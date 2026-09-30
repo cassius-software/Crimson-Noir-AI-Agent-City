@@ -1,0 +1,332 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Engine, type EngineOptions } from './07_Execute_Actions/engine.ts'
+import { Hud } from './07_Execute_Actions/Hud.tsx'
+import { Terminal } from './07_Execute_Actions/terminal/Terminal.tsx'
+import type { TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
+import { hudLine, recruitBridge, Recruiter } from './08_Swarm/recruitment.ts'
+import { TaskRouter } from './08_Swarm/taskRouter.ts'
+import { deferredLedger, followRecruiter, indexedDbLedger, memoryBridge, SwarmMemory } from './08_Swarm/memory.ts'
+import { createLocalCompute } from './09_Cognition/localCompute.ts'
+import { createLocalSpeech } from './09_Cognition/localSpeech.ts'
+import type { GateHandle, GateLease, Mind, SkillGate } from './07_Execute_Actions/operator.ts'
+import { TouchControls } from './04_Connect_Hardware/TouchControls.tsx'
+import { isEditableTarget } from './04_Connect_Hardware/input.ts'
+import type { SipocSnapshot } from './05_Observe_Environment/telemetry.ts'
+import { MonolithLogo } from './MonolithLogo.tsx'
+import { BootVeil } from './07_Execute_Actions/BootVeil.tsx'
+import { Concierge } from './07_Execute_Actions/Concierge.tsx'
+import { loadProfile, type Profile } from './05_Observe_Environment/profile.ts'
+import type { PlanStep } from './06_Make_Decisions/intent.ts'
+import { BRAND } from './brand.ts'
+import embeddedRegion from 'virtual:region-pack'
+import { validatePack, type RegionPack } from './01_Initialize_World/region/pack.ts'
+
+const HUD_INTERVAL_MS = 100
+/** Where the local model's settings (its server and model) are kept between visits. */
+const COGNITION_KEY = 'civic-simulation:cognition:v1'
+/** Where the local speech server's settings (its server, voice, model, auto) are kept between visits. */
+const SPEECH_KEY = 'civic-simulation:speech:v1'
+/** Characters of a streaming answer the HUD shows. */
+const ANSWER_TAIL = 72
+
+/** The page's local storage for one key; a browser that refuses storage keeps the settings for this visit only. */
+const pageStore = (key: string) => ({
+  load: (): string | null => {
+    try {
+      return localStorage.getItem(key)
+    } catch {
+      return null
+    }
+  },
+  save: (value: string): void => {
+    try {
+      localStorage.setItem(key, value)
+    } catch {
+      // storage refused
+    }
+  },
+})
+
+/**
+ * The HUD's view of the operator's local model and voice: an answer streaming in (its latest words, or that the model
+ * is still thinking), or who is speaking aloud.
+ */
+function activityText(a: { thinking: number; tail: string } | null, speaking: number): string {
+  if (!a) return speaking >= 0 ? `Speaking · agent ${speaking}` : ''
+  if (a.tail) return `Answering: …${a.tail.replace(/\s+/g, ' ').trimStart()}`
+  return a.thinking ? `Answering · thinking (${a.thinking})` : 'Answering · waiting for the model'
+}
+
+/**
+ * The region the pilot build carries (vite.config.ts regionPack), unpacked and checked; null in every other build, or
+ * when the page asks for the procedural city (?region=off). Nothing is fetched: the bytes are in this file.
+ */
+async function loadRegion(): Promise<RegionPack | null> {
+  if (!embeddedRegion || new URLSearchParams(window.location.search).get('region') === 'off') return null
+  const bytes = Uint8Array.from(atob(embeddedRegion), (c) => c.charCodeAt(0))
+  const text = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text()
+  return validatePack(JSON.parse(text))
+}
+
+function readOptions(): EngineOptions & { debug: boolean } {
+  const q = new URLSearchParams(window.location.search)
+  const num = (key: string, fallback: number, min: number, max: number) => {
+    const v = Number(q.get(key))
+    return q.has(key) && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback
+  }
+  const quality = q.get('quality')
+  return {
+    // Absent: the device profile decides (governor.ts defaultAgents: 14,000 on a desktop GPU, fewer on phones).
+    agents: q.has('crowd') ? Math.round(num('crowd', 14000, 256, 60000)) : undefined,
+    cars: Math.round(num('cars', 36, 0, 48)),
+    pixelRatio: num('scale', Math.min(window.devicePixelRatio, 1), 0.25, 2),
+    seed: Math.round(num('seed', 1337, 0, 2 ** 31)),
+    // Golden hour: the sun about 10° up in the west (solar.ts), long warm light for the first look.
+    startHour: num('time', 17, 0, 24),
+    dayMinutes: num('day', 24, 1, 1440),
+    shadows: q.get('shadows') !== '0',
+    post: q.get('post') !== '0',
+    profile: q.has('profile'),
+    quality: quality === null || quality === 'auto' ? 'auto' : Math.round(num('quality', 3, 0, 4)),
+    targetFps: Math.round(num('fps', 0, 0, 240)),
+    audio: q.get('audio') !== '0',
+    debug: q.has('debug'),
+    // The cinema camera (24 fps, 180° shutter, ND, film response); ?cinema=0 draws every frame with ACES.
+    cinema: q.get('cinema') !== '0',
+  }
+}
+
+function App() {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const engineRef = useRef<Engine | null>(null)
+  const termOpenRef = useRef(false)
+  const [engine, setEngine] = useState<Engine | null>(null)
+  const [bridge, setBridge] = useState<TerminalBridge | null>(null)
+  const [termOpen, setTermOpen] = useState(false)
+  const [hud, setHud] = useState<SipocSnapshot | null>(null)
+  const [hudVisible, setHudVisible] = useState(true)
+  const [adapter, setAdapter] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  // Read synchronously, so the very first render already knows a returning visitor.
+  const [profile, setProfile] = useState<Profile | null>(loadProfile)
+  const [veilDone, setVeilDone] = useState(false)
+  // A Ring-0 kernel panic: the engine is halted and the reason is shown over everything.
+  const [locked, setLocked] = useState<string | null>(null)
+
+  useEffect(() => { engine?.setPlayerName(profile?.name ?? '') }, [engine, profile])
+
+  // A brief's immediate steps go through the terminal bridge (the same four operator knobs), never the engine.
+  const applyIntent = useCallback((step: PlanStep): boolean => {
+    const b = bridge
+    if (!b) return false
+    if (step.control === 'time' && typeof step.value === 'number') { b.setClock(step.value); return true }
+    if (step.control === 'quality' && (step.value === 'auto' || typeof step.value === 'number')) { b.quality(step.value); return true }
+    if (step.control === 'audio' && (step.value === 'on' || step.value === 'off' || typeof step.value === 'number')) { b.audio(step.value); return true }
+    return false
+  }, [bridge])
+
+  // The console suspends game input (and releases pointer lock) while it owns the keyboard.
+  const onTermOpen = useCallback((open: boolean) => {
+    termOpenRef.current = open
+    setTermOpen(open)
+    engineRef.current?.input.suspend(open)
+  }, [])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code === 'KeyH' && !e.repeat && !termOpenRef.current && !isEditableTarget(e.target)) setHudVisible((v) => !v)
+    }
+    // Browsers only start audio from a user gesture; every gesture is a chance to (re)unlock it.
+    const unlock = () => engineRef.current?.audio.unlock()
+    window.addEventListener('keydown', onKey)
+    for (const type of ['pointerdown', 'keydown', 'touchend', 'click'] as const) window.addEventListener(type, unlock, { capture: true })
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      for (const type of ['pointerdown', 'keydown', 'touchend', 'click'] as const) window.removeEventListener(type, unlock, { capture: true })
+    }
+  }, [])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const options = readOptions()
+    let engine: Engine | null = null
+    let recruiter: Recruiter | null = null
+    let router: TaskRouter | null = null
+    /** Stops writing the recruiter's events into the swarm's memory. */
+    let unfollow: (() => void) | null = null
+    /** The answer streaming in from the local model, for the HUD (null when none is). */
+    let answering: { thinking: number; tail: string } | null = null
+    let raf = 0
+    let cancelled = false
+    let lastHud = 0
+
+    // The single requestAnimationFrame loop: the engine advances one synchronized step per tick and
+    // React only sees a snapshot every HUD_INTERVAL_MS, so the HUD never re-renders at frame rate.
+    const loop = (now: number) => {
+      if (!engine || engine.halted) return
+      engine.frame(now)
+      if (now - lastHud > HUD_INTERVAL_MS) {
+        lastHud = now
+        const s = engine.snapshot()
+        if (recruiter) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, activityText(answering, engine.speaking))
+        setHud(s)
+      }
+      raf = requestAnimationFrame(loop)
+    }
+    const onResize = () => engine?.resize()
+
+    loadRegion().then((region) => Engine.create(canvas, { ...options, region })).then(
+      (e) => {
+        if (cancelled) {
+          e.dispose()
+          return
+        }
+        engine = e
+        engineRef.current = e
+        // Recruitment: voice (on-device) and the console, over the engine's narrow host. A halt closes the microphone.
+        const r = new Recruiter(e.recruitHost())
+        recruiter = r
+        // The capability gateway over the recruiter's copy of the swarm: every operator script and prompt runs through
+        // it, and a task a broken tether stops also toasts, so it shows with the console closed.
+        const tasks = new TaskRouter(r)
+        router = tasks
+        const gate: SkillGate = {
+          submit<T>(requires: readonly string[], task: (lease: GateLease) => T | PromiseLike<T>): GateHandle<T> {
+            const h = tasks.submit(requires, task)
+            void h.verdict.then((v) => { if (v.state === 'Aborted') e.toast('Task aborted', `Spatial tether lost: ${v.message}`) })
+            return h
+          },
+        }
+        // The local model (only ever asked on the operator's command, only on this machine). Its answer's pieces are
+        // shown on the HUD only after the lease let them through.
+        const local = createLocalCompute({ fetch: (url, init) => window.fetch(url, init), store: pageStore(COGNITION_KEY) })
+        const mind: Mind = {
+          ...local,
+          answer: (req, onPiece) => {
+            const live = { thinking: 0, tail: '' }
+            answering = live
+            return local.answer(req, (p) => {
+              onPiece(p)
+              if (p.kind === 'text') live.tail = (live.tail + p.text).slice(-ANSWER_TAIL)
+              else live.thinking++
+            }).finally(() => { if (answering === live) answering = null })
+          },
+        }
+        // The swarm's memory for this city (this world seed): in the page's IndexedDB on this machine (for this visit
+        // only if the browser refuses it), fed by the recruiter's arrivals and releases and by the operator tier's
+        // tasks (its diary). Nothing in it reaches the physics worker.
+        const memory = new SwarmMemory(deferredLedger((async () => indexedDbLedger(window.indexedDB))()), options.seed)
+        unfollow = followRecruiter(memory, r)
+        // The local speech server (only ever asked on the operator's command, only on this machine): the audio it
+        // returns is placed by the engine's soundscape at the speaker's head.
+        const voice = createLocalSpeech({ fetch: (url, init) => window.fetch(url, init), store: pageStore(SPEECH_KEY) })
+        e.onHalt = (reason) => {
+          unfollow?.()
+          tasks.dispose()
+          r.dispose()
+          setLocked(reason)
+        }
+        if (termOpenRef.current) e.input.suspend(true)
+        setEngine(e)
+        setBridge(Object.freeze({
+          ...e.terminalBridge(gate, mind, voice, memory.diary()),
+          recruit: recruitBridge(r),
+          memory: memoryBridge(memory, r),
+        }))
+        // The fallback without a microphone, in the browser's console: recruit("Rust").
+        Object.assign(window, { recruit: (skill: string) => r.recruit(skill) })
+        setAdapter(e.adapter)
+        window.addEventListener('resize', onResize)
+        if (options.debug) {
+          Object.assign(window, {
+            __SIM__: {
+              snapshot: () => e.snapshot(),
+              errors: () => e.errors,
+              setHour: (h: number) => e.debugSetHour(h),
+              teleport: (x: number, z: number, yaw = 0) => e.debugTeleport(x, z, yaw),
+              interact: () => e.interact(),
+              hold: (code: string, on: boolean) => e.input.hold(code, on),
+              look: (yaw: number, pitch: number) => { e.input.yaw = yaw; e.input.pitch = pitch },
+              // Headless browsers cannot take pointer lock; this hides the capture hint for screenshots.
+              pretendLocked: () => { e.input.locked = true },
+              // The physics realm as the harness sees it: the mirrored state, the command queue (dbg* accepted), the next state.
+              sim: e.debugSim(),
+              engine: e,
+            },
+          })
+        }
+        raf = requestAnimationFrame(loop)
+      },
+      (err: unknown) => setError(err instanceof Error ? err.message : String(err)),
+    )
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(raf)
+      window.removeEventListener('resize', onResize)
+      engineRef.current = null
+      setEngine(null)
+      setBridge(null)
+      unfollow?.()
+      router?.dispose()
+      recruiter?.dispose()
+      if ((window as { recruit?: unknown }).recruit) delete (window as { recruit?: unknown }).recruit
+      engine?.dispose()
+    }
+  }, [])
+
+  return (
+    <main className="relative h-full w-full overflow-hidden bg-slate-900">
+      <canvas ref={canvasRef} className="block h-full w-full touch-none" />
+      <Hud s={hud} adapter={adapter} visible={hudVisible} terminalOpen={termOpen} mapLayer={engine?.mapLayer ?? null} />
+      {engine && hud && !termOpen && (
+        <TouchControls input={engine.input} driving={hud.input.mode === 'vehicle'} nearVehicle={hud.input.nearVehicle} />
+      )}
+      {hud && (
+        <Concierge
+          visible={veilDone && hudVisible && !termOpen}
+          profile={profile}
+          onProfile={setProfile}
+          family={hud.supplier.glyphs}
+          driving={hud.input.mode === 'vehicle'}
+          dark={hud.customer.daylight < 0.35}
+          onIntent={applyIntent}
+        />
+      )}
+      <Terminal bridge={bridge} onOpenChange={onTermOpen} />
+      {/* From the first render: React swaps index.html's identical splash for this, which fades into the city
+          once the first snapshot exists (or lifts to show the error card). */}
+      <BootVeil ready={hud !== null || error !== null} onDone={() => setVeilDone(true)} />
+      {locked && (
+        <div role="alertdialog" aria-live="assertive" className="absolute inset-0 z-[10000] flex items-center justify-center bg-black p-8 font-mono text-sm text-slate-200">
+          <div className="max-w-2xl">
+            <div className="text-xs tracking-[0.3em] text-rose-400">[RING-0 FATAL]</div>
+            <div className="mt-3 text-2xl font-semibold text-white">SYSTEM LOCKED</div>
+            <div className="mt-2 break-words text-slate-300">{locked}</div>
+            <div className="mt-6 text-xs text-slate-500">
+              The Ring-0 audit found a broken invariant after the physics step. Physics and rendering are halted and the
+              hardware bus has been disconnected. Reload the page to start again.
+            </div>
+          </div>
+        </div>
+      )}
+      {error && (
+        <div className="absolute inset-0 flex items-center justify-center p-8 font-sans text-sm">
+          <div className="max-w-xl rounded-2xl border border-white/70 bg-white/80 p-6 text-slate-900 shadow-2xl backdrop-blur-xl">
+            <div className="mb-3 flex items-center gap-3">
+              <MonolithLogo size={36} title="" />
+              <div className="text-lg font-semibold">{BRAND.name} couldn’t start</div>
+            </div>
+            <div>{error}</div>
+            <div className="mt-3 text-xs text-slate-500">
+              {BRAND.name} needs WebGPU: a current Chrome, Edge or Brave on desktop or Android, or Safari 26 on iPhone, iPad and Mac.
+              The crowd simulation runs as WGSL compute and has no WebGL path.
+            </div>
+          </div>
+        </div>
+      )}
+    </main>
+  )
+}
+
+export default App

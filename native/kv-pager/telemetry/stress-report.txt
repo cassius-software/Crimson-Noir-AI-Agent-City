@@ -1,0 +1,18 @@
+adapter: AMD Radeon(TM) Graphics (Dx12, IntegratedGpu, driver )
+model geometry: 36 layers, 32 Q heads, 8 KV heads, head_dim 128 -> 147456 B of KV per token (f16)
+page: 16 tokens = 2.25 MiB; pool: 910 pages = 2048 MiB requested (2048 MiB asked)
+pool allocated: 2048 MiB in 36 K + 36 V storage buffers of 28.44 MiB each (911 ms)
+wgpu allocator report: 2050 MiB allocated, 2304 MiB reserved, 75 allocations in 9 memory blocks
+base reality: 82 stand-in tokens; squad prompts 114..114 tokens; prefix-cache hits on admission: 720 tokens
+after admission + forks: 35 pages in use for 100 agents (800 logical pages mapped)
+
+after 24 steps (103 tokens per agent appended):
+  paged + prefix cache + CoW: 725 of 910 pages in use (1631 MiB of 2048 MiB), peak 725 pages; 1400 logical pages mapped, 25 physical pages shared
+  copy-on-write: 90 partial pages copied (25.3 MiB moved on the GPU); 100 distinct agent histories of 100
+  no sharing, same pool: demand 1400 pages (3150 MiB); 100 of 100 agents stalled (a token refused; admitted ones still hold 910 pages), 0 ran every step
+  first refusal: agent 10 at step 6: OutOfBlocks { needed: 1, available: 0 } (the request was refused whole; table invariants held)
+  contiguous reservation: 100 x 217 tokens (longest agent) = 2.98 GiB; x 8192 (full context) = 112.5 GiB
+  wgpu allocator report after the run: 2050 MiB allocated, 2368 MiB reserved
+
+decode kernel vs CPU reference (3 layers x 100 agents x 32 heads x 128 dims, 12.7 s): max |error| 4.12e-7 at agent 59 layer 35 -> PASS
+tokens written to the pool: 10720 (the rest came from the prefix cache or were shared by forks)

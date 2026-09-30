@@ -1,0 +1,116 @@
+/**
+ * Why does this file exist? It is the physics worker's door: the only code that reads what the page sends.
+ * It treats every message as untrusted data: one init (a second is refused), then step requests whose shape
+ * it checks before SimCore clamps every number; anything else is counted as refused and dropped. It replies
+ * with plain-data state (the pose buffer is transferred, never shared) and, once the Ring-0 audit has halted
+ * the simulation or this realm faults, with a panic, after which it answers nothing. No DOM, no worker API:
+ * physics.worker.ts binds it to postMessage, and the node tests drive it with a plain function.
+ * What breaks if it is removed? The worker cannot hear the page, and nothing vets what the page says.
+ */
+import { SimCore, type SimCoreOptions } from './simCore.ts'
+import { POSE, type FromWorker, type SimInit } from './simProtocol.ts'
+import type { RegionGround } from './physics.ts'
+
+export type Post = (msg: FromWorker, transfer?: Transferable[]) => void
+
+/** Simulated time may run at most this much faster than wall time (a flood of steps cannot fast-forward the city). */
+const TIME_RATE = 1.5
+/** Simulated seconds that may be banked while the page is idle (a frame after a stall still gets its step). */
+const TIME_BANK = 0.25
+const now = (): number => (typeof performance === 'undefined' ? Date.now() : performance.now())
+const isRecord = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x)
+const message = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
+/** Returns the handler for one incoming message. `create` is injectable for tests. */
+/**
+ * A region's physics, checked: null when there is none, undefined when it is malformed (finite, ordered bounds; walls a
+ * list of finite numbers in fives, at most 4 million walls).
+ */
+function regionOf(u: unknown): RegionGround | null | undefined {
+  if (u === undefined || u === null) return null
+  if (!isRecord(u) || !isRecord(u.bounds)) return undefined
+  const { x0, z0, x1, z1 } = u.bounds as Record<string, unknown>
+  if (![x0, z0, x1, z1].every((n) => typeof n === 'number' && Number.isFinite(n)) || !((x0 as number) < (x1 as number) && (z0 as number) < (z1 as number))) return undefined
+  const w = u.walls
+  const list = w instanceof Float32Array || w instanceof Float64Array || Array.isArray(w) ? (w as ArrayLike<number>) : null
+  if (!list || list.length % 5 !== 0 || list.length > 5 * 4_000_000) return undefined
+  for (let i = 0; i < list.length; i++) if (typeof list[i] !== 'number' || !Number.isFinite(list[i])) return undefined
+  return { bounds: { x0: x0 as number, z0: z0 as number, x1: x1 as number, z1: z1 as number }, walls: list }
+}
+
+export function createSimHost(post: Post, create: (o: SimCoreOptions) => Promise<SimCore> = SimCore.create): (data: unknown) => Promise<void> {
+  let core: SimCore | null = null
+  let initStarted = false
+  let refusedEarly = 0
+  let panicked = false
+  /** Pose buffers the page handed back, ready for reuse. */
+  const pool: ArrayBuffer[] = []
+  /** Simulated seconds the page may still spend, refilled at TIME_RATE × wall time. */
+  let bank = TIME_BANK
+  let lastWall = now()
+
+  const refuse = (reason: string): void => {
+    if (core) core.noteRejected(reason)
+    else refusedEarly++
+  }
+
+  const panic = (reason: string): void => {
+    if (panicked) return
+    panicked = true
+    post({ t: 'panic', reason })
+  }
+
+  return async (data: unknown): Promise<void> => {
+    if (panicked) return
+    if (!isRecord(data)) return refuse('not a message object')
+    if (data.t === 'init') {
+      if (initStarted) return refuse('init: the world is already built')
+      initStarted = true
+      const init = data as unknown as SimInit
+      if (!Array.isArray(init.boxes) || !isRecord(init.furniture) || !isRecord(init.spawn)) {
+        post({ t: 'error', message: 'init: boxes, furniture and spawn are required' })
+        return
+      }
+      try {
+        const region = regionOf(init.region)
+        if (region === undefined) {
+          post({ t: 'error', message: 'init: a region needs finite bounds and walls in fives' })
+          return
+        }
+        core = await create({ seed: init.seed, cars: init.cars, agents: init.agents, boxes: init.boxes, furniture: init.furniture, spawn: init.spawn, debug: init.debug === true, region })
+        for (let i = 0; i < refusedEarly; i++) core.noteRejected('message before init')
+        post({ t: 'ready', meta: core.meta })
+      } catch (e) {
+        post({ t: 'error', message: `init: ${message(e)}` })
+      }
+      return
+    }
+    if (data.t !== 'step') return refuse(`unknown message '${String(data.t)}'`)
+    if (!core) return refuse('step before init')
+    const id = typeof data.id === 'number' && Number.isFinite(data.id) ? data.id : 0
+    const wall = now()
+    bank = Math.min(TIME_BANK, bank + ((wall - lastWall) / 1000) * TIME_RATE)
+    lastWall = wall
+    const asked = typeof data.dt === 'number' && data.dt > 0 ? data.dt : 0
+    const dt = Math.min(asked, bank)
+    bank -= dt
+    const bytes = core.meta.count * POSE.stride * 4
+    if (data.buffer instanceof ArrayBuffer && data.buffer.byteLength === bytes && pool.length < 4) pool.push(data.buffer)
+    const buffer = pool.pop() ?? new ArrayBuffer(bytes)
+    if (data.crowdBuffer instanceof ArrayBuffer) core.recycleCrowd(data.crowdBuffer)
+    try {
+      const state = core.step({
+        dt,
+        foot: (isRecord(data.foot) ? data.foot : {}) as never,
+        drive: (isRecord(data.drive) ? data.drive : {}) as never,
+        cmds: Array.isArray(data.cmds) ? data.cmds : [],
+      }, new Float32Array(buffer))
+      // Anything else the page put in the message (a hazard array, GPU flags, a clock) is never read.
+      post({ t: 'state', id, ...state }, state.crowdFrame ? [buffer, state.crowdFrame.buffer as ArrayBuffer] : [buffer])
+    } catch (e) {
+      // A fault inside this realm leaves the simulation in an unknown state: it is halted like a panic.
+      core.halt(`Physics realm fault: ${message(e)}`)
+    }
+    if (core.halted) panic(core.panic ?? 'halted')
+  }
+}

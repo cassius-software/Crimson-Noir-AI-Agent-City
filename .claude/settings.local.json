@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(\"node: \" + \\(node --version 2>&1\\); \"npm: \" + \\(npm --version 2>&1\\); \"git: \" + \\(git --version 2>&1\\); \"cargo: \" + \\(cargo --version 2>&1\\))",
+      "Bash(mkdir -p /c/Users/julia/AppData/Local/Temp/claude/C--Users-julia-Downloads-agent-city-0-11-0-rc-1-handoff-AgentCity/b83e94e1-8dda-5eb7-98dc-4df04490ad3a/scratchpad/tdd)",
+      "Read(//c/Users/julia/AppData/Local/Temp/claude/C--Users-julia-Downloads-agent-city-0-11-0-rc-1-handoff-AgentCity/b83e94e1-8dda-5eb7-98dc-4df04490ad3a/scratchpad/**)",
+      "Bash(unzip -o -q \"/c/Users/julia/.claude/uploads/b83e94e1-8dda-5eb7-98dc-4df04490ad3a/739dafb5-Operation_Zero_Hour__PhD-Level_Context_Engineering_Technical_Design_Document.docx\")",
+      "Bash(ls word *)",
+      "Bash(sed -e 's#</w:p>#\\\\n#g' -e 's#<[^>]*>##g' word/document.xml)",
+      "PowerShell(node --version; npm --version; Get-ChildItem node_modules -Directory | Select-Object -ExpandProperty Name | Out-String -Width 400; Get-ChildItem dist -Recurse | Select-Object FullName,Length | Format-Table -AutoSize; Test-Path \"C:\\\\Program Files\\\\BraveSoftware\\\\Brave-Browser\\\\Application\\\\brave.exe\"; Get-ChildItem \"$env:APPDATA\\\\npm\\\\node_modules\" -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)",
+      "PowerShell($sp=\"C:\\\\Users\\\\julia\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-julia-Downloads-agent-city-0-11-0-rc-1-handoff-AgentCity\\\\0e17c319-c4d7-5313-b6ff-5aba495214bd\\\\scratchpad\"; New-Item -ItemType Directory -Force \"$sp\\\\baseline\" | Out-Null; Copy-Item -Recurse -Force src,index.html,package.json,README.md,vite.config.ts,tsconfig.app.json,tsconfig.json,tsconfig.node.json,.oxlintrc.json,.gitignore \"$sp\\\\baseline\\\\\"; Compress-Archive -Force -Path src,index.html,package.json,package-lock.json,README.md,vite.config.ts,tsconfig.app.json,tsconfig.json,tsconfig.node.json,.oxlintrc.json,.gitignore -DestinationPath \"$sp\\\\AgentCity-pre-stable-backup.zip\"; Copy-Item -Recurse -Force \"C:\\\\Users\\\\julia\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-julia-Downloads-agent-city-0-11-0-rc-1-handoff-AgentCity\\\\b83e94e1-8dda-5eb7-98dc-4df04490ad3a\\\\scratchpad\\\\probe\" \"$sp\\\\probe\"; Get-ChildItem $sp | Select-Object Name,Length)",
+      "PowerShell($t=Get-Date; npm test 2>&1 | Select-Object -Last 12; \"---lint\"; npm run lint 2>&1 | Select-Object -Last 6; \"---build\"; npm run build 2>&1 | Select-Object -Last 12; \"elapsed: $\\(\\(Get-Date\\)-$t\\)\")",
+      "PowerShell(\\(Get-Item \"C:\\\\Program Files\\\\BraveSoftware\\\\Brave-Browser\\\\Application\\\\brave.exe\"\\).VersionInfo | Select-Object ProductVersion,FileVersion; Get-ChildItem \"C:\\\\Program Files\\\\BraveSoftware\\\\Brave-Browser\\\\Application\" | Select-Object Name,LastWriteTime; Get-Process brave -ErrorAction SilentlyContinue | Measure-Object | Select-Object Count)",
+      "PowerShell(try { Get-ChildItem \"C:\\\\Program Files\\\\BraveSoftware\\\\Brave-Browser\\\\Application\" -ErrorAction Stop | Select-Object Name,LastWriteTime | Format-Table -AutoSize } catch { \"ERR: $_\" }; try { @\\(Get-Process brave -ErrorAction Stop\\).Count } catch { \"no brave running\" })",
+      "Bash(timeout 110 node city.mjs \"file:///C:/Users/julia/Downloads/agent-city-0.11.0-rc.1-handoff/AgentCity/dist/index.html?debug&time=11\" \"C:/Users/julia/AppData/Local/Temp/claude/C--Users-julia-Downloads-agent-city-0-11-0-rc-1-handoff-AgentCity/0e17c319-c4d7-5313-b6ff-5aba495214bd/scratchpad\" base 5)",
+      "PowerShell($t=Get-Date; npx tsc -p tsconfig.app.json --noEmit 2>&1 | Select-Object -First 5; \"exit=$LASTEXITCODE elapsed=$\\(\\(Get-Date\\)-$t\\)\"; Get-Content .oxlintrc.json; Get-Content tsconfig.node.json; Get-Content src\\\\index.css; Get-Content src\\\\01_Initialize_World\\\\webgpu-globals.d.ts)"
+    ]
+  }
+}

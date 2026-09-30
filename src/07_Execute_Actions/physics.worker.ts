@@ -1,0 +1,42 @@
+/**
+ * Why does this file exist? It is the physics realm: a dedicated Web Worker that alone owns the Rapier
+ * world, the fleet, the avatar, the Bouncer, the Sanctuary, the Ring-0 auditor (simCore.ts) and the GPU
+ * pedestrian crowd with its First-Law hazard sensing, on a GPU device of its own (crowdSim.ts). The page
+ * builds it once (simClient.ts, inlined into the single HTML file) and can only exchange messages with it; a
+ * worker's heap and its GPU device are not reachable from the page's scripts, so no DOM script, React
+ * component or injected code can read or write a body or a pedestrian, lower a hazard reading, swap a law or
+ * skip the audit. Everything it hears goes through simHost.ts.
+ * What breaks if it is removed? There is no physics and no crowd, and nothing separates them from the page.
+ */
+import { CrowdSim } from '../03_Spawn_Agents/crowdSim.ts'
+import { createSimHost } from './simHost.ts'
+import { SimCore } from './simCore.ts'
+
+const scope = self as unknown as {
+  postMessage(message: unknown, transfer: Transferable[]): void
+  onmessage: ((e: MessageEvent) => void) | null
+  navigator: { gpu?: GPU }
+}
+
+/**
+ * The crowd's own GPU device, requested here in the worker. There is no fallback: without WebGPU in the worker
+ * the realm refuses to start rather than let the page sense pedestrians for it.
+ */
+async function gpuCrowd(agents: number): Promise<CrowdSim> {
+  const gpu = scope.navigator.gpu
+  if (!gpu) throw new Error('WebGPU is not available inside the physics worker (the pedestrian sensing needs it there)')
+  const adapter = await gpu.requestAdapter({ powerPreference: 'high-performance' })
+  if (!adapter) throw new Error('no WebGPU adapter inside the physics worker')
+  const device = await adapter.requestDevice({ label: 'physics-realm crowd' })
+  device.addEventListener('uncapturederror', (e) => console.error('[physics worker] crowd GPU error:', (e as GPUUncapturedErrorEvent).error.message))
+  return CrowdSim.create(device, agents)
+}
+
+const handle = createSimHost((m, transfer) => scope.postMessage(m, transfer ?? []), (o) => SimCore.create(o, gpuCrowd))
+// One message at a time, in arrival order; init is the only asynchronous one and the page waits for it.
+let queue: Promise<void> = Promise.resolve()
+scope.onmessage = (e) => {
+  queue = queue.then(() => handle(e.data)).catch((err: unknown) => {
+    scope.postMessage({ t: 'panic', reason: `Physics realm fault: ${err instanceof Error ? err.message : String(err)}` }, [])
+  })
+}

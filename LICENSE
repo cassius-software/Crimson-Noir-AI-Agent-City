@@ -1,0 +1,56 @@
+LICENSE
+
+Copyright (c) 2026 the ONYX authors. "ONYX" is the product's provisional working name; the name,
+logo and trade dress are Reserved Material (see NOTICE.md).
+
+
+1. ORC License
+
+This product is licensed under the ORC License located at the Library of Congress at TX 9-307-067 and available online at various locations including www.azoralaw.com/orclicense and others. All warranties are disclaimed as set forth therein.
+
+The ORC License (Open RPG Creative License) was drafted by Azora Law and registered with the United
+States Copyright Office as TX 9-307-067 (effective date of registration: 17 August 2023). Its terms
+cannot be modified by any licensor or licensee. Its full text is not reproduced here; the official
+copy is published at:
+
+  https://azoralaw.com/orclicense/
+  https://azoralaw.com/wp-content/uploads/2023/09/ORC-License.FINAL_.pdf
+
+NOTICE.md completes the notice the ORC License requires: the attribution of the Licensed Material
+this product is based on, how to credit this product, its Reserved Material, and its Expressly
+Designated Licensed Material. The build embeds NOTICE.md in dist/index.html, so the notice travels
+with the product.
+
+
+2. What the ORC License covers here
+
+The ORC License licenses game mechanics ("Licensed Material"): in this product, the degrees-of-
+success check rules and the checks, envelopes and rulings built on them, as listed in NOTICE.md. You
+may use, adapt and share them under the terms of the ORC License.
+
+The ORC License does not license software code as such, and it does not license Reserved Material.
+The product name, logo and trade dress, and the product's visual art, models, materials and sound
+design, are Reserved Material. No right in them is granted by this file.
+
+
+3. Software code
+
+The source code, shaders and build configuration of this product are copyright the ONYX authors.
+Except for the rights the ORC License grants in the Licensed Material they express, no license to the
+code is granted by this file.
+
+
+4. Third-party software
+
+The build bundles third-party open-source software (React, three.js, Rapier, Tailwind CSS). Each
+package remains under its own license, not under the ORC License. NOTICE.md lists them; their full
+license texts are embedded at the end of dist/index.html by the build.
+
+
+5. No warranty
+
+THIS PRODUCT IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE PRODUCT OR THE USE OR OTHER DEALINGS IN THE PRODUCT.

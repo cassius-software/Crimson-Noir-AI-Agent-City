@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#000000" />
+    <!-- The percent-wrapped BRAND tokens below are filled from src/brand.ts by the brand-html plugin (vite.config.ts). -->
+    <meta name="application-name" content="%BRAND_NAME%" />
+    <meta name="description" content="%BRAND_TAGLINE%" />
+    <link rel="icon" type="image/svg+xml" href="%BRAND_ICON%" />
+    <title>%BRAND_NAME%</title>
+    <!-- The boot veil's look, the one definition shared with src/07_Execute_Actions/BootVeil.tsx (same classes):
+         the page is black with the Monolith from its first paint, and React takes it over pixel for pixel.
+         Unlayered, so Tailwind's layered preflight cannot restyle it. -->
+    <style>
+      html, body { margin: 0; height: 100%; background: #000; }
+      .boot-veil { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; background: #000; }
+      .boot-mark {
+        width: clamp(80px, 14vmin, 120px);
+        height: clamp(80px, 14vmin, 120px);
+        border-radius: 23.333%; /* the mark's rx 28 of 120 */
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16), 0 0 28px rgba(255, 255, 255, 0.1), 0 0 96px rgba(255, 255, 255, 0.06);
+      }
+      .boot-mark > svg { display: block; width: 100%; height: 100%; filter: drop-shadow(0px 10px 15px rgba(0, 0, 0, 0.2)); }
+    </style>
+  </head>
+  <body>
+    <!-- React replaces this on mount with the identical BootVeil, which then fades into the city. -->
+    <div id="root">
+      <div class="boot-veil" role="img" aria-label="%BRAND_NAME% is starting">
+        <div class="boot-mark">%BRAND_MARK%</div>
+        <!-- source-only: brand-html removes everything up to the closing marker (dev server and build) -->
+        <p style="position: absolute; right: 24px; bottom: 24px; left: 24px; margin: 0; color: #94a3b8; font: 13px/1.6 system-ui, sans-serif; text-align: center">
+          This is the source entry, which only runs under <code>npm run dev</code>. To play, open <code>dist/index.html</code>.
+        </p>
+        <!-- /source-only -->
+      </div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

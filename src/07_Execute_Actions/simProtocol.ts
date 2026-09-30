@@ -1,0 +1,229 @@
+/**
+ * Why does this file exist? It is the whole contract across the realm boundary between the page and the
+ * physics worker: the messages each side may send, the commands the page may ask for, and the layout of the
+ * pose buffer the worker hands back every step. Everything crossing is plain data (numbers, strings,
+ * booleans, typed arrays); no object reference can cross a postMessage, so the page never holds a Rapier
+ * handle, the Bouncer, the Sanctuary or the Ring-0 auditor. Pure: it imports only types.
+ * What breaks if it is removed? The two realms have no agreed language, and nothing checks either side.
+ */
+import type { Box, Furniture } from '../01_Initialize_World/city.ts'
+import type { RegionGround } from './physics.ts'
+import type { KernelStats } from '../05_Observe_Environment/telemetry.ts'
+import type { CrowdSimStats } from '../03_Spawn_Agents/crowdSensor.ts'
+import type { CarTuning, DriveMode } from './car.ts'
+
+/**
+ * One vehicle's slice of the pose buffer (Float32Array, `POSE.stride` floats per vehicle, fleet order). The
+ * wheels follow as `[suspension length, rolling angle, steering angle]` for each of the four wheels.
+ */
+export const POSE = {
+  x: 0, y: 1, z: 2, qx: 3, qy: 4, qz: 5, qw: 6,
+  heading: 7, speed: 8, curvature: 9, throttle: 10, brake: 11, mode: 12, vx: 13, vy: 14, vz: 15,
+  wheels: 16,
+  stride: 28,
+} as const
+
+/**
+ * The person model: an upright capsule of this radius around a cylinder of 2 × halfHeight, feet at its bottom (1.8 m
+ * tall). The avatar's Rapier body is built from it (player.ts); the ghost view draws every pedestrian's contact
+ * envelope with it (ghost.ts).
+ */
+export const PERSON = Object.freeze({ radius: 0.3, halfHeight: 0.6 })
+
+/** Walking and running speed, m/s: the worker caps the page's foot controls at a run. */
+export const WALK = 2.0
+export const RUN = 5.2
+/** How close the avatar must stand to a car to take its wheel, m. */
+export const ENTER_RANGE = 3.8
+
+/** DriveMode as it is stored in the pose buffer. */
+export const MODES: readonly DriveMode[] = ['ai', 'player', 'parked']
+
+/** The page's one-time request to build the world in the worker. A second init is refused. */
+export interface SimInit {
+  t: 'init'
+  seed: number
+  cars: number
+  /** Pedestrians simulated on the worker's own GPU device (the first is the player's own body). */
+  agents: number
+  boxes: Box[]
+  furniture: Furniture
+  spawn: { x: number; z: number }
+  /** ?debug: the worker also accepts the fault-injection commands (dbg*). Fixed for the worker's lifetime. */
+  debug: boolean
+  /**
+   * A surveyed region to build instead of the procedural city's boxes and furniture (physics.ts RegionGround): its
+   * bounds and walls. Absent (or null) for the city.
+   */
+  region?: RegionGround | null
+}
+
+/** Static facts about the world the worker built, sent once in `ready`. */
+export interface SimMeta {
+  count: number
+  /** Pedestrians in the worker's crowd, and so in every render frame (12 floats each). */
+  agents: number
+  suv: boolean[]
+  /** Body colour per vehicle, 0xRRGGBB (sRGB). */
+  paint: number[]
+  person: { radius: number; halfHeight: number }
+  debug: boolean
+}
+
+/**
+ * On foot: the desired walking velocity in the world (x, z), m/s, which the worker caps at a run; and the way
+ * the player's body faces (the view's heading), which only turns the player's own figure in the crowd.
+ */
+export interface FootControls { x: number; z: number; heading: number }
+
+/** In a car: raw controls, each clamped by the worker. steer −1..1 (positive = left), fwd and back 0..1. */
+export interface DriveControls { steer: number; fwd: number; back: number; handbrake: boolean }
+
+/** What the page may ask of the simulation. Every command is validated again in the worker. */
+export type SimCommand =
+  | { c: 'interact' }
+  | { c: 'reset' }
+  | { c: 'teleport'; x: number; z: number }
+  | { c: 'setMode'; i: number; mode: 'ai' | 'parked' }
+  | { c: 'recover'; i: number; x?: number; z?: number; heading?: number }
+  | { c: 'intent'; i: number; throttle: number; brake: number; steer: number }
+  | { c: 'tune'; key: keyof CarTuning; value: number }
+  | { c: 'blind'; on: boolean; ttlMs?: number }
+  // Recruitment (skills.ts): ask someone with `skill` within earshot over. `agent` is the page's pick; the worker
+  // checks it against its own readings and, if it no longer qualifies, asks the nearest person who does. `id` is
+  // echoed by the 'recruit' event that answers it.
+  | { c: 'recruit'; id: number; skill: string; agent?: number }
+  /** Lets one recruit (`agent`) go, or every one: the tether breaks. */
+  | { c: 'dismiss'; agent?: number }
+  // Fault injection for the ?debug harness only: refused by a worker built without debug.
+  | { c: 'dbgVelocity'; i: number; x: number; y: number; z: number }
+  | { c: 'dbgMode'; i: number; mode: DriveMode }
+  | { c: 'dbgSanctuary'; on: boolean }
+  | { c: 'dbgHazard'; i: number; ahead: number | null }
+
+/**
+ * One frame's worth of input. There is deliberately nothing about pedestrians or time in it: the crowd, its
+ * First-Law hazard readings, its Ring-0 flags and the signal clock all live in the worker.
+ */
+export interface StepRequest {
+  t: 'step'
+  id: number
+  /** Real seconds since the last step request (the worker clamps it and runs its own clock). */
+  dt: number
+  foot: FootControls
+  drive: DriveControls
+  cmds: SimCommand[]
+  /** A pose buffer handed back for reuse (transferred). */
+  buffer?: ArrayBuffer
+  /** A crowd render frame's buffer handed back for reuse (transferred). */
+  crowdBuffer?: ArrayBuffer
+}
+
+export interface AvatarState {
+  x: number
+  /** Capsule centre height, m. */
+  y: number
+  z: number
+  /** The feet (bottom of the capsule), m. */
+  feetY: number
+  /** Achieved walking speed, m/s. */
+  speed: number
+  /** False while seated in a car (the collider is out of the world). */
+  enabled: boolean
+  /** True while the Sanctuary shields the avatar (its collider is a sensor). */
+  sensor: boolean
+}
+
+export type SimEvent =
+  | { e: 'entered'; index: number; heading: number; suv: boolean }
+  | { e: 'exited'; x: number; z: number; heading: number }
+  | { e: 'rejected'; reason: string }
+  /** The answer to a recruit command: who is coming over (distance at the request, m), or why nobody is. */
+  | { e: 'recruit'; id: number; ok: true; agent: number; skill: string; distance: number }
+  | { e: 'recruit'; id: number; ok: false; skill: string; reason: string }
+  /** A recruit reached the operator and stopped: Active, tethered from now on, with every skill they have. */
+  | { e: 'active'; agent: number; skill: string; skills: string[] }
+  /** A recruit went back to their day, and why. */
+  | { e: 'released'; agent: number; skill: string; reason: string }
+
+export interface SimPhysicsStats {
+  /** EMA of one world.step(), ms. */
+  stepMs: number
+  steps: number
+  bodies: number
+  colliders: number
+  ccd: number
+  /** EMA of the whole step request in the worker (controls, vetting, substeps, audit, packing), ms. */
+  workerMs: number
+}
+
+/** The pedestrians as the worker reports them. */
+export interface CrowdState {
+  stats: CrowdSimStats
+  /** How old the hazard readings the Bouncer used this step were, ms of simulation time (null: no crowd). */
+  ageMs: number | null
+  /** Wall time from a crowd step's dispatch to its readback in the worker, ms (EMA). */
+  lagMs: number
+}
+
+/**
+ * Someone the operator asked over, as the worker tracks them. From the request they are Interviewing, walking over;
+ * once they have reached the operator they are Active (`arrived` true): tethered, following the operator and stopping
+ * INTERVIEW_DISTANCE away each time, until the operator walks RELEASE_DISTANCE off, drives off, or dismisses them.
+ */
+export interface RecruitView {
+  agent: number
+  /**
+   * This realm's number for this recruitment, never reused: the same person asked over again is a new tether with a
+   * new serial (a task lease binds to the tether, 08_Swarm/taskRouter.ts, not to the person).
+   */
+  serial: number
+  skill: string
+  state: 'Interviewing' | 'Active'
+  arrived: boolean
+  /** Every skill they have (skills.ts skillsOf), the one they were asked for first: what an Active recruit brings. */
+  skills: string[]
+  /** Metres from the operator, and where they stand, in the newest reading (NaN until one has measured them). */
+  distance: number
+  x: number
+  z: number
+  /** Seconds since the request. */
+  seconds: number
+}
+
+/** The worker's reply to every step: plain numbers only. */
+export interface StepState {
+  t: 'state'
+  id: number
+  /** Worker simulation seconds (its own clock, from the clamped dt it accepted): the signals run on it. */
+  simTime: number
+  poses: Float32Array
+  avatar: AvatarState
+  /** Index of the car the player drives, or −1 on foot. */
+  driving: number
+  kernel: KernelStats
+  physics: SimPhysicsStats
+  tuning: CarTuning
+  /** Brake the wheels received / max, whether the L2 limiter withheld throttle, and a First-Law or full-brake edge. */
+  haptics: { trigger: number; limited: boolean; thump: boolean }
+  events: SimEvent[]
+  crowd: CrowdState
+  /**
+   * The newest pedestrian render state since the last reply, or null: every pos, then every vel, then every pose
+   * (12 floats per agent), transferred. The page only draws it; the Bouncer reads the worker's own buffers.
+   */
+  crowdFrame: Float32Array | null
+  /** Everyone the operator has asked over and not yet released. */
+  recruits: RecruitView[]
+  /** Messages and commands the worker refused since it started. */
+  rejected: number
+  /** True while a harness has person sensing blinded. */
+  blind: boolean
+}
+
+export interface SimReady { t: 'ready'; meta: SimMeta }
+export interface SimPanic { t: 'panic'; reason: string }
+export interface SimFailure { t: 'error'; message: string }
+
+export type ToWorker = SimInit | StepRequest
+export type FromWorker = SimReady | StepState | SimPanic | SimFailure

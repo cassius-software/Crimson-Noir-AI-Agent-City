@@ -1,0 +1,130 @@
+/**
+ * Why does this file exist? It keeps the commercial build legally clean.
+ * - Every runtime dependency ships its licence text: the build fails otherwise. That includes Rapier, which rides
+ *   in the physics worker's own bundle, so the page's chunks never showed it.
+ * - The product, its tests, its build and its README name no third-party game platform, film or console brand
+ *   that the operator asked scrubbed.
+ * - The controller hints use no console maker's button symbols.
+ * What breaks if it is removed? A licence could silently drop out of dist/index.html again, or a brand name or
+ * trademarked button symbol could creep back into the UI, the code or the README.
+ */
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { join, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { bundledPackageDirs, missingNotices, noticesComment, packageRoot, OPERATOR_NOTES, type PackageNotice } from '../vite.config.ts'
+import { glyph, type ControlAction, type GlyphFamily } from './07_Execute_Actions/glyphs.ts'
+
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
+const SELF = fileURLToPath(import.meta.url)
+
+// ---------------------------------------------------------------------------------------------------
+// Licences
+
+test('packageRoot: the node_modules package a module id belongs to (scoped, nested, Windows paths, queries)', () => {
+  assert.equal(packageRoot('/app/node_modules/three/build/three.module.js'), '/app/node_modules/three')
+  assert.equal(packageRoot('/app/node_modules/@dimforge/rapier3d-simd-compat/rapier.mjs?worker'), '/app/node_modules/@dimforge/rapier3d-simd-compat')
+  assert.equal(packageRoot('C:\\app\\node_modules\\react-dom\\cjs\\x.js'), 'C:/app/node_modules/react-dom')
+  assert.equal(packageRoot('/app/node_modules/a/node_modules/b/i.js'), '/app/node_modules/a/node_modules/b', 'the innermost package')
+  assert.equal(packageRoot('/app/src/engine.ts'), null)
+  assert.equal(packageRoot('\0vite/preload-helper'), null)
+})
+
+test('bundledPackageDirs: every chunk\'s packages once, assets and virtual modules ignored', () => {
+  const dirs = bundledPackageDirs({
+    main: { type: 'chunk', moduleIds: ['/app/node_modules/three/a.js', '/app/node_modules/three/b.js', '/app/src/x.ts'] },
+    worker: { type: 'chunk', moduleIds: ['/app/node_modules/@dimforge/rapier3d-simd-compat/r.js', '\0rolldown/runtime'] },
+    css: { type: 'asset' },
+  })
+  assert.deepEqual(dirs.sort(), ['/app/node_modules/@dimforge/rapier3d-simd-compat', '/app/node_modules/three'])
+})
+
+test('missingNotices: every runtime dependency must have its notice (the build throws on any it lists)', () => {
+  const notice = (name: string): PackageNotice => ({ name, version: '1.0.0', license: 'MIT', text: 'MIT License' })
+  const deps = { '@dimforge/rapier3d-simd-compat': '^0.21.0', react: '^19', 'react-dom': '^19', three: '^0.186' }
+  assert.deepEqual(missingNotices(deps, ['react', 'react-dom', 'three', 'scheduler'].map(notice)), ['@dimforge/rapier3d-simd-compat'],
+    'the page\'s chunks alone miss the worker\'s Rapier')
+  assert.deepEqual(missingNotices(deps, ['@dimforge/rapier3d-simd-compat', 'react', 'react-dom', 'three'].map(notice)), [])
+  assert.deepEqual(missingNotices({}, []), [])
+})
+
+test('the real runtime dependencies all have a licence file the build can embed', () => {
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { dependencies: Record<string, string> }
+  for (const name of Object.keys(pkg.dependencies)) {
+    const dir = join(ROOT, 'node_modules', name)
+    assert.ok(readdirSync(dir).some((f) => /^(licen[cs]e|copying)(\.|$)/i.test(f)), `${name} ships no licence file`)
+  }
+  const rapier = readFileSync(join(ROOT, 'node_modules/@dimforge/rapier3d-simd-compat/LICENSE'), 'utf8')
+  assert.match(rapier, /Apache License/)
+})
+
+test('noticesComment: the shipped part of NOTICE.md and each package\'s full text, nothing of the operator notes', () => {
+  const md = `# Notices\n\nShipped.\n${OPERATOR_NOTES}\n\nFor counsel only.`
+  const c = noticesComment(md, [{ name: '@dimforge/rapier3d-simd-compat', version: '0.21.0', license: 'Apache-2.0', text: 'Apache License\nVersion 2.0' }])
+  assert.match(c, /Shipped\./)
+  assert.doesNotMatch(c, /For counsel only/)
+  assert.match(c, /@dimforge\/rapier3d-simd-compat 0\.21\.0 \(Apache-2\.0\)\n\nApache License\nVersion 2\.0/)
+})
+
+// ---------------------------------------------------------------------------------------------------
+// Names
+
+/** Brand names the operator had scrubbed from the product: console makers and their pads, and a film franchise.
+ *  (The linear-algebra "matrix" is not a brand: only film-style uses are caught.) */
+const SCRUBBED: readonly RegExp[] = [/\bxbox\b/i, /\bnintendo\b/i, /\bjoy-?cons?\b/i, /\bthe matrix\b/i, /\bmatrix[- ](?:style|like|rain|code|effect)\b/i, /\bdigital rain\b/i]
+
+function* files(dir: string): Generator<string> {
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name)
+    if (statSync(p).isDirectory()) yield* files(p)
+    else if (/\.(ts|tsx|wgsl|css|html|md)$/.test(name)) yield p
+  }
+}
+
+test('no scrubbed brand name in the source, the tests, the build config, the HTML shell, the README or the shipped notice', () => {
+  const shipped = readFileSync(join(ROOT, 'NOTICE.md'), 'utf8')
+  const texts: [string, string][] = [
+    ...[...files(join(ROOT, 'src'))].filter((f) => f !== SELF).map((f) => [relative(ROOT, f), readFileSync(f, 'utf8')] as [string, string]),
+    ['vite.config.ts', readFileSync(join(ROOT, 'vite.config.ts'), 'utf8')],
+    ['index.html', readFileSync(join(ROOT, 'index.html'), 'utf8')],
+    ['README.md', readFileSync(join(ROOT, 'README.md'), 'utf8')],
+    // Only the notice that ships: the operator notes below it are legal research for counsel.
+    ['NOTICE.md (shipped part)', shipped.slice(0, shipped.indexOf(OPERATOR_NOTES))],
+  ]
+  assert.ok(texts.length > 100, `${texts.length} files read`)
+  for (const [name, text] of texts) {
+    for (const re of SCRUBBED) {
+      const m = text.match(re)
+      assert.equal(m, null, `${name}: "${m?.[0]}"`)
+    }
+  }
+})
+
+/**
+ * Real places of the region the city borrows its character from, and its landmarks and streets. The operator's rule:
+ * fictional names only in anything the product shows (comments and docs may name the real region they describe).
+ */
+const REAL_PLACES = /\b(?:Toronto|Ontario|Mississauga|Brampton|Scarborough|Etobicoke|Markham|Oakville|Burlington|Oshawa|Pickering|Vaughan|Richmond Hill|Hamilton|Niagara|Cambridge|Galt|Hespeler|Harbourfront|Queens? Quay|Yonge|Gardiner|Don Valley|Humber|CN Tower|Rogers Centre|Scotiabank)\b/
+
+/** The code of a source file without its comments (a line comment starts at // not preceded by a colon, as in URLs). */
+const code = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
+
+test('no real place name in anything the product shows: every string in the shipped source is fictional', () => {
+  const shipped = [...files(join(ROOT, 'src'))].filter((f) => f !== SELF && !/\.test\.tsx?$/.test(f) && !/\.(md|css)$/.test(f))
+  assert.ok(shipped.length > 50, `${shipped.length} files read`)
+  for (const f of shipped) {
+    const m = code(readFileSync(f, 'utf8')).match(REAL_PLACES)
+    assert.equal(m, null, `${relative(ROOT, f)}: "${m?.[0]}"`)
+  }
+  assert.equal(code('const a = "x" // Toronto\n/* Ontario */ fetch("http://localhost") // Yonge').match(REAL_PLACES), null, 'comments are skipped, URLs kept')
+  assert.ok(code("const label = 'Clear · Toronto'").match(REAL_PLACES), 'a string is caught')
+})
+
+test('controller hints carry no console maker\'s button symbols, in any family, for any action', () => {
+  const families: GlyphFamily[] = ['keyboard', 'abxy', 'bayx', 'numbered', 'generic', 'touch']
+  const actions: ControlAction[] = ['move', 'look', 'run', 'interact', 'handbrake', 'reset', 'throttle', 'brake', 'clock', 'console', 'hud', 'ghost']
+  for (const f of families) for (const a of actions) assert.doesNotMatch(glyph(a, f), /[✕×○◯△□▢⨯]/u, `${f}.${a}`)
+  // The glyph table itself holds none either (not even unused).
+  assert.doesNotMatch(readFileSync(join(ROOT, 'src/07_Execute_Actions/glyphs.ts'), 'utf8'), /[✕○△□]/u)
+})

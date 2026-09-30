@@ -1,0 +1,1292 @@
+/**
+ * Why does this file exist? Node has no Web Audio, so it proves the soundscape's maths directly (gearbox
+ * hysteresis, gain curves, Doppler, listener basis, voice assignment, the synthesized buffers) and drives
+ * the Soundscape class against a strict fake audio graph that, like browsers, throws on non-finite
+ * automation values: voices fade before they switch cars, the listener falls back to the legacy API,
+ * walk tones start and stop per phase, speech is decoded from a copy, said at the speaker's head, follows them, is
+ * muffled by the walls of the city's own geometry between them and the listener (and only by walls in the way), fades
+ * out when cut (one utterance at a time), and nothing runs before unlock or after dispose.
+ * What breaks if it is removed? Clicks, voice hopping, silent walk signals, speech from the wrong place or an
+ * AudioParam exception inside the frame loop would only be found by ear in a browser.
+ */
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import { Euler, Vector3 } from 'three'
+import {
+  APS, BabbleRender, CABIN, CUE, ENGINE, MURMUR, OCCLUSION, SPEECH, SYNTH_RATE, VOICE, Soundscape, assignVoices, carLoudness, carTimbre, distanceGain,
+  dopplerFactor, engineCutoff, engineLevel, engineLoad, engineRpm, engineWave, listenerBasis, muffle, murmurLayout, murmurLevel,
+  murmurSwell, renderBabble, renderNoise, renderSignalTone, selectGear, signalToneLength, tyreCutoff, tyreLevel,
+  volumeToGain, cueLength, renderCue, wallsBetween, type AudioFrame, type CarSample,
+} from './audio.ts'
+import { CITY, LAKE, generateBuildings, inLot, type Box } from '../01_Initialize_World/city.ts'
+import { createRng } from '../02_Define_The_Rules/degrees.ts'
+
+const near = (a: number, b: number, tol: number, msg?: string) => assert.ok(Math.abs(a - b) <= tol, msg ?? `${a} ≉ ${b} (±${tol})`)
+
+/** Goertzel power of `x[from, to)` at `f` Hz, normalised by length². */
+function power(x: Float32Array, rate: number, f: number, from = 0, to = x.length): number {
+  const c = 2 * Math.cos((2 * Math.PI * f) / rate)
+  let s1 = 0, s2 = 0
+  for (let i = from; i < to; i++) { const s = x[i] + c * s1 - s2; s2 = s1; s1 = s }
+  return (s1 * s1 + s2 * s2 - c * s1 * s2) / ((to - from) * (to - from))
+}
+
+const car = (x: number, z: number, speed = 0, heading = 0, player = false): CarSample => ({ x, z, heading, speed, player })
+
+// ---------------------------------------------------------------------------------------------- maths
+
+test('distance gain is Web Audio\'s inverse model; volume taper is monotonic and clamped', () => {
+  assert.equal(distanceGain(0, 4, 1.2), 1)
+  assert.equal(distanceGain(4, 4, 1.2), 1)
+  near(distanceGain(10, 4, 1.2), 4 / (4 + 1.2 * 6), 1e-12)
+  for (let d = 4; d < 100; d += 3) assert.ok(distanceGain(d + 1, 4, 1.2) < distanceGain(d, 4, 1.2))
+  assert.equal(volumeToGain(0), 0)
+  assert.equal(volumeToGain(1), 1)
+  assert.equal(volumeToGain(-3), 0)
+  assert.equal(volumeToGain(7), 1)
+  assert.equal(volumeToGain(Number.NaN), 0)
+  for (let v = 0; v < 1; v += 0.05) assert.ok(volumeToGain(v + 0.05) > volumeToGain(v))
+})
+
+test('gearbox: idles at rest, shifts with hysteresis, never chatters at a shift point', () => {
+  assert.equal(selectGear(0, 3), 0)
+  near(engineRpm(0, 0), ENGINE.idleRpm, 1e-9)
+  // Sweep up: rpm stays inside the band between idle and just past the upshift point.
+  let g = 0
+  const ups: number[] = []
+  for (let v = 0; v <= 30; v += 0.05) {
+    const next = selectGear(v, g)
+    if (next > g) ups.push(v)
+    g = next
+    // Upshifts key on the wheel-driven rpm; the idle blend adds a little on top.
+    assert.ok(engineRpm(v, g) <= Math.hypot(ENGINE.idleRpm, ENGINE.upshiftRpm) * 1.01 || g === ENGINE.gears.length - 1, `rpm ${engineRpm(v, g)} at ${v}`)
+    assert.ok(engineRpm(v, g) >= ENGINE.idleRpm)
+  }
+  assert.equal(ups.length, ENGINE.gears.length - 1)
+  // Sweep down: downshifts happen at lower speeds than the upshifts (hysteresis).
+  const downs: number[] = []
+  for (let v = 30; v >= 0; v -= 0.05) {
+    const next = selectGear(v, g)
+    if (next < g) downs.unshift(v)
+    g = next
+  }
+  assert.equal(downs.length, ENGINE.gears.length - 1)
+  for (let i = 0; i < ups.length; i++) assert.ok(downs[i] < ups[i] - 0.5, `gear ${i + 1}: down ${downs[i]} vs up ${ups[i]}`)
+  // A car hovering ±0.2 m/s around the first upshift point shifts once, not every frame.
+  let shifts = 0
+  g = 0
+  for (let t = 0; t < 600; t++) {
+    const next = selectGear(ups[0] + 0.2 * Math.sin(t * 0.3), g)
+    if (next !== g) shifts++
+    g = next
+  }
+  assert.ok(shifts <= 1, `${shifts} shifts`)
+  // The result is a fixed point, whatever gear it started from.
+  for (let v = 0; v < 40; v += 0.7) for (let from = 0; from < ENGINE.gears.length; from++) {
+    const s = selectGear(v, from)
+    assert.equal(selectGear(v, s), s)
+  }
+  // Plausible city cruise: 50 km/h in a middle gear at 1300–2600 rpm; reversing uses |speed|.
+  const v50 = 50 / 3.6
+  let gc = 0
+  for (let v = 0; v <= v50; v += 0.1) gc = selectGear(v, gc)
+  const rpm = engineRpm(v50, gc)
+  assert.ok(rpm > 1300 && rpm < 2600, `50 km/h → ${rpm} rpm in gear ${gc + 1}`)
+  near(engineRpm(-3, 0), engineRpm(3, 0), 1e-9)
+  assert.ok(engineRpm(200, 0) <= ENGINE.redlineRpm)
+  // Garbage gear indices are clamped, not NaN.
+  assert.ok(Number.isFinite(engineRpm(10, Number.NaN)) && Number.isFinite(engineRpm(10, 99)))
+})
+
+test('engine and tyre curves: bounded, monotonic where they should be, tyres take over at speed', () => {
+  assert.equal(engineLoad(-5), 0)
+  assert.equal(engineLoad(10), 1)
+  assert.equal(engineLoad(Number.NaN), 0)
+  assert.ok(engineLoad(1) > engineLoad(0))
+  for (let rpm = ENGINE.idleRpm; rpm < 6000; rpm += 100) {
+    assert.ok(engineLevel(rpm + 100, 0.5) >= engineLevel(rpm, 0.5))
+    assert.ok(engineLevel(rpm, 1) > engineLevel(rpm, 0))
+    assert.ok(engineLevel(rpm, 1) <= 0.5 + 1e-12)
+    assert.ok(engineCutoff(rpm + 100, 0.5) > engineCutoff(rpm, 0.5))
+  }
+  assert.equal(tyreLevel(0), 0)
+  for (let v = 0; v < 40; v += 0.5) {
+    assert.ok(tyreLevel(v + 0.5) >= tyreLevel(v))
+    assert.ok(tyreLevel(v) <= 1.5)
+    assert.ok(tyreCutoff(v) >= 380 && tyreCutoff(v) <= 2600)
+  }
+  const cruise = (v: number) => engineLevel(engineRpm(v, selectGear(v, 0)), 0.35)
+  assert.ok(tyreLevel(20 / 3.6) < cruise(20 / 3.6), 'engine dominates at 20 km/h')
+  assert.ok(tyreLevel(80 / 3.6) > cruise(80 / 3.6), 'tyres dominate at 80 km/h')
+  assert.ok(carLoudness(11) > carLoudness(0), 'a moving car is louder than an idling one')
+})
+
+test('car timbre is deterministic, bounded and varied', () => {
+  const seen = new Set<string>()
+  for (let i = 0; i < 64; i++) {
+    const s = carTimbre(i)
+    assert.equal(s, carTimbre(i))
+    assert.ok(s >= 0.92 && s <= 1.08)
+    seen.add(s.toFixed(3))
+  }
+  assert.ok(seen.size > 48)
+})
+
+test('Doppler: approaching sharpens, receding flattens, co-moving is neutral, clamped', () => {
+  const v = 14
+  near(dopplerFactor(0, 0, v, 0, 30, 0, 0, 0), 343 / (343 - v), 1e-12)
+  near(dopplerFactor(0, 0, -v, 0, 30, 0, 0, 0), 343 / (343 + v), 1e-12)
+  near(dopplerFactor(0, 0, 0, v, 30, 0, 0, 0), 1, 1e-12) // crossing at right angles
+  near(dopplerFactor(0, 0, 9, 3, 30, 5, 9, 3), 1, 1e-12)
+  near(dopplerFactor(0, 0, 0, 0, 30, 0, -v, 0), (343 + v) / 343, 1e-12) // listener driving toward the source
+  assert.equal(dopplerFactor(5, 5, 10, 0, 5, 5, 0, 0), 1)
+  assert.equal(dopplerFactor(0, 0, 300, 0, 30, 0, 0, 0), 1.25)
+  assert.equal(dopplerFactor(0, 0, -300, 0, 30, 0, 0, 0), 0.8)
+})
+
+test('listener basis matches the camera (three.js YXZ Euler) and is orthonormal', () => {
+  const b = new Float32Array(6)
+  const rng = createRng(3)
+  for (let i = 0; i < 200; i++) {
+    const yaw = (rng() - 0.5) * 12, pitch = (rng() - 0.5) * 2.6
+    listenerBasis(yaw, pitch, b)
+    const e = new Euler(pitch, yaw, 0, 'YXZ')
+    const f = new Vector3(0, 0, -1).applyEuler(e), u = new Vector3(0, 1, 0).applyEuler(e)
+    near(b[0], f.x, 1e-6); near(b[1], f.y, 1e-6); near(b[2], f.z, 1e-6)
+    near(b[3], u.x, 1e-6); near(b[4], u.y, 1e-6); near(b[5], u.z, 1e-6)
+    near(b[0] * b[3] + b[1] * b[4] + b[2] * b[5], 0, 1e-6)
+    near(Math.hypot(b[0], b[1], b[2]), 1, 1e-6)
+    near(Math.hypot(b[3], b[4], b[5]), 1, 1e-6)
+  }
+  listenerBasis(0, 0, b)
+  assert.deepEqual(Array.from(b, (x) => Math.round(x * 1e6) / 1e6 + 0), [0, 0, -1, 0, 1, 0])
+})
+
+test('murmur level: silent without people, saturating with density, quieter at night, busier while crossing', () => {
+  assert.equal(murmurLevel(0, 0, 0, 1), 0)
+  for (let n = 0; n < 500; n += 10) assert.ok(murmurLevel(n + 10, 10, 10, 1) > murmurLevel(n, 10, 10, 1))
+  assert.ok(murmurLevel(1e6, 10, 10, 1) <= 1)
+  assert.ok(murmurLevel(100, 10, 10, 0) < murmurLevel(100, 10, 10, 1) * 0.5)
+  assert.ok(murmurLevel(100, 10, 10, 0) > 0, 'the night is quieter, not silent')
+  assert.ok(murmurLevel(100, 0, 50, 1) > murmurLevel(100, 50, 0, 1))
+  for (const bad of [Number.NaN, -5, Infinity]) assert.ok(Number.isFinite(murmurLevel(bad, bad, bad, bad === Infinity ? 1 : bad)))
+})
+
+test('murmur beds sit on sidewalks around the listener and barely move when the street choice flips', () => {
+  const out = new Float32Array(8)
+  const rng = createRng(11)
+  const pitch = CITY.pitch
+  const walkway = CITY.pitch / 2 - CITY.lotHalf
+  for (let i = 0; i < 2000; i++) {
+    // Anywhere a person can stand: roads and sidewalks, never inside a lot.
+    let x = 0, z = 0
+    do { x = 40 + rng() * 400; z = 40 + rng() * 400 } while (inLot(x, z))
+    murmurLayout(x, z, out)
+    for (let k = 0; k < 4; k++) {
+      const px = out[k * 2], pz = out[k * 2 + 1]
+      const ox = Math.abs(px - Math.round(px / pitch) * pitch), oz = Math.abs(pz - Math.round(pz / pitch) * pitch)
+      const onWalk = (o: number) => o >= CITY.roadHalf - 1e-9 && o <= walkway + 1e-9
+      assert.ok(onWalk(ox) || onWalk(oz), `bed ${k} at (${px.toFixed(1)}, ${pz.toFixed(1)}) is not on a sidewalk`)
+      assert.ok(Math.hypot(px - x, pz - z) >= 3, 'never on top of the listener')
+      assert.ok(Math.hypot(px - x, pz - z) <= 25, 'around the listener')
+    }
+  }
+  // Mid-block on an east–west street: the beds line both sidewalks of that street.
+  murmurLayout(220, 400.5, out)
+  for (let k = 0; k < 4; k++) near(Math.abs(out[k * 2 + 1] - 400), CITY.lane, 1e-3)
+  // Across the diagonal of an intersection the layout moves by little more than the corner geometry.
+  const a = new Float32Array(8), b = new Float32Array(8)
+  murmurLayout(400.3, 400.31, a)
+  murmurLayout(400.31, 400.3, b)
+  const corners = [[-1, -1], [1, -1], [-1, 1], [1, 1]]
+  for (const layout of [a, b]) for (let k = 0; k < 4; k++) {
+    const d = Math.min(...corners.map(([cx, cz]) => Math.hypot(layout[k * 2] - (400 + cx * 6.4), layout[k * 2 + 1] - (400 + cz * 6.4))))
+    assert.ok(d < 1.5, `bed ${k} is ${d.toFixed(2)} m from a corner`)
+  }
+  for (let t = 0; t < 600; t += 0.37) for (let i = 0; i < MURMUR.sources; i++) {
+    const s = murmurSwell(t, i)
+    assert.ok(s >= 0.55 - 1e-9 && s <= 1 + 1e-9)
+  }
+})
+
+test('voice assignment: loudest cars win, the driven car always does, no duplicates', () => {
+  const slots = new Int32Array(VOICE.count).fill(-1), age = new Float32Array(VOICE.count)
+  const cars = [car(0, 5, 10), car(0, 8, 10), car(0, 12, 10), car(0, 16, 10), car(0, 20, 10), car(0, 24, 10), car(0, 30, 10), car(0, 200, 10)]
+  assert.equal(assignVoices(cars, 0, 0, 1 / 60, slots, age), 5)
+  assert.deepEqual([...slots].sort((p, q) => p - q), [0, 1, 2, 3, 4])
+  // The driven car wins a voice even when far away (it is always the camera's subject).
+  cars[7] = car(0, 200, 10, 0, true)
+  for (let t = 0; t < 60; t++) assignVoices(cars, 0, 0, 1 / 60, slots, age)
+  assert.ok(slots.includes(7))
+  assert.ok(!slots.includes(4), 'the quietest of the five gave way')
+  // Beyond range nothing is voiced; empty input releases everything.
+  const far = [car(500, 500, 10), car(-300, 0, 10)]
+  assignVoices(far, 0, 0, 1 / 60, slots, age)
+  assert.deepEqual([...slots], [-1, -1, -1, -1, -1])
+  assert.equal(assignVoices([], 0, 0, 1 / 60, slots, age), 0)
+  // Non-finite cars are ignored rather than voiced.
+  assignVoices([car(Number.NaN, 0, 10), car(3, 3, Number.NaN), car(2, 2, 5)], 0, 0, 1 / 60, slots, age)
+  assert.deepEqual([...slots].filter((s) => s >= 0), [2])
+  // Cars that vanish from the list lose their voice.
+  assignVoices([car(2, 2, 5), car(3, 3, 5), car(4, 4, 5)], 0, 0, 1 / 60, slots, age)
+  assignVoices([car(2, 2, 5)], 0, 0, 1 / 60, slots, age)
+  assert.deepEqual([...slots].filter((s) => s >= 0), [0])
+})
+
+test('voice assignment hysteresis: a held car keeps its slot, challengers must be clearly louder, min hold', () => {
+  const slots = new Int32Array(2).fill(-1), age = new Float32Array(2)
+  const cars = [car(0, 10, 10), car(0, 11, 10), car(0, 12, 10)]
+  assignVoices(cars, 0, 0, 1 / 60, slots, age)
+  const held = [...slots]
+  assert.deepEqual([...held].sort(), [0, 1])
+  for (let t = 0; t < 120; t++) assignVoices(cars, 0, 0, 1 / 60, slots, age)
+  // Car 2 edges slightly closer than car 1: not enough to take the voice over.
+  cars[2] = car(0, 10.8, 10)
+  for (let t = 0; t < 120; t++) assert.equal(assignVoices(cars, 0, 0, 1 / 60, slots, age), 0)
+  assert.deepEqual([...slots], held)
+  // Car 2 comes much closer: it takes over car 1's slot, and car 0 stays in its own slot.
+  cars[2] = car(0, 4, 10)
+  assert.equal(assignVoices(cars, 0, 0, 1 / 60, slots, age), 1)
+  assert.equal(slots[held.indexOf(0)], 0)
+  assert.equal(slots[held.indexOf(1)], 2)
+  // Just assigned: even a far louder challenger cannot take the voice within minHold.
+  const one = new Int32Array([-1]), oneAge = new Float32Array(1)
+  const pair = [car(0, 20, 6), car(0, 1, 14)]
+  assignVoices([pair[0]], 0, 0, 1 / 60, one, oneAge)
+  assert.equal(one[0], 0)
+  const frames = Math.round(VOICE.minHold * 60)
+  let handedAt = -1
+  for (let t = 1; t <= frames + 5 && handedAt < 0; t++) {
+    assignVoices(pair, 0, 0, 1 / 60, one, oneAge)
+    if (one.at(0) === 1) handedAt = t
+  }
+  assert.ok(handedAt >= frames - 1 && handedAt <= frames + 2, `handed over after ${handedAt} frames (minHold ${frames})`)
+  // New cars take idle slots before a just-released one (which still has to fade out).
+  const s3 = new Int32Array([4, -1, -1]), a3 = new Float32Array([5, 0, 0])
+  assert.equal(assignVoices([car(0, 3, 10), car(0, 5, 10), car(999, 0, 0), car(999, 0, 0), car(999, 0, 0)], 0, 0, 1 / 60, s3, a3), 3)
+  assert.equal(s3[0], -1, 'car 4 left range and was released')
+  assert.deepEqual([s3[1], s3[2]].sort(), [0, 1], 'the new cars took the idle slots')
+})
+
+test('voice assignment over a busy minute: stable slots, min hold honoured, few changes', () => {
+  const rng = createRng(42)
+  const n = 30
+  const cars: CarSample[] = []
+  const vel: [number, number][] = []
+  for (let i = 0; i < n; i++) {
+    const h = rng() * Math.PI * 2, v = rng() * 13
+    cars.push(car((rng() - 0.5) * 160, (rng() - 0.5) * 160, v, h, i === 5))
+    vel.push([Math.sin(h) * v, Math.cos(h) * v])
+  }
+  const slots = new Int32Array(VOICE.count).fill(-1), age = new Float32Array(VOICE.count)
+  const since = new Float64Array(VOICE.count)
+  let changes = 0
+  const dt = 1 / 60
+  for (let f = 0; f < 3600; f++) {
+    const t = f * dt
+    for (let i = 0; i < n; i++) {
+      const c = cars[i]
+      let x = c.x + vel[i][0] * dt, z = c.z + vel[i][1] * dt
+      if (Math.abs(x) > 90) { vel[i][0] *= -1; x = c.x }
+      if (Math.abs(z) > 90) { vel[i][1] *= -1; z = c.z }
+      cars[i] = car(x, z, c.speed, Math.atan2(vel[i][0], vel[i][1]), c.player)
+    }
+    const prev = [...slots]
+    changes += assignVoices(cars, 10 * Math.sin(t * 0.2), 0, dt, slots, age)
+    const live = [...slots].filter((s) => s >= 0)
+    assert.equal(new Set(live).size, live.length, 'no car on two voices')
+    assert.ok(slots.includes(5), 'the driven car always has a voice')
+    for (let j = 0; j < VOICE.count; j++) {
+      if (prev[j] === slots[j]) continue
+      if (prev[j] >= 0 && slots.includes(prev[j])) assert.fail(`car ${prev[j]} changed slot`)
+      if (prev[j] >= 0 && slots[j] >= 0) assert.ok(t - since[j] >= VOICE.minHold - 1e-6, `slot ${j} handed over after ${(t - since[j]).toFixed(2)} s`)
+      since[j] = t
+    }
+  }
+  assert.ok(changes / 60 < 2, `${(changes / 60).toFixed(2)} voice changes per second`)
+})
+
+test('engine wave: the firing order dominates; phases spread; no DC', () => {
+  const { real, imag } = engineWave()
+  assert.equal(real.length, ENGINE.harmonics + 1)
+  assert.equal(real[0], 0)
+  assert.equal(imag[0], 0)
+  const amp = (k: number) => Math.hypot(real[k], imag[k])
+  for (let k = 1; k <= ENGINE.harmonics; k++) if (k !== 4) assert.ok(amp(4) > amp(k), `harmonic ${k}`)
+  assert.ok(amp(8) > amp(6) && amp(8) > amp(7), 'second firing harmonic above its neighbours')
+  let aligned = 0
+  for (let k = 1; k <= 16; k++) if (Math.abs(real[k]) < 1e-9) aligned++
+  assert.ok(aligned < 4, 'phases are spread, not all sines')
+})
+
+test('noise buffer: bounded, zero-mean, deterministic', () => {
+  const a = new Float32Array(48000), b = new Float32Array(48000)
+  renderNoise(a, 9)
+  renderNoise(b, 9)
+  assert.deepEqual(a, b)
+  let sum = 0
+  for (const x of a) { assert.ok(x >= -1 && x < 1); sum += x }
+  near(sum / a.length, 0, 0.01)
+})
+
+test('babble: speech-band, syllabic amplitude modulation, loops without a click, renders in small steps', () => {
+  const out = new Float32Array(SYNTH_RATE * MURMUR.seconds)
+  const job = new BabbleRender(out, SYNTH_RATE, 0xb4bb1e)
+  const steps: number[] = []
+  let finished = false
+  while (!finished) {
+    const t0 = performance.now()
+    finished = job.step()
+    steps.push(performance.now() - t0)
+  }
+  // Half a second of voiced talker audio per step (pauses cost nothing): many steps, each far below a frame.
+  assert.ok(steps.length > MURMUR.talkers * MURMUR.seconds, `${steps.length} steps`)
+  assert.ok(job.done && job.step(), 'stays done')
+  const ms = steps.reduce((a, b) => a + b, 0)
+  const sorted = [...steps].sort((a, b) => a - b)
+  const p95 = sorted[Math.floor(sorted.length * 0.95)]
+  // Relative, not wall-clock: under machine load every step slows alike, but no step may carry a big share.
+  assert.ok(p95 < ms / 8, `p95 step ${p95.toFixed(2)} ms of ${ms.toFixed(1)} ms total`)
+  const again = new Float32Array(out.length)
+  renderBabble(again, SYNTH_RATE, 0xb4bb1e)
+  assert.deepEqual(again, out, 'stepped and one-shot renders are identical')
+  let sum = 0, peak = 0, diffSum = 0
+  for (let i = 0; i < out.length; i++) {
+    assert.ok(Number.isFinite(out[i]))
+    sum += out[i] * out[i]
+    peak = Math.max(peak, Math.abs(out[i]))
+    if (i > 0) diffSum += Math.abs(out[i] - out[i - 1])
+  }
+  const rms = Math.sqrt(sum / out.length)
+  assert.ok(peak <= 0.95 + 1e-6, `peak ${peak}`)
+  assert.ok(rms > 0.1 && rms <= 0.2 + 1e-6, `rms ${rms}`)
+  const seam = Math.abs(out[0] - out[out.length - 1])
+  assert.ok(seam < 4 * (diffSum / (out.length - 1)), `seam step ${seam}`)
+  const band = (fs: number[]) => fs.reduce((s, f) => s + power(out, SYNTH_RATE, f), 0) / fs.length
+  const speech = band([450, 700, 1000, 1400, 1900])
+  assert.ok(speech > 30 * band([30, 45, 60]), 'little below the voice range')
+  assert.ok(speech > 30 * band([7000, 8500, 10000]), 'little above the speech band')
+  // Syllables and pauses: 50 ms window levels vary (a steady hiss would not).
+  const win = Math.round(SYNTH_RATE * 0.05)
+  const levels: number[] = []
+  for (let i = 0; i + win <= out.length; i += win) {
+    let e = 0
+    for (let k = i; k < i + win; k++) e += out[k] * out[k]
+    levels.push(Math.sqrt(e / win))
+  }
+  const mean = levels.reduce((s, x) => s + x, 0) / levels.length
+  const sd = Math.sqrt(levels.reduce((s, x) => s + (x - mean) ** 2, 0) / levels.length)
+  assert.ok(sd / mean > 0.2, `envelope variation ${(sd / mean).toFixed(2)}`)
+  console.log(`# babble: ${ms.toFixed(1)} ms total in ${steps.length} steps, p95 ${p95.toFixed(2)} ms, max ${sorted[sorted.length - 1].toFixed(2)} ms (${MURMUR.seconds} s at ${SYNTH_RATE} Hz), rms ${rms.toFixed(3)}, envelope CV ${(sd / mean).toFixed(2)}`)
+})
+
+test('walk tones: one loop per period, silent at the loop point, distinct and gentle', () => {
+  for (const axis of ['ew', 'ns'] as const) {
+    const out = new Float32Array(signalToneLength(axis, SYNTH_RATE))
+    assert.equal(out.length, Math.round(APS[axis].period * SYNTH_RATE))
+    renderSignalTone(axis, SYNTH_RATE, out)
+    near(out[0], 0, 1e-6)
+    near(out[out.length - 1], 0, 1e-6)
+    let peak = 0, step = 0, silent = 0
+    for (let i = 0; i < out.length; i++) {
+      peak = Math.max(peak, Math.abs(out[i]))
+      if (i > 0) step = Math.max(step, Math.abs(out[i] - out[i - 1]))
+      if (out[i] === 0) silent++
+    }
+    assert.ok(peak <= APS[axis].amplitude + 1e-6 && peak > 0.2, `${axis} peak ${peak}`)
+    // Smooth: no sample step larger than the steepest sine the notes contain.
+    const fMax = Math.max(...APS[axis].notes.map((n) => Math.max(n[2], n[3])))
+    assert.ok(step <= (2 * Math.PI * 2 * fMax * APS[axis].amplitude) / SYNTH_RATE, `${axis} step ${step}`)
+    assert.ok(silent / out.length > 0.5, 'mostly silence between notes')
+  }
+  const ns = new Float32Array(signalToneLength('ns', SYNTH_RATE)), ew = new Float32Array(signalToneLength('ew', SYNTH_RATE))
+  renderSignalTone('ns', SYNTH_RATE, ns)
+  renderSignalTone('ew', SYNTH_RATE, ew)
+  const span = (s: number, l: number) => [Math.round(s * SYNTH_RATE), Math.round((s + l) * SYNTH_RATE)] as const
+  const [a0, a1] = span(0, 0.2), [b0, b1] = span(0.3, 0.26)
+  assert.ok(power(ns, SYNTH_RATE, 1100, a0, a1) > 20 * power(ns, SYNTH_RATE, 880, a0, a1), 'cuckoo: high note first')
+  assert.ok(power(ns, SYNTH_RATE, 880, b0, b1) > 20 * power(ns, SYNTH_RATE, 1100, b0, b1), 'cuckoo: then the low note')
+  const [c0, c1] = span(0, 0.09)
+  const sweep = [2100, 2400, 2700].reduce((s, f) => s + power(ew, SYNTH_RATE, f, c0, c1), 0)
+  assert.ok(sweep > 20 * power(ew, SYNTH_RATE, 1000, c0, c1), 'chirp: a high sweep')
+  assert.ok(power(ew, SYNTH_RATE, 1100, c0, c1) < power(ns, SYNTH_RATE, 1100, a0, a1) / 20, 'the two axes sound different')
+})
+
+// ---------------------------------------------------------------------------- Soundscape on a fake graph
+
+interface Ev { kind: 'target' | 'set' | 'cancel'; v: number; t: number; tau?: number }
+
+/** WebIDL `float`: a double that rounds past the single-precision range throws, like NaN and ±Infinity. */
+const FLOAT_MAX = 3.4028234663852886e38
+const float = (v: number) => {
+  if (!Number.isFinite(v) || Math.abs(v) > FLOAT_MAX) throw new TypeError('The provided float value is non-finite.')
+}
+
+class FakeParam {
+  value: number
+  automationRate: 'a-rate' | 'k-rate' = 'a-rate'
+  readonly events: Ev[] = []
+  constructor(v: number) { this.value = v }
+  /** The value the automation is heading for. */
+  get target(): number {
+    for (let i = this.events.length - 1; i >= 0; i--) if (this.events[i].kind !== 'cancel') return this.events[i].v
+    return this.value
+  }
+  setTargetAtTime(v: number, t: number, tau: number) {
+    float(v); float(tau)
+    if (!Number.isFinite(t)) throw new TypeError('The provided double value is non-finite.')
+    if (t < 0 || tau < 0) throw new RangeError('negative time')
+    this.events.push({ kind: 'target', v, t, tau })
+    return this
+  }
+  setValueAtTime(v: number, t: number) {
+    float(v)
+    if (!Number.isFinite(t)) throw new TypeError('The provided double value is non-finite.')
+    if (t < 0) throw new RangeError('negative time')
+    this.events.push({ kind: 'set', v, t })
+    this.value = v
+    return this
+  }
+  cancelScheduledValues(t: number) {
+    if (!Number.isFinite(t) || t < 0) throw new RangeError('bad time')
+    this.events.push({ kind: 'cancel', v: Number.NaN, t })
+    return this
+  }
+}
+
+class FakeNode {
+  readonly ctx: FakeContext
+  readonly outputs: FakeNode[] = []
+  constructor(ctx: FakeContext) { this.ctx = ctx; ctx.nodes.push(this) }
+  connect(n: FakeNode): undefined {
+    this.outputs.push(n)
+    return undefined // older WebKit returns nothing: chains must not be relied on
+  }
+  disconnect() { this.outputs.length = 0 }
+}
+class FakeGain extends FakeNode { gain = new FakeParam(1) }
+class FakeBiquad extends FakeNode { type = 'lowpass'; frequency = new FakeParam(350); Q = new FakeParam(1) }
+class FakeCompressor extends FakeNode { threshold = new FakeParam(-24); knee = new FakeParam(30); ratio = new FakeParam(12) }
+class FakePanner extends FakeNode {
+  panningModel = 'equalpower'; distanceModel = 'inverse'; refDistance = 1; rolloffFactor = 1; maxDistance = 10000
+  positionX = new FakeParam(0); positionY = new FakeParam(0); positionZ = new FakeParam(0)
+}
+class FakeSource extends FakeNode {
+  started = -1; offset = 0; stopped = -1
+  onended: (() => void) | null = null
+  start(when = 0, offset = 0) {
+    if (this.started >= 0) throw new Error('InvalidStateError: start twice')
+    this.started = when; this.offset = offset
+  }
+  stop(when = 0) {
+    if (this.started < 0) throw new Error('InvalidStateError: stop before start')
+    this.stopped = when
+  }
+}
+class FakeOsc extends FakeSource { frequency = new FakeParam(440); wave: unknown = null; setPeriodicWave(w: unknown) { this.wave = w } }
+class FakeBufferSource extends FakeSource { buffer: FakeBuffer | null = null; loop = false; playbackRate = new FakeParam(1) }
+class FakeBuffer {
+  readonly data: Float32Array; readonly length: number; readonly sampleRate: number
+  constructor(len: number, rate: number) {
+    if (rate < 22050) throw new Error('NotSupportedError: older WebKit rejects low buffer rates')
+    this.data = new Float32Array(len); this.length = len; this.sampleRate = rate
+  }
+  get duration() { return this.length / this.sampleRate }
+  getChannelData() { return this.data }
+}
+class ParamListener {
+  positionX = new FakeParam(0); positionY = new FakeParam(0); positionZ = new FakeParam(0)
+  forwardX = new FakeParam(0); forwardY = new FakeParam(0); forwardZ = new FakeParam(-1)
+  upX = new FakeParam(0); upY = new FakeParam(1); upZ = new FakeParam(0)
+}
+class LegacyListener {
+  readonly positions: number[][] = []
+  readonly orientations: number[][] = []
+  setPosition(x: number, y: number, z: number) { float(x); float(y); float(z); this.positions.push([x, y, z]) }
+  setOrientation(...v: number[]) { v.forEach(float); this.orientations.push(v) }
+}
+/** A panner without position AudioParams (older engines): only setPosition(). */
+class LegacyPanner extends FakeNode {
+  panningModel = 'equalpower'; distanceModel = 'inverse'; refDistance = 1; rolloffFactor = 1; maxDistance = 10000
+  readonly positions: number[][] = []
+  setPosition(x: number, y: number, z: number) { float(x); float(y); float(z); this.positions.push([x, y, z]) }
+}
+
+class FakeContext {
+  static instances: FakeContext[] = []
+  static legacy = false
+  static legacyPanners = false
+  state: 'suspended' | 'running' | 'closed' | 'interrupted' = 'suspended'
+  currentTime = 0
+  readonly sampleRate = 48000
+  readonly nodes: FakeNode[] = []
+  readonly destination: FakeNode
+  readonly listener: ParamListener | LegacyListener
+  readonly calls: string[] = []
+  readonly options: unknown
+  constructor(options?: unknown) {
+    FakeContext.instances.push(this)
+    this.options = options
+    this.destination = new FakeNode(this)
+    this.listener = FakeContext.legacy ? new LegacyListener() : new ParamListener()
+  }
+  resume() { this.calls.push('resume'); if (this.state !== 'closed') this.state = 'running'; return Promise.resolve() }
+  suspend() { this.calls.push('suspend'); if (this.state !== 'closed') this.state = 'suspended'; return Promise.resolve() }
+  close() { this.calls.push('close'); this.state = 'closed'; return Promise.resolve() }
+  createGain() { return new FakeGain(this) }
+  createBiquadFilter() { return new FakeBiquad(this) }
+  createDynamicsCompressor() { return new FakeCompressor(this) }
+  createPanner() { return FakeContext.legacyPanners ? new LegacyPanner(this) : new FakePanner(this) }
+  createOscillator() { return new FakeOsc(this) }
+  createBufferSource() { return new FakeBufferSource(this) }
+  createBuffer(_channels: number, len: number, rate: number) { return new FakeBuffer(len, rate) }
+  /** Every buffer decoded (the bytes given, which the real call detaches); fewer than 44 bytes is not audio. */
+  readonly decoded: ArrayBuffer[] = []
+  decodeAudioData(bytes: ArrayBuffer) {
+    this.decoded.push(bytes)
+    if (bytes.byteLength < 44) return Promise.reject(new DOMException('Unable to decode audio data', 'EncodingError'))
+    return Promise.resolve(new FakeBuffer((bytes.byteLength - 44) / 2, 24000))
+  }
+  createPeriodicWave(real: Float32Array, imag: Float32Array) {
+    assert.equal(real.length, imag.length)
+    return { real, imag }
+  }
+  of<T extends FakeNode>(type: new (ctx: FakeContext) => T): T[] {
+    return this.nodes.filter((n): n is T => n instanceof type)
+  }
+}
+
+interface FakeDocument extends EventTarget { hidden: boolean }
+
+const g = globalThis as unknown as Record<string, unknown>
+
+function withFakes(fn: (doc: FakeDocument) => void | Promise<void>, legacy = false): () => Promise<void> {
+  return async () => {
+    const saved = { AudioContext: g.AudioContext, PannerNode: g.PannerNode, document: g.document }
+    FakeContext.instances = []
+    FakeContext.legacy = legacy
+    const doc = Object.assign(new EventTarget(), { hidden: false })
+    g.AudioContext = FakeContext
+    g.PannerNode = FakePanner
+    g.document = doc
+    try { await fn(doc) } finally {
+      g.AudioContext = saved.AudioContext
+      g.PannerNode = saved.PannerNode
+      g.document = saved.document
+      FakeContext.legacy = false
+      FakeContext.legacyPanners = false
+    }
+  }
+}
+
+interface VoiceView {
+  car: number; fading: boolean
+  pan: { node: FakePanner }
+  freq: { param: FakeParam }; engineGain: { param: FakeParam }; tyreGain: { param: FakeParam }; engineCut: { param: FakeParam }
+}
+interface GraphView {
+  babbleJob: unknown
+  voices: VoiceView[]; beds: { gain: { param: FakeParam }; pan: { node: FakePanner } }[]
+  cabin: { param: FakeParam }; master: { param: FakeParam }
+  tones: Record<'ew' | 'ns', { gain: FakeGain; source: FakeBufferSource | null; envelope: FakeGain | null; on: boolean }>
+  tonePan: { node: FakePanner }
+}
+const graphOf = (s: Soundscape) => (s as unknown as { graph: GraphView }).graph
+const ctxOf = () => FakeContext.instances[FakeContext.instances.length - 1]
+
+function frame(over: Partial<AudioFrame> = {}): AudioFrame {
+  return {
+    dt: 1 / 60,
+    listener: { x: 200, y: 1.7, z: 205, yaw: 0, pitch: 0 },
+    cars: [],
+    crowd: { near: 80, waiting: 40, crossing: 20 },
+    daylight: 1,
+    walk: { ew: false, ns: false },
+    intersection: { x: 200, z: 200 },
+    interior: false,
+    ...over,
+  }
+}
+
+/** Advances the fake audio clock and runs one control pass. */
+function tick(s: Soundscape, f: AudioFrame, seconds = f.dt): void {
+  ctxOf().currentTime += seconds
+  s.update(f)
+}
+
+test('without Web Audio the soundscape is inert and says so', () => {
+  assert.equal(typeof g.AudioContext, 'undefined', 'Node has no Web Audio')
+  const s = new Soundscape()
+  assert.deepEqual(s.status(), { state: 'unsupported', voices: 0, hrtf: false, volume: 0.8 })
+  s.unlock()
+  s.update(frame({ cars: [car(200, 210, 10)] }))
+  s.setEnabled(false)
+  s.setVolume(0.3)
+  s.dispose()
+  assert.equal(s.status().state, 'unsupported')
+})
+
+test('nothing is created before the gesture; unlock builds one HRTF graph and is idempotent', withFakes(() => {
+  const s = new Soundscape()
+  assert.equal(s.status().state, 'locked')
+  s.update(frame({ cars: [car(200, 210, 10)] }))
+  assert.equal(FakeContext.instances.length, 0, 'no AudioContext before a user gesture')
+  s.unlock()
+  s.unlock()
+  assert.equal(FakeContext.instances.length, 1)
+  const ctx = ctxOf()
+  assert.deepEqual(ctx.options, { latencyHint: 'balanced' })
+  assert.deepEqual(s.status(), { state: 'running', voices: 0, hrtf: true, volume: 0.8 })
+  const panners = ctx.of(FakePanner)
+  assert.equal(panners.length, VOICE.count + MURMUR.sources + 1 + CUE.slots + 1, 'cars, beds, walk tones, cues, speech')
+  for (const p of panners) { assert.equal(p.panningModel, 'HRTF'); assert.equal(p.distanceModel, 'inverse') }
+  assert.equal(ctx.of(FakeOsc).length, VOICE.count)
+  for (const o of ctx.of(FakeOsc)) assert.ok(o.started >= 0 && o.wave !== null)
+  assert.equal(ctx.of(FakeBufferSource).length, VOICE.count, 'the babble renders after the gesture, not inside it')
+  // One babble chunk per control pass, then the beds start looping the finished buffer.
+  let passes = 0
+  while (graphOf(s).babbleJob) {
+    assert.equal(ctx.of(FakeBufferSource).length, VOICE.count)
+    tick(s, frame())
+    passes++
+    assert.ok(passes < 1000, 'babble never finished')
+  }
+  assert.ok(passes > 20, `spread over ${passes} frames`)
+  const loops = ctx.of(FakeBufferSource)
+  assert.equal(loops.length, VOICE.count + MURMUR.sources, 'tone sources are made per walk phase, not up front')
+  const beds = loops.slice(VOICE.count)
+  const expected = new Float32Array(SYNTH_RATE * MURMUR.seconds)
+  renderBabble(expected, SYNTH_RATE, 0xb4bb1e)
+  for (const b of beds) assert.deepEqual(b.buffer!.data, expected)
+  assert.equal(new Set(beds.map((b) => b.playbackRate.value)).size, MURMUR.sources, 'beds drift against each other')
+  assert.equal(s.status().voices, MURMUR.sources)
+  for (const b of loops) {
+    assert.ok(b.loop && b.started >= 0 && b.buffer !== null)
+    assert.ok(b.offset >= 0 && b.offset < b.buffer!.length / b.buffer!.sampleRate, 'start offset inside the buffer')
+  }
+  // Everything reaches the destination through cabin filter → master → limiter.
+  const reaches = (n: FakeNode, seen = new Set<FakeNode>()): boolean => n === ctx.destination || (!seen.has(n) && (seen.add(n), n.outputs.some((o) => reaches(o, seen))))
+  for (const n of [...panners, ...ctx.of(FakeOsc), ...loops]) assert.ok(reaches(n), `${n.constructor.name} is not connected`)
+  s.dispose()
+}))
+
+test('murmur beds swell in from silence when their loops start (no click at mid-waveform offsets)', withFakes(() => {
+  const s = new Soundscape()
+  s.unlock()
+  const ctx = ctxOf()
+  // The crowd is busy from the first frame, so the bed gains follow it while the babble still renders.
+  while (graphOf(s).babbleJob) tick(s, frame())
+  const gv = graphOf(s)
+  const loops = ctx.of(FakeBufferSource).slice(VOICE.count)
+  assert.equal(loops.length, MURMUR.sources)
+  for (let i = 0; i < MURMUR.sources; i++) {
+    const events = gv.beds[i].gain.param.events
+    const start = loops[i].started
+    const k = events.findIndex((e) => e.kind === 'set')
+    assert.ok(k >= 0, `bed ${i} gain is not reset when its loop starts`)
+    assert.equal(events[k].v, 0)
+    near(events[k].t, start, 1e-9, 'reset at the loop start')
+    assert.ok(events.slice(0, k).some((e) => e.kind === 'target' && e.v > 0.01), 'the gain was up before the loop existed')
+    const after = events.slice(k + 1)
+    assert.ok(after.length > 0 && after.every((e) => e.kind === 'target'), 'then it only glides')
+    assert.ok(after[0].tau! >= 0.2 && after[0].v > 0, 'a slow swell')
+  }
+  s.dispose()
+}))
+
+test('cars are voiced where they are, at the gearbox pitch, and the listener follows the camera', withFakes(() => {
+  const s = new Soundscape()
+  s.unlock()
+  while (graphOf(s).babbleJob) tick(s, frame())
+  const cars = [car(210, 205, 11, Math.PI / 2), car(200, 600, 10), car(195, 195, 0, Math.PI)]
+  const listener = { x: 200, y: 1.7, z: 205, yaw: 0.4, pitch: -0.1 }
+  for (let i = 0; i < 30; i++) tick(s, frame({ cars, listener }))
+  const gv = graphOf(s)
+  const voiced = gv.voices.filter((v) => v.car >= 0).map((v) => v.car).sort()
+  assert.deepEqual(voiced, [0, 2], 'the far car is not voiced')
+  const v = gv.voices.find((x) => x.car === 0)!
+  const scale = carTimbre(0)
+  let gear = 0
+  gear = selectGear(11, gear, scale)
+  const doppler = dopplerFactor(210 + VOICE.nose, 205, 11, 0, 200, 205, 0, 0)
+  near(v.freq.param.target, engineRpm(11, gear, scale) * ENGINE.fundamental * scale * doppler, 0.01 * v.freq.param.target)
+  assert.ok(doppler < 1, 'driving away from the listener: flatter')
+  near(v.pan.node.positionX.target, 210 + VOICE.nose, 0.02)
+  near(v.pan.node.positionY.target, VOICE.height, 1e-9)
+  near(v.pan.node.positionZ.target, 205, 0.02)
+  assert.ok(v.engineGain.param.target > 0 && v.tyreGain.param.target > 0)
+  const idle = gv.voices.find((x) => x.car === 2)!
+  const idleHz = ENGINE.idleRpm * ENGINE.fundamental * carTimbre(2)
+  near(idle.freq.param.target, idleHz, idleHz * 0.006) // ±0.5 % engine wobble
+  near(idle.tyreGain.param.target, 0, 1e-9)
+  const l = ctxOf().listener as ParamListener
+  const b = new Float32Array(6)
+  listenerBasis(listener.yaw, listener.pitch, b)
+  near(l.positionX.target, 200, 1e-9); near(l.positionY.target, 1.7, 1e-6); near(l.positionZ.target, 205, 1e-9)
+  near(l.forwardX.target, b[0], 1e-6); near(l.forwardY.target, b[1], 1e-6); near(l.forwardZ.target, b[2], 1e-6)
+  near(l.upX.target, b[3], 1e-6); near(l.upY.target, b[4], 1e-6); near(l.upZ.target, b[5], 1e-6)
+  // The murmur is up in daylight with people about, on the beds' sidewalk positions.
+  for (const bed of gv.beds) assert.ok(bed.gain.param.target > 0.01)
+  const layout = new Float32Array(8)
+  murmurLayout(200, 205, layout)
+  near(gv.beds[0].pan.node.positionX.target, layout[0], 1e-6)
+  near(gv.beds[0].pan.node.positionZ.target, layout[1], 1e-6)
+  assert.equal(s.status().voices, 2 + MURMUR.sources)
+  s.dispose()
+}))
+
+test('a reassigned voice fades out before it switches car: gains only ever jump while silent', withFakes(() => {
+  const s = new Soundscape()
+  s.unlock()
+  const cars = [car(200, 225, 8), car(200, 228, 8), car(200, 231, 8), car(200, 234, 8), car(200, 237, 8)]
+  for (let i = 0; i < 60; i++) tick(s, frame({ cars }))
+  const gv = graphOf(s)
+  assert.equal(gv.voices.filter((v) => v.car >= 0).length, 5)
+  const outgoing = gv.voices.find((v) => v.car === 4)!
+  cars.push(car(200, 207, 12))
+  tick(s, frame({ cars }))
+  assert.ok(outgoing.fading, 'the quietest voice starts fading')
+  assert.equal(outgoing.car, 4, 'and keeps its old car until silent')
+  near(outgoing.engineGain.param.target, 0, 1e-12)
+  const last = outgoing.engineGain.param.events[outgoing.engineGain.param.events.length - 1]
+  assert.equal(last.kind, 'target', 'a ramp, not a jump')
+  tick(s, frame({ cars }), 0.05)
+  assert.equal(outgoing.car, 4, 'not switched mid-fade')
+  tick(s, frame({ cars }), 0.2)
+  assert.equal(outgoing.car, 5, 'switched once silent')
+  assert.ok(outgoing.engineGain.param.target > 0, 'and fades in on the new car')
+  for (let i = 0; i < 30; i++) tick(s, frame({ cars }))
+  // Click-free invariant over the whole run: every hard set of a voice gain is to zero, after ≥ 5τ of fading to zero.
+  for (const v of gv.voices) for (const p of [v.engineGain.param, v.tyreGain.param]) {
+    let lastTarget: Ev | null = null
+    for (const e of p.events) {
+      if (e.kind === 'set') {
+        assert.equal(e.v, 0, 'gains only jump to silence')
+        if (lastTarget && lastTarget.v !== 0) assert.fail('jumped while audible')
+        if (lastTarget) assert.ok(e.t - lastTarget.t >= 5 * VOICE.fade - 1e-9, 'jumped before the fade finished')
+      }
+      if (e.kind === 'target') lastTarget = e
+    }
+  }
+  s.dispose()
+}))
+
+test('inside the car: the exterior is muffled and the own engine sits ahead of the listener', withFakes(() => {
+  const s = new Soundscape()
+  s.unlock()
+  const listener = { x: 300, y: 1.2, z: 300, yaw: Math.PI, pitch: 0 }
+  const cars = [car(300, 300.5, 9, 0, true), car(310, 320, 9, Math.PI)]
+  for (let i = 0; i < 20; i++) tick(s, frame({ cars, listener, interior: false }))
+  const gv = graphOf(s)
+  near(gv.cabin.param.target, CABIN.open, 1e-9)
+  const other = gv.voices.find((v) => v.car === 1)!
+  const outsideGain = other.engineGain.param.target
+  for (let i = 0; i < 20; i++) tick(s, frame({ cars, listener, interior: true }))
+  near(gv.cabin.param.target, CABIN.cutoff, 1e-9)
+  near(other.engineGain.param.target, outsideGain * CABIN.outside, outsideGain * 0.05)
+  const own = gv.voices.find((v) => v.car === 0)!
+  near(own.pan.node.positionX.target, 300, 0.02)
+  near(own.pan.node.positionZ.target, 300 + CABIN.engineBay, 0.02)
+  // Co-moving with the listener: no Doppler on the own engine.
+  const scale = carTimbre(0)
+  near(own.freq.param.target, engineRpm(9, selectGear(9, 0, scale), scale) * ENGINE.fundamental * scale, 0.01 * own.freq.param.target)
+  // Doppler on the other car uses the driven car's velocity as the listener's.
+  const ox = 310 + Math.sin(Math.PI) * VOICE.nose, oz = 320 + Math.cos(Math.PI) * VOICE.nose
+  const expected = dopplerFactor(ox, oz, Math.sin(Math.PI) * 9, Math.cos(Math.PI) * 9, 300, 300, 0, 9)
+  assert.ok(expected > 1.04, 'closing at 18 m/s')
+  const s1 = carTimbre(1)
+  near(other.freq.param.target, engineRpm(9, selectGear(9, 0, s1), s1) * ENGINE.fundamental * s1 * expected, 0.01 * other.freq.param.target)
+  s.dispose()
+}))
+
+test('walk tones: a fresh loop per walk phase at the intersection, stopped with a fade', withFakes(() => {
+  const s = new Soundscape()
+  s.unlock()
+  const gv = graphOf(s)
+  const ctx = ctxOf()
+  while (graphOf(s).babbleJob) tick(s, frame())
+  tick(s, frame({ walk: { ew: false, ns: true }, intersection: { x: 240, z: 200 } }))
+  const t = gv.tones.ns
+  assert.ok(t.on && t.source)
+  const src = t.source!
+  assert.equal(src.loop, true)
+  assert.equal(src.buffer!.length, signalToneLength('ns', SYNTH_RATE))
+  assert.ok(src.started > ctx.currentTime - 1e-9)
+  near(t.gain.gain.target, APS.level, 1e-9)
+  const env = t.envelope!
+  assert.ok(src.outputs.includes(env) && env.outputs.includes(t.gain), 'source → phase envelope → shared level')
+  near(env.gain.value, 1, 1e-12)
+  near(gv.tonePan.node.positionX.target, 240, 1e-9)
+  near(gv.tonePan.node.positionY.target, APS.height, 1e-9)
+  assert.equal(gv.tones.ew.on, false)
+  assert.equal(s.status().voices, MURMUR.sources + 1)
+  for (let i = 0; i < 10; i++) tick(s, frame({ walk: { ew: false, ns: true } }))
+  assert.equal(t.source, src, 'one source per phase')
+  tick(s, frame({ walk: { ew: false, ns: false } }))
+  assert.equal(t.on, false)
+  assert.ok(src.stopped > ctx.currentTime, 'stops after the fade')
+  const lastEv = env.gain.events[env.gain.events.length - 1]
+  assert.equal(lastEv.kind, 'target')
+  assert.equal(lastEv.v, 0)
+  assert.ok((src.stopped - lastEv.t) / lastEv.tau! >= 7, 'the tail is silent (≤ −60 dB) before it stops')
+  tick(s, frame({ walk: { ew: true, ns: false } }))
+  assert.ok(gv.tones.ew.on && gv.tones.ew.source !== src)
+  assert.equal(gv.tones.ew.source!.buffer!.length, signalToneLength('ew', SYNTH_RATE))
+  s.dispose()
+}))
+
+test('walk tones: a phase restarting inside the previous tail neither revives nor cuts it', withFakes(() => {
+  const s = new Soundscape()
+  s.unlock()
+  const gv = graphOf(s)
+  const t = gv.tones.ns
+  tick(s, frame({ walk: { ew: false, ns: true } }))
+  const first = t.source!, firstEnv = t.envelope!
+  tick(s, frame({ walk: { ew: false, ns: false } }))
+  // A clock jump turns the same walk phase back on 0.1 s later, while the first loop is still fading.
+  tick(s, frame({ walk: { ew: false, ns: true } }), 0.1)
+  assert.ok(t.on && t.source !== first && t.envelope !== firstEnv, 'a new loop on its own envelope')
+  assert.ok(first.stopped > ctxOf().currentTime, 'the old tail keeps fading until its stop')
+  const tail = firstEnv.gain.events
+  assert.equal(tail.length, 1)
+  assert.equal(tail[0].kind, 'target')
+  assert.equal(tail[0].v, 0)
+  for (let i = 0; i < 20; i++) tick(s, frame({ walk: { ew: false, ns: true } }))
+  assert.equal(firstEnv.gain.events.length, 1, 'nothing brings the fading tail back up')
+  // The shared level never jumps and never drops to silence: it only follows the cabin muffling.
+  for (const e of t.gain.gain.events) { assert.equal(e.kind, 'target'); assert.ok(e.v > 0) }
+  s.dispose()
+}))
+
+test('legacy listener API is used where AudioListener has no AudioParams', withFakes(() => {
+  const s = new Soundscape()
+  s.unlock()
+  const l = ctxOf().listener as LegacyListener
+  assert.ok(l instanceof LegacyListener)
+  tick(s, frame({ listener: { x: 10, y: 2, z: 20, yaw: 0, pitch: 0 } }))
+  assert.deepEqual(l.positions.at(-1), [10, 2, 20])
+  assert.deepEqual(l.orientations.at(-1)!.map((x) => Math.round(x * 1e6) / 1e6 + 0), [0, 0, -1, 0, 1, 0])
+  const [np, no] = [l.positions.length, l.orientations.length]
+  tick(s, frame({ listener: { x: 10.001, y: 2, z: 20, yaw: 0, pitch: 0 } }))
+  assert.equal(l.positions.length, np, 'dead-banded')
+  assert.equal(l.orientations.length, no, 'dead-banded')
+  tick(s, frame({ listener: { x: 12, y: 2, z: 20, yaw: 1, pitch: 0 } }))
+  assert.equal(l.positions.length, np + 1)
+  assert.equal(l.orientations.length, no + 1)
+  s.dispose()
+}, true))
+
+test('legacy panners (no position AudioParams) are placed through setPosition()', withFakes(() => {
+  FakeContext.legacyPanners = true
+  const s = new Soundscape()
+  s.unlock()
+  const ctx = ctxOf()
+  const panners = ctx.of(LegacyPanner)
+  assert.equal(panners.length, VOICE.count + MURMUR.sources + 1 + CUE.slots + 1, 'cars, beds, walk tones, cues, speech')
+  const cars = [car(210, 205, 8, Math.PI / 2)]
+  for (let i = 0; i < 5; i++) tick(s, frame({ cars, walk: { ew: true, ns: false }, intersection: { x: 240, z: 200 } }))
+  const gv = graphOf(s) as unknown as { voices: { car: number; pan: { node: LegacyPanner } }[]; beds: { pan: { node: LegacyPanner } }[]; tonePan: { node: LegacyPanner } }
+  const voice = gv.voices.find((v) => v.car === 0)!
+  // Every panner that sounds has been placed (idle car voices are silent and need no position).
+  for (const p of [voice.pan.node, ...gv.beds.map((b) => b.pan.node), gv.tonePan.node]) assert.ok(p.positions.length >= 1, 'placed')
+  const at = voice.pan.node.positions.at(-1)!
+  near(at[0], 210 + VOICE.nose, 0.02); near(at[1], VOICE.height, 1e-9); near(at[2], 205, 0.02)
+  assert.deepEqual(gv.tonePan.node.positions.at(-1), [240, APS.height, 200])
+  const layout = new Float32Array(8)
+  murmurLayout(200, 205, layout)
+  near(gv.beds[1].pan.node.positions.at(-1)![0], layout[2], 1e-4)
+  // Dead-banded: a car creeping 1 mm does not call setPosition again.
+  const n = voice.pan.node.positions.length
+  cars[0] = car(210.001, 205, 0, Math.PI / 2)
+  tick(s, frame({ cars }))
+  assert.equal(voice.pan.node.positions.length, n)
+  s.dispose()
+}))
+
+test('automation that needs no sample accuracy runs at k-rate; gains stay a-rate for smooth fades', withFakes(() => {
+  const s = new Soundscape()
+  s.unlock()
+  const ctx = ctxOf()
+  for (const p of ctx.of(FakePanner)) for (const q of [p.positionX, p.positionY, p.positionZ]) assert.equal(q.automationRate, 'k-rate')
+  const l = ctx.listener as ParamListener
+  for (const q of [l.positionX, l.positionY, l.positionZ, l.forwardX, l.forwardY, l.forwardZ, l.upX, l.upY, l.upZ]) assert.equal(q.automationRate, 'k-rate')
+  for (const f of ctx.of(FakeBiquad)) assert.equal(f.frequency.automationRate, 'k-rate')
+  for (const o of ctx.of(FakeOsc)) assert.equal(o.frequency.automationRate, 'k-rate')
+  for (const gn of ctx.of(FakeGain)) assert.equal(gn.gain.automationRate, 'a-rate')
+  s.dispose()
+}))
+
+test('the listener jumps on a camera cut instead of sweeping its forward vector through zero', withFakes(() => {
+  const s = new Soundscape()
+  s.unlock()
+  const l = ctxOf().listener as ParamListener
+  const fwd = [l.forwardX, l.forwardY, l.forwardZ, l.upX, l.upY, l.upZ]
+  const lastKind = (p: FakeParam) => p.events[p.events.length - 1].kind
+  tick(s, frame({ listener: { x: 200, y: 1.7, z: 205, yaw: 0, pitch: 0 } }))
+  assert.equal(lastKind(l.positionX), 'set', 'the first pass places the listener, no sweep in from the origin')
+  assert.equal(lastKind(l.forwardZ), 'set')
+  tick(s, frame({ listener: { x: 200.5, y: 1.7, z: 205, yaw: 0.05, pitch: 0 } }))
+  assert.equal(lastKind(l.positionX), 'target', 'ordinary motion glides')
+  assert.equal(lastKind(l.forwardX), 'target')
+  // Entering a car: the chase camera swings round by ~180° in one frame.
+  tick(s, frame({ listener: { x: 200.5, y: 1.7, z: 205, yaw: 0.05 + Math.PI * 0.97, pitch: 0 } }))
+  for (const p of fwd) assert.equal(lastKind(p), 'set')
+  near(l.forwardZ.value, -Math.cos(0.05 + Math.PI * 0.97), 1e-6)
+  tick(s, frame({ listener: { x: 200.5, y: 1.7, z: 205, yaw: 0.1 + Math.PI * 0.97, pitch: 0 } }))
+  assert.equal(lastKind(l.forwardX), 'target', 'and glides again afterwards')
+  s.dispose()
+}))
+
+test('values beyond single-float range never reach Web Audio (WebIDL float would throw)', withFakes(() => {
+  const s = new Soundscape()
+  s.unlock()
+  const huge = 1e39
+  assert.doesNotThrow(() => {
+    for (let i = 0; i < 5; i++) {
+      tick(s, frame({ cars: [car(huge, 205, 10, 0, true), car(201, 206, 8)], interior: false }))
+      tick(s, frame({ cars: [car(200, -huge, 10, 0, true)], interior: true }))
+      tick(s, frame({ listener: { x: huge, y: 1.7, z: 205, yaw: 0, pitch: 0 } }))
+      tick(s, frame({ intersection: { x: huge, z: 200 }, walk: { ew: true, ns: false } }))
+    }
+  })
+  assert.equal(s.status().state, 'running', 'handled by the guards, not by the failure path')
+  s.dispose()
+}))
+
+test('an audio stack that throws mid-frame is switched off instead of breaking the frame loop', withFakes(() => {
+  const s = new Soundscape()
+  s.unlock()
+  const ctx = ctxOf()
+  tick(s, frame({ cars: [car(200, 210, 10)] }))
+  const gv = graphOf(s)
+  const v = gv.voices.find((x) => x.car === 0)!
+  v.freq.param.setTargetAtTime = () => { throw new Error('InvalidStateError: something unforeseen') }
+  assert.doesNotThrow(() => tick(s, frame({ cars: [car(200, 211, 12)] }), 0.05))
+  assert.equal(s.status().state, 'unsupported')
+  assert.equal(ctx.state, 'closed')
+  for (const src of [...ctx.of(FakeOsc), ...ctx.of(FakeBufferSource)]) assert.ok(src.stopped >= 0)
+  assert.doesNotThrow(() => { s.update(frame()); s.unlock(); s.setEnabled(true); s.setVolume(0.5) })
+  assert.equal(FakeContext.instances.length, 1, 'no new context after the failure')
+  s.dispose()
+}))
+
+test('disabled before the first gesture: the context is created but kept asleep', withFakes(() => {
+  const s = new Soundscape()
+  s.setEnabled(false)
+  s.unlock()
+  assert.equal(ctxOf().state, 'suspended')
+  assert.equal(s.status().state, 'off')
+  near(graphOf(s).master.param.value, 0, 1e-12)
+  s.setEnabled(true)
+  assert.equal(ctxOf().state, 'running')
+  near(graphOf(s).master.param.target, volumeToGain(0.8) * 2, 1e-9)
+  s.dispose()
+}))
+
+test('volume, enable/disable and page visibility', withFakes(async (doc) => {
+  const s = new Soundscape()
+  s.setVolume(0.5)
+  s.unlock()
+  const gv = graphOf(s)
+  const ctx = ctxOf()
+  near(ctx.of(FakeGain).length > 0 ? gv.master.param.value : 0, volumeToGain(0.5) * 2, 1e-9)
+  s.setVolume(2)
+  assert.equal(s.status().volume, 1)
+  near(gv.master.param.target, 2, 1e-9)
+  s.setEnabled(false)
+  assert.equal(s.status().state, 'off')
+  near(gv.master.param.target, 0, 1e-12)
+  const before = ctx.of(FakePanner).reduce((n, p) => n + p.positionX.events.length, 0)
+  tick(s, frame({ cars: [car(200, 210, 10)] }))
+  assert.equal(ctx.of(FakePanner).reduce((n, p) => n + p.positionX.events.length, 0), before, 'no work while off')
+  await new Promise((r) => setTimeout(r, 350))
+  assert.equal(ctx.state, 'suspended', 'the context sleeps once faded out')
+  s.setEnabled(true)
+  assert.equal(s.status().state, 'running')
+  near(gv.master.param.target, 2, 1e-9)
+  doc.hidden = true
+  doc.dispatchEvent(new Event('visibilitychange'))
+  assert.equal(ctx.state, 'suspended')
+  assert.equal(s.status().state, 'suspended')
+  s.unlock()
+  assert.equal(ctx.state, 'suspended', 'a hidden page stays asleep')
+  doc.hidden = false
+  doc.dispatchEvent(new Event('visibilitychange'))
+  assert.equal(ctx.state, 'running')
+  // Re-enabling right after disabling cancels the pending suspend.
+  s.setEnabled(false)
+  s.setEnabled(true)
+  await new Promise((r) => setTimeout(r, 350))
+  assert.equal(ctx.state, 'running')
+  // An interrupted context (iOS call) reads as suspended until the next gesture resumes it.
+  ctx.state = 'interrupted'
+  assert.equal(s.status().state, 'suspended')
+  s.unlock()
+  assert.equal(ctx.state, 'running')
+  s.dispose()
+}))
+
+test('non-finite input never reaches an AudioParam; the control pass is rate-limited', withFakes(() => {
+  const s = new Soundscape()
+  s.unlock()
+  const bad = Number.NaN
+  assert.doesNotThrow(() => {
+    for (let i = 0; i < 10; i++) {
+      tick(s, frame({ cars: [car(bad, 200, 10), car(201, 206, bad), car(202, 207, 10, bad), car(203, 208, 5, 0, true)], daylight: bad, crowd: { near: bad, waiting: bad, crossing: bad }, intersection: { x: bad, z: 0 } }))
+      tick(s, frame({ listener: { x: bad, y: 1, z: 0, yaw: 0, pitch: 0 } }))
+      tick(s, frame({ cars: [car(Infinity, 0, 1)], interior: true }))
+    }
+  })
+  // 240 Hz frames: the control pass runs on every ~4th.
+  const l = ctxOf().listener as ParamListener
+  const n0 = l.positionX.events.length
+  for (let i = 0; i < 40; i++) tick(s, frame({ dt: 1 / 240, listener: { x: 200 + i, y: 1.7, z: 205, yaw: 0, pitch: 0 } }))
+  const passes = l.positionX.events.length - n0
+  assert.ok(passes >= 8 && passes <= 14, `${passes} control passes for 40 frames at 240 Hz`)
+  s.dispose()
+}))
+
+test('dispose stops every source, closes the context and leaves an inert object', withFakes(() => {
+  const s = new Soundscape()
+  s.unlock()
+  tick(s, frame({ walk: { ew: true, ns: false } }))
+  const ctx = ctxOf()
+  s.dispose()
+  assert.equal(ctx.state, 'closed')
+  for (const src of [...ctx.of(FakeOsc), ...ctx.of(FakeBufferSource)]) assert.ok(src.stopped >= 0, `${src.constructor.name} left running`)
+  assert.equal(s.status().state, 'off')
+  s.unlock()
+  s.update(frame())
+  s.setEnabled(true)
+  s.setVolume(0.2)
+  assert.equal(FakeContext.instances.length, 1, 'no context after dispose')
+  s.dispose()
+}))
+
+test('a failing audio stack reports unsupported instead of throwing', withFakes(() => {
+  const Broken = class { constructor() { throw new Error('NotAllowedError') } }
+  g.AudioContext = Broken
+  const s = new Soundscape()
+  assert.doesNotThrow(() => s.unlock())
+  assert.equal(s.status().state, 'unsupported')
+  assert.doesNotThrow(() => s.update(frame()))
+}))
+
+test('recruitment cue: two soft notes, silent at both ends, bounded', () => {
+  const n = cueLength(SYNTH_RATE)
+  assert.ok(n > 0.4 * SYNTH_RATE && n < 0.7 * SYNTH_RATE, `${n} samples`)
+  const out = new Float32Array(n).fill(9)
+  renderCue(SYNTH_RATE, out)
+  assert.ok(out.every((v) => Math.abs(v) <= CUE.amplitude + 1e-6))
+  assert.ok(Math.abs(out[0]) < 1e-3 && Math.abs(out[n - 1]) < 1e-3, 'no click at either end')
+  // Sound in each note, silence in the gap between them.
+  const rms = (a: number, b: number) => Math.sqrt(out.slice(Math.round(a * SYNTH_RATE), Math.round(b * SYNTH_RATE)).reduce((t, v) => t + v * v, 0) / ((b - a) * SYNTH_RATE))
+  assert.ok(rms(0.03, 0.13) > 0.1 && rms(0.25, 0.45) > 0.1)
+  assert.ok(rms(0.165, 0.195) < 1e-3)
+})
+
+test('recruitment cue: sounds only while the soundscape runs, where the recruit stands, and is stopped with everything else', withFakes(() => {
+  const s = new Soundscape()
+  assert.equal(s.cue(200, 210), false, 'locked: no context before a gesture')
+  assert.equal(FakeContext.instances.length, 0)
+  s.unlock()
+  const ctx = ctxOf()
+  const cues = (graphOf(s) as unknown as { cues: { pan: { node: FakePanner }; source: FakeBufferSource | null }[] }).cues
+  assert.equal(cues.length, CUE.slots)
+  for (const bad of [NaN, Infinity, 1e39]) assert.equal(s.cue(bad, 0), false, String(bad))
+  const before = ctx.of(FakeBufferSource).length
+  assert.equal(s.cue(203, 208), true)
+  const shot = ctx.of(FakeBufferSource).at(-1)!
+  assert.equal(ctx.of(FakeBufferSource).length, before + 1)
+  assert.ok(!shot.loop && shot.started >= 0 && shot.buffer!.length === cueLength(SYNTH_RATE))
+  const p = cues.find((c) => c.source === shot)!.pan.node
+  assert.deepEqual([p.positionX.target, p.positionY.target, p.positionZ.target], [203, CUE.height, 208])
+  assert.equal(s.status().voices, 1)
+  // More requests than voices: the one nearest its end is cut for the newest.
+  assert.ok(s.cue(210, 210) && s.cue(220, 220))
+  assert.ok(shot.stopped >= 0, 'the oldest shot was cut')
+  assert.equal(s.status().voices, CUE.slots)
+  // Over: no longer counted.
+  ctx.currentTime += 1
+  assert.equal(s.status().voices, 0)
+  // Off: silent, and nothing new starts.
+  s.setEnabled(false)
+  assert.equal(s.cue(203, 208), false)
+  s.setEnabled(true)
+  assert.equal(s.cue(203, 208), true)
+  const last = ctx.of(FakeBufferSource).at(-1)!
+  s.dispose()
+  assert.ok(last.stopped >= 0, 'dispose stops a cue that is still sounding')
+  assert.equal(s.cue(203, 208), false)
+}))
+
+interface SpeechView { pan: { node: FakePanner }; gain: FakeGain; wall: FakeBiquad; source: FakeBufferSource | null; envelope: FakeGain | null }
+const speechOf = (s: Soundscape) => (graphOf(s) as unknown as { speech: SpeechView }).speech
+
+/** A WAV-sized buffer of `seconds` of 24 kHz 16-bit mono audio (the fake decoder only reads its length). */
+const clipBytes = (seconds: number) => new ArrayBuffer(44 + Math.round(seconds * 24000) * 2)
+
+test('speech: decoded only while the soundscape runs, from a copy of the bytes; anything else is refused in one sentence', withFakes(async () => {
+  const s = new Soundscape()
+  await assert.rejects(s.decodeSpeech(clipBytes(1)), { message: "the city's sound starts with the first click or key press on the page" })
+  s.unlock()
+  const ctx = ctxOf()
+  const bytes = clipBytes(1.5)
+  const buffer = await s.decodeSpeech(bytes)
+  assert.equal(buffer.duration, 1.5)
+  assert.equal(ctx.decoded.length, 1)
+  assert.notEqual(ctx.decoded[0], bytes, 'a copy is decoded (the real call detaches what it is given)')
+  assert.equal(ctx.decoded[0].byteLength, bytes.byteLength)
+  await assert.rejects(s.decodeSpeech(new ArrayBuffer(8)), { message: "the speech server's audio could not be decoded" })
+  s.setEnabled(false)
+  await assert.rejects(s.decodeSpeech(bytes), { message: "the city's sound is off: type audio on" })
+  s.setEnabled(true)
+  ctx.state = 'suspended'
+  await assert.rejects(s.decodeSpeech(bytes), { message: "the city's sound is paused while the page is hidden" })
+}))
+
+test('speech: said at the speaker\'s head through its own HRTF voice, followed as they walk, held when a reading is missing', withFakes(async () => {
+  const s = new Soundscape()
+  s.unlock()
+  const ctx = ctxOf()
+  const sp = speechOf(s)
+  assert.equal(sp.gain.gain.value, SPEECH.level)
+  assert.deepEqual([sp.pan.node.panningModel, sp.pan.node.refDistance, sp.pan.node.rolloffFactor], ['HRTF', SPEECH.refDistance, SPEECH.rolloff])
+  const buffer = await s.decodeSpeech(clipBytes(2))
+  assert.equal(s.speaking, false)
+  const u = s.speak(buffer, 203, 208)
+  const src = sp.source!
+  assert.ok(src && src.buffer === (buffer as unknown as FakeBuffer) && src.started >= 0 && !src.loop)
+  assert.deepEqual([sp.pan.node.positionX.target, sp.pan.node.positionY.target, sp.pan.node.positionZ.target], [203, SPEECH.height, 208])
+  assert.ok(src.outputs[0] === sp.envelope && sp.envelope!.outputs[0] === sp.gain && sp.gain.outputs[0] === sp.wall && sp.wall.outputs[0] === sp.pan.node)
+  assert.deepEqual([sp.wall.type, sp.wall.frequency.target, sp.gain.gain.target], ['lowpass', OCCLUSION.open, SPEECH.level], 'nothing in the way: unfiltered, full level')
+  assert.equal(s.speaking, true)
+  assert.equal(s.status().voices, 1)
+  // The speaker walks: the voice glides after them each control pass.
+  s.update(frame({ dt: 0.05, speaker: { x: 205, z: 211 } }))
+  assert.deepEqual([sp.pan.node.positionX.target, sp.pan.node.positionZ.target], [205, 211])
+  const glide = sp.pan.node.positionX.events.at(-1)!
+  assert.deepEqual([glide.kind, glide.tau], ['target', SPEECH.follow])
+  // No reading of them this frame: the voice stays where they were last heard.
+  s.update(frame({ dt: 0.05, speaker: { x: NaN, z: NaN } }))
+  s.update(frame({ dt: 0.05 }))
+  assert.deepEqual([sp.pan.node.positionX.target, sp.pan.node.positionZ.target], [205, 211])
+  // Played out: it ends on its own.
+  let ended = false
+  void u.ended.then(() => { ended = true })
+  src.onended?.()
+  await Promise.resolve()
+  assert.ok(ended)
+  assert.equal(s.speaking, false)
+  assert.equal(s.status().voices, 0)
+  // Nobody speaking: a speaker reading moves nothing.
+  const events = sp.pan.node.positionX.events.length
+  s.update(frame({ dt: 0.05, speaker: { x: 300, z: 300 } }))
+  assert.equal(sp.pan.node.positionX.events.length, events)
+  void ctx
+}))
+
+test('speech past buildings: the walls on the line from the head to the speaker, counted in the city\'s own boxes, and only those in the way', () => {
+  const head = (x: number, z: number) => ({ x, y: 1.7, z })
+  const mouth = (x: number, z: number) => ({ x, y: SPEECH.height, z })
+  const wall = (x0: number, x1: number, y0 = 0, y1 = 10): Box => [x0, y0, -5, x1, y1, 5]
+  assert.equal(wallsBetween([], head(0, 0), mouth(10, 0)), 0)
+  assert.equal(wallsBetween([wall(4, 5)], head(0, 0), mouth(10, 0)), 1, 'a building between')
+  assert.equal(wallsBetween([wall(4, 5), wall(6, 7)], head(0, 0), mouth(10, 0)), 2)
+  assert.equal(wallsBetween([wall(4, 5), wall(6, 7), wall(8, 9)], head(0, 0), mouth(10, 0)), 2, 'counted to its limit')
+  assert.equal(wallsBetween([wall(4, 5), wall(6, 7), wall(8, 9)], head(0, 0), mouth(10, 0), 5), 3)
+  assert.equal(wallsBetween([wall(12, 13), wall(-3, -2)], head(0, 0), mouth(10, 0)), 0, 'past either end')
+  assert.equal(wallsBetween([[4, 0, 6, 5, 10, 9]], head(0, 0), mouth(10, 0)), 0, 'beside the line: around a corner')
+  assert.equal(wallsBetween([wall(4, 5, 0, LAKE.pier.deck), wall(6, 7, 0, 1.2)], head(0, 0), mouth(10, 0)), 0, 'a deck and a railing under head height')
+  assert.equal(wallsBetween([wall(4, 5, 2.5, 6)], head(0, 0), mouth(10, 0)), 0, 'a canopy overhead')
+  assert.equal(wallsBetween([wall(4, 5)], head(0, 0), mouth(0, 0)), 0, 'the same spot')
+  assert.equal(wallsBetween([wall(-1, 1)], head(0, 0), mouth(0.5, 0)), 1, 'standing inside a box is behind it')
+  assert.equal(wallsBetween([[-5, 0, 4, 5, 10, 5]], head(0, 0), mouth(0, 10)), 1, 'along z too')
+  // The real city: across a lot, the buildings stand between; along a sidewalk, nothing does.
+  const boxes = generateBuildings(1337).map((b) => b.box)
+  const c = CITY.pitch * 8.5
+  assert.ok(wallsBetween(boxes, head(c, CITY.pitch * 8 + CITY.lane), mouth(c, CITY.pitch * 9 - CITY.lane)) >= 1, 'through the lot between two streets')
+  assert.equal(wallsBetween(boxes, head(c - 5, CITY.pitch * 8 + CITY.lane), mouth(c + 5, CITY.pitch * 8 + CITY.lane)), 0, 'along its sidewalk')
+  // What the walls do to the voice.
+  assert.deepEqual(muffle(0), { cutoff: OCCLUSION.open, gain: 1 })
+  assert.deepEqual(muffle(1), { cutoff: OCCLUSION.one.cutoff, gain: OCCLUSION.one.gain })
+  assert.deepEqual(muffle(2), { cutoff: OCCLUSION.more.cutoff, gain: OCCLUSION.more.gain })
+  assert.deepEqual(muffle(7), muffle(2))
+  assert.deepEqual(muffle(Number.NaN), muffle(0))
+  assert.ok(OCCLUSION.more.cutoff < OCCLUSION.one.cutoff && OCCLUSION.one.cutoff < 4000 && OCCLUSION.more.gain < OCCLUSION.one.gain && OCCLUSION.one.gain < 1)
+})
+
+test('speech past buildings: the voice closes up as walls come between, and opens as the speaker steps clear', withFakes(async () => {
+  const s = new Soundscape()
+  s.unlock()
+  const sp = speechOf(s)
+  const buffer = await s.decodeSpeech(clipBytes(2))
+  // Started behind a wall: muffled from the first sample.
+  s.speak(buffer, 203, 208, 1)
+  assert.deepEqual([sp.wall.frequency.target, sp.gain.gain.target], [OCCLUSION.one.cutoff, SPEECH.level * OCCLUSION.one.gain])
+  assert.equal(sp.wall.frequency.events.at(-1)!.kind, 'set', 'jumped, not swept in from open')
+  // They step clear: it opens, gliding.
+  s.update(frame({ dt: 0.05, speaker: { x: 204, z: 208, walls: 0 } }))
+  assert.deepEqual([sp.wall.frequency.target, sp.gain.gain.target], [OCCLUSION.open, SPEECH.level])
+  const g = sp.wall.frequency.events.at(-1)!
+  assert.deepEqual([g.kind, g.tau], ['target', OCCLUSION.glide])
+  // Two buildings between: more muffled still. A reading that is missing changes nothing.
+  s.update(frame({ dt: 0.05, speaker: { x: 230, z: 208, walls: 2 } }))
+  assert.deepEqual([sp.wall.frequency.target, sp.gain.gain.target], [OCCLUSION.more.cutoff, SPEECH.level * OCCLUSION.more.gain])
+  s.update(frame({ dt: 0.05, speaker: { x: NaN, z: NaN, walls: 0 } }))
+  assert.deepEqual([sp.wall.frequency.target, sp.gain.gain.target], [OCCLUSION.more.cutoff, SPEECH.level * OCCLUSION.more.gain])
+  // A new utterance in the open starts open.
+  s.speak(buffer, 204, 208)
+  assert.deepEqual([sp.wall.frequency.target, sp.gain.gain.target], [OCCLUSION.open, SPEECH.level])
+}))
+
+test('speech: a stop fades it out at once and ends it; a new utterance cuts the one playing; a stale stop cannot touch the new one', withFakes(async () => {
+  const s = new Soundscape()
+  s.unlock()
+  const ctx = ctxOf()
+  const sp = speechOf(s)
+  const buffer = await s.decodeSpeech(clipBytes(3))
+  ctx.currentTime = 10
+  const first = s.speak(buffer, 200, 200)
+  const firstSrc = sp.source!, firstEnv = sp.envelope!
+  let firstEnded = false
+  void first.ended.then(() => { firstEnded = true })
+  ctx.currentTime = 11
+  const second = s.speak(buffer, 201, 201)
+  await Promise.resolve()
+  assert.ok(firstEnded, 'the cut utterance ended')
+  assert.deepEqual([firstEnv.gain.events.at(-1)?.v, firstEnv.gain.events.at(-1)?.tau], [0, SPEECH.fade], 'faded, not clicked off')
+  assert.ok(Math.abs(firstSrc.stopped - (11 + SPEECH.fade * 6)) < 1e-9)
+  assert.equal(s.status().voices, 1, 'one voice at a time')
+  const secondSrc = sp.source!
+  first.stop()
+  assert.equal(secondSrc.stopped, -1, 'a stale stop leaves the new utterance alone')
+  let secondEnded = false
+  void second.ended.then(() => { secondEnded = true })
+  ctx.currentTime = 12
+  second.stop()
+  second.stop()
+  await Promise.resolve()
+  assert.ok(secondEnded)
+  assert.ok(Math.abs(secondSrc.stopped - (12 + SPEECH.fade * 6)) < 1e-9)
+  assert.equal(s.speaking, false)
+}))
+
+test('speech: refused when it cannot sound or has nowhere to sound from; disposing ends what is playing', withFakes(async () => {
+  const s = new Soundscape()
+  s.unlock()
+  const buffer = await s.decodeSpeech(clipBytes(1))
+  for (const [x, z] of [[NaN, 0], [0, Infinity], [1e39, 0]]) assert.throws(() => s.speak(buffer, x, z), /no position to speak from/)
+  s.setEnabled(false)
+  assert.throws(() => s.speak(buffer, 1, 1), /the city's sound is off: type audio on/)
+  s.setEnabled(true)
+  const u = s.speak(buffer, 1, 1)
+  const src = speechOf(s).source!
+  let ended = false
+  void u.ended.then(() => { ended = true })
+  s.dispose()
+  await Promise.resolve()
+  assert.ok(ended, 'the context closed: the utterance ended with it')
+  assert.ok(src.stopped >= 0)
+  assert.throws(() => s.speak(buffer, 1, 1), /the city's sound is off/)
+}))

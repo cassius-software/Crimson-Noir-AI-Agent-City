@@ -1,0 +1,167 @@
+/**
+ * Why does this file exist? It observes the running city and packages each HUD tick as a SIPOC X
+ * snapshot (Supplier, Input, Process, Output, Customer, eXperience), shaped so a later phase can
+ * serialize it as a Sparkplug B metric set without renaming anything.
+ * What breaks if it is removed? The HUD loses its readouts and frame-time budgets go unmeasured.
+ */
+
+export class FrameClock {
+  private readonly samples = new Float32Array(240)
+  private n = 0
+  longFrames = 0
+
+  push(ms: number): void {
+    this.samples[this.n++ % this.samples.length] = ms
+    if (ms > 33.4) this.longFrames++
+  }
+
+  /** [mean, p50, p95] over the last 240 frames, in milliseconds. */
+  stats(): [number, number, number] {
+    const count = Math.min(this.n, this.samples.length)
+    if (count === 0) return [0, 0, 0]
+    const sorted = Array.from(this.samples.subarray(0, count)).sort((a, b) => a - b)
+    const mean = sorted.reduce((s, x) => s + x, 0) / count
+    return [mean, sorted[Math.floor(count * 0.5)], sorted[Math.min(count - 1, Math.floor(count * 0.95))]]
+  }
+}
+
+export type Light = 'green' | 'amber' | 'red'
+
+export interface Toast { id: number; title: string; body: string; time: number }
+
+export interface MapCar { x: number; z: number; heading: number; player: boolean }
+
+/** Which control glyphs the HUD shows: the keyboard, a controller family, or touch. */
+export type GlyphFamily = 'keyboard' | 'abxy' | 'bayx' | 'numbered' | 'generic' | 'touch'
+
+/** What the HUD shows about a recording in progress. */
+export interface RecordingState {
+  active: boolean
+  source: 'canvas' | 'camera' | null
+  seconds: number
+  frames: number
+  bytes: number
+  /** Frames dropped to encoder backpressure. */
+  dropped: number
+  codec: string
+}
+
+/** The Ring-0 audit (ring0.ts): a post-physics, pre-render invariant check over every vehicle and person. */
+export interface AuditStats {
+  ticks: number
+  /** Ticks in which a solid person stood within the watched 1.85 m perimeter of a moving vehicle. */
+  perimeterBreaches: number
+  /** Vehicle speeds clamped to the 50 m/s cap. */
+  velocityCaps: number
+  /** Closest footprint gap to a solid person in a moving vehicle's path this session, m (Infinity if none). */
+  closest: number
+  /** The kernel panic reason, once one has fired (the engine is halted from then on). */
+  panic: string | null
+}
+
+/** Ring-0 kernel counters: rising-edge interventions per law, and Solid→Sensor collider flips. */
+export interface KernelStats {
+  law1: number
+  law2: number
+  law3: number
+  sensorFlips: number
+  /** True while any person collider is currently a sensor. */
+  shielded: boolean
+  /** Human-readable reason of the most recent intervention ('' if none yet). */
+  last: string
+  audit: AuditStats
+}
+
+/** The adaptive quality governor's current state. */
+export interface QualityState {
+  tier: number
+  label: string
+  auto: boolean
+  /** Multiplier on the base pixel ratio. */
+  renderScale: number
+  /** Frame-time target the governor holds, ms. */
+  targetMs: number
+}
+
+/** The cinema camera as the HUD and the console show it. */
+export interface CameraStats {
+  /** Presented frames per second (the pacer holds 24). */
+  fps: number
+  /** Seconds the shutter is open (1/48), 0 while the quality tier draws without the post chain (no blur, no film). */
+  shutterS: number
+  /** The variable ND filter's strength, stops (0 at night, about 0.84 in daylight). */
+  ndStops: number
+  /** Presented frames that were cuts (no blur across them), since boot. */
+  cuts: number
+}
+
+export interface SipocSnapshot {
+  supplier: {
+    device: string; pointerLocked: boolean
+    /** Pointer locked, touch controls engaged, or a gamepad in use: the capture hint can go. */
+    engaged: boolean
+    /** Coarse-pointer touch device (touch controls shown). */
+    touch: boolean
+    triggerResistance: number
+    /** One-line hardware bus summary, e.g. "1 device · DualSense (USB) ready". */
+    hal: string
+    /** Control glyphs matching the input in use (silently swapped when a controller is picked up). */
+    glyphs: GlyphFamily
+    /** The .agv recorder (recorder.ts): local-only capture of the canvas or the camera with per-frame telemetry. */
+    recording: RecordingState
+    /**
+     * Recruitment (08_Swarm/recruitment.ts), added by the host: whether the microphone is open (on-device speech
+     * recognition), and one line about the Active swarm's skills and who is coming over (or the last outcome).
+     */
+    recruiting?: { listening: boolean; line: string }
+  }
+  input: { mode: 'foot' | 'vehicle'; nearVehicle: boolean }
+  process: {
+    pedestrians: number; vehicles: number; drawnNear: number; drawnFar: number
+    waiting: number; crossing: number; yielding: number; safetyNudges: number; gpu: string
+    /** How old the pedestrian hazard readings the Bouncer used were, ms of simulation time (physics worker). */
+    sensingAgeMs?: number | null
+    /** GPU round trip of one crowd step in the physics worker, ms. */
+    sensingLagMs?: number
+    /** Pedestrian render frames received from the physics worker and drawn, since boot. */
+    crowdFrames?: number
+    /** The world seed the city was generated from. */
+    seed?: number
+    /** Where the page runs: a browser tab, or a native shell (a Tauri v2 window). */
+    host?: 'browser' | 'native'
+  }
+  output: {
+    fps: number; frameMs: number; p50Ms: number; p95Ms: number; cpuMs: number; gpuRenderMs: number; gpuComputeMs: number
+    /** One whole step in the physics worker (controls, vetting, substeps, Ring-0 audit, packing), ms: off this thread. */
+    physicsMs: number
+    /** Rapier world.step() alone, per step, ms. */
+    rapierMs: number
+    /** Posting one step request to the physics worker (this thread's share of the realm crossing), ms. */
+    postMs?: number
+    /**
+     * The cinema camera; absent with ?cinema=0, where every animation frame is drawn. `fps` above stays the animation
+     * frame rate: input, step requests and haptics run at it whatever the camera presents.
+     */
+    camera?: CameraStats
+    /** Ghost view is on: the physics shapes drawn as code over the frame (view-only). */
+    ghost?: boolean
+    /**
+     * Ghost-mode collision's contact wipe (contact.ts): how far the iris of code is open (0..1), the kind the user's
+     * body last passed through (GHOST_KIND; 0 none), and how many passages have played a wipe since boot.
+     */
+    contact?: { wipe: number; kind: number; count: number }
+  }
+  kernel: KernelStats
+  quality: QualityState
+  customer: {
+    /** The surveyed region being walked (its fictional name), or null in the procedural city. */
+    region?: string | null
+    /** The name the user gave the Concierge ('' until they do). */
+    name: string
+    clock: string; daylight: number; viewYaw: number; district: string; speedKmh: number; gear: string
+    x: number; z: number; heading: number; signalEW: Light; signalNS: Light; signalRemaining: number
+  }
+  experience: { sessionSeconds: number; longFrames: number; distanceWalked: number; distanceDriven: number }
+  map: MapCar[]
+  toasts: Toast[]
+}

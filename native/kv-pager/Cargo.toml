@@ -1,0 +1,24 @@
+[package]
+name = "kv-pager"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "A paged KV-cache page table with prefix caching, and the WGSL attention kernel that reads it"
+license-file = "../../LICENSE"
+
+[features]
+# The page table has no dependencies; the GPU pool, the decode pipeline and the stress run need wgpu.
+gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
+
+[dependencies]
+wgpu = { version = "24", optional = true }
+pollster = { version = "0.4", optional = true }
+bytemuck = { version = "1", optional = true }
+
+[[bin]]
+name = "stress"
+required-features = ["gpu"]
+
+[[example]]
+name = "adapters"
+required-features = ["gpu"]
