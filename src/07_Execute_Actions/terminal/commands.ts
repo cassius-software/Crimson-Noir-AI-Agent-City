@@ -69,7 +69,7 @@ const CORE = [
 const OPERATOR = [
   { name: 'operator', usage: 'operator [unlock|lock|status]', summary: 'the operator tier: scripts, tuning keys, harnesses' },
   { name: 'run', usage: 'run <skill>[,<skill>...]: <js...>', summary: 'run a script against sim.* while someone tethered has the skill (Shift+Enter adds a line)' },
-  { name: 'ask', usage: 'ask [<skill>[,<skill>...]: <prompt...>|model <name>|server <url>|think on|off|api <format>|stop]', summary: 'ask the local model, answering as someone tethered with the skill; the answer streams in' },
+  { name: 'ask', usage: 'ask [<skill>[,<skill>...]: <prompt...>|provider <name>|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|stop]', summary: 'ask the model, answering as someone tethered with the skill; the answer streams in' },
   { name: 'say', usage: 'say [<skill>[,<skill>...]: <text...>|voice <name>|model <name>|server <url>|auto on|off|stop]', summary: 'said aloud by someone tethered with the skill, from where they stand (local speech server)' },
   { name: 'api', usage: 'api [path]', summary: 'the script API, or one branch of it' },
   { name: 'get', usage: 'get [path]', summary: 'read physics.* and shaders.* tuning keys' },
@@ -113,9 +113,11 @@ const ARGS: Record<string, readonly string[]> = {
   uname: ['-a'],
   operator: ['lock', 'status', 'unlock'],
   run: SKILL_ARGS.map((s) => `${s}:`),
-  ask: [...SKILL_ARGS.map((s) => `${s}:`), 'api', 'model', 'server', 'stop', 'think'].sort(),
+  ask: [...SKILL_ARGS.map((s) => `${s}:`), 'api', 'effort', 'key', 'model', 'provider', 'server', 'stop', 'think'].sort(),
   'ask think': ['off', 'on'],
   'ask api': ['chat', 'generate'],
+  'ask provider': ['claude', 'llamacpp', 'ollama'],
+  'ask effort': ['high', 'low', 'max', 'medium', 'none', 'xhigh'],
   say: [...SKILL_ARGS.map((s) => `${s}:`), 'auto', 'model', 'server', 'stop', 'voice'].sort(),
   'say auto': ['off', 'on'],
   memory: ['forget'],
@@ -281,6 +283,8 @@ function askLines(r: AskResult): Line[] {
   const answer = textLines(r.text)
   if (r.state === 'Aborted') return [...answer, err(`ask: Aborted (Spatial Tether Lost): ${r.reason ?? ''}`)]
   if (r.error !== undefined) return [...answer, err(`ask: ${r.error}`)]
+  // 14A: the agent did not engage (the conduct screen, or the model's own refusal): no reply, and nothing about it.
+  if (r.disengaged) return [sys('-- no reply --')]
   const none = answer.length ? [] : [sys(r.thinking > 0 ? '(no answer: the model spent its tokens thinking)' : '(the model returned no text)')]
   const thought = r.thinking > 0 ? `, after ${r.thinking} tokens of thinking` : ''
   const cut = r.done === 'length' ? ' (cut at the token limit)' : ''
@@ -292,6 +296,7 @@ function sayLines(r: SayResult): Line[] {
   if (r.state === 'Rejected') return [err(`say: Rejected (Insufficient Capabilities): ${r.reason ?? ''}`)]
   if (r.state === 'Aborted') return [err(`say: Aborted (Spatial Tether Lost): ${r.reason ?? ''}`)]
   if (r.error !== undefined) return [r.stopped ? sys(`say: ${r.error}`) : err(`say: ${r.error}`)]
+  if (r.silent) return [sys('-- not said --')]
   const who = r.speaker ? tetherText(r.speaker) : 'someone tethered'
   return [sys(`-- said by ${who}${r.seconds !== undefined ? ` (${r.seconds.toFixed(1)} s)` : ''} --`)]
 }
@@ -312,12 +317,21 @@ function voiceLines(v: VoiceStatus): Line[] {
   return lines
 }
 
-/** `ask` alone: where the local model server is, the model chosen, and what the server says it has. */
+/** `ask` alone: the provider, where its server is, the model chosen, and what the server says it has. */
 function mindLines(m: MindStatus): Line[] {
-  const lines = [out(row('server', `${m.server}  (this machine only)`)), out(row('model', m.model ?? 'none chosen: ask model <name>'))]
+  const network = m.provider === 'claude'
+  const lines: Line[] = []
+  if (m.provider !== undefined) {
+    lines.push(out(row('provider', network ? 'claude: the Claude API over the network (ask provider ollama|llamacpp for a model on this machine)' : `${m.provider}: a model server on this machine (ask provider claude for the Claude API)`)))
+  }
+  lines.push(out(row('server', network ? m.server : `${m.server}  (this machine only)`)), out(row('model', m.model ?? 'none chosen: ask model <name>')))
+  if (network) {
+    lines.push(out(row('key', m.key ? `${m.key}  (kept in this browser only)` : 'none set: ask key <key>')))
+    lines.push(out(row('effort', m.effort ?? "the model's default (ask effort low|medium|high|xhigh|max)")))
+  }
   if (m.api !== undefined) lines.push(out(row('api', m.api === 'chat' ? 'chat: /v1/chat/completions (ask api generate for /api/generate)' : `${m.api}: /api/generate (ask api chat for /v1/chat/completions)`)))
   if (m.think !== undefined) lines.push(out(row('think', m.api === 'chat' ? 'not sent in the chat format: the server decides' : m.think ? 'on: it reasons before it answers' : 'off: it answers without reasoning first (ask think on)')))
-  if (m.installed === null) return [...lines, err(`ask: ${m.error ?? 'the local model server did not answer'}`)]
+  if (m.installed === null) return [...lines, err(`ask: ${m.error ?? (network ? 'the Claude API did not answer' : 'the local model server did not answer')}`)]
   if (!m.installed.length) return [...lines, out(row('installed', 'no models'))]
   lines.push(...m.installed.map((name, i) => out(row(i === 0 ? 'installed' : '', name === m.model ? `${name}  (chosen)` : name))))
   if (m.model === null) lines.push(sys('choose one that writes text: ask model <name>'))
@@ -639,11 +653,12 @@ const HANDLERS: Record<Name, Handler> = {
     const rest = args[0] ?? ''
     if (!rest) return { lines: [], pending: Promise.resolve(op.askStatus()).then(mindLines, (e: unknown): Line[] => [err(`ask: ${message(e)}`)]) }
     if (rest === 'stop') return { lines: [out(`ask: ${op.askStop()}`)] }
-    const set = /^(model|server|think|api)(?:\s+([\s\S]*))?$/.exec(rest)
+    const set = /^(model|server|think|api|provider|key|effort)(?:\s+([\s\S]*))?$/.exec(rest)
     if (set) {
-      const key = set[1] as 'model' | 'server' | 'think' | 'api'
+      const key = set[1] as 'model' | 'server' | 'think' | 'api' | 'provider' | 'key' | 'effort'
       const value = (set[2] ?? '').trim()
-      if (!value) return fail(`usage: ask ${key} <${key === 'model' ? 'name' : key === 'server' ? 'url' : key === 'api' ? 'generate|chat' : 'on|off'}>`)
+      const takes = { model: 'name', server: 'url', api: 'generate|chat', think: 'on|off', provider: 'claude|ollama|llamacpp', key: 'key|none', effort: 'low|medium|high|xhigh|max|none' }[key]
+      if (!value) return fail(`usage: ask ${key} <${takes}>`)
       return { lines: [out(row(key, op.askSet(key, value)))] }
     }
     const intent = runIntent(rest)

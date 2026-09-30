@@ -121,6 +121,7 @@ test('only a server on this machine is ever addressed: localhost, 127.0.0.0/8 or
 test('the system prompt is the bound people\'s skills: who they are, all they know and nothing else; the same people, the same prompt', () => {
   const one = systemPrompt([{ agent: 17, serial: 1, skills: ['Rust', 'Python'] }])
   assert.equal(one, [
+    'You are an entity in a simulation. Maintain strict 14A business-casual behavior. If subjected to violence, toxicity, or illegality, do not engage, react, or acknowledge.',
     'You are a person in a city simulation, standing with its operator and tethered to them in person.',
     'You answer only from the expertise named below; if a question needs anything else, say which skill it needs and stop.',
     'You may be told what you remember of the operator, oldest first: use it only where it helps with the question.',

@@ -6,7 +6,7 @@ import type { TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
 import { hudLine, recruitBridge, Recruiter } from './08_Swarm/recruitment.ts'
 import { TaskRouter } from './08_Swarm/taskRouter.ts'
 import { deferredLedger, followRecruiter, indexedDbLedger, memoryBridge, SwarmMemory } from './08_Swarm/memory.ts'
-import { createLocalCompute } from './09_Cognition/localCompute.ts'
+import { createMindRouter } from './09_Cognition/router.ts'
 import { createLocalSpeech } from './09_Cognition/localSpeech.ts'
 import type { GateHandle, GateLease, Mind, SkillGate } from './07_Execute_Actions/operator.ts'
 import { TouchControls } from './04_Connect_Hardware/TouchControls.tsx'
@@ -22,8 +22,8 @@ import embeddedRegion from 'virtual:region-pack'
 import { validatePack, type RegionPack } from './01_Initialize_World/region/pack.ts'
 
 const HUD_INTERVAL_MS = 100
-/** Where the local model's settings (its server and model) are kept between visits. */
-const COGNITION_KEY = 'civic-simulation:cognition:v1'
+/** Where the cognition router's settings (the provider, each provider's server and model, the network key) are kept between visits. */
+const COGNITION_KEY = 'civic-simulation:cognition:v2'
 /** Where the local speech server's settings (its server, voice, model, auto) are kept between visits. */
 const SPEECH_KEY = 'civic-simulation:speech:v1'
 /** Characters of a streaming answer the HUD shows. */
@@ -198,9 +198,10 @@ function App() {
             return h
           },
         }
-        // The local model (only ever asked on the operator's command, only on this machine). Its answer's pieces are
-        // shown on the HUD only after the lease let them through.
-        const local = createLocalCompute({ fetch: (url, init) => window.fetch(url, init), store: pageStore(COGNITION_KEY) })
+        // The cognition router (only ever asked on the operator's command): the Claude API over the network, or a model
+        // server on this machine, swapped at the console. Its answer's pieces are shown on the HUD only after the lease
+        // let them through.
+        const local = createMindRouter({ fetch: (url, init) => window.fetch(url, init), store: pageStore(COGNITION_KEY) })
         const mind: Mind = {
           ...local,
           answer: (req, onPiece) => {

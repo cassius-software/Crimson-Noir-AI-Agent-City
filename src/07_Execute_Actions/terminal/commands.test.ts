@@ -78,7 +78,7 @@ interface FakeOp extends OperatorBridge {
   gate: 'open' | 'reject' | 'abort'
   /** How an `ask` ends: answered, rejected, cut off by the tether, the server failing, all thinking, the token limit. */
   answer: 'ok' | 'reject' | 'abort' | 'fail' | 'thinking' | 'length'
-  mind: { server: string; model: string | null; think?: boolean; api?: string }
+  mind: { server: string; model: string | null; think?: boolean; api?: string; provider?: string; key?: string | null; effort?: string }
   /** How a `say` ends: said, rejected, cut off by the tether, the server failing, the operator's stop. */
   speech: 'ok' | 'reject' | 'abort' | 'fail' | 'stopped'
   /** The ask's answer is said aloud as well (say auto on): how that ends. */
@@ -368,7 +368,7 @@ test('help lists every command with usage, in two groups; help <cmd> explains on
   assert.match(all, /hal \[pair hid\|serial\|ble\]/)
   assert.match(all, /operator \[unlock\|lock\|status\]/)
   assert.match(all, /run <skill>\[,<skill>\.\.\.\]: <js\.\.\.>/)
-  assert.match(all, /ask \[<skill>\[,<skill>\.\.\.\]: <prompt\.\.\.>\|model <name>\|server <url>\|think on\|off\|api <format>\|stop\]/)
+  assert.match(all, /ask \[<skill>\[,<skill>\.\.\.\]: <prompt\.\.\.>\|provider <name>\|model <name>\|server <url>\|key <key>\|effort <level>\|think on\|off\|api <format>\|stop\]/)
   assert.match(all, /harness \[list\|run <name>\]/)
   assert.match(all, /record \[start \[canvas\|camera\]\|stop\|status\]/)
   assert.match(all, /recruit \[<skill>\|listen\|stop\|install\|dismiss\]/)
@@ -892,7 +892,7 @@ test('ask: alone it reports the server, the model and what the server has; model
   assert.deepEqual(texts(run('ask think', b, [])), ['usage: ask think <on|off>'])
   for (const line of ['ask how does grip work?', 'ask 42: hi', 'ask "a: b"']) {
     const no = run(line, b, [])
-    assert.deepEqual(texts(no), ['ask: name the skill the answer needs first, e.g. ask rust: how does car.grip work?', 'usage: ask [<skill>[,<skill>...]: <prompt...>|model <name>|server <url>|think on|off|api <format>|stop]'], line)
+    assert.deepEqual(texts(no), ['ask: name the skill the answer needs first, e.g. ask rust: how does car.grip work?', 'usage: ask [<skill>[,<skill>...]: <prompt...>|provider <name>|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|stop]'], line)
     assert.equal(no.pending, undefined, line)
   }
   assert.ok(isErr(run('ask rust:', b, [])))
@@ -1224,8 +1224,10 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.deepEqual(complete('run rust: s'), [])
   assert.deepEqual(complete('api si'), ['api signal'])
   assert.deepEqual(complete('ask s'), ['ask security:', 'ask server', 'ask shaders:', 'ask stop'])
-  assert.equal(complete('ask ').length, SKILL_ARGS.length + 5)
+  assert.equal(complete('ask ').length, SKILL_ARGS.length + 8)
   assert.deepEqual(complete('ask m'), ['ask model'])
+  assert.deepEqual(complete('ask provider '), ['ask provider claude', 'ask provider llamacpp', 'ask provider ollama'])
+  assert.deepEqual(complete('ask effort m'), ['ask effort max', 'ask effort medium'])
   assert.deepEqual(complete('ask think '), ['ask think off', 'ask think on'])
   assert.deepEqual(complete('ask think o'), ['ask think off', 'ask think on'])
   assert.deepEqual(complete('ask api '), ['ask api chat', 'ask api generate'])

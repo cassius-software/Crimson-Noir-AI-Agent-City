@@ -65,8 +65,12 @@ export interface OperatorBridge {
   ask(skills: readonly string[], prompt: string): GatedAsk
   /** The local model server's address and model, and (asking the server, on this call only) the models it has. */
   askStatus(): Promise<MindStatus>
-  /** Chooses the model or the server's address (this machine only), or turns thinking on or off; returns the new value. Throws on a bad one. */
-  askSet(key: 'model' | 'server' | 'think' | 'api', value: string): string
+  /**
+   * Chooses the model, the server's address, the wire format, the provider (09_Cognition/router.ts: claude over the
+   * network, or ollama or llamacpp on this machine), the network provider's key or effort, or turns thinking on or
+   * off; returns the new value. Throws on a bad one.
+   */
+  askSet(key: 'model' | 'server' | 'think' | 'api' | 'provider' | 'key' | 'effort', value: string): string
   /** Stops the answer being generated, if any (the operator's own stop); returns what it did. */
   askStop(): string
   /**

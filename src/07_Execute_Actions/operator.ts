@@ -15,6 +15,7 @@
  * What breaks if it is removed? `operator`, `run`, `ask`, `say`, `api`, `get`, `set` and `harness` have nothing
  * behind them, and the engine has no contract to implement.
  */
+import { DISENGAGED, disengaged, screen } from '../02_Define_The_Rules/conduct.ts'
 import type { CrowdStats } from '../03_Spawn_Agents/crowdCompute.ts'
 import type { KernelStats, QualityState, SipocSnapshot } from '../05_Observe_Environment/telemetry.ts'
 import type { OperatorBridge } from './terminal/bridge.ts'
@@ -146,15 +147,22 @@ export interface Answer {
 export interface Mind {
   /**
    * `think`: the model reasons before it answers (absent: the server's own default). `api`: the wire format the server
-   * is spoken to in (absent: the mind has one only).
+   * is spoken to in (absent: the mind has one only). `provider`: which model provider answers (absent: the mind has one
+   * only); `key`: the network provider's key, masked (null: none set); `effort`: how hard it works (absent: its default).
    */
-  settings(): { server: string; model: string | null; think?: boolean; api?: string }
+  settings(): { server: string; model: string | null; think?: boolean; api?: string; provider?: string; key?: string | null; effort?: string }
   setServer(url: string): string
   setModel(name: string): string
   /** Whether the model reasons before it answers; returns the new value. Absent: the mind has no such switch. */
   setThink?(on: boolean): boolean
   /** The wire format (09_Cognition/localCompute.ts WireFormat); returns the new one. Absent: the mind has one only. */
   setApi?(format: string): string
+  /** The provider that answers (09_Cognition/router.ts Provider); returns the new one. Absent: the mind has one only. */
+  setProvider?(name: string): string
+  /** The network provider's key (empty clears it); returns it masked. Absent: no provider takes a key. */
+  setKey?(key: string): string | null
+  /** The network provider's effort (empty clears it); returns it. Absent: no provider takes one. */
+  setEffort?(level: string): string | null
   installed(signal?: AbortSignal): Promise<string[]>
   answer(req: { tethers: readonly GateTether[]; prompt: string; signal: AbortSignal; memories?: readonly Memories[] }, onPiece: (p: Piece) => void): Promise<Answer>
 }
@@ -233,6 +241,8 @@ export interface SayResult {
   /** Authorized, but not spoken to the end: why (the speech server, the soundscape, or the operator's stop). */
   readonly error?: string
   readonly stopped?: true
+  /** Authorized, but not said at all: the 14A screen (02_Define_The_Rules/conduct.ts) found the text inadmissible. */
+  readonly silent?: true
   readonly ms: number
 }
 
@@ -277,6 +287,8 @@ export interface AskResult {
   /** Authorized and answered: why the model stopped ('stop', or 'length' at the token limit), and its tokens. */
   readonly done?: string
   readonly tokens?: number
+  /** Authorized, but the agent did not engage (the 14A screen, or the model's own refusal): no reply. */
+  readonly disengaged?: true
   readonly ms: number
 }
 
@@ -298,6 +310,10 @@ export interface MindStatus {
   readonly think?: boolean
   /** The wire format the server is spoken to in (absent: the mind has one only). */
   readonly api?: string
+  /** The provider that answers (absent: the mind has one only); the network provider's key, masked; its effort. */
+  readonly provider?: string
+  readonly key?: string | null
+  readonly effort?: string
   readonly installed: readonly string[] | null
   readonly error?: string
 }
@@ -575,7 +591,9 @@ export function gatedAsk(gate: SkillGate, mind: Mind, skills: readonly string[],
   let thinking = 0
   const remembered = (bound: readonly GateTether[]): Memories[] =>
     diary ? bound.map((t) => ({ agent: t.agent, lines: [...diary.recall(t.agent)] })).filter((m) => m.lines.length > 0) : []
-  const handle = gate.submit(skills, (lease) => mind.answer(
+  // 14A: an inadmissible prompt (violence, toxicity, illegality) is not engaged with: it reaches no model, whichever
+  // provider answers, nothing streams, and the answer is nothing at once.
+  const handle = gate.submit(skills, (lease) => screen(prompt).admissible ? mind.answer(
     { tethers: lease.bound, prompt, signal: AbortSignal.any([lease.signal, stopper.signal]), memories: remembered(lease.bound) },
     (p) => lease.use(() => {
       if (p.kind === 'text') text += p.text
@@ -588,11 +606,14 @@ export function gatedAsk(gate: SkillGate, mind: Mind, skills: readonly string[],
         }
       }
     }),
-  ))
+  ) : Promise.resolve(DISENGAGED))
   const result = handle.verdict.then((v): AskResult => {
     const ms = now() - t0
     if (v.state !== 'Authorized') return { state: v.state, text, thinking, reason: v.message, ms }
-    if (v.outcome.ok) return { state: 'Authorized', text, thinking, done: v.outcome.value.reason, tokens: v.outcome.value.tokens, ms }
+    if (v.outcome.ok) {
+      const { reason, tokens } = v.outcome.value
+      return { state: 'Authorized', text, thinking, done: reason, tokens, ms, ...(disengaged(reason) && { disengaged: true as const }) }
+    }
     if (stopper.signal.aborted) return { state: 'Authorized', text, thinking, error: 'stopped by the operator', stopped: true, ms }
     const e = v.outcome.error
     return { state: 'Authorized', text, thinking, error: e instanceof Error ? e.message : String(e), ms }
@@ -631,7 +652,13 @@ export function gatedSay(gate: SkillGate, voice: Voice, out: SpeechOut, skills: 
   const stopper = new AbortController()
   const t0 = now()
   let seconds: number | undefined
+  let silent = false
   const handle = gate.submit(skills, async (lease) => {
+    // 14A: an inadmissible line is not said: it reaches no speech server, and the speaker stays silent.
+    if (!screen(text).admissible) {
+      silent = true
+      return lease.bound[0]
+    }
     const signal = AbortSignal.any([lease.signal, stopper.signal])
     const bytes = await voice.synthesize(text, signal)
     signal.throwIfAborted()
@@ -656,7 +683,7 @@ export function gatedSay(gate: SkillGate, voice: Voice, out: SpeechOut, skills: 
   const result = handle.verdict.then((v): SayResult => {
     const ms = now() - t0
     if (v.state !== 'Authorized') return { state: v.state, reason: v.message, ms, ...(seconds !== undefined && { seconds }) }
-    if (v.outcome.ok) return { state: 'Authorized', speaker: v.outcome.value, ms, ...(seconds !== undefined && { seconds }) }
+    if (v.outcome.ok) return { state: 'Authorized', speaker: v.outcome.value, ms, ...(seconds !== undefined && { seconds }), ...(silent && { silent: true as const }) }
     if (stopper.signal.aborted) return { state: 'Authorized', error: 'stopped by the operator', stopped: true, ms }
     return { state: 'Authorized', error: describeError(v.outcome.error), ms }
   })
@@ -811,7 +838,8 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
         void a.result.then(() => { if (asking === a) asking = null })
       }
       const result = a.result.then((r): AskResult => {
-        diary?.note(a.bound, 'ask', asNamed(skills, a.bound), `${words.split('\n')[0]} → ${r.text}`, r.state, began)
+        // A prompt the agent did not engage with is not acknowledged: nothing of it is remembered either.
+        if (!disengaged(r.done)) diary?.note(a.bound, 'ask', asNamed(skills, a.bound), `${words.split('\n')[0]} → ${r.text}`, r.state, began)
         // Said aloud as well (say auto on): a whole answer, through the gate again, while nothing else is being said.
         const v = voice?.settings()
         if (r.state !== 'Authorized' || r.error !== undefined || !r.text.trim() || !v?.auto || v.voice === null || !speech || saying) return r
@@ -822,17 +850,34 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
     },
     askStatus: (): Promise<MindStatus> => {
       if (!unlocked) throw locked('ask')
-      const { server, model, think, api } = mind.settings()
-      const base = { server, model, ...(think !== undefined && { think }), ...(api !== undefined && { api }) }
+      const { server, model, think, api, provider, key, effort } = mind.settings()
+      const base = {
+        server, model, ...(think !== undefined && { think }), ...(api !== undefined && { api }),
+        ...(provider !== undefined && { provider }), ...(key !== undefined && { key }), ...(effort !== undefined && { effort }),
+      }
       return mind.installed().then(
         (installed) => ({ ...base, installed }),
         (e: unknown) => ({ ...base, installed: null, error: text(e) }),
       )
     },
-    askSet: (key: 'model' | 'server' | 'think' | 'api', value: string): string => {
+    askSet: (key: 'model' | 'server' | 'think' | 'api' | 'provider' | 'key' | 'effort', value: string): string => {
       if (!unlocked) throw locked('ask')
       if (key === 'model') return mind.setModel(value)
       if (key === 'server') return mind.setServer(value)
+      if (key === 'provider') {
+        if (!mind.setProvider) throw new Error('this page has one model provider only')
+        const p = mind.setProvider(value)
+        return p === 'claude' ? 'claude: the Claude API over the network (ask key <key> to set the key)' : p === 'ollama' ? 'ollama: a model server on this machine (the Ollama API)' : `${p}: a packaged model under a llama.cpp server on this machine`
+      }
+      if (key === 'key') {
+        if (!mind.setKey) throw new Error('no provider on this page takes a key')
+        const masked = mind.setKey(value === 'none' ? '' : value)
+        return masked === null ? 'none: cleared' : `${masked}: kept in this browser only`
+      }
+      if (key === 'effort') {
+        if (!mind.setEffort) throw new Error('no provider on this page takes an effort')
+        return mind.setEffort(value === 'none' ? '' : value) ?? "none: the provider's own default"
+      }
       if (key === 'think') {
         if (value !== 'on' && value !== 'off') throw new TypeError('ask think takes on or off')
         if (!mind.setThink) throw new Error('this model server has no think switch')
@@ -843,7 +888,7 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
         const api = mind.setApi(value)
         return api === 'chat' ? 'chat: /v1/chat/completions (the chat-completions format most local servers speak)' : `${api}: /api/generate (the default)`
       }
-      throw new TypeError(`nothing to set called '${String(key)}': model, server, think or api`)
+      throw new TypeError(`nothing to set called '${String(key)}': model, server, think, api, provider, key or effort`)
     },
     askStop: (): string => {
       if (!unlocked) throw locked('ask')
