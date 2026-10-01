@@ -1,11 +1,11 @@
 # Agent City v1.0 Stable Beta: architecture blueprint
 
-Status: **blueprint of the beta as built**, at version 1.4.0-beta.1 (commit `f5b8399`, 2026-10-01, branch
-`claude/quirky-faraday-xkpdln`). It records what the operator's directive for Phases 7 to 10 asked, what was built
+Status: **blueprint of the beta as built**, at version 1.4.0-beta.1 (commits `f5b8399` to `bd700b8`, 2026-10-01,
+branch `claude/quirky-faraday-xkpdln`). It records what the operator's directive for Phases 7 to 10 asked, what was built
 for each item, where that logic runs, what is proved and by which test, where the build deviates from the
 directive's wording and why, and what is still being wired. The README is the product's documentation of the shipped
 state; this document is the plan behind it. File paths are relative to `src/` unless they name a tool or a config
-file. Test names are quoted as the suites print them.
+file. Test names are quoted as the suites print them, cut with an ellipsis where they run long.
 
 Where an item's page-side wiring was still in progress when this was written, the design is described as decided and
 marked **wiring in progress; see README for the shipped state**.
@@ -16,17 +16,16 @@ marked **wiring in progress; see README for the shipped state**.
 
 - Every item of the directive (7.1 to 10.2) has a module in the tree, under its causal stage, with a Node test
   suite of its own. `npm test` at this commit runs 986 tests and passes all of them (42 s, real Rapier included).
-- Everything that lives in the physics realm is wired and shipped: cars pass through cars (7.1), the fleet drives
-  the fixed track network and the craft stream crosses the realm boundary (7.3), the rally request (8.4, realm
-  half), and up to four avatars with their per-player kernel guarantees (10.1, realm half). The 14A conduct core and
-  screen (8.2) and the cognition router with the Claude provider (8.3) are wired on the page and in the console.
-- The page-side wiring of the remaining items is designed, decided in the completeness critique, and in progress:
-  the dissolve's attributes and engine hooks (7.2), the soundscape's rooms (8.1), captions and the ping binding
-  (8.4), the look attribute and the customizer card (9.1), the render guard and the bare boot (9.2), seats,
-  viewports and listeners on the page (10.1), and the console's network verb (10.2).
-- "Stable" is a claim about the laws, not the feature count: every product law below is pinned by a test, and no
-  phase loosened one. Where a law had to be amended (recruitment can now point a recruit at a sidewalk spot), the
-  amendment is named in this document and will be named in the README.
+- Everything that lives in the physics realm is wired and shipped: cars pass through cars (7.1), the fleet on the
+  fixed tracks and the craft stream (7.3), the rally request (8.4) and four avatars under the kernel (10.1). The
+  14A core and screen (8.2) and the cognition router (8.3) are wired on the page and in the console, and so is the
+  code dissolve (7.2, commit `bd700b8`).
+- The page-side wiring of the rest is designed, decided in the completeness critique, and in progress: the
+  soundscape's rooms (8.1), captions and the ping binding (8.4), the look attribute and the customizer (9.1), the
+  render guard and the bare boot (9.2), seats, viewports and listeners (10.1), the console's network verb (10.2).
+- "Stable" is a claim about the laws, not the feature count: every law below is pinned by a test and no phase
+  loosened one. The one amendment (recruitment can point a recruit at a sidewalk spot) is named here and is owed to
+  the README.
 
 ### The dual track
 
@@ -34,10 +33,10 @@ The directive's Phase 9 names two front ends. The beta treats them as two ways i
 
 - **Track A, the photorealistic GUI.** The WebGPU page: the city, the crowd, the cinema camera, the HUD, first
   person on foot or at the wheel. Phases 7.2, 8.1, 8.4 (captions, the ping marker), 9.1 and 10.1 are Track A work.
-- **Track B, the Ring-0 terminal.** The console at `~`: air-gapped from the engine, frozen `TerminalBridge`, the
-  operator tier behind `operator unlock`. Phase 9.2 gives it a language of its own (R0, `terminal/repl.ts`) and,
-  in the wiring, a `render off` guard and a `?boot=tty` shell with no engine at all. Phases 8.2, 8.3 and 10.2 reach
-  the product only through this track (`ask provider`, the planned `net join`).
+- **Track B, the Ring-0 terminal.** The console at `~`: air-gapped from the engine, a frozen `TerminalBridge`, the
+  operator tier behind `operator unlock`. Phase 9.2 gives it a language of its own (R0, `terminal/repl.ts`) and, in
+  the wiring, a `render off` guard and a `?boot=tty` shell with no engine at all. Phases 8.2, 8.3 and 10.2 reach the
+  product only through this track (`ask provider`, the planned `net join`).
 
 Both tracks talk to the physics worker through the same door (`simHost.ts`) with the same plain numbers. Neither
 can reach a body, a pedestrian, a law or the audit.
@@ -59,13 +58,13 @@ can reach a body, a pedestrian, a law or the audit.
 
 | Stage | Added or changed in this beta | Role in the beta |
 |---|---|---|
-| 01_Initialize_World | `codeDissolve.ts` (+ test) | The TSL helper that dissolves any `MeshStandardNodeMaterial` into falling green binary code (7.2) |
+| 01_Initialize_World | `codeDissolve.ts` (+ test); `world.ts` gives the props a `dissolve` attribute | The TSL helper that dissolves any `MeshStandardNodeMaterial` into falling green binary code (7.2) |
 | 02_Define_The_Rules | `collision.ts`, `conduct.ts` (+ tests); `ring0.ts` gains `CRAFT`, `auditCraft`, `OFF_CORRIDOR` | The contact policy and group bits (7.1); the 14A core and screen (8.2); the craft corridor check (7.3) |
-| 03_Spawn_Agents | `look.ts` (+ test); `skills.ts` gains `RALLY_RANGE`, `whyNotRally` (`skillsRally.test.ts`) | The business-casual wardrobe and the packed look word (9.1); the rally rule both realms share (8.4) |
+| 03_Spawn_Agents | `look.ts` (+ test); `skills.ts` gains `RALLY_RANGE`, `whyNotRally` (`skillsRally.test.ts`); `crowd.ts` carries `crowd.dissolve` | The business-casual wardrobe and the packed look word (9.1); the rally rule both realms share (8.4); the crowd's dissolve amounts (7.2) |
 | 04_Connect_Hardware | `seats.ts` (+ test) | The seating plan for four local players and the per-seat pad intent (10.1) |
-| 05_Observe_Environment | nothing yet | The snapshot fields the wirings will add (`output.dissolve`, `pings`, `captions`, `rendering`, `players`) are pending, all optional |
+| 05_Observe_Environment | `telemetry.ts` gains the optional `output.dissolve` | The snapshot fields the other wirings will add (`pings`, `captions`, `rendering`, `players`) are pending, all optional |
 | 06_Make_Decisions | `tracks.ts`, `trackDriver.ts` (+ tests); `traffic.ts` gains `DriverLike`, `HazardEpisode` | The fixed track network and its follower (7.3); the hazard episode shared by both drivers |
-| 07_Execute_Actions | `trackFleet.ts`, `dissolve.ts`, `acoustics.ts`, `captions.ts`, `controls.ts`, `viewports.ts`, `terminal/repl.ts` (+ tests); `contact.ts` gains the identity scans; `head.ts` gains `aimRay`; `simProtocol.ts`, `simCore.ts`, `simHost.ts`, `simClient.ts` carry `tracks`, the craft stream, `spawns`, `players`, `rally`; `vehicles.ts` carries the groups, the network and `setPeople`; `engine.ts` passes `tracks` and forwards `rally`; `vehiclePassThrough.test.ts`, `simPlayers.test.ts` | The scheduled craft (7.3); the dissolve's amounts (7.2); room acoustics (8.1); the caption track (8.4); per-seat controls and split-screen arithmetic (10.1); R0 (9.2); the realm's four avatars and the rally (10.1, 8.4) |
+| 07_Execute_Actions | `trackFleet.ts`, `dissolve.ts`, `acoustics.ts`, `captions.ts`, `controls.ts`, `viewports.ts`, `terminal/repl.ts` (+ tests); `contact.ts` gains the identity scans; `head.ts` gains `aimRay`; `simProtocol.ts`, `simCore.ts`, `simHost.ts`, `simClient.ts` carry `tracks`, the craft stream, `spawns`, `players`, `rally`; `vehicles.ts` carries the groups, the network and `setPeople`; `engine.ts` passes `tracks`, forwards `rally` and runs the dissolve; `fleetView.ts` carries the cars' amounts; `vehiclePassThrough.test.ts`, `simPlayers.test.ts`, `dissolveWiring.test.ts` | The scheduled craft (7.3); the dissolve's amounts (7.2); room acoustics (8.1); the caption track (8.4); per-seat controls and split-screen arithmetic (10.1); R0 (9.2); the realm's four avatars and the rally (10.1, 8.4) |
 | 08_Swarm | `ping.ts` (+ test); `recruitment.ts` gains `Recruiter.rally` | The pick, the ping board and the rally plan (8.4) |
 | 09_Cognition | `claudeApi.ts`, `router.ts` (+ tests); `localCompute.ts` opens every prompt with the core | The hot-swap router and the Claude provider (8.3) |
 | 10_Network | `replication.ts`, `replication.node.ts`, `netClient.ts`, `airgap.test.ts`; `package.json` `serve:net`; the tsconfig split | The replication scaffold: protocol core, Node host, opt-in page client (10.2) |
@@ -91,12 +90,11 @@ to disable; `combat: false` is policy wording.
 passes through a parked car on its line as over open ground: no contact, no speed change, the parked car unmoved"
 (same line within 0.05 m, same speed within 0.05 m/s, the parked car moves under 1 mm), "the wheel rays never lift a
 car onto the car it passes through" (never more than 0.02 m), "a wall still stops a car, and the ground still carries
-the wheels at ride height", "the avatar still stops at a parked car's face", and "every chassis carries the
-collision groups collision.ts derives; the wheel rays accept theirs". `collision.test.ts` (pure) is the structural
-guard: "the ragdoll stays unwired: no runtime file outside its two sources imports or names it", "a vehicle is not a
-cause the ragdoll accepts", and "the group arithmetic: Rapier packing, the reserved ragdoll bit read from
-ragdollRig.ts, disjoint bits". The Sanctuary's engine-order test in `sanctuary.test.ts` is the people-and-cars
-regression and still passes.
+the wheels at ride height", "the avatar still stops at a parked car's face", "every chassis carries the collision
+groups collision.ts derives; the wheel rays accept theirs". `collision.test.ts` (pure) is the structural guard: "the
+ragdoll stays unwired: no runtime file outside its two sources imports or names it", "a vehicle is not a cause the
+ragdoll accepts", "the group arithmetic: Rapier packing, the reserved ragdoll bit read from ragdollRig.ts, disjoint
+bits". The Sanctuary's engine-order test in `sanctuary.test.ts` is the people-and-cars regression and still passes.
 
 **Deliberate deviations.** Contact is disabled with collision groups, not by removing meshes. The chassis collider
 stays: CCD stays on, the body and collider counts are unchanged, ghost view still draws it, the avatar still stops at
@@ -106,8 +104,8 @@ to the world; only the car-to-car pair is dropped, in the broad phase. The `ragd
 runtime file allowed to name the word, and `collision.test.ts` exempts exactly that file.
 
 **Shipped.** Fully. **Next:** the README's "Vehicles: Collisions" bullet and "Ghost-mode collision: What stays
-solid" still say cars are solid to each other; the dissolve (7.2) has not decided whether two cars overlapping at a
-corner apex should dissolve one another.
+solid" still say cars are solid to each other. Two cars overlapping at a corner apex now dissolve one another (7.2,
+`carsOverlapping`), so the overlap is never seen.
 
 ### 7.2 The code dissolve
 
@@ -129,16 +127,14 @@ by `DISSOLVE.reach` (0.25 m) so a mesh is gone before the near plane clips it. E
 view-only: nothing reaches the physics realm, no pedestrian moves, no pole stops anyone.
 
 **Guarantees, and the tests that prove them.** `codeDissolve.test.ts`: "builds without a renderer on a bare material
-and returns it: position, mask, colour and emissive set, roughness and metalness untouched", "an existing mask is
-kept and ANDed; an existing position node is kept under the fold; positionPrevious folds only with motion vectors",
-"the look: an alphabet of exactly two glyphs, a 0 and a 1, from strokes on the unit box; a top-down fold threshold".
+and returns it ...", "an existing mask is kept and ANDed; an existing position node is kept under the fold;
+positionPrevious folds only with motion vectors", "the look: an alphabet of exactly two glyphs, a 0 and a 1 ...".
 `dissolve.test.ts`: "the envelope: at 1 the frame it is touched, down to exactly 0 over release, held while touched",
-"count: once per passage; a new passage after a release counts again", "buffers: only the touched slots are written,
-the dirty range covers exactly them, clean() clears it", and the scans checked against a brute force over the real
-city ("PoleIndex.within: exactly the poles a brute force over the real city finds the disc inside, for thousands of
-probes", "peopleWithin: every body the disc is inside, never row 0, never a hidden row", "carsWithin: every car whose
-footprint holds the disc; the driven car is skipped"). `contact.test.ts`'s pinned signatures are unchanged; the scans
-are additions.
+"count: once per passage ...", "buffers: only the touched slots are written, the dirty range covers exactly them,
+clean() clears it", and each scan checked against a brute force over the real city for thousands of probes
+("PoleIndex.within ...", "peopleWithin: every body the disc is inside, never row 0, never a hidden row ...",
+"carsWithin: every car whose footprint holds the disc; the driven car is skipped ..."). `contact.test.ts`'s pinned
+signatures are unchanged; the scans are additions.
 
 **Deliberate deviations.** The dissolve is per mesh, in the mesh's own material, not a post pass: while nothing
 dissolves the materials draw exactly as before and the cinema camera's velocity buffer is untouched. The driven car
@@ -147,12 +143,20 @@ drops through the material's mask, not through a discard in the colour node, bec
 shadow pass. The helper lives at stage 01 because `world.ts` (stage 01) must import it and imports point downward
 only. A tree's collider is its trunk, so on foot only the trunk triggers its dissolve.
 
-**Scaffolded.** The page wiring is designed call by call and **in progress; see README for the shipped state**: a
-`dissolve` instanced attribute on the lamp, tree and signal geometries in `world.ts`, on the body and wheel
-geometries in `fleetView.ts`, a `crowd.dissolve` storage attribute in `crowd.ts`; the scans in `Engine.received()`
-(people, before the crowd upload, as `contact.test.ts` pins the order) and `Engine.frame()` (poles and cars, after the
-contact pulse); the uploads in `present()`; `output.dissolve` in the snapshot. The compiled WGSL look (fold, cells,
-glyphs, shadow drop) is verified only in a WebGPU browser.
+**Shipped.** The pure halves, and (after this document was first written) the page wiring, in commit `bd700b8`: a
+`dissolve` instanced attribute on the lamp, tree and signal geometries in `world.ts` and on the body and wheel
+geometries in `fleetView.ts` (the cabin mask kept), a `crowd.dissolve` storage attribute in `crowd.ts` read in
+`posed()`; the people gathered in `Engine.received()` before the crowd upload, poles, cars (on foot only) and people
+touched in `frame()` right after the contact pulse, untouched slots falling back on the wall clock, the amounts
+flushed in `present()` before the render, and `output.dissolve` in the snapshot. Two cars passing through each other
+(7.1) both dissolve, found from their poses alone (`carsOverlapping`), which answers 7.1's open question.
+`dissolveWiring.test.ts` pins it: "the props: a dissolve attribute on each of the three prop geometries, the helper on
+each material, never on the buildings", "the fleet: a dissolve amount per body slot and four per car for the wheels,
+the cabin mask kept under the dissolve", "the crowd: one amount per agent in a storage attribute named
+crowd.dissolve, read by every body material", "wiring: the people are gathered before the upload, the touches follow
+the contact pulse, the flush precedes the render, the snapshot reports it", "the envelope end to end: a touched car
+and its wheels flush once, fall back, and the set is clean after". **Not verified here:** the compiled WGSL look
+(fold, cells, glyphs, shadow drop) needs a WebGPU browser (see Verification).
 
 ### 7.3 Safe vehicular routing on fixed tracks
 
@@ -204,23 +208,24 @@ and every other ring's trajectory is identical to the undisturbed run (INV-4). T
 timetabled, interaction-free functions of the realm's clock on corridors that never meet the street, so they can
 neither jam nor be jammed; the Ring-0 audit halts the realm if one ever reads below its corridor's floor.
 
-**The tests behind it.** `tracks.test.ts`: "INV-1 separation: car rings never come within 4 m of each other; trains,
-drones and planes clear every box and the cars", "INV-2 and INV-3: a ring at capacity keeps every gap, holds every
-red, never speeds, and every car laps", "INV-2 under an adversarial leader: hard random braking never closes a gap
-below a metre, and no throttle needs the Third Law", "INV-4 containment: a stalled car delays only its own ring", and
-the pin that explains the ray predicate: "a bonnet ray that counted tracked cars would see the cross street's queue
-head from the apex of a right turn". `trackDriver.test.ts` repeats INV-2 to INV-4 with real `TrackDriver`s and adds
-"a recovered car rejoins its ring: set down 12 m off the track it is back in its lane inside 15 s, never over corner
-speed, then drives on". `vehicles.test.ts` (real Rapier): "a fleet on tracks spawns in headway seats on the lanes and
-follows its rings without the First or Third Law", "the rays of a car on a ring skip the cars on rings, still see a
-wall and a player's car", and the verifier's "a car set down off its ring leaves the ring's order while it steers
-back". `trackFleet.test.ts`: "two hours at 0.5 s: finite and clean for the audit, trains on the deck ... drones at
-40/46 m, planes at 400 m, sets ≥ 74 m apart", "every craft clears every building box of four seeds by its envelope".
-`ring0.test.ts`: "the craft buffer: a NaN or a train below its deck halts with a named reason; a healthy stream does
-not; a kind with no corridor halts; the layout is the protocol's". `simCore.test.ts`: "an init on tracks builds the
-fleet on the ring network inside the realm; the door passes only a true flag", "tracks on: a step returns the pose
-buffer and the craft buffer, plain data on the realm's clock", "tracks on over a surveyed region: ... no craft". A
-48-car run through the real city for 90 s showed no rulings and no stuck car.
+**The tests behind it.** `tracks.test.ts` proves the four invariants with the kinematic car model: "INV-1
+separation: car rings never come within 4 m of each other; trains, drones and planes clear every box and the cars",
+"INV-2 and INV-3: a ring at capacity keeps every gap, holds every red, never speeds, and every car laps", "INV-2
+under an adversarial leader: hard random braking never closes a gap below a metre, and no throttle needs the Third
+Law", "INV-4 containment: a stalled car delays only its own ring ...", plus the pin behind the ray predicate, "a
+bonnet ray that counted tracked cars would see the cross street's ...". `trackDriver.test.ts` repeats INV-2 to INV-4
+with real `TrackDriver`s and adds the rejoin ("a recovered car rejoins its ring: set down 12 m off the track it is
+back in its lane inside 15 s, never over corner speed, then drives on"). `vehicles.test.ts` (real Rapier): "a fleet
+on tracks spawns in headway seats on the lanes and follows its rings without the First or Third Law", "a fleet on
+tracks: the rays of a car on a ring skip the cars on rings, still see a wall and a player's ...", "a fleet on tracks:
+a car set down off its ring leaves the ring's ...". `trackFleet.test.ts`: "two hours at 0.5 s: finite and clean for
+the audit, trains on the deck ... drones at 40/46 m, planes at 400 m, sets ≥ 74 m apart, s and speed true", "every
+craft clears every building box of four seeds by its envelope (INV-1, read off the stream)". `ring0.test.ts`: "the
+craft buffer: a NaN or a train below its deck halts with a named reason; a healthy stream does not; a kind with no
+corridor halts; the layout is the protocol's". `simCore.test.ts`: "an init on tracks builds the fleet on the ring
+network inside the realm; the door passes only a true flag", "tracks on: a step returns the pose buffer and the craft
+buffer, plain data on the realm's ...", "tracks on over a surveyed region: ... no craft". A 48-car run through the
+real city for 90 s showed no rulings and no stuck car.
 
 **Deliberate deviations.**
 
@@ -244,11 +249,9 @@ buffer and the craft buffer, plain data on the realm's clock", "tracks on over a
 - *Default on.* The directive asked for guaranteed zero jams, so the page defaults to tracks; `?tracks=0` keeps the
   random path byte-identical (the draw order is pinned by a two-construction deep-equal test, and `traffic.test.ts`
   is unchanged).
-- *Smaller ones:* a 2 m right-hand drone lane rather than the centreline (opposite corridors 4 m apart); the Driver's
-  corner comparison passes at < 0.5 m (its own pure pursuit cuts its curve by 0.39 m); stops at straight-through
-  crossings too (the in-page harness measures every intersection); `TrackDriver.ringGap` is a public field written by
-  the Fleet because the box hold must read the ring gap alone; a train's speed in the stream is a central-difference
-  chord (within 0.03 m/s).
+- *Smaller ones:* a 2 m right-hand drone lane rather than the centreline; the Driver's corner comparison at < 0.5 m;
+  stops at straight-through crossings too; `TrackDriver.ringGap` a public field, because the box hold must read the
+  ring gap alone; a train's stream speed a central-difference chord (within 0.03 m/s).
 
 **Shipped.** The realm side in full. **Scaffolded:** the page-side renderer for the craft and the guideway
 (`trackView.ts`: instanced train cars, drones, planes, portals) and their audio; the stream, the layout and the audit
@@ -274,12 +277,10 @@ deterministically (no audio files: noise under an exact `exp(−6.908·t/rt60)` 
 first, unit energy), and `roomKey` buckets rooms to 5 m so it is re-rendered only when the room really changes.
 
 **Guarantees, and the tests that prove them.** `acoustics.test.ts`: "roomAt on the real city: a canyon between
-mid-block facades, a crossing at an intersection, the open on the pier", "roomAt never throws", "sabineRt60:
-monotonic in height, clamped, open at the floor", "transmissionLoss through masonry is exactly muffle(); glass is
-lighter", "eavesdrop reduces to muffle without rooms, is fainter across rooms but never silent, wetter with distance",
-"renderImpulse: deterministic, silent through the predelay, unit energy, every sample finite", "renderImpulse: the
-envelope is exp(−6.908·t/rt60), −60 dB at rt60, monotone, highs fade first", "acoustics.ts imports only city.ts and
-degrees.ts (the causal order)".
+mid-block facades, a crossing at an intersection, the open on the pier", "transmissionLoss through masonry is exactly
+muffle(); glass is lighter", "eavesdrop reduces to muffle without rooms, is fainter across rooms but never silent,
+wetter with distance", "renderImpulse: the envelope is exp(−6.908·t/rt60), −60 dB at rt60, monotone, highs fade
+first", "acoustics.ts imports only city.ts and degrees.ts (the causal order)".
 
 **Deliberate deviations.** The listener is the existing soundscape extended with rooms, not a new one. Rooms are plan
 rectangles under an open sky, so a one-sided enclosure counts as a crossing and the surveyed region (no page-side
@@ -307,7 +308,7 @@ the screen's verdict and for a model's own refusal). It is applied in three plac
 systemPrompt` opens every prompt with the core, whichever provider answers; `07_Execute_Actions/operator.ts gatedAsk`
 screens the prompt inside the gateway's lease and resolves `DISENGAGED` without calling the mind, and `gatedSay`
 screens a `say` line and does not say it; `10_Network/replication.ts` screens every player name and chat line. The
-page's console prints `-- no reply --` for a disengaged answer (`terminal/commands.ts`), and the diary does not note it
+console prints `-- no reply --` for a disengaged answer (`terminal/commands.ts`), and the diary does not note it
 (`operator.ts`).
 
 **The conduct screen's behaviour.** A prompt or a line is read as normalised text and matched on whole words, so
@@ -318,15 +319,15 @@ under the core, is the second layer. An inadmissible prompt reaches no model, st
 --` and is not remembered. An inadmissible `say` line is not said. A model's own refusal is treated the same way as a
 disengagement. The screen is applied once, in the operator tier, for every provider; the router has no lexicon.
 
-**Guarantees, and the tests that prove them.** `conduct.test.ts`: "the core is the operator's sentence, verbatim",
-"the screen refuses each category on whole words, in any case, with a suffix, inside a sentence, and names the
-phrase", "violence outranks toxicity outranks illegality when a line holds more than one", "the screen never refuses
-a skill name, an ordinary question, or a word that only contains a refused one", "every lexicon phrase is refused on
-its own", "a disengaged answer is nothing: no text, no thinking, no tokens, and its reason; a refusal counts as one
-too". `router.test.ts`: "14A over any provider: an inadmissible prompt reaches no server, streams nothing".
-`captions.test.ts`: "no caption string carries a scrubbed brand, a combat word or a phrase the 14A screen refuses".
-`replication.test.ts`: "the screen: an inadmissible name or chat line is null; an ordinary business-casual one
-survives, trimmed".
+**Guarantees, and the tests that prove them.** `conduct.test.ts`: "the core is the operator's exact text: one line,
+no trailing space, and it names all three refusals", "the screen refuses each category on whole words, in any case,
+with a suffix, inside a sentence, and names the phrase", "violence outranks toxicity outranks illegality when a line
+holds more than one", "the screen never refuses a skill name, an ordinary question, or a word that only contains a
+refused one", "a disengaged answer is nothing: no text, no thinking, no tokens, and its reason; a refusal counts as
+one too". `router.test.ts`: "14A over any provider: an inadmissible prompt reaches no server, streams nothing,
+answers "no reply" and is not remembered; a refusal by the model is the same no reply". `captions.test.ts`: "no
+caption string carries a scrubbed brand, a combat word or a phrase the 14A screen refuses". `replication.test.ts`:
+"the screen: an inadmissible name or chat line is null; an ordinary business-casual one survives, trimmed".
 
 **Deliberate deviations.** None from the wording. The lexicon is a first, deterministic layer rather than the whole
 judgement, and it says so in its header.
@@ -354,15 +355,15 @@ server`; `ask` alone reports the provider, the server, the model and the masked 
 operator tier.
 
 **Guarantees, and the tests that prove them.** `claudeApi.test.ts`: "the provider speaks only https (any host) or
-plain http to a loopback gateway, with no credentials; the API is the default", "a key is shown masked", "the request
-is the one the API takes: headers, streaming, the system prompt, the prompt as a user message, adaptive thinking, the
-fallback, the effort", "however the bytes arrive (every single cut, 300 seeded pairs, one byte at a time), the answer
-is the same", "every way the API can fail is one plain sentence", "the moment the signal aborts mid-answer, the answer
-rejects with its reason and nothing more arrives". `router.test.ts`: "the Claude API is the provider unless the
-operator chooses another; each provider has its own server and model", "every provider answers with the same system
-prompt, the conduct core first; the local ones only on this machine, the Claude one only over https", "from the
-console: ask provider swaps, ask key keeps the key masked". `airgap.test.ts`: "only the two opt-in clients name an
-address off this machine or a socket constructor".
+plain http to a loopback gateway, with no credentials; the API is the default", "the request is the one the API
+takes: headers, streaming, the system prompt, the prompt as a user message, adaptive thinking, the fallback, the
+effort", "however the bytes arrive (every single cut, 300 seeded pairs, one byte at a time), the answer is the same",
+"every way the API can fail is one plain sentence ...", "the moment the signal aborts mid-answer, the answer rejects
+with its reason and nothing more arrives". `router.test.ts`: "the Claude API is the provider unless the operator
+chooses another; each provider has its own server and model", "every provider answers with the same system prompt,
+the conduct core first; the local ones only on this machine, the Claude one only over https", "from the console: ask
+provider swaps, ask key keeps the key masked, ask alone reports the provider ...". `airgap.test.ts`: "only the two
+opt-in clients name an address off this machine or a socket constructor ...".
 
 **Deliberate deviations.** This item reverses the 1.3.0 ruling recorded in the README's History ("The operator chose
 to keep the air gap: any server that speaks either format can answer, as long as it is on this machine"), by the
@@ -407,18 +408,17 @@ audio."
   `↗ [car approaching] · ahead right, 30 m`. A tethered person's words are captioned verbatim.
 
 **Guarantees, and the tests that prove them.** `ping.test.ts`: "aimRay is the head forward (−sin yaw·cos pitch, sin
-pitch, −cos yaw·cos pitch)", "the nearest of overlapping candidates wins", "row 0 (the player), hidden rows, a capsule
-the eye is inside, and rows with no numbers are never picked", "the board is bounded to PING_MAX, oldest dropped",
-"RALLY_RANGE keeps a rallied recruit inside the tether measured from the operator, with the standoff and a margin",
-"rallyPlan refuses, with a reason, everything the tether and the road forbid", "pingLine is one ASCII line without
-the words the console forbids". `skillsRally.test.ts`: "the rally range sits a metre inside the tether", "a rally
-point must be finite, off the road, within range of the operator, with a sidewalk path from where they stand".
-`simCore.test.ts`: "rally: an Active recruit is pointed at a sidewalk point the realm checked itself; the summons slot
-moves to it, the tether does not", "rally: refused with a reason for a road point, a point too far, no sidewalk
-path ..., an Interviewing recruit or a stranger; malformed ones are counted", "rally: refused for a point inside a
-building lot". `captions.test.ts`: "dedupe: a continuing sound is one line, refreshed", "ordering: speech, peer, ping,
-cue, walk signal, cabin, engine, tyres, murmur", "bound: lines() never exceeds maxLines", "speech text is kept
-verbatim", "determinism: the same events in the same order give the same lines", and the vocabulary sweep.
+pitch, −cos yaw·cos pitch) ...", "row 0 (the player), hidden rows, a capsule the eye is inside, and rows with no
+numbers are never picked", "RALLY_RANGE keeps a rallied recruit inside the tether measured from the operator, with
+the standoff and a margin", "rallyPlan refuses, with a reason, everything the tether and the road forbid", "pingLine
+is one ASCII line without the words the console forbids". `skillsRally.test.ts`: "a rally point must be finite, off
+the road, within range of the operator, with a sidewalk path from where they stand". `simCore.test.ts`: "rally: an
+Active recruit is pointed at a sidewalk point the realm checked itself; the summons slot moves to it, the tether does
+not", "rally: refused with a reason for a road point, a point too far, no sidewalk path from where they stand, an
+Interviewing recruit or a stranger; malformed ones are counted", "rally: refused for a point inside a building lot
+...". `captions.test.ts`: "dedupe: a continuing sound is one line, refreshed ...", "ordering: speech, peer, ping, cue,
+walk signal, cabin, engine, tyres, murmur ...", "bound: lines() never exceeds maxLines ...", "speech text is kept
+verbatim ...", "determinism: the same events in the same order give the same lines", and the vocabulary sweep.
 
 **Deliberate deviations.** A ping is never a command to a pedestrian. The README's Recruitment law ("Recruitment is
 the one knob that reaches a pedestrian, and it can only ask") is amended, not broken: recruitment can ask, and can
@@ -458,11 +458,11 @@ eight symbols with a CRC-8 (`formatLookCode`, `parseLookCode`); `describeLook` i
 
 **Guarantees, and the tests that prove them.** `look.test.ts`: "LOOK_PALETTE is crowd.ts PALETTE verbatim: the same
 names, lengths and hex values, in order" and "the bodies, the piece bits, the grey, the hash chains and the odds are
-the crowd's" (both parsed from the source text of `crowd.ts`, the drift guard), "packLook/unpackLook round-trip every
-slot value of every body", "validateLook accepts exactly the catalogue and returns a frozen copy", "validateLook
-refuses NaN, negatives, non-integers, strings, out-of-range indices, unknown bodies, extra and missing keys",
-"lookFromSeed is deterministic, always wearable, body = seed mod 4", "parseLookCode refuses corruption: any one
-symbol changed, junk, the wrong length, and a code for an invalid word", "every preset validates".
+the crowd's ..." (both parsed from the source text of `crowd.ts`: the drift guard), "packLook/unpackLook round-trip
+every slot value of every body ...", "validateLook accepts exactly the catalogue and returns a frozen copy",
+"validateLook refuses NaN, negatives, non-integers, strings, out-of-range indices, unknown bodies, extra and missing
+keys", "parseLookCode refuses corruption: any one symbol changed, junk, the wrong length, and a code for an invalid
+word".
 
 **Deliberate deviations.** "Strictly constrained" is met by construction, not by a filter: the module ships no
 colour, piece or body of its own, so nothing stored, typed or shared can dress anyone in anything the crowd does not
@@ -496,12 +496,12 @@ definitions and memory intact and the data stack cleared. A line that fails to c
 nothing.
 
 **Guarantees, and the tests that prove them.** `repl.test.ts`: "colon definitions: recursion (fib 20 is 6765), exit,
-redefinition shadows, callers keep the old word", "control: if/else/then, begin/until, begin/while/repeat, nesting",
-"compile errors are named, nothing of the line runs, and no definition from a bad line is installed", "the step
-budget: a line that never ends stops with a named error and the machine stays usable", "deterministic: two machines
-fed the same lines print the same, step for step", "Turing-completeness witness: an interpreter for a small tape
-machine, written in R0, runs a program", "air gap: repl.ts has no import line and names no door to the host".
-`commands.test.ts` scans `repl.ts` with the other terminal sources for imports and for the words the console forbids.
+redefinition shadows, callers keep the old word, words()", "compile errors are named, nothing of the line runs, and
+no definition from a bad line is installed", "the step budget: a line that never ends stops with a named error and
+the machine stays usable", "deterministic: two machines fed the same lines print the same, step for step",
+"Turing-completeness witness: an interpreter for a small tape machine, written in R0, runs a program", "air gap:
+repl.ts has no import line and names no door to the host". `commands.test.ts` scans `repl.ts` with the other terminal
+sources for imports and for the words the console forbids.
 
 **The override, as decided.** The critique settled two competing designs into one: a `render [on|off]` knob whose
 guard sits at the top of `Engine.present()` (never inside `frame()`, because `cinema.test.ts` pins that block's text),
@@ -559,19 +559,18 @@ and a non-list `players` per step, slices `players` to three, and treats a malfo
 infinite controls are no control. `laws.ts` and `ring0.ts` are untouched; the audit invariants hold per avatar.
 
 **The tests behind it.** `simPlayers.test.ts` (real Rapier): "four avatars stand where spawned, as plain data beside
-player 0", "the Sanctuary shields the avatar a car is about to reach, and no other, without touching the car", "the
-Ring-0 audit names the person a car runs into: the Sanctuary off, sensing blinded, a car rolled at avatar 3", "one
-driver per car: player 1 takes a parked car, player 0 is refused it, and driving past a bystander is no breach", "the
-Bouncer sees the nearest of several people", "the message door: spawns checked at init, players refused or clamped,
-the state still plain", "a spawn inside a building lot starts on the sidewalk beside it", "adversarial: player 2
-drives at player 0 standing in the lane and the Bouncer holds; one car cannot be taken by two players in a step; a
-reset is refused beside a player on foot; infinite controls are no control", "adversarial: a surveyed region takes
-spawns too". `seats.test.ts`: "four players: pads fill seats 1..3 in index order, then seat 0, then wait", "a pad
-that disappears frees its seat at once", "stability: seated pads keep their seats across frames, list order and other
-pads coming and going", "PadSeat: the right stick turns the head like Input". `controls.test.ts`: "the pure mapping
-reproduces the engine's inline block" (a verbatim copy, over 2,000 intents), "NaN never leaks". `viewports.test.ts`:
-"splitScreen: one to four rects tile the canvas exactly at every size and orientation", "spectatorFor: never row 0,
-deterministic, distinct per viewport", "air gap: the module imports only the hardware stage".
+player 0 ...", "the Sanctuary shields the avatar a car is about to reach, and no other, without touching the car",
+"the Ring-0 audit names the person a car runs into: the Sanctuary off, sensing blinded, a car rolled at avatar 3",
+"one driver per car: player 1 takes a parked car, player 0 is refused it, and driving past a bystander is no breach",
+"the message door: spawns checked at init, players refused or clamped, the state still plain", "a spawn inside a
+building lot starts on the sidewalk beside it", and the two adversarial tests quoted under Verification.
+`seats.test.ts`: "four players: pads fill seats 1..3 in index order, then seat 0, then wait", "a pad that disappears
+frees its seat at once ...", "stability: seated pads keep their seats across frames, list order and other pads coming
+and going". `controls.test.ts`: "the pure mapping reproduces the engine's inline block for a table of intents, on
+foot and at the wheel" (a verbatim copy of the old block, over 2,000 intents), "NaN never leaks ...".
+`viewports.test.ts`: "splitScreen: one to four rects tile the canvas exactly at every size and orientation",
+"spectatorFor: never row 0, deterministic, distinct per viewport, and NO_SPECTATOR without a second row", "air gap:
+the module imports only the hardware stage ...".
 
 **Deliberate deviations.** Four listeners are one shared `AudioContext` with per-listener panning in head space
 (the audio owner's "Design B"), not four contexts: browsers cap concurrent contexts and the soundscape owns one. The
@@ -630,13 +629,11 @@ counted; the room stays full at LIMITS.peers", "input: integrated on the fixed t
 range; stale seq, a future ack and over-rate inputs are refused", "repeated refusals remove a peer: the limit is
 reached by malformed frames and inadmissible chat alike", "deterministic: two rooms fed the same messages on the same
 clock give the same snapshots". `replication.node.test.ts` (a real socket in Node): "tokens: signed with an expiry;
-the subject comes back only for a good, unexpired, untampered token under the same secret", "a good token joins and
-is welcomed; inputs move the pose every snapshot carries; a second peer sees it", "a bad token is refused silently;
-malformed, binary and over-rate frames count up to a kick with close code 4008", "an unmasked frame or an over-size
-frame closes the socket with the RFC code". `airgap.test.ts`: "no runtime source under src imports a .node.ts module:
-the host never enters the page", "only the two opt-in clients name an address off this machine or a socket
-constructor; the host names no address off this machine", "the replication core takes its 14A verdicts from
-conduct.ts screen, and the stage imports only what the allowlist names".
+the subject comes back only for a good, unexpired, untampered token under the same secret", "a bad token is refused
+silently; malformed, binary and over-rate frames count up to a kick with close code 4008", "an unmasked frame or an
+over-size frame closes the socket with the RFC code ...". `airgap.test.ts`: "no runtime source under src imports a
+.node.ts module ...", "only the two opt-in clients name an address off this machine or a socket constructor; the host
+names no address off this machine", "the replication core takes its 14A verdicts from conduct.ts screen ...".
 
 **Deliberate deviations.** "Standard" means a plain JSON schema over WebSocket, written like `simProtocol.ts`, with no
 third-party library: the host has no dependency, so nothing new needs a licence in the build. Remote players are
@@ -655,7 +652,8 @@ candidates), and a `netClient.test.ts` driving the client against `startHost` in
 
 **The Node suites.** `npm test` (`node --test "src/**/*.test.ts"`) at commit `f5b8399`, in this environment on
 2026-10-01: 986 tests, 986 pass, 0 fail, 0 skipped, 42 s. The count rose from 737 at 1.3.0 (README, Browser support)
-to 876 before the Phase 7 verification, 910 after it, 983 before the realm verification and 986 after it. Both
+to 876 before the Phase 7 verification, 910 after it, 983 before the realm verification and 986 after it. The 7.2
+wiring (`bd700b8`) then added `07_Execute_Actions/dissolveWiring.test.ts`: 8 tests, 8 pass. Both
 TypeScript projects type-check (`tsc -p tsconfig.app.json`, `tsc -p tsconfig.node.json`) and `oxlint` reports
 nothing, as both verifiers recorded. The suites this beta added, with the count each prints:
 
@@ -676,9 +674,9 @@ nothing, as both verifiers recorded. The suites this beta added, with the count 
 
 The rest of the increase is additions to existing suites: `ring0.test.ts` (the craft check), `simCore.test.ts`
 (tracks, craft, rally, spawns), `vehicles.test.ts` (the fleet on tracks), `recruitment.test.ts` (rally),
-`commands.test.ts` (`repl.ts` in the scanned sources), `localCompute.test.ts` (the core opens the prompt). No existing
-assertion or test body was removed; the verifiers diffed every `*.test.ts` and found only additions and four
-single-line widenings (two imports, one type, one event list).
+`commands.test.ts` (`repl.ts` in the scanned sources) and `localCompute.test.ts` (the core sentence at the head of
+the expected prompt). No existing assertion or test body was removed; the verifiers diffed every `*.test.ts` and found
+only additions and four single-line widenings (two imports, one type, one event list).
 
 **Mutation and negative controls the agents ran.**
 
@@ -705,29 +703,31 @@ single-line widenings (two imports, one type, one event list).
   order at its projected arc length; the follower behind that phantom queued 3 m behind nothing, never counted as
   stuck, and the ring stalled for as long as the car stayed away. Fix in `vehicles.ts #ringGaps`: a rejoining car is
   skipped in the ring order and its own gap is infinite. Test: `vehicles.test.ts` "a fleet on tracks: a car set down
-  off its ring leaves the ring's order while it steers back".
+  off its ring leaves the ring's order while it steers back ...".
 - *The realm* (10.1 stage B and the rally). Checks as above; `avatars[0]` deep-equals `avatar` and `drivings[0]`
   equals `driving` in every new test. **Defects found and fixed:** (1) a rally point inside a building lot was
   accepted (`whyNotRally` checked the road and the sidewalk path only); the crowd shader keeps every pedestrian out of
   lots, so the recruit would have hurried against the lot edge forever. Fix in `skills.ts`: `inLot` refuses it.
-  Tests: `simCore.test.ts` "rally: refused for a point inside a building lot", `skillsRally.test.ts`. (2) `reset` could
-  put a car down beside a player on foot (audit invariant 8), unreachable with one avatar and reachable with four. Fix
-  in `simCore.ts`: `#clearOfPeople` guards `reset` as it guards `recover`. Test: `simPlayers.test.ts` "adversarial:
-  player 2 drives at player 0 ...". **Attacks that held** (kept as tests): infinite controls for a player on foot and
-  one at the wheel; player 2 at full throttle at player 0 standing 35 m ahead (held over 1 m short); two players
-  taking the same parked car in one step; a rally at 11.9 m, after a dismiss, for an Interviewing recruit, onto the
-  road, with the operator in a car; a spawn inside a lot; four players over a surveyed region.
+  Tests: `simCore.test.ts` "rally: refused for a point inside a building lot ...", `skillsRally.test.ts`. (2) `reset`
+  could put a car down beside a player on foot (audit invariant 8), unreachable with one avatar and reachable with
+  four. Fix in `simCore.ts`: `#clearOfPeople` guards `reset` as it guards `recover`. Test: `simPlayers.test.ts`
+  "adversarial: player 2 drives at player 0 standing in the lane and the Bouncer holds; one car cannot be taken by
+  two players in a step; a reset is refused beside a player on foot; infinite controls are no control". **Attacks
+  that held** (kept as tests): infinite controls for a player on foot and one at the wheel; player 2 at full throttle
+  at player 0 standing 35 m ahead (held over 1 m short); two players taking the same parked car in one step; a rally
+  at 11.9 m, after a dismiss, for an Interviewing recruit, onto the road, with the operator in a car; a spawn inside
+  a lot; four players over a surveyed region ("adversarial: a surveyed region takes spawns too ...").
 
 **The headless-browser limitation of this environment.** The 3D page was not smoke-tested here. The only browser
 available is a headless Chromium with a software Vulkan adapter. The record (`probe/baseline2/result.json` in the
 session's scratchpad) shows the release build opened with `?debug&crowd=512&cars=4&quality=0&post=0`, the boot veil
-cleared, and then `THREE.WebGPURenderer: WebGPU Device Lost: A valid external Instance reference no longer exists`,
-followed by `OperationError: Instance dropped in popErrorScope` on every frame; `__SIM__` never appeared. An earlier
-run reached no device at all. So the items whose proof needs a GPU are still owed a browser run on real hardware, as
-previous releases had in headless Brave: the compiled dissolve shader (walk through a lamp, `output.dissolve.active >
-0`, no `[RING-0]` and no uncaptured error), the in-page traffic-lights and spatial harnesses with tracks on, the
-viewport origin and one clear with four scissored draws, `lookFromSeed(0)` against agent 0's hashed look, and the
-soundscape's convolver.
+cleared, and then three's renderer reported `WebGPU Device Lost` (`A valid external Instance reference no longer
+exists`), followed by `OperationError: Instance dropped in popErrorScope` on every frame; `__SIM__` never appeared.
+An earlier run reached no device at all. So the items whose proof needs a GPU are still owed a browser run on real
+hardware, as previous releases had in headless Brave: the compiled dissolve shader (walk through a lamp,
+`output.dissolve.active > 0`, no `[RING-0]` and no uncaptured error), the in-page traffic-lights and spatial harnesses
+with tracks on, the viewport origin and one clear with four scissored draws, `lookFromSeed(0)` against agent 0's
+hashed look, and the soundscape's convolver.
 
 ## 5. Open questions and risks for the operator
 
@@ -762,14 +762,15 @@ Carried over from the critique and the notes. Each names the file where the deci
   not a jam. Reachable only through `recover` plus `setMode` from the harness or the console.
 - The real fleet's corner cut measures 0.78 m against the 0.8 m bound `vehicles.test.ts` asserts: deterministic, but a
   Rapier or tuning change could cross it.
-- Two cars on neighbouring rings may visibly overlap at a shared corner apex. Whether 7.2 should dissolve one is open.
+- Two cars on neighbouring rings may overlap at a shared corner apex; since `bd700b8` both dissolve
+  (`carsOverlapping`), so the overlap is covered, not prevented.
 - `spatial.test.ts`'s "6 of 6 streets driven" and the in-page harnesses were validated with random routing; tracks
   are now the page default.
 
-**The page wirings (7.2, 8.1, 8.4, 9.1, 9.2, 10.1).**
+**The page wirings still in progress (8.1, 8.4, 9.1, 9.2, 10.1).**
 
-- `engine.ts` is touched by six items, and three text-pinning tests (`cinema.test.ts`, `contact.test.ts`,
-  `ghost.test.ts`) must be re-run after each edit. `terminal/bridge.ts`, `commands.ts` and `commands.test.ts` are
+- `engine.ts` is touched by every one of them (7.2's edit has landed), and three text-pinning tests
+  (`cinema.test.ts`, `contact.test.ts`, `ghost.test.ts`) must be re-run after each edit. `terminal/bridge.ts`, `commands.ts` and `commands.test.ts` are
   touched by five; every knob enters the same pinned sets. `simProtocol.ts` must stay free of render words.
 - The dissolve's cells are keyed on the whole drawing buffer; split screen needs them keyed on the viewport. A
   tree's canopy never triggers its dissolve.
