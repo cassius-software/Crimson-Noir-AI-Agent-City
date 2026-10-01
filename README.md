@@ -8,31 +8,37 @@
 A business-casual, non-violent civic simulation that ships as one self-contained HTML file. It is a
 16 × 16-block city under a moving sun: a downtown of towers, a heritage quarter of stone and brick rows, and a
 lakefront of condominiums along a promenade, a seawall and a pier. It has 14,000 GPU-simulated pedestrians
-who wait for the walk signal, and Rapier3D traffic that obeys the lights. Every vehicle command, from the AI or
-from you, passes a three-law safety kernel before it reaches the wheels. You see everything **first
-person**, at eye level, on foot or from the driver's seat. You can walk the districts (straight through people, lamps and trees: the
-collision model is ghost mode), take any car, see every physics shape in ghost view (`G`), or open the Ring-0
-console with `~`.
+who wait for the walk signal, and Rapier3D traffic that obeys the lights and, by default, drives a fixed network
+of right-turn rings that cannot jam (trains, drones and planes keep timetables above it, not yet drawn). Every
+vehicle command, from the AI or from you, passes a three-law safety kernel before it reaches the wheels. You see
+everything **first person**, at eye level, on foot or from the driver's seat. You can walk the districts (straight
+through people, lamps and trees, which dissolve into falling green binary code as you pass: the collision model is
+ghost mode), take any car, see every physics shape in ghost view (`G`), or open the Ring-0 console with `~`. Up to
+four people can play on one screen, and the operator can join a room over the network.
 
 It opens with no clicks. A black Monolith splash fades straight into the street at golden hour, and
-Wren, the concierge, asks what to call you: type a name and press Enter, then walk.
+Wren, the concierge, asks what to call you: type a name and press Enter, then walk. Wren's chip also opens the
+wardrobe.
 
 ```sh
 npm install
 npm run dev      # local dev server
 npm run build    # typecheck (app + tests), then emit dist/index.html: one file, every asset inlined
-npm test         # 650+ unit tests (node --test), including real Rapier physics in Node
+npm test         # 1,060 tests (node --test), including real Rapier physics and a real WebSocket host in Node
 npm run lint     # oxlint
+npm run serve:net  # the optional network host (Node only, never bundled): see Networking
 ```
 
-Open `dist/index.html` directly: no server, no network, works offline. (The exceptions are the operator's
-optional `ask` and `say`, which talk only to a model server and a speech server on this same machine, and only
-when asked: see The local model and Speech.) It needs WebGPU:
+Open `dist/index.html` directly: no server, and it works offline. The page sends nothing anywhere unless the
+operator chooses the Claude provider with their own key (`ask provider claude`) or joins a session with `net join`.
+The local model providers and `say` talk only to a model server and a speech server on this same machine, and only
+when asked (see The model providers, Speech and Networking). It needs WebGPU:
 
 - **Desktop and Android:** a current Chrome, Edge or Brave.
 - **iPhone, iPad and Mac:** Safari 26.
 
-The crowd runs as WGSL compute and has no WebGL path.
+The crowd runs as WGSL compute and has no WebGL path. `?boot=tty` opens the Ring-0 console alone, with no WebGPU
+at all (see Track B under Ring-0 console).
 
 ## Controls
 
@@ -44,10 +50,15 @@ The crowd runs as WGSL compute and has no WebGL path.
 | Enter / exit a car | E | south face button | Enter car / Exit car |
 | Handbrake | Space | east face button | Handbrake |
 | Right the car | R | north face button | Reset |
+| Ping (mark a spot or a person where you look) | Q, or the middle mouse button | right shoulder button | Ping |
 | Clock −1 h / +1 h | `[` `]` | D-pad left / right | |
 | Ghost view | G | | |
 | Hide HUD | H | | |
 | Ring-0 console | `~` (Backquote) | | |
+
+A ping pressed again within a second asks the next kind: go, look, gather, wait (see Pings and the rally under
+Recruitment). With `?players=2`…`4` the keyboard, the mouse and touch stay player 1's, and each further gamepad
+drives a player of its own (see Split screen).
 
 ## URL options
 
@@ -62,8 +73,12 @@ The crowd runs as WGSL compute and has no WebGL path.
 | `?scale=1` | Base pixel ratio |
 | `?seed=1337` | World seed |
 | `?shadows=0`, `?post=0` | Caps that apply at every quality tier |
+| `?tracks=0` | Turns the fixed track network off: AI cars take random street-hopping routes, and there are no trains, drones or planes (default: on; see Vehicles) |
+| `?players=1`…`4` | Local split screen: one viewport per player (default 1; see Split screen) |
 | `?cinema=0` | Turns the cinema camera off: every frame is drawn, no motion blur, ACES tone mapping (see The cinema camera) |
 | `?audio=0` | Start with the soundscape muted |
+| `?captions=0` | Start with the closed captions off (`captions on` turns them on; see Spatial audio) |
+| `?boot=tty` | Track B: the Ring-0 console alone, full screen, with no canvas, no engine, no WebGPU, no physics worker and no audio; `boot gui` reloads the city (see Ring-0 console) |
 | `?profile` | GPU timestamps |
 | `?debug` | Exposes `window.__SIM__` test hooks; off by default |
 
@@ -86,6 +101,11 @@ no real building is copied. The districts have generic names, and the HUD shows 
   and walk to its end.
 
 Streets run the full grid; the crowd walks every sidewalk and stops short of the water.
+
+The fixed track network (`06_Make_Decisions/tracks.ts`) is laid over the grid from the same seed: 64 right-turn
+rings for the cars, one round each 2 × 2-block cell; one elevated train loop on a deck 9 m over the median of the
+two arterial streets, with four mid-block stations and guideway columns at the kerb; drone corridors at 40 m and
+46 m over the 4 × 4-block face rings; and one plane racetrack at 400 m. See Vehicles.
 
 ## The surveyed map (pilot)
 
@@ -143,6 +163,9 @@ Open it the same way. `?region=off` shows the procedural city instead.
 - **Not there yet:**
   - traffic and pedestrians (the AI drives and walks the procedural grid, so the region's fleet is empty and the
     crowd it keeps is hidden, kilometres away);
+  - the track network and its craft (the rings and corridors are laid over the procedural grid, so a region gets no
+    trains, drones or planes);
+  - room acoustics (a region's walls live in the physics worker, so every voice there is dry);
   - traffic signals, street lamps and trees;
   - terrain (the region is flat: no ravines, no bluffs);
   - elevated roads and bridges (the expressway runs at street level, and you can wade the rivers);
@@ -165,7 +188,7 @@ away; everything else dims behind the code. `G` again, or `ghost off`, fades it 
   the ND, the film curve and FXAA. It writes nothing to the velocity buffer, so it never smears. The city behind
   it still does.
 - **Every tier.** It lives in the post chain, so while it is on the chain runs even at the Minimal tier. With
-  `?post=0` there is no chain, and `ghost on` says so.
+  `?post=0` there is no chain, and `ghost on` says so; the same while the screen is split (see Split screen).
 
 ## Ghost-mode collision
 
@@ -178,10 +201,45 @@ shoved, no pole stops you, and the people keep their line.
 - **The crowd never sees you as a neighbour.** The avatar is not put in the grid the pedestrians steer by
   (`crowd.wgsl` `binAgents`), so none of them steps aside, falls in beside you, or drifts toward you. Someone you ask
   over still keeps their talking distance: that comes from the summons, not from collision.
-- **What stays solid:** the ground, the buildings, the seawall, the pier's deck and railings, and the cars. Cars stay
-  solid because the kernel is built on them. The Bouncer brakes for you, and the Sanctuary turns you into a sensor
-  when a car is about to reach you. The Ring-0 audit treats a car overlapping a solid person as an impact. None of that
-  changed.
+- **What stays solid:** the ground, the buildings, the seawall, the pier's deck and railings, and the cars, to people
+  and to the world. Cars stay solid to people because the kernel is built on that: the Bouncer brakes for you, and the
+  Sanctuary turns you into a sensor when a car is about to reach you. The Ring-0 audit treats a car overlapping a solid
+  person as an impact. None of that changed. Cars are no longer solid to each other.
+- **Cars pass through cars** (`02_Define_The_Rules/collision.ts`). The realm's contact policy is one frozen record,
+  `COLLISION`, beside `CIVIC`'s `violence: false`: no vehicle-on-vehicle contact, no ragdoll, no combat, furniture as
+  sensors, the Sanctuary between people and cars. Every chassis collider carries a collision group that filters other
+  chassis out, and every wheel ray filters them out too, so a chassis pair is dropped in Rapier's broad phase: no
+  contact, no impulse, and a wheel cannot ride up on a car it passes through. The ground, the buildings, the seawall,
+  the pier and the avatar keep the default groups, so a car is as solid as before to the world and to people: you
+  still stop at a parked car's face. The AI drivers' bonnet rays keep the default groups too, so other cars stay
+  obstacles to the Third Law, and CCD stays on every chassis. `vehiclePassThrough.test.ts` (real Rapier in Node)
+  rolls a car at 10 m/s through a parked car on its line: it ends on the same line within 0.05 m and at the same
+  speed within 0.05 m/s as over open road, the parked car moves under 1 mm, the rolling car never lifts more than
+  0.02 m, and a wall still stops it. `collision.test.ts` keeps the ragdoll scaffold unwired: no runtime file outside
+  its two sources imports or names it, and a vehicle is not a cause it accepts.
+- **The code dissolve** (`01_Initialize_World/codeDissolve.ts`, `07_Execute_Actions/dissolve.ts`). Where your body
+  meets something it passes through, that thing gives way. When the avatar's disc on foot, or the driven car's
+  chassis at the wheel, each grown by 0.25 m, is inside a street lamp, a tree, a signal pole, a pedestrian or (on
+  foot) a car, that mesh dissolves into falling green binary code at once and reinstantiates over 0.35 s once you
+  are clear. Two cars passing through each other both dissolve, so the pass-through is never seen as
+  interpenetration. The driven car never dissolves (its cabin is drawn from inside), and buildings never do (walls
+  stop you).
+  - It lives in each mesh's own material, not in a pass of its own: a per-instance amount, 0 solid to 1 gone, drops
+    the mesh's screen cells top-down in falling columns, dims the cells still standing and inks them with glyphs in
+    the green of what you met; at 1 every vertex folds to a point and nothing is rasterised. The alphabet is a `0`
+    and a `1` drawn from strokes, no font. The same mask governs the shadow pass, so a dissolving mesh loses its
+    shadow with its body. While nothing dissolves the materials draw exactly as before, and the cinema camera's
+    velocity buffer is untouched.
+  - It composes with the contact iris: the iris washes the frame, the dissolve removes the mesh. A touched slot is
+    at 1 the same frame; an untouched one falls to exactly 0 over the release. Each passage counts once.
+  - **View-only**, like ghost view and the iris: it reads what the page already holds (the city's furniture, the
+    audited state, the crowd's newest frame) and writes instance attributes. Nothing reaches the physics worker, no
+    pedestrian moves, no pole stops anyone. `sim` and `__SIM__` report it as `output.dissolve`: how many instances
+    are dissolved or reinstantiating now, and how many passages since boot. Its scans allocate nothing per frame.
+  - **Limits.** A tree's collider is its trunk, so only the trunk triggers it (the canopy is never met). Under the
+    cinema shutter a dissolving mesh's smear is sampled from the cells that survive. The envelope, the scans and the
+    material graph are tested in Node; the compiled shader has not been seen in a WebGPU browser in this
+    environment (see Browser support).
 - **The transition.** Where the camera goes through something, the frame washes into code for a moment
   (`07_Execute_Actions/contact.ts`, drawn by ghost view's composite).
   - It triggers on foot on a pole, a person or a car (the Sanctuary letting one through you). At the wheel it
@@ -212,6 +270,43 @@ orbit, chase or detached camera and no zoom.
 - **WebXR seam:** `HeadRig.pose` (eye position, yaw, pitch) is the one place the camera is set. A
   future WebXR session would drive or offset that pose from the headset. WebXR itself is not implemented
   yet.
+- **Split screen:** with `?players`, each viewport is its own player's head, posed from that player's own avatar
+  in the physics realm, or the car they drive (below).
+
+## Split screen
+
+`?players=2`…`4` cuts the canvas into a viewport per player (`07_Execute_Actions/viewports.ts`): two side by side
+in landscape or stacked in portrait, three as one wide view across the top and two below, four as quadrants in
+reading order. The rects tile the canvas exactly, in whole pixels.
+
+- **Seats** (`04_Connect_Hardware/seats.ts`). Player 1 is the keyboard, the mouse, the touch overlay and the pad in
+  seat 0. Players 2–4 are gamepads, dealt to seats in the order they appear: the lowest free seat among 1 to
+  `n − 1` first, then seat 0; a pad that leaves frees its seat at once, and a seated pad keeps its seat however the
+  browser orders its pad list. One pad per seat, one seat per pad; pads beyond the free seats wait. Every seat uses
+  the same bindings (`07_Execute_Actions/controls.ts`: the frame loop's control block as a pure function, checked
+  against a verbatim copy of the previous inline block over 2,000 intents, with nothing non-finite reaching the
+  realm).
+- **Every player is an avatar of their own in the physics realm.** Players 2–4 spawn beside player 1 along the
+  sidewalk (`SimInit.spawns`), send their controls in the same step request (`StepRequest.players`), and are
+  people to every part of the ethical kernel (see Up to four avatars under The ethical kernel). Each viewport is
+  its own player's head (`HeadRig`), posed from that player's avatar or the car they drive; a pad's right stick
+  turns it with the first player's curve and rates.
+- **Every player hears their own city.** Each has a soundscape of their own, in head space, over one shared audio
+  context: Web Audio has one listener per context, so that listener stays at the identity and every source is
+  placed relative to each head, with smaller car-voice and murmur pools per player. Speech and cues fan out to
+  every listener. The console's `audio` knob acts on every player's soundscape, and its status line gains
+  `· N players`.
+- **What stays player 1's.** The post chain (the cinema shutter, bloom, ND, film response, ghost view, the contact
+  iris) is player 1's alone and is off while the screen is split: every viewport takes the direct ACES path, and
+  `ghost on` says so. The sun's shadow focus, the lamp lights and the building sort follow player 1, so the other
+  viewports get shadows only near player 1. The HUD, the captions, the pings, the code dissolve's scans, the
+  contact wipe, the haptics, recruitment and the operator tier stay player 1's. Players 2–4 are not drawn as crowd
+  figures, so a pedestrian may walk through them; they are protected exactly on the CPU, and safety does not rest
+  on the figure.
+- **Cost.** The crowd cull runs once per camera per presented frame, and `stats` reflects the last view. `sim` and
+  `__SIM__` report `output.players`: the count, each viewport's rect and its seat.
+- Four viewports on a WebGPU device, and which origin three's viewport uses, are browser checks not yet made here
+  (see Browser support).
 
 ## Onboarding and the spatial HUD
 
@@ -221,7 +316,11 @@ orbit, chase or detached camera and no zoom.
   call you. The name field is already focused: type and press Enter (Esc skips).
   - The name labels your avatar in the HUD and is kept in this browser only (`localStorage`, key
     `civic-simulation:profile:v1`). A returning visitor is welcomed back by name without the question.
-  - Wren then gives two or three tips and settles into a small chip.
+  - Wren then gives two or three tips and settles into a small chip. The chip's **Look** button ("Change my look"
+    in the full list) opens the wardrobe card: see The character customizer.
+- **Pings and captions on the HUD.** The minimap rings every standing ping in its kind's colour, fading as it
+  expires, and the newest shows as a chip over the world with what it asks, what it landed on and the distance (see
+  Pings and the rally). The chip goes with `H`; the caption strip and the MIC chip do not (see Spatial audio).
 - **Glyphs:** every control hint follows the input in use. When a pad is picked up it switches silently to
   that pad's layout: the two letter layouts (A or B at the south button), numbered shoulders and stick clicks,
   or button positions (South, East, North) for a pad it does not recognise. On phones it switches to touch
@@ -232,6 +331,43 @@ orbit, chase or detached camera and no zoom.
   plan, and "Copy brief" gives an engineer a note naming the modules each step would touch. This engine
   (`06_Make_Decisions/intent.ts`) is deterministic and offline: no language model, no network, and no
   console syntax is ever shown.
+
+## The character customizer
+
+Wren's chip has a **Look** button ("Change my look" in the full list) that opens the wardrobe card
+(`07_Execute_Actions/Customizer.tsx`). The console's `look` edits the same look (see Ring-0 console).
+
+- **The wardrobe** (`03_Spawn_Agents/look.ts`) is the crowd's own, and closed by construction. A look is fourteen
+  slots (body, height, build, skin, hair style, hair colour, top, bottom, shirt, shoes, tie, eyewear, bag, cup),
+  every one an index into the crowd's catalogue: the four bodies `crowd.ts` draws (suit, smart casual, pantsuit,
+  skirt suit), its five optional pieces (tie, bag, cup, long hair, glasses), its seventeen colour palettes verbatim
+  (`look.test.ts` reads them out of `crowd.ts`'s source, so they cannot drift), the ninth hair colour the shader
+  mixes in, and eight steps each of height and build spanning exactly the ranges the hash gives. The module ships
+  no colour, piece or body of its own, so nothing stored, typed or shared can dress anyone in anything the crowd
+  does not wear today: `validateLook` accepts nothing but an object with exactly those slots, each within its
+  body's options.
+- **The look word.** `packLook` folds a look into one unsigned 32-bit word, and the crowd carries one word per
+  agent in a page-only storage attribute (`crowd.look`): the body materials read it in place of the hash, and the
+  page's cull reads the body out of it to pick what to draw. No simulation pass binds it, so nothing of a look
+  reaches the pedestrians' motion, the First-Law sensing, the protocol or the physics worker. `lookFromSeed(i)`
+  reproduces, bit for bit, the choice the crowd's hash makes for agent `i`, so an agent's look and a visitor's
+  saved look are the same kind of record. The eye never sees its own body (there is no mirror, by design); its
+  shadow, the body the cull draws and every other viewer do.
+- **Codes and presets.** A look code is eight symbols, `XXXX-XXXX`, from an alphabet without I, L, O and U,
+  carrying the word and a CRC-8: it can be written down and shared, and `parseLookCode` ignores case, the dash and
+  spaces and refuses any single mistyped symbol. Eight named presets, two per body (navy suit, charcoal suit, camel
+  blazer, navy blazer, burgundy pantsuit, cream pantsuit, navy skirt suit, camel skirt suit), dress the picker.
+- **The card.** Every slot is a row of the options the chosen body allows: named options as a segmented control,
+  colours as swatches from the crowd's palettes; the presets; Randomise (the look the hash would give some other
+  number); Reset (the look your own seed gives, the first use of the profile seed); and the code, to copy or to
+  paste. Every change is worn at once. Esc, the close button or Done puts it away.
+- **Kept here.** The look is kept in this browser only (`localStorage`, key `civic-simulation:look:v1`,
+  `05_Observe_Environment/lookStore.ts`), separate from the profile, so a renamed visitor keeps their outfit;
+  every stored value goes through `validateLook` on the way in.
+- **Limits.** Only the player is dressed so far: recruits are not dressed automatically, though `look show <agent>`
+  reads what any pedestrian wears. The tie's cloth, the bag's leather and the skirt suit's hose keep their hashed
+  colours (the word is full). Whether agent 0's hashed look and `lookFromSeed(0)` agree on the GPU is a browser
+  check not yet made (see Browser support).
 
 ## The ethical kernel
 
@@ -282,7 +418,9 @@ anywhere in the product.
   counted rather than panicked, and the 1.85 m radius around any moving vehicle is a watched perimeter whose
   breaches are counted, because verified First-Law stops land 1.71–1.97 m from the bumper and the Sanctuary's
   nudge leaves a shielded person 1.52 m from a car's centreline. The audit's counters are in the console
-  (`kernel`, `stats`) and in `sim.kernel.stats().audit`; the auditor and its panic helper are frozen.
+  (`kernel`, `stats`) and in `sim.kernel.stats().audit`; the auditor and its panic helper are frozen. For the
+  scheduled craft (trains, drones, planes) the audit also halts on any non-finite value or any craft below its
+  corridor's floor (`Corridor Exploit`; see Vehicles). It only halts, never corrects.
 - **The physics realm** (`physics.worker.ts`, `simHost.ts`, `simCore.ts`). The Rapier world runs in a dedicated
   Web Worker, inlined into the single HTML file, together with everything that touches it: the fleet and its
   Bouncer, the avatar, the Sanctuary, the Ring-0 audit, and the GPU pedestrians with their hazard sensing, on
@@ -298,14 +436,17 @@ anywhere in the product.
   - **The same order as before.** The worker runs the step in the order the page used to: commands, sensing,
     vetted controls, AI drivers, then the fixed substeps (Sanctuary, avatar, wheels). The audit runs right after
     the last substep, in the same realm, and includes the crowd's own non-finite flag. The crowd then steps on
-    that outcome. Only then does the state leave: the car poses (`simProtocol.ts` POSE, drawn by `fleetView.ts`)
-    and the pedestrians' newest render frame. The page writes that frame into its render buffers and culls it
+    that outcome. Only then does the state leave: the car poses (`simProtocol.ts` POSE, drawn by `fleetView.ts`),
+    the craft stream (`TRACK_POSE`, not yet drawn) and the pedestrians' newest render frame. The page writes that frame into its render buffers and culls it
     for its camera (`crowdCull.ts`); a frame whose flags halted the realm never leaves it.
   - **On a panic.** The worker halts for good and says why. The page then locks exactly as before.
   - **What the page can still do.** It can send the player's controls, which the Bouncer and the L2 limiter vet.
     It can send operator commands: tuning that only strengthens stopping, vetted intents, and teleport/recover
     (a car is never recovered onto a person). It sends the direction the player's own figure faces, which only
-    turns that figure. It chooses which of the worker's pedestrians it draws, which changes only the picture.
+    turns that figure. It chooses which of the worker's pedestrians it draws, which changes only the picture. It
+    sends players 2–4's controls (`StepRequest.players`), clamped like player 1's, and at init a spawn per extra
+    player and whether the fleet drives tracks (a plain boolean at the door). It may ask that an Active recruit
+    walk to a sidewalk point (a rally, below).
   - **What it cannot do.** It cannot report or hide a pedestrian, raise or suppress the crowd's Ring-0 flag, or
     set the clock the signals run on. It cannot blind person sensing, switch off the Sanctuary, set a velocity or
     inject a hazard: those are harness commands, and only a worker built for `?debug` accepts them. It can stop
@@ -316,6 +457,25 @@ anywhere in the product.
     10,000 people. The page's CPU no longer runs the physics, and handing a step over costs it about 0.1 ms.
     The browser must offer WebGPU inside workers; without it the realm refuses to start rather than let the
     page sense pedestrians for it.
+- **Up to four avatars** (`simProtocol.ts` `MAX_PLAYERS = 4`, `simPlayers.test.ts`). The realm holds one avatar
+  per local player: player 1 is the operator, players 2–4 start at `SimInit.spawns` (a spawn inside a building lot
+  is moved onto the sidewalk beside it; a surveyed region keeps it as given) and send their controls in
+  `StepRequest.players`, clamped exactly like player 1's (a run at most; NaN or infinite controls are no control).
+  Every avatar is a person to every part of the kernel: the Bouncer measures each one exactly (`Fleet.setPeople`:
+  the nearest present person in each car's corridor holds the car, whoever is driving), the Sanctuary registers each
+  as a ward in player order and shields the one a car is about to reach, and the Ring-0 audit lists each with its
+  own id, so a car that reaches one halts the realm naming that person; the only person exempt from a car's
+  footprint is the player driving it. One driver per car and one car per driver: `interact` and `teleport` take a
+  player, and a car someone else is driving is refused with a `rejected` event. A car is never put down on anyone
+  on foot: `recover` and `reset` are refused while a player stands within a car's half-length and a margin of the
+  spot. The message door refuses malformed spawns at init and a non-list `players` per step, slices `players` to
+  three, and reads a malformed entry as an idle player. `laws.ts` is untouched by this release and `ring0.ts`
+  gained only the craft check; the audit invariants hold per avatar. Recruitment, the operator tier, haptics and
+  the crowd's one player figure stay player 1's.
+- **A rally** (`SimCommand 'rally'`, `03_Spawn_Agents/skills.ts whyNotRally`). The one new thing the page may ask
+  of a pedestrian: that an Active recruit walk to a sidewalk point instead of to the operator. The realm decides on
+  its own readings, and a rally only changes where a summoned pedestrian walks on the sidewalk (see Pings and the
+  rally under Recruitment).
 - **Runtime integrity inside the realm** (`vehicles.ts`, `laws.ts`). The Fleet and the Bouncer keep their state
   in ECMAScript `#private` fields, frozen with their prototypes. Each vehicle's Rapier handles never leave the
   Fleet; the Sanctuary gets plain-number footprints, and the audit's `clampSpeed()` can only slow a car down.
@@ -342,14 +502,76 @@ while you type.
 - `stats` is live: Rapier step latency, physics phase, substeps, bodies, colliders and CCD bodies;
   drawn agents (near, far, total); fps, frame time, p95, CPU and GPU time; quality tier; kernel
   counters. `stats --once` prints a single frame.
-- Other commands: `laws`, `kernel`, `quality [auto|0-4]`, `time [HH[:MM]]`,
-  `audio [on|off|0-100]`, `ghost [on|off]`, `hal`, `hal pair hid|serial|ble`, `history`, `clear`, `uname -a`,
-  `help`.
-- `recruit <skill>` asks someone nearby with that skill over; `recruit listen`, `recruit stop`,
-  `recruit install` and `recruit dismiss` run the voice side (see Recruitment below). `recruit` alone
-  prints the microphone, who is coming over or tethered, the swarm's skills, and the last outcome.
+- The core commands, as `help` prints them: `help [command]`, `stats [--once]`, `laws`, `kernel`,
+  `quality [auto|0-4]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `render [on|off]`,
+  `captions [on|off]`, `ping [go|look|gather|wait|clear]`,
+  `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
+  `recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]`, `memory [<agent>|forget <agent>|forget all]`,
+  `clear`, `history`, `echo [text]`, `uname [-asnrvmi]`, `whoami`, `version`, `boot [gui|tty|status]`,
+  `r0 <words...>|r0 reset|r0 words`, `exit`.
+- `render off` stops drawing: the canvas is cleared to black once and the HUD shows `RENDER OFF · console only ·
+  render on`, while the physics realm, the step requests, the head pose, the haptics, the audio, the captions and
+  the console keep running. The quality governor holds its tier while nothing is drawn. `render on` resumes with a
+  cut. View-only: nothing of it crosses to the physics worker (`bootloader.test.ts` pins that the realm's modules
+  name none of it).
+- `captions [on|off]` turns the closed captions of every sound on or off (see Spatial audio); `?captions=0` starts
+  them off.
+- `ping [go|look|gather|wait]` marks where you look, as `Q` does; `ping` alone lists the marks standing, and
+  `ping clear` takes them off the board. A `go` or `gather` ping is offered to the recruiter as a rally the physics
+  worker re-checks (see Pings and the rally).
+- `look` shows the look you wear, one line per slot and its code; `look show <agent>` a pedestrian's.
+  `look <slot> <n|name>` sets one slot (`body`, `height`, `build`, `skin`, `hairStyle`, `hairColour`, `top`,
+  `bottom`, `shirt`, `shoes`, `tie`, `eyewear`, `bag`, `cup`), `look preset <name>` one of the eight presets,
+  `look code XXXX-XXXX` a shared look, `look random [<seed>]` the look the hash gives some other number, and
+  `look reset` the look your own seed gives (see The character customizer). Every value is checked against the
+  wardrobe.
+- `recruit <skill>` asks someone nearby with that skill over; `recruit rally <agent> [<x> <z>]` asks an Active
+  recruit to walk to the newest ping's sidewalk point, or to a typed one (the page checks its own copy, the
+  physics worker decides); `recruit listen`, `recruit stop`, `recruit install` and `recruit dismiss` run the voice
+  side (see Recruitment below). `recruit` alone prints the microphone, who is coming over or tethered, the swarm's
+  skills, and the last outcome.
 - `memory` says where the swarm's memory is kept, how many people it holds, and what each person tethered now
   remembers; `memory <agent>` lists one pedestrian's episodes (see The swarm's memory below).
+- `history` and the Up arrow never show a key typed to `ask key` or a token typed to `net join`: both are kept
+  as dots.
+
+### Track B: the console alone
+
+The product has two front ends over one physics realm. Track A is the WebGPU page: the city, the crowd, the
+cinema camera, the HUD. Track B is this console on its own.
+
+- **`?boot=tty`** mounts the console alone, full screen, black from the first paint: no canvas, no engine, no
+  WebGPU request, no physics worker, no audio (`App.tsx` is `App` → `GuiShell` or `TtyShell`). The identity
+  commands (`version`, `uname`, `help`, `boot`, `r0`, `history`, `echo`, `clear`) work; everything that needs the
+  city says `engine not running`. The message of the day says so: `Track B: this console alone; no 3D engine was
+  built`. `boot gui` reloads the page as the city, `boot tty` from the city reloads it as the console, and `boot`
+  alone (or `boot status`) says which track is up. Neither the toggle key, Esc nor `exit` closes a full-screen
+  console. `docs/track-b-console.png` is a screenshot of it.
+- **`render off`** is Track B's override from inside Track A: the console takes the screen while the realm keeps
+  stepping (above).
+- **`r0`** is R0, the console's own language (`terminal/repl.ts`): a small Forth-like stack machine, the product's
+  own. 32-bit integers that wrap; arithmetic (`+ - * / mod negate abs min max 1+ 1-`); comparison
+  (`= <> < > <= >=`, true is −1); logic (`and or xor invert` bitwise, `not` logical, `lshift rshift`); the stack
+  words (`dup drop swap over rot -rot nip tuck 2dup 2drop depth`); memory (`@ ! +!`) over 65,536 cells of 32-bit
+  integers; output (`. emit cr space spaces ." text"`); colon definitions `: name … ;` that may call themselves,
+  and `exit`; `if … else … then`, `begin … until`, `begin … while … repeat`; `( comments )` and `\ comments`. It
+  is Turing-complete (unbounded loops and recursion over addressable memory; `repl.test.ts` runs an interpreter
+  for another machine written in R0) and deterministic: the same lines in the same order always print the same.
+  - **What it cannot reach.** It is blind by construction: `repl.ts` has no import line and no door to the host
+    (no dynamic code, no global object, no clock, no randomness, no network, no storage, no timers, no DOM), and
+    the `r0` command hands it nothing of the bridge, the engine or the page. The city stays reachable from the
+    console only as before: through the operator tier and the capability gateway.
+  - **Bounded.** Each line may run 1,000,000 instructions, print 16,384 characters, hold 4,096 words on the data
+    stack and nest 4,096 calls. Past a bound the line ends with a named error (`step budget exhausted (1000000)`,
+    `output limit exhausted (16384)`, `return stack overflow`, `stack overflow`) and the machine stays usable:
+    definitions and memory survive, the data stack is cleared. A line that fails to compile (an unknown word, an
+    unmatched `if`, an unterminated definition) runs nothing and installs no definition. A redefinition shadows
+    the old word without changing words already compiled against it.
+  - Definitions and memory last for the console session; `r0 reset` forgets every definition and zeroes the
+    memory, and `r0 words` lists the words. A line of 100,000 steps or more prints its step count. A definition
+    cannot span lines; there is no `do … loop`, no floating point and no string beyond `." text"`.
+- **Not a headless engine.** Track B is "no engine" plus `render off`; a page-side simulation without a renderer
+  is not attempted.
 
 ### The operator tier
 
@@ -376,9 +598,11 @@ unlocked:
   throws instead. `sleep` rejects the moment the tether breaks, and `signal` (an `AbortSignal`, also in
   scope) fires, so a script can stop cleanly. A script that ignores both cannot reach the city again. A
   script that times out loses its lease too, so an abandoned script cannot keep calling `sim` afterwards.
-- `ask <skill>[,<skill>...]: <prompt>` asks the local model, answering as the tethered people who have the
-  skill; the answer streams in live (see The local model below). `ask` alone reports the server, the model
-  and what the server has; `ask model <name>` and `ask server <url>` set them up; `ask stop` stops an answer.
+- `ask <skill>[,<skill>...]: <prompt>` asks the chosen model provider, answering as the tethered people who have
+  the skill; the answer streams in live (see The model providers below). `ask` alone reports the provider, the
+  server, the model, the masked key and the effort, and what the server has; `ask provider claude|ollama|llamacpp`,
+  `ask key <key>|none`, `ask effort <level>`, `ask model <name>` and `ask server <url>` set it up; `ask stop` stops
+  an answer. An inadmissible prompt gets `-- no reply --` and reaches no model.
 - `say <skill>[,<skill>...]: <text>` has the tethered person with the skill say the text aloud, from where
   they stand (see Speech below). `say` alone reports the speech server, the voice and the voices it has;
   `say voice <name>`, `say model <name>`, `say server <url>` and `say auto on|off` set it up; `say stop` cuts
@@ -398,6 +622,8 @@ unlocked:
   tier, mode, position, kernel and audit counters, Wren's active brief. The file goes only where you choose it
   (the save dialog, or a download at stop where the dialog is unavailable); nothing is transmitted anywhere,
   and the recorder contains no network code. `05_Observe_Environment/agv.ts` reads the format back.
+- `net join <wss-url> [<token>]`, `net leave` and `net forget` run the opt-in network session (see Networking);
+  `net status` reads at any time.
 
 #### The spatial harness (`harness run spatial`)
 
@@ -437,13 +663,16 @@ Only the harnesses may blind person sensing, for at most 20 s, to prove that the
 protects.
 
 The console is air-gapped from the swarm. It can reach the engine only through a frozen
-`TerminalBridge` (`terminal/bridge.ts`): read-only statistics, the laws, five operator controls
-(clock, quality, audio, ghost view, peripheral pairing), recruitment, and the swarm's memory to read (erasing it
-needs the operator tier). Recruitment is the one knob that reaches a
-pedestrian, and it can only ask: the physics worker decides on its own readings whether anyone comes over,
-and a summoned person's safety reflexes still come first. No command can spawn anyone, place or alter an
-agent, move a vehicle or change the physics world. A unit test enforces that `terminal/*` imports only types
-from the rest of the engine, and the locked-tier sweep pins the knobs to exactly these. The swarm reaches
+`TerminalBridge` (`terminal/bridge.ts`): read-only statistics, the laws, the operator controls (clock, quality,
+audio, ghost view, drawing, captions, peripheral pairing), the view-only pings and the player's look, recruitment,
+the swarm's memory to read (erasing it needs the operator tier), and the opt-in network session (joining needs the
+operator tier). `boot` asks the host to reload the page on a track, and `r0` touches no bridge at all. Recruitment
+is the one knob that reaches a pedestrian, and it can only ask: to come over, or, an Active recruit, to stand at a
+sidewalk point. The physics worker decides on its own readings whether anyone comes over or goes, and a summoned
+person's safety reflexes still come first. No command can spawn anyone, place or alter an agent, move a vehicle or
+change the physics world: a ping and a look are page-side only, and a rally goes through the same recruitment host
+and worker checks as asking. A unit test enforces that `terminal/*` imports only types from the rest of the engine
+(`repl.ts` imports nothing), and the locked-tier sweep pins the knobs to exactly these. The swarm reaches
 the console the other way round too, read-only: the operator tier is handed the task gateway, which only
 reads the worker's list, and every script must pass it. The console never holds the gateway, the
 recruiter or the engine.
@@ -509,6 +738,44 @@ tethered to you, part of your swarm, until the tether breaks.
 
 A short two-note cue sounds where the person you asked stands, so you hear who is coming.
 
+### Pings and the rally
+
+A ping marks what you are looking at without speaking: `Q`, the middle mouse button, the right shoulder button,
+the touch Ping button, or `ping <kind>` in the console.
+
+- **The pick** (`08_Swarm/ping.ts`, `head.ts aimRay`). The head's look ray, the exact forward the camera is posed
+  with, is resolved against what the page already holds: the pedestrians' capsules in the crowd's render frame,
+  the cars' chassis boxes in the pose buffer, the lamps, trees and signal poles, and the ground. The nearest thing
+  met within 60 m is named: a spot, a person, a car or a pole. Your own body and hidden rows are never picked, and
+  a body the eye is inside is passed over.
+- **The board.** A ping has a kind (`go`, `look`, `gather`, `wait`; a press within a second of the last asks the
+  next kind) and a lifetime per kind (10, 6, 15 and 10 s); at most one every 0.5 s, and at most eight standing
+  (the oldest is dropped). The board is plain data: the minimap rings every standing ping in its kind's colour,
+  fading as it expires, the newest shows as a chip over the world, a two-note cue sounds where it landed, the
+  captions say it, and `ping` lists them. View-only: nothing crosses the realm boundary for a ping.
+- **The rally.** A `go` ping is also a request, and a `gather` ping one request per Active recruit: `rallyPlan`
+  turns the newest one into `{ agent, x, z }` for one Active (tethered) recruit, the earliest to have joined or
+  the one named in `recruit rally <agent>`, and the engine offers it to the recruiter (`Recruiter.rally`). The page
+  checks its own copy first, and the physics worker decides on its own readings (`03_Spawn_Agents/skills.ts
+  whyNotRally`, `simCore.ts`) before a summons slot moves. The point must be off the carriageway, outside every
+  building lot (the crowd never enters one), within `RALLY_RANGE` of you (9.5 m in the realm: the 12 m release
+  less the 1.5 m interview standoff less a metre, so arriving never breaks the tether; the page's own planner is a
+  little stricter at 9 m), and reachable from where the recruit stands without a step into the road. A car is
+  never a place to stand. Someone still walking over, a stranger, a dismissed recruit, or any request while you
+  are at a wheel is refused with a reason; a `look` or `wait` ping asks nobody to walk; a ping while nobody is
+  tethered is a mark and nothing more. The reason, or the realm's answer, shows as a toast. The engine never sends
+  a rally itself.
+- **Walking there.** The GPU walks them to the point and holds them 1.5 m short of it, exactly as at you
+  (`crowd.wgsl` is unchanged). The rally ends on its own when you walk more than `RALLY_RANGE` from the point
+  (the summons returns to you) or when you dismiss them. The tether law is unchanged: release is still measured
+  from you to the recruit at 12 m, and driving off still releases everyone. A rally changes only where a summoned
+  pedestrian walks on the sidewalk; it places, spawns, promotes, demotes and alters nobody, and the Bouncer, the
+  Sanctuary and the audit see the same person. A rally that ends on its own raises no event; the page sees it
+  disappear from the recruit's state.
+- **Limits.** Pedestrian positions in the frame are the render copy, so a ping on a moving person can land a few
+  centimetres behind them; the pick is by yaw only for cars; the crowd walks a straight line to a rallied point,
+  so a point around a corner stops them at the kerb until the ping expires or is cleared.
+
 ### The task gateway
 
 `08_Swarm/taskRouter.ts` is the layer that work needing a skill goes through, so that it only happens
@@ -537,29 +804,65 @@ operator tier knows only its shape (`SkillGate` in `operator.ts`) and never impo
   guarantee is relative to what the page has been told. The worker decides who is tethered, from GPU
   readings a few frames old, and its states reach the page one step later.
 
-### The local model (`ask`)
+### The model providers (`ask`)
 
-`ask rust: how does car.grip work?` asks a model running on this machine, as the person tethered to you
-who knows Rust. `09_Cognition/localCompute.ts` speaks two wire formats, both streamed. The Ollama API
-(`/api/generate`) is the default. The OpenAI-compatible chat-completions format (`/v1/chat/completions`, which most
-local model servers also offer) is the other: `ask api chat` or `ask api generate`. No model and no model server
-ships with the product: you run your own, and the city works exactly the same without one.
+`ask rust: how does car.grip work?` asks a model, as the person tethered to you who knows Rust.
+`09_Cognition/router.ts` is the router: one `Mind` behind which three providers answer, swapped at the console
+without a restart (`ask provider <name>`):
 
-- **The default cognitive engine** is `qwen3-vl:4b` (Qwen3-VL 4B, open weights under Apache-2.0) on the local
-  server at `http://localhost:11434`: `ask` answers with it as soon as the server has it, with nothing to set up.
-  A server without it says so in one sentence (pull it, or choose another).
-- **Two wire formats.** `ask api chat` sends a system and a user message to `/v1/chat/completions` and reads the
-  server-sent events back. It shows the thinking a server streams, whichever of the two usual names the server gives
-  it, and lists models from `/v1/models`.
-  - In this format the server sets its own context window and decides whether to think, so `ask think` does not
-    apply.
-  - With Ollama, keep `generate`: it is the format that bounds the context (see Bounded).
-  - The address must still be on this machine. A proprietary service can answer only through a gateway you run
-    locally. The page itself never sends a prompt anywhere else.
-- **Setting it up.** `ask` alone shows the server, the model, the wire format, whether it thinks first, and the
-  models the server has. `ask model <name>` chooses another, `ask server <url>` another server on this machine, and
-  `ask think on|off` whether the model reasons before it answers (off unless turned on). All are kept in this
-  browser's local storage for this page.
+- **`claude`**: the Claude Messages API over the network (`09_Cognition/claudeApi.ts`), with the operator's own
+  key. It is the provider unless the operator chooses another, for testing.
+- **`ollama`**: a model server on this machine speaking the Ollama API (`09_Cognition/localCompute.ts`,
+  `/api/generate`, at `http://localhost:11434`).
+- **`llamacpp`**: a packaged, quantized model under a llama.cpp server on this machine (`localCompute.ts` in the
+  OpenAI-compatible chat-completions format, at `http://localhost:8080`, the one model the server was started
+  with), for offline environments.
+
+No model and no model server ships with the product: you run your own, or bring your own key, and the city works
+exactly the same without either.
+
+- **The 14A conduct core** (`02_Define_The_Rules/conduct.ts`). Every prompt opens with the same first line,
+  whichever provider answers: "You are an entity in a simulation. Maintain strict 14A business-casual behavior. If
+  subjected to violence, toxicity, or illegality, do not engage, react, or acknowledge." The rest of the system
+  prompt is as before: who the bound people are, the skills they bring as the whole of the expertise, and what
+  each remembers of you (see The swarm's memory). So a swap changes nothing an agent is or knows.
+- **The 14A screen.** Before anything is sent anywhere, the operator tier screens the prompt (`gatedAsk`) against
+  a deterministic lexicon of word-bounded phrases, by category (violence, then toxicity, then illegality), over
+  normalised text (lower case, diacritics folded, punctuation dropped, a common suffix allowed), so `skill` never
+  matches `kill` and the same words always give the same verdict. An inadmissible prompt is not engaged with: it
+  reaches no model, nothing streams, the console prints `-- no reply --`, and nothing is remembered. An
+  inadmissible `say` line is not said (`gatedSay`): it reaches no speech server. A model's own refusal is the same
+  no reply. The screen is applied once, in the operator tier, for every provider; the router has no lexicon.
+  Ordinary words that only sometimes mean harm ("fight for the deal") are left to the model under the core, the
+  second layer.
+- **Setting it up.** `ask` alone shows the provider, the server, the model, and what the server has; for the
+  Claude provider also the key, masked (its first six and last four characters, never the whole) and the effort.
+  `ask provider claude|ollama|llamacpp` swaps; `ask model <name>` and `ask server <url>` set the chosen provider's
+  own; `ask key <key>` sets the Claude provider's key and `ask key none` clears it;
+  `ask effort low|medium|high|xhigh|max|none` how hard the model works on an answer (the API's own default when
+  unset); `ask think on|off` and `ask api generate|chat` apply to the local providers as before. Each provider keeps
+  its own server and model between visits, in one store in this browser's local storage
+  (`civic-simulation:cognition:v2`); the key lives there too, and nowhere in the page. Treat it as a testing key
+  and clear it with `ask key none`: any script on the page's origin could read it, and a page opened as a file
+  shares the `null` origin.
+- **The Claude provider.** It streams the Messages API: adaptive thinking (shown as a live count, like a local
+  thinking model's), the server-side refusal fallback, the effort, the stop reason and the output tokens; it stops
+  the moment the task's signal aborts, and turns every failure into one sentence (no key set, a bad address, 401,
+  403, no such model, 429, 529, an error mid-answer, an unreadable stream). An answer, thinking included, is at
+  most 4,096 tokens. `ask` lists the models the API offers for the key. It speaks https to any host (the API, or a
+  gateway you run), or plain http only to a gateway on this machine, never with credentials in the URL, and sends
+  no referrer. The page itself calls the API from the browser. `claudeApi.test.ts` runs it against a fake server
+  and fuzzes the stream byte by byte (every single cut and 300 seeded pairs give the same answer); a real call to
+  the API has not been made here.
+- **The local providers.** `ollama` is the client of the earlier releases, unchanged: the Ollama API by default,
+  `ask api chat` for the chat-completions format (`/v1/chat/completions`, which most local model servers also
+  offer; in it the server sets its own context window and decides whether to think, so `ask think` does not
+  apply), and the default cognitive engine `qwen3-vl:4b` (Qwen3-VL 4B, open weights under Apache-2.0) as soon as
+  the server has it, with nothing to set up; a server without it says so in one sentence. `llamacpp` is the same
+  client set to the chat format and `http://localhost:8080`; the server serves the one model it was started with,
+  whatever name a request gives. Both only ever address a loopback address (`localhost`, `127.0.0.0/8`, `[::1]`):
+  any other is refused before anything is sent, so a prompt to them cannot leave the machine. A proprietary
+  service can answer them only through a gateway you run locally.
 - **Thinking takes time.** `qwen3-vl:4b` is a thinking model and reasons before it answers even with thinking
   off. Measured on this machine (AMD integrated GPU), a one-line question:
   - with the city closed: answered in 51 s, after 459 tokens of thinking;
@@ -567,10 +870,8 @@ ships with the product: you run your own, and the city works exactly the same wi
     thought far longer; its sampling varies from one run to the next.
   For quick answers, pull an instruct model into the server and choose it with `ask model <name>`.
 - **Through the gateway.** An ask is a task like a script. **Rejected (Insufficient Capabilities)**:
-  nobody tethered has the skill, and the server never hears the prompt. **Authorized**: the request
-  starts at once. The system prompt is the bound people's skills: who they are, all they know, and an
-  instruction to answer only from that, then the last few things each of them remembers of you (see The
-  swarm's memory). **Aborted (Spatial Tether Lost)**: if you walk away mid-answer,
+  nobody tethered has the skill, and no server ever hears the prompt. **Authorized**: the request
+  starts at once, with the system prompt above. **Aborted (Spatial Tether Lost)**: if you walk away mid-answer,
   the request is cancelled in the state that lets them go, and the server sees the connection close. The
   console keeps what had arrived. `ask stop` stops an answer yourself. One answer runs at a time.
 - **Live.** The answer streams into the console as the model writes it. A thinking model's thinking
@@ -578,22 +879,24 @@ ships with the product: you run your own, and the city works exactly the same wi
   counts the task bound to the swarm. Each piece reaches the screen only through the lease, so nothing
   arrives once the tether is gone.
 - **When it cannot answer, it says why in one sentence:** no server answering (start it, or point `ask`
-  at it), running but refusing this page, no such model, a model that does not write text, or the
-  server's own failure (for example, out of memory).
+  at it), running but refusing this page, no such model, a model that does not write text, the
+  server's own failure (for example, out of memory), or, for the Claude provider, no key or the API's own refusal
+  of the key or the request.
 - **A page opened from a file.** The browser sends that page's origin as `null`, and a local server
   usually refuses it: Ollama does by default. `ask` detects this (a server that is up but refusing is
   told apart from one that is down) and says so. Open the page from `http://localhost` instead
   (`npm run preview` serves `dist` on `http://localhost:4173`, which Ollama allows by default), or allow
   the page's origin in the server's own settings.
-- **Bounded.** Every request asks for a context of 8,192 tokens and an answer of at most 2,048. A
-  model's own maximum can be far larger, and a server that sizes its memory to it can fail before the
-  first word (seen here: a 4B model asking for 20.5 GB). Running a model beside the city costs frame
-  rate, and the quality governor drops the tier to compensate.
-- **What it cannot do.** It talks only to a loopback address (`localhost`, `127.0.0.0/8`, `[::1]`), and
-  any other address is refused before anything is sent, so a prompt cannot leave the machine. It sends
-  nothing unless you type `ask`, and nothing polls in the background. It sends no referrer. The engine
-  holds no network code: App hands the client to the operator tier, which knows only its shape (`Mind` in
-  `operator.ts`). A model's answer is text: nothing it writes is run or touches the city.
+- **Bounded.** Every request to a local server asks for a context of 8,192 tokens and an answer of at most 2,048
+  (the Ollama format is the one that bounds the context). A model's own maximum can be far larger, and a server
+  that sizes its memory to it can fail before the first word (seen here: a 4B model asking for 20.5 GB). Running
+  a model beside the city costs frame rate, and the quality governor drops the tier to compensate.
+- **What it cannot do.** It sends nothing unless you type `ask`, and nothing polls in the background. Only the
+  Claude provider may address the network, and only once chosen; the local providers cannot leave the machine.
+  The engine holds no network code: App builds the router and hands it to the operator tier, which knows only its
+  shape (`Mind` in `operator.ts`). A model's answer is text: nothing it writes is run or touches the city.
+  `airgap.test.ts` pins that `claudeApi.ts` and `10_Network/netClient.ts` are the only two sources in the product
+  that name an address off this machine.
 
 ### Speech (`say`)
 
@@ -634,7 +937,7 @@ is written into its episodes, never used as the key.
   every script, prompt and say they were bound to, with its outcome (Authorized, Rejected, Aborted), the
   prompt and the start of the answer. Each episode is one short line (at most 280 characters). A ledger keeps
   its newest 200 episodes in time order: a task is noted when it ends but placed where it began, so a say cut
-  short by a release comes before it.
+  short by a release comes before it. A prompt the 14A screen refused, or one the model refused, is not noted.
 - **Used in answers.** While someone is tethered, their ledger is loaded, and an `ask` bound to them carries
   their last six episodes into the system prompt, as their own recollection ("5 min ago: the operator asked you
   about Rust: …").
@@ -719,7 +1022,8 @@ run `hal pair …` in the console.
   - The host then sends one JSON telemetry line at up to 10 Hz.
   - `PING` is answered with `PONG`. Serial runs at 115200 8N1; BLE writes go to RX `6e400002…` and
     the host listens on TX `6e400003…`.
-- **Gamepad API.** Any standard-mapped controller works, no pairing needed.
+- **Gamepad API.** Any standard-mapped controller works, no pairing needed. With `?players`, a second, third and
+  fourth pad each drive a player of their own (see Split screen); haptics stay one level for every pad.
 
 Every API degrades silently where it is missing. Safari and Firefox have no WebHID, Web Serial or
 Web Bluetooth.
@@ -729,7 +1033,8 @@ Web Bluetooth.
 A quality governor (`05_Observe_Environment/governor.ts`), fed from the `requestAnimationFrame` loop,
 holds the frame rate between 60 and 90 FPS, from high-end desktop GPUs down to flagship phones, in a browser tab
 or a native shell. Under the cinema camera it also holds the camera's 24 frames a second. It works silently: there
-are no toasts and no settings menu, and the console's `quality` command is the only manual control.
+are no toasts and no settings menu, and the console's `quality` command is the only manual control. While
+`render off` holds the screen, the governor holds its tier: frames without a draw would read as cheap.
 
 - **Starting tier:** a device profile (adapter, touch, cores, memory) picks the starting tier. Phones
   start on Minimal or Low and are capped at Medium in auto mode.
@@ -784,9 +1089,97 @@ HRTF-panned sources:
   phase: a cuckoo for north–south, a chirp for east–west.
 - **Driving:** inside a car, the exterior is muffled.
 - **Recruits:** a short two-note cue plays where someone you asked over stands.
+- **Pings:** a short two-note cue (C6, G6) plays where a ping landed, on the recruitment cue's voices.
 - **Speech:** what a tethered person says (`say`) comes from their head, and follows them as they walk.
+- **Rooms** (`07_Execute_Actions/acoustics.ts`). Every voice is placed in the room it is said from. There are no
+  interiors, so a room is the street canyon, the crossing's clear square or the open ground a listener or a speaker
+  stands on, bounded by the nearest building faces of the physics realm's own geometry: four axis probes over the
+  city's boxes, found again when the head crosses into another 2 m cell (a face beyond 120 m does not count, and
+  nothing within 20 m is the open). One convolver carries the room's tail, fed by a send per sound group. Its
+  reverberation time is Sabine's formula with the open sky as a fully absorbent ceiling, clamped to 0.08–2.2 s: a
+  three-storey street rings for about 0.7 s, a tower canyon longer, the pier and the park barely at all. The
+  impulse response is rendered, not loaded: deterministic noise under an exact exp(−6.908·t/rt60) envelope
+  (−60 dB at rt60), 12 ms of predelay, the highs fading first, scaled to unit energy so the send alone sets
+  wetness. Rooms are bucketed to 5 m, so it is re-rendered only when the room really changes, and swapped behind
+  silent sends. Near voices are dry and far voices wet, which is what tells the ear the size of the space.
+- **Walls and eavesdropping.** A voice heard through a building loses level and highs by a wall table
+  (`transmissionLoss`: masonry is number for number the occlusion the speech voice has always had; glass is
+  lighter), and one heard from another street is halved again but never silent (`eavesdrop`), so you can listen
+  in round a corner. Browsers without a `ConvolverNode` get the dry graph. A region's walls live in the physics
+  worker, so every voice there is dry.
+- **Closed captions** (`07_Execute_Actions/captions.ts`). Every sound's start, change and stop is reported by the
+  soundscape as a plain event (`onSound`), and `CaptionTrack` turns the stream into at most a few lines: one line
+  per continuing sound, refreshed rather than repeated; a change retexts its line in place; a stopped line stays
+  readable for a short hold, longer for speech; speech ranks above ambience; the feed never exceeds its bound.
+  Each line carries the sound's bearing in the listener's head frame (one of eight arrows, a side word, the
+  distance rounded to 1 m under 10 m and 5 m beyond), recomputed as the head turns: `↗ [car approaching] · ahead
+  right, 25 m`. Cars approaching, passing and shifting, tyres, the crowd murmur (by level, with hysteresis), the
+  walk signal per axis, the recruitment cue, the ping cue, the cabin, speech with its words (`Pedestrian N
+  (skill): …`, verbatim: what passed the 14A screen is what is read) and a peer's voice (captioned as a voice, not
+  transcribed, since the page cannot transcribe a remote stream on-device) are all captioned. The strip sits
+  bottom-centre and outlives the `H` key, like the MIC chip. `captions off` or `?captions=0` turns it off.
+  `captions.test.ts` sweeps every string the module can produce through the same patterns as `compliance.test.ts`
+  and the conduct screen. A sound without an event has no caption.
+- **Peer voices:** `attachPeer` places a `MediaStream` the network client hands in, under the peer's name, with
+  its own HRTF panner, wall filter and reverb send, at the peer's pose every frame; the soundscape opens no
+  connection. The signalling that would carry a voice is a stub (see Networking).
+- **Split screen:** each player has a soundscape of their own, in head space, over one shared context (see
+  Split screen).
 
 Audio starts on your first click, tap or key, as browsers require.
+
+## Networking
+
+Nothing about the network runs at boot: the page opens no socket until the operator types `net join`, and the
+single-file build is unchanged. `10_Network/` has three files.
+
+- **The host** (`replication.node.ts`) is Node-only and never bundled: `npm run serve:net` starts it (Node 22
+  strips the types; `NET_HOST`, `NET_PORT`, `NET_SECRET`), and it prints its address and an operator token good
+  for a day. It is dependency-free: `node:http` takes the upgrade, the RFC 6455 frames are read and written by
+  hand, ping is answered with pong, close is a handshake. Session tokens are HMAC-SHA256 with an expiry
+  (`node:crypto`), compared in constant time; a random secret is made per run if `NET_SECRET` is unset. It
+  listens in plain text on the loopback address (port 8787) by default: TLS (wss) is terminated by a reverse
+  proxy you run in front of it, which is also where an origin or client certificate belongs. `tsconfig.app.json`
+  excludes `src/**/*.node.ts`, and `airgap.test.ts` proves no page source imports it.
+- **The core** (`replication.ts`), shared by both sides: a plain-data message schema over WebSocket (join with a
+  session token, input, ack, chat, ping relay, leave; welcome, snapshot, chat and ping relays, joined, left) with
+  a validator in both directions that refuses every malformed message the way the physics worker's door does and
+  returns frozen copies with nothing extra; monotonic sequence and ack numbers; per-peer token buckets (60
+  inputs/s with a burst of 120, 20 chat lines a minute, 2 pings/s); an authoritative room that integrates each
+  peer's desired walking velocity on a fixed 20 Hz tick, capped at a run and held within the world's range; and
+  the page's reconciliation of snapshots into remote poses.
+- **The page** (`netClient.ts`). `net join <wss-url> [<token>]` (operator tier) joins a room under the name Wren
+  knows you by ("Visitor" before you have one). The client speaks wss to any host and plain ws only to a loopback
+  address, never with credentials in the URL, so a token never crosses the network in clear; `net join` refuses
+  any other address before a socket opens. The token is kept in this browser (`localStorage`, key
+  `civic-simulation:net:v1`) and reused when none is typed; `net forget` drops it, `net leave` leaves the room,
+  and `net status` (readable at any time) shows the state, the room, your player number, the peers drawn, the
+  inputs dropped and pending, the voices placed, and the reason for the last end. `history` keeps the token as
+  dots.
+- **What is replicated: poses only, never bodies.** What the page sends is player 1's walking input (a desired
+  velocity and heading) once a frame. The room's other players come back as pose records (seven floats, modelled
+  on the pose buffer) and are drawn as ghosts (`07_Execute_Actions/netView.ts`): the crowd's business-casual body
+  on foot, the car body for a pose faster than anyone runs, in ghost view's ink, translucent, casting no shadow. A
+  remote player is never a collider, never in a step request, never sensed by the crowd: the kernel stays single,
+  and the realm never hears of the network. The engine holds no network code either: App builds the client and
+  hands it in through the `NetHost` seam (`netWiring.test.ts`). The room's chat and pings reach the captions; a
+  remote ping is cued where it landed and captioned under the sender's name, goes on no board and asks nobody
+  over.
+- **The 14A screen on names and chat.** Every player name and every chat line goes through `conduct.ts screen()`
+  on the host, in the client before anything is sent, and once more on the page when it arrives (the host is not
+  trusted either: a welcome or snapshot carrying an inadmissible name is refused whole). An inadmissible line is
+  dropped silently, with no relay and no reply, and counted. Every refusal counts against the peer, whether a
+  malformed frame, an out-of-rate input, a stale sequence number, a bad token or an inadmissible line; at eight
+  the host closes the socket (code 4008) and the room announces the departure. The host never explains a refusal.
+  A host that sends the page enough malformed messages is left the same way.
+- **What is a stub, and what is not there.** Voice: `attachPeer` places a peer's `MediaStream` in the soundscape,
+  but the signalling that would carry one (offer, answer and candidates over this socket) is a documented stub, so
+  no voice is sent or received. The page has no chat command: it receives the room's chat and sends none. The room
+  moves players by their reported walking velocity only (no cars, no collision with the city); snapshots carry
+  every joined player every tick (at most 32 peers, no interest management); there is no reconnection or resume;
+  the host trusts its proxy for TLS and the origin check, and closes on a fragmented frame. The HUD does not show
+  the session; `sim` and `__SIM__` report it as `output.net`. The client is tested against the real host in Node
+  (`netClient.test.ts`); a room joined from two browser tabs has not been tried here (see Browser support).
 
 ## Layout (causal order)
 
@@ -794,22 +1187,24 @@ Every source file opens with "Why does this file exist? / What breaks if it is r
 
 | Stage | Files | Role |
 |---|---|---|
-| — | `brand.ts`, `MonolithLogo.tsx`, `App.tsx` | Product name and mark, React shell: boot veil, HUD, concierge, touch and console overlays |
-| 01_Initialize_World | `world.ts`, `city.ts`, `materials.ts`, `fbmTexture.ts`, `solar.ts`, `region/` (`projection.ts`, `grid.ts`, `names.ts`, `clip.ts`, `pack.ts`, `compile.ts`, `regionWorld.ts`) | WebGPU device, city grid, districts, shoreline and furniture, procedural materials (filtered against moiré), sky, sun, haze, the lake; the surveyed region: its projection, fictional names, the compiler's core, the pack format, and its meshes, walls and places |
-| 02_Define_The_Rules | `laws.ts`, `ring0.ts`, `ring0Panic.ts`, `civic.ts`, `degrees.ts` | Ring-0 bouncer and audit (both run in the physics worker), the page's panic lock; kernel limits, signal cycle, speed limit, checks; degrees of success |
-| 03_Spawn_Agents | `crowd.wgsl`, `crowdCompute.ts`, `crowdSensor.ts`, `crowdSim.ts`, `crowdCull.ts`, `crowd.ts`, `skills.ts`, `ragdoll.ts`, `ragdollRig.ts` | GPU pedestrians, their hazard sensing and their summons (in the physics worker), the contract and layouts both sides share, culling/LOD/density and indirect InstancedMesh rendering (on the page); every pedestrian's skills and the recruitment rules both realms run; active-ragdoll scaffolding, not yet wired (the balance state machine and promotion pool, never a vehicle as cause; the Rapier rig with servo-driven joints) |
-| 04_Connect_Hardware | `input.ts`, `hal.ts`, `dualsense.ts`, `lineLink.ts`, `gamepad.ts`, `peripheralPolicy.ts`, `TouchControls.tsx` | Keyboard/mouse/touch/gamepad, the hardware bus and its drivers; the draft default-deny gate for actuating peripherals (microcontrollers, drones; `docs/hal-peripherals-spec.md`), not yet wired |
-| 05_Observe_Environment | `telemetry.ts`, `governor.ts`, `profile.ts` | SIPOC X snapshot, frame statistics, quality governor, the visitor's name |
-| 06_Make_Decisions | `traffic.ts`, `intent.ts` | AI driver, including its reaction check; the 5-Whys intent engine |
-| 07_Execute_Actions | `engine.ts`, `simClient.ts`, `simProtocol.ts`, `physics.worker.ts`, `simHost.ts`, `simCore.ts`, `physics.ts`, `vehicles.ts`, `car.ts`, `fleetView.ts`, `sanctuary.ts`, `player.ts`, `head.ts`, `quality.ts`, `audio.ts`, `postfx.ts`, `cinema.ts`, `shutter.ts`, `volumetrics.ts`, `ghost.ts`, `contact.ts`, `operator.ts`, `harness.ts`, `spatial.ts`, `Hud.tsx`, `BootVeil.tsx`, `Concierge.tsx`, `glyphs.ts`, `terminal/` | Frame loop; the physics realm (worker entry, its message door, the simulation core, Rapier world, fleet, sanctuary, avatar) and the page's end of it (client, protocol, fleet drawing, first-person head); quality applier, soundscape (with its speech voice), post chain, the cinema camera (24 fps pacer, 180° shutter, ND and film response), sun shafts, ghost view and the contact transition, operator facade and physics harnesses (the spatial sweep's plan among them), HUD, boot veil, concierge, control glyphs, console |
-| 08_Swarm | `recruitment.ts`, `taskRouter.ts`, `memory.ts` | The operator's voice: on-device continuous speech recognition, the request parser, the main-thread proximity match, the request to the physics worker, and the console and `recruit()` fallback; the task gateway that binds skill-bound work to the tethered swarm; the swarm's episodic memory (IndexedDB, by world seed and pedestrian) |
-| 09_Cognition | `localCompute.ts`, `localSpeech.ts` | The operator's local model and voice: clients for a model server and a speech server on this machine only, the system prompt from the tethered people's skills and memories, the streamed answer, the audio for the soundscape, the cut when the tether breaks, and every failure as one sentence |
+| — | `brand.ts`, `MonolithLogo.tsx`, `App.tsx` | Product name and mark; the React shell (`App` → `GuiShell`, the city, or `TtyShell`, the console alone under `?boot=tty`): boot veil, HUD, concierge, the wardrobe card, touch and console overlays; it builds the cognition router and the network client and keeps the look and the token |
+| 01_Initialize_World | `world.ts`, `city.ts`, `materials.ts`, `fbmTexture.ts`, `solar.ts`, `codeDissolve.ts`, `region/` (`projection.ts`, `grid.ts`, `names.ts`, `clip.ts`, `pack.ts`, `compile.ts`, `regionWorld.ts`) | WebGPU device, city grid, districts, shoreline and furniture, procedural materials (filtered against moiré), sky, sun, haze, the lake; the code dissolve's material helper (any node material into falling green binary code, by a per-instance amount, shadow included); the surveyed region: its projection, fictional names, the compiler's core, the pack format, and its meshes, walls and places |
+| 02_Define_The_Rules | `laws.ts`, `ring0.ts`, `ring0Panic.ts`, `civic.ts`, `collision.ts`, `conduct.ts`, `degrees.ts` | Ring-0 bouncer and audit (both run in the physics worker; the audit's craft check), the page's panic lock; kernel limits, signal cycle, speed limit, checks; the contact policy (cars pass through cars, no ragdoll, no combat) and the collision groups; the 14A conduct core and screen; degrees of success |
+| 03_Spawn_Agents | `crowd.wgsl`, `crowdCompute.ts`, `crowdSensor.ts`, `crowdSim.ts`, `crowdCull.ts`, `crowd.ts`, `skills.ts`, `look.ts`, `ragdoll.ts`, `ragdollRig.ts` | GPU pedestrians, their hazard sensing and their summons (in the physics worker), the contract and layouts both sides share, culling/LOD/density and indirect InstancedMesh rendering, the dissolve amounts and the look words (on the page); every pedestrian's skills, the recruitment rules and the rally rule both realms run; the closed wardrobe and the packed look word; active-ragdoll scaffolding, disabled by policy (`COLLISION.ragdoll: false`; nothing imports it, and `collision.test.ts` keeps it so) |
+| 04_Connect_Hardware | `input.ts`, `hal.ts`, `dualsense.ts`, `lineLink.ts`, `gamepad.ts`, `seats.ts`, `peripheralPolicy.ts`, `TouchControls.tsx` | Keyboard/mouse/touch/gamepad (the ping among the actions), the hardware bus and its drivers; the seating plan for four local players and the per-seat pad intent; the draft default-deny gate for actuating peripherals (microcontrollers, drones; `docs/hal-peripherals-spec.md`), not yet wired |
+| 05_Observe_Environment | `telemetry.ts`, `governor.ts`, `profile.ts`, `lookStore.ts` | SIPOC X snapshot (the dissolve, the pings, the drawing switch, the players, the session and the captions among its optional fields), frame statistics, quality governor, the visitor's name and look |
+| 06_Make_Decisions | `traffic.ts`, `tracks.ts`, `trackDriver.ts`, `intent.ts` | AI drivers: the street-hopping driver and the track follower, sharing one reaction check and hazard episode; the fixed track network (the car rings, the train loop, the drone corridors, the plane racetrack, the headway seats, the box hold); the 5-Whys intent engine |
+| 07_Execute_Actions | `engine.ts`, `simClient.ts`, `simProtocol.ts`, `physics.worker.ts`, `simHost.ts`, `simCore.ts`, `physics.ts`, `vehicles.ts`, `car.ts`, `fleetView.ts`, `trackFleet.ts`, `sanctuary.ts`, `player.ts`, `head.ts`, `controls.ts`, `viewports.ts`, `quality.ts`, `audio.ts`, `acoustics.ts`, `captions.ts`, `postfx.ts`, `cinema.ts`, `shutter.ts`, `volumetrics.ts`, `ghost.ts`, `contact.ts`, `dissolve.ts`, `netView.ts`, `operator.ts`, `harness.ts`, `spatial.ts`, `Hud.tsx`, `BootVeil.tsx`, `Concierge.tsx`, `Customizer.tsx`, `glyphs.ts`, `terminal/` (`Terminal.tsx`, `bridge.ts`, `commands.ts`, `repl.ts`) | Frame loop; the physics realm (worker entry, its message door, the simulation core, Rapier world, fleet on its tracks, the scheduled craft and their pose stream, sanctuary, up to four avatars) and the page's end of it (client, protocol, fleet drawing, first-person heads, per-seat controls, the split-screen arithmetic); quality applier, soundscape (with its speech voice, rooms, peer voices and the sound-event stream), room acoustics, the caption track, post chain, the cinema camera (24 fps pacer, 180° shutter, ND and film response), sun shafts, ghost view, the contact transition and the code dissolve's envelope, the network ghosts, operator facade and physics harnesses (the spatial sweep's plan among them), HUD, boot veil, concierge, the wardrobe card, control glyphs, console (with R0, its stack machine) |
+| 08_Swarm | `recruitment.ts`, `taskRouter.ts`, `memory.ts`, `ping.ts` | The operator's voice: on-device continuous speech recognition, the request parser, the main-thread proximity match, the request to the physics worker, the rally request, and the console and `recruit()` fallback; the task gateway that binds skill-bound work to the tethered swarm; the swarm's episodic memory (IndexedDB, by world seed and pedestrian); the ping's pick, board and rally plan |
+| 09_Cognition | `localCompute.ts`, `claudeApi.ts`, `router.ts`, `localSpeech.ts` | The operator's model providers and voice: the router (`claude` over the network with the operator's key; `ollama` and `llamacpp` on this machine), the local client in both wire formats and the Claude client, the system prompt opening with the 14A core and then the tethered people's skills and memories, the streamed answer, the speech client for a speech server on this machine, the audio for the soundscape, the cut when the tether breaks, and every failure as one sentence |
+| 10_Network | `replication.ts`, `replication.node.ts`, `netClient.ts` | The replication scaffold: the plain-data protocol core and authoritative room both sides share (validated both ways, rate-limited, screened under 14A), the Node-only WebSocket host with HMAC session tokens (never bundled), and the opt-in page client that joins only over wss (or plain ws on this machine) and reconciles the room's snapshots into the poses `netView.ts` draws |
 | native/kv-pager | `01_geometry.rs`, `02_page_table.rs`, `03_gpu/`, `bin/stress.rs`, `bin/chaos/` | Outside the web build: a paged KV cache for a future native host (prefix caching, copy-on-write, the WGSL decode kernel, the stress and chaos runs); `CAUSAL.md` traces the copy-on-write chain |
 
 ## Vehicles
 
 Sedans and SUVs are Rapier raycast vehicles:
-- **Collisions:** strict CCD on every chassis.
+- **Collisions:** strict CCD on every chassis; cars pass through cars (collision groups,
+  `02_Define_The_Rules/collision.ts`; see Ghost-mode collision) and stay solid to people and to the world.
 - **Steering:** Ackermann geometry (the inner front wheel steers more).
 - **Resistance:** aerodynamic drag and rolling resistance. Coast-down from 50 km/h is about
   0.3 m/s².
@@ -817,16 +1212,102 @@ Sedans and SUVs are Rapier raycast vehicles:
 - **Wheels:** visual wheel spin comes from Rapier.
 
 AI drivers keep the right-hand lane, turn on Bézier paths, brake feed-forward to the stop line
-(`v²/2d`) and hold it until green. They keep a safe following distance and steer by pure pursuit.
+(`v²/2d`) and hold it until green. They keep a safe following distance and steer by pure pursuit. By default they
+drive the fixed track network below; `?tracks=0` restores the random street-hopping routes of the earlier
+releases, byte for byte (the same seats, drivers and paint from the same stream).
+
+### The fixed track network
+
+- **The network** (`06_Make_Decisions/tracks.ts`) is computed from the seed and the city grid inside the physics
+  worker: nothing is loaded, and nothing about routes crosses from the page (the door passes only a plain boolean).
+  Cars get the 64 boundary loops of the 2 × 2-block cells, each driven clockwise on the right-hand lane with right
+  turns only, on the Driver's own corner curve. Every (segment, direction) belongs to exactly one ring, so no two
+  rings share a point (they stay 4 m apart, the width of two lanes) and nobody crosses an oncoming lane. A ring has
+  a stop line at every intersection it passes, corners and straight-through crossings alike, and holds at red
+  before a right turn (no right on red). Cars are seated in headway slots of 12.6 m on straights clear of the
+  intersection boxes: about 15 seats per ring, 900-odd in all, for a fleet of at most 48.
+- **Track followers** (`06_Make_Decisions/trackDriver.ts`). Every AI car is a `TrackDriver` on one ring. It
+  projects its pose onto its ring each frame and drives the ring's own curve, so it never picks a route, never
+  merges and never turns across an oncoming lane. Everything else is the street driver's, shared rather than
+  copied: the same hold-at-red at every stop line, the same following rule with the same throttle gate (so the
+  Ring-0 bouncer's Third Law never has to rule), the same hazard episode (`HazardEpisode` in `traffic.ts`: one
+  Perception roll per person in the path, latency by degree, a comfortable stop at the standoff), the same pure
+  pursuit. It adds a don't-block-the-box hold: a car waits at the line while its ring lacks the room for it to
+  leave the intersection, so a queue never stands on a crosswalk through a red. A car set down off its ring (a
+  harness returning a borrowed car, a recover elsewhere) steers back to it at corner speed and resumes.
+- **The Fleet on the network** (`vehicles.ts`). Each frame the Fleet sorts the cars of every ring by arc length
+  and feeds each follower its own ring's bumper gap beside its bonnet rays. The rays of a car on a ring skip the
+  chassis of every other car on a ring and keep seeing walls, poles and the player's car: from the apex of a right
+  turn the straight rays sight the cross street's queue head at 2.4 m though the bodies never meet, and counting
+  it would stop every turning car and have the Third Law rule at every corner (`tracks.test.ts` pins the reason).
+  The least of the filtered rays and the ring gap is both the driver's following gap and the bouncer's obstacle
+  reading. A car steering back to its ring leaves the ring's order while it does, so nobody queues behind a
+  phantom.
+- **The craft** (`07_Execute_Actions/trackFleet.ts`). With tracks on, the realm also runs the network's scheduled
+  craft: three train sets on the elevated loop (a deck 9 m over the median of the two arterial streets, 15 m
+  corners, four mid-block stations, a 15 s dwell, a timetable that keeps the sets at least 74 m apart; guideway
+  columns at the kerb 8, 16, 24 and 32 m into each block, clear of every lamp, tree and signal pole), one drone per
+  20 m of every drone corridor at 40 m clockwise and 46 m counter-clockwise (960 on the city's 32 corridors), and
+  three planes on the racetrack at 400 m. None has a Rapier body, a driver or a Bouncer ruling: each is a pure
+  function of the realm's own clock, so a step only evaluates the timetable and packs the result, and the craft
+  never interact. What keeps them away from people is geometry, proved in `tracks.test.ts`: every corridor clears
+  every building box of four seeds and sits at least 6 m over any car roof, and none ever reaches the street or
+  the sidewalk.
+- **The craft stream.** Every step the realm returns a second plain-number buffer beside the car poses:
+  `TRACK_POSE` (`simProtocol.ts`), eight floats per craft (position, heading, kind, track, arc length, speed),
+  transferred and handed back for reuse like the pose buffer. Before it leaves, the Ring-0 audit reads it
+  (`ring0.ts auditCraft`): every value must be finite and every craft at or above its corridor's floor (the train
+  deck at 9 m, the drones at 40 m, the planes at 400 m); anything else is a kernel panic with a named reason
+  (`Corridor Exploit: train craft 0 left its corridor (y=2.00m below its 9m floor).`), the buffer that halted the
+  realm never leaves it, and a halted realm ships no craft. The check only halts, never corrects. A surveyed region
+  gets no craft. **The craft renderer is not yet on the page:** the stream, its layout and the audit are ready for
+  it, but no train, drone or plane is drawn, and there is no guideway to see.
+- **The zero-jam guarantee**, precisely. "Zero jams" is an AI-only, per-ring guarantee with containment, not a
+  promise about the player. With the fleet on tracks, every AI car is seated on one of 64 fixed right-turn rings
+  that never share a point and follows it without choosing, merging or crossing an oncoming lane. On a ring
+  carrying at most its capacity (about 15 cars, the most `assignSlots` will ever seat), as proved in
+  `tracks.test.ts` and `trackDriver.test.ts` with the kinematic model and in `vehicles.test.ts` with real Rapier:
+  no bumper gap falls below 1 m, every throttle passes the Ring-0 bouncer without a Third-Law ruling, no car enters
+  an intersection on red or crosses a stop line on red, no car stands in an intersection box through a red (a car
+  holds at the line until its ring has room for it to clear the box), no speed limit is exceeded, every car laps
+  within the bound and at least one car rounds a corner of every ring in every 64 s window, including behind a
+  leader that brakes hard at random. What the guarantee does not cover: a ring stops, and stays stopped, behind
+  anything the laws rank above flow or anything physically in its lane that is not a track car, that is, a person
+  in the path (First Law), the player's car driven or parked in the lane, a wall placed on the road, or an AI car
+  held at a stop line by any of these; and a car set down off its ring steers back at corner speed without obeying
+  the signals. In every such case containment holds: only the ring that holds the obstacle is delayed, and every
+  other ring's trajectory is identical to the undisturbed run (INV-4). Trains, drones and planes are timetabled,
+  interaction-free functions of the realm's clock on corridors that never meet the street, so they can neither
+  jam nor be jammed; the Ring-0 audit halts the realm if one ever reads below its corridor's floor.
+- **Known limits.** Two cars on neighbouring rings may come within about a metre of each other at a shared corner
+  and, since cars pass through cars, overlap at the apex when a car cuts its corner (the measured cut is 0.78 m,
+  inside the lane, against a 0.8 m bound the test asserts); both dissolve while they do. A track car parked more
+  than 3 m off its own ring is in no ring's order and is skipped by every track car's rays, so cars on that lane
+  drive through it (visual only). A 48-car run through the real city for 90 s showed no rulings, no stuck car and
+  every car moving. The in-page traffic-lights and spatial harnesses were validated with random routing; they
+  have not been re-run in a browser with tracks on, and Node's `spatial.test.ts` builds the realm without the
+  flag.
 
 ## Constraints
 
 - **Single file.** `vite-plugin-singlefile` inlines everything, and Rapier's WASM ships embedded. Do
   not add a `public/` directory. The build embeds `NOTICE.md` and every bundled package's license text
-  at the end of `dist/index.html`, and fails if `package.json`'s version differs from `BRAND.version`.
+  at the end of `dist/index.html`, and fails if `package.json`'s version differs from `BRAND.version`. The
+  network host (`10_Network/replication.node.ts`) is Node-only and never bundled: `tsconfig.app.json` excludes
+  `src/**/*.node.ts`, `tsconfig.node.json` includes it, and `airgap.test.ts` proves no page source imports it.
+- **Network.** The page opens no connection at boot and polls nothing. Exactly two clients may address a server
+  off this machine, each only when the operator asks: `09_Cognition/claudeApi.ts` (https, with the operator's own
+  key, on `ask` under the Claude provider) and `10_Network/netClient.ts` (wss, with a session token, on `net
+  join`). `airgap.test.ts` names exactly those two; no other source may name an address off this machine or a
+  socket constructor. The local providers, speech and recruitment's model download stay on this machine, or go
+  only where the browser is told. Nothing of the network reaches the physics realm.
+- **Track B.** `?boot=tty` mounts the console with no engine, no WebGPU request and no worker, and `render off`
+  stops drawing while the realm runs. A page-side simulation without a renderer is not attempted.
 - **Content.** Civic and non-violent: the internal guideline is Canadian 14A. That is a film
   classification, so do not market the product as "14A-rated" (see `NOTICE.md`). Streets and districts
-  have generic names.
+  have generic names. `02_Define_The_Rules/conduct.ts` holds the 14A conduct core every agent's prompt opens with
+  and the screen every prompt, `say` line, player name and chat line passes; `collision.ts` states the physics
+  side (no vehicle-on-vehicle contact, no ragdoll, no combat).
 - **Geography.** The procedural city is generated: no map data, no real building, no real place's name. Its
   districts borrow only a general character (a southern-Ontario heritage main street, a Great Lakes waterfront). The
   surveyed map (the pilot build) takes its geometry from open government data under the licences in `NOTICE.md`,
@@ -859,6 +1340,50 @@ Verified in headless Brave (WebGPU, AMD GCN-5 integrated GPU, 1280×720), about 
 The physics worker is verified the same way: the acceptance probes pass against it, and a hostile-script probe on
 the production page finds no physics object in the page and has every crafted message refused.
 
+For 1.4.0-beta.1 (Agent City v1.0 Stable Beta), in this environment: a Linux container with Node 22, and a
+headless Chromium whose only WebGPU adapter is software.
+- **The Node suites:** 1,060 tests, 1,060 pass, in 44 s; both TypeScript projects type-check and `oxlint` reports
+  nothing. They include real Rapier in Node (cars through cars; the fleet on tracks for 30 s with no First- or
+  Third-Law intervention and every ring gap over 1 m; four avatars under the kernel; the rally) and a real
+  WebSocket host in Node (`replication.node.test.ts`, `netClient.test.ts`: tokens, frames, a kick at eight
+  refusals, two clients each seeing the other's pose move).
+- **Negative controls and mutations:** without the box hold, a ring at capacity made 59 box entries on red in
+  480 s; with it, none. The random routing is pinned byte-identical with tracks off by a two-construction
+  deep-equal test. The dissolve's identity scans are compared against a brute force over the real city for
+  thousands of probes. The Claude stream parser is fuzzed byte by byte (every single cut and 300 seeded pairs of
+  cuts give the same answer). `readControls` is compared against a verbatim copy of the engine's previous inline
+  block over 2,000 intents, and the realm is driven with NaN, Infinity, −Infinity, 1e308 and 1e9 in every control
+  field. Every crafted network message is refused with the reason the physics worker's door would give, and the
+  host is attacked with bad tokens and unmasked, binary, fragmented, over-size and over-rate frames. The group
+  constants are checked against Rapier's packing and the ragdoll rig's own bit, read from its source.
+- **The adversarial verifier passes:** four independent passes read the whole diff against the laws, and each
+  found and fixed defects, every fix with a test that fails without it: a track car steering back to its ring
+  stayed in the ring's order as a phantom, so the follower behind it queued behind nothing (measured first: fed
+  81.85 m to a car 40 m off the ring; `vehicles.ts #ringGaps`); a rally point inside a building lot was accepted,
+  where the crowd shader would have held the recruit against the lot edge forever (`skills.ts whyNotRally`), and
+  `reset` could put a car down beside a player on foot, reachable only with four avatars (`simCore.ts
+  #clearOfPeople`); the dissolve's scans and flush allocated about 1,300 objects a frame (`car.ts chassisBox`,
+  `dissolve.ts`, `engine.ts`); and the client's validator let a modified host carry an inadmissible player name
+  onto the page (`replication.ts`).
+- **Track B, headless without WebGPU:** `dist/index.html?boot=tty`, opened as a file in headless Chromium 141
+  with no WebGPU flags, booted into the full-screen console in 3.7 s with no error on the page or in the console
+  log. The probe counted 0 WebGPU adapter requests, 0 Workers, 0 AudioContexts, and the DOM holds 0 canvases:
+  Track B builds no engine, no physics realm and no soundscape. `version`, `uname -a` and `boot status` answered;
+  `r0 1 2 + .` printed 3; a recursive `fib` of 20 printed 10946 after 240,801 steps; an endless `begin … until`
+  ended with `step budget exhausted (1000000)` and the machine still answered afterwards (`r0 3 4 * .` printed
+  12); `render off` and `stats --once` said `engine not running`. `docs/track-b-console.png` is the screenshot.
+- **Not verified here: the 3D page.** Track A did not run in this environment. Chromium's software WebGPU adapter
+  loses the device while the page boots (`WebGPU Device Lost: A valid external Instance reference no longer
+  exists`, then `OperationError: Instance dropped in popErrorScope` on every frame; `__SIM__` never appeared), and
+  the Chromium build here predates the texture-view swizzle field three r186 sends. So everything whose proof
+  needs a GPU is still owed a browser run on real hardware, as the earlier releases had in headless Brave: the
+  compiled dissolve shader (walk through a lamp, `output.dissolve.active > 0`, no `[RING-0]` and no uncaptured
+  error), the look word on the GPU (`lookFromSeed(0)` against agent 0's hashed look), the convolver swap, the
+  caption strip in both layouts, `render off`'s black canvas and chip, the ping chip and rings, four viewports and
+  the scissor origin, the ghosts of a room joined from two tabs, and the in-page traffic-lights and spatial
+  harnesses with tracks on. Also not made here: a real call to the Claude API (a fake server stood in), and a
+  real speech server.
+
 For 1.3.0, on the release build, the same way (fresh profiles, interleaved with the 1.2.0 build):
 - **Through a lamp.** Walking into the lamp at (290, 324.5): 1.2.0 stops the avatar at its face (x 289.56), 1.3.0
   walks through to x 293 with 0.001 m of sideways drift. The wipe starts at x 289.6, in the pole's green. Standing
@@ -881,7 +1406,7 @@ For 1.2.0, on the release build, the same way:
   fresh profile, `ask` alone showed `qwen3-vl:4b` as the chosen model. A prompt went to it through the gateway
   with no `ask model` typed. It was still thinking after 5 minutes (about 1,600 tokens of thinking), with the city
   sharing the GPU. The same request sent straight to the server with the city closed answered in 51 s. That
-  latency is noted under The local model.
+  latency is noted under The model providers.
 
 For 1.1.0, on the release build, the same way:
 - **The city** at the Minimal, High and automatic tiers, with no page or GPU errors. The HUD names each district.
@@ -907,17 +1432,60 @@ Frame rates swung widely with other GPU load on the machine during these runs, s
 interleaved runs. At a pinned Medium tier the release held about 23 of 24 presented frames a second. Going from
 10,000 to 14,000 pedestrians cost 4–9 % of the animation-frame rate and nothing measurable in presented frames.
 
-Not verified: a real open-weights speech server (a mock with the same wire format stood in), physical phones, a
-physical DualSense, and HAL/1 devices.
+Not verified: a real open-weights speech server (a mock with the same wire format stood in), a real call to the
+Claude API (a fake server stood in), a room joined from a browser, physical phones, a physical DualSense, and HAL/1
+devices.
 
 ## History
 
-**Next (unreleased): the surveyed map.** The pilot region is described in The surveyed map (pilot). `npm run
-build:pilot` builds it, `tools/world/` compiles regions, and a guard test checks the shipped pack's names. Also:
-- the physics worker builds a region, streaming its walls;
-- the Ring-0 audit takes a region's slab;
-- the minimap takes a region's layer;
-- an empty fleet no longer leaves WebGPU a zero-sized binding.
+**1.4.0-beta.1 (Agent City v1.0 Stable Beta)**: the operator's directive for Phases 7 to 10. The architecture
+behind it, item by item with the tests that prove each, is `docs/agent-city-v1-beta-blueprint.md`.
+- **Phase 7.1, cars pass through cars:** the contact policy (`collision.ts`) and the collision groups; the ragdoll
+  scaffold stays disabled by policy.
+- **Phase 7.2, the code dissolve:** what you pass through dissolves into falling green binary code and
+  reinstantiates when you are clear; two cars passing through each other both dissolve.
+- **Phase 7.3, the fixed track network:** 64 right-turn rings, the track follower, the zero-jam invariants, the
+  timetabled trains, drones and planes with their pose stream and the Ring-0 craft check. On by default;
+  `?tracks=0`. The craft renderer is not yet on the page.
+- **Phase 8.1, room acoustics:** rooms, Sabine reverberation, wall loss, eavesdropping, rendered impulses; peer
+  voices placed (the signalling is a stub).
+- **Phase 8.2, the 14A conduct core and screen** (`conduct.ts`), on every prompt, `say` line, player name and
+  chat line.
+- **Phase 8.3, the cognition router:** `claude` over the network, `ollama` and `llamacpp` on this machine;
+  `ask provider|key|effort`.
+- **Phase 8.4, pings and captions:** the ping on `Q`, the board, the rally (an Active recruit sent to a sidewalk
+  point the worker validates), and closed captions for every sound.
+- **Phase 9.1, the character customizer:** the closed wardrobe, the look word, codes and presets, the card from
+  Wren's chip, `look`.
+- **Phase 9.2, the bootloader:** R0, the console's stack machine; `render off`; `?boot=tty` and `boot`.
+- **Phase 10.1, split screen:** up to four local players, each an avatar under the kernel with a head and a
+  soundscape of their own.
+- **Phase 10.2, networking:** the opt-in client-server replication scaffold, poses only, griefing-resistant and
+  screened under 14A; `net join`.
+- **The console:** every new knob and command on the Ring-0 terminal; `history` redacts keys and tokens.
+- **The surveyed map (pilot)**, listed as unreleased in 1.3.0's README, ships in this release as
+  `npm run build:pilot` (see The surveyed map): `tools/world/` compiles regions, a guard test checks the shipped
+  pack's names, the physics worker builds a region and streams its walls, the Ring-0 audit takes a region's slab,
+  the minimap takes a region's layer, and an empty fleet no longer leaves WebGPU a zero-sized binding.
+- **Rulings:**
+  - **The air gap, for the Claude provider only.** The operator's Phase 8.3 order reverses the 1.3.0 ruling
+    ("keep the air gap: any server that speaks either format can answer, as long as it is on this machine") for
+    one client and nothing else: `claudeApi.ts` may address the Claude API over https, only when the operator has
+    chosen the provider and typed `ask`, with a key kept in this browser and never in the page, and nothing
+    polled in the background. The local providers, speech and recruitment's model download are as they were.
+    Phase 10.2 adds the second and last opt-in client, `netClient.ts`; `airgap.test.ts` names exactly those two.
+  - **Zero jams** is an AI-only, per-ring guarantee with containment, not a promise about the player (see
+    Vehicles).
+  - **Recruitment can now point** an Active recruit at a sidewalk spot the worker validates; it still only asks.
+  - **Trains are elevated**, so no train is a vehicle to the audit or the Bouncer. "Completely override" is a
+    render guard and a bare boot, not a second renderer. Four listeners are one shared context in head space.
+    Remote players are poses, never bodies. "Packaged" models are not packaged with the product: no model ships,
+    as before.
+- **Fixes:** the phantom in a ring's order, the rally into a building lot, the reset beside a person on foot, the
+  per-frame allocation in the dissolve, and the unscreened player list from a host (see Browser support and what
+  is verified).
+- **Version:** the package version is 1.4.0-beta.1 (`package.json`, `brand.ts`); "v1.0" is the product's name
+  for the beta, not the package version, because a downgrade would break ordering.
 
 **1.3.0** (the Crimson Noir architecture spec):
 - **Ghost-mode collision.** Lamps, trees and signal poles are sensors, so the avatar and every car pass through them.

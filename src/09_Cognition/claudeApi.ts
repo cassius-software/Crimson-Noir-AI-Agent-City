@@ -1,9 +1,10 @@
 /**
  * Why does this file exist? It is the network provider of the cognition router (router.ts): a streaming client for the
  * Claude Messages API, the default engine for testing, spoken to over the network with a key the operator gives the
- * console (ask key <key>; kept in this browser's local storage, never in the page). It is the one client in the product
- * that may address a server off this machine, and only https (or a loopback gateway the operator runs), only when the
- * operator has chosen this provider and typed ask. It sends the same system prompt as the local providers (the agent's
+ * console (ask key <key>; kept in this browser's local storage, never in the page). It is one of the two clients in the
+ * product that may address a server off this machine (the other is 10_Network/netClient.ts, on `net join`), and only
+ * https (or a loopback gateway the operator runs), only when the operator has chosen this provider and typed ask. It
+ * sends the same system prompt as the local providers (the agent's
  * persona: 02_Define_The_Rules/conduct.ts core, then localCompute.ts systemPrompt), reads the server-sent events back
  * (thinking summaries and text as pieces, the stop reason, the output tokens), stops the moment the task's signal aborts,
  * and turns every failure into one plain sentence, like the local client. A refusal by the model's own safeguards ends

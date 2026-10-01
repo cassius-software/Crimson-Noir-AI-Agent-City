@@ -1,31 +1,36 @@
 # Agent City v1.0 Stable Beta: architecture blueprint
 
-Status: **blueprint of the beta as built**, at version 1.4.0-beta.1 (commits `f5b8399` to `bd700b8`, 2026-10-01,
+Status: **blueprint of the beta as built**, at version 1.4.0-beta.1 (commits `26ba78b` to `bad4507`, 2026-10-01,
 branch `claude/quirky-faraday-xkpdln`). It records what the operator's directive for Phases 7 to 10 asked, what was built
 for each item, where that logic runs, what is proved and by which test, where the build deviates from the
-directive's wording and why, and what is still being wired. The README is the product's documentation of the shipped
+directive's wording and why, and what is still owed. The README is the product's documentation of the shipped
 state; this document is the plan behind it. File paths are relative to `src/` unless they name a tool or a config
 file. Test names are quoted as the suites print them, cut with an ellipsis where they run long.
 
-Where an item's page-side wiring was still in progress when this was written, the design is described as decided and
-marked **wiring in progress; see README for the shipped state**.
+This document was first written while the page-side wirings of 8.1, 8.4, 9.1, 9.2, 10.1 and 10.2 were in progress.
+They have since shipped (commits `4b21c0a` to `b535cca`, with the console stage in `83fa306`), each item's closing
+paragraph says what landed, and the README describes the shipped state.
 
 ## 1. Purpose and scope
 
 ### What "Stable Beta" means here
 
 - Every item of the directive (7.1 to 10.2) has a module in the tree, under its causal stage, with a Node test
-  suite of its own. `npm test` at this commit runs 986 tests and passes all of them (42 s, real Rapier included).
+  suite of its own. `npm test` at `bad4507` runs 1,060 tests and passes all of them (44 s, real Rapier and a real
+  WebSocket host included).
 - Everything that lives in the physics realm is wired and shipped: cars pass through cars (7.1), the fleet on the
   fixed tracks and the craft stream (7.3), the rally request (8.4) and four avatars under the kernel (10.1). The
   14A core and screen (8.2) and the cognition router (8.3) are wired on the page and in the console, and so is the
   code dissolve (7.2, commit `bd700b8`).
-- The page-side wiring of the rest is designed, decided in the completeness critique, and in progress: the
-  soundscape's rooms (8.1), captions and the ping binding (8.4), the look attribute and the customizer (9.1), the
-  render guard and the bare boot (9.2), seats, viewports and listeners (10.1), the console's network verb (10.2).
+- The page-side wiring of the rest, designed and decided in the completeness critique, has shipped: the
+  soundscape's rooms and the captions feed (8.1, 8.4; `4b21c0a`), the ping binding and the rally hand-off (8.4;
+  `e61d309`), the render guard and the bare boot (9.2; `e872a6f`), the look attribute and the customizer (9.1;
+  `f5765d5`), seats, viewports and listeners (10.1; `65f9b1f`), the network client on the page (10.2; `59acc60`,
+  `b535cca`), and every new console knob and command (`83fa306`). What is still owed is named per item: the craft
+  renderer (7.3), the voice signalling (10.2), and the browser run on real hardware (Verification).
 - "Stable" is a claim about the laws, not the feature count: every law below is pinned by a test and no phase
-  loosened one. The one amendment (recruitment can point a recruit at a sidewalk spot) is named here and is owed to
-  the README.
+  loosened one. The one amendment (recruitment can point a recruit at a sidewalk spot) is named here and in the
+  README (Pings and the rally).
 
 ### The dual track
 
@@ -34,9 +39,9 @@ The directive's Phase 9 names two front ends. The beta treats them as two ways i
 - **Track A, the photorealistic GUI.** The WebGPU page: the city, the crowd, the cinema camera, the HUD, first
   person on foot or at the wheel. Phases 7.2, 8.1, 8.4 (captions, the ping marker), 9.1 and 10.1 are Track A work.
 - **Track B, the Ring-0 terminal.** The console at `~`: air-gapped from the engine, a frozen `TerminalBridge`, the
-  operator tier behind `operator unlock`. Phase 9.2 gives it a language of its own (R0, `terminal/repl.ts`) and, in
-  the wiring, a `render off` guard and a `?boot=tty` shell with no engine at all. Phases 8.2, 8.3 and 10.2 reach the
-  product only through this track (`ask provider`, the planned `net join`).
+  operator tier behind `operator unlock`. Phase 9.2 gives it a language of its own (R0, `terminal/repl.ts`), a
+  `render off` guard and a `?boot=tty` shell with no engine at all. Phases 8.2, 8.3 and 10.2 reach the product only
+  through this track (`ask provider`, `net join`).
 
 Both tracks talk to the physics worker through the same door (`simHost.ts`) with the same plain numbers. Neither
 can reach a body, a pedestrian, a law or the audit.
@@ -62,12 +67,12 @@ can reach a body, a pedestrian, a law or the audit.
 | 02_Define_The_Rules | `collision.ts`, `conduct.ts` (+ tests); `ring0.ts` gains `CRAFT`, `auditCraft`, `OFF_CORRIDOR` | The contact policy and group bits (7.1); the 14A core and screen (8.2); the craft corridor check (7.3) |
 | 03_Spawn_Agents | `look.ts` (+ test); `skills.ts` gains `RALLY_RANGE`, `whyNotRally` (`skillsRally.test.ts`); `crowd.ts` carries `crowd.dissolve` | The business-casual wardrobe and the packed look word (9.1); the rally rule both realms share (8.4); the crowd's dissolve amounts (7.2) |
 | 04_Connect_Hardware | `seats.ts` (+ test) | The seating plan for four local players and the per-seat pad intent (10.1) |
-| 05_Observe_Environment | `telemetry.ts` gains the optional `output.dissolve` | The snapshot fields the other wirings will add (`pings`, `captions`, `rendering`, `players`) are pending, all optional |
+| 05_Observe_Environment | `telemetry.ts` gains the optional `output.dissolve`, `output.pings`, `output.rendering`, `output.players`, `output.net` and `customer.captions`; `lookStore.ts` | The snapshot fields the wirings added, all optional; the player's look kept under its own key (9.1) |
 | 06_Make_Decisions | `tracks.ts`, `trackDriver.ts` (+ tests); `traffic.ts` gains `DriverLike`, `HazardEpisode` | The fixed track network and its follower (7.3); the hazard episode shared by both drivers |
 | 07_Execute_Actions | `trackFleet.ts`, `dissolve.ts`, `acoustics.ts`, `captions.ts`, `controls.ts`, `viewports.ts`, `terminal/repl.ts` (+ tests); `contact.ts` gains the identity scans; `head.ts` gains `aimRay`; `simProtocol.ts`, `simCore.ts`, `simHost.ts`, `simClient.ts` carry `tracks`, the craft stream, `spawns`, `players`, `rally`; `vehicles.ts` carries the groups, the network and `setPeople`; `engine.ts` passes `tracks`, forwards `rally` and runs the dissolve; `fleetView.ts` carries the cars' amounts; `vehiclePassThrough.test.ts`, `simPlayers.test.ts`, `dissolveWiring.test.ts` | The scheduled craft (7.3); the dissolve's amounts (7.2); room acoustics (8.1); the caption track (8.4); per-seat controls and split-screen arithmetic (10.1); R0 (9.2); the realm's four avatars and the rally (10.1, 8.4) |
 | 08_Swarm | `ping.ts` (+ test); `recruitment.ts` gains `Recruiter.rally` | The pick, the ping board and the rally plan (8.4) |
 | 09_Cognition | `claudeApi.ts`, `router.ts` (+ tests); `localCompute.ts` opens every prompt with the core | The hot-swap router and the Claude provider (8.3) |
-| 10_Network | `replication.ts`, `replication.node.ts`, `netClient.ts`, `airgap.test.ts`; `package.json` `serve:net`; the tsconfig split | The replication scaffold: protocol core, Node host, opt-in page client (10.2) |
+| 10_Network | `replication.ts`, `replication.node.ts`, `netClient.ts`, `airgap.test.ts`, `netClient.test.ts`; `package.json` `serve:net`; the tsconfig split; on the page, `07_Execute_Actions/netView.ts` and the `NetHost` seam in `engine.ts` | The replication scaffold: protocol core, Node host, opt-in page client, the ghosts it draws (10.2) |
 
 ## 3. The phase items
 
@@ -103,9 +108,8 @@ default groups so other cars stay obstacles to the Third Law. The kernel is buil
 to the world; only the car-to-car pair is dropped, in the broad phase. The `ragdoll` key in `COLLISION` is the one
 runtime file allowed to name the word, and `collision.test.ts` exempts exactly that file.
 
-**Shipped.** Fully. **Next:** the README's "Vehicles: Collisions" bullet and "Ghost-mode collision: What stays
-solid" still say cars are solid to each other. Two cars overlapping at a corner apex now dissolve one another (7.2,
-`carsOverlapping`), so the overlap is never seen.
+**Shipped.** Fully; the README's Vehicles and Ghost-mode collision sections say so. Two cars overlapping at a corner
+apex dissolve one another (7.2, `carsOverlapping`), so the overlap is never seen.
 
 ### 7.2 The code dissolve
 
@@ -287,11 +291,13 @@ rectangles under an open sky, so a one-sided enclosure counts as a crossing and 
 boxes) has only open rooms. "WebRTC" is the peer-voice hand-off of 10.2 (`netClient.onVoice`), which is a documented
 stub: the room model is ready for a peer's stream, but no voice crosses the network yet.
 
-**Scaffolded.** The wiring is **in progress; see README for the shipped state**: `AudioFrame.room` and
-`speaker.room` computed in `Engine.listen()` per 2 m cell, one `ConvolverNode` per soundscape with per-group sends,
-`muffle()` delegating to `transmissionLoss`, `eavesdrop` at the speech follow and `speak()`, `attachPeer` for a
-`MediaStream`. The convolver and `createMediaStreamSource` must be feature-detected, because `audio.test.ts` pins the
-exact panner and buffer-source counts and its fake context has neither factory.
+**Shipped** (commit `4b21c0a`): `AudioFrame.room` and `speaker.room` computed in `Engine.listen()` per 2 m cell, one
+`ConvolverNode` per soundscape with per-group sends (feature-detected: a browser without one gets the dry graph, and
+`audio.test.ts`'s fake context, which pins the exact panner and buffer-source counts, has neither factory), the
+impulse rendered once per room key and swapped behind silent sends, `muffle()` delegating to `transmissionLoss`,
+`eavesdrop` at the speech follow and `speak()`, `attachPeer` for a `MediaStream`, and `onSound` reporting every
+sound's start, change and stop for the captions. A region has no page-side boxes, so its rooms are dry. The README's
+Spatial audio section describes it.
 
 ### 8.2 The 14A conduct core
 
@@ -332,8 +338,7 @@ caption string carries a scrubbed brand, a combat word or a phrase the 14A scree
 **Deliberate deviations.** None from the wording. The lexicon is a first, deterministic layer rather than the whole
 judgement, and it says so in its header.
 
-**Shipped.** Fully. **Next:** the README's 14A paragraphs (the console section and Constraints) do not yet name
-`conduct.ts`.
+**Shipped.** Fully; the README names `conduct.ts` under The model providers, Networking and Constraints.
 
 ### 8.3 The hot-swap cognition router
 
@@ -373,9 +378,9 @@ storage and never in the page source, nothing polled in the background. "Package
 product: no model ships, as before; the llama.cpp provider is the drop-in for a model the operator packages beside
 the file.
 
-**Shipped.** Fully. **Next:** the README's "The local model" section still says loopback only and must become a
-providers section; `claudeApi.ts`'s header line "the one client in the product that may address a server off this
-machine" is now shared with `netClient.ts` and should say so.
+**Shipped.** Fully; the README's section is now The model providers (`ask`), and its History records the ruling.
+**Next:** `claudeApi.ts`'s header line "the one client in the product that may address a server off this machine"
+is now shared with `netClient.ts` and should say so (wording only; `airgap.test.ts` names both).
 
 ### 8.4 Pings and closed captions
 
@@ -432,13 +437,16 @@ little stricter than the realm (`ping.ts RALLY_RANGE` 9 m with a 1.5 m margin; `
 the realm is the authority.
 
 **Shipped.** The realm half of the rally (`simCore.ts`, `simProtocol.ts`, `skills.ts`, `recruitment.ts`,
-`engine.ts` forwarding), and the pure modules. **Scaffolded, wiring in progress; see README for the shipped state:**
-the `ping` action (KeyQ, the pad's R1, the middle mouse button, a touch button) in `input.ts`, `gamepad.ts` and
-`glyphs.ts`; the engine's edge hook (`aimRay` to `pickPing` to `PingBoard.place`); the HUD and minimap marker from
-`PingBoard.snapshot`; the console's `ping` and `recruit rally` verbs and bridge members; `Soundscape.onSound` emits at
-every sound's start, change and stop; `SpeechOut.play(clip, agent, text)`; the `captions on|off` knob, `?captions=`
-and the HUD's caption strip (`role="status"`, shown even with the HUD hidden). A rally that ends on its own emits no
-event; the page sees `RecruitView.rally` disappear.
+`engine.ts` forwarding), the pure modules, and the page wiring (commits `e61d309`, `4b21c0a`, `83fa306`): the `ping`
+action (KeyQ, the pad's right shoulder, the middle mouse button, a touch button) in `input.ts`, `gamepad.ts` and
+`glyphs.ts`; the engine's edge hook (`aimRay` to `pickPing` to `PingBoard.place`, a press within a second asking the
+next kind); the HUD and minimap marker from `PingBoard.snapshot`; the rally hand-off to `Recruiter.rally` with its
+answer as a toast; the console's `ping` and `recruit rally` verbs and bridge members; `Soundscape.onSound` at every
+sound's start, change and stop; `SpeechOut.play(clip, agent, text)`; the `captions on|off` knob, `?captions=0` and the
+HUD's caption strip (`role="status"`, shown even with the HUD hidden). Pinned by `pingWiring.test.ts`; `audio.test.ts`
+pins the sound-event stream ("every sound start, change and stop is reported once with its position ..."), and
+`bootloader.test.ts` that the caption strip outlives the H key. A rally that ends on its own emits no event; the
+page sees `RecruitView.rally` disappear.
 
 ### 9.1 The character customizer
 
@@ -472,12 +480,15 @@ their hashed colours. The look gets its own local-storage key rather than a fiel
 uniform for agent 0: the eye never sees its own body (the crowd folds it), so a uniform would render nothing visible
 until split screen; the per-agent word dresses agents and players alike, as the directive asks.
 
-**Scaffolded, wiring in progress; see README for the shipped state.** A `crowd.look` storage attribute read in
-`crowd.ts posed()` with `select()` overrides for mask, height and width and per-slot colour picks in the fragment;
-the cull's body-variant override as a separate step; `CrowdView.setLook`; the `look` console knob on the bridge
-(`look <slot> <index>`, `look preset <name>`, `look code <XXXX-XXXX>`, never a `sim.*` member, since
-`operator.test.ts` pins the facade's keys); the Customizer card and its Concierge entry; `crowd.ts` re-exporting the
-body names. Whether agent 0's hashed look and `lookFromSeed(0)` agree on the GPU is a browser check.
+**Shipped** (commits `f5765d5`, `83fa306`): the `crowd.look` storage attribute read in `crowd.ts posed()` with
+`select()` overrides for mask, height and width and per-slot colour picks in the fragment; the cull's body-variant
+override (binding 13, the page's pass alone; no simulation pass binds the word); `Engine.setLook` and `lookOf`;
+`05_Observe_Environment/lookStore.ts` under `civic-simulation:look:v1`; the `look` console knob on the bridge
+(`look <slot> <n|name>`, `look preset <name>`, `look code <XXXX-XXXX>`, `look random`, `look reset`, `look show
+[<agent>]`, never a `sim.*` member, since `operator.test.ts` pins the facade's keys); the Customizer card and its
+Concierge entry (the Look button on Wren's chip); `intent.ts`'s wardrobe label. Pinned by `lookWiring.test.ts`. Only
+the player is dressed; recruits are not dressed automatically. Whether agent 0's hashed look and `lookFromSeed(0)`
+agree on the GPU is a browser check still owed.
 
 ### 9.2 The bootloader: the terminal as a Turing-complete environment
 
@@ -516,10 +527,11 @@ city only as the console always has, through the operator tier and the capabilit
 blind by construction. A definition cannot span lines; there is no `do … loop`, no floating point and no string beyond
 `." text"`.
 
-**Shipped.** R0. **Scaffolded, wiring in progress; see README for the shipped state:** the `r0`, `render` and `boot`
-commands (`commands.ts`, `bridge.ts`, their pinned sets in `commands.test.ts`, with `./repl.ts` added to the allowed
-runtime imports), the guard in `present()`, `output.rendering` in the snapshot, `Terminal.tsx`'s full-screen mode and
-the `?boot=tty` shell split.
+**Shipped.** R0, and (commits `e872a6f`, `83fa306`) the `r0`, `render` and `boot` commands (`commands.ts`,
+`bridge.ts`, their pinned sets in `commands.test.ts`, with `./repl.ts` among the allowed runtime imports), the guard
+at the top of `present()`, `output.rendering` in the snapshot, `Terminal.tsx`'s full-screen mode and the `?boot=tty`
+shell split (`App` → `GuiShell` | `TtyShell`). Pinned by `bootloader.test.ts`. The optional `r0> ` mode was not
+built. Track B was smoke-tested headless without WebGPU (see Verification).
 
 ### 10.1 Four-player local split screen
 
@@ -534,7 +546,7 @@ listeners."
   beside the unchanged `avatar` and `driving` of player 0; `interact` and `teleport` take a player; `entered` and
   `exited` events name one. `vehicles.ts Fleet.setPeople(list)` gives the Bouncer every present person; `simCore.ts
   #clearOfPeople` guards `reset` and `recover`.
-- **The pure halves (shipped, not yet wired).** `04_Connect_Hardware/seats.ts`: `SeatTable` seats up to four
+- **The pure halves (shipped).** `04_Connect_Hardware/seats.ts`: `SeatTable` seats up to four
   players at one screen (seat 0 is the keyboard, mouse and touch overlay; pads take seats by slot, the lowest free seat
   among 1 to 3, then seat 0; a pad that disappears frees its seat at once; a seated pad keeps its seat however the
   list is ordered) and `PadSeat` is one player's intent from a gamepad alone through the same `PlayerIntent` surface
@@ -542,9 +554,9 @@ listeners."
   control block as a pure function, run once per seat. `07_Execute_Actions/viewports.ts splitScreen(players, w, h)`
   cuts the canvas into one to four rects that tile it exactly (side by side in landscape, stacked in portrait, one
   wide and two below for three, quadrants for four), `aspectOf`, `originBottomLeft` (the y flip a backend may need),
-  `spectatorFor` (which pedestrian's eyes a viewport looks through before the realm's avatars are wired in: never row
-  0, tethered recruits first, then a stable hashed pick) and `padLook` (a spare pad's right stick with the first
-  player's curve and rates).
+  `spectatorFor` (a placeholder from before the realm's avatars were wired in: which pedestrian's eyes a viewport
+  would look through, never row 0, tethered recruits first, then a stable hashed pick; the engine no longer uses it)
+  and `padLook` (a spare pad's right stick with the first player's curve and rates).
 
 **The realm's per-player guarantees, as the verifier stated them.** Every avatar is a person to every part of the
 ethical kernel: the Bouncer measures each one exactly (the nearest present person in each car's corridor holds the
@@ -576,17 +588,18 @@ the module imports only the hardware stage ...".
 (the audio owner's "Design B"), not four contexts: browsers cap concurrent contexts and the soundscape owns one. The
 GPU crowd keeps one player figure: avatars 1 to 3 are not crowd figures and are protected exactly on the CPU, so a
 pedestrian may walk through them (safety does not rest on it). Recruitment, the operator tier, haptics and the
-spectator fold stay player 0's. One post chain, one ghost view, one shadow frustum and one HUD serve all four
-viewports; the other three are plain renders. The realm came first (stage B of the critique's plan) because the
-spectator design (stage A) is a placeholder: once `avatars[k]` is wired, viewports 2 to 4 look out of their own
-avatars.
+spectator fold stay player 0's. The post chain and ghost view are player 0's and off while the screen is split; one
+shadow frustum and one HUD serve all four viewports; the other three are plain renders under player 0's light. The
+realm came first (stage B of the critique's plan) because the spectator design (stage A) was a placeholder: with
+`avatars[k]` wired, viewports 2 to 4 look out of their own avatars.
 
-**Scaffolded, wiring in progress; see README for the shipped state.** `Input` in a seated mode over `SeatTable`
-(`hal.readPads()` once per frame, `intent(seat)`); `engine.ts` sending `spawns` at init and `players[k−1]` from
-`readControls(input.intent(k), ...)`; `PlayerView[]` with the view loop inside `present()` after view 0 (one clear,
-scissored renders, `crowd.step` per camera); four `HeadRig`s; `listen()` per view; the `entered`/`exited` toast
-filtered by player; `output.players` in the snapshot; `?players=`. Which origin three's WebGPU viewport uses (the
-`flip` flag) is a browser verification.
+**Shipped** (commit `65f9b1f`): `Input` in a seated mode over `SeatTable` (`hal.readPads()` once per frame,
+`intent(seat)`); `engine.ts` sending `spawns` at init and `players[k−1]` from `readControls(input.intent(k), ...)`;
+`PlayerView[]` with the view loop inside `present()` after view 0 (one clear, scissored renders, `crowd.step` per
+camera); a `HeadRig` per player; `listen()` per view over one shared context; the `entered`/`exited` toast filtered
+by player; `output.players` in the snapshot; `?players=`; the console's `audio` knob over every player's soundscape.
+Pinned by `splitWiring.test.ts`. Which origin three's WebGPU viewport uses (the `flip` flag) is a browser
+verification still owed.
 
 ### 10.2 Secure client-server replication
 
@@ -642,20 +655,26 @@ reported walking velocity only (no cars, no collision with the city), snapshots 
 (at most 32 peers, no interest management), and there is no reconnection or resume. The host trusts its proxy for
 TLS and the origin check, and does not reassemble fragmented frames (it closes with 1003).
 
-**Shipped.** The scaffold: core, host, client, the air-gap test, the build split. **Scaffolded, wiring in progress;
-see README for the shipped state:** the console's `net join <wss-url> <token> [name]` and `net leave` (the token kept
-like the Claude key), the engine's per-frame `sendInput` while joined, drawing remote poses as instances, HUD chat and
-ping relays into the caption track and the ping board, the voice signalling (`signal` messages for offer, answer and
-candidates), and a `netClient.test.ts` driving the client against `startHost` in Node.
+**Shipped.** The scaffold: core, host, client, the air-gap test, the build split; and (commits `59acc60`, `b535cca`,
+`83fa306`) the console's `net join <wss-url> [<token>]`, `net leave`, `net forget` and `net status` (the token kept
+in this browser under `civic-simulation:net:v1` and redacted from history; joining under the Concierge's name, or
+"Visitor"), the engine's per-frame `sendInput` while joined through the `NetHost` seam, remote poses drawn as ghosts
+(`07_Execute_Actions/netView.ts`), the room's chat and pings into the caption track (a remote ping goes on no board
+and asks nobody over), a peer's voice placed by the soundscape, `output.net` in the snapshot, and `netClient.test.ts`
+driving the client against `startHost` in Node. The fix in `b535cca`: the client's validator screens the player names
+a host sends in welcome, snapshot and joined messages. **Still a stub:** the voice signalling (`signal` messages for
+offer, answer and candidates). The page has no chat command: it receives the room's chat and sends none.
 
 ## 4. Verification
 
 **The Node suites.** `npm test` (`node --test "src/**/*.test.ts"`) at commit `f5b8399`, in this environment on
 2026-10-01: 986 tests, 986 pass, 0 fail, 0 skipped, 42 s. The count rose from 737 at 1.3.0 (README, Browser support)
 to 876 before the Phase 7 verification, 910 after it, 983 before the realm verification and 986 after it. The 7.2
-wiring (`bd700b8`) then added `07_Execute_Actions/dissolveWiring.test.ts`: 8 tests, 8 pass. Both
-TypeScript projects type-check (`tsc -p tsconfig.app.json`, `tsc -p tsconfig.node.json`) and `oxlint` reports
-nothing, as both verifiers recorded. The suites this beta added, with the count each prints:
+wiring (`bd700b8`) then added `07_Execute_Actions/dissolveWiring.test.ts`: 8 tests, 8 pass. The page wirings and the
+console stage took the count to 1,060 at `bad4507` (1,060 pass, 0 fail, 44 s): the suites `pingWiring`,
+`lookWiring`, `bootloader`, `splitWiring`, `netWiring`, `netView` and `netClient`, and the grown pinned sets in
+`commands.test.ts`. Both TypeScript projects type-check (`tsc -p tsconfig.app.json`, `tsc -p tsconfig.node.json`)
+and `oxlint` reports nothing, as every verifier recorded. The suites this beta added, with the count each prints:
 
 | Suite | Tests | Suite | Tests |
 |---|---|---|---|
@@ -694,7 +713,7 @@ only additions and four single-line widenings (two imports, one type, one event 
 - 10.2: every crafted message is refused with the reason `simHost` would give; the host is attacked with bad tokens,
   unmasked, binary, fragmented, over-size and over-rate frames.
 
-**The adversarial verifier passes.** Two independent passes read the whole diff against the laws.
+**The adversarial verifier passes.** Four independent passes read the whole diff against the laws.
 
 - *Phase 7* (7.1, 7.3a, 7.3b, 7.3c). Checks: both type projects, lint, the full suite; `laws.ts` untouched;
   `ring0.ts` gained only the halt-only craft check; the Fleet's new state behind ES-private fields with
@@ -717,6 +736,28 @@ only additions and four single-line widenings (two imports, one type, one event 
   at player 0 standing 35 m ahead (held over 1 m short); two players taking the same parked car in one step; a rally
   at 11.9 m, after a dismiss, for an Interviewing recruit, onto the road, with the operator in a car; a spawn inside
   a lot; four players over a surveyed region ("adversarial: a surveyed region takes spawns too ...").
+- *The page wirings, first pass* (`bd700b8` to `f5765d5`). Checks as above, plus: no new page-to-worker path (the
+  realm's four files name nothing of acoustics, captions, rendering, the look or the pings); the console gained only
+  `render` and `brand.track`; every optional snapshot field; the per-frame allocation audit. **Defect found and
+  fixed** (`929f473`): `car.ts chassisBox()` returned a fresh object on every call, and the dissolve's
+  `carsOverlapping` called it n + n² times per animation frame (about 1,300 objects a frame for 36 cars);
+  `footprintsOverlap` built an axes array per pair and `flushDissolve` a closure per frame. Now two frozen shared
+  boxes and allocation-free helpers, pinned by a test in `dissolveWiring.test.ts`.
+- *The page wirings, second pass* (`65f9b1f`, `59acc60`, `83fa306` line by line; the rest re-checked). Checks as
+  above, plus `npm run build` (6.46 MB, no `node:http` in the page); the only commits touching the realm's files are
+  the realm stages; every field the page sends is defined by them; `net join|leave|forget` refuse while the operator
+  tier is locked; the token is redacted from history; `laws.ts` unchanged and `ring0.ts` only the craft check; the
+  14A screen at `ask`, `say`, the host, the client's own chat and App's second screen. **Defect found and fixed**
+  (`b535cca`): the client-side validator of welcome, snapshot and joined messages accepted any printable name, so a
+  modified host could carry an inadmissible name onto the page, where it would label a remote ping's caption and a
+  peer's voice. Now `admissibleName` refuses the whole message; `replication.test.ts` pins it.
+
+**Track B, smoke-tested headless without WebGPU.** `dist/index.html?boot=tty`, opened as a file in headless Chromium
+141 with no WebGPU flags, booted into the full-screen console in 3.7 s with no error on the page or in the console
+log; the probe counted 0 WebGPU adapter requests, 0 Workers, 0 AudioContexts, and the DOM held 0 canvases. `version`,
+`uname -a` and `boot status` answered; `r0 1 2 + .` printed 3; a recursive `fib` of 20 printed 10946 after 240,801
+steps; an endless `begin … until` ended with `step budget exhausted (1000000)` and the machine still answered;
+`render off` and `stats --once` said `engine not running`. The screenshot is `docs/track-b-console.png` (`bad4507`).
 
 **The headless-browser limitation of this environment.** The 3D page was not smoke-tested here. The only browser
 available is a headless Chromium with a software Vulkan adapter. The record (`probe/baseline2/result.json` in the
@@ -767,11 +808,14 @@ Carried over from the critique and the notes. Each names the file where the deci
 - `spatial.test.ts`'s "6 of 6 streets driven" and the in-page harnesses were validated with random routing; tracks
   are now the page default.
 
-**The page wirings still in progress (8.1, 8.4, 9.1, 9.2, 10.1).**
+**The page wirings, as shipped (8.1, 8.4, 9.1, 9.2, 10.1, 10.2).**
 
-- `engine.ts` is touched by every one of them (7.2's edit has landed), and three text-pinning tests
-  (`cinema.test.ts`, `contact.test.ts`, `ghost.test.ts`) must be re-run after each edit. `terminal/bridge.ts`, `commands.ts` and `commands.test.ts` are
-  touched by five; every knob enters the same pinned sets. `simProtocol.ts` must stay free of render words.
+- `engine.ts` was touched by every one of them, and the three text-pinning tests (`cinema.test.ts`,
+  `contact.test.ts`, `ghost.test.ts`) still pass. Every knob entered the pinned sets in `commands.test.ts` in the
+  console commit (`83fa306`). `simProtocol.ts` stays free of render words (`bootloader.test.ts`).
+- Still owed on the page: per-player pings, contact wipe, dissolve scans, captions and haptics in split screen; the
+  post chain, ghost view and the iris while split; `stats` does not print `output.players`; remote pings go on no
+  board; recruits are not dressed automatically; the `r0> ` mode.
 - The dissolve's cells are keyed on the whole drawing buffer; split screen needs them keyed on the viewport. A
   tree's canopy never triggers its dissolve.
 - Sabine with the chosen coefficients clamps to 2.2 s in any canyon taller than about 15 m; if downtown rings too
@@ -779,8 +823,9 @@ Carried over from the critique and the notes. Each names the file where the deci
 - Four listeners share one stereo output. Design B pans each listener's sources in its own head space and mixes them
   to one pair; a true per-player output would need a multichannel destination and hardware to match. Haptics are one
   level for every pad (`hal.ts HalBus.output`); per-player rumble and trigger feedback are unowned.
-- The ping key (KeyQ, R1, middle mouse) must enter `glyphs.ts`'s families, `glyphs.test.ts`, `compliance.test.ts`'s
-  action list and `gamepad.test.ts`'s unmapped list in one commit, or the build refuses.
+- The ping key (KeyQ, the right shoulder, the middle mouse button) entered `glyphs.ts`'s families, `glyphs.test.ts`,
+  `compliance.test.ts`'s action list and `gamepad.test.ts`'s unmapped list in one commit (`e61d309`), as the build
+  requires.
 - Two constants named `RALLY_RANGE` hold different values on purpose (`ping.ts` 9 m, `skills.ts` 9.5 m). The realm's is
   the law; renaming the page's would remove the ambiguity.
 
@@ -789,11 +834,14 @@ Carried over from the critique and the notes. Each names the file where the deci
 - The Claude key lives in this browser's local storage under `COGNITION_KEY` (`App.tsx`), masked in the console.
   Any script running on the page's origin could read it; a page opened as a file shares the `null` origin. The
   operator should treat it as a testing key and clear it with `ask key none`.
-- The README still says the model talks only to a loopback address and that the build has "no network"; both are
-  stale until the README pass lands.
-- `netClient.ts` has no dedicated test; its connect and reconcile flow is exercised only by its types and
-  `airgap.test.ts`. Voice is a stub. The host does no origin check of its own, drops fragmented frames, and holds at
-  most 32 peers with no interest management.
+- The README's The model providers section, Networking section and Constraints now state the network rule: two
+  opt-in clients, nothing at boot, nothing polled.
+- `netClient.test.ts` drives the client against the real host in Node; a room joined from two browser tabs has not
+  been tried. Voice is a stub, and the page has no chat command. The host does no origin check of its own, drops
+  fragmented frames, and holds at most 32 peers with no interest management. `engine.ts netFrame` allocates up to
+  32 frozen pose objects per animation frame while joined (`predict()` has no output slot); a follow-up for the
+  replication stage.
+- `?debug`'s `__SIM__.net` joins without `operator unlock`, like the other debug hooks; the console path is locked.
 
 **Housekeeping.**
 
@@ -803,6 +851,7 @@ Carried over from the critique and the notes. Each names the file where the deci
 - The version is 1.4.0-beta.1 in `package.json`, `package-lock.json` and `brand.ts` together (the build gate compares
   them); the directive's "v1.0" is the product's name for the beta, not the package version, because a downgrade
   would break ordering.
-- The README is stale for everything in this document: the Layout table, the URL options (`?tracks`, `?players`,
-  `?boot`, `?captions`), the Controls table (a Ping row), the console command list, Ghost-mode collision,
-  Recruitment, Spatial audio, The local model, Constraints and History. It is handled separately, after the wirings.
+- The README was brought up to date for this release after the wirings landed: the Layout table, the URL options
+  (`?tracks`, `?players`, `?boot`, `?captions`), the Controls table (the Ping row), the console command list,
+  Ghost-mode collision, Vehicles, Recruitment, Spatial audio, The model providers, the new Split screen, Character
+  customizer and Networking sections, Constraints, Browser support and History. This document is the plan behind it.
