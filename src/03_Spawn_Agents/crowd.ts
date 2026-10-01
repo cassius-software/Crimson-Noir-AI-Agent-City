@@ -143,6 +143,17 @@ function distantBody(variant: number): BufferGeometry {
   return build(p)
 }
 
+/**
+ * One business-casual body of the same closed wardrobe as a plain geometry (its rig attribute rides along, unread by a
+ * plain material): the detailed body of `variant` (VARIANT_NAMES order, clamped), or the distant one. For the page's
+ * own ghosts of a network session's other players (07_Execute_Actions/netView.ts), which are poses drawn here and
+ * never bodies in the physics realm.
+ */
+export function bodyGeometry(variant: number, detailed = true): BufferGeometry {
+  const v = Number.isFinite(variant) ? Math.min(VARIANTS - 1, Math.max(0, Math.floor(variant))) : 0
+  return detailed ? detailedBody(v) : distantBody(v)
+}
+
 // Shared by position (w = 1) and normal (w = 0) so both follow the same skeleton.
 const rotX = wgslFn(`
 fn agentRotX(v: vec3f, a: f32) -> vec3f {

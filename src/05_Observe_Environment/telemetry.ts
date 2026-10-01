@@ -29,6 +29,25 @@ export type Light = 'green' | 'amber' | 'red'
 
 export interface Toast { id: number; title: string; body: string; time: number }
 
+/** The network client's state (10_Network/netClient.ts NetStatus, carried here without the import). */
+export type NetState = 'idle' | 'connecting' | 'joining' | 'joined' | 'closed'
+
+/**
+ * The network session as the console's `net status` reports it (the engine's net.status()): the client's state, the
+ * room's address once joined, this page's id in it (0 until welcomed), the other players drawn, inputs the client
+ * refused and inputs the room has not yet applied, peer voices attached, and why the session closed, if it did.
+ */
+export interface NetReport {
+  state: NetState
+  url: string | null
+  id: number
+  peers: number
+  dropped: number
+  pending: number
+  voices: number
+  reason: string | null
+}
+
 /** One ping as the HUD draws it: plain data, in metres and seconds, plus its place on the screen. */
 export interface HudPing {
   id: number
@@ -197,6 +216,12 @@ export interface SipocSnapshot {
      * none stands.
      */
     pings?: HudPing[]
+    /**
+     * The network session (10_Network/netClient.ts, the engine's net seam): the client's state, how many other players'
+     * poses the page draws, and how many of this page's inputs the client refused since the session began (over its
+     * own rate). Absent until the host has attached a client; 'idle' then until the operator joins a room.
+     */
+    net?: { state: NetState; peers: number; dropped: number }
     /**
      * Local split screen (?players=2..4; viewports.ts, seats.ts): how many players share the canvas, each viewport's
      * rect in logical pixels (index = player, top-left first), and each seat: the pad in it (−1 none; seat 0 is the

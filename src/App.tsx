@@ -2,12 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Engine, type EngineOptions } from './07_Execute_Actions/engine.ts'
 import { Hud } from './07_Execute_Actions/Hud.tsx'
 import { Terminal } from './07_Execute_Actions/terminal/Terminal.tsx'
-import { offlineBridge, type TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
+import { offlineBridge, type NetBridge, type TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
 import { hudLine, recruitBridge, Recruiter } from './08_Swarm/recruitment.ts'
 import { TaskRouter } from './08_Swarm/taskRouter.ts'
 import { deferredLedger, followRecruiter, indexedDbLedger, memoryBridge, SwarmMemory } from './08_Swarm/memory.ts'
 import { createMindRouter } from './09_Cognition/router.ts'
 import { createLocalSpeech } from './09_Cognition/localSpeech.ts'
+import { createNetClient } from './10_Network/netClient.ts'
+import { admissibleChat, admissibleName } from './10_Network/replication.ts'
+import type { NetControls } from './07_Execute_Actions/engine.ts'
 import type { GateHandle, GateLease, Mind, SkillGate } from './07_Execute_Actions/operator.ts'
 import { TouchControls } from './04_Connect_Hardware/TouchControls.tsx'
 import { isEditableTarget } from './04_Connect_Hardware/input.ts'
@@ -33,6 +36,8 @@ const COGNITION_KEY = 'civic-simulation:cognition:v2'
 const SPEECH_KEY = 'civic-simulation:speech:v1'
 /** Characters of a streaming answer the HUD shows. */
 const ANSWER_TAIL = 72
+/** Where the network session token (`net join <url> <token>`) is kept between visits, like the cognition key; never in the page source. */
+const NET_TOKEN_KEY = 'civic-simulation:net:v1'
 
 /** The page's local storage for one key; a browser that refuses storage keeps the settings for this visit only. */
 const pageStore = (key: string) => ({
@@ -51,6 +56,30 @@ const pageStore = (key: string) => ({
     }
   },
 })
+
+/**
+ * The console's network knob over the engine's session controls (NetControls), with the session token kept on this
+ * machine: a token given is saved and reused by a later `join` without one; `forget` drops it. Nothing else of the
+ * session lives here: the engine joins, draws and leaves.
+ */
+function netBridge(net: NetControls, store: { load(): string | null; save(value: string): void }): NetBridge {
+  return Object.freeze({
+    join: (url: string, token?: string): Promise<string> => {
+      const kept = store.load()
+      const t = token?.trim() || kept || ''
+      if (t === '') return Promise.reject(new Error('a session token is required (net join <url> <token>; it is kept for next time)'))
+      if (token && token.trim() !== kept) store.save(token.trim())
+      return net.join(url, t)
+    },
+    leave: () => net.leave(),
+    status: () => net.status(),
+    forget: () => {
+      if (!store.load()) return 'no token kept'
+      store.save('')
+      return 'token forgotten'
+    },
+  })
+}
 
 /**
  * The HUD's view of the operator's local model and voice: an answer streaming in (its latest words, or that the model
@@ -296,6 +325,19 @@ function GuiShell({ options }: { options: Options }) {
         // plans it from its own copies (08_Swarm/ping.ts rallyPlan), the recruiter checks the page's copy, the physics
         // realm decides on its own readings; its answer is a toast either way.
         e.onRally = (req) => { void r.rally(req.agent, req.x, req.z).then((o) => e.toast('Rally', o.message)) }
+        // The opt-in network client (10_Network/netClient.ts): built over the page's own socket constructor, never
+        // connected at boot, handed to the engine through its NetHost seam (the engine draws the room's poses as
+        // ghosts and feeds the client player 1's input) and to the console through the bridge. The room's chat and
+        // pings reach the engine's captions only after the core's 14A screen is applied once more here: the host is
+        // not trusted either.
+        const net = createNetClient({
+          onChat: (m) => {
+            const name = admissibleName(m.name), text = admissibleChat(m.text)
+            if (name !== null && text !== null) e.netChat(m.from, name, text)
+          },
+          onPing: (m) => e.netPing(m.from, m.kind, m.x, m.y, m.z),
+        })
+        e.setNet(net)
         e.onHalt = (reason) => {
           unfollow?.()
           tasks.dispose()
@@ -308,6 +350,7 @@ function GuiShell({ options }: { options: Options }) {
           ...e.terminalBridge(gate, mind, voice, memory.diary()),
           recruit: recruitBridge(r),
           memory: memoryBridge(memory, r),
+          net: netBridge(e.net, pageStore(NET_TOKEN_KEY)),
         }))
         // The fallback without a microphone, in the browser's console: recruit("Rust").
         Object.assign(window, { recruit: (skill: string) => r.recruit(skill) })
@@ -328,6 +371,8 @@ function GuiShell({ options }: { options: Options }) {
               // The wardrobe (03_Spawn_Agents/look.ts): dress an agent (0 is the player) in a look, or null for the hash's.
               wear: (agent: number, look: Look | null) => e.setLook(agent, look),
               lookOf: (agent = PLAYER_INDEX) => e.lookOf(agent),
+              // The network session (10_Network): join a room, leave it, or read it as plain data.
+              net: e.net,
               // Headless browsers cannot take pointer lock; this hides the capture hint for screenshots.
               pretendLocked: () => { e.input.locked = true },
               // The physics realm as the harness sees it: the mirrored state, the command queue (dbg* accepted), the next state.

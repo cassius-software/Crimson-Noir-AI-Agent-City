@@ -12,7 +12,7 @@
  */
 import type { HalDevice } from '../../04_Connect_Hardware/hal.ts'
 import type { LawText } from '../../02_Define_The_Rules/laws.ts'
-import type { CameraStats, KernelStats, QualityState, RecordingState, SipocSnapshot } from '../../05_Observe_Environment/telemetry.ts'
+import type { CameraStats, KernelStats, NetReport, QualityState, RecordingState, SipocSnapshot } from '../../05_Observe_Environment/telemetry.ts'
 import type { RecorderSource } from '../../05_Observe_Environment/recorder.ts'
 import type {
   AskResult, ExecResult, GatedAsk, GatedRun, GatedSay, GateTether, MindStatus, Piece, RunResult, RunState, SayResult, VoiceStatus, apiDoc,
@@ -21,7 +21,7 @@ import type { HarnessReport, harnesses } from '../harness.ts'
 
 export type {
   HalDevice, LawText, AskResult, ExecResult, GatedAsk, GatedRun, GatedSay, GateTether, MindStatus, Piece, RunResult, RunState, SayResult,
-  VoiceStatus, HarnessReport, RecorderSource, RecordingState,
+  VoiceStatus, HarnessReport, RecorderSource, RecordingState, NetReport,
 }
 
 export interface Ring0Stats {
@@ -143,6 +143,21 @@ export interface MemoryBridge {
 }
 
 /**
+ * The opt-in network session (10_Network/netClient.ts; the engine's NetControls, App adds the kept token): nothing
+ * connects until `join`, which takes the room's address (wss anywhere, plain ws only to this machine) and the session
+ * token the operator was handed; a token given is kept on this machine between visits and reused when none is given.
+ * The room's other players are drawn as pose-only ghosts and never enter the physics realm. `join` resolves with the
+ * status line once the room welcomes this page and rejects with why it did not; `leave` and `forget` (drops the
+ * kept token) return what they did; `status` is plain data.
+ */
+export interface NetBridge {
+  join(url: string, token?: string): Promise<string>
+  leave(): string
+  status(): NetReport
+  forget(): string
+}
+
+/**
  * Implemented by the host (App/engine). Arguments mirror the command line: `quality` takes 'auto' or a
  * tier 0–4, `audio` takes 'on' / 'off' or a volume in percent (0–100). Called with no argument, both
  * only report. A method may throw; the terminal prints the message and carries on.
@@ -176,6 +191,8 @@ export interface TerminalBridge {
   recruit?: RecruitBridge
   /** Absent until the host has opened the swarm's memory (the terminal then says so). */
   memory?: MemoryBridge
+  /** Absent until the host has attached its network client (the terminal then says so). */
+  net?: NetBridge
 }
 
 /** Rapier world counters, the shape of Physics.stats. */

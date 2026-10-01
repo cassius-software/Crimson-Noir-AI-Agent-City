@@ -15,7 +15,8 @@ import { CAR, RIDE_HEIGHT, WHEELS } from './car.ts'
 import { DISSOLVE_COLOR } from './dissolve.ts'
 import { POSE } from './simProtocol.ts'
 
-function carBodyGeometry(): ExtrudeGeometry {
+/** The car body's geometry: the chassis centre at the origin (RIDE_HEIGHT below its floor), the front along +x. Also the network ghosts' car (netView.ts). */
+export function carBodyGeometry(): ExtrudeGeometry {
   // Side profile, x along the length (front = +x), y height above the ground.
   const pts: [number, number][] = [
     [-2.3, 0.3], [-2.33, 0.56], [-2.22, 0.84], [-1.3, 0.92], [-0.82, 1.38], [0.42, 1.42], [1.12, 0.98],

@@ -21,6 +21,10 @@
  * head space over one shared audio context; view 0 is player 1's and is this engine's own camera, head and soundscape,
  * so with one player nothing of this changes. The post chain, the ghost view, the contact wipe, the dissolve scans,
  * the ping, the captions, the haptics and the HUD stay player 1's, and the post chain is off while the screen is split.
+ * A network session (10_Network, opt-in) reaches the engine only through the NetHost seam: App hands in the page's
+ * client the way it hands in the mind, the engine holds no network code, and each frame it offers the client player
+ * 1's desired velocity and heading and reads back the room's poses, drawn as pose-only ghosts (netView.ts) that are
+ * never bodies in the physics realm; the room's chat and pings become captions, a peer's voice a placed voice.
  * App.tsx owns the requestAnimationFrame loop and calls frame().
  * What breaks if it is removed? Nothing runs; every module is inert without this orchestration.
  */
@@ -41,12 +45,13 @@ import { CrowdCull } from '../03_Spawn_Agents/crowdCull.ts'
 import { AGENTS_RANGE } from '../03_Spawn_Agents/crowdSensor.ts'
 import { Input, TriggerFeedback } from '../04_Connect_Hardware/input.ts'
 import { KEYBOARD_SEAT, type Seat } from '../04_Connect_Hardware/seats.ts'
-import { FrameClock, type GlyphFamily, type KernelStats, type SeatView, type SipocSnapshot, type Toast } from '../05_Observe_Environment/telemetry.ts'
+import { FrameClock, type GlyphFamily, type KernelStats, type NetReport, type NetState, type SeatView, type SipocSnapshot, type Toast } from '../05_Observe_Environment/telemetry.ts'
 import { MemorySink, Recorder, fileSink, markdownFor, type RecorderSink, type RecorderSource } from '../05_Observe_Environment/recorder.ts'
 import type { AgentTelemetry } from '../05_Observe_Environment/agv.ts'
 import { Governor, defaultAgents, profileDevice, readDeviceHints, tierRange, type QualityKnobs } from '../05_Observe_Environment/governor.ts'
 import { CAR_TUNE_RANGE, chassisBox, clampTuning, type CarTuning } from './car.ts'
 import { FleetView } from './fleetView.ts'
+import { NetView, type RemotePose } from './netView.ts'
 import { HeadRig, aimRay, carriedYaw, yawFacing, type AimRay } from './head.ts'
 import { SimClient } from './simClient.ts'
 import { applyWalk, requestWalk, type ScriptedWalk } from './scriptedWalk.ts'
@@ -61,8 +66,8 @@ import { CINEMA, FramePacer, SHUTTER_SECONDS, exposureFor, type CameraMark } fro
 import { updateVolumetrics, type Volumetrics } from './volumetrics.ts'
 import { operatorBridge, type Diary, type Mind, type SimControls, type SkillGate, type SpeechClip, type SpeechOut, type Utterance, type Voice } from './operator.ts'
 import { applyQuality, type QualityTargets } from './quality.ts'
-import { SPEECH, Soundscape, sharedAudioContext, wallsBetween, type AudioFrame } from './audio.ts'
-import { roomAt } from './acoustics.ts'
+import { SPEECH, Soundscape, sharedAudioContext, wallsBetween, type AudioFrame, type PeerVoice } from './audio.ts'
+import { roomAt, type Room } from './acoustics.ts'
 import { CaptionTrack, captionText } from './captions.ts'
 import { ring0Stats, type TerminalBridge } from './terminal/bridge.ts'
 import { familyOf, glyph } from './glyphs.ts'
@@ -141,6 +146,13 @@ const SPLIT = { spawnGap: 1.5, voices: 3, beds: 2 } as const
  * WebGPU backend hands setViewport/setScissor straight to the pass, whose origin is the top-left corner: no flip.
  */
 const ORIGIN_FLIP = false
+/**
+ * The network session (NetHost): the name a player joins under before the Concierge has one, and how long a peer's
+ * voice is kept after its player's pose stops arriving (a voice may arrive before the first snapshot that names them).
+ */
+const NET = { defaultName: 'Visitor', voiceGraceS: 5 } as const
+/** No remote players: the one empty list netFrame holds between sessions. */
+const NO_PEERS: readonly RemotePose[] = Object.freeze([])
 
 /**
  * One local player's view: their head (HeadRig) on a camera of their own, its frustum pack for the crowd cull, the
@@ -228,6 +240,46 @@ export interface RecruitHost {
   onState(fn: (s: StepState) => void): () => void
   /** The soundscape's recruitment cue at (x, z); false when it cannot sound. */
   cue(x: number, z: number): boolean
+}
+
+/** A remote player as the engine reads it from the client and the view draws it (10_Network's RemotePlayer's shape, without the import). */
+export type NetPeer = RemotePose
+
+/**
+ * What the engine may use of the page's network client (10_Network/netClient.ts), handed in by App (setNet) the way
+ * the mind is: the engine holds no network code and never opens a socket. Each frame while `status` is 'joined' it
+ * offers one input (player 1's desired velocity and heading) and reads the room's poses; it never sends a position,
+ * a chat line or a ping of its own, and nothing it reads goes to the physics realm.
+ */
+export interface NetHost {
+  readonly status: NetState
+  /** This page's id in the room (0 until welcomed). */
+  readonly id: number
+  /** Why the session closed, once it did. */
+  readonly reason: string | null
+  /** Starts a session, or says why it did not. */
+  connect(url: string, token: string, name: string): string | null
+  /** One frame of input: false when not joined or over the client's own rate. */
+  sendInput(x: number, z: number, heading: number): boolean
+  /** Every other player's pose, carried forward to `now` (ms). */
+  poses(now?: number): readonly NetPeer[]
+  /** Inputs the room has not yet applied. */
+  pending(): readonly unknown[]
+  leave(): void
+  /** A peer's voice as a MediaStream, when one arrives; returns the unsubscribe. */
+  onVoice(cb: (id: number, stream: MediaStream) => void): () => void
+}
+
+/**
+ * The network session as the console drives it (`net join|leave|status` over the terminal bridge, App adds the kept
+ * token): join resolves with the status line once the room has welcomed this page and rejects with why it did not
+ * (a refused address, no client, the room's refusal or the socket's end); leave returns what it did; status is plain
+ * data (telemetry.ts NetReport).
+ */
+export interface NetControls {
+  join(url: string, token: string): Promise<string>
+  leave(): string
+  status(): NetReport
 }
 
 export interface DebugSim {
@@ -347,6 +399,25 @@ export class Engine {
   private readonly pings = new PingBoard()
   private readonly pingPoint = new Vector3()
   /**
+   * The network session (NetHost, set by App): the client, the address joined, the poses read this frame (drawn by
+   * netView in present(), placed for the peer voices in listen()), inputs the client refused since the join, the
+   * peer voices attached (by peer id, with when: a voice outliving its pose by NET.voiceGraceS is let go), the join
+   * awaiting the room's welcome, and the state seen last frame (a change is toasted).
+   */
+  private netClient: NetHost | null = null
+  private netUrl: string | null = null
+  private netPeers: readonly NetPeer[] = NO_PEERS
+  private netDropped = 0
+  private readonly netVoices = new Map<number, { voice: PeerVoice; since: number }>()
+  private netJoin: { resolve: (line: string) => void; reject: (e: Error) => void } | null = null
+  private netSeen: NetState = 'idle'
+  private netUnvoice: (() => void) | null = null
+  private netControls: NetControls | null = null
+  /** The peers' places for AudioFrame.peers, reused frame to frame (a room is found again when a peer crosses into another 2 m cell). */
+  private readonly peerPlaces: { id: number; x: number; z: number; walls: number; room: Room | undefined; cell: number }[] = []
+  /** The other players of a network session, drawn as pose-only ghosts (netView.ts). */
+  private readonly netView: NetView
+  /**
    * The host's rally hand-off (App.tsx: the recruiter's rally): called with the plain request a walk ping (go or
    * gather) makes for an Active recruit once rallyPlan allows it; the recruiter checks the page's copy and the physics
    * realm decides on its own readings. Null: a ping is a mark and nothing more. The engine never sends a rally itself.
@@ -395,7 +466,7 @@ export class Engine {
   private constructor(p: {
     canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView
     post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; crowdFrameSeconds: UniformNode<'float', number>; ghost: GhostView
-    options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; crowdDissolve: GPUBuffer; crowdLook: GPUBuffer
+    options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; netView: NetView
   }) {
     this.places = p.places
     this.regionName = p.options.region?.name ?? null
@@ -411,6 +482,7 @@ export class Engine {
     this.pacer = p.cinema ? new FramePacer(CINEMA.fps) : null
     this.crowdFrameSeconds = p.crowdFrameSeconds
     this.ghost = p.ghost
+    this.netView = p.netView
     this.poles = new PoleIndex(p.world.furniture)
     const f = p.world.furniture
     this.dissolve = new DissolveSet({ lamps: f.lamps.length, trees: f.trees.length, signals: f.signals.length, cars: p.sim.meta.suv.length, people: p.options.agents })
@@ -531,6 +603,9 @@ export class Engine {
     const view = new FleetView(sim.meta.suv, sim.meta.paint, world.night)
     view.sync(sim.state.poses)
     world.scene.add(...view0.meshes, view.bodies, view.wheels)
+    // The network ghosts (netView.ts): two hidden instanced meshes until a session's poses arrive, compiled with the rest.
+    const netView = new NetView()
+    world.scene.add(netView.people, netView.cars)
     const ghost = createGhost({ boxes: world.boxes, furniture: world.furniture, suv: sim.meta.suv, crowdPos: view0.pos, agents: options.agents })
     const { pipeline: post, volumetrics, cinema } = buildPost(gpu.renderer, world.scene, world.camera, options.cinema === false ? null : { resorted: world.resorted }, ghost)
 
@@ -568,6 +643,7 @@ export class Engine {
       // The code dissolve's crowd amounts: allocated by the draws above like the frame's buffers, written the same way.
       crowdDissolve: gpuBufferOf(gpu.renderer, view0.dissolve),
       crowdLook,
+      netView,
     })
     if (start) engine.input.yaw = yawFacing(start.heading)
     return engine
@@ -703,6 +779,170 @@ export class Engine {
   lookOf(agent: number): Look | null {
     if (!Number.isInteger(agent) || agent < 0 || agent >= this.lookWords.length) return null
     return unpackLook(this.lookWords[agent])
+  }
+
+  /**
+   * The page's network client (10_Network/netClient.ts), handed in once by App like the mind: the engine never builds
+   * or connects one. Nothing is sent until `net.join`. A peer's voice the client reports is attached to player 1's
+   * soundscape (audio.ts attachPeer) under the peer's name and placed at their pose every frame. A second call
+   * replaces the first: its session is left and its voices let go.
+   */
+  setNet(client: NetHost): void {
+    if (this.netClient === client) return
+    this.netUnvoice?.()
+    try { this.netClient?.leave() } catch { /* the old socket may be gone */ }
+    this.netLetGo('replaced')
+    this.netClient = client
+    this.netSeen = client.status
+    this.netUnvoice = client.onVoice((id, stream) => {
+      if (this.netClient !== client || this.halted || this.disposed) return
+      const voice = this.audio.attachPeer(stream, id, this.netName(id))
+      this.netVoices.get(id)?.voice.detach()
+      if (voice) this.netVoices.set(id, { voice, since: this.simTime })
+      else this.netVoices.delete(id)
+    })
+  }
+
+  /**
+   * The console's hold on the session (NetControls): join a room by its address and the operator's session token
+   * under the name the Concierge was given ('Visitor' until then), leave it, or read it. Built once, frozen.
+   */
+  get net(): NetControls {
+    if (this.netControls) return this.netControls
+    this.netControls = Object.freeze({
+      join: (url: string, token: string) => new Promise<string>((resolve, reject) => {
+        const c = this.netClient
+        if (!c) { reject(new Error('no network client on this page')); return }
+        if (this.halted || this.disposed) { reject(new Error('the city has stopped')); return }
+        if (this.netJoin) { reject(new Error('a join is already under way')); return }
+        const why = c.connect(url, token, this.playerName.trim() || NET.defaultName)
+        if (why !== null) { reject(new Error(why)); return }
+        this.netUrl = url
+        this.netDropped = 0
+        this.netSeen = c.status
+        this.netJoin = { resolve, reject }
+      }),
+      leave: () => {
+        const c = this.netClient
+        if (!c || c.status === 'idle' || c.status === 'closed') return 'no session'
+        c.leave()
+        this.netLetGo(c.reason ?? 'left')
+        return `left ${this.netUrl ?? 'the room'}`
+      },
+      status: (): NetReport => {
+        const c = this.netClient
+        return {
+          state: c ? c.status : 'idle', url: this.netUrl, id: c ? c.id : 0, peers: this.netPeers.length, dropped: this.netDropped,
+          pending: c ? c.pending().length : 0, voices: this.netVoices.size, reason: c ? c.reason : null,
+        }
+      },
+    })
+    return this.netControls
+  }
+
+  /**
+   * A chat line from the room (NetClientOptions.onChat, after the core's 14A screen and App's second one): a caption
+   * in the peer's name, placed where the room has them (nowhere if their pose has not arrived), read as speech is.
+   * Nothing is spoken aloud and nothing reaches the physics realm.
+   */
+  netChat(from: number, name: string, text: string): void {
+    if (!this.captionsOn || this.halted || this.disposed) return
+    const at = this.netPeers.find((p) => p.id === from)
+    const e = { kind: 'peer' as const, source: from, x: at ? at.x : Number.NaN, z: at ? at.z : Number.NaN, t: this.audio.clock, text, label: name, agent: from }
+    this.captions.push({ ...e, phase: 'start' }, this.rig.pose)
+    this.captions.push({ ...e, phase: 'stop' }, this.rig.pose)
+  }
+
+  /**
+   * A ping from the room (NetClientOptions.onPing): cued where it landed for every player and captioned through the
+   * cue's own event ('[ping: Ada: go there]'). It goes on no board here and asks nobody over: a remote ping is heard
+   * and read, never acted on by this page's recruits.
+   */
+  netPing(from: number, kind: PingKind, x: number, _y: number, z: number): void {
+    if (this.halted || this.disposed || !PING_KINDS.includes(kind) || !Number.isFinite(x + z)) return
+    this.audio.cuePing(x, z, `${this.netName(from)}: ${PING_WORDS[kind]}`)
+    for (let k = 1; k < this.views.length; k++) this.views[k].audio.cuePing(x, z)
+  }
+
+  /** A peer's name as the room last gave it, else 'player N'. */
+  private netName(id: number): string {
+    return this.netPeers.find((p) => p.id === id)?.name ?? `player ${id}`
+  }
+
+  /**
+   * One frame of the session: the client's state watched (a join settled on the room's welcome or the socket's end,
+   * a change toasted), then, while joined, player 1's input offered (on foot the desired velocity and the body's
+   * heading the realm gets; at the wheel the car's own velocity and heading, which the room caps at a run) and the
+   * room's poses read, carried forward to now. Between sessions nothing is drawn or placed.
+   */
+  private netFrame(st: StepState, driving: number): void {
+    const c = this.netClient
+    if (!c) return
+    const state = c.status
+    if (state !== this.netSeen) {
+      this.netSeen = state
+      if (state === 'joined') {
+        this.netJoin?.resolve(`joined ${this.netUrl ?? 'the room'} as player ${c.id}`)
+        this.netJoin = null
+        this.toast('Network', `joined as player ${c.id}`)
+      } else if (state === 'closed') {
+        const why = c.reason ?? 'closed'
+        this.netJoin?.reject(new Error(why))
+        this.netJoin = null
+        this.netLetGo(why)
+        this.toast('Network', `session ended: ${why}`)
+      }
+    }
+    if (state !== 'joined') return
+    let vx = this.foot.x, vz = this.foot.z, heading = this.foot.heading
+    if (driving >= 0) {
+      const p = st.poses, o = driving * POSE.stride
+      heading = p[o + POSE.heading]
+      const speed = p[o + POSE.speed]
+      vx = Math.sin(heading) * speed
+      vz = Math.cos(heading) * speed
+    }
+    if (!c.sendInput(vx, vz, heading)) this.netDropped++
+    this.netPeers = c.poses(performance.now())
+    // A voice whose player is no longer in the room (or never arrived) is let go after the grace.
+    if (this.netVoices.size > 0) {
+      for (const [id, v] of this.netVoices) {
+        if (this.simTime - v.since >= NET.voiceGraceS && !this.netPeers.some((p) => p.id === id)) {
+          v.voice.detach()
+          this.netVoices.delete(id)
+        }
+      }
+    }
+  }
+
+  /** The session over: no poses drawn or placed, every peer voice let go, a join still waiting told why. */
+  private netLetGo(why: string): void {
+    this.netPeers = NO_PEERS
+    for (const v of this.netVoices.values()) v.voice.detach()
+    this.netVoices.clear()
+    this.peerPlaces.length = 0
+    this.netJoin?.reject(new Error(why))
+    this.netJoin = null
+  }
+
+  /** Where each peer with a voice stands, for AudioFrame.peers: their pose, the walls from this head, and their room (by 2 m cell). */
+  private placePeers(): AudioFrame['peers'] {
+    const out = this.peerPlaces
+    let n = 0
+    for (const p of this.netPeers) {
+      if (!this.netVoices.has(p.id)) continue
+      const slot = out[n] ?? (out[n] = { id: 0, x: 0, z: 0, walls: 0, room: undefined, cell: Number.NaN })
+      const cell = this.places ? Number.NaN : cellOf(p.x, p.z)
+      if (slot.id !== p.id || cell !== slot.cell) {
+        slot.cell = cell
+        slot.room = Number.isNaN(cell) ? undefined : roomAt(this.world.boxes, p.x, p.z)
+      }
+      slot.id = p.id; slot.x = p.x; slot.z = p.z
+      slot.walls = this.wallsTo(p.x, p.z)
+      n++
+    }
+    out.length = n
+    return out
   }
 
   /** Enter the nearest car, or leave the current one on the driver's (left) side (decided in the physics realm). */
@@ -1032,6 +1272,8 @@ export class Engine {
     // DISSOLVE.release on the same wall clock. The amounts reach the GPU in present() (view-only: instance data).
     this.dissolveNow(st)
     this.dissolve.update(realDt / 1000)
+    // The network session (NetHost): this frame's input offered to the room, the room's poses read for the draw.
+    this.netFrame(st, driving)
 
     // Drawing: every animation frame, or in cinema mode only those the pacer presents (24 a second). Nothing above
     // waits for it: the step request, the haptics and the head pose ran this frame whether or not it is drawn.
@@ -1079,6 +1321,8 @@ export class Engine {
     this.lastDrawnMs = nowMs
     // The code dissolve's amounts, to the meshes that read them, before the frame that reads them.
     this.flushDissolve()
+    // The room's other players, as the poses read this frame (view-only: instance matrices).
+    this.netView.update(this.netPeers)
     const split = this.views.length > 1
     if (split) {
       // One clear of the whole canvas (colour, depth, stencil: a clear pass ignores the scissor), then each viewport is
@@ -1301,6 +1545,9 @@ export class Engine {
       this.speakerCell = speakerCell
       sp.room = Number.isNaN(speakerCell) ? undefined : roomAt(this.world.boxes, speaking!.x, speaking!.z)
     }
+    // The peer voices (NetHost.onVoice) follow their players' poses: placed from where the room has them, the walls
+    // from this head between (a region has no page-side rooms: dry there, as every voice is).
+    f.peers = this.netVoices.size > 0 ? this.placePeers() : undefined
     this.audio.update(f)
     // Captions outlive nothing: when the soundscape is not sounding (off, hidden, failed), what it said is gone.
     if (this.captions.size > 0 && this.audio.status().state !== 'running') this.captions.clear()
@@ -1422,6 +1669,7 @@ export class Engine {
         contact: { wipe: this.contactPulse.value, kind: this.contactPulse.kind, count: this.contactPulse.count },
         dissolve: { active: this.dissolve.active, count: this.dissolve.count },
         ...(pings && { pings }),
+        ...(this.netClient && { net: { state: this.netClient.status, peers: this.netPeers.length, dropped: this.netDropped } }),
         ...(this.views.length > 1 && { players: this.playersView(st) }),
         ...(this.pacer && {
           camera: {
@@ -1729,6 +1977,8 @@ export class Engine {
     if (this.halted) return
     this.halted = true
     if (this.lockReason === null) this.lockReason = reason
+    try { this.netClient?.leave() } catch { /* the halt must complete whatever the socket does */ }
+    this.netLetGo('the city has stopped')
     try { this.audio.dispose() } catch { /* the halt must complete whatever the audio stack does */ }
     for (let k = 1; k < this.views.length; k++) try { this.views[k].audio.dispose() } catch { /* likewise */ }
     void Promise.resolve(this.input.hal.dispose()).catch(() => {})
@@ -1739,8 +1989,12 @@ export class Engine {
     this.disposed = true
     if (this.recorder.state.active) void this.recorder.stop().catch(() => {})
     this.cameraTrack?.stop()
+    this.netUnvoice?.()
+    try { this.netClient?.leave() } catch { /* the socket may be gone */ }
+    this.netLetGo('the city has stopped')
     this.audio.dispose()
     for (let k = 1; k < this.views.length; k++) this.views[k].audio.dispose()
+    this.netView.dispose()
     // Input.dispose() also disposes the hardware bus, which resets trigger effects and closes ports.
     this.input.dispose()
     this.sim.terminate()
