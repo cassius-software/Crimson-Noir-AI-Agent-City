@@ -24,7 +24,7 @@ wardrobe.
 npm install
 npm run dev      # local dev server
 npm run build    # typecheck (app + tests), then emit dist/index.html: one file, every asset inlined
-npm test         # 1,060 tests (node --test), including real Rapier physics and a real WebSocket host in Node
+npm test         # 1,149 tests (node --test), including real Rapier physics and a real WebSocket host in Node
 npm run lint     # oxlint
 npm run serve:net  # the optional network host (Node only, never bundled): see Networking
 ```
@@ -1157,14 +1157,24 @@ are no toasts and no settings menu, and the console's `quality` command is the o
   - The animation frames are held at the 60 FPS floor whatever the display. A 120 or 144 Hz display does not buy
     extra input frames with fidelity, since the camera shows 24.
   - The camera's own frames are counted, in half-second slices. Short of 90 % of them in every slice for more
-    than 2 s (a frame missed in each) steps down one tier, even while the animation frames look fine. A step up
+    than 2 s (two frames missed in each) steps down one tier, even while the animation frames look fine. A step up
     waits until the camera has presented 97 % of its frames for 5 s.
 - **Where it runs.** A native shell (a Tauri v2 window, whose WebView2 on Windows 11 is desktop Chromium) is
   recognised by what Tauri injects, and the snapshot says so (`process.host`). It profiles as the desktop it is:
-  a high-end GPU starts on Ultra with the full crowd.
+  a high-end GPU starts on Ultra with the full crowd. Stock Chrome, Edge and WebView2 report a GPU's vendor and
+  architecture but not its name, so an AMD card starts on High there (it cannot be told from an integrated chip of
+  its architecture) and the first probe takes it to Ultra about 6 s after boot.
 - **How many pedestrians.** Unless `?crowd` says, the profile decides at boot: 14,000 wherever it starts on
   Medium or above, 8,000 on a phone, and 5,000 on the weakest GPUs and software rasterizers. The simulation's size
   is fixed for the session (the GPU buffers are sized for it). The tiers then scale how many are drawn.
+
+**The two ends of the range.** `docs/autoscaler/README.md` drives the governor as a flagship phone (Safari 26, 120 Hz,
+touch) and as a console-class desktop (16 threads, a 10 TFLOPS GPU, 4K at 60 Hz or 144 Hz, tab and native shell)
+through overload, heat, recovery, the camera's rules, pinned tiers and noise, with every tier path in
+`docs/autoscaler/phone.csv` and `desktop.csv` (`governorPhone.test.ts`, `governorDesktop.test.ts`). It is the
+governor's logic on synthetic frames: this machine's headless WebGPU loses its device at boot, so no real GPU was
+measured for it. The phone starts on Low, reaches Medium in 5.9 s and never goes higher; the desktop starts on Ultra
+and walks an overload down to Minimal one tier about every 3.9 s, then climbs back with its back-offs.
 
 Under a deliberate overload (60,000 pedestrians at 2× resolution) in headless Brave, it held for 5.5 s,
 then stepped from High to Minimal. Drawn pedestrians fell from 17,345 to 615 and the texture from 256
@@ -1506,6 +1516,12 @@ headless Chromium whose only WebGPU adapter is software.
   `r0 1 2 + .` printed 3; a recursive `fib` of 20 printed 10946 after 240,801 steps; an endless `begin … until`
   ended with `step budget exhausted (1000000)` and the machine still answered afterwards (`r0 3 4 * .` printed
   12); `render off` and `stats --once` said `engine not running`. `docs/track-b-console.png` is the screenshot.
+- **The Stable Beta (tag `stable-beta`):** 1,149 tests, 1,149 pass, in 50 s; both TypeScript projects type-check and
+  `oxlint` reports nothing. `dist/index.html` (10 MB, the surveyed region inside), opened from disk in headless
+  Chromium with the network off and every request but the file's own aborted: the file was the only request;
+  Track B booted and answered `version`; the page inflated the embedded pack itself (2,539,732 bytes, `region/1`,
+  3,038 names); Track A stopped at the device loss below. The autoscaler's two profiles are in
+  `docs/autoscaler/README.md`.
 - **Not verified here: the 3D page.** Track A did not run in this environment. Chromium's software WebGPU adapter
   loses the device while the page boots (`WebGPU Device Lost: A valid external Instance reference no longer
   exists`, then `OperationError: Instance dropped in popErrorScope` on every frame; `__SIM__` never appeared), and
@@ -1622,6 +1638,20 @@ behind it, item by item with the tests that prove each, is `docs/agent-city-v1-b
   reversed; pedestrians near the operator may be promoted to a Rapier rig by a shove, a kerb trip or a slip, every
   shape a Sanctuary ward and an audit person, the rig stream drawn in the hidden figure's place; a vehicle is never a
   cause, and nobody is ever harmed. `?ragdoll=0` (see The balance machine under The ethical kernel).
+- **Stable Beta, the rulings:** surface trams are ruled out (`collision.ts COLLISION.surfaceRail`: every train rides
+  the elevated deck, the Ring-0 craft floor); recruiting, rallying and dismissing are player 1's alone
+  (`skills.ts RECRUITING_PLAYER`; the realm refuses another player's, the page drops other seats' pings); the Claude
+  key belongs in the gateway on this machine, the page sending none when it holds none (`docs/zero-trust-audit.md`,
+  The API key).
+- **Stable Beta, the map offline:** every build carries the surveyed region, `dist/index.html` included (10 MB), so
+  the one file plays it from a disk or a stick with no network; `?region=on` walks it (see The surveyed map). Booted
+  headless from disk with the network off: the file was the only request. `fetch.mjs` and `odb.py` were run again
+  and the network policy still refuses their hosts, so the pack is the one compiled before.
+- **Stable Beta, the autoscaler at both ends:** a flagship phone and a console-class desktop, simulated through the
+  governor on synthetic frames (`docs/autoscaler/`). They found four defects, all fixed in `governor.ts`: a named
+  RDNA2 card started on High; a run of sub-second hitches under the cinema camera stepped the tier down; a step under
+  `?fps` was labelled "frames below 60 FPS"; and the camera floor's wording (two frames missed in each half second,
+  not one).
 - **The console:** every new knob and command on the Ring-0 terminal; `history` redacts keys and tokens.
 - **The surveyed map (pilot)**, listed as unreleased in 1.3.0's README, ships in this release as
   `npm run build:pilot` (see The surveyed map): `tools/world/` compiles regions, a guard test checks the shipped

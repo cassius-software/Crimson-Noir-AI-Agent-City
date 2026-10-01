@@ -714,6 +714,30 @@ The operator's Phase 11 directive came after the beta. Each item, what was built
 - **11.3(c) The prefix cache.** kv-pager's page table (`native/kv-pager-wasm`) compiled to WebAssembly behind the
   cognition router; `ask` prints its counts.
 
+### Stable Beta finalization
+
+The operator's last directive before the tag: sweep the gaps, bake the map in, and simulate the autoscaler's two
+ends. Tagged `stable-beta` with 1,149 tests passing.
+
+- **The gap sweep.** Every Phase 11 item above was found complete in the tree but one: the map pipeline, which cannot
+  run here (below). The three open rulings were made: no surface trams (`collision.ts COLLISION.surfaceRail: false`),
+  recruitment for player 1 only (`skills.ts RECRUITING_PLAYER`, enforced by the realm and by the page's ping
+  wiring), and the key kept in the gateway, with the local-storage key's threat model written down
+  (`docs/zero-trust-audit.md`, "The API key"). Every provider now records the hash of the system prompt it sent.
+- **The offline map.** Every build embeds `world/pilot.region.json.gz` (`vite.config.ts regionModule`); the default
+  build still opens on the procedural city and walks the region with `?region=on` (§5, Housekeeping). Booted from
+  disk headless with the network off, the file was the only request and the page inflated the pack itself.
+  `fetch.mjs` and `odb.py` were run again: HTTP 403 at the proxy for all three hosts.
+- **The autoscaler's two ends.** `governorPhone.test.ts` (a flagship phone in Safari 26) and
+  `governorDesktop.test.ts` (a console-class desktop, tab and native shell) drive the governor from stubbed browser
+  globals through `Engine.create`'s set-up on synthetic frames, with every tier path in `docs/autoscaler/*.csv`.
+  Headless WebGPU loses its device at boot here, so this is the governor's logic, not a GPU measurement. Four
+  defects found, all fixed with the tests turned into regressions: a named RDNA2 card started on High; a run of
+  sub-second hitches under the cinema camera stepped the tier down; a step under `?fps` was labelled "frames below
+  60 FPS"; and the camera floor was glossed as one missed frame per slice where it takes two.
+  `docs/autoscaler/README.md` has the profiles, the paths and what remains to know (Safari's Low Power Mode and
+  60 Hz default; AMD cards unnamed by Chromium start on High).
+
 ## 4. Verification
 
 **The Node suites.** `npm test` (`node --test "src/**/*.test.ts"`) at commit `f5b8399`, in this environment on

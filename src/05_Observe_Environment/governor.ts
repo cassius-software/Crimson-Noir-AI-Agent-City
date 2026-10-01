@@ -150,7 +150,7 @@ export function profileDevice(h: DeviceHints): DeviceProfile {
   } else {
     if (gpuClass === 'discrete') {
       const highEnd = h.cores >= 8 && ((nvidia && /ampere|lovelace|blackwell|rtx ?[345]0[6-9]0/.test(a)) ||
-        (amd && /rdna[34]/.test(c) && /\brx\b|radeon pro/.test(a)))
+        (amd && /rdna[234]/.test(c) && /\brx\b|radeon pro/.test(a)))
       start = highEnd ? 4 : 3
     } else if (gpuClass === 'integrated') {
       if (apple) start = 3
@@ -233,7 +233,8 @@ const GOV = {
   outlierMs: 250,
   /** …unless this many arrive in a row: a device that slow must still step down. */
   outlierRun: 4,
-  /** A frame this long is a tab switch or an app resume: the step-down window starts afresh after it. */
+  /** A frame this long, or a run of hitches together this long, is a tab switch or an app resume: the step-down
+   *  window starts afresh after it. */
   gapMs: 1000,
   /** Start-up frames ignored: at least warmupMs, and warmupFrames or warmupMaxMs, whichever is first. */
   warmupMs: 750,
@@ -278,7 +279,7 @@ const GOV = {
   maxBackoffMs: 300000,
   /**
    * Under the cinema camera: fewer than this share of its frames presented in every half second of the step-down
-   * window (under about 10.8 of 12: a frame missed in each) steps down; a step up needs at least presentUp of them
+   * window (under about 10.8 of 12: two frames missed in each) steps down; a step up needs at least presentUp of them
    * over the upgrade window.
    */
   presentFloor: 0.9,
@@ -319,6 +320,8 @@ export class Governor {
   private firstMs = -1
   private seen = 0
   private outliers = 0
+  /** When the current run of hitches began (the start of its first frame). */
+  private runStart = 0
   /** Start of the step-down window's observation: the last reset or long gap. */
   private since = 0
   /** Start of the current hitch-free stretch, which a step up needs upgradeHoldMs of. */
@@ -364,7 +367,8 @@ export class Governor {
   get auto(): boolean { return this.adaptive }
   /** Whether the cinema camera's presented frames are held too. */
   get pacer(): boolean { return this.pacerMs > 0 }
-  /** Why the tier last changed: 'frames below 60 FPS', 'camera behind', 'probe', 'manual', or '' (never). */
+  /** Why the tier last changed: 'frames below 60 FPS' ('frames below target' under ?fps), 'camera behind', 'probe',
+   *  'manual', or '' (never). */
   get reason(): string { return this.why }
 
   /** One frame the cinema camera presented, at `nowMs` (the same clock as sample()). Ignored without a camera. */
@@ -445,10 +449,13 @@ export class Governor {
     let ms = frameMs
     if (ms > GOV.outlierMs) {
       if (++this.outliers < GOV.outlierRun) {
-        // A tab switch or app resume leaves a long hole whose slices would read as below 60, so janky
-        // frames after it would look sustained: the window starts afresh. A shorter hitch stays in it (it
-        // was below 60, and alone it never fills a window), so a jittery device at a few FPS still steps.
-        if (ms > GOV.gapMs && this.since < nowMs) this.since = nowMs
+        // A tab switch or app resume leaves a long hole whose slices would read as below 60 (and the cinema
+        // camera's as behind), so janky frames after it would look sustained: the window starts afresh. So does
+        // a run of hitches as long, which the camera would otherwise read as frames missed. A shorter hitch
+        // stays in it (it was below 60, and alone it never fills a window), so a jittery device at a few FPS
+        // still steps.
+        if (this.outliers === 1) this.runStart = nowMs - ms
+        if (nowMs - this.runStart > GOV.gapMs && this.since < nowMs) this.since = nowMs
         if (this.calm < nowMs) this.calm = nowMs
         return this.report()
       }
@@ -557,7 +564,7 @@ export class Governor {
     const span = now - this.since
 
     if (below && span >= GOV.degradeHoldMs && n1 >= GOV.minFrames && this.current > this.min) {
-      this.why = 'frames below 60 FPS'
+      this.why = this.fixedTarget ? 'frames below target' : 'frames below 60 FPS'
       this.step(now, -1)
       return
     }
