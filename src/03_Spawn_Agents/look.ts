@@ -396,3 +396,57 @@ export function describeLook(look: Look): string[] {
   lines.push(`${'code'.padEnd(11)}${formatLookCode(look)}`)
   return lines
 }
+
+// --- The console's changes --------------------------------------------------------------------------------------
+
+/**
+ * One change to a look, as the console's `look` command asks it (terminal/bridge.ts LookBridge): a slot set to an
+ * option (its 1-based number as describeLook prints it, or its name), a preset by name, a look code, a look drawn
+ * from a seed, or the seed's own look again.
+ */
+export type LookChange =
+  | { readonly kind: 'slot'; readonly slot: string; readonly value: string }
+  | { readonly kind: 'preset'; readonly name: string }
+  | { readonly kind: 'code'; readonly code: string }
+  | { readonly kind: 'random'; readonly seed: number }
+  | { readonly kind: 'reset' }
+
+/** What a change gives: the look after it, or why it was refused (never a look outside the wardrobe). */
+export type LookChangeResult = { readonly look: Look; readonly error: null } | { readonly look: null; readonly error: string }
+
+const refused = (error: string): LookChangeResult => ({ look: null, error })
+const changed = (look: Look | null, error: string): LookChangeResult => (look === null ? refused(error) : { look, error: null })
+
+/**
+ * The look after `change`, or the reason it was refused. `seed` is the look `reset` returns to (lookFromSeed: the
+ * visitor's own seed, or an agent's index). A slot's value is its 1-based number or an option's name, case
+ * ignored; a body change keeps what still fits (withLookSlot). Pure and deterministic: `random` takes its seed.
+ */
+export function changeLook(look: Look, change: LookChange, seed: number): LookChangeResult {
+  if (validateLook(look) === null) return refused('the look worn now is outside the wardrobe')
+  switch (change.kind) {
+    case 'reset': return changed(lookFromSeed(seed), 'no look for that seed')
+    case 'random': return Number.isFinite(change.seed) ? changed(lookFromSeed(change.seed), 'no look for that seed') : refused('the seed must be a number')
+    case 'code': return changed(parseLookCode(change.code), `not a look code: '${change.code}' (eight symbols, XXXX-XXXX)`)
+    case 'preset': {
+      const p = lookPreset(change.name)
+      return p ? { look: p.look, error: null } : refused(`no preset named '${change.name}': ${LOOK_PRESETS.map((x) => x.name).join(', ')}`)
+    }
+    case 'slot': {
+      const want = change.slot.toLowerCase()
+      const slot = LOOK_SLOTS.find((s) => s.toLowerCase() === want)
+      if (!slot) return refused(`no slot named '${change.slot}': ${LOOK_SLOTS.join(', ')}`)
+      const options = lookOptions(look.body as LookBody, slot)
+      const text = change.value.trim()
+      let index: number
+      if (/^\d{1,3}$/.test(text)) {
+        index = Number(text) - 1
+        if (index < 0 || index >= options.length) return refused(`${slot} has ${options.length} options (1-${options.length})`)
+      } else {
+        index = options.findIndex((o) => o.name.toLowerCase() === text.toLowerCase())
+        if (index < 0) return refused(`no ${slot} named '${text}': ${options.map((o) => o.name).join(', ')}`)
+      }
+      return changed(withLookSlot(look, slot, index), `${slot} ${index + 1} is outside the wardrobe`)
+    }
+  }
+}

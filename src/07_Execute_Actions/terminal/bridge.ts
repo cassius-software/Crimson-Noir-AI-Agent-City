@@ -1,9 +1,10 @@
 /**
  * Why does this file exist? It is the air gap between the Ring-0 terminal and the running city: the
  * only surface the console can reach. It carries read-only telemetry plus a few operator knobs (clock,
- * quality tier, audio, hardware pairing), recruitment (asking someone nearby over by skill, the one knob that
+ * quality tier, audio, ghost view, drawing, captions, hardware pairing), the view-only pings and the player's look,
+ * recruitment (asking someone nearby over by skill, or an Active recruit to a pinged point: the one knob that
  * reaches a pedestrian, and only through the physics worker's own checks), the swarm's memory (read, or erased on
- * command) and, behind an explicit `operator unlock`, the operator tier
+ * command), the opt-in network session and, behind an explicit `operator unlock`, the operator tier
  * (sandboxed scripts, prompts to the local model, speech, tuning keys, physics harnesses, the local .agv recorder)
  * that the engine builds over its SimControls. A script, a prompt or speech runs only through the capability gateway:
  * while someone tethered to the operator has the skills it names, and no longer. The console itself holds no engine,
@@ -18,10 +19,11 @@ import type {
   AskResult, ExecResult, GatedAsk, GatedRun, GatedSay, GateTether, MindStatus, Piece, RunResult, RunState, SayResult, VoiceStatus, apiDoc,
 } from '../operator.ts'
 import type { HarnessReport, harnesses } from '../harness.ts'
+import type { LookChange } from '../../03_Spawn_Agents/look.ts'
 
 export type {
   HalDevice, LawText, AskResult, ExecResult, GatedAsk, GatedRun, GatedSay, GateTether, MindStatus, Piece, RunResult, RunState, SayResult,
-  VoiceStatus, HarnessReport, RecorderSource, RecordingState, NetReport,
+  VoiceStatus, HarnessReport, RecorderSource, RecordingState, NetReport, LookChange,
 }
 
 export interface Ring0Stats {
@@ -117,6 +119,12 @@ export interface RecordBridge {
 export interface RecruitBridge {
   /** Resolves with the outcome: who is coming over, or why nobody is. */
   ask(skill: string): Promise<{ ok: boolean; message: string }>
+  /**
+   * Asks the Active recruit `agent` to walk to the sidewalk point (x, z), usually the one the operator pinged
+   * (`ping`): the page checks the point and the tether on its own copy, the physics worker decides on its own
+   * readings. Resolves with the outcome either way; nothing here moves anyone.
+   */
+  rally(agent: number, x: number, z: number): Promise<{ ok: boolean; message: string }>
   /** Resolves with the microphone's status line. */
   listen(): Promise<string>
   stop(): string
@@ -157,6 +165,43 @@ export interface NetBridge {
   forget(): string
 }
 
+/** A ping's kind (08_Swarm/ping.ts PingKind): what the operator means by the mark. */
+export type PingKind = 'go' | 'look' | 'gather' | 'wait'
+
+/** What a ping met (08_Swarm/ping.ts Pick), as plain data: the ground, a person, a car or a pole, its index, and where. */
+export interface PingPick { kind: 'point' | 'person' | 'car' | 'pole'; index: number; x: number; y: number; z: number; distance: number }
+
+/** The newest ping standing: its number, kind and point. */
+export interface PingPoint { id: number; kind: PingKind; x: number; z: number }
+
+/**
+ * The operator's pings (08_Swarm/ping.ts): a mark where the head looks, view-only (the board, a cue, a caption, the
+ * minimap); a walk ping (go, gather) is also offered to the host's recruiter as a plain request the physics worker
+ * re-checks. Nothing here moves anyone or crosses into the physics realm.
+ */
+export interface PingBridge {
+  /** A ping of `kind` where the head looks: what it met, or null (nothing within range, too soon after the last, the city stopped). */
+  at(kind: PingKind): PingPick | null
+  /** The pings standing now, oldest first, one line each (none: an empty list). */
+  list(): string[]
+  /** The newest ping standing, or null. */
+  newest(): PingPoint | null
+  /** Takes every ping off the board; returns how many stood. */
+  clear(): number
+}
+
+/**
+ * The player's look (03_Spawn_Agents/look.ts): the closed business-casual wardrobe the crowd already wears, worn by
+ * the player's own body (the eye never sees it; its shadow and every other viewer do) and kept on this machine
+ * between visits by the host. View-only: nothing reaches the physics realm.
+ */
+export interface LookBridge {
+  /** The look worn now, one line per slot then its code (describeLook); `agent` reads a pedestrian's instead. Throws for no such pedestrian. */
+  show(agent?: number): string[]
+  /** Changes the player's look and returns it as show() prints it; throws with the reason when the change is outside the wardrobe. */
+  set(change: LookChange): string[]
+}
+
 /**
  * Implemented by the host (App/engine). Arguments mirror the command line: `quality` takes 'auto' or a
  * tier 0–4, `audio` takes 'on' / 'off' or a volume in percent (0–100). Called with no argument, both
@@ -185,6 +230,9 @@ export interface TerminalBridge {
    * black): on, off, or the status line ('on' | 'off').
    */
   render(arg?: 'on' | 'off'): string
+  /** Closed captions for every sound (view-only; the soundscape keeps sounding): on, off, or the status line ('captions: on' | 'captions: off'). */
+  captions(arg?: 'on' | 'off'): string
+  ping: PingBridge
   operator: OperatorBridge
   record: RecordBridge
   /** Absent until the host has built its recruiter (the terminal then says so). */
@@ -193,6 +241,8 @@ export interface TerminalBridge {
   memory?: MemoryBridge
   /** Absent until the host has attached its network client (the terminal then says so). */
   net?: NetBridge
+  /** Absent until the host keeps a look for the player (the terminal then says so). */
+  look?: LookBridge
 }
 
 /** Rapier world counters, the shape of Physics.stats. */
@@ -232,13 +282,16 @@ export function offlineBridge(brand: TerminalBridge['brand']): TerminalBridge {
     adapter: () => '',
     ghost: down,
     render: down,
+    captions: down,
+    ping: { at: down, list: down, newest: down, clear: down },
     operator: {
       unlock: down, lock: down, unlocked: down, exec: down, tuning: down, tune: down,
       ask: down, askStatus: down, askSet: down, askStop: down, say: down, sayStatus: down, saySet: down, sayStop: down,
       api: down, harnesses: down, harness: down,
     },
     record: { start: down, stop: down, status: down, supported: down },
-    recruit: { ask: down, listen: down, stop: down, install: down, dismiss: down, status: down, skills: () => [] },
+    recruit: { ask: down, rally: down, listen: down, stop: down, install: down, dismiss: down, status: down, skills: () => [] },
     memory: { status: down, ledger: down, forget: down },
+    look: { show: down, set: down },
   }
 }

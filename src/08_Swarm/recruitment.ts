@@ -638,13 +638,12 @@ export function hudLine(r: Recruiter, tasks = 0, activity = ''): { listening: bo
 }
 
 /**
- * The console's surface over a recruiter (terminal/bridge.ts RecruitBridge), plus `rally` for the console verb that
- * lands with the ping work (it joins RecruitBridge then; until it does, nothing in the terminal reaches it).
+ * The console's surface over a recruiter (terminal/bridge.ts RecruitBridge): asking by skill, and `rally` (the
+ * console's `recruit rally <agent>`: an Active recruit to the pinged sidewalk point).
  */
-export function recruitBridge(r: Recruiter): RecruitBridge & { rally(agent: number, x: number, z: number): Promise<RallyOutcome> } {
+export function recruitBridge(r: Recruiter): RecruitBridge {
   return Object.freeze({
     ask: (skill: string) => r.recruit(skill).then((o) => ({ ok: o.ok, message: o.message })),
-    /** A rally for an Active recruit (the console verb that calls it lands with the ping work). */
     rally: (agent: number, x: number, z: number) => r.rally(agent, x, z).then((o) => ({ ok: o.ok, message: o.message })),
     listen: () => r.listen().then(micLine),
     stop: () => micLine(r.stop()),

@@ -8,14 +8,19 @@
  * names the skills it needs (`run rust: …`) and runs only if the capability gateway authorizes it; the
  * console prints the gateway's three states as they happen: Authorized, Rejected, Aborted. A prompt to the
  * local model (`ask rust: …`) goes through the same gateway, and its answer streams in live; so does speech
- * (`say rust: …`), said by the person it is bound to. `memory` reads what the people recruited remember.
+ * (`say rust: …`), said by the person it is bound to. `memory` reads what the people recruited remember. The view
+ * knobs (`ghost`, `render`, `captions`), the pings (`ping`: a mark where the head looks; `recruit rally` sends an
+ * Active recruit to it, through the same worker checks as asking), the player's look (`look`) and the opt-in network
+ * session (`net`, operator-gated) go through the bridge the same way. `boot` asks the host to reload on a track
+ * (the city, or the console alone); `r0` is the console's own stack machine (repl.ts): it touches no bridge at all.
  * What breaks if it is removed? The terminal cannot interpret a single line.
  */
 import type {
-  AskResult, ExecResult, GateTether, HalDevice, HarnessReport, MemoryBridge, MindStatus, OperatorBridge, Piece, RecordBridge, RecruitBridge, Ring0Stats,
-  RunResult, SayResult, TerminalBridge, VoiceStatus,
+  AskResult, ExecResult, GateTether, HalDevice, HarnessReport, LookBridge, LookChange, MemoryBridge, MindStatus, NetBridge, NetReport, OperatorBridge,
+  Piece, PingKind, PingPick, RecordBridge, RecruitBridge, Ring0Stats, RunResult, SayResult, TerminalBridge, VoiceStatus,
 } from './bridge.ts'
 import type { QualityState, RecordingState } from '../../05_Observe_Environment/telemetry.ts'
+import { Machine } from './repl.ts'
 
 export type LineKind = 'out' | 'err' | 'cmd' | 'sys'
 
@@ -43,6 +48,10 @@ export interface CommandResult { lines: Line[]; clear?: boolean; live?: 'stats';
 const MAX_TIER = 4
 /** A script slower than this gets its wall time printed after its output. */
 const SLOW_MS = 500
+/** An R0 line that took this many steps or more gets its count printed after its output. */
+const R0_NOTE_STEPS = 100_000
+/** A number as typed for a point: -12, 3.5. */
+const NUMBER = /^-?\d+(?:\.\d+)?$/
 
 /** Drives `help` and Tab completion. Order is the order `help` prints. */
 const CORE = [
@@ -54,8 +63,12 @@ const CORE = [
   { name: 'time', usage: 'time [HH[:MM]]', summary: 'show or set the city clock' },
   { name: 'audio', usage: 'audio [on|off|0-100]', summary: 'show or set the soundscape' },
   { name: 'ghost', usage: 'ghost [on|off]', summary: 'ghost view: the physics shapes as code over the frame (view-only; G)' },
+  { name: 'render', usage: 'render [on|off]', summary: 'draw the city, or stop drawing it (physics, audio and this console keep running)' },
+  { name: 'captions', usage: 'captions [on|off]', summary: 'closed captions for every sound: engines, signals, speech, pings (view-only)' },
+  { name: 'ping', usage: 'ping [go|look|gather|wait|clear]', summary: 'mark where you look for your swarm (view-only; shown on the minimap and captioned; Q); alone, the marks standing' },
+  { name: 'look', usage: 'look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]', summary: "your look from the crowd's wardrobe (body, height, build, skin, hair, top, bottom, shirt, shoes, tie, eyewear, bag, cup)" },
   { name: 'hal', usage: 'hal [pair hid|serial|ble]', summary: 'hardware bus devices; pair a controller' },
-  { name: 'recruit', usage: 'recruit [<skill>|listen|stop|install|dismiss]', summary: 'ask someone nearby with a skill over; listen by voice (on-device)' },
+  { name: 'recruit', usage: 'recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]', summary: 'ask someone nearby with a skill over, or an Active recruit to the pinged point; listen by voice (on-device)' },
   { name: 'memory', usage: 'memory [<agent>|forget <agent>|forget all]', summary: 'what the people you recruit remember in this city; forget erases it (operator)' },
   { name: 'clear', usage: 'clear', summary: 'clear the screen (Ctrl+L)' },
   { name: 'history', usage: 'history', summary: 'lines entered this session' },
@@ -63,6 +76,8 @@ const CORE = [
   { name: 'uname', usage: 'uname [-asnrvmi]', summary: 'system information' },
   { name: 'whoami', usage: 'whoami', summary: 'print the current user' },
   { name: 'version', usage: 'version', summary: 'print the product version' },
+  { name: 'boot', usage: 'boot [gui|tty|status]', summary: 'which shell is up; boot gui reloads as the city, boot tty as this console alone (?boot=tty, no 3D engine)' },
+  { name: 'r0', usage: 'r0 <words...>|r0 reset|r0 words', summary: "the console's own stack machine (Turing-complete, sandboxed: it reaches nothing of the city)" },
   { name: 'exit', usage: 'exit', summary: 'close the console (also ` or Esc)' },
 ] as const
 
@@ -77,6 +92,7 @@ const OPERATOR = [
   { name: 'set', usage: 'set <path> <value>', summary: 'write a physics.* or shaders.* tuning key' },
   { name: 'harness', usage: 'harness [list|run <name>]', summary: 'physics harnesses: kernel stop, First-Law floor, sanctuary, brakes, lights, the spatial sweep' },
   { name: 'record', usage: 'record [start [canvas|camera]|stop|status]', summary: 'record the view (or the camera) with per-frame telemetry to a local .agv file' },
+  { name: 'net', usage: 'net [join <wss-url> [<token>]|leave|status|forget]', summary: 'the opt-in network session: join a room with its token (kept on this machine), leave it, read it' },
   { name: 'sim', usage: 'sim', summary: 'one-screen summary of the simulation' },
 ] as const
 
@@ -86,8 +102,12 @@ type Name = (typeof COMMANDS)[number]['name']
 
 const NAMES: readonly string[] = COMMANDS.map((c) => c.name).sort()
 
-/** Commands whose argument is the rest of the line, untokenized (a script or a prompt keeps its quotes and newlines). */
-const RAW: ReadonlySet<string> = new Set(['run', 'ask', 'say'])
+/** Commands whose argument is the rest of the line, untokenized (a script, a prompt or an R0 line keeps its quotes and newlines). */
+const RAW: ReadonlySet<string> = new Set(['run', 'ask', 'say', 'r0'])
+
+/** A persistent R0 machine (repl.ts): the terminal keeps one for the life of the console, so definitions outlive a line. */
+export interface ReplSession { machine: Machine }
+export const replSession = (): ReplSession => ({ machine: new Machine() })
 
 /** The harness names, for completion (commands.test.ts pins them to harness.ts, which this file must not import). */
 export const HARNESS_NAMES = ['brake-distance', 'first-law-floor', 'kernel-stop', 'sanctuary', 'spatial', 'traffic-lights'] as const
@@ -99,7 +119,17 @@ export const SKILL_ARGS = [
   'accessibility', 'audio', 'c++', 'data', 'design', 'go', 'networking', 'python', 'robotics', 'rust', 'security', 'shaders', 'testing',
   'typescript', 'wgsl', 'writing',
 ] as const
-const RECRUIT_ACTIONS = ['dismiss', 'install', 'listen', 'stop'] as const
+const RECRUIT_ACTIONS = ['dismiss', 'install', 'listen', 'rally', 'stop'] as const
+
+/** The kinds of ping and their words (commands.test.ts pins them to 08_Swarm/ping.ts, which this file must not import). */
+const PING_KINDS = ['gather', 'go', 'look', 'wait'] as const
+const PING_WORDS: Record<PingKind, string> = { go: 'go there', look: 'look there', gather: 'gather there', wait: 'wait there' }
+
+/** The look's slots, bodies and presets, as typed after `look` (commands.test.ts pins them to 03_Spawn_Agents/look.ts, not imported here). */
+export const LOOK_SLOT_ARGS = ['body', 'height', 'build', 'skin', 'hairStyle', 'hairColour', 'top', 'bottom', 'shirt', 'shoes', 'tie', 'eyewear', 'bag', 'cup'] as const
+export const LOOK_BODY_ARGS = ['pantsuit', 'skirt suit', 'smart casual', 'suit'] as const
+export const LOOK_PRESET_ARGS = ['burgundy pantsuit', 'camel blazer', 'camel skirt suit', 'charcoal suit', 'cream pantsuit', 'navy blazer', 'navy skirt suit', 'navy suit'] as const
+const LOOK_ACTIONS = ['code', 'preset', 'random', 'reset', 'show'] as const
 
 /** Tab-completion candidates for arguments, keyed by the words before the one being completed. */
 const ARGS: Record<string, readonly string[]> = {
@@ -108,6 +138,15 @@ const ARGS: Record<string, readonly string[]> = {
   quality: ['0', '1', '2', '3', '4', 'auto'],
   audio: ['off', 'on'],
   ghost: ['off', 'on'],
+  render: ['off', 'on'],
+  captions: ['off', 'on'],
+  ping: ['clear', ...PING_KINDS],
+  look: [...LOOK_ACTIONS, ...LOOK_SLOT_ARGS].sort(),
+  'look body': LOOK_BODY_ARGS,
+  'look hairStyle': ['long', 'short'],
+  'look preset': LOOK_PRESET_ARGS,
+  boot: ['gui', 'status', 'tty'],
+  r0: ['reset', 'words'],
   hal: ['pair'],
   'hal pair': ['ble', 'hid', 'serial'],
   recruit: [...RECRUIT_ACTIONS, ...SKILL_ARGS].sort(),
@@ -129,6 +168,7 @@ const ARGS: Record<string, readonly string[]> = {
   'harness run': HARNESS_NAMES,
   record: ['start', 'status', 'stop'],
   'record start': ['camera', 'canvas'],
+  net: ['forget', 'join', 'leave', 'status'],
 }
 
 const out = (text: string): Line => ({ kind: 'out', text })
@@ -172,6 +212,23 @@ function recordOf(b: TerminalBridge): RecordBridge {
   if (!rec) throw new Error('recorder not available on this bridge')
   return rec
 }
+
+/** Likewise for a bridge without a network client (the TTY shell, an older host). */
+function netOf(b: TerminalBridge): NetBridge {
+  const n = b.net
+  if (!n) throw new Error('network not available on this bridge')
+  return n
+}
+
+/** Likewise for a bridge whose host keeps no look (the TTY shell, an older host). */
+function lookOf(b: TerminalBridge): LookBridge {
+  const l = b.look
+  if (!l) throw new Error('look not available on this bridge')
+  return l
+}
+
+/** A pedestrian's number as typed (`memory 7`, `look show 7`, `recruit rally 7`), or null. */
+const agentOf = (a: string): number | null => (/^\d{1,9}$/.test(a) ? Number(a) : null)
 
 /** mm:ss (minutes keep counting past 59). */
 function clockOf(seconds: number): string {
@@ -318,6 +375,42 @@ function voiceLines(v: VoiceStatus): Line[] {
   return lines
 }
 
+/** What a ping met, for the console: 'person 12 at (312.4, 88.1), 8.3 m away'. ASCII only. */
+function pickText(p: PingPick): string {
+  const what = p.kind === 'point' ? 'a spot on the ground' : `${p.kind} ${p.index}`
+  return `${what} at (${fixed(p.x, 1)}, ${fixed(p.z, 1)}), ${fixed(p.distance, 1)} m away`
+}
+
+/** `net status`: the session as plain rows (state, room, player number, peers, dropped, pending, voices, reason). */
+function netLines(r: NetReport): Line[] {
+  const lines = [
+    out(row('state', r.state)),
+    out(row('room', r.url ?? 'none (net join <wss-url> <token>)')),
+    out(row('player', r.state === 'joined' ? String(r.id) : '-')),
+    out(row('peers', `${count(r.peers)}  dropped ${count(r.dropped)}  pending ${count(r.pending)}  voices ${count(r.voices)}`)),
+  ]
+  if (r.reason) lines.push(out(row('reason', r.reason)))
+  return lines
+}
+
+/**
+ * `look <action> <rest...>` as a change (03_Spawn_Agents/look.ts LookChange), or the error line: the action and its
+ * words are checked here, the values themselves by the host against the wardrobe.
+ */
+function lookChange(action: string, rest: readonly string[]): LookChange | string {
+  if (action === 'reset') return rest.length ? usage('look') : { kind: 'reset' }
+  if (action === 'random') {
+    if (rest.length > 1) return usage('look')
+    if (rest.length && !/^\d{1,9}$/.test(rest[0])) return `look: the seed must be a number, not '${rest[0]}'`
+    return { kind: 'random', seed: rest.length ? Number(rest[0]) : Number.NaN }
+  }
+  if (action === 'preset') return rest.length ? { kind: 'preset', name: rest.join(' ') } : 'usage: look preset <name>'
+  if (action === 'code') return rest.length === 1 ? { kind: 'code', code: rest[0] } : 'usage: look code <XXXX-XXXX>'
+  const slot = LOOK_SLOT_ARGS.find((x) => x.toLowerCase() === action.toLowerCase())
+  if (!slot) return `look: no slot named '${action}': ${LOOK_SLOT_ARGS.join(', ')}`
+  return rest.length ? { kind: 'slot', slot, value: rest.join(' ') } : `usage: look ${slot} <n|name>`
+}
+
 /** `ask` alone: the provider, where its server is, the model chosen, and what the server says it has. */
 function mindLines(m: MindStatus): Line[] {
   const network = m.provider === 'claude'
@@ -399,11 +492,18 @@ function tokenize(line: string): string[] | null {
   return words
 }
 
-type Handler = (args: string[], b: TerminalBridge, history: readonly string[], line: string) => CommandResult
+type Handler = (args: string[], b: TerminalBridge, history: readonly string[], line: string, session: ReplSession | null) => CommandResult
 
 /** Commands that take no arguments reject stray ones instead of silently ignoring them. */
 const bare = (name: Name, fn: (b: TerminalBridge, history: readonly string[], line: string) => CommandResult): Handler =>
   (args, b, history, line) => (args.length ? fail(`${name}: unexpected argument '${args[0]}'`, usage(name)) : fn(b, history, line))
+
+/** A one-knob on|off command (ghost, render, captions): the status alone, or the knob set; anything else is refused before the bridge. */
+const knob = (name: Name, fn: (b: TerminalBridge, arg: 'on' | 'off' | undefined) => string): Handler => (args, b) => {
+  if (args.length > 1) return fail(usage(name))
+  if (args.length && args[0] !== 'on' && args[0] !== 'off') return fail(`${name}: invalid argument '${args[0]}'`, usage(name))
+  return { lines: [out(fn(b, args[0] as 'on' | 'off' | undefined))] }
+}
 
 const HANDLERS: Record<Name, Handler> = {
   help(args) {
@@ -416,7 +516,7 @@ const HANDLERS: Record<Name, Handler> = {
     const entry = (c: { usage: string; summary: string }) => out(`  ${c.usage.padEnd(width)}${c.summary}`)
     return {
       lines: [
-        sys('Ring-0 commands: observe and tune through the bridge; only recruit reaches a pedestrian, and only to ask them over.'),
+        sys('Ring-0 commands: observe and tune through the bridge; only recruit reaches a pedestrian, and only to ask them over (or to a pinged point).'),
         ...CORE.map(entry),
         sys("Ring-0 operator (after 'operator unlock'): scripts, tuning and harnesses over the simulation; the laws stay in force."),
         ...OPERATOR.map(entry),
@@ -488,10 +588,45 @@ const HANDLERS: Record<Name, Handler> = {
     return fail(`audio: invalid argument '${a}'`, usage('audio'))
   },
 
-  ghost(args, b) {
-    if (args.length > 1) return fail(usage('ghost'))
-    if (args.length && args[0] !== 'on' && args[0] !== 'off') return fail(`ghost: invalid argument '${args[0]}'`, usage('ghost'))
-    return { lines: [out(`ghost view ${b.ghost(args[0] as 'on' | 'off' | undefined)}`)] }
+  ghost: knob('ghost', (b, arg) => `ghost view ${b.ghost(arg)}`),
+
+  render: knob('render', (b, arg) => `render ${b.render(arg)}`),
+
+  captions: knob('captions', (b, arg) => b.captions(arg)),
+
+  // View-only: a mark on the board where the head looks (cued, captioned, on the minimap). A walk ping (go, gather)
+  // is offered to the host's recruiter by the engine, as a request the physics worker re-checks; nothing moves here.
+  ping(args, b) {
+    if (args.length > 1) return fail(usage('ping'))
+    const a = args[0]
+    if (a === undefined) {
+      const lines = b.ping.list()
+      return { lines: lines.length ? lines.map(out) : [sys('ping: nothing is pinged (ping go|look|gather|wait marks where you look; Q)')] }
+    }
+    if (a === 'clear') {
+      const n = b.ping.clear()
+      return { lines: [out(n ? `ping: ${n} ${n === 1 ? 'mark' : 'marks'} cleared` : 'ping: nothing to clear')] }
+    }
+    const kind = PING_KINDS.find((k) => k === a)
+    if (!kind) return fail(`ping: unknown kind '${a}'`, usage('ping'))
+    const pick = b.ping.at(kind)
+    if (!pick) return fail('ping: nothing within reach where you look (or less than half a second since the last ping)')
+    return { lines: [out(`ping: ${PING_WORDS[kind]}: ${pickText(pick)}`)] }
+  },
+
+  // The player's own look (the host keeps it between visits); `show <agent>` reads what a pedestrian wears.
+  look(args, b) {
+    const l = lookOf(b)
+    const a = args[0] ?? 'show'
+    if (a === 'show') {
+      if (args.length > 2) return fail(usage('look'))
+      if (args.length < 2) return { lines: l.show().map(out) }
+      const agent = agentOf(args[1])
+      return agent === null ? fail(`look: not a pedestrian's number: '${args[1]}'`, usage('look')) : { lines: l.show(agent).map(out) }
+    }
+    const change = lookChange(a, args.slice(1))
+    if (typeof change === 'string') return fail(change)
+    return { lines: l.set(change).map(out) }
   },
 
   hal(args, b) {
@@ -555,6 +690,28 @@ const HANDLERS: Record<Name, Handler> = {
     }
     if (args.length === 1 && a === 'stop') return { lines: [out(`recruit: ${r.stop()}`)] }
     if (args.length === 1 && a === 'dismiss') return { lines: [out(`recruit: ${r.dismiss()}`)] }
+    if (a === 'rally') {
+      // An Active recruit to a sidewalk point: the newest ping's, or one typed. The page checks its copy, the worker decides.
+      if (args.length !== 2 && args.length !== 4) return fail(usage('recruit'))
+      const agent = agentOf(args[1])
+      if (agent === null) return fail(`recruit: not a pedestrian's number: '${args[1]}'`, usage('recruit'))
+      let x: number, z: number
+      if (args.length === 4) {
+        if (!NUMBER.test(args[2]) || !NUMBER.test(args[3])) return fail(`recruit: not a point: '${args[2]} ${args[3]}'`, usage('recruit'))
+        x = Number(args[2])
+        z = Number(args[3])
+      } else {
+        const p = b.ping.newest()
+        if (!p) return fail('recruit: nothing is pinged: ping go where they should stand first (Q), or give a point: recruit rally <agent> <x> <z>')
+        x = p.x
+        z = p.z
+      }
+      const pending = r.rally(agent, x, z).then(
+        (o): Line[] => [o.ok ? out(`recruit: ${o.message}`) : err(`recruit: ${o.message}`)],
+        (e: unknown): Line[] => [err(`recruit: ${message(e)}`)],
+      )
+      return { lines: [sys(`recruit: asking agent ${agent} to walk to (${fixed(x, 1)}, ${fixed(z, 1)})...`)], pending }
+    }
     const skill = args.join(' ')
     const pending = r.ask(skill).then(
       (o): Line[] => [o.ok ? out(`recruit: ${o.message}`) : err(`recruit: ${o.message}`)],
@@ -602,6 +759,37 @@ const HANDLERS: Record<Name, Handler> = {
   exit(args) {
     if (args.length > 1 || (args.length === 1 && !/^\d{1,3}$/.test(args[0]))) return fail(usage('exit'))
     return { lines: [], close: true }
+  },
+
+  // The track comes from the brand (the host that mounted the console); a switch is a reload the host performs.
+  boot(args, b) {
+    if (args.length > 1) return fail(usage('boot'))
+    const track = b.brand.track ?? 'gui'
+    const a = args[0] ?? 'status'
+    if (a === 'status') {
+      return { lines: [out(track === 'tty' ? 'boot: tty (Track B: this console alone, no 3D engine; boot gui for the city)' : 'boot: gui (Track A: the city; boot tty for this console alone)')] }
+    }
+    if (a !== 'gui' && a !== 'tty') return fail(`boot: unknown track '${a}'`, usage('boot'))
+    if (a === track) return { lines: [sys(`boot: already on ${a}`)] }
+    return { lines: [sys(a === 'tty' ? 'booting tty: reloading as this console alone (no 3D engine)...' : 'booting gui: reloading as the city...')], boot: a }
+  },
+
+  // Raw: the rest of the line is an R0 line for the session's machine. No bridge is touched: the machine is blind.
+  r0(args, _b, _history, _line, session) {
+    const rest = args[0] ?? ''
+    if (!rest) return { lines: [out(usage('r0')), sys("the console's own stack machine: 'r0 1 2 + .' prints 3; ': sq dup * ;' defines sq for this console session")] }
+    const m = (session ?? replSession()).machine
+    if (rest === 'reset') {
+      m.reset()
+      return { lines: [out('r0: reset (every definition forgotten, memory zeroed)')] }
+    }
+    if (rest === 'words') return { lines: [out(m.words().join(' '))] }
+    const r = m.run(rest)
+    // `.` prints a number and a blank, as the language does; a line's trailing blanks are invisible here, so they go.
+    const lines = r.out.map((t) => out(t.replace(/ +$/, '')))
+    if (r.error !== undefined) lines.push(err(`r0: ${r.error}`))
+    if (r.steps >= R0_NOTE_STEPS) lines.push(sys(`-- ${r.steps} steps --`))
+    return { lines }
   },
 
   // ---- the operator tier ----
@@ -800,6 +988,26 @@ const HANDLERS: Record<Name, Handler> = {
     return { lines: [sys(`record: choose where to save the .agv file${source === 'camera' ? ', then allow the camera' : ''}...`)], pending }
   },
 
+  // `status` reads at any time; joining, leaving and dropping the kept token are the operator's. The room's address
+  // and the token go to the host's client and nowhere else; the token is kept on this machine for the next join.
+  net(args, b) {
+    const n = netOf(b)
+    const a = args[0] ?? 'status'
+    if (a === 'status') return args.length > 1 ? fail(usage('net')) : { lines: netLines(n.status()) }
+    if (a === 'leave' || a === 'forget') {
+      if (args.length > 1) return fail(usage('net'))
+      if (!operatorOf(b).unlocked()) return locked('net')
+      return { lines: [out(`net: ${a === 'leave' ? n.leave() : n.forget()}`)] }
+    }
+    if (a !== 'join') return fail(`net: unknown command '${a}'`, usage('net'))
+    if (args.length < 2 || args.length > 3) return fail(usage('net'))
+    const url = args[1]
+    if (!/^wss?:\/\/\S+$/.test(url)) return fail(`net: not a room address: '${url}' (a wss address anywhere, or plain ws only on this machine)`, usage('net'))
+    if (!operatorOf(b).unlocked()) return locked('net')
+    const pending = n.join(url, args[2]).then((t): Line[] => [out(`net: ${t}`)], (e: unknown): Line[] => [err(`net: ${message(e)}`)])
+    return { lines: [sys(`net: joining ${url}...`)], pending }
+  },
+
   sim: bare('sim', (b) => {
     const s = b.stats(), r = s.rapier, a = s.agents, k = s.kernel
     const op = b.operator
@@ -819,9 +1027,9 @@ const HANDLERS: Record<Name, Handler> = {
   }),
 }
 
-function dispatch(name: Name, args: string[], bridge: TerminalBridge, history: readonly string[], line: string): CommandResult {
+function dispatch(name: Name, args: string[], bridge: TerminalBridge, history: readonly string[], line: string, session: ReplSession | null): CommandResult {
   try {
-    return HANDLERS[name](args, bridge, history, line)
+    return HANDLERS[name](args, bridge, history, line, session)
   } catch (e) {
     return fail(`${name}: ${message(e)}`)
   }
@@ -830,20 +1038,29 @@ function dispatch(name: Name, args: string[], bridge: TerminalBridge, history: r
 /**
  * Parses and runs one line (or several, joined by newlines, for a script). Pure apart from what the
  * bridge does; never throws (a failing bridge call becomes an error line). `history` is the lines
- * entered before this one, oldest first.
+ * entered before this one, oldest first. `session` is the console's R0 machine (`r0` lines run on it, so
+ * definitions persist); without one, each `r0` line runs on a fresh machine.
  */
-export function run(input: string, bridge: TerminalBridge, history: readonly string[]): CommandResult {
+export function run(input: string, bridge: TerminalBridge, history: readonly string[], session: ReplSession | null = null): CommandResult {
   const head = /^\s*(\S+)/.exec(input)
   if (head && RAW.has(head[1])) {
     const rest = input.slice(head.index + head[0].length).trim()
-    return dispatch(head[1] as Name, rest ? [rest] : [], bridge, history, input.trim())
+    return dispatch(head[1] as Name, rest ? [rest] : [], bridge, history, input.trim(), session)
   }
   const words = tokenize(input)
   if (!words) return fail('ash: syntax error: unterminated quoted string')
   if (!words.length) return { lines: [] }
   const [name, ...args] = words
   if (!Object.hasOwn(HANDLERS, name)) return fail(`ash: ${name}: not found`)
-  return dispatch(name as Name, args, bridge, history, input.trim())
+  return dispatch(name as Name, args, bridge, history, input.trim(), session)
+}
+
+/**
+ * A line as the console's history keeps it: a key given to `ask key` and a token given to `net join` are replaced
+ * by dots, so `history` and the Up arrow never show a secret typed earlier. Every other line is kept as typed.
+ */
+export function redactForHistory(line: string): string {
+  return line.replace(/^(\s*ask\s+key\s+)\S[\s\S]*$/, '$1••••').replace(/^(\s*net\s+join\s+\S+\s+)\S[\s\S]*$/, '$1••••')
 }
 
 /**
@@ -893,12 +1110,14 @@ export function recallsHistory(key: 'ArrowUp' | 'ArrowDown', value: string, care
   return key === 'ArrowUp' ? !value.slice(0, caret).includes('\n') : !value.slice(caret).includes('\n')
 }
 
-/** Message of the day, printed once when the console first mounts. */
+/** Message of the day, printed once when the console first mounts; on Track B (?boot=tty) it says no city was built. */
 export function motd(brand: TerminalBridge['brand']): Line[] {
+  const tty = brand.track === 'tty'
   return [
     sys(`${brand.name} ${brand.version} Ring-0 console`),
+    ...(tty ? [sys("Track B: this console alone; no 3D engine was built (?boot=tty). Type 'boot gui' for the city.")] : []),
     sys("Observe and tune; 'operator unlock' opens the scripted tier (the laws stay in force)."),
-    sys("Type 'help' for commands. ` or Esc closes."),
+    sys(tty ? "Type 'help' for commands; 'r0' is the console's own stack machine." : "Type 'help' for commands. ` or Esc closes."),
     sys(''),
   ]
 }

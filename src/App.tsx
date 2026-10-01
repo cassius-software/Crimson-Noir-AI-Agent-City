@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Engine, type EngineOptions } from './07_Execute_Actions/engine.ts'
 import { Hud } from './07_Execute_Actions/Hud.tsx'
 import { Terminal } from './07_Execute_Actions/terminal/Terminal.tsx'
-import { offlineBridge, type NetBridge, type TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
+import { offlineBridge, type LookBridge, type NetBridge, type TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
 import { hudLine, recruitBridge, Recruiter } from './08_Swarm/recruitment.ts'
 import { TaskRouter } from './08_Swarm/taskRouter.ts'
 import { deferredLedger, followRecruiter, indexedDbLedger, memoryBridge, SwarmMemory } from './08_Swarm/memory.ts'
@@ -21,7 +21,7 @@ import { Concierge } from './07_Execute_Actions/Concierge.tsx'
 import { Customizer } from './07_Execute_Actions/Customizer.tsx'
 import { loadProfile, type Profile } from './05_Observe_Environment/profile.ts'
 import { loadLook, saveLook } from './05_Observe_Environment/lookStore.ts'
-import { lookFromSeed, type Look } from './03_Spawn_Agents/look.ts'
+import { changeLook, describeLook, lookFromSeed, type Look, type LookChange } from './03_Spawn_Agents/look.ts'
 import { PLAYER_INDEX } from './03_Spawn_Agents/crowdCompute.ts'
 import { clampPlayers } from './07_Execute_Actions/viewports.ts'
 import type { PlanStep } from './06_Make_Decisions/intent.ts'
@@ -77,6 +77,30 @@ function netBridge(net: NetControls, store: { load(): string | null; save(value:
       if (!store.load()) return 'no token kept'
       store.save('')
       return 'token forgotten'
+    },
+  })
+}
+
+/**
+ * The console's look knob (terminal/bridge.ts LookBridge) over App's own look state, so the React state, the saved
+ * look (lookStore.ts) and the player's body stay one thing: a change goes through `wear` (wearLook), which saves
+ * it and re-dresses agent PLAYER_INDEX through the engine; `show` reads what is worn now, or what a pedestrian
+ * wears (the engine's word, else the hash's look for that index). `random` without a seed draws one here, so the
+ * pure change stays deterministic.
+ */
+function lookBridge(host: { worn(): Look; seed(): number; wear(look: Look): void; lookOf(agent: number): Look | null; agents: number }): LookBridge {
+  return Object.freeze({
+    show: (agent?: number): string[] => {
+      if (agent === undefined || agent === PLAYER_INDEX) return describeLook(host.worn())
+      if (!Number.isInteger(agent) || agent < 0 || agent >= host.agents) throw new Error(`no pedestrian ${agent} (0-${host.agents - 1})`)
+      return describeLook(host.lookOf(agent) ?? lookFromSeed(agent))
+    },
+    set: (change: LookChange): string[] => {
+      const seeded = change.kind === 'random' && !Number.isFinite(change.seed) ? { kind: 'random' as const, seed: Math.floor(Math.random() * 0x7fffffff) } : change
+      const r = changeLook(host.worn(), seeded, host.seed())
+      if (r.look === null) throw new Error(r.error)
+      host.wear(r.look)
+      return describeLook(r.look)
     },
   })
 }
@@ -206,6 +230,10 @@ function GuiShell({ options }: { options: Options }) {
   const worn = useMemo(() => look ?? (profile ? lookFromSeed(profile.seed) : null), [look, profile])
   useEffect(() => { engine?.setLook(PLAYER_INDEX, worn) }, [engine, worn])
   const wearLook = useCallback((next: Look) => { setLook(next); saveLook(next) }, [])
+  // The console's `look` knob reads these (the bridge is built once, with the engine).
+  const wornRef = useRef<Look | null>(null)
+  const seedRef = useRef(PLAYER_INDEX)
+  useEffect(() => { wornRef.current = worn; seedRef.current = profile?.seed ?? PLAYER_INDEX }, [worn, profile])
   const openLook = useCallback(() => setLookOpen(true), [])
   const closeLook = useCallback(() => setLookOpen(false), [])
 
@@ -351,6 +379,14 @@ function GuiShell({ options }: { options: Options }) {
           recruit: recruitBridge(r),
           memory: memoryBridge(memory, r),
           net: netBridge(e.net, pageStore(NET_TOKEN_KEY)),
+          // The player's look: App's state is the one source (the wardrobe card and the console share it).
+          look: lookBridge({
+            worn: () => wornRef.current ?? lookFromSeed(seedRef.current),
+            seed: () => seedRef.current,
+            wear: wearLook,
+            lookOf: (agent) => e.lookOf(agent),
+            agents: e.recruitHost().agents,
+          }),
         }))
         // The fallback without a microphone, in the browser's console: recruit("Rust").
         Object.assign(window, { recruit: (skill: string) => r.recruit(skill) })
@@ -398,7 +434,7 @@ function GuiShell({ options }: { options: Options }) {
       if ((window as { recruit?: unknown }).recruit) delete (window as { recruit?: unknown }).recruit
       engine?.dispose()
     }
-  }, [options])
+  }, [options, wearLook])
 
   return (
     <main className="relative h-full w-full overflow-hidden bg-slate-900">

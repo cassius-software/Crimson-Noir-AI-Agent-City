@@ -13,7 +13,7 @@ import { test } from 'node:test'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  buildScale, describeLook, formatLookCode, GREY_HAIR, heightScale, LOOK_BODIES, LOOK_FIELD, LOOK_HASH, LOOK_NONE, LOOK_ODDS,
+  buildScale, changeLook, describeLook, formatLookCode, GREY_HAIR, heightScale, LOOK_BODIES, LOOK_FIELD, LOOK_HASH, LOOK_NONE, LOOK_ODDS,
   LOOK_PALETTE, LOOK_PIECE_BIT, LOOK_PRESETS, LOOK_SCALE, LOOK_SLOTS, lookFromSeed, lookMask, lookOptions, lookPreset, lookSize,
   lookSwatch, packLook, parseLookCode, shaderHash, unpackLook, validateLook, WARDROBE, withLookSlot,
   type Look, type LookBody, type LookSlot,
@@ -436,4 +436,36 @@ test('describeLook: one ASCII line per slot and the code, with swatches, matchin
   assert.equal(grey[5], 'hairColour grey  [9/9]')
   assert.equal(grey[7], 'bottom     matching (#1f2a44)  [1/4]')
   assert.deepEqual(describeLook(withSlot(zero(0), 'shoes', 3)), ['look: outside the wardrobe'])
+})
+
+test('changeLook: a slot by number or name, a preset, a code, random and reset; every refusal names why; never outside the wardrobe', () => {
+  const suit = LOOK_PRESETS[0].look
+  const ok = (r: ReturnType<typeof changeLook>): Look => { assert.equal(r.error, null, r.error ?? ''); return r.look! }
+  assert.equal(ok(changeLook(suit, { kind: 'slot', slot: 'top', value: '2' }, 0)).top, 1)
+  assert.equal(ok(changeLook(suit, { kind: 'slot', slot: 'HairStyle', value: 'long' }, 0)).hairStyle, 1)
+  assert.equal(ok(changeLook(suit, { kind: 'slot', slot: 'tie', value: 'NONE' }, 0)).tie, 0)
+  assert.equal(ok(changeLook(suit, { kind: 'slot', slot: 'body', value: 'skirt suit' }, 0)).body, 3)
+  assert.equal(ok(changeLook(suit, { kind: 'slot', slot: 'skin', value: lookOptions(0, 'skin')[2].name }, 0)).skin, 2)
+  assert.deepEqual(ok(changeLook(suit, { kind: 'preset', name: ' Camel Blazer ' }, 0)), lookPreset('camel blazer')!.look)
+  assert.deepEqual(ok(changeLook(suit, { kind: 'code', code: formatLookCode(LOOK_PRESETS[5].look).toLowerCase() }, 0)), LOOK_PRESETS[5].look)
+  assert.deepEqual(ok(changeLook(suit, { kind: 'random', seed: 77 }, 0)), lookFromSeed(77))
+  assert.deepEqual(ok(changeLook(suit, { kind: 'reset' }, 1337)), lookFromSeed(1337))
+  for (const [change, why] of [
+    [{ kind: 'slot', slot: 'hat', value: '1' }, /no slot named 'hat': body, height/],
+    [{ kind: 'slot', slot: 'top', value: '0' }, /top has \d+ options \(1-\d+\)/],
+    [{ kind: 'slot', slot: 'top', value: '99' }, /top has \d+ options/],
+    [{ kind: 'slot', slot: 'tie', value: 'bow' }, /no tie named 'bow': none, tie/],
+    [{ kind: 'preset', name: 'tuxedo' }, /no preset named 'tuxedo': navy suit, /],
+    [{ kind: 'code', code: 'ZZZZ-ZZZZ' }, /not a look code/],
+    [{ kind: 'random', seed: Number.NaN }, /seed must be a number/],
+  ] as const) {
+    const r = changeLook(suit, change, 0)
+    assert.equal(r.look, null)
+    assert.match(r.error ?? '', why)
+  }
+  assert.match(changeLook(withSlot(zero(0), 'shoes', 3), { kind: 'reset' }, 0).error ?? '', /outside the wardrobe/)
+  // Every result validates, and the input is never touched.
+  const before = { ...suit }
+  for (const c of [{ kind: 'slot', slot: 'body', value: '2' }, { kind: 'random', seed: 5 }] as const) assert.ok(validateLook(changeLook(suit, c, 0).look))
+  assert.deepEqual(suit, before)
 })

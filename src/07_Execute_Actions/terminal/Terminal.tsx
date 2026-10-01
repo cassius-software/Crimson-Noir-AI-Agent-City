@@ -7,13 +7,15 @@
  * A local model's answer (`ask`) streams in live under the scrollback until its final lines replace it.
  * With `fullscreen` (Track B, ?boot=tty) it is the whole page instead: open from the first render, full height,
  * black, and no key closes it; a `boot` result is handed to the host (onBoot), which reloads on that track.
+ * One R0 machine (`r0`, repl.ts) lives for the life of the console, so definitions outlive a line; a typed key or
+ * token never enters the history as typed (redactForHistory).
  * What breaks if it is removed? Operators lose the live Rapier3D / crowd / kernel readout, the quality,
  * clock, audio and hardware-pairing controls, and the operator tier's scripts, answers and harnesses.
  */
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type SyntheticEvent } from 'react'
 import { BRAND } from '../../brand.ts'
 import { offlineBridge, type TerminalBridge } from './bridge.ts'
-import { commonPrefix, complete, continuationPrompt, formatStats, isToggleKey, motd, recallsHistory, run, type Line } from './commands.ts'
+import { commonPrefix, complete, continuationPrompt, formatStats, isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type Line, type ReplSession } from './commands.ts'
 
 const MAX_ROWS = 600
 const MAX_HISTORY = 200
@@ -123,6 +125,8 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot }: {
   const bridgeRef = useRef(bridge)
   const onOpenChangeRef = useRef(onOpenChange)
   const fullRef = useRef(fullscreen)
+  /** The console's R0 machine (commands.ts `r0`), made on the first line that needs it. */
+  const session = useRef<ReplSession | null>(null)
 
   useEffect(() => {
     bridgeRef.current = bridge
@@ -267,10 +271,12 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot }: {
     if (!line && liveFrame.current) return // a blank Enter does not end a live view
     stopLive()
     // Runs synchronously inside the keydown: `hal pair` needs the user activation to open a device picker.
-    const r = run(line, bridge ?? OFFLINE, history.current)
+    const r = run(line, bridge ?? OFFLINE, history.current, (session.current ??= replSession()))
     const h = history.current
-    if (line && h[h.length - 1] !== line) {
-      h.push(line)
+    // A key or a token typed on the line is kept as dots, never as typed.
+    const kept = redactForHistory(line)
+    if (kept && h[h.length - 1] !== kept) {
+      h.push(kept)
       if (h.length > MAX_HISTORY) h.splice(0, h.length - MAX_HISTORY)
     }
     histPos.current = h.length

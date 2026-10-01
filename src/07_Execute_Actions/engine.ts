@@ -71,7 +71,7 @@ import { roomAt, type Room } from './acoustics.ts'
 import { CaptionTrack, captionText } from './captions.ts'
 import { ring0Stats, type TerminalBridge } from './terminal/bridge.ts'
 import { familyOf, glyph } from './glyphs.ts'
-import { PING_KINDS, PING_WORDS, PingBoard, pickPing, rallyPlan, type Ping, type Pick, type PingKind, type RallyRequest } from '../08_Swarm/ping.ts'
+import { PING_KINDS, PING_WORDS, PingBoard, pickPing, pingLine, rallyPlan, type Ping, type Pick, type PingKind, type RallyRequest } from '../08_Swarm/ping.ts'
 
 export interface EngineOptions {
   /** Pedestrians to simulate; absent: as many as the device profile allows (governor.ts defaultAgents). */
@@ -1591,6 +1591,23 @@ export class Engine {
     return on ? 'captions: on' : 'captions: off'
   }
 
+  /** The pings standing now, oldest first, one line each (08_Swarm/ping.ts pingLine), for the console. */
+  pingLines(): string[] {
+    const now = this.simTime
+    return this.pings.alive(now).map((p) => pingLine(p, now))
+  }
+
+  /** The newest ping standing, as plain data, or null: the point `recruit rally` sends a recruit to. */
+  newestPing(): { id: number; kind: PingKind; x: number; z: number } | null {
+    const p = this.pings.newest(this.simTime)
+    return p ? { id: p.id, kind: p.kind, x: p.x, z: p.z } : null
+  }
+
+  /** Takes every ping off the board (view-only; a rally already sent is the recruiter's); returns how many stood. */
+  clearPings(): number {
+    return this.pings.clear()
+  }
+
   /** The caption lines to show now, in the house style (captions.ts captionText), bearings taken from the head. */
   private captionLines(): string[] {
     const out: string[] = []
@@ -1740,6 +1757,14 @@ export class Engine {
       adapter: () => this.adapter,
       ghost: (arg?: 'on' | 'off') => (arg === undefined ? (this.ghost.on ? 'on' : 'off') : this.setGhost(arg === 'on')),
       render: (arg?: 'on' | 'off') => (arg === undefined ? (this.rendering ? 'on' : 'off') : this.setRendering(arg === 'on')),
+      captions: (arg?: 'on' | 'off') => (arg === undefined ? (this.captionsOn ? 'captions: on' : 'captions: off') : this.setCaptions(arg === 'on')),
+      // Pings are view-only marks (a walk ping is offered to the host's recruiter through onRally, never sent anywhere).
+      ping: Object.freeze({
+        at: (kind: PingKind) => this.pingAt(kind),
+        list: () => this.pingLines(),
+        newest: () => this.newestPing(),
+        clear: () => this.clearPings(),
+      }),
       // The operator tier: unlockable, sandboxed, built over simControls() (never over the engine itself), its
       // scripts bound to the swarm through the gate.
       operator: operatorBridge(this.simControls(), gate, mind, undefined, { voice, speech: this.speechOut(), diary }),
