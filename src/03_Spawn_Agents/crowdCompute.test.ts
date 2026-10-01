@@ -41,7 +41,7 @@ Object.assign(globalThis, { GPUBufferUsage: USAGE, GPUMapMode: { READ: 1, WRITE:
 
 const { CULL_PASSES, FLAG_NON_FINITE, MAX_CARS, PARAMS_SIZE, PASS_BINDINGS, RENDER_FLOATS, SIM_PASSES, VARIANTS, agentQuota, corridorReach, crowdShader, packFrustumPlanes, packSimParams, simReadbackSize } = await import('./crowdCompute.ts')
 const { CROWD_SUBSTEP, CrowdSim } = await import('./crowdSim.ts')
-const { CrowdCull } = await import('./crowdCull.ts')
+const { CrowdCull, MAX_HIDDEN } = await import('./crowdCull.ts')
 const { MAX_CARS: SENSOR_MAX_CARS, PEDESTRIAN_MAX_SPEED } = await import('./crowdSensor.ts')
 
 const SOURCE = readFileSync(new URL('./crowd.wgsl', import.meta.url), 'utf8')
@@ -998,6 +998,42 @@ test('the page: frames are uploaded into its render buffers in order; nothing is
   assert.deepEqual(copies.map((l) => l.split(' ')[1].split('@')[0]), ['drawArgs'], 'the page reads back only what it drew')
   await device.flush()
   assert.deepEqual(crowd.stats, { drawnNear: 7, drawnFar: 3 })
+})
+
+test('the page: the hide mask sinks the listed figures below the cull\'s floor in the render copy, after every upload, and nothing else', async () => {
+  const { device, crowd } = await cullRig()
+  // Before the first upload nothing is written: the buffers hold zeros and nobody is culled in anyway.
+  device.log.length = 0
+  crowd.hide([3])
+  assert.deepEqual(device.log, [])
+  assert.deepEqual([...crowd.hidden], [3])
+  const frame = new Float32Array(AGENTS * 12).map((_, i) => i)
+  crowd.upload(frame)
+  assert.equal(device.log.at(-1), 'write pos @48+16', 'the upload re-applies the mask')
+  const y = (agent: number) => device.buffer('pos').f32()[agent * 4 + 1]
+  assert.equal(y(3), -100)
+  assert.equal(y(2), 2 * 4 + 1, 'nobody else is touched')
+  // The player's own figure (0), a duplicate, an index past the crowd and a non-index are ignored; a newly hidden
+  // figure is sunk at once, one already hidden is not written again.
+  device.log.length = 0
+  crowd.hide([3, 0, 5, 3, AGENTS, 1.5, -1])
+  assert.deepEqual([...crowd.hidden], [3, 5])
+  assert.deepEqual(device.log, ['write pos @80+16'])
+  assert.equal(y(5), -100)
+  assert.equal(y(0), 1)
+  // Shown again: nothing is written now (the copy is stale either way); the next frame brings the figure back.
+  device.log.length = 0
+  crowd.hide([5])
+  assert.deepEqual(device.log, [])
+  crowd.upload(frame)
+  assert.equal(y(3), 3 * 4 + 1)
+  assert.equal(y(5), -100)
+  // At most MAX_HIDDEN, in the order given.
+  crowd.hide([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+  assert.deepEqual([...crowd.hidden], [1, 2, 3, 4, 5, 6, 7, 8])
+  assert.equal(MAX_HIDDEN, 8)
+  crowd.hide([])
+  assert.equal(crowd.hidden.length, 0)
 })
 
 test('setCull takes effect on the next step, is copied, and is sanitised', async () => {

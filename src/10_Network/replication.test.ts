@@ -5,17 +5,21 @@
  * same snapshots), caps a walk at a run, keeps everyone within the world's range, refuses stale sequence numbers,
  * out-of-rate inputs, chat and pings, and removes a peer after repeated refusals; the 14A screen drops an inadmissible
  * chat line or name silently and counts it; the page's reconciliation ignores stale snapshots, drops the client's own
- * entry and never puts a remote player anywhere but a pose record.
+ * entry and never puts a remote player anywhere but a pose record. Every frame on the wire is sealed: numbered, and
+ * signed under the session token over its canonical body; a forged, altered or replayed frame is refused on either
+ * side without moving anything.
  * What breaks if it is removed? A malformed or hostile message could reach the room, or a remote player could stop
  * being a pose.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { canonical, hmacSha256 } from '../02_Define_The_Rules/integrity.ts'
 import { RUN } from '../07_Execute_Actions/simProtocol.ts'
 import {
   admissibleChat, admissibleName, admit, blend, bucket, createRoom, decodeClientMessage, decodeServerMessage, depart, emptyReplica, encode, expired,
-  handle, LIMITS, packPoses, peerBuckets, pending, poses, predict, PROTOCOL_VERSION, readClientMessage, readServerMessage, reconcile, REMOTE_POSE,
-  refuse, snapshotFor, take, tickRoom, type ClientMessage, type Peer, type RemotePlayer, type Room, type SnapshotMessage,
+  handle, LIMITS, openClientFrame, openServerFrame, packPoses, peerBuckets, pending, poses, predict, PROTOCOL_VERSION, readClientMessage,
+  readServerMessage, reconcile, REMOTE_POSE, refuse, sealMessage, snapshotFor, take, tickRoom,
+  type ClientMessage, type Peer, type RemotePlayer, type Room, type ServerMessage, type SnapshotMessage,
 } from './replication.ts'
 
 const ok = (u: unknown): ClientMessage => {
@@ -34,7 +38,7 @@ const player = (id: number, over: Partial<RemotePlayer> = {}): RemotePlayer => (
 
 test('readClientMessage: the good shapes come back frozen, plain, and with nothing extra in them', () => {
   const join = ok({ t: 'join', v: PROTOCOL_VERSION, token: 'abc', name: 'Ada', extra: 1 })
-  assert.deepEqual(join, { t: 'join', v: 1, token: 'abc', name: 'Ada' })
+  assert.deepEqual(join, { t: 'join', v: PROTOCOL_VERSION, token: 'abc', name: 'Ada' })
   assert.ok(Object.isFrozen(join))
   assert.deepEqual(ok({ t: 'input', seq: 1, ack: 0, x: 1, z: -1, heading: 0.5, pose: { x: 999 } }), { t: 'input', seq: 1, ack: 0, x: 1, z: -1, heading: 0.5 })
   assert.deepEqual(ok({ t: 'ack', ack: 7 }), { t: 'ack', ack: 7 })
@@ -47,14 +51,14 @@ test('readClientMessage: every crafted message is refused with the reason simHos
   for (const bad of [null, undefined, 1, 'join', [], [{ t: 'join' }], true]) refused(bad, /not a message object/)
   refused({}, /unknown message 'undefined'/)
   refused({ t: 'step' }, /unknown message 'step'/)
-  refused({ t: 'join', v: 2, token: 'a', name: 'b' }, /protocol 2 is not 1/)
+  refused({ t: 'join', v: PROTOCOL_VERSION + 1, token: 'a', name: 'b' }, new RegExp(`protocol ${PROTOCOL_VERSION + 1} is not ${PROTOCOL_VERSION}`))
   refused({ t: 'join', v: '1', token: 'a', name: 'b' }, /protocol/)
-  refused({ t: 'join', v: 1, name: 'b' }, /token/)
-  refused({ t: 'join', v: 1, token: '', name: 'b' }, /token/)
-  refused({ t: 'join', v: 1, token: 'x'.repeat(LIMITS.token + 1), name: 'b' }, /token/)
-  refused({ t: 'join', v: 1, token: 'a', name: 'x'.repeat(LIMITS.name + 1) }, /name/)
-  refused({ t: 'join', v: 1, token: 'a', name: 'line\nbreak' }, /name/)
-  refused({ t: 'join', v: 1, token: 'a', name: 7 }, /name/)
+  refused({ t: 'join', v: PROTOCOL_VERSION, name: 'b' }, /token/)
+  refused({ t: 'join', v: PROTOCOL_VERSION, token: '', name: 'b' }, /token/)
+  refused({ t: 'join', v: PROTOCOL_VERSION, token: 'x'.repeat(LIMITS.token + 1), name: 'b' }, /token/)
+  refused({ t: 'join', v: PROTOCOL_VERSION, token: 'a', name: 'x'.repeat(LIMITS.name + 1) }, /name/)
+  refused({ t: 'join', v: PROTOCOL_VERSION, token: 'a', name: 'line\nbreak' }, /name/)
+  refused({ t: 'join', v: PROTOCOL_VERSION, token: 'a', name: 7 }, /name/)
   refused({ t: 'input', seq: -1, ack: 0, x: 0, z: 0, heading: 0 }, /seq and ack/)
   refused({ t: 'input', seq: 1.5, ack: 0, x: 0, z: 0, heading: 0 }, /seq and ack/)
   refused({ t: 'input', seq: '1', ack: 0, x: 0, z: 0, heading: 0 }, /seq and ack/)
@@ -102,12 +106,12 @@ test('readServerMessage: the host is checked the same way; a player list with on
   bad({ t: 'snapshot', tick: 3, ack: 2, players: [player(2, { name: 'x'.repeat(LIMITS.name + 1) })] }, /players/)
   // 14A reads the host's player lists too: a name the room would refuse at join never reaches a caption or a voice label.
   bad({ t: 'snapshot', tick: 3, ack: 2, players: [player(2, { name: 'you idiot' })] }, /players/)
-  bad({ t: 'welcome', v: 1, id: 1, tick: 0, tickHz: 20, players: [player(2, { name: ' ' })] }, /players/)
+  bad({ t: 'welcome', v: PROTOCOL_VERSION, id: 1, tick: 0, tickHz: 20, players: [player(2, { name: ' ' })] }, /players/)
   bad({ t: 'joined', tick: 1, player: player(2, { name: 'Kill Bill' }) }, /player/)
   bad({ t: 'snapshot', tick: 3, ack: 2, players: [{ id: 1 }] }, /players/)
   bad({ t: 'snapshot', tick: 3, ack: 2, players: new Array(LIMITS.peers + 1).fill(player(1)) }, /players/)
   bad({ t: 'snapshot', tick: -1, ack: 2, players: [] }, /tick and ack/)
-  bad({ t: 'welcome', v: 1, id: 1, tick: 0, tickHz: 0, players: [] }, /tickHz/)
+  bad({ t: 'welcome', v: PROTOCOL_VERSION, id: 1, tick: 0, tickHz: 0, players: [] }, /tickHz/)
   bad({ t: 'welcome', v: 0, id: 1, tick: 0, tickHz: 20, players: [] }, /protocol/)
   bad({ t: 'chat', from: 1, name: 'a', text: 'hi' }, /tick/)
   bad({ t: 'ping', from: 1, kind: 'wait', x: 0, y: 0, z: 0, tick: 'now' }, /from and tick/)
@@ -158,7 +162,7 @@ const verify = (t: string): boolean => t === GOOD
 const joined = (room: Room, name: string, now: number): Peer => {
   const peer = admit(room, now)
   assert.ok(peer)
-  const out = handle(room, peer, { t: 'join', v: 1, token: GOOD, name }, now, verify)
+  const out = handle(room, peer, { t: 'join', v: PROTOCOL_VERSION, token: GOOD, name }, now, verify)
   assert.equal(out.refused, undefined)
   return peer
 }
@@ -168,13 +172,13 @@ test('join: a good token and an admissible name are welcomed and announced; a ba
   const a = admit(room, 0)!
   const out = handle(room, a, { t: 'input', seq: 1, ack: 0, x: 0, z: 0, heading: 0 }, 0, verify)
   assert.equal(out.refused, 'input before join')
-  assert.equal(handle(room, a, { t: 'join', v: 1, token: 'wrong', name: 'Ada' }, 0, verify).refused, 'join: bad token')
+  assert.equal(handle(room, a, { t: 'join', v: PROTOCOL_VERSION, token: 'wrong', name: 'Ada' }, 0, verify).refused, 'join: bad token')
   assert.equal(a.joined, false)
-  const w = handle(room, a, { t: 'join', v: 1, token: GOOD, name: ' Ada ' }, 5, verify)
-  assert.deepEqual(w.reply, { t: 'welcome', v: 1, id: 1, tick: 0, tickHz: 20, players: [] })
+  const w = handle(room, a, { t: 'join', v: PROTOCOL_VERSION, token: GOOD, name: ' Ada ' }, 5, verify)
+  assert.deepEqual(w.reply, { t: 'welcome', v: PROTOCOL_VERSION, id: 1, tick: 0, tickHz: 20, players: [] })
   assert.deepEqual(w.broadcast, { t: 'joined', player: player(1, { name: 'Ada' }), tick: 0 })
   assert.equal(a.name, 'Ada')
-  assert.equal(handle(room, a, { t: 'join', v: 1, token: GOOD, name: 'Ada' }, 6, verify).refused, 'join: already joined')
+  assert.equal(handle(room, a, { t: 'join', v: PROTOCOL_VERSION, token: GOOD, name: 'Ada' }, 6, verify).refused, 'join: already joined')
   const b = joined(room, 'Bob', 7)
   assert.deepEqual(poses(room).map((p) => p.name), ['Ada', 'Bob'])
   assert.deepEqual(depart(room, b, 'left'), { t: 'left', id: 2, reason: 'left', tick: 0 })
@@ -185,7 +189,7 @@ test('join: a good token and an admissible name are welcomed and announced; a ba
 test('join: an inadmissible name is dropped silently and counted; the room stays full at LIMITS.peers', () => {
   const room = createRoom()
   const a = admit(room, 0)!
-  const out = handle(room, a, { t: 'join', v: 1, token: GOOD, name: 'you idiot' }, 0, verify)
+  const out = handle(room, a, { t: 'join', v: PROTOCOL_VERSION, token: GOOD, name: 'you idiot' }, 0, verify)
   assert.deepEqual(out, { refused: 'join: name' })
   assert.equal(a.joined, false)
   assert.equal(a.refusals, 1)
@@ -321,4 +325,71 @@ test('packPoses: REMOTE_POSE is the layout, as many as fit, plain floats only', 
   assert.deepEqual([...out.subarray(0, REMOTE_POSE.stride)], [1, 2, 3, 0.5, 1, -1, 1.5])
   assert.equal(out[REMOTE_POSE.stride + REMOTE_POSE.x], 4)
   assert.equal(REMOTE_POSE.stride, 7)
+})
+
+// ---------------------------------------------------------------- sealed frames
+
+test('sealed frames: numbered and signed under the session token over the canonical body; a forgery, an altered field or a replay is refused and moves nothing', () => {
+  const room = createRoom()
+  const peer = admit(room, 0)!
+  const join: ClientMessage = { t: 'join', v: PROTOCOL_VERSION, token: GOOD, name: 'Ada' }
+  const wire = sealMessage(join, 1, GOOD)
+  const env = JSON.parse(wire) as { n: number; body: unknown; mac: string }
+  assert.deepEqual(Object.keys(env).sort(), ['body', 'mac', 'n'])
+  assert.deepEqual(env.body, join)
+  assert.equal(env.mac, hmacSha256(GOOD, canonical({ n: 1, body: join })), 'the HMAC of the number and the canonical body')
+  assert.equal(sealMessage({ t: 'leave' }, 1, GOOD), sealMessage({ t: 'leave' }, 1, GOOD), 'deterministic')
+  assert.throws(() => sealMessage({ t: 'leave' }, -1, GOOD), RangeError)
+  // Before the join only a join is read, under the token it carries; the room then verifies that token itself.
+  assert.deepEqual(openClientFrame(peer, sealMessage({ t: 'ack', ack: 0 }, 1, GOOD)), { ok: false, reason: 'ack before join' })
+  assert.deepEqual(openClientFrame(peer, sealMessage(join, 1, 'other')), { ok: false, reason: 'envelope: bad seal' }, 'sealed under another token than it carries')
+  assert.equal(peer.received, 0)
+  const opened = openClientFrame(peer, wire)
+  assert.ok(opened.ok)
+  assert.deepEqual(opened.msg, join)
+  assert.equal(peer.received, 1)
+  assert.equal(handle(room, peer, opened.msg, 0, verify).refused, undefined)
+  assert.equal(peer.key, GOOD, 'the token the peer joined with seals everything after, both ways')
+  // Joined: the seal under the peer's token, the envelope number rising.
+  const input = (seq: number, n: number, key = GOOD): string => sealMessage({ t: 'input', seq, ack: 0, x: 1, z: 0, heading: 0 }, n, key)
+  assert.ok(openClientFrame(peer, input(1, 2)).ok)
+  assert.deepEqual(openClientFrame(peer, input(2, 2)), { ok: false, reason: 'envelope: replayed' })
+  assert.deepEqual(openClientFrame(peer, input(2, 1)), { ok: false, reason: 'envelope: replayed' })
+  assert.deepEqual(openClientFrame(peer, input(2, 3, 'other')), { ok: false, reason: 'envelope: bad seal' })
+  assert.equal(peer.received, 2, 'a refusal moves nothing')
+  // One field altered after sealing, a field added, the number changed, one hex digit of the seal: all refused.
+  const good = JSON.parse(input(3, 3)) as { n: number; body: Record<string, unknown>; mac: string }
+  const flipped = `${good.mac[0] === 'a' ? 'b' : 'a'}${good.mac.slice(1)}`
+  for (const altered of [{ ...good, body: { ...good.body, x: 2 } }, { ...good, body: { ...good.body, extra: 1 } }, { ...good, n: 4 }, { ...good, mac: flipped }]) {
+    assert.deepEqual(openClientFrame(peer, JSON.stringify(altered)), { ok: false, reason: 'envelope: bad seal' }, JSON.stringify(altered))
+  }
+  assert.ok(openClientFrame(peer, JSON.stringify(good)).ok, 'the genuine frame still passes')
+  assert.ok(openClientFrame(peer, input(4, 1_000_000)).ok, 'a gap in the numbers is not a replay')
+  // The envelope's own shape, bounded like any frame; JSON that is not plain data is refused, not thrown on.
+  const mac = 'a'.repeat(64)
+  const shapes: [unknown, RegExp][] = [
+    [7, /not text/], ['{', /not JSON/], ['[]', /not an envelope/], ['{"n":-1}', /envelope: n/], ['{"n":1,"mac":"x"}', /envelope: mac/],
+    [`{"n":1,"mac":"${mac}","body":1}`, /envelope: body/], [`{"n":1,"mac":"${mac}","body":{"t":"leave","x":1e999}}`, /envelope: body/],
+    [`{"n":1,"mac":"${mac}","body":{"t":"step"}}`, /unknown message 'step'/],
+  ]
+  for (const [bad, why] of shapes) {
+    const r = openClientFrame(peer, bad)
+    assert.ok(!r.ok && why.test(r.reason), `${String(bad)} → ${r.ok ? 'ok' : r.reason}`)
+  }
+  const long = openClientFrame(peer, sealMessage({ t: 'chat', seq: 1, text: 'x' }, 9, GOOD).padEnd(LIMITS.message + 1))
+  assert.ok(!long.ok && /longer than/.test(long.reason))
+  assert.equal(peer.received, 1_000_000, 'none of it moved the peer')
+})
+
+test('the page opens the host\'s frames the same way: under the session token, numbered above the last; the validator still reads the body', () => {
+  const key = 'session-token'
+  const welcome: ServerMessage = { t: 'welcome', v: PROTOCOL_VERSION, id: 1, tick: 0, tickHz: 20, players: [] }
+  const a = openServerFrame(sealMessage(welcome, 1, key), key, 0)
+  assert.ok(a.ok)
+  assert.deepEqual([a.msg, a.n], [welcome, 1])
+  assert.deepEqual(openServerFrame(sealMessage(welcome, 1, key), key, 1), { ok: false, reason: 'envelope: replayed' })
+  assert.deepEqual(openServerFrame(sealMessage(welcome, 2, 'other'), key, 1), { ok: false, reason: 'envelope: bad seal' })
+  assert.deepEqual(openServerFrame(sealMessage({ t: 'snapshot', tick: 1, ack: 0, players: [player(2, { name: 'you idiot' })] }, 2, key), key, 1), { ok: false, reason: 'snapshot: players' })
+  assert.deepEqual(openServerFrame(encode(welcome), key, 0), { ok: false, reason: 'envelope: n' }, 'an unsealed message is not a frame')
+  assert.deepEqual(openServerFrame(undefined, key, 0), { ok: false, reason: 'not text' })
 })

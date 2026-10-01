@@ -1,9 +1,9 @@
 /**
- * Why does this file exist? It is the page's half of the replication scaffold: the one client, beside the cognition
- * router's claudeApi.ts, that may address a server off this machine. It is opt-in only: nothing imports it at boot,
- * it opens no socket until the operator asks (a later console command hands it a URL, a session token and a name),
- * and it speaks only wss to any host or plain ws to a loopback address (the claudeServer rule of claudeApi.ts, so a
- * token never crosses the network in clear). It sends inputs at the core's own rate, reads every message from the
+ * Why does this file exist? It is the page's half of the replication scaffold: the room client. It is opt-in only:
+ * nothing imports it at boot, it opens no socket until the operator asks (a later console command hands it a URL, a
+ * session token and a name), and it speaks only ws or wss to a loopback address (the gate of
+ * 02_Define_The_Rules/airgap.ts: the host on this machine, or the local end of a proxy the operator runs), so neither
+ * a token nor a pose leaves this machine from the page. It sends inputs at the core's own rate, reads every message from the
  * host through the core's validator (the host is not trusted either: enough malformed messages and the client leaves),
  * reconciles each snapshot into a replica of remote POSES the page draws (never bodies in the physics realm), relays
  * chat and pings to callbacks, and screens its own chat under 14A before sending. Voice: a peer's MediaStream is
@@ -13,30 +13,18 @@
  * What breaks if it is removed? The page cannot join a host; the host and the core are unchanged.
  */
 import {
-  admissibleChat, decodeServerMessage, emptyReplica, encode, LIMITS, peerBuckets, predict, PROTOCOL_VERSION, reconcile, take,
+  admissibleChat, emptyReplica, LIMITS, openServerFrame, peerBuckets, predict, PROTOCOL_VERSION, reconcile, sealMessage, take,
   type ClientMessage, type InputMessage, type PeerBuckets, type PingRelayMessage, type ChatRelayMessage, type RemotePlayer, type Replica,
 } from './replication.ts'
 import type { PingKind } from '../08_Swarm/ping.ts'
+import { netServer } from '../02_Define_The_Rules/airgap.ts'
 
 /**
- * The host's address if it may be spoken to: wss to any host, or plain ws only to a loopback address (a host on this
- * machine, or the proxy's local end); no user name or password; nothing else. Null for anything else.
+ * The host's address, path included, if it may be spoken to: ws or wss to a loopback address only (a host on this
+ * machine, or the local end of a proxy); no user name or password; nothing else. Null for anything else. The gate
+ * itself (airgap.ts netServer) under the name this client has always used.
  */
-export function netServer(url: unknown): string | null {
-  if (typeof url !== 'string') return null
-  let u: URL
-  try {
-    u = new URL(url.trim())
-  } catch {
-    return null
-  }
-  if (u.username || u.password) return null
-  const host = u.hostname.toLowerCase()
-  const loopback = host === 'localhost' || host === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(host)
-  if (u.protocol === 'wss:') return u.href
-  if (u.protocol === 'ws:' && loopback) return u.href
-  return null
-}
+export { netServer }
 
 /** The slice of a WebSocket the client uses, so a test can hand it a fake and Node 22 can hand it its global. */
 export interface NetSocket {
@@ -93,7 +81,11 @@ export const HOST_REFUSALS = LIMITS.refusalsBeforeKick
 
 export function createNetClient(o: NetClientOptions = {}): NetClient {
   const now = o.now ?? (() => Date.now())
-  const open = o.open ?? ((url: string): NetSocket => new WebSocket(url) as unknown as NetSocket)
+  const open = o.open ?? ((url: string): NetSocket => {
+    // connect() has already held the URL to this machine; the socket is still only ever made for one the gate admits.
+    if (netServer(url) === null) throw new Error('only ws or wss to this machine, with no credentials')
+    return new WebSocket(url) as unknown as NetSocket
+  })
   let status: NetStatus = 'idle'
   let reason: string | null = null
   let socket: NetSocket | null = null
@@ -105,6 +97,11 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
   let buckets: PeerBuckets = peerBuckets(now())
   let snapshotAt = 0
   let unsent: InputMessage[] = []
+  // The seal (replication.ts sealMessage): every frame out is numbered and signed under the session token, every
+  // frame in must be signed under it and numbered above the last; one that is not is dropped as a host refusal.
+  let key = ''
+  let sent = 0
+  let received = 0
   const voice = new Set<(id: number, stream: MediaStream) => void>()
 
   const setStatus = (s: NetStatus, why: string | null = null): void => {
@@ -114,7 +111,7 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
   }
   const send = (msg: ClientMessage): boolean => {
     if (!socket || status === 'idle' || status === 'closed' || status === 'connecting') return false
-    socket.send(encode(msg))
+    socket.send(sealMessage(msg, ++sent, key))
     return true
   }
   const end = (code: number, why: string): void => {
@@ -130,11 +127,12 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
   }
 
   const onMessage = (data: unknown): void => {
-    const read = decodeServerMessage(typeof data === 'string' ? data : '')
+    const read = openServerFrame(data, key, received)
     if (!read.ok) {
       if (++refusals >= HOST_REFUSALS) end(1002, `host: ${read.reason}`)
       return
     }
+    received = read.n
     const msg = read.msg
     switch (msg.t) {
       case 'welcome':
@@ -174,7 +172,7 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
     connect(url, token, name) {
       if (socket) return 'a session is already open'
       const href = netServer(url)
-      if (href === null) return 'only wss, or plain ws to this machine, with no credentials'
+      if (href === null) return 'only ws or wss to this machine, with no credentials'
       if (typeof token !== 'string' || token.length === 0 || token.length > LIMITS.token) return 'a session token is required'
       if (typeof name !== 'string' || name.trim().length === 0 || name.length > LIMITS.name) return `a name of 1 to ${LIMITS.name} characters is required`
       let s: NetSocket
@@ -191,6 +189,9 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
       refusals = 0
       buckets = peerBuckets(now())
       unsent = []
+      key = token
+      sent = 0
+      received = 0
       reason = null
       setStatus('connecting')
       s.onopen = () => {
@@ -241,7 +242,7 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
     },
     offerVoice(stream) {
       if (status !== 'joined') return 'voice: not joined'
-      if (typeof RTCPeerConnection === 'undefined') return 'voice: this browser has no RTCPeerConnection'
+      if (typeof RTCPeerConnection === 'undefined') return 'voice: this page has no peer connection (the air gap removes it)'
       if (stream.getAudioTracks().length === 0) return 'voice: the stream has no audio track'
       return 'voice: signalling is not in this scaffold (no offer is sent)'
     },

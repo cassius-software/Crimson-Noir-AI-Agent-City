@@ -1,21 +1,26 @@
 /**
- * Why does this file exist? It is the network provider of the cognition router (router.ts): a streaming client for the
- * Claude Messages API, the default engine for testing, spoken to over the network with a key the operator gives the
- * console (ask key <key>; kept in this browser's local storage, never in the page). It is one of the two clients in the
- * product that may address a server off this machine (the other is 10_Network/netClient.ts, on `net join`), and only
- * https (or a loopback gateway the operator runs), only when the operator has chosen this provider and typed ask. It
- * sends the same system prompt as the local providers (the agent's
- * persona: 02_Define_The_Rules/conduct.ts core, then localCompute.ts systemPrompt), reads the server-sent events back
- * (thinking summaries and text as pieces, the stop reason, the output tokens), stops the moment the task's signal aborts,
- * and turns every failure into one plain sentence, like the local client. A refusal by the model's own safeguards ends
- * the answer with the reason 'refusal', which the operator tier treats as the agent not engaging.
+ * Why does this file exist? It is the Claude provider of the cognition router (router.ts): a streaming client for the
+ * Claude Messages API, the default engine for testing, spoken to only through a gateway the operator runs on this
+ * machine (a reverse proxy at http://localhost:8089 unless `ask server` names another loopback address) with a key
+ * the operator gives the console (ask key <key>; kept in this browser's local storage, never in the page). Like every
+ * client in the product it addresses a loopback origin and nothing else: the gate is 02_Define_The_Rules/airgap.ts,
+ * and the page's own fetch refuses anything off this machine besides. It sends the same system prompt as the local
+ * providers (the agent's persona: 02_Define_The_Rules/conduct.ts core, then localCompute.ts systemPrompt), reads the
+ * server-sent events back (thinking summaries and text as pieces, the stop reason, the output tokens), stops the
+ * moment the task's signal aborts, and turns every failure into one plain sentence, like the local client. A refusal
+ * by the model's own safeguards ends the answer with the reason 'refusal', which the operator tier treats as the agent
+ * not engaging.
  * What breaks if it is removed? `ask provider claude` has nothing behind it; the local providers are untouched.
  */
+import { loopbackServer } from '../02_Define_The_Rules/airgap.ts'
 import type { Answer, Piece } from '../07_Execute_Actions/operator.ts'
 import { CognitionError, readLines, sentence, type FetchLike } from './localCompute.ts'
 
-/** The Claude API's origin unless the operator points the provider at a gateway. */
-export const CLAUDE_API = 'https://api.anthropic.com'
+/**
+ * Where the operator's gateway to the Claude API listens unless `ask server` names another loopback address: a reverse
+ * proxy on this machine that forwards /v1/messages and /v1/models to the API. No gateway ships with the product.
+ */
+export const CLAUDE_GATEWAY = 'http://localhost:8089'
 /** The model asked unless the operator chooses another (ask model <name>). */
 export const DEFAULT_CLAUDE_MODEL = 'claude-opus-5-5'
 /** The API version every request names. */
@@ -29,24 +34,11 @@ export const EFFORTS: readonly string[] = Object.freeze(['low', 'medium', 'high'
 export const isEffort = (v: unknown): v is string => typeof v === 'string' && EFFORTS.includes(v)
 
 /**
- * The provider's address as an origin, if it may be spoken to: https to any host (the API, or a gateway), or plain
- * http only to a loopback address (a gateway on this machine); no user name or password. Null for anything else.
+ * The gateway's address as an origin, if the provider may speak to it: http or https to a loopback address only
+ * (localhost, 127.0.0.0/8, [::1]), no user name or password. Null for anything else. The gate itself
+ * (airgap.ts loopbackServer) under the name this provider has always used.
  */
-export function claudeServer(url: unknown): string | null {
-  if (typeof url !== 'string') return null
-  let u: URL
-  try {
-    u = new URL(url.trim())
-  } catch {
-    return null
-  }
-  if (u.username || u.password) return null
-  const host = u.hostname.toLowerCase()
-  const loopback = host === 'localhost' || host === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(host)
-  if (u.protocol === 'https:') return u.origin
-  if (u.protocol === 'http:' && loopback) return u.origin
-  return null
-}
+export const claudeServer: (url: unknown) => string | null = loopbackServer
 
 /** A key as the console shows it: its first six and last four characters, never the whole. */
 export function maskKey(key: string | null): string | null {
@@ -92,7 +84,7 @@ async function httpFailure(res: Response, model: string | null): Promise<Cogniti
 function unreachable(server: string, signal: AbortSignal | undefined, error: unknown): unknown {
   if (signal?.aborted) return signal.reason
   if (error instanceof DOMException && error.name === 'AbortError') return error
-  return new CognitionError('offline', `the Claude API at ${server} could not be reached: check the network, or ask provider ollama for a model on this machine`)
+  return new CognitionError('offline', `no gateway to the Claude API is answering at ${server}: start one on this machine (ask server <url>), or ask provider ollama for a model on this machine`)
 }
 
 export interface ClaudeRequest {
@@ -107,7 +99,7 @@ export interface ClaudeRequest {
 }
 
 /**
- * One streamed answer: POSTs the system prompt and the prompt as one user message to `server` + /v1/messages with
+ * One streamed answer: POSTs the system prompt and the prompt as one user message to the gateway at `server` + /v1/messages with
  * `stream: true` and reads the server-sent events back, calling `onPiece` with each thinking summary and each piece of
  * text as it arrives. Resolves when the message stops: 'stop' (end_turn), 'length' (max_tokens), 'refusal' (the
  * model's safeguards declined, whichever model ran), or the API's own word. Rejects with a CognitionError for anything
@@ -115,7 +107,7 @@ export interface ClaudeRequest {
  */
 export async function claudeAnswer(fetchFn: FetchLike, req: ClaudeRequest, onPiece: (p: Piece) => void): Promise<Answer> {
   const server = claudeServer(req.server)
-  if (server === null) throw new CognitionError('refused', `not an address the Claude provider may speak to: ${String(req.server)}`)
+  if (server === null) throw new CognitionError('refused', `the Claude provider speaks only to a gateway on this machine (localhost, 127.0.0.1 or [::1]), not '${String(req.server)}'`)
   if (!req.key) throw new CognitionError('refused', 'no API key is set: ask key <key>, or ask provider ollama for a model on this machine')
   const body = JSON.stringify({
     model: req.model,
@@ -183,10 +175,10 @@ export async function claudeAnswer(fetchFn: FetchLike, req: ClaudeRequest, onPie
   return { text, thinking, tokens, reason }
 }
 
-/** The models the API lists for this key, by id, sorted. */
+/** The models the API lists for this key (through the gateway), by id, sorted. */
 export async function claudeModels(fetchFn: FetchLike, server: string, key: string, signal?: AbortSignal): Promise<string[]> {
   const origin = claudeServer(server)
-  if (origin === null) throw new CognitionError('refused', `not an address the Claude provider may speak to: ${String(server)}`)
+  if (origin === null) throw new CognitionError('refused', `the Claude provider speaks only to a gateway on this machine (localhost, 127.0.0.1 or [::1]), not '${String(server)}'`)
   if (!key) throw new CognitionError('refused', 'no API key is set: ask key <key>, or ask provider ollama for a model on this machine')
   let res: Response
   try {

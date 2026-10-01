@@ -334,12 +334,12 @@ interface FakeNet extends NetBridge {
 function fakeNet(calls: string[]): FakeNet {
   const n: FakeNet = {
     report: { state: 'idle', url: null, id: 0, peers: 0, dropped: 0, pending: 0, voices: 0, reason: null },
-    joinResult: Promise.resolve('joined wss://room.example as player 3'),
+    joinResult: Promise.resolve('joined ws://127.0.0.1:8787 as player 3'),
     join: (url, token) => {
       calls.push(`net join ${url} ${token ?? '-'}`)
       return typeof n.joinResult === 'function' ? n.joinResult() : n.joinResult
     },
-    leave: () => { calls.push('net leave'); return 'left wss://room.example' },
+    leave: () => { calls.push('net leave'); return 'left ws://127.0.0.1:8787' },
     status: () => { calls.push('net status'); return n.report },
     forget: () => { calls.push('net forget'); return 'token forgotten' },
   }
@@ -474,7 +474,7 @@ test('help lists every command with usage, in two groups; help <cmd> explains on
   assert.match(all, /look \[show \[<agent>\]\|<slot> <n\|name>\|preset <name>\|code <code>\|random \[<seed>\]\|reset\]/)
   assert.match(all, /boot \[gui\|tty\|status\]/)
   assert.match(all, /r0 <words\.\.\.>\|r0 reset\|r0 words/)
-  assert.match(all, /net \[join <wss-url> \[<token>\]\|leave\|status\|forget\]/)
+  assert.match(all, /net \[join <ws-url> \[<token>\]\|leave\|status\|forget\]/)
   // The operator group is headed and comes after the core commands.
   const t = texts(r)
   const head = t.findIndex((l) => /Ring-0 operator/.test(l))
@@ -802,7 +802,7 @@ test('air gap: while locked, across every command and completion, the only knobs
   for (const l of ['run 1 + 1', 'run sim.clock.set(3)', 'run rust: sim.clock.set(3)', 'run rust, go: 1', 'ask', 'ask rust: hi', 'ask model m', 'ask server http://localhost:1', 'ask stop',
     'say', 'say rust: over here', 'say voice v', 'say model m', 'say server http://localhost:1', 'say auto on', 'say stop', 'memory forget 7', 'memory forget all',
     'get', 'get physics', 'set physics.car.power 2', 'harness run kernel-stop', 'harness run sanctuary', 'record start', 'record start camera', 'record stop',
-    'net join ws://127.0.0.1:8787 tok', 'net join wss://room.example', 'net leave', 'net forget']) {
+    'net join ws://127.0.0.1:8787 tok', 'net join wss://localhost:8788', 'net leave', 'net forget']) {
     const r = run(l, b, [])
     assert.ok(isErr(r), `${l} should be refused while locked`)
     assert.match(texts(r)[0], /^\w+: locked; type 'operator unlock' first$/)
@@ -1697,12 +1697,12 @@ test('r0: the console\'s own machine runs the rest of the line, keeps definition
 
 test('net: status reads at any time as rows; join, leave and forget are the operator\'s; a join resolves with the room\'s line or its refusal', async () => {
   const b = fake()
-  assert.deepEqual(texts(run('net', b, [])), ['state     idle', 'room      none (net join <wss-url> <token>)', 'player    -', 'peers     0  dropped 0  pending 0  voices 0'])
-  b.net.report = { state: 'joined', url: 'wss://room.example', id: 3, peers: 2, dropped: 1, pending: 4, voices: 1, reason: null }
-  assert.deepEqual(texts(run('net status', b, [])), ['state     joined', 'room      wss://room.example', 'player    3', 'peers     2  dropped 1  pending 4  voices 1'])
+  assert.deepEqual(texts(run('net', b, [])), ['state     idle', 'room      none (net join <ws-url> <token>)', 'player    -', 'peers     0  dropped 0  pending 0  voices 0'])
+  b.net.report = { state: 'joined', url: 'ws://127.0.0.1:8787', id: 3, peers: 2, dropped: 1, pending: 4, voices: 1, reason: null }
+  assert.deepEqual(texts(run('net status', b, [])), ['state     joined', 'room      ws://127.0.0.1:8787', 'player    3', 'peers     2  dropped 1  pending 4  voices 1'])
   b.net.report = { ...b.net.report, state: 'closed', reason: 'the room closed the session: token refused' }
   assert.equal(texts(run('net status', b, [])).at(-1), 'reason    the room closed the session: token refused')
-  for (const l of ['net join wss://room.example tok', 'net join wss://room.example', 'net leave', 'net forget']) {
+  for (const l of ['net join ws://127.0.0.1:8787 tok', 'net join wss://localhost:8788', 'net leave', 'net forget']) {
     const r = run(l, b, [])
     assert.ok(isErr(r), l)
     assert.match(texts(r)[0], /^net: locked; type 'operator unlock' first$/)
@@ -1711,22 +1711,23 @@ test('net: status reads at any time as rows; join, leave and forget are the oper
   assert.deepEqual(b.calls, ['net status', 'net status', 'net status'], 'nothing joined while locked')
   b.calls.length = 0
   run('operator unlock', b, [])
-  let r = run('net join wss://room.example tok', b, [])
-  assert.deepEqual(b.calls, ['net join wss://room.example tok'], 'handed to the host at once')
-  assert.deepEqual(r.lines, [{ kind: 'sys', text: 'net: joining wss://room.example...' }])
-  assert.deepEqual(await r.pending, [{ kind: 'out', text: 'net: joined wss://room.example as player 3' }])
+  let r = run('net join ws://127.0.0.1:8787 tok', b, [])
+  assert.deepEqual(b.calls, ['net join ws://127.0.0.1:8787 tok'], 'handed to the host at once')
+  assert.deepEqual(r.lines, [{ kind: 'sys', text: 'net: joining ws://127.0.0.1:8787...' }])
+  assert.deepEqual(await r.pending, [{ kind: 'out', text: 'net: joined ws://127.0.0.1:8787 as player 3' }])
   // Without a token the host reuses the one kept, or refuses.
   b.calls.length = 0
   b.net.joinResult = Promise.reject(new Error('a session token is required (net join <url> <token>; it is kept for next time)'))
   r = run('net join ws://127.0.0.1:8787', b, [])
   assert.deepEqual(b.calls, ['net join ws://127.0.0.1:8787 -'])
   assert.deepEqual(await r.pending, [{ kind: 'err', text: 'net: a session token is required (net join <url> <token>; it is kept for next time)' }])
-  b.net.joinResult = () => { throw new Error('plain ws only to this machine') }
-  assert.deepEqual(run('net join ws://room.example tok', b, []).lines, [{ kind: 'err', text: 'net: plain ws only to this machine' }])
-  assert.deepEqual(run('net leave', b, []).lines, [{ kind: 'out', text: 'net: left wss://room.example' }])
+  // An address off this machine is the client's to refuse (netServer, the gate), in its words, before any socket opens.
+  b.net.joinResult = () => { throw new Error('only ws or wss to this machine, with no credentials') }
+  assert.deepEqual(run('net join wss://rooms.example.net tok', b, []).lines, [{ kind: 'err', text: 'net: only ws or wss to this machine, with no credentials' }])
+  assert.deepEqual(run('net leave', b, []).lines, [{ kind: 'out', text: 'net: left ws://127.0.0.1:8787' }])
   assert.deepEqual(run('net forget', b, []).lines, [{ kind: 'out', text: 'net: token forgotten' }])
   b.calls.length = 0
-  for (const l of ['net join', 'net join room.example tok', 'net join http://room.example tok', 'net join wss://room.example tok extra', 'net leave now', 'net forget all', 'net status x', 'net open']) {
+  for (const l of ['net join', 'net join localhost:8787 tok', 'net join http://localhost:8787 tok', 'net join ws://127.0.0.1:8787 tok extra', 'net leave now', 'net forget all', 'net status x', 'net open']) {
     const no = run(l, b, [])
     assert.ok(isErr(no), l)
     assert.equal(no.pending, undefined, l)

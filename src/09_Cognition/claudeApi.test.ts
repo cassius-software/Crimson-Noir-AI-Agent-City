@@ -1,6 +1,6 @@
 /**
- * Why does this file exist? It proves the Claude API provider (claudeApi.ts): only https, or a gateway on this machine,
- * is ever addressed, and nothing is sent without a key; the request is the one the API takes (the version and key
+ * Why does this file exist? It proves the Claude API provider (claudeApi.ts): only a gateway on this machine (http or
+ * https to a loopback address) is ever addressed, and nothing is sent without a key; the request is the one the API takes (the version and key
  * headers, the browser-access header, streaming, the system prompt, the prompt as a user message, adaptive thinking,
  * the refusal fallback); the server-sent events stream piece by piece, thinking apart from text, however the bytes are
  * cut; the stop reason and the tokens are read; a refusal ends as 'refusal'; every failure is one plain sentence; the
@@ -11,7 +11,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
 import type { Answer } from '../07_Execute_Actions/operator.ts'
-import { ANTHROPIC_BETAS, ANTHROPIC_VERSION, CLAUDE_API, CLAUDE_ANSWER_TOKENS, claudeAnswer, claudeModels, claudeServer, DEFAULT_CLAUDE_MODEL, EFFORTS, maskKey } from './claudeApi.ts'
+import { ANTHROPIC_BETAS, ANTHROPIC_VERSION, CLAUDE_GATEWAY, CLAUDE_ANSWER_TOKENS, claudeAnswer, claudeModels, claudeServer, DEFAULT_CLAUDE_MODEL, EFFORTS, maskKey } from './claudeApi.ts'
+import { loopbackServer } from '../02_Define_The_Rules/airgap.ts'
 import { CognitionError, type FetchLike } from './localCompute.ts'
 
 const enc = new TextEncoder()
@@ -54,7 +55,7 @@ function fakeFetch(reply: (url: string, init?: RequestInit) => Response | Promis
   return { f, calls }
 }
 
-const REQ = { server: CLAUDE_API, key: 'sk-ant-test-0123456789', model: DEFAULT_CLAUDE_MODEL, system: 'SYSTEM', prompt: 'how does grip work?' }
+const REQ = { server: CLAUDE_GATEWAY, key: 'sk-ant-test-0123456789', model: DEFAULT_CLAUDE_MODEL, system: 'SYSTEM', prompt: 'how does grip work?' }
 
 async function collect(res: Response, req = REQ): Promise<{ pieces: string[]; answer: Answer | null; error: unknown }> {
   const pieces: string[] = []
@@ -68,14 +69,17 @@ async function collect(res: Response, req = REQ): Promise<{ pieces: string[]; an
 
 const json = (status: number, body: unknown): Response => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 
-test('the provider speaks only https (any host) or plain http to a loopback gateway, with no credentials; the API is the default', () => {
-  assert.equal(claudeServer(CLAUDE_API), 'https://api.anthropic.com')
-  assert.equal(claudeServer('https://gateway.example.com/v1/'), 'https://gateway.example.com')
+test('the provider speaks only to a gateway on this machine (http or https to loopback, no credentials); the gateway port is the default; the API itself is refused', () => {
+  assert.equal(CLAUDE_GATEWAY, 'http://localhost:8089')
+  assert.equal(claudeServer(CLAUDE_GATEWAY), 'http://localhost:8089')
   assert.equal(claudeServer('http://localhost:4000'), 'http://localhost:4000')
   assert.equal(claudeServer('http://127.0.0.1:4000/x'), 'http://127.0.0.1:4000')
-  for (const bad of ['http://api.anthropic.com', 'http://192.168.1.2:4000', 'https://user:pw@api.anthropic.com', 'ftp://localhost', 'not a url', '', 42, null, undefined]) {
+  assert.equal(claudeServer('https://[::1]:8443/v1/'), 'https://[::1]:8443')
+  for (const bad of ['https://api.anthropic.com', 'https://gateway.example.com/v1/', 'http://api.anthropic.com', 'http://192.168.1.2:4000', 'https://user:pw@localhost:8089', 'ws://localhost:8089', 'ftp://localhost', 'not a url', '', 42, null, undefined]) {
     assert.equal(claudeServer(bad), null, String(bad))
   }
+  assert.equal(claudeServer, loopbackServer, 'the gate itself, under this name')
+  for (const url of ['http://localhost:8089', 'https://api.anthropic.com', 'http://user@localhost']) assert.equal(claudeServer(url), loopbackServer(url), url)
   assert.equal(DEFAULT_CLAUDE_MODEL, 'claude-opus-5-5')
   assert.deepEqual(EFFORTS, ['low', 'medium', 'high', 'xhigh', 'max'])
 })
@@ -91,7 +95,7 @@ test('the request is the one the API takes: headers, streaming, the system promp
   const { f, calls } = fakeFetch(() => streamed(SAMPLE))
   await claudeAnswer(f, { ...REQ, effort: 'low' }, () => {})
   assert.equal(calls.length, 1)
-  assert.equal(calls[0].url, 'https://api.anthropic.com/v1/messages')
+  assert.equal(calls[0].url, 'http://localhost:8089/v1/messages')
   const init = calls[0].init!
   assert.equal(init.method, 'POST')
   const h = init.headers as Record<string, string>
@@ -151,9 +155,9 @@ test('every way the API can fail is one plain sentence: no key, a bad address, 4
   const noKey = await fail(streamed(SAMPLE), { ...REQ, key: '' })
   assert.equal(noKey.code, 'refused')
   assert.match(noKey.message, /^no API key is set: ask key <key>, or ask provider ollama/)
-  const off = await fail(streamed(SAMPLE), { ...REQ, server: 'http://example.com' })
+  const off = await fail(streamed(SAMPLE), { ...REQ, server: 'https://api.anthropic.com' })
   assert.equal(off.code, 'refused')
-  assert.match(off.message, /^not an address the Claude provider may speak to: http:\/\/example\.com/)
+  assert.equal(off.message, "the Claude provider speaks only to a gateway on this machine (localhost, 127.0.0.1 or [::1]), not 'https://api.anthropic.com'")
   const e401 = await fail(json(401, { type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } }))
   assert.deepEqual([e401.code, e401.message], ['refused', 'the Claude API did not accept the key (401): invalid x-api-key; set it with ask key <key>'])
   const e403 = await fail(json(403, { type: 'error', error: { type: 'permission_error', message: 'nope' } }))
@@ -177,7 +181,7 @@ test('every way the API can fail is one plain sentence: no key, a bad address, 4
   const pieces: string[] = []
   const net = await claudeAnswer(async () => { throw new TypeError('fetch failed') }, REQ, (p) => pieces.push(p.text)).then(() => null, (e: unknown) => e)
   assert.ok(net instanceof CognitionError)
-  assert.deepEqual([net.code, net.message], ['offline', 'the Claude API at https://api.anthropic.com could not be reached: check the network, or ask provider ollama for a model on this machine'])
+  assert.deepEqual([net.code, net.message], ['offline', 'no gateway to the Claude API is answering at http://localhost:8089: start one on this machine (ask server <url>), or ask provider ollama for a model on this machine'])
 })
 
 test('the moment the signal aborts mid-answer, the answer rejects with its reason and nothing more arrives', async () => {
@@ -213,12 +217,13 @@ test('the moment the signal aborts mid-answer, the answer rejects with its reaso
 
 test('the models the API lists, by id, sorted; its failures in the same plain words; nothing without a key', async () => {
   const { f, calls } = fakeFetch(() => json(200, { data: [{ id: 'claude-sonnet-5-5', type: 'model' }, { id: 'claude-opus-5-5', type: 'model' }, { nope: 1 }], has_more: false }))
-  assert.deepEqual(await claudeModels(f, CLAUDE_API, 'k'), ['claude-opus-5-5', 'claude-sonnet-5-5'])
-  assert.equal(calls[0].url, 'https://api.anthropic.com/v1/models?limit=100')
+  assert.deepEqual(await claudeModels(f, CLAUDE_GATEWAY, 'k'), ['claude-opus-5-5', 'claude-sonnet-5-5'])
+  assert.equal(calls[0].url, 'http://localhost:8089/v1/models?limit=100')
   assert.equal((calls[0].init!.headers as Record<string, string>)['x-api-key'], 'k')
-  await assert.rejects(claudeModels(f, CLAUDE_API, ''), (e: CognitionError) => e.code === 'refused')
-  await assert.rejects(claudeModels(f, 'http://example.com', 'k'), (e: CognitionError) => e.code === 'refused')
-  await assert.rejects(claudeModels(fakeFetch(() => json(401, { type: 'error', error: { type: 'authentication_error', message: 'bad' } })).f, CLAUDE_API, 'k'), (e: CognitionError) => e.code === 'refused')
-  await assert.rejects(claudeModels(fakeFetch(() => json(200, { nope: [] })).f, CLAUDE_API, 'k'), (e: CognitionError) => e.code === 'unreadable')
-  await assert.rejects(claudeModels(fakeFetch(() => new Response('<html>', { status: 200 })).f, CLAUDE_API, 'k'), (e: CognitionError) => e.code === 'unreadable')
+  await assert.rejects(claudeModels(f, CLAUDE_GATEWAY, ''), (e: CognitionError) => e.code === 'refused')
+  await assert.rejects(claudeModels(f, 'https://api.anthropic.com', 'k'), (e: CognitionError) => e.code === 'refused')
+  assert.equal(calls.length, 1, 'nothing was sent off this machine')
+  await assert.rejects(claudeModels(fakeFetch(() => json(401, { type: 'error', error: { type: 'authentication_error', message: 'bad' } })).f, CLAUDE_GATEWAY, 'k'), (e: CognitionError) => e.code === 'refused')
+  await assert.rejects(claudeModels(fakeFetch(() => json(200, { nope: [] })).f, CLAUDE_GATEWAY, 'k'), (e: CognitionError) => e.code === 'unreadable')
+  await assert.rejects(claudeModels(fakeFetch(() => new Response('<html>', { status: 200 })).f, CLAUDE_GATEWAY, 'k'), (e: CognitionError) => e.code === 'unreadable')
 })

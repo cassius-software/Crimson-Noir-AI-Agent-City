@@ -1,25 +1,26 @@
 /**
  * Why does this file exist? It is the cognition router: the one Mind the operator tier is handed (operator.ts Mind),
  * behind which any of three model providers answers, swapped at the console without a restart (ask provider <name>):
- * - `claude`: the Claude Messages API over the network (claudeApi.ts), the default for testing, with the key the
- *   operator gives the console;
+ * - `claude`: the Claude Messages API through a gateway on this machine (claudeApi.ts), the default for testing,
+ *   with the key the operator gives the console;
  * - `ollama`: a local model server on this machine speaking the Ollama API (localCompute.ts generate);
  * - `llamacpp`: a packaged, quantized model under a llama.cpp server on this machine (localCompute.ts chat, the
  *   OpenAI-compatible format that server speaks), for offline environments.
  * Every provider answers with the same system prompt (the conduct core, the bound people's skills and memories), so a
  * swap changes nothing an agent is or knows. Each keeps its own server and model, remembered between visits in one
- * store; the local providers still only ever address a loopback server, and only the Claude provider may address the
- * network. The 14A screen is not here: it is applied once for every provider in the operator tier (gatedAsk), before
- * a prompt reaches this router.
+ * store; every provider only ever addresses a loopback origin (02_Define_The_Rules/airgap.ts is the gate), so no
+ * prompt leaves this machine from the page. The 14A screen is not here: it is applied once for every provider in the
+ * operator tier (gatedAsk), before a prompt reaches this router.
  * What breaks if it is removed? `ask` has one provider and no way to swap it; an offline environment has no drop-in.
  */
 import type { Answer, GateTether, Memories, Mind, Piece } from '../07_Execute_Actions/operator.ts'
-import { CLAUDE_API, claudeAnswer, claudeModels, claudeServer, DEFAULT_CLAUDE_MODEL, EFFORTS, isEffort, maskKey } from './claudeApi.ts'
-import { createLocalCompute, systemPrompt, type FetchLike, type SettingsStore } from './localCompute.ts'
+import { CLAUDE_GATEWAY, claudeAnswer, claudeModels, claudeServer, DEFAULT_CLAUDE_MODEL, EFFORTS, isEffort, maskKey } from './claudeApi.ts'
+import { BASE_REALITY, createLocalCompute, systemPrompt, type FetchLike, type SettingsStore } from './localCompute.ts'
+import { createPrefixCache } from './prefixCache.ts'
 
 export type Provider = 'claude' | 'ollama' | 'llamacpp'
 export const PROVIDERS: readonly Provider[] = Object.freeze(['claude', 'ollama', 'llamacpp'])
-/** The provider unless the operator chooses another: the Claude API, for testing. */
+/** The provider unless the operator chooses another: the Claude API through a gateway on this machine, for testing. */
 export const DEFAULT_PROVIDER: Provider = 'claude'
 /** Where a llama.cpp server listens unless the operator says otherwise (its own default port). */
 export const LLAMACPP_SERVER = 'http://localhost:8080'
@@ -62,13 +63,13 @@ export interface MindRouter extends Mind {
 }
 
 export function createMindRouter({ fetch: fetchFn, store }: { fetch: FetchLike; store?: SettingsStore }): MindRouter {
-  const kept: Kept = { v: 2, provider: DEFAULT_PROVIDER, claude: { server: CLAUDE_API, model: DEFAULT_CLAUDE_MODEL, key: null, effort: null }, ollama: null, llamacpp: null }
+  const kept: Kept = { v: 2, provider: DEFAULT_PROVIDER, claude: { server: CLAUDE_GATEWAY, model: DEFAULT_CLAUDE_MODEL, key: null, effort: null }, ollama: null, llamacpp: null }
   try {
     const saved: unknown = JSON.parse(store?.load() ?? 'null')
     if (typeof saved === 'object' && saved !== null) {
       const s = saved as Partial<Kept> & { claude?: Partial<Kept['claude']> }
       if (isProvider(s.provider)) kept.provider = s.provider
-      kept.claude.server = claudeServer(s.claude?.server) ?? CLAUDE_API
+      kept.claude.server = claudeServer(s.claude?.server) ?? CLAUDE_GATEWAY
       if (typeof s.claude?.model === 'string' && s.claude.model.trim()) kept.claude.model = s.claude.model.trim()
       if (typeof s.claude?.key === 'string' && s.claude.key) kept.claude.key = s.claude.key
       if (isEffort(s.claude?.effort)) kept.claude.effort = s.claude.effort
@@ -88,12 +89,15 @@ export function createMindRouter({ fetch: fetchFn, store }: { fetch: FetchLike; 
   const ollama = createLocalCompute({ fetch: fetchFn, store: slice(kept, 'ollama', keep) })
   const llamacpp = createLocalCompute({ fetch: fetchFn, store: slice(kept, 'llamacpp', keep), defaults: { server: LLAMACPP_SERVER, model: LLAMACPP_MODEL, api: 'chat' } })
   const local = (): Mind => (kept.provider === 'ollama' ? ollama : llamacpp)
+  // The prompt-prefix page table (prefixCache.ts): asked before every answer, its counts are the `cache` setting.
+  const cache = createPrefixCache({ prefix: BASE_REALITY })
+  const agentKey = (tethers: readonly GateTether[]): string => [...new Set(tethers.map((t) => t.agent))].sort((a, b) => a - b).join('+')
 
   const claude: Mind = Object.freeze({
     settings: () => ({ server: kept.claude.server, model: kept.claude.model }),
     setServer: (url: string): string => {
       const origin = claudeServer(url)
-      if (origin === null) throw new Error(`the Claude provider speaks only https, or http to a gateway on this machine, not '${String(url)}'`)
+      if (origin === null) throw new Error(`the Claude provider speaks only to a gateway on this machine (localhost, 127.0.0.1 or [::1]), not '${String(url)}'`)
       kept.claude.server = origin
       keep()
       return origin
@@ -121,7 +125,8 @@ export function createMindRouter({ fetch: fetchFn, store }: { fetch: FetchLike; 
     settings: () => {
       const s = active().settings()
       const own = { provider: kept.provider, key: kept.provider === 'claude' ? maskKey(kept.claude.key) : undefined, effort: kept.provider === 'claude' ? kept.claude.effort ?? undefined : undefined }
-      return { ...s, ...own }
+      const line = cache.line()
+      return { ...s, ...own, ...(line !== null && { cache: line }) }
     },
     setServer: (url: string) => active().setServer(url),
     setModel: (name: string) => active().setModel(name),
@@ -156,7 +161,10 @@ export function createMindRouter({ fetch: fetchFn, store }: { fetch: FetchLike; 
       return kept.claude.effort
     },
     installed: (signal?: AbortSignal) => active().installed(signal),
-    answer: (req, onPiece) => active().answer(req, onPiece),
+    answer: async (req, onPiece) => {
+      await cache.page(agentKey(req.tethers), systemPrompt(req.tethers, req.memories))
+      return active().answer(req, onPiece)
+    },
   }
   return Object.freeze(router)
 }

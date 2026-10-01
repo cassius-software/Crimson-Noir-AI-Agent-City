@@ -4,7 +4,9 @@
  * the RFC 6455 frames are read and written here (a client's frame must be masked, the host's never is; ping is
  * answered with pong; close is a handshake; anything binary, fragmented or over the message bound closes the socket),
  * and node:crypto signs the session tokens (HMAC, with an expiry) the operator hands out. Every frame goes through the
- * core's validator and the peer's rate limits; every name and chat line through the 14A screen; a peer that keeps
+ * core's seal (replication.ts openClientFrame: the envelope number must rise and the HMAC under the session token must
+ * hold, or the frame is refused and counted; the host's own frames are sealed the same way, so the page can tell a
+ * forged or replayed one), the core's validator and the peer's rate limits; every name and chat line through the 14A screen; a peer that keeps
  * earning refusals is removed; a peer that never joins or goes silent is dropped. The room ticks at a fixed rate and
  * every joined peer gets its snapshot each tick. The host listens in plain text on the loopback address by default:
  * TLS (wss) is terminated by the operator's reverse proxy in front of it, which is also where an origin or a client
@@ -17,7 +19,7 @@ import { createServer, type IncomingMessage, type Server } from 'node:http'
 import type { Socket } from 'node:net'
 import { pathToFileURL } from 'node:url'
 import {
-  admit, createRoom, decodeClientMessage, depart, encode, expired, handle, LIMITS, poses, refuse, snapshotFor, tickRoom,
+  admit, createRoom, depart, expired, handle, LIMITS, openClientFrame, poses, refuse, sealMessage, snapshotFor, tickRoom,
   type Outcome, type Peer, type Room, type ServerMessage,
 } from './replication.ts'
 
@@ -154,6 +156,8 @@ interface Conn {
   peer: Peer
   buf: Buffer
   closing: boolean
+  /** Envelopes sent to this peer: the next frame is numbered one above (replication.ts sealMessage). */
+  sent: number
 }
 
 /** One day: how long a token minted by `host.token` is good for unless told otherwise. */
@@ -167,8 +171,10 @@ export function startHost(o: HostOptions): Promise<Host> {
   const conns = new Map<number, Conn>()
   const verify = (token: string): boolean => verifyToken(o.secret, token, now()) !== null
 
+  /** One message to a joined peer, sealed under the token it joined with (nothing is ever sent to a peer without one). */
   const send = (c: Conn, msg: ServerMessage): void => {
-    if (!c.closing && c.socket.writable) c.socket.write(writeFrame(OP.text, Buffer.from(encode(msg), 'utf8')))
+    if (c.closing || !c.socket.writable || c.peer.key === '') return
+    c.socket.write(writeFrame(OP.text, Buffer.from(sealMessage(msg, ++c.sent, c.peer.key), 'utf8')))
   }
   const broadcast = (msg: ServerMessage): void => {
     for (const c of conns.values()) if (c.peer.joined) send(c, msg)
@@ -197,7 +203,8 @@ export function startHost(o: HostOptions): Promise<Host> {
   const onFrame = (c: Conn, opcode: number, payload: Buffer): void => {
     switch (opcode) {
       case OP.text: {
-        const read = decodeClientMessage(payload.toString('utf8'))
+        // The seal first (a forgery or a replay is a refusal like any malformed frame), then the room.
+        const read = openClientFrame(c.peer, payload.toString('utf8'))
         apply(c, read.ok ? handle(room, c.peer, read.msg, now(), verify) : refuse(c.peer, read.reason))
         return
       }
@@ -240,7 +247,7 @@ export function startHost(o: HostOptions): Promise<Host> {
       return
     }
     socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${acceptKey(key)}\r\n\r\n`)
-    const c: Conn = { socket, peer, buf: Buffer.alloc(0), closing: false }
+    const c: Conn = { socket, peer, buf: Buffer.alloc(0), closing: false, sent: 0 }
     conns.set(peer.id, c)
     socket.setNoDelay(true)
     socket.on('data', (chunk: Buffer) => onData(c, chunk))

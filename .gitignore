@@ -23,3 +23,6 @@ dist-ssr
 *.sln
 *.sw?
 dist-pilot
+
+# Rust build output of the native crates (their wasm is committed as generated .ts modules)
+native/*/target

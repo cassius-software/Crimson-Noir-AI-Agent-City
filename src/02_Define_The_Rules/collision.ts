@@ -1,22 +1,30 @@
 /**
  * Why does this file exist? It is the 14A physics contract in one record: what may exchange contact in the realm's
- * Rapier world and what never does. Cars pass through cars (no vehicle-on-vehicle contact), no ragdoll is wired into
- * the realm, there is no combat, street furniture is sensors (the ghost-mode law, physics.ts), and people and cars
- * meet only through the Sanctuary (sanctuary.ts), which flips a person to a sensor before a car can reach them. It
- * also holds the realm's group bit table and the packed interaction groups the fleet gives its chassis colliders and
- * its wheel rays (vehicles.ts). It is pure — no Rapier import — so it runs in Node without WASM and the page may
- * import it; collision.test.ts is the structural guard that keeps the ragdoll unwired and the bit table from drifting.
+ * Rapier world and what never does. Cars pass through cars (no vehicle-on-vehicle contact); the ragdoll balance
+ * machine is wired to a few pedestrians near the operator (03_Spawn_Agents/ragdoll.ts over ragdollRig.ts, run by
+ * 07_Execute_Actions/ragdollRealm.ts) and a vehicle is never a cause of it; there is no combat; street furniture is
+ * sensors (the ghost-mode law, physics.ts); and people and cars meet only through the Sanctuary (sanctuary.ts), which
+ * flips a person — an avatar's capsule or a rig's segment — to a sensor before a car can reach them. It also holds
+ * the realm's group bit table and the packed interaction groups the fleet gives its chassis colliders and its wheel
+ * rays (vehicles.ts) and the avatar gives its capsule (player.ts). It is pure — no Rapier import — so it runs in
+ * Node without WASM and the page may import it; collision.test.ts is the structural guard that keeps the ragdoll's
+ * importers to the realm and the bit table from drifting.
  * What breaks if it is removed? Two cars could exchange impulses again (a car pushed into a person's path by
- * another car), a wheel could ride up on a car it passes through, and nothing would say in one place what the
- * realm's contact policy is.
+ * another car), a wheel could ride up on a car it passes through, an avatar could shove a fallen person, and nothing
+ * would say in one place what the realm's contact policy is.
  */
 
 /** The contact policy of the realm, beside CIVIC's `violence: false` (civic.ts). Frozen: policy, not tuning. */
 export const COLLISION = Object.freeze({
   /** Chassis never exchange contact with chassis; cars pass through cars. */
   vehicleOnVehicle: false,
-  /** No ragdoll is wired into the realm (03_Spawn_Agents/ragdoll*.ts is scaffolding nothing imports). */
-  ragdoll: false,
+  /**
+   * The ragdoll balance machine is wired: pedestrians within 25 m of the operator may be promoted to a Rapier rig by a
+   * shove in a dense crowd, a kerb trip or a slip (07_Execute_Actions/ragdollRealm.ts over 03_Spawn_Agents/ragdoll.ts).
+   * A vehicle is never a cause: the pool refuses it by name (ragdoll.ts PERTURBATION_CAUSES), the Sanctuary shields
+   * every segment of a rig as it shields an avatar, and the Ring-0 audit halts the realm if a car reaches one.
+   */
+  ragdoll: true,
   /** There is no combat: no module, no rule, no vocabulary. */
   combat: false,
   /** Lamps, trees and signal poles are in the world as sensors: found by queries, never solid. */
@@ -36,7 +44,7 @@ export const GROUP = Object.freeze({
   query: 0x0001,
   /** A vehicle chassis. */
   vehicle: 0x0002,
-  /** Reserved for the ragdoll scaffold's segments (ragdollRig.ts RAGDOLL_GROUP); the realm never sets it. */
+  /** A promoted pedestrian's rig segments (ragdollRig.ts RAGDOLL_GROUP sets it; the realm builds them). */
   ragdoll: 0x0004,
 } as const)
 
@@ -61,3 +69,12 @@ export const VEHICLE_CHASSIS_GROUPS = interactionGroups(GROUP.vehicle, ALL_GROUP
  * EXCLUDE_KINEMATIC) keep the wheels off people; the groups are an addition to those flags, never a replacement.
  */
 export const WHEEL_RAY_GROUPS = interactionGroups(GROUP.query, ALL_GROUPS & ~GROUP.vehicle)
+
+/**
+ * An avatar's capsule is a member of everything and filters `ragdoll` out: a rig segment (membership `ragdoll`) and
+ * the avatar have no common bit in that direction, so the broad phase never pairs them and the ghost-mode law holds
+ * for a promoted person too (the avatar walks through them, nobody is shoved). The character controller is given the
+ * same groups for its own sweeps (player.ts). Against cars, the ground and the buildings the avatar is as solid as
+ * ever; a rig meets cars and the world exactly as it did, with the Sanctuary between it and every car.
+ */
+export const AVATAR_GROUPS = interactionGroups(ALL_GROUPS, ALL_GROUPS & ~GROUP.ragdoll)

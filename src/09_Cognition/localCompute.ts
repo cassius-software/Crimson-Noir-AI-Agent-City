@@ -11,8 +11,18 @@
  * model that writes text, out of memory. Nothing it sends can leave the machine.
  * What breaks if it is removed? `ask` has nothing behind it. Nothing else in the city needs it.
  */
+import { loopbackServer } from '../02_Define_The_Rules/airgap.ts'
 import { AGENT_SYSTEM_PROMPT_CORE } from '../02_Define_The_Rules/conduct.ts'
+import { sha256 } from '../02_Define_The_Rules/integrity.ts'
 import type { Answer, GateTether, Memories, Mind, Piece } from '../07_Execute_Actions/operator.ts'
+
+/**
+ * The server's address as an origin ("http://localhost:11434"), if it is on this machine: http or https, a loopback
+ * host (localhost, 127.0.0.0/8, [::1]), no user name or password. Null for anything else, so a prompt can never be
+ * sent off the machine. Paths are dropped: the API's own paths are added to the origin. It is the gate of
+ * 02_Define_The_Rules/airgap.ts under the name this client has always used.
+ */
+export { loopbackServer }
 
 /** Where the local model server listens unless the operator says otherwise (the Ollama API's default port). */
 export const DEFAULT_SERVER = 'http://localhost:11434'
@@ -59,26 +69,6 @@ export class CognitionError extends Error {
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>
 
 /**
- * The server's address as an origin ("http://localhost:11434"), if it is on this machine: http or https, a loopback
- * host (localhost, 127.0.0.0/8, [::1]), no user name or password. Null for anything else, so a prompt can never be
- * sent off the machine. Paths are dropped: the API's own paths are added to the origin.
- */
-export function loopbackServer(url: unknown): string | null {
-  if (typeof url !== 'string') return null
-  let u: URL
-  try {
-    u = new URL(url.trim())
-  } catch {
-    return null
-  }
-  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
-  if (u.username || u.password) return null
-  const host = u.hostname.toLowerCase()
-  const loopback = host === 'localhost' || host === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(host)
-  return loopback ? u.origin : null
-}
-
-/**
  * The Agent City base reality: the part of the system prompt that is the same for every agent, and so comes first,
  * opening with the 14A conduct core (02_Define_The_Rules/conduct.ts) whichever model answers. A model server that
  * caches prompts (the local one reuses the longest prefix of a prompt it has already computed) computes it once for
@@ -110,6 +100,13 @@ export function systemPrompt(tethers: readonly GateTether[], memories: readonly 
     ...history,
   ].join('\n')
 }
+
+/**
+ * The provenance of a prompt: the SHA-256 (02_Define_The_Rules/integrity.ts) of the exact system prompt string sent,
+ * carried on the answer (Answer.promptHash) and noted in the diary, so an audit can prove what a model was given
+ * without keeping the prompt. Every provider computes it over the very string it sends.
+ */
+export const promptHash = (system: string): string => sha256(system)
 
 /** The first line of a server's message, cut to MESSAGE_CHARS. */
 export function sentence(text: string): string {
@@ -419,8 +416,10 @@ export function createLocalCompute({ fetch: fetchFn, store, defaults = {} }: { f
     },
     installed: (signal?: AbortSignal) => installedModels(fetchFn, server, signal, api),
     answer: (req: { tethers: readonly GateTether[]; prompt: string; signal: AbortSignal; memories?: readonly Memories[] }, onPiece: (p: Piece) => void): Promise<Answer> => {
-      const r = { server, model, system: systemPrompt(req.tethers, req.memories), prompt: req.prompt, signal: req.signal, think }
-      return api === 'chat' ? chat(fetchFn, r, onPiece) : generate(fetchFn, r, onPiece)
+      const system = systemPrompt(req.tethers, req.memories)
+      const r = { server, model, system, prompt: req.prompt, signal: req.signal, think }
+      // The hash of the exact string sent, for the audit: computed here, over `system` as it goes into the request.
+      return (api === 'chat' ? chat(fetchFn, r, onPiece) : generate(fetchFn, r, onPiece)).then((a) => ({ ...a, promptHash: promptHash(system) }))
     },
   })
 }

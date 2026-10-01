@@ -353,8 +353,9 @@ started with). Every provider gets the same system prompt (the conduct core, the
 memories), so a swap changes nothing an agent is or knows. Each keeps its own server and model between visits in one
 store (`App.tsx` `COGNITION_KEY` in local storage). `claudeApi.ts` streams the Messages API: adaptive thinking, the
 server-side refusal fallback, `EFFORTS`, the stop reason and the output tokens, abort on the task's signal, every
-failure as one sentence; `claudeServer(url)` admits https to any host or plain http to a loopback gateway, with no
-credentials in the URL; `maskKey` shows a key as its first six and last four characters. The console: `ask provider
+failure as one sentence; `claudeServer(url)` admitted https to any host or plain http to a loopback gateway, with no
+credentials in the URL (since Phase 11.1, below, a loopback gateway only); `maskKey` shows a key as its first six and
+last four characters. The console: `ask provider
 claude|ollama|llamacpp`, `ask key <key>|none`, `ask effort low|medium|high|xhigh|max|none`, `ask model`, `ask
 server`; `ask` alone reports the provider, the server, the model and the masked key. This runs on the page, in the
 operator tier.
@@ -379,8 +380,15 @@ product: no model ships, as before; the llama.cpp provider is the drop-in for a 
 the file.
 
 **Shipped.** Fully; the README's section is now The model providers (`ask`), and its History records the ruling.
-**Next:** `claudeApi.ts`'s header line "the one client in the product that may address a server off this machine"
-is now shared with `netClient.ts` and should say so (wording only; `airgap.test.ts` names both).
+
+**Superseded (Phase 11.1, zero-trust containment).** The operator's later order ("ensure all API routing is
+mathematically locked to localhost; sever any arbitrary outbound fetch capabilities") reverses the deviation above:
+`claudeServer` is now an alias of `02_Define_The_Rules/airgap.ts loopbackServer`, so the Claude provider speaks only to
+a gateway the operator runs on this machine (`CLAUDE_GATEWAY`, `http://localhost:8089`, by default), `main.tsx` installs
+`installAirgap` on the page's global before anything else and `physics.worker.ts` on its own, and the strengthened
+`10_Network/airgap.test.ts` allowlists every outbound call site and checks that each goes through the gate. The 1.3.0
+ruling the README recorded is back in force for every client; `docs/zero-trust-audit.md` is the audit, with what the
+guard cannot close from script.
 
 ### 8.4 Pings and closed captions
 
@@ -633,7 +641,7 @@ the departure. The host never explains a refusal to the peer.
 **Security.** A session is admitted only with a token minted by the host's secret for a subject and an expiry. The
 host listens in plain text on the loopback address by default; TLS (wss) is terminated by the operator's reverse
 proxy in front of it, which is also where an origin or a client certificate belongs. The page refuses any URL that is
-not wss, or plain ws to loopback, or carries credentials.
+not ws or wss to loopback, or carries credentials (since Phase 11.1; before it, wss to any host was admitted).
 
 **Guarantees, and the tests that prove them.** `replication.test.ts`: "readClientMessage: every crafted message is
 refused with the reason simHost would give", "join: a good token and an admissible name are welcomed and announced; a
@@ -664,6 +672,47 @@ and asks nobody over), a peer's voice placed by the soundscape, `output.net` in 
 driving the client against `startHost` in Node. The fix in `b535cca`: the client's validator screens the player names
 a host sends in welcome, snapshot and joined messages. **Still a stub:** the voice signalling (`signal` messages for
 offer, answer and candidates). The page has no chat command: it receives the room's chat and sends none.
+
+**Superseded in part (Phase 11.1).** `netServer` is now an alias of the gate's ws rule in `02_Define_The_Rules/airgap.ts`:
+ws or wss to a loopback address only, so `net join` reaches the host on this machine, or the local end of a tunnel or
+proxy the operator runs towards a room elsewhere. The page's own `WebSocket` is guarded and frozen besides, and
+`RTCPeerConnection` is removed from the global, so the voice stub could not be wired to a peer connection on the page.
+
+### Phase 11: zero-trust containment, learning, and ingestion
+
+The operator's Phase 11 directive came after the beta. Each item, what was built, and what is held back:
+
+- **11.1(a, b) The audit and the loopback lock.** `docs/zero-trust-audit.md` lists every escape vector found in
+  `02_Define_The_Rules` and `09_Cognition` (and the operator `run` sandbox they feed). `02_Define_The_Rules/airgap.ts`
+  is the one definition of "this machine" and the guard installed first on the page's and the worker's globals; the
+  Claude provider and `net join` are loopback-only; `index.html` carries a Content-Security-Policy whose
+  `connect-src` names only loopback. Proved by `02_Define_The_Rules/airgap.test.ts` and the structural
+  `10_Network/airgap.test.ts`. Still open, by the browser's design: navigation and the browser's own speech
+  recognition.
+- **11.1(c) WebAssembly.** The physics was already WebAssembly (Rapier). The fleet's track arithmetic is now a
+  dependency-free Rust crate (`native/routing`) compiled to `wasm32-unknown-unknown`, committed as a generated
+  module and installed in the physics worker; `tracks.ts` stays as the reference and fallback, and
+  `routingWasm.test.ts` proves the two equal. The order asked for this to prevent reverse engineering. It does not:
+  WebAssembly can be disassembled, and the TypeScript reference ships beside it. It is recorded as a compilation
+  target with a parity proof, not as protection.
+- **11.1(d) Integrity.** `02_Define_The_Rules/integrity.ts` (SHA-256, HMAC, canonical encoding; standard vectors in
+  its test). The swarm's memory is a hash chain (a prompt carries only the verified prefix); an ask records the
+  hash of its system prompt; every replication frame is sealed with an HMAC over its body and sequence number, and
+  replays are refused. A `say` line the 14A screen refused was still written into memory and would have returned
+  in the next prompt; it no longer is.
+- **11.2 The weight ledger.** `08_Swarm/memory.ts` folds each task's outcome into per-skill and brevity weights over
+  the verified chain, stores the result in IndexedDB bound to the chain's head, checks the stored copy against a
+  replay on every read, and lets the weights reach a prompt only as at most three fixed, screened sentences
+  (`memoryWeights.test.ts`). An inadmissible prompt is never noted, so it cannot train an agent; nothing learned can
+  change the conduct core, the laws or the host's code.
+- **11.3(a) The surveyed map pipeline: not run.** `fetch.mjs` and `odb.py` need the provincial road and water
+  services and the national building database; this environment's network policy refuses all three hosts. The
+  shipped pilot pack is unchanged.
+- **11.3(b) The balance machine.** Wired (`07_Execute_Actions/ragdollRealm.ts`): pedestrians within 25 m of the
+  operator may be promoted to a Rapier rig by a shove, a kerb trip or a slip, never by a vehicle; every rig shape is
+  a Sanctuary ward and a Ring-0 audit person; the rig stream is drawn where the hidden figure stood.
+- **11.3(c) The prefix cache.** kv-pager's page table (`native/kv-pager-wasm`) compiled to WebAssembly behind the
+  cognition router; `ask` prints its counts.
 
 ## 4. Verification
 
@@ -834,8 +883,12 @@ Carried over from the critique and the notes. Each names the file where the deci
 - The Claude key lives in this browser's local storage under `COGNITION_KEY` (`App.tsx`), masked in the console.
   Any script running on the page's origin could read it; a page opened as a file shares the `null` origin. The
   operator should treat it as a testing key and clear it with `ask key none`.
-- The README's The model providers section, Networking section and Constraints now state the network rule: two
-  opt-in clients, nothing at boot, nothing polled.
+- Phase 11.1 (zero-trust containment) replaced the two-client rule: the page sends nothing off this machine by
+  construction (`02_Define_The_Rules/airgap.ts`: the gate, the guard installed on both globals, and the structural test
+  over every call site), and the README's The model providers, Networking and Constraints sections say so. What the
+  guard cannot close from script (loads the HTML parser and CSS make, navigation, a remote `import()`, a fresh realm
+  from an iframe or a blob worker, the browser's own speech recognition) is listed in `docs/zero-trust-audit.md`, with
+  the Content-Security-Policy for the HTML shell that would close most of it; that policy is not yet in `index.html`.
 - `netClient.test.ts` drives the client against the real host in Node; a room joined from two browser tabs has not
   been tried. Voice is a stub, and the page has no chat command. The host does no origin check of its own, drops
   fragmented frames, and holds at most 32 peers with no interest management. `engine.ts netFrame` allocates up to

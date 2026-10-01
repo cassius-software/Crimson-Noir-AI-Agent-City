@@ -405,6 +405,33 @@ export function buildTrackNetwork(seed: number): TrackNetwork {
 
 // ---------------------------------------------------------------- arc-length API
 
+/**
+ * A routing core (routingWasm.ts): poseAt, projectOnto, nextStop and speedLimitAt compiled to WebAssembly over
+ * tracks laid into its own arena. `laid(track)` says whether it answers for a track (it lays one on first sight when
+ * every piece is a line or a corner and it fits); when it does, the exported functions below delegate to it, and
+ * otherwise the TypeScript reference answers, as it does everywhere when no core is installed. The physics worker
+ * installs one at start; routingWasm.test.ts proves the two equal.
+ */
+export interface RoutingCore {
+  laid(track: Track): boolean
+  poseAt(track: Track, s: number): TrackPose
+  projectOnto(track: Track, x: number, z: number, sHint: number): { s: number; lateral: number }
+  nextStop(track: Track, s: number, behind: number): { s: number; axis: Axis; distance: number } | null
+  speedLimitAt(track: Track, s: number): number
+}
+
+let core: RoutingCore | null = null
+
+/** Installs the routing core the four functions delegate to for the tracks it has laid (null: the reference alone). */
+export function useRoutingCore(c: RoutingCore | null): void {
+  core = c
+}
+
+/** The routing core installed, or null. */
+export function routingCore(): RoutingCore | null {
+  return core
+}
+
 /** `s` folded into [0, length). */
 export function wrap(track: Track, s: number): number {
   const L = track.length
@@ -458,6 +485,12 @@ function evalPiece(p: Piece, local: number, out: TrackPose): void {
 
 /** Position, unit tangent and heading at arc length `s` (any real number; wrapped). */
 export function poseAt(track: Track, s: number): TrackPose {
+  if (core !== null && core.laid(track)) return core.poseAt(track, s)
+  return referencePoseAt(track, s)
+}
+
+/** poseAt as written here in TypeScript: the specification a routing core is proved equal to, and the fallback. */
+export function referencePoseAt(track: Track, s: number): TrackPose {
   const w = wrap(track, s)
   const p = pieceAt(track, w)
   const out: TrackPose = { x: 0, y: track.y, z: 0, heading: 0, tangentX: 0, tangentZ: 0 }
@@ -467,13 +500,13 @@ export function poseAt(track: Track, s: number): TrackPose {
 
 /** The unit tangent at `s`. */
 export function tangentAt(track: Track, s: number): Vec2 {
-  const p = poseAt(track, s)
+  const p = referencePoseAt(track, s)
   return [p.tangentX, p.tangentZ]
 }
 
 /** Along-track and (right-positive) lateral offsets of (x, z) from the pose at s. */
 function offsets(track: Track, s: number, x: number, z: number): { along: number; lateral: number } {
-  const p = poseAt(track, s)
+  const p = referencePoseAt(track, s)
   const ox = x - p.x, oz = z - p.z
   return { along: ox * p.tangentX + oz * p.tangentZ, lateral: ox * -p.tangentZ + oz * p.tangentX }
 }
@@ -496,6 +529,12 @@ function refine(track: Track, s: number, x: number, z: number, steps: number, cl
  * search over every piece (closed form on lines, a scan every NEWTON_STEP m on curves) and the same refinement.
  */
 export function projectOnto(track: Track, x: number, z: number, sHint = NaN): { s: number; lateral: number } {
+  if (core !== null && core.laid(track)) return core.projectOnto(track, x, z, sHint)
+  return referenceProjectOnto(track, x, z, sHint)
+}
+
+/** projectOnto as written here in TypeScript (the reference and the fallback). */
+export function referenceProjectOnto(track: Track, x: number, z: number, sHint = NaN): { s: number; lateral: number } {
   if (Number.isFinite(sHint)) {
     const s = refine(track, wrap(track, sHint), x, z, 6, NEWTON_STEP)
     const { along, lateral } = offsets(track, s, x, z)
@@ -528,6 +567,12 @@ export function projectOnto(track: Track, x: number, z: number, sHint = NaN): { 
  * distance may be negative; then the next stop ahead takes over. Null on a track without stops.
  */
 export function nextStop(track: Track, s: number, behind: number = STOP_CLEAR): { s: number; axis: Axis; distance: number } | null {
+  if (core !== null && core.laid(track)) return core.nextStop(track, s, behind)
+  return referenceNextStop(track, s, behind)
+}
+
+/** nextStop as written here in TypeScript (the reference and the fallback). */
+export function referenceNextStop(track: Track, s: number, behind: number = STOP_CLEAR): { s: number; axis: Axis; distance: number } | null {
   let best: { s: number; axis: Axis; distance: number } | null = null
   const w = wrap(track, s)
   for (const stop of track.stops) {
@@ -564,6 +609,12 @@ export function cornerAhead(track: Track, s: number): number {
  * v ≤ sqrt(cornerSpeed² + 2 · comfortableDecel · distance) that traffic.ts:181 applies, capped at the limit.
  */
 export function speedLimitAt(track: Track, s: number): number {
+  if (core !== null && core.laid(track)) return core.speedLimitAt(track, s)
+  return referenceSpeedLimitAt(track, s)
+}
+
+/** speedLimitAt as written here in TypeScript (the reference and the fallback). */
+export function referenceSpeedLimitAt(track: Track, s: number): number {
   const d = cornerAhead(track, s)
   if (d === 0) return track.cornerSpeed
   return Math.min(track.speedLimit, Math.sqrt(track.cornerSpeed * track.cornerSpeed + 2 * TRAFFIC.comfortableDecel * d))

@@ -92,7 +92,7 @@ const OPERATOR = [
   { name: 'set', usage: 'set <path> <value>', summary: 'write a physics.* or shaders.* tuning key' },
   { name: 'harness', usage: 'harness [list|run <name>]', summary: 'physics harnesses: kernel stop, First-Law floor, sanctuary, brakes, lights, the spatial sweep' },
   { name: 'record', usage: 'record [start [canvas|camera]|stop|status]', summary: 'record the view (or the camera) with per-frame telemetry to a local .agv file' },
-  { name: 'net', usage: 'net [join <wss-url> [<token>]|leave|status|forget]', summary: 'the opt-in network session: join a room with its token (kept on this machine), leave it, read it' },
+  { name: 'net', usage: 'net [join <ws-url> [<token>]|leave|status|forget]', summary: 'the opt-in network session: join a room on this machine with its token (kept on this machine), leave it, read it' },
   { name: 'sim', usage: 'sim', summary: 'one-screen summary of the simulation' },
 ] as const
 
@@ -385,7 +385,7 @@ function pickText(p: PingPick): string {
 function netLines(r: NetReport): Line[] {
   const lines = [
     out(row('state', r.state)),
-    out(row('room', r.url ?? 'none (net join <wss-url> <token>)')),
+    out(row('room', r.url ?? 'none (net join <ws-url> <token>)')),
     out(row('player', r.state === 'joined' ? String(r.id) : '-')),
     out(row('peers', `${count(r.peers)}  dropped ${count(r.dropped)}  pending ${count(r.pending)}  voices ${count(r.voices)}`)),
   ]
@@ -416,16 +416,17 @@ function mindLines(m: MindStatus): Line[] {
   const network = m.provider === 'claude'
   const lines: Line[] = []
   if (m.provider !== undefined) {
-    lines.push(out(row('provider', network ? 'claude: the Claude API over the network (ask provider ollama|llamacpp for a model on this machine)' : `${m.provider}: a model server on this machine (ask provider claude for the Claude API)`)))
+    lines.push(out(row('provider', network ? 'claude: the Claude API through a gateway on this machine (ask provider ollama|llamacpp for a model on this machine)' : `${m.provider}: a model server on this machine (ask provider claude for the Claude API)`)))
   }
-  lines.push(out(row('server', network ? m.server : `${m.server}  (this machine only)`)), out(row('model', m.model ?? 'none chosen: ask model <name>')))
+  lines.push(out(row('server', network ? `${m.server}  (a gateway on this machine only)` : `${m.server}  (this machine only)`)), out(row('model', m.model ?? 'none chosen: ask model <name>')))
   if (network) {
     lines.push(out(row('key', m.key ? `${m.key}  (kept in this browser only)` : 'none set: ask key <key>')))
     lines.push(out(row('effort', m.effort ?? "the model's default (ask effort low|medium|high|xhigh|max)")))
   }
   if (m.api !== undefined) lines.push(out(row('api', m.api === 'chat' ? 'chat: /v1/chat/completions (ask api generate for /api/generate)' : `${m.api}: /api/generate (ask api chat for /v1/chat/completions)`)))
   if (m.think !== undefined) lines.push(out(row('think', m.api === 'chat' ? 'not sent in the chat format: the server decides' : m.think ? 'on: it reasons before it answers' : 'off: it answers without reasoning first (ask think on)')))
-  if (m.installed === null) return [...lines, err(`ask: ${m.error ?? (network ? 'the Claude API did not answer' : 'the local model server did not answer')}`)]
+  if (m.cache !== undefined) lines.push(out(row('cache', m.cache)))
+  if (m.installed === null) return [...lines, err(`ask: ${m.error ?? (network ? 'the gateway to the Claude API did not answer' : 'the local model server did not answer')}`)]
   if (!m.installed.length) return [...lines, out(row('installed', 'no models'))]
   lines.push(...m.installed.map((name, i) => out(row(i === 0 ? 'installed' : '', name === m.model ? `${name}  (chosen)` : name))))
   if (m.model === null) lines.push(sys('choose one that writes text: ask model <name>'))
@@ -1002,7 +1003,7 @@ const HANDLERS: Record<Name, Handler> = {
     if (a !== 'join') return fail(`net: unknown command '${a}'`, usage('net'))
     if (args.length < 2 || args.length > 3) return fail(usage('net'))
     const url = args[1]
-    if (!/^wss?:\/\/\S+$/.test(url)) return fail(`net: not a room address: '${url}' (a wss address anywhere, or plain ws only on this machine)`, usage('net'))
+    if (!/^wss?:\/\/\S+$/.test(url)) return fail(`net: not a room address: '${url}' (ws or wss, on this machine only)`, usage('net'))
     if (!operatorOf(b).unlocked()) return locked('net')
     const pending = n.join(url, args[2]).then((t): Line[] => [out(`net: ${t}`)], (e: unknown): Line[] => [err(`net: ${message(e)}`)])
     return { lines: [sys(`net: joining ${url}...`)], pending }

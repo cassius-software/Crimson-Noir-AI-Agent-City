@@ -8,7 +8,7 @@
  * What breaks if it is removed? The worker cannot hear the page, and nothing vets what the page says.
  */
 import { SimCore, type SimCoreOptions } from './simCore.ts'
-import { MAX_PLAYERS, POSE, TRACK_POSE, type FromWorker, type SimInit } from './simProtocol.ts'
+import { MAX_PLAYERS, POSE, RIG_POSE, TRACK_POSE, type FromWorker, type SimInit } from './simProtocol.ts'
 import type { RegionGround } from './physics.ts'
 
 export type Post = (msg: FromWorker, transfer?: Transferable[]) => void
@@ -62,6 +62,8 @@ export function createSimHost(post: Post, create: (o: SimCoreOptions) => Promise
   const pool: ArrayBuffer[] = []
   /** Craft buffers the page handed back (tracks on), ready for reuse. */
   const craftPool: ArrayBuffer[] = []
+  /** Rig stream buffers the page handed back (ragdoll on), ready for reuse. */
+  const rigPool: ArrayBuffer[] = []
   /** Simulated seconds the page may still spend, refilled at TIME_RATE × wall time. */
   let bank = TIME_BANK
   let lastWall = now()
@@ -101,7 +103,7 @@ export function createSimHost(post: Post, create: (o: SimCoreOptions) => Promise
         }
         core = await create({
           seed: init.seed, cars: init.cars, agents: init.agents, boxes: init.boxes, furniture: init.furniture, spawn: init.spawn, spawns, debug: init.debug === true, region,
-          tracks: init.tracks === true,
+          tracks: init.tracks === true, ragdoll: init.ragdoll === true,
         })
         for (let i = 0; i < refusedEarly; i++) core.noteRejected('message before init')
         post({ t: 'ready', meta: core.meta })
@@ -126,6 +128,9 @@ export function createSimHost(post: Post, create: (o: SimCoreOptions) => Promise
     const craftBytes = core.meta.craft * TRACK_POSE.stride * 4
     if (craftBytes > 0 && data.craftBuffer instanceof ArrayBuffer && data.craftBuffer.byteLength === craftBytes && craftPool.length < 4) craftPool.push(data.craftBuffer)
     const craft = craftBytes > 0 ? craftPool.pop() ?? new ArrayBuffer(craftBytes) : null
+    const rigBytes = core.meta.rigSlots * RIG_POSE.stride * 4
+    if (rigBytes > 0 && data.rigBuffer instanceof ArrayBuffer && data.rigBuffer.byteLength === rigBytes && rigPool.length < 4) rigPool.push(data.rigBuffer)
+    const rigs = rigBytes > 0 ? rigPool.pop() ?? new ArrayBuffer(rigBytes) : null
     // Players 1..3: a list of records (anything else in it is an idle player); a `players` that is not a list is
     // refused and counts as none. SimCore clamps every number in them as it does player 0's.
     let players: Record<string, unknown>[] = []
@@ -141,12 +146,14 @@ export function createSimHost(post: Post, create: (o: SimCoreOptions) => Promise
         drive: (isRecord(data.drive) ? data.drive : {}) as never,
         players: players.map((p) => ({ foot: (isRecord(p.foot) ? p.foot : {}) as never, drive: (isRecord(p.drive) ? p.drive : {}) as never })),
         cmds: Array.isArray(data.cmds) ? data.cmds : [],
-      }, new Float32Array(buffer), craft ? new Float32Array(craft) : null)
+      }, new Float32Array(buffer), craft ? new Float32Array(craft) : null, rigs ? new Float32Array(rigs) : null)
       // Anything else the page put in the message (a hazard array, GPU flags, a clock) is never read.
       const transfer: Transferable[] = [buffer]
       if (state.crowdFrame) transfer.push(state.crowdFrame.buffer as ArrayBuffer)
       if (state.craft) transfer.push(state.craft.buffer as ArrayBuffer)
       else if (craft) craftPool.push(craft)
+      if (state.rigs) transfer.push(state.rigs.buffer as ArrayBuffer)
+      else if (rigs) rigPool.push(rigs)
       post({ t: 'state', id, ...state }, transfer)
     } catch (e) {
       // A fault inside this realm leaves the simulation in an unknown state: it is halted like a panic.

@@ -51,6 +51,7 @@ import type { AgentTelemetry } from '../05_Observe_Environment/agv.ts'
 import { Governor, defaultAgents, profileDevice, readDeviceHints, tierRange, type QualityKnobs } from '../05_Observe_Environment/governor.ts'
 import { CAR_TUNE_RANGE, chassisBox, clampTuning, type CarTuning } from './car.ts'
 import { FleetView } from './fleetView.ts'
+import { RigView } from './rigView.ts'
 import { NetView, type RemotePose } from './netView.ts'
 import { HeadRig, aimRay, carriedYaw, yawFacing, type AimRay } from './head.ts'
 import { SimClient } from './simClient.ts'
@@ -110,6 +111,12 @@ export interface EngineOptions {
    * a variable ND and the film response. Off, every animation frame is drawn and tone-mapped with ACES.
    */
   cinema?: boolean
+  /**
+   * The ragdoll balance machine (default on; ?ragdoll=0 turns it off): pedestrians within 25 m of the operator may be
+   * promoted to a physical body in the realm by a shove, a kerb trip or a slip, drawn here as a rig in their figure's
+   * place (rigView.ts). Never a vehicle's doing. Never in a region.
+   */
+  ragdoll?: boolean
   /**
    * A surveyed region to walk instead of the procedural city (the pilot build). Its streets have no traffic or crowd
    * yet: the fleet is empty and the GPU crowd, still simulated on the procedural grid far from the region, is not drawn.
@@ -304,6 +311,8 @@ export class Engine {
   /** The page's end of the physics realm: numbers in, numbers out. */
   private readonly sim: SimClient
   private readonly view: FleetView
+  /** The promoted pedestrians' rigs from the realm's rig stream, drawn where their hidden figures stood. */
+  private readonly rigView: RigView
   /** The first-person head: the only thing that places the camera (future WebXR reads/overrides its pose). */
   private readonly rig = new HeadRig()
   /** The driven car's heading last frame, so the head turns with the car. */
@@ -464,7 +473,7 @@ export class Engine {
   onHalt: ((reason: string) => void) | null = null
 
   private constructor(p: {
-    canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView
+    canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; rigView: RigView
     post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; crowdFrameSeconds: UniformNode<'float', number>; ghost: GhostView
     options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; netView: NetView
   }) {
@@ -476,6 +485,7 @@ export class Engine {
     this.crowd = p.crowd
     this.sim = p.sim
     this.view = p.view
+    this.rigView = p.rigView
     this.post = p.post
     this.volumetrics = p.volumetrics
     this.cinema = p.cinema
@@ -565,6 +575,7 @@ export class Engine {
     const simBoot = SimClient.create({
       seed: options.seed, cars: options.cars, agents: options.agents, boxes: world.boxes, furniture: world.furniture, spawn, debug: options.debug === true,
       region: pack && layout ? regionPhysics(pack, layout) : null, tracks: options.tracks !== false,
+      ragdoll: options.ragdoll !== false && !pack,
       ...(spawns.length > 0 && { spawns }),
     })
 
@@ -602,11 +613,14 @@ export class Engine {
     if (sim.meta.agents !== options.agents) throw new Error(`the physics worker simulates ${sim.meta.agents} pedestrians, the page draws ${options.agents}`)
     const view = new FleetView(sim.meta.suv, sim.meta.paint, world.night)
     view.sync(sim.state.poses)
-    world.scene.add(...view0.meshes, view.bodies, view.wheels)
+    // The rigs of the promoted pedestrians (the realm's rig stream; none with the ragdoll off or in a region).
+    const rigView = new RigView(sim.meta.rigSlots)
+    rigView.sync(sim.state.rigs)
+    world.scene.add(...view0.meshes, view.bodies, view.wheels, ...rigView.meshes)
     // The network ghosts (netView.ts): two hidden instanced meshes until a session's poses arrive, compiled with the rest.
     const netView = new NetView()
     world.scene.add(netView.people, netView.cars)
-    const ghost = createGhost({ boxes: world.boxes, furniture: world.furniture, suv: sim.meta.suv, crowdPos: view0.pos, agents: options.agents })
+    const ghost = createGhost({ boxes: world.boxes, furniture: world.furniture, suv: sim.meta.suv, crowdPos: view0.pos, agents: options.agents, rigs: rigView.meshes })
     const { pipeline: post, volumetrics, cinema } = buildPost(gpu.renderer, world.scene, world.camera, options.cinema === false ? null : { resorted: world.resorted }, ghost)
 
     const w = Math.max(1, canvas.clientWidth), h = Math.max(1, canvas.clientHeight)
@@ -638,7 +652,7 @@ export class Engine {
     if (sim.state.crowdFrame) crowd.upload(sim.state.crowdFrame)
     if (options.profile) crowd.enableProfiling()
     const engine = new Engine({
-      canvas, gpu, world, crowd, sim, view, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, ghost, options,
+      canvas, gpu, world, crowd, sim, view, rigView, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, ghost, options,
       quality: { governor, targets, applied, mask, live }, places,
       // The code dissolve's crowd amounts: allocated by the draws above like the frame's buffers, written the same way.
       crowdDissolve: gpuBufferOf(gpu.renderer, view0.dissolve),
@@ -1053,6 +1067,10 @@ export class Engine {
     // The contact wipe's view of the crowd: who is nearest the user's body in this frame (and, for the code dissolve,
     // whose bodies it is inside).
     if (s.crowdFrame) this.contactScan(s)
+    // The promoted pedestrians' rigs: their figures are hidden in the render copy (before the upload re-applies the
+    // mask) and the rigs posed where they stand. View-only: the realm decided who is promoted.
+    this.rigView.sync(s.rigs)
+    this.crowd.hide(this.rigView.hidden)
     // The pedestrians the worker simulated: straight into the render buffers (the copy is only ever drawn).
     if (s.crowdFrame && this.crowd.upload(s.crowdFrame)) this.crowdFrames++
     for (const ev of s.events) {

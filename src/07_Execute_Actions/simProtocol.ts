@@ -12,6 +12,7 @@ import type { KernelStats } from '../05_Observe_Environment/telemetry.ts'
 import type { CrowdSimStats } from '../03_Spawn_Agents/crowdSensor.ts'
 import type { CarTuning, DriveMode } from './car.ts'
 import type { TrackKind } from '../06_Make_Decisions/tracks.ts'
+import type { BalanceState } from '../03_Spawn_Agents/ragdoll.ts'
 
 /**
  * One vehicle's slice of the pose buffer (Float32Array, `POSE.stride` floats per vehicle, fleet order). The
@@ -60,6 +61,35 @@ export const TRACK_POSE = { x: 0, y: 1, z: 2, heading: 3, kind: 4, track: 5, s: 
 /** TrackKind as it is stored in the craft buffer (index = code). Cars never appear in it: they are in the pose buffer. */
 export const TRACK_KINDS: readonly TrackKind[] = ['car', 'train', 'drone', 'plane']
 
+/**
+ * The rig stream (StepState.rigs): one slice of `RIG_POSE.stride` floats per rig slot (`SimMeta.rigSlots` of them),
+ * for the pedestrians near the operator the realm has promoted to a physical body (ragdollRealm.ts over
+ * 03_Spawn_Agents/ragdoll.ts): `agent` is the pedestrian's index in the crowd (−1: an empty slot, nothing follows),
+ * `state` the balance machine's state as RIG_STATES codes it, then `segments` poses of `segmentStride` floats each
+ * (x, y, z, qx, qy, qz, qw), one per RIG_SEGMENTS entry. The page hides the crowd's figure of a listed agent and draws
+ * the rig in its place (rigView.ts); the Ring-0 audit has already checked every segment as a person before it leaves.
+ */
+export const RIG_POSE = { agent: 0, state: 1, segments: 2, segmentStride: 7, segmentCount: 13, stride: 2 + 13 * 7 } as const
+
+/** Rig slots the realm holds at most (03_Spawn_Agents/ragdoll.ts POOL_CAPACITY; pinned equal by ragdollRealm.test.ts). */
+export const RIG_SLOTS = 8
+
+/** BalanceState as the rig stream codes it (index = code). */
+export const RIG_STATES: readonly BalanceState[] = ['kinematic', 'perturbed', 'catchStep', 'sittingDown', 'seated', 'recovering']
+
+/**
+ * The thirteen shapes of a rig in stream order, with the capsule each is drawn as: [half height of the cylinder part,
+ * radius], m. The eleven segments match 03_Spawn_Agents/ragdollRig.ts SEGMENTS (which the page never loads: it
+ * imports Rapier); the two flat feet are drawn as short capsules of their footprint. Pinned equal by
+ * ragdollRealm.test.ts.
+ */
+export const RIG_SEGMENTS: readonly (readonly [name: string, halfHeight: number, radius: number])[] = Object.freeze([
+  ['pelvis', 0.04, 0.14], ['torso', 0.12, 0.16], ['head', 0.01, 0.11],
+  ['upperLegL', 0.14, 0.07], ['lowerLegL', 0.14, 0.055], ['upperLegR', 0.14, 0.07], ['lowerLegR', 0.14, 0.055],
+  ['upperArmL', 0.1, 0.05], ['lowerArmL', 0.1, 0.045], ['upperArmR', 0.1, 0.05], ['lowerArmR', 0.1, 0.045],
+  ['footL', 0.07, 0.05], ['footR', 0.07, 0.05],
+] as const)
+
 /** The page's one-time request to build the world in the worker. A second init is refused. */
 export interface SimInit {
   t: 'init'
@@ -87,6 +117,11 @@ export interface SimInit {
    * drive it with track followers; anything but true keeps the random street-hopping drivers.
    */
   tracks?: boolean
+  /**
+   * Wire the ragdoll balance machine to the pedestrians near the operator (ragdollRealm.ts; the page's default, ?ragdoll=0
+   * off): anything but true keeps every pedestrian on the GPU alone, and the rig stream null. Never in a region.
+   */
+  ragdoll?: boolean
 }
 
 /** Static facts about the world the worker built, sent once in `ready`. */
@@ -103,6 +138,8 @@ export interface SimMeta {
   craft: number
   /** Avatars the realm holds (1 + spawns.length, at most MAX_PLAYERS): the length of every `avatars` and `drivings`. */
   players: number
+  /** Rig slots in every rig stream (RIG_SLOTS with the ragdoll on in the city; 0 off, or in a region: the stream is null). */
+  rigSlots: number
 }
 
 /**
@@ -167,6 +204,8 @@ export interface StepRequest {
   crowdBuffer?: ArrayBuffer
   /** A craft buffer handed back for reuse (transferred). */
   craftBuffer?: ArrayBuffer
+  /** A rig stream's buffer handed back for reuse (transferred). */
+  rigBuffer?: ArrayBuffer
 }
 
 export interface AvatarState {
@@ -277,6 +316,11 @@ export interface StepState {
    * null with tracks off, and from a halted realm (its clock has stopped, and a buffer that halted it never leaves).
    */
   craft: Float32Array | null
+  /**
+   * The promoted pedestrians' rigs (RIG_POSE, `meta.rigSlots` slices, empty slots with agent −1) as this step left
+   * them, transferred; null with the ragdoll off, in a region, and from a halted realm.
+   */
+  rigs: Float32Array | null
   /** Everyone the operator has asked over and not yet released. */
   recruits: RecruitView[]
   /** Messages and commands the worker refused since it started. */

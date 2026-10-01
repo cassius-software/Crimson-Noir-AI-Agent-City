@@ -6,6 +6,7 @@ import { offlineBridge, type LookBridge, type NetBridge, type TerminalBridge } f
 import { hudLine, recruitBridge, Recruiter } from './08_Swarm/recruitment.ts'
 import { TaskRouter } from './08_Swarm/taskRouter.ts'
 import { deferredLedger, followRecruiter, indexedDbLedger, memoryBridge, SwarmMemory } from './08_Swarm/memory.ts'
+import { loopbackFetch } from './02_Define_The_Rules/airgap.ts'
 import { createMindRouter } from './09_Cognition/router.ts'
 import { createLocalSpeech } from './09_Cognition/localSpeech.ts'
 import { createNetClient } from './10_Network/netClient.ts'
@@ -176,6 +177,8 @@ function readOptions(): Options {
     tracks: q.get('tracks') !== '0',
     // The cinema camera (24 fps, 180° shutter, ND, film response); ?cinema=0 draws every frame with ACES.
     cinema: q.get('cinema') !== '0',
+    // The ragdoll balance machine over the pedestrians near the operator; ?ragdoll=0 keeps everyone on the GPU alone.
+    ragdoll: q.get('ragdoll') !== '0',
     // Local split screen: ?players=2..4 cuts the canvas into a viewport per player (viewports.ts clamps it to 1..4).
     players: clampPlayers(q.get('players')),
   }
@@ -325,10 +328,11 @@ function GuiShell({ options }: { options: Options }) {
             return h
           },
         }
-        // The cognition router (only ever asked on the operator's command): the Claude API over the network, or a model
-        // server on this machine, swapped at the console. Its answer's pieces are shown on the HUD only after the lease
-        // let them through.
-        const local = createMindRouter({ fetch: (url, init) => window.fetch(url, init), store: pageStore(COGNITION_KEY) })
+        // The cognition router (only ever asked on the operator's command): the Claude API through a gateway on this
+        // machine, or a model server on this machine, swapped at the console. Its fetch is the page's own (already held
+        // to this machine by the air gap main.tsx installed) under the gate's own wrapper once more. Its answer's pieces
+        // are shown on the HUD only after the lease let them through.
+        const local = createMindRouter({ fetch: loopbackFetch((url, init) => window.fetch(url, init)), store: pageStore(COGNITION_KEY) })
         const mind: Mind = {
           ...local,
           answer: (req, onPiece) => {
@@ -348,7 +352,7 @@ function GuiShell({ options }: { options: Options }) {
         unfollow = followRecruiter(memory, r)
         // The local speech server (only ever asked on the operator's command, only on this machine): the audio it
         // returns is placed by the engine's soundscape at the speaker's head.
-        const voice = createLocalSpeech({ fetch: (url, init) => window.fetch(url, init), store: pageStore(SPEECH_KEY) })
+        const voice = createLocalSpeech({ fetch: loopbackFetch((url, init) => window.fetch(url, init)), store: pageStore(SPEECH_KEY) })
         // A walk ping (go or gather) at a sidewalk point near the operator asks an Active recruit over to it: the engine
         // plans it from its own copies (08_Swarm/ping.ts rallyPlan), the recruiter checks the page's copy, the physics
         // realm decides on its own readings; its answer is a toast either way.

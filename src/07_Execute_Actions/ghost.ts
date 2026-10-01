@@ -2,7 +2,8 @@
  * Why does this file exist? Ghost view: the physics world as the physics engine sees it, drawn as falling code over
  * the finished frame.
  * - The collider proxies render into a mask of their own, with the same camera: every building's box, the lamp,
- *   tree and signal poles, every car's chassis box, and every pedestrian's contact envelope.
+ *   tree and signal poles, every car's chassis box, every pedestrian's contact envelope, and the shapes of every
+ *   promoted pedestrian's rig (rigView.ts; its instance matrices are shared, so they cost nothing more here).
  * - A screen-space pass fills each shape with columns of procedural glyphs, traces its outline, and dims the city
  *   behind it. The glyphs are original: strokes on a small lattice, chosen by a hash; no font and no borrowed
  *   character set.
@@ -90,6 +91,8 @@ export interface GhostSource {
   suv: readonly boolean[]
   crowdPos: StorageBufferAttribute
   agents: number
+  /** The rig shapes the page draws (rigView.ts meshes): drawn here as person-kind proxies from the same matrices. */
+  rigs?: readonly InstancedMesh[]
 }
 
 export interface GhostView {
@@ -173,6 +176,13 @@ export function createGhost(src: GhostSource): GhostView {
   people.frustumCulled = false
 
   scene.add(buildings, poles, cars, people)
+  // The rigs: one proxy per shape mesh, sharing its geometry and instance matrices (an empty slot is scaled to nothing).
+  for (const mesh of src.rigs ?? []) {
+    const proxy = new InstancedMesh(mesh.geometry, maskMaterial(GHOST_KIND.person), mesh.count)
+    proxy.instanceMatrix = mesh.instanceMatrix
+    proxy.frustumCulled = false
+    scene.add(proxy)
+  }
   const strength = uniform(0)
   const seconds = uniform(0)
   const contact = uniform(0)

@@ -12,7 +12,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { RUN } from '../07_Execute_Actions/simProtocol.ts'
 import { createNetClient, HOST_REFUSALS, netServer, type NetSocket, type NetStatus } from './netClient.ts'
-import { encode, LIMITS, type ChatRelayMessage, type PingRelayMessage } from './replication.ts'
+import { netServer as gate } from '../02_Define_The_Rules/airgap.ts'
+import { encode, LIMITS, PROTOCOL_VERSION, sealMessage, type ChatRelayMessage, type PingRelayMessage, type SnapshotMessage } from './replication.ts'
 import { startHost, type Host } from './replication.node.ts'
 
 const SECRET = 'client-test-secret'
@@ -36,14 +37,16 @@ async function withHost(fn: (host: Host) => Promise<void>): Promise<void> {
   }
 }
 
-test('netServer: wss anywhere, plain ws only to this machine, never with credentials', () => {
-  assert.equal(netServer('wss://rooms.example.net/city'), 'wss://rooms.example.net/city')
+test('netServer: ws or wss to this machine only, never with credentials; the gate of airgap.ts under this name', () => {
+  assert.equal(netServer('wss://localhost:8788/city'), 'wss://localhost:8788/city')
   assert.equal(netServer('ws://127.0.0.1:8787'), 'ws://127.0.0.1:8787/')
   assert.equal(netServer(' ws://localhost:8787 '), 'ws://localhost:8787/')
   assert.equal(netServer('ws://[::1]:8787'), 'ws://[::1]:8787/')
+  assert.equal(netServer('wss://rooms.example.net/city'), null, 'a room off this machine, even over TLS')
   assert.equal(netServer('ws://rooms.example.net'), null, 'a token would cross the network in clear')
-  assert.equal(netServer('wss://ada:secret@rooms.example.net'), null)
-  assert.equal(netServer('https://rooms.example.net'), null)
+  assert.equal(netServer('wss://ada:secret@localhost:8788'), null)
+  assert.equal(netServer('http://localhost:8787'), null)
+  assert.equal(netServer, gate, 'one definition of this machine')
   assert.equal(netServer('not a url'), null)
   assert.equal(netServer(42), null)
 })
@@ -51,16 +54,17 @@ test('netServer: wss anywhere, plain ws only to this machine, never with credent
 test('connect refuses what it must before any socket opens: the address, the token, the name, a second session', async () => {
   let opened = 0
   const c = createNetClient({ open: () => { opened++; return { send() {}, close() {}, onopen: null, onmessage: null, onclose: null, onerror: null } } })
-  assert.match(c.connect('ws://rooms.example.net', 't', 'Ada') ?? '', /only wss/)
-  assert.match(c.connect('wss://rooms.example.net', '', 'Ada') ?? '', /token/)
-  assert.match(c.connect('wss://rooms.example.net', 'x'.repeat(LIMITS.token + 1), 'Ada') ?? '', /token/)
-  assert.match(c.connect('wss://rooms.example.net', 't', '   ') ?? '', /name/)
+  assert.match(c.connect('ws://rooms.example.net', 't', 'Ada') ?? '', /only ws or wss to this machine/)
+  assert.match(c.connect('wss://rooms.example.net', 't', 'Ada') ?? '', /only ws or wss to this machine/)
+  assert.match(c.connect('wss://localhost:8788', '', 'Ada') ?? '', /token/)
+  assert.match(c.connect('wss://localhost:8788', 'x'.repeat(LIMITS.token + 1), 'Ada') ?? '', /token/)
+  assert.match(c.connect('wss://localhost:8788', 't', '   ') ?? '', /name/)
   assert.equal(opened, 0, 'nothing opened for a refused connect')
   assert.equal(c.status, 'idle')
-  assert.equal(c.connect('wss://rooms.example.net', 't', 'Ada'), null)
+  assert.equal(c.connect('wss://localhost:8788', 't', 'Ada'), null)
   assert.equal(opened, 1)
   assert.equal(c.status, 'connecting')
-  assert.equal(c.connect('wss://rooms.example.net', 't', 'Ada'), 'a session is already open')
+  assert.equal(c.connect('wss://localhost:8788', 't', 'Ada'), 'a session is already open')
   assert.equal(c.sendInput(1, 0, 0), false, 'nothing is sent before the welcome')
   assert.equal(c.sendChat('hello'), false)
   assert.equal(c.sendPing('go', 0, 0, 0), false)
@@ -187,17 +191,33 @@ test('a host the core refuses: HOST_REFUSALS malformed messages and the client l
       return socket
     },
   })
-  assert.equal(c.connect('wss://rooms.example.net', 'token', 'Ada'), null)
+  assert.equal(c.connect('wss://localhost:8788', 'token', 'Ada'), null)
   const s = socket as unknown as NetSocket
   s.onopen?.({})
   assert.equal(c.status, 'joining')
   assert.equal(sent.length, 1)
   assert.match(sent[0], /"t":"join"/)
+  // The join went out sealed under the token, as envelope 1; an unsealed welcome is not read at all.
+  assert.match(sent[0], /^\{"n":1,"body":\{"t":"join".*"mac":"[0-9a-f]{64}"\}$/)
+  const welcome = { t: 'welcome' as const, v: PROTOCOL_VERSION, id: 7, tick: 3, tickHz: 20, players: [] }
+  s.onmessage?.({ data: encode(welcome) })
+  assert.equal(c.status, 'joining', 'unsealed: dropped')
+  s.onmessage?.({ data: sealMessage(welcome, 1, 'another token') })
+  assert.equal(c.status, 'joining', 'sealed under another token: dropped')
   // A good welcome, then rubbish: the client tolerates HOST_REFUSALS − 1 refusals and leaves on the next.
-  s.onmessage?.({ data: encode({ t: 'welcome', v: 1, id: 7, tick: 3, tickHz: 20, players: [] }) })
+  s.onmessage?.({ data: sealMessage(welcome, 1, 'token') })
   assert.equal(c.status, 'joined')
   assert.equal(c.id, 7)
-  for (let i = 0; i < HOST_REFUSALS - 1; i++) s.onmessage?.({ data: '{"t":"snapshot","tick":"nope"}' })
+  // Two refusals so far. A sealed snapshot is applied once; the same frame again is a replay, and one under another key a forgery: neither moves the replica.
+  const snapshot: SnapshotMessage = { t: 'snapshot', tick: 4, ack: 0, players: [] }
+  const frame = sealMessage(snapshot, 2, 'token')
+  s.onmessage?.({ data: frame })
+  assert.equal(c.replica.tick, 4)
+  s.onmessage?.({ data: frame })
+  s.onmessage?.({ data: sealMessage({ ...snapshot, tick: 5 }, 3, 'another token') })
+  s.onmessage?.({ data: sealMessage({ ...snapshot, tick: 5 }, 1, 'token') })
+  assert.equal(c.replica.tick, 4, 'a replay, a forgery and a stale envelope number change nothing')
+  for (let i = 0; i < HOST_REFUSALS - 6; i++) s.onmessage?.({ data: '{"t":"snapshot","tick":"nope"}' })
   assert.equal(c.status, 'joined')
   s.onmessage?.({ data: 'not even JSON' })
   assert.equal(c.status, 'closed')

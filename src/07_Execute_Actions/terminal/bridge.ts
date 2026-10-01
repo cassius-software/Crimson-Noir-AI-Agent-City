@@ -152,7 +152,7 @@ export interface MemoryBridge {
 
 /**
  * The opt-in network session (10_Network/netClient.ts; the engine's NetControls, App adds the kept token): nothing
- * connects until `join`, which takes the room's address (wss anywhere, plain ws only to this machine) and the session
+ * connects until `join`, which takes the room's address (ws or wss, on this machine only) and the session
  * token the operator was handed; a token given is kept on this machine between visits and reused when none is given.
  * The room's other players are drawn as pose-only ghosts and never enter the physics realm. `join` resolves with the
  * status line once the room welcomes this page and rejects with why it did not; `leave` and `forget` (drops the

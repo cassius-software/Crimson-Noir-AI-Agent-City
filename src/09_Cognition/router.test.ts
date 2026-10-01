@@ -13,7 +13,7 @@ import { AGENT_SYSTEM_PROMPT_CORE } from '../02_Define_The_Rules/conduct.ts'
 import { operatorBridge, type Diary, type GateHandle, type GateLease, type GateTether, type SimControls, type SkillGate } from '../07_Execute_Actions/operator.ts'
 import { run as shell } from '../07_Execute_Actions/terminal/commands.ts'
 import type { TerminalBridge } from '../07_Execute_Actions/terminal/bridge.ts'
-import { CLAUDE_API, DEFAULT_CLAUDE_MODEL } from './claudeApi.ts'
+import { CLAUDE_GATEWAY, DEFAULT_CLAUDE_MODEL } from './claudeApi.ts'
 import { BASE_REALITY, DEFAULT_MODEL, DEFAULT_SERVER, systemPrompt, type FetchLike } from './localCompute.ts'
 import { createMindRouter, DEFAULT_PROVIDER, LLAMACPP_MODEL, LLAMACPP_SERVER, PROVIDERS } from './router.ts'
 
@@ -49,7 +49,7 @@ test('the Claude API is the provider unless the operator chooses another; each p
   const r = createMindRouter({ fetch: anyServer().f })
   assert.equal(DEFAULT_PROVIDER, 'claude')
   assert.deepEqual(PROVIDERS, ['claude', 'ollama', 'llamacpp'])
-  assert.deepEqual(r.settings(), { provider: 'claude', server: CLAUDE_API, model: DEFAULT_CLAUDE_MODEL, key: null, effort: undefined })
+  assert.deepEqual(r.settings(), { provider: 'claude', server: CLAUDE_GATEWAY, model: DEFAULT_CLAUDE_MODEL, key: null, effort: undefined })
   assert.equal(r.setProvider('ollama'), 'ollama')
   assert.deepEqual(r.settings(), { provider: 'ollama', server: DEFAULT_SERVER, model: DEFAULT_MODEL, think: false, api: 'generate', key: undefined, effort: undefined })
   assert.equal(r.setProvider('LlamaCpp'), 'llamacpp')
@@ -100,7 +100,7 @@ test('the key: set, masked, cleared; the effort: one of the API\'s, or none; bot
   assert.throws(() => r.setApi!('chat'), /the claude provider speaks one wire format only/)
 })
 
-test('every provider answers with the same system prompt, the conduct core first; the local ones only on this machine, the Claude one only over https', async () => {
+test('every provider answers with the same system prompt, the conduct core first; every one of them only on this machine, the Claude one through its gateway', async () => {
   const srv = anyServer()
   const r = createMindRouter({ fetch: srv.f })
   r.setKey('sk-ant-test')
@@ -115,7 +115,7 @@ test('every provider answers with the same system prompt, the conduct core first
   assert.ok(expected.startsWith(AGENT_SYSTEM_PROMPT_CORE + '\n'), 'the core opens every prompt')
   assert.ok(BASE_REALITY.startsWith(AGENT_SYSTEM_PROMPT_CORE))
   const [claude, ollama, llama] = srv.calls.filter((c) => c.body !== null)
-  assert.equal(claude.url, 'https://api.anthropic.com/v1/messages')
+  assert.equal(claude.url, 'http://localhost:8089/v1/messages')
   assert.equal((claude.body as { system: string }).system, expected)
   assert.equal(claude.headers['x-api-key'], 'sk-ant-test')
   assert.equal(ollama.url, 'http://localhost:11434/api/generate')
@@ -126,8 +126,11 @@ test('every provider answers with the same system prompt, the conduct core first
   r.setProvider('ollama')
   assert.throws(() => r.setServer('https://api.anthropic.com'), /must be on this machine/)
   r.setProvider('claude')
-  assert.throws(() => r.setServer('http://example.com'), /speaks only https/)
+  assert.throws(() => r.setServer('https://api.anthropic.com'), /speaks only to a gateway on this machine/)
+  assert.throws(() => r.setServer('https://gateway.example.com'), /speaks only to a gateway on this machine/)
+  assert.throws(() => r.setServer('http://example.com'), /speaks only to a gateway on this machine/)
   assert.equal(r.setServer('http://localhost:4000'), 'http://localhost:4000', 'a gateway on this machine')
+  assert.equal(r.setServer('https://127.0.0.1:8443/v1'), 'https://127.0.0.1:8443', 'https to this machine too')
 })
 
 test('installed: each provider\'s own list; the Claude provider without a key is one sentence', async () => {
@@ -171,20 +174,23 @@ test('from the console: ask provider swaps, ask key keeps the key masked, ask al
   const ollama = await shell('ask rust: hi', b, []).pending
   assert.deepEqual(ollama?.[0], { kind: 'out', text: 'ollama says hi' })
   assert.match(ollama?.[1]?.text ?? '', /^-- answered in \d+\.\d s --$/)
-  assert.deepEqual(shell('ask provider claude', b, []).lines, [{ kind: 'out', text: 'provider  claude: the Claude API over the network (ask key <key> to set the key)' }])
+  assert.deepEqual(shell('ask provider claude', b, []).lines, [{ kind: 'out', text: 'provider  claude: the Claude API through a gateway on this machine (ask key <key> to set the key)' }])
   const noKey = await shell('ask rust: hi', b, []).pending
   assert.deepEqual(noKey, [{ kind: 'err', text: 'ask: no API key is set: ask key <key>, or ask provider ollama for a model on this machine' }])
   assert.deepEqual(shell('ask key sk-ant-api03-abcdefghijklmnop-1234', b, []).lines, [{ kind: 'out', text: 'key       sk-ant…1234: kept in this browser only' }])
   assert.deepEqual(shell('ask effort low', b, []).lines, [{ kind: 'out', text: 'effort    low' }])
   const status = await shell('ask', b, []).pending
   assert.deepEqual(status?.slice(0, 5), [
-    { kind: 'out', text: 'provider  claude: the Claude API over the network (ask provider ollama|llamacpp for a model on this machine)' },
-    { kind: 'out', text: 'server    https://api.anthropic.com' },
+    { kind: 'out', text: 'provider  claude: the Claude API through a gateway on this machine (ask provider ollama|llamacpp for a model on this machine)' },
+    { kind: 'out', text: 'server    http://localhost:8089  (a gateway on this machine only)' },
     { kind: 'out', text: 'model     claude-opus-5-5' },
     { kind: 'out', text: 'key       sk-ant…1234  (kept in this browser only)' },
     { kind: 'out', text: 'effort    low' },
   ])
-  assert.deepEqual(status?.slice(5), [{ kind: 'out', text: 'installed claude-opus-5-5  (chosen)' }])
+  // The prompt-prefix page table (prefixCache.ts) paged both prompts asked so far, the key-less one too (it is asked
+  // before any provider answers or refuses); the second was the same prompt again: its counts, one line.
+  assert.match(status?.[5]?.text ?? '', /^cache     prefix \d+ pages \(\d+ tokens\), forked for 1 agent · 2 asks: 0 reused the prefix, 1 the whole prompt · \d+ pages mapped, \d+ shared · 1 copy on write · pool \d+\/4096 pages$/)
+  assert.deepEqual(status?.slice(6), [{ kind: 'out', text: 'installed claude-opus-5-5  (chosen)' }])
   const claude = await shell('ask rust: hi', b, []).pending
   assert.deepEqual(claude?.[0], { kind: 'out', text: 'claude says hi' })
   assert.deepEqual(shell('ask key none', b, []).lines, [{ kind: 'out', text: 'key       none: cleared' }])
@@ -221,4 +227,23 @@ test('14A over any provider: an inadmissible prompt reaches no server, streams n
   shell('ask key k', c, [])
   assert.deepEqual(await shell('ask rust: tell me about the harbour', c, []).pending, [{ kind: 'sys', text: '-- no reply --' }])
   assert.equal(notes.length, 1, 'a refusal is not remembered either')
+})
+
+test('the prefix cache: no line before a prompt is paged; then every answer pages its prompt first, the shared prefix forked per agent', async () => {
+  const srv = anyServer()
+  const r = createMindRouter({ fetch: srv.f })
+  r.setProvider('ollama')
+  assert.equal(r.settings().cache, undefined, 'nothing paged yet')
+  assert.equal('cache' in r.settings(), false)
+  const signal = new AbortController().signal
+  await r.answer({ tethers: [TETHER], prompt: 'hi', signal }, () => {})
+  assert.match(r.settings().cache ?? '', /forked for 1 agent · 1 ask: 0 reused the prefix, 0 the whole prompt/)
+  await r.answer({ tethers: [TETHER], prompt: 'again', signal }, () => {})
+  assert.match(r.settings().cache ?? '', /forked for 1 agent · 2 asks: 0 reused the prefix, 1 the whole prompt/, 'the same prompt: a hit')
+  await r.answer({ tethers: [{ agent: 9, serial: 2, skills: ['Go'] }], prompt: 'hi', signal }, () => {})
+  assert.match(r.settings().cache ?? '', /forked for 2 agents · 3 asks: 1 reused the prefix, 1 the whole prompt · \d+ pages mapped, \d+ shared · 2 copies on write/)
+  // The prompt itself is unchanged by the paging: the provider still gets the full system prompt.
+  const last = srv.calls.filter((c) => c.body !== null).at(-1)
+  assert.ok(last)
+  assert.equal((last.body as { system: string }).system, systemPrompt([{ agent: 9, serial: 2, skills: ['Go'] }]))
 })

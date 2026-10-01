@@ -5,6 +5,7 @@
  * It lives in the physics worker with the rest of the Rapier world; the camera's head is head.ts, on the page.
  * What breaks if it is removed? The player cannot walk, and nobody is there for the kernel to protect.
  */
+import { AVATAR_GROUPS } from '../02_Define_The_Rules/collision.ts'
 import { RAPIER, type Physics } from './physics.ts'
 import type { PersonBody } from './sanctuary.ts'
 import { PERSON } from './simProtocol.ts'
@@ -44,7 +45,9 @@ export class Avatar {
     const world = physics.world
     this.physics = physics
     this.body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(x, HALF_HEIGHT + RADIUS, z))
-    this.collider = world.createCollider(RAPIER.ColliderDesc.capsule(HALF_HEIGHT, RADIUS), this.body)
+    // The ghost-mode law for a promoted pedestrian too: the capsule's groups (collision.ts AVATAR_GROUPS) drop every
+    // pair with a physical person's segments, so the avatar walks through them and shoves nobody.
+    this.collider = world.createCollider(RAPIER.ColliderDesc.capsule(HALF_HEIGHT, RADIUS).setCollisionGroups(AVATAR_GROUPS), this.body)
     this.controller = world.createCharacterController(SKIN)
     this.controller.setUp({ x: 0, y: 1, z: 0 })
     this.controller.setSlideEnabled(true)
@@ -78,7 +81,7 @@ export class Avatar {
     this.nudgeX = 0
     this.nudgeZ = 0
     // Shielded (a sensor): cars pass through, so they must not block, trap or be shoved by the avatar.
-    this.controller.computeColliderMovement(this.collider, want, this.collider.isSensor() ? PASS_VEHICLES : SOLIDS)
+    this.controller.computeColliderMovement(this.collider, want, this.collider.isSensor() ? PASS_VEHICLES : SOLIDS, AVATAR_GROUPS)
     const d = this.controller.computedMovement(this.moved)
     const t = this.body.translation(this.at)
     const next = this.next

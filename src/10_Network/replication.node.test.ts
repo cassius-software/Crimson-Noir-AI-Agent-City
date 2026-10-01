@@ -8,10 +8,12 @@
  * What breaks if it is removed? The door could stop refusing what the core refuses, or a frame rule could drift.
  */
 import assert from 'node:assert/strict'
+import { createHmac } from 'node:crypto'
 import { test } from 'node:test'
 import { request } from 'node:http'
 import { connect, type Socket } from 'node:net'
-import { LIMITS, PROTOCOL_VERSION, readServerMessage, type ServerMessage } from './replication.ts'
+import { canonical } from '../02_Define_The_Rules/integrity.ts'
+import { LIMITS, openServerFrame, PROTOCOL_VERSION, sealMessage, type ClientMessage, type ServerMessage } from './replication.ts'
 import { acceptKey, closePayload, mintToken, OP, readFrame, startHost, verifyToken, writeFrame, type Host } from './replication.node.ts'
 
 const SECRET = 'test-secret'
@@ -26,29 +28,54 @@ async function until(cond: () => boolean, what: string): Promise<void> {
   assert.ok(cond(), `still waiting: ${what}`)
 }
 
-/** A client over Node's global WebSocket that records every message the host sends, checked by the core. */
+/**
+ * A frame sealed the way the page seals one (replication.ts sealMessage) but with node:crypto: the host may sign with
+ * either, so every frame this file sends proves the two agree bit for bit. A join is sealed under the token it carries.
+ */
+function sealWithNode(msg: unknown, n: number, key: string): string {
+  const body: unknown = JSON.parse(JSON.stringify(msg))
+  const mac = createHmac('sha256', key).update(canonical({ n, body }), 'utf8').digest('hex')
+  const wire = JSON.stringify({ n, body, mac })
+  assert.equal(wire, sealMessage(body as ClientMessage, n, key), 'node:crypto and integrity.ts seal alike')
+  return wire
+}
+
+/** A client over Node's global WebSocket that records every message the host sends, opened and checked by the core. */
 interface Client {
   ws: WebSocket
+  /** The session token this client joins with and reads the host under. */
+  token: string
   got: ServerMessage[]
   closed: Promise<{ code: number; reason: string }>
+  /** `msg` sealed as the next envelope (a string goes as it is). */
+  seal(msg: unknown): string
   send(msg: unknown): void
   /** The next message of kind `t` after `from` entries, within 3 s. */
   next<T extends ServerMessage['t']>(t: T, from?: number): Promise<Extract<ServerMessage, { t: T }>>
 }
 
-async function open(host: Host): Promise<Client> {
+async function open(host: Host, subject = 'tester'): Promise<Client> {
   const ws = new WebSocket(host.url)
+  const token = host.token(subject)
   const got: ServerMessage[] = []
+  let received = 0
+  let sent = 0
   const closed = new Promise<{ code: number; reason: string }>((r) => { ws.onclose = (ev) => r({ code: ev.code, reason: ev.reason }) })
   ws.onmessage = (ev) => {
-    const read = readServerMessage(JSON.parse(String(ev.data)))
+    const read = openServerFrame(String(ev.data), token, received)
     assert.ok(read.ok, `the host sent something the core refuses: ${String(ev.data)}`)
+    received = read.n
     got.push(read.msg)
   }
   await new Promise<void>((r, j) => { ws.onopen = () => r(); ws.onerror = () => j(new Error('socket error')) })
+  const seal = (msg: unknown): string => {
+    if (typeof msg === 'string') return msg
+    const m = msg as { t?: unknown; token?: unknown }
+    return sealWithNode(msg, ++sent, m.t === 'join' && typeof m.token === 'string' ? m.token : token)
+  }
   const c: Client = {
-    ws, got, closed,
-    send: (msg) => ws.send(typeof msg === 'string' ? msg : JSON.stringify(msg)),
+    ws, token, got, closed, seal,
+    send: (msg) => ws.send(seal(msg)),
     next: async (t, from = 0) => {
       let found: ServerMessage | undefined
       await until(() => { found = got.slice(from).find((m) => m.t === t); return found !== undefined }, `a '${t}' message`)
@@ -57,8 +84,6 @@ async function open(host: Host): Promise<Client> {
   }
   return c
 }
-
-const token = (host: Host, subject = 'tester'): string => host.token(subject)
 
 // ---------------------------------------------------------------- tokens and frames
 
@@ -126,9 +151,9 @@ test('frames: masked client frames of every length class are read, unmasked ones
 test('a good token joins and is welcomed; inputs move the pose every snapshot carries; a second peer sees it, chat and pings are relayed; leaving is announced', async () => {
   const host = await startHost({ secret: SECRET, tickHz: 50 })
   try {
-    const a = await open(host)
+    const a = await open(host, 'Ada')
     await until(() => host.connections() === 1, 'the host to see the socket')
-    a.send({ t: 'join', v: PROTOCOL_VERSION, token: token(host, 'Ada'), name: 'Ada' })
+    a.send({ t: 'join', v: PROTOCOL_VERSION, token: a.token, name: 'Ada' })
     const welcome = await a.next('welcome')
     assert.equal(welcome.id, 1)
     assert.equal(welcome.tickHz, 50)
@@ -146,8 +171,8 @@ test('a good token joins and is welcomed; inputs move the pose every snapshot ca
 
     assert.equal((await a.next('joined')).player.name, 'Ada', 'a peer hears its own arrival, in room order')
     const mark = a.got.length
-    const b = await open(host)
-    b.send({ t: 'join', v: PROTOCOL_VERSION, token: token(host, 'Bob'), name: 'Bob' })
+    const b = await open(host, 'Bob')
+    b.send({ t: 'join', v: PROTOCOL_VERSION, token: b.token, name: 'Bob' })
     const wb = await b.next('welcome')
     assert.equal(wb.id, 2)
     assert.deepEqual(wb.players.map((p) => p.name), ['Ada'])
@@ -181,7 +206,7 @@ test('a good token joins and is welcomed; inputs move the pose every snapshot ca
   }
 })
 
-test('a bad token is refused silently; malformed, binary and over-rate frames count up to a kick with close code 4008', async () => {
+test('a bad token is refused silently; malformed, binary, replayed, forged and over-rate frames count up to a kick with close code 4008', async () => {
   const host = await startHost({ secret: SECRET, tickHz: 50 })
   try {
     const bad = await open(host)
@@ -190,18 +215,25 @@ test('a bad token is refused silently; malformed, binary and over-rate frames co
     bad.send({ t: 'join', v: PROTOCOL_VERSION, token: mintToken(SECRET, 'x', Date.now() - 1), name: 'Ada' })
     await until(() => host.room.peers.get(1)?.refusals === 2, 'the expired token refused')
     assert.equal(bad.got.length, 0, 'no welcome, no word')
-    bad.send({ t: 'join', v: PROTOCOL_VERSION, token: token(host), name: 'Ada' })
+    bad.send({ t: 'join', v: PROTOCOL_VERSION, token: bad.token, name: 'Ada' })
     await bad.next('welcome')
     const crafted: unknown[] = [
       '{not json',
-      { t: 'step' },
       { t: 'input', seq: 1, ack: 0, x: NaN, z: 0, heading: 0 },
-      { t: 'input', seq: 1, ack: 0, x: '1', z: 0, heading: 0 },
     ]
     for (const m of crafted) bad.send(m)
     bad.ws.send(new Uint8Array([1, 2, 3]))
     await until(() => host.room.peers.get(1)?.refusals === 2 + crafted.length + 1, 'every crafted frame refused')
-    assert.equal(2 + crafted.length + 1, LIMITS.refusalsBeforeKick - 1)
+    // A genuine input is applied once; the very same frame again is a replay, and one sealed under another token a forgery: refused, applying nothing.
+    const genuine = bad.seal({ t: 'input', seq: 1, ack: 0, x: 1, z: 0, heading: 0 })
+    bad.send(genuine)
+    await until(() => host.room.peers.get(1)?.seq === 1, 'the genuine input applied')
+    bad.send(genuine)
+    bad.send(sealMessage({ t: 'input', seq: 2, ack: 0, x: 2, z: 0, heading: 0 }, 99, 'another token'))
+    await until(() => host.room.peers.get(1)?.refusals === 2 + crafted.length + 1 + 2, 'the replay and the forgery refused')
+    assert.equal(host.room.peers.get(1)?.seq, 1, 'nothing applied twice')
+    assert.equal(host.room.peers.get(1)?.vx, 1, 'the forged velocity never landed')
+    assert.equal(2 + crafted.length + 1 + 2, LIMITS.refusalsBeforeKick - 1)
     assert.equal(host.room.peers.get(1)?.joined, true, 'still in the room, one short of the limit')
     bad.send({ t: 'chat', seq: 1, text: 'you idiot' })
     const closed = await bad.closed
@@ -211,7 +243,7 @@ test('a bad token is refused silently; malformed, binary and over-rate frames co
 
     // A flood of inputs past the burst is refused by the rate limit until the peer is removed.
     const flood = await open(host)
-    flood.send({ t: 'join', v: PROTOCOL_VERSION, token: token(host), name: 'Flood' })
+    flood.send({ t: 'join', v: PROTOCOL_VERSION, token: flood.token, name: 'Flood' })
     await flood.next('welcome')
     for (let seq = 1; seq <= LIMITS.inputBurst + LIMITS.refusalsBeforeKick; seq++) flood.send({ t: 'input', seq, ack: 0, x: 0, z: 0, heading: 0 })
     assert.equal((await flood.closed).code, 4008)
@@ -295,7 +327,7 @@ test('a plain HTTP request is told to upgrade; a bad upgrade is refused; the hos
   assert.match(badUpgrade, /^HTTP\/1\.1 400 /)
   assert.equal(host.connections(), 0)
   const a = await open(host)
-  a.send({ t: 'join', v: PROTOCOL_VERSION, token: token(host), name: 'Ada' })
+  a.send({ t: 'join', v: PROTOCOL_VERSION, token: a.token, name: 'Ada' })
   await a.next('welcome')
   await host.close()
   const closed = await a.closed

@@ -8,7 +8,10 @@
  * (every avatar exactly, the crowd's newest readings aged for how stale they are), vetted controls, AI drivers,
  * the fixed substeps (Sanctuary, avatars, wheels), then the audit, synchronously after the last substep and in
  * the same realm (including the crowd's own Ring-0 flags), then the crowd's next step, and only then packs the
- * poses and the pedestrians' render state the page may draw. Recruitment is decided here too: a request is
+ * poses and the pedestrians' render state the page may draw. The ragdoll balance machine runs here as well
+ * (ragdollRealm.ts): on the realm's own crowd readout a shove, a kerb trip or a slip near the operator promotes a
+ * pedestrian to a Rapier rig whose every shape is a Sanctuary ward and an audit person, handed back on recovery;
+ * the rig stream leaves with the poses. Recruitment is decided here too: a request is
  * checked against this realm's own readings of the crowd (earshot, the sidewalk, the skill), the person is asked
  * over through the crowd's summon slots, becomes Active (tethered: following the operator) on arrival, and is released
  * when the operator walks off, drives off or dismisses them. Nothing it returns is a reference into it. It
@@ -25,6 +28,7 @@ import { Avatar } from './player.ts'
 import { Sanctuary, type Nudge } from './sanctuary.ts'
 import { Fleet, type Person, type Vehicle } from './vehicles.ts'
 import { TrackFleet } from './trackFleet.ts'
+import { RagdollRealm } from './ragdollRealm.ts'
 import { buildTrackNetwork } from '../06_Make_Decisions/tracks.ts'
 import { AGENTS_RANGE, MAX_CARS, PEDESTRIAN_MAX_SPEED, type CrowdSensor, type Summon } from '../03_Spawn_Agents/crowdSensor.ts'
 import {
@@ -33,7 +37,7 @@ import {
 } from '../03_Spawn_Agents/skills.ts'
 import type { Intent } from '../02_Define_The_Rules/laws.ts'
 import {
-  ENTER_RANGE, MAX_PLAYERS, RUN, type AvatarState, type DriveControls, type FootControls, type PlayerControls, type RecruitView, type SimCommand,
+  ENTER_RANGE, MAX_PLAYERS, RIG_SLOTS, RUN, type AvatarState, type DriveControls, type FootControls, type PlayerControls, type RecruitView, type SimCommand,
   type SimEvent, type SimInit, type SimMeta, type StepState,
 } from './simProtocol.ts'
 
@@ -133,6 +137,8 @@ export class SimCore {
   /** Every player's body, index = player: Sanctuary ward k and audit person k. */
   readonly #avatars: readonly Avatar[]
   readonly #sanctuary: Sanctuary
+  /** The ragdoll balance machine over the pedestrians near the operator (ragdoll on, in the city, with a crowd), or null. */
+  readonly #realm: RagdollRealm | null
   /** Centred on the city, or on a region with a slab that holds it (and a margin). */
   readonly #auditor: Ring0Auditor
   readonly #debug: boolean
@@ -151,13 +157,13 @@ export class SimCore {
   readonly #noHazards: Float32Array
   #preVel: Float32Array
   readonly #auditVehicles: AuditVehicle[] = []
-  /** One audit person per avatar, id = player. */
+  /** One audit person per avatar, id = player; then one per rig shape (ragdollRealm.ts PERSON_ID_BASE and up). */
   readonly #auditPeople: AuditPerson[]
   /** Per player: the walking velocity asked for this step, clamped. */
   readonly #wish: { x: number; z: number }[]
   /** Per player: the way their body faces (the page's view heading); player 0's turns that figure in the crowd. */
   readonly #bodyHeading: number[]
-  /** Per player: everyone the fleet sees this step (scratch for setPeople). */
+  /** Everyone the fleet sees this step (scratch for setPeople): per player, then one per rig. */
   readonly #people: Person[]
   #crowdAgeMs: number | null = null
   /** Number of the last crowd step dispatched; every readback echoes the number of the step it measured. */
@@ -203,6 +209,8 @@ export class SimCore {
     this.#avatars = Object.freeze(spawns.map((p) => new Avatar(physics, p.x, p.z)))
     this.#sanctuary = new Sanctuary(physics.world)
     for (const a of this.#avatars) this.#sanctuary.register(a.person)
+    // The ragdoll realm registers its wards after the avatars (ward k is player k; a rig's come later, by index).
+    this.#realm = o.ragdoll === true && !r && crowd ? new RagdollRealm(physics, this.#sanctuary, o.seed, crowd.agentCount) : null
     const players = this.#avatars.length
     this.#driving = this.#avatars.map(() => null)
     this.#wish = this.#avatars.map(() => ({ x: 0, z: 0 }))
@@ -227,6 +235,7 @@ export class SimCore {
       debug: this.#debug,
       craft: this.#craft?.count ?? 0,
       players,
+      rigSlots: this.#realm ? RIG_SLOTS : 0,
     })
     Object.freeze(this)
   }
@@ -300,11 +309,14 @@ export class SimCore {
    * state. After a panic it changes nothing and reports the frozen state. `craft` is the buffer the scheduled
    * craft are packed into (meta.craft slices; the host sizes it): it is returned filled from a running realm with
    * tracks on, and null otherwise (a halted realm's clock has stopped, and a buffer that halted it never leaves).
+   * `rigs` is the buffer the promoted pedestrians' rigs are packed into (meta.rigSlots slices): returned filled from
+   * a running realm with the ragdoll on, after the audit has checked every shape, and null otherwise.
    */
-  step(input: StepInput, poses: Float32Array, craft: Float32Array | null = null): Omit<StepState, 't' | 'id'> {
+  step(input: StepInput, poses: Float32Array, craft: Float32Array | null = null, rigs: Float32Array | null = null): Omit<StepState, 't' | 'id'> {
     const t0 = now()
     let haptics: Haptics = { trigger: 0, limited: false, thump: false }
     let craftOut: Float32Array | null = null
+    let rigsOut: Float32Array | null = null
     // A crowd that can no longer see anyone leaves the Bouncer blind to pedestrians: that is a broken kernel.
     if (this.#panic === null && this.#crowd?.lost) this.halt(`Sensing Failure: pedestrian sensing stopped (${this.#crowd.lost}).`)
     if (this.#panic === null) {
@@ -331,6 +343,8 @@ export class SimCore {
         people[k].z = avatars[k].z
         people[k].present = driving[k] === null && !blind
       }
+      // And every promoted pedestrian's rig (its pelvis), exactly, as long as it stands.
+      people.length = this.#realm ? this.#realm.peopleInto(people, avatars.length, !blind) : avatars.length
       fleet.setPeople(people)
       if (blind) fleet.setPersonHazards(this.#noHazards, this.#noHazards)
       else this.#feedHazards()
@@ -352,6 +366,13 @@ export class SimCore {
       }
 
       fleet.think(dt, signalTime)
+      // The ragdoll realm reads this realm's own crowd readout: a shove, a kerb trip or a slip near the operator (on
+      // foot or at the wheel) is offered to the pool; the next substep builds the rig. Never a vehicle.
+      if (this.#realm) {
+        const v = driving[0]
+        const op = v !== null ? fleet.position(v, this.#pos) : { x: avatars[0].x, z: avatars[0].z }
+        this.#realm.observe(this.#crowd?.readout ?? null, op.x, op.z, fleet.footprints())
+      }
       // Pre-step velocities for the audit's IMPACT test (a contact resolves inside the step it happens in).
       this.#capturePreStep()
       // A region streams its walls around every player (the car driven, or the avatar): built before this step solves.
@@ -366,8 +387,10 @@ export class SimCore {
       }
       const wish = this.#wish
       this.#physics.step(dt, (h) => {
-        // Sanctuary first: a person a vehicle is about to reach becomes a sensor before this step solves. Its nudges
-        // are index-aligned with the wards, registered in player order.
+        // The rigs first: the pool steps, rigs are removed and built, so the guard sweeps every shape as it now is.
+        this.#realm?.tend(h)
+        // Sanctuary next: a person a vehicle is about to reach becomes a sensor before this step solves. Its nudges
+        // are index-aligned with the wards, registered in player order, then the rigs' shapes.
         const nudges = this.#sanctuaryOn ? this.#sanctuary.guard(fleet.footprints(), h) : null
         for (let k = 0; k < avatars.length; k++) {
           if (driving[k] !== null) continue
@@ -375,6 +398,8 @@ export class SimCore {
           avatars[k].nudge(n.dx, n.dz)
           avatars[k].move(wish[k].x, wish[k].z, h)
         }
+        // The rigs' gains, shields and nudges, then their powered joints.
+        this.#realm?.drive(h, nudges)
         fleet.updateControllers(h)
         // The odometer: how far each car can have driven since any crowd reading (the speed at the substep's
         // start never undercounts a braking car).
@@ -388,6 +413,8 @@ export class SimCore {
       if (this.#panic === null) {
         this.#tendRecruits()
         this.#stepCrowd(dt)
+        // The rigs as the audit checked them: packed only now, from a realm still running.
+        if (this.#realm && rigs) rigsOut = this.#realm.write(rigs)
       }
     }
     this.#fleet.writePoses(poses)
@@ -418,6 +445,7 @@ export class SimCore {
       // arrive with it), so a frame whose flags halted the realm never leaves it.
       crowdFrame: this.#crowd && this.#panic === null ? this.#crowd.takeFrame() : null,
       craft: this.#panic === null ? craftOut : null,
+      rigs: this.#panic === null ? rigsOut : null,
       recruits: this.#recruits.map((r): RecruitView => ({
         agent: r.agent, serial: r.serial, skill: r.skill, state: r.arrivedAt >= 0 ? 'Active' : 'Interviewing', arrived: r.arrivedAt >= 0,
         skills: [...r.skills], distance: r.distance, x: r.x, z: r.z,
@@ -903,7 +931,7 @@ export class SimCore {
     }
     list.length = vehicles.length
     // Every avatar is a person, id = player. Inside a car the collider is disabled; on foot it is solid unless the
-    // Sanctuary shields it (ward k is player k).
+    // Sanctuary shields it (ward k is player k). Then every shape of every rig, each a person with an id of its own.
     const people = this.#auditPeople, avatars = this.#avatars
     for (let k = 0; k < avatars.length; k++) {
       const p = people[k]
@@ -912,6 +940,7 @@ export class SimCore {
       p.solid = this.#driving[k] === null && !this.#sanctuary.isSensor(k)
       p.radius = avatars[k].person.radius
     }
+    people.length = this.#realm ? this.#realm.auditInto(people, avatars.length) : avatars.length
     const result = this.#auditor.run(list, this.#auditPeople, this.#simTime < this.#blindUntil)
     for (let i = 0; i < result.capped.length; i++) fleet.clampSpeed(vehicles[result.capped[i]], RING0.maxVelocity)
     if (gpuFlags & 1) result.violations.push({ code: 'NON_FINITE', subject: 'pedestrians', detail: 'a GPU pedestrian state was non-finite' })

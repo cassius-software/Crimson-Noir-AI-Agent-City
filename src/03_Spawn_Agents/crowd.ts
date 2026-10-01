@@ -214,6 +214,29 @@ fn agentXform(v: vec3f, w: f32, rig: vec3f, agent: vec4f, motion: vec4f, pose: v
 const xform = (...args: (Node | number)[]) => agentXform(...args) as unknown as V3
 
 const hex = (list: number[]) => list.map((c) => new Color(c))
+/**
+ * three's TSL `hash` (nodes/math/Hash.js): PCG on the integer part of the seed, as the body material's h(k) runs it
+ * on the GPU with seed = agent + k · 13.37 in f32. On the CPU it gives a promoted person's rig (07_Execute_Actions/
+ * rigView.ts) the colour the crowd gives their figure.
+ */
+function tslHash(seed: number): number {
+  const state = (Math.imul(Math.trunc(seed) >>> 0, 747796405) + 2891336453) >>> 0
+  const word = Math.imul(((state >>> ((state >>> 28) + 4)) ^ state) >>> 0, 277803737) >>> 0
+  return (((word >>> 22) ^ word) >>> 0) / 2 ** 32
+}
+/** The body variant of an agent whose look is not worn (crowd.wgsl cull: the index's). */
+export const variantOf = (agent: number): number => ((agent % VARIANTS) + VARIANTS) % VARIANTS
+/**
+ * The colour of the top (the suit, blazer or top) the crowd's material gives agent `agent`'s own body, linear RGB
+ * 0..1, as the material picks it (h(3) of the variant's list; a worn look may differ: look.ts).
+ */
+export function attireColour(agent: number): [number, number, number] {
+  const h = (k: number): number => tslHash(Math.fround(agent + Math.fround(k * 13.37)))
+  const variant = variantOf(agent)
+  const list = variant === 0 ? PALETTE.suits : variant === 1 ? PALETTE.blazers : variant === 2 ? PALETTE.womenBlazers : PALETTE.womenTops
+  const c = list[Math.min(list.length - 1, Math.floor(Math.fround(h(3) * (list.length - 0.001))))]
+  return [c.r, c.g, c.b]
+}
 const PALETTE = {
   skin: hex([0xf3d2b8, 0xe8b894, 0xd29f79, 0xb97f5a, 0x9a6444, 0x7a4a31, 0x5c3522, 0xe5c0a0]),
   hair: hex([0x1b1512, 0x2a1d14, 0x3b2618, 0x5e3c24, 0x7a3a1f, 0xb8935a, 0x8a6a48, 0x9c9a96]),

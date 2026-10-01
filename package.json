@@ -10,6 +10,8 @@
     "build": "tsc -b && vite build",
     "build:pilot": "tsc -b && vite build --mode pilot",
     "lint": "oxlint",
+    "native:wasm": "node tools/native/build-wasm.mjs",
+    "native:test": "cargo test --manifest-path native/routing/Cargo.toml && cargo test --manifest-path native/kv-pager/Cargo.toml && cargo test --manifest-path native/kv-pager-wasm/Cargo.toml",
     "preview": "vite preview",
     "serve:net": "node src/10_Network/replication.node.ts",
     "test": "node --test \"src/**/*.test.ts\""

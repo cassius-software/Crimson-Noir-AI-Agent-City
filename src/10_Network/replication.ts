@@ -10,16 +10,20 @@
  * peer has token buckets (inputs per second, chat per minute, pings per second), every refusal is counted and a peer
  * that keeps earning them is removed. The 14A screen of 02_Define_The_Rules/conduct.ts reads every player name and
  * every chat line: an inadmissible one is dropped silently and counted, so a griefer gets no reaction and no stage.
+ * Every frame on the wire is sealed (02_Define_The_Rules/integrity.ts): an envelope number that must rise, and an
+ * HMAC-SHA256 under the session token over the canonical message, checked on both sides before the message is read
+ * any further, so a forged, altered or replayed frame is refused and counted like any other malformed one.
  * Pure: no socket, no clock of its own (the caller passes `now`), no randomness, no I/O.
  * What breaks if it is removed? The client and the host have no agreed language, nothing vets what a peer says, and a
  * remote player could become a body in the realm.
  */
 import { screen } from '../02_Define_The_Rules/conduct.ts'
+import { canonical, hmacSha256, isDigest, sameDigest } from '../02_Define_The_Rules/integrity.ts'
 import { RUN } from '../07_Execute_Actions/simProtocol.ts'
 import { PING_KINDS, type PingKind } from '../08_Swarm/ping.ts'
 
-/** The protocol's version; a join naming another is refused. */
-export const PROTOCOL_VERSION = 1
+/** The protocol's version; a join naming another is refused. 2: every frame is sealed (sealMessage). */
+export const PROTOCOL_VERSION = 2
 
 /** Every bound the validators and the room enforce, frozen. */
 export const LIMITS = Object.freeze({
@@ -260,8 +264,93 @@ export function decode<T>(wire: string, read: (u: unknown) => Read<T>): Read<T> 
 export const decodeClientMessage = (wire: string): Read<ClientMessage> => decode(wire, readClientMessage)
 export const decodeServerMessage = (wire: string): Read<ServerMessage> => decode(wire, readServerMessage)
 
-/** A message for the wire. */
+/** A message as JSON, unsealed (the validators' tests; the wire carries sealMessage). */
 export const encode = (msg: ClientMessage | ServerMessage): string => JSON.stringify(msg)
+
+// ---------------------------------------------------------------------------------------------------
+// Sealed frames: what the wire carries (02_Define_The_Rules/integrity.ts)
+
+/**
+ * What rides the wire, both ways: the envelope number `n` (1, 2, 3… per direction per session: a frame whose number
+ * does not rise is a replay and is refused), the message as plain data, and `mac`, the HMAC-SHA256 under the session
+ * token of canonical({ n, body }), so neither the number nor a field of the body can be altered. The seal is checked
+ * before the message is applied, and compared in constant time.
+ */
+export interface SealedFrame { n: number; body: unknown; mac: string }
+
+/** A frame opened: the message, and the envelope number it came as. */
+export type Opened<T> = { ok: true; msg: T; n: number } | { ok: false; reason: string }
+
+/** `msg` sealed as envelope `n` under `key`, for the wire. */
+export function sealMessage(msg: ClientMessage | ServerMessage, n: number, key: string): string {
+  if (!count(n)) throw new RangeError(`sealMessage: n ${String(n)}`)
+  return JSON.stringify({ n, body: msg, mac: hmacSha256(key, canonical({ n, body: msg })) })
+}
+
+/** The wire as an envelope: bounded text, JSON, the shape, before anything in it is trusted. */
+export function readEnvelope(wire: unknown): Read<SealedFrame> {
+  if (typeof wire !== 'string') return refusal('not text')
+  if (wire.length > LIMITS.message) return refusal(`message longer than ${LIMITS.message}`)
+  let u: unknown
+  try {
+    u = JSON.parse(wire)
+  } catch {
+    return refusal('not JSON')
+  }
+  if (!isRecord(u)) return refusal('not an envelope')
+  if (!count(u.n)) return refusal('envelope: n')
+  if (!isDigest(u.mac)) return refusal('envelope: mac')
+  if (!isRecord(u.body)) return refusal('envelope: body')
+  return { ok: true, msg: Object.freeze({ n: u.n, body: u.body, mac: u.mac }) }
+}
+
+/**
+ * Why `env` is not the genuine next frame under `key` after envelope `after`: a seal that is not the HMAC of its own
+ * number and body (forged, altered, or under another token), or a number that does not rise (a replay). Null when it
+ * is. The seal is checked first, so a forgery is never told apart from a replay by the reason it earns.
+ */
+export function sealFault(env: SealedFrame, key: string, after: number): string | null {
+  let want: string
+  try {
+    want = hmacSha256(key, canonical({ n: env.n, body: env.body }))
+  } catch {
+    // JSON that is not plain data (1e999 parses as Infinity): nothing to seal, nothing to accept.
+    return 'envelope: body'
+  }
+  if (!sameDigest(env.mac, want)) return 'envelope: bad seal'
+  if (env.n <= after) return 'envelope: replayed'
+  return null
+}
+
+/**
+ * A client's frame opened for `peer`: the envelope, then the message's shape, then the seal under the peer's session
+ * token (before the peer has joined, only a join is read, under the token it carries: the room then verifies that
+ * token itself), then the envelope number, which must rise. A good frame moves `peer.received`; a refused one moves
+ * nothing, so a forgery or a replay never advances a thing.
+ */
+export function openClientFrame(peer: Peer, wire: unknown): Read<ClientMessage> {
+  const env = readEnvelope(wire)
+  if (!env.ok) return env
+  const read = readClientMessage(env.msg.body)
+  if (!read.ok) return read
+  const key = peer.joined ? peer.key : read.msg.t === 'join' ? read.msg.token : ''
+  if (key === '') return refusal(`${read.msg.t} before join`)
+  const fault = sealFault(env.msg, key, peer.received)
+  if (fault !== null) return refusal(fault)
+  peer.received = env.msg.n
+  return read
+}
+
+/** The host's frame opened on the page: the envelope, the message's shape, the seal under the session token, a number above `after`. */
+export function openServerFrame(wire: unknown, key: string, after: number): Opened<ServerMessage> {
+  const env = readEnvelope(wire)
+  if (!env.ok) return env
+  const read = readServerMessage(env.msg.body)
+  if (!read.ok) return read
+  const fault = sealFault(env.msg, key, after)
+  if (fault !== null) return { ok: false, reason: fault }
+  return { ok: true, msg: read.msg, n: env.msg.n }
+}
 
 // ---------------------------------------------------------------------------------------------------
 // The 14A screen on what peers say
@@ -332,6 +421,10 @@ export interface Peer {
   ack: number
   refusals: number
   buckets: PeerBuckets
+  /** The session token the peer joined with: the key its frames are sealed under both ways ('' until it has joined). */
+  key: string
+  /** The newest envelope number received from the peer (openClientFrame): the next must be above it. */
+  received: number
   /** When the socket arrived and when the peer last said anything well-formed, ms. */
   arrived: number
   seen: number
@@ -367,7 +460,10 @@ export const createRoom = (tickHz: number = LIMITS.tickHz): Room => ({ tick: 0, 
 /** A socket arrived: a new, unjoined peer, or null when the room is full. */
 export function admit(room: Room, now: number): Peer | null {
   if (room.peers.size >= LIMITS.peers) return null
-  const peer: Peer = { id: room.next++, name: '', joined: false, seq: 0, said: 0, ack: 0, refusals: 0, buckets: peerBuckets(now), arrived: now, seen: now, x: 0, y: 0, z: 0, heading: 0, vx: 0, vz: 0 }
+  const peer: Peer = {
+    id: room.next++, name: '', joined: false, seq: 0, said: 0, ack: 0, refusals: 0, buckets: peerBuckets(now), key: '', received: 0,
+    arrived: now, seen: now, x: 0, y: 0, z: 0, heading: 0, vx: 0, vz: 0,
+  }
   room.peers.set(peer.id, peer)
   return peer
 }
@@ -400,6 +496,7 @@ export function handle(room: Room, peer: Peer, msg: ClientMessage, now: number, 
     if (name === null) return refuse(peer, 'join: name')
     peer.joined = true
     peer.name = name
+    peer.key = msg.token
     peer.seen = now
     const me = pose(peer)
     const others = poses(room).filter((p) => p.id !== peer.id)
