@@ -36,6 +36,28 @@ const wrap = (a: number) => a - TAU * Math.floor((a + Math.PI) / TAU)
 
 export interface HeadPose { x: number; y: number; z: number; yaw: number; pitch: number }
 
+/** A ray from the eye along the head forward: origin (ox, oy, oz) and unit direction (dx, dy, dz), world space. */
+export interface AimRay { ox: number; oy: number; oz: number; dx: number; dy: number; dz: number }
+
+/**
+ * The look ray of a head pose, written into `out`: origin = the eye, direction = the head forward the camera is
+ * posed with, (−sin yaw·cos pitch, sin pitch, −cos yaw·cos pitch), so a ray and the view can never disagree.
+ * A non-finite angle gives the direction (0, 0, −1); a non-finite eye coordinate leaves the origin as it was.
+ * Allocation-free.
+ */
+export function aimRay(pose: HeadPose, out: AimRay): AimRay {
+  if (Number.isFinite(pose.x) && Number.isFinite(pose.y) && Number.isFinite(pose.z)) { out.ox = pose.x; out.oy = pose.y; out.oz = pose.z }
+  if (Number.isFinite(pose.yaw) && Number.isFinite(pose.pitch)) {
+    const cp = Math.cos(pose.pitch)
+    out.dx = -Math.sin(pose.yaw) * cp
+    out.dy = Math.sin(pose.pitch)
+    out.dz = -Math.cos(pose.yaw) * cp
+  } else {
+    out.dx = 0; out.dy = 0; out.dz = -1
+  }
+  return out
+}
+
 /**
  * The camera is the avatar's head: world eye position plus yaw and pitch, applied to the camera as
  * (pitch, yaw, 0, 'YXZ') — head forward = (−sin yaw·cos pitch, sin pitch, −cos yaw·cos pitch). No roll and

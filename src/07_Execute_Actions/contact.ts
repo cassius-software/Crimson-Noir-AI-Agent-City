@@ -3,6 +3,8 @@
  * the user's body (the avatar on foot, the driven car's chassis at the wheel) meets a lamp, a tree, a signal pole, a
  * pedestrian or (on foot) a car, the frame washes into code for a moment (ghost.ts ghostComposite's contact iris).
  * This file decides when: an index of the poles, the nearest person and car, and the pulse that shapes the wipe.
+ * It also names which ones: the identity scans (PoleIndex.within/withinBox, peopleWithin/peopleWithinBox,
+ * carsWithin) list every pole, person and car the body is inside, for the code dissolve (dissolve.ts).
  * - View-only, like ghost view: it reads what the page already holds (the city's furniture, the worker's audited
  *   state, the crowd's render frame) and writes two uniforms. Nothing reaches the physics realm.
  * - Pure and allocation-free per frame, so it is tested here without a GPU.
@@ -104,6 +106,52 @@ export class PoleIndex {
     }
     return best
   }
+
+  /**
+   * Which poles a disc of radius `pad` around (x, z) is inside (gap below 0, the test `gap` makes): their indices into
+   * `out`, at most out.length, returning how many. Allocation-free; nothing for a point that is not a number.
+   */
+  within(x: number, z: number, pad: number, out: Int32Array): number {
+    if (!Number.isFinite(x) || !Number.isFinite(z) || out.length === 0) return 0
+    const cx = Math.floor(x / CONTACT.cell), cz = Math.floor(z / CONTACT.cell)
+    let n = 0
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        const list = this.cells.get(PoleIndex.key(cx + dx, cz + dz))
+        if (!list) continue
+        for (const i of list) {
+          if (Math.hypot(this.x[i] - x, this.z[i] - z) - this.r[i] - pad < 0) {
+            out[n++] = i
+            if (n === out.length) return n
+          }
+        }
+      }
+    }
+    return n
+  }
+
+  /** As `within`, for a car's chassis footprint (the test `gapToBox` makes): the poles standing in it. */
+  withinBox(cx: number, cz: number, heading: number, halfLength: number, halfWidth: number, out: Int32Array): number {
+    if (!Number.isFinite(cx) || !Number.isFinite(cz) || !Number.isFinite(heading) || out.length === 0) return 0
+    // Every pole in the footprint lies within its reach of the centre: that many cells each way covers them.
+    const span = Math.ceil(Math.hypot(halfLength, halfWidth) / CONTACT.cell)
+    if (!Number.isFinite(span) || span > 8) return 0
+    const ix = Math.floor(cx / CONTACT.cell), iz = Math.floor(cz / CONTACT.cell)
+    let n = 0
+    for (let dx = -span; dx <= span; dx++) {
+      for (let dz = -span; dz <= span; dz++) {
+        const list = this.cells.get(PoleIndex.key(ix + dx, iz + dz))
+        if (!list) continue
+        for (const i of list) {
+          if (boxGap(this.x[i] - cx, this.z[i] - cz, heading, halfLength, halfWidth) - this.r[i] < 0) {
+            out[n++] = i
+            if (n === out.length) return n
+          }
+        }
+      }
+    }
+    return n
+  }
 }
 
 /**
@@ -167,6 +215,68 @@ export function carGap(poses: Float32Array, suv: readonly boolean[], x: number, 
     if (g < best) best = g
   }
   return best
+}
+
+/**
+ * Which pedestrians a disc of radius `pad` around (x, z) is inside (the test `personGap` makes, per person): their
+ * rows into `out`, at most out.length, returning how many. Row 0 (the avatar) and hidden rows are never reported.
+ * Allocation-free; nothing without a frame or for a point that is not a number.
+ */
+export function peopleWithin(frame: Float32Array | null, agents: number, x: number, z: number, pad: number, out: Int32Array): number {
+  if (!frame || !Number.isFinite(x) || !Number.isFinite(z) || out.length === 0) return 0
+  const n = Math.min(agents, Math.floor(frame.length / 4))
+  const reach = PERSON.radius + pad
+  const reach2 = reach * reach
+  let found = 0
+  for (let i = 1; i < n; i++) {
+    const o = 4 * i
+    if (!(frame[o + 1] > HIDDEN_Y)) continue
+    const dx = frame[o] - x, dz = frame[o + 2] - z
+    if (dx * dx + dz * dz < reach2) {
+      out[found++] = i
+      if (found === out.length) break
+    }
+  }
+  return found
+}
+
+/** As `peopleWithin`, for a car's chassis footprint (the test `personGapToBox` makes): the people standing in it. */
+export function peopleWithinBox(frame: Float32Array | null, agents: number, cx: number, cz: number, heading: number, halfLength: number, halfWidth: number, out: Int32Array): number {
+  if (!frame || !Number.isFinite(cx) || !Number.isFinite(cz) || !Number.isFinite(heading) || out.length === 0) return 0
+  const n = Math.min(agents, Math.floor(frame.length / 4))
+  const near = halfLength + halfWidth + PERSON.radius + 1
+  let found = 0
+  for (let i = 1; i < n; i++) {
+    const o = 4 * i
+    if (!(frame[o + 1] > HIDDEN_Y)) continue
+    const rx = frame[o] - cx, rz = frame[o + 2] - cz
+    if (Math.abs(rx) > near || Math.abs(rz) > near) continue
+    if (boxGap(rx, rz, heading, halfLength, halfWidth) - PERSON.radius < 0) {
+      out[found++] = i
+      if (found === out.length) break
+    }
+  }
+  return found
+}
+
+/**
+ * Which cars' chassis footprints a disc (x, z, pad) is inside (the test `carGap` makes, per car): their indices into
+ * `out`, at most out.length, returning how many; `skip` (the driven car) is never reported. Allocation-free.
+ */
+export function carsWithin(poses: Float32Array, suv: readonly boolean[], x: number, z: number, pad: number, out: Int32Array, skip = -1): number {
+  if (!Number.isFinite(x) || !Number.isFinite(z) || out.length === 0) return 0
+  let found = 0
+  for (let i = 0; i < suv.length; i++) {
+    if (i === skip) continue
+    const o = i * POSE.stride
+    if (o + POSE.stride > poses.length) break
+    const c = chassisBox(suv[i])
+    if (boxGap(x - poses[o + POSE.x], z - poses[o + POSE.z], poses[o + POSE.heading], c.hx, c.hz) - pad < 0) {
+      out[found++] = i
+      if (found === out.length) break
+    }
+  }
+  return found
 }
 
 /** What the user's body is touching this frame: the kind that goes deepest in (most negative gap), or none. */

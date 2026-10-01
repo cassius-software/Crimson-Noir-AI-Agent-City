@@ -698,11 +698,12 @@ test('air gap: while locked, across every command and completion, the only knobs
 test('air gap: the terminal files reach nothing at runtime beyond React, the brand and each other', () => {
   const allowedTypes = ['../../02_Define_The_Rules/laws.ts', '../../04_Connect_Hardware/hal.ts', '../../05_Observe_Environment/telemetry.ts', '../../05_Observe_Environment/recorder.ts', '../operator.ts', '../harness.ts']
   const allowedRuntime = ['react', '../../brand.ts', './bridge.ts', './commands.ts']
-  for (const file of ['bridge.ts', 'commands.ts', 'Terminal.tsx']) {
+  for (const file of ['bridge.ts', 'commands.ts', 'Terminal.tsx', 'repl.ts']) {
     const src = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8')
     assert.doesNotMatch(src, /\bimport\s*\(|\brequire\s*\(|__AC__|__SIM__/, `${file}: dynamic import or debug handle`)
     const imports = [...src.matchAll(/^\s*(import|export)\s+(type\s+)?(?:[^'";]*?\sfrom\s+)?'([^']+)'/gm)]
-    assert.ok(imports.length > 0, `${file}: no imports parsed`)
+    // repl.ts is the stack machine: it imports nothing at all (repl.test.ts pins that too).
+    assert.ok(file === 'repl.ts' ? imports.length === 0 : imports.length > 0, `${file}: ${imports.length} imports parsed`)
     for (const [, , typeOnly, spec] of imports) {
       const ok = typeOnly ? allowedTypes.includes(spec) || allowedRuntime.includes(spec) : allowedRuntime.includes(spec)
       assert.ok(ok, `${file} imports ${typeOnly ? 'type ' : ''}'${spec}'`)
@@ -1179,7 +1180,7 @@ test('content rules: no combat vocabulary in anything the console prints', () =>
     .join('\n')
   assert.doesNotMatch(printed, /\b(attack|kill|weapon|target|shoot|gun|violence|injur\w*|damage)\b/i)
   // No third-party names in the sources either (comments included).
-  for (const file of ['bridge.ts', 'commands.ts', 'Terminal.tsx', '../operator.ts', '../harness.ts']) {
+  for (const file of ['bridge.ts', 'commands.ts', 'Terminal.tsx', 'repl.ts', '../operator.ts', '../harness.ts']) {
     const src = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8')
     assert.doesNotMatch(src, /\b(quake|matrix|gta|alpine|pathfinder|pf2e|paizo|busybox)\b/i, file)
   }
