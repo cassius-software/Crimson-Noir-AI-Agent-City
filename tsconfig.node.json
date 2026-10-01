@@ -23,6 +23,7 @@
   "include": [
     "vite.config.ts",
     "src/**/*.test.ts",
+    "src/**/*.node.ts",
     "src/01_Initialize_World/webgpu-globals.d.ts",
     "src/04_Connect_Hardware/web-hardware.d.ts"
   ]
