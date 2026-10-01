@@ -1,10 +1,14 @@
 /**
  * Why does this file exist? It proves the Node host (replication.node.ts) over a real loopback socket with Node 22's
- * own WebSocket: tokens are signed with an expiry and refuse tampering; frames are read by the RFC 6455 rules (masked
- * from the client, bounded, control frames small) and written unmasked; a join with a good token is welcomed and a bad
- * one is refused silently; valid inputs move the authoritative pose that the next snapshot carries to every peer;
- * malformed and over-rate frames are counted until the peer is removed with a close code; a plain HTTP request is
- * told to upgrade; and the host closes cleanly. Every wait is for the host to observe the event, never a fixed sleep.
+ * own WebSocket: tokens are signed with an expiry and refuse tampering; no connection is upgraded without one (the
+ * token rides the upgrade as a subprotocol: a missing, forged or expired one is a 401 with no socket, an address that
+ * keeps failing is turned away with a 429, and a join must carry the upgrade's own token); frames are read by the RFC
+ * 6455 rules (masked from the client, bounded, control frames small) and written unmasked; a good join is welcomed with
+ * its spawn; honest inputs move the authoritative pose every snapshot carries to every peer; malformed, replayed,
+ * forged and over-rate frames are counted until the peer is removed with a close code; a plain HTTP request is told to
+ * upgrade; and the host closes cleanly. With the headless Ring-0 mirror as the authority (the city of the page's seed)
+ * it shows crafted illegal movement refused and corrected in the same turn it arrives, the truth unchanged, and a
+ * room of walkers judged in microseconds. Every wait is for the host to observe the event, never a fixed sleep.
  * What breaks if it is removed? The door could stop refusing what the core refuses, or a frame rule could drift.
  */
 import assert from 'node:assert/strict'
@@ -12,9 +16,18 @@ import { createHmac } from 'node:crypto'
 import { test } from 'node:test'
 import { request } from 'node:http'
 import { connect, type Socket } from 'node:net'
-import { canonical } from '../02_Define_The_Rules/integrity.ts'
-import { LIMITS, openServerFrame, PROTOCOL_VERSION, sealMessage, type ClientMessage, type ServerMessage } from './replication.ts'
-import { acceptKey, closePayload, mintToken, OP, readFrame, startHost, verifyToken, writeFrame, type Host } from './replication.node.ts'
+import { canonical, hmacSha256 } from '../02_Define_The_Rules/integrity.ts'
+import { RUN } from '../07_Execute_Actions/simProtocol.ts'
+import { Mirror } from './mirror.node.ts'
+import { planeAuthority, planeStep } from './plane.node.ts'
+import {
+  AUTH_PREFIX, LIMITS, openServerFrame, PROTOCOL_VERSION, sealMessage, SUBPROTOCOL,
+  type ClientMessage, type InputMessage, type RemotePlayer, type Run, type ServerMessage,
+} from './replication.ts'
+import {
+  acceptKey, AUTH_FAILURES, closePayload, mintToken, nodeMac, OP, offeredToken, readFrame, startHost, verifyToken, writeFrame,
+  type Host, type HostOptions,
+} from './replication.node.ts'
 
 const SECRET = 'test-secret'
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -27,6 +40,9 @@ async function until(cond: () => boolean, what: string): Promise<void> {
   }
   assert.ok(cond(), `still waiting: ${what}`)
 }
+
+/** A host over the open plane (plane.node.ts): the protocol's tests, without building the city. */
+const plane = (o: Partial<HostOptions> = {}): Promise<Host> => startHost({ secret: SECRET, tickHz: 50, authority: planeAuthority(), ...o })
 
 /**
  * A frame sealed the way the page seals one (replication.ts sealMessage) but with node:crypto: the host may sign with
@@ -43,9 +59,11 @@ function sealWithNode(msg: unknown, n: number, key: string): string {
 /** A client over Node's global WebSocket that records every message the host sends, opened and checked by the core. */
 interface Client {
   ws: WebSocket
-  /** The session token this client joins with and reads the host under. */
+  /** The session token this client's upgrade offered, and the one it joins with and reads the host under. */
   token: string
   got: ServerMessage[]
+  /** When each message arrived (performance.now()), index-aligned with `got`. */
+  at: number[]
   closed: Promise<{ code: number; reason: string }>
   /** `msg` sealed as the next envelope (a string goes as it is). */
   seal(msg: unknown): string
@@ -54,10 +72,10 @@ interface Client {
   next<T extends ServerMessage['t']>(t: T, from?: number): Promise<Extract<ServerMessage, { t: T }>>
 }
 
-async function open(host: Host, subject = 'tester'): Promise<Client> {
-  const ws = new WebSocket(host.url)
-  const token = host.token(subject)
+async function open(host: Host, subject = 'tester', token = host.token(subject)): Promise<Client> {
+  const ws = new WebSocket(host.url, [SUBPROTOCOL, AUTH_PREFIX + token])
   const got: ServerMessage[] = []
+  const at: number[] = []
   let received = 0
   let sent = 0
   const closed = new Promise<{ code: number; reason: string }>((r) => { ws.onclose = (ev) => r({ code: ev.code, reason: ev.reason }) })
@@ -66,15 +84,17 @@ async function open(host: Host, subject = 'tester'): Promise<Client> {
     assert.ok(read.ok, `the host sent something the core refuses: ${String(ev.data)}`)
     received = read.n
     got.push(read.msg)
+    at.push(performance.now())
   }
   await new Promise<void>((r, j) => { ws.onopen = () => r(); ws.onerror = () => j(new Error('socket error')) })
+  assert.equal(ws.protocol, SUBPROTOCOL, 'the host answers with the protocol it speaks')
   const seal = (msg: unknown): string => {
     if (typeof msg === 'string') return msg
     const m = msg as { t?: unknown; token?: unknown }
     return sealWithNode(msg, ++sent, m.t === 'join' && typeof m.token === 'string' ? m.token : token)
   }
   const c: Client = {
-    ws, token, got, closed, seal,
+    ws, token, got, at, closed, seal,
     send: (msg) => ws.send(seal(msg)),
     next: async (t, from = 0) => {
       let found: ServerMessage | undefined
@@ -83,6 +103,43 @@ async function open(host: Host, subject = 'tester'): Promise<Client> {
     },
   }
   return c
+}
+
+/** Joins `c` as `name` to the host's world and returns the welcome. */
+async function join(host: Host, c: Client, name: string): Promise<Extract<ServerMessage, { t: 'welcome' }>> {
+  c.send({ t: 'join', v: PROTOCOL_VERSION, token: c.token, name, world: host.world })
+  return c.next('welcome')
+}
+
+/** An input on foot under correction `fix`. */
+const input = (seq: number, fix: number, segs: Run[], claim: { x: number; y: number; z: number }, o: Partial<InputMessage> = {}): InputMessage =>
+  ({ t: 'input', seq, ack: 0, fix, mode: 'foot', segs, heading: 0, claim, ...o })
+
+/** An upgrade over a raw socket: the status line and headers the host answers with, and the socket. */
+function rawUpgrade(host: Host, protocol: string | null): Promise<{ socket: Socket; chunks: Buffer[]; head: string }> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(host.port, host.host)
+    const chunks: Buffer[] = []
+    socket.on('data', (c: Buffer) => chunks.push(c))
+    socket.on('error', reject)
+    const done = (): void => {
+      const text = Buffer.concat(chunks).toString('latin1')
+      const end = text.indexOf('\r\n\r\n')
+      if (end < 0) return
+      socket.off('data', done)
+      socket.off('close', done)
+      const rest = Buffer.concat(chunks).subarray(end + 4)
+      chunks.length = 0
+      if (rest.length) chunks.push(rest)
+      resolve({ socket, chunks, head: text.slice(0, end) })
+    }
+    socket.on('data', done)
+    socket.on('close', done)
+    socket.on('connect', () => {
+      const proto = protocol === null ? '' : `Sec-WebSocket-Protocol: ${protocol}\r\n`
+      socket.write(`GET / HTTP/1.1\r\nHost: ${host.host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n${proto}\r\n`)
+    })
+  })
 }
 
 // ---------------------------------------------------------------- tokens and frames
@@ -146,40 +203,95 @@ test('frames: masked client frames of every length class are read, unmasked ones
   assert.equal(acceptKey('dGhlIHNhbXBsZSBub25jZQ=='), 's3pPLMBiTxaQ9kYGzzhZRbK+xOo=', 'the RFC\'s own example')
 })
 
+test('the upgrade\'s token: onyx.3 and exactly one auth entry; the host\'s seals are integrity.ts\'s digest', () => {
+  assert.equal(offeredToken(`${SUBPROTOCOL}, ${AUTH_PREFIX}abc.1.xyz`), 'abc.1.xyz')
+  assert.equal(offeredToken(`${AUTH_PREFIX}abc, ${SUBPROTOCOL}`), 'abc')
+  for (const bad of [undefined, '', SUBPROTOCOL, `${AUTH_PREFIX}abc`, `onyx.2, ${AUTH_PREFIX}abc`, `${SUBPROTOCOL}, ${AUTH_PREFIX}a, ${AUTH_PREFIX}b`, `${SUBPROTOCOL}, ${AUTH_PREFIX}`, 'x'.repeat(2 * LIMITS.token + 1)]) {
+    assert.equal(offeredToken(bad), null, String(bad))
+  }
+  for (const [k, m] of [['key', 'message'], ['x'.repeat(100), '{"n":1}'], ['', '']]) assert.equal(nodeMac(k, m), hmacSha256(k, m))
+})
+
 // ---------------------------------------------------------------- over a socket
 
-test('a good token joins and is welcomed; inputs move the pose every snapshot carries; a second peer sees it, chat and pings are relayed; leaving is announced', async () => {
-  const host = await startHost({ secret: SECRET, tickHz: 50 })
+test('no upgrade without a good token: missing, forged, expired or another secret\'s is a 401 with no socket; an address that keeps failing gets 429s, but a good token still gets in', async () => {
+  const host = await plane()
+  try {
+    const head = async (protocol: string | null): Promise<string> => {
+      const r = await rawUpgrade(host, protocol)
+      r.socket.destroy()
+      return r.head
+    }
+    const good = host.token('Ada')
+    assert.match(await head(null), /^HTTP\/1\.1 401 /, 'no subprotocol at all')
+    assert.match(await head(SUBPROTOCOL), /^HTTP\/1\.1 401 /, 'no token offered')
+    assert.match(await head(`${SUBPROTOCOL}, ${AUTH_PREFIX}${mintToken('another secret', 'Ada', Date.now() + 60_000)}`), /^HTTP\/1\.1 401 /)
+    assert.match(await head(`${SUBPROTOCOL}, ${AUTH_PREFIX}${mintToken(SECRET, 'Ada', Date.now() - 1)}`), /^HTTP\/1\.1 401 /, 'expired')
+    assert.match(await head(`${SUBPROTOCOL}, ${AUTH_PREFIX}${good.slice(0, -2)}`), /^HTTP\/1\.1 401 /, 'tampered')
+    assert.equal(host.connections(), 0, 'no socket was ever upgraded')
+    assert.equal(host.room.peers.size, 0, 'no room slot was ever taken')
+    assert.equal(host.stats().unauthorized, AUTH_FAILURES.burst)
+    // The address has spent its failures: the next bad token is a 429 (unlogged)…
+    assert.match(await head(`${SUBPROTOCOL}, ${AUTH_PREFIX}forged`), /^HTTP\/1\.1 429 /)
+    assert.equal(host.stats().throttled, 1)
+    // …but a good token is never locked out (behind a proxy every client shares one address). That probe drops its
+    // connection without a close frame: the host lets the peer go at once, not at the idle timeout.
+    assert.match(await head(`${SUBPROTOCOL}, ${AUTH_PREFIX}${good}`), /^HTTP\/1\.1 101 /)
+    await until(() => host.connections() === 0 && host.room.peers.size === 0, 'the dropped socket let go')
+    // A WebSocket sees a refused upgrade as a failure (an error event; a browser closes it with 1006), never an open socket.
+    const ws = new WebSocket(host.url, [SUBPROTOCOL, `${AUTH_PREFIX}forged`])
+    const outcome = await new Promise<string>((r) => { ws.onerror = () => r('error'); ws.onclose = () => r('close'); ws.onopen = () => r('open') })
+    assert.notEqual(outcome, 'open')
+  } finally {
+    await host.close()
+  }
+  // A fresh host: the good token upgrades, answering with the protocol; the join must carry that same token.
+  const fresh = await plane()
+  try {
+    const r = await rawUpgrade(fresh, `${SUBPROTOCOL}, ${AUTH_PREFIX}${fresh.token('Ada')}`)
+    assert.match(r.head, /^HTTP\/1\.1 101 /)
+    assert.match(r.head, /Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK\+xOo=/)
+    assert.match(r.head, new RegExp(`Sec-WebSocket-Protocol: ${SUBPROTOCOL.replace('.', '\\.')}`))
+    r.socket.destroy()
+    const c = await open(fresh, 'Ada')
+    c.send({ t: 'join', v: PROTOCOL_VERSION, token: fresh.token('Bob'), name: 'Ada', world: fresh.world })
+    await until(() => fresh.room.peers.get(2)?.refusals === 1, 'a join under another token than the upgrade\'s refused')
+    assert.equal(c.got.length, 0)
+    await join(fresh, c, 'Ada')
+  } finally {
+    await fresh.close()
+  }
+})
+
+test('a good join is welcomed with its spawn; honest inputs move the truth every snapshot carries; a second peer sees it; chat and pings are relayed; leaving is announced', async () => {
+  const host = await plane()
   try {
     const a = await open(host, 'Ada')
     await until(() => host.connections() === 1, 'the host to see the socket')
-    a.send({ t: 'join', v: PROTOCOL_VERSION, token: a.token, name: 'Ada' })
-    const welcome = await a.next('welcome')
-    assert.equal(welcome.id, 1)
-    assert.equal(welcome.tickHz, 50)
-    assert.deepEqual(welcome.players, [])
+    const welcome = await join(host, a, 'Ada')
+    assert.deepEqual([welcome.id, welcome.tickHz, welcome.fix, welcome.players], [1, 50, 1, []])
+    assert.equal(welcome.you.name, 'Ada')
     const s0 = await a.next('snapshot')
-    assert.equal(s0.players.length, 1)
-    assert.equal(s0.players[0].name, 'Ada')
-    a.send({ t: 'input', seq: 1, ack: s0.tick, x: 2, z: 0, heading: 1 })
-    await until(() => host.room.peers.get(1)?.seq === 1, 'the input applied')
+    assert.deepEqual([s0.players, s0.you.x], [[], welcome.you.x])
+    const runs: Run[] = [[2, 0, 6]]
+    const claim = planeStep(welcome.you, runs)
+    a.send(input(1, 1, runs, claim, { ack: s0.tick, heading: 1 }))
+    await until(() => host.room.peers.get(1)?.seq === 1, 'the input kept')
     const s1 = await a.next('snapshot', a.got.length)
-    assert.equal(s1.ack, 1)
-    assert.ok(s1.players[0].x > 0 && s1.players[0].x < 1, `moved a little: ${s1.players[0].x}`)
-    assert.equal(s1.players[0].heading, 1)
-    assert.equal(s1.players[0].speed, 2)
+    assert.deepEqual([s1.ack, s1.you.x, s1.you.heading], [1, claim.x, 1])
+    assert.ok(Math.abs(s1.you.speed - 2) < 1e-9, `speed ${s1.you.speed}`)
 
     assert.equal((await a.next('joined')).player.name, 'Ada', 'a peer hears its own arrival, in room order')
     const mark = a.got.length
     const b = await open(host, 'Bob')
-    b.send({ t: 'join', v: PROTOCOL_VERSION, token: b.token, name: 'Bob' })
-    const wb = await b.next('welcome')
+    const wb = await join(host, b, 'Bob')
     assert.equal(wb.id, 2)
-    assert.deepEqual(wb.players.map((p) => p.name), ['Ada'])
+    assert.deepEqual(wb.players.map((p: RemotePlayer) => [p.name, p.x]), [['Ada', Math.round(claim.x * 1000) / 1000]])
     const joined = await a.next('joined', mark)
     assert.equal(joined.player.name, 'Bob')
     const sb = await b.next('snapshot')
-    assert.deepEqual(sb.players.map((p) => p.name).sort(), ['Ada', 'Bob'])
+    assert.deepEqual(sb.players.map((p) => p.name), ['Ada'])
+    assert.equal(sb.you.name, 'Bob')
 
     a.send({ t: 'chat', seq: 1, text: 'Good morning, Bob' })
     const chat = await b.next('chat')
@@ -206,46 +318,45 @@ test('a good token joins and is welcomed; inputs move the pose every snapshot ca
   }
 })
 
-test('a bad token is refused silently; malformed, binary, replayed, forged and over-rate frames count up to a kick with close code 4008', async () => {
-  const host = await startHost({ secret: SECRET, tickHz: 50 })
+test('malformed, binary, replayed, forged and over-rate frames count up to a kick with close code 4008; a forged or malformed input is corrected too', async () => {
+  const host = await plane()
   try {
     const bad = await open(host)
-    bad.send({ t: 'join', v: PROTOCOL_VERSION, token: mintToken('wrong secret', 'x', Date.now() + 60_000), name: 'Ada' })
-    await until(() => host.room.peers.get(1)?.refusals === 1, 'the bad token refused')
-    bad.send({ t: 'join', v: PROTOCOL_VERSION, token: mintToken(SECRET, 'x', Date.now() - 1), name: 'Ada' })
-    await until(() => host.room.peers.get(1)?.refusals === 2, 'the expired token refused')
+    bad.send({ t: 'join', v: PROTOCOL_VERSION, token: mintToken(SECRET, 'x', Date.now() - 1), name: 'Ada', world: host.world })
+    await until(() => host.room.peers.get(1)?.refusals === 1, 'an expired join token refused')
+    bad.send({ t: 'join', v: PROTOCOL_VERSION, token: bad.token, name: 'Ada', world: 'city/7' })
+    await until(() => host.room.peers.get(1)?.refusals === 2, 'another world refused')
     assert.equal(bad.got.length, 0, 'no welcome, no word')
-    bad.send({ t: 'join', v: PROTOCOL_VERSION, token: bad.token, name: 'Ada' })
-    await bad.next('welcome')
-    const crafted: unknown[] = [
-      '{not json',
-      { t: 'input', seq: 1, ack: 0, x: NaN, z: 0, heading: 0 },
-    ]
-    for (const m of crafted) bad.send(m)
+    const w = await join(host, bad, 'Ada')
+    const peer = () => host.room.peers.get(1)!
+    bad.send('{not json')
+    bad.send({ ...input(1, 1, [[0, 0, 1]], planeStep(w.you, [[0, 0, 1]])), segs: [[NaN, 0, 1]] })
     bad.ws.send(new Uint8Array([1, 2, 3]))
-    await until(() => host.room.peers.get(1)?.refusals === 2 + crafted.length + 1, 'every crafted frame refused')
-    // A genuine input is applied once; the very same frame again is a replay, and one sealed under another token a forgery: refused, applying nothing.
-    const genuine = bad.seal({ t: 'input', seq: 1, ack: 0, x: 1, z: 0, heading: 0 })
+    await until(() => peer().refusals === 5, 'every crafted frame refused')
+    const fixed = await bad.next('correct')
+    assert.deepEqual([fixed.fix, fixed.reason], [2, 'input: velocity'], 'the malformed input was answered with a correction')
+    // A genuine input is kept once; the very same frame again is a replay, and one sealed under another token a forgery: refused and corrected, keeping nothing.
+    const genuine = bad.seal(input(1, 2, [[1, 0, 6]], planeStep(fixed.you, [[1, 0, 6]])))
     bad.send(genuine)
-    await until(() => host.room.peers.get(1)?.seq === 1, 'the genuine input applied')
+    await until(() => peer().seq === 1, 'the genuine input kept')
+    const x = peer().x
     bad.send(genuine)
-    bad.send(sealMessage({ t: 'input', seq: 2, ack: 0, x: 2, z: 0, heading: 0 }, 99, 'another token'))
-    await until(() => host.room.peers.get(1)?.refusals === 2 + crafted.length + 1 + 2, 'the replay and the forgery refused')
-    assert.equal(host.room.peers.get(1)?.seq, 1, 'nothing applied twice')
-    assert.equal(host.room.peers.get(1)?.vx, 1, 'the forged velocity never landed')
-    assert.equal(2 + crafted.length + 1 + 2, LIMITS.refusalsBeforeKick - 1)
-    assert.equal(host.room.peers.get(1)?.joined, true, 'still in the room, one short of the limit')
+    bad.send(sealMessage(input(2, 3, [[5, 0, 6]], planeStep({ x: x + 10, z: 0 }, [[5, 0, 6]])), 99, 'another token'))
+    await until(() => peer().refusals === 7, 'the replay and the forgery refused')
+    assert.deepEqual([peer().seq, peer().x, peer().fix], [1, x, 4], 'nothing kept twice; the forged move never landed; each was corrected')
+    assert.equal(7, LIMITS.refusalsBeforeKick - 1)
+    assert.equal(peer().joined, true, 'still in the room, one short of the limit')
     bad.send({ t: 'chat', seq: 1, text: 'you idiot' })
     const closed = await bad.closed
-    assert.equal(closed.code, 4008)
-    assert.equal(closed.reason, 'repeated refusals')
+    assert.deepEqual([closed.code, closed.reason], [4008, 'repeated refusals'])
     await until(() => host.room.peers.size === 0, 'the peer gone from the room')
 
-    // A flood of inputs past the burst is refused by the rate limit until the peer is removed.
+    // A flood of inputs past the burst is refused by the rate limit until the peer is removed. Five times the burst, so
+    // that however slowly a loaded machine delivers them, the bucket's refill cannot keep up.
     const flood = await open(host)
-    flood.send({ t: 'join', v: PROTOCOL_VERSION, token: flood.token, name: 'Flood' })
-    await flood.next('welcome')
-    for (let seq = 1; seq <= LIMITS.inputBurst + LIMITS.refusalsBeforeKick; seq++) flood.send({ t: 'input', seq, ack: 0, x: 0, z: 0, heading: 0 })
+    const wf = await join(host, flood, 'Flood')
+    const still = planeStep(wf.you, [[0, 0, 0]])
+    for (let seq = 1; seq <= 5 * LIMITS.inputBurst && flood.ws.readyState === WebSocket.OPEN; seq++) flood.send(input(seq, 1, [[0, 0, 0]], still))
     assert.equal((await flood.closed).code, 4008)
   } finally {
     await host.close()
@@ -253,29 +364,13 @@ test('a bad token is refused silently; malformed, binary, replayed, forged and o
 })
 
 test('an unmasked frame or an over-size frame closes the socket with the RFC code; a peer that never joins is dropped by the join timeout rule', async () => {
-  const clock = { now: 0 }
-  const host = await startHost({ secret: SECRET, tickHz: 100, now: () => clock.now })
-  const raw = (): Promise<{ socket: Socket; chunks: Buffer[] }> =>
-    new Promise((resolve, reject) => {
-      const socket = connect(host.port, host.host)
-      const chunks: Buffer[] = []
-      socket.on('data', (c: Buffer) => chunks.push(c))
-      socket.on('error', reject)
-      socket.on('connect', () => {
-        socket.write(`GET / HTTP/1.1\r\nHost: ${host.host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n`)
-      })
-      const check = (): void => {
-        const text = Buffer.concat(chunks).toString('latin1')
-        if (text.includes('\r\n\r\n')) {
-          assert.match(text, /^HTTP\/1\.1 101 /)
-          assert.match(text, /Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK\+xOo=/)
-          chunks.length = 0
-          socket.off('data', check)
-          resolve({ socket, chunks })
-        }
-      }
-      socket.on('data', check)
-    })
+  const clock = { now: Date.now() }
+  const host = await plane({ tickHz: 100, now: () => clock.now })
+  const raw = async (): Promise<{ socket: Socket; chunks: Buffer[] }> => {
+    const r = await rawUpgrade(host, `${SUBPROTOCOL}, ${AUTH_PREFIX}${host.token('raw')}`)
+    assert.match(r.head, /^HTTP\/1\.1 101 /)
+    return r
+  }
   try {
     const u = await raw()
     await until(() => host.connections() === 1, 'the raw socket admitted')
@@ -309,7 +404,7 @@ test('an unmasked frame or an over-size frame closes the socket with the RFC cod
 })
 
 test('a plain HTTP request is told to upgrade; a bad upgrade is refused; the host closes cleanly with a client still joined', async () => {
-  const host = await startHost({ secret: SECRET, tickHz: 50 })
+  const host = await plane()
   const status = await new Promise<number>((resolve, reject) => {
     const req = request({ host: host.host, port: host.port, path: '/', method: 'GET' }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode ?? 0)) })
     req.on('error', reject)
@@ -327,12 +422,121 @@ test('a plain HTTP request is told to upgrade; a bad upgrade is refused; the hos
   assert.match(badUpgrade, /^HTTP\/1\.1 400 /)
   assert.equal(host.connections(), 0)
   const a = await open(host)
-  a.send({ t: 'join', v: PROTOCOL_VERSION, token: a.token, name: 'Ada' })
-  await a.next('welcome')
+  await join(host, a, 'Ada')
   await host.close()
   const closed = await a.closed
   assert.equal(closed.code, 1001)
   assert.equal(closed.reason, 'host closing')
   assert.equal(host.connections(), 0)
   await assert.rejects(open(host), 'nothing listens after close')
+})
+
+test('a peer too slow to read what it is sent is closed (4009) before the host buffers it: every send checks the backlog first', async () => {
+  // A loopback socket's kernel buffers take megabytes before Node holds a byte, so the rule is read from the code: the
+  // one send path checks the unread backlog against maxBacklog before it writes, and closes the peer instead.
+  const { readFileSync } = await import('node:fs')
+  const code = readFileSync(new URL('./replication.node.ts', import.meta.url), 'utf8')
+  const send = code.slice(code.indexOf('const send = (c: Conn, msg: ServerMessage): void => {'), code.indexOf('const broadcast ='))
+  assert.match(send, /if \(c\.socket\.writableLength > maxBacklog\) \{\s*close\(c, 4009, 'too slow to keep up'\)\s*return\s*\}\s*c\.socket\.write\(/)
+  assert.equal(code.match(/c\.socket\.write\(writeFrame\(OP\.text/g)?.length, 1, 'one path writes text frames')
+})
+
+// ---------------------------------------------------------------- the mirror as the authority
+
+test('the mirror on the socket: crafted illegal movement is refused and corrected in the same turn it arrives, the truth unchanged; honest walking is kept', async () => {
+  // Snapshots once a second, so the answer to a crafted packet is plainly the correction, not a tick.
+  const host = await startHost({ secret: SECRET, tickHz: 1 })
+  const predictor = await Mirror.create(1337)
+  try {
+    assert.equal(host.world, 'city/1337')
+    const c = await open(host, 'Ada')
+    const w = await join(host, c, 'Ada')
+    // The client's own prediction: the same controller on the same city (the page's realm agrees within a micrometre,
+    // mirror.node.test.ts), put down at the welcome's spawn as the page is.
+    predictor.join(w.id)
+    predictor.place(w.id, w.you.x, w.you.z)
+    let seq = 0
+    let fix = w.fix
+    const walk = (runs: Run[]): InputMessage => {
+      const p = predictor.walk(w.id, runs)
+      return input(++seq, fix, runs, { x: p.x, y: p.y, z: p.z })
+    }
+    const truth = () => host.room.peers.get(w.id)!
+    // Honest: two seconds south along the spawn sidewalk, half a second at a time, paced like a client.
+    for (let k = 0; k < 4; k++) {
+      c.send(walk([[0, RUN, 30]]))
+      await sleep(500)
+    }
+    await until(() => truth().seq === seq, 'the honest walk kept')
+    assert.ok(truth().z > w.you.z + 9, `walked: z ${w.you.z} → ${truth().z}`)
+    const kept = { x: truth().x, z: truth().z }
+
+    // Each crafted packet: sent, then the very next message is its correction; the truth has not moved.
+    const crafted = async (msg: unknown, why: RegExp): Promise<number> => {
+      const from = c.got.length
+      const t0 = performance.now()
+      c.send(msg)
+      const corr = await c.next('correct', from)
+      const i = c.got.indexOf(corr)
+      assert.equal(i, from, `the next message is the correction (${c.got.slice(from, i).map((m) => m.t).join(', ')})`)
+      assert.match(corr.reason, why)
+      assert.deepEqual([corr.you.x, corr.you.z], [kept.x, kept.z], 'the truth is where it was')
+      assert.equal(corr.fix, fix + 1)
+      fix = corr.fix
+      // The client snaps: put down standing at the truth.
+      predictor.place(w.id, corr.you.x, corr.you.z)
+      return c.at[i] - t0
+    }
+    const ms: number[] = []
+    // 1. Memory written: an honest run, the claim 40 m along.
+    const honestNext = walk([[0, RUN, 6]])
+    ms.push(await crafted({ ...honestNext, claim: { ...honestNext.claim, z: honestNext.claim.z + 40 } }, /claim .* from the mirror's pose/))
+    // 2. A speed hack in the shape: 600 substeps in one packet.
+    ms.push(await crafted(input(++seq, fix, [[0, RUN, 600]], { x: kept.x, y: 0.92, z: kept.z + 52 }), /input: substeps/))
+    // 3. A speed hack on the clock: more than the banked second of substeps at once (honest claims, too many substeps).
+    const burst = (): InputMessage => input(++seq, fix, [[0, 0, 30]], { x: kept.x, y: truth().y, z: kept.z })
+    for (let k = 0; k < LIMITS.stepBurst / 30; k++) c.send(burst())
+    ms.push(await crafted(burst(), /more substeps than time allows/))
+    await sleep(600)
+    // 4. Through a wall: the lot east of the sidewalk (a podium from x 327 m), the claim on the straight line.
+    ms.push(await crafted(input(++seq, fix, [[RUN, 0, 30]], { x: kept.x + RUN * 0.5, y: 0.92, z: kept.z }), /claim .* from the mirror's pose/))
+    assert.ok(truth().x < 327 - 0.25, `the truth never entered the lot: x ${truth().x}`)
+    for (const t of ms) assert.ok(t < 250, `answered in ${t.toFixed(1)} ms`)
+    const st = host.stats()
+    assert.ok(st.corrected >= 4 && st.kept >= 4, JSON.stringify(st))
+    assert.ok(st.inputUs > 0 && st.inputUs < 5000, `an input handled in ${st.inputUs.toFixed(0)} µs`)
+  } finally {
+    await host.close()
+  }
+})
+
+test('a room of walkers on the mirror: every honest input kept, each judged in well under a millisecond', async () => {
+  const host = await startHost({ secret: SECRET, tickHz: 20 })
+  const predictor = await Mirror.create(1337)
+  try {
+    const N = 12, STEPS = 30
+    const clients = await Promise.all(Array.from({ length: N }, (_, k) => open(host, `walker${k}`)))
+    const welcomes = []
+    for (let k = 0; k < N; k++) welcomes.push(await join(host, clients[k], `Walker ${k}`))
+    for (const w of welcomes) {
+      predictor.join(w.id)
+      predictor.place(w.id, w.you.x, w.you.z)
+    }
+    for (let i = 1; i <= STEPS; i++) {
+      for (let k = 0; k < N; k++) {
+        const id = welcomes[k].id
+        const runs: Run[] = [[Math.sin(k) * RUN, Math.cos(k) * RUN, 1]]
+        const p = predictor.walk(id, runs)
+        clients[k].send(input(i, 1, runs, { x: p.x, y: p.y, z: p.z }))
+      }
+      await sleep(1000 / 60)
+    }
+    await until(() => [...host.room.peers.values()].every((p) => p.seq === STEPS), 'every input kept')
+    const st = host.stats()
+    assert.deepEqual([st.inputs, st.kept, st.corrected, st.stale], [N * STEPS, N * STEPS, 0, 0])
+    assert.ok(st.inputUs < 1000, `${st.inputUs.toFixed(0)} µs an input`)
+    await until(() => host.stats().tickUs > 0, 'a tick measured')
+  } finally {
+    await host.close()
+  }
 })

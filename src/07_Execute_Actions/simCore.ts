@@ -37,7 +37,7 @@ import {
 } from '../03_Spawn_Agents/skills.ts'
 import type { Intent } from '../02_Define_The_Rules/laws.ts'
 import {
-  ENTER_RANGE, MAX_PLAYERS, RIG_SLOTS, RUN, type AvatarState, type DriveControls, type FootControls, type PlayerControls, type RecruitView, type SimCommand,
+  ENTER_RANGE, footWish, MAX_PLAYERS, RIG_SLOTS, type AvatarState, type DriveControls, type FootControls, type PlayerControls, type RecruitView, type SimCommand,
   type SimEvent, type SimInit, type SimMeta, type StepState,
 } from './simProtocol.ts'
 
@@ -468,13 +468,11 @@ export class SimCore {
     const v = this.#driving[k]
     let trigger = 0, limited = false, thump = false
     if (v === null) {
-      // On foot: the desired walking velocity, never faster than a run.
-      const wx = finite(foot?.x), wz = finite(foot?.z)
-      const len = Math.hypot(wx, wz)
-      const s = len > RUN ? RUN / len : 1
+      // On foot: the desired walking velocity, never faster than a run (footWish: the mirror clamps the same way).
+      const w = footWish(finite(foot?.x), finite(foot?.z))
       const wish = this.#wish[k]
-      wish.x = wx * s
-      wish.z = wz * s
+      wish.x = w.x
+      wish.z = w.z
       // Wrapped in f64 so the crowd's f32 uniform always holds a small angle: 1e39 is finite here and
       // Infinity there, and would turn the player's figure (and, through the grid, its neighbours) into NaN.
       const h = finite(foot?.heading, NaN)

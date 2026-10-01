@@ -2,7 +2,9 @@
  * Why does this file exist? It is the player's presence in the shared physics space: a Rapier
  * kinematic character controller on foot (slides along walls, steps curbs, snaps to the ground), and the
  * person the sanctuary shields (sanctuary.ts flips its collider to a sensor and nudges it clear of a car).
- * It lives in the physics worker with the rest of the Rapier world; the camera's head is head.ts, on the page.
+ * It lives in the physics worker with the rest of the Rapier world; the camera's head is head.ts, on the page. The
+ * network's authoritative mirror (10_Network/mirror.node.ts) runs this same class on its server, in mirror mode, so a
+ * client's prediction (the page's realm) and the server's truth are one controller's arithmetic.
  * What breaks if it is removed? The player cannot walk, and nobody is there for the kernel to protect.
  */
 import { AVATAR_GROUPS } from '../02_Define_The_Rules/collision.ts'
@@ -23,6 +25,23 @@ const MAX_LIFT = 0.35
 const SOLIDS = RAPIER.QueryFilterFlags.EXCLUDE_SENSORS
 /** While shielded, vehicles are not obstacles either: every dynamic body in this world is a vehicle chassis. */
 const PASS_VEHICLES = RAPIER.QueryFilterFlags.EXCLUDE_SENSORS | RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC
+/** In the mirror, other players (kinematic capsules) are not obstacles: the room's players pass through one another. */
+const PASS_PLAYERS = RAPIER.QueryFilterFlags.EXCLUDE_KINEMATIC
+
+/** How an avatar lives in its world. */
+export interface AvatarOptions {
+  /**
+   * The network's authoritative mirror (10_Network/mirror.node.ts): each move puts the capsule where the controller
+   * says at once (the body's translation set and its collider updated, no world step: nothing in the mirror's world
+   * moves on its own), and the other players are not obstacles. The result is the realm's within a 32-bit
+   * coordinate's last bit (a world step lands a kinematic body on its next translation through a velocity, which can
+   * round that bit the other way). The realm's avatars (the default) step with their world.
+   */
+  mirror?: boolean
+}
+
+/** Everything a move reads and leaves, to put an avatar back exactly as it was (the mirror's trials). */
+export interface AvatarSnapshot { x: number; y: number; z: number; fall: number; grounded: boolean; heading: number; speed: number }
 
 export class Avatar {
   readonly body: RAPIER.RigidBody
@@ -33,7 +52,10 @@ export class Avatar {
   speed = 0
   private readonly controller: RAPIER.KinematicCharacterController
   private readonly physics: Physics
+  private readonly mirror: boolean
   private fall = 0
+  /** Whether the last move ended on the ground (the controller's own verdict, kept so a snapshot can restore it). */
+  private grounded = false
   private nudgeX = 0
   private nudgeZ = 0
   private readonly desired = { x: 0, y: 0, z: 0 }
@@ -41,9 +63,10 @@ export class Avatar {
   private readonly at = { x: 0, y: 0, z: 0 }
   private readonly moved = { x: 0, y: 0, z: 0 }
 
-  constructor(physics: Physics, x: number, z: number) {
+  constructor(physics: Physics, x: number, z: number, o: AvatarOptions = {}) {
     const world = physics.world
     this.physics = physics
+    this.mirror = o.mirror === true
     this.body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(x, HALF_HEIGHT + RADIUS, z))
     // The ghost-mode law for a promoted pedestrian too: the capsule's groups (collision.ts AVATAR_GROUPS) drop every
     // pair with a physical person's segments, so the avatar walks through them and shoves nobody.
@@ -57,6 +80,7 @@ export class Avatar {
     // The player can shove a parked car a little; cars cannot shove the player through walls.
     this.controller.setApplyImpulsesToDynamicBodies(true)
     this.person = { body: this.body, collider: this.collider, radius: RADIUS, halfHeight: HALF_HEIGHT }
+    if (this.mirror) world.propagateModifiedBodyPositionsToColliders()
   }
 
   get x(): number { return this.body.translation(this.at).x }
@@ -73,7 +97,7 @@ export class Avatar {
    * (a nudge carries the avatar without adding to it).
    */
   move(vx: number, vz: number, dt: number): void {
-    this.fall = this.controller.computedGrounded() ? 0 : Math.max(-20, this.fall - 9.81 * dt)
+    this.fall = this.grounded ? 0 : Math.max(-20, this.fall - 9.81 * dt)
     const want = this.desired
     want.x = vx * dt + this.nudgeX
     want.y = this.fall * dt
@@ -81,7 +105,9 @@ export class Avatar {
     this.nudgeX = 0
     this.nudgeZ = 0
     // Shielded (a sensor): cars pass through, so they must not block, trap or be shoved by the avatar.
-    this.controller.computeColliderMovement(this.collider, want, this.collider.isSensor() ? PASS_VEHICLES : SOLIDS, AVATAR_GROUPS)
+    const flags = this.collider.isSensor() ? PASS_VEHICLES : SOLIDS
+    this.controller.computeColliderMovement(this.collider, want, this.mirror ? flags | PASS_PLAYERS : flags, AVATAR_GROUPS)
+    this.grounded = this.controller.computedGrounded()
     const d = this.controller.computedMovement(this.moved)
     const t = this.body.translation(this.at)
     const next = this.next
@@ -100,7 +126,7 @@ export class Avatar {
         this.fall = 0
       }
     }
-    this.body.setNextKinematicTranslation(next)
+    this.place(next)
     this.speed = Math.min(Math.hypot(d.x, d.z), Math.hypot(vx, vz) * dt) / Math.max(dt, 1e-4)
     if (Math.hypot(vx, vz) > 0.1) {
       const target = Math.atan2(vx, vz)
@@ -108,6 +134,12 @@ export class Avatar {
       diff -= Math.PI * 2 * Math.floor((diff + Math.PI) / (Math.PI * 2))
       this.heading += diff * Math.min(1, dt * 12)
     }
+  }
+
+  /** Takes the avatar out of its world for good (the mirror, when a peer leaves): its controller, body and capsule. */
+  dispose(): void {
+    this.physics.world.removeCharacterController(this.controller)
+    this.physics.world.removeRigidBody(this.body)
   }
 
   setEnabled(on: boolean): void {
@@ -118,9 +150,43 @@ export class Avatar {
 
   teleport(x: number, z: number): void {
     this.body.setTranslation({ x, y: HALF_HEIGHT + RADIUS + 0.05, z }, true)
-    this.body.setNextKinematicTranslation({ x, y: HALF_HEIGHT + RADIUS + 0.05, z })
+    if (this.mirror) this.physics.world.propagateModifiedBodyPositionsToColliders()
+    else this.body.setNextKinematicTranslation({ x, y: HALF_HEIGHT + RADIUS + 0.05, z })
+    // Put down in the air: the next move starts falling from rest, whatever the last one ended on (so a client's realm
+    // and the mirror, teleported to the same point, take the same next step).
     this.fall = 0
+    this.grounded = false
     this.nudgeX = 0
     this.nudgeZ = 0
+  }
+
+  /** Where the capsule is and how it was moving: everything the next move reads. */
+  state(): AvatarSnapshot {
+    const t = this.body.translation(this.at)
+    return { x: t.x, y: t.y, z: t.z, fall: this.fall, grounded: this.grounded, heading: this.heading, speed: this.speed }
+  }
+
+  /** Puts the avatar back exactly as `s` found it (a trial the mirror did not keep). */
+  restore(s: AvatarSnapshot): void {
+    const at = { x: s.x, y: s.y, z: s.z }
+    this.body.setTranslation(at, false)
+    if (this.mirror) this.physics.world.propagateModifiedBodyPositionsToColliders()
+    else this.body.setNextKinematicTranslation(at)
+    this.fall = s.fall
+    this.grounded = s.grounded
+    this.heading = s.heading
+    this.speed = s.speed
+    this.nudgeX = 0
+    this.nudgeZ = 0
+  }
+
+  /** The move's end: the next step reaches it (the realm), or the capsule is put there now (the mirror). */
+  private place(next: { x: number; y: number; z: number }): void {
+    if (!this.mirror) {
+      this.body.setNextKinematicTranslation(next)
+      return
+    }
+    this.body.setTranslation(next, false)
+    this.physics.world.propagateModifiedBodyPositionsToColliders()
   }
 }

@@ -253,10 +253,29 @@ export interface RecruitHost {
 export type NetPeer = RemotePose
 
 /**
+ * One step of the physics realm as the network client reports it (10_Network/netClient.ts Move's shape, without the
+ * import): the walking velocity the request asked for (the realm and the room clamp it alike), the substeps the realm
+ * ran, the facing, where the realm then had player 1 (the capsule, or the chassis at the wheel), the exit point on the
+ * step that left a car, and the correction the realm had applied.
+ */
+export interface NetMove {
+  mode: 'foot' | 'drive'
+  x: number
+  z: number
+  n: number
+  heading: number
+  at: { x: number; y: number; z: number }
+  from?: { x: number; z: number }
+  fix: number
+}
+
+/**
  * What the engine may use of the page's network client (10_Network/netClient.ts), handed in by App (setNet) the way
- * the mind is: the engine holds no network code and never opens a socket. Each frame while `status` is 'joined' it
- * offers one input (player 1's desired velocity and heading) and reads the room's poses; it never sends a position,
- * a chat line or a ping of its own, and nothing it reads goes to the physics realm.
+ * the mind is: the engine holds no network code and never opens a socket. The room is authoritative and this page's
+ * physics realm is the prediction: each new realm state while `status` is 'joined' is reported as one move (player 1's
+ * step, paired with the request that ran it), and the room's correction, when a new one arrives, is applied as a
+ * teleport to the truth; the room's poses are read for the draw. It never sends a chat line or a ping of its own, and
+ * nothing it reads goes to the physics realm but that teleport.
  */
 export interface NetHost {
   readonly status: NetState
@@ -264,10 +283,15 @@ export interface NetHost {
   readonly id: number
   /** Why the session closed, once it did. */
   readonly reason: string | null
-  /** Starts a session, or says why it did not. */
-  connect(url: string, token: string, name: string): string | null
-  /** One frame of input: false when not joined or over the client's own rate. */
-  sendInput(x: number, z: number, heading: number): boolean
+  /** Corrections the room made this session (the welcome's spawn not counted), and the newest one's reason. */
+  readonly corrections: number
+  readonly corrected: string | null
+  /** Starts a session in `world` (the room refuses another), or says why it did not. */
+  connect(url: string, token: string, name: string, world: string): string | null
+  /** One realm step: false when not joined, from before the newest correction, or held back by the client's rate. */
+  move(m: NetMove): boolean
+  /** The newest correction (the truth to snap to and its number), or null before the welcome. */
+  correction(): { fix: number; x: number; z: number } | null
   /** Every other player's pose, carried forward to `now` (ms). */
   poses(now?: number): readonly NetPeer[]
   /** Inputs the room has not yet applied. */
@@ -415,6 +439,15 @@ export class Engine {
    */
   private netClient: NetHost | null = null
   private netUrl: string | null = null
+  /**
+   * The walking velocity and correction of the step request in flight (one at a time): its state is the room's next
+   * move. `snap`: the request carried a correction's teleport (a car it left for that is not a door the room replays).
+   */
+  private netSent = { x: 0, z: 0, fix: 0, snap: false }
+  /** The newest realm state as a move for the room, until netFrame reports it. */
+  private netMove: NetMove | null = null
+  /** The newest correction whose teleport has been queued for the realm (0: none this session). */
+  private netFix = 0
   private netPeers: readonly NetPeer[] = NO_PEERS
   private netDropped = 0
   private readonly netVoices = new Map<number, { voice: PeerVoice; since: number }>()
@@ -829,7 +862,9 @@ export class Engine {
         if (!c) { reject(new Error('no network client on this page')); return }
         if (this.halted || this.disposed) { reject(new Error('the city has stopped')); return }
         if (this.netJoin) { reject(new Error('a join is already under way')); return }
-        const why = c.connect(url, token, this.playerName.trim() || NET.defaultName)
+        // The room's authority holds the procedural city of a seed (10_Network/mirror.node.ts); a surveyed region has no mirror yet.
+        if (this.places) { reject(new Error('the room holds the procedural city; open the page without ?region=on to join')); return }
+        const why = c.connect(url, token, this.playerName.trim() || NET.defaultName, `city/${this.options.seed >>> 0}`)
         if (why !== null) { reject(new Error(why)); return }
         this.netUrl = url
         this.netDropped = 0
@@ -848,6 +883,7 @@ export class Engine {
         return {
           state: c ? c.status : 'idle', url: this.netUrl, id: c ? c.id : 0, peers: this.netPeers.length, dropped: this.netDropped,
           pending: c ? c.pending().length : 0, voices: this.netVoices.size, reason: c ? c.reason : null,
+          corrections: c ? c.corrections : 0, corrected: c ? c.corrected : null,
         }
       },
     })
@@ -885,11 +921,12 @@ export class Engine {
 
   /**
    * One frame of the session: the client's state watched (a join settled on the room's welcome or the socket's end,
-   * a change toasted), then, while joined, player 1's input offered (on foot the desired velocity and the body's
-   * heading the realm gets; at the wheel the car's own velocity and heading, which the room caps at a run) and the
-   * room's poses read, carried forward to now. Between sessions nothing is drawn or placed.
+   * a change toasted), then, while joined, the newest realm step reported as a move (player 1's: paired in received()
+   * with the request that ran it), a new correction from the room applied (a teleport to the truth, queued for the next
+   * step request, whose state is the first under that correction), and the room's poses read, carried forward to now.
+   * Between sessions nothing is drawn or placed.
    */
-  private netFrame(st: StepState, driving: number): void {
+  private netFrame(): void {
     const c = this.netClient
     if (!c) return
     const state = c.status
@@ -908,15 +945,16 @@ export class Engine {
       }
     }
     if (state !== 'joined') return
-    let vx = this.foot.x, vz = this.foot.z, heading = this.foot.heading
-    if (driving >= 0) {
-      const p = st.poses, o = driving * POSE.stride
-      heading = p[o + POSE.heading]
-      const speed = p[o + POSE.speed]
-      vx = Math.sin(heading) * speed
-      vz = Math.cos(heading) * speed
+    const m = this.netMove
+    this.netMove = null
+    if (m && !c.move(m)) this.netDropped++
+    // The room's truth: player 1 is put down there (the realm leaves a car for it), once per correction.
+    const fix = c.correction()
+    if (fix && fix.fix > this.netFix) {
+      this.netFix = fix.fix
+      this.sim.send({ c: 'teleport', x: fix.x, z: fix.z })
+      if (fix.fix > 1) this.toast('Network', 'the room put you back where it has you')
     }
-    if (!c.sendInput(vx, vz, heading)) this.netDropped++
     this.netPeers = c.poses(performance.now())
     // A voice whose player is no longer in the room (or never arrived) is let go after the grace.
     if (this.netVoices.size > 0) {
@@ -929,9 +967,33 @@ export class Engine {
     }
   }
 
+  /**
+   * A realm state as the room's move: on foot the walking velocity the request asked for and the capsule the step left;
+   * at the wheel the chassis; the exit point when the step left a car; the substeps it ran; the correction the request
+   * carried out.
+   */
+  private netMoveOf(s: StepState): NetMove {
+    const sent = this.netSent
+    const exited = s.events.find((e): e is Extract<typeof e, { e: 'exited' }> => e.e === 'exited' && e.player === 0)
+    if (s.driving >= 0) {
+      const p = s.poses, o = s.driving * POSE.stride
+      return { mode: 'drive', x: 0, z: 0, n: s.physics.steps, heading: p[o + POSE.heading], at: { x: p[o + POSE.x], y: p[o + POSE.y], z: p[o + POSE.z] }, fix: sent.fix }
+    }
+    const a = s.avatar
+    return {
+      mode: 'foot', x: sent.x, z: sent.z, n: s.physics.steps, heading: this.foot.heading, at: { x: a.x, y: a.y, z: a.z }, fix: sent.fix,
+      // A car left for a correction's teleport is no door: the room has already put the player down at its truth.
+      ...(exited && !sent.snap && { from: { x: exited.x, z: exited.z } }),
+    }
+  }
+
   /** The session over: no poses drawn or placed, every peer voice let go, a join still waiting told why. */
   private netLetGo(why: string): void {
     this.netPeers = NO_PEERS
+    this.netMove = null
+    this.netFix = 0
+    this.netSent.fix = 0
+    this.netSent.snap = false
     for (const v of this.netVoices.values()) v.voice.detach()
     this.netVoices.clear()
     this.peerPlaces.length = 0
@@ -1048,6 +1110,8 @@ export class Engine {
   /** A new state from the physics realm: what changed for the player, the distance counters, the haptic edge. */
   private received(s: StepState, prev: StepState): void {
     this.fresh = true
+    // The answer to the one request in flight: player 1's step as the room's move (netFrame reports it while joined).
+    if (this.netClient?.status === 'joined') this.netMove = this.netMoveOf(s)
     // Where they stand, for SimControls.crowd.positions (the frame's first 4 floats per person are its position), a few
     // times a second: before the upload, which hands the buffer back to the worker.
     const now = performance.now()
@@ -1248,6 +1312,14 @@ export class Engine {
     }
     this.pendingDt = Math.min(MAX_STEP_DT, this.pendingDt + dt)
     const physicsStart = performance.now()
+    // The step about to go out (one at a time: none is in flight), for the room: the walking velocity it asks for and
+    // the correction it carries out (a teleport queued by netFrame rides this request).
+    if (!sim.pending) {
+      this.netSent.x = foot.x
+      this.netSent.z = foot.z
+      this.netSent.snap = this.netFix !== this.netSent.fix
+      this.netSent.fix = this.netFix
+    }
     if (sim.request({ dt: this.pendingDt, foot, drive })) this.pendingDt = 0
     const postMs = performance.now() - physicsStart
     // Hardware hears only audited states: the worker sends a state after its Ring-0 audit, a panic instead of one.
@@ -1294,7 +1366,7 @@ export class Engine {
     this.dissolveNow(st)
     this.dissolve.update(realDt / 1000)
     // The network session (NetHost): this frame's input offered to the room, the room's poses read for the draw.
-    this.netFrame(st, driving)
+    this.netFrame()
 
     // Drawing: every animation frame, or in cinema mode only those the pacer presents (24 a second). Nothing above
     // waits for it: the step request, the haptics and the head pose ran this frame whether or not it is drawn.

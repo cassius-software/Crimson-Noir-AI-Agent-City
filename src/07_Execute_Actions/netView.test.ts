@@ -41,12 +41,16 @@ function placed(mesh: { getMatrixAt(i: number, m: Matrix4): void }, i: number, a
 
 const near = (v: Vector3, x: number, y: number, z: number, what: string) => assert.ok(Math.hypot(v.x - x, v.y - y, v.z - z) < 1e-6, `${what}: (${v.x}, ${v.y}, ${v.z})`)
 
-test('bodyOf: a person up to a run, a car beyond it, a person for anything that is not a number', () => {
+test('bodyOf: a car at a wheel (the room says so) or beyond a run; a person otherwise, and for anything that is not a number', () => {
   assert.equal(bodyOf(0), 'person')
   assert.equal(bodyOf(RUN), 'person')
   assert.equal(bodyOf(RUN + 0.01), 'car')
   assert.equal(bodyOf(Number.NaN), 'person')
   assert.equal(bodyOf(Number.POSITIVE_INFINITY), 'person')
+  // A car parked or crawling is still a car: the room's word, not the speed.
+  assert.equal(bodyOf(0, true), 'car')
+  assert.equal(bodyOf(2, true), 'car')
+  assert.equal(bodyOf(2, false), 'person')
 })
 
 test('the view holds the room\'s bound of each body, starts hidden, and wears a business-casual variant', () => {

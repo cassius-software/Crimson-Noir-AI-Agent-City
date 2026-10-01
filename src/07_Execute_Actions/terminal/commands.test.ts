@@ -333,7 +333,7 @@ interface FakeNet extends NetBridge {
 /** Logs to the bridge's shared `calls` (as 'net <verb>'): only `status` may be read while locked. */
 function fakeNet(calls: string[]): FakeNet {
   const n: FakeNet = {
-    report: { state: 'idle', url: null, id: 0, peers: 0, dropped: 0, pending: 0, voices: 0, reason: null },
+    report: { state: 'idle', url: null, id: 0, peers: 0, dropped: 0, pending: 0, voices: 0, reason: null, corrections: 0, corrected: null },
     joinResult: Promise.resolve('joined ws://127.0.0.1:8787 as player 3'),
     join: (url, token) => {
       calls.push(`net join ${url} ${token ?? '-'}`)
@@ -1698,8 +1698,11 @@ test('r0: the console\'s own machine runs the rest of the line, keeps definition
 test('net: status reads at any time as rows; join, leave and forget are the operator\'s; a join resolves with the room\'s line or its refusal', async () => {
   const b = fake()
   assert.deepEqual(texts(run('net', b, [])), ['state     idle', 'room      none (net join <ws-url> <token>)', 'player    -', 'peers     0  dropped 0  pending 0  voices 0'])
-  b.net.report = { state: 'joined', url: 'ws://127.0.0.1:8787', id: 3, peers: 2, dropped: 1, pending: 4, voices: 1, reason: null }
+  b.net.report = { state: 'joined', url: 'ws://127.0.0.1:8787', id: 3, peers: 2, dropped: 1, pending: 4, voices: 1, reason: null, corrections: 0, corrected: null }
   assert.deepEqual(texts(run('net status', b, [])), ['state     joined', 'room      ws://127.0.0.1:8787', 'player    3', 'peers     2  dropped 1  pending 4  voices 1'])
+  b.net.report = { ...b.net.report, corrections: 2, corrected: 'claim 40.00 m from the mirror\'s pose' }
+  assert.equal(texts(run('net status', b, [])).at(-1), 'snapped   2  last: claim 40.00 m from the mirror\'s pose')
+  b.net.report = { ...b.net.report, corrections: 0, corrected: null }
   b.net.report = { ...b.net.report, state: 'closed', reason: 'the room closed the session: token refused' }
   assert.equal(texts(run('net status', b, [])).at(-1), 'reason    the room closed the session: token refused')
   for (const l of ['net join ws://127.0.0.1:8787 tok', 'net join wss://localhost:8788', 'net leave', 'net forget']) {
@@ -1708,7 +1711,7 @@ test('net: status reads at any time as rows; join, leave and forget are the oper
     assert.match(texts(r)[0], /^net: locked; type 'operator unlock' first$/)
     assert.equal(r.pending, undefined)
   }
-  assert.deepEqual(b.calls, ['net status', 'net status', 'net status'], 'nothing joined while locked')
+  assert.deepEqual(b.calls, new Array(4).fill('net status'), 'nothing joined while locked')
   b.calls.length = 0
   run('operator unlock', b, [])
   let r = run('net join ws://127.0.0.1:8787 tok', b, [])

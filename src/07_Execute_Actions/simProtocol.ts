@@ -35,6 +35,17 @@ export const PERSON = Object.freeze({ radius: 0.3, halfHeight: 0.6 })
 /** Walking and running speed, m/s: the worker caps the page's foot controls at a run. */
 export const WALK = 2.0
 export const RUN = 5.2
+
+/**
+ * The walking velocity the realm applies for foot controls (x, z) that are already finite: the same direction, never
+ * faster than a run. One definition for the physics worker (simCore.ts) and the network's authoritative mirror
+ * (10_Network/mirror.node.ts), so a client's prediction and the server's truth clamp alike, to the bit.
+ */
+export function footWish(x: number, z: number): { x: number; z: number } {
+  const len = Math.hypot(x, z)
+  const s = len > RUN ? RUN / len : 1
+  return { x: x * s, z: z * s }
+}
 /** How close the avatar must stand to a car to take its wheel, m. */
 export const ENTER_RANGE = 3.8
 /**

@@ -3,17 +3,23 @@
  * (netClient.ts) and the Node host (replication.node.ts) share, written the way simProtocol.ts writes the realm
  * boundary: every message is plain data (numbers, strings, booleans), and every message is read as untrusted. The
  * validators refuse anything malformed the way simHost does (shape, finite numbers, bounds, string lengths, sequence
- * order) and hand back a frozen copy with nothing extra in it. The room is server-authoritative: a peer sends inputs
- * (a desired walking velocity and a heading), the room integrates them on its own fixed tick, clamped to a run and to
- * the world's range, and the snapshot it sends is the truth. On the page a remote player is only a pose that is drawn,
- * modelled on the pose buffer's layout (REMOTE_POSE), never a body in the physics realm: the kernel stays single. Every
- * peer has token buckets (inputs per second, chat per minute, pings per second), every refusal is counted and a peer
- * that keeps earning them is removed. The 14A screen of 02_Define_The_Rules/conduct.ts reads every player name and
+ * order) and hand back a frozen copy with nothing extra in it. The room is server-authoritative (Phase 12): a peer's
+ * input says which walking velocity the client's own physics realm applied for each run of fixed substeps and where
+ * that left it (the claim, its prediction); the room hands it to its Authority (the host's is the headless Ring-0
+ * mirror, mirror.node.ts, the same city and the same character controller), which replays it and keeps it only if the
+ * claim matches. An input it refuses changes nothing in the room and is answered at once with a correction: the truth,
+ * under a new correction number, which the client snaps to (inputs under an older number predate the snap and are
+ * dropped unread). A peer may not run more substeps than time allows, and a peer that keeps earning corrections is
+ * removed. The snapshot each tick is the truth: every other player's pose, and this peer's own. On the page a remote
+ * player is only a pose that is drawn, modelled on the pose buffer's layout (REMOTE_POSE), never a body in the physics
+ * realm: the kernel stays single. Every peer has token buckets (inputs per second, substeps per second, corrections per
+ * minute, chat per minute, pings per second), every refusal is counted and a peer that keeps earning them is removed. The 14A screen of 02_Define_The_Rules/conduct.ts reads every player name and
  * every chat line: an inadmissible one is dropped silently and counted, so a griefer gets no reaction and no stage.
  * Every frame on the wire is sealed (02_Define_The_Rules/integrity.ts): an envelope number that must rise, and an
  * HMAC-SHA256 under the session token over the canonical message, checked on both sides before the message is read
- * any further, so a forged, altered or replayed frame is refused and counted like any other malformed one.
- * Pure: no socket, no clock of its own (the caller passes `now`), no randomness, no I/O.
+ * any further, so a forged, altered or replayed frame is refused and counted like any other malformed one. The token
+ * itself rides the WebSocket upgrade as a subprotocol (authProtocol), so the host checks it before a socket exists.
+ * Pure: no socket, no clock of its own (the caller passes `now`), no randomness, no I/O; the authority is handed in.
  * What breaks if it is removed? The client and the host have no agreed language, nothing vets what a peer says, and a
  * remote player could become a body in the realm.
  */
@@ -22,8 +28,16 @@ import { canonical, hmacSha256, isDigest, sameDigest } from '../02_Define_The_Ru
 import { RUN } from '../07_Execute_Actions/simProtocol.ts'
 import { PING_KINDS, type PingKind } from '../08_Swarm/ping.ts'
 
-/** The protocol's version; a join naming another is refused. 2: every frame is sealed (sealMessage). */
-export const PROTOCOL_VERSION = 2
+/**
+ * The protocol's version; a join naming another is refused. 2: every frame is sealed (sealMessage). 3: the room is
+ * authoritative (inputs are runs of substeps and a claim, a refused one is answered with a correction), and the token
+ * rides the upgrade (authProtocol).
+ */
+export const PROTOCOL_VERSION = 3
+/** The WebSocket subprotocol a client offers and the host answers with. */
+export const SUBPROTOCOL = 'onyx.3'
+/** The subprotocol entry that carries the session token, `auth.<token>`: the host checks it before it upgrades. */
+export const AUTH_PREFIX = 'auth.'
 
 /** Every bound the validators and the room enforce, frozen. */
 export const LIMITS = Object.freeze({
@@ -33,8 +47,10 @@ export const LIMITS = Object.freeze({
   chat: 240,
   /** A session token, characters. */
   token: 512,
-  /** One encoded message (one text frame), bytes. */
+  /** One encoded message from a client (one text frame), bytes. */
   message: 4096,
+  /** One encoded message from the host, bytes: a snapshot carries every player's pose. */
+  hostMessage: 16384,
   /** Peers a room holds at once (joined or not). */
   peers: 32,
   /** |x| and |z| of any position or ping, m; |y| at most `height`. */
@@ -43,6 +59,20 @@ export const LIMITS = Object.freeze({
   /** Inputs a peer may send: a steady rate and the burst it may bank. */
   inputsPerSecond: 60,
   inputBurst: 120,
+  /** Runs of substeps one input may carry, and the substeps in all. */
+  runs: 8,
+  stepsPerInput: 30,
+  /**
+   * Substeps a peer may run: the realm's fixed rate (physics.ts PHYSICS_HZ) and a second banked (a network stall up to
+   * a second delivers an honest client's steps at once). A client that runs its physics faster than time (a speed hack
+   * on the clock) runs out, and gains at most that second, once: the room never keeps a claim it did not replay.
+   */
+  stepsPerSecond: 60,
+  stepBurst: 60,
+  /** Corrections a peer may earn per minute (burst: the same) before the host removes it. */
+  correctionsPerMinute: 10,
+  /** A walker's speed bound (RUN) and a car's (the Ring-0 velocity cap, ring0.ts RING0.maxVelocity), m/s. */
+  driveSpeed: 50,
   /** Chat lines a peer may send per minute (burst: the same). */
   chatPerMinute: 20,
   /** Pings a peer may relay per second (burst: 4). */
@@ -79,6 +109,8 @@ export interface RemotePlayer {
   vz: number
   /** |(vx, vz)|, m/s. */
   speed: number
+  /** At a wheel (the pose is the chassis), or on foot. */
+  driving: boolean
 }
 
 /** One remote player's slice of a Float32Array (`stride` floats per player, replica order), for the page's drawing. */
@@ -104,13 +136,31 @@ export function packPoses(players: readonly RemotePlayer[], out: Float32Array): 
 // ---------------------------------------------------------------------------------------------------
 // Messages
 
-/** Client → host: the first message, once; `token` is the session token the operator handed out. */
-export interface JoinMessage { t: 'join'; v: number; token: string; name: string }
 /**
- * Client → host: one frame of input. `x`, `z` is the desired walking velocity (m/s, the room caps it at a run) and
- * `heading` the way the player faces (rad). `seq` rises by one per input; `ack` is the newest snapshot tick seen.
+ * Client → host: the first message, once; `token` is the session token the operator handed out (the same one the
+ * upgrade carried), and `world` the world the page is walking (mirror.node.ts worldOf: 'city/<seed>').
  */
-export interface InputMessage { t: 'input'; seq: number; ack: number; x: number; z: number; heading: number }
+export interface JoinMessage { t: 'join'; v: number; token: string; name: string; world: string }
+/** A run of fixed substeps: the walking velocity (x, z, m/s) the client's realm applied to each, and how many. */
+export type Run = readonly [x: number, z: number, n: number]
+/**
+ * Client → host: what the client's realm did since the last input. `segs` are its runs of substeps (at the wheel the
+ * velocity is 0: the car is the client's, and only its substeps count); `claim` is where the realm then had the player
+ * (the capsule centre on foot, the chassis centre at the wheel); `from`, on the first input on foot after a car, is
+ * where the realm put the player down. `heading` is the way the player faces. `seq` rises by one per input; `ack` is
+ * the newest snapshot tick seen; `fix` the newest correction applied (an input under an older one is dropped).
+ */
+export interface InputMessage {
+  t: 'input'
+  seq: number
+  ack: number
+  fix: number
+  mode: 'foot' | 'drive'
+  segs: Run[]
+  heading: number
+  claim: { x: number; y: number; z: number }
+  from?: { x: number; z: number }
+}
 /** Client → host: the newest snapshot tick seen, from an idle client. */
 export interface AckMessage { t: 'ack'; ack: number }
 /** Client → host: a chat line for the room. */
@@ -121,15 +171,20 @@ export interface PingMessage { t: 'ping'; seq: number; kind: PingKind; x: number
 export interface LeaveMessage { t: 'leave' }
 export type ClientMessage = JoinMessage | InputMessage | AckMessage | ChatMessage | PingMessage | LeaveMessage
 
-/** Host → client: the answer to a good join. */
-export interface WelcomeMessage { t: 'welcome'; v: number; id: number; tick: number; tickHz: number; players: RemotePlayer[] }
-/** Host → client, every tick: every joined player's pose; `ack` is the newest input seq the room applied from this peer. */
-export interface SnapshotMessage { t: 'snapshot'; tick: number; ack: number; players: RemotePlayer[] }
+/** Host → client: the answer to a good join: the peer's own truth (its spawn, correction 1: the client snaps to it) and everyone else. */
+export interface WelcomeMessage { t: 'welcome'; v: number; id: number; tick: number; tickHz: number; fix: number; you: RemotePlayer; players: RemotePlayer[] }
+/** Host → client, every tick: this peer's truth, every other joined player's, the newest input seq kept and correction made. */
+export interface SnapshotMessage { t: 'snapshot'; tick: number; ack: number; fix: number; you: RemotePlayer; players: RemotePlayer[] }
+/**
+ * Host → client, at once, for an input the room refused: the truth to snap to under correction `fix` (the client puts
+ * the player down there, standing, and numbers its inputs under it), the newest input seq kept, and why.
+ */
+export interface CorrectMessage { t: 'correct'; fix: number; ack: number; you: RemotePlayer; reason: string; tick: number }
 export interface ChatRelayMessage { t: 'chat'; from: number; name: string; text: string; tick: number }
 export interface PingRelayMessage { t: 'ping'; from: number; kind: PingKind; x: number; y: number; z: number; tick: number }
 export interface JoinedMessage { t: 'joined'; player: RemotePlayer; tick: number }
 export interface LeftMessage { t: 'left'; id: number; reason: string; tick: number }
-export type ServerMessage = WelcomeMessage | SnapshotMessage | ChatRelayMessage | PingRelayMessage | JoinedMessage | LeftMessage
+export type ServerMessage = WelcomeMessage | SnapshotMessage | CorrectMessage | ChatRelayMessage | PingRelayMessage | JoinedMessage | LeftMessage
 
 /** What a validator says: the message as a frozen plain copy, or why it was refused. */
 export type Read<T> = { ok: true; msg: T } | { ok: false; reason: string }
@@ -155,11 +210,14 @@ function text(u: unknown, max: number): u is string {
  */
 function player(u: unknown): RemotePlayer | null {
   if (!isRecord(u)) return null
-  const { id, x, y, z, heading, vx, vz, speed } = u
+  const { id, x, y, z, heading, vx, vz, speed, driving } = u
   const name = admissibleName(u.name)
   if (!count(id) || name === null || !fin(x, -LIMITS.range, LIMITS.range) || !fin(y, -LIMITS.height, LIMITS.height) || !fin(z, -LIMITS.range, LIMITS.range)) return null
-  if (!fin(heading, -Math.PI * 2, Math.PI * 2) || !fin(vx, -RUN, RUN) || !fin(vz, -RUN, RUN) || !fin(speed, 0, RUN)) return null
-  return Object.freeze({ id, name, x, y, z, heading, vx, vz, speed })
+  if (typeof driving !== 'boolean') return null
+  // A walker is never faster than a run; a car never faster than the velocity cap.
+  const top = driving ? LIMITS.driveSpeed : RUN
+  if (!fin(heading, -Math.PI * 2, Math.PI * 2) || !fin(vx, -top, top) || !fin(vz, -top, top) || !fin(speed, 0, top)) return null
+  return Object.freeze({ id, name, x, y, z, heading, vx, vz, speed, driving })
 }
 
 function players(u: unknown): RemotePlayer[] | null {
@@ -173,6 +231,55 @@ function players(u: unknown): RemotePlayer[] | null {
   return out
 }
 
+/** A point within the world's range: x and z within ±range, y within ±height when it has one. */
+function point(u: unknown, withY: boolean): { x: number; y: number; z: number } | null {
+  if (!isRecord(u)) return null
+  const { x, y, z } = u
+  if (!fin(x, -LIMITS.range, LIMITS.range) || !fin(z, -LIMITS.range, LIMITS.range)) return null
+  if (withY && !fin(y, -LIMITS.height, LIMITS.height)) return null
+  return { x, y: withY ? (y as number) : 0, z }
+}
+
+/**
+ * An input, field by field: the counters, the mode, 1..LIMITS.runs runs of [x, z, n] (x and z within a run per axis;
+ * the authority clamps the length, as the realm does; 0 at the wheel; n a whole number, LIMITS.stepsPerInput in all),
+ * the heading, the claim, and an exit point only on foot.
+ */
+function readInput(u: Record<string, unknown>): Read<ClientMessage> {
+  if (!count(u.seq) || !count(u.ack) || !count(u.fix)) return refusal('input: seq, ack and fix')
+  if (u.mode !== 'foot' && u.mode !== 'drive') return refusal('input: mode')
+  const mode = u.mode
+  if (!Array.isArray(u.segs) || u.segs.length === 0 || u.segs.length > LIMITS.runs) return refusal('input: runs')
+  const segs: Run[] = []
+  let total = 0
+  for (const r of u.segs) {
+    if (!Array.isArray(r) || r.length !== 3) return refusal('input: runs')
+    const [x, z, n] = r as unknown[]
+    if (!fin(x, -RUN, RUN) || !fin(z, -RUN, RUN)) return refusal('input: velocity')
+    if (mode === 'drive' && (x !== 0 || z !== 0)) return refusal('input: velocity')
+    if (!(typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= LIMITS.stepsPerInput)) return refusal('input: substeps')
+    total += n
+    segs.push(Object.freeze([x, z, n] as const))
+  }
+  if (total > LIMITS.stepsPerInput) return refusal('input: substeps')
+  if (!fin(u.heading, -Math.PI * 2, Math.PI * 2)) return refusal('input: heading')
+  const claim = point(u.claim, true)
+  if (!claim) return refusal('input: claim')
+  let from: { x: number; z: number } | undefined
+  if (u.from !== undefined) {
+    const f = point(u.from, false)
+    if (!f || mode !== 'foot') return refusal('input: from')
+    from = Object.freeze({ x: f.x, z: f.z })
+  }
+  return {
+    ok: true,
+    msg: Object.freeze({
+      t: 'input', seq: u.seq, ack: u.ack, fix: u.fix, mode, segs: Object.freeze(segs) as Run[], heading: u.heading, claim: Object.freeze(claim),
+      ...(from && { from }),
+    }),
+  }
+}
+
 /** A client's message, checked field by field; anything else in it is never read. */
 export function readClientMessage(u: unknown): Read<ClientMessage> {
   if (!isRecord(u)) return refusal('not a message object')
@@ -181,14 +288,11 @@ export function readClientMessage(u: unknown): Read<ClientMessage> {
       if (u.v !== PROTOCOL_VERSION) return refusal(`join: protocol ${String(u.v)} is not ${PROTOCOL_VERSION}`)
       if (!text(u.token, LIMITS.token) || u.token.length === 0) return refusal('join: token')
       if (!text(u.name, LIMITS.name)) return refusal('join: name')
-      return { ok: true, msg: Object.freeze({ t: 'join', v: PROTOCOL_VERSION, token: u.token, name: u.name }) }
+      if (!text(u.world, LIMITS.name) || u.world.length === 0) return refusal('join: world')
+      return { ok: true, msg: Object.freeze({ t: 'join', v: PROTOCOL_VERSION, token: u.token, name: u.name, world: u.world }) }
     }
-    case 'input': {
-      if (!count(u.seq) || !count(u.ack)) return refusal('input: seq and ack')
-      if (!fin(u.x, -RUN, RUN) || !fin(u.z, -RUN, RUN)) return refusal('input: velocity')
-      if (!fin(u.heading, -Math.PI * 2, Math.PI * 2)) return refusal('input: heading')
-      return { ok: true, msg: Object.freeze({ t: 'input', seq: u.seq, ack: u.ack, x: u.x, z: u.z, heading: u.heading }) }
-    }
+    case 'input':
+      return readInput(u)
     case 'ack':
       if (!count(u.ack)) return refusal('ack: ack')
       return { ok: true, msg: Object.freeze({ t: 'ack', ack: u.ack }) }
@@ -215,16 +319,26 @@ export function readServerMessage(u: unknown): Read<ServerMessage> {
   switch (u.t) {
     case 'welcome': {
       if (u.v !== PROTOCOL_VERSION) return refusal(`welcome: protocol ${String(u.v)} is not ${PROTOCOL_VERSION}`)
-      if (!count(u.id) || !count(u.tick) || !fin(u.tickHz, 1, 240)) return refusal('welcome: id, tick and tickHz')
+      if (!count(u.id) || !count(u.tick) || !fin(u.tickHz, 1, 240) || !count(u.fix)) return refusal('welcome: id, tick, tickHz and fix')
+      const you = player(u.you)
+      if (!you || you.id !== u.id) return refusal('welcome: you')
       const list = players(u.players)
       if (!list) return refusal('welcome: players')
-      return { ok: true, msg: Object.freeze({ t: 'welcome', v: PROTOCOL_VERSION, id: u.id, tick: u.tick, tickHz: u.tickHz, players: list }) }
+      return { ok: true, msg: Object.freeze({ t: 'welcome', v: PROTOCOL_VERSION, id: u.id, tick: u.tick, tickHz: u.tickHz, fix: u.fix, you, players: list }) }
     }
     case 'snapshot': {
-      if (!count(u.tick) || !count(u.ack)) return refusal('snapshot: tick and ack')
+      if (!count(u.tick) || !count(u.ack) || !count(u.fix)) return refusal('snapshot: tick, ack and fix')
+      const you = player(u.you)
+      if (!you) return refusal('snapshot: you')
       const list = players(u.players)
       if (!list) return refusal('snapshot: players')
-      return { ok: true, msg: Object.freeze({ t: 'snapshot', tick: u.tick, ack: u.ack, players: list }) }
+      return { ok: true, msg: Object.freeze({ t: 'snapshot', tick: u.tick, ack: u.ack, fix: u.fix, you, players: list }) }
+    }
+    case 'correct': {
+      if (!count(u.fix) || !count(u.ack) || !count(u.tick) || !text(u.reason, LIMITS.chat)) return refusal('correct: fix, ack, tick and reason')
+      const you = player(u.you)
+      if (!you) return refusal('correct: you')
+      return { ok: true, msg: Object.freeze({ t: 'correct', fix: u.fix, ack: u.ack, you, reason: u.reason, tick: u.tick }) }
     }
     case 'chat':
       if (!count(u.from) || !count(u.tick) || !text(u.name, LIMITS.name) || !text(u.text, LIMITS.chat)) return refusal('chat: from, name, text and tick')
@@ -248,10 +362,10 @@ export function readServerMessage(u: unknown): Read<ServerMessage> {
   }
 }
 
-/** One text frame as JSON, bounded, then read as `read` reads it. */
-export function decode<T>(wire: string, read: (u: unknown) => Read<T>): Read<T> {
+/** One text frame as JSON, bounded (a client's at `message`, the host's at `hostMessage`), then read as `read` reads it. */
+export function decode<T>(wire: string, read: (u: unknown) => Read<T>, max: number = LIMITS.message): Read<T> {
   if (typeof wire !== 'string') return refusal('not text')
-  if (wire.length > LIMITS.message) return refusal(`message longer than ${LIMITS.message}`)
+  if (wire.length > max) return refusal(`message longer than ${max}`)
   let u: unknown
   try {
     u = JSON.parse(wire)
@@ -262,7 +376,7 @@ export function decode<T>(wire: string, read: (u: unknown) => Read<T>): Read<T> 
 }
 
 export const decodeClientMessage = (wire: string): Read<ClientMessage> => decode(wire, readClientMessage)
-export const decodeServerMessage = (wire: string): Read<ServerMessage> => decode(wire, readServerMessage)
+export const decodeServerMessage = (wire: string): Read<ServerMessage> => decode(wire, readServerMessage, LIMITS.hostMessage)
 
 /** A message as JSON, unsealed (the validators' tests; the wire carries sealMessage). */
 export const encode = (msg: ClientMessage | ServerMessage): string => JSON.stringify(msg)
@@ -281,16 +395,22 @@ export interface SealedFrame { n: number; body: unknown; mac: string }
 /** A frame opened: the message, and the envelope number it came as. */
 export type Opened<T> = { ok: true; msg: T; n: number } | { ok: false; reason: string }
 
+/**
+ * HMAC-SHA256 of a text under a key, as 64 lower-case hex digits: integrity.ts by default (dependency-free, the page's);
+ * the host passes node:crypto's, the same digest, faster.
+ */
+export type Mac = (key: string, message: string) => string
+
 /** `msg` sealed as envelope `n` under `key`, for the wire. */
-export function sealMessage(msg: ClientMessage | ServerMessage, n: number, key: string): string {
+export function sealMessage(msg: ClientMessage | ServerMessage, n: number, key: string, mac: Mac = hmacSha256): string {
   if (!count(n)) throw new RangeError(`sealMessage: n ${String(n)}`)
-  return JSON.stringify({ n, body: msg, mac: hmacSha256(key, canonical({ n, body: msg })) })
+  return JSON.stringify({ n, body: msg, mac: mac(key, canonical({ n, body: msg })) })
 }
 
-/** The wire as an envelope: bounded text, JSON, the shape, before anything in it is trusted. */
-export function readEnvelope(wire: unknown): Read<SealedFrame> {
+/** The wire as an envelope: bounded text (a client's frame at `message`, the host's at `hostMessage`), JSON, the shape, before anything in it is trusted. */
+export function readEnvelope(wire: unknown, max: number = LIMITS.message): Read<SealedFrame> {
   if (typeof wire !== 'string') return refusal('not text')
-  if (wire.length > LIMITS.message) return refusal(`message longer than ${LIMITS.message}`)
+  if (wire.length > max) return refusal(`message longer than ${max}`)
   let u: unknown
   try {
     u = JSON.parse(wire)
@@ -309,10 +429,10 @@ export function readEnvelope(wire: unknown): Read<SealedFrame> {
  * number and body (forged, altered, or under another token), or a number that does not rise (a replay). Null when it
  * is. The seal is checked first, so a forgery is never told apart from a replay by the reason it earns.
  */
-export function sealFault(env: SealedFrame, key: string, after: number): string | null {
+export function sealFault(env: SealedFrame, key: string, after: number, mac: Mac = hmacSha256): string | null {
   let want: string
   try {
-    want = hmacSha256(key, canonical({ n: env.n, body: env.body }))
+    want = mac(key, canonical({ n: env.n, body: env.body }))
   } catch {
     // JSON that is not plain data (1e999 parses as Infinity): nothing to seal, nothing to accept.
     return 'envelope: body'
@@ -328,14 +448,14 @@ export function sealFault(env: SealedFrame, key: string, after: number): string 
  * token itself), then the envelope number, which must rise. A good frame moves `peer.received`; a refused one moves
  * nothing, so a forgery or a replay never advances a thing.
  */
-export function openClientFrame(peer: Peer, wire: unknown): Read<ClientMessage> {
+export function openClientFrame(peer: Peer, wire: unknown, mac: Mac = hmacSha256): Read<ClientMessage> {
   const env = readEnvelope(wire)
   if (!env.ok) return env
   const read = readClientMessage(env.msg.body)
   if (!read.ok) return read
   const key = peer.joined ? peer.key : read.msg.t === 'join' ? read.msg.token : ''
   if (key === '') return refusal(`${read.msg.t} before join`)
-  const fault = sealFault(env.msg, key, peer.received)
+  const fault = sealFault(env.msg, key, peer.received, mac)
   if (fault !== null) return refusal(fault)
   peer.received = env.msg.n
   return read
@@ -343,13 +463,34 @@ export function openClientFrame(peer: Peer, wire: unknown): Read<ClientMessage> 
 
 /** The host's frame opened on the page: the envelope, the message's shape, the seal under the session token, a number above `after`. */
 export function openServerFrame(wire: unknown, key: string, after: number): Opened<ServerMessage> {
-  const env = readEnvelope(wire)
+  const env = readEnvelope(wire, LIMITS.hostMessage)
   if (!env.ok) return env
   const read = readServerMessage(env.msg.body)
   if (!read.ok) return read
   const fault = sealFault(env.msg, key, after)
   if (fault !== null) return { ok: false, reason: fault }
   return { ok: true, msg: read.msg, n: env.msg.n }
+}
+
+/**
+ * The subprotocol entry that carries a session token through the WebSocket upgrade (`auth.<token>`), or null for a
+ * token a subprotocol cannot carry: the host's tokens are base64url and dots (replication.node.ts mintToken), all of
+ * them characters RFC 6455 allows there.
+ */
+export function authProtocol(token: unknown): string | null {
+  if (typeof token !== 'string' || token.length === 0 || token.length > LIMITS.token || !/^[A-Za-z0-9._-]+$/.test(token)) return null
+  return AUTH_PREFIX + token
+}
+
+/** A bucket with `n` tokens taken at once at `now`, if it holds them: a run of substeps against the peer's budget. */
+export function takeMany(b: Bucket, n: number, now: number): boolean {
+  if (n <= 0) return true
+  const dt = Math.max(0, now - b.at) / 1000
+  b.tokens = Math.min(b.capacity, b.tokens + dt * b.perSecond)
+  b.at = Math.max(b.at, now)
+  if (b.tokens < n) return false
+  b.tokens -= n
+  return true
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -396,11 +537,13 @@ export function take(b: Bucket, now: number): boolean {
   return true
 }
 
-export interface PeerBuckets { input: Bucket; chat: Bucket; ping: Bucket }
+export interface PeerBuckets { input: Bucket; steps: Bucket; corrections: Bucket; chat: Bucket; ping: Bucket }
 
 /** A new peer's buckets, full. */
 export const peerBuckets = (now: number): PeerBuckets => ({
   input: bucket(LIMITS.inputBurst, LIMITS.inputsPerSecond, now),
+  steps: bucket(LIMITS.stepBurst, LIMITS.stepsPerSecond, now),
+  corrections: bucket(LIMITS.correctionsPerMinute, LIMITS.correctionsPerMinute / 60, now),
   chat: bucket(LIMITS.chatPerMinute, LIMITS.chatPerMinute / 60, now),
   ping: bucket(LIMITS.pingBurst, LIMITS.pingsPerSecond, now),
 })
@@ -408,18 +551,41 @@ export const peerBuckets = (now: number): PeerBuckets => ({
 // ---------------------------------------------------------------------------------------------------
 // The authoritative room
 
+/** A peer's truth as the authority holds it. */
+export interface Truth { x: number; y: number; z: number; heading: number; vx: number; vz: number; speed: number; driving: boolean }
+
+/**
+ * What decides where the room's players are (the host's: the headless Ring-0 mirror, mirror.node.ts). The room only
+ * knows that every input must be judged and every refusal settled.
+ */
+export interface Authority {
+  /** The world a joining page must be walking (a join naming another is refused). */
+  readonly world: string
+  /** A new peer's body at its spawn: its truth. */
+  join(id: number): Truth
+  leave(id: number): void
+  /** One input on trial: kept (the new truth), or refused (the truth exactly as before) and why. */
+  judge(id: number, input: InputMessage): { ok: true; pose: Truth } | { ok: false; pose: Truth; reason: string }
+  /** The peer put down at its truth again, standing, as the client is by a correction: its truth. */
+  settle(id: number): Truth
+}
+
 /** One peer as the room holds it; `joined` is false between the socket and a good join. */
 export interface Peer {
   id: number
   name: string
   joined: boolean
-  /** The newest input seq applied. */
+  /** The newest input seq kept. */
   seq: number
+  /** The newest correction made (the welcome is the first): inputs under an older one predate the snap. */
+  fix: number
   /** The newest chat or ping seq relayed. */
   said: number
   /** The newest snapshot tick the peer acknowledged. */
   ack: number
   refusals: number
+  /** Corrections made since the peer joined. */
+  corrections: number
   buckets: PeerBuckets
   /** The session token the peer joined with: the key its frames are sealed under both ways ('' until it has joined). */
   key: string
@@ -428,12 +594,14 @@ export interface Peer {
   /** When the socket arrived and when the peer last said anything well-formed, ms. */
   arrived: number
   seen: number
+  /** The truth, as the authority last gave it. */
   x: number
   y: number
   z: number
   heading: number
   vx: number
   vz: number
+  driving: boolean
 }
 
 export interface Room {
@@ -442,6 +610,7 @@ export interface Room {
   /** The next peer id. */
   next: number
   peers: Map<number, Peer>
+  readonly authority: Authority
 }
 
 /** What the room wants done after a message: a reply to the peer, a broadcast to every joined peer, a refusal counted, a removal. */
@@ -455,14 +624,14 @@ export interface Outcome {
   left?: boolean
 }
 
-export const createRoom = (tickHz: number = LIMITS.tickHz): Room => ({ tick: 0, tickHz, next: 1, peers: new Map() })
+export const createRoom = (authority: Authority, tickHz: number = LIMITS.tickHz): Room => ({ tick: 0, tickHz, next: 1, peers: new Map(), authority })
 
 /** A socket arrived: a new, unjoined peer, or null when the room is full. */
 export function admit(room: Room, now: number): Peer | null {
   if (room.peers.size >= LIMITS.peers) return null
   const peer: Peer = {
-    id: room.next++, name: '', joined: false, seq: 0, said: 0, ack: 0, refusals: 0, buckets: peerBuckets(now), key: '', received: 0,
-    arrived: now, seen: now, x: 0, y: 0, z: 0, heading: 0, vx: 0, vz: 0,
+    id: room.next++, name: '', joined: false, seq: 0, fix: 0, said: 0, ack: 0, refusals: 0, corrections: 0, buckets: peerBuckets(now), key: '',
+    received: 0, arrived: now, seen: now, x: 0, y: 0, z: 0, heading: 0, vx: 0, vz: 0, driving: false,
   }
   room.peers.set(peer.id, peer)
   return peer
@@ -474,7 +643,37 @@ export function refuse(peer: Peer, reason: string): Outcome {
   return peer.refusals >= LIMITS.refusalsBeforeKick ? { refused: reason, kick: 'repeated refusals' } : { refused: reason }
 }
 
-const pose = (p: Peer): RemotePlayer => Object.freeze({ id: p.id, name: p.name, x: p.x, y: p.y, z: p.z, heading: p.heading, vx: p.vx, vz: p.vz, speed: Math.hypot(p.vx, p.vz) })
+const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v)
+
+const round = (v: number, places: number): number => {
+  const k = 10 ** places
+  return Math.round(v * k) / k
+}
+
+/**
+ * A peer's pose on the wire: the others' in millimetres and milliradians, so a full room's snapshot stays small; a
+ * peer's own exact (`exact`), since its client snaps to it and must put the player down where the authority did.
+ */
+const pose = (p: Peer, exact = false): RemotePlayer => {
+  const top = p.driving ? LIMITS.driveSpeed : RUN
+  const at = (v: number): number => (exact ? v : round(v, 3))
+  const vx = Math.max(-top, Math.min(top, at(p.vx))), vz = Math.max(-top, Math.min(top, at(p.vz)))
+  return Object.freeze({
+    id: p.id, name: p.name, x: at(p.x), y: at(p.y), z: at(p.z), heading: at(p.heading), vx, vz,
+    speed: Math.min(top, at(Math.hypot(vx, vz))), driving: p.driving,
+  })
+}
+
+/** The authority's truth onto the peer. */
+function hold(peer: Peer, t: Truth): void {
+  peer.x = t.x
+  peer.y = t.y
+  peer.z = t.z
+  peer.heading = t.heading
+  peer.vx = t.vx
+  peer.vz = t.vz
+  peer.driving = t.driving
+}
 
 /** Every joined player's pose, by id. */
 export function poses(room: Room): RemotePlayer[] {
@@ -484,42 +683,69 @@ export function poses(room: Room): RemotePlayer[] {
 }
 
 /**
- * One well-formed message from a peer, applied. `verify` says whether a session token is good (the host's HMAC check);
- * the room only knows that it must be. Nothing here replies to a refusal: a malformed, out-of-order, over-rate or
- * inadmissible message is silently counted, exactly as the physics worker treats the page.
+ * An input the room will not keep: nothing of it is applied, and the peer is answered at once with a correction (the
+ * truth, put down standing, under the next correction number). A peer past its corrections a minute is to be removed.
+ */
+export function correct(room: Room, peer: Peer, reason: string, now: number): Outcome {
+  peer.fix++
+  peer.corrections++
+  hold(peer, room.authority.settle(peer.id))
+  const out: Outcome = { reply: { t: 'correct', fix: peer.fix, ack: peer.seq, you: pose(peer, true), reason, tick: room.tick }, refused: reason }
+  if (!take(peer.buckets.corrections, now)) out.kick = 'repeated illegal movement'
+  return out
+}
+
+/**
+ * One well-formed message from a peer, applied. `verify` says whether a session token is good (the host's HMAC check,
+ * bound to the token its upgrade carried); the room only knows that it must be. Nothing here replies to a refusal but
+ * an input's (a correction): a malformed, out-of-order, over-rate or inadmissible message is silently counted, exactly
+ * as the physics worker treats the page.
  */
 export function handle(room: Room, peer: Peer, msg: ClientMessage, now: number, verify: (token: string) => boolean): Outcome {
   if (!peer.joined) {
     if (msg.t !== 'join') return refuse(peer, `${msg.t} before join`)
     if (!verify(msg.token)) return refuse(peer, 'join: bad token')
+    if (msg.world !== room.authority.world) return refuse(peer, 'join: world')
     const name = admissibleName(msg.name)
     if (name === null) return refuse(peer, 'join: name')
     peer.joined = true
     peer.name = name
     peer.key = msg.token
     peer.seen = now
-    const me = pose(peer)
+    peer.fix = 1
+    hold(peer, room.authority.join(peer.id))
     const others = poses(room).filter((p) => p.id !== peer.id)
     return {
-      reply: { t: 'welcome', v: PROTOCOL_VERSION, id: peer.id, tick: room.tick, tickHz: room.tickHz, players: others },
-      broadcast: { t: 'joined', player: me, tick: room.tick },
+      reply: { t: 'welcome', v: PROTOCOL_VERSION, id: peer.id, tick: room.tick, tickHz: room.tickHz, fix: peer.fix, you: pose(peer, true), players: others },
+      broadcast: { t: 'joined', player: pose(peer), tick: room.tick },
     }
   }
   switch (msg.t) {
     case 'join':
       return refuse(peer, 'join: already joined')
     case 'input': {
-      if (!take(peer.buckets.input, now)) return refuse(peer, 'input: over rate')
-      if (msg.seq <= peer.seq) return refuse(peer, 'input: stale seq')
-      if (msg.ack > room.tick) return refuse(peer, 'input: ack from the future')
+      // Over rate is a refusal, counted toward removal whatever the input says (a flood that ignores its corrections is
+      // still a flood), and corrected when it was current.
+      if (!take(peer.buckets.input, now)) {
+        const counted = refuse(peer, 'input: over rate')
+        if (msg.fix !== peer.fix || counted.kick) return counted
+        return correct(room, peer, 'input: over rate', now)
+      }
+      // Sent before the client applied the last correction: it describes a body the room never had. Dropped unread.
+      if (msg.fix < peer.fix) return {}
+      peer.seen = now
+      if (msg.fix > peer.fix) return correct(room, peer, 'input: a correction that was never made', now)
+      if (msg.seq <= peer.seq) return correct(room, peer, 'input: stale seq', now)
+      if (msg.ack > room.tick) return correct(room, peer, 'input: ack from the future', now)
+      let n = 0
+      for (const r of msg.segs) n += r[2]
+      // More substeps than time allows: a client running its physics faster than the clock.
+      if (!takeMany(peer.buckets.steps, n, now)) return correct(room, peer, 'input: more substeps than time allows', now)
+      const v = room.authority.judge(peer.id, msg)
+      if (!v.ok) return correct(room, peer, v.reason, now)
+      hold(peer, v.pose)
       peer.seq = msg.seq
       peer.ack = Math.max(peer.ack, msg.ack)
-      peer.seen = now
-      const speed = Math.hypot(msg.x, msg.z)
-      const k = speed > RUN ? RUN / speed : 1
-      peer.vx = msg.x * k
-      peer.vz = msg.z * k
-      peer.heading = msg.heading
       return {}
     }
     case 'ack':
@@ -548,28 +774,32 @@ export function handle(room: Room, peer: Peer, msg: ClientMessage, now: number, 
   }
 }
 
-/** Removes a peer; the broadcast for the others when it had joined, else null. */
-export function depart(room: Room, peer: Peer, reason: string): LeftMessage | null {
-  room.peers.delete(peer.id)
-  return peer.joined ? { t: 'left', id: peer.id, reason, tick: room.tick } : null
+/**
+ * An input frame the core refused before reading it (malformed or forged, from a joined peer): counted as a refusal,
+ * and answered with a correction like any input the room will not keep.
+ */
+export function refuseInput(room: Room, peer: Peer, reason: string, now: number): Outcome {
+  const counted = refuse(peer, reason)
+  const fixed = correct(room, peer, reason, now)
+  return { ...fixed, ...(counted.kick && { kick: counted.kick }) }
 }
 
-const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v)
+/** Removes a peer (its body leaves the authority); the broadcast for the others when it had joined, else null. */
+export function depart(room: Room, peer: Peer, reason: string): LeftMessage | null {
+  room.peers.delete(peer.id)
+  if (!peer.joined) return null
+  room.authority.leave(peer.id)
+  return { t: 'left', id: peer.id, reason, tick: room.tick }
+}
 
-/** One fixed tick: every joined peer moves by its velocity, kept within the world's range; the tick counts up. */
+/** One fixed tick: the snapshots' clock counts up (the authority has already moved everyone, input by input). */
 export function tickRoom(room: Room): void {
-  const dt = 1 / room.tickHz
-  for (const p of room.peers.values()) {
-    if (!p.joined) continue
-    p.x = clamp(p.x + p.vx * dt, -LIMITS.range, LIMITS.range)
-    p.z = clamp(p.z + p.vz * dt, -LIMITS.range, LIMITS.range)
-  }
   room.tick++
 }
 
-/** The snapshot for one peer after a tick: every joined player, and the newest input seq applied from this peer. */
+/** The snapshot for one peer after a tick: its own truth, every other joined player's, and the newest input seq kept. */
 export function snapshotFor(room: Room, peer: Peer, players: RemotePlayer[] = poses(room)): SnapshotMessage {
-  return { t: 'snapshot', tick: room.tick, ack: peer.seq, players }
+  return { t: 'snapshot', tick: room.tick, ack: peer.seq, fix: peer.fix, you: pose(peer, true), players: players.filter((p) => p.id !== peer.id) }
 }
 
 /** Peers the host should drop at `now`: not joined in time, or joined and silent too long; each with its reason. */
@@ -585,27 +815,35 @@ export function expired(room: Room, now: number): { peer: Peer; reason: string }
 // ---------------------------------------------------------------------------------------------------
 // The page's replica: reconciliation with the authoritative snapshot
 
-/** What the page holds of the room: the newest snapshot's tick and ack, and every other player's pose, by id. */
+/**
+ * What the page holds of the room: the newest snapshot's tick, the newest input seq and correction the host has
+ * acknowledged, this client's own truth, and every other player's pose, by id. The local avatar stays the local
+ * realm's (the prediction); `you` is what the host says, which the client snaps to only on a correction.
+ */
 export interface Replica {
-  /** This client's own id (its own pose is never taken from a snapshot: the local avatar is the local realm's). */
+  /** This client's own id. */
   self: number
   tick: number
-  /** The newest input seq the host has applied from this client. */
+  /** The newest input seq the host has kept from this client. */
   ack: number
+  /** The newest correction the host has made (the welcome is the first). */
+  fix: number
+  /** This client's truth in the newest snapshot (null before the first). */
+  you: RemotePlayer | null
   players: readonly RemotePlayer[]
 }
 
-export const emptyReplica = (self: number): Replica => Object.freeze({ self, tick: 0, ack: 0, players: Object.freeze([]) })
+export const emptyReplica = (self: number): Replica => Object.freeze({ self, tick: 0, ack: 0, fix: 0, you: null, players: Object.freeze([]) })
 
 /**
- * The replica after a snapshot: the host's word replaces every remote pose; this client's own entry is dropped; a
- * snapshot no newer than the one held is ignored (out of order or repeated). Deterministic: the same replica and the
- * same snapshot always give the same result, players by rising id, frozen.
+ * The replica after a snapshot: the host's word replaces every remote pose and this client's truth; an entry for this
+ * client among the others is dropped; a snapshot no newer than the one held is ignored (out of order or repeated).
+ * Deterministic: the same replica and the same snapshot always give the same result, players by rising id, frozen.
  */
 export function reconcile(r: Replica, s: SnapshotMessage): Replica {
   if (s.tick <= r.tick) return r
   const players = s.players.filter((p) => p.id !== r.self).sort((a, b) => a.id - b.id)
-  return Object.freeze({ self: r.self, tick: s.tick, ack: Math.max(r.ack, s.ack), players: Object.freeze(players) })
+  return Object.freeze({ self: r.self, tick: s.tick, ack: Math.max(r.ack, s.ack), fix: Math.max(r.fix, s.fix), you: s.you, players: Object.freeze(players) })
 }
 
 /** Inputs the host has not yet applied: those with a seq above the replica's ack. */
@@ -631,7 +869,7 @@ export function blend(a: RemotePlayer, b: RemotePlayer, alpha: number): RemotePl
   const k = clamp(Number.isFinite(alpha) ? alpha : 0, 0, 1)
   const mix = (p: number, q: number): number => p + (q - p) * k
   return Object.freeze({
-    id: b.id, name: b.name,
+    id: b.id, name: b.name, driving: b.driving,
     x: mix(a.x, b.x), y: mix(a.y, b.y), z: mix(a.z, b.z),
     heading: a.heading + turn(a.heading, b.heading) * k,
     vx: mix(a.vx, b.vx), vz: mix(a.vz, b.vz), speed: mix(a.speed, b.speed),

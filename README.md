@@ -24,9 +24,10 @@ wardrobe.
 npm install
 npm run dev      # local dev server
 npm run build    # typecheck (app + tests), then emit dist/index.html: one file, every asset inlined
-npm test         # 1,149 tests (node --test), including real Rapier physics and a real WebSocket host in Node
+npm test         # 1,169 tests (node --test), including real Rapier physics and a real WebSocket host in Node
 npm run lint     # oxlint
 npm run serve:net  # the optional network host (Node only, never bundled): see Networking
+npm run smoke:net  # the host as a process of its own, attacked with crafted illegal movement: see Networking
 ```
 
 Open `dist/index.html` directly: no server, and it works offline. The page sends nothing anywhere unless the
@@ -1242,57 +1243,110 @@ Audio starts on your first click, tap or key, as browsers require.
 ## Networking
 
 Nothing about the network runs at boot: the page opens no socket until the operator types `net join`, and the
-single-file build is unchanged. `10_Network/` has three files.
+single-file build is unchanged. The room is authoritative (Phase 12): the server runs its own physics of the city and
+is the only word on where anyone is; the page's own physics realm is the prediction that hides the latency.
 
-- **The host** (`replication.node.ts`) is Node-only and never bundled: `npm run serve:net` starts it (Node 22
-  strips the types; `NET_HOST`, `NET_PORT`, `NET_SECRET`), and it prints its address and an operator token good
-  for a day. It is dependency-free: `node:http` takes the upgrade, the RFC 6455 frames are read and written by
-  hand, ping is answered with pong, close is a handshake. Session tokens are HMAC-SHA256 with an expiry
-  (`node:crypto`), compared in constant time; a random secret is made per run if `NET_SECRET` is unset. It
-  listens in plain text on the loopback address (port 8787) by default: TLS (wss) is terminated by a reverse
-  proxy you run in front of it, which is also where an origin or client certificate belongs. `tsconfig.app.json`
-  excludes `src/**/*.node.ts`, and `airgap.test.ts` proves no page source imports it.
-- **The core** (`replication.ts`), shared by both sides: a plain-data message schema over WebSocket (join with a
-  session token, input, ack, chat, ping relay, leave; welcome, snapshot, chat and ping relays, joined, left) with
-  a validator in both directions that refuses every malformed message the way the physics worker's door does and
-  returns frozen copies with nothing extra; monotonic sequence and ack numbers; per-peer token buckets (60
-  inputs/s with a burst of 120, 20 chat lines a minute, 2 pings/s); an authoritative room that integrates each
-  peer's desired walking velocity on a fixed 20 Hz tick, capped at a run and held within the world's range; and
-  the page's reconciliation of snapshots into remote poses.
-- **The page** (`netClient.ts`). `net join <ws-url> [<token>]` (operator tier) joins a room under the name Wren
-  knows you by ("Visitor" before you have one). The client speaks ws or wss only to a loopback address (`localhost`,
-  `127.0.0.0/8`, `[::1]`: the host on this machine, or the local end of a tunnel or proxy you run towards a room
-  elsewhere), never with credentials in the URL, so neither the token nor a pose leaves this machine from the page;
-  `net join` refuses any other address before a socket opens (`02_Define_The_Rules/airgap.ts netServer`), and the
-  page's own `WebSocket` would refuse it again (see Constraints). The token is kept in this browser (`localStorage`, key
-  `civic-simulation:net:v1`) and reused when none is typed; `net forget` drops it, `net leave` leaves the room,
-  and `net status` (readable at any time) shows the state, the room, your player number, the peers drawn, the
-  inputs dropped and pending, the voices placed, and the reason for the last end. `history` keeps the token as
-  dots.
-- **What is replicated: poses only, never bodies.** What the page sends is player 1's walking input (a desired
-  velocity and heading) once a frame. The room's other players come back as pose records (seven floats, modelled
-  on the pose buffer) and are drawn as ghosts (`07_Execute_Actions/netView.ts`): the crowd's business-casual body
-  on foot, the car body for a pose faster than anyone runs, in ghost view's ink, translucent, casting no shadow. A
-  remote player is never a collider, never in a step request, never sensed by the crowd: the kernel stays single,
-  and the realm never hears of the network. The engine holds no network code either: App builds the client and
-  hands it in through the `NetHost` seam (`netWiring.test.ts`). The room's chat and pings reach the captions; a
-  remote ping is cued where it landed and captioned under the sender's name, goes on no board and asks nobody
-  over.
+- **The host** (`10_Network/replication.node.ts`) is Node-only and never bundled: `npm run serve:net` starts it (Node 22
+  strips the types; `NET_HOST`, `NET_PORT`, `NET_SECRET`, `NET_SEED`), and it prints its address, the world it holds
+  (`city/1337` unless `NET_SEED` says) and an operator token good for a day. It is dependency-free: `node:http` takes
+  the upgrade, the RFC 6455 frames are read and written by hand, ping is answered with pong, close is a handshake.
+  Session tokens are HMAC-SHA256 with an expiry (`node:crypto`), compared in constant time; a random secret is made
+  per run if `NET_SECRET` is unset. It listens in plain text on the loopback address (port 8787) by default.
+- **No connection without a token.** The token rides the WebSocket upgrade as a subprotocol (`onyx.3` and
+  `auth.<token>`), so the host checks its HMAC and expiry before it answers 101: a missing, forged, tampered or
+  expired token is a 401, with no socket and no room slot. An address that keeps failing (five in a row) is turned
+  away with a 429 for a while without the check being run. The join must carry the same token, and every frame after
+  it is sealed under it both ways (an envelope number that must rise and an HMAC over the canonical message: a
+  forged, altered or replayed frame is refused). The host's seals use `node:crypto`; the page's use `integrity.ts`.
+  Both produce the same digest, which the tests check bit for bit.
+- **The headless Ring-0 mirror** (`10_Network/mirror.node.ts`) is the host's authority. It builds the city of the seed
+  the way the page's physics realm does: every building box, the tiled ground, and the street furniture as sensors.
+  The physics is Rapier, the Rust physics engine compiled to WebAssembly that the page's physics worker loads. Each
+  player is the realm's own character controller (`07_Execute_Actions/player.ts`, in a mirror mode: moved in place,
+  other players not obstacles). The world is built once and stepped once, to build its query tree. A substep is
+  then replayed in about 22 µs, where a world step of the city takes 1.1 ms. Measured here, an input costs about
+  0.2 ms with its seal checked and its correction (if any) sent, and a tick with two players about 0.3 ms. Every
+  pose the mirror keeps passes the Ring-0 person audit (finite, inside the 1600 m containment slab, above the ground
+  floor).
+  The mirror holds no traffic: the cars on your screen are your own page's.
+  - The Phase 11 WebAssembly modules (the track arithmetic and kv-pager) are not physics and the mirror does not load
+    them: it needs no fleet.
+- **What the page sends: the steps its realm ran, and where they left it.** Each realm step is one move, paired by the
+  engine with the one step request that ran it:
+  - the walking velocity asked for;
+  - how many fixed 1/60 s substeps it ran;
+  - where it left player 1 (the claim);
+  - the correction it carried out.
+  Moves are coalesced into runs of substeps while the input rate is spent, and the claim is always where the last
+  run ended. At a wheel the claim is the chassis, since the car is the page's own.
+- **What the server does with them, the moment they arrive.** On foot it replays the substeps on its own capsule,
+  with the same clamp (`simProtocol.ts footWish`) and the same controller. An honest page's claim matches within a
+  micrometre: `mirror.node.test.ts` drives the page's realm and the mirror side by side through the city's walls. A
+  claim more than 25 cm off is refused, which catches:
+  - a speed hack;
+  - a wall walked through;
+  - a position written into the page's memory.
+  A packet is also refused for any of these:
+  - more substeps than the clock allows (60 a second, one second banked);
+  - a malformed, replayed or forged input;
+  - too many inputs.
+  A refused packet changes nothing on the server, and the host answers it in the same turn with a correction: the
+  truth, under a new correction number. Inputs the page sent before it applied the correction are dropped unread.
+  - At the wheel the server cannot replay the car, so it bounds the claim instead. A car is never faster than the
+    Ring-0 velocity cap (50 m/s), never through a building (rays at the sill and the roof line), and only enters or
+    leaves within reach of where the server has the player. The exit point must stand clear.
+  - A player who keeps earning corrections (more than ten a minute) is removed (code 4008).
+- **Snap reconciliation on the page** (`netClient.ts`, `engine.ts`). The welcome is the first correction: the spawn.
+  The engine applies each new correction once, as a teleport of player 1 to the truth. That teleport is the one
+  thing the room may ask of the physics realm. The page then walks on from there. `net status` shows how often the
+  room has snapped you and why (`snapped 1  last: claim 30.00 m from the mirror's pose`).
+- **What everyone sees.** Other players come from the server's truth, not from what a page claims. They come back
+  as pose records and are drawn as ghosts (`07_Execute_Actions/netView.ts`): the crowd's business-casual body on foot,
+  the car body at a wheel, in ghost view's ink, translucent, casting no shadow. A remote player is never a collider,
+  never in a step request, never sensed by the crowd. The engine holds no network code either: App builds the client
+  and hands it in through the `NetHost` seam (`netWiring.test.ts`). The room's chat and pings reach the captions; a
+  remote ping is cued where it landed and captioned under the sender's name, goes on no board and asks nobody over.
+- **The page** (`netClient.ts`). `net join <ws-url> [<token>]` (operator tier) joins a room under the name Wren knows
+  you by ("Visitor" before you have one), in the city of this page's `?seed`. A page walking the surveyed region
+  (`?region=on`) cannot join yet: the mirror holds the procedural city. The client speaks ws or wss only to a
+  loopback address (`localhost`, `127.0.0.0/8`, `[::1]`): the host on this machine, or the local end of a tunnel or
+  proxy you run towards a room elsewhere.
+  - **A server in the cloud** is reached the same way: run the host there (`NET_HOST`, behind TLS) and reach it
+    through a local end on this machine (an SSH tunnel such as `ssh -L 8787:127.0.0.1:8787 <server>`, or a reverse
+    proxy terminating wss). The page never names an address off this machine; the Phase 11 air gap
+    (`02_Define_The_Rules/airgap.ts netServer`) refuses any other before a socket opens.
+  - The token is kept in this browser (`localStorage`, key `civic-simulation:net:v1`) and reused when none is typed.
+    `net forget` drops it and `net leave` leaves the room. `net status` (readable at any time) shows the state, the
+    room, your player number, the peers drawn, the steps held and pending, the voices placed, the corrections, and
+    the reason for the last end. `history` keeps the token as dots.
 - **The 14A screen on names and chat.** Every player name and every chat line goes through `conduct.ts screen()`
   on the host, in the client before anything is sent, and once more on the page when it arrives (the host is not
   trusted either: a welcome or snapshot carrying an inadmissible name is refused whole). An inadmissible line is
   dropped silently, with no relay and no reply, and counted. Every refusal counts against the peer, whether a
   malformed frame, an out-of-rate input, a stale sequence number, a bad token or an inadmissible line; at eight
-  the host closes the socket (code 4008) and the room announces the departure. The host never explains a refusal.
-  A host that sends the page enough malformed messages is left the same way.
-- **What is a stub, and what is not there.** Voice: `attachPeer` places a peer's `MediaStream` in the soundscape,
-  but the signalling that would carry one (offer, answer and candidates over this socket) is a documented stub, so
-  no voice is sent or received. The page has no chat command: it receives the room's chat and sends none. The room
-  moves players by their reported walking velocity only (no cars, no collision with the city); snapshots carry
-  every joined player every tick (at most 32 peers, no interest management); there is no reconnection or resume;
-  the host trusts its proxy for TLS and the origin check, and closes on a fragmented frame. The HUD does not show
-  the session; `sim` and `__SIM__` report it as `output.net`. The client is tested against the real host in Node
-  (`netClient.test.ts`); a room joined from two browser tabs has not been tried here (see Browser support).
+  the host closes the socket (code 4008) and the room announces the departure. A peer too slow to read what it is
+  sent is closed (4009) rather than buffered without end. A host that sends the page enough malformed messages is
+  left the same way.
+- **The smoke test.** `npm run smoke:net` starts the real server as a process of its own and plays a client over a real
+  socket. It checks:
+  - that a missing or forged token is refused before a socket opens;
+  - that an honest walk is kept;
+  - that five crafted illegal packets are each refused and corrected within 50 ms (measured here: 0.8–5.9 ms over
+    two runs), with the server's truth unchanged. The five are a position written into memory, 600 substeps in one
+    packet, a third half-second burst at once (the room banks one second), a walk through the podium east of the
+    spawn sidewalk, and an injected velocity of three runs.
+- **What is a stub, and what is not there.**
+  - Voice: `attachPeer` places a peer's `MediaStream` in the soundscape, but the signalling that would carry one
+    (offer, answer and candidates over this socket) is a documented stub, so no voice is sent or received.
+  - The page has no chat command: it receives the room's chat and sends none.
+  - The surveyed region has no mirror.
+  - Snapshots carry every joined player every tick (at most 32 peers, no interest management).
+  - There is no reconnection or resume.
+  - The host trusts its proxy for TLS and the origin check, and closes on a fragmented frame.
+  - The HUD does not show the session; `sim` and `__SIM__` report it as `output.net`.
+  - Tested in Node: the client against the real host, and the page's realm, client and host end to end
+    (`authority.node.test.ts`). A room joined from two browser tabs has not been tried here: the page's 3D track
+    cannot run in this headless browser (see Browser support).
 
 ## Layout (causal order)
 
@@ -1310,7 +1364,7 @@ Every source file opens with "Why does this file exist? / What breaks if it is r
 | 07_Execute_Actions | `engine.ts`, `simClient.ts`, `simProtocol.ts`, `physics.worker.ts`, `simHost.ts`, `simCore.ts`, `physics.ts`, `vehicles.ts`, `car.ts`, `fleetView.ts`, `trackFleet.ts`, `ragdollRealm.ts`, `rigView.ts`, `sanctuary.ts`, `player.ts`, `head.ts`, `controls.ts`, `viewports.ts`, `quality.ts`, `audio.ts`, `acoustics.ts`, `captions.ts`, `postfx.ts`, `cinema.ts`, `shutter.ts`, `volumetrics.ts`, `ghost.ts`, `contact.ts`, `dissolve.ts`, `netView.ts`, `operator.ts`, `harness.ts`, `spatial.ts`, `Hud.tsx`, `BootVeil.tsx`, `Concierge.tsx`, `Customizer.tsx`, `glyphs.ts`, `terminal/` (`Terminal.tsx`, `bridge.ts`, `commands.ts`, `repl.ts`) | Frame loop; the physics realm (worker entry, its message door, the simulation core, Rapier world, fleet on its tracks, the scheduled craft and their pose stream, the balance machine over the pedestrians near the operator and its rig stream, sanctuary, up to four avatars) and the page's end of it (client, protocol, fleet drawing, rig drawing, first-person heads, per-seat controls, the split-screen arithmetic); quality applier, soundscape (with its speech voice, rooms, peer voices and the sound-event stream), room acoustics, the caption track, post chain, the cinema camera (24 fps pacer, 180° shutter, ND and film response), sun shafts, ghost view, the contact transition and the code dissolve's envelope, the network ghosts, operator facade and physics harnesses (the spatial sweep's plan among them), HUD, boot veil, concierge, the wardrobe card, control glyphs, console (with R0, its stack machine) |
 | 08_Swarm | `recruitment.ts`, `taskRouter.ts`, `memory.ts`, `ping.ts` | The swarm's hash-chained memory and weight ledger; the operator's voice: on-device continuous speech recognition, the request parser, the main-thread proximity match, the request to the physics worker, the rally request, and the console and `recruit()` fallback; the task gateway that binds skill-bound work to the tethered swarm; the swarm's episodic memory (IndexedDB, by world seed and pedestrian); the ping's pick, board and rally plan |
 | 09_Cognition | `localCompute.ts`, `claudeApi.ts`, `router.ts`, `prefixCache.ts`, `kvPager.wasm.ts` (generated from `native/kv-pager-wasm`), `localSpeech.ts` | The prompt-prefix page table over kv-pager as WebAssembly; the operator's model providers and voice: the router (`claude` through a gateway on this machine with the operator's key; `ollama` and `llamacpp` on this machine), the local client in both wire formats and the Claude client, the system prompt opening with the 14A core and then the tethered people's skills and memories, the streamed answer, the speech client for a speech server on this machine, the audio for the soundscape, the cut when the tether breaks, and every failure as one sentence |
-| 10_Network | `replication.ts`, `replication.node.ts`, `netClient.ts` | The replication scaffold: the plain-data protocol core and authoritative room both sides share (validated both ways, rate-limited, screened under 14A), the Node-only WebSocket host with HMAC session tokens (never bundled), and the opt-in page client that joins only over wss (or plain ws on this machine) and reconciles the room's snapshots into the poses `netView.ts` draws |
+| 10_Network | `replication.ts`, `replication.node.ts`, `mirror.node.ts`, `plane.node.ts`, `netClient.ts` | The network room: the plain-data protocol core and authoritative room both sides share (validated both ways, rate-limited, screened under 14A, every input judged by an authority and refused ones corrected), the Node-only WebSocket host (HMAC session tokens checked at the upgrade, never bundled), the headless Ring-0 mirror it judges with (the city of the seed in Rapier, the realm's own character controller, the Ring-0 person audit), an open-plane authority for the protocol's tests, and the opt-in page client that joins only over wss (or plain ws on this machine), reports the realm's steps and snaps to corrections, and reconciles the room's snapshots into the poses `netView.ts` draws |
 | native/kv-pager | `01_geometry.rs`, `02_page_table.rs`, `03_gpu/`, `bin/stress.rs`, `bin/chaos/` | A paged KV cache (its page table also runs on the page, through `native/kv-pager-wasm`) (prefix caching, copy-on-write, the WGSL decode kernel, the stress and chaos runs); `CAUSAL.md` traces the copy-on-write chain |
 | native/kv-pager-wasm | `lib.rs` | kv-pager's page table (no GPU) behind a C ABI, built to WebAssembly as `09_Cognition/kvPager.wasm.ts` (`npm run native:wasm`) |
 | native/routing | `lib.rs`, `layout.rs`, `math.rs`, `tests.rs` | The track arithmetic in dependency-free Rust, built to WebAssembly as `06_Make_Decisions/routing.wasm.ts`; its layout is defined once in each language and the two are proved equal |
@@ -1522,6 +1576,17 @@ headless Chromium whose only WebGPU adapter is software.
   Track B booted and answered `version`; the page inflated the embedded pack itself (2,539,732 bytes, `region/1`,
   3,038 names); Track A stopped at the device loss below. The autoscaler's two profiles are in
   `docs/autoscaler/README.md`.
+- **Phase 12 (the authoritative room):** 1,169 tests, 1,169 pass, in 50 s; both TypeScript projects type-check,
+  `oxlint` reports nothing, and the build carries no server code (no `node:` module, no mirror).
+  - `npm run smoke:net` against the server as a process of its own: a missing and a forged token were refused before
+    any socket opened, an honest walk of 40 steps was kept, and five crafted illegal packets were each refused and
+    corrected 0.8–5.9 ms after they left (two runs), the truth unchanged.
+  - The built page in headless Chromium (Track B, opened from disk), driving its own WebSocket (the air gap's
+    guard, the page's Content-Security-Policy) against the live host:
+    - a forged token failed at the upgrade (Chromium: "HTTP Authentication failed");
+    - an address off this machine was refused by the guard;
+    - the good token opened with `onyx.3` and was welcomed at the spawn;
+    - a claim 40 m along was answered by the very next message, its correction, with the truth unmoved.
 - **Not verified here: the 3D page.** Track A did not run in this environment. Chromium's software WebGPU adapter
   loses the device while the page boots (`WebGPU Device Lost: A valid external Instance reference no longer
   exists`, then `OperationError: Instance dropped in popErrorScope` on every frame; `__SIM__` never appeared), and
@@ -1652,6 +1717,25 @@ behind it, item by item with the tests that prove each, is `docs/agent-city-v1-b
   RDNA2 card started on High; a run of sub-second hitches under the cinema camera stepped the tier down; a step under
   `?fps` was labelled "frames below 60 FPS"; and the camera floor's wording (two frames missed in each half second,
   not one).
+- **Phase 12.1, the WebSocket host:** no connection without a token. The HMAC and expiry are checked at the upgrade
+  (401 before any socket exists, 429 for an address that keeps failing), the join is bound to that token, and seals
+  use `node:crypto`. A slow reader is closed rather than buffered, and the host reports its own costs. The frames
+  are protocol 3: a client's frame up to 4 KB, a host's up to 16 KB, others' poses in millimetres. Fixed on the way:
+  a client that dropped its connection without a close frame held its room slot until the idle timeout (`node:http`
+  keeps sockets half-open); it is now let go at once.
+- **Phase 12.2, the headless Ring-0 mirror** (`10_Network/mirror.node.ts`): the city of the seed in Rapier on the
+  server, the realm's own character controller per player, the Ring-0 person audit on every pose kept. The page's
+  realm and the mirror agree within a micrometre for the same inputs. The order asked for "the Phase 11
+  WASM-compiled Rust physics kernel"; the physics kernel is Rapier, Rust compiled to WebAssembly, which is what the
+  server runs. Phase 11's own Rust modules (the track arithmetic and kv-pager) are not physics, and the mirror,
+  which holds no fleet, does not load them.
+- **Phase 12.3, prediction and snap reconciliation:** the page's own realm predicts, and every step it runs is
+  reported with the pose it reached. The server keeps an honest claim. Any other it refuses: the packet changes
+  nothing, and the page is snapped to the truth by one teleport (`authority.node.test.ts` runs the page's realm, its
+  client and the host end to end). At the wheel the server bounds the claim (the velocity cap, the buildings, the
+  door), since the car is the page's own. `npm run smoke:net` attacks the server as it ships, a process of its own,
+  with five crafted illegal packets: each is refused and corrected within a few milliseconds (0.8–5.9 ms over two
+  runs), and the truth never moves.
 - **The console:** every new knob and command on the Ring-0 terminal; `history` redacts keys and tokens.
 - **The surveyed map (pilot)**, listed as unreleased in 1.3.0's README, ships in this release as
   `npm run build:pilot` (see The surveyed map): `tools/world/` compiles regions, a guard test checks the shipped

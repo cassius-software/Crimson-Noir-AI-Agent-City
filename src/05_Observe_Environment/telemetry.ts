@@ -34,8 +34,9 @@ export type NetState = 'idle' | 'connecting' | 'joining' | 'joined' | 'closed'
 
 /**
  * The network session as the console's `net status` reports it (the engine's net.status()): the client's state, the
- * room's address once joined, this page's id in it (0 until welcomed), the other players drawn, inputs the client
- * refused and inputs the room has not yet applied, peer voices attached, and why the session closed, if it did.
+ * room's address once joined, this page's id in it (0 until welcomed), the other players drawn, steps the client held
+ * back or dropped and inputs the room has not yet acknowledged, peer voices attached, the room's corrections (snaps to
+ * its truth), and why the session closed, if it did.
  */
 export interface NetReport {
   state: NetState
@@ -46,6 +47,9 @@ export interface NetReport {
   pending: number
   voices: number
   reason: string | null
+  /** Corrections the room's authority made this session (the welcome's spawn not counted), and the newest one's reason. */
+  corrections: number
+  corrected: string | null
 }
 
 /** One ping as the HUD draws it: plain data, in metres and seconds, plus its place on the screen. */

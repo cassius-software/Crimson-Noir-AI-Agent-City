@@ -26,6 +26,8 @@ export interface RemotePose {
   heading: number
   /** Over the ground, m/s. */
   speed: number
+  /** At a wheel, as the room says (absent: decided by the speed alone). */
+  driving?: boolean
 }
 
 export const NET_VIEW = Object.freeze({
@@ -37,8 +39,11 @@ export const NET_VIEW = Object.freeze({
   variant: 1,
 })
 
-/** What a pose is drawn as: a person, or a car when it moves faster than anyone runs (the room caps a walker at RUN). */
-export const bodyOf = (speed: number): 'person' | 'car' => (Number.isFinite(speed) && speed > RUN ? 'car' : 'person')
+/**
+ * What a pose is drawn as: a car when the room says the player is at a wheel, or when it moves faster than anyone runs
+ * (the room caps a walker at RUN); a person otherwise.
+ */
+export const bodyOf = (speed: number, driving = false): 'person' | 'car' => (driving === true || (Number.isFinite(speed) && speed > RUN) ? 'car' : 'person')
 
 const UP = new Vector3(0, 1, 0)
 
@@ -87,7 +92,7 @@ export class NetView {
     let people = 0, cars = 0
     for (const r of poses) {
       if (!Number.isFinite(r.x + r.y + r.z + r.heading)) continue
-      if (bodyOf(r.speed) === 'car') {
+      if (bodyOf(r.speed, r.driving) === 'car') {
         if (cars >= NET_VIEW.max) continue
         // The car body's front is along +x; a yaw of (heading − π/2) turns it to the realm's forward (sin h, 0, cos h).
         this.q.setFromAxisAngle(UP, r.heading - Math.PI / 2)

@@ -738,6 +738,73 @@ ends. Tagged `stable-beta` with 1,149 tests passing.
   `docs/autoscaler/README.md` has the profiles, the paths and what remains to know (Safari's Low Power Mode and
   60 Hz default; AMD cards unnamed by Chromium start on High).
 
+### Phase 12: the cloud-authoritative room
+
+The operator's order: upgrade the Phase 10 replication into a high-performance WebSocket host with strict HMAC token
+validation; run the Phase 11 WebAssembly physics kernel in a headless server that takes input vectors, steps its own
+deterministic physics and holds the true state; and make the page predict while the server snaps it back whenever a
+reported position deviates.
+
+- **12.1 The host** (`10_Network/replication.node.ts`). The session token rides the WebSocket upgrade as a
+  subprotocol (`onyx.3`, `auth.<token>`). Its HMAC and expiry are checked before the 101: a missing, forged, tampered
+  or expired one is a 401 with no socket and no room slot, and an address that keeps failing gets a 429 without the
+  check. The join must carry the same token, and the Phase 11 seals (rising envelope number, HMAC over the canonical
+  message) hold for every frame after.
+  - "High-performance" is measured, not asserted: seals use `node:crypto`, an input is judged the moment it arrives,
+    a slow reader is closed (4009), and `host.stats()` reports the costs.
+  - Measured here: about 0.2 ms an input (seal, validation, judgement, any correction), about 0.3 ms a tick with two
+    players. Twelve walkers at 60 inputs a second were all kept, each judged in under a millisecond
+    (`replication.node.test.ts`).
+- **12.2 The headless Ring-0 mirror** (`10_Network/mirror.node.ts`).
+  - **The physics is Rapier.** The order names "the Phase 11 WASM-compiled Rust physics kernel". Phase 11 compiled
+    the track arithmetic and the kv-pager page table, neither of which is physics. The physics kernel the page runs
+    is Rapier, itself Rust compiled to WebAssembly (`@dimforge/rapier3d-simd-compat`), and that is what the server
+    instantiates. The mirror holds no fleet, so it loads neither Phase 11 module.
+  - **The same city and controller.** It builds the city of the seed exactly as the physics worker does, and gives
+    each player the realm's own `Avatar` in a mirror mode (`player.ts AvatarOptions.mirror`: the capsule placed
+    where the controller says, no world step; other players not obstacles). The page's realm and the mirror agree
+    within a micrometre for the same inputs: a world step can round a 32-bit coordinate's last bit the other way
+    (`mirror.node.test.ts`, 700 frames of 0–3 substeps through the walls).
+  - **Judging an input.** An input is replayed on trial and kept only if the claim is within 25 cm. A refused one
+    is undone exactly (`Avatar.state`/`restore`). Every kept pose passes the Ring-0 person audit (finite, inside the
+    slab, above the ground floor).
+  - **At the wheel.** The car is the page's own, never the room's, so the mirror bounds the claim instead: at most
+    the velocity cap, never through a building, in and out only within reach. That is an envelope, not a
+    simulation, and it says so.
+- **12.3 Prediction and snap reconciliation.**
+  - **Prediction.** The page's own physics realm predicts: the player moves at once. The engine pairs each realm
+    state with the one step request that ran it (the walking velocity, the substeps, the correction carried out).
+    The client reports it as the room's input, coalescing into runs while its rate is spent, with the claim always
+    where the last run ended.
+  - **Snapping.** A refused input changes nothing on the server and is answered in the same turn with a correction.
+    The engine applies it once, as a teleport of player 1 to the truth: the one thing the room may ask of the realm.
+    Inputs from before the snap are dropped unread.
+  - **Proof.** `authority.node.test.ts` runs the page's realm, its client and the host end to end: an honest walk
+    with walls is never corrected, and a position written into the page is refused at once and snapped back, with
+    the other player seeing only the truth.
+  - **The headless smoke test.** `npm run smoke:net` (`tools/net/smoke.mjs`) starts the server as a process of its
+    own and sends five crafted illegal packets: a position written into memory, a speed hack in the shape, a speed
+    hack on the clock, a walk through a wall, and an injected velocity. Each was refused and corrected 0.8–5.9 ms
+    after it left (two runs), the truth unchanged.
+  - **The browser path.** The built page in headless Chromium, driving its own guarded WebSocket under its
+    Content-Security-Policy, was refused with a forged token, admitted with a good one (`onyx.3`), and answered a
+    crafted claim with its correction as the very next message. The page's 3D track could not run there (the
+    headless WebGPU device loss), so the engine's wiring is proved by `authority.node.test.ts` and the text pins of
+    `netWiring.test.ts`.
+- **The cloud and the air gap.** The order's title says "cloud". The page still speaks only to this machine (Phase
+  11): a server elsewhere is reached through a local end the operator runs (an SSH tunnel or a wss proxy). Nothing
+  in the page names a remote address.
+- **Open, for the operator.**
+  - **Snaps the server must make.** The traffic is each page's own, so a local car that blocks or nudges the
+    player (the Sanctuary's nudge) makes the page diverge. Past 25 cm the room snaps it back. That is the authority
+    working, but it will be felt.
+  - **One step after a teleport.** The realm's first move after one reads its capsule's collider where the last
+    world step left it, the mirror's teleport moves it at once, and against a wall the two can differ by
+    millimetres. That is far inside the tolerance (`authority.node.test.ts`).
+  - **What is not covered yet.** The surveyed region has no mirror, so a page walking it cannot join. The car is
+    bounded, not simulated. There is no interest management, reconnection or lag compensation for anything but
+    the player's own walk.
+
 ## 4. Verification
 
 **The Node suites.** `npm test` (`node --test "src/**/*.test.ts"`) at commit `f5b8399`, in this environment on

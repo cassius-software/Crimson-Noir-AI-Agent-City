@@ -2,12 +2,13 @@
  * Why does this file exist? It proves the replication core (replication.ts): the validators refuse every crafted
  * message (shape, type, finite numbers, bounds, string lengths, unknown kinds) and hand back frozen copies with
  * nothing extra; the room is server-authoritative and deterministic (the same messages on the same clock give the
- * same snapshots), caps a walk at a run, keeps everyone within the world's range, refuses stale sequence numbers,
- * out-of-rate inputs, chat and pings, and removes a peer after repeated refusals; the 14A screen drops an inadmissible
- * chat line or name silently and counts it; the page's reconciliation ignores stale snapshots, drops the client's own
- * entry and never puts a remote player anywhere but a pose record. Every frame on the wire is sealed: numbered, and
- * signed under the session token over its canonical body; a forged, altered or replayed frame is refused on either
- * side without moving anything.
+ * same snapshots): every input goes to the authority (here the open plane, plane.node.ts), a claim it refuses changes
+ * nothing and is answered at once with a correction, inputs from before the snap are dropped unread, a client cannot
+ * run more substeps than time allows, and a peer that keeps earning corrections or refusals is removed; chat and pings
+ * keep their rates; the 14A screen drops an inadmissible chat line or name silently and counts it; the page's
+ * reconciliation ignores stale snapshots, keeps the client's truth apart and never puts a remote player anywhere but a
+ * pose record. Every frame on the wire is sealed: numbered, and signed under the session token over its canonical
+ * body; a forged, altered or replayed frame is refused on either side without moving anything.
  * What breaks if it is removed? A malformed or hostile message could reach the room, or a remote player could stop
  * being a pose.
  */
@@ -15,11 +16,14 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { canonical, hmacSha256 } from '../02_Define_The_Rules/integrity.ts'
 import { RUN } from '../07_Execute_Actions/simProtocol.ts'
+import { RING0 } from '../02_Define_The_Rules/ring0.ts'
+import { PLANE, planeAuthority, planeStep } from './plane.node.ts'
 import {
-  admissibleChat, admissibleName, admit, blend, bucket, createRoom, decodeClientMessage, decodeServerMessage, depart, emptyReplica, encode, expired,
-  handle, LIMITS, openClientFrame, openServerFrame, packPoses, peerBuckets, pending, poses, predict, PROTOCOL_VERSION, readClientMessage,
-  readServerMessage, reconcile, REMOTE_POSE, refuse, sealMessage, snapshotFor, take, tickRoom,
-  type ClientMessage, type Peer, type RemotePlayer, type Room, type ServerMessage, type SnapshotMessage,
+  admissibleChat, admissibleName, admit, AUTH_PREFIX, authProtocol, blend, bucket, createRoom, decodeClientMessage, decodeServerMessage, depart,
+  emptyReplica, encode, expired, handle, LIMITS, openClientFrame, openServerFrame, packPoses, peerBuckets, pending, poses, predict,
+  PROTOCOL_VERSION, readClientMessage, readServerMessage, reconcile, REMOTE_POSE, refuse, refuseInput, sealMessage, snapshotFor, SUBPROTOCOL,
+  take, takeMany, tickRoom,
+  type ClientMessage, type InputMessage, type Peer, type RemotePlayer, type Room, type Run, type ServerMessage, type SnapshotMessage,
 } from './replication.ts'
 
 const ok = (u: unknown): ClientMessage => {
@@ -32,15 +36,25 @@ const refused = (u: unknown, why: RegExp): void => {
   assert.ok(!r.ok, `expected a refusal: ${JSON.stringify(u)}`)
   assert.match(r.reason, why)
 }
-const player = (id: number, over: Partial<RemotePlayer> = {}): RemotePlayer => ({ id, name: `p${id}`, x: 0, y: 0, z: 0, heading: 0, vx: 0, vz: 0, speed: 0, ...over })
+const player = (id: number, over: Partial<RemotePlayer> = {}): RemotePlayer => ({ id, name: `p${id}`, x: 0, y: 0, z: 0, heading: 0, vx: 0, vz: 0, speed: 0, driving: false, ...over })
+/** An input on foot: one run, a claim (where the client says it is), under correction `fix`. */
+const input = (seq: number, claim: { x: number; y: number; z: number }, o: Partial<InputMessage> = {}): InputMessage =>
+  ({ t: 'input', seq, ack: 0, fix: 1, mode: 'foot', segs: [[0, 0, 1]], heading: 0, claim, ...o })
+const STAND = { x: 0, y: PLANE.standing, z: 0 }
 
 // ---------------------------------------------------------------- validators
 
 test('readClientMessage: the good shapes come back frozen, plain, and with nothing extra in them', () => {
-  const join = ok({ t: 'join', v: PROTOCOL_VERSION, token: 'abc', name: 'Ada', extra: 1 })
-  assert.deepEqual(join, { t: 'join', v: PROTOCOL_VERSION, token: 'abc', name: 'Ada' })
+  const join = ok({ t: 'join', v: PROTOCOL_VERSION, token: 'abc', name: 'Ada', world: 'city/1337', extra: 1 })
+  assert.deepEqual(join, { t: 'join', v: PROTOCOL_VERSION, token: 'abc', name: 'Ada', world: 'city/1337' })
   assert.ok(Object.isFrozen(join))
-  assert.deepEqual(ok({ t: 'input', seq: 1, ack: 0, x: 1, z: -1, heading: 0.5, pose: { x: 999 } }), { t: 'input', seq: 1, ack: 0, x: 1, z: -1, heading: 0.5 })
+  const foot = { t: 'input', seq: 1, ack: 0, fix: 1, mode: 'foot', segs: [[1, -1, 2], [0, 0, 1]], heading: 0.5, claim: { x: 1, y: 0.92, z: -1, w: 7 } }
+  const read = ok({ ...foot, pose: { x: 999 } }) as InputMessage
+  assert.deepEqual(read, { ...foot, claim: { x: 1, y: 0.92, z: -1 } })
+  assert.ok(Object.isFrozen(read) && Object.isFrozen(read.segs) && Object.isFrozen(read.segs[0]) && Object.isFrozen(read.claim))
+  assert.deepEqual(ok({ ...foot, from: { x: 3, z: 4, y: 9 } }), { ...foot, claim: { x: 1, y: 0.92, z: -1 }, from: { x: 3, z: 4 } })
+  const drive = { t: 'input', seq: 2, ack: 0, fix: 1, mode: 'drive', segs: [[0, 0, 30]], heading: 0, claim: { x: 30, y: 0.7, z: 0 } }
+  assert.deepEqual(ok(drive), drive)
   assert.deepEqual(ok({ t: 'ack', ack: 7 }), { t: 'ack', ack: 7 })
   assert.deepEqual(ok({ t: 'chat', seq: 1, text: 'hello' }), { t: 'chat', seq: 1, text: 'hello' })
   assert.deepEqual(ok({ t: 'ping', seq: 2, kind: 'go', x: 1, y: 2, z: 3 }), { t: 'ping', seq: 2, kind: 'go', x: 1, y: 2, z: 3 })
@@ -58,17 +72,37 @@ test('readClientMessage: every crafted message is refused with the reason simHos
   refused({ t: 'join', v: PROTOCOL_VERSION, token: 'x'.repeat(LIMITS.token + 1), name: 'b' }, /token/)
   refused({ t: 'join', v: PROTOCOL_VERSION, token: 'a', name: 'x'.repeat(LIMITS.name + 1) }, /name/)
   refused({ t: 'join', v: PROTOCOL_VERSION, token: 'a', name: 'line\nbreak' }, /name/)
-  refused({ t: 'join', v: PROTOCOL_VERSION, token: 'a', name: 7 }, /name/)
-  refused({ t: 'input', seq: -1, ack: 0, x: 0, z: 0, heading: 0 }, /seq and ack/)
-  refused({ t: 'input', seq: 1.5, ack: 0, x: 0, z: 0, heading: 0 }, /seq and ack/)
-  refused({ t: 'input', seq: '1', ack: 0, x: 0, z: 0, heading: 0 }, /seq and ack/)
-  refused({ t: 'input', seq: LIMITS.maxSeq, ack: 0, x: 0, z: 0, heading: 0 }, /seq and ack/)
-  refused({ t: 'input', seq: 1, ack: 0, x: NaN, z: 0, heading: 0 }, /velocity/)
-  refused({ t: 'input', seq: 1, ack: 0, x: Infinity, z: 0, heading: 0 }, /velocity/)
-  refused({ t: 'input', seq: 1, ack: 0, x: 0, z: RUN + 0.01, heading: 0 }, /velocity/)
-  refused({ t: 'input', seq: 1, ack: 0, x: '1', z: 0, heading: 0 }, /velocity/)
-  refused({ t: 'input', seq: 1, ack: 0, x: 0, z: 0, heading: 7 }, /heading/)
-  refused({ t: 'input', seq: 1, ack: 0, x: 0, z: 0 }, /heading/)
+  refused({ t: 'join', v: PROTOCOL_VERSION, token: 'a', name: 7, world: 'w' }, /name/)
+  refused({ t: 'join', v: PROTOCOL_VERSION, token: 'a', name: 'b' }, /world/)
+  refused({ t: 'join', v: PROTOCOL_VERSION, token: 'a', name: 'b', world: '' }, /world/)
+  const good = { t: 'input', seq: 1, ack: 0, fix: 1, mode: 'foot', segs: [[0, 0, 1]], heading: 0, claim: { x: 0, y: 0, z: 0 } }
+  refused({ ...good, seq: -1 }, /seq, ack and fix/)
+  refused({ ...good, seq: 1.5 }, /seq, ack and fix/)
+  refused({ ...good, seq: '1' }, /seq, ack and fix/)
+  refused({ ...good, seq: LIMITS.maxSeq }, /seq, ack and fix/)
+  refused({ ...good, fix: undefined }, /seq, ack and fix/)
+  refused({ ...good, mode: 'fly' }, /mode/)
+  refused({ ...good, segs: [] }, /runs/)
+  refused({ ...good, segs: new Array(LIMITS.runs + 1).fill([0, 0, 1]) }, /runs/)
+  refused({ ...good, segs: [[0, 0]] }, /runs/)
+  refused({ ...good, segs: { 0: [0, 0, 1] } }, /runs/)
+  refused({ ...good, segs: [[NaN, 0, 1]] }, /velocity/)
+  refused({ ...good, segs: [[Infinity, 0, 1]] }, /velocity/)
+  refused({ ...good, segs: [[0, RUN + 0.01, 1]] }, /velocity/)
+  refused({ ...good, segs: [['1', 0, 1]] }, /velocity/)
+  refused({ ...good, mode: 'drive', segs: [[1, 0, 1]] }, /velocity/)
+  refused({ ...good, segs: [[0, 0, 1.5]] }, /substeps/)
+  refused({ ...good, segs: [[0, 0, -1]] }, /substeps/)
+  refused({ ...good, segs: [[0, 0, LIMITS.stepsPerInput + 1]] }, /substeps/)
+  refused({ ...good, segs: [[0, 0, LIMITS.stepsPerInput], [0, 0, 1]] }, /substeps/)
+  refused({ ...good, heading: 7 }, /heading/)
+  refused({ ...good, heading: undefined }, /heading/)
+  refused({ ...good, claim: undefined }, /claim/)
+  refused({ ...good, claim: { x: 0, z: 0 } }, /claim/)
+  refused({ ...good, claim: { x: LIMITS.range + 1, y: 0, z: 0 } }, /claim/)
+  refused({ ...good, claim: { x: 0, y: NaN, z: 0 } }, /claim/)
+  refused({ ...good, from: { x: 0 } }, /from/)
+  refused({ ...good, mode: 'drive', from: { x: 0, z: 0 } }, /from/)
   refused({ t: 'ack', ack: -1 }, /ack/)
   refused({ t: 'chat', seq: 1, text: '' }, /text/)
   refused({ t: 'chat', seq: 1, text: '   ' }, /text/)
@@ -91,28 +125,43 @@ test('decode: a bounded JSON text frame; too long, not JSON and not text are ref
 })
 
 test('readServerMessage: the host is checked the same way; a player list with one bad pose refuses the whole snapshot', () => {
-  const good = { t: 'snapshot', tick: 3, ack: 2, players: [player(2, { x: 1, vx: 1, speed: 1 })] }
+  const good = { t: 'snapshot', tick: 3, ack: 2, fix: 1, you: player(1), players: [player(2, { x: 1, vx: 1, speed: 1 })] }
   const r = readServerMessage(good)
   assert.ok(r.ok)
   assert.deepEqual(r.msg, good)
-  assert.ok(Object.isFrozen(r.msg) && Object.isFrozen((r.msg as SnapshotMessage).players[0]))
+  assert.ok(Object.isFrozen(r.msg) && Object.isFrozen((r.msg as SnapshotMessage).players[0]) && Object.isFrozen((r.msg as SnapshotMessage).you))
+  // A car may run to the velocity cap; a walker only to a run.
+  const car = player(3, { vx: 30, speed: 30, driving: true })
+  assert.ok(readServerMessage({ ...good, players: [car] }).ok)
+  const correction = { t: 'correct', fix: 2, ack: 7, you: player(1, { x: 4 }), reason: 'claim 40.00 m from the mirror\'s pose', tick: 9 }
+  assert.deepEqual((readServerMessage(correction) as { msg: unknown }).msg, correction)
   const bad = (u: unknown, why: RegExp): void => {
     const x = readServerMessage(u)
     assert.ok(!x.ok, JSON.stringify(u))
     assert.match(x.reason, why)
   }
-  bad({ t: 'snapshot', tick: 3, ack: 2, players: [player(2, { x: NaN })] }, /players/)
-  bad({ t: 'snapshot', tick: 3, ack: 2, players: [player(2, { speed: RUN + 1 })] }, /players/)
-  bad({ t: 'snapshot', tick: 3, ack: 2, players: [player(2, { name: 'x'.repeat(LIMITS.name + 1) })] }, /players/)
+  bad({ ...good, players: [player(2, { x: NaN })] }, /players/)
+  bad({ ...good, players: [player(2, { speed: RUN + 1 })] }, /players/)
+  bad({ ...good, players: [player(2, { vx: 30, speed: 30 })] }, /players/)
+  bad({ ...good, players: [player(2, { speed: LIMITS.driveSpeed + 1, driving: true })] }, /players/)
+  bad({ ...good, players: [{ ...player(2), driving: 'no' }] }, /players/)
+  bad({ ...good, players: [player(2, { name: 'x'.repeat(LIMITS.name + 1) })] }, /players/)
   // 14A reads the host's player lists too: a name the room would refuse at join never reaches a caption or a voice label.
-  bad({ t: 'snapshot', tick: 3, ack: 2, players: [player(2, { name: 'you idiot' })] }, /players/)
-  bad({ t: 'welcome', v: PROTOCOL_VERSION, id: 1, tick: 0, tickHz: 20, players: [player(2, { name: ' ' })] }, /players/)
+  bad({ ...good, players: [player(2, { name: 'you idiot' })] }, /players/)
+  bad({ t: 'welcome', v: PROTOCOL_VERSION, id: 1, tick: 0, tickHz: 20, fix: 1, you: player(1), players: [player(2, { name: ' ' })] }, /players/)
   bad({ t: 'joined', tick: 1, player: player(2, { name: 'Kill Bill' }) }, /player/)
-  bad({ t: 'snapshot', tick: 3, ack: 2, players: [{ id: 1 }] }, /players/)
-  bad({ t: 'snapshot', tick: 3, ack: 2, players: new Array(LIMITS.peers + 1).fill(player(1)) }, /players/)
-  bad({ t: 'snapshot', tick: -1, ack: 2, players: [] }, /tick and ack/)
-  bad({ t: 'welcome', v: PROTOCOL_VERSION, id: 1, tick: 0, tickHz: 0, players: [] }, /tickHz/)
-  bad({ t: 'welcome', v: 0, id: 1, tick: 0, tickHz: 20, players: [] }, /protocol/)
+  bad({ ...good, players: [{ id: 1 }] }, /players/)
+  bad({ ...good, players: new Array(LIMITS.peers + 1).fill(player(1)) }, /players/)
+  bad({ ...good, tick: -1 }, /tick, ack and fix/)
+  bad({ ...good, fix: undefined }, /tick, ack and fix/)
+  bad({ ...good, you: player(1, { z: Infinity }) }, /you/)
+  bad({ ...good, you: undefined }, /you/)
+  bad({ t: 'welcome', v: PROTOCOL_VERSION, id: 1, tick: 0, tickHz: 0, fix: 1, you: player(1), players: [] }, /tickHz/)
+  bad({ t: 'welcome', v: PROTOCOL_VERSION, id: 1, tick: 0, tickHz: 20, fix: 1, you: player(2), players: [] }, /you/)
+  bad({ t: 'welcome', v: 0, id: 1, tick: 0, tickHz: 20, fix: 1, you: player(1), players: [] }, /protocol/)
+  bad({ ...correction, you: player(1, { x: NaN }) }, /you/)
+  bad({ ...correction, reason: 'two\nlines' }, /reason/)
+  bad({ ...correction, fix: -1 }, /fix/)
   bad({ t: 'chat', from: 1, name: 'a', text: 'hi' }, /tick/)
   bad({ t: 'ping', from: 1, kind: 'wait', x: 0, y: 0, z: 0, tick: 'now' }, /from and tick/)
   bad({ t: 'joined', player: player(1, { heading: 10 }), tick: 1 }, /player/)
@@ -147,49 +196,76 @@ test('token buckets: a burst, then the steady rate; the clock is the caller\'s a
   assert.equal(take(b, 1200), false, 'going backwards refills nothing')
   assert.equal(take(b, 5000), true)
   assert.equal(b.tokens, 2, 'the burst is the cap')
+  const many = bucket(30, 60, 0)
+  assert.equal(takeMany(many, 30, 0), true)
+  assert.equal(takeMany(many, 1, 0), false)
+  assert.equal(takeMany(many, 0, 0), true, 'no substeps cost nothing')
+  assert.equal(takeMany(many, 30, 499), false, 'half a second refills 29.94')
+  assert.equal(takeMany(many, 30, 500), true)
   const p = peerBuckets(0)
   assert.equal(p.input.capacity, LIMITS.inputBurst)
   assert.equal(p.input.perSecond, LIMITS.inputsPerSecond)
+  assert.equal(p.steps.capacity, LIMITS.stepBurst)
+  assert.equal(p.steps.perSecond, LIMITS.stepsPerSecond)
+  assert.equal(p.corrections.capacity, LIMITS.correctionsPerMinute)
+  assert.equal(p.corrections.perSecond * 60, LIMITS.correctionsPerMinute)
   assert.equal(p.chat.capacity, LIMITS.chatPerMinute)
   assert.equal(p.chat.perSecond * 60, LIMITS.chatPerMinute)
   assert.equal(p.ping.perSecond, LIMITS.pingsPerSecond)
+  // The substep budget is the realm's own fixed rate; a car's speed bound is the Ring-0 velocity cap.
+  assert.equal(LIMITS.stepsPerSecond, 1 / PLANE.h)
+  assert.equal(LIMITS.driveSpeed, RING0.maxVelocity)
+})
+
+test('the token rides the upgrade: auth.<token> for the characters a subprotocol may carry, nothing else', () => {
+  assert.equal(SUBPROTOCOL, `onyx.${PROTOCOL_VERSION}`)
+  assert.equal(authProtocol('b3BlcmF0b3I.1767225600000.aZ_-09'), `${AUTH_PREFIX}b3BlcmF0b3I.1767225600000.aZ_-09`)
+  for (const bad of ['', 'a b', 'a,b', 'a=b', 'x'.repeat(LIMITS.token + 1), 7, null]) assert.equal(authProtocol(bad), null, String(bad))
 })
 
 // ---------------------------------------------------------------- the room
 
 const GOOD = 'good-token'
 const verify = (t: string): boolean => t === GOOD
+const room0 = (tickHz?: number): Room => createRoom(planeAuthority(), tickHz)
 const joined = (room: Room, name: string, now: number): Peer => {
   const peer = admit(room, now)
   assert.ok(peer)
-  const out = handle(room, peer, { t: 'join', v: PROTOCOL_VERSION, token: GOOD, name }, now, verify)
+  const out = handle(room, peer, { t: 'join', v: PROTOCOL_VERSION, token: GOOD, name, world: room.authority.world }, now, verify)
   assert.equal(out.refused, undefined)
   return peer
 }
+/** Where an honest client would claim to be after `runs`, from where the plane has peer `p` now. */
+const honest = (p: Peer, runs: Run[]) => planeStep({ x: p.x, z: p.z }, runs)
 
-test('join: a good token and an admissible name are welcomed and announced; a bad token, a second join or anything before a join is refused', () => {
-  const room = createRoom(20)
+test('join: a good token, the room\'s world and an admissible name are welcomed with the spawn and announced; anything else is refused', () => {
+  const room = room0(20)
   const a = admit(room, 0)!
-  const out = handle(room, a, { t: 'input', seq: 1, ack: 0, x: 0, z: 0, heading: 0 }, 0, verify)
+  const out = handle(room, a, input(1, STAND), 0, verify)
   assert.equal(out.refused, 'input before join')
-  assert.equal(handle(room, a, { t: 'join', v: PROTOCOL_VERSION, token: 'wrong', name: 'Ada' }, 0, verify).refused, 'join: bad token')
+  const join = { t: 'join' as const, v: PROTOCOL_VERSION, token: GOOD, name: ' Ada ', world: 'plane' }
+  assert.equal(handle(room, a, { ...join, token: 'wrong' }, 0, verify).refused, 'join: bad token')
+  assert.equal(handle(room, a, { ...join, world: 'city/1337' }, 0, verify).refused, 'join: world', 'a page walking another world')
   assert.equal(a.joined, false)
-  const w = handle(room, a, { t: 'join', v: PROTOCOL_VERSION, token: GOOD, name: ' Ada ' }, 5, verify)
-  assert.deepEqual(w.reply, { t: 'welcome', v: PROTOCOL_VERSION, id: 1, tick: 0, tickHz: 20, players: [] })
-  assert.deepEqual(w.broadcast, { t: 'joined', player: player(1, { name: 'Ada' }), tick: 0 })
+  const w = handle(room, a, join, 5, verify)
+  const me = player(1, { name: 'Ada', y: PLANE.standing })
+  assert.deepEqual(w.reply, { t: 'welcome', v: PROTOCOL_VERSION, id: 1, tick: 0, tickHz: 20, fix: 1, you: me, players: [] })
+  assert.deepEqual(w.broadcast, { t: 'joined', player: me, tick: 0 })
   assert.equal(a.name, 'Ada')
-  assert.equal(handle(room, a, { t: 'join', v: PROTOCOL_VERSION, token: GOOD, name: 'Ada' }, 6, verify).refused, 'join: already joined')
+  assert.equal(a.fix, 1, 'the welcome is the first correction: the client snaps to its spawn')
+  assert.equal(handle(room, a, join, 6, verify).refused, 'join: already joined')
   const b = joined(room, 'Bob', 7)
-  assert.deepEqual(poses(room).map((p) => p.name), ['Ada', 'Bob'])
+  assert.deepEqual(poses(room).map((p) => [p.name, p.x]), [['Ada', 0], ['Bob', PLANE.spawnGap]])
   assert.deepEqual(depart(room, b, 'left'), { t: 'left', id: 2, reason: 'left', tick: 0 })
+  assert.equal(room.authority.join(2).x, PLANE.spawnGap, 'its body left the authority')
   assert.equal(depart(room, admit(room, 8)!, 'join timeout'), null, 'an unjoined peer leaves without a word')
   assert.equal(room.peers.size, 1)
 })
 
 test('join: an inadmissible name is dropped silently and counted; the room stays full at LIMITS.peers', () => {
-  const room = createRoom()
+  const room = room0()
   const a = admit(room, 0)!
-  const out = handle(room, a, { t: 'join', v: PROTOCOL_VERSION, token: GOOD, name: 'you idiot' }, 0, verify)
+  const out = handle(room, a, { t: 'join', v: PROTOCOL_VERSION, token: GOOD, name: 'you idiot', world: 'plane' }, 0, verify)
   assert.deepEqual(out, { refused: 'join: name' })
   assert.equal(a.joined, false)
   assert.equal(a.refusals, 1)
@@ -197,36 +273,102 @@ test('join: an inadmissible name is dropped silently and counted; the room stays
   assert.equal(admit(room, 0), null)
 })
 
-test('input: integrated on the fixed tick, capped at a run, held within the range; stale seq, a future ack and over-rate inputs are refused', () => {
-  const room = createRoom(10)
+test('input: an honest claim is kept; a claim off the truth is answered at once with a correction and changes nothing', () => {
+  const room = room0(10)
   const a = joined(room, 'Ada', 0)
-  assert.deepEqual(handle(room, a, { t: 'input', seq: 1, ack: 0, x: 30, z: 40, heading: 1 }, 0, verify), {})
-  assert.ok(Math.abs(Math.hypot(a.vx, a.vz) - RUN) < 1e-9, 'capped at a run')
+  // Half a second along the diagonal at a run on each axis (1.4 runs): the authority clamps it to a run, as the realm does.
+  const runs: Run[] = [[RUN, RUN, 30]]
+  const claim = honest(a, runs)
+  assert.deepEqual(handle(room, a, input(1, claim, { segs: runs }), 0, verify), {})
+  assert.deepEqual([a.x, a.z, a.seq], [claim.x, claim.z, 1])
+  assert.ok(Math.abs(Math.hypot(a.vx, a.vz) - RUN) < 1e-9, 'a run, never faster')
   tickRoom(room)
-  assert.equal(room.tick, 1)
   const s = snapshotFor(room, a)
-  assert.equal(s.ack, 1)
-  assert.ok(Math.abs(s.players[0].x - RUN * 0.6 / 10) < 1e-9)
-  assert.ok(Math.abs(s.players[0].speed - RUN) < 1e-9)
-  assert.equal(s.players[0].heading, 1)
-  assert.equal(handle(room, a, { t: 'input', seq: 1, ack: 1, x: 0, z: 0, heading: 0 }, 1, verify).refused, 'input: stale seq')
-  assert.equal(handle(room, a, { t: 'input', seq: 2, ack: 5, x: 0, z: 0, heading: 0 }, 1, verify).refused, 'input: ack from the future')
-  assert.deepEqual(handle(room, a, { t: 'ack', ack: 1 }, 1, verify), {})
-  assert.equal(handle(room, a, { t: 'ack', ack: 2 }, 1, verify).refused, 'ack: from the future')
-  a.x = LIMITS.range - 0.1
-  handle(room, a, { t: 'input', seq: 2, ack: 1, x: RUN, z: 0, heading: 0 }, 2, verify)
-  tickRoom(room)
-  assert.equal(a.x, LIMITS.range, 'held at the edge')
-  // Over rate: the burst, then a refusal at the same instant.
-  const b = joined(room, 'Bob', 0)
+  assert.deepEqual([s.ack, s.fix, s.you.x, s.you.z], [1, 1, a.x, a.z], 'the snapshot carries the truth, exact for the peer itself')
+  // A lie: 40 m further than the walk. Refused and corrected at once; the truth stands.
+  const at = { x: a.x, z: a.z }
+  const lie = honest(a, [[0, RUN, 6]])
+  const out = handle(room, a, input(2, { ...lie, z: lie.z + 40 }, { segs: [[0, RUN, 6]], ack: 1 }), 100, verify)
+  assert.match(out.refused ?? '', /^claim 40\.\d\d m from the plane's pose$/)
+  assert.deepEqual(out.reply, { t: 'correct', fix: 2, ack: 1, you: { ...s.you, vx: 0, vz: 0, speed: 0 }, reason: out.refused, tick: 1 })
+  assert.equal(out.broadcast, undefined)
+  assert.deepEqual([a.x, a.z, a.seq, a.fix, a.corrections], [at.x, at.z, 1, 2, 1])
+  // Inputs the client sent before it applied the correction are dropped unread: no reply, nothing counted.
+  assert.deepEqual(handle(room, a, input(3, { ...lie, z: lie.z + 41 }, { ack: 1 }), 110, verify), {})
+  assert.deepEqual([a.seq, a.fix, a.corrections, a.refusals], [1, 2, 1, 0])
+  // Under the new correction, honest again.
+  const next = honest(a, [[0, RUN, 6]])
+  // (A refused input still spent its substeps: the budget is a second later.)
+  assert.deepEqual(handle(room, a, input(4, next, { fix: 2, ack: 1, segs: [[0, RUN, 6]] }), 1100, verify), {})
+  assert.equal(a.seq, 4)
+  // A correction the room never made is a lie too.
+  assert.match(handle(room, a, input(5, next, { fix: 9, ack: 1 }), 1200, verify).refused ?? '', /never made/)
+})
+
+test('input: more substeps than time allows, over rate, a stale seq or a future ack are corrected; too many corrections remove the peer', () => {
+  const room = room0(10)
+  const a = joined(room, 'Ada', 0)
+  // The burst: half a second of substeps at once; the next substep in the same instant is a clock running fast.
+  const burst = honest(a, [[0, 1, LIMITS.stepBurst]])
+  assert.deepEqual(handle(room, a, input(1, burst, { segs: [[0, 1, LIMITS.stepBurst]] }), 0, verify), {})
+  const fast = handle(room, a, input(2, honest(a, [[0, 1, 1]]), { fix: 1 }), 0, verify)
+  assert.equal(fast.refused, 'input: more substeps than time allows')
+  assert.equal((fast.reply as { t: string }).t, 'correct')
+  // A sixtieth of a second later there is one substep to spend.
+  assert.deepEqual(handle(room, a, input(3, honest(a, [[0, 1, 1]]), { fix: 2 }), 1000 / 60, verify), {})
+  assert.equal(handle(room, a, input(3, STAND, { fix: 2 }), 2000, verify).refused, 'input: stale seq')
+  assert.equal(handle(room, a, input(9, STAND, { fix: 3, ack: 5 }), 2000, verify).refused, 'input: ack from the future')
+  // Over rate: the burst of inputs, then a correction at the same instant.
+  const b = joined(room, 'Bob', 10_000)
   let seq = 0
-  for (let i = 0; i < LIMITS.inputBurst; i++) assert.equal(handle(room, b, { t: 'input', seq: ++seq, ack: 0, x: 0, z: 0, heading: 0 }, 0, verify).refused, undefined)
-  assert.equal(handle(room, b, { t: 'input', seq: ++seq, ack: 0, x: 0, z: 0, heading: 0 }, 0, verify).refused, 'input: over rate')
-  assert.equal(handle(room, b, { t: 'input', seq: ++seq, ack: 0, x: 0, z: 0, heading: 0 }, 1000 / LIMITS.inputsPerSecond, verify).refused, undefined, 'one more a tick later')
+  for (let i = 0; i < LIMITS.inputBurst; i++) assert.equal(handle(room, b, input(++seq, honest(b, [[0, 0, 0]]), { segs: [[0, 0, 0]] }), 10_000, verify).refused, undefined)
+  const over = handle(room, b, input(++seq, STAND, { segs: [[0, 0, 0]] }), 10_000, verify)
+  assert.deepEqual([over.refused, (over.reply as { t: string }).t, b.refusals], ['input: over rate', 'correct', 1], 'counted, and corrected')
+  // A flood that ignores its corrections is still counted toward removal.
+  let kick: string | undefined
+  for (let i = 1; i < LIMITS.refusalsBeforeKick; i++) kick = handle(room, b, input(++seq, STAND, { segs: [[0, 0, 0]] }), 10_000, verify).kick
+  assert.equal(kick, 'repeated refusals')
+  // Corrections a minute: the burst, then removal.
+  const c = joined(room, 'Cy', 20_000)
+  let kicked: string | undefined
+  for (let i = 1; i <= LIMITS.correctionsPerMinute + 1 && !kicked; i++) {
+    kicked = handle(room, c, input(i, { x: 999, y: 0, z: 0 }, { fix: c.fix }), 20_000, verify).kick
+    if (i <= LIMITS.correctionsPerMinute) assert.equal(kicked, undefined, `correction ${i}`)
+  }
+  assert.equal(kicked, 'repeated illegal movement')
+})
+
+test('a malformed input frame from a joined peer is counted as a refusal and corrected; at the wheel and back on foot through the door', () => {
+  const room = room0()
+  const a = joined(room, 'Ada', 0)
+  const out = refuseInput(room, a, 'input: velocity', 0)
+  assert.equal(out.refused, 'input: velocity')
+  assert.equal((out.reply as { t: string; fix: number }).fix, 2)
+  assert.equal(a.refusals, 1)
+  // Into a car 3 m off (the door), along the street at the cap, out at the kerb.
+  assert.deepEqual(handle(room, a, input(1, { x: 3, y: 0.7, z: 0 }, { fix: 2, mode: 'drive', segs: [[0, 0, 1]] }), 0, verify), {})
+  assert.equal(a.driving, true)
+  assert.deepEqual(handle(room, a, input(2, { x: 3, y: 0.7, z: 25 }, { fix: 2, mode: 'drive', segs: [[0, 0, 30]] }), 1000, verify), {})
+  assert.ok(Math.abs(Math.hypot(a.vx, a.vz) - 50) < 1e-9, 'a car at the cap')
+  assert.equal(poses(room)[0].driving, true)
+  assert.match(handle(room, a, input(3, { x: 3, y: 0.7, z: 60 }, { fix: 2, mode: 'drive', segs: [[0, 0, 30]] }), 2000, verify).refused ?? '', /cannot cover 35\.0 m/)
+  // A correction at the wheel puts the player down on foot where the car was kept.
+  assert.deepEqual([a.driving, a.x, a.z, a.fix], [false, 3, 25, 3])
+  // Back in; on foot again only through the door: an exit point, within reach.
+  const into = (seq: number, fix: number) => handle(room, a, input(seq, { x: 3, y: 0.7, z: 26 }, { fix, mode: 'drive', segs: [[0, 0, 1]] }), 3000 + seq, verify)
+  assert.deepEqual(into(4, 3), {})
+  const kerb = { x: 5, z: 26 }
+  const walk = planeStep(kerb, [[0, 0, 1]])
+  assert.match(handle(room, a, input(5, walk, { fix: 3 }), 3100, verify).refused ?? '', /without leaving the car/)
+  assert.deepEqual(into(6, 4), {})
+  assert.match(handle(room, a, input(7, walk, { fix: 4, from: { x: 30, z: 26 } }), 3200, verify).refused ?? '', /out of reach/)
+  assert.deepEqual(into(8, 5), {})
+  assert.deepEqual(handle(room, a, input(9, walk, { fix: 5, from: kerb }), 3300, verify), {})
+  assert.deepEqual([a.driving, a.x, a.z], [false, walk.x, walk.z])
 })
 
 test('chat and ping: relayed to the room with the sender\'s id and name; inadmissible chat is dropped silently; over rate and stale seq refused', () => {
-  const room = createRoom()
+  const room = room0()
   const a = joined(room, 'Ada', 0)
   assert.deepEqual(handle(room, a, { t: 'chat', seq: 1, text: ' Good morning ' }, 0, verify), { broadcast: { t: 'chat', from: 1, name: 'Ada', text: 'Good morning', tick: 0 } })
   assert.deepEqual(handle(room, a, { t: 'chat', seq: 2, text: 'shut up' }, 0, verify), { refused: 'chat: inadmissible' })
@@ -243,7 +385,7 @@ test('chat and ping: relayed to the room with the sender\'s id and name; inadmis
 })
 
 test('repeated refusals remove a peer: the limit is reached by malformed frames and inadmissible chat alike', () => {
-  const room = createRoom()
+  const room = room0()
   const a = joined(room, 'Ada', 0)
   for (let i = 1; i < LIMITS.refusalsBeforeKick; i++) {
     const out = i % 2 ? refuse(a, 'not JSON') : handle(room, a, { t: 'chat', seq: i, text: 'you moron' }, 0, verify)
@@ -255,7 +397,7 @@ test('repeated refusals remove a peer: the limit is reached by malformed frames 
 })
 
 test('expired: a peer that never joined is dropped after the join timeout, a silent one after the idle timeout', () => {
-  const room = createRoom()
+  const room = room0()
   const a = admit(room, 0)!
   const b = joined(room, 'Bob', 0)
   assert.deepEqual(expired(room, LIMITS.joinTimeoutMs - 1), [])
@@ -264,40 +406,65 @@ test('expired: a peer that never joined is dropped after the join timeout, a sil
   assert.deepEqual(expired(room, 10_000 + LIMITS.idleTimeoutMs).map((e) => [e.peer.id, e.reason]), [[a.id, 'join timeout'], [b.id, 'idle']])
 })
 
-test('deterministic: two rooms fed the same messages on the same clock give the same snapshots', () => {
-  const run = (): SnapshotMessage[] => {
-    const room = createRoom(30)
+test('deterministic: two rooms fed the same messages on the same clock give the same snapshots and corrections', () => {
+  const run = (): unknown[] => {
+    const room = room0(30)
     const a = joined(room, 'Ada', 0)
     const b = joined(room, 'Bob', 1)
-    const out: SnapshotMessage[] = []
+    const out: unknown[] = []
     for (let i = 1; i <= 50; i++) {
-      handle(room, a, { t: 'input', seq: i, ack: room.tick, x: Math.sin(i), z: Math.cos(i) * 3, heading: i / 50 }, i * 33, verify)
-      if (i % 3 === 0) handle(room, b, { t: 'input', seq: i, ack: room.tick, x: 2, z: -2, heading: 0 }, i * 33, verify)
+      const runs: Run[] = [[Math.sin(i) * RUN, Math.cos(i) * 3, 1 + (i % 2)]]
+      const claim = honest(a, runs)
+      if (i % 7 === 0) claim.z += 1
+      const r = handle(room, a, input(i, claim, { ack: room.tick, fix: a.fix, segs: runs }), i * 33, verify)
+      if (r.reply) out.push(r.reply)
+      if (i % 3 === 0) handle(room, b, input(i, honest(b, [[2, -2, 1]]), { ack: room.tick, segs: [[2, -2, 1]] }), i * 33, verify)
       tickRoom(room)
       out.push(snapshotFor(room, a))
     }
     return out
   }
-  assert.deepEqual(run(), run())
+  const one = run()
+  assert.deepEqual(one, run())
+  assert.ok(one.some((m) => (m as { t: string }).t === 'correct'), 'the lies were corrected')
+})
+
+test('snapshots: every other player in millimetres, the peer itself exact; a full room fits the host\'s bound', () => {
+  const room = room0()
+  const peers: Peer[] = []
+  for (let i = 0; i < LIMITS.peers; i++) peers.push(joined(room, `Player ${String(i).padStart(2, '0')} longname`, 0))
+  for (const p of peers) {
+    p.x = 1234.567891234 + p.id
+    p.z = -2345.678912345
+    p.vx = 1.23456789
+  }
+  const s = snapshotFor(room, peers[0])
+  assert.equal(s.you.x, peers[0].x, 'exact')
+  assert.equal(s.players.length, LIMITS.peers - 1)
+  assert.equal(s.players[0].x, Math.round((1234.567891234 + 2) * 1000) / 1000)
+  assert.equal(s.players[0].vx, 1.235)
+  const wire = sealMessage(s, 1e9, 'x'.repeat(LIMITS.token))
+  assert.ok(wire.length <= LIMITS.hostMessage, `${wire.length} bytes`)
+  assert.ok(decodeServerMessage(encode(s)).ok)
 })
 
 // ---------------------------------------------------------------- the replica
 
-test('reconcile: the host\'s word replaces every remote pose, the client\'s own entry is dropped, a stale snapshot is ignored, the result is frozen', () => {
+test('reconcile: the host\'s word replaces every remote pose and the client\'s truth; a stale snapshot is ignored; the result is frozen', () => {
   const r0 = emptyReplica(2)
-  const s1: SnapshotMessage = { t: 'snapshot', tick: 5, ack: 3, players: [player(3, { x: 1 }), player(2, { x: 9 }), player(1, { x: 2 })] }
+  assert.equal(r0.you, null)
+  const s1: SnapshotMessage = { t: 'snapshot', tick: 5, ack: 3, fix: 1, you: player(2, { x: 9 }), players: [player(3, { x: 1 }), player(2, { x: 9 }), player(1, { x: 2 })] }
   const r1 = reconcile(r0, s1)
   assert.deepEqual(r1.players.map((p) => [p.id, p.x]), [[1, 2], [3, 1]], 'by rising id, self gone')
-  assert.equal(r1.tick, 5)
-  assert.equal(r1.ack, 3)
+  assert.deepEqual([r1.tick, r1.ack, r1.fix, r1.you?.x], [5, 3, 1, 9])
   assert.ok(Object.isFrozen(r1) && Object.isFrozen(r1.players))
-  assert.equal(reconcile(r1, { t: 'snapshot', tick: 5, ack: 4, players: [] }), r1, 'a repeat is ignored')
-  assert.equal(reconcile(r1, { t: 'snapshot', tick: 4, ack: 4, players: [] }), r1, 'an older one is ignored')
-  const r2 = reconcile(r1, { t: 'snapshot', tick: 6, ack: 2, players: [player(1, { x: 3 })] })
+  assert.equal(reconcile(r1, { ...s1, tick: 5, ack: 4 }), r1, 'a repeat is ignored')
+  assert.equal(reconcile(r1, { ...s1, tick: 4, ack: 4 }), r1, 'an older one is ignored')
+  const r2 = reconcile(r1, { t: 'snapshot', tick: 6, ack: 2, fix: 0, you: player(2, { x: 10 }), players: [player(1, { x: 3 })] })
   assert.deepEqual(r2.players.map((p) => [p.id, p.x]), [[1, 3]], 'player 3 is gone when the host no longer lists it')
-  assert.equal(r2.ack, 3, 'ack never falls')
+  assert.deepEqual([r2.ack, r2.fix, r2.you?.x], [3, 1, 10], 'ack and fix never fall')
   assert.deepEqual(reconcile(r0, s1), r1, 'deterministic')
-  const inputs = [1, 2, 3, 4].map((seq) => ({ t: 'input' as const, seq, ack: 0, x: 0, z: 0, heading: 0 }))
+  const inputs = [1, 2, 3, 4].map((seq) => input(seq, STAND))
   assert.deepEqual(pending(inputs, 3).map((i) => i.seq), [4])
 })
 
@@ -309,11 +476,12 @@ test('predict and blend: a remote pose moves by its own velocity for at most pre
   assert.deepEqual(predict(p, NaN), p)
   assert.equal(predict(player(1, { x: LIMITS.range, vx: RUN }), 0.2).x, LIMITS.range)
   const a = player(1, { heading: 3 })
-  const b = player(1, { heading: -3, x: 10 })
+  const b = player(1, { heading: -3, x: 10, driving: true })
   const m = blend(a, b, 0.5)
   assert.equal(m.x, 5)
+  assert.equal(m.driving, true)
   assert.ok(Math.abs(Math.abs(m.heading) - Math.PI) < 1e-9, `through π, not through 0: ${m.heading}`)
-  assert.deepEqual(blend(a, b, 0), { ...a, id: b.id, name: b.name })
+  assert.deepEqual(blend(a, b, 0), { ...a, id: b.id, name: b.name, driving: true })
   assert.deepEqual(blend(a, b, 1), { ...b, heading: a.heading + (-3 - 3 + Math.PI * 2) })
   assert.deepEqual(blend(a, b, 2), blend(a, b, 1), 'alpha is clamped')
 })
@@ -330,15 +498,16 @@ test('packPoses: REMOTE_POSE is the layout, as many as fit, plain floats only', 
 // ---------------------------------------------------------------- sealed frames
 
 test('sealed frames: numbered and signed under the session token over the canonical body; a forgery, an altered field or a replay is refused and moves nothing', () => {
-  const room = createRoom()
+  const room = room0()
   const peer = admit(room, 0)!
-  const join: ClientMessage = { t: 'join', v: PROTOCOL_VERSION, token: GOOD, name: 'Ada' }
+  const join: ClientMessage = { t: 'join', v: PROTOCOL_VERSION, token: GOOD, name: 'Ada', world: 'plane' }
   const wire = sealMessage(join, 1, GOOD)
   const env = JSON.parse(wire) as { n: number; body: unknown; mac: string }
   assert.deepEqual(Object.keys(env).sort(), ['body', 'mac', 'n'])
   assert.deepEqual(env.body, join)
   assert.equal(env.mac, hmacSha256(GOOD, canonical({ n: 1, body: join })), 'the HMAC of the number and the canonical body')
   assert.equal(sealMessage({ t: 'leave' }, 1, GOOD), sealMessage({ t: 'leave' }, 1, GOOD), 'deterministic')
+  assert.equal(sealMessage({ t: 'leave' }, 1, GOOD, (k, m) => hmacSha256(k, m)), sealMessage({ t: 'leave' }, 1, GOOD), 'the MAC is pluggable, the digest the same')
   assert.throws(() => sealMessage({ t: 'leave' }, -1, GOOD), RangeError)
   // Before the join only a join is read, under the token it carries; the room then verifies that token itself.
   assert.deepEqual(openClientFrame(peer, sealMessage({ t: 'ack', ack: 0 }, 1, GOOD)), { ok: false, reason: 'ack before join' })
@@ -351,20 +520,21 @@ test('sealed frames: numbered and signed under the session token over the canoni
   assert.equal(handle(room, peer, opened.msg, 0, verify).refused, undefined)
   assert.equal(peer.key, GOOD, 'the token the peer joined with seals everything after, both ways')
   // Joined: the seal under the peer's token, the envelope number rising.
-  const input = (seq: number, n: number, key = GOOD): string => sealMessage({ t: 'input', seq, ack: 0, x: 1, z: 0, heading: 0 }, n, key)
-  assert.ok(openClientFrame(peer, input(1, 2)).ok)
-  assert.deepEqual(openClientFrame(peer, input(2, 2)), { ok: false, reason: 'envelope: replayed' })
-  assert.deepEqual(openClientFrame(peer, input(2, 1)), { ok: false, reason: 'envelope: replayed' })
-  assert.deepEqual(openClientFrame(peer, input(2, 3, 'other')), { ok: false, reason: 'envelope: bad seal' })
+  const frame = (seq: number, n: number, key = GOOD): string => sealMessage(input(seq, STAND), n, key)
+  assert.ok(openClientFrame(peer, frame(1, 2)).ok)
+  assert.deepEqual(openClientFrame(peer, frame(2, 2)), { ok: false, reason: 'envelope: replayed' })
+  assert.deepEqual(openClientFrame(peer, frame(2, 1)), { ok: false, reason: 'envelope: replayed' })
+  assert.deepEqual(openClientFrame(peer, frame(2, 3, 'other')), { ok: false, reason: 'envelope: bad seal' })
   assert.equal(peer.received, 2, 'a refusal moves nothing')
-  // One field altered after sealing, a field added, the number changed, one hex digit of the seal: all refused.
-  const good = JSON.parse(input(3, 3)) as { n: number; body: Record<string, unknown>; mac: string }
+  // One field altered after sealing (the claim moved 40 m), a field added, the number changed, one hex digit of the seal.
+  const good = JSON.parse(frame(3, 3)) as { n: number; body: Record<string, unknown>; mac: string }
   const flipped = `${good.mac[0] === 'a' ? 'b' : 'a'}${good.mac.slice(1)}`
-  for (const altered of [{ ...good, body: { ...good.body, x: 2 } }, { ...good, body: { ...good.body, extra: 1 } }, { ...good, n: 4 }, { ...good, mac: flipped }]) {
+  const moved = { ...good, body: { ...good.body, claim: { ...(good.body.claim as object), z: 40 } } }
+  for (const altered of [moved, { ...good, body: { ...good.body, extra: 1 } }, { ...good, n: 4 }, { ...good, mac: flipped }]) {
     assert.deepEqual(openClientFrame(peer, JSON.stringify(altered)), { ok: false, reason: 'envelope: bad seal' }, JSON.stringify(altered))
   }
   assert.ok(openClientFrame(peer, JSON.stringify(good)).ok, 'the genuine frame still passes')
-  assert.ok(openClientFrame(peer, input(4, 1_000_000)).ok, 'a gap in the numbers is not a replay')
+  assert.ok(openClientFrame(peer, frame(4, 1_000_000)).ok, 'a gap in the numbers is not a replay')
   // The envelope's own shape, bounded like any frame; JSON that is not plain data is refused, not thrown on.
   const mac = 'a'.repeat(64)
   const shapes: [unknown, RegExp][] = [
@@ -381,15 +551,19 @@ test('sealed frames: numbered and signed under the session token over the canoni
   assert.equal(peer.received, 1_000_000, 'none of it moved the peer')
 })
 
-test('the page opens the host\'s frames the same way: under the session token, numbered above the last; the validator still reads the body', () => {
+test('the page opens the host\'s frames the same way: under the session token, numbered above the last, bounded at hostMessage; the validator still reads the body', () => {
   const key = 'session-token'
-  const welcome: ServerMessage = { t: 'welcome', v: PROTOCOL_VERSION, id: 1, tick: 0, tickHz: 20, players: [] }
+  const welcome: ServerMessage = { t: 'welcome', v: PROTOCOL_VERSION, id: 1, tick: 0, tickHz: 20, fix: 1, you: player(1), players: [] }
   const a = openServerFrame(sealMessage(welcome, 1, key), key, 0)
   assert.ok(a.ok)
   assert.deepEqual([a.msg, a.n], [welcome, 1])
   assert.deepEqual(openServerFrame(sealMessage(welcome, 1, key), key, 1), { ok: false, reason: 'envelope: replayed' })
   assert.deepEqual(openServerFrame(sealMessage(welcome, 2, 'other'), key, 1), { ok: false, reason: 'envelope: bad seal' })
-  assert.deepEqual(openServerFrame(sealMessage({ t: 'snapshot', tick: 1, ack: 0, players: [player(2, { name: 'you idiot' })] }, 2, key), key, 1), { ok: false, reason: 'snapshot: players' })
+  const named = { t: 'snapshot' as const, tick: 1, ack: 0, fix: 1, you: player(1), players: [player(2, { name: 'you idiot' })] }
+  assert.deepEqual(openServerFrame(sealMessage(named, 2, key), key, 1), { ok: false, reason: 'snapshot: players' })
   assert.deepEqual(openServerFrame(encode(welcome), key, 0), { ok: false, reason: 'envelope: n' }, 'an unsealed message is not a frame')
   assert.deepEqual(openServerFrame(undefined, key, 0), { ok: false, reason: 'not text' })
+  const big = sealMessage({ ...named, players: [] }, 3, key).padEnd(LIMITS.message + 100)
+  assert.ok(openServerFrame(big, key, 2).ok, 'a host frame may be longer than a client\'s')
+  assert.match((openServerFrame(big.padEnd(LIMITS.hostMessage + 1), key, 2) as { reason: string }).reason, /longer than/)
 })

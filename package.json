@@ -14,6 +14,7 @@
     "native:test": "cargo test --manifest-path native/routing/Cargo.toml && cargo test --manifest-path native/kv-pager/Cargo.toml && cargo test --manifest-path native/kv-pager-wasm/Cargo.toml",
     "preview": "vite preview",
     "serve:net": "node src/10_Network/replication.node.ts",
+    "smoke:net": "node tools/net/smoke.mjs",
     "test": "node --test \"src/**/*.test.ts\""
   },
   "dependencies": {

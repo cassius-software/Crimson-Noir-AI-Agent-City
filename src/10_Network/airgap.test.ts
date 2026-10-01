@@ -55,7 +55,7 @@ const ALLOWED: Record<string, { line: RegExp; guard: RegExp | null }[]> = {
   'App.tsx': [{ line: /window\.fetch\(url, init\)/, guard: /\bloopbackFetch\(/ }],
   // The room client's one socket, made only for a URL netServer (the gate's ws alias) admits; a presence check for the voice stub.
   '10_Network/netClient.ts': [
-    { line: /new WebSocket\(url\)/, guard: /\bnetServer\(url\)/ },
+    { line: /new WebSocket\(url, protocols\)/, guard: /\bnetServer\(url\)/ },
     { line: /typeof RTCPeerConnection === 'undefined'/, guard: null },
   ],
 }
@@ -68,11 +68,13 @@ function enclosing(lines: readonly string[], i: number): string {
   return lines.slice(j, i + 1).join('\n')
 }
 
-test('no runtime source under src imports a .node.ts module: the host never enters the page\'s import graph', () => {
+test('no runtime source under src imports a .node.ts module but another .node.ts: the host and its mirror never enter the page\'s import graph', () => {
   const sources = runtimeSources()
   assert.ok(sources.length > 50, `${sources.length} runtime sources read`)
   assert.ok(sources.some(([name]) => name.endsWith('.node.ts')), 'the host is among the runtime sources scanned')
   for (const [name, text] of sources) {
+    // The host imports the mirror: both are Node-only, and nothing on the page imports either.
+    if (name.endsWith('.node.ts')) continue
     for (const spec of specifiers(text)) assert.doesNotMatch(spec, /\.node(?:\.ts)?$/, `${name} imports ${spec}`)
   }
 })
@@ -158,7 +160,14 @@ test('the replication core takes its 14A verdicts from conduct.ts screen, and th
   const allowed: Record<string, string[]> = {
     'replication.ts': ['../02_Define_The_Rules/conduct.ts', '../02_Define_The_Rules/integrity.ts', '../07_Execute_Actions/simProtocol.ts', '../08_Swarm/ping.ts'],
     'netClient.ts': ['./replication.ts', '../08_Swarm/ping.ts', `../${GATE}`],
-    'replication.node.ts': ['node:crypto', 'node:http', 'node:net', 'node:url', './replication.ts'],
+    'replication.node.ts': ['node:crypto', 'node:http', 'node:net', 'node:url', './mirror.node.ts', './replication.ts'],
+    // The host's authority is a realm of its own on the server (Phase 12): the city, Rapier, the avatar's controller and
+    // the Ring-0 audit, never the page's realm (no simCore, no fleet, no laws) and never on the page.
+    'mirror.node.ts': [
+      '../01_Initialize_World/city.ts', '../02_Define_The_Rules/ring0.ts', '../07_Execute_Actions/physics.ts', '../07_Execute_Actions/player.ts',
+      '../07_Execute_Actions/simProtocol.ts',
+    ],
+    'plane.node.ts': ['../07_Execute_Actions/simProtocol.ts', './replication.ts'],
   }
   for (const [file, list] of Object.entries(allowed)) {
     const text = readFileSync(join(SRC, '10_Network', file), 'utf8')
@@ -166,8 +175,11 @@ test('the replication core takes its 14A verdicts from conduct.ts screen, and th
     const specs = specifiers(text)
     assert.ok(specs.length > 0, `${file}: imports parsed`)
     for (const spec of specs) assert.ok(list.includes(spec), `${file} imports '${spec}'`)
-    for (const realm of ['simCore', 'vehicles', 'laws', 'ring0', 'physics']) assert.ok(!specs.some((s) => s.includes(realm)), `${file} reaches the realm (${realm})`)
+    const realms = file === 'mirror.node.ts' ? ['simCore', 'vehicles', 'laws'] : ['simCore', 'vehicles', 'laws', 'ring0', 'physics']
+    for (const realm of realms) assert.ok(!specs.some((s) => s.includes(realm)), `${file} reaches the realm (${realm})`)
   }
+  // Every source of the stage is in the list above (or is a test).
+  for (const f of readdirSync(join(SRC, '10_Network'))) if (!f.endsWith('.test.ts')) assert.ok(f in allowed, `10_Network/${f} has no import allowlist`)
   // The page half opens nothing at module load: a socket is made only inside connect().
   const client = code(readFileSync(join(SRC, '10_Network/netClient.ts'), 'utf8'))
   assert.equal(client.match(/new WebSocket\(/g)?.length, 1)

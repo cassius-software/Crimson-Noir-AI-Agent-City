@@ -1,26 +1,36 @@
 /**
- * Why does this file exist? It is the Node host of the replication scaffold: one authoritative room (replication.ts)
- * behind a dependency-free WebSocket door. It is Node-only and never part of the page: node:http takes the upgrade,
- * the RFC 6455 frames are read and written here (a client's frame must be masked, the host's never is; ping is
- * answered with pong; close is a handshake; anything binary, fragmented or over the message bound closes the socket),
- * and node:crypto signs the session tokens (HMAC, with an expiry) the operator hands out. Every frame goes through the
- * core's seal (replication.ts openClientFrame: the envelope number must rise and the HMAC under the session token must
- * hold, or the frame is refused and counted; the host's own frames are sealed the same way, so the page can tell a
- * forged or replayed one), the core's validator and the peer's rate limits; every name and chat line through the 14A screen; a peer that keeps
- * earning refusals is removed; a peer that never joins or goes silent is dropped. The room ticks at a fixed rate and
- * every joined peer gets its snapshot each tick. The host listens in plain text on the loopback address by default:
- * TLS (wss) is terminated by the operator's reverse proxy in front of it, which is also where an origin or a client
- * certificate would be checked. Run it with `npm run serve:net` (Node 22 strips the types); the tsconfig split keeps
- * it in the node type project and out of the app's, and airgap.test.ts proves nothing on the page imports it.
+ * Why does this file exist? It is the Node host of the network room: one authoritative room (replication.ts) behind
+ * a dependency-free WebSocket door, with the headless Ring-0 mirror (mirror.node.ts: the page's city of the same seed
+ * in Rapier, the realm's own character controller) as its authority. It is Node-only and never part of the page:
+ * node:http takes the upgrade, the RFC 6455 frames are read and written here (a client's frame must be masked, the
+ * host's never is; ping is answered with pong; close is a handshake; anything binary, fragmented or over the message
+ * bound closes the socket), and node:crypto signs the session tokens (HMAC, with an expiry) the operator hands out.
+ * No connection is upgraded without one: the token rides the upgrade as a subprotocol (`auth.<token>`, beside
+ * `onyx.3`), its HMAC and expiry are checked before the 101, a failure is a 401 with no socket and no room slot (a
+ * 429, unlogged, for an address that keeps failing; a good token is always admitted, since behind a proxy everyone
+ * shares one address), and the join must carry the same token. Every frame then goes through the core's seal (replication.ts openClientFrame: the envelope number must
+ * rise and the HMAC under the session token must hold, or the frame is refused and counted; the host's own frames are
+ * sealed the same way, so the page can tell a forged or replayed one), the core's validator and the peer's rate
+ * limits; every name and chat line through the 14A screen. An input is judged by the mirror the moment it arrives, and
+ * one it refuses is answered with a correction in the same turn, before anything else is read from that socket. A
+ * peer that keeps earning refusals or corrections is removed; one that never joins or goes silent is dropped; one too
+ * slow to take what it is sent (a backlog past maxBacklog) is closed. The room ticks at a fixed rate and every joined
+ * peer gets its snapshot each tick. Seals use node:crypto's HMAC (the same digest as integrity.ts, faster). The host
+ * listens in plain text on the loopback address by default: TLS (wss) is terminated by the operator's reverse proxy
+ * in front of it, which is also where an origin or a client certificate would be checked. Run it with `npm run
+ * serve:net` (Node 22 strips the types); the tsconfig split keeps it in the node type project and out of the app's,
+ * and airgap.test.ts proves nothing on the page imports it.
  * What breaks if it is removed? There is no host for netClient.ts to join; the page is unchanged.
  */
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 import type { Socket } from 'node:net'
 import { pathToFileURL } from 'node:url'
+import { Mirror } from './mirror.node.ts'
 import {
-  admit, createRoom, depart, expired, handle, LIMITS, openClientFrame, poses, refuse, sealMessage, snapshotFor, tickRoom,
-  type Outcome, type Peer, type Room, type ServerMessage,
+  admit, AUTH_PREFIX, bucket, createRoom, depart, expired, handle, LIMITS, openClientFrame, poses, readEnvelope, refuse, refuseInput, sealMessage,
+  snapshotFor, SUBPROTOCOL, take, tickRoom,
+  type Authority, type Bucket, type Mac, type Outcome, type Peer, type Room, type ServerMessage,
 } from './replication.ts'
 
 // ---------------------------------------------------------------------------------------------------
@@ -29,6 +39,29 @@ import {
 const b64url = (b: Buffer): string => b.toString('base64url')
 
 const sign = (secret: string, body: string): Buffer => createHmac('sha256', secret).update(body).digest()
+
+/** The seals' HMAC-SHA256 through node:crypto: the digest integrity.ts computes, at native speed. */
+export const nodeMac: Mac = (key, message) => createHmac('sha256', key).update(message).digest('hex')
+
+/** Two tokens compared in constant time (for equal lengths; different lengths are simply different). */
+function sameToken(a: string, b: string): boolean {
+  const x = Buffer.from(a, 'utf8'), y = Buffer.from(b, 'utf8')
+  return x.length === y.length && timingSafeEqual(x, y)
+}
+
+/**
+ * The session token an upgrade offers, from its Sec-WebSocket-Protocol list: `onyx.3` must be offered, and exactly one
+ * `auth.<token>` entry. Null for anything else.
+ */
+export function offeredToken(header: unknown): string | null {
+  if (typeof header !== 'string' || header.length > 2 * LIMITS.token) return null
+  const offered = header.split(',').map((p) => p.trim())
+  if (!offered.includes(SUBPROTOCOL)) return null
+  const auth = offered.filter((p) => p.startsWith(AUTH_PREFIX))
+  if (auth.length !== 1) return null
+  const token = auth[0].slice(AUTH_PREFIX.length)
+  return token.length > 0 ? token : null
+}
 
 /** A token for `subject` (a printable name of at most LIMITS.name characters) that expires at `expiresAt` (ms). */
 export function mintToken(secret: string, subject: string, expiresAt: number): string {
@@ -132,15 +165,47 @@ export interface HostOptions {
   /** 0 picks a free port. */
   port?: number
   tickHz?: number
+  /** The city the mirror builds and a joining page must be walking (the page's ?seed; 1337 by default). */
+  seed?: number
+  /** Another authority than the mirror (the protocol's tests run the open plane, plane.node.ts). */
+  authority?: Authority
+  /** Bytes a peer may leave unread before the host closes it as too slow. */
+  maxBacklog?: number
   /** Wall clock, ms (injectable for tests). */
   now?: () => number
   log?: (line: string) => void
 }
 
+/** What the host has done since it started, for the console and the tests. */
+export interface HostStats {
+  peers: number
+  /** Upgrades refused for want of a good token: answered 401, or 429 once the address had spent its failures. */
+  unauthorized: number
+  throttled: number
+  /** Inputs read, kept, and corrected; inputs dropped unread for predating a correction. */
+  inputs: number
+  kept: number
+  corrected: number
+  stale: number
+  /** Microseconds to handle one input (the mirror's judgement included) and one tick (every snapshot sealed and sent), moving averages. */
+  inputUs: number
+  tickUs: number
+}
+
+/** The city a host builds unless told otherwise: the page's default seed (App.tsx). */
+export const DEFAULT_SEED = 1337
+/** Unread bytes past which a peer is too slow to keep (about two seconds of a full room's snapshots). */
+export const MAX_BACKLOG = 512 * 1024
+/** Failed upgrades an address may make before its failures are answered 429 (unlogged), and how fast it earns another. */
+export const AUTH_FAILURES = Object.freeze({ burst: 5, perSecond: 0.2 })
+
 export interface Host {
   readonly host: string
   readonly port: number
   readonly room: Room
+  /** The world a page must be walking to join (the mirror's: 'city/<seed>'). */
+  readonly world: string
+  stats(): HostStats
   /** The URL a client on this machine joins. */
   readonly url: string
   /** Sockets open (joined or not). */
@@ -154,6 +219,8 @@ export interface Host {
 interface Conn {
   socket: Socket
   peer: Peer
+  /** The token the upgrade carried: the join must carry the same. */
+  token: string
   buf: Buffer
   closing: boolean
   /** Envelopes sent to this peer: the next frame is numbered one above (replication.ts sealMessage). */
@@ -163,18 +230,27 @@ interface Conn {
 /** One day: how long a token minted by `host.token` is good for unless told otherwise. */
 export const TOKEN_TTL_MS = 24 * 60 * 60 * 1000
 
-export function startHost(o: HostOptions): Promise<Host> {
+export async function startHost(o: HostOptions): Promise<Host> {
   const now = o.now ?? Date.now
   const log = o.log ?? ((): void => {})
   const bind = o.host ?? '127.0.0.1'
-  const room = createRoom(o.tickHz ?? LIMITS.tickHz)
+  const maxBacklog = o.maxBacklog ?? MAX_BACKLOG
+  const authority = o.authority ?? (await Mirror.create(o.seed ?? DEFAULT_SEED))
+  const room = createRoom(authority, o.tickHz ?? LIMITS.tickHz)
   const conns = new Map<number, Conn>()
-  const verify = (token: string): boolean => verifyToken(o.secret, token, now()) !== null
+  const failures = new Map<string, Bucket>()
+  const stats: HostStats = { peers: 0, unauthorized: 0, throttled: 0, inputs: 0, kept: 0, corrected: 0, stale: 0, inputUs: 0, tickUs: 0 }
+  const average = (was: number, us: number): number => (was === 0 ? us : was * 0.95 + us * 0.05)
 
   /** One message to a joined peer, sealed under the token it joined with (nothing is ever sent to a peer without one). */
   const send = (c: Conn, msg: ServerMessage): void => {
     if (c.closing || !c.socket.writable || c.peer.key === '') return
-    c.socket.write(writeFrame(OP.text, Buffer.from(sealMessage(msg, ++c.sent, c.peer.key), 'utf8')))
+    // A peer that does not read what it is sent would have the host hold it all: it is closed instead.
+    if (c.socket.writableLength > maxBacklog) {
+      close(c, 4009, 'too slow to keep up')
+      return
+    }
+    c.socket.write(writeFrame(OP.text, Buffer.from(sealMessage(msg, ++c.sent, c.peer.key, nodeMac), 'utf8')))
   }
   const broadcast = (msg: ServerMessage): void => {
     for (const c of conns.values()) if (c.peer.joined) send(c, msg)
@@ -203,9 +279,35 @@ export function startHost(o: HostOptions): Promise<Host> {
   const onFrame = (c: Conn, opcode: number, payload: Buffer): void => {
     switch (opcode) {
       case OP.text: {
-        // The seal first (a forgery or a replay is a refusal like any malformed frame), then the room.
-        const read = openClientFrame(c.peer, payload.toString('utf8'))
-        apply(c, read.ok ? handle(room, c.peer, read.msg, now(), verify) : refuse(c.peer, read.reason))
+        // The seal first (a forgery or a replay is a refusal like any malformed frame), then the room. An input is
+        // judged here and now: a refused one is answered with its correction before the next frame is read.
+        const wire = payload.toString('utf8')
+        const t0 = performance.now()
+        const read = openClientFrame(c.peer, wire, nodeMac)
+        const verify = (token: string): boolean => sameToken(token, c.token) && verifyToken(o.secret, token, now()) !== null
+        let out: Outcome
+        let input = false
+        if (read.ok) {
+          input = read.msg.t === 'input'
+          const fixWas = c.peer.fix, seqWas = c.peer.seq
+          out = handle(room, c.peer, read.msg, now(), verify)
+          if (input) {
+            if (c.peer.fix !== fixWas) stats.corrected++
+            else if (c.peer.seq !== seqWas) stats.kept++
+            else stats.stale++
+          }
+        } else {
+          // An input that failed its seal or its shape from a joined peer is refused and corrected like any other.
+          const env = readEnvelope(wire)
+          input = c.peer.joined && env.ok && (env.msg.body as { t?: unknown }).t === 'input'
+          out = input ? refuseInput(room, c.peer, read.reason, now()) : refuse(c.peer, read.reason)
+          if (input) stats.corrected++
+        }
+        if (input) {
+          stats.inputs++
+          stats.inputUs = average(stats.inputUs, (performance.now() - t0) * 1000)
+        }
+        apply(c, out)
         return
       }
       case OP.binary:
@@ -241,17 +343,38 @@ export function startHost(o: HostOptions): Promise<Host> {
       socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n')
       return
     }
-    const peer = admit(room, now())
+    // The token before anything else. A good one is always admitted: behind the operator's proxy every client arrives
+    // from one address, so a stranger's failures must never lock anyone out. An address that keeps failing is turned
+    // away with 429 instead of 401, unlogged, until its budget refills.
+    const from = socket.remoteAddress ?? '?'
+    const t = now()
+    const token = offeredToken(req.headers['sec-websocket-protocol'])
+    if (token === null || verifyToken(o.secret, token, t) === null) {
+      let budget = failures.get(from)
+      if (!budget) failures.set(from, (budget = bucket(AUTH_FAILURES.burst, AUTH_FAILURES.perSecond, t)))
+      if (!take(budget, t)) {
+        stats.throttled++
+        socket.end('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\n\r\n')
+        return
+      }
+      stats.unauthorized++
+      log(`upgrade from ${from} refused: ${token === null ? 'no session token offered' : 'a token that does not verify'}`)
+      socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
+      return
+    }
+    const peer = admit(room, t)
     if (!peer) {
       socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n')
       return
     }
-    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${acceptKey(key)}\r\n\r\n`)
-    const c: Conn = { socket, peer, buf: Buffer.alloc(0), closing: false, sent: 0 }
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${acceptKey(key)}\r\nSec-WebSocket-Protocol: ${SUBPROTOCOL}\r\n\r\n`)
+    const c: Conn = { socket, peer, token, buf: Buffer.alloc(0), closing: false, sent: 0 }
     conns.set(peer.id, c)
     socket.setNoDelay(true)
     socket.on('data', (chunk: Buffer) => onData(c, chunk))
     socket.on('error', () => close(c, 1006, 'socket error'))
+    // node:http keeps its sockets half-open: a client that drops the connection without a close frame only ends it.
+    socket.on('end', () => close(c, 1006, 'socket ended'))
     socket.on('close', () => close(c, 1006, 'socket closed'))
     log(`peer ${peer.id} connected`)
     if (head.length > 0) onData(c, head)
@@ -264,6 +387,7 @@ export function startHost(o: HostOptions): Promise<Host> {
   server.on('upgrade', onUpgrade)
 
   const ticker = setInterval(() => {
+    const t0 = performance.now()
     const t = now()
     for (const { peer, reason } of expired(room, t)) {
       const c = conns.get(peer.id)
@@ -272,7 +396,10 @@ export function startHost(o: HostOptions): Promise<Host> {
     }
     tickRoom(room)
     const players = poses(room)
-    for (const c of conns.values()) if (c.peer.joined) send(c, snapshotFor(room, c.peer, players))
+    for (const c of [...conns.values()]) if (c.peer.joined) send(c, snapshotFor(room, c.peer, players))
+    // Addresses that stopped failing are forgotten once their budget is whole again.
+    for (const [addr, b] of failures) if (t - b.at > (AUTH_FAILURES.burst / AUTH_FAILURES.perSecond) * 1000) failures.delete(addr)
+    stats.tickUs = average(stats.tickUs, (performance.now() - t0) * 1000)
   }, 1000 / room.tickHz)
   ticker.unref()
 
@@ -282,11 +409,13 @@ export function startHost(o: HostOptions): Promise<Host> {
       const address = server.address()
       const port = typeof address === 'object' && address ? address.port : 0
       const hostname = bind.includes(':') ? `[${bind}]` : bind
-      log(`replication host listening on ws://${hostname}:${port} (wss is the proxy's)`)
+      log(`replication host listening on ws://${hostname}:${port} (wss is the proxy's); the world is ${authority.world}`)
       resolve({
         host: bind,
         port,
         room,
+        world: authority.world,
+        stats: () => ({ ...stats, peers: conns.size }),
         url: `ws://${hostname}:${port}`,
         connections: () => conns.size,
         token: (subject, ttlMs = TOKEN_TTL_MS) => mintToken(o.secret, subject, now() + ttlMs),
@@ -308,8 +437,10 @@ export function startHost(o: HostOptions): Promise<Host> {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const secret = process.env.NET_SECRET ?? randomBytes(32).toString('hex')
   const port = Number(process.env.NET_PORT ?? 8787)
-  const host = await startHost({ secret, host: process.env.NET_HOST ?? '127.0.0.1', port, log: (line) => console.log(line) })
-  console.log(`room ticks at ${host.room.tickHz} Hz; at most ${LIMITS.peers} peers; ${process.env.NET_SECRET ? 'secret from NET_SECRET' : 'secret made for this run (set NET_SECRET to keep tokens across restarts)'}`)
+  const seed = Number(process.env.NET_SEED ?? DEFAULT_SEED)
+  const host = await startHost({ secret, host: process.env.NET_HOST ?? '127.0.0.1', port, seed, log: (line) => console.log(line) })
+  console.log(`room ticks at ${host.room.tickHz} Hz; at most ${LIMITS.peers} peers; the authority is the headless Ring-0 mirror of ${host.world} (pages with ?seed=${seed >>> 0} join)`)
+  console.log(process.env.NET_SECRET ? 'secret from NET_SECRET' : 'secret made for this run (set NET_SECRET to keep tokens across restarts)')
   console.log(`a token for 'operator', good for ${TOKEN_TTL_MS / 3600000} h: ${host.token('operator')}`)
   console.log('clients off this machine join through the reverse proxy that terminates wss in front of this port')
   process.once('SIGINT', () => { void host.close().then(() => process.exit(0)) })

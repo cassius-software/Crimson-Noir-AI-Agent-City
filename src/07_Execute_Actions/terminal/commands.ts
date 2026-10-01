@@ -381,7 +381,7 @@ function pickText(p: PingPick): string {
   return `${what} at (${fixed(p.x, 1)}, ${fixed(p.z, 1)}), ${fixed(p.distance, 1)} m away`
 }
 
-/** `net status`: the session as plain rows (state, room, player number, peers, dropped, pending, voices, reason). */
+/** `net status`: the session as plain rows (state, room, player number, peers, dropped, pending, voices, corrections, reason). */
 function netLines(r: NetReport): Line[] {
   const lines = [
     out(row('state', r.state)),
@@ -389,6 +389,8 @@ function netLines(r: NetReport): Line[] {
     out(row('player', r.state === 'joined' ? String(r.id) : '-')),
     out(row('peers', `${count(r.peers)}  dropped ${count(r.dropped)}  pending ${count(r.pending)}  voices ${count(r.voices)}`)),
   ]
+  // The room's authority snapped this page to its truth: how often, and the newest reason.
+  if (r.corrections > 0) lines.push(out(row('snapped', `${count(r.corrections)}  last: ${r.corrected ?? 'unknown'}`)))
   if (r.reason) lines.push(out(row('reason', r.reason)))
   return lines
 }
