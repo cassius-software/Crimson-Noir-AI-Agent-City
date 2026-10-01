@@ -20,6 +20,7 @@ import { loadProfile, type Profile } from './05_Observe_Environment/profile.ts'
 import { loadLook, saveLook } from './05_Observe_Environment/lookStore.ts'
 import { lookFromSeed, type Look } from './03_Spawn_Agents/look.ts'
 import { PLAYER_INDEX } from './03_Spawn_Agents/crowdCompute.ts'
+import { clampPlayers } from './07_Execute_Actions/viewports.ts'
 import type { PlanStep } from './06_Make_Decisions/intent.ts'
 import { BRAND } from './brand.ts'
 import embeddedRegion from 'virtual:region-pack'
@@ -122,6 +123,8 @@ function readOptions(): Options {
     tracks: q.get('tracks') !== '0',
     // The cinema camera (24 fps, 180° shutter, ND, film response); ?cinema=0 draws every frame with ACES.
     cinema: q.get('cinema') !== '0',
+    // Local split screen: ?players=2..4 cuts the canvas into a viewport per player (viewports.ts clamps it to 1..4).
+    players: clampPlayers(q.get('players')),
   }
 }
 
@@ -204,8 +207,8 @@ function GuiShell({ options }: { options: Options }) {
     const onKey = (e: KeyboardEvent) => {
       if (e.code === 'KeyH' && !e.repeat && !termOpenRef.current && !isEditableTarget(e.target)) setHudVisible((v) => !v)
     }
-    // Browsers only start audio from a user gesture; every gesture is a chance to (re)unlock it.
-    const unlock = () => engineRef.current?.audio.unlock()
+    // Browsers only start audio from a user gesture; every gesture is a chance to (re)unlock it (every player's soundscape).
+    const unlock = () => engineRef.current?.unlockAudio()
     window.addEventListener('keydown', onKey)
     for (const type of ['pointerdown', 'keydown', 'touchend', 'click'] as const) window.addEventListener(type, unlock, { capture: true })
     return () => {

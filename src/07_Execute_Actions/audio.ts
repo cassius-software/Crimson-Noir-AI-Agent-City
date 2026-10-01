@@ -10,7 +10,10 @@
  * connection is opened here) is placed in the same space. Every sound's start, change and stop is reported to one
  * listener (`onSound`, a plain event with the sound's world point) so the HUD can caption it (captions.ts). The maths
  * (gearbox, gain curves, voice assignment, Doppler, synthesis) is exported as pure functions and unit-tested; the
- * Soundscape class only maps it onto a small, fixed Web Audio graph built once on the first user gesture.
+ * Soundscape class only maps it onto a small, fixed Web Audio graph built once on the first user gesture. In local
+ * split screen each player has a soundscape of their own over one shared context, in head space (SoundscapeOptions):
+ * Web Audio has one listener per context, so that listener stays put and every source is placed relative to each
+ * player's head (toHeadSpace), with smaller voice and bed pools per player.
  * What breaks if it is removed? The city is silent: approaching traffic gives no spatial cue and the walk
  * signal has no audible counterpart for players who cannot see it.
  */
@@ -47,6 +50,61 @@ export interface PeerVoice {
 export type CarSample = AudioFrame['cars'][number]
 
 export type AudioState = 'locked' | 'running' | 'suspended' | 'unsupported' | 'off'
+
+/** One AudioContext held by several soundscapes (sharedAudioContext): opened by the first to acquire it, closed by the last to release it. */
+export interface AudioContextShare {
+  acquire(): AudioContext
+  release(): void
+}
+
+/**
+ * How a Soundscape is built: alone, over a context of its own, with the context's listener following the head (the
+ * default, 'world' space); or as one of several players' soundscapes over one shared context in 'head' space (local
+ * split screen). Web Audio has exactly one listener per context, so in head space the listener stays at the identity and
+ * every source is placed relative to that player's head instead (toHeadSpace): a rigid move, so distances, the voice
+ * pool and the Doppler read the same numbers in either space. Smaller pools per player keep the panner count in hand.
+ */
+export interface SoundscapeOptions {
+  /** A shared context (sharedAudioContext()); absent: the soundscape opens and closes a context of its own. */
+  context?: AudioContextShare
+  /** 'world' (default): the context's listener is the head. 'head': the listener stays put and the sources move. */
+  space?: 'world' | 'head'
+  /** Car voices in the pool, 1..MAX_VOICES (default VOICE.count). */
+  voices?: number
+  /** Murmur beds, 1..MURMUR.sources (default MURMUR.sources). */
+  beds?: number
+  /** Where the limiter goes (default: the context's destination). */
+  output?: AudioNode
+}
+
+/**
+ * A context shared by reference count: acquire() opens it on the first call (or again after it was closed) and counts a
+ * holder; release() lets one holder go and closes the context with the last. Each holder releases once (its teardown).
+ */
+export function sharedAudioContext(): AudioContextShare {
+  let ctx: AudioContext | null = null
+  let holders = 0
+  return Object.freeze({
+    acquire: (): AudioContext => {
+      if (!ctx || ctx.state === 'closed') {
+        ctx = new AudioContext({ latencyHint: 'balanced' })
+        holders = 0
+      }
+      holders++
+      return ctx
+    },
+    release: (): void => {
+      if (holders <= 0) return
+      holders--
+      if (holders > 0 || !ctx) return
+      const c = ctx
+      ctx = null
+      if (c.state !== 'closed') {
+        try { void c.close().catch(noop) } catch { /* already closing */ }
+      }
+    },
+  })
+}
 
 /** Pooled car voices and the hysteresis that keeps them from hopping between cars. */
 export const VOICE = {
@@ -255,6 +313,8 @@ const MASTER_TRIM = 2
 const MAX_VOICES = 16
 /** Slightly different playback rates keep the beds (one shared babble loop) from phasing into each other. */
 const BED_RATES = [0.97, 1, 1.025, 0.985] as const
+/** Web Audio's listener as it starts: at the origin, looking down −z, +y up (where head space keeps it). */
+const IDENTITY_LISTENER = [0, 0, 0, 0, 0, -1, 0, 1, 0] as const
 
 /** NaN-safe: a bad input reads as 0, never reaches an AudioParam. */
 const clamp01 = (v: number) => (v > 0 ? (v < 1 ? v : 1) : 0)
@@ -348,6 +408,22 @@ export function listenerBasis(yaw: number, pitch: number, out: Float32Array | nu
   const sy = Math.sin(yaw), cy = Math.cos(yaw), sp = Math.sin(pitch), cp = Math.cos(pitch)
   out[0] = -sy * cp; out[1] = sp; out[2] = -cy * cp
   out[3] = sy * sp; out[4] = cp; out[5] = cy * sp
+}
+
+/**
+ * A world point as a head at (lx, ly, lz) with the listener basis `basis` (forward 0..2, up 3..5, right = forward × up)
+ * hears it: its coordinates in the frame Web Audio's listener holds at the identity (x to the right, y up, −z ahead),
+ * written into `out`. The inverse of listenerBasis as a rotation, after the translation to the head: rigid, so the
+ * distance to the head is unchanged, and the panners' distance model, the voice pool and the Doppler read as in world
+ * space; only the azimuth and elevation come from the head.
+ */
+export function toHeadSpace(basis: ArrayLike<number>, lx: number, ly: number, lz: number, x: number, y: number, z: number, out: { x: number; y: number; z: number }): void {
+  const fx = basis[0], fy = basis[1], fz = basis[2], ux = basis[3], uy = basis[4], uz = basis[5]
+  const rx = fy * uz - fz * uy, ry = fz * ux - fx * uz, rz = fx * uy - fy * ux
+  const dx = x - lx, dy = y - ly, dz = z - lz
+  out.x = dx * rx + dy * ry + dz * rz
+  out.y = dx * ux + dy * uy + dz * uz
+  out.z = -(dx * fx + dy * fy + dz * fz)
 }
 
 /** Murmur level 0..1: saturating in the number of people near the camera, lower at night, busier while people cross. */
@@ -641,6 +717,10 @@ function renderNotes(spec: NoteSpec, sampleRate: number, out: Float32Array): voi
 
 const noop = (): void => {}
 
+/** A pool size option: an integer within 1..max, the default when absent or not a number. */
+const poolSize = (v: number | undefined, fallback: number, max: number): number =>
+  (v === undefined || !Number.isFinite(v) ? fallback : Math.max(1, Math.min(max, Math.floor(v))))
+
 /**
  * Web Audio takes single-precision floats (WebIDL `float`): NaN, ±Infinity and any double that rounds past
  * ±3.4e38 throw a TypeError, which inside update() would take the frame loop down. False for all of them.
@@ -685,6 +765,20 @@ class Knob {
   }
 }
 
+/**
+ * A soundscape in head space (SoundscapeOptions.space 'head'): the head every panner is placed against. `at` is the
+ * listener's world position (0..2, NaN before the first control pass) and `basis` its forward and up; `on` once a pass
+ * has set them; `cut` for the pass after a turn of 90° or more, when every source jumps instead of sweeping round the
+ * head; `out` the scratch toHeadSpace writes into.
+ */
+interface HeadFrame {
+  on: boolean
+  cut: boolean
+  readonly at: Float32Array
+  readonly basis: Float32Array
+  readonly out: { x: number; y: number; z: number }
+}
+
 /** An HRTF panner positioned through its AudioParams, or setPosition() where those are missing. */
 class Spatial {
   readonly node: PannerNode
@@ -692,12 +786,14 @@ class Spatial {
   private readonly px: Knob | null
   private readonly py: Knob | null
   private readonly pz: Knob | null
+  /** The head this panner is placed relative to (head space), or null: world coordinates go straight to the node. */
+  private readonly head: HeadFrame | null
   /** Last position sent; NaN until the first placement, which jumps instead of sweeping in from the origin. */
   private lx = Number.NaN
   private ly = Number.NaN
   private lz = Number.NaN
 
-  constructor(ctx: AudioContext, ref: number, rolloff: number) {
+  constructor(ctx: AudioContext, ref: number, rolloff: number, head: HeadFrame | null = null) {
     const p = ctx.createPanner()
     try { p.panningModel = 'HRTF' } catch { /* keeps equalpower */ }
     p.distanceModel = 'inverse'
@@ -706,14 +802,34 @@ class Spatial {
     p.maxDistance = 10000
     this.node = p
     this.hrtf = p.panningModel === 'HRTF'
+    this.head = head
     const params = typeof (p as Partial<PannerNode>).positionX === 'object'
     this.px = params ? new Knob(kRate(p.positionX), 0.01) : null
     this.py = params ? new Knob(kRate(p.positionY), 0.01) : null
     this.pz = params ? new Knob(kRate(p.positionZ), 0.01) : null
   }
 
+  /** World coordinates in; in head space they are taken relative to the head before they reach the node. */
   place(x: number, y: number, z: number, now: number, tau: number): void {
-    if (Number.isNaN(this.lx)) { this.jump(x, y, z, now); return }
+    const h = this.head
+    if (h && h.on) {
+      toHeadSpace(h.basis, h.at[0], h.at[1], h.at[2], x, y, z, h.out)
+      x = h.out.x; y = h.out.y; z = h.out.z
+      // The head turned round in one pass: every source is on the other side now, nothing sweeps through the head.
+      if (h.cut) { this.put(x, y, z, now); return }
+    }
+    this.put(x, y, z, now, tau)
+  }
+
+  private put(x: number, y: number, z: number, now: number, tau?: number): void {
+    if (tau === undefined || Number.isNaN(this.lx)) {
+      if (this.px && this.py && this.pz) {
+        if (!representable(x) || !representable(y) || !representable(z)) return
+        this.px.jump(x, now); this.py.jump(y, now); this.pz.jump(z, now)
+        this.lx = x; this.ly = y; this.lz = z
+      } else this.set(x, y, z)
+      return
+    }
     if (this.px && this.py && this.pz) {
       this.px.glide(x, now, tau); this.py.glide(y, now, tau); this.pz.glide(z, now, tau)
       this.lx = x; this.ly = y; this.lz = z
@@ -729,12 +845,14 @@ class Spatial {
     }
   }
 
+  /** World coordinates in, as place(); the node is set at once, never glided. */
   jump(x: number, y: number, z: number, now: number): void {
-    if (this.px && this.py && this.pz) {
-      if (!representable(x) || !representable(y) || !representable(z)) return
-      this.px.jump(x, now); this.py.jump(y, now); this.pz.jump(z, now)
-      this.lx = x; this.ly = y; this.lz = z
-    } else this.set(x, y, z)
+    const h = this.head
+    if (h && h.on) {
+      toHeadSpace(h.basis, h.at[0], h.at[1], h.at[2], x, y, z, h.out)
+      x = h.out.x; y = h.out.y; z = h.out.z
+    }
+    this.put(x, y, z, now)
   }
 }
 
@@ -893,12 +1011,20 @@ export class Soundscape {
   private pending = 0
   private suspendTimer: ReturnType<typeof setTimeout> | undefined
   private readonly supported: boolean
-  private readonly slots = new Int32Array(VOICE.count).fill(-1)
-  private readonly age = new Float32Array(VOICE.count)
+  private readonly slots: Int32Array
+  private readonly age: Float32Array
   private readonly basis = new Float32Array(6)
   private readonly layout = new Float32Array(MURMUR.sources * 2)
   /** Last listener position (0..2) and forward/up basis (3..8) sent; NaN until the first control pass. */
   private readonly listenerAt = new Float32Array(9).fill(Number.NaN)
+  /** Head space (SoundscapeOptions): the frame every panner is placed against; null in world space. */
+  private readonly head: HeadFrame | null
+  /** The shared context this soundscape holds (SoundscapeOptions.context), released at teardown; null: a context of its own. */
+  private readonly share: AudioContextShare | null
+  private held = false
+  private readonly voiceCount: number
+  private readonly bedCount: number
+  private readonly output: AudioNode | null
   private murmur = 0
   /**
    * The host's one listener for every sound's start, change and stop (captions.ts CaptionTrack.push), called with a
@@ -921,16 +1047,27 @@ export class Soundscape {
     else if (this.enabled) void ctx.resume().catch(noop)
   }
 
-  constructor() {
+  constructor(opts: SoundscapeOptions = {}) {
     this.supported = typeof AudioContext === 'function' && typeof PannerNode === 'function'
+    this.share = opts.context ?? null
+    this.voiceCount = poolSize(opts.voices, VOICE.count, MAX_VOICES)
+    this.bedCount = poolSize(opts.beds, MURMUR.sources, MURMUR.sources)
+    this.output = opts.output ?? null
+    this.slots = new Int32Array(this.voiceCount).fill(-1)
+    this.age = new Float32Array(this.voiceCount)
+    this.head = opts.space === 'head' ? { on: false, cut: false, at: this.listenerAt, basis: this.basis, out: { x: 0, y: 0, z: 0 } } : null
   }
 
-  /** Call from a user gesture (click, key, touchend). Idempotent: creates the context once, resumes it after that. */
+  /**
+   * Call from a user gesture (click, key, touchend). Idempotent: creates the context once (or takes its hold on the
+   * shared one), resumes it after that.
+   */
   unlock(): void {
     if (!this.supported || this.failed || this.disposed) return
     if (!this.ctx) {
       try {
-        const ctx = new AudioContext({ latencyHint: 'balanced' })
+        const ctx = this.share ? this.share.acquire() : new AudioContext({ latencyHint: 'balanced' })
+        this.held = this.share !== null
         this.ctx = ctx
         this.graph = this.build(ctx)
         if (typeof document !== 'undefined') document.addEventListener('visibilitychange', this.onVisibility)
@@ -1287,7 +1424,7 @@ export class Soundscape {
       const had = g.peers.get(id)
       if (had) this.detachPeer(g, had)
       const source = ctx.createMediaStreamSource(stream)
-      const pan = new Spatial(ctx, SPEECH.refDistance, SPEECH.rolloff)
+      const pan = new Spatial(ctx, SPEECH.refDistance, SPEECH.rolloff, this.head)
       pan.node.connect(g.bus)
       const wall = ctx.createBiquadFilter()
       wall.type = 'lowpass'
@@ -1511,8 +1648,13 @@ export class Soundscape {
       for (const p of g.peers.values()) this.detachPeer(g, p)
       for (const p of g.fading) releasePeer(p)
       g.fading.length = 0
+      // A shared context lives on for the other players: this graph leaves it instead.
+      if (this.held) try { g.limiter.disconnect() } catch { /* already gone */ }
     }
-    if (ctx && ctx.state !== 'closed') {
+    if (this.held && this.share) {
+      this.held = false
+      this.share.release()
+    } else if (ctx && ctx.state !== 'closed') {
       try { void ctx.close().catch(noop) } catch { /* already closing */ }
     }
   }
@@ -1524,7 +1666,7 @@ export class Soundscape {
     limiter.threshold.value = -10
     limiter.knee.value = 6
     limiter.ratio.value = 8
-    limiter.connect(ctx.destination)
+    limiter.connect(this.output ?? ctx.destination)
     const master = ctx.createGain()
     master.gain.value = this.enabled ? volumeToGain(this.volume) * MASTER_TRIM : 0
     master.connect(limiter)
@@ -1551,8 +1693,8 @@ export class Soundscape {
     const periodic = ctx.createPeriodicWave(wave.real, wave.imag)
     let hrtf = true
     const voices: CarVoice[] = []
-    for (let j = 0; j < VOICE.count; j++) {
-      const pan = new Spatial(ctx, VOICE.refDistance, VOICE.rolloff)
+    for (let j = 0; j < this.voiceCount; j++) {
+      const pan = new Spatial(ctx, VOICE.refDistance, VOICE.rolloff, this.head)
       hrtf &&= pan.hrtf
       pan.node.connect(bus)
       const osc = ctx.createOscillator()
@@ -1597,8 +1739,8 @@ export class Soundscape {
     const beds: Bed[] = []
     const bedSend = convolver ? ctx.createGain() : null
     if (bedSend && convolver) { bedSend.gain.value = 0; bedSend.connect(convolver) }
-    for (let i = 0; i < MURMUR.sources; i++) {
-      const pan = new Spatial(ctx, MURMUR.refDistance, MURMUR.rolloff)
+    for (let i = 0; i < this.bedCount; i++) {
+      const pan = new Spatial(ctx, MURMUR.refDistance, MURMUR.rolloff, this.head)
       hrtf &&= pan.hrtf
       pan.node.connect(bus)
       if (bedSend) pan.node.connect(bedSend)
@@ -1608,7 +1750,7 @@ export class Soundscape {
       beds.push({ pan, input, gain: new Knob(input.gain, 0.002), source: null })
     }
 
-    const tonePan = new Spatial(ctx, APS.refDistance, APS.rolloff)
+    const tonePan = new Spatial(ctx, APS.refDistance, APS.rolloff, this.head)
     hrtf &&= tonePan.hrtf
     tonePan.node.connect(bus)
     const toneSend = send(tonePan.node)
@@ -1629,7 +1771,7 @@ export class Soundscape {
     const cueSend = convolver ? ctx.createGain() : null
     if (cueSend && convolver) { cueSend.gain.value = 0; cueSend.connect(convolver) }
     for (let i = 0; i < CUE.slots; i++) {
-      const pan = new Spatial(ctx, CUE.refDistance, CUE.rolloff)
+      const pan = new Spatial(ctx, CUE.refDistance, CUE.rolloff, this.head)
       hrtf &&= pan.hrtf
       pan.node.connect(bus)
       if (cueSend) pan.node.connect(cueSend)
@@ -1638,7 +1780,7 @@ export class Soundscape {
       cues.push({ pan, gain, source: null, until: -Infinity, kind: 'cue', x: Number.NaN, z: Number.NaN })
     }
 
-    const speechPan = new Spatial(ctx, SPEECH.refDistance, SPEECH.rolloff)
+    const speechPan = new Spatial(ctx, SPEECH.refDistance, SPEECH.rolloff, this.head)
     hrtf &&= speechPan.hrtf
     speechPan.node.connect(bus)
     const speechWall = ctx.createBiquadFilter()
@@ -1694,6 +1836,22 @@ export class Soundscape {
     listenerBasis(yaw, pitch, b)
     const at = this.listenerAt
     const k = g.listener
+    const head = this.head
+    if (head) {
+      // Head space: the context's one listener (shared with the other players' soundscapes) stays at the identity, set
+      // once on this graph's first pass; the head's pose is kept here and every panner is placed relative to it.
+      const first = Number.isNaN(at[0])
+      if (first) {
+        if (k) { for (let i = 0; i < 9; i++) k[i].jump(IDENTITY_LISTENER[i], now) }
+        else { ctx.listener.setPosition(0, 0, 0); ctx.listener.setOrientation(0, 0, -1, 0, 1, 0) }
+      }
+      // A turn of 90° or more in one pass (entering a car): every source jumps to its new side this pass.
+      head.cut = !first && !(b[0] * at[3] + b[1] * at[4] + b[2] * at[5] > 0)
+      for (let i = 0; i < 6; i++) at[3 + i] = b[i]
+      at[0] = x; at[1] = y; at[2] = z
+      head.on = true
+      return
+    }
     if (k) {
       if (Number.isNaN(at[0])) { k[0].jump(x, now); k[1].jump(y, now); k[2].jump(z, now) }
       else { k[0].glide(x, now, 0.03); k[1].glide(y, now, 0.03); k[2].glide(z, now, 0.03) }

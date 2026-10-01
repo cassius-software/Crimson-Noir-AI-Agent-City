@@ -475,7 +475,7 @@ function importGraph(entry: URL): Set<string> {
 test('air gap: nothing the physics worker loads reaches the camera, the shutter, the post chain or the engine', () => {
   const graph = importGraph(new URL('./physics.worker.ts', import.meta.url))
   assert.ok(graph.size > 5, `the worker's graph was read (${graph.size} modules)`)
-  for (const f of ['cinema.ts', 'shutter.ts', 'postfx.ts', 'ghost.ts', 'engine.ts', 'head.ts', 'fleetView.ts']) {
+  for (const f of ['cinema.ts', 'shutter.ts', 'postfx.ts', 'ghost.ts', 'engine.ts', 'head.ts', 'fleetView.ts', 'viewports.ts', 'controls.ts']) {
     assert.ok(![...graph].some((u) => u.endsWith(`/07_Execute_Actions/${f}`)), `the worker loads ${f}`)
   }
   // The camera's arithmetic imports nothing at all; its protocol with the worker is unchanged (no camera fields).

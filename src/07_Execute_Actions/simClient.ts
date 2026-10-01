@@ -1,14 +1,15 @@
 /**
  * Why does this file exist? It is the page's end of the realm boundary: it starts the physics worker (inlined
  * into the single HTML file), sends the world once, then at most one step request at a time (the frame's
- * controls and queued commands; never anything about pedestrians) and keeps the newest state the worker sent
+ * controls and queued commands, with the other local players' controls beside them; never anything about
+ * pedestrians) and keeps the newest state the worker sent
  * back, with the crowd's render frame when one came. The page renders from that state, one step behind the
  * worker (the price of running physics in parallel with rendering), and hands the pose and crowd buffers back
  * for reuse. It holds numbers and a Worker handle; nothing in it can reach a Rapier body or a pedestrian.
  * What breaks if it is removed? The page cannot start or talk to the physics realm.
  */
 import PhysicsWorker from './physics.worker.ts?worker&inline'
-import type { DriveControls, FootControls, FromWorker, PlayerControls, SimCommand, SimInit, SimMeta, StepState } from './simProtocol.ts'
+import { MAX_PLAYERS, type DriveControls, type FootControls, type FromWorker, type PlayerControls, type SimCommand, type SimInit, type SimMeta, type StepState } from './simProtocol.ts'
 
 /** Commands waiting for the next step request; a flood beyond this is dropped here (the worker caps them too). */
 const MAX_QUEUE = 256
@@ -35,6 +36,8 @@ export class SimClient {
   #queue: SimCommand[] = []
   #dropped = 0
   #closed = false
+  /** Players 1..3's controls, sent with every step request (setPlayers); null for one player. */
+  #players: PlayerControls[] | null = null
 
   private constructor(worker: Worker, meta: SimMeta, first: StepState) {
     this.#worker = worker
@@ -92,6 +95,14 @@ export class SimClient {
     return this.#dropped
   }
 
+  /**
+   * The extra players' controls (local split screen, index k − 1 for player k) that every step request carries from
+   * now on, read at each request (the engine fills the same records in place every frame); null or empty: none sent.
+   */
+  setPlayers(players: readonly PlayerControls[] | null): void {
+    this.#players = players && players.length > 0 ? players.slice(0, MAX_PLAYERS - 1) : null
+  }
+
   /** Queues a command for the next step request. */
   send(cmd: SimCommand): void {
     if (this.#closed) return
@@ -116,8 +127,9 @@ export class SimClient {
     if (buffer) transfer.push(buffer)
     if (crowdBuffer) transfer.push(crowdBuffer)
     if (craftBuffer) transfer.push(craftBuffer)
+    const players = input.players ?? this.#players ?? undefined
     this.#worker.postMessage({
-      t: 'step', id: ++this.#id, ...input, cmds, buffer: buffer ?? undefined, crowdBuffer: crowdBuffer ?? undefined, craftBuffer: craftBuffer ?? undefined,
+      t: 'step', id: ++this.#id, ...input, players, cmds, buffer: buffer ?? undefined, crowdBuffer: crowdBuffer ?? undefined, craftBuffer: craftBuffer ?? undefined,
     }, transfer)
     return true
   }

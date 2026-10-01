@@ -14,6 +14,7 @@ import { afterEach, beforeEach, test } from 'node:test'
 import { HalBus } from './hal.ts'
 import { Input, isEditableTarget, LOOK, PITCH_LIMIT } from './input.ts'
 import { PAD } from './gamepad.ts'
+import { KEYBOARD_SEAT } from './seats.ts'
 import type { GamepadLike } from './web-hardware.d.ts'
 
 class FakeDocument extends EventTarget {
@@ -333,4 +334,78 @@ test('editable targets never take game keys', () => {
   assert.equal(isEditableTarget({ tagName: 'DIV', isContentEditable: true } as unknown as EventTarget), true)
   assert.equal(isEditableTarget({ tagName: 'CANVAS' } as unknown as EventTarget), false)
   assert.equal(isEditableTarget(null), false)
+})
+
+test('seated (split screen): the pads are dealt to seats, player 1 keeps the keyboard, and each seat reads its own pad', () => {
+  assert.equal(input.seated, false)
+  input.setPlayers(3)
+  assert.equal(input.seated, true)
+  assert.equal(input.seats.players, 3)
+  assert.equal(input.intent(KEYBOARD_SEAT), input, 'seat 0 is the keyboard, the mouse and touch')
+  pads.push(pad({ index: 0, axes: [0, -1, 0, 0] }), pad({ index: 3, id: 'Controller (XInput STANDARD GAMEPAD)', pressed: [PAD.south] }))
+  input.poll(1 / 60)
+  assert.equal(input.seats.seatOf(0), 1, 'the first pad takes seat 1 (player 2)')
+  assert.equal(input.seats.seatOf(3), 2, 'the next the seat after')
+  assert.equal(input.seats.padIndexOf(KEYBOARD_SEAT), -1, 'no pad merges into player 1')
+  assert.ok(input.analog.moveY === 0, 'player 1 reads no stick')
+  assert.ok(input.intent(1).analog.moveY > 0.99, 'player 2 walks forward on its own pad')
+  assert.equal(input.intent(2).take('interact'), true, 'player 3 pressed south')
+  assert.equal(input.intent(1).take('interact'), false)
+  assert.equal(input.take('interact'), false)
+  assert.equal(input.familyOf(2), 'abxy')
+  assert.equal(input.familyOf(1), 'numbered')
+  assert.equal(input.familyOf(0), null)
+  assert.equal(input.familyOf(3), null, 'no seat 3 at a table of three')
+  // Keyboard still drives player 1.
+  doc.dispatchEvent(ev('keydown', { code: 'KeyW' }))
+  assert.equal(input.down('KeyW'), true)
+  assert.equal(input.intent(1).down('KeyW'), false, 'a pad has no keys')
+  // The right stick on seat 1's pad turns that head, not player 1's.
+  const yaw = input.yaw, yaw1 = input.intent(1).yaw
+  pads[0] = pad({ index: 0, axes: [0, 0, 1, 0] })
+  for (let i = 0; i < 30; i++) input.poll(1 / 60)
+  assert.equal(input.yaw, yaw, 'player 1 did not turn')
+  assert.ok(input.intent(1).yaw < yaw1, 'player 2 turned right')
+  // suspend() rests every seat: queued presses are dropped.
+  pads[1] = pad({ index: 3, id: 'Controller (XInput STANDARD GAMEPAD)', pressed: [PAD.east] })
+  input.poll(1 / 60)
+  input.suspend(true)
+  assert.equal(input.intent(2).take('reset'), false, 'dropped with the console open')
+  input.suspend(false)
+  // A third pad joins seat 0 once seats 1 and 2 are taken (player 1 then has a pad as well as the keyboard); a fourth
+  // waits; a pad that leaves frees its seat and the waiting pad takes it, while every seated pad keeps its seat.
+  pads.push(pad({ index: 5, axes: [0, -1, 0, 0] }))
+  input.poll(1 / 60)
+  assert.equal(input.seats.seatOf(5), KEYBOARD_SEAT, 'seat 0 last')
+  assert.ok(input.analog.moveY > 0.99, 'and it drives player 1')
+  pads.push(pad({ index: 7 }))
+  input.poll(1 / 60)
+  assert.equal(input.seats.seatOf(7), -1, 'no seat free at a table of three')
+  pads.splice(0, 1)
+  input.poll(1 / 60)
+  assert.equal(input.seats.seatOf(7), 1, 'took the freed seat')
+  assert.equal(input.seats.seatOf(5), KEYBOARD_SEAT, 'kept its seat')
+  assert.equal(input.seats.seatOf(3), 2, 'kept its seat')
+  // Back to one player: every pad merges into player 1 again.
+  input.setPlayers(1)
+  assert.equal(input.seated, false)
+  pads.length = 0
+  pads.push(pad({ index: 0, axes: [0, -1, 0, 0] }))
+  input.poll(1 / 60)
+  assert.ok(input.analog.moveY > 0.99, 'merged into player 1 as before')
+})
+
+test('seated: with one pad and two players the pad is player 2, so player 1 is the keyboard alone', () => {
+  input.setPlayers(2)
+  pads.push(pad({ index: 0, pressed: [PAD.south] }))
+  input.poll(1 / 60)
+  assert.equal(input.seats.seatOf(0), 1)
+  assert.equal(input.take('interact'), false, 'player 1 did not press it')
+  assert.equal(input.intent(1).take('interact'), true)
+  // A second pad then fills seat 0: player 1 has a pad as well as the keyboard.
+  pads.push(pad({ index: 1, axes: [0, -1, 0, 0] }))
+  input.poll(1 / 60)
+  assert.equal(input.seats.seatOf(1), KEYBOARD_SEAT)
+  assert.ok(input.analog.moveY > 0.99, 'seat 0\'s pad drives player 1')
+  assert.equal(input.familyOf(0), 'numbered')
 })

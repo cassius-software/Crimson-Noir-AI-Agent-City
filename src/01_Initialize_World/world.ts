@@ -122,6 +122,11 @@ export interface World {
    * for them. They never move.
    */
   resorted: readonly InstancedMesh[]
+  /**
+   * Re-centres the sky on another camera before it draws (local split screen: each viewport's head). update() centres it
+   * on `camera`; the sun, its shadow focus, the lamp lights and the building sort stay where update() put them.
+   */
+  follow(camera: PerspectiveCamera): void
   /** The region drawn instead of the procedural city (?region), with its counts; null for the city. */
   region: RegionScene | null
   /**
@@ -465,6 +470,7 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   }
 
   const setTextureSize = (size: number) => { fbm.setSize(size) }
+  const follow = (other: PerspectiveCamera) => { sky.position.copy(other.position) }
 
-  return { scene, camera, boxes, furniture, night, signalClock, sun, setTextureSize, tuning, resorted: region ? [] : [buildings], region: regionScene, dissolve, update }
+  return { scene, camera, boxes, furniture, night, signalClock, sun, setTextureSize, tuning, resorted: region ? [] : [buildings], follow, region: regionScene, dissolve, update }
 }

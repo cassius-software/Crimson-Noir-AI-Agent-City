@@ -15,10 +15,16 @@
  * draws; a walk ping is handed to the host's recruiter (onRally) as a plain request the physics realm re-validates.
  * A person's look (03_Spawn_Agents/look.ts) is a word per agent in the crowd's page-only storage attribute: setLook
  * writes it the way the dissolve amounts are written, and nothing of it reaches the physics realm either.
+ * Local split screen (?players=2..4; viewports.ts, seats.ts, controls.ts): every player is a head of their own on a
+ * camera of their own, an avatar of their own in the physics realm (SimInit.spawns, StepRequest.players, the realm's
+ * avatars and drivings), a seat at the input's table, a viewport of the one canvas and a soundscape of their own in
+ * head space over one shared audio context; view 0 is player 1's and is this engine's own camera, head and soundscape,
+ * so with one player nothing of this changes. The post chain, the ghost view, the contact wipe, the dissolve scans,
+ * the ping, the captions, the haptics and the HUD stay player 1's, and the post chain is off while the screen is split.
  * App.tsx owns the requestAnimationFrame loop and calls frame().
  * What breaks if it is removed? Nothing runs; every module is inert without this orchestration.
  */
-import { Frustum, Matrix4, Vector3, type RenderPipeline, type UniformNode } from 'three/webgpu'
+import { Frustum, Matrix4, Vector3, type PerspectiveCamera, type RenderPipeline, type UniformNode } from 'three/webgpu'
 import { BRAND } from '../brand.ts'
 import { buildWorld, createRenderer, gpuBufferOf, LIGHT_TUNE_RANGE, ndStopsFor, type Gpu, type LightTuning, type World } from '../01_Initialize_World/world.ts'
 import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
@@ -34,7 +40,8 @@ import { packFrustumPlanes, type CrowdStats, type CullSettings } from '../03_Spa
 import { CrowdCull } from '../03_Spawn_Agents/crowdCull.ts'
 import { AGENTS_RANGE } from '../03_Spawn_Agents/crowdSensor.ts'
 import { Input, TriggerFeedback } from '../04_Connect_Hardware/input.ts'
-import { FrameClock, type GlyphFamily, type KernelStats, type SipocSnapshot, type Toast } from '../05_Observe_Environment/telemetry.ts'
+import { KEYBOARD_SEAT, type Seat } from '../04_Connect_Hardware/seats.ts'
+import { FrameClock, type GlyphFamily, type KernelStats, type SeatView, type SipocSnapshot, type Toast } from '../05_Observe_Environment/telemetry.ts'
 import { MemorySink, Recorder, fileSink, markdownFor, type RecorderSink, type RecorderSource } from '../05_Observe_Environment/recorder.ts'
 import type { AgentTelemetry } from '../05_Observe_Environment/agv.ts'
 import { Governor, defaultAgents, profileDevice, readDeviceHints, tierRange, type QualityKnobs } from '../05_Observe_Environment/governor.ts'
@@ -43,7 +50,9 @@ import { FleetView } from './fleetView.ts'
 import { HeadRig, aimRay, carriedYaw, yawFacing, type AimRay } from './head.ts'
 import { SimClient } from './simClient.ts'
 import { applyWalk, requestWalk, type ScriptedWalk } from './scriptedWalk.ts'
-import { ENTER_RANGE, MODES, PERSON, POSE, RUN, WALK, type DriveControls, type FootControls, type SimCommand, type StepState } from './simProtocol.ts'
+import { ENTER_RANGE, MODES, PERSON, POSE, RUN, type DriveControls, type FootControls, type PlayerControls, type SimCommand, type StepState } from './simProtocol.ts'
+import { readControls } from './controls.ts'
+import { clampPlayers, originBottomLeft, splitScreen, type Rect } from './viewports.ts'
 import { buildPost, type CinemaPost } from './postfx.ts'
 import { createGhost, type GhostView } from './ghost.ts'
 import { CONTACT, ContactPulse, PoleIndex, carGap, carsWithin, peopleWithin, peopleWithinBox, personGap, personGapToBox, touching } from './contact.ts'
@@ -52,7 +61,7 @@ import { CINEMA, FramePacer, SHUTTER_SECONDS, exposureFor, type CameraMark } fro
 import { updateVolumetrics, type Volumetrics } from './volumetrics.ts'
 import { operatorBridge, type Diary, type Mind, type SimControls, type SkillGate, type SpeechClip, type SpeechOut, type Utterance, type Voice } from './operator.ts'
 import { applyQuality, type QualityTargets } from './quality.ts'
-import { SPEECH, Soundscape, wallsBetween, type AudioFrame } from './audio.ts'
+import { SPEECH, Soundscape, sharedAudioContext, wallsBetween, type AudioFrame } from './audio.ts'
 import { roomAt } from './acoustics.ts'
 import { CaptionTrack, captionText } from './captions.ts'
 import { ring0Stats, type TerminalBridge } from './terminal/bridge.ts'
@@ -101,10 +110,16 @@ export interface EngineOptions {
    * yet: the fleet is empty and the GPU crowd, still simulated on the procedural grid far from the region, is not drawn.
    */
   region?: RegionPack | null
+  /**
+   * Local players on this one canvas, 1 (default) to 4 (?players; viewports.ts PLAYERS_RANGE): each a viewport, a
+   * head, an avatar in the physics realm, a seat for a gamepad (seats.ts) and a soundscape of their own. More than
+   * one turns the post chain off (it is player 1's alone); the HUD stays player 1's.
+   */
+  players?: number
 }
 
-/** The options as the engine runs them: the crowd's size decided, and where the page runs. */
-export type EngineConfig = EngineOptions & { agents: number; host: 'browser' | 'native' }
+/** The options as the engine runs them: the crowd's size decided, the player count clamped, and where the page runs. */
+export type EngineConfig = EngineOptions & { agents: number; players: number; host: 'browser' | 'native' }
 
 /**
  * Guardrail haptics (rumble 0..1, sent through the HAL bus, which picks WebHID or the Gamepad API and never
@@ -116,6 +131,59 @@ const HAPTICS = { limiter: 0.2, pulse: 1, pulseMs: 180 } as const
 const MAX_STEP_DT = 0.1
 /** How often the pedestrians' positions are copied out of the crowd frames for SimControls.crowd.positions, ms. */
 const CROWD_COPY_MS = 250
+/**
+ * Split screen: how far apart players 1..3 spawn along the sidewalk beside player 0, m, and each player's audio pools
+ * (audio.ts Design B: smaller car-voice and murmur pools per head keep the panner count near forty for four players).
+ */
+const SPLIT = { spawnGap: 1.5, voices: 3, beds: 2 } as const
+/**
+ * Whether three's WebGPU canvas viewport is measured from the bottom-left corner (viewports.ts originBottomLeft). The
+ * WebGPU backend hands setViewport/setScissor straight to the pass, whose origin is the top-left corner: no flip.
+ */
+const ORIGIN_FLIP = false
+
+/**
+ * One local player's view: their head (HeadRig) on a camera of their own, its frustum pack for the crowd cull, the
+ * viewport it draws into, the car heading the head is carried by, the controls the realm gets for them, and their
+ * soundscape with its frame. View 0 is player 1's and wraps the engine's own camera, rig, frame and soundscape.
+ */
+interface PlayerView {
+  readonly seat: Seat
+  readonly camera: PerspectiveCamera
+  readonly rig: HeadRig
+  readonly frustum: Frustum
+  readonly projScreen: Matrix4
+  readonly planes: Float32Array
+  /** The camera's position for the cull, copied without allocating. */
+  readonly eye: { x: number; y: number; z: number }
+  /** In logical pixels, y down from the canvas's top edge (resize); the full canvas with one player. */
+  rect: Rect
+  /** The driven car's heading last frame, so the head turns with the car. */
+  carHeading: number
+  readonly foot: FootControls
+  readonly drive: DriveControls
+  readonly sound: AudioFrame
+  readonly audio: Soundscape
+  /** The 2 m cell this head was last found in (its room). */
+  listenerCell: number
+}
+
+/** One soundscape's frame, mutated in place every tick; car slots keep fleet order (voice hysteresis is by index). */
+function audioFrameOf(cars: number): AudioFrame {
+  const list = []
+  for (let i = 0; i < cars; i++) list.push({ x: 0, z: 0, heading: 0, speed: 0, player: false })
+  return {
+    dt: 0,
+    listener: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 },
+    cars: list,
+    crowd: { near: 0, waiting: 0, crossing: 0 },
+    daylight: 1,
+    walk: { ew: false, ns: false },
+    intersection: { x: 0, z: 0 },
+    interior: false,
+    speaker: { x: Number.NaN, z: Number.NaN, walls: 0 },
+  }
+}
 
 const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th'}`
 /** What a ping landed on, for its caption: 'a spot', 'person 12', 'car 3', 'pole 7'. */
@@ -172,7 +240,10 @@ export interface DebugSim {
 export class Engine {
   readonly errors: string[] = []
   readonly input: Input
-  readonly audio = new Soundscape()
+  /** Player 1's soundscape (every player has one: views). Over a context of its own alone; in head space over the shared one split. */
+  readonly audio: Soundscape
+  /** One view per local player (PlayerView); views[0] is player 1's, this engine's own camera, head and soundscape. */
+  private readonly views: readonly PlayerView[]
   private readonly canvas: HTMLCanvasElement
   private readonly gpu: Gpu
   private readonly world: World
@@ -354,22 +425,33 @@ export class Engine {
     // Input opens the hardware bus and re-attaches previously granted peripherals (never prompts).
     this.input = new Input(p.canvas)
     this.trigger = new TriggerFeedback(this.input.hal)
+    // Split screen: every player's soundscape over one shared context, each in head space (Web Audio has one listener
+    // per context); alone, player 1's soundscape owns its context and its listener is the head, as ever.
+    const players = p.options.players
+    const share = players > 1 ? sharedAudioContext() : null
+    const soundscape = () => (share ? new Soundscape({ context: share, space: 'head', voices: SPLIT.voices, beds: SPLIT.beds }) : new Soundscape())
+    this.audio = soundscape()
     if (!p.options.audio) this.audio.setEnabled(false)
     this.captionsOn = p.options.captions !== false
     // Every sound's start, change and stop, captioned from where the head is (HeadRig.pose is the listener).
     this.audio.onSound = (e) => { if (this.captionsOn) this.captions.push(e, this.rig.pose) }
     // One audio frame, mutated in place every tick; car slots keep fleet order (voice hysteresis is by index).
-    this.sound = {
-      dt: 0,
-      listener: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 },
-      cars: p.sim.meta.suv.map(() => ({ x: 0, z: 0, heading: 0, speed: 0, player: false })),
-      crowd: { near: 0, waiting: 0, crossing: 0 },
-      daylight: 1,
-      walk: { ew: false, ns: false },
-      intersection: { x: 0, z: 0 },
-      interior: false,
-      speaker: { x: Number.NaN, z: Number.NaN, walls: 0 },
+    this.sound = audioFrameOf(p.sim.meta.suv.length)
+    // The views: player 1's wraps this engine's own camera, head, controls, frame and soundscape; every other player
+    // gets their own, a seat at the input's table and their controls in every step request (SimClient.setPlayers).
+    const cars = p.sim.meta.suv.length
+    const views: PlayerView[] = [this.viewOf(KEYBOARD_SEAT, p.world.camera, this.rig, this.foot, this.drive, this.sound, this.audio)]
+    for (let k = 1; k < players; k++) {
+      const audio = soundscape()
+      if (!p.options.audio) audio.setEnabled(false)
+      views.push(this.viewOf(k as Seat, p.world.camera.clone(), new HeadRig(), { x: 0, z: 0, heading: 0 }, { steer: 0, fwd: 0, back: 0, handbrake: false }, audioFrameOf(cars), audio))
     }
+    this.views = views
+    this.input.setPlayers(players)
+    const controls: PlayerControls[] = []
+    for (let k = 1; k < views.length; k++) controls.push({ foot: views[k].foot, drive: views[k].drive })
+    p.sim.setPlayers(controls)
+    if (views.length > 1) this.layout()
     this.recorder.onEnd = (st, error) => {
       this.cameraTrack?.stop()
       this.cameraTrack = null
@@ -389,17 +471,29 @@ export class Engine {
     const pack = requested.region ?? null
     // A region has no traffic yet: its fleet is empty (the AI drives the procedural grid only).
     // Nor pedestrians: its crowd is hidden, so it runs at the smallest size the realm takes (the GPU is the region's).
-    const options: EngineConfig = { ...requested, cars: pack ? 0 : requested.cars, agents: pack ? AGENTS_RANGE[0] : requested.agents ?? defaultAgents(profile), host: hints.host ?? 'browser' }
+    // Split screen: the post chain is player 1's alone (one pipeline, one velocity history, one full-screen pass), so
+    // with more than one player it is off at every tier, as ?post=0 is, and every viewport takes the direct path.
+    const players = clampPlayers(requested.players)
+    const options: EngineConfig = {
+      ...requested, players, post: requested.post && players === 1,
+      cars: pack ? 0 : requested.cars, agents: pack ? AGENTS_RANGE[0] : requested.agents ?? defaultAgents(profile), host: hints.host ?? 'browser',
+    }
     const layout = pack ? layoutOf(pack) : null
     const places = pack && layout ? new RegionPlaces(pack, layout) : null
     const world = buildWorld(gpu.renderer, options.seed, pack && layout ? { pack, layout } : null)
     // In a region: a sidewalk of the arterial nearest the region's origin (its downtown), facing along the street.
     const start = places && layout ? places.spawn({ x: layout.offset.x, z: layout.offset.z }) : null
     const spawn = start ? { x: start.x, z: start.z } : { x: CITY_SIZE / 2 + CITY.lane, z: CITY_SIZE / 2 + 12 }
+    // Players 1..3 (split screen) start beside player 0 along the sidewalk (the city's spawn sidewalk runs along z; a
+    // region's along its street heading); the realm moves a spawn out of a building lot itself.
+    const along = start ? { x: Math.sin(start.heading), z: Math.cos(start.heading) } : { x: 0, z: 1 }
+    const spawns: { x: number; z: number }[] = []
+    for (let k = 1; k < players; k++) spawns.push({ x: spawn.x + along.x * SPLIT.spawnGap * k, z: spawn.z + along.z * SPLIT.spawnGap * k })
     // The physics realm boots (Rapier, the city's colliders or the region's, the fleet) while this thread sets up quality.
     const simBoot = SimClient.create({
       seed: options.seed, cars: options.cars, agents: options.agents, boxes: world.boxes, furniture: world.furniture, spawn, debug: options.debug === true,
       region: pack && layout ? regionPhysics(pack, layout) : null, tracks: options.tracks !== false,
+      ...(spawns.length > 0 && { spawns }),
     })
 
     // Start on the tier the device profile suggests (or the one the URL pins), before anything compiles:
@@ -490,8 +584,59 @@ export class Engine {
     this.gpu.renderer.setSize(w, h, false)
     this.world.camera.aspect = w / h
     this.world.camera.updateProjectionMatrix()
-    // A new projection moves every pixel without anything moving: the next presented frame is a cut.
+    // Split: the viewports are cut again and every camera takes its rect's aspect (player 1's included).
+    if (this.views.length > 1) this.layout()
+    // A new projection moves every pixel without anything moving: the next presented frame is a cut (player 1's: the
+    // other viewports take the direct path, which keeps no velocity history to smear from).
     this.marked = false
+  }
+
+  /** A view record (PlayerView) over its parts; the rect is the whole canvas until layout() cuts it. */
+  private viewOf(seat: Seat, camera: PerspectiveCamera, rig: HeadRig, foot: FootControls, drive: DriveControls, sound: AudioFrame, audio: Soundscape): PlayerView {
+    const frustum = seat === KEYBOARD_SEAT ? this.frustum : new Frustum()
+    const projScreen = seat === KEYBOARD_SEAT ? this.projScreen : new Matrix4()
+    const planes = seat === KEYBOARD_SEAT ? this.planes : new Float32Array(24)
+    const w = Math.max(1, this.canvas.clientWidth), h = Math.max(1, this.canvas.clientHeight)
+    return {
+      seat, camera, rig, frustum, projScreen, planes, eye: { x: 0, y: 0, z: 0 }, rect: { x: 0, y: 0, width: w, height: h },
+      carHeading: 0, foot, drive, sound, audio, listenerCell: Number.NaN,
+    }
+  }
+
+  /**
+   * Split screen: cuts the canvas into one rect per player (viewports.ts splitScreen, logical pixels; three scales them
+   * by the pixel ratio in setViewport/setScissor), gives each camera its rect's aspect, and sets the renderer up for
+   * scissored draws: autoClear off (present() clears the whole canvas once, then draws each rect) and the scissor test
+   * on. Called at boot and on every resize, never per frame.
+   */
+  private layout(): void {
+    const w = Math.max(1, this.canvas.clientWidth), h = Math.max(1, this.canvas.clientHeight)
+    const rects = splitScreen(this.views.length, w, h)
+    for (let k = 0; k < this.views.length; k++) {
+      const v = this.views[k]
+      v.rect = rects[k]
+      v.camera.aspect = v.rect.width / v.rect.height
+      v.camera.updateProjectionMatrix()
+    }
+    this.gpu.renderer.autoClear = false
+    this.gpu.renderer.setScissorTest(true)
+  }
+
+  /** The renderer's viewport and scissor at a view's rect (split screen only; with one player neither is ever set). */
+  private frameView(v: PlayerView): void {
+    const r = originBottomLeft(v.rect, Math.max(1, this.canvas.clientHeight), ORIGIN_FLIP)
+    this.gpu.renderer.setViewport(r.x, r.y, r.width, r.height)
+    this.gpu.renderer.setScissor(r.x, r.y, r.width, r.height)
+  }
+
+  /** How many local players share the canvas (1..4). */
+  get players(): number {
+    return this.views.length
+  }
+
+  /** Every player's soundscape takes the gesture (App calls this on each click, key and touch): the shared context opens with the first. */
+  unlockAudio(): void {
+    for (const v of this.views) v.audio.unlock()
   }
 
   get adapter(): string {
@@ -531,6 +676,7 @@ export class Engine {
   setGhost(on: boolean): string {
     this.ghost.setOn(on)
     this.applyTier()
+    if (on && this.views.length > 1) return 'needs the post-processing chain, which is off while the screen is split'
     if (on && !this.options.post) return 'needs the post-processing chain, which ?post=0 turned off'
     return on ? 'on: every physics shape as code (G to hide)' : 'off'
   }
@@ -583,6 +729,7 @@ export class Engine {
     const pick = { kind: ping.pick, index: ping.index, x: ping.x, y: ping.y, z: ping.z, distance: this.lastPick.distance }
     // Cued and captioned where it landed: the cue's own 'ping' event carries this label into the captions.
     this.audio.cuePing(ping.x, ping.z, `${PING_WORDS[kind]}: ${pingWhat(ping)}`)
+    for (let k = 1; k < this.views.length; k++) this.views[k].audio.cuePing(ping.x, ping.z)
     if (ping.kind === 'go' || ping.kind === 'gather') this.rallyFor(ping)
     return pick
   }
@@ -616,6 +763,16 @@ export class Engine {
         this.toast('Rally', plan.reason)
       }
     }
+  }
+
+  /** Split screen as the snapshot reports it: the player count, each viewport's rect and each seat (its pad, glyph family and mode). */
+  private playersView(st: StepState): NonNullable<SipocSnapshot['output']['players']> {
+    const seats: SeatView[] = []
+    for (let k = 0; k < this.views.length; k++) {
+      const seat = this.views[k].seat
+      seats.push({ seat, pad: this.input.seats.padIndexOf(seat), family: this.input.familyOf(seat), mode: (st.drivings[k] ?? -1) >= 0 ? 'vehicle' : 'foot' })
+    }
+    return { count: this.views.length, rects: this.views.map((v) => ({ x: v.rect.x, y: v.rect.y, width: v.rect.width, height: v.rect.height })), seats }
   }
 
   /** The pings standing now as the HUD draws them: the board's marks with their distance from the head and their place on the screen. */
@@ -659,6 +816,15 @@ export class Engine {
     // The pedestrians the worker simulated: straight into the render buffers (the copy is only ever drawn).
     if (s.crowdFrame && this.crowd.upload(s.crowdFrame)) this.crowdFrames++
     for (const ev of s.events) {
+      // Another local player's car: their head sits down facing its windscreen; the toasts and the haptics are player 1's.
+      if ((ev.e === 'entered' || ev.e === 'exited') && ev.player > 0) {
+        const v = this.views[ev.player]
+        if (v && ev.e === 'entered') {
+          v.carHeading = ev.heading
+          this.input.intent(v.seat).yaw = yawFacing(ev.heading)
+        }
+        continue
+      }
       if (ev.e === 'entered') {
         // Sit down facing the windscreen; the head then turns with the car.
         this.carHeading = ev.heading
@@ -700,7 +866,11 @@ export class Engine {
         this.stateListeners.add(fn)
         return () => { this.stateListeners.delete(fn) }
       },
-      cue: (x: number, z: number) => this.audio.cue(x, z),
+      cue: (x: number, z: number) => {
+        const heard = this.audio.cue(x, z)
+        for (let k = 1; k < this.views.length; k++) this.views[k].audio.cue(x, z)
+        return heard
+      },
     })
   }
 
@@ -735,7 +905,15 @@ export class Engine {
         const u = this.audio.speak(buffer, at.x, at.z, this.wallsTo(at.x, at.z), text, { agent, label })
         this.speaker = agent
         this.speakerCell = Number.NaN
-        return u
+        if (this.views.length === 1) return u
+        // Split: the same clip at the same head for every other player, muffled by the walls from their own head; a
+        // soundscape that cannot sound (still locked, failed) is skipped. One utterance: its stop stops them all.
+        const others: Utterance[] = []
+        for (let k = 1; k < this.views.length; k++) {
+          const v = this.views[k]
+          try { others.push(v.audio.speak(buffer, at.x, at.z, this.wallsFrom(v.camera, at.x, at.z), text, { agent, label })) } catch { /* that player hears nothing of it */ }
+        }
+        return Object.freeze({ ended: u.ended, stop: () => { u.stop(); for (const o of others) o.stop() } })
       },
     })
   }
@@ -791,40 +969,21 @@ export class Engine {
     if (input.take('ghost')) this.toast('Ghost view', this.setGhost(!this.ghost.on))
     if (input.take('reset') && driving >= 0) sim.send({ c: 'reset' })
 
-    // Controls for the physics realm; it applies the set that matches its own state (on foot or at the wheel).
-    const a = input.analog
-    const yaw = input.yaw
-    const fx = -Math.sin(yaw), fz = -Math.cos(yaw)
-    const rx = Math.cos(yaw), rz = -Math.sin(yaw)
+    // Controls for the physics realm (controls.ts readControls, the same maths for every seat); it applies the set that
+    // matches its own state (on foot or at the wheel). The other local players' sets ride in the same request
+    // (SimClient.setPlayers holds their records; the realm reads avatars[k] from players[k − 1]).
     const foot = this.foot, drive = this.drive
-    foot.x = 0; foot.z = 0
-    // The player's own body faces where the head looks; it only turns that figure in the worker's crowd.
-    foot.heading = yaw + Math.PI
-    drive.steer = 0; drive.fwd = 0; drive.back = 0; drive.handbrake = false
+    readControls(input, driving >= 0, foot, drive)
+    for (let k = 1; k < this.views.length; k++) {
+      const v = this.views[k]
+      readControls(input.intent(v.seat), (st.drivings[k] ?? -1) >= 0, v.foot, v.drive)
+    }
     let rumble = 0, trigger = 0
     if (driving < 0) {
-      let mx = 0, mz = 0
-      if (input.down('KeyW')) { mx += fx; mz += fz }
-      if (input.down('KeyS')) { mx -= fx; mz -= fz }
-      if (input.down('KeyD')) { mx += rx; mz += rz }
-      if (input.down('KeyA')) { mx -= rx; mz -= rz }
-      mx += fx * a.moveY + rx * a.moveX
-      mz += fz * a.moveY + rz * a.moveX
-      // Keyboard diagonals are normalised; a half-pushed stick walks at half speed.
-      const len = Math.hypot(mx, mz)
-      const speed = input.down('ShiftLeft') || a.run ? RUN : WALK
-      const k = len > 1 ? speed / len : speed
-      foot.x = mx * k
-      foot.z = mz * k
       // A script's walk (a harness's, say) overrides the keys while it lasts; the worker still caps it at a run.
       applyWalk(this.scriptedWalk, nowMs, foot)
       this.pulseUntil = 0
     } else {
-      drive.steer = Math.max(-1, Math.min(1, (input.down('KeyA') ? 1 : 0) - (input.down('KeyD') ? 1 : 0) + a.steer))
-      // Left stick Y drives as well as R2/L2 (touch already folds its stick into throttle/brake; max() keeps one source).
-      drive.fwd = input.down('KeyW') ? 1 : Math.max(a.throttle, a.moveY > 0 ? a.moveY : 0)
-      drive.back = input.down('KeyS') ? 1 : Math.max(a.brake, a.moveY < 0 ? -a.moveY : 0)
-      drive.handbrake = input.down('Space') || a.handbrake
       // What the wheels received (vetted, L2-limited) in the audited state: the trigger feels it, the rumble reports it.
       trigger = st.haptics.trigger
       rumble = nowMs < this.pulseUntil ? HAPTICS.pulse : st.haptics.limited ? HAPTICS.limiter : 0
@@ -857,6 +1016,9 @@ export class Engine {
       this.avatarHeading = input.yaw + Math.PI
       this.rig.onFoot(cam, av.x, av.feetY, av.z, input.yaw, input.pitch, dt)
     }
+    // The other local players' heads, each on its own camera from its own avatar (or the car it drives) and its seat's
+    // yaw and pitch; posed every animation frame like player 1's (their listeners read it; the car carries it).
+    for (let k = 1; k < this.views.length; k++) this.poseView(this.views[k], k, st, dt)
 
     // The ping (08_Swarm/ping.ts): the look ray from the head just posed meets the page's own copies, never the realm.
     // A press within a second of the last ping asks the next kind (go, look, gather, wait); the board rates and bounds it.
@@ -917,14 +1079,59 @@ export class Engine {
     this.lastDrawnMs = nowMs
     // The code dissolve's amounts, to the meshes that read them, before the frame that reads them.
     this.flushDissolve()
+    const split = this.views.length > 1
+    if (split) {
+      // One clear of the whole canvas (colour, depth, stencil: a clear pass ignores the scissor), then each viewport is
+      // drawn into its own rect with autoClear off (layout); player 1's first.
+      this.gpu.renderer.clear(true, true, true)
+      this.frameView(this.views[0])
+    }
     if (post) this.post.render()
     else this.gpu.renderer.render(this.world.scene, cam)
+    // The other players' viewports: each culled for its own camera, under the sky re-centred on that head, drawn on the
+    // direct path. The sun's shadow focus, the lamp lights and the building sort stay player 1's (world.update above).
+    if (split) for (let k = 1; k < this.views.length; k++) this.presentView(this.views[k])
     if (this.options.profile && !this.resolving) {
       this.resolving = true
       this.gpu.renderer.resolveTimestampsAsync('render').then((ms) => {
         if (typeof ms === 'number' && ms > 0) this.gpuRenderMs = this.gpuRenderMs * 0.9 + ms * 0.1
         this.resolving = false
       }, () => { this.resolving = false })
+    }
+  }
+
+  /** One split-screen viewport after player 1's: the crowd cull for its camera, the sky on its head, its scissored draw. */
+  private presentView(v: PlayerView): void {
+    const cam = v.camera
+    v.projScreen.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)
+    v.frustum.setFromProjectionMatrix(v.projScreen)
+    packFrustumPlanes(v.frustum.planes, v.planes)
+    v.eye.x = cam.position.x; v.eye.y = cam.position.y; v.eye.z = cam.position.z
+    this.crowd.step({ camera: v.eye, planes: v.planes })
+    this.world.follow(cam)
+    this.frameView(v)
+    this.gpu.renderer.render(this.world.scene, cam)
+  }
+
+  /**
+   * Player k's head (k ≥ 1) on its view's camera: the driver's seat of the car they drive (the head carried by the car,
+   * their seat's yaw turning with it), else eye level over their avatar's feet. The same HeadRig calls as player 1's.
+   */
+  private poseView(v: PlayerView, k: number, st: StepState, dt: number): void {
+    const seat = this.input.intent(v.seat)
+    const d = st.drivings[k] ?? -1
+    if (d >= 0) {
+      const p = st.poses, o = d * POSE.stride
+      const t = this.carPos, r = this.carRot
+      t.x = p[o + POSE.x]; t.y = p[o + POSE.y]; t.z = p[o + POSE.z]
+      r.x = p[o + POSE.qx]; r.y = p[o + POSE.qy]; r.z = p[o + POSE.qz]; r.w = p[o + POSE.qw]
+      const h = p[o + POSE.heading]
+      seat.yaw = carriedYaw(seat.yaw, v.carHeading, h)
+      v.carHeading = h
+      v.rig.inVehicle(v.camera, t, r, this.sim.meta.suv[d], seat.yaw, seat.pitch)
+    } else {
+      const av = st.avatars[k] ?? st.avatar
+      v.rig.onFoot(v.camera, av.x, av.feetY, av.z, seat.yaw, seat.pitch, dt)
     }
   }
 
@@ -1046,18 +1253,19 @@ export class Engine {
     if (cut) this.cuts++
   }
 
-  /** Feeds the soundscape from the final camera pose, the fleet, the crowd and the signals. */
-  private listen(dt: number, st: StepState): void {
-    const f = this.sound
-    const cam = this.world.camera
+  /**
+   * One soundscape's frame from a head's final camera pose, the fleet, the crowd and the signals: the listener is that
+   * head (HeadRig sets rotation (pitch, yaw, 0, 'YXZ')), `driving` the car that player drives (−1 on foot), whose cabin
+   * muffles the city for them. The listener's and the speaker's rooms are the caller's (listen).
+   */
+  private soundFrame(f: AudioFrame, cam: PerspectiveCamera, st: StepState, dt: number, driving: number): void {
     f.dt = dt
     f.listener.x = cam.position.x; f.listener.y = cam.position.y; f.listener.z = cam.position.z
-    // HeadRig sets rotation (pitch, yaw, 0, 'YXZ'): the listener is the head, on foot or in the driver's seat.
     f.listener.yaw = cam.rotation.y; f.listener.pitch = cam.rotation.x
     const p = st.poses
     for (let i = 0; i < f.cars.length; i++) {
       const c = f.cars[i], o = i * POSE.stride
-      c.x = p[o + POSE.x]; c.z = p[o + POSE.z]; c.heading = p[o + POSE.heading]; c.speed = p[o + POSE.speed]; c.player = i === st.driving
+      c.x = p[o + POSE.x]; c.z = p[o + POSE.z]; c.heading = p[o + POSE.heading]; c.speed = p[o + POSE.speed]; c.player = i === driving
     }
     f.crowd.near = this.crowd.stats.drawnNear; f.crowd.waiting = st.crowd.stats.waiting; f.crowd.crossing = st.crowd.stats.crossing
     f.daylight = this.sun.daylight
@@ -1066,7 +1274,15 @@ export class Engine {
     f.intersection.x = this.places ? Number.NaN : Math.max(0, Math.min(CITY.blocks, Math.round(cam.position.x / CITY.pitch))) * CITY.pitch
     f.intersection.z = this.places ? Number.NaN : Math.max(0, Math.min(CITY.blocks, Math.round(cam.position.z / CITY.pitch))) * CITY.pitch
     // In first person the listener sits in the cabin while driving: the city outside is muffled.
-    f.interior = st.driving >= 0
+    f.interior = driving >= 0
+  }
+
+  /** Feeds the soundscape from the final camera pose, the fleet, the crowd and the signals (then every other player's from theirs). */
+  private listen(dt: number, st: StepState): void {
+    const f = this.sound
+    const cam = this.world.camera
+    // HeadRig sets rotation (pitch, yaw, 0, 'YXZ'): the listener is the head, on foot or in the driver's seat.
+    this.soundFrame(f, cam, st, dt, st.driving)
     // The room the listener stands in (acoustics.ts), found again when the head crosses into another 2 m cell. A region
     // has no page-side geometry (its walls live in the worker): no room there, every voice dry.
     const cell = this.places ? Number.NaN : cellOf(cam.position.x, cam.position.z)
@@ -1088,12 +1304,37 @@ export class Engine {
     this.audio.update(f)
     // Captions outlive nothing: when the soundscape is not sounding (off, hidden, failed), what it said is gone.
     if (this.captions.size > 0 && this.audio.status().state !== 'running') this.captions.clear()
+    // Split: every other player's soundscape from their own head (their room, their cabin, the speaker's walls from
+    // them); the speaker's room is the same room whoever listens.
+    for (let k = 1; k < this.views.length; k++) this.listenFor(this.views[k], k, st, dt, speaking, sp.room)
+  }
+
+  /** One more player's frame (listenFor): their head's room, the walls from their head to the speaker, then their soundscape. */
+  private listenFor(v: PlayerView, k: number, st: StepState, dt: number, speaking: { x: number; z: number } | undefined, speakerRoom: AudioFrame['room']): void {
+    const f = v.sound, cam = v.camera
+    this.soundFrame(f, cam, st, dt, st.drivings[k] ?? -1)
+    const cell = this.places ? Number.NaN : cellOf(cam.position.x, cam.position.z)
+    if (cell !== v.listenerCell) {
+      v.listenerCell = cell
+      f.room = Number.isNaN(cell) ? undefined : roomAt(this.world.boxes, cam.position.x, cam.position.z)
+    }
+    const sp = f.speaker!
+    sp.x = speaking ? speaking.x : Number.NaN
+    sp.z = speaking ? speaking.z : Number.NaN
+    sp.walls = speaking && Number.isFinite(speaking.x + speaking.z) ? this.wallsFrom(cam, speaking.x, speaking.z) : 0
+    sp.room = speakerRoom
+    v.audio.update(f)
   }
 
   /** Walls of the physics realm's own geometry between the listener's head and a speaker's at (x, z) (audio.ts OCCLUSION). */
   private wallsTo(x: number, z: number): number {
-    const cam = this.world.camera.position
-    return wallsBetween(this.world.boxes, { x: cam.x, y: cam.y, z: cam.z }, { x, y: SPEECH.height, z })
+    return this.wallsFrom(this.world.camera, x, z)
+  }
+
+  /** The same walls from another player's head. */
+  private wallsFrom(cam: PerspectiveCamera, x: number, z: number): number {
+    const at = cam.position
+    return wallsBetween(this.world.boxes, { x: at.x, y: at.y, z: at.z }, { x, y: SPEECH.height, z })
   }
 
   /** Closed captions on or off (view-only; the soundscape keeps sounding). Returns the status line the console prints. */
@@ -1181,6 +1422,7 @@ export class Engine {
         contact: { wipe: this.contactPulse.value, kind: this.contactPulse.kind, count: this.contactPulse.count },
         dissolve: { active: this.dissolve.active, count: this.dissolve.count },
         ...(pings && { pings }),
+        ...(this.views.length > 1 && { players: this.playersView(st) }),
         ...(this.pacer && {
           camera: {
             fps: this.pacer.fps(this.lastMs), shutterS: this.quality.live.post ? SHUTTER_SECONDS : 0,
@@ -1235,11 +1477,15 @@ export class Engine {
         return governor.state()
       },
       audio: (arg?: 'on' | 'off' | number) => {
-        if (arg === 'on') { audio.unlock(); audio.setEnabled(true) }
-        else if (arg === 'off') audio.setEnabled(false)
-        else if (typeof arg === 'number') audio.setVolume(arg / 100)
+        // Every player's soundscape together (they share one context in split screen); the line reads player 1's.
+        for (const v of this.views) {
+          if (arg === 'on') { v.audio.unlock(); v.audio.setEnabled(true) }
+          else if (arg === 'off') v.audio.setEnabled(false)
+          else if (typeof arg === 'number') v.audio.setVolume(arg / 100)
+        }
         const st = audio.status()
-        return `audio: ${st.state} · ${st.voices} voices · ${st.hrtf ? 'HRTF' : 'stereo'} · volume ${Math.round(st.volume * 100)}%`
+        const split = this.views.length > 1 ? ` · ${this.views.length} players` : ''
+        return `audio: ${st.state} · ${st.voices} voices · ${st.hrtf ? 'HRTF' : 'stereo'} · volume ${Math.round(st.volume * 100)}%${split}`
       },
       // pair() must stay synchronous up to requestDevice/requestPort: the Enter keydown is the user gesture.
       hal: Object.freeze({ summary: () => hal.summary(), devices: () => hal.devices(), pair: (k: 'hid' | 'serial' | 'bluetooth') => hal.pair(k) }),
@@ -1484,6 +1730,7 @@ export class Engine {
     this.halted = true
     if (this.lockReason === null) this.lockReason = reason
     try { this.audio.dispose() } catch { /* the halt must complete whatever the audio stack does */ }
+    for (let k = 1; k < this.views.length; k++) try { this.views[k].audio.dispose() } catch { /* likewise */ }
     void Promise.resolve(this.input.hal.dispose()).catch(() => {})
     try { this.onHalt?.(reason) } catch { /* likewise */ }
   }
@@ -1493,6 +1740,7 @@ export class Engine {
     if (this.recorder.state.active) void this.recorder.stop().catch(() => {})
     this.cameraTrack?.stop()
     this.audio.dispose()
+    for (let k = 1; k < this.views.length; k++) this.views[k].audio.dispose()
     // Input.dispose() also disposes the hardware bus, which resets trigger effects and closes ports.
     this.input.dispose()
     this.sim.terminate()

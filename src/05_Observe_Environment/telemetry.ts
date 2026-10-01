@@ -54,6 +54,17 @@ export interface MapCar { x: number; z: number; heading: number; player: boolean
 /** Which control glyphs the HUD shows: the keyboard, a controller family, or touch. */
 export type GlyphFamily = 'keyboard' | 'abxy' | 'bayx' | 'numbered' | 'generic' | 'touch'
 
+/** One seat at the local split-screen table (SipocSnapshot.output.players). */
+export interface SeatView {
+  /** 0..3: player 1 is seat 0. */
+  seat: number
+  /** The index of the gamepad in this seat, −1 for none (seat 0 then runs on the keyboard, the mouse or touch). */
+  pad: number
+  /** The pad's face-button family (gamepad.ts PadFamily), for that viewport's glyphs; null before any input (or with no pad). */
+  family: Exclude<GlyphFamily, 'keyboard' | 'touch'> | null
+  mode: 'foot' | 'vehicle'
+}
+
 /** What the HUD shows about a recording in progress. */
 export interface RecordingState {
   active: boolean
@@ -186,6 +197,13 @@ export interface SipocSnapshot {
      * none stands.
      */
     pings?: HudPing[]
+    /**
+     * Local split screen (?players=2..4; viewports.ts, seats.ts): how many players share the canvas, each viewport's
+     * rect in logical pixels (index = player, top-left first), and each seat: the pad in it (−1 none; seat 0 is the
+     * keyboard, the mouse and the touch overlay, pad or not), its face-button family, and whether that player is at a
+     * wheel. Absent with one player.
+     */
+    players?: { count: number; rects: { x: number; y: number; width: number; height: number }[]; seats: SeatView[] }
   }
   kernel: KernelStats
   quality: QualityState

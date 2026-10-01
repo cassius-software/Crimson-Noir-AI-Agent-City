@@ -16,7 +16,7 @@ import {
   APS, BabbleRender, CABIN, CAPTION_REFRESH, CUE, ENGINE, MURMUR, OCCLUSION, PING, REVERB, SPEECH, SYNTH_RATE, VOICE, Soundscape, assignVoices, carLoudness, carTimbre, distanceGain,
   dopplerFactor, engineCutoff, engineLevel, engineLoad, engineRpm, engineWave, listenerBasis, muffle, murmurLayout, murmurLevel,
   murmurSwell, pingLength, renderBabble, renderNoise, renderPing, renderSignalTone, selectGear, signalToneLength, tyreCutoff, tyreLevel,
-  volumeToGain, cueLength, renderCue, wallsBetween, type AudioFrame, type CarSample,
+  volumeToGain, cueLength, renderCue, sharedAudioContext, toHeadSpace, wallsBetween, type AudioFrame, type CarSample,
 } from './audio.ts'
 import { ACOUSTICS, eavesdrop, impulseLength, renderImpulse, roomAt, roomKey, sabineRt60, type Room } from './acoustics.ts'
 import type { CaptionEvent } from './captions.ts'
@@ -1626,4 +1626,181 @@ test('every sound start, change and stop is reported once with its position; a l
   const t = s.clock
   s.dispose()
   assert.equal(s.clock, t, 'the clock holds where it stopped')
+}))
+
+// Local split screen (Design B): several soundscapes over one shared context, each in head space
+
+/** The number of panners one soundscape builds: car voices, murmur beds, the walk tones, the cues, speech. */
+const pannersOf = (voices: number, beds: number) => voices + beds + 1 + CUE.slots + 1
+
+test('toHeadSpace: a rigid move into the head frame, the inverse of listenerBasis, right of the head to +x and ahead to −z', () => {
+  const rng = createRng(0x5ea7)
+  const b = new Float32Array(6)
+  const out = { x: 0, y: 0, z: 0 }
+  for (let i = 0; i < 100; i++) {
+    const yaw = (rng() - 0.5) * 4 * Math.PI, pitch = (rng() - 0.5) * 2.9
+    const L = { x: rng() * 400, y: 1.7, z: rng() * 400 }
+    const P = { x: rng() * 400, y: rng() * 3, z: rng() * 400 }
+    listenerBasis(yaw, pitch, b)
+    toHeadSpace(b, L.x, L.y, L.z, P.x, P.y, P.z, out)
+    const d = Math.hypot(P.x - L.x, P.y - L.y, P.z - L.z)
+    near(Math.hypot(out.x, out.y, out.z), d, 1e-6 * d, 'the distance is unchanged (the basis is single precision)')
+    // Back to the world through the camera's own rotation (YXZ, as listenerBasis): the inverse holds.
+    const back = new Vector3(out.x, out.y, out.z).applyEuler(new Euler(pitch, yaw, 0, 'YXZ'))
+    near(back.x, P.x - L.x, 1e-3); near(back.y, P.y - L.y, 1e-3); near(back.z, P.z - L.z, 1e-3)
+  }
+  listenerBasis(0, 0, b)
+  toHeadSpace(b, 200, 1.7, 205, 210, 1.7, 205, out)
+  assert.deepEqual([out.x, out.y, out.z].map((v) => Math.round(v * 1e6) / 1e6 + 0), [10, 0, 0], 'yaw 0: +x is to the right')
+  toHeadSpace(b, 200, 1.7, 205, 200, 1.7, 195, out)
+  assert.deepEqual([out.x, out.y, out.z].map((v) => Math.round(v * 1e6) / 1e6 + 0), [0, 0, -10], 'yaw 0: −z is ahead')
+  listenerBasis(-Math.PI / 2, 0, b)
+  toHeadSpace(b, 200, 1.7, 205, 210, 1.7, 205, out)
+  assert.deepEqual([out.x, out.y, out.z].map((v) => Math.round(v * 1e6) / 1e6 + 0), [0, 0, -10], 'turned to +x: the same point is ahead')
+})
+
+test('two soundscapes on one page own separate contexts and listeners; disposing one closes only its context', withFakes(() => {
+  const a = new Soundscape(), b = new Soundscape()
+  a.unlock()
+  b.unlock()
+  assert.equal(FakeContext.instances.length, 2)
+  const [ca, cb] = FakeContext.instances
+  tick(a, frame({ listener: { x: 10, y: 1.7, z: 20, yaw: 0, pitch: 0 } }))
+  ctxOf().currentTime += 1 / 60
+  b.update(frame({ listener: { x: 10, y: 1.7, z: 20, yaw: Math.PI, pitch: 0 } }))
+  near((ca.listener as ParamListener).forwardZ.target, -1, 1e-6, 'A looks down −z')
+  near((cb.listener as ParamListener).forwardZ.target, 1, 1e-6, 'B looks down +z')
+  assert.equal(ca.of(FakePanner).length, pannersOf(VOICE.count, MURMUR.sources))
+  assert.equal(cb.of(FakePanner).length, pannersOf(VOICE.count, MURMUR.sources))
+  a.dispose()
+  assert.equal(ca.state, 'closed')
+  assert.equal(cb.state, 'running', 'B plays on')
+  assert.equal(b.status().state, 'running')
+  b.dispose()
+  assert.equal(cb.state, 'closed')
+}))
+
+test('a shared context in head space: one context, the listener left at the identity, every source placed relative to its head', withFakes(() => {
+  const share = sharedAudioContext()
+  const p1 = new Soundscape({ context: share, space: 'head' })
+  const p2 = new Soundscape({ context: share, space: 'head' })
+  p1.unlock()
+  p2.unlock()
+  assert.equal(FakeContext.instances.length, 1, 'one context for both')
+  const ctx = ctxOf()
+  const l = ctx.listener as ParamListener
+  const params = [l.positionX, l.positionY, l.positionZ, l.forwardX, l.forwardY, l.forwardZ, l.upX, l.upY, l.upZ]
+  while (graphOf(p1).babbleJob) { tick(p1, frame()); p2.update(frame()) }
+  const identity = [0, 0, 0, 0, 0, -1, 0, 1, 0]
+  params.forEach((p, i) => near(p.target, identity[i], 1e-9, `listener param ${i} at the identity`))
+  const events = params.map((p) => p.events.length)
+  // The car sits 10 m to the right of player 1 (yaw 0) and straight ahead of player 2 (turned to +x), nose on +x.
+  const cars = [car(210, 205, 0, Math.PI / 2)]
+  const f1 = frame({ cars, listener: { x: 200, y: 1.7, z: 205, yaw: 0, pitch: 0 } })
+  const f2 = frame({ cars, listener: { x: 200, y: 1.7, z: 205, yaw: -Math.PI / 2, pitch: 0 } })
+  for (let i = 0; i < 30; i++) { tick(p1, f1); p2.update(f2) }
+  params.forEach((p, i) => assert.equal(p.events.length, events[i], 'the listener is never moved again'))
+  const v1 = graphOf(p1).voices.find((v) => v.car === 0)!
+  const v2 = graphOf(p2).voices.find((v) => v.car === 0)!
+  near(v1.pan.node.positionX.target, 10 + VOICE.nose, 0.02, 'to the right of player 1')
+  near(v1.pan.node.positionY.target, VOICE.height - 1.7, 1e-6)
+  near(v1.pan.node.positionZ.target, 0, 0.02)
+  near(v2.pan.node.positionX.target, 0, 0.02)
+  near(v2.pan.node.positionZ.target, -(10 + VOICE.nose), 0.02, 'ahead of player 2')
+  const d = Math.hypot(10 + VOICE.nose, VOICE.height - 1.7)
+  near(Math.hypot(v1.pan.node.positionX.target, v1.pan.node.positionY.target, v1.pan.node.positionZ.target), d, 1e-3, 'the distance is the world distance')
+  near(Math.hypot(v2.pan.node.positionX.target, v2.pan.node.positionY.target, v2.pan.node.positionZ.target), d, 1e-3)
+  // The Doppler reads the world, not the head: both players hear the same pitch from the same still car.
+  near(v1.freq.param.target, v2.freq.param.target, 1e-9)
+  // The beds sit on the sidewalks in the world (murmurLayout) and in the head frame here: the same distances.
+  const layout = new Float32Array(8)
+  murmurLayout(200, 205, layout)
+  const bed = graphOf(p1).beds[0].pan.node
+  near(Math.hypot(bed.positionX.target, bed.positionY.target, bed.positionZ.target), Math.hypot(layout[0] - 200, MURMUR.height - 1.7, layout[1] - 205), 1e-3)
+  // The world-space default is untouched: a third soundscape of its own moves its listener as before.
+  const alone = new Soundscape()
+  alone.unlock()
+  const own = ctxOf()
+  assert.notEqual(own, ctx)
+  tick(alone, frame({ listener: { x: 10, y: 1.7, z: 20, yaw: 0, pitch: 0 } }))
+  near((own.listener as ParamListener).positionX.target, 10, 1e-9)
+  alone.dispose()
+  p1.dispose()
+  assert.equal(ctx.state, 'running', 'the context lives on for player 2')
+  assert.equal(p2.status().state, 'running')
+  p2.dispose()
+  assert.equal(ctx.state, 'closed', 'the last player out closes it')
+  assert.equal(FakeContext.instances.length, 2)
+}))
+
+test('four players: panners = 4 × (voices + beds + 1 + CUE.slots + 1) with the per-player pools; each reports its own voices', withFakes(() => {
+  const share = sharedAudioContext()
+  const players = [0, 1, 2, 3].map(() => new Soundscape({ context: share, space: 'head', voices: 3, beds: 2 }))
+  for (const p of players) p.unlock()
+  assert.equal(FakeContext.instances.length, 1)
+  const ctx = ctxOf()
+  assert.equal(ctx.of(FakePanner).length, 4 * pannersOf(3, 2))
+  assert.equal(ctx.of(FakeCompressor).length, 4, 'a limiter each, into the one destination')
+  for (const c of ctx.of(FakeCompressor)) assert.ok(c.outputs.includes(ctx.destination))
+  for (const p of players) while (graphOf(p).babbleJob) tick(p, frame({ crowd: { near: 0, waiting: 0, crossing: 0 } }))
+  const cars = [car(210, 205, 8, Math.PI / 2), car(200, 215, 8), car(190, 205, 8, -Math.PI / 2), car(200, 195, 8, Math.PI), car(220, 205, 8, Math.PI / 2)]
+  const quiet = { near: 0, waiting: 0, crossing: 0 }
+  const far = { x: 900, y: 1.7, z: 900, yaw: 0, pitch: 0 }
+  for (let i = 0; i < 30; i++) {
+    tick(players[0], frame({ cars, crowd: quiet }))
+    players[1].update(frame({ cars, crowd: quiet, listener: far }))
+    players[2].update(frame({ cars, crowd: { near: 80, waiting: 40, crossing: 20 } }))
+    players[3].update(frame({ cars: [], crowd: quiet, walk: { ew: true, ns: true } }))
+  }
+  assert.equal(players[0].status().voices, 3, 'three of five cars, the pool is three')
+  assert.equal(players[1].status().voices, 0, 'nothing within range of player 2')
+  assert.equal(players[2].status().voices, 3 + 2, 'cars and the two beds')
+  assert.equal(players[3].status().voices, 2, 'the two walk tones')
+  for (const p of players) p.dispose()
+  assert.equal(ctx.state, 'closed')
+}))
+
+test('head-space cut: a turn of 90° or more jumps every placed source instead of gliding it round the head', withFakes(() => {
+  const share = sharedAudioContext()
+  const s = new Soundscape({ context: share, space: 'head' })
+  s.unlock()
+  const cars = [car(210, 205, 8, Math.PI / 2)]
+  const lastKind = (p: FakeParam) => p.events[p.events.length - 1].kind
+  tick(s, frame({ cars, listener: { x: 200, y: 1.7, z: 205, yaw: 0, pitch: 0 } }))
+  const v = graphOf(s).voices.find((x) => x.car === 0)!
+  assert.equal(lastKind(v.pan.node.positionX), 'set', 'the first placement jumps')
+  tick(s, frame({ cars, listener: { x: 200.5, y: 1.7, z: 205, yaw: 0.05, pitch: 0 } }))
+  assert.equal(lastKind(v.pan.node.positionX), 'target', 'ordinary motion glides')
+  tick(s, frame({ cars, listener: { x: 200.5, y: 1.7, z: 205, yaw: 0.05 + Math.PI * 0.97, pitch: 0 } }))
+  for (const p of [v.pan.node.positionX, v.pan.node.positionZ]) assert.equal(lastKind(p), 'set', 'the car is on the other side now')
+  for (const b of graphOf(s).beds) assert.equal(lastKind(b.pan.node.positionX), 'set', 'the beds too')
+  assert.ok(v.pan.node.positionX.value < 0, 'and to the left after the turn')
+  tick(s, frame({ cars, listener: { x: 200.5, y: 1.7, z: 205, yaw: 0.1 + Math.PI * 0.97, pitch: 0 } }))
+  assert.equal(lastKind(v.pan.node.positionX), 'target', 'and glides again afterwards')
+  s.dispose()
+}))
+
+test('a shared context survives a soundscape that fails or is left locked; pool options are clamped', withFakes(() => {
+  const share = sharedAudioContext()
+  const a = new Soundscape({ context: share, space: 'head', voices: 0, beds: 99 })
+  const b = new Soundscape({ context: share, space: 'head', voices: Number.NaN, beds: 2.7 })
+  const locked = new Soundscape({ context: share, space: 'head' })
+  a.unlock()
+  b.unlock()
+  const ctx = ctxOf()
+  assert.equal(graphOf(a).voices.length, 1, 'at least one voice')
+  assert.equal(graphOf(a).beds.length, MURMUR.sources, 'no more beds than the layout has')
+  assert.equal(graphOf(b).voices.length, VOICE.count, 'NaN is the default')
+  assert.equal(graphOf(b).beds.length, 2, 'rounded down')
+  // A broken frame takes one soundscape down (unsupported from then on) and leaves the context to the other.
+  tick(a, frame({ listener: { x: 1e39, y: 1.7, z: 205, yaw: 0, pitch: 0 }, cars: [car(1e39, 205, 8)] }))
+  assert.ok(a.status().state === 'running' || a.status().state === 'unsupported')
+  a.dispose()
+  assert.equal(ctx.state, 'running')
+  assert.equal(b.status().state, 'running')
+  locked.dispose()
+  assert.equal(ctx.state, 'running', 'a soundscape that never unlocked held nothing')
+  b.dispose()
+  assert.equal(ctx.state, 'closed')
+  assert.equal(FakeContext.instances.length, 1)
 }))

@@ -3,11 +3,15 @@
  * or dragged with the button held), gamepads and touch controls, merged into one per-frame intent — the
  * head's yaw and pitch, held keys, an Analog frame (sticks, triggers, touch stick) and edge-triggered
  * actions (enter/exit vehicle, reset, clock, ghost view, a ping) — plus the hardware bus (HalBus) and the adaptive-trigger hook
- * that turns brake pressure into trigger resistance.
+ * that turns brake pressure into trigger resistance. With more than one local player (setPlayers) it also keeps the
+ * seating plan (seats.ts): the pads are read once a frame and dealt to seats, player 1 keeps the keyboard, the mouse,
+ * touch and the pad in seat 0, and every other seat is its own PadSeat intent (intent(seat)).
  * What breaks if it is removed? The player cannot move, look, drive or interact.
  */
 import { HalBus } from './hal.ts'
-import { createAnalog, PAD_EDGE, PadLook, PadMapper, type Analog, type PadFamily } from './gamepad.ts'
+import { createAnalog, isStandardPad, PAD_EDGE, PadLook, PadMapper, type Analog, type PadFamily } from './gamepad.ts'
+import { KEYBOARD_SEAT, PadSeat, SEATS, SeatTable, type PlayerIntent, type Seat } from './seats.ts'
+import type { GamepadLike } from './web-hardware.d.ts'
 
 export type { Analog, PadFamily } from './gamepad.ts'
 
@@ -84,6 +88,12 @@ export class Input {
   private readonly held: Record<TouchButton, boolean> = { brake: false, handbrake: false, run: false }
   /** The primary mouse button is down on the canvas without pointer lock: moving it turns the head. */
   private drag: { id: number; x: number; y: number; travel: number } | null = null
+  /** The seating plan (seats.ts): one seat until setPlayers; pads are dealt to seats only then. */
+  readonly seats = new SeatTable()
+  /** Seats 1..3's pad-only intents (seats.ts PadSeat), read each poll while the table has more than one seat. */
+  private readonly padSeats: readonly PadSeat[] = [new PadSeat(), new PadSeat(), new PadSeat()]
+  /** The pads in seat 0 this frame (seated mode), refilled without allocation. */
+  private readonly mine: GamepadLike[] = []
 
   constructor(canvas: HTMLCanvasElement, hal: HalBus = new HalBus()) {
     this.canvas = canvas
@@ -197,6 +207,7 @@ export class Input {
     this.keys.clear()
     this.endDrag()
     this.padLook.reset()
+    for (const seat of this.padSeats) seat.release()
     this.stick.x = 0
     this.stick.y = 0
     this.held.brake = false
@@ -251,12 +262,56 @@ export class Input {
     this.queued.clear()
     this.endDrag()
     this.padLook.reset()
+    for (const seat of this.padSeats) seat.release()
     if (document.pointerLockElement === this.canvas) document.exitPointerLock()
+  }
+
+  /**
+   * Seats in play (local split screen): with more than one, the pads are dealt to seats (seats.ts SeatTable: the
+   * lowest free seat among 1..n−1 first, then seat 0) and player 1 reads only the pad in seat 0; with one, every pad
+   * merges into player 1 as before. Pads in seats that no longer exist stand up at once.
+   */
+  setPlayers(n: number): void {
+    this.seats.setPlayers(n)
+    if (this.seats.players <= 1) this.seats.clear()
+    for (const seat of this.padSeats) seat.release()
+  }
+
+  /** True while the pads are dealt to seats (more than one player). */
+  get seated(): boolean {
+    return this.seats.players > 1
+  }
+
+  /** The intent the frame loop reads for a seat: this (keyboard, mouse, touch and seat 0's pad) for seat 0, the seat's PadSeat otherwise. */
+  intent(seat: Seat): PlayerIntent {
+    return seat === KEYBOARD_SEAT ? this : this.padSeats[seat - 1]
+  }
+
+  /** Face-button family of a seat's pad, for its viewport's glyphs (seat 0: the pad used most recently; null without one). */
+  familyOf(seat: number): PadFamily | null {
+    if (seat === KEYBOARD_SEAT) return this.padFamily
+    return seat > 0 && seat < SEATS ? this.padSeats[seat - 1].padFamily : null
   }
 
   /** Once per frame, before the engine reads input: gamepads → analog and actions, right stick → head yaw/pitch. */
   poll(dt: number): void {
-    const edges = this.mapper.read(this.hal.readPads(), this.pad)
+    // Read once: readPads pumps the pads' rumble and syncs their slots; the same list is dealt to every seat.
+    const pads = this.hal.readPads()
+    let edges: number
+    if (this.seats.players > 1) {
+      this.seats.assign(pads)
+      const mine = this.mine
+      mine.length = 0
+      for (let i = 0; i < pads.length; i++) {
+        const p = pads[i]
+        if (isStandardPad(p) && this.seats.seatOf(p.index) === KEYBOARD_SEAT) mine.push(p)
+      }
+      edges = this.mapper.read(mine, this.pad)
+      const now = performance.now()
+      for (let s = 1; s < this.seats.players; s++) this.padSeats[s - 1].poll(pads, this.seats, s as Seat, dt, now)
+    } else {
+      edges = this.mapper.read(pads, this.pad)
+    }
     if (edges & PAD_EDGE.interact) this.queued.add('interact')
     if (edges & PAD_EDGE.reset) this.queued.add('reset')
     if (edges & PAD_EDGE.timeForward) this.queued.add('timeForward')
@@ -320,6 +375,7 @@ export class Input {
     for (const d of this.disposers) d()
     this.disposers.length = 0
     this.endDrag()
+    for (const seat of this.padSeats) seat.release()
     if (document.pointerLockElement === this.canvas) document.exitPointerLock()
     void this.hal.dispose()
   }
