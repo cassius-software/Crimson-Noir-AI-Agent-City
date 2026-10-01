@@ -121,6 +121,14 @@ const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? 'st' : n % 10 =
 /** What a ping landed on, for its caption: 'a spot', 'person 12', 'car 3', 'pole 7'. */
 const pingWhat = (p: Ping): string => (p.pick === 'point' ? 'a spot' : `${p.pick} ${p.index}`)
 
+/** One prop's dissolve amounts to its instanced attribute (dirty range only), marked for three's upload, then cleaned. */
+function flushProp(b: DissolveBuffer, attr: { array: ArrayLike<number>; needsUpdate: boolean }): void {
+  if (!b.dirty) return
+  copyDirty(b, attr.array as Float32Array)
+  attr.needsUpdate = true
+  b.clean()
+}
+
 /** The 2 m cell of a point as one number (NaN for a point that is not finite), for the room caches. */
 const cellOf = (x: number, z: number): number => (Number.isFinite(x + z) ? Math.floor(x / 2) * 1e6 + Math.floor(z / 2) : Number.NaN)
 
@@ -996,15 +1004,9 @@ export class Engine {
    */
   private flushDissolve(): void {
     const set = this.dissolve, props = this.world.dissolve, fleet = this.view.dissolve
-    const prop = (b: DissolveBuffer, attr: { array: ArrayLike<number>; needsUpdate: boolean }) => {
-      if (!b.dirty) return
-      copyDirty(b, attr.array as Float32Array)
-      attr.needsUpdate = true
-      b.clean()
-    }
-    prop(set.lamps, props.lamps)
-    prop(set.trees, props.trees)
-    prop(set.signals, props.signals)
+    flushProp(set.lamps, props.lamps)
+    flushProp(set.trees, props.trees)
+    flushProp(set.signals, props.signals)
     if (set.cars.dirty) {
       copyDirty(set.cars, fleet.bodies.array as Float32Array)
       copyDirty(set.cars, fleet.wheels.array as Float32Array, 4)

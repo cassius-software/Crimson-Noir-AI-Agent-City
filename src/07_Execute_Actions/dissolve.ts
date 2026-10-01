@@ -83,21 +83,26 @@ export function copyDirty(b: DissolveBuffer, into: Float32Array, stride = 1): nu
 function footprintsOverlap(ax: number, az: number, ah: number, al: number, aw: number, bx: number, bz: number, bh: number, bl: number, bw: number): boolean {
   const dx = bx - ax, dz = bz - az
   const afx = Math.sin(ah), afz = Math.cos(ah), bfx = Math.sin(bh), bfz = Math.cos(bh)
-  // The four candidate axes: each box's length axis (forward) and width axis (across).
-  const axes: [number, number][] = [[afx, afz], [afz, -afx], [bfx, bfz], [bfz, -bfx]]
-  for (const [x, z] of axes) {
-    const ra = al * Math.abs(afx * x + afz * z) + aw * Math.abs(afz * x - afx * z)
-    const rb = bl * Math.abs(bfx * x + bfz * z) + bw * Math.abs(bfz * x - bfx * z)
-    if (Math.abs(dx * x + dz * z) > ra + rb) return false
-  }
-  return true
+  // The four candidate axes, tried in turn (no array: this runs per car pair per frame): each box's length axis
+  // (forward) and width axis (across).
+  return !separatedOn(afx, afz, dx, dz, afx, afz, al, aw, bfx, bfz, bl, bw)
+    && !separatedOn(afz, -afx, dx, dz, afx, afz, al, aw, bfx, bfz, bl, bw)
+    && !separatedOn(bfx, bfz, dx, dz, afx, afz, al, aw, bfx, bfz, bl, bw)
+    && !separatedOn(bfz, -bfx, dx, dz, afx, afz, al, aw, bfx, bfz, bl, bw)
+}
+
+/** Whether the axis (x, z) separates the two footprints: their projected half extents do not reach their centres' gap. */
+function separatedOn(x: number, z: number, dx: number, dz: number, afx: number, afz: number, al: number, aw: number, bfx: number, bfz: number, bl: number, bw: number): boolean {
+  const ra = al * Math.abs(afx * x + afz * z) + aw * Math.abs(afz * x - afx * z)
+  const rb = bl * Math.abs(bfx * x + bfz * z) + bw * Math.abs(bfz * x - bfx * z)
+  return Math.abs(dx * x + dz * z) > ra + rb
 }
 
 /**
  * Which cars' chassis footprints (grown by `pad`) overlap another car's, from the poses alone: their indices into
  * `out`, at most out.length, returning how many. Phase 7.1 lets cars pass through cars; both dissolve so the
  * passage is never seen as interpenetration. `skip` (the driven car, which never dissolves) is never reported, but
- * a car passing through it is. A short pose buffer ends the scan. Allocation-free beyond the axes.
+ * a car passing through it is. A short pose buffer ends the scan. Allocation-free (the chassis boxes are shared).
  */
 export function carsOverlapping(poses: Float32Array, suv: readonly boolean[], pad: number, out: Int32Array, skip = -1): number {
   if (out.length === 0 || !Number.isFinite(pad)) return 0

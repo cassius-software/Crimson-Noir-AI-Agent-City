@@ -247,3 +247,21 @@ test('the envelope end to end: a touched car and its wheels flush once, fall bac
   assert.equal(set.active, 0)
   assert.ok(!set.cars.dirty)
 })
+
+test('wiring: nothing is allocated per frame: the chassis boxes are shared and frozen, the pass-through scan builds no axes, the flush builds no closure', () => {
+  // dissolveNow() runs carsOverlapping every animation frame over every car pair: a fresh box per call would be
+  // hundreds of objects a frame for the default fleet.
+  assert.equal(chassisBox(true), chassisBox(true), 'one SUV box')
+  assert.equal(chassisBox(false), chassisBox(false), 'one car box')
+  assert.notEqual(chassisBox(true), chassisBox(false))
+  assert.ok(Object.isFrozen(chassisBox(true)) && Object.isFrozen(chassisBox(false)), 'nobody can bend a shared box')
+  assert.deepEqual(chassisBox(true), { hx: chassisBox(false).hx, hy: 0.48, hz: chassisBox(false).hz, y: 0.38 }, 'the numbers as before')
+  const d = read('./dissolve.ts')
+  const overlap = between(d, 'function footprintsOverlap(', 'export function carsOverlapping(')
+  assert.doesNotMatch(overlap, /\[\[|\bnew\b|\.map\(|=>/, 'no axes array or closure per candidate pair')
+  const scan = between(d, 'export function carsOverlapping(', '\n}\n')
+  assert.doesNotMatch(scan, /\[\[|\bnew\b|\.map\(|=>/, 'no allocation in the scan')
+  const flush = between(read('./engine.ts'), '  private flushDissolve(', '  /**\n   * The cinema camera')
+  assert.doesNotMatch(flush, /=>|\bfunction\b|\bnew\b/, 'no closure per drawn frame')
+  assert.match(flush, /flushProp\(set\.lamps, props\.lamps\)/)
+})
