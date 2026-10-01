@@ -74,6 +74,14 @@ export const LIMITS = Object.freeze({
   stepsPerSecond: 60,
   stepBurst: 180,
   /**
+   * How much faster than the realm's own rate the host refills a peer's inputs and substeps: an honest page steps at
+   * exactly that rate, so without it a bank spent in a stall would never come back, and a page whose clock runs a
+   * little fast against the host's would drain it in a long session. With it a spent bank is whole again within a
+   * minute; a client running its physics faster than the clock gains at most this (5 %), never more. The page's own
+   * client paces itself at the realm's rate (netClient.ts).
+   */
+  headroom: 1.05,
+  /**
    * How long after a correction an input under the correction before it is still dropped unread, ms: the inputs an
    * honest client had in flight (a stall included) when the correction reached it. Past it, one is a refusal.
    */
@@ -105,8 +113,11 @@ export const LIMITS = Object.freeze({
   tickHz: 20,
   /** A peer that has not joined within this long is dropped, ms. */
   joinTimeoutMs: 5000,
-  /** A joined peer silent for this long is dropped, ms. */
-  idleTimeoutMs: 15000,
+  /**
+   * A joined peer silent for this long is dropped, ms. The page sends a keepalive every few seconds (netClient.ts
+   * KEEPALIVE_MS), but a browser runs a tab hidden for minutes on one timer a minute: past that, not before.
+   */
+  idleTimeoutMs: 75000,
   /** Sequence and tick numbers stay below this (a safe integer, so JSON carries them exactly). */
   maxSeq: 2 ** 40,
   /** The longest a remote pose is carried forward between snapshots, s. */
@@ -227,6 +238,9 @@ export type ServerMessage = WelcomeMessage | SnapshotMessage | CorrectMessage | 
 export type Read<T> = { ok: true; msg: T } | { ok: false; reason: string }
 
 const refusal = <T,>(reason: string): Read<T> => ({ ok: false, reason })
+/** A value named in a refusal: a short string or a number as it is, anything else only by its type (never converted: an object may refuse to be). */
+const shown = (u: unknown): string =>
+  typeof u === 'string' ? JSON.stringify(u.slice(0, 32)) : typeof u === 'number' || typeof u === 'boolean' ? String(u) : u === null ? 'null' : typeof u
 const isRecord = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x)
 const fin = (u: unknown, lo: number, hi: number): u is number => typeof u === 'number' && Number.isFinite(u) && u >= lo && u <= hi
 const count = (u: unknown): u is number => typeof u === 'number' && Number.isSafeInteger(u) && u >= 0 && u < LIMITS.maxSeq
@@ -265,7 +279,7 @@ function players(u: unknown): RemotePlayer[] | null {
     if (!r) return null
     out.push(r)
   }
-  return out
+  return Object.freeze(out) as RemotePlayer[]
 }
 
 const STATE_KEYS = ['x', 'y', 'z', 'qx', 'qy', 'qz', 'qw', 'vx', 'vy', 'vz', 'wx', 'wy', 'wz'] as const
@@ -378,7 +392,7 @@ export function readClientMessage(u: unknown): Read<ClientMessage> {
   if (!isRecord(u)) return refusal('not a message object')
   switch (u.t) {
     case 'join': {
-      if (u.v !== PROTOCOL_VERSION) return refusal(`join: protocol ${String(u.v)} is not ${PROTOCOL_VERSION}`)
+      if (u.v !== PROTOCOL_VERSION) return refusal(`join: protocol ${shown(u.v)} is not ${PROTOCOL_VERSION}`)
       if (!text(u.token, LIMITS.token) || u.token.length === 0) return refusal('join: token')
       if (!text(u.name, LIMITS.name)) return refusal('join: name')
       if (!text(u.world, LIMITS.name) || u.world.length === 0) return refusal('join: world')
@@ -402,7 +416,7 @@ export function readClientMessage(u: unknown): Read<ClientMessage> {
     case 'leave':
       return { ok: true, msg: Object.freeze({ t: 'leave' }) }
     default:
-      return refusal(`unknown message '${String(u.t)}'`)
+      return refusal(`unknown message ${shown(u.t)}`)
   }
 }
 
@@ -411,7 +425,7 @@ export function readServerMessage(u: unknown): Read<ServerMessage> {
   if (!isRecord(u)) return refusal('not a message object')
   switch (u.t) {
     case 'welcome': {
-      if (u.v !== PROTOCOL_VERSION) return refusal(`welcome: protocol ${String(u.v)} is not ${PROTOCOL_VERSION}`)
+      if (u.v !== PROTOCOL_VERSION) return refusal(`welcome: protocol ${shown(u.v)} is not ${PROTOCOL_VERSION}`)
       if (!count(u.id) || !count(u.tick) || !fin(u.tickHz, 1, 240) || !count(u.fix)) return refusal('welcome: id, tick, tickHz and fix')
       const you = player(u.you)
       if (!you || you.id !== u.id) return refusal('welcome: you')
@@ -458,7 +472,7 @@ export function readServerMessage(u: unknown): Read<ServerMessage> {
       if (!count(u.id) || !count(u.tick) || !text(u.reason, LIMITS.chat)) return refusal('left: id, reason and tick')
       return { ok: true, msg: Object.freeze({ t: 'left', id: u.id, reason: u.reason, tick: u.tick }) }
     default:
-      return refusal(`unknown message '${String(u.t)}'`)
+      return refusal(`unknown message ${shown(u.t)}`)
   }
 }
 
@@ -639,12 +653,15 @@ export function take(b: Bucket, now: number): boolean {
 
 export interface PeerBuckets { input: Bucket; stale: Bucket; steps: Bucket; doors: Bucket; corrections: Bucket; chat: Bucket; ping: Bucket }
 
-/** A new peer's buckets, full. */
-export const peerBuckets = (now: number): PeerBuckets => ({
-  input: bucket(LIMITS.inputBurst, LIMITS.inputsPerSecond, now),
+/**
+ * A new peer's buckets, full: inputs and substeps refilled `headroom` times the realm's rate (the host's: LIMITS.headroom;
+ * the page's own client paces itself at 1, the realm's rate exactly).
+ */
+export const peerBuckets = (now: number, headroom: number = LIMITS.headroom): PeerBuckets => ({
+  input: bucket(LIMITS.inputBurst, LIMITS.inputsPerSecond * headroom, now),
   // Inputs under an old correction dropped unread: an honest stall's backlog fits (the input burst); a flood does not.
-  stale: bucket(LIMITS.inputBurst, LIMITS.inputsPerSecond, now),
-  steps: bucket(LIMITS.stepBurst, LIMITS.stepsPerSecond, now),
+  stale: bucket(LIMITS.inputBurst, LIMITS.inputsPerSecond * headroom, now),
+  steps: bucket(LIMITS.stepBurst, LIMITS.stepsPerSecond * headroom, now),
   doors: bucket(LIMITS.doorBurst, LIMITS.doorsPerSecond, now),
   corrections: bucket(LIMITS.correctionsPerMinute, LIMITS.correctionsPerMinute / 60, now),
   chat: bucket(LIMITS.chatPerMinute, LIMITS.chatPerMinute / 60, now),
@@ -854,8 +871,9 @@ export function handle(room: Room, peer: Peer, msg: ClientMessage, now: number, 
       if (msg.fix > peer.fix) return correct(room, peer, 'input: a correction that was never made', now)
       if (msg.seq <= peer.seq) return correct(room, peer, 'input: stale seq', now)
       if (msg.ack > room.tick) return correct(room, peer, 'input: ack from the future', now)
+      // Every run's substeps are its last entry (on foot [x, z, n], at the wheel [throttle, brake, steer, handbrake, n]).
       let n = 0
-      for (const r of msg.segs) n += r[2]
+      for (const r of msg.segs) n += r[r.length - 1]
       // More substeps than time allows: a client running its physics faster than the clock.
       // More doors than time allows: a client hopping in and out of cars to carry itself along.
       if (msg.door && !take(peer.buckets.doors, now)) return correct(room, peer, 'input: more doors than time allows', now)

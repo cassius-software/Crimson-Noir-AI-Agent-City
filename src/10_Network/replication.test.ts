@@ -70,8 +70,9 @@ test('readClientMessage: the good shapes come back frozen, plain, and with nothi
 
 test('readClientMessage: every crafted message is refused with the reason simHost would give', () => {
   for (const bad of [null, undefined, 1, 'join', [], [{ t: 'join' }], true]) refused(bad, /not a message object/)
-  refused({}, /unknown message 'undefined'/)
-  refused({ t: 'step' }, /unknown message 'step'/)
+  refused({}, /unknown message undefined/)
+  refused({ t: 'step' }, /unknown message "step"/)
+  refused({ t: Object.create(null) }, /unknown message object/)
   refused({ t: 'join', v: PROTOCOL_VERSION + 1, token: 'a', name: 'b' }, new RegExp(`protocol ${PROTOCOL_VERSION + 1} is not ${PROTOCOL_VERSION}`))
   refused({ t: 'join', v: '1', token: 'a', name: 'b' }, /protocol/)
   refused({ t: 'join', v: PROTOCOL_VERSION, name: 'b' }, /token/)
@@ -187,6 +188,10 @@ test('readServerMessage: the host is checked the same way; a player list with on
   bad({ ...wheel, car: { index: 2, state: { ...state, x: 5 } } }, /correct: car/)
   bad({ ...wheel, car: { index: LIMITS.cars, state } }, /correct: car/)
   bad({ ...wheel, car: { index: 2, state: { ...state, qw: 0.5 } } }, /correct: car/)
+  // Whatever comes back is frozen all the way down, the lists of players included.
+  const w = readServerMessage({ t: 'welcome', v: PROTOCOL_VERSION, id: 1, tick: 0, tickHz: 20, fix: 1, you: player(1), players: [player(2)] })
+  assert.ok(w.ok && w.msg.t === 'welcome' && Object.isFrozen(w.msg.players))
+  assert.ok(Object.isFrozen((readServerMessage(good) as { msg: SnapshotMessage }).msg.players))
   bad({ ...good, players: [player(2, { x: NaN })] }, /players/)
   bad({ ...good, players: [player(2, { speed: RUN + 1 })] }, /players/)
   bad({ ...good, players: [player(2, { vx: 30, speed: 30 })] }, /players/)
@@ -213,7 +218,7 @@ test('readServerMessage: the host is checked the same way; a player list with on
   bad({ t: 'ping', from: 1, kind: 'wait', x: 0, y: 0, z: 0, tick: 'now' }, /from and tick/)
   bad({ t: 'joined', player: player(1, { heading: 10 }), tick: 1 }, /player/)
   bad({ t: 'left', id: 1, reason: 'bye\n', tick: 1 }, /reason/)
-  bad({ t: 'state' }, /unknown message 'state'/)
+  bad({ t: 'state' }, /unknown message "state"/)
   assert.ok(decodeServerMessage(encode({ t: 'left', id: 1, reason: 'idle', tick: 9 })).ok)
 })
 
@@ -251,9 +256,11 @@ test('token buckets: a burst, then the steady rate; the clock is the caller\'s a
   assert.equal(takeMany(many, 30, 500), true)
   const p = peerBuckets(0)
   assert.equal(p.input.capacity, LIMITS.inputBurst)
-  assert.equal(p.input.perSecond, LIMITS.inputsPerSecond)
+  assert.equal(p.input.perSecond, LIMITS.inputsPerSecond * LIMITS.headroom)
+  assert.equal(peerBuckets(0, 1).input.perSecond, LIMITS.inputsPerSecond, 'the page paces itself at the realm\'s rate')
   assert.equal(p.steps.capacity, LIMITS.stepBurst)
-  assert.equal(p.steps.perSecond, LIMITS.stepsPerSecond)
+  assert.equal(p.steps.perSecond, LIMITS.stepsPerSecond * LIMITS.headroom)
+  assert.ok(LIMITS.headroom > 1 && LIMITS.headroom <= 1.05, 'a clock-speed cheat gains at most 5 %')
   assert.equal(p.corrections.capacity, LIMITS.correctionsPerMinute)
   assert.equal(p.corrections.perSecond * 60, LIMITS.correctionsPerMinute)
   assert.equal(p.chat.capacity, LIMITS.chatPerMinute)
@@ -446,6 +453,21 @@ test('a malformed input frame from a joined peer is counted as a refusal and cor
   assert.equal((refuseInput(room, a, 'input: runs', 3400).reply as { car?: unknown }).car, undefined)
 })
 
+test('at the wheel the substeps are spent as on foot: a run\'s last entry, never its steer (found by protocol.fuzz.test.ts)', () => {
+  const room = room0()
+  const a = joined(room, 'Ada', 0)
+  const st = { x: 1, y: 0.7, z: 0, qx: 0, qy: 0, qz: 0, qw: 1, vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0 }
+  assert.deepEqual(handle(room, a, input(1, { x: 1, y: 0.7, z: 0 }, { mode: 'drive', segs: [[0, 0, 0, 0, 0]], door: { enter: { car: 0, state: st } } }), 0, verify), {})
+  // The whole bank in full inputs at the wheel (the steer 0.1, which a count of the wrong entry would read as nothing)…
+  let seq = 1
+  for (let k = 0; k < LIMITS.stepBurst / LIMITS.stepsPerInput; k++) {
+    assert.deepEqual(handle(room, a, input(++seq, { x: 1, y: 0.7, z: 0 }, { mode: 'drive', segs: [[1, 0, 0.1, 0, LIMITS.stepsPerInput]] }), 0, verify), {}, `burst ${k}`)
+  }
+  // …and one more at once is a clock running fast, at the wheel as on foot.
+  const fast = handle(room, a, input(++seq, { x: 1, y: 0.7, z: 0 }, { mode: 'drive', segs: [[1, 0, 0.1, 0, 1]] }), 0, verify)
+  assert.equal(fast.refused, 'input: more substeps than time allows')
+})
+
 test('doors: more than time allows are corrected, whatever they say (a hop chain is no faster than the door rate)', () => {
   const room = room0()
   const a = joined(room, 'Ada', 0)
@@ -636,7 +658,7 @@ test('sealed frames: numbered and signed under the session token over the canoni
   const shapes: [unknown, RegExp][] = [
     [7, /not text/], ['{', /not JSON/], ['[]', /not an envelope/], ['{"n":-1}', /envelope: n/], ['{"n":1,"mac":"x"}', /envelope: mac/],
     [`{"n":1,"mac":"${mac}","body":1}`, /envelope: body/], [`{"n":1,"mac":"${mac}","body":{"t":"leave","x":1e999}}`, /envelope: body/],
-    [`{"n":1,"mac":"${mac}","body":{"t":"step"}}`, /unknown message 'step'/],
+    [`{"n":1,"mac":"${mac}","body":{"t":"step"}}`, /unknown message "step"/],
   ]
   for (const [bad, why] of shapes) {
     const r = openClientFrame(peer, bad)

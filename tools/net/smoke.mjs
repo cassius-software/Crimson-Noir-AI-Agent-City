@@ -44,8 +44,10 @@ const server = spawn(process.execPath, [join(ROOT, 'src/10_Network/replication.n
   cwd: ROOT, env: { ...process.env, NET_SECRET: secret, NET_PORT: '0', NET_SEED: String(SEED), NET_CARS: String(CARS), NET_TICK_HZ: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
 })
 const started = await new Promise((resolve, reject) => {
+  // A server that never comes up is not left running.
+  const fail = (e) => { server.kill('SIGKILL'); reject(e) }
   let out = ''
-  const timer = setTimeout(() => reject(new Error(`the server did not start:\n${out}`)), 30_000)
+  const timer = setTimeout(() => fail(new Error(`the server did not start:\n${out}`)), 30_000)
   server.stdout.on('data', (b) => {
     out += b
     const url = /listening on (ws:\/\/[\d.]+:\d+)/.exec(out)?.[1]

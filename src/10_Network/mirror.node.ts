@@ -90,8 +90,8 @@ const NO_VEHICLES: never[] = []
 /** The world a page must be running to join this mirror's room: the procedural city of a seed, and its fleet's size. */
 export const worldOf = (seed: number, cars: number = MIRROR.cars): string => `city/${seed >>> 0}/${Math.max(0, Math.floor(cars))}`
 
-/** Total substeps an input covers. */
-export const substeps = (segs: readonly (readonly number[])[]): number => segs.reduce((n, s) => n + s[2], 0)
+/** Total substeps an input covers: each run's last entry, on foot and at the wheel alike. */
+export const substeps = (segs: readonly (readonly number[])[]): number => segs.reduce((n, s) => n + s[s.length - 1], 0)
 
 /**
  * The Ring-0 person audit on one pose: non-finite (the realm's auditor), then containment (the slab around the city,

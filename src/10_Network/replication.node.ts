@@ -4,18 +4,24 @@
  * in Rapier, the realm's own character controller, and its garage replaying every player's car with the realm's own
  * car physics) as its authority. It is Node-only and never part of the page:
  * node:http takes the upgrade, the RFC 6455 frames are read and written here (a client's frame must be masked, the
- * host's never is; ping is answered with pong; close is a handshake; anything binary, fragmented or over the message
- * bound closes the socket), and node:crypto signs the session tokens (HMAC, with an expiry) the operator hands out.
+ * host's never is; ping is answered with pong, at most PINGS_PER_SECOND; close is a handshake; anything fragmented or
+ * over the message bound closes the socket, and a binary frame is refused and counted like any malformed one), and
+ * node:crypto signs the session tokens (HMAC, with an expiry) the operator hands out; a secret shorter than MIN_SECRET
+ * starts no host.
  * No connection is upgraded without one: the token rides the upgrade as a subprotocol (`auth.<token>`, beside
  * `onyx.4`), its HMAC and expiry are checked before the 101, a failure is a 401 with no socket and no room slot (a
  * 429, unlogged, for an address that keeps failing; a good token is always admitted, since behind a proxy everyone
- * shares one address), and the join must carry the same token. Every frame then goes through the core's seal (replication.ts openClientFrame: the envelope number must
+ * shares one address); a refused upgrade's socket is ended and destroyed within a second (a client that resets it is
+ * no error of the host's), and a connection whose request has not arrived whole within HEADERS_TIMEOUT_MS is dropped.
+ * The join must carry the same token. A token's subject is one player: a second connection under it replaces the first
+ * (4010), and a session ends when its token expires (4003). Every frame then goes through the core's seal (replication.ts openClientFrame: the envelope number must
  * rise and the HMAC under the session token must hold, or the frame is refused and counted; the host's own frames are
  * sealed the same way, so the page can tell a forged or replayed one), the core's validator and the peer's rate
  * limits; every name and chat line through the 14A screen. An input is judged by the mirror the moment it arrives, and
  * one it refuses is answered with a correction in the same turn, before anything else is read from that socket. A
  * peer that keeps earning refusals or corrections is removed; one that never joins or goes silent is dropped; one too
- * slow to take what it is sent (a backlog past maxBacklog) is closed. The room ticks at a fixed rate and every joined
+ * slow to take what it is sent (a backlog past maxBacklog, checked before every write) is closed. Untrusted text reaches
+ * the log escaped, on one line (loggable). The room ticks at a fixed rate and every joined
  * peer gets its snapshot each tick. Seals use node:crypto's HMAC (the same digest as integrity.ts, faster). The host
  * listens in plain text on the loopback address by default: TLS (wss) is terminated by the operator's reverse proxy
  * in front of it, which is also where an origin or a client certificate would be checked. Run it with `npm run
@@ -51,7 +57,7 @@ function sameToken(a: string, b: string): boolean {
 }
 
 /**
- * The session token an upgrade offers, from its Sec-WebSocket-Protocol list: `onyx.3` must be offered, and exactly one
+ * The session token an upgrade offers, from its Sec-WebSocket-Protocol list: the protocol's own (SUBPROTOCOL, `onyx.4`) must be offered, and exactly one
  * `auth.<token>` entry. Null for anything else.
  */
 export function offeredToken(header: unknown): string | null {
@@ -178,6 +184,8 @@ export interface HostOptions {
   cars?: number
   /** Another authority than the mirror (the protocol's tests run the open plane, plane.node.ts). */
   authority?: Authority
+  /** How long a connection may take to send its request's headers (a slow-header client is dropped after it), ms. */
+  headersTimeoutMs?: number
   /** Bytes a peer may leave unread before the host closes it as too slow. */
   maxBacklog?: number
   /** Wall clock, ms (injectable for tests). */
@@ -208,6 +216,8 @@ export interface HostStats {
 export const MIN_SECRET = 16
 /** WebSocket pings a peer may send per second (burst: twice that); past it each one is a refusal. */
 export const PINGS_PER_SECOND = 4
+/** How long a connection may take to send its request's headers, ms (HostOptions.headersTimeoutMs). */
+export const HEADERS_TIMEOUT_MS = 5000
 /** How long a refused upgrade's socket is given to flush its HTTP answer before it is destroyed, ms. */
 const REFUSED_LINGER_MS = 1000
 
@@ -397,7 +407,11 @@ export async function startHost(o: HostOptions): Promise<Host> {
     socket.once('close', () => clearTimeout(t))
   }
 
+  /** Sockets whose request arrived whole (an upgrade or a plain request): the header deadline no longer applies. */
+  const answered = new WeakSet<Socket>()
+
   const onUpgrade = (req: IncomingMessage, socket: Socket, head: Buffer): void => {
+    answered.add(socket)
     // Before anything is read or written: a client may reset the connection at any moment, and an 'error' with no
     // listener would bring the whole host down.
     socket.on('error', () => socket.destroy())
@@ -451,11 +465,23 @@ export async function startHost(o: HostOptions): Promise<Host> {
     if (head.length > 0) onData(c, head)
   }
 
-  const server: Server = createServer((_req, res) => {
+  // A client that dribbles its request's headers (slowloris) holds a socket only this long: the parser's own timeouts,
+  // checked often.
+  const headersTimeout = o.headersTimeoutMs ?? HEADERS_TIMEOUT_MS
+  const server: Server = createServer({ headersTimeout, requestTimeout: 2 * headersTimeout, connectionsCheckingInterval: Math.min(1000, headersTimeout) }, (req, res) => {
+    answered.add(req.socket)
     res.writeHead(426, { 'content-type': 'text/plain', upgrade: 'websocket', connection: 'close' })
     res.end('Upgrade Required: this is a WebSocket host.\n')
   })
   server.on('upgrade', onUpgrade)
+  // And a deadline of the host's own on every connection, beside the parser's (which, under a churn of upgraded
+  // sockets, does not always fire): one whose request has not arrived whole by then is destroyed.
+  server.on('connection', (socket: Socket) => {
+    socket.on('error', () => socket.destroy())
+    const t = setTimeout(() => { if (!answered.has(socket)) socket.destroy() }, headersTimeout)
+    t.unref()
+    socket.once('close', () => clearTimeout(t))
+  })
 
   const ticker = setInterval(() => {
     const t0 = performance.now()

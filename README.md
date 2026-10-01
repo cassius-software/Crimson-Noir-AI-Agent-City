@@ -1243,63 +1243,107 @@ Audio starts on your first click, tap or key, as browsers require.
 ## Networking
 
 Nothing about the network runs at boot: the page opens no socket until the operator types `net join`, and the
-single-file build is unchanged. The room is authoritative (Phase 12): the server runs its own physics of the city and
-is the only word on where anyone is; the page's own physics realm is the prediction that hides the latency.
+single-file build is unchanged. The room is authoritative (Phase 12, extended to cars in Phase 13): the server runs
+its own physics of the city and of every player's car, and is the only word on where anyone is; the page's own
+physics realm is the prediction that hides the latency.
 
 - **The host** (`10_Network/replication.node.ts`) is Node-only and never bundled: `npm run serve:net` starts it (Node 22
-  strips the types; `NET_HOST`, `NET_PORT`, `NET_SECRET`, `NET_SEED`), and it prints its address, the world it holds
-  (`city/1337` unless `NET_SEED` says) and an operator token good for a day. It is dependency-free: `node:http` takes
-  the upgrade, the RFC 6455 frames are read and written by hand, ping is answered with pong, close is a handshake.
-  Session tokens are HMAC-SHA256 with an expiry (`node:crypto`), compared in constant time; a random secret is made
-  per run if `NET_SECRET` is unset. It listens in plain text on the loopback address (port 8787) by default.
-- **No connection without a token.** The token rides the WebSocket upgrade as a subprotocol (`onyx.3` and
+  strips the types; `NET_HOST`, `NET_PORT`, `NET_SECRET`, `NET_SEED`, `NET_CARS`, `NET_TICK_HZ`), and it prints its
+  address, the world it holds (`city/1337/36` unless `NET_SEED` or `NET_CARS` says otherwise: the seed's city and
+  the size of its fleet) and an operator token good for a day. It is dependency-free: `node:http` takes the upgrade,
+  the RFC 6455 frames are read and written by hand, ping is answered with pong, close is a handshake. Session tokens
+  are HMAC-SHA256 with an expiry (`node:crypto`), compared in constant time. A random secret is made per run if
+  `NET_SECRET` is unset; a set one shorter than 16 characters (an empty one included) starts no host. It listens in
+  plain text on the loopback address (port 8787) by default.
+- **No connection without a token.** The token rides the WebSocket upgrade as a subprotocol (`onyx.4` and
   `auth.<token>`), so the host checks its HMAC and expiry before it answers 101: a missing, forged, tampered or
-  expired token is a 401, with no socket and no room slot. An address that keeps failing (five in a row) is turned
-  away with a 429 for a while without the check being run. The join must carry the same token, and every frame after
-  it is sealed under it both ways (an envelope number that must rise and an HMAC over the canonical message: a
-  forged, altered or replayed frame is refused). The host's seals use `node:crypto`; the page's use `integrity.ts`.
-  Both produce the same digest, which the tests check bit for bit.
+  expired token is a 401, with no socket and no room slot. After five failures from one address in quick succession
+  (one more earned every 5 s), further failures from it are answered 429 instead of 401 and not logged; the token is
+  still checked, so a good one is always admitted (behind a proxy everyone shares one address). A refused upgrade's
+  socket is ended and destroyed within a second, and a client that resets it is no error of the host's. A client that
+  dribbles its request headers is dropped after 5 s. The join must carry the same token, and every frame after it is
+  sealed under it both ways (an envelope number that must rise and an HMAC over the canonical message: a forged,
+  altered or replayed frame is refused). The host's seals use `node:crypto`; the page's use `integrity.ts`. Both
+  produce the same digest, which the tests check bit for bit.
+- **One player, one connection; a session ends with its token.** A second connection under the same token's subject
+  (the same token, or another minted for the same name) replaces the first (close code 4010), so no player holds two
+  of the 32 slots. A session is closed the moment its token expires (4003), whatever it is doing. WebSocket pings are
+  metered (four a second); every write the host makes, pongs and close frames included, checks the peer's unread
+  backlog first, and a peer too slow to read is closed (4009). Untrusted text reaches the log only escaped, on one
+  line, at most 160 characters.
 - **The headless Ring-0 mirror** (`10_Network/mirror.node.ts`) is the host's authority. It builds the city of the seed
   the way the page's physics realm does: every building box, the tiled ground, and the street furniture as sensors.
   The physics is Rapier, the Rust physics engine compiled to WebAssembly that the page's physics worker loads. Each
   player is the realm's own character controller (`07_Execute_Actions/player.ts`, in a mirror mode: moved in place,
-  other players not obstacles). The world is built once and stepped once, to build its query tree. A substep is
-  then replayed in about 22 µs, where a world step of the city takes 1.1 ms. Measured here, an input costs about
-  0.2 ms with its seal checked and its correction (if any) sent, and a tick with two players about 0.3 ms. Every
-  pose the mirror keeps passes the Ring-0 person audit (finite, inside the 1600 m containment slab, above the ground
-  floor).
-  The mirror holds no traffic: the cars on your screen are your own page's.
-  - The Phase 11 WebAssembly modules (the track arithmetic and kv-pager) are not physics and the mirror does not load
-    them: it needs no fleet.
+  other players not obstacles). The world is built once and stepped once, to build its query tree (every fresh
+  world is, the page's too: an unstepped world answers no query). A substep on foot is replayed in about 22 µs.
+  Every pose the mirror keeps passes the Ring-0 audit (finite, inside the 1600 m containment slab, above the ground
+  floor; a car also under the velocity cap).
+- **The garage** (`10_Network/garage.node.ts`, Phase 13) is the mirror's authority over cars. From the seed and the
+  fleet size alone it knows the fleet's own plan (`07_Execute_Actions/carRig.ts planFleet`): which ring of the track
+  network every car was seated on, and which is an SUV. When a player takes a car's wheel, the car is built in a
+  drive world of that player's own (the city's building boxes and ground; about 20 MB, built in about 20 ms, stepped
+  only while they drive), and from then on every substep at the wheel is replayed there with the page's own car
+  physics (`carRig.ts carSubstep`: drivetrain, brakes, Ackermann steering, drag, rolling resistance, the raycast
+  wheels, then the world step, and the Ring-0 speed clamp after each step). Both sides build the car from the same
+  numbers when it changes hands (`carRig.ts rebuildCarRig`: a new chassis, collider and vehicle controller, so no
+  contact or wheel state is carried over), and the page's car and the room's agree to the bit
+  (`garage.node.test.ts`). A world step of the full city costs about 0.7 ms, so a driving player costs the host about
+  4 % of a core.
+- **Room mode.** While joined, player 1 walks and drives in the page's realm as the room does (`simCore.ts` `room`):
+  a ghost that only the city's fixed geometry stops (the traffic, the other players and the Sanctuary's nudges are
+  the page's alone and never the room's), the car tuning at the authored values, and the console commands that move
+  a car (`recover`, `setMode`, `tune` and the debug ones) refused. A car its driver leaves in a room stops dead where
+  it is left. In room mode the page and the room agree to the bit on foot too, so the room's tolerance is a
+  micrometre.
 - **What the page sends: the steps its realm ran, and where they left it.** Each realm step is one move, paired by the
   engine with the one step request that ran it:
-  - the walking velocity asked for;
+  - the door it took first, if any (`simProtocol.ts doorOf`: the realm's own entered or exited event; a teleport or a
+    correction that moved the player is no door): into car `i` in the state the realm took it over in, or out at the
+    point the realm put the player down;
+  - on foot the walking velocity asked for, clamped as the realm clamps it; at the wheel the command the car ran (the
+    bouncer's vetted throttle, brake and steer, and the handbrake);
   - how many fixed 1/60 s substeps it ran;
-  - where it left player 1 (the claim);
+  - where it left player 1 (the claim: the capsule, or the chassis);
   - the correction it carried out.
-  Moves are coalesced into runs of substeps while the input rate is spent, and the claim is always where the last
-  run ended. At a wheel the claim is the chassis, since the car is the page's own.
-- **What the server does with them, the moment they arrive.** On foot it replays the substeps on its own capsule,
-  with the same clamp (`simProtocol.ts footWish`) and the same controller. An honest page's claim matches within a
-  micrometre: `mirror.node.test.ts` drives the page's realm and the mirror side by side through the city's walls. A
-  claim more than 25 cm off is refused, which catches:
-  - a speed hack;
-  - a wall walked through;
-  - a position written into the page's memory.
-  A packet is also refused for any of these:
-  - more substeps than the clock allows (60 a second, one second banked);
-  - a malformed, replayed or forged input;
-  - too many inputs.
-  A refused packet changes nothing on the server, and the host answers it in the same turn with a correction: the
-  truth, under a new correction number. Inputs the page sent before it applied the correction are dropped unread.
-  - At the wheel the server cannot replay the car, so it bounds the claim instead. A car is never faster than the
-    Ring-0 velocity cap (50 m/s), never through a building (rays at the sill and the roof line), and only enters or
-    leaves within reach of where the server has the player. The exit point must stand clear.
+  Moves are coalesced into runs of substeps while the input rate is spent; a door starts an input of its own, and the
+  claim is always where the last run ended. A quiet page (a hidden tab, a player standing still) sends a keepalive
+  ack every 5 s; the room lets a peer go only after 75 s of silence, since a browser runs a tab hidden for minutes on
+  one timer a minute.
+- **What the server does with them, the moment they arrive.**
+  - **On foot** it replays the substeps on its own capsule, with the same clamp (`simProtocol.ts footWish`) and the
+    same controller. A claim more than a micrometre off is refused, which catches a speed hack, a wall walked
+    through, and a position written into the page's memory.
+  - **Into a car**: the car must be within the realm's door (3.8 m) of where the room has the player. A car this
+    player drove before is held by the room where it was left, and must be within 0.5 m of that spot. Any other car
+    is an AI car, and an AI car's position is not computable on a server: it is a Rapier body that brakes for the
+    pedestrians of each page's own GPU crowd (the First Law), so every page's traffic is its own. What the room checks
+    is everything that can be checked: the car on its own ring's lane (within 1.0 m: the fleet's own cars stray at
+    most 0.53 m on straights and 0.78 m in corners, measured), facing along it (within 0.5 rad), no faster than the
+    ring's limit, upright, its chassis at a car's height and not spinning. The room then takes over the car in
+    exactly the state the page reported.
+  - **At the wheel** it replays the runs on its own copy of the car, which is then the truth: a chassis claim more
+    than a micrometre off it is refused.
+  - **Out of a car**: the exit point must be within 0.5 m of the one the room computes from its own chassis
+    (`carRig.ts exitPoint`, the realm's rule), and the room puts the player down at its own point.
+  - **What a door can carry you**: at most the door and an exit, about 6 m, and the room takes two doors a second
+    (a burst of four), so hopping from car to car is no faster than a run.
+  - A packet is also refused for any of these: more substeps than the clock allows (the realm's 60 a second, refilled
+    5 % faster so a bank spent in a stall comes back within a minute, three seconds banked: a network stall up to 3 s
+    is ridden out); more doors than the clock allows; a malformed, replayed or forged input; a mode without its door
+    (at a wheel without taking one, on foot without leaving it); too many inputs.
+  - A refused packet is answered in the same turn with a correction: the truth, under a new correction number. On
+    foot nothing of the refused packet is kept; a door it took is kept if it was good on its own. At the wheel the
+    replay is kept (it is the room's own physics) and the correction carries the car's full state. Inputs the page
+    sent before it applied the correction are dropped unread for 5 s after it (an honest stall's backlog, on an
+    allowance of its own); after that, or past that allowance, each is a refusal.
   - A player who keeps earning corrections (more than ten a minute) is removed (code 4008).
 - **Snap reconciliation on the page** (`netClient.ts`, `engine.ts`). The welcome is the first correction: the spawn.
-  The engine applies each new correction once, as a teleport of player 1 to the truth. That teleport is the one
-  thing the room may ask of the physics realm. The page then walks on from there. `net status` shows how often the
-  room has snapped you and why (`snapped 1  last: claim 30.00 m from the mirror's pose`).
+  The engine applies each new correction once: on foot as a teleport of player 1 to the truth, at the wheel as the
+  car built again in the room's state (`simCore.ts` `netCar`). Those, and the room mode on the welcome and off when
+  the session ends, are the only things the room may ask of the physics realm. `net status` shows how often the
+  room has snapped you and why (`snapped 1  last: claim 30.00 m from the mirror's pose`); its dropped count is the
+  steps the room could not have kept (run before a correction was applied), not the ones held for the next input.
 - **What everyone sees.** Other players come from the server's truth, not from what a page claims. They come back
   as pose records and are drawn as ghosts (`07_Execute_Actions/netView.ts`): the crowd's business-casual body on foot,
   the car body at a wheel, in ghost view's ink, translucent, casting no shadow. A remote player is never a collider,
@@ -1307,10 +1351,11 @@ is the only word on where anyone is; the page's own physics realm is the predict
   and hands it in through the `NetHost` seam (`netWiring.test.ts`). The room's chat and pings reach the captions; a
   remote ping is cued where it landed and captioned under the sender's name, goes on no board and asks nobody over.
 - **The page** (`netClient.ts`). `net join <ws-url> [<token>]` (operator tier) joins a room under the name Wren knows
-  you by ("Visitor" before you have one), in the city of this page's `?seed`. A page walking the surveyed region
-  (`?region=on`) cannot join yet: the mirror holds the procedural city. The client speaks ws or wss only to a
-  loopback address (`localhost`, `127.0.0.0/8`, `[::1]`): the host on this machine, or the local end of a tunnel or
-  proxy you run towards a room elsewhere.
+  you by ("Visitor" before you have one), in the city of this page's `?seed` with its fleet (`?cars`) on the track
+  network. A page walking the surveyed region (`?region=on`) or with the track network off (`?tracks=0`) cannot join:
+  the mirror holds the procedural city and the fleet's plan. The client speaks ws or wss only to `localhost` or
+  `127.0.0.1`, the hosts the page's content security policy reaches: the host on this machine, or the local end of a
+  tunnel or proxy you run towards a room elsewhere.
   - **A server in the cloud** is reached the same way: run the host there (`NET_HOST`, behind TLS) and reach it
     through a local end on this machine (an SSH tunnel such as `ssh -L 8787:127.0.0.1:8787 <server>`, or a reverse
     proxy terminating wss). The page never names an address off this machine; the Phase 11 air gap
@@ -1322,31 +1367,53 @@ is the only word on where anyone is; the page's own physics realm is the predict
 - **The 14A screen on names and chat.** Every player name and every chat line goes through `conduct.ts screen()`
   on the host, in the client before anything is sent, and once more on the page when it arrives (the host is not
   trusted either: a welcome or snapshot carrying an inadmissible name is refused whole). An inadmissible line is
-  dropped silently, with no relay and no reply, and counted. Every refusal counts against the peer, whether a
-  malformed frame, an out-of-rate input, a stale sequence number, a bad token or an inadmissible line; at eight
-  the host closes the socket (code 4008) and the room announces the departure. A peer too slow to read what it is
-  sent is closed (4009) rather than buffered without end. A host that sends the page enough malformed messages is
-  left the same way.
-- **The smoke test.** `npm run smoke:net` starts the real server as a process of its own and plays a client over a real
-  socket. It checks:
-  - that a missing or forged token is refused before a socket opens;
-  - that an honest walk is kept;
-  - that five crafted illegal packets are each refused and corrected within 50 ms (measured here: 0.8–5.9 ms over
-    two runs), with the server's truth unchanged. The five are a position written into memory, 600 substeps in one
-    packet, a third half-second burst at once (the room banks one second), a walk through the podium east of the
-    spawn sidewalk, and an injected velocity of three runs.
+  dropped silently, with no relay and no reply, and counted. Two budgets remove a peer. Refusals (a malformed or
+  forged frame, an out-of-rate input, chat or ping, a stale input long after its correction, a bad token, an
+  inadmissible line) count toward eight, at which the host closes the socket (code 4008). Corrections (an input the
+  authority will not keep: a stale sequence number, a correction never made, a future ack, more substeps or doors
+  than time allows, a claim off the truth) count toward ten a minute, with the same close. A host that sends the
+  page enough malformed messages is left the same way.
+- **The smoke test.** `npm run smoke:net` starts the real server as a process of its own (snapshots once a second,
+  so the answer to a packet is plainly its correction) and plays a client over a real socket. It checks that a
+  missing or forged token is refused before a socket opens, that an honest walk is kept, and that nine crafted
+  illegal packets are each refused and corrected within 50 ms (measured here: 0.9–15.5 ms), with nothing else sent
+  back and the server's truth unchanged: a position written into memory, 600 substeps in one packet, a burst past
+  the bank of 180 substeps (the correction proves the six honest bursts before it were the ones kept), a walk
+  through the podium east of the spawn sidewalk, an injected velocity of three runs, a door into a car 284 m away, a
+  car claimed beside the player but off every ring, a door out of a car never taken, and a wheel never taken.
+- **Fuzzing and the parity proof** (Phase 13). Seeded, replayable property suites
+  (`02_Define_The_Rules/property.ts`) fuzz every layer:
+  - the protocol core (`protocol.fuzz.test.ts`): validators total, closed and idempotent over 50,000 near misses;
+    seals refused for any change; the room's invariants over 400 adversarial sessions on a chaotic clock;
+  - the host over real sockets (`host.fuzz.test.ts`): 360 hostile connections a run (random bytes, broken upgrades,
+    malformed and oversized frames split at random, resets, silences, same-token races, a slow-header client);
+  - the Three Laws, the Bouncer and the Ring-0 auditor (`ring0.fuzz.test.ts`), the car rules both sides share
+    (`carRig.fuzz.test.ts`), the WebAssembly routing core against its reference (`routingWasm.fuzz.test.ts`) and
+    kv-pager against a model of what it holds (`kvPager.fuzz.test.ts`);
+  - and the parity proof (`parity.fuzz.test.ts`): two pages, each the full city with 36 cars, drive on a network
+    that jitters both ways, spikes past a second and stalls for 2.5 s; they take doors, floor the throttle, haul the
+    handbrake and crash into buildings at once, while a third player lies beside them. Over 90 s of the city the
+    room kept about 9,000 steps of the honest two, each within a micrometre of its own replay, corrected neither
+    once, and holds the last pose of each to the bit; every lie was corrected.
+  The fuzzing found and fixed: drive inputs that spent no substep budget, a validator a prototype-less object could
+  make throw, player lists left unfrozen, a First Law that a non-number reading slipped past (it now fails toward
+  the person), a speed clamp that turned an infinite velocity into a NaN, a substep bank that never came back after
+  a stall, and a slow-header client that could hold a socket for a minute.
 - **What is a stub, and what is not there.**
   - Voice: `attachPeer` places a peer's `MediaStream` in the soundscape, but the signalling that would carry one
     (offer, answer and candidates over this socket) is a documented stub, so no voice is sent or received.
   - The page has no chat command: it receives the room's chat and sends none.
-  - The surveyed region has no mirror.
+  - The surveyed region has no mirror, and street-hopping traffic (`?tracks=0`) no plan.
+  - Each page runs its own traffic: the AI cars you see are your page's, not another player's. Cars pass through
+    cars (the realm's contact policy), so two players' cars never meet.
   - Snapshots carry every joined player every tick (at most 32 peers, no interest management).
   - There is no reconnection or resume.
-  - The host trusts its proxy for TLS and the origin check, and closes on a fragmented frame.
+  - The host trusts its proxy for TLS and the origin check; it closes on a fragmented frame and counts a binary one
+    as a refusal.
   - The HUD does not show the session; `sim` and `__SIM__` report it as `output.net`.
   - Tested in Node: the client against the real host, and the page's realm, client and host end to end
-    (`authority.node.test.ts`). A room joined from two browser tabs has not been tried here: the page's 3D track
-    cannot run in this headless browser (see Browser support).
+    (`authority.node.test.ts`, two drivers; `parity.fuzz.test.ts`). A room joined from two browser tabs has not been
+    tried here: the page's 3D track cannot run in this headless browser (see Browser support).
 
 ## Layout (causal order)
 
@@ -1364,7 +1431,7 @@ Every source file opens with "Why does this file exist? / What breaks if it is r
 | 07_Execute_Actions | `engine.ts`, `simClient.ts`, `simProtocol.ts`, `physics.worker.ts`, `simHost.ts`, `simCore.ts`, `physics.ts`, `vehicles.ts`, `car.ts`, `fleetView.ts`, `trackFleet.ts`, `ragdollRealm.ts`, `rigView.ts`, `sanctuary.ts`, `player.ts`, `head.ts`, `controls.ts`, `viewports.ts`, `quality.ts`, `audio.ts`, `acoustics.ts`, `captions.ts`, `postfx.ts`, `cinema.ts`, `shutter.ts`, `volumetrics.ts`, `ghost.ts`, `contact.ts`, `dissolve.ts`, `netView.ts`, `operator.ts`, `harness.ts`, `spatial.ts`, `Hud.tsx`, `BootVeil.tsx`, `Concierge.tsx`, `Customizer.tsx`, `glyphs.ts`, `terminal/` (`Terminal.tsx`, `bridge.ts`, `commands.ts`, `repl.ts`) | Frame loop; the physics realm (worker entry, its message door, the simulation core, Rapier world, fleet on its tracks, the scheduled craft and their pose stream, the balance machine over the pedestrians near the operator and its rig stream, sanctuary, up to four avatars) and the page's end of it (client, protocol, fleet drawing, rig drawing, first-person heads, per-seat controls, the split-screen arithmetic); quality applier, soundscape (with its speech voice, rooms, peer voices and the sound-event stream), room acoustics, the caption track, post chain, the cinema camera (24 fps pacer, 180° shutter, ND and film response), sun shafts, ghost view, the contact transition and the code dissolve's envelope, the network ghosts, operator facade and physics harnesses (the spatial sweep's plan among them), HUD, boot veil, concierge, the wardrobe card, control glyphs, console (with R0, its stack machine) |
 | 08_Swarm | `recruitment.ts`, `taskRouter.ts`, `memory.ts`, `ping.ts` | The swarm's hash-chained memory and weight ledger; the operator's voice: on-device continuous speech recognition, the request parser, the main-thread proximity match, the request to the physics worker, the rally request, and the console and `recruit()` fallback; the task gateway that binds skill-bound work to the tethered swarm; the swarm's episodic memory (IndexedDB, by world seed and pedestrian); the ping's pick, board and rally plan |
 | 09_Cognition | `localCompute.ts`, `claudeApi.ts`, `router.ts`, `prefixCache.ts`, `kvPager.wasm.ts` (generated from `native/kv-pager-wasm`), `localSpeech.ts` | The prompt-prefix page table over kv-pager as WebAssembly; the operator's model providers and voice: the router (`claude` through a gateway on this machine with the operator's key; `ollama` and `llamacpp` on this machine), the local client in both wire formats and the Claude client, the system prompt opening with the 14A core and then the tethered people's skills and memories, the streamed answer, the speech client for a speech server on this machine, the audio for the soundscape, the cut when the tether breaks, and every failure as one sentence |
-| 10_Network | `replication.ts`, `replication.node.ts`, `mirror.node.ts`, `plane.node.ts`, `netClient.ts` | The network room: the plain-data protocol core and authoritative room both sides share (validated both ways, rate-limited, screened under 14A, every input judged by an authority and refused ones corrected), the Node-only WebSocket host (HMAC session tokens checked at the upgrade, never bundled), the headless Ring-0 mirror it judges with (the city of the seed in Rapier, the realm's own character controller, the Ring-0 person audit), an open-plane authority for the protocol's tests, and the opt-in page client that joins only over wss (or plain ws on this machine), reports the realm's steps and snaps to corrections, and reconciles the room's snapshots into the poses `netView.ts` draws |
+| 10_Network | `replication.ts`, `replication.node.ts`, `mirror.node.ts`, `garage.node.ts`, `plane.node.ts`, `netClient.ts` | The network room: the plain-data protocol core and authoritative room both sides share (validated both ways, rate-limited, screened under 14A, every input judged by an authority and refused ones corrected), the Node-only WebSocket host (HMAC session tokens checked at the upgrade, one connection per player, never bundled), the headless Ring-0 mirror it judges with (the city of the seed in Rapier, the realm's own character controller, the Ring-0 audit) and its garage (every player's car replayed with the page's own car physics, every door checked), an open-plane authority for the protocol's tests, and the opt-in page client that speaks ws or wss only to `localhost` or `127.0.0.1` (the host on this machine, or the local end of a tunnel or proxy), reports the realm's steps and doors, snaps to corrections, and reconciles the room's snapshots into the poses `netView.ts` draws |
 | native/kv-pager | `01_geometry.rs`, `02_page_table.rs`, `03_gpu/`, `bin/stress.rs`, `bin/chaos/` | A paged KV cache (its page table also runs on the page, through `native/kv-pager-wasm`) (prefix caching, copy-on-write, the WGSL decode kernel, the stress and chaos runs); `CAUSAL.md` traces the copy-on-write chain |
 | native/kv-pager-wasm | `lib.rs` | kv-pager's page table (no GPU) behind a C ABI, built to WebAssembly as `09_Cognition/kvPager.wasm.ts` (`npm run native:wasm`) |
 | native/routing | `lib.rs`, `layout.rs`, `math.rs`, `tests.rs` | The track arithmetic in dependency-free Rust, built to WebAssembly as `06_Make_Decisions/routing.wasm.ts`; its layout is defined once in each language and the two are proved equal |
@@ -1652,6 +1719,47 @@ Claude API (a fake server stood in), a room joined from a browser, physical phon
 devices.
 
 ## History
+
+**1.4.0 (Agent City v1.0.0 Stable Release)**: the operator's Phase 13 directive, zero-defect fleet reconciliation
+and formal verification. The architecture is `docs/agent-city-v1-beta-blueprint.md` (Phase 13); the networking is
+described in Networking above.
+- **Phase 13.1, the vehicle teleport exploit closed:** the room replays cars. Its garage (`10_Network/garage.node.ts`)
+  knows the fleet's own plan from the seed and replays every player's car with the page's own car physics, shared in
+  `07_Execute_Actions/carRig.ts`, to the bit. Every door is checked against the room's own numbers: a car this player
+  left within 0.5 m of where the room holds it, an exit within 0.5 m of the point the room computes from its own
+  chassis, any other car within the realm's door, on its own ring's lane, facing along it, at its ring's speed or
+  under. The 0-substep foot/drive switch that moved a player 16.5 m a pair (the critical finding of the Phase 12
+  review) is gone: a mode without its door is refused, a door carries a player at most about 6 m, and the room
+  takes two a second. **What the directive asked and what is true:** it asked the server to compute every car's
+  coordinate from the Phase 7.3 schedule on the realm clock. An AI car's position is not a schedule: it is a Rapier
+  body that stops at signals and brakes for the pedestrians of each page's own GPU crowd (the First Law), so every
+  page's traffic is its own and no server can compute it. Only the trains, drones and planes are timetabled. The
+  0.5 m check therefore applies to the cars the room holds and to every exit; an AI car the room does not hold is
+  checked against its ring's lane within the fleet's measured envelope (1.0 m) and the 3.8 m door.
+- **Phase 13.1, room mode:** while joined, player 1 walks and drives in the page's realm as the room does (a ghost
+  only fixed geometry stops, the authored tuning, car-moving commands refused, a car left stops dead), so the page
+  and the room agree to the bit and the room's tolerance is a micrometre. A correction at the wheel carries the
+  car's full state, and both sides build the car again from those numbers.
+- **Phase 13.2, property-based fuzzing and the parity proof:** a seeded, replayable harness
+  (`02_Define_The_Rules/property.ts`) and suites on the protocol core, the host over real sockets, the Three Laws
+  and the Ring-0 auditor, the shared car rules, the WebAssembly routing core and kv-pager; and the proof
+  (`parity.fuzz.test.ts`) that two drivers on a network that jitters, spikes and stalls, taking doors and crashing
+  into buildings beside a liar, are never a micrometre from the room's replay and end at its pose to the bit. See
+  Networking, Fuzzing and the parity proof.
+- **Phase 13.3, fixes found on the way** (the Phase 12 review's 47 findings, and the fuzzing):
+  - the host survives a reset after a refused upgrade (it crashed); refused upgrades are ended, a slow-header client
+    is dropped, pings are metered and every write checks the backlog; a short secret starts no host; one connection
+    per player; a session ends with its token; logged text is escaped;
+  - drive inputs now spend the substep budget (they spent none); the budgets ride out a 3 s stall and refill 5 %
+    faster than the realm steps, so a stall's bank comes back; inputs under an old correction no longer count
+    against the input rate; a quiet page sends a keepalive;
+  - the First Law fails toward the person on a reading that is not a number; the speed clamp leaves a non-finite
+    velocity to the audit instead of making it a NaN; the validators are total and freeze everything they return;
+  - every fresh Rapier world is stepped once at build, so a page's first substep finds the ground as the server's
+    does; the engine reports the velocity the realm applies and resets its correction on a new session; `net
+    status` counts as dropped only what the room could not keep; the room is joined only at the hosts the page's
+    content security policy reaches.
+- **Version:** 1.4.0 (`package.json`, `brand.ts`); the release tag is `v1.0.0-stable-release`.
 
 **1.4.0-beta.1 (Agent City v1.0 Stable Beta)**: the operator's directive for Phases 7 to 10. The architecture
 behind it, item by item with the tests that prove each, is `docs/agent-city-v1-beta-blueprint.md`.

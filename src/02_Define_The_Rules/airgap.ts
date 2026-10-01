@@ -58,10 +58,17 @@ export function loopbackServer(url: unknown): string | null {
   return u !== null && (u.protocol === 'http:' || u.protocol === 'https:') ? u.origin : null
 }
 
-/** A room host's address, path included, if it is on this machine: ws or wss only. */
+/**
+ * The hosts the page's content security policy lets a socket reach (index.html connect-src: `localhost` and
+ * `127.0.0.1`, any port). A room is joined only at one of them: another loopback address passes the gate above but the
+ * browser would refuse the socket with an error the player cannot read, so it is refused here, with the reason.
+ */
+export const ROOM_HOSTS: readonly string[] = Object.freeze(['localhost', '127.0.0.1'])
+
+/** A room host's address, path included, if it is on this machine and the page's policy reaches it: ws or wss only. */
 export function netServer(url: unknown): string | null {
   const u = loopbackUrl(url)
-  return u !== null && (u.protocol === 'ws:' || u.protocol === 'wss:') ? u.href : null
+  return u !== null && (u.protocol === 'ws:' || u.protocol === 'wss:') && ROOM_HOSTS.includes(u.hostname) ? u.href : null
 }
 
 /** The one sentence every refusal is. */

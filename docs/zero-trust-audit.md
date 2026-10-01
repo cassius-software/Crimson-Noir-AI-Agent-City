@@ -187,6 +187,15 @@ which is wider than the policy. Chromium also refuses an IPv6 literal (`[::1]`) 
 headless in both tracks with a `securitypolicyviolation` listener: no violation, no new error. The single-file build inlines its scripts and styles, hence `'unsafe-inline'`; a
 nonce would need the build to stamp one. `index.html` now carries this policy, without the `[::1]` sources (see above).
 
+**Phase 13: the room gate is the policy's hosts.** A gate wider than the policy turned a typed `ws://[::1]:8787` or
+`ws://127.0.0.2:8787` into a socket the browser refused with an error the player could not read. `netServer` now
+admits a room only at `localhost` or `127.0.0.1` (`airgap.ts ROOM_HOSTS`), exactly the ws and wss sources of the
+shipped policy, and refuses any other loopback address itself, with the reason; `airgap.test.ts` reads `index.html`
+and fails if the two ever part. The model and speech gate (`loopbackServer`) is unchanged: its clients name their
+servers by `localhost`, and a server at another loopback address is still refused by the policy, as above. On the
+host side, the room's own defences against what reaches it over that socket (one connection per player, a session
+ending with its token, metered pings, a header deadline, ended refusals) are described in the README, Networking.
+
 ## What changed, in one list
 
 - New: `02_Define_The_Rules/airgap.ts` and its test; `docs/zero-trust-audit.md` (this file).

@@ -804,6 +804,80 @@ reported position deviates.
   - **What is not covered yet.** The surveyed region has no mirror, so a page walking it cannot join. The car is
     bounded, not simulated. There is no interest management, reconnection or lag compensation for anything but
     the player's own walk.
+- **Superseded in Phase 13** (below): the car is now replayed, not bounded; the protocol is 4 (`onyx.4`); in a room the
+  page walks as the mirror does, so the 25 cm tolerance and the snaps from local obstacles are gone (the tolerance
+  is a micrometre); the step after a teleport now starts from the new point on both sides.
+
+### Phase 13: zero-defect fleet reconciliation and formal verification
+
+The operator's order: close the vehicle teleport exploit by porting the Phase 7.3 track schedule to the server and
+computing every car's coordinate on the realm clock, verifying every `enter_vehicle` and `exit_vehicle` within 0.5 m;
+fuzz the WebSocket host, the Ring-0 kernel and the WebAssembly reconciliation bounds under chaotic networks and prove
+the server and client realms never diverge by more than a micrometre; then fix everything found, keep 14A and the air
+gap, and release.
+
+- **13.1 What a server can know about a car, and what it cannot.**
+  - **The premise, corrected.** The Phase 7.3 schedule is closed-form only for the trains, drones and planes
+    (`tracks.ts scheduledPose`). A car on a ring is a Rapier body driven by a track follower that stops at signals
+    and is held by the First Law for pedestrians the page reads from its own GPU crowd; every page runs its own
+    traffic on its own clock. No server can compute where an AI car is. What it can compute natively, from the seed
+    and the fleet size alone, is the fleet's own plan: every ring's geometry, every car's ring, seat and SUV flag
+    (`carRig.ts planFleet`, the very function the page's fleet is built from).
+  - **What it can do is better than a schedule: replay the player's own car.** A car's motion per substep depends
+    only on its rigid-body state, the vetted wheel command, the tuning and the wheel rays against the static city.
+    The garage (`10_Network/garage.node.ts`) replays every player's car with the page's own code (`carRig.ts`:
+    the rig, the substep, the Ring-0 clamp), in a drive world of that player's own holding every building box of
+    the city. Measured: bit-exact only with the full city (a world of the buildings within 200 m leaves 6e-5 m), and
+    only when both sides build the car again from the same numbers at a handover (`rebuildCarRig`): a fresh vehicle
+    controller alone left 1.6 cm (the wheels' hidden state), and a car resting on a building corner left 3 mm (its
+    contacts' warm-start impulses). With both, `garage.node.test.ts` drives 1,200 frames of 0–3 substeps, leaves the
+    car, walks, comes back and drives again, and the page's car and the room's differ by 0.
+  - **The doors.** Into a car: within the realm's door (3.8 m) of the room's pose; a car this player left within
+    0.5 m of where the room holds it (stopped dead where it was left); any other car on its own ring's lane within
+    the fleet's measured envelope (1.0 m: at most 0.53 m on straights, 0.78 m in corners over a minute of 36 cars),
+    facing along it within 0.5 rad, no faster than the ring's limit, upright, at a car's height, not spinning. Out of
+    a car: within 0.5 m of the exit point the room computes from its own chassis, where the room then puts the
+    player. A mode without its door is refused, and the room takes two doors a second, so a hop chain moves a player
+    at most about 6 m a pair, no faster than a run (`mirror.node.test.ts`).
+  - **Room mode** (`simCore.ts` `room`). In a room player 1 is a ghost only fixed geometry stops, the tuning is the
+    authored car's, the console commands that move a car are refused, and a car left stops dead. On foot the page
+    and the mirror then agree to the bit (0 over 700 frames with walls), and the tolerance is a micrometre.
+  - **One more parity defect found on the way:** every fresh Rapier world must be stepped once before its first
+    query. The page's realm moved its avatar in an unstepped world on the very first substep (the ground snap missed
+    by 3 cm) while the mirror's was stepped; `Physics.build` now steps every world it builds.
+- **13.2 Property-based fuzzing and the proof.** A seeded harness (`02_Define_The_Rules/property.ts`: a reproducible
+  stream, adversarial numbers, a structural mutator, `forAll` that prints the seed and case to replay) and suites:
+  - `protocol.fuzz.test.ts`: the validators total, closed and idempotent over 50,000 near misses; any change to a
+    sealed frame refused; the room's invariants (kept seq and correction only rise, substeps and doors within the
+    clock, the truth moved only by a kept input, determinism) over 400 adversarial sessions with jitter and stalls;
+    an honest page on a chaotic clock never corrected; adversarial claims never moving the truth.
+  - `host.fuzz.test.ts`: 360 hostile connections a run over real sockets; the host never throws, lets every socket
+    go, keeps one connection per player, drops a slow-header client, and still serves an honest one.
+  - `ring0.fuzz.test.ts`, `carRig.fuzz.test.ts`: the Three Laws (bounded, the First Law first, failing toward the
+    person, monotone, pure), the Bouncer's rising edges, the auditor's classifications, the clamp, the exit rule.
+  - `routingWasm.fuzz.test.ts`, `kvPager.fuzz.test.ts`: the WebAssembly modules against their references on the
+    inputs the seeded tests do not draw.
+  - `parity.fuzz.test.ts`, the proof: two pages, each the full city with 36 cars, on a network that jitters both
+    ways (2–80 ms, spikes to 1.5 s, stalls to 2.5 s), drive at once (doors, full throttle, the handbrake, reverse,
+    crashes into buildings) beside a liar. Over 90 s the room kept about 9,000 honest steps, each within a
+    micrometre of its replay (the tolerance), corrected neither driver once, and ends at both pages' poses to the
+    bit; every lie was corrected. `authority.node.test.ts` is the calm-network version with two drivers.
+- **13.3 Found and fixed.** The Phase 12 review's findings (the critical host crash on a reset after a refused upgrade,
+  the 0-substep teleport, the drive slack, the shared-token slots, the empty secret, honest snaps from local
+  obstacles, the stall that kicked an honest page, and the rest, listed in `agent_handoff_state.md`), and what the
+  fuzzing found: drive inputs that spent no substep budget, a validator that a prototype-less object made throw,
+  unfrozen player lists, a First Law that a non-number reading slipped past, a clamp that made a NaN of an infinite
+  velocity, a substep bank that never came back after a stall (it now refills 5 % faster than the realm steps), and
+  a slow-header client that held a socket.
+- **Open, for the operator.**
+  - **AI cars are checked by an envelope, not a coordinate**, for the reason above. A client can claim an AI car
+    anywhere on its own ring's lane within reach of its door; what it gains is a door's reach, at the door rate.
+  - **A cheating driver can ignore the First Law in its own page.** The room replays the wheel command the page
+    reports and cannot run the Bouncer (the pedestrians are the page's GPU crowd). The car still obeys the room's
+    physics and the velocity cap, and remote players are poses, never bodies, so nobody else's page is touched.
+  - **Cost.** A driving player costs the host about 4 % of a core (a world step of the full city is about 0.7 ms);
+    32 drivers at once would need more than one core.
+  - **A clock-speed cheat gains at most 5 %**, the refill headroom that lets an honest page's bank come back.
 
 ## 4. Verification
 

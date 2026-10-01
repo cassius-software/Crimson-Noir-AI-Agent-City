@@ -73,7 +73,9 @@ test('netServer: ws or wss to this machine only, never with credentials; the gat
   assert.equal(netServer('wss://localhost:8788/city'), 'wss://localhost:8788/city')
   assert.equal(netServer('ws://127.0.0.1:8787'), 'ws://127.0.0.1:8787/')
   assert.equal(netServer(' ws://localhost:8787 '), 'ws://localhost:8787/')
-  assert.equal(netServer('ws://[::1]:8787'), 'ws://[::1]:8787/')
+  // Loopback, but not a host the page's content security policy reaches: refused here with a reason, not by the browser.
+  assert.equal(netServer('ws://[::1]:8787'), null)
+  assert.equal(netServer('ws://127.0.0.2:8787'), null)
   assert.equal(netServer('wss://rooms.example.net/city'), null, 'a room off this machine, even over TLS')
   assert.equal(netServer('ws://rooms.example.net'), null, 'a token would cross the network in clear')
   assert.equal(netServer('wss://ada:secret@localhost:8788'), null)
@@ -87,8 +89,8 @@ test('connect refuses what it must before any socket opens: the address, the tok
   let opened = 0
   let offered: string[] = []
   const c = createNetClient({ open: (_url, protocols) => { opened++; offered = protocols; return { send() {}, close() {}, onopen: null, onmessage: null, onclose: null, onerror: null } } })
-  assert.match(c.connect('ws://rooms.example.net', 't', 'Ada', WORLD) ?? '', /only ws or wss to this machine/)
-  assert.match(c.connect('wss://rooms.example.net', 't', 'Ada', WORLD) ?? '', /only ws or wss to this machine/)
+  assert.match(c.connect('ws://rooms.example.net', 't', 'Ada', WORLD) ?? '', /only ws or wss to localhost or 127\.0\.0\.1/)
+  assert.match(c.connect('wss://rooms.example.net', 't', 'Ada', WORLD) ?? '', /only ws or wss to localhost or 127\.0\.0\.1/)
   assert.match(c.connect('wss://localhost:8788', '', 'Ada', WORLD) ?? '', /token/)
   assert.match(c.connect('wss://localhost:8788', 'x'.repeat(LIMITS.token + 1), 'Ada', WORLD) ?? '', /token/)
   assert.match(c.connect('wss://localhost:8788', 'a token, with spaces', 'Ada', WORLD) ?? '', /cannot be offered/)

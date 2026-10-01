@@ -489,6 +489,31 @@ test('one player, one connection: a second under the same subject replaces the f
   }
 })
 
+test('the removals over a socket: ten corrections a minute and the eleventh closes 4008; a joined peer silent past the idle timeout is let go (4001)', async () => {
+  const clock = { now: Date.now() }
+  const host = await plane({ tickHz: 100, now: () => clock.now })
+  try {
+    const liar = await open(host, 'liar')
+    const w = await join(host, liar, 'Liar')
+    let fix = w.fix
+    for (let seq = 1; seq <= LIMITS.correctionsPerMinute + 1 && liar.ws.readyState === WebSocket.OPEN; seq++) {
+      const from = liar.got.length
+      liar.send(input(seq, fix, [[0, 0, 1]], { x: 999, y: 0, z: 0 }))
+      if (seq <= LIMITS.correctionsPerMinute) fix = (await liar.next('correct', from)).fix
+    }
+    const closed = await liar.closed
+    assert.deepEqual([closed.code, closed.reason], [4008, 'repeated illegal movement'])
+    const quiet = await open(host, 'quiet')
+    await join(host, quiet, 'Quiet')
+    clock.now += LIMITS.idleTimeoutMs
+    const idle = await quiet.closed
+    assert.deepEqual([idle.code, idle.reason], [4001, 'idle'])
+    await until(() => host.room.peers.size === 0, 'both gone from the room')
+  } finally {
+    await host.close()
+  }
+})
+
 test('WebSocket pings are metered: a flood of them is refused and the peer removed (4008), joined or not', async () => {
   const host = await plane()
   try {

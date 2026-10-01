@@ -9,7 +9,8 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { installAirgap, isLoopbackHost, loopbackFetch, loopbackOnly, loopbackServer, loopbackUrl, netServer, refusal } from './airgap.ts'
+import { readFileSync } from 'node:fs'
+import { installAirgap, isLoopbackHost, loopbackFetch, loopbackOnly, loopbackServer, loopbackUrl, netServer, refusal, ROOM_HOSTS } from './airgap.ts'
 
 test('loopbackOnly: http(s) and ws(s) to localhost, 127.0.0.0/8 or [::1], without credentials, give the origin; nothing else does', () => {
   const ok: [string, string][] = [
@@ -46,6 +47,10 @@ test('the aliases are the gate narrowed by protocol: loopbackServer gives an htt
   assert.equal(netServer('http://localhost:8787'), null, 'not a room')
   assert.equal(netServer('wss://rooms.example.net'), null)
   assert.equal(netServer('ws://ada:secret@localhost:8787'), null)
+  // Every room host the gate admits is one the page's content security policy reaches, and no other loopback address.
+  const csp = readFileSync(new URL('../../index.html', import.meta.url), 'utf8').match(/connect-src ([^;]+);/)?.[1] ?? ''
+  for (const h of ROOM_HOSTS) for (const scheme of ['ws', 'wss']) assert.ok(csp.split(' ').includes(`${scheme}://${h}:*`), `${scheme}://${h}:* in connect-src`)
+  for (const other of ['ws://[::1]:8787', 'ws://127.0.0.2:8787', 'wss://127.1.2.3:8788']) assert.equal(netServer(other), null, other)
   assert.equal(refusal('http://example.com'), 'http://example.com is not on this machine: the page addresses only localhost, 127.0.0.0/8 or [::1]')
 })
 

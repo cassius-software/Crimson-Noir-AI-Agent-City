@@ -135,7 +135,7 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
   const now = o.now ?? (() => Date.now())
   const open = o.open ?? ((url: string, protocols: string[]): NetSocket => {
     // connect() has already held the URL to this machine; the socket is still only ever made for one the gate admits.
-    if (netServer(url) === null) throw new Error('only ws or wss to this machine, with no credentials')
+    if (netServer(url) === null) throw new Error('only ws or wss to localhost or 127.0.0.1 (this machine, as the page\'s policy allows), with no credentials')
     return new WebSocket(url, protocols) as unknown as NetSocket
   })
   let status: NetStatus = 'idle'
@@ -146,7 +146,7 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
   let seq = 0
   let said = 0
   let refusals = 0
-  let buckets: PeerBuckets = peerBuckets(now())
+  let buckets: PeerBuckets = peerBuckets(now(), 1)
   let snapshotAt = 0
   let unsent: InputMessage[] = []
   // The authority: the newest correction received, and the steps not yet sent (runs of one mode, claimed at `claim`).
@@ -292,7 +292,7 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
     connect(url, token, name, place) {
       if (socket) return 'a session is already open'
       const href = netServer(url)
-      if (href === null) return 'only ws or wss to this machine, with no credentials'
+      if (href === null) return 'only ws or wss to localhost or 127.0.0.1 (this machine, as the page\'s policy allows), with no credentials'
       if (typeof token !== 'string' || token.length === 0 || token.length > LIMITS.token) return 'a session token is required'
       const auth = authProtocol(token)
       if (auth === null) return 'that session token cannot be offered to a host (letters, digits, dots, dashes and underscores only)'
@@ -310,7 +310,7 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
       seq = 0
       said = 0
       refusals = 0
-      buckets = peerBuckets(now())
+      buckets = peerBuckets(now(), 1)
       unsent = []
       key = token
       sent = 0

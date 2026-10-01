@@ -154,7 +154,9 @@ export function forwardSpeedOf(r: { x: number; y: number; z: number; w: number }
 export function clampSpeed(body: RAPIER.RigidBody, max: number): boolean {
   const u = body.linvel(vel)
   const speed = Math.hypot(u.x, u.y, u.z)
-  if (!(speed > max) || !(max >= 0)) return false
+  // A velocity that is not a finite number is the Ring-0 audit's to name (NON_FINITE), never the clamp's to scale:
+  // max/∞ is 0, and ∞·0 would invent a NaN.
+  if (!(speed > max) || !(max >= 0) || !Number.isFinite(speed)) return false
   const k = max / speed
   body.setLinvel({ x: u.x * k, y: u.y * k, z: u.z * k }, true)
   return true
