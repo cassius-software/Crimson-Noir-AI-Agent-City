@@ -17,6 +17,7 @@ import {
   Fn, attribute, cameraPosition, float, hash, instanceIndex, mix, normalLocal, positionLocal, positionPrevious, select, step,
   storage, time, uint, uniform, uniformArray, varyingProperty, vec3, vec4, wgslFn,
 } from 'three/tsl'
+import { CODE_DISSOLVE, applyCodeDissolve } from '../01_Initialize_World/codeDissolve.ts'
 import { PLAYER_INDEX, VARIANTS, agentQuota } from './crowdCompute.ts'
 
 /**
@@ -26,6 +27,12 @@ import { PLAYER_INDEX, VARIANTS, agentQuota } from './crowdCompute.ts'
  * one's own shadow walking.
  */
 export const OWN_BODY = { height: 1.6, radius: 0.8 } as const
+
+/**
+ * The ink of a dissolving pedestrian: the ghost view's person green (ghost.ts GHOST_COLOR.person, linear RGB). Stage 03
+ * cannot import stage 07, so the value is repeated here; dissolve.test.ts pins the two equal.
+ */
+export const PEOPLE_DISSOLVE_INK: readonly [number, number, number] = Object.freeze([0.85, 1, 0.85] as [number, number, number])
 
 type V3 = Node<'vec3'>
 type F1 = Node<'float'>
@@ -216,6 +223,7 @@ function agentBuffers(view: CrowdView, agentCount: number, listLength: number) {
     pos: storage(view.pos, 'vec4', agentCount).toReadOnly(),
     vel: storage(view.vel, 'vec4', agentCount).toReadOnly(),
     pose: storage(view.pose, 'vec4', agentCount).toReadOnly(),
+    dissolve: storage(view.dissolve, 'float', agentCount).toReadOnly(),
     lists: storage(view.drawLists, 'uint', listLength).toReadOnly(),
   }
 }
@@ -226,6 +234,12 @@ export class CrowdView {
   readonly vel: StorageBufferAttribute
   readonly pose: StorageBufferAttribute
   readonly drawLists: StorageBufferAttribute
+  /**
+   * The code dissolve's amounts (codeDissolve.ts; 0 solid, 1 gone), one float per agent: the engine writes them (by
+   * gpuBufferOf + queue.writeBuffer, the frame upload's path) when the user's body is inside a pedestrian. Page-only:
+   * crowd.wgsl never binds it, no pedestrian moves for it.
+   */
+  readonly dissolve: StorageBufferAttribute
   readonly drawArgs: IndirectStorageBufferAttribute
   /** Initial indirect args (index counts, zero instances); reset into the GPU buffer every frame. */
   readonly drawTemplate: Uint32Array<ArrayBuffer>
@@ -243,11 +257,13 @@ export class CrowdView {
     this.vel = new StorageBufferAttribute(new Float32Array(agentCount * 4), 4)
     this.pose = new StorageBufferAttribute(new Float32Array(agentCount * 4), 4)
     this.drawLists = new StorageBufferAttribute(new Uint32Array(quota * VARIANTS * 2), 1)
+    this.dissolve = new StorageBufferAttribute(new Float32Array(agentCount), 1)
     this.drawTemplate = new Uint32Array(VARIANTS * 2 * 5)
     this.pos.name = 'crowd.pos'
     this.vel.name = 'crowd.vel'
     this.pose.name = 'crowd.pose'
     this.drawLists.name = 'crowd.drawLists'
+    this.dissolve.name = 'crowd.dissolve'
 
     const geometries: BufferGeometry[] = []
     for (let lod = 0; lod < 2; lod++) {
@@ -278,6 +294,7 @@ export class CrowdView {
 
   private material(b: AgentBuffers, listBase: number, variant: number): MeshStandardNodeMaterial {
     const vSeed = varyingProperty('float', 'vAgentSeed')
+    const vDissolve = varyingProperty('float', 'vAgentDissolve')
     const woman = variant >= 2
     const m = new MeshStandardNodeMaterial()
     // One pose, built twice: for the eye (which folds away the body it looks out of) and for the shadow map.
@@ -286,6 +303,7 @@ export class CrowdView {
       const agent = b.pos.element(agentIndex)
       const motion = b.vel.element(agentIndex)
       const pose = b.pose.element(agentIndex)
+      const dissolve = b.dissolve.element(agentIndex)
       const seed = float(agentIndex)
       const h = (k: number) => hash(seed.add(k * 13.37))
       // Per-person accessories (bit per optional piece) and proportions.
@@ -301,12 +319,18 @@ export class CrowdView {
       const rig = attribute('rig', 'vec3')
       normalLocal.assign(xform(normalLocal, float(0), rig, agent, motion, pose, shape, time).normalize())
       vSeed.assign(seed)
+      // The fragment stage reads the code dissolve's amount from this varying (both passes: the shadow map drops the
+      // same cells).
+      vDissolve.assign(dissolve)
       const body = xform(positionLocal, float(1), rig, agent, motion, pose, shape, time)
       if (!eye) return body
-      // Every vertex on one point: zero-area triangles, nothing rasterised.
+      // Every vertex on one point: zero-area triangles, nothing rasterised. A body gone to code folds the same way,
+      // here where its amount is read (the fold applyCodeDissolve wraps over this reads the varying, which this stage
+      // writes only here, so that one never fires for a pedestrian: this one is the fold that acts).
       const head = agent.xyz.add(vec3(0, OWN_BODY.height, 0))
       const inside = agentIndex.equal(uint(PLAYER_INDEX)).and(cameraPosition.distance(head).lessThan(OWN_BODY.radius))
-      const placed = select(inside, agent.xyz, body)
+      const gone = dissolve.greaterThanEqual(CODE_DISSOLVE.fold)
+      const placed = select(inside.or(gone), agent.xyz, body)
       // Only a pass with a velocity target asks for the previous frame (the shadow map and ?cinema=0 never do).
       if (needsPrevious(builder)) positionPrevious.assign(placed.sub(vec3(motion.x, 0, motion.y).mul(this.frameSeconds)))
       return placed
@@ -348,6 +372,10 @@ export class CrowdView {
     m.colorNode = color
     m.roughnessNode = roughness
     m.metalnessNode = float(0)
+    // The code dissolve, over everything above, with the body's feet as its origin (fresh reads: nothing of posed()'s
+    // graph is shared across the fold's branches).
+    const feet = b.pos.element(b.lists.element(instanceIndex.add(uint(listBase)))).xyz
+    applyCodeDissolve(m, vDissolve, feet, PEOPLE_DISSOLVE_INK)
     return m
   }
 }

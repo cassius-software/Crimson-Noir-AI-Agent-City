@@ -14,7 +14,9 @@
  * with no transition, and the "falling green binary code" the product promises never shows.
  */
 import type { Furniture } from '../01_Initialize_World/city.ts'
+import { chassisBox } from './car.ts'
 import { GHOST_COLOR } from './ghost.ts'
+import { POSE } from './simProtocol.ts'
 
 /** The envelope and the reach. */
 export const DISSOLVE = Object.freeze({
@@ -59,6 +61,69 @@ export function poleSlot(i: number, f: Furniture): PoleSlot | null {
   if (i < lamps + trees) return { list: 'trees', index: i - lamps }
   if (i < lamps + trees + signals) return { list: 'signals', index: i - lamps - trees }
   return null
+}
+
+/**
+ * Copies a buffer's dirty range into `into`, `stride` floats per slot (the fleet's wheels take four per car), and
+ * returns how many floats were written; nothing when the buffer is clean. The caller marks the attribute and cleans.
+ */
+export function copyDirty(b: DissolveBuffer, into: Float32Array, stride = 1): number {
+  if (!b.dirty || !(stride >= 1)) return 0
+  const end = Math.min(b.dirtyEnd, b.values.length, Math.floor(into.length / stride))
+  let n = 0
+  for (let i = b.dirtyStart; i < end; i++) {
+    const v = b.values[i]
+    for (let k = 0; k < stride; k++) into[i * stride + k] = v
+    n += stride
+  }
+  return n
+}
+
+/** Whether two chassis footprints (centres, headings as boxGap takes them, half extents) overlap: a separating axis test. */
+function footprintsOverlap(ax: number, az: number, ah: number, al: number, aw: number, bx: number, bz: number, bh: number, bl: number, bw: number): boolean {
+  const dx = bx - ax, dz = bz - az
+  const afx = Math.sin(ah), afz = Math.cos(ah), bfx = Math.sin(bh), bfz = Math.cos(bh)
+  // The four candidate axes: each box's length axis (forward) and width axis (across).
+  const axes: [number, number][] = [[afx, afz], [afz, -afx], [bfx, bfz], [bfz, -bfx]]
+  for (const [x, z] of axes) {
+    const ra = al * Math.abs(afx * x + afz * z) + aw * Math.abs(afz * x - afx * z)
+    const rb = bl * Math.abs(bfx * x + bfz * z) + bw * Math.abs(bfz * x - bfx * z)
+    if (Math.abs(dx * x + dz * z) > ra + rb) return false
+  }
+  return true
+}
+
+/**
+ * Which cars' chassis footprints (grown by `pad`) overlap another car's, from the poses alone: their indices into
+ * `out`, at most out.length, returning how many. Phase 7.1 lets cars pass through cars; both dissolve so the
+ * passage is never seen as interpenetration. `skip` (the driven car, which never dissolves) is never reported, but
+ * a car passing through it is. A short pose buffer ends the scan. Allocation-free beyond the axes.
+ */
+export function carsOverlapping(poses: Float32Array, suv: readonly boolean[], pad: number, out: Int32Array, skip = -1): number {
+  if (out.length === 0 || !Number.isFinite(pad)) return 0
+  const n = Math.min(suv.length, Math.floor(poses.length / POSE.stride))
+  let found = 0
+  for (let i = 0; i < n; i++) {
+    if (i === skip) continue
+    const oi = i * POSE.stride, ci = chassisBox(suv[i])
+    const ix = poses[oi + POSE.x], iz = poses[oi + POSE.z], ih = poses[oi + POSE.heading]
+    const il = ci.hx + pad, iw = ci.hz + pad
+    const reach = Math.hypot(il, iw)
+    for (let j = 0; j < n; j++) {
+      if (j === i) continue
+      const oj = j * POSE.stride, cj = chassisBox(suv[j])
+      const jx = poses[oj + POSE.x], jz = poses[oj + POSE.z]
+      const jl = cj.hx + pad, jw = cj.hz + pad
+      // Far apart by their bounding circles: no overlap possible.
+      if (Math.hypot(jx - ix, jz - iz) > reach + Math.hypot(jl, jw)) continue
+      if (footprintsOverlap(ix, iz, ih, il, iw, jx, jz, poses[oj + POSE.heading], jl, jw)) {
+        out[found++] = i
+        break
+      }
+    }
+    if (found === out.length) break
+  }
+  return found
 }
 
 /**

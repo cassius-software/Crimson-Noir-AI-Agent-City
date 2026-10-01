@@ -150,6 +150,11 @@ export interface SipocSnapshot {
      * body last passed through (GHOST_KIND; 0 none), and how many passages have played a wipe since boot.
      */
     contact?: { wipe: number; kind: number; count: number }
+    /**
+     * The code dissolve (dissolve.ts): how many mesh instances (poles, cars, people) are dissolved or reinstantiating
+     * now, and how many passages have dissolved one since boot.
+     */
+    dissolve?: { active: number; count: number }
   }
   kernel: KernelStats
   quality: QualityState

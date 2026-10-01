@@ -41,7 +41,8 @@ import { applyWalk, requestWalk, type ScriptedWalk } from './scriptedWalk.ts'
 import { ENTER_RANGE, MODES, PERSON, POSE, RUN, WALK, type DriveControls, type FootControls, type SimCommand, type StepState } from './simProtocol.ts'
 import { buildPost, type CinemaPost } from './postfx.ts'
 import { createGhost, type GhostView } from './ghost.ts'
-import { CONTACT, ContactPulse, PoleIndex, carGap, personGap, personGapToBox, touching } from './contact.ts'
+import { CONTACT, ContactPulse, PoleIndex, carGap, carsWithin, peopleWithin, peopleWithinBox, personGap, personGapToBox, touching } from './contact.ts'
+import { DISSOLVE, DissolveSet, carsOverlapping, copyDirty, poleSlot, type DissolveBuffer } from './dissolve.ts'
 import { CINEMA, FramePacer, SHUTTER_SECONDS, exposureFor, type CameraMark } from './cinema.ts'
 import { updateVolumetrics, type Volumetrics } from './volumetrics.ts'
 import { operatorBridge, type Diary, type Mind, type SimControls, type SkillGate, type SpeechClip, type SpeechOut, type Utterance, type Voice } from './operator.ts'
@@ -180,6 +181,16 @@ export class Engine {
   private readonly contactPulse = new ContactPulse()
   private personGapFoot: number = CONTACT.far
   private personGapCar: number = CONTACT.far
+  /** The code dissolve: which instances the user's body is inside, and how far each has dissolved (view-only). */
+  private readonly dissolve: DissolveSet
+  /** The crowd's amounts on the GPU (three's buffer for CrowdView.dissolve), written like the frame upload. */
+  private readonly crowdDissolve: GPUBuffer
+  private readonly poleOut = new Int32Array(DISSOLVE.maxPoles)
+  private readonly carOut = new Int32Array(DISSOLVE.maxCars)
+  private readonly overlapOut: Int32Array
+  private readonly peopleOut = new Int32Array(DISSOLVE.maxPeople)
+  /** The people gathered with the newest crowd frame (received), touched every animation frame until the next. */
+  private peopleCount = 0
   /** Where the camera was at the last frame drawn through the velocity buffer (valid while `marked`; not: a cut). */
   private readonly lastMark: CameraMark = { x: 0, y: 0, z: 0, seat: -1 }
   private marked = false
@@ -260,7 +271,7 @@ export class Engine {
   private constructor(p: {
     canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView
     post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; crowdFrameSeconds: UniformNode<'float', number>; ghost: GhostView
-    options: EngineConfig; quality: QualityRig; places: RegionPlaces | null
+    options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; crowdDissolve: GPUBuffer
   }) {
     this.places = p.places
     this.regionName = p.options.region?.name ?? null
@@ -277,6 +288,10 @@ export class Engine {
     this.crowdFrameSeconds = p.crowdFrameSeconds
     this.ghost = p.ghost
     this.poles = new PoleIndex(p.world.furniture)
+    const f = p.world.furniture
+    this.dissolve = new DissolveSet({ lamps: f.lamps.length, trees: f.trees.length, signals: f.signals.length, cars: p.sim.meta.suv.length, people: p.options.agents })
+    this.crowdDissolve = p.crowdDissolve
+    this.overlapOut = new Int32Array(p.sim.meta.suv.length)
     this.options = p.options
     this.quality = p.quality
     this.hours = p.options.startHour
@@ -394,6 +409,8 @@ export class Engine {
     const engine = new Engine({
       canvas, gpu, world, crowd, sim, view, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, ghost, options,
       quality: { governor, targets, applied, mask, live }, places,
+      // The code dissolve's crowd amounts: allocated by the draws above like the frame's buffers, written the same way.
+      crowdDissolve: gpuBufferOf(gpu.renderer, view0.dissolve),
     })
     if (start) engine.input.yaw = yawFacing(start.heading)
     return engine
@@ -457,7 +474,8 @@ export class Engine {
         this.crowdCopiedAt = now
       }
     }
-    // The contact wipe's view of the crowd: who is nearest the user's body in this frame.
+    // The contact wipe's view of the crowd: who is nearest the user's body in this frame (and, for the code dissolve,
+    // whose bodies it is inside).
     if (s.crowdFrame) this.contactScan(s)
     // The pedestrians the worker simulated: straight into the render buffers (the copy is only ever drawn).
     if (s.crowdFrame && this.crowd.upload(s.crowdFrame)) this.crowdFrames++
@@ -661,6 +679,10 @@ export class Engine {
     // On the wall clock (the pulse bounds a step itself), not the simulation's capped step: at a low frame rate the
     // wipe must not outlast its passage.
     this.contactPulse.update(this.contactNow(st), realDt / 1000)
+    // The code dissolve: every mesh the body is inside this frame goes to code at once; the rest reinstantiate over
+    // DISSOLVE.release on the same wall clock. The amounts reach the GPU in present() (view-only: instance data).
+    this.dissolveNow(st)
+    this.dissolve.update(realDt / 1000)
 
     // Drawing: every animation frame, or in cinema mode only those the pacer presents (24 a second). Nothing above
     // waits for it: the step request, the haptics and the head pose ran this frame whether or not it is drawn.
@@ -701,6 +723,8 @@ export class Engine {
     this.ghost.contact.value = wipe
     this.ghost.contactKind.value = this.contactPulse.kind
     this.lastDrawnMs = nowMs
+    // The code dissolve's amounts, to the meshes that read them, before the frame that reads them.
+    this.flushDissolve()
     if (post) this.post.render()
     else this.gpu.renderer.render(this.world.scene, cam)
     if (this.options.profile && !this.resolving) {
@@ -729,8 +753,11 @@ export class Engine {
     if (d >= 0) {
       const o = d * POSE.stride, c = chassisBox(this.sim.meta.suv[d])
       this.personGapCar = personGapToBox(frame, n, s.poses[o + POSE.x], s.poses[o + POSE.z], s.poses[o + POSE.heading], c.hx, c.hz)
+      // The code dissolve: the people the chassis (grown by the reach) stands in, by row.
+      this.peopleCount = peopleWithinBox(frame, n, s.poses[o + POSE.x], s.poses[o + POSE.z], s.poses[o + POSE.heading], c.hx + DISSOLVE.reach, c.hz + DISSOLVE.reach, this.peopleOut)
     } else {
       this.personGapCar = CONTACT.far
+      this.peopleCount = peopleWithin(frame, n, s.avatar.x, s.avatar.z, PERSON.radius + DISSOLVE.reach, this.peopleOut)
     }
   }
 
@@ -748,6 +775,64 @@ export class Engine {
       person: this.personGapFoot,
       vehicle: carGap(st.poses, this.sim.meta.suv, x, z, PERSON.radius),
     })
+  }
+
+  /**
+   * What the user's body is inside this frame, by instance, each put at 1 (dissolve.ts): the poles (lamps, trees,
+   * signals) around the avatar's disc or under the driven car's footprint, the cars the avatar on foot stands in (the
+   * driven car never dissolves: its shell is drawn from inside by design, as contactNow exempts it), the people
+   * gathered with the newest crowd frame, and every car passing through another car (7.1), so neither is seen
+   * interpenetrating. Reads poses, the furniture and the frame's rows; nothing crosses to the worker.
+   */
+  private dissolveNow(st: StepState): void {
+    const set = this.dissolve, suv = this.sim.meta.suv, d = st.driving
+    let poles = 0
+    if (d >= 0) {
+      const o = d * POSE.stride, c = chassisBox(suv[d])
+      poles = this.poles.withinBox(st.poses[o + POSE.x], st.poses[o + POSE.z], st.poses[o + POSE.heading], c.hx + DISSOLVE.reach, c.hz + DISSOLVE.reach, this.poleOut)
+    } else {
+      const x = st.avatar.x, z = st.avatar.z, pad = PERSON.radius + DISSOLVE.reach
+      poles = this.poles.within(x, z, pad, this.poleOut)
+      const cars = carsWithin(st.poses, suv, x, z, pad, this.carOut)
+      for (let i = 0; i < cars; i++) set.touch('cars', this.carOut[i])
+    }
+    for (let i = 0; i < poles; i++) {
+      const slot = poleSlot(this.poleOut[i], this.world.furniture)
+      if (slot) set.touch(slot.list, slot.index)
+    }
+    for (let i = 0; i < this.peopleCount; i++) set.touch('people', this.peopleOut[i])
+    const overlapping = carsOverlapping(st.poses, suv, DISSOLVE.reach, this.overlapOut, d)
+    for (let i = 0; i < overlapping; i++) set.touch('cars', this.overlapOut[i])
+  }
+
+  /**
+   * The amounts changed since the last drawn frame, to the GPU: the props' and the fleet's instanced attributes are
+   * marked for three's upload (whole buffers of a few kilobytes, only when one changed; the wheels take their car's
+   * value four times), the crowd's storage buffer is written directly, as the frame upload is (CrowdCull.upload).
+   */
+  private flushDissolve(): void {
+    const set = this.dissolve, props = this.world.dissolve, fleet = this.view.dissolve
+    const prop = (b: DissolveBuffer, attr: { array: ArrayLike<number>; needsUpdate: boolean }) => {
+      if (!b.dirty) return
+      copyDirty(b, attr.array as Float32Array)
+      attr.needsUpdate = true
+      b.clean()
+    }
+    prop(set.lamps, props.lamps)
+    prop(set.trees, props.trees)
+    prop(set.signals, props.signals)
+    if (set.cars.dirty) {
+      copyDirty(set.cars, fleet.bodies.array as Float32Array)
+      copyDirty(set.cars, fleet.wheels.array as Float32Array, 4)
+      fleet.bodies.needsUpdate = true
+      fleet.wheels.needsUpdate = true
+      set.cars.clean()
+    }
+    const people = set.people
+    if (people.dirty) {
+      this.gpu.device.queue.writeBuffer(this.crowdDissolve, people.dirtyStart * 4, people.values, people.dirtyStart, people.dirtyEnd - people.dirtyStart)
+      people.clean()
+    }
   }
 
   /**
@@ -877,6 +962,7 @@ export class Engine {
         postMs: this.postMs,
         ghost: this.ghost.on,
         contact: { wipe: this.contactPulse.value, kind: this.contactPulse.kind, count: this.contactPulse.count },
+        dissolve: { active: this.dissolve.active, count: this.dissolve.count },
         ...(this.pacer && {
           camera: {
             fps: this.pacer.fps(this.lastMs), shutterS: this.quality.live.post ? SHUTTER_SECONDS : 0,
