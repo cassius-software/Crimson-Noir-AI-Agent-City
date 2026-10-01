@@ -1281,6 +1281,9 @@ export class Engine {
     // The ping (08_Swarm/ping.ts): the look ray from the head just posed meets the page's own copies, never the realm.
     // A press within a second of the last ping asks the next kind (go, look, gather, wait); the board rates and bounds it.
     if (input.take('ping')) this.pingAt(this.pingKindFor(this.simTime))
+    // Pings, and the rallies they ask for, are player 1's alone (skills.ts RECRUITING_PLAYER): the other seats' presses
+    // are dropped here, every frame, so none waits to be taken.
+    for (let k = 1; k < this.views.length; k++) this.input.intent(this.views[k].seat).take('ping')
 
     // Ghost-mode collision: what the user's body passes through this frame shapes the contact wipe (drawn frames read it).
     // On the wall clock (the pulse bounds a step itself), not the simulation's capped step: at a low frame rate the

@@ -184,13 +184,22 @@ function notices(): Plugin {
 
 /** The id App imports the embedded region from (src/region-pack.d.ts types it). */
 export const REGION_MODULE = 'virtual:region-pack'
-/** The region the pilot build embeds. */
+/** The surveyed region every build embeds (the pilot build opens on it). */
 export const PILOT_PACK = 'world/pilot.region.json.gz'
 
 /**
- * The embedded region: `virtual:region-pack` is the pack's gzipped bytes as base64. Only the pilot build imports it
- * (App.tsx reaches the import only when the mode is 'pilot', so every other build drops it); a missing pack fails that
- * build loudly.
+ * The embedded region module's source: the pack's gzipped bytes as base64 (the default export), and whether the page
+ * opens on the region rather than the procedural city (`regionFirst`: the pilot build only). Every build carries the
+ * pack, so the single file needs nothing from a network or a disk beside it to show the region.
+ */
+export function regionModule(mode: string, pack: Uint8Array): string {
+  return `export const regionFirst = ${mode === 'pilot'}\nexport default ${JSON.stringify(Buffer.from(pack).toString('base64'))}`
+}
+
+/**
+ * The embedded region: `virtual:region-pack` (src/region-pack.d.ts types it). Every build carries it, the default
+ * dist/index.html too, so the one file plays the surveyed map with no network and nothing beside it; a missing pack
+ * fails the build loudly.
  */
 function regionPack(mode: string): Plugin {
   const resolved = `\0${REGION_MODULE}`
@@ -199,10 +208,9 @@ function regionPack(mode: string): Plugin {
     resolveId: (id) => (id === REGION_MODULE ? resolved : null),
     load(id) {
       if (id !== resolved) return null
-      if (mode !== 'pilot') return 'export default null'
       const file = join(ROOT, PILOT_PACK)
-      if (!existsSync(file)) throw new Error(`the pilot build needs ${PILOT_PACK}: compile it with tools/world/compile.mjs`)
-      return `export default ${JSON.stringify(readFileSync(file).toString('base64'))}`
+      if (!existsSync(file)) throw new Error(`the build embeds ${PILOT_PACK}: compile it with tools/world/compile.mjs`)
+      return regionModule(mode, readFileSync(file))
     },
   }
 }

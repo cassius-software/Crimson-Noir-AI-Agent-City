@@ -15,7 +15,7 @@
  */
 import type { Answer, GateTether, Memories, Mind, Piece } from '../07_Execute_Actions/operator.ts'
 import { CLAUDE_GATEWAY, claudeAnswer, claudeModels, claudeServer, DEFAULT_CLAUDE_MODEL, EFFORTS, isEffort, maskKey } from './claudeApi.ts'
-import { BASE_REALITY, createLocalCompute, systemPrompt, type FetchLike, type SettingsStore } from './localCompute.ts'
+import { BASE_REALITY, createLocalCompute, promptHash, systemPrompt, type FetchLike, type SettingsStore } from './localCompute.ts'
 import { createPrefixCache } from './prefixCache.ts'
 
 export type Provider = 'claude' | 'ollama' | 'llamacpp'
@@ -93,6 +93,16 @@ export function createMindRouter({ fetch: fetchFn, store }: { fetch: FetchLike; 
   const cache = createPrefixCache({ prefix: BASE_REALITY })
   const agentKey = (tethers: readonly GateTether[]): string => [...new Set(tethers.map((t) => t.agent))].sort((a, b) => a - b).join('+')
 
+  // The Claude provider answers with the hash of the exact system prompt it sent, as the local providers do (the
+  // swarm's memory records it, so an audit can prove what the model was given).
+  const claudeAnswerHashed = async (req: { tethers: readonly GateTether[]; prompt: string; signal: AbortSignal; memories?: readonly Memories[] }, onPiece: (p: Piece) => void): Promise<Answer> => {
+    const system = systemPrompt(req.tethers, req.memories)
+    const answer = await claudeAnswer(fetchFn, {
+      server: kept.claude.server, key: kept.claude.key ?? '', model: kept.claude.model, system, prompt: req.prompt, signal: req.signal,
+      ...(kept.claude.effort && { effort: kept.claude.effort }),
+    }, onPiece)
+    return { ...answer, promptHash: promptHash(system) }
+  }
   const claude: Mind = Object.freeze({
     settings: () => ({ server: kept.claude.server, model: kept.claude.model }),
     setServer: (url: string): string => {
@@ -111,10 +121,7 @@ export function createMindRouter({ fetch: fetchFn, store }: { fetch: FetchLike; 
     },
     installed: (signal?: AbortSignal) => claudeModels(fetchFn, kept.claude.server, kept.claude.key ?? '', signal),
     answer: (req: { tethers: readonly GateTether[]; prompt: string; signal: AbortSignal; memories?: readonly Memories[] }, onPiece: (p: Piece) => void): Promise<Answer> =>
-      claudeAnswer(fetchFn, {
-        server: kept.claude.server, key: kept.claude.key ?? '', model: kept.claude.model, system: systemPrompt(req.tethers, req.memories), prompt: req.prompt, signal: req.signal,
-        ...(kept.claude.effort && { effort: kept.claude.effort }),
-      }, onPiece),
+      claudeAnswerHashed(req, onPiece),
   })
   const active = (): Mind => (kept.provider === 'claude' ? claude : local())
 

@@ -75,6 +75,15 @@ export function roadAt(p: RegionPack, i: number): Pt[] {
 }
 
 /**
+ * Whether the page walks the embedded region: `?region=on` asks for it, `?region=off` for the procedural city, and
+ * with neither the build decides (`first`: the pilot build opens on the region, every other on the procedural city,
+ * where the traffic, the crowd and the tracks are).
+ */
+export function regionWanted(asked: string | null, first: boolean): boolean {
+  return asked === 'on' || (first && asked !== 'off')
+}
+
+/**
  * Checks a parsed pack's shape: the format, every table's lengths and offsets consistent, every coordinate a whole
  * number, every name index in range. Throws a TypeError naming the first problem.
  */

@@ -825,9 +825,10 @@ Carried over from the critique and the notes. Each names the file where the deci
 
 **The kernel and the realm.**
 
-- Recruitment, the operator tier, haptics and the crowd's one player figure are player 0's. Avatars 1 to 3 are not
-  crowd figures: GPU pedestrians can walk through them, and they cannot recruit or rally anyone (`simCore.ts`,
-  `crowd.ts PLAYER_INDEX`).
+- Recruitment is player 1's alone (ruled, Stable Beta): `skills.ts RECRUITING_PLAYER`; the realm refuses a recruit,
+  rally or dismiss that names another player, and the page drops every other seat's ping press each frame
+  (`simPlayers.test.ts`, `pingWiring.test.ts`). The operator tier, haptics and the crowd's one player figure are
+  player 1's too; avatars 2 to 4 are not crowd figures, so GPU pedestrians can walk through them.
 - Player spawns, player 0's included, are not range-checked against the city or region slab; a finite spawn off the
   slab falls. Pre-existing; the audit's bounds rule is for vehicles only (`ring0.ts`).
 - `Fleet.think`'s own flip auto-recover rights an AI car in place without the person clearance; `recover` (the page
@@ -835,9 +836,9 @@ Carried over from the critique and the notes. Each names the file where the deci
   breach (`vehicles.ts`, `simCore.ts`).
 - A rally that ends on its own emits no event; the page sees `RecruitView.rally` disappear. Add an event if captions
   or the HUD need to say so.
-- A surface train would need kernel work: on the street plane it is a vehicle that can reach a person, so it would
-  need an `AuditVehicle` entry, a Bouncer ruling and a Sanctuary ward of its own (`laws.ts`, `ring0.ts`,
-  `sanctuary.ts`). The elevated loop was chosen to avoid exactly that.
+- Surface trams are ruled out (Stable Beta): `collision.ts COLLISION.surfaceRail: false`. Every train rides the
+  elevated deck, the Ring-0 craft floor is that deck, and `collision.test.ts` ties the two to the track network. A
+  surface train would be a vehicle that cannot stop inside the First Law's envelope.
 - The craft check does not test the world slab (the planes reach ±1000 m, inside the 1600 m slab); a slab check would
   make `auditCraft` a method of the auditor.
 
@@ -880,15 +881,16 @@ Carried over from the critique and the notes. Each names the file where the deci
 
 **Cognition and the network.**
 
-- The Claude key lives in this browser's local storage under `COGNITION_KEY` (`App.tsx`), masked in the console.
-  Any script running on the page's origin could read it; a page opened as a file shares the `null` origin. The
-  operator should treat it as a testing key and clear it with `ask key none`.
+- The Claude key (ruled, Stable Beta): the recommended setup keeps it in the gateway on this machine and none in the
+  page (with no key set, the page sends no key header). A key typed to `ask key` is kept in local storage in plain
+  text, readable by any script on the page's origin (and, in Chromium, by any page opened from a file in the same
+  profile), but it cannot leave the machine. `docs/zero-trust-audit.md` ("The API key") has the threat model.
 - Phase 11.1 (zero-trust containment) replaced the two-client rule: the page sends nothing off this machine by
   construction (`02_Define_The_Rules/airgap.ts`: the gate, the guard installed on both globals, and the structural test
   over every call site), and the README's The model providers, Networking and Constraints sections say so. What the
   guard cannot close from script (loads the HTML parser and CSS make, navigation, a remote `import()`, a fresh realm
   from an iframe or a blob worker, the browser's own speech recognition) is listed in `docs/zero-trust-audit.md`, with
-  the Content-Security-Policy for the HTML shell that would close most of it; that policy is not yet in `index.html`.
+  the Content-Security-Policy for the HTML shell that closes most of it, now in `index.html`.
 - `netClient.test.ts` drives the client against the real host in Node; a room joined from two browser tabs has not
   been tried. Voice is a stub, and the page has no chat command. The host does no origin check of its own, drops
   fragmented frames, and holds at most 32 peers with no interest management. `engine.ts netFrame` allocates up to
@@ -898,6 +900,13 @@ Carried over from the critique and the notes. Each names the file where the deci
 
 **Housekeeping.**
 
+- The surveyed region is in every build (Stable Beta): `vite.config.ts regionModule` embeds
+  `world/pilot.region.json.gz` in `dist/index.html` as base64 (about 3.4 MB of the file's 10 MB), and the page
+  inflates it with the browser's own gzip stream, so the one file plays the region from removable media with no
+  network (`pilotPack.test.ts` checks the module carries the pack byte for byte). The default build still opens on
+  the procedural city (`?region=on` walks the region; `pack.ts regionWanted`), because the region has no traffic,
+  crowd or tracks yet. The pack is the one compiled before Phase 11; `fetch.mjs` and `odb.py` were run again for this
+  release and the network policy still refuses their three hosts (HTTP 403 at the proxy).
 - `01_Initialize_World/macroCity.ts` is unused: nothing imports it, and the live page draws the 16 × 16 city. It
   exists for a future navigation and population pass and should either gain an importer or be noted as dormant in
   the Layout table.

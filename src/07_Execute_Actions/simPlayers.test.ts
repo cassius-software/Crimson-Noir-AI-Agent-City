@@ -434,3 +434,21 @@ test('adversarial: a surveyed region takes spawns too: kept as given (no lots), 
   await assert.rejects(SimCore.create({ ...base, spawns: [{ x: 'a' as unknown as number, z: 0 }] }, null), /spawns\[0\]/)
   await assert.rejects(SimCore.create({ ...base, spawns: [{ x: 0, z: 0 }, { x: 0, z: 0 }, { x: 0, z: 0 }, { x: 0, z: 0 }] }, null), /at most 3/)
 })
+
+test('recruitment is player 1\'s alone: a recruit, rally or dismiss that names another player is refused, one naming player 1 (or none) is heard', async () => {
+  const { step } = await core()
+  let s = step()
+  const before = s.rejected
+  s = step({ cmds: [
+    { c: 'recruit', id: 1, skill: 'Rust', player: 1 } as never,
+    { c: 'rally', agent: 5, x: OPEN.x, z: OPEN.z, player: 2 } as never,
+    { c: 'dismiss', player: 3 } as never,
+  ] })
+  assert.equal(s.rejected, before + 3, 'three refused')
+  assert.equal(s.events.filter((e) => e.e === 'rejected').length, 3)
+  assert.equal(s.events.filter((e) => e.e === 'recruit' || e.e === 'rally').length, 0, 'nothing was asked of anyone')
+  // Player 1, named or not, is heard: the realm answers (here: nobody, since this core runs no crowd), never refuses.
+  s = step({ cmds: [{ c: 'recruit', id: 2, skill: 'Rust', player: 0 } as never, { c: 'recruit', id: 3, skill: 'Rust' }] })
+  assert.equal(s.rejected, before + 3, 'nothing more refused')
+  assert.deepEqual(s.events.filter((e) => e.e === 'recruit').map((e) => (e as { id: number }).id), [2, 3])
+})

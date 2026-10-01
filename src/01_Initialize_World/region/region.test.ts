@@ -15,7 +15,7 @@ import { clipLine, clipRing, clipSegment, signedArea2, simplifyLine, simplifyRin
 import { compileRegion, groupRings, ordinaryWords, realNamesIn, regionRect, type RoadFeature } from './compile.ts'
 import { REGION_GRID } from './grid.ts'
 import { NAME_HEADS, NAME_SPACE, NAME_TAILS, NameBook, hash32, normal, streetName } from './names.ts'
-import { DM, ROAD_CLASS, WATER_KIND, polygonAt, polygonCount, roadAt, validatePack } from './pack.ts'
+import { DM, ROAD_CLASS, WATER_KIND, polygonAt, polygonCount, regionWanted, roadAt, validatePack } from './pack.ts'
 import { fromGrid, scaleAt, toGrid } from './projection.ts'
 
 const G = REGION_GRID
@@ -231,4 +231,13 @@ test('validatePack: a malformed pack is refused with the first problem named', (
   bad((p) => { p.buildings.height.pop() }, /wrong length/)
   bad((p) => { p.attribution = [] }, /attribution/)
   assert.throws(() => validatePack(null), /not an object/)
+})
+
+test('regionWanted: ?region=on walks the region in any build, ?region=off never; otherwise the build decides', () => {
+  for (const first of [false, true]) {
+    assert.equal(regionWanted('on', first), true)
+    assert.equal(regionWanted('off', first), false)
+    assert.equal(regionWanted(null, first), first)
+    assert.equal(regionWanted('maybe', first), first)
+  }
 })

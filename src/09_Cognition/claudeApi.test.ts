@@ -152,14 +152,16 @@ test('every way the API can fail is one plain sentence: no key, a bad address, 4
     assert.ok(r.error instanceof CognitionError, `expected a CognitionError, got ${String(r.error)}`)
     return r.error
   }
-  const noKey = await fail(streamed(SAMPLE), { ...REQ, key: '' })
-  assert.equal(noKey.code, 'refused')
-  assert.match(noKey.message, /^no API key is set: ask key <key>, or ask provider ollama/)
+  // No key in the page: the request still goes to the gateway on this machine, with no key header (the gateway adds it).
+  const keyless = fakeFetch(() => streamed(SAMPLE))
+  await claudeAnswer(keyless.f, { ...REQ, key: '' }, () => {})
+  assert.equal(keyless.calls[0].url, 'http://localhost:8089/v1/messages')
+  assert.equal('x-api-key' in (keyless.calls[0].init!.headers as Record<string, string>), false, 'no key header at all')
   const off = await fail(streamed(SAMPLE), { ...REQ, server: 'https://api.anthropic.com' })
   assert.equal(off.code, 'refused')
   assert.equal(off.message, "the Claude provider speaks only to a gateway on this machine (localhost, 127.0.0.1 or [::1]), not 'https://api.anthropic.com'")
   const e401 = await fail(json(401, { type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } }))
-  assert.deepEqual([e401.code, e401.message], ['refused', 'the Claude API did not accept the key (401): invalid x-api-key; set it with ask key <key>'])
+  assert.deepEqual([e401.code, e401.message], ['refused', 'the Claude API did not accept the key (401): invalid x-api-key; set it in the gateway on this machine, or with ask key <key>'])
   const e403 = await fail(json(403, { type: 'error', error: { type: 'permission_error', message: 'nope' } }))
   assert.deepEqual([e403.code, e403.message], ['refused', 'the Claude API refused this request (403): nope'])
   const e404 = await fail(json(404, { type: 'error', error: { type: 'not_found_error', message: 'model: x' } }))
@@ -215,14 +217,15 @@ test('the moment the signal aborts mid-answer, the answer rejects with its reaso
   await assert.rejects(claudeAnswer(async () => { throw new DOMException('aborted', 'AbortError') }, { ...REQ, signal: early.signal }, () => {}), /already/)
 })
 
-test('the models the API lists, by id, sorted; its failures in the same plain words; nothing without a key', async () => {
+test('the models the API lists, by id, sorted; its failures in the same plain words; no key in the page sends none', async () => {
   const { f, calls } = fakeFetch(() => json(200, { data: [{ id: 'claude-sonnet-5-5', type: 'model' }, { id: 'claude-opus-5-5', type: 'model' }, { nope: 1 }], has_more: false }))
   assert.deepEqual(await claudeModels(f, CLAUDE_GATEWAY, 'k'), ['claude-opus-5-5', 'claude-sonnet-5-5'])
   assert.equal(calls[0].url, 'http://localhost:8089/v1/models?limit=100')
   assert.equal((calls[0].init!.headers as Record<string, string>)['x-api-key'], 'k')
-  await assert.rejects(claudeModels(f, CLAUDE_GATEWAY, ''), (e: CognitionError) => e.code === 'refused')
+  assert.deepEqual(await claudeModels(f, CLAUDE_GATEWAY, ''), ['claude-opus-5-5', 'claude-sonnet-5-5'])
+  assert.equal('x-api-key' in (calls[1].init!.headers as Record<string, string>), false, 'the gateway adds the key')
   await assert.rejects(claudeModels(f, 'https://api.anthropic.com', 'k'), (e: CognitionError) => e.code === 'refused')
-  assert.equal(calls.length, 1, 'nothing was sent off this machine')
+  assert.equal(calls.length, 2, 'nothing was sent off this machine')
   await assert.rejects(claudeModels(fakeFetch(() => json(401, { type: 'error', error: { type: 'authentication_error', message: 'bad' } })).f, CLAUDE_GATEWAY, 'k'), (e: CognitionError) => e.code === 'refused')
   await assert.rejects(claudeModels(fakeFetch(() => json(200, { nope: [] })).f, CLAUDE_GATEWAY, 'k'), (e: CognitionError) => e.code === 'unreadable')
   await assert.rejects(claudeModels(fakeFetch(() => new Response('<html>', { status: 200 })).f, CLAUDE_GATEWAY, 'k'), (e: CognitionError) => e.code === 'unreadable')

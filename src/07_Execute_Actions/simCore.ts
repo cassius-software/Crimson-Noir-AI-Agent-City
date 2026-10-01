@@ -32,7 +32,7 @@ import { RagdollRealm } from './ragdollRealm.ts'
 import { buildTrackNetwork } from '../06_Make_Decisions/tracks.ts'
 import { AGENTS_RANGE, MAX_CARS, PEDESTRIAN_MAX_SPEED, type CrowdSensor, type Summon } from '../03_Spawn_Agents/crowdSensor.ts'
 import {
-  ACTIVITY, APPROACH_SECONDS, AUDIBLE_RADIUS, eligible, findRecruit, RALLY_RANGE, RECRUIT_SLOTS, RELEASE_DISTANCE, skillNamed, skillsOf, whyNot, whyNotRally,
+  ACTIVITY, APPROACH_SECONDS, AUDIBLE_RADIUS, eligible, findRecruit, RALLY_RANGE, RECRUIT_SLOTS, RECRUITING_PLAYER, RELEASE_DISTANCE, skillNamed, skillsOf, whyNot, whyNotRally,
   type Skill,
 } from '../03_Spawn_Agents/skills.ts'
 import type { Intent } from '../02_Define_The_Rules/laws.ts'
@@ -567,6 +567,12 @@ export class SimCore {
     return u
   }
 
+  /** Recruitment is player 1's alone (skills.ts RECRUITING_PLAYER): a command that names another player is refused. */
+  #recruiter(cmd: SimCommand): void {
+    const p = (cmd as { player?: unknown }).player
+    if (p !== undefined && this.#player(p) !== RECRUITING_PLAYER) throw new Error(`${cmd.c}: only player 1 recruits`)
+  }
+
   #debugOnly(c: string): void {
     if (!this.#debug) throw new Error(`${c}: fault injection is refused outside ?debug`)
   }
@@ -635,9 +641,10 @@ export class SimCore {
         this.#blindUntil = this.#simTime + ttl / 1000
         return
       }
-      case 'recruit': this.#recruit(cmd); return
-      case 'rally': this.#rally(cmd); return
+      case 'recruit': this.#recruiter(cmd); this.#recruit(cmd); return
+      case 'rally': this.#recruiter(cmd); this.#rally(cmd); return
       case 'dismiss': {
+        this.#recruiter(cmd)
         if (cmd.agent !== undefined && !Number.isInteger(cmd.agent)) throw new Error('dismiss: agent must be a pedestrian index')
         for (const r of [...this.#recruits]) if (cmd.agent === undefined || r.agent === cmd.agent) this.#release(r, 'dismissed')
         return

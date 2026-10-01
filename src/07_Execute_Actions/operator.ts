@@ -904,12 +904,12 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
       if (key === 'provider') {
         if (!mind.setProvider) throw new Error('this page has one model provider only')
         const p = mind.setProvider(value)
-        return p === 'claude' ? 'claude: the Claude API through a gateway on this machine (ask key <key> to set the key)' : p === 'ollama' ? 'ollama: a model server on this machine (the Ollama API)' : `${p}: a packaged model under a llama.cpp server on this machine`
+        return p === 'claude' ? 'claude: the Claude API through a gateway on this machine (best with the key in the gateway; ask key <key> keeps one in this browser)' : p === 'ollama' ? 'ollama: a model server on this machine (the Ollama API)' : `${p}: a packaged model under a llama.cpp server on this machine`
       }
       if (key === 'key') {
         if (!mind.setKey) throw new Error('no provider on this page takes a key')
         const masked = mind.setKey(value === 'none' ? '' : value)
-        return masked === null ? 'none: cleared' : `${masked}: kept in this browser only`
+        return masked === null ? 'none: cleared (the gateway on this machine adds the key)' : `${masked}: kept in this browser's local storage (ask key none clears it)`
       }
       if (key === 'effort') {
         if (!mind.setEffort) throw new Error('no provider on this page takes an effort')

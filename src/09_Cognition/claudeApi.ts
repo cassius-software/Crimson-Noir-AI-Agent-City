@@ -1,8 +1,10 @@
 /**
  * Why does this file exist? It is the Claude provider of the cognition router (router.ts): a streaming client for the
  * Claude Messages API, the default engine for testing, spoken to only through a gateway the operator runs on this
- * machine (a reverse proxy at http://localhost:8089 unless `ask server` names another loopback address) with a key
- * the operator gives the console (ask key <key>; kept in this browser's local storage, never in the page). Like every
+ * machine (a reverse proxy at http://localhost:8089 unless `ask server` names another loopback address). The key is
+ * best held by that gateway, which adds it to every request, so the page holds none: with no key set, no `x-api-key`
+ * header is sent. A key the operator gives the console instead (ask key <key>) is kept in this browser's local
+ * storage, where any script of the page's origin can read it (docs/zero-trust-audit.md, "The API key"). Like every
  * client in the product it addresses a loopback origin and nothing else: the gate is 02_Define_The_Rules/airgap.ts,
  * and the page's own fetch refuses anything off this machine besides. It sends the same system prompt as the local
  * providers (the agent's persona: 02_Define_The_Rules/conduct.ts core, then localCompute.ts systemPrompt), reads the
@@ -46,9 +48,10 @@ export function maskKey(key: string | null): string | null {
   return key.length <= 12 ? '••••' : `${key.slice(0, 6)}…${key.slice(-4)}`
 }
 
+/** The request's headers; the key only when the page holds one (with none, the gateway on this machine adds it). */
 const headers = (key: string): Record<string, string> => ({
   'content-type': 'application/json',
-  'x-api-key': key,
+  ...(key && { 'x-api-key': key }),
   'anthropic-version': ANTHROPIC_VERSION,
   'anthropic-beta': ANTHROPIC_BETAS,
   // The page itself calls the API: the browser's cross-origin request is only allowed with this header.
@@ -71,7 +74,7 @@ async function httpFailure(res: Response, model: string | null): Promise<Cogniti
     // not JSON: the status alone
   }
   const tail = said ? `: ${sentence(said)}` : ''
-  if (res.status === 401) return new CognitionError('refused', `the Claude API did not accept the key (401)${tail}; set it with ask key <key>`)
+  if (res.status === 401) return new CognitionError('refused', `the Claude API did not accept the key (401)${tail}; set it in the gateway on this machine, or with ask key <key>`)
   if (res.status === 403) return new CognitionError('refused', `the Claude API refused this request (403)${tail}`)
   if (res.status === 404 && model !== null && type === 'not_found_error') return new CognitionError('model', `the Claude API has no model '${model}': choose one it lists (type ask)`)
   if (res.status === 404) return new CognitionError('server', `the Claude API answered 404${tail}`)
@@ -108,7 +111,6 @@ export interface ClaudeRequest {
 export async function claudeAnswer(fetchFn: FetchLike, req: ClaudeRequest, onPiece: (p: Piece) => void): Promise<Answer> {
   const server = claudeServer(req.server)
   if (server === null) throw new CognitionError('refused', `the Claude provider speaks only to a gateway on this machine (localhost, 127.0.0.1 or [::1]), not '${String(req.server)}'`)
-  if (!req.key) throw new CognitionError('refused', 'no API key is set: ask key <key>, or ask provider ollama for a model on this machine')
   const body = JSON.stringify({
     model: req.model,
     max_tokens: CLAUDE_ANSWER_TOKENS,
@@ -179,7 +181,6 @@ export async function claudeAnswer(fetchFn: FetchLike, req: ClaudeRequest, onPie
 export async function claudeModels(fetchFn: FetchLike, server: string, key: string, signal?: AbortSignal): Promise<string[]> {
   const origin = claudeServer(server)
   if (origin === null) throw new CognitionError('refused', `the Claude provider speaks only to a gateway on this machine (localhost, 127.0.0.1 or [::1]), not '${String(server)}'`)
-  if (!key) throw new CognitionError('refused', 'no API key is set: ask key <key>, or ask provider ollama for a model on this machine')
   let res: Response
   try {
     res = await fetchFn(`${origin}/v1/models?limit=100`, { headers: headers(key), signal, cache: 'no-store', referrerPolicy: 'no-referrer' })

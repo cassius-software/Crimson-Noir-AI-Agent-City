@@ -27,8 +27,8 @@ import { PLAYER_INDEX } from './03_Spawn_Agents/crowdCompute.ts'
 import { clampPlayers } from './07_Execute_Actions/viewports.ts'
 import type { PlanStep } from './06_Make_Decisions/intent.ts'
 import { BRAND } from './brand.ts'
-import embeddedRegion from 'virtual:region-pack'
-import { validatePack, type RegionPack } from './01_Initialize_World/region/pack.ts'
+import embeddedRegion, { regionFirst } from 'virtual:region-pack'
+import { regionWanted, validatePack, type RegionPack } from './01_Initialize_World/region/pack.ts'
 
 const HUD_INTERVAL_MS = 100
 /** Where the cognition router's settings (the provider, each provider's server and model, the network key) are kept between visits. */
@@ -117,11 +117,12 @@ function activityText(a: { thinking: number; tail: string } | null, speaking: nu
 }
 
 /**
- * The region the pilot build carries (vite.config.ts regionPack), unpacked and checked; null in every other build, or
- * when the page asks for the procedural city (?region=off). Nothing is fetched: the bytes are in this file.
+ * The region every build carries (vite.config.ts regionPack), unpacked and checked when the page walks it: ?region=on
+ * in any build, by default in the pilot build (pack.ts regionWanted); null for the procedural city (?region=off, or by
+ * default). Nothing is fetched: the bytes are in this file.
  */
 async function loadRegion(): Promise<RegionPack | null> {
-  if (!embeddedRegion || new URLSearchParams(window.location.search).get('region') === 'off') return null
+  if (!regionWanted(new URLSearchParams(window.location.search).get('region'), regionFirst)) return null
   const bytes = Uint8Array.from(atob(embeddedRegion), (c) => c.charCodeAt(0))
   const text = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text()
   return validatePack(JSON.parse(text))

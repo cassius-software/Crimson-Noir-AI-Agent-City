@@ -100,6 +100,50 @@ as bytes and instantiated from them (no `fetch`), and the crowd runs on WebGPU. 
 from the inlined build (`?worker&inline`, a `blob:` URL), which the guard does not touch: `Worker` is not an outbound
 primitive, and a worker's own `fetch` is governed by its own guard.
 
+## The API key
+
+The Claude provider authenticates with an API key. Where it lives decides who can read it.
+
+**Recommended: the gateway holds it, the page holds none.** The provider speaks only to a gateway on this machine
+(`http://localhost:8089` by default). Run that gateway as a reverse proxy that listens on `127.0.0.1:8089`, forwards
+`/v1/messages` and `/v1/models` to the Claude API over https, and adds the `x-api-key` header from its own
+configuration, readable by the operator's account alone. With `ask key none` the page holds no key: it sends no
+`x-api-key` header, and nothing in the browser can read a key that is not there. For example, with nginx (the key in
+a file only the operator can read, included by the server block):
+
+```
+server {
+  listen 127.0.0.1:8089;
+  location /v1/ {
+    proxy_pass https://api.anthropic.com;
+    proxy_set_header Host api.anthropic.com;
+    include /etc/nginx/claude-key.conf;   # proxy_set_header x-api-key "<key>";  (mode 600)
+  }
+}
+```
+
+The page sends `anthropic-dangerous-direct-browser-access: true`, so the API answers the browser's cross-origin
+preflight through the proxy; a gateway that terminates CORS itself must allow the page's origin (`null` for a page
+opened from a file) and the `anthropic-*` and `content-type` headers.
+
+**Allowed: a key typed to the console.** `ask key <key>` keeps the key in this browser's local storage, in the
+record `civic-simulation:cognition:v2` (`App.tsx COGNITION_KEY`, `09_Cognition/router.ts`), field `claude.key`, in
+plain text. It is not encrypted: the key to decrypt it would have to sit on the same origin, readable by the same
+scripts, so encryption would add no protection. What that means:
+
+| Who | Can read the key? | Can send it off this machine? |
+|---|---|---|
+| The page's own code | Only `router.ts` reads it, to set the header on a request to the loopback gateway. The console shows it masked (first six and last four characters); `history` and the Up arrow never show the line that set it (`redactForHistory`); it is never sent to a local model server (`router.test.ts`). | No: the gate admits only loopback, the guard refuses every other address, and the Content-Security-Policy's `connect-src` names only loopback. |
+| An operator `run` script, or any script injected into the page | Yes, from `localStorage`. The script sandbox shares the page's realm. | Not by `fetch`, `WebSocket`, `EventSource`, XHR, `sendBeacon` or WebRTC (guarded or removed), nor by an image, a stylesheet, a frame or a worker (the Content-Security-Policy). It could still navigate the tab to an address with the key in it: navigation has no CSP directive a single file can carry. |
+| Another page opened from a file in the same browser profile | In Chromium-based browsers, yes: every page opened from a file shares one storage area. | That page is not under this page's guard or policy. |
+| Another site on the web | No: storage is per origin. | |
+| Anyone with the operator's browser profile on disk | Yes: local storage is a file in the profile. | |
+
+So a key typed to the console should be a testing key: scoped, with a spending limit, revoked when the testing ends,
+and cleared with `ask key none` (which also deletes it from storage). Serving the page from `npm run preview`
+(`http://localhost:4173`) instead of opening it as a file gives it an origin of its own, which closes the
+shared-file-storage row.
+
 ## What cannot be closed from the page's scripts
 
 These are vectors a script in the page's realm still has after `installAirgap`, because they are not functions a

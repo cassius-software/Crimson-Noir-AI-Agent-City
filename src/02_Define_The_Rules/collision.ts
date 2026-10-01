@@ -31,6 +31,13 @@ export const COLLISION = Object.freeze({
   furniture: 'sensor',
   /** People and cars meet only through the Sanctuary's Solid -> Sensor flip and its nudge. */
   peopleAndCars: 'sanctuary',
+  /**
+   * No rail vehicle runs on the street plane: no surface tram, no level crossing. Trains ride the elevated loop
+   * (06_Make_Decisions/tracks.ts TRACKS.train.deck, 9 m), timetabled and never a vehicle a person can meet, and the
+   * Ring-0 audit halts the realm if one reads below that deck (ring0.ts CRAFT, OFF_CORRIDOR). A surface train would
+   * be a vehicle that cannot stop inside the First Law's envelope; it is ruled out, not deferred.
+   */
+  surfaceRail: false,
 } as const)
 
 /**

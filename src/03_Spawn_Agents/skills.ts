@@ -101,6 +101,13 @@ export const APPROACH_SECONDS = 15
 export const RALLY_RANGE = RELEASE_DISTANCE - INTERVIEW_DISTANCE - 1
 /** People who can be over at once, walking over or Active (summon slots in the crowd's uniform): the swarm's size. */
 export const RECRUIT_SLOTS = 8
+/**
+ * The one player who recruits, rallies and dismisses: player 1 (index 0), the operator. In split screen the other
+ * players are people to the kernel but never recruiters: the realm refuses a recruitment command that names any
+ * other player, the page takes pings (and so rallies) from player 1's seat alone, and the console, the microphone and
+ * the task gateway are player 1's.
+ */
+export const RECRUITING_PLAYER = 0
 
 /**
  * What a pedestrian is doing, as the crowd reports it per agent (crowd.wgsl writes it into pose.w): the recruiter

@@ -108,18 +108,22 @@ rings for the cars, one round each 2 × 2-block cell; one elevated train loop on
 two arterial streets, with four mid-block stations and guideway columns at the kerb; drone corridors at 40 m and
 46 m over the 4 × 4-block face rings; and one plane racetrack at 400 m. See Vehicles.
 
-## The surveyed map (pilot)
+## The surveyed map
 
 The map is becoming a real metropolitan region with fictional names: its streets, buildings, shoreline and water
 are surveyed, and every name is invented. Real fictional cities work the same way. The first piece is a
 pilot region of 12.1 × 7.8 km: the downtown waterfront, its harbour and islands, 49,620 buildings, 11,141 street runs.
-It is a separate build:
+Every build carries it: `dist/index.html` holds the compiled pack (`world/pilot.region.json.gz`, 2.5 MB, as base64,
+about 3.4 MB of the file's 10 MB), so the one file plays the region from a disk or a stick with no network and nothing
+beside it. The page inflates the pack itself (the browser's own gzip stream); nothing is fetched.
+
+- `?region=on` walks the region in any build. The default build opens on the procedural city, where the traffic, the
+  crowd and the tracks are; the region has none of them yet (see Not there yet).
+- The pilot build opens on the region, and `?region=off` shows the procedural city instead:
 
 ```sh
-npm run build:pilot   # dist-pilot/index.html: the same single offline file, with the region embedded
+npm run build:pilot   # dist-pilot/index.html: the same single offline file, opening on the region
 ```
-
-Open it the same way. `?region=off` shows the procedural city instead.
 
 - **What you get.** You walk first person on the sidewalks of the real street grid. The streets have their surveyed
   widths, lane counts, centre lines, lane dashes and one-way flows. Every building stands at its surveyed footprint
@@ -882,12 +886,19 @@ exactly the same without either.
   `ask effort low|medium|high|xhigh|max|none` how hard the model works on an answer (the API's own default when
   unset); `ask think on|off` and `ask api generate|chat` apply to the local providers as before. Each provider keeps
   its own server and model between visits, in one store in this browser's local storage
-  (`civic-simulation:cognition:v2`); the key lives there too, and nowhere in the page. Treat it as a testing key
-  and clear it with `ask key none`: any script on the page's origin could read it, and a page opened as a file
-  shares the `null` origin.
+  (`civic-simulation:cognition:v2`).
+- **The key: keep it in the gateway.** The recommended setup holds no key in the page at all: the gateway on this
+  machine adds the key to every request it forwards, `ask key none` leaves the page with none, and with none the
+  page sends no `x-api-key` header. A key typed to `ask key <key>` is kept in the same local-storage record, in
+  plain text, because any key that could encrypt it would sit beside it on the same origin. Any script running on
+  the page's origin can read it, and in Chromium-based browsers every page opened from a file shares one storage
+  area, so another local HTML file opened in the same browser profile could read it too. What it cannot do is leave
+  this machine: the guard and the Content-Security-Policy refuse every address off it, and the key is sent only to
+  the loopback gateway, never to a local model server. The console shows it masked, and `history` never shows the
+  line that set it. `docs/zero-trust-audit.md` ("The API key") has the whole threat model and a gateway example.
 - **The Claude provider.** It streams the Messages API: adaptive thinking (shown as a live count, like a local
   thinking model's), the server-side refusal fallback, the effort, the stop reason and the output tokens; it stops
-  the moment the task's signal aborts, and turns every failure into one sentence (no key set, a bad address, 401,
+  the moment the task's signal aborts, and turns every failure into one sentence (a bad address, 401,
   403, no such model, 429, 529, an error mid-answer, an unreadable stream). An answer, thinking included, is at
   most 4,096 tokens. `ask` lists the models the API offers for the key. It speaks only to a gateway on this machine:
   http or https to `localhost`, `127.0.0.0/8` or `[::1]`, `http://localhost:8089` by default (a reverse proxy you
@@ -1433,8 +1444,8 @@ releases, byte for byte (the same seats, drivers and paint from the same stream)
   side (no vehicle-on-vehicle contact, the balance machine wired with no vehicle ever a cause, no combat).
 - **Geography.** The procedural city is generated: no map data, no real building, no real place's name. Its
   districts borrow only a general character (a southern-Ontario heritage main street, a Great Lakes waterfront). The
-  surveyed map (the pilot build) takes its geometry from open government data under the licences in `NOTICE.md`,
-  never from share-alike sources. Its names are all fictional, and a pack in which a real one survives is refused.
+  surveyed map (in every build: `?region=on`) takes its geometry from open government data under the licences in
+  `NOTICE.md`, never from share-alike sources. Its names are all fictional, and a pack in which a real one survives is refused.
   `compliance.test.ts` fails on any real place, landmark or street of the region named in the shipped source.
 - **Brand names.** Control hints, labels and docs name positions and letters, not console makers or their
   button symbols. `compliance.test.ts` scans the source, the build config, the HTML shell, this README and the

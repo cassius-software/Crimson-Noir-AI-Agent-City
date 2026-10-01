@@ -73,7 +73,8 @@ function runtimeSources(): [string, string][] {
 
 test('COLLISION is frozen and says: cars pass through cars, the ragdoll wired, no combat, sensor furniture, the sanctuary between people and cars', () => {
   assert.ok(Object.isFrozen(COLLISION))
-  assert.deepEqual(COLLISION, { vehicleOnVehicle: false, ragdoll: true, combat: false, furniture: 'sensor', peopleAndCars: 'sanctuary' })
+  assert.deepEqual(COLLISION, { vehicleOnVehicle: false, ragdoll: true, combat: false, furniture: 'sensor', peopleAndCars: 'sanctuary', surfaceRail: false })
+  assert.equal(COLLISION.surfaceRail, false)
   assert.equal(COLLISION.vehicleOnVehicle, false)
   assert.equal(COLLISION.ragdoll, true)
   assert.equal(COLLISION.combat, false)
@@ -155,4 +156,23 @@ test('the group arithmetic: Rapier packing, the ragdoll bit read from ragdollRig
   assert.equal(meets(AVATAR_GROUPS, VEHICLE_CHASSIS_GROUPS), true, 'and is as solid as ever to a car')
   assert.equal(meets(AVATAR_GROUPS, DEFAULT), true, 'and to the ground and the buildings')
   assert.equal(meets(WHEEL_RAY_GROUPS, ragdoll), true, 'a wheel ray finds a solid segment (a sensor one it excludes by flag, as it does the avatar)')
+})
+
+test('no surface rail: every train of the track network rides the elevated deck, and the Ring-0 craft floor is that deck', async () => {
+  const { buildTrackNetwork, poseAt, TRACKS } = await import('../06_Make_Decisions/tracks.ts')
+  const { CRAFT } = await import('./ring0.ts')
+  assert.equal(COLLISION.surfaceRail, false)
+  // A deck no car, bus or person on the street can reach (a car's roof is under 2 m; a person's reach under 2.5 m).
+  assert.ok(TRACKS.train.deck >= 6, `deck ${TRACKS.train.deck} m`)
+  assert.equal(CRAFT.floor[CRAFT.kinds.indexOf('train')], TRACKS.train.deck, 'the audit halts the realm below the deck')
+  for (const seed of [1337, 7]) {
+    const trains = buildTrackNetwork(seed).tracks.filter((t) => t.kind === 'train')
+    assert.ok(trains.length > 0)
+    for (const t of trains) {
+      for (let s = 0; s < t.length; s += 2) assert.ok(poseAt(t, s).y >= TRACKS.train.deck - 1e-9, `train ${t.id} at s=${s}`)
+    }
+  }
+  // Every kind of track is one of the four: nothing that runs at street level besides the cars on their lanes.
+  const kinds = new Set(buildTrackNetwork(1337).tracks.map((t) => t.kind))
+  assert.deepEqual([...kinds].sort(), ['car', 'drone', 'plane', 'train'])
 })

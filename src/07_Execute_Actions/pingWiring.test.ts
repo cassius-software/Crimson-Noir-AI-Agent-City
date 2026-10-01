@@ -87,3 +87,14 @@ test('wiring: the HUD rings every ping on the minimap and chips the newest over 
     assert.doesNotMatch(read(file), /ping\.ts|PingBoard|pickPing|aimRay|onRally/, file)
   }
 })
+
+test('pings are player 1\'s alone: the engine takes one from seat 0\'s input only, and drops every other seat\'s press each frame', () => {
+  const engine = read('./engine.ts')
+  const taken = engine.indexOf("if (input.take('ping')) this.pingAt(")
+  const drained = engine.indexOf("this.input.intent(this.views[k].seat).take('ping')")
+  assert.ok(taken > 0, 'player 1 pings from seat 0')
+  assert.ok(drained > taken, 'the other seats are drained right after')
+  assert.match(engine.slice(drained - 200, drained), /for \(let k = 1; k < this\.views\.length; k\+\+\)/)
+  assert.equal(engine.split("take('ping')").length - 1, 2, 'no other place takes a ping')
+  assert.match(read('../03_Spawn_Agents/skills.ts'), /export const RECRUITING_PLAYER = 0\b/)
+})

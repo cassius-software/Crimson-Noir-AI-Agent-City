@@ -14,7 +14,7 @@ import { operatorBridge, type Diary, type GateHandle, type GateLease, type GateT
 import { run as shell } from '../07_Execute_Actions/terminal/commands.ts'
 import type { TerminalBridge } from '../07_Execute_Actions/terminal/bridge.ts'
 import { CLAUDE_GATEWAY, DEFAULT_CLAUDE_MODEL } from './claudeApi.ts'
-import { BASE_REALITY, DEFAULT_MODEL, DEFAULT_SERVER, systemPrompt, type FetchLike } from './localCompute.ts'
+import { BASE_REALITY, DEFAULT_MODEL, DEFAULT_SERVER, promptHash, systemPrompt, type FetchLike } from './localCompute.ts'
 import { createMindRouter, DEFAULT_PROVIDER, LLAMACPP_MODEL, LLAMACPP_SERVER, PROVIDERS } from './router.ts'
 
 const enc = new TextEncoder()
@@ -133,11 +133,14 @@ test('every provider answers with the same system prompt, the conduct core first
   assert.equal(r.setServer('https://127.0.0.1:8443/v1'), 'https://127.0.0.1:8443', 'https to this machine too')
 })
 
-test('installed: each provider\'s own list; the Claude provider without a key is one sentence', async () => {
-  const r = createMindRouter({ fetch: anyServer().f })
-  await assert.rejects(r.installed(), /no API key is set/)
+test('installed: each provider\'s own list; the Claude provider asks the gateway with no key in the page, or with one', async () => {
+  const srv = anyServer()
+  const r = createMindRouter({ fetch: srv.f })
+  assert.deepEqual(await r.installed(), ['claude-opus-5-5'])
+  assert.equal('x-api-key' in srv.calls[0].headers, false, 'the gateway adds the key')
   r.setKey('k')
   assert.deepEqual(await r.installed(), ['claude-opus-5-5'])
+  assert.equal(srv.calls[1].headers['x-api-key'], 'k')
   r.setProvider('ollama')
   assert.deepEqual(await r.installed(), ['qwen3-vl:4b'])
   r.setProvider('llamacpp')
@@ -174,17 +177,18 @@ test('from the console: ask provider swaps, ask key keeps the key masked, ask al
   const ollama = await shell('ask rust: hi', b, []).pending
   assert.deepEqual(ollama?.[0], { kind: 'out', text: 'ollama says hi' })
   assert.match(ollama?.[1]?.text ?? '', /^-- answered in \d+\.\d s --$/)
-  assert.deepEqual(shell('ask provider claude', b, []).lines, [{ kind: 'out', text: 'provider  claude: the Claude API through a gateway on this machine (ask key <key> to set the key)' }])
+  assert.deepEqual(shell('ask provider claude', b, []).lines, [{ kind: 'out', text: 'provider  claude: the Claude API through a gateway on this machine (best with the key in the gateway; ask key <key> keeps one in this browser)' }])
+  // No key in the page: the gateway on this machine adds it, so the ask is answered.
   const noKey = await shell('ask rust: hi', b, []).pending
-  assert.deepEqual(noKey, [{ kind: 'err', text: 'ask: no API key is set: ask key <key>, or ask provider ollama for a model on this machine' }])
-  assert.deepEqual(shell('ask key sk-ant-api03-abcdefghijklmnop-1234', b, []).lines, [{ kind: 'out', text: 'key       sk-ant…1234: kept in this browser only' }])
+  assert.deepEqual(noKey?.[0], { kind: 'out', text: 'claude says hi' })
+  assert.deepEqual(shell('ask key sk-ant-api03-abcdefghijklmnop-1234', b, []).lines, [{ kind: 'out', text: "key       sk-ant…1234: kept in this browser's local storage (ask key none clears it)" }])
   assert.deepEqual(shell('ask effort low', b, []).lines, [{ kind: 'out', text: 'effort    low' }])
   const status = await shell('ask', b, []).pending
   assert.deepEqual(status?.slice(0, 5), [
     { kind: 'out', text: 'provider  claude: the Claude API through a gateway on this machine (ask provider ollama|llamacpp for a model on this machine)' },
     { kind: 'out', text: 'server    http://localhost:8089  (a gateway on this machine only)' },
     { kind: 'out', text: 'model     claude-opus-5-5' },
-    { kind: 'out', text: 'key       sk-ant…1234  (kept in this browser only)' },
+    { kind: 'out', text: "key       sk-ant…1234  (kept in this browser's local storage: ask key none clears it)" },
     { kind: 'out', text: 'effort    low' },
   ])
   // The prompt-prefix page table (prefixCache.ts) paged both prompts asked so far, the key-less one too (it is asked
@@ -193,7 +197,7 @@ test('from the console: ask provider swaps, ask key keeps the key masked, ask al
   assert.deepEqual(status?.slice(6), [{ kind: 'out', text: 'installed claude-opus-5-5  (chosen)' }])
   const claude = await shell('ask rust: hi', b, []).pending
   assert.deepEqual(claude?.[0], { kind: 'out', text: 'claude says hi' })
-  assert.deepEqual(shell('ask key none', b, []).lines, [{ kind: 'out', text: 'key       none: cleared' }])
+  assert.deepEqual(shell('ask key none', b, []).lines, [{ kind: 'out', text: 'key       none: cleared (the gateway on this machine adds the key)' }])
   assert.deepEqual(shell('ask effort none', b, []).lines, [{ kind: 'out', text: "effort    none: the provider's own default" }])
   assert.deepEqual(shell('ask provider gpt', b, []).lines, [{ kind: 'err', text: 'ask: ask provider takes claude, ollama, llamacpp' }])
   assert.deepEqual(shell('ask key', b, []).lines, [{ kind: 'err', text: 'usage: ask key <key|none>' }])
@@ -246,4 +250,15 @@ test('the prefix cache: no line before a prompt is paged; then every answer page
   const last = srv.calls.filter((c) => c.body !== null).at(-1)
   assert.ok(last)
   assert.equal((last.body as { system: string }).system, systemPrompt([{ agent: 9, serial: 2, skills: ['Go'] }]))
+})
+
+test('every provider answers with the hash of the exact system prompt it sent, the Claude provider included (the audit\'s provenance)', async () => {
+  const srv = anyServer()
+  const r = createMindRouter({ fetch: srv.f })
+  const expected = promptHash(systemPrompt([TETHER]))
+  for (const p of PROVIDERS) {
+    r.setProvider(p)
+    const a = await r.answer({ tethers: [TETHER], prompt: 'hi', signal: new AbortController().signal }, () => {})
+    assert.equal(a.promptHash, expected, p)
+  }
 })
