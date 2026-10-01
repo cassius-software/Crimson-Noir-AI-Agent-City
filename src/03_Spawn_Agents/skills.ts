@@ -7,7 +7,7 @@
  * crowd's summon slots are sized here (crowdCompute.ts). Pure: no DOM, no GPU, no clock, no randomness.
  * What breaks if it is removed? Nobody has a skill, and the two realms could disagree about who was asked.
  */
-import { CITY } from '../01_Initialize_World/city.ts'
+import { CITY, inLot } from '../01_Initialize_World/city.ts'
 
 /**
  * The skills the city's people have: programming languages and crafts, named only so the operator can ask for
@@ -93,6 +93,12 @@ export const TETHER_PACE = 2.4
 export const RELEASE_DISTANCE = 12
 /** A recruit who has not arrived after this long goes back to their day, s. */
 export const APPROACH_SECONDS = 15
+/**
+ * Farthest from the operator a rally point may be, m: an Active recruit asked to walk to a sidewalk point stops
+ * INTERVIEW_DISTANCE short of it, and the tether still breaks at RELEASE_DISTANCE from the operator (never from the
+ * point), so the point stays a metre inside that: a rally never ends the tether it rides on.
+ */
+export const RALLY_RANGE = RELEASE_DISTANCE - INTERVIEW_DISTANCE - 1
 /** People who can be over at once, walking over or Active (summon slots in the crowd's uniform): the swarm's size. */
 export const RECRUIT_SLOTS = 8
 
@@ -188,6 +194,26 @@ export function whyNot(operator: { x: number; z: number } | null): string | null
   if (!operator) return 'recruiting works on foot'
   if (!Number.isFinite(operator.x) || !Number.isFinite(operator.z)) return 'the operator is nowhere'
   if (onRoad(operator.x, operator.z)) return 'step onto the sidewalk first: nobody is called into the road'
+  return null
+}
+
+/**
+ * Why Active recruit `agent` (at `xz[2·agent]`, `xz[2·agent + 1]`) may not be sent to the rally point (x, z); null
+ * when they may. The point must be finite, off the carriageway, outside every building lot (the crowd never enters
+ * one: crowd.wgsl pushOut), within RALLY_RANGE of the operator, and reachable from where the recruit stands without a
+ * step into the road. The page runs it on its copy to answer at once; the
+ * physics worker runs it again on its own reading before anyone walks (simCore.ts).
+ */
+export function whyNotRally(operator: { x: number; z: number } | null, xz: ArrayLike<number>, agent: number, x: number, z: number): string | null {
+  if (!operator || !Number.isFinite(operator.x) || !Number.isFinite(operator.z)) return 'rallying works on foot'
+  if (!Number.isFinite(x) || !Number.isFinite(z)) return 'the rally point is nowhere'
+  if (onRoad(x, z)) return 'nobody is sent into the road: pick a sidewalk point'
+  if (inLot(x, z)) return 'nobody is sent into a building: pick a sidewalk point'
+  if (Math.hypot(x - operator.x, z - operator.z) > RALLY_RANGE) return `the rally point is too far: within ${RALLY_RANGE} m of the operator`
+  if (!(Number.isInteger(agent) && agent > 0 && 2 * agent + 1 < xz.length)) return 'nobody by that number'
+  const ax = xz[2 * agent], az = xz[2 * agent + 1]
+  if (!Number.isFinite(ax) || !Number.isFinite(az)) return 'they have not been seen yet'
+  if (!sidewalkPath(ax, az, x, z)) return 'no sidewalk from where they stand to the rally point'
   return null
 }
 

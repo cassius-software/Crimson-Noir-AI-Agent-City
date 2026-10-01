@@ -33,8 +33,9 @@ import type { SimControls } from './operator.ts'
 import { applyWalk, DEFAULT_WALK_MS, MAX_WALK_MS, requestWalk, type ScriptedWalk } from './scriptedWalk.ts'
 import { MODES } from './simProtocol.ts'
 import { MAX_CARS, type CrowdReadout, type CrowdSensor, type CrowdStepInput } from '../03_Spawn_Agents/crowdSensor.ts'
-import { ACTIVITY, APPROACH_SECONDS, RECRUIT_SLOTS, RELEASE_DISTANCE, skillsOf, TETHER_PACE, type Skill } from '../03_Spawn_Agents/skills.ts'
+import { ACTIVITY, APPROACH_SECONDS, RALLY_RANGE, RECRUIT_SLOTS, RELEASE_DISTANCE, skillsOf, TETHER_PACE, type Skill } from '../03_Spawn_Agents/skills.ts'
 import type { SimEvent } from './simProtocol.ts'
+import { inLot } from '../01_Initialize_World/city.ts'
 
 const H = 1 / 60
 const NO_FURNITURE = { lamps: [], trees: [], signals: [] }
@@ -884,6 +885,154 @@ test('recruit: every recruitment gets a serial of its own, never reused, even fo
   assert.deepEqual([first, second, again], [1, 2, 3])
 })
 
+const rallyEvents = (events: SimEvent[]) => events.filter((e) => e.e === 'rally')
+
+/** A street with two Design recruits over: `one` Active (2 m up the sidewalk), `two` still walking over (2 m down). */
+async function rallyStreet() {
+  const { sim, step, crowd, place } = await street()
+  const [one, two] = withSkill('Design')
+  place(one, 0, 2)
+  place(two, 0, -2)
+  step()
+  const ask = (id: number, agent: number) => {
+    const e = recruitEvents(step({ cmds: [{ c: 'recruit', id, skill: 'design', agent }] }).events)[0] as { ok: boolean; agent: number }
+    assert.ok(e.ok && e.agent === agent)
+  }
+  ask(1, one)
+  crowd.activity[one] = ACTIVITY.interviewing
+  for (let k = 0; k < 3; k++) step()
+  ask(2, two)
+  crowd.activity[two] = ACTIVITY.coming
+  const s = step()
+  assert.deepEqual(s.recruits.map((r) => [r.agent, r.state]), [[one, 'Active'], [two, 'Interviewing']])
+  return { sim, step, crowd, place, one, two }
+}
+
+test('rally: an Active recruit is pointed at a sidewalk point the realm checked itself; the summons slot moves to it, the tether does not', async () => {
+  const { sim, step, crowd, place, one, two } = await rallyStreet()
+  const at = { x: WALK_AT.x, z: WALK_AT.z + 6 }
+  let s = step({ cmds: [{ c: 'rally', agent: one, x: at.x, z: at.z }] })
+  assert.deepEqual(rallyEvents(s.events), [{ e: 'rally', agent: one, ok: true }])
+  assert.deepEqual(s.recruits.find((r) => r.agent === one)!.rally, { x: at.x, z: at.z }, 'the view carries the point while it is in force')
+  assert.equal(s.recruits.find((r) => r.agent === two)!.rally, undefined)
+  assert.deepEqual(s.recruits.map((r) => [r.agent, r.state, r.arrived]), [[one, 'Active', true], [two, 'Interviewing', false]], 'nobody promoted or demoted')
+  plain(s)
+  structuredClone(s)
+  // The very next crowd step walks them to the point, still tethered (they hurry); the other recruit still comes to the operator.
+  let m = crowd.steps.at(-1)!.summons
+  assert.deepEqual(m.map((x) => [x.agent, x.tethered]), [[one, true], [two, false]])
+  assert.ok(Math.abs(m[0].x - at.x) < 1e-6 && Math.abs(m[0].z - at.z) < 1e-6, 'the Active recruit walks to the rally point')
+  assert.ok(Math.abs(m[1].x - WALK_AT.x) < 0.05 && Math.abs(m[1].z - WALK_AT.z) < 0.05, 'the Interviewing one still walks to the operator')
+  // They reach it (as the crowd reads them): still Active, still held there, no second arrival, the tether as it was.
+  place(one, 0, 6 - 1.5)
+  for (let k = 0; k < 5; k++) s = step()
+  assert.deepEqual(recruitEvents(s.events), [])
+  assert.equal(s.recruits.find((r) => r.agent === one)!.state, 'Active')
+  m = crowd.steps.at(-1)!.summons
+  assert.ok(Math.abs(m[0].x - at.x) < 1e-6 && Math.abs(m[0].z - at.z) < 1e-6, 'held at the point while the rally is in force')
+  // The operator walks away from the point beyond RALLY_RANGE (still within the tether of the recruit): the rally ends on
+  // its own, the summons points at the operator again, and they are still Active.
+  const back = { x: WALK_AT.x, z: at.z - RALLY_RANGE - 0.5 }
+  assert.ok(Math.hypot(back.x - (WALK_AT.x), back.z - (WALK_AT.z + 4.5)) < RELEASE_DISTANCE, 'the test keeps the tether')
+  step({ cmds: [{ c: 'teleport', x: back.x, z: back.z }] })
+  for (let k = 0; k < 3; k++) s = step()
+  assert.equal(s.recruits.find((r) => r.agent === one)!.rally, undefined, 'the rally ended on its own')
+  assert.equal(s.recruits.find((r) => r.agent === one)!.state, 'Active')
+  m = crowd.steps.at(-1)!.summons
+  assert.ok(Math.abs(m[0].x - back.x) < 0.05 && Math.abs(m[0].z - back.z) < 0.05, 'back to following the operator')
+  // Walking off beyond RELEASE_DISTANCE still breaks the tether, rally or not: the documented law is unchanged.
+  step({ cmds: [{ c: 'teleport', x: WALK_AT.x, z: WALK_AT.z }] })
+  for (let k = 0; k < 3; k++) step()
+  s = step({ cmds: [{ c: 'rally', agent: one, x: at.x, z: at.z }] })
+  assert.deepEqual(rallyEvents(s.events), [{ e: 'rally', agent: one, ok: true }])
+  const gone = recruitEvents(step({ cmds: [{ c: 'teleport', x: WALK_AT.x, z: WALK_AT.z + 4.5 - RELEASE_DISTANCE - 1 }] }).events)
+  for (let k = 0; k < 3; k++) s = step()
+  assert.deepEqual([...gone, ...recruitEvents(s.events)].filter((e) => e.e === 'released' && e.agent === one).length, 1, 'the operator walked away')
+  void sim
+})
+
+test('rally: refused with a reason for a road point, a point too far, no sidewalk path from where they stand, an Interviewing recruit or a stranger; malformed ones are counted', async () => {
+  const { step, crowd, place, one, two } = await rallyStreet()
+  const before = crowd.steps.at(-1)!.summons.map((m) => ({ ...m }))
+  const refused = (cmd: { agent: number; x: number; z: number }, reason: RegExp) => {
+    const s = step({ cmds: [{ c: 'rally', ...cmd }] })
+    const ev = rallyEvents(s.events)
+    assert.equal(ev.length, 1)
+    assert.equal((ev[0] as { ok: boolean }).ok, false)
+    assert.match((ev[0] as { reason: string }).reason, reason)
+    assert.equal(s.recruits.find((r) => r.agent === cmd.agent)?.rally, undefined)
+    return s
+  }
+  // Into the carriageway (3 m west of the lane is 2.8 m from the street's centreline).
+  refused({ agent: one, x: WALK_AT.x - 3, z: WALK_AT.z }, /nobody is sent into the road/)
+  // Up the same sidewalk, but farther than RALLY_RANGE from the operator: the tether would break on arrival.
+  refused({ agent: one, x: WALK_AT.x, z: WALK_AT.z + RALLY_RANGE + 0.5 }, /too far/)
+  // Still walking over: only an Active recruit is sent anywhere.
+  refused({ agent: two, x: WALK_AT.x, z: WALK_AT.z + 3 }, /still walking over/)
+  // A stranger (nobody by that number is over) and the player's own body.
+  const [stranger] = without('Design')
+  refused({ agent: stranger, x: WALK_AT.x, z: WALK_AT.z + 3 }, /nobody by that number/)
+  refused({ agent: 0, x: WALK_AT.x, z: WALK_AT.z + 3 }, /nobody by that number/)
+  // The realm's own reading decides where they stand: with the recruit read across the street (the other kerb, within
+  // the tether), a point 2 m from the operator has no sidewalk path from where they stand.
+  place(one, -2 * 5.8, 0)
+  step()
+  let s = refused({ agent: one, x: WALK_AT.x, z: WALK_AT.z + 2 }, /no sidewalk from where they stand/)
+  assert.equal(s.recruits.find((r) => r.agent === one)!.state, 'Active', 'still tethered (11.6 m is inside RELEASE_DISTANCE)')
+  place(one, 0, 2)
+  step()
+  // Nothing above moved the summons: both still walk to the operator.
+  const after = crowd.steps.at(-1)!.summons
+  assert.deepEqual(after.map((m) => [m.agent, m.tethered]), before.map((m) => [m.agent, m.tethered]))
+  for (const m of after) assert.ok(Math.abs(m.x - WALK_AT.x) < 0.05 && Math.abs(m.z - WALK_AT.z) < 0.05)
+  // Malformed: no pedestrian number, a non-finite point, a point that is not a number. Counted, never answered.
+  const rejected = s.rejected
+  s = step({ cmds: [
+    { c: 'rally', agent: 1.5, x: WALK_AT.x, z: WALK_AT.z },
+    { c: 'rally', agent: one, x: NaN, z: WALK_AT.z },
+    { c: 'rally', agent: one, x: WALK_AT.x, z: 'here' as unknown as number },
+    { c: 'rally' } as unknown as { c: 'rally'; agent: number; x: number; z: number },
+  ] })
+  assert.equal(s.rejected, rejected + 4)
+  assert.deepEqual(rallyEvents(s.events), [])
+  assert.equal(s.events.filter((e) => e.e === 'rejected').length, 4)
+  assert.equal(s.recruits.find((r) => r.agent === one)!.rally, undefined)
+  plain(s)
+  // At the wheel the recruits are let go anyway; a rally then names nobody.
+  step({ cmds: [{ c: 'setMode', i: 0, mode: 'parked' }, { c: 'recover', i: 0, x: WALK_AT.x + 3.5, z: WALK_AT.z, heading: 0 }] })
+  for (let k = 0; k < 30; k++) step()
+  s = step({ cmds: [{ c: 'interact' }] })
+  assert.equal(s.driving, 0)
+  s = step({ cmds: [{ c: 'rally', agent: one, x: WALK_AT.x, z: WALK_AT.z + 3 }] })
+  assert.equal(s.recruits.length, 0)
+  assert.match((rallyEvents(s.events)[0] as { reason: string }).reason, /on foot|nobody by that number/)
+})
+
+test('rally: a dismiss clears it with the recruit, and asking the same person again starts with no rally', async () => {
+  const { step, crowd, place, one } = await rallyStreet()
+  const at = { x: WALK_AT.x, z: WALK_AT.z + 5 }
+  let s = step({ cmds: [{ c: 'rally', agent: one, x: at.x, z: at.z }] })
+  assert.deepEqual(rallyEvents(s.events), [{ e: 'rally', agent: one, ok: true }])
+  s = step({ cmds: [{ c: 'dismiss', agent: one }] })
+  assert.deepEqual(recruitEvents(s.events), [{ e: 'released', agent: one, skill: 'Design', reason: 'dismissed' }])
+  assert.deepEqual(s.recruits.map((r) => r.agent).includes(one), false)
+  assert.deepEqual(crowd.steps.at(-1)!.summons.map((m) => m.agent).includes(one), false)
+  // Asked over again: a new tether, Interviewing, no rally remembered; a rally before they arrive is refused.
+  crowd.activity[one] = ACTIVITY.routine
+  place(one, 0, 2)
+  step()
+  s = step({ cmds: [{ c: 'recruit', id: 9, skill: 'design', agent: one }] })
+  assert.equal((recruitEvents(s.events)[0] as { ok: boolean }).ok, true)
+  assert.equal(s.recruits.find((r) => r.agent === one)!.rally, undefined)
+  s = step({ cmds: [{ c: 'rally', agent: one, x: at.x, z: at.z }] })
+  assert.match((rallyEvents(s.events)[0] as { reason: string }).reason, /still walking over/)
+  // dismiss everyone: no summons, no rally anywhere.
+  s = step({ cmds: [{ c: 'dismiss' }] })
+  assert.deepEqual(s.recruits, [])
+  assert.deepEqual(crowd.steps.at(-1)!.summons, [])
+  plain(s)
+})
+
 test('recruit: a halted realm answers nothing more, and the state stays plain data', async () => {
   const { sim, step, place } = await street()
   const [a] = withSkill('Audio')
@@ -1018,4 +1167,33 @@ test('tracks on over a surveyed region: the fleet keeps its network but no corri
   const s = sim.step({ dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds: [] }, new Float32Array(0), new Float32Array(0))
   assert.equal(s.craft, null)
   assert.equal(sim.halted, false)
+})
+
+test('rally: refused for a point inside a building lot (the crowd never enters one), for 11.9 m (inside the tether, past the range), and after a dismiss', async () => {
+  const { step, crowd, one } = await rallyStreet()
+  const before = crowd.steps.at(-1)!.summons.map((m) => ({ ...m }))
+  const refused = (cmd: { agent: number; x: number; z: number }, reason: RegExp) => {
+    const s = step({ cmds: [{ c: 'rally', ...cmd }] })
+    const ev = rallyEvents(s.events)
+    assert.equal(ev.length, 1, JSON.stringify(s.events))
+    assert.equal((ev[0] as { ok: boolean }).ok, false)
+    assert.match((ev[0] as { reason: string }).reason, reason)
+    assert.equal(s.recruits.find((r) => r.agent === cmd.agent)?.rally, undefined)
+    return s
+  }
+  // 2.2 m from the operator, off the road, a straight sidewalk-free walk: but 1 m inside the lot behind the sidewalk.
+  const lot = { x: WALK_AT.x + 2.2, z: WALK_AT.z }
+  assert.equal(inLot(lot.x, lot.z), true)
+  refused({ agent: one, x: lot.x, z: lot.z }, /into a building/)
+  // 11.9 m up the sidewalk: inside RELEASE_DISTANCE, but a recruit stopped short of it could still be past the tether.
+  assert.ok(11.9 < RELEASE_DISTANCE && 11.9 > RALLY_RANGE)
+  refused({ agent: one, x: WALK_AT.x, z: WALK_AT.z + 11.9 }, /too far/)
+  const after = crowd.steps.at(-1)!.summons
+  assert.deepEqual(after.map((m) => [m.agent, m.tethered]), before.map((m) => [m.agent, m.tethered]))
+  for (const m of after) assert.ok(Math.abs(m.x - WALK_AT.x) < 0.05 && Math.abs(m.z - WALK_AT.z) < 0.05, 'nobody was sent anywhere')
+  // Dismissed: a rally names nobody.
+  let s = step({ cmds: [{ c: 'dismiss', agent: one }] })
+  assert.equal(s.recruits.some((r) => r.agent === one), false)
+  s = refused({ agent: one, x: WALK_AT.x, z: WALK_AT.z + 3 }, /nobody by that number was asked over/)
+  plain(s)
 })

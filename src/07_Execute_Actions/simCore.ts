@@ -1,11 +1,12 @@
 /**
  * Why does this file exist? It is the whole physical simulation as one object with a plain-data interface,
  * built to live alone in the physics worker (physics.worker.ts): the Rapier world, the fleet and its
- * Ring-0 Bouncer, the avatar, the Sanctuary, the Ring-0 auditor, and the GPU pedestrian crowd that senses
+ * Ring-0 Bouncer, the avatars (up to MAX_PLAYERS local players, each a person to the Sanctuary, the Bouncer and
+ * the audit; player 0 is the operator), the Sanctuary, the Ring-0 auditor, and the GPU pedestrian crowd that senses
  * for the Bouncer (a CrowdSensor on the worker's own device, crowdSim.ts). One step() takes the page's input
  * as numbers (controls and queued commands, nothing about pedestrians or time) and runs: commands, sensing
- * (the avatar exactly, the crowd's newest readings aged for how stale they are), vetted controls, AI drivers,
- * the fixed substeps (Sanctuary, avatar, wheels), then the audit, synchronously after the last substep and in
+ * (every avatar exactly, the crowd's newest readings aged for how stale they are), vetted controls, AI drivers,
+ * the fixed substeps (Sanctuary, avatars, wheels), then the audit, synchronously after the last substep and in
  * the same realm (including the crowd's own Ring-0 flags), then the crowd's next step, and only then packs the
  * poses and the pedestrians' render state the page may draw. Recruitment is decided here too: a request is
  * checked against this realm's own readings of the crowd (earshot, the sidewalk, the skill), the person is asked
@@ -14,7 +15,7 @@
  * imports no DOM, no worker API and no GPU code, so the node tests drive it directly with a stand-in sensor.
  * What breaks if it is removed? The worker has nothing to run, and the page has no simulation.
  */
-import { CITY_SIZE, inLot } from '../01_Initialize_World/city.ts'
+import { CITY, CITY_SIZE, inLot } from '../01_Initialize_World/city.ts'
 import { KERNEL } from '../02_Define_The_Rules/civic.ts'
 import { auditCraft, panicReason, RING0, Ring0Auditor, type AuditPerson, type AuditVehicle } from '../02_Define_The_Rules/ring0.ts'
 import type { KernelStats } from '../05_Observe_Environment/telemetry.ts'
@@ -22,18 +23,18 @@ import { CAR, CAR_TUNE_RANGE, type CarTuning } from './car.ts'
 import { Physics } from './physics.ts'
 import { Avatar } from './player.ts'
 import { Sanctuary, type Nudge } from './sanctuary.ts'
-import { Fleet, type Vehicle } from './vehicles.ts'
+import { Fleet, type Person, type Vehicle } from './vehicles.ts'
 import { TrackFleet } from './trackFleet.ts'
 import { buildTrackNetwork } from '../06_Make_Decisions/tracks.ts'
 import { AGENTS_RANGE, MAX_CARS, PEDESTRIAN_MAX_SPEED, type CrowdSensor, type Summon } from '../03_Spawn_Agents/crowdSensor.ts'
 import {
-  ACTIVITY, APPROACH_SECONDS, AUDIBLE_RADIUS, eligible, findRecruit, RECRUIT_SLOTS, RELEASE_DISTANCE, skillNamed, skillsOf, whyNot,
+  ACTIVITY, APPROACH_SECONDS, AUDIBLE_RADIUS, eligible, findRecruit, RALLY_RANGE, RECRUIT_SLOTS, RELEASE_DISTANCE, skillNamed, skillsOf, whyNot, whyNotRally,
   type Skill,
 } from '../03_Spawn_Agents/skills.ts'
 import type { Intent } from '../02_Define_The_Rules/laws.ts'
 import {
-  ENTER_RANGE, RUN, type AvatarState, type DriveControls, type FootControls, type RecruitView, type SimCommand, type SimEvent, type SimInit, type SimMeta,
-  type StepState,
+  ENTER_RANGE, MAX_PLAYERS, RUN, type AvatarState, type DriveControls, type FootControls, type PlayerControls, type RecruitView, type SimCommand,
+  type SimEvent, type SimInit, type SimMeta, type StepState,
 } from './simProtocol.ts'
 
 /** Longest step accepted, s (a page that skipped frames sends the sum; the physics caps its own substeps). */
@@ -56,6 +57,10 @@ const CROWD_STALE_S = 1.0
 const SUMMON_GRACE_S = 1.0
 const ZERO_NUDGE: Nudge = Object.freeze({ dx: 0, dz: 0 })
 const TUNING_KEYS = Object.keys(CAR_TUNE_RANGE) as (keyof CarTuning)[]
+/** How far past a building lot's edge a spawn inside one is moved, m (onto the sidewalk; #interact exits with 0.4). */
+const LOT_PAD = 0.4
+const IDLE_FOOT: FootControls = Object.freeze({ x: 0, z: 0, heading: NaN })
+const IDLE_DRIVE: DriveControls = Object.freeze({ steer: 0, fwd: 0, back: 0, handbrake: false })
 
 export type SimCoreOptions = Omit<SimInit, 't'>
 
@@ -70,8 +75,13 @@ export interface StepInput {
   dt: number
   foot: FootControls
   drive: DriveControls
+  /** Players 1..3 (index k − 1 for player k), shape-checked by the host to records; a missing entry is idle. */
+  players?: readonly Partial<PlayerControls>[]
   cmds: readonly unknown[]
 }
+
+/** What one player's controls gave the page to feel this step (reported for player 0). */
+interface Haptics { trigger: number; limited: boolean; thump: boolean }
 
 /** Someone the operator asked over. */
 interface Recruit {
@@ -92,6 +102,8 @@ interface Recruit {
   distance: number
   x: number
   z: number
+  /** The sidewalk point this (Active) recruit walks to instead of the operator, while a rally is in force. */
+  rally: { x: number; z: number } | null
 }
 
 const finite = (n: unknown, fallback = 0): number => (typeof n === 'number' && Number.isFinite(n) ? n : fallback)
@@ -99,20 +111,35 @@ const clamp = (n: number, lo: number, hi: number): number => (n < lo ? lo : n > 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 const now = (): number => (typeof performance === 'undefined' ? Date.now() : performance.now())
 
+/**
+ * A spawn inside one of the city's building lots, moved onto the nearest sidewalk (a person cannot start inside a
+ * building); anywhere else it is kept as it is. The city only: a surveyed region has no lots.
+ */
+function offLot(x: number, z: number): { x: number; z: number } {
+  if (!inLot(x, z, LOT_PAD)) return { x, z }
+  const cx = (Math.floor(x / CITY.pitch) + 0.5) * CITY.pitch, cz = (Math.floor(z / CITY.pitch) + 0.5) * CITY.pitch
+  const dx = x - cx, dz = z - cz
+  const out = CITY.lotHalf + LOT_PAD + 1
+  if (Math.abs(dx) >= Math.abs(dz)) return { x: cx + (dx < 0 ? -out : out), z }
+  return { x, z: cz + (dz < 0 ? -out : out) }
+}
+
 export class SimCore {
   readonly meta: SimMeta
   readonly #physics: Physics
   readonly #fleet: Fleet
   /** The scheduled craft (train sets, drones, planes) on the city's corridors: with tracks on, in the city only. */
   readonly #craft: TrackFleet | null
-  readonly #avatar: Avatar
+  /** Every player's body, index = player: Sanctuary ward k and audit person k. */
+  readonly #avatars: readonly Avatar[]
   readonly #sanctuary: Sanctuary
   /** Centred on the city, or on a region with a slab that holds it (and a margin). */
   readonly #auditor: Ring0Auditor
   readonly #debug: boolean
   /** The GPU pedestrians and their First-Law sensing (null only in tests without a crowd). */
   readonly #crowd: CrowdSensor | null
-  #driving: Vehicle | null = null
+  /** Per player: the car they drive, or null on foot. */
+  readonly #driving: (Vehicle | null)[]
   /** This realm's own clock (the sum of accepted dt): harness time limits never trust the page's clock. */
   #simTime = 0
   #blindUntil = -1
@@ -124,10 +151,14 @@ export class SimCore {
   readonly #noHazards: Float32Array
   #preVel: Float32Array
   readonly #auditVehicles: AuditVehicle[] = []
-  readonly #auditPeople: AuditPerson[] = [{ id: 0, x: 0, y: 0, z: 0, solid: true }]
-  readonly #wish = { x: 0, z: 0 }
-  /** The way the player's own body faces (the page's view heading): it only turns that figure in the crowd. */
-  #bodyHeading = 0
+  /** One audit person per avatar, id = player. */
+  readonly #auditPeople: AuditPerson[]
+  /** Per player: the walking velocity asked for this step, clamped. */
+  readonly #wish: { x: number; z: number }[]
+  /** Per player: the way their body faces (the page's view heading); player 0's turns that figure in the crowd. */
+  readonly #bodyHeading: number[]
+  /** Per player: everyone the fleet sees this step (scratch for setPeople). */
+  readonly #people: Person[]
   #crowdAgeMs: number | null = null
   /** Number of the last crowd step dispatched; every readback echoes the number of the step it measured. */
   #crowdSeq = 0
@@ -141,8 +172,9 @@ export class SimCore {
   readonly #intents = new Map<number, Intent>()
   readonly #pos = { x: 0, y: 0, z: 0 }
   readonly #vel = { x: 0, y: 0, z: 0 }
-  #holdWas = false
-  #fullBrakeWas = false
+  /** Per player: the First-Law hold and the full-brake edge last step (for the thump). */
+  readonly #holdWas: boolean[]
+  readonly #fullBrakeWas: boolean[]
   #events: SimEvent[] = []
   /** Everyone the operator has asked over (at most RECRUIT_SLOTS), and their summons as the crowd receives them. */
   readonly #recruits: Recruit[] = []
@@ -166,9 +198,19 @@ export class SimCore {
     this.#fleet = new Fleet(physics, o.cars, o.seed, { exposeRig: this.#debug, network: network ?? undefined })
     // The corridors are laid over the city's grid: a surveyed region has no elevated loop and no racetrack over it.
     this.#craft = network && !r ? new TrackFleet(network) : null
-    this.#avatar = new Avatar(physics, o.spawn.x, o.spawn.z)
+    // Every player's body, in player order: Sanctuary ward k and audit person k are player k.
+    const spawns = [o.spawn, ...(o.spawns ?? [])]
+    this.#avatars = Object.freeze(spawns.map((p) => new Avatar(physics, p.x, p.z)))
     this.#sanctuary = new Sanctuary(physics.world)
-    this.#sanctuary.register(this.#avatar.person)
+    for (const a of this.#avatars) this.#sanctuary.register(a.person)
+    const players = this.#avatars.length
+    this.#driving = this.#avatars.map(() => null)
+    this.#wish = this.#avatars.map(() => ({ x: 0, z: 0 }))
+    this.#bodyHeading = this.#avatars.map(() => 0)
+    this.#holdWas = this.#avatars.map(() => false)
+    this.#fullBrakeWas = this.#avatars.map(() => false)
+    this.#people = this.#avatars.map(() => ({ x: 0, z: 0, present: false }))
+    this.#auditPeople = this.#avatars.map((_, k) => ({ id: k, x: 0, y: 0, z: 0, solid: true }))
     const n = this.#fleet.vehicles.length
     this.#hazardAhead = new Float32Array(n).fill(Infinity)
     this.#hazardBehind = new Float32Array(n).fill(Infinity)
@@ -181,9 +223,10 @@ export class SimCore {
       agents: crowd ? crowd.agentCount : 0,
       suv: this.#fleet.vehicles.map((v) => v.suv),
       paint: [...this.#fleet.paint],
-      person: { radius: this.#avatar.person.radius, halfHeight: this.#avatar.person.halfHeight },
+      person: { radius: this.#avatars[0].person.radius, halfHeight: this.#avatars[0].person.halfHeight },
       debug: this.#debug,
       craft: this.#craft?.count ?? 0,
+      players,
     })
     Object.freeze(this)
   }
@@ -200,10 +243,20 @@ export class SimCore {
     const agents = Math.floor(finite(o.agents, lo))
     if (makeCrowd && !(agents >= lo && agents <= hi)) throw new Error(`agents must be ${lo}–${hi}, got ${o.agents}`)
     const spawn = { x: finite(o.spawn?.x, CITY_SIZE / 2), z: finite(o.spawn?.z, CITY_SIZE / 2) }
+    // Players 1..3: each a finite pair (anything else is refused, like a malformed region), and in the city never
+    // inside a building lot.
+    const extra = o.spawns ?? []
+    if (!Array.isArray(extra) || extra.length > MAX_PLAYERS - 1) throw new Error(`spawns must list at most ${MAX_PLAYERS - 1} players`)
+    const spawns = extra.map((p, k) => {
+      const x = finite(p?.x, NaN), z = finite(p?.z, NaN)
+      if (Number.isNaN(x) || Number.isNaN(z)) throw new Error(`spawns[${k}] must be a finite x, z pair`)
+      return o.region ? { x, z } : offLot(x, z)
+    })
     const physics = await Physics.create(o.boxes, o.furniture, o.region ?? null)
     const crowd = makeCrowd ? await makeCrowd(agents) : null
     physics.streamAt(spawn.x, spawn.z)
-    const core = new SimCore(physics, { ...o, cars, agents, seed: Math.floor(finite(o.seed)) >>> 0, spawn }, crowd)
+    for (const p of spawns) physics.streamAt(p.x, p.z)
+    const core = new SimCore(physics, { ...o, cars, agents, seed: Math.floor(finite(o.seed)) >>> 0, spawn, spawns }, crowd)
     if (crowd) {
       core.#stepCrowd(0)
       const t0 = now()
@@ -250,7 +303,7 @@ export class SimCore {
    */
   step(input: StepInput, poses: Float32Array, craft: Float32Array | null = null): Omit<StepState, 't' | 'id'> {
     const t0 = now()
-    let trigger = 0, limited = false, thump = false
+    let haptics: Haptics = { trigger: 0, limited: false, thump: false }
     let craftOut: Float32Array | null = null
     // A crowd that can no longer see anyone leaves the Bouncer blind to pedestrians: that is a broken kernel.
     if (this.#panic === null && this.#crowd?.lost) this.halt(`Sensing Failure: pedestrian sensing stopped (${this.#crowd.lost}).`)
@@ -268,85 +321,59 @@ export class SimCore {
           this.noteRejected(message(e))
         }
       }
-      const fleet = this.#fleet, avatar = this.#avatar
+      const fleet = this.#fleet, avatars = this.#avatars, driving = this.#driving
 
-      // Everyone the First Law protects, as the fleet will see them this step.
+      // Everyone the First Law protects, as the fleet will see them this step: every avatar on foot, exactly.
       const blind = this.#simTime < this.#blindUntil
-      fleet.setAvatar(avatar.x, avatar.z, this.#driving === null && !blind)
+      const people = this.#people
+      for (let k = 0; k < avatars.length; k++) {
+        people[k].x = avatars[k].x
+        people[k].z = avatars[k].z
+        people[k].present = driving[k] === null && !blind
+      }
+      fleet.setPeople(people)
       if (blind) fleet.setPersonHazards(this.#noHazards, this.#noHazards)
       else this.#feedHazards()
-      // Scripted intents are ruled on this step's sensing (as the player's controls below are), never on the
+      // Scripted intents are ruled on this step's sensing (as the players' controls below are), never on the
       // previous step's: a setMode or interact later in the same batch still wins.
       for (const [i, cmd] of this.#intents) {
         const v = fleet.vehicles[i]
-        if (v !== this.#driving && v.mode === 'player') fleet.drive(v, cmd, false)
+        if (!driving.includes(v) && v.mode === 'player') fleet.drive(v, cmd, false)
       }
       this.#intents.clear()
 
-      const v = this.#driving
-      if (v === null) {
-        // On foot: the desired walking velocity, never faster than a run.
-        const wx = finite(input.foot?.x), wz = finite(input.foot?.z)
-        const len = Math.hypot(wx, wz)
-        const k = len > RUN ? RUN / len : 1
-        this.#wish.x = wx * k
-        this.#wish.z = wz * k
-        // Wrapped in f64 so the crowd's f32 uniform always holds a small angle: 1e39 is finite here and
-        // Infinity there, and would turn the player's figure (and, through the grid, its neighbours) into NaN.
-        const h = finite(input.foot?.heading, NaN)
-        if (!Number.isNaN(h)) this.#bodyHeading = Math.atan2(Math.sin(h), Math.cos(h))
-        this.#holdWas = false
-        this.#fullBrakeWas = false
-      } else {
-        const d = input.drive
-        const steerIn = clamp(finite(d?.steer), -1, 1)
-        const fwd = clamp(finite(d?.fwd), 0, 1), back = clamp(finite(d?.back), 0, 1)
-        const speed = fleet.speed(v)
-        const target = steerIn * CAR.maxSteer * (1 - Math.min(0.6, Math.abs(speed) / 28))
-        v.steer += (target - v.steer) * Math.min(1, dt * 5)
-        let throttle = 0, brake = 0
-        if (fwd > 0) {
-          if (speed < -0.5) brake = KERNEL.maxBrake * fwd
-          else throttle = fwd
-        }
-        if (back > 0) {
-          if (speed > 0.5) brake = Math.max(brake, KERNEL.maxBrake * back)
-          else throttle = -0.55 * back
-        }
-        // Ring-0 L2 on the input, before the step: no drive further along the direction of travel within 0.5 m/s
-        // of the cap, so the audit's post-step clamp stays a backstop that never has to act on a player's car.
-        const asked = throttle
-        if (speed >= RING0.maxVelocity - 0.5) throttle = Math.min(throttle, 0)
-        else if (speed <= -(RING0.maxVelocity - 0.5)) throttle = Math.max(throttle, 0)
-        limited = throttle !== asked
-        // The bouncer vets the driver's intent; what reaches the wheels is what the trigger should feel.
-        fleet.drive(v, { throttle, brake, steer: v.steer }, d?.handbrake === true)
-        trigger = Math.min(1, v.lastCommand.brake / KERNEL.maxBrake)
-        // A thump when the First Law takes the car, or when the driver stands on the brake.
-        const hold = fleet.bouncer.holding(v.index)
-        const fullBrake = brake >= KERNEL.maxBrake && speed > 0.5
-        thump = (hold && !this.#holdWas) || (fullBrake && !this.#fullBrakeWas)
-        this.#holdWas = hold
-        this.#fullBrakeWas = fullBrake
+      // Player 0's controls are foot and drive; players 1..3 ride in `players` (a missing entry is idle). The
+      // haptics reported are player 0's.
+      haptics = this.#control(0, input.foot, input.drive, dt)
+      const extra = input.players
+      for (let k = 1; k < avatars.length; k++) {
+        const c = extra?.[k - 1]
+        this.#control(k, c?.foot ?? IDLE_FOOT, c?.drive ?? IDLE_DRIVE, dt)
       }
 
       fleet.think(dt, signalTime)
       // Pre-step velocities for the audit's IMPACT test (a contact resolves inside the step it happens in).
       this.#capturePreStep()
-      const driving = this.#driving
-      // A region streams its walls around the player (the car driven, or the avatar): built before this step solves.
-      if (driving !== null) {
-        const p = fleet.position(driving)
-        this.#physics.streamAt(p.x, p.z)
-      } else {
-        this.#physics.streamAt(avatar.x, avatar.z)
+      // A region streams its walls around every player (the car driven, or the avatar): built before this step solves.
+      for (let k = 0; k < avatars.length; k++) {
+        const v = driving[k]
+        if (v !== null) {
+          const p = fleet.position(v, this.#pos)
+          this.#physics.streamAt(p.x, p.z)
+        } else {
+          this.#physics.streamAt(avatars[k].x, avatars[k].z)
+        }
       }
+      const wish = this.#wish
       this.#physics.step(dt, (h) => {
-        // Sanctuary first: a person a vehicle is about to reach becomes a sensor before this step solves.
-        const n = this.#sanctuaryOn ? this.#sanctuary.guard(fleet.footprints(), h)[0] : ZERO_NUDGE
-        if (driving === null) {
-          avatar.nudge(n.dx, n.dz)
-          avatar.move(this.#wish.x, this.#wish.z, h)
+        // Sanctuary first: a person a vehicle is about to reach becomes a sensor before this step solves. Its nudges
+        // are index-aligned with the wards, registered in player order.
+        const nudges = this.#sanctuaryOn ? this.#sanctuary.guard(fleet.footprints(), h) : null
+        for (let k = 0; k < avatars.length; k++) {
+          if (driving[k] !== null) continue
+          const n = nudges?.[k] ?? ZERO_NUDGE
+          avatars[k].nudge(n.dx, n.dz)
+          avatars[k].move(wish[k].x, wish[k].z, h)
         }
         fleet.updateControllers(h)
         // The odometer: how far each car can have driven since any crowd reading (the speed at the substep's
@@ -369,15 +396,19 @@ export class SimCore {
     const events = this.#events
     this.#events = []
     const st = this.#physics.stats
+    const avatars = this.#avatars.map((_, k) => this.#avatarState(k))
+    const drivings = this.#driving.map((v) => (v ? v.index : -1))
     return {
       simTime: this.#simTime,
       poses,
-      avatar: this.#avatarState(),
-      driving: this.#driving ? this.#driving.index : -1,
+      avatar: avatars[0],
+      driving: drivings[0],
+      avatars,
+      drivings,
       kernel: this.#kernelStats(),
       physics: { stepMs: st.stepMs, steps: st.steps, bodies: st.bodies, colliders: st.colliders, ccd: st.ccd, workerMs: this.#workerMs },
       tuning: { ...this.#fleet.tuning },
-      haptics: { trigger, limited, thump },
+      haptics,
       crowd: {
         stats: { ...(this.#crowd?.readout?.stats ?? { nudges: 0, waiting: 0, crossing: 0, retreating: 0 }) },
         ageMs: this.#crowdAgeMs,
@@ -391,6 +422,7 @@ export class SimCore {
         agent: r.agent, serial: r.serial, skill: r.skill, state: r.arrivedAt >= 0 ? 'Active' : 'Interviewing', arrived: r.arrivedAt >= 0,
         skills: [...r.skills], distance: r.distance, x: r.x, z: r.z,
         seconds: this.#simTime - r.since,
+        ...(r.rally ? { rally: { x: r.rally.x, z: r.rally.z } } : {}),
       })),
       events,
       rejected: this.#rejected,
@@ -398,12 +430,70 @@ export class SimCore {
     }
   }
 
-  #avatarState(): AvatarState {
-    const a = this.#avatar, p = a.person
+  /**
+   * Player k's controls this step: on foot the desired walking velocity, never faster than a run, and the way their
+   * body faces; in a car the wheel and pedals, clamped, L2-limited and vetted by the Bouncer. Returns what the
+   * trigger should feel (the brake the wheels received, the limiter, a First-Law or full-brake edge).
+   */
+  #control(k: number, foot: FootControls | undefined, drive: DriveControls | undefined, dt: number): Haptics {
+    const fleet = this.#fleet
+    const v = this.#driving[k]
+    let trigger = 0, limited = false, thump = false
+    if (v === null) {
+      // On foot: the desired walking velocity, never faster than a run.
+      const wx = finite(foot?.x), wz = finite(foot?.z)
+      const len = Math.hypot(wx, wz)
+      const s = len > RUN ? RUN / len : 1
+      const wish = this.#wish[k]
+      wish.x = wx * s
+      wish.z = wz * s
+      // Wrapped in f64 so the crowd's f32 uniform always holds a small angle: 1e39 is finite here and
+      // Infinity there, and would turn the player's figure (and, through the grid, its neighbours) into NaN.
+      const h = finite(foot?.heading, NaN)
+      if (!Number.isNaN(h)) this.#bodyHeading[k] = Math.atan2(Math.sin(h), Math.cos(h))
+      this.#holdWas[k] = false
+      this.#fullBrakeWas[k] = false
+    } else {
+      const d = drive
+      const steerIn = clamp(finite(d?.steer), -1, 1)
+      const fwd = clamp(finite(d?.fwd), 0, 1), back = clamp(finite(d?.back), 0, 1)
+      const speed = fleet.speed(v)
+      const aim = steerIn * CAR.maxSteer * (1 - Math.min(0.6, Math.abs(speed) / 28))
+      v.steer += (aim - v.steer) * Math.min(1, dt * 5)
+      let throttle = 0, brake = 0
+      if (fwd > 0) {
+        if (speed < -0.5) brake = KERNEL.maxBrake * fwd
+        else throttle = fwd
+      }
+      if (back > 0) {
+        if (speed > 0.5) brake = Math.max(brake, KERNEL.maxBrake * back)
+        else throttle = -0.55 * back
+      }
+      // Ring-0 L2 on the input, before the step: no drive further along the direction of travel within 0.5 m/s
+      // of the cap, so the audit's post-step clamp stays a backstop that never has to act on a player's car.
+      const asked = throttle
+      if (speed >= RING0.maxVelocity - 0.5) throttle = Math.min(throttle, 0)
+      else if (speed <= -(RING0.maxVelocity - 0.5)) throttle = Math.max(throttle, 0)
+      limited = throttle !== asked
+      // The bouncer vets the driver's intent; what reaches the wheels is what the trigger should feel.
+      fleet.drive(v, { throttle, brake, steer: v.steer }, d?.handbrake === true)
+      trigger = Math.min(1, v.lastCommand.brake / KERNEL.maxBrake)
+      // A thump when the First Law takes the car, or when the driver stands on the brake.
+      const hold = fleet.bouncer.holding(v.index)
+      const fullBrake = brake >= KERNEL.maxBrake && speed > 0.5
+      thump = (hold && !this.#holdWas[k]) || (fullBrake && !this.#fullBrakeWas[k])
+      this.#holdWas[k] = hold
+      this.#fullBrakeWas[k] = fullBrake
+    }
+    return { trigger, limited, thump }
+  }
+
+  #avatarState(k: number): AvatarState {
+    const a = this.#avatars[k], p = a.person
     const t = a.body.translation(this.#pos)
     return {
-      x: t.x, y: t.y, z: t.z, feetY: t.y - p.halfHeight - p.radius, speed: this.#driving ? 0 : a.speed,
-      enabled: a.collider.isEnabled(), sensor: this.#sanctuary.isSensor(0),
+      x: t.x, y: t.y, z: t.z, feetY: t.y - p.halfHeight - p.radius, speed: this.#driving[k] ? 0 : a.speed,
+      enabled: a.collider.isEnabled(), sensor: this.#sanctuary.isSensor(k),
     }
   }
 
@@ -423,8 +513,30 @@ export class SimCore {
   }
 
   #notDriven(v: Vehicle): Vehicle {
-    if (v === this.#driving) throw new Error('that car is being driven')
+    if (this.#driving.includes(v)) throw new Error('that car is being driven')
     return v
+  }
+
+  /**
+   * Never drop a car onto a person (audit invariant 8): a car put down at (tx, tz) must clear every avatar on foot by a
+   * car's half-length and a margin, or the command is refused. Players inside cars are not on foot.
+   */
+  #clearOfPeople(what: string, tx: number, tz: number): void {
+    for (let k = 0; k < this.#avatars.length; k++) {
+      const a = this.#avatars[k]
+      if (this.#driving[k] === null && Math.hypot(tx - a.x, tz - a.z) < CAR.halfLength + a.person.radius + 0.5) {
+        throw new Error(`${what}: a person is standing there`)
+      }
+    }
+  }
+
+  /** A command's player: absent is player 0; anything but an index into the avatars is malformed. */
+  #player(u: unknown): number {
+    if (u === undefined) return 0
+    if (typeof u !== 'number' || !Number.isInteger(u) || u < 0 || u >= this.#avatars.length) {
+      throw new Error(`player must be 0–${this.#avatars.length - 1}, got ${String(u)}`)
+    }
+    return u
   }
 
   #debugOnly(c: string): void {
@@ -437,13 +549,22 @@ export class SimCore {
     const cmd = raw as SimCommand
     const fleet = this.#fleet
     switch (cmd.c) {
-      case 'interact': this.#interact(); return
-      case 'reset': if (this.#driving) fleet.recover(this.#driving); return
+      case 'interact': this.#interact(this.#player(cmd.player)); return
+      case 'reset': {
+        // Player 0's car, righted where it stands: never put down beside a player on foot (the driver is inside).
+        const v = this.#driving[0]
+        if (!v) return
+        const at = fleet.position(v, this.#pos)
+        this.#clearOfPeople('reset', at.x, at.z)
+        fleet.recover(v)
+        return
+      }
       case 'teleport': {
+        const k = this.#player(cmd.player)
         const x = finite(cmd.x, NaN), z = finite(cmd.z, NaN)
         if (Number.isNaN(x) || Number.isNaN(z)) throw new Error('teleport: x and z must be finite')
-        if (this.#driving) this.#interact()
-        this.#avatar.teleport(x, z)
+        if (this.#driving[k]) this.#interact(k)
+        this.#avatars[k].teleport(x, z)
         return
       }
       case 'setMode': {
@@ -457,12 +578,8 @@ export class SimCore {
         const opt = (n: unknown): number | undefined => (n === undefined ? undefined : finite(n, NaN))
         const x = opt(cmd.x), z = opt(cmd.z), heading = opt(cmd.heading)
         if ([x, z, heading].some((n) => Number.isNaN(n))) throw new Error('recover: x, z and heading must be finite')
-        // Never drop a car onto a person: the spot must clear the avatar on foot by a car's half-length and a margin.
         const at = fleet.position(v, this.#pos)
-        const tx = x ?? at.x, tz = z ?? at.z
-        if (this.#driving === null && Math.hypot(tx - this.#avatar.x, tz - this.#avatar.z) < CAR.halfLength + this.#avatar.person.radius + 0.5) {
-          throw new Error('recover: a person is standing there')
-        }
+        this.#clearOfPeople('recover', x ?? at.x, z ?? at.z)
         fleet.recover(v, x, z, heading)
         // Moved: every reading dispatched so far measured it somewhere else. It holds until one taken here lands.
         if (x !== undefined || z !== undefined || heading !== undefined) this.#movedSeq[v.index] = this.#crowdSeq
@@ -491,6 +608,7 @@ export class SimCore {
         return
       }
       case 'recruit': this.#recruit(cmd); return
+      case 'rally': this.#rally(cmd); return
       case 'dismiss': {
         if (cmd.agent !== undefined && !Number.isInteger(cmd.agent)) throw new Error('dismiss: agent must be a pedestrian index')
         for (const r of [...this.#recruits]) if (cmd.agent === undefined || r.agent === cmd.agent) this.#release(r, 'dismissed')
@@ -540,7 +658,7 @@ export class SimCore {
     const refuse = (reason: string): void => { this.#events.push({ e: 'recruit', id, ok: false, skill, reason }) }
     const r = this.#crowd?.readout ?? null
     if (r === null) return refuse('nobody can hear you: the crowd is not running')
-    const operator = this.#driving ? null : { x: this.#avatar.x, z: this.#avatar.z }
+    const operator = this.#driving[0] ? null : { x: this.#avatars[0].x, z: this.#avatars[0].z }
     const why = whyNot(operator)
     if (why !== null || operator === null) return refuse(why ?? 'recruiting works on foot')
     if (this.#recruits.length >= RECRUIT_SLOTS) return refuse(`the swarm is full (${RECRUIT_SLOTS} people): dismiss someone first`)
@@ -554,9 +672,36 @@ export class SimCore {
     if (pick === null) return refuse(`nobody within ${AUDIBLE_RADIUS} m on this side of the street knows ${skill}`)
     this.#recruits.push({
       id, serial: ++this.#serial, agent: pick.agent, skill, skills: [skill, ...skillsOf(pick.agent).filter((s) => s !== skill)], since: this.#simTime, seq: this.#crowdSeq, arrivedAt: -1, distance: pick.distance,
-      x: r.xz[2 * pick.agent], z: r.xz[2 * pick.agent + 1],
+      x: r.xz[2 * pick.agent], z: r.xz[2 * pick.agent + 1], rally: null,
     })
     this.#events.push({ e: 'recruit', id, ok: true, agent: pick.agent, skill, distance: pick.distance })
+  }
+
+  /**
+   * A rally request, decided on this realm's own readings: Active recruit `agent` is asked to walk to the sidewalk
+   * point (x, z) instead of to the operator. A malformed one (no pedestrian number, a non-finite point) is refused like
+   * any bad command; otherwise the answer is a 'rally' event: no while the operator drives, for someone not over or
+   * still walking over (only an Active recruit is sent anywhere), for a point in the road, farther than RALLY_RANGE
+   * from the operator, or with no sidewalk path from where the recruit stands (skills.ts whyNotRally); yes otherwise,
+   * and the next crowd step's summons points them at it. Nothing here promotes, demotes, places or releases anyone.
+   */
+  #rally(cmd: Extract<SimCommand, { c: 'rally' }>): void {
+    if (!Number.isInteger(cmd.agent)) throw new Error('rally: agent must be a pedestrian index')
+    const x = finite(cmd.x, NaN), z = finite(cmd.z, NaN)
+    if (Number.isNaN(x) || Number.isNaN(z)) throw new Error('rally: x and z must be finite')
+    const agent = cmd.agent
+    const refuse = (reason: string): void => { this.#events.push({ e: 'rally', agent, ok: false, reason }) }
+    const r = this.#crowd?.readout ?? null
+    if (r === null) return refuse('the crowd is not running')
+    const operator = this.#driving[0] ? null : { x: this.#avatars[0].x, z: this.#avatars[0].z }
+    if (operator === null) return refuse('rallying works on foot')
+    const rec = this.#recruits.find((q) => q.agent === agent)
+    if (!rec) return refuse('nobody by that number was asked over')
+    if (rec.arrivedAt < 0) return refuse('they are still walking over: only an Active recruit is sent to a rally point')
+    const why = whyNotRally(operator, r.xz, agent, x, z)
+    if (why !== null) return refuse(why)
+    rec.rally = { x, z }
+    this.#events.push({ e: 'rally', agent, ok: true })
   }
 
   #release(r: Recruit, reason: string): void {
@@ -576,9 +721,9 @@ export class SimCore {
    */
   #tendRecruits(): void {
     const r = this.#crowd?.readout ?? null
-    const ax = this.#avatar.x, az = this.#avatar.z, t = this.#simTime
+    const ax = this.#avatars[0].x, az = this.#avatars[0].z, t = this.#simTime
     for (const rec of [...this.#recruits]) {
-      if (this.#driving) { this.#release(rec, 'the operator drove off'); continue }
+      if (this.#driving[0]) { this.#release(rec, 'the operator drove off'); continue }
       if (r !== null && r.seq > rec.seq) {
         rec.x = r.xz[2 * rec.agent]
         rec.z = r.xz[2 * rec.agent + 1]
@@ -593,42 +738,54 @@ export class SimCore {
       }
       if (rec.arrivedAt < 0 && t - rec.since > APPROACH_SECONDS) this.#release(rec, 'they could not reach the operator')
       else if (rec.distance > RELEASE_DISTANCE) this.#release(rec, 'the operator walked away')
+      // A rally ends on its own once the operator has walked more than RALLY_RANGE from its point: the summons
+      // points at the operator again, and the tether above (measured from the operator, never the point) is as it was.
+      else if (rec.rally && Math.hypot(rec.rally.x - ax, rec.rally.z - az) > RALLY_RANGE) rec.rally = null
     }
     const summons = this.#summons
     summons.length = this.#recruits.length
     for (let k = 0; k < summons.length; k++) {
       const m = summons[k] ?? (summons[k] = { agent: 0, x: 0, z: 0, tethered: false })
-      m.agent = this.#recruits[k].agent; m.x = ax; m.z = az; m.tethered = this.#recruits[k].arrivedAt >= 0
+      const rec = this.#recruits[k]
+      // An Active recruit with a rally in force walks to its point (and the GPU holds them INTERVIEW_DISTANCE short of
+      // it, as it does at the operator); everyone else walks to the operator.
+      const at = rec.arrivedAt >= 0 && rec.rally ? rec.rally : null
+      m.agent = rec.agent; m.x = at ? at.x : ax; m.z = at ? at.z : az; m.tethered = rec.arrivedAt >= 0
     }
   }
 
-  /** Enter the nearest car, or leave the current one on the driver's (left) side. */
-  #interact(): void {
-    const fleet = this.#fleet, avatar = this.#avatar
-    if (this.#driving) {
-      const v = this.#driving
+  /**
+   * Player k enters the nearest car, or leaves the one they drive on the driver's (left) side. A car another player
+   * is driving is refused (a 'rejected' event, never a silent no-op): one driver per car, one car per driver.
+   */
+  #interact(k: number): void {
+    const fleet = this.#fleet, avatar = this.#avatars[k]
+    const cur = this.#driving[k]
+    if (cur) {
+      const v = cur
       const t = fleet.position(v, this.#pos)
       const h = fleet.heading(v)
       const lx = Math.cos(h), lz = -Math.sin(h)
       let ex = t.x + lx * 2.1, ez = t.z + lz * 2.1
       if (inLot(ex, ez, 0.4)) { ex = t.x - lx * 2.1; ez = t.z - lz * 2.1 }
       v.mode = 'parked'
-      this.#driving = null
+      this.#driving[k] = null
       avatar.setEnabled(true)
       avatar.teleport(ex, ez)
       avatar.heading = h
-      this.#holdWas = false
-      this.#fullBrakeWas = false
-      this.#events.push({ e: 'exited', x: ex, z: ez, heading: h })
+      this.#holdWas[k] = false
+      this.#fullBrakeWas[k] = false
+      this.#events.push({ e: 'exited', player: k, x: ex, z: ez, heading: h })
       return
     }
     const v = fleet.nearest(avatar.x, avatar.z, ENTER_RANGE)
     if (!v) return
+    this.#notDriven(v)
     v.mode = 'player'
     v.steer = 0
-    this.#driving = v
+    this.#driving[k] = v
     avatar.setEnabled(false)
-    this.#events.push({ e: 'entered', index: v.index, heading: fleet.heading(v), suv: v.suv })
+    this.#events.push({ e: 'entered', player: k, index: v.index, heading: fleet.heading(v), suv: v.suv })
   }
 
   /**
@@ -688,18 +845,22 @@ export class SimCore {
     this.#fleet.setPersonHazards(this.#hazardAhead, this.#hazardBehind)
   }
 
-  /** One crowd step on this step's outcome: the realm's cars, the avatar as the player's own body, its clock. */
+  /**
+   * One crowd step on this step's outcome: the realm's cars, player 0's avatar as the crowd's one player figure (the
+   * shader has one player slot; players 1..3 are protected exactly on the CPU, by the fleet, the Sanctuary and the
+   * audit, and are no one's neighbour in the crowd, as player 0 is not), its clock.
+   */
   #stepCrowd(dt: number): void {
     const crowd = this.#crowd
     if (!crowd) return
-    const a = this.#avatar
+    const a = this.#avatars[0]
     const seq = ++this.#crowdSeq
     // The odometers now: the reading this step returns measured the cars here. Kept as long as a reading can be used.
     this.#dispatches.push({ seq, time: this.#simTime, odo: this.#odo.slice() })
     while (this.#dispatches.length > 1 && this.#dispatches[0].time < this.#simTime - CROWD_STALE_S - MAX_DT) this.#dispatches.shift()
     crowd.step({
       seq, dt, time: this.#simTime,
-      player: { x: a.x, z: a.z, heading: this.#bodyHeading, speed: this.#driving ? 0 : a.speed, visible: this.#driving === null },
+      player: { x: a.x, z: a.z, heading: this.#bodyHeading[0], speed: this.#driving[0] ? 0 : a.speed, visible: this.#driving[0] === null },
       cars: this.#fleet.crowdStates(),
       summons: this.#summons,
     })
@@ -737,15 +898,20 @@ export class SimCore {
       r.heading = fleet.heading(v); r.speed = fleet.speed(v); r.curvature = fleet.curvature(v)
       r.throttle = v.lastCommand.throttle; r.brake = v.lastCommand.brake
       r.preVx = this.#preVel[2 * i]; r.preVz = this.#preVel[2 * i + 1]
-      r.occupant = v === this.#driving ? 0 : -1
+      // The person driving it (the audit exempts only them from its own footprint), or nobody.
+      r.occupant = this.#driving.indexOf(v)
     }
     list.length = vehicles.length
-    const p = this.#auditPeople[0]
-    const at = this.#avatar.body.translation(this.#pos)
-    p.x = at.x; p.y = at.y; p.z = at.z
-    // Inside a car the avatar's collider is disabled; on foot it is solid unless the Sanctuary shields it.
-    p.solid = this.#driving === null && !this.#sanctuary.isSensor(0)
-    p.radius = this.#avatar.person.radius
+    // Every avatar is a person, id = player. Inside a car the collider is disabled; on foot it is solid unless the
+    // Sanctuary shields it (ward k is player k).
+    const people = this.#auditPeople, avatars = this.#avatars
+    for (let k = 0; k < avatars.length; k++) {
+      const p = people[k]
+      const at = avatars[k].body.translation(this.#pos)
+      p.x = at.x; p.y = at.y; p.z = at.z
+      p.solid = this.#driving[k] === null && !this.#sanctuary.isSensor(k)
+      p.radius = avatars[k].person.radius
+    }
     const result = this.#auditor.run(list, this.#auditPeople, this.#simTime < this.#blindUntil)
     for (let i = 0; i < result.capped.length; i++) fleet.clampSpeed(vehicles[result.capped[i]], RING0.maxVelocity)
     if (gpuFlags & 1) result.violations.push({ code: 'NON_FINITE', subject: 'pedestrians', detail: 'a GPU pedestrian state was non-finite' })

@@ -128,7 +128,7 @@ export interface RecruitHost {
   /** The operator's head position on foot (head.ts), or null while driving or halted. */
   operator(): { x: number; z: number } | null
   /** Queues a recruitment command for the physics realm; any other command is dropped here. */
-  send(cmd: Extract<SimCommand, { c: 'recruit' | 'dismiss' }>): void
+  send(cmd: Extract<SimCommand, { c: 'recruit' | 'dismiss' | 'rally' }>): void
   /** Calls `fn` with each state the physics realm sends (its render frame still attached); returns the unsubscribe. */
   onState(fn: (s: StepState) => void): () => void
   /** The soundscape's recruitment cue at (x, z); false when it cannot sound. */
@@ -494,9 +494,10 @@ export class Engine {
     return Object.freeze({
       agents: this.options.agents,
       operator: () => (this.halted || this.disposed || this.sim.state.driving >= 0 ? null : { x: this.rig.pose.x, z: this.rig.pose.z }),
-      send: (cmd: Extract<SimCommand, { c: 'recruit' | 'dismiss' }>) => {
+      send: (cmd: Extract<SimCommand, { c: 'recruit' | 'dismiss' | 'rally' }>) => {
         if (cmd?.c === 'recruit') this.sim.send({ c: 'recruit', id: cmd.id, skill: cmd.skill, agent: cmd.agent })
         else if (cmd?.c === 'dismiss') this.sim.send(cmd.agent === undefined ? { c: 'dismiss' } : { c: 'dismiss', agent: cmd.agent })
+        else if (cmd?.c === 'rally') this.sim.send({ c: 'rally', agent: cmd.agent, x: cmd.x, z: cmd.z })
       },
       onState: (fn: (s: StepState) => void) => {
         this.stateListeners.add(fn)

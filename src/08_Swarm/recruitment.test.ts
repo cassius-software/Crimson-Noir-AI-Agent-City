@@ -11,7 +11,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { CITY } from '../01_Initialize_World/city.ts'
-import { AUDIBLE_RADIUS, skillsOf, type Skill } from '../03_Spawn_Agents/skills.ts'
+import { AUDIBLE_RADIUS, RALLY_RANGE, skillsOf, type Skill } from '../03_Spawn_Agents/skills.ts'
 import type { RecruitHost } from '../07_Execute_Actions/engine.ts'
 import type { RecruitView, SimCommand, SimEvent, StepState } from '../07_Execute_Actions/simProtocol.ts'
 import { hudLine, recruitBridge, Recruiter, SPEECH_LANG, type Clock, type RecruitOutcome, type SpeechEnv } from './recruitment.ts'
@@ -42,7 +42,7 @@ class FakeHost implements RecruitHost {
   readonly cues: [number, number][] = []
   listeners = new Set<(s: StepState) => void>()
   operator() { return this.operatorAt }
-  send(cmd: Extract<SimCommand, { c: 'recruit' | 'dismiss' }>) { this.sent.push(cmd) }
+  send(cmd: Extract<SimCommand, { c: 'recruit' | 'dismiss' | 'rally' }>) { this.sent.push(cmd) }
   onState(fn: (s: StepState) => void) { this.listeners.add(fn); return () => { this.listeners.delete(fn) } }
   cue(x: number, z: number) { this.cues.push([x, z]); return true }
   /** Everyone at `xz` (NaN: not placed) in a render frame, with these events and this recruits list. */
@@ -68,7 +68,7 @@ function rig() {
   const clock = new ManualClock()
   const r = new Recruiter(host, { Recognition: null, Phrase: null }, clock)
   const seen: { type: string; detail: unknown }[] = []
-  for (const type of ['heard', 'recruit', 'refused', 'active', 'released', 'mic']) r.addEventListener(type, (e) => seen.push({ type, detail: (e as CustomEvent).detail }))
+  for (const type of ['heard', 'recruit', 'refused', 'active', 'released', 'rally', 'mic']) r.addEventListener(type, (e) => seen.push({ type, detail: (e as CustomEvent).detail }))
   return { host, clock, r, seen }
 }
 
@@ -231,6 +231,83 @@ test('nothing is sent when nobody qualifies: an unknown skill, at the wheel, in 
   // A state without a frame keeps the copy.
   host.deliver(new Map(), [], [], false)
   assert.equal(r.stateOf(a), 'Interviewing')
+})
+
+test('rally: the page checks an Active recruit and the point on its own copy, sends the command, and the worker\'s event answers', async () => {
+  const { host, r, seen } = rig()
+  const [a, b] = withSkill('Rust')
+  const xz = new Map<number, [number, number]>([[a, [OP.x, OP.z + 2]], [b, [OP.x, OP.z - 2]]])
+  host.deliver(xz, [], [view(a, 'Rust', true), view(b, 'Rust')])
+  assert.equal(r.stateOf(a), 'Active')
+  assert.equal(r.stateOf(b), 'Interviewing')
+  // Still walking over: not sent anywhere; nothing reaches the worker.
+  assert.equal((await r.rally(b, OP.x, OP.z + 4)).message, 'rally: only an Active recruit is sent to a rally point')
+  assert.deepEqual(host.sent, [])
+  // An Active recruit, a sidewalk point 4 m up: sent as is, answered by the event.
+  const at = { x: OP.x, z: OP.z + 4 }
+  const p = r.rally(a, at.x, at.z)
+  assert.deepEqual(host.sent, [{ c: 'rally', agent: a, x: at.x, z: at.z }])
+  // A second one for the same person while the first is unanswered waits its turn.
+  assert.match((await r.rally(a, at.x, at.z + 1)).message, /not been answered yet/)
+  assert.equal(host.sent.length, 1)
+  host.deliver(xz, [{ e: 'rally', agent: a, ok: true }], [{ ...view(a, 'Rust', true), rally: at }, view(b, 'Rust')])
+  const o = await p
+  assert.deepEqual(o, { ok: true, message: `rally: someone is walking to (${at.x.toFixed(1)}, ${at.z.toFixed(1)})` })
+  assert.equal(r.last, o.message)
+  assert.deepEqual(seen.filter((e) => e.type === 'rally').at(-1)!.detail, { agent: a, x: at.x, z: at.z, ok: true, reason: '' })
+  assert.deepEqual(r.recruits.find((v) => v.agent === a)!.rally, at, "the worker's view carries the point while it is in force")
+  // The worker refuses on its own reading: the page's answer is its reason.
+  const q = r.rally(a, at.x, at.z + 1)
+  host.deliver(xz, [{ e: 'rally', agent: a, ok: false, reason: 'no sidewalk from where they stand to the rally point' }], [view(a, 'Rust', true)])
+  assert.deepEqual(await q, { ok: false, message: 'rally: no sidewalk from where they stand to the rally point' })
+  // An answer for a rally the page never sent changes nothing.
+  const sent = host.sent.length
+  host.deliver(xz, [{ e: 'rally', agent: b, ok: true }], [view(a, 'Rust', true)])
+  assert.equal(host.sent.length, sent)
+  // Silence: given up after ANSWER_STATES states, like a request.
+  const lost = r.rally(a, at.x, at.z)
+  let settled = false
+  void lost.then(() => { settled = true })
+  for (let k = 0; k < 29; k++) host.deliver(xz, [], [view(a, 'Rust', true)])
+  await Promise.resolve()
+  assert.equal(settled, false)
+  host.deliver(xz, [], [view(a, 'Rust', true)])
+  assert.match((await lost).message, /did not answer/)
+  // The console surface returns the same outcome; dispose answers a waiting rally.
+  const bridge = recruitBridge(r)
+  const viaBridge = bridge.rally(a, at.x, at.z)
+  assert.deepEqual(host.sent.at(-1), { c: 'rally', agent: a, x: at.x, z: at.z })
+  r.dispose()
+  assert.deepEqual(await viaBridge, { ok: false, message: 'the city stopped' })
+  assert.deepEqual(await r.rally(a, at.x, at.z), { ok: false, message: 'rally: the city is not running' })
+})
+
+test('rally: nothing is sent for a road point, a point too far, no sidewalk path, a stranger, at the wheel, a bad number or before the crowd is seen', async () => {
+  const { host, clock, r } = rig()
+  const [a] = withSkill('Go')
+  assert.match((await r.rally(a, OP.x, OP.z + 2)).message, /only an Active recruit/)
+  host.deliver(new Map(), [], [view(a, 'Go', true)], false)
+  assert.match((await r.rally(a, OP.x, OP.z + 2)).message, /not been seen yet/)
+  host.deliver(new Map([[a, [OP.x, OP.z + 2]]]), [], [view(a, 'Go', true)])
+  assert.equal((await r.rally(a, 2 * CITY.pitch, OP.z + 2)).message, 'rally: nobody is sent into the road: pick a sidewalk point')
+  assert.equal((await r.rally(a, OP.x, OP.z + RALLY_RANGE + 0.1)).message, `rally: the rally point is too far: within ${RALLY_RANGE} m of the operator`)
+  const edge = r.rally(a, OP.x, OP.z + RALLY_RANGE)
+  assert.deepEqual(host.sent, [{ c: 'rally', agent: a, x: OP.x, z: OP.z + RALLY_RANGE }], 'exactly RALLY_RANGE is in range')
+  host.deliver(new Map([[a, [OP.x, OP.z + 2]]]), [{ e: 'rally', agent: a, ok: true }], [view(a, 'Go', true)])
+  assert.equal((await edge).ok, true)
+  // Across the street as the page's copy has them (refreshed after the copy interval): a point beside the operator has
+  // no sidewalk path from there.
+  clock.advance(300)
+  host.deliver(new Map([[a, [OP.x - 2 * CITY.lane, OP.z]]]), [], [view(a, 'Go', true)])
+  assert.match((await r.rally(a, OP.x, OP.z + 2)).message, /no sidewalk from where they stand/)
+  // Bad numbers, a stranger, the wheel.
+  for (const [agent, x, z] of [[1.5, OP.x, OP.z], [-1, OP.x, OP.z], [0, OP.x, OP.z], [a, NaN, OP.z], [a, OP.x, Infinity], [a, '3' as unknown as number, OP.z]] as const) {
+    assert.equal((await r.rally(agent, x, z)).ok, false, `${agent} ${x} ${z}`)
+  }
+  assert.match((await r.rally(a + 1, OP.x, OP.z + 2)).message, /only an Active recruit/)
+  host.operatorAt = null
+  assert.match((await r.rally(a, OP.x, OP.z + 2)).message, /on foot/)
+  assert.deepEqual(host.sent.map((c) => c.c), ['rally'], 'only the one in-range rally reached the worker')
 })
 
 test('transcripts: a request needs a request word and a skill; what was heard is reported either way', () => {

@@ -36,6 +36,13 @@ export const WALK = 2.0
 export const RUN = 5.2
 /** How close the avatar must stand to a car to take its wheel, m. */
 export const ENTER_RANGE = 3.8
+/**
+ * Most people the realm holds for the page: local split-screen players, each an Avatar in the Rapier world, a ward of
+ * the Sanctuary and a person to the Bouncer and the Ring-0 audit. Player 0 is the operator (foot/drive, avatar,
+ * driving, recruitment, the crowd's one player figure); players 1..3 ride beside them in `players`, `avatars` and
+ * `drivings`.
+ */
+export const MAX_PLAYERS = 4
 
 /** DriveMode as it is stored in the pose buffer. */
 export const MODES: readonly DriveMode[] = ['ai', 'player', 'parked']
@@ -63,6 +70,11 @@ export interface SimInit {
   boxes: Box[]
   furniture: Furniture
   spawn: { x: number; z: number }
+  /**
+   * Where players 1..3 start (index k − 1 for player k), at most MAX_PLAYERS − 1 of them: each a finite pair, moved out
+   * of a building lot by the worker. Absent for one player.
+   */
+  spawns?: { x: number; z: number }[]
   /** ?debug: the worker also accepts the fault-injection commands (dbg*). Fixed for the worker's lifetime. */
   debug: boolean
   /**
@@ -89,6 +101,8 @@ export interface SimMeta {
   debug: boolean
   /** Scheduled craft (train sets, drones, planes) in every craft buffer, TRACK_POSE.stride floats each; 0 with tracks off. */
   craft: number
+  /** Avatars the realm holds (1 + spawns.length, at most MAX_PLAYERS): the length of every `avatars` and `drivings`. */
+  players: number
 }
 
 /**
@@ -100,11 +114,15 @@ export interface FootControls { x: number; z: number; heading: number }
 /** In a car: raw controls, each clamped by the worker. steer −1..1 (positive = left), fwd and back 0..1. */
 export interface DriveControls { steer: number; fwd: number; back: number; handbrake: boolean }
 
+/** One extra player's frame of controls (players 1..3): the same foot and drive the operator sends, clamped the same. */
+export interface PlayerControls { foot: FootControls; drive: DriveControls }
+
 /** What the page may ask of the simulation. Every command is validated again in the worker. */
 export type SimCommand =
-  | { c: 'interact' }
+  // `player` picks the avatar (0..players − 1, default 0): a car another player is driving is refused.
+  | { c: 'interact'; player?: number }
   | { c: 'reset' }
-  | { c: 'teleport'; x: number; z: number }
+  | { c: 'teleport'; x: number; z: number; player?: number }
   | { c: 'setMode'; i: number; mode: 'ai' | 'parked' }
   | { c: 'recover'; i: number; x?: number; z?: number; heading?: number }
   | { c: 'intent'; i: number; throttle: number; brake: number; steer: number }
@@ -116,6 +134,13 @@ export type SimCommand =
   | { c: 'recruit'; id: number; skill: string; agent?: number }
   /** Lets one recruit (`agent`) go, or every one: the tether breaks. */
   | { c: 'dismiss'; agent?: number }
+  /**
+   * Asks Active recruit `agent` to walk to the sidewalk point (x, z) instead of to the operator (skills.ts RALLY_RANGE,
+   * whyNotRally): the worker checks the point on its own readings and answers with a 'rally' event. The tether is
+   * unchanged: it still breaks when the operator is RELEASE_DISTANCE from them, and the rally ends on its own when the
+   * operator walks more than RALLY_RANGE from the point, or when they are dismissed.
+   */
+  | { c: 'rally'; agent: number; x: number; z: number }
   // Fault injection for the ?debug harness only: refused by a worker built without debug.
   | { c: 'dbgVelocity'; i: number; x: number; y: number; z: number }
   | { c: 'dbgMode'; i: number; mode: DriveMode }
@@ -133,6 +158,8 @@ export interface StepRequest {
   dt: number
   foot: FootControls
   drive: DriveControls
+  /** Players 1..3 (index k − 1 for player k); a missing entry is an idle player. Player 0 is foot and drive above. */
+  players?: PlayerControls[]
   cmds: SimCommand[]
   /** A pose buffer handed back for reuse (transferred). */
   buffer?: ArrayBuffer
@@ -158,8 +185,8 @@ export interface AvatarState {
 }
 
 export type SimEvent =
-  | { e: 'entered'; index: number; heading: number; suv: boolean }
-  | { e: 'exited'; x: number; z: number; heading: number }
+  | { e: 'entered'; player: number; index: number; heading: number; suv: boolean }
+  | { e: 'exited'; player: number; x: number; z: number; heading: number }
   | { e: 'rejected'; reason: string }
   /** The answer to a recruit command: who is coming over (distance at the request, m), or why nobody is. */
   | { e: 'recruit'; id: number; ok: true; agent: number; skill: string; distance: number }
@@ -168,6 +195,8 @@ export type SimEvent =
   | { e: 'active'; agent: number; skill: string; skills: string[] }
   /** A recruit went back to their day, and why. */
   | { e: 'released'; agent: number; skill: string; reason: string }
+  /** The answer to a rally command: the recruit is walking to the point, or why not. */
+  | { e: 'rally'; agent: number; ok: boolean; reason?: string }
 
 export interface SimPhysicsStats {
   /** EMA of one world.step(), ms. */
@@ -212,6 +241,8 @@ export interface RecruitView {
   z: number
   /** Seconds since the request. */
   seconds: number
+  /** The sidewalk point an Active recruit was asked to walk to, while that rally is in force (absent otherwise). */
+  rally?: { x: number; z: number }
 }
 
 /** The worker's reply to every step: plain numbers only. */
@@ -221,9 +252,14 @@ export interface StepState {
   /** Worker simulation seconds (its own clock, from the clamped dt it accepted): the signals run on it. */
   simTime: number
   poses: Float32Array
+  /** Player 0 (the operator): the same values as avatars[0]. */
   avatar: AvatarState
-  /** Index of the car the player drives, or −1 on foot. */
+  /** Index of the car player 0 drives, or −1 on foot: the same value as drivings[0]. */
   driving: number
+  /** Every avatar the realm holds, index = player (meta.players of them). */
+  avatars: AvatarState[]
+  /** Per player, the index of the car they drive, or −1 on foot. */
+  drivings: number[]
   kernel: KernelStats
   physics: SimPhysicsStats
   tuning: CarTuning

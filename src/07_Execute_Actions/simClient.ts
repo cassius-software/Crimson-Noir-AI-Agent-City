@@ -8,7 +8,7 @@
  * What breaks if it is removed? The page cannot start or talk to the physics realm.
  */
 import PhysicsWorker from './physics.worker.ts?worker&inline'
-import type { DriveControls, FootControls, FromWorker, SimCommand, SimInit, SimMeta, StepState } from './simProtocol.ts'
+import type { DriveControls, FootControls, FromWorker, PlayerControls, SimCommand, SimInit, SimMeta, StepState } from './simProtocol.ts'
 
 /** Commands waiting for the next step request; a flood beyond this is dropped here (the worker caps them too). */
 const MAX_QUEUE = 256
@@ -17,6 +17,8 @@ export interface StepInput {
   dt: number
   foot: FootControls
   drive: DriveControls
+  /** Players 1..3 (index k − 1 for player k); absent or short means idle players. */
+  players?: PlayerControls[]
 }
 
 export class SimClient {

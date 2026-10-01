@@ -8,11 +8,13 @@
  * person is Interviewing from the request on, walking over, then Active once they reach the operator: tethered,
  * following the operator and stopping 1.5 m away, their skills on the HUD, until the worker lets them go. The
  * same request is one call without a microphone: `recruit("Rust")` in the browser console, or `recruit rust` in
- * the Ring-0 console. Voice never leaves the device: a recogniser that cannot promise on-device processing is not
+ * the Ring-0 console. An Active recruit can also be asked to walk to a sidewalk point instead of to the operator (a
+ * rally, `rally(agent, x, z)`): checked here on the page's copy first, then decided by the worker on its own
+ * readings, like any request; it moves nobody and promotes nobody. Voice never leaves the device: a recogniser that cannot promise on-device processing is not
  * used, and the on-device model is only ever installed on the operator's explicit command.
  * What breaks if it is removed? The operator has no way to ask anyone over, by voice or by command.
  */
-import { AUDIBLE_RADIUS, findRecruit, parseRequest, SKILL_WORDS, SKILLS, skillNamed, whyNot, type Skill } from '../03_Spawn_Agents/skills.ts'
+import { AUDIBLE_RADIUS, findRecruit, parseRequest, SKILL_WORDS, SKILLS, skillNamed, whyNot, whyNotRally, type Skill } from '../03_Spawn_Agents/skills.ts'
 import type { RecruitHost } from '../07_Execute_Actions/engine.ts'
 import type { RecruitView, StepState } from '../07_Execute_Actions/simProtocol.ts'
 import type { RecruitBridge } from '../07_Execute_Actions/terminal/bridge.ts'
@@ -60,8 +62,13 @@ export interface RecruitEvents {
   /** They reached the operator: Active, tethered, bringing these skills. */
   active: { agent: number; skill: string; skills: string[] }
   released: { agent: number; skill: string; reason: string }
+  /** The worker's answer to a rally: the Active recruit is walking to the point, or why not. */
+  rally: { agent: number; x: number; z: number; ok: boolean; reason: string }
   mic: { state: MicState; detail: string }
 }
+
+/** A rally's answer: whether the recruit is walking to the point, and one line for a console or a toast. */
+export interface RallyOutcome { ok: boolean; message: string }
 
 // ---------------------------------------------------------------- the browser's speech recognition, minimally typed
 
@@ -124,6 +131,7 @@ const LOCAL: LocalOptions = { langs: [SPEECH_LANG], processLocally: true }
 const USE_THE_COMMAND = 'type recruit <skill> in the console instead'
 
 interface Pending { resolve: (o: RecruitOutcome) => void; skill: Skill; agent: number; states: number }
+interface PendingRally { resolve: (o: RallyOutcome) => void; x: number; z: number; states: number }
 
 export class Recruiter extends EventTarget {
   readonly #host: RecruitHost
@@ -139,6 +147,8 @@ export class Recruiter extends EventTarget {
   /** Told of every new copy of the worker's list (onMirror). */
   readonly #mirrorListeners = new Set<(recruits: readonly RecruitView[]) => void>()
   readonly #pending = new Map<number, Pending>()
+  /** Rallies sent and not yet answered, by the recruit's pedestrian number (one at a time per recruit). */
+  readonly #rallies = new Map<number, PendingRally>()
   /** Requests the page gave up on: if the worker still accepts one, the person is let go at once (never a silent summons). */
   readonly #abandoned = new Set<number>()
   #id = 0
@@ -224,6 +234,28 @@ export class Recruiter extends EventTarget {
     this.#emit('heard', { transcript: t })
     const skill = parseRequest(t)
     return skill === null ? null : this.#ask(skill)
+  }
+
+  /**
+   * Asks Active recruit `agent` to walk to the sidewalk point (x, z) instead of to the operator. Checked here first on
+   * the page's copy (on foot, an Active recruit, the point finite, off the road, within RALLY_RANGE of the operator,
+   * a sidewalk path from where they stand: skills.ts whyNotRally), then sent; the worker decides again on its own
+   * readings and its 'rally' event answers. The tether is unchanged either way.
+   */
+  rally(agent: number, x: number, z: number): Promise<RallyOutcome> {
+    if (this.#disposed) return Promise.resolve(this.#refuseRally(agent, 'the city is not running'))
+    if (!Number.isInteger(agent) || agent <= 0) return Promise.resolve(this.#refuseRally(agent, 'a rally names a recruit by their pedestrian number'))
+    if (typeof x !== 'number' || typeof z !== 'number' || !Number.isFinite(x) || !Number.isFinite(z)) return Promise.resolve(this.#refuseRally(agent, 'the rally point is nowhere'))
+    const operator = this.#host.operator()
+    if (operator === null) return Promise.resolve(this.#refuseRally(agent, 'rallying works on foot'))
+    if (this.stateOf(agent) !== 'Active') return Promise.resolve(this.#refuseRally(agent, 'only an Active recruit is sent to a rally point'))
+    const xz = this.#xz
+    if (xz === null) return Promise.resolve(this.#refuseRally(agent, 'the crowd has not been seen yet'))
+    const why = whyNotRally(operator, xz, agent, x, z)
+    if (why !== null) return Promise.resolve(this.#refuseRally(agent, why))
+    if (this.#rallies.has(agent)) return Promise.resolve(this.#refuseRally(agent, 'their last rally has not been answered yet'))
+    this.#host.send({ c: 'rally', agent, x, z })
+    return new Promise((resolve) => { this.#rallies.set(agent, { resolve, x, z, states: 0 }) })
   }
 
   /** Ends every interview. */
@@ -326,6 +358,10 @@ export class Recruiter extends EventTarget {
       this.#pending.delete(id)
       p.resolve({ ok: false, skill: p.skill, agent: -1, distance: -1, message: 'the city stopped' })
     }
+    for (const [agent, p] of this.#rallies) {
+      this.#rallies.delete(agent)
+      p.resolve({ ok: false, message: 'the city stopped' })
+    }
     this.#states.clear()
     this.#mirror([])
     this.#mirrorListeners.clear()
@@ -372,6 +408,12 @@ export class Recruiter extends EventTarget {
     return { ok: false, skill, agent: -1, distance: -1, message: this.#last }
   }
 
+  #refuseRally(agent: number, reason: string, x = NaN, z = NaN): RallyOutcome {
+    this.#last = `rally: ${reason}`
+    this.#emit('rally', { agent: Number.isInteger(agent) ? agent : -1, x, z, ok: false, reason })
+    return { ok: false, message: this.#last }
+  }
+
   /** Each state from the physics worker: the page's position copy, the answers to requests, and who is over now. */
   #received(s: StepState): void {
     const frame = s.crowdFrame
@@ -414,6 +456,17 @@ export class Recruiter extends EventTarget {
         this.#states.delete(ev.agent)
         this.#last = `${ev.skill}: ${ev.reason}`
         this.#emit('released', { agent: ev.agent, skill: ev.skill, reason: ev.reason })
+      } else if (ev.e === 'rally') {
+        const p = this.#rallies.get(ev.agent)
+        if (!p) continue // not one of the page's (or given up on): nothing to answer
+        this.#rallies.delete(ev.agent)
+        if (ev.ok) {
+          this.#last = `rally: someone is walking to (${p.x.toFixed(1)}, ${p.z.toFixed(1)})`
+          this.#emit('rally', { agent: ev.agent, x: p.x, z: p.z, ok: true, reason: '' })
+          p.resolve({ ok: true, message: this.#last })
+        } else {
+          p.resolve(this.#refuseRally(ev.agent, ev.reason ?? 'refused', p.x, p.z))
+        }
       }
     }
     // A request with no answer after ANSWER_STATES states was lost: given up, and withdrawn if it turns up later.
@@ -422,6 +475,12 @@ export class Recruiter extends EventTarget {
       this.#pending.delete(id)
       this.#abandoned.add(id)
       p.resolve(this.#refuse(p.skill, 'the physics worker did not answer'))
+    }
+    // A rally with no answer was lost too: nothing to withdraw, the recruit walks nowhere new without an acceptance.
+    for (const [agent, p] of this.#rallies) {
+      if (++p.states < ANSWER_STATES) continue
+      this.#rallies.delete(agent)
+      p.resolve(this.#refuseRally(agent, 'the physics worker did not answer', p.x, p.z))
     }
     // The page's own matches stay only while their answer is still on its way.
     const waiting = new Set([...this.#pending.values()].map((p) => p.agent))
@@ -578,10 +637,15 @@ export function hudLine(r: Recruiter, tasks = 0, activity = ''): { listening: bo
   return { listening: r.mic.state === 'listening', line: parts.length ? parts.join(' · ') : r.last }
 }
 
-/** The console's surface over a recruiter (terminal/bridge.ts RecruitBridge). */
-export function recruitBridge(r: Recruiter): RecruitBridge {
+/**
+ * The console's surface over a recruiter (terminal/bridge.ts RecruitBridge), plus `rally` for the console verb that
+ * lands with the ping work (it joins RecruitBridge then; until it does, nothing in the terminal reaches it).
+ */
+export function recruitBridge(r: Recruiter): RecruitBridge & { rally(agent: number, x: number, z: number): Promise<RallyOutcome> } {
   return Object.freeze({
     ask: (skill: string) => r.recruit(skill).then((o) => ({ ok: o.ok, message: o.message })),
+    /** A rally for an Active recruit (the console verb that calls it lands with the ping work). */
+    rally: (agent: number, x: number, z: number) => r.rally(agent, x, z).then((o) => ({ ok: o.ok, message: o.message })),
     listen: () => r.listen().then(micLine),
     stop: () => micLine(r.stop()),
     install: () => r.install().then(micLine),

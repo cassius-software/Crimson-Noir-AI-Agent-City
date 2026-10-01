@@ -74,6 +74,9 @@ interface Rig {
   controller: RAPIER.DynamicRayCastVehicleController
 }
 
+/** Someone the CPU knows exactly (an avatar): where they stand, and whether they are on foot (`present`) or in a car. */
+export interface Person { x: number; z: number; present: boolean }
+
 export interface FleetOptions {
   /** Tests and the ?debug harness only: rig() hands out the raw Rapier handles. Off in production pages. */
   exposeRig?: boolean
@@ -217,7 +220,8 @@ export class Fleet {
   /** Per-vehicle metres to the nearest pedestrian from the GPU crowd (Infinity = none). */
   readonly #crowdAhead: Float32Array
   readonly #crowdBehind: Float32Array
-  readonly #avatar = { x: 0, z: 0, present: false }
+  /** The people the CPU knows exactly (the avatars, player order): `present` false while one is inside a car. */
+  readonly #people: Person[] = []
   /** Per vehicle: emergency braking latched by the First Law, 1 moving forward, −1 reversing, 0 off. */
   readonly #emergency: Int8Array
   /** Per vehicle: the vetted command the wheels follow (only apply() writes it). */
@@ -516,11 +520,30 @@ export class Fleet {
     }
   }
 
-  /** The player's avatar, which the CPU knows exactly (`present` false while it is inside a car). */
+  /**
+   * Everyone the CPU knows exactly, player order (the avatars; `present` false while one is inside a car): copied, so
+   * nothing the caller keeps reaches the Fleet. Each present person counts in every car's corridor from here on.
+   */
+  setPeople(list: readonly Person[]): void {
+    const people = this.#people
+    for (let k = 0; k < list.length; k++) {
+      const p = people[k] ?? (people[k] = { x: 0, z: 0, present: false })
+      const q = list[k]
+      p.x = q.x
+      p.z = q.z
+      p.present = q.present === true
+    }
+    people.length = list.length
+  }
+
+  /** One person only (the single avatar): the same as setPeople with that one entry. */
   setAvatar(x: number, z: number, present: boolean): void {
-    this.#avatar.x = x
-    this.#avatar.z = z
-    this.#avatar.present = present
+    const people = this.#people
+    const p = people[0] ?? (people[0] = { x: 0, z: 0, present: false })
+    p.x = x
+    p.z = z
+    p.present = present === true
+    people.length = 1
   }
 
   /**
@@ -676,19 +699,24 @@ export class Fleet {
   }
 
   /**
-   * The nearest person in the corridor: the GPU crowd's reading, or the avatar on either `steer` (the lock
-   * the wheels hold now, or the one a new command sets) or the steer the driver is heading for.
+   * The nearest person in the corridor: the GPU crowd's reading, or the nearest present person (setPeople) on either
+   * `steer` (the lock the wheels hold now, or the one a new command sets) or the steer the driver is heading for.
    */
   #personIn(v: Vehicle, dir: 1 | -1, steer: number): number {
-    const crowd = dir > 0 ? this.#crowdAhead[v.index] : this.#crowdBehind[v.index]
-    const a = this.#avatar
-    if (!a.present) return crowd
-    const t = this.#rigs[v.index].body.translation(this.#pos)
-    const h = this.heading(v)
-    const now = corridorDistance(a.x, a.z, t.x, t.z, h, Math.tan(steer) / CAR.wheelbase, dir)
-    const aim = this.#aim[v.index]
-    const next = aim === steer ? now : corridorDistance(a.x, a.z, t.x, t.z, h, Math.tan(aim) / CAR.wheelbase, dir)
-    return Math.min(crowd, now, next)
+    let best = dir > 0 ? this.#crowdAhead[v.index] : this.#crowdBehind[v.index]
+    const people = this.#people
+    let t: { x: number; y: number; z: number } | null = null
+    let h = 0
+    for (let k = 0; k < people.length; k++) {
+      const a = people[k]
+      if (!a.present) continue
+      if (t === null) { t = this.#rigs[v.index].body.translation(this.#pos); h = this.heading(v) }
+      const now = corridorDistance(a.x, a.z, t.x, t.z, h, Math.tan(steer) / CAR.wheelbase, dir)
+      const aim = this.#aim[v.index]
+      const next = aim === steer ? now : corridorDistance(a.x, a.z, t.x, t.z, h, Math.tan(aim) / CAR.wheelbase, dir)
+      best = Math.min(best, now, next)
+    }
+    return best
   }
 
   /**
