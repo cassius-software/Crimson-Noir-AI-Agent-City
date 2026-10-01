@@ -47,21 +47,22 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
 - DONE (host hardening, uncommitted until the WIP commit): MIN_SECRET 16, one connection per token (4010), token expiry
   enforced in session (4003), pings metered, backlog on every write, error handler first in onUpgrade, refused upgrades
   destroyed, loggable() log escaping, no reads after close.
-- Tests passing: garage.node.test.ts (5), mirror.node.test.ts (10). Realm suites passed after the rebuild change.
+- DONE C (page side). engine.ts reports doors (simProtocol.ts doorOf: the step's own entered/exited events; a forced
+  exit or a room seat cancels), wheel runs from st.wheels, footWish-clamped velocity; sends {c:'room'} on the welcome
+  and off on let-go; a correction with `car` becomes {c:'netCar'}; join refuses ?tracks=0, names `city/<seed>/<cars>`,
+  lets the last session go first; only 'stale'/'refused' moves count as dropped. netClient.ts: Move with wheels/door,
+  MoveStatus, a door in an input of its own, keepalive ack every KEEPALIVE_MS (5 s) via an injectable `every`.
+  simCore: one door a step for player 1 in a room; 'exited' carries `forced` for teleport/netCar exits.
+- Full suite at this point: 1,181 tests, all passing after netWiring.test.ts was updated; smoke:net passes (9 crafted
+  packets incl. 4 car exploits). authority.node.test.ts is now the two-driver end-to-end proof (0 corrections over
+  thousands of steps under the 1 um tolerance).
 - TODO, in order:
-  1. replication.test.ts / replication.node.test.ts / netClient.test.ts / authority.node.test.ts to protocol 4
-     (tsc lists the errors: `npx tsc -b`); airgap.test.ts allowlist: add garage.node.ts and mirror's new imports
-     (./garage.node.ts, ./replication.ts types); host tests for 4010/4003/ping metering/try-finally.
-  2. Page side (#25): engine.ts netMoveOf reports drive runs from `st.wheels` and doors from entered/exited events
-     (skip events with `room: true` and steps that carried a correction), sends {c:'room', on} on join/leave, applies a
-     correction with `car` as {c:'netCar', i, state} else a teleport; report footWish-clamped velocity; reset netFix on
-     join; world string `city/<seed>/<cars>` (refuse join if tracks off or a region); netClient: Move with wheels and
-     doors, no coalescing across a door or of drive runs with different commands, keepalive ack, `dropped` semantics.
-  3. Fuzz/property suites (#26): seeded harness; core room fuzz (reorder, duplicate, stale fix, jitter, float rounding,
-     cheaters); host socket fuzz; Ring-0/Bouncer properties; realm-vs-room parity under adversarial load (two peers).
-  4. Smoke: car rows (teleport-hop, car off its lane, exit off the room's point, chassis lie), fix the third-burst row
-     for stepBurst 180.
-  5. Docs (README Networking, History, blueprint Phase 13, headers), full checks, fresh review, commit, tag.
+  1. Fuzz/property suites (#26): seeded harness; core room fuzz (reorder, duplicate, stale fix, jitter, float rounding,
+     cheaters); host socket fuzz (random bytes, partial frames, resets, slowloris, same-subject races); Ring-0 and
+     Bouncer properties; WASM routing/kv-pager vs reference; realm-vs-room parity under adversarial network load.
+  2. Docs (README Networking, History, blueprint Phase 13, zero-trust audit, file headers, the README findings listed
+     below), full checks, build, smoke, a fresh adversarial review (mind the 4 CPUs), handoff update, commit, tag
+     `v1.0.0-stable-release`, push branch and tag (report a 403).
 
 ## Review findings on Phase 12 (adversarial workflow; [k/n] = verifiers who confirmed)
 

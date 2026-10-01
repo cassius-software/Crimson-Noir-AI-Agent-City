@@ -56,7 +56,10 @@ import { NetView, type RemotePose } from './netView.ts'
 import { HeadRig, aimRay, carriedYaw, yawFacing, type AimRay } from './head.ts'
 import { SimClient } from './simClient.ts'
 import { applyWalk, requestWalk, type ScriptedWalk } from './scriptedWalk.ts'
-import { ENTER_RANGE, MODES, PERSON, POSE, RUN, type DriveControls, type FootControls, type PlayerControls, type SimCommand, type StepState } from './simProtocol.ts'
+import {
+  doorOf, ENTER_RANGE, footWish, MODES, PERSON, POSE, RUN, type CarBodyState, type DriveControls, type Door, type FootControls, type PlayerControls,
+  type SimCommand, type StepState,
+} from './simProtocol.ts'
 import { readControls } from './controls.ts'
 import { clampPlayers, originBottomLeft, splitScreen, type Rect } from './viewports.ts'
 import { buildPost, type CinemaPost } from './postfx.ts'
@@ -252,20 +255,25 @@ export interface RecruitHost {
 /** A remote player as the engine reads it from the client and the view draws it (10_Network's RemotePlayer's shape, without the import). */
 export type NetPeer = RemotePose
 
+/** A door player 1 took (10_Network/replication.ts Door's shape; simProtocol.ts doorOf reads it from a step). */
+export type NetDoor = Door
+
 /**
  * One step of the physics realm as the network client reports it (10_Network/netClient.ts Move's shape, without the
- * import): the walking velocity the request asked for (the realm and the room clamp it alike), the substeps the realm
- * ran, the facing, where the realm then had player 1 (the capsule, or the chassis at the wheel), the exit point on the
- * step that left a car, and the correction the realm had applied.
+ * import): the door player 1 took first, if any, then what the room replays for each substep (on foot the walking
+ * velocity the request asked for, clamped as the realm clamps it; at the wheel the command the car ran), the substeps
+ * the realm ran, the facing, where the realm then had player 1 (the capsule, or the chassis at the wheel), and the
+ * correction the realm had applied.
  */
 export interface NetMove {
   mode: 'foot' | 'drive'
   x: number
   z: number
+  wheels?: { throttle: number; brake: number; steer: number; handbrake: boolean }
   n: number
   heading: number
   at: { x: number; y: number; z: number }
-  from?: { x: number; z: number }
+  door?: NetDoor
   fix: number
 }
 
@@ -288,10 +296,13 @@ export interface NetHost {
   readonly corrected: string | null
   /** Starts a session in `world` (the room refuses another), or says why it did not. */
   connect(url: string, token: string, name: string, world: string): string | null
-  /** One realm step: false when not joined, from before the newest correction, or held back by the client's rate. */
-  move(m: NetMove): boolean
-  /** The newest correction (the truth to snap to and its number), or null before the welcome. */
-  correction(): { fix: number; x: number; z: number } | null
+  /**
+   * One realm step: 'sent' or 'held' (coalesced into the next input), 'idle' (nothing to say), 'stale' (run before the
+   * newest correction was applied: the room would drop it unread) or 'refused' (not a step the room could read).
+   */
+  move(m: NetMove): 'sent' | 'held' | 'idle' | 'stale' | 'refused'
+  /** The newest correction (the truth to snap to and its number; at the wheel the car's state too), or null before the welcome. */
+  correction(): { fix: number; x: number; z: number; car?: { index: number; state: CarBodyState } } | null
   /** Every other player's pose, carried forward to `now` (ms). */
   poses(now?: number): readonly NetPeer[]
   /** Inputs the room has not yet applied. */
@@ -440,14 +451,16 @@ export class Engine {
   private netClient: NetHost | null = null
   private netUrl: string | null = null
   /**
-   * The walking velocity and correction of the step request in flight (one at a time): its state is the room's next
-   * move. `snap`: the request carried a correction's teleport (a car it left for that is not a door the room replays).
+   * The walking velocity (as the realm clamps it) and the correction of the step request in flight (one at a time):
+   * its state is the room's next move.
    */
-  private netSent = { x: 0, z: 0, fix: 0, snap: false }
+  private netSent = { x: 0, z: 0, fix: 0 }
   /** The newest realm state as a move for the room, until netFrame reports it. */
   private netMove: NetMove | null = null
   /** The newest correction whose teleport has been queued for the realm (0: none this session). */
   private netFix = 0
+  /** The realm is in room mode for this session (simCore.ts 'room'). */
+  private netRoom = false
   private netPeers: readonly NetPeer[] = NO_PEERS
   private netDropped = 0
   private readonly netVoices = new Map<number, { voice: PeerVoice; since: number }>()
@@ -862,9 +875,14 @@ export class Engine {
         if (!c) { reject(new Error('no network client on this page')); return }
         if (this.halted || this.disposed) { reject(new Error('the city has stopped')); return }
         if (this.netJoin) { reject(new Error('a join is already under way')); return }
-        // The room's authority holds the procedural city of a seed (10_Network/mirror.node.ts); a surveyed region has no mirror yet.
+        // The room's authority holds the procedural city of a seed and its fleet on the track network (10_Network/
+        // mirror.node.ts, garage.node.ts); a surveyed region has no mirror yet, and street-hopping traffic no plan.
         if (this.places) { reject(new Error('the room holds the procedural city; open the page without ?region=on to join')); return }
-        const why = c.connect(url, token, this.playerName.trim() || NET.defaultName, `city/${this.options.seed >>> 0}`)
+        if (this.options.tracks === false) { reject(new Error('the room holds the fleet on the track network; open the page without ?tracks=0 to join')); return }
+        // Whatever the last session left (its end may not have been seen yet): a new session starts from nothing.
+        this.netLetGo('a new session')
+        const world = `city/${this.options.seed >>> 0}/${this.sim.meta.suv.length}`
+        const why = c.connect(url, token, this.playerName.trim() || NET.defaultName, world)
         if (why !== null) { reject(new Error(why)); return }
         this.netUrl = url
         this.netDropped = 0
@@ -933,6 +951,9 @@ export class Engine {
     if (state !== this.netSeen) {
       this.netSeen = state
       if (state === 'joined') {
+        // Player 1 walks and drives as the room's authority does (simCore.ts 'room'): ahead of the welcome's teleport.
+        this.sim.send({ c: 'room', on: true })
+        this.netRoom = true
         this.netJoin?.resolve(`joined ${this.netUrl ?? 'the room'} as player ${c.id}`)
         this.netJoin = null
         this.toast('Network', `joined as player ${c.id}`)
@@ -947,12 +968,18 @@ export class Engine {
     if (state !== 'joined') return
     const m = this.netMove
     this.netMove = null
-    if (m && !c.move(m)) this.netDropped++
-    // The room's truth: player 1 is put down there (the realm leaves a car for it), once per correction.
+    // Dropped: a step the room could not have kept (run before a correction was applied, or unreadable); a step held
+    // for the next input or with nothing to say is not.
+    if (m) {
+      const done = c.move(m)
+      if (done === 'stale' || done === 'refused') this.netDropped++
+    }
+    // The room's truth, once per correction: at the wheel the car in the room's state (the realm builds it again from
+    // those numbers, as the room did), on foot player 1 put down there (the realm leaves a car for it).
     const fix = c.correction()
     if (fix && fix.fix > this.netFix) {
       this.netFix = fix.fix
-      this.sim.send({ c: 'teleport', x: fix.x, z: fix.z })
+      this.sim.send(fix.car ? { c: 'netCar', i: fix.car.index, state: fix.car.state } : { c: 'teleport', x: fix.x, z: fix.z })
       if (fix.fix > 1) this.toast('Network', 'the room put you back where it has you')
     }
     this.netPeers = c.poses(performance.now())
@@ -968,32 +995,31 @@ export class Engine {
   }
 
   /**
-   * A realm state as the room's move: on foot the walking velocity the request asked for and the capsule the step left;
-   * at the wheel the chassis; the exit point when the step left a car; the substeps it ran; the correction the request
-   * carried out.
+   * A realm state as the room's move: the door player 1 took this step, if any; on foot the walking velocity the
+   * request asked for and the capsule the step left; at the wheel the command the car ran and the chassis; the
+   * substeps it ran; the correction the request carried out.
    */
   private netMoveOf(s: StepState): NetMove {
     const sent = this.netSent
-    const exited = s.events.find((e): e is Extract<typeof e, { e: 'exited' }> => e.e === 'exited' && e.player === 0)
+    const door = doorOf(s.events)
+    const n = s.physics.steps
     if (s.driving >= 0) {
       const p = s.poses, o = s.driving * POSE.stride
-      return { mode: 'drive', x: 0, z: 0, n: s.physics.steps, heading: p[o + POSE.heading], at: { x: p[o + POSE.x], y: p[o + POSE.y], z: p[o + POSE.z] }, fix: sent.fix }
+      const at = { x: p[o + POSE.x], y: p[o + POSE.y], z: p[o + POSE.z] }
+      return { mode: 'drive', x: 0, z: 0, ...(s.wheels && { wheels: s.wheels }), n, heading: p[o + POSE.heading], at, fix: sent.fix, ...(door && { door }) }
     }
     const a = s.avatar
-    return {
-      mode: 'foot', x: sent.x, z: sent.z, n: s.physics.steps, heading: this.foot.heading, at: { x: a.x, y: a.y, z: a.z }, fix: sent.fix,
-      // A car left for a correction's teleport is no door: the room has already put the player down at its truth.
-      ...(exited && !sent.snap && { from: { x: exited.x, z: exited.z } }),
-    }
+    return { mode: 'foot', x: sent.x, z: sent.z, n, heading: this.foot.heading, at: { x: a.x, y: a.y, z: a.z }, fix: sent.fix, ...(door && { door }) }
   }
 
-  /** The session over: no poses drawn or placed, every peer voice let go, a join still waiting told why. */
+  /** The session over: no poses drawn or placed, every peer voice let go, a join still waiting told why, the room mode off. */
   private netLetGo(why: string): void {
+    if (this.netRoom && !this.halted && !this.disposed) this.sim.send({ c: 'room', on: false })
+    this.netRoom = false
     this.netPeers = NO_PEERS
     this.netMove = null
     this.netFix = 0
     this.netSent.fix = 0
-    this.netSent.snap = false
     for (const v of this.netVoices.values()) v.voice.detach()
     this.netVoices.clear()
     this.peerPlaces.length = 0
@@ -1315,9 +1341,11 @@ export class Engine {
     // The step about to go out (one at a time: none is in flight), for the room: the walking velocity it asks for and
     // the correction it carries out (a teleport queued by netFrame rides this request).
     if (!sim.pending) {
-      this.netSent.x = foot.x
-      this.netSent.z = foot.z
-      this.netSent.snap = this.netFix !== this.netSent.fix
+      // What the realm applies (simProtocol.ts footWish, the clamp it and the room share): a scripted walk past a run
+      // is reported at a run.
+      const w = footWish(foot.x, foot.z)
+      this.netSent.x = w.x
+      this.netSent.z = w.z
       this.netSent.fix = this.netFix
     }
     if (sim.request({ dt: this.pendingDt, foot, drive })) this.pendingDt = 0

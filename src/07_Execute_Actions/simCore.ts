@@ -192,6 +192,8 @@ export class SimCore {
   #workerMs = 0
   /** Joined to a network room (the `room` command): player 1 is a ghost and car-moving commands are refused. */
   #room = false
+  /** Player 1 took a door this step (a network room hears one a step). */
+  #doored = false
 
   private constructor(physics: Physics, o: SimCoreOptions, crowd: CrowdSensor | null) {
     this.#physics = physics
@@ -329,6 +331,7 @@ export class SimCore {
       // One clock for every signal in the city: the cars', the crowd's, and the lights the page draws (from simTime).
       const signalTime = this.#simTime
       const cmds = input.cmds
+      this.#doored = false
       for (let i = 0; i < cmds.length; i++) {
         if (i >= MAX_COMMANDS) { this.noteRejected(`command flood: ${cmds.length - MAX_COMMANDS} dropped`); break }
         try {
@@ -599,7 +602,16 @@ export class SimCore {
     const cmd = raw as SimCommand
     const fleet = this.#fleet
     switch (cmd.c) {
-      case 'interact': this.#interact(this.#player(cmd.player)); return
+      case 'interact': {
+        const k = this.#player(cmd.player)
+        // A network room hears one door a step from player 1: each input of the room's carries one.
+        if (this.#room && k === 0) {
+          if (this.#doored) throw new Error('interact: one door a step in a network room')
+          this.#doored = true
+        }
+        this.#interact(k)
+        return
+      }
       case 'room': {
         const on = cmd.on === true
         this.#room = on
@@ -621,7 +633,7 @@ export class SimCore {
           return
         }
         // Out of another car first (stopped where it is), then into this one, in the room's state.
-        if (cur) this.#interact(0)
+        if (cur) this.#interact(0, true)
         this.#seat(0, v, true, cmd.state)
         return
       }
@@ -639,7 +651,7 @@ export class SimCore {
         const k = this.#player(cmd.player)
         const x = finite(cmd.x, NaN), z = finite(cmd.z, NaN)
         if (Number.isNaN(x) || Number.isNaN(z)) throw new Error('teleport: x and z must be finite')
-        if (this.#driving[k]) this.#interact(k)
+        if (this.#driving[k]) this.#interact(k, true)
         this.#avatars[k].teleport(x, z)
         return
       }
@@ -840,9 +852,10 @@ export class SimCore {
 
   /**
    * Player k enters the nearest car, or leaves the one they drive on the driver's (left) side. A car another player
-   * is driving is refused (a 'rejected' event, never a silent no-op): one driver per car, one car per driver.
+   * is driving is refused (a 'rejected' event, never a silent no-op): one driver per car, one car per driver. `forced`:
+   * a teleport or a network room's correction takes the player out, which the 'exited' event says (no door of theirs).
    */
-  #interact(k: number): void {
+  #interact(k: number, forced = false): void {
     const fleet = this.#fleet, avatar = this.#avatars[k]
     const cur = this.#driving[k]
     if (cur) {
@@ -861,7 +874,7 @@ export class SimCore {
       avatar.heading = h
       this.#holdWas[k] = false
       this.#fullBrakeWas[k] = false
-      this.#events.push({ e: 'exited', player: k, x: ex, z: ez, heading: h })
+      this.#events.push({ e: 'exited', player: k, x: ex, z: ez, heading: h, ...(forced && { forced: true }) })
       return
     }
     const v = fleet.nearest(avatar.x, avatar.z, ENTER_RANGE)

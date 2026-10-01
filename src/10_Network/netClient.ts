@@ -5,11 +5,14 @@
  * the host on this machine, or the local end of a proxy the operator runs), so neither a token nor a pose leaves this
  * machine from the page. The token rides the upgrade as a subprotocol (replication.ts authProtocol), so the host
  * checks it before a socket exists. The room is authoritative (Phase 12) and the page's own physics realm is the
- * prediction: the player moves at once, and every realm step the engine hands over (move) is reported as the
- * velocity applied to each run of fixed substeps and where the realm then had the player (the claim), coalesced into
- * runs while the input rate is spent. A correction from the host (the welcome's spawn is the first) is the truth to
- * snap to: the engine puts the player down there, and steps the realm ran before that are never sent (the host would
- * drop them unread). It reads every message from the host through the core's validator (the host is not trusted
+ * prediction: the player moves at once, and every realm step the engine hands over (move) is reported as what the
+ * realm applied to each run of fixed substeps (on foot the walking velocity, at the wheel the vetted wheel command) and
+ * where the realm then had the player (the claim), coalesced into runs while the input rate is spent; a step that took
+ * a door (into a car, in the state the realm took it over in, or out of one) starts an input of its own (Phase 13). A
+ * correction from the host (the welcome's spawn is the first) is the truth to snap to: the engine puts the player down
+ * there (at the wheel, the car in the room's state), and steps the realm ran before that are never sent (the host
+ * would drop them unread). While nothing else goes out (a hidden tab, a player standing still) a keepalive ack does,
+ * so a quiet page is not taken for a gone one. It reads every message from the host through the core's validator (the host is not trusted
  * either: enough malformed messages and the client leaves), reconciles each snapshot into a replica of remote POSES
  * the page draws (never bodies in the physics realm), relays chat and pings to callbacks, and screens its own chat
  * under 14A before sending. Voice: a peer's MediaStream is
@@ -20,8 +23,8 @@
  */
 import {
   admissibleChat, authProtocol, emptyReplica, LIMITS, openServerFrame, peerBuckets, predict, PROTOCOL_VERSION, reconcile, sealMessage, SUBPROTOCOL,
-  take, type ClientMessage, type InputMessage, type PeerBuckets, type PingRelayMessage, type ChatRelayMessage, type RemotePlayer, type Replica,
-  type Run,
+  take, type CarFix, type ClientMessage, type Door, type InputMessage, type PeerBuckets, type PingRelayMessage, type ChatRelayMessage,
+  type RemotePlayer, type Replica, type Run,
 } from './replication.ts'
 import type { PingKind } from '../08_Swarm/ping.ts'
 import { netServer } from '../02_Define_The_Rules/airgap.ts'
@@ -53,27 +56,44 @@ export interface NetClientOptions {
   onStatus?: (status: NetStatus, reason: string | null) => void
   onChat?: (msg: ChatRelayMessage) => void
   onPing?: (msg: PingRelayMessage) => void
+  /** Runs `fn` every `ms` until the returned stop is called: setInterval unless a test injects a clock of its own. */
+  every?: (fn: () => void, ms: number) => () => void
 }
 
+/** How long the client stays silent before it sends a keepalive ack (the host drops a peer silent for LIMITS.idleTimeoutMs), ms. */
+export const KEEPALIVE_MS = 5000
+
 /**
- * One step of the page's physics realm, as the engine reports it: what the room replays (the walking velocity applied
- * to each of its `n` fixed substeps, on foot) and where the realm then had the player (`at`: the capsule centre on
- * foot, the chassis centre at the wheel), the exit point on the first step on foot after a car, and the correction
- * the realm had applied when it ran the step.
+ * One step of the page's physics realm, as the engine reports it: the door it took first, if any (the realm's own
+ * entered or exited event), then what the room replays for each of its `n` fixed substeps (on foot the walking velocity
+ * `x`, `z` as the realm clamped it; at the wheel the command its car ran, `wheels`), where the realm then had the player
+ * (`at`: the capsule centre on foot, the chassis centre at the wheel), and the correction the realm had applied when
+ * it ran the step.
  */
 export interface Move {
   mode: 'foot' | 'drive'
   x: number
   z: number
+  wheels?: { throttle: number; brake: number; steer: number; handbrake: boolean }
   n: number
   heading: number
   at: { x: number; y: number; z: number }
-  from?: { x: number; z: number }
+  door?: Door
   fix: number
 }
 
-/** The truth to snap to: where the host has the player, under correction `fix`, and why (the welcome's spawn is the first). */
-export interface Correction { fix: number; x: number; y: number; z: number; reason: string }
+/**
+ * What became of a step: sent in an input, held for the next one (the input rate is spent), idle (no substep and no
+ * door: nothing to say), stale (run before the page applied the newest correction: the room would drop it unread), or
+ * refused (not joined, or not a step the room could read).
+ */
+export type MoveStatus = 'sent' | 'held' | 'idle' | 'stale' | 'refused'
+
+/**
+ * The truth to snap to: where the host has the player, under correction `fix`, and why (the welcome's spawn is the
+ * first); at the wheel, `car`, the car's full state, which the page puts its car in.
+ */
+export interface Correction { fix: number; x: number; y: number; z: number; reason: string; car?: CarFix }
 
 export interface NetClient {
   readonly status: NetStatus
@@ -87,11 +107,8 @@ export interface NetClient {
   readonly corrected: string | null
   /** Starts a session in `world` (the room refuses another), or says why it did not (a refused URL or token, a session already open). */
   connect(url: string, token: string, name: string, world: string): string | null
-  /**
-   * One step of the realm, reported: false when not joined, when the step predates the newest correction (dropped), or
-   * when it is held back by the client's own rate (coalesced into the next input).
-   */
-  move(m: Move): boolean
+  /** One step of the realm, reported (MoveStatus says what became of it). */
+  move(m: Move): MoveStatus
   /** The newest correction (null before the welcome): the engine snaps to it once, when its `fix` is new to the page. */
   correction(): Correction | null
   /** A chat line, screened here first: false when inadmissible, not joined, or over rate. */
@@ -138,7 +155,17 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
   let corrections = 0
   let corrected: string | null = null
   let world = ''
-  let held: { mode: 'foot' | 'drive'; segs: [number, number, number][]; heading: number; claim: { x: number; y: number; z: number }; from?: { x: number; z: number } } | null = null
+  /** Steps not yet sent: runs of one mode (each a run's key, then its substeps last), claimed at `claim`, after `door`. */
+  let held: { mode: 'foot' | 'drive'; segs: number[][]; heading: number; claim: { x: number; y: number; z: number }; door?: Door } | null = null
+  /** When anything last went out, ms (the keepalive's clock), and the keepalive's stop. */
+  let lastSent = 0
+  let stopKeepalive: (() => void) | null = null
+  const every = o.every ?? ((fn: () => void, ms: number): (() => void) => {
+    const t = setInterval(fn, ms)
+    // In Node (the tests, the smoke) the keepalive never holds the process open on its own.
+    ;(t as unknown as { unref?: () => void }).unref?.()
+    return () => clearInterval(t)
+  })
   // The seal (replication.ts sealMessage): every frame out is numbered and signed under the session token, every
   // frame in must be signed under it and numbered above the last; one that is not is dropped as a host refusal.
   let key = ''
@@ -148,12 +175,17 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
 
   const setStatus = (s: NetStatus, why: string | null = null): void => {
     status = s
-    if (s === 'closed') reason = why
+    if (s === 'closed') {
+      reason = why
+      stopKeepalive?.()
+      stopKeepalive = null
+    }
     o.onStatus?.(s, why)
   }
   const send = (msg: ClientMessage): boolean => {
     if (!socket || status === 'idle' || status === 'closed' || status === 'connecting') return false
     socket.send(sealMessage(msg, ++sent, key))
+    lastSent = now()
     return true
   }
   const end = (code: number, why: string): void => {
@@ -191,7 +223,7 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
       case 'correct':
         if (status !== 'joined' || msg.fix <= fix) return
         fix = msg.fix
-        truth = { fix: msg.fix, x: msg.you.x, y: msg.you.y, z: msg.you.z, reason: msg.reason }
+        truth = { fix: msg.fix, x: msg.you.x, y: msg.you.y, z: msg.you.z, reason: msg.reason, ...(msg.car && { car: msg.car }) }
         corrections++
         corrected = msg.reason
         // Steps the realm ran before it is put down at the truth describe a body the room never had.
@@ -220,26 +252,36 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
     }
   }
 
-  /** Whether a run of `n` substeps at (vx, vz) can join `segs` within one input's bounds. */
-  const fits = (segs: readonly (readonly number[])[], vx: number, vz: number, n: number): boolean => {
-    const total = segs.reduce((a, r) => a + r[2], 0)
-    const last = segs[segs.length - 1]
-    return total + n <= LIMITS.stepsPerInput && ((last !== undefined && last[0] === vx && last[1] === vz) || segs.length < LIMITS.runs)
+  /** A run's substeps (its last entry), and whether two runs share a key (everything but the substeps). */
+  const stepsOf = (r: readonly number[]): number => r[r.length - 1]
+  const sameKey = (a: readonly number[] | undefined, key: readonly number[]): boolean =>
+    a !== undefined && a.length === key.length + 1 && key.every((v, i) => a[i] === v)
+  /** Whether a run of `n` substeps under `key` can join `segs` within one input's bounds. */
+  const fits = (segs: readonly (readonly number[])[], key: readonly number[], n: number): boolean => {
+    const total = segs.reduce((a, r) => a + stepsOf(r), 0)
+    return total + n <= LIMITS.stepsPerInput && (sameKey(segs[segs.length - 1], key) || segs.length < LIMITS.runs)
   }
 
-  /** Sends what is held as one input when the rate allows (or `force`d: a mode change, an exit, a full input). */
+  /** Sends what is held as one input when the rate allows (or `force`d: a mode change, a door, a full input). */
   const flush = (force: boolean): boolean => {
     if (!held) return true
     if (!take(buckets.input, now()) && !force) return false
     const h = held
     held = null
-    const segs: Run[] = h.segs.map((r) => [r[0], r[1], r[2]] as const)
+    const segs = h.segs.map((r) => Object.freeze([...r])) as unknown as Run[]
     const msg: InputMessage = {
       t: 'input', seq: ++seq, ack: replica.tick, fix, mode: h.mode, segs, heading: Math.atan2(Math.sin(h.heading), Math.cos(h.heading)), claim: h.claim,
-      ...(h.from && { from: h.from }),
+      ...(h.door && { door: h.door }),
     }
     if (unsent.length < LIMITS.inputBurst) unsent.push(msg)
     return send(msg)
+  }
+
+  /** The keepalive: what is held goes out once the rate allows, and a client silent for KEEPALIVE_MS acknowledges the newest snapshot. */
+  const keepalive = (): void => {
+    if (status !== 'joined') return
+    if (held) flush(false)
+    if (now() - lastSent >= KEEPALIVE_MS) send({ t: 'ack', ack: replica.tick })
   }
 
   return {
@@ -280,6 +322,9 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
       corrected = null
       held = null
       world = place
+      lastSent = now()
+      stopKeepalive?.()
+      stopKeepalive = every(keepalive, 1000)
       setStatus('connecting')
       s.onopen = () => {
         if (socket !== s) return
@@ -296,24 +341,30 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
       return null
     },
     move(m) {
-      if (status !== 'joined') return false
-      if (![m.x, m.z, m.n, m.heading, m.at.x, m.at.y, m.at.z].every(Number.isFinite)) return false
+      if (status !== 'joined') return 'refused'
+      if (![m.n, m.heading, m.at.x, m.at.y, m.at.z].every(Number.isFinite)) return 'refused'
       // Run before the page applied the newest correction: the room would drop it unread.
-      if (m.fix < fix) return false
+      if (m.fix < fix) return 'stale'
       const n = Math.max(0, Math.floor(m.n))
-      const from = m.mode === 'foot' && m.from && Number.isFinite(m.from.x + m.from.z) ? { x: m.from.x, z: m.from.z } : undefined
-      // A step that ran no substep moved nothing (the heading rides the next input), unless it left a car.
-      if (n === 0 && !from) return false
-      const vx = m.mode === 'foot' ? m.x : 0, vz = m.mode === 'foot' ? m.z : 0
-      // A held input's claim is where its last run ended, so a step that cannot join it (another mode, an exit point,
-      // no room) sends it first, whatever the rate says.
-      if (held && (held.mode !== m.mode || from || !fits(held.segs, vx, vz, n))) flush(true)
+      // What the room replays for each substep: the walking velocity, or the wheel command (the handbrake as 0 or 1).
+      let key: number[]
+      if (m.mode === 'foot') key = [m.x, m.z]
+      else if (m.wheels) key = [m.wheels.throttle, m.wheels.brake, m.wheels.steer, m.wheels.handbrake ? 1 : 0]
+      else return 'refused'
+      if (!key.every(Number.isFinite)) return 'refused'
+      const door = m.door
+      // A step that ran no substep and took no door moved nothing (the heading rides the next input).
+      if (n === 0 && !door) return 'idle'
+      // A held input's claim is where its last run ended, so a step that cannot join it (another mode, a door, which
+      // comes first in an input of its own, or no room) sends it first, whatever the rate says.
+      if (held && (held.mode !== m.mode || door || !fits(held.segs, key, n))) flush(true)
       const segs = held?.segs ?? []
       const last = segs[segs.length - 1]
-      if (last && last[0] === vx && last[1] === vz) last[2] += n
-      else segs.push([vx, vz, n])
-      held = { mode: m.mode, segs, heading: m.heading, claim: { x: m.at.x, y: m.at.y, z: m.at.z }, ...((from ?? held?.from) && { from: from ?? held?.from }) }
-      return flush(false)
+      if (sameKey(last, key)) last[last.length - 1] += n
+      else segs.push([...key, n])
+      const keep = door ?? held?.door
+      held = { mode: m.mode, segs, heading: m.heading, claim: { x: m.at.x, y: m.at.y, z: m.at.z }, ...(keep && { door: keep }) }
+      return flush(false) ? 'sent' : 'held'
     },
     correction: () => truth,
     get corrections() { return corrections },

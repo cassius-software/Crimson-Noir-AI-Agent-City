@@ -16,7 +16,7 @@ import { Ring0Auditor } from '../02_Define_The_Rules/ring0.ts'
 import { poseAt, projectOnto } from '../06_Make_Decisions/tracks.ts'
 import { EXIT_SIDE } from '../07_Execute_Actions/carRig.ts'
 import { SimCore } from '../07_Execute_Actions/simCore.ts'
-import { ENTER_RANGE, footWish, POSE, RUN, type CarBodyState, type DriveControls, type FootControls, type SimCommand, type StepState } from '../07_Execute_Actions/simProtocol.ts'
+import { doorOf, ENTER_RANGE, footWish, POSE, RUN, type CarBodyState, type DriveControls, type FootControls, type SimCommand, type StepState } from '../07_Execute_Actions/simProtocol.ts'
 import { GARAGE } from './garage.node.ts'
 import { carViolation, Mirror, MIRROR, personViolation, substeps, worldOf, type MirrorPose, type MoveInput } from './mirror.node.ts'
 
@@ -59,8 +59,8 @@ async function client(m: Mirror, id: number) {
 
 /**
  * The page's realm in a network room with the room's whole fleet on the track network, joined to mirror `m` as peer
- * `id`, and a step that reports what the engine reports (engine.ts netMoveOf): a door from the step's own entered or
- * exited event (never one a correction made), then the runs in the mode the step ended in (the walking velocity as
+ * `id`, and a step that reports what the engine reports (engine.ts netMoveOf): the step's door (simProtocol.ts doorOf:
+ * never one a correction made or forced), then the runs in the mode the step ended in (the walking velocity as
  * the realm clamps it, or the wheel command the bouncer let through), and the claim (the capsule, or the chassis).
  */
 async function roomPage(m: Mirror, id: number) {
@@ -68,19 +68,13 @@ async function roomPage(m: Mirror, id: number) {
   const sim = await SimCore.create({ seed: SEED, cars: m.garage.cars, agents: 256, boxes: generateCity(SEED), furniture: streetFurniture(SEED), spawn: start, debug: false, tracks: true }, null)
   const poses = new Float32Array(sim.meta.count * POSE.stride)
   let cmds: SimCommand[] = [{ c: 'room', on: true }, { c: 'teleport', x: start.x, z: start.z }]
-  let snap = true
   const step = (o: { dt?: number; foot?: FootControls; drive?: DriveControls; cmds?: SimCommand[] } = {}): { st: StepState; input: MoveInput } => {
     const foot = o.foot ?? { x: 0, z: 0, heading: 0 }
     const st = { ...sim.step({ dt: o.dt ?? 1 / 60, foot, drive: o.drive ?? IDLE, cmds: [...cmds, ...(o.cmds ?? [])] }, poses), t: 'state' as const, id: 0 }
-    const corrected = snap
     cmds = []
-    snap = false
     const n = st.physics.steps
-    const entered = st.events.find((e) => e.e === 'entered' && e.player === 0)
-    const exited = st.events.find((e) => e.e === 'exited' && e.player === 0)
-    const door = corrected ? undefined
-      : entered?.e === 'entered' && !entered.room ? { enter: { car: entered.index, state: entered.state } }
-        : exited?.e === 'exited' ? { exit: { x: exited.x, z: exited.z } } : undefined
+    // The engine's own rule (simProtocol.ts doorOf): a door a correction made or forced is no door of the player's.
+    const door = doorOf(st.events)
     let input: MoveInput
     if (st.driving >= 0) {
       const w = st.wheels!, o2 = st.driving * POSE.stride
@@ -94,7 +88,6 @@ async function roomPage(m: Mirror, id: number) {
   /** The room's correction, as the engine applies it: at the wheel the car in the room's state, on foot a teleport. */
   const correct = (p: MirrorPose): void => {
     cmds = p.car ? [{ c: 'netCar', i: p.car.index, state: p.car.state }] : [{ c: 'teleport', x: p.x, z: p.z }]
-    snap = true
   }
   const chassis = (i: number) => ({ x: poses[i * POSE.stride + POSE.x], y: poses[i * POSE.stride + POSE.y], z: poses[i * POSE.stride + POSE.z], heading: poses[i * POSE.stride + POSE.heading] })
   return { start, step, correct, chassis }

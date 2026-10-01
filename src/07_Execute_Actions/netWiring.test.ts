@@ -2,9 +2,12 @@
  * Why does this file exist? It pins the page-side wiring of the network session (Phase 10.2, made authoritative in
  * Phase 12), which the engine, the host and the console carry and Node cannot run: the engine holds no network code
  * (it imports nothing from 10_Network, names no socket, and reaches the client only through the NetHost seam App hands
- * it), pairs each realm state with the one step request that ran it (its walking velocity and the correction it
- * carried out) and reports it as one move per new state, applies a new correction from the room as one teleport of
- * player 1 and nothing else, joins only the procedural city of its seed, draws the room's poses as ghosts in present() alone,
+ * it), pairs each realm state with the one step request that ran it (its walking velocity as the realm clamps it and
+ * the correction it carried out) and reports it as one move per new state (the door the step took, read by
+ * simProtocol.ts doorOf; at the wheel the command the car ran), puts the realm in room mode for the session and out of it
+ * after, applies a new correction from the room as one command and nothing else (on foot a teleport, at the wheel the
+ * car in the room's state), joins only the procedural city of its seed with its fleet on the track network, counts as
+ * dropped only the steps the room could not have kept, draws the room's poses as ghosts in present() alone,
  * places the peer voices before the soundscape's update, captions the room's chat and pings through the captions
  * feed, reports the session in the snapshot, leaves on dispose; App builds the client once, connects it never (only
  * the console's `join` does), screens the room's lines under 14A once more, keeps the token on this machine and
@@ -46,11 +49,14 @@ test('the engine holds no network code: nothing from 10_Network, no socket, the 
   assert.match(src, /^ {2}netPing\(from: number, kind: PingKind, x: number, _y: number, z: number\): void \{$/m)
   const seam = between(src, 'export interface NetHost {', 'export interface NetControls {')
   assert.doesNotMatch(seam, /sendChat|sendPing|replica/, 'the engine is never handed a way to speak for the player')
-  // The join: the Concierge's name, else the default, in the city of this page's seed (a region has no mirror yet);
-  // nothing is sent without the console's join.
+  // The join: the Concierge's name, else the default, in the city of this page's seed and the fleet it runs (a region
+  // has no mirror yet, and street-hopping traffic no plan); nothing is sent without the console's join, and whatever
+  // the last session left is let go first.
   const net = between(src, '  get net(): NetControls {', '  netChat(')
-  assert.match(net, /c\.connect\(url, token, this\.playerName\.trim\(\) \|\| NET\.defaultName, `city\/\$\{this\.options\.seed >>> 0\}`\)/)
+  assert.match(net, /const world = `city\/\$\{this\.options\.seed >>> 0\}\/\$\{this\.sim\.meta\.suv\.length\}`\n\s*const why = c\.connect\(url, token, this\.playerName\.trim\(\) \|\| NET\.defaultName, world\)/)
   before(net, 'if (this.places) { reject(', 'c.connect(', 'a region is refused before any socket')
+  before(net, 'if (this.options.tracks === false) { reject(', 'c.connect(', 'traffic off the track network is refused before any socket')
+  before(net, "this.netLetGo('a new session')", 'c.connect(', 'a new session starts from nothing')
   assert.match(net, /this\.netJoin = \{ resolve, reject \}/, 'settled by the room\'s welcome or the socket\'s end (netFrame)')
 })
 
@@ -63,21 +69,26 @@ test('each realm state: one move, paired with the request that ran it; a new cor
   // The request in flight (one at a time) remembers what the room must replay: the walking velocity it asks for and the
   // correction it carries out (a teleport queued by netFrame rides the next request).
   before(frame, 'readControls(input, driving >= 0, foot, drive)', 'if (!sim.pending) {', 'the controls of this frame')
-  assert.match(frame, /if \(!sim\.pending\) \{\n\s*this\.netSent\.x = foot\.x\n\s*this\.netSent\.z = foot\.z\n\s*this\.netSent\.snap = this\.netFix !== this\.netSent\.fix\n\s*this\.netSent\.fix = this\.netFix\n\s*\}\n\s*if \(sim\.request\(\{ dt: this\.pendingDt, foot, drive \}\)\) this\.pendingDt = 0\n/, 'recorded just before the one request line, which is unchanged')
+  assert.match(frame, /if \(!sim\.pending\) \{\n(?:\s*\/\/.*\n)*\s*const w = footWish\(foot\.x, foot\.z\)\n\s*this\.netSent\.x = w\.x\n\s*this\.netSent\.z = w\.z\n\s*this\.netSent\.fix = this\.netFix\n\s*\}\n\s*if \(sim\.request\(\{ dt: this\.pendingDt, foot, drive \}\)\) this\.pendingDt = 0\n/, 'recorded just before the one request line, which is unchanged: the velocity the realm applies')
   // Its answer is the next state the worker sends: paired there, before anything else reads it.
   const received = between(src, '  private received(s: StepState, prev: StepState): void {', '\n  }\n')
   assert.match(received, /^ {4}this\.fresh = true\n(?:\s*\/\/.*\n)*\s*if \(this\.netClient\?\.status === 'joined'\) this\.netMove = this\.netMoveOf\(s\)$/m)
   const moveOf = between(src, '  private netMoveOf(s: StepState): NetMove {', '  /** The session over')
-  assert.match(moveOf, /n: s\.physics\.steps/, 'the substeps the realm ran')
-  assert.match(moveOf, /mode: 'drive', x: 0, z: 0/, 'at the wheel no walking velocity: the chassis is the claim')
-  assert.match(moveOf, /e\.e === 'exited' && e\.player === 0/, 'the exit point of the step that left the car')
-  assert.match(moveOf, /exited && !sent\.snap && \{ from:/, 'but not a car left for a correction\'s teleport')
+  assert.match(moveOf, /const n = s\.physics\.steps/, 'the substeps the realm ran')
+  assert.match(moveOf, /mode: 'drive', x: 0, z: 0, \.\.\.\(s\.wheels && \{ wheels: s\.wheels \}\)/, 'at the wheel the command the car ran; the chassis is the claim')
+  assert.match(moveOf, /const door = doorOf\(s\.events\)/, 'the step\'s own door: never one a correction made or forced')
+  assert.equal(moveOf.match(/\.\.\.\(door && \{ door \}\)/g)?.length, 2, 'on foot and at the wheel')
   assert.match(moveOf, /fix: sent\.fix/)
+  // The door rule itself: the last of the step's own doors, a later correction cancelling it.
+  const doors = between(read('./simProtocol.ts'), 'export function doorOf(', '\n}\n')
+  assert.match(doors, /door = e\.room \? undefined : \{ enter: \{ car: e\.index, state: e\.state \} \}/)
+  assert.match(doors, /door = e\.forced \? undefined : \{ exit: \{ x: e\.x, z: e\.z \} \}/)
   const nf = between(src, '  private netFrame(', '  /**\n   * A realm state as the room')
   assert.match(nf, /if \(state !== 'joined'\) return/, 'nothing offered or read between sessions')
-  assert.match(nf, /const m = this\.netMove\n\s*this\.netMove = null\n\s*if \(m && !c\.move\(m\)\) this\.netDropped\+\+/, 'each state reported once')
-  assert.match(nf, /if \(fix && fix\.fix > this\.netFix\) \{\n\s*this\.netFix = fix\.fix\n\s*this\.sim\.send\(\{ c: 'teleport', x: fix\.x, z: fix\.z \}\)/, 'each correction once, as a teleport')
-  assert.equal(nf.match(/sim\.send\(/g)?.length, 1, 'the teleport is the only thing the room may ask of the realm')
+  assert.match(nf, /const m = this\.netMove\n\s*this\.netMove = null\n(?:\s*\/\/.*\n)*\s*if \(m\) \{\n\s*const done = c\.move\(m\)\n\s*if \(done === 'stale' \|\| done === 'refused'\) this\.netDropped\+\+/, 'each state reported once; dropped only what the room could not keep')
+  assert.match(nf, /if \(fix && fix\.fix > this\.netFix\) \{\n\s*this\.netFix = fix\.fix\n\s*this\.sim\.send\(fix\.car \? \{ c: 'netCar', i: fix\.car\.index, state: fix\.car\.state \} : \{ c: 'teleport', x: fix\.x, z: fix\.z \}\)/, 'each correction once: the car in the room\'s state, or a teleport')
+  assert.match(nf, /this\.sim\.send\(\{ c: 'room', on: true \}\)/, 'the room mode on the welcome, ahead of its teleport')
+  assert.equal(nf.match(/sim\.send\(/g)?.length, 2, 'the room mode and the correction are all the room may ask of the realm')
   assert.match(nf, /this\.netPeers = c\.poses\(performance\.now\(\)\)/)
   assert.doesNotMatch(nf, /sim\.request|sendChat|sendPing|connect\(/, 'the engine neither steps the realm for the room nor speaks for the player')
   const present = between(src, '  private present(', '  private presentView(')
@@ -118,8 +129,10 @@ test('the room\'s chat and pings become captions through the feed; the snapshot 
   const set = between(src, '  setNet(client: NetHost): void {', '  /**\n   * The console\'s hold')
   assert.match(set, /this\.audio\.attachPeer\(stream, id, this\.netName\(id\)\)/)
   assert.match(between(src, '  private netFrame(', '  /**\n   * A realm state as the room'), /this\.simTime - v\.since >= NET\.voiceGraceS && !this\.netPeers\.some\(\(p\) => p\.id === id\)/)
-  // A session over forgets its corrections: the next one starts from the welcome.
-  assert.match(between(src, '  private netLetGo(why: string): void {', '\n  }\n'), /this\.netMove = null\n\s*this\.netFix = 0\n\s*this\.netSent\.fix = 0\n\s*this\.netSent\.snap = false/)
+  // A session over forgets its corrections (the next one starts from the welcome) and takes the realm out of room mode.
+  const letGo = between(src, '  private netLetGo(why: string): void {', '\n  }\n')
+  assert.match(letGo, /this\.netMove = null\n\s*this\.netFix = 0\n\s*this\.netSent\.fix = 0/)
+  assert.match(letGo, /if \(this\.netRoom && !this\.halted && !this\.disposed\) this\.sim\.send\(\{ c: 'room', on: false \}\)/)
 })
 
 test('the view: the crowd\'s body and the fleet\'s car, hidden until poses arrive, added to the scene at boot', () => {

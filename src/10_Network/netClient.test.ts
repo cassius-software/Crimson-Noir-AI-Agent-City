@@ -3,8 +3,9 @@
  * (replication.node.ts, here over the open-plane authority, plane.node.ts) on a loopback socket, with Node 22's own
  * WebSocket as the client's default socket: the address and token rules, the token offered on the upgrade, a join
  * welcomed with the spawn to snap to and its status walk, the realm's steps reported as moves (coalesced into runs
- * while the rate is spent, never sent from before a correction) and acknowledged by the room's snapshots, a lie
- * corrected and the client snapped and honest again, two clients seeing each other's poses move and carried forward
+ * while the rate is spent, a door in an input of its own, never sent from before a correction) and acknowledged by the
+ * room's snapshots, a lie corrected and the client snapped and honest again (at the wheel, with the car's state), a
+ * keepalive while the page is quiet, two clients seeing each other's poses move and carried forward
  * between snapshots, chat and pings relayed to the callbacks and screened before they leave, a leave that closes
  * cleanly and a host that closes every client, and a host whose messages the core refuses being left after
  * HOST_REFUSALS of them (through an injected socket). Every wait is for the event to be observed, never a fixed sleep.
@@ -13,7 +14,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { RUN } from '../07_Execute_Actions/simProtocol.ts'
-import { createNetClient, HOST_REFUSALS, netServer, type Move, type NetClient, type NetSocket, type NetStatus } from './netClient.ts'
+import { createNetClient, HOST_REFUSALS, KEEPALIVE_MS, netServer, type Move, type MoveStatus, type NetClient, type NetSocket, type NetStatus } from './netClient.ts'
 import { netServer as gate } from '../02_Define_The_Rules/airgap.ts'
 import { planeAuthority, planeStep } from './plane.node.ts'
 import { AUTH_PREFIX, encode, LIMITS, PROTOCOL_VERSION, sealMessage, SUBPROTOCOL, type ChatRelayMessage, type PingRelayMessage, type RemotePlayer, type SnapshotMessage } from './replication.ts'
@@ -59,7 +60,7 @@ function page(c: NetClient) {
     get at() { return at },
     get fix() { return fix },
     snap,
-    step(vx: number, vz: number, n = 1, lie = 0): boolean {
+    step(vx: number, vz: number, n = 1, lie = 0): MoveStatus {
       snap()
       at = planeStep(at, [[vx, vz, n]])
       const m: Move = { mode: 'foot', x: vx, z: vz, n, heading: 0, at: { ...at, z: at.z + lie }, fix }
@@ -100,7 +101,7 @@ test('connect refuses what it must before any socket opens: the address, the tok
   assert.deepEqual(offered, [SUBPROTOCOL, `${AUTH_PREFIX}abc.123.x_y-z`])
   assert.equal(c.status, 'connecting')
   assert.equal(c.connect('wss://localhost:8788', 't', 'Ada', WORLD), 'a session is already open')
-  assert.equal(c.move({ mode: 'foot', x: 1, z: 0, n: 1, heading: 0, at: { x: 0, y: 0, z: 0 }, fix: 1 }), false, 'nothing is sent before the welcome')
+  assert.equal(c.move({ mode: 'foot', x: 1, z: 0, n: 1, heading: 0, at: { x: 0, y: 0, z: 0 }, fix: 1 }), 'refused', 'nothing is sent before the welcome')
   assert.equal(c.correction(), null)
   assert.equal(c.sendChat('hello'), false)
   assert.equal(c.sendPing('go', 0, 0, 0), false)
@@ -125,19 +126,20 @@ test('join over Node\'s WebSocket: the status walk, the welcome\'s spawn to snap
     assert.deepEqual([spawn?.fix, spawn?.reason], [1, 'welcome'])
     assert.equal(a.corrections, 0, 'the spawn is not counted as a correction')
     const p = page(a)
-    assert.equal(a.move({ mode: 'foot', x: 1, z: 0, n: 1, heading: 0, at: { x: 9, y: 0, z: 9 }, fix: 0 }), false, 'a step from before the snap is never sent')
+    assert.equal(a.move({ mode: 'foot', x: 1, z: 0, n: 1, heading: 0, at: { x: 9, y: 0, z: 9 }, fix: 0 }), 'stale', 'a step from before the snap is never sent')
     assert.equal(a.pending().length, 0)
     // One step: pending until a snapshot carries an ack at or past its seq; the room kept it.
-    assert.equal(p.step(1, 0, 3), true)
+    assert.equal(p.step(1, 0, 3), 'sent')
     assert.equal(a.pending().length, 1)
     assert.equal(a.pending()[0].seq, 1)
     await until(() => a.pending().length === 0, 'the ack')
     const peer = host.room.peers.get(a.id)!
     assert.deepEqual([peer.seq, peer.x, peer.z], [1, p.at.x, p.at.z])
     await until(() => a.replica.you?.x === p.at.x, 'the snapshot carries the truth')
-    // Not finite, or no substep: nothing to send.
-    assert.equal(a.move({ mode: 'foot', x: Number.NaN, z: 0, n: 1, heading: 0, at: p.at, fix: 1 }), false)
-    assert.equal(a.move({ mode: 'foot', x: 1, z: 0, n: 0, heading: 0, at: p.at, fix: 1 }), false)
+    // Not finite, at the wheel with no command, or no substep and no door: nothing to send.
+    assert.equal(a.move({ mode: 'foot', x: Number.NaN, z: 0, n: 1, heading: 0, at: p.at, fix: 1 }), 'refused')
+    assert.equal(a.move({ mode: 'drive', x: 0, z: 0, n: 1, heading: 0, at: p.at, fix: 1 }), 'refused')
+    assert.equal(a.move({ mode: 'foot', x: 1, z: 0, n: 0, heading: 0, at: p.at, fix: 1 }), 'idle')
     // A realm paced like a page (a substep a sixtieth of a second): every step kept, none corrected.
     for (let i = 0; i < 20; i++) {
       p.step(i % 2 ? 2 : 1, 0)
@@ -158,7 +160,7 @@ test('a lie is corrected: the client snaps to the truth, steps from before the s
     assert.equal(a.connect(host.url, host.token('ada'), 'Ada', WORLD), null)
     await until(() => a.status === 'joined', 'the welcome')
     const p = page(a)
-    for (let i = 0; i < 5; i++) assert.equal(p.step(0, RUN, 2), true)
+    for (let i = 0; i < 5; i++) assert.equal(p.step(0, RUN, 2), 'sent')
     await until(() => host.room.peers.get(a.id)?.seq === 5, 'the honest steps kept')
     const truth = { ...p.at }
     // The page claims 40 m along: the room refuses it and answers with the truth under correction 2.
@@ -169,11 +171,11 @@ test('a lie is corrected: the client snaps to the truth, steps from before the s
     assert.match(c.reason, /claim 40\.\d\d m from the plane's pose/)
     assert.deepEqual([a.corrections, a.corrected], [1, c.reason])
     // A step the realm ran before it was put down there is never sent.
-    assert.equal(a.move({ mode: 'foot', x: 0, z: RUN, n: 1, heading: 0, at: { x: 0, y: 0, z: 99 }, fix: 1 }), false)
+    assert.equal(a.move({ mode: 'foot', x: 0, z: RUN, n: 1, heading: 0, at: { x: 0, y: 0, z: 99 }, fix: 1 }), 'stale')
     // Snapped (the engine's teleport), the page is honest again under correction 2.
     p.snap()
     assert.equal(p.fix, 2)
-    for (let i = 0; i < 3; i++) assert.equal(p.step(0, RUN, 2), true)
+    for (let i = 0; i < 3; i++) assert.equal(p.step(0, RUN, 2), 'sent')
     await until(() => host.room.peers.get(a.id)?.z === p.at.z, 'kept again')
     assert.equal(a.corrections, 1)
     a.leave()
@@ -196,7 +198,7 @@ test('two clients: each sees the other\'s pose move as the room keeps its steps,
     // carries her forward.
     const pa = page(a)
     const x0 = b.poses().find((p) => p.id === a.id)!.x
-    assert.equal(pa.step(RUN, RUN, 3), true)
+    assert.equal(pa.step(RUN, RUN, 3), 'sent')
     await until(() => (b.poses().find((p) => p.id === a.id)?.vx ?? 0) > 0, 'her velocity reaches Bob')
     const seen: RemotePlayer = b.poses().find((p) => p.id === a.id)!
     assert.ok(Math.abs(seen.vx - RUN / Math.SQRT2) < 2e-3, `capped at a run (${seen.vx})`)
@@ -257,15 +259,51 @@ test('the host closing ends every client with its reason; a token the host refus
   await until(() => a.status === 'closed', 'Ada sees the host go')
   assert.equal(a.reason, 'host closing')
   assert.deepEqual(a.poses(), [])
-  assert.equal(a.move({ mode: 'foot', x: 0, z: 0, n: 1, heading: 0, at: { x: 0, y: 0, z: 0 }, fix: 1 }), false)
+  assert.equal(a.move({ mode: 'foot', x: 0, z: 0, n: 1, heading: 0, at: { x: 0, y: 0, z: 0 }, fix: 1 }), 'refused')
 })
 
-test('over the client\'s own rate the steps are held and coalesced into runs, the claim always where the last run ended; a mode change or a full input goes at once', () => {
+test('at the wheel: a door into a car, wheel runs kept, a lie corrected with the car\'s state; the door out; a quiet page keeps itself in the room', async () => {
+  await withHost(async (host) => {
+    const ticks: (() => void)[] = []
+    let clock = Date.now()
+    const a = createNetClient({ now: () => clock, every: (fn) => { ticks.push(fn); return () => {} } })
+    assert.equal(a.connect(host.url, host.token('ada'), 'Ada', WORLD), null)
+    await until(() => a.status === 'joined', 'the welcome')
+    const spawn = a.correction()!
+    const state = { x: spawn.x + 2, y: 0.7, z: spawn.z, qx: 0, qy: 0, qz: 0, qw: 1, vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0 }
+    const wheels = { throttle: 0.5, brake: 0, steer: 0.1, handbrake: false }
+    const drive = (z: number, n: number, door?: Move['door']): MoveStatus =>
+      a.move({ mode: 'drive', x: 0, z: 0, wheels, n, heading: 0, at: { x: state.x, y: 0.7, z }, fix: a.correction()!.fix, ...(door && { door }) })
+    assert.equal(drive(0, 1, { enter: { car: 3, state } }), 'sent')
+    await until(() => host.room.peers.get(a.id)?.driving === true, 'at the wheel')
+    assert.equal(drive(5, 6), 'sent')
+    await until(() => host.room.peers.get(a.id)?.z === 5, 'the run kept')
+    // 40 m in six substeps: past any car. The correction carries the car, at rest where the room kept it.
+    assert.equal(drive(45, 6), 'sent')
+    await until(() => a.corrections === 1, 'the correction')
+    const fix = a.correction()!
+    assert.match(fix.reason, /cannot cover/)
+    assert.deepEqual([fix.car?.index, fix.car?.state.x, fix.car?.state.z, fix.car?.state.vx], [3, state.x, 5, 0])
+    // Out at the kerb, a door of its own.
+    const out = a.move({ mode: 'foot', x: 0, z: 0, n: 1, heading: 0, at: { x: state.x + 2, y: 0.92, z: 5 }, fix: fix.fix, door: { exit: { x: state.x + 2, z: 5 } } })
+    assert.equal(out, 'sent')
+    await until(() => host.room.peers.get(a.id)?.driving === false, 'on foot again')
+    // Quiet: nothing goes out until the keepalive's clock says so, then an ack the room counts as a sign of life.
+    const seen = host.room.peers.get(a.id)!.seen
+    clock += KEEPALIVE_MS
+    for (const t of ticks) t()
+    await until(() => host.room.peers.get(a.id)!.seen > seen, 'the keepalive')
+    a.leave()
+  })
+})
+
+test('over the client\'s own rate the steps are held and coalesced into runs, the claim always where the last run ended; a door, a mode change or a full input goes at once', () => {
   let clock = 0
   let socket: NetSocket | null = null
-  const sent: { body: { t: string; seq: number; segs: number[][]; claim: { z: number }; mode: string; from?: unknown } }[] = []
+  const sent: { body: { t: string; seq: number; segs: number[][]; claim: { z: number }; mode: string; door?: unknown } }[] = []
   const c = createNetClient({
     now: () => clock,
+    every: () => () => {},
     open: () => (socket = { send: (d) => { sent.push(JSON.parse(d)) }, close() {}, onopen: null, onmessage: null, onclose: null, onerror: null }),
   })
   assert.equal(c.connect('wss://localhost:8788', 'token', 'Ada', WORLD), null)
@@ -273,42 +311,54 @@ test('over the client\'s own rate the steps are held and coalesced into runs, th
   s.onopen?.({})
   const you = { id: 1, name: 'Ada', x: 0, y: 0.92, z: 0, heading: 0, vx: 0, vz: 0, speed: 0, driving: false }
   s.onmessage?.({ data: sealMessage({ t: 'welcome', v: PROTOCOL_VERSION, id: 1, tick: 0, tickHz: 20, fix: 1, you, players: [] }, 1, 'token') })
-  const step = (z: number, vz: number, n = 1, mode: 'foot' | 'drive' = 'foot', from?: { x: number; z: number }): boolean =>
-    c.move({ mode, x: 0, z: vz, n, heading: 0, at: { x: 0, y: 0.92, z }, fix: 1, ...(from && { from }) })
-  for (let i = 1; i <= LIMITS.inputBurst; i++) assert.equal(step(i, 1), true, `step ${i} within the burst`)
+  const step = (z: number, vz: number, n = 1, door?: Move['door']): MoveStatus =>
+    c.move({ mode: 'foot', x: 0, z: vz, n, heading: 0, at: { x: 0, y: 0.92, z }, fix: 1, ...(door && { door }) })
+  const wheel = (z: number, throttle: number, n = 1, door?: Move['door']): MoveStatus =>
+    c.move({ mode: 'drive', x: 0, z: 0, wheels: { throttle, brake: 0, steer: 0, handbrake: false }, n, heading: 0, at: { x: 0, y: 0.7, z }, fix: 1, ...(door && { door }) })
+  for (let i = 1; i <= LIMITS.inputBurst; i++) assert.equal(step(i, 1), 'sent', `step ${i} within the burst`)
   const inputs = () => sent.filter((m) => m.body.t === 'input').map((m) => m.body)
   assert.equal(inputs().length, LIMITS.inputBurst)
   // The rate is spent: three steps at one velocity, two at another, held as two runs.
-  assert.equal(step(121, 1), false)
-  assert.equal(step(122, 1), false)
-  assert.equal(step(123, 1, 2), false)
-  assert.equal(step(124, 2), false)
-  assert.equal(step(125, 2), false)
+  const z0 = LIMITS.inputBurst
+  assert.equal(step(z0 + 1, 1), 'held')
+  assert.equal(step(z0 + 2, 1), 'held')
+  assert.equal(step(z0 + 3, 1, 2), 'held')
+  assert.equal(step(z0 + 4, 2), 'held')
+  assert.equal(step(z0 + 5, 2), 'held')
   assert.equal(inputs().length, LIMITS.inputBurst, 'nothing more on the wire')
   // A sixtieth of a second later there is a token: one input, both runs, the claim where the last one ended.
   clock = 1000 / 60
-  assert.equal(step(126, 2), true)
+  assert.equal(step(z0 + 6, 2), 'sent')
   const last = inputs().at(-1)!
   assert.deepEqual(last.segs, [[0, 1, 4], [0, 2, 3]])
-  assert.equal(last.claim.z, 126)
-  // A mode change sends what is held first, whatever the rate says: a run is never claimed at another mode's pose.
-  assert.equal(step(127, 3), false)
+  assert.equal(last.claim.z, z0 + 6)
+  // A door sends what is held first, whatever the rate says, and starts an input of its own: the room takes the door
+  // before its runs, and a run is never claimed at another mode's pose.
+  assert.equal(step(z0 + 7, 3), 'held')
   const before = inputs().length
-  step(130, 0, 1, 'drive')
+  const state = { x: 0, y: 0.7, z: 0, qx: 0, qy: 0, qz: 0, qw: 1, vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0 }
+  wheel(z0 + 10, 0.5, 1, { enter: { car: 2, state } })
   assert.equal(inputs().length, before + 1, 'the held foot run went at once')
-  assert.deepEqual([inputs().at(-1)!.mode, inputs().at(-1)!.segs, inputs().at(-1)!.claim.z], ['foot', [[0, 3, 1]], 127])
-  // At the wheel the held run and the next merge; leaving the car starts an input of its own, the exit point first.
+  assert.deepEqual([inputs().at(-1)!.mode, inputs().at(-1)!.segs, inputs().at(-1)!.claim.z], ['foot', [[0, 3, 1]], z0 + 7])
+  // At the wheel the door's input takes the runs after it while it is held; a new command is a new run; leaving the car
+  // starts an input of its own, the exit point first.
+  wheel(z0 + 11, 0.5, 2)
+  wheel(z0 + 12, 0.8, 1)
   clock += 1000
-  step(131, 0, 4, 'drive')
-  step(132, 1, 1, 'foot', { x: 1, z: 131 })
-  const [drove, walked] = inputs().slice(-2)
-  assert.deepEqual([drove.mode, drove.segs, drove.claim.z], ['drive', [[0, 0, 5]], 131])
-  assert.deepEqual([walked.mode, walked.from, walked.segs], ['foot', { x: 1, z: 131 }, [[0, 1, 1]]])
+  wheel(z0 + 13, 0.8, 1)
+  const drove = inputs().at(-1)!
+  assert.deepEqual([drove.mode, drove.segs, drove.claim.z, drove.door], ['drive', [[0.5, 0, 0, 0, 3], [0.8, 0, 0, 0, 2]], z0 + 13, { enter: { car: 2, state } }])
+  clock += 1000
+  assert.equal(step(z0 + 14, 1, 1, { exit: { x: 2, z: z0 + 13 } }), 'sent')
+  assert.deepEqual([inputs().at(-1)!.mode, inputs().at(-1)!.door, inputs().at(-1)!.segs], ['foot', { exit: { x: 2, z: z0 + 13 } }, [[0, 1, 1]]])
+  // A door with no substep is still a door.
+  clock += 1000
+  assert.equal(wheel(z0 + 15, 0, 0, { enter: { car: 2, state } }), 'sent')
   // A full input (LIMITS.stepsPerInput substeps) goes at once.
   clock += 1000
-  for (let i = 0; i < 40; i++) step(140 + i, 1, 1)
-  assert.ok(inputs().every((m) => m.segs.reduce((a, r) => a + r[2], 0) <= LIMITS.stepsPerInput), 'never more substeps than an input may carry')
-  assert.ok(inputs().some((m) => m.from !== undefined), 'the exit point rode the first input on foot')
+  for (let i = 0; i < 40; i++) wheel(z0 + 20 + i, 1, 1)
+  assert.ok(inputs().every((m) => m.segs.reduce((a, r) => a + r[r.length - 1], 0) <= LIMITS.stepsPerInput), 'never more substeps than an input may carry')
+  assert.equal(inputs().filter((m) => m.door !== undefined).length, 3, 'each door in exactly one input')
 })
 
 test('a host the core refuses: HOST_REFUSALS malformed messages and the client leaves with the reason (an injected socket)', () => {
@@ -353,6 +403,10 @@ test('a host the core refuses: HOST_REFUSALS malformed messages and the client l
   // A correction no newer than the one held is ignored.
   s.onmessage?.({ data: sealMessage({ t: 'correct', fix: 1, ack: 0, you: { ...you, x: 50 }, reason: 'old', tick: 4 }, 4, 'token') })
   assert.equal(c.correction()?.x, 1)
+  // A newer one at the wheel carries the car's state, which the engine puts its car in.
+  const state = { x: 1, y: 0.56, z: 2, qx: 0, qy: 0, qz: 0, qw: 1, vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0 }
+  s.onmessage?.({ data: sealMessage({ t: 'correct', fix: 2, ack: 0, you: { ...you, y: 0.56, driving: true }, reason: 'chassis', tick: 4, car: { index: 5, state } }, 5, 'token') })
+  assert.deepEqual(c.correction(), { fix: 2, x: 1, y: 0.56, z: 2, reason: 'chassis', car: { index: 5, state } })
   for (let i = 0; i < HOST_REFUSALS - 6; i++) s.onmessage?.({ data: '{"t":"snapshot","tick":"nope"}' })
   assert.equal(c.status, 'joined')
   s.onmessage?.({ data: 'not even JSON' })

@@ -28,7 +28,7 @@
  */
 import { screen } from '../02_Define_The_Rules/conduct.ts'
 import { canonical, hmacSha256, isDigest, sameDigest } from '../02_Define_The_Rules/integrity.ts'
-import { RUN, type CarBodyState } from '../07_Execute_Actions/simProtocol.ts'
+import { RUN, type CarBodyState, type Door as RealmDoor } from '../07_Execute_Actions/simProtocol.ts'
 import { PING_KINDS, type PingKind } from '../08_Swarm/ping.ts'
 
 /**
@@ -176,9 +176,9 @@ export type CarState = CarBodyState
 export interface CarFix { index: number; state: CarState }
 /**
  * A door, taken before the input's runs: the realm took car `enter.car`'s wheel in `enter.state`, or put the player down
- * at `exit` beside the car they drove.
+ * at `exit` beside the car they drove (simProtocol.ts doorOf reads it from a realm step).
  */
-export type Door = { enter: { car: number; state: CarState } } | { exit: { x: number; z: number } }
+export type Door = RealmDoor
 /**
  * Client → host: what the client's realm did since the last input. `door`, when the player took a car's wheel or left
  * it, comes first; `segs` are then the runs of substeps in `mode` (on foot the walking velocity, at the wheel the

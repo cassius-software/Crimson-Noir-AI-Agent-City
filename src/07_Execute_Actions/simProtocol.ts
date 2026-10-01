@@ -255,6 +255,23 @@ export interface CarBodyState {
   wx: number; wy: number; wz: number
 }
 
+/** A door player 1 took: into car `car` in the state the realm took it over in, or out at a point (the room's own word for it). */
+export type Door = { enter: { car: number; state: CarBodyState } } | { exit: { x: number; z: number } }
+
+/**
+ * The door player 1 took in a step, as a network room hears it (engine.ts reports it with the step): the last of the
+ * step's own doors (an entered event the realm did not make for a room correction, an exited event no teleport or
+ * correction forced), unless a correction came after it (the room's truth then stands). Undefined for none.
+ */
+export function doorOf(events: readonly SimEvent[]): Door | undefined {
+  let door: Door | undefined
+  for (const e of events) {
+    if (e.e === 'entered' && e.player === 0) door = e.room ? undefined : { enter: { car: e.index, state: e.state } }
+    else if (e.e === 'exited' && e.player === 0) door = e.forced ? undefined : { exit: { x: e.x, z: e.z } }
+  }
+  return door
+}
+
 /** The command player 1's car ran this step (the bouncer's vetted throttle, brake and steer, and the handbrake). */
 export interface WheelsState { throttle: number; brake: number; steer: number; handbrake: boolean }
 
@@ -264,7 +281,8 @@ export type SimEvent =
    * room's authority takes over). `room`: the room's correction seated them (netCar), not the player.
    */
   | { e: 'entered'; player: number; index: number; heading: number; suv: boolean; state: CarBodyState; room?: boolean }
-  | { e: 'exited'; player: number; x: number; z: number; heading: number }
+  /** `forced`: a teleport or a network room's correction took the player out (no door of theirs). */
+  | { e: 'exited'; player: number; x: number; z: number; heading: number; forced?: boolean }
   | { e: 'rejected'; reason: string }
   /** The answer to a recruit command: who is coming over (distance at the request, m), or why nobody is. */
   | { e: 'recruit'; id: number; ok: true; agent: number; skill: string; distance: number }
