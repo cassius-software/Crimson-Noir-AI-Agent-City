@@ -56,13 +56,18 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
 - Full suite at this point: 1,181 tests, all passing after netWiring.test.ts was updated; smoke:net passes (9 crafted
   packets incl. 4 car exploits). authority.node.test.ts is now the two-driver end-to-end proof (0 corrections over
   thousands of steps under the 1 um tolerance).
-- TODO, in order:
-  1. Fuzz/property suites (#26): seeded harness; core room fuzz (reorder, duplicate, stale fix, jitter, float rounding,
-     cheaters); host socket fuzz (random bytes, partial frames, resets, slowloris, same-subject races); Ring-0 and
-     Bouncer properties; WASM routing/kv-pager vs reference; realm-vs-room parity under adversarial network load.
-  2. Docs (README Networking, History, blueprint Phase 13, zero-trust audit, file headers, the README findings listed
-     below), full checks, build, smoke, a fresh adversarial review (mind the 4 CPUs), handoff update, commit, tag
-     `v1.0.0-stable-release`, push branch and tag (report a 403).
+- DONE D (fuzzing and the proof). property.ts harness; protocol.fuzz, host.fuzz, ring0.fuzz, carRig.fuzz,
+  routingWasm.fuzz, kvPager.fuzz, parity.fuzz (two drivers + a liar on a chaotic link: 0 honest corrections, exact at
+  the end). Fixed what they found (see README History 1.4.0 and the commit "property-based fuzzing ...").
+- DONE E (docs, mostly): README Networking rewritten, Layout row, History 1.4.0, blueprint Phase 13, zero-trust audit
+  note; package version 1.4.0. Still to fill after the final run: README "what is verified" Phase 13 entry (test
+  count, smoke timings).
+- Review findings status: every finding below is fixed or superseded by Phase 13 except "seals keyed only by the
+  token" (low: a replay across sequential connections of one subject needs injection into a loopback/tunnel stream;
+  one live connection per subject now) and "mirror churn" (not reproduced). Both are named in the final report.
+- TODO, in order: (1) final full suite + build + smoke:net; (2) fresh adversarial review (small workflow, <= 6
+  agents, nothing else running: the container has 4 CPUs/16 GB); fix what it confirms; (3) README verified entry;
+  (4) commit, tag `v1.0.0-stable-release`, push branch and tag (report a 403 as before).
 
 ## Review findings on Phase 12 (adversarial workflow; [k/n] = verifiers who confirmed)
 
