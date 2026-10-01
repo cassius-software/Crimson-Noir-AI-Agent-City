@@ -779,17 +779,19 @@ class FakeVoice implements Voice {
   fail(e: unknown): void { this.#reply?.fail(e) }
 }
 
-/** The soundscape's contract: what it decoded and played, at whom, and every stop. */
+/** The soundscape's contract: what it decoded and played, at whom, with which words (for the captions), and every stop. */
 class FakeOut implements SpeechOut {
   readonly played: number[] = []
+  readonly texts: (string | undefined)[] = []
   stops = 0
   refuse: string | null = null
   #end: (() => void) | null = null
   decode(bytes: ArrayBuffer): Promise<SpeechClip> {
     return this.refuse ? Promise.reject(new Error(this.refuse)) : Promise.resolve({ seconds: bytes.byteLength / 48000 })
   }
-  play(_clip: SpeechClip, agent: number): Utterance {
+  play(_clip: SpeechClip, agent: number, text?: string): Utterance {
     this.played.push(agent)
+    this.texts.push(text)
     let end: () => void = () => {}
     const ended = new Promise<void>((r) => { end = r })
     this.#end = end
@@ -818,6 +820,7 @@ test('gatedSay: Rejected never reaches the speech server; Authorized is said by 
   voice.audio(2.5)
   await ticks()
   assert.deepEqual(out.played, [7], 'played at agent 7')
+  assert.deepEqual(out.texts, ['over here, by the lamp'], 'the screened words travel with the clip, for the captions')
   out.finish()
   const y = await within(yes.result)
   assert.deepEqual([y.state, y.speaker?.agent, y.seconds, y.error], ['Authorized', 7, 2.5, undefined])

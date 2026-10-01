@@ -48,6 +48,8 @@ import { updateVolumetrics, type Volumetrics } from './volumetrics.ts'
 import { operatorBridge, type Diary, type Mind, type SimControls, type SkillGate, type SpeechClip, type SpeechOut, type Utterance, type Voice } from './operator.ts'
 import { applyQuality, type QualityTargets } from './quality.ts'
 import { SPEECH, Soundscape, wallsBetween, type AudioFrame } from './audio.ts'
+import { roomAt } from './acoustics.ts'
+import { CaptionTrack, captionText } from './captions.ts'
 import { ring0Stats, type TerminalBridge } from './terminal/bridge.ts'
 import { familyOf, glyph } from './glyphs.ts'
 
@@ -71,6 +73,11 @@ export interface EngineOptions {
   targetFps: number
   /** Start with spatial audio enabled (it still waits for a user gesture). */
   audio: boolean
+  /**
+   * Closed captions of every spatial sound (captions.ts; default on, ?captions=0 off): each sound's start, change and
+   * stop as a HUD line with its bearing and distance, speech with its words. setCaptions() turns them at run time.
+   */
+  captions?: boolean
   /** ?debug: the physics worker also accepts fault-injection commands (the harness's). Fixed at boot; off in production. */
   debug?: boolean
   /**
@@ -105,6 +112,8 @@ const MAX_STEP_DT = 0.1
 const CROWD_COPY_MS = 250
 
 const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th'}`
+/** The 2 m cell of a point as one number (NaN for a point that is not finite), for the room caches. */
+const cellOf = (x: number, z: number): number => (Number.isFinite(x + z) ? Math.floor(x / 2) * 1e6 + Math.floor(z / 2) : Number.NaN)
 
 
 /** Quality state shared by create() and the running engine: what is applied, and where it lands. */
@@ -223,6 +232,12 @@ export class Engine {
   private readonly haptics = { rumble: 0 }
   /** The pedestrian whose speech is playing (speechOut), or −1: the voice follows them. */
   private speaker = -1
+  /** The 2 m cells the listener and the speaker were last found in: their rooms (acoustics.ts) are recomputed on a change. */
+  private listenerCell = Number.NaN
+  private speakerCell = Number.NaN
+  /** The soundscape's closed captions (captions.ts), fed by every sound event with the head pose as the listener. */
+  private readonly captions = new CaptionTrack()
+  private captionsOn: boolean
   /** A scripted walk (SimControls.avatar.walk): the velocity it asks for, and until when (performance.now() ms). */
   private readonly scriptedWalk: ScriptedWalk = { x: 0, z: 0, until: 0 }
   /** Every pedestrian's x, z from the newest crowd frame, refreshed at most CROWD_COPY_MS apart (SimControls.crowd.positions). */
@@ -300,6 +315,9 @@ export class Engine {
     this.input = new Input(p.canvas)
     this.trigger = new TriggerFeedback(this.input.hal)
     if (!p.options.audio) this.audio.setEnabled(false)
+    this.captionsOn = p.options.captions !== false
+    // Every sound's start, change and stop, captioned from where the head is (HeadRig.pose is the listener).
+    this.audio.onSound = (e) => { if (this.captionsOn) this.captions.push(e, this.rig.pose) }
     // One audio frame, mutated in place every tick; car slots keep fleet order (voice hysteresis is by index).
     this.sound = {
       dt: 0,
@@ -545,14 +563,17 @@ export class Engine {
         clips.set(clip, buffer)
         return clip
       },
-      play: (clip: SpeechClip, agent: number): Utterance => {
+      play: (clip: SpeechClip, agent: number, text?: string): Utterance => {
         const buffer = clips.get(clip)
         if (!buffer) throw new Error('not speech this soundscape decoded')
         if (this.halted || this.disposed) throw new Error('the city has stopped')
         const at = this.sim.state.recruits.find((r) => r.agent === agent)
         if (!at || !Number.isFinite(at.x + at.z)) throw new Error(`agent ${agent} is not with the operator`)
-        const u = this.audio.speak(buffer, at.x, at.z, this.wallsTo(at.x, at.z))
+        // The caption names them by number and skill (pedestrians have no names): 'Pedestrian 1234 (Rust)'.
+        const label = at.skill ? `Pedestrian ${agent} (${at.skill})` : `Pedestrian ${agent}`
+        const u = this.audio.speak(buffer, at.x, at.z, this.wallsTo(at.x, at.z), text, { agent, label })
         this.speaker = agent
+        this.speakerCell = Number.NaN
         return u
       },
     })
@@ -881,18 +902,47 @@ export class Engine {
     f.intersection.z = this.places ? Number.NaN : Math.max(0, Math.min(CITY.blocks, Math.round(cam.position.z / CITY.pitch))) * CITY.pitch
     // In first person the listener sits in the cabin while driving: the city outside is muffled.
     f.interior = st.driving >= 0
+    // The room the listener stands in (acoustics.ts), found again when the head crosses into another 2 m cell. A region
+    // has no page-side geometry (its walls live in the worker): no room there, every voice dry.
+    const cell = this.places ? Number.NaN : cellOf(cam.position.x, cam.position.z)
+    if (cell !== this.listenerCell) {
+      this.listenerCell = cell
+      f.room = Number.isNaN(cell) ? undefined : roomAt(this.world.boxes, cam.position.x, cam.position.z)
+    }
     // The person speaking, where the newest state has them (NaN: nobody, or not measured; the voice then holds).
     const speaking = this.speaker >= 0 && this.audio.speaking ? st.recruits.find((r) => r.agent === this.speaker) : undefined
-    f.speaker!.x = speaking ? speaking.x : Number.NaN
-    f.speaker!.z = speaking ? speaking.z : Number.NaN
-    f.speaker!.walls = speaking && Number.isFinite(speaking.x + speaking.z) ? this.wallsTo(speaking.x, speaking.z) : 0
+    const sp = f.speaker!
+    sp.x = speaking ? speaking.x : Number.NaN
+    sp.z = speaking ? speaking.z : Number.NaN
+    sp.walls = speaking && Number.isFinite(speaking.x + speaking.z) ? this.wallsTo(speaking.x, speaking.z) : 0
+    const speakerCell = speaking && !this.places ? cellOf(speaking.x, speaking.z) : Number.NaN
+    if (speakerCell !== this.speakerCell) {
+      this.speakerCell = speakerCell
+      sp.room = Number.isNaN(speakerCell) ? undefined : roomAt(this.world.boxes, speaking!.x, speaking!.z)
+    }
     this.audio.update(f)
+    // Captions outlive nothing: when the soundscape is not sounding (off, hidden, failed), what it said is gone.
+    if (this.captions.size > 0 && this.audio.status().state !== 'running') this.captions.clear()
   }
 
   /** Walls of the physics realm's own geometry between the listener's head and a speaker's at (x, z) (audio.ts OCCLUSION). */
   private wallsTo(x: number, z: number): number {
     const cam = this.world.camera.position
     return wallsBetween(this.world.boxes, { x: cam.x, y: cam.y, z: cam.z }, { x, y: SPEECH.height, z })
+  }
+
+  /** Closed captions on or off (view-only; the soundscape keeps sounding). Returns the status line the console prints. */
+  setCaptions(on: boolean): string {
+    this.captionsOn = on
+    if (!on) this.captions.clear()
+    return on ? 'captions: on' : 'captions: off'
+  }
+
+  /** The caption lines to show now, in the house style (captions.ts captionText), bearings taken from the head. */
+  private captionLines(): string[] {
+    const out: string[] = []
+    for (const line of this.captions.lines(this.audio.clock, this.rig.pose)) out.push(captionText(line))
+    return out
   }
 
   /** Index of the car nearest (x, z) within `range` in the newest state, or −1. */
@@ -979,6 +1029,7 @@ export class Engine {
         speedKmh, gear,
         x, z, heading, signalEW: signalFor('ew', st.simTime), signalNS: signalFor('ns', st.simTime), signalRemaining: next - phase,
         region: this.regionName,
+        ...(this.captionsOn && { captions: this.captionLines() }),
       },
       experience: { sessionSeconds: this.simTime, longFrames: this.clock.longFrames, distanceWalked: this.walked, distanceDriven: this.driven },
       map,

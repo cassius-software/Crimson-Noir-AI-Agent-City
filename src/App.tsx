@@ -90,6 +90,8 @@ function readOptions(): EngineOptions & { debug: boolean } {
     quality: quality === null || quality === 'auto' ? 'auto' : Math.round(num('quality', 3, 0, 4)),
     targetFps: Math.round(num('fps', 0, 0, 240)),
     audio: q.get('audio') !== '0',
+    // Closed captions of every spatial sound (captions.ts); ?captions=0 keeps the HUD's strip empty.
+    captions: q.get('captions') !== '0',
     debug: q.has('debug'),
     // The AI fleet on fixed tracks (zero-jam rings); ?tracks=0 restores the random street-hopping routes.
     tracks: q.get('tracks') !== '0',

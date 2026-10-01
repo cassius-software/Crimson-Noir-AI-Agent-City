@@ -165,6 +165,11 @@ export interface SipocSnapshot {
     name: string
     clock: string; daylight: number; viewYaw: number; district: string; speedKmh: number; gear: string
     x: number; z: number; heading: number; signalEW: Light; signalNS: Light; signalRemaining: number
+    /**
+     * Closed captions of the soundscape (captions.ts): the lines to show now, each a sound with its bearing and
+     * distance, speech with its words. Absent while captions are off (?captions=0 or setCaptions(false)).
+     */
+    captions?: string[]
   }
   experience: { sessionSeconds: number; longFrames: number; distanceWalked: number; distanceDriven: number }
   map: MapCar[]

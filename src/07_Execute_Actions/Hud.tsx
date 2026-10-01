@@ -147,6 +147,17 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
     </div>
   )
 
+  // Closed captions of the soundscape (captions.ts, fed by the engine): every sound with its bearing and distance,
+  // speech with its words. An accessibility surface, so it outlives the H key like the MIC and REC chips.
+  const captions = c.captions
+  const captionStrip = captions && captions.length > 0 && (
+    <div role="status" aria-live="polite" className={`flex max-w-full flex-col items-center gap-1 px-4 py-2 text-[13px] font-medium ${panel}`} data-hint="captions">
+      {captions.map((line, i) => (
+        <div key={`${i}:${line}`} className="max-w-full truncate text-center">{line}</div>
+      ))}
+    </div>
+  )
+
   // Ghost view: the altered picture always says what it is (and how to leave it).
   const ghostChip = s.output.ghost && (
     <div className={`flex max-w-full items-center gap-2 px-3 py-1.5 text-[11px] font-semibold ${panel}`} data-hint="ghost">
@@ -267,6 +278,8 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
           </div>
 
           {enterPrompt && <div className="absolute bottom-20 left-1/2 -translate-x-1/2">{enterPrompt}</div>}
+          {/* The captions above the enter prompt, clear of the minimap and the speed panel like the capture chip. */}
+          {captionStrip && <div className="absolute bottom-32 left-1/2 w-max max-w-[calc(100%_-_34rem)] -translate-x-1/2">{captionStrip}</div>}
           {/* Clear of the minimap (13 rem) and the speed panel on either side. */}
           {captureHint && (
             <div className="absolute bottom-0 left-1/2 w-max max-w-[calc(100%_-_34rem)] -translate-x-1/2">{captureChip(roomy)}</div>
@@ -320,8 +333,9 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
           {/* Bottom-centre, between the thumbs: the capture hint (a small desktop window), the enter
               prompt, and — on a phone held in landscape, where browser bars take 30-60 px of its height
               and the speedometer under the minimap would reach the driving buttons — the speedometer. */}
-          {(captureHint || enterPrompt || (driving && short)) && (
+          {(captureHint || enterPrompt || (driving && short) || captionStrip) && (
             <div className="absolute bottom-0 left-1/2 flex max-w-full -translate-x-1/2 flex-col items-center gap-2">
+              {captionStrip}
               {captureHint && captureChip(false)}
               {enterPrompt}
               {driving && short && speedChip}
@@ -330,12 +344,13 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
         </div>
       )}
 
-      {!visible && (recChip || rc?.listening) && (
+      {!visible && (recChip || rc?.listening || captionStrip) && (
         <div className={compact ? FRAME_COMPACT : FRAME_WIDE}>
           <div className="absolute top-0 left-0 flex max-w-full flex-col items-start gap-2">
             {recChip}
             {rc?.listening && micChip}
           </div>
+          {captionStrip && <div className="absolute bottom-0 left-1/2 w-max max-w-full -translate-x-1/2">{captionStrip}</div>}
         </div>
       )}
     </div>

@@ -10,6 +10,7 @@
  * read, a left-hand sound could read as right-hand, or a word the product scrubbed could reach the HUD unnoticed.
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { screen } from '../02_Define_The_Rules/conduct.ts'
 import { ARROWS, CAPTIONS, CaptionTrack, bearing, captionText, roundMetres, soundText, type CaptionEvent, type ListenerPose, type SoundKind } from './captions.ts'
@@ -373,4 +374,48 @@ test('no caption string carries a scrubbed brand, a combat word or a phrase the 
     assert.equal(screen(text).admissible, true, text)
     assert.doesNotMatch(text, /[✕○△□]/u, text)
   }
+})
+
+// ---------------------------------------------------------------------------------------------------
+// Wiring (engine.ts is not Node-testable: its text is pinned)
+
+const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8')
+const between = (src: string, from: string, to: string): string => {
+  const a = src.indexOf(from), b = src.indexOf(to, a + from.length)
+  assert.ok(a >= 0 && b > a, `missing ${from} … ${to}`)
+  return src.slice(a, b)
+}
+
+test('wiring: the soundscape reports every sound to one listener, the engine feeds the track at the head pose, the snapshot carries the lines, the HUD shows them', () => {
+  const audio = read('./audio.ts')
+  assert.match(audio, /onSound: \(\(e: CaptionEvent\) => void\) \| null = null/)
+  assert.match(audio, /private emit\(kind: SoundKind, phase: SoundPhase, source: number, x: number, z: number, t: number/)
+  assert.match(between(audio, '  private emit(', '  get clock()'), /try \{ fn\(e\) \} catch \{/, 'a listener that throws is caught')
+  // Every kind captions.ts knows is emitted somewhere.
+  for (const kind of ['engine', 'tyres', 'murmur', 'walk-signal', 'cue', 'speech', 'cabin', 'peer', 'ping']) {
+    assert.ok(audio.includes(`this.emit('${kind}', `) || audio.includes(`this.emit(kind, `) || audio.includes(`this.emit(slot.kind, `), `${kind} is never emitted`)
+  }
+  for (const kind of ['engine', 'tyres', 'murmur', 'walk-signal', 'speech', 'cabin', 'peer']) assert.ok(audio.includes(`this.emit('${kind}', `), kind)
+  assert.match(audio, /speak\(buffer: AudioBuffer, x: number, z: number, walls = 0, text\?: string, who\?: \{ agent\?: number; label\?: string \}\)/)
+  const engine = read('./engine.ts')
+  assert.match(engine, /private readonly captions = new CaptionTrack\(\)/)
+  assert.match(engine, /this\.audio\.onSound = \(e\) => \{ if \(this\.captionsOn\) this\.captions\.push\(e, this\.rig\.pose\) \}/, 'fed from the head pose, gated by the flag')
+  assert.match(engine, /this\.captionsOn = p\.options\.captions !== false/, 'on by default')
+  assert.match(between(engine, '  speechOut(): SpeechOut {', '  private panicked('), /play: \(clip: SpeechClip, agent: number, text\?: string\): Utterance/)
+  assert.match(engine, /this\.audio\.speak\(buffer, at\.x, at\.z, this\.wallsTo\(at\.x, at\.z\), text, \{ agent, label \}\)/, 'the words and the label reach the soundscape')
+  assert.match(engine, /const label = at\.skill \? `Pedestrian \$\{agent\} \(\$\{at\.skill\}\)` : `Pedestrian \$\{agent\}`/, 'a number and a skill, never a name')
+  assert.match(engine, /setCaptions\(on: boolean\): string \{/)
+  assert.match(between(engine, '  snapshot(): SipocSnapshot {', '  terminalBridge('), /\.\.\.\(this\.captionsOn && \{ captions: this\.captionLines\(\) \}\)/, 'optional: absent while off')
+  assert.match(between(engine, '  private captionLines(', '  /** Index of the car nearest'), /this\.captions\.lines\(this\.audio\.clock, this\.rig\.pose\)/, 'one clock for the events and the lines; bearings from the head')
+  assert.match(between(engine, '  private listen(', '  private wallsTo('), /if \(this\.captions\.size > 0 && this\.audio\.status\(\)\.state !== 'running'\) this\.captions\.clear\(\)/)
+  const operator = read('./operator.ts')
+  assert.match(operator, /play\(clip: SpeechClip, agent: number, text\?: string\): Utterance/)
+  assert.match(operator, /out\.play\(clip, speaker\.agent, text\)/, 'gatedSay passes the screened text')
+  assert.ok(operator.indexOf('if (!screen(text).admissible)') < operator.indexOf('out.play(clip, speaker.agent, text)'), 'screened before it is said or captioned')
+  assert.match(read('../05_Observe_Environment/telemetry.ts'), /captions\?: string\[\]/)
+  assert.match(read('../App.tsx'), /captions: q\.get\('captions'\) !== '0'/)
+  const hud = read('./Hud.tsx')
+  assert.match(hud, /role="status" aria-live="polite"/)
+  assert.match(hud, /const captions = c\.captions/)
+  assert.ok(hud.includes('{!visible && (recChip || rc?.listening || captionStrip) && ('), 'shown with the HUD hidden, like the MIC chip')
 })

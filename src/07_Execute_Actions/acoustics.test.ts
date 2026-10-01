@@ -266,3 +266,28 @@ test('acoustics.ts imports only city.ts and degrees.ts (the causal order)', () =
   const imports = [...src.matchAll(/^import .* from '([^']+)'/gm)].map((m) => m[1])
   assert.deepEqual(imports.sort(), ['../01_Initialize_World/city.ts', '../02_Define_The_Rules/degrees.ts'])
 })
+
+// ---------------------------------------------------------------------------------------------------
+// Wiring (engine.ts is not Node-testable: its text is pinned)
+
+test('wiring: the engine finds the listener\'s and the speaker\'s rooms per 2 m cell; the soundscape\'s wall table is this one and its convolver is feature-detected', () => {
+  const engine = readFileSync(new URL('./engine.ts', import.meta.url), 'utf8')
+  const listen = engine.slice(engine.indexOf('  private listen('), engine.indexOf('  private wallsTo('))
+  assert.match(listen, /f\.room = Number\.isNaN\(cell\) \? undefined : roomAt\(this\.world\.boxes, cam\.position\.x, cam\.position\.z\)/)
+  assert.match(listen, /if \(cell !== this\.listenerCell\) \{/, 'only when the cell changes')
+  assert.match(listen, /sp\.room = Number\.isNaN\(speakerCell\) \? undefined : roomAt\(this\.world\.boxes, speaking!\.x, speaking!\.z\)/)
+  assert.match(engine, /const cellOf = \(x: number, z: number\): number => \(Number\.isFinite\(x \+ z\) \? Math\.floor\(x \/ 2\) \* 1e6 \+ Math\.floor\(z \/ 2\) : Number\.NaN\)/, '2 m cells')
+  assert.match(listen, /const cell = this\.places \? Number\.NaN : cellOf\(/, 'a region has no page-side boxes: no room there')
+  assert.ok(listen.indexOf('f.room =') < listen.indexOf('this.audio.update(f)'), 'before the frame goes to the soundscape')
+  const audio = readFileSync(new URL('./audio.ts', import.meta.url), 'utf8')
+  assert.match(audio, /export function muffle\(walls: number\): \{ cutoff: number; gain: number \} \{\n  return transmissionLoss\(walls, 'masonry'\)\n\}/)
+  assert.match(audio, /if \(typeof ctx\.createConvolver === 'function'\) \{/, 'the dry graph where there is no convolver')
+  assert.match(audio, /typeof ctx\.createMediaStreamSource !== 'function'/, 'no peer source where there is none')
+  assert.match(audio, /const m = eavesdrop\(Math\.hypot\(sp\.x - L\.x, sp\.z - L\.z\), walls, f\.room, sp\.room\)/, 'speech follows through eavesdrop')
+  assert.match(audio, /renderImpulse\(rt60, SYNTH_RATE, REVERB\.seed, buffer\.getChannelData\(0\)\)/)
+  // Nothing of this crosses to the worker: the protocol and the realm name no room, no caption, no peer.
+  for (const file of ['./simProtocol.ts', './simCore.ts', './physics.worker.ts']) {
+    const text = readFileSync(new URL(file, import.meta.url), 'utf8')
+    assert.doesNotMatch(text, /acoustics|captions\.ts|roomAt|attachPeer|MediaStream/, file)
+  }
+})

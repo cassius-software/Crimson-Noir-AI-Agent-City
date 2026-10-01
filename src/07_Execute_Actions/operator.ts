@@ -208,8 +208,11 @@ export interface Utterance {
 export interface SpeechOut {
   /** Decodes the audio a speech server sent; rejects when it is not audio or the city's sound is off. */
   decode(bytes: ArrayBuffer): Promise<SpeechClip>
-  /** Starts `clip` at pedestrian `agent`'s head at once (synchronous); throws when it cannot sound. It cuts any other. */
-  play(clip: SpeechClip, agent: number): Utterance
+  /**
+   * Starts `clip` at pedestrian `agent`'s head at once (synchronous); throws when it cannot sound. It cuts any other.
+   * `text` is what the clip says (already screened), for the soundscape's captions; it reaches no speech server.
+   */
+  play(clip: SpeechClip, agent: number, text?: string): Utterance
 }
 
 /**
@@ -667,7 +670,7 @@ export function gatedSay(gate: SkillGate, voice: Voice, out: SpeechOut, skills: 
     seconds = clip.seconds
     const speaker = lease.bound[0]
     // P5: the tether is checked against the newest copy of the swarm and the speech started in that one step.
-    const speaking = lease.use(() => out.play(clip, speaker.agent))
+    const speaking = lease.use(() => out.play(clip, speaker.agent, text))
     const cut = (): void => speaking.stop()
     signal.addEventListener('abort', cut, { once: true })
     try {
