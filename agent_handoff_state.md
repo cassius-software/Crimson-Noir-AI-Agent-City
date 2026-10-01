@@ -65,7 +65,12 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
 - Review findings status: every finding below is fixed or superseded by Phase 13 except "seals keyed only by the
   token" (low: a replay across sequential connections of one subject needs injection into a loopback/tunnel stream;
   one live connection per subject now) and "mirror churn" (not reproduced). Both are named in the final report.
-- TODO, in order: (1) final full suite + build + smoke:net; (2) fresh adversarial review (small workflow, <= 6
+- Final checks at commit "handoff state after the fuzzing" + this one: 1,204 tests, 1,204 pass (88 s); tsc and
+  oxlint clean; `npm run build` clean (dist/index.html 9.99 MB, no server code); smoke:net 9/9 refused in 0.9-9.1 ms.
+- Adversarial review launched: workflow run wf_36a42bed-56f (5 reviewers + 1 skeptic per finding). If the session
+  dies, resume with Workflow({scriptPath: <session>/workflows/scripts/phase13-adversarial-review-wf_36a42bed-56f.js,
+  resumeFromRunId: "wf_36a42bed-56f"}), or rerun a fresh review the same way.
+- TODO, in order: (1) [done] final full suite + build + smoke:net; (2) fresh adversarial review (small workflow, <= 6
   agents, nothing else running: the container has 4 CPUs/16 GB); fix what it confirms; (3) README verified entry;
   (4) commit, tag `v1.0.0-stable-release`, push branch and tag (report a 403 as before).
 
