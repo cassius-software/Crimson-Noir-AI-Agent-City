@@ -145,11 +145,15 @@ function text(u: unknown, max: number): u is string {
   return true
 }
 
-/** A remote player as a frozen plain copy, or null. */
+/**
+ * A remote player as a frozen plain copy, or null. The name is read through the same 14A screen the room applies at
+ * join (admissibleName): the host is not trusted either, and a name reaches the page's captions and voice labels.
+ */
 function player(u: unknown): RemotePlayer | null {
   if (!isRecord(u)) return null
-  const { id, name, x, y, z, heading, vx, vz, speed } = u
-  if (!count(id) || !text(name, LIMITS.name) || !fin(x, -LIMITS.range, LIMITS.range) || !fin(y, -LIMITS.height, LIMITS.height) || !fin(z, -LIMITS.range, LIMITS.range)) return null
+  const { id, x, y, z, heading, vx, vz, speed } = u
+  const name = admissibleName(u.name)
+  if (!count(id) || name === null || !fin(x, -LIMITS.range, LIMITS.range) || !fin(y, -LIMITS.height, LIMITS.height) || !fin(z, -LIMITS.range, LIMITS.range)) return null
   if (!fin(heading, -Math.PI * 2, Math.PI * 2) || !fin(vx, -RUN, RUN) || !fin(vz, -RUN, RUN) || !fin(speed, 0, RUN)) return null
   return Object.freeze({ id, name, x, y, z, heading, vx, vz, speed })
 }

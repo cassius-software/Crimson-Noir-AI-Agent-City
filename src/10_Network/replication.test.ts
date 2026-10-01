@@ -100,6 +100,10 @@ test('readServerMessage: the host is checked the same way; a player list with on
   bad({ t: 'snapshot', tick: 3, ack: 2, players: [player(2, { x: NaN })] }, /players/)
   bad({ t: 'snapshot', tick: 3, ack: 2, players: [player(2, { speed: RUN + 1 })] }, /players/)
   bad({ t: 'snapshot', tick: 3, ack: 2, players: [player(2, { name: 'x'.repeat(LIMITS.name + 1) })] }, /players/)
+  // 14A reads the host's player lists too: a name the room would refuse at join never reaches a caption or a voice label.
+  bad({ t: 'snapshot', tick: 3, ack: 2, players: [player(2, { name: 'you idiot' })] }, /players/)
+  bad({ t: 'welcome', v: 1, id: 1, tick: 0, tickHz: 20, players: [player(2, { name: ' ' })] }, /players/)
+  bad({ t: 'joined', tick: 1, player: player(2, { name: 'Kill Bill' }) }, /player/)
   bad({ t: 'snapshot', tick: 3, ack: 2, players: [{ id: 1 }] }, /players/)
   bad({ t: 'snapshot', tick: 3, ack: 2, players: new Array(LIMITS.peers + 1).fill(player(1)) }, /players/)
   bad({ t: 'snapshot', tick: -1, ack: 2, players: [] }, /tick and ack/)
