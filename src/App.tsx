@@ -91,6 +91,8 @@ function readOptions(): EngineOptions & { debug: boolean } {
     targetFps: Math.round(num('fps', 0, 0, 240)),
     audio: q.get('audio') !== '0',
     debug: q.has('debug'),
+    // The AI fleet on fixed tracks (zero-jam rings); ?tracks=0 restores the random street-hopping routes.
+    tracks: q.get('tracks') !== '0',
     // The cinema camera (24 fps, 180° shutter, ND, film response); ?cinema=0 draws every frame with ACES.
     cinema: q.get('cinema') !== '0',
   }

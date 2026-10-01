@@ -5,7 +5,9 @@
  * and steers by pure pursuit. When a person steps into its path it makes a Perception-style check
  * (degrees of success) whose degree sets how quickly it notices them, then plans a comfortable stop
  * short of them. The bouncer in laws.ts brakes regardless of the roll: the check shapes the driving,
- * never the safety.
+ * never the safety. The hazard episode is its own class (HazardEpisode) so the track follower
+ * (trackDriver.ts) shares it rather than copying it, and DriverLike is the contract the Fleet drives any
+ * AI driver through.
  * What breaks if it is removed? Every non-player car sits still.
  */
 import { CITY } from '../01_Initialize_World/city.ts'
@@ -18,6 +20,18 @@ type Turn = 'straight' | 'left' | 'right'
 export interface DriverPose { x: number; z: number; heading: number; speed: number }
 /** throttle 0..1 · brake as a desired deceleration in m/s² · steer in radians, positive = left. */
 export interface DriverCommand { throttle: number; brake: number; steer: number }
+
+/**
+ * What the Fleet asks of any AI driver, once per frame: the command for this pose, and the hazard episode's
+ * state for telemetry. `stuckSeconds` is the Fleet's anti-stall clock (it resets it when it recovers the car).
+ */
+export interface DriverLike {
+  command(p: DriverPose, signalSeconds: number, gap: number, dt: number, personAhead?: number): DriverCommand
+  stuckSeconds: number
+  readonly check: CheckResult | null
+  readonly reactionLatency: number
+  readonly reacted: boolean
+}
 
 const right = (d: Vec): Vec => [-d[1], d[0]]
 const left = (d: Vec): Vec => [d[1], -d[0]]
@@ -42,7 +56,61 @@ export function followSpeed(gap: number): number {
   return d * (Math.sqrt(l * l + (2 * room) / d) - l)
 }
 
-export class Driver {
+/**
+ * One hazard episode at a time: the first frame a person is inside the sensing range rolls the Perception
+ * check; the episode (and its roll) lasts until the path has been clear for `EPISODE_CLEAR` seconds, so a
+ * person flickering in and out of the corridor is not re-rolled. Shared by every AI driver so the semantics
+ * (one roll per episode, latency by degree) are the same on a street and on a track.
+ */
+export class HazardEpisode {
+  readonly #rng: () => number
+  #hazard: CheckResult | null = null
+  #hazardSeconds = 0
+  #clearSeconds = 0
+
+  constructor(rng: () => number) {
+    this.#rng = rng
+  }
+
+  /** The Perception check of the current hazard episode (null once the path has been clear for 1 s). */
+  get check(): CheckResult | null {
+    return this.#hazard
+  }
+
+  /** Seconds the driver takes to react in the current episode (Infinity when there is none). */
+  get reactionLatency(): number {
+    return this.#hazard ? DRIVER_REACTION.latency[this.#hazard.degree] : Infinity
+  }
+
+  /** True once the driver has noticed the person of the current episode. */
+  get reacted(): boolean {
+    return this.#hazard !== null && this.#hazardSeconds >= this.reactionLatency
+  }
+
+  /**
+   * Advances the episode by `dt` with the person `personAhead` metres from the bumper (Infinity: none). Returns
+   * the room to stop in before the person once the driver has reacted, else Infinity.
+   */
+  perceive(personAhead: number, dt: number): number {
+    const present = personAhead < KERNEL.range
+    if (present && !this.#hazard) {
+      this.#hazard = rollCheck(DRIVER_REACTION.modifier, DRIVER_REACTION.dc, this.#rng)
+      this.#hazardSeconds = 0
+      this.#clearSeconds = 0
+    } else if (this.#hazard) {
+      this.#hazardSeconds += dt
+      this.#clearSeconds = present ? 0 : this.#clearSeconds + dt
+      if (this.#clearSeconds >= EPISODE_CLEAR) {
+        this.#hazard = null
+        this.#hazardSeconds = 0
+        this.#clearSeconds = 0
+      }
+    }
+    return present && this.reacted ? personAhead - PERSON_STOP : Infinity
+  }
+}
+
+export class Driver implements DriverLike {
   private from: Vec
   private dir: Vec
   private turn: Turn = 'straight'
@@ -52,31 +120,30 @@ export class Driver {
   private tau = 0
   stuckSeconds = 0
   private readonly rng: () => number
-  private hazard: CheckResult | null = null
-  private hazardSeconds = 0
-  private clearSeconds = 0
+  private readonly episode: HazardEpisode
 
   constructor(from: Vec, dir: Vec, rng: () => number) {
     this.from = from
     this.dir = dir
     this.exitDir = dir
     this.rng = rng
+    this.episode = new HazardEpisode(rng)
     this.chooseTurn()
   }
 
   /** The Perception check of the current hazard episode (null once the path has been clear for 1 s). */
   get check(): CheckResult | null {
-    return this.hazard
+    return this.episode.check
   }
 
   /** Seconds this driver takes to react in the current episode (Infinity when there is none). */
   get reactionLatency(): number {
-    return this.hazard ? DRIVER_REACTION.latency[this.hazard.degree] : Infinity
+    return this.episode.reactionLatency
   }
 
   /** True once the driver has noticed the person of the current episode. */
   get reacted(): boolean {
-    return this.hazard !== null && this.hazardSeconds >= this.reactionLatency
+    return this.episode.reacted
   }
 
   /** Lane pose `s` metres along the street from intersection `from`. */
@@ -124,30 +191,6 @@ export class Driver {
         : [B[0] + r1[0] * L + this.dir[0] * L, B[1] + r1[1] * L + this.dir[1] * L]
     const u = 1 - t
     return [u * u * E[0] + 2 * u * t * C[0] + t * t * X[0], u * u * E[1] + 2 * u * t * C[1] + t * t * X[1]]
-  }
-
-  /**
-   * Tracks one hazard episode: the first frame a person is inside the sensing range rolls the check; the
-   * episode (and its roll) lasts until the path has been clear for `EPISODE_CLEAR` seconds, so a person
-   * flickering in and out of the corridor is not re-rolled. Returns the room to stop in before the person
-   * once the driver has reacted, else Infinity.
-   */
-  private perceive(personAhead: number, dt: number): number {
-    const present = personAhead < KERNEL.range
-    if (present && !this.hazard) {
-      this.hazard = rollCheck(DRIVER_REACTION.modifier, DRIVER_REACTION.dc, this.rng)
-      this.hazardSeconds = 0
-      this.clearSeconds = 0
-    } else if (this.hazard) {
-      this.hazardSeconds += dt
-      this.clearSeconds = present ? 0 : this.clearSeconds + dt
-      if (this.clearSeconds >= EPISODE_CLEAR) {
-        this.hazard = null
-        this.hazardSeconds = 0
-        this.clearSeconds = 0
-      }
-    }
-    return present && this.reacted ? personAhead - PERSON_STOP : Infinity
   }
 
   /**
@@ -208,7 +251,7 @@ export class Driver {
 
     // A person in the path: once noticed, a comfortable feed-forward stop (v²/2d) short of them, held
     // while they stay there. Until then the driver has not seen them; the First Law floor has.
-    const room = this.perceive(personAhead, dt)
+    const room = this.episode.perceive(personAhead, dt)
     if (room < Infinity) {
       vTarget = Math.min(vTarget, room < 0.3 ? 0 : Math.sqrt(2 * a * room))
       requiredDecel = Math.max(requiredDecel, room > 0.3 ? (p.speed * p.speed) / (2 * room) : 6)

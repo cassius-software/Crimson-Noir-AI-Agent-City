@@ -16,13 +16,15 @@
  */
 import { CITY_SIZE, inLot } from '../01_Initialize_World/city.ts'
 import { KERNEL } from '../02_Define_The_Rules/civic.ts'
-import { panicReason, RING0, Ring0Auditor, type AuditPerson, type AuditVehicle } from '../02_Define_The_Rules/ring0.ts'
+import { auditCraft, panicReason, RING0, Ring0Auditor, type AuditPerson, type AuditVehicle } from '../02_Define_The_Rules/ring0.ts'
 import type { KernelStats } from '../05_Observe_Environment/telemetry.ts'
 import { CAR, CAR_TUNE_RANGE, type CarTuning } from './car.ts'
 import { Physics } from './physics.ts'
 import { Avatar } from './player.ts'
 import { Sanctuary, type Nudge } from './sanctuary.ts'
 import { Fleet, type Vehicle } from './vehicles.ts'
+import { TrackFleet } from './trackFleet.ts'
+import { buildTrackNetwork } from '../06_Make_Decisions/tracks.ts'
 import { AGENTS_RANGE, MAX_CARS, PEDESTRIAN_MAX_SPEED, type CrowdSensor, type Summon } from '../03_Spawn_Agents/crowdSensor.ts'
 import {
   ACTIVITY, APPROACH_SECONDS, AUDIBLE_RADIUS, eligible, findRecruit, RECRUIT_SLOTS, RELEASE_DISTANCE, skillNamed, skillsOf, whyNot,
@@ -101,6 +103,8 @@ export class SimCore {
   readonly meta: SimMeta
   readonly #physics: Physics
   readonly #fleet: Fleet
+  /** The scheduled craft (train sets, drones, planes) on the city's corridors: with tracks on, in the city only. */
+  readonly #craft: TrackFleet | null
   readonly #avatar: Avatar
   readonly #sanctuary: Sanctuary
   /** Centred on the city, or on a region with a slab that holds it (and a margin). */
@@ -157,7 +161,11 @@ export class SimCore {
       ? new Ring0Auditor({ x: (r.x0 + r.x1) / 2, z: (r.z0 + r.z1) / 2 }, { extent: Math.max(r.x1 - r.x0, r.z1 - r.z0) / 2 + REGION_SLAB_MARGIN })
       : new Ring0Auditor({ x: CITY_SIZE / 2, z: CITY_SIZE / 2 })
     // The Rapier handles leave the Fleet only for the debug fault-injection commands (dbgVelocity).
-    this.#fleet = new Fleet(physics, o.cars, o.seed, { exposeRig: this.#debug })
+    // On tracks, the network is built here from the seed: nothing about the routes crosses from the page.
+    const network = o.tracks === true ? buildTrackNetwork(o.seed) : null
+    this.#fleet = new Fleet(physics, o.cars, o.seed, { exposeRig: this.#debug, network: network ?? undefined })
+    // The corridors are laid over the city's grid: a surveyed region has no elevated loop and no racetrack over it.
+    this.#craft = network && !r ? new TrackFleet(network) : null
     this.#avatar = new Avatar(physics, o.spawn.x, o.spawn.z)
     this.#sanctuary = new Sanctuary(physics.world)
     this.#sanctuary.register(this.#avatar.person)
@@ -175,6 +183,7 @@ export class SimCore {
       paint: [...this.#fleet.paint],
       person: { radius: this.#avatar.person.radius, halfHeight: this.#avatar.person.halfHeight },
       debug: this.#debug,
+      craft: this.#craft?.count ?? 0,
     })
     Object.freeze(this)
   }
@@ -235,11 +244,14 @@ export class SimCore {
 
   /**
    * One frame: commands, sensing, vetted controls, AI, the fixed substeps, the Ring-0 audit, then the packed
-   * state. After a panic it changes nothing and reports the frozen state.
+   * state. After a panic it changes nothing and reports the frozen state. `craft` is the buffer the scheduled
+   * craft are packed into (meta.craft slices; the host sizes it): it is returned filled from a running realm with
+   * tracks on, and null otherwise (a halted realm's clock has stopped, and a buffer that halted it never leaves).
    */
-  step(input: StepInput, poses: Float32Array): Omit<StepState, 't' | 'id'> {
+  step(input: StepInput, poses: Float32Array, craft: Float32Array | null = null): Omit<StepState, 't' | 'id'> {
     const t0 = now()
     let trigger = 0, limited = false, thump = false
+    let craftOut: Float32Array | null = null
     // A crowd that can no longer see anyone leaves the Bouncer blind to pedestrians: that is a broken kernel.
     if (this.#panic === null && this.#crowd?.lost) this.halt(`Sensing Failure: pedestrian sensing stopped (${this.#crowd.lost}).`)
     if (this.#panic === null) {
@@ -341,8 +353,10 @@ export class SimCore {
         // start never undercounts a braking car).
         for (let i = 0; i < this.#odo.length; i++) this.#odo[i] += Math.abs(fleet.speed(fleet.vehicles[i])) * h
       })
+      // The scheduled craft where this realm's clock has them: packed before the audit, which reads the buffer.
+      if (this.#craft && craft) craftOut = this.#craft.writePoses(this.#simTime, craft)
       // RING-0 AUDIT SITE: in this realm, synchronously after the last substep, before any state leaves it.
-      this.#ring0Audit(this.#crowd ? this.#crowd.takeFlags() : 0)
+      this.#ring0Audit(this.#crowd ? this.#crowd.takeFlags() : 0, craftOut)
       // The crowd steps on this step's outcome: the cars where they now are, the avatar, this clock, the summons.
       if (this.#panic === null) {
         this.#tendRecruits()
@@ -372,6 +386,7 @@ export class SimCore {
       // A frame ships only from a realm that is still running: its flags were audited in this very step (they
       // arrive with it), so a frame whose flags halted the realm never leaves it.
       crowdFrame: this.#crowd && this.#panic === null ? this.#crowd.takeFrame() : null,
+      craft: this.#panic === null ? craftOut : null,
       recruits: this.#recruits.map((r): RecruitView => ({
         agent: r.agent, serial: r.serial, skill: r.skill, state: r.arrivedAt >= 0 ? 'Active' : 'Interviewing', arrived: r.arrivedAt >= 0,
         skills: [...r.skills], distance: r.distance, x: r.x, z: r.z,
@@ -704,8 +719,10 @@ export class SimCore {
    * car, or a moving car within the standoff of a solid person in its path without an emergency stop applied:
    * any one halts the simulation. Speeds over the cap are clamped and counted. `gpuFlags` bit 0 is this realm's
    * GPU crowd reporting a non-finite pedestrian state (read back from its own buffers, never from the page).
+   * `craft` is the scheduled craft buffer packed this step (null with tracks off): every value finite and every
+   * craft at or above its corridor's floor, or the realm halts (auditCraft; it never corrects).
    */
-  #ring0Audit(gpuFlags: number): void {
+  #ring0Audit(gpuFlags: number, craft: Float32Array | null): void {
     const fleet = this.#fleet
     const vehicles = fleet.vehicles
     const list = this.#auditVehicles
@@ -732,6 +749,10 @@ export class SimCore {
     const result = this.#auditor.run(list, this.#auditPeople, this.#simTime < this.#blindUntil)
     for (let i = 0; i < result.capped.length; i++) fleet.clampSpeed(vehicles[result.capped[i]], RING0.maxVelocity)
     if (gpuFlags & 1) result.violations.push({ code: 'NON_FINITE', subject: 'pedestrians', detail: 'a GPU pedestrian state was non-finite' })
+    if (craft) {
+      const fault = auditCraft(craft)
+      if (fault) result.violations.push(fault)
+    }
     if (result.violations.length) this.halt(panicReason(result.violations[0]))
   }
 }

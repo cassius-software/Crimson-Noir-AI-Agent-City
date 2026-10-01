@@ -1,11 +1,15 @@
 /**
  * Why does this file exist? It is the vehicle fleet: Rapier raycast-vehicle sedans and SUVs with strict
- * CCD on the chassis, driven by the AI (06_Make_Decisions/traffic.ts) or by the player. Every command is
- * vetted by the Ring-0 bouncer (02_Define_The_Rules/laws.ts) before it reaches the wheels, using the
- * people in each car's sensing corridor (the GPU crowd's readback plus the avatar, measured here). It adds
- * what the raycast model lacks — Ackermann steering, aerodynamic drag, rolling resistance, engine braking,
- * a power limit. It runs inside the physics worker (simCore.ts): the page only ever receives the packed
- * poses writePoses() produces, and draws them (fleetView.ts).
+ * CCD on the chassis, driven by the AI (06_Make_Decisions/traffic.ts on random streets, or trackDriver.ts on
+ * the fixed rings of tracks.ts when a network is given: the cars are then seated in headway slots and each
+ * reads its own ring's gap beside its bonnet rays, which skip the cars on tracks) or by the player. A chassis is solid
+ * to the ground, the buildings and people, and cars pass through cars: the collision groups of
+ * 02_Define_The_Rules/collision.ts drop every chassis-chassis pair, on the chassis and on the wheel rays.
+ * Every command is vetted by the Ring-0 bouncer (02_Define_The_Rules/laws.ts) before it reaches the wheels,
+ * using the people in each car's sensing corridor (the GPU crowd's readback plus the avatar, measured here).
+ * It adds what the raycast model lacks — Ackermann steering, aerodynamic drag, rolling resistance, engine
+ * braking, a power limit. It runs inside the physics worker (simCore.ts): the page only ever receives the
+ * packed poses writePoses() produces, and draws them (fleetView.ts).
  * What breaks if it is removed? There are no cars to watch, dodge or drive, and nothing keeps a car
  * from driving into a person.
  */
@@ -13,9 +17,12 @@ import { RAPIER, type Physics } from './physics.ts'
 import { CAR, CAR_TUNE_RANGE, chassisBox, clampTuning, RIDE_HEIGHT, WHEELS, type CarTuning, type DriveMode } from './car.ts'
 import { MODES, POSE } from './simProtocol.ts'
 import type { VehicleFootprint } from './sanctuary.ts'
-import { Driver, type DriverCommand, type DriverPose } from '../06_Make_Decisions/traffic.ts'
+import { Driver, type DriverCommand, type DriverLike, type DriverPose } from '../06_Make_Decisions/traffic.ts'
+import { TrackDriver } from '../06_Make_Decisions/trackDriver.ts'
+import { assignSlots, poseAt, type TrackNetwork } from '../06_Make_Decisions/tracks.ts'
 import { CITY } from '../01_Initialize_World/city.ts'
 import { KERNEL } from '../02_Define_The_Rules/civic.ts'
+import { VEHICLE_CHASSIS_GROUPS, WHEEL_RAY_GROUPS } from '../02_Define_The_Rules/collision.ts'
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
 import { Bouncer, type Intent, type Situation } from '../02_Define_The_Rules/laws.ts'
 import type { CarState } from '../03_Spawn_Agents/crowdCompute.ts'
@@ -37,11 +44,15 @@ const NOT_PEOPLE = RAPIER.QueryFilterFlags.EXCLUDE_SENSORS | RAPIER.QueryFilterF
 const AT_REST = 0.05
 /** A car held by emergency braking stays held at a standstill while the person is this close, m. */
 const HOLD_CLEAR = KERNEL.standoff + 0.5
+/** Reach of the bonnet obstacle rays, m. */
+const GAP_RANGE = 22
+/** A parked car this far (lateral, m) off its ring or nearer counts in the ring's order; further, it stands elsewhere. */
+const ON_LANE = 3
 
 export interface Vehicle {
   /** Slot in the Fleet (its rig, its footprint). Fixed at creation: a rewritten index cannot re-point a vehicle at another car. */
   readonly index: number
-  driver: Driver
+  driver: DriverLike
   mode: DriveMode
   suv: boolean
   /** kg */
@@ -66,6 +77,11 @@ interface Rig {
 export interface FleetOptions {
   /** Tests and the ?debug harness only: rig() hands out the raw Rapier handles. Off in production pages. */
   exposeRig?: boolean
+  /**
+   * The fixed track network (tracks.ts): the cars are seated in its headway slots and driven by TrackDrivers on
+   * their rings. Absent, every car takes the random street-hopping Driver, exactly as before.
+   */
+  network?: TrackNetwork
 }
 
 /**
@@ -182,6 +198,20 @@ export class Fleet {
   readonly #exposeRig: boolean
   readonly #physics: Physics
   readonly #rng: () => number
+  /** The track network the fleet was seated on (null: random streets). */
+  readonly #network: TrackNetwork | null
+  /** Per vehicle: the bumper gap to the car ahead on its ring this frame (Infinity: alone, or not on a ring). */
+  readonly #trackGap: Float64Array
+  /** Scratch: the vehicles on rings this frame, sorted by (track, arc length). */
+  readonly #ringOrder: number[] = []
+  /** Collider handle -> vehicle index, for the bonnet rays' filter. */
+  readonly #byCollider = new Map<number, number>()
+  readonly #ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 1 })
+  /** The bonnet rays' filter on a track: a chassis on a ring is not an obstacle (the ring gap places it exactly). */
+  readonly #notOnTrack = (c: RAPIER.Collider): boolean => {
+    const i = this.#byCollider.get(c.handle)
+    return i === undefined || !this.#onRing(this.vehicles[i])
+  }
   readonly #states: CarState[] = []
   readonly #prints: VehicleFootprint[] = []
   /** Per-vehicle metres to the nearest pedestrian from the GPU crowd (Infinity = none). */
@@ -215,6 +245,8 @@ export class Fleet {
     this.#exposeRig = opts.exposeRig === true
     this.#physics = physics
     this.#rng = createRng(seed ^ 0xca75)
+    this.#network = opts.network ?? null
+    this.#trackGap = new Float64Array(count).fill(Infinity)
     this.#crowdAhead = new Float32Array(count).fill(Infinity)
     this.#crowdBehind = new Float32Array(count).fill(Infinity)
     this.#emergency = new Int8Array(count)
@@ -223,29 +255,43 @@ export class Fleet {
 
     const paint: number[] = []
     const used = new Set<string>()
+    // On a network: a headway seat per car, on a straight clear of every intersection box, from the same stream.
+    const seatsOf = this.#network ? assignSlots(this.#network, count, this.#rng) : null
     for (let i = 0; i < count; i++) {
-      // A random street segment and direction, spaced so no two cars start on the same stretch.
-      let from: [number, number] = [0, 0], dir: [number, number] = [1, 0], slot = ''
-      for (let tries = 0; tries < 50; tries++) {
-        const line = Math.floor(this.#rng() * (CITY.blocks + 1))
-        const seg = Math.floor(this.#rng() * CITY.blocks)
-        const sign = this.#rng() < 0.5 ? 1 : -1
-        if (this.#rng() < 0.5) {
-          dir = [sign, 0]
-          from = [sign > 0 ? seg : seg + 1, line]
-        } else {
-          dir = [0, sign]
-          from = [line, sign > 0 ? seg : seg + 1]
+      let pose: { x: number; z: number; heading: number }
+      let suv: boolean
+      let driver: DriverLike
+      if (this.#network && seatsOf) {
+        const seat = seatsOf[i]
+        const track = this.#network.tracks[seat.track]
+        pose = poseAt(track, seat.s)
+        suv = this.#rng() < 0.3
+        driver = new TrackDriver(track, seat.s, this.#rng)
+      } else {
+        // A random street segment and direction, spaced so no two cars start on the same stretch.
+        let from: [number, number] = [0, 0], dir: [number, number] = [1, 0], slot = ''
+        for (let tries = 0; tries < 50; tries++) {
+          const line = Math.floor(this.#rng() * (CITY.blocks + 1))
+          const seg = Math.floor(this.#rng() * CITY.blocks)
+          const sign = this.#rng() < 0.5 ? 1 : -1
+          if (this.#rng() < 0.5) {
+            dir = [sign, 0]
+            from = [sign > 0 ? seg : seg + 1, line]
+          } else {
+            dir = [0, sign]
+            from = [line, sign > 0 ? seg : seg + 1]
+          }
+          slot = `${from},${dir}`
+          if (!used.has(slot)) break
         }
-        slot = `${from},${dir}`
-        if (!used.has(slot)) break
+        used.add(slot)
+        const [k, m] = from
+        const s = 12 + this.#rng() * 10
+        pose = Driver.lanePose([k, m], dir, s)
+        suv = this.#rng() < 0.3
+        driver = new Driver([k, m], dir, this.#rng)
       }
-      used.add(slot)
-      const [k, m] = from
-      const s = 12 + this.#rng() * 10
-      const pose = Driver.lanePose([k, m], dir, s)
-      const suv = this.#rng() < 0.3
-      const vehicle = this.#create(i, pose.x, pose.z, pose.heading, suv, new Driver([k, m], dir, this.#rng))
+      const vehicle = this.#create(i, pose.x, pose.z, pose.heading, suv, driver)
       paint.push(PAINT[Math.floor(this.#rng() * PAINT.length)])
       this.vehicles.push(vehicle)
       this.#commands.push({ throttle: 0, brake: 0, steer: 0 })
@@ -258,7 +304,7 @@ export class Fleet {
     Object.freeze(this)
   }
 
-  #create(index: number, x: number, z: number, heading: number, suv: boolean, driver: Driver): Vehicle {
+  #create(index: number, x: number, z: number, heading: number, suv: boolean, driver: DriverLike): Vehicle {
     const world = this.#physics.world
     const mass = suv ? CAR.suvMass : CAR.mass
     const body = world.createRigidBody(
@@ -267,8 +313,10 @@ export class Fleet {
     // Strict CCD: fast cars cannot tunnel through poles, thin walls or people between steps.
     body.enableCcd(true)
     const box = chassisBox(suv)
+    // Cars pass through cars: the chassis groups drop every chassis-chassis pair in the broad phase (no contact,
+    // no impulse) and leave the ground, the buildings and the avatar's capsule as solid as before.
     const collider = world.createCollider(
-      RAPIER.ColliderDesc.cuboid(box.hx, box.hy, box.hz).setTranslation(0, box.y, 0).setMass(mass).setFriction(0.4),
+      RAPIER.ColliderDesc.cuboid(box.hx, box.hy, box.hz).setTranslation(0, box.y, 0).setMass(mass).setFriction(0.4).setCollisionGroups(VEHICLE_CHASSIS_GROUPS),
       body,
     )
     const controller = world.createVehicleController(body)
@@ -282,6 +330,7 @@ export class Fleet {
       controller.setWheelSideFrictionStiffness(i, 1.0)
     }
     this.#rigs[index] = { body, collider, controller }
+    this.#byCollider.set(collider.handle, index)
     const vehicle: Vehicle = {
       index, driver, mode: 'ai', suv, mass, steer: 0,
       lastCommand: { throttle: 0, brake: 0, steer: 0 }, handbrake: false,
@@ -380,16 +429,79 @@ export class Fleet {
 
   /** Free road ahead of the front bumper to a car, wall or pole, from rays at bonnet height (people excluded). */
   gapAhead(v: Vehicle): number {
+    return this.#gapAhead(v, false)
+  }
+
+  /**
+   * The bonnet rays; with `skipTracked`, the chassis of every car on a ring is never found. A track follower reads
+   * its own ring's gap for those (exact, through corners) and keeps the rays for walls, poles and cars off the
+   * rings: from the apex of a right turn the rays sweep the cross street's queue head at 2.4 m though the two
+   * bodies never meet (tracks.test.ts), which would stop every turning car and have the Third Law rule at every corner.
+   */
+  #gapAhead(v: Vehicle, skipTracked: boolean): number {
     const t = this.#rigs[v.index].body.translation(this.#pos)
     const h = this.heading(v)
     const fx = Math.sin(h), fz = Math.cos(h)
     const ox = t.x + fx * (CAR.halfLength + 0.1), oz = t.z + fz * (CAR.halfLength + 0.1)
     let best = Infinity
     for (const side of GAP_RAYS) {
-      const toi = this.#physics.castRay(ox - fz * side, 0.7, oz + fx * side, fx, 0, fz, 22, this.#rigs[v.index].body, NOT_PEOPLE)
+      let toi: number | null
+      if (skipTracked) {
+        const ray = this.#ray
+        ray.origin.x = ox - fz * side; ray.origin.y = 0.7; ray.origin.z = oz + fx * side
+        ray.dir.x = fx; ray.dir.y = 0; ray.dir.z = fz
+        const hit = this.#physics.world.castRay(ray, GAP_RANGE, true, NOT_PEOPLE, undefined, undefined, this.#rigs[v.index].body, this.#notOnTrack)
+        toi = hit ? hit.timeOfImpact : null
+      } else {
+        toi = this.#physics.castRay(ox - fz * side, 0.7, oz + fx * side, fx, 0, fz, GAP_RANGE, this.#rigs[v.index].body, NOT_PEOPLE)
+      }
       if (toi !== null && toi < best) best = toi
     }
     return best
+  }
+
+  /** True for a car a track follower drives or has parked on its ring: placed by its ring's order, not by a ray. */
+  #onRing(v: Vehicle): boolean {
+    return v.driver instanceof TrackDriver && v.mode !== 'player'
+  }
+
+  /**
+   * Every ring's order this frame: the cars on tracks (AI at their last projection, parked ones re-projected and
+   * counted only while on their lane) sorted by (track, arc length), then the bumper gap ahead of each within its
+   * ring, wrapping (the rule of tracks.ts ringGaps; Infinity alone). Player-driven cars are left to the rays. A car
+   * steering back to its ring from off it (rejoining: set down elsewhere, say by a harness) is not in the order
+   * either: its projection names a point on the ring where no car stands, and a follower would queue behind it.
+   */
+  #ringGaps(): void {
+    const order = this.#ringOrder
+    order.length = 0
+    this.#trackGap.fill(Infinity)
+    for (const v of this.vehicles) {
+      if (!this.#onRing(v)) continue
+      const driver = v.driver as TrackDriver
+      if (v.mode === 'parked') {
+        const t = this.#rigs[v.index].body.translation(this.#pos)
+        if (Math.abs(driver.locate(t.x, t.z).lateral) > ON_LANE) continue
+      } else if (driver.rejoining) continue
+      order.push(v.index)
+    }
+    const at = (i: number) => this.vehicles[i].driver as TrackDriver
+    order.sort((a, b) => at(a).track - at(b).track || at(a).progress - at(b).progress)
+    const network = this.#network
+    if (!network) return
+    for (let a = 0; a < order.length;) {
+      const track = at(order[a]).track
+      let b = a + 1
+      while (b < order.length && at(order[b]).track === track) b++
+      if (b - a > 1) {
+        const L = network.tracks[track].length
+        for (let k = a; k < b; k++) {
+          const ahead = k + 1 < b ? at(order[k + 1]).progress : at(order[a]).progress + L
+          this.#trackGap[order[k]] = ahead - at(order[k]).progress - 2 * CAR.halfLength
+        }
+      }
+      a = b
+    }
   }
 
   /**
@@ -442,6 +554,7 @@ export class Fleet {
    */
   think(dt: number, signalSeconds: number): void {
     const intent = this.#intent
+    if (this.#network) this.#ringGaps()
     for (const v of this.vehicles) {
       const i = v.index
       const fresh = this.#driven[i] === 1
@@ -463,7 +576,11 @@ export class Fleet {
       const t = this.#rigs[v.index].body.translation(this.#pos)
       const p = this.#pose
       p.x = t.x; p.z = t.z; p.heading = this.heading(v); p.speed = this.speed(v)
-      const gap = this.gapAhead(v)
+      // On a ring: the least of the rays (walls, poles, cars off the rings) and the ring's own gap ahead; the same
+      // number is the driver's following gap and the bouncer's obstacleAhead.
+      const onRing = this.#onRing(v)
+      if (onRing) (v.driver as TrackDriver).ringGap = this.#trackGap[i]
+      const gap = onRing ? Math.min(this.#gapAhead(v, true), this.#trackGap[i]) : this.gapAhead(v)
       const cmd = v.driver.command(p, signalSeconds, gap, dt, this.personAhead(v))
       this.#aim[i] = Number.isFinite(cmd.steer) ? cmd.steer : 0
       // Smooth the wheel so pure pursuit does not twitch.
@@ -482,7 +599,8 @@ export class Fleet {
   updateControllers(h: number): void {
     for (const v of this.vehicles) {
       this.#drivetrain(v, h, this.#roadLoads(v))
-      this.#rigs[v.index].controller.updateVehicle(h, NOT_PEOPLE)
+      // The wheel rays skip people (flags) and other chassis (groups): a car never rides up on a car it passes through.
+      this.#rigs[v.index].controller.updateVehicle(h, NOT_PEOPLE, WHEEL_RAY_GROUPS)
     }
   }
 

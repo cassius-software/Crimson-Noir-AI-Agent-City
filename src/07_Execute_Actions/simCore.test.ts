@@ -22,7 +22,10 @@ import { test } from 'node:test'
 import { CAR } from './car.ts'
 import { SimCore, type StepInput } from './simCore.ts'
 import { createSimHost } from './simHost.ts'
-import { POSE, RUN, WALK, type FromWorker, type SimInit } from './simProtocol.ts'
+import { POSE, RUN, TRACK_KINDS, TRACK_POSE, WALK, type FromWorker, type SimInit } from './simProtocol.ts'
+import { auditCraft } from '../02_Define_The_Rules/ring0.ts'
+import { buildTrackNetwork } from '../06_Make_Decisions/tracks.ts'
+import { TrackFleet } from './trackFleet.ts'
 import { KERNEL, signalFor } from '../02_Define_The_Rules/civic.ts'
 import { stoppingDistance } from '../02_Define_The_Rules/laws.ts'
 import { runHarness } from './harness.ts'
@@ -892,4 +895,127 @@ test('recruit: a halted realm answers nothing more, and the state stays plain da
   sim.halt('test')
   const after = step({ cmds: [{ c: 'recruit', id: 8, skill: 'audio', agent: a }] })
   assert.deepEqual(recruitEvents(after.events), [])
+})
+
+test('an init on tracks builds the fleet on the ring network inside the realm; the door passes only a true flag', async () => {
+  const sim = await SimCore.create({ seed: 11, cars: 12, agents: AGENTS, boxes: [], furniture: NO_FURNITURE, spawn: { x: OPEN.x, z: OPEN.z }, debug: false, tracks: true })
+  const poses = new Float32Array(sim.meta.count * POSE.stride)
+  let last = sim.step({ dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds: [] }, poses)
+  const first = Float32Array.from(poses)
+  for (let k = 0; k < 60; k++) last = sim.step({ dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds: [] }, poses)
+  assert.equal(sim.halted, false)
+  assert.equal(sim.panic, null)
+  assert.equal(last.kernel.audit.panic, null)
+  assert.ok(poses.every(Number.isFinite))
+  plain(last)
+  // The cars stand on the city's lanes (the grid spans 0..640), not on the random seats, and some have moved off.
+  for (let i = 0; i < sim.meta.count; i++) {
+    const x = first[i * POSE.stride + POSE.x], z = first[i * POSE.stride + POSE.z]
+    assert.ok(x > -5 && x < 645 && z > -5 && z < 645, `car ${i} at ${x.toFixed(0)}, ${z.toFixed(0)}`)
+    const off = Math.abs(x - Math.round(x / 40) * 40), ofz = Math.abs(z - Math.round(z / 40) * 40)
+    assert.ok(Math.abs(Math.min(off, ofz) - 2) < 0.05, `car ${i}: ${Math.min(off, ofz).toFixed(2)} m from a centreline`)
+  }
+  assert.ok(poses.some((v, i) => i % POSE.stride === POSE.speed && v > 1), 'cars are moving')
+
+  const seen: unknown[] = []
+  const out: FromWorker[] = []
+  const crowd = new FakeCrowd()
+  const handle = createSimHost((msg) => out.push(msg), (o) => { seen.push(o.tracks); return SimCore.create(o, async () => crowd) })
+  await handle({ t: 'init', seed: 11, cars: 2, agents: AGENTS, boxes: [], furniture: NO_FURNITURE, spawn: OPEN, debug: false, tracks: 'yes' as unknown as boolean } satisfies SimInit)
+  assert.deepEqual(seen, [false], 'anything but true is off')
+  assert.equal(out.at(-1)?.t, 'ready')
+  const seen2: unknown[] = []
+  const handle2 = createSimHost(() => {}, (o) => { seen2.push(o.tracks); return SimCore.create(o, async () => new FakeCrowd()) })
+  await handle2({ t: 'init', seed: 11, cars: 2, agents: AGENTS, boxes: [], furniture: NO_FURNITURE, spawn: OPEN, debug: false, tracks: true } satisfies SimInit)
+  assert.deepEqual(seen2, [true])
+})
+
+test('tracks on: a step returns the pose buffer and the craft buffer, plain data on the realm\'s own clock, audited clean; a halted realm returns no craft; the door transfers the craft buffer and takes it back', async () => {
+  const crowd = new FakeCrowd()
+  const sim = await SimCore.create({ seed: 11, cars: 4, agents: AGENTS, boxes: [], furniture: NO_FURNITURE, spawn: { x: OPEN.x, z: OPEN.z }, debug: false, tracks: true }, async () => crowd)
+  const reference = new TrackFleet(buildTrackNetwork(11))
+  assert.equal(sim.meta.craft, reference.count)
+  assert.ok(sim.meta.craft > 900)
+  const poses = new Float32Array(sim.meta.count * POSE.stride)
+  const craft = new Float32Array(sim.meta.craft * TRACK_POSE.stride)
+  const input = { dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds: [] }
+  let s = sim.step(input, poses, craft)
+  for (let k = 0; k < 30; k++) s = sim.step(input, poses, craft)
+  assert.equal(s.craft, craft, 'the buffer handed in comes back filled')
+  assert.equal(s.poses, poses)
+  plain(s)
+  assert.equal(s.kernel.audit.panic, null)
+  assert.equal(sim.halted, false)
+  assert.ok(craft.every(Number.isFinite))
+  assert.equal(auditCraft(craft), null)
+  const kinds = new Set<number>()
+  for (let i = 0; i < sim.meta.craft; i++) kinds.add(craft[i * TRACK_POSE.stride + TRACK_POSE.kind])
+  assert.deepEqual([...kinds].sort(), [TRACK_KINDS.indexOf('train'), TRACK_KINDS.indexOf('drone'), TRACK_KINDS.indexOf('plane')])
+  // The craft stand where the realm's clock has them: the timetable evaluated at simTime, bit for bit.
+  assert.deepEqual(Array.from(craft), Array.from(reference.writePoses(s.simTime, new Float32Array(reference.length))))
+  // The craft move with the clock, and the trains stay on their deck.
+  const before = Float32Array.from(craft)
+  for (let k = 0; k < 60; k++) s = sim.step(input, poses, craft)
+  let moved = 0
+  for (let i = 0; i < sim.meta.craft; i++) {
+    const o = i * TRACK_POSE.stride
+    if (Math.hypot(craft[o + TRACK_POSE.x] - before[o + TRACK_POSE.x], craft[o + TRACK_POSE.z] - before[o + TRACK_POSE.z]) > 1) moved++
+    if (craft[o + TRACK_POSE.kind] === TRACK_KINDS.indexOf('train')) assert.equal(craft[o + TRACK_POSE.y], 9)
+  }
+  assert.ok(moved > sim.meta.craft / 2, `${moved} craft moved in a second`)
+  // A step without a craft buffer still runs, and reports none.
+  s = sim.step(input, poses)
+  assert.equal(s.craft, null)
+  assert.equal(sim.halted, false)
+  // A halted realm returns nothing new: no craft, its clock stopped.
+  const t = s.simTime
+  sim.halt('test')
+  s = sim.step(input, poses, craft)
+  assert.equal(s.craft, null)
+  assert.equal(s.simTime, t)
+  plain(s)
+
+  // Tracks off: no craft at all, whatever buffer is passed.
+  const { sim: plainSim, step } = await core()
+  assert.equal(plainSim.meta.craft, 0)
+  assert.equal(step().craft, null)
+  assert.equal(plainSim.step(input, new Float32Array(plainSim.meta.count * POSE.stride), new Float32Array(0)).craft, null)
+
+  // The door: the craft buffer is transferred after the poses and the crowd frame, and one handed back is reused.
+  const out: { msg: FromWorker; transfer?: Transferable[] }[] = []
+  const crowd2 = new FakeCrowd()
+  const handle = createSimHost((msg, transfer) => out.push({ msg, transfer }), (o) => SimCore.create(o, async () => crowd2))
+  await handle({ t: 'init', seed: 11, cars: 2, agents: AGENTS, boxes: [], furniture: NO_FURNITURE, spawn: OPEN, debug: false, tracks: true } satisfies SimInit)
+  const ready = out[0].msg
+  assert.ok(ready.t === 'ready' && ready.meta.craft === reference.count)
+  await handle(hostStep(1))
+  const st = out[1].msg
+  assert.ok(st.t === 'state')
+  if (st.t !== 'state') return
+  assert.ok(st.craft instanceof Float32Array && st.craft.length === reference.count * TRACK_POSE.stride)
+  assert.equal(auditCraft(st.craft), null)
+  assert.deepEqual(out[1].transfer, [st.poses.buffer, st.crowdFrame!.buffer, st.craft.buffer], 'poses, crowd frame, craft: all transferred')
+  const back = st.craft.buffer
+  await handle(hostStep(2, { craftBuffer: back }))
+  const st2 = out[2].msg
+  assert.ok(st2.t === 'state' && st2.craft?.buffer === back, 'a craft buffer handed back is the next one filled')
+  // A buffer of the wrong size is not taken; a step without one still answers with craft.
+  await handle(hostStep(3, { craftBuffer: new ArrayBuffer(8) }))
+  const st3 = out[3].msg
+  assert.ok(st3.t === 'state' && st3.craft instanceof Float32Array && st3.craft.length === reference.count * TRACK_POSE.stride)
+  // After a panic the door is shut; the state that carried it has no craft.
+  crowd2.flags = 1
+  await handle(hostStep(4))
+  const st4 = out[4].msg
+  assert.ok(st4.t === 'state' && st4.craft === null, 'a halted realm ships no craft')
+  assert.equal(out[5].msg.t, 'panic')
+})
+
+test('tracks on over a surveyed region: the fleet keeps its network but no corridor is laid over the region (no craft)', async () => {
+  const region = { bounds: { x0: -200, z0: -150, x1: 200, z1: 150 }, walls: [] }
+  const sim = await SimCore.create({ seed: 1, cars: 0, agents: AGENTS, boxes: [], furniture: NO_FURNITURE, spawn: { x: 0, z: 0 }, debug: false, region, tracks: true }, null)
+  assert.equal(sim.meta.craft, 0)
+  const s = sim.step({ dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds: [] }, new Float32Array(0), new Float32Array(0))
+  assert.equal(s.craft, null)
+  assert.equal(sim.halted, false)
 })

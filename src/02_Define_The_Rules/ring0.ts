@@ -4,7 +4,9 @@
  * invariants that hold whenever the kernel (laws.ts, sanctuary.ts, the fleet's vetting) has done its job:
  * every state finite, no vehicle past the velocity cap, every vehicle inside the world slab, no solid
  * person inside a moving vehicle's footprint, and no moving vehicle closing on a solid person inside its
- * standoff while its applied command is anything but an emergency stop. A violation is a kernel panic:
+ * standoff while its applied command is anything but an emergency stop; and, over the scheduled craft stream
+ * (the trains, drones and planes that have no body and no Bouncer), every value finite and every craft at or
+ * above the floor of the corridor that keeps it away from people. A violation is a kernel panic:
  * the engine severs the hardware bridge, halts, and `kernelPanic` throws out of the frame. The 1.85 m
  * radius of the operator's directive is kept as a watched perimeter (counted, never panicked): measured
  * on this build, cars legally pass people on the sidewalk 1.1 m from their side and First-Law stops land
@@ -78,7 +80,7 @@ export interface AuditPerson {
   radius?: number
 }
 
-export type ViolationCode = 'NON_FINITE' | 'OUT_OF_BOUNDS' | 'RUNAWAY' | 'IMPACT' | 'UNGUARDED_APPROACH'
+export type ViolationCode = 'NON_FINITE' | 'OUT_OF_BOUNDS' | 'RUNAWAY' | 'IMPACT' | 'UNGUARDED_APPROACH' | 'OFF_CORRIDOR'
 
 /** `extent`: for OUT_OF_BOUNDS, the half-size of the slab that was breached, m (a region's differs from the city's). */
 export interface Violation { code: ViolationCode; subject: string; detail: string; extent?: number }
@@ -174,6 +176,48 @@ function nonFinite(v: AuditVehicle): string {
 }
 
 const m3 = (x: number): string => `${x.toFixed(3)}m`
+
+/**
+ * The scheduled craft stream (the train sets, drones and planes on the corridors of 06_Make_Decisions/tracks.ts,
+ * packed by 07_Execute_Actions/trackFleet.ts) as this audit reads it: `stride` floats per craft, named in `fields`
+ * (simProtocol.ts TRACK_POSE; ring0.test.ts pins the two equal), the kind codes of `kinds` (simProtocol.ts
+ * TRACK_KINDS), and per kind the floor of its corridor, m over the street plane: a train's deck, the lower drone
+ * altitude, the planes' altitude (tracks.ts TRACKS, pinned equal by ring0.test.ts). A craft has no body, no driver
+ * and no Bouncer: what keeps it from ever reaching a person is that its corridor is in the air (tracks.test.ts
+ * INV-1), so one below its floor, or of a kind with no corridor (a car: NaN), has left the proof and halts the realm.
+ */
+export const CRAFT = Object.freeze({
+  stride: 8,
+  fields: Object.freeze(['x', 'y', 'z', 'heading', 'kind', 'track', 's', 'speed'] as const),
+  y: 1,
+  kind: 4,
+  kinds: Object.freeze(['car', 'train', 'drone', 'plane'] as const),
+  floor: Object.freeze([NaN, 9, 40, 400] as const),
+} as const)
+
+/**
+ * Audits one craft buffer, allocating only for a violation: every value finite, every craft of a kind that has a
+ * corridor and at or above its floor, and the buffer a whole number of craft. The first fault found is returned
+ * (NON_FINITE or OFF_CORRIDOR); null when the buffer is clean. It only ever halts: nothing is corrected.
+ */
+export function auditCraft(craft: Float32Array): Violation | null {
+  const { stride, fields, y: Y, kind: K, kinds, floor } = CRAFT
+  const n = Math.floor(craft.length / stride)
+  if (craft.length !== n * stride) return { code: 'OFF_CORRIDOR', subject: 'craft buffer', detail: `${craft.length} floats is not a whole number of craft` }
+  for (let i = 0; i < n; i++) {
+    const o = i * stride
+    for (let f = 0; f < stride; f++) {
+      const v = craft[o + f]
+      if (!Number.isFinite(v)) return { code: 'NON_FINITE', subject: `craft ${i}`, detail: `${fields[f]}=${v}` }
+    }
+    const kind = craft[o + K]
+    const fl = Number.isInteger(kind) && kind >= 0 && kind < floor.length ? floor[kind] : NaN
+    if (Number.isNaN(fl)) return { code: 'OFF_CORRIDOR', subject: `craft ${i}`, detail: `kind ${kind} (${kinds[kind] ?? 'unknown'}) has no corridor` }
+    const y = craft[o + Y]
+    if (y < fl) return { code: 'OFF_CORRIDOR', subject: `${kinds[kind]} craft ${i}`, detail: `y=${y.toFixed(2)}m below its ${fl}m floor` }
+  }
+  return null
+}
 
 export class Ring0Auditor {
   /** Cumulative over the session; `panic` holds the first reason once one has fired. */
@@ -315,9 +359,11 @@ export function panicReason(v: Violation): string {
     case 'OUT_OF_BOUNDS': return `OOB Exploit: ${v.subject} breached the ${v.extent ?? RING0.worldExtent}m containment slab (${v.detail}).`
     case 'IMPACT': return `First-Law Violation: Perimeter breached (${v.detail}) — ${v.subject}.`
     case 'UNGUARDED_APPROACH': return `First-Law Violation: Unguarded approach (${v.detail}) — ${v.subject}.`
+    case 'OFF_CORRIDOR': return `Corridor Exploit: ${v.subject} left its corridor (${v.detail}).`
   }
 }
 
 Object.freeze(Ring0Auditor)
 Object.freeze(Ring0Auditor.prototype)
 Object.freeze(panicReason)
+Object.freeze(auditCraft)

@@ -73,6 +73,11 @@ export interface EngineOptions {
   /** ?debug: the physics worker also accepts fault-injection commands (the harness's). Fixed at boot; off in production. */
   debug?: boolean
   /**
+   * The AI fleet on the fixed track network (default on; ?tracks=0 turns it off): cars seated in headway slots on the
+   * right-turn rings of 06_Make_Decisions/tracks.ts. Off, they take the random street-hopping routes.
+   */
+  tracks?: boolean
+  /**
    * The cinema camera (default on; ?cinema=0 turns it off): 24 presented frames per second through a 180° shutter,
    * a variable ND and the film response. Off, every animation frame is drawn and tone-mapped with ACES.
    */
@@ -321,7 +326,7 @@ export class Engine {
     // The physics realm boots (Rapier, the city's colliders or the region's, the fleet) while this thread sets up quality.
     const simBoot = SimClient.create({
       seed: options.seed, cars: options.cars, agents: options.agents, boxes: world.boxes, furniture: world.furniture, spawn, debug: options.debug === true,
-      region: pack && layout ? regionPhysics(pack, layout) : null,
+      region: pack && layout ? regionPhysics(pack, layout) : null, tracks: options.tracks !== false,
     })
 
     // Start on the tier the device profile suggests (or the one the URL pins), before anything compiles:

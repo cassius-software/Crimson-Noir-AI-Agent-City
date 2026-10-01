@@ -29,6 +29,7 @@ export class SimClient {
   #id = 0
   #spare: ArrayBuffer | null = null
   #spareCrowd: ArrayBuffer | null = null
+  #spareCraft: ArrayBuffer | null = null
   #queue: SimCommand[] = []
   #dropped = 0
   #closed = false
@@ -105,13 +106,17 @@ export class SimClient {
     this.#pending = true
     const cmds = this.#queue
     this.#queue = []
-    const buffer = this.#spare, crowdBuffer = this.#spareCrowd
+    const buffer = this.#spare, crowdBuffer = this.#spareCrowd, craftBuffer = this.#spareCraft
     this.#spare = null
     this.#spareCrowd = null
+    this.#spareCraft = null
     const transfer: ArrayBuffer[] = []
     if (buffer) transfer.push(buffer)
     if (crowdBuffer) transfer.push(crowdBuffer)
-    this.#worker.postMessage({ t: 'step', id: ++this.#id, ...input, cmds, buffer: buffer ?? undefined, crowdBuffer: crowdBuffer ?? undefined }, transfer)
+    if (craftBuffer) transfer.push(craftBuffer)
+    this.#worker.postMessage({
+      t: 'step', id: ++this.#id, ...input, cmds, buffer: buffer ?? undefined, crowdBuffer: crowdBuffer ?? undefined, craftBuffer: craftBuffer ?? undefined,
+    }, transfer)
     return true
   }
 
@@ -121,8 +126,9 @@ export class SimClient {
       const prev = this.#state
       this.#state = m
       this.#pending = false
-      // The previous frame's poses are no longer read once the new state is in: hand them back.
+      // The previous frame's poses and craft are no longer read once the new state is in: hand them back.
       this.#spare = prev.poses.buffer as ArrayBuffer
+      this.#spareCraft = prev.craft ? (prev.craft.buffer as ArrayBuffer) : null
       try {
         this.#onState?.(m, prev)
       } catch (e) {

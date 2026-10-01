@@ -17,7 +17,10 @@ import { test } from 'node:test'
 import { KERNEL, TRAFFIC } from './civic.ts'
 import { createRng } from './degrees.ts'
 import type { Intent } from './laws.ts'
-import { kernelPanic, panicReason, RING0, Ring0Auditor, type AuditPerson, type AuditResult, type AuditVehicle, type Violation } from './ring0.ts'
+import { auditCraft, CRAFT, kernelPanic, panicReason, RING0, Ring0Auditor, type AuditPerson, type AuditResult, type AuditVehicle, type Violation } from './ring0.ts'
+import { TRACKS, buildTrackNetwork } from '../06_Make_Decisions/tracks.ts'
+import { TRACK_KINDS, TRACK_POSE } from '../07_Execute_Actions/simProtocol.ts'
+import { TrackFleet } from '../07_Execute_Actions/trackFleet.ts'
 import { Driver } from '../06_Make_Decisions/traffic.ts'
 import { Physics } from '../07_Execute_Actions/physics.ts'
 import { Avatar } from '../07_Execute_Actions/player.ts'
@@ -777,4 +780,78 @@ test('NON_FINITE covers the pre-step velocity', () => {
   const r = audit().run([bad], [], false)
   assert.deepEqual(codes(r), ['NON_FINITE'])
   assert.match(r.violations[0].detail, /preVx=NaN/)
+})
+
+test('the craft buffer: a NaN or a train below its deck halts with a named reason; a healthy stream does not; a kind with no corridor halts; the layout is the protocol\'s, the floors the tracks\'', () => {
+  const fleet = new TrackFleet(buildTrackNetwork(1337))
+  const S = TRACK_POSE.stride
+  const buf = new Float32Array(fleet.length)
+  for (const t of [0, 12.5, 777.7, 3600]) assert.equal(auditCraft(fleet.writePoses(t, buf)), null, `clean at t ${t}`)
+  const kindOf = (i: number) => buf[i * S + TRACK_POSE.kind]
+  const first = (name: 'train' | 'drone' | 'plane') => Array.from({ length: fleet.count }, (_, i) => i).find((i) => kindOf(i) === TRACK_KINDS.indexOf(name))!
+  const train = first('train'), drone = first('drone'), plane = first('plane')
+  assert.ok(train >= 0 && drone >= 0 && plane >= 0)
+  const copy = () => Float32Array.from(buf)
+  // A NaN anywhere, or an Infinity, names the craft and the field.
+  let bad = copy()
+  bad[train * S + TRACK_POSE.z] = NaN
+  let v = auditCraft(bad)
+  assert.deepEqual(v, { code: 'NON_FINITE', subject: `craft ${train}`, detail: 'z=NaN' })
+  assert.equal(panicReason(v!), `IEEE 754 Exploit: Non-finite spatial matrix generated (craft ${train}: z=NaN).`)
+  bad = copy()
+  bad[drone * S + TRACK_POSE.speed] = Infinity
+  assert.deepEqual(auditCraft(bad), { code: 'NON_FINITE', subject: `craft ${drone}`, detail: 'speed=Infinity' })
+  // A train at y = 2 has left its deck.
+  bad = copy()
+  bad[train * S + TRACK_POSE.y] = 2
+  v = auditCraft(bad)
+  assert.deepEqual(v, { code: 'OFF_CORRIDOR', subject: `train craft ${train}`, detail: 'y=2.00m below its 9m floor' })
+  assert.equal(panicReason(v!), `Corridor Exploit: train craft ${train} left its corridor (y=2.00m below its 9m floor).`)
+  // A drone a hair under its band, a plane under its altitude; the upper drone band and the exact floors pass.
+  bad = copy()
+  bad[drone * S + TRACK_POSE.y] = 39.99
+  assert.deepEqual(auditCraft(bad), { code: 'OFF_CORRIDOR', subject: `drone craft ${drone}`, detail: 'y=39.99m below its 40m floor' })
+  bad[drone * S + TRACK_POSE.y] = 46
+  assert.equal(auditCraft(bad), null)
+  bad[drone * S + TRACK_POSE.y] = 40
+  assert.equal(auditCraft(bad), null)
+  bad = copy()
+  bad[plane * S + TRACK_POSE.y] = 399
+  assert.deepEqual(auditCraft(bad), { code: 'OFF_CORRIDOR', subject: `plane craft ${plane}`, detail: 'y=399.00m below its 400m floor' })
+  bad[plane * S + TRACK_POSE.y] = 400
+  assert.equal(auditCraft(bad), null)
+  // A kind with no corridor: a car (its place is the pose buffer and the audit's vehicle list), an unknown code, a fraction.
+  bad = copy()
+  bad[plane * S + TRACK_POSE.kind] = TRACK_KINDS.indexOf('car')
+  assert.deepEqual(auditCraft(bad), { code: 'OFF_CORRIDOR', subject: `craft ${plane}`, detail: 'kind 0 (car) has no corridor' })
+  bad[plane * S + TRACK_POSE.kind] = 7
+  assert.deepEqual(auditCraft(bad), { code: 'OFF_CORRIDOR', subject: `craft ${plane}`, detail: 'kind 7 (unknown) has no corridor' })
+  bad[plane * S + TRACK_POSE.kind] = 1.5
+  assert.deepEqual(auditCraft(bad), { code: 'OFF_CORRIDOR', subject: `craft ${plane}`, detail: 'kind 1.5 (unknown) has no corridor' })
+  bad[plane * S + TRACK_POSE.kind] = -1
+  assert.equal(auditCraft(bad)?.code, 'OFF_CORRIDOR')
+  // A buffer that is not a whole number of craft; an empty one is clean.
+  assert.deepEqual(auditCraft(buf.subarray(0, fleet.length - 1)), { code: 'OFF_CORRIDOR', subject: 'craft buffer', detail: `${fleet.length - 1} floats is not a whole number of craft` })
+  assert.equal(auditCraft(new Float32Array(0)), null)
+  // The first fault in buffer order is the one returned.
+  bad = copy()
+  bad[TRACK_POSE.y] = -1
+  bad[5 * S + TRACK_POSE.x] = NaN
+  assert.equal(auditCraft(bad)?.subject, `${TRACK_KINDS[kindOf(0)]} craft 0`)
+  // Its wording, like every other reason's, says nothing a 14A rating would refuse.
+  for (const r of [panicReason(v!), panicReason(auditCraft(bad)!)]) assert.doesNotMatch(r, /\b(attack|kill|target|weapon|shoot|injur|violence|hit|crash|collid|dead|blood)/i)
+  // The audit reads the protocol's layout and the tracks' floors (02 imports neither: the numbers are pinned equal here).
+  assert.equal(CRAFT.stride, TRACK_POSE.stride)
+  assert.equal(CRAFT.y, TRACK_POSE.y)
+  assert.equal(CRAFT.kind, TRACK_POSE.kind)
+  const names = Object.entries(TRACK_POSE).filter(([k]) => k !== 'stride').sort((a, b) => a[1] - b[1]).map(([k]) => k)
+  assert.deepEqual([...CRAFT.fields], names)
+  assert.deepEqual([...CRAFT.kinds], [...TRACK_KINDS])
+  assert.deepEqual([...CRAFT.floor], [NaN, TRACKS.train.deck, TRACKS.drone.altitude[0], TRACKS.plane.altitude])
+  // Frozen, like every other export.
+  const mutable = (o: unknown) => o as Record<string, unknown>
+  assert.throws(() => { mutable(CRAFT).stride = 1 }, TypeError)
+  assert.throws(() => { mutable(CRAFT.floor)[1] = -100 }, TypeError)
+  assert.throws(() => { mutable(auditCraft).disarmed = true }, TypeError)
+  for (const o of [CRAFT, CRAFT.floor, CRAFT.kinds, CRAFT.fields, auditCraft, RING0, kernelPanic, panicReason, Ring0Auditor, Ring0Auditor.prototype]) assert.ok(Object.isFrozen(o))
 })

@@ -11,6 +11,7 @@ import type { RegionGround } from './physics.ts'
 import type { KernelStats } from '../05_Observe_Environment/telemetry.ts'
 import type { CrowdSimStats } from '../03_Spawn_Agents/crowdSensor.ts'
 import type { CarTuning, DriveMode } from './car.ts'
+import type { TrackKind } from '../06_Make_Decisions/tracks.ts'
 
 /**
  * One vehicle's slice of the pose buffer (Float32Array, `POSE.stride` floats per vehicle, fleet order). The
@@ -39,6 +40,19 @@ export const ENTER_RANGE = 3.8
 /** DriveMode as it is stored in the pose buffer. */
 export const MODES: readonly DriveMode[] = ['ai', 'player', 'parked']
 
+/**
+ * One scheduled craft's slice of the craft buffer (Float32Array, `TRACK_POSE.stride` floats per craft): the train
+ * sets, drones and planes that follow the corridors of 06_Make_Decisions/tracks.ts on the realm's own clock
+ * (trackFleet.ts), in network order (track by track, each track's craft by index). `kind` is the craft's index in
+ * TRACK_KINDS, `track` its track id, `s` its arc length along the track (m) and `speed` its speed along it (m/s).
+ * The page only draws it; the Ring-0 audit reads it (every value finite, every craft at or above its corridor's
+ * floor) before it leaves the realm.
+ */
+export const TRACK_POSE = { x: 0, y: 1, z: 2, heading: 3, kind: 4, track: 5, s: 6, speed: 7, stride: 8 } as const
+
+/** TrackKind as it is stored in the craft buffer (index = code). Cars never appear in it: they are in the pose buffer. */
+export const TRACK_KINDS: readonly TrackKind[] = ['car', 'train', 'drone', 'plane']
+
 /** The page's one-time request to build the world in the worker. A second init is refused. */
 export interface SimInit {
   t: 'init'
@@ -56,6 +70,11 @@ export interface SimInit {
    * bounds and walls. Absent (or null) for the city.
    */
   region?: RegionGround | null
+  /**
+   * Seat the AI fleet on the fixed track network (06_Make_Decisions/tracks.ts, built in the worker from the seed) and
+   * drive it with track followers; anything but true keeps the random street-hopping drivers.
+   */
+  tracks?: boolean
 }
 
 /** Static facts about the world the worker built, sent once in `ready`. */
@@ -68,6 +87,8 @@ export interface SimMeta {
   paint: number[]
   person: { radius: number; halfHeight: number }
   debug: boolean
+  /** Scheduled craft (train sets, drones, planes) in every craft buffer, TRACK_POSE.stride floats each; 0 with tracks off. */
+  craft: number
 }
 
 /**
@@ -117,6 +138,8 @@ export interface StepRequest {
   buffer?: ArrayBuffer
   /** A crowd render frame's buffer handed back for reuse (transferred). */
   crowdBuffer?: ArrayBuffer
+  /** A craft buffer handed back for reuse (transferred). */
+  craftBuffer?: ArrayBuffer
 }
 
 export interface AvatarState {
@@ -213,6 +236,11 @@ export interface StepState {
    * (12 floats per agent), transferred. The page only draws it; the Bouncer reads the worker's own buffers.
    */
   crowdFrame: Float32Array | null
+  /**
+   * The scheduled craft (TRACK_POSE, `meta.craft` of them) where the realm's clock has them this step, transferred;
+   * null with tracks off, and from a halted realm (its clock has stopped, and a buffer that halted it never leaves).
+   */
+  craft: Float32Array | null
   /** Everyone the operator has asked over and not yet released. */
   recruits: RecruitView[]
   /** Messages and commands the worker refused since it started. */
