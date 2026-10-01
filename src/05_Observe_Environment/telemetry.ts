@@ -166,6 +166,11 @@ export interface SipocSnapshot {
     /** Ghost view is on: the physics shapes drawn as code over the frame (view-only). */
     ghost?: boolean
     /**
+     * Whether the city is drawn (engine.setRendering, the console's render knob). False is Track B's override: the
+     * canvas is black while physics, audio and the console keep running.
+     */
+    rendering?: boolean
+    /**
      * Ghost-mode collision's contact wipe (contact.ts): how far the iris of code is open (0..1), the kind the user's
      * body last passed through (GHOST_KIND; 0 none), and how many passages have played a wipe since boot.
      */

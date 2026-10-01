@@ -34,9 +34,10 @@ export interface TextStream {
 /**
  * `live`: redraw formatStats() in place until cancelled (lines are the first frame). `pending`: lines
  * that arrive later (a device picker, a script, a harness). `stream`: text shown live until `pending`
- * settles. `clear` wipes the screen, `close` hides the console.
+ * settles. `clear` wipes the screen, `close` hides the console, `boot` asks the host to reload the page on
+ * that track ('gui': the city; 'tty': the full-screen console alone, ?boot=tty).
  */
-export interface CommandResult { lines: Line[]; clear?: boolean; live?: 'stats'; close?: boolean; pending?: Promise<Line[]>; stream?: TextStream }
+export interface CommandResult { lines: Line[]; clear?: boolean; live?: 'stats'; close?: boolean; boot?: 'gui' | 'tty'; pending?: Promise<Line[]>; stream?: TextStream }
 
 /** Highest quality tier index (tiers are 0 = lowest … 4 = highest). */
 const MAX_TIER = 4

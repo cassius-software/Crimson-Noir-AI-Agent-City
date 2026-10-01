@@ -186,6 +186,15 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
     </div>
   )
 
+  // Render off (the console's render knob): the black canvas says why, and how to draw again. It outlives the
+  // H key like the recorder's chip: a blank screen is never left unexplained.
+  const renderChip = s.output.rendering === false && (
+    <div className={`flex max-w-full items-center gap-2 px-3 py-1.5 text-[11px] font-semibold ${panel}`} data-hint="render">
+      <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400" />
+      <span className="truncate">RENDER OFF · console only · render on</span>
+    </div>
+  )
+
   // Compact: the toasts stack under the header, so only as many as clear the touch stick below them
   // (one, on a single body line, on a phone held in landscape).
   const tight = compact && short
@@ -225,6 +234,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
             {recChip}
             {micChip}
             {ghostChip}
+            {renderChip}
           </div>
 
           <div className={`absolute top-0 right-0 w-72 px-5 py-4 ${panel}`}>
@@ -342,6 +352,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
             {recChip}
             {micChip}
             {ghostChip}
+            {renderChip}
             <div className="flex w-68 max-w-full flex-col gap-2">{toasts}</div>
           </div>
 
@@ -373,6 +384,12 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
             {rc?.listening && micChip}
           </div>
           {captionStrip && <div className="absolute bottom-0 left-1/2 w-max max-w-full -translate-x-1/2">{captionStrip}</div>}
+        </div>
+      )}
+
+      {!visible && renderChip && (
+        <div className={compact ? FRAME_COMPACT : FRAME_WIDE}>
+          <div className="absolute top-0 left-1/2 max-w-full -translate-x-1/2">{renderChip}</div>
         </div>
       )}
     </div>

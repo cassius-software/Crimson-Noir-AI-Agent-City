@@ -292,6 +292,7 @@ function fake(): Fake {
     },
     audio: (arg) => { f.calls.push(`audio ${arg}`); return `audio status ${arg ?? '-'}` },
     ghost: (arg) => { f.calls.push(`ghost ${arg}`); return arg ?? 'off' },
+    render: (arg) => { f.calls.push(`render ${arg}`); return arg ?? 'on' },
     hal: {
       summary: () => `${f.devs.length} device(s)`,
       devices: () => f.devs,

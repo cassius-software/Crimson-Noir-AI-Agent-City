@@ -148,7 +148,8 @@ export interface MemoryBridge {
  * only report. A method may throw; the terminal prints the message and carries on.
  */
 export interface TerminalBridge {
-  readonly brand: { name: string; version: string; host: string }
+  /** `track`: which shell mounted the console: 'gui' (the city, the engine's bridge) or 'tty' (?boot=tty: the full-screen console alone). */
+  readonly brand: { name: string; version: string; host: string; track?: 'gui' | 'tty' }
   stats(): Ring0Stats
   laws(): readonly LawText[]
   /** Local solar time as HH:MM. */
@@ -164,6 +165,11 @@ export interface TerminalBridge {
   adapter(): string
   /** Ghost view (view-only: the physics shapes drawn as code over the frame): on, off, or the status line. */
   ghost(arg?: 'on' | 'off'): string
+  /**
+   * Drawing the city (view-only: physics, audio and this console keep running while it is off and the canvas stays
+   * black): on, off, or the status line ('on' | 'off').
+   */
+  render(arg?: 'on' | 'off'): string
   operator: OperatorBridge
   record: RecordBridge
   /** Absent until the host has built its recruiter (the terminal then says so). */
@@ -208,6 +214,7 @@ export function offlineBridge(brand: TerminalBridge['brand']): TerminalBridge {
     hal: { summary: down, devices: down, pair: down },
     adapter: () => '',
     ghost: down,
+    render: down,
     operator: {
       unlock: down, lock: down, unlocked: down, exec: down, tuning: down, tune: down,
       ask: down, askStatus: down, askSet: down, askStop: down, say: down, sayStatus: down, saySet: down, sayStop: down,

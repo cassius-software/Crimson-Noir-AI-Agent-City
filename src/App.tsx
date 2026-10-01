@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Engine, type EngineOptions } from './07_Execute_Actions/engine.ts'
 import { Hud } from './07_Execute_Actions/Hud.tsx'
 import { Terminal } from './07_Execute_Actions/terminal/Terminal.tsx'
-import type { TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
+import { offlineBridge, type TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
 import { hudLine, recruitBridge, Recruiter } from './08_Swarm/recruitment.ts'
 import { TaskRouter } from './08_Swarm/taskRouter.ts'
 import { deferredLedger, followRecruiter, indexedDbLedger, memoryBridge, SwarmMemory } from './08_Swarm/memory.ts'
@@ -68,7 +68,26 @@ async function loadRegion(): Promise<RegionPack | null> {
   return validatePack(JSON.parse(text))
 }
 
-function readOptions(): EngineOptions & { debug: boolean } {
+/** Which shell the page boots: 'gui' (the city) or 'tty' (?boot=tty: the full-screen console alone, no engine). */
+type BootTrack = 'gui' | 'tty'
+
+type Options = EngineOptions & { debug: boolean; boot: BootTrack }
+
+/** The console's bridge in the TTY shell: no engine exists, so everything but the identity commands says so. */
+const TTY_BRIDGE: TerminalBridge = offlineBridge({ ...BRAND, track: 'tty' })
+
+/**
+ * Reloads the page on `track` (Track B's `boot gui|tty`): the URL keeps every other option. A reload, not a
+ * remount: no engine teardown races, and the single file needs no server.
+ */
+function reboot(track: BootTrack): void {
+  const url = new URL(window.location.href)
+  if (track === 'tty') url.searchParams.set('boot', 'tty')
+  else url.searchParams.delete('boot')
+  window.location.assign(url.toString())
+}
+
+function readOptions(): Options {
   const q = new URLSearchParams(window.location.search)
   const num = (key: string, fallback: number, min: number, max: number) => {
     const v = Number(q.get(key))
@@ -93,6 +112,8 @@ function readOptions(): EngineOptions & { debug: boolean } {
     // Closed captions of every spatial sound (captions.ts); ?captions=0 keeps the HUD's strip empty.
     captions: q.get('captions') !== '0',
     debug: q.has('debug'),
+    // Track B: ?boot=tty mounts the full-screen console alone (no canvas, no engine, no WebGPU, no worker, no audio).
+    boot: q.get('boot') === 'tty' ? 'tty' : 'gui',
     // The AI fleet on fixed tracks (zero-jam rings); ?tracks=0 restores the random street-hopping routes.
     tracks: q.get('tracks') !== '0',
     // The cinema camera (24 fps, 180° shutter, ND, film response); ?cinema=0 draws every frame with ACES.
@@ -100,7 +121,29 @@ function readOptions(): EngineOptions & { debug: boolean } {
   }
 }
 
+const noop = (): void => {}
+
+/**
+ * Track B: the bare console. Nothing of the city is built: no canvas, no Engine.create, no WebGPU adapter request,
+ * no physics worker, no audio, no HUD. The terminal runs over the offline bridge (the identity commands work; the
+ * rest says 'engine not running'); a `boot gui` result reloads into the city.
+ */
+function TtyShell() {
+  return (
+    <main className="relative h-full w-full overflow-hidden bg-black">
+      <Terminal bridge={TTY_BRIDGE} fullscreen onOpenChange={noop} onBoot={reboot} />
+    </main>
+  )
+}
+
 function App() {
+  // Read once: the boot track decides which shell mounts, so the hooks of each shell live in that shell.
+  const [options] = useState(readOptions)
+  return options.boot === 'tty' ? <TtyShell /> : <GuiShell options={options} />
+}
+
+/** The city: the engine over the canvas, the HUD, the Concierge, the touch controls and the drop-down console. */
+function GuiShell({ options }: { options: Options }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const engineRef = useRef<Engine | null>(null)
   const termOpenRef = useRef(false)
@@ -153,7 +196,6 @@ function App() {
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const options = readOptions()
     let engine: Engine | null = null
     let recruiter: Recruiter | null = null
     let router: TaskRouter | null = null
@@ -284,7 +326,7 @@ function App() {
       if ((window as { recruit?: unknown }).recruit) delete (window as { recruit?: unknown }).recruit
       engine?.dispose()
     }
-  }, [])
+  }, [options])
 
   return (
     <main className="relative h-full w-full overflow-hidden bg-slate-900">
@@ -304,7 +346,7 @@ function App() {
           onIntent={applyIntent}
         />
       )}
-      <Terminal bridge={bridge} onOpenChange={onTermOpen} />
+      <Terminal bridge={bridge} onOpenChange={onTermOpen} onBoot={reboot} />
       {/* From the first render: React swaps index.html's identical splash for this, which fades into the city
           once the first snapshot exists (or lifts to show the error card). */}
       <BootVeil ready={hud !== null || error !== null} onDone={() => setVeilDone(true)} />

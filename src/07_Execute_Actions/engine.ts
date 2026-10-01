@@ -210,6 +210,11 @@ export class Engine {
   private readonly lastMark: CameraMark = { x: 0, y: 0, z: 0, seat: -1 }
   private marked = false
   private readonly mark: CameraMark = { x: 0, y: 0, z: 0, seat: -1 }
+  /**
+   * Whether present() draws (setRendering). Off is Track B's override: the console has the screen, the canvas is
+   * black, and everything else in frame() (the step requests, the head, the haptics, the audio) runs as before.
+   */
+  private rendering = true
   /** The camera's projection × view at the last presented frame. */
   private readonly lastViewProjection = new Matrix4()
   private lastPresentMs = Number.NaN
@@ -478,6 +483,26 @@ export class Engine {
   }
 
   /**
+   * Drawing on or off (Track B's override: the console takes the screen). Off, present() draws nothing and the
+   * canvas is cleared once to black; the physics realm, the step requests, the head, the haptics, the audio and the
+   * console keep running, and the governor holds its tier (frames without a draw would read as cheap). On again, the
+   * first frame drawn is a cut. View-only: nothing reaches the physics realm. Returns the status line the console
+   * prints.
+   */
+  setRendering(on: boolean): string {
+    const off = 'off: physics, audio and the console run; nothing is drawn (render on)'
+    if (on === this.rendering) return on ? 'on' : off
+    this.rendering = on
+    if (on) {
+      // The shutter has nothing to smear from: the next presented frame is a cut.
+      this.marked = false
+      return 'on'
+    }
+    this.gpu.renderer.clear()
+    return off
+  }
+
+  /**
    * Ghost view on or off: the physics shapes as code over the finished frame (ghost.ts). View-only: nothing reaches
    * the physics realm. It lives in the post chain, so the chain stays on at every tier while it shows. Returns the
    * status line the toast and the console print.
@@ -701,8 +726,9 @@ export class Engine {
     const realDt = this.lastMs < 0 ? 16.7 : nowMs - this.lastMs
     this.lastMs = nowMs
     this.clock.push(realDt)
-    // The governor reads the raw frame interval (not the clamped simulation step).
-    if (this.quality.governor.sample(realDt, nowMs) !== null) this.applyTier()
+    // The governor reads the raw frame interval (not the clamped simulation step); it holds while nothing is drawn
+    // (setRendering), since an idle GPU would read as room to step the tier up.
+    if (this.rendering && this.quality.governor.sample(realDt, nowMs) !== null) this.applyTier()
     const dt = Math.min(realDt / 1000, 0.05)
     this.simTime += dt
     this.hours = (this.hours + (dt / (this.options.dayMinutes * 60)) * 24) % 24
@@ -814,6 +840,11 @@ export class Engine {
 
   /** One drawn frame: the cull for this camera, the city's light, the cinema camera's uniforms, the render. */
   private present(nowMs: number, st: StepState, focusX: number, focusZ: number): void {
+    // Render off (setRendering): nothing is drawn, but the sun keeps its place for the listener and the snapshot.
+    if (!this.rendering) {
+      this.sun = sunAt(this.hours)
+      return
+    }
     const cam = this.world.camera
     this.projScreen.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)
     this.frustum.setFromProjectionMatrix(this.projScreen)
@@ -1107,6 +1138,7 @@ export class Engine {
         gpuRenderMs: this.gpuRenderMs, gpuComputeMs: this.crowd.gpuMs, physicsMs: st.physics.workerMs, rapierMs: st.physics.stepMs,
         postMs: this.postMs,
         ghost: this.ghost.on,
+        rendering: this.rendering,
         contact: { wipe: this.contactPulse.value, kind: this.contactPulse.kind, count: this.contactPulse.count },
         dissolve: { active: this.dissolve.active, count: this.dissolve.count },
         ...(pings && { pings }),
@@ -1152,7 +1184,7 @@ export class Engine {
     const audio = this.audio
     const governor = this.quality.governor
     this.bridge = Object.freeze({
-      brand: Object.freeze({ name: BRAND.name, version: BRAND.version, host: BRAND.host }),
+      brand: Object.freeze({ name: BRAND.name, version: BRAND.version, host: BRAND.host, track: 'gui' as const }),
       stats: () => ring0Stats(this.snapshot(), this.sim.state.physics),
       laws: () => THREE_LAWS,
       clock: () => formatClock(this.hours),
@@ -1174,6 +1206,7 @@ export class Engine {
       hal: Object.freeze({ summary: () => hal.summary(), devices: () => hal.devices(), pair: (k: 'hid' | 'serial' | 'bluetooth') => hal.pair(k) }),
       adapter: () => this.adapter,
       ghost: (arg?: 'on' | 'off') => (arg === undefined ? (this.ghost.on ? 'on' : 'off') : this.setGhost(arg === 'on')),
+      render: (arg?: 'on' | 'off') => (arg === undefined ? (this.rendering ? 'on' : 'off') : this.setRendering(arg === 'on')),
       // The operator tier: unlockable, sandboxed, built over simControls() (never over the engine itself), its
       // scripts bound to the swarm through the gate.
       operator: operatorBridge(this.simControls(), gate, mind, undefined, { voice, speech: this.speechOut(), diary }),
