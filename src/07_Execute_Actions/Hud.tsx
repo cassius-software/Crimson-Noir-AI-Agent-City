@@ -4,9 +4,9 @@
  * frosted-glass panels that go dark after sunset, the brand mark and the visitor's name, a rotating radar
  * minimap, a speedometer with the posted limit, live signal state, quality tier and Ring-0 kernel
  * counters, the cinema camera's frame rate, shutter and ND beside the input rate, notifications, a REC chip
- * while the .agv recorder runs, and glyph-aware control hints (the
- * enter-vehicle prompt and, until the player is under way, a small capture-and-controls chip) that
- * switch silently to a controller's glyphs.
+ * while the .agv recorder runs, the operator's pings (a ring on the minimap per ping and, for the newest, a
+ * chip over the world with its distance), and glyph-aware control hints (the enter-vehicle prompt and, until
+ * the player is under way, a small capture-and-controls chip) that switch silently to a controller's glyphs.
  * Onboarding is zero-click: there is no title card; the Concierge (Concierge.tsx) greets the player.
  * On phones and touch devices (or any small window) it switches to a compact layout that keeps the
  * bottom corners free for the touch controls: stick bottom-left, buttons bottom-right. A phone held in
@@ -16,12 +16,15 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react'
 import { CITY, CITY_SIZE, LAKE, districtOfLot } from '../01_Initialize_World/city.ts'
 import { TRAFFIC } from '../02_Define_The_Rules/civic.ts'
-import type { Light, SipocSnapshot } from '../05_Observe_Environment/telemetry.ts'
+import type { HudPing, Light, SipocSnapshot } from '../05_Observe_Environment/telemetry.ts'
 import { BRAND } from '../brand.ts'
 import { MonolithLogo } from '../MonolithLogo.tsx'
 import { controlHints, glyph, glyphKind, spokenGlyph, type ControlAction, type GlyphKind } from './glyphs.ts'
 
 const LIGHT_COLOR: Record<Light, string> = { green: 'bg-emerald-400', amber: 'bg-amber-400', red: 'bg-rose-500' }
+/** A ping's colour by what it asks, on the minimap and the chip. */
+const PING_COLOR: Record<HudPing['kind'], string> = { go: '#f59e0b', look: '#0ea5e9', gather: '#a855f7', wait: '#94a3b8' }
+const PING_WORD: Record<HudPing['kind'], string> = { go: 'go there', look: 'look there', gather: 'gather there', wait: 'wait there' }
 const LIMIT_KMH = Math.round(TRAFFIC.speedLimit * 3.6)
 
 /** Panels sit inside this frame: a fixed gap from the edges, or the safe-area inset where that is larger. */
@@ -155,6 +158,23 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
       {captions.map((line, i) => (
         <div key={`${i}:${line}`} className="max-w-full truncate text-center">{line}</div>
       ))}
+    </div>
+  )
+
+  // The newest ping, over the world where it landed (the engine projects it; off screen it is on the minimap alone):
+  // what it asks, what it landed on, and how far it is.
+  const newestPing = s.output.pings?.at(-1)
+  const pingChip = newestPing && Number.isFinite(newestPing.sx) && Number.isFinite(newestPing.sy) && (
+    <div
+      className="absolute flex -translate-x-1/2 -translate-y-full flex-col items-center"
+      style={{ left: `${(newestPing.sx * 100).toFixed(2)}%`, top: `${(newestPing.sy * 100).toFixed(2)}%`, opacity: Math.min(1, 0.35 + newestPing.left / 4) }}
+      data-hint="ping"
+    >
+      <div className={`flex items-center gap-2 px-3 py-1.5 text-[11px] font-semibold tabular-nums whitespace-nowrap ${panel}`}>
+        <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: PING_COLOR[newestPing.kind] }} />
+        <span>{PING_WORD[newestPing.kind]} · {pingWhat(newestPing)} · {newestPing.distance.toFixed(0)} m</span>
+      </div>
+      <span className="h-3 w-px" style={{ background: PING_COLOR[newestPing.kind] }} />
     </div>
   )
 
@@ -344,6 +364,8 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
         </div>
       )}
 
+      {visible && pingChip}
+
       {!visible && (recChip || rc?.listening || captionStrip) && (
         <div className={compact ? FRAME_COMPACT : FRAME_WIDE}>
           <div className="absolute top-0 left-0 flex max-w-full flex-col items-start gap-2">
@@ -355,6 +377,11 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
       )}
     </div>
   )
+}
+
+/** What a ping landed on: 'a spot', 'person 12', 'car 3', 'pole 7'. */
+function pingWhat(p: HudPing): string {
+  return p.pick === 'point' ? 'a spot' : `${p.pick} ${p.index}`
 }
 
 function skyLabel(daylight: number): string {
@@ -503,6 +530,22 @@ function Minimap({ s, dark, ui, className, layer = null }: { s: SipocSnapshot; d
       ctx.fillStyle = car.player ? '#2563eb' : dark ? '#94a3b8' : '#64748b'
       ctx.beginPath()
       ctx.roundRect(-0.95, -2.3, 1.9, 4.6, 0.6)
+      ctx.fill()
+      ctx.restore()
+    }
+    // The operator's pings: a ring per mark, its colour by what it asks, fading over its last seconds.
+    for (const p of s.output.pings ?? []) {
+      if (Math.abs(p.x - x) > 150 || Math.abs(p.z - z) > 150) continue
+      ctx.save()
+      ctx.globalAlpha = Math.max(0.25, Math.min(1, p.left / 3))
+      ctx.strokeStyle = PING_COLOR[p.kind]
+      ctx.fillStyle = PING_COLOR[p.kind]
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.arc(p.x, p.z, 3.2, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.arc(p.x, p.z, 1.1, 0, Math.PI * 2)
       ctx.fill()
       ctx.restore()
     }

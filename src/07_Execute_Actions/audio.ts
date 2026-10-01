@@ -1230,11 +1230,12 @@ export class Soundscape {
   }
 
   /** The ping's cue where (x, z) is (08_Swarm/ping.ts): a mark the operator set. As cue(), on the same voices. */
-  cuePing(x: number, z: number): boolean {
-    return this.shot('ping', x, z)
+  cuePing(x: number, z: number, label?: string): boolean {
+    return this.shot('ping', x, z, label)
   }
 
-  private shot(kind: 'cue' | 'ping', x: number, z: number): boolean {
+  /** One shot on the cue voices; `label` names it in its caption (a ping's word and what it marked). */
+  private shot(kind: 'cue' | 'ping', x: number, z: number, label?: string): boolean {
     const ctx = this.ctx, g = this.graph
     if (!ctx || !g || !this.enabled || ctx.state !== 'running' || !representable(x) || !representable(z)) return false
     try {
@@ -1265,7 +1266,7 @@ export class Soundscape {
       slot.x = x
       slot.z = z
       slot.until = now + 0.01 + buffer.length / buffer.sampleRate
-      this.emit(kind, 'start', index, x, z, now)
+      this.emit(kind, 'start', index, x, z, now, label === undefined ? undefined : { label })
       return true
     } catch {
       this.fail()

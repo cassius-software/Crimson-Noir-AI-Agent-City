@@ -226,6 +226,10 @@ function App() {
         // The local speech server (only ever asked on the operator's command, only on this machine): the audio it
         // returns is placed by the engine's soundscape at the speaker's head.
         const voice = createLocalSpeech({ fetch: (url, init) => window.fetch(url, init), store: pageStore(SPEECH_KEY) })
+        // A walk ping (go or gather) at a sidewalk point near the operator asks an Active recruit over to it: the engine
+        // plans it from its own copies (08_Swarm/ping.ts rallyPlan), the recruiter checks the page's copy, the physics
+        // realm decides on its own readings; its answer is a toast either way.
+        e.onRally = (req) => { void r.rally(req.agent, req.x, req.z).then((o) => e.toast('Rally', o.message)) }
         e.onHalt = (reason) => {
           unfollow?.()
           tasks.dispose()
@@ -253,6 +257,8 @@ function App() {
               interact: () => e.interact(),
               hold: (code: string, on: boolean) => e.input.hold(code, on),
               look: (yaw: number, pitch: number) => { e.input.yaw = yaw; e.input.pitch = pitch },
+              // A ping where the head looks (the Q key's path), as plain data: what it met and where.
+              ping: (kind: 'go' | 'look' | 'gather' | 'wait' = 'go') => e.pingAt(kind),
               // Headless browsers cannot take pointer lock; this hides the capture hint for screenshots.
               pretendLocked: () => { e.input.locked = true },
               // The physics realm as the harness sees it: the mirrored state, the command queue (dbg* accepted), the next state.

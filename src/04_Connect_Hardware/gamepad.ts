@@ -51,7 +51,7 @@ export const PAD_TUNING = {
 } as const
 
 /** Edge bits returned by PadMapper.read(). */
-export const PAD_EDGE = { interact: 1, reset: 2, timeForward: 4, timeBack: 8 } as const
+export const PAD_EDGE = { interact: 1, reset: 2, timeForward: 4, timeBack: 8, ping: 16 } as const
 
 /**
  * Radial dead zone with rescale; square-gate corners are clamped to magnitude 1. NaN or ±Infinity (a broken
@@ -184,6 +184,8 @@ export class PadMapper {
       if (rising & (1 << PAD.north)) edges |= PAD_EDGE.reset
       if (rising & (1 << PAD.left)) edges |= PAD_EDGE.timeBack
       if (rising & (1 << PAD.right)) edges |= PAD_EDGE.timeForward
+      // The right shoulder: a ping, reachable with the thumbs on the sticks, walking or steering.
+      if (rising & (1 << PAD.r1)) edges |= PAD_EDGE.ping
       if (rising & (1 << PAD.l3)) l3 = true
       if (bits & (1 << PAD.east)) out.handbrake = true
       if (bits !== 0 || move > 0 || look > 0 || throttle > 0 || brake > 0) {

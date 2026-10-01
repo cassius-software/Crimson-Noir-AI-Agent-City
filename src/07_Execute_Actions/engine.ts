@@ -10,11 +10,13 @@
  * own) runs in a dedicated worker (physics.worker.ts): this file only sends it controls and commands, and draws
  * the plain numbers it sends back — the cars' poses and the pedestrians' render frames. It exposes a SIPOC X
  * snapshot for the HUD, the only bridge the Ring-0 terminal may use, and the narrow host recruitment uses (the
- * operator's position, the states, two commands, a sound cue). App.tsx owns the requestAnimationFrame loop and
- * calls frame().
+ * operator's position, the states, two commands, a sound cue). The operator's ping (08_Swarm/ping.ts) is resolved
+ * here from the head's look ray against the page's own copies (never the realm) and kept on a board the HUD
+ * draws; a walk ping is handed to the host's recruiter (onRally) as a plain request the physics realm re-validates.
+ * App.tsx owns the requestAnimationFrame loop and calls frame().
  * What breaks if it is removed? Nothing runs; every module is inert without this orchestration.
  */
-import { Frustum, Matrix4, type RenderPipeline, type UniformNode } from 'three/webgpu'
+import { Frustum, Matrix4, Vector3, type RenderPipeline, type UniformNode } from 'three/webgpu'
 import { BRAND } from '../brand.ts'
 import { buildWorld, createRenderer, gpuBufferOf, LIGHT_TUNE_RANGE, ndStopsFor, type Gpu, type LightTuning, type World } from '../01_Initialize_World/world.ts'
 import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
@@ -35,7 +37,7 @@ import type { AgentTelemetry } from '../05_Observe_Environment/agv.ts'
 import { Governor, defaultAgents, profileDevice, readDeviceHints, tierRange, type QualityKnobs } from '../05_Observe_Environment/governor.ts'
 import { CAR_TUNE_RANGE, chassisBox, clampTuning, type CarTuning } from './car.ts'
 import { FleetView } from './fleetView.ts'
-import { HeadRig, carriedYaw, yawFacing } from './head.ts'
+import { HeadRig, aimRay, carriedYaw, yawFacing, type AimRay } from './head.ts'
 import { SimClient } from './simClient.ts'
 import { applyWalk, requestWalk, type ScriptedWalk } from './scriptedWalk.ts'
 import { ENTER_RANGE, MODES, PERSON, POSE, RUN, WALK, type DriveControls, type FootControls, type SimCommand, type StepState } from './simProtocol.ts'
@@ -52,6 +54,7 @@ import { roomAt } from './acoustics.ts'
 import { CaptionTrack, captionText } from './captions.ts'
 import { ring0Stats, type TerminalBridge } from './terminal/bridge.ts'
 import { familyOf, glyph } from './glyphs.ts'
+import { PING_KINDS, PING_WORDS, PingBoard, pickPing, rallyPlan, type Ping, type Pick, type PingKind, type RallyRequest } from '../08_Swarm/ping.ts'
 
 export interface EngineOptions {
   /** Pedestrians to simulate; absent: as many as the device profile allows (governor.ts defaultAgents). */
@@ -112,6 +115,9 @@ const MAX_STEP_DT = 0.1
 const CROWD_COPY_MS = 250
 
 const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th'}`
+/** What a ping landed on, for its caption: 'a spot', 'person 12', 'car 3', 'pole 7'. */
+const pingWhat = (p: Ping): string => (p.pick === 'point' ? 'a spot' : `${p.pick} ${p.index}`)
+
 /** The 2 m cell of a point as one number (NaN for a point that is not finite), for the room caches. */
 const cellOf = (x: number, z: number): number => (Number.isFinite(x + z) ? Math.floor(x / 2) * 1e6 + Math.floor(z / 2) : Number.NaN)
 
@@ -243,6 +249,19 @@ export class Engine {
   /** Every pedestrian's x, z from the newest crowd frame, refreshed at most CROWD_COPY_MS apart (SimControls.crowd.positions). */
   private crowdXZ = new Float32Array(0)
   private crowdCopiedAt = -Infinity
+  /** Every pedestrian's x, y, z, heading from the same copy (the ping's capsules, 08_Swarm/ping.ts PingWorld.frame). */
+  private crowdPose = new Float32Array(0)
+  /** The ping: the head's look ray, the last thing it met, the board of marks standing, and a point to project them. */
+  private readonly ray: AimRay = { ox: 0, oy: 0, oz: 0, dx: 0, dy: 0, dz: -1 }
+  private readonly lastPick: Pick = { kind: 'point', index: -1, x: 0, y: 0, z: 0, distance: 0 }
+  private readonly pings = new PingBoard()
+  private readonly pingPoint = new Vector3()
+  /**
+   * The host's rally hand-off (App.tsx: the recruiter's rally): called with the plain request a walk ping (go or
+   * gather) makes for an Active recruit once rallyPlan allows it; the recruiter checks the page's copy and the physics
+   * realm decides on its own readings. Null: a ping is a mark and nothing more. The engine never sends a rally itself.
+   */
+  onRally: ((request: RallyRequest) => void) | null = null
   /** Real-time end of the current haptic thump (ms, rAF clock). */
   private pulseUntil = 0
   private readonly foot: FootControls = { x: 0, z: 0, heading: 0 }
@@ -475,6 +494,76 @@ export class Engine {
     this.sim.send({ c: 'interact' })
   }
 
+  /**
+   * A ping of `kind` where the head looks (08_Swarm/ping.ts): the look ray (head.ts aimRay, on foot or at the wheel)
+   * meets the page's own copies — the pedestrians' capsules in the crowd copy, the cars' chassis in the newest poses,
+   * the lamps, trees and signal poles, else the ground — and the mark goes on the board, is cued and captioned where
+   * it landed, and, for a walk ping (go or gather), is offered to the host's recruiter through onRally. Returns what
+   * the ray met as plain data, or null when nothing was within range, the board refused (less than PING_INTERVAL_S
+   * after the last, an unknown kind) or the city has stopped. Nothing here reaches the physics realm.
+   */
+  pingAt(kind: PingKind): Pick | null {
+    if (this.halted || this.disposed || !PING_KINDS.includes(kind)) return null
+    aimRay(this.rig.pose, this.ray)
+    const s = this.sim.state
+    const met = pickPing(this.ray, { frame: this.crowdPose, agents: this.options.agents, poses: s.poses, suv: this.sim.meta.suv, furniture: this.world.furniture }, this.lastPick)
+    if (!met) return null
+    const ping = this.pings.place(kind, this.lastPick, this.simTime)
+    if (!ping) return null
+    const pick = { kind: ping.pick, index: ping.index, x: ping.x, y: ping.y, z: ping.z, distance: this.lastPick.distance }
+    // Cued and captioned where it landed: the cue's own 'ping' event carries this label into the captions.
+    this.audio.cuePing(ping.x, ping.z, `${PING_WORDS[kind]}: ${pingWhat(ping)}`)
+    if (ping.kind === 'go' || ping.kind === 'gather') this.rallyFor(ping)
+    return pick
+  }
+
+  /** The kind the key, button or touch asks: 'go', or the kind after the newest ping's when it was placed within a second. */
+  private pingKindFor(now: number): PingKind {
+    const newest = this.pings.newest(now)
+    if (!newest || now - newest.at >= 1) return 'go'
+    return PING_KINDS[(PING_KINDS.indexOf(newest.kind) + 1) % PING_KINDS.length]
+  }
+
+  /**
+   * A walk ping as a rally: rallyPlan (08_Swarm/ping.ts) turns it into the plain request for one Active recruit (a go
+   * ping) or one per Active recruit (a gather ping), or says why not; a request goes to the host (onRally), a reason to
+   * a toast. Quiet while nobody is tethered: a ping then is a mark and nothing more.
+   */
+  private rallyFor(ping: Ping): void {
+    const st = this.sim.state
+    const recruits = st.recruits
+    if (!recruits.some((r) => r.arrived)) return
+    const operator = st.driving >= 0 ? null : { x: this.rig.pose.x, z: this.rig.pose.z }
+    const agents = ping.kind === 'gather' ? recruits.filter((r) => r.arrived).map((r) => r.agent) : [undefined]
+    for (const agent of agents) {
+      const plan = rallyPlan(this.pings, recruits, operator, this.simTime, agent)
+      if (plan.request) {
+        const fn = this.onRally
+        if (fn) {
+          try { fn(plan.request) } catch (e) { this.errors.push(`rally: ${e instanceof Error ? e.message : String(e)}`) }
+        }
+      } else {
+        this.toast('Rally', plan.reason)
+      }
+    }
+  }
+
+  /** The pings standing now as the HUD draws them: the board's marks with their distance from the head and their place on the screen. */
+  private pingMarks(): SipocSnapshot['output']['pings'] {
+    const alive = this.pings.alive(this.simTime)
+    if (alive.length === 0) return undefined
+    const cam = this.world.camera, eye = this.rig.pose, v = this.pingPoint, now = this.simTime
+    return alive.map((p) => {
+      v.set(p.x, p.y, p.z).project(cam)
+      const ahead = v.z < 1 && Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1
+      return {
+        id: p.id, kind: p.kind, pick: p.pick, index: p.index, x: p.x, z: p.z, age: now - p.at, left: p.until - now,
+        distance: Math.hypot(p.x - eye.x, p.y - eye.y, p.z - eye.z),
+        sx: ahead ? (v.x + 1) / 2 : Number.NaN, sy: ahead ? (1 - v.y) / 2 : Number.NaN,
+      }
+    })
+  }
+
   /** A new state from the physics realm: what changed for the player, the distance counters, the haptic edge. */
   private received(s: StepState, prev: StepState): void {
     this.fresh = true
@@ -489,6 +578,8 @@ export class Engine {
           this.crowdXZ[2 * i] = frame[4 * i]
           this.crowdXZ[2 * i + 1] = frame[4 * i + 2]
         }
+        if (this.crowdPose.length !== 4 * n) this.crowdPose = new Float32Array(4 * n)
+        this.crowdPose.set(frame.subarray(0, 4 * n))
         this.crowdCopiedAt = now
       }
     }
@@ -695,6 +786,10 @@ export class Engine {
       this.avatarHeading = input.yaw + Math.PI
       this.rig.onFoot(cam, av.x, av.feetY, av.z, input.yaw, input.pitch, dt)
     }
+
+    // The ping (08_Swarm/ping.ts): the look ray from the head just posed meets the page's own copies, never the realm.
+    // A press within a second of the last ping asks the next kind (go, look, gather, wait); the board rates and bounds it.
+    if (input.take('ping')) this.pingAt(this.pingKindFor(this.simTime))
 
     // Ghost-mode collision: what the user's body passes through this frame shapes the contact wipe (drawn frames read it).
     // On the wall clock (the pulse bounds a step itself), not the simulation's capped step: at a low frame rate the
@@ -981,6 +1076,7 @@ export class Engine {
     const phase = ((st.simTime % SIGNAL.cycle) + SIGNAL.cycle) % SIGNAL.cycle
     const next = [SIGNAL.ewGreen, SIGNAL.ewAmber, SIGNAL.nsGreen, SIGNAL.cycle].find((b) => b > phase) ?? SIGNAL.cycle
     const kernel = this.kernelStats()
+    const pings = this.pingMarks()
     const fps = mean > 0 ? 1000 / mean : 0
     const clock = formatClock(this.hours)
     const speedKmh = Math.abs(speed) * 3.6
@@ -1013,6 +1109,7 @@ export class Engine {
         ghost: this.ghost.on,
         contact: { wipe: this.contactPulse.value, kind: this.contactPulse.kind, count: this.contactPulse.count },
         dissolve: { active: this.dissolve.active, count: this.dissolve.count },
+        ...(pings && { pings }),
         ...(this.pacer && {
           camera: {
             fps: this.pacer.fps(this.lastMs), shutterS: this.quality.live.post ? SHUTTER_SECONDS : 0,

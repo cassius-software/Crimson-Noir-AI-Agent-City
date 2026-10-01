@@ -3,8 +3,9 @@
  * canvas as EventTargets, pointer capture and pointer lock simulated) to prove the first-person look
  * contract: no zoom and no wheel handling, dragging with the primary button turns the head without pointer
  * lock, a click (no drag) captures the pointer, pitch is clamped to ±PITCH_LIMIT, the terminal and lost
- * focus end a drag, touch drag uses first-person sensitivity, the right stick turns the head, and
- * `padFamily` follows the controller used last.
+ * focus end a drag, touch drag uses first-person sensitivity, the right stick turns the head,
+ * `padFamily` follows the controller used last, and the ping is one edge from Q, the middle mouse button
+ * (never a drag) and a pad's right shoulder.
  * What breaks if it is removed? A regression to orbit-camera input (a wheel zoom, a click that must come
  * first, an unclamped pitch that flips the view) could ship unnoticed.
  */
@@ -166,6 +167,46 @@ test('only the primary mouse button drags; touch and pen engage the touch contro
   assert.equal(input.touch, true)
   assert.equal(input.device, 'touch')
   assert.equal(input.engaged, true)
+})
+
+test('ping: Q, the middle mouse button and the right shoulder queue one edge each; a field, the terminal and a held key never do', () => {
+  const yaw = input.yaw
+  doc.dispatchEvent(ev('keydown', { code: 'KeyQ', repeat: false }))
+  assert.equal(input.take('ping'), true)
+  assert.equal(input.take('ping'), false, 'one edge per press')
+  doc.dispatchEvent(ev('keydown', { code: 'KeyQ', repeat: true }))
+  assert.equal(input.take('ping'), false, 'a held key repeats nothing')
+  const typed = ev('keydown', { code: 'KeyQ', repeat: false })
+  Object.defineProperty(typed, 'target', { value: { tagName: 'INPUT' } })
+  doc.dispatchEvent(typed)
+  assert.equal(input.take('ping'), false, 'typing in a field')
+  input.suspend(true)
+  doc.dispatchEvent(ev('keydown', { code: 'KeyQ', repeat: false }))
+  assert.equal(input.take('ping'), false, 'the terminal is open')
+  input.suspend(false)
+
+  const middle = Object.assign(new Event('pointerdown', { cancelable: true }), { pointerId: 1, pointerType: 'mouse', button: 1, buttons: 4, clientX: 0, clientY: 0 })
+  canvas.dispatchEvent(middle)
+  assert.equal(middle.defaultPrevented, true, 'no autoscroll')
+  assert.equal(input.dragging, false, 'the middle button never drags')
+  assert.equal(input.take('ping'), true)
+  canvas.dispatchEvent(mouse('pointermove', 40, 0, { buttons: 4 }))
+  assert.equal(input.yaw, yaw, 'moving with it held is not a look')
+  assert.equal(canvas.lockRequests, 0)
+  canvas.dispatchEvent(mouse('pointerup', 40, 0))
+  assert.equal(canvas.lockRequests, 0, 'nor a click that captures the pointer')
+  input.suspend(true)
+  canvas.dispatchEvent(mouse('pointerdown', 0, 0, { button: 1, buttons: 4 }))
+  assert.equal(input.take('ping'), false, 'suspended: ignored')
+  input.suspend(false)
+
+  pads.push(pad({ pressed: [PAD.r1] }))
+  input.poll(1 / 60)
+  assert.equal(input.take('ping'), true, 'right shoulder')
+  input.poll(1 / 60)
+  assert.equal(input.take('ping'), false, 'held')
+  input.press('ping')
+  assert.equal(input.take('ping'), true, 'the touch button and the harness press it')
 })
 
 test('a drag ends when the button is found released, when focus is lost, and when the terminal opens', () => {

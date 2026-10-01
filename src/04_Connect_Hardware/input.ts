@@ -2,7 +2,7 @@
  * Why does this file exist? It is the Supplier stage of the SIPOC X flow: keyboard, mouse (pointer-locked,
  * or dragged with the button held), gamepads and touch controls, merged into one per-frame intent — the
  * head's yaw and pitch, held keys, an Analog frame (sticks, triggers, touch stick) and edge-triggered
- * actions (enter/exit vehicle, reset, clock) — plus the hardware bus (HalBus) and the adaptive-trigger hook
+ * actions (enter/exit vehicle, reset, clock, ghost view, a ping) — plus the hardware bus (HalBus) and the adaptive-trigger hook
  * that turns brake pressure into trigger resistance.
  * What breaks if it is removed? The player cannot move, look, drive or interact.
  */
@@ -11,7 +11,7 @@ import { createAnalog, PAD_EDGE, PadLook, PadMapper, type Analog, type PadFamily
 
 export type { Analog, PadFamily } from './gamepad.ts'
 
-export type Action = 'interact' | 'reset' | 'timeForward' | 'timeBack' | 'ghost'
+export type Action = 'interact' | 'reset' | 'timeForward' | 'timeBack' | 'ghost' | 'ping'
 
 /** Hold-type touch buttons. `run` is a toggle on the touch layout, but the state lives here. */
 export type TouchButton = 'brake' | 'handbrake' | 'run'
@@ -27,6 +27,8 @@ const ACTION_KEYS: Record<string, Action> = {
   BracketRight: 'timeForward',
   BracketLeft: 'timeBack',
   KeyG: 'ghost',
+  /** A ping where the head looks (08_Swarm/ping.ts); also the middle mouse button and a pad's right shoulder. */
+  KeyQ: 'ping',
 }
 
 /** First-person look sensitivities. Look right = yaw down, look up = pitch up. */
@@ -112,6 +114,12 @@ export class Input {
       if (e.pointerType === 'touch' || e.pointerType === 'pen') {
         this.touch = true
         this.engageTouch()
+        return
+      }
+      // The middle button pings (locked or not) and never starts a drag; the browser's autoscroll is declined.
+      if (e.button === 1) {
+        if (!this.suspended) { this.queued.add('ping'); this.lastSource = 'keyboard+mouse' }
+        e.preventDefault()
         return
       }
       if (e.button !== 0 || this.locked || this.suspended) return
@@ -253,6 +261,7 @@ export class Input {
     if (edges & PAD_EDGE.reset) this.queued.add('reset')
     if (edges & PAD_EDGE.timeForward) this.queued.add('timeForward')
     if (edges & PAD_EDGE.timeBack) this.queued.add('timeBack')
+    if (edges & PAD_EDGE.ping) this.queued.add('ping')
     if (this.mapper.active) this.lastSource = 'gamepad'
 
     const a = this.analog, p = this.pad, sx = this.stick.x, sy = this.stick.y

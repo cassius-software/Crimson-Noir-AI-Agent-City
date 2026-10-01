@@ -29,6 +29,26 @@ export type Light = 'green' | 'amber' | 'red'
 
 export interface Toast { id: number; title: string; body: string; time: number }
 
+/** One ping as the HUD draws it: plain data, in metres and seconds, plus its place on the screen. */
+export interface HudPing {
+  id: number
+  /** What it asks (go, look, gather, wait) and what it landed on (the ground, a person, a car, a pole). */
+  kind: 'go' | 'look' | 'gather' | 'wait'
+  pick: 'point' | 'person' | 'car' | 'pole'
+  /** The pedestrian row, car index or pole index it landed on; −1 for the ground. */
+  index: number
+  x: number
+  z: number
+  /** Seconds since it was placed, and seconds until it fades. */
+  age: number
+  left: number
+  /** Metres from the head now. */
+  distance: number
+  /** Where it falls on the screen (0..1 across and down) while it is in front of the camera; NaN when it is not. */
+  sx: number
+  sy: number
+}
+
 export interface MapCar { x: number; z: number; heading: number; player: boolean }
 
 /** Which control glyphs the HUD shows: the keyboard, a controller family, or touch. */
@@ -155,6 +175,12 @@ export interface SipocSnapshot {
      * now, and how many passages have dissolved one since boot.
      */
     dissolve?: { active: number; count: number }
+    /**
+     * The operator's pings standing now (08_Swarm/ping.ts PingBoard), oldest first, each placed where the head looked,
+     * with where it falls on the screen: a marker on the minimap and a chip over the world for the newest. Absent when
+     * none stands.
+     */
+    pings?: HudPing[]
   }
   kernel: KernelStats
   quality: QualityState

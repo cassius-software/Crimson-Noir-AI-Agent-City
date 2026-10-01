@@ -13,28 +13,28 @@ import {
   controlHints, familyOf, glyph, glyphKind, isPadFamily, spokenGlyph, type ControlAction, type GlyphFamily,
 } from './glyphs.ts'
 
-const ACTIONS: readonly ControlAction[] = ['move', 'look', 'run', 'interact', 'handbrake', 'reset', 'throttle', 'brake', 'clock', 'console', 'hud', 'ghost']
+const ACTIONS: readonly ControlAction[] = ['move', 'look', 'run', 'interact', 'handbrake', 'reset', 'throttle', 'brake', 'clock', 'console', 'hud', 'ghost', 'ping']
 const FAMILIES: readonly GlyphFamily[] = ['keyboard', 'abxy', 'bayx', 'numbered', 'generic', 'touch']
 const row = (family: GlyphFamily) => Object.fromEntries(ACTIONS.map((a) => [a, glyph(a, family)]))
 
 test('keyboard glyphs are the keys the Input class reads', () => {
   assert.deepEqual(row('keyboard'), {
     move: 'W A S D', look: 'Mouse', run: 'Shift', interact: 'E', handbrake: 'Space', reset: 'R',
-    throttle: 'W', brake: 'S', clock: '[ ]', console: '~', hud: 'H', ghost: 'G',
+    throttle: 'W', brake: 'S', clock: '[ ]', console: '~', hud: 'H', ghost: 'G', ping: 'Q',
   })
 })
 
 test('numbered layout: face buttons by position (no button symbols), shoulders and stick clicks by number', () => {
   assert.deepEqual(row('numbered'), {
     move: 'L', look: 'R', run: 'L3', interact: 'South', handbrake: 'East', reset: 'North',
-    throttle: 'R2', brake: 'L2', clock: 'D-pad ◀ ▶', console: '~', hud: 'H', ghost: 'G',
+    throttle: 'R2', brake: 'L2', clock: 'D-pad ◀ ▶', console: '~', hud: 'H', ghost: 'G', ping: 'R1',
   })
 })
 
 test('abxy layout: A south, B east, Y north', () => {
   assert.deepEqual(row('abxy'), {
     move: 'L', look: 'R', run: 'LS', interact: 'A', handbrake: 'B', reset: 'Y',
-    throttle: 'RT', brake: 'LT', clock: 'D-pad ◀ ▶', console: '~', hud: 'H', ghost: 'G',
+    throttle: 'RT', brake: 'LT', clock: 'D-pad ◀ ▶', console: '~', hud: 'H', ghost: 'G', ping: 'RB',
   })
 })
 
@@ -45,6 +45,7 @@ test('bayx layout is position-true: south B, east A, north X', () => {
   assert.equal(n.reset, 'X')
   assert.equal(n.throttle, 'ZR')
   assert.equal(n.brake, 'ZL')
+  assert.equal(n.ping, 'R', 'the right shoulder, by this layout\'s name')
   // Same positions, different letters from the abxy layout.
   assert.notEqual(n.interact, glyph('interact', 'abxy'))
 })
@@ -56,6 +57,7 @@ test('generic pads are named by button position', () => {
   assert.equal(g.reset, 'North')
   assert.equal(g.move, 'L')
   assert.equal(g.look, 'R')
+  assert.equal(g.ping, 'RB')
 })
 
 test('touch glyphs are the on-screen control labels; missing controls are empty', () => {
@@ -67,6 +69,7 @@ test('touch glyphs are the on-screen control labels; missing controls are empty'
   assert.equal(t.brake, 'Brake')
   assert.equal(t.handbrake, 'Handbrake')
   assert.equal(t.reset, 'Reset')
+  assert.equal(t.ping, 'Ping')
   assert.equal(t.clock, '')
   assert.equal(t.console, '')
   assert.equal(t.hud, '')
@@ -115,6 +118,8 @@ test('glyphKind: keycaps, round face buttons, sticks, pills', () => {
   assert.equal(glyphKind('look', 'bayx'), 'stick')
   assert.equal(glyphKind('throttle', 'numbered'), 'pill')
   assert.equal(glyphKind('run', 'abxy'), 'pill')
+  assert.equal(glyphKind('ping', 'abxy'), 'pill', 'a shoulder button is a pill, not a face button')
+  assert.equal(glyphKind('ping', 'keyboard'), 'key')
   assert.equal(glyphKind('console', 'numbered'), 'key', 'keyboard-only actions stay keycaps')
   assert.equal(glyphKind('hud', 'generic'), 'key')
   for (const a of ACTIONS) assert.equal(glyphKind(a, 'touch'), 'pill')
@@ -144,19 +149,19 @@ test('Concierge tips: three per family and mode, glyph-aware', () => {
 
 test('all controls: complete per family, unbound ones skipped', () => {
   assert.deepEqual(summary('keyboard', false, 'all'), [
-    'W A S D=Walk', 'Mouse=Look around', 'Shift=Run', 'E=Enter a car', '[ ]=Clock −1 h / +1 h', '~=Ring-0 console', 'H=Hide the HUD', 'G=Ghost view',
+    'W A S D=Walk', 'Mouse=Look around', 'Shift=Run', 'E=Enter a car', 'Q=Ping a spot or a person', '[ ]=Clock −1 h / +1 h', '~=Ring-0 console', 'H=Hide the HUD', 'G=Ghost view',
   ])
   assert.deepEqual(summary('keyboard', true, 'all'), [
-    'A D=Steer', 'W=Accelerate', 'S=Brake · reverse', 'Space=Handbrake', 'R=Right the car', 'E=Leave the car',
+    'A D=Steer', 'W=Accelerate', 'S=Brake · reverse', 'Space=Handbrake', 'R=Right the car', 'E=Leave the car', 'Q=Ping a spot or a person',
     'Mouse=Look around', '[ ]=Clock −1 h / +1 h', '~=Ring-0 console', 'H=Hide the HUD', 'G=Ghost view',
   ])
   assert.deepEqual(summary('numbered', true, 'all'), [
-    'L=Steer', 'R2=Accelerate', 'L2=Brake · reverse', 'East=Handbrake', 'North=Right the car', 'South=Leave the car',
+    'L=Steer', 'R2=Accelerate', 'L2=Brake · reverse', 'East=Handbrake', 'North=Right the car', 'South=Leave the car', 'R1=Ping a spot or a person',
     'R=Look around', 'D-pad ◀ ▶=Clock −1 h / +1 h', '~=Ring-0 console', 'H=Hide the HUD', 'G=Ghost view',
   ])
-  assert.deepEqual(summary('touch', false, 'all'), ['Stick=Walk', 'Drag=Look around', 'Run=Run', 'Enter car=Enter a car'])
+  assert.deepEqual(summary('touch', false, 'all'), ['Stick=Walk', 'Drag=Look around', 'Run=Run', 'Enter car=Enter a car', 'Ping=Ping a spot or a person'])
   assert.deepEqual(summary('touch', true, 'all'), [
-    'Stick=Steer and accelerate', 'Brake=Brake · reverse', 'Handbrake=Handbrake', 'Reset=Right the car', 'Exit car=Leave the car', 'Drag=Look around',
+    'Stick=Steer and accelerate', 'Brake=Brake · reverse', 'Handbrake=Handbrake', 'Reset=Right the car', 'Exit car=Leave the car', 'Ping=Ping a spot or a person', 'Drag=Look around',
   ])
   for (const f of FAMILIES) {
     for (const d of [false, true]) {
