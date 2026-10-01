@@ -5,7 +5,10 @@
  * the WGSL vertex kinematics that pose each body from GPU state — including the player's own body, which
  * the first-person eye never sees from inside but whose shadow still walks beside them. The state it poses
  * them from arrives from the physics worker, which alone simulates the pedestrians (crowdSim.ts); the page
- * writes each frame into these buffers and culls it (crowdCull.ts).
+ * writes each frame into these buffers and culls it (crowdCull.ts). A person's look is hashed from their
+ * index unless the page's per-agent look word (look.ts, one u32 in `crowd.look`) names one: then its bits
+ * choose the pieces, the proportions and every colour slot in place of the hash (the body itself is chosen
+ * from the same word in the cull, crowd.wgsl), so the player and a recruit can wear what they chose.
  * What breaks if it is removed? No pedestrian is drawn, and the worker's frames have nowhere to land.
  */
 import {
@@ -19,6 +22,7 @@ import {
 } from 'three/tsl'
 import { CODE_DISSOLVE, applyCodeDissolve } from '../01_Initialize_World/codeDissolve.ts'
 import { PLAYER_INDEX, VARIANTS, agentQuota } from './crowdCompute.ts'
+import { LOOK_FIELD, LOOK_SCALE, WARDROBE, type LookSlot, type PaletteName } from './look.ts'
 
 /**
  * The player's own body (agent PLAYER_INDEX) seen from inside its head would fill the view: it is folded to
@@ -36,6 +40,7 @@ export const PEOPLE_DISSOLVE_INK: readonly [number, number, number] = Object.fre
 
 type V3 = Node<'vec3'>
 type F1 = Node<'float'>
+type U1 = Node<'uint'>
 
 /** Whether the pass being built writes motion vectors (three's builder knows; its typings leave the method out). */
 const needsPrevious = (b: NodeBuilder): boolean => (b as NodeBuilder & { needsPreviousData(): boolean }).needsPreviousData()
@@ -224,6 +229,7 @@ function agentBuffers(view: CrowdView, agentCount: number, listLength: number) {
     vel: storage(view.vel, 'vec4', agentCount).toReadOnly(),
     pose: storage(view.pose, 'vec4', agentCount).toReadOnly(),
     dissolve: storage(view.dissolve, 'float', agentCount).toReadOnly(),
+    look: storage(view.look, 'uint', agentCount).toReadOnly(),
     lists: storage(view.drawLists, 'uint', listLength).toReadOnly(),
   }
 }
@@ -240,6 +246,12 @@ export class CrowdView {
    * crowd.wgsl never binds it, no pedestrian moves for it.
    */
   readonly dissolve: StorageBufferAttribute
+  /**
+   * The look word per agent (look.ts packLook; LOOK_NONE = 0 dresses them as the hash does), one u32 per agent: the
+   * engine writes it the way it writes the dissolve amounts (gpuBufferOf + queue.writeBuffer). Page-only: the worker's
+   * passes never bind it, no pedestrian moves for it; the page's cull reads it for the body to draw.
+   */
+  readonly look: StorageBufferAttribute
   readonly drawArgs: IndirectStorageBufferAttribute
   /** Initial indirect args (index counts, zero instances); reset into the GPU buffer every frame. */
   readonly drawTemplate: Uint32Array<ArrayBuffer>
@@ -258,12 +270,14 @@ export class CrowdView {
     this.pose = new StorageBufferAttribute(new Float32Array(agentCount * 4), 4)
     this.drawLists = new StorageBufferAttribute(new Uint32Array(quota * VARIANTS * 2), 1)
     this.dissolve = new StorageBufferAttribute(new Float32Array(agentCount), 1)
+    this.look = new StorageBufferAttribute(new Uint32Array(agentCount), 1)
     this.drawTemplate = new Uint32Array(VARIANTS * 2 * 5)
     this.pos.name = 'crowd.pos'
     this.vel.name = 'crowd.vel'
     this.pose.name = 'crowd.pose'
     this.drawLists.name = 'crowd.drawLists'
     this.dissolve.name = 'crowd.dissolve'
+    this.look.name = 'crowd.look'
 
     const geometries: BufferGeometry[] = []
     for (let lod = 0; lod < 2; lod++) {
@@ -295,7 +309,12 @@ export class CrowdView {
   private material(b: AgentBuffers, listBase: number, variant: number): MeshStandardNodeMaterial {
     const vSeed = varyingProperty('float', 'vAgentSeed')
     const vDissolve = varyingProperty('float', 'vAgentDissolve')
+    // The look word, to the fragment stage as two float varyings (its low and high 16 bits: an integer varying would
+    // need flat interpolation, and 32 bits exceed a float's mantissa); every vertex of a body carries the same value.
+    const vLookLo = varyingProperty('float', 'vAgentLookLo')
+    const vLookHi = varyingProperty('float', 'vAgentLookHi')
     const woman = variant >= 2
+    const heightScale = woman ? LOOK_SCALE.heightWoman : LOOK_SCALE.heightMan
     const m = new MeshStandardNodeMaterial()
     // One pose, built twice: for the eye (which folds away the body it looks out of) and for the shadow map.
     const posed = (eye: boolean) => Fn((builder: NodeBuilder) => {
@@ -304,21 +323,31 @@ export class CrowdView {
       const motion = b.vel.element(agentIndex)
       const pose = b.pose.element(agentIndex)
       const dissolve = b.dissolve.element(agentIndex)
+      const word = b.look.element(agentIndex)
       const seed = float(agentIndex)
       const h = (k: number) => hash(seed.add(k * 13.37))
-      // Per-person accessories (bit per optional piece) and proportions.
+      // Per-person accessories (bit per optional piece) and proportions, as the hash gives them.
       const tie = step(0.3, h(1)).mul(2)
       const bag = step(woman ? 0.62 : 0.7, h(2)).mul(4)
       const cup = step(0.82, h(3)).mul(8)
       const longHair = step(0.35, h(4)).mul(16)
       const glasses = step(0.78, h(5)).mul(32)
-      const mask = tie.add(bag).add(cup).add(longHair).add(glasses)
-      const height = woman ? h(6).mul(0.1).add(0.92) : h(6).mul(0.14).add(0.94)
-      const width = h(7).mul(0.14).add(0.94)
+      const hashedMask = tie.add(bag).add(cup).add(longHair).add(glasses)
+      const hashedHeight = woman ? h(6).mul(0.1).add(0.92) : h(6).mul(0.14).add(0.94)
+      const hashedWidth = h(7).mul(0.14).add(0.94)
+      // A chosen look (look.ts: bit 0 set) overrides them: its pieces sit where agentXform tests them ((word >> 2) & 62 is
+      // the mask), its height and build steps span the same range the hash does for this body.
+      const custom = word.bitAnd(uint(1)).equal(uint(1))
+      const stepOf = (slot: LookSlot) => float(word.shiftRight(uint(LOOK_FIELD[slot][0])).bitAnd(uint((1 << LOOK_FIELD[slot][1]) - 1))).div(WARDROBE.steps - 1)
+      const mask = select(custom, float(word.shiftRight(uint(2)).bitAnd(uint(62))), hashedMask)
+      const height = select(custom, stepOf('height').mul(heightScale.range).add(heightScale.base), hashedHeight)
+      const width = select(custom, stepOf('build').mul(LOOK_SCALE.build.range).add(LOOK_SCALE.build.base), hashedWidth)
       const shape = vec4(height, width, mask, h(8))
       const rig = attribute('rig', 'vec3')
       normalLocal.assign(xform(normalLocal, float(0), rig, agent, motion, pose, shape, time).normalize())
       vSeed.assign(seed)
+      vLookLo.assign(float(word.bitAnd(uint(0xffff))))
+      vLookHi.assign(float(word.shiftRight(uint(16))))
       // The fragment stage reads the code dissolve's amount from this varying (both passes: the shadow map drops the
       // same cells).
       vDissolve.assign(dissolve)
@@ -341,27 +370,59 @@ export class CrowdView {
     const rig = attribute('rig', 'vec3')
     const slot = rig.y
     const h = (k: number): F1 => hash(vSeed.add(k * 7.919))
-    const pick = (list: Color[], hk: F1): V3 => uniformArray(list, 'color').element(uint(hk.mul(list.length - 0.001))) as unknown as V3
+    // Colour lists on the GPU, one uniform array per palette however many slots read it.
+    const arrays = new Map<Color[], ReturnType<typeof uniformArray>>()
+    const colours = (list: Color[]) => arrays.get(list) ?? (arrays.set(list, uniformArray(list, 'color')), arrays.get(list)!)
+    const pick = (list: Color[], hk: F1): V3 => colours(list).element(uint(hk.mul(list.length - 0.001))) as unknown as V3
     const skin = pick(PALETTE.skin, h(1))
     const hair = mix(pick(PALETTE.hair, h(2)), vec3(0.6, 0.6, 0.58), step(0.9, h(9)))
-    let top: V3, bottom: V3, shirt: V3, shoes: V3, accent: V3, legwear: V3
+    let top: V3, bottom: V3, shirt: V3, shoes: V3
     if (variant === 0) {
-      top = pick(PALETTE.suits, h(3)); bottom = top; shirt = pick(PALETTE.shirts, h(4))
-      accent = pick(PALETTE.ties, h(5)); shoes = pick(PALETTE.menShoes, h(6)); legwear = bottom
+      top = pick(PALETTE.suits, h(3)); bottom = top; shirt = pick(PALETTE.shirts, h(4)); shoes = pick(PALETTE.menShoes, h(6))
     } else if (variant === 1) {
-      top = pick(PALETTE.blazers, h(3)); bottom = pick(PALETTE.chinos, h(4)); shirt = pick(PALETTE.casualShirts, h(5))
-      accent = shirt; shoes = pick(PALETTE.casualShoes, h(6)); legwear = bottom
+      top = pick(PALETTE.blazers, h(3)); bottom = pick(PALETTE.chinos, h(4)); shirt = pick(PALETTE.casualShirts, h(5)); shoes = pick(PALETTE.casualShoes, h(6))
     } else if (variant === 2) {
       top = pick(PALETTE.womenBlazers, h(3)); bottom = mix(top, pick(PALETTE.darkTrousers, h(4)), step(0.6, h(10)))
-      shirt = pick(PALETTE.blouses, h(5)); accent = shirt; shoes = pick(PALETTE.womenShoes, h(6)); legwear = bottom
+      shirt = pick(PALETTE.blouses, h(5)); shoes = pick(PALETTE.womenShoes, h(6))
     } else {
-      top = pick(PALETTE.womenTops, h(3)); bottom = pick(PALETTE.skirts, h(4)); shirt = pick(PALETTE.blouses, h(5))
-      accent = shirt; shoes = pick(PALETTE.womenShoes, h(6))
-      legwear = mix(skin, vec3(0.08, 0.07, 0.07), step(0.55, h(11)))
+      top = pick(PALETTE.womenTops, h(3)); bottom = pick(PALETTE.skirts, h(4)); shirt = pick(PALETTE.blouses, h(5)); shoes = pick(PALETTE.womenShoes, h(6))
     }
+    // A chosen look (the word again, whole: both halves are exact in a float) replaces the hash's picks slot by slot
+    // with its option out of the same palettes (look.ts WARDROBE: this body's cloths), each index bounded to its list.
+    // The tie's cloth, the bag's leather and the skirt suit's hose stay the hash's: the word has no room for them.
+    const word = uint(vLookHi.add(0.5)).shiftLeft(uint(16)).bitOr(uint(vLookLo.add(0.5)))
+    const custom = word.bitAnd(uint(1)).equal(uint(1))
+    const field = (s: LookSlot): U1 => word.shiftRight(uint(LOOK_FIELD[s][0])).bitAnd(uint((1 << LOOK_FIELD[s][1]) - 1))
+    const at = (list: Color[], i: U1): V3 => {
+      const last = uint(list.length - 1)
+      return colours(list).element(select(i.lessThan(last), i, last)) as unknown as V3
+    }
+    const outfit = WARDROBE.outfits[variant]
+    const cloth = (name: PaletteName): Color[] => PALETTE[name]
+    const grey = vec3(0.6, 0.6, 0.58)
+    const hairAt = field('hairColour')
+    const ownSkin = at(PALETTE.skin, field('skin'))
+    const ownHair = select(hairAt.greaterThanEqual(uint(PALETTE.hair.length)), grey, at(PALETTE.hair, hairAt))
+    const ownTop = at(cloth(outfit.top), field('top'))
+    // Trousers that may match the jacket (option 0 of a matching outfit): the cloth at i - 1 otherwise.
+    const bottomAt = field('bottom')
+    const ownBottom = outfit.matching
+      ? select(bottomAt.equal(uint(0)), ownTop, at(cloth(outfit.bottom), select(bottomAt.equal(uint(0)), uint(0), bottomAt.sub(uint(1)))))
+      : at(cloth(outfit.bottom), bottomAt)
+    const ownShirt = at(cloth(outfit.shirt), field('shirt'))
+    const ownShoes = at(cloth(outfit.shoes), field('shoes'))
+    const wornSkin = select(custom, ownSkin, skin)
+    const wornHair = select(custom, ownHair, hair)
+    top = select(custom, ownTop, top)
+    bottom = select(custom, ownBottom, bottom)
+    shirt = select(custom, ownShirt, shirt)
+    shoes = select(custom, ownShoes, shoes)
+    // The suit's tie keeps the hash's cloth; the other bodies' accent is the shirt. The skirt suit's hose is the hash's.
+    const accent = variant === 0 ? pick(PALETTE.ties, h(5)) : shirt
+    const legwear = variant === 3 ? mix(wornSkin, vec3(0.08, 0.07, 0.07), step(0.55, h(11))) : bottom
     const prop = select(rig.z.greaterThan(2.5), vec3(0.93, 0.92, 0.9), pick(PALETTE.bags, h(12)))
     const frame = vec3(0.05, 0.05, 0.055)
-    const slots: V3[] = [top, shirt, skin, hair, bottom, shoes, accent, prop, legwear, frame]
+    const slots: V3[] = [top, shirt, wornSkin, wornHair, bottom, shoes, accent, prop, legwear, frame]
     const rough = [0.82, 0.7, 0.55, 0.6, 0.8, 0.35, 0.6, 0.45, 0.6, 0.3]
     let color: V3 = slots[slots.length - 1]
     let roughness: F1 = float(rough[rough.length - 1])

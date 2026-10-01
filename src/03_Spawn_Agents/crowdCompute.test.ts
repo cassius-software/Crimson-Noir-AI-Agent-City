@@ -527,6 +527,7 @@ async function cullRig(settings: CullSettings = { lodDistance: 30, nearRadius: 2
     pose: device.createBuffer({ label: 'pose', size: AGENTS * 16, usage: S | USAGE.VERTEX }),
     drawArgs: device.createBuffer({ label: 'drawArgs', size: VARIANTS * 2 * 20, usage: S | USAGE.INDIRECT }),
     drawLists: device.createBuffer({ label: 'drawLists', size: agentQuota(AGENTS) * VARIANTS * 2 * 4, usage: S }),
+    look: device.createBuffer({ label: 'look', size: AGENTS * 4, usage: S }),
   }
   const template = new Uint32Array(VARIANTS * 2 * 5)
   const crowd = await CrowdCull.create(device as unknown as GPUDevice, shared as unknown as SharedBuffers, template, AGENTS, settings)

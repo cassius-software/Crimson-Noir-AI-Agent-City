@@ -49,7 +49,7 @@ export class CrowdCull {
         busy: false, frame: 0,
       })
     }
-    const resources: Record<number, GPUBuffer> = { 0: this.params, 1: shared.pos, 10: shared.drawArgs, 11: shared.drawLists }
+    const resources: Record<number, GPUBuffer> = { 0: this.params, 1: shared.pos, 10: shared.drawArgs, 11: shared.drawLists, 13: shared.look }
     const module = device.createShaderModule({ label: 'crowd.wgsl', code: crowdShader(agentCount) })
     for (const name of CULL_PASSES) {
       const pipeline = device.createComputePipeline({ label: `crowd.${name}`, layout: 'auto', compute: { module, entryPoint: name } })

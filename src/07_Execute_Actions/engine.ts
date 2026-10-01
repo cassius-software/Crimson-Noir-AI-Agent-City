@@ -13,6 +13,8 @@
  * operator's position, the states, two commands, a sound cue). The operator's ping (08_Swarm/ping.ts) is resolved
  * here from the head's look ray against the page's own copies (never the realm) and kept on a board the HUD
  * draws; a walk ping is handed to the host's recruiter (onRally) as a plain request the physics realm re-validates.
+ * A person's look (03_Spawn_Agents/look.ts) is a word per agent in the crowd's page-only storage attribute: setLook
+ * writes it the way the dissolve amounts are written, and nothing of it reaches the physics realm either.
  * App.tsx owns the requestAnimationFrame loop and calls frame().
  * What breaks if it is removed? Nothing runs; every module is inert without this orchestration.
  */
@@ -27,6 +29,7 @@ import { SIGNAL, signalFor, walkAllowed } from '../02_Define_The_Rules/civic.ts'
 import { THREE_LAWS } from '../02_Define_The_Rules/laws.ts'
 import { kernelPanic } from '../02_Define_The_Rules/ring0Panic.ts'
 import { CrowdView } from '../03_Spawn_Agents/crowd.ts'
+import { LOOK_NONE, packLook, unpackLook, validateLook, type Look } from '../03_Spawn_Agents/look.ts'
 import { packFrustumPlanes, type CrowdStats, type CullSettings } from '../03_Spawn_Agents/crowdCompute.ts'
 import { CrowdCull } from '../03_Spawn_Agents/crowdCull.ts'
 import { AGENTS_RANGE } from '../03_Spawn_Agents/crowdSensor.ts'
@@ -200,6 +203,9 @@ export class Engine {
   private readonly dissolve: DissolveSet
   /** The crowd's amounts on the GPU (three's buffer for CrowdView.dissolve), written like the frame upload. */
   private readonly crowdDissolve: GPUBuffer
+  /** The crowd's look words on the GPU (three's buffer for CrowdView.look) and the page's copy of them (setLook, lookOf). */
+  private readonly crowdLook: GPUBuffer
+  private readonly lookWords: Uint32Array
   private readonly poleOut = new Int32Array(DISSOLVE.maxPoles)
   private readonly carOut = new Int32Array(DISSOLVE.maxCars)
   private readonly overlapOut: Int32Array
@@ -310,7 +316,7 @@ export class Engine {
   private constructor(p: {
     canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView
     post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; crowdFrameSeconds: UniformNode<'float', number>; ghost: GhostView
-    options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; crowdDissolve: GPUBuffer
+    options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; crowdDissolve: GPUBuffer; crowdLook: GPUBuffer
   }) {
     this.places = p.places
     this.regionName = p.options.region?.name ?? null
@@ -330,6 +336,8 @@ export class Engine {
     const f = p.world.furniture
     this.dissolve = new DissolveSet({ lamps: f.lamps.length, trees: f.trees.length, signals: f.signals.length, cars: p.sim.meta.suv.length, people: p.options.agents })
     this.crowdDissolve = p.crowdDissolve
+    this.crowdLook = p.crowdLook
+    this.lookWords = new Uint32Array(p.options.agents)
     this.overlapOut = new Int32Array(p.sim.meta.suv.length)
     this.options = p.options
     this.quality = p.quality
@@ -437,13 +445,17 @@ export class Engine {
     // pipeline mid-game; the boot veil hides these frames.
     gpu.renderer.render(world.scene, world.camera)
     post.render()
-    // The render buffers exist once three has drawn them (above); the worker's first frame goes straight in.
+    // The render buffers exist once three has drawn them (above); the worker's first frame goes straight in. The
+    // looks (03_Spawn_Agents/look.ts): every body material reads the attribute, so the draws allocated it as well;
+    // the cull reads each agent's body from it, setLook writes it.
+    const crowdLook = gpuBufferOf(gpu.renderer, view0.look)
     const crowd = await CrowdCull.create(gpu.device, {
       pos: gpuBufferOf(gpu.renderer, view0.pos),
       vel: gpuBufferOf(gpu.renderer, view0.vel),
       pose: gpuBufferOf(gpu.renderer, view0.pose),
       drawArgs: gpuBufferOf(gpu.renderer, view0.drawArgs),
       drawLists: gpuBufferOf(gpu.renderer, view0.drawLists),
+      look: crowdLook,
     }, view0.drawTemplate, options.agents, live.cull)
     live.crowd = crowd
     if (sim.state.crowdFrame) crowd.upload(sim.state.crowdFrame)
@@ -453,6 +465,7 @@ export class Engine {
       quality: { governor, targets, applied, mask, live }, places,
       // The code dissolve's crowd amounts: allocated by the draws above like the frame's buffers, written the same way.
       crowdDissolve: gpuBufferOf(gpu.renderer, view0.dissolve),
+      crowdLook,
     })
     if (start) engine.input.yaw = yawFacing(start.heading)
     return engine
@@ -512,6 +525,30 @@ export class Engine {
     this.applyTier()
     if (on && !this.options.post) return 'needs the post-processing chain, which ?post=0 turned off'
     return on ? 'on: every physics shape as code (G to hide)' : 'off'
+  }
+
+  /**
+   * Dresses an agent (0 is the player's own body; a recruit by their pedestrian number) in a look out of the crowd's
+   * closed wardrobe (03_Spawn_Agents/look.ts), or null to dress them as the hash does again. The word goes to the
+   * crowd's page-only storage attribute the way the dissolve amounts do (queue.writeBuffer; view-only: nothing
+   * reaches the physics realm, nobody moves for it). Refused (false) for an agent outside the crowd, a look outside
+   * the wardrobe, or once the city has stopped; the eye never sees its own body, but its shadow, the cull's body
+   * choice and every other viewer do.
+   */
+  setLook(agent: number, look: Look | null): boolean {
+    if (this.halted || this.disposed) return false
+    if (!Number.isInteger(agent) || agent < 0 || agent >= this.lookWords.length) return false
+    const word = look === null ? LOOK_NONE : validateLook(look) === null ? -1 : packLook(look)
+    if (word < 0) return false
+    this.lookWords[agent] = word
+    this.gpu.device.queue.writeBuffer(this.crowdLook, agent * 4, this.lookWords, agent, 1)
+    return true
+  }
+
+  /** The look an agent was dressed in (setLook), or null while the hash dresses them (or for no such agent). */
+  lookOf(agent: number): Look | null {
+    if (!Number.isInteger(agent) || agent < 0 || agent >= this.lookWords.length) return null
+    return unpackLook(this.lookWords[agent])
   }
 
   /** Enter the nearest car, or leave the current one on the driver's (left) side (decided in the physics realm). */

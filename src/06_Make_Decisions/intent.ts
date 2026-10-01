@@ -147,7 +147,7 @@ const UNSUPPORTED: readonly (Unmapped & { re: RegExp })[] = [
   { re: /\b(?:vr|virtual reality|headset|webxr|xr)\b/,
     label: 'A headset: the head rig is ready for one, but there is no XR session yet', modules: ['07_Execute_Actions/player.ts', '07_Execute_Actions/engine.ts'] },
   { re: /\b(?:change|different|new|customi[sz]e|edit|pick|choose) (?:my |the )?(?:avatar|character|outfit|clothes|body|face|skin|hair)\b|\b(?:avatar|outfit|clothes|clothing|hair|skin colou?r)\b/,
-    label: 'Your avatar: it is seeded from your name; there is no wardrobe yet', modules: ['05_Observe_Environment/profile.ts', '03_Spawn_Agents/crowd.ts'] },
+    label: 'Your look: the wardrobe is a tap away (Look on Wren\'s chip, or Change my look in the full list): presets, swatches and a code to share', modules: ['07_Execute_Actions/Customizer.tsx', '03_Spawn_Agents/look.ts', '05_Observe_Environment/lookStore.ts'] },
   { re: /\b(?:save (?:the |my )?(?:game|city|progress|state)|load (?:the |my )?(?:game|save)|checkpoint|photo mode|record(?:ing)? (?:a |the )?(?:video|clip)|screenshots?|share (?:this|it|the city))\b/,
     label: 'Saving, sharing and photo mode: not in the city yet (your name is the only thing remembered)', modules: ['05_Observe_Environment/profile.ts', 'App.tsx'] },
 ]

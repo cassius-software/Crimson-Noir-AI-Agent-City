@@ -136,9 +136,11 @@ export interface ConciergeProps {
    *  given — a deep link, or a server render of that view. Steps the answers have already reached are shown
    *  as the plan, not applied: the host applies only what the player reaches through the dialogue. */
   goal?: { text: string; answers?: readonly string[] }
+  /** Optional: the host opens the wardrobe (Customizer.tsx); the chip and the full list then offer it. */
+  onLook?(): void
 }
 
-export function Concierge({ visible, profile, onProfile, family, driving, dark = false, settleMs = WREN.settleMs, travelled, onIntent, goal }: ConciergeProps) {
+export function Concierge({ visible, profile, onProfile, family, driving, dark = false, settleMs = WREN.settleMs, travelled, onIntent, goal, onLook }: ConciergeProps) {
   const small = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
   const short = useSyncExternalStore(SHORT.subscribe, SHORT.matches, SHORT.server)
   const [view, setView] = useState<View>(() => (goal ? 'goal' : profile ? 'greet' : 'ask'))
@@ -391,6 +393,11 @@ export function Concierge({ visible, profile, onProfile, family, driving, dark =
             <button type="button" onClick={() => open('help')} className={`shrink-0 border-l py-1.5 pr-3.5 pl-2.5 ${rule} ${muted}`} data-concierge="chip-controls">
               Controls
             </button>
+            {onLook && (
+              <button type="button" onClick={onLook} className={`shrink-0 border-l py-1.5 pr-3.5 pl-2.5 ${rule} ${muted}`} data-concierge="chip-look">
+                Look
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -578,6 +585,11 @@ export function Concierge({ visible, profile, onProfile, family, driving, dark =
               <button type="button" onClick={askForName} className={link}>
                 {name ? 'Change my name' : `Tell ${WREN.name} your name`}
               </button>
+              {onLook && (
+                <button type="button" onClick={onLook} className={link} data-action="look">
+                  Change my look
+                </button>
+              )}
             </div>
           )}
         </div>

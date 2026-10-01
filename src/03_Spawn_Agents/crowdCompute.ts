@@ -115,6 +115,8 @@ export interface SharedBuffers {
   pose: GPUBuffer
   drawArgs: GPUBuffer
   drawLists: GPUBuffer
+  /** The look word per agent (look.ts; crowd.ts CrowdView.look): the cull reads the body to draw from it. */
+  look: GPUBuffer
 }
 
 export interface CullSettings {
@@ -202,7 +204,7 @@ export const PASS_BINDINGS: Readonly<Record<PassName, readonly number[]>> = {
   binAgents: [0, 1, 2, 5, 6],
   spawn: [0, 1, 2, 3, 4],
   simulate: [0, 1, 2, 3, 4, 7, 8, 9, 12],
-  cull: [0, 1, 10, 11],
+  cull: [0, 1, 10, 11, 13],
 }
 /** The passes the physics worker runs (simulation and First-Law sensing), and the one the page runs (drawing). */
 export const SIM_PASSES: readonly PassName[] = ['clearGrid', 'binAgents', 'spawn', 'simulate']

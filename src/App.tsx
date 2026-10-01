@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Engine, type EngineOptions } from './07_Execute_Actions/engine.ts'
 import { Hud } from './07_Execute_Actions/Hud.tsx'
 import { Terminal } from './07_Execute_Actions/terminal/Terminal.tsx'
@@ -15,7 +15,11 @@ import type { SipocSnapshot } from './05_Observe_Environment/telemetry.ts'
 import { MonolithLogo } from './MonolithLogo.tsx'
 import { BootVeil } from './07_Execute_Actions/BootVeil.tsx'
 import { Concierge } from './07_Execute_Actions/Concierge.tsx'
+import { Customizer } from './07_Execute_Actions/Customizer.tsx'
 import { loadProfile, type Profile } from './05_Observe_Environment/profile.ts'
+import { loadLook, saveLook } from './05_Observe_Environment/lookStore.ts'
+import { lookFromSeed, type Look } from './03_Spawn_Agents/look.ts'
+import { PLAYER_INDEX } from './03_Spawn_Agents/crowdCompute.ts'
 import type { PlanStep } from './06_Make_Decisions/intent.ts'
 import { BRAND } from './brand.ts'
 import embeddedRegion from 'virtual:region-pack'
@@ -156,11 +160,22 @@ function GuiShell({ options }: { options: Options }) {
   const [error, setError] = useState<string | null>(null)
   // Read synchronously, so the very first render already knows a returning visitor.
   const [profile, setProfile] = useState<Profile | null>(loadProfile)
+  // The look the visitor chose (lookStore.ts), or null: then their own seed's look (the first use of profile.seed),
+  // or, unnamed, the hash's for the player's body. The wardrobe card is Wren's to open.
+  const [look, setLook] = useState<Look | null>(loadLook)
+  const [lookOpen, setLookOpen] = useState(false)
+  const lookOpenRef = useRef(false)
   const [veilDone, setVeilDone] = useState(false)
   // A Ring-0 kernel panic: the engine is halted and the reason is shown over everything.
   const [locked, setLocked] = useState<string | null>(null)
 
   useEffect(() => { engine?.setPlayerName(profile?.name ?? '') }, [engine, profile])
+  // The player's own body wears it from the start (agent PLAYER_INDEX; the engine writes the crowd's look word).
+  const worn = useMemo(() => look ?? (profile ? lookFromSeed(profile.seed) : null), [look, profile])
+  useEffect(() => { engine?.setLook(PLAYER_INDEX, worn) }, [engine, worn])
+  const wearLook = useCallback((next: Look) => { setLook(next); saveLook(next) }, [])
+  const openLook = useCallback(() => setLookOpen(true), [])
+  const closeLook = useCallback(() => setLookOpen(false), [])
 
   // A brief's immediate steps go through the terminal bridge (the same four operator knobs), never the engine.
   const applyIntent = useCallback((step: PlanStep): boolean => {
@@ -172,12 +187,18 @@ function GuiShell({ options }: { options: Options }) {
     return false
   }, [bridge])
 
-  // The console suspends game input (and releases pointer lock) while it owns the keyboard.
+  // The console suspends game input (and releases pointer lock) while it owns the keyboard; the wardrobe card likewise
+  // while it is open (the console opening puts the card away).
   const onTermOpen = useCallback((open: boolean) => {
     termOpenRef.current = open
     setTermOpen(open)
-    engineRef.current?.input.suspend(open)
+    if (open) setLookOpen(false)
+    engineRef.current?.input.suspend(open || lookOpenRef.current)
   }, [])
+  useEffect(() => {
+    lookOpenRef.current = lookOpen
+    engineRef.current?.input.suspend(lookOpen || termOpenRef.current)
+  }, [lookOpen])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -278,7 +299,7 @@ function GuiShell({ options }: { options: Options }) {
           r.dispose()
           setLocked(reason)
         }
-        if (termOpenRef.current) e.input.suspend(true)
+        if (termOpenRef.current || lookOpenRef.current) e.input.suspend(true)
         setEngine(e)
         setBridge(Object.freeze({
           ...e.terminalBridge(gate, mind, voice, memory.diary()),
@@ -301,6 +322,9 @@ function GuiShell({ options }: { options: Options }) {
               look: (yaw: number, pitch: number) => { e.input.yaw = yaw; e.input.pitch = pitch },
               // A ping where the head looks (the Q key's path), as plain data: what it met and where.
               ping: (kind: 'go' | 'look' | 'gather' | 'wait' = 'go') => e.pingAt(kind),
+              // The wardrobe (03_Spawn_Agents/look.ts): dress an agent (0 is the player) in a look, or null for the hash's.
+              wear: (agent: number, look: Look | null) => e.setLook(agent, look),
+              lookOf: (agent = PLAYER_INDEX) => e.lookOf(agent),
               // Headless browsers cannot take pointer lock; this hides the capture hint for screenshots.
               pretendLocked: () => { e.input.locked = true },
               // The physics realm as the harness sees it: the mirrored state, the command queue (dbg* accepted), the next state.
@@ -337,13 +361,24 @@ function GuiShell({ options }: { options: Options }) {
       )}
       {hud && (
         <Concierge
-          visible={veilDone && hudVisible && !termOpen}
+          visible={veilDone && hudVisible && !termOpen && !lookOpen}
           profile={profile}
           onProfile={setProfile}
           family={hud.supplier.glyphs}
           driving={hud.input.mode === 'vehicle'}
           dark={hud.customer.daylight < 0.35}
           onIntent={applyIntent}
+          onLook={openLook}
+        />
+      )}
+      {hud && (
+        <Customizer
+          visible={lookOpen && veilDone && !termOpen && locked === null}
+          look={worn}
+          seed={profile?.seed ?? 0}
+          onChange={wearLook}
+          onClose={closeLook}
+          dark={hud.customer.daylight < 0.35}
         />
       )}
       <Terminal bridge={bridge} onOpenChange={onTermOpen} onBoot={reboot} />
