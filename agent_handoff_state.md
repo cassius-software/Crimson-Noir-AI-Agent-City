@@ -5,49 +5,63 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
 
 ## Where things stand (updated as work lands)
 
-- Branch `claude/quirky-faraday-xkpdln`. Last pushed code commit: `0695c8b` (Phase 12: authoritative room). The tree at
-  that commit passes `npm test` (1,169 tests), `npx tsc -b`, `npx oxlint`, `npm run build`, `npm run smoke:net`.
-- The local tag `stable-beta` exists only locally (GitHub refused the tag push, HTTP 403); the operator was told how to
-  publish it.
-- Machine: 4 CPUs, 16 GB. Do not run several Rapier-heavy experiments and a multi-agent workflow at once: the container
-  was killed once (exit 137) doing exactly that.
+- Branch `claude/quirky-faraday-xkpdln`. Last pushed code commit: `0695c8b` (Phase 12). Phase 13 work is in the working
+  tree and in WIP commits on the branch (see `git log`); the tree is not yet release-ready.
+- The local tag `stable-beta` exists only locally (GitHub refused the tag push, HTTP 403).
+- Machine: 4 CPUs, 16 GB. Do not run several Rapier-heavy experiments and a multi-agent workflow at once (exit 137 once).
 
 ## The operator's current directive: Phase 13
 
 1. Close the vehicle teleport exploit: the server must know where cars are and verify entering and leaving a car within
    0.5 m of its own computed vehicle coordinate.
 2. Property-based fuzzing of the WebSocket host, the Ring-0 kernel and the WASM reconciliation bounds; chaotic network
-   conditions; prove client/server parity ≤ 1 µm under adversarial load.
+   conditions; prove client/server parity <= 1 um under adversarial load.
 3. Fix every defect found, keep 14A and the loopback air gap intact, run the full suite, commit, tag
    `v1.0.0-stable-release`.
 
 ## What was established (facts, measured)
 
-- AI car positions are NOT a closed-form schedule: each car is a Rapier body driven along its ring by a track follower
-  (vehicles.ts TrackDriver) that stops at signals and is held by the First Law for pedestrians read from each page's GPU
-  crowd. Each page runs its own traffic on its own clock. Only trains, drones and planes are closed-form
-  (tracks.ts scheduledPose). What the server CAN compute natively: every ring's geometry and every car's ring and starting
-  seat (Fleet seats cars with `assignSlots(buildTrackNetwork(seed), count, createRng(seed ^ 0xca75))`).
-- A player's own car CAN be replayed on the server: its motion per substep depends only on its rigid-body state, the
-  vetted wheel command, tuning, and wheel ray casts against the static city (wheel rays skip sensors, kinematics and other
-  chassis). First substep after a state transfer matches exactly; then a drift (1.6 cm over 1,879 substeps) appeared in a
-  small server world (ground + buildings within 200 m). Source not yet isolated (scratchpad experiment carparity2.ts:
-  N=1 still drifts; the FULL-city run was killed by memory).
-- World step cost: ~0.7 ms with the full city's 7,339 static colliders, ~40–50 µs with only the ground; it scales with
-  static colliders, not cars.
+- AI car positions are NOT computable on a server: each car is a Rapier body driven along its ring by a track follower
+  that stops at signals and is held by the First Law for pedestrians read from each page's own GPU crowd. What the server
+  computes natively: every ring's geometry, every car's ring, seat and SUV flag (carRig.ts planFleet, the fleet's own
+  plan). A player's own car IS replayed on the server, to the bit.
+- Bit-exact car replay needs: the full city's building boxes in the server's world (furniture is sensors, not needed),
+  AND the car rebuilt from the same numbers on both sides (carRig.ts rebuildCarRig: new chassis, collider, controller).
+  A fresh controller alone is not enough: a car resting against a building keeps contact warm-start impulses (3 mm drift).
+- Every fresh Rapier world must be stepped once before its first query (Physics.build now does): the page's realm moved
+  its avatar in an unstepped world on the first substep (ground snap missed, 3 cm) while the mirror's was stepped.
+- In a room the realm's player 1 is a ghost (only fixed geometry stops it), so foot parity is exact (0) and the mirror's
+  tolerance is now 1 um (MIRROR.tolerance). Claims must be the f32 numbers read back from Rapier.
+- Lane envelope of AI cars (measured, 36 cars, 30 s): lateral < 1.0 m (GARAGE.lane), heading < 0.5 rad, never over the
+  ring's limit.
 
-## Plan (decided)
+## Progress on the plan
 
-A. Room mode in the realm (SimCommand `room`): player 1 becomes a permanent ghost to vehicles and other players (the
-   Sanctuary keeps them a sensor, no nudges; the controller hits only fixed geometry; placement like the mirror's), car
-   tuning and car-moving console commands are refused while joined, and a teleport updates the collider at once. Goal:
-   realm and mirror bit-identical on foot.
-B. Authoritative vehicles: refactor the per-car rig and substep out of vehicles.ts so the server replays the player's car
-   (and their parked cars) with the same code; entering is verified (within ENTER_RANGE of the truth, the car on its own
-   ring's lane within 0.5 m or at the server's parked truth within 0.5 m), leaving is verified against the realm's exact
-   exit rule within 0.5 m; corrections at the wheel carry the car's state.
-C. Fix the review findings below. D. Property-based fuzz suites (core, host over sockets, Ring-0, WASM). E. Docs, full
-   suite, build, smoke, a fresh adversarial review, commit, tag.
+- DONE A. Room mode in the realm (simCore 'room', player.ts ghost, sanctuary ghost wards, tuning refused in a room).
+- DONE B (server side). carRig.ts (shared car physics, planFleet, exitPoint, rebuildCarRig), vehicles.ts refactor,
+  garage.node.ts (doors, replay, park/hold, settle), mirror.node.ts judge with doors (enter checked by the garage; exit
+  within 0.5 m of the room's own exit point; the room puts the player at its own point), protocol 4 in replication.ts
+  (drive runs [throttle, brake, steer, handbrake, n], door {enter:{car,state}}|{exit:{x,z}}, correct.car, world
+  'city/<seed>/<cars>', door bucket 2/s burst 4, stale-fix grace 5 s before the rate check, 3 s stall budgets),
+  plane.node.ts updated, host option `cars` / NET_CARS.
+- DONE (host hardening, uncommitted until the WIP commit): MIN_SECRET 16, one connection per token (4010), token expiry
+  enforced in session (4003), pings metered, backlog on every write, error handler first in onUpgrade, refused upgrades
+  destroyed, loggable() log escaping, no reads after close.
+- Tests passing: garage.node.test.ts (5), mirror.node.test.ts (10). Realm suites passed after the rebuild change.
+- TODO, in order:
+  1. replication.test.ts / replication.node.test.ts / netClient.test.ts / authority.node.test.ts to protocol 4
+     (tsc lists the errors: `npx tsc -b`); airgap.test.ts allowlist: add garage.node.ts and mirror's new imports
+     (./garage.node.ts, ./replication.ts types); host tests for 4010/4003/ping metering/try-finally.
+  2. Page side (#25): engine.ts netMoveOf reports drive runs from `st.wheels` and doors from entered/exited events
+     (skip events with `room: true` and steps that carried a correction), sends {c:'room', on} on join/leave, applies a
+     correction with `car` as {c:'netCar', i, state} else a teleport; report footWish-clamped velocity; reset netFix on
+     join; world string `city/<seed>/<cars>` (refuse join if tracks off or a region); netClient: Move with wheels and
+     doors, no coalescing across a door or of drive runs with different commands, keepalive ack, `dropped` semantics.
+  3. Fuzz/property suites (#26): seeded harness; core room fuzz (reorder, duplicate, stale fix, jitter, float rounding,
+     cheaters); host socket fuzz; Ring-0/Bouncer properties; realm-vs-room parity under adversarial load (two peers).
+  4. Smoke: car rows (teleport-hop, car off its lane, exit off the room's point, chassis lie), fix the third-burst row
+     for stepBurst 180.
+  5. Docs (README Networking, History, blueprint Phase 13, headers), full checks, fresh review, commit, tag.
 
 ## Review findings on Phase 12 (adversarial workflow; [k/n] = verifiers who confirmed)
 
@@ -196,7 +210,9 @@ C. Fix the review findings below. D. Property-based fuzz suites (core, host over
 ## Next steps / resume commands
 
 ```sh
-cd /home/user/Crimson-Noir-AI-Agent-City && git fetch origin claude/quirky-faraday-xkpdln && git status
-npx tsc -b && npx oxlint && npm test        # baseline: 1,169 pass at 0695c8b
-npm run smoke:net
+cd /home/user/Crimson-Noir-AI-Agent-City && git fetch origin claude/quirky-faraday-xkpdln && git status && git log --oneline -5
+npx tsc -b                                   # lists the tests still on protocol 3
+node --test src/10_Network/garage.node.test.ts src/10_Network/mirror.node.test.ts   # must pass
+node --test "src/10_Network/*.test.ts"       # the protocol-4 test updates are the next job
+npx oxlint && npm test && npm run build && npm run smoke:net
 ```

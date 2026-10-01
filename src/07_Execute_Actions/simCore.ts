@@ -27,6 +27,7 @@ import { Physics } from './physics.ts'
 import { Avatar } from './player.ts'
 import { Sanctuary, type Nudge } from './sanctuary.ts'
 import { Fleet, type Person, type Vehicle } from './vehicles.ts'
+import { exitPoint } from './carRig.ts'
 import { TrackFleet } from './trackFleet.ts'
 import { RagdollRealm } from './ragdollRealm.ts'
 import { buildTrackNetwork } from '../06_Make_Decisions/tracks.ts'
@@ -37,8 +38,8 @@ import {
 } from '../03_Spawn_Agents/skills.ts'
 import type { Intent } from '../02_Define_The_Rules/laws.ts'
 import {
-  ENTER_RANGE, footWish, MAX_PLAYERS, RIG_SLOTS, type AvatarState, type DriveControls, type FootControls, type PlayerControls, type RecruitView, type SimCommand,
-  type SimEvent, type SimInit, type SimMeta, type StepState,
+  ENTER_RANGE, footWish, MAX_PLAYERS, RIG_SLOTS, type AvatarState, type CarBodyState, type DriveControls, type FootControls, type PlayerControls, type RecruitView, type SimCommand,
+  type SimEvent, type SimInit, type SimMeta, type StepState, type WheelsState,
 } from './simProtocol.ts'
 
 /** Longest step accepted, s (a page that skipped frames sends the sum; the physics caps its own substeps). */
@@ -189,6 +190,8 @@ export class SimCore {
   readonly #summons: Summon[] = []
   #rejected = 0
   #workerMs = 0
+  /** Joined to a network room (the `room` command): player 1 is a ghost and car-moving commands are refused. */
+  #room = false
 
   private constructor(physics: Physics, o: SimCoreOptions, crowd: CrowdSensor | null) {
     this.#physics = physics
@@ -317,6 +320,7 @@ export class SimCore {
     let haptics: Haptics = { trigger: 0, limited: false, thump: false }
     let craftOut: Float32Array | null = null
     let rigsOut: Float32Array | null = null
+    let wheels: WheelsState | null = null
     // A crowd that can no longer see anyone leaves the Bouncer blind to pedestrians: that is a broken kernel.
     if (this.#panic === null && this.#crowd?.lost) this.halt(`Sensing Failure: pedestrian sensing stopped (${this.#crowd.lost}).`)
     if (this.#panic === null) {
@@ -366,6 +370,9 @@ export class SimCore {
       }
 
       fleet.think(dt, signalTime)
+      // What player 0's car runs this step's substeps with (the bouncer has vetted it, think() has re-vetted a stale one).
+      const v0 = driving[0]
+      wheels = v0 ? { throttle: v0.lastCommand.throttle, brake: v0.lastCommand.brake, steer: v0.lastCommand.steer, handbrake: v0.handbrake } : null
       // The ragdoll realm reads this realm's own crowd readout: a shove, a kerb trip or a slip near the operator (on
       // foot or at the wheel) is offered to the pool; the next substep builds the rig. Never a vehicle.
       if (this.#realm) {
@@ -430,6 +437,7 @@ export class SimCore {
       poses,
       avatar: avatars[0],
       driving: drivings[0],
+      wheels,
       avatars,
       drivings,
       kernel: this.#kernelStats(),
@@ -575,6 +583,16 @@ export class SimCore {
     if (!this.#debug) throw new Error(`${c}: fault injection is refused outside ?debug`)
   }
 
+  /** A command that would move a car behind a network room's back is refused while the page is joined to one. */
+  #notInRoom(c: string): void {
+    if (this.#room) throw new Error(`${c}: refused in a network room (its authority replays your physics)`)
+  }
+
+  /** True while joined to a network room (the `room` command). */
+  get room(): boolean {
+    return this.#room
+  }
+
   /** One page command. Anything malformed throws; step() counts it as refused and goes on. */
   #command(raw: unknown): void {
     if (typeof raw !== 'object' || raw === null || typeof (raw as { c?: unknown }).c !== 'string') throw new Error('malformed command')
@@ -582,7 +600,33 @@ export class SimCore {
     const fleet = this.#fleet
     switch (cmd.c) {
       case 'interact': this.#interact(this.#player(cmd.player)); return
+      case 'room': {
+        const on = cmd.on === true
+        this.#room = on
+        this.#avatars[0].setGhost(on)
+        this.#sanctuary.ghost(0, on)
+        // The authored car: the room's authority replays it with the authored tuning.
+        if (on) for (const key of TUNING_KEYS) fleet.setTuning(key, 1)
+        return
+      }
+      case 'netCar': {
+        if (!this.#room) throw new Error('netCar: only a network room corrects a car')
+        const v = this.#car(cmd.i)
+        const st = cmd.state as unknown as Record<string, unknown>
+        const keys = ['x', 'y', 'z', 'qx', 'qy', 'qz', 'qw', 'vx', 'vy', 'vz', 'wx', 'wy', 'wz'] as const
+        if (typeof st !== 'object' || st === null || !keys.every((k) => Number.isFinite(st[k]))) throw new Error('netCar: state must be 13 finite numbers')
+        const cur = this.#driving[0]
+        if (cur === v) {
+          fleet.rebuild(v, cmd.state)
+          return
+        }
+        // Out of another car first (stopped where it is), then into this one, in the room's state.
+        if (cur) this.#interact(0)
+        this.#seat(0, v, true, cmd.state)
+        return
+      }
       case 'reset': {
+        this.#notInRoom(cmd.c)
         // Player 0's car, righted where it stands: never put down beside a player on foot (the driver is inside).
         const v = this.#driving[0]
         if (!v) return
@@ -600,12 +644,14 @@ export class SimCore {
         return
       }
       case 'setMode': {
+        this.#notInRoom(cmd.c)
         const v = this.#notDriven(this.#car(cmd.i))
         if (cmd.mode !== 'ai' && cmd.mode !== 'parked') throw new Error(`setMode: mode must be 'ai' or 'parked'`)
         v.mode = cmd.mode
         return
       }
       case 'recover': {
+        this.#notInRoom(cmd.c)
         const v = this.#car(cmd.i)
         const opt = (n: unknown): number | undefined => (n === undefined ? undefined : finite(n, NaN))
         const x = opt(cmd.x), z = opt(cmd.z), heading = opt(cmd.heading)
@@ -618,6 +664,7 @@ export class SimCore {
         return
       }
       case 'intent': {
+        this.#notInRoom(cmd.c)
         const v = this.#notDriven(this.#car(cmd.i))
         if (v.mode === 'ai') v.mode = 'player'
         // A scripted intent is a player-style command: same Bouncer, same envelope, same latch. It is ruled after
@@ -626,6 +673,7 @@ export class SimCore {
         return
       }
       case 'tune': {
+        this.#notInRoom(cmd.c)
         if (!TUNING_KEYS.includes(cmd.key)) throw new Error(`tune: unknown key '${String(cmd.key)}'`)
         fleet.setTuning(cmd.key, finite(cmd.value, NaN))
         return
@@ -649,12 +697,14 @@ export class SimCore {
       }
       case 'dbgVelocity': {
         this.#debugOnly(cmd.c)
+        this.#notInRoom(cmd.c)
         const v = this.#car(cmd.i)
         fleet.rig(v).body.setLinvel({ x: finite(cmd.x), y: finite(cmd.y), z: finite(cmd.z) }, true)
         return
       }
       case 'dbgMode': {
         this.#debugOnly(cmd.c)
+        this.#notInRoom(cmd.c)
         const v = this.#notDriven(this.#car(cmd.i))
         if (cmd.mode !== 'ai' && cmd.mode !== 'player' && cmd.mode !== 'parked') throw new Error('dbgMode: unknown mode')
         v.mode = cmd.mode
@@ -667,6 +717,7 @@ export class SimCore {
       }
       case 'dbgHazard': {
         this.#debugOnly(cmd.c)
+        this.#notInRoom(cmd.c)
         const v = this.#car(cmd.i)
         if (cmd.ahead === null) this.#hazardOverride.delete(v.index)
         else this.#hazardOverride.set(v.index, Math.max(0, finite(cmd.ahead, Infinity)))
@@ -798,10 +849,12 @@ export class SimCore {
       const v = cur
       const t = fleet.position(v, this.#pos)
       const h = fleet.heading(v)
-      const lx = Math.cos(h), lz = -Math.sin(h)
-      let ex = t.x + lx * 2.1, ez = t.z + lz * 2.1
-      if (inLot(ex, ez, 0.4)) { ex = t.x - lx * 2.1; ez = t.z - lz * 2.1 }
+      // carRig.ts exitPoint: the realm's rule and the room's check of it are one function.
+      const { x: ex, z: ez } = exitPoint(t.x, t.z, h)
       v.mode = 'parked'
+      // In a network room a car stops where its driver leaves it: its brakes would otherwise answer the bouncer, whose
+      // pedestrians only this page sees, and the room's authority holds the car where it was left.
+      if (this.#room && k === 0) fleet.stop(v)
       this.#driving[k] = null
       avatar.setEnabled(true)
       avatar.teleport(ex, ez)
@@ -813,12 +866,24 @@ export class SimCore {
     }
     const v = fleet.nearest(avatar.x, avatar.z, ENTER_RANGE)
     if (!v) return
+    this.#seat(k, v, false)
+  }
+
+  /**
+   * Player k takes car v's wheel. In a network room (player 1) the car is built again in its own state (or the room's,
+   * `state`), as the room's authority builds it when it takes over the same car from the state this event carries
+   * (vehicles.ts rebuild, garage.node.ts).
+   */
+  #seat(k: number, v: Vehicle, byRoom: boolean, state?: CarBodyState): void {
+    const fleet = this.#fleet
     this.#notDriven(v)
     v.mode = 'player'
     v.steer = 0
     this.#driving[k] = v
-    avatar.setEnabled(false)
-    this.#events.push({ e: 'entered', player: k, index: v.index, heading: fleet.heading(v), suv: v.suv })
+    this.#avatars[k].setEnabled(false)
+    const s = state ?? fleet.bodyState(v)
+    if (this.#room && k === 0) fleet.rebuild(v, s)
+    this.#events.push({ e: 'entered', player: k, index: v.index, heading: fleet.heading(v), suv: v.suv, state: s, ...(byRoom && { room: true }) })
   }
 
   /**

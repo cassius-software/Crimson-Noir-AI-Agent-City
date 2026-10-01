@@ -8,7 +8,10 @@
  * forged and over-rate frames are counted until the peer is removed with a close code; a plain HTTP request is told to
  * upgrade; and the host closes cleanly. With the headless Ring-0 mirror as the authority (the city of the page's seed)
  * it shows crafted illegal movement refused and corrected in the same turn it arrives, the truth unchanged, and a
- * room of walkers judged in microseconds. Every wait is for the host to observe the event, never a fixed sleep.
+ * room of walkers judged in microseconds. It also pins the host's own defences: a refused upgrade's socket is ended and
+ * a reset after it is no crash, one player holds one connection, a session ends with its token, WebSocket pings are
+ * metered, a short secret starts no host, and untrusted text is escaped before it is logged. Every wait is for the host
+ * to observe the event, never a fixed sleep.
  * What breaks if it is removed? The door could stop refusing what the core refuses, or a frame rule could drift.
  */
 import assert from 'node:assert/strict'
@@ -22,14 +25,14 @@ import { Mirror } from './mirror.node.ts'
 import { planeAuthority, planeStep } from './plane.node.ts'
 import {
   AUTH_PREFIX, LIMITS, openServerFrame, PROTOCOL_VERSION, sealMessage, SUBPROTOCOL,
-  type ClientMessage, type InputMessage, type RemotePlayer, type Run, type ServerMessage,
+  type ClientMessage, type InputMessage, type RemotePlayer, type FootRun, type Run, type ServerMessage,
 } from './replication.ts'
 import {
-  acceptKey, AUTH_FAILURES, closePayload, mintToken, nodeMac, OP, offeredToken, readFrame, startHost, verifyToken, writeFrame,
-  type Host, type HostOptions,
+  acceptKey, AUTH_FAILURES, closePayload, loggable, MIN_SECRET, mintToken, nodeMac, OP, offeredToken, PINGS_PER_SECOND, readFrame, startHost, verifyToken,
+  writeFrame, type Host, type HostOptions,
 } from './replication.node.ts'
 
-const SECRET = 'test-secret'
+const SECRET = 'test-secret-of-sixteen+'
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 /** Polls until `cond` holds, at most 3 s: the host observes sockets on its own schedule, so the test waits for it rather than guessing. */
@@ -114,6 +117,12 @@ async function join(host: Host, c: Client, name: string): Promise<Extract<Server
 /** An input on foot under correction `fix`. */
 const input = (seq: number, fix: number, segs: Run[], claim: { x: number; y: number; z: number }, o: Partial<InputMessage> = {}): InputMessage =>
   ({ t: 'input', seq, ack: 0, fix, mode: 'foot', segs, heading: 0, claim, ...o })
+
+/** A client frame, masked as RFC 6455 requires (payloads up to 125 bytes: control frames and short text). */
+function maskedFrame(opcode: number, payload: Buffer = Buffer.alloc(0)): Buffer {
+  const mask = Buffer.from([7, 1, 8, 2])
+  return Buffer.concat([Buffer.from([0x80 | opcode, 0x80 | payload.length]), mask, Buffer.from(payload.map((b, i) => b ^ mask[i & 3]))])
+}
 
 /** An upgrade over a raw socket: the status line and headers the host answers with, and the socket. */
 function rawUpgrade(host: Host, protocol: string | null): Promise<{ socket: Socket; chunks: Buffer[]; head: string }> {
@@ -203,7 +212,8 @@ test('frames: masked client frames of every length class are read, unmasked ones
   assert.equal(acceptKey('dGhlIHNhbXBsZSBub25jZQ=='), 's3pPLMBiTxaQ9kYGzzhZRbK+xOo=', 'the RFC\'s own example')
 })
 
-test('the upgrade\'s token: onyx.3 and exactly one auth entry; the host\'s seals are integrity.ts\'s digest', () => {
+test('the upgrade\'s token: onyx.4 and exactly one auth entry; the host\'s seals are integrity.ts\'s digest', () => {
+  assert.equal(SUBPROTOCOL, 'onyx.4')
   assert.equal(offeredToken(`${SUBPROTOCOL}, ${AUTH_PREFIX}abc.1.xyz`), 'abc.1.xyz')
   assert.equal(offeredToken(`${AUTH_PREFIX}abc, ${SUBPROTOCOL}`), 'abc')
   for (const bad of [undefined, '', SUBPROTOCOL, `${AUTH_PREFIX}abc`, `onyx.2, ${AUTH_PREFIX}abc`, `${SUBPROTOCOL}, ${AUTH_PREFIX}a, ${AUTH_PREFIX}b`, `${SUBPROTOCOL}, ${AUTH_PREFIX}`, 'x'.repeat(2 * LIMITS.token + 1)]) {
@@ -230,10 +240,18 @@ test('no upgrade without a good token: missing, forged, expired or another secre
     assert.match(await head(`${SUBPROTOCOL}, ${AUTH_PREFIX}${good.slice(0, -2)}`), /^HTTP\/1\.1 401 /, 'tampered')
     assert.equal(host.connections(), 0, 'no socket was ever upgraded')
     assert.equal(host.room.peers.size, 0, 'no room slot was ever taken')
-    assert.equal(host.stats().unauthorized, AUTH_FAILURES.burst)
+    // A refused socket is ended by the host, not left open for the client to hold (a client that keeps it holds a
+    // descriptor at most a second), and a reset right after the refusal is no error of the host's.
+    const held = await rawUpgrade(host, SUBPROTOCOL)
+    await new Promise<void>((r) => { if (held.socket.destroyed) r(); else held.socket.once('close', () => r()) })
+    const reset = await rawUpgrade(host, SUBPROTOCOL)
+    reset.socket.resetAndDestroy()
+    await sleep(50)
+    assert.equal(host.stats().unauthorized + host.stats().throttled, AUTH_FAILURES.burst + 2)
     // The address has spent its failures: the next bad token is a 429 (unlogged)…
+    const throttled = host.stats().throttled
     assert.match(await head(`${SUBPROTOCOL}, ${AUTH_PREFIX}forged`), /^HTTP\/1\.1 429 /)
-    assert.equal(host.stats().throttled, 1)
+    assert.equal(host.stats().throttled, throttled + 1)
     // …but a good token is never locked out (behind a proxy every client shares one address). That probe drops its
     // connection without a close frame: the host lets the peer go at once, not at the idle timeout.
     assert.match(await head(`${SUBPROTOCOL}, ${AUTH_PREFIX}${good}`), /^HTTP\/1\.1 101 /)
@@ -273,7 +291,7 @@ test('a good join is welcomed with its spawn; honest inputs move the truth every
     assert.equal(welcome.you.name, 'Ada')
     const s0 = await a.next('snapshot')
     assert.deepEqual([s0.players, s0.you.x], [[], welcome.you.x])
-    const runs: Run[] = [[2, 0, 6]]
+    const runs: FootRun[] = [[2, 0, 6]]
     const claim = planeStep(welcome.you, runs)
     a.send(input(1, 1, runs, claim, { ack: s0.tick, heading: 1 }))
     await until(() => host.room.peers.get(1)?.seq === 1, 'the input kept')
@@ -405,6 +423,7 @@ test('an unmasked frame or an over-size frame closes the socket with the RFC cod
 
 test('a plain HTTP request is told to upgrade; a bad upgrade is refused; the host closes cleanly with a client still joined', async () => {
   const host = await plane()
+  try {
   const status = await new Promise<number>((resolve, reject) => {
     const req = request({ host: host.host, port: host.port, path: '/', method: 'GET' }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode ?? 0)) })
     req.on('error', reject)
@@ -429,16 +448,87 @@ test('a plain HTTP request is told to upgrade; a bad upgrade is refused; the hos
   assert.equal(closed.reason, 'host closing')
   assert.equal(host.connections(), 0)
   await assert.rejects(open(host), 'nothing listens after close')
+  } finally {
+    await host.close()
+  }
 })
 
-test('a peer too slow to read what it is sent is closed (4009) before the host buffers it: every send checks the backlog first', async () => {
+test('a peer too slow to read what it is sent is closed (4009) before the host buffers it: every write checks the backlog first', async () => {
   // A loopback socket's kernel buffers take megabytes before Node holds a byte, so the rule is read from the code: the
-  // one send path checks the unread backlog against maxBacklog before it writes, and closes the peer instead.
+  // one write path checks the unread backlog against maxBacklog before it writes, and closes the peer instead; text
+  // frames and pongs both go through it, and the close frame is written only under the same bound.
   const { readFileSync } = await import('node:fs')
   const code = readFileSync(new URL('./replication.node.ts', import.meta.url), 'utf8')
-  const send = code.slice(code.indexOf('const send = (c: Conn, msg: ServerMessage): void => {'), code.indexOf('const broadcast ='))
-  assert.match(send, /if \(c\.socket\.writableLength > maxBacklog\) \{\s*close\(c, 4009, 'too slow to keep up'\)\s*return\s*\}\s*c\.socket\.write\(/)
-  assert.equal(code.match(/c\.socket\.write\(writeFrame\(OP\.text/g)?.length, 1, 'one path writes text frames')
+  const write = code.slice(code.indexOf('const write = (c: Conn, frame: Buffer): void => {'), code.indexOf('const send ='))
+  assert.match(write, /if \(c\.socket\.writableLength > maxBacklog\) \{\s*if \(!c\.closing\) close\(c, 4009, 'too slow to keep up'\)\s*c\.socket\.destroy\(\)\s*return\s*\}\s*c\.socket\.write\(frame\)/)
+  assert.equal(code.match(/c\.socket\.write\(/g)?.length, 2, 'the write path, and the close frame under the same bound')
+  assert.match(code, /c\.socket\.writableLength <= maxBacklog\) c\.socket\.write\(writeFrame\(OP\.close/)
+  assert.match(code, /write\(c, writeFrame\(OP\.text/)
+  assert.match(code, /write\(c, writeFrame\(OP\.pong/)
+})
+
+test('one player, one connection: a second under the same subject replaces the first (4010); a session ends with its token (4003)', async () => {
+  const clock = { now: Date.now() }
+  const host = await plane({ tickHz: 100, now: () => clock.now })
+  try {
+    const first = await open(host, 'Ada')
+    await join(host, first, 'Ada')
+    // Another token minted for the same player: the first connection gives way.
+    const second = await open(host, 'Ada', host.token('Ada', 10_000))
+    const closed = await first.closed
+    assert.deepEqual([closed.code, closed.reason], [4010, 'replaced by a new connection'])
+    await join(host, second, 'Ada')
+    await until(() => host.connections() === 1 && host.room.peers.size === 1, 'one slot for Ada')
+    // A token good for ten seconds (less than the idle timeout): the session ends when it does, whatever the peer does.
+    clock.now += 10_001
+    const ended = await second.closed
+    assert.deepEqual([ended.code, ended.reason], [4003, 'token expired'])
+    await until(() => host.connections() === 0, 'the expired session gone')
+  } finally {
+    await host.close()
+  }
+})
+
+test('WebSocket pings are metered: a flood of them is refused and the peer removed (4008), joined or not', async () => {
+  const host = await plane()
+  try {
+    const r = await rawUpgrade(host, `${SUBPROTOCOL}, ${AUTH_PREFIX}${host.token('pinger')}`)
+    assert.match(r.head, /^HTTP\/1\.1 101 /)
+    const closedAt = new Promise<void>((done) => r.socket.once('close', () => done()))
+    // The burst is answered with pongs; past it every ping is a refusal, and the eighth removes the peer.
+    const n = 2 * PINGS_PER_SECOND + 20
+    r.socket.write(Buffer.concat(Array.from({ length: n }, () => maskedFrame(OP.ping, Buffer.from('x')))))
+    await until(() => Buffer.concat(r.chunks).includes(Buffer.from([0x88])), 'a close frame')
+    const frames = Buffer.concat(r.chunks)
+    const at = frames.indexOf(Buffer.from([0x88]))
+    let pongs = 0
+    for (let i = 0; i < at; i++) if (frames[i] === 0x8a) pongs++
+    assert.ok(pongs <= 2 * PINGS_PER_SECOND + 1, `${pongs} pongs`)
+    assert.equal(frames.readUInt16BE(at + 2), 4008)
+    r.socket.end()
+    await closedAt
+  } finally {
+    await host.close()
+  }
+})
+
+test('a short secret starts no host; untrusted text is one escaped, bounded line in the log', async () => {
+  for (const secret of ['', 'x'.repeat(MIN_SECRET - 1)]) await assert.rejects(startHost({ secret, authority: planeAuthority() }), /at least 16 characters/)
+  assert.equal(loggable('a\nb'), 'a\\nb')
+  assert.equal(loggable('peer 1 closed: x\r\npeer 7 banned'), 'peer 1 closed: x\\r\\npeer 7 banned')
+  assert.equal(loggable('"quoted"'), '\\"quoted\\"')
+  assert.equal(loggable('y'.repeat(500)).length, 161)
+  // The log lines a client can steer go through it.
+  const lines: string[] = []
+  const host = await plane({ log: (l) => lines.push(l) })
+  try {
+    const c = await open(host, 'Ada')
+    c.send({ t: 'x\npeer 9 closed: banned', v: 1 })
+    await until(() => lines.some((l) => l.includes('refused')), 'the refusal logged')
+    assert.ok(lines.every((l) => !l.includes('\n')), lines.join(' | '))
+  } finally {
+    await host.close()
+  }
 })
 
 // ---------------------------------------------------------------- the mirror as the authority
@@ -448,7 +538,7 @@ test('the mirror on the socket: crafted illegal movement is refused and correcte
   const host = await startHost({ secret: SECRET, tickHz: 1 })
   const predictor = await Mirror.create(1337)
   try {
-    assert.equal(host.world, 'city/1337')
+    assert.equal(host.world, 'city/1337/36')
     const c = await open(host, 'Ada')
     const w = await join(host, c, 'Ada')
     // The client's own prediction: the same controller on the same city (the page's realm agrees within a micrometre,
@@ -457,7 +547,7 @@ test('the mirror on the socket: crafted illegal movement is refused and correcte
     predictor.place(w.id, w.you.x, w.you.z)
     let seq = 0
     let fix = w.fix
-    const walk = (runs: Run[]): InputMessage => {
+    const walk = (runs: FootRun[]): InputMessage => {
       const p = predictor.walk(w.id, runs)
       return input(++seq, fix, runs, { x: p.x, y: p.y, z: p.z })
     }
@@ -493,18 +583,24 @@ test('the mirror on the socket: crafted illegal movement is refused and correcte
     ms.push(await crafted({ ...honestNext, claim: { ...honestNext.claim, z: honestNext.claim.z + 40 } }, /claim .* from the mirror's pose/))
     // 2. A speed hack in the shape: 600 substeps in one packet.
     ms.push(await crafted(input(++seq, fix, [[0, RUN, 600]], { x: kept.x, y: 0.92, z: kept.z + 52 }), /input: substeps/))
-    // 3. A speed hack on the clock: more than the banked second of substeps at once (honest claims, too many substeps).
-    const burst = (): InputMessage => input(++seq, fix, [[0, 0, 30]], { x: kept.x, y: truth().y, z: kept.z })
+    // 3. A speed hack on the clock: more than the banked seconds of substeps at once (honest claims, too many substeps).
+    const burst = (): InputMessage => walk([[0, 0, 30]])
     for (let k = 0; k < LIMITS.stepBurst / 30; k++) c.send(burst())
     ms.push(await crafted(burst(), /more substeps than time allows/))
     await sleep(600)
     // 4. Through a wall: the lot east of the sidewalk (a podium from x 327 m), the claim on the straight line.
     ms.push(await crafted(input(++seq, fix, [[RUN, 0, 30]], { x: kept.x + RUN * 0.5, y: 0.92, z: kept.z }), /claim .* from the mirror's pose/))
     assert.ok(truth().x < 327 - 0.25, `the truth never entered the lot: x ${truth().x}`)
+    // 5. A teleport through a door: car 0's own state, claimed where the player is not.
+    const car = host.room.authority as unknown as Mirror
+    const seat = car.garage.plan[0].pose
+    const yaw = seat.heading - Math.PI / 2
+    const state = { x: seat.x, y: 0.56, z: seat.z, qx: 0, qy: Math.sin(yaw / 2), qz: 0, qw: Math.cos(yaw / 2), vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0 }
+    ms.push(await crafted(input(++seq, fix, [[0, 0, 0, 0, 1]], state, { mode: 'drive', door: { enter: { car: 0, state } } }), /from the room's pose/))
     for (const t of ms) assert.ok(t < 250, `answered in ${t.toFixed(1)} ms`)
     const st = host.stats()
-    assert.ok(st.corrected >= 4 && st.kept >= 4, JSON.stringify(st))
-    assert.ok(st.inputUs > 0 && st.inputUs < 5000, `an input handled in ${st.inputUs.toFixed(0)} µs`)
+    assert.ok(st.corrected >= 5 && st.kept >= 4, JSON.stringify(st))
+    assert.ok(st.inputUs > 0, 'inputs timed (the walkers\' test bounds the cost)')
   } finally {
     await host.close()
   }
@@ -525,7 +621,7 @@ test('a room of walkers on the mirror: every honest input kept, each judged in w
     for (let i = 1; i <= STEPS; i++) {
       for (let k = 0; k < N; k++) {
         const id = welcomes[k].id
-        const runs: Run[] = [[Math.sin(k) * RUN, Math.cos(k) * RUN, 1]]
+        const runs: FootRun[] = [[Math.sin(k) * RUN, Math.cos(k) * RUN, 1]]
         const p = predictor.walk(id, runs)
         clients[k].send(input(i, 1, runs, { x: p.x, y: p.y, z: p.z }))
       }

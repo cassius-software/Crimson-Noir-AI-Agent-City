@@ -95,6 +95,11 @@ interface Ward {
    */
   side: number
   sideOf: number
+  /**
+   * A ghost (player 1 in a network room): a sensor for as long as it lasts, never nudged, never restored to solid.
+   * Nothing can touch it, so it needs no shield episode; what moves it is its own walk alone.
+   */
+  ghost: boolean
 }
 
 export class Sanctuary {
@@ -123,7 +128,7 @@ export class Sanctuary {
    */
   register(person: PersonBody): number {
     person.collider.setSensor(false)
-    this.wards.push({ person, probe: new RAPIER.Capsule(person.halfHeight, person.radius), sensor: false, clear: 0, side: 1, sideOf: -1 })
+    this.wards.push({ person, probe: new RAPIER.Capsule(person.halfHeight, person.radius), sensor: false, clear: 0, side: 1, sideOf: -1, ghost: false })
     this.nudges.push({ dx: 0, dz: 0 })
     return this.wards.length - 1
   }
@@ -140,7 +145,30 @@ export class Sanctuary {
     ward.clear = 0
     ward.side = 1
     ward.sideOf = -1
+    ward.ghost = false
     person.collider.setSensor(false)
+    const out = this.nudges[i]
+    out.dx = 0
+    out.dz = 0
+  }
+
+  /**
+   * Makes ward `i` a ghost, or ends it (simCore.ts `room`): a ghost is a sensor at once and stays one, with no nudge;
+   * ended, it is solid again unless a vehicle is in reach, which the next guard() decides as for anyone.
+   */
+  ghost(i: number, on: boolean): void {
+    const ward = this.wards[i]
+    if (!ward) throw new RangeError(`no ward ${i} (0–${this.wards.length - 1})`)
+    if (on === true) {
+      ward.ghost = true
+      ward.sensor = true
+      ward.clear = 0
+      ward.sideOf = -1
+      if (ward.person.collider.isValid()) ward.person.collider.setSensor(true)
+    } else if (ward.ghost) {
+      ward.ghost = false
+      this.restore(ward)
+    }
     const out = this.nudges[i]
     out.dx = 0
     out.dz = 0
@@ -160,6 +188,8 @@ export class Sanctuary {
       const out = this.nudges[i]
       out.dx = 0
       out.dz = 0
+      // A ghost stays a sensor, untouched and never nudged.
+      if (ward.ghost) continue
       const { body, collider, radius } = ward.person
       if (!collider.isValid()) {
         ward.sensor = false

@@ -25,17 +25,18 @@ const MAX_LIFT = 0.35
 const SOLIDS = RAPIER.QueryFilterFlags.EXCLUDE_SENSORS
 /** While shielded, vehicles are not obstacles either: every dynamic body in this world is a vehicle chassis. */
 const PASS_VEHICLES = RAPIER.QueryFilterFlags.EXCLUDE_SENSORS | RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC
-/** In the mirror, other players (kinematic capsules) are not obstacles: the room's players pass through one another. */
-const PASS_PLAYERS = RAPIER.QueryFilterFlags.EXCLUDE_KINEMATIC
+/**
+ * A ghost (player 1 in a network room) and the network's mirror: only fixed geometry is an obstacle. No vehicle, no
+ * other player (kinematic capsules), no sensor. The same flags on both sides, so the page's move and the server's
+ * replay search the same set of colliders.
+ */
+const GHOST = RAPIER.QueryFilterFlags.EXCLUDE_SENSORS | RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC | RAPIER.QueryFilterFlags.EXCLUDE_KINEMATIC
 
 /** How an avatar lives in its world. */
 export interface AvatarOptions {
   /**
-   * The network's authoritative mirror (10_Network/mirror.node.ts): each move puts the capsule where the controller
-   * says at once (the body's translation set and its collider updated, no world step: nothing in the mirror's world
-   * moves on its own), and the other players are not obstacles. The result is the realm's within a 32-bit
-   * coordinate's last bit (a world step lands a kinematic body on its next translation through a velocity, which can
-   * round that bit the other way). The realm's avatars (the default) step with their world.
+   * The network's authoritative mirror (10_Network/mirror.node.ts): a ghost for good (see setGhost), in a world that
+   * is never stepped (nothing in it moves on its own).
    */
   mirror?: boolean
 }
@@ -53,6 +54,8 @@ export class Avatar {
   private readonly controller: RAPIER.KinematicCharacterController
   private readonly physics: Physics
   private readonly mirror: boolean
+  /** A ghost: only fixed geometry stops it, and each move puts it in place at once (setGhost). */
+  private ghost = false
   private fall = 0
   /** Whether the last move ended on the ground (the controller's own verdict, kept so a snapshot can restore it). */
   private grounded = false
@@ -67,6 +70,7 @@ export class Avatar {
     const world = physics.world
     this.physics = physics
     this.mirror = o.mirror === true
+    this.ghost = this.mirror
     this.body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(x, HALF_HEIGHT + RADIUS, z))
     // The ghost-mode law for a promoted pedestrian too: the capsule's groups (collision.ts AVATAR_GROUPS) drop every
     // pair with a physical person's segments, so the avatar walks through them and shoves nobody.
@@ -104,9 +108,10 @@ export class Avatar {
     want.z = vz * dt + this.nudgeZ
     this.nudgeX = 0
     this.nudgeZ = 0
-    // Shielded (a sensor): cars pass through, so they must not block, trap or be shoved by the avatar.
-    const flags = this.collider.isSensor() ? PASS_VEHICLES : SOLIDS
-    this.controller.computeColliderMovement(this.collider, want, this.mirror ? flags | PASS_PLAYERS : flags, AVATAR_GROUPS)
+    // Shielded (a sensor): cars pass through, so they must not block, trap or be shoved by the avatar. A ghost meets
+    // only fixed geometry.
+    const flags = this.ghost ? GHOST : this.collider.isSensor() ? PASS_VEHICLES : SOLIDS
+    this.controller.computeColliderMovement(this.collider, want, flags, AVATAR_GROUPS)
     this.grounded = this.controller.computedGrounded()
     const d = this.controller.computedMovement(this.moved)
     const t = this.body.translation(this.at)
@@ -142,6 +147,22 @@ export class Avatar {
     this.physics.world.removeRigidBody(this.body)
   }
 
+  /**
+   * Player 1 in a network room (simCore.ts `room`), and the mirror always: only fixed geometry is an obstacle (no
+   * vehicle, no other player), and each move puts the capsule where the controller says at once (the body's
+   * translation set, which also sets its next kinematic translation, and its collider updated), so a world step never
+   * moves it and the next move reads exactly where this one left it. The page's realm and the server's mirror then run
+   * the same arithmetic on the same fixed geometry, to the bit (mirror.node.test.ts). The Sanctuary keeps a ghost a
+   * sensor (sanctuary.ts ghost), so no vehicle ever touches it.
+   */
+  setGhost(on: boolean): void {
+    this.ghost = on === true || this.mirror
+  }
+
+  get isGhost(): boolean {
+    return this.ghost
+  }
+
   setEnabled(on: boolean): void {
     this.collider.setEnabled(on)
     this.nudgeX = 0
@@ -150,8 +171,10 @@ export class Avatar {
 
   teleport(x: number, z: number): void {
     this.body.setTranslation({ x, y: HALF_HEIGHT + RADIUS + 0.05, z }, true)
-    if (this.mirror) this.physics.world.propagateModifiedBodyPositionsToColliders()
-    else this.body.setNextKinematicTranslation({ x, y: HALF_HEIGHT + RADIUS + 0.05, z })
+    // The collider follows at once (a move right after reads the collider, not the body): the first step after a
+    // teleport starts where the teleport put the avatar, in the realm as in the mirror.
+    this.physics.world.propagateModifiedBodyPositionsToColliders()
+    if (!this.ghost) this.body.setNextKinematicTranslation({ x, y: HALF_HEIGHT + RADIUS + 0.05, z })
     // Put down in the air: the next move starts falling from rest, whatever the last one ended on (so a client's realm
     // and the mirror, teleported to the same point, take the same next step).
     this.fall = 0
@@ -170,8 +193,8 @@ export class Avatar {
   restore(s: AvatarSnapshot): void {
     const at = { x: s.x, y: s.y, z: s.z }
     this.body.setTranslation(at, false)
-    if (this.mirror) this.physics.world.propagateModifiedBodyPositionsToColliders()
-    else this.body.setNextKinematicTranslation(at)
+    this.physics.world.propagateModifiedBodyPositionsToColliders()
+    if (!this.ghost) this.body.setNextKinematicTranslation(at)
     this.fall = s.fall
     this.grounded = s.grounded
     this.heading = s.heading
@@ -180,9 +203,9 @@ export class Avatar {
     this.nudgeZ = 0
   }
 
-  /** The move's end: the next step reaches it (the realm), or the capsule is put there now (the mirror). */
+  /** The move's end: the next step reaches it (the realm), or the capsule is put there now (a ghost, the mirror). */
   private place(next: { x: number; y: number; z: number }): void {
-    if (!this.mirror) {
+    if (!this.ghost) {
       this.body.setNextKinematicTranslation(next)
       return
     }

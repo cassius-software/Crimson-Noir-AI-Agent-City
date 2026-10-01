@@ -165,7 +165,13 @@ test('the replication core takes its 14A verdicts from conduct.ts screen, and th
     // the Ring-0 audit, never the page's realm (no simCore, no fleet, no laws) and never on the page.
     'mirror.node.ts': [
       '../01_Initialize_World/city.ts', '../02_Define_The_Rules/ring0.ts', '../07_Execute_Actions/physics.ts', '../07_Execute_Actions/player.ts',
-      '../07_Execute_Actions/simProtocol.ts',
+      '../07_Execute_Actions/simProtocol.ts', './garage.node.ts', './replication.ts',
+    ],
+    // Its garage (Phase 13): one car's physics shared with the page (carRig.ts) and the track network's geometry, again
+    // never the page's realm, its fleet or its bouncer.
+    'garage.node.ts': [
+      '../01_Initialize_World/city.ts', '../02_Define_The_Rules/ring0.ts', '../06_Make_Decisions/tracks.ts', '../07_Execute_Actions/carRig.ts',
+      '../07_Execute_Actions/physics.ts', '../07_Execute_Actions/simProtocol.ts',
     ],
     'plane.node.ts': ['../07_Execute_Actions/simProtocol.ts', './replication.ts'],
   }
@@ -175,7 +181,7 @@ test('the replication core takes its 14A verdicts from conduct.ts screen, and th
     const specs = specifiers(text)
     assert.ok(specs.length > 0, `${file}: imports parsed`)
     for (const spec of specs) assert.ok(list.includes(spec), `${file} imports '${spec}'`)
-    const realms = file === 'mirror.node.ts' ? ['simCore', 'vehicles', 'laws'] : ['simCore', 'vehicles', 'laws', 'ring0', 'physics']
+    const realms = file === 'mirror.node.ts' || file === 'garage.node.ts' ? ['simCore', 'vehicles', 'laws'] : ['simCore', 'vehicles', 'laws', 'ring0', 'physics']
     for (const realm of realms) assert.ok(!specs.some((s) => s.includes(realm)), `${file} reaches the realm (${realm})`)
   }
   // Every source of the stage is in the list above (or is a test).

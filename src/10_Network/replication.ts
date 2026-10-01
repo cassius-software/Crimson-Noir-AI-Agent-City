@@ -4,13 +4,16 @@
  * boundary: every message is plain data (numbers, strings, booleans), and every message is read as untrusted. The
  * validators refuse anything malformed the way simHost does (shape, finite numbers, bounds, string lengths, sequence
  * order) and hand back a frozen copy with nothing extra in it. The room is server-authoritative (Phase 12): a peer's
- * input says which walking velocity the client's own physics realm applied for each run of fixed substeps and where
- * that left it (the claim, its prediction); the room hands it to its Authority (the host's is the headless Ring-0
- * mirror, mirror.node.ts, the same city and the same character controller), which replays it and keeps it only if the
- * claim matches. An input it refuses changes nothing in the room and is answered at once with a correction: the truth,
- * under a new correction number, which the client snaps to (inputs under an older number predate the snap and are
- * dropped unread). A peer may not run more substeps than time allows, and a peer that keeps earning corrections is
- * removed. The snapshot each tick is the truth: every other player's pose, and this peer's own. On the page a remote
+ * input says what the client's own physics realm applied for each run of fixed substeps (on foot the walking velocity,
+ * at the wheel the vetted wheel command) and where that left it (the claim, its prediction); the room hands it to its
+ * Authority (the host's is the headless Ring-0 mirror, mirror.node.ts, the same city, the same character controller
+ * and the same car physics), which replays it and keeps it only if the claim matches. Taking a car's wheel and leaving
+ * it are doors (Phase 13): an input names the car and the state the realm took it over in, or the point the realm put
+ * the player down at, and the authority checks each against its own numbers before the runs are replayed. An input it
+ * refuses is answered at once with a correction: the truth (and, at the wheel, the car's full state), under a new
+ * correction number, which the client snaps to (inputs under an older number predate the snap and are dropped unread
+ * for a grace after it). A peer may not run more substeps or take more doors than time allows, and a peer that keeps
+ * earning corrections is removed. The snapshot each tick is the truth: every other player's pose, and this peer's own. On the page a remote
  * player is only a pose that is drawn, modelled on the pose buffer's layout (REMOTE_POSE), never a body in the physics
  * realm: the kernel stays single. Every peer has token buckets (inputs per second, substeps per second, corrections per
  * minute, chat per minute, pings per second), every refusal is counted and a peer that keeps earning them is removed. The 14A screen of 02_Define_The_Rules/conduct.ts reads every player name and
@@ -25,17 +28,18 @@
  */
 import { screen } from '../02_Define_The_Rules/conduct.ts'
 import { canonical, hmacSha256, isDigest, sameDigest } from '../02_Define_The_Rules/integrity.ts'
-import { RUN } from '../07_Execute_Actions/simProtocol.ts'
+import { RUN, type CarBodyState } from '../07_Execute_Actions/simProtocol.ts'
 import { PING_KINDS, type PingKind } from '../08_Swarm/ping.ts'
 
 /**
  * The protocol's version; a join naming another is refused. 2: every frame is sealed (sealMessage). 3: the room is
  * authoritative (inputs are runs of substeps and a claim, a refused one is answered with a correction), and the token
- * rides the upgrade (authProtocol).
+ * rides the upgrade (authProtocol). 4: the room replays cars too (runs at the wheel carry the wheel command, doors are
+ * checked, a correction at the wheel carries the car's state), and the world names the fleet ('city/<seed>/<cars>').
  */
-export const PROTOCOL_VERSION = 3
+export const PROTOCOL_VERSION = 4
 /** The WebSocket subprotocol a client offers and the host answers with. */
-export const SUBPROTOCOL = 'onyx.3'
+export const SUBPROTOCOL = 'onyx.4'
 /** The subprotocol entry that carries the session token, `auth.<token>`: the host checks it before it upgrades. */
 export const AUTH_PREFIX = 'auth.'
 
@@ -56,23 +60,40 @@ export const LIMITS = Object.freeze({
   /** |x| and |z| of any position or ping, m; |y| at most `height`. */
   range: 4096,
   height: 1024,
-  /** Inputs a peer may send: a steady rate and the burst it may bank. */
+  /** Inputs a peer may send: a steady rate and the burst it may bank (a network stall of 3 s delivers 3 s of them at once). */
   inputsPerSecond: 60,
-  inputBurst: 120,
+  inputBurst: 180,
   /** Runs of substeps one input may carry, and the substeps in all. */
   runs: 8,
   stepsPerInput: 30,
   /**
-   * Substeps a peer may run: the realm's fixed rate (physics.ts PHYSICS_HZ) and a second banked (a network stall up to
-   * a second delivers an honest client's steps at once). A client that runs its physics faster than time (a speed hack
-   * on the clock) runs out, and gains at most that second, once: the room never keeps a claim it did not replay.
+   * Substeps a peer may run: the realm's fixed rate (physics.ts PHYSICS_HZ) and three seconds banked (a network stall up
+   * to 3 s delivers an honest client's steps at once). A client that runs its physics faster than time (a speed hack on
+   * the clock) runs out, and gains at most those seconds, once: the room never keeps a claim it did not replay.
    */
   stepsPerSecond: 60,
-  stepBurst: 60,
+  stepBurst: 180,
+  /**
+   * How long after a correction an input under the correction before it is still dropped unread, ms: the inputs an
+   * honest client had in flight (a stall included) when the correction reached it. Past it, one is a refusal.
+   */
+  staleGraceMs: 5000,
   /** Corrections a peer may earn per minute (burst: the same) before the host removes it. */
   correctionsPerMinute: 10,
   /** A walker's speed bound (RUN) and a car's (the Ring-0 velocity cap, ring0.ts RING0.maxVelocity), m/s. */
   driveSpeed: 50,
+  /**
+   * A run at the wheel: the bounds of the command the realm's bouncer lets through (vehicles.ts sanitize): throttle
+   * −1..1, brake 0..KERNEL.maxBrake m/s², steer ±CAR.maxSteer rad (replication.test.ts pins them to the realm's).
+   */
+  throttle: 1,
+  brake: 8,
+  steer: 0.6,
+  /** The largest fleet a room may name, and so the car indices a door may carry (simCore.ts MAX_CARS). */
+  cars: 48,
+  /** Doors (into or out of a car) a peer may take per second, and the burst. */
+  doorsPerSecond: 2,
+  doorBurst: 4,
   /** Chat lines a peer may send per minute (burst: the same). */
   chatPerMinute: 20,
   /** Pings a peer may relay per second (burst: 4). */
@@ -141,14 +162,29 @@ export function packPoses(players: readonly RemotePlayer[], out: Float32Array): 
  * upgrade carried), and `world` the world the page is walking (mirror.node.ts worldOf: 'city/<seed>').
  */
 export interface JoinMessage { t: 'join'; v: number; token: string; name: string; world: string }
-/** A run of fixed substeps: the walking velocity (x, z, m/s) the client's realm applied to each, and how many. */
-export type Run = readonly [x: number, z: number, n: number]
+/** A run of fixed substeps on foot: the walking velocity (x, z, m/s) the client's realm applied to each, and how many. */
+export type FootRun = readonly [x: number, z: number, n: number]
 /**
- * Client → host: what the client's realm did since the last input. `segs` are its runs of substeps (at the wheel the
- * velocity is 0: the car is the client's, and only its substeps count); `claim` is where the realm then had the player
- * (the capsule centre on foot, the chassis centre at the wheel); `from`, on the first input on foot after a car, is
- * where the realm put the player down. `heading` is the way the player faces. `seq` rises by one per input; `ack` is
- * the newest snapshot tick seen; `fix` the newest correction applied (an input under an older one is dropped).
+ * A run of fixed substeps at the wheel: the command the realm's car ran (the bouncer's vetted throttle, brake and
+ * steer, the handbrake as 0 or 1), and how many.
+ */
+export type DriveRun = readonly [throttle: number, brake: number, steer: number, handbrake: number, n: number]
+export type Run = FootRun | DriveRun
+/** A car's full rigid-body state as plain numbers (simProtocol.ts CarBodyState). */
+export type CarState = CarBodyState
+/** A car and its state: what a door into it and a correction at its wheel carry. */
+export interface CarFix { index: number; state: CarState }
+/**
+ * A door, taken before the input's runs: the realm took car `enter.car`'s wheel in `enter.state`, or put the player down
+ * at `exit` beside the car they drove.
+ */
+export type Door = { enter: { car: number; state: CarState } } | { exit: { x: number; z: number } }
+/**
+ * Client → host: what the client's realm did since the last input. `door`, when the player took a car's wheel or left
+ * it, comes first; `segs` are then the runs of substeps in `mode` (on foot the walking velocity, at the wheel the
+ * command); `claim` is where the realm then had the player (the capsule centre on foot, the chassis centre at the
+ * wheel). `heading` is the way the player faces. `seq` rises by one per input; `ack` is the newest snapshot tick seen;
+ * `fix` the newest correction applied (an input under an older one is dropped).
  */
 export interface InputMessage {
   t: 'input'
@@ -159,7 +195,7 @@ export interface InputMessage {
   segs: Run[]
   heading: number
   claim: { x: number; y: number; z: number }
-  from?: { x: number; z: number }
+  door?: Door
 }
 /** Client → host: the newest snapshot tick seen, from an idle client. */
 export interface AckMessage { t: 'ack'; ack: number }
@@ -176,10 +212,11 @@ export interface WelcomeMessage { t: 'welcome'; v: number; id: number; tick: num
 /** Host → client, every tick: this peer's truth, every other joined player's, the newest input seq kept and correction made. */
 export interface SnapshotMessage { t: 'snapshot'; tick: number; ack: number; fix: number; you: RemotePlayer; players: RemotePlayer[] }
 /**
- * Host → client, at once, for an input the room refused: the truth to snap to under correction `fix` (the client puts
- * the player down there, standing, and numbers its inputs under it), the newest input seq kept, and why.
+ * Host → client, at once, for an input the room refused: the truth to snap to under correction `fix` (on foot the
+ * client puts the player down there, standing; at the wheel, `car`, it puts the car in exactly that state), the newest
+ * input seq kept, and why. The client numbers its inputs under `fix` from then on.
  */
-export interface CorrectMessage { t: 'correct'; fix: number; ack: number; you: RemotePlayer; reason: string; tick: number }
+export interface CorrectMessage { t: 'correct'; fix: number; ack: number; you: RemotePlayer; reason: string; tick: number; car?: CarFix }
 export interface ChatRelayMessage { t: 'chat'; from: number; name: string; text: string; tick: number }
 export interface PingRelayMessage { t: 'ping'; from: number; kind: PingKind; x: number; y: number; z: number; tick: number }
 export interface JoinedMessage { t: 'joined'; player: RemotePlayer; tick: number }
@@ -231,6 +268,34 @@ function players(u: unknown): RemotePlayer[] | null {
   return out
 }
 
+const STATE_KEYS = ['x', 'y', 'z', 'qx', 'qy', 'qz', 'qw', 'vx', 'vy', 'vz', 'wx', 'wy', 'wz'] as const
+
+/**
+ * A car's state as a frozen plain copy, or null: a chassis within the world's range, a unit orientation (within 1 %),
+ * a velocity within the velocity cap, a spin within 4π rad/s.
+ */
+function carState(u: unknown): CarState | null {
+  if (!isRecord(u)) return null
+  for (const k of STATE_KEYS) if (typeof u[k] !== 'number' || !Number.isFinite(u[k])) return null
+  const s = u as unknown as CarState
+  if (!fin(s.x, -LIMITS.range, LIMITS.range) || !fin(s.y, -LIMITS.height, LIMITS.height) || !fin(s.z, -LIMITS.range, LIMITS.range)) return null
+  const q = Math.hypot(s.qx, s.qy, s.qz, s.qw)
+  if (!(q > 0.99 && q < 1.01)) return null
+  if (!(Math.hypot(s.vx, s.vy, s.vz) <= LIMITS.driveSpeed) || !(Math.hypot(s.wx, s.wy, s.wz) <= 4 * Math.PI)) return null
+  const out = {} as Record<(typeof STATE_KEYS)[number], number>
+  for (const k of STATE_KEYS) out[k] = s[k]
+  return Object.freeze(out)
+}
+
+/** A car index a room's fleet may hold. */
+const carIndex = (u: unknown): u is number => typeof u === 'number' && Number.isInteger(u) && u >= 0 && u < LIMITS.cars
+
+function carFix(u: unknown): CarFix | null {
+  if (!isRecord(u) || !carIndex(u.index)) return null
+  const state = carState(u.state)
+  return state ? Object.freeze({ index: u.index, state }) : null
+}
+
 /** A point within the world's range: x and z within ±range, y within ±height when it has one. */
 function point(u: unknown, withY: boolean): { x: number; y: number; z: number } | null {
   if (!isRecord(u)) return null
@@ -240,10 +305,30 @@ function point(u: unknown, withY: boolean): { x: number; y: number; z: number } 
   return { x, y: withY ? (y as number) : 0, z }
 }
 
+/** A run's substep count: a whole number, 0..LIMITS.stepsPerInput. */
+const steps = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= LIMITS.stepsPerInput
+
+/** A door as a frozen plain copy, or null: into a car (its index and state), or out of one (the point, x and z). */
+function door(u: unknown): Door | null {
+  if (!isRecord(u)) return null
+  if (u.enter !== undefined && u.exit === undefined) {
+    const e = u.enter
+    if (!isRecord(e) || !carIndex(e.car)) return null
+    const state = carState(e.state)
+    return state ? Object.freeze({ enter: Object.freeze({ car: e.car, state }) }) : null
+  }
+  if (u.exit !== undefined && u.enter === undefined) {
+    const p = point(u.exit, false)
+    return p ? Object.freeze({ exit: Object.freeze({ x: p.x, z: p.z }) }) : null
+  }
+  return null
+}
+
 /**
- * An input, field by field: the counters, the mode, 1..LIMITS.runs runs of [x, z, n] (x and z within a run per axis;
- * the authority clamps the length, as the realm does; 0 at the wheel; n a whole number, LIMITS.stepsPerInput in all),
- * the heading, the claim, and an exit point only on foot.
+ * An input, field by field: the counters, the mode, 1..LIMITS.runs runs (on foot [x, z, n], x and z within a run per
+ * axis, the authority clamping the length as the realm does; at the wheel [throttle, brake, steer, handbrake, n] within
+ * the bouncer's bounds and a handbrake of 0 or 1; n a whole number, LIMITS.stepsPerInput in all), the heading, the
+ * claim, and a door that agrees with the mode (into a car: at the wheel after it; out of one: on foot).
  */
 function readInput(u: Record<string, unknown>): Read<ClientMessage> {
   if (!count(u.seq) || !count(u.ack) || !count(u.fix)) return refusal('input: seq, ack and fix')
@@ -253,29 +338,37 @@ function readInput(u: Record<string, unknown>): Read<ClientMessage> {
   const segs: Run[] = []
   let total = 0
   for (const r of u.segs) {
-    if (!Array.isArray(r) || r.length !== 3) return refusal('input: runs')
-    const [x, z, n] = r as unknown[]
-    if (!fin(x, -RUN, RUN) || !fin(z, -RUN, RUN)) return refusal('input: velocity')
-    if (mode === 'drive' && (x !== 0 || z !== 0)) return refusal('input: velocity')
-    if (!(typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= LIMITS.stepsPerInput)) return refusal('input: substeps')
+    if (!Array.isArray(r) || r.length !== (mode === 'foot' ? 3 : 5)) return refusal('input: runs')
+    const n = r[r.length - 1] as unknown
+    if (!steps(n)) return refusal('input: substeps')
+    if (mode === 'foot') {
+      const [x, z] = r as unknown[]
+      if (!fin(x, -RUN, RUN) || !fin(z, -RUN, RUN)) return refusal('input: velocity')
+      segs.push(Object.freeze([x, z, n] as const))
+    } else {
+      const [throttle, brake, steer, handbrake] = r as unknown[]
+      if (!fin(throttle, -LIMITS.throttle, LIMITS.throttle) || !fin(brake, 0, LIMITS.brake) || !fin(steer, -LIMITS.steer, LIMITS.steer)) return refusal('input: wheel command')
+      if (handbrake !== 0 && handbrake !== 1) return refusal('input: handbrake')
+      segs.push(Object.freeze([throttle, brake, steer, handbrake, n] as const))
+    }
     total += n
-    segs.push(Object.freeze([x, z, n] as const))
   }
   if (total > LIMITS.stepsPerInput) return refusal('input: substeps')
   if (!fin(u.heading, -Math.PI * 2, Math.PI * 2)) return refusal('input: heading')
   const claim = point(u.claim, true)
   if (!claim) return refusal('input: claim')
-  let from: { x: number; z: number } | undefined
-  if (u.from !== undefined) {
-    const f = point(u.from, false)
-    if (!f || mode !== 'foot') return refusal('input: from')
-    from = Object.freeze({ x: f.x, z: f.z })
+  let d: Door | undefined
+  if (u.door !== undefined) {
+    const read = door(u.door)
+    if (!read) return refusal('input: door')
+    if ('enter' in read ? mode !== 'drive' : mode !== 'foot') return refusal('input: door and mode')
+    d = read
   }
   return {
     ok: true,
     msg: Object.freeze({
       t: 'input', seq: u.seq, ack: u.ack, fix: u.fix, mode, segs: Object.freeze(segs) as Run[], heading: u.heading, claim: Object.freeze(claim),
-      ...(from && { from }),
+      ...(d && { door: d }),
     }),
   }
 }
@@ -338,7 +431,14 @@ export function readServerMessage(u: unknown): Read<ServerMessage> {
       if (!count(u.fix) || !count(u.ack) || !count(u.tick) || !text(u.reason, LIMITS.chat)) return refusal('correct: fix, ack, tick and reason')
       const you = player(u.you)
       if (!you) return refusal('correct: you')
-      return { ok: true, msg: Object.freeze({ t: 'correct', fix: u.fix, ack: u.ack, you, reason: u.reason, tick: u.tick }) }
+      let car: CarFix | undefined
+      if (u.car !== undefined) {
+        const c = carFix(u.car)
+        // A car correction is for a player at the wheel, and its chassis is where `you` is.
+        if (!c || !you.driving || c.state.x !== you.x || c.state.y !== you.y || c.state.z !== you.z) return refusal('correct: car')
+        car = c
+      }
+      return { ok: true, msg: Object.freeze({ t: 'correct', fix: u.fix, ack: u.ack, you, reason: u.reason, tick: u.tick, ...(car && { car }) }) }
     }
     case 'chat':
       if (!count(u.from) || !count(u.tick) || !text(u.name, LIMITS.name) || !text(u.text, LIMITS.chat)) return refusal('chat: from, name, text and tick')
@@ -537,12 +637,15 @@ export function take(b: Bucket, now: number): boolean {
   return true
 }
 
-export interface PeerBuckets { input: Bucket; steps: Bucket; corrections: Bucket; chat: Bucket; ping: Bucket }
+export interface PeerBuckets { input: Bucket; stale: Bucket; steps: Bucket; doors: Bucket; corrections: Bucket; chat: Bucket; ping: Bucket }
 
 /** A new peer's buckets, full. */
 export const peerBuckets = (now: number): PeerBuckets => ({
   input: bucket(LIMITS.inputBurst, LIMITS.inputsPerSecond, now),
+  // Inputs under an old correction dropped unread: an honest stall's backlog fits (the input burst); a flood does not.
+  stale: bucket(LIMITS.inputBurst, LIMITS.inputsPerSecond, now),
   steps: bucket(LIMITS.stepBurst, LIMITS.stepsPerSecond, now),
+  doors: bucket(LIMITS.doorBurst, LIMITS.doorsPerSecond, now),
   corrections: bucket(LIMITS.correctionsPerMinute, LIMITS.correctionsPerMinute / 60, now),
   chat: bucket(LIMITS.chatPerMinute, LIMITS.chatPerMinute / 60, now),
   ping: bucket(LIMITS.pingBurst, LIMITS.pingsPerSecond, now),
@@ -551,8 +654,8 @@ export const peerBuckets = (now: number): PeerBuckets => ({
 // ---------------------------------------------------------------------------------------------------
 // The authoritative room
 
-/** A peer's truth as the authority holds it. */
-export interface Truth { x: number; y: number; z: number; heading: number; vx: number; vz: number; speed: number; driving: boolean }
+/** A peer's truth as the authority holds it; at the wheel, from a settle, the car's full state too. */
+export interface Truth { x: number; y: number; z: number; heading: number; vx: number; vz: number; speed: number; driving: boolean; car?: CarFix }
 
 /**
  * What decides where the room's players are (the host's: the headless Ring-0 mirror, mirror.node.ts). The room only
@@ -566,7 +669,10 @@ export interface Authority {
   leave(id: number): void
   /** One input on trial: kept (the new truth), or refused (the truth exactly as before) and why. */
   judge(id: number, input: InputMessage): { ok: true; pose: Truth } | { ok: false; pose: Truth; reason: string }
-  /** The peer put down at its truth again, standing, as the client is by a correction: its truth. */
+  /**
+   * The peer put down at its truth again, as the client is by a correction: on foot standing, at the wheel the car
+   * built again in its own state (`car`). Its truth.
+   */
   settle(id: number): Truth
 }
 
@@ -579,6 +685,8 @@ export interface Peer {
   seq: number
   /** The newest correction made (the welcome is the first): inputs under an older one predate the snap. */
   fix: number
+  /** When the newest correction was made, ms. */
+  fixedAt: number
   /** The newest chat or ping seq relayed. */
   said: number
   /** The newest snapshot tick the peer acknowledged. */
@@ -630,7 +738,7 @@ export const createRoom = (authority: Authority, tickHz: number = LIMITS.tickHz)
 export function admit(room: Room, now: number): Peer | null {
   if (room.peers.size >= LIMITS.peers) return null
   const peer: Peer = {
-    id: room.next++, name: '', joined: false, seq: 0, fix: 0, said: 0, ack: 0, refusals: 0, corrections: 0, buckets: peerBuckets(now), key: '',
+    id: room.next++, name: '', joined: false, seq: 0, fix: 0, fixedAt: now, said: 0, ack: 0, refusals: 0, corrections: 0, buckets: peerBuckets(now), key: '',
     received: 0, arrived: now, seen: now, x: 0, y: 0, z: 0, heading: 0, vx: 0, vz: 0, driving: false,
   }
   room.peers.set(peer.id, peer)
@@ -689,8 +797,11 @@ export function poses(room: Room): RemotePlayer[] {
 export function correct(room: Room, peer: Peer, reason: string, now: number): Outcome {
   peer.fix++
   peer.corrections++
-  hold(peer, room.authority.settle(peer.id))
-  const out: Outcome = { reply: { t: 'correct', fix: peer.fix, ack: peer.seq, you: pose(peer, true), reason, tick: room.tick }, refused: reason }
+  peer.fixedAt = now
+  const t = room.authority.settle(peer.id)
+  hold(peer, t)
+  const reply: CorrectMessage = { t: 'correct', fix: peer.fix, ack: peer.seq, you: pose(peer, true), reason, tick: room.tick, ...(t.car && { car: t.car }) }
+  const out: Outcome = { reply, refused: reason }
   if (!take(peer.buckets.corrections, now)) out.kick = 'repeated illegal movement'
   return out
 }
@@ -713,6 +824,7 @@ export function handle(room: Room, peer: Peer, msg: ClientMessage, now: number, 
     peer.key = msg.token
     peer.seen = now
     peer.fix = 1
+    peer.fixedAt = now
     hold(peer, room.authority.join(peer.id))
     const others = poses(room).filter((p) => p.id !== peer.id)
     return {
@@ -724,15 +836,20 @@ export function handle(room: Room, peer: Peer, msg: ClientMessage, now: number, 
     case 'join':
       return refuse(peer, 'join: already joined')
     case 'input': {
-      // Over rate is a refusal, counted toward removal whatever the input says (a flood that ignores its corrections is
-      // still a flood), and corrected when it was current.
+      // Sent before the client applied the last correction: it describes a body the room never had. Dropped unread while
+      // an honest client could still have it in flight (a stall included), on an allowance of its own, never the input
+      // rate (a stall's backlog under an old correction must not cost the inputs after it); past either, a refusal.
+      if (msg.fix < peer.fix) {
+        if (now - peer.fixedAt > LIMITS.staleGraceMs) return refuse(peer, 'input: under a correction long past')
+        return take(peer.buckets.stale, now) ? {} : refuse(peer, 'input: under an old correction, over rate')
+      }
+      // Over rate is a refusal, counted toward removal (a flood that ignores its corrections is still a flood), and
+      // corrected.
       if (!take(peer.buckets.input, now)) {
         const counted = refuse(peer, 'input: over rate')
         if (msg.fix !== peer.fix || counted.kick) return counted
         return correct(room, peer, 'input: over rate', now)
       }
-      // Sent before the client applied the last correction: it describes a body the room never had. Dropped unread.
-      if (msg.fix < peer.fix) return {}
       peer.seen = now
       if (msg.fix > peer.fix) return correct(room, peer, 'input: a correction that was never made', now)
       if (msg.seq <= peer.seq) return correct(room, peer, 'input: stale seq', now)
@@ -740,6 +857,8 @@ export function handle(room: Room, peer: Peer, msg: ClientMessage, now: number, 
       let n = 0
       for (const r of msg.segs) n += r[2]
       // More substeps than time allows: a client running its physics faster than the clock.
+      // More doors than time allows: a client hopping in and out of cars to carry itself along.
+      if (msg.door && !take(peer.buckets.doors, now)) return correct(room, peer, 'input: more doors than time allows', now)
       if (!takeMany(peer.buckets.steps, n, now)) return correct(room, peer, 'input: more substeps than time allows', now)
       const v = room.authority.judge(peer.id, msg)
       if (!v.ok) return correct(room, peer, v.reason, now)

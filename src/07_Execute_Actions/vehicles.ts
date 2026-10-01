@@ -13,33 +13,28 @@
  * What breaks if it is removed? There are no cars to watch, dodge or drive, and nothing keeps a car
  * from driving into a person.
  */
+import type { CarBodyState } from './simProtocol.ts'
 import { RAPIER, type Physics } from './physics.ts'
-import { CAR, CAR_TUNE_RANGE, chassisBox, clampTuning, RIDE_HEIGHT, WHEELS, type CarTuning, type DriveMode } from './car.ts'
+import { CAR, CAR_TUNE_RANGE, clampTuning, RIDE_HEIGHT, type CarTuning, type DriveMode } from './car.ts'
+import {
+  ackermann, buildCarRig, carState, carSubstep, clampSpeed, forwardSpeedOf, headingOf, NOT_PEOPLE, planFleet, rebuildCarRig, yawQuat, type CarRig,
+} from './carRig.ts'
 import { MODES, POSE } from './simProtocol.ts'
 import type { VehicleFootprint } from './sanctuary.ts'
-import { Driver, type DriverCommand, type DriverLike, type DriverPose } from '../06_Make_Decisions/traffic.ts'
+import type { DriverCommand, DriverLike, DriverPose } from '../06_Make_Decisions/traffic.ts'
 import { TrackDriver } from '../06_Make_Decisions/trackDriver.ts'
-import { assignSlots, poseAt, type TrackNetwork } from '../06_Make_Decisions/tracks.ts'
-import { CITY } from '../01_Initialize_World/city.ts'
+import type { TrackNetwork } from '../06_Make_Decisions/tracks.ts'
 import { KERNEL } from '../02_Define_The_Rules/civic.ts'
-import { VEHICLE_CHASSIS_GROUPS, WHEEL_RAY_GROUPS } from '../02_Define_The_Rules/collision.ts'
-import { createRng } from '../02_Define_The_Rules/degrees.ts'
 import { Bouncer, type Intent, type Situation } from '../02_Define_The_Rules/laws.ts'
 import type { CarState } from '../03_Spawn_Agents/crowdCompute.ts'
 
-export { CAR, CAR_TUNE_RANGE, type CarTuning, type DriveMode }
+export { ackermann, CAR, CAR_TUNE_RANGE, type CarTuning, type DriveMode }
 
-const AIR_DENSITY = 1.225
-const GRAVITY = 9.81
 const TAU = Math.PI * 2
 /** Lateral offsets of the obstacle rays across the bonnet. */
 const GAP_RAYS = [-0.6, 0, 0.6] as const
-/**
- * People are kinematic bodies (the avatar), sensors while the sanctuary shields them: wheels never roll on
- * them (Rapier's wheel rays hit both by default, so a car would ride up over a shielded person), and the
- * obstacle rays skip them because people reach the bouncer through the sensing corridor instead.
- */
-const NOT_PEOPLE = RAPIER.QueryFilterFlags.EXCLUDE_SENSORS | RAPIER.QueryFilterFlags.EXCLUDE_KINEMATIC
+// People (kinematic avatars, sensors while shielded) are skipped by the wheel rays and by the obstacle rays alike
+// (carRig.ts NOT_PEOPLE): they reach the bouncer through the sensing corridor instead.
 /** Speed below which a vehicle counts as standing, m/s (laws.ts uses the same threshold). */
 const AT_REST = 0.05
 /** A car held by emergency braking stays held at a standstill while the person is this close, m. */
@@ -67,12 +62,8 @@ export interface Vehicle {
   handbrake: boolean
 }
 
-/** A vehicle's Rapier handles. They never leave the Fleet, except through rig() on a Fleet built with exposeRig. */
-interface Rig {
-  body: RAPIER.RigidBody
-  collider: RAPIER.Collider
-  controller: RAPIER.DynamicRayCastVehicleController
-}
+/** A vehicle's Rapier handles (carRig.ts). They never leave the Fleet, except through rig() on a Fleet built with exposeRig. */
+type Rig = CarRig
 
 /** Someone the CPU knows exactly (an avatar): where they stand, and whether they are on foot (`present`) or in a car. */
 export interface Person { x: number; z: number; present: boolean }
@@ -85,16 +76,6 @@ export interface FleetOptions {
    * their rings. Absent, every car takes the random street-hopping Driver, exactly as before.
    */
   network?: TrackNetwork
-}
-
-/**
- * Ackermann steering: the inner front wheel turns tighter so both front wheels roll about the rear axle's
- * turn centre. `steer` is the bicycle-model angle (positive = left); `side` is +1 for the left wheel and
- * −1 for the right one.
- */
-export function ackermann(steer: number, side: 1 | -1): number {
-  const t = Math.tan(steer)
-  return Math.atan((CAR.wheelbase * t) / (CAR.wheelbase - side * (CAR.track / 2) * t))
 }
 
 /** A whole turn, normalised to [0, 2π), with a turn a hair short of 2π read as none (rounding at contact). */
@@ -180,13 +161,6 @@ function sanitize(src: Intent, dst: Intent): Intent {
   return dst
 }
 
-/** Body colours, 0xRRGGBB (sRGB). Picked from the seeded stream in spawn order, so every car keeps its colour. */
-const PAINT = [0xf2f2f0, 0x111214, 0xa9adb3, 0x5c6168, 0x1d2f55, 0x7a1a1f, 0x2d3e33, 0xc9c1ad, 0x2a4f7a, 0x3a3a3c]
-
-/** A rotation of `angle` about +y as a quaternion (the chassis only ever spawns or recovers upright). */
-function yawQuat(angle: number): { x: number; y: number; z: number; w: number } {
-  return { x: 0, y: Math.sin(angle / 2), z: 0, w: Math.cos(angle / 2) }
-}
 
 export class Fleet {
   readonly vehicles: Vehicle[] = []
@@ -200,7 +174,6 @@ export class Fleet {
   readonly #rigs: Rig[] = []
   readonly #exposeRig: boolean
   readonly #physics: Physics
-  readonly #rng: () => number
   /** The track network the fleet was seated on (null: random streets). */
   readonly #network: TrackNetwork | null
   /** Per vehicle: the bumper gap to the car ahead on its ring this frame (Infinity: alone, or not on a ring). */
@@ -248,8 +221,10 @@ export class Fleet {
   constructor(physics: Physics, count: number, seed: number, opts: FleetOptions = {}) {
     this.#exposeRig = opts.exposeRig === true
     this.#physics = physics
-    this.#rng = createRng(seed ^ 0xca75)
     this.#network = opts.network ?? null
+    // The seeded plan (carRig.ts planFleet): seats or streets, SUVs, drivers and paint, from one stream that goes on
+    // to drive the AI. The room's authority reads the same plan.
+    const plan = planFleet(count, seed, this.#network)
     this.#trackGap = new Float64Array(count).fill(Infinity)
     this.#crowdAhead = new Float32Array(count).fill(Infinity)
     this.#crowdBehind = new Float32Array(count).fill(Infinity)
@@ -258,45 +233,10 @@ export class Fleet {
     this.#driven = new Uint8Array(count)
 
     const paint: number[] = []
-    const used = new Set<string>()
-    // On a network: a headway seat per car, on a straight clear of every intersection box, from the same stream.
-    const seatsOf = this.#network ? assignSlots(this.#network, count, this.#rng) : null
     for (let i = 0; i < count; i++) {
-      let pose: { x: number; z: number; heading: number }
-      let suv: boolean
-      let driver: DriverLike
-      if (this.#network && seatsOf) {
-        const seat = seatsOf[i]
-        const track = this.#network.tracks[seat.track]
-        pose = poseAt(track, seat.s)
-        suv = this.#rng() < 0.3
-        driver = new TrackDriver(track, seat.s, this.#rng)
-      } else {
-        // A random street segment and direction, spaced so no two cars start on the same stretch.
-        let from: [number, number] = [0, 0], dir: [number, number] = [1, 0], slot = ''
-        for (let tries = 0; tries < 50; tries++) {
-          const line = Math.floor(this.#rng() * (CITY.blocks + 1))
-          const seg = Math.floor(this.#rng() * CITY.blocks)
-          const sign = this.#rng() < 0.5 ? 1 : -1
-          if (this.#rng() < 0.5) {
-            dir = [sign, 0]
-            from = [sign > 0 ? seg : seg + 1, line]
-          } else {
-            dir = [0, sign]
-            from = [line, sign > 0 ? seg : seg + 1]
-          }
-          slot = `${from},${dir}`
-          if (!used.has(slot)) break
-        }
-        used.add(slot)
-        const [k, m] = from
-        const s = 12 + this.#rng() * 10
-        pose = Driver.lanePose([k, m], dir, s)
-        suv = this.#rng() < 0.3
-        driver = new Driver([k, m], dir, this.#rng)
-      }
+      const { pose, suv, driver } = plan.cars[i]
       const vehicle = this.#create(i, pose.x, pose.z, pose.heading, suv, driver)
-      paint.push(PAINT[Math.floor(this.#rng() * PAINT.length)])
+      paint.push(plan.cars[i].paint)
       this.vehicles.push(vehicle)
       this.#commands.push({ throttle: 0, brake: 0, steer: 0 })
       this.#states.push({ x: pose.x, z: pose.z, heading: pose.heading, speed: 0, halfWidth: CAR.halfWidth, halfLength: CAR.halfLength, curvature: 0 })
@@ -309,32 +249,10 @@ export class Fleet {
   }
 
   #create(index: number, x: number, z: number, heading: number, suv: boolean, driver: DriverLike): Vehicle {
-    const world = this.#physics.world
-    const mass = suv ? CAR.suvMass : CAR.mass
-    const body = world.createRigidBody(
-      RAPIER.RigidBodyDesc.dynamic().setTranslation(x, RIDE_HEIGHT + 0.1, z).setRotation(yawQuat(heading - Math.PI / 2)).setCanSleep(false),
-    )
-    // Strict CCD: fast cars cannot tunnel through poles, thin walls or people between steps.
-    body.enableCcd(true)
-    const box = chassisBox(suv)
-    // Cars pass through cars: the chassis groups drop every chassis-chassis pair in the broad phase (no contact,
-    // no impulse) and leave the ground, the buildings and the avatar's capsule as solid as before.
-    const collider = world.createCollider(
-      RAPIER.ColliderDesc.cuboid(box.hx, box.hy, box.hz).setTranslation(0, box.y, 0).setMass(mass).setFriction(0.4).setCollisionGroups(VEHICLE_CHASSIS_GROUPS),
-      body,
-    )
-    const controller = world.createVehicleController(body)
-    for (const [wx, wz] of WHEELS) controller.addWheel({ x: wx, y: 0, z: wz }, { x: 0, y: -1, z: 0 }, { x: 0, y: 0, z: -1 }, CAR.suspension, CAR.wheelRadius)
-    for (let i = 0; i < 4; i++) {
-      controller.setWheelSuspensionStiffness(i, 30)
-      controller.setWheelSuspensionCompression(i, 2.3)
-      controller.setWheelSuspensionRelaxation(i, 3.2)
-      controller.setWheelMaxSuspensionForce(i, 40000)
-      controller.setWheelFrictionSlip(i, CAR.frictionSlip)
-      controller.setWheelSideFrictionStiffness(i, 1.0)
-    }
-    this.#rigs[index] = { body, collider, controller }
-    this.#byCollider.set(collider.handle, index)
+    const rig = buildCarRig(this.#physics.world, x, z, heading, suv)
+    const { mass } = rig
+    this.#rigs[index] = rig
+    this.#byCollider.set(rig.collider.handle, index)
     const vehicle: Vehicle = {
       index, driver, mode: 'ai', suv, mass, steer: 0,
       lastCommand: { throttle: 0, brake: 0, steer: 0 }, handbrake: false,
@@ -343,11 +261,8 @@ export class Fleet {
   }
 
   heading(v: Vehicle): number {
-    const r = this.#rigs[v.index].body.rotation(this.#rot)
     // Chassis +x is forward.
-    const fx = 1 - 2 * (r.y * r.y + r.z * r.z)
-    const fz = 2 * (r.x * r.z - r.w * r.y)
-    return Math.atan2(fx, fz)
+    return headingOf(this.#rigs[v.index].body.rotation(this.#rot))
   }
 
   /**
@@ -356,12 +271,7 @@ export class Fleet {
    * it reads ±0.06 m/s on a car at rest, enough to flip the bouncer between forward and reverse.
    */
   speed(v: Vehicle): number {
-    const r = this.#rigs[v.index].body.rotation(this.#rot)
-    const u = this.#rigs[v.index].body.linvel(this.#vel)
-    const fx = 1 - 2 * (r.y * r.y + r.z * r.z)
-    const fy = 2 * (r.x * r.y + r.w * r.z)
-    const fz = 2 * (r.x * r.z - r.w * r.y)
-    return u.x * fx + u.y * fy + u.z * fz
+    return forwardSpeedOf(this.#rigs[v.index].body.rotation(this.#rot), this.#rigs[v.index].body.linvel(this.#vel))
   }
 
   /** Operator scale factors, as a frozen copy: writing to it changes nothing (use setTuning). */
@@ -395,13 +305,35 @@ export class Fleet {
    * only velocity write outside the vetted drivetrain, and it can only slow a car down.
    */
   clampSpeed(v: Vehicle, max: number): boolean {
+    return clampSpeed(this.#rigs[v.index].body, max)
+  }
+
+  /** Stops car `v` dead (a network room's rule for a car its driver leaves: it stays where it is left). */
+  stop(v: Vehicle): void {
     const b = this.#rigs[v.index].body
-    const u = b.linvel(this.#vel)
-    const speed = Math.hypot(u.x, u.y, u.z)
-    if (!(speed > max) || !(max >= 0)) return false
-    const k = max / speed
-    b.setLinvel({ x: u.x * k, y: u.y * k, z: u.z * k }, true)
-    return true
+    b.setLinvel({ x: 0, y: 0, z: 0 }, true)
+    b.setAngvel({ x: 0, y: 0, z: 0 }, true)
+  }
+
+  /**
+   * Car `v`'s full rigid-body state as plain numbers: chassis centre, orientation, linear and angular velocity. What a
+   * network room's authority needs to take over the replay of a car when a player takes its wheel.
+   */
+  bodyState(v: Vehicle): CarBodyState {
+    return carState(this.#rigs[v.index])
+  }
+
+  /**
+   * Builds car `v` again in state `s` (its own, by default): a new chassis, collider and vehicle controller (carRig.ts
+   * rebuildCarRig). A player in a network room taking its wheel, or the room's correction of it: the room's authority
+   * rebuilds the same car from the same numbers, so both replay it from the same state to the bit.
+   */
+  rebuild(v: Vehicle, s: CarBodyState = this.bodyState(v)): void {
+    const old = this.#rigs[v.index]
+    this.#byCollider.delete(old.collider.handle)
+    const rig = rebuildCarRig(this.#physics.world, old, s, v.suv, this.#tuning.grip)
+    this.#rigs[v.index] = rig
+    this.#byCollider.set(rig.collider.handle, v.index)
   }
 
   /** The raw Rapier handles: only on a Fleet built with exposeRig (tests, the ?debug harness); throws otherwise. */
@@ -620,11 +552,9 @@ export class Fleet {
 
   /** Runs inside each physics substep: drivetrain, brakes, steering and road loads, then the raycast wheels. */
   updateControllers(h: number): void {
-    for (const v of this.vehicles) {
-      this.#drivetrain(v, h, this.#roadLoads(v))
-      // The wheel rays skip people (flags) and other chassis (groups): a car never rides up on a car it passes through.
-      this.#rigs[v.index].controller.updateVehicle(h, NOT_PEOPLE, WHEEL_RAY_GROUPS)
-    }
+    // carRig.ts carSubstep: the same substep the room's authority replays. The wheel rays skip people (flags) and other
+    // chassis (groups): a car never rides up on a car it passes through.
+    for (const v of this.vehicles) carSubstep(this.#rigs[v.index], this.#commands[v.index], v.handbrake, v.mode, this.#tuning, h)
   }
 
   /** Vehicle footprints for the GPU crowd (yielding, hazard sensing and the safety nudge). */
@@ -785,64 +715,6 @@ export class Fleet {
     this.#tuning[key] = v
     if (key === 'grip') for (const car of this.vehicles) for (let w = 0; w < 4; w++) this.#rigs[car.index].controller.setWheelFrictionSlip(w, CAR.frictionSlip * v)
     return v
-  }
-
-  /** Engine force (capped by power at speed), brakes and Ackermann steering for this substep. */
-  #drivetrain(v: Vehicle, h: number, speed: number): void {
-    const c = this.#rigs[v.index].controller
-    const cmd = this.#commands[v.index]
-    const peak = CAR.engine * (v.suv ? 1.25 : 1)
-    const power = v.suv ? CAR.suvPower : CAR.power
-    const perWheel = Math.min(peak, power / 2 / Math.max(1, Math.abs(speed))) * this.#tuning.power
-    // Negative engine force drives toward chassis +x (calibrated). A wheel with engine force ignores its
-    // brake, so the handbrake, or any service brake (brake overrides throttle), cuts the drive.
-    const force = v.handbrake || cmd.brake > 0 ? 0 : -cmd.throttle * perWheel
-    c.setWheelEngineForce(2, force)
-    c.setWheelEngineForce(3, force)
-    // Rapier's wheel brake is the largest impulse the wheel may apply per step: decel·m·h over four wheels.
-    const unit = v.mass * h
-    const service = (Math.min(KERNEL.maxBrake, Math.max(0, cmd.brake)) * unit * this.#tuning.brake) / 4
-    const rear = service + (v.handbrake ? (CAR.handbrake * unit * this.#tuning.brake) / 2 : 0)
-    c.setWheelBrake(0, service)
-    c.setWheelBrake(1, service)
-    c.setWheelBrake(2, rear)
-    c.setWheelBrake(3, rear)
-    c.setWheelSteering(0, ackermann(cmd.steer, -1))
-    c.setWheelSteering(1, ackermann(cmd.steer, 1))
-  }
-
-  /**
-   * Aerodynamic drag (½ρC_dAv², against the velocity), rolling resistance (C_rr·m·g on the wheels touching
-   * the road, against the rolling direction, faded in below 0.5 m/s so it never pushes a stopped car back)
-   * and engine braking with the throttle closed. Rapier keeps user forces until reset, so they are rebuilt
-   * every substep. Returns the rolling (horizontal chassis-forward) speed, m/s.
-   */
-  #roadLoads(v: Vehicle): number {
-    const b = this.#rigs[v.index].body
-    b.resetForces(false)
-    const u = b.linvel(this.#vel)
-    const r = b.rotation(this.#rot)
-    let fx = 1 - 2 * (r.y * r.y + r.z * r.z)
-    let fz = 2 * (r.x * r.z - r.w * r.y)
-    const fl = Math.hypot(fx, fz)
-    if (fl < 1e-3) return 0
-    fx /= fl; fz /= fl
-    const rolling = u.x * fx + u.z * fz
-    const speed = Math.hypot(u.x, u.z)
-    if (speed < 0.01) return rolling
-    const c = this.#rigs[v.index].controller
-    let contact = 0
-    for (let w = 0; w < 4; w++) if (c.wheelIsInContact(w)) contact++
-    const cda = v.suv ? CAR.suvDragCoefficient * CAR.suvFrontalArea : CAR.dragCoefficient * CAR.frontalArea
-    const aero = 0.5 * AIR_DENSITY * cda * speed * this.#tuning.drag
-    const tyre = (contact / 4) * CAR.rollingResistance * v.mass * GRAVITY * Math.max(-1, Math.min(1, rolling / 0.5))
-    const engine = v.mode !== 'parked' && this.#commands[v.index].throttle === 0 && contact > 0 ? CAR.engineBraking * rolling : 0
-    const f = this.#force
-    f.x = -aero * u.x - (tyre + engine) * fx
-    f.y = 0
-    f.z = -aero * u.z - (tyre + engine) * fz
-    b.addForce(f, false)
-    return rolling
   }
 }
 

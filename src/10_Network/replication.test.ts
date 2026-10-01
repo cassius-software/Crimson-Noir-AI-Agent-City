@@ -15,15 +15,18 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { canonical, hmacSha256 } from '../02_Define_The_Rules/integrity.ts'
-import { RUN } from '../07_Execute_Actions/simProtocol.ts'
+import { RUN, type CarBodyState } from '../07_Execute_Actions/simProtocol.ts'
 import { RING0 } from '../02_Define_The_Rules/ring0.ts'
+import { KERNEL } from '../02_Define_The_Rules/civic.ts'
+import { CAR } from '../07_Execute_Actions/car.ts'
+import { MAX_CARS } from '../03_Spawn_Agents/crowdSensor.ts'
 import { PLANE, planeAuthority, planeStep } from './plane.node.ts'
 import {
   admissibleChat, admissibleName, admit, AUTH_PREFIX, authProtocol, blend, bucket, createRoom, decodeClientMessage, decodeServerMessage, depart,
   emptyReplica, encode, expired, handle, LIMITS, openClientFrame, openServerFrame, packPoses, peerBuckets, pending, poses, predict,
   PROTOCOL_VERSION, readClientMessage, readServerMessage, reconcile, REMOTE_POSE, refuse, refuseInput, sealMessage, snapshotFor, SUBPROTOCOL,
   take, takeMany, tickRoom,
-  type ClientMessage, type InputMessage, type Peer, type RemotePlayer, type Room, type Run, type ServerMessage, type SnapshotMessage,
+  type ClientMessage, type FootRun, type InputMessage, type Peer, type RemotePlayer, type Room, type ServerMessage, type SnapshotMessage,
 } from './replication.ts'
 
 const ok = (u: unknown): ClientMessage => {
@@ -52,9 +55,13 @@ test('readClientMessage: the good shapes come back frozen, plain, and with nothi
   const read = ok({ ...foot, pose: { x: 999 } }) as InputMessage
   assert.deepEqual(read, { ...foot, claim: { x: 1, y: 0.92, z: -1 } })
   assert.ok(Object.isFrozen(read) && Object.isFrozen(read.segs) && Object.isFrozen(read.segs[0]) && Object.isFrozen(read.claim))
-  assert.deepEqual(ok({ ...foot, from: { x: 3, z: 4, y: 9 } }), { ...foot, claim: { x: 1, y: 0.92, z: -1 }, from: { x: 3, z: 4 } })
-  const drive = { t: 'input', seq: 2, ack: 0, fix: 1, mode: 'drive', segs: [[0, 0, 30]], heading: 0, claim: { x: 30, y: 0.7, z: 0 } }
+  assert.deepEqual(ok({ ...foot, door: { exit: { x: 3, z: 4, y: 9 } } }), { ...foot, claim: { x: 1, y: 0.92, z: -1 }, door: { exit: { x: 3, z: 4 } } })
+  const drive = { t: 'input', seq: 2, ack: 0, fix: 1, mode: 'drive', segs: [[0.5, 0, -0.2, 0, 20], [-1, LIMITS.brake, LIMITS.steer, 1, 10]], heading: 0, claim: { x: 30, y: 0.7, z: 0 } }
   assert.deepEqual(ok(drive), drive)
+  const state = { x: 1, y: 0.56, z: 2, qx: 0, qy: 0.6, qz: 0, qw: 0.8, vx: 3, vy: 0, vz: 4, wx: 0, wy: 0.1, wz: 0 }
+  const into = ok({ ...drive, door: { enter: { car: 3, state: { ...state, extra: 1 } }, note: 'x' } }) as InputMessage
+  assert.deepEqual(into, { ...drive, door: { enter: { car: 3, state } } })
+  assert.ok(into.door && 'enter' in into.door && Object.isFrozen(into.door.enter.state))
   assert.deepEqual(ok({ t: 'ack', ack: 7 }), { t: 'ack', ack: 7 })
   assert.deepEqual(ok({ t: 'chat', seq: 1, text: 'hello' }), { t: 'chat', seq: 1, text: 'hello' })
   assert.deepEqual(ok({ t: 'ping', seq: 2, kind: 'go', x: 1, y: 2, z: 3 }), { t: 'ping', seq: 2, kind: 'go', x: 1, y: 2, z: 3 })
@@ -90,7 +97,21 @@ test('readClientMessage: every crafted message is refused with the reason simHos
   refused({ ...good, segs: [[Infinity, 0, 1]] }, /velocity/)
   refused({ ...good, segs: [[0, RUN + 0.01, 1]] }, /velocity/)
   refused({ ...good, segs: [['1', 0, 1]] }, /velocity/)
-  refused({ ...good, mode: 'drive', segs: [[1, 0, 1]] }, /velocity/)
+  refused({ ...good, mode: 'drive', segs: [[1, 0, 1]] }, /runs/)
+  const wheel = { ...good, mode: 'drive', segs: [[0, 0, 0, 0, 1]] }
+  ok(wheel)
+  refused({ ...wheel, segs: [[0, 0, 1]] }, /runs/)
+  refused({ ...good, segs: [[0, 0, 0, 0, 1]] }, /runs/)
+  refused({ ...wheel, segs: [[1.01, 0, 0, 0, 1]] }, /wheel command/)
+  refused({ ...wheel, segs: [[-1.01, 0, 0, 0, 1]] }, /wheel command/)
+  refused({ ...wheel, segs: [[0, -0.01, 0, 0, 1]] }, /wheel command/)
+  refused({ ...wheel, segs: [[0, LIMITS.brake + 0.01, 0, 0, 1]] }, /wheel command/)
+  refused({ ...wheel, segs: [[0, 0, LIMITS.steer + 0.01, 0, 1]] }, /wheel command/)
+  refused({ ...wheel, segs: [[NaN, 0, 0, 0, 1]] }, /wheel command/)
+  refused({ ...wheel, segs: [[0, 0, 0, 0.5, 1]] }, /handbrake/)
+  refused({ ...wheel, segs: [[0, 0, 0, true, 1]] }, /handbrake/)
+  refused({ ...wheel, segs: [[0, 0, 0, 0, 1.5]] }, /substeps/)
+  refused({ ...wheel, segs: [[0, 0, 0, 0, LIMITS.stepsPerInput], [0, 0, 0, 0, 1]] }, /substeps/)
   refused({ ...good, segs: [[0, 0, 1.5]] }, /substeps/)
   refused({ ...good, segs: [[0, 0, -1]] }, /substeps/)
   refused({ ...good, segs: [[0, 0, LIMITS.stepsPerInput + 1]] }, /substeps/)
@@ -101,8 +122,25 @@ test('readClientMessage: every crafted message is refused with the reason simHos
   refused({ ...good, claim: { x: 0, z: 0 } }, /claim/)
   refused({ ...good, claim: { x: LIMITS.range + 1, y: 0, z: 0 } }, /claim/)
   refused({ ...good, claim: { x: 0, y: NaN, z: 0 } }, /claim/)
-  refused({ ...good, from: { x: 0 } }, /from/)
-  refused({ ...good, mode: 'drive', from: { x: 0, z: 0 } }, /from/)
+  // Doors: one of enter or exit, well formed, and agreeing with the mode.
+  const st = { x: 1, y: 0.56, z: 2, qx: 0, qy: 0, qz: 0, qw: 1, vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0 }
+  ok({ ...wheel, door: { enter: { car: 0, state: st } } })
+  ok({ ...good, door: { exit: { x: 0, z: 0 } } })
+  refused({ ...good, door: { exit: { x: 0 } } }, /door/)
+  refused({ ...good, door: { exit: { x: 0, z: 0 }, enter: { car: 0, state: st } } }, /door/)
+  refused({ ...good, door: {} }, /door/)
+  refused({ ...good, door: 'exit' }, /door/)
+  refused({ ...wheel, door: { exit: { x: 0, z: 0 } } }, /door and mode/)
+  refused({ ...good, door: { enter: { car: 0, state: st } } }, /door and mode/)
+  refused({ ...wheel, door: { enter: { car: LIMITS.cars, state: st } } }, /door/)
+  refused({ ...wheel, door: { enter: { car: -1, state: st } } }, /door/)
+  refused({ ...wheel, door: { enter: { car: 0.5, state: st } } }, /door/)
+  refused({ ...wheel, door: { enter: { car: 0, state: { ...st, qw: 2 } } } }, /door/)
+  refused({ ...wheel, door: { enter: { car: 0, state: { ...st, x: NaN } } } }, /door/)
+  refused({ ...wheel, door: { enter: { car: 0, state: { ...st, vx: LIMITS.driveSpeed + 1 } } } }, /door/)
+  refused({ ...wheel, door: { enter: { car: 0, state: { ...st, wy: 13 } } } }, /door/)
+  refused({ ...wheel, door: { enter: { car: 0, state: { ...st, wz: undefined } } } }, /door/)
+  refused({ ...good, from: { x: 0, z: 0 }, door: 1 }, /door/)
   refused({ t: 'ack', ack: -1 }, /ack/)
   refused({ t: 'chat', seq: 1, text: '' }, /text/)
   refused({ t: 'chat', seq: 1, text: '   ' }, /text/)
@@ -140,6 +178,15 @@ test('readServerMessage: the host is checked the same way; a player list with on
     assert.ok(!x.ok, JSON.stringify(u))
     assert.match(x.reason, why)
   }
+  // At the wheel the correction carries the car, its chassis where `you` is; anything else about it refuses the message.
+  const state = { x: 4, y: 0.56, z: 0, qx: 0, qy: 0, qz: 0, qw: 1, vx: 1, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0 }
+  const wheel = { ...correction, you: player(1, { x: 4, y: 0.56, driving: true }), car: { index: 2, state } }
+  const read = readServerMessage(wheel)
+  assert.ok(read.ok && read.msg.t === 'correct' && read.msg.car?.index === 2 && Object.isFrozen(read.msg.car.state))
+  bad({ ...wheel, you: player(1, { x: 4, y: 0.56 }) }, /correct: car/)
+  bad({ ...wheel, car: { index: 2, state: { ...state, x: 5 } } }, /correct: car/)
+  bad({ ...wheel, car: { index: LIMITS.cars, state } }, /correct: car/)
+  bad({ ...wheel, car: { index: 2, state: { ...state, qw: 0.5 } } }, /correct: car/)
   bad({ ...good, players: [player(2, { x: NaN })] }, /players/)
   bad({ ...good, players: [player(2, { speed: RUN + 1 })] }, /players/)
   bad({ ...good, players: [player(2, { vx: 30, speed: 30 })] }, /players/)
@@ -212,9 +259,19 @@ test('token buckets: a burst, then the steady rate; the clock is the caller\'s a
   assert.equal(p.chat.capacity, LIMITS.chatPerMinute)
   assert.equal(p.chat.perSecond * 60, LIMITS.chatPerMinute)
   assert.equal(p.ping.perSecond, LIMITS.pingsPerSecond)
-  // The substep budget is the realm's own fixed rate; a car's speed bound is the Ring-0 velocity cap.
+  assert.equal(p.stale.capacity, LIMITS.inputBurst)
+  assert.equal(p.doors.capacity, LIMITS.doorBurst)
+  assert.equal(p.doors.perSecond, LIMITS.doorsPerSecond)
+  // The substep budget is the realm's own fixed rate; a car's speed bound is the Ring-0 velocity cap; a run at the wheel
+  // is bounded where the realm's bouncer bounds the command; a door names a car of the largest fleet the realm builds.
   assert.equal(LIMITS.stepsPerSecond, 1 / PLANE.h)
   assert.equal(LIMITS.driveSpeed, RING0.maxVelocity)
+  assert.equal(LIMITS.brake, KERNEL.maxBrake)
+  assert.equal(LIMITS.steer, CAR.maxSteer)
+  assert.equal(LIMITS.throttle, 1)
+  assert.equal(LIMITS.cars, MAX_CARS)
+  // A stall the budgets ride out: three seconds of substeps and of inputs at the realm's rate.
+  assert.ok(LIMITS.stepBurst >= 3 * LIMITS.stepsPerSecond && LIMITS.inputBurst >= 3 * LIMITS.inputsPerSecond)
 })
 
 test('the token rides the upgrade: auth.<token> for the characters a subprotocol may carry, nothing else', () => {
@@ -236,7 +293,7 @@ const joined = (room: Room, name: string, now: number): Peer => {
   return peer
 }
 /** Where an honest client would claim to be after `runs`, from where the plane has peer `p` now. */
-const honest = (p: Peer, runs: Run[]) => planeStep({ x: p.x, z: p.z }, runs)
+const honest = (p: Peer, runs: FootRun[]) => planeStep({ x: p.x, z: p.z }, runs)
 
 test('join: a good token, the room\'s world and an admissible name are welcomed with the spawn and announced; anything else is refused', () => {
   const room = room0(20)
@@ -277,7 +334,7 @@ test('input: an honest claim is kept; a claim off the truth is answered at once 
   const room = room0(10)
   const a = joined(room, 'Ada', 0)
   // Half a second along the diagonal at a run on each axis (1.4 runs): the authority clamps it to a run, as the realm does.
-  const runs: Run[] = [[RUN, RUN, 30]]
+  const runs: FootRun[] = [[RUN, RUN, 30]]
   const claim = honest(a, runs)
   assert.deepEqual(handle(room, a, input(1, claim, { segs: runs }), 0, verify), {})
   assert.deepEqual([a.x, a.z, a.seq], [claim.x, claim.z, 1])
@@ -293,9 +350,15 @@ test('input: an honest claim is kept; a claim off the truth is answered at once 
   assert.deepEqual(out.reply, { t: 'correct', fix: 2, ack: 1, you: { ...s.you, vx: 0, vz: 0, speed: 0 }, reason: out.refused, tick: 1 })
   assert.equal(out.broadcast, undefined)
   assert.deepEqual([a.x, a.z, a.seq, a.fix, a.corrections], [at.x, at.z, 1, 2, 1])
-  // Inputs the client sent before it applied the correction are dropped unread: no reply, nothing counted.
+  // Inputs the client sent before it applied the correction are dropped unread: no reply, nothing counted, no input
+  // spent from the rate (a stall's backlog under the old correction costs the inputs after it nothing).
+  const spent = a.buckets.input.tokens
   assert.deepEqual(handle(room, a, input(3, { ...lie, z: lie.z + 41 }, { ack: 1 }), 110, verify), {})
   assert.deepEqual([a.seq, a.fix, a.corrections, a.refusals], [1, 2, 1, 0])
+  assert.ok(a.buckets.input.tokens >= spent)
+  // …for as long as an honest client could still have one in flight; long after the correction one is a refusal.
+  assert.equal(handle(room, a, input(3, STAND, { ack: 1 }), 100 + LIMITS.staleGraceMs + 1, verify).refused, 'input: under a correction long past')
+  a.refusals = 0
   // Under the new correction, honest again.
   const next = honest(a, [[0, RUN, 6]])
   // (A refused input still spent its substeps: the budget is a second later.)
@@ -324,10 +387,18 @@ test('input: more substeps than time allows, over rate, a stale seq or a future 
   for (let i = 0; i < LIMITS.inputBurst; i++) assert.equal(handle(room, b, input(++seq, honest(b, [[0, 0, 0]]), { segs: [[0, 0, 0]] }), 10_000, verify).refused, undefined)
   const over = handle(room, b, input(++seq, STAND, { segs: [[0, 0, 0]] }), 10_000, verify)
   assert.deepEqual([over.refused, (over.reply as { t: string }).t, b.refusals], ['input: over rate', 'correct', 1], 'counted, and corrected')
-  // A flood that ignores its corrections is still counted toward removal.
+  // A flood that ignores its corrections is still counted toward removal: past what a stall's backlog could hold, every
+  // input under the old correction is a refusal.
+  for (let i = 0; i < LIMITS.inputBurst; i++) assert.deepEqual(handle(room, b, input(++seq, STAND, { segs: [[0, 0, 0]] }), 10_000, verify), {}, `stale ${i}`)
   let kick: string | undefined
   for (let i = 1; i < LIMITS.refusalsBeforeKick; i++) kick = handle(room, b, input(++seq, STAND, { segs: [[0, 0, 0]] }), 10_000, verify).kick
   assert.equal(kick, 'repeated refusals')
+  // A network stall of three seconds: the page kept stepping at 60 Hz and every input arrives at once. All are kept.
+  const d = joined(room, 'Di', 30_000)
+  for (let i = 1; i <= 3 * LIMITS.stepsPerSecond; i++) {
+    const r = handle(room, d, input(i, honest(d, [[0, 1, 1]]), { segs: [[0, 1, 1]] }), 33_000, verify)
+    assert.deepEqual(r, {}, `input ${i} after the stall`)
+  }
   // Corrections a minute: the burst, then removal.
   const c = joined(room, 'Cy', 20_000)
   let kicked: string | undefined
@@ -338,33 +409,58 @@ test('input: more substeps than time allows, over rate, a stale seq or a future 
   assert.equal(kicked, 'repeated illegal movement')
 })
 
-test('a malformed input frame from a joined peer is counted as a refusal and corrected; at the wheel and back on foot through the door', () => {
+test('a malformed input frame from a joined peer is counted as a refusal and corrected; at the wheel and back on foot through the doors', () => {
   const room = room0()
   const a = joined(room, 'Ada', 0)
   const out = refuseInput(room, a, 'input: velocity', 0)
   assert.equal(out.refused, 'input: velocity')
   assert.equal((out.reply as { t: string; fix: number }).fix, 2)
   assert.equal(a.refusals, 1)
-  // Into a car 3 m off (the door), along the street at the cap, out at the kerb.
-  assert.deepEqual(handle(room, a, input(1, { x: 3, y: 0.7, z: 0 }, { fix: 2, mode: 'drive', segs: [[0, 0, 1]] }), 0, verify), {})
+  // Into a car 3 m off (within the door), along the street at the cap, out at the kerb.
+  const car = (x: number, z: number): CarBodyState => ({ x, y: 0.7, z, qx: 0, qy: 0, qz: 0, qw: 1, vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0 })
+  const wheel = (n: number) => [[0.5, 0, 0, 0, n] as const]
+  const drive = (seq: number, claim: { x: number; y: number; z: number }, fix: number, n: number, now: number, o: Partial<InputMessage> = {}) =>
+    handle(room, a, input(seq, claim, { fix, mode: 'drive', segs: wheel(n), ...o }), now, verify)
+  assert.match(drive(1, { x: 3, y: 0.7, z: 0 }, 2, 1, 0).refused ?? '', /at a wheel without taking one/)
+  assert.match(drive(2, { x: 9, y: 0.7, z: 0 }, 3, 1, 0, { door: { enter: { car: 4, state: car(9, 0) } } }).refused ?? '', /out of the door's reach/)
+  assert.deepEqual(drive(3, { x: 3, y: 0.7, z: 0 }, 4, 1, 0, { door: { enter: { car: 4, state: car(3, 0) } } }), {})
   assert.equal(a.driving, true)
-  assert.deepEqual(handle(room, a, input(2, { x: 3, y: 0.7, z: 25 }, { fix: 2, mode: 'drive', segs: [[0, 0, 30]] }), 1000, verify), {})
+  assert.deepEqual(drive(4, { x: 3, y: 0.7, z: 25 }, 4, 30, 1000), {})
   assert.ok(Math.abs(Math.hypot(a.vx, a.vz) - 50) < 1e-9, 'a car at the cap')
   assert.equal(poses(room)[0].driving, true)
-  assert.match(handle(room, a, input(3, { x: 3, y: 0.7, z: 60 }, { fix: 2, mode: 'drive', segs: [[0, 0, 30]] }), 2000, verify).refused ?? '', /cannot cover 35\.0 m/)
-  // A correction at the wheel puts the player down on foot where the car was kept.
-  assert.deepEqual([a.driving, a.x, a.z, a.fix], [false, 3, 25, 3])
-  // Back in; on foot again only through the door: an exit point, within reach.
-  const into = (seq: number, fix: number) => handle(room, a, input(seq, { x: 3, y: 0.7, z: 26 }, { fix, mode: 'drive', segs: [[0, 0, 1]] }), 3000 + seq, verify)
-  assert.deepEqual(into(4, 3), {})
-  const kerb = { x: 5, z: 26 }
+  const fast = drive(5, { x: 3, y: 0.7, z: 60 }, 4, 30, 2000)
+  assert.match(fast.refused ?? '', /cannot cover 35\.0 m/)
+  // A correction at the wheel keeps the player there and carries the car: its state, at rest where it was kept.
+  const fix = fast.reply as { t: 'correct'; fix: number; you: RemotePlayer; car?: { index: number; state: CarBodyState } }
+  assert.deepEqual([fix.you.driving, fix.you.x, fix.you.z, fix.fix], [true, 3, 25, 5])
+  assert.deepEqual(fix.car, { index: 4, state: { ...car(3, 25) } })
+  assert.ok(readServerMessage(fix).ok, 'the page reads it as the host sent it')
+  // On foot again only through a door out, within reach of the car.
+  const kerb = { x: 5, z: 25 }
   const walk = planeStep(kerb, [[0, 0, 1]])
-  assert.match(handle(room, a, input(5, walk, { fix: 3 }), 3100, verify).refused ?? '', /without leaving the car/)
-  assert.deepEqual(into(6, 4), {})
-  assert.match(handle(room, a, input(7, walk, { fix: 4, from: { x: 30, z: 26 } }), 3200, verify).refused ?? '', /out of reach/)
-  assert.deepEqual(into(8, 5), {})
-  assert.deepEqual(handle(room, a, input(9, walk, { fix: 5, from: kerb }), 3300, verify), {})
+  assert.match(handle(room, a, input(6, walk, { fix: 5 }), 3100, verify).refused ?? '', /without leaving the car/)
+  assert.match(handle(room, a, input(7, walk, { fix: 6, door: { exit: { x: 30, z: 25 } } }), 3200, verify).refused ?? '', /out of reach/)
+  assert.deepEqual(handle(room, a, input(8, walk, { fix: 7, door: { exit: kerb } }), 3300, verify), {})
   assert.deepEqual([a.driving, a.x, a.z], [false, walk.x, walk.z])
+  // A correction on foot carries no car.
+  assert.equal((refuseInput(room, a, 'input: runs', 3400).reply as { car?: unknown }).car, undefined)
+})
+
+test('doors: more than time allows are corrected, whatever they say (a hop chain is no faster than the door rate)', () => {
+  const room = room0()
+  const a = joined(room, 'Ada', 0)
+  const st = { x: 1, y: 0.7, z: 0, qx: 0, qy: 0, qz: 0, qw: 1, vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0 }
+  let seq = 0
+  const hop = (now: number) => {
+    const into = handle(room, a, input(++seq, { x: a.x + 1, y: 0.7, z: a.z }, { fix: a.fix, mode: 'drive', segs: [[0, 0, 0, 0, 0]], door: { enter: { car: 0, state: { ...st, x: a.x + 1, z: a.z } } } }), now, verify)
+    const out = handle(room, a, input(++seq, planeStep({ x: a.x + 2, z: a.z }, [[0, 0, 0]]), { fix: a.fix, door: { exit: { x: a.x + 2, z: a.z } } }), now, verify)
+    return [into.refused, out.refused]
+  }
+  for (let i = 0; i < LIMITS.doorBurst / 2; i++) assert.deepEqual(hop(0), [undefined, undefined], `pair ${i}`)
+  assert.equal(hop(0)[0], 'input: more doors than time allows')
+  // Half a second refills one door.
+  assert.equal(a.driving, false)
+  assert.deepEqual(hop(1000), [undefined, undefined])
 })
 
 test('chat and ping: relayed to the room with the sender\'s id and name; inadmissible chat is dropped silently; over rate and stale seq refused', () => {
@@ -413,7 +509,7 @@ test('deterministic: two rooms fed the same messages on the same clock give the 
     const b = joined(room, 'Bob', 1)
     const out: unknown[] = []
     for (let i = 1; i <= 50; i++) {
-      const runs: Run[] = [[Math.sin(i) * RUN, Math.cos(i) * 3, 1 + (i % 2)]]
+      const runs: FootRun[] = [[Math.sin(i) * RUN, Math.cos(i) * 3, 1 + (i % 2)]]
       const claim = honest(a, runs)
       if (i % 7 === 0) claim.z += 1
       const r = handle(room, a, input(i, claim, { ack: room.tick, fix: a.fix, segs: runs }), i * 33, verify)

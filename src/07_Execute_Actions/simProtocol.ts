@@ -189,6 +189,19 @@ export type SimCommand =
    * operator walks more than RALLY_RANGE from the point, or when they are dismissed.
    */
   | { c: 'rally'; agent: number; x: number; z: number }
+  /**
+   * A network room (10_Network): on while the page is joined to one, off when it leaves. Player 1 becomes a ghost
+   * (player.ts setGhost, sanctuary.ts ghost: only fixed geometry stops them and no vehicle can touch them, while the
+   * Bouncer still brakes every car for them), the cars' tuning returns to the authored car, and the commands that
+   * would move a car behind the room's back (tune, setMode, recover, intent, reset and the fault injections) are refused:
+   * the room's authority replays player 1's walk and car and must find the same physics.
+   */
+  | { c: 'room'; on: boolean }
+  /**
+   * A network room's correction at the wheel (room only): player 1 put in car `i`, its chassis in exactly `state`, with a
+   * fresh controller, as the room's authority has it (leaving the car they were in, if another, where it is).
+   */
+  | { c: 'netCar'; i: number; state: CarBodyState }
   // Fault injection for the ?debug harness only: refused by a worker built without debug.
   | { c: 'dbgVelocity'; i: number; x: number; y: number; z: number }
   | { c: 'dbgMode'; i: number; mode: DriveMode }
@@ -234,8 +247,23 @@ export interface AvatarState {
   sensor: boolean
 }
 
+/** A car's full rigid-body state as plain numbers: chassis centre, orientation, linear and angular velocity. */
+export interface CarBodyState {
+  x: number; y: number; z: number
+  qx: number; qy: number; qz: number; qw: number
+  vx: number; vy: number; vz: number
+  wx: number; wy: number; wz: number
+}
+
+/** The command player 1's car ran this step (the bouncer's vetted throttle, brake and steer, and the handbrake). */
+export interface WheelsState { throttle: number; brake: number; steer: number; handbrake: boolean }
+
 export type SimEvent =
-  | { e: 'entered'; player: number; index: number; heading: number; suv: boolean }
+  /**
+   * `state`: the car's full state the moment the player took the wheel, before this step's substeps (what a network
+   * room's authority takes over). `room`: the room's correction seated them (netCar), not the player.
+   */
+  | { e: 'entered'; player: number; index: number; heading: number; suv: boolean; state: CarBodyState; room?: boolean }
   | { e: 'exited'; player: number; x: number; z: number; heading: number }
   | { e: 'rejected'; reason: string }
   /** The answer to a recruit command: who is coming over (distance at the request, m), or why nobody is. */
@@ -306,6 +334,8 @@ export interface StepState {
   avatar: AvatarState
   /** Index of the car player 0 drives, or −1 on foot: the same value as drivings[0]. */
   driving: number
+  /** What player 0's car ran this step (null on foot): a network room replays it. */
+  wheels: WheelsState | null
   /** Every avatar the realm holds, index = player (meta.players of them). */
   avatars: AvatarState[]
   /** Per player, the index of the car they drive, or −1 on foot. */

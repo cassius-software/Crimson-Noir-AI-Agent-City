@@ -190,12 +190,21 @@ export class Physics {
 
   static async create(boxes: Box[], furniture: Furniture, region: RegionGround | null = null): Promise<Physics> {
     await RAPIER.init()
+    return Physics.build(boxes, furniture, region)
+  }
+
+  /**
+   * create() once Rapier's WebAssembly is loaded (any create() has loaded it): the same world, built synchronously.
+   * The network room's authority builds a player's drive world this way the moment it is needed (garage.node.ts).
+   */
+  static build(boxes: Box[], furniture: Furniture, region: RegionGround | null = null): Physics {
     const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 })
     world.timestep = 1 / PHYSICS_HZ
     const fixed = world.createRigidBody(RAPIER.RigidBodyDesc.fixed())
     if (region) {
       const p = new Physics(world)
       p.walls = regionColliders(world, fixed, region)
+      world.step()
       return p
     }
     groundColliders(world, fixed)
@@ -213,6 +222,10 @@ export class Physics {
     for (const [x, z] of furniture.lamps) pole(x, z, POLES.lamp.height, POLES.lamp.radius)
     for (const [x, z] of furniture.trees) pole(x, z, POLES.tree.height, POLES.tree.radius)
     for (const [x, z] of furniture.signals) pole(x, z, POLES.signal.height, POLES.signal.radius)
+    // One step of the fixed world builds the query tree every query searches (the character controller's ground snap,
+    // the wheels' rays, the AI's obstacle rays): an unstepped world has none, so the first substep's moves would miss
+    // the ground. The network room's mirror and garage build their worlds here too, so all start alike.
+    world.step()
     return new Physics(world)
   }
 
