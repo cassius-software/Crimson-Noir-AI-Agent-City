@@ -107,15 +107,19 @@ this product.
 Chrome, Android and Go (Google LLC), Edge, Windows, WebView2 and TypeScript (Microsoft Corporation), Brave (Brave
 Software, Inc.), Safari, iPhone, iPad and Mac (Apple Inc.), PlayStation and DualSense (Sony Interactive
 Entertainment Inc.), Bluetooth (Bluetooth SIG, Inc.), Rust (the Rust Foundation), Python (the Python
-Software Foundation), Ollama (Ollama, Inc.), OpenAI (OpenAI and its affiliates), Qwen (Alibaba Cloud) and Tauri (the Tauri Programme within The Commons
+Software Foundation), Ollama (Ollama, Inc.), OpenAI (OpenAI and its affiliates), Qwen (Alibaba Cloud), Claude and
+Anthropic (Anthropic, PBC), llama.cpp (its authors) and Tauri (the Tauri Programme within The Commons
 Conservancy) are trademarks of their respective owners. The browsers, platforms, native shells and hardware are
 named only to identify what the product runs on; the programming languages are named only as skills the city's
 pedestrians have, so the operator can ask for them (`03_Spawn_Agents/skills.ts`); Ollama is named only to identify
-the local model server API the operator's `ask` speaks, and OpenAI only to identify the chat-completions wire format
-it can speak instead (`ask api chat`), and Qwen3-VL only as the model `ask` asks that server for
-unless the operator chooses another (`09_Cognition/localCompute.ts`). No model and no model server ships with the
-product: the operator's server holds the model under the model's own licence. No speech engine, speech model or
-voice ships either: the operator's `say` talks to a speech server the operator runs on the same machine
+the local model server API the operator's `ask` speaks, OpenAI only to identify the chat-completions wire format
+it can speak instead (`ask api chat`), llama.cpp only to identify the local server that serves packaged models in
+that format (`ask provider llamacpp`), Claude and Anthropic only to identify the network model API the operator can
+choose with a key of their own (`ask provider claude`, `09_Cognition/claudeApi.ts`), and Qwen3-VL only as the model
+`ask` asks the local server for unless the operator chooses another (`09_Cognition/localCompute.ts`). No model and
+no model server ships with the product: the operator's server holds the model under the model's own licence, and the
+network provider answers only with the operator's own key, which stays in their browser. No speech engine, speech
+model or voice ships either: the operator's `say` talks to a speech server the operator runs on the same machine
 (`09_Cognition/localSpeech.ts`). This product is not affiliated with or endorsed by any of them.
 
 ## Operator notes
