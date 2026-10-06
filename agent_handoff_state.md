@@ -74,6 +74,31 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
   agents, nothing else running: the container has 4 CPUs/16 GB); fix what it confirms; (3) README verified entry;
   (4) commit, tag `v1.0.0-stable-release`, push branch and tag (report a 403 as before).
 
+## Next directive (after the release): the Crimson Noir OS Technical Design Document
+
+The operator attached `Technical_Design_Document.md` (Chrismon Noir OS 0.9.0), then a corrected copy,
+`Technical_Design_Document_1.md` (**Crimson Noir OS** 0.9.0; this one rules): build a Rust DOD runtime (no OOP, 1-D
+SoA arrays, branchless hot path, WGSL compute via wgpu), a Nix-style declarative containment generator ("NixOS and seL4
+microkernel paradigms"), a self-testing visual tutorial (a "5-Whys ELI5" agent runs a minimal system initialization in
+3D; sorting the array on screen verifies memory, compute and display; a failure is caught as a hardware fault), a
+Turing-complete terminal over the raw arrays, the compute shader configuration and the declarative configuration, a
+one-click bootable image; MIT OR Apache-2.0. The loop breaker in the corrected copy: an index that loops identical
+failure states continuously has its memory block flushed and zeroed (the first copy said "> 100 times"; the threshold
+is declared in the configuration). Execution directives: `cargo new crimson_noir_os --bin` (done at the repo root); wgpu
++ bytemuck + logging, `no_std` where applicable; the arrays; the sandbox generator; iterate until it boots into the
+visual tutorial.
+Plan (decided): `crimson_noir_os/` (a Cargo workspace): a `no_std` + alloc core (the Global Matrix, the branchless
+kernels, the containment masks, the dropped-pointer defense, the loop breaker, the self-test sort, a software
+rasterizer for the tutorial, a small Forth-like terminal), the hosted bin (std: wgpu compute with the same kernels in
+WGSL, CPU parity, the terminal, PNG frames of the tutorial), a `boot/` UEFI image (x86_64-unknown-uefi, its own UEFI
+FFI: GOP framebuffer, keyboard) booted in QEMU with OVMF and screenshotted, and the containment generator (a
+`containment.nix`-style spec -> locked, hashed const tables via build.rs). Network allows crates.io, rustup and apt
+(qemu-system-x86, ovmf, mesa-vulkan-drivers for lavapipe, mtools). Honest limits to state: wgpu cannot run bare-metal
+(the UEFI image runs the CPU kernels; the hosted runtime runs WGSL); "provable ASI containment" is not achievable, only
+the narrow invariants the tests prove; a Linux kernel stays GPL-2.0 (the image carries none: it is a standalone UEFI
+program); no code earns regulatory approval; the rendering is stylized, not photorealistic; "Sith" is a third-party
+trademark to clear before a commercial release.
+
 ## Review findings on Phase 12 (adversarial workflow; [k/n] = verifiers who confirmed)
 
 - [2/2 verifiers say real] **critical** `src/10_Network/mirror.node.ts:258` — Switching foot and drive with 0-substep inputs moves the truth 16.5 m per pair, with no correction

@@ -26,3 +26,6 @@ dist-pilot
 
 # Rust build output of the native crates (their wasm is committed as generated .ts modules)
 native/*/target
+
+# Rust build output of the Crimson Noir OS workspace
+crimson_noir_os/target
