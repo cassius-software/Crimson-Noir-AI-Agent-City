@@ -18,7 +18,7 @@ import { Physics } from '../07_Execute_Actions/physics.ts'
 import { SimCore } from '../07_Execute_Actions/simCore.ts'
 import { ENTER_RANGE, POSE, type CarBodyState, type SimEvent, type StepState } from '../07_Execute_Actions/simProtocol.ts'
 import { Fleet } from '../07_Execute_Actions/vehicles.ts'
-import { Garage, GARAGE, type CarState, type DriveRun } from './garage.node.ts'
+import { Garage, GARAGE, motionOf, type CarState, type DriveRun } from './garage.node.ts'
 
 const SEED = 1337
 const CARS = 36
@@ -160,7 +160,20 @@ test('the door rules: reach, the car\'s ring, lane, heading, speed, height, spin
   assert.match(why({ qy: Math.sin((yaw + 1) / 2), qw: Math.cos((yaw + 1) / 2) }) ?? '', /facing along its ring/)
   assert.match(why({ vx: t[0] * 20, vz: t[1] * 20 }) ?? '', /past its ring's/)
   assert.match(why({ y: 3 }) ?? '', /height/)
+  assert.match(why({ y: 1.2 }) ?? '', /height/, 'a chassis held 0.6 m off the street')
   assert.match(why({ wy: 5 }) ?? '', /spinning/)
+  // The whole state the room would adopt (found by the Phase 13 review: only the speed's size was checked, so a car could
+  // be claimed moving upward and the room's own replay landed it on a roof).
+  const f = [t[0], t[1]], side = [t[1], -t[0]]
+  assert.match(why({ vx: f[0] * 5, vy: 10, vz: f[1] * 5 }) ?? '', /moving up at 10\.0 m\/s/)
+  assert.match(why({ vy: -3 }) ?? '', /moving down at 3\.0 m\/s/)
+  assert.equal(why({ vy: -0.74 }), null, 'settling onto its springs at the start')
+  assert.match(why({ vx: f[0] * 6 + side[0] * 5, vz: f[1] * 6 + side[1] * 5 }) ?? '', /sliding sideways at 5\.0 m\/s/)
+  assert.match(why({ vx: -f[0] * 3, vz: -f[1] * 3 }) ?? '', /reversing at 3\.0 m\/s/)
+  assert.match(why({ wx: f[0] * 2, wz: f[1] * 2, wy: 0 }) ?? '', /pitching or rolling/, 'a roll rate past the fleet\'s')
+  assert.match(why({ wx: side[0] * 2, wz: side[1] * 2, wy: 0 }) ?? '', /pitching or rolling/, 'a pitch rate past the fleet\'s')
+  // The fleet's own extremes pass: an emergency stop's pitch, a corner's slip and yaw, the springs' bounce.
+  assert.equal(why({ vx: f[0] * 9 + side[0] * 1.6, vy: -0.17, vz: f[1] * 9 + side[1] * 1.6, wy: 1.2, wx: side[0] * 0.3, wz: side[1] * 0.3 }), null)
   assert.match(why({ qx: 0.5, qy: 0, qz: 0, qw: Math.sqrt(0.75) }) ?? '', /upright/)
   assert.match(why({ x: Number.NaN }) ?? '', /the car state/)
   assert.match(why({ qw: 2 }) ?? '', /the car state/)
@@ -186,15 +199,27 @@ test('a car the room holds is checked against where it was left; an exit is chec
   const near = { x: held.x + 1, z: held.z }
   assert.equal(g.whyNotEnter(8, near, 2, { ...held, x: held.x + 0.4 }), null, 'within 0.5 m of where it was left')
   assert.match(g.whyNotEnter(8, near, 2, { ...held, x: held.x + 0.6 }) ?? '', /0\.60 m from where it was left/)
+  // Where it was left, but not as it was left (found by the Phase 13 review: only the position was checked, so a car
+  // left at rest could be taken back moving at 36 m/s, 30 of them upward, and the room's replay put it on a roof).
+  const yawBy = (q: CarBodyState, a: number): CarBodyState => {
+    const h = { x: 0, y: Math.sin(a / 2), z: 0, w: Math.cos(a / 2) }
+    return { ...q, qx: h.w * q.qx + h.x * q.qw + h.y * q.qz - h.z * q.qy, qy: h.w * q.qy - h.x * q.qz + h.y * q.qw + h.z * q.qx, qz: h.w * q.qz + h.x * q.qy - h.y * q.qx + h.z * q.qw, qw: h.w * q.qw - h.x * q.qx - h.y * q.qy - h.z * q.qz }
+  }
+  assert.match(g.whyNotEnter(8, near, 2, { ...held, vx: 20, vy: 30 }) ?? '', /was left at rest, not moving \(36\.06 m\/s/)
+  assert.match(g.whyNotEnter(8, near, 2, { ...held, wy: 2 }) ?? '', /was left at rest, not moving/)
+  assert.match(g.whyNotEnter(8, near, 2, yawBy(held, 0.3)) ?? '', /turned 0\.30 rad from how it was left/)
+  // A car settled on its springs since: a little lower, a little turned, barely moving.
+  assert.equal(g.whyNotEnter(8, near, 2, { ...yawBy(held, 0.03), y: held.y - 0.012, vy: -0.09, wz: 0.1 }), null)
   assert.match(g.whyNotEnter(8, near, 2, { ...s, x: car.pose.x }) ?? '', /from where it was left|from the room's pose/, 'not at its old seat any more')
   g.leave(8)
 })
 
-test('the lane envelope: the fleet\'s own cars stay within GARAGE.lane of their rings, their speed limit and heading', async () => {
+test('the lane envelope: the fleet\'s own cars stay within every door bound, in their lane, speed, heading and motion', async () => {
   const g = await theGarage()
   const p = await Physics.create(generateCity(SEED), streetFurniture(SEED))
-  const fleet = new Fleet(p, CARS, SEED, { network: g.network })
+  const fleet = new Fleet(p, CARS, SEED, { network: g.network, exposeRig: true })
   let clock = 0, lat = 0, dh = 0, over = 0
+  const most = { rise: 0, fall: 0, side: 0, back: 0, yaw: 0, tilt: 0, up: 1, low: Infinity, high: -Infinity }
   for (let k = 0; k < 1800; k++) {
     clock += 1 / 60
     fleet.think(1 / 60, clock)
@@ -210,10 +235,31 @@ test('the lane envelope: the fleet\'s own cars stay within GARAGE.lane of their 
       d = Math.atan2(Math.sin(d), Math.cos(d))
       dh = Math.max(dh, Math.abs(d))
       if (Math.abs(fleet.speed(v)) > track.speedLimit + GARAGE.speedSlack) over++
+      // The whole state a page would report at its door, read as the room reads it.
+      const m = motionOf(fleet.bodyState(v))
+      most.rise = Math.max(most.rise, m.vertical)
+      most.fall = Math.max(most.fall, -m.vertical)
+      most.side = Math.max(most.side, Math.abs(m.side))
+      most.back = Math.max(most.back, -m.forward)
+      most.yaw = Math.max(most.yaw, Math.abs(m.yaw))
+      most.tilt = Math.max(most.tilt, m.tilt)
+      most.up = Math.min(most.up, m.up)
+      const y = fleet.bodyState(v).y
+      most.low = Math.min(most.low, y)
+      most.high = Math.max(most.high, y)
     }
   }
   assert.ok(lat < GARAGE.lane, `lateral ${lat.toFixed(3)} m`)
   assert.ok(lat > 0.3, 'corners are cut: the envelope is not slack for nothing')
   assert.ok(dh < GARAGE.heading, `heading ${dh.toFixed(3)} rad`)
   assert.equal(over, 0)
+  // Every motion bound holds the fleet with room to spare (each is at least twice what the fleet does here).
+  const twice = (v: number, bound: number, what: string) => assert.ok(2 * v <= bound, `${what}: ${v.toFixed(3)} against a bound of ${bound}`)
+  twice(most.rise, GARAGE.rise, 'rising')
+  twice(most.fall, GARAGE.fall, 'falling (the first frames settle the fleet onto its springs)')
+  twice(most.side, GARAGE.slip, 'sideways slip')
+  twice(Math.max(0, most.back), GARAGE.speedSlack, 'reversing')
+  twice(most.yaw, GARAGE.spin, 'yaw rate')
+  twice(most.tilt, GARAGE.tilt, 'pitch and roll rate')
+  assert.ok(most.up >= GARAGE.upright && most.low >= GARAGE.low && most.high <= GARAGE.high, JSON.stringify(most))
 })

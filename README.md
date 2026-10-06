@@ -1314,14 +1314,20 @@ physics realm is the prediction that hides the latency.
   - **On foot** it replays the substeps on its own capsule, with the same clamp (`simProtocol.ts footWish`) and the
     same controller. A claim more than a micrometre off is refused, which catches a speed hack, a wall walked
     through, and a position written into the page's memory.
-  - **Into a car**: the car must be within the realm's door (3.8 m) of where the room has the player. A car this
-    player drove before is held by the room where it was left, and must be within 0.5 m of that spot. Any other car
-    is an AI car, and an AI car's position is not computable on a server: it is a Rapier body that brakes for the
-    pedestrians of each page's own GPU crowd (the First Law), so every page's traffic is its own. What the room checks
-    is everything that can be checked: the car on its own ring's lane (within 1.0 m: the fleet's own cars stray at
-    most 0.53 m on straights and 0.78 m in corners, measured), facing along it (within 0.5 rad), no faster than the
-    ring's limit, upright, its chassis at a car's height and not spinning. The room then takes over the car in
-    exactly the state the page reported.
+  - **Into a car**: the car must be within the realm's door (3.8 m) of where the room has the player. The room then
+    takes over the car in exactly the state the page reported, so every number of that state is checked, not only
+    where the car is (`garage.node.ts GARAGE`, each bound measured on the fleet, with at least twice its margin).
+    - A car this player drove before is held by the room, stopped where it was left: it must be within 0.5 m of that
+      spot, turned at most 0.1 rad from how it was left, and moving no faster than a car settling on its springs
+      (0.5 m/s, 0.5 rad/s; measured: 0.10 and 0.12 after a dead stop).
+    - Any other car is an AI car, and an AI car's position is not computable on a server: it is a Rapier body that
+      brakes for the pedestrians of each page's own GPU crowd (the First Law), so every page's traffic is its own.
+      What the room checks is everything that can be checked: on its own ring's lane (within 1.0 m: the fleet's own
+      cars stray at most 0.53 m on straights and 0.78 m in corners), facing along it (0.5 rad), upright, at a car's
+      height, and moving as a car on a street moves: forward along its heading no faster than the ring's limit,
+      sliding sideways no faster than 4 m/s, rising no faster than 0.5 m/s, pitching or rolling no faster than
+      1 rad/s, turning no faster than 3 rad/s. A car claimed moving upward or sideways would otherwise be launched by
+      the room's own replay (the Phase 13 review landed one on a roof that way).
   - **At the wheel** it replays the runs on its own copy of the car, which is then the truth: a chassis claim more
     than a micrometre off it is refused.
   - **Out of a car**: the exit point must be within 0.5 m of the one the room computes from its own chassis
@@ -1746,7 +1752,11 @@ described in Networking above.
   (`parity.fuzz.test.ts`) that two drivers on a network that jitters, spikes and stalls, taking doors and crashing
   into buildings beside a liar, are never a micrometre from the room's replay and end at its pose to the bit. See
   Networking, Fuzzing and the parity proof.
-- **Phase 13.3, fixes found on the way** (the Phase 12 review's 47 findings, and the fuzzing):
+- **Phase 13.3, fixes found on the way** (the Phase 12 review's 47 findings, the fuzzing, and a fresh review of
+  Phase 13 itself):
+  - a door now checks the whole state the room adopts, not only where the car is: the review took a car the room
+    held at rest back at 36 m/s (30 of them upward), and claimed an AI car at its ring's speed but moving upward, and
+    the room's own replay landed each on a roof;
   - the host survives a reset after a refused upgrade (it crashed); refused upgrades are ended, a slow-header client
     is dropped, pings are metered and every write checks the backlog; a short secret starts no host; one connection
     per player; a session ends with its token; logged text is escaped;

@@ -316,8 +316,10 @@ test('every lie about a car is refused: a car out of the door\'s reach or off it
     ['out of the door', { ...into, door: { enter: { car: i, state: { ...st, x: st.x - Math.cos(c.heading) * 4, z: st.z + Math.sin(c.heading) * 4 } } } }, /from the room's pose/],
     // Another car's index for this car's state: its ring runs elsewhere.
     ['another ring', { ...into, door: { enter: { car: other, state: st } } }, /off its ring's lane/],
-    // The car claimed at five times its ring's speed.
-    ['too fast', { ...into, door: { enter: { car: i, state: { ...st, vx: st.vx * 5 + 30 } } } }, /past its ring's/],
+    // The car claimed at 30 m/s along its heading, past its ring's limit; launched upward; sliding sideways.
+    ['too fast', { ...into, door: { enter: { car: i, state: { ...st, vx: Math.sin(c.heading) * 30, vz: Math.cos(c.heading) * 30 } } } }, /past its ring's/],
+    ['launched', { ...into, door: { enter: { car: i, state: { ...st, vy: 12 } } } }, /moving up at 12\.0 m\/s/],
+    ['sideways', { ...into, door: { enter: { car: i, state: { ...st, vx: Math.cos(c.heading) * 8, vz: -Math.sin(c.heading) * 8 } } } }, /sliding sideways/],
     // At a wheel with no door; on foot claiming a door out of a car it never took.
     ['no door', { ...into, door: undefined }, /at a wheel without taking one/],
     ['no car to leave', { mode: 'foot', segs: [[0, 0, 1]], heading: 0, claim: before, door: { exit: { x: before.x, z: before.z } } }, /exit: not at a wheel/],

@@ -832,12 +832,15 @@ gap, and release.
     controller alone left 1.6 cm (the wheels' hidden state), and a car resting on a building corner left 3 mm (its
     contacts' warm-start impulses). With both, `garage.node.test.ts` drives 1,200 frames of 0–3 substeps, leaves the
     car, walks, comes back and drives again, and the page's car and the room's differ by 0.
-  - **The doors.** Into a car: within the realm's door (3.8 m) of the room's pose; a car this player left within
-    0.5 m of where the room holds it (stopped dead where it was left); any other car on its own ring's lane within
-    the fleet's measured envelope (1.0 m: at most 0.53 m on straights, 0.78 m in corners over a minute of 36 cars),
-    facing along it within 0.5 rad, no faster than the ring's limit, upright, at a car's height, not spinning. Out of
-    a car: within 0.5 m of the exit point the room computes from its own chassis, where the room then puts the
-    player. A mode without its door is refused, and the room takes two doors a second, so a hop chain moves a player
+  - **The doors.** Into a car: within the realm's door (3.8 m) of the room's pose, and, since the room adopts the state
+    it lets through, every number of that state checked: a car this player left within 0.5 m of where the room holds
+    it (stopped dead where it was left), turned at most 0.1 rad and moving no faster than a car settling on its
+    springs; any other car on its own ring's lane within the fleet's measured envelope (1.0 m: at most 0.53 m on
+    straights, 0.78 m in corners over a minute of 36 cars), facing along it within 0.5 rad, upright, at a car's
+    height, and moving as the fleet moves (forward along its heading at the ring's speed or under, sliding, rising,
+    pitching and rolling and turning within twice what the fleet ever does, emergency stops and the first settling
+    drop measured). Out of a car: within 0.5 m of the exit point the room computes from its own chassis, where the
+    room then puts the player. A mode without its door is refused, and the room takes two doors a second, so a hop chain moves a player
     at most about 6 m a pair, no faster than a run (`mirror.node.test.ts`).
   - **Room mode** (`simCore.ts` `room`). In a room player 1 is a ghost only fixed geometry stops, the tuning is the
     authored car's, the console commands that move a car are refused, and a car left stops dead. On foot the page
@@ -862,7 +865,10 @@ gap, and release.
     crashes into buildings) beside a liar. Over 90 s the room kept about 9,000 honest steps, each within a
     micrometre of its replay (the tolerance), corrected neither driver once, and ends at both pages' poses to the
     bit; every lie was corrected. `authority.node.test.ts` is the calm-network version with two drivers.
-- **13.3 Found and fixed.** The Phase 12 review's findings (the critical host crash on a reset after a refused upgrade,
+- **13.3 Found and fixed.** A fresh review of Phase 13 found that a door checked only where a car was: a held car
+  taken back at 36 m/s (30 upward) and an AI car claimed moving upward were each landed on a roof by the room's own
+  replay; every number of the adopted state is now checked (above), with regression tests on both. The Phase 12
+  review's findings (the critical host crash on a reset after a refused upgrade,
   the 0-substep teleport, the drive slack, the shared-token slots, the empty secret, honest snaps from local
   obstacles, the stall that kicked an honest page, and the rest, listed in `agent_handoff_state.md`), and what the
   fuzzing found: drive inputs that spent no substep budget, a validator that a prototype-less object made throw,

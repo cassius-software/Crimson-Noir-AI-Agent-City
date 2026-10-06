@@ -7,9 +7,13 @@
  * crowd, whom the First Law makes it brake for, so no server can compute it. What the garage checks when a player takes
  * a car's wheel is everything that can be checked:
  *   - the door: the chassis within ENTER_RANGE of where the room has the player (the realm's own rule);
- *   - a car this player has driven before (the room holds it, parked where it was left): within 0.5 m of that spot;
+ *   - a car this player has driven before (the room holds it, stopped where it was left): within 0.5 m of that spot,
+ *     turned no further from how it was left and moving no faster than a car settling on its springs;
  *   - any other car: on its own ring's lane (within the fleet's measured cornering envelope), facing along the ring,
- *     upright, at the ring's speed or below.
+ *     upright, at a car's height, and moving as a car on a street moves: along its heading at the ring's speed or
+ *     below, not sliding, rising or falling, pitching or rolling past what the fleet ever does (GARAGE: each bound is
+ *     measured, with a margin).
+ * The room adopts the state it lets through, so every number of it is checked, not only where the car is.
  * From then on the car is the room's: each step's wheel command (what the page's Ring-0 bouncer let through) is replayed
  * here on the same car, in a world of the same city's buildings and ground, with the same code (carRig.ts carSubstep and
  * the Ring-0 speed clamp after each step), from the same numbers, the car built again from them on both sides (carRig.ts
@@ -38,14 +42,39 @@ export const GARAGE = Object.freeze({
   lane: 1.0,
   /** …facing along its ring within this, rad (measured: 0.29 at most). */
   heading: 0.5,
-  /** …no faster than its ring's speed limit and this, m/s (measured: never over the limit). */
+  /**
+   * …moving along its own heading: forward no faster than its ring's speed limit and this, nor backward faster than
+   * this, m/s (measured: never over the limit, never backward faster than 0.1).
+   */
   speedSlack: 0.5,
-  /** …turning no faster than this, rad/s, and upright: its up axis at least this much vertical. */
+  /** …sliding sideways no faster than this, m/s (measured: 1.67 at most, cornering; a claimed slide stops in half a metre). */
+  slip: 4,
+  /**
+   * …rising no faster than `rise` and falling no faster than `fall`, m/s: a car on a street is on its wheels (measured:
+   * never rising faster than 0.08, settling onto its springs at the start included; falling 0.08 driving, 0.17 in an
+   * emergency stop, 0.74 in that first settling drop). Only rising is a danger: a car claimed moving upward would be
+   * launched by the room's own replay.
+   */
+  rise: 0.5,
+  fall: 2,
+  /** …turning about its up axis no faster than this, rad/s (measured: 1.28 at most). */
   spin: 3,
-  upright: 0.9,
-  /** …its chassis centre this high above the ground, m (it rides at about 0.56). */
-  low: 0.2,
-  high: 1.5,
+  /** …pitching or rolling no faster than this, rad/s (measured: 0.17 driving, 0.31 in an emergency stop). */
+  tilt: 1,
+  /** …upright: its up axis at least this much vertical (measured: never under 0.9993). */
+  upright: 0.99,
+  /** …its chassis centre this high above the ground, m (measured: 0.55 to 0.57 driving, 0.54 to 0.66 settling). */
+  low: 0.4,
+  high: 0.9,
+  /**
+   * A car the room holds was stopped where it was left; when its driver comes back, the page's car has only settled on
+   * its springs (measured over a minute after a dead stop mid-manoeuvre: never faster than 0.10 m/s, never spinning
+   * past 0.12 rad/s, turned at most 0.02 rad, moved at most 1.6 cm). So it must be within `door` of that spot, turned
+   * within `heldTurn` rad of that orientation, and no faster than `heldSpeed` m/s or `heldSpin` rad/s.
+   */
+  heldTurn: 0.1,
+  heldSpeed: 0.5,
+  heldSpin: 0.5,
   /** The door's own margin past ENTER_RANGE, m (the page measures the same distance from the same numbers). */
   enterSlack: 0.01,
   /** Cars one player may hold parked at once; the oldest is let go past it (the room then treats it as any car). */
@@ -77,8 +106,31 @@ function wellFormed(s: CarState): boolean {
   return q > 0.99 && q < 1.01
 }
 
-/** A car's chassis heading and forward speed from a state (carRig.ts headingOf, forwardSpeedOf). */
+/** A car's chassis heading from a state (carRig.ts headingOf). */
 const headingOfState = (s: CarState): number => headingOf({ x: s.qx, y: s.qy, z: s.qz, w: s.qw })
+
+/**
+ * A state's motion in its own chassis frame (forward is the chassis +x, up its +y, side its +z): the velocity along each,
+ * the turn rate about up (yaw) and about any horizontal axis of the chassis (pitch and roll), and how upright it is.
+ */
+export function motionOf(s: CarState): { forward: number; side: number; vertical: number; yaw: number; tilt: number; up: number } {
+  const { qx: x, qy: y, qz: z, qw: w } = s
+  const f = [1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y)]
+  const u = [2 * (x * y - w * z), 1 - 2 * (x * x + z * z), 2 * (y * z + w * x)]
+  const d = [2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y)]
+  const yaw = s.wx * u[0] + s.wy * u[1] + s.wz * u[2]
+  return {
+    forward: s.vx * f[0] + s.vy * f[1] + s.vz * f[2],
+    side: s.vx * d[0] + s.vy * d[1] + s.vz * d[2],
+    vertical: s.vy,
+    yaw,
+    tilt: Math.hypot(s.wx - yaw * u[0], s.wy - yaw * u[1], s.wz - yaw * u[2]),
+    up: u[1],
+  }
+}
+
+/** The angle between two orientations, rad. */
+const turnBetween = (a: CarState, b: CarState): number => 2 * Math.acos(Math.min(1, Math.abs(a.qx * b.qx + a.qy * b.qy + a.qz * b.qz + a.qw * b.qw)))
 
 export class Garage {
   readonly seed: number
@@ -145,26 +197,37 @@ export class Garage {
     if (!wellFormed(s)) return 'enter: the car state'
     const door = Math.hypot(s.x - at.x, s.z - at.z)
     if (!(door <= ENTER_RANGE + GARAGE.enterSlack)) return `enter: the car is ${door.toFixed(2)} m from the room's pose (the door is ${ENTER_RANGE} m)`
+    // The room adopts the state it lets through, so every number in it is checked, not only where the car is: a car
+    // claimed at the right spot but moving upward, sideways or spinning would be launched by the room's own replay.
     const held = bay.parked.get(index)
     if (held) {
       const off = Math.hypot(s.x - held.x, s.y - held.y, s.z - held.z)
-      return off <= GARAGE.door ? null : `enter: car ${index} is ${off.toFixed(2)} m from where it was left`
+      if (!(off <= GARAGE.door)) return `enter: car ${index} is ${off.toFixed(2)} m from where it was left`
+      const turned = turnBetween(s, held)
+      if (!(turned <= GARAGE.heldTurn)) return `enter: car ${index} is turned ${turned.toFixed(2)} rad from how it was left`
+      const speed = Math.hypot(s.vx, s.vy, s.vz), spin = Math.hypot(s.wx, s.wy, s.wz)
+      if (!(speed <= GARAGE.heldSpeed && spin <= GARAGE.heldSpin)) return `enter: car ${index} was left at rest, not moving (${speed.toFixed(2)} m/s, ${spin.toFixed(2)} rad/s)`
+      return null
     }
     const car = this.plan[index]
     const track = car.track >= 0 ? this.network.tracks[car.track] : null
     if (!track) return `enter: car ${index} has no ring`
     if (!(s.y >= GARAGE.low && s.y <= GARAGE.high)) return 'enter: chassis height'
-    const up = 1 - 2 * (s.qx * s.qx + s.qz * s.qz)
-    if (!(up >= GARAGE.upright)) return 'enter: the car is not upright'
-    if (!(Math.hypot(s.wx, s.wy, s.wz) <= GARAGE.spin)) return 'enter: the car is spinning'
+    const m = motionOf(s)
+    if (!(m.up >= GARAGE.upright)) return 'enter: the car is not upright'
     const p = projectOnto(track, s.x, s.z)
     if (!(Math.abs(p.lateral) <= GARAGE.lane)) return `enter: car ${index} is ${Math.abs(p.lateral).toFixed(2)} m off its ring's lane`
     const t = tangentAt(track, p.s)
     let dh = headingOfState(s) - Math.atan2(t[0], t[1])
     dh = Math.atan2(Math.sin(dh), Math.cos(dh))
     if (!(Math.abs(dh) <= GARAGE.heading)) return `enter: car ${index} is not facing along its ring`
-    const speed = Math.hypot(s.vx, s.vy, s.vz)
-    if (!(speed <= track.speedLimit + GARAGE.speedSlack)) return `enter: car ${index} at ${speed.toFixed(1)} m/s is past its ring's ${track.speedLimit.toFixed(1)}`
+    if (!(Math.abs(m.yaw) <= GARAGE.spin)) return 'enter: the car is spinning'
+    if (!(m.tilt <= GARAGE.tilt)) return 'enter: the car is pitching or rolling'
+    if (!(m.vertical <= GARAGE.rise)) return `enter: car ${index} is moving up at ${m.vertical.toFixed(1)} m/s`
+    if (!(m.vertical >= -GARAGE.fall)) return `enter: car ${index} is moving down at ${(-m.vertical).toFixed(1)} m/s`
+    if (!(Math.abs(m.side) <= GARAGE.slip)) return `enter: car ${index} is sliding sideways at ${Math.abs(m.side).toFixed(1)} m/s`
+    if (!(m.forward <= track.speedLimit + GARAGE.speedSlack)) return `enter: car ${index} at ${m.forward.toFixed(1)} m/s is past its ring's ${track.speedLimit.toFixed(1)}`
+    if (!(m.forward >= -GARAGE.speedSlack)) return `enter: car ${index} is reversing at ${(-m.forward).toFixed(1)} m/s against its ring`
     return null
   }
 
