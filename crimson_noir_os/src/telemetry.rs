@@ -25,7 +25,7 @@ pub fn chain(head: u32, digest: u32, seq: u32) -> u32 {
 
 /// The digests of `frames` frames laid flat (FRAME_WORDS words each), on the CPU.
 pub fn digests(words: &[u32]) -> Vec<u32> {
-    assert!(words.len() % FRAME_WORDS == 0, "frames are {FRAME_WORDS} words each");
+    assert!(words.len().is_multiple_of(FRAME_WORDS), "frames are {FRAME_WORDS} words each");
     words.chunks_exact(FRAME_WORDS).map(|c| frame_digest(c.try_into().expect("a chunk of FRAME_WORDS"))).collect()
 }
 

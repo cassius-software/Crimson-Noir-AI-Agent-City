@@ -484,7 +484,7 @@ pub fn sort(gpu: &Gpu, keys: &[u32]) -> Vec<u32> {
 /// telemetry::digests, on the GPU.
 pub fn digests(gpu: &Gpu, words: &[u32]) -> Vec<u32> {
     use crate::telemetry::FRAME_WORDS;
-    assert!(!words.is_empty() && words.len() % FRAME_WORDS == 0, "frames are {FRAME_WORDS} words each");
+    assert!(!words.is_empty() && words.len().is_multiple_of(FRAME_WORDS), "frames are {FRAME_WORDS} words each");
     let frames = (words.len() / FRAME_WORDS) as u32;
     let input = buffer(gpu, "telemetry frames", bytemuck::cast_slice(words), wgpu::BufferUsages::empty());
     let out = buffer(gpu, "telemetry digests", &vec![0u8; frames as usize * 4], wgpu::BufferUsages::empty());
