@@ -20,7 +20,7 @@ run_one() {
     native-test)   cargo test --manifest-path native/routing/Cargo.toml && cargo test --manifest-path native/kv-pager/Cargo.toml && cargo test --manifest-path native/kv-pager-wasm/Cargo.toml ;;
     rust-test)     (cd crimson_noir_os && cargo test --workspace --locked) ;;
     rust-clippy)   (cd crimson_noir_os && cargo clippy --workspace --all-targets --locked -- -D warnings) && cargo clippy --manifest-path native/routing/Cargo.toml --all-targets -- -D warnings ;;
-    fvps-smt)      python3 -I tools/verify/fvps_smt.py ;;
+    fvps-smt)      python3 tools/verify/fvps_smt.py ;;
     fvps-wasm)     sh tools/verify/fvps.sh wasm ;;
     fvps-kani)     sh tools/verify/fvps.sh kani ;;
     selfheal-test) node --test tools/selfheal/*.test.mjs ;;

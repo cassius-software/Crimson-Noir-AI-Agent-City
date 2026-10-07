@@ -49,7 +49,8 @@ run_kani() {
   done
 }
 
-run_smt() { python3 -I tools/verify/fvps_smt.py || status=1; }
+# Not `python3 -I`: isolated mode drops the user site-packages, where a runner's `pip install z3-solver` lands.
+run_smt() { python3 tools/verify/fvps_smt.py || status=1; }
 
 run_wasm() {
   if rustup target list --installed 2> /dev/null | grep -q wasm32-unknown-unknown; then
