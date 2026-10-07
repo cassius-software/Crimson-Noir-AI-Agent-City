@@ -7,8 +7,8 @@
 # - The bake job has read-only access. It does what a contributor does by hand:
 #   - installs the pinned Rust toolchain and the UEFI target, and fetches every crate from Cargo.lock;
 #   - runs the core and hosted-runtime tests, with the GPU path on Mesa's lavapipe;
-#   - bakes the image and the ISO (tools/build-image.sh). They are reproducible: the same commit and toolchain give
-#     the same bytes;
+#   - bakes the image and the ISO (tools/build-image.sh), then bakes again from a clean build and compares: the same
+#     commit and toolchain must give the same bytes, and a release is refused if they do not;
 #   - boots the disk image in QEMU with OVMF, through the self-test, the tutorial and the terminal's scripted run,
 #     until it logs POWER OFF and the machine stops;
 #   - boots the ISO to its self-test;
@@ -131,6 +131,19 @@ jobs:
           cp target/x86_64-unknown-uefi/release/crimson_boot.efi "$out/BOOTX64.EFI"
           cp containment.nix containment.lock NOTICE.txt LICENSE-MIT LICENSE-APACHE "$out/"
           rm -rf "$out/esp.img" "$out/iso"
+
+      - name: Bake again from a clean build; the bytes must be the same
+        working-directory: crimson_noir_os
+        env:
+          CARGO_NET_OFFLINE: 'true'
+        run: |
+          cargo clean -p crimson_boot --release --target x86_64-unknown-uefi
+          sh tools/build-image.sh "$RUNNER_TEMP/media-again" > /dev/null
+          for f in crimson_noir_os.img crimson_noir_os.iso; do
+            cmp "$RUNNER_TEMP/media/$f" "$RUNNER_TEMP/media-again/$f" || { echo "::error::$f is not reproducible: a second clean bake differs"; exit 1; }
+          done
+          cmp "$RUNNER_TEMP/media/BOOTX64.EFI" target/x86_64-unknown-uefi/release/crimson_boot.efi || { echo "::error::BOOTX64.EFI is not reproducible"; exit 1; }
+          echo "a second clean bake gave the same bytes"
 
       - name: Boot the disk image (self-test, tutorial, terminal, power-off)
         working-directory: crimson_noir_os

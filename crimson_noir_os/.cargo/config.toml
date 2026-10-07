@@ -1,0 +1,6 @@
+# Why does this file exist? The UEFI image must build to the same bytes from the same commit, so a release's media can
+# be rebuilt and compared. The linker (lld-link) stamps the PE header and the debug directory with the build time;
+# /Brepro writes a hash of the output there instead. Nothing else about the build varies.
+# What breaks if it is removed? Two builds of one commit differ in two timestamps, and the release's checksums with them.
+[target.x86_64-unknown-uefi]
+rustflags = ["-C", "link-arg=/Brepro"]
