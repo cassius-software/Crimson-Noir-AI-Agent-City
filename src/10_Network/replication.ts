@@ -99,16 +99,26 @@ export const LIMITS = Object.freeze({
   steer: 0.6,
   /** The largest fleet a room may name, and so the car indices a door may carry (simCore.ts MAX_CARS). */
   cars: 48,
-  /** Doors (into or out of a car) a peer may take per second, and the burst. */
-  doorsPerSecond: 2,
+  /**
+   * Doors (into or out of a car) a peer may take per second, and the burst. A door spends no substep, and a pair
+   * carries a player at most 5.91 m (into a car: ENTER_RANGE and the room's slack, 3.81 m; out: EXIT_SIDE, 2.1 m), so
+   * the rate is what keeps a hop chain from car to car no faster than a run: at 1.75 doors a second, 5.17 m/s
+   * (replication.test.ts pins it to the realm's numbers). A door costs an honest player nothing else.
+   */
+  doorsPerSecond: 1.75,
   doorBurst: 4,
   /** Chat lines a peer may send per minute (burst: the same). */
   chatPerMinute: 20,
   /** Pings a peer may relay per second (burst: 4). */
   pingsPerSecond: 2,
   pingBurst: 4,
-  /** Refusals a peer may earn before the host removes it. */
+  /**
+   * Refusals a peer may earn in a burst before the host removes it (the eighth in a row removes it), and how fast the
+   * allowance comes back: a stream of refusals is a griefer's, while an honest client's rare one (an input racing a
+   * correction, a stall) never adds up to a removal however long the session.
+   */
   refusalsBeforeKick: 8,
+  refusalsPerMinute: 4,
   /** The room's fixed tick rate, Hz. */
   tickHz: 20,
   /** A peer that has not joined within this long is dropped, ms. */
@@ -170,7 +180,7 @@ export function packPoses(players: readonly RemotePlayer[], out: Float32Array): 
 
 /**
  * Client → host: the first message, once; `token` is the session token the operator handed out (the same one the
- * upgrade carried), and `world` the world the page is walking (mirror.node.ts worldOf: 'city/<seed>').
+ * upgrade carried), and `world` the world the page is walking (mirror.node.ts worldOf: 'city/<seed>/<cars>').
  */
 export interface JoinMessage { t: 'join'; v: number; token: string; name: string; world: string }
 /** A run of fixed substeps on foot: the walking velocity (x, z, m/s) the client's realm applied to each, and how many. */
@@ -227,7 +237,11 @@ export interface SnapshotMessage { t: 'snapshot'; tick: number; ack: number; fix
  * client puts the player down there, standing; at the wheel, `car`, it puts the car in exactly that state), the newest
  * input seq kept, and why. The client numbers its inputs under `fix` from then on.
  */
-export interface CorrectMessage { t: 'correct'; fix: number; ack: number; you: RemotePlayer; reason: string; tick: number; car?: CarFix }
+/**
+ * The truth to snap to. `drift`: the input was kept, but the page had drifted from the authority's replay of it within
+ * the authority's bound (no lie, and not counted against the peer): the page is put back all the same.
+ */
+export interface CorrectMessage { t: 'correct'; fix: number; ack: number; you: RemotePlayer; reason: string; tick: number; car?: CarFix; drift?: true }
 export interface ChatRelayMessage { t: 'chat'; from: number; name: string; text: string; tick: number }
 export interface PingRelayMessage { t: 'ping'; from: number; kind: PingKind; x: number; y: number; z: number; tick: number }
 export interface JoinedMessage { t: 'joined'; player: RemotePlayer; tick: number }
@@ -245,12 +259,21 @@ const isRecord = (x: unknown): x is Record<string, unknown> => typeof x === 'obj
 const fin = (u: unknown, lo: number, hi: number): u is number => typeof u === 'number' && Number.isFinite(u) && u >= lo && u <= hi
 const count = (u: unknown): u is number => typeof u === 'number' && Number.isSafeInteger(u) && u >= 0 && u < LIMITS.maxSeq
 
-/** A string of at most `max` characters with nothing unprintable in it (no control characters, no line breaks). */
+/**
+ * A character a peer's string may not hold: a control character (C0, DEL or C1), a line or paragraph separator, a bidi
+ * control (an override or an isolate would make the line render in an order other than the one the screen read), or
+ * half of a surrogate pair.
+ */
+export function unprintable(c: number): boolean {
+  return c < 32 || (c >= 0x7f && c < 0xa0) || c === 0x2028 || c === 0x2029 || c === 0x061c || c === 0x200e || c === 0x200f ||
+    (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069) || (c >= 0xd800 && c <= 0xdfff)
+}
+
+/** A string of at most `max` characters with nothing unprintable in it (see `unprintable`). */
 function text(u: unknown, max: number): u is string {
   if (typeof u !== 'string' || u.length > max) return false
   for (const ch of u) {
-    const c = ch.codePointAt(0) ?? 0
-    if (c < 32 || c === 127) return false
+    if (unprintable(ch.codePointAt(0) ?? 0)) return false
   }
   return true
 }
@@ -452,7 +475,8 @@ export function readServerMessage(u: unknown): Read<ServerMessage> {
         if (!c || !you.driving || c.state.x !== you.x || c.state.y !== you.y || c.state.z !== you.z) return refusal('correct: car')
         car = c
       }
-      return { ok: true, msg: Object.freeze({ t: 'correct', fix: u.fix, ack: u.ack, you, reason: u.reason, tick: u.tick, ...(car && { car }) }) }
+      if (u.drift !== undefined && u.drift !== true) return refusal('correct: drift')
+      return { ok: true, msg: Object.freeze({ t: 'correct', fix: u.fix, ack: u.ack, you, reason: u.reason, tick: u.tick, ...(car && { car }), ...(u.drift === true && { drift: true as const }) }) }
     }
     case 'chat':
       if (!count(u.from) || !count(u.tick) || !text(u.name, LIMITS.name) || !text(u.text, LIMITS.chat)) return refusal('chat: from, name, text and tick')
@@ -651,7 +675,7 @@ export function take(b: Bucket, now: number): boolean {
   return true
 }
 
-export interface PeerBuckets { input: Bucket; stale: Bucket; steps: Bucket; doors: Bucket; corrections: Bucket; chat: Bucket; ping: Bucket }
+export interface PeerBuckets { input: Bucket; stale: Bucket; steps: Bucket; doors: Bucket; corrections: Bucket; chat: Bucket; ping: Bucket; refusals: Bucket }
 
 /**
  * A new peer's buckets, full: inputs and substeps refilled `headroom` times the realm's rate (the host's: LIMITS.headroom;
@@ -666,6 +690,8 @@ export const peerBuckets = (now: number, headroom: number = LIMITS.headroom): Pe
   corrections: bucket(LIMITS.correctionsPerMinute, LIMITS.correctionsPerMinute / 60, now),
   chat: bucket(LIMITS.chatPerMinute, LIMITS.chatPerMinute / 60, now),
   ping: bucket(LIMITS.pingBurst, LIMITS.pingsPerSecond, now),
+  // The refusals a peer may still earn: the burst less the one that removes it, coming back at refusalsPerMinute.
+  refusals: bucket(LIMITS.refusalsBeforeKick - 1, LIMITS.refusalsPerMinute / 60, now),
 })
 
 // ---------------------------------------------------------------------------------------------------
@@ -684,8 +710,11 @@ export interface Authority {
   /** A new peer's body at its spawn: its truth. */
   join(id: number): Truth
   leave(id: number): void
-  /** One input on trial: kept (the new truth), or refused (the truth exactly as before) and why. */
-  judge(id: number, input: InputMessage): { ok: true; pose: Truth } | { ok: false; pose: Truth; reason: string }
+  /**
+   * One input on trial: kept (the new truth; `resync` when the page drifted from the authority's replay of it within the
+   * authority's bound, and must be put back), or refused (the truth exactly as before) and why.
+   */
+  judge(id: number, input: InputMessage): { ok: true; pose: Truth; resync?: string } | { ok: false; pose: Truth; reason: string }
   /**
    * The peer put down at its truth again, as the client is by a correction: on foot standing, at the wheel the car
    * built again in its own state (`car`). Its truth.
@@ -709,6 +738,8 @@ export interface Peer {
   /** The newest snapshot tick the peer acknowledged. */
   ack: number
   refusals: number
+  /** Pages put back after a kept input they had drifted from (resync): never counted toward removal. */
+  resyncs: number
   /** Corrections made since the peer joined. */
   corrections: number
   buckets: PeerBuckets
@@ -755,17 +786,17 @@ export const createRoom = (authority: Authority, tickHz: number = LIMITS.tickHz)
 export function admit(room: Room, now: number): Peer | null {
   if (room.peers.size >= LIMITS.peers) return null
   const peer: Peer = {
-    id: room.next++, name: '', joined: false, seq: 0, fix: 0, fixedAt: now, said: 0, ack: 0, refusals: 0, corrections: 0, buckets: peerBuckets(now), key: '',
+    id: room.next++, name: '', joined: false, seq: 0, fix: 0, fixedAt: now, said: 0, ack: 0, refusals: 0, corrections: 0, resyncs: 0, buckets: peerBuckets(now), key: '',
     received: 0, arrived: now, seen: now, x: 0, y: 0, z: 0, heading: 0, vx: 0, vz: 0, driving: false,
   }
   room.peers.set(peer.id, peer)
   return peer
 }
 
-/** Counts one refusal against a peer; past the limit, the peer is to be removed. */
-export function refuse(peer: Peer, reason: string): Outcome {
+/** Counts one refusal against a peer; past its allowance (LIMITS.refusalsBeforeKick in a burst, refusalsPerMinute after), the peer is to be removed. */
+export function refuse(peer: Peer, reason: string, now: number): Outcome {
   peer.refusals++
-  return peer.refusals >= LIMITS.refusalsBeforeKick ? { refused: reason, kick: 'repeated refusals' } : { refused: reason }
+  return take(peer.buckets.refusals, now) ? { refused: reason } : { refused: reason, kick: 'repeated refusals' }
 }
 
 const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v)
@@ -811,16 +842,30 @@ export function poses(room: Room): RemotePlayer[] {
  * An input the room will not keep: nothing of it is applied, and the peer is answered at once with a correction (the
  * truth, put down standing, under the next correction number). A peer past its corrections a minute is to be removed.
  */
-export function correct(room: Room, peer: Peer, reason: string, now: number): Outcome {
+/** The peer put down at its truth under a new correction number, and the message that tells its page. */
+function snap(room: Room, peer: Peer, reason: string, now: number, drift: boolean): CorrectMessage {
   peer.fix++
-  peer.corrections++
   peer.fixedAt = now
   const t = room.authority.settle(peer.id)
   hold(peer, t)
-  const reply: CorrectMessage = { t: 'correct', fix: peer.fix, ack: peer.seq, you: pose(peer, true), reason, tick: room.tick, ...(t.car && { car: t.car }) }
-  const out: Outcome = { reply, refused: reason }
+  return { t: 'correct', fix: peer.fix, ack: peer.seq, you: pose(peer, true), reason, tick: room.tick, ...(t.car && { car: t.car }), ...(drift && { drift: true as const }) }
+}
+
+export function correct(room: Room, peer: Peer, reason: string, now: number): Outcome {
+  peer.corrections++
+  const out: Outcome = { reply: snap(room, peer, reason, now, false), refused: reason }
   if (!take(peer.buckets.corrections, now)) out.kick = 'repeated illegal movement'
   return out
+}
+
+/**
+ * A page put back after an input the room kept: it had drifted from the authority's replay within the authority's
+ * bound (the two physics engines meeting two boxes touched at once in their own orders). The page snaps as to any
+ * correction, but nothing is refused and nothing counts toward removal: the truth is the authority's replay either way.
+ */
+export function resync(room: Room, peer: Peer, reason: string, now: number): Outcome {
+  peer.resyncs++
+  return { reply: snap(room, peer, reason, now, true) }
 }
 
 /**
@@ -831,11 +876,11 @@ export function correct(room: Room, peer: Peer, reason: string, now: number): Ou
  */
 export function handle(room: Room, peer: Peer, msg: ClientMessage, now: number, verify: (token: string) => boolean): Outcome {
   if (!peer.joined) {
-    if (msg.t !== 'join') return refuse(peer, `${msg.t} before join`)
-    if (!verify(msg.token)) return refuse(peer, 'join: bad token')
-    if (msg.world !== room.authority.world) return refuse(peer, 'join: world')
+    if (msg.t !== 'join') return refuse(peer, `${msg.t} before join`, now)
+    if (!verify(msg.token)) return refuse(peer, 'join: bad token', now)
+    if (msg.world !== room.authority.world) return refuse(peer, 'join: world', now)
     const name = admissibleName(msg.name)
-    if (name === null) return refuse(peer, 'join: name')
+    if (name === null) return refuse(peer, 'join: name', now)
     peer.joined = true
     peer.name = name
     peer.key = msg.token
@@ -851,19 +896,19 @@ export function handle(room: Room, peer: Peer, msg: ClientMessage, now: number, 
   }
   switch (msg.t) {
     case 'join':
-      return refuse(peer, 'join: already joined')
+      return refuse(peer, 'join: already joined', now)
     case 'input': {
       // Sent before the client applied the last correction: it describes a body the room never had. Dropped unread while
       // an honest client could still have it in flight (a stall included), on an allowance of its own, never the input
       // rate (a stall's backlog under an old correction must not cost the inputs after it); past either, a refusal.
       if (msg.fix < peer.fix) {
-        if (now - peer.fixedAt > LIMITS.staleGraceMs) return refuse(peer, 'input: under a correction long past')
-        return take(peer.buckets.stale, now) ? {} : refuse(peer, 'input: under an old correction, over rate')
+        if (now - peer.fixedAt > LIMITS.staleGraceMs) return refuse(peer, 'input: under a correction long past', now)
+        return take(peer.buckets.stale, now) ? {} : refuse(peer, 'input: under an old correction, over rate', now)
       }
       // Over rate is a refusal, counted toward removal (a flood that ignores its corrections is still a flood), and
       // corrected.
       if (!take(peer.buckets.input, now)) {
-        const counted = refuse(peer, 'input: over rate')
+        const counted = refuse(peer, 'input: over rate', now)
         if (msg.fix !== peer.fix || counted.kick) return counted
         return correct(room, peer, 'input: over rate', now)
       }
@@ -883,26 +928,28 @@ export function handle(room: Room, peer: Peer, msg: ClientMessage, now: number, 
       hold(peer, v.pose)
       peer.seq = msg.seq
       peer.ack = Math.max(peer.ack, msg.ack)
+      // Kept as the authority replayed it, though the page drifted from it: put back, not counted.
+      if (v.resync !== undefined) return resync(room, peer, v.resync, now)
       return {}
     }
     case 'ack':
-      if (msg.ack > room.tick) return refuse(peer, 'ack: from the future')
+      if (msg.ack > room.tick) return refuse(peer, 'ack: from the future', now)
       peer.ack = Math.max(peer.ack, msg.ack)
       peer.seen = now
       return {}
     case 'chat': {
-      if (!take(peer.buckets.chat, now)) return refuse(peer, 'chat: over rate')
-      if (msg.seq <= peer.said) return refuse(peer, 'chat: stale seq')
+      if (!take(peer.buckets.chat, now)) return refuse(peer, 'chat: over rate', now)
+      if (msg.seq <= peer.said) return refuse(peer, 'chat: stale seq', now)
       peer.said = msg.seq
       peer.seen = now
       const line = admissibleChat(msg.text)
       // Inadmissible: dropped without a word, and counted. The room never acknowledges it.
-      if (line === null) return refuse(peer, 'chat: inadmissible')
+      if (line === null) return refuse(peer, 'chat: inadmissible', now)
       return { broadcast: { t: 'chat', from: peer.id, name: peer.name, text: line, tick: room.tick } }
     }
     case 'ping':
-      if (!take(peer.buckets.ping, now)) return refuse(peer, 'ping: over rate')
-      if (msg.seq <= peer.said) return refuse(peer, 'ping: stale seq')
+      if (!take(peer.buckets.ping, now)) return refuse(peer, 'ping: over rate', now)
+      if (msg.seq <= peer.said) return refuse(peer, 'ping: stale seq', now)
       peer.said = msg.seq
       peer.seen = now
       return { broadcast: { t: 'ping', from: peer.id, kind: msg.kind, x: msg.x, y: msg.y, z: msg.z, tick: room.tick } }
@@ -916,7 +963,7 @@ export function handle(room: Room, peer: Peer, msg: ClientMessage, now: number, 
  * and answered with a correction like any input the room will not keep.
  */
 export function refuseInput(room: Room, peer: Peer, reason: string, now: number): Outcome {
-  const counted = refuse(peer, reason)
+  const counted = refuse(peer, reason, now)
   const fixed = correct(room, peer, reason, now)
   return { ...fixed, ...(counted.kick && { kick: counted.kick }) }
 }

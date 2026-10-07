@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+/*
+ * Why does this file exist? It is the page's one stylesheet: Tailwind, and the root that fills the window without
+ * scrolling on the city's night background (the canvas and every overlay sit inside it).
+ * What breaks if it is removed? The utility classes every overlay uses are gone, and the page scrolls on a white margin.
+ */
+
 html,
 body,
 #root {

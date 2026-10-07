@@ -1269,8 +1269,9 @@ physics realm is the prediction that hides the latency.
   (the same token, or another minted for the same name) replaces the first (close code 4010), so no player holds two
   of the 32 slots. A session is closed the moment its token expires (4003), whatever it is doing. WebSocket pings are
   metered (four a second); every write the host makes, pongs and close frames included, checks the peer's unread
-  backlog first, and a peer too slow to read is closed (4009). Untrusted text reaches the log only escaped, on one
-  line, at most 160 characters.
+  backlog first, and a peer too slow to read is closed (4009). Untrusted text reaches the log only escaped (C0, DEL
+  and C1 control characters, line and paragraph separators and bidi controls, so no escape sequence or forged line
+  reaches the operator's terminal), on one line, at most 160 characters.
 - **The headless Ring-0 mirror** (`10_Network/mirror.node.ts`) is the host's authority. It builds the city of the seed
   the way the page's physics realm does: every building box, the tiled ground, and the street furniture as sensors.
   The physics is Rapier, the Rust physics engine compiled to WebAssembly that the page's physics worker loads. Each
@@ -1278,7 +1279,8 @@ physics realm is the prediction that hides the latency.
   other players not obstacles). The world is built once and stepped once, to build its query tree (every fresh
   world is, the page's too: an unstepped world answers no query). A substep on foot is replayed in about 22 µs.
   Every pose the mirror keeps passes the Ring-0 audit (finite, inside the 1600 m containment slab, above the ground
-  floor; a car also under the velocity cap).
+  floor; a car also under the velocity cap). At the wheel a replay the audit refuses is undone: the car goes back to
+  its last audited state, and the correction carries that.
 - **The garage** (`10_Network/garage.node.ts`, Phase 13) is the mirror's authority over cars. From the seed and the
   fleet size alone it knows the fleet's own plan (`07_Execute_Actions/carRig.ts planFleet`): which ring of the track
   network every car was seated on, and which is an SUV. When a player takes a car's wheel, the car is built in a
@@ -1293,9 +1295,20 @@ physics realm is the prediction that hides the latency.
 - **Room mode.** While joined, player 1 walks and drives in the page's realm as the room does (`simCore.ts` `room`):
   a ghost that only the city's fixed geometry stops (the traffic, the other players and the Sanctuary's nudges are
   the page's alone and never the room's), the car tuning at the authored values, and the console commands that move
-  a car (`recover`, `setMode`, `tune` and the debug ones) refused. A car its driver leaves in a room stops dead where
-  it is left. In room mode the page and the room agree to the bit on foot too, so the room's tolerance is a
-  micrometre.
+  a car (`recover`, `setMode`, `tune` and the debug ones) refused (`mirror.node.test.ts` sends each). A car its driver
+  leaves in a room stops dead where it is left, and the room holds it there for them (up to 16; past that the oldest
+  goes back to traffic on both sides). Every car the room does not hold is, to the room, an AI car on its own ring's
+  lane, so the page puts every other car it had stopped back there as traffic: the cars parked before a session
+  starts, and a car a correction takes the player out of. In room mode the page and the room agree to the bit on foot
+  too, so the room's tolerance is a micrometre.
+- **Drift.** The page and the room agree to the bit almost everywhere. Where the player meets two boxes at once (the
+  shared wall of a terrace's lots), each side's physics can take the two contacts in its own order and part by
+  micrometres (the second Phase 13 review measured up to 0.6 mm on foot and 1.4 mm at the wheel, and had an honest
+  player removed for it). A claim off by more than the micrometre but within the drift bound (`MIRROR.drift`: 25 cm on
+  foot, 1 m at the wheel) is kept as the room replayed it, and the page is put back there: a correction to the page
+  (marked `drift`), but no refusal, no notice to the player and no count toward removal. The truth is the room's
+  replay either way, so a claim moves nothing: a drift gains a liar nothing, and a claim past the bound is a lie,
+  refused and counted.
 - **What the page sends: the steps its realm ran, and where they left it.** Each realm step is one move, paired by the
   engine with the one step request that ran it:
   - the door it took first, if any (`simProtocol.ts doorOf`: the realm's own entered or exited event; a teleport or a
@@ -1312,11 +1325,13 @@ physics realm is the prediction that hides the latency.
   one timer a minute.
 - **What the server does with them, the moment they arrive.**
   - **On foot** it replays the substeps on its own capsule, with the same clamp (`simProtocol.ts footWish`) and the
-    same controller. A claim more than a micrometre off is refused, which catches a speed hack, a wall walked
-    through, and a position written into the page's memory.
-  - **Into a car**: the car must be within the realm's door (3.8 m) of where the room has the player. The room then
-    takes over the car in exactly the state the page reported, so every number of that state is checked, not only
-    where the car is (`garage.node.ts GARAGE`, each bound measured on the fleet, with at least twice its margin).
+    same controller. A claim more than a micrometre off is put back (within the drift bound) or refused (past it),
+    so a speed hack, a wall walked through and a position written into the page's memory move nothing.
+  - **Into a car**: the car must be within the realm's door (3.8 m, with 1 cm of slack) of where the room has the
+    player. The room then takes over the car in exactly the state the page reported, so every number of that state is
+    checked, not only where the car is (`garage.node.ts GARAGE`). Each bound is set from what the fleet was measured
+    doing (its own traffic, and an emergency stop for a pedestrian), most with at least twice the measured value; the
+    lane and heading bounds have less (1.0 m against 0.78 m measured in corners, 0.5 rad against 0.29 rad).
     - A car this player drove before is held by the room, stopped where it was left: it must be within 0.5 m of that
       spot, turned at most 0.1 rad from how it was left, and moving no faster than a car settling on its springs
       (0.5 m/s, 0.5 rad/s; measured: 0.10 and 0.12 after a dead stop).
@@ -1324,29 +1339,40 @@ physics realm is the prediction that hides the latency.
       brakes for the pedestrians of each page's own GPU crowd (the First Law), so every page's traffic is its own.
       What the room checks is everything that can be checked: on its own ring's lane (within 1.0 m: the fleet's own
       cars stray at most 0.53 m on straights and 0.78 m in corners), facing along it (0.5 rad), upright, at a car's
-      height, and moving as a car on a street moves: forward along its heading no faster than the ring's limit,
-      sliding sideways no faster than 4 m/s, rising no faster than 0.5 m/s, pitching or rolling no faster than
+      height, and moving as a car on a street moves: forward along its heading no faster than the ring's limit and
+      0.5 m/s, sliding sideways no faster than 4 m/s, rising no faster than 0.5 m/s, pitching or rolling no faster than
       1 rad/s, turning no faster than 3 rad/s. A car claimed moving upward or sideways would otherwise be launched by
       the room's own replay (the Phase 13 review landed one on a roof that way).
   - **At the wheel** it replays the runs on its own copy of the car, which is then the truth: a chassis claim more
-    than a micrometre off it is refused.
+    than a micrometre off it is put back with the car's state (within the drift bound) or corrected and counted (past
+    it).
   - **Out of a car**: the exit point must be within 0.5 m of the one the room computes from its own chassis
     (`carRig.ts exitPoint`, the realm's rule), and the room puts the player down at its own point.
-  - **What a door can carry you**: at most the door and an exit, about 6 m, and the room takes two doors a second
-    (a burst of four), so hopping from car to car is no faster than a run.
+  - **What a door can carry you**: a pair of doors moves a player at most 5.91 m (3.81 m into a car, 2.1 m out) and
+    spends no substep, so the room takes at most 1.75 doors a second (a burst of four): a hop chain alone is no
+    faster than a run (5.17 m/s), and the runs between hops add at most a run more, only where cars stand within a
+    door's reach along the way (`replication.test.ts` drives every mix of doors and runs against an authority that
+    grants each door its full reach).
   - A packet is also refused for any of these: more substeps than the clock allows (the realm's 60 a second, refilled
-    5 % faster so a bank spent in a stall comes back within a minute, three seconds banked: a network stall up to 3 s
-    is ridden out); more doors than the clock allows; a malformed, replayed or forged input; a mode without its door
+    5 % faster so a bank spent in a stall comes back within a minute, three seconds banked); more doors than the clock
+    allows; a malformed, replayed or forged input; a mode without its door
     (at a wheel without taking one, on foot without leaving it); too many inputs.
   - A refused packet is answered in the same turn with a correction: the truth, under a new correction number. On
     foot nothing of the refused packet is kept; a door it took is kept if it was good on its own. At the wheel the
     replay is kept (it is the room's own physics) and the correction carries the car's full state. Inputs the page
     sent before it applied the correction are dropped unread for 5 s after it (an honest stall's backlog, on an
     allowance of its own); after that, or past that allowance, each is a refusal.
+  - **A stalled link.** The page stops sending once 150 of its inputs (two and a half seconds of steps) are
+    unacknowledged (`netClient.ts MAX_IN_FLIGHT`), so whatever a stall piles up arrives within the room's input
+    allowance, which refilled meanwhile. A stall shorter than that costs nothing; a longer one costs one correction
+    (the steps taken past the cap are held, then dropped, and the room corrects the next input), never a refusal,
+    however long the stall or the session (`netClient.test.ts` stalls an honest page for 2, 8 and 30 s, and ten
+    times in five minutes).
   - A player who keeps earning corrections (more than ten a minute) is removed (code 4008).
 - **Snap reconciliation on the page** (`netClient.ts`, `engine.ts`). The welcome is the first correction: the spawn.
   The engine applies each new correction once: on foot as a teleport of player 1 to the truth, at the wheel as the
-  car built again in the room's state (`simCore.ts` `netCar`). Those, and the room mode on the welcome and off when
+  car built again in the room's state (`simCore.ts` `netCar`), ahead of anything the player queued meanwhile (an E
+  pressed on the same frame then acts on the truth, and no door out of a car the room never had is reported). Those, and the room mode on the welcome and off when
   the session ends, are the only things the room may ask of the physics realm. `net status` shows how often the
   room has snapped you and why (`snapped 1  last: claim 30.00 m from the mirror's pose`); its dropped count is the
   steps the room could not have kept (run before a correction was applied), not the ones held for the next input.
@@ -1373,16 +1399,23 @@ physics realm is the prediction that hides the latency.
 - **The 14A screen on names and chat.** Every player name and every chat line goes through `conduct.ts screen()`
   on the host, in the client before anything is sent, and once more on the page when it arrives (the host is not
   trusted either: a welcome or snapshot carrying an inadmissible name is refused whole). An inadmissible line is
-  dropped silently, with no relay and no reply, and counted. Two budgets remove a peer. Refusals (a malformed or
+  dropped silently, with no relay and no reply, and counted. The screen reads a line as it renders: characters that
+  draw nothing (zero-width spaces and joiners, the soft hyphen, the word joiner) are removed before the lexicon reads
+  it, letters of other alphabets drawn like Latin ones (Cyrillic, Greek, Armenian, Cherokee, the small capitals;
+  fullwidth and mathematical letters fold already) are read as the Latin letter, and a name or a line may hold no
+  control character, line separator, bidi control (which could reorder what renders) or lone surrogate. It is still
+  a lexicon: a misspelling or a digit for a letter passes it. Two budgets remove a peer. Refusals (a malformed or
   forged frame, an out-of-rate input, chat or ping, a stale input long after its correction, a bad token, an
-  inadmissible line) count toward eight, at which the host closes the socket (code 4008). Corrections (an input the
-  authority will not keep: a stale sequence number, a correction never made, a future ack, more substeps or doors
+  inadmissible line) are an allowance: eight in a burst close the socket (code 4008), and it comes back at four a
+  minute, so an honest client's rare refusal never adds up over a long session. Corrections (a drift is not one; an
+  input the authority will not keep: a stale sequence number, a correction never made, a future ack, more substeps or doors
   than time allows, a claim off the truth) count toward ten a minute, with the same close. A host that sends the
   page enough malformed messages is left the same way.
 - **The smoke test.** `npm run smoke:net` starts the real server as a process of its own (snapshots once a second,
   so the answer to a packet is plainly its correction) and plays a client over a real socket. It checks that a
-  missing or forged token is refused before a socket opens, that an honest walk is kept, and that nine crafted
-  illegal packets are each refused and corrected within 50 ms (measured here: 0.9–15.5 ms), with nothing else sent
+  missing or forged token is refused before a socket opens, that an honest walk is kept (it waits for the snapshot
+  that acknowledges the walk's last step, however late), and that nine crafted illegal packets are each refused and
+  corrected within 50 ms (measured here: 0.7–15.1 ms), with nothing else sent
   back and the server's truth unchanged: a position written into memory, 600 substeps in one packet, a burst past
   the bank of 180 substeps (the correction proves the six honest bursts before it were the ones kept), a walk
   through the podium east of the spawn sidewalk, an injected velocity of three runs, a door into a car 284 m away, a
@@ -1399,8 +1432,10 @@ physics realm is the prediction that hides the latency.
   - and the parity proof (`parity.fuzz.test.ts`): two pages, each the full city with 36 cars, drive on a network
     that jitters both ways, spikes past a second and stalls for 2.5 s; they take doors, floor the throttle, haul the
     handbrake and crash into buildings at once, while a third player lies beside them. Over 90 s of the city the
-    room kept about 9,000 steps of the honest two, each within a micrometre of its own replay, corrected neither
-    once, and holds the last pose of each to the bit; every lie was corrected.
+    room kept about 6,300 steps of the honest two (about 9,100 in all, the liar's honest steps included), each within
+    a micrometre of its own replay, corrected neither
+    once, and holds the last pose of each to the bit; every lie was corrected, and every drift the liar was made to
+    claim put back without a count.
   The fuzzing found and fixed: drive inputs that spent no substep budget, a validator a prototype-less object could
   make throw, player lists left unfrozen, a First Law that a non-number reading slipped past (it now fails toward
   the person), a speed clamp that turned an infinite velocity into a NaN, a substep bank that never came back after
@@ -1429,12 +1464,12 @@ Every source file opens with "Why does this file exist? / What breaks if it is r
 |---|---|---|
 | — | `brand.ts`, `MonolithLogo.tsx`, `App.tsx` | Product name and mark; the React shell (`App` → `GuiShell`, the city, or `TtyShell`, the console alone under `?boot=tty`): boot veil, HUD, concierge, the wardrobe card, touch and console overlays; it builds the cognition router and the network client and keeps the look and the token |
 | 01_Initialize_World | `world.ts`, `city.ts`, `materials.ts`, `fbmTexture.ts`, `solar.ts`, `codeDissolve.ts`, `region/` (`projection.ts`, `grid.ts`, `names.ts`, `clip.ts`, `pack.ts`, `compile.ts`, `regionWorld.ts`) | WebGPU device, city grid, districts, shoreline and furniture, procedural materials (filtered against moiré), sky, sun, haze, the lake; the code dissolve's material helper (any node material into falling green binary code, by a per-instance amount, shadow included); the surveyed region: its projection, fictional names, the compiler's core, the pack format, and its meshes, walls and places |
-| 02_Define_The_Rules | `laws.ts`, `ring0.ts`, `ring0Panic.ts`, `civic.ts`, `collision.ts`, `conduct.ts`, `degrees.ts`, `airgap.ts`, `integrity.ts` | SHA-256, HMAC and canonical encoding for every hash and seal; the air gap (the one definition of "this machine", and the guard installed on the page's and the worker's globals); Ring-0 bouncer and audit (both run in the physics worker; the audit's craft check), the page's panic lock; kernel limits, signal cycle, speed limit, checks; the contact policy (cars pass through cars, the ragdoll balance machine wired with no vehicle a cause, no combat) and the collision groups (the chassis, the wheel rays, the avatar through a rig); the 14A conduct core and screen; degrees of success |
+| 02_Define_The_Rules | `laws.ts`, `ring0.ts`, `ring0Panic.ts`, `civic.ts`, `collision.ts`, `conduct.ts`, `degrees.ts`, `airgap.ts`, `integrity.ts`, `property.ts` | The seeded, replayable property harness every fuzz suite shares; SHA-256, HMAC and canonical encoding for every hash and seal; the air gap (the one definition of "this machine", and the guard installed on the page's and the worker's globals); Ring-0 bouncer and audit (both run in the physics worker; the audit's craft check), the page's panic lock; kernel limits, signal cycle, speed limit, checks; the contact policy (cars pass through cars, the ragdoll balance machine wired with no vehicle a cause, no combat) and the collision groups (the chassis, the wheel rays, the avatar through a rig); the 14A conduct core and screen; degrees of success |
 | 03_Spawn_Agents | `crowd.wgsl`, `crowdCompute.ts`, `crowdSensor.ts`, `crowdSim.ts`, `crowdCull.ts`, `crowd.ts`, `skills.ts`, `look.ts`, `ragdoll.ts`, `ragdollRig.ts` | GPU pedestrians, their hazard sensing and their summons (in the physics worker), the contract and layouts both sides share, culling/LOD/density and indirect InstancedMesh rendering, the dissolve amounts and the look words (on the page); every pedestrian's skills, the recruitment rules and the rally rule both realms run; the closed wardrobe and the packed look word; the active ragdoll's balance machine, pool and Rapier body (wired by `07_Execute_Actions/ragdollRealm.ts`; `COLLISION.ragdoll: true`, and `collision.test.ts` keeps that the one road to it) |
 | 04_Connect_Hardware | `input.ts`, `hal.ts`, `dualsense.ts`, `lineLink.ts`, `gamepad.ts`, `seats.ts`, `peripheralPolicy.ts`, `TouchControls.tsx` | Keyboard/mouse/touch/gamepad (the ping among the actions), the hardware bus and its drivers; the seating plan for four local players and the per-seat pad intent; the draft default-deny gate for actuating peripherals (microcontrollers, drones; `docs/hal-peripherals-spec.md`), not yet wired |
 | 05_Observe_Environment | `telemetry.ts`, `governor.ts`, `profile.ts`, `lookStore.ts` | SIPOC X snapshot (the dissolve, the pings, the drawing switch, the players, the session and the captions among its optional fields), frame statistics, quality governor, the visitor's name and look |
 | 06_Make_Decisions | `traffic.ts`, `tracks.ts`, `trackDriver.ts`, `routingWasm.ts`, `routing.wasm.ts` (generated from `native/routing`), `intent.ts` | The track arithmetic as WebAssembly, with `tracks.ts` its reference; AI drivers: the street-hopping driver and the track follower, sharing one reaction check and hazard episode; the fixed track network (the car rings, the train loop, the drone corridors, the plane racetrack, the headway seats, the box hold); the 5-Whys intent engine |
-| 07_Execute_Actions | `engine.ts`, `simClient.ts`, `simProtocol.ts`, `physics.worker.ts`, `simHost.ts`, `simCore.ts`, `physics.ts`, `vehicles.ts`, `car.ts`, `fleetView.ts`, `trackFleet.ts`, `ragdollRealm.ts`, `rigView.ts`, `sanctuary.ts`, `player.ts`, `head.ts`, `controls.ts`, `viewports.ts`, `quality.ts`, `audio.ts`, `acoustics.ts`, `captions.ts`, `postfx.ts`, `cinema.ts`, `shutter.ts`, `volumetrics.ts`, `ghost.ts`, `contact.ts`, `dissolve.ts`, `netView.ts`, `operator.ts`, `harness.ts`, `spatial.ts`, `Hud.tsx`, `BootVeil.tsx`, `Concierge.tsx`, `Customizer.tsx`, `glyphs.ts`, `terminal/` (`Terminal.tsx`, `bridge.ts`, `commands.ts`, `repl.ts`) | Frame loop; the physics realm (worker entry, its message door, the simulation core, Rapier world, fleet on its tracks, the scheduled craft and their pose stream, the balance machine over the pedestrians near the operator and its rig stream, sanctuary, up to four avatars) and the page's end of it (client, protocol, fleet drawing, rig drawing, first-person heads, per-seat controls, the split-screen arithmetic); quality applier, soundscape (with its speech voice, rooms, peer voices and the sound-event stream), room acoustics, the caption track, post chain, the cinema camera (24 fps pacer, 180° shutter, ND and film response), sun shafts, ghost view, the contact transition and the code dissolve's envelope, the network ghosts, operator facade and physics harnesses (the spatial sweep's plan among them), HUD, boot veil, concierge, the wardrobe card, control glyphs, console (with R0, its stack machine) |
+| 07_Execute_Actions | `engine.ts`, `simClient.ts`, `simProtocol.ts`, `physics.worker.ts`, `simHost.ts`, `simCore.ts`, `physics.ts`, `vehicles.ts`, `car.ts`, `carRig.ts`, `fleetView.ts`, `trackFleet.ts`, `ragdollRealm.ts`, `rigView.ts`, `sanctuary.ts`, `player.ts`, `head.ts`, `controls.ts`, `viewports.ts`, `quality.ts`, `audio.ts`, `acoustics.ts`, `captions.ts`, `postfx.ts`, `cinema.ts`, `shutter.ts`, `volumetrics.ts`, `ghost.ts`, `contact.ts`, `dissolve.ts`, `netView.ts`, `operator.ts`, `harness.ts`, `spatial.ts`, `Hud.tsx`, `BootVeil.tsx`, `Concierge.tsx`, `Customizer.tsx`, `glyphs.ts`, `terminal/` (`Terminal.tsx`, `bridge.ts`, `commands.ts`, `repl.ts`) | Frame loop; the physics realm (worker entry, its message door, the simulation core, Rapier world, fleet on its tracks, the car rules the page and the room share (the rig, the substep, the exit point, the fleet's plan), the scheduled craft and their pose stream, the balance machine over the pedestrians near the operator and its rig stream, sanctuary, up to four avatars) and the page's end of it (client, protocol, fleet drawing, rig drawing, first-person heads, per-seat controls, the split-screen arithmetic); quality applier, soundscape (with its speech voice, rooms, peer voices and the sound-event stream), room acoustics, the caption track, post chain, the cinema camera (24 fps pacer, 180° shutter, ND and film response), sun shafts, ghost view, the contact transition and the code dissolve's envelope, the network ghosts, operator facade and physics harnesses (the spatial sweep's plan among them), HUD, boot veil, concierge, the wardrobe card, control glyphs, console (with R0, its stack machine) |
 | 08_Swarm | `recruitment.ts`, `taskRouter.ts`, `memory.ts`, `ping.ts` | The swarm's hash-chained memory and weight ledger; the operator's voice: on-device continuous speech recognition, the request parser, the main-thread proximity match, the request to the physics worker, the rally request, and the console and `recruit()` fallback; the task gateway that binds skill-bound work to the tethered swarm; the swarm's episodic memory (IndexedDB, by world seed and pedestrian); the ping's pick, board and rally plan |
 | 09_Cognition | `localCompute.ts`, `claudeApi.ts`, `router.ts`, `prefixCache.ts`, `kvPager.wasm.ts` (generated from `native/kv-pager-wasm`), `localSpeech.ts` | The prompt-prefix page table over kv-pager as WebAssembly; the operator's model providers and voice: the router (`claude` through a gateway on this machine with the operator's key; `ollama` and `llamacpp` on this machine), the local client in both wire formats and the Claude client, the system prompt opening with the 14A core and then the tethered people's skills and memories, the streamed answer, the speech client for a speech server on this machine, the audio for the soundscape, the cut when the tether breaks, and every failure as one sentence |
 | 10_Network | `replication.ts`, `replication.node.ts`, `mirror.node.ts`, `garage.node.ts`, `plane.node.ts`, `netClient.ts` | The network room: the plain-data protocol core and authoritative room both sides share (validated both ways, rate-limited, screened under 14A, every input judged by an authority and refused ones corrected), the Node-only WebSocket host (HMAC session tokens checked at the upgrade, one connection per player, never bundled), the headless Ring-0 mirror it judges with (the city of the seed in Rapier, the realm's own character controller, the Ring-0 audit) and its garage (every player's car replayed with the page's own car physics, every door checked), an open-plane authority for the protocol's tests, and the opt-in page client that speaks ws or wss only to `localhost` or `127.0.0.1` (the host on this machine, or the local end of a tunnel or proxy), reports the realm's steps and doors, snaps to corrections, and reconciles the room's snapshots into the poses `netView.ts` draws |
@@ -1660,6 +1695,19 @@ headless Chromium whose only WebGPU adapter is software.
     - an address off this machine was refused by the guard;
     - the good token opened with `onyx.3` and was welcomed at the spawn;
     - a claim 40 m along was answered by the very next message, its correction, with the truth unmoved.
+- **Phase 13 (`v1.0.0-stable-release`):** 1,219 tests, 1,219 pass, in 93 s; both TypeScript projects type-check,
+  `oxlint` reports nothing, and the build carries no server code.
+  - `npm run smoke:net` against the server as a process of its own: a missing and a forged token were refused before
+    any socket opened, the good one answered with `onyx.4`, an honest walk of 40 steps was kept (the snapshot that
+    acknowledges its last step awaited), and nine crafted illegal packets (five on foot, four about cars) were each
+    refused and corrected 1.0–13.5 ms after they left, the truth unchanged.
+  - The parity proof (`parity.fuzz.test.ts`, seeded): two pages, each the full city with 36 cars, drove for 90 s of
+    the city on a link that jittered, spiked 115 times and stalled twice, taking 44 doors and crashing into
+    buildings; the room kept 9,076 steps, and the honest two drew no correction and no drift; the liar beside them
+    drew 8 corrections (every one a lie) and had 4 drifts put back (all its own).
+  - The second review's reproductions, run again on the release: along a terrace's shared wall for 90 s on foot and
+    at the wheel, an honest page drew no correction; a reconnected page took back the car it had left; stalls of
+    2, 8 and 30 s cost an honest page no refusal.
 - **Not verified here: the 3D page.** Track A did not run in this environment. Chromium's software WebGPU adapter
   loses the device while the page boots (`WebGPU Device Lost: A valid external Instance reference no longer
   exists`, then `OperationError: Instance dropped in popErrorScope` on every frame; `__SIM__` never appeared), and
@@ -1769,6 +1817,25 @@ described in Networking above.
     does; the engine reports the velocity the realm applies and resets its correction on a new session; `net
     status` counts as dropped only what the room could not keep; the room is joined only at the hosts the page's
     content security policy reaches.
+- **Phase 13.4, a second review** (three reviewers: the protocol and host, the page driven against the real host, the
+  documents against the code; every finding reproduced before it was fixed, every fix with a test that fails without
+  it):
+  - an honest player was removed for hugging the shared wall of a terrace's lots, on foot or at the wheel, where the
+    page and the room part by micrometres: a drift within the room's bound is now kept as replayed and put back,
+    uncounted (above, **Drift**);
+  - an honest page was removed after one stall of 6.5 s, or eight short ones in a session: it now keeps at most 150
+    inputs unacknowledged, and refusals are an allowance that comes back at four a minute;
+  - the 14A screen now reads a line as it renders (invisible characters and look-alike letters hid a word), and names
+    and chat may hold no control character, separator or bidi control; the log escapes C1 controls, DEL and the line
+    separators, at most 160 characters;
+  - a reconnected page could not take back a car it had left: every car the room does not hold goes back onto its
+    ring's lane as traffic; an E pressed while a correction was in flight was reported as a door out of a car the room
+    never had: corrections go ahead of the player's commands; a refused re-entry into a held car lets the room's hold
+    go; at the wheel a replay the Ring-0 audit refuses is undone;
+  - hopping between cars beat a run at two doors a second: the room takes 1.75;
+  - `pending()` kept the acknowledged inputs after a correction; seven tests checked less than their names said, and
+    the smoke test's honest walk passed only if a snapshot landed in a 200 ms window; three source files had no
+    header (a test now holds every one to it).
 - **Version:** 1.4.0 (`package.json`, `brand.ts`); the release tag is `v1.0.0-stable-release`.
 
 **1.4.0-beta.1 (Agent City v1.0 Stable Beta)**: the operator's directive for Phases 7 to 10. The architecture

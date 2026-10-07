@@ -149,7 +149,7 @@ test('air gap and the house style: nothing of split screen reaches the realm\'s 
     assert.doesNotMatch(between(engine, from, to), FORBIDDEN, `${from} …`)
   }
   assert.doesNotMatch(between(read('../04_Connect_Hardware/input.ts'), '  setPlayers(n: number): void {', '  /** Virtual stick'), FORBIDDEN)
-  assert.doesNotMatch(between(read('./simClient.ts'), '  setPlayers(', '  /** Queues a command'), FORBIDDEN)
+  assert.doesNotMatch(between(read('./simClient.ts'), '  setPlayers(', '   * Queues a command'), FORBIDDEN)
   // The audio layer's split-screen additions carry no renderer, DOM or worker word of their own.
   const audio = read('./audio.ts')
   assert.match(audio, /export function sharedAudioContext\(\): AudioContextShare/)

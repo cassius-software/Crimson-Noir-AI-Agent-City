@@ -27,7 +27,7 @@ import { Physics } from './physics.ts'
 import { Avatar } from './player.ts'
 import { Sanctuary, type Nudge } from './sanctuary.ts'
 import { Fleet, type Person, type Vehicle } from './vehicles.ts'
-import { exitPoint } from './carRig.ts'
+import { exitPoint, HELD_CARS } from './carRig.ts'
 import { TrackFleet } from './trackFleet.ts'
 import { RagdollRealm } from './ragdollRealm.ts'
 import { buildTrackNetwork } from '../06_Make_Decisions/tracks.ts'
@@ -192,6 +192,8 @@ export class SimCore {
   #workerMs = 0
   /** Joined to a network room (the `room` command): player 1 is a ghost and car-moving commands are refused. */
   #room = false
+  /** Cars player 1 left in this network room, oldest first: the ones the room holds for them (#hold). */
+  readonly #held: Vehicle[] = []
   /** Player 1 took a door this step (a network room hears one a step). */
   #doored = false
 
@@ -619,6 +621,12 @@ export class SimCore {
         this.#sanctuary.ghost(0, on)
         // The authored car: the room's authority replays it with the authored tuning.
         if (on) for (const key of TUNING_KEYS) fleet.setTuning(key, 1)
+        // A new session's room holds no car for player 1: every car left parked before it (in a session before, or
+        // out of one) goes back to its ring's traffic, where the room expects a car it does not hold.
+        if (on) {
+          for (const v of fleet.vehicles) if (v.mode === 'parked' && !this.#driving.includes(v)) fleet.release(v)
+          this.#held.length = 0
+        }
         return
       }
       case 'netCar': {
@@ -866,8 +874,12 @@ export class SimCore {
       const { x: ex, z: ez } = exitPoint(t.x, t.z, h)
       v.mode = 'parked'
       // In a network room a car stops where its driver leaves it: its brakes would otherwise answer the bouncer, whose
-      // pedestrians only this page sees, and the room's authority holds the car where it was left.
-      if (this.#room && k === 0) fleet.stop(v)
+      // pedestrians only this page sees, and the room's authority holds the car where it was left. A car the room took
+      // the player out of (a forced exit: a correction) is one the room does not hold: back to its ring's traffic.
+      if (this.#room && k === 0) {
+        if (forced) fleet.release(v)
+        else this.#hold(v)
+      }
       this.#driving[k] = null
       avatar.setEnabled(true)
       avatar.teleport(ex, ez)
@@ -887,9 +899,30 @@ export class SimCore {
    * `state`), as the room's authority builds it when it takes over the same car from the state this event carries
    * (vehicles.ts rebuild, garage.node.ts).
    */
+  /**
+   * A car player 1 left in a network room, stopped dead and kept where it was left, as the room's authority keeps it
+   * (garage.node.ts park); past HELD_CARS the oldest goes back to traffic, the one the room lets go of too.
+   */
+  #hold(v: Vehicle): void {
+    this.#fleet.stop(v)
+    const held = this.#held
+    const at = held.indexOf(v)
+    if (at >= 0) held.splice(at, 1)
+    held.push(v)
+    while (held.length > HELD_CARS) {
+      const oldest = held.shift()!
+      if (oldest.mode === 'parked') this.#fleet.release(oldest)
+    }
+  }
+
   #seat(k: number, v: Vehicle, byRoom: boolean, state?: CarBodyState): void {
     const fleet = this.#fleet
     this.#notDriven(v)
+    // Taken again: the room no longer holds it as left (garage.node.ts enter).
+    if (k === 0) {
+      const at = this.#held.indexOf(v)
+      if (at >= 0) this.#held.splice(at, 1)
+    }
     v.mode = 'player'
     v.steer = 0
     this.#driving[k] = v

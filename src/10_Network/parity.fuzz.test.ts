@@ -194,7 +194,7 @@ test('parity under sustained adversarial load: two drivers on a chaotic network,
     }
     assert.ok([ada.client, bob.client, eve].every((c) => c.status === 'joined'), 'all three welcomed')
     predictor.join(eve.id)
-    let eveFix = 0, lies = 0, nextLie = 4
+    let eveFix = 0, lies = 0, drifts = 0, nextLie = 4
     const eg = gen(g.int(0, 2 ** 31))
     const seat = predictor.garage.plan[3].pose
     const eveFrame = (n: number, t: number): void => {
@@ -208,8 +208,11 @@ test('parity under sustained adversarial load: two drivers on a chaotic network,
       let m: Move = { mode: 'foot', x: v.x, z: v.z, n, heading: 0, at: { x: at.x, y: at.y, z: at.z }, fix: eveFix }
       if (t >= nextLie) {
         nextLie = t + eg.float(6, 9)
-        lies++
-        const kind = eg.int(0, 2)
+        // In turn: a drift, a lie on foot, a door to a car it is nowhere near.
+        const kind = (lies + drifts) % 3
+        // A micrometre and a half off is within the room's drift bound: kept as replayed and put back, not counted.
+        if (kind === 0) drifts++
+        else lies++
         if (kind === 0) m = { ...m, n: Math.max(1, n), at: { ...m.at, x: m.at.x + 1.5e-6 } }
         else if (kind === 1) m = { ...m, n: Math.max(1, n), at: { ...m.at, z: m.at.z + 10 } }
         else {
@@ -249,14 +252,16 @@ test('parity under sustained adversarial load: two drivers on a chaotic network,
     assert.ok(a.driven > 600 && b.driven > 600, `substeps at the wheel: Ada ${a.driven}, Bob ${b.driven}`)
     assert.ok(a.crashes + b.crashes >= 1, `crashes: Ada ${a.crashes}, Bob ${b.crashes}`)
     assert.ok(link.stalls >= 1 && link.spikes >= 10, `${link.stalls} stalls, ${link.spikes} spikes`)
-    // The liar: every lie corrected, still in the room (under the corrections' own limit), the honest two untouched.
+    // The liar: every lie corrected, every drift put back uncounted, still in the room (under the corrections' own
+    // limit), the honest two untouched.
     await until(() => eve.corrections === lies, `Eve's ${lies} lies corrected (${eve.corrections})`)
-    assert.ok(lies >= 8, `${lies} lies`)
+    assert.ok(lies >= 6 && drifts >= 3, `${lies} lies, ${drifts} drifts`)
     assert.equal(eve.status, 'joined')
     const st = host.stats()
     assert.equal(st.corrected, lies, 'every correction the room made was for a lie')
+    assert.equal(st.resynced, drifts, 'every page put back was Eve\'s drift: the honest two never drifted')
     assert.ok(st.kept > 5000, `${st.kept} steps kept, each within a micrometre of the room's replay`)
-    console.log(`parity: ${st.kept} steps kept, ${st.corrected} corrections (all lies), ${link.stalls} stalls, ${link.spikes} latency spikes; Ada ${a.doors} doors, ${a.driven} substeps at the wheel, ${a.crashes} crashes; Bob ${b.doors} doors, ${b.driven} substeps, ${b.crashes} crashes`)
+    console.log(`parity: ${st.kept} steps kept, ${st.corrected} corrections (all lies), ${st.resynced} put back (Eve's drifts), ${link.stalls} stalls, ${link.spikes} latency spikes; Ada ${a.doors} doors, ${a.driven} substeps at the wheel, ${a.crashes} crashes; Bob ${b.doors} doors, ${b.driven} substeps, ${b.crashes} crashes`)
     for (const c of [ada.client, bob.client, eve]) c.leave()
   } finally {
     await host.close()

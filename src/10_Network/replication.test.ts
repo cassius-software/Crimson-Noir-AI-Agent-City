@@ -15,7 +15,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { canonical, hmacSha256 } from '../02_Define_The_Rules/integrity.ts'
-import { RUN, type CarBodyState } from '../07_Execute_Actions/simProtocol.ts'
+import { ENTER_RANGE, RUN, type CarBodyState } from '../07_Execute_Actions/simProtocol.ts'
+import { EXIT_SIDE } from '../07_Execute_Actions/carRig.ts'
+import { forAll } from '../02_Define_The_Rules/property.ts'
+import { GARAGE } from './garage.node.ts'
 import { RING0 } from '../02_Define_The_Rules/ring0.ts'
 import { KERNEL } from '../02_Define_The_Rules/civic.ts'
 import { CAR } from '../07_Execute_Actions/car.ts'
@@ -26,7 +29,8 @@ import {
   emptyReplica, encode, expired, handle, LIMITS, openClientFrame, openServerFrame, packPoses, peerBuckets, pending, poses, predict,
   PROTOCOL_VERSION, readClientMessage, readServerMessage, reconcile, REMOTE_POSE, refuse, refuseInput, sealMessage, snapshotFor, SUBPROTOCOL,
   take, takeMany, tickRoom,
-  type ClientMessage, type FootRun, type InputMessage, type Peer, type RemotePlayer, type Room, type ServerMessage, type SnapshotMessage,
+  type Authority, type ClientMessage, type FootRun, type InputMessage, type Peer, type RemotePlayer, type Room, type ServerMessage, type SnapshotMessage,
+  type Truth,
 } from './replication.ts'
 
 const ok = (u: unknown): ClientMessage => {
@@ -236,6 +240,26 @@ test('the screen: an inadmissible name or chat line is null; an ordinary busines
   assert.equal(admissibleChat('let us buy drugs'), null)
   assert.equal(admissibleChat('the skill list is ready'), 'the skill list is ready', 'skill is never read as kill')
   assert.equal(admissibleChat(undefined), null)
+})
+
+test('the screen reads a line as it renders: invisible characters and look-alike letters cannot hide a word, and nothing may reorder or break the line', () => {
+  // Characters that draw nothing, inside a refused word: the line renders as the word, so it is refused.
+  for (const hidden of ['\u200b', '\u00ad', '\u2060', '\u200d', '\ufeff', '\u180e', '\u034f', '\ufe0f']) {
+    assert.equal(admissibleChat(`f${hidden}uck you`), null, `U+${hidden.codePointAt(0)!.toString(16)}`)
+    assert.equal(admissibleName(`Ki${hidden}ller`), null, `U+${hidden.codePointAt(0)!.toString(16)} in a name`)
+  }
+  // Letters of other alphabets drawn like Latin ones (Cyrillic, Greek, Armenian, small capitals, fullwidth, mathematical).
+  for (const line of ['kіll yourself', 'you mοron', 'ѕhut up', 'ᴋɪʟʟ', 'ｋｉｌｌ', '𝐤𝐢𝐥𝐥 yourself', 'іdіot', 'Κill']) assert.equal(admissibleChat(line), null, line)
+  // A bidi override would render "kcuf" backwards as the word; a C1 control, DEL or a separator breaks the line: refused.
+  for (const bad of ['\u202ekcuf', 'a\u2066b\u2069', 'hi\u0085there', 'x\u009b2K', 'x\u007f', 'a\u2028b', 'a\u2029b', 'a\ud800b']) {
+    assert.equal(admissibleChat(bad), null, JSON.stringify(bad))
+    assert.equal(admissibleName(bad.slice(0, LIMITS.name)), null, JSON.stringify(bad))
+  }
+  // Ordinary lines in other scripts, emoji sequences and accents still pass, as written.
+  for (const fine of ['Привет, как дела?', 'Γειά σου κόσμε', 'שלום לכולם', 'こんにちは', '👩‍💻 ready at the desk', 'naïve café', 'Smith & Sons']) {
+    assert.equal(admissibleChat(fine), fine, fine)
+  }
+  assert.equal(admissibleName('Zoë'), 'Zoë')
 })
 
 // ---------------------------------------------------------------- rate limits
@@ -480,9 +504,9 @@ test('doors: more than time allows are corrected, whatever they say (a hop chain
   }
   for (let i = 0; i < LIMITS.doorBurst / 2; i++) assert.deepEqual(hop(0), [undefined, undefined], `pair ${i}`)
   assert.equal(hop(0)[0], 'input: more doors than time allows')
-  // Half a second refills one door.
+  // A pair's worth of time (two doors at LIMITS.doorsPerSecond) refills a pair.
   assert.equal(a.driving, false)
-  assert.deepEqual(hop(1000), [undefined, undefined])
+  assert.deepEqual(hop(Math.ceil(2000 / LIMITS.doorsPerSecond)), [undefined, undefined])
 })
 
 test('chat and ping: relayed to the room with the sender\'s id and name; inadmissible chat is dropped silently; over rate and stale seq refused', () => {
@@ -506,12 +530,115 @@ test('repeated refusals remove a peer: the limit is reached by malformed frames 
   const room = room0()
   const a = joined(room, 'Ada', 0)
   for (let i = 1; i < LIMITS.refusalsBeforeKick; i++) {
-    const out = i % 2 ? refuse(a, 'not JSON') : handle(room, a, { t: 'chat', seq: i, text: 'you moron' }, 0, verify)
+    const out = i % 2 ? refuse(a, 'not JSON', 0) : handle(room, a, { t: 'chat', seq: i, text: 'you moron' }, 0, verify)
     assert.equal(out.kick, undefined, `refusal ${i}`)
   }
-  const last = refuse(a, 'not JSON')
+  const last = refuse(a, 'not JSON', 0)
   assert.deepEqual(last, { refused: 'not JSON', kick: 'repeated refusals' })
   assert.equal(a.refusals, LIMITS.refusalsBeforeKick)
+})
+
+/**
+ * The worst authority for a hopper: it keeps every input, moves the player along +x a run's worth for each substep,
+ * and grants every door its full reach (into a car 3.81 m, out 2.1 m), keeping apart how far the doors carried it.
+ */
+function hopAuthority(): Authority & { at: Map<number, Truth>; hopped: number } {
+  const at = new Map<number, Truth>()
+  const truth = (x: number, driving: boolean): Truth => ({ x, y: PLANE.standing, z: 0, heading: 0, vx: 0, vz: 0, speed: 0, driving })
+  const a = {
+    world: 'hop',
+    at,
+    hopped: 0,
+    join(id: number) { at.set(id, truth(0, false)); return at.get(id)! },
+    leave(id: number) { at.delete(id) },
+    judge(id: number, m: InputMessage) {
+      const t = at.get(id)!
+      let x = t.x
+      for (const r of m.segs) x += (r[r.length - 1] * RUN) / 60
+      if (m.door) {
+        const reach = 'enter' in m.door ? ENTER_RANGE + GARAGE.enterSlack : EXIT_SIDE
+        x += reach
+        a.hopped += reach
+      }
+      at.set(id, truth(x, m.door ? 'enter' in m.door : t.driving))
+      return { ok: true as const, pose: at.get(id)! }
+    },
+    settle(id: number) { return at.get(id)! },
+  }
+  return a
+}
+
+test('hopping from car to car is no faster than a run: a pair reaches at most 5.91 m, and the door rate keeps a hop chain under RUN', () => {
+  const pair = ENTER_RANGE + GARAGE.enterSlack + EXIT_SIDE
+  assert.ok((pair * LIMITS.doorsPerSecond) / 2 <= RUN, `a chain at the door rate: ${((pair * LIMITS.doorsPerSecond) / 2).toFixed(2)} m/s`)
+  const state = { x: 0, y: 0.56, z: 0, qx: 0, qy: 0, qz: 0, qw: 1, vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0 }
+  forAll('hops', { seed: 0x40b, runs: 60 }, (g) => ({ doorEvery: g.int(1, 40), steps: g.int(0, 3), frames: g.int(600, 2400) }), ({ doorEvery, steps, frames }) => {
+    const authority = hopAuthority()
+    const room = createRoom(authority)
+    const p = admit(room, 0)!
+    handle(room, p, { t: 'join', v: PROTOCOL_VERSION, token: GOOD, name: 'Hop', world: 'hop' }, 0, verify)
+    let seq = 0
+    let fix = p.fix
+    for (let f = 1; f <= frames; f++) {
+      const now = (f * 1000) / 60
+      const driving = authority.at.get(p.id)!.driving
+      const door = f % doorEvery === 0 ? (driving ? { exit: { x: 0, z: 0 } } : { enter: { car: 0, state } }) : undefined
+      const mode = (door ? 'enter' in door : driving) ? 'drive' : 'foot'
+      const segs = mode === 'drive' ? [[1, 0, 0, 0, steps]] : [[RUN, 0, steps]]
+      const out = handle(room, p, { t: 'input', seq: ++seq, ack: 0, fix, mode, segs, heading: 0, claim: STAND, ...(door && { door }) } as unknown as InputMessage, now, verify)
+      if (out.reply?.t === 'correct') fix = out.reply.fix
+      if (out.kick) break
+      const s = now / 1000
+      // The doors alone: never past a run since the start, but for the door burst's reach.
+      const hops = RUN * s + LIMITS.doorBurst * (ENTER_RANGE + GARAGE.enterSlack) + 1e-9
+      assert.ok(authority.hopped <= hops, `frame ${f}: the doors carried ${authority.hopped.toFixed(2)} m, past ${hops.toFixed(2)}`)
+      // The runs between them add at most a run more (and the substep bank).
+      const both = hops + RUN * s * LIMITS.headroom + (LIMITS.stepBurst * RUN) / 60
+      assert.ok(p.x <= both, `frame ${f}: the truth is ${p.x.toFixed(2)} m along, past ${both.toFixed(2)}`)
+    }
+  })
+})
+
+test('a kept input the page drifted from is put back (drift): a correction to the page, never a refusal and never counted toward removal', () => {
+  const base = planeAuthority()
+  const authority: Authority = { ...base, judge: (id, m) => { const v = base.judge(id, m); return v.ok ? { ...v, resync: 'claim 5.0 µm from the plane\'s pose' } : v } }
+  const room = createRoom(authority)
+  const a = admit(room, 0)!
+  handle(room, a, { t: 'join', v: PROTOCOL_VERSION, token: GOOD, name: 'Ada', world: 'plane' }, 0, verify)
+  const tokens = a.buckets.corrections.tokens
+  for (let k = 1; k <= 40; k++) {
+    const out = handle(room, a, input(k, honest(a, [[0, RUN, 1]]), { fix: a.fix, segs: [[0, RUN, 1]] }), k * 100, verify)
+    assert.equal(out.refused, undefined, `input ${k}`)
+    assert.equal(out.kick, undefined)
+    const reply = out.reply as { t: string; drift?: boolean; ack: number; fix: number }
+    assert.deepEqual([reply.t, reply.drift, reply.ack, reply.fix], ['correct', true, k, k + 1], 'kept (acknowledged) and put back')
+  }
+  assert.deepEqual([a.seq, a.corrections, a.refusals, a.resyncs], [40, 0, 0, 40])
+  assert.equal(a.buckets.corrections.tokens, tokens, 'the corrections allowance untouched')
+  // On the wire: drift is true or absent.
+  const c = { t: 'correct', fix: 2, ack: 1, you: player(1), reason: 'r', tick: 1 }
+  const read = readServerMessage({ ...c, drift: true })
+  assert.ok(read.ok && read.msg.t === 'correct' && read.msg.drift === true)
+  assert.ok(readServerMessage(c).ok && !('drift' in (readServerMessage(c) as { msg: object }).msg), 'absent stays absent')
+  assert.ok(!readServerMessage({ ...c, drift: false }).ok)
+  assert.ok(!readServerMessage({ ...c, drift: 'yes' }).ok)
+})
+
+test('the refusal allowance comes back: an honest client\'s rare refusal never adds up over a long session, a stream of them still removes a peer', () => {
+  const room = room0()
+  const a = joined(room, 'Ada', 0)
+  // One refusal every 20 s for an hour (the allowance comes back at one every 15 s): never removed.
+  for (let t = 0; t < 3_600_000; t += 20_000) assert.equal(refuse(a, 'input: under a correction long past', t).kick, undefined, `at ${t / 1000} s`)
+  assert.equal(a.refusals, 180, 'every one still counted')
+  // Then a burst: the eighth in a row removes the peer, as from a standing start.
+  const t = 3_600_000
+  for (let i = 1; i < LIMITS.refusalsBeforeKick; i++) assert.equal(refuse(a, 'not JSON', t).kick, undefined, `refusal ${i}`)
+  assert.equal(refuse(a, 'not JSON', t).kick, 'repeated refusals')
+  // Seven in a burst, then the eighth after the allowance has come back by one: still in.
+  const b = joined(room, 'Bob', 0)
+  for (let i = 1; i < LIMITS.refusalsBeforeKick; i++) refuse(b, 'not JSON', 0)
+  assert.equal(refuse(b, 'not JSON', 60_000 / LIMITS.refusalsPerMinute).kick, undefined)
+  assert.equal(refuse(b, 'not JSON', 60_000 / LIMITS.refusalsPerMinute).kick, 'repeated refusals')
 })
 
 test('expired: a peer that never joined is dropped after the join timeout, a silent one after the idle timeout', () => {

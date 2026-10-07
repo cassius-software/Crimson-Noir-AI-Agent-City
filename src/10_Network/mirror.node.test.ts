@@ -12,13 +12,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { CITY, CITY_SIZE, generateCity, inLot, streetFurniture } from '../01_Initialize_World/city.ts'
-import { Ring0Auditor } from '../02_Define_The_Rules/ring0.ts'
+import { RING0, Ring0Auditor } from '../02_Define_The_Rules/ring0.ts'
 import { poseAt, projectOnto } from '../06_Make_Decisions/tracks.ts'
-import { EXIT_SIDE } from '../07_Execute_Actions/carRig.ts'
+import { EXIT_SIDE, HELD_CARS } from '../07_Execute_Actions/carRig.ts'
 import { SimCore } from '../07_Execute_Actions/simCore.ts'
-import { doorOf, ENTER_RANGE, footWish, POSE, RUN, type CarBodyState, type DriveControls, type FootControls, type SimCommand, type StepState } from '../07_Execute_Actions/simProtocol.ts'
+import { doorOf, ENTER_RANGE, footWish, MODES, POSE, RUN, type CarBodyState, type DriveControls, type FootControls, type SimCommand, type StepState } from '../07_Execute_Actions/simProtocol.ts'
 import { GARAGE } from './garage.node.ts'
 import { carViolation, Mirror, MIRROR, personViolation, substeps, worldOf, type MirrorPose, type MoveInput } from './mirror.node.ts'
+import { LIMITS } from './replication.ts'
 
 const SEED = 1337
 const IDLE = { steer: 0, fwd: 0, back: 0, handbrake: false }
@@ -160,7 +161,7 @@ test('prediction is the truth: the page\'s realm in a room and the mirror agree 
   assert.ok(blocked > 20, `walls met: ${blocked} frames`)
 })
 
-test('a claim off the truth is refused and the truth stays exactly as it was: a teleport, a speed hack, a wall walked through', async () => {
+test('a claim off the truth is refused and the truth stays exactly as it was: a teleport, a speed hack, a wall walked through; one off by less than the drift bound is kept as replayed', async () => {
   const m = await Mirror.create(SEED)
   const c = await client(m, 1)
   // Warm up: the welcome's teleport, a few honest frames.
@@ -172,16 +173,17 @@ test('a claim off the truth is refused and the truth stays exactly as it was: a 
   assert.ok(!teleport.ok && /claim 40\.\d\d m from the mirror's pose/.test(teleport.reason), JSON.stringify(teleport))
   same(teleport.pose, before)
   same(m.pose(1), before)
-  // Just past the tolerance.
+  // Just past the tolerance and within MIRROR.drift: the input is kept as the mirror replayed it (the honest frame
+  // after every refusal above: they all put the body back exactly), and the page is to be put back; the claim moved
+  // nothing.
   const nudge = m.judge(1, { ...honest, claim: { ...honest.claim, x: honest.claim.x + MIRROR.tolerance + 0.01 } })
-  assert.ok(!nudge.ok)
-  same(m.pose(1), before)
-  // The honest frame after all that is still the truth: every refusal put the body back exactly.
-  const kept = m.judge(1, honest)
-  assert.ok(kept.ok)
-  assert.equal(offOf(kept.pose, honest.claim), 0)
-  // A micrometre is the tolerance: a claim off by two is refused.
-  assert.ok(!m.judge(1, { ...c.step(1 / 60, { x: 0, z: 1, heading: 0 }), claim: { ...m.pose(1), z: m.pose(1).z + 2e-6 } }).ok)
+  assert.ok(nudge.ok && nudge.resync !== undefined, JSON.stringify(nudge))
+  assert.equal(offOf(nudge.pose, honest.claim), 0, 'the replay, not the claim')
+  // A micrometre is the tolerance: a claim two off is kept as replayed and put back, never adopted.
+  const next = c.step(1 / 60, { x: 0, z: 1, heading: 0 })
+  const two = m.judge(1, { ...next, claim: { ...next.claim, z: next.claim.z + 2e-6 } })
+  assert.ok(two.ok && two.resync !== undefined)
+  assert.equal(offOf(two.pose, next.claim), 0)
 
   // A speed hack: a client that moves at three runs and says so. The mirror clamps the velocity to a run (footWish).
   const fast = { x: 0, z: 3 * RUN, heading: 0 }
@@ -261,12 +263,18 @@ test('at the wheel the room replays the car: an honest page\'s doors, drive and 
   }
   drive(300)
   assert.equal(worst, 0)
-  // A chassis claim a centimetre off: refused, and the room's car stays the truth. The correction carries the car; the
-  // page builds its car again in exactly that state, and from there both replay the same car again.
+  // A chassis claim a centimetre off (within MIRROR.drift): kept as the room replayed it, the page to be put back. Two
+  // metres off: a lie, refused. Either way the room's car stays the truth: the replay of the honest run stands. The
+  // correction carries the car; the page builds its car again in exactly that state, and from there both replay the
+  // same car again.
   const lie = page.step({ drive: { steer: 0, fwd: 0.5, back: 0, handbrake: false } }).input
-  const refused = m.judge(1, { ...lie, claim: { ...lie.claim, x: lie.claim.x + 0.01 } })
-  assert.ok(!refused.ok && /chassis claim 0\.01 m from the room's car/.test(refused.reason), JSON.stringify(refused))
-  assert.ok(refused.pose.driving && offOf(refused.pose, lie.claim) === 0, 'the replay of the honest run stands')
+  const drifted = m.judge(1, { ...lie, claim: { ...lie.claim, x: lie.claim.x + 0.01 } })
+  assert.ok(drifted.ok && drifted.resync === `chassis claim 0.01 m from the room's car`, JSON.stringify(drifted))
+  assert.ok(drifted.pose.driving && offOf(drifted.pose, lie.claim) === 0, 'the replay of the honest run stands')
+  const lie2 = page.step({ drive: { steer: 0, fwd: 0.5, back: 0, handbrake: false } }).input
+  const refused = m.judge(1, { ...lie2, claim: { ...lie2.claim, x: lie2.claim.x + 2 } })
+  assert.ok(!refused.ok && /chassis claim 2\.00 m from the room's car/.test(refused.reason), JSON.stringify(refused))
+  assert.ok(refused.pose.driving && offOf(refused.pose, lie2.claim) === 0, 'the replay of the honest run stands')
   const fix = m.settle(1)
   assert.ok(fix.car && fix.car.index === i && fix.driving)
   page.correct(fix)
@@ -401,9 +409,190 @@ test('a hop from car to car carries a player no further than a door and an exit:
   }
   assert.ok(pairs >= 2, `${pairs} door pairs taken`)
   assert.ok(worst <= bound, `a pair moved the truth ${worst.toFixed(2)} m (bound ${bound.toFixed(2)})`)
-  // The room's door bucket (replication.ts LIMITS.doorsPerSecond) then caps the rate: 2 doors a second is one pair, so
-  // a hop chain gains no more than `bound` metres a second, about a run (RUN).
-  assert.ok(bound < 1.25 * RUN, `hopping at most ${bound.toFixed(1)} m/s`)
+  // The room's door bucket (replication.ts LIMITS.doorsPerSecond) then caps the rate: at most doorsPerSecond / 2 pairs
+  // a second, so a hop chain alone is no faster than a run (replication.test.ts drives every mix through the room).
+  assert.ok((worst * LIMITS.doorsPerSecond) / 2 <= RUN, `hopping at most ${((worst * LIMITS.doorsPerSecond) / 2).toFixed(2)} m/s`)
+  assert.ok((bound * LIMITS.doorsPerSecond) / 2 <= RUN, `the bound: ${((bound * LIMITS.doorsPerSecond) / 2).toFixed(2)} m/s`)
+})
+
+test('a car the room does not hold goes back to its ring\'s traffic: one parked before the session, one a correction took the player out of, and the oldest past HELD_CARS', async () => {
+  const CARS = HELD_CARS + 3
+  const m = await Mirror.create(SEED, CARS)
+  const sim = await SimCore.create({ seed: SEED, cars: CARS, agents: 64, boxes: generateCity(SEED), furniture: streetFurniture(SEED), spawn: { x: C, z: C }, debug: false, tracks: true }, null)
+  const poses = new Float32Array(Math.max(1, sim.meta.count) * POSE.stride)
+  const still = { x: 0, z: 0, heading: 0 }
+  const step = (cmds: SimCommand[] = []) => sim.step({ dt: 1 / 60, foot: still, drive: IDLE, cmds }, poses)
+  const car = (i: number) => ({ x: poses[i * POSE.stride + POSE.x], z: poses[i * POSE.stride + POSE.z], mode: MODES[poses[i * POSE.stride + POSE.mode]] })
+  const offLane = (i: number): number => {
+    const c = car(i)
+    return Math.abs(projectOnto(m.garage.network.tracks[m.garage.plan[i].track], c.x, c.z).lateral)
+  }
+  /** Player 1 put beside car `i` and through its door: the car the realm says it entered (or -1). */
+  const enter = (i: number): number => {
+    const c = car(i)
+    const st = step([{ c: 'teleport', x: c.x + 1.5, z: c.z }, { c: 'interact' }])
+    return st.events.find((e) => e.e === 'entered')?.index ?? -1
+  }
+  step()
+  // Out of a room: car 0 taken, set down 8 m off its lane, left there (parked where it stands).
+  assert.equal(enter(0), 0)
+  const at = car(0)
+  step([{ c: 'recover', i: 0, x: at.x + 8, z: at.z + 8 }])
+  step([{ c: 'interact' }])
+  for (let k = 0; k < 30; k++) step()
+  assert.equal(car(0).mode, 'parked')
+  assert.ok(offLane(0) > 4, `left ${offLane(0).toFixed(2)} m off its lane`)
+  // A session starts: the room holds no car for the player, so car 0 goes back to its lane as traffic.
+  step([{ c: 'room', on: true }])
+  for (let k = 0; k < 30; k++) step()
+  assert.equal(car(0).mode, 'ai')
+  assert.ok(offLane(0) < 0.5, `back on its lane (${offLane(0).toFixed(2)} m)`)
+  // In the room: a correction takes the player out of a car (a teleport while driving): that car goes back too.
+  const taken = enter(1)
+  assert.ok(taken >= 0)
+  step([{ c: 'teleport', x: C, z: C }])
+  for (let k = 0; k < 30; k++) step()
+  assert.equal(car(taken).mode, 'ai', 'a car the room took the player out of is traffic again')
+  // Cars left in the room are held where they stop, HELD_CARS of them; the oldest is let go past that.
+  const left: number[] = []
+  for (let i = 0; i < CARS && left.length <= HELD_CARS; i++) {
+    const got = enter(i)
+    if (got < 0 || left.includes(got)) {
+      if (got >= 0) step([{ c: 'interact' }])
+      continue
+    }
+    step([{ c: 'interact' }])
+    left.push(got)
+  }
+  assert.equal(left.length, HELD_CARS + 1, `${left.length} cars left`)
+  step()
+  assert.equal(car(left[0]).mode, 'ai', 'the oldest held car went back to traffic')
+  for (const i of left.slice(1)) assert.equal(car(i).mode, 'parked', `car ${i} still held`)
+})
+
+test('a correction goes ahead of what the player queued: an E pressed while the truth was on its way acts on the truth, and no door out of a car the room never had is reported', async () => {
+  const sim = await SimCore.create({ seed: SEED, cars: 4, agents: 64, boxes: generateCity(SEED), furniture: streetFurniture(SEED), spawn: { x: C, z: C }, debug: false, tracks: true }, null)
+  const poses = new Float32Array(Math.max(1, sim.meta.count) * POSE.stride)
+  const still = { x: 0, z: 0, heading: 0 }
+  const step = (cmds: SimCommand[] = []) => sim.step({ dt: 1 / 60, foot: still, drive: IDLE, cmds }, poses)
+  const drivingCar = (): void => {
+    step([{ c: 'room', on: true }])
+    const i = 0
+    const c = { x: poses[i * POSE.stride + POSE.x], z: poses[i * POSE.stride + POSE.z] }
+    const st = step([{ c: 'teleport', x: c.x + 1.5, z: c.z }, { c: 'interact' }])
+    assert.ok(st.events.some((e) => e.e === 'entered'), 'at a wheel')
+  }
+  // The room's truth has the player on foot at the spawn, and the player pressed E in the same frame.
+  drivingCar()
+  const ahead = step([{ c: 'teleport', x: C, z: C }, { c: 'interact' }])
+  const out = doorOf(ahead.events)
+  assert.ok(out === undefined || !('exit' in out), 'the correction first: its exit is no door, and the E acts on the truth')
+  // Behind the E (the order the engine used to send them in), the E is a door out that the room never had.
+  drivingCar()
+  const behind = step([{ c: 'interact' }, { c: 'teleport', x: C, z: C }])
+  const door = doorOf(behind.events)
+  assert.ok(door !== undefined && 'exit' in door, 'the E first: reported as a door out')
+})
+
+test('in a network room the realm refuses every command that would move a car behind the room\'s back; out of the room it takes them again', async () => {
+  const sim = await SimCore.create({ seed: SEED, cars: 2, agents: 64, boxes: generateCity(SEED), furniture: streetFurniture(SEED), spawn: { x: C, z: C }, debug: true, tracks: true }, null)
+  const poses = new Float32Array(Math.max(1, sim.meta.count) * POSE.stride)
+  const still = { x: 0, z: 0, heading: 0 }
+  const step = (cmds: SimCommand[]): number => sim.step({ dt: 1 / 60, foot: still, drive: IDLE, cmds }, poses).rejected
+  const carMovers: SimCommand[] = [
+    { c: 'reset' },
+    { c: 'setMode', i: 0, mode: 'parked' },
+    { c: 'recover', i: 0 },
+    { c: 'intent', i: 0, throttle: 1, brake: 0, steer: 0 },
+    { c: 'tune', key: 'grip', value: 2 },
+    { c: 'dbgVelocity', i: 0, x: 40, y: 0, z: 0 },
+    { c: 'dbgMode', i: 0, mode: 'player' },
+    { c: 'dbgHazard', i: 0, ahead: 3 },
+  ]
+  let rejected = step([{ c: 'room', on: true }])
+  for (const cmd of carMovers) {
+    const now = step([cmd])
+    assert.equal(now, rejected + 1, `${cmd.c} refused in a room`)
+    rejected = now
+  }
+  rejected = step([{ c: 'room', on: false }])
+  for (const cmd of carMovers) assert.equal(step([cmd]), rejected, `${cmd.c} taken out of a room`)
+})
+
+test('a page that drifts from the replay within MIRROR.drift is kept as the mirror replayed it and put back, never counted; past it, the claim is a lie', async () => {
+  const m = await Mirror.create(SEED)
+  const page = await Mirror.create(SEED)
+  m.join(1)
+  page.join(1)
+  const s = m.spawnOf(1)
+  m.place(1, s.x, s.z)
+  page.place(1, s.x, s.z)
+  const segs = [[0, RUN, 6]]
+  // Fifty micrometres off the replay: no lie, and nothing to gain (the truth is the replay).
+  const honest = page.walk(1, segs)
+  const drifted = m.judge(1, { mode: 'foot', segs, heading: 0, claim: { x: honest.x + 50e-6, y: honest.y, z: honest.z } })
+  assert.equal(drifted.ok, true)
+  assert.equal(drifted.ok && drifted.resync, `claim 50.0 µm from the mirror's pose`)
+  assert.deepEqual([m.pose(1).x, m.pose(1).z], [honest.x, honest.z], 'kept as the mirror replayed it, not as claimed')
+  // Past MIRROR.drift: refused and undone.
+  const before = m.pose(1)
+  const next = page.walk(1, segs)
+  const lie = m.judge(1, { mode: 'foot', segs, heading: 0, claim: { x: next.x + MIRROR.drift.foot * 2, y: next.y, z: next.z } })
+  assert.equal(lie.ok, false)
+  assert.match(lie.ok ? '' : lie.reason, /^claim 0\.50 m from the mirror's pose$/)
+  assert.deepEqual([m.pose(1).x, m.pose(1).z], [before.x, before.z], 'undone')
+  assert.deepEqual([m.counts.resynced, m.counts.refused], [1, 1])
+  assert.ok(MIRROR.drift.foot >= 0.1 && MIRROR.drift.drive >= 0.5, 'well past the drifts measured (0.6 mm on foot, 1.4 mm at the wheel)')
+})
+
+test('a held car claimed where the room does not have it is refused and let go: from then on the room checks it as traffic, as the page has it', async () => {
+  const m = await Mirror.create(SEED)
+  m.join(1)
+  const seat = m.garage.plan[0].pose
+  m.place(1, seat.x + 2 * Math.cos(seat.heading), seat.z - 2 * Math.sin(seat.heading))
+  const f = Math.fround
+  const yaw = seat.heading - Math.PI / 2
+  const state = { x: f(seat.x), y: f(0.56), z: f(seat.z), qx: 0, qy: f(Math.sin(yaw / 2)), qz: 0, qw: f(Math.cos(yaw / 2)), vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0 }
+  assert.ok(m.judge(1, { mode: 'drive', segs: [[0, 0, 0, 0, 0]], heading: 0, claim: state, door: { enter: { car: 0, state } } }).ok)
+  const ex = m.garage.exitPoint(1)!
+  assert.ok(m.judge(1, { mode: 'foot', segs: [[0, 0, 0]], heading: 0, claim: { x: f(ex.x), y: f(0.95), z: f(ex.z) }, door: { exit: ex } }).ok)
+  const held = m.garage.parkedAt(1, 0)!
+  assert.ok(held, 'held where it was left')
+  // Claimed a metre toward the player from where the room holds it: refused, and the room lets go of it.
+  const d = Math.hypot(ex.x - held.x, ex.z - held.z)
+  const elsewhere = { ...held, x: f(held.x + (ex.x - held.x) / d), z: f(held.z + (ex.z - held.z) / d) }
+  const out = m.judge(1, { mode: 'drive', segs: [[0, 0, 0, 0, 0]], heading: 0, claim: elsewhere, door: { enter: { car: 0, state: elsewhere } } })
+  assert.equal(out.ok, false)
+  assert.equal(m.garage.parkedAt(1, 0), null, 'let go: an AI car on its ring to the room from now on')
+})
+
+test('at the wheel a replay the Ring-0 audit refuses is undone: the car goes back to its last audited state, and a correction carries that', async () => {
+  const m = await Mirror.create(1337)
+  m.join(1)
+  // Car 0 at rest where the fleet's plan starts it, the player two metres beside it.
+  const seat = m.garage.plan[0].pose
+  m.place(1, seat.x + 2 * Math.cos(seat.heading), seat.z - 2 * Math.sin(seat.heading))
+  const f = Math.fround
+  const yaw = seat.heading - Math.PI / 2
+  const state = { x: f(seat.x), y: f(0.56), z: f(seat.z), qx: 0, qy: f(Math.sin(yaw / 2)), qz: 0, qw: f(Math.cos(yaw / 2)), vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0 }
+  const enter = m.judge(1, { mode: 'drive', segs: [[0, 0, 0, 0, 0]], heading: 0, claim: state, door: { enter: { car: 0, state } } })
+  assert.ok(enter.ok, enter.ok ? '' : enter.reason)
+  const audited = m.garage.chassis(1)!
+  // A replay that ends below the ground floor (the room's own physics never does this: the audit is the net under it).
+  const drive = m.garage.drive.bind(m.garage)
+  m.garage.drive = (id, runs) => {
+    const s = drive(id, runs)
+    m.garage.settle(id, { ...s, y: RING0.groundFloor - 1 })
+    return m.garage.chassis(id)!
+  }
+  const out = m.judge(1, { mode: 'drive', segs: [[1, 0, 0, 0, 10]], heading: 0, claim: audited })
+  m.garage.drive = drive
+  assert.equal(out.ok, false)
+  assert.match(out.ok ? '' : out.reason, /^Ring-0: /)
+  assert.deepEqual(m.garage.chassis(1), audited, 'back at the last audited state')
+  const t = m.settle(1)
+  assert.deepEqual(t.car?.state, audited, 'the correction carries the audited car')
+  assert.equal(carViolation(new Ring0Auditor({ x: C, z: C }), 1, t.car!.state), null)
 })
 
 test('the Ring-0 audit on every pose the mirror keeps: a person finite, inside the slab, above the ground floor; a car under the velocity cap too', () => {

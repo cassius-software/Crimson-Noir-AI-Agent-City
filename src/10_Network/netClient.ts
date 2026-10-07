@@ -1,24 +1,24 @@
 /**
  * Why does this file exist? It is the page's half of the network room: the room client. It is opt-in only: nothing
  * imports it at boot, it opens no socket until the operator asks (a later console command hands it a URL, a session
- * token and a name), and it speaks only ws or wss to a loopback address (the gate of 02_Define_The_Rules/airgap.ts:
- * the host on this machine, or the local end of a proxy the operator runs), so neither a token nor a pose leaves this
- * machine from the page. The token rides the upgrade as a subprotocol (replication.ts authProtocol), so the host
- * checks it before a socket exists. The room is authoritative (Phase 12) and the page's own physics realm is the
- * prediction: the player moves at once, and every realm step the engine hands over (move) is reported as what the
- * realm applied to each run of fixed substeps (on foot the walking velocity, at the wheel the vetted wheel command) and
- * where the realm then had the player (the claim), coalesced into runs while the input rate is spent; a step that took
- * a door (into a car, in the state the realm took it over in, or out of one) starts an input of its own (Phase 13). A
- * correction from the host (the welcome's spawn is the first) is the truth to snap to: the engine puts the player down
- * there (at the wheel, the car in the room's state), and steps the realm ran before that are never sent (the host
- * would drop them unread). While nothing else goes out (a hidden tab, a player standing still) a keepalive ack does,
- * so a quiet page is not taken for a gone one. It reads every message from the host through the core's validator (the host is not trusted
- * either: enough malformed messages and the client leaves), reconciles each snapshot into a replica of remote POSES
- * the page draws (never bodies in the physics realm), relays chat and pings to callbacks, and screens its own chat
- * under 14A before sending. Voice: a peer's MediaStream is
- * handed to a callback; the RTCPeerConnection plumbing (offer, answer and candidates relayed through this socket) is
- * a documented stub in this scaffold, so no voice is sent or received yet. The socket factory is injectable, so the
- * whole client is tested in Node without a browser.
+ * token and a name), and it speaks only ws or wss to `localhost` or `127.0.0.1`, the hosts the page's content security
+ * policy reaches (the gate of 02_Define_The_Rules/airgap.ts: the host on this machine, or the local end of a proxy the
+ * operator runs), so neither a token nor a pose leaves this machine from the page. The token rides the upgrade as a
+ * subprotocol (replication.ts authProtocol), so the host checks it before a socket exists. The room is authoritative
+ * (Phase 12) and the page's own physics realm is the prediction: the player moves at once, and every realm step the
+ * engine hands over (move) is reported as what the realm applied to each run of fixed substeps (on foot the walking
+ * velocity, at the wheel the vetted wheel command) and where the realm then had the player (the claim), coalesced into
+ * runs while the input rate is spent; a step that took a door (into a car, in the state the realm took it over in, or
+ * out of one) starts an input of its own (Phase 13). A correction from the host (the welcome's spawn is the first) is
+ * the truth to snap to: the engine puts the player down there (at the wheel, the car in the room's state), and steps
+ * the realm ran before that are never sent (the host would drop them unread). While nothing else goes out (a hidden
+ * tab, a player standing still) a keepalive ack does, so a quiet page is not taken for a gone one. It reads every
+ * message from the host through the core's validator (the host is not trusted either: enough malformed messages and the
+ * client leaves), reconciles each snapshot into a replica of remote POSES the page draws (never bodies in the physics
+ * realm), relays chat and pings to callbacks, and screens its own chat under 14A before sending. Voice: a peer's
+ * MediaStream is handed to a callback; the RTCPeerConnection plumbing (offer, answer and candidates relayed through
+ * this socket) is a documented stub in this scaffold, so no voice is sent or received yet. The socket factory is
+ * injectable, so the whole client is tested in Node without a browser.
  * What breaks if it is removed? The page cannot join a host; the host and the core are unchanged.
  */
 import {
@@ -30,7 +30,7 @@ import type { PingKind } from '../08_Swarm/ping.ts'
 import { netServer } from '../02_Define_The_Rules/airgap.ts'
 
 /**
- * The host's address, path included, if it may be spoken to: ws or wss to a loopback address only (a host on this
+ * The host's address, path included, if it may be spoken to: ws or wss to `localhost` or `127.0.0.1` only (a host on this
  * machine, or the local end of a proxy); no user name or password; nothing else. Null for anything else. The gate
  * itself (airgap.ts netServer) under the name this client has always used.
  */
@@ -91,9 +91,10 @@ export type MoveStatus = 'sent' | 'held' | 'idle' | 'stale' | 'refused'
 
 /**
  * The truth to snap to: where the host has the player, under correction `fix`, and why (the welcome's spawn is the
- * first); at the wheel, `car`, the car's full state, which the page puts its car in.
+ * first); at the wheel, `car`, the car's full state, which the page puts its car in. `drift`: the room kept the input
+ * and only puts the page back where its replay ended (not a correction of the player's: no count, no notice).
  */
-export interface Correction { fix: number; x: number; y: number; z: number; reason: string; car?: CarFix }
+export interface Correction { fix: number; x: number; y: number; z: number; reason: string; car?: CarFix; drift?: true }
 
 export interface NetClient {
   readonly status: NetStatus
@@ -116,8 +117,16 @@ export interface NetClient {
   sendPing(kind: PingKind, x: number, y: number, z: number): boolean
   /** Every remote pose, carried forward to `now` by its own velocity (at most LIMITS.predictS). */
   poses(now?: number): readonly RemotePlayer[]
-  /** Inputs the host has not yet acknowledged. */
+  /**
+   * Inputs sent and not yet acknowledged by the host. A correction empties it: the host drops unread everything sent
+   * under the correction before.
+   */
   pending(): readonly InputMessage[]
+  /**
+   * The link is stalled: MAX_IN_FLIGHT inputs are in flight unacknowledged, so steps are held (and past one input's
+   * bounds dropped) until the host answers.
+   */
+  readonly stalled: boolean
   leave(): void
   /** A peer's voice as a MediaStream, when one arrives; returns the unsubscribe. */
   onVoice(cb: (id: number, stream: MediaStream) => void): () => void
@@ -130,6 +139,16 @@ export interface NetClient {
 
 /** Malformed messages from the host the client tolerates before it leaves. */
 export const HOST_REFUSALS = LIMITS.refusalsBeforeKick
+
+/**
+ * The inputs a client keeps in flight, unacknowledged, before it reads its link as stalled and sends nothing more until
+ * the host answers: the host's input burst less a margin (two and a half seconds of steps; a room acknowledges at least
+ * once a second). A stall's backlog then always arrives within the host's input allowance, which refilled while the
+ * link was stalled, so an honest client is never refused for one: a stall shorter than this costs nothing, and a
+ * longer one costs one correction (the steps taken past the cap are held, and past one input's bounds dropped, so the
+ * room corrects the next input), never a refusal.
+ */
+export const MAX_IN_FLIGHT = LIMITS.inputBurst - 30
 
 export function createNetClient(o: NetClientOptions = {}): NetClient {
   const now = o.now ?? (() => Date.now())
@@ -223,12 +242,16 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
       case 'correct':
         if (status !== 'joined' || msg.fix <= fix) return
         fix = msg.fix
-        truth = { fix: msg.fix, x: msg.you.x, y: msg.you.y, z: msg.you.z, reason: msg.reason, ...(msg.car && { car: msg.car }) }
-        corrections++
-        corrected = msg.reason
-        // Steps the realm ran before it is put down at the truth describe a body the room never had.
+        truth = { fix: msg.fix, x: msg.you.x, y: msg.you.y, z: msg.you.z, reason: msg.reason, ...(msg.car && { car: msg.car }), ...(msg.drift && { drift: true as const }) }
+        // A drift resync (an input the room kept, the page put back) is no correction of the player's.
+        if (!msg.drift) {
+          corrections++
+          corrected = msg.reason
+        }
+        // Steps the realm ran before it is put down at the truth describe a body the room never had, and everything sent
+        // under the correction before is dropped by the room unread: nothing is pending any more.
         held = null
-        unsent = unsent.filter((i) => i.seq <= msg.ack)
+        unsent = []
         return
       case 'snapshot': {
         const next = reconcile(replica, msg)
@@ -265,6 +288,12 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
   /** Sends what is held as one input when the rate allows (or `force`d: a mode change, a door, a full input). */
   const flush = (force: boolean): boolean => {
     if (!held) return true
+    // A stalled link: nothing more goes out until the host acknowledges what is in flight. What a forced flush would have
+    // sent is dropped instead (the room corrects the next input, once).
+    if (unsent.length >= MAX_IN_FLIGHT) {
+      if (force) held = null
+      return false
+    }
     if (!take(buckets.input, now()) && !force) return false
     const h = held
     held = null
@@ -273,7 +302,7 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
       t: 'input', seq: ++seq, ack: replica.tick, fix, mode: h.mode, segs, heading: Math.atan2(Math.sin(h.heading), Math.cos(h.heading)), claim: h.claim,
       ...(h.door && { door: h.door }),
     }
-    if (unsent.length < LIMITS.inputBurst) unsent.push(msg)
+    unsent.push(msg)
     return send(msg)
   }
 
@@ -385,6 +414,7 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
       return dt > 0 ? replica.players.map((p) => predict(p, dt)) : replica.players
     },
     pending: () => unsent,
+    get stalled() { return unsent.length >= MAX_IN_FLIGHT },
     leave() {
       if (!socket) return
       send({ t: 'leave' })

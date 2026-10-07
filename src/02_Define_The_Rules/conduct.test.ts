@@ -1,7 +1,8 @@
 /**
  * Why does this file exist? It proves the 14A conduct law (conduct.ts): the core is the exact text the operator set;
  * the screen refuses violence, toxicity and illegality on whole words however they are cased, accented, punctuated
- * or suffixed; it never refuses a skill name or an ordinary business-casual line; the same text always gives the same
+ * or suffixed, and reads a line as it renders (an invisible character or a look-alike letter of another alphabet cannot
+ * hide a word); it never refuses a skill name or an ordinary business-casual line; the same text always gives the same
  * verdict; and a disengaged answer is nothing at all.
  * What breaks if it is removed? The screen could drift into refusing "skill" for "kill", or letting "KILL!" through.
  */
@@ -20,6 +21,18 @@ test('normalise: lower case, diacritics folded, punctuation and runs of space to
   assert.equal(normalise('  Héllo,   WORLD!!  '), 'hello world')
   assert.equal(normalise('naïve café — 東京'), 'naive cafe')
   assert.equal(normalise(''), '')
+})
+
+test('normalise reads a line as it renders: what draws nothing is removed, a line break is a space, a look-alike letter is the Latin one', () => {
+  assert.equal(normalise('f\u200bu\u00adc\u2060k'), 'fuck', 'zero-width space, soft hyphen and word joiner join the word they sit in')
+  assert.equal(normalise('shut\nup\tnow\u2028ok'), 'shut up now ok', 'line breaks and tabs still separate words')
+  assert.equal(normalise('kіll ѕtab mοron'), 'kill stab moron', 'Cyrillic і and ѕ, Greek ο')
+  assert.equal(normalise('ʜᴇʟʟᴏ ｗｏｒｌｄ 𝐨𝐤'), 'hello world ok', 'small capitals, fullwidth and mathematical letters')
+  assert.equal(normalise('Η η Ӏ ӏ'), 'h n i l', 'a capital and a small letter can imitate different Latin letters')
+  assert.equal(normalise('z̶̛a̷l̴g̸o̵'), 'zalgo', 'stacked combining marks are dropped')
+  for (const [line, term] of [['ki\u200bll yourself', 'kill'], ['ѕhit', 'shit'], ['ᴍᴜʀᴅᴇʀ', 'murder']] as const) {
+    assert.equal(screen(line).term, term, line)
+  }
 })
 
 test('the screen refuses each category on whole words, in any case, with a suffix, inside a sentence, and names the phrase', () => {

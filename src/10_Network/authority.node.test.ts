@@ -199,15 +199,26 @@ test('prediction and snap reconciliation end to end: two players walk to cars, d
     for (let k = 0; k < 60 * 120 && c.phase === 'chase'; k++) await tick(1, () => { c.frame(); bob.frame() })
     assert.equal(c.phase, 'drive')
     await tick(30, () => { c.frame(); bob.frame() })
+    // A centimetre off is within the room's drift bound: kept as the room replayed it, the page put back (drift),
+    // nothing counted.
+    const fixed = ada.client.correction()!.fix
     await tick(1, () => { ada.frame({ drive: { steer: 0, fwd: 0.7, back: 0, handbrake: false }, lie: 0.01 }); bob.frame() })
+    await until(() => ada.client.correction()!.fix > fixed, 'put back at the wheel')
+    assert.deepEqual([ada.client.correction()!.drift, ada.client.correction()!.reason], [true, "chassis claim 0.01 m from the room's car"])
+    assert.ok(ada.client.correction()?.car, 'it carries the car')
+    assert.equal(ada.client.corrections, 1, 'a drift is not counted')
+    await tick(60, () => { ada.frame({ drive: { steer: 0.1, fwd: 0.6, back: 0, handbrake: false } }); bob.frame() })
+    // Two metres off is a lie: corrected and counted.
+    await tick(1, () => { ada.frame({ drive: { steer: 0, fwd: 0.7, back: 0, handbrake: false }, lie: 2 }); bob.frame() })
     await until(() => ada.client.corrections === 2, 'the correction at the wheel')
-    assert.match(ada.client.corrected ?? '', /chassis claim 0\.01 m from the room's car/)
+    assert.match(ada.client.corrected ?? '', /chassis claim 2\.\d\d m from the room's car/)
     assert.ok(ada.client.correction()?.car, 'it carries the car')
     await tick(120, () => { ada.frame({ drive: { steer: 0.1, fwd: 0.6, back: 0, handbrake: false } }); bob.frame() })
     await until(() => { const t = truthOf(ada), r = ada.reported!; return t.driving && t.x === r.at.x && t.y === r.at.y && t.z === r.at.z }, 'the room and Ada\'s car agree again, to the bit')
     assert.equal(ada.client.corrections, 2, `no correction after the snap: ${ada.client.corrected}`)
     assert.equal(bob.client.corrections, 0)
     assert.equal(host.stats().corrected, 2)
+    assert.equal(host.stats().resynced, 1)
     ada.client.leave()
     bob.client.leave()
   } finally {

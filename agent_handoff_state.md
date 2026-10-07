@@ -5,8 +5,10 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
 
 ## Where things stand (updated as work lands)
 
-- Branch `claude/quirky-faraday-xkpdln`. Last pushed code commit: `0695c8b` (Phase 12). Phase 13 work is in the working
-  tree and in WIP commits on the branch (see `git log`); the tree is not yet release-ready.
+- Branch `claude/quirky-faraday-xkpdln`. Phase 13 is complete and release-ready: two adversarial reviews fixed (the
+  second's 4 + 13 + 4 findings below), 1,219 tests passing, tagged `v1.0.0-stable-release` (see `git log`, `git tag`).
+- The Crimson Noir OS (the operator's next directive, below) is under way in `crimson_noir_os/`: the core crate is done
+  and committed (20 tests); next are the UEFI image, the tutorial and terminal, the hosted wgpu runtime, the image.
 - The local tag `stable-beta` exists only locally (GitHub refused the tag push, HTTP 403).
 - Machine: 4 CPUs, 16 GB. Do not run several Rapier-heavy experiments and a multi-agent workflow at once (exit 137 once).
 
@@ -70,9 +72,24 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
 - Adversarial review launched: workflow run wf_36a42bed-56f (5 reviewers + 1 skeptic per finding). If the session
   dies, resume with Workflow({scriptPath: <session>/workflows/scripts/phase13-adversarial-review-wf_36a42bed-56f.js,
   resumeFromRunId: "wf_36a42bed-56f"}), or rerun a fresh review the same way.
-- TODO, in order: (1) [done] final full suite + build + smoke:net; (2) fresh adversarial review (small workflow, <= 6
-  agents, nothing else running: the container has 4 CPUs/16 GB); fix what it confirms; (3) README verified entry;
-  (4) commit, tag `v1.0.0-stable-release`, push branch and tag (report a 403 as before).
+- DONE (the second review: three reviewers, protocol/host, page against the real host, documents against code; the
+  first review's run died with a container restart). Every finding reproduced, fixed, with a test that fails without
+  the fix (mutation-checked):
+  - protocol: 14A screen bypass by invisible characters and look-alike letters (conduct.ts normalise; replication.ts
+    `unprintable` refuses C1, separators, bidi controls, lone surrogates); loggable leaked C1/DEL/U+2028 and cut at 161;
+    an honest client kicked after a 6.5 s stall or 8 short ones (netClient MAX_IN_FLIGHT 150; refusals an allowance,
+    8 burst, 4/min back); pending() inverted after a correction (now emptied).
+  - page: drift at a terrace's shared wall (page and room part by micrometres; honest players kicked on foot and at
+    the wheel): MIRROR.drift (0.25 m foot, 1 m wheel) keeps the input as replayed and resyncs uncounted (`drift: true`
+    on the correct message; host stats `resynced`); reconnect stranded a left car (every car the room does not hold
+    goes back to its ring's lane: at room on, on a forced exit, the oldest past HELD_CARS; a refused held re-entry
+    releases the room's hold); an E queued before a correction was reported as a door (SimClient `first` lane).
+  - docs: door hops beat a run (doorsPerSecond 2 -> 1.75; a substep charge was tried and dropped: it corrected the
+    parity proof's honest drivers); flaky smoke ack wait; vacuous tests (clock hack, full input, CSP one-way, log,
+    backlog, room-refused commands, hop rate); Ring-0 at the wheel kept a refused replay (now undone); headers on
+    App.tsx/main.tsx/index.css (test added); stale lines; README verified entry and History 13.4 written.
+- Final checks for the tag: 1,219 tests, 1,219 pass (93 s); tsc and oxlint clean; build clean (9.99 MB, no server
+  code); smoke:net 9/9 refused in 1.0-13.5 ms.
 
 ## Next directive (after the release): the Crimson Noir OS Technical Design Document
 
@@ -247,8 +264,6 @@ trademark to clear before a commercial release.
 
 ```sh
 cd /home/user/Crimson-Noir-AI-Agent-City && git fetch origin claude/quirky-faraday-xkpdln && git status && git log --oneline -5
-npx tsc -b                                   # lists the tests still on protocol 3
-node --test src/10_Network/garage.node.test.ts src/10_Network/mirror.node.test.ts   # must pass
-node --test "src/10_Network/*.test.ts"       # the protocol-4 test updates are the next job
-npx oxlint && npm test && npm run build && npm run smoke:net
+npx tsc -b && npx oxlint && npm test && npm run build && npm run smoke:net     # the release's checks, all green
+cd crimson_noir_os && cargo test -p noir_core                                  # the OS core (20 tests)
 ```

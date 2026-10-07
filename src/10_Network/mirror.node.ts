@@ -39,6 +39,15 @@ export const MIRROR = Object.freeze({
    * last bit near the city's far corner is about 60 µm, so a micrometre is no rounding allowance at all.
    */
   tolerance: 1e-6,
+  /**
+   * How far an honest page may drift from the mirror's replay before its claim is read as a lie, m (on foot, at the
+   * wheel). The two sides agree to the bit almost everywhere, but where the player meets two boxes at once (the shared
+   * wall of a terrace's lots), each side's physics can take the two contacts in its own order and part by micrometres
+   * (the second Phase 13 review measured up to 0.6 mm on foot and 1.4 mm at the wheel). Within this bound the input is
+   * kept as the mirror replayed it (the mirror's pose is the truth, whatever the claim) and the page is put back there
+   * without it counting against it; past it, the claim is a lie: refused (on foot undone) and counted.
+   */
+  drift: Object.freeze({ foot: 0.25, drive: 1 }),
   /** The fleet a room's page runs when it does not say (the page's own default, engine.ts). */
   cars: 36,
   /** The room's players start a sidewalk step apart along the page's own spawn sidewalk (engine.ts), m, cycling. */
@@ -75,7 +84,8 @@ export interface MoveInput {
 }
 
 /** The mirror's verdict on one input: kept (the new truth), or refused (the truth unchanged) and why. */
-export type Judgement = { ok: true; pose: MirrorPose } | { ok: false; pose: MirrorPose; reason: string }
+/** A kept input, put back (`resync`, why) when the page drifted from the replay within MIRROR.drift; or a refusal. */
+export type Judgement = { ok: true; pose: MirrorPose; resync?: string } | { ok: false; pose: MirrorPose; reason: string }
 
 interface Body {
   avatar: Avatar
@@ -129,7 +139,7 @@ export class Mirror {
   /** The room's cars: the fleet's plan, and every player's own car replayed (garage.node.ts). */
   readonly garage: Garage
   /** Substeps replayed on foot, inputs kept and refused, since the mirror was built (the garage counts its own). */
-  readonly counts = { substeps: 0, kept: 0, refused: 0 }
+  readonly counts = { substeps: 0, kept: 0, refused: 0, resynced: 0 }
 
   private constructor(physics: Physics, seed: number, cars: number) {
     this.#physics = physics
@@ -252,10 +262,17 @@ export class Mirror {
     }
     const door = input.door
     let origin: { x: number; z: number } | null = null
+    /** Set when the page drifted from the replay within MIRROR.drift: kept, and put back. */
+    let resync: string | null = null
     if (door && 'enter' in door) {
       if (b.driving) return refuse('enter: already at a wheel')
       const why = garage.whyNotEnter(id, b.avatar.state(), door.enter.car, door.enter.state)
-      if (why !== null) return refuse(why)
+      if (why !== null) {
+        // A car held for this player, claimed where the room does not have it: the correction takes the page out of it,
+        // and the page puts it back in traffic (simCore.ts release); the room lets go of it too, so the two agree.
+        garage.release(id, door.enter.car)
+        return refuse(why)
+      }
       garage.enter(id, door.enter.car, door.enter.state)
       b.driving = true
     } else if (door) {
@@ -291,7 +308,10 @@ export class Mirror {
       this.counts.substeps += n
       const after = b.avatar.state()
       const off = Math.hypot(claim.x - after.x, claim.y - after.y, claim.z - after.z)
-      if (!(off <= MIRROR.tolerance)) return refuse(`claim ${fmt(off)} from the mirror's pose`, undo)
+      if (!(off <= MIRROR.tolerance)) {
+        if (!(off <= MIRROR.drift.foot)) return refuse(`claim ${fmt(off)} from the mirror's pose`, undo)
+        resync = `claim ${fmt(off)} from the mirror's pose`
+      }
       const violation = personViolation(this.#auditor, id, after.x, after.y, after.z)
       if (violation !== null) return refuse(`Ring-0: ${violation}`, undo)
       // The velocity the others' views carry this pose forward by: from the exit point after a car, capped at a run.
@@ -304,20 +324,28 @@ export class Mirror {
         vz *= RUN / speed
       }
     } else {
-      // The room's car, replayed: it is the truth from here, whatever the claim says.
+      // The room's car, replayed: once the Ring-0 audit passes it, it is the truth from here, whatever the claim says. A
+      // replay the audit refuses is undone (the car goes back to its last audited state), so every pose the mirror keeps
+      // has passed the audit, at the wheel too.
+      const audited = garage.chassis(id)
       const s = garage.drive(id, input.segs as unknown as DriveRun[])
+      const violation = carViolation(this.#auditor, id, s)
+      if (violation !== null) return refuse(`Ring-0: ${violation}`, () => { garage.settle(id, audited) })
       vx = s.vx
       vz = s.vz
       const off = Math.hypot(claim.x - s.x, claim.y - s.y, claim.z - s.z)
-      if (!(off <= MIRROR.tolerance)) return refuse(`chassis claim ${fmt(off)} from the room's car`)
-      const violation = carViolation(this.#auditor, id, s)
-      if (violation !== null) return refuse(`Ring-0: ${violation}`)
+      if (!(off <= MIRROR.tolerance)) {
+        if (!(off <= MIRROR.drift.drive)) return refuse(`chassis claim ${fmt(off)} from the room's car`)
+        resync = `chassis claim ${fmt(off)} from the room's car`
+      }
     }
     b.vx = vx
     b.vz = vz
     b.heading = Math.atan2(Math.sin(input.heading), Math.cos(input.heading))
     this.counts.kept++
-    return { ok: true, pose: this.pose(id) }
+    if (resync === null) return { ok: true, pose: this.pose(id) }
+    this.counts.resynced++
+    return { ok: true, pose: this.pose(id), resync }
   }
 
   #body(id: number): Body {

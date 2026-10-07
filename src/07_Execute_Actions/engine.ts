@@ -301,8 +301,8 @@ export interface NetHost {
    * newest correction was applied: the room would drop it unread) or 'refused' (not a step the room could read).
    */
   move(m: NetMove): 'sent' | 'held' | 'idle' | 'stale' | 'refused'
-  /** The newest correction (the truth to snap to and its number; at the wheel the car's state too), or null before the welcome. */
-  correction(): { fix: number; x: number; z: number; car?: { index: number; state: CarBodyState } } | null
+  /** The newest correction (the truth to snap to and its number; at the wheel the car's state too; `drift` for a kept input the page is only put back after), or null before the welcome. */
+  correction(): { fix: number; x: number; z: number; car?: { index: number; state: CarBodyState }; drift?: true } | null
   /** Every other player's pose, carried forward to `now` (ms). */
   poses(now?: number): readonly NetPeer[]
   /** Inputs the room has not yet applied. */
@@ -326,7 +326,7 @@ export interface NetControls {
 
 export interface DebugSim {
   state(): StepState
-  send(cmd: SimCommand): void
+  send(cmd: SimCommand, first?: boolean): void
   /** Resolves with the next state the worker sends. */
   next(): Promise<StepState>
 }
@@ -951,8 +951,9 @@ export class Engine {
     if (state !== this.netSeen) {
       this.netSeen = state
       if (state === 'joined') {
-        // Player 1 walks and drives as the room's authority does (simCore.ts 'room'): ahead of the welcome's teleport.
-        this.sim.send({ c: 'room', on: true })
+        // Player 1 walks and drives as the room's authority does (simCore.ts 'room'): ahead of the welcome's teleport,
+        // and of anything the player queued before it.
+        this.sim.send({ c: 'room', on: true }, true)
         this.netRoom = true
         this.netJoin?.resolve(`joined ${this.netUrl ?? 'the room'} as player ${c.id}`)
         this.netJoin = null
@@ -979,8 +980,10 @@ export class Engine {
     const fix = c.correction()
     if (fix && fix.fix > this.netFix) {
       this.netFix = fix.fix
-      this.sim.send(fix.car ? { c: 'netCar', i: fix.car.index, state: fix.car.state } : { c: 'teleport', x: fix.x, z: fix.z })
-      if (fix.fix > 1) this.toast('Network', 'the room put you back where it has you')
+      // Ahead of anything the player queued meanwhile (an E pressed on this frame): it then acts on the truth, and the
+      // door it takes is reported against the truth (simProtocol.ts doorOf).
+      this.sim.send(fix.car ? { c: 'netCar', i: fix.car.index, state: fix.car.state } : { c: 'teleport', x: fix.x, z: fix.z }, true)
+      if (fix.fix > 1 && !fix.drift) this.toast('Network', 'the room put you back where it has you')
     }
     this.netPeers = c.poses(performance.now())
     // A voice whose player is no longer in the room (or never arrived) is let go after the grace.
@@ -1014,7 +1017,7 @@ export class Engine {
 
   /** The session over: no poses drawn or placed, every peer voice let go, a join still waiting told why, the room mode off. */
   private netLetGo(why: string): void {
-    if (this.netRoom && !this.halted && !this.disposed) this.sim.send({ c: 'room', on: false })
+    if (this.netRoom && !this.halted && !this.disposed) this.sim.send({ c: 'room', on: false }, true)
     this.netRoom = false
     this.netPeers = NO_PEERS
     this.netMove = null

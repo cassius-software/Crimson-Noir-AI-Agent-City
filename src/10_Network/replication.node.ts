@@ -36,7 +36,7 @@ import { pathToFileURL } from 'node:url'
 import { Mirror } from './mirror.node.ts'
 import {
   admit, AUTH_PREFIX, bucket, createRoom, depart, expired, handle, LIMITS, openClientFrame, poses, readEnvelope, refuse, refuseInput, sealMessage,
-  snapshotFor, SUBPROTOCOL, take, tickRoom,
+  snapshotFor, SUBPROTOCOL, take, tickRoom, unprintable,
   type Authority, type Bucket, type Mac, type Outcome, type Peer, type Room, type ServerMessage,
 } from './replication.ts'
 
@@ -199,10 +199,14 @@ export interface HostStats {
   /** Upgrades refused for want of a good token: answered 401 (`unauthorized`), or 429 once the address had spent its failures (`throttled`). */
   unauthorized: number
   throttled: number
-  /** Inputs read, kept, and corrected; inputs neither kept nor corrected (dropped unread for predating a correction, or refused and counted). */
+  /**
+   * Inputs read, kept, and corrected; kept but put back for drift (resynced); inputs neither kept nor corrected (dropped
+   * unread for predating a correction, or refused and counted).
+   */
   inputs: number
   kept: number
   corrected: number
+  resynced: number
   stale: number
   /** Microseconds to handle one input (the mirror's judgement included) and one tick (every snapshot sealed and sent), moving averages. */
   inputUs: number
@@ -221,10 +225,21 @@ export const HEADERS_TIMEOUT_MS = 5000
 /** How long a refused upgrade's socket is given to flush its HTTP answer before it is destroyed, ms. */
 const REFUSED_LINGER_MS = 1000
 
-/** A line of untrusted text as the log may print it: one line, at most 160 characters, control characters escaped. */
+/**
+ * A line of untrusted text as the log may print it: one line of at most 160 characters, with every character a
+ * terminal could act on or a reader could be misled by escaped as \uXXXX: C0, DEL and C1 controls (an escape sequence
+ * or a "next line"), the line and paragraph separators, and bidi controls (see replication.ts `unprintable`).
+ */
 export function loggable(text: string): string {
-  const one = JSON.stringify(String(text)).slice(1, -1)
-  return one.length > 160 ? `${one.slice(0, 160)}…` : one
+  let one = ''
+  for (const ch of JSON.stringify(String(text)).slice(1, -1)) {
+    const c = ch.codePointAt(0) ?? 0
+    one += unprintable(c) ? `\\u${c.toString(16).padStart(4, '0')}` : ch
+  }
+  if (one.length <= 160) return one
+  // Cut on a whole character: never half of a surrogate pair.
+  const cut = one.slice(0, 159)
+  return `${/[\ud800-\udbff]$/.test(cut) ? cut.slice(0, -1) : cut}…`
 }
 
 /** The city a host builds unless told otherwise: the page's default seed (App.tsx). */
@@ -283,7 +298,7 @@ export async function startHost(o: HostOptions): Promise<Host> {
   /** The live connection of each subject: a token's subject is one player, so a second connection replaces the first. */
   const bySubject = new Map<string, Conn>()
   const failures = new Map<string, Bucket>()
-  const stats: HostStats = { peers: 0, unauthorized: 0, throttled: 0, inputs: 0, kept: 0, corrected: 0, stale: 0, inputUs: 0, tickUs: 0 }
+  const stats: HostStats = { peers: 0, unauthorized: 0, throttled: 0, inputs: 0, kept: 0, corrected: 0, resynced: 0, stale: 0, inputUs: 0, tickUs: 0 }
   const average = (was: number, us: number): number => (was === 0 ? us : was * 0.95 + us * 0.05)
 
   /**
@@ -348,7 +363,10 @@ export async function startHost(o: HostOptions): Promise<Host> {
           const fixWas = c.peer.fix, seqWas = c.peer.seq
           out = handle(room, c.peer, read.msg, now(), verify)
           if (input) {
-            if (c.peer.fix !== fixWas) stats.corrected++
+            if (c.peer.fix !== fixWas) {
+              if (out.refused === undefined) stats.resynced++
+              else stats.corrected++
+            }
             else if (c.peer.seq !== seqWas) stats.kept++
             else stats.stale++
           }
@@ -356,7 +374,7 @@ export async function startHost(o: HostOptions): Promise<Host> {
           // An input that failed its seal or its shape from a joined peer is refused and corrected like any other.
           const env = readEnvelope(wire)
           input = c.peer.joined && env.ok && (env.msg.body as { t?: unknown }).t === 'input'
-          out = input ? refuseInput(room, c.peer, read.reason, now()) : refuse(c.peer, read.reason)
+          out = input ? refuseInput(room, c.peer, read.reason, now()) : refuse(c.peer, read.reason, now())
           if (input) stats.corrected++
         }
         if (input) {
@@ -367,11 +385,11 @@ export async function startHost(o: HostOptions): Promise<Host> {
         return
       }
       case OP.binary:
-        apply(c, refuse(c.peer, 'binary frame'))
+        apply(c, refuse(c.peer, 'binary frame', now()))
         return
       case OP.ping:
         // Answered while within the peer's ping rate; past it each one is a refusal like any other.
-        if (!take(c.pings, now())) apply(c, refuse(c.peer, 'ping: over rate'))
+        if (!take(c.pings, now())) apply(c, refuse(c.peer, 'ping: over rate', now()))
         else write(c, writeFrame(OP.pong, payload))
         return
       case OP.pong:

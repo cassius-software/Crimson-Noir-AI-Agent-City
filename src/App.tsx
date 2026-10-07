@@ -1,3 +1,11 @@
+/**
+ * Why does this file exist? It is the page's React shell: the city (`GuiShell`) or the console alone (`TtyShell`, under
+ * `?boot=tty`), the engine mounted with the page's options, and around it the boot veil, the HUD, the concierge, the
+ * wardrobe card and the touch and console overlays. It builds what the engine is handed through its seams instead of
+ * importing (the cognition router, the network client), keeps the visitor's look and session token, and screens the
+ * room's names and chat under 14A once more as they arrive.
+ * What breaks if it is removed? Nothing is mounted: the page is blank.
+ */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Engine, type EngineOptions } from './07_Execute_Actions/engine.ts'
 import { Hud } from './07_Execute_Actions/Hud.tsx'

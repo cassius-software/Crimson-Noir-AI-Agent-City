@@ -47,9 +47,12 @@ test('the aliases are the gate narrowed by protocol: loopbackServer gives an htt
   assert.equal(netServer('http://localhost:8787'), null, 'not a room')
   assert.equal(netServer('wss://rooms.example.net'), null)
   assert.equal(netServer('ws://ada:secret@localhost:8787'), null)
-  // Every room host the gate admits is one the page's content security policy reaches, and no other loopback address.
+  // The socket hosts the gate admits are exactly those the page's content security policy reaches: every room host is in
+  // connect-src, and connect-src names no socket host the gate refuses (the two cannot part in either direction).
   const csp = readFileSync(new URL('../../index.html', import.meta.url), 'utf8').match(/connect-src ([^;]+);/)?.[1] ?? ''
-  for (const h of ROOM_HOSTS) for (const scheme of ['ws', 'wss']) assert.ok(csp.split(' ').includes(`${scheme}://${h}:*`), `${scheme}://${h}:* in connect-src`)
+  const sockets = csp.split(/\s+/).filter((s) => /^wss?:/.test(s))
+  const admitted = ROOM_HOSTS.flatMap((h) => ['ws', 'wss'].map((scheme) => `${scheme}://${h}:*`))
+  assert.deepEqual([...sockets].sort(), [...admitted].sort(), `connect-src socket sources: ${sockets.join(' ')}`)
   for (const other of ['ws://[::1]:8787', 'ws://127.0.0.2:8787', 'wss://127.1.2.3:8788']) assert.equal(netServer(other), null, other)
   assert.equal(refusal('http://example.com'), 'http://example.com is not on this machine: the page addresses only localhost, 127.0.0.0/8 or [::1]')
 })

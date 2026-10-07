@@ -121,6 +121,16 @@ test('no real place name in anything the product shows: every string in the ship
   assert.ok(code("const label = 'Clear · Toronto'").match(REAL_PLACES), 'a string is caught')
 })
 
+test('every source file opens with why it exists and what breaks without it (the README\'s promise)', () => {
+  const sources = [...files(join(ROOT, 'src'))].filter((f) => /\.(ts|tsx|css|wgsl)$/.test(f))
+  assert.ok(sources.length > 100, `${sources.length} files read`)
+  const missing = sources.filter((f) => {
+    const head = readFileSync(f, 'utf8').split('\n').slice(0, 40).join('\n')
+    return !head.includes('Why does this file exist?') || !head.includes('What breaks if it is removed?')
+  })
+  assert.deepEqual(missing.map((f) => relative(ROOT, f)), [])
+})
+
 test('controller hints carry no console maker\'s button symbols, in any family, for any action', () => {
   const families: GlyphFamily[] = ['keyboard', 'abxy', 'bayx', 'numbered', 'generic', 'touch']
   const actions: ControlAction[] = ['move', 'look', 'run', 'interact', 'handbrake', 'reset', 'throttle', 'brake', 'clock', 'console', 'hud', 'ghost', 'ping']

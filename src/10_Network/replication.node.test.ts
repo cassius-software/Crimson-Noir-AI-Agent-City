@@ -24,7 +24,7 @@ import { RUN } from '../07_Execute_Actions/simProtocol.ts'
 import { Mirror } from './mirror.node.ts'
 import { planeAuthority, planeStep } from './plane.node.ts'
 import {
-  AUTH_PREFIX, LIMITS, openServerFrame, PROTOCOL_VERSION, sealMessage, SUBPROTOCOL,
+  AUTH_PREFIX, LIMITS, openServerFrame, PROTOCOL_VERSION, sealMessage, SUBPROTOCOL, unprintable,
   type ClientMessage, type InputMessage, type RemotePlayer, type FootRun, type Run, type ServerMessage,
 } from './replication.ts'
 import {
@@ -467,6 +467,22 @@ test('a peer too slow to read what it is sent is closed (4009) before the host b
   assert.match(code, /write\(c, writeFrame\(OP\.pong/)
 })
 
+test('the backlog rule in action: with a bound every write is past, the first message for a peer closes it instead (logged as too slow) and takes it out of the room', async () => {
+  const lines: string[] = []
+  const host = await plane({ maxBacklog: -1, log: (l) => lines.push(l) })
+  try {
+    const c = await open(host, 'Ada')
+    // The join's welcome is the first message the host would write to this peer.
+    c.send({ t: 'join', v: PROTOCOL_VERSION, token: c.token, name: 'Ada', world: host.world })
+    await until(() => lines.some((l) => /closed: too slow to keep up/.test(l)), 'closed as too slow to keep up')
+    assert.equal(c.got.length, 0, 'nothing was written past the bound: not the welcome, not even the close frame')
+    await c.closed
+    await until(() => host.room.peers.size === 0 && host.connections() === 0, 'out of the room, the socket gone')
+  } finally {
+    await host.close()
+  }
+})
+
 test('one player, one connection: a second under the same subject replaces the first (4010); a session ends with its token (4003)', async () => {
   const clock = { now: Date.now() }
   const host = await plane({ tickHz: 100, now: () => clock.now })
@@ -542,15 +558,25 @@ test('a short secret starts no host; untrusted text is one escaped, bounded line
   assert.equal(loggable('a\nb'), 'a\\nb')
   assert.equal(loggable('peer 1 closed: x\r\npeer 7 banned'), 'peer 1 closed: x\\r\\npeer 7 banned')
   assert.equal(loggable('"quoted"'), '\\"quoted\\"')
-  assert.equal(loggable('y'.repeat(500)).length, 161)
-  // The log lines a client can steer go through it.
+  // C1 controls (a CSI that erases the line, a "next line"), DEL, the line and paragraph separators and bidi overrides
+  // are escaped too: JSON alone leaves them raw.
+  assert.equal(loggable('a\u0085b\u2028c\u009b2K\u007fd\u2029e\u202ef'), 'a\\u0085b\\u2028c\\u009b2K\\u007fd\\u2029e\\u202ef')
+  assert.equal(loggable('y'.repeat(500)).length, 160, 'at most 160 characters, the ellipsis included')
+  assert.equal(loggable('y'.repeat(160)), 'y'.repeat(160))
+  const astral = loggable('😀'.repeat(200))
+  assert.ok(astral.length <= 160 && !/[\ud800-\udbff]…$/.test(astral), 'never half a surrogate pair')
+  const plain = (l: string): boolean => [...l].every((ch) => !unprintable(ch.codePointAt(0) ?? 0))
+  // The log lines a client can steer go through it: a refusal names the value it refused, raw as it was sent.
   const lines: string[] = []
   const host = await plane({ log: (l) => lines.push(l) })
   try {
     const c = await open(host, 'Ada')
-    c.send({ t: 'x\npeer 9 closed: banned', v: 1 })
+    c.send({ t: 'join', v: '\u009b2K\u0085peer 999 connected\u2028x', token: '', name: 'Ada', world: 'plane' })
     await until(() => lines.some((l) => l.includes('refused')), 'the refusal logged')
-    assert.ok(lines.every((l) => !l.includes('\n')), lines.join(' | '))
+    const refused = lines.find((l) => l.includes('refused'))!
+    assert.match(refused, /\\u009b2K\\u0085peer 999 connected\\u2028x/, 'the value is in the line, escaped')
+    assert.ok(lines.every(plain), lines.join(' | '))
+    assert.ok(lines.every((l) => l.length <= 200), 'bounded')
   } finally {
     await host.close()
   }
@@ -608,10 +634,16 @@ test('the mirror on the socket: crafted illegal movement is refused and correcte
     ms.push(await crafted({ ...honestNext, claim: { ...honestNext.claim, z: honestNext.claim.z + 40 } }, /claim .* from the mirror's pose/))
     // 2. A speed hack in the shape: 600 substeps in one packet.
     ms.push(await crafted(input(++seq, fix, [[0, RUN, 600]], { x: kept.x, y: 0.92, z: kept.z + 52 }), /input: substeps/))
-    // 3. A speed hack on the clock: more than the banked seconds of substeps at once (honest claims, too many substeps).
+    // 3. A speed hack on the clock: the room banks LIMITS.stepBurst substeps. Once the bank is full again, six honest
+    //    bursts of half a second spend it, each kept; the seventh, at once, is a clock running fast, and its correction
+    //    acknowledges the sixth (so it is the hack that was refused, not an honest burst before it).
+    await sleep(3200)
     const burst = (): InputMessage => walk([[0, 0, 30]])
     for (let k = 0; k < LIMITS.stepBurst / 30; k++) c.send(burst())
+    const lastHonest = seq
     ms.push(await crafted(burst(), /more substeps than time allows/))
+    const clockHack = c.got.filter((m) => m.t === 'correct').at(-1)!
+    assert.equal(clockHack.ack, lastHonest, `the correction acknowledges the sixth burst (seq ${lastHonest}), so the seventh was the one refused`)
     await sleep(600)
     // 4. Through a wall: the lot east of the sidewalk (a podium from x 327 m), the claim on the straight line.
     ms.push(await crafted(input(++seq, fix, [[RUN, 0, 30]], { x: kept.x + RUN * 0.5, y: 0.92, z: kept.z }), /claim .* from the mirror's pose/))

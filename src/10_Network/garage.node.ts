@@ -27,7 +27,7 @@
 import { generateCity } from '../01_Initialize_World/city.ts'
 import { RING0 } from '../02_Define_The_Rules/ring0.ts'
 import { buildTrackNetwork, projectOnto, tangentAt, type TrackNetwork } from '../06_Make_Decisions/tracks.ts'
-import { AUTHORED, carState, carSubstep, clampSpeed, exitPoint, headingOf, planFleet, rebuildCarRig, type CarRig, type PlannedCar } from '../07_Execute_Actions/carRig.ts'
+import { AUTHORED, carState, carSubstep, clampSpeed, exitPoint, HELD_CARS, headingOf, planFleet, rebuildCarRig, type CarRig, type PlannedCar } from '../07_Execute_Actions/carRig.ts'
 import { Physics, PHYSICS_HZ } from '../07_Execute_Actions/physics.ts'
 import { ENTER_RANGE, type CarBodyState } from '../07_Execute_Actions/simProtocol.ts'
 
@@ -78,7 +78,7 @@ export const GARAGE = Object.freeze({
   /** The door's own margin past ENTER_RANGE, m (the page measures the same distance from the same numbers). */
   enterSlack: 0.01,
   /** Cars one player may hold parked at once; the oldest is let go past it (the room then treats it as any car). */
-  maxParked: 16,
+  maxParked: HELD_CARS,
 })
 
 /** A car's full rigid-body state as plain numbers (simProtocol.ts CarBodyState): what the room takes over at the door. */
@@ -153,6 +153,15 @@ export class Garage {
 
   join(id: number): void {
     if (!this.#bays.has(id)) this.#bays.set(id, { physics: null, driving: null, parked: new Map() })
+  }
+
+  /**
+   * The room lets go of car `index` it held for the player: from now on it is an AI car to the room, checked on its own
+   * ring's lane (whyNotEnter). Taken when the page claims a held car somewhere the room does not have it: the page has
+   * put that car back in traffic (simCore.ts release) after the correction took the player out of it.
+   */
+  release(id: number, index: number): void {
+    this.#bay(id).parked.delete(index)
   }
 
   /** The player's bay goes, its drive world freed. */

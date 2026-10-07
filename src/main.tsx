@@ -1,3 +1,9 @@
+/**
+ * Why does this file exist? It is the page's entry point: before the page does anything it holds the global's outbound
+ * primitives to this machine (02_Define_The_Rules/airgap.ts installAirgap), then mounts App under React's StrictMode.
+ * What breaks if it is removed? The page never starts, and nothing would hold its outbound requests to this machine
+ * before the first one.
+ */
 import { installAirgap } from './02_Define_The_Rules/airgap.ts'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'

@@ -23,7 +23,7 @@ import { MODES, POSE } from './simProtocol.ts'
 import type { VehicleFootprint } from './sanctuary.ts'
 import type { DriverCommand, DriverLike, DriverPose } from '../06_Make_Decisions/traffic.ts'
 import { TrackDriver } from '../06_Make_Decisions/trackDriver.ts'
-import type { TrackNetwork } from '../06_Make_Decisions/tracks.ts'
+import { poseAt, type TrackNetwork } from '../06_Make_Decisions/tracks.ts'
 import { KERNEL } from '../02_Define_The_Rules/civic.ts'
 import { Bouncer, type Intent, type Situation } from '../02_Define_The_Rules/laws.ts'
 import type { CarState } from '../03_Spawn_Agents/crowdCompute.ts'
@@ -313,6 +313,22 @@ export class Fleet {
     const b = this.#rigs[v.index].body
     b.setLinvel({ x: 0, y: 0, z: 0 }, true)
     b.setAngvel({ x: 0, y: 0, z: 0 }, true)
+  }
+
+  /**
+   * Car `v` back in its ring's traffic: set down at rest on its lane at the point nearest where it stands, facing along
+   * the ring, and handed back to its driver. What a network room expects of every car it does not hold for the player:
+   * an AI car on its own ring's lane (garage.node.ts whyNotEnter). A car with no ring is only handed back.
+   */
+  release(v: Vehicle): void {
+    const network = this.#network
+    if (network && v.driver instanceof TrackDriver) {
+      const t = this.#rigs[v.index].body.translation(this.#pos)
+      const at = v.driver.locate(t.x, t.z)
+      const p = poseAt(network.tracks[v.driver.track], at.s)
+      this.recover(v, p.x, p.z, p.heading)
+    }
+    v.mode = 'ai'
   }
 
   /**

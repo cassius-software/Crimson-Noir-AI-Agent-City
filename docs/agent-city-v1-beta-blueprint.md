@@ -747,8 +747,8 @@ reported position deviates.
 
 - **12.1 The host** (`10_Network/replication.node.ts`). The session token rides the WebSocket upgrade as a
   subprotocol (`onyx.3`, `auth.<token>`). Its HMAC and expiry are checked before the 101: a missing, forged, tampered
-  or expired one is a 401 with no socket and no room slot, and an address that keeps failing gets a 429 without the
-  check. The join must carry the same token, and the Phase 11 seals (rising envelope number, HMAC over the canonical
+  or expired one is a 401 with no socket and no room slot, and an address that keeps failing gets a 429, unlogged (a
+  good token is still checked first, so it is always admitted). The join must carry the same token, and the Phase 11 seals (rising envelope number, HMAC over the canonical
   message) hold for every frame after.
   - "High-performance" is measured, not asserted: seals use `node:crypto`, an input is judged the moment it arrives,
     a slow reader is closed (4009), and `host.stats()` reports the costs.
@@ -836,12 +836,13 @@ gap, and release.
     it lets through, every number of that state checked: a car this player left within 0.5 m of where the room holds
     it (stopped dead where it was left), turned at most 0.1 rad and moving no faster than a car settling on its
     springs; any other car on its own ring's lane within the fleet's measured envelope (1.0 m: at most 0.53 m on
-    straights, 0.78 m in corners over a minute of 36 cars), facing along it within 0.5 rad, upright, at a car's
-    height, and moving as the fleet moves (forward along its heading at the ring's speed or under, sliding, rising,
-    pitching and rolling and turning within twice what the fleet ever does, emergency stops and the first settling
-    drop measured). Out of a car: within 0.5 m of the exit point the room computes from its own chassis, where the
-    room then puts the player. A mode without its door is refused, and the room takes two doors a second, so a hop chain moves a player
-    at most about 6 m a pair, no faster than a run (`mirror.node.test.ts`).
+    straights, 0.78 m in corners over a minute of 36 cars), facing along it within 0.5 rad (0.29 rad measured),
+    upright, at a car's height, and moving as the fleet moves (forward along its heading at the ring's speed and
+    0.5 m/s or under, sliding, rising, pitching and rolling and turning within twice what the fleet ever does,
+    emergency stops and the first settling drop measured). Out of a car: within 0.5 m of the exit point the room computes from its own chassis, where the
+    room then puts the player. A mode without its door is refused. A pair of doors moves a player at most 5.91 m and
+    spends no substep, so the room takes at most 1.75 doors a second: a hop chain alone is no faster than a run
+    (`replication.test.ts`, every mix of doors and runs against an authority that grants each door its full reach).
   - **Room mode** (`simCore.ts` `room`). In a room player 1 is a ghost only fixed geometry stops, the tuning is the
     authored car's, the console commands that move a car are refused, and a car left stops dead. On foot the page
     and the mirror then agree to the bit (0 over 700 frames with walls), and the tolerance is a micrometre.
@@ -862,8 +863,8 @@ gap, and release.
     inputs the seeded tests do not draw.
   - `parity.fuzz.test.ts`, the proof: two pages, each the full city with 36 cars, on a network that jitters both
     ways (2–80 ms, spikes to 1.5 s, stalls to 2.5 s), drive at once (doors, full throttle, the handbrake, reverse,
-    crashes into buildings) beside a liar. Over 90 s the room kept about 9,000 honest steps, each within a
-    micrometre of its replay (the tolerance), corrected neither driver once, and ends at both pages' poses to the
+    crashes into buildings) beside a liar. Over 90 s the room kept about 6,300 steps of the honest two (about
+    9,100 in all), each within a micrometre of its replay (the tolerance), corrected neither driver once, and ends at both pages' poses to the
     bit; every lie was corrected. `authority.node.test.ts` is the calm-network version with two drivers.
 - **13.3 Found and fixed.** A fresh review of Phase 13 found that a door checked only where a car was: a held car
   taken back at 36 m/s (30 upward) and an AI car claimed moving upward were each landed on a roof by the room's own
@@ -875,6 +876,37 @@ gap, and release.
   unfrozen player lists, a First Law that a non-number reading slipped past, a clamp that made a NaN of an infinite
   velocity, a substep bank that never came back after a stall (it now refills 5 % faster than the realm steps), and
   a slow-header client that held a socket.
+- **13.4 The second review** (protocol, the page, the documents against the code; each finding reproduced before
+  it was fixed, each fix with a test that fails without it):
+  - the 14A screen read a word that a zero-width character or a look-alike letter split as two, while the line
+    rendered as the word: it now removes what draws nothing and reads look-alike letters as Latin, and a name or a
+    line may hold no control character, separator or bidi control (`conduct.test.ts`, `replication.test.ts`);
+  - the log escaped only C0 controls: C1 controls, DEL and the line separators reached the operator's terminal raw,
+    and a cut line was 161 characters (`replication.node.test.ts`, which a mutant that escapes nothing now fails);
+  - an honest page was removed after one stall of 6.5 s, or after eight short ones in a long session: the page now
+    keeps at most 150 inputs unacknowledged (`netClient.ts MAX_IN_FLIGHT`), and refusals are an allowance that comes
+    back at four a minute (`netClient.test.ts` stalls an honest page for 2, 8 and 30 s, and ten times in five
+    minutes: no refusal, at most one correction a stall);
+  - `pending()` kept the acknowledged inputs after a correction; it is now emptied (the room drops everything sent
+    under the correction before);
+  - a door pair moved a player 5.9 m on no substep budget at two doors a second, so hopping beat a run: the room now
+    takes 1.75 doors a second (above). Charging doors to the substep budget instead was tried and dropped: the honest
+    drivers of the parity proof were then corrected, since a door is a teleport the game grants and walking at a run
+    between doors is honest;
+  - at the wheel, a replay the Ring-0 audit refused was kept; it is now undone to the car's last audited state;
+  - the page side (a fourth reviewer driving the real realm against the real host): an honest player was removed for
+    walking or driving along the shared wall of a terrace's lots, where the page and the room take two contacts in
+    their own orders and part by micrometres; drift within `MIRROR.drift` is now kept as replayed and put back
+    uncounted (`mirror.node.test.ts`, `replication.test.ts`, the parity proof's liar drifting in turn). A reconnected
+    page could not take back a car it had left (the room forgets a session's held cars; the page kept the car stopped
+    off its lane forever): every car the room does not hold now goes back onto its ring's lane as traffic, on both
+    sides. And an E pressed while a correction was in flight was applied before it and reported as a door out of a
+    car the room never had: corrections now go ahead of the player's queued commands;
+  - tests that checked less than their names said: the clock speed hack (the packet refused was an honest one), a
+    full input never filled, the CSP checked one way only, a log check whose newline was already escaped, the backlog
+    rule read only from the source (now also seen in action), the room's refused commands never sent, and the smoke
+    test's honest walk, which passed only if a snapshot landed inside a 200 ms window (it now waits for the
+    acknowledgement).
 - **Open, for the operator.**
   - **AI cars are checked by an envelope, not a coordinate**, for the reason above. A client can claim an AI car
     anywhere on its own ring's lane within reach of its door; what it gains is a door's reach, at the door rate.

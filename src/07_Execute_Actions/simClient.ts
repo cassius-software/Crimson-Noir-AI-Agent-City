@@ -35,6 +35,8 @@ export class SimClient {
   #spareCraft: ArrayBuffer | null = null
   #spareRigs: ArrayBuffer | null = null
   #queue: SimCommand[] = []
+  /** Commands that go ahead of the queue in the next request (send's `first`). */
+  #first: SimCommand[] = []
   #dropped = 0
   #closed = false
   /** Players 1..3's controls, sent with every step request (setPlayers); null for one player. */
@@ -104,11 +106,15 @@ export class SimClient {
     this.#players = players && players.length > 0 ? players.slice(0, MAX_PLAYERS - 1) : null
   }
 
-  /** Queues a command for the next step request. */
-  send(cmd: SimCommand): void {
+  /**
+   * Queues a command for the next step request. `first`: ahead of every command queued the ordinary way (a network
+   * room's switch and corrections: the player's own commands, queued before the truth arrived, then act on the truth).
+   */
+  send(cmd: SimCommand, first = false): void {
     if (this.#closed) return
-    if (this.#queue.length >= MAX_QUEUE) { this.#dropped++; return }
-    this.#queue.push(cmd)
+    if (this.#queue.length + this.#first.length >= MAX_QUEUE) { this.#dropped++; return }
+    if (first) this.#first.push(cmd)
+    else this.#queue.push(cmd)
   }
 
   /**
@@ -118,7 +124,8 @@ export class SimClient {
   request(input: StepInput): boolean {
     if (this.#pending || this.#closed) return false
     this.#pending = true
-    const cmds = this.#queue
+    const cmds = this.#first.length > 0 ? [...this.#first, ...this.#queue] : this.#queue
+    this.#first = []
     this.#queue = []
     const buffer = this.#spare, crowdBuffer = this.#spareCrowd, craftBuffer = this.#spareCraft, rigBuffer = this.#spareRigs
     this.#spare = null

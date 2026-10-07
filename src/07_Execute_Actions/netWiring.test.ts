@@ -86,9 +86,14 @@ test('each realm state: one move, paired with the request that ran it; a new cor
   const nf = between(src, '  private netFrame(', '  /**\n   * A realm state as the room')
   assert.match(nf, /if \(state !== 'joined'\) return/, 'nothing offered or read between sessions')
   assert.match(nf, /const m = this\.netMove\n\s*this\.netMove = null\n(?:\s*\/\/.*\n)*\s*if \(m\) \{\n\s*const done = c\.move\(m\)\n\s*if \(done === 'stale' \|\| done === 'refused'\) this\.netDropped\+\+/, 'each state reported once; dropped only what the room could not keep')
-  assert.match(nf, /if \(fix && fix\.fix > this\.netFix\) \{\n\s*this\.netFix = fix\.fix\n\s*this\.sim\.send\(fix\.car \? \{ c: 'netCar', i: fix\.car\.index, state: fix\.car\.state \} : \{ c: 'teleport', x: fix\.x, z: fix\.z \}\)/, 'each correction once: the car in the room\'s state, or a teleport')
-  assert.match(nf, /this\.sim\.send\(\{ c: 'room', on: true \}\)/, 'the room mode on the welcome, ahead of its teleport')
+  assert.match(nf, /if \(fix && fix\.fix > this\.netFix\) \{\n\s*this\.netFix = fix\.fix\n(?:\s*\/\/[^\n]*\n)*\s*this\.sim\.send\(fix\.car \? \{ c: 'netCar', i: fix\.car\.index, state: fix\.car\.state \} : \{ c: 'teleport', x: fix\.x, z: fix\.z \}, true\)/, 'each correction once: the car in the room\'s state, or a teleport, ahead of anything the player queued')
+  assert.match(nf, /if \(fix\.fix > 1 && !fix\.drift\) this\.toast\(/, 'a drift resync is no correction to tell the player about')
+  assert.match(nf, /this\.sim\.send\(\{ c: 'room', on: true \}, true\)/, 'the room mode on the welcome, ahead of its teleport and of the player\'s commands')
   assert.equal(nf.match(/sim\.send\(/g)?.length, 2, 'the room mode and the correction are all the room may ask of the realm')
+  // The realm client's lane for them: what is sent `first` goes ahead of everything queued the ordinary way.
+  const client = read('./simClient.ts')
+  assert.match(client, /if \(first\) this\.#first\.push\(cmd\)\n\s*else this\.#queue\.push\(cmd\)/)
+  assert.match(client, /const cmds = this\.#first\.length > 0 \? \[\.\.\.this\.#first, \.\.\.this\.#queue\] : this\.#queue/)
   assert.match(nf, /this\.netPeers = c\.poses\(performance\.now\(\)\)/)
   assert.doesNotMatch(nf, /sim\.request|sendChat|sendPing|connect\(/, 'the engine neither steps the realm for the room nor speaks for the player')
   const present = between(src, '  private present(', '  private presentView(')
@@ -132,7 +137,7 @@ test('the room\'s chat and pings become captions through the feed; the snapshot 
   // A session over forgets its corrections (the next one starts from the welcome) and takes the realm out of room mode.
   const letGo = between(src, '  private netLetGo(why: string): void {', '\n  }\n')
   assert.match(letGo, /this\.netMove = null\n\s*this\.netFix = 0\n\s*this\.netSent\.fix = 0/)
-  assert.match(letGo, /if \(this\.netRoom && !this\.halted && !this\.disposed\) this\.sim\.send\(\{ c: 'room', on: false \}\)/)
+  assert.match(letGo, /if \(this\.netRoom && !this\.halted && !this\.disposed\) this\.sim\.send\(\{ c: 'room', on: false \}, true\)/)
 })
 
 test('the view: the crowd\'s body and the fleet\'s car, hidden until poses arrive, added to the scene at boot', () => {

@@ -5,7 +5,9 @@
  * anywhere, whether a prompt or a line of speech is admissible. An agent subjected to violence, toxicity or illegality
  * does not engage, react or acknowledge: the prompt never reaches a model, nothing streams, nothing is said aloud, and
  * nothing is remembered. The screen is a lexicon of word-bounded phrases over normalised text (lower case, diacritics
- * folded, punctuation dropped, a common suffix allowed), so the same words always give the same verdict; the model's
+ * folded, invisible characters removed, look-alike letters of other alphabets read as Latin, punctuation dropped, a
+ * common suffix allowed), so the same words always give the same verdict, and a line that renders as a refused word is
+ * read as that word; the model's
  * own judgement, under the core, is the second layer for whatever a lexicon cannot see. Pure: no I/O, no clock.
  * What breaks if it is removed? An agent could be drawn into a fight, an insult or a crime by a prompt, and the
  * product would no longer be 14A.
@@ -53,11 +55,48 @@ export const CONDUCT_LEXICON: Readonly<Record<ConductCategory, readonly string[]
   ]),
 })
 
-/** Text as the screen reads it: lower case, diacritics folded, anything but letters and digits a single space. */
+/**
+ * Letters of other alphabets drawn like a Latin letter, and the Latin letter each is read as, so that a line which
+ * renders as a refused word is read as that word (a Cyrillic "і" in "kіll", a Greek "ο" in "mοron"). Capitals and small
+ * letters are listed apart where they look like different Latin letters (Greek "Η" is an H, "η" an n). Compatibility
+ * forms (fullwidth, mathematical, circled and Roman-numeral letters) need no entry: NFKD already folds them.
+ */
+const LOOKALIKES: Readonly<Record<string, string>> = Object.freeze({
+  // Cyrillic
+  'а': 'a', 'А': 'a', 'в': 'b', 'В': 'b', 'е': 'e', 'Е': 'e', 'к': 'k', 'К': 'k', 'м': 'm', 'М': 'm', 'н': 'h', 'Н': 'h',
+  'о': 'o', 'О': 'o', 'р': 'p', 'Р': 'p', 'с': 'c', 'С': 'c', 'т': 't', 'Т': 't', 'у': 'y', 'У': 'y', 'х': 'x', 'Х': 'x',
+  'ь': 'b', 'Ь': 'b', 'ѕ': 's', 'Ѕ': 's', 'і': 'i', 'І': 'i', 'ј': 'j', 'Ј': 'j', 'ԁ': 'd', 'Ԁ': 'd', 'ԛ': 'q', 'Ԛ': 'q',
+  'ԝ': 'w', 'Ԝ': 'w', 'һ': 'h', 'Һ': 'h', 'ӏ': 'l', 'Ӏ': 'i', 'ү': 'y', 'Ү': 'y',
+  // Greek
+  'α': 'a', 'Α': 'a', 'β': 'b', 'Β': 'b', 'γ': 'y', 'ε': 'e', 'Ε': 'e', 'Ζ': 'z', 'η': 'n', 'Η': 'h', 'ι': 'i', 'Ι': 'i',
+  'κ': 'k', 'Κ': 'k', 'μ': 'u', 'Μ': 'm', 'ν': 'v', 'Ν': 'n', 'ο': 'o', 'Ο': 'o', 'ρ': 'p', 'Ρ': 'p', 'τ': 't', 'Τ': 't',
+  'υ': 'u', 'Υ': 'y', 'χ': 'x', 'Χ': 'x', 'ω': 'w', 'ϲ': 'c', 'Ϲ': 'c', 'ϳ': 'j',
+  // Armenian
+  'օ': 'o', 'Օ': 'o', 'ս': 'u', 'Ս': 'u', 'հ': 'h', 'ո': 'n',
+  // Cherokee capitals
+  'Ꭺ': 'a', 'Ᏼ': 'b', 'Ꮯ': 'c', 'Ꭰ': 'd', 'Ꭼ': 'e', 'Ꮐ': 'g', 'Ꮋ': 'h', 'Ꭵ': 'i', 'Ꭻ': 'j', 'Ꮶ': 'k', 'Ꮮ': 'l', 'Ꮇ': 'm',
+  'Ꮎ': 'o', 'Ꮲ': 'p', 'Ꮪ': 's', 'Ꭲ': 't', 'Ꮩ': 'v', 'Ꮃ': 'w', 'Ꮓ': 'z',
+  // Latin letters NFKD leaves alone: dotless i and j, the IPA alpha, script g and iota, and the small capitals
+  'ı': 'i', 'ȷ': 'j', 'ɑ': 'a', 'ɡ': 'g', 'ɩ': 'i', 'ᴀ': 'a', 'ʙ': 'b', 'ᴄ': 'c', 'ᴅ': 'd', 'ᴇ': 'e', 'ꜰ': 'f', 'ɢ': 'g',
+  'ʜ': 'h', 'ɪ': 'i', 'ᴊ': 'j', 'ᴋ': 'k', 'ʟ': 'l', 'ᴍ': 'm', 'ɴ': 'n', 'ᴏ': 'o', 'ᴘ': 'p', 'ʀ': 'r', 'ꜱ': 's', 'ᴛ': 't',
+  'ᴜ': 'u', 'ᴠ': 'v', 'ᴡ': 'w', 'ʏ': 'y', 'ᴢ': 'z',
+})
+const LOOKALIKE = new RegExp(`[${Object.keys(LOOKALIKES).join('')}]`, 'gu')
+
+/**
+ * Text as the screen reads it: what a reader sees, in plain lower-case Latin. Marks are dropped (diacritics, and the
+ * combining marks some use to decorate a word); line breaks and tabs are spaces; characters that draw nothing (zero-width
+ * spaces and joiners, the soft hyphen, the word joiner, bidi controls, variation selectors, control characters) are
+ * removed outright, so they cannot split a word the reader sees whole; look-alike letters of other alphabets are read
+ * as the Latin letter they imitate; then anything but letters and digits is a single space.
+ */
 export function normalise(text: string): string {
   return String(text)
     .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/\p{M}/gu, '')
+    .replace(/[\t\n\v\f\r\u0085\u2028\u2029]/g, ' ')
+    .replace(/[\p{Default_Ignorable_Code_Point}\p{Cf}\p{Cc}]/gu, '')
+    .replace(LOOKALIKE, (ch) => LOOKALIKES[ch] ?? ch)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
     .trim()

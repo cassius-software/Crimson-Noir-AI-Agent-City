@@ -247,6 +247,13 @@ export function carSubstep(rig: CarRig, cmd: WheelCommand, handbrake: boolean, m
   rig.controller.updateVehicle(h, NOT_PEOPLE, WHEEL_RAY_GROUPS)
 }
 
+/**
+ * The cars a network room holds for one player where they were left (garage.node.ts park: the oldest is let go past
+ * it), and so the cars the page keeps stopped for player 1 in a room before it hands the oldest back to traffic
+ * (simCore.ts): the two sides forget the same car.
+ */
+export const HELD_CARS = 16
+
 /** The command a parked car's wheels hold: the brake on, nothing else (vehicles.ts think). */
 export const PARKED: Readonly<WheelCommand> = Object.freeze({ throttle: 0, brake: 4, steer: 0 })
 

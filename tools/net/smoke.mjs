@@ -114,8 +114,15 @@ try {
     send(honest([[0, RUN, 1]]))
     await sleep(1000 / 60)
   }
-  await sleep(200)
-  const snap = got.slice(before).filter((g) => g.msg.t === 'snapshot').at(-1)?.msg
+  // The room acknowledges in its snapshots (one a second here): wait for the one that names the last step, however
+  // late a loaded machine makes it, rather than for a fixed time.
+  let snap
+  for (let t = 0; t < 10_000 && !snap; t += 20) {
+    snap = got.slice(before).find((g) => g.msg.t === 'snapshot' && g.msg.ack === seq)?.msg
+    if (!snap && !got.slice(before).some((g) => g.msg.t === 'correct')) await sleep(20)
+    else if (!snap) break
+  }
+  snap ??= got.slice(before).filter((g) => g.msg.t === 'snapshot').at(-1)?.msg
   const corrected = got.slice(before).some((g) => g.msg.t === 'correct')
   check(!corrected && snap?.ack === seq, `an honest walk of 40 steps is kept: the snapshot acknowledges step ${snap?.ack}, no correction`)
   if (snap) truth = snap.you

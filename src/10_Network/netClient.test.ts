@@ -14,10 +14,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { RUN } from '../07_Execute_Actions/simProtocol.ts'
-import { createNetClient, HOST_REFUSALS, KEEPALIVE_MS, netServer, type Move, type MoveStatus, type NetClient, type NetSocket, type NetStatus } from './netClient.ts'
+import { createHmac } from 'node:crypto'
+import { createNetClient, HOST_REFUSALS, KEEPALIVE_MS, MAX_IN_FLIGHT, netServer, type Move, type MoveStatus, type NetClient, type NetSocket, type NetStatus } from './netClient.ts'
 import { netServer as gate } from '../02_Define_The_Rules/airgap.ts'
 import { planeAuthority, planeStep } from './plane.node.ts'
-import { AUTH_PREFIX, encode, LIMITS, PROTOCOL_VERSION, sealMessage, SUBPROTOCOL, type ChatRelayMessage, type PingRelayMessage, type RemotePlayer, type SnapshotMessage } from './replication.ts'
+import {
+  admit, AUTH_PREFIX, createRoom, encode, handle, LIMITS, openClientFrame, poses, PROTOCOL_VERSION, refuse, sealMessage, snapshotFor, SUBPROTOCOL, tickRoom,
+  type ChatRelayMessage, type PingRelayMessage, type RemotePlayer, type ServerMessage, type SnapshotMessage,
+} from './replication.ts'
 import { startHost, type Host } from './replication.node.ts'
 
 const SECRET = 'client-test-secret'
@@ -317,8 +321,17 @@ test('over the client\'s own rate the steps are held and coalesced into runs, th
     c.move({ mode: 'foot', x: 0, z: vz, n, heading: 0, at: { x: 0, y: 0.92, z }, fix: 1, ...(door && { door }) })
   const wheel = (z: number, throttle: number, n = 1, door?: Move['door']): MoveStatus =>
     c.move({ mode: 'drive', x: 0, z: 0, wheels: { throttle, brake: 0, steer: 0, handbrake: false }, n, heading: 0, at: { x: 0, y: 0.7, z }, fix: 1, ...(door && { door }) })
-  for (let i = 1; i <= LIMITS.inputBurst; i++) assert.equal(step(i, 1), 'sent', `step ${i} within the burst`)
   const inputs = () => sent.filter((m) => m.body.t === 'input').map((m) => m.body)
+  // The room acknowledges what has arrived, as its snapshots do every tick (the welcome was envelope 1).
+  let envelope = 1
+  const ack = (): void => {
+    const tick = envelope
+    s.onmessage?.({ data: sealMessage({ t: 'snapshot', tick, ack: inputs().at(-1)?.seq ?? 0, fix: 1, you, players: [] }, ++envelope, 'token') })
+  }
+  for (let i = 1; i <= LIMITS.inputBurst; i++) {
+    assert.equal(step(i, 1), 'sent', `step ${i} within the burst`)
+    ack()
+  }
   assert.equal(inputs().length, LIMITS.inputBurst)
   // The rate is spent: three steps at one velocity, two at another, held as two runs.
   const z0 = LIMITS.inputBurst
@@ -356,11 +369,119 @@ test('over the client\'s own rate the steps are held and coalesced into runs, th
   // A door with no substep is still a door.
   clock += 1000
   assert.equal(wheel(z0 + 15, 0, 0, { enter: { car: 2, state } }), 'sent')
-  // A full input (LIMITS.stepsPerInput substeps) goes at once.
-  clock += 1000
-  for (let i = 0; i < 40; i++) wheel(z0 + 20 + i, 1, 1)
-  assert.ok(inputs().every((m) => m.segs.reduce((a, r) => a + r[r.length - 1], 0) <= LIMITS.stepsPerInput), 'never more substeps than an input may carry')
+  // A full input (LIMITS.stepsPerInput substeps) goes at once, whatever the rate says: with the rate spent, the steps
+  // pile up in one held input until the next would not fit, and that one sends it.
+  const total = (m: { segs: number[][] }): number => m.segs.reduce((a, r) => a + r[r.length - 1], 0)
+  ack()
+  while (wheel(z0 + 19, 1, 1) === 'sent') ack()
+  const piled = inputs().length
+  for (let i = 1; i < LIMITS.stepsPerInput; i++) assert.equal(wheel(z0 + 19 + i, 1, 1), 'held', `substep ${i + 1} held`)
+  assert.equal(inputs().length, piled, 'a held input of 30 substeps, nothing sent')
+  assert.equal(wheel(z0 + 50, 1, 1), 'held', 'the next substep does not fit: the full one went, this one is held')
+  assert.equal(inputs().length, piled + 1)
+  assert.deepEqual([total(inputs().at(-1)!), inputs().at(-1)!.claim.z], [LIMITS.stepsPerInput, z0 + 19 + LIMITS.stepsPerInput - 1])
+  assert.ok(inputs().every((m) => total(m) <= LIMITS.stepsPerInput), 'never more substeps than an input may carry')
   assert.equal(inputs().filter((m) => m.door !== undefined).length, 3, 'each door in exactly one input')
+})
+
+/**
+ * An honest page (the real client, paced by its own buckets) through the real room core (openClientFrame and handle,
+ * as the host's frame handler calls them) over the open plane, one 60 Hz frame at a time, with network stalls in both
+ * directions at the given times: everything sent during a stall arrives together when it clears. Returns what the room
+ * counted against the client.
+ */
+function stalled(stalls: { at: number; s: number }[], endS: number): { refusals: number; corrections: number; kicked: string | null; delivered: number[] } {
+  const mac = (k: string, m: string): string => createHmac('sha256', k).update(m).digest('hex')
+  const TOKEN = 'stall.token'
+  let now = 1_000_000
+  const room = createRoom(planeAuthority(WORLD), 20)
+  const peer = admit(room, now)!
+  let hostSent = 0
+  let kicked: string | null = null
+  const toClient: string[] = []
+  const toHost: string[] = []
+  let stall = false
+  const delivered: number[] = []
+  const sock: NetSocket = { send: (d) => { toHost.push(d) }, close() {}, onopen: null, onmessage: null, onclose: null, onerror: null }
+  const client = createNetClient({ now: () => now, every: () => () => {}, open: () => sock })
+  assert.equal(client.connect('ws://127.0.0.1:8787', TOKEN, 'Ada', WORLD), null)
+  sock.onopen!({})
+  const sendHost = (m: ServerMessage): void => { toClient.push(sealMessage(m, ++hostSent, TOKEN, mac)) }
+  const pump = (): void => {
+    if (stall) return
+    while (toHost.length > 0 && !kicked) {
+      const read = openClientFrame(peer, toHost.shift()!, mac)
+      const out = read.ok ? handle(room, peer, read.msg, now, (t) => t === TOKEN) : refuse(peer, read.reason, now)
+      if (out.reply) sendHost(out.reply)
+      if (out.kick) kicked = out.kick
+    }
+    while (toClient.length > 0) sock.onmessage!({ data: toClient.shift()! })
+  }
+  pump()
+  let at = { x: 0, y: 0, z: 0 }
+  let fix = 0
+  let lastTick = now
+  const start = now
+  for (let f = 0; f < endS * 60 && !kicked; f++) {
+    now += 1000 / 60
+    const t = (now - start) / 1000
+    const inStall = stalls.some((x) => t >= x.at && t < x.at + x.s)
+    if (stall && !inStall) {
+      delivered.push(toHost.length)
+      stall = false
+    }
+    stall = inStall
+    const c = client.correction()
+    if (c && c.fix > fix) {
+      fix = c.fix
+      at = { x: c.x, y: c.y, z: c.z }
+    }
+    at = planeStep(at, [[1, 0, 1]])
+    client.move({ mode: 'foot', x: 1, z: 0, n: 1, heading: 0, at, fix })
+    if (now - lastTick >= 50) {
+      lastTick = now
+      tickRoom(room)
+      if (!stall) sendHost(snapshotFor(room, peer, poses(room)))
+    }
+    pump()
+  }
+  return { refusals: peer.refusals, corrections: peer.corrections, kicked, delivered }
+}
+
+test('a stalled link: the client stops at MAX_IN_FLIGHT, so whatever piled up arrives within the host\'s allowance; a stall costs at most one correction, never a refusal', () => {
+  assert.ok(MAX_IN_FLIGHT < LIMITS.inputBurst, 'the backlog always fits the host\'s burst')
+  // One stall of each length: the short one costs nothing, the long ones one correction each (the steps past the cap).
+  for (const s of [2, 8, 30]) {
+    const r = stalled([{ at: 30, s }], 30 + s + 10)
+    assert.equal(r.kicked, null, `a ${s} s stall`)
+    assert.equal(r.refusals, 0, `a ${s} s stall`)
+    assert.ok(r.delivered[0] <= MAX_IN_FLIGHT + 1, `${r.delivered[0]} frames piled up`)
+    assert.equal(r.corrections, s * 60 > MAX_IN_FLIGHT ? 1 : 0, `a ${s} s stall`)
+  }
+  // Ten four-second stalls half a minute apart: nothing adds up.
+  const many = stalled(Array.from({ length: 10 }, (_, k) => ({ at: 20 + 30 * k, s: 4 })), 20 + 30 * 10 + 5)
+  assert.deepEqual([many.kicked, many.refusals, many.corrections], [null, 0, 10])
+})
+
+test('a correction empties what is pending: the room drops everything sent under the correction before', () => {
+  let socket: NetSocket | null = null
+  const c = createNetClient({ now: () => 0, every: () => () => {}, open: () => (socket = { send() {}, close() {}, onopen: null, onmessage: null, onclose: null, onerror: null }) })
+  assert.equal(c.connect('wss://localhost:8788', 'token', 'Ada', WORLD), null)
+  const s = socket as unknown as NetSocket
+  s.onopen?.({})
+  const you = { id: 1, name: 'Ada', x: 0, y: 0.92, z: 0, heading: 0, vx: 0, vz: 0, speed: 0, driving: false }
+  s.onmessage?.({ data: sealMessage({ t: 'welcome', v: PROTOCOL_VERSION, id: 1, tick: 0, tickHz: 20, fix: 1, you, players: [] }, 1, 'token') })
+  for (let z = 1; z <= 5; z++) c.move({ mode: 'foot', x: 0, z: 1, n: 1, heading: 0, at: { x: 0, y: 0.92, z }, fix: 1 })
+  assert.deepEqual(c.pending().map((i) => i.seq), [1, 2, 3, 4, 5])
+  s.onmessage?.({ data: sealMessage({ t: 'snapshot', tick: 1, ack: 2, fix: 1, you, players: [] }, 2, 'token') })
+  assert.deepEqual(c.pending().map((i) => i.seq), [3, 4, 5], 'a snapshot acknowledges up to its ack')
+  s.onmessage?.({ data: sealMessage({ t: 'correct', fix: 2, ack: 3, you, reason: 'claim', tick: 1 }, 3, 'token') })
+  assert.deepEqual(c.pending(), [], 'everything after the ack was sent under the old correction')
+  assert.equal(c.stalled, false)
+  assert.equal(c.corrections, 1)
+  // A drift resync is snapped to like any correction, but it is not one of the player's.
+  s.onmessage?.({ data: sealMessage({ t: 'correct', fix: 3, ack: 3, you, reason: 'claim 5.0 µm', tick: 2, drift: true }, 4, 'token') })
+  assert.deepEqual([c.correction()?.fix, c.correction()?.drift, c.corrections, c.corrected], [3, true, 1, 'claim'])
 })
 
 test('a host the core refuses: HOST_REFUSALS malformed messages and the client leaves with the reason (an injected socket)', () => {
