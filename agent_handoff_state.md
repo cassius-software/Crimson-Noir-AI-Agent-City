@@ -24,12 +24,19 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
     sort animated comparator by comparator with the 0-1 proof; ESC skips the film, never the checks; any failure is
     the fault screen), `term.rs` (the Sith Lord Terminal: a bounds-checked Forth over the arrays; caps/role read-only,
     `ask` requests judged by the kernels; knobs within the validator's ranges; `cfg`/`digest` read-only with a live
-    SHA-256 re-check; step budget = loop breaker; Rule 110 runs in it). 44 core tests.
+    SHA-256 re-check; step budget = loop breaker; Rule 110 runs in it). 41 core tests (+3 ignored preview tools).
     The image runs it all: QEMU boot -> SELFTEST PASS 6.8 s -> the film (about 14 fps under TCG) -> PASSED 76 s ->
     terminal (golden MATCH, digest holds, help example) -> `halt` powers the VM off (runtime services).
     Boot test with screenshots: see the command under Next steps.
-  - NEXT: the hosted wgpu runtime with WGSL parity (31), the README/docs, the final boot test of .img and .iso with
-    screenshots sent to the operator (32).
+  - DONE (task 31) the hosted runtime (`src/`, wgpu 30, bytemuck, log + env_logger, pollster): `shaders/*.wgsl`
+    (swarm tick, routing relaxation, bitonic pass; branch-free, linted, naga-validated offline), `gpu.rs` (SoA
+    buffers, batched dispatches at dynamic uniform offsets, the scripted run replayed on the GPU), `host.rs` (a
+    thread-sealable counting allocator: tutorial/terminal frames run sealed on the desktop too; host platform; PNG).
+    `cargo run -- selftest` on lavapipe: GPU scripted run = CPU matrix word for word (fingerprint 0x83765bab), routing
+    fields equal (118 passes), 1,048,576 keys sorted equal. Tests: 6 (random-state parity with injected requests and
+    single-tick comparisons; 4 of 5 shader mutants caught, the 5th is equivalent). `frames DIR`, `terminal` (stdin).
+  - NEXT (task 32): crimson_noir_os/README.md (build, boot, test, limits), the final boot test of .img and .iso with
+    screenshots sent to the operator, handoff, commit.
 - The local tag `stable-beta` exists only locally (GitHub refused the tag push, HTTP 403).
 - Machine: 4 CPUs, 16 GB. Do not run several Rapier-heavy experiments and a multi-agent workflow at once (exit 137 once).
 
@@ -286,7 +293,8 @@ trademark to clear before a commercial release.
 ```sh
 cd /home/user/Crimson-Noir-AI-Agent-City && git fetch origin claude/quirky-faraday-xkpdln && git status && git log --oneline -5
 npx tsc -b && npx oxlint && npm test && npm run build && npm run smoke:net     # the release's checks, all green
-cd crimson_noir_os && cargo test -p noir_core                                  # the OS core (44 tests)
+cd crimson_noir_os && NOIR_REQUIRE_GPU=1 cargo test --workspace                # core 41 + hosted 6 (GPU via lavapipe)
+cargo run -- selftest && cargo run -- frames /tmp/frames                        # CPU = GPU, word for word; PNG frames
 cargo clippy --workspace --all-targets && cargo clippy -p crimson_boot --target x86_64-unknown-uefi --release
 sh tools/build-image.sh                                                        # target/image/crimson_noir_os.{img,iso}
 python3 -I tools/boot_test.py target/image/crimson_noir_os.img --timeout 150 --wait "SELFTEST PASS" \
