@@ -5,9 +5,9 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
 
 ## Where things stand (updated as work lands)
 
-- Phase 18 (formal verification, self-healing CI/CD, IIoT telemetry) is built on branch
-  `claude/phase-18-verification-selfheal-6yjhen`: see the Phase 18 section at the end. No release tag was cut; the
-  operator decides when (the bake now refuses a commit whose proofs fail).
+- Phase 18 (formal verification, self-healing CI/CD, IIoT telemetry) is merged into main (PR #3, ff8dc5d): see the
+  Phase 18 section at the end. No release tag was cut; the operator decides when (the bake now refuses a commit
+  whose proofs fail). CI now runs on every pull request and push to main (ci.yml).
 - Phase 14 (the approved hosted-runtime bridge) is complete: see the Phase 14 section at the end.
 - Branch `claude/quirky-faraday-xkpdln`. Phase 13 is complete and release-ready: two adversarial reviews fixed (the
   second's 4 + 13 + 4 findings below), 1,219 tests passing, tagged `v1.0.0-stable-release` (see `git log`, `git tag`).
@@ -587,7 +587,7 @@ an adversarial campaign (extreme latency, cache desyncs, dropped packets); verif
 Working rules from the project: deliver through a PR; no tag or release without the operator's confirmation; the
 agent opens PRs and never merges.
 
-### State: BUILT, on the branch (PR open; nothing released)
+### State: MERGED (PR #3 into main at ff8dc5d, merged by the operator on 2026-10-07; nothing released)
 
 **Part 1, the verification step (`tools/verify/fvps.sh`, modes all|kani|smt|wasm|ir).** Wired into
 build-release.yml before the bake (smt, wasm, ir: a failed proof refuses the bake) and into the new `ci.yml`
@@ -603,7 +603,14 @@ the release bake). What exists and what it proves:
   the values). Lessons: fill loops over symbolic arrays fail the unwinding assertion, use `kani::any::<[T; N]>()`;
   CBMC's NaN checks fire on any float arithmetic over symbolic words, so float-only functions must be stubbed; CBMC
   takes ~6 GB per harness, run them one at a time; `pkill -f "cargo kani"` kills the shell that runs it (`pkill -x
-  cbmc`). KANI_RESULTS_LINE
+  cbmc`). Results (every harness proved, `sh tools/verify/fvps.sh kani`, times on a 4-core container): core masks
+  5 s, compare_exchange 5 s, bitonic 1 s, flush 156 s, relax (8x8 floor) 49 s, agent_tick 1,086 s; routing
+  arena_setter under a minute, no-track refused 153 s, no-track refused by the projection 476 s, check on any arena
+  117 s, pose on one piece 280 s, pose on two pieces 389 s, next stop and speed limit 609 s, projection on a short
+  piece 1,252 s. Four harnesses were re-bounded after a first run could not finish them (the relaxation at 32x32,
+  the bitonic permutation by sums, the arena check over two pieces' words, the projection with the refinement
+  inlined), and the routing harnesses run with `--no-overflow-checks` (a NaN is a value, not a trap). ci.yml runs
+  them as a `kani` matrix of six groups on parallel runners (90 min each); the fast `fvps` job runs smt, ir, wasm.
 - Z3 theorems (`tools/verify/fvps_smt.py`, 15 s): index arithmetic over 32-bit words and IEEE doubles for every
   validated dimension, each with a vacuity check and a self-check that a wrong theorem is refused. All proved.
 - `tools/verify/wasm_airgap.py`: 0 imports, 1 exported memory, no start, no exported table, the exact export sets
@@ -645,7 +652,15 @@ refused forever), `crimson_noir_os/src/telemetry.rs` + `shaders/telemetry.wgsl` 
 lavapipe for 1..4097 frames, pinned VECTORS 0xf8da9ded, 0x0543e119, 0x525f35c4, chain 0xdeb20183; in the no-branch
 and naga validation lists).
 
-**Verified before the PR:** VERIFIED_LINE
+**Verified before the merge (locally, and on CI for the page, Rust and fast proof jobs):** tsc, oxlint, `npm test`
+1,312 tests (1,301 pass, 11 skipped), build, `smoke`, the 16 self-heal tests, `cargo test --workspace` (incl. the
+GPU parity on lavapipe with NOIR_REQUIRE_GPU=1 and the selftest's telemetry step), clippy on every target, the
+native tests, fvps smt/ir/wasm, every Kani harness (above), two clean UEFI builds byte-identical. The first CI runs
+found and fixed four things the local runs had not: the runner's `pip install z3-solver` lands in the user site
+that `python3 -I` ignores; the committed kv-pager module embedded this checkout's path; `airgap.test.ts` had no
+allowlist entry for telemetry.ts; `replication.node.test.ts`'s mirror test raced the host's 1 Hz snapshot on a
+loaded runner (now tolerated). Three routing-crate clippy lints on the current toolchain were fixed (the module
+regenerated, same size, new bytes).
 
 **Not done / the operator's call:** no release tag (the directive's "finalize the deployment" means: dispatch
 build-release.yml on main after the PR merges; the bake now runs the proofs first). The self-heal workflow needs the

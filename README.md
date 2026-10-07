@@ -1836,9 +1836,10 @@ devices.
 
 **The formal verification step (FVPS).** `sh tools/verify/fvps.sh` runs before every release bake
 (`build-release.yml` refuses to bake a commit whose proofs fail) and in `ci.yml` on every pull request and push to
-`main`, where it is the `fvps` job (the Kani harnesses take about an hour on a runner; the `rust` and `page` jobs
-run the tests, clippy, tsc, oxlint, the build and the air-gap check first). It has four parts, each honest about
-what it proves:
+`main`: the `fvps` job runs the theorems, the IR scan and the air gap in minutes, and the `kani` matrix runs the
+proof harnesses in six groups on parallel runners (the longest harness takes about twenty minutes; the `rust` and
+`page` jobs run the tests, clippy, tsc, oxlint, the build and the air-gap check alongside). It has four parts, each
+honest about what it proves:
 - **Kani (CBMC, bit-precise model checking)** over harnesses compiled only under `cfg(kani)`:
   `crimson_noir_os/crates/noir_core/src/verify.rs` lays a symbolic Global Matrix of the smallest validated
   dimensions (64 agents, an 8-word memory block, 2 stations, a 32×32 floor, every kernel knob symbolic) and proves
@@ -1848,9 +1849,12 @@ what it proves:
   `native/routing/src/verify.rs` lays a symbolic arena (every word any f64, NaN and infinities included) and proves
   the WebAssembly routing core never traps: the arena setter and `routing_check` on any arena, the pose, the piece
   search, the next stop, the speed limit and the projection on one- and two-piece tracks with up to two stops, every
-  index they compute in bounds. The transcendental functions, the Bézier point, the offsets, the fold and the piece
-  evaluation are abstracted to "any f64" (sound: their results never become an index; their values are held bit for
-  bit by the parity tests, not proved here). The sizes are small because the checker unrolls every loop.
+  index they compute in bounds. The transcendental functions, the Bézier point, the offsets, the fold, the piece
+  evaluation and the Newton refinement are abstracted to "any f64" (sound: their results never become an index;
+  their values are held bit for bit by the parity tests, not proved here), and the routing harnesses run without
+  the checker's floating-point checks (a NaN is a value the module returns for a NaN input, not a trap; bounds,
+  pointers, integer overflow and assertions stay checked). The sizes are small because the checker unrolls every
+  loop (the relaxation pass is proved on an 8×8 floor; the theorems cover every validated floor).
 - **Z3 theorems** (`tools/verify/fvps_smt.py`) over 32-bit words and IEEE doubles, for every validated dimension:
   memory-slot isolation between agents, no 32-bit wrap in the index arithmetic, every field read in bounds, the goal
   mask, the stepped cell on the floor, the weight index, the relaxation neighbours, the bitonic comparators, the
