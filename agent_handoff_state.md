@@ -609,7 +609,8 @@ the release bake). What exists and what it proves:
   (`one_piece_words`: 12.5 GB and 21 min became 0.2 GB and 16 s for the same checks); `pkill -f "cargo kani"`
   kills the shell that runs it (`pkill -x cbmc`). Results (every harness proved, `sh tools/verify/fvps.sh kani`,
   times on a 4-core container): core masks 5 s, compare_exchange 5 s, bitonic 1 s, flush 156 s, relax (8x8 floor)
-  49 s, agent_tick (8x8 floor) 473 s at a 5.5 GB peak; routing arena_setter under a minute, no-track refused 153 s,
+  49 s, agent_tick (8x8 floor) 473 s at a 5.5 GB peak (284 s on the runner); routing arena_setter under a minute,
+  no-track refused 153 s,
   no-track refused by the projection 10 s, check on any arena 117 s, pose on one piece 280 s, pose on two pieces
   389 s, next stop and speed limit 609 s, projection on a short piece 16 s. Six harnesses were re-bounded after a
   run could not finish them: the relaxation at 32x32, the bitonic permutation by sums, the arena check over two
