@@ -371,3 +371,36 @@ Status and honest assessment:
   TLS; anything remote reaches the host through the operator's TLS reverse proxy, as the room's players do.
 - Tags `v1.0.0-stable-release` and `stable-beta` exist locally only: pushing tags returned HTTP 403 from the git
   proxy. The operator must push them (or create them on GitHub at the matching commits).
+
+## Phase 15 (operator directive): production infrastructure and CI/CD
+
+Directive: (1) `publish.ps1` for the operator to push the tags `v1.0.0-stable-release` and `stable-beta` at cb99379
+(the agent's git proxy answers 403 to tag pushes); (2) `.github/workflows/build-release.yml`: on tag push, set up Rust,
+build the OS, make the .img/.iso, attach them to a GitHub Release; (3) a minimal multi-stage Dockerfile for the
+Node host and an nginx TLS reverse proxy (wss:// outside, ws:// to the host inside).
+
+State (updated as work lands):
+- DONE, tested here: `Dockerfile` + `.dockerignore` (allowlist), `tools/net/closure.mjs` (the host's import closure,
+  via node:module stripTypeScriptTypes; equal to a runtime trace of what Node loads: 25 modules + rapier's manifest and
+  licence), `tools/net/image-check.mjs` (the image as built starts the host from /app alone, ledger door pinned, token
+  minted; the last stage depends on it), `tools/net/mint-token.mjs`, `deploy/compose.yaml` (host on an `internal`
+  network: no published port, no egress; nginx-unprivileged publishes 80/443), `deploy/nginx.conf`,
+  `deploy/bridge-tunnel.conf` (client-side TLS origination for the loopback-only Rust bridge), `deploy/README.md`,
+  `deploy/.gitignore`. Host change: NET_SECRET_FILE, NET_PRINT_TOKEN=0, refuse to run tokenless without a secret.
+  `crimson_noir_os/tools/build-image.sh` builds with --locked.
+  Image: distroless nodejs24 (pinned digest) + 27 files; 54.5 MB compressed (base 52.7 MB).
+  Checked with docker compose and a throwaway CA: 426/404/405/403/401 at the door, TLS1.1 refused, TLS1.3, HSTS,
+  a wss room join (welcome seal verified), the Rust bridge through the tunnel (verified, bit-exact, 4 tampers refused),
+  429s from nginx and from the host, rejoin after a host restart, no DNS or route out of the host, uid 65532 on a
+  read-only root, nginx -t as uid 101.
+- WRITTEN, being verified: `.github/workflows/build-release.yml` (bake job read-only: pinned Rust 1.97.0, cargo fetch
+  --locked, workspace tests with lavapipe, build-image.sh, QEMU boot of the .img through the terminal run and of the
+  .iso to SELFTEST PASS, SHA256SUMS; publish job alone has contents: write, gh release create/upload) and
+  `publish.ps1` (PS 5.1 + 7; refuses to move a published tag without -Force; atomic push; reads back).
+- IMPORTANT for the operator: cb99379 predates the workflow file, and a tag push runs the workflow as it is at the
+  tagged commit, so tags at cb99379 start no bake. publish.ps1 warns about this. Either tag the Phase 15 commit
+  (`.\publish.ps1 -Commit <sha>`) or, once the file is on the default branch (main), run the workflow by hand for the
+  existing tags (workflow_dispatch with `tag`).
+- Local test tooling (not committed): pwsh 7.4.2 copied out of mcr.microsoft.com/powershell into the scratchpad;
+  dockerd started by hand (`dockerd &`); the compose stack runs from deploy/ with secrets/ and tls/ (git-ignored).
+- An adversarial verify+review workflow (3 execution verifiers, 2 reviewers, skeptic pass) is running; findings to fix next.

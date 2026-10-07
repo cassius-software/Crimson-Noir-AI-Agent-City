@@ -29,6 +29,7 @@ npm run lint     # oxlint
 npm run serve:net  # the optional network host (Node only, never bundled): see Networking
 npm run smoke:net  # the host as a process of its own, attacked with crafted illegal movement: see Networking
 npm run smoke:bridge  # Crimson Noir OS's hosted runtime against the host's ledger door: see Networking
+docker compose -f deploy/compose.yaml up -d --build  # the host in production, behind TLS: see deploy/README.md
 ```
 
 Open `dist/index.html` directly: no server, and it works offline. The page sends nothing anywhere unless the
@@ -1467,6 +1468,25 @@ physics realm is the prediction that hides the latency.
       and a reward no clock gives.
     It also checks that the host still shares only the honest weights.
   - `ledger.node.test.ts` adds a fuzz: 40 sessions of mutated messages, none of which ever verifies.
+- **Deployment** (Phase 15, `deploy/`, `Dockerfile`). The host ships as a container image built from distroless
+  Node 24:
+  - It holds only the 27 files the host runs (`tools/net/closure.mjs` follows its imports the way Node does). That is
+    about 55 MB compressed, the base included.
+  - It runs as a non-root user on a read-only root.
+  - The image's own Node proves at build time that the host starts from those files alone.
+  
+  `deploy/compose.yaml` puts it behind nginx (`deploy/nginx.conf`):
+  - The proxy terminates TLS (1.2 and 1.3, with the hybrid post-quantum key exchange offered first) and admits only
+    `GET /` with a WebSocket upgrade.
+  - It checks Origin, limits each client address, and logs no header.
+  - The host sits on an internal network that has no published port and no route out.
+  
+  Operator tooling:
+  - Tokens are minted per player or runtime with `tools/net/mint-token.mjs`.
+  - The secret is a file (`NET_SECRET_FILE`), never an environment variable.
+  - The host prints no token when its logs are kept (`NET_PRINT_TOKEN=0`).
+  - An OS runtime's loopback-only bridge reaches a cloud host through `deploy/bridge-tunnel.conf`: a local nginx that
+    carries it over verified TLS.
 - **What is a stub, and what is not there.**
   - Voice: `attachPeer` places a peer's `MediaStream` in the soundscape, but the signalling that would carry one
     (offer, answer and candidates over this socket) is a documented stub, so no voice is sent or received.

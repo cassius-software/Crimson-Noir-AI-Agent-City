@@ -1,0 +1,70 @@
+# Why does this file exist? It runs the authoritative host in production: the host image (../Dockerfile) behind the TLS
+# proxy (nginx.conf). Only the proxy is reachable: it publishes 80 and 443. The host joins one network, `backend`,
+# which is internal: no port of it is published, nothing but the proxy is on it, and it has no route out, so the host
+# can answer the proxy and reach nothing at all. (Sharing one network namespace would keep the host on 127.0.0.1, but
+# a restart of the namespace's owner silently cuts the other off; an internal network has no such failure.)
+# Before the first `docker compose up -d` (see README.md here):
+#   secrets/net_secret     the host's HMAC secret (openssl rand -hex 32), readable by uid 65532 only
+#   tls/fullchain.pem      the certificate chain for the proxy's name, and
+#   tls/privkey.pem        its key, readable by uid 101 (the proxy's user)
+# Tokens: docker compose exec host /nodejs/bin/node tools/net/mint-token.mjs SUBJECT [HOURS]
+# What breaks if it is removed? The image and the proxy configuration have nothing that runs them together.
+
+name: crimson-noir
+
+services:
+  host:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: crimson-noir-host:local
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: 1g
+    environment:
+      NET_HOST: 0.0.0.0           # the internal network's address, which only the proxy can reach
+      NET_SECRET_FILE: /run/secrets/net_secret
+      # NET_SEED: "1337"          # the city a joining page must be walking, and its fleet
+      # NET_CARS: "36"
+    secrets: [net_secret]
+    networks: [backend]
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+
+  proxy:
+    image: nginxinc/nginx-unprivileged:stable-alpine@sha256:15c994d10d6d78658721c3bcafff14cb281fba2a4bdf9d5ba92c416a472516e3
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: 256m
+    depends_on:
+      host:
+        condition: service_healthy
+    ports:
+      - "80:8080"
+      - "443:8443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./tls:/etc/nginx/tls:ro
+      - ./acme:/var/www/acme:ro
+    networks: [edge, backend]
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+
+networks:
+  backend:
+    internal: true
+  edge: {}
+
+secrets:
+  net_secret:
+    file: ./secrets/net_secret

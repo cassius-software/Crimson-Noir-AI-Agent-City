@@ -8,7 +8,7 @@ set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 out=${1:-"$here/target/image"}
 cd "$here"
-cargo build -q -p crimson_boot --target x86_64-unknown-uefi --release
+cargo build -q --locked -p crimson_boot --target x86_64-unknown-uefi --release
 efi="$here/target/x86_64-unknown-uefi/release/crimson_boot.efi"
 mkdir -p "$out"
 esp="$out/esp.img"

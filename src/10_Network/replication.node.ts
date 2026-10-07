@@ -599,8 +599,17 @@ export function readLock(text: string): string | null {
 // `npm run serve:net`
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  // An unset NET_SECRET makes one for this run; a set one must be long enough (startHost refuses a short one).
-  const secret = process.env.NET_SECRET === undefined ? randomBytes(32).toString('hex') : process.env.NET_SECRET
+  // The secret: NET_SECRET_FILE names a file holding it (a container's secret, which `docker inspect` and the process's
+  // environment never show; one trailing newline is not part of it), or NET_SECRET holds it, or one is made for this
+  // run. Both set is refused as ambiguous; a set one must be long enough (startHost refuses a short one).
+  if (process.env.NET_SECRET !== undefined && process.env.NET_SECRET_FILE !== undefined) throw new Error('set NET_SECRET or NET_SECRET_FILE, not both')
+  // A secret made for this run with no token printed would admit nobody, ever: refused rather than run that way.
+  if (process.env.NET_PRINT_TOKEN === '0' && process.env.NET_SECRET === undefined && process.env.NET_SECRET_FILE === undefined) {
+    throw new Error('NET_PRINT_TOKEN=0 needs the secret set (NET_SECRET_FILE or NET_SECRET), so tokens can be minted for it')
+  }
+  const secretFile = process.env.NET_SECRET_FILE
+  const secret = secretFile !== undefined ? readFileSync(secretFile, 'utf8').replace(/\r?\n$/, '')
+    : process.env.NET_SECRET === undefined ? randomBytes(32).toString('hex') : process.env.NET_SECRET
   const port = Number(process.env.NET_PORT ?? 8787)
   const seed = Number(process.env.NET_SEED ?? DEFAULT_SEED)
   const cars = process.env.NET_CARS === undefined ? undefined : Number(process.env.NET_CARS)
@@ -614,8 +623,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   console.log(ledgerLock ? `the ledger door (crimson.1) checks ledgers against ${ledgerLock.slice(0, 16)}… (${lockPath})` : `no ledger door: ${lockPath} pins no digest`)
   const [, s, n] = host.world.split('/')
   console.log(`room ticks at ${host.room.tickHz} Hz; at most ${LIMITS.peers} peers; the authority is the headless Ring-0 mirror of ${host.world} (pages with ?seed=${s} and ${n} cars join)`)
-  console.log(process.env.NET_SECRET ? 'secret from NET_SECRET' : 'secret made for this run (set NET_SECRET to keep tokens across restarts)')
-  console.log(`a token for 'operator', good for ${TOKEN_TTL_MS / 3600000} h: ${host.token('operator')}`)
+  console.log(secretFile !== undefined ? `secret from NET_SECRET_FILE (${secretFile})` : process.env.NET_SECRET ? 'secret from NET_SECRET' : 'secret made for this run (set NET_SECRET or NET_SECRET_FILE to keep tokens across restarts)')
+  // A deployment whose logs are kept (a container's) sets NET_PRINT_TOKEN=0 and mints its tokens with
+  // tools/net/mint-token.mjs instead: a token in a log is a credential anyone who reads the log holds.
+  if (process.env.NET_PRINT_TOKEN === '0') console.log('no token printed (NET_PRINT_TOKEN=0): mint them with tools/net/mint-token.mjs')
+  else console.log(`a token for 'operator', good for ${TOKEN_TTL_MS / 3600000} h: ${host.token('operator')}`)
   console.log('clients off this machine join through the reverse proxy that terminates wss in front of this port')
   process.once('SIGINT', () => { void host.close().then(() => process.exit(0)) })
 }

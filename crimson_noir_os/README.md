@@ -53,6 +53,19 @@ npm run smoke:bridge                       # from the repository root: the bridg
 | Boot test | `qemu-system-x86_64` and OVMF |
 | Hosted GPU path | Any Vulkan, Metal or DX12 adapter; Mesa's lavapipe works, with no GPU at all |
 
+**Releases**
+
+Pushing a tag that matches `v*` or `stable-*` runs `.github/workflows/build-release.yml`, and the media land on the
+tag's GitHub Release. The workflow:
+1. builds with the pinned toolchain and every crate from `Cargo.lock`;
+2. runs these tests, with the GPU on lavapipe;
+3. bakes the image and the ISO;
+4. boots both in QEMU with OVMF (the disk image through the tutorial and the terminal to a clean power-off);
+5. attaches `crimson_noir_os.img`, `crimson_noir_os.iso`, `BOOTX64.EFI`, the configuration and `SHA256SUMS`.
+
+A tag runs the workflow as it is at the tagged commit, so it must point at a commit that has the file. The tags are
+pushed from the operator's machine with `publish.ps1` in the repository root.
+
 **Writing the media**
 
 - To make a bootable stick, write `crimson_noir_os.img` to it, for example

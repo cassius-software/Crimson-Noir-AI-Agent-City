@@ -1,0 +1,164 @@
+# Why does this file exist? It bakes Crimson Noir OS's bootable media for every release tag and attaches them to the
+# tag's GitHub Release. Pushing a tag that matches v* or stable-* runs it; so can "Run workflow" for a tag that already
+# exists (once this file is on the default branch, since GitHub dispatches only workflows found there).
+# The bake job, with read-only access, does what a contributor does by hand:
+# - the pinned Rust toolchain and the UEFI target;
+# - every crate from Cargo.lock;
+# - the core and hosted-runtime tests, the GPU path on Mesa's lavapipe;
+# - the image and the ISO (tools/build-image.sh);
+# - the disk image booted in QEMU with OVMF, through the self-test, the tutorial and the terminal's scripted run to a
+#   clean power-off, and the ISO booted to its self-test;
+# - SHA256SUMS.
+# The publish job alone may write: it checks the sums again and creates the release, or replaces its files on a re-run.
+# No third-party action runs here (only GitHub's own checkout and artifact actions), no cache is restored into a
+# release build, and the checkout keeps no credentials.
+# A tag must point at a commit that contains this file: a tag push runs the workflow as it is at the tagged commit.
+# What breaks if it is removed? Releases carry no media; the image is still built by hand with tools/build-image.sh.
+
+name: build-release
+
+on:
+  push:
+    tags: ['v*', 'stable-*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: An existing tag to bake and release
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: build-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  # The toolchain the image was last built and booted with; move it on purpose.
+  RUST_TOOLCHAIN: '1.97.0'
+  TAG: ${{ inputs.tag || github.ref_name }}
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bake:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - name: Check the tag's name
+        run: |
+          case "$TAG" in
+            ''|-*|*[!A-Za-z0-9._-]*) echo "::error::'$TAG' is not a tag name this workflow bakes"; exit 1 ;;
+          esac
+
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
+
+      - name: Record the commit
+        id: source
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Install the media tools, QEMU with OVMF, and lavapipe
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends mtools gdisk xorriso qemu-system-x86 ovmf mesa-vulkan-drivers
+
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }} with the UEFI target
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target x86_64-unknown-uefi
+          rustup default "$RUST_TOOLCHAIN"
+          rustc --version
+
+      - name: Fetch the crates in Cargo.lock
+        working-directory: crimson_noir_os
+        run: cargo fetch --locked
+
+      - name: Test the core and the hosted runtime (CPU and GPU, word for word)
+        working-directory: crimson_noir_os
+        env:
+          NOIR_REQUIRE_GPU: '1'
+        run: cargo test --workspace --locked --offline
+
+      - name: Bake the disk image and the ISO
+        working-directory: crimson_noir_os
+        env:
+          CARGO_NET_OFFLINE: 'true'
+        run: |
+          out="$RUNNER_TEMP/media"
+          sh tools/build-image.sh "$out"
+          cp target/x86_64-unknown-uefi/release/crimson_boot.efi "$out/BOOTX64.EFI"
+          cp containment.nix containment.lock "$out/"
+          rm -rf "$out/esp.img" "$out/iso"
+
+      - name: Boot the disk image (self-test, tutorial, terminal, power-off)
+        working-directory: crimson_noir_os
+        run: |
+          python3 -I tools/boot_test.py "$RUNNER_TEMP/media/crimson_noir_os.img" --timeout 300 --wait "SELFTEST PASS" \
+            --step "wait:TUTORIAL 6 PASSED" --step 'type:\n' --step "wait:TERMINAL READY" \
+            --step 'type:golden\n' --step wait:MATCH --step 'type:halt\n' --step exit
+
+      - name: Boot the ISO (self-test)
+        working-directory: crimson_noir_os
+        run: python3 -I tools/boot_test.py "$RUNNER_TEMP/media/crimson_noir_os.iso" --timeout 300 --wait "SELFTEST PASS"
+
+      - name: Write SHA256SUMS
+        working-directory: ${{ runner.temp }}/media
+        run: |
+          sha256sum crimson_noir_os.img crimson_noir_os.iso BOOTX64.EFI containment.nix containment.lock > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crimson-noir-os-${{ env.TAG }}
+          path: ${{ runner.temp }}/media/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: bake
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+      COMMIT: ${{ needs.bake.outputs.commit }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: crimson-noir-os-${{ env.TAG }}
+          path: media
+
+      - name: Check the sums again
+        working-directory: media
+        run: sha256sum --check --strict SHA256SUMS
+
+      - name: Create the release, or replace its files
+        run: |
+          notes="$RUNNER_TEMP/notes.md"
+          {
+            echo "Crimson Noir OS bootable media, baked from \`$TAG\` (commit $COMMIT)."
+            echo
+            echo "- \`crimson_noir_os.img\`: a GPT disk image. Write it to a USB stick (for example"
+            echo "  \`dd if=crimson_noir_os.img of=/dev/sdX bs=4M\`) and boot it on a UEFI x86-64 machine with Secure Boot off."
+            echo "- \`crimson_noir_os.iso\`: a hybrid UEFI ISO, for a virtual machine's CD or a stick."
+            echo "- \`BOOTX64.EFI\`, \`containment.nix\`, \`containment.lock\`: the UEFI application and the configuration it was built with."
+            echo
+            echo "Check them with \`sha256sum --check SHA256SUMS\`. The image is unsigned. Before this release was"
+            echo "made, CI booted the disk image in QEMU with OVMF through the self-test, the tutorial and the terminal's"
+            echo "scripted run to a clean power-off, and the ISO to its self-test. No physical machine is part of that check."
+            echo "The image has no network code, and its configuration refuses one."
+          } > "$notes"
+          prerelease=()
+          case "$TAG" in *alpha*|*beta*|*rc*) prerelease=(--prerelease) ;; esac
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" media/* --clobber
+          else
+            gh release create "$TAG" media/* --verify-tag --title "Crimson Noir OS ($TAG)" --notes-file "$notes" "${prerelease[@]}"
+          fi

@@ -1,0 +1,13 @@
+# Why does this file exist? The host image's build context is an allowlist: only what its Dockerfile copies is sent
+# to the builder, so no secret, build output (crimson_noir_os/target is gigabytes), test or page asset can reach it.
+*
+!package.json
+!package-lock.json
+!LICENSE
+!NOTICE.md
+!src/
+src/**/*.test.ts
+!tools/net/closure.mjs
+!tools/net/mint-token.mjs
+!tools/net/image-check.mjs
+!crimson_noir_os/containment.lock
