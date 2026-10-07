@@ -160,7 +160,17 @@ test('the replication core takes its 14A verdicts from conduct.ts screen, and th
   const allowed: Record<string, string[]> = {
     'replication.ts': ['../02_Define_The_Rules/conduct.ts', '../02_Define_The_Rules/integrity.ts', '../07_Execute_Actions/simProtocol.ts', '../08_Swarm/ping.ts'],
     'netClient.ts': ['./replication.ts', '../08_Swarm/ping.ts', `../${GATE}`],
-    'replication.node.ts': ['node:crypto', 'node:http', 'node:net', 'node:url', './mirror.node.ts', './replication.ts'],
+    // node:fs and node:path read one file, once, at startup: the digest the operator pinned in
+    // crimson_noir_os/containment.lock, which opens the ledger door (Phase 14). Nothing is ever written.
+    'replication.node.ts': [
+      'node:crypto', 'node:fs', 'node:http', 'node:net', 'node:path', 'node:url', '../02_Define_The_Rules/integrity.ts', './ledger.node.ts',
+      './ledger.ts', './mirror.node.ts', './replication.ts',
+    ],
+    // The ledger door's check is pure: the 14A screen for the configuration's names, the hash chain, the fold.
+    'ledger.ts': ['../02_Define_The_Rules/conduct.ts', '../02_Define_The_Rules/integrity.ts'],
+    // The door itself: the room's envelope seal, and the host's frame code passed in (replication.node.ts and node:net
+    // for their types only). It opens no connection of its own.
+    'ledger.node.ts': ['node:net', '../02_Define_The_Rules/integrity.ts', './ledger.ts', './replication.ts', './replication.node.ts'],
     // The host's authority is a realm of its own on the server (Phase 12): the city, Rapier, the avatar's controller and
     // the Ring-0 audit, never the page's realm (no simCore, no fleet, no laws) and never on the page.
     'mirror.node.ts': [
@@ -186,6 +196,11 @@ test('the replication core takes its 14A verdicts from conduct.ts screen, and th
   }
   // Every source of the stage is in the list above (or is a test).
   for (const f of readdirSync(join(SRC, '10_Network'))) if (!f.endsWith('.test.ts')) assert.ok(f in allowed, `10_Network/${f} has no import allowlist`)
+  // The ledger door only answers: neither of its files can open a connection of its own.
+  for (const f of ['ledger.ts', 'ledger.node.ts']) {
+    const text = code(readFileSync(join(SRC, '10_Network', f), 'utf8'))
+    assert.doesNotMatch(text, /\bnew WebSocket\b|\bcreateConnection\b|\bconnect\(|\bfetch\(|\brequest\(/, `${f} opens a connection`)
+  }
   // The page half opens nothing at module load: a socket is made only inside connect().
   const client = code(readFileSync(join(SRC, '10_Network/netClient.ts'), 'utf8'))
   assert.equal(client.match(/new WebSocket\(/g)?.length, 1)

@@ -1,0 +1,31 @@
+{
+  system.name = "crimson-noir";
+  system.version = "0.9.0";
+  system.tickHz = 60;
+  system.seed = 1337;
+  pool.capacity = 4096;
+  pool.blockWords = 64;
+  world.width = 64;
+  world.depth = 64;
+  world.stations = 8;
+  memory.arenaBytes = 16777216;
+  containment.loopLimit = 100;
+  containment.network = false;
+  kernels.stepEighths = 1;
+  kernels.learnShift = 3;
+  kernels.explore = 2048;
+  display.width = 640;
+  display.height = 360;
+  display.triangles = 16384;
+  terminal.cells = 16384;
+  terminal.stack = 256;
+  terminal.stepBudget = 5000000;
+  terminal.lines = 256;
+  roles.courier.count = 3072;
+  roles.courier.caps = [ "move" "route" "learn" "memory" ];
+  roles.sentry.count = 1023;
+  roles.sentry.caps = [ "move" "memory" ];
+  roles.tutor.count = 1;
+  roles.tutor.caps = [ "move" "route" "memory" ];
+  dependencies = [ "crimson_boot" "noir_core" "font8x8" "log" ];
+}

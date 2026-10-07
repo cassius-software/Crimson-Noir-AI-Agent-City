@@ -391,3 +391,15 @@ fn the_validator_keeps_the_terminals_dictionary_large_enough() {
     let least = SAMPLE.replace("cells = 16384;", "cells = 2048;");
     assert!(config::validate(&config::parse(&least).unwrap()).is_ok());
 }
+
+/// containment.canonical is the configuration's canonical form, byte for byte: the ledger door's tests (TypeScript)
+/// read it and check it against containment.lock, so it must never drift from what the build hashes.
+#[test]
+fn the_committed_canonical_form_is_the_configurations() {
+    let c = sample();
+    assert_eq!(
+        include_str!("../../../containment.canonical"),
+        config::canonical(&c),
+        "regenerate it: cargo run -q -- canonical > containment.canonical"
+    );
+}

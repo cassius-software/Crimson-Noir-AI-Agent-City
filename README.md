@@ -24,10 +24,11 @@ wardrobe.
 npm install
 npm run dev      # local dev server
 npm run build    # typecheck (app + tests), then emit dist/index.html: one file, every asset inlined
-npm test         # 1,169 tests (node --test), including real Rapier physics and a real WebSocket host in Node
+npm test         # 1,232 tests (node --test), including real Rapier physics and a real WebSocket host in Node
 npm run lint     # oxlint
 npm run serve:net  # the optional network host (Node only, never bundled): see Networking
 npm run smoke:net  # the host as a process of its own, attacked with crafted illegal movement: see Networking
+npm run smoke:bridge  # Crimson Noir OS's hosted runtime against the host's ledger door: see Networking
 ```
 
 Open `dist/index.html` directly: no server, and it works offline. The page sends nothing anywhere unless the
@@ -1440,6 +1441,32 @@ physics realm is the prediction that hides the latency.
   make throw, player lists left unfrozen, a First Law that a non-number reading slipped past (it now fails toward
   the person), a speed clamp that turned an infinite velocity into a NaN, a substep bank that never came back after
   a stall, and a slow-header client that could hold a socket for a minute.
+- **The ledger door** (Phase 14, `ledger.ts`, `ledger.node.ts`). The same host also verifies the learning of
+  Crimson Noir OS's hosted runtime (`crimson_noir_os/`, its `bridge` command). It is a second door beside the room,
+  on its own subprotocol (`crimson.1`), behind the same tokens, the same 401 and 429, the same sealed and numbered
+  envelopes, and its own bound on frames. It opens only when the operator pins the OS configuration's digest
+  (`crimson_noir_os/containment.lock`, or the file `NET_LEDGER_LOCK` names); without one it answers 404.
+  - A runtime says hello with its configuration's canonical text. The host takes it only if its SHA-256 is the
+    pinned digest, it reads strictly, its names pass the 14A screen, and it still declares the bootable image
+    air-gapped (`network = false`).
+  - Then come the entries of its weight ledger, hash-chained. The host replays the fold under the containment rules:
+    only roles declared with `learn` learn, every reward is one the kernel's formula can produce (not merely in
+    range), every station exists, ticks never go back, and every entry links to the one before.
+  - The seal must name the fold's own head, count and weights digest, and the weights must be in range and held
+    only by learning roles. The host answers `verified` and keeps the weights, or `refused` with the reason and a
+    close (4008), keeping nothing.
+  - Any runtime of the same configuration can then fetch the last verified weights. It checks them again itself
+    before it adopts them.
+  - The door never dials out: the airgap test forbids the ledger files any outbound call.
+  - `npm run smoke:bridge` runs both sides as they ship. It starts the host as a process, has the Rust runtime
+    record its run, and gets it verified. A fresh runtime then adopts the weights bit for bit. Finally it checks
+    what must be refused:
+    - the runtime with no token, with a forged token, aimed off this machine, or given a name to look up (it
+      looks up no names);
+    - over the wire, a sentry that learns, a swapped reward sealed as the honest weights, an entry edited in place,
+      and a reward no clock gives.
+    It also checks that the host still shares only the honest weights.
+  - `ledger.node.test.ts` adds a fuzz: 40 sessions of mutated messages, none of which ever verifies.
 - **What is a stub, and what is not there.**
   - Voice: `attachPeer` places a peer's `MediaStream` in the soundscape, but the signalling that would carry one
     (offer, answer and candidates over this socket) is a documented stub, so no voice is sent or received.

@@ -3,11 +3,16 @@
 //! WGSL kernels through wgpu) and holds both against the build's proof and each other, word for word, then relaxes
 //! the routing fields and sorts a million keys on both; `frames DIR` renders the 5-Whys tutorial and a terminal
 //! session as PNG frames; `terminal` is the Sith Lord Terminal on standard input and output; `info` prints the locked
-//! configuration. Logging goes through `log` (env_logger: RUST_LOG=info shows the GPU's progress).
+//! configuration; `bridge [ws://127.0.0.1:PORT]` sends the scripted run's weight ledger to the Phase 12 host for
+//! verification and adopts the verified weights in a fresh runtime (bridge.rs; loopback only, token in CRIMSON_TOKEN).
+//! The bootable image has none of this. Logging goes through `log` (env_logger: RUST_LOG=info shows the GPU's progress).
 //! What breaks if it is removed? The runtime has no entry point.
 
+mod bridge;
 mod gpu;
 mod host;
+mod ledger;
+mod wire;
 
 use std::io::{BufRead, Write};
 use std::process::ExitCode;
@@ -249,6 +254,13 @@ fn info_command() {
     println!("the scripted run's fingerprint, as built: {:#010x}", locked::GOLDEN);
 }
 
+/// The bridge to the host's ledger door. The token comes from the environment, never the command line.
+fn bridge_command(url: &str) -> Result<(), String> {
+    let token = std::env::var("CRIMSON_TOKEN").map_err(|_| String::from("set CRIMSON_TOKEN to a session token the host's operator minted"))?;
+    let lk = bridge::Locked { canonical: locked::CANONICAL, dims: locked::DIMS, role_counts: &locked::ROLE_COUNTS, role_caps: &locked::ROLE_CAPS };
+    bridge::run(url, token.trim(), &lk)
+}
+
 fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     let args: Vec<String> = std::env::args().collect();
@@ -260,7 +272,13 @@ fn main() -> ExitCode {
             info_command();
             Ok(())
         }
-        Some(other) => Err(format!("unknown command {other}: selftest (the default), frames DIR, terminal, info")),
+        Some("canonical") => {
+            // The locked configuration's canonical form, byte for byte (containment.canonical is this output).
+            print!("{}", locked::CANONICAL);
+            Ok(())
+        }
+        Some("bridge") => bridge_command(args.get(2).map_or("ws://127.0.0.1:8787", String::as_str)),
+        Some(other) => Err(format!("unknown command {other}: selftest (the default), frames DIR, terminal, info, canonical, bridge [URL]")),
     };
     info!("done");
     match result {

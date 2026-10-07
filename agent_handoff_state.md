@@ -5,6 +5,7 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
 
 ## Where things stand (updated as work lands)
 
+- Phase 14 (the approved hosted-runtime bridge) is complete: see the Phase 14 section at the end.
 - Branch `claude/quirky-faraday-xkpdln`. Phase 13 is complete and release-ready: two adversarial reviews fixed (the
   second's 4 + 13 + 4 findings below), 1,219 tests passing, tagged `v1.0.0-stable-release` (see `git log`, `git tag`).
 - The Crimson Noir OS (the operator's next directive, below) is under way in `crimson_noir_os/`:
@@ -305,7 +306,8 @@ trademark to clear before a commercial release.
 ```sh
 cd /home/user/Crimson-Noir-AI-Agent-City && git fetch origin claude/quirky-faraday-xkpdln && git status && git log --oneline -5
 npx tsc -b && npx oxlint && npm test && npm run build && npm run smoke:net     # the release's checks, all green
-cd crimson_noir_os && NOIR_REQUIRE_GPU=1 cargo test --workspace                # core 41 + hosted 6 (GPU via lavapipe)
+npm run smoke:bridge                                                           # the OS bridge vs the real host
+cd crimson_noir_os && NOIR_REQUIRE_GPU=1 cargo test --workspace                # core 48 + hosted 15 (GPU via lavapipe)
 cargo run -- selftest && cargo run -- frames /tmp/frames                        # CPU = GPU, word for word; PNG frames
 cargo clippy --workspace --all-targets && cargo clippy -p crimson_boot --target x86_64-unknown-uefi --release
 sh tools/build-image.sh                                                        # target/image/crimson_noir_os.{img,iso}
@@ -338,5 +340,34 @@ Status and honest assessment:
     (`src/`, std, real networking, already runs the same kernels/weights). It talks WebSocket to the Phase 12 server,
     sends the hash-chained weight ledger, server validates the fold vs 14A, syncs validated weights back. The
     bare-metal image stays air-gapped. This is testable against the real server.
-  - Awaiting operator choice before building the network piece (asked via question). Do NOT silently flip
-    network=false or write a fake bare-metal driver.
+  - Operator chose "Bridge in hosted runtime", then confirmed it ("PHASE 14 ARCHITECTURAL PIVOT APPROVED": no
+    bare-metal TCP/IP, keep `containment.network = false`, the QEMU/USB image stays air-gapped). Do NOT flip
+    network=false or write a bare-metal driver.
+- DONE part 3, as approved (the hosted runtime, never the image):
+  - Host: `src/10_Network/ledger.ts` (pure checks: canonical config vs the pinned lock, 14A screen, network=false,
+    entry rules, fold, seal, contained weights; rewards must be ones the kernel's formula can produce — exact, via
+    `producible`, not just the range) and `ledger.node.ts` (the `crimson.1` door in replication.node.ts beside
+    `onyx.4`: same tokens/401/429/sealed envelopes; verified → kept by digest; fetch → weights chunks + end; refused →
+    sealed reason + 4008). Opens only with `ledgerLock` (NET_LEDGER_LOCK or crimson_noir_os/containment.lock), else
+    404. Tests: ledger.test.ts (8), ledger.node.test.ts (5, real sockets, incl. a 40-session mutation fuzz).
+    airgap.test.ts allowlists the new imports with reasons and forbids the ledger files any outbound call.
+  - Runtime: `crimson_noir_os/src/wire.rs` (std-only RFC 6455 client, SHA-1, base64, HMAC-SHA256, bounded JSON,
+    canonical writer; literal loopback addresses only — no DNS lookup, no TLS), `ledger.rs` (recorder around
+    golden_step: LEARN on dock by a learn role, WIPE on flush/reap; fold == matrix weights; adopt checks digest,
+    range, learn roles), `bridge.rs` (session/submit/fetch/run; `run` records, self-checks, submits, then a fresh
+    matrix fetches and adopts — bit-exact). `main.rs`: `bridge [URL]` (token from CRIMSON_TOKEN only) and
+    `canonical`. `containment.canonical` is held equal to the generator (Rust test) and its SHA-256 to the lock (TS).
+    One link pinned in both languages: link([0,5,17,3,1234], GENESIS) = 946cde52….
+  - End to end: `npm run smoke:bridge` (tools/net/bridge-smoke.mjs): real host process + real runtime; 3,576
+    entries (3,551 learns, 25 wipes) verified, a fresh runtime adopts 3,200 weights bit-exact; refused: no token,
+    forged token (401), off-machine address, a name to look up; over the wire (the ignored live Rust test
+    `a_tampered_ledger_is_refused_by_the_live_host`): a sentry that learns, a swapped reward sealed as the honest
+    weights, an edited entry, a reward no clock gives; the host still shares only the honest weights. 10/10 checks.
+  - Checks (all green): `npx tsc -b`, `npx oxlint`, `npm test` 1,232/1,232, `npm run build`, `npm run smoke:net`,
+    `npm run smoke:bridge`, `NOIR_REQUIRE_GPU=1 cargo test --workspace` 63 passed (48 core + 15 runtime; 4 ignored:
+    3 QEMU-side, 1 live), clippy workspace + UEFI clean. No network code in `boot/` or `crates/`.
+- NOT DONE, and why (part 1): nothing was flashed or booted on physical hardware (only QEMU exists here); the image
+  has no NIC driver or network stack, by the operator's approved pivot. The bridge is loopback-only `ws://` with no
+  TLS; anything remote reaches the host through the operator's TLS reverse proxy, as the room's players do.
+- Tags `v1.0.0-stable-release` and `stable-beta` exist locally only: pushing tags returned HTTP 403 from the git
+  proxy. The operator must push them (or create them on GitHub at the matching commits).

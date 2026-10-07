@@ -40,7 +40,8 @@ python3 tools/boot_test.py target/image/crimson_noir_os.img --wait "SELFTEST PAS
   --step "wait:TUTORIAL 6 PASSED" --step 'type:\n' --step "wait:TERMINAL READY" \
   --step 'type:golden\n' --step wait:MATCH --step 'type:halt\n' --step exit
 cargo run --release -- selftest            # the hosted runtime: CPU and GPU, compared word for word
-cargo test --workspace                     # 53 tests (set NOIR_REQUIRE_GPU=1 to fail rather than skip without a GPU)
+cargo test --workspace                     # 63 tests (set NOIR_REQUIRE_GPU=1 to fail rather than skip without a GPU)
+npm run smoke:bridge                       # from the repository root: the bridge against the real host (below)
 ```
 
 **Requirements**
@@ -64,9 +65,10 @@ cargo test --workspace                     # 53 tests (set NOIR_REQUIRE_GPU=1 to
 | Path | What it is |
 |---|---|
 | `containment.nix`, `containment.lock` | The declarative configuration (a strict Nix subset) and the SHA-256 of its canonical form |
-| `crates/noir_core` | The `no_std` + `alloc` core, shared by the image and the hosted runtime (47 tests) |
+| `containment.canonical` | That canonical form, byte for byte (`cargo run -- canonical`); a test holds it equal to the generator, and the host's tests hold its SHA-256 equal to the lock |
+| `crates/noir_core` | The `no_std` + `alloc` core, shared by the image and the hosted runtime (48 tests) |
 | `boot/` (`crimson_boot`) | The UEFI application: its own UEFI bindings, GOP framebuffer, ExitBootServices, own GDT/IDT, serial log, PS/2 keyboard, a sealed bump allocator |
-| `src/`, `shaders/` | The hosted runtime (std, wgpu 30, bytemuck, log + env_logger, pollster) and the WGSL kernels (6 tests) |
+| `src/`, `shaders/` | The hosted runtime (std, wgpu 30, bytemuck, log + env_logger, pollster) and the WGSL kernels; `wire.rs`, `ledger.rs` and `bridge.rs` are the bridge, which only this runtime has (15 tests, and 1 run against a live host) |
 | `tools/` | `build-image.sh` makes the disk image and the ISO; `boot_test.py` boots them in QEMU + OVMF, follows the serial log, types, and takes screenshots |
 
 The core crate's modules:
@@ -171,6 +173,31 @@ map 42 mark go                        \ the floor map, agent 42 ringed, the swar
   costs an eighth of a step per cell of every field. This is the terminal's loop breaker.
 - Rule 110, a universal cellular automaton, runs in it, so it is Turing complete within its declared memory.
 
+## The bridge (hosted runtime only)
+
+`CRIMSON_TOKEN=… cargo run -- bridge ws://127.0.0.1:8787` sends the learning of a run to the Phase 12 host
+(`npm run serve:net` in the repository root) and brings verified learning back:
+
+1. The self-test's scripted run is recorded as a weight ledger (`ledger.rs`). The kernel changes a weight two ways
+   only, a learn when an agent whose role holds `learn` docks, and a wipe when a row is flushed or reaped, and both
+   are recorded from outside the kernel, which is unchanged. Each entry is `[kind, tick, agent, station, reward]`,
+   linked as SHA-256 of its canonical text and the hash before it. The ledger must fold to the matrix's weights
+   exactly before anything leaves the process.
+2. A session on the host's ledger door (`crimson.1`, beside the room's `onyx.4`), with a token the host's operator
+   minted. Every message is sealed with HMAC-SHA256 under the token, numbered, and bounded. The host checks the
+   configuration's canonical text against the digest the operator pinned (`containment.lock`), then replays the fold
+   under the containment rules: only roles declared with `learn` learn, every reward is one the kernel can produce,
+   every station exists, ticks never go back, the chain links, and the seal names the fold's own head, count and
+   weights. It answers `verified`, or `refused` with the reason and a close.
+3. The fleet sync: a second runtime, started fresh, fetches the verified weights, checks them itself (their digest,
+   their range, and that only learning roles hold any) and adopts them. They must equal the first runtime's, bit for
+   bit.
+
+The client is std only (`wire.rs`: RFC 6455, SHA-1, base64, HMAC-SHA256, a bounded JSON reader), so the dependency
+list is unchanged. It speaks `ws://` to a literal loopback address and nothing else: it looks up no names and has no
+TLS. Anything off this machine would reach the host through the operator's reverse proxy, as the room's players do.
+`npm run smoke:bridge` runs it all against the real host and then has four tampered ledgers refused over the wire.
+
 ## Measured
 
 QEMU 8 with OVMF, q35 machine, TCG (no hardware acceleration):
@@ -206,7 +233,10 @@ These are stated plainly so nobody has to discover them.
 **Hardware support**
 
 - The keyboard is PS/2 only; USB keyboards work where the firmware emulates PS/2, as QEMU and most PCs do.
-- There is no network, by design.
+- The image has no network, by design, and its configuration refuses one (`network = false`). Only the hosted
+  runtime's bridge speaks to anything, and only to this machine.
+- Nothing here has been booted on physical hardware: the image is tested in QEMU with OVMF. The keyboard, the
+  framebuffer and the firmware calls are the standard ones a PC provides, but no physical machine has confirmed them.
 - The image is soft-float, so the renderer is integer-only.
 - The firmware watchdog is turned off; the step budget is the only watchdog.
 

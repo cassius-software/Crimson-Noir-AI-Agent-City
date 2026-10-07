@@ -32,7 +32,12 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 import type { Socket } from 'node:net'
-import { pathToFileURL } from 'node:url'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { isDigest } from '../02_Define_The_Rules/integrity.ts'
+import { LEDGER_SUBPROTOCOL } from './ledger.ts'
+import { ledgerDoor, type LedgerDoor, type LedgerStats } from './ledger.node.ts'
 import { Mirror } from './mirror.node.ts'
 import {
   admit, AUTH_PREFIX, bucket, createRoom, depart, expired, handle, LIMITS, openClientFrame, poses, readEnvelope, refuse, refuseInput, sealMessage,
@@ -56,14 +61,20 @@ function sameToken(a: string, b: string): boolean {
   return x.length === y.length && timingSafeEqual(x, y)
 }
 
+/** Whether an upgrade's Sec-WebSocket-Protocol list offers `protocol`. */
+export function offers(header: unknown, protocol: string): boolean {
+  return typeof header === 'string' && header.length <= 2 * LIMITS.token && header.split(',').map((p) => p.trim()).includes(protocol)
+}
+
 /**
- * The session token an upgrade offers, from its Sec-WebSocket-Protocol list: the protocol's own (SUBPROTOCOL, `onyx.4`) must be offered, and exactly one
- * `auth.<token>` entry. Null for anything else.
+ * The session token an upgrade offers, from its Sec-WebSocket-Protocol list: the door's own protocol (`onyx.4` for the
+ * room, SUBPROTOCOL; `crimson.1` for the ledger door) must be offered, and exactly one `auth.<token>` entry. Null for
+ * anything else.
  */
-export function offeredToken(header: unknown): string | null {
+export function offeredToken(header: unknown, protocol: string = SUBPROTOCOL): string | null {
   if (typeof header !== 'string' || header.length > 2 * LIMITS.token) return null
   const offered = header.split(',').map((p) => p.trim())
-  if (!offered.includes(SUBPROTOCOL)) return null
+  if (!offered.includes(protocol)) return null
   const auth = offered.filter((p) => p.startsWith(AUTH_PREFIX))
   if (auth.length !== 1) return null
   const token = auth[0].slice(AUTH_PREFIX.length)
@@ -191,6 +202,11 @@ export interface HostOptions {
   /** Wall clock, ms (injectable for tests). */
   now?: () => number
   log?: (line: string) => void
+  /**
+   * The SHA-256 the operator pinned for the Crimson Noir OS configuration (crimson_noir_os/containment.lock): with it
+   * the host also opens the ledger door (ledger.node.ts, `crimson.1`); without it that door answers 404.
+   */
+  ledgerLock?: string
 }
 
 /** What the host has done since it started, for the console and the tests. */
@@ -262,6 +278,8 @@ export interface Host {
   connections(): number
   /** A token for `subject` good for `ttlMs` from now. */
   token(subject: string, ttlMs?: number): string
+  /** What the ledger door has done, or null when the host was started without a pinned digest. */
+  ledger(): LedgerStats | null
   /** Closes every socket (a close handshake each) and the server. */
   close(): Promise<void>
 }
@@ -300,6 +318,10 @@ export async function startHost(o: HostOptions): Promise<Host> {
   const failures = new Map<string, Bucket>()
   const stats: HostStats = { peers: 0, unauthorized: 0, throttled: 0, inputs: 0, kept: 0, corrected: 0, resynced: 0, stale: 0, inputUs: 0, tickUs: 0 }
   const average = (was: number, us: number): number => (was === 0 ? us : was * 0.95 + us * 0.05)
+  if (o.ledgerLock !== undefined && !isDigest(o.ledgerLock)) throw new Error('ledgerLock must be a SHA-256 digest (64 lowercase hex characters)')
+  const ledger: LedgerDoor | null = o.ledgerLock === undefined ? null : ledgerDoor({
+    pinned: o.ledgerLock, now, log, mac: nodeMac, maxBacklog, loggable, io: { readFrame, writeFrame, closePayload, acceptKey, OP },
+  })
 
   /**
    * Every byte the host sends a peer goes through here: a peer that does not read what it is sent would have the host
@@ -443,7 +465,11 @@ export async function startHost(o: HostOptions): Promise<Host> {
     // away with 429 instead of 401, unlogged, until its budget refills.
     const from = socket.remoteAddress ?? '?'
     const t = now()
-    const token = offeredToken(req.headers['sec-websocket-protocol'])
+    // Which door: the ledger's when `crimson.1` is offered and the room's `onyx.4` is not; the room's otherwise. The
+    // token is checked the same way for both.
+    const protocols = req.headers['sec-websocket-protocol']
+    const toLedger = offers(protocols, LEDGER_SUBPROTOCOL) && !offers(protocols, SUBPROTOCOL)
+    const token = offeredToken(protocols, toLedger ? LEDGER_SUBPROTOCOL : SUBPROTOCOL)
     const subject = token === null ? null : verifyToken(o.secret, token, t)
     if (token === null || subject === null) {
       let budget = failures.get(from)
@@ -456,6 +482,14 @@ export async function startHost(o: HostOptions): Promise<Host> {
       stats.unauthorized++
       log(`upgrade from ${loggable(from)} refused: ${token === null ? 'no session token offered' : 'a token that does not verify'}`)
       turnAway(socket, '401 Unauthorized')
+      return
+    }
+    if (toLedger) {
+      if (ledger === null) {
+        turnAway(socket, '404 Not Found')
+        return
+      }
+      ledger.open(socket, key, token, subject, tokenExpiry(token), head)
       return
     }
     // A subject is one player: a second connection under it (the same token, or another minted for the same name)
@@ -511,6 +545,7 @@ export async function startHost(o: HostOptions): Promise<Host> {
     }
     // A session lives no longer than its token.
     for (const c of [...conns.values()]) if (!(t < c.expires)) close(c, 4003, 'token expired')
+    ledger?.tick(t)
     tickRoom(room)
     const players = poses(room)
     for (const c of [...conns.values()]) if (c.peer.joined) send(c, snapshotFor(room, c.peer, players))
@@ -536,16 +571,28 @@ export async function startHost(o: HostOptions): Promise<Host> {
         url: `ws://${hostname}:${port}`,
         connections: () => conns.size,
         token: (subject, ttlMs = TOKEN_TTL_MS) => mintToken(o.secret, subject, now() + ttlMs),
+        ledger: () => ledger?.stats() ?? null,
         close: () =>
           new Promise<void>((done) => {
             clearInterval(ticker)
             for (const c of [...conns.values()]) close(c, 1001, 'host closing')
+            ledger?.close()
             server.close(() => done())
             setTimeout(() => server.closeAllConnections(), 1100).unref()
           }),
       })
     })
   })
+}
+
+/**
+ * The digest a containment.lock pins: its last line that is neither blank nor a comment, which must be a SHA-256
+ * digest. Null for anything else.
+ */
+export function readLock(text: string): string | null {
+  const lines = text.split('\n').map((l) => l.trim()).filter((l) => l !== '' && !l.startsWith('#'))
+  const last = lines.at(-1)
+  return last !== undefined && isDigest(last) ? last : null
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -560,7 +607,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   if (cars !== undefined && !(Number.isInteger(cars) && cars >= 0 && cars <= LIMITS.cars)) throw new Error(`NET_CARS must be a whole number 0..${LIMITS.cars}`)
   const tickHz = process.env.NET_TICK_HZ === undefined ? undefined : Number(process.env.NET_TICK_HZ)
   if (tickHz !== undefined && !(tickHz >= 1 && tickHz <= 120)) throw new Error('NET_TICK_HZ must be 1..120')
-  const host = await startHost({ secret, host: process.env.NET_HOST ?? '127.0.0.1', port, seed, cars, tickHz, log: (line) => console.log(line) })
+  // The ledger door opens on the digest the OS's own lock pins (or NET_LEDGER_LOCK's file), and stays shut without one.
+  const lockPath = process.env.NET_LEDGER_LOCK ?? join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'crimson_noir_os', 'containment.lock')
+  const ledgerLock = existsSync(lockPath) ? readLock(readFileSync(lockPath, 'utf8')) ?? undefined : undefined
+  const host = await startHost({ secret, host: process.env.NET_HOST ?? '127.0.0.1', port, seed, cars, tickHz, ledgerLock, log: (line) => console.log(line) })
+  console.log(ledgerLock ? `the ledger door (crimson.1) checks ledgers against ${ledgerLock.slice(0, 16)}… (${lockPath})` : `no ledger door: ${lockPath} pins no digest`)
   const [, s, n] = host.world.split('/')
   console.log(`room ticks at ${host.room.tickHz} Hz; at most ${LIMITS.peers} peers; the authority is the headless Ring-0 mirror of ${host.world} (pages with ?seed=${s} and ${n} cars join)`)
   console.log(process.env.NET_SECRET ? 'secret from NET_SECRET' : 'secret made for this run (set NET_SECRET to keep tokens across restarts)')
