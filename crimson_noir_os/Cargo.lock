@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "crimson_boot"
+version = "0.9.0"
+dependencies = [
+ "log",
+ "noir_core",
+]
+
+[[package]]
 name = "crimson_noir_os"
 version = "0.9.0"
 dependencies = [
@@ -10,5 +18,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "font8x8"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "875488b8711a968268c7cf5d139578713097ca4635a76044e8fe8eedf831d07e"
+
+[[package]]
+name = "log"
+version = "0.4.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+
+[[package]]
 name = "noir_core"
 version = "0.9.0"
+dependencies = [
+ "font8x8",
+]

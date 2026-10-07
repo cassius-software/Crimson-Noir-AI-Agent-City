@@ -7,8 +7,16 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
 
 - Branch `claude/quirky-faraday-xkpdln`. Phase 13 is complete and release-ready: two adversarial reviews fixed (the
   second's 4 + 13 + 4 findings below), 1,219 tests passing, tagged `v1.0.0-stable-release` (see `git log`, `git tag`).
-- The Crimson Noir OS (the operator's next directive, below) is under way in `crimson_noir_os/`: the core crate is done
-  and committed (20 tests); next are the UEFI image, the tutorial and terminal, the hosted wgpu runtime, the image.
+- The Crimson Noir OS (the operator's next directive, below) is under way in `crimson_noir_os/`:
+  - DONE the core crate (`crates/noir_core`, 22 tests): config/lock/generator, Global Matrix, branchless kernels,
+    sorting network, text, the declared system allocation.
+  - DONE the UEFI image (`boot/`): own UEFI FFI, GOP 1280x720, the declared arena, ExitBootServices, own GDT/IDT (all
+    32 exceptions to a fault screen), COM1 log, PS/2 keyboard, TSC clock, a sealed bump allocator (it caught an
+    undeclared 992-byte Vec on the first boot). In QEMU+OVMF (`tools/build-image.sh`, `tools/boot_test.py`): memory
+    march 16 MiB clean, 4,274,560 bytes declared = allocated, the scripted run's fingerprint 0x83765bab equal to the
+    build machine's (soft-float on the image), display read-back clean, `SELFTEST PASS` in 6.5 s, keys echoed.
+  - NEXT: the fixed-point renderer + the 5-Whys tutorial scene + the terminal (task 30), the hosted wgpu runtime with
+    WGSL parity (31), the README/docs and final boot test with screenshots (32).
 - The local tag `stable-beta` exists only locally (GitHub refused the tag push, HTTP 403).
 - Machine: 4 CPUs, 16 GB. Do not run several Rapier-heavy experiments and a multi-agent workflow at once (exit 137 once).
 

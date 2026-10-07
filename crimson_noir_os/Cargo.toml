@@ -13,7 +13,7 @@ noir_core = { path = "crates/noir_core" }
 noir_core = { path = "crates/noir_core" }
 
 [workspace]
-members = [".", "crates/noir_core"]
+members = [".", "crates/noir_core", "boot"]
 default-members = [".", "crates/noir_core"]
 resolver = "3"
 

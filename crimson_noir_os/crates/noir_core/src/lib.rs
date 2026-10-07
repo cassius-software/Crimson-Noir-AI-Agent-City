@@ -14,6 +14,8 @@ pub mod hash;
 pub mod kernels;
 pub mod matrix;
 pub mod sort;
+pub mod system;
+pub mod text;
 
 #[cfg(test)]
 mod tests;

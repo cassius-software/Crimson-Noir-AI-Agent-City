@@ -565,14 +565,18 @@ pub struct Alloc {
 /// Every allocation is rounded up to (and aligned on) this many bytes.
 pub const ALLOC_ALIGN: usize = 64;
 
+/// How many allocations the layout declares.
+pub const LAYOUT_LEN: usize = 31;
+
 /// The arrays the system allocates, in the order it allocates them. The Global Matrix first (one element per agent
-/// slot unless noted), then the world, the display and the terminal.
-pub fn layout(d: &Dims) -> Vec<Alloc> {
+/// slot unless noted), then the world, the display and the terminal. (An array, not a Vec: the bootable image reads
+/// the layout after its allocator is sealed.)
+pub fn layout(d: &Dims) -> [Alloc; LAYOUT_LEN] {
     let cap = d.capacity;
     let cells = d.width * d.depth;
     let pixels = d.display_width * d.display_height;
     let a = |name, elems, elem_bytes| Alloc { name, elems, elem_bytes };
-    Vec::from([
+    [
         a("px", cap, 4),
         a("pz", cap, 4),
         a("alive", cap, 4),
@@ -604,7 +608,7 @@ pub fn layout(d: &Dims) -> Vec<Alloc> {
         a("term_rstack", d.term_stack, 4),
         a("term_text", d.term_lines * TERM_COLS, 1),
         a("term_line", TERM_COLS * 4, 1),
-    ])
+    ]
 }
 
 /// The bytes one declared allocation takes from the arena.
