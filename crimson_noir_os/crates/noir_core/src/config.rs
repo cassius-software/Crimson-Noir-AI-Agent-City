@@ -28,6 +28,8 @@ pub const CAP_SPAWN: u32 = 16;
 
 /// The text columns of the terminal's scrollback (a line is this many bytes).
 pub const TERM_COLS: usize = 80;
+/// The smallest terminal dictionary: the typed line's code area (1,024 cells) and room for definitions.
+pub const TERM_MIN_CELLS: usize = 2048;
 
 // -------------------------------------------------------------------------------------------------------------------
 // The Nix subset
@@ -480,7 +482,7 @@ pub fn validate(root: &Value) -> Result<Config, String> {
 
     let terminal = as_set(need(root, "terminal", "")?, "terminal")?;
     only(terminal, &["cells", "stack", "stepBudget", "lines"], "terminal.")?;
-    let term_cells = pow2(terminal, "cells", "terminal.", 256, 65536)?;
+    let term_cells = pow2(terminal, "cells", "terminal.", TERM_MIN_CELLS as i64, 65536)?;
     let term_stack = int(terminal, "stack", "terminal.", 16, 1024)? as usize;
     let term_steps = int(terminal, "stepBudget", "terminal.", 1000, 100_000_000)? as u32;
     let term_lines = int(terminal, "lines", "terminal.", 16, 1024)? as usize;

@@ -107,10 +107,11 @@ pub fn agent_tick(d: &Dims, m: &mut Matrix, i: usize, t: u32, step: f32) -> u32 
     let stations = d.stations as u32;
     let cells = w * depth;
 
-    let a = m.alive[i];
+    // The 1/0 masks are bit 0 of their words, whatever else a word holds.
+    let a = m.alive[i] & 1;
     let caps = m.caps[i];
     // A pointer dropped during the last tick: its row is zeroed at the end of this one.
-    let reaped = m.doomed[i];
+    let reaped = m.doomed[i] & 1;
 
     // Where the agent stands, and what its station's field says about the four cells around it.
     let cx = (m.px[i] as u32).min(w - 1);

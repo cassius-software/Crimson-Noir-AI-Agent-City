@@ -358,3 +358,36 @@ fn the_kernels_hold_on_a_small_world_under_random_requests_and_pokes() {
         }
     }
 }
+
+/// Masks hold 0 or 1, but nothing breaks if a word holds anything else: the kernel reads bit 0 (no product can
+/// overflow), and a declared privilege is never rewritten by a partial wipe (the review's `doomed = 2`).
+#[test]
+fn a_corrupt_mask_never_panics_the_kernel_or_rewrites_a_declared_privilege() {
+    let c = sample();
+    let d = &c.dims;
+    let mut m = spawned(&c);
+    let before = (m.caps.clone(), m.role.clone());
+    for i in 0..d.capacity {
+        let h = mix32(i as u32);
+        m.alive[i] = [0, 1, 2, 3, u32::MAX, 0x8000_0000][(h % 6) as usize];
+        m.doomed[i] = [0, 1, 2, u32::MAX - 1][((h >> 8) % 4) as usize];
+        m.clock[i] = h;
+    }
+    for t in 0..20 {
+        tick(d, &mut m, t);
+    }
+    for i in 0..d.capacity {
+        let zeroed = row_is_zero(d, &m, i);
+        assert!(zeroed || (m.caps[i], m.role[i]) == (before.0[i], before.1[i]), "slot {i}: caps or role rewritten");
+        assert!(m.alive[i] <= 1 && m.doomed[i] <= 1, "slot {i}: a mask left outside 0 and 1");
+    }
+}
+
+#[test]
+fn the_validator_keeps_the_terminals_dictionary_large_enough() {
+    let small = SAMPLE.replace("cells = 16384;", "cells = 1024;");
+    let err = config::validate(&config::parse(&small).unwrap()).unwrap_err();
+    assert!(err.contains("terminal.cells must be between 2048"), "{err}");
+    let least = SAMPLE.replace("cells = 16384;", "cells = 2048;");
+    assert!(config::validate(&config::parse(&least).unwrap()).is_ok());
+}

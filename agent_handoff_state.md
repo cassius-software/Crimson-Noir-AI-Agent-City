@@ -37,10 +37,14 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
     single-tick comparisons; 4 of 5 shader mutants caught, the 5th is equivalent). `frames DIR`, `terminal` (stdin).
   - IN PROGRESS (task 32): `crimson_noir_os/README.md` written (uncommitted). The ISO boots too (ESC skip: every check
     still runs, PASSED at 24 s). Fixed: a key pressed in the verdict's first 2 s was dropped (now remembered; test).
-    A read-only review agent is checking term/tutorial/render/scene/gpu/host/boot; fix its verified findings, then:
-    rebuild the image, final boot test of .img and .iso with screenshots of every shot + the terminal, send them to
-    the operator, commit, push, and write the final report (release status: tag push refused HTTP 403; the OS; the
-    honest limits listed in the README).
+    The read-only review found 6 verified defects, all fixed with regression tests: `1 walls fill-a respawn` hung
+    (spawn's scan now bounded); `alive = -1` overflowed the kernel in debug and `doomed = 2` half-wiped a row,
+    rewriting the read-only caps/role (kernels and WGSL read masks as bit 0; the terminal writes masks as 0/1 only);
+    `route` was under-charged (now metered per pass); `begin : foo again ;` compiled into the line's code (flush
+    checks open structures first, outside definitions); terminal.cells < 2048 and a 256-cell floor on a 200-px screen
+    panicked (validator minimum; the map fits and clips). Fingerprint unchanged (0x83765bab); 46 core + 6 hosted tests.
+    NEXT: final boot test of .img and .iso with screenshots of every shot + the terminal, send them to the operator,
+    commit, push, final report (release status: tag push refused HTTP 403; the OS; the README's limits).
 - The local tag `stable-beta` exists only locally (GitHub refused the tag push, HTTP 403).
 - Machine: 4 CPUs, 16 GB. Do not run several Rapier-heavy experiments and a multi-agent workflow at once (exit 137 once).
 

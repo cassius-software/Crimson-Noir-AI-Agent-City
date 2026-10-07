@@ -19,7 +19,7 @@
 
 use core::fmt::Write;
 
-use crate::config::{CAP_LEARN, CAP_MEMORY, CAP_MOVE, CAP_ROUTE, CAP_SPAWN, CAPABILITIES, Dims, TERM_COLS};
+use crate::config::{CAP_LEARN, CAP_MEMORY, CAP_MOVE, CAP_ROUTE, CAP_SPAWN, CAPABILITIES, Dims, TERM_COLS, TERM_MIN_CELLS};
 use crate::hash;
 use crate::kernels::{self, Tally};
 use crate::matrix::{self, GOLDEN_TICKS};
@@ -34,6 +34,8 @@ const NAME_CELLS: usize = 4;
 const MAX_NAME: usize = NAME_CELLS * 4;
 /// The typed line's code is compiled into the dictionary's last cells.
 const SCRATCH: usize = 1024;
+// The validator's smallest dictionary holds the line's area and room for definitions.
+const _: () = assert!(TERM_MIN_CELLS >= SCRATCH + RESERVED + 512);
 /// The longest input line, and the lines of history kept after it in term_line.
 const INPUT: usize = TERM_COLS - 2;
 const HISTORY: usize = 3;
@@ -552,11 +554,13 @@ fn close_ctl(t: &mut Term, kinds: &[u8], what: &'static str) -> R<Ctl> {
 
 /// Runs the line's code compiled so far, and starts it afresh.
 fn flush(t: &mut Term, sys: &mut System, lk: &Locked, c: &mut Code) -> R<()> {
+    // Checked first: a BEGIN compiles nothing, yet a definition after it would branch into the line's code. (A
+    // definition's own open structures may span lines: the line's code is empty then.)
+    if t.def == 0 && t.nctl != 0 {
+        return Err(Fault::Compile("finish the IF, BEGIN or DO before defining a word"));
+    }
     if c.sc == c.scratch {
         return Ok(());
-    }
-    if t.nctl != 0 {
-        return Err(Fault::Compile("finish the IF, BEGIN or DO before defining a word"));
     }
     let exit = code_of(P::Exit);
     comma(t, &mut sys.b, c, exit)?;
@@ -949,6 +953,7 @@ fn write_array(t: &Term, sys: &mut System, a: usize, i: usize, v: i32) -> R<()> 
         0 => m.px[i] = v.clamp(0, d.width as i32 * 8 - 1) as f32 / 8.0,
         1 => m.pz[i] = v.clamp(0, d.depth as i32 * 8 - 1) as f32 / 8.0,
         4 | 6 => return Err(Fault::ReadOnly("caps and role are declared in containment.nix: read-only (ask requests)")),
+        2 | 3 | 16 if v != 0 && v != 1 => return Err(Fault::Range("alive, doomed and walls are 1/0 masks: write 0 or 1")),
         14 => m.weights[i] = v,
         18 => {
             if v < 0 || v as usize >= d.width * d.depth {
@@ -1380,12 +1385,11 @@ fn word(t: &mut Term, sys: &mut System, lk: &Locked, p: P) -> R<()> {
             o.end_line();
         }
         P::World | P::Route => {
-            let cells = (t.dims.width * t.dims.depth) as u64;
-            charge(t, cells)?;
             if p == P::World {
+                charge(t, (t.dims.width * t.dims.depth) as u64)?;
                 matrix::lay_out_world(&t.dims, &mut sys.m);
             }
-            let passes = matrix::route(&t.dims, &mut sys.m);
+            let passes = route(t, sys)?;
             let mut o = sink(t, &mut sys.b);
             fresh_line(&mut o);
             let _ = write!(o, "{}routing fields relaxed in {} passes", if p == P::World { "world laid out; " } else { "" }, passes);
@@ -1533,6 +1537,32 @@ fn word(t: &mut Term, sys: &mut System, lk: &Locked, p: P) -> R<()> {
         _ => return Err(Fault::Corrupt),
     }
     Ok(())
+}
+
+/// matrix::route, metered: every pass of the relaxation is charged to the line's budget (a pass updates every cell
+/// of every station's field: an eighth of a step each), so a maze that needs more passes than the budget allows ends
+/// the line with the budget error instead of holding the machine.
+fn route(t: &mut Term, sys: &mut System) -> R<u32> {
+    let d = t.dims;
+    let m = &mut sys.m;
+    let cells = d.width * d.depth;
+    m.field.fill(kernels::INF);
+    for s in 0..d.stations {
+        // Station writes are range-checked, so the index is in the field.
+        let home = (m.station[s] as usize).min(cells - 1);
+        m.field[s * cells + home] = 0;
+    }
+    let per_pass = (d.stations * cells / 8).max(1) as u64;
+    let mut passes = 0;
+    loop {
+        charge(t, per_pass)?;
+        let changed = kernels::relax_pass(&d, &m.walls, &m.station, &m.field, &mut m.scratch);
+        core::mem::swap(&mut m.field, &mut m.scratch);
+        passes += 1;
+        if changed == 0 || passes as usize >= cells {
+            return Ok(passes);
+        }
+    }
 }
 
 /// One tick of the swarm under the terminal's compute configuration.
@@ -1708,41 +1738,50 @@ pub fn render(t: &Term, sys: &mut System, lk: &Locked) {
     }
 }
 
-/// The floor from above: walls, stations, every live agent; the marked one ringed.
+/// The floor from above: walls, stations, every live agent; the marked one ringed. It fits a square of at most 128
+/// pixels inside the screen (a cell may take several pixels, or a pixel several cells), and every write is clipped.
 fn draw_map(t: &Term, tg: &mut Target, m: &matrix::Matrix, d: &Dims) {
-    let px = (128 / d.width.max(d.depth)).max(1) as i32;
-    let (mw, mh) = (d.width as i32 * px, d.depth as i32 * px);
+    let side = 128.min(tg.height as i32 - 40).min(tg.width as i32 / 3).max(16);
+    let (cw, cd) = (d.width as i32, d.depth as i32);
+    let (mw, mh) = (side * cw / cw.max(cd), side * cd / cw.max(cd));
     let (x0, y0) = (tg.width as i32 - mw - 8, 20);
+    // Cell (x, z) and its far corner, in pixels.
+    let at = |x: i32, z: i32| (x0 + x * mw / cw, y0 + z * mh / cd);
     text::fill(tg, x0 - 3, y0 - 3, mw + 6, mh + 6, RED);
     text::fill(tg, x0 - 2, y0 - 2, mw + 4, mh + 4, 0x050507);
     for c in 0..(d.width * d.depth) {
         if m.walls[c] & 1 != 0 {
             let (x, z) = ((c % d.width) as i32, (c / d.width) as i32);
-            text::fill(tg, x0 + x * px, y0 + z * px, px, px, 0x2c2e36);
+            let ((ax, az), (bx, bz)) = (at(x, z), at(x + 1, z + 1));
+            text::fill(tg, ax, az, (bx - ax).max(1), (bz - az).max(1), 0x2c2e36);
         }
     }
     for &s in &m.station {
         let (x, z) = ((s as usize % d.width) as i32, (s as usize / d.width) as i32);
-        text::fill(tg, x0 + x * px - 1, y0 + z * px - 1, px + 2, px + 2, RED);
+        let (ax, az) = at(x, z);
+        text::fill(tg, ax - 1, az - 1, 3, 3, RED);
     }
+    // A position (eighths of a cell) in pixels, inside the map.
+    let spot = |i: usize| {
+        let x = (eighths(m.px[i]) as i64 * mw as i64 / (cw as i64 * 8)).clamp(0, mw as i64 - 1) as i32;
+        let z = (eighths(m.pz[i]) as i64 * mh as i64 / (cd as i64 * 8)).clamp(0, mh as i64 - 1) as i32;
+        (x0 + x, y0 + z)
+    };
     for i in 0..m.alive.len() {
         if m.alive[i] != 1 {
             continue;
         }
-        let x = (eighths(m.px[i]) * px / 8).clamp(0, mw - 1);
-        let z = (eighths(m.pz[i]) * px / 8).clamp(0, mh - 1);
         let rgb = match m.role[i] {
             0 => 0xe0283c,
             1 => 0xd89a2a,
             _ => 0xffffff,
         };
-        let p = &mut tg.pixels[(y0 + z) as usize * tg.stride + (x0 + x) as usize];
-        *p = rgb;
+        let (x, z) = spot(i);
+        text::fill(tg, x, z, 1, 1, rgb);
     }
     if (t.mark as usize) < m.alive.len() {
         let i = t.mark as usize;
-        let x = x0 + (eighths(m.px[i]) * px / 8).clamp(0, mw - 1);
-        let z = y0 + (eighths(m.pz[i]) * px / 8).clamp(0, mh - 1);
+        let (x, z) = spot(i);
         let rgb = if m.alive[i] == 1 { 0xffffff } else { scale(0xffffff, 90) };
         text::fill(tg, x - 4, z, 3, 1, rgb);
         text::fill(tg, x + 2, z, 3, 1, rgb);
@@ -1917,6 +1956,57 @@ mod tests {
             row = next;
         }
         assert_eq!(got[24], " ok");
+    }
+
+    /// The review's findings, each as it was reproduced: a full floor of walls hung `respawn`; a mask written as -1
+    /// or 2 overflowed the kernel or half-wiped a row (rewriting the read-only caps and role); `route` on a long maze
+    /// held the machine past the step budget; a BEGIN before a definition compiled it into the line's code.
+    #[test]
+    fn the_reviewed_holes_stay_closed() {
+        let (mut t, mut sys, lk, _) = term();
+        let mut ask = |line: &str| say(&mut t, &mut sys, &lk, line);
+        assert_eq!(ask("1 walls fill-a respawn 1 tick"), "the declared roles are spawned afresh; tick 0 ok");
+        assert_eq!(ask("2 walls fill-a"), "? alive, doomed and walls are 1/0 masks: write 0 or 1");
+        assert_eq!(ask("-1 0 alive !a"), "? alive, doomed and walls are 1/0 masks: write 0 or 1");
+        assert_eq!(ask("2 18 doomed !a"), "? alive, doomed and walls are 1/0 masks: write 0 or 1");
+        assert_eq!(ask("-2 4095 doomed !a"), "? alive, doomed and walls are 1/0 masks: write 0 or 1");
+        assert_eq!(ask("begin : foo again ;"), "? finish the IF, BEGIN or DO before defining a word");
+        assert_eq!(ask("1 if variable v then"), "? finish the IF, BEGIN or DO before defining a word");
+        assert_eq!(
+            ask("world respawn 18 caps @a . 4095 role @a ."),
+            "world laid out; routing fields relaxed in 118 passes|the declared roles are spawned afresh; tick 0|15 2  ok"
+        );
+        // A serpentine maze: every other row walled across, the gap at alternating ends. Its paths are about 1,800
+        // cells long, more passes than one line's budget pays for: the line ends, the machine does not hang.
+        for line in [
+            ": gap 4 mod if 1 else 62 then ;",
+            ": wall! cell 1 swap walls !a ;",
+            ": row dup gap swap 63 1 do over i <> if i over wall! then loop 2drop ;",
+            ": maze 61 2 do i row 2 +loop ;",
+        ] {
+            assert_eq!(ask(line), " ok", "{line}");
+        }
+        assert_eq!(ask("maze route"), "? step budget spent: loop broken (terminal.stepBudget)");
+        assert_eq!(ask("world"), "world laid out; routing fields relaxed in 118 passes ok");
+    }
+
+    #[test]
+    fn a_large_floor_on_a_small_screen_draws_its_map_inside_the_screen() {
+        let src = include_str!("../../../containment.nix")
+            .replace("width = 64;", "width = 256;")
+            .replace("depth = 64;", "depth = 256;")
+            .replace("width = 640;", "width = 320;")
+            .replace("height = 360;", "height = 200;");
+        let c = crate::config::validate(&crate::config::parse(&src).unwrap()).unwrap();
+        let d = c.dims;
+        assert_eq!((d.width, d.depth, d.display_width, d.display_height), (256, 256, 320, 200));
+        let (_, lk, _, _) = setup();
+        let mut sys = crate::system::allocate(&d);
+        matrix::golden_begin(&d, lk.role_counts, lk.role_caps, &mut sys.m);
+        let mut t = open(&mut sys, &d, &lk);
+        run_line(&mut t, &mut sys, &lk, "map 100 mark");
+        assert!(t.map);
+        render(&t, &mut sys, &lk);
     }
 
     /// The help's example agent is alive after the self-test's scripted run (the state the terminal opens in).

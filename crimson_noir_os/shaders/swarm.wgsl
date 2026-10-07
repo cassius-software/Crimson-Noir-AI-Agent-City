@@ -95,9 +95,10 @@ fn tick(@builtin(global_invocation_id) gid: vec3<u32>) {
     let stations = P.stations;
     let cells = w * depth;
 
-    let a = words[at(ALIVE, i)];
+    // The 1/0 masks are bit 0 of their words, whatever else a word holds.
+    let a = words[at(ALIVE, i)] & 1u;
     let caps = words[at(CAPS, i)];
-    let reaped = words[at(DOOMED, i)];
+    let reaped = words[at(DOOMED, i)] & 1u;
 
     // Where the agent stands, and what its station's field says about the four cells around it.
     let cx = min(u32(pos[i]), w - 1u);

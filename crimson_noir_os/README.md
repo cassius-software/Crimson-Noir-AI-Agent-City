@@ -28,7 +28,7 @@ python3 tools/boot_test.py target/image/crimson_noir_os.img --wait "SELFTEST PAS
   --step "wait:TUTORIAL 6 PASSED" --step 'type:\n' --step "wait:TERMINAL READY" \
   --step 'type:golden\n' --step wait:MATCH --step 'type:halt\n' --step exit
 cargo run --release -- selftest            # the hosted runtime: CPU and GPU, compared word for word
-cargo test --workspace                     # 48 tests (set NOIR_REQUIRE_GPU=1 to fail rather than skip without a GPU)
+cargo test --workspace                     # 52 tests (set NOIR_REQUIRE_GPU=1 to fail rather than skip without a GPU)
 ```
 
 **Requirements**
@@ -52,7 +52,7 @@ cargo test --workspace                     # 48 tests (set NOIR_REQUIRE_GPU=1 to
 | Path | What it is |
 |---|---|
 | `containment.nix`, `containment.lock` | The declarative configuration (a strict Nix subset) and the SHA-256 of its canonical form |
-| `crates/noir_core` | The `no_std` + `alloc` core, shared by the image and the hosted runtime (42 tests) |
+| `crates/noir_core` | The `no_std` + `alloc` core, shared by the image and the hosted runtime (46 tests) |
 | `boot/` (`crimson_boot`) | The UEFI application: its own UEFI bindings, GOP framebuffer, ExitBootServices, own GDT/IDT, serial log, PS/2 keyboard, a sealed bump allocator |
 | `src/`, `shaders/` | The hosted runtime (std, wgpu 30, bytemuck, log + env_logger, pollster) and the WGSL kernels (6 tests) |
 | `tools/` | `build-image.sh` makes the disk image and the ISO; `boot_test.py` boots them in QEMU + OVMF, follows the serial log, types, and takes screenshots |
@@ -154,7 +154,9 @@ map 42 mark go                        \ the floor map, agent 42 ringed, the swar
 
 - `caps` and `role` are read-only.
 - Positions are clamped to the floor, and station writes are range-checked.
-- One line may take at most `stepBudget` steps; a tick costs one step per slot. This is the terminal's loop breaker.
+- `alive`, `doomed` and `walls` are 1/0 masks: only 0 or 1 can be written (the kernels read bit 0 in any case).
+- One line may take at most `stepBudget` steps. A tick costs one step per slot, and a pass of the routing relaxation
+  costs an eighth of a step per cell of every field. This is the terminal's loop breaker.
 - Rule 110, a universal cellular automaton, runs in it, so it is Turing complete within its declared memory.
 
 ## Measured

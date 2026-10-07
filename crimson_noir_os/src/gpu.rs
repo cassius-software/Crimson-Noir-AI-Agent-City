@@ -587,8 +587,15 @@ mod tests {
             for i in 0..d.capacity {
                 m.px[i] = (next() % (d.width as u32 * 8)) as f32 / 8.0;
                 m.pz[i] = (next() % (d.depth as u32 * 8)) as f32 / 8.0;
-                m.alive[i] = (next() % 4 != 0) as u32;
-                m.doomed[i] = (next() % 16 == 0) as u32;
+                // Masks are 0 or 1, but a corrupt word must tick the same on both (bit 0 is the mask).
+                m.alive[i] = match next() % 16 {
+                    0 => next(),
+                    k => (k % 4 != 0) as u32,
+                };
+                m.doomed[i] = match next() % 32 {
+                    0 => next(),
+                    k => (k % 16 == 0) as u32,
+                };
                 m.caps[i] = next() % 32;
                 m.req[i] = (next() % 8 == 0) as u32 * (next() % 32);
                 m.role[i] = next() % 3;

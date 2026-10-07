@@ -144,7 +144,8 @@ pub fn route(d: &Dims, m: &mut Matrix) -> u32 {
     }
 }
 
-/// Spawns the declared roles into the pool, in order, at free cells derived from the seed.
+/// Spawns the declared roles into the pool, in order, at free cells derived from the seed (on a floor with no free
+/// cell at all, an agent is placed where the search ends, in a wall it cannot leave).
 pub fn spawn(d: &Dims, role_counts: &[u32], role_caps: &[u32], m: &mut Matrix) {
     clear_agents(m);
     let cells = (d.width * d.depth) as u32;
@@ -154,13 +155,15 @@ pub fn spawn(d: &Dims, role_counts: &[u32], role_caps: &[u32], m: &mut Matrix) {
             let mut h = mix32(d.seed ^ (i as u32).wrapping_mul(0x9e37_79b9));
             let mut c = h % cells;
             let mut tries = 0;
-            while m.walls[c as usize] != 0 && tries < 64 {
+            while m.walls[c as usize] & 1 != 0 && tries < 64 {
                 h = mix32(h.wrapping_add(1));
                 c = h % cells;
                 tries += 1;
             }
-            while m.walls[c as usize] != 0 {
+            let mut scanned = 0;
+            while m.walls[c as usize] & 1 != 0 && scanned < cells {
                 c = (c + 1) % cells;
+                scanned += 1;
             }
             let (x, z) = (c as usize % d.width, c as usize / d.width);
             m.px[i] = x as f32 + 0.5;
