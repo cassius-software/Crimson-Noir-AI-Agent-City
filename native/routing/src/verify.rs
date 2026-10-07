@@ -83,6 +83,17 @@ fn checked_words_of<const N: usize>(pieces: usize) -> [f64; N] {
     words
 }
 
+/// A well-formed one-piece track with no stops, the counts written into the words rather than assumed: the checker
+/// then knows the loops over the pieces and the stops statically (one and none), instead of unrolling each to the
+/// harness's bound behind a guard, which multiplied the projection's scan by the bound and outgrew a 7 GB runner.
+fn one_piece_words<const N: usize>() -> [f64; N] {
+    let mut words = any_words::<N>();
+    words[T_PIECES] = 1.0;
+    words[T_STOPS] = 0.0;
+    kani::assume(Track::check(&words));
+    words
+}
+
 /// The arena setter refuses what it must (misaligned, empty, overflowing ranges) and never traps; the layout table
 /// answers 0 past its end.
 #[kani::proof]
@@ -203,6 +214,8 @@ fn next_stop_and_speed_limit_never_trap() {
 
 /// The projection never traps on a one-piece track, a line or a corner short enough that its scan is 16 samples,
 /// for every point and hint (the piece evaluation it samples is abstracted here and proved by the pose harnesses).
+/// The counts are written into the words (`one_piece_words`), so the checker unrolls the scan once, not once per
+/// guarded iteration of the loop over the pieces.
 #[kani::proof]
 #[kani::unwind(19)]
 #[kani::stub(crate::math::atan2, any_atan2)]
@@ -214,7 +227,7 @@ fn next_stop_and_speed_limit_never_trap() {
 #[kani::stub(crate::eval_piece, any_pose)]
 #[kani::stub(crate::refine, any_refine)]
 fn project_onto_never_traps_on_a_short_piece() {
-    let words = checked_words::<{ T_HEADER + PIECE_WORDS }>();
+    let words = one_piece_words::<{ T_HEADER + PIECE_WORDS }>();
     kani::assume(words[T_HEADER + P_LENGTH] <= 16.0 * NEWTON_STEP);
     lay(&words);
     let t = Track::new(&words);

@@ -144,5 +144,15 @@ jobs:
         run: |
           cargo install kani-verifier --version 0.68.0 --locked
           cargo kani setup
+      # A standard runner of a private repository has 7 GB; the checker peaks at 5.5 GB on the agent tick. Swap on
+      # the runner's disk keeps a harness that grows past that from taking the runner down with it (the first run
+      # on main lost two groups to "The runner has received a shutdown signal"). A safety net, not a requirement:
+      # every harness is bounded to fit the memory alone.
+      - name: 8 GB of swap beside the runner's memory
+        run: |
+          { sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192; } \
+            && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile \
+            || echo "::warning::no swap could be added; the harnesses run within the runner's memory alone"
+          free -m
       - name: The proof harnesses of this group
         run: sh tools/verify/fvps.sh kani ${{ matrix.group.harnesses }}

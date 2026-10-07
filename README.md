@@ -1837,12 +1837,13 @@ devices.
 **The formal verification step (FVPS).** `sh tools/verify/fvps.sh` runs before every release bake
 (`build-release.yml` refuses to bake a commit whose proofs fail) and in `ci.yml` on every pull request and push to
 `main`: the `fvps` job runs the theorems, the IR scan and the air gap in minutes, and the `kani` matrix runs the
-proof harnesses in six groups on parallel runners (the longest harness takes about twenty minutes; the `rust` and
+proof harnesses in six groups on parallel runners (the longest harness takes about ten minutes; the `rust` and
 `page` jobs run the tests, clippy, tsc, oxlint, the build and the air-gap check alongside). It has four parts, each
 honest about what it proves:
 - **Kani (CBMC, bit-precise model checking)** over harnesses compiled only under `cfg(kani)`:
   `crimson_noir_os/crates/noir_core/src/verify.rs` lays a symbolic Global Matrix of the smallest validated
-  dimensions (64 agents, an 8-word memory block, 2 stations, a 32×32 floor, every kernel knob symbolic) and proves
+  dimensions (64 agents, an 8-word memory block, 2 stations, every kernel knob symbolic; a 32×32 floor for the
+  flush, 8×8 for the tick and the relaxation, which read the floor at symbolic cells) and proves
   that one agent's tick writes only its own row, its own weights and its own memory block, keeps its position on the
   floor and its masks at 0 or 1, that the flush zeroes one row only, that a relaxation pass and a bitonic pass never
   index outside their arrays, and that the branchless masks mean what the kernels take them to mean;
@@ -1854,7 +1855,10 @@ honest about what it proves:
   their values are held bit for bit by the parity tests, not proved here), and the routing harnesses run without
   the checker's floating-point checks (a NaN is a value the module returns for a NaN input, not a trap; bounds,
   pointers, integer overflow and assertions stay checked). The sizes are small because the checker unrolls every
-  loop (the relaxation pass is proved on an 8×8 floor; the theorems cover every validated floor).
+  loop and its memory grows with the arrays (the tick and the relaxation pass are proved on an 8×8 floor; the
+  projection's track has its piece and stop counts written in rather than assumed, so the scan is unrolled once; the
+  theorems cover every validated floor). A standard runner of a private repository has 7 GB, and the first run on
+  main found the tick at 32×32 and the projection with assumed counts both outgrow it.
 - **Z3 theorems** (`tools/verify/fvps_smt.py`) over 32-bit words and IEEE doubles, for every validated dimension:
   memory-slot isolation between agents, no 32-bit wrap in the index arithmetic, every field read in bounds, the goal
   mask, the stepped cell on the floor, the weight index, the relaxation neighbours, the bitonic comparators, the
