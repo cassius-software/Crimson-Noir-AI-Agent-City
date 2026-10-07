@@ -3,7 +3,9 @@
 Why does this file exist? It boots the bootable media in QEMU with OVMF (UEFI firmware), as a machine would, and checks
 what the system reports: the serial log must reach every marker asked for (SELFTEST PASS, the tutorial's states) within
 the time allowed, and the screen is captured as PNG along the way. It can type into the system's keyboard (a PS/2 one,
-through QEMU's monitor) and capture again, so the terminal is tested the same way. Nothing leaves this machine.
+through QEMU's monitor) and capture again, so the terminal is tested the same way. `--step` runs a script of steps in
+order (wait:MARKER, shot:FILE.png, type:TEXT with \n for Enter, key:QEMU-KEY, sleep:SECONDS, exit: the machine
+powers itself off); each wait looks only at what the log gained since the last one. Nothing leaves this machine.
 What breaks if it is removed? Nothing would check that the image boots into the tutorial.
 """
 import argparse
@@ -24,7 +26,9 @@ KEYS = {" ": "spc", "\n": "ret", "-": "minus", "=": "equal", ".": "dot", ",": "c
         "'": "apostrophe", "[": "bracket_left", "]": "bracket_right", "\\": "backslash", "`": "grave_accent",
         "*": "shift-8", "+": "shift-equal", ":": "shift-semicolon", "(": "shift-9", ")": "shift-0", "!": "shift-1",
         "@": "shift-2", "\"": "shift-apostrophe", "<": "shift-comma", ">": "shift-dot", "?": "shift-slash",
-        "_": "shift-minus", "\x1b": "esc", "\b": "backspace"}
+        "_": "shift-minus", "\x1b": "esc", "\b": "backspace", "#": "shift-3", "$": "shift-4", "%": "shift-5",
+        "^": "shift-6", "&": "shift-7", "|": "shift-backslash", "{": "shift-bracket_left", "}": "shift-bracket_right",
+        "~": "shift-grave_accent"}
 
 
 def monitor(path, command):
@@ -101,12 +105,16 @@ def type_text(sock, text):
         time.sleep(0.05)
 
 
-def wait_for(log_path, marker, deadline):
+def wait_for(log_path, marker, deadline, since=0):
+    """Waits for `marker` in the log after offset `since`; returns the offset just past it, or None."""
     while time.time() < deadline:
-        if os.path.exists(log_path) and marker in open(log_path, errors="replace").read():
-            return True
+        if os.path.exists(log_path):
+            text = open(log_path, errors="replace").read()
+            at = text.find(marker, since)
+            if at >= 0:
+                return at + len(marker)
         time.sleep(0.25)
-    return False
+    return None
 
 
 def main():
@@ -119,6 +127,7 @@ def main():
     p.add_argument("--after-type-shot", default=None, help="a PNG to capture after typing")
     p.add_argument("--timeout", type=float, default=600, help="seconds allowed for each marker")
     p.add_argument("--log", default=None, help="where to keep the serial log")
+    p.add_argument("--step", action="append", default=[], help="a scripted step, run after the markers (in order)")
     a = p.parse_args()
 
     work = tempfile.mkdtemp(prefix="crimson-boot-")
@@ -138,14 +147,47 @@ def main():
     ok = True
     try:
         start = time.time()
+        cursor = 0
         for i, marker in enumerate(a.wait):
-            if not wait_for(log, marker, time.time() + a.timeout):
+            found = wait_for(log, marker, time.time() + a.timeout, cursor)
+            if found is None:
                 print(f"FAIL: '{marker}' never reached the serial log ({time.time() - start:.0f} s)")
                 ok = False
                 break
+            cursor = found
             print(f"ok    '{marker}' after {time.time() - start:.1f} s")
             if i < len(a.shot):
                 shot(sock, work, a.shot[i])
+        for step in a.step if ok else []:
+            kind, _, arg = step.partition(":")
+            if kind == "wait":
+                found = wait_for(log, arg, time.time() + a.timeout, cursor)
+                if found is None:
+                    print(f"FAIL: '{arg}' never reached the serial log ({time.time() - start:.0f} s)")
+                    ok = False
+                    break
+                cursor = found
+                print(f"ok    '{arg}' after {time.time() - start:.1f} s")
+            elif kind == "shot":
+                shot(sock, work, arg)
+            elif kind == "type":
+                type_text(sock, arg.replace("\\n", "\n"))
+            elif kind == "key":
+                monitor(sock, f"sendkey {arg}")
+            elif kind == "sleep":
+                time.sleep(float(arg))
+            elif kind == "exit":
+                try:
+                    q.wait(timeout=a.timeout)
+                    print(f"ok    the machine powered itself off after {time.time() - start:.1f} s")
+                except subprocess.TimeoutExpired:
+                    print("FAIL: the machine did not power off")
+                    ok = False
+                break
+            else:
+                print(f"FAIL: unknown step '{step}'")
+                ok = False
+                break
         if ok and a.type is not None:
             type_text(sock, a.type)
             if a.after_type_wait and not wait_for(log, a.after_type_wait, time.time() + a.timeout):

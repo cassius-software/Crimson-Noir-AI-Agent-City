@@ -96,15 +96,22 @@ pub fn clear_agents(m: &mut Matrix) {
     m.weights.fill(0);
 }
 
-/// The server-room floor: walls around the edge, rows of racks every eighth row with an aisle through the middle,
-/// and the stations along the two side walls.
+/// A row of racks every this many rows of cells (the rows between are an aisle).
+pub const RACK_EVERY: usize = 8;
+/// Cells kept clear of racks along the side walls (where the stations are).
+pub const RACK_MARGIN: usize = 8;
+/// Half the width, in cells, of the cross aisle through the middle of every rack row.
+pub const CROSS_HALF: usize = 2;
+
+/// The server-room floor: walls around the edge, rows of racks every RACK_EVERY rows with a cross aisle through the
+/// middle, and the stations along the two side walls.
 pub fn lay_out_world(d: &Dims, m: &mut Matrix) {
     let (w, depth) = (d.width, d.depth);
     for z in 0..depth {
         for x in 0..w {
             let edge = x == 0 || z == 0 || x == w - 1 || z == depth - 1;
-            let aisle = x + 2 >= w / 2 && x < w / 2 + 2;
-            let rack = z % 8 == 0 && x >= 8 && x < w - 8 && !aisle;
+            let aisle = x + CROSS_HALF >= w / 2 && x < w / 2 + CROSS_HALF;
+            let rack = z % RACK_EVERY == 0 && x >= RACK_MARGIN && x < w - RACK_MARGIN && !aisle;
             m.walls[z * w + x] = (edge || rack) as u32;
         }
     }
@@ -260,15 +267,17 @@ pub fn golden_step(d: &Dims, m: &mut Matrix, p: &mut Proof) -> bool {
     }
     let t = p.tick;
     let looper = p.looper as usize;
-    if p.trapped_at == NONE && t >= TRAP_TICK && p.looper != NONE {
-        if let Some(cell) = intended_cell(d, m, looper) {
-            if !m.station.contains(&cell) && m.walls[cell as usize] == 0 {
-                // A wall the routing fields do not know about: the looper keeps choosing it.
-                m.walls[cell as usize] = 1;
-                p.trap_cell = cell;
-                p.trapped_at = t;
-            }
-        }
+    if p.trapped_at == NONE
+        && t >= TRAP_TICK
+        && p.looper != NONE
+        && let Some(cell) = intended_cell(d, m, looper)
+        && !m.station.contains(&cell)
+        && m.walls[cell as usize] == 0
+    {
+        // A wall the routing fields do not know about: the looper keeps choosing it.
+        m.walls[cell as usize] = 1;
+        p.trap_cell = cell;
+        p.trapped_at = t;
     }
     if t == ROGUE_TICK && p.rogue != NONE {
         m.req[p.rogue as usize] |= CAP_SPAWN;

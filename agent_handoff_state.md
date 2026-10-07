@@ -15,8 +15,21 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
     undeclared 992-byte Vec on the first boot). In QEMU+OVMF (`tools/build-image.sh`, `tools/boot_test.py`): memory
     march 16 MiB clean, 4,274,560 bytes declared = allocated, the scripted run's fingerprint 0x83765bab equal to the
     build machine's (soft-float on the image), display read-back clean, `SELFTEST PASS` in 6.5 s, keys echoed.
-  - NEXT: the fixed-point renderer + the 5-Whys tutorial scene + the terminal (task 30), the hosted wgpu runtime with
-    WGSL parity (31), the README/docs and final boot test with screenshots (32).
+  - DONE (task 30) the tutorial and the terminal, all in the `no_std` core and allocation-free (a counting allocator
+    in the tests proves it): `render.rs` (integer-only rasterizer: Q16.16, sine table, look-at camera, near clipping,
+    1/z depth, fog, dots, letterbox/vignette/grain), `scene.rs` (the room from the matrix walls and stations, staged
+    along the real aisles; the tutor in a blazer/shirt/crimson tie; cage at the trap cell, crash cart, sorting
+    table), `tutorial.rs` (the 5-Whys film: memory march of the arena's untouched part + the seal probe, the scripted
+    run against GOLDEN_PROOF, containment from that run with live row-zero reads, the screen read-back, the bitonic
+    sort animated comparator by comparator with the 0-1 proof; ESC skips the film, never the checks; any failure is
+    the fault screen), `term.rs` (the Sith Lord Terminal: a bounds-checked Forth over the arrays; caps/role read-only,
+    `ask` requests judged by the kernels; knobs within the validator's ranges; `cfg`/`digest` read-only with a live
+    SHA-256 re-check; step budget = loop breaker; Rule 110 runs in it). 44 core tests.
+    The image runs it all: QEMU boot -> SELFTEST PASS 6.8 s -> the film (about 14 fps under TCG) -> PASSED 76 s ->
+    terminal (golden MATCH, digest holds, help example) -> `halt` powers the VM off (runtime services).
+    Boot test with screenshots: see the command under Next steps.
+  - NEXT: the hosted wgpu runtime with WGSL parity (31), the README/docs, the final boot test of .img and .iso with
+    screenshots sent to the operator (32).
 - The local tag `stable-beta` exists only locally (GitHub refused the tag push, HTTP 403).
 - Machine: 4 CPUs, 16 GB. Do not run several Rapier-heavy experiments and a multi-agent workflow at once (exit 137 once).
 
@@ -273,5 +286,11 @@ trademark to clear before a commercial release.
 ```sh
 cd /home/user/Crimson-Noir-AI-Agent-City && git fetch origin claude/quirky-faraday-xkpdln && git status && git log --oneline -5
 npx tsc -b && npx oxlint && npm test && npm run build && npm run smoke:net     # the release's checks, all green
-cd crimson_noir_os && cargo test -p noir_core                                  # the OS core (20 tests)
+cd crimson_noir_os && cargo test -p noir_core                                  # the OS core (44 tests)
+cargo clippy --workspace --all-targets && cargo clippy -p crimson_boot --target x86_64-unknown-uefi --release
+sh tools/build-image.sh                                                        # target/image/crimson_noir_os.{img,iso}
+python3 -I tools/boot_test.py target/image/crimson_noir_os.img --timeout 150 --wait "SELFTEST PASS" \
+  --step "wait:TUTORIAL 5 SORT" --step sleep:8 --step shot:/tmp/sort.png --step "wait:TUTORIAL 6 PASSED" \
+  --step 'type:\n' --step "wait:TERMINAL READY" --step 'type:golden\n' --step wait:MATCH \
+  --step 'type:halt\n' --step exit                                              # about 95 s under TCG
 ```

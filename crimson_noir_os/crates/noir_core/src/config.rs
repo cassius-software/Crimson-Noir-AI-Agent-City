@@ -446,7 +446,7 @@ pub fn validate(root: &Value) -> Result<Config, String> {
     let memory = as_set(need(root, "memory", "")?, "memory")?;
     only(memory, &["arenaBytes"], "memory.")?;
     let arena_bytes = int(memory, "arenaBytes", "memory.", 1 << 20, 1 << 30)? as usize;
-    if arena_bytes % 4096 != 0 {
+    if !arena_bytes.is_multiple_of(4096) {
         return Err(format!("memory.arenaBytes must be a whole number of 4 KiB pages (got {})", arena_bytes));
     }
 
@@ -473,7 +473,7 @@ pub fn validate(root: &Value) -> Result<Config, String> {
     only(display, &["width", "height", "triangles"], "display.")?;
     let display_width = int(display, "width", "display.", 320, 1920)? as usize;
     let display_height = int(display, "height", "display.", 200, 1080)? as usize;
-    if display_width % 8 != 0 || display_height % 8 != 0 {
+    if !display_width.is_multiple_of(8) || !display_height.is_multiple_of(8) {
         return Err(String::from("display.width and display.height must be multiples of 8"));
     }
     let triangles = int(display, "triangles", "display.", 256, 1 << 20)? as usize;

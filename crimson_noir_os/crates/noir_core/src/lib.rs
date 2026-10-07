@@ -13,9 +13,13 @@ pub mod config;
 pub mod hash;
 pub mod kernels;
 pub mod matrix;
+pub mod render;
+pub mod scene;
 pub mod sort;
 pub mod system;
+pub mod term;
 pub mod text;
+pub mod tutorial;
 
 #[cfg(test)]
 mod tests;

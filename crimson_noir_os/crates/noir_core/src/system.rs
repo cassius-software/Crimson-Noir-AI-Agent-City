@@ -9,7 +9,34 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::config::{Dims, TERM_COLS};
-use crate::matrix::{self, Matrix};
+use crate::matrix::{self, Matrix, Proof};
+
+/// What the build locked into the system (the tables generated from containment.nix), as one value for the tutorial
+/// and the terminal: the platforms build it from their generated `locked` module.
+#[derive(Clone, Copy, Debug)]
+pub struct Locked {
+    pub name: &'static str,
+    pub version: &'static str,
+    /// The SHA-256 of the canonical configuration, as pinned in containment.lock.
+    pub digest: &'static str,
+    pub canonical: &'static str,
+    pub role_names: &'static [&'static str],
+    pub role_counts: &'static [u32],
+    pub role_caps: &'static [u32],
+    /// The self-test's scripted run, as the build machine ran it.
+    pub golden: Proof,
+}
+
+/// Keys as the platforms report them: ASCII for characters (Enter is '\r', Backspace 8, Escape 27), these for the rest.
+pub const KEY_BACKSPACE: u32 = 8;
+pub const KEY_ENTER: u32 = 13;
+pub const KEY_ESC: u32 = 27;
+pub const KEY_UP: u32 = 0x101;
+pub const KEY_DOWN: u32 = 0x102;
+pub const KEY_LEFT: u32 = 0x103;
+pub const KEY_RIGHT: u32 = 0x104;
+pub const KEY_PAGE_UP: u32 = 0x105;
+pub const KEY_PAGE_DOWN: u32 = 0x106;
 
 /// The display, the scene and the terminal's memory (beside the Global Matrix).
 pub struct Buffers {

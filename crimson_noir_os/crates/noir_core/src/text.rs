@@ -68,6 +68,72 @@ pub fn draw_shadowed(t: &mut Target, x: i32, y: i32, scale: i32, color: u32, s: 
     draw(t, x, y, scale, color, s)
 }
 
+/// A line of text in a fixed buffer, for `write!` where nothing may be allocated (after the seal). Past its capacity the
+/// text is cut; anything outside ASCII is written as '?'.
+pub struct Buf<const N: usize> {
+    bytes: [u8; N],
+    len: usize,
+}
+
+impl<const N: usize> Buf<N> {
+    pub const fn new() -> Self {
+        Buf { bytes: [0; N], len: 0 }
+    }
+    pub fn as_str(&self) -> &str {
+        // Only ASCII is ever written.
+        core::str::from_utf8(&self.bytes[..self.len]).unwrap_or("?")
+    }
+    pub fn clear(&mut self) {
+        self.len = 0;
+    }
+    pub fn len(&self) -> usize {
+        self.len
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+impl<const N: usize> Default for Buf<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const N: usize> core::fmt::Write for Buf<N> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        for c in s.chars() {
+            if self.len < N {
+                self.bytes[self.len] = if c.is_ascii() { c as u8 } else { b'?' };
+                self.len += 1;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `n` with thousands separators ("4,274,560").
+pub fn grouped(out: &mut impl core::fmt::Write, n: u64) -> core::fmt::Result {
+    let mut digits = [0u8; 20];
+    let mut k = 0;
+    let mut v = n;
+    loop {
+        digits[k] = b'0' + (v % 10) as u8;
+        k += 1;
+        v /= 10;
+        if v == 0 {
+            break;
+        }
+    }
+    for i in (0..k).rev() {
+        out.write_char(digits[i] as char)?;
+        if i > 0 && i % 3 == 0 {
+            out.write_char(',')?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,5 +153,23 @@ mod tests {
         draw(&mut t, 30, 14, 3, 1, "clip");
         assert_eq!(width("abc", 2), 48);
         assert_eq!(glyph('é'), glyph('?'));
+    }
+
+    #[test]
+    fn a_fixed_line_cuts_at_its_capacity_and_groups_digits() {
+        use core::fmt::Write;
+        let mut b: Buf<8> = Buf::new();
+        write!(b, "{}é3456789", 12).unwrap();
+        assert_eq!(b.as_str(), "12?34567");
+        let mut g: Buf<32> = Buf::new();
+        for n in [0u64, 7, 999, 1000, 4274560, u64::MAX] {
+            g.clear();
+            grouped(&mut g, n).unwrap();
+            let plain: std::string::String = g.as_str().chars().filter(|c| *c != ',').collect();
+            assert_eq!(plain, std::format!("{n}"));
+        }
+        g.clear();
+        grouped(&mut g, 4274560).unwrap();
+        assert_eq!(g.as_str(), "4,274,560");
     }
 }

@@ -62,6 +62,17 @@ pub fn refused() -> usize {
     state().refused
 }
 
+/// Asks the sealed allocator for 64 bytes, live: true when it refuses (the tutorial's memory check). The probe's own
+/// refusal is not counted, so a later panic is not mistaken for an undeclared allocation.
+pub fn seal_holds() -> bool {
+    let before = refused();
+    // SAFETY: a valid, non-zero layout; a pointer, were one returned, would never be used or freed.
+    let p = unsafe { ARENA.alloc(Layout::from_size_align_unchecked(64, 64)) };
+    let held = p.is_null() && refused() == before + 1;
+    state().refused = before;
+    held
+}
+
 unsafe impl GlobalAlloc for Arena {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let s = state();

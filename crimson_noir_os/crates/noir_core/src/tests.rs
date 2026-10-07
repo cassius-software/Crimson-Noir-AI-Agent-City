@@ -5,6 +5,8 @@
 //! the walls, and the routing fields are true shortest paths.
 //! What breaks if it is removed? The claims above would be unchecked.
 
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::collections::VecDeque;
 use std::string::String;
 use std::vec::Vec;
@@ -15,6 +17,45 @@ use crate::kernels::{self, FATE_DROPPED, FATE_FLUSHED, FATE_REAPED, INF, agent_t
 use crate::matrix::{self, GOLDEN_TICKS, Matrix, ROGUE_TICK, golden, row_is_zero};
 
 const SAMPLE: &str = include_str!("../../../containment.nix");
+
+/// Counts the allocations each test thread makes, so a test can prove code allocates nothing (what runs after the
+/// image's allocator is sealed must not).
+struct Counting;
+
+std::thread_local! {
+    static ALLOCS: Cell<usize> = const { Cell::new(0) };
+}
+
+fn counted() {
+    ALLOCS.with(|a| a.set(a.get() + 1));
+}
+
+// SAFETY: every call is forwarded to the system allocator unchanged; the count is a thread-local integer.
+unsafe impl GlobalAlloc for Counting {
+    unsafe fn alloc(&self, l: Layout) -> *mut u8 {
+        counted();
+        unsafe { System.alloc(l) }
+    }
+    unsafe fn alloc_zeroed(&self, l: Layout) -> *mut u8 {
+        counted();
+        unsafe { System.alloc_zeroed(l) }
+    }
+    unsafe fn realloc(&self, p: *mut u8, l: Layout, size: usize) -> *mut u8 {
+        counted();
+        unsafe { System.realloc(p, l, size) }
+    }
+    unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
+        unsafe { System.dealloc(p, l) }
+    }
+}
+
+#[global_allocator]
+static COUNTING: Counting = Counting;
+
+/// Allocations this thread has made so far.
+pub(crate) fn allocations() -> usize {
+    ALLOCS.with(|a| a.get())
+}
 
 fn sample() -> Config {
     config::validate(&config::parse(SAMPLE).unwrap()).unwrap()

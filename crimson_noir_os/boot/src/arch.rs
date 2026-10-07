@@ -272,13 +272,7 @@ extern "sysv64" fn fault_entry(frame: *const FaultFrame) -> ! {
 // -------------------------------------------------------------------------------------------------------------------
 // The keyboard: the PS/2 controller, polled, scancode set 1 (the controller's translation, as firmware leaves it)
 
-/// Keys that are not characters.
-pub const KEY_UP: u16 = 0x101;
-pub const KEY_DOWN: u16 = 0x102;
-pub const KEY_LEFT: u16 = 0x103;
-pub const KEY_RIGHT: u16 = 0x104;
-pub const KEY_PAGE_UP: u16 = 0x105;
-pub const KEY_PAGE_DOWN: u16 = 0x106;
+use noir_core::system::{KEY_DOWN, KEY_ENTER, KEY_LEFT, KEY_PAGE_DOWN, KEY_PAGE_UP, KEY_RIGHT, KEY_UP};
 
 const NORMAL: &[u8; 59] = b"\x00\x1b1234567890-=\x08\tqwertyuiop[]\r\x00asdfghjkl;'`\x00\\zxcvbnm,./\x00*\x00 \x00";
 const SHIFTED: &[u8; 59] = b"\x00\x1b!@#$%^&*()_+\x08\tQWERTYUIOP{}\r\x00ASDFGHJKL:\"~\x00|ZXCVBNM<>?\x00*\x00 \x00";
@@ -306,9 +300,9 @@ pub fn ps2_byte() -> Option<u8> {
     }
 }
 
-/// A scancode as a key: ASCII for characters (Enter is '\r', Backspace 8, Escape 27), KEY_* for the others, None for
-/// releases and modifiers.
-pub fn key(kb: &mut Keyboard, sc: u8) -> Option<u16> {
+/// A scancode as a key, in the core's key codes (noir_core::system::KEY_*: ASCII for characters, Enter '\r',
+/// Backspace 8, Escape 27); None for releases and modifiers.
+pub fn key(kb: &mut Keyboard, sc: u8) -> Option<u32> {
     if sc == 0xe0 {
         kb.extended = true;
         return None;
@@ -331,7 +325,7 @@ pub fn key(kb: &mut Keyboard, sc: u8) -> Option<u16> {
             0x4d => Some(KEY_RIGHT),
             0x49 => Some(KEY_PAGE_UP),
             0x51 => Some(KEY_PAGE_DOWN),
-            0x1c => Some(b'\r' as u16),
+            0x1c => Some(KEY_ENTER),
             _ => None,
         };
     }
@@ -347,5 +341,5 @@ pub fn key(kb: &mut Keyboard, sc: u8) -> Option<u16> {
     if kb.caps && c.is_ascii_alphabetic() {
         c ^= 0x20;
     }
-    (c != 0).then_some(c as u16)
+    (c != 0).then_some(c as u32)
 }

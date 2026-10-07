@@ -1,9 +1,12 @@
 //! Why does this file exist? It is the bootable image's life, from the firmware's call to the system's loop: the
 //! screen (the Graphics Output Protocol's linear framebuffer), the declared arena taken from the firmware, the clock
 //! calibrated against the firmware's stall, the hand-over (ExitBootServices: from then on the machine is the image's
-//! alone, interrupts off, its own GDT and IDT), the system's memory allocated as declared and sealed, and the loop
-//! that draws frames and reads the keyboard. It also owns the two ways the system stops: the fault screen (a CPU
-//! exception, a panic, an allocation the configuration never declared, a failed self-test) and a halt.
+//! alone, interrupts off, its own GDT and IDT), the system's memory allocated as declared and sealed, the boot-time
+//! checks, and the loop that runs the 5-Whys tutorial (the self-test, live) and then the Sith Lord Terminal, reading
+//! the keyboard and drawing frames. It is the tutorial's platform too: the live memory march over the arena's free
+//! part, the seal probe and the screen's read-back. It also owns the ways the system stops: the fault screen (a CPU
+//! exception, a panic, an allocation the configuration never declared, a failed check), and a reset or power-off
+//! through the firmware's runtime services when the operator asks.
 //! What breaks if it is removed? The image boots into nothing.
 
 use core::fmt::Write as _;
@@ -11,11 +14,25 @@ use core::ptr::null;
 
 use log::{error, info};
 use noir_core::config::{self, Dims};
-use noir_core::system::{self, System};
+use noir_core::system::{self, KEY_ENTER, KEY_ESC, Locked, System};
+use noir_core::term::{self, Request, Term};
 use noir_core::text::{self, Target};
+use noir_core::tutorial::{self, Boot, March, Outcome, Platform};
 
-use crate::uefi::{self, BootServices, Handle, Status, SystemTable};
+use crate::uefi::{self, BootServices, Handle, RuntimeServices, Status, SystemTable};
 use crate::{arch, heap, locked};
+
+/// The tables the image was built with, as the core's value.
+const LOCKED: Locked = Locked {
+    name: locked::NAME,
+    version: locked::VERSION,
+    digest: locked::DIGEST,
+    canonical: locked::CANONICAL,
+    role_names: &locked::ROLE_NAMES,
+    role_counts: &locked::ROLE_COUNTS,
+    role_caps: &locked::ROLE_CAPS,
+    golden: locked::GOLDEN_PROOF,
+};
 
 // -------------------------------------------------------------------------------------------------------------------
 // The log: the serial line
@@ -88,10 +105,10 @@ fn open_screen(bs: &BootServices) -> Result<Screen, &'static str> {
                 best = Some((mode, score));
             }
         }
-        if let Some((mode, _)) = best {
-            if mode != (*g.mode).mode {
-                (g.set_mode)(gop, mode);
-            }
+        if let Some((mode, _)) = best
+            && mode != (*g.mode).mode
+        {
+            (g.set_mode)(gop, mode);
         }
         let m = &*g.mode;
         let i = &*m.info;
@@ -320,6 +337,10 @@ pub extern "efiapi" fn efi_main(image: Handle, st: *mut SystemTable) -> Status {
         uefi::print(st, "the firmware would not give the declared memory (memory.arenaBytes)");
         return uefi::OUT_OF_RESOURCES;
     }
+    // The firmware's runtime services (reset and power-off) outlive its boot services; the image never remaps memory,
+    // so the pointer stays good.
+    // SAFETY: as above, the system table is the firmware's.
+    let rt = unsafe { (*st).runtime_services };
     // The clock: 50 ms of the firmware's stall against the time-stamp counter.
     let t0 = arch::rdtsc();
     (bs.stall)(50_000);
@@ -341,7 +362,7 @@ pub extern "efiapi" fn efi_main(image: Handle, st: *mut SystemTable) -> Status {
     // SAFETY: as Shared; nothing reads it yet.
     unsafe { *SCREEN.0.get() = Some(s) };
     info!("boot services exited: {} MiB of free RAM, the image's own GDT and IDT, TSC at {} MHz", ram >> 20, tsc_per_us);
-    run(s, arena as usize, d, tsc_per_us)
+    run(s, arena as usize, d, tsc_per_us, rt)
 }
 
 /// Writes and reads back every word of [start, end) twice (an address-dependent pattern, then its complement). Returns
@@ -365,12 +386,76 @@ fn march(start: usize, end: usize) -> usize {
     wrong
 }
 
-fn run(s: Screen, arena: usize, d: Dims, tsc_per_us: u64) -> ! {
+/// Milliseconds since the system started, from the time-stamp counter.
+#[derive(Clone, Copy)]
+struct Clock {
+    t0: u64,
+    per_us: u64,
+}
+
+impl Clock {
+    fn ms(&self) -> u64 {
+        (arch::rdtsc() - self.t0) / self.per_us / 1000
+    }
+}
+
+/// The tutorial's platform: the arena's untouched part for the live march, the screen for the read-back, the
+/// allocator for the seal probe.
+struct Machine {
+    screen: Screen,
+    from: usize,
+    to: usize,
+    at: usize,
+    wrong: usize,
+}
+
+impl Platform for Machine {
+    fn march(&mut self, bytes: usize) -> March {
+        let n = (self.to - self.at).min(bytes) & !3;
+        if n > 0 {
+            self.wrong += march(self.at, self.at + n);
+            self.at += n;
+        }
+        March { done: self.at - self.from, total: self.to - self.from, wrong: self.wrong }
+    }
+
+    fn display_test(&mut self) -> (usize, usize) {
+        let side = 64.min(self.screen.width).min(self.screen.height);
+        (side * side * 2, display_test(&self.screen))
+    }
+
+    fn seal_holds(&mut self) -> bool {
+        heap::seal_holds()
+    }
+}
+
+const SHOT_NAMES: [&str; 7] = ["INTRO", "MEMORY", "COMPUTE", "CONTAINMENT", "DISPLAY", "SORT", "PASSED"];
+
+/// Resets or powers off the machine through the firmware's runtime services.
+fn reset(rt: *mut RuntimeServices, kind: u32) -> ! {
+    info!("{}", if kind == uefi::RESET_SHUTDOWN { "POWER OFF" } else { "REBOOT" });
+    if rt.is_null() {
+        arch::halt();
+    }
+    // SAFETY: the firmware's runtime services, valid after ExitBootServices (see efi_main).
+    unsafe { ((*rt).reset_system)(kind, uefi::SUCCESS, 0, null()) }
+}
+
+/// A scrollback line of the terminal, as text.
+fn term_line(sys: &System, line: usize) -> &str {
+    let w = noir_core::config::TERM_COLS;
+    let bytes = sys.b.term_text.get(line * w..(line + 1) * w).unwrap_or(&[]);
+    core::str::from_utf8(bytes).unwrap_or("?").trim_end()
+}
+
+fn run(s: Screen, arena: usize, d: Dims, tsc_per_us: u64, rt: *mut RuntimeServices) -> ! {
+    let clock = Clock { t0: arch::rdtsc(), per_us: tsc_per_us };
     // Memory, before anything lives in it.
     let t = arch::rdtsc();
-    let wrong = march(arena, arena + d.arena_bytes);
-    info!("memory: {} bytes written and read back twice, {} wrong, in {} ms", d.arena_bytes, wrong, (arch::rdtsc() - t) / tsc_per_us / 1000);
-    if wrong > 0 {
+    let boot_wrong = march(arena, arena + d.arena_bytes);
+    let march_ms = ((arch::rdtsc() - t) / tsc_per_us / 1000) as u32;
+    info!("memory: {} bytes written and read back twice, {} wrong, in {} ms", d.arena_bytes, boot_wrong, march_ms);
+    if boot_wrong > 0 {
         fault_screen("Memory does not hold what was written to it", &["the arena failed its write-and-read-back test"]);
     }
     heap::init(arena, d.arena_bytes);
@@ -402,34 +487,91 @@ fn run(s: Screen, arena: usize, d: Dims, tsc_per_us: u64) -> ! {
         fault_screen("The display does not show what was drawn", &["the framebuffer's test card read back wrong"]);
     }
     info!("SELFTEST PASS");
-    // A first screen until the tutorial runs: what the checks found, and the keyboard echoed.
-    let (w, h) = (d.display_width, d.display_height);
-    let mut typed = [0u8; 64];
-    let mut n = 0usize;
+    // The tutorial runs the checks again, live, on screen; then the terminal.
+    let boot = Boot {
+        arena_bytes: d.arena_bytes,
+        boot_wrong,
+        march_ms,
+        declared,
+        allocated: heap::used(),
+        screen_w: s.width,
+        screen_h: s.height,
+    };
+    let (from, to) = heap::untouched();
+    let mut machine = Machine { screen: s, from, to, at: from, wrong: 0 };
     let mut kb = arch::Keyboard { shift: false, caps: false, extended: false };
+    let mut tut = tutorial::begin(&mut sys, &d, &LOCKED, arch::rdtsc() as u32, clock.ms());
+    let mut console: Option<Term> = None;
+    let mut in_tutorial = true;
+    let mut shot = usize::MAX;
+    let (w, h) = (d.display_width, d.display_height);
+    let mut keys = [0u32; 16];
+    let frame_tsc = tsc_per_us * 16_000;
     loop {
-        {
-            let mut t = Target { pixels: &mut sys.b.color, width: w, height: h, stride: w };
-            text::fill(&mut t, 0, 0, w as i32, h as i32, 0x0b0b10);
-            text::draw(&mut t, 24, 24, 2, 0xe0283c, "CRIMSON NOIR OS");
-            text::draw(&mut t, 24, 52, 1, 0xd0d0d0, "memory, compute, containment and display checked");
-            let mut l = Line::new();
-            let _ = write!(l, "fingerprint {:#010x}, as built", p.fingerprint);
-            text::draw(&mut t, 24, 68, 1, 0xd0d0d0, l.as_str());
-            text::draw(&mut t, 24, 92, 1, 0x909090, "type:");
-            text::draw(&mut t, 72, 92, 1, 0xffffff, core::str::from_utf8(&typed[..n]).unwrap_or(""));
+        let start = arch::rdtsc();
+        let now = clock.ms();
+        let mut n = 0;
+        while let Some(sc) = arch::ps2_byte() {
+            if let Some(k) = arch::key(&mut kb, sc)
+                && n < keys.len()
+            {
+                keys[n] = k;
+                n += 1;
+            }
+        }
+        if in_tutorial {
+            let key = keys[..n].iter().copied().find(|&k| k == KEY_ESC).or(keys[..n].first().copied());
+            match tutorial::update(&mut tut, &mut sys, &d, &LOCKED, &boot, &mut machine, now, key) {
+                Outcome::Running => {}
+                Outcome::Passed => {
+                    info!("TUTORIAL PASSED");
+                    if console.is_none() {
+                        console = Some(term::open(&mut sys, &d, &LOCKED));
+                    }
+                    in_tutorial = false;
+                    info!("TERMINAL READY");
+                }
+                Outcome::Failed { title, detail } => fault_screen(title, &[detail]),
+            }
+            if in_tutorial && tut.shot != shot {
+                shot = tut.shot;
+                info!("TUTORIAL {} {}", shot, SHOT_NAMES.get(shot).copied().unwrap_or("?"));
+            }
+        } else if let Some(t) = console.as_mut() {
+            for &k in &keys[..n] {
+                if k == KEY_ENTER {
+                    let typed = core::str::from_utf8(&sys.b.term_line[..t.input]).unwrap_or("?");
+                    info!("TERM> {}", typed);
+                }
+                term::key(t, &mut sys, &LOCKED, k);
+                if k == KEY_ENTER {
+                    info!("TERM< {}", term_line(&sys, t.lines.saturating_sub(1)));
+                }
+            }
+            term::frame(t, &mut sys, now);
+            match t.request {
+                Request::None => {}
+                Request::Tutorial => {
+                    t.request = Request::None;
+                    machine.at = machine.from;
+                    machine.wrong = 0;
+                    tut = tutorial::begin(&mut sys, &d, &LOCKED, arch::rdtsc() as u32, now);
+                    in_tutorial = true;
+                    shot = usize::MAX;
+                }
+                Request::Reboot => reset(rt, uefi::RESET_COLD),
+                Request::Halt => reset(rt, uefi::RESET_SHUTDOWN),
+            }
+        }
+        if in_tutorial {
+            tutorial::render(&tut, &mut sys, &d, &LOCKED, &boot);
+        } else if let Some(t) = console.as_ref() {
+            term::render(t, &mut sys, &LOCKED);
         }
         present(&s, &sys.b.color, w, h);
-        while let Some(sc) = arch::ps2_byte() {
-            if let Some(k) = arch::key(&mut kb, sc) {
-                if k == 8 {
-                    n = n.saturating_sub(1);
-                } else if (32..127).contains(&k) && n < typed.len() {
-                    typed[n] = k as u8;
-                    n += 1;
-                }
-                info!("key {k:#x}");
-            }
+        // At most about sixty frames a second.
+        while arch::rdtsc() - start < frame_tsc {
+            core::hint::spin_loop();
         }
     }
 }
