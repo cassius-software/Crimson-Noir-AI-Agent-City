@@ -65,7 +65,7 @@ pub enum Outcome {
 const FOG: Fog = Fog { rgb: 0x07080c, near: ONE * 4, far: ONE * 32 };
 /// Milliseconds: each shot's length (or its least, for the shots that wait on work), the camera's move, the intro's
 /// walk, and the sort's pacing.
-const SHOT_MS: [u64; SHOTS] = [10_500, 9_500, 7_000, 10_000, 8_000, 0, 2_000];
+const SHOT_MS: [u64; SHOTS] = [10_500, 9_500, 7_000, 10_000, 8_000, 0, 1_500];
 const MOVE_MS: [u64; SHOTS] = [10_500, 9_500, 13_000, 10_000, 8_000, 16_000, 7_000];
 const WALK_MS: u64 = 6_000;
 const SORT_LEAD: u64 = 3_000;
@@ -110,6 +110,8 @@ pub struct Tutorial {
     pub swaps: u32,
     pub sorted_at: u64,
     pub zero_one: u32,
+    /// A key was pressed on the verdict (kept, so a press during its first moments is not lost).
+    pub pressed: bool,
 }
 
 /// The tutorial at its first frame: the world laid out and spawned afresh, the room baked into the scene's arrays, and
@@ -149,6 +151,7 @@ pub fn begin(sys: &mut System, d: &Dims, lk: &Locked, seed: u32, now: u64) -> Tu
         swaps: 0,
         sorted_at: 0,
         zero_one: 0,
+        pressed: false,
     }
 }
 
@@ -271,7 +274,9 @@ pub fn update(t: &mut Tutorial, sys: &mut System, d: &Dims, lk: &Locked, boot: &
             }
         }
         _ => {
-            if el >= SHOT_MS[scene::PASSED] && key.is_some_and(|k| k != KEY_ESC) {
+            // Any key but ESC goes on to the terminal, once the verdict has been on screen a moment.
+            t.pressed |= key.is_some_and(|k| k != KEY_ESC);
+            if t.pressed && el >= SHOT_MS[scene::PASSED] {
                 return Outcome::Passed;
             }
         }
@@ -770,6 +775,34 @@ pub(crate) mod tests {
         assert!(t.marched && t.sealed && t.march.done == t.march.total);
         assert_eq!(t.proof.tick, GOLDEN_TICKS);
         assert!(is_sorted(&t.keys) && t.zero_one == 256 && t.comps == NETWORK8.len());
+    }
+
+    #[test]
+    fn a_key_pressed_as_the_verdict_appears_is_not_lost() {
+        let (d, lk, boot, mut sys) = setup();
+        let mut fake = Fake::new();
+        let mut t = begin(&mut sys, &d, &lk, 1, 0);
+        let mut now = 0;
+        let mut out = Outcome::Running;
+        let mut pressed = false;
+        for f in 0..400 {
+            now += 40;
+            // ESC at once, then a single Enter the first frame the verdict is up.
+            let key = match (f, t.shot == scene::PASSED && !pressed) {
+                (0, _) => Some(KEY_ESC),
+                (_, true) => {
+                    pressed = true;
+                    Some(KEY_ENTER)
+                }
+                _ => None,
+            };
+            out = update(&mut t, &mut sys, &d, &lk, &boot, &mut fake, now, key);
+            if out != Outcome::Running {
+                break;
+            }
+        }
+        assert!(pressed);
+        assert_eq!(out, Outcome::Passed);
     }
 
     #[test]
