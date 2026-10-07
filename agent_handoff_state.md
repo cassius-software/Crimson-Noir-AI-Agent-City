@@ -607,7 +607,11 @@ the release bake). What exists and what it proves:
 - Z3 theorems (`tools/verify/fvps_smt.py`, 15 s): index arithmetic over 32-bit words and IEEE doubles for every
   validated dimension, each with a vacuity check and a self-check that a wrong theorem is refused. All proved.
 - `tools/verify/wasm_airgap.py`: 0 imports, 1 exported memory, no start, no exported table, the exact export sets
-  (routing 8, kv-pager 14), the rebuilt routing module byte-equal to the committed one. Passes.
+  (routing 8, kv-pager 14), both rebuilt modules byte-equal to the committed ones. Its first CI run found the
+  committed kv-pager module carried `/home/user/.../native/kv-pager/src/02_page_table.rs` (the path dependency's
+  panic location), so a rebuild elsewhere differed by 32 bytes: build-wasm.mjs and fvps.sh now build with
+  `--remap-path-prefix=<checkout>=/crimson-noir`, the module was regenerated (53,133 bytes, dcbcaaf3…), and a
+  rebuild from another directory gives the same bytes. Passes.
 - IR: `cargo rustc --emit=llvm-ir` on the routing crate (21 functions, 18 external declarations, 36 trap sites);
   only LLVM intrinsics, the four libm symbols and core's panic entry points may be declared. The system `opt` (LLVM
   18) cannot parse rustc's IR, so the step scans the declarations rather than running a pass.

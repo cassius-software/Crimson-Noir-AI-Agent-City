@@ -66,6 +66,16 @@ fn checked_words<const N: usize>() -> [f64; N] {
     words
 }
 
+/// A well-formed track of exactly `pieces` pieces (the words past them are stops, or nothing): `N` symbolic words
+/// that `Track::check` accepts. Fixing the count keeps the check's loop over the stops within the harness's unwind
+/// bound (two pieces' worth of words could otherwise be one piece and twenty-one stops).
+fn checked_words_of<const N: usize>(pieces: usize) -> [f64; N] {
+    let words = any_words::<N>();
+    kani::assume(words[T_PIECES] == pieces as f64);
+    kani::assume(Track::check(&words));
+    words
+}
+
 /// The arena setter refuses what it must (misaligned, empty, overflowing ranges) and never traps; the layout table
 /// answers 0 past its end.
 #[kani::proof]
@@ -136,7 +146,7 @@ fn pose_at_never_traps_on_one_piece() {
 #[kani::stub(crate::offsets, any_offsets)]
 #[kani::stub(crate::eval_piece, any_pose)]
 fn pose_at_never_traps_on_two_pieces() {
-    let words = checked_words::<{ T_HEADER + 2 * PIECE_WORDS }>();
+    let words = checked_words_of::<{ T_HEADER + 2 * PIECE_WORDS }>(2);
     lay(&words);
     let t = Track::new(&words);
     let s: f64 = kani::any();

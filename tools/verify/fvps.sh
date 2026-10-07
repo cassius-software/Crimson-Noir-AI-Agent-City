@@ -52,10 +52,15 @@ run_kani() {
 # Not `python3 -I`: isolated mode drops the user site-packages, where a runner's `pip install z3-solver` lands.
 run_smt() { python3 tools/verify/fvps_smt.py || status=1; }
 
+# The modules are built with the checkout mapped to one fixed prefix (tools/native/build-wasm.mjs REMAP), so a
+# rebuild on any machine gives the committed bytes; the same flag here, or the comparison below would fail on every
+# other checkout path.
+WASM_RUSTFLAGS="--remap-path-prefix=$(pwd)=/crimson-noir"
+
 run_wasm() {
   if rustup target list --installed 2> /dev/null | grep -q wasm32-unknown-unknown; then
-    cargo build --release --target wasm32-unknown-unknown --manifest-path native/routing/Cargo.toml --quiet
-    cargo build --release --target wasm32-unknown-unknown --manifest-path native/kv-pager-wasm/Cargo.toml --quiet
+    RUSTFLAGS="$WASM_RUSTFLAGS" cargo build --release --target wasm32-unknown-unknown --manifest-path native/routing/Cargo.toml --quiet
+    RUSTFLAGS="$WASM_RUSTFLAGS" cargo build --release --target wasm32-unknown-unknown --manifest-path native/kv-pager-wasm/Cargo.toml --quiet
     python3 -I tools/verify/wasm_airgap.py \
       --rebuilt-routing native/routing/target/wasm32-unknown-unknown/release/routing.wasm \
       --rebuilt-kv-pager native/kv-pager-wasm/target/wasm32-unknown-unknown/release/kv_pager_wasm.wasm || status=1
@@ -67,7 +72,7 @@ run_wasm() {
 
 run_ir() {
   rustup target list --installed 2> /dev/null | grep -q wasm32-unknown-unknown || { echo "ir: wasm32-unknown-unknown is not installed; skipped"; return 0; }
-  cargo rustc --manifest-path native/routing/Cargo.toml --release --target wasm32-unknown-unknown --quiet -- --emit=llvm-ir
+  RUSTFLAGS="$WASM_RUSTFLAGS" cargo rustc --manifest-path native/routing/Cargo.toml --release --target wasm32-unknown-unknown --quiet -- --emit=llvm-ir
   ir=native/routing/target/wasm32-unknown-unknown/release/deps/routing.ll
   test -f "$ir" || { echo "::error::ir: $ir was not emitted"; status=1; return 0; }
   # Everything the module can call that is not defined in it. Allowed: LLVM intrinsics, the four libm symbols the

@@ -1534,7 +1534,7 @@ Every source file opens with "Why does this file exist? / What breaks if it is r
 | native/kv-pager | `01_geometry.rs`, `02_page_table.rs`, `03_gpu/`, `bin/stress.rs`, `bin/chaos/` | A paged KV cache (its page table also runs on the page, through `native/kv-pager-wasm`) (prefix caching, copy-on-write, the WGSL decode kernel, the stress and chaos runs); `CAUSAL.md` traces the copy-on-write chain |
 | native/kv-pager-wasm | `lib.rs` | kv-pager's page table (no GPU) behind a C ABI, built to WebAssembly as `09_Cognition/kvPager.wasm.ts` (`npm run native:wasm`) |
 | native/routing | `lib.rs`, `layout.rs`, `math.rs`, `tests.rs`, `verify.rs` (Kani proof harnesses, `cfg(kani)` only) | The track arithmetic in dependency-free Rust, built to WebAssembly as `06_Make_Decisions/routing.wasm.ts`; its layout is defined once in each language and the two are proved equal |
-| tools/native | `build-wasm.mjs` | Builds both crates for `wasm32-unknown-unknown` and writes the generated modules with their sizes and SHA-256 |
+| tools/native | `build-wasm.mjs` | Builds both crates for `wasm32-unknown-unknown` with the checkout mapped to one fixed prefix (so the bytes are the same on any machine, and no module carries a builder's directory) and writes the generated modules with their sizes and SHA-256 |
 | tools/verify | `fvps.sh`, `fvps_smt.py`, `wasm_airgap.py` | The formal verification step (Phase 18): the Kani harnesses, the Z3 theorems, the WebAssembly air gap and export pin, the routing core's LLVM IR call scan; one command, run before every release bake and in CI |
 | tools/selfheal | `agent.mjs`, `checks.sh`, `failures.mjs`, `ast.mjs`, `sandbox.mjs`, `planner.mjs`, `Dockerfile.sandbox` | The self-healing agent (Phase 18): the named checks, failure parsers, syntax-tree loci, the network-off sandbox, the planners (built-in remedies, then Claude) and the bounded remediation loop that opens `selfheal-*` pull requests and never merges |
 
@@ -1858,7 +1858,10 @@ what it proves:
   min/max semantics, the arena setter's range. Every theorem has a vacuity check.
 - **The WebAssembly air gap** (`tools/verify/wasm_airgap.py`): both modules the page carries import nothing, own
   exactly one memory, have no start function, export no table, and export exactly the functions the host binds; with
-  a wasm32 toolchain present the routing crate is rebuilt and must give the committed bytes.
+  a wasm32 toolchain present both crates are rebuilt and must give the committed bytes. (This check's first run in
+  CI found that the committed page-table module carried the absolute path of the checkout that built it, through a
+  panic location in its path dependency, so no other machine could reproduce it; both builds now map the checkout
+  to a fixed prefix, and the module was regenerated.)
 - **The LLVM IR call graph**: the routing core's IR, emitted from the compilation that makes the module, may declare
   nothing external but LLVM intrinsics, the four libm functions and core's panic entry points (every one a trap the
   harnesses prove unreachable).
