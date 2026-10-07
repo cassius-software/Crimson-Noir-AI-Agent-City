@@ -414,7 +414,7 @@ Committed in 913bba0 (checkpoint) and the review-fix commit after it.
     to what Node loads;
   - `tools/net/image-check.mjs` and `tools/net/mint-token.mjs`;
   - in `deploy/`:
-    - `compose.yaml`: an internal network, IPv4 publishing, a stop grace period;
+    - `docker-compose.yml`: an internal network, IPv4 publishing, a stop grace period;
     - `nginx.conf`: worker_shutdown_timeout, a 426 with an Upgrade header, honest origin and limits comments, a
       complete real-IP recipe;
     - `bridge-tunnel.conf`, used by the game page and the OS runtime alike;
@@ -477,3 +477,29 @@ Committed in 913bba0 (checkpoint) and the review-fix commit after it.
 - pwsh 7.4.2 copied out of mcr.microsoft.com/powershell into the scratchpad;
 - dockerd started by hand;
 - the stack ran from deploy/ with a throwaway CA, and was torn down at the end.
+
+## Phase 16 (operator directive): final audit and launch
+
+Directive: (1) a 7+ agent adversarial audit with property-based fuzzing of memory boundaries and token validation,
+fixing anything found with regression tests; (2) a PR from `claude/quirky-faraday-xkpdln` to `main`, merged;
+(3) releases `v1.0.0-stable-release` and `stable-beta` cut through the API, and the bake watched; (4) a production
+`docker-compose.yml` and a one-touch `deploy-live.sh` with Let's Encrypt.
+
+State (updated as work lands):
+- `gh` has no valid token in this session (GH_TOKEN is rejected), so GitHub work goes through the GitHub MCP tools.
+  Those can open and merge PRs and dispatch workflows, but have no release-creation call. So the release workflow was
+  extended: a dispatch for a tag that does not exist bakes the dispatched commit and makes the tag as part of the
+  release (`gh release create --target`), with optional `title` and `notes` inputs; an existing release keeps its
+  title and hand-written notes (the media's description sits under a marker). Releases will be cut by dispatching
+  the workflow on `main` after the merge.
+- DONE: `deploy/compose.yaml` renamed to `deploy/docker-compose.yml` (all references updated); `deploy/deploy-live.sh`
+  written and run three times here (self-signed; Let's Encrypt with a stand-in certbot, incl. the renewal hook; an
+  idempotent re-run). It found and fixed one bug on first run: a 0700 `tls/` directory is 0700 inside the container
+  too, so nginx (uid 101) could not read the world-readable certificate; mounted dirs are 0755, the parent is 0700.
+- RUNNING: the audit workflow (8 attackers: nginx, container, rust-kernels, wasm, ledger-wire, tokens-seals,
+  airgap-csp, memory-determinism; a skeptic per attacker). Attackers leave new test files at assigned paths:
+  crates/noir_core/tests/{kernels_fuzz,term_fuzz,determinism}.rs, src/06_Make_Decisions/routingWasm.bounds.test.ts,
+  src/09_Cognition/kvPager.bounds.test.ts, src/10_Network/{hostileHost.node,ledgerProperties,token.fuzz,seal.fuzz,
+  churn.node}.test.ts, src/02_Define_The_Rules/airgap.fuzz.test.ts.
+- NEXT: integrate the audit (fix confirmed findings, keep passing tests, full suites), commit, PR, merge, dispatch
+  the two releases, watch the bakes, final handoff.

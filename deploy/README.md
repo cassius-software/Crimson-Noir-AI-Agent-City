@@ -7,7 +7,8 @@ configuration refuses one.
 | File | What it is |
 |---|---|
 | `../Dockerfile` | The host's image: distroless Node 24 and the 27 files the host runs, about 55 MB compressed |
-| `compose.yaml` | The host and an nginx TLS proxy; only the proxy is reachable, and the host has no route out |
+| `docker-compose.yml` | The host and an nginx TLS proxy; only the proxy is reachable, and the host has no route out |
+| `deploy-live.sh` | The one-touch start on an Ubuntu or Debian server: packages, secret, certificate, containers, renewals |
 | `nginx.conf` | The proxy: `wss://` in, `ws://` to the host, with per-client limits and an origin check |
 | `bridge-tunnel.conf` | For each client machine: carries its loopback-only connection to the proxy over verified TLS |
 
@@ -35,10 +36,44 @@ game page / OS runtime ─ws:8787─▶ tunnel ═wss:443═▶ proxy (nginx, ui
   - rotated logs.
 - **The host's files belong to root** and are read-only to it.
 
-## First start
+## One-touch start (`deploy-live.sh`)
 
-On a Linux server with Docker Engine and the compose plugin. Keep the checkout in a directory only root can enter,
-for example `/srv/crimson-noir` with mode 0700, and run these as root:
+On a plain Ubuntu or Debian server, as root, from this folder:
+
+```sh
+sudo ./deploy-live.sh ledger.example.com admin@example.com            # a public name: Let's Encrypt
+sudo ./deploy-live.sh ledger.example.com admin@example.com --staging  # a rehearsal against the staging CA
+sudo ./deploy-live.sh --self-signed                                   # a local or test machine
+```
+
+The script does every step below itself, and checks before each one, so it can be run again at any time:
+1. It installs docker, the compose plugin, openssl and certbot from the distribution's own packages. Nothing is
+   fetched from a third-party repository or piped into a shell.
+2. It keeps this folder root-only (0700). The secret and the key are owned by the containers' users, uids that may
+   belong to unrelated accounts on the server, and those accounts cannot enter the folder. (The mounted `tls/` and
+   `acme/` folders themselves are 0755: a mounted folder keeps its own mode inside the container, and the proxy's
+   user must be able to enter them.)
+3. It makes the host's secret once (`secrets/net_secret`, uid 65532, 0400).
+4. It gives the proxy a certificate to start with: the Let's Encrypt one if it already exists, else a self-signed one
+   good for 30 days.
+5. It opens 80 and 443 in ufw when ufw is active, builds the image and starts the containers, and waits until the
+   proxy answers 426 on 443.
+6. For a public name, it asks Let's Encrypt for the certificate through the running proxy (the ACME webroot on
+   port 80), installs it, reloads the proxy, and installs `/etc/letsencrypt/renewal-hooks/deploy/crimson-noir.sh`,
+   so certbot's own timer renews it and reloads the proxy. If the name does not resolve to the server yet, the
+   self-signed certificate stays, and the script says to run again once DNS points there.
+
+Behind a proxy that inspects TLS, set `BUILD_CA_FILE=/path/to/its-ca.pem`: compose cannot pass a build secret, so
+the script builds the image itself with that CA.
+
+**What was checked:** the script ran three times here: in self-signed mode; in Let's Encrypt mode with a stand-in
+`certbot` on PATH that issues a test CA's certificate (the issuance, install, reload and hook paths all ran, and the
+hook was then run by hand with `RENEWED_LINEAGE` set: it installed the files and reloaded the proxy, and ignored
+another lineage); and again, idempotently. A real Let's Encrypt issuance needs a public name and was not run here.
+
+## By hand
+
+The same steps, for another distribution or for reading:
 
 ```sh
 # 1. The secret every token is signed with. It is readable by the host's user only and is never an environment
@@ -48,7 +83,7 @@ chown 65532:65532 secrets/net_secret && chmod 0400 secrets/net_secret
 
 # 2. The first certificate, while nothing listens on port 80, then a copy readable by the proxy's user.
 certbot certonly --standalone -d ledger.example.com
-mkdir -p tls acme
+mkdir -p tls acme && chmod 0755 tls acme
 install -m 0444 /etc/letsencrypt/live/ledger.example.com/fullchain.pem tls/fullchain.pem
 install -o 101 -g 101 -m 0400 /etc/letsencrypt/live/ledger.example.com/privkey.pem tls/privkey.pem
 
@@ -57,26 +92,14 @@ docker compose up -d --build
 docker compose ps          # the host turns "healthy", then the proxy starts
 ```
 
-**Why the 0700 directory:** the files are owned by uid 65532 and uid 101, as the containers need, and those numbers
-may belong to unrelated accounts on the server. The containers read the files through their mounts. Host accounts
-cannot enter the directory.
-
-**Building behind a proxy that inspects TLS:** compose cannot pass a build secret. Build the image first, then start
-without building:
-
-```sh
-docker build --secret id=build_ca,src=/path/to/proxy-ca.pem -t crimson-noir-host:local ..
-docker compose up -d --no-build
-```
-
-**Renewals:** once the proxy is up, it serves the ACME challenge on port 80. Switch certbot to the webroot, with a
-hook that copies the files and reloads the proxy:
+Keep the checkout in a directory only root can enter (`chmod 0700`). **Renewals:** once the proxy is up, it serves the
+ACME challenge on port 80. Switch certbot to the webroot, with a hook that copies the files and reloads the proxy:
 
 ```sh
 certbot certonly --webroot -w /srv/crimson-noir/deploy/acme -d ledger.example.com --deploy-hook \
   'install -m 0444 "$RENEWED_LINEAGE/fullchain.pem" /srv/crimson-noir/deploy/tls/fullchain.pem &&
    install -o 101 -g 101 -m 0400 "$RENEWED_LINEAGE/privkey.pem" /srv/crimson-noir/deploy/tls/privkey.pem &&
-   docker compose -f /srv/crimson-noir/deploy/compose.yaml exec -T proxy nginx -s reload'
+   docker compose -f /srv/crimson-noir/deploy/docker-compose.yml exec -T proxy nginx -s reload'
 ```
 
 A reload closes the old workers' WebSockets within 10 s (`worker_shutdown_timeout`), and clients reconnect.

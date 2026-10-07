@@ -3,7 +3,7 @@
 # (The one name that check matches is NET_PRINT_TOKEN, a 0/1 switch; no secret is ever an ARG or ENV here.)
 # Why does this file exist? It builds the container image of the authoritative host (src/10_Network/replication.node.ts:
 # the Phase 12 room and the Phase 14 ledger door), kept as small as the host allows. It holds Node and the 27 files
-# the host runs, and nothing else: no shell, no package manager, no page code. deploy/compose.yaml runs it behind the
+# the host runs, and nothing else: no shell, no package manager, no page code. deploy/docker-compose.yml runs it behind the
 # TLS proxy (deploy/nginx.conf).
 # - The base images are pinned by digest, so a build gets the same bytes until someone moves the pin on purpose.
 # - The host's one package is installed from package-lock.json (its integrity hashes) with no install scripts run.

@@ -1,7 +1,9 @@
 # Why does this file exist? It bakes Crimson Noir OS's bootable media for every release tag and attaches them to the
 # tag's GitHub Release.
-# - What runs it: pushing a tag that matches v* or stable-*. "Run workflow" also works for a tag that already exists,
-#   once this file is on the default branch (GitHub dispatches only workflows found there).
+# - What runs it: pushing a tag that matches v* or stable-*. "Run workflow" also works, once this file is on the
+#   default branch (GitHub dispatches only workflows found there): for a tag that exists, it bakes that tag's commit;
+#   for a tag that does not exist yet, it bakes the commit the workflow was dispatched on and makes the tag there, as
+#   part of the release. So a release can be cut from the Actions tab or the API alone.
 # - The bake job has read-only access. It does what a contributor does by hand:
 #   - installs the pinned Rust toolchain and the UEFI target, and fetches every crate from Cargo.lock;
 #   - runs the core and hosted-runtime tests, with the GPU path on Mesa's lavapipe;
@@ -11,12 +13,14 @@
 #     until it logs POWER OFF and the machine stops;
 #   - boots the ISO to its self-test;
 #   - writes SHA256SUMS.
-# - Only the publish job may write. It checks the sums again and checks the tag still names the commit that was
-#   baked. Then it creates the release, or brings an existing one's files and notes up to date.
+# - Only the publish job may write. It checks the sums again and checks that the tag, if it exists, still names the
+#   commit that was baked. Then it creates the release, or brings an existing one's files up to date. A release's
+#   title and hand-written notes are kept: the media's description sits below a marker and only that part is refreshed.
 # - No third-party action runs here, only GitHub's own checkout and artifact actions. They are on their major
 #   versions; pin them to commit hashes if your policy asks for it. No cache is restored into a release build, and
 #   the checkout keeps no credentials.
-# - A tag must point at a commit that contains this file: a tag push runs the workflow as it is at the tagged commit.
+# - A tag push runs the workflow as it is at the tagged commit, so such a tag must point at a commit that contains
+#   this file.
 # What breaks if it is removed? Releases carry no media; the image is still built by hand with tools/build-image.sh.
 
 name: build-release
@@ -27,8 +31,16 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: An existing tag to bake and release
+        description: The tag to bake and release (made at the dispatched commit if it does not exist yet)
         required: true
+        type: string
+      title:
+        description: The release's title, for a release that does not exist yet (default "Crimson Noir OS (tag)")
+        required: false
+        type: string
+      notes:
+        description: Notes to put above the media's description, for a release that does not exist yet
+        required: false
         type: string
 
 permissions: {}
@@ -62,9 +74,23 @@ jobs:
             ''|-*|*[!A-Za-z0-9._-]*) printf '::error::not a tag name this workflow bakes: %q\n' "$TAG"; exit 1 ;;
           esac
 
+      - name: Resolve what to bake (the tag's commit, or the dispatched commit for a tag not made yet)
+        id: ref
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/$GH_REPO/git/ref/tags/$TAG" > /dev/null 2>&1; then
+            echo "ref=refs/tags/$TAG" >> "$GITHUB_OUTPUT"
+            echo "the tag $TAG exists: baking its commit"
+          else
+            echo "ref=$GITHUB_REF" >> "$GITHUB_OUTPUT"
+            echo "no tag $TAG yet: baking $GITHUB_REF, and the release will make the tag there"
+          fi
+
       - uses: actions/checkout@v4
         with:
-          ref: refs/tags/${{ env.TAG }}
+          ref: ${{ steps.ref.outputs.ref }}
           persist-credentials: false
 
       - name: Record the commit
@@ -72,6 +98,7 @@ jobs:
         run: |
           commit=$(git rev-parse HEAD)
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          test -f .github/workflows/build-release.yml || { echo "::error::$commit has no release workflow: it predates this file"; exit 1; }
 
       - name: Install the media tools, QEMU with OVMF, and lavapipe
         run: |
@@ -148,19 +175,26 @@ jobs:
         working-directory: media
         run: sha256sum --check --strict SHA256SUMS
 
-      - name: Create the release, or bring its files and notes up to date
+      - name: Create the release, or bring its files up to date
         env:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ inputs.title }}
+          NOTES: ${{ inputs.notes }}
         run: |
-          # The tag must still name the commit that was baked: a tag moved while this ran gets a run of its own.
-          now=$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)
-          if [ "$now" != "$COMMIT" ]; then
-            echo "::error::$TAG now names $now, not the baked $COMMIT; nothing was published"
-            exit 1
+          # A tag that exists must still name the commit that was baked: a tag moved while this ran gets a run of its own.
+          exists=false
+          if now=$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha 2> /dev/null); then
+            exists=true
+            if [ "$now" != "$COMMIT" ]; then
+              echo "::error::$TAG now names $now, not the baked $COMMIT; nothing was published"
+              exit 1
+            fi
           fi
-          notes="$RUNNER_TEMP/notes.md"
+          marker='<!-- build-release: media -->'
+          media="$RUNNER_TEMP/media.md"
           {
+            echo "$marker"
             echo "Crimson Noir OS bootable media, baked from \`$TAG\` (commit $COMMIT) with Rust $RUST_TOOLCHAIN."
             echo
             echo "- \`crimson_noir_os.img\`: a GPT disk image. Write it to a USB stick (for example"
@@ -174,13 +208,24 @@ jobs:
             echo "Before this release was made, CI booted the disk image in QEMU with OVMF through the self-test, the tutorial"
             echo "and the terminal's scripted run until it logged POWER OFF, and the ISO to its self-test. No physical machine"
             echo "is part of that check. The image has no network code, and its configuration refuses one."
-          } > "$notes"
+          } > "$media"
           prerelease=false
           if [[ "$TAG" =~ (^|[-.])(alpha|beta|rc)([-.0-9]|$) ]]; then prerelease=true; fi
+          notes="$RUNNER_TEMP/notes.md"
           if gh release view "$TAG" > /dev/null 2>&1; then
+            # The release's own title and notes stay; the media's description below the marker is refreshed.
+            gh release view "$TAG" --json body --jq .body | sed "/$marker/,\$d" > "$notes"
+            cat "$media" >> "$notes"
             gh release upload "$TAG" media/* --clobber
-            gh release edit "$TAG" --title "Crimson Noir OS ($TAG)" --notes-file "$notes" --prerelease="$prerelease"
+            gh release edit "$TAG" --notes-file "$notes" --prerelease="$prerelease"
           else
-            gh release create "$TAG" media/* --verify-tag --title "Crimson Noir OS ($TAG)" --notes-file "$notes" \
-              --prerelease="$prerelease"
+            if [ -n "$NOTES" ]; then printf '%s\n\n' "$NOTES" > "$notes"; else : > "$notes"; fi
+            cat "$media" >> "$notes"
+            title=${TITLE:-"Crimson Noir OS ($TAG)"}
+            if [ "$exists" = true ]; then
+              gh release create "$TAG" media/* --verify-tag --title "$title" --notes-file "$notes" --prerelease="$prerelease"
+            else
+              # The tag is made here, at the commit that was baked.
+              gh release create "$TAG" media/* --target "$COMMIT" --title "$title" --notes-file "$notes" --prerelease="$prerelease"
+            fi
           fi

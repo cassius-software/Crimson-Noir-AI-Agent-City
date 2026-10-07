@@ -67,15 +67,20 @@ The media are reproducible. Every timestamp is the commit's time, and the disk's
 the commit's hash. So the same commit, built with the same toolchain, gives the same bytes, and anyone can rebuild and
 compare checksums.
 
-A tag runs the workflow as it is at the tagged commit, so it must point at a commit that has the file. The tags are
-pushed from the operator's machine with `publish.ps1` in the repository root. Tags at an older commit (the script's
-default, cb99379) start no bake: either tag a commit that has the workflow (`-Commit`), or, once the workflow is on the
-default branch, run it by hand for each tag:
+A tag push runs the workflow as it is at the tagged commit, so such a tag must point at a commit that has the file.
+Tags are pushed from the operator's machine with `publish.ps1` in the repository root.
+
+A release can also be cut without pushing a tag at all. Once the workflow is on the default branch, "Run workflow"
+(or the API) with a tag name that does not exist yet bakes the dispatched commit and makes the tag there, as part of
+the release; a `title` and `notes` can be given for the new release:
 
 ```sh
-gh workflow run build-release.yml -f tag=v1.0.0-stable-release
-gh workflow run build-release.yml -f tag=stable-beta
+gh workflow run build-release.yml --ref main -f tag=v1.0.0-stable-release -f title="Crimson Noir OS v1.0.0 Stable Release"
+gh workflow run build-release.yml --ref main -f tag=stable-beta -f title="Stable Beta"
 ```
+
+A dispatch for a tag that exists bakes that tag's commit. An existing release keeps its title and hand-written notes;
+only the media's description under the marker is refreshed.
 
 **Writing the media**
 

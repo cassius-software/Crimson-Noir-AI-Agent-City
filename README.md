@@ -29,7 +29,7 @@ npm run lint     # oxlint
 npm run serve:net  # the optional network host (Node only, never bundled): see Networking
 npm run smoke:net  # the host as a process of its own, attacked with crafted illegal movement: see Networking
 npm run smoke:bridge  # Crimson Noir OS's hosted runtime against the host's ledger door: see Networking
-docker compose -f deploy/compose.yaml up -d --build  # the host in production, behind TLS: see deploy/README.md
+sudo deploy/deploy-live.sh HOST EMAIL  # the host in production on a server, behind Let's Encrypt TLS: see deploy/README.md
 ```
 
 Open `dist/index.html` directly: no server, and it works offline. The page sends nothing anywhere unless the
@@ -1475,7 +1475,8 @@ physics realm is the prediction that hides the latency.
   - It runs as a non-root user on a read-only root.
   - The image's own Node proves at build time that the host starts from those files alone.
   
-  `deploy/compose.yaml` puts it behind nginx (`deploy/nginx.conf`):
+  `deploy/deploy-live.sh` starts it on a plain Ubuntu server in one command, Let's Encrypt included;
+  `deploy/docker-compose.yml` puts it behind nginx (`deploy/nginx.conf`):
   - The proxy terminates TLS (1.2 and 1.3, with the hybrid post-quantum key exchange offered first) and admits only
     `GET /` with a WebSocket upgrade.
   - It checks Origin, limits each client address, and logs no header.
