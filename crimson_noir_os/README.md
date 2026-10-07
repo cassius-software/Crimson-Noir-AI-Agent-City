@@ -20,6 +20,18 @@ declared in one locked configuration file.
 
 Licensed under either of [Apache-2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT), at your option.
 
+## Screenshots
+
+`tools/boot_test.py` captured these from the bootable disk image in QEMU with OVMF, at 1280x720. The scene is
+rendered at 640x360 and scaled 2x.
+
+| | |
+|---|---|
+| ![The intro: the tutor walks in; the content card](docs/screenshots/01-intro.png) | ![Why 1: the live memory march and the seal](docs/screenshots/02-memory.png) |
+| ![Why 2: the scripted run matches the build's fingerprint](docs/screenshots/03-compute.png) | ![Why 3: the containment cage around the looper's trap](docs/screenshots/04-containment.png) |
+| ![Why 4: the screen's read-back at the crash cart](docs/screenshots/05-display.png) | ![Why 5: the sort, a comparator mid-swap](docs/screenshots/06-sort.png) |
+| ![Self-test passed](docs/screenshots/07-passed.png) | ![The Sith Lord Terminal: a session, the floor map, the swarm running](docs/screenshots/09-terminal.png) |
+
 ## Quick start
 
 ```sh

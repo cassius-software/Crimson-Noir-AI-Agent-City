@@ -437,6 +437,22 @@ fn panel(tg: &mut Target, x: i32, y: i32, w: i32, h: i32) {
     text::fill(tg, x, y, 2, h, RED);
 }
 
+/// A readout: a panel as wide as its longest line, the lines in it, and a progress bar after the first when given.
+fn readout(tg: &mut Target, x: i32, y: i32, lines: &[(&str, u32)], progress: Option<(u64, u64)>) {
+    let w = lines.iter().map(|(s, _)| text::width(s, 1)).max().unwrap_or(0).max(218) + 16;
+    let h = 12 + 11 * lines.len() as i32 + if progress.is_some() { 10 } else { 0 };
+    panel(tg, x, y, w, h);
+    let mut at = y + 6;
+    for (k, &(s, rgb)) in lines.iter().enumerate() {
+        text::draw(tg, x + 8, at, 1, rgb, s);
+        at += 11;
+        if let (0, Some((part, whole))) = (k, progress) {
+            bar(tg, x + 8, at, w - 16, part, whole, RED);
+            at += 10;
+        }
+    }
+}
+
 /// A bar `w` wide, filled `part` of `whole`.
 fn bar(tg: &mut Target, x: i32, y: i32, w: i32, part: u64, whole: u64, rgb: u32) {
     text::fill(tg, x, y, w, 5, 0x2a2a30);
@@ -534,62 +550,43 @@ fn overlay(t: &Tutorial, tg: &mut Target, d: &Dims, lk: &Locked, boot: &Boot, to
             text::draw(tg, x + 46, y + 30, 1, DIM, "self-applied, not a film rating");
         }
         scene::MEMORY => {
-            panel(tg, x, y, 250, 52);
-            text::draw(tg, x + 8, y + 6, 1, WHITE, "LIVE MEMORY MARCH");
-            bar(tg, x + 8, y + 18, 234, t.march.done as u64, t.march.total.max(1) as u64, RED);
-            line.clear();
-            let _ = grouped(&mut line, t.march.done as u64);
-            let _ = line.write_str(" of ");
-            let _ = grouped(&mut line, t.march.total as u64);
-            let _ = write!(line, " bytes, {} wrong", t.march.wrong);
-            text::draw(tg, x + 8, y + 28, 1, DIM, line.as_str());
-            if t.marched {
-                text::draw(tg, x + 8, y + 40, 1, if t.sealed { OK } else { RED }, if t.sealed { "SEAL HOLDS" } else { "SEAL BROKEN" });
-            }
+            let mut bytes: Buf<96> = Buf::new();
+            let _ = grouped(&mut bytes, t.march.done as u64);
+            let _ = bytes.write_str(" of ");
+            let _ = grouped(&mut bytes, t.march.total as u64);
+            let _ = write!(bytes, " bytes, {} wrong", t.march.wrong);
+            let seal = if t.sealed { ("SEAL HOLDS", OK) } else { ("SEAL BROKEN", RED) };
+            let lines = [("LIVE MEMORY MARCH", WHITE), (bytes.as_str(), DIM), seal];
+            let n = if t.marched { 3 } else { 2 };
+            readout(tg, x, y, &lines[..n], Some((t.march.done as u64, t.march.total.max(1) as u64)));
         }
         scene::COMPUTE => {
             let pr = &t.proof;
-            panel(tg, x, y, 250, 64);
-            line.clear();
-            let _ = write!(line, "SCRIPTED RUN  tick {} / {}", pr.tick, GOLDEN_TICKS);
-            text::draw(tg, x + 8, y + 6, 1, WHITE, line.as_str());
-            bar(tg, x + 8, y + 18, 234, pr.tick as u64, GOLDEN_TICKS as u64, RED);
-            line.clear();
-            let _ = write!(line, "dropped {}  flushed {}  docked ", pr.totals.dropped, pr.totals.flushed);
-            let _ = grouped(&mut line, pr.totals.docked as u64);
-            text::draw(tg, x + 8, y + 28, 1, DIM, line.as_str());
-            if t.ran_at != 0 {
-                line.clear();
-                let _ = write!(line, "now {:#010x}  factory {:#010x}", pr.fingerprint, lk.golden.fingerprint);
-                text::draw(tg, x + 8, y + 40, 1, WHITE, line.as_str());
-                text::draw(tg, x + 8, y + 52, 1, OK, "MATCH, TO THE LAST BIT");
-            }
+            let (mut head, mut tally, mut prints): (Buf<96>, Buf<96>, Buf<96>) = (Buf::new(), Buf::new(), Buf::new());
+            let _ = write!(head, "SCRIPTED RUN  tick {} / {}", pr.tick, GOLDEN_TICKS);
+            let _ = write!(tally, "dropped {}  flushed {}  docked ", pr.totals.dropped, pr.totals.flushed);
+            let _ = grouped(&mut tally, pr.totals.docked as u64);
+            let _ = write!(prints, "now {:#010x}  factory {:#010x}", pr.fingerprint, lk.golden.fingerprint);
+            let lines = [(head.as_str(), WHITE), (tally.as_str(), DIM), (prints.as_str(), WHITE), ("MATCH, TO THE LAST BIT", OK)];
+            let n = if t.ran_at != 0 { 4 } else { 2 };
+            readout(tg, x, y, &lines[..n], Some((pr.tick as u64, GOLDEN_TICKS as u64)));
         }
         scene::CONTAINMENT => {
             let pr = &t.proof;
-            panel(tg, x, y, 300, 52);
-            line.clear();
-            let asked = CAPABILITIES[4];
-            let _ = write!(line, "AGENT {:<5} asked for \"{}\": dropped @{}", pr.rogue, asked, matrix::ROGUE_TICK);
-            text::draw(tg, x + 8, y + 6, 1, WHITE, line.as_str());
-            text::draw(tg, x + 8, y + 17, 1, DIM, "             its row now: every word zero");
-            line.clear();
-            let _ = write!(line, "AGENT {:<5} walled in @{}: flushed @{}", pr.looper, pr.trapped_at, pr.looper_flushed_at);
-            text::draw(tg, x + 8, y + 30, 1, WHITE, line.as_str());
-            line.clear();
-            let _ = write!(line, "             loop limit {}; {} flushed in all", d.loop_limit, pr.totals.flushed);
-            text::draw(tg, x + 8, y + 41, 1, DIM, line.as_str());
+            let (mut rogue, mut looper, mut limit): (Buf<96>, Buf<96>, Buf<96>) = (Buf::new(), Buf::new(), Buf::new());
+            let _ = write!(rogue, "AGENT {}: asked for \"{}\", dropped @{}", pr.rogue, CAPABILITIES[4], matrix::ROGUE_TICK);
+            let _ = write!(looper, "AGENT {}: walled in @{}, flushed @{}", pr.looper, pr.trapped_at, pr.looper_flushed_at);
+            let _ = write!(limit, "  loop limit {}; {} flushed in all", d.loop_limit, pr.totals.flushed);
+            let lines = [(rogue.as_str(), WHITE), ("  its row now: every word zero", DIM), (looper.as_str(), WHITE), (limit.as_str(), DIM)];
+            readout(tg, x, y, &lines, None);
         }
         scene::DISPLAY => {
-            panel(tg, x, y, 250, 40);
-            text::draw(tg, x + 8, y + 6, 1, WHITE, "SCREEN READ-BACK");
-            line.clear();
-            let _ = grouped(&mut line, t.display.0 as u64);
-            let _ = write!(line, " pixels, {} wrong", t.display.1);
-            text::draw(tg, x + 8, y + 17, 1, if t.display.1 == 0 { OK } else { RED }, line.as_str());
-            line.clear();
-            let _ = write!(line, "framebuffer {}x{}", boot.screen_w, boot.screen_h);
-            text::draw(tg, x + 8, y + 28, 1, DIM, line.as_str());
+            let (mut pixels, mut fb): (Buf<96>, Buf<96>) = (Buf::new(), Buf::new());
+            let _ = grouped(&mut pixels, t.display.0 as u64);
+            let _ = write!(pixels, " pixels, {} wrong", t.display.1);
+            let _ = write!(fb, "framebuffer {}x{}", boot.screen_w, boot.screen_h);
+            let lines = [("SCREEN READ-BACK", WHITE), (pixels.as_str(), if t.display.1 == 0 { OK } else { RED }), (fb.as_str(), DIM)];
+            readout(tg, x, y, &lines, None);
         }
         _ => {}
     }

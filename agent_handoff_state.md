@@ -43,8 +43,12 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
     `route` was under-charged (now metered per pass); `begin : foo again ;` compiled into the line's code (flush
     checks open structures first, outside definitions); terminal.cells < 2048 and a 256-cell floor on a 200-px screen
     panicked (validator minimum; the map fits and clips). Fingerprint unchanged (0x83765bab); 46 core + 6 hosted tests.
-    NEXT: final boot test of .img and .iso with screenshots of every shot + the terminal, send them to the operator,
-    commit, push, final report (release status: tag push refused HTTP 403; the OS; the README's limits).
+    DONE (task 32): final boot tests with the final build. Disk image: the whole film, each shot captured into
+    `crimson_noir_os/docs/screenshots/` (README gallery), then a terminal session replaying the review's inputs on the
+    real image (all refused), golden MATCH, digest holds, halt powers off (96.7 s). ISO: ESC skip still runs every
+    check (PASSED at 21 s), golden MATCH, halt (26.4 s). Readout panels now size to their lines.
+  - The Crimson Noir OS is at stable beta. Remaining work is optional: a signed Secure Boot shim, USB keyboards
+    without legacy emulation, renaming the terminal before any commercial release ("Sith" is a trademark).
 - The local tag `stable-beta` exists only locally (GitHub refused the tag push, HTTP 403).
 - Machine: 4 CPUs, 16 GB. Do not run several Rapier-heavy experiments and a multi-agent workflow at once (exit 137 once).
 
