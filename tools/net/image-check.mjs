@@ -47,4 +47,4 @@ host.stdout.on('data', (b) => {
   }
 })
 host.stderr.on('data', (b) => { out += b })
-host.once('exit', (code) => finish(`the host exited (${code}) before it was ready`))
+host.once('close', (code) => finish(`the host exited (${code}) before it was ready`))

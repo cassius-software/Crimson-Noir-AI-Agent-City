@@ -374,33 +374,106 @@ Status and honest assessment:
 
 ## Phase 15 (operator directive): production infrastructure and CI/CD
 
-Directive: (1) `publish.ps1` for the operator to push the tags `v1.0.0-stable-release` and `stable-beta` at cb99379
-(the agent's git proxy answers 403 to tag pushes); (2) `.github/workflows/build-release.yml`: on tag push, set up Rust,
-build the OS, make the .img/.iso, attach them to a GitHub Release; (3) a minimal multi-stage Dockerfile for the
-Node host and an nginx TLS reverse proxy (wss:// outside, ws:// to the host inside).
+Directive:
+1. `publish.ps1`, for the operator to push the tags `v1.0.0-stable-release` and `stable-beta` at cb99379 (the
+   agent's git proxy answers 403 to tag pushes).
+2. `.github/workflows/build-release.yml`: on a tag push, set up Rust, build the OS, make the .img and .iso, and
+   attach them to a GitHub Release.
+3. A minimal multi-stage Dockerfile for the Node host, and an nginx TLS reverse proxy (wss:// outside, ws:// to the
+   host inside).
 
-State (updated as work lands):
-- DONE, tested here: `Dockerfile` + `.dockerignore` (allowlist), `tools/net/closure.mjs` (the host's import closure,
-  via node:module stripTypeScriptTypes; equal to a runtime trace of what Node loads: 25 modules + rapier's manifest and
-  licence), `tools/net/image-check.mjs` (the image as built starts the host from /app alone, ledger door pinned, token
-  minted; the last stage depends on it), `tools/net/mint-token.mjs`, `deploy/compose.yaml` (host on an `internal`
-  network: no published port, no egress; nginx-unprivileged publishes 80/443), `deploy/nginx.conf`,
-  `deploy/bridge-tunnel.conf` (client-side TLS origination for the loopback-only Rust bridge), `deploy/README.md`,
-  `deploy/.gitignore`. Host change: NET_SECRET_FILE, NET_PRINT_TOKEN=0, refuse to run tokenless without a secret.
-  `crimson_noir_os/tools/build-image.sh` builds with --locked.
-  Image: distroless nodejs24 (pinned digest) + 27 files; 54.5 MB compressed (base 52.7 MB).
-  Checked with docker compose and a throwaway CA: 426/404/405/403/401 at the door, TLS1.1 refused, TLS1.3, HSTS,
-  a wss room join (welcome seal verified), the Rust bridge through the tunnel (verified, bit-exact, 4 tampers refused),
-  429s from nginx and from the host, rejoin after a host restart, no DNS or route out of the host, uid 65532 on a
-  read-only root, nginx -t as uid 101.
-- WRITTEN, being verified: `.github/workflows/build-release.yml` (bake job read-only: pinned Rust 1.97.0, cargo fetch
-  --locked, workspace tests with lavapipe, build-image.sh, QEMU boot of the .img through the terminal run and of the
-  .iso to SELFTEST PASS, SHA256SUMS; publish job alone has contents: write, gh release create/upload) and
-  `publish.ps1` (PS 5.1 + 7; refuses to move a published tag without -Force; atomic push; reads back).
-- IMPORTANT for the operator: cb99379 predates the workflow file, and a tag push runs the workflow as it is at the
-  tagged commit, so tags at cb99379 start no bake. publish.ps1 warns about this. Either tag the Phase 15 commit
-  (`.\publish.ps1 -Commit <sha>`) or, once the file is on the default branch (main), run the workflow by hand for the
-  existing tags (workflow_dispatch with `tag`).
-- Local test tooling (not committed): pwsh 7.4.2 copied out of mcr.microsoft.com/powershell into the scratchpad;
-  dockerd started by hand (`dockerd &`); the compose stack runs from deploy/ with secrets/ and tls/ (git-ignored).
-- An adversarial verify+review workflow (3 execution verifiers, 2 reviewers, skeptic pass) is running; findings to fix next.
+### State: COMPLETE
+
+Committed in 913bba0 (checkpoint) and the review-fix commit after it.
+
+**The deliverables:**
+- `publish.ps1` (Windows PowerShell 5.1 and PowerShell 7). The default commit is the full SHA of cb99379, so no
+  short prefix can be matched by a look-alike commit.
+  - It works on the clone it lives in. Every fetch and push URL of the remote must name the repository (anchored
+    match).
+  - It fetches with `--no-tags --no-prune`, leaving the operator's own tags alone.
+  - It accepts one to three tags ('a,b' is two).
+  - A local tag is reused only if it is annotated (and signed, with -Sign).
+  - Moving a tag needs -Force, and the push carries a lease. The push is atomic, and the tags are read back after.
+  - It decodes git's output as UTF-8 and hides credentials in printed URLs.
+  - It names the branch head as the commit to tag when the default commit predates the workflow.
+- `.github/workflows/build-release.yml`, in two jobs.
+  - The bake job is read-only:
+    - Rust 1.97.0, `cargo fetch --locked`, the workspace tests with lavapipe;
+    - build-image.sh, which now gives reproducible media;
+    - QEMU boots: the .img through the terminal run to a logged POWER OFF, the .iso to SELFTEST PASS;
+    - SHA256SUMS, covering NOTICE.txt and LICENSE-MIT/APACHE too.
+  - The publish job alone has contents: write:
+    - it checks the sums;
+    - it checks that the tag still names the baked commit;
+    - it creates the release, or updates an existing one's files and notes;
+    - it marks prereleases by an exact alpha/beta/rc match.
+- Container deployment:
+  - `Dockerfile` and `.dockerignore`;
+  - `tools/net/closure.mjs`, with a regression test in `src/10_Network/closure.node.test.ts` holding its list equal
+    to what Node loads;
+  - `tools/net/image-check.mjs` and `tools/net/mint-token.mjs`;
+  - in `deploy/`:
+    - `compose.yaml`: an internal network, IPv4 publishing, a stop grace period;
+    - `nginx.conf`: worker_shutdown_timeout, a 426 with an Upgrade header, honest origin and limits comments, a
+      complete real-IP recipe;
+    - `bridge-tunnel.conf`, used by the game page and the OS runtime alike;
+    - `README.md` and `.gitignore`.
+
+**Host and test changes:**
+- The host takes `NET_SECRET_FILE` and `NET_PRINT_TOKEN=0`, and refuses to run tokenless without a secret.
+- **Bug fixed:** `verifyToken` now accepts only the canonical base64url spelling of the signature. Before, four
+  spellings verified, because the decoder ignores the last character's padding bits. A unit test holds this. The
+  bridge smoke's "forged token" changed only the last character, so it passed or failed by chance (3 in 64): it now
+  changes the first.
+- The smoke scripts ignore an operator's NET_SECRET_FILE and NET_PRINT_TOKEN.
+- boot_test.py no longer spins for 10 s on a closed monitor.
+- build-image.sh builds with --locked and reproducibly. Every timestamp is the commit time (SOURCE_DATE_EPOCH), and
+  the GPT GUIDs and FAT serial come from the commit hash. Three builds were byte-identical. The EFI binary embeds no
+  machine paths, only the toolchain's /rustc/<hash>.
+
+**The review:**
+- 7 agents ran: 3 execution verifiers, 2 reviewers and 2 skeptics, raising 62 findings.
+- Every finding confirmed real, and every cheap improvement, was fixed.
+- Rejected by the skeptics as not real:
+  - Origin "null" as a bypass: the token is the access control, and no Origin is admitted anyway;
+  - GH_TOKEN step scoping as a security boundary (moved to the step anyway);
+  - the frontend pin;
+  - the healthcheck start delay (measured at 5 s).
+
+**Verified here:**
+- tsc, oxlint, `npm test` 1233/1233, build, smoke:net, smoke:bridge;
+- `cargo test --workspace` 63 passed with the GPU, clippy on the workspace and the UEFI target;
+- actionlint (with shellcheck), `docker build --check`, hadolint (in the review), PSScriptAnalyzer (only Write-Host;
+  no 5.1 or 7.0 syntax, command or type issues), `docker compose config`.
+- publish.ps1 under pwsh 7.4.2 against fixture repositories:
+  - refuses to move tags; -WhatIf changes nothing; real runs make annotated tags; re-runs are idempotent;
+  - refuses local-only commits, a wrong or evil-prefixed URL, a wrong push URL, a lightweight local tag, a garbage
+    commit, and a shallow clone (with a hint);
+  - -Force moves under a lease;
+  - parses comma-joined tags as separate tags;
+  - ignores GIT_TRACE noise, runs from another directory, keeps a non-ASCII path and subject intact under code
+    page 850, and preserves the operator's local tags under pruneTags.
+- The live stack, with a test CA:
+  - status codes 426 (with Upgrade), 404, 405, 403, 401 and 301; TLS 1.1 refused, TLS 1.3 verified, HSTS sent;
+  - the room joined over wss and through the tunnel; the OS ledger verified through the tunnel, adopted bit-exact,
+    and 4 tampers refused;
+  - no egress from the host; .image-checked owned by root with mode 0444; no token in any log;
+  - a proxy stop in 0.5 s.
+
+**For the operator:**
+- cb99379 (the directive's commit and publish.ps1's default) has no workflow file, so tags there start no bake. To get
+  the release media, either run `.\publish.ps1 -Commit <branch head>` (the script prints the SHA), or keep cb99379,
+  merge the branch into main, and run `gh workflow run build-release.yml -f tag=<tag>` for each tag.
+- The old local-only tags in this container (v1.0.0-stable-release at 994eb6d, stable-beta at ca4a41f) were never on
+  origin, and the operator's machine does not have them.
+
+**Not verified:**
+- No GitHub Actions run (no runner here).
+- No Windows PowerShell 5.1 (only static analysis against its profile).
+- No physical hardware.
+
+**Local test tooling (not committed):**
+- pwsh 7.4.2 copied out of mcr.microsoft.com/powershell into the scratchpad;
+- dockerd started by hand;
+- the stack ran from deploy/ with a throwaway CA, and was torn down at the end.

@@ -38,7 +38,7 @@ rendered at 640x360 and scaled 2x.
 sh tools/build-image.sh                    # target/image/crimson_noir_os.img and .iso (+ sha256 sums)
 python3 tools/boot_test.py target/image/crimson_noir_os.img --wait "SELFTEST PASS" \
   --step "wait:TUTORIAL 6 PASSED" --step 'type:\n' --step "wait:TERMINAL READY" \
-  --step 'type:golden\n' --step wait:MATCH --step 'type:halt\n' --step exit
+  --step 'type:golden\n' --step wait:MATCH --step 'type:halt\n' --step 'wait:POWER OFF' --step exit
 cargo run --release -- selftest            # the hosted runtime: CPU and GPU, compared word for word
 cargo test --workspace                     # 63 tests (set NOIR_REQUIRE_GPU=1 to fail rather than skip without a GPU)
 npm run smoke:bridge                       # from the repository root: the bridge against the real host (below)
@@ -63,8 +63,19 @@ tag's GitHub Release. The workflow:
 4. boots both in QEMU with OVMF (the disk image through the tutorial and the terminal to a clean power-off);
 5. attaches `crimson_noir_os.img`, `crimson_noir_os.iso`, `BOOTX64.EFI`, the configuration and `SHA256SUMS`.
 
+The media are reproducible. Every timestamp is the commit's time, and the disk's GUIDs and the FAT serial come from
+the commit's hash. So the same commit, built with the same toolchain, gives the same bytes, and anyone can rebuild and
+compare checksums.
+
 A tag runs the workflow as it is at the tagged commit, so it must point at a commit that has the file. The tags are
-pushed from the operator's machine with `publish.ps1` in the repository root.
+pushed from the operator's machine with `publish.ps1` in the repository root. Tags at an older commit (the script's
+default, cb99379) start no bake: either tag a commit that has the workflow (`-Commit`), or, once the workflow is on the
+default branch, run it by hand for each tag:
+
+```sh
+gh workflow run build-release.yml -f tag=v1.0.0-stable-release
+gh workflow run build-release.yml -f tag=stable-beta
+```
 
 **Writing the media**
 

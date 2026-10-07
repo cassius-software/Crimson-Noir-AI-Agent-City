@@ -1485,8 +1485,12 @@ physics realm is the prediction that hides the latency.
   - Tokens are minted per player or runtime with `tools/net/mint-token.mjs`.
   - The secret is a file (`NET_SECRET_FILE`), never an environment variable.
   - The host prints no token when its logs are kept (`NET_PRINT_TOKEN=0`).
-  - An OS runtime's loopback-only bridge reaches a cloud host through `deploy/bridge-tunnel.conf`: a local nginx that
-    carries it over verified TLS.
+  - Clients reach a cloud host through `deploy/bridge-tunnel.conf`: a local nginx on their machine that carries the
+    connection over verified TLS. The game page joins with `net join ws://127.0.0.1:8787 <token>`, since its
+    loopback gate and content policy allow 127.0.0.1 only. An OS runtime's bridge works the same way, since it has no
+    TLS and looks up no names.
+  - A token's signature is accepted only in the spelling `mintToken` writes. The decoder's ignored padding bits no
+    longer give a token four valid spellings.
 - **What is a stub, and what is not there.**
   - Voice: `attachPeer` places a peer's `MediaStream` in the soundscape, but the signalling that would carry one
     (offer, answer and candidates over this socket) is a documented stub, so no voice is sent or received.

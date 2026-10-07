@@ -162,6 +162,12 @@ test('tokens: signed with an expiry; the subject comes back only for a good, une
   assert.equal(verifyToken(SECRET, `${subject}.${Number(expires) + 1}.${mac}`, 0), null, 'a longer life is not signed')
   assert.equal(verifyToken(SECRET, `${Buffer.from('Bob').toString('base64url')}.${expires}.${mac}`, 0), null, 'another subject is not signed')
   assert.equal(verifyToken(SECRET, `${subject}.${expires}.${mac.slice(0, -1)}`, 0), null, 'a short signature')
+  // The signature's other spellings: its last character's low bits are ignored by the decoder, never by the host.
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
+  const spellings = [...alphabet].map((c) => `${subject}.${expires}.${mac.slice(0, -1)}${c}`)
+  const same = spellings.filter((x) => Buffer.from(x.split('.')[2], 'base64url').equals(Buffer.from(mac, 'base64url')))
+  assert.equal(same.length, 4, 'four spellings decode to the one signature')
+  assert.deepEqual(same.filter((x) => verifyToken(SECRET, x, 0) !== null), [t], 'only the minted spelling verifies')
   assert.equal(verifyToken(SECRET, `${subject}.${expires}`, 0), null)
   assert.equal(verifyToken(SECRET, '', 0), null)
   assert.equal(verifyToken(SECRET, 42, 0), null)

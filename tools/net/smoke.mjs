@@ -39,9 +39,16 @@ const check = (ok, what) => {
 
 // ---------------------------------------------------------------- the server, as it ships
 
+/** The host's environment for this run: its own secret and printed token, whatever the operator's shell carries. */
+const hostEnv = (own) => {
+  const env = { ...process.env, ...own }
+  delete env.NET_SECRET_FILE
+  delete env.NET_PRINT_TOKEN
+  return env
+}
 const secret = randomBytes(32).toString('hex')
 const server = spawn(process.execPath, [join(ROOT, 'src/10_Network/replication.node.ts')], {
-  cwd: ROOT, env: { ...process.env, NET_SECRET: secret, NET_PORT: '0', NET_SEED: String(SEED), NET_CARS: String(CARS), NET_TICK_HZ: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
+  cwd: ROOT, env: hostEnv({ NET_SECRET: secret, NET_PORT: '0', NET_SEED: String(SEED), NET_CARS: String(CARS), NET_TICK_HZ: '1' }), stdio: ['ignore', 'pipe', 'pipe'],
 })
 const started = await new Promise((resolve, reject) => {
   // A server that never comes up is not left running.

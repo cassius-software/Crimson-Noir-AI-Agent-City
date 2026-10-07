@@ -16,8 +16,9 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
 import { stripTypeScriptTypes } from 'node:module'
 import { dirname, join, relative, resolve, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const ROOT = resolve(dirname(new URL(import.meta.url).pathname), '..', '..')
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const args = process.argv.slice(2)
 const at = args.indexOf('--into')
 const into = at === -1 ? null : resolve(args[at + 1] ?? '')
@@ -25,10 +26,48 @@ const entries = (at === -1 ? args : args.slice(0, at).concat(args.slice(at + 2))
 if (entries.length === 0) throw new Error('usage: node tools/net/closure.mjs ENTRY... [--into DIR]')
 
 // Static imports and re-exports (any number of lines, no quotes or semicolons before `from`), bare imports, and
-// dynamic imports of a string literal. A dynamic import of anything else is refused below.
-const STATIC = /^[ \t]*(?:import|export)\b((?:(?!\n[ \t]*(?:import|export)\b)[^;'"`])*?)\bfrom\s*['"]([^'"]+)['"]/gm
-const BARE = /^[ \t]*import\s*['"]([^'"]+)['"]/gm
+// dynamic imports of a string literal, each at the start of a line or after a semicolon. Comments are blanked first.
+// A dynamic import of anything else is refused below. Should a pattern still miss an import, the image's build
+// starts the host from the copy (tools/net/image-check.mjs) and fails, and closure.node.test.ts holds this list equal
+// to what Node loads.
+const STATIC = /(?:^|;)[ \t]*(?:import|export)\b((?:(?!\n[ \t]*(?:import|export)\b)[^;'"`])*?)\bfrom\s*['"]([^'"]+)['"]/gm
+const BARE = /(?:^|;)[ \t]*import\s*['"]([^'"]+)['"]/gm
 const DYNAMIC = /\bimport\s*\(\s*([^)]*?)\s*\)/g
+
+/**
+ * The source with its comments turned to spaces (line breaks kept), strings and template literals left as they are.
+ * A quote inside a regular expression literal is taken for a string's start; a string ends at the line's end anyway.
+ */
+function uncommented(src) {
+  let out = ''
+  let state = 'code'
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i]
+    const next = src[i + 1]
+    if (state === 'code') {
+      if (c === '/' && next === '/') state = 'line'
+      else if (c === '/' && next === '*') state = 'block'
+      else if (c === "'" || c === '"' || c === '`') state = c
+      out += state === 'line' || state === 'block' ? ' ' : c
+    } else if (state === 'line') {
+      if (c === '\n') state = 'code'
+      out += c === '\n' ? c : ' '
+    } else if (state === 'block') {
+      if (c === '*' && next === '/') {
+        out += '  '
+        i++
+        state = 'code'
+      } else out += c === '\n' ? c : ' '
+    } else {
+      out += c
+      if (c === '\\') {
+        out += next ?? ''
+        i++
+      } else if (c === state || (c === '\n' && state !== '`')) state = 'code'
+    }
+  }
+  return out
+}
 
 const files = new Set()
 const packages = new Map()
@@ -62,7 +101,7 @@ function walk(file) {
   if (files.has(file)) return
   if (!existsSync(file)) throw new Error(`missing module ${relative(ROOT, file)}`)
   files.add(file)
-  const src = runnable(file)
+  const src = uncommented(runnable(file))
   const specs = [...src.matchAll(STATIC)].map((m) => m[2]).concat([...src.matchAll(BARE)].map((m) => m[1]))
   for (const m of src.matchAll(DYNAMIC)) {
     const literal = /^(['"])([^'"]+)\1$/.exec(m[1])

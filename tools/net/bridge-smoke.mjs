@@ -26,11 +26,18 @@ const check = (ok, what) => {
   console.log(`${ok ? 'ok  ' : 'FAIL'}  ${what}`)
 }
 
+/** The host's environment for this run: its own secret and printed token, whatever the operator's shell carries. */
+const hostEnv = (own) => {
+  const env = { ...process.env, ...own }
+  delete env.NET_SECRET_FILE
+  delete env.NET_PRINT_TOKEN
+  return env
+}
 const built = spawnSync('cargo', ['build', '--quiet'], { cwd: OS, stdio: ['ignore', 'inherit', 'inherit'] })
 if (built.status !== 0) throw new Error('cargo build failed')
 
 const server = spawn(process.execPath, [join(ROOT, 'src/10_Network/replication.node.ts')], {
-  cwd: ROOT, env: { ...process.env, NET_SECRET: randomBytes(32).toString('hex'), NET_PORT: '0', NET_TICK_HZ: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
+  cwd: ROOT, env: hostEnv({ NET_SECRET: randomBytes(32).toString('hex'), NET_PORT: '0', NET_TICK_HZ: '1' }), stdio: ['ignore', 'pipe', 'pipe'],
 })
 let log = ''
 const started = await new Promise((resolve, reject) => {
@@ -61,7 +68,9 @@ console.log(good.out.trimEnd().replace(/^/gm, '      '))
 check(good.code === 0 && /verified by the host/.test(good.out), 'the recorded ledger is verified by the host')
 check(good.code === 0 && /fleet sync: a fresh runtime adopted \d+ weights, bit-exact/.test(good.out), 'a fresh runtime adopts the verified weights, bit-exact')
 
-const forged = started.token.slice(0, -1) + (started.token.endsWith('0') ? '1' : '0')
+// A forgery changes the signature's first character: every bit of it counts (the last one's low bits do not).
+const mac = started.token.split('.')[2]
+const forged = started.token.slice(0, -mac.length) + (mac[0] === 'A' ? 'B' : 'A') + mac.slice(1)
 const refusals = [
   ['no token', bridge(started.url, undefined), /CRIMSON_TOKEN/],
   ['a forged token', bridge(started.url, forged), /refused the upgrade: 401/],

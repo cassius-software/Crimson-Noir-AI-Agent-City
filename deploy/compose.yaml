@@ -45,12 +45,15 @@ services:
     security_opt: ["no-new-privileges:true"]
     pids_limit: 256
     mem_limit: 256m
+    stop_grace_period: 15s       # nginx closes its sockets within 10 s (worker_shutdown_timeout)
     depends_on:
       host:
         condition: service_healthy
+    # IPv4 only: Docker would carry IPv6 clients in from one gateway address, which would make nginx's per-client
+    # limits one shared limit. Publish no AAAA record (or give the edge network IPv6 and nginx [::] listeners).
     ports:
-      - "80:8080"
-      - "443:8443"
+      - "0.0.0.0:80:8080"
+      - "0.0.0.0:443:8443"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./tls:/etc/nginx/tls:ro

@@ -66,4 +66,4 @@ RUN ["/nodejs/bin/node", "/tmp/image-check.mjs"]
 
 # 5. The image as shipped: the host, reached only through the proof (whose start-up lines it keeps).
 FROM host
-COPY --from=checked /tmp/image-checked /app/.image-checked
+COPY --from=checked --chown=0:0 --chmod=0444 /tmp/image-checked /app/.image-checked

@@ -106,6 +106,9 @@ export function verifyToken(secret: string, token: unknown, now: number): string
   const want = sign(secret, body)
   const got = Buffer.from(mac, 'base64url')
   if (got.length !== want.length || !timingSafeEqual(got, want)) return null
+  // One spelling per token: base64url's last character carries bits the decoder ignores, so '...A' and '...B' can
+  // decode to the same signature. Only the encoding mintToken writes is a token.
+  if (b64url(got) !== mac) return null
   const subject = Buffer.from(subject64, 'base64url').toString('utf8')
   return /^[\w .-]{1,24}$/.test(subject) ? subject : null
 }

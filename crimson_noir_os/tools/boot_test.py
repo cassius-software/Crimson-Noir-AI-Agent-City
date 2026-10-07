@@ -38,15 +38,22 @@ def monitor(path, command):
     s.settimeout(10)
     buf = b""
     while not buf.endswith(b"(qemu) "):
-        buf += s.recv(4096)
+        chunk = s.recv(4096)
+        if not chunk:
+            raise OSError("QEMU closed its monitor before the prompt")
+        buf += chunk
     s.sendall(command.encode() + b"\n")
     out = b""
     deadline = time.time() + 10
     while time.time() < deadline and not out.endswith(b"(qemu) "):
         try:
-            out += s.recv(4096)
+            chunk = s.recv(4096)
         except socket.timeout:
             break
+        # A closed monitor (QEMU quitting) answers nothing more: stop rather than spin to the deadline.
+        if not chunk:
+            break
+        out += chunk
     s.close()
     return out.decode(errors="replace")
 
