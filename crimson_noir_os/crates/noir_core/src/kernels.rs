@@ -99,6 +99,13 @@ fn wipe(d: &Dims, m: &mut Matrix, i: usize, keep: u32) {
     }
 }
 
+/// Zeroes slot `i`'s row, its learned weights and its memory block at once: the manual form of the loop breaker's
+/// flush, for the terminal. It only clears, never grants, so it cannot raise a privilege or move an agent off the
+/// floor; the index is the caller's to bound.
+pub fn flush(d: &Dims, m: &mut Matrix, i: usize) {
+    wipe(d, m, i, 0);
+}
+
 /// One agent slot's tick. Returns its fate bits (also stored in `fate`).
 #[inline(always)]
 pub fn agent_tick(d: &Dims, m: &mut Matrix, i: usize, t: u32, step: f32) -> u32 {

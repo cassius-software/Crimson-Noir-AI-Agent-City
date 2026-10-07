@@ -314,3 +314,29 @@ python3 -I tools/boot_test.py target/image/crimson_noir_os.img --timeout 150 --w
   --step 'type:\n' --step "wait:TERMINAL READY" --step 'type:golden\n' --step wait:MATCH \
   --step 'type:halt\n' --step exit                                              # about 95 s under TCG
 ```
+
+## Phase 14 (operator directive): bare-metal deployment, terminal expansion, cloud RL bridge
+
+Directive: (1) physical USB/bare-metal target with network drivers for outbound WebSocket, keeping the DOD sandbox;
+(2) terminal expansion — live hex bitmasks over the 1-D arrays, a memory-safe `flush` to zero agent blocks during
+compute; (3) connect the OS to the Phase 12 authoritative Node/Deno server, send the hash-chained RL weight ledger for
+verification against the 14A rules, sync validated weights back.
+
+Status and honest assessment:
+- DONE part 2: `flush` word added (kernels::flush = the manual loop-breaker wipe; clears only, so containment holds;
+  index bounds-checked). Live hex bitmask editing already existed (`$ff`, and/or/xor, `!a`, `fill-a`). 47 core tests
+  (new: flush_zeroes_one_agents_block_and_nothing_else), clippy clean, verified through the hosted `terminal` binary.
+- BLOCKED / needs operator decision, parts 1 and 3:
+  - This environment has ONLY QEMU; there is no physical hardware and no way to flash/boot USB here. "Verify the
+    physical deployment" cannot be done in this session — only a QEMU boot can.
+  - A real bare-metal network stack (NIC driver + ARP/IPv4/TCP + TLS 1.3 + WebSocket, no_std, no entropy/cert store on
+    bare metal) is months of specialist work and cannot be honestly stubbed and called verified. Will not fake it.
+  - Outbound network directly contradicts `containment.network = false` (the validator refuses `true`: "the air gap is
+    not configurable") and the operator's own standing instruction to keep the air gap intact. It also contradicts
+    "prove the sandbox does not leak" — an outbound socket IS the leak. Cannot prove both.
+  - Honest achievable alternative offered: build the cloud bridge + RL ledger verification in the HOSTED runtime
+    (`src/`, std, real networking, already runs the same kernels/weights). It talks WebSocket to the Phase 12 server,
+    sends the hash-chained weight ledger, server validates the fold vs 14A, syncs validated weights back. The
+    bare-metal image stays air-gapped. This is testable against the real server.
+  - Awaiting operator choice before building the network piece (asked via question). Do NOT silently flip
+    network=false or write a fake bare-metal driver.

@@ -175,7 +175,7 @@ prims! {
     AFetch = "@a", AStore = "!a", ALen = "#a", AFill = "fill-a", ACount = "count-a",
     CapMove = "cap-move", CapRoute = "cap-route", CapLearn = "cap-learn", CapMemory = "cap-memory",
     CapSpawn = "cap-spawn", Ask = "ask", Cell = "cell", Xz = "xz",
-    Tick = "tick", Ticks = "ticks", Go = "go", Stop = "stop", Stats = "stats", Agent = "agent", Respawn = "respawn",
+    Tick = "tick", Ticks = "ticks", Go = "go", Stop = "stop", Stats = "stats", Agent = "agent", Flush = "flush", Respawn = "respawn",
     World = "world", Route = "route", Golden = "golden", Map = "map", Mark = "mark",
     Cfg = "cfg", Digest = "digest", Roles = "roles", Params = "params", SetLoop = "loop-limit!", SetStep = "step!",
     SetLearn = "learn!", SetExplore = "explore!", Locked = "locked",
@@ -197,7 +197,7 @@ const HELP: [&str; 12] = [
     "  px pz alive doomed caps req role goal run last trips clock heading fate",
     "  weights memory walls field station    1 alive count-a .   0 walls fill-a",
     "  positions are eighths of a cell; caps and role are declared: read-only",
-    "swarm: tick ticks go stop stats agent ask respawn world route golden map",
+    "swarm: tick ticks go stop stats agent ask flush respawn world route golden map",
     "  cap-spawn 5 ask 1 tick 5 agent   (a privilege it was never declared)",
     "config: cfg digest roles params loop-limit! step! learn! explore! locked",
     "system: words page cold mark tutorial reboot halt .s hex decimal recurse",
@@ -1375,6 +1375,19 @@ fn word(t: &mut Term, sys: &mut System, lk: &Locked, p: P) -> R<()> {
             let _ = write!(o, "  req {}  heading {}  fate {}  weights {} set  memory {}/{} words", row.3, heading, fate, weights, memory, d.block_words);
             o.end_line();
         }
+        P::Flush => {
+            // The manual loop-breaker: zero an agent's row, weights and memory block at once. It only clears, so it
+            // keeps containment; the swarm may be running (`go`), and the next tick simply finds an empty slot.
+            let i = usize::try_from(pop(t, b)?).map_err(|_| Fault::Index)?;
+            if i >= sys.m.alive.len() {
+                return Err(Fault::Index);
+            }
+            kernels::flush(&t.dims, &mut sys.m, i);
+            let mut o = sink(t, &mut sys.b);
+            fresh_line(&mut o);
+            let _ = write!(o, "agent {i} flushed: its row, weights and memory block are zero");
+            o.end_line();
+        }
         P::Respawn => {
             charge(t, t.dims.capacity as u64)?;
             matrix::spawn(&t.dims, lk.role_counts, lk.role_caps, &mut sys.m);
@@ -2007,6 +2020,25 @@ mod tests {
         run_line(&mut t, &mut sys, &lk, "map 100 mark");
         assert!(t.map);
         render(&t, &mut sys, &lk);
+    }
+
+    /// `flush` zeroes exactly the named agent's block while the swarm runs, keeps containment, and bounds its index.
+    #[test]
+    fn flush_zeroes_one_agents_block_and_nothing_else() {
+        let (mut t, mut sys, lk, d) = term();
+        let mut ask = |line: &str| say(&mut t, &mut sys, &lk, line);
+        // A live hex bitmask edit, then a flush of the same agent while running.
+        assert_eq!(ask("$ff 300 heading !a 300 heading @a ."), "255  ok");
+        assert_eq!(ask("go 300 flush"), "the swarm runs, a tick a frame (stop stops it)|agent 300 flushed: its row, weights and memory block are zero ok");
+        assert_eq!(ask("300 alive @a . 300 heading @a . 300 caps @a ."), "0 0 0  ok");
+        // Its neighbours are untouched.
+        assert_eq!(ask("301 alive @a . 299 alive @a ."), "1 1  ok");
+        // The index is bounds-checked; a flush cannot grant a privilege (it only clears).
+        assert_eq!(ask("4096 flush"), "? index outside the array");
+        assert_eq!(ask("-1 flush"), "? index outside the array");
+        // After a flush the row reads as an empty slot, and a tick leaves it empty.
+        assert_eq!(ask("1 tick 300 agent"), "agent 300: an empty slot (its row is all zero) ok");
+        let _ = d;
     }
 
     /// The help's example agent is alive after the self-test's scripted run (the state the terminal opens in).
