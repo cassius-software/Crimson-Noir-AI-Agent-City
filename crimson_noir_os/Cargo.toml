@@ -1,6 +1,33 @@
 [package]
 name = "crimson_noir_os"
-version = "0.1.0"
+version = "0.9.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Crimson Noir OS hosted runtime: the Global Matrix on wgpu compute, the self-test, the terminal and the tutorial frames"
+publish = false
 
 [dependencies]
+noir_core = { path = "crates/noir_core" }
+
+[build-dependencies]
+noir_core = { path = "crates/noir_core" }
+
+[workspace]
+members = [".", "crates/noir_core"]
+default-members = [".", "crates/noir_core"]
+resolver = "3"
+
+[profile.dev]
+# The kernels' tests run thousands of ticks of 4,096 agents.
+opt-level = 2
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+
+[profile.dev.build-override]
+opt-level = 2
+
+[profile.release.build-override]
+opt-level = 2

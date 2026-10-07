@@ -1,0 +1,9 @@
+[package]
+name = "noir_core"
+version = "0.9.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Crimson Noir OS core: the declarative containment configuration, the Global Matrix and its branchless kernels, the self-test, the renderer and the terminal (no_std + alloc)"
+publish = false
+
+[dependencies]
