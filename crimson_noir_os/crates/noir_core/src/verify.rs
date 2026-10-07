@@ -10,8 +10,9 @@
 //! matrix content and every validated kernel knob; the routing relaxation and the sorting network never index out of
 //! their arrays; the mask arithmetic (`nz`, `sel`) means what the hot path takes it to mean, for all 2^32 words.
 //! The dimensions are the smallest the configuration validator admits (capacity 64, 8-word blocks, 2 stations, a
-//! 32x32 floor); tools/verify/fvps_smt.py proves the index arithmetic for every power-of-two dimension with an SMT
-//! solver, where the matrix itself does not have to be built.
+//! 32x32 floor), except the floor of the agent tick and the relaxation, 8x8 (see `SMALL`); tools/verify/fvps_smt.py
+//! proves the index arithmetic for every power-of-two dimension with an SMT solver, where the matrix itself does not
+//! have to be built.
 //! What breaks if it is removed? `cargo kani` has nothing to prove and the verification step of the pipeline is empty.
 
 use crate::config::Dims;
@@ -31,10 +32,13 @@ fn dims() -> Dims {
     dims_on(WIDTH, DEPTH)
 }
 
-/// The floor the relaxation harness uses: 8x8, below what the validator admits, because the checker unrolls the
-/// pass over every cell (the pass's arithmetic is per cell and the same at 32x32; tools/verify/fvps_smt.py proves
-/// its index arithmetic for every validated floor).
+/// The floor the agent tick and the relaxation harnesses use: 8x8, below what the validator admits, because the
+/// checker's memory grows with the floor (the relaxation unrolls its pass over every cell; the tick's reads of the
+/// field and the walls at symbolic cells cost it more than a CI runner's 7 GB at 32x32). Both kernels' arithmetic
+/// is per cell and the same at 32x32, and tools/verify/fvps_smt.py proves their index arithmetic (the tick's five
+/// field reads, its step, its memory and weight slots; the pass's neighbours) for every validated floor.
 const SMALL: usize = 8;
+const SMALL_CELLS: usize = SMALL * SMALL;
 
 fn dims_on(width: usize, depth: usize) -> Dims {
     let loop_limit: u32 = kani::any();
@@ -92,8 +96,9 @@ fn index(n: usize) -> usize {
 }
 
 /// A matrix of the dimensions whose every word is symbolic: any content at all, including what no kernel would
-/// ever write (NaN positions, masks with high bits set, fields past INF).
-fn any_matrix(d: &Dims) -> Matrix {
+/// ever write (NaN positions, masks with high bits set, fields past INF). `WALLS` and `FIELD` are the floor's cell
+/// count and the field's word count (stations x cells) for `d`'s floor, as constants so each is one symbolic array.
+fn any_matrix<const WALLS: usize, const FIELD: usize>(d: &Dims) -> Matrix {
     let mut m = matrix::new(d);
     any_f32s::<CAP>(&mut m.px);
     any_f32s::<CAP>(&mut m.pz);
@@ -104,20 +109,20 @@ fn any_matrix(d: &Dims) -> Matrix {
         any_u32s::<CAP>(a);
     }
     any_u32s::<{ CAP * BLOCK }>(&mut m.memory);
-    any_u32s::<CELLS>(&mut m.walls);
-    any_u32s::<{ STATIONS * CELLS }>(&mut m.field);
+    any_u32s::<WALLS>(&mut m.walls);
+    any_u32s::<FIELD>(&mut m.field);
     any_u32s::<STATIONS>(&mut m.station);
     any_i32s::<{ CAP * STATIONS }>(&mut m.weights);
     m
 }
 
-/// One agent's tick, over every matrix content, every validated knob, every slot and every tick number: it never
-/// traps, and it touches nothing outside its own row, weights and memory block.
+/// One agent's tick on the 8x8 floor (see `SMALL`), over every matrix content, every validated knob, every slot
+/// and every tick number: it never traps, and it touches nothing outside its own row, weights and memory block.
 #[kani::proof]
 #[kani::unwind(9)]
 fn agent_tick_is_isolated_to_its_own_row() {
-    let d = dims();
-    let mut m = any_matrix(&d);
+    let d = dims_on(SMALL, SMALL);
+    let mut m = any_matrix::<SMALL_CELLS, { STATIONS * SMALL_CELLS }>(&d);
     let i = index(d.capacity);
     let t: u32 = kani::any();
     // One symbolic witness per array: a word outside the agent's own part, chosen by the checker (so every word
@@ -156,7 +161,7 @@ fn agent_tick_is_isolated_to_its_own_row() {
 #[kani::unwind(9)]
 fn flush_zeroes_one_row_only() {
     let d = dims();
-    let mut m = any_matrix(&d);
+    let mut m = any_matrix::<CELLS, { STATIONS * CELLS }>(&d);
     let i = index(d.capacity);
     let inside = index(d.block_words);
     let outside = index(m.memory.len());
