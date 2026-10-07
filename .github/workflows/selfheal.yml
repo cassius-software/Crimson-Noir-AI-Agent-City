@@ -93,7 +93,8 @@ jobs:
           checks=""
           case " $failed " in *" page "*) checks="$checks,page-tsc,page-lint,page-test,page-build,page-smoke,selfheal-test" ;; esac
           case " $failed " in *" rust "*) checks="$checks,rust-test,rust-clippy,native-test,fvps-wasm" ;; esac
-          case " $failed " in *" fvps "*) checks="$checks,fvps-smt,fvps-wasm,fvps-kani" ;; esac
+          case " $failed " in *" fvps "*) checks="$checks,fvps-smt,fvps-wasm" ;; esac
+          case " $failed " in *" kani ("*) checks="$checks,fvps-kani" ;; esac
           case " $failed " in *" bake "*) checks="$checks,rust-test,fvps-smt,fvps-wasm" ;; esac
           checks=${checks#,}
           echo "CHECKS=${checks:-all}" >> "$GITHUB_ENV"

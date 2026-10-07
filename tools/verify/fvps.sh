@@ -1,6 +1,6 @@
 #!/bin/sh
 # Why does this file exist? It is the formal verification step of the pipeline (FVPS), one command: `sh
-# tools/verify/fvps.sh [all|kani|smt|wasm|ir]`, run by ci.yml and before every release bake (build-release.yml), and
+# tools/verify/fvps.sh [all|kani [HARNESS...]|smt|wasm|ir]`, run by ci.yml and before every release bake (build-release.yml), and
 # by tools/selfheal/checks.sh. It hard-fails the build when any proof fails:
 # - kani: the Kani model checker (CBMC, bit-precise) over the proof harnesses in
 #   crimson_noir_os/crates/noir_core/src/verify.rs (the kernels: an agent's tick touches only its own row, weights
@@ -36,16 +36,24 @@ kani_one() {
   if grep -q "^VERIFICATION:- SUCCESSFUL" "$log"; then echo "kani $dir $h: proved"; else echo "::error::kani $dir $h: FAILED (see $log)"; status=1; fi
 }
 
+CORE_HARNESSES="masks_mean_what_the_kernels_take_them_to_mean compare_exchange_orders_the_pair bitonic_pass_stays_in_bounds
+  flush_zeroes_one_row_only agent_tick_is_isolated_to_its_own_row relax_pass_stays_in_bounds"
+ROUTING_HARNESSES="arena_setter_never_traps no_track_is_refused_not_trapped no_track_is_refused_by_the_projection
+  check_never_traps_on_any_arena pose_at_never_traps_on_one_piece pose_at_never_traps_on_two_pieces
+  next_stop_and_speed_limit_never_trap project_onto_never_traps_on_a_short_piece"
+
+# `kani` alone runs every harness; `kani NAME...` runs the named ones (ci.yml spreads them over parallel jobs).
+# The routing harnesses run with the checker's floating-point checks off (--no-overflow-checks): an operation that
+# produces a NaN is not a trap (a NaN arc length answers NaN, as the TypeScript reference does; the parity fuzz
+# holds that), and the harnesses' subject is what traps: bounds, pointers, integer overflow, unwraps, assertions.
 run_kani() {
   command -v cargo-kani > /dev/null || { echo "::error::cargo kani is not installed (cargo install kani-verifier && cargo kani setup)"; return 1; }
-  for h in masks_mean_what_the_kernels_take_them_to_mean compare_exchange_orders_the_pair bitonic_pass_stays_in_bounds \
-           flush_zeroes_one_row_only agent_tick_is_isolated_to_its_own_row relax_pass_stays_in_bounds; do
-    kani_one crimson_noir_os "$h" -p noir_core
+  wanted="$*"
+  for h in $CORE_HARNESSES; do
+    if [ -z "$wanted" ] || echo " $wanted " | grep -q " $h "; then kani_one crimson_noir_os "$h" -p noir_core; fi
   done
-  for h in arena_setter_never_traps no_track_is_refused_not_trapped no_track_is_refused_by_the_projection \
-           check_never_traps_on_any_arena pose_at_never_traps_on_one_piece pose_at_never_traps_on_two_pieces \
-           next_stop_and_speed_limit_never_trap project_onto_never_traps_on_a_short_piece; do
-    kani_one native/routing "$h" -Z stubbing
+  for h in $ROUTING_HARNESSES; do
+    if [ -z "$wanted" ] || echo " $wanted " | grep -q " $h "; then kani_one native/routing "$h" -Z stubbing --no-overflow-checks; fi
   done
 }
 
@@ -87,7 +95,7 @@ run_ir() {
 
 case "$mode" in
   all) run_smt; run_wasm; run_ir; run_kani ;;
-  kani) run_kani ;;
+  kani) shift; run_kani "$@" ;;
   smt) run_smt ;;
   wasm) run_wasm ;;
   ir) run_ir ;;

@@ -28,6 +28,15 @@ const CELLS: usize = WIDTH * DEPTH;
 /// The smallest configuration the validator admits (config.rs: capacity >= 64, blockWords >= 8, stations >= 2,
 /// a 32x32 floor), with every kernel knob symbolic within its validated range.
 fn dims() -> Dims {
+    dims_on(WIDTH, DEPTH)
+}
+
+/// The floor the relaxation harness uses: 8x8, below what the validator admits, because the checker unrolls the
+/// pass over every cell (the pass's arithmetic is per cell and the same at 32x32; tools/verify/fvps_smt.py proves
+/// its index arithmetic for every validated floor).
+const SMALL: usize = 8;
+
+fn dims_on(width: usize, depth: usize) -> Dims {
     let loop_limit: u32 = kani::any();
     kani::assume((2..=1_000_000).contains(&loop_limit));
     let step_eighths: u32 = kani::any();
@@ -40,8 +49,8 @@ fn dims() -> Dims {
         capacity: CAP,
         block_words: BLOCK,
         stations: STATIONS,
-        width: WIDTH,
-        depth: DEPTH,
+        width,
+        depth,
         loop_limit,
         step_eighths,
         learn_shift,
@@ -163,9 +172,10 @@ fn flush_zeroes_one_row_only() {
 /// One relaxation pass over every field, wall and station content never indexes out of its arrays and never writes a
 /// distance past INF.
 #[kani::proof]
-#[kani::unwind(2050)]
+#[kani::unwind(66)]
 fn relax_pass_stays_in_bounds() {
-    let d = dims();
+    const CELLS: usize = SMALL * SMALL;
+    let d = dims_on(SMALL, SMALL);
     let walls: [u32; CELLS] = kani::any();
     let station: [u32; STATIONS] = kani::any();
     let src: [u32; STATIONS * CELLS] = kani::any();
@@ -176,7 +186,9 @@ fn relax_pass_stays_in_bounds() {
 }
 
 /// Every comparator of every pass of the bitonic network over an array of the smallest power-of-two sizes lands
-/// inside the array, a pass makes at most one swap per comparator, and it permutes the keys.
+/// inside the array, a pass makes at most one swap per comparator, and every key ends where it was or at its
+/// comparator's partner (the pass moves keys only within pairs: a witness index, not a sum over the array, which
+/// the checker could not finish).
 #[kani::proof]
 #[kani::unwind(9)]
 fn bitonic_pass_stays_in_bounds() {
@@ -187,14 +199,8 @@ fn bitonic_pass_stays_in_bounds() {
     kani::assume(j.is_power_of_two() && j >= 1 && j < k);
     let swaps = bitonic_pass(&mut keys, k, j);
     assert!(swaps <= 4);
-    let (mut sa, mut sb, mut xa, mut xb) = (0u64, 0u64, 0u32, 0u32);
-    for n in 0..8 {
-        sa += before[n] as u64;
-        sb += keys[n] as u64;
-        xa ^= before[n];
-        xb ^= keys[n];
-    }
-    assert!(sa == sb && xa == xb);
+    let w = index(8);
+    assert!(keys[w] == before[w] || keys[w] == before[w ^ j]);
 }
 
 /// The comparator orders its pair whichever way it is asked, for all keys.

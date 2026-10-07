@@ -6,8 +6,9 @@
 #   test, and the self-healing agent's own tests;
 # - rust: the OS workspace's tests on CPU and GPU (lavapipe) and clippy on every target, the native crates' tests,
 #   and the WebAssembly modules rebuilt and compared with the committed ones (the air-gap check);
-# - fvps: the formal step: the SMT theorems, the LLVM-IR call graph, and every Kani proof harness, one at a time
-#   (the model checker's memory is the bound; a GitHub runner has 16 GB). Kani is cached between runs.
+# - fvps: the formal step's fast parts: the SMT theorems, the LLVM-IR call graph and the WebAssembly air gap;
+# - kani: the Kani proof harnesses, in groups over parallel runners, one harness at a time within a runner (the
+#   model checker's memory is the bound; a GitHub runner has 16 GB). Kani is cached between runs.
 # A failure of any job wakes the self-healing workflow (selfheal.yml), which may answer with a selfheal-* pull
 # request and never merges anything. `workflow_dispatch` lets the agent, or a person, run this on a selfheal branch.
 # What breaks if it is removed? A change is checked only when someone remembers to.
@@ -84,7 +85,7 @@ jobs:
 
   fvps:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -94,6 +95,40 @@ jobs:
       - name: Install Rust ${{ env.RUST_TOOLCHAIN }} with the wasm32 target
         run: |
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target wasm32-unknown-unknown
+          rustup default "$RUST_TOOLCHAIN"
+      - name: The SMT theorems, the IR call graph and the WebAssembly air gap
+        run: sh tools/verify/fvps.sh smt && sh tools/verify/fvps.sh ir && sh tools/verify/fvps.sh wasm
+
+  # The Kani harnesses, spread over parallel runners (each is minutes to a quarter of an hour of the checker's
+  # time, and the checker runs one at a time within a job); the group names are the harnesses of
+  # tools/verify/fvps.sh. A job is red when any of its harnesses fails to verify.
+  kani:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        group:
+          - name: core-small
+            harnesses: masks_mean_what_the_kernels_take_them_to_mean compare_exchange_orders_the_pair bitonic_pass_stays_in_bounds flush_zeroes_one_row_only
+          - name: core-tick
+            harnesses: agent_tick_is_isolated_to_its_own_row
+          - name: core-relax
+            harnesses: relax_pass_stays_in_bounds
+          - name: routing-arena
+            harnesses: arena_setter_never_traps no_track_is_refused_not_trapped check_never_traps_on_any_arena pose_at_never_traps_on_one_piece
+          - name: routing-pieces
+            harnesses: pose_at_never_traps_on_two_pieces next_stop_and_speed_limit_never_trap
+          - name: routing-projection
+            harnesses: no_track_is_refused_by_the_projection project_onto_never_traps_on_a_short_piece
+    name: kani (${{ matrix.group.name }})
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
           rustup default "$RUST_TOOLCHAIN"
       - uses: actions/cache@v4
         id: kani
@@ -109,7 +144,5 @@ jobs:
         run: |
           cargo install kani-verifier --version 0.68.0 --locked
           cargo kani setup
-      - name: The SMT theorems, the IR call graph and the WebAssembly air gap
-        run: sh tools/verify/fvps.sh smt && sh tools/verify/fvps.sh ir && sh tools/verify/fvps.sh wasm
-      - name: Every Kani proof harness
-        run: sh tools/verify/fvps.sh kani
+      - name: The proof harnesses of this group
+        run: sh tools/verify/fvps.sh kani ${{ matrix.group.harnesses }}
