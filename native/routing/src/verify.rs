@@ -11,7 +11,9 @@
 //! What is abstracted, and why it is sound. The values that never become an index are replaced under the checker by
 //! "any f64": the transcendental functions (`atan2`, `hypot`, `sqrt`), the Bézier point, the along/lateral offsets
 //! and the fold `wrap` (whose result only ever reaches comparisons and clamps, so every index below is bounded
-//! whatever it is, NaN included). A proof over every possible value of those covers the real one; it says nothing
+//! whatever it is, NaN included), and the piece evaluation `eval_piece` (pure arithmetic on a piece's words, which
+//! can produce a NaN or an infinity from a symbolic word; a NaN is a value the module returns, not a trap, and the
+//! checker's NaN checks would otherwise report every such path). A proof over every possible value of those covers the real one; it says nothing
 //! about the numbers' accuracy, which src/06_Make_Decisions/routingWasm.test.ts holds bit for bit against the
 //! TypeScript reference. `floor` and `ceil` shape indices and loop counts and are kept exact. The arena sizes are
 //! small (one or two pieces, up to two stops) because the checker unrolls every loop; the arithmetic is the same at 64
@@ -111,6 +113,7 @@ fn check_never_traps_on_any_arena() {
 #[kani::stub(crate::wrap, any_wrap)]
 #[kani::stub(crate::bezier_point, any_bezier)]
 #[kani::stub(crate::offsets, any_offsets)]
+#[kani::stub(crate::eval_piece, any_pose)]
 fn pose_at_never_traps_on_one_piece() {
     let words = checked_words::<{ T_HEADER + PIECE_WORDS }>();
     lay(&words);
@@ -131,6 +134,7 @@ fn pose_at_never_traps_on_one_piece() {
 #[kani::stub(crate::wrap, any_wrap)]
 #[kani::stub(crate::bezier_point, any_bezier)]
 #[kani::stub(crate::offsets, any_offsets)]
+#[kani::stub(crate::eval_piece, any_pose)]
 fn pose_at_never_traps_on_two_pieces() {
     let words = checked_words::<{ T_HEADER + 2 * PIECE_WORDS }>();
     lay(&words);

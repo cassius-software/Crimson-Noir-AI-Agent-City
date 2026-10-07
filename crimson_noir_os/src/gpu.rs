@@ -1,5 +1,6 @@
 //! Why does this file exist? It runs the Global Matrix on a GPU through wgpu: the swarm's tick (shaders/swarm.wgsl),
-//! the routing relaxation (shaders/route.wgsl) and the bitonic sort (shaders/sort.wgsl), the CPU kernels' twins. The
+//! the routing relaxation (shaders/route.wgsl), the bitonic sort (shaders/sort.wgsl) and the telemetry digest
+//! (shaders/telemetry.wgsl, the fog's Process stage of telemetry.rs), the CPU kernels' twins. The
 //! matrix is uploaded as a few structure-of-arrays buffers (bytemuck casts, no per-agent object), many ticks or passes
 //! go into one submission (each dispatch reads its own parameters at a dynamic uniform offset), and the scripted
 //! self-test run is replayed on the GPU with the host stepping in only where the script does (the looper's trap, the
@@ -18,6 +19,7 @@ use wgpu::util::DeviceExt;
 pub const SWARM_WGSL: &str = include_str!("../shaders/swarm.wgsl");
 pub const ROUTE_WGSL: &str = include_str!("../shaders/route.wgsl");
 pub const SORT_WGSL: &str = include_str!("../shaders/sort.wgsl");
+pub const TELEMETRY_WGSL: &str = include_str!("../shaders/telemetry.wgsl");
 
 /// The word arrays in the order swarm.wgsl reads them (ALIVE .. FATE).
 const WORDS: usize = 12;
@@ -68,6 +70,7 @@ pub struct Gpu {
     tick: Kernel,
     relax: Kernel,
     sort: Kernel,
+    telemetry: Kernel,
 }
 
 fn storage(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
@@ -134,7 +137,8 @@ pub fn open() -> Result<Gpu, String> {
         &[dynamic_uniform(16), storage(1, true), storage(2, true), storage(3, true), storage(4, false), storage(5, false)],
     );
     let sort = kernel(&device, "bitonic pass", SORT_WGSL, "bitonic", &[dynamic_uniform(16), storage(1, false)]);
-    Ok(Gpu { device, queue, info, stride, tick, relax, sort })
+    let telemetry = kernel(&device, "telemetry digest", TELEMETRY_WGSL, "digest", &[dynamic_uniform(16), storage(1, true), storage(2, false)]);
+    Ok(Gpu { device, queue, info, stride, tick, relax, sort, telemetry })
 }
 
 fn buffer(gpu: &Gpu, name: &str, contents: &[u8], extra: wgpu::BufferUsages) -> wgpu::Buffer {
@@ -476,6 +480,32 @@ pub fn sort(gpu: &Gpu, keys: &[u32]) -> Vec<u32> {
     bytemuck::cast_slice(&read_back(gpu, &buf, (n * 4) as u64)).to_vec()
 }
 
+/// The digests of `frames` telemetry frames laid flat (telemetry::FRAME_WORDS words each) with the fog's shader:
+/// telemetry::digests, on the GPU.
+pub fn digests(gpu: &Gpu, words: &[u32]) -> Vec<u32> {
+    use crate::telemetry::FRAME_WORDS;
+    assert!(!words.is_empty() && words.len() % FRAME_WORDS == 0, "frames are {FRAME_WORDS} words each");
+    let frames = (words.len() / FRAME_WORDS) as u32;
+    let input = buffer(gpu, "telemetry frames", bytemuck::cast_slice(words), wgpu::BufferUsages::empty());
+    let out = buffer(gpu, "telemetry digests", &vec![0u8; frames as usize * 4], wgpu::BufferUsages::empty());
+    let params = uniforms(gpu, "telemetry parameters", 1);
+    gpu.queue.write_buffer(&params, 0, bytemuck::bytes_of(&PassParams { a: frames, b: 0, c: 0, d: 0 }));
+    let bind = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("telemetry"),
+        layout: &gpu.telemetry.layout,
+        entries: &[binding(&params, 0, Some(16)), binding(&input, 1, None), binding(&out, 2, None)],
+    });
+    let mut enc = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    {
+        let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("telemetry"), timestamp_writes: None });
+        pass.set_pipeline(&gpu.telemetry.pipeline);
+        pass.set_bind_group(0, &bind, &[0]);
+        pass.dispatch_workgroups(frames.div_ceil(64), 1, 1);
+    }
+    gpu.queue.submit([enc.finish()]);
+    bytemuck::cast_slice(&read_back(gpu, &out, frames as u64 * 4)).to_vec()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -506,7 +536,7 @@ mod tests {
 
     #[test]
     fn the_kernels_have_no_branch_in_their_source() {
-        for (name, src) in [("swarm", SWARM_WGSL), ("route", ROUTE_WGSL), ("sort", SORT_WGSL)] {
+        for (name, src) in [("swarm", SWARM_WGSL), ("route", ROUTE_WGSL), ("sort", SORT_WGSL), ("telemetry", TELEMETRY_WGSL)] {
             let code = code(src);
             for word in ["if", "else", "switch", "loop", "while", "break", "continue", "discard"] {
                 let found = code.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|w| w == word);
@@ -521,7 +551,7 @@ mod tests {
     #[test]
     fn the_kernels_are_valid_wgsl_without_a_device() {
         use wgpu::naga::valid::{Capabilities, ValidationFlags, Validator};
-        for (name, src) in [("swarm", SWARM_WGSL), ("route", ROUTE_WGSL), ("sort", SORT_WGSL)] {
+        for (name, src) in [("swarm", SWARM_WGSL), ("route", ROUTE_WGSL), ("sort", SORT_WGSL), ("telemetry", TELEMETRY_WGSL)] {
             let module = wgpu::naga::front::wgsl::parse_str(src).unwrap_or_else(|e| panic!("{name}.wgsl: {}", e.emit_to_string(src)));
             Validator::new(ValidationFlags::all(), Capabilities::empty())
                 .validate(&module)
@@ -549,6 +579,34 @@ mod tests {
         let mut sorted = keys.clone();
         sorted.sort();
         assert_eq!(sort(&g, &keys), sorted);
+    }
+
+    /// The fog's digest shader against telemetry.rs: the pinned vectors, then frames of every shape (zeros, all ones,
+    /// every bit, random words) in counts that do not fill the last workgroup, every digest the same.
+    #[test]
+    fn the_gpu_digests_telemetry_frames_as_the_cpu_does() {
+        use crate::telemetry::{self, FRAME_WORDS, VECTORS};
+        let Some(g) = device() else { return };
+        let vectors: Vec<u32> = VECTORS.iter().flat_map(|(w, _)| w.iter().copied()).collect();
+        assert_eq!(digests(&g, &vectors), VECTORS.iter().map(|(_, d)| *d).collect::<Vec<_>>());
+        let mut r = 0x7e1e_7e1e_u32;
+        let mut next = move || {
+            r = mix32(r.wrapping_add(0x9e37_79b9));
+            r
+        };
+        for frames in [1usize, 63, 64, 65, 1000, 4097] {
+            let mut words = vec![0u32; frames * FRAME_WORDS];
+            for (i, w) in words.iter_mut().enumerate() {
+                *w = match (i / FRAME_WORDS) % 5 {
+                    0 => 0,
+                    1 => u32::MAX,
+                    2 => 1 << (i % 32),
+                    3 => i as u32,
+                    _ => next(),
+                };
+            }
+            assert_eq!(digests(&g, &words), telemetry::digests(&words), "{frames} frames");
+        }
     }
 
     /// Random matrices (every array, the walls and the kernels' knobs drawn at random within what the terminal and

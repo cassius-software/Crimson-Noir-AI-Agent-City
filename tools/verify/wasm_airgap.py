@@ -43,7 +43,7 @@ MODULES = {
     "kv-pager": {
         "file": ROOT / "src/09_Cognition/kvPager.wasm.ts",
         "prefix": "KV_PAGER_WASM",
-        "functions": {  # prefixCache.ts binds these (kv_no_block is the "no block" sentinel the host reads once)
+        "functions": {  # the module's whole surface: what prefixCache.ts binds, plus kv_no_block (the "no block" sentinel, read by the tests)
             "kv_block_tokens", "kv_new", "kv_free", "kv_scratch", "kv_scratch_len", "kv_out", "kv_spawn", "kv_fork",
             "kv_append", "kv_despawn", "kv_len", "kv_stats", "kv_check", "kv_no_block",
         },

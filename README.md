@@ -1530,11 +1530,13 @@ Every source file opens with "Why does this file exist? / What breaks if it is r
 | 07_Execute_Actions | `engine.ts`, `simClient.ts`, `simProtocol.ts`, `physics.worker.ts`, `simHost.ts`, `simCore.ts`, `physics.ts`, `vehicles.ts`, `car.ts`, `carRig.ts`, `fleetView.ts`, `trackFleet.ts`, `ragdollRealm.ts`, `rigView.ts`, `sanctuary.ts`, `player.ts`, `head.ts`, `controls.ts`, `viewports.ts`, `quality.ts`, `audio.ts`, `acoustics.ts`, `captions.ts`, `postfx.ts`, `cinema.ts`, `shutter.ts`, `volumetrics.ts`, `ghost.ts`, `contact.ts`, `dissolve.ts`, `netView.ts`, `operator.ts`, `harness.ts`, `spatial.ts`, `Hud.tsx`, `BootVeil.tsx`, `Concierge.tsx`, `Customizer.tsx`, `glyphs.ts`, `terminal/` (`Terminal.tsx`, `bridge.ts`, `commands.ts`, `repl.ts`) | Frame loop; the physics realm (worker entry, its message door, the simulation core, Rapier world, fleet on its tracks, the car rules the page and the room share (the rig, the substep, the exit point, the fleet's plan), the scheduled craft and their pose stream, the balance machine over the pedestrians near the operator and its rig stream, sanctuary, up to four avatars) and the page's end of it (client, protocol, fleet drawing, rig drawing, first-person heads, per-seat controls, the split-screen arithmetic); quality applier, soundscape (with its speech voice, rooms, peer voices and the sound-event stream), room acoustics, the caption track, post chain, the cinema camera (24 fps pacer, 180° shutter, ND and film response), sun shafts, ghost view, the contact transition and the code dissolve's envelope, the network ghosts, operator facade and physics harnesses (the spatial sweep's plan among them), HUD, boot veil, concierge, the wardrobe card, control glyphs, console (with R0, its stack machine) |
 | 08_Swarm | `recruitment.ts`, `taskRouter.ts`, `memory.ts`, `ping.ts` | The swarm's hash-chained memory and weight ledger; the operator's voice: on-device continuous speech recognition, the request parser, the main-thread proximity match, the request to the physics worker, the rally request, and the console and `recruit()` fallback; the task gateway that binds skill-bound work to the tethered swarm; the swarm's episodic memory (IndexedDB, by world seed and pedestrian); the ping's pick, board and rally plan |
 | 09_Cognition | `localCompute.ts`, `claudeApi.ts`, `router.ts`, `prefixCache.ts`, `kvPager.wasm.ts` (generated from `native/kv-pager-wasm`), `localSpeech.ts` | The prompt-prefix page table over kv-pager as WebAssembly; the operator's model providers and voice: the router (`claude` through a gateway on this machine with the operator's key; `ollama` and `llamacpp` on this machine), the local client in both wire formats and the Claude client, the system prompt opening with the 14A core and then the tethered people's skills and memories, the streamed answer, the speech client for a speech server on this machine, the audio for the soundscape, the cut when the tether breaks, and every failure as one sentence |
-| 10_Network | `replication.ts`, `replication.node.ts`, `mirror.node.ts`, `garage.node.ts`, `plane.node.ts`, `netClient.ts` | The network room: the plain-data protocol core and authoritative room both sides share (validated both ways, rate-limited, screened under 14A, every input judged by an authority and refused ones corrected), the Node-only WebSocket host (HMAC session tokens checked at the upgrade, one connection per player, never bundled), the headless Ring-0 mirror it judges with (the city of the seed in Rapier, the realm's own character controller, the Ring-0 audit) and its garage (every player's car replayed with the page's own car physics, every door checked), an open-plane authority for the protocol's tests, and the opt-in page client that speaks ws or wss only to `localhost` or `127.0.0.1` (the host on this machine, or the local end of a tunnel or proxy), reports the realm's steps and doors, snaps to corrections, and reconciles the room's snapshots into the poses `netView.ts` draws |
+| 10_Network | `replication.ts`, `replication.node.ts`, `mirror.node.ts`, `garage.node.ts`, `plane.node.ts`, `netClient.ts`, `telemetry.ts` | The network room: the plain-data protocol core and authoritative room both sides share (validated both ways, rate-limited, screened under 14A, every input judged by an authority and refused ones corrected), the Node-only WebSocket host (HMAC session tokens checked at the upgrade, one connection per player, never bundled), the headless Ring-0 mirror it judges with (the city of the seed in Rapier, the realm's own character controller, the Ring-0 audit) and its garage (every player's car replayed with the page's own car physics, every door checked), an open-plane authority for the protocol's tests, and the opt-in page client that speaks ws or wss only to `localhost` or `127.0.0.1` (the host on this machine, or the local end of a tunnel or proxy), reports the realm's steps and doors, snaps to corrections, and reconciles the room's snapshots into the poses `netView.ts` draws |
 | native/kv-pager | `01_geometry.rs`, `02_page_table.rs`, `03_gpu/`, `bin/stress.rs`, `bin/chaos/` | A paged KV cache (its page table also runs on the page, through `native/kv-pager-wasm`) (prefix caching, copy-on-write, the WGSL decode kernel, the stress and chaos runs); `CAUSAL.md` traces the copy-on-write chain |
 | native/kv-pager-wasm | `lib.rs` | kv-pager's page table (no GPU) behind a C ABI, built to WebAssembly as `09_Cognition/kvPager.wasm.ts` (`npm run native:wasm`) |
-| native/routing | `lib.rs`, `layout.rs`, `math.rs`, `tests.rs` | The track arithmetic in dependency-free Rust, built to WebAssembly as `06_Make_Decisions/routing.wasm.ts`; its layout is defined once in each language and the two are proved equal |
+| native/routing | `lib.rs`, `layout.rs`, `math.rs`, `tests.rs`, `verify.rs` (Kani proof harnesses, `cfg(kani)` only) | The track arithmetic in dependency-free Rust, built to WebAssembly as `06_Make_Decisions/routing.wasm.ts`; its layout is defined once in each language and the two are proved equal |
 | tools/native | `build-wasm.mjs` | Builds both crates for `wasm32-unknown-unknown` and writes the generated modules with their sizes and SHA-256 |
+| tools/verify | `fvps.sh`, `fvps_smt.py`, `wasm_airgap.py` | The formal verification step (Phase 18): the Kani harnesses, the Z3 theorems, the WebAssembly air gap and export pin, the routing core's LLVM IR call scan; one command, run before every release bake and in CI |
+| tools/selfheal | `agent.mjs`, `checks.sh`, `failures.mjs`, `ast.mjs`, `sandbox.mjs`, `planner.mjs`, `Dockerfile.sandbox` | The self-healing agent (Phase 18): the named checks, failure parsers, syntax-tree loci, the network-off sandbox, the planners (built-in remedies, then Claude) and the bounded remediation loop that opens `selfheal-*` pull requests and never merges |
 
 ## Vehicles
 
@@ -1829,6 +1831,72 @@ interleaved runs. At a pinned Medium tier the release held about 23 of 24 presen
 Not verified: a real open-weights speech server (a mock with the same wire format stood in), a real call to the
 Claude API (a fake server stood in), a room joined from a browser, physical phones, a physical DualSense, and HAL/1
 devices.
+
+## Formal verification, self-healing CI and telemetry (Phase 18)
+
+**The formal verification step (FVPS).** `sh tools/verify/fvps.sh` runs before every release bake
+(`build-release.yml` refuses to bake a commit whose proofs fail) and in `ci.yml` on every pull request and push to
+`main`, where it is the `fvps` job (the Kani harnesses take about an hour on a runner; the `rust` and `page` jobs
+run the tests, clippy, tsc, oxlint, the build and the air-gap check first). It has four parts, each honest about
+what it proves:
+- **Kani (CBMC, bit-precise model checking)** over harnesses compiled only under `cfg(kani)`:
+  `crimson_noir_os/crates/noir_core/src/verify.rs` lays a symbolic Global Matrix of the smallest validated
+  dimensions (64 agents, an 8-word memory block, 2 stations, a 32×32 floor, every kernel knob symbolic) and proves
+  that one agent's tick writes only its own row, its own weights and its own memory block, keeps its position on the
+  floor and its masks at 0 or 1, that the flush zeroes one row only, that a relaxation pass and a bitonic pass never
+  index outside their arrays, and that the branchless masks mean what the kernels take them to mean;
+  `native/routing/src/verify.rs` lays a symbolic arena (every word any f64, NaN and infinities included) and proves
+  the WebAssembly routing core never traps: the arena setter and `routing_check` on any arena, the pose, the piece
+  search, the next stop, the speed limit and the projection on one- and two-piece tracks with up to two stops, every
+  index they compute in bounds. The transcendental functions, the Bézier point, the offsets, the fold and the piece
+  evaluation are abstracted to "any f64" (sound: their results never become an index; their values are held bit for
+  bit by the parity tests, not proved here). The sizes are small because the checker unrolls every loop.
+- **Z3 theorems** (`tools/verify/fvps_smt.py`) over 32-bit words and IEEE doubles, for every validated dimension:
+  memory-slot isolation between agents, no 32-bit wrap in the index arithmetic, every field read in bounds, the goal
+  mask, the stepped cell on the floor, the weight index, the relaxation neighbours, the bitonic comparators, the
+  `nz`/`sel` lemmas, the loop breaker's signature, the piece evaluation's look-up index in 0..31 under JavaScript's
+  min/max semantics, the arena setter's range. Every theorem has a vacuity check.
+- **The WebAssembly air gap** (`tools/verify/wasm_airgap.py`): both modules the page carries import nothing, own
+  exactly one memory, have no start function, export no table, and export exactly the functions the host binds; with
+  a wasm32 toolchain present the routing crate is rebuilt and must give the committed bytes.
+- **The LLVM IR call graph**: the routing core's IR, emitted from the compilation that makes the module, may declare
+  nothing external but LLVM intrinsics, the four libm functions and core's panic entry points (every one a trap the
+  harnesses prove unreachable).
+
+What it does not prove: floating-point values (parity tests hold them bit for bit), `fmod` (no exact SMT model), and
+dimensions larger than the harnesses fix (the theorems cover every validated dimension; the harnesses the
+smallest). `/Brepro` (`crimson_noir_os/.cargo/config.toml`) is the lld-link flag the UEFI target uses so the PE
+header's timestamp is a hash of the output, not the build time; two clean bakes of one commit give the same bytes
+(the workflow bakes twice and compares; verified here, SHA-256 equal).
+
+**The self-healing pipeline.** `selfheal.yml` runs when `ci.yml` or `build-release.yml` ends in failure and runs
+`tools/selfheal/agent.mjs` on the failed commit: the agent re-runs the failed checks in a fresh container with the
+network off (`Dockerfile.sandbox`) to isolate the failure, parses it (`node --test`, `cargo test`, `tsc`, `oxlint`,
+Kani) and maps each failure to the declaration it points at in the syntax tree (the TypeScript compiler API for
+`.ts`, brace matching for `.rs`), asks its planner for a structural patch of those declarations only (the built-in
+remedies first: a stale committed module regenerated, a stale seal re-pinned; then Claude through the Anthropic API
+when `ANTHROPIC_API_KEY` is set, at most three model calls), applies it to a copy, re-runs the failed checks and
+then every check in a fresh container, and stops after three attempts or sooner when an attempt changes nothing
+(the loop dampening). When every check passes it pushes a `selfheal-<run>-<sha7>` branch and opens a pull request
+that documents the failure, the map, every attempt and the diff, and dispatches `ci.yml` on it. It never merges:
+the workflow has no permission to, and the pull request waits for a review like any other. The repository setting
+"Allow GitHub Actions to create and approve pull requests" must be on for the pull request; without it the branch
+is pushed and the log says so.
+
+**IIoT telemetry (SIPOC).** `10_Network/telemetry.ts` is the edge-fog-cloud pipeline: an edge node (an actor over
+the WebAssembly routing core, or any sensor; the Supplier) frames its readings as eight 32-bit words numbered per
+node without gaps (Input); the Process stage digests a frame with FNV-1a finished by the swarm's `mix32`, run at the
+edge and again at the fog as the WGSL compute shader `crimson_noir_os/shaders/telemetry.wgsl` (one invocation per
+frame, no branch, no float; `telemetry.rs` is its reference and `gpu::digests` runs it, held equal to the CPU on
+every frame drawn); the cloud's ledger admits a frame only when the fog's digest equals the edge's own, only in
+sequence order, once each, and chains it with SHA-256 per node (Output) for whoever reads it (Customer). Delivery is
+at least once: the edge keeps every frame until acknowledged and re-sends; the acknowledgement carries the head the
+cloud reached, which the edge compares with its own fold. `telemetry.fuzz.test.ts` drives 64 edge actors, one per
+car ring, through a link with up to 200 ticks of latency, reordering, duplication and drops in both directions, and
+a fog whose cache serves the wrong digest (the previous frame's line, a flipped bit, a stale word) for up to a third
+of the frames: the ledger ends equal, entry for entry and hash for hash, to the clean run's, re-verifies from genesis,
+has refused every desynchronised digest and chained none, and every edge's fold agrees with the cloud's. Both twins
+pin the same vectors (`VECTORS`, `VECTORS_CHAIN`).
 
 ## History
 

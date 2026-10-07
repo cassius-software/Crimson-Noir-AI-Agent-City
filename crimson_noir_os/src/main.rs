@@ -12,6 +12,7 @@ mod bridge;
 mod gpu;
 mod host;
 mod ledger;
+mod telemetry;
 mod wire;
 
 use std::io::{BufRead, Write};
