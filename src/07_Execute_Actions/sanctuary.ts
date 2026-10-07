@@ -6,7 +6,9 @@
  * call. A sensor takes part in no contact, so the vehicle passes with no impulse on either side. The person
  * is nudged sideways out of the footprint (never through a wall) and turns solid again once every vehicle
  * has kept its distance for a moment. GPU pedestrians are not Rapier bodies (crowd.wgsl nudges them
- * itself); the Rapier person is the player's avatar.
+ * itself); the Rapier people are the players' avatars and, while a pedestrian near the operator is promoted
+ * to a physical body, each segment of that body, registered as a ward of its own and rebound (rebind) each
+ * time its slot is built again.
  * What breaks if it is removed? A car that reaches the avatar runs into an immovable kinematic capsule: the
  * car stops dead or rebounds, and a vehicle collides with a person, which 14A forbids.
  */
@@ -93,6 +95,11 @@ interface Ward {
    */
   side: number
   sideOf: number
+  /**
+   * A ghost (player 1 in a network room): a sensor for as long as it lasts, never nudged, never restored to solid.
+   * Nothing can touch it, so it needs no shield episode; what moves it is its own walk alone.
+   */
+  ghost: boolean
 }
 
 export class Sanctuary {
@@ -115,11 +122,56 @@ export class Sanctuary {
     return this.flipCount
   }
 
-  /** Registers a person (starts solid; the sanctuary owns the collider's sensor flag from here on). */
-  register(person: PersonBody): void {
+  /**
+   * Registers a person (starts solid; the sanctuary owns the collider's sensor flag from here on) and returns their
+   * ward index: guard()'s nudges and isSensor() are read by it, in register() order.
+   */
+  register(person: PersonBody): number {
     person.collider.setSensor(false)
-    this.wards.push({ person, probe: new RAPIER.Capsule(person.halfHeight, person.radius), sensor: false, clear: 0, side: 1, sideOf: -1 })
+    this.wards.push({ person, probe: new RAPIER.Capsule(person.halfHeight, person.radius), sensor: false, clear: 0, side: 1, sideOf: -1, ghost: false })
     this.nudges.push({ dx: 0, dz: 0 })
+    return this.wards.length - 1
+  }
+
+  /**
+   * Gives ward `i` a new body of the same shape (a slot built again after its last body left the world): the ward
+   * starts over, solid, with no episode kept from the body before. An unknown index is refused.
+   */
+  rebind(i: number, person: PersonBody): void {
+    const ward = this.wards[i]
+    if (!ward) throw new RangeError(`no ward ${i} (0–${this.wards.length - 1})`)
+    ward.person = person
+    ward.sensor = false
+    ward.clear = 0
+    ward.side = 1
+    ward.sideOf = -1
+    ward.ghost = false
+    person.collider.setSensor(false)
+    const out = this.nudges[i]
+    out.dx = 0
+    out.dz = 0
+  }
+
+  /**
+   * Makes ward `i` a ghost, or ends it (simCore.ts `room`): a ghost is a sensor at once and stays one, with no nudge;
+   * ended, it is solid again unless a vehicle is in reach, which the next guard() decides as for anyone.
+   */
+  ghost(i: number, on: boolean): void {
+    const ward = this.wards[i]
+    if (!ward) throw new RangeError(`no ward ${i} (0–${this.wards.length - 1})`)
+    if (on === true) {
+      ward.ghost = true
+      ward.sensor = true
+      ward.clear = 0
+      ward.sideOf = -1
+      if (ward.person.collider.isValid()) ward.person.collider.setSensor(true)
+    } else if (ward.ghost) {
+      ward.ghost = false
+      this.restore(ward)
+    }
+    const out = this.nudges[i]
+    out.dx = 0
+    out.dz = 0
   }
 
   /**
@@ -136,6 +188,8 @@ export class Sanctuary {
       const out = this.nudges[i]
       out.dx = 0
       out.dz = 0
+      // A ghost stays a sensor, untouched and never nudged.
+      if (ward.ghost) continue
       const { body, collider, radius } = ward.person
       if (!collider.isValid()) {
         ward.sensor = false

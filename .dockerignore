@@ -1,0 +1,20 @@
+# Why does this file exist? The host image's build context is an allowlist: only what its Dockerfile copies is sent
+# to the builder, so no secret, build output (crimson_noir_os/target is gigabytes) or test file can reach it; the
+# closure stage then picks the host's own files out of src/, and the page's components, shaders and styles are kept
+# out here too.
+*
+!package.json
+!package-lock.json
+!LICENSE
+!NOTICE.md
+!src/
+src/**/*.test.ts
+src/**/*.tsx
+src/**/*.wgsl
+src/**/*.css
+src/**/*.d.ts
+!tools/net/closure.mjs
+!tools/net/mint-token.mjs
+!tools/net/image-check.mjs
+!crimson_noir_os/containment.lock
+!crimson_noir_os/containment.seal

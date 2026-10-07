@@ -1,0 +1,4 @@
+# The deployment's secret, key and certificates live here on the server and never in git.
+secrets/
+tls/
+acme/

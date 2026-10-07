@@ -29,10 +29,64 @@ export type Light = 'green' | 'amber' | 'red'
 
 export interface Toast { id: number; title: string; body: string; time: number }
 
+/** The network client's state (10_Network/netClient.ts NetStatus, carried here without the import). */
+export type NetState = 'idle' | 'connecting' | 'joining' | 'joined' | 'closed'
+
+/**
+ * The network session as the console's `net status` reports it (the engine's net.status()): the client's state, the
+ * room's address once joined, this page's id in it (0 until welcomed), the other players drawn, steps the client held
+ * back or dropped and inputs the room has not yet acknowledged, peer voices attached, the room's corrections (snaps to
+ * its truth), and why the session closed, if it did.
+ */
+export interface NetReport {
+  state: NetState
+  url: string | null
+  id: number
+  peers: number
+  dropped: number
+  pending: number
+  voices: number
+  reason: string | null
+  /** Corrections the room's authority made this session (the welcome's spawn not counted), and the newest one's reason. */
+  corrections: number
+  corrected: string | null
+}
+
+/** One ping as the HUD draws it: plain data, in metres and seconds, plus its place on the screen. */
+export interface HudPing {
+  id: number
+  /** What it asks (go, look, gather, wait) and what it landed on (the ground, a person, a car, a pole). */
+  kind: 'go' | 'look' | 'gather' | 'wait'
+  pick: 'point' | 'person' | 'car' | 'pole'
+  /** The pedestrian row, car index or pole index it landed on; −1 for the ground. */
+  index: number
+  x: number
+  z: number
+  /** Seconds since it was placed, and seconds until it fades. */
+  age: number
+  left: number
+  /** Metres from the head now. */
+  distance: number
+  /** Where it falls on the screen (0..1 across and down) while it is in front of the camera; NaN when it is not. */
+  sx: number
+  sy: number
+}
+
 export interface MapCar { x: number; z: number; heading: number; player: boolean }
 
 /** Which control glyphs the HUD shows: the keyboard, a controller family, or touch. */
 export type GlyphFamily = 'keyboard' | 'abxy' | 'bayx' | 'numbered' | 'generic' | 'touch'
+
+/** One seat at the local split-screen table (SipocSnapshot.output.players). */
+export interface SeatView {
+  /** 0..3: player 1 is seat 0. */
+  seat: number
+  /** The index of the gamepad in this seat, −1 for none (seat 0 then runs on the keyboard, the mouse or touch). */
+  pad: number
+  /** The pad's face-button family (gamepad.ts PadFamily), for that viewport's glyphs; null before any input (or with no pad). */
+  family: Exclude<GlyphFamily, 'keyboard' | 'touch'> | null
+  mode: 'foot' | 'vehicle'
+}
 
 /** What the HUD shows about a recording in progress. */
 export interface RecordingState {
@@ -146,10 +200,39 @@ export interface SipocSnapshot {
     /** Ghost view is on: the physics shapes drawn as code over the frame (view-only). */
     ghost?: boolean
     /**
+     * Whether the city is drawn (engine.setRendering, the console's render knob). False is Track B's override: the
+     * canvas is black while physics, audio and the console keep running.
+     */
+    rendering?: boolean
+    /**
      * Ghost-mode collision's contact wipe (contact.ts): how far the iris of code is open (0..1), the kind the user's
      * body last passed through (GHOST_KIND; 0 none), and how many passages have played a wipe since boot.
      */
     contact?: { wipe: number; kind: number; count: number }
+    /**
+     * The code dissolve (dissolve.ts): how many mesh instances (poles, cars, people) are dissolved or reinstantiating
+     * now, and how many passages have dissolved one since boot.
+     */
+    dissolve?: { active: number; count: number }
+    /**
+     * The operator's pings standing now (08_Swarm/ping.ts PingBoard), oldest first, each placed where the head looked,
+     * with where it falls on the screen: a marker on the minimap and a chip over the world for the newest. Absent when
+     * none stands.
+     */
+    pings?: HudPing[]
+    /**
+     * The network session (10_Network/netClient.ts, the engine's net seam): the client's state, how many other players'
+     * poses the page draws, and how many of this page's inputs the client refused since the session began (over its
+     * own rate). Absent until the host has attached a client; 'idle' then until the operator joins a room.
+     */
+    net?: { state: NetState; peers: number; dropped: number }
+    /**
+     * Local split screen (?players=2..4; viewports.ts, seats.ts): how many players share the canvas, each viewport's
+     * rect in logical pixels (index = player, top-left first), and each seat: the pad in it (−1 none; seat 0 is the
+     * keyboard, the mouse and the touch overlay, pad or not), its face-button family, and whether that player is at a
+     * wheel. Absent with one player.
+     */
+    players?: { count: number; rects: { x: number; y: number; width: number; height: number }[]; seats: SeatView[] }
   }
   kernel: KernelStats
   quality: QualityState
@@ -160,6 +243,11 @@ export interface SipocSnapshot {
     name: string
     clock: string; daylight: number; viewYaw: number; district: string; speedKmh: number; gear: string
     x: number; z: number; heading: number; signalEW: Light; signalNS: Light; signalRemaining: number
+    /**
+     * Closed captions of the soundscape (captions.ts): the lines to show now, each a sound with its bearing and
+     * distance, speech with its words. Absent while captions are off (?captions=0 or setCaptions(false)).
+     */
+    captions?: string[]
   }
   experience: { sessionSeconds: number; longFrames: number; distanceWalked: number; distanceDriven: number }
   map: MapCar[]

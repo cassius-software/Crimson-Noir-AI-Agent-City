@@ -15,7 +15,10 @@ import { GROUND_COLLIDERS, Physics, RAPIER } from './physics.ts'
 import { ackermann, CAR, corridorDistance, Fleet, type Vehicle, CAR_TUNE_RANGE } from './vehicles.ts'
 import { MODES, POSE } from './simProtocol.ts'
 import { Driver } from '../06_Make_Decisions/traffic.ts'
-import type { Box } from '../01_Initialize_World/city.ts'
+import { TrackDriver } from '../06_Make_Decisions/trackDriver.ts'
+import { buildTrackNetwork, poseAt, projectOnto, ringGaps, TRACKS } from '../06_Make_Decisions/tracks.ts'
+import { onRoad } from '../03_Spawn_Agents/skills.ts'
+import { CITY, type Box } from '../01_Initialize_World/city.ts'
 import { KERNEL, TRAFFIC } from '../02_Define_The_Rules/civic.ts'
 import { Bouncer, stoppingDistance } from '../02_Define_The_Rules/laws.ts'
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
@@ -688,4 +691,166 @@ test('clampSpeed only ever slows a chassis, and keeps its direction', async () =
   body.setLinvel({ x: 10, y: 0, z: 0 }, true)
   for (const max of [50, Number.NaN, -1]) assert.equal(fleet.clampSpeed(v, max), false, `max ${max}`)
   assert.equal(fleet.velocity(v).x, 10)
+})
+
+test('a fleet on tracks spawns in headway seats on the lanes and follows its rings without the First or Third Law', async () => {
+  const physics = await Physics.create([], NO_FURNITURE)
+  const network = buildTrackNetwork(SEED)
+  const fleet = new Fleet(physics, 12, SEED, { exposeRig: true, network })
+  const trackOf = (v: Vehicle) => network.tracks[(v.driver as TrackDriver).track]
+  // Seated: every car on a car ring, on the carriageway, exactly laneOffset from a street centreline, on a straight.
+  const seen = new Set<string>()
+  for (const v of fleet.vehicles) {
+    assert.ok(v.driver instanceof TrackDriver)
+    const track = trackOf(v)
+    assert.equal(track.kind, 'car')
+    const t = fleet.position(v)
+    assert.ok(onRoad(t.x, t.z), `car ${v.index} off the carriageway`)
+    const off = [t.x - Math.round(t.x / CITY.pitch) * CITY.pitch, t.z - Math.round(t.z / CITY.pitch) * CITY.pitch]
+    const along = Math.abs(Math.sin(fleet.heading(v))) > 0.5 ? off[1] : off[0]
+    assert.ok(Math.abs(Math.abs(along) - TRAFFIC.laneOffset) < 1e-3, `car ${v.index}: ${along} m from its centreline`)
+    const seat = `${track.id}:${(v.driver as TrackDriver).progress.toFixed(1)}`
+    assert.ok(!seen.has(seat), `two cars in seat ${seat}`)
+    seen.add(seat)
+  }
+  const seatOf = fleet.vehicles.map((v) => (v.driver as TrackDriver).progress)
+  // 30 s of think + step on the flat city: the fleet drives its rings.
+  let maxLateral = 0, minGap = Infinity, maxSpeed = 0
+  const gapsOf = () => {
+    const byTrack = new Map<number, Vehicle[]>()
+    for (const v of fleet.vehicles) byTrack.set(trackOf(v).id, [...(byTrack.get(trackOf(v).id) ?? []), v])
+    for (const [id, cars] of byTrack) {
+      if (cars.length < 2) continue
+      const s = Float64Array.from(cars.map((v) => (v.driver as TrackDriver).progress).sort((a, b) => a - b))
+      for (const g of ringGaps(s, network.tracks[id].length, 2 * CAR.halfLength)) minGap = Math.min(minGap, g)
+    }
+  }
+  for (let frame = 0; frame < 30 * 60; frame++) {
+    fleet.think(H, frame * H)
+    physics.step(H, (h) => fleet.updateControllers(h))
+    if (frame % 10 !== 0) continue
+    gapsOf()
+    for (const v of fleet.vehicles) {
+      const t = fleet.position(v)
+      const d = v.driver as TrackDriver
+      maxLateral = Math.max(maxLateral, Math.abs(projectOnto(trackOf(v), t.x, t.z, d.progress).lateral))
+      maxSpeed = Math.max(maxSpeed, fleet.speed(v))
+      assert.equal(d.rejoining, false, `car ${v.index} lost its track`)
+    }
+  }
+  assert.equal(fleet.bouncer.counts[1], 0, 'no First-Law intervention: nobody is in the city')
+  assert.equal(fleet.bouncer.counts[3], 0, 'no Third-Law ruling: the rays skip the cars on rings and the ring gap keeps the envelope')
+  assert.ok(maxLateral < 0.8, `a car drifted ${maxLateral.toFixed(2)} m off its ring`)
+  assert.ok(minGap >= 1, `a ring gap fell to ${minGap.toFixed(2)} m`)
+  assert.ok(maxSpeed > 5 && maxSpeed <= TRAFFIC.speedLimit + 0.5, `max speed ${maxSpeed.toFixed(2)}`)
+  for (const v of fleet.vehicles) {
+    const track = trackOf(v), d = v.driver as TrackDriver
+    const gained = ((d.progress - seatOf[v.index]) % track.length + track.length) % track.length
+    assert.ok(gained >= 5, `car ${v.index} moved only ${gained.toFixed(1)} m along its ring in 30 s`)
+    assert.ok(v.mode === 'ai' && d.stuckSeconds < 8)
+  }
+  // The public surface is unchanged: the network and the ring order live behind private fields.
+  assert.deepEqual(Object.keys(fleet).sort(), ['bouncer', 'paint', 'vehicles'])
+  const handle = (x: unknown) => x instanceof RAPIER.RigidBody || x instanceof RAPIER.Collider || x instanceof RAPIER.DynamicRayCastVehicleController
+  const reaches = (root: unknown, seen = new Set<unknown>()): boolean => {
+    if (root === null || typeof root !== 'object' || seen.has(root)) return false
+    seen.add(root)
+    return handle(root) || Object.values(root).some((x) => reaches(x, seen))
+  }
+  for (const car of fleet.vehicles) {
+    assert.equal(reaches(car), false, `vehicle ${car.index} carries a handle`)
+    assert.deepEqual(Object.keys(car.driver), ['stuckSeconds', 'ringGap'], 'a track driver shows no track: it is ES-private')
+  }
+  assert.equal(TRACKS.car.headway, 8)
+})
+
+test('a fleet on tracks: the rays of a car on a ring skip the cars on rings, still see a wall and a player\'s car; a random fleet is untouched', async () => {
+  const wall: Box = [TRACK_X - 1, 0, 20, TRACK_X + 1, 3, 22]
+  const physics = await Physics.create([wall], NO_FURNITURE)
+  const network = buildTrackNetwork(SEED)
+  const fleet = new Fleet(physics, 3, SEED, { exposeRig: true, network })
+  const [a, b, c] = fleet.vehicles
+  /** A track driver that remembers the gap the Fleet fed it. */
+  class Spy extends TrackDriver {
+    fed = Infinity
+    command(p: Parameters<TrackDriver['command']>[0], signalSeconds: number, gap: number, dt: number, personAhead?: number) {
+      this.fed = gap
+      return super.command(p, signalSeconds, gap, dt, personAhead)
+    }
+  }
+  const spy = new Spy(network.tracks[(a.driver as TrackDriver).track], (a.driver as TrackDriver).progress, createRng(1))
+  a.driver = spy
+  // a at the origin of the open ground heading +z; b, a car of the fleet, parked 10 m ahead of it; the wall 20 m on (inside the rays' 22 m reach);
+  // c driven by the player far away (so it is in no ring's order).
+  fleet.recover(a, TRACK_X, 0, 0)
+  fleet.recover(b, TRACK_X, 10, 0)
+  fleet.recover(c, TRACK_X + 100, 0, 0)
+  b.mode = 'parked'
+  c.mode = 'player'
+  for (let k = 0; k < 60; k++) physics.step(H, (h) => fleet.updateControllers(h))
+  const toCar = 10 - 2 * CAR.halfLength - 0.1, toWall = 20 - CAR.halfLength - 0.1
+  // The public rays (what a player's car reads) see the parked car ahead ...
+  assert.ok(Math.abs(fleet.gapAhead(a) - toCar) < 0.3, `gapAhead ${fleet.gapAhead(a).toFixed(2)}`)
+  // ... while the track driver is fed the least of the rays filtered of the cars on rings (the wall) and its ring gap
+  // (alone: Infinity; the parked car stands off its ring, so the ring's order leaves it out).
+  fleet.think(H, 1)
+  assert.ok(Math.abs(spy.fed - toWall) < 0.3, `the track driver was fed ${spy.fed.toFixed(2)} m: the wall, not the parked car on a ring`)
+  assert.equal(fleet.bouncer.counts[3], 0)
+  // A player's car is not on a ring: the rays are its backstop.
+  b.mode = 'player'
+  fleet.think(H, 1)
+  assert.ok(Math.abs(spy.fed - toCar) < 0.3, `fed ${spy.fed.toFixed(2)} m with the player's car ahead`)
+
+  // Without a network the fleet is what it always was: Drivers on random lane seats, the same for the same seed.
+  const plain = await Physics.create([], NO_FURNITURE)
+  const random = new Fleet(plain, 8, SEED)
+  const again = new Fleet(await Physics.create([], NO_FURNITURE), 8, SEED)
+  for (const v of random.vehicles) {
+    assert.ok(v.driver instanceof Driver && !(v.driver instanceof TrackDriver))
+    const p = random.position(v), q = again.position(again.vehicles[v.index])
+    assert.deepEqual(p, q)
+    assert.ok(onRoad(p.x, p.z))
+    assert.equal(random.paint[v.index], again.paint[v.index])
+  }
+  assert.equal(poseAt(network.tracks[0], 0).y, 0)
+})
+
+test('a fleet on tracks: a car set down off its ring leaves the ring\'s order while it steers back, so nobody queues behind its projection', async () => {
+  const physics = await Physics.create([], NO_FURNITURE)
+  const network = buildTrackNetwork(SEED)
+  const fleet = new Fleet(physics, 2, SEED, { exposeRig: true, network })
+  const [a, b] = fleet.vehicles
+  /** A track driver that remembers the gap the Fleet fed it. */
+  class Spy extends TrackDriver {
+    fed = Infinity
+    command(p: Parameters<TrackDriver['command']>[0], signalSeconds: number, gap: number, dt: number, personAhead?: number) {
+      this.fed = gap
+      return super.command(p, signalSeconds, gap, dt, personAhead)
+    }
+  }
+  // Both on ring 0: a at a seat, b 30 m ahead of it on the same lane.
+  const track = network.tracks[0]
+  const sA = 20, sB = sA + 30
+  const pA = poseAt(track, sA), pB = poseAt(track, sB)
+  const spy = new Spy(track, sA, createRng(1))
+  a.driver = spy
+  b.driver = new TrackDriver(track, sB, createRng(2))
+  fleet.recover(a, pA.x, pA.z, pA.heading)
+  fleet.recover(b, pB.x, pB.z, pB.heading)
+  for (let k = 0; k < 60; k++) physics.step(H, (h) => fleet.updateControllers(h))
+  fleet.think(H, 1)
+  const ringGap = 30 - 2 * CAR.halfLength
+  assert.ok(Math.abs(spy.fed - ringGap) < 0.5, `fed ${spy.fed.toFixed(2)} m with b 30 m ahead on the ring`)
+  // b is set down 40 m to the right of its lane (open ground beside the grid), still an AI car of ring 0.
+  const q = poseAt(track, sB)
+  fleet.recover(b, q.x - q.tangentZ * 40, q.z + q.tangentX * 40, q.heading)
+  for (let k = 0; k < 60; k++) physics.step(H, (h) => fleet.updateControllers(h))
+  fleet.think(H, 1)
+  assert.equal((b.driver as TrackDriver).rejoining, true, 'b noticed it is off its ring')
+  // From the next frame b is out of the ring's order: a's ring gap is Infinity and its rays (which skip the cars on
+  // rings) find nothing, so a is fed a clear road, not a queue behind a car that is not there.
+  fleet.think(H, 1)
+  assert.equal(spy.fed, Infinity, `a was fed ${spy.fed.toFixed(2)} m behind b's projection while b stands 40 m off the ring`)
+  assert.equal((b.driver as TrackDriver).ringGap, Infinity)
+  assert.equal(fleet.bouncer.counts[3], 0)
 })

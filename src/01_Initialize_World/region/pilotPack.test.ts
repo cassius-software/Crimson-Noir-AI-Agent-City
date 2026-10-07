@@ -1,10 +1,11 @@
 /**
- * Why does this file exist? It checks the region pack the pilot build embeds (world/pilot.region.json.gz), as shipped:
+ * Why does this file exist? It checks the region pack every build embeds (world/pilot.region.json.gz), as shipped:
  * the shape the engine reads, fictional names only (none of the region's real places, landmarks or streets on the
  * tools' denylist, and nothing the source-code scan would refuse), its data licences stated, and its size. The raw
  * sources are not in the repository, so the compiler's full check (every real street name) ran when it was compiled;
- * this one keeps the committed file honest.
- * What breaks if it is removed? A hand-edited or stale pack could carry a real name into the pilot build.
+ * this one keeps the committed file honest. It also checks the module the build embeds it through carries it byte for
+ * byte, in the default build as in the pilot build, so the single file plays the region offline.
+ * What breaks if it is removed? A hand-edited or stale pack could carry a real name into every build.
  */
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
@@ -34,4 +35,16 @@ test('the pilot pack: its shape, fictional names only, its licences, a sensible 
   // The licences travel with the data.
   const lic = pack.attribution.join(' ')
   for (const l of ['Open Government Licence – Ontario', 'Open Government Licence – Canada', 'Open Government Licence – Toronto']) assert.ok(lic.includes(l), l)
+})
+
+test('every build embeds the pack byte for byte; only the pilot build opens on it', { skip: !existsSync(FILE) && 'no pilot pack compiled' }, async () => {
+  const { regionModule } = await import('../../../vite.config.ts')
+  const raw = readFileSync(FILE)
+  for (const [mode, first] of [['production', false], ['development', false], ['pilot', true]] as const) {
+    const src = regionModule(mode, raw)
+    const m = /^export const regionFirst = (true|false)\nexport default "([A-Za-z0-9+/=]+)"$/.exec(src)
+    assert.ok(m, `${mode}: the module's shape`)
+    assert.equal(m[1], String(first), `${mode}: regionFirst`)
+    assert.ok(Buffer.from(m[2], 'base64').equals(raw), `${mode}: the pack's bytes`)
+  }
 })

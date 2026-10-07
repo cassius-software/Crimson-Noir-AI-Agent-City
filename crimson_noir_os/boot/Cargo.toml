@@ -1,0 +1,14 @@
+[package]
+name = "crimson_boot"
+version = "0.9.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Crimson Noir OS bootable image: a UEFI application that takes the machine over and boots into the self-testing tutorial"
+publish = false
+
+[dependencies]
+noir_core = { path = "../crates/noir_core" }
+log = { version = "0.4", default-features = false }
+
+[build-dependencies]
+noir_core = { path = "../crates/noir_core" }

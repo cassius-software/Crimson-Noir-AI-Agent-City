@@ -9,11 +9,14 @@ import {
   CylinderGeometry, DoubleSide, ExtrudeGeometry, InstancedBufferAttribute, InstancedMesh, Matrix4, MeshStandardNodeMaterial,
   Quaternion, Shape, Vector3, type UniformNode,
 } from 'three/webgpu'
-import { abs, attribute, float, frontFacing, length, normalGeometry, positionGeometry, select, vec2, vec3 } from 'three/tsl'
+import { abs, attribute, float, frontFacing, length, normalGeometry, positionGeometry, positionLocal, select, vec2, vec3 } from 'three/tsl'
+import { applyCodeDissolve } from '../01_Initialize_World/codeDissolve.ts'
 import { CAR, RIDE_HEIGHT, WHEELS } from './car.ts'
+import { DISSOLVE_COLOR } from './dissolve.ts'
 import { POSE } from './simProtocol.ts'
 
-function carBodyGeometry(): ExtrudeGeometry {
+/** The car body's geometry: the chassis centre at the origin (RIDE_HEIGHT below its floor), the front along +x. Also the network ghosts' car (netView.ts). */
+export function carBodyGeometry(): ExtrudeGeometry {
   // Side profile, x along the length (front = +x), y height above the ground.
   const pts: [number, number][] = [
     [-2.3, 0.3], [-2.33, 0.56], [-2.22, 0.84], [-1.3, 0.92], [-0.82, 1.38], [0.42, 1.42], [1.12, 0.98],
@@ -34,6 +37,12 @@ export class FleetView {
   readonly bodies: InstancedMesh
   readonly wheels: InstancedMesh
   readonly count: number
+  /**
+   * The code dissolve's amounts (codeDissolve.ts; 0 solid, 1 gone), one float per body slot and one per wheel slot
+   * (wheel w of car i is slot i * 4 + w, so the four follow their car): the engine writes them when the user's body on
+   * foot is inside a car, or a car passes through another. View-only; the driven car is never written.
+   */
+  readonly dissolve: { bodies: InstancedBufferAttribute; wheels: InstancedBufferAttribute }
   private readonly suv: readonly boolean[]
   private readonly m = new Matrix4()
   private readonly q = new Quaternion()
@@ -85,6 +94,13 @@ export class FleetView {
     const nightGlow = night.mul(0.9).add(0.1)
     const lamps = select(head, vec3(1.0, 0.95, 0.85).mul(nightGlow.mul(6)), select(tail, vec3(1.0, 0.05, 0.03).mul(nightGlow.mul(3)), vec3(0)))
     mat.emissiveNode = select(frontFacing, lamps, vec3(0))
+    // The code dissolve, over everything above: the amount per instance, the origin the instance's own (positionLocal
+    // × 0 maps to the chassis centre, or the wheel's), the cabin shell's mask kept and ANDed with the cells' survival.
+    const amount = attribute('dissolve', 'float')
+    const origin = positionLocal.mul(0)
+    this.dissolve = { bodies: new InstancedBufferAttribute(new Float32Array(slots), 1), wheels: new InstancedBufferAttribute(new Float32Array(slots * 4), 1) }
+    bodyGeo.setAttribute('dissolve', this.dissolve.bodies)
+    applyCodeDissolve(mat, amount, origin, DISSOLVE_COLOR.cars)
     this.bodies = new InstancedMesh(bodyGeo, mat, slots)
     this.bodies.count = count
     this.bodies.name = 'Cars'
@@ -96,6 +112,8 @@ export class FleetView {
     wheelMat.colorNode = select(rim, vec3(0.62, 0.63, 0.65), vec3(0.03, 0.03, 0.03))
     wheelMat.metalnessNode = select(rim, float(0.9), float(0))
     wheelMat.roughnessNode = select(rim, float(0.3), float(0.85))
+    wheelGeo.setAttribute('dissolve', this.dissolve.wheels)
+    applyCodeDissolve(wheelMat, amount, origin, DISSOLVE_COLOR.cars)
     this.wheels = new InstancedMesh(wheelGeo, wheelMat, slots * 4)
     this.wheels.count = count * 4
     this.wheels.name = 'Wheels'

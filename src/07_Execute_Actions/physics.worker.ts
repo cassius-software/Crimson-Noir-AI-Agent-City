@@ -5,12 +5,22 @@
  * builds it once (simClient.ts, inlined into the single HTML file) and can only exchange messages with it; a
  * worker's heap and its GPU device are not reachable from the page's scripts, so no DOM script, React
  * component or injected code can read or write a body or a pedestrian, lower a hazard reading, swap a law or
- * skip the audit. Everything it hears goes through simHost.ts.
+ * skip the audit. Everything it hears goes through simHost.ts. The worker has a global object of its own, so it
+ * installs the air gap on it first (02_Define_The_Rules/airgap.ts): nothing in the realm can address anything off
+ * this machine either.
  * What breaks if it is removed? There is no physics and no crowd, and nothing separates them from the page.
  */
+import { installAirgap } from '../02_Define_The_Rules/airgap.ts'
 import { CrowdSim } from '../03_Spawn_Agents/crowdSim.ts'
+import { createRoutingCore } from '../06_Make_Decisions/routingWasm.ts'
+import { useRoutingCore } from '../06_Make_Decisions/tracks.ts'
 import { createSimHost } from './simHost.ts'
 import { SimCore } from './simCore.ts'
+
+installAirgap(globalThis)
+// The track arithmetic as WebAssembly (routingWasm.ts): the fleet's rings are laid into its arena on first sight.
+// oxlint-disable-next-line react/rules-of-hooks -- not a React hook: tracks.ts takes its routing core
+useRoutingCore(createRoutingCore())
 
 const scope = self as unknown as {
   postMessage(message: unknown, transfer: Transferable[]): void

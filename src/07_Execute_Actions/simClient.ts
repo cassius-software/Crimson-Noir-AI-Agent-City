@@ -1,14 +1,15 @@
 /**
  * Why does this file exist? It is the page's end of the realm boundary: it starts the physics worker (inlined
  * into the single HTML file), sends the world once, then at most one step request at a time (the frame's
- * controls and queued commands; never anything about pedestrians) and keeps the newest state the worker sent
+ * controls and queued commands, with the other local players' controls beside them; never anything about
+ * pedestrians) and keeps the newest state the worker sent
  * back, with the crowd's render frame when one came. The page renders from that state, one step behind the
  * worker (the price of running physics in parallel with rendering), and hands the pose and crowd buffers back
  * for reuse. It holds numbers and a Worker handle; nothing in it can reach a Rapier body or a pedestrian.
  * What breaks if it is removed? The page cannot start or talk to the physics realm.
  */
 import PhysicsWorker from './physics.worker.ts?worker&inline'
-import type { DriveControls, FootControls, FromWorker, SimCommand, SimInit, SimMeta, StepState } from './simProtocol.ts'
+import { MAX_PLAYERS, type DriveControls, type FootControls, type FromWorker, type PlayerControls, type SimCommand, type SimInit, type SimMeta, type StepState } from './simProtocol.ts'
 
 /** Commands waiting for the next step request; a flood beyond this is dropped here (the worker caps them too). */
 const MAX_QUEUE = 256
@@ -17,6 +18,8 @@ export interface StepInput {
   dt: number
   foot: FootControls
   drive: DriveControls
+  /** Players 1..3 (index k − 1 for player k); absent or short means idle players. */
+  players?: PlayerControls[]
 }
 
 export class SimClient {
@@ -29,9 +32,15 @@ export class SimClient {
   #id = 0
   #spare: ArrayBuffer | null = null
   #spareCrowd: ArrayBuffer | null = null
+  #spareCraft: ArrayBuffer | null = null
+  #spareRigs: ArrayBuffer | null = null
   #queue: SimCommand[] = []
+  /** Commands that go ahead of the queue in the next request (send's `first`). */
+  #first: SimCommand[] = []
   #dropped = 0
   #closed = false
+  /** Players 1..3's controls, sent with every step request (setPlayers); null for one player. */
+  #players: PlayerControls[] | null = null
 
   private constructor(worker: Worker, meta: SimMeta, first: StepState) {
     this.#worker = worker
@@ -89,11 +98,23 @@ export class SimClient {
     return this.#dropped
   }
 
-  /** Queues a command for the next step request. */
-  send(cmd: SimCommand): void {
+  /**
+   * The extra players' controls (local split screen, index k − 1 for player k) that every step request carries from
+   * now on, read at each request (the engine fills the same records in place every frame); null or empty: none sent.
+   */
+  setPlayers(players: readonly PlayerControls[] | null): void {
+    this.#players = players && players.length > 0 ? players.slice(0, MAX_PLAYERS - 1) : null
+  }
+
+  /**
+   * Queues a command for the next step request. `first`: ahead of every command queued the ordinary way (a network
+   * room's switch and corrections: the player's own commands, queued before the truth arrived, then act on the truth).
+   */
+  send(cmd: SimCommand, first = false): void {
     if (this.#closed) return
-    if (this.#queue.length >= MAX_QUEUE) { this.#dropped++; return }
-    this.#queue.push(cmd)
+    if (this.#queue.length + this.#first.length >= MAX_QUEUE) { this.#dropped++; return }
+    if (first) this.#first.push(cmd)
+    else this.#queue.push(cmd)
   }
 
   /**
@@ -103,15 +124,24 @@ export class SimClient {
   request(input: StepInput): boolean {
     if (this.#pending || this.#closed) return false
     this.#pending = true
-    const cmds = this.#queue
+    const cmds = this.#first.length > 0 ? [...this.#first, ...this.#queue] : this.#queue
+    this.#first = []
     this.#queue = []
-    const buffer = this.#spare, crowdBuffer = this.#spareCrowd
+    const buffer = this.#spare, crowdBuffer = this.#spareCrowd, craftBuffer = this.#spareCraft, rigBuffer = this.#spareRigs
     this.#spare = null
     this.#spareCrowd = null
+    this.#spareCraft = null
+    this.#spareRigs = null
     const transfer: ArrayBuffer[] = []
     if (buffer) transfer.push(buffer)
     if (crowdBuffer) transfer.push(crowdBuffer)
-    this.#worker.postMessage({ t: 'step', id: ++this.#id, ...input, cmds, buffer: buffer ?? undefined, crowdBuffer: crowdBuffer ?? undefined }, transfer)
+    if (craftBuffer) transfer.push(craftBuffer)
+    if (rigBuffer) transfer.push(rigBuffer)
+    const players = input.players ?? this.#players ?? undefined
+    this.#worker.postMessage({
+      t: 'step', id: ++this.#id, ...input, players, cmds, buffer: buffer ?? undefined, crowdBuffer: crowdBuffer ?? undefined, craftBuffer: craftBuffer ?? undefined,
+      rigBuffer: rigBuffer ?? undefined,
+    }, transfer)
     return true
   }
 
@@ -121,8 +151,10 @@ export class SimClient {
       const prev = this.#state
       this.#state = m
       this.#pending = false
-      // The previous frame's poses are no longer read once the new state is in: hand them back.
+      // The previous frame's poses and craft are no longer read once the new state is in: hand them back.
       this.#spare = prev.poses.buffer as ArrayBuffer
+      this.#spareCraft = prev.craft ? (prev.craft.buffer as ArrayBuffer) : null
+      this.#spareRigs = prev.rigs ? (prev.rigs.buffer as ArrayBuffer) : null
       try {
         this.#onState?.(m, prev)
       } catch (e) {

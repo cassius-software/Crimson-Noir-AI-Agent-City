@@ -1,7 +1,7 @@
 /**
  * Why does this file exist? It proves the standard-gamepad mapping the contract promises: left stick
  * move/steer (steer > 0 = left), right stick look, right trigger throttle, left trigger brake, south button
- * interact, north reset, east handbrake, left-stick click run latch, d-pad left/right clock — with dead zones, edge detection, multi-pad merge,
+ * interact, north reset, east handbrake, right shoulder ping, left-stick click run latch, d-pad left/right clock — with dead zones, edge detection, multi-pad merge,
  * non-standard pads ignored, browser pad ids parsed, the controller family the HUD's glyphs follow, and the
  * right stick's first-person head motion (rates, curve, rim boost, easing, frame-rate independence).
  * What breaks if it is removed? A mapping slip (a flipped axis, a repeating edge, a wrong glyph family, a
@@ -85,7 +85,7 @@ test('triggers: right throttle, left brake; the east button holds the handbrake'
   assert.equal(a.handbrake, false)
 })
 
-test('edges fire once per press: A interact, Y reset, d-pad left/right clock', () => {
+test('edges fire once per press: A interact, Y reset, right shoulder ping, d-pad left/right clock', () => {
   const m = new PadMapper(), a = createAnalog()
   assert.equal(m.read([pad({ pressed: [PAD.south] })], a), PAD_EDGE.interact)
   assert.equal(m.read([pad({ pressed: [PAD.south] })], a), 0, 'held: no repeat')
@@ -93,7 +93,11 @@ test('edges fire once per press: A interact, Y reset, d-pad left/right clock', (
   assert.equal(m.read([pad({ pressed: [PAD.south] })], a), PAD_EDGE.interact, 'released and pressed again')
   assert.equal(m.read([pad({ pressed: [PAD.north, PAD.left] })], a), PAD_EDGE.reset | PAD_EDGE.timeBack)
   assert.equal(m.read([pad({ pressed: [PAD.right] })], a), PAD_EDGE.timeForward)
-  assert.equal(m.read([pad({ pressed: [PAD.west, PAD.l1, PAD.r1, PAD.start, PAD.select] })], a), 0, 'unmapped buttons')
+  assert.equal(m.read([pad({ pressed: [PAD.r1] })], a), PAD_EDGE.ping, 'right shoulder: ping')
+  assert.equal(m.read([pad({ pressed: [PAD.r1] })], a), 0, 'held: no repeat')
+  assert.equal(m.read([pad()], a), 0)
+  assert.equal(m.read([pad({ pressed: [PAD.r1, PAD.south] })], a), PAD_EDGE.ping | PAD_EDGE.interact, 'pressed again, with another edge')
+  assert.equal(m.read([pad({ pressed: [PAD.west, PAD.l1, PAD.start, PAD.select] })], a), 0, 'unmapped buttons')
 })
 
 test('L3 latches run while the left stick is deflected; centring or another click clears it', () => {

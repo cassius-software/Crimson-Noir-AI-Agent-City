@@ -1,0 +1,87 @@
+# Why does this file exist? It runs the authoritative host in production: the host image (../Dockerfile) behind the TLS
+# proxy (nginx.conf). Only the proxy is reachable: it publishes 80 and 443. The host joins one network, `backend`,
+# which is internal: no port of it is published, nothing but the proxy is on it, and it has no route out, so the host
+# can answer the proxy and reach nothing at all. (Sharing one network namespace would keep the host on 127.0.0.1, but
+# a restart of the namespace's owner silently cuts the other off; an internal network has no such failure.)
+# Before the first `docker compose up -d` (see README.md here):
+#   secrets/net_secret     the host's HMAC secret (openssl rand -hex 32), readable by uid 65532 only
+#   tls/fullchain.pem      the certificate chain for the proxy's name, and
+#   tls/privkey.pem        its key, readable by uid 101 (the proxy's user)
+# Tokens: docker compose exec host /nodejs/bin/node tools/net/mint-token.mjs SUBJECT [HOURS]
+# What breaks if it is removed? The image and the proxy configuration have nothing that runs them together.
+
+name: crimson-noir
+
+services:
+  host:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: crimson-noir-host:local
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: 1g
+    memswap_limit: 1g            # the whole budget, swap included
+    cpus: 2
+    environment:
+      NET_HOST: 0.0.0.0           # the internal network's address, which only the proxy can reach
+      NET_SECRET_FILE: /run/secrets/net_secret
+      # NET_SEED: "1337"          # the city a joining page must be walking, and its fleet
+      # NET_CARS: "36"
+    secrets: [net_secret]
+    networks: [backend]
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+
+  proxy:
+    image: nginxinc/nginx-unprivileged:stable-alpine@sha256:15c994d10d6d78658721c3bcafff14cb281fba2a4bdf9d5ba92c416a472516e3
+    restart: unless-stopped
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777"]   # a pid file and temp paths: a few KB; sized so nothing can fill the cgroup through it
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 1
+    stop_grace_period: 15s       # nginx closes its sockets within 10 s (worker_shutdown_timeout)
+    depends_on:
+      host:
+        condition: service_healthy
+    # IPv4 only: Docker would carry IPv6 clients in from one gateway address, which would make nginx's per-client
+    # limits one shared limit. Publish no AAAA record (or give the edge network IPv6 and nginx [::] listeners).
+    ports:
+      - "0.0.0.0:80:8080"
+      - "0.0.0.0:443:8443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./tls:/etc/nginx/tls:ro
+      - ./acme:/var/www/acme:ro
+    networks: [edge, backend]
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+
+networks:
+  backend:
+    internal: true
+    # `internal` cuts the route out, but the bridge's gateway is the server itself: without this, the host could reach
+    # any service the server binds on 0.0.0.0 (sshd, a database). Docker 28+ honours it; deploy-live.sh adds the same
+    # cut with iptables for an older engine.
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+  edge:
+    # The proxy needs no route out: its upstream is the host on `backend`, and the ACME challenge comes in. Without
+    # masquerading, nothing it starts reaches the internet; deploy-live.sh also closes the embedded resolver's path
+    # and the proxy's way into this machine's own stack (an isolated gateway is for internal networks only).
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+
+secrets:
+  net_secret:
+    file: ./secrets/net_secret

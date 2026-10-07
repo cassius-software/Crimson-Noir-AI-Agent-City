@@ -779,17 +779,19 @@ class FakeVoice implements Voice {
   fail(e: unknown): void { this.#reply?.fail(e) }
 }
 
-/** The soundscape's contract: what it decoded and played, at whom, and every stop. */
+/** The soundscape's contract: what it decoded and played, at whom, with which words (for the captions), and every stop. */
 class FakeOut implements SpeechOut {
   readonly played: number[] = []
+  readonly texts: (string | undefined)[] = []
   stops = 0
   refuse: string | null = null
   #end: (() => void) | null = null
   decode(bytes: ArrayBuffer): Promise<SpeechClip> {
     return this.refuse ? Promise.reject(new Error(this.refuse)) : Promise.resolve({ seconds: bytes.byteLength / 48000 })
   }
-  play(_clip: SpeechClip, agent: number): Utterance {
+  play(_clip: SpeechClip, agent: number, text?: string): Utterance {
     this.played.push(agent)
+    this.texts.push(text)
     let end: () => void = () => {}
     const ended = new Promise<void>((r) => { end = r })
     this.#end = end
@@ -818,6 +820,7 @@ test('gatedSay: Rejected never reaches the speech server; Authorized is said by 
   voice.audio(2.5)
   await ticks()
   assert.deepEqual(out.played, [7], 'played at agent 7')
+  assert.deepEqual(out.texts, ['over here, by the lamp'], 'the screened words travel with the clip, for the captions')
   out.finish()
   const y = await within(yes.result)
   assert.deepEqual([y.state, y.speaker?.agent, y.seconds, y.error], ['Authorized', 7, 2.5, undefined])
@@ -946,6 +949,54 @@ test('the diary: every run, ask and say is noted for the people it was bound to,
     '7#1 say [rust] over here (Aborted)',
     ' run [Go] 1 (Rejected)',
   ])
+})
+
+test('the diary is told how each task ended (what the memory learns from), and a line the 14A screen kept unsaid is not noted at all', async () => {
+  const gate = new FakeGate()
+  const mind = new FakeMind()
+  const voice = new FakeVoice()
+  const out = new FakeOut()
+  const notes: string[] = []
+  const diary: Diary = {
+    recall: () => [],
+    note: (_bound, kind, _skills, text, state, _at, _hash, outcome) => notes.push(`${kind} ${text} (${state}) ${outcome ?? '-'}`),
+  }
+  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary })
+  op.unlock()
+  await op.exec(['rust'], '1 + 1').result
+  await op.exec(['rust'], 'throw new Error("no")').result
+  const answered = op.ask(['rust'], 'q1')
+  mind.say('text', 'A.')
+  mind.finish('A.')
+  await answered.result
+  const cut = op.ask(['rust'], 'q2')
+  mind.say('text', 'B')
+  mind.finish('B', 'length')
+  await cut.result
+  const failed = op.ask(['rust'], 'q3')
+  mind.fail(new Error('the local model server failed (500)'))
+  await failed.result
+  const said = op.say(['rust'], 'over here')
+  voice.audio()
+  await ticks()
+  out.finish()
+  await said.result
+  const refused = op.say(['rust'], 'shut up, idiot')
+  const r = await refused.result
+  assert.equal(r.silent, true)
+  gate.reject = 'nobody tethered to the operator has Go'
+  await op.exec(['Go'], '1').result
+  await ticks()
+  assert.deepEqual(notes, [
+    'run 1 + 1 (Authorized) ok',
+    'run throw new Error("no") (Authorized) error',
+    'ask q1 → A. (Authorized) answered',
+    'ask q2 → B (Authorized) cut',
+    'ask q3 →  (Authorized) failed',
+    'say over here (Authorized) said',
+    'run 1 (Rejected) -',
+  ], 'the refused line is not among them')
+  assert.deepEqual(voice.sent.map((x) => x.text), ['over here'], 'and it never reached the speech server')
 })
 
 test('say auto on: a whole answer is said aloud by whoever gave it, through the gate again; not an error, not over something being said', async () => {

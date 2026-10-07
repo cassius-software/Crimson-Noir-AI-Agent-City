@@ -1,0 +1,20 @@
+[package]
+name = "kv-pager-wasm"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "kv-pager's page table (the non-GPU part) behind a C ABI, built to WebAssembly for the cognition router's prompt-prefix page table"
+license-file = "../../LICENSE"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+kv-pager = { path = "../kv-pager", default-features = false }
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"
+codegen-units = 1
+strip = true

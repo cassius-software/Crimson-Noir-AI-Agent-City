@@ -24,8 +24,22 @@ import { sunAt, type SunState } from './solar.ts'
 import { regionMeshes, type RegionLayout, type RegionScene } from './region/regionWorld.ts'
 import type { RegionPack } from './region/pack.ts'
 import { SIGNAL } from '../02_Define_The_Rules/civic.ts'
+import { applyCodeDissolve } from './codeDissolve.ts'
 
 export class WebGPUUnavailableError extends Error {}
+
+/**
+ * The ink of a dissolving prop: the ghost view's pole green (ghost.ts GHOST_COLOR.pole, linear RGB). Stage 01 cannot
+ * import stage 07, so the value is repeated here; dissolve.test.ts pins the two equal.
+ */
+export const PROP_DISSOLVE_INK: readonly [number, number, number] = Object.freeze([0.3, 0.95, 0.6] as [number, number, number])
+
+/** The code dissolve's amounts, one float per instance of each prop mesh (0 solid, 1 gone): the engine writes them. */
+export interface PropDissolve {
+  lamps: InstancedBufferAttribute
+  trees: InstancedBufferAttribute
+  signals: InstancedBufferAttribute
+}
 
 export interface Gpu {
   renderer: WebGPURenderer
@@ -108,8 +122,19 @@ export interface World {
    * for them. They never move.
    */
   resorted: readonly InstancedMesh[]
+  /**
+   * Re-centres the sky on another camera before it draws (local split screen: each viewport's head). update() centres it
+   * on `camera`; the sun, its shadow focus, the lamp lights and the building sort stay where update() put them.
+   */
+  follow(camera: PerspectiveCamera): void
   /** The region drawn instead of the procedural city (?region), with its counts; null for the city. */
   region: RegionScene | null
+  /**
+   * The code dissolve (codeDissolve.ts) of the props: per-instance amounts the engine writes when the user's body is
+   * inside a lamp, a tree or a signal pole (instance i is furniture list index i). Empty in a region. View-only.
+   * Buildings never dissolve: walls are solid by law.
+   */
+  dissolve: PropDissolve
   update(hours: number, signalSeconds: number, focusX: number, focusZ: number): SunState
 }
 
@@ -159,8 +184,16 @@ function instanced(geo: BufferGeometry, mat: MeshStandardNodeMaterial, matrices:
   return mesh
 }
 
-function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', number>, signalClock: UniformNode<'float', number>): InstancedMesh[] {
+/** A fresh, all-solid dissolve attribute for `instances` slots. */
+const dissolveAttribute = (instances: number): InstancedBufferAttribute => new InstancedBufferAttribute(new Float32Array(instances), 1)
+
+function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', number>, signalClock: UniformNode<'float', number>): { meshes: InstancedMesh[]; dissolve: PropDissolve } {
   const part = attribute('part', 'float')
+  // The code dissolve: a per-instance amount, read by the helper in every stage; the origin is the instance's own
+  // (positionLocal × 0, which the instance matrix maps to where the pole stands), so a gone prop folds to its foot.
+  const dissolve: PropDissolve = { lamps: dissolveAttribute(f.lamps.length), trees: dissolveAttribute(f.trees.length), signals: dissolveAttribute(f.signals.length) }
+  const amount = attribute('dissolve', 'float')
+  const origin = positionLocal.mul(0)
 
   // Street lamps: pole, arm over the road, luminaire (part 1).
   const lampGeo = assemble([
@@ -173,6 +206,8 @@ function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', 
   lampMat.metalnessNode = float(0.6)
   lampMat.roughnessNode = float(0.45)
   lampMat.emissiveNode = vec3(1.0, 0.82, 0.55).mul(step(0.5, part).mul(night).mul(6))
+  lampGeo.setAttribute('dissolve', dissolve.lamps)
+  applyCodeDissolve(lampMat, amount, origin, PROP_DISSOLVE_INK)
 
   // Street trees: trunk (part 0) and a three-lobed canopy (part 1) that sways in the wind.
   const treeGeo = assemble([
@@ -193,6 +228,8 @@ function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', 
     if (needsPrevious(builder)) positionPrevious.assign(positionPrevious.add(swayed))
     return positionLocal.add(swayed)
   })()
+  treeGeo.setAttribute('dissolve', dissolve.trees)
+  applyCodeDissolve(treeMat, amount, origin, PROP_DISSOLVE_INK)
 
   // Traffic signals: pole, head (part 1), and red / amber / green lenses (parts 2, 3, 4) facing local +z.
   const signalGeo = assemble([
@@ -220,12 +257,15 @@ function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', 
   signalMat.roughnessNode = select(isLens, float(0.15), float(0.5))
   signalMat.metalnessNode = float(0.4)
   signalMat.emissiveNode = lens(2, red, [1.0, 0.08, 0.04]).add(lens(3, amber, [1.0, 0.55, 0.05])).add(lens(4, green, [0.1, 1.0, 0.45]))
+  signalGeo.setAttribute('dissolve', dissolve.signals)
+  applyCodeDissolve(signalMat, amount, origin, PROP_DISSOLVE_INK)
 
-  return [
+  const meshes = [
     instanced(lampGeo, lampMat, placed(f.lamps), 'StreetLamps'),
     instanced(treeGeo, treeMat, placed(f.trees, (e) => e[2]), 'StreetTrees'),
     instanced(signalGeo, signalMat, placed(f.signals.map((s) => [s[0], s[1], s[2]])), 'TrafficSignals'),
   ]
+  return { meshes, dissolve }
 }
 
 /**
@@ -334,9 +374,13 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   const lake = new Mesh(new PlaneGeometry(3200, lakeDepth).rotateX(-Math.PI / 2).translate(CITY_CENTER, LAKE.water, north - lakeDepth / 2), waterMaterial(fbm))
   lake.receiveShadow = true
   lake.name = 'Lake'
+  // A region has no street furniture: its dissolve attributes are empty (nothing to write, nothing drawn).
+  let dissolve: PropDissolve = { lamps: dissolveAttribute(0), trees: dissolveAttribute(0), signals: dissolveAttribute(0) }
   if (!region) {
     scene.add(lake)
-    for (const mesh of furnitureMeshes(furniture, fbm, night, signalClock)) scene.add(mesh)
+    const props = furnitureMeshes(furniture, fbm, night, signalClock)
+    for (const mesh of props.meshes) scene.add(mesh)
+    dissolve = props.dissolve
   }
 
   // Real light from the lamps nearest the player, so people, cars and facades are lit after dark
@@ -426,6 +470,7 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   }
 
   const setTextureSize = (size: number) => { fbm.setSize(size) }
+  const follow = (other: PerspectiveCamera) => { sky.position.copy(other.position) }
 
-  return { scene, camera, boxes, furniture, night, signalClock, sun, setTextureSize, tuning, resorted: region ? [] : [buildings], region: regionScene, update }
+  return { scene, camera, boxes, furniture, night, signalClock, sun, setTextureSize, tuning, resorted: region ? [] : [buildings], follow, region: regionScene, dissolve, update }
 }

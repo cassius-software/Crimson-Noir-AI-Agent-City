@@ -4,7 +4,10 @@
  * is written into three's storage buffers (pos, vel, pose). Every page frame the cull pass then picks who is
  * drawn for the current camera — the frustum, a near radius, a stable density lottery, the draw distance and
  * the level of detail — compacting them into the indirect draws, and a small readback reports what was drawn.
- * Whatever happens here changes only what the page shows: the Bouncer reads the worker's own buffers.
+ * A few figures can be hidden (hide): the pedestrians the realm has promoted to a physical body, whose rig the
+ * page draws in their place (07_Execute_Actions/rigView.ts); the mask only sinks their position in the render
+ * copy below the cull's floor. Whatever happens here changes only what the page shows: the Bouncer reads the
+ * worker's own buffers.
  * What breaks if it is removed? The pedestrians are simulated but never drawn.
  */
 import {
@@ -13,6 +16,11 @@ import {
 } from './crowdCompute.ts'
 
 interface Staging { buffer: GPUBuffer; busy: boolean; frame: number }
+
+/** Figures the page may hide at once (the realm's rig slots, simProtocol.ts RIG_SLOTS). */
+export const MAX_HIDDEN = 8
+/** A hidden figure's height in the render copy: below the floor the cull pass skips (crowd.wgsl cull: p.y < -50). */
+const HIDDEN_Y = -100
 
 export class CrowdCull {
   readonly agentCount: number
@@ -34,6 +42,9 @@ export class CrowdCull {
   private readFrame = 0
   /** Until the first frame from the worker lands, the render buffers hold zeros: nobody is culled in (or drawn). */
   private uploaded = false
+  /** The hide mask: agents whose figure is not drawn (a rig stands in their place), at most MAX_HIDDEN. */
+  private readonly hiddenAgents: number[] = []
+  private readonly sunk = new Float32Array([0, HIDDEN_Y, 0, 0])
   private timing: { set: GPUQuerySet; resolve: GPUBuffer; read: GPUBuffer; busy: boolean } | null = null
 
   private constructor(device: GPUDevice, shared: SharedBuffers, drawTemplate: Uint32Array<ArrayBuffer>, agentCount: number, settings: CullSettings) {
@@ -49,7 +60,7 @@ export class CrowdCull {
         busy: false, frame: 0,
       })
     }
-    const resources: Record<number, GPUBuffer> = { 0: this.params, 1: shared.pos, 10: shared.drawArgs, 11: shared.drawLists }
+    const resources: Record<number, GPUBuffer> = { 0: this.params, 1: shared.pos, 10: shared.drawArgs, 11: shared.drawLists, 13: shared.look }
     const module = device.createShaderModule({ label: 'crowd.wgsl', code: crowdShader(agentCount) })
     for (const name of CULL_PASSES) {
       const pipeline = device.createComputePipeline({ label: `crowd.${name}`, layout: 'auto', compute: { module, entryPoint: name } })
@@ -98,7 +109,34 @@ export class CrowdCull {
     q.writeBuffer(this.shared.vel, 0, frame, n, n)
     q.writeBuffer(this.shared.pose, 0, frame, 2 * n, n)
     this.uploaded = true
+    for (const agent of this.hiddenAgents) this.sink(agent)
     return true
+  }
+
+  /**
+   * Hides the figures of these agents (and shows every other hidden one again at the next upload): their position
+   * in the render copy is sunk below the floor the cull pass skips, so they are never drawn. View-only: the worker's
+   * crowd, and its sensing, never see it. More than MAX_HIDDEN, a non-index or the player's own figure are ignored.
+   */
+  hide(agents: readonly number[]): void {
+    const list = this.hiddenAgents
+    const next: number[] = []
+    for (const a of agents) {
+      if (next.length >= MAX_HIDDEN) break
+      if (Number.isInteger(a) && a > 0 && a < this.agentCount && !next.includes(a)) next.push(a)
+    }
+    if (this.uploaded) for (const a of next) if (!list.includes(a)) this.sink(a)
+    list.length = 0
+    list.push(...next)
+  }
+
+  /** The agents hidden now. */
+  get hidden(): readonly number[] {
+    return this.hiddenAgents
+  }
+
+  private sink(agent: number): void {
+    this.device.queue.writeBuffer(this.shared.pos, agent * 16, this.sunk)
   }
 
   /** Culls for this camera: resets the indirect draws, compacts who is drawn, and reads the counts back. */

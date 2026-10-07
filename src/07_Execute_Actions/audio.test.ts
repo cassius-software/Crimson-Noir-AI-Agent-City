@@ -13,11 +13,13 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Euler, Vector3 } from 'three'
 import {
-  APS, BabbleRender, CABIN, CUE, ENGINE, MURMUR, OCCLUSION, SPEECH, SYNTH_RATE, VOICE, Soundscape, assignVoices, carLoudness, carTimbre, distanceGain,
+  APS, BabbleRender, CABIN, CAPTION_REFRESH, CUE, ENGINE, MURMUR, OCCLUSION, PING, REVERB, SPEECH, SYNTH_RATE, VOICE, Soundscape, assignVoices, carLoudness, carTimbre, distanceGain,
   dopplerFactor, engineCutoff, engineLevel, engineLoad, engineRpm, engineWave, listenerBasis, muffle, murmurLayout, murmurLevel,
-  murmurSwell, renderBabble, renderNoise, renderSignalTone, selectGear, signalToneLength, tyreCutoff, tyreLevel,
-  volumeToGain, cueLength, renderCue, wallsBetween, type AudioFrame, type CarSample,
+  murmurSwell, pingLength, renderBabble, renderNoise, renderPing, renderSignalTone, selectGear, signalToneLength, tyreCutoff, tyreLevel,
+  volumeToGain, cueLength, renderCue, sharedAudioContext, toHeadSpace, wallsBetween, type AudioFrame, type CarSample,
 } from './audio.ts'
+import { ACOUSTICS, eavesdrop, impulseLength, renderImpulse, roomAt, roomKey, sabineRt60, type Room } from './acoustics.ts'
+import type { CaptionEvent } from './captions.ts'
 import { CITY, LAKE, generateBuildings, inLot, type Box } from '../01_Initialize_World/city.ts'
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
 
@@ -512,10 +514,21 @@ class LegacyPanner extends FakeNode {
   setPosition(x: number, y: number, z: number) { float(x); float(y); float(z); this.positions.push([x, y, z]) }
 }
 
+/** A convolver (the room's tail), present only when FakeContext.reverb is set: the default graph stays dry. */
+class FakeConvolver extends FakeNode { buffer: FakeBuffer | null = null; normalize = true }
+/** A MediaStream source (a peer's voice), present only when FakeContext.streams is set. */
+class FakeStreamSource extends FakeNode {
+  readonly stream: unknown
+  constructor(ctx: FakeContext, stream: unknown) { super(ctx); this.stream = stream }
+}
+
 class FakeContext {
   static instances: FakeContext[] = []
   static legacy = false
   static legacyPanners = false
+  /** Newer engines only: a ConvolverNode, a MediaStreamAudioSourceNode. Off by default, so every existing count is exact. */
+  static reverb = false
+  static streams = false
   state: 'suspended' | 'running' | 'closed' | 'interrupted' = 'suspended'
   currentTime = 0
   readonly sampleRate = 48000
@@ -524,11 +537,15 @@ class FakeContext {
   readonly listener: ParamListener | LegacyListener
   readonly calls: string[] = []
   readonly options: unknown
+  createConvolver?: () => FakeConvolver
+  createMediaStreamSource?: (stream: unknown) => FakeStreamSource
   constructor(options?: unknown) {
     FakeContext.instances.push(this)
     this.options = options
     this.destination = new FakeNode(this)
     this.listener = FakeContext.legacy ? new LegacyListener() : new ParamListener()
+    if (FakeContext.reverb) this.createConvolver = () => new FakeConvolver(this)
+    if (FakeContext.streams) this.createMediaStreamSource = (stream: unknown) => new FakeStreamSource(this, stream)
   }
   resume() { this.calls.push('resume'); if (this.state !== 'closed') this.state = 'running'; return Promise.resolve() }
   suspend() { this.calls.push('suspend'); if (this.state !== 'closed') this.state = 'suspended'; return Promise.resolve() }
@@ -551,7 +568,7 @@ class FakeContext {
     assert.equal(real.length, imag.length)
     return { real, imag }
   }
-  of<T extends FakeNode>(type: new (ctx: FakeContext) => T): T[] {
+  of<T extends FakeNode>(type: new (ctx: FakeContext, ...rest: never[]) => T): T[] {
     return this.nodes.filter((n): n is T => n instanceof type)
   }
 }
@@ -575,6 +592,8 @@ function withFakes(fn: (doc: FakeDocument) => void | Promise<void>, legacy = fal
       g.document = saved.document
       FakeContext.legacy = false
       FakeContext.legacyPanners = false
+      FakeContext.reverb = false
+      FakeContext.streams = false
     }
   }
 }
@@ -1289,4 +1308,499 @@ test('speech: refused when it cannot sound or has nowhere to sound from; disposi
   assert.ok(ended, 'the context closed: the utterance ended with it')
   assert.ok(src.stopped >= 0)
   assert.throws(() => s.speak(buffer, 1, 1), /the city's sound is off/)
+}))
+
+// ------------------------------------------------------------------------------------ rooms, peers, captions
+
+interface SendView { param: FakeParam }
+interface ReverbView { convolver: FakeConvolver; key: string; pendingKey: string | null; beds: SendView; tones: SendView; cues: SendView }
+interface PeerView { gain: FakeGain; wall: FakeBiquad; pan: { node: FakePanner }; live: boolean }
+const reverbOf = (s: Soundscape) => (graphOf(s) as unknown as { reverb: ReverbView | null }).reverb
+const peersOf = (s: Soundscape) => (graphOf(s) as unknown as { peers: Map<number, PeerView>; fading: PeerView[] })
+const sendOf = (v: VoiceView) => (v as unknown as { send: SendView | null }).send
+/** Whether `n` reaches the destination through `.outputs`. */
+const reachesDestination = (ctx: FakeContext, n: FakeNode, seen = new Set<FakeNode>()): boolean =>
+  n === ctx.destination || (!seen.has(n) && (seen.add(n), n.outputs.some((o) => reachesDestination(ctx, o, seen))))
+
+const CITY_BOXES = generateBuildings(1337).map((b) => b.box)
+/** A mid-block sidewalk of the city (a canyon), and the open ground. */
+const CANYON = roomAt(CITY_BOXES, CITY.pitch * 8.5, CITY.pitch * 8 + CITY.lane)
+const OPEN = roomAt([], 0, 0)
+
+test('ping cue: two notes a fifth above the recruitment cue, silent at both ends, bounded', () => {
+  const n = pingLength(SYNTH_RATE)
+  assert.ok(n > 0.3 * SYNTH_RATE && n < 0.5 * SYNTH_RATE, `${n} samples`)
+  const out = new Float32Array(n).fill(9)
+  renderPing(SYNTH_RATE, out)
+  assert.ok(out.every((v) => Math.abs(v) <= PING.amplitude + 1e-6))
+  assert.ok(Math.abs(out[0]) < 1e-3 && Math.abs(out[n - 1]) < 1e-3, 'no click at either end')
+  const first = [Math.round(0.01 * SYNTH_RATE), Math.round(0.09 * SYNTH_RATE)] as const
+  assert.ok(power(out, SYNTH_RATE, PING.notes[0][2], ...first) > 20 * power(out, SYNTH_RATE, CUE.notes[0][2], ...first), 'the ping sits on its own note')
+  const cue = new Float32Array(cueLength(SYNTH_RATE))
+  renderCue(SYNTH_RATE, cue)
+  const cueFirst = [Math.round(0.03 * SYNTH_RATE), Math.round(0.13 * SYNTH_RATE)] as const
+  assert.ok(power(cue, SYNTH_RATE, CUE.notes[0][2], ...cueFirst) > 20 * power(cue, SYNTH_RATE, PING.notes[0][2], ...cueFirst), 'and the cue on its own')
+  assert.ok(PING.notes[0][2] > CUE.notes[1][2], 'the ping starts above the cue\'s top note')
+})
+
+test('rooms: with a convolver the impulse is set once per room bucket, swapped behind silent sends, and every send starts from nothing', withFakes(() => {
+  FakeContext.reverb = true
+  const s = new Soundscape()
+  s.unlock()
+  const ctx = ctxOf()
+  const rv = reverbOf(s)!
+  assert.ok(rv, 'a reverb where the engine has a convolver')
+  assert.equal(ctx.of(FakeConvolver).length, 1, 'one convolver per soundscape: the sends fan in')
+  assert.equal(ctx.of(FakePanner).length, VOICE.count + MURMUR.sources + 1 + CUE.slots + 1, 'the reverb adds no panner')
+  assert.equal(ctx.of(FakeBufferSource).length, VOICE.count, 'and no source')
+  assert.equal(rv.convolver.normalize, false, 'the rendered impulse has unit energy: the sends alone set the wetness')
+  assert.ok(reachesDestination(ctx, rv.convolver), 'the tail returns to the bus')
+  const sends = ctx.of(FakeGain).filter((gn) => gn.outputs.includes(rv.convolver))
+  assert.equal(sends.length, VOICE.count + 1 + 1 + 1 + 1, 'a send per car voice, one for the beds, the tones, the cues and the speech voice')
+  for (const gn of sends) { assert.equal(gn.gain.value, 0, 'born silent'); assert.equal(gn.gain.automationRate, 'a-rate') }
+  assert.equal(CANYON.kind, 'canyon')
+  assert.equal(OPEN.kind, 'open')
+  /** The impulse set now (read through a call, so an assertion on one reading narrows nothing for the next). */
+  const bufferOf = (): FakeBuffer | null => rv.convolver.buffer
+  // Dry until a room is known.
+  tick(s, frame())
+  assert.equal(bufferOf(), null)
+  assert.equal(rv.key, '')
+  // The first room: set at once (nothing is wet yet), the impulse exactly acoustics.ts's at the synthesis rate.
+  tick(s, frame({ room: CANYON }))
+  const first = bufferOf()!
+  assert.ok(first)
+  assert.equal(first.sampleRate, SYNTH_RATE)
+  assert.equal(first.length, impulseLength(sabineRt60(CANYON), SYNTH_RATE))
+  const expected = new Float32Array(first.length)
+  renderImpulse(sabineRt60(CANYON), SYNTH_RATE, REVERB.seed, expected)
+  assert.deepEqual(first.data, expected)
+  assert.equal(rv.key, roomKey(CANYON))
+  // The same bucket: nothing rendered, the same buffer.
+  for (let i = 0; i < 5; i++) tick(s, frame({ room: CANYON }))
+  assert.equal(bufferOf(), first)
+  // Another bucket: the swap waits while the sends glide to nothing, then the open ground's shortest tail is set.
+  tick(s, frame({ room: OPEN }))
+  assert.equal(bufferOf(), first, 'not yet')
+  assert.equal(rv.pendingKey, roomKey(OPEN))
+  near(rv.beds.param.target, 0, 1e-12, 'the sends head for nothing before the swap')
+  tick(s, frame({ room: OPEN }), REVERB.swap + 0.01)
+  const open = bufferOf()!
+  assert.ok(open !== first, 'swapped')
+  assert.equal(open.length, impulseLength(sabineRt60(OPEN), SYNTH_RATE))
+  assert.equal(rv.pendingKey, null)
+  // Back in the canyon: the cached impulse, by identity.
+  tick(s, frame({ room: CANYON }))
+  tick(s, frame({ room: CANYON }), REVERB.swap + 0.01)
+  assert.equal(bufferOf(), first)
+  // Every send only ever glides, or jumps to nothing.
+  for (const gn of sends) for (const e of gn.gain.events) assert.ok(e.kind === 'target' || (e.kind === 'set' && e.v === 0), `${e.kind} ${e.v}`)
+  // The beds sit MURMUR.spread away; a far car is wetter than a near one, never beyond wetMax.
+  near(rv.beds.param.target, eavesdrop(MURMUR.spread, 0).reverbSend, 1e-9)
+  const cars = [car(205, 205, 10, Math.PI / 2), car(240, 205, 10, Math.PI / 2)]
+  for (let i = 0; i < 30; i++) tick(s, frame({ cars, room: CANYON }))
+  const gv = graphOf(s)
+  const nearVoice = gv.voices.find((v) => v.car === 0)!, farVoice = gv.voices.find((v) => v.car === 1)!
+  const nearSend = sendOf(nearVoice)!.param.target, farSend = sendOf(farVoice)!.param.target
+  assert.ok(nearSend > 0 && farSend > nearSend && farSend <= ACOUSTICS.wetMax, `${nearSend} < ${farSend}`)
+  near(farSend, eavesdrop(Math.hypot(240 + VOICE.nose - 200, 0), 0).reverbSend, 1e-6)
+  // The walk tones: the intersection's distance.
+  tick(s, frame({ cars, room: CANYON, intersection: { x: 240, z: 200 } }))
+  near(rv.tones.param.target, eavesdrop(Math.hypot(40, 5), 0).reverbSend, 1e-9)
+  // Inside the car the own engine stays dry; a released voice's send goes to nothing.
+  const own = [car(200, 205.5, 9, 0, true), car(240, 205, 10, Math.PI / 2)]
+  for (let i = 0; i < 30; i++) tick(s, frame({ cars: own, room: CANYON, interior: true }))
+  near(sendOf(gv.voices.find((v) => v.car === 0)!)!.param.target, 0, 1e-12)
+  for (let i = 0; i < 30; i++) tick(s, frame({ room: CANYON }))
+  for (const v of gv.voices) near(sendOf(v)!.param.target, 0, 1e-12)
+  s.dispose()
+}))
+
+test('rooms: speech from another room is coupled and reverberant; in the same room only the walls count; with no rooms it is exactly the wall table', withFakes(async () => {
+  FakeContext.reverb = true
+  const s = new Soundscape()
+  s.unlock()
+  const sp = speechOf(s)
+  const send = (sp as unknown as { send: SendView }).send
+  const buffer = await s.decodeSpeech(clipBytes(2))
+  const here: Room = { x0: 190, z0: 190, x1: 210, z1: 220, height: 20, kind: 'canyon' }
+  const there: Room = { x0: 230, z0: 190, x1: 250, z1: 220, height: 20, kind: 'canyon' }
+  s.speak(buffer, 203, 208, 1)
+  assert.deepEqual([sp.wall.frequency.target, sp.gain.gain.target], [OCCLUSION.one.cutoff, SPEECH.level * OCCLUSION.one.gain], 'started on the wall table alone')
+  assert.deepEqual([send.param.target, send.param.events.at(-1)!.kind], [0, 'set'], 'dry at the start')
+  // The speaker is in the next street: fainter still, wetter with distance.
+  s.update(frame({ dt: 0.05, room: here, speaker: { x: 240, z: 208, walls: 1, room: there } }))
+  const d = Math.hypot(240 - 200, 208 - 205)
+  assert.deepEqual([sp.wall.frequency.target, sp.gain.gain.target], [OCCLUSION.one.cutoff, SPEECH.level * OCCLUSION.one.gain * ACOUSTICS.coupling])
+  near(send.param.target, eavesdrop(d, 1, here, there).reverbSend, 1e-9)
+  assert.ok(send.param.target > 0.2 && send.param.target <= ACOUSTICS.wetMax)
+  assert.deepEqual([send.param.events.at(-1)!.kind, send.param.events.at(-1)!.tau], ['target', REVERB.glide])
+  // The same room: the wall alone; nearer: drier.
+  s.update(frame({ dt: 0.05, room: here, speaker: { x: 204, z: 208, walls: 1, room: here } }))
+  assert.deepEqual([sp.wall.frequency.target, sp.gain.gain.target], [OCCLUSION.one.cutoff, SPEECH.level * OCCLUSION.one.gain])
+  near(send.param.target, eavesdrop(5, 1).reverbSend, 1e-9)
+  // No rooms given: muffle(), exactly as before rooms existed.
+  s.update(frame({ dt: 0.05, speaker: { x: 204, z: 208, walls: 2 } }))
+  assert.deepEqual([sp.wall.frequency.target, sp.gain.gain.target], [OCCLUSION.more.cutoff, SPEECH.level * OCCLUSION.more.gain])
+  assert.deepEqual(muffle(1), { cutoff: eavesdrop(0, 1).cutoff, gain: eavesdrop(0, 1).gain })
+  s.dispose()
+}))
+
+test('peers: a voice is placed at its player, muffled by the walls between, follows the frame, and detaches with a fade', withFakes(() => {
+  FakeContext.streams = true
+  const stream = { id: 'remote' } as unknown as MediaStream
+  const s = new Soundscape()
+  assert.equal(s.attachPeer(stream, 1), null, 'locked: nothing to attach to')
+  s.unlock()
+  const ctx = ctxOf()
+  const panners = ctx.of(FakePanner).length
+  const p = s.attachPeer(stream, 1, 'Mara')
+  assert.ok(p, 'attached')
+  assert.equal(ctx.of(FakePanner).length, panners + 1, 'its own HRTF panner, made on attach')
+  assert.equal(ctx.of(FakeStreamSource).length, 1)
+  const src = ctx.of(FakeStreamSource)[0]
+  assert.equal(src.stream, stream, 'the host\'s stream, as given')
+  const peers = peersOf(s)
+  const pv = peers.peers.get(1)!
+  assert.ok(src.outputs[0] === pv.gain && pv.gain.outputs[0] === pv.wall && pv.wall.outputs[0] === pv.pan.node, 'stream → level → wall → panner')
+  assert.ok(reachesDestination(ctx, pv.pan.node))
+  assert.deepEqual([pv.pan.node.panningModel, pv.pan.node.refDistance, pv.pan.node.rolloffFactor], ['HRTF', SPEECH.refDistance, SPEECH.rolloff])
+  assert.equal(pv.wall.frequency.automationRate, 'k-rate')
+  assert.equal(pv.gain.gain.value, 0, 'silent until placed')
+  assert.equal(pv.live, false)
+  assert.equal(s.status().voices, 0)
+  tick(s, frame())
+  p!.place(210, 205, 1)
+  assert.deepEqual([pv.pan.node.positionX.target, pv.pan.node.positionY.target, pv.pan.node.positionZ.target], [210, SPEECH.height, 205])
+  assert.equal(pv.pan.node.positionX.events.at(-1)!.kind, 'set', 'the first placement jumps')
+  const up = pv.gain.gain.events.at(-1)!
+  assert.deepEqual([up.kind, up.v], ['target', SPEECH.level * OCCLUSION.one.gain], 'swells in to the level the wall allows')
+  assert.deepEqual([pv.wall.frequency.target, pv.wall.frequency.events.at(-1)!.kind], [OCCLUSION.one.cutoff, 'set'])
+  assert.equal(s.status().voices, 1, 'counted while it sounds')
+  // The frame moves them, with the speech follow; the wall opens with the occlusion glide; unknown ids are ignored.
+  tick(s, frame({ peers: [{ id: 1, x: 212, z: 206, walls: 0 }, { id: 9, x: 0, z: 0 }] }))
+  assert.deepEqual([pv.pan.node.positionX.target, pv.pan.node.positionZ.target], [212, 206])
+  const glide = pv.pan.node.positionX.events.at(-1)!
+  assert.deepEqual([glide.kind, glide.tau], ['target', SPEECH.follow])
+  assert.deepEqual([pv.gain.gain.target, pv.wall.frequency.target], [SPEECH.level, OCCLUSION.open])
+  assert.equal(pv.wall.frequency.events.at(-1)!.tau, OCCLUSION.glide)
+  assert.equal(ctx.of(FakePanner).length, panners + 1, 'no panner per frame')
+  // Detach: a fade, then the nodes are let go once it is inaudible.
+  p!.detach()
+  const down = pv.gain.gain.events.at(-1)!
+  assert.deepEqual([down.kind, down.v, down.tau], ['target', 0, SPEECH.fade])
+  assert.equal(s.status().voices, 0)
+  assert.equal(peers.peers.has(1), false)
+  assert.equal(peers.fading.length, 1)
+  tick(s, frame({ peers: [{ id: 1, x: 300, z: 300 }] }), SPEECH.fade * 6 + 0.01)
+  assert.equal(src.outputs.length, 0, 'released once silent')
+  assert.equal(peers.fading.length, 0)
+  assert.doesNotThrow(() => { p!.detach(); p!.place(1, 1) })
+  // A second attach of the same id lets the first go; a source that cannot be made is a null, not a throw.
+  const q = s.attachPeer(stream, 2), r = s.attachPeer(stream, 2)
+  assert.ok(q && r && q !== r)
+  assert.equal(peers.peers.size, 1)
+  ctx.createMediaStreamSource = () => { throw new Error('NotSupportedError') }
+  assert.equal(s.attachPeer(stream, 3), null)
+  assert.equal(s.status().state, 'running')
+  assert.equal(s.attachPeer(stream, Number.NaN), null)
+  s.setEnabled(false)
+  assert.equal(s.attachPeer(stream, 4), null, 'off: refused like speech')
+  s.setEnabled(true)
+  s.dispose()
+  assert.equal(peers.peers.size, 0, 'dispose lets every peer go')
+}))
+
+test('peers: without a MediaStream source in the browser attachPeer is null and nothing else changes', withFakes(() => {
+  const s = new Soundscape()
+  s.unlock()
+  const ctx = ctxOf()
+  const n = ctx.nodes.length
+  assert.equal(s.attachPeer({} as unknown as MediaStream, 1), null)
+  assert.equal(ctx.nodes.length, n)
+  assert.equal(s.status().state, 'running')
+  s.dispose()
+}))
+
+test('every sound start, change and stop is reported once with its position; a listener that throws cannot take the sound down', withFakes(async () => {
+  const s = new Soundscape()
+  const events: CaptionEvent[] = []
+  s.onSound = (e) => events.push(e)
+  const quiet = { near: 0, waiting: 0, crossing: 0 }
+  const of = (kind: CaptionEvent['kind'], phase?: CaptionEvent['phase']) => events.filter((e) => e.kind === kind && (phase === undefined || e.phase === phase))
+  s.update(frame({ cars: [car(210, 205, 11)] }))
+  s.cue(1, 1)
+  assert.equal(events.length, 0, 'no event before unlock')
+  s.unlock()
+  const ctx = ctxOf()
+  while (graphOf(s).babbleJob) tick(s, frame({ crowd: quiet }))
+  assert.equal(events.length, 0, 'nothing sounds in an empty street')
+  // A car driving at the listener: its voice starts at its nose, approaching.
+  const cars = [car(210, 205, 5, -Math.PI / 2)]
+  tick(s, frame({ cars, crowd: quiet }))
+  assert.equal(of('engine').length, 1)
+  const start = of('engine')[0]
+  assert.deepEqual([start.phase, start.source, start.detail, start.t], ['start', 0, 'approaching', ctx.currentTime])
+  near(start.x, 210 - VOICE.nose, 1e-6); near(start.z, 205, 1e-6)
+  assert.equal(of('tyres').length, 0, 'the engine is louder than the tyres at 18 km/h')
+  // Held at that speed, the line is only refreshed (a repeated start), not retexted.
+  events.length = 0
+  for (let i = 0; i < 300; i++) tick(s, frame({ cars, crowd: quiet }))
+  assert.ok(of('engine', 'start').length >= 1 && of('engine', 'start').length <= 5 / CAPTION_REFRESH + 1, `${of('engine', 'start').length} refreshes in 5 s`)
+  assert.equal(of('engine', 'change').length, 0)
+  // Speeding up: a gear shift, then the tyres take over.
+  events.length = 0
+  for (let v = 5; v <= 24; v += 1) { cars[0] = car(210, 205, v, -Math.PI / 2); tick(s, frame({ cars, crowd: quiet })) }
+  assert.ok(of('engine', 'change').some((e) => e.detail === 'up'), 'shifted up')
+  assert.deepEqual(of('tyres').map((e) => [e.phase, e.source]), [['start', 0]])
+  // Gone out of range: the engine and the tyres stop, once.
+  events.length = 0
+  cars[0] = car(600, 600, 24, 0)
+  for (let i = 0; i < 10; i++) tick(s, frame({ cars, crowd: quiet }))
+  assert.deepEqual(of('engine').map((e) => [e.phase, e.source]), [['stop', 0]])
+  assert.deepEqual(of('tyres').map((e) => [e.phase, e.source]), [['stop', 0]])
+  // The walk signal at the intersection, per axis.
+  events.length = 0
+  const at = { x: 240, z: 200 }
+  tick(s, frame({ walk: { ew: false, ns: true }, intersection: at, crowd: quiet }))
+  assert.deepEqual(of('walk-signal').map((e) => [e.phase, e.source, e.x, e.z, e.detail]), [['start', 0, 240, 200, 'ns']])
+  for (let i = 0; i < 10; i++) tick(s, frame({ walk: { ew: false, ns: true }, intersection: at, crowd: quiet }))
+  assert.equal(of('walk-signal', 'stop').length, 0)
+  tick(s, frame({ walk: { ew: true, ns: false }, intersection: at, crowd: quiet }))
+  assert.deepEqual(of('walk-signal').slice(-2).map((e) => [e.phase, e.source, e.detail]), [['start', 1, 'ew'], ['stop', 0, 'ns']])
+  tick(s, frame({ intersection: at, crowd: quiet }))
+  // The recruitment cue and the ping, where they sound.
+  events.length = 0
+  assert.ok(s.cue(203, 208))
+  assert.deepEqual(of('cue').map((e) => [e.phase, e.x, e.z]), [['start', 203, 208]])
+  assert.ok(s.cuePing(220, 230))
+  assert.deepEqual(of('ping').map((e) => [e.phase, e.x, e.z]), [['start', 220, 230]])
+  const shots = ctx.of(FakeBufferSource).slice(-2)
+  assert.notEqual(shots[0].buffer, shots[1].buffer, 'the ping has its own buffer')
+  assert.equal(shots[1].buffer!.length, pingLength(SYNTH_RATE))
+  shots[0].onended?.()
+  assert.deepEqual(of('cue', 'stop').length, 1, 'a shot that played out stops its caption')
+  // Speech carries the words and the speaker; it follows them and says when a wall comes between; a stop ends it.
+  const buffer = await s.decodeSpeech(clipBytes(2))
+  events.length = 0
+  const u = s.speak(buffer, 203, 208, 0, 'over here', { agent: 12, label: 'Pedestrian 12 (Rust)' })
+  assert.deepEqual(of('speech'), [{ kind: 'speech', phase: 'start', source: 12, x: 203, z: 208, t: ctx.currentTime, text: 'over here', label: 'Pedestrian 12 (Rust)', agent: 12, detail: 'clear' }])
+  s.update(frame({ dt: 0.05, speaker: { x: 206, z: 210, walls: 1 }, crowd: quiet }))
+  const change = of('speech', 'change')
+  assert.equal(change.length, 1)
+  assert.deepEqual([change[0].source, change[0].x, change[0].z, change[0].text, change[0].detail], [12, 206, 210, 'over here', 'muffled'])
+  u.stop()
+  assert.deepEqual(of('speech', 'stop').map((e) => [e.source, e.agent]), [[12, 12]])
+  events.length = 0
+  s.speak(buffer, 203, 208)
+  const src = speechOf(s).source!
+  src.onended?.()
+  assert.deepEqual(of('speech').map((e) => [e.phase, e.source]), [['start', 0], ['stop', 0]], 'played out: ended on its own')
+  // The cabin, with no place of its own.
+  events.length = 0
+  const driven = [car(200, 205, 5, 0, true)]
+  tick(s, frame({ cars: driven, interior: true, crowd: quiet }))
+  tick(s, frame({ cars: driven, interior: false, crowd: quiet }))
+  assert.deepEqual(of('cabin').map((e) => [e.phase, Number.isNaN(e.x), Number.isNaN(e.z)]), [['start', true, true], ['stop', true, true]])
+  assert.equal(of('engine', 'start').length, 1, 'the driven car is not captioned; it is once it is driven no more')
+  // The murmur: a busy daytime crowd starts it at a bed; an empty street ends it.
+  events.length = 0
+  tick(s, frame())
+  const murmur = of('murmur')
+  assert.equal(murmur.length, 1)
+  assert.deepEqual([murmur[0].phase, murmur[0].detail, Number.isFinite(murmur[0].x + murmur[0].z)], ['start', 'busy', true])
+  tick(s, frame({ crowd: { near: 10, waiting: 10, crossing: 0 } }))
+  assert.deepEqual(of('murmur').at(-1)!.detail, 'quiet', 'retexted as the crowd thins')
+  tick(s, frame({ crowd: quiet }))
+  assert.equal(of('murmur').at(-1)!.phase, 'stop')
+  // Every event is a fresh object with a finite time on the audio clock.
+  for (const e of events) assert.ok(Number.isFinite(e.t) && e.t <= ctx.currentTime)
+  assert.equal(new Set(events).size, events.length)
+  assert.equal(s.clock, ctx.currentTime)
+  // A listener that throws: the pass finishes, the stack keeps running.
+  s.onSound = () => { throw new Error('caption fault') }
+  assert.doesNotThrow(() => { for (let i = 0; i < 5; i++) tick(s, frame({ cars: [car(205, 205, 10)] })) })
+  assert.equal(s.status().state, 'running')
+  assert.ok(graphOf(s).voices.some((v) => v.car === 0), 'the car is voiced all the same')
+  s.onSound = null
+  const t = s.clock
+  s.dispose()
+  assert.equal(s.clock, t, 'the clock holds where it stopped')
+}))
+
+// Local split screen (Design B): several soundscapes over one shared context, each in head space
+
+/** The number of panners one soundscape builds: car voices, murmur beds, the walk tones, the cues, speech. */
+const pannersOf = (voices: number, beds: number) => voices + beds + 1 + CUE.slots + 1
+
+test('toHeadSpace: a rigid move into the head frame, the inverse of listenerBasis, right of the head to +x and ahead to −z', () => {
+  const rng = createRng(0x5ea7)
+  const b = new Float32Array(6)
+  const out = { x: 0, y: 0, z: 0 }
+  for (let i = 0; i < 100; i++) {
+    const yaw = (rng() - 0.5) * 4 * Math.PI, pitch = (rng() - 0.5) * 2.9
+    const L = { x: rng() * 400, y: 1.7, z: rng() * 400 }
+    const P = { x: rng() * 400, y: rng() * 3, z: rng() * 400 }
+    listenerBasis(yaw, pitch, b)
+    toHeadSpace(b, L.x, L.y, L.z, P.x, P.y, P.z, out)
+    const d = Math.hypot(P.x - L.x, P.y - L.y, P.z - L.z)
+    near(Math.hypot(out.x, out.y, out.z), d, 1e-6 * d, 'the distance is unchanged (the basis is single precision)')
+    // Back to the world through the camera's own rotation (YXZ, as listenerBasis): the inverse holds.
+    const back = new Vector3(out.x, out.y, out.z).applyEuler(new Euler(pitch, yaw, 0, 'YXZ'))
+    near(back.x, P.x - L.x, 1e-3); near(back.y, P.y - L.y, 1e-3); near(back.z, P.z - L.z, 1e-3)
+  }
+  listenerBasis(0, 0, b)
+  toHeadSpace(b, 200, 1.7, 205, 210, 1.7, 205, out)
+  assert.deepEqual([out.x, out.y, out.z].map((v) => Math.round(v * 1e6) / 1e6 + 0), [10, 0, 0], 'yaw 0: +x is to the right')
+  toHeadSpace(b, 200, 1.7, 205, 200, 1.7, 195, out)
+  assert.deepEqual([out.x, out.y, out.z].map((v) => Math.round(v * 1e6) / 1e6 + 0), [0, 0, -10], 'yaw 0: −z is ahead')
+  listenerBasis(-Math.PI / 2, 0, b)
+  toHeadSpace(b, 200, 1.7, 205, 210, 1.7, 205, out)
+  assert.deepEqual([out.x, out.y, out.z].map((v) => Math.round(v * 1e6) / 1e6 + 0), [0, 0, -10], 'turned to +x: the same point is ahead')
+})
+
+test('two soundscapes on one page own separate contexts and listeners; disposing one closes only its context', withFakes(() => {
+  const a = new Soundscape(), b = new Soundscape()
+  a.unlock()
+  b.unlock()
+  assert.equal(FakeContext.instances.length, 2)
+  const [ca, cb] = FakeContext.instances
+  tick(a, frame({ listener: { x: 10, y: 1.7, z: 20, yaw: 0, pitch: 0 } }))
+  ctxOf().currentTime += 1 / 60
+  b.update(frame({ listener: { x: 10, y: 1.7, z: 20, yaw: Math.PI, pitch: 0 } }))
+  near((ca.listener as ParamListener).forwardZ.target, -1, 1e-6, 'A looks down −z')
+  near((cb.listener as ParamListener).forwardZ.target, 1, 1e-6, 'B looks down +z')
+  assert.equal(ca.of(FakePanner).length, pannersOf(VOICE.count, MURMUR.sources))
+  assert.equal(cb.of(FakePanner).length, pannersOf(VOICE.count, MURMUR.sources))
+  a.dispose()
+  assert.equal(ca.state, 'closed')
+  assert.equal(cb.state, 'running', 'B plays on')
+  assert.equal(b.status().state, 'running')
+  b.dispose()
+  assert.equal(cb.state, 'closed')
+}))
+
+test('a shared context in head space: one context, the listener left at the identity, every source placed relative to its head', withFakes(() => {
+  const share = sharedAudioContext()
+  const p1 = new Soundscape({ context: share, space: 'head' })
+  const p2 = new Soundscape({ context: share, space: 'head' })
+  p1.unlock()
+  p2.unlock()
+  assert.equal(FakeContext.instances.length, 1, 'one context for both')
+  const ctx = ctxOf()
+  const l = ctx.listener as ParamListener
+  const params = [l.positionX, l.positionY, l.positionZ, l.forwardX, l.forwardY, l.forwardZ, l.upX, l.upY, l.upZ]
+  while (graphOf(p1).babbleJob) { tick(p1, frame()); p2.update(frame()) }
+  const identity = [0, 0, 0, 0, 0, -1, 0, 1, 0]
+  params.forEach((p, i) => near(p.target, identity[i], 1e-9, `listener param ${i} at the identity`))
+  const events = params.map((p) => p.events.length)
+  // The car sits 10 m to the right of player 1 (yaw 0) and straight ahead of player 2 (turned to +x), nose on +x.
+  const cars = [car(210, 205, 0, Math.PI / 2)]
+  const f1 = frame({ cars, listener: { x: 200, y: 1.7, z: 205, yaw: 0, pitch: 0 } })
+  const f2 = frame({ cars, listener: { x: 200, y: 1.7, z: 205, yaw: -Math.PI / 2, pitch: 0 } })
+  for (let i = 0; i < 30; i++) { tick(p1, f1); p2.update(f2) }
+  params.forEach((p, i) => assert.equal(p.events.length, events[i], 'the listener is never moved again'))
+  const v1 = graphOf(p1).voices.find((v) => v.car === 0)!
+  const v2 = graphOf(p2).voices.find((v) => v.car === 0)!
+  near(v1.pan.node.positionX.target, 10 + VOICE.nose, 0.02, 'to the right of player 1')
+  near(v1.pan.node.positionY.target, VOICE.height - 1.7, 1e-6)
+  near(v1.pan.node.positionZ.target, 0, 0.02)
+  near(v2.pan.node.positionX.target, 0, 0.02)
+  near(v2.pan.node.positionZ.target, -(10 + VOICE.nose), 0.02, 'ahead of player 2')
+  const d = Math.hypot(10 + VOICE.nose, VOICE.height - 1.7)
+  near(Math.hypot(v1.pan.node.positionX.target, v1.pan.node.positionY.target, v1.pan.node.positionZ.target), d, 1e-3, 'the distance is the world distance')
+  near(Math.hypot(v2.pan.node.positionX.target, v2.pan.node.positionY.target, v2.pan.node.positionZ.target), d, 1e-3)
+  // The Doppler reads the world, not the head: both players hear the same pitch from the same still car.
+  near(v1.freq.param.target, v2.freq.param.target, 1e-9)
+  // The beds sit on the sidewalks in the world (murmurLayout) and in the head frame here: the same distances.
+  const layout = new Float32Array(8)
+  murmurLayout(200, 205, layout)
+  const bed = graphOf(p1).beds[0].pan.node
+  near(Math.hypot(bed.positionX.target, bed.positionY.target, bed.positionZ.target), Math.hypot(layout[0] - 200, MURMUR.height - 1.7, layout[1] - 205), 1e-3)
+  // The world-space default is untouched: a third soundscape of its own moves its listener as before.
+  const alone = new Soundscape()
+  alone.unlock()
+  const own = ctxOf()
+  assert.notEqual(own, ctx)
+  tick(alone, frame({ listener: { x: 10, y: 1.7, z: 20, yaw: 0, pitch: 0 } }))
+  near((own.listener as ParamListener).positionX.target, 10, 1e-9)
+  alone.dispose()
+  p1.dispose()
+  assert.equal(ctx.state, 'running', 'the context lives on for player 2')
+  assert.equal(p2.status().state, 'running')
+  p2.dispose()
+  assert.equal(ctx.state, 'closed', 'the last player out closes it')
+  assert.equal(FakeContext.instances.length, 2)
+}))
+
+test('four players: panners = 4 × (voices + beds + 1 + CUE.slots + 1) with the per-player pools; each reports its own voices', withFakes(() => {
+  const share = sharedAudioContext()
+  const players = [0, 1, 2, 3].map(() => new Soundscape({ context: share, space: 'head', voices: 3, beds: 2 }))
+  for (const p of players) p.unlock()
+  assert.equal(FakeContext.instances.length, 1)
+  const ctx = ctxOf()
+  assert.equal(ctx.of(FakePanner).length, 4 * pannersOf(3, 2))
+  assert.equal(ctx.of(FakeCompressor).length, 4, 'a limiter each, into the one destination')
+  for (const c of ctx.of(FakeCompressor)) assert.ok(c.outputs.includes(ctx.destination))
+  for (const p of players) while (graphOf(p).babbleJob) tick(p, frame({ crowd: { near: 0, waiting: 0, crossing: 0 } }))
+  const cars = [car(210, 205, 8, Math.PI / 2), car(200, 215, 8), car(190, 205, 8, -Math.PI / 2), car(200, 195, 8, Math.PI), car(220, 205, 8, Math.PI / 2)]
+  const quiet = { near: 0, waiting: 0, crossing: 0 }
+  const far = { x: 900, y: 1.7, z: 900, yaw: 0, pitch: 0 }
+  for (let i = 0; i < 30; i++) {
+    tick(players[0], frame({ cars, crowd: quiet }))
+    players[1].update(frame({ cars, crowd: quiet, listener: far }))
+    players[2].update(frame({ cars, crowd: { near: 80, waiting: 40, crossing: 20 } }))
+    players[3].update(frame({ cars: [], crowd: quiet, walk: { ew: true, ns: true } }))
+  }
+  assert.equal(players[0].status().voices, 3, 'three of five cars, the pool is three')
+  assert.equal(players[1].status().voices, 0, 'nothing within range of player 2')
+  assert.equal(players[2].status().voices, 3 + 2, 'cars and the two beds')
+  assert.equal(players[3].status().voices, 2, 'the two walk tones')
+  for (const p of players) p.dispose()
+  assert.equal(ctx.state, 'closed')
+}))
+
+test('head-space cut: a turn of 90° or more jumps every placed source instead of gliding it round the head', withFakes(() => {
+  const share = sharedAudioContext()
+  const s = new Soundscape({ context: share, space: 'head' })
+  s.unlock()
+  const cars = [car(210, 205, 8, Math.PI / 2)]
+  const lastKind = (p: FakeParam) => p.events[p.events.length - 1].kind
+  tick(s, frame({ cars, listener: { x: 200, y: 1.7, z: 205, yaw: 0, pitch: 0 } }))
+  const v = graphOf(s).voices.find((x) => x.car === 0)!
+  assert.equal(lastKind(v.pan.node.positionX), 'set', 'the first placement jumps')
+  tick(s, frame({ cars, listener: { x: 200.5, y: 1.7, z: 205, yaw: 0.05, pitch: 0 } }))
+  assert.equal(lastKind(v.pan.node.positionX), 'target', 'ordinary motion glides')
+  tick(s, frame({ cars, listener: { x: 200.5, y: 1.7, z: 205, yaw: 0.05 + Math.PI * 0.97, pitch: 0 } }))
+  for (const p of [v.pan.node.positionX, v.pan.node.positionZ]) assert.equal(lastKind(p), 'set', 'the car is on the other side now')
+  for (const b of graphOf(s).beds) assert.equal(lastKind(b.pan.node.positionX), 'set', 'the beds too')
+  assert.ok(v.pan.node.positionX.value < 0, 'and to the left after the turn')
+  tick(s, frame({ cars, listener: { x: 200.5, y: 1.7, z: 205, yaw: 0.1 + Math.PI * 0.97, pitch: 0 } }))
+  assert.equal(lastKind(v.pan.node.positionX), 'target', 'and glides again afterwards')
+  s.dispose()
+}))
+
+test('a shared context survives a soundscape that fails or is left locked; pool options are clamped', withFakes(() => {
+  const share = sharedAudioContext()
+  const a = new Soundscape({ context: share, space: 'head', voices: 0, beds: 99 })
+  const b = new Soundscape({ context: share, space: 'head', voices: Number.NaN, beds: 2.7 })
+  const locked = new Soundscape({ context: share, space: 'head' })
+  a.unlock()
+  b.unlock()
+  const ctx = ctxOf()
+  assert.equal(graphOf(a).voices.length, 1, 'at least one voice')
+  assert.equal(graphOf(a).beds.length, MURMUR.sources, 'no more beds than the layout has')
+  assert.equal(graphOf(b).voices.length, VOICE.count, 'NaN is the default')
+  assert.equal(graphOf(b).beds.length, 2, 'rounded down')
+  // A broken frame takes one soundscape down (unsupported from then on) and leaves the context to the other.
+  tick(a, frame({ listener: { x: 1e39, y: 1.7, z: 205, yaw: 0, pitch: 0 }, cars: [car(1e39, 205, 8)] }))
+  assert.ok(a.status().state === 'running' || a.status().state === 'unsupported')
+  a.dispose()
+  assert.equal(ctx.state, 'running')
+  assert.equal(b.status().state, 'running')
+  locked.dispose()
+  assert.equal(ctx.state, 'running', 'a soundscape that never unlocked held nothing')
+  b.dispose()
+  assert.equal(ctx.state, 'closed')
+  assert.equal(FakeContext.instances.length, 1)
 }))

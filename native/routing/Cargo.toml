@@ -1,0 +1,19 @@
+[package]
+name = "routing"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "The fixed track network's arc-length arithmetic (06_Make_Decisions/tracks.ts) as a dependency-free WebAssembly core"
+license-file = "../../LICENSE"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"
+codegen-units = 1
+strip = true

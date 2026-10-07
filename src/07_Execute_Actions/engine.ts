@@ -10,11 +10,25 @@
  * own) runs in a dedicated worker (physics.worker.ts): this file only sends it controls and commands, and draws
  * the plain numbers it sends back — the cars' poses and the pedestrians' render frames. It exposes a SIPOC X
  * snapshot for the HUD, the only bridge the Ring-0 terminal may use, and the narrow host recruitment uses (the
- * operator's position, the states, two commands, a sound cue). App.tsx owns the requestAnimationFrame loop and
- * calls frame().
+ * operator's position, the states, two commands, a sound cue). The operator's ping (08_Swarm/ping.ts) is resolved
+ * here from the head's look ray against the page's own copies (never the realm) and kept on a board the HUD
+ * draws; a walk ping is handed to the host's recruiter (onRally) as a plain request the physics realm re-validates.
+ * A person's look (03_Spawn_Agents/look.ts) is a word per agent in the crowd's page-only storage attribute: setLook
+ * writes it the way the dissolve amounts are written, and nothing of it reaches the physics realm either.
+ * Local split screen (?players=2..4; viewports.ts, seats.ts, controls.ts): every player is a head of their own on a
+ * camera of their own, an avatar of their own in the physics realm (SimInit.spawns, StepRequest.players, the realm's
+ * avatars and drivings), a seat at the input's table, a viewport of the one canvas and a soundscape of their own in
+ * head space over one shared audio context; view 0 is player 1's and is this engine's own camera, head and soundscape,
+ * so with one player nothing of this changes. The post chain, the ghost view, the contact wipe, the dissolve scans,
+ * the ping, the captions, the haptics and the HUD stay player 1's, and the post chain is off while the screen is split.
+ * A network session (10_Network, opt-in) reaches the engine only through the NetHost seam: App hands in the page's
+ * client the way it hands in the mind, the engine holds no network code, and each frame it offers the client player
+ * 1's desired velocity and heading and reads back the room's poses, drawn as pose-only ghosts (netView.ts) that are
+ * never bodies in the physics realm; the room's chat and pings become captions, a peer's voice a placed voice.
+ * App.tsx owns the requestAnimationFrame loop and calls frame().
  * What breaks if it is removed? Nothing runs; every module is inert without this orchestration.
  */
-import { Frustum, Matrix4, type RenderPipeline, type UniformNode } from 'three/webgpu'
+import { Frustum, Matrix4, Vector3, type PerspectiveCamera, type RenderPipeline, type UniformNode } from 'three/webgpu'
 import { BRAND } from '../brand.ts'
 import { buildWorld, createRenderer, gpuBufferOf, LIGHT_TUNE_RANGE, ndStopsFor, type Gpu, type LightTuning, type World } from '../01_Initialize_World/world.ts'
 import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
@@ -25,30 +39,43 @@ import { SIGNAL, signalFor, walkAllowed } from '../02_Define_The_Rules/civic.ts'
 import { THREE_LAWS } from '../02_Define_The_Rules/laws.ts'
 import { kernelPanic } from '../02_Define_The_Rules/ring0Panic.ts'
 import { CrowdView } from '../03_Spawn_Agents/crowd.ts'
+import { LOOK_NONE, packLook, unpackLook, validateLook, type Look } from '../03_Spawn_Agents/look.ts'
 import { packFrustumPlanes, type CrowdStats, type CullSettings } from '../03_Spawn_Agents/crowdCompute.ts'
 import { CrowdCull } from '../03_Spawn_Agents/crowdCull.ts'
 import { AGENTS_RANGE } from '../03_Spawn_Agents/crowdSensor.ts'
 import { Input, TriggerFeedback } from '../04_Connect_Hardware/input.ts'
-import { FrameClock, type GlyphFamily, type KernelStats, type SipocSnapshot, type Toast } from '../05_Observe_Environment/telemetry.ts'
+import { KEYBOARD_SEAT, type Seat } from '../04_Connect_Hardware/seats.ts'
+import { FrameClock, type GlyphFamily, type KernelStats, type NetReport, type NetState, type SeatView, type SipocSnapshot, type Toast } from '../05_Observe_Environment/telemetry.ts'
 import { MemorySink, Recorder, fileSink, markdownFor, type RecorderSink, type RecorderSource } from '../05_Observe_Environment/recorder.ts'
 import type { AgentTelemetry } from '../05_Observe_Environment/agv.ts'
 import { Governor, defaultAgents, profileDevice, readDeviceHints, tierRange, type QualityKnobs } from '../05_Observe_Environment/governor.ts'
 import { CAR_TUNE_RANGE, chassisBox, clampTuning, type CarTuning } from './car.ts'
 import { FleetView } from './fleetView.ts'
-import { HeadRig, carriedYaw, yawFacing } from './head.ts'
+import { RigView } from './rigView.ts'
+import { NetView, type RemotePose } from './netView.ts'
+import { HeadRig, aimRay, carriedYaw, yawFacing, type AimRay } from './head.ts'
 import { SimClient } from './simClient.ts'
 import { applyWalk, requestWalk, type ScriptedWalk } from './scriptedWalk.ts'
-import { ENTER_RANGE, MODES, PERSON, POSE, RUN, WALK, type DriveControls, type FootControls, type SimCommand, type StepState } from './simProtocol.ts'
+import {
+  doorOf, ENTER_RANGE, footWish, MODES, PERSON, POSE, RUN, type CarBodyState, type DriveControls, type Door, type FootControls, type PlayerControls,
+  type SimCommand, type StepState,
+} from './simProtocol.ts'
+import { readControls } from './controls.ts'
+import { clampPlayers, originBottomLeft, splitScreen, type Rect } from './viewports.ts'
 import { buildPost, type CinemaPost } from './postfx.ts'
 import { createGhost, type GhostView } from './ghost.ts'
-import { CONTACT, ContactPulse, PoleIndex, carGap, personGap, personGapToBox, touching } from './contact.ts'
+import { CONTACT, ContactPulse, PoleIndex, carGap, carsWithin, peopleWithin, peopleWithinBox, personGap, personGapToBox, touching } from './contact.ts'
+import { DISSOLVE, DissolveSet, carsOverlapping, copyDirty, poleSlot, type DissolveBuffer } from './dissolve.ts'
 import { CINEMA, FramePacer, SHUTTER_SECONDS, exposureFor, type CameraMark } from './cinema.ts'
 import { updateVolumetrics, type Volumetrics } from './volumetrics.ts'
 import { operatorBridge, type Diary, type Mind, type SimControls, type SkillGate, type SpeechClip, type SpeechOut, type Utterance, type Voice } from './operator.ts'
 import { applyQuality, type QualityTargets } from './quality.ts'
-import { SPEECH, Soundscape, wallsBetween, type AudioFrame } from './audio.ts'
+import { SPEECH, Soundscape, sharedAudioContext, wallsBetween, type AudioFrame, type PeerVoice } from './audio.ts'
+import { roomAt, type Room } from './acoustics.ts'
+import { CaptionTrack, captionText } from './captions.ts'
 import { ring0Stats, type TerminalBridge } from './terminal/bridge.ts'
 import { familyOf, glyph } from './glyphs.ts'
+import { PING_KINDS, PING_WORDS, PingBoard, pickPing, pingLine, rallyPlan, type Ping, type Pick, type PingKind, type RallyRequest } from '../08_Swarm/ping.ts'
 
 export interface EngineOptions {
   /** Pedestrians to simulate; absent: as many as the device profile allows (governor.ts defaultAgents). */
@@ -70,22 +97,44 @@ export interface EngineOptions {
   targetFps: number
   /** Start with spatial audio enabled (it still waits for a user gesture). */
   audio: boolean
+  /**
+   * Closed captions of every spatial sound (captions.ts; default on, ?captions=0 off): each sound's start, change and
+   * stop as a HUD line with its bearing and distance, speech with its words. setCaptions() turns them at run time.
+   */
+  captions?: boolean
   /** ?debug: the physics worker also accepts fault-injection commands (the harness's). Fixed at boot; off in production. */
   debug?: boolean
+  /**
+   * The AI fleet on the fixed track network (default on; ?tracks=0 turns it off): cars seated in headway slots on the
+   * right-turn rings of 06_Make_Decisions/tracks.ts. Off, they take the random street-hopping routes.
+   */
+  tracks?: boolean
   /**
    * The cinema camera (default on; ?cinema=0 turns it off): 24 presented frames per second through a 180° shutter,
    * a variable ND and the film response. Off, every animation frame is drawn and tone-mapped with ACES.
    */
   cinema?: boolean
   /**
+   * The ragdoll balance machine (default on; ?ragdoll=0 turns it off): pedestrians within 25 m of the operator may be
+   * promoted to a physical body in the realm by a shove, a kerb trip or a slip, drawn here as a rig in their figure's
+   * place (rigView.ts). Never a vehicle's doing. Never in a region.
+   */
+  ragdoll?: boolean
+  /**
    * A surveyed region to walk instead of the procedural city (the pilot build). Its streets have no traffic or crowd
    * yet: the fleet is empty and the GPU crowd, still simulated on the procedural grid far from the region, is not drawn.
    */
   region?: RegionPack | null
+  /**
+   * Local players on this one canvas, 1 (default) to 4 (?players; viewports.ts PLAYERS_RANGE): each a viewport, a
+   * head, an avatar in the physics realm, a seat for a gamepad (seats.ts) and a soundscape of their own. More than
+   * one turns the post chain off (it is player 1's alone); the HUD stays player 1's.
+   */
+  players?: number
 }
 
-/** The options as the engine runs them: the crowd's size decided, and where the page runs. */
-export type EngineConfig = EngineOptions & { agents: number; host: 'browser' | 'native' }
+/** The options as the engine runs them: the crowd's size decided, the player count clamped, and where the page runs. */
+export type EngineConfig = EngineOptions & { agents: number; players: number; host: 'browser' | 'native' }
 
 /**
  * Guardrail haptics (rumble 0..1, sent through the HAL bus, which picks WebHID or the Gamepad API and never
@@ -97,8 +146,81 @@ const HAPTICS = { limiter: 0.2, pulse: 1, pulseMs: 180 } as const
 const MAX_STEP_DT = 0.1
 /** How often the pedestrians' positions are copied out of the crowd frames for SimControls.crowd.positions, ms. */
 const CROWD_COPY_MS = 250
+/**
+ * Split screen: how far apart players 1..3 spawn along the sidewalk beside player 0, m, and each player's audio pools
+ * (audio.ts Design B: smaller car-voice and murmur pools per head keep the panner count near forty for four players).
+ */
+const SPLIT = { spawnGap: 1.5, voices: 3, beds: 2 } as const
+/**
+ * Whether three's WebGPU canvas viewport is measured from the bottom-left corner (viewports.ts originBottomLeft). The
+ * WebGPU backend hands setViewport/setScissor straight to the pass, whose origin is the top-left corner: no flip.
+ */
+const ORIGIN_FLIP = false
+/**
+ * The network session (NetHost): the name a player joins under before the Concierge has one, and how long a peer's
+ * voice is kept after its player's pose stops arriving (a voice may arrive before the first snapshot that names them).
+ */
+const NET = { defaultName: 'Visitor', voiceGraceS: 5 } as const
+/** No remote players: the one empty list netFrame holds between sessions. */
+const NO_PEERS: readonly RemotePose[] = Object.freeze([])
+
+/**
+ * One local player's view: their head (HeadRig) on a camera of their own, its frustum pack for the crowd cull, the
+ * viewport it draws into, the car heading the head is carried by, the controls the realm gets for them, and their
+ * soundscape with its frame. View 0 is player 1's and wraps the engine's own camera, rig, frame and soundscape.
+ */
+interface PlayerView {
+  readonly seat: Seat
+  readonly camera: PerspectiveCamera
+  readonly rig: HeadRig
+  readonly frustum: Frustum
+  readonly projScreen: Matrix4
+  readonly planes: Float32Array
+  /** The camera's position for the cull, copied without allocating. */
+  readonly eye: { x: number; y: number; z: number }
+  /** In logical pixels, y down from the canvas's top edge (resize); the full canvas with one player. */
+  rect: Rect
+  /** The driven car's heading last frame, so the head turns with the car. */
+  carHeading: number
+  readonly foot: FootControls
+  readonly drive: DriveControls
+  readonly sound: AudioFrame
+  readonly audio: Soundscape
+  /** The 2 m cell this head was last found in (its room). */
+  listenerCell: number
+}
+
+/** One soundscape's frame, mutated in place every tick; car slots keep fleet order (voice hysteresis is by index). */
+function audioFrameOf(cars: number): AudioFrame {
+  const list = []
+  for (let i = 0; i < cars; i++) list.push({ x: 0, z: 0, heading: 0, speed: 0, player: false })
+  return {
+    dt: 0,
+    listener: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 },
+    cars: list,
+    crowd: { near: 0, waiting: 0, crossing: 0 },
+    daylight: 1,
+    walk: { ew: false, ns: false },
+    intersection: { x: 0, z: 0 },
+    interior: false,
+    speaker: { x: Number.NaN, z: Number.NaN, walls: 0 },
+  }
+}
 
 const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th'}`
+/** What a ping landed on, for its caption: 'a spot', 'person 12', 'car 3', 'pole 7'. */
+const pingWhat = (p: Ping): string => (p.pick === 'point' ? 'a spot' : `${p.pick} ${p.index}`)
+
+/** One prop's dissolve amounts to its instanced attribute (dirty range only), marked for three's upload, then cleaned. */
+function flushProp(b: DissolveBuffer, attr: { array: ArrayLike<number>; needsUpdate: boolean }): void {
+  if (!b.dirty) return
+  copyDirty(b, attr.array as Float32Array)
+  attr.needsUpdate = true
+  b.clean()
+}
+
+/** The 2 m cell of a point as one number (NaN for a point that is not finite), for the room caches. */
+const cellOf = (x: number, z: number): number => (Number.isFinite(x + z) ? Math.floor(x / 2) * 1e6 + Math.floor(z / 2) : Number.NaN)
 
 
 /** Quality state shared by create() and the running engine: what is applied, and where it lands. */
@@ -123,16 +245,88 @@ export interface RecruitHost {
   /** The operator's head position on foot (head.ts), or null while driving or halted. */
   operator(): { x: number; z: number } | null
   /** Queues a recruitment command for the physics realm; any other command is dropped here. */
-  send(cmd: Extract<SimCommand, { c: 'recruit' | 'dismiss' }>): void
+  send(cmd: Extract<SimCommand, { c: 'recruit' | 'dismiss' | 'rally' }>): void
   /** Calls `fn` with each state the physics realm sends (its render frame still attached); returns the unsubscribe. */
   onState(fn: (s: StepState) => void): () => void
   /** The soundscape's recruitment cue at (x, z); false when it cannot sound. */
   cue(x: number, z: number): boolean
 }
 
+/** A remote player as the engine reads it from the client and the view draws it (10_Network's RemotePlayer's shape, without the import). */
+export type NetPeer = RemotePose
+
+/** A door player 1 took (10_Network/replication.ts Door's shape; simProtocol.ts doorOf reads it from a step). */
+export type NetDoor = Door
+
+/**
+ * One step of the physics realm as the network client reports it (10_Network/netClient.ts Move's shape, without the
+ * import): the door player 1 took first, if any, then what the room replays for each substep (on foot the walking
+ * velocity the request asked for, clamped as the realm clamps it; at the wheel the command the car ran), the substeps
+ * the realm ran, the facing, where the realm then had player 1 (the capsule, or the chassis at the wheel), and the
+ * correction the realm had applied.
+ */
+export interface NetMove {
+  mode: 'foot' | 'drive'
+  x: number
+  z: number
+  wheels?: { throttle: number; brake: number; steer: number; handbrake: boolean }
+  n: number
+  heading: number
+  at: { x: number; y: number; z: number }
+  door?: NetDoor
+  fix: number
+}
+
+/**
+ * What the engine may use of the page's network client (10_Network/netClient.ts), handed in by App (setNet) the way
+ * the mind is: the engine holds no network code and never opens a socket. The room is authoritative and this page's
+ * physics realm is the prediction: each new realm state while `status` is 'joined' is reported as one move (player 1's
+ * step, paired with the request that ran it), and the room's correction, when a new one arrives, is applied as a
+ * teleport to the truth; the room's poses are read for the draw. It never sends a chat line or a ping of its own, and
+ * nothing it reads goes to the physics realm but that teleport.
+ */
+export interface NetHost {
+  readonly status: NetState
+  /** This page's id in the room (0 until welcomed). */
+  readonly id: number
+  /** Why the session closed, once it did. */
+  readonly reason: string | null
+  /** Corrections the room made this session (the welcome's spawn not counted), and the newest one's reason. */
+  readonly corrections: number
+  readonly corrected: string | null
+  /** Starts a session in `world` (the room refuses another), or says why it did not. */
+  connect(url: string, token: string, name: string, world: string): string | null
+  /**
+   * One realm step: 'sent' or 'held' (coalesced into the next input), 'idle' (nothing to say), 'stale' (run before the
+   * newest correction was applied: the room would drop it unread) or 'refused' (not a step the room could read).
+   */
+  move(m: NetMove): 'sent' | 'held' | 'idle' | 'stale' | 'refused'
+  /** The newest correction (the truth to snap to and its number; at the wheel the car's state too; `drift` for a kept input the page is only put back after), or null before the welcome. */
+  correction(): { fix: number; x: number; z: number; car?: { index: number; state: CarBodyState }; drift?: true } | null
+  /** Every other player's pose, carried forward to `now` (ms). */
+  poses(now?: number): readonly NetPeer[]
+  /** Inputs the room has not yet applied. */
+  pending(): readonly unknown[]
+  leave(): void
+  /** A peer's voice as a MediaStream, when one arrives; returns the unsubscribe. */
+  onVoice(cb: (id: number, stream: MediaStream) => void): () => void
+}
+
+/**
+ * The network session as the console drives it (`net join|leave|status` over the terminal bridge, App adds the kept
+ * token): join resolves with the status line once the room has welcomed this page and rejects with why it did not
+ * (a refused address, no client, the room's refusal or the socket's end); leave returns what it did; status is plain
+ * data (telemetry.ts NetReport).
+ */
+export interface NetControls {
+  join(url: string, token: string): Promise<string>
+  leave(): string
+  status(): NetReport
+}
+
 export interface DebugSim {
   state(): StepState
-  send(cmd: SimCommand): void
+  send(cmd: SimCommand, first?: boolean): void
   /** Resolves with the next state the worker sends. */
   next(): Promise<StepState>
 }
@@ -140,7 +334,10 @@ export interface DebugSim {
 export class Engine {
   readonly errors: string[] = []
   readonly input: Input
-  readonly audio = new Soundscape()
+  /** Player 1's soundscape (every player has one: views). Over a context of its own alone; in head space over the shared one split. */
+  readonly audio: Soundscape
+  /** One view per local player (PlayerView); views[0] is player 1's, this engine's own camera, head and soundscape. */
+  private readonly views: readonly PlayerView[]
   private readonly canvas: HTMLCanvasElement
   private readonly gpu: Gpu
   private readonly world: World
@@ -149,6 +346,8 @@ export class Engine {
   /** The page's end of the physics realm: numbers in, numbers out. */
   private readonly sim: SimClient
   private readonly view: FleetView
+  /** The promoted pedestrians' rigs from the realm's rig stream, drawn where their hidden figures stood. */
+  private readonly rigView: RigView
   /** The first-person head: the only thing that places the camera (future WebXR reads/overrides its pose). */
   private readonly rig = new HeadRig()
   /** The driven car's heading last frame, so the head turns with the car. */
@@ -175,10 +374,28 @@ export class Engine {
   private readonly contactPulse = new ContactPulse()
   private personGapFoot: number = CONTACT.far
   private personGapCar: number = CONTACT.far
+  /** The code dissolve: which instances the user's body is inside, and how far each has dissolved (view-only). */
+  private readonly dissolve: DissolveSet
+  /** The crowd's amounts on the GPU (three's buffer for CrowdView.dissolve), written like the frame upload. */
+  private readonly crowdDissolve: GPUBuffer
+  /** The crowd's look words on the GPU (three's buffer for CrowdView.look) and the page's copy of them (setLook, lookOf). */
+  private readonly crowdLook: GPUBuffer
+  private readonly lookWords: Uint32Array
+  private readonly poleOut = new Int32Array(DISSOLVE.maxPoles)
+  private readonly carOut = new Int32Array(DISSOLVE.maxCars)
+  private readonly overlapOut: Int32Array
+  private readonly peopleOut = new Int32Array(DISSOLVE.maxPeople)
+  /** The people gathered with the newest crowd frame (received), touched every animation frame until the next. */
+  private peopleCount = 0
   /** Where the camera was at the last frame drawn through the velocity buffer (valid while `marked`; not: a cut). */
   private readonly lastMark: CameraMark = { x: 0, y: 0, z: 0, seat: -1 }
   private marked = false
   private readonly mark: CameraMark = { x: 0, y: 0, z: 0, seat: -1 }
+  /**
+   * Whether present() draws (setRendering). Off is Track B's override: the console has the screen, the canvas is
+   * black, and everything else in frame() (the step requests, the head, the haptics, the audio) runs as before.
+   */
+  private rendering = true
   /** The camera's projection × view at the last presented frame. */
   private readonly lastViewProjection = new Matrix4()
   private lastPresentMs = Number.NaN
@@ -207,11 +424,60 @@ export class Engine {
   private readonly haptics = { rumble: 0 }
   /** The pedestrian whose speech is playing (speechOut), or −1: the voice follows them. */
   private speaker = -1
+  /** The 2 m cells the listener and the speaker were last found in: their rooms (acoustics.ts) are recomputed on a change. */
+  private listenerCell = Number.NaN
+  private speakerCell = Number.NaN
+  /** The soundscape's closed captions (captions.ts), fed by every sound event with the head pose as the listener. */
+  private readonly captions = new CaptionTrack()
+  private captionsOn: boolean
   /** A scripted walk (SimControls.avatar.walk): the velocity it asks for, and until when (performance.now() ms). */
   private readonly scriptedWalk: ScriptedWalk = { x: 0, z: 0, until: 0 }
   /** Every pedestrian's x, z from the newest crowd frame, refreshed at most CROWD_COPY_MS apart (SimControls.crowd.positions). */
   private crowdXZ = new Float32Array(0)
   private crowdCopiedAt = -Infinity
+  /** Every pedestrian's x, y, z, heading from the same copy (the ping's capsules, 08_Swarm/ping.ts PingWorld.frame). */
+  private crowdPose = new Float32Array(0)
+  /** The ping: the head's look ray, the last thing it met, the board of marks standing, and a point to project them. */
+  private readonly ray: AimRay = { ox: 0, oy: 0, oz: 0, dx: 0, dy: 0, dz: -1 }
+  private readonly lastPick: Pick = { kind: 'point', index: -1, x: 0, y: 0, z: 0, distance: 0 }
+  private readonly pings = new PingBoard()
+  private readonly pingPoint = new Vector3()
+  /**
+   * The network session (NetHost, set by App): the client, the address joined, the poses read this frame (drawn by
+   * netView in present(), placed for the peer voices in listen()), inputs the client refused since the join, the
+   * peer voices attached (by peer id, with when: a voice outliving its pose by NET.voiceGraceS is let go), the join
+   * awaiting the room's welcome, and the state seen last frame (a change is toasted).
+   */
+  private netClient: NetHost | null = null
+  private netUrl: string | null = null
+  /**
+   * The walking velocity (as the realm clamps it) and the correction of the step request in flight (one at a time):
+   * its state is the room's next move.
+   */
+  private netSent = { x: 0, z: 0, fix: 0 }
+  /** The newest realm state as a move for the room, until netFrame reports it. */
+  private netMove: NetMove | null = null
+  /** The newest correction whose teleport has been queued for the realm (0: none this session). */
+  private netFix = 0
+  /** The realm is in room mode for this session (simCore.ts 'room'). */
+  private netRoom = false
+  private netPeers: readonly NetPeer[] = NO_PEERS
+  private netDropped = 0
+  private readonly netVoices = new Map<number, { voice: PeerVoice; since: number }>()
+  private netJoin: { resolve: (line: string) => void; reject: (e: Error) => void } | null = null
+  private netSeen: NetState = 'idle'
+  private netUnvoice: (() => void) | null = null
+  private netControls: NetControls | null = null
+  /** The peers' places for AudioFrame.peers, reused frame to frame (a room is found again when a peer crosses into another 2 m cell). */
+  private readonly peerPlaces: { id: number; x: number; z: number; walls: number; room: Room | undefined; cell: number }[] = []
+  /** The other players of a network session, drawn as pose-only ghosts (netView.ts). */
+  private readonly netView: NetView
+  /**
+   * The host's rally hand-off (App.tsx: the recruiter's rally): called with the plain request a walk ping (go or
+   * gather) makes for an Active recruit once rallyPlan allows it; the recruiter checks the page's copy and the physics
+   * realm decides on its own readings. Null: a ping is a mark and nothing more. The engine never sends a rally itself.
+   */
+  onRally: ((request: RallyRequest) => void) | null = null
   /** Real-time end of the current haptic thump (ms, rAF clock). */
   private pulseUntil = 0
   private readonly foot: FootControls = { x: 0, z: 0, heading: 0 }
@@ -253,9 +519,9 @@ export class Engine {
   onHalt: ((reason: string) => void) | null = null
 
   private constructor(p: {
-    canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView
+    canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; rigView: RigView
     post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; crowdFrameSeconds: UniformNode<'float', number>; ghost: GhostView
-    options: EngineConfig; quality: QualityRig; places: RegionPlaces | null
+    options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; netView: NetView
   }) {
     this.places = p.places
     this.regionName = p.options.region?.name ?? null
@@ -265,13 +531,21 @@ export class Engine {
     this.crowd = p.crowd
     this.sim = p.sim
     this.view = p.view
+    this.rigView = p.rigView
     this.post = p.post
     this.volumetrics = p.volumetrics
     this.cinema = p.cinema
     this.pacer = p.cinema ? new FramePacer(CINEMA.fps) : null
     this.crowdFrameSeconds = p.crowdFrameSeconds
     this.ghost = p.ghost
+    this.netView = p.netView
     this.poles = new PoleIndex(p.world.furniture)
+    const f = p.world.furniture
+    this.dissolve = new DissolveSet({ lamps: f.lamps.length, trees: f.trees.length, signals: f.signals.length, cars: p.sim.meta.suv.length, people: p.options.agents })
+    this.crowdDissolve = p.crowdDissolve
+    this.crowdLook = p.crowdLook
+    this.lookWords = new Uint32Array(p.options.agents)
+    this.overlapOut = new Int32Array(p.sim.meta.suv.length)
     this.options = p.options
     this.quality = p.quality
     this.hours = p.options.startHour
@@ -279,19 +553,33 @@ export class Engine {
     // Input opens the hardware bus and re-attaches previously granted peripherals (never prompts).
     this.input = new Input(p.canvas)
     this.trigger = new TriggerFeedback(this.input.hal)
+    // Split screen: every player's soundscape over one shared context, each in head space (Web Audio has one listener
+    // per context); alone, player 1's soundscape owns its context and its listener is the head, as ever.
+    const players = p.options.players
+    const share = players > 1 ? sharedAudioContext() : null
+    const soundscape = () => (share ? new Soundscape({ context: share, space: 'head', voices: SPLIT.voices, beds: SPLIT.beds }) : new Soundscape())
+    this.audio = soundscape()
     if (!p.options.audio) this.audio.setEnabled(false)
+    this.captionsOn = p.options.captions !== false
+    // Every sound's start, change and stop, captioned from where the head is (HeadRig.pose is the listener).
+    this.audio.onSound = (e) => { if (this.captionsOn) this.captions.push(e, this.rig.pose) }
     // One audio frame, mutated in place every tick; car slots keep fleet order (voice hysteresis is by index).
-    this.sound = {
-      dt: 0,
-      listener: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 },
-      cars: p.sim.meta.suv.map(() => ({ x: 0, z: 0, heading: 0, speed: 0, player: false })),
-      crowd: { near: 0, waiting: 0, crossing: 0 },
-      daylight: 1,
-      walk: { ew: false, ns: false },
-      intersection: { x: 0, z: 0 },
-      interior: false,
-      speaker: { x: Number.NaN, z: Number.NaN, walls: 0 },
+    this.sound = audioFrameOf(p.sim.meta.suv.length)
+    // The views: player 1's wraps this engine's own camera, head, controls, frame and soundscape; every other player
+    // gets their own, a seat at the input's table and their controls in every step request (SimClient.setPlayers).
+    const cars = p.sim.meta.suv.length
+    const views: PlayerView[] = [this.viewOf(KEYBOARD_SEAT, p.world.camera, this.rig, this.foot, this.drive, this.sound, this.audio)]
+    for (let k = 1; k < players; k++) {
+      const audio = soundscape()
+      if (!p.options.audio) audio.setEnabled(false)
+      views.push(this.viewOf(k as Seat, p.world.camera.clone(), new HeadRig(), { x: 0, z: 0, heading: 0 }, { steer: 0, fwd: 0, back: 0, handbrake: false }, audioFrameOf(cars), audio))
     }
+    this.views = views
+    this.input.setPlayers(players)
+    const controls: PlayerControls[] = []
+    for (let k = 1; k < views.length; k++) controls.push({ foot: views[k].foot, drive: views[k].drive })
+    p.sim.setPlayers(controls)
+    if (views.length > 1) this.layout()
     this.recorder.onEnd = (st, error) => {
       this.cameraTrack?.stop()
       this.cameraTrack = null
@@ -311,17 +599,30 @@ export class Engine {
     const pack = requested.region ?? null
     // A region has no traffic yet: its fleet is empty (the AI drives the procedural grid only).
     // Nor pedestrians: its crowd is hidden, so it runs at the smallest size the realm takes (the GPU is the region's).
-    const options: EngineConfig = { ...requested, cars: pack ? 0 : requested.cars, agents: pack ? AGENTS_RANGE[0] : requested.agents ?? defaultAgents(profile), host: hints.host ?? 'browser' }
+    // Split screen: the post chain is player 1's alone (one pipeline, one velocity history, one full-screen pass), so
+    // with more than one player it is off at every tier, as ?post=0 is, and every viewport takes the direct path.
+    const players = clampPlayers(requested.players)
+    const options: EngineConfig = {
+      ...requested, players, post: requested.post && players === 1,
+      cars: pack ? 0 : requested.cars, agents: pack ? AGENTS_RANGE[0] : requested.agents ?? defaultAgents(profile), host: hints.host ?? 'browser',
+    }
     const layout = pack ? layoutOf(pack) : null
     const places = pack && layout ? new RegionPlaces(pack, layout) : null
     const world = buildWorld(gpu.renderer, options.seed, pack && layout ? { pack, layout } : null)
     // In a region: a sidewalk of the arterial nearest the region's origin (its downtown), facing along the street.
     const start = places && layout ? places.spawn({ x: layout.offset.x, z: layout.offset.z }) : null
     const spawn = start ? { x: start.x, z: start.z } : { x: CITY_SIZE / 2 + CITY.lane, z: CITY_SIZE / 2 + 12 }
+    // Players 1..3 (split screen) start beside player 0 along the sidewalk (the city's spawn sidewalk runs along z; a
+    // region's along its street heading); the realm moves a spawn out of a building lot itself.
+    const along = start ? { x: Math.sin(start.heading), z: Math.cos(start.heading) } : { x: 0, z: 1 }
+    const spawns: { x: number; z: number }[] = []
+    for (let k = 1; k < players; k++) spawns.push({ x: spawn.x + along.x * SPLIT.spawnGap * k, z: spawn.z + along.z * SPLIT.spawnGap * k })
     // The physics realm boots (Rapier, the city's colliders or the region's, the fleet) while this thread sets up quality.
     const simBoot = SimClient.create({
       seed: options.seed, cars: options.cars, agents: options.agents, boxes: world.boxes, furniture: world.furniture, spawn, debug: options.debug === true,
-      region: pack && layout ? regionPhysics(pack, layout) : null,
+      region: pack && layout ? regionPhysics(pack, layout) : null, tracks: options.tracks !== false,
+      ragdoll: options.ragdoll !== false && !pack,
+      ...(spawns.length > 0 && { spawns }),
     })
 
     // Start on the tier the device profile suggests (or the one the URL pins), before anything compiles:
@@ -358,8 +659,14 @@ export class Engine {
     if (sim.meta.agents !== options.agents) throw new Error(`the physics worker simulates ${sim.meta.agents} pedestrians, the page draws ${options.agents}`)
     const view = new FleetView(sim.meta.suv, sim.meta.paint, world.night)
     view.sync(sim.state.poses)
-    world.scene.add(...view0.meshes, view.bodies, view.wheels)
-    const ghost = createGhost({ boxes: world.boxes, furniture: world.furniture, suv: sim.meta.suv, crowdPos: view0.pos, agents: options.agents })
+    // The rigs of the promoted pedestrians (the realm's rig stream; none with the ragdoll off or in a region).
+    const rigView = new RigView(sim.meta.rigSlots)
+    rigView.sync(sim.state.rigs)
+    world.scene.add(...view0.meshes, view.bodies, view.wheels, ...rigView.meshes)
+    // The network ghosts (netView.ts): two hidden instanced meshes until a session's poses arrive, compiled with the rest.
+    const netView = new NetView()
+    world.scene.add(netView.people, netView.cars)
+    const ghost = createGhost({ boxes: world.boxes, furniture: world.furniture, suv: sim.meta.suv, crowdPos: view0.pos, agents: options.agents, rigs: rigView.meshes })
     const { pipeline: post, volumetrics, cinema } = buildPost(gpu.renderer, world.scene, world.camera, options.cinema === false ? null : { resorted: world.resorted }, ghost)
 
     const w = Math.max(1, canvas.clientWidth), h = Math.max(1, canvas.clientHeight)
@@ -375,20 +682,28 @@ export class Engine {
     // pipeline mid-game; the boot veil hides these frames.
     gpu.renderer.render(world.scene, world.camera)
     post.render()
-    // The render buffers exist once three has drawn them (above); the worker's first frame goes straight in.
+    // The render buffers exist once three has drawn them (above); the worker's first frame goes straight in. The
+    // looks (03_Spawn_Agents/look.ts): every body material reads the attribute, so the draws allocated it as well;
+    // the cull reads each agent's body from it, setLook writes it.
+    const crowdLook = gpuBufferOf(gpu.renderer, view0.look)
     const crowd = await CrowdCull.create(gpu.device, {
       pos: gpuBufferOf(gpu.renderer, view0.pos),
       vel: gpuBufferOf(gpu.renderer, view0.vel),
       pose: gpuBufferOf(gpu.renderer, view0.pose),
       drawArgs: gpuBufferOf(gpu.renderer, view0.drawArgs),
       drawLists: gpuBufferOf(gpu.renderer, view0.drawLists),
+      look: crowdLook,
     }, view0.drawTemplate, options.agents, live.cull)
     live.crowd = crowd
     if (sim.state.crowdFrame) crowd.upload(sim.state.crowdFrame)
     if (options.profile) crowd.enableProfiling()
     const engine = new Engine({
-      canvas, gpu, world, crowd, sim, view, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, ghost, options,
+      canvas, gpu, world, crowd, sim, view, rigView, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, ghost, options,
       quality: { governor, targets, applied, mask, live }, places,
+      // The code dissolve's crowd amounts: allocated by the draws above like the frame's buffers, written the same way.
+      crowdDissolve: gpuBufferOf(gpu.renderer, view0.dissolve),
+      crowdLook,
+      netView,
     })
     if (start) engine.input.yaw = yawFacing(start.heading)
     return engine
@@ -405,8 +720,59 @@ export class Engine {
     this.gpu.renderer.setSize(w, h, false)
     this.world.camera.aspect = w / h
     this.world.camera.updateProjectionMatrix()
-    // A new projection moves every pixel without anything moving: the next presented frame is a cut.
+    // Split: the viewports are cut again and every camera takes its rect's aspect (player 1's included).
+    if (this.views.length > 1) this.layout()
+    // A new projection moves every pixel without anything moving: the next presented frame is a cut (player 1's: the
+    // other viewports take the direct path, which keeps no velocity history to smear from).
     this.marked = false
+  }
+
+  /** A view record (PlayerView) over its parts; the rect is the whole canvas until layout() cuts it. */
+  private viewOf(seat: Seat, camera: PerspectiveCamera, rig: HeadRig, foot: FootControls, drive: DriveControls, sound: AudioFrame, audio: Soundscape): PlayerView {
+    const frustum = seat === KEYBOARD_SEAT ? this.frustum : new Frustum()
+    const projScreen = seat === KEYBOARD_SEAT ? this.projScreen : new Matrix4()
+    const planes = seat === KEYBOARD_SEAT ? this.planes : new Float32Array(24)
+    const w = Math.max(1, this.canvas.clientWidth), h = Math.max(1, this.canvas.clientHeight)
+    return {
+      seat, camera, rig, frustum, projScreen, planes, eye: { x: 0, y: 0, z: 0 }, rect: { x: 0, y: 0, width: w, height: h },
+      carHeading: 0, foot, drive, sound, audio, listenerCell: Number.NaN,
+    }
+  }
+
+  /**
+   * Split screen: cuts the canvas into one rect per player (viewports.ts splitScreen, logical pixels; three scales them
+   * by the pixel ratio in setViewport/setScissor), gives each camera its rect's aspect, and sets the renderer up for
+   * scissored draws: autoClear off (present() clears the whole canvas once, then draws each rect) and the scissor test
+   * on. Called at boot and on every resize, never per frame.
+   */
+  private layout(): void {
+    const w = Math.max(1, this.canvas.clientWidth), h = Math.max(1, this.canvas.clientHeight)
+    const rects = splitScreen(this.views.length, w, h)
+    for (let k = 0; k < this.views.length; k++) {
+      const v = this.views[k]
+      v.rect = rects[k]
+      v.camera.aspect = v.rect.width / v.rect.height
+      v.camera.updateProjectionMatrix()
+    }
+    this.gpu.renderer.autoClear = false
+    this.gpu.renderer.setScissorTest(true)
+  }
+
+  /** The renderer's viewport and scissor at a view's rect (split screen only; with one player neither is ever set). */
+  private frameView(v: PlayerView): void {
+    const r = originBottomLeft(v.rect, Math.max(1, this.canvas.clientHeight), ORIGIN_FLIP)
+    this.gpu.renderer.setViewport(r.x, r.y, r.width, r.height)
+    this.gpu.renderer.setScissor(r.x, r.y, r.width, r.height)
+  }
+
+  /** How many local players share the canvas (1..4). */
+  get players(): number {
+    return this.views.length
+  }
+
+  /** Every player's soundscape takes the gesture (App calls this on each click, key and touch): the shared context opens with the first. */
+  unlockAudio(): void {
+    for (const v of this.views) v.audio.unlock()
   }
 
   get adapter(): string {
@@ -419,6 +785,26 @@ export class Engine {
   }
 
   /**
+   * Drawing on or off (Track B's override: the console takes the screen). Off, present() draws nothing and the
+   * canvas is cleared once to black; the physics realm, the step requests, the head, the haptics, the audio and the
+   * console keep running, and the governor holds its tier (frames without a draw would read as cheap). On again, the
+   * first frame drawn is a cut. View-only: nothing reaches the physics realm. Returns the status line the console
+   * prints.
+   */
+  setRendering(on: boolean): string {
+    const off = 'off: physics, audio and the console run; nothing is drawn (render on)'
+    if (on === this.rendering) return on ? 'on' : off
+    this.rendering = on
+    if (on) {
+      // The shutter has nothing to smear from: the next presented frame is a cut.
+      this.marked = false
+      return 'on'
+    }
+    this.gpu.renderer.clear()
+    return off
+  }
+
+  /**
    * Ghost view on or off: the physics shapes as code over the finished frame (ghost.ts). View-only: nothing reaches
    * the physics realm. It lives in the post chain, so the chain stays on at every tier while it shows. Returns the
    * status line the toast and the console print.
@@ -426,8 +812,242 @@ export class Engine {
   setGhost(on: boolean): string {
     this.ghost.setOn(on)
     this.applyTier()
+    if (on && this.views.length > 1) return 'needs the post-processing chain, which is off while the screen is split'
     if (on && !this.options.post) return 'needs the post-processing chain, which ?post=0 turned off'
     return on ? 'on: every physics shape as code (G to hide)' : 'off'
+  }
+
+  /**
+   * Dresses an agent (0 is the player's own body; a recruit by their pedestrian number) in a look out of the crowd's
+   * closed wardrobe (03_Spawn_Agents/look.ts), or null to dress them as the hash does again. The word goes to the
+   * crowd's page-only storage attribute the way the dissolve amounts do (queue.writeBuffer; view-only: nothing
+   * reaches the physics realm, nobody moves for it). Refused (false) for an agent outside the crowd, a look outside
+   * the wardrobe, or once the city has stopped; the eye never sees its own body, but its shadow, the cull's body
+   * choice and every other viewer do.
+   */
+  setLook(agent: number, look: Look | null): boolean {
+    if (this.halted || this.disposed) return false
+    if (!Number.isInteger(agent) || agent < 0 || agent >= this.lookWords.length) return false
+    const word = look === null ? LOOK_NONE : validateLook(look) === null ? -1 : packLook(look)
+    if (word < 0) return false
+    this.lookWords[agent] = word
+    this.gpu.device.queue.writeBuffer(this.crowdLook, agent * 4, this.lookWords, agent, 1)
+    return true
+  }
+
+  /** The look an agent was dressed in (setLook), or null while the hash dresses them (or for no such agent). */
+  lookOf(agent: number): Look | null {
+    if (!Number.isInteger(agent) || agent < 0 || agent >= this.lookWords.length) return null
+    return unpackLook(this.lookWords[agent])
+  }
+
+  /**
+   * The page's network client (10_Network/netClient.ts), handed in once by App like the mind: the engine never builds
+   * or connects one. Nothing is sent until `net.join`. A peer's voice the client reports is attached to player 1's
+   * soundscape (audio.ts attachPeer) under the peer's name and placed at their pose every frame. A second call
+   * replaces the first: its session is left and its voices let go.
+   */
+  setNet(client: NetHost): void {
+    if (this.netClient === client) return
+    this.netUnvoice?.()
+    try { this.netClient?.leave() } catch { /* the old socket may be gone */ }
+    this.netLetGo('replaced')
+    this.netClient = client
+    this.netSeen = client.status
+    this.netUnvoice = client.onVoice((id, stream) => {
+      if (this.netClient !== client || this.halted || this.disposed) return
+      const voice = this.audio.attachPeer(stream, id, this.netName(id))
+      this.netVoices.get(id)?.voice.detach()
+      if (voice) this.netVoices.set(id, { voice, since: this.simTime })
+      else this.netVoices.delete(id)
+    })
+  }
+
+  /**
+   * The console's hold on the session (NetControls): join a room by its address and the operator's session token
+   * under the name the Concierge was given ('Visitor' until then), leave it, or read it. Built once, frozen.
+   */
+  get net(): NetControls {
+    if (this.netControls) return this.netControls
+    this.netControls = Object.freeze({
+      join: (url: string, token: string) => new Promise<string>((resolve, reject) => {
+        const c = this.netClient
+        if (!c) { reject(new Error('no network client on this page')); return }
+        if (this.halted || this.disposed) { reject(new Error('the city has stopped')); return }
+        if (this.netJoin) { reject(new Error('a join is already under way')); return }
+        // The room's authority holds the procedural city of a seed and its fleet on the track network (10_Network/
+        // mirror.node.ts, garage.node.ts); a surveyed region has no mirror yet, and street-hopping traffic no plan.
+        if (this.places) { reject(new Error('the room holds the procedural city; open the page without ?region=on to join')); return }
+        if (this.options.tracks === false) { reject(new Error('the room holds the fleet on the track network; open the page without ?tracks=0 to join')); return }
+        // Whatever the last session left (its end may not have been seen yet): a new session starts from nothing.
+        this.netLetGo('a new session')
+        const world = `city/${this.options.seed >>> 0}/${this.sim.meta.suv.length}`
+        const why = c.connect(url, token, this.playerName.trim() || NET.defaultName, world)
+        if (why !== null) { reject(new Error(why)); return }
+        this.netUrl = url
+        this.netDropped = 0
+        this.netSeen = c.status
+        this.netJoin = { resolve, reject }
+      }),
+      leave: () => {
+        const c = this.netClient
+        if (!c || c.status === 'idle' || c.status === 'closed') return 'no session'
+        c.leave()
+        this.netLetGo(c.reason ?? 'left')
+        return `left ${this.netUrl ?? 'the room'}`
+      },
+      status: (): NetReport => {
+        const c = this.netClient
+        return {
+          state: c ? c.status : 'idle', url: this.netUrl, id: c ? c.id : 0, peers: this.netPeers.length, dropped: this.netDropped,
+          pending: c ? c.pending().length : 0, voices: this.netVoices.size, reason: c ? c.reason : null,
+          corrections: c ? c.corrections : 0, corrected: c ? c.corrected : null,
+        }
+      },
+    })
+    return this.netControls
+  }
+
+  /**
+   * A chat line from the room (NetClientOptions.onChat, after the core's 14A screen and App's second one): a caption
+   * in the peer's name, placed where the room has them (nowhere if their pose has not arrived), read as speech is.
+   * Nothing is spoken aloud and nothing reaches the physics realm.
+   */
+  netChat(from: number, name: string, text: string): void {
+    if (!this.captionsOn || this.halted || this.disposed) return
+    const at = this.netPeers.find((p) => p.id === from)
+    const e = { kind: 'peer' as const, source: from, x: at ? at.x : Number.NaN, z: at ? at.z : Number.NaN, t: this.audio.clock, text, label: name, agent: from }
+    this.captions.push({ ...e, phase: 'start' }, this.rig.pose)
+    this.captions.push({ ...e, phase: 'stop' }, this.rig.pose)
+  }
+
+  /**
+   * A ping from the room (NetClientOptions.onPing): cued where it landed for every player and captioned through the
+   * cue's own event ('[ping: Ada: go there]'). It goes on no board here and asks nobody over: a remote ping is heard
+   * and read, never acted on by this page's recruits.
+   */
+  netPing(from: number, kind: PingKind, x: number, _y: number, z: number): void {
+    if (this.halted || this.disposed || !PING_KINDS.includes(kind) || !Number.isFinite(x + z)) return
+    this.audio.cuePing(x, z, `${this.netName(from)}: ${PING_WORDS[kind]}`)
+    for (let k = 1; k < this.views.length; k++) this.views[k].audio.cuePing(x, z)
+  }
+
+  /** A peer's name as the room last gave it, else 'player N'. */
+  private netName(id: number): string {
+    return this.netPeers.find((p) => p.id === id)?.name ?? `player ${id}`
+  }
+
+  /**
+   * One frame of the session: the client's state watched (a join settled on the room's welcome or the socket's end,
+   * a change toasted), then, while joined, the newest realm step reported as a move (player 1's: paired in received()
+   * with the request that ran it), a new correction from the room applied (a teleport to the truth, queued for the next
+   * step request, whose state is the first under that correction), and the room's poses read, carried forward to now.
+   * Between sessions nothing is drawn or placed.
+   */
+  private netFrame(): void {
+    const c = this.netClient
+    if (!c) return
+    const state = c.status
+    if (state !== this.netSeen) {
+      this.netSeen = state
+      if (state === 'joined') {
+        // Player 1 walks and drives as the room's authority does (simCore.ts 'room'): ahead of the welcome's teleport,
+        // and of anything the player queued before it.
+        this.sim.send({ c: 'room', on: true }, true)
+        this.netRoom = true
+        this.netJoin?.resolve(`joined ${this.netUrl ?? 'the room'} as player ${c.id}`)
+        this.netJoin = null
+        this.toast('Network', `joined as player ${c.id}`)
+      } else if (state === 'closed') {
+        const why = c.reason ?? 'closed'
+        this.netJoin?.reject(new Error(why))
+        this.netJoin = null
+        this.netLetGo(why)
+        this.toast('Network', `session ended: ${why}`)
+      }
+    }
+    if (state !== 'joined') return
+    const m = this.netMove
+    this.netMove = null
+    // Dropped: a step the room could not have kept (run before a correction was applied, or unreadable); a step held
+    // for the next input or with nothing to say is not.
+    if (m) {
+      const done = c.move(m)
+      if (done === 'stale' || done === 'refused') this.netDropped++
+    }
+    // The room's truth, once per correction: at the wheel the car in the room's state (the realm builds it again from
+    // those numbers, as the room did), on foot player 1 put down there (the realm leaves a car for it).
+    const fix = c.correction()
+    if (fix && fix.fix > this.netFix) {
+      this.netFix = fix.fix
+      // Ahead of anything the player queued meanwhile (an E pressed on this frame): it then acts on the truth, and the
+      // door it takes is reported against the truth (simProtocol.ts doorOf).
+      this.sim.send(fix.car ? { c: 'netCar', i: fix.car.index, state: fix.car.state } : { c: 'teleport', x: fix.x, z: fix.z }, true)
+      if (fix.fix > 1 && !fix.drift) this.toast('Network', 'the room put you back where it has you')
+    }
+    this.netPeers = c.poses(performance.now())
+    // A voice whose player is no longer in the room (or never arrived) is let go after the grace.
+    if (this.netVoices.size > 0) {
+      for (const [id, v] of this.netVoices) {
+        if (this.simTime - v.since >= NET.voiceGraceS && !this.netPeers.some((p) => p.id === id)) {
+          v.voice.detach()
+          this.netVoices.delete(id)
+        }
+      }
+    }
+  }
+
+  /**
+   * A realm state as the room's move: the door player 1 took this step, if any; on foot the walking velocity the
+   * request asked for and the capsule the step left; at the wheel the command the car ran and the chassis; the
+   * substeps it ran; the correction the request carried out.
+   */
+  private netMoveOf(s: StepState): NetMove {
+    const sent = this.netSent
+    const door = doorOf(s.events)
+    const n = s.physics.steps
+    if (s.driving >= 0) {
+      const p = s.poses, o = s.driving * POSE.stride
+      const at = { x: p[o + POSE.x], y: p[o + POSE.y], z: p[o + POSE.z] }
+      return { mode: 'drive', x: 0, z: 0, ...(s.wheels && { wheels: s.wheels }), n, heading: p[o + POSE.heading], at, fix: sent.fix, ...(door && { door }) }
+    }
+    const a = s.avatar
+    return { mode: 'foot', x: sent.x, z: sent.z, n, heading: this.foot.heading, at: { x: a.x, y: a.y, z: a.z }, fix: sent.fix, ...(door && { door }) }
+  }
+
+  /** The session over: no poses drawn or placed, every peer voice let go, a join still waiting told why, the room mode off. */
+  private netLetGo(why: string): void {
+    if (this.netRoom && !this.halted && !this.disposed) this.sim.send({ c: 'room', on: false }, true)
+    this.netRoom = false
+    this.netPeers = NO_PEERS
+    this.netMove = null
+    this.netFix = 0
+    this.netSent.fix = 0
+    for (const v of this.netVoices.values()) v.voice.detach()
+    this.netVoices.clear()
+    this.peerPlaces.length = 0
+    this.netJoin?.reject(new Error(why))
+    this.netJoin = null
+  }
+
+  /** Where each peer with a voice stands, for AudioFrame.peers: their pose, the walls from this head, and their room (by 2 m cell). */
+  private placePeers(): AudioFrame['peers'] {
+    const out = this.peerPlaces
+    let n = 0
+    for (const p of this.netPeers) {
+      if (!this.netVoices.has(p.id)) continue
+      const slot = out[n] ?? (out[n] = { id: 0, x: 0, z: 0, walls: 0, room: undefined, cell: Number.NaN })
+      const cell = this.places ? Number.NaN : cellOf(p.x, p.z)
+      if (slot.id !== p.id || cell !== slot.cell) {
+        slot.cell = cell
+        slot.room = Number.isNaN(cell) ? undefined : roomAt(this.world.boxes, p.x, p.z)
+      }
+      slot.id = p.id; slot.x = p.x; slot.z = p.z
+      slot.walls = this.wallsTo(p.x, p.z)
+      n++
+    }
+    out.length = n
+    return out
   }
 
   /** Enter the nearest car, or leave the current one on the driver's (left) side (decided in the physics realm). */
@@ -435,9 +1055,92 @@ export class Engine {
     this.sim.send({ c: 'interact' })
   }
 
+  /**
+   * A ping of `kind` where the head looks (08_Swarm/ping.ts): the look ray (head.ts aimRay, on foot or at the wheel)
+   * meets the page's own copies — the pedestrians' capsules in the crowd copy, the cars' chassis in the newest poses,
+   * the lamps, trees and signal poles, else the ground — and the mark goes on the board, is cued and captioned where
+   * it landed, and, for a walk ping (go or gather), is offered to the host's recruiter through onRally. Returns what
+   * the ray met as plain data, or null when nothing was within range, the board refused (less than PING_INTERVAL_S
+   * after the last, an unknown kind) or the city has stopped. Nothing here reaches the physics realm.
+   */
+  pingAt(kind: PingKind): Pick | null {
+    if (this.halted || this.disposed || !PING_KINDS.includes(kind)) return null
+    aimRay(this.rig.pose, this.ray)
+    const s = this.sim.state
+    const met = pickPing(this.ray, { frame: this.crowdPose, agents: this.options.agents, poses: s.poses, suv: this.sim.meta.suv, furniture: this.world.furniture }, this.lastPick)
+    if (!met) return null
+    const ping = this.pings.place(kind, this.lastPick, this.simTime)
+    if (!ping) return null
+    const pick = { kind: ping.pick, index: ping.index, x: ping.x, y: ping.y, z: ping.z, distance: this.lastPick.distance }
+    // Cued and captioned where it landed: the cue's own 'ping' event carries this label into the captions.
+    this.audio.cuePing(ping.x, ping.z, `${PING_WORDS[kind]}: ${pingWhat(ping)}`)
+    for (let k = 1; k < this.views.length; k++) this.views[k].audio.cuePing(ping.x, ping.z)
+    if (ping.kind === 'go' || ping.kind === 'gather') this.rallyFor(ping)
+    return pick
+  }
+
+  /** The kind the key, button or touch asks: 'go', or the kind after the newest ping's when it was placed within a second. */
+  private pingKindFor(now: number): PingKind {
+    const newest = this.pings.newest(now)
+    if (!newest || now - newest.at >= 1) return 'go'
+    return PING_KINDS[(PING_KINDS.indexOf(newest.kind) + 1) % PING_KINDS.length]
+  }
+
+  /**
+   * A walk ping as a rally: rallyPlan (08_Swarm/ping.ts) turns it into the plain request for one Active recruit (a go
+   * ping) or one per Active recruit (a gather ping), or says why not; a request goes to the host (onRally), a reason to
+   * a toast. Quiet while nobody is tethered: a ping then is a mark and nothing more.
+   */
+  private rallyFor(ping: Ping): void {
+    const st = this.sim.state
+    const recruits = st.recruits
+    if (!recruits.some((r) => r.arrived)) return
+    const operator = st.driving >= 0 ? null : { x: this.rig.pose.x, z: this.rig.pose.z }
+    const agents = ping.kind === 'gather' ? recruits.filter((r) => r.arrived).map((r) => r.agent) : [undefined]
+    for (const agent of agents) {
+      const plan = rallyPlan(this.pings, recruits, operator, this.simTime, agent)
+      if (plan.request) {
+        const fn = this.onRally
+        if (fn) {
+          try { fn(plan.request) } catch (e) { this.errors.push(`rally: ${e instanceof Error ? e.message : String(e)}`) }
+        }
+      } else {
+        this.toast('Rally', plan.reason)
+      }
+    }
+  }
+
+  /** Split screen as the snapshot reports it: the player count, each viewport's rect and each seat (its pad, glyph family and mode). */
+  private playersView(st: StepState): NonNullable<SipocSnapshot['output']['players']> {
+    const seats: SeatView[] = []
+    for (let k = 0; k < this.views.length; k++) {
+      const seat = this.views[k].seat
+      seats.push({ seat, pad: this.input.seats.padIndexOf(seat), family: this.input.familyOf(seat), mode: (st.drivings[k] ?? -1) >= 0 ? 'vehicle' : 'foot' })
+    }
+    return { count: this.views.length, rects: this.views.map((v) => ({ x: v.rect.x, y: v.rect.y, width: v.rect.width, height: v.rect.height })), seats }
+  }
+
+  /** The pings standing now as the HUD draws them: the board's marks with their distance from the head and their place on the screen. */
+  private pingMarks(): SipocSnapshot['output']['pings'] {
+    const alive = this.pings.alive(this.simTime)
+    if (alive.length === 0) return undefined
+    const cam = this.world.camera, eye = this.rig.pose, v = this.pingPoint, now = this.simTime
+    return alive.map((p) => {
+      v.set(p.x, p.y, p.z).project(cam)
+      const ahead = v.z < 1 && Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1
+      return {
+        id: p.id, kind: p.kind, pick: p.pick, index: p.index, x: p.x, z: p.z, age: now - p.at, left: p.until - now,
+        distance: Math.hypot(p.x - eye.x, p.y - eye.y, p.z - eye.z),
+        sx: ahead ? (v.x + 1) / 2 : Number.NaN, sy: ahead ? (1 - v.y) / 2 : Number.NaN,
+      }
+    })
+  }
+
   /** A new state from the physics realm: what changed for the player, the distance counters, the haptic edge. */
   private received(s: StepState, prev: StepState): void {
     this.fresh = true
+    // The answer to the one request in flight: player 1's step as the room's move (netFrame reports it while joined).
+    if (this.netClient?.status === 'joined') this.netMove = this.netMoveOf(s)
     // Where they stand, for SimControls.crowd.positions (the frame's first 4 floats per person are its position), a few
     // times a second: before the upload, which hands the buffer back to the worker.
     const now = performance.now()
@@ -449,14 +1152,30 @@ export class Engine {
           this.crowdXZ[2 * i] = frame[4 * i]
           this.crowdXZ[2 * i + 1] = frame[4 * i + 2]
         }
+        if (this.crowdPose.length !== 4 * n) this.crowdPose = new Float32Array(4 * n)
+        this.crowdPose.set(frame.subarray(0, 4 * n))
         this.crowdCopiedAt = now
       }
     }
-    // The contact wipe's view of the crowd: who is nearest the user's body in this frame.
+    // The contact wipe's view of the crowd: who is nearest the user's body in this frame (and, for the code dissolve,
+    // whose bodies it is inside).
     if (s.crowdFrame) this.contactScan(s)
+    // The promoted pedestrians' rigs: their figures are hidden in the render copy (before the upload re-applies the
+    // mask) and the rigs posed where they stand. View-only: the realm decided who is promoted.
+    this.rigView.sync(s.rigs)
+    this.crowd.hide(this.rigView.hidden)
     // The pedestrians the worker simulated: straight into the render buffers (the copy is only ever drawn).
     if (s.crowdFrame && this.crowd.upload(s.crowdFrame)) this.crowdFrames++
     for (const ev of s.events) {
+      // Another local player's car: their head sits down facing its windscreen; the toasts and the haptics are player 1's.
+      if ((ev.e === 'entered' || ev.e === 'exited') && ev.player > 0) {
+        const v = this.views[ev.player]
+        if (v && ev.e === 'entered') {
+          v.carHeading = ev.heading
+          this.input.intent(v.seat).yaw = yawFacing(ev.heading)
+        }
+        continue
+      }
       if (ev.e === 'entered') {
         // Sit down facing the windscreen; the head then turns with the car.
         this.carHeading = ev.heading
@@ -489,15 +1208,20 @@ export class Engine {
     return Object.freeze({
       agents: this.options.agents,
       operator: () => (this.halted || this.disposed || this.sim.state.driving >= 0 ? null : { x: this.rig.pose.x, z: this.rig.pose.z }),
-      send: (cmd: Extract<SimCommand, { c: 'recruit' | 'dismiss' }>) => {
+      send: (cmd: Extract<SimCommand, { c: 'recruit' | 'dismiss' | 'rally' }>) => {
         if (cmd?.c === 'recruit') this.sim.send({ c: 'recruit', id: cmd.id, skill: cmd.skill, agent: cmd.agent })
         else if (cmd?.c === 'dismiss') this.sim.send(cmd.agent === undefined ? { c: 'dismiss' } : { c: 'dismiss', agent: cmd.agent })
+        else if (cmd?.c === 'rally') this.sim.send({ c: 'rally', agent: cmd.agent, x: cmd.x, z: cmd.z })
       },
       onState: (fn: (s: StepState) => void) => {
         this.stateListeners.add(fn)
         return () => { this.stateListeners.delete(fn) }
       },
-      cue: (x: number, z: number) => this.audio.cue(x, z),
+      cue: (x: number, z: number) => {
+        const heard = this.audio.cue(x, z)
+        for (let k = 1; k < this.views.length; k++) this.views[k].audio.cue(x, z)
+        return heard
+      },
     })
   }
 
@@ -521,15 +1245,26 @@ export class Engine {
         clips.set(clip, buffer)
         return clip
       },
-      play: (clip: SpeechClip, agent: number): Utterance => {
+      play: (clip: SpeechClip, agent: number, text?: string): Utterance => {
         const buffer = clips.get(clip)
         if (!buffer) throw new Error('not speech this soundscape decoded')
         if (this.halted || this.disposed) throw new Error('the city has stopped')
         const at = this.sim.state.recruits.find((r) => r.agent === agent)
         if (!at || !Number.isFinite(at.x + at.z)) throw new Error(`agent ${agent} is not with the operator`)
-        const u = this.audio.speak(buffer, at.x, at.z, this.wallsTo(at.x, at.z))
+        // The caption names them by number and skill (pedestrians have no names): 'Pedestrian 1234 (Rust)'.
+        const label = at.skill ? `Pedestrian ${agent} (${at.skill})` : `Pedestrian ${agent}`
+        const u = this.audio.speak(buffer, at.x, at.z, this.wallsTo(at.x, at.z), text, { agent, label })
         this.speaker = agent
-        return u
+        this.speakerCell = Number.NaN
+        if (this.views.length === 1) return u
+        // Split: the same clip at the same head for every other player, muffled by the walls from their own head; a
+        // soundscape that cannot sound (still locked, failed) is skipped. One utterance: its stop stops them all.
+        const others: Utterance[] = []
+        for (let k = 1; k < this.views.length; k++) {
+          const v = this.views[k]
+          try { others.push(v.audio.speak(buffer, at.x, at.z, this.wallsFrom(v.camera, at.x, at.z), text, { agent, label })) } catch { /* that player hears nothing of it */ }
+        }
+        return Object.freeze({ ended: u.ended, stop: () => { u.stop(); for (const o of others) o.stop() } })
       },
     })
   }
@@ -565,8 +1300,9 @@ export class Engine {
     const realDt = this.lastMs < 0 ? 16.7 : nowMs - this.lastMs
     this.lastMs = nowMs
     this.clock.push(realDt)
-    // The governor reads the raw frame interval (not the clamped simulation step).
-    if (this.quality.governor.sample(realDt, nowMs) !== null) this.applyTier()
+    // The governor reads the raw frame interval (not the clamped simulation step); it holds while nothing is drawn
+    // (setRendering), since an idle GPU would read as room to step the tier up.
+    if (this.rendering && this.quality.governor.sample(realDt, nowMs) !== null) this.applyTier()
     const dt = Math.min(realDt / 1000, 0.05)
     this.simTime += dt
     this.hours = (this.hours + (dt / (this.options.dayMinutes * 60)) * 24) % 24
@@ -584,46 +1320,37 @@ export class Engine {
     if (input.take('ghost')) this.toast('Ghost view', this.setGhost(!this.ghost.on))
     if (input.take('reset') && driving >= 0) sim.send({ c: 'reset' })
 
-    // Controls for the physics realm; it applies the set that matches its own state (on foot or at the wheel).
-    const a = input.analog
-    const yaw = input.yaw
-    const fx = -Math.sin(yaw), fz = -Math.cos(yaw)
-    const rx = Math.cos(yaw), rz = -Math.sin(yaw)
+    // Controls for the physics realm (controls.ts readControls, the same maths for every seat); it applies the set that
+    // matches its own state (on foot or at the wheel). The other local players' sets ride in the same request
+    // (SimClient.setPlayers holds their records; the realm reads avatars[k] from players[k − 1]).
     const foot = this.foot, drive = this.drive
-    foot.x = 0; foot.z = 0
-    // The player's own body faces where the head looks; it only turns that figure in the worker's crowd.
-    foot.heading = yaw + Math.PI
-    drive.steer = 0; drive.fwd = 0; drive.back = 0; drive.handbrake = false
+    readControls(input, driving >= 0, foot, drive)
+    for (let k = 1; k < this.views.length; k++) {
+      const v = this.views[k]
+      readControls(input.intent(v.seat), (st.drivings[k] ?? -1) >= 0, v.foot, v.drive)
+    }
     let rumble = 0, trigger = 0
     if (driving < 0) {
-      let mx = 0, mz = 0
-      if (input.down('KeyW')) { mx += fx; mz += fz }
-      if (input.down('KeyS')) { mx -= fx; mz -= fz }
-      if (input.down('KeyD')) { mx += rx; mz += rz }
-      if (input.down('KeyA')) { mx -= rx; mz -= rz }
-      mx += fx * a.moveY + rx * a.moveX
-      mz += fz * a.moveY + rz * a.moveX
-      // Keyboard diagonals are normalised; a half-pushed stick walks at half speed.
-      const len = Math.hypot(mx, mz)
-      const speed = input.down('ShiftLeft') || a.run ? RUN : WALK
-      const k = len > 1 ? speed / len : speed
-      foot.x = mx * k
-      foot.z = mz * k
       // A script's walk (a harness's, say) overrides the keys while it lasts; the worker still caps it at a run.
       applyWalk(this.scriptedWalk, nowMs, foot)
       this.pulseUntil = 0
     } else {
-      drive.steer = Math.max(-1, Math.min(1, (input.down('KeyA') ? 1 : 0) - (input.down('KeyD') ? 1 : 0) + a.steer))
-      // Left stick Y drives as well as R2/L2 (touch already folds its stick into throttle/brake; max() keeps one source).
-      drive.fwd = input.down('KeyW') ? 1 : Math.max(a.throttle, a.moveY > 0 ? a.moveY : 0)
-      drive.back = input.down('KeyS') ? 1 : Math.max(a.brake, a.moveY < 0 ? -a.moveY : 0)
-      drive.handbrake = input.down('Space') || a.handbrake
       // What the wheels received (vetted, L2-limited) in the audited state: the trigger feels it, the rumble reports it.
       trigger = st.haptics.trigger
       rumble = nowMs < this.pulseUntil ? HAPTICS.pulse : st.haptics.limited ? HAPTICS.limiter : 0
     }
     this.pendingDt = Math.min(MAX_STEP_DT, this.pendingDt + dt)
     const physicsStart = performance.now()
+    // The step about to go out (one at a time: none is in flight), for the room: the walking velocity it asks for and
+    // the correction it carries out (a teleport queued by netFrame rides this request).
+    if (!sim.pending) {
+      // What the realm applies (simProtocol.ts footWish, the clamp it and the room share): a scripted walk past a run
+      // is reported at a run.
+      const w = footWish(foot.x, foot.z)
+      this.netSent.x = w.x
+      this.netSent.z = w.z
+      this.netSent.fix = this.netFix
+    }
     if (sim.request({ dt: this.pendingDt, foot, drive })) this.pendingDt = 0
     const postMs = performance.now() - physicsStart
     // Hardware hears only audited states: the worker sends a state after its Ring-0 audit, a panic instead of one.
@@ -650,11 +1377,27 @@ export class Engine {
       this.avatarHeading = input.yaw + Math.PI
       this.rig.onFoot(cam, av.x, av.feetY, av.z, input.yaw, input.pitch, dt)
     }
+    // The other local players' heads, each on its own camera from its own avatar (or the car it drives) and its seat's
+    // yaw and pitch; posed every animation frame like player 1's (their listeners read it; the car carries it).
+    for (let k = 1; k < this.views.length; k++) this.poseView(this.views[k], k, st, dt)
+
+    // The ping (08_Swarm/ping.ts): the look ray from the head just posed meets the page's own copies, never the realm.
+    // A press within a second of the last ping asks the next kind (go, look, gather, wait); the board rates and bounds it.
+    if (input.take('ping')) this.pingAt(this.pingKindFor(this.simTime))
+    // Pings, and the rallies they ask for, are player 1's alone (skills.ts RECRUITING_PLAYER): the other seats' presses
+    // are dropped here, every frame, so none waits to be taken.
+    for (let k = 1; k < this.views.length; k++) this.input.intent(this.views[k].seat).take('ping')
 
     // Ghost-mode collision: what the user's body passes through this frame shapes the contact wipe (drawn frames read it).
     // On the wall clock (the pulse bounds a step itself), not the simulation's capped step: at a low frame rate the
     // wipe must not outlast its passage.
     this.contactPulse.update(this.contactNow(st), realDt / 1000)
+    // The code dissolve: every mesh the body is inside this frame goes to code at once; the rest reinstantiate over
+    // DISSOLVE.release on the same wall clock. The amounts reach the GPU in present() (view-only: instance data).
+    this.dissolveNow(st)
+    this.dissolve.update(realDt / 1000)
+    // The network session (NetHost): this frame's input offered to the room, the room's poses read for the draw.
+    this.netFrame()
 
     // Drawing: every animation frame, or in cinema mode only those the pacer presents (24 a second). Nothing above
     // waits for it: the step request, the haptics and the head pose ran this frame whether or not it is drawn.
@@ -670,6 +1413,11 @@ export class Engine {
 
   /** One drawn frame: the cull for this camera, the city's light, the cinema camera's uniforms, the render. */
   private present(nowMs: number, st: StepState, focusX: number, focusZ: number): void {
+    // Render off (setRendering): nothing is drawn, but the sun keeps its place for the listener and the snapshot.
+    if (!this.rendering) {
+      this.sun = sunAt(this.hours)
+      return
+    }
     const cam = this.world.camera
     this.projScreen.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)
     this.frustum.setFromProjectionMatrix(this.projScreen)
@@ -695,14 +1443,63 @@ export class Engine {
     this.ghost.contact.value = wipe
     this.ghost.contactKind.value = this.contactPulse.kind
     this.lastDrawnMs = nowMs
+    // The code dissolve's amounts, to the meshes that read them, before the frame that reads them.
+    this.flushDissolve()
+    // The room's other players, as the poses read this frame (view-only: instance matrices).
+    this.netView.update(this.netPeers)
+    const split = this.views.length > 1
+    if (split) {
+      // One clear of the whole canvas (colour, depth, stencil: a clear pass ignores the scissor), then each viewport is
+      // drawn into its own rect with autoClear off (layout); player 1's first.
+      this.gpu.renderer.clear(true, true, true)
+      this.frameView(this.views[0])
+    }
     if (post) this.post.render()
     else this.gpu.renderer.render(this.world.scene, cam)
+    // The other players' viewports: each culled for its own camera, under the sky re-centred on that head, drawn on the
+    // direct path. The sun's shadow focus, the lamp lights and the building sort stay player 1's (world.update above).
+    if (split) for (let k = 1; k < this.views.length; k++) this.presentView(this.views[k])
     if (this.options.profile && !this.resolving) {
       this.resolving = true
       this.gpu.renderer.resolveTimestampsAsync('render').then((ms) => {
         if (typeof ms === 'number' && ms > 0) this.gpuRenderMs = this.gpuRenderMs * 0.9 + ms * 0.1
         this.resolving = false
       }, () => { this.resolving = false })
+    }
+  }
+
+  /** One split-screen viewport after player 1's: the crowd cull for its camera, the sky on its head, its scissored draw. */
+  private presentView(v: PlayerView): void {
+    const cam = v.camera
+    v.projScreen.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)
+    v.frustum.setFromProjectionMatrix(v.projScreen)
+    packFrustumPlanes(v.frustum.planes, v.planes)
+    v.eye.x = cam.position.x; v.eye.y = cam.position.y; v.eye.z = cam.position.z
+    this.crowd.step({ camera: v.eye, planes: v.planes })
+    this.world.follow(cam)
+    this.frameView(v)
+    this.gpu.renderer.render(this.world.scene, cam)
+  }
+
+  /**
+   * Player k's head (k ≥ 1) on its view's camera: the driver's seat of the car they drive (the head carried by the car,
+   * their seat's yaw turning with it), else eye level over their avatar's feet. The same HeadRig calls as player 1's.
+   */
+  private poseView(v: PlayerView, k: number, st: StepState, dt: number): void {
+    const seat = this.input.intent(v.seat)
+    const d = st.drivings[k] ?? -1
+    if (d >= 0) {
+      const p = st.poses, o = d * POSE.stride
+      const t = this.carPos, r = this.carRot
+      t.x = p[o + POSE.x]; t.y = p[o + POSE.y]; t.z = p[o + POSE.z]
+      r.x = p[o + POSE.qx]; r.y = p[o + POSE.qy]; r.z = p[o + POSE.qz]; r.w = p[o + POSE.qw]
+      const h = p[o + POSE.heading]
+      seat.yaw = carriedYaw(seat.yaw, v.carHeading, h)
+      v.carHeading = h
+      v.rig.inVehicle(v.camera, t, r, this.sim.meta.suv[d], seat.yaw, seat.pitch)
+    } else {
+      const av = st.avatars[k] ?? st.avatar
+      v.rig.onFoot(v.camera, av.x, av.feetY, av.z, seat.yaw, seat.pitch, dt)
     }
   }
 
@@ -723,8 +1520,11 @@ export class Engine {
     if (d >= 0) {
       const o = d * POSE.stride, c = chassisBox(this.sim.meta.suv[d])
       this.personGapCar = personGapToBox(frame, n, s.poses[o + POSE.x], s.poses[o + POSE.z], s.poses[o + POSE.heading], c.hx, c.hz)
+      // The code dissolve: the people the chassis (grown by the reach) stands in, by row.
+      this.peopleCount = peopleWithinBox(frame, n, s.poses[o + POSE.x], s.poses[o + POSE.z], s.poses[o + POSE.heading], c.hx + DISSOLVE.reach, c.hz + DISSOLVE.reach, this.peopleOut)
     } else {
       this.personGapCar = CONTACT.far
+      this.peopleCount = peopleWithin(frame, n, s.avatar.x, s.avatar.z, PERSON.radius + DISSOLVE.reach, this.peopleOut)
     }
   }
 
@@ -742,6 +1542,58 @@ export class Engine {
       person: this.personGapFoot,
       vehicle: carGap(st.poses, this.sim.meta.suv, x, z, PERSON.radius),
     })
+  }
+
+  /**
+   * What the user's body is inside this frame, by instance, each put at 1 (dissolve.ts): the poles (lamps, trees,
+   * signals) around the avatar's disc or under the driven car's footprint, the cars the avatar on foot stands in (the
+   * driven car never dissolves: its shell is drawn from inside by design, as contactNow exempts it), the people
+   * gathered with the newest crowd frame, and every car passing through another car (7.1), so neither is seen
+   * interpenetrating. Reads poses, the furniture and the frame's rows; nothing crosses to the worker.
+   */
+  private dissolveNow(st: StepState): void {
+    const set = this.dissolve, suv = this.sim.meta.suv, d = st.driving
+    let poles = 0
+    if (d >= 0) {
+      const o = d * POSE.stride, c = chassisBox(suv[d])
+      poles = this.poles.withinBox(st.poses[o + POSE.x], st.poses[o + POSE.z], st.poses[o + POSE.heading], c.hx + DISSOLVE.reach, c.hz + DISSOLVE.reach, this.poleOut)
+    } else {
+      const x = st.avatar.x, z = st.avatar.z, pad = PERSON.radius + DISSOLVE.reach
+      poles = this.poles.within(x, z, pad, this.poleOut)
+      const cars = carsWithin(st.poses, suv, x, z, pad, this.carOut)
+      for (let i = 0; i < cars; i++) set.touch('cars', this.carOut[i])
+    }
+    for (let i = 0; i < poles; i++) {
+      const slot = poleSlot(this.poleOut[i], this.world.furniture)
+      if (slot) set.touch(slot.list, slot.index)
+    }
+    for (let i = 0; i < this.peopleCount; i++) set.touch('people', this.peopleOut[i])
+    const overlapping = carsOverlapping(st.poses, suv, DISSOLVE.reach, this.overlapOut, d)
+    for (let i = 0; i < overlapping; i++) set.touch('cars', this.overlapOut[i])
+  }
+
+  /**
+   * The amounts changed since the last drawn frame, to the GPU: the props' and the fleet's instanced attributes are
+   * marked for three's upload (whole buffers of a few kilobytes, only when one changed; the wheels take their car's
+   * value four times), the crowd's storage buffer is written directly, as the frame upload is (CrowdCull.upload).
+   */
+  private flushDissolve(): void {
+    const set = this.dissolve, props = this.world.dissolve, fleet = this.view.dissolve
+    flushProp(set.lamps, props.lamps)
+    flushProp(set.trees, props.trees)
+    flushProp(set.signals, props.signals)
+    if (set.cars.dirty) {
+      copyDirty(set.cars, fleet.bodies.array as Float32Array)
+      copyDirty(set.cars, fleet.wheels.array as Float32Array, 4)
+      fleet.bodies.needsUpdate = true
+      fleet.wheels.needsUpdate = true
+      set.cars.clean()
+    }
+    const people = set.people
+    if (people.dirty) {
+      this.gpu.device.queue.writeBuffer(this.crowdDissolve, people.dirtyStart * 4, people.values, people.dirtyStart, people.dirtyEnd - people.dirtyStart)
+      people.clean()
+    }
   }
 
   /**
@@ -769,18 +1621,19 @@ export class Engine {
     if (cut) this.cuts++
   }
 
-  /** Feeds the soundscape from the final camera pose, the fleet, the crowd and the signals. */
-  private listen(dt: number, st: StepState): void {
-    const f = this.sound
-    const cam = this.world.camera
+  /**
+   * One soundscape's frame from a head's final camera pose, the fleet, the crowd and the signals: the listener is that
+   * head (HeadRig sets rotation (pitch, yaw, 0, 'YXZ')), `driving` the car that player drives (−1 on foot), whose cabin
+   * muffles the city for them. The listener's and the speaker's rooms are the caller's (listen).
+   */
+  private soundFrame(f: AudioFrame, cam: PerspectiveCamera, st: StepState, dt: number, driving: number): void {
     f.dt = dt
     f.listener.x = cam.position.x; f.listener.y = cam.position.y; f.listener.z = cam.position.z
-    // HeadRig sets rotation (pitch, yaw, 0, 'YXZ'): the listener is the head, on foot or in the driver's seat.
     f.listener.yaw = cam.rotation.y; f.listener.pitch = cam.rotation.x
     const p = st.poses
     for (let i = 0; i < f.cars.length; i++) {
       const c = f.cars[i], o = i * POSE.stride
-      c.x = p[o + POSE.x]; c.z = p[o + POSE.z]; c.heading = p[o + POSE.heading]; c.speed = p[o + POSE.speed]; c.player = i === st.driving
+      c.x = p[o + POSE.x]; c.z = p[o + POSE.z]; c.heading = p[o + POSE.heading]; c.speed = p[o + POSE.speed]; c.player = i === driving
     }
     f.crowd.near = this.crowd.stats.drawnNear; f.crowd.waiting = st.crowd.stats.waiting; f.crowd.crossing = st.crowd.stats.crossing
     f.daylight = this.sun.daylight
@@ -789,19 +1642,101 @@ export class Engine {
     f.intersection.x = this.places ? Number.NaN : Math.max(0, Math.min(CITY.blocks, Math.round(cam.position.x / CITY.pitch))) * CITY.pitch
     f.intersection.z = this.places ? Number.NaN : Math.max(0, Math.min(CITY.blocks, Math.round(cam.position.z / CITY.pitch))) * CITY.pitch
     // In first person the listener sits in the cabin while driving: the city outside is muffled.
-    f.interior = st.driving >= 0
+    f.interior = driving >= 0
+  }
+
+  /** Feeds the soundscape from the final camera pose, the fleet, the crowd and the signals (then every other player's from theirs). */
+  private listen(dt: number, st: StepState): void {
+    const f = this.sound
+    const cam = this.world.camera
+    // HeadRig sets rotation (pitch, yaw, 0, 'YXZ'): the listener is the head, on foot or in the driver's seat.
+    this.soundFrame(f, cam, st, dt, st.driving)
+    // The room the listener stands in (acoustics.ts), found again when the head crosses into another 2 m cell. A region
+    // has no page-side geometry (its walls live in the worker): no room there, every voice dry.
+    const cell = this.places ? Number.NaN : cellOf(cam.position.x, cam.position.z)
+    if (cell !== this.listenerCell) {
+      this.listenerCell = cell
+      f.room = Number.isNaN(cell) ? undefined : roomAt(this.world.boxes, cam.position.x, cam.position.z)
+    }
     // The person speaking, where the newest state has them (NaN: nobody, or not measured; the voice then holds).
     const speaking = this.speaker >= 0 && this.audio.speaking ? st.recruits.find((r) => r.agent === this.speaker) : undefined
-    f.speaker!.x = speaking ? speaking.x : Number.NaN
-    f.speaker!.z = speaking ? speaking.z : Number.NaN
-    f.speaker!.walls = speaking && Number.isFinite(speaking.x + speaking.z) ? this.wallsTo(speaking.x, speaking.z) : 0
+    const sp = f.speaker!
+    sp.x = speaking ? speaking.x : Number.NaN
+    sp.z = speaking ? speaking.z : Number.NaN
+    sp.walls = speaking && Number.isFinite(speaking.x + speaking.z) ? this.wallsTo(speaking.x, speaking.z) : 0
+    const speakerCell = speaking && !this.places ? cellOf(speaking.x, speaking.z) : Number.NaN
+    if (speakerCell !== this.speakerCell) {
+      this.speakerCell = speakerCell
+      sp.room = Number.isNaN(speakerCell) ? undefined : roomAt(this.world.boxes, speaking!.x, speaking!.z)
+    }
+    // The peer voices (NetHost.onVoice) follow their players' poses: placed from where the room has them, the walls
+    // from this head between (a region has no page-side rooms: dry there, as every voice is).
+    f.peers = this.netVoices.size > 0 ? this.placePeers() : undefined
     this.audio.update(f)
+    // Captions outlive nothing: when the soundscape is not sounding (off, hidden, failed), what it said is gone.
+    if (this.captions.size > 0 && this.audio.status().state !== 'running') this.captions.clear()
+    // Split: every other player's soundscape from their own head (their room, their cabin, the speaker's walls from
+    // them); the speaker's room is the same room whoever listens.
+    for (let k = 1; k < this.views.length; k++) this.listenFor(this.views[k], k, st, dt, speaking, sp.room)
+  }
+
+  /** One more player's frame (listenFor): their head's room, the walls from their head to the speaker, then their soundscape. */
+  private listenFor(v: PlayerView, k: number, st: StepState, dt: number, speaking: { x: number; z: number } | undefined, speakerRoom: AudioFrame['room']): void {
+    const f = v.sound, cam = v.camera
+    this.soundFrame(f, cam, st, dt, st.drivings[k] ?? -1)
+    const cell = this.places ? Number.NaN : cellOf(cam.position.x, cam.position.z)
+    if (cell !== v.listenerCell) {
+      v.listenerCell = cell
+      f.room = Number.isNaN(cell) ? undefined : roomAt(this.world.boxes, cam.position.x, cam.position.z)
+    }
+    const sp = f.speaker!
+    sp.x = speaking ? speaking.x : Number.NaN
+    sp.z = speaking ? speaking.z : Number.NaN
+    sp.walls = speaking && Number.isFinite(speaking.x + speaking.z) ? this.wallsFrom(cam, speaking.x, speaking.z) : 0
+    sp.room = speakerRoom
+    v.audio.update(f)
   }
 
   /** Walls of the physics realm's own geometry between the listener's head and a speaker's at (x, z) (audio.ts OCCLUSION). */
   private wallsTo(x: number, z: number): number {
-    const cam = this.world.camera.position
-    return wallsBetween(this.world.boxes, { x: cam.x, y: cam.y, z: cam.z }, { x, y: SPEECH.height, z })
+    return this.wallsFrom(this.world.camera, x, z)
+  }
+
+  /** The same walls from another player's head. */
+  private wallsFrom(cam: PerspectiveCamera, x: number, z: number): number {
+    const at = cam.position
+    return wallsBetween(this.world.boxes, { x: at.x, y: at.y, z: at.z }, { x, y: SPEECH.height, z })
+  }
+
+  /** Closed captions on or off (view-only; the soundscape keeps sounding). Returns the status line the console prints. */
+  setCaptions(on: boolean): string {
+    this.captionsOn = on
+    if (!on) this.captions.clear()
+    return on ? 'captions: on' : 'captions: off'
+  }
+
+  /** The pings standing now, oldest first, one line each (08_Swarm/ping.ts pingLine), for the console. */
+  pingLines(): string[] {
+    const now = this.simTime
+    return this.pings.alive(now).map((p) => pingLine(p, now))
+  }
+
+  /** The newest ping standing, as plain data, or null: the point `recruit rally` sends a recruit to. */
+  newestPing(): { id: number; kind: PingKind; x: number; z: number } | null {
+    const p = this.pings.newest(this.simTime)
+    return p ? { id: p.id, kind: p.kind, x: p.x, z: p.z } : null
+  }
+
+  /** Takes every ping off the board (view-only; a rally already sent is the recruiter's); returns how many stood. */
+  clearPings(): number {
+    return this.pings.clear()
+  }
+
+  /** The caption lines to show now, in the house style (captions.ts captionText), bearings taken from the head. */
+  private captionLines(): string[] {
+    const out: string[] = []
+    for (const line of this.captions.lines(this.audio.clock, this.rig.pose)) out.push(captionText(line))
+    return out
   }
 
   /** Index of the car nearest (x, z) within `range` in the newest state, or −1. */
@@ -840,6 +1775,7 @@ export class Engine {
     const phase = ((st.simTime % SIGNAL.cycle) + SIGNAL.cycle) % SIGNAL.cycle
     const next = [SIGNAL.ewGreen, SIGNAL.ewAmber, SIGNAL.nsGreen, SIGNAL.cycle].find((b) => b > phase) ?? SIGNAL.cycle
     const kernel = this.kernelStats()
+    const pings = this.pingMarks()
     const fps = mean > 0 ? 1000 / mean : 0
     const clock = formatClock(this.hours)
     const speedKmh = Math.abs(speed) * 3.6
@@ -870,7 +1806,12 @@ export class Engine {
         gpuRenderMs: this.gpuRenderMs, gpuComputeMs: this.crowd.gpuMs, physicsMs: st.physics.workerMs, rapierMs: st.physics.stepMs,
         postMs: this.postMs,
         ghost: this.ghost.on,
+        rendering: this.rendering,
         contact: { wipe: this.contactPulse.value, kind: this.contactPulse.kind, count: this.contactPulse.count },
+        dissolve: { active: this.dissolve.active, count: this.dissolve.count },
+        ...(pings && { pings }),
+        ...(this.netClient && { net: { state: this.netClient.status, peers: this.netPeers.length, dropped: this.netDropped } }),
+        ...(this.views.length > 1 && { players: this.playersView(st) }),
         ...(this.pacer && {
           camera: {
             fps: this.pacer.fps(this.lastMs), shutterS: this.quality.live.post ? SHUTTER_SECONDS : 0,
@@ -887,6 +1828,7 @@ export class Engine {
         speedKmh, gear,
         x, z, heading, signalEW: signalFor('ew', st.simTime), signalNS: signalFor('ns', st.simTime), signalRemaining: next - phase,
         region: this.regionName,
+        ...(this.captionsOn && { captions: this.captionLines() }),
       },
       experience: { sessionSeconds: this.simTime, longFrames: this.clock.longFrames, distanceWalked: this.walked, distanceDriven: this.driven },
       map,
@@ -912,7 +1854,7 @@ export class Engine {
     const audio = this.audio
     const governor = this.quality.governor
     this.bridge = Object.freeze({
-      brand: Object.freeze({ name: BRAND.name, version: BRAND.version, host: BRAND.host }),
+      brand: Object.freeze({ name: BRAND.name, version: BRAND.version, host: BRAND.host, track: 'gui' as const }),
       stats: () => ring0Stats(this.snapshot(), this.sim.state.physics),
       laws: () => THREE_LAWS,
       clock: () => formatClock(this.hours),
@@ -924,16 +1866,29 @@ export class Engine {
         return governor.state()
       },
       audio: (arg?: 'on' | 'off' | number) => {
-        if (arg === 'on') { audio.unlock(); audio.setEnabled(true) }
-        else if (arg === 'off') audio.setEnabled(false)
-        else if (typeof arg === 'number') audio.setVolume(arg / 100)
+        // Every player's soundscape together (they share one context in split screen); the line reads player 1's.
+        for (const v of this.views) {
+          if (arg === 'on') { v.audio.unlock(); v.audio.setEnabled(true) }
+          else if (arg === 'off') v.audio.setEnabled(false)
+          else if (typeof arg === 'number') v.audio.setVolume(arg / 100)
+        }
         const st = audio.status()
-        return `audio: ${st.state} · ${st.voices} voices · ${st.hrtf ? 'HRTF' : 'stereo'} · volume ${Math.round(st.volume * 100)}%`
+        const split = this.views.length > 1 ? ` · ${this.views.length} players` : ''
+        return `audio: ${st.state} · ${st.voices} voices · ${st.hrtf ? 'HRTF' : 'stereo'} · volume ${Math.round(st.volume * 100)}%${split}`
       },
       // pair() must stay synchronous up to requestDevice/requestPort: the Enter keydown is the user gesture.
       hal: Object.freeze({ summary: () => hal.summary(), devices: () => hal.devices(), pair: (k: 'hid' | 'serial' | 'bluetooth') => hal.pair(k) }),
       adapter: () => this.adapter,
       ghost: (arg?: 'on' | 'off') => (arg === undefined ? (this.ghost.on ? 'on' : 'off') : this.setGhost(arg === 'on')),
+      render: (arg?: 'on' | 'off') => (arg === undefined ? (this.rendering ? 'on' : 'off') : this.setRendering(arg === 'on')),
+      captions: (arg?: 'on' | 'off') => (arg === undefined ? (this.captionsOn ? 'captions: on' : 'captions: off') : this.setCaptions(arg === 'on')),
+      // Pings are view-only marks (a walk ping is offered to the host's recruiter through onRally, never sent anywhere).
+      ping: Object.freeze({
+        at: (kind: PingKind) => this.pingAt(kind),
+        list: () => this.pingLines(),
+        newest: () => this.newestPing(),
+        clear: () => this.clearPings(),
+      }),
       // The operator tier: unlockable, sandboxed, built over simControls() (never over the engine itself), its
       // scripts bound to the swarm through the gate.
       operator: operatorBridge(this.simControls(), gate, mind, undefined, { voice, speech: this.speechOut(), diary }),
@@ -1171,7 +2126,10 @@ export class Engine {
     if (this.halted) return
     this.halted = true
     if (this.lockReason === null) this.lockReason = reason
+    try { this.netClient?.leave() } catch { /* the halt must complete whatever the socket does */ }
+    this.netLetGo('the city has stopped')
     try { this.audio.dispose() } catch { /* the halt must complete whatever the audio stack does */ }
+    for (let k = 1; k < this.views.length; k++) try { this.views[k].audio.dispose() } catch { /* likewise */ }
     void Promise.resolve(this.input.hal.dispose()).catch(() => {})
     try { this.onHalt?.(reason) } catch { /* likewise */ }
   }
@@ -1180,7 +2138,12 @@ export class Engine {
     this.disposed = true
     if (this.recorder.state.active) void this.recorder.stop().catch(() => {})
     this.cameraTrack?.stop()
+    this.netUnvoice?.()
+    try { this.netClient?.leave() } catch { /* the socket may be gone */ }
+    this.netLetGo('the city has stopped')
     this.audio.dispose()
+    for (let k = 1; k < this.views.length; k++) this.views[k].audio.dispose()
+    this.netView.dispose()
     // Input.dispose() also disposes the hardware bus, which resets trigger effects and closes ports.
     this.input.dispose()
     this.sim.terminate()

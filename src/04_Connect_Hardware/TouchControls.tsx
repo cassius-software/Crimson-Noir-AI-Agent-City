@@ -2,7 +2,8 @@
  * Why does this file exist? It is the touch Supplier for phones and tablets: a frosted-glass, thumb-sized
  * overlay with a floating virtual stick on the left (walk, or steer + throttle), drag on the right half to
  * turn the first-person head (yaw and pitch), and context buttons — Enter/Exit car when relevant, Run on
- * foot, Brake, Handbrake and Reset while driving. Only its own controls take pointer events, so the rest of
+ * foot, Brake, Handbrake and Reset while driving, and Ping (a mark where the head looks) in both modes. Only
+ * its own controls take pointer events, so the rest of
  * the HUD stays click-through.
  * What breaks if it is removed? Touch devices can neither move, look nor drive.
  *
@@ -87,6 +88,7 @@ function TouchLayer({ input, driving, nearVehicle }: Props) {
         {driving ? (
           <>
             <div className="flex gap-3">
+              <TapButton label="Ping" onTap={press(() => input.press('ping'))} />
               <TapButton label="Reset" onTap={press(() => input.press('reset'))} />
               <TapButton label="Exit car" onTap={press(() => input.press('interact'))} />
             </div>
@@ -98,12 +100,15 @@ function TouchLayer({ input, driving, nearVehicle }: Props) {
         ) : (
           <>
             {nearVehicle && <TapButton label="Enter car" onTap={press(() => input.press('interact'))} />}
-            <TapButton
-              label="Run"
-              pressed={run}
-              round
-              onTap={() => { input.setTouchButton('run', !input.touchHeld('run')); rerender() }}
-            />
+            <div className="flex items-end gap-3">
+              <TapButton label="Ping" round onTap={press(() => input.press('ping'))} />
+              <TapButton
+                label="Run"
+                pressed={run}
+                round
+                onTap={() => { input.setTouchButton('run', !input.touchHeld('run')); rerender() }}
+              />
+            </div>
           </>
         )}
       </div>

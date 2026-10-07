@@ -43,8 +43,16 @@ export const CAR = {
  * above the chassis origin. The physics worker builds each car's collider from it (vehicles.ts); the page's ghost
  * view draws the same box (ghost.ts).
  */
-export function chassisBox(suv: boolean): { hx: number; hy: number; hz: number; y: number } {
-  return { hx: CAR.halfLength - 0.05, hy: suv ? 0.48 : 0.38, hz: CAR.halfWidth - 0.04, y: suv ? 0.38 : 0.3 }
+export interface ChassisBox { readonly hx: number; readonly hy: number; readonly hz: number; readonly y: number }
+
+/** The two boxes, frozen and shared: every per-frame scan (contact.ts, dissolve.ts) reads them without allocating. */
+const CHASSIS: readonly [ChassisBox, ChassisBox] = Object.freeze([
+  Object.freeze({ hx: CAR.halfLength - 0.05, hy: 0.38, hz: CAR.halfWidth - 0.04, y: 0.3 }),
+  Object.freeze({ hx: CAR.halfLength - 0.05, hy: 0.48, hz: CAR.halfWidth - 0.04, y: 0.38 }),
+])
+
+export function chassisBox(suv: boolean): ChassisBox {
+  return CHASSIS[suv ? 1 : 0]
 }
 
 /** Wheel centres in chassis space: +x forward, +z to the car's right. Front-right, front-left, rear-right, rear-left. */

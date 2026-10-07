@@ -4,9 +4,9 @@
  * frosted-glass panels that go dark after sunset, the brand mark and the visitor's name, a rotating radar
  * minimap, a speedometer with the posted limit, live signal state, quality tier and Ring-0 kernel
  * counters, the cinema camera's frame rate, shutter and ND beside the input rate, notifications, a REC chip
- * while the .agv recorder runs, and glyph-aware control hints (the
- * enter-vehicle prompt and, until the player is under way, a small capture-and-controls chip) that
- * switch silently to a controller's glyphs.
+ * while the .agv recorder runs, the operator's pings (a ring on the minimap per ping and, for the newest, a
+ * chip over the world with its distance), and glyph-aware control hints (the enter-vehicle prompt and, until
+ * the player is under way, a small capture-and-controls chip) that switch silently to a controller's glyphs.
  * Onboarding is zero-click: there is no title card; the Concierge (Concierge.tsx) greets the player.
  * On phones and touch devices (or any small window) it switches to a compact layout that keeps the
  * bottom corners free for the touch controls: stick bottom-left, buttons bottom-right. A phone held in
@@ -16,12 +16,15 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react'
 import { CITY, CITY_SIZE, LAKE, districtOfLot } from '../01_Initialize_World/city.ts'
 import { TRAFFIC } from '../02_Define_The_Rules/civic.ts'
-import type { Light, SipocSnapshot } from '../05_Observe_Environment/telemetry.ts'
+import type { HudPing, Light, SipocSnapshot } from '../05_Observe_Environment/telemetry.ts'
 import { BRAND } from '../brand.ts'
 import { MonolithLogo } from '../MonolithLogo.tsx'
 import { controlHints, glyph, glyphKind, spokenGlyph, type ControlAction, type GlyphKind } from './glyphs.ts'
 
 const LIGHT_COLOR: Record<Light, string> = { green: 'bg-emerald-400', amber: 'bg-amber-400', red: 'bg-rose-500' }
+/** A ping's colour by what it asks, on the minimap and the chip. */
+const PING_COLOR: Record<HudPing['kind'], string> = { go: '#f59e0b', look: '#0ea5e9', gather: '#a855f7', wait: '#94a3b8' }
+const PING_WORD: Record<HudPing['kind'], string> = { go: 'go there', look: 'look there', gather: 'gather there', wait: 'wait there' }
 const LIMIT_KMH = Math.round(TRAFFIC.speedLimit * 3.6)
 
 /** Panels sit inside this frame: a fixed gap from the edges, or the safe-area inset where that is larger. */
@@ -147,11 +150,48 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
     </div>
   )
 
+  // Closed captions of the soundscape (captions.ts, fed by the engine): every sound with its bearing and distance,
+  // speech with its words. An accessibility surface, so it outlives the H key like the MIC and REC chips.
+  const captions = c.captions
+  const captionStrip = captions && captions.length > 0 && (
+    <div role="status" aria-live="polite" className={`flex max-w-full flex-col items-center gap-1 px-4 py-2 text-[13px] font-medium ${panel}`} data-hint="captions">
+      {captions.map((line, i) => (
+        <div key={`${i}:${line}`} className="max-w-full truncate text-center">{line}</div>
+      ))}
+    </div>
+  )
+
+  // The newest ping, over the world where it landed (the engine projects it; off screen it is on the minimap alone):
+  // what it asks, what it landed on, and how far it is.
+  const newestPing = s.output.pings?.at(-1)
+  const pingChip = newestPing && Number.isFinite(newestPing.sx) && Number.isFinite(newestPing.sy) && (
+    <div
+      className="absolute flex -translate-x-1/2 -translate-y-full flex-col items-center"
+      style={{ left: `${(newestPing.sx * 100).toFixed(2)}%`, top: `${(newestPing.sy * 100).toFixed(2)}%`, opacity: Math.min(1, 0.35 + newestPing.left / 4) }}
+      data-hint="ping"
+    >
+      <div className={`flex items-center gap-2 px-3 py-1.5 text-[11px] font-semibold tabular-nums whitespace-nowrap ${panel}`}>
+        <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: PING_COLOR[newestPing.kind] }} />
+        <span>{PING_WORD[newestPing.kind]} · {pingWhat(newestPing)} · {newestPing.distance.toFixed(0)} m</span>
+      </div>
+      <span className="h-3 w-px" style={{ background: PING_COLOR[newestPing.kind] }} />
+    </div>
+  )
+
   // Ghost view: the altered picture always says what it is (and how to leave it).
   const ghostChip = s.output.ghost && (
     <div className={`flex max-w-full items-center gap-2 px-3 py-1.5 text-[11px] font-semibold ${panel}`} data-hint="ghost">
       <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
       <span className="truncate">GHOST VIEW · physics shapes · G to hide</span>
+    </div>
+  )
+
+  // Render off (the console's render knob): the black canvas says why, and how to draw again. It outlives the
+  // H key like the recorder's chip: a blank screen is never left unexplained.
+  const renderChip = s.output.rendering === false && (
+    <div className={`flex max-w-full items-center gap-2 px-3 py-1.5 text-[11px] font-semibold ${panel}`} data-hint="render">
+      <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400" />
+      <span className="truncate">RENDER OFF · console only · render on</span>
     </div>
   )
 
@@ -194,6 +234,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
             {recChip}
             {micChip}
             {ghostChip}
+            {renderChip}
           </div>
 
           <div className={`absolute top-0 right-0 w-72 px-5 py-4 ${panel}`}>
@@ -267,6 +308,8 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
           </div>
 
           {enterPrompt && <div className="absolute bottom-20 left-1/2 -translate-x-1/2">{enterPrompt}</div>}
+          {/* The captions above the enter prompt, clear of the minimap and the speed panel like the capture chip. */}
+          {captionStrip && <div className="absolute bottom-32 left-1/2 w-max max-w-[calc(100%_-_34rem)] -translate-x-1/2">{captionStrip}</div>}
           {/* Clear of the minimap (13 rem) and the speed panel on either side. */}
           {captureHint && (
             <div className="absolute bottom-0 left-1/2 w-max max-w-[calc(100%_-_34rem)] -translate-x-1/2">{captureChip(roomy)}</div>
@@ -309,6 +352,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
             {recChip}
             {micChip}
             {ghostChip}
+            {renderChip}
             <div className="flex w-68 max-w-full flex-col gap-2">{toasts}</div>
           </div>
 
@@ -320,8 +364,9 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
           {/* Bottom-centre, between the thumbs: the capture hint (a small desktop window), the enter
               prompt, and — on a phone held in landscape, where browser bars take 30-60 px of its height
               and the speedometer under the minimap would reach the driving buttons — the speedometer. */}
-          {(captureHint || enterPrompt || (driving && short)) && (
+          {(captureHint || enterPrompt || (driving && short) || captionStrip) && (
             <div className="absolute bottom-0 left-1/2 flex max-w-full -translate-x-1/2 flex-col items-center gap-2">
+              {captionStrip}
               {captureHint && captureChip(false)}
               {enterPrompt}
               {driving && short && speedChip}
@@ -330,16 +375,30 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
         </div>
       )}
 
-      {!visible && (recChip || rc?.listening) && (
+      {visible && pingChip}
+
+      {!visible && (recChip || rc?.listening || captionStrip) && (
         <div className={compact ? FRAME_COMPACT : FRAME_WIDE}>
           <div className="absolute top-0 left-0 flex max-w-full flex-col items-start gap-2">
             {recChip}
             {rc?.listening && micChip}
           </div>
+          {captionStrip && <div className="absolute bottom-0 left-1/2 w-max max-w-full -translate-x-1/2">{captionStrip}</div>}
+        </div>
+      )}
+
+      {!visible && renderChip && (
+        <div className={compact ? FRAME_COMPACT : FRAME_WIDE}>
+          <div className="absolute top-0 left-1/2 max-w-full -translate-x-1/2">{renderChip}</div>
         </div>
       )}
     </div>
   )
+}
+
+/** What a ping landed on: 'a spot', 'person 12', 'car 3', 'pole 7'. */
+function pingWhat(p: HudPing): string {
+  return p.pick === 'point' ? 'a spot' : `${p.pick} ${p.index}`
 }
 
 function skyLabel(daylight: number): string {
@@ -488,6 +547,22 @@ function Minimap({ s, dark, ui, className, layer = null }: { s: SipocSnapshot; d
       ctx.fillStyle = car.player ? '#2563eb' : dark ? '#94a3b8' : '#64748b'
       ctx.beginPath()
       ctx.roundRect(-0.95, -2.3, 1.9, 4.6, 0.6)
+      ctx.fill()
+      ctx.restore()
+    }
+    // The operator's pings: a ring per mark, its colour by what it asks, fading over its last seconds.
+    for (const p of s.output.pings ?? []) {
+      if (Math.abs(p.x - x) > 150 || Math.abs(p.z - z) > 150) continue
+      ctx.save()
+      ctx.globalAlpha = Math.max(0.25, Math.min(1, p.left / 3))
+      ctx.strokeStyle = PING_COLOR[p.kind]
+      ctx.fillStyle = PING_COLOR[p.kind]
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.arc(p.x, p.z, 3.2, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.arc(p.x, p.z, 1.1, 0, Math.PI * 2)
       ctx.fill()
       ctx.restore()
     }

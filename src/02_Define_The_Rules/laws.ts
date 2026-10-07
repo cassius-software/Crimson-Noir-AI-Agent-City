@@ -54,11 +54,13 @@ export function adjudicate(intent: Intent, s: Situation): Ruling {
   const reverse = s.speed < -STILL || intent.throttle < 0
   const stop = (reason: string): Ruling => ({ command: { throttle: 0, brake: KERNEL.maxBrake, steer: intent.steer }, law: 1, reason })
 
-  // First Law: a person inside the stopping envelope (plus standoff) in the direction of travel.
-  if (forward && s.personAhead <= stoppingDistance(s.speed) + KERNEL.standoff) {
+  // First Law: a person inside the stopping envelope (plus standoff) in the direction of travel. Written as "not
+  // clear beyond it", so a reading that is not a number (a person's distance, or the car's own speed) stops the car:
+  // the law fails toward the person, never toward the throttle.
+  if (forward && !(s.personAhead > stoppingDistance(s.speed) + KERNEL.standoff)) {
     return stop(`First Law: person ${s.personAhead.toFixed(1)} m ahead`)
   }
-  if (reverse && s.personBehind <= stoppingDistance(-s.speed) + KERNEL.standoff) {
+  if (reverse && !(s.personBehind > stoppingDistance(-s.speed) + KERNEL.standoff)) {
     return stop(`First Law: person ${s.personBehind.toFixed(1)} m behind`)
   }
 

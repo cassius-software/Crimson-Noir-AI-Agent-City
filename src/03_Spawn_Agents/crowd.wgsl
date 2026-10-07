@@ -92,6 +92,9 @@ struct Brain {
 // (corridorGap), reset to 0xffffffff (nobody) every frame. [0, MAX_CARS) driving on, [MAX_CARS,
 // 2·MAX_CARS) reversing. simulate now uses 8 storage buffers, the WebGPU default per-stage limit.
 @group(0) @binding(12) var<storage, read_write> hazards: array<atomic<u32>, HAZARD_SLOTS>;
+// The page's look word per agent (look.ts packLook; 0 = as hashed), read by the cull alone for the body to draw:
+// no simulation pass binds it, so nothing of it reaches the pedestrians' motion or the First-Law sensing.
+@group(0) @binding(13) var<storage, read> look: array<u32>;
 
 // ---------------------------------------------------------------- hashing and dice
 
@@ -640,7 +643,9 @@ fn cull(@builtin(global_invocation_id) gid: vec3u) {
   }
   if (!visible) { return; }
   let lod = select(1u, 0u, d < P.lodDistance);
-  let variant = i % VARIANTS;
+  // The body: the look word's (bits 1-2) when one is worn (bit 0), else the index's.
+  let w = look[i];
+  let variant = select(i % VARIANTS, (w >> 1u) & 3u, (w & 1u) == 1u);
   let draw = lod * VARIANTS + variant;
   let slot = atomicAdd(&drawArgs[draw * 5u + 1u], 1u);
   drawLists[lod * LIST_LOD_STRIDE + variant * AGENT_QUOTA + slot] = i;

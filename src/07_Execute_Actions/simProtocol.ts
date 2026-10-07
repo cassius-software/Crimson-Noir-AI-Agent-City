@@ -11,6 +11,8 @@ import type { RegionGround } from './physics.ts'
 import type { KernelStats } from '../05_Observe_Environment/telemetry.ts'
 import type { CrowdSimStats } from '../03_Spawn_Agents/crowdSensor.ts'
 import type { CarTuning, DriveMode } from './car.ts'
+import type { TrackKind } from '../06_Make_Decisions/tracks.ts'
+import type { BalanceState } from '../03_Spawn_Agents/ragdoll.ts'
 
 /**
  * One vehicle's slice of the pose buffer (Float32Array, `POSE.stride` floats per vehicle, fleet order). The
@@ -33,11 +35,71 @@ export const PERSON = Object.freeze({ radius: 0.3, halfHeight: 0.6 })
 /** Walking and running speed, m/s: the worker caps the page's foot controls at a run. */
 export const WALK = 2.0
 export const RUN = 5.2
+
+/**
+ * The walking velocity the realm applies for foot controls (x, z) that are already finite: the same direction, never
+ * faster than a run. One definition for the physics worker (simCore.ts) and the network's authoritative mirror
+ * (10_Network/mirror.node.ts), so a client's prediction and the server's truth clamp alike, to the bit.
+ */
+export function footWish(x: number, z: number): { x: number; z: number } {
+  const len = Math.hypot(x, z)
+  const s = len > RUN ? RUN / len : 1
+  return { x: x * s, z: z * s }
+}
 /** How close the avatar must stand to a car to take its wheel, m. */
 export const ENTER_RANGE = 3.8
+/**
+ * Most people the realm holds for the page: local split-screen players, each an Avatar in the Rapier world, a ward of
+ * the Sanctuary and a person to the Bouncer and the Ring-0 audit. Player 0 is the operator (foot/drive, avatar,
+ * driving, recruitment, the crowd's one player figure); players 1..3 ride beside them in `players`, `avatars` and
+ * `drivings`.
+ */
+export const MAX_PLAYERS = 4
 
 /** DriveMode as it is stored in the pose buffer. */
 export const MODES: readonly DriveMode[] = ['ai', 'player', 'parked']
+
+/**
+ * One scheduled craft's slice of the craft buffer (Float32Array, `TRACK_POSE.stride` floats per craft): the train
+ * sets, drones and planes that follow the corridors of 06_Make_Decisions/tracks.ts on the realm's own clock
+ * (trackFleet.ts), in network order (track by track, each track's craft by index). `kind` is the craft's index in
+ * TRACK_KINDS, `track` its track id, `s` its arc length along the track (m) and `speed` its speed along it (m/s).
+ * The page only draws it; the Ring-0 audit reads it (every value finite, every craft at or above its corridor's
+ * floor) before it leaves the realm.
+ */
+export const TRACK_POSE = { x: 0, y: 1, z: 2, heading: 3, kind: 4, track: 5, s: 6, speed: 7, stride: 8 } as const
+
+/** TrackKind as it is stored in the craft buffer (index = code). Cars never appear in it: they are in the pose buffer. */
+export const TRACK_KINDS: readonly TrackKind[] = ['car', 'train', 'drone', 'plane']
+
+/**
+ * The rig stream (StepState.rigs): one slice of `RIG_POSE.stride` floats per rig slot (`SimMeta.rigSlots` of them),
+ * for the pedestrians near the operator the realm has promoted to a physical body (ragdollRealm.ts over
+ * 03_Spawn_Agents/ragdoll.ts): `agent` is the pedestrian's index in the crowd (−1: an empty slot, nothing follows),
+ * `state` the balance machine's state as RIG_STATES codes it, then `segments` poses of `segmentStride` floats each
+ * (x, y, z, qx, qy, qz, qw), one per RIG_SEGMENTS entry. The page hides the crowd's figure of a listed agent and draws
+ * the rig in its place (rigView.ts); the Ring-0 audit has already checked every segment as a person before it leaves.
+ */
+export const RIG_POSE = { agent: 0, state: 1, segments: 2, segmentStride: 7, segmentCount: 13, stride: 2 + 13 * 7 } as const
+
+/** Rig slots the realm holds at most (03_Spawn_Agents/ragdoll.ts POOL_CAPACITY; pinned equal by ragdollRealm.test.ts). */
+export const RIG_SLOTS = 8
+
+/** BalanceState as the rig stream codes it (index = code). */
+export const RIG_STATES: readonly BalanceState[] = ['kinematic', 'perturbed', 'catchStep', 'sittingDown', 'seated', 'recovering']
+
+/**
+ * The thirteen shapes of a rig in stream order, with the capsule each is drawn as: [half height of the cylinder part,
+ * radius], m. The eleven segments match 03_Spawn_Agents/ragdollRig.ts SEGMENTS (which the page never loads: it
+ * imports Rapier); the two flat feet are drawn as short capsules of their footprint. Pinned equal by
+ * ragdollRealm.test.ts.
+ */
+export const RIG_SEGMENTS: readonly (readonly [name: string, halfHeight: number, radius: number])[] = Object.freeze([
+  ['pelvis', 0.04, 0.14], ['torso', 0.12, 0.16], ['head', 0.01, 0.11],
+  ['upperLegL', 0.14, 0.07], ['lowerLegL', 0.14, 0.055], ['upperLegR', 0.14, 0.07], ['lowerLegR', 0.14, 0.055],
+  ['upperArmL', 0.1, 0.05], ['lowerArmL', 0.1, 0.045], ['upperArmR', 0.1, 0.05], ['lowerArmR', 0.1, 0.045],
+  ['footL', 0.07, 0.05], ['footR', 0.07, 0.05],
+] as const)
 
 /** The page's one-time request to build the world in the worker. A second init is refused. */
 export interface SimInit {
@@ -49,6 +111,11 @@ export interface SimInit {
   boxes: Box[]
   furniture: Furniture
   spawn: { x: number; z: number }
+  /**
+   * Where players 1..3 start (index k − 1 for player k), at most MAX_PLAYERS − 1 of them: each a finite pair, moved out
+   * of a building lot by the worker. Absent for one player.
+   */
+  spawns?: { x: number; z: number }[]
   /** ?debug: the worker also accepts the fault-injection commands (dbg*). Fixed for the worker's lifetime. */
   debug: boolean
   /**
@@ -56,6 +123,16 @@ export interface SimInit {
    * bounds and walls. Absent (or null) for the city.
    */
   region?: RegionGround | null
+  /**
+   * Seat the AI fleet on the fixed track network (06_Make_Decisions/tracks.ts, built in the worker from the seed) and
+   * drive it with track followers; anything but true keeps the random street-hopping drivers.
+   */
+  tracks?: boolean
+  /**
+   * Wire the ragdoll balance machine to the pedestrians near the operator (ragdollRealm.ts; the page's default, ?ragdoll=0
+   * off): anything but true keeps every pedestrian on the GPU alone, and the rig stream null. Never in a region.
+   */
+  ragdoll?: boolean
 }
 
 /** Static facts about the world the worker built, sent once in `ready`. */
@@ -68,6 +145,12 @@ export interface SimMeta {
   paint: number[]
   person: { radius: number; halfHeight: number }
   debug: boolean
+  /** Scheduled craft (train sets, drones, planes) in every craft buffer, TRACK_POSE.stride floats each; 0 with tracks off. */
+  craft: number
+  /** Avatars the realm holds (1 + spawns.length, at most MAX_PLAYERS): the length of every `avatars` and `drivings`. */
+  players: number
+  /** Rig slots in every rig stream (RIG_SLOTS with the ragdoll on in the city; 0 off, or in a region: the stream is null). */
+  rigSlots: number
 }
 
 /**
@@ -79,11 +162,15 @@ export interface FootControls { x: number; z: number; heading: number }
 /** In a car: raw controls, each clamped by the worker. steer −1..1 (positive = left), fwd and back 0..1. */
 export interface DriveControls { steer: number; fwd: number; back: number; handbrake: boolean }
 
+/** One extra player's frame of controls (players 1..3): the same foot and drive the operator sends, clamped the same. */
+export interface PlayerControls { foot: FootControls; drive: DriveControls }
+
 /** What the page may ask of the simulation. Every command is validated again in the worker. */
 export type SimCommand =
-  | { c: 'interact' }
+  // `player` picks the avatar (0..players − 1, default 0): a car another player is driving is refused.
+  | { c: 'interact'; player?: number }
   | { c: 'reset' }
-  | { c: 'teleport'; x: number; z: number }
+  | { c: 'teleport'; x: number; z: number; player?: number }
   | { c: 'setMode'; i: number; mode: 'ai' | 'parked' }
   | { c: 'recover'; i: number; x?: number; z?: number; heading?: number }
   | { c: 'intent'; i: number; throttle: number; brake: number; steer: number }
@@ -95,6 +182,26 @@ export type SimCommand =
   | { c: 'recruit'; id: number; skill: string; agent?: number }
   /** Lets one recruit (`agent`) go, or every one: the tether breaks. */
   | { c: 'dismiss'; agent?: number }
+  /**
+   * Asks Active recruit `agent` to walk to the sidewalk point (x, z) instead of to the operator (skills.ts RALLY_RANGE,
+   * whyNotRally): the worker checks the point on its own readings and answers with a 'rally' event. The tether is
+   * unchanged: it still breaks when the operator is RELEASE_DISTANCE from them, and the rally ends on its own when the
+   * operator walks more than RALLY_RANGE from the point, or when they are dismissed.
+   */
+  | { c: 'rally'; agent: number; x: number; z: number }
+  /**
+   * A network room (10_Network): on while the page is joined to one, off when it leaves. Player 1 becomes a ghost
+   * (player.ts setGhost, sanctuary.ts ghost: only fixed geometry stops them and no vehicle can touch them, while the
+   * Bouncer still brakes every car for them), the cars' tuning returns to the authored car, and the commands that
+   * would move a car behind the room's back (tune, setMode, recover, intent, reset and the fault injections) are refused:
+   * the room's authority replays player 1's walk and car and must find the same physics.
+   */
+  | { c: 'room'; on: boolean }
+  /**
+   * A network room's correction at the wheel (room only): player 1 put in car `i`, its chassis in exactly `state`, with a
+   * fresh controller, as the room's authority has it (leaving the car they were in, if another, where it is).
+   */
+  | { c: 'netCar'; i: number; state: CarBodyState }
   // Fault injection for the ?debug harness only: refused by a worker built without debug.
   | { c: 'dbgVelocity'; i: number; x: number; y: number; z: number }
   | { c: 'dbgMode'; i: number; mode: DriveMode }
@@ -112,11 +219,17 @@ export interface StepRequest {
   dt: number
   foot: FootControls
   drive: DriveControls
+  /** Players 1..3 (index k − 1 for player k); a missing entry is an idle player. Player 0 is foot and drive above. */
+  players?: PlayerControls[]
   cmds: SimCommand[]
   /** A pose buffer handed back for reuse (transferred). */
   buffer?: ArrayBuffer
   /** A crowd render frame's buffer handed back for reuse (transferred). */
   crowdBuffer?: ArrayBuffer
+  /** A craft buffer handed back for reuse (transferred). */
+  craftBuffer?: ArrayBuffer
+  /** A rig stream's buffer handed back for reuse (transferred). */
+  rigBuffer?: ArrayBuffer
 }
 
 export interface AvatarState {
@@ -134,9 +247,42 @@ export interface AvatarState {
   sensor: boolean
 }
 
+/** A car's full rigid-body state as plain numbers: chassis centre, orientation, linear and angular velocity. */
+export interface CarBodyState {
+  x: number; y: number; z: number
+  qx: number; qy: number; qz: number; qw: number
+  vx: number; vy: number; vz: number
+  wx: number; wy: number; wz: number
+}
+
+/** A door player 1 took: into car `car` in the state the realm took it over in, or out at a point (the room's own word for it). */
+export type Door = { enter: { car: number; state: CarBodyState } } | { exit: { x: number; z: number } }
+
+/**
+ * The door player 1 took in a step, as a network room hears it (engine.ts reports it with the step): the last of the
+ * step's own doors (an entered event the realm did not make for a room correction, an exited event no teleport or
+ * correction forced), unless a correction came after it (the room's truth then stands). Undefined for none.
+ */
+export function doorOf(events: readonly SimEvent[]): Door | undefined {
+  let door: Door | undefined
+  for (const e of events) {
+    if (e.e === 'entered' && e.player === 0) door = e.room ? undefined : { enter: { car: e.index, state: e.state } }
+    else if (e.e === 'exited' && e.player === 0) door = e.forced ? undefined : { exit: { x: e.x, z: e.z } }
+  }
+  return door
+}
+
+/** The command player 1's car ran this step (the bouncer's vetted throttle, brake and steer, and the handbrake). */
+export interface WheelsState { throttle: number; brake: number; steer: number; handbrake: boolean }
+
 export type SimEvent =
-  | { e: 'entered'; index: number; heading: number; suv: boolean }
-  | { e: 'exited'; x: number; z: number; heading: number }
+  /**
+   * `state`: the car's full state the moment the player took the wheel, before this step's substeps (what a network
+   * room's authority takes over). `room`: the room's correction seated them (netCar), not the player.
+   */
+  | { e: 'entered'; player: number; index: number; heading: number; suv: boolean; state: CarBodyState; room?: boolean }
+  /** `forced`: a teleport or a network room's correction took the player out (no door of theirs). */
+  | { e: 'exited'; player: number; x: number; z: number; heading: number; forced?: boolean }
   | { e: 'rejected'; reason: string }
   /** The answer to a recruit command: who is coming over (distance at the request, m), or why nobody is. */
   | { e: 'recruit'; id: number; ok: true; agent: number; skill: string; distance: number }
@@ -145,6 +291,8 @@ export type SimEvent =
   | { e: 'active'; agent: number; skill: string; skills: string[] }
   /** A recruit went back to their day, and why. */
   | { e: 'released'; agent: number; skill: string; reason: string }
+  /** The answer to a rally command: the recruit is walking to the point, or why not. */
+  | { e: 'rally'; agent: number; ok: boolean; reason?: string }
 
 export interface SimPhysicsStats {
   /** EMA of one world.step(), ms. */
@@ -189,6 +337,8 @@ export interface RecruitView {
   z: number
   /** Seconds since the request. */
   seconds: number
+  /** The sidewalk point an Active recruit was asked to walk to, while that rally is in force (absent otherwise). */
+  rally?: { x: number; z: number }
 }
 
 /** The worker's reply to every step: plain numbers only. */
@@ -198,9 +348,16 @@ export interface StepState {
   /** Worker simulation seconds (its own clock, from the clamped dt it accepted): the signals run on it. */
   simTime: number
   poses: Float32Array
+  /** Player 0 (the operator): the same values as avatars[0]. */
   avatar: AvatarState
-  /** Index of the car the player drives, or −1 on foot. */
+  /** Index of the car player 0 drives, or −1 on foot: the same value as drivings[0]. */
   driving: number
+  /** What player 0's car ran this step (null on foot): a network room replays it. */
+  wheels: WheelsState | null
+  /** Every avatar the realm holds, index = player (meta.players of them). */
+  avatars: AvatarState[]
+  /** Per player, the index of the car they drive, or −1 on foot. */
+  drivings: number[]
   kernel: KernelStats
   physics: SimPhysicsStats
   tuning: CarTuning
@@ -213,6 +370,16 @@ export interface StepState {
    * (12 floats per agent), transferred. The page only draws it; the Bouncer reads the worker's own buffers.
    */
   crowdFrame: Float32Array | null
+  /**
+   * The scheduled craft (TRACK_POSE, `meta.craft` of them) where the realm's clock has them this step, transferred;
+   * null with tracks off, and from a halted realm (its clock has stopped, and a buffer that halted it never leaves).
+   */
+  craft: Float32Array | null
+  /**
+   * The promoted pedestrians' rigs (RIG_POSE, `meta.rigSlots` slices, empty slots with agent −1) as this step left
+   * them, transferred; null with the ragdoll off, in a region, and from a halted realm.
+   */
+  rigs: Float32Array | null
   /** Everyone the operator has asked over and not yet released. */
   recruits: RecruitView[]
   /** Messages and commands the worker refused since it started. */

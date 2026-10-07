@@ -1,0 +1,6 @@
+# The seal of the scripted run under containment.lock 96c3d1d3a733cf6d31c6afe0531cd9a72f734a7b63d72cfebc5737b6025d261b: its ledger's head, its entries, and its weights'
+# digest. The host's ledger door keeps a verified ledger for the fleet only if its seal is this one.
+# Regenerate it with `cargo run -- seal` whenever containment.nix changes.
+head 436218de27478239df5c76b21ea03deb6e3d59b0889fda782db6170912d4c21c
+count 3576
+weights 2805fa0fa1f91a3a119ce1ef72d65349976bf8e23ccc8ff939255eba55e00b5b

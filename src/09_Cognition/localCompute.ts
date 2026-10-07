@@ -11,7 +11,18 @@
  * model that writes text, out of memory. Nothing it sends can leave the machine.
  * What breaks if it is removed? `ask` has nothing behind it. Nothing else in the city needs it.
  */
+import { loopbackServer } from '../02_Define_The_Rules/airgap.ts'
+import { AGENT_SYSTEM_PROMPT_CORE } from '../02_Define_The_Rules/conduct.ts'
+import { sha256 } from '../02_Define_The_Rules/integrity.ts'
 import type { Answer, GateTether, Memories, Mind, Piece } from '../07_Execute_Actions/operator.ts'
+
+/**
+ * The server's address as an origin ("http://localhost:11434"), if it is on this machine: http or https, a loopback
+ * host (localhost, 127.0.0.0/8, [::1]), no user name or password. Null for anything else, so a prompt can never be
+ * sent off the machine. Paths are dropped: the API's own paths are added to the origin. It is the gate of
+ * 02_Define_The_Rules/airgap.ts under the name this client has always used.
+ */
+export { loopbackServer }
 
 /** Where the local model server listens unless the operator says otherwise (the Ollama API's default port). */
 export const DEFAULT_SERVER = 'http://localhost:11434'
@@ -58,31 +69,13 @@ export class CognitionError extends Error {
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>
 
 /**
- * The server's address as an origin ("http://localhost:11434"), if it is on this machine: http or https, a loopback
- * host (localhost, 127.0.0.0/8, [::1]), no user name or password. Null for anything else, so a prompt can never be
- * sent off the machine. Paths are dropped: the API's own paths are added to the origin.
- */
-export function loopbackServer(url: unknown): string | null {
-  if (typeof url !== 'string') return null
-  let u: URL
-  try {
-    u = new URL(url.trim())
-  } catch {
-    return null
-  }
-  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
-  if (u.username || u.password) return null
-  const host = u.hostname.toLowerCase()
-  const loopback = host === 'localhost' || host === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(host)
-  return loopback ? u.origin : null
-}
-
-/**
- * The Agent City base reality: the part of the system prompt that is the same for every agent, and so comes first. A
- * model server that caches prompts (the local one reuses the longest prefix of a prompt it has already computed)
- * computes it once for all of them; only what follows (who answers, their skills, what they remember) is theirs.
+ * The Agent City base reality: the part of the system prompt that is the same for every agent, and so comes first,
+ * opening with the 14A conduct core (02_Define_The_Rules/conduct.ts) whichever model answers. A model server that
+ * caches prompts (the local one reuses the longest prefix of a prompt it has already computed) computes it once for
+ * all of them; only what follows (who answers, their skills, what they remember) is theirs.
  */
 export const BASE_REALITY = [
+  AGENT_SYSTEM_PROMPT_CORE,
   'You are a person in a city simulation, standing with its operator and tethered to them in person.',
   'You answer only from the expertise named below; if a question needs anything else, say which skill it needs and stop.',
   'You may be told what you remember of the operator, oldest first: use it only where it helps with the question.',
@@ -108,8 +101,15 @@ export function systemPrompt(tethers: readonly GateTether[], memories: readonly 
   ].join('\n')
 }
 
+/**
+ * The provenance of a prompt: the SHA-256 (02_Define_The_Rules/integrity.ts) of the exact system prompt string sent,
+ * carried on the answer (Answer.promptHash) and noted in the diary, so an audit can prove what a model was given
+ * without keeping the prompt. Every provider computes it over the very string it sends.
+ */
+export const promptHash = (system: string): string => sha256(system)
+
 /** The first line of a server's message, cut to MESSAGE_CHARS. */
-function sentence(text: string): string {
+export function sentence(text: string): string {
   const line = text.split('\n')[0].trim()
   return line.length > MESSAGE_CHARS ? `${line.slice(0, MESSAGE_CHARS)}…` : line
 }
@@ -166,7 +166,7 @@ async function unreachable(fetchFn: FetchLike, server: string, signal: AbortSign
  * already was; rejects with the signal's reason once it aborts, with what `line` threw, or because the server
  * stopped short.
  */
-async function readLines(res: Response, signal: AbortSignal | undefined, line: (raw: string) => boolean, ended: () => boolean = () => false): Promise<void> {
+export async function readLines(res: Response, signal: AbortSignal | undefined, line: (raw: string) => boolean, ended: () => boolean = () => false): Promise<void> {
   if (!res.body) throw new CognitionError('unreadable', "the local model server's answer could not be read")
   const reader = res.body.getReader()
   const stopped = signal ? new Promise<never>((_, reject) => {
@@ -357,21 +357,25 @@ export interface SettingsStore {
  * default unless the operator set one), its wire format (generate unless the operator chose chat), the model (DEFAULT_MODEL unless the operator chose another) and whether it
  * thinks before it answers (off unless the operator turns it on: a small model on a modest machine can spend minutes,
  * and all of its tokens, reasoning about a one-line question), all kept in `store`; the models the server has; and
- * answers.
+ * answers. `defaults` are another server's own (the router's llama.cpp provider: its port, its one model, the chat
+ * format); the Ollama API's are used without them.
  */
-export function createLocalCompute({ fetch: fetchFn, store }: { fetch: FetchLike; store?: SettingsStore }): Mind {
-  let server = DEFAULT_SERVER
-  let model: string = DEFAULT_MODEL
+export function createLocalCompute({ fetch: fetchFn, store, defaults = {} }: { fetch: FetchLike; store?: SettingsStore; defaults?: { server?: string; model?: string; api?: WireFormat } }): Mind {
+  const defaultServer = loopbackServer(defaults.server) ?? DEFAULT_SERVER
+  const defaultModel = defaults.model?.trim() || DEFAULT_MODEL
+  const defaultApi: WireFormat = isWireFormat(defaults.api) ? defaults.api : DEFAULT_API
+  let server = defaultServer
+  let model: string = defaultModel
   let think = false
-  let api: WireFormat = DEFAULT_API
+  let api: WireFormat = defaultApi
   try {
     const saved: unknown = JSON.parse(store?.load() ?? 'null')
     if (typeof saved === 'object' && saved !== null) {
       const s = saved as { server?: unknown; model?: unknown; think?: unknown; api?: unknown }
-      server = loopbackServer(s.server) ?? DEFAULT_SERVER
-      model = typeof s.model === 'string' && s.model.trim() ? s.model.trim() : DEFAULT_MODEL
+      server = loopbackServer(s.server) ?? defaultServer
+      model = typeof s.model === 'string' && s.model.trim() ? s.model.trim() : defaultModel
       think = s.think === true
-      api = isWireFormat(s.api) ? s.api : DEFAULT_API
+      api = isWireFormat(s.api) ? s.api : defaultApi
     }
   } catch {
     // nothing kept, or not readable: the defaults
@@ -412,8 +416,10 @@ export function createLocalCompute({ fetch: fetchFn, store }: { fetch: FetchLike
     },
     installed: (signal?: AbortSignal) => installedModels(fetchFn, server, signal, api),
     answer: (req: { tethers: readonly GateTether[]; prompt: string; signal: AbortSignal; memories?: readonly Memories[] }, onPiece: (p: Piece) => void): Promise<Answer> => {
-      const r = { server, model, system: systemPrompt(req.tethers, req.memories), prompt: req.prompt, signal: req.signal, think }
-      return api === 'chat' ? chat(fetchFn, r, onPiece) : generate(fetchFn, r, onPiece)
+      const system = systemPrompt(req.tethers, req.memories)
+      const r = { server, model, system, prompt: req.prompt, signal: req.signal, think }
+      // The hash of the exact string sent, for the audit: computed here, over `system` as it goes into the request.
+      return (api === 'chat' ? chat(fetchFn, r, onPiece) : generate(fetchFn, r, onPiece)).then((a) => ({ ...a, promptHash: promptHash(system) }))
     },
   })
 }

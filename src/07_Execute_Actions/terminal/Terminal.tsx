@@ -5,13 +5,17 @@
  * keystroke typed here reaches the game. The prompt is a multi-line buffer (Shift+Enter adds a line
  * under a `…` continuation prompt) so operator scripts can be typed in place.
  * A local model's answer (`ask`) streams in live under the scrollback until its final lines replace it.
+ * With `fullscreen` (Track B, ?boot=tty) it is the whole page instead: open from the first render, full height,
+ * black, and no key closes it; a `boot` result is handed to the host (onBoot), which reloads on that track.
+ * One R0 machine (`r0`, repl.ts) lives for the life of the console, so definitions outlive a line; a typed key or
+ * token never enters the history as typed (redactForHistory).
  * What breaks if it is removed? Operators lose the live Rapier3D / crowd / kernel readout, the quality,
  * clock, audio and hardware-pairing controls, and the operator tier's scripts, answers and harnesses.
  */
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type SyntheticEvent } from 'react'
 import { BRAND } from '../../brand.ts'
 import { offlineBridge, type TerminalBridge } from './bridge.ts'
-import { commonPrefix, complete, continuationPrompt, formatStats, isToggleKey, motd, recallsHistory, run, type Line } from './commands.ts'
+import { commonPrefix, complete, continuationPrompt, formatStats, isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type Line, type ReplSession } from './commands.ts'
 
 const MAX_ROWS = 600
 const MAX_HISTORY = 200
@@ -37,6 +41,7 @@ background:rgba(0,0,0,0.85);color:#c8c8c8;font:13px/1.4 ${FONT};font-variant-lig
 border-bottom:1px solid #3a3a3a;user-select:text;-webkit-user-select:text;cursor:text;
 transform:translateY(-100%);visibility:hidden;pointer-events:none;transition:transform 140ms ease-in,visibility 0s linear 140ms}
 .r0-root[data-open]{transform:none;visibility:visible;pointer-events:auto;transition:transform 160ms ease-out,visibility 0s}
+.r0-root[data-full]{height:100%;min-height:0;transform:none;visibility:visible;pointer-events:auto;border-bottom:0;background:#000;transition:none}
 .r0-root ::selection{background:#c8c8c8;color:#000}
 .r0-scroll{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;white-space:pre-wrap;overflow-wrap:anywhere;
 scrollbar-width:thin;scrollbar-color:#4a4a4a transparent}
@@ -86,8 +91,15 @@ const Scrollback = memo(function Scrollback({ rows, prompt }: { rows: readonly R
   )
 })
 
-export function Terminal({ bridge, onOpenChange }: { bridge: TerminalBridge | null; onOpenChange(open: boolean): void }) {
-  const [open, setOpen] = useState(false)
+export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot }: {
+  bridge: TerminalBridge | null
+  onOpenChange(open: boolean): void
+  /** Track B: the console is the whole page, open from the start; the toggle key and Esc never close it. */
+  fullscreen?: boolean
+  /** A `boot gui|tty` result: the host reloads the page on that track. */
+  onBoot?(track: 'gui' | 'tty'): void
+}) {
+  const [open, setOpen] = useState(fullscreen)
   const [rows, setRows] = useState<Row[]>(() => motd((bridge ?? OFFLINE).brand).map((l, i) => ({ ...l, id: -1 - i })))
   const [value, setValue] = useState('')
   const [sel, setSel] = useState<readonly [number, number]>([0, 0])
@@ -112,10 +124,14 @@ export function Terminal({ bridge, onOpenChange }: { bridge: TerminalBridge | nu
   const mounted = useRef(true)
   const bridgeRef = useRef(bridge)
   const onOpenChangeRef = useRef(onOpenChange)
+  const fullRef = useRef(fullscreen)
+  /** The console's R0 machine (commands.ts `r0`), made on the first line that needs it. */
+  const session = useRef<ReplSession | null>(null)
 
   useEffect(() => {
     bridgeRef.current = bridge
     onOpenChangeRef.current = onOpenChange
+    fullRef.current = fullscreen
   })
 
   useEffect(() => {
@@ -170,6 +186,7 @@ export function Terminal({ bridge, onOpenChange }: { bridge: TerminalBridge | nu
       if (e.isComposing) return
       const inside = rootRef.current?.contains(e.target as Node) ?? false
       if (isToggleKey(e)) {
+        if (fullRef.current) return // the whole page: nothing to toggle, the key is an ordinary character
         if (!openRef.current && !inside && isEditable(e.target)) return // someone else's text field
         e.preventDefault()
         e.stopImmediatePropagation()
@@ -179,6 +196,7 @@ export function Terminal({ bridge, onOpenChange }: { bridge: TerminalBridge | nu
       if (!openRef.current) return
       const live = liveFrame.current !== null
       if (e.key === 'Escape' || (live && stopsLive(e, inputRef.current))) {
+        if (e.key === 'Escape' && !live && fullRef.current) return // full screen: Esc has nothing to close
         e.preventDefault()
         e.stopImmediatePropagation()
         if (live) stopLive()
@@ -253,10 +271,12 @@ export function Terminal({ bridge, onOpenChange }: { bridge: TerminalBridge | nu
     if (!line && liveFrame.current) return // a blank Enter does not end a live view
     stopLive()
     // Runs synchronously inside the keydown: `hal pair` needs the user activation to open a device picker.
-    const r = run(line, bridge ?? OFFLINE, history.current)
+    const r = run(line, bridge ?? OFFLINE, history.current, (session.current ??= replSession()))
     const h = history.current
-    if (line && h[h.length - 1] !== line) {
-      h.push(line)
+    // A key or a token typed on the line is kept as dots, never as typed.
+    const kept = redactForHistory(line)
+    if (kept && h[h.length - 1] !== kept) {
+      h.push(kept)
       if (h.length > MAX_HISTORY) h.splice(0, h.length - MAX_HISTORY)
     }
     histPos.current = h.length
@@ -287,7 +307,8 @@ export function Terminal({ bridge, onOpenChange }: { bridge: TerminalBridge | nu
     } else {
       r.pending?.then((lines) => { if (mounted.current) append(lines) }, () => {})
     }
-    if (r.close) setOpen(false)
+    if (r.close && !fullscreen) setOpen(false)
+    if (r.boot) onBoot?.(r.boot)
   }
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
@@ -375,6 +396,7 @@ export function Terminal({ bridge, onOpenChange }: { bridge: TerminalBridge | nu
       ref={rootRef}
       className="r0-root"
       data-open={open || undefined}
+      data-full={fullscreen || undefined}
       inert={!open}
       role="dialog"
       aria-label={`${b.brand.name} Ring-0 terminal`}

@@ -1,13 +1,25 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+/**
+ * Why does this file exist? It is the page's React shell: the city (`GuiShell`) or the console alone (`TtyShell`, under
+ * `?boot=tty`), the engine mounted with the page's options, and around it the boot veil, the HUD, the concierge, the
+ * wardrobe card and the touch and console overlays. It builds what the engine is handed through its seams instead of
+ * importing (the cognition router, the network client), keeps the visitor's look and session token, and screens the
+ * room's names and chat under 14A once more as they arrive.
+ * What breaks if it is removed? Nothing is mounted: the page is blank.
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Engine, type EngineOptions } from './07_Execute_Actions/engine.ts'
 import { Hud } from './07_Execute_Actions/Hud.tsx'
 import { Terminal } from './07_Execute_Actions/terminal/Terminal.tsx'
-import type { TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
+import { offlineBridge, type LookBridge, type NetBridge, type TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
 import { hudLine, recruitBridge, Recruiter } from './08_Swarm/recruitment.ts'
 import { TaskRouter } from './08_Swarm/taskRouter.ts'
 import { deferredLedger, followRecruiter, indexedDbLedger, memoryBridge, SwarmMemory } from './08_Swarm/memory.ts'
-import { createLocalCompute } from './09_Cognition/localCompute.ts'
+import { loopbackFetch } from './02_Define_The_Rules/airgap.ts'
+import { createMindRouter } from './09_Cognition/router.ts'
 import { createLocalSpeech } from './09_Cognition/localSpeech.ts'
+import { createNetClient } from './10_Network/netClient.ts'
+import { admissibleChat, admissibleName } from './10_Network/replication.ts'
+import type { NetControls } from './07_Execute_Actions/engine.ts'
 import type { GateHandle, GateLease, Mind, SkillGate } from './07_Execute_Actions/operator.ts'
 import { TouchControls } from './04_Connect_Hardware/TouchControls.tsx'
 import { isEditableTarget } from './04_Connect_Hardware/input.ts'
@@ -15,19 +27,26 @@ import type { SipocSnapshot } from './05_Observe_Environment/telemetry.ts'
 import { MonolithLogo } from './MonolithLogo.tsx'
 import { BootVeil } from './07_Execute_Actions/BootVeil.tsx'
 import { Concierge } from './07_Execute_Actions/Concierge.tsx'
+import { Customizer } from './07_Execute_Actions/Customizer.tsx'
 import { loadProfile, type Profile } from './05_Observe_Environment/profile.ts'
+import { loadLook, saveLook } from './05_Observe_Environment/lookStore.ts'
+import { changeLook, describeLook, lookFromSeed, type Look, type LookChange } from './03_Spawn_Agents/look.ts'
+import { PLAYER_INDEX } from './03_Spawn_Agents/crowdCompute.ts'
+import { clampPlayers } from './07_Execute_Actions/viewports.ts'
 import type { PlanStep } from './06_Make_Decisions/intent.ts'
 import { BRAND } from './brand.ts'
-import embeddedRegion from 'virtual:region-pack'
-import { validatePack, type RegionPack } from './01_Initialize_World/region/pack.ts'
+import embeddedRegion, { regionFirst } from 'virtual:region-pack'
+import { regionWanted, validatePack, type RegionPack } from './01_Initialize_World/region/pack.ts'
 
 const HUD_INTERVAL_MS = 100
-/** Where the local model's settings (its server and model) are kept between visits. */
-const COGNITION_KEY = 'civic-simulation:cognition:v1'
+/** Where the cognition router's settings (the provider, each provider's server and model, the network key) are kept between visits. */
+const COGNITION_KEY = 'civic-simulation:cognition:v2'
 /** Where the local speech server's settings (its server, voice, model, auto) are kept between visits. */
 const SPEECH_KEY = 'civic-simulation:speech:v1'
 /** Characters of a streaming answer the HUD shows. */
 const ANSWER_TAIL = 72
+/** Where the network session token (`net join <url> <token>`) is kept between visits, like the cognition key; never in the page source. */
+const NET_TOKEN_KEY = 'civic-simulation:net:v1'
 
 /** The page's local storage for one key; a browser that refuses storage keeps the settings for this visit only. */
 const pageStore = (key: string) => ({
@@ -48,6 +67,54 @@ const pageStore = (key: string) => ({
 })
 
 /**
+ * The console's network knob over the engine's session controls (NetControls), with the session token kept on this
+ * machine: a token given is saved and reused by a later `join` without one; `forget` drops it. Nothing else of the
+ * session lives here: the engine joins, draws and leaves.
+ */
+function netBridge(net: NetControls, store: { load(): string | null; save(value: string): void }): NetBridge {
+  return Object.freeze({
+    join: (url: string, token?: string): Promise<string> => {
+      const kept = store.load()
+      const t = token?.trim() || kept || ''
+      if (t === '') return Promise.reject(new Error('a session token is required (net join <url> <token>; it is kept for next time)'))
+      if (token && token.trim() !== kept) store.save(token.trim())
+      return net.join(url, t)
+    },
+    leave: () => net.leave(),
+    status: () => net.status(),
+    forget: () => {
+      if (!store.load()) return 'no token kept'
+      store.save('')
+      return 'token forgotten'
+    },
+  })
+}
+
+/**
+ * The console's look knob (terminal/bridge.ts LookBridge) over App's own look state, so the React state, the saved
+ * look (lookStore.ts) and the player's body stay one thing: a change goes through `wear` (wearLook), which saves
+ * it and re-dresses agent PLAYER_INDEX through the engine; `show` reads what is worn now, or what a pedestrian
+ * wears (the engine's word, else the hash's look for that index). `random` without a seed draws one here, so the
+ * pure change stays deterministic.
+ */
+function lookBridge(host: { worn(): Look; seed(): number; wear(look: Look): void; lookOf(agent: number): Look | null; agents: number }): LookBridge {
+  return Object.freeze({
+    show: (agent?: number): string[] => {
+      if (agent === undefined || agent === PLAYER_INDEX) return describeLook(host.worn())
+      if (!Number.isInteger(agent) || agent < 0 || agent >= host.agents) throw new Error(`no pedestrian ${agent} (0-${host.agents - 1})`)
+      return describeLook(host.lookOf(agent) ?? lookFromSeed(agent))
+    },
+    set: (change: LookChange): string[] => {
+      const seeded = change.kind === 'random' && !Number.isFinite(change.seed) ? { kind: 'random' as const, seed: Math.floor(Math.random() * 0x7fffffff) } : change
+      const r = changeLook(host.worn(), seeded, host.seed())
+      if (r.look === null) throw new Error(r.error)
+      host.wear(r.look)
+      return describeLook(r.look)
+    },
+  })
+}
+
+/**
  * The HUD's view of the operator's local model and voice: an answer streaming in (its latest words, or that the model
  * is still thinking), or who is speaking aloud.
  */
@@ -58,17 +125,37 @@ function activityText(a: { thinking: number; tail: string } | null, speaking: nu
 }
 
 /**
- * The region the pilot build carries (vite.config.ts regionPack), unpacked and checked; null in every other build, or
- * when the page asks for the procedural city (?region=off). Nothing is fetched: the bytes are in this file.
+ * The region every build carries (vite.config.ts regionPack), unpacked and checked when the page walks it: ?region=on
+ * in any build, by default in the pilot build (pack.ts regionWanted); null for the procedural city (?region=off, or by
+ * default). Nothing is fetched: the bytes are in this file.
  */
 async function loadRegion(): Promise<RegionPack | null> {
-  if (!embeddedRegion || new URLSearchParams(window.location.search).get('region') === 'off') return null
+  if (!regionWanted(new URLSearchParams(window.location.search).get('region'), regionFirst)) return null
   const bytes = Uint8Array.from(atob(embeddedRegion), (c) => c.charCodeAt(0))
   const text = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text()
   return validatePack(JSON.parse(text))
 }
 
-function readOptions(): EngineOptions & { debug: boolean } {
+/** Which shell the page boots: 'gui' (the city) or 'tty' (?boot=tty: the full-screen console alone, no engine). */
+type BootTrack = 'gui' | 'tty'
+
+type Options = EngineOptions & { debug: boolean; boot: BootTrack }
+
+/** The console's bridge in the TTY shell: no engine exists, so everything but the identity commands says so. */
+const TTY_BRIDGE: TerminalBridge = offlineBridge({ ...BRAND, track: 'tty' })
+
+/**
+ * Reloads the page on `track` (Track B's `boot gui|tty`): the URL keeps every other option. A reload, not a
+ * remount: no engine teardown races, and the single file needs no server.
+ */
+function reboot(track: BootTrack): void {
+  const url = new URL(window.location.href)
+  if (track === 'tty') url.searchParams.set('boot', 'tty')
+  else url.searchParams.delete('boot')
+  window.location.assign(url.toString())
+}
+
+function readOptions(): Options {
   const q = new URLSearchParams(window.location.search)
   const num = (key: string, fallback: number, min: number, max: number) => {
     const v = Number(q.get(key))
@@ -90,13 +177,45 @@ function readOptions(): EngineOptions & { debug: boolean } {
     quality: quality === null || quality === 'auto' ? 'auto' : Math.round(num('quality', 3, 0, 4)),
     targetFps: Math.round(num('fps', 0, 0, 240)),
     audio: q.get('audio') !== '0',
+    // Closed captions of every spatial sound (captions.ts); ?captions=0 keeps the HUD's strip empty.
+    captions: q.get('captions') !== '0',
     debug: q.has('debug'),
+    // Track B: ?boot=tty mounts the full-screen console alone (no canvas, no engine, no WebGPU, no worker, no audio).
+    boot: q.get('boot') === 'tty' ? 'tty' : 'gui',
+    // The AI fleet on fixed tracks (zero-jam rings); ?tracks=0 restores the random street-hopping routes.
+    tracks: q.get('tracks') !== '0',
     // The cinema camera (24 fps, 180° shutter, ND, film response); ?cinema=0 draws every frame with ACES.
     cinema: q.get('cinema') !== '0',
+    // The ragdoll balance machine over the pedestrians near the operator; ?ragdoll=0 keeps everyone on the GPU alone.
+    ragdoll: q.get('ragdoll') !== '0',
+    // Local split screen: ?players=2..4 cuts the canvas into a viewport per player (viewports.ts clamps it to 1..4).
+    players: clampPlayers(q.get('players')),
   }
 }
 
+const noop = (): void => {}
+
+/**
+ * Track B: the bare console. Nothing of the city is built: no canvas, no Engine.create, no WebGPU adapter request,
+ * no physics worker, no audio, no HUD. The terminal runs over the offline bridge (the identity commands work; the
+ * rest says 'engine not running'); a `boot gui` result reloads into the city.
+ */
+function TtyShell() {
+  return (
+    <main className="relative h-full w-full overflow-hidden bg-black">
+      <Terminal bridge={TTY_BRIDGE} fullscreen onOpenChange={noop} onBoot={reboot} />
+    </main>
+  )
+}
+
 function App() {
+  // Read once: the boot track decides which shell mounts, so the hooks of each shell live in that shell.
+  const [options] = useState(readOptions)
+  return options.boot === 'tty' ? <TtyShell /> : <GuiShell options={options} />
+}
+
+/** The city: the engine over the canvas, the HUD, the Concierge, the touch controls and the drop-down console. */
+function GuiShell({ options }: { options: Options }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const engineRef = useRef<Engine | null>(null)
   const termOpenRef = useRef(false)
@@ -109,11 +228,26 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   // Read synchronously, so the very first render already knows a returning visitor.
   const [profile, setProfile] = useState<Profile | null>(loadProfile)
+  // The look the visitor chose (lookStore.ts), or null: then their own seed's look (the first use of profile.seed),
+  // or, unnamed, the hash's for the player's body. The wardrobe card is Wren's to open.
+  const [look, setLook] = useState<Look | null>(loadLook)
+  const [lookOpen, setLookOpen] = useState(false)
+  const lookOpenRef = useRef(false)
   const [veilDone, setVeilDone] = useState(false)
   // A Ring-0 kernel panic: the engine is halted and the reason is shown over everything.
   const [locked, setLocked] = useState<string | null>(null)
 
   useEffect(() => { engine?.setPlayerName(profile?.name ?? '') }, [engine, profile])
+  // The player's own body wears it from the start (agent PLAYER_INDEX; the engine writes the crowd's look word).
+  const worn = useMemo(() => look ?? (profile ? lookFromSeed(profile.seed) : null), [look, profile])
+  useEffect(() => { engine?.setLook(PLAYER_INDEX, worn) }, [engine, worn])
+  const wearLook = useCallback((next: Look) => { setLook(next); saveLook(next) }, [])
+  // The console's `look` knob reads these (the bridge is built once, with the engine).
+  const wornRef = useRef<Look | null>(null)
+  const seedRef = useRef(PLAYER_INDEX)
+  useEffect(() => { wornRef.current = worn; seedRef.current = profile?.seed ?? PLAYER_INDEX }, [worn, profile])
+  const openLook = useCallback(() => setLookOpen(true), [])
+  const closeLook = useCallback(() => setLookOpen(false), [])
 
   // A brief's immediate steps go through the terminal bridge (the same four operator knobs), never the engine.
   const applyIntent = useCallback((step: PlanStep): boolean => {
@@ -125,19 +259,25 @@ function App() {
     return false
   }, [bridge])
 
-  // The console suspends game input (and releases pointer lock) while it owns the keyboard.
+  // The console suspends game input (and releases pointer lock) while it owns the keyboard; the wardrobe card likewise
+  // while it is open (the console opening puts the card away).
   const onTermOpen = useCallback((open: boolean) => {
     termOpenRef.current = open
     setTermOpen(open)
-    engineRef.current?.input.suspend(open)
+    if (open) setLookOpen(false)
+    engineRef.current?.input.suspend(open || lookOpenRef.current)
   }, [])
+  useEffect(() => {
+    lookOpenRef.current = lookOpen
+    engineRef.current?.input.suspend(lookOpen || termOpenRef.current)
+  }, [lookOpen])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.code === 'KeyH' && !e.repeat && !termOpenRef.current && !isEditableTarget(e.target)) setHudVisible((v) => !v)
     }
-    // Browsers only start audio from a user gesture; every gesture is a chance to (re)unlock it.
-    const unlock = () => engineRef.current?.audio.unlock()
+    // Browsers only start audio from a user gesture; every gesture is a chance to (re)unlock it (every player's soundscape).
+    const unlock = () => engineRef.current?.unlockAudio()
     window.addEventListener('keydown', onKey)
     for (const type of ['pointerdown', 'keydown', 'touchend', 'click'] as const) window.addEventListener(type, unlock, { capture: true })
     return () => {
@@ -149,7 +289,6 @@ function App() {
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const options = readOptions()
     let engine: Engine | null = null
     let recruiter: Recruiter | null = null
     let router: TaskRouter | null = null
@@ -198,9 +337,11 @@ function App() {
             return h
           },
         }
-        // The local model (only ever asked on the operator's command, only on this machine). Its answer's pieces are
-        // shown on the HUD only after the lease let them through.
-        const local = createLocalCompute({ fetch: (url, init) => window.fetch(url, init), store: pageStore(COGNITION_KEY) })
+        // The cognition router (only ever asked on the operator's command): the Claude API through a gateway on this
+        // machine, or a model server on this machine, swapped at the console. Its fetch is the page's own (already held
+        // to this machine by the air gap main.tsx installed) under the gate's own wrapper once more. Its answer's pieces
+        // are shown on the HUD only after the lease let them through.
+        const local = createMindRouter({ fetch: loopbackFetch((url, init) => window.fetch(url, init)), store: pageStore(COGNITION_KEY) })
         const mind: Mind = {
           ...local,
           answer: (req, onPiece) => {
@@ -220,19 +361,45 @@ function App() {
         unfollow = followRecruiter(memory, r)
         // The local speech server (only ever asked on the operator's command, only on this machine): the audio it
         // returns is placed by the engine's soundscape at the speaker's head.
-        const voice = createLocalSpeech({ fetch: (url, init) => window.fetch(url, init), store: pageStore(SPEECH_KEY) })
+        const voice = createLocalSpeech({ fetch: loopbackFetch((url, init) => window.fetch(url, init)), store: pageStore(SPEECH_KEY) })
+        // A walk ping (go or gather) at a sidewalk point near the operator asks an Active recruit over to it: the engine
+        // plans it from its own copies (08_Swarm/ping.ts rallyPlan), the recruiter checks the page's copy, the physics
+        // realm decides on its own readings; its answer is a toast either way.
+        e.onRally = (req) => { void r.rally(req.agent, req.x, req.z).then((o) => e.toast('Rally', o.message)) }
+        // The opt-in network client (10_Network/netClient.ts): built over the page's own socket constructor, never
+        // connected at boot, handed to the engine through its NetHost seam (the engine draws the room's poses as
+        // ghosts and feeds the client player 1's input) and to the console through the bridge. The room's chat and
+        // pings reach the engine's captions only after the core's 14A screen is applied once more here: the host is
+        // not trusted either.
+        const net = createNetClient({
+          onChat: (m) => {
+            const name = admissibleName(m.name), text = admissibleChat(m.text)
+            if (name !== null && text !== null) e.netChat(m.from, name, text)
+          },
+          onPing: (m) => e.netPing(m.from, m.kind, m.x, m.y, m.z),
+        })
+        e.setNet(net)
         e.onHalt = (reason) => {
           unfollow?.()
           tasks.dispose()
           r.dispose()
           setLocked(reason)
         }
-        if (termOpenRef.current) e.input.suspend(true)
+        if (termOpenRef.current || lookOpenRef.current) e.input.suspend(true)
         setEngine(e)
         setBridge(Object.freeze({
           ...e.terminalBridge(gate, mind, voice, memory.diary()),
           recruit: recruitBridge(r),
           memory: memoryBridge(memory, r),
+          net: netBridge(e.net, pageStore(NET_TOKEN_KEY)),
+          // The player's look: App's state is the one source (the wardrobe card and the console share it).
+          look: lookBridge({
+            worn: () => wornRef.current ?? lookFromSeed(seedRef.current),
+            seed: () => seedRef.current,
+            wear: wearLook,
+            lookOf: (agent) => e.lookOf(agent),
+            agents: e.recruitHost().agents,
+          }),
         }))
         // The fallback without a microphone, in the browser's console: recruit("Rust").
         Object.assign(window, { recruit: (skill: string) => r.recruit(skill) })
@@ -248,6 +415,13 @@ function App() {
               interact: () => e.interact(),
               hold: (code: string, on: boolean) => e.input.hold(code, on),
               look: (yaw: number, pitch: number) => { e.input.yaw = yaw; e.input.pitch = pitch },
+              // A ping where the head looks (the Q key's path), as plain data: what it met and where.
+              ping: (kind: 'go' | 'look' | 'gather' | 'wait' = 'go') => e.pingAt(kind),
+              // The wardrobe (03_Spawn_Agents/look.ts): dress an agent (0 is the player) in a look, or null for the hash's.
+              wear: (agent: number, look: Look | null) => e.setLook(agent, look),
+              lookOf: (agent = PLAYER_INDEX) => e.lookOf(agent),
+              // The network session (10_Network): join a room, leave it, or read it as plain data.
+              net: e.net,
               // Headless browsers cannot take pointer lock; this hides the capture hint for screenshots.
               pretendLocked: () => { e.input.locked = true },
               // The physics realm as the harness sees it: the mirrored state, the command queue (dbg* accepted), the next state.
@@ -273,7 +447,7 @@ function App() {
       if ((window as { recruit?: unknown }).recruit) delete (window as { recruit?: unknown }).recruit
       engine?.dispose()
     }
-  }, [])
+  }, [options, wearLook])
 
   return (
     <main className="relative h-full w-full overflow-hidden bg-slate-900">
@@ -284,16 +458,27 @@ function App() {
       )}
       {hud && (
         <Concierge
-          visible={veilDone && hudVisible && !termOpen}
+          visible={veilDone && hudVisible && !termOpen && !lookOpen}
           profile={profile}
           onProfile={setProfile}
           family={hud.supplier.glyphs}
           driving={hud.input.mode === 'vehicle'}
           dark={hud.customer.daylight < 0.35}
           onIntent={applyIntent}
+          onLook={openLook}
         />
       )}
-      <Terminal bridge={bridge} onOpenChange={onTermOpen} />
+      {hud && (
+        <Customizer
+          visible={lookOpen && veilDone && !termOpen && locked === null}
+          look={worn}
+          seed={profile?.seed ?? 0}
+          onChange={wearLook}
+          onClose={closeLook}
+          dark={hud.customer.daylight < 0.35}
+        />
+      )}
+      <Terminal bridge={bridge} onOpenChange={onTermOpen} onBoot={reboot} />
       {/* From the first render: React swaps index.html's identical splash for this, which fades into the city
           once the first snapshot exists (or lifts to show the error card). */}
       <BootVeil ready={hud !== null || error !== null} onDone={() => setVeilDone(true)} />

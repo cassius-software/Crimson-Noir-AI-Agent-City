@@ -121,9 +121,19 @@ test('no real place name in anything the product shows: every string in the ship
   assert.ok(code("const label = 'Clear · Toronto'").match(REAL_PLACES), 'a string is caught')
 })
 
+test('every source file opens with why it exists and what breaks without it (the README\'s promise)', () => {
+  const sources = [...files(join(ROOT, 'src'))].filter((f) => /\.(ts|tsx|css|wgsl)$/.test(f))
+  assert.ok(sources.length > 100, `${sources.length} files read`)
+  const missing = sources.filter((f) => {
+    const head = readFileSync(f, 'utf8').split('\n').slice(0, 40).join('\n')
+    return !head.includes('Why does this file exist?') || !head.includes('What breaks if it is removed?')
+  })
+  assert.deepEqual(missing.map((f) => relative(ROOT, f)), [])
+})
+
 test('controller hints carry no console maker\'s button symbols, in any family, for any action', () => {
   const families: GlyphFamily[] = ['keyboard', 'abxy', 'bayx', 'numbered', 'generic', 'touch']
-  const actions: ControlAction[] = ['move', 'look', 'run', 'interact', 'handbrake', 'reset', 'throttle', 'brake', 'clock', 'console', 'hud', 'ghost']
+  const actions: ControlAction[] = ['move', 'look', 'run', 'interact', 'handbrake', 'reset', 'throttle', 'brake', 'clock', 'console', 'hud', 'ghost', 'ping']
   for (const f of families) for (const a of actions) assert.doesNotMatch(glyph(a, f), /[✕×○◯△□▢⨯]/u, `${f}.${a}`)
   // The glyph table itself holds none either (not even unused).
   assert.doesNotMatch(readFileSync(join(ROOT, 'src/07_Execute_Actions/glyphs.ts'), 'utf8'), /[✕○△□]/u)
