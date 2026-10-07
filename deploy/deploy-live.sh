@@ -47,7 +47,10 @@ fi
 [ "$(id -u)" -eq 0 ] || { echo "run this as root (sudo): it installs packages and owns the secrets" >&2; exit 2; }
 command -v apt-get > /dev/null || { echo "this script installs from apt; on another distribution follow README.md" >&2; exit 2; }
 
-DEPLOY=$(cd "$(dirname "$0")" && pwd)
+# The deploy directory is where this script really lives (a symlink to it is followed), and it must hold the stack's
+# files before anything here is owned or locked: a copy of the script in a PATH directory must not lock that directory.
+DEPLOY=$(cd "$(dirname "$(readlink -f "$0")")" && pwd -P)
+[ -f "$DEPLOY/docker-compose.yml" ] && [ -f "$DEPLOY/nginx.conf" ] || { echo "$DEPLOY is not the deploy directory (no docker-compose.yml and nginx.conf there)" >&2; exit 2; }
 COMPOSE=(docker compose --project-directory "$DEPLOY" -f "$DEPLOY/docker-compose.yml")
 say() { printf '\n== %s\n' "$*"; }
 
@@ -136,19 +139,46 @@ if [ -n "${BUILD_CA_FILE:-}" ]; then
 else
     "${COMPOSE[@]}" up -d --build
 fi
+# Where the proxy was published (the compose file's port, whatever it is), then the two cuts the compose file cannot
+# make by itself: the host's network must not reach this machine's own listeners (an engine older than 28 ignores
+# the gateway_mode option), and the proxy's network must not start connections out (its resolver still forwards).
+published=$("${COMPOSE[@]}" port proxy 8443 2> /dev/null | tail -n 1)
+port=${published##*:}
+[ -n "$port" ] || port=443
+if command -v iptables > /dev/null; then
+    backend=$(docker network inspect "$(basename "$DEPLOY")_backend" -f '{{.Id}}' 2> /dev/null | cut -c1-12 || true)
+    edge=$(docker network inspect "$(basename "$DEPLOY")_edge" -f '{{.Id}}' 2> /dev/null | cut -c1-12 || true)
+    # Compose names its networks after the project, which the compose file sets to crimson-noir.
+    backend=$(docker network inspect crimson-noir_backend -f '{{.Id}}' 2> /dev/null | cut -c1-12 || echo "$backend")
+    edge=$(docker network inspect crimson-noir_edge -f '{{.Id}}' 2> /dev/null | cut -c1-12 || echo "$edge")
+    if [ -n "$backend" ]; then
+        iptables -C INPUT -i "br-$backend" -j DROP 2> /dev/null || iptables -I INPUT -i "br-$backend" -j DROP
+    fi
+    if [ -n "$edge" ]; then
+        # The proxy's network starts no connection into this machine's own stack (inbound published traffic is
+        # forwarded, not delivered here, and the embedded resolver lives inside the container's namespace)...
+        iptables -C INPUT -i "br-$edge" -m conntrack --ctstate NEW -j DROP 2> /dev/null || iptables -I INPUT -i "br-$edge" -m conntrack --ctstate NEW -j DROP
+        # ...nor out to the internet (the network does not masquerade; this also closes the resolver's forwarding).
+        if iptables -L DOCKER-USER -n > /dev/null 2>&1; then
+            iptables -C DOCKER-USER -i "br-$edge" -m conntrack --ctstate NEW ! -d 172.16.0.0/12 -j DROP 2> /dev/null \
+                || iptables -I DOCKER-USER -i "br-$edge" -m conntrack --ctstate NEW ! -d 172.16.0.0/12 -j DROP
+        fi
+    fi
+    echo "firewall: neither container's network reaches a listener of this machine; the proxy's starts no connection out"
+fi
 ready=''
 for _ in $(seq 1 60); do
-    code=$(curl -sk -o /dev/null -w '%{http_code}' --noproxy '*' https://127.0.0.1/ 2> /dev/null || true)
+    code=$(curl -sk -o /dev/null -w '%{http_code}' --noproxy '*' "https://127.0.0.1:$port/" 2> /dev/null || true)
     if [ "$code" = 426 ]; then ready=1; break; fi
     sleep 2
 done
 if [ -z "$ready" ]; then
-    echo "the proxy did not answer on 443 within two minutes:" >&2
+    echo "the proxy did not answer on $port within two minutes:" >&2
     "${COMPOSE[@]}" ps >&2
     "${COMPOSE[@]}" logs --tail 40 >&2
     exit 1
 fi
-echo "the proxy answers on 443 (426 to a plain request: the door is a WebSocket upgrade)"
+echo "the proxy answers on $port (426 to a plain request: the door is a WebSocket upgrade)"
 
 # 6. Let's Encrypt, through the running proxy, and its renewal.
 if [ -z "$SELF_SIGNED" ]; then

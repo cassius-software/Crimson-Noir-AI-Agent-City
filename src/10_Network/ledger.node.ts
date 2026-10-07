@@ -18,10 +18,7 @@
  */
 import type { Socket } from 'node:net'
 import { canonical } from '../02_Define_The_Rules/integrity.ts'
-import {
-  admit, begin, LEDGER_CHUNK, LEDGER_FRAME, LEDGER_MAX_ENTRIES, LEDGER_SUBPROTOCOL, newSession, pairs, readLedgerMessage, seal, WEIGHTS_CHUNK,
-  type LedgerSession,
-} from './ledger.ts'
+import { admit, begin, LEDGER_CHUNK, LEDGER_FRAME, LEDGER_MAX_ENTRIES, LEDGER_SUBPROTOCOL, newSession, pairs, readLedgerMessage, seal, WEIGHTS_CHUNK, type LedgerSession, type LedgerSeal } from './ledger.ts'
 import { readEnvelope, sealFault, type Mac } from './replication.ts'
 import type { FrameRead } from './replication.node.ts'
 
@@ -44,6 +41,12 @@ export interface LedgerDoorOptions {
   maxBacklog: number
   /** Escapes untrusted text for the log (replication.node.ts loggable). */
   loggable: (text: string) => string
+  /**
+   * The seal of the configuration's own run (crimson_noir_os/containment.seal). With it, only that run is kept for
+   * the fleet; another verified ledger is answered `verified` with `kept: false`. Without it, the last verified
+   * ledger is kept, whatever it folds to: a door for tests and development.
+   */
+  seal?: LedgerSeal
 }
 
 export interface LedgerStats {
@@ -158,11 +161,15 @@ export function ledgerDoor(o: LedgerDoorOptions): LedgerDoor {
       case 'seal': {
         const sealed = seal(s, m as unknown as Record<string, unknown>)
         if (!sealed.ok) return refuse(c, sealed.reason)
-        // Only now is anything kept: a copy of the folded weights, replacing the last of this configuration.
-        kept.set(s.digest, { head: sealed.value.head, count: sealed.value.count, digest: sealed.value.weights, weights: s.weights.slice() })
+        // Only now is anything kept: a copy of the folded weights, replacing the last of this configuration, and
+        // only if it is the run the operator pinned (or nothing is pinned). A verified ledger that is another run is
+        // lawful but not the fleet's: it is answered, not kept, so no token-holder can replace the fleet's weights.
+        const pinned = o.seal
+        const keep = pinned === undefined || (pinned.head === sealed.value.head && pinned.count === sealed.value.count && pinned.weights === sealed.value.weights)
+        if (keep) kept.set(s.digest, { head: sealed.value.head, count: sealed.value.count, digest: sealed.value.weights, weights: s.weights.slice() })
         stats.verified++
-        o.log(`ledger of ${o.loggable(c.subject)} verified: ${sealed.value.count} entries, head ${sealed.value.head.slice(0, 12)}`)
-        send(c, { t: 'verified', head: sealed.value.head, count: sealed.value.count, weights: sealed.value.weights })
+        o.log(`ledger of ${o.loggable(c.subject)} verified: ${sealed.value.count} entries, head ${sealed.value.head.slice(0, 12)}${keep ? '' : ', not kept (not the pinned run)'}`)
+        send(c, { t: 'verified', head: sealed.value.head, count: sealed.value.count, weights: sealed.value.weights, kept: keep })
         return
       }
       case 'fetch': {

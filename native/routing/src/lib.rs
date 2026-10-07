@@ -73,8 +73,9 @@ impl<'a> Track<'a> {
             return false;
         }
         let (np, ns) = (pieces as usize, stops as usize);
-        if words.len() < track_words(np, ns) {
-            return false;
+        match track_words_checked(np, ns) {
+            Some(need) if words.len() >= need => {}
+            _ => return false,
         }
         let length = words[T_LENGTH];
         if !(length > 0.0 && length.is_finite()) || !words[T_Y].is_finite() || !words[T_SPEED_LIMIT].is_finite() || !words[T_CORNER_SPEED].is_finite() || !words[T_DECEL].is_finite() {
@@ -359,7 +360,7 @@ fn track_at(at: usize) -> Option<Track<'static>> {
     if !(np >= 1.0 && np < 1.0e9 && ns >= 0.0 && ns < 1.0e9) {
         return None;
     }
-    let need = track_words(np as usize, ns as usize);
+    let Some(need) = track_words_checked(np as usize, ns as usize) else { return None };
     if head.len() < need {
         return None;
     }

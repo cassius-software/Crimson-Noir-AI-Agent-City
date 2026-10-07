@@ -65,7 +65,7 @@ const bridge = (url, token) => {
 
 const good = bridge(started.url, started.token)
 console.log(good.out.trimEnd().replace(/^/gm, '      '))
-check(good.code === 0 && /verified by the host/.test(good.out), 'the recorded ledger is verified by the host')
+check(good.code === 0 && /verified by the host: .*and the host keeps it for the fleet/.test(good.out), 'the recorded ledger is verified by the host and kept for the fleet (the pinned run)')
 check(good.code === 0 && /fleet sync: a fresh runtime adopted \d+ weights, bit-exact/.test(good.out), 'a fresh runtime adopts the verified weights, bit-exact')
 
 // A forgery changes the signature's first character: every bit of it counts (the last one's low bits do not).

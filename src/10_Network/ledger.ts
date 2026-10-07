@@ -34,6 +34,35 @@ export const CONFIG_MAX = 8192
 export const WEIGHTS_CHUNK = 512
 /** The hash before the first entry. */
 export const LEDGER_GENESIS = '0'.repeat(64)
+
+/**
+ * The seal of the configuration's own scripted run, as crimson_noir_os/containment.seal pins it (`cargo run -- seal`
+ * writes that file): the ledger the door keeps for the fleet. Any other verified ledger is answered `verified` and
+ * not kept.
+ */
+export interface LedgerSeal {
+  readonly head: string
+  readonly count: number
+  readonly weights: string
+}
+
+/** containment.seal read strictly: comment lines, then `head`, `count` and `weights` once each. Null for anything else. */
+export function readSeal(text: string): LedgerSeal | null {
+  const fields = new Map<string, string>()
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    if (line === '' || line.startsWith('#')) continue
+    const m = /^(head|count|weights) (\S+)$/.exec(line)
+    if (m === null || fields.has(m[1])) return null
+    fields.set(m[1], m[2])
+  }
+  const head = fields.get('head')
+  const count = fields.get('count')
+  const weights = fields.get('weights')
+  if (head === undefined || count === undefined || weights === undefined) return null
+  if (!isDigest(head) || !isDigest(weights) || !/^(?:0|[1-9]\d{0,8})$/.test(count) || Number(count) > LEDGER_MAX_ENTRIES) return null
+  return Object.freeze({ head, count: Number(count), weights })
+}
 /** The rewards the kernel can produce: (1 << 22) / (min(clock, 1 << 20) + 64), at clock 0 and at the cap. */
 export const REWARD_MAX = Math.floor((1 << 22) / 64)
 export const REWARD_MIN = Math.floor((1 << 22) / ((1 << 20) + 64))

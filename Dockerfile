@@ -34,10 +34,10 @@ COPY --from=deps /src/node_modules ./node_modules
 COPY LICENSE NOTICE.md ./
 COPY src ./src
 COPY tools/net/closure.mjs tools/net/mint-token.mjs ./tools/net/
-COPY crimson_noir_os/containment.lock ./crimson_noir_os/
+COPY crimson_noir_os/containment.lock crimson_noir_os/containment.seal ./crimson_noir_os/
 RUN node --no-warnings tools/net/closure.mjs src/10_Network/replication.node.ts tools/net/mint-token.mjs --into /app \
  && cp LICENSE NOTICE.md /app/ \
- && mkdir -p /app/crimson_noir_os && cp crimson_noir_os/containment.lock /app/crimson_noir_os/ \
+ && mkdir -p /app/crimson_noir_os && cp crimson_noir_os/containment.lock crimson_noir_os/containment.seal /app/crimson_noir_os/ \
  && printf '{ "private": true, "type": "module" }\n' > /app/package.json
 
 # 3. The host: Node and /app.
@@ -47,7 +47,8 @@ WORKDIR /app
 ENV NET_HOST=127.0.0.1 \
     NET_PORT=8787 \
     NET_PRINT_TOKEN=0 \
-    NET_LEDGER_LOCK=/app/crimson_noir_os/containment.lock
+    NET_LEDGER_LOCK=/app/crimson_noir_os/containment.lock \
+    NET_LEDGER_SEAL=/app/crimson_noir_os/containment.seal
 USER 65532:65532
 STOPSIGNAL SIGINT
 # A plain request is answered 426 (Upgrade Required) and costs the host nothing: that answer is health.

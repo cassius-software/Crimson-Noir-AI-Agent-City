@@ -485,21 +485,67 @@ fixing anything found with regression tests; (2) a PR from `claude/quirky-farada
 (3) releases `v1.0.0-stable-release` and `stable-beta` cut through the API, and the bake watched; (4) a production
 `docker-compose.yml` and a one-touch `deploy-live.sh` with Let's Encrypt.
 
-State (updated as work lands):
-- `gh` has no valid token in this session (GH_TOKEN is rejected), so GitHub work goes through the GitHub MCP tools.
-  Those can open and merge PRs and dispatch workflows, but have no release-creation call. So the release workflow was
-  extended: a dispatch for a tag that does not exist bakes the dispatched commit and makes the tag as part of the
-  release (`gh release create --target`), with optional `title` and `notes` inputs; an existing release keeps its
-  title and hand-written notes (the media's description sits under a marker). Releases will be cut by dispatching
-  the workflow on `main` after the merge.
-- DONE: `deploy/compose.yaml` renamed to `deploy/docker-compose.yml` (all references updated); `deploy/deploy-live.sh`
-  written and run three times here (self-signed; Let's Encrypt with a stand-in certbot, incl. the renewal hook; an
-  idempotent re-run). It found and fixed one bug on first run: a 0700 `tls/` directory is 0700 inside the container
-  too, so nginx (uid 101) could not read the world-readable certificate; mounted dirs are 0755, the parent is 0700.
-- RUNNING: the audit workflow (8 attackers: nginx, container, rust-kernels, wasm, ledger-wire, tokens-seals,
-  airgap-csp, memory-determinism; a skeptic per attacker). Attackers leave new test files at assigned paths:
-  crates/noir_core/tests/{kernels_fuzz,term_fuzz,determinism}.rs, src/06_Make_Decisions/routingWasm.bounds.test.ts,
-  src/09_Cognition/kvPager.bounds.test.ts, src/10_Network/{hostileHost.node,ledgerProperties,token.fuzz,seal.fuzz,
-  churn.node}.test.ts, src/02_Define_The_Rules/airgap.fuzz.test.ts.
-- NEXT: integrate the audit (fix confirmed findings, keep passing tests, full suites), commit, PR, merge, dispatch
-  the two releases, watch the bakes, final handoff.
+### State
+
+**The audit (done).** Eight attackers (nginx proxy, container bounds, Rust no_std core, WASM engine, ledger wire,
+tokens and seals, air gap and CSP, memory and determinism), then a skeptic per attacker (the first pass hit the
+operator's usage limit; the workflow was resumed and every agent finished: 16 agents, ~3.0M tokens). 51 findings;
+the skeptics confirmed 13 as real (none worse than minor), rejected the rest as theoretical here or as documented
+limits. Fixed, each with its regression test committed (the attackers' tests, 9 files, 72 new tests):
+- Rust core: a name with `"`, `\` or `$` broke the canonical round trip (config.rs text() refuses them); a long
+  dotted path recursed the parser off its stack (bounded by MAX_DEPTH); stats/agent/words/help/roles were not
+  charged to the terminal's step budget (charged, so a budget bounds a line's time); a patrol walked off the floor
+  with the edge walls cleared (positions clamped, CPU and WGSL alike; the scripted run's fingerprint is unchanged);
+  bitonic_sort of an empty slice, zero_one_proof's precondition.
+- The Rust bridge (wire.rs/bridge.rs): a 10 s per-message deadline and at most 64 pings per message (a drip or a
+  ping flood no longer holds it); a fetch takes at most one weight per slot of the pool; the host's text is escaped
+  (`loggable`) before any terminal line carries it.
+- The ledger door: the host keeps for the fleet only the configuration's own run, whose seal is pinned in
+  `crimson_noir_os/containment.seal` (`cargo run -- seal`; a Rust test holds the file equal, the image carries it as
+  NET_LEDGER_SEAL, image-check proves it is pinned). Any other lawful ledger is answered `verified` with
+  `kept: false`. The skeptic rated the finding a nit (the bridge's own adopt already refused a replaced set), but a
+  token-holder could still make every other runtime's fleet sync fail; now it cannot.
+- Host: a NaN clock refuses (not admits) an expired token; the secret is measured in bytes with no NUL; the failure
+  buckets are capped at 4,096 addresses and swept once a second; readFrame judges a 64-bit length against a whole
+  bound and refuses non-minimal length encodings (1002).
+- Page: canonical() writes a sparse array's holes as null; the prefix cache re-takes its output view after each
+  append (a grow detached it: copies went uncounted), compares a hit by tokens not by a 32-bit digest, reports a
+  hit's own `forked`, bounds `pages` to 2^20 and refreshes its counts after a refused ask; the routing wrapper
+  re-takes its views when the exported memory changed and reports a refused grow as an error; the native routing
+  module refuses a piece count whose words would wrap a wasm32 usize (rebuilt: routing.wasm.ts); the gate's
+  isLoopbackHost takes four octets of at most 255; `x-dns-prefetch-control: off` in index.html, and the link-hint
+  limit documented in docs/zero-trust-audit.md.
+- Deployment: `backend` has an isolated gateway (the host could reach any service the server binds on 0.0.0.0;
+  Docker 28+, and deploy-live.sh adds the cut with iptables too); `edge` does not masquerade and deploy-live.sh
+  drops new connections from the proxy to the internet and to the server's own stack (the proxy could reach both);
+  memswap and cpu limits; the proxy's /tmp sized (64 MB); deploy-live.sh acts only in the real deploy directory
+  (a symlinked or copied script could lock /usr/local/bin to root) and reads the published port from compose;
+  X-Real-IP/Forwarded cleared at the proxy; .dockerignore keeps the page's sources out of the build context; the
+  tunnel's documented docker run carries the stack's hardening.
+- Rejected by the skeptics and left as documented limits (see deploy/README.md "Limits to know" and
+  docs/zero-trust-audit.md): the port-80 redirect reflecting Host, the case-insensitive 'null' origin, navigation
+  and WebRTC-through-a-realm exfiltration, loopbackServer admitting 127.0.0.2 and [::1] (the CSP refuses them), the
+  gate admitting a fragment (the WebSocket constructor refuses it; the gate's test pins it).
+
+**Verified after the fixes:** `npm test` 1,301/1,301; `cargo test --workspace` 85 (48 core, 16 runtime incl. the
+seal pin, 21 property tests in crates/noir_core/tests); native tests; clippy on every target; tsc; oxlint; build;
+smoke:net; smoke:bridge (10/10, the host keeps the run); the image rebuilt and the stack recreated by deploy-live.sh
+with the new network options; the proxy cannot connect out; the host cannot reach a listener on the server's
+0.0.0.0 (Docker's isolated gateway refuses it); a join over wss and through the tunnel; the bridge through the tunnel
+(verified, kept, bit-exact); an empty lawful ledger verified and not kept, the fetch after it still the pinned run.
+
+**Provisioning (done, part 4):** `deploy/docker-compose.yml` (renamed from compose.yaml) and `deploy/deploy-live.sh`
+(self-signed, Let's Encrypt with a stand-in certbot incl. the renewal hook, idempotent re-run; its first run found
+the 0700 tls/ directory bug, fixed).
+
+**Release path (parts 2 and 3):** `gh` has no valid token here (GH_TOKEN rejected); the GitHub MCP tools work as the
+owner but have no release-creation call. So build-release.yml now cuts a release from a dispatch: for a tag that
+does not exist it bakes the dispatched commit and makes the tag as part of the release (`gh release create
+--target`), with `title` and `notes` inputs; an existing release keeps its title and notes above a marker. Replayed
+locally with a stand-in gh in four scenarios. The plan: merge the PR, dispatch on main for
+`v1.0.0-stable-release` (title "Crimson Noir OS v1.0.0 Stable Release", notes "Production ISO Release. Fully
+Audited.") and `stable-beta` ("Stable Beta", a prerelease by the alpha/beta/rc rule), watch the runs, verify the
+assets.
+
+**Not verified:** no GitHub Actions run yet (no runner here); no Windows PowerShell 5.1; no physical hardware; no
+real Let's Encrypt issuance (needs a public name).

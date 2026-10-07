@@ -124,6 +124,21 @@ pub fn fold(d: &Dims, entries: &[Entry]) -> Vec<i32> {
     w
 }
 
+/// The seal of a run as crimson_noir_os/containment.seal pins it for the host (`cargo run -- seal` writes it): the
+/// ledger's head, its count and its weights' digest, under the lock they belong to. The host's ledger door keeps a
+/// verified ledger for the fleet only if its seal is this one.
+pub fn seal_text(l: &Ledger, weights: &[i32], lock: &str) -> String {
+    format!(
+        "# The seal of the scripted run under containment.lock {lock}: its ledger's head, its entries, and its weights'\n\
+         # digest. The host's ledger door keeps a verified ledger for the fleet only if its seal is this one.\n\
+         # Regenerate it with `cargo run -- seal` whenever containment.nix changes.\n\
+         head {}\ncount {}\nweights {}\n",
+        l.head(),
+        l.entries.len(),
+        weights_digest(weights)
+    )
+}
+
 /// The non-zero weights as [index, weight] pairs, in index order.
 pub fn pairs(weights: &[i32]) -> Vec<(usize, i32)> {
     weights.iter().enumerate().filter(|(_, w)| **w != 0).map(|(i, w)| (i, *w)).collect()
@@ -216,6 +231,15 @@ mod tests {
             prev.clone_from(&e.hash);
         }
         assert_eq!(prev, l.head());
+    }
+
+    /// containment.seal is what `cargo run -- seal` prints: the host's ledger door pins the run by it.
+    #[test]
+    fn the_committed_seal_is_the_scripted_runs() {
+        let (d, counts, caps) = sample();
+        let (m, _, l) = record_golden(&d, &counts, &caps);
+        let lock = include_str!("../containment.lock").lines().filter(|l| !l.starts_with('#')).find(|l| !l.trim().is_empty()).unwrap().trim().to_string();
+        assert_eq!(include_str!("../containment.seal"), seal_text(&l, &m.weights, &lock));
     }
 
     #[test]

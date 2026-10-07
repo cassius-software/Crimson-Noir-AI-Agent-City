@@ -46,6 +46,9 @@ pub fn run_network(keys: &mut [u32], net: &[(u8, u8, bool)]) -> u32 {
 
 /// A full bitonic sort of a power-of-two array, pass by pass. Returns the swaps it made.
 pub fn bitonic_sort(keys: &mut [u32]) -> u32 {
+    if keys.len() < 2 {
+        return 0;
+    }
     assert!(keys.len().is_power_of_two(), "a bitonic sort needs a power-of-two length");
     let mut swaps = 0;
     let mut k = 2;
@@ -63,6 +66,7 @@ pub fn bitonic_sort(keys: &mut [u32]) -> u32 {
 /// The 0-1 principle, exhausted: the network sorts every one of the 2^N inputs of zeros and ones, so it sorts every
 /// input. Returns how many inputs it checked, or None at the first it fails.
 pub fn zero_one_proof(net: &[(u8, u8, bool)], n: usize) -> Option<u32> {
+    assert!(n <= 16, "the 0-1 proof holds up to 16 keys");
     let mut keys = [0u32; 16];
     for bits in 0..(1u32 << n) {
         for (k, key) in keys[..n].iter_mut().enumerate() {

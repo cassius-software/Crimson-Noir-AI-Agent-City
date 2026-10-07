@@ -18,7 +18,7 @@
 use std::fmt::Write as _;
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use noir_core::hash::sha256;
 
@@ -389,6 +389,29 @@ fn string(b: &[u8], at: &mut usize) -> Result<String, String> {
 const GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 /// The largest frame the client reads from the host, bytes (a chunk of weights is about 10 KiB).
 pub const MAX_FRAME: usize = 65536;
+/// The longest a whole message may take to arrive (the read timeout is per read, and a host that drips a byte or a
+/// ping at a time would otherwise hold the bridge for ever), and the pings answered within one message.
+pub const MESSAGE_DEADLINE: Duration = Duration::from_secs(10);
+pub const PINGS_PER_MESSAGE: u32 = 64;
+
+/// Text the host chose, fit for a terminal or a log: every control character (C0, DEL, C1), the line and paragraph
+/// separators and the bidi controls are written as escapes, a backslash as two, and the text is cut at 200 characters.
+pub fn loggable(text: &str) -> String {
+    let mut out = String::new();
+    for ch in text.chars().take(200) {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            c if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}') => {
+                let _ = write!(out, "\\u{{{:x}}}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    if text.chars().count() > 200 {
+        out.push_str("...");
+    }
+    out
+}
 const MAX_HEADERS: usize = 8192;
 
 /// A number nobody can predict from outside this process: std's per-process random hasher keys, and a counter.
@@ -524,7 +547,12 @@ impl Ws {
     /// The next text or close from the host. Pings are answered on the way; a fragment, a masked or oversized frame,
     /// reserved bits or a binary frame is a protocol error.
     pub fn recv(&mut self) -> Result<Frame, String> {
+        let started = Instant::now();
+        let mut pings = 0u32;
         loop {
+            if started.elapsed() > MESSAGE_DEADLINE {
+                return Err(format!("the host did not send a whole message within the deadline ({} s)", MESSAGE_DEADLINE.as_secs()));
+            }
             match read_frame(&self.buf)? {
                 None => self.fill()?,
                 Some((opcode, payload, used)) => {
@@ -536,7 +564,13 @@ impl Ws {
                             let reason = String::from_utf8_lossy(payload.get(2..).unwrap_or(&[])).to_string();
                             return Ok(Frame::Close(code, reason));
                         }
-                        9 => self.send_frame(10, &payload)?,
+                        9 => {
+                            pings += 1;
+                            if pings > PINGS_PER_MESSAGE {
+                                return Err(String::from("too many pings before a message"));
+                            }
+                            self.send_frame(10, &payload)?;
+                        }
                         10 => {}
                         _ => return Err(format!("the host sent opcode {opcode}")),
                     }
@@ -632,7 +666,7 @@ impl Sealed {
     /// close is an error naming the code and reason.
     pub fn recv(&mut self) -> Result<Json, String> {
         match self.ws.recv()? {
-            Frame::Close(code, reason) => Err(format!("the host closed the session ({code}): {reason}")),
+            Frame::Close(code, reason) => Err(format!("the host closed the session ({code}): {}", loggable(&reason))),
             Frame::Text(wire) => {
                 let env = parse(&wire)?;
                 let (Some(n), Some(mac), Some(body)) = (env.int("n"), env.str("mac"), env.get("body")) else {

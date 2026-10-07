@@ -173,8 +173,9 @@ pub fn agent_tick(d: &Dims, m: &mut Matrix, i: usize, t: u32, step: f32) -> u32 
     let blocked = m.walls[(tz * w + tx) as usize] & 1;
     let moves = ok & want & nz(caps & CAP_MOVE);
     let go = moves & (blocked ^ 1);
-    m.px[i] += (dx as f32) * step * (go as f32);
-    m.pz[i] += (dz as f32) * step * (go as f32);
+    // The floor's edge holds even when the operator has cleared the edge walls.
+    m.px[i] = (m.px[i] + (dx as f32) * step * (go as f32)).max(0.0).min(w as f32 - 0.125);
+    m.pz[i] = (m.pz[i] + (dz as f32) * step * (go as f32)).max(0.0).min(depth as f32 - 0.125);
     // A patrol that meets a wall turns around (east and west, north and south, are pairs).
     m.heading[i] = h ^ (moves & blocked & (routes ^ 1));
 

@@ -439,7 +439,7 @@ test('a seal that holds and weights that are the fold: the hostile host can stil
 // The audit's findings: these fail until the bridge takes the fix.
 
 test('REGRESSION (finding: no per-message deadline): a ping flood, a pong flood, bytes dribbled one at a time', {
-  skip: skip || 'CONFIRMED major, fails until the fix lands: wire.rs Ws has only a per-read timeout (set_read_timeout, wire.rs:442), which resets on every read, so a host that sends a ping (answered at wire.rs:539), a pong, or one byte of a frame every <20 s holds the bridge forever. Verified: this case hung the bridge past 12 s (killed). The fix is an overall deadline in Ws::recv/Sealed::recv (an Instant at the first read, checked before each fill); un-skip once wire.rs carries it.',
+  skip,
   timeout: 120_000,
 }, async () => {
   // The bridge answers every ping and ignores every pong without bound, and its read timeout starts over at each
@@ -464,7 +464,7 @@ test('REGRESSION (finding: no per-message deadline): a ping flood, a pong flood,
 })
 
 test('REGRESSION (finding: a fetch is not bounded before its end): the bridge refuses more pairs than the pool holds while they are still arriving', {
-  skip: skip || 'CONFIRMED major, fails until the fix lands: bridge.rs fetch() accumulates every weights pair into `got` (bridge.rs:92, got.push at :102) with no bound; nothing is checked until the `end` (indices and range are adopt()\'s, after the loop). A host that streams weights and never sends `end` grows the bridge\'s memory without limit, stopped only by the per-read timeout. Verified: 1,000,000 pairs (30x the 32,768 pool) streamed and the bridge kept taking them (killed at 10 s). The fix is a cap in the weights branch (got.len() past d.capacity*d.stations is refused at once); un-skip once bridge.rs carries it.',
+  skip,
   timeout: 60_000,
 }, async () => {
   // 1,000,000 pairs is thirty times the pool; without the bound the bridge keeps every one until an `end` that never
@@ -482,7 +482,7 @@ test('REGRESSION (finding: a fetch is not bounded before its end): the bridge re
 })
 
 test("REGRESSION (finding: the host's text reaches the terminal raw): a refused reason and a close reason carrying escape sequences are escaped before they are printed", {
-  skip: skip || "CONFIRMED major, fails until the fix lands: the host's text reaches the operator's terminal unescaped. main.rs:287 prints `FAIL: {e}` raw; bridge.rs:46/116 build that string from the host's `refused` reason and wire.rs:635 from the close reason, none escaped. The TS host escapes every untrusted string before it logs it (replication.node.ts loggable); the Rust bridge has no equal. Verified: the bytes \u001b[2J \u001b]0;owned\u0007 \u009b31m reached stderr intact (a terminal could act on them). The fix is a loggable() equivalent applied to host text before any eprintln!/return Err that carries it; un-skip once wire.rs/bridge.rs carry it.",
+  skip,
   timeout: 30_000,
 }, async () => {
   const esc = '\u001b[2J\u001b]0;owned\u0007\u009b31m'

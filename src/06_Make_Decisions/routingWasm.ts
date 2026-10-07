@@ -92,19 +92,32 @@ export function createRoutingCore({ arenaWords = DEFAULT_ARENA_WORDS }: { arenaW
   for (let i = 0; i < TABLE.length; i++) {
     if (e.routing_layout(i) !== TABLE[i]) throw new Error(`routing core: layout entry ${i} is ${e.routing_layout(i)} in the module and ${TABLE[i]} here`)
   }
-  const before = e.memory.grow(Math.ceil((arenaWords * 8) / PAGE))
-  if (before < 0) throw new Error(`routing core: the memory refused ${arenaWords} words of arena`)
+  let before: number
+  try {
+    before = e.memory.grow(Math.ceil((arenaWords * 8) / PAGE))
+  } catch (err) {
+    throw new Error(`routing core: the memory refused ${arenaWords} words of arena (${err instanceof Error ? err.message : String(err)})`)
+  }
   const base = before * PAGE
   if (e.routing_arena(base, arenaWords) !== 1) throw new Error('routing core: the module refused the arena')
-  // Views after the grow: a grow detaches every earlier view of the memory.
-  const arena = new Float64Array(e.memory.buffer, base, arenaWords)
-  const out = new Float64Array(e.memory.buffer, e.routing_out(), OUT_WORDS)
+  // Views after the grow: a grow detaches every earlier view of the memory. The module allocates nothing after this,
+  // but the memory is exported, so the views are taken again whenever its buffer is another one (one compare a call).
+  let buffer = e.memory.buffer
+  let arena = new Float64Array(buffer, base, arenaWords)
+  let out = new Float64Array(buffer, e.routing_out(), OUT_WORDS)
+  const views = (): void => {
+    if (e.memory.buffer === buffer) return
+    buffer = e.memory.buffer
+    arena = new Float64Array(buffer, base, arenaWords)
+    out = new Float64Array(buffer, e.routing_out(), OUT_WORDS)
+  }
   /** Word offset of each track laid, or -1 for one refused. */
   const offsets = new WeakMap<Track, number>()
   let used = 0
   let count = 0
 
   const layInto = (track: Track): number => {
+    views()
     for (const p of track.pieces) if (p.kind !== 'line' && p.kind !== 'corner') return -1
     const words = trackWords(track)
     if (used + words > arenaWords) return -1
@@ -177,20 +190,24 @@ export function createRoutingCore({ arenaWords = DEFAULT_ARENA_WORDS }: { arenaW
     lay: (track) => place(track) >= 0,
     laid: (track) => place(track) >= 0,
     poseAt(track: Track, s: number): TrackPose {
+      views()
       if (e.routing_pose_at(need(track), s) !== 1) throw new Error(`routing core: no pose for track ${track.id}`)
       return { x: out[0], y: out[1], z: out[2], heading: out[3], tangentX: out[4], tangentZ: out[5] }
     },
     projectOnto(track: Track, x: number, z: number, sHint: number): { s: number; lateral: number } {
+      views()
       if (e.routing_project_onto(need(track), x, z, sHint) !== 1) throw new Error(`routing core: no projection on track ${track.id}`)
       return { s: out[0], lateral: out[1] }
     },
     nextStop(track: Track, s: number, behind: number): { s: number; axis: Axis; distance: number } | null {
+      views()
       const r = e.routing_next_stop(need(track), s, behind)
       if (r === 2) return null
       if (r !== 1) throw new Error(`routing core: no stop line on track ${track.id}`)
       return { s: out[0], axis: out[1] === AXIS_EW ? 'ew' : 'ns', distance: out[2] }
     },
     speedLimitAt(track: Track, s: number): number {
+      views()
       const v = e.routing_speed_limit_at(need(track), s)
       if (Number.isNaN(v)) throw new Error(`routing core: no speed limit on track ${track.id}`)
       return v

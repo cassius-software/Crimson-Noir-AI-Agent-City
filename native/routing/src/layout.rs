@@ -61,6 +61,12 @@ pub const NEWTON_STEP: f64 = 3.0;
 pub const HINT_LATERAL: f64 = 5.0;
 
 /// Words a track of `pieces` pieces and `stops` stops takes.
+/// The words a track of `np` pieces and `ns` stops takes, or None when the count itself cannot fit a wasm32 usize:
+/// a header whose counts wrap the multiplication must be refused, never indexed.
+pub(crate) fn track_words_checked(np: usize, ns: usize) -> Option<usize> {
+    np.checked_mul(PIECE_WORDS)?.checked_add(ns.checked_mul(STOP_WORDS)?)?.checked_add(T_HEADER)
+}
+
 pub const fn track_words(pieces: usize, stops: usize) -> usize {
     T_HEADER + PIECE_WORDS * pieces + STOP_WORDS * stops
 }

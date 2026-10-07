@@ -20,7 +20,7 @@ use noir_core::config::Dims;
 use noir_core::matrix;
 
 use crate::ledger::{self, Ledger};
-use crate::wire::{Json, Sealed, Ws};
+use crate::wire::{Json, Sealed, Ws, loggable};
 
 /// The ledger door's subprotocol, and the entries one message carries (ledger.ts LEDGER_SUBPROTOCOL, LEDGER_CHUNK).
 pub const PROTOCOL: &str = "crimson.1";
@@ -43,7 +43,7 @@ fn expect(s: &mut Sealed, want: &str) -> Result<Json, String> {
     let m = s.recv()?;
     match m.str("t") {
         Some(k) if k == want => Ok(m),
-        Some("refused") => Err(format!("refused: {}", m.str("reason").unwrap_or("?"))),
+        Some("refused") => Err(format!("refused: {}", loggable(m.str("reason").unwrap_or("?")))),
         other => Err(format!("expected '{want}', the host sent {other:?}")),
     }
 }
@@ -86,8 +86,9 @@ pub fn submit(s: &mut Sealed, l: &Ledger, weights: &[i32]) -> Result<Json, Strin
 /// Weights as the host shares them: [index, weight] pairs in index order, and the digest it sealed them under.
 pub type Shared = (Vec<(i64, i64)>, String);
 
-/// Fetches the weights of the last verified ledger of this configuration. None when nothing has verified yet.
-pub fn fetch(s: &mut Sealed) -> Result<Option<Shared>, String> {
+/// Fetches the weights the host keeps for this configuration, at most `max_pairs` of them (the pool holds one weight
+/// per slot: more is refused before it is taken). None when the host keeps nothing yet.
+pub fn fetch(s: &mut Sealed, max_pairs: usize) -> Result<Option<Shared>, String> {
     s.send(&Json::obj(&[t("fetch")]))?;
     let mut got: Vec<(i64, i64)> = Vec::new();
     loop {
@@ -97,6 +98,9 @@ pub fn fetch(s: &mut Sealed) -> Result<Option<Shared>, String> {
             Some("weights") => {
                 let Some(Json::Arr(list)) = m.get("list") else { return Err(String::from("a weights message without a list")) };
                 for pair in list {
+                    if got.len() >= max_pairs {
+                        return Err(format!("the host sent more weights than the pool holds ({max_pairs} slots): the rest would be outside the pool"));
+                    }
                     match pair {
                         Json::Arr(p) if p.len() == 2 => match (&p[0], &p[1]) {
                             (Json::Int(i), Json::Int(w)) => got.push((*i, *w)),
@@ -113,7 +117,7 @@ pub fn fetch(s: &mut Sealed) -> Result<Option<Shared>, String> {
                 let digest = m.str("weights").ok_or_else(|| String::from("an end without the weights' digest"))?;
                 return Ok(Some((got, digest.to_string())));
             }
-            Some("refused") => return Err(format!("refused: {}", m.str("reason").unwrap_or("?"))),
+            Some("refused") => return Err(format!("refused: {}", loggable(m.str("reason").unwrap_or("?")))),
             other => return Err(format!("the host sent {other:?} during a fetch")),
         }
     }
@@ -145,7 +149,13 @@ pub fn run(url: &str, token: &str, lk: &Locked) -> Result<(), String> {
     if verdict.str("head") != Some(l.head()) || verdict.str("weights") != Some(digest.as_str()) {
         return Err(String::from("the host verified another ledger than the one sent"));
     }
-    println!("verified by the host: the fold holds under the containment rules");
+    // A host whose operator pinned the configuration's run (containment.seal) keeps a verified ledger for the fleet
+    // only when it is that run; one that pins nothing keeps the last verified.
+    let kept = !matches!(verdict.get("kept"), Some(Json::Bool(false)));
+    println!(
+        "verified by the host: the fold holds under the containment rules{}",
+        if kept { ", and the host keeps it for the fleet" } else { "; the host keeps another run for the fleet" }
+    );
 
     // The fleet sync: a second runtime, started the same way but with nothing learned.
     let mut b = matrix::new(d);
@@ -154,7 +164,7 @@ pub fn run(url: &str, token: &str, lk: &Locked) -> Result<(), String> {
         return Err(String::from("a fresh runtime already holds weights"));
     }
     let mut s = session(url, token, lk)?;
-    let fetched = fetch(&mut s)?;
+    let fetched = fetch(&mut s, d.capacity * d.stations)?;
     s.ws.close();
     let Some((list, sealed)) = fetched else { return Err(String::from("the host holds no verified weights")) };
     if sealed != digest {
@@ -237,7 +247,7 @@ mod live {
         }
         // Nothing tampered became what the host shares.
         let mut s = session(&url, &token, &lk).expect("session");
-        let (_, digest) = fetch(&mut s).expect("fetch").expect("the honest run's weights");
+        let (_, digest) = fetch(&mut s, lk.dims.capacity * lk.dims.stations).expect("fetch").expect("the honest run's weights");
         s.ws.close();
         assert_eq!(digest, ledger::weights_digest(&m.weights));
         println!("the host still shares the honest run's weights");

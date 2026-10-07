@@ -36,7 +36,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { isDigest } from '../02_Define_The_Rules/integrity.ts'
-import { LEDGER_SUBPROTOCOL } from './ledger.ts'
+import { LEDGER_SUBPROTOCOL, readSeal, type LedgerSeal } from './ledger.ts'
 import { ledgerDoor, type LedgerDoor, type LedgerStats } from './ledger.node.ts'
 import { Mirror } from './mirror.node.ts'
 import {
@@ -101,7 +101,8 @@ export function verifyToken(secret: string, token: unknown, now: number): string
   const parts = token.split('.')
   if (parts.length !== 3) return null
   const [subject64, expires, mac] = parts
-  if (!/^\d{1,16}$/.test(expires) || Number(expires) <= now) return null
+  // Written so an unordered clock refuses: a token lives only while its expiry is strictly ahead of `now`.
+  if (!/^\d{1,16}$/.test(expires) || !(Number(expires) > now)) return null
   const body = `${subject64}.${expires}`
   const want = sign(secret, body)
   const got = Buffer.from(mac, 'base64url')
@@ -148,11 +149,15 @@ export function readFrame(buf: Buffer, max: number = LIMITS.message): FrameRead 
   if (len === 126) {
     if (buf.length < 4) return { kind: 'more' }
     len = buf.readUInt16BE(2)
+    // RFC 6455 5.2: the shortest encoding of a length is the only one.
+    if (len < 126) return { kind: 'bad', code: 1002, reason: 'non-minimal length' }
     at = 4
   } else if (len === 127) {
     if (buf.length < 10) return { kind: 'more' }
     const big = buf.readBigUInt64BE(2)
-    if (big > BigInt(max)) return { kind: 'bad', code: 1009, reason: 'frame too big' }
+    // Judged as a BigInt before any allocation; `max` is read as a whole number whatever a caller passed.
+    if (big > BigInt(Math.min(Math.floor(max), Number.MAX_SAFE_INTEGER))) return { kind: 'bad', code: 1009, reason: 'frame too big' }
+    if (big < 65536n) return { kind: 'bad', code: 1002, reason: 'non-minimal length' }
     len = Number(big)
     at = 10
   }
@@ -210,6 +215,11 @@ export interface HostOptions {
    * the host also opens the ledger door (ledger.node.ts, `crimson.1`); without it that door answers 404.
    */
   ledgerLock?: string
+  /**
+   * The seal of the configuration's own run (crimson_noir_os/containment.seal): with it the ledger door keeps only
+   * that run for the fleet (ledger.node.ts). Without it, the last verified ledger.
+   */
+  ledgerSeal?: LedgerSeal
 }
 
 /** What the host has done since it started, for the console and the tests. */
@@ -266,7 +276,7 @@ export const DEFAULT_SEED = 1337
 /** Unread bytes past which a peer is too slow to keep (about two seconds of a full room's snapshots). */
 export const MAX_BACKLOG = 512 * 1024
 /** Failed upgrades an address may make before its failures are answered 429 (unlogged), and how fast it earns another. */
-export const AUTH_FAILURES = Object.freeze({ burst: 5, perSecond: 0.2 })
+export const AUTH_FAILURES = Object.freeze({ burst: 5, perSecond: 0.2, addresses: 4096 })
 
 export interface Host {
   readonly host: string
@@ -308,7 +318,9 @@ interface Conn {
 export const TOKEN_TTL_MS = 24 * 60 * 60 * 1000
 
 export async function startHost(o: HostOptions): Promise<Host> {
-  if (typeof o.secret !== 'string' || o.secret.length < MIN_SECRET) throw new Error(`the host's secret must be at least ${MIN_SECRET} characters`)
+  // Measured in bytes, as HMAC takes it, and with no NUL (which HMAC's zero padding would make part of no key).
+  const secretBytes = typeof o.secret === 'string' ? Buffer.from(o.secret, 'utf8') : Buffer.alloc(0)
+  if (secretBytes.length < MIN_SECRET || secretBytes.includes(0)) throw new Error(`the host's secret must be at least ${MIN_SECRET} characters (bytes of UTF-8, none of them NUL)`)
   const now = o.now ?? Date.now
   const log = o.log ?? ((): void => {})
   const bind = o.host ?? '127.0.0.1'
@@ -319,11 +331,12 @@ export async function startHost(o: HostOptions): Promise<Host> {
   /** The live connection of each subject: a token's subject is one player, so a second connection replaces the first. */
   const bySubject = new Map<string, Conn>()
   const failures = new Map<string, Bucket>()
+  let sweptAt = now()
   const stats: HostStats = { peers: 0, unauthorized: 0, throttled: 0, inputs: 0, kept: 0, corrected: 0, resynced: 0, stale: 0, inputUs: 0, tickUs: 0 }
   const average = (was: number, us: number): number => (was === 0 ? us : was * 0.95 + us * 0.05)
   if (o.ledgerLock !== undefined && !isDigest(o.ledgerLock)) throw new Error('ledgerLock must be a SHA-256 digest (64 lowercase hex characters)')
   const ledger: LedgerDoor | null = o.ledgerLock === undefined ? null : ledgerDoor({
-    pinned: o.ledgerLock, now, log, mac: nodeMac, maxBacklog, loggable, io: { readFrame, writeFrame, closePayload, acceptKey, OP },
+    pinned: o.ledgerLock, seal: o.ledgerSeal, now, log, mac: nodeMac, maxBacklog, loggable, io: { readFrame, writeFrame, closePayload, acceptKey, OP },
   })
 
   /**
@@ -476,7 +489,17 @@ export async function startHost(o: HostOptions): Promise<Host> {
     const subject = token === null ? null : verifyToken(o.secret, token, t)
     if (token === null || subject === null) {
       let budget = failures.get(from)
-      if (!budget) failures.set(from, (budget = bucket(AUTH_FAILURES.burst, AUTH_FAILURES.perSecond, t)))
+      if (!budget) {
+        // Bounded: past the cap the address that failed longest ago is forgotten, so a flood of addresses (a host
+        // exposed without its proxy) holds a fixed amount of memory.
+        if (failures.size >= AUTH_FAILURES.addresses) {
+          let oldest: string | null = null
+          let at = Infinity
+          for (const [addr, b] of failures) if (b.at < at) { at = b.at; oldest = addr }
+          if (oldest !== null) failures.delete(oldest)
+        }
+        failures.set(from, (budget = bucket(AUTH_FAILURES.burst, AUTH_FAILURES.perSecond, t)))
+      }
       if (!take(budget, t)) {
         stats.throttled++
         turnAway(socket, '429 Too Many Requests')
@@ -552,8 +575,12 @@ export async function startHost(o: HostOptions): Promise<Host> {
     tickRoom(room)
     const players = poses(room)
     for (const c of [...conns.values()]) if (c.peer.joined) send(c, snapshotFor(room, c.peer, players))
-    // Addresses that stopped failing are forgotten once their budget is whole again.
-    for (const [addr, b] of failures) if (t - b.at > (AUTH_FAILURES.burst / AUTH_FAILURES.perSecond) * 1000) failures.delete(addr)
+    // Addresses that stopped failing are forgotten once their budget is whole again (swept once a second, so the
+    // tick's cost does not grow with the addresses that failed).
+    if (t - sweptAt >= 1000) {
+      sweptAt = t
+      for (const [addr, b] of failures) if (t - b.at > (AUTH_FAILURES.burst / AUTH_FAILURES.perSecond) * 1000) failures.delete(addr)
+    }
     stats.tickUs = average(stats.tickUs, (performance.now() - t0) * 1000)
   }, 1000 / room.tickHz)
   ticker.unref()
@@ -622,8 +649,18 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   // The ledger door opens on the digest the OS's own lock pins (or NET_LEDGER_LOCK's file), and stays shut without one.
   const lockPath = process.env.NET_LEDGER_LOCK ?? join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'crimson_noir_os', 'containment.lock')
   const ledgerLock = existsSync(lockPath) ? readLock(readFileSync(lockPath, 'utf8')) ?? undefined : undefined
-  const host = await startHost({ secret, host: process.env.NET_HOST ?? '127.0.0.1', port, seed, cars, tickHz, ledgerLock, log: (line) => console.log(line) })
+  // The run the door keeps for the fleet (NET_LEDGER_SEAL, or the OS's own containment.seal); a seal file that does
+  // not read is refused rather than run without.
+  const sealPath = process.env.NET_LEDGER_SEAL ?? join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'crimson_noir_os', 'containment.seal')
+  let ledgerSeal: LedgerSeal | undefined
+  if (ledgerLock !== undefined && existsSync(sealPath)) {
+    const read = readSeal(readFileSync(sealPath, 'utf8'))
+    if (read === null) throw new Error(`${sealPath} is not a seal (head, count and weights lines)`)
+    ledgerSeal = read
+  }
+  const host = await startHost({ secret, host: process.env.NET_HOST ?? '127.0.0.1', port, seed, cars, tickHz, ledgerLock, ledgerSeal, log: (line) => console.log(line) })
   console.log(ledgerLock ? `the ledger door (crimson.1) checks ledgers against ${ledgerLock.slice(0, 16)}… (${lockPath})` : `no ledger door: ${lockPath} pins no digest`)
+  if (ledgerLock) console.log(ledgerSeal ? `the ledger door keeps for the fleet only the run sealed in ${sealPath} (head ${ledgerSeal.head.slice(0, 12)}, ${ledgerSeal.count} entries)` : `the ledger door keeps the last verified ledger: no seal pinned at ${sealPath}`)
   const [, s, n] = host.world.split('/')
   console.log(`room ticks at ${host.room.tickHz} Hz; at most ${LIMITS.peers} peers; the authority is the headless Ring-0 mirror of ${host.world} (pages with ?seed=${s} and ${n} cars join)`)
   console.log(secretFile !== undefined ? `secret from NET_SECRET_FILE (${secretFile})` : process.env.NET_SECRET ? 'secret from NET_SECRET' : 'secret made for this run (set NET_SECRET or NET_SECRET_FILE to keep tokens across restarts)')

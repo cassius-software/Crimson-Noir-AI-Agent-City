@@ -21,7 +21,9 @@ const PROTOCOLS: ReadonlySet<string> = new Set(['http:', 'https:', 'ws:', 'wss:'
 /** A host that is this machine: localhost, 127.0.0.0/8 (any spelling the URL parser reduces to it) or [::1]. */
 export function isLoopbackHost(hostname: string): boolean {
   const host = hostname.toLowerCase()
-  return host === 'localhost' || host === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(host)
+  if (host === 'localhost' || host === '[::1]') return true
+  const octets = host.split('.')
+  return octets.length === 4 && octets[0] === '127' && octets.every((o) => /^(?:0|[1-9]\d{0,2})$/.test(o) && Number(o) <= 255)
 }
 
 /**

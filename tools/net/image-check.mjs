@@ -3,7 +3,8 @@
  * Why does this file exist? It is the host image's proof that it runs, executed by the Dockerfile inside the image as
  * built (its Node, its /app, its user), before the image can be tagged:
  * - the host starts from /app alone, so tools/net/closure.mjs missed no file it needs;
- * - its ledger door opens on the digest crimson_noir_os/containment.lock pins;
+ * - its ledger door opens on the digest crimson_noir_os/containment.lock pins, and keeps for the fleet only the run
+ *   crimson_noir_os/containment.seal pins;
  * - a token minted with tools/net/mint-token.mjs from the same secret has the host's shape.
  * It writes /tmp/image-checked (the start-up lines), which the image's last stage copies, so no build reaches the final
  * image without passing through here. Nothing listens beyond the build's own loopback, and the host is stopped after.
@@ -41,9 +42,11 @@ const finish = (why) => {
 const timer = setTimeout(() => finish('the host did not start within 90 s'), 90_000)
 host.stdout.on('data', (b) => {
   out += b
-  if (/listening on ws:\/\/127\.0\.0\.1:\d+/.test(out) && out.includes('no token printed') && out.includes('ledger door (crimson.1)')) {
+  if (/listening on ws:\/\/127\.0\.0\.1:\d+/.test(out) && out.includes('no token printed') && out.includes('ledger door (crimson.1)') && out.includes('the ledger door keeps')) {
     clearTimeout(timer)
-    finish(out.includes(`checks ledgers against ${pinned.slice(0, 16)}`) ? null : 'the ledger door is not pinned to containment.lock')
+    if (!out.includes(`checks ledgers against ${pinned.slice(0, 16)}`)) finish('the ledger door is not pinned to containment.lock')
+    else if (!out.includes('keeps for the fleet only the run sealed in')) finish('the ledger door pins no run (containment.seal)')
+    else finish(null)
   }
 })
 host.stderr.on('data', (b) => { out += b })

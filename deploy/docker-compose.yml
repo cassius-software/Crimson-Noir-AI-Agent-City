@@ -25,6 +25,8 @@ services:
     security_opt: ["no-new-privileges:true"]
     pids_limit: 256
     mem_limit: 1g
+    memswap_limit: 1g            # the whole budget, swap included
+    cpus: 2
     environment:
       NET_HOST: 0.0.0.0           # the internal network's address, which only the proxy can reach
       NET_SECRET_FILE: /run/secrets/net_secret
@@ -40,11 +42,13 @@ services:
     image: nginxinc/nginx-unprivileged:stable-alpine@sha256:15c994d10d6d78658721c3bcafff14cb281fba2a4bdf9d5ba92c416a472516e3
     restart: unless-stopped
     read_only: true
-    tmpfs: [/tmp]
+    tmpfs: ["/tmp:size=64m,mode=1777"]   # a pid file and temp paths: a few KB; sized so nothing can fill the cgroup through it
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     pids_limit: 256
     mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 1
     stop_grace_period: 15s       # nginx closes its sockets within 10 s (worker_shutdown_timeout)
     depends_on:
       host:
@@ -66,7 +70,17 @@ services:
 networks:
   backend:
     internal: true
-  edge: {}
+    # `internal` cuts the route out, but the bridge's gateway is the server itself: without this, the host could reach
+    # any service the server binds on 0.0.0.0 (sshd, a database). Docker 28+ honours it; deploy-live.sh adds the same
+    # cut with iptables for an older engine.
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+  edge:
+    # The proxy needs no route out: its upstream is the host on `backend`, and the ACME challenge comes in. Without
+    # masquerading, nothing it starts reaches the internet; deploy-live.sh also closes the embedded resolver's path
+    # and the proxy's way into this machine's own stack (an isolated gateway is for internal networks only).
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
 
 secrets:
   net_secret:

@@ -152,8 +152,8 @@ fn tick(@builtin(global_invocation_id) gid: vec3<u32>) {
     let blocked = world[tz * w + tx] & 1u;
     let moves = ok & want & nz(caps & CAP_MOVE);
     let go = moves & (blocked ^ 1u);
-    pos[i] = pos[i] + f32(mx) * P.step * f32(go);
-    pos[cap + i] = pos[cap + i] + f32(mz) * P.step * f32(go);
+    pos[i] = clamp(pos[i] + f32(mx) * P.step * f32(go), 0.0, f32(w) - 0.125);
+    pos[cap + i] = clamp(pos[cap + i] + f32(mz) * P.step * f32(go), 0.0, f32(depth) - 0.125);
     words[at(HEADING, i)] = h ^ (moves & blocked & (routes ^ 1u));
 
     // The loop breaker.

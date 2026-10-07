@@ -40,7 +40,7 @@ python3 tools/boot_test.py target/image/crimson_noir_os.img --wait "SELFTEST PAS
   --step "wait:TUTORIAL 6 PASSED" --step 'type:\n' --step "wait:TERMINAL READY" \
   --step 'type:golden\n' --step wait:MATCH --step 'type:halt\n' --step 'wait:POWER OFF' --step exit
 cargo run --release -- selftest            # the hosted runtime: CPU and GPU, compared word for word
-cargo test --workspace                     # 63 tests (set NOIR_REQUIRE_GPU=1 to fail rather than skip without a GPU)
+cargo test --workspace                     # 85 tests (set NOIR_REQUIRE_GPU=1 to fail rather than skip without a GPU)
 npm run smoke:bridge                       # from the repository root: the bridge against the real host (below)
 ```
 
@@ -95,9 +95,10 @@ only the media's description under the marker is refreshed.
 |---|---|
 | `containment.nix`, `containment.lock` | The declarative configuration (a strict Nix subset) and the SHA-256 of its canonical form |
 | `containment.canonical` | That canonical form, byte for byte (`cargo run -- canonical`); a test holds it equal to the generator, and the host's tests hold its SHA-256 equal to the lock |
-| `crates/noir_core` | The `no_std` + `alloc` core, shared by the image and the hosted runtime (48 tests) |
+| `containment.seal` | The scripted run's ledger head, entry count and weights digest (`cargo run -- seal`): the host keeps for the fleet only the run with this seal; a test holds it equal to the run |
+| `crates/noir_core` | The `no_std` + `alloc` core, shared by the image and the hosted runtime (48 unit tests, 21 property tests under tests/) |
 | `boot/` (`crimson_boot`) | The UEFI application: its own UEFI bindings, GOP framebuffer, ExitBootServices, own GDT/IDT, serial log, PS/2 keyboard, a sealed bump allocator |
-| `src/`, `shaders/` | The hosted runtime (std, wgpu 30, bytemuck, log + env_logger, pollster) and the WGSL kernels; `wire.rs`, `ledger.rs` and `bridge.rs` are the bridge, which only this runtime has (15 tests, and 1 run against a live host) |
+| `src/`, `shaders/` | The hosted runtime (std, wgpu 30, bytemuck, log + env_logger, pollster) and the WGSL kernels; `wire.rs`, `ledger.rs` and `bridge.rs` are the bridge, which only this runtime has (16 tests, and 1 run against a live host) |
 | `tools/` | `build-image.sh` makes the disk image and the ISO; `boot_test.py` boots them in QEMU + OVMF, follows the serial log, types, and takes screenshots |
 
 The core crate's modules:
@@ -223,7 +224,9 @@ map 42 mark go                        \ the floor map, agent 42 ringed, the swar
    bit.
 
 The client is std only (`wire.rs`: RFC 6455, SHA-1, base64, HMAC-SHA256, a bounded JSON reader), so the dependency
-list is unchanged. It speaks `ws://` to a literal loopback address and nothing else: it looks up no names and has no
+list is unchanged. A whole message must arrive within 10 s and carry at most 64 pings, a fetch takes at most one
+weight per slot of the pool, and the host's own text is escaped before the terminal sees it (Phase 16). The host
+answers whether it kept the run for the fleet (`containment.seal`). It speaks `ws://` to a literal loopback address and nothing else: it looks up no names and has no
 TLS. Anything off this machine would reach the host through the operator's reverse proxy, as the room's players do.
 `npm run smoke:bridge` runs it all against the real host and then has four tampered ledgers refused over the wire.
 

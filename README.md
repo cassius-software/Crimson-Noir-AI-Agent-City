@@ -24,7 +24,7 @@ wardrobe.
 npm install
 npm run dev      # local dev server
 npm run build    # typecheck (app + tests), then emit dist/index.html: one file, every asset inlined
-npm test         # 1,232 tests (node --test), including real Rapier physics and a real WebSocket host in Node
+npm test         # 1,301 tests (node --test), including real Rapier physics and a real WebSocket host in Node
 npm run lint     # oxlint
 npm run serve:net  # the optional network host (Node only, never bundled): see Networking
 npm run smoke:net  # the host as a process of its own, attacked with crafted illegal movement: see Networking
@@ -1492,6 +1492,12 @@ physics realm is the prediction that hides the latency.
     TLS and looks up no names.
   - A token's signature is accepted only in the spelling `mintToken` writes. The decoder's ignored padding bits no
     longer give a token four valid spellings.
+  - The host keeps for the fleet only the configuration's own run: its seal is pinned in
+    `crimson_noir_os/containment.seal` (Phase 16). Any other lawful ledger is verified, answered `kept: false`, and
+    not kept, so no token-holder can replace what runtimes fetch.
+  - Phase 16's audit (eight attack agents, a skeptic each) left property tests across the gate, the tokens and
+    seals, the frames, the ledger door, a hostile host against the runtime's bridge, the routing and page-table
+    modules, the Rust core and the host under churn; every confirmed finding is fixed with a regression test.
 - **What is a stub, and what is not there.**
   - Voice: `attachPeer` places a peer's `MediaStream` in the soundscape, but the signalling that would carry one
     (offer, answer and candidates over this socket) is a documented stub, so no voice is sent or received.

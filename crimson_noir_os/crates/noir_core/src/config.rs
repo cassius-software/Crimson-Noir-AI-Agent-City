@@ -228,6 +228,10 @@ fn value(c: &mut Cursor) -> Result<Value, String> {
                     bump(c);
                     path.push(ident(c)?);
                     skip(c);
+                    // A dotted path nests one set per segment: it is bounded as nesting is.
+                    if path.len() + c.depth as usize > MAX_DEPTH as usize {
+                        return fail(c, "nested too deeply");
+                    }
                 }
                 expect(c, b'=')?;
                 let v = value(c)?;
@@ -380,7 +384,9 @@ fn pow2(set: &Set, key: &str, path: &str, lo: i64, hi: i64) -> Result<usize, Str
 
 fn text(set: &Set, key: &str, path: &str) -> Result<String, String> {
     match need(set, key, path)? {
-        Value::Str(s) if !s.is_empty() && s.len() <= 32 && s.bytes().all(|b| b.is_ascii_graphic()) => Ok(s.clone()),
+        // Graphic ASCII, less the three bytes the subset's strings give meaning to (a quote, a backslash, a dollar), so
+        // the canonical form writes every name unescaped and parses back to it.
+        Value::Str(s) if !s.is_empty() && s.len() <= 32 && s.bytes().all(|b| b.is_ascii_graphic() && !matches!(b, b'"' | b'\\' | b'$')) => Ok(s.clone()),
         _ => Err(format!("{}{} must be a short printable string", path, key)),
     }
 }

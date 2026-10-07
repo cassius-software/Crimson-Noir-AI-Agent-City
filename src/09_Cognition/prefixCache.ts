@@ -116,6 +116,15 @@ export function tokenize(text: string): Uint32Array {
   return out
 }
 
+/** The largest table the wrapper makes: the module counts pages in a u32 and keeps one value for "no page". */
+export const MAX_POOL_PAGES = 1 << 20
+
+function sameTokens(a: Uint32Array, b: Uint32Array): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
+
 /** A 32-bit digest of a token stream (which prompt an agent's chain holds). */
 function digest(tokens: Uint32Array): number {
   let h = 0x811c9dc5
@@ -148,7 +157,8 @@ const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n =
  * page's main thread requires of a module this size).
  */
 export function createPrefixCache({ prefix, pages = DEFAULT_POOL_PAGES }: { prefix: string; pages?: number }): PrefixCache {
-  if (!Number.isInteger(pages) || pages < 1) throw new RangeError(`the prefix cache needs a positive whole number of pages, not ${pages}`)
+  // The module counts pages in a u32 and keeps one value as "no page"; a table past 2^20 pages would be ~100 MB anyway.
+  if (!Number.isInteger(pages) || pages < 1 || pages > MAX_POOL_PAGES) throw new RangeError(`the prefix cache needs a whole number of pages from 1 to ${MAX_POOL_PAGES}, not ${pages}`)
   const prefixTokens = tokenize(prefix)
   const prefixPages = Math.ceil(prefixTokens.length / PAGE_TOKENS)
   let loading: Promise<{ e: KvExports; h: number }> | null = null
@@ -163,7 +173,7 @@ export function createPrefixCache({ prefix, pages = DEFAULT_POOL_PAGES }: { pref
     return loading
   }
   /** Each agent key's id in the table and the digest of the prompt its chain holds. */
-  const agents = new Map<string, { id: number; prompt: number }>()
+  const agents = new Map<string, { id: number; prompt: number; tokens: Uint32Array; forked: boolean }>()
   let nextId = ROOT + 1
   let prefixSpawned = false
   const counts = { asks: 0, prefixHits: 0, hits: 0, copies: 0, refused: 0 }
@@ -204,10 +214,11 @@ export function createPrefixCache({ prefix, pages = DEFAULT_POOL_PAGES }: { pref
       }
       const prompt = digest(tokens)
       const known = agents.get(agent)
-      if (known !== undefined && known.prompt === prompt) {
+      // A hit is the same tokens, not the same 32-bit digest: the digest only short-cuts the comparison.
+      if (known !== undefined && known.prompt === prompt && sameTokens(known.tokens, tokens)) {
         counts.hits++
         refresh(e, h)
-        return { ...base, forked: true, prefixHit, hit: true, copies: 0, cachedPages: 0 }
+        return { ...base, forked: known.forked, prefixHit, hit: true, copies: 0, cachedPages: 0 }
       }
       if (known !== undefined) {
         agents.delete(agent)
@@ -221,7 +232,6 @@ export function createPrefixCache({ prefix, pages = DEFAULT_POOL_PAGES }: { pref
       if (forked) {
         const r = e.kv_fork(h, ROOT, id)
         if (r < 0) fail(`forking the prefix for agent ${agent}`, r)
-        const out = new Uint32Array(e.memory.buffer, e.kv_out(h), OUT_WORDS)
         const end = Math.min(tokens.length, SCRATCH_TOKENS)
         for (let i = prefixTokens.length; i < end; i++) {
           const a = e.kv_append(h, id, tokens[i])
@@ -229,19 +239,30 @@ export function createPrefixCache({ prefix, pages = DEFAULT_POOL_PAGES }: { pref
             e.kv_despawn(h, id)
             fail(`appending token ${i} for agent ${agent}`, a)
           }
-          if (out[SLOT_COPIED] > 0) copies++
+          // The view is taken after the call: an append that seals a page can grow the memory, which detaches
+          // every earlier view.
+          if (new Uint32Array(e.memory.buffer, e.kv_out(h), OUT_WORDS)[SLOT_COPIED] > 0) copies++
         }
         if (prefixHit) counts.prefixHits++
       } else {
         cachedPages = spawn(e, h, id, tokens)
       }
-      agents.set(agent, { id, prompt })
+      agents.set(agent, { id, prompt, tokens, forked })
       counts.copies += copies
       refresh(e, h)
       return { ...base, forked, prefixHit, hit: false, copies, cachedPages }
     } catch (err) {
       counts.refused++
       lastError = err instanceof Error ? err.message : String(err)
+      // The pool's counts are the table's, whether or not this ask was admitted.
+      if (loading !== null) {
+        try {
+          const { e, h } = await loading
+          refresh(e, h)
+        } catch {
+          // the load itself failed: the defaults stand
+        }
+      }
       return { ...base, forked: false, prefixHit: prefixSpawned, hit: false, copies: 0, cachedPages: 0, error: lastError }
     }
   }

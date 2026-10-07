@@ -25,14 +25,20 @@ game page / OS runtime ─ws:8787─▶ tunnel ═wss:443═▶ proxy (nginx, ui
   - An OS runtime's bridge has no TLS and looks up no names.
   - So each client machine runs `bridge-tunnel.conf`: a local nginx that carries the connection to the proxy over
     TLS, checking the certificate.
-- **The `backend` network is `internal`.** It has no published port and no route out: the host can answer the proxy
-  and reach nothing else.
+- **The `backend` network is `internal`, with an isolated gateway.** It has no published port and no route out, and
+  its gateway address is not the server's own stack (`gateway_mode_ipv4: isolated`, Docker 28+; `deploy-live.sh`
+  adds the same cut with iptables for an older engine): the host can answer the proxy and reach nothing else, not
+  even a service the server binds on 0.0.0.0.
   - A shared network namespace would keep the host on 127.0.0.1. But when the namespace's owner restarts, the other
     container is silently cut off.
+- **The proxy has no route out either, nor into the server.** Its network does not masquerade, so nothing started
+  inside the proxy reaches the internet; `deploy-live.sh` also closes the embedded resolver's path and new
+  connections from the proxy into the server's own stack at the firewall. Its upstream is the host on `backend`, and
+  the ACME challenge comes in.
 - **Both containers are locked down:**
-  - a read-only root;
+  - a read-only root (the proxy's `/tmp` is a 64 MB tmpfs);
   - all capabilities dropped and `no-new-privileges`;
-  - pids and memory limits;
+  - pids, memory (swap included) and CPU limits;
   - rotated logs.
 - **The host's files belong to root** and are read-only to it.
 
@@ -121,6 +127,14 @@ docker compose exec host /nodejs/bin/node tools/net/mint-token.mjs os-runtime 8 
 - A token cannot be revoked early. Changing `secrets/net_secret` and restarting the host
   (`docker compose restart host`) ends every token at once.
 
+## The fleet's weights
+
+The host keeps, for the fleet, only the ledger of the configuration's own scripted run: its seal (head, count and
+weights digest) is pinned in `crimson_noir_os/containment.seal`, which the image carries (`NET_LEDGER_SEAL`). Any
+other ledger that holds under the containment rules is answered `verified` with `kept: false`, so no token-holder can
+replace what runtimes fetch. `cargo run -- seal` regenerates the file when `containment.nix` changes; a Rust test
+holds the file equal to the run.
+
 ## Clients
 
 On each client machine:
@@ -144,27 +158,43 @@ On each client machine:
   client's bad tokens can turn other clients' bad tokens into 429s. Good tokens are always admitted, and the proxy's
   access log has each client's real address.
 - **The tunnel looks up the proxy's name once**, when it starts. Restart it if the server's address changes.
+- **A host that crashes is restarted** by its policy; one stopped by hand (`docker stop`, `docker kill`) stays stopped
+  until `docker compose up -d`, which is Docker's own rule.
+- **Port 80's redirect reflects the request's Host header** (nginx's documented idiom). No client uses port 80, and a
+  browser sends its own host, so nobody can be steered through it; it is noted here, not changed.
 
 ## What was checked
 
-Run against this compose file with a throwaway CA, after the adversarial review's fixes:
+Run against this compose file with a throwaway CA, after the Phase 16 audit's fixes (eight attack agents and a
+skeptic for each; `agent_handoff_state.md` lists every finding and its verdict):
 
 - **Proxy status codes:**
   - a plain GET gets 426 with `Upgrade: websocket`;
   - another path gets 404, a POST 405, a foreign `Origin` 403;
   - `Origin: null` and no Origin reach the host, which answers 401 without a token;
-  - port 80 redirects to https.
-- **TLS:** TLS 1.1 is refused, TLS 1.3 is negotiated, the certificate verifies, and HSTS is sent.
-- **The room:** a minted token joins through the proxy, and the welcome's seal verifies.
+  - port 80 redirects to https and serves the ACME path.
+- **TLS:** 1.0 and 1.1 refused, 1.2 with a forward-secret AEAD cipher, 1.3 negotiated; tickets off, no compression,
+  no early data, no HTTP/2; the certificate verifies and HSTS is sent.
+- **The door under attack:** path, method, header and Origin variants, duplicate and smuggled headers, oversized
+  and slow headers, an ACME traversal, an h2 preface, an SNI mismatch: each refused; no token in any log, and
+  control bytes in a path or Origin are escaped in the access log.
+- **The room:** a minted token joins over `wss://` and through the tunnel, and the welcome's seal verifies.
 - **The OS runtime, through `bridge-tunnel.conf`:**
-  - the scripted run's ledger (3,576 entries) verifies;
+  - its scripted run's ledger (3,576 entries) verifies, and the host keeps it (the pinned run);
   - a fresh runtime adopts the weights bit-exact;
-  - four tampered ledgers are refused.
+  - four tampered ledgers over the wire, and eight more from the audit, are refused;
+  - an empty but lawful ledger is answered `verified` with `kept: false`, and the fetch after it still returns the
+    pinned run.
+- **A hostile host against the runtime's bridge:** every handshake, frame, JSON, seal, protocol and fetch attack
+  ends the bridge with a reason within seconds; a ping flood, a dripped frame and an unbounded weights stream are
+  cut by its message deadline and pool bound; host text reaches the terminal escaped.
 - **Rate limits:** a burst of bad upgrades gets 429s, from nginx's per-client limit and from the host's own.
 - **Restarts:** after a host restart, a join works again. A proxy stop finishes within its grace period.
 - **The host container:**
-  - DNS and connections to the outside fail;
-  - it runs as uid 65532 on a read-only root, and its files are owned by root;
-  - the proxy runs as uid 101, and `nginx -t` passes.
-- **The review's attacks were refused:** path, method, header and Origin variants, oversized and slow headers, an h2
-  ALPN offer, and an SNI mismatch. Neither the proxy's nor the host's log ever holds a token.
+  - uid 65532, every capability set empty, `no-new-privileges`, seccomp, a read-only root; its files are root's;
+  - DNS and connections to the outside fail, and a listener on the server's own 0.0.0.0 is unreachable from it;
+  - the image holds the 27 host files, the lock, the seal and the licences, and nothing else; no secret in any layer.
+- **The proxy container:** uid 101, a read-only root, no connection out (`nc` to the internet is blocked) and none
+  into a listener on the server's own 0.0.0.0, while its DNS and the published ports still work; `nginx -t` passes.
+- **`deploy-live.sh`:** ran in self-signed mode, in Let's Encrypt mode with a stand-in certbot (issuance, install,
+  reload and the renewal hook), and again unchanged; it refuses to act outside the deploy directory.

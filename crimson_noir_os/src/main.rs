@@ -272,13 +272,19 @@ fn main() -> ExitCode {
             info_command();
             Ok(())
         }
+        Some("seal") => {
+            // The scripted run's seal, for the host's ledger door (containment.seal is this output).
+            let (m, _, l) = ledger::record_golden(&locked::DIMS, &locked::ROLE_COUNTS, &locked::ROLE_CAPS);
+            print!("{}", ledger::seal_text(&l, &m.weights, locked::DIGEST));
+            Ok(())
+        }
         Some("canonical") => {
             // The locked configuration's canonical form, byte for byte (containment.canonical is this output).
             print!("{}", locked::CANONICAL);
             Ok(())
         }
         Some("bridge") => bridge_command(args.get(2).map_or("ws://127.0.0.1:8787", String::as_str)),
-        Some(other) => Err(format!("unknown command {other}: selftest (the default), frames DIR, terminal, info, canonical, bridge [URL]")),
+        Some(other) => Err(format!("unknown command {other}: selftest (the default), frames DIR, terminal, info, canonical, seal, bridge [URL]")),
     };
     info!("done");
     match result {

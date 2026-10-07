@@ -22,7 +22,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { forAll, gen, type Gen } from '../02_Define_The_Rules/property.ts'
-import { DEFAULT_POOL_PAGES, PAGE_TOKENS, SCRATCH_TOKENS, createPrefixCache, kvPagerWasmBytes, tokenize, type KvExports, type PrefixReport } from './prefixCache.ts'
+import { createPrefixCache, DEFAULT_POOL_PAGES, kvPagerWasmBytes, MAX_POOL_PAGES, PAGE_TOKENS, SCRATCH_TOKENS, tokenize, type KvExports, type PrefixReport } from './prefixCache.ts'
 
 const ERR = { pages: -1, unknown: -2, exists: -3 }
 const words = (prefix: string, n: number): string => Array.from({ length: n }, (_, i) => `${prefix}${i}`).join(' ')
@@ -40,10 +40,8 @@ test('REGRESSION (Phase 16 audit): a table of 2^32 pages or more is refused, not
   for (const n of [2 ** 32, 2 ** 32 + 5, 2 ** 32 - 1, 2 ** 53, Number.MAX_SAFE_INTEGER]) {
     assert.throws(() => createPrefixCache({ prefix: 'a b c', pages: n }), RangeError, `pages ${n}: a table of ${n % 2 ** 32} pages would be built instead`)
   }
-  // Until it is: 2^32 is a table of no pages whose stats claim the capacity asked for, and 2^32 + 5 a table of five.
-  const none = createPrefixCache({ prefix: 'a b c', pages: 2 ** 32 })
-  const r = await none.page('7', 'a b c d')
-  assert.equal(r.error, undefined, `a table of 2^32 pages refused the prompt: ${r.error}`)
+  // The largest table the wrapper makes is MAX_POOL_PAGES; that one, and one page, are built.
+  for (const n of [1, MAX_POOL_PAGES]) assert.doesNotThrow(() => createPrefixCache({ prefix: 'a b c', pages: n }), `pages ${n}`)
 })
 
 test('a table of one page, of exactly the prefix\'s pages, and of one more: what fits is paged, what does not is reported and stops nothing', async () => {

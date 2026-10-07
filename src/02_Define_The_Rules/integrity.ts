@@ -151,7 +151,7 @@ export function canonical(value: unknown): string {
     case 'string':
       return JSON.stringify(value)
     case 'object': {
-      if (Array.isArray(value)) return `[${value.map((v) => canonical(v === undefined ? null : v)).join(',')}]`
+      if (Array.isArray(value)) return `[${Array.from(value, (v) => canonical(v === undefined ? null : v)).join(',')}]`
       const proto = Object.getPrototypeOf(value)
       if (proto !== null && proto !== Object.prototype) throw new TypeError('canonical: not plain data')
       const o = value as Record<string, unknown>

@@ -1315,6 +1315,8 @@ fn word(t: &mut Term, sys: &mut System, lk: &Locked, p: P) -> R<()> {
             o.end_line();
         }
         P::Stats => {
+            // A pool's worth of work, charged before it is done: the budget bounds a line's time, not only its steps.
+            charge(t, 2 * t.dims.capacity as u64)?;
             let m = &sys.m;
             let alive = m.alive.iter().filter(|&&a| a == 1).count();
             let doomed = m.doomed.iter().filter(|&&a| a == 1).count();
@@ -1332,10 +1334,11 @@ fn word(t: &mut Term, sys: &mut System, lk: &Locked, p: P) -> R<()> {
         }
         P::Agent => {
             let i = usize::try_from(pop(t, b)?).map_err(|_| Fault::Index)?;
-            let m = &sys.m;
-            if i >= m.alive.len() {
+            if i >= sys.m.alive.len() {
                 return Err(Fault::Index);
             }
+            charge(t, (t.dims.stations + 2 * t.dims.block_words) as u64)?;
+            let m = &sys.m;
             let (x, z) = (eighths(m.px[i]), eighths(m.pz[i]));
             let d = t.dims;
             let cx = (x / 8).clamp(0, d.width as i32 - 1);
@@ -1446,6 +1449,7 @@ fn word(t: &mut Term, sys: &mut System, lk: &Locked, p: P) -> R<()> {
             o.end_line();
         }
         P::Roles => {
+            charge(t, (lk.role_names.len() * TERM_COLS) as u64)?;
             let mut o = sink(t, b);
             for (k, name) in lk.role_names.iter().enumerate() {
                 fresh_line(&mut o);
@@ -1488,6 +1492,7 @@ fn word(t: &mut Term, sys: &mut System, lk: &Locked, p: P) -> R<()> {
             o.end_line();
         }
         P::Words => {
+            charge(t, b.term_dict.len() as u64)?;
             let mut buf = [0u8; MAX_NAME];
             let mut h = t.latest;
             let mut o = Sink { lines: &mut t.lines, col: &mut t.col, pending: &mut t.pending, text: &mut b.term_text };
@@ -1518,6 +1523,7 @@ fn word(t: &mut Term, sys: &mut System, lk: &Locked, p: P) -> R<()> {
             o.end_line();
         }
         P::Help => {
+            charge(t, (HELP.len() * TERM_COLS) as u64)?;
             let mut o = sink(t, b);
             for line in HELP {
                 fresh_line(&mut o);
