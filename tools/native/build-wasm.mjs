@@ -8,7 +8,7 @@
  * The generated files are committed: the single-file build (vite) needs no cargo, and the modules are plain
  * strings the bundler inlines like any other source. Run it after a change to a crate (`npm run native:wasm`); the
  * tests (`npm run native:test`, routingWasm.test.ts, prefixCache.test.ts) prove the module in the tree against the
- * TypeScript reference and its own hash.
+ * TypeScript reference and its own hash, and tools/verify/fvps.sh proves a rebuild gives the committed bytes.
  * What breaks if it is removed? A change to a crate never reaches the page; the committed modules go stale silently.
  */
 import { execFileSync } from 'node:child_process'
@@ -19,6 +19,14 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const TARGET = 'wasm32-unknown-unknown'
+/**
+ * The build is reproducible on any machine: a panic location names its source file, and a path dependency
+ * (kv-pager-wasm's ../kv-pager) is named by its absolute path, so without this every checkout would bake its own
+ * directory into the module (and ship it). Both crates are built with the checkout mapped to one fixed prefix;
+ * tools/verify/fvps.sh rebuilds with the same flag and holds the bytes equal to the committed ones.
+ */
+export const REMAP = '/crimson-noir'
+export const RUSTFLAGS = `--remap-path-prefix=${ROOT}=${REMAP}`
 
 /** Each crate, the wasm file cargo writes for it, and the module it becomes (the constant prefix names its exports). */
 const MODULES = [
@@ -39,7 +47,7 @@ const SCRUBBED = [/\bxbox\b/i, /\bnintendo\b/i, /\bjoy-?cons?\b/i, /\bthe matrix
 
 for (const m of MODULES) {
   const manifest = join(ROOT, m.crate, 'Cargo.toml')
-  execFileSync('cargo', ['build', '--release', '--target', TARGET, '--manifest-path', manifest], { stdio: 'inherit' })
+  execFileSync('cargo', ['build', '--release', '--target', TARGET, '--manifest-path', manifest], { stdio: 'inherit', env: { ...process.env, RUSTFLAGS } })
   const bytes = readFileSync(join(ROOT, m.crate, 'target', TARGET, 'release', m.wasm))
   const base64 = bytes.toString('base64')
   const sha256 = createHash('sha256').update(bytes).digest('hex')

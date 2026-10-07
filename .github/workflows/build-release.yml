@@ -6,6 +6,9 @@
 #   part of the release. So a release can be cut from the Actions tab or the API alone.
 # - The bake job has read-only access. It does what a contributor does by hand:
 #   - installs the pinned Rust toolchain and the UEFI target, and fetches every crate from Cargo.lock;
+#   - runs the formal verification step's fast proofs (tools/verify/fvps.sh: the SMT theorems, the WebAssembly
+#     air-gap check, the routing core's LLVM-IR call graph; the Kani harnesses run in ci.yml on every change) and
+#     refuses to bake a commit whose proofs fail;
 #   - runs the core and hosted-runtime tests, with the GPU path on Mesa's lavapipe;
 #   - bakes the image and the ISO (tools/build-image.sh), then bakes again from a clean build and compares: the same
 #     commit and toolchain must give the same bytes, and a release is refused if they do not;
@@ -105,15 +108,22 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends mtools gdisk xorriso qemu-system-x86 ovmf mesa-vulkan-drivers
 
-      - name: Install Rust ${{ env.RUST_TOOLCHAIN }} with the UEFI target
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }} with the UEFI and wasm32 targets
         run: |
-          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target x86_64-unknown-uefi
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target x86_64-unknown-uefi --target wasm32-unknown-unknown
           rustup default "$RUST_TOOLCHAIN"
           rustc --version
 
       - name: Fetch the crates in Cargo.lock
         working-directory: crimson_noir_os
         run: cargo fetch --locked
+
+      - name: Formal verification (SMT theorems, WebAssembly air gap, IR call graph); a failed proof refuses the bake
+        run: |
+          pip install -q z3-solver
+          sh tools/verify/fvps.sh smt
+          sh tools/verify/fvps.sh wasm
+          sh tools/verify/fvps.sh ir
 
       - name: Test the core and the hosted runtime (CPU and GPU, word for word)
         working-directory: crimson_noir_os

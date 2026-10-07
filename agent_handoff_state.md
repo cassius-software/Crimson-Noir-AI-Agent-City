@@ -5,6 +5,9 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
 
 ## Where things stand (updated as work lands)
 
+- Phase 18 (formal verification, self-healing CI/CD, IIoT telemetry) is built on branch
+  `claude/phase-18-verification-selfheal-6yjhen`: see the Phase 18 section at the end. No release tag was cut; the
+  operator decides when (the bake now refuses a commit whose proofs fail).
 - Phase 14 (the approved hosted-runtime bridge) is complete: see the Phase 14 section at the end.
 - Branch `claude/quirky-faraday-xkpdln`. Phase 13 is complete and release-ready: two adversarial reviews fixed (the
   second's 4 + 13 + 4 findings below), 1,219 tests passing, tagged `v1.0.0-stable-release` (see `git log`, `git tag`).
@@ -570,3 +573,80 @@ assets.
 
 **Not verified:** no Windows PowerShell 5.1; no physical hardware; no real Let's Encrypt issuance (needs a public
 name).
+
+## Phase 18 (operator directive): self-healing CI/CD and formal WebAssembly verification
+
+Directive: (1) a formal verification platform step (SMT / symbolic execution) in the build pipeline over the
+Rust/WASM kernel: prove the 64-ring deterministic schedule and the 1D DOD arrays never reach an undefined state or a
+memory trap, from the LLVM IR, hard-failing the build on any path that violates the Phase 11 air gap or the memory
+isolation bounds; (2) build-release.yml upgraded into a self-correcting loop: on a failed proof, telemetry test or
+test suite, a sandboxed remediation agent isolates the failure, maps it to the AST, formulates a structural patch,
+re-runs the suite in an ephemeral container, dampened at 3 attempts, and on success pushes a `selfheal-*` branch and a
+documented PR; (3) the IIoT SIPOC telemetry pipeline (edge WASM actors → WGSL Process → hash-chained ledger) under
+an adversarial campaign (extreme latency, cache desyncs, dropped packets); verify `/Brepro`; finalize the deployment.
+Working rules from the project: deliver through a PR; no tag or release without the operator's confirmation; the
+agent opens PRs and never merges.
+
+### State: BUILT, on the branch (PR open; nothing released)
+
+**Part 1, the verification step (`tools/verify/fvps.sh`, modes all|kani|smt|wasm|ir).** Wired into
+build-release.yml before the bake (smt, wasm, ir: a failed proof refuses the bake) and into the new `ci.yml`
+(jobs `page`, `rust`, `fvps`; the repository had no CI on pull requests or pushes to main at all before this, only
+the release bake). What exists and what it proves:
+- Kani 0.68 (CBMC 6.11) harnesses, `cfg(kani)` only, run with `-Z stubbing`:
+  `crimson_noir_os/crates/noir_core/src/verify.rs` (6 harnesses over a symbolic matrix at the smallest validated
+  dims, every knob symbolic: an agent's tick isolated to its own row/weights/memory block and on the floor, flush
+  zeroes one row, relaxation and bitonic passes in bounds, the masks' meaning, compare-exchange) and
+  `native/routing/src/verify.rs` (8 harnesses: arena setter, check on any arena, no track refused-not-trapped, the
+  projection, pose on one and two pieces, next stop and speed limit, project_onto). Transcendentals, the Bézier
+  point, offsets, the fold and `eval_piece` are stubbed to "any f64" (sound: never an index; the parity tests hold
+  the values). Lessons: fill loops over symbolic arrays fail the unwinding assertion, use `kani::any::<[T; N]>()`;
+  CBMC's NaN checks fire on any float arithmetic over symbolic words, so float-only functions must be stubbed; CBMC
+  takes ~6 GB per harness, run them one at a time; `pkill -f "cargo kani"` kills the shell that runs it (`pkill -x
+  cbmc`). KANI_RESULTS_LINE
+- Z3 theorems (`tools/verify/fvps_smt.py`, 15 s): index arithmetic over 32-bit words and IEEE doubles for every
+  validated dimension, each with a vacuity check and a self-check that a wrong theorem is refused. All proved.
+- `tools/verify/wasm_airgap.py`: 0 imports, 1 exported memory, no start, no exported table, the exact export sets
+  (routing 8, kv-pager 14), both rebuilt modules byte-equal to the committed ones. Its first CI run found the
+  committed kv-pager module carried `/home/user/.../native/kv-pager/src/02_page_table.rs` (the path dependency's
+  panic location), so a rebuild elsewhere differed by 32 bytes: build-wasm.mjs and fvps.sh now build with
+  `--remap-path-prefix=<checkout>=/crimson-noir`, the module was regenerated (53,133 bytes, dcbcaaf3…), and a
+  rebuild from another directory gives the same bytes. Passes.
+- IR: `cargo rustc --emit=llvm-ir` on the routing crate (21 functions, 18 external declarations, 36 trap sites);
+  only LLVM intrinsics, the four libm symbols and core's panic entry points may be declared. The system `opt` (LLVM
+  18) cannot parse rustc's IR, so the step scans the declarations rather than running a pass.
+- Honest limits: floats are held by parity tests, not proofs; `fmod` has no exact SMT model; the Kani dims are the
+  smallest validated ones (the theorems quantify over every dimension); nothing here is a proof of the whole program.
+- `/Brepro`: `crimson_noir_os/.cargo/config.toml` passes it to lld-link for the UEFI target. Verified here: two
+  clean builds of crimson_boot.efi are byte-identical (SHA-256 a476ee01…), the PE TimeDateStamp is the hash
+  0xe9cd5aa1, not a time. It is an lld-link (PE) flag: the Linux runtime binary is not covered by it (nor shipped).
+
+**Part 2, the self-healing loop (`.github/workflows/selfheal.yml`, `tools/selfheal/`).** `workflow_run` on a failed
+ci or build-release run (never on a `selfheal-*` head): builds `Dockerfile.sandbox` (rust 1.97 + node 22 + mesa +
+z3; Kani optional) and runs `agent.mjs --checks <the failed jobs' checks> --max-attempts 3 --push`. The agent: copies
+the tree, re-runs the failed checks with `--network none` to isolate (`failures.mjs` parses node:test, cargo test,
+tsc, oxlint, Kani), maps each failure to a declaration (`ast.mjs`: the TypeScript compiler API; brace matching for
+Rust), asks the planner (`planner.mjs`: built-in remedies for a stale committed wasm module or seal, then Claude
+through `@anthropic-ai/sdk` with a JSON-schema output of patches limited to the shown loci, at most 3 model calls),
+applies, re-runs the failed checks then every check in a fresh container, dampens on an identical failure signature
+or a refused patch, and on success pushes `selfheal-<run>-<sha7>` and opens a PR with `gh pr create` (Before/After,
+the failures, the map, every attempt, the diff) and dispatches ci.yml on it. It cannot merge (no permission; the
+workflow documents the "Allow GitHub Actions to create and approve pull requests" setting it needs). 16 tests in
+`selfheal.test.mjs`, including an end-to-end fixture healed in the host sandbox. Not exercised: a real run on
+GitHub (needs a failure on main or a dispatch; `ANTHROPIC_API_KEY` is not set as a secret, so only the built-in
+remedies would run there).
+
+**Part 3, telemetry.** `src/10_Network/telemetry.ts` (frames of 8 words, FNV-1a+mix32 digest, chain fold, Ledger
+with digest/stale/window refusals and a per-node SHA-256 chain, EdgeNode with at-least-once resends and desync
+detection; 7 tests), `telemetry.fuzz.test.ts` (64 edge actors sampling poses from the WASM routing core over the car
+rings; 10 seeded campaigns plus the worst link: 200 ticks of latency, 50 % drops, 50 % duplicates, 34 % fog cache
+desyncs; the ledger equals the clean run's, verifies, refused every desync; the window burst; a corrupt edge cache
+refused forever), `crimson_noir_os/src/telemetry.rs` + `shaders/telemetry.wgsl` + `gpu::digests` (GPU == CPU on
+lavapipe for 1..4097 frames, pinned VECTORS 0xf8da9ded, 0x0543e119, 0x525f35c4, chain 0xdeb20183; in the no-branch
+and naga validation lists).
+
+**Verified before the PR:** VERIFIED_LINE
+
+**Not done / the operator's call:** no release tag (the directive's "finalize the deployment" means: dispatch
+build-release.yml on main after the PR merges; the bake now runs the proofs first). The self-heal workflow needs the
+repository setting above and, for the model planner, an `ANTHROPIC_API_KEY` secret.

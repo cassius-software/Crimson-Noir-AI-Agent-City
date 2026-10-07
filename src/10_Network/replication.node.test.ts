@@ -625,7 +625,10 @@ test('the mirror on the socket: crafted illegal movement is refused and correcte
       c.send(msg)
       const corr = await c.next('correct', from)
       const i = c.got.indexOf(corr)
-      assert.equal(i, from, `the next message is the correction (${c.got.slice(from, i).map((m) => m.t).join(', ')})`)
+      // The correction is the answer: nothing but the host's periodic snapshot (which can land in the window between
+      // the send and the answer on a slow machine; it is not an answer to anything) may come before it.
+      const between = c.got.slice(from, i).map((m) => m.t)
+      assert.ok(between.every((t) => t === 'snapshot'), `the next message is the correction (${between.join(', ')})`)
       assert.match(corr.reason, why)
       assert.deepEqual([corr.you.x, corr.you.z], [kept.x, kept.z], 'the truth is where it was')
       assert.equal(corr.fix, fix + 1)

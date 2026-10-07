@@ -1,7 +1,7 @@
 //! Why does this file exist? It is the hosted runtime of Crimson Noir OS: the same core as the bootable image, on a
 //! desktop, with the GPU. `selftest` (the default) runs the self-test's scripted swarm on the CPU and on the GPU (the
 //! WGSL kernels through wgpu) and holds both against the build's proof and each other, word for word, then relaxes
-//! the routing fields and sorts a million keys on both; `frames DIR` renders the 5-Whys tutorial and a terminal
+//! the routing fields, sorts a million keys and digests the telemetry frames on both; `frames DIR` renders the 5-Whys tutorial and a terminal
 //! session as PNG frames; `terminal` is the Sith Lord Terminal on standard input and output; `info` prints the locked
 //! configuration; `bridge [ws://127.0.0.1:PORT]` sends the scripted run's weight ledger to the Phase 12 host for
 //! verification and adopts the verified weights in a fresh runtime (bridge.rs; loopback only, token in CRIMSON_TOKEN).
@@ -12,6 +12,7 @@ mod bridge;
 mod gpu;
 mod host;
 mod ledger;
+mod telemetry;
 mod wire;
 
 use std::io::{BufRead, Write};
@@ -139,6 +140,30 @@ fn selftest() -> Result<(), String> {
         return Err(String::from("the GPU's sort differs from the CPU's"));
     }
     println!("      = the same order, every key");
+    // The telemetry digest (Phase 18): the fog's shader against the CPU kernel on a batch of frames, and the pinned
+    // vectors folded to the chain head the page pins (telemetry.rs).
+    let frames = 1 << 16;
+    let words: Vec<u32> = (0..frames as u32 * telemetry::FRAME_WORDS as u32).map(|i| mix32(i ^ 0x7e1e_7e1e)).collect();
+    let t = Instant::now();
+    let want = telemetry::digests(&words);
+    let cpu_ms = t.elapsed();
+    let t = Instant::now();
+    let got = gpu::digests(&g, &words);
+    println!("telem {} frames digested: {:.0?} on the CPU, {:.0?} on the GPU", frames, cpu_ms, t.elapsed());
+    if got != want {
+        return Err(String::from("the GPU's telemetry digests differ from the CPU's"));
+    }
+    let mut head = 0;
+    for (seq, (vector, digest)) in telemetry::VECTORS.iter().enumerate() {
+        if telemetry::frame_digest(vector) != *digest {
+            return Err(format!("telemetry vector {seq} does not digest to {digest:#010x}"));
+        }
+        head = telemetry::chain(head, *digest, seq as u32);
+    }
+    if head != telemetry::VECTORS_CHAIN {
+        return Err(format!("the telemetry vectors chain to {head:#010x}, not {:#010x}", telemetry::VECTORS_CHAIN));
+    }
+    println!("      = the same digests, every frame; the pinned vectors chain to {:#010x}", head);
     println!("SELFTEST PASS");
     Ok(())
 }

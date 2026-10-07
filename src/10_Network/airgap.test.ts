@@ -184,6 +184,9 @@ test('the replication core takes its 14A verdicts from conduct.ts screen, and th
       '../07_Execute_Actions/physics.ts', '../07_Execute_Actions/simProtocol.ts',
     ],
     'plane.node.ts': ['../07_Execute_Actions/simProtocol.ts', './replication.ts'],
+    // The telemetry pipeline (Phase 18) is pure: frames, digests and the per-node hash chain; it opens nothing and
+    // reaches no realm. Its links are whatever carries a frame (the fuzz drives it through a chaotic one in memory).
+    'telemetry.ts': ['../02_Define_The_Rules/integrity.ts'],
   }
   for (const [file, list] of Object.entries(allowed)) {
     const text = readFileSync(join(SRC, '10_Network', file), 'utf8')
