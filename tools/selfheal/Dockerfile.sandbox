@@ -1,0 +1,28 @@
+# Why does this file exist? It is the image the self-healing agent's sandbox runs the checks in (tools/selfheal/
+# sandbox.mjs): every toolchain the checks need, and the page's dependencies installed from the lockfile, so a
+# container started from it can run `sh tools/selfheal/checks.sh` with the network off. It is built once per
+# agent run, from the tree under repair, and never published. The Rust toolchain is the one build-release.yml bakes
+# with; Kani is installed when SELFHEAL_KANI=1 (it adds minutes to the build) and the fvps-kani check reports
+# itself skipped otherwise.
+# What breaks if it is removed? The sandbox has no image to run; the agent falls back to a host subprocess.
+FROM rust:1.97-bookworm
+ARG SELFHEAL_KANI=0
+ENV DEBIAN_FRONTEND=noninteractive CARGO_TERM_COLOR=never
+RUN apt-get update -q && apt-get install -y -q --no-install-recommends \
+      ca-certificates curl python3 python3-pip mesa-vulkan-drivers libvulkan1 mtools gdisk xorriso \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y -q nodejs && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --break-system-packages -q z3-solver \
+    && rustup target add wasm32-unknown-unknown x86_64-unknown-uefi \
+    && if [ "$SELFHEAL_KANI" = "1" ]; then cargo install kani-verifier --locked && cargo kani setup; fi
+WORKDIR /deps
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+WORKDIR /fetch
+COPY crimson_noir_os/Cargo.toml crimson_noir_os/Cargo.lock ./crimson_noir_os/
+COPY crimson_noir_os/crates ./crimson_noir_os/crates
+COPY crimson_noir_os/boot ./crimson_noir_os/boot
+COPY crimson_noir_os/build.rs crimson_noir_os/containment.nix crimson_noir_os/containment.lock crimson_noir_os/containment.seal ./crimson_noir_os/
+RUN mkdir -p crimson_noir_os/src && echo 'fn main() {}' > crimson_noir_os/src/main.rs && (cd crimson_noir_os && cargo fetch --locked)
+WORKDIR /work
+ENV NOIR_REQUIRE_GPU=1 CARGO_NET_OFFLINE=true

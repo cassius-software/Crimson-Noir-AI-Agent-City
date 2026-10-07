@@ -1,0 +1,115 @@
+# Why does this file exist? It is the standing verification of every change: the checks that were run by hand in a
+# container at the end of each phase, run here on every pull request and every push to main, and the formal
+# verification step (FVPS) with them. The checks are the ones tools/selfheal/checks.sh names, so a contributor, this
+# workflow and the self-healing agent run the same commands. Three jobs run side by side:
+# - page: tsc, oxlint, the 1,300-test suite, the single-file build with its no-server-code check, the host's smoke
+#   test, and the self-healing agent's own tests;
+# - rust: the OS workspace's tests on CPU and GPU (lavapipe) and clippy on every target, the native crates' tests,
+#   and the WebAssembly modules rebuilt and compared with the committed ones (the air-gap check);
+# - fvps: the formal step: the SMT theorems, the LLVM-IR call graph, and every Kani proof harness, one at a time
+#   (the model checker's memory is the bound; a GitHub runner has 16 GB). Kani is cached between runs.
+# A failure of any job wakes the self-healing workflow (selfheal.yml), which may answer with a selfheal-* pull
+# request and never merges anything. `workflow_dispatch` lets the agent, or a person, run this on a selfheal branch.
+# What breaks if it is removed? A change is checked only when someone remembers to.
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  RUST_TOOLCHAIN: '1.97.0'
+  CARGO_TERM_COLOR: always
+
+jobs:
+  page:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: tsc, oxlint, the test suite, the build, the smoke test, the agent's tests
+        run: sh tools/selfheal/checks.sh page-tsc page-lint page-test page-build page-smoke selfheal-test
+
+  rust:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install lavapipe and python's z3
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends mesa-vulkan-drivers
+          pip install -q z3-solver
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }} with the UEFI and wasm32 targets
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy --target x86_64-unknown-uefi --target wasm32-unknown-unknown
+          rustup default "$RUST_TOOLCHAIN"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crimson_noir_os/target
+            native/routing/target
+            native/kv-pager/target
+            native/kv-pager-wasm/target
+          key: rust-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('**/Cargo.lock') }}
+      - name: The OS workspace's tests (CPU and GPU), clippy, the native crates, the WebAssembly modules
+        env:
+          NOIR_REQUIRE_GPU: '1'
+        run: sh tools/selfheal/checks.sh rust-test rust-clippy native-test fvps-wasm
+
+  fvps:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install python's z3
+        run: pip install -q z3-solver
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }} with the wasm32 target
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target wasm32-unknown-unknown
+          rustup default "$RUST_TOOLCHAIN"
+      - uses: actions/cache@v4
+        id: kani
+        with:
+          path: |
+            ~/.cargo/bin/cargo-kani
+            ~/.cargo/bin/kani
+            ~/.kani
+            ~/.rustup/toolchains/nightly-*
+          key: kani-${{ runner.os }}-0.68.0
+      - name: Install Kani 0.68.0
+        if: steps.kani.outputs.cache-hit != 'true'
+        run: |
+          cargo install kani-verifier --version 0.68.0 --locked
+          cargo kani setup
+      - name: The SMT theorems, the IR call graph and the WebAssembly air gap
+        run: sh tools/verify/fvps.sh smt && sh tools/verify/fvps.sh ir && sh tools/verify/fvps.sh wasm
+      - name: Every Kani proof harness
+        run: sh tools/verify/fvps.sh kani

@@ -461,3 +461,5 @@ pub extern "C" fn routing_layout(index: u32) -> u32 {
 
 #[cfg(test)]
 mod tests;
+#[cfg(kani)]
+mod verify;

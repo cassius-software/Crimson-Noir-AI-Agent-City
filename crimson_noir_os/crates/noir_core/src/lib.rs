@@ -23,6 +23,8 @@ pub mod tutorial;
 
 #[cfg(test)]
 mod tests;
+#[cfg(kani)]
+mod verify;
 
 use alloc::format;
 use alloc::string::String;

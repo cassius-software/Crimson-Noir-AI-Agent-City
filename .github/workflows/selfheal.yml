@@ -1,0 +1,141 @@
+# Why does this file exist? It is the self-healing half of the pipeline. When ci.yml or build-release.yml ends in
+# failure, this workflow spawns the remediation agent (tools/selfheal/agent.mjs) on the commit that failed, in a
+# runner of its own:
+# 1. the agent re-runs the failed checks in a sandbox (a fresh container with the network off, built from
+#    tools/selfheal/Dockerfile.sandbox) to isolate the failure and reads it into failures;
+# 2. maps each failure to the declaration it points at in the syntax tree;
+# 3. asks its planner for a structural patch: the built-in remedies first (a committed module regenerated with the
+#    repository's own tool), then Claude through the Anthropic API when the ANTHROPIC_API_KEY secret is set;
+# 4. applies the patch to a copy and re-runs the failed checks, then every check, in a fresh container;
+# 5. stops after 3 attempts, or sooner when an attempt changes nothing (the loop dampening), so a failure the agent
+#    cannot fix costs a bounded number of model calls;
+# 6. when every check passes, pushes a selfheal-<run>-<sha7> branch and opens a pull request that documents the
+#    failure, the map, every attempt and the diff. The agent cannot merge: this workflow has no permission to, and
+#    branch protection on main should require a review. Pull requests opened with the workflow's own token do not
+#    start ci.yml by themselves, so the agent's report carries the sandbox's own results and the last step
+#    dispatches ci.yml on the branch.
+# The repository setting "Allow GitHub Actions to create and approve pull requests" must be on for step 6; without
+# it the branch is pushed and the run's log says so. Without ANTHROPIC_API_KEY only the built-in remedies run.
+# `workflow_dispatch` runs the agent by hand on any commit, for a named set of checks.
+# What breaks if it is removed? A red pipeline waits for a person; nothing else changes.
+
+name: selfheal
+
+on:
+  workflow_run:
+    workflows: [ci, build-release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      checks:
+        description: The checks to isolate (tools/selfheal/checks.sh names, comma-separated; `all` runs everything)
+        required: false
+        default: all
+        type: string
+      planner:
+        description: claude (built-in remedies, then the model), builtin, or none (isolate and report only)
+        required: false
+        default: claude
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: selfheal-${{ github.event.workflow_run.head_sha || github.sha }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  heal:
+    # Only a failed run of ci or build-release, and never a run on a selfheal-* branch (the agent does not heal itself).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'failure' && !startsWith(github.event.workflow_run.head_branch, 'selfheal-'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    env:
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      HEAD_BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+      RUN_ID: ${{ github.event.workflow_run.id || github.run_id }}
+      CHECKS: ${{ inputs.checks || 'all' }}
+      PLANNER: ${{ inputs.planner || 'claude' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          fetch-depth: 0
+          # The token stays: the agent pushes the selfheal-* branch and opens the pull request with it.
+          persist-credentials: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Which checks failed (from the failed run's job names), unless named by hand
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # ci.yml's jobs map to checks.sh names; a failed bake maps to the checks the bake runs first.
+          failed=$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/jobs" --paginate --jq '.jobs[] | select(.conclusion == "failure") | .name' | tr '\n' ' ')
+          echo "failed jobs: $failed"
+          checks=""
+          case " $failed " in *" page "*) checks="$checks,page-tsc,page-lint,page-test,page-build,page-smoke,selfheal-test" ;; esac
+          case " $failed " in *" rust "*) checks="$checks,rust-test,rust-clippy,native-test,fvps-wasm" ;; esac
+          case " $failed " in *" fvps "*) checks="$checks,fvps-smt,fvps-wasm,fvps-kani" ;; esac
+          case " $failed " in *" bake "*) checks="$checks,rust-test,fvps-smt,fvps-wasm" ;; esac
+          checks=${checks#,}
+          echo "CHECKS=${checks:-all}" >> "$GITHUB_ENV"
+
+      - name: Build the sandbox image (every toolchain, the dependencies from the lockfiles)
+        run: docker build -q -t crimson-noir-selfheal-sandbox -f tools/selfheal/Dockerfile.sandbox .
+
+      - name: Run the remediation agent (at most 3 attempts, each verified in a fresh container)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          SELFHEAL_SANDBOX: docker
+        run: |
+          planner=$PLANNER
+          if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ "$planner" = claude ]; then
+            echo "::notice::ANTHROPIC_API_KEY is not set: only the built-in remedies will be tried"
+            planner=builtin
+          fi
+          set +e
+          node tools/selfheal/agent.mjs --checks "$CHECKS" --planner "$planner" --max-attempts 3 --run-id "$RUN_ID" \
+            --out "$RUNNER_TEMP/selfheal" --base "$HEAD_BRANCH" --push
+          status=$?
+          set -e
+          cp "$RUNNER_TEMP/selfheal/report.md" "$GITHUB_STEP_SUMMARY" 2> /dev/null || true
+          # 0: a patch passed and was pushed; 3: no patch (reported); anything else is the agent's own failure.
+          [ "$status" -eq 0 ] || [ "$status" -eq 3 ]
+
+      - name: Run ci on the selfheal branch, if one was pushed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          branch=$(git rev-parse --abbrev-ref HEAD)
+          case "$branch" in
+            selfheal-*) gh workflow run ci.yml --ref "$branch" && echo "ci dispatched on $branch" ;;
+            *) echo "no selfheal branch to check" ;;
+          esac
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: selfheal-${{ env.RUN_ID }}
+          path: ${{ runner.temp }}/selfheal/
+          if-no-files-found: ignore
+          retention-days: 30
