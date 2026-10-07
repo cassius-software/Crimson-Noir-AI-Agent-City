@@ -94,7 +94,7 @@ fn arena_setter_never_traps() {
 /// Whatever the arena holds, `routing_check` answers 0 or 1 and never traps; and an offset it accepts is a track
 /// whose header and body lie inside the arena.
 #[kani::proof]
-#[kani::unwind(26)]
+#[kani::unwind(4)]
 #[kani::stub(crate::math::atan2, any_atan2)]
 #[kani::stub(crate::math::hypot, any_hypot)]
 #[kani::stub(crate::math::sqrt, any_sqrt)]
@@ -102,7 +102,10 @@ fn arena_setter_never_traps() {
 #[kani::stub(crate::bezier_point, any_bezier)]
 #[kani::stub(crate::offsets, any_offsets)]
 fn check_never_traps_on_any_arena() {
-    let words = any_words::<{ T_HEADER + 2 * PIECE_WORDS + 2 * STOP_WORDS }>();
+    // One piece and two stops' worth of words: the offset is symbolic, so the check is tried at every alignment of
+    // a track inside the arena (a larger arena holds more stops for the check to walk, and the checker ran out of
+    // memory walking them at every offset).
+    let words = any_words::<{ T_HEADER + PIECE_WORDS + 2 * STOP_WORDS }>();
     lay(&words);
     let at: u32 = kani::any();
     let ok = routing_check(at);

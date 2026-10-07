@@ -357,10 +357,10 @@ fn track_at(at: usize) -> Option<Track<'static>> {
     let all = unsafe { core::slice::from_raw_parts(base, words) };
     let head = &all[at..];
     let (np, ns) = (head[T_PIECES], head[T_STOPS]);
-    if !(np >= 1.0 && np < 1.0e9 && ns >= 0.0 && ns < 1.0e9) {
+    if !((1.0..1.0e9).contains(&np) && (0.0..1.0e9).contains(&ns)) {
         return None;
     }
-    let Some(need) = track_words_checked(np as usize, ns as usize) else { return None };
+    let need = track_words_checked(np as usize, ns as usize)?;
     if head.len() < need {
         return None;
     }
