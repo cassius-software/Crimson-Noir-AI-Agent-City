@@ -63,9 +63,12 @@ tag's GitHub Release. The workflow:
 4. boots both in QEMU with OVMF (the disk image through the tutorial and the terminal to a clean power-off);
 5. attaches `crimson_noir_os.img`, `crimson_noir_os.iso`, `BOOTX64.EFI`, the configuration and `SHA256SUMS`.
 
-The media are reproducible. Every timestamp is the commit's time, and the disk's GUIDs and the FAT serial come from
-the commit's hash. So the same commit, built with the same toolchain, gives the same bytes, and anyone can rebuild and
-compare checksums.
+The media are reproducible. Every timestamp is the commit's time, the disk's GUIDs and the FAT serial come from the
+commit's hash, and the linker writes a hash of the output where it would stamp the build time (`.cargo/config.toml`:
+`/Brepro`; without it two builds differed in exactly two timestamps, which is how `v1.0.0-stable-release` and
+`stable-beta`, baked from one commit before this fix, came to carry EFI binaries that differ from each other by those
+8 bytes). So the same commit, built with the same toolchain, gives the same bytes, and anyone can rebuild and compare
+checksums; the release workflow bakes twice from a clean build and refuses a release whose two bakes differ.
 
 A tag push runs the workflow as it is at the tagged commit, so such a tag must point at a commit that has the file.
 Tags are pushed from the operator's machine with `publish.ps1` in the repository root.

@@ -547,5 +547,26 @@ locally with a stand-in gh in four scenarios. The plan: merge the PR, dispatch o
 Audited.") and `stable-beta` ("Stable Beta", a prerelease by the alpha/beta/rc rule), watch the runs, verify the
 assets.
 
-**Not verified:** no GitHub Actions run yet (no runner here); no Windows PowerShell 5.1; no physical hardware; no
-real Let's Encrypt issuance (needs a public name).
+**Merged and released (parts 2 and 3, done):**
+- PR #1 (the branch's standing pull request, retitled to the full scope) merged into `main` at 0f68d954 with a merge
+  commit; auto-merge is not enabled on the repository, so it was merged directly with the head pinned to c198b066.
+- build-release.yml dispatched on main twice (run 37650576963 for v1.0.0-stable-release, run 37650584700 for
+  stable-beta); both completed successfully in about 7 minutes: tests, bake, both QEMU boots, publish. The workflow
+  made the tags at 0f68d954 and the releases:
+  - https://github.com/exitwoundscassius-ux/Crimson-Noir-AI-Agent-City/releases/tag/v1.0.0-stable-release
+    ("Crimson Noir OS v1.0.0 Stable Release", notes "Production ISO Release. Fully Audited." above the media
+    description, not a prerelease);
+  - https://github.com/exitwoundscassius-ux/Crimson-Noir-AI-Agent-City/releases/tag/stable-beta ("Stable Beta", a
+    prerelease). Each carries crimson_noir_os.img (36 MiB), crimson_noir_os.iso, BOOTX64.EFI, containment.nix,
+    containment.lock, NOTICE.txt, LICENSE-MIT, LICENSE-APACHE and SHA256SUMS.
+- Found by comparing the two: the EFI binaries of the two releases differ from each other (and so do the img and
+  iso) in exactly two 4-byte linker timestamps (the PE header's and the debug directory's). The local
+  reproducibility test in Phase 15 never rebuilt the EFI (cargo was a no-op the second time), so it missed this.
+  Fixed on the branch: crimson_noir_os/.cargo/config.toml passes /Brepro to lld-link for the UEFI target (two clean
+  builds and two clean bakes are now byte-identical), and the workflow bakes twice from a clean build and refuses a
+  release whose two bakes differ. The two published releases predate the fix: everything in them was built and
+  booted by CI, but their media are not bit-identical to each other or to a rebuild; cutting new tags from a commit
+  with the fix is the operator's call (publish.ps1 or a dispatch with a new tag name).
+
+**Not verified:** no Windows PowerShell 5.1; no physical hardware; no real Let's Encrypt issuance (needs a public
+name).
