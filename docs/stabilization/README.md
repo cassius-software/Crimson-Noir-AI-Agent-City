@@ -39,7 +39,9 @@ Converted in this pass:
 - **The swarm's tick runs in SIMD lanes** (`crimson_noir_os/crates/noir_core/src/lanes.rs`, `kernels::tick_lanes`):
   four agents a register, SSE2 on x86_64, plain lane loops on the UEFI target (built with SSE off). The scalar kernel
   stays as the reference the Kani harnesses prove, and the lanes are held to it bit for bit by the determinism suite's
-  pinned fingerprint and by a fuzz test over adversarial matrices.
+  pinned fingerprint and by a fuzz test over adversarial matrices. Measured on the shipped configuration (4,096 agents,
+  `bench_the_tick`, a 4-core cloud container, 2026-10-08): 3,799 ticks/s scalar, 4,537 ticks/s in lanes, 1.19x; the tick
+  is bound by its gathers from the routing fields, which SSE2 has no instruction for, so the gain is the arithmetic's.
 - **The KV pager's page table is a structure of arrays** (`native/kv-pager/src/02_page_table.rs`): one array per
   field of a block and one flat token array instead of a vector of block objects; the agents' block tables are one flat
   table in the layout the GPU kernel reads, so `gpu_tables` copies rows. The chaos fuzzer (thousands of seeds, millions
