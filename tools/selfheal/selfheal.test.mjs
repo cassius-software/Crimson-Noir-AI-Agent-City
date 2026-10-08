@@ -8,7 +8,7 @@
  * What breaks if it is removed? The agent could silently stop isolating, mapping or stopping.
  */
 import assert from 'node:assert/strict'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -17,7 +17,7 @@ import { MAX_ATTEMPTS, applyPlan, failuresOf, heal, lociOf, parseArgs, report } 
 import { allLoci, replaceLocus, rustLocus, tsLocus } from './ast.mjs'
 import { parseCargoTest, parseKani, parseNodeTest, parseOxlint, parseTsc, signature } from './failures.mjs'
 import { builtinPlanner, chain, describe, nonePlanner, plan } from './planner.mjs'
-import { copyTree, runChecks } from './sandbox.mjs'
+import { copyTree, removeCopy, runChecks } from './sandbox.mjs'
 
 const TAP = `TAP version 13
 # Subtest: adds
@@ -279,6 +279,18 @@ test('end to end on a fixture: isolate, map, a wrong patch, a right patch, a dif
   assert.match(body, /```diff/)
   rmSync(s.patched, { recursive: true, force: true })
   rmSync(tree, { recursive: true, force: true })
+})
+
+test('the sandbox removes its copy when the checks end, and a copy it cannot remove does not throw', () => {
+  const tree = fixture()
+  const copies = () => new Set(readdirSync(tmpdir()).filter((n) => n.startsWith('selfheal-')))
+  const before = copies()
+  runChecks(tree, ['page-test'], { kind: 'host', log: () => {} })
+  assert.deepEqual([...copies()].filter((n) => !before.has(n)), [], 'no copy is left behind')
+  rmSync(tree, { recursive: true, force: true })
+  const logged = []
+  removeCopy(join(tmpdir(), 'selfheal-never-made'), false, (s) => logged.push(s))
+  assert.deepEqual(logged, [], 'a copy that is already gone is nothing to report')
 })
 
 test('the host sandbox runs the checks on a copy and leaves the tree alone', () => {
