@@ -1,8 +1,9 @@
 # Why does this file exist? It is the self-healing half of the pipeline. When ci.yml or build-release.yml ends in
 # failure, this workflow spawns the remediation agent (tools/selfheal/agent.mjs) on the commit that failed, in a
 # runner of its own:
-# 1. the agent re-runs the failed checks in a sandbox (a fresh container with the network off, built from
-#    tools/selfheal/Dockerfile.sandbox) to isolate the failure and reads it into failures;
+# 1. the agent re-runs the failed checks in a sandbox (a fresh container, air-gapped, with nothing of the host
+#    mounted and no privilege, built from tools/selfheal/Dockerfile.sandbox; its containment is verified by
+#    ci.yml's sandbox job) to isolate the failure and reads it into failures;
 # 2. maps each failure to the declaration it points at in the syntax tree;
 # 3. asks its planner for a structural patch: the built-in remedies first (a committed module regenerated with the
 #    repository's own tool), then Claude through the Anthropic API when the ANTHROPIC_API_KEY secret is set;
@@ -96,6 +97,8 @@ jobs:
           case " $failed " in *" fvps "*) checks="$checks,fvps-smt,fvps-wasm" ;; esac
           case " $failed " in *" kani ("*) checks="$checks,fvps-kani" ;; esac
           case " $failed " in *" bake "*) checks="$checks,rust-test,fvps-smt,fvps-wasm" ;; esac
+          # A failed sandbox job is the containment's failure, not the tree's: nothing for the agent to patch.
+          if [ -z "$checks" ] && [ "${failed% }" = sandbox ]; then echo "only the sandbox job failed: nothing to heal"; checks=none; fi
           checks=${checks#,}
           echo "CHECKS=${checks:-all}" >> "$GITHUB_ENV"
 
@@ -108,6 +111,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SELFHEAL_SANDBOX: docker
         run: |
+          if [ "$CHECKS" = none ]; then echo "nothing to heal"; exit 0; fi
           planner=$PLANNER
           if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ "$planner" = claude ]; then
             echo "::notice::ANTHROPIC_API_KEY is not set: only the built-in remedies will be tried"

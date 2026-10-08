@@ -5,6 +5,10 @@
 # with; Kani is installed when SELFHEAL_KANI=1 (it adds minutes to the build) and the fvps-kani check reports
 # itself skipped otherwise. Its build context is Dockerfile.sandbox.dockerignore's, not the root .dockerignore's
 # allowlist (the host image's), which would hide the OS crates the prefetch copies.
+# The container runs as `sandbox` (uid 10001), never root, on a read-only root filesystem (sandbox.mjs): the
+# toolchains, the registry and the installed modules under /deps are read by that user and written by nobody; the
+# tree arrives in /work (a tmpfs the container is given) and the build output goes to /build, the one directory
+# the user owns, which docker replaces with an empty volume of the same ownership for every run.
 # What breaks if it is removed? The sandbox has no image to run; the agent falls back to a host subprocess.
 FROM rust:1.97-bookworm
 ARG SELFHEAL_KANI=0
@@ -25,5 +29,9 @@ COPY crimson_noir_os/crates ./crimson_noir_os/crates
 COPY crimson_noir_os/boot ./crimson_noir_os/boot
 COPY crimson_noir_os/build.rs crimson_noir_os/containment.nix crimson_noir_os/containment.lock crimson_noir_os/containment.seal ./crimson_noir_os/
 RUN mkdir -p crimson_noir_os/src && echo 'fn main() {}' > crimson_noir_os/src/main.rs && (cd crimson_noir_os && cargo fetch --locked)
+RUN groupadd -g 10001 sandbox && useradd -u 10001 -g 10001 -M -d /tmp/home -s /bin/sh sandbox \
+    && mkdir -p /build /work && chown sandbox:sandbox /build /work \
+    && chmod -R a+rX /deps /fetch /usr/local/cargo /usr/local/rustup
 WORKDIR /work
-ENV NOIR_REQUIRE_GPU=1 CARGO_NET_OFFLINE=true
+USER sandbox
+ENV NOIR_REQUIRE_GPU=1 CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 HOME=/tmp/home
