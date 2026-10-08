@@ -142,7 +142,7 @@ release; each one is something the release engineering could not confirm.
    original number. Confirm no other ORC work was drawn on. If one was, add it to the attribution.
 4. **Licensing the code.** The ORC License grants no licence to software code (the ORC AxE, "Digital
    Applications of the ORC License"). `LICENSE` licenses the mechanics under ORC, keeps the core
-   (`src/`, `crimson_noir_os/`, `native/`, `world/`) proprietary under
+   (`src/`, `crimson_noir_os/`, `native/`, `world/`, `brand/`) proprietary under
    `LICENSES/LicenseRef-CrimsonNoir-Proprietary.txt`, and opens the auxiliary tooling (`tools/`,
    `deploy/`, `.github/`, `docs/`) under MIT (`LICENSES/MIT.txt`). Have counsel review the
    combination. The same AxE section warns that assigning all rights in the code to a distributor, as

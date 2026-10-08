@@ -4,6 +4,7 @@
  * Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
  */
 @import "tailwindcss";
+@import "./brand/tokens.css";
 
 /*
  * Why does this file exist? It is the page's one stylesheet: Tailwind, and the root that fills the window without
@@ -17,5 +18,6 @@ body,
   height: 100%;
   margin: 0;
   overflow: hidden;
-  background: #0f172a;
+  background: var(--noir-ink, #050507);
+  font-family: var(--noir-font-text, system-ui, sans-serif);
 }

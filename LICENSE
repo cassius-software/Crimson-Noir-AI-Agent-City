@@ -20,6 +20,7 @@ this file, by the repository being readable, or by a release:
                      decisions, the actions, the swarm, the cognition and the network
   native/            the native cores (the routing core, the KV pager and its WebAssembly module)
   world/             the compiled region pack and its previews
+  brand/             the design tokens, the marks and the style guide (Reserved Material, NOTICE.md)
   index.html, vite.config.ts   the page's entry and its build
 
 Headers: "Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved." and
