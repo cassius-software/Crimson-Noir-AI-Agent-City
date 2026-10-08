@@ -73,7 +73,8 @@ test('the tree the container receives has no history, installed modules or build
   writeFileSync(join(tree, 'src/a/x.ts'), 'export const x = 1\n')
   writeFileSync(join(tree, 'dist/index.html'), '')
   writeFileSync(join(tree, 'tools/selfheal/checks.sh'), '')
-  const listing = spawnSync('tar', ['-tf', '-'], { input: tarTree(tree), encoding: 'utf8' }).stdout.split('\n').map((l) => l.replace(/^\.\//, '')).filter(Boolean)
+  const listing = spawnSync('tar', ['-tf', '-'], { input: tarTree(tree), encoding: 'utf8' }).stdout.split('\n').filter(Boolean)
+  assert.ok(!listing.includes('./') && !listing.includes('.'), 'the tree itself is not an entry')
   assert.ok(listing.includes('src/a/x.ts') && listing.includes('crimson_noir_os/Cargo.toml') && listing.includes('tools/selfheal/checks.sh'))
   for (const entry of listing) for (const e of EXCLUDE) assert.ok(!entry.split('/').includes(e), `${entry} is excluded`)
   const copy = copyTree(tree)
@@ -85,7 +86,7 @@ test('the tree the container receives has no history, installed modules or build
 
 test('the entry script unpacks into /work, links the modules in, and puts every crate\'s build output on /build', () => {
   assert.match(ENTRY, /^set -e\n/)
-  assert.ok(ENTRY.includes('tar -xf - -C /work'))
+  assert.ok(ENTRY.includes('tar -xf - --no-same-owner -C /work'))
   assert.ok(ENTRY.includes('ln -s /deps/node_modules /work/node_modules'))
   for (const crate of ['crimson_noir_os', 'native/routing', 'native/kv-pager', 'native/kv-pager-wasm']) assert.ok(ENTRY.includes(crate), `${crate}'s target is linked`)
   assert.ok(ENTRY.includes('ln -s "/build/$d" "/work/$d/target"'))

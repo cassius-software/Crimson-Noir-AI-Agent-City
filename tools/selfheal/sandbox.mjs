@@ -27,7 +27,7 @@
  * What breaks if it is removed? A patch would be tested in the tree it came from, with the network on.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -102,7 +102,7 @@ export function dockerArgs(checks, env = {}) {
 export const ENTRY = [
   'set -e',
   'mkdir -p /tmp/home',
-  'tar -xf - -C /work',
+  'tar -xf - --no-same-owner -C /work',
   'ln -s /deps/node_modules /work/node_modules',
   'for d in crimson_noir_os native/routing native/kv-pager native/kv-pager-wasm; do mkdir -p "/build/$d" && ln -s "/build/$d" "/work/$d/target"; done',
   'exec sh tools/selfheal/checks.sh "$@"',
@@ -115,9 +115,15 @@ export function copyTree(tree) {
   return dir
 }
 
-/** The tree as a tar archive (a Buffer), without EXCLUDE; what the container is given. */
+/**
+ * The tree as a tar archive (a Buffer), without EXCLUDE; what the container is given. The archive holds the
+ * tree's entries, not the tree itself (`.`): the container unpacks into /work as an unprivileged user, and a
+ * `.` entry would make tar restore the mount point's mode and time, which that user may not.
+ */
 export function tarTree(tree) {
-  const r = spawnSync('tar', ['-C', tree, ...EXCLUDE.map((e) => `--exclude=${e}`), '-cf', '-', '.'], { maxBuffer: 1024 * 1024 * 1024 })
+  const entries = readdirSync(tree).filter((n) => !EXCLUDE.includes(n))
+  if (entries.length === 0) throw new Error(`sandbox: nothing to send from ${tree}`)
+  const r = spawnSync('tar', ['-C', tree, ...EXCLUDE.map((e) => `--exclude=${e}`), '-cf', '-', ...entries], { maxBuffer: 1024 * 1024 * 1024 })
   if (r.status !== 0) throw new Error(`sandbox: tar of ${tree} failed: ${r.stderr}`)
   return r.stdout
 }
