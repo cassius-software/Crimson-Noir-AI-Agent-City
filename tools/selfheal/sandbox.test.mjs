@@ -84,10 +84,10 @@ test('the tree the container receives has no history, installed modules or build
   rmSync(tree, { recursive: true, force: true })
 })
 
-test('the entry script unpacks into /work, links the modules in, and puts every crate\'s build output on /build', () => {
+test('the entry script unpacks into /work, links the modules in one by one, and puts every crate\'s build output on /build', () => {
   assert.match(ENTRY, /^set -e\n/)
   assert.ok(ENTRY.includes('tar -xf - --no-same-owner -C /work'))
-  assert.ok(ENTRY.includes('ln -s /deps/node_modules /work/node_modules'))
+  assert.ok(ENTRY.includes('mkdir /work/node_modules') && ENTRY.includes('ln -s "$e" /work/node_modules/'), 'a directory of links, so node_modules/.tmp is writable')
   for (const crate of ['crimson_noir_os', 'native/routing', 'native/kv-pager', 'native/kv-pager-wasm']) assert.ok(ENTRY.includes(crate), `${crate}'s target is linked`)
   assert.ok(ENTRY.includes('ln -s "/build/$d" "/work/$d/target"'))
   assert.ok(ENTRY.endsWith('exec sh tools/selfheal/checks.sh "$@"'))

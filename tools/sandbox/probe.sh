@@ -114,7 +114,7 @@ uid=$(id -u)
 if [ "$uid" != 0 ]; then report priv.uid denied "uid $uid"; else report priv.uid escaped "running as root"; fi
 
 caps=$(awk '/^Cap(Eff|Prm|Bnd|Inh|Amb):/ { printf "%s%s ", $1, $2 }' /proc/self/status)
-if printf '%s' "$caps" | grep -qE '[1-9a-f]'; then report priv.caps escaped "capabilities held: $caps"; else report priv.caps denied "every capability set is empty"; fi
+if awk '/^Cap(Eff|Prm|Bnd|Inh|Amb):/ { print $2 }' /proc/self/status | grep -qE '[1-9a-f]'; then report priv.caps escaped "capabilities held: $caps"; else report priv.caps denied "every capability set is empty"; fi
 
 deny priv.userns "unshare a user namespace" unshare -Ur true
 deny priv.mountns "unshare a mount namespace" unshare -m true

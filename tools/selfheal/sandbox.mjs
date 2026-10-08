@@ -103,7 +103,9 @@ export const ENTRY = [
   'set -e',
   'mkdir -p /tmp/home',
   'tar -xf - --no-same-owner -C /work',
-  'ln -s /deps/node_modules /work/node_modules',
+  // A directory of links, not a link to the directory: tsc writes its build info under node_modules/.tmp, and
+  // /deps is read-only; the packages themselves (and .bin, on the exec-able image layer) resolve through the links.
+  'mkdir /work/node_modules && for e in /deps/node_modules/* /deps/node_modules/.[!.]*; do ln -s "$e" /work/node_modules/; done',
   'for d in crimson_noir_os native/routing native/kv-pager native/kv-pager-wasm; do mkdir -p "/build/$d" && ln -s "/build/$d" "/work/$d/target"; done',
   'exec sh tools/selfheal/checks.sh "$@"',
 ].join('\n')
