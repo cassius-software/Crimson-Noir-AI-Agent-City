@@ -8,6 +8,8 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
 - Phase 18 (formal verification, self-healing CI/CD, IIoT telemetry) is merged into main (PRs #3 and #4) and
   released as `v1.0.1-stable-release` on 2026-10-08 (the bake runs the proofs first and refuses a commit whose proofs
   fail): see the Phase 18 section at the end, including why the published EFI's TimeDateStamp is not this
+  container's, and the linker change that makes the next release's stamp the commit's alone. CI now runs on every
+  pull request and push to main (ci.yml); PR #5 (merged) carried the self-heal workflow's first-run fixes.
   container's. CI now runs on every pull request and push to main (ci.yml); PR #5 carries the self-heal workflow's
   first-run fixes.
 - Phase 17 (the plan written between Phases 16 and 18, then skipped; picked up on 2026-10-08): the two code items
@@ -698,10 +700,13 @@ SHA256SUMS. The `v1.0.0-stable-release` and `stable-beta` releases are unchanged
   the absolute paths of the object file, the working directory and rust-lld: `/home/user/...` here,
   `/home/runner/work/...` on the runner), derives the GUID from the PDB and only then hashes the executable, GUID
   included, for the timestamp. So the stamp is stable on one host (the dual bake passes) but not across hosts.
-  To make it a property of the commit, add `strip = "debuginfo"` to `[profile.release]` in `crimson_noir_os/
-  Cargo.toml` (rustc then passes `/DEBUG:NONE`: no PDB, no CodeView record, the hash covers the code alone); it
-  changes the media's bytes, so it belongs to the next release, not to this one. The published v1.0.0 EFI's
-  0x6ac6715a is a real build time (2026-10-07 16:20:42 UTC): that commit had no /Brepro.
+  Fixed after the release, for the next one (it changes the media's bytes): `.cargo/config.toml` now passes
+  `/DEBUG:NONE` after rustc's own `/DEBUG` (lld takes the last), so no PDB is written, the image carries no
+  CodeView record, and the stamp is a hash of the code alone. Checked here: the same commit built in two
+  directories gives the same bytes (220,672, SHA-256 55d0af9a…, TimeDateStamp 0x245203b6), where before the fix
+  the two directories gave two stamps. `strip = "debuginfo"` in the release profile does not do it: cargo passes
+  `-C strip=debuginfo`, but rustc 1.97 still links with `/DEBUG` and the PDB is still written. The published
+  v1.0.0 EFI's 0x6ac6715a is a real build time (2026-10-07 16:20:42 UTC): that commit had no /Brepro.
 - The self-healing workflow's first real runs (on the first CI run of main and on the failed bake) never reached
   the agent; PR #5 fixes what they found: `docker build -f tools/selfheal/Dockerfile.sandbox .` took the root
   `.dockerignore`, the host image's allowlist, so the sandbox could not copy the OS crates (now
@@ -714,6 +719,8 @@ SHA256SUMS. The `v1.0.0-stable-release` and `stable-beta` releases are unchanged
   approve pull requests", which only a heal that pushes a patch exercises; the agent's log says so if the pull
   request cannot be opened.
 
+**Not done / the operator's call:** the next release (any new tag dispatched to build-release.yml) carries the
+host-independent stamp; nothing else is open.
 **Not done / the operator's call:** merge PR #5; decide on `strip = "debuginfo"` for a host-independent stamp
 in the next release.
 
