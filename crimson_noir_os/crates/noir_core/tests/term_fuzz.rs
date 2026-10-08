@@ -1,4 +1,4 @@
-//! Why does this file exist? It is the adversarial property suite for the Sith Lord Terminal through its public API
+//! Why does this file exist? It is the adversarial property suite for the Crimson Terminal through its public API
 //! (open, run_line, key, frame, render), driven by a seeded splitmix64 so every failing line names the seed that
 //! replays it. Thousands of random lines over the whole dictionary (every built-in word, every compiling word,
 //! numbers at the edges of every base, strings and comments left open, names too long, tokens that are not words,

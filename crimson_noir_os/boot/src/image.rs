@@ -2,7 +2,7 @@
 //! screen (the Graphics Output Protocol's linear framebuffer), the declared arena taken from the firmware, the clock
 //! calibrated against the firmware's stall, the hand-over (ExitBootServices: from then on the machine is the image's
 //! alone, interrupts off, its own GDT and IDT), the system's memory allocated as declared and sealed, the boot-time
-//! checks, and the loop that runs the 5-Whys tutorial (the self-test, live) and then the Sith Lord Terminal, reading
+//! checks, and the loop that runs the 5-Whys tutorial (the self-test, live) and then the Crimson Terminal, reading
 //! the keyboard and drawing frames. It is the tutorial's platform too: the live memory march over the arena's free
 //! part, the seal probe and the screen's read-back. It also owns the ways the system stops: the fault screen (a CPU
 //! exception, a panic, an allocation the configuration never declared, a failed check), and a reset or power-off

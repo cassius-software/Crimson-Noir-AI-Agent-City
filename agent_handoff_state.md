@@ -741,6 +741,6 @@ every pull request and push: ci.yml) and 17.2 (a reproducible release re-cut: `v
 
 Verified: tsc, oxlint, `npm test` 1,302/1,302, smoke:net, `docker compose config`.
 
-**Still the operator's call (17.3, 17.4):** renaming the terminal ("Sith" is Lucasfilm's) and settling the product
-name; the real-target checks (a physical UEFI boot, a real Let's Encrypt issuance, publish.ps1 under Windows
+**17.3 (done, Julian's decision on 2026-10-08):** the terminal is the Crimson Terminal (code, tests, README; the
+screenshot predates it). **Still the operator's call (17.4):** settling the product name; the real-target checks (a physical UEFI boot, a real Let's Encrypt issuance, publish.ps1 under Windows
 PowerShell 5.1, a room from two browser tabs, `?players=4` on a real GPU); branch protection on main requiring ci.yml.
