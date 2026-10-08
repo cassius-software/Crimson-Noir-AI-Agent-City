@@ -1,6 +1,11 @@
 # Why does this file exist? The UEFI image must build to the same bytes from the same commit, so a release's media can
 # be rebuilt and compared. The linker (lld-link) stamps the PE header and the debug directory with the build time;
-# /Brepro writes a hash of the output there instead. Nothing else about the build varies.
+# /Brepro writes a hash of the output there instead. rustc also links with /DEBUG, which makes lld write a PDB beside
+# the image, derive the image's CodeView GUID from that PDB and hash the image, GUID included: the PDB embeds the
+# build host's absolute paths, so the same commit built in two directories gave the same code and data under two
+# stamps (v1.0.1-stable-release: 0xefa3b9b5 on the runner, 0xe9cd5aa1 in a container). /DEBUG:NONE, given after
+# rustc's own /DEBUG, is the one that counts: no PDB, no GUID, and the stamp is a hash of the code alone, the
+# commit's wherever it is built. Nothing else about the build varies.
 # What breaks if it is removed? Two builds of one commit differ in two timestamps, and the release's checksums with them.
 [target.x86_64-unknown-uefi]
-rustflags = ["-C", "link-arg=/Brepro"]
+rustflags = ["-C", "link-arg=/Brepro", "-C", "link-arg=/DEBUG:NONE"]
