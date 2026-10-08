@@ -72,8 +72,10 @@ done
 [ -d /run/user ] && present="$present /run/user"
 if [ -z "$present" ]; then report sock.daemons denied "no Docker, containerd, podman or D-Bus socket, no DOCKER_HOST, no session bus"; else report sock.daemons escaped "reachable:$present"; fi
 
-socks=$(find / -xdev -type s -not -path '/proc/*' 2>/dev/null | head -n 20 | tr '\n' ' ')
-if [ -z "$socks" ]; then report sock.any denied "no unix socket on the filesystem"; else report sock.any escaped "sockets: $socks"; fi
+# Four levels deep (every daemon socket lives at two or three: /run/x.sock, /var/run/x/y.sock, /tmp/.X11-unix/X0); an
+# unbounded walk of a host's disk is minutes, and this probe also runs on the unconfined host as a control.
+socks=$(find / -xdev -maxdepth 4 -type s -not -path '/proc/*' 2>/dev/null | head -n 20 | tr '\n' ' ')
+if [ -z "$socks" ]; then report sock.any denied "no unix socket within four levels of the root"; else report sock.any escaped "sockets: $socks"; fi
 
 # ---- execution of what a check or a patch can write ------------------------------------------------------------
 for dir in /work /tmp; do
