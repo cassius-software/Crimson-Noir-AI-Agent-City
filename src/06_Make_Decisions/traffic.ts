@@ -8,14 +8,15 @@
  * and steers by pure pursuit. When a person steps into its path it makes a Perception-style check
  * (degrees of success) whose degree sets how quickly it notices them, then plans a comfortable stop
  * short of them. The bouncer in laws.ts brakes regardless of the roll: the check shapes the driving,
- * never the safety. The hazard episode is its own class (HazardEpisode) so the track follower
- * (trackDriver.ts) shares it rather than copying it, and DriverLike is the contract the Fleet drives any
- * AI driver through.
+ * never the safety. The hazard episode is a row of the hazard table (hazards.ts) behind one handle
+ * (HazardEpisode) so the track follower (trackDriver.ts) shares it rather than copying it, and DriverLike is
+ * the contract the Fleet drives any AI driver through.
  * What breaks if it is removed? Every non-player car sits still.
  */
 import { CITY } from '../01_Initialize_World/city.ts'
-import { DRIVER_REACTION, KERNEL, TRAFFIC, signalFor } from '../02_Define_The_Rules/civic.ts'
-import { rollCheck, type CheckResult } from '../02_Define_The_Rules/degrees.ts'
+import { KERNEL, TRAFFIC, signalFor } from '../02_Define_The_Rules/civic.ts'
+import type { CheckResult } from '../02_Define_The_Rules/degrees.ts'
+import { HAZARDS, HazardTable } from './hazards.ts'
 
 type Vec = [number, number]
 type Turn = 'straight' | 'left' | 'right'
@@ -41,10 +42,6 @@ const left = (d: Vec): Vec => [d[1], -d[0]]
 const WHEELBASE = 2.8
 const HALF_LENGTH = 2.3
 const ENTRY = 7.5
-/** Bumper-to-person distance a driver plans to stop at: the kernel's standoff plus a courtesy margin. */
-const PERSON_STOP = KERNEL.standoff + 0.5
-/** Seconds the path must stay clear before a new person starts a new hazard episode (and a new roll). */
-const EPISODE_CLEAR = 1
 /** Metres a following driver keeps beyond the Third Law's own margin, so the kernel never has to step in. */
 const FOLLOW_MARGIN = 0.5
 
@@ -63,31 +60,37 @@ export function followSpeed(gap: number): number {
  * One hazard episode at a time: the first frame a person is inside the sensing range rolls the Perception
  * check; the episode (and its roll) lasts until the path has been clear for `EPISODE_CLEAR` seconds, so a
  * person flickering in and out of the corridor is not re-rolled. Shared by every AI driver so the semantics
- * (one roll per episode, latency by degree) are the same on a street and on a track.
+ * (one roll per episode, latency by degree) are the same on a street and on a track. The state lives in a row of
+ * the hazard table (hazards.ts: a structure of arrays, the transition as mask arithmetic); this is the handle a
+ * driver holds on its row.
  */
 export class HazardEpisode {
-  readonly #rng: () => number
-  #hazard: CheckResult | null = null
-  #hazardSeconds = 0
-  #clearSeconds = 0
+  readonly #table: HazardTable
+  readonly #row: number
 
-  constructor(rng: () => number) {
-    this.#rng = rng
+  constructor(rng: () => number, table: HazardTable = HAZARDS) {
+    this.#table = table
+    this.#row = table.add(rng)
+  }
+
+  /** The row this episode is in its table. */
+  get row(): number {
+    return this.#row
   }
 
   /** The Perception check of the current hazard episode (null once the path has been clear for 1 s). */
   get check(): CheckResult | null {
-    return this.#hazard
+    return this.#table.check(this.#row)
   }
 
   /** Seconds the driver takes to react in the current episode (Infinity when there is none). */
   get reactionLatency(): number {
-    return this.#hazard ? DRIVER_REACTION.latency[this.#hazard.degree] : Infinity
+    return this.#table.reactionLatency(this.#row)
   }
 
   /** True once the driver has noticed the person of the current episode. */
   get reacted(): boolean {
-    return this.#hazard !== null && this.#hazardSeconds >= this.reactionLatency
+    return this.#table.reacted(this.#row)
   }
 
   /**
@@ -95,21 +98,7 @@ export class HazardEpisode {
    * the room to stop in before the person once the driver has reacted, else Infinity.
    */
   perceive(personAhead: number, dt: number): number {
-    const present = personAhead < KERNEL.range
-    if (present && !this.#hazard) {
-      this.#hazard = rollCheck(DRIVER_REACTION.modifier, DRIVER_REACTION.dc, this.#rng)
-      this.#hazardSeconds = 0
-      this.#clearSeconds = 0
-    } else if (this.#hazard) {
-      this.#hazardSeconds += dt
-      this.#clearSeconds = present ? 0 : this.#clearSeconds + dt
-      if (this.#clearSeconds >= EPISODE_CLEAR) {
-        this.#hazard = null
-        this.#hazardSeconds = 0
-        this.#clearSeconds = 0
-      }
-    }
-    return present && this.reacted ? personAhead - PERSON_STOP : Infinity
+    return this.#table.perceive(this.#row, personAhead, dt)
   }
 }
 

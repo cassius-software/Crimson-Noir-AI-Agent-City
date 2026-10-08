@@ -110,7 +110,8 @@ The core crate's modules:
 |---|---|
 | `config.rs` | The configuration parser, validator, lock and generator |
 | `matrix.rs` | The Global Matrix, the world, spawning and the scripted self-test run |
-| `kernels.rs` | The branch-free hot path |
+| `kernels.rs` | The branch-free hot path: the scalar reference tick, the SIMD tick (four agents a register), the relaxation and the sorting network's comparator |
+| `lanes.rs` | The SIMD lane type the tick runs on: SSE2 registers on x86_64, plain lane loops on the UEFI target |
 | `sort.rs` | The bitonic network and its 0-1 proof |
 | `render.rs` | The integer-only rasterizer |
 | `scene.rs` | The room, built from the matrix |
@@ -145,8 +146,18 @@ also checks `Cargo.lock`, so it links nothing outside the declared crates.
 
 ## The kernels
 
-`kernels.rs` contains no `if`, `else`, `match`, `while`, `loop`, `return`, `&&`, `||` or `?`; a test reads the file to
-make sure. Every decision is a 1/0 mask folded into arithmetic: `NewState = CurrentState + (UpdateValue x Mask)`.
+`kernels.rs` and `lanes.rs` contain no `if`, `else`, `match`, `while`, `loop`, `return`, `&&`, `||` or `?`; a test
+reads both files to make sure. Every decision is a 1/0 mask folded into arithmetic:
+`NewState = CurrentState + (UpdateValue x Mask)`.
+
+The tick runs four agents at a time (`kernels::tick_lanes`): every word of the four rows is a lane of one SIMD register
+(`lanes.rs`; SSE2 instructions on x86_64, the hosted runtime and the CI runners; plain loops over four words on the
+UEFI target, which is built with SSE off), with the scalar kernel (`agent_tick`) kept as the reference the lanes are
+held to bit for bit: the determinism suite's pinned fingerprint, and a fuzz test that ticks adversarial matrices
+(masks of all ones, positions that are not numbers, weights at the extremes) through both and compares every word.
+The operations that have no exact packed form (the float clamp, `f32 as u32`, the integer division of the reward) are
+done lane by lane with the scalar operation itself, so the lanes compute the scalar bits on every input. The Kani
+harnesses prove the scalar kernel; the fuzz holds the lanes to it.
 
 The three WGSL shaders are the same arithmetic, line for line, with the same lint (no `if`, `else`, `switch`, loops,
 `&&` or `||`). naga validates them without a device.

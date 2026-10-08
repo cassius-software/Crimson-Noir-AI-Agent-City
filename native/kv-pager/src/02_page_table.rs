@@ -8,6 +8,14 @@
 //! pedestrian number) has its own block table mapping its sequence's logical blocks to physical ones, which need not be
 //! contiguous.
 //!
+//! The pool is laid out as a structure of arrays (data-oriented, no block object): one array per field of a block
+//! (`refs`, `filled`, `parent`, `key`, `sealed`, `idle_since`), indexed by the physical block number, and every
+//! block's tokens side by side in one flat array (`tokens`, block `b` at `b * BLOCK_TOKENS`). The agents' block tables
+//! are one flat table too: a row of `capacity` entries per agent slot (no agent can map more distinct blocks than the
+//! pool has), padded with `NO_BLOCK`, which is the layout the GPU kernel reads, so `gpu_tables` is a row copy and
+//! never a rebuild. An agent id maps to its row through one hash map; the prefix cache is another (content key to
+//! physical block) and the eviction order an ordered map, the three associative structures the algorithm is.
+//!
 //! Full blocks are content-addressed (prefix caching): a block's key is its tokens and the key of the block before
 //! it, and a hit is checked against the stored tokens and the physical block before it, so a hash collision can never
 //! share a page. Agents whose prompts begin with the same tokens (the Agent City base reality) map those blocks to the
@@ -78,27 +86,6 @@ pub struct GpuTables {
     pub seq_lens: Vec<u32>,
 }
 
-#[derive(Clone)]
-struct Block {
-    refs: u32,
-    tokens: [Token; BLOCK_TOKENS],
-    filled: usize,
-    /// The physical block before it in the sequence it was written for, or `NO_BLOCK`.
-    parent: BlockId,
-    /// Its content key once full.
-    key: Option<u64>,
-    /// When it was left unreferenced while cached (its place in the eviction order).
-    idle_since: u64,
-}
-
-const EMPTY: Block = Block { refs: 0, tokens: [0; BLOCK_TOKENS], filled: 0, parent: NO_BLOCK, key: None, idle_since: 0 };
-
-#[derive(Clone)]
-struct Sequence {
-    blocks: Vec<BlockId>,
-    len: usize,
-}
-
 /// The key a chain of blocks starts from.
 const CHAIN_SEED: u64 = 0xcbf2_9ce4_8422_2325;
 
@@ -116,17 +103,42 @@ pub fn chain_key(before: u64, tokens: &[Token]) -> u64 {
     h ^ (h >> 31)
 }
 
+/// An agent slot's row: no agent.
+const NO_ROW: u32 = u32::MAX;
+
 pub struct PageTable {
-    blocks: Vec<Block>,
+    // The physical blocks, one array per field, indexed by block number.
+    /// How many tables map the block.
+    refs: Vec<u32>,
+    /// Token slots written.
+    filled: Vec<u32>,
+    /// The physical block before it in the sequence it was written for, or `NO_BLOCK`.
+    parent: Vec<BlockId>,
+    /// Its content key, meaningful where `sealed` is true (the block is full and keyed).
+    key: Vec<u64>,
+    sealed: Vec<bool>,
+    /// When it was left unreferenced while cached (its place in the eviction order).
+    idle_since: Vec<u64>,
+    /// Every block's tokens, block `b` at `b * BLOCK_TOKENS`.
+    tokens: Vec<Token>,
     /// Blocks holding nothing, ready to use.
     free: Vec<BlockId>,
     /// Cached blocks no table maps, by when they were left: evicted oldest first.
     idle: BTreeMap<u64, BlockId>,
     /// The prefix cache: content key → the physical block that holds it.
     cache: HashMap<u64, BlockId>,
-    agents: HashMap<AgentId, Sequence>,
+    // The agents' block tables: a row of `capacity` entries per slot, padded with NO_BLOCK, and a length each.
+    rows: Vec<BlockId>,
+    /// Tokens in the slot's sequence.
+    row_len: Vec<u32>,
+    /// The agent in each slot, or NO_ROW where the slot is free.
+    row_agent: Vec<AgentId>,
+    /// Free slots, ready to hold an agent.
+    free_rows: Vec<u32>,
+    /// Which slot an agent holds.
+    agents: HashMap<AgentId, u32>,
     clock: u64,
-    key: fn(u64, &[Token]) -> u64,
+    keyer: fn(u64, &[Token]) -> u64,
     /// Whether admission looks in the prefix cache (off only for the no-sharing baseline a stress run compares with).
     share: bool,
 }
@@ -141,13 +153,23 @@ impl PageTable {
     pub fn with_key(blocks: usize, key: fn(u64, &[Token]) -> u64) -> Self {
         assert!(blocks < NO_BLOCK as usize, "a block id must fit below NO_BLOCK");
         Self {
-            blocks: vec![EMPTY; blocks],
+            refs: vec![0; blocks],
+            filled: vec![0; blocks],
+            parent: vec![NO_BLOCK; blocks],
+            key: vec![0; blocks],
+            sealed: vec![false; blocks],
+            idle_since: vec![0; blocks],
+            tokens: vec![0; blocks * BLOCK_TOKENS],
             free: (0..blocks as BlockId).rev().collect(),
             idle: BTreeMap::new(),
             cache: HashMap::new(),
+            rows: Vec::new(),
+            row_len: Vec::new(),
+            row_agent: Vec::new(),
+            free_rows: Vec::new(),
             agents: HashMap::new(),
             clock: 0,
-            key,
+            keyer: key,
             share: true,
         }
     }
@@ -159,7 +181,7 @@ impl PageTable {
     }
 
     pub fn capacity(&self) -> usize {
-        self.blocks.len()
+        self.refs.len()
     }
 
     /// Blocks a request can have: free ones, and cached ones no table maps (evicted when taken).
@@ -176,28 +198,59 @@ impl PageTable {
         self.agents.len()
     }
 
+    /// The row's blocks (the mapped prefix of its row).
+    fn row_blocks(&self, row: u32) -> &[BlockId] {
+        let cap = self.capacity();
+        let at = row as usize * cap;
+        &self.rows[at..at + (self.row_len[row as usize] as usize).div_ceil(BLOCK_TOKENS)]
+    }
+
     pub fn blocks_of(&self, agent: AgentId) -> Option<&[BlockId]> {
-        self.agents.get(&agent).map(|s| s.blocks.as_slice())
+        self.agents.get(&agent).map(|&row| self.row_blocks(row))
     }
 
     pub fn len_of(&self, agent: AgentId) -> Option<usize> {
-        self.agents.get(&agent).map(|s| s.len)
+        self.agents.get(&agent).map(|&row| self.row_len[row as usize] as usize)
     }
 
     /// How many tables map `block`.
     pub fn refs(&self, block: BlockId) -> u32 {
-        self.blocks[block as usize].refs
+        self.refs[block as usize]
+    }
+
+    /// Block `b`'s token slots.
+    fn tokens_of_block(&self, b: BlockId) -> &[Token] {
+        &self.tokens[b as usize * BLOCK_TOKENS..(b as usize + 1) * BLOCK_TOKENS]
     }
 
     /// The agent's tokens, read back through its table.
     pub fn tokens_of(&self, agent: AgentId) -> Option<Vec<Token>> {
-        let s = self.agents.get(&agent)?;
-        let mut out = Vec::with_capacity(s.len);
-        for (i, &b) in s.blocks.iter().enumerate() {
-            let n = (s.len - i * BLOCK_TOKENS).min(BLOCK_TOKENS);
-            out.extend_from_slice(&self.blocks[b as usize].tokens[..n]);
+        let &row = self.agents.get(&agent)?;
+        let len = self.row_len[row as usize] as usize;
+        let mut out = Vec::with_capacity(len);
+        for (i, &b) in self.row_blocks(row).iter().enumerate() {
+            let n = (len - i * BLOCK_TOKENS).min(BLOCK_TOKENS);
+            out.extend_from_slice(&self.tokens_of_block(b)[..n]);
         }
         Some(out)
+    }
+
+    /// A slot for a new agent's table: a freed row, or a new row of `capacity` empty entries.
+    fn take_row(&mut self, agent: AgentId) -> u32 {
+        let cap = self.capacity();
+        let row = match self.free_rows.pop() {
+            Some(r) => r,
+            None => {
+                self.rows.extend(std::iter::repeat_n(NO_BLOCK, cap));
+                self.row_len.push(0);
+                self.row_agent.push(NO_ROW);
+                (self.row_len.len() - 1) as u32
+            }
+        };
+        self.row_agent[row as usize] = agent;
+        self.row_len[row as usize] = 0;
+        self.agents.insert(agent, row);
+        row
     }
 
     /// Maps a new agent's prompt: its leading full blocks from the prefix cache while they match, the rest into new
@@ -210,9 +263,9 @@ impl PageTable {
         let mut hits: Vec<BlockId> = Vec::new();
         let (mut key, mut parent) = (CHAIN_SEED, NO_BLOCK);
         for chunk in prompt.as_chunks::<BLOCK_TOKENS>().0.iter().take_while(|_| self.share) {
-            let k = (self.key)(key, chunk);
+            let k = (self.keyer)(key, chunk);
             match self.cache.get(&k) {
-                Some(&b) if self.blocks[b as usize].tokens[..] == chunk[..] && self.blocks[b as usize].parent == parent => {
+                Some(&b) if self.tokens_of_block(b) == &chunk[..] && self.parent[b as usize] == parent => {
                     hits.push(b);
                     key = k;
                     parent = b;
@@ -221,7 +274,7 @@ impl PageTable {
             }
         }
         let needed = full - hits.len() + usize::from(!prompt.len().is_multiple_of(BLOCK_TOKENS));
-        let reviving = hits.iter().filter(|&&b| self.blocks[b as usize].refs == 0).count();
+        let reviving = hits.iter().filter(|&&b| self.refs[b as usize] == 0).count();
         let available = self.available() - reviving;
         if needed > available {
             return Err(PageError::OutOfBlocks { needed, available });
@@ -229,73 +282,79 @@ impl PageTable {
         for &b in &hits {
             self.hold(b);
         }
-        let mut table = hits.clone();
+        let row = self.take_row(agent);
+        let at = row as usize * self.capacity();
+        let mut n = hits.len();
+        self.rows[at..at + n].copy_from_slice(&hits);
         for chunk in prompt.chunks(BLOCK_TOKENS).skip(hits.len()) {
             let b = self.take().expect("counted before anything changed");
-            let block = &mut self.blocks[b as usize];
-            block.tokens[..chunk.len()].copy_from_slice(chunk);
-            block.filled = chunk.len();
-            block.parent = parent;
-            block.refs = 1;
+            self.tokens[b as usize * BLOCK_TOKENS..b as usize * BLOCK_TOKENS + chunk.len()].copy_from_slice(chunk);
+            self.filled[b as usize] = chunk.len() as u32;
+            self.parent[b as usize] = parent;
+            self.refs[b as usize] = 1;
             if chunk.len() == BLOCK_TOKENS {
-                let k = (self.key)(key, chunk);
+                let k = (self.keyer)(key, chunk);
                 self.seal(b, k);
                 key = k;
             }
-            table.push(b);
+            self.rows[at + n] = b;
+            n += 1;
             parent = b;
         }
-        let blocks = table.len();
-        self.agents.insert(agent, Sequence { blocks: table, len: prompt.len() });
-        Ok(Admission { blocks, cached_blocks: hits.len(), cached_tokens: hits.len() * BLOCK_TOKENS })
+        self.row_len[row as usize] = prompt.len() as u32;
+        Ok(Admission { blocks: n, cached_blocks: hits.len(), cached_tokens: hits.len() * BLOCK_TOKENS })
     }
 
     /// Where the agent's next token goes: the next slot of its last block, a new block when that one is full, or a
     /// private copy of it when another table maps it too (copy-on-write).
     pub fn append(&mut self, agent: AgentId, token: Token) -> Result<Slot, PageError> {
-        let seq = self.agents.get(&agent).ok_or(PageError::UnknownAgent(agent))?;
-        let offset = seq.len % BLOCK_TOKENS;
-        let last = seq.blocks.last().copied();
+        let &row = self.agents.get(&agent).ok_or(PageError::UnknownAgent(agent))?;
+        let cap = self.capacity();
+        let at = row as usize * cap;
+        let len = self.row_len[row as usize] as usize;
+        let n = len.div_ceil(BLOCK_TOKENS);
+        let offset = len % BLOCK_TOKENS;
+        let last = (n > 0).then(|| self.rows[at + n - 1]);
         let (block, copy_from) = match last {
-            Some(b) if offset > 0 && self.blocks[b as usize].refs > 1 => {
+            Some(b) if offset > 0 && self.refs[b as usize] > 1 => {
                 let copy = self.take().ok_or(PageError::OutOfBlocks { needed: 1, available: 0 })?;
-                let src = self.blocks[b as usize].clone();
-                let dst = &mut self.blocks[copy as usize];
-                dst.tokens[..offset].copy_from_slice(&src.tokens[..offset]);
-                dst.filled = offset;
-                dst.parent = src.parent;
-                dst.refs = 1;
+                let (src, dst) = (b as usize * BLOCK_TOKENS, copy as usize * BLOCK_TOKENS);
+                self.tokens.copy_within(src..src + offset, dst);
+                self.filled[copy as usize] = offset as u32;
+                self.parent[copy as usize] = self.parent[b as usize];
+                self.refs[copy as usize] = 1;
                 self.release_block(b);
                 (copy, Some((b, offset)))
             }
             Some(b) if offset > 0 => (b, None),
             _ => {
                 let fresh = self.take().ok_or(PageError::OutOfBlocks { needed: 1, available: 0 })?;
-                let block = &mut self.blocks[fresh as usize];
-                block.parent = last.unwrap_or(NO_BLOCK);
-                block.refs = 1;
+                self.parent[fresh as usize] = last.unwrap_or(NO_BLOCK);
+                self.refs[fresh as usize] = 1;
                 (fresh, None)
             }
         };
         let before = {
-            let seq = &self.agents[&agent];
-            let n = seq.blocks.len();
             let prev = if offset == 0 { n } else { n - 1 };
-            if prev == 0 { CHAIN_SEED } else { self.blocks[seq.blocks[prev - 1] as usize].key.expect("a block before another is full") }
+            if prev == 0 {
+                CHAIN_SEED
+            } else {
+                let b = self.rows[at + prev - 1] as usize;
+                assert!(self.sealed[b], "a block before another is full");
+                self.key[b]
+            }
         };
-        let b = &mut self.blocks[block as usize];
-        b.tokens[offset] = token;
-        b.filled = offset + 1;
-        let full = b.filled == BLOCK_TOKENS;
-        let seq = self.agents.get_mut(&agent).expect("looked up above");
+        self.tokens[block as usize * BLOCK_TOKENS + offset] = token;
+        self.filled[block as usize] = (offset + 1) as u32;
+        let full = offset + 1 == BLOCK_TOKENS;
         if offset == 0 {
-            seq.blocks.push(block);
+            self.rows[at + n] = block;
         } else if copy_from.is_some() {
-            *seq.blocks.last_mut().expect("offset > 0") = block;
+            self.rows[at + n - 1] = block;
         }
-        seq.len += 1;
+        self.row_len[row as usize] = (len + 1) as u32;
         if full {
-            let k = (self.key)(before, &self.blocks[block as usize].tokens);
+            let k = (self.keyer)(before, self.tokens_of_block(block));
             self.seal(block, k);
         }
         Ok(Slot { block, offset, copy_from })
@@ -306,100 +365,156 @@ impl PageTable {
         if self.agents.contains_key(&child) {
             return Err(PageError::AgentExists(child));
         }
-        let seq = self.agents.get(&parent).ok_or(PageError::UnknownAgent(parent))?.clone();
-        for &b in &seq.blocks {
-            self.blocks[b as usize].refs += 1;
+        let &from = self.agents.get(&parent).ok_or(PageError::UnknownAgent(parent))?;
+        let cap = self.capacity();
+        let len = self.row_len[from as usize];
+        let n = (len as usize).div_ceil(BLOCK_TOKENS);
+        for k in 0..n {
+            let b = self.rows[from as usize * cap + k];
+            self.refs[b as usize] += 1;
         }
-        self.agents.insert(child, seq);
+        let row = self.take_row(child);
+        self.rows.copy_within(from as usize * cap..from as usize * cap + n, row as usize * cap);
+        self.row_len[row as usize] = len;
         Ok(())
     }
 
     /// Unmaps an agent: pages no other table maps are freed, or kept cached (full ones) until the pool needs them.
     pub fn release(&mut self, agent: AgentId) -> Result<(), PageError> {
-        let seq = self.agents.remove(&agent).ok_or(PageError::UnknownAgent(agent))?;
-        for b in seq.blocks {
+        let row = self.agents.remove(&agent).ok_or(PageError::UnknownAgent(agent))?;
+        let cap = self.capacity();
+        let at = row as usize * cap;
+        let n = (self.row_len[row as usize] as usize).div_ceil(BLOCK_TOKENS);
+        for k in 0..n {
+            let b = self.rows[at + k];
+            self.rows[at + k] = NO_BLOCK;
             self.release_block(b);
         }
+        self.row_len[row as usize] = 0;
+        self.row_agent[row as usize] = NO_ROW;
+        self.free_rows.push(row);
         Ok(())
     }
 
     /// The tables of `agents`, in that order, as the kernel reads them.
     pub fn gpu_tables(&self, agents: &[AgentId]) -> Result<GpuTables, PageError> {
-        let mut seqs = Vec::with_capacity(agents.len());
+        let cap = self.capacity();
+        let mut rows = Vec::with_capacity(agents.len());
         for &a in agents {
-            seqs.push(self.agents.get(&a).ok_or(PageError::UnknownAgent(a))?);
+            rows.push(*self.agents.get(&a).ok_or(PageError::UnknownAgent(a))?);
         }
-        let max_blocks = seqs.iter().map(|s| s.blocks.len()).max().unwrap_or(0).max(1);
-        let mut block_table = vec![NO_BLOCK; seqs.len() * max_blocks];
-        for (i, s) in seqs.iter().enumerate() {
-            block_table[i * max_blocks..i * max_blocks + s.blocks.len()].copy_from_slice(&s.blocks);
+        let blocks = |row: u32| (self.row_len[row as usize] as usize).div_ceil(BLOCK_TOKENS);
+        let max_blocks = rows.iter().map(|&r| blocks(r)).max().unwrap_or(0).max(1);
+        let mut block_table = vec![NO_BLOCK; rows.len() * max_blocks];
+        for (i, &r) in rows.iter().enumerate() {
+            let n = blocks(r);
+            block_table[i * max_blocks..i * max_blocks + n].copy_from_slice(&self.rows[r as usize * cap..r as usize * cap + n]);
         }
-        Ok(GpuTables { max_blocks, block_table, seq_lens: seqs.iter().map(|s| s.len as u32).collect() })
+        Ok(GpuTables { max_blocks, block_table, seq_lens: rows.iter().map(|&r| self.row_len[r as usize]).collect() })
     }
 
     /// Where every block is now (the fuzzer's fragmentation statistics).
     pub fn stats(&self) -> PoolStats {
-        let mapped: Vec<&Block> = self.blocks.iter().filter(|b| b.refs > 0).collect();
+        let mapped = (0..self.capacity()).filter(|&b| self.refs[b] > 0);
+        let (mut count, mut shared, mut empty) = (0, 0, 0);
+        for b in mapped {
+            count += 1;
+            shared += usize::from(self.refs[b] > 1);
+            empty += BLOCK_TOKENS - self.filled[b] as usize;
+        }
         PoolStats {
             capacity: self.capacity(),
             free: self.free.len(),
             idle_cached: self.idle.len(),
-            mapped: mapped.len(),
-            shared: mapped.iter().filter(|b| b.refs > 1).count(),
-            empty_slots: mapped.iter().map(|b| BLOCK_TOKENS - b.filled).sum(),
+            mapped: count,
+            shared,
+            empty_slots: empty,
             cached_keys: self.cache.len(),
         }
     }
 
     /// Checks every invariant of the table; the error says which one broke.
     pub fn check(&self) -> Result<(), String> {
-        let mut mapped = vec![0u32; self.blocks.len()];
-        for (a, s) in &self.agents {
-            if s.blocks.len() != s.len.div_ceil(BLOCK_TOKENS) {
-                return Err(format!("agent {a}: {} blocks for {} tokens", s.blocks.len(), s.len));
+        let cap = self.capacity();
+        let mut mapped = vec![0u32; cap];
+        let mut slots_held = 0;
+        for (&a, &row) in &self.agents {
+            let r = row as usize;
+            if self.row_agent[r] != a {
+                return Err(format!("agent {a}: row {row} is {}'s", self.row_agent[r]));
             }
-            for (i, &b) in s.blocks.iter().enumerate() {
+            slots_held += 1;
+            let len = self.row_len[r] as usize;
+            let n = len.div_ceil(BLOCK_TOKENS);
+            let blocks = &self.rows[r * cap..(r + 1) * cap];
+            if blocks[n..].iter().any(|&b| b != NO_BLOCK) {
+                return Err(format!("agent {a}: a block past its {n} blocks is mapped"));
+            }
+            for (i, &b) in blocks[..n].iter().enumerate() {
+                if b as usize >= cap {
+                    return Err(format!("agent {a}: block {b} is outside the pool"));
+                }
                 mapped[b as usize] += 1;
-                let want = (s.len - i * BLOCK_TOKENS).min(BLOCK_TOKENS);
-                let have = self.blocks[b as usize].filled;
-                if have < want || (i + 1 < s.blocks.len() && have != BLOCK_TOKENS) {
+                let want = (len - i * BLOCK_TOKENS).min(BLOCK_TOKENS);
+                let have = self.filled[b as usize] as usize;
+                if have < want || (i + 1 < n && have != BLOCK_TOKENS) {
                     return Err(format!("agent {a}: block {b} holds {have} tokens where {want} are read"));
                 }
                 // A page holds its tokens' keys and values only after the exact pages before it: every table that
                 // maps it must map the same page before it.
-                let parent = if i == 0 { NO_BLOCK } else { s.blocks[i - 1] };
-                if self.blocks[b as usize].parent != parent {
-                    return Err(format!("agent {a}: block {b} was written after block {}, but follows {parent}", self.blocks[b as usize].parent));
+                let parent = if i == 0 { NO_BLOCK } else { blocks[i - 1] };
+                if self.parent[b as usize] != parent {
+                    return Err(format!("agent {a}: block {b} was written after block {}, but follows {parent}", self.parent[b as usize]));
                 }
             }
         }
-        let mut seen = vec![false; self.blocks.len()];
+        let rows = self.row_len.len();
+        if slots_held + self.free_rows.len() != rows {
+            return Err(format!("{rows} rows, {slots_held} held and {} free", self.free_rows.len()));
+        }
+        for &r in &self.free_rows {
+            if self.row_agent[r as usize] != NO_ROW || self.rows[r as usize * cap..(r as usize + 1) * cap].iter().any(|&b| b != NO_BLOCK) {
+                return Err(format!("free row {r} is not empty"));
+            }
+        }
+        let mut seen = vec![false; cap];
         for &b in self.free.iter().chain(self.idle.values()) {
             if std::mem::replace(&mut seen[b as usize], true) {
                 return Err(format!("block {b} is free twice"));
             }
         }
-        for (b, block) in self.blocks.iter().enumerate() {
-            if block.refs != mapped[b] {
-                return Err(format!("block {b}: {} refs, {} tables map it", block.refs, mapped[b]));
+        for b in 0..cap {
+            if self.refs[b] != mapped[b] {
+                return Err(format!("block {b}: {} refs, {} tables map it", self.refs[b], mapped[b]));
             }
-            if (block.refs == 0) != seen[b] {
-                return Err(format!("block {b}: {} refs, yet {} free", block.refs, if seen[b] { "" } else { "not" }));
+            if (self.refs[b] == 0) != seen[b] {
+                return Err(format!("block {b}: {} refs, yet {} free", self.refs[b], if seen[b] { "" } else { "not" }));
             }
         }
         for &b in self.idle.values() {
-            let key = self.blocks[b as usize].key;
-            if key.is_none() || self.cache.get(&key.unwrap()) != Some(&b) {
+            if !self.sealed[b as usize] || self.cache.get(&self.key[b as usize]) != Some(&b) {
                 return Err(format!("idle block {b} is not in the cache"));
             }
         }
         for (&k, &b) in &self.cache {
-            let block = &self.blocks[b as usize];
-            if block.key != Some(k) || block.filled != BLOCK_TOKENS {
+            let b = b as usize;
+            if !self.sealed[b] || self.key[b] != k || self.filled[b] as usize != BLOCK_TOKENS {
                 return Err(format!("the cache maps key {k:x} to block {b}, which does not hold it"));
             }
         }
         Ok(())
+    }
+
+    /// Empties block `b`'s fields (its tokens too).
+    fn clear_block(&mut self, b: BlockId) {
+        let b = b as usize;
+        self.refs[b] = 0;
+        self.filled[b] = 0;
+        self.parent[b] = NO_BLOCK;
+        self.key[b] = 0;
+        self.sealed[b] = false;
+        self.idle_since[b] = 0;
+        self.tokens[b * BLOCK_TOKENS..(b + 1) * BLOCK_TOKENS].fill(0);
     }
 
     /// Takes a free block, or evicts the oldest idle cached one.
@@ -408,45 +523,44 @@ impl PageTable {
             Some(b) => b,
             None => {
                 let (_, b) = self.idle.pop_first()?;
-                let key = self.blocks[b as usize].key.expect("idle blocks are cached");
-                self.cache.remove(&key);
+                assert!(self.sealed[b as usize], "idle blocks are cached");
+                self.cache.remove(&self.key[b as usize]);
                 b
             }
         };
-        self.blocks[b as usize] = EMPTY;
+        self.clear_block(b);
         Some(b)
     }
 
     /// Maps a cached block into one more table, reviving it if it was idle.
     fn hold(&mut self, b: BlockId) {
-        let block = &mut self.blocks[b as usize];
-        if block.refs == 0 {
-            self.idle.remove(&block.idle_since);
+        if self.refs[b as usize] == 0 {
+            self.idle.remove(&self.idle_since[b as usize]);
         }
-        block.refs += 1;
+        self.refs[b as usize] += 1;
     }
 
     /// A block just filled: its key, and a place in the cache unless another block already holds that content.
     fn seal(&mut self, b: BlockId, key: u64) {
-        self.blocks[b as usize].key = Some(key);
+        self.key[b as usize] = key;
+        self.sealed[b as usize] = true;
         if self.share {
             self.cache.entry(key).or_insert(b);
         }
     }
 
     fn release_block(&mut self, b: BlockId) {
-        let block = &mut self.blocks[b as usize];
-        block.refs -= 1;
-        if block.refs > 0 {
+        self.refs[b as usize] -= 1;
+        if self.refs[b as usize] > 0 {
             return;
         }
-        let cached = block.key.is_some_and(|k| self.cache.get(&k) == Some(&b));
+        let cached = self.sealed[b as usize] && self.cache.get(&self.key[b as usize]) == Some(&b);
         if cached {
             self.clock += 1;
-            block.idle_since = self.clock;
+            self.idle_since[b as usize] = self.clock;
             self.idle.insert(self.clock, b);
         } else {
-            *block = EMPTY;
+            self.clear_block(b);
             self.free.push(b);
         }
     }
