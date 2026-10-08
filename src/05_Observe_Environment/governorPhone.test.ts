@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It drives the quality governor as the minimum phone it must serve would: the latest
  * flagship handset (an iPhone-class phone) in iOS Safari 26, WebGPU on its own mobile GPU, touch only, a 120 Hz

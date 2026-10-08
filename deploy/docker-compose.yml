@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 # Why does this file exist? It runs the authoritative host in production: the host image (../Dockerfile) behind the TLS
 # proxy (nginx.conf). Only the proxy is reachable: it publishes 80 and 443. The host joins one network, `backend`,
 # which is internal: no port of it is published, nothing but the proxy is on it, and it has no route out, so the host

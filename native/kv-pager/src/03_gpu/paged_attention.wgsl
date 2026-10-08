@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 // Why does this file exist? It is one decode step of attention over the paged KV pool: for every agent (sequence) and
 // query head, the new token's query attends to every key the agent's block table maps, and the output is the softmax-
 // weighted sum of the values. The pages need not be contiguous, and a page shared by many agents (a cached prefix) is

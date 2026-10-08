@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It runs the pedestrians and the First-Law hazard sensing on the physics worker's
  * own GPU device, where nothing on the page can reach them: crowd.wgsl's spawn, clearGrid, binAgents and

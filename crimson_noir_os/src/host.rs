@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It is what a desktop gives the system in place of the bare machine. A global allocator
 //! that counts what the system allocates (rounded as the image's arena rounds it, so the count can be held against
 //! config::declared_bytes) and can be sealed for the calling thread, so the tutorial's and the terminal's frames run

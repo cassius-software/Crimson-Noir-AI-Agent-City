@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the host's second door: where the Crimson Noir OS hosted runtime (crimson_noir_os
  * src/bridge.rs) brings its weight ledger to be verified, and where the runtimes of the same configuration fetch the

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the swarm's memory: an episodic ledger per pedestrian, kept on this machine in the
  * page's IndexedDB and keyed by the world seed and the pedestrian's number, so the same person in the same city

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the Node host of the network room: one authoritative room (replication.ts) behind
  * a dependency-free WebSocket door, with the headless Ring-0 mirror (mirror.node.ts: the page's city of the same seed

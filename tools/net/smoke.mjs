@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Copyright (c) 2026 Julian Cassius Subban
+// SPDX-License-Identifier: MIT
+// Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 /**
  * Why does this file exist? It is the headless smoke test of the authoritative room (`npm run smoke:net`): it starts
  * the real server as a process of its own (`node src/10_Network/replication.node.ts`, the headless Ring-0 mirror of the

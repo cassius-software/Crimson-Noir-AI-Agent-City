@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the touch Supplier for phones and tablets: a frosted-glass, thumb-sized
  * overlay with a floating virtual stick on the left (walk, or steer + throttle), drag on the right half to

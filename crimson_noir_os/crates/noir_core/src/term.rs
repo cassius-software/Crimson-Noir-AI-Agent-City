@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It is the Crimson Terminal: the operator's console once the self-test has passed. It is
 //! a small Forth, so it is a programming language and not a menu: numbers and words on a data stack, definitions,
 //! variables and arrays in its own dictionary, IF/ELSE, BEGIN loops, counted DO loops and recursion. That makes it

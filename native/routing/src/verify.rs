@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It is the formal side of the routing core: proof harnesses for the Kani model checker
 //! (`cargo kani -Z stubbing`, tools/verify/fvps.sh), compiled only under `cfg(kani)`. The core reads tracks the host
 //! laid into an arena it does not control; the WebAssembly module traps (an `unreachable`) if any of that reading

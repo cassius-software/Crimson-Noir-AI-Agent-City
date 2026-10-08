@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Stage 03 (always compiled): the attention kernel's source.
 //!
 //! Why does this file exist? The kernel (`paged_attention.wgsl`, beside it) is the reader every page-table decision is

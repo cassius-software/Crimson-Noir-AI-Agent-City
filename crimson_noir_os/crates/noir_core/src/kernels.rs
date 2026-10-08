@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It is the simulation hot path, and nothing else: the per-agent tick and the per-cell
 //! routing relaxation, written without `if`, `else`, `match` or a data-dependent loop (a test reads this file and
 //! refuses one). Every decision is a 1/0 mask folded into arithmetic, the design's

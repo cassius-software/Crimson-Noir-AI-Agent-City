@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the integrity law of everything agents and players say to one another: a pure,
  * dependency-free SHA-256 and HMAC-SHA256 (synchronous, deterministic, no Web Crypto, so the page, the physics worker

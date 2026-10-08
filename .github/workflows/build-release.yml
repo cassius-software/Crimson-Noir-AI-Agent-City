@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 # Why does this file exist? It bakes Crimson Noir OS's bootable media for every release tag and attaches them to the
 # tag's GitHub Release.
 # - What runs it: pushing a tag that matches v* or stable-*. "Run workflow" also works, once this file is on the
@@ -139,7 +142,7 @@ jobs:
           out="$RUNNER_TEMP/media"
           sh tools/build-image.sh "$out"
           cp target/x86_64-unknown-uefi/release/crimson_boot.efi "$out/BOOTX64.EFI"
-          cp containment.nix containment.lock NOTICE.txt LICENSE-MIT LICENSE-APACHE "$out/"
+          cp containment.nix containment.lock NOTICE.txt LICENSE "$out/"
           rm -rf "$out/esp.img" "$out/iso"
 
       - name: Bake again from a clean build; the bytes must be the same
@@ -170,7 +173,7 @@ jobs:
         working-directory: ${{ runner.temp }}/media
         run: |
           sha256sum crimson_noir_os.img crimson_noir_os.iso BOOTX64.EFI containment.nix containment.lock \
-            NOTICE.txt LICENSE-MIT LICENSE-APACHE > SHA256SUMS
+            NOTICE.txt LICENSE > SHA256SUMS
           cat SHA256SUMS
 
       - uses: actions/upload-artifact@v4
@@ -224,7 +227,7 @@ jobs:
             echo "  \`dd if=crimson_noir_os.img of=/dev/sdX bs=4M\`) and boot it on a UEFI x86-64 machine with Secure Boot off."
             echo "- \`crimson_noir_os.iso\`: a hybrid UEFI ISO, for a virtual machine's CD or a stick."
             echo "- \`BOOTX64.EFI\`, \`containment.nix\`, \`containment.lock\`: the UEFI application and the configuration it was built with;"
-            echo "  \`NOTICE.txt\`, \`LICENSE-MIT\`, \`LICENSE-APACHE\`: their notices and licences."
+            echo "  \`NOTICE.txt\`, \`LICENSE\`: their notices and licence."
             echo
             echo "Check them with \`sha256sum --check SHA256SUMS\`. The media are reproducible: \`sh tools/build-image.sh\` in"
             echo "\`crimson_noir_os/\` at this commit, with Rust $RUST_TOOLCHAIN, gives the same bytes. The image is unsigned."

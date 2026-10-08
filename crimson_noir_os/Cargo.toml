@@ -1,8 +1,11 @@
+# Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+# SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+# Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 [package]
 name = "crimson_noir_os"
 version = "0.9.0"
 edition = "2024"
-license = "MIT OR Apache-2.0"
+license-file = "LICENSE"
 description = "Crimson Noir OS hosted runtime: the Global Matrix on wgpu compute, the self-test, the terminal and the tutorial frames"
 publish = false
 

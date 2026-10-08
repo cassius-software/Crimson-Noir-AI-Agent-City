@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Stage 01: what a token is and what it costs.
 //!
 //! Why does this file exist? Every later stage sizes itself from these: a page is BLOCK_TOKENS tokens, a token's keys

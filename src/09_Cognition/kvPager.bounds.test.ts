@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the boundary audit of the prompt-prefix page table (prefixCache.ts over the kv-pager
  * module kvPager.wasm.ts), seeded and replayable (02_Define_The_Rules/property.ts), on what the unit and fuzz suites

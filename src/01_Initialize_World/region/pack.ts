@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the region pack: what the world compiler (region/compile.ts) writes and the engine
  * reads, one compact document per region. Coordinates are whole decimetres in the engine's frame (x east, z south,

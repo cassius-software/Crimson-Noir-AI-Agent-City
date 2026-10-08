@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+# SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+# Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 # Why does this file exist? The UEFI image must build to the same bytes from the same commit, so a release's media can
 # be rebuilt and compared. The linker (lld-link) stamps the PE header and the debug directory with the build time;
 # /Brepro writes a hash of the output there instead. rustc also links with /DEBUG, which makes lld write a PDB beside

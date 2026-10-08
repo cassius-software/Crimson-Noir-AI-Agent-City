@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 // Why does this file exist? It is one Jacobi pass of the routing relaxation on the GPU: kernels.rs `relax_pass`, one
 // invocation per (station, cell). Each cell takes the smallest of its own distance and its neighbours' plus one; a
 // wall is INF and a station's own cell 0. No branch. Every pass adds the cells it changed to its own counter (a pass

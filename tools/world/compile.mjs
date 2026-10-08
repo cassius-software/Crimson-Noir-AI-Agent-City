@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban
+// SPDX-License-Identifier: MIT
+// Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 // Why does this file exist? The world compiler's command line: it reads what fetch.mjs and odb.py cached, runs the
 // pure compiler (src/01_Initialize_World/region/compile.ts), refuses a pack in which any real name survives, and writes
 // the region pack, gzipped, where the build embeds it.

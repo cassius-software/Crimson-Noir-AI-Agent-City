@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is what both halves of the crowd agree on. The simulation and the First-Law
  * hazard sensing run in the physics worker on its own GPU device (crowdSim.ts); the culling that picks who is

@@ -1,0 +1,39 @@
+Crimson Noir OS / Agent City Proprietary License
+
+Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+
+This license covers the proprietary core of Crimson Noir OS / Agent City: every file that carries the header
+"SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary", and the directories LICENSE names as the core.
+
+1. Ownership. The software, its source code, shaders, build configuration, models, images and documentation
+   (the "Software") are the copyrighted work of Julian Cassius Subban (the "Owner"). All rights not expressly
+   granted below are reserved.
+
+2. No license by default. Except as a separate written agreement signed by the Owner provides, no right to use,
+   copy, modify, merge, publish, distribute, sublicense, sell, host, or create derivative works of the Software is
+   granted, and nothing in this file, in a repository, in a package registry, or in a release grants one. Access to
+   the source code (for example through a public repository) is not a license to it.
+
+3. Evaluation. A person may read the source code and may build and run it on their own machines, for evaluation,
+   study and review only, for no commercial purpose, and may not distribute the Software or anything built from it.
+
+4. Licensed Material under the ORC License. The game mechanics this product expresses (see LICENSE section 3 and
+   NOTICE.md) are offered under the ORC License, whose grant cannot be narrowed by this file. The ORC License
+   covers those mechanics; it does not cover software code, which this license governs.
+
+5. Third-party software. Third-party components the Software bundles or links remain under their own licenses
+   (NOTICE.md; crimson_noir_os/NOTICE.txt). Nothing here changes them.
+
+6. Trademarks. The product names, logos and trade dress are not licensed by this file (NOTICE.md, "Reserved
+   Material").
+
+7. No warranty. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+   LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+   SHALL THE OWNER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+   OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+8. Prior releases. Versions of Crimson Noir OS published before this license took effect under the MIT License or
+   the Apache License 2.0 remain available under those licenses, as those licenses provide. This license governs
+   this and later versions.
+
+For a commercial license, contact the Owner.

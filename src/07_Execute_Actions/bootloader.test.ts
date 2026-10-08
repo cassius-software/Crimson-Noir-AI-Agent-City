@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It pins the page-side wiring of Track B, the bootloader (console map item 9.2 A and B),
  * which the engine, the terminal and App carry and Node cannot run: the render switch (present() begins with the

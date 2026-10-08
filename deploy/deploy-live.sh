@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 # Why does this file exist? It is the one-touch deployment of the authoritative host on a plain Ubuntu (or Debian)
 # server: the packages, the secret, the certificate, the two containers (docker-compose.yml), and the renewal that
 # keeps the certificate alive. Run it again whenever you like: every step checks before it acts.

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban
+// SPDX-License-Identifier: MIT
+// Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 /**
  * Why does this file exist? It is the part of the self-healing loop that formulates a patch. The agent
  * (agent.mjs) hands it the failures, the loci they map to (ast.mjs) and what the earlier attempts tried; it answers

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the property-based fuzzing of the Node host (replication.node.ts) over real loopback
  * sockets, seeded and replayable (02_Define_The_Rules/property.ts): hundreds of hostile connections at once, each a

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It proves the sanctuary in real Rapier (the WASM build runs in Node): a car at
  * 10–14 m/s meeting a standing avatar turns the avatar into a sensor before any contact and passes with its

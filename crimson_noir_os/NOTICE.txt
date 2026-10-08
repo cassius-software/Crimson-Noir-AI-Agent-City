@@ -1,7 +1,11 @@
 Crimson Noir OS 0.9.0
 
-Crimson Noir OS is licensed under either of the Apache License, Version 2.0 (LICENSE-APACHE) or the MIT
-license (LICENSE-MIT), at your option. The bootable image links two third-party crates, under these notices:
+Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+
+Crimson Noir OS is proprietary software, licensed under the terms in LICENSE (the Crimson Noir OS / Agent City
+Proprietary License; the repository's LICENSE and NOTICE.md say more). Releases up to v1.0.1-stable-release were
+published under MIT OR Apache-2.0 and stay available under those licences. The bootable image links two third-party
+crates, under these notices:
 
 ----------------------------------------------------------------------------------------------------------
 font8x8 0.3.1 (MIT): the 8x8 bitmap font the system draws its text with.

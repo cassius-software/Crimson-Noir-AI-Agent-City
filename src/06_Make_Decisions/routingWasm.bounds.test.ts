@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the boundary audit of the WebAssembly routing core's host (routingWasm.ts) and of
  * the module's C ABI beneath it, seeded and replayable (02_Define_The_Rules/property.ts), on the inputs the parity

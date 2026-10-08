@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Stage 03 (feature `gpu`): the pages on the device.
 //!
 //! Why does this file exist? It puts the page table on a GPU: a fixed pool of KV pages allocated once, the copy a

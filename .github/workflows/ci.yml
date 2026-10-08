@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 # Why does this file exist? It is the standing verification of every change: the checks that were run by hand in a
 # container at the end of each phase, run here on every pull request and every push to main, and the formal
 # verification step (FVPS) with them. The checks are the ones tools/selfheal/checks.sh names, so a contributor, this
@@ -49,8 +52,8 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - name: tsc, oxlint, the test suite, the build, the smoke test, the agent's tests
-        run: sh tools/selfheal/checks.sh page-tsc page-lint page-test page-build page-smoke selfheal-test
+      - name: tsc, oxlint, the test suite, the build, the smoke test, the agent's tests, the licence headers
+        run: sh tools/selfheal/checks.sh page-tsc page-lint page-test page-build page-smoke selfheal-test license-headers
 
   rust:
     runs-on: ubuntu-24.04

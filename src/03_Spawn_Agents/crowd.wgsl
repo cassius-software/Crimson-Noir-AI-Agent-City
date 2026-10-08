@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 // Why does this file exist? It is the whole pedestrian population's brain and body: GPU spawn,
 // spatial-hash flocking, sidewalk navigation with signal-controlled crosswalks and a Perception check
 // to notice the walk signal, the Reflex save to get out of a vehicle's path, the 14A safety nudge (a

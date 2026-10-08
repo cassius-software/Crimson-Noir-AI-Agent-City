@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the autoscaler that keeps the frame rate in the 60–90 FPS band on every
  * device that runs WebGPU, from flagship phones to high-end desktop GPUs, in a browser tab or a native shell

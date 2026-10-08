@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? A region built from surveyed data (the world compiler, region/compile.ts) needs one flat,
  * metric frame the whole engine can share: this is it. A transverse Mercator on the GRS 1980 ellipsoid (the NAD83

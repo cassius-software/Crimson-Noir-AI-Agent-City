@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It is the hosted runtime's weight ledger: the record of how the swarm's learned weights
 //! came to be, hash-chained, so the Phase 12 host's ledger door (src/10_Network/ledger.ts in the repository root) can
 //! verify it and share the result with other runtimes of the same configuration.

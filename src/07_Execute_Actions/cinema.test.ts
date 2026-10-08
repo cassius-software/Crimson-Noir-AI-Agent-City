@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It pins the cinema camera. The pacer: 24.000 presented frames a second on every common
  * refresh, each frame on the tick nearest its due time, the 2-and-3 hold at 60 Hz, never a burst after a stall, a

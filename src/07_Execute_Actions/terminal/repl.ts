@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is R0, the console's own language: a small Forth-like stack machine, the product's
  * own, that is Turing-complete (unbounded loops and recursion over 65 536 addressable cells) and blind. It is the

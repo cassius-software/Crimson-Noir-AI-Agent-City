@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the 14A physics contract in one record: what may exchange contact in the realm's
  * Rapier world and what never does. Cars pass through cars (no vehicle-on-vehicle contact); the ragdoll balance

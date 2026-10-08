@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban
+// SPDX-License-Identifier: MIT
+// Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 // Why does this file exist? The world compiler's denylist beyond the sources' own names: the real municipalities,
 // neighbourhoods, landmarks, waterways and highways of the region a map is modelled on. No fictional name may be one
 // of these (region/names.ts NameBook), and a compiled pack is refused if any survives (compile.mjs). It lives with

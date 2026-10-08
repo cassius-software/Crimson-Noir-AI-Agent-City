@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the cognition router's prompt-prefix page table: kv-pager's page table
  * (native/kv-pager, compiled to WebAssembly through native/kv-pager-wasm and carried as kvPager.wasm.ts, generated)

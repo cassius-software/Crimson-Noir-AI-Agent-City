@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It is the root of the Crimson Noir OS core: everything the bootable image and the hosted
 //! runtime share, with no standard library under it (`no_std` + `alloc`), so the same code runs on the bare metal
 //! and on a desktop. `generate` is what both build scripts call: it locks the declarative configuration, runs the

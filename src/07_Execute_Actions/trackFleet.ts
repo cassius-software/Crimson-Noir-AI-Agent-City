@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the realm's fleet of scheduled craft: the train sets on the elevated loop, the
  * drones on their corridors and the planes on the racetrack of the fixed track network (06_Make_Decisions/

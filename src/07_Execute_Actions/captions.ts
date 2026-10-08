@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the closed-caption feed for every spatial sound the city makes, as pure state and
  * maths, so a player who cannot hear the soundscape (audio.ts) still learns what sounds, where, and how far: a bounded,

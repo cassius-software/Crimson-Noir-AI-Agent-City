@@ -1,0 +1,168 @@
+/*
+ * Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+ * SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+ * Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
+ */
+/*
+ * Why does this file exist? It is the Crimson Noir design system as the page sees it: the tokens of brand/tokens.json
+ * as custom properties on :root (the palette of Vantablack, anodized titanium and crimson; the type scale; the
+ * spacing, radius and motion values), the same names handed to Tailwind through @theme so `bg-noir-ink`,
+ * `text-noir-titanium-200`, `border-noir-crimson`, `font-noir-display` and `rounded-noir-panel` exist as utilities,
+ * and a few structural classes (a panel, a rule, a label, a button, the terminal frame) that brand/STYLE.md names.
+ * Values are stated once here and once in tokens.json; keep them equal.
+ * What breaks if it is removed? The page falls back to the browser's defaults and Tailwind's stock palette, and
+ * every surface that reads a --noir-* property loses its colour.
+ */
+
+:root {
+  /* Vantablack and the surfaces on it */
+  --noir-black: #000000;
+  --noir-ink: #050507;
+  --noir-ink-2: #0a0a0e;
+  --noir-ink-3: #121216;
+  /* Anodized titanium: text and hairlines */
+  --noir-titanium-100: #e7e9ec;
+  --noir-titanium-200: #c8c8cc;
+  --noir-titanium-400: #8c8c90;
+  --noir-titanium-600: #5a5a60;
+  --noir-titanium-800: #2c2e36;
+  /* Crimson: the one accent, and its surfaces */
+  --noir-crimson: #e8203a;
+  --noir-crimson-deep: #2a0710;
+  --noir-crimson-rule: #3a1018;
+  --noir-crimson-tint: #ffd0d6;
+  --noir-crimson-muted: #d0b0b6;
+  /* Signals */
+  --noir-amber: #d89a2a;
+  --noir-white: #ffffff;
+
+  /* Type: the system face, no web font (the CSP admits no font host) */
+  --noir-font-display: system-ui, -apple-system, 'SF Pro Display', 'Segoe UI Variable Display', 'Segoe UI', Roboto, sans-serif;
+  --noir-font-text: system-ui, -apple-system, 'SF Pro Text', 'Segoe UI Variable Text', 'Segoe UI', Roboto, sans-serif;
+  --noir-font-mono: ui-monospace, 'SF Mono', Menlo, 'Cascadia Mono', Consolas, monospace;
+  --noir-type-display: 600 34px/40px var(--noir-font-display);
+  --noir-type-title: 600 22px/28px var(--noir-font-display);
+  --noir-type-headline: 600 17px/22px var(--noir-font-text);
+  --noir-type-body: 400 15px/20px var(--noir-font-text);
+  --noir-type-caption: 400 13px/18px var(--noir-font-text);
+  --noir-type-label: 500 11px/14px var(--noir-font-text);
+  --noir-type-mono: 400 13px/20px var(--noir-font-mono);
+  --noir-tracking-display: -0.02em;
+  --noir-tracking-title: -0.01em;
+  --noir-tracking-label: 0.08em;
+
+  /* The 4pt grid, the radii of the mark's family, the lines */
+  --noir-space-1: 4px;
+  --noir-space-2: 8px;
+  --noir-space-3: 12px;
+  --noir-space-4: 16px;
+  --noir-space-6: 24px;
+  --noir-space-8: 32px;
+  --noir-space-12: 48px;
+  --noir-space-16: 64px;
+  --noir-radius-hairline: 4px;
+  --noir-radius-control: 8px;
+  --noir-radius-panel: 14px;
+  --noir-radius-mark: 28px;
+  --noir-line: 1px;
+  --noir-line-focus: 2px;
+
+  /* Motion: the boot veil's own timing */
+  --noir-motion-fast: 250ms;
+  --noir-motion-reveal: 1200ms;
+  --noir-ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* The same tokens as Tailwind utilities: bg-noir-ink, text-noir-titanium-200, border-noir-crimson, font-noir-mono, rounded-noir-panel. */
+@theme {
+  --color-noir-black: #000000;
+  --color-noir-ink: #050507;
+  --color-noir-ink-2: #0a0a0e;
+  --color-noir-ink-3: #121216;
+  --color-noir-titanium-100: #e7e9ec;
+  --color-noir-titanium-200: #c8c8cc;
+  --color-noir-titanium-400: #8c8c90;
+  --color-noir-titanium-600: #5a5a60;
+  --color-noir-titanium-800: #2c2e36;
+  --color-noir-crimson: #e8203a;
+  --color-noir-crimson-deep: #2a0710;
+  --color-noir-crimson-rule: #3a1018;
+  --color-noir-crimson-tint: #ffd0d6;
+  --color-noir-crimson-muted: #d0b0b6;
+  --color-noir-amber: #d89a2a;
+  --font-noir-display: system-ui, -apple-system, 'SF Pro Display', 'Segoe UI Variable Display', 'Segoe UI', Roboto, sans-serif;
+  --font-noir-text: system-ui, -apple-system, 'SF Pro Text', 'Segoe UI Variable Text', 'Segoe UI', Roboto, sans-serif;
+  --font-noir-mono: ui-monospace, 'SF Mono', Menlo, 'Cascadia Mono', Consolas, monospace;
+  --radius-noir-hairline: 4px;
+  --radius-noir-control: 8px;
+  --radius-noir-panel: 14px;
+  --radius-noir-mark: 28px;
+  --ease-noir: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Structural classes (brand/STYLE.md, "Structure"). Unlayered so Tailwind's preflight cannot restyle them. */
+
+/* A panel: ink-3 on ink, a titanium hairline, the panel radius. Industrial, not frosted. */
+.noir-panel {
+  background: var(--noir-ink-3);
+  color: var(--noir-titanium-200);
+  border: var(--noir-line) solid var(--noir-titanium-800);
+  border-radius: var(--noir-radius-panel);
+}
+
+/* The crimson rule: a 1px line under a header, the one place crimson is a line. */
+.noir-rule {
+  height: var(--noir-line);
+  background: var(--noir-crimson);
+}
+
+/* A label: small caps tracking over titanium-400. */
+.noir-label {
+  font: var(--noir-type-label);
+  letter-spacing: var(--noir-tracking-label);
+  text-transform: uppercase;
+  color: var(--noir-titanium-400);
+}
+
+/* A button: titanium text in a hairline, crimson only on the edge when active or focused. */
+.noir-button {
+  font: var(--noir-type-caption);
+  font-weight: 500;
+  color: var(--noir-titanium-100);
+  background: var(--noir-ink-3);
+  border: var(--noir-line) solid var(--noir-titanium-800);
+  border-radius: var(--noir-radius-control);
+  padding: var(--noir-space-2) var(--noir-space-4);
+  transition: border-color var(--noir-motion-fast) var(--noir-ease), background var(--noir-motion-fast) var(--noir-ease);
+}
+.noir-button:hover { border-color: var(--noir-titanium-600); }
+.noir-button:focus-visible { outline: var(--noir-line-focus) solid var(--noir-crimson); outline-offset: 2px; }
+.noir-button[aria-pressed='true'], .noir-button.is-active { border-color: var(--noir-crimson); }
+
+/* The terminal frame: the Crimson Terminal's structure on the page (the OS draws the same with term.rs's constants). */
+.noir-term {
+  display: flex;
+  flex-direction: column;
+  background: var(--noir-ink-2);
+  color: var(--noir-titanium-200);
+  font: var(--noir-type-mono);
+}
+.noir-term-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--noir-space-4);
+  padding: 0 var(--noir-space-1);
+  background: var(--noir-crimson-deep);
+  color: var(--noir-crimson-tint);
+  border-bottom: var(--noir-line) solid var(--noir-crimson);
+  font: var(--noir-type-label);
+  letter-spacing: var(--noir-tracking-label);
+  text-transform: uppercase;
+  line-height: 24px;
+}
+.noir-term-header .noir-term-status { color: var(--noir-crimson-muted); letter-spacing: 0; text-transform: none; font: var(--noir-type-mono); }
+.noir-term-body { flex: 1 1 auto; min-height: 0; overflow: hidden; padding: var(--noir-space-1) 0; white-space: pre; }
+.noir-term-body .noir-term-echo { color: var(--noir-white); }
+.noir-term-body .noir-term-error { color: var(--noir-crimson); }
+.noir-term-input { border-top: var(--noir-line) solid var(--noir-crimson-rule); padding: var(--noir-space-1) 0; color: var(--noir-white); }

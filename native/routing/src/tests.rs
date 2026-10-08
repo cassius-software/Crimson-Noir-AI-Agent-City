@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Unit tests on the host target: a 2 × 2-block car ring laid out exactly as tracks.ts ring() lays it (pitch 40 m,
 //! entry 7.5 m, lane offset 2 m, stop line 8.8 m, half-length 2.3 m), and hand-computed values on it. The bit-for-bit
 //! parity with the TypeScript reference is proved from the host side (src/06_Make_Decisions/routingWasm.test.ts).

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? Evaluating many octaves of 3D noise per pixel cost ~15 ms/frame on an
  * integrated GPU. This bakes fractional Brownian motion once at startup into a tileable RGBA texture

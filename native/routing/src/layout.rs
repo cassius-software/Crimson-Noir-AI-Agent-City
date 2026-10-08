@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! The flat f64 layout of a track in the arena: one definition the host (src/06_Make_Decisions/routingWasm.ts
 //! LAYOUT) repeats word for word, and `routing_layout` hands back so the host can check the two agree at load.
 //!

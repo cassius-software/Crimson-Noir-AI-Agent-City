@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It proves the HAL/1 line protocol: HELLO/READY handshake with its 2 s deadline
  * and HELLO repeats, framing (split UTF-8, CRLF, overlong lines), PING → PONG, inbound JSON ignored,

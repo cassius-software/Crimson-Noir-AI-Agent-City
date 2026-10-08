@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It proves the seating plan: keyboard and mouse at seat 0, pads in index order into
  * the lowest free seat among 1..3 and then seat 0, a pad that disappears freeing its seat at once, seated pads

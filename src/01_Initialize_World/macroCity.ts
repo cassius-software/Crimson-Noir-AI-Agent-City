@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the macro city: the same street geometry as city.ts (40 m pitch, 8 m roads, 3 m
  * sidewalks, 26 m lots) laid out over a sector map of any size (256 × 256 blocks, 10.24 km, by default), generated

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It pins the contact wipe's decisions (contact.ts): the pole index agrees with a brute
  * force over the real city, gaps to boxes and bodies are exact, the avatar's own row and hidden rows are never met,

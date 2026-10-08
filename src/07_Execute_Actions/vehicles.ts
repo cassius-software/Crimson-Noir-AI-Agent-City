@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the vehicle fleet: Rapier raycast-vehicle sedans and SUVs with strict
  * CCD on the chassis, driven by the AI (06_Make_Decisions/traffic.ts on random streets, or trackDriver.ts on

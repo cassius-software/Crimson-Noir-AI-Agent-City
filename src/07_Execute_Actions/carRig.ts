@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is one car's physics, shared by the page's fleet (vehicles.ts) and the network room's
  * authority on the server (10_Network/garage.node.ts): how a car is built in a Rapier world (its chassis, its strict

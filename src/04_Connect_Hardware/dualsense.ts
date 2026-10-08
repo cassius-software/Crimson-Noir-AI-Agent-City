@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the WebHID driver for Sony's DualSense and DualSense Edge: it builds the
  * main output report byte for byte (USB report 0x02; Bluetooth report 0x31 with its sequence nibble and
