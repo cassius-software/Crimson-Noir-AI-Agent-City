@@ -3,7 +3,8 @@
 # container started from it can run `sh tools/selfheal/checks.sh` with the network off. It is built once per
 # agent run, from the tree under repair, and never published. The Rust toolchain is the one build-release.yml bakes
 # with; Kani is installed when SELFHEAL_KANI=1 (it adds minutes to the build) and the fvps-kani check reports
-# itself skipped otherwise.
+# itself skipped otherwise. Its build context is Dockerfile.sandbox.dockerignore's, not the root .dockerignore's
+# allowlist (the host image's), which would hide the OS crates the prefetch copies.
 # What breaks if it is removed? The sandbox has no image to run; the agent falls back to a host subprocess.
 FROM rust:1.97-bookworm
 ARG SELFHEAL_KANI=0

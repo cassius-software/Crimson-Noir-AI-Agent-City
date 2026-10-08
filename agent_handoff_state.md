@@ -5,9 +5,11 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
 
 ## Where things stand (updated as work lands)
 
-- Phase 18 (formal verification, self-healing CI/CD, IIoT telemetry) is merged into main (PR #3, ff8dc5d): see the
-  Phase 18 section at the end. No release tag was cut; the operator decides when (the bake now refuses a commit
-  whose proofs fail). CI now runs on every pull request and push to main (ci.yml).
+- Phase 18 (formal verification, self-healing CI/CD, IIoT telemetry) is merged into main (PRs #3 and #4) and
+  released as `v1.0.1-stable-release` on 2026-10-08 (the bake runs the proofs first and refuses a commit whose proofs
+  fail): see the Phase 18 section at the end, including why the published EFI's TimeDateStamp is not this
+  container's. CI now runs on every pull request and push to main (ci.yml); PR #5 carries the self-heal workflow's
+  first-run fixes.
 - Phase 14 (the approved hosted-runtime bridge) is complete: see the Phase 14 section at the end.
 - Branch `claude/quirky-faraday-xkpdln`. Phase 13 is complete and release-ready: two adversarial reviews fixed (the
   second's 4 + 13 + 4 findings below), 1,219 tests passing, tagged `v1.0.0-stable-release` (see `git log`, `git tag`).
@@ -587,7 +589,7 @@ an adversarial campaign (extreme latency, cache desyncs, dropped packets); verif
 Working rules from the project: deliver through a PR; no tag or release without the operator's confirmation; the
 agent opens PRs and never merges.
 
-### State: MERGED (PR #3 into main at ff8dc5d, merged by the operator on 2026-10-07; nothing released)
+### State: RELEASED (PRs #3 and #4 merged into main, 1afdec0; `v1.0.1-stable-release` published from it on 2026-10-08; PR #5 open with the self-heal workflow's first-run fixes)
 
 **Part 1, the verification step (`tools/verify/fvps.sh`, modes all|kani|smt|wasm|ir).** Wired into
 build-release.yml before the bake (smt, wasm, ir: a failed proof refuses the bake) and into the new `ci.yml`
@@ -673,6 +675,42 @@ loaded runner (now tolerated); and the first run on main (ff8dc5d) lost the `kan
 runner's 7 GB), fixed in PR #4 by the two re-bounded harnesses above and the swap step. Three routing-crate clippy
 lints on the current toolchain were fixed (the module regenerated, same size, new bytes).
 
-**Not done / the operator's call:** no release tag (the directive's "finalize the deployment" means: dispatch
-build-release.yml on main after the PR merges; the bake now runs the proofs first). The self-heal workflow needs the
-repository setting above and, for the model planner, an `ANTHROPIC_API_KEY` secret.
+**Release (2026-10-08, the operator's "grand opening" directive).** The directive named the tag
+`v1.0.0-stable-release`, which already existed: it was published on 2026-10-07 at 16:22 UTC from 0f68d95 (PR #1's
+merge, before Phase 18), and build-release.yml bakes an existing tag's commit, so that dispatch (run 37705701478)
+stopped at the proof step with "cannot open tools/verify/fvps.sh" (the commit predates tools/verify). The operator
+chose a new tag over moving the published one. build-release.yml run 37817355201 on main (1afdec0) made
+`v1.0.1-stable-release` ("Crimson Noir OS v1.0.1 Stable Release", notes "Production ISO Release. Formally Verified
+via SMT/Kani.") in 7 minutes: proofs (smt, wasm, ir) passed, the core and hosted-runtime tests passed, the bake and a
+second clean bake gave the same bytes, QEMU booted the disk image through SELFTEST PASS, TUTORIAL 6 PASSED, TERMINAL
+READY, the scripted `golden` run (MATCH, fingerprint 0x83765bab) and POWER OFF (85.8 s), and the ISO to SELFTEST
+PASS. Published: https://github.com/exitwoundscassius-ux/Crimson-Noir-AI-Agent-City/releases/tag/v1.0.1-stable-release
+with crimson_noir_os.img (37,748,736 bytes, 8b6662d7…), crimson_noir_os.iso (36,036,608 bytes, a37aed33…),
+BOOTX64.EFI (220,672 bytes, 32264e78…), containment.nix, containment.lock, NOTICE.txt, the two licences and
+SHA256SUMS. The `v1.0.0-stable-release` and `stable-beta` releases are unchanged (pre-Phase-18 media).
+- The TimeDateStamp question. The directive expected the EFI's PE TimeDateStamp to be 0xe9cd5aa1; the published
+  BOOTX64.EFI's is 0xefa3b9b5. 0xe9cd5aa1 is the stamp of this container's build of the same commit with the same
+  rustc 1.97.0. The two files differ in exactly 20 bytes: the COFF TimeDateStamp, the two debug-directory
+  timestamps and the first 8 bytes of the CodeView GUID; every byte of code and data is the same. Cause, read from
+  the linker: rustc links with `/DEBUG /PDBALTPATH:%_PDB% /Brepro`, so lld writes a PDB sidecar first (it embeds
+  the absolute paths of the object file, the working directory and rust-lld: `/home/user/...` here,
+  `/home/runner/work/...` on the runner), derives the GUID from the PDB and only then hashes the executable, GUID
+  included, for the timestamp. So the stamp is stable on one host (the dual bake passes) but not across hosts.
+  To make it a property of the commit, add `strip = "debuginfo"` to `[profile.release]` in `crimson_noir_os/
+  Cargo.toml` (rustc then passes `/DEBUG:NONE`: no PDB, no CodeView record, the hash covers the code alone); it
+  changes the media's bytes, so it belongs to the next release, not to this one. The published v1.0.0 EFI's
+  0x6ac6715a is a real build time (2026-10-07 16:20:42 UTC): that commit had no /Brepro.
+- The self-healing workflow's first real runs (on the first CI run of main and on the failed bake) never reached
+  the agent; PR #5 fixes what they found: `docker build -f tools/selfheal/Dockerfile.sandbox .` took the root
+  `.dockerignore`, the host image's allowlist, so the sandbox could not copy the OS crates (now
+  `Dockerfile.sandbox.dockerignore` beside the Dockerfile); the container's root-owned files in the mounted copy made
+  the agent's `rmSync` throw EACCES and end the run (a container of the same image now empties the copy first, and a
+  copy that still cannot be removed is logged and left); `tools/verify/__pycache__` was tracked. A dispatched heal
+  on the branch (checks `fvps-smt`, planner `claude`) now runs end to end: the image builds, the agent isolates the
+  check in the sandbox, finds nothing to heal on a healthy tree and exits 3 (run 37817635304). The `ANTHROPIC_API_KEY`
+  secret reached the agent's environment (seen by name only). Still unverified: "Allow GitHub Actions to create and
+  approve pull requests", which only a heal that pushes a patch exercises; the agent's log says so if the pull
+  request cannot be opened.
+
+**Not done / the operator's call:** merge PR #5; decide on `strip = "debuginfo"` for a host-independent stamp
+in the next release.

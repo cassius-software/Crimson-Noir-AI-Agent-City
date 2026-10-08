@@ -1,0 +1,14 @@
+# Why does this file exist? BuildKit reads a <Dockerfile>.dockerignore beside the Dockerfile in place of the root
+# .dockerignore. The root one is the host image's allowlist (`*`, then the few files that image copies), which hid
+# crimson_noir_os/Cargo.toml, crates/, boot/ and build.rs from this image's prefetch of the crates: the first real
+# self-heal run stopped there ("build.rs: not found"). This file keeps only the build output, the installed modules
+# and the repository's history out of the context (15 MB without them; gigabytes with).
+# What breaks if it is removed? The sandbox image cannot be built, and the agent never reaches a failure.
+.git
+node_modules
+crimson_noir_os/target
+native/*/target
+dist
+dist-ssr
+dist-pilot
+**/__pycache__

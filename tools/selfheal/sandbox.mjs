@@ -50,11 +50,13 @@ export function buildImage(tree, log = console.log) {
  */
 export function runChecks(tree, checks, { kind = sandboxKind(), timeoutMs = 60 * 60 * 1000, env = {}, log = console.log } = {}) {
   const copy = copyTree(tree)
+  let ran = false
   try {
     let r
     if (kind === 'docker') {
       if (!existsSync(join(tree, 'tools/selfheal/Dockerfile.sandbox'))) throw new Error('no tools/selfheal/Dockerfile.sandbox in the tree')
       log(`sandbox: docker run --network none (${checks.join(' ')})`)
+      ran = true
       r = spawnSync('docker', [
         'run', '--rm', '--network', 'none', '--memory', '12g', '--pids-limit', '4096',
         '-v', `${copy}:/work`, '-w', '/work',
@@ -75,6 +77,23 @@ export function runChecks(tree, checks, { kind = sandboxKind(), timeoutMs = 60 *
     const output = raw.split(copy).join(tree).split('/work/').join(tree + '/')
     return { ok: r.status === 0, output, kind }
   } finally {
+    removeCopy(copy, kind === 'docker' && ran, log)
+  }
+}
+
+/**
+ * Removes a copy the checks ran on. A container runs as root and leaves root-owned files in the copy it mounted
+ * (the dependencies it copies in, build output), which the host user cannot delete, so after a docker run a
+ * container of the same image empties the copy first. A copy that still cannot be removed is logged and left:
+ * a leftover temporary directory is not a failed check, and must not end the agent's run.
+ */
+export function removeCopy(copy, byContainer = false, log = console.log) {
+  if (byContainer) {
+    spawnSync('docker', ['run', '--rm', '--network', 'none', '-v', `${copy}:/work`, IMAGE, 'find', '/work', '-mindepth', '1', '-delete'], { stdio: 'ignore' })
+  }
+  try {
     rmSync(copy, { recursive: true, force: true })
+  } catch (e) {
+    log(`sandbox: could not remove ${copy} (${e.code ?? e.message}); it is left behind`)
   }
 }
