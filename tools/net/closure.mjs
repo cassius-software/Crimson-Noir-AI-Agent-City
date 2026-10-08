@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Copyright (c) 2026 Julian Cassius Subban
+// SPDX-License-Identifier: MIT
+// Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 /**
  * Why does this file exist? It lists, and with `--into DIR` copies, exactly the files the authoritative host needs at
  * run time, so its container image (Dockerfile) carries those and nothing else: no page code, no tests, no dev tools.

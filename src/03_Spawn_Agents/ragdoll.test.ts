@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It proves the active ragdoll's balance machine and promotion pool without a physics
  * world: every transition of the table is reachable and none outside it ever happens, the machine is deterministic,

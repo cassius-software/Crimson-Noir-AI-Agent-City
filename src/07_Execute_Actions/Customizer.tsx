@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the wardrobe's card (Track A of the character customizer): the player's own look,
  * slot by slot, out of the crowd's closed business-casual catalogue (03_Spawn_Agents/look.ts). Every slot is a row of

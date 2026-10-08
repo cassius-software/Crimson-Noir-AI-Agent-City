@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the Gamepad API driver: it reads W3C "standard"-mapped pads (and the
  * HAL's HID-decoded DualSense, which uses the same shape) into one Analog frame plus edge-triggered

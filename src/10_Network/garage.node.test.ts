@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It proves the room's garage (garage.node.ts) is the authority a car needs: the page's own
  * physics realm (SimCore, as the worker runs it: the seed's city and its fleet on the track network, the player in a

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban
+// SPDX-License-Identifier: MIT
+// Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 /**
  * Why does this file exist? It holds the sandbox's containment where no docker is needed: the `docker run`
  * arguments the agent uses carry every flag CONTAINMENT names and no mount of a host path; the environment the

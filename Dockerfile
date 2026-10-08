@@ -1,5 +1,8 @@
 # syntax=docker/dockerfile:1
 # check=skip=SecretsUsedInArgOrEnv
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 # (The one name that check matches is NET_PRINT_TOKEN, a 0/1 switch; no secret is ever an ARG or ENV here.)
 # Why does this file exist? It builds the container image of the authoritative host (src/10_Network/replication.node.ts:
 # the Phase 12 room and the Phase 14 ledger door), kept as small as the host allows. It holds Node and the 27 files

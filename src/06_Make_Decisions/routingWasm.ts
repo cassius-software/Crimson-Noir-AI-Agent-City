@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the routing core's host: it instantiates the WebAssembly module native/routing
  * compiles to (routing.wasm.ts, generated), lays car tracks of a TrackNetwork into the module's arena in the flat

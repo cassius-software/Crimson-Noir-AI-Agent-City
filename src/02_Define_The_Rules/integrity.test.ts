@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It proves the integrity law (integrity.ts) against the published vectors: SHA-256 over
  * the empty string, "abc", the two-block message and a million "a"s (FIPS 180-4), HMAC-SHA256 over the RFC 4231

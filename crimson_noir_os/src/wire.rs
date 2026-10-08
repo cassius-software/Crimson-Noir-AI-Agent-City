@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It is the hosted runtime's side of the wire to the Phase 12 host's ledger door, with no
 //! network crate: a WebSocket client (RFC 6455) over std's TcpStream, and the host's own envelope seal. The pieces:
 //! - The handshake. The key is a random nonce; the answer must be 101 with the right Sec-WebSocket-Accept (SHA-1 of

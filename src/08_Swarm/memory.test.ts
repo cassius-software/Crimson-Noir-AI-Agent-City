@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It proves the swarm's memory (memory.ts). A ledger is keyed by the world seed and the
  * pedestrian's number, never by a recruitment's serial (which goes into each episode instead). Episodes are kept in

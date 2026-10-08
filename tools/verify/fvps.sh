@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 # Why does this file exist? It is the formal verification step of the pipeline (FVPS), one command: `sh
 # tools/verify/fvps.sh [all|kani [HARNESS...]|smt|wasm|ir]`, run by ci.yml and before every release bake (build-release.yml), and
 # by tools/selfheal/checks.sh. It hard-fails the build when any proof fails:

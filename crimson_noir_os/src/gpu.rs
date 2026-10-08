@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It runs the Global Matrix on a GPU through wgpu: the swarm's tick (shaders/swarm.wgsl),
 //! the routing relaxation (shaders/route.wgsl), the bitonic sort (shaders/sort.wgsl) and the telemetry digest
 //! (shaders/telemetry.wgsl, the fog's Process stage of telemetry.rs), the CPU kernels' twins. The

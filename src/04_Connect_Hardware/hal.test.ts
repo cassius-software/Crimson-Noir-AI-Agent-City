@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It proves the HAL bus end to end against a mock navigator: silent degradation
  * when WebHID / Web Serial / Web Bluetooth / Gamepad are missing, autoconnect of granted devices only,

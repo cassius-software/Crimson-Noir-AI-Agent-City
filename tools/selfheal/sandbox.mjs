@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban
+// SPDX-License-Identifier: MIT
+// Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 /**
  * Why does this file exist? It is the ephemeral, zero-trust container the self-healing agent re-runs the checks
  * in. A patch the planner formulated is never run in the agent's own tree: the tree is copied, the copy is

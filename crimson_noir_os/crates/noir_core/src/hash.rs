@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It holds the three hashes the system trusts: SHA-256 locks the declarative
 //! configuration (containment.nix against containment.lock, and the canonical copy baked into the image against the
 //! digest beside it), FNV-1a fingerprints the Global Matrix (the self-test compares the swarm's state after a fixed

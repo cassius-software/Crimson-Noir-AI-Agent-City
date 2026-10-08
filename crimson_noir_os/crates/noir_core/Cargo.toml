@@ -1,8 +1,11 @@
+# Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+# SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+# Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 [package]
 name = "noir_core"
 version = "0.9.0"
 edition = "2024"
-license = "MIT OR Apache-2.0"
+license-file = "../../LICENSE"
 description = "Crimson Noir OS core: the declarative containment configuration, the Global Matrix and its branchless kernels, the self-test, the renderer and the terminal (no_std + alloc)"
 publish = false
 

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It proves the split-screen arithmetic: every layout tiles the canvas exactly at odd and
  * even sizes in both orientations, the aspect and the origin flip are right, a spectator is never the player's own

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It proves client-side prediction with snap reconciliation end to end, the way the page runs
  * it: the page's own physics realm (SimCore, the code the worker runs: the city of the seed, its fleet of 36 cars on

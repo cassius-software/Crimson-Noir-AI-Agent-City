@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 # Why does this file exist? It is the image the self-healing agent's sandbox runs the checks in (tools/selfheal/
 # sandbox.mjs): every toolchain the checks need, and the page's dependencies installed from the lockfile, so a
 # container started from it can run `sh tools/selfheal/checks.sh` with the network off. It is built once per

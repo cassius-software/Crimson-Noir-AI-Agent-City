@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the physics realm: a dedicated Web Worker that alone owns the Rapier
  * world, the fleet, the avatar, the Bouncer, the Sanctuary, the Ring-0 auditor (simCore.ts) and the GPU

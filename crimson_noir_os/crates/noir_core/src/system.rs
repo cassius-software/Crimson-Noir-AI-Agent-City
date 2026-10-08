@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? Every allocation the system makes is made here, once, at boot, in the order and at the
 //! sizes the containment configuration's layout declares (config::layout): the Global Matrix, then the display (the
 //! render target and its depth), the scene's triangles (flat arrays, fixed point), and the terminal (its dictionary,

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the operator's non-verbal ping: a point in the world marked by looking at it, in
  * two layers. The first is view-only and lives on the page: `pickPing` resolves the head's look ray (head.ts

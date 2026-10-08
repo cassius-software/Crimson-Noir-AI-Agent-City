@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! The few floating-point functions the arithmetic needs, chosen so the core gives the host's own numbers bit for
 //! bit: sqrt, floor and ceil are IEEE-exact everywhere; atan2 comes from compiler-builtins' libm on wasm32 (the
 //! fdlibm algorithm the JavaScript engine also uses); hypot is the engine's own Kahan-summed, max-normalised form,

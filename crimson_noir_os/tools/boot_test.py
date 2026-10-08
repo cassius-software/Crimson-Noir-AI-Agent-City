@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+# SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+# Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 """
 Why does this file exist? It boots the bootable media in QEMU with OVMF (UEFI firmware), as a machine would, and checks
 what the system reports: the serial log must reach every marker asked for (SELFTEST PASS, the tutorial's states) within

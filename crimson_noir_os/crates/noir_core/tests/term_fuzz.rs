@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It is the adversarial property suite for the Crimson Terminal through its public API
 //! (open, run_line, key, frame, render), driven by a seeded splitmix64 so every failing line names the seed that
 //! replays it. Thousands of random lines over the whole dictionary (every built-in word, every compiling word,

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It is the hosted runtime of Crimson Noir OS: the same core as the bootable image, on a
 //! desktop, with the GPU. `selftest` (the default) runs the self-test's scripted swarm on the CPU and on the GPU (the
 //! WGSL kernels through wgpu) and holds both against the build's proof and each other, word for word, then relaxes

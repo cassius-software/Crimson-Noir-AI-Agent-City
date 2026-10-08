@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It pins the page-side wiring of the operator's ping (08_Swarm/ping.ts), which the
  * engine, the HUD and the hardware layer carry and Node cannot run: the one edge from the Q key, the middle mouse

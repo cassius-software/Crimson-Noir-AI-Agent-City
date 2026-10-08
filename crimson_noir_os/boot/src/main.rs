@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It is the bootable image's root. Built for `x86_64-unknown-uefi` it is a UEFI application
 //! (`efi_main`, no standard library, no runtime): the firmware loads it from the boot medium and it takes the machine
 //! over (image.rs). Built for any other target it is only a note saying how to build the image, so the workspace still

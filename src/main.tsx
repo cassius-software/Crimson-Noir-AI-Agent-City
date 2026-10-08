@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the page's entry point: before the page does anything it holds the global's outbound
  * primitives to this machine (02_Define_The_Rules/airgap.ts installAirgap), then mounts App under React's StrictMode.

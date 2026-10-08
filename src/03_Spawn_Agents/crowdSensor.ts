@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the contract between the physics realm's simulation (simCore.ts) and the
  * GPU pedestrian sensor that lives beside it in the worker (crowdSim.ts): what the simulation hands the crowd

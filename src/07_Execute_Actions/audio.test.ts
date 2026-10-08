@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? Node has no Web Audio, so it proves the soundscape's maths directly (gearbox
  * hysteresis, gain curves, Doppler, listener basis, voice assignment, the synthesized buffers) and drives

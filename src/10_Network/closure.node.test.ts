@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? The host's container image carries only the files tools/net/closure.mjs lists, so that list
  * must be exactly what Node loads. This test starts the real host with a resolve hook (node:module registerHooks) that

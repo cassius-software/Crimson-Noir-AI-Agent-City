@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? Every word the system shows is drawn here: the tutorial's captions, the terminal, the
 //! fault screen. Glyphs are the public-domain 8×8 bitmap font of the IBM PC era as the `font8x8` crate ships it (MIT;
 //! bit 0 of each row is the leftmost pixel), drawn into a 0x00RRGGBB pixel buffer, scaled by whole pixels and clipped

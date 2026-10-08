@@ -18,7 +18,7 @@ declared in one locked configuration file.
 - **The Crimson Terminal** follows: a small Forth over the raw arrays, the kernels, the compute knobs and the locked
   configuration.
 
-Licensed under either of [Apache-2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT), at your option.
+Proprietary: Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved. See [LICENSE](LICENSE).
 
 ## Screenshots
 
@@ -289,6 +289,8 @@ These are stated plainly so nobody has to discover them.
 
 **Licences**
 
+- Crimson Noir OS is proprietary: copyright (c) 2026 Julian Cassius Subban, all rights reserved, under `LICENSE`
+  (releases up to v1.0.1-stable-release were MIT OR Apache-2.0 and stay so). Every source file carries the header.
 - The image contains no Linux kernel or other GPL code. It is a standalone UEFI program that links only `font8x8`
   (MIT) and `log` (MIT OR Apache-2.0); see `NOTICE.txt`.
 - The hosted runtime's dependency closure is about 140 crates, all under permissive licences (MIT, Apache-2.0, Zlib,

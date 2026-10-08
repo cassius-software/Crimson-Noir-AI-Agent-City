@@ -1,4 +1,7 @@
 #Requires -Version 5.1
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 <#
 .SYNOPSIS
     Publishes the release tags of Crimson Noir AI Agent City from the operator's own machine.

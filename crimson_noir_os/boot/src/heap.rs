@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It is the only allocator the bootable image has, and it enforces the containment
 //! configuration's memory rule: the image takes exactly `memory.arenaBytes` from the firmware, carves the declared layout
 //! out of it in order (every allocation rounded to config::ALLOC_ALIGN, so the bytes used must equal

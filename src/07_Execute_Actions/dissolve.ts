@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? The code dissolve's page-side half: which mesh the user's body is inside this frame, and
  * how far dissolved each one is. When the avatar (on foot) or the driven car's chassis (at the wheel) meets a lamp, a

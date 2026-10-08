@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the Ring-0 operator tier behind `operator unlock`: the SimControls
  * contract the engine fulfils, the deep-frozen ScriptApi facade a script sees (SimControls minus the

@@ -1696,9 +1696,22 @@ releases, byte for byte (the same seats, drivers and paint from the same stream)
 
 The mark is the Monolith: a black rounded square with an open white triangle
 (`MonolithLogo.tsx`). The favicon is generated from the same SVG. "ONYX" is provisional.
+The design system is Crimson Noir (`brand/STYLE.md`): Vantablack and anodized titanium surfaces with one crimson
+line, the system face, a 4pt grid. Its tokens are `brand/tokens.json`, the page reads them from
+`src/brand/tokens.css` (custom properties and Tailwind utilities), the marks are in `brand/marks/`, and
+`brand/preview.html` shows them; the Crimson Terminal's colours are the same tokens.
 Preliminary trademark notes for ONYX, AEGIS and SENTIS are in `NOTICE.md`: Unity sells an AI
 inference package named Sentis, and Aegis is a naval weapons system. Commission a clearance search
 before you settle the name.
+
+## Licensing
+
+The product is dual-licensed (`LICENSE`): the core (`src/`, `crimson_noir_os/`, `native/`, `world/`, `brand/`, the page's
+entry and build) is proprietary, copyright (c) 2026 Julian Cassius Subban, all rights reserved
+(`LICENSES/LicenseRef-CrimsonNoir-Proprietary.txt`); the auxiliary tooling (`tools/`, `deploy/`, `.github/`,
+`docs/`, the container build and the publish script) is open source under MIT (`LICENSES/MIT.txt`); the game
+mechanics are offered under the ORC License (`NOTICE.md`). Every source file opens with its licence header, and
+`node tools/license/headers.mjs check` (CI's `license-headers` check) fails on a file without one.
 
 ## Browser support and what is verified
 

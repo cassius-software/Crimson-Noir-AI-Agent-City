@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban
+// SPDX-License-Identifier: MIT
+// Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 // Why does this file exist? It is the world compiler's first stage: it pulls the open government data a region of the
 // map is built from, clipped to a box, into a local cache. Nothing here ships: the product never touches the network
 // (the air gap); the compiled world pack it leads to is a local file.

@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+# SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+# Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 # Why does this file exist? It makes the one-click bootable media of Crimson Noir OS from the UEFI image: a raw GPT disk
 # image (an EFI system partition holding \EFI\BOOT\BOOTX64.EFI, the declared configuration and the notices) to write to a
 # USB stick or boot in a virtual machine, and a UEFI-bootable ISO (El Torito, hybrid). Tools: cargo with the

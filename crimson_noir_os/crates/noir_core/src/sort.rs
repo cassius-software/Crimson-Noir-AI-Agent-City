@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? The tutorial's last proof is a sort, and the sort is a bitonic network: a fixed list of
 //! comparators that does not depend on the data, each one branchless (kernels::compare_exchange). Because the list is
 //! fixed it can be proved, not just tested: by the 0-1 principle a comparator network sorts every input if and only if

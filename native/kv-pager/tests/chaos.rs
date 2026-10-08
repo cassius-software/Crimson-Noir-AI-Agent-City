@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It keeps a bounded slice of the chaos fuzzer (src/bin/chaos/core.rs) in `cargo test`, and
 //! proves the fuzzer's own oracle and shrinker work, so a regression in the page table fails the ordinary test run.
 //! What breaks if it is removed? Only the full `chaos` binary would catch a page-table regression.

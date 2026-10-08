@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? Ghost-mode collision has no impact to show, so the page shows the passage instead: when
  * the user's body (the avatar on foot, the driven car's chassis at the wheel) meets a lamp, a tree, a signal pole, a

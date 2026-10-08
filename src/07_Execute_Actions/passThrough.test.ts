@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It proves ghost-mode collision in real Rapier: the street furniture (lamps, tree trunks,
  * signal poles) is in the physics world as sensors, so the avatar walks through it and a car drives through it

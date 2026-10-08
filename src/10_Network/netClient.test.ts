@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It drives the page's network client (netClient.ts) against the real Node host
  * (replication.node.ts, here over the open-plane authority, plane.node.ts) on a loopback socket, with Node 22's own

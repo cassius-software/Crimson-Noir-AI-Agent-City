@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? The world compiler's pure core: surveyed sources in, a region pack out. It projects every
  * feature into the engine's frame (region/projection.ts), clips it to the region (region/clip.ts), drops the vertices

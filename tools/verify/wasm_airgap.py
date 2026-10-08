@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 """
 Why does this file exist? It is the air-gap and isolation check of the WebAssembly modules the page carries
 (tools/verify/fvps.sh runs it; src/06_Make_Decisions/routing.wasm.ts and src/09_Cognition/kvPager.wasm.ts carry the

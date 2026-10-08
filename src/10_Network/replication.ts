@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the protocol core of the replication scaffold, the one language the page's client
  * (netClient.ts) and the Node host (replication.node.ts) share, written the way simProtocol.ts writes the realm

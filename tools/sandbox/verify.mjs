@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban
+// SPDX-License-Identifier: MIT
+// Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 /**
  * Why does this file exist? It is the empirical verification of the sandbox's containment, one command:
  * `node tools/sandbox/verify.mjs [--no-build] [--checks NAME,...] [--out DIR]`, run by ci.yml's sandbox job on

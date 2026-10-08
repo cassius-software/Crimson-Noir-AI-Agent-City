@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It pins the autoscaler: the operator's step-down rule (FPS below 60 for more
  * than 2 s, one tier) on synthetic frame streams (vsync-quantized, jittered, overloaded, hitching), the

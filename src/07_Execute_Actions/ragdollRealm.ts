@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It wires the ragdoll balance machine (03_Spawn_Agents/ragdoll.ts) and its Rapier body
  * (ragdollRig.ts) into the physics realm, for the pedestrians within PROMOTE_RADIUS of the operator. The GPU crowd

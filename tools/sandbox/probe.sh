@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 # Why does this file exist? It is the escape attempt. Run inside the self-healing agent's sandbox (tools/selfheal/
 # sandbox.mjs; `sh tools/selfheal/checks.sh sandbox-probe`), it tries, from the position of a malicious check or a
 # planted workspace file, every escape vector the containment claims to close: egress (an interface, a route, DNS,

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? The one grid every region of the map shares (region/projection.ts), so regions compiled
  * separately line up edge to edge: a transverse Mercator whose central meridian and origin sit at the middle of the

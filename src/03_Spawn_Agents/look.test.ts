@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? The wardrobe is only closed if nothing drifts: the catalogue must be exactly the crowd's
  * palettes and pieces (crowd.ts cannot load in Node, it imports a WGSL file, so its source text is read instead),

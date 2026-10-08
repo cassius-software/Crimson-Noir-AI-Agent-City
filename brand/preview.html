@@ -1,0 +1,100 @@
+<!--
+  Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+  SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+  Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Crimson Noir tokens</title>
+    <!-- A static preview of brand/STYLE.md: open this file from the repository (it links ../src/brand/tokens.css). -->
+    <link rel="stylesheet" href="../src/brand/tokens.css" />
+    <style>
+      html, body { margin: 0; background: var(--noir-ink); color: var(--noir-titanium-200); font: var(--noir-type-body); }
+      main { max-width: 960px; margin: 0 auto; padding: var(--noir-space-12) var(--noir-space-4); display: grid; gap: var(--noir-space-8); }
+      h1 { font: var(--noir-type-display); letter-spacing: var(--noir-tracking-display); color: var(--noir-titanium-100); margin: 0; }
+      h2 { font: var(--noir-type-title); letter-spacing: var(--noir-tracking-title); color: var(--noir-titanium-100); margin: 0 0 var(--noir-space-4); }
+      .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: var(--noir-space-2); }
+      .swatch { border: var(--noir-line) solid var(--noir-titanium-800); border-radius: var(--noir-radius-control); overflow: hidden; }
+      .swatch > div { height: 56px; }
+      .swatch > p { margin: 0; padding: var(--noir-space-2) var(--noir-space-3); font: var(--noir-type-mono); color: var(--noir-titanium-400); }
+      .type > p { margin: 0 0 var(--noir-space-2); }
+      .marks { display: flex; gap: var(--noir-space-6); align-items: center; flex-wrap: wrap; }
+      .marks img { display: block; height: 120px; }
+      .term { height: 240px; border-radius: var(--noir-radius-panel); overflow: hidden; border: var(--noir-line) solid var(--noir-titanium-800); }
+      .row { display: flex; gap: var(--noir-space-2); align-items: center; flex-wrap: wrap; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="noir-label">Crimson Noir · design tokens</p>
+        <h1>Vantablack, anodized titanium, one crimson line.</h1>
+      </header>
+
+      <section>
+        <h2>Palette</h2>
+        <div class="swatches">
+          <div class="swatch"><div style="background: var(--noir-black)"></div><p>black #000000</p></div>
+          <div class="swatch"><div style="background: var(--noir-ink)"></div><p>ink #050507</p></div>
+          <div class="swatch"><div style="background: var(--noir-ink-2)"></div><p>ink-2 #0a0a0e</p></div>
+          <div class="swatch"><div style="background: var(--noir-ink-3)"></div><p>ink-3 #121216</p></div>
+          <div class="swatch"><div style="background: var(--noir-titanium-100)"></div><p>titanium-100 #e7e9ec</p></div>
+          <div class="swatch"><div style="background: var(--noir-titanium-200)"></div><p>titanium-200 #c8c8cc</p></div>
+          <div class="swatch"><div style="background: var(--noir-titanium-400)"></div><p>titanium-400 #8c8c90</p></div>
+          <div class="swatch"><div style="background: var(--noir-titanium-600)"></div><p>titanium-600 #5a5a60</p></div>
+          <div class="swatch"><div style="background: var(--noir-titanium-800)"></div><p>titanium-800 #2c2e36</p></div>
+          <div class="swatch"><div style="background: var(--noir-crimson)"></div><p>crimson #e8203a</p></div>
+          <div class="swatch"><div style="background: var(--noir-crimson-deep)"></div><p>crimson-deep #2a0710</p></div>
+          <div class="swatch"><div style="background: var(--noir-crimson-rule)"></div><p>crimson-rule #3a1018</p></div>
+          <div class="swatch"><div style="background: var(--noir-crimson-tint)"></div><p>crimson-tint #ffd0d6</p></div>
+          <div class="swatch"><div style="background: var(--noir-crimson-muted)"></div><p>crimson-muted #d0b0b6</p></div>
+          <div class="swatch"><div style="background: var(--noir-amber)"></div><p>amber #d89a2a</p></div>
+        </div>
+      </section>
+
+      <section class="type">
+        <h2>Type</h2>
+        <p style="font: var(--noir-type-display); letter-spacing: var(--noir-tracking-display); color: var(--noir-titanium-100)">Display 34/40</p>
+        <p style="font: var(--noir-type-title); letter-spacing: var(--noir-tracking-title); color: var(--noir-titanium-100)">Title 22/28</p>
+        <p style="font: var(--noir-type-headline); color: var(--noir-titanium-100)">Headline 17/22</p>
+        <p style="font: var(--noir-type-body)">Body 15/20. The city at night, its agents at work, the operator at the terminal.</p>
+        <p style="font: var(--noir-type-caption); color: var(--noir-titanium-400)">Caption 13/18</p>
+        <p class="noir-label">Label 11/14 · 0.08em</p>
+        <p style="font: var(--noir-type-mono)">mono 13/20 · lock 96c3d1d3 · tick 3576</p>
+      </section>
+
+      <section>
+        <h2>Marks</h2>
+        <div class="marks">
+          <img src="marks/crimson-noir-mark.svg" alt="the mark" />
+          <img src="marks/crimson-noir-mark-mono.svg" alt="the mark, one colour" style="color: #2c2e36" />
+          <img src="marks/crimson-terminal-glyph.svg" alt="the terminal glyph" />
+          <img src="marks/crimson-noir-wordmark.svg" alt="the wordmark" style="height: 120px" />
+        </div>
+      </section>
+
+      <section>
+        <h2>Structure</h2>
+        <div class="row" style="margin-bottom: var(--noir-space-4)">
+          <button class="noir-button">Button</button>
+          <button class="noir-button is-active">Active</button>
+          <div class="noir-panel" style="padding: var(--noir-space-4); min-width: 200px"><p class="noir-label" style="margin: 0 0 4px">Alive</p><span style="font: var(--noir-type-title); color: var(--noir-titanium-100); font-variant-numeric: tabular-nums">4,096</span></div>
+        </div>
+        <div class="noir-term term">
+          <div class="noir-term-header"><span>Crimson Terminal</span><span class="noir-term-status">tick 3576  alive 4096  RUNNING  lock 96c3d1d3</span></div>
+          <div class="noir-term-body">CRIMSON NOIR OS 0.9.0 (generation 0): the self-test passed.
+<span class="noir-term-echo">&gt; golden</span>
+MATCH
+<span class="noir-term-echo">&gt; tick</span>
+tick 3577
+<span class="noir-term-echo">&gt; fly</span>
+<span class="noir-term-error">? no such word: fly</span></div>
+          <div class="noir-term-input">&gt; _</div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

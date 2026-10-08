@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It holds the core's cross-module tests: the hot path is branchless as written, the
 //! scripted run is deterministic and shows what it claims, the order agents are visited in cannot change a tick,
 //! containment holds for any request (a privilege outside the role drops the pointer, inside it never does), memory

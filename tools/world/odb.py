@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 # Why does this file exist? The world compiler's building stage: it streams one province file of the Open Database of
 # Buildings (Statistics Canada, Open Government Licence – Canada) straight out of its remote zip (inflating as it
 # downloads, so the archive itself never touches the disk), pulls the footprints inside a box through the GeoPackage's

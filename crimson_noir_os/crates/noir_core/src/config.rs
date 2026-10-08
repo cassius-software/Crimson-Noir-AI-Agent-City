@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It is the containment matrix's declarative half. `containment.nix` declares everything
 //! the system may hold: the size of the agent pool, every allocation (the arena and the layout carved from it), the
 //! privileges of each role, the loop breaker's limit, the kernel parameters, the display and the terminal, and the

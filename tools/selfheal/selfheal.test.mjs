@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban
+// SPDX-License-Identifier: MIT
+// Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 /**
  * Why does this file exist? It is the proof that the self-healing agent does what agent.mjs says, without a model
  * and without docker: the failure parsers read the real output formats of node's test runner, cargo, tsc and

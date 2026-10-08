@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Copyright (c) 2026 Julian Cassius Subban
+// SPDX-License-Identifier: MIT
+// Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 /**
  * Why does this file exist? It is the native build step: it compiles the two Rust crates under native/ for
  * wasm32-unknown-unknown (no bindgen: a plain C ABI over linear memory) and writes each module into the source tree
@@ -14,6 +17,7 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFileSync, writeFileSync } from 'node:fs'
+import { HEADERS } from '../license/headers.mjs'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -54,7 +58,8 @@ for (const m of MODULES) {
   for (const re of SCRUBBED) {
     if (re.test(base64)) throw new Error(`${m.out}: the base64 text spells "${base64.match(re)[0]}" by chance; change the crate (a comment moves nothing: reorder a function) and rebuild`)
   }
-  const text = `/**
+  const text = `${HEADERS.proprietary.map((l) => `// ${l}`).join('\n')}
+/**
  * Why does this file exist? It is ${m.role}, compiled to WebAssembly
  * and carried here as base64 so the single-file build needs no cargo and no loader: ${bytes.length} bytes, SHA-256
  * ${sha256}.

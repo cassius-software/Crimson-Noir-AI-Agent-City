@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It draws the tutorial's 3D server room with integer arithmetic only: fixed-point
 //! coordinates (Q16.16 metres), a sine table built at compile time, a camera, near-plane clipping, a triangle
 //! rasterizer with a depth buffer (1/z, interpolated as a plane), per-triangle fog, depth-tested points for the swarm,

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Stage 04: the property fuzzer's engine (shared by `cargo run --bin chaos` and `tests/chaos.rs`).
 //!
 //! Why does this file exist? The page table's promises (02_page_table.rs) are about sequences of operations, not single

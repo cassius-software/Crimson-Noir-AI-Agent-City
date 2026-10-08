@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? The code dissolve: when the user's body meets an agent, a vehicle or a prop, that mesh
  * dissolves into falling green binary code and reinstantiates once clear. This is the render half, one TSL helper any

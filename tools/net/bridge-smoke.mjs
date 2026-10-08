@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Copyright (c) 2026 Julian Cassius Subban
+// SPDX-License-Identifier: MIT
+// Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 /**
  * Why does this file exist? It is the end-to-end check of the Crimson Noir OS bridge (`npm run smoke:bridge`): the
  * real host as a process of its own (`node src/10_Network/replication.node.ts`, a secret made for this run, its ledger
