@@ -29,6 +29,7 @@ services:
     cpus: 2
     environment:
       NET_HOST: 0.0.0.0           # the internal network's address, which only the proxy can reach
+      NET_TRUST_PROXY: "1"        # every connection comes through the proxy: the client's address is its X-Forwarded-For
       NET_SECRET_FILE: /run/secrets/net_secret
       # NET_SEED: "1337"          # the city a joining page must be walking, and its fleet
       # NET_CARS: "36"

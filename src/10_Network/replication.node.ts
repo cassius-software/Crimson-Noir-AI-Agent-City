@@ -31,7 +31,7 @@
  */
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
-import type { Socket } from 'node:net'
+import { isIP, type Socket } from 'node:net'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -194,6 +194,13 @@ export interface HostOptions {
   secret: string
   /** Loopback unless the operator's proxy needs another address. */
   host?: string
+  /**
+   * The host sits behind the operator's reverse proxy, and every connection reaches it through that proxy: the
+   * client's own address is read from the `X-Forwarded-For` header the proxy writes (deploy/nginx.conf), so the
+   * failure throttle keys on the client, not on the proxy's one address. Never set on a host anyone reaches directly:
+   * a direct client would then name any address it liked, and a bucket per invented address is a bucket per request.
+   */
+  trustProxy?: boolean
   /** 0 picks a free port. */
   port?: number
   tickHz?: number
@@ -275,6 +282,18 @@ export function loggable(text: string): string {
 export const DEFAULT_SEED = 1337
 /** Unread bytes past which a peer is too slow to keep (about two seconds of a full room's snapshots). */
 export const MAX_BACKLOG = 512 * 1024
+/**
+ * The client's address as a trusted proxy reports it: the last entry of `X-Forwarded-For` (the one the nearest proxy
+ * appended; nginx.conf writes exactly one), only when it is an IP literal. Anything else gives null, and the caller
+ * falls back to the socket's own address.
+ */
+export function forwardedFor(header: string | string[] | undefined): string | null {
+  if (header === undefined) return null
+  const text = Array.isArray(header) ? header.join(',') : header
+  const last = text.slice(text.lastIndexOf(',') + 1).trim()
+  return last.length > 0 && last.length <= 45 && isIP(last) !== 0 ? last : null
+}
+
 /** Failed upgrades an address may make before its failures are answered 429 (unlogged), and how fast it earns another. */
 export const AUTH_FAILURES = Object.freeze({ burst: 5, perSecond: 0.2, addresses: 4096 })
 
@@ -477,9 +496,10 @@ export async function startHost(o: HostOptions): Promise<Host> {
       return
     }
     // The token before anything else. A good one is always admitted: behind the operator's proxy every client arrives
-    // from one address, so a stranger's failures must never lock anyone out. An address that keeps failing is turned
-    // away with 429 instead of 401, unlogged, until its budget refills.
-    const from = socket.remoteAddress ?? '?'
+    // from one address (unless the proxy is trusted to name the client, below), so a stranger's failures must never
+    // lock anyone out. An address that keeps failing is turned away with 429 instead of 401, unlogged, until its
+    // budget refills.
+    const from = (o.trustProxy ? forwardedFor(req.headers['x-forwarded-for']) : null) ?? socket.remoteAddress ?? '?'
     const t = now()
     // Which door: the ledger's when `crimson.1` is offered and the room's `onyx.4` is not; the room's otherwise. The
     // token is checked the same way for both.
@@ -658,7 +678,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     if (read === null) throw new Error(`${sealPath} is not a seal (head, count and weights lines)`)
     ledgerSeal = read
   }
-  const host = await startHost({ secret, host: process.env.NET_HOST ?? '127.0.0.1', port, seed, cars, tickHz, ledgerLock, ledgerSeal, log: (line) => console.log(line) })
+  // NET_TRUST_PROXY=1: the client's address is the one the proxy forwards (see HostOptions.trustProxy); only behind it.
+  const trust = process.env.NET_TRUST_PROXY
+  if (trust !== undefined && trust !== '0' && trust !== '1') throw new Error('NET_TRUST_PROXY must be 0 or 1')
+  const trustProxy = trust === '1'
+  const host = await startHost({ secret, host: process.env.NET_HOST ?? '127.0.0.1', port, seed, cars, tickHz, trustProxy, ledgerLock, ledgerSeal, log: (line) => console.log(line) })
+  console.log(trustProxy ? 'clients are named by the proxy\'s X-Forwarded-For (NET_TRUST_PROXY=1): the failure throttle keys on each client' : 'clients are named by their socket address: behind a proxy, the failure throttle sees one address (set NET_TRUST_PROXY=1 there)')
   console.log(ledgerLock ? `the ledger door (crimson.1) checks ledgers against ${ledgerLock.slice(0, 16)}… (${lockPath})` : `no ledger door: ${lockPath} pins no digest`)
   if (ledgerLock) console.log(ledgerSeal ? `the ledger door keeps for the fleet only the run sealed in ${sealPath} (head ${ledgerSeal.head.slice(0, 12)}, ${ledgerSeal.count} entries)` : `the ledger door keeps the last verified ledger: no seal pinned at ${sealPath}`)
   const [, s, n] = host.world.split('/')
