@@ -42,7 +42,7 @@ export const HEADERS = {
  * OS, the native cores, the page's runtime (agents, rules, cognition, network) and the page's build; the auxiliary
  * tooling is everything that builds, checks, heals, deploys or publishes it. LICENSE lists the same split.
  */
-export const PROPRIETARY_DIRS = ['src', 'crimson_noir_os', 'native', 'world']
+export const PROPRIETARY_DIRS = ['src', 'crimson_noir_os', 'native', 'world', 'brand']
 export const MIT_DIRS = ['tools', 'deploy', '.github', 'docs']
 const ROOT_FILES = {
   'index.html': 'proprietary',
@@ -64,7 +64,7 @@ export function commentStyle(name) {
   const ext = extname(name).toLowerCase()
   if (['.ts', '.tsx', '.mts', '.mjs', '.js', '.rs', '.wgsl'].includes(ext)) return { line: '// ' }
   if (ext === '.css') return { open: '/*', line: ' * ', close: ' */' }
-  if (ext === '.html') return { open: '<!--', line: '  ', close: '-->' }
+  if (ext === '.html' || ext === '.svg') return { open: '<!--', line: '  ', close: '-->' }
   if (['.py', '.sh', '.yml', '.yaml', '.toml', '.ps1', '.nix', '.conf'].includes(ext)) return { line: '# ' }
   if (/^Dockerfile(\..*)?$/.test(name) && !name.endsWith('.dockerignore')) return { line: '# ' }
   return null

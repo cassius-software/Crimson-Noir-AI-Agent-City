@@ -1,0 +1,12 @@
+<!--
+  Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+  SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+  Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
+-->
+<svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Crimson Noir">
+  <title>Crimson Noir</title>
+  <rect width="120" height="120" rx="28" fill="#050507"/>
+  <rect x="0.5" y="0.5" width="119" height="119" rx="27.5" stroke="#2c2e36"/>
+  <path fill-rule="evenodd" clip-rule="evenodd" d="M60 25L90 77H30L60 25ZM60 48L46 72H74L60 48Z" fill="#c8c8cc"/>
+  <path d="M60 48L74 72H46L60 48Z" fill="#e8203a"/>
+</svg>
