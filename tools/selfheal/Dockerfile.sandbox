@@ -33,7 +33,10 @@ RUN mkdir -p crimson_noir_os/src && echo 'fn main() {}' > crimson_noir_os/src/ma
 COPY native/routing/Cargo.toml native/routing/Cargo.lock ./native/routing/
 COPY native/kv-pager/Cargo.toml native/kv-pager/Cargo.lock ./native/kv-pager/
 COPY native/kv-pager-wasm/Cargo.toml native/kv-pager-wasm/Cargo.lock ./native/kv-pager-wasm/
-RUN for c in routing kv-pager kv-pager-wasm; do mkdir -p native/$c/src && touch native/$c/src/lib.rs && (cd native/$c && cargo fetch --locked); done
+# Empty sources stand in for the crates (kv-pager names a bin and an example that must exist for cargo to read it).
+RUN for c in routing kv-pager kv-pager-wasm; do mkdir -p native/$c/src && touch native/$c/src/lib.rs; done \
+    && mkdir -p native/kv-pager/src/bin native/kv-pager/examples && touch native/kv-pager/src/bin/stress.rs native/kv-pager/examples/adapters.rs \
+    && for c in routing kv-pager kv-pager-wasm; do (cd native/$c && cargo fetch --locked); done
 RUN groupadd -g 10001 sandbox && useradd -u 10001 -g 10001 -M -d /tmp/home -s /bin/sh sandbox \
     && mkdir -p /build /work && chown sandbox:sandbox /build /work \
     && chmod -R a+rX /deps /fetch /usr/local/cargo /usr/local/rustup
