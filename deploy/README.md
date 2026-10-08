@@ -154,9 +154,11 @@ On each client machine:
 - **Per-client limits need clients' own addresses.** compose publishes IPv4 only, because Docker would hand every
   IPv6 client to nginx from one gateway address. Publish no AAAA record, or give the `edge` network IPv6 and nginx
   `[::]` listeners. Behind a load balancer, follow the real-IP comment in `nginx.conf`.
-- **The host's own throttle sees one address.** Behind the proxy, every client arrives from the same address. So one
-  client's bad tokens can turn other clients' bad tokens into 429s. Good tokens are always admitted, and the proxy's
-  access log has each client's real address.
+- **The host's own throttle keys on the address the proxy forwards.** `NET_TRUST_PROXY=1` (set in the compose file)
+  makes the host read the client's address from the `X-Forwarded-For` header nginx writes, so one client's bad tokens
+  throttle only that client. Set it only on a host every connection reaches through the proxy, as here: a client that
+  could reach the host directly would name any address it liked. Good tokens are always admitted either way, and the
+  proxy's access log has each client's real address.
 - **The tunnel looks up the proxy's name once**, when it starts. Restart it if the server's address changes.
 - **A host that crashes is restarted** by its policy; one stopped by hand (`docker stop`, `docker kill`) stays stopped
   until `docker compose up -d`, which is Docker's own rule.

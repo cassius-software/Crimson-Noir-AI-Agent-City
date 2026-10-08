@@ -10,6 +10,8 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
   fail): see the Phase 18 section at the end, including why the published EFI's TimeDateStamp is not this
   container's. CI now runs on every pull request and push to main (ci.yml); PR #5 carries the self-heal workflow's
   first-run fixes.
+- Phase 17 (the plan written between Phases 16 and 18, then skipped; picked up on 2026-10-08): the two code items
+  Phase 18 had not covered are on the branch `claude/project-thread-q8gvxn`; see the Phase 17 section at the end.
 - Phase 14 (the approved hosted-runtime bridge) is complete: see the Phase 14 section at the end.
 - Branch `claude/quirky-faraday-xkpdln`. Phase 13 is complete and release-ready: two adversarial reviews fixed (the
   second's 4 + 13 + 4 findings below), 1,219 tests passing, tagged `v1.0.0-stable-release` (see `git log`, `git tag`).
@@ -714,3 +716,24 @@ SHA256SUMS. The `v1.0.0-stable-release` and `stable-beta` releases are unchanged
 
 **Not done / the operator's call:** merge PR #5; decide on `strip = "debuginfo"` for a host-independent stamp
 in the next release.
+
+## Phase 17 (planned 2026-10-07, done 2026-10-08): standing verification, the release's loose ends
+
+The plan (`/mnt/project-files/plans/phase-17-plan.md` in the project) had six items. Phase 18 covered 17.1 (CI on
+every pull request and push: ci.yml) and 17.2 (a reproducible release re-cut: `v1.0.1-stable-release`). Done here:
+
+- **17.5 Per-client limits behind the proxy.** `HostOptions.trustProxy` / `NET_TRUST_PROXY=1`: the failure throttle
+  keys on the last `X-Forwarded-For` entry when it is an IP literal (`forwardedFor`, replication.node.ts), else on
+  the socket's address; a host that trusts no proxy ignores the header, so a direct client cannot buy budgets by
+  inventing addresses. `deploy/docker-compose.yml` sets it (only the proxy can reach the host there; nginx.conf
+  writes exactly `$remote_addr`). Test in replication.node.test.ts (both hosts, the fallback, a balancer's entry, a
+  good token from a throttled client). deploy/README.md "Limits to know" updated.
+- **17.6 Nightly fuzz.** `.github/workflows/fuzz.yml` runs the `*.fuzz.test.ts` suites nightly (03:17 UTC) and on
+  dispatch with `FUZZ_SCALE` (20) and `FUZZ_SEED` (the run number), both read once by property.ts `FUZZ`; a failure
+  prints the `{ seed, runs }` that replay it with no knob set. Scale 3 with a seed offset passed here (54 suites).
+
+Verified: tsc, oxlint, `npm test` 1,302/1,302, smoke:net, `docker compose config`.
+
+**Still the operator's call (17.3, 17.4):** renaming the terminal ("Sith" is Lucasfilm's) and settling the product
+name; the real-target checks (a physical UEFI boot, a real Let's Encrypt issuance, publish.ps1 under Windows
+PowerShell 5.1, a room from two browser tabs, `?players=4` on a real GPU); branch protection on main requiring ci.yml.

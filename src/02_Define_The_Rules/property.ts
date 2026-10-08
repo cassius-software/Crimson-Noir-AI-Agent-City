@@ -148,10 +148,30 @@ export function numbersIn(u: unknown, out: number[] = []): number[] {
 }
 
 /**
- * Runs `check` on `runs` cases made by `make` from the seeded stream. The first case that throws fails the property
- * with its index, the seed that replays it, and the case itself.
+ * The nightly fuzz run's knobs, read once from the environment (none in a browser): FUZZ_SCALE multiplies every
+ * property's `runs` (a whole number, 1 by default), and FUZZ_SEED is added to every property's seed, so a scheduled
+ * run explores cases the suite's fixed seeds never draw. A failure's message names the seed and run count that
+ * replay it, so the knobs never hide a case: replay with `{ seed, runs }` as printed, and no knob set.
+ */
+export const FUZZ = Object.freeze((() => {
+  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {}
+  const read = (name: string, min: number): number => {
+    const raw = env[name]
+    if (raw === undefined || raw === '') return min === 1 ? 1 : 0
+    const n = Number(raw)
+    if (!Number.isSafeInteger(n) || n < min) throw new Error(`${name} must be a whole number of at least ${min}: ${JSON.stringify(raw)}`)
+    return n
+  }
+  return { scale: read('FUZZ_SCALE', 1), seed: read('FUZZ_SEED', 0) }
+})())
+
+/**
+ * Runs `check` on `runs` cases made by `make` from the seeded stream (times FUZZ_SCALE, from the seed plus FUZZ_SEED:
+ * see FUZZ). The first case that throws fails the property with its index, the seed that replays it, and the case
+ * itself.
  */
 export function forAll<T>(name: string, o: { seed: number; runs: number }, make: (g: Gen, i: number) => T, check: (c: T, i: number) => void): void {
+  o = { seed: o.seed + FUZZ.seed, runs: o.runs * FUZZ.scale }
   const g = gen(o.seed)
   for (let i = 0; i < o.runs; i++) {
     const c = make(g, i)
