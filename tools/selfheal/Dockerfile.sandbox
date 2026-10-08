@@ -8,6 +8,10 @@
 # with; Kani is installed when SELFHEAL_KANI=1 (it adds minutes to the build) and the fvps-kani check reports
 # itself skipped otherwise. Its build context is Dockerfile.sandbox.dockerignore's, not the root .dockerignore's
 # allowlist (the host image's), which would hide the OS crates the prefetch copies.
+# The container runs as `sandbox` (uid 10001), never root, on a read-only root filesystem (sandbox.mjs): the
+# toolchains, the registry and the installed modules under /deps are read by that user and written by nobody; the
+# tree arrives in /work (a tmpfs the container is given) and the build output goes to /build, the one directory
+# the user owns, which docker replaces with an empty volume of the same ownership for every run.
 # What breaks if it is removed? The sandbox has no image to run; the agent falls back to a host subprocess.
 FROM rust:1.97-bookworm
 ARG SELFHEAL_KANI=0
@@ -28,5 +32,17 @@ COPY crimson_noir_os/crates ./crimson_noir_os/crates
 COPY crimson_noir_os/boot ./crimson_noir_os/boot
 COPY crimson_noir_os/build.rs crimson_noir_os/containment.nix crimson_noir_os/containment.lock crimson_noir_os/containment.seal ./crimson_noir_os/
 RUN mkdir -p crimson_noir_os/src && echo 'fn main() {}' > crimson_noir_os/src/main.rs && (cd crimson_noir_os && cargo fetch --locked)
+# The native crates' dependencies too (native-test and fvps-wasm build them; kv-pager pulls wgpu), from their locks.
+COPY native/routing/Cargo.toml native/routing/Cargo.lock ./native/routing/
+COPY native/kv-pager/Cargo.toml native/kv-pager/Cargo.lock ./native/kv-pager/
+COPY native/kv-pager-wasm/Cargo.toml native/kv-pager-wasm/Cargo.lock ./native/kv-pager-wasm/
+# Empty sources stand in for the crates (kv-pager names a bin and an example that must exist for cargo to read it).
+RUN for c in routing kv-pager kv-pager-wasm; do mkdir -p native/$c/src && touch native/$c/src/lib.rs; done \
+    && mkdir -p native/kv-pager/src/bin native/kv-pager/examples && touch native/kv-pager/src/bin/stress.rs native/kv-pager/examples/adapters.rs \
+    && for c in routing kv-pager kv-pager-wasm; do (cd native/$c && cargo fetch --locked); done
+RUN groupadd -g 10001 sandbox && useradd -u 10001 -g 10001 -M -d /tmp/home -s /bin/sh sandbox \
+    && mkdir -p /build /work && chown sandbox:sandbox /build /work \
+    && chmod -R a+rX /deps /fetch /usr/local/cargo /usr/local/rustup
 WORKDIR /work
-ENV NOIR_REQUIRE_GPU=1 CARGO_NET_OFFLINE=true
+USER sandbox
+ENV NOIR_REQUIRE_GPU=1 CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 HOME=/tmp/home

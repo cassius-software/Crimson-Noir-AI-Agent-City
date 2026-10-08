@@ -292,7 +292,7 @@ test('the sandbox removes its copy when the checks end, and a copy it cannot rem
   assert.deepEqual([...copies()].filter((n) => !before.has(n)), [], 'no copy is left behind')
   rmSync(tree, { recursive: true, force: true })
   const logged = []
-  removeCopy(join(tmpdir(), 'selfheal-never-made'), false, (s) => logged.push(s))
+  removeCopy(join(tmpdir(), 'selfheal-never-made'), (s) => logged.push(s))
   assert.deepEqual(logged, [], 'a copy that is already gone is nothing to report')
 })
 

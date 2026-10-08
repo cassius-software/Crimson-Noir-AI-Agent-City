@@ -10,6 +10,9 @@
 # - rust: the OS workspace's tests on CPU and GPU (lavapipe) and clippy on every target, the native crates' tests,
 #   and the WebAssembly modules rebuilt and compared with the committed ones (the air-gap check);
 # - fvps: the formal step's fast parts: the SMT theorems, the LLVM-IR call graph and the WebAssembly air gap;
+# - sandbox: the self-healing agent's zero-trust container (tools/selfheal/sandbox.mjs) tried from the inside:
+#   the escape probes (tools/sandbox/probe.sh) contained, the same probes in a weakened control, and two checks
+#   run contained (tools/sandbox/verify.mjs); the evidence is kept as an artifact;
 # - kani: the Kani proof harnesses, in groups over parallel runners, one harness at a time within a runner (the
 #   model checker's memory is the bound; a GitHub runner has 16 GB). Kani is cached between runs.
 # A failure of any job wakes the self-healing workflow (selfheal.yml), which may answer with a selfheal-* pull
@@ -101,6 +104,29 @@ jobs:
           rustup default "$RUST_TOOLCHAIN"
       - name: The SMT theorems, the IR call graph and the WebAssembly air gap
         run: sh tools/verify/fvps.sh smt && sh tools/verify/fvps.sh ir && sh tools/verify/fvps.sh wasm
+
+  # The containment of the self-healing agent's sandbox, verified empirically: every escape attempt denied inside
+  # it, the same attempts succeeding once the containment is taken away (so the probes are live), and the checks
+  # still able to run in it. Docker's network namespaces need no privilege on the runner; the whole experiment runs
+  # on a standard runner.
+  sandbox:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build the sandbox image (the toolchains, the dependencies from the lockfiles, the sandbox user)
+        run: docker build -q -t crimson-noir-selfheal-sandbox -f tools/selfheal/Dockerfile.sandbox .
+      - name: The escape probes contained, the control, and a page build and the native tests run contained
+        run: node tools/sandbox/verify.mjs --no-build --out "$RUNNER_TEMP/sandbox"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sandbox-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/sandbox/
+          if-no-files-found: ignore
+          retention-days: 30
 
   # The Kani harnesses, spread over parallel runners (each is minutes to a quarter of an hour of the checker's
   # time, and the checker runs one at a time within a job); the group names are the harnesses of

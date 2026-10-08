@@ -28,6 +28,9 @@ run_one() {
     fvps-kani)     sh tools/verify/fvps.sh kani ;;
     selfheal-test) node --test tools/selfheal/*.test.mjs ;;
     license-headers) node tools/license/headers.mjs check ;;
+    # Not in ALL: it passes only inside the docker sandbox (tools/sandbox/verify.mjs runs it there, and ci.yml's
+    # sandbox job); on a host it reports the host's escapes, which is its control.
+    sandbox-probe) sh tools/sandbox/probe.sh ;;
     *) echo "checks.sh: no check named $1" >&2; return 2 ;;
   esac
 }

@@ -1540,6 +1540,7 @@ Every source file opens with "Why does this file exist? / What breaks if it is r
 | native/routing | `lib.rs`, `layout.rs`, `math.rs`, `tests.rs`, `verify.rs` (Kani proof harnesses, `cfg(kani)` only) | The track arithmetic in dependency-free Rust, built to WebAssembly as `06_Make_Decisions/routing.wasm.ts`; its layout is defined once in each language and the two are proved equal |
 | tools/native | `build-wasm.mjs` | Builds both crates for `wasm32-unknown-unknown` with the checkout mapped to one fixed prefix (so the bytes are the same on any machine, and no module carries a builder's directory) and writes the generated modules with their sizes and SHA-256 |
 | tools/verify | `fvps.sh`, `fvps_smt.py`, `wasm_airgap.py` | The formal verification step (Phase 18): the Kani harnesses, the Z3 theorems, the WebAssembly air gap and export pin, the routing core's LLVM IR call scan; one command, run before every release bake and in CI |
+| tools/sandbox | `probe.sh`, `verify.mjs` | The zero-trust sandbox's escape probes (egress, daemon sockets, workspace-file execution, privilege, credentials) and the experiment that runs them contained, in a weakened control and beside the checks, on every pull request (`docs/zero-trust-sandbox.md`) |
 | tools/selfheal | `agent.mjs`, `checks.sh`, `failures.mjs`, `ast.mjs`, `sandbox.mjs`, `planner.mjs`, `Dockerfile.sandbox` | The self-healing agent (Phase 18): the named checks, failure parsers, syntax-tree loci, the network-off sandbox, the planners (built-in remedies, then Claude) and the bounded remediation loop that opens `selfheal-*` pull requests and never merges |
 
 ## Vehicles
@@ -1898,8 +1899,10 @@ header's timestamp is a hash of the output, not the build time; two clean bakes 
 (the workflow bakes twice and compares; verified here, SHA-256 equal).
 
 **The self-healing pipeline.** `selfheal.yml` runs when `ci.yml` or `build-release.yml` ends in failure and runs
-`tools/selfheal/agent.mjs` on the failed commit: the agent re-runs the failed checks in a fresh container with the
-network off (`Dockerfile.sandbox`) to isolate the failure, parses it (`node --test`, `cargo test`, `tsc`, `oxlint`,
+`tools/selfheal/agent.mjs` on the failed commit: the agent re-runs the failed checks in a fresh container
+(`Dockerfile.sandbox`; air-gapped, nothing of the host mounted, an unprivileged user with no capability, a
+`noexec` workspace, no secret in its environment; `docs/zero-trust-sandbox.md`, verified from the inside by
+`ci.yml`'s `sandbox` job) to isolate the failure, parses it (`node --test`, `cargo test`, `tsc`, `oxlint`,
 Kani) and maps each failure to the declaration it points at in the syntax tree (the TypeScript compiler API for
 `.ts`, brace matching for `.rs`), asks its planner for a structural patch of those declarations only (the built-in
 remedies first: a stale committed module regenerated, a stale seal re-pinned; then Claude through the Anthropic API
