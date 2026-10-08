@@ -29,3 +29,6 @@ native/*/target
 
 # Rust build output of the Crimson Noir OS workspace
 crimson_noir_os/target
+
+# Python bytecode of the verification and self-heal scripts
+__pycache__/
