@@ -12,7 +12,7 @@ interval, not an impression. Each suite carries its SIPOC line (supplier, input,
 reader knows what a failure would mean and who it would reach. A failing run keeps the tail of its output in the
 log, for the next iteration to work from.
 
-    python3 tools/stabilize/stabilize.py [--rounds N] [--only SUITE,...] [--chaos-seeds S] [--fuzz-scale K]
+    python3 tools/stabilize/stabilize.py [--rounds N] [--first-round R] [--only SUITE,...] [--chaos-seeds S] [--fuzz-scale K]
 
 What breaks if it is removed? The suites run once, on their fixed seeds, and nobody can say how often they pass.
 """
@@ -182,6 +182,7 @@ def summarize(log, defs):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rounds", type=int, default=3)
+    ap.add_argument("--first-round", type=int, default=0, help="the round number to start from (seeds follow it), so later runs draw new seeds")
     ap.add_argument("--only", default="")
     ap.add_argument("--chaos-seeds", type=int, default=2000)
     ap.add_argument("--fuzz-scale", type=int, default=3)
@@ -195,7 +196,7 @@ def main():
             sys.exit(f"no suite named {s}; suites: {', '.join(defs)}")
     log = load()
     failed = 0
-    for rnd in range(args.rounds):
+    for rnd in range(args.first_round, args.first_round + args.rounds):
         for name in wanted:
             cmd, cwd, env, seed = defs[name]["run"](rnd)
             full_env = dict(os.environ, **env)
@@ -223,7 +224,7 @@ def main():
             summarize(log, defs)
             save(log)
             s = log["suites"][name]
-            print(f"[{rnd + 1}/{args.rounds}] {name}: {'ok' if ok else 'FAILED'} in {secs}s ({seed}); "
+            print(f"[{rnd + 1 - args.first_round}/{args.rounds}] {name}: {'ok' if ok else 'FAILED'} in {secs}s ({seed}); "
                   f"{s['passes']}/{s['runs']} passes, posterior {s['posterior_mean_pass_probability']:.3f}, "
                   f"wilson lower {s['wilson_lower_95']:.3f}", flush=True)
     print(f"log: {os.path.relpath(LOG, ROOT)}")

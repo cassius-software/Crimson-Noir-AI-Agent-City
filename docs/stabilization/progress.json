@@ -1,0 +1,1155 @@
+{
+ "runs": [
+  {
+   "suite": "rust-test",
+   "round": 0,
+   "at": "2026-10-08T22:07:53+00:00",
+   "commit": "1813dae",
+   "command": "cargo test --workspace --locked -q",
+   "env": {
+    "NOIR_REQUIRE_GPU": "1"
+   },
+   "seed": "fixed seeds",
+   "ok": true,
+   "exit": 0,
+   "seconds": 30.3
+  },
+  {
+   "suite": "determinism",
+   "round": 0,
+   "at": "2026-10-08T22:07:54+00:00",
+   "commit": "1813dae",
+   "command": "cargo test -p noir_core --test determinism -q",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 0.8
+  },
+  {
+   "suite": "kernels-fuzz",
+   "round": 0,
+   "at": "2026-10-08T22:08:03+00:00",
+   "commit": "1813dae",
+   "command": "cargo test -p noir_core --test kernels_fuzz -q",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 8.6
+  },
+  {
+   "suite": "chaos",
+   "round": 0,
+   "at": "2026-10-08T22:08:06+00:00",
+   "commit": "1813dae",
+   "command": "cargo run --release -q --bin chaos -- --seeds 3000 --ops 2000 --first-seed 0 --shared-threads 4 --shared-ops 40000",
+   "env": {},
+   "seed": "seeds 0..2999",
+   "ok": true,
+   "exit": 0,
+   "seconds": 3.6
+  },
+  {
+   "suite": "stress",
+   "round": 0,
+   "at": "2026-10-08T22:08:15+00:00",
+   "commit": "1813dae",
+   "command": "cargo run --release -q --features gpu --bin stress -- --pool-mib 768 --steps 4 --seed 7",
+   "env": {},
+   "seed": "seed 7",
+   "ok": true,
+   "exit": 0,
+   "seconds": 8.6
+  },
+  {
+   "suite": "native-test",
+   "round": 0,
+   "at": "2026-10-08T22:08:25+00:00",
+   "commit": "1813dae",
+   "command": "sh tools/selfheal/checks.sh native-test",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 9.8
+  },
+  {
+   "suite": "page-test",
+   "round": 0,
+   "at": "2026-10-08T22:10:12+00:00",
+   "commit": "93b8fb2",
+   "command": "node --test src/**/*.test.ts",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 107.3
+  },
+  {
+   "suite": "page-fuzz",
+   "round": 0,
+   "at": "2026-10-08T22:10:47+00:00",
+   "commit": "93b8fb2",
+   "command": "node --test src/**/*.fuzz.test.ts",
+   "env": {
+    "FUZZ_SCALE": "3",
+    "FUZZ_SEED": "1000"
+   },
+   "seed": "FUZZ_SEED 1000",
+   "ok": true,
+   "exit": 0,
+   "seconds": 35.0
+  },
+  {
+   "suite": "rust-test",
+   "round": 1,
+   "at": "2026-10-08T22:11:13+00:00",
+   "commit": "93b8fb2",
+   "command": "cargo test --workspace --locked -q",
+   "env": {
+    "NOIR_REQUIRE_GPU": "1"
+   },
+   "seed": "fixed seeds",
+   "ok": true,
+   "exit": 0,
+   "seconds": 26.3
+  },
+  {
+   "suite": "determinism",
+   "round": 1,
+   "at": "2026-10-08T22:11:14+00:00",
+   "commit": "93b8fb2",
+   "command": "cargo test -p noir_core --test determinism -q",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 0.8
+  },
+  {
+   "suite": "kernels-fuzz",
+   "round": 1,
+   "at": "2026-10-08T22:11:23+00:00",
+   "commit": "93b8fb2",
+   "command": "cargo test -p noir_core --test kernels_fuzz -q",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 8.6
+  },
+  {
+   "suite": "chaos",
+   "round": 1,
+   "at": "2026-10-08T22:11:27+00:00",
+   "commit": "93b8fb2",
+   "command": "cargo run --release -q --bin chaos -- --seeds 3000 --ops 2000 --first-seed 3000 --shared-threads 4 --shared-ops 40000",
+   "env": {},
+   "seed": "seeds 3000..5999",
+   "ok": true,
+   "exit": 0,
+   "seconds": 3.7
+  },
+  {
+   "suite": "stress",
+   "round": 1,
+   "at": "2026-10-08T22:11:35+00:00",
+   "commit": "93b8fb2",
+   "command": "cargo run --release -q --features gpu --bin stress -- --pool-mib 768 --steps 4 --seed 8",
+   "env": {},
+   "seed": "seed 8",
+   "ok": true,
+   "exit": 0,
+   "seconds": 8.5
+  },
+  {
+   "suite": "native-test",
+   "round": 1,
+   "at": "2026-10-08T22:11:45+00:00",
+   "commit": "93b8fb2",
+   "command": "sh tools/selfheal/checks.sh native-test",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 9.5
+  },
+  {
+   "suite": "page-test",
+   "round": 1,
+   "at": "2026-10-08T22:13:33+00:00",
+   "commit": "93b8fb2",
+   "command": "node --test src/**/*.test.ts",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 108.2
+  },
+  {
+   "suite": "page-fuzz",
+   "round": 1,
+   "at": "2026-10-08T22:14:08+00:00",
+   "commit": "93b8fb2",
+   "command": "node --test src/**/*.fuzz.test.ts",
+   "env": {
+    "FUZZ_SCALE": "3",
+    "FUZZ_SEED": "1001"
+   },
+   "seed": "FUZZ_SEED 1001",
+   "ok": true,
+   "exit": 0,
+   "seconds": 35.6
+  },
+  {
+   "suite": "rust-test",
+   "round": 2,
+   "at": "2026-10-08T22:14:33+00:00",
+   "commit": "93b8fb2",
+   "command": "cargo test --workspace --locked -q",
+   "env": {
+    "NOIR_REQUIRE_GPU": "1"
+   },
+   "seed": "fixed seeds",
+   "ok": true,
+   "exit": 0,
+   "seconds": 24.3
+  },
+  {
+   "suite": "determinism",
+   "round": 2,
+   "at": "2026-10-08T22:14:33+00:00",
+   "commit": "93b8fb2",
+   "command": "cargo test -p noir_core --test determinism -q",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 0.8
+  },
+  {
+   "suite": "kernels-fuzz",
+   "round": 2,
+   "at": "2026-10-08T22:14:42+00:00",
+   "commit": "93b8fb2",
+   "command": "cargo test -p noir_core --test kernels_fuzz -q",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 8.3
+  },
+  {
+   "suite": "chaos",
+   "round": 2,
+   "at": "2026-10-08T22:14:45+00:00",
+   "commit": "93b8fb2",
+   "command": "cargo run --release -q --bin chaos -- --seeds 3000 --ops 2000 --first-seed 6000 --shared-threads 4 --shared-ops 40000",
+   "env": {},
+   "seed": "seeds 6000..8999",
+   "ok": true,
+   "exit": 0,
+   "seconds": 3.6
+  },
+  {
+   "suite": "stress",
+   "round": 2,
+   "at": "2026-10-08T22:14:54+00:00",
+   "commit": "93b8fb2",
+   "command": "cargo run --release -q --features gpu --bin stress -- --pool-mib 768 --steps 4 --seed 9",
+   "env": {},
+   "seed": "seed 9",
+   "ok": true,
+   "exit": 0,
+   "seconds": 8.5
+  },
+  {
+   "suite": "native-test",
+   "round": 2,
+   "at": "2026-10-08T22:15:03+00:00",
+   "commit": "93b8fb2",
+   "command": "sh tools/selfheal/checks.sh native-test",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 9.2
+  },
+  {
+   "suite": "page-test",
+   "round": 2,
+   "at": "2026-10-08T22:16:49+00:00",
+   "commit": "93b8fb2",
+   "command": "node --test src/**/*.test.ts",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 105.9
+  },
+  {
+   "suite": "page-fuzz",
+   "round": 2,
+   "at": "2026-10-08T22:17:25+00:00",
+   "commit": "93b8fb2",
+   "command": "node --test src/**/*.fuzz.test.ts",
+   "env": {
+    "FUZZ_SCALE": "3",
+    "FUZZ_SEED": "1002"
+   },
+   "seed": "FUZZ_SEED 1002",
+   "ok": true,
+   "exit": 0,
+   "seconds": 36.3
+  },
+  {
+   "suite": "rust-test",
+   "round": 0,
+   "at": "2026-10-08T22:18:14+00:00",
+   "commit": "93b8fb2",
+   "command": "cargo test --workspace --locked -q",
+   "env": {
+    "NOIR_REQUIRE_GPU": "1"
+   },
+   "seed": "fixed seeds",
+   "ok": true,
+   "exit": 0,
+   "seconds": 26.1
+  },
+  {
+   "suite": "determinism",
+   "round": 0,
+   "at": "2026-10-08T22:18:15+00:00",
+   "commit": "93b8fb2",
+   "command": "cargo test -p noir_core --test determinism -q",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 1.0
+  },
+  {
+   "suite": "kernels-fuzz",
+   "round": 0,
+   "at": "2026-10-08T22:18:24+00:00",
+   "commit": "93b8fb2",
+   "command": "cargo test -p noir_core --test kernels_fuzz -q",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 8.7
+  },
+  {
+   "suite": "chaos",
+   "round": 0,
+   "at": "2026-10-08T22:18:29+00:00",
+   "commit": "93b8fb2",
+   "command": "cargo run --release -q --bin chaos -- --seeds 3000 --ops 2000 --first-seed 0 --shared-threads 4 --shared-ops 40000",
+   "env": {},
+   "seed": "seeds 0..2999",
+   "ok": true,
+   "exit": 0,
+   "seconds": 5.2
+  },
+  {
+   "suite": "stress",
+   "round": 0,
+   "at": "2026-10-08T22:18:39+00:00",
+   "commit": "93b8fb2",
+   "command": "cargo run --release -q --features gpu --bin stress -- --pool-mib 768 --steps 4 --seed 7",
+   "env": {},
+   "seed": "seed 7",
+   "ok": true,
+   "exit": 0,
+   "seconds": 9.2
+  },
+  {
+   "suite": "native-test",
+   "round": 0,
+   "at": "2026-10-08T22:18:48+00:00",
+   "commit": "93b8fb2",
+   "command": "sh tools/selfheal/checks.sh native-test",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 9.6
+  },
+  {
+   "suite": "page-test",
+   "round": 0,
+   "at": "2026-10-08T22:20:36+00:00",
+   "commit": "e416f64",
+   "command": "node --test src/**/*.test.ts",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 108.3
+  },
+  {
+   "suite": "page-fuzz",
+   "round": 0,
+   "at": "2026-10-08T22:21:12+00:00",
+   "commit": "e416f64",
+   "command": "node --test src/**/*.fuzz.test.ts",
+   "env": {
+    "FUZZ_SCALE": "3",
+    "FUZZ_SEED": "1000"
+   },
+   "seed": "FUZZ_SEED 1000",
+   "ok": true,
+   "exit": 0,
+   "seconds": 35.3
+  },
+  {
+   "suite": "rust-test",
+   "round": 1,
+   "at": "2026-10-08T22:21:36+00:00",
+   "commit": "e416f64",
+   "command": "cargo test --workspace --locked -q",
+   "env": {
+    "NOIR_REQUIRE_GPU": "1"
+   },
+   "seed": "fixed seeds",
+   "ok": true,
+   "exit": 0,
+   "seconds": 24.2
+  },
+  {
+   "suite": "determinism",
+   "round": 1,
+   "at": "2026-10-08T22:21:37+00:00",
+   "commit": "e416f64",
+   "command": "cargo test -p noir_core --test determinism -q",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 0.7
+  },
+  {
+   "suite": "kernels-fuzz",
+   "round": 1,
+   "at": "2026-10-08T22:21:45+00:00",
+   "commit": "e416f64",
+   "command": "cargo test -p noir_core --test kernels_fuzz -q",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 8.2
+  },
+  {
+   "suite": "chaos",
+   "round": 1,
+   "at": "2026-10-08T22:21:49+00:00",
+   "commit": "e416f64",
+   "command": "cargo run --release -q --bin chaos -- --seeds 3000 --ops 2000 --first-seed 3000 --shared-threads 4 --shared-ops 40000",
+   "env": {},
+   "seed": "seeds 3000..5999",
+   "ok": true,
+   "exit": 0,
+   "seconds": 3.6
+  },
+  {
+   "suite": "stress",
+   "round": 1,
+   "at": "2026-10-08T22:21:58+00:00",
+   "commit": "e416f64",
+   "command": "cargo run --release -q --features gpu --bin stress -- --pool-mib 768 --steps 4 --seed 8",
+   "env": {},
+   "seed": "seed 8",
+   "ok": true,
+   "exit": 0,
+   "seconds": 8.9
+  },
+  {
+   "suite": "native-test",
+   "round": 1,
+   "at": "2026-10-08T22:22:07+00:00",
+   "commit": "e416f64",
+   "command": "sh tools/selfheal/checks.sh native-test",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 9.0
+  },
+  {
+   "suite": "page-test",
+   "round": 1,
+   "at": "2026-10-08T22:23:55+00:00",
+   "commit": "e416f64",
+   "command": "node --test src/**/*.test.ts",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 108.8
+  },
+  {
+   "suite": "page-fuzz",
+   "round": 1,
+   "at": "2026-10-08T22:24:31+00:00",
+   "commit": "e416f64",
+   "command": "node --test src/**/*.fuzz.test.ts",
+   "env": {
+    "FUZZ_SCALE": "3",
+    "FUZZ_SEED": "1001"
+   },
+   "seed": "FUZZ_SEED 1001",
+   "ok": true,
+   "exit": 0,
+   "seconds": 35.4
+  },
+  {
+   "suite": "rust-test",
+   "round": 2,
+   "at": "2026-10-08T22:24:55+00:00",
+   "commit": "e416f64",
+   "command": "cargo test --workspace --locked -q",
+   "env": {
+    "NOIR_REQUIRE_GPU": "1"
+   },
+   "seed": "fixed seeds",
+   "ok": true,
+   "exit": 0,
+   "seconds": 24.4
+  },
+  {
+   "suite": "determinism",
+   "round": 2,
+   "at": "2026-10-08T22:24:56+00:00",
+   "commit": "e416f64",
+   "command": "cargo test -p noir_core --test determinism -q",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 0.8
+  },
+  {
+   "suite": "kernels-fuzz",
+   "round": 2,
+   "at": "2026-10-08T22:25:04+00:00",
+   "commit": "e416f64",
+   "command": "cargo test -p noir_core --test kernels_fuzz -q",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 8.5
+  },
+  {
+   "suite": "chaos",
+   "round": 2,
+   "at": "2026-10-08T22:25:08+00:00",
+   "commit": "e416f64",
+   "command": "cargo run --release -q --bin chaos -- --seeds 3000 --ops 2000 --first-seed 6000 --shared-threads 4 --shared-ops 40000",
+   "env": {},
+   "seed": "seeds 6000..8999",
+   "ok": true,
+   "exit": 0,
+   "seconds": 3.6
+  },
+  {
+   "suite": "stress",
+   "round": 2,
+   "at": "2026-10-08T22:25:16+00:00",
+   "commit": "e416f64",
+   "command": "cargo run --release -q --features gpu --bin stress -- --pool-mib 768 --steps 4 --seed 9",
+   "env": {},
+   "seed": "seed 9",
+   "ok": true,
+   "exit": 0,
+   "seconds": 8.4
+  },
+  {
+   "suite": "native-test",
+   "round": 2,
+   "at": "2026-10-08T22:25:26+00:00",
+   "commit": "e416f64",
+   "command": "sh tools/selfheal/checks.sh native-test",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 9.6
+  },
+  {
+   "suite": "page-test",
+   "round": 2,
+   "at": "2026-10-08T22:27:13+00:00",
+   "commit": "e416f64",
+   "command": "node --test src/**/*.test.ts",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 107.2
+  },
+  {
+   "suite": "page-fuzz",
+   "round": 2,
+   "at": "2026-10-08T22:27:50+00:00",
+   "commit": "e416f64",
+   "command": "node --test src/**/*.fuzz.test.ts",
+   "env": {
+    "FUZZ_SCALE": "3",
+    "FUZZ_SEED": "1002"
+   },
+   "seed": "FUZZ_SEED 1002",
+   "ok": true,
+   "exit": 0,
+   "seconds": 36.4
+  },
+  {
+   "suite": "rust-test",
+   "round": 3,
+   "at": "2026-10-08T22:28:13+00:00",
+   "commit": "e416f64",
+   "command": "cargo test --workspace --locked -q",
+   "env": {
+    "NOIR_REQUIRE_GPU": "1"
+   },
+   "seed": "fixed seeds",
+   "ok": true,
+   "exit": 0,
+   "seconds": 23.7
+  },
+  {
+   "suite": "determinism",
+   "round": 3,
+   "at": "2026-10-08T22:28:14+00:00",
+   "commit": "e416f64",
+   "command": "cargo test -p noir_core --test determinism -q",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 0.7
+  },
+  {
+   "suite": "kernels-fuzz",
+   "round": 3,
+   "at": "2026-10-08T22:28:22+00:00",
+   "commit": "e416f64",
+   "command": "cargo test -p noir_core --test kernels_fuzz -q",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 8.2
+  },
+  {
+   "suite": "chaos",
+   "round": 3,
+   "at": "2026-10-08T22:28:26+00:00",
+   "commit": "e416f64",
+   "command": "cargo run --release -q --bin chaos -- --seeds 3000 --ops 2000 --first-seed 9000 --shared-threads 4 --shared-ops 40000",
+   "env": {},
+   "seed": "seeds 9000..11999",
+   "ok": true,
+   "exit": 0,
+   "seconds": 3.7
+  },
+  {
+   "suite": "stress",
+   "round": 3,
+   "at": "2026-10-08T22:28:34+00:00",
+   "commit": "e416f64",
+   "command": "cargo run --release -q --features gpu --bin stress -- --pool-mib 768 --steps 4 --seed 10",
+   "env": {},
+   "seed": "seed 10",
+   "ok": true,
+   "exit": 0,
+   "seconds": 8.4
+  },
+  {
+   "suite": "native-test",
+   "round": 3,
+   "at": "2026-10-08T22:28:44+00:00",
+   "commit": "e416f64",
+   "command": "sh tools/selfheal/checks.sh native-test",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 9.3
+  },
+  {
+   "suite": "page-test",
+   "round": 3,
+   "at": "2026-10-08T22:30:30+00:00",
+   "commit": "e416f64",
+   "command": "node --test src/**/*.test.ts",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 106.2
+  },
+  {
+   "suite": "page-fuzz",
+   "round": 3,
+   "at": "2026-10-08T22:31:05+00:00",
+   "commit": "e416f64",
+   "command": "node --test src/**/*.fuzz.test.ts",
+   "env": {
+    "FUZZ_SCALE": "3",
+    "FUZZ_SEED": "1003"
+   },
+   "seed": "FUZZ_SEED 1003",
+   "ok": true,
+   "exit": 0,
+   "seconds": 34.7
+  },
+  {
+   "suite": "rust-test",
+   "round": 4,
+   "at": "2026-10-08T22:31:29+00:00",
+   "commit": "e416f64",
+   "command": "cargo test --workspace --locked -q",
+   "env": {
+    "NOIR_REQUIRE_GPU": "1"
+   },
+   "seed": "fixed seeds",
+   "ok": true,
+   "exit": 0,
+   "seconds": 24.6
+  },
+  {
+   "suite": "determinism",
+   "round": 4,
+   "at": "2026-10-08T22:31:30+00:00",
+   "commit": "e416f64",
+   "command": "cargo test -p noir_core --test determinism -q",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 0.7
+  },
+  {
+   "suite": "kernels-fuzz",
+   "round": 4,
+   "at": "2026-10-08T22:31:38+00:00",
+   "commit": "e416f64",
+   "command": "cargo test -p noir_core --test kernels_fuzz -q",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 8.4
+  },
+  {
+   "suite": "chaos",
+   "round": 4,
+   "at": "2026-10-08T22:31:42+00:00",
+   "commit": "e416f64",
+   "command": "cargo run --release -q --bin chaos -- --seeds 3000 --ops 2000 --first-seed 12000 --shared-threads 4 --shared-ops 40000",
+   "env": {},
+   "seed": "seeds 12000..14999",
+   "ok": true,
+   "exit": 0,
+   "seconds": 3.8
+  },
+  {
+   "suite": "stress",
+   "round": 4,
+   "at": "2026-10-08T22:31:50+00:00",
+   "commit": "e416f64",
+   "command": "cargo run --release -q --features gpu --bin stress -- --pool-mib 768 --steps 4 --seed 11",
+   "env": {},
+   "seed": "seed 11",
+   "ok": true,
+   "exit": 0,
+   "seconds": 8.3
+  },
+  {
+   "suite": "native-test",
+   "round": 4,
+   "at": "2026-10-08T22:32:00+00:00",
+   "commit": "e416f64",
+   "command": "sh tools/selfheal/checks.sh native-test",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 9.2
+  },
+  {
+   "suite": "page-test",
+   "round": 4,
+   "at": "2026-10-08T22:33:48+00:00",
+   "commit": "e416f64",
+   "command": "node --test src/**/*.test.ts",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 108.5
+  },
+  {
+   "suite": "page-fuzz",
+   "round": 4,
+   "at": "2026-10-08T22:34:25+00:00",
+   "commit": "e416f64",
+   "command": "node --test src/**/*.fuzz.test.ts",
+   "env": {
+    "FUZZ_SCALE": "3",
+    "FUZZ_SEED": "1004"
+   },
+   "seed": "FUZZ_SEED 1004",
+   "ok": true,
+   "exit": 0,
+   "seconds": 37.4
+  },
+  {
+   "suite": "rust-test",
+   "round": 5,
+   "at": "2026-10-08T22:34:51+00:00",
+   "commit": "e416f64",
+   "command": "cargo test --workspace --locked -q",
+   "env": {
+    "NOIR_REQUIRE_GPU": "1"
+   },
+   "seed": "fixed seeds",
+   "ok": true,
+   "exit": 0,
+   "seconds": 25.3
+  },
+  {
+   "suite": "determinism",
+   "round": 5,
+   "at": "2026-10-08T22:34:52+00:00",
+   "commit": "e416f64",
+   "command": "cargo test -p noir_core --test determinism -q",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 0.8
+  },
+  {
+   "suite": "kernels-fuzz",
+   "round": 5,
+   "at": "2026-10-08T22:35:00+00:00",
+   "commit": "e416f64",
+   "command": "cargo test -p noir_core --test kernels_fuzz -q",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 8.3
+  },
+  {
+   "suite": "chaos",
+   "round": 5,
+   "at": "2026-10-08T22:35:04+00:00",
+   "commit": "e416f64",
+   "command": "cargo run --release -q --bin chaos -- --seeds 3000 --ops 2000 --first-seed 15000 --shared-threads 4 --shared-ops 40000",
+   "env": {},
+   "seed": "seeds 15000..17999",
+   "ok": true,
+   "exit": 0,
+   "seconds": 3.9
+  },
+  {
+   "suite": "stress",
+   "round": 5,
+   "at": "2026-10-08T22:35:12+00:00",
+   "commit": "e416f64",
+   "command": "cargo run --release -q --features gpu --bin stress -- --pool-mib 768 --steps 4 --seed 12",
+   "env": {},
+   "seed": "seed 12",
+   "ok": true,
+   "exit": 0,
+   "seconds": 8.7
+  },
+  {
+   "suite": "native-test",
+   "round": 5,
+   "at": "2026-10-08T22:35:22+00:00",
+   "commit": "e416f64",
+   "command": "sh tools/selfheal/checks.sh native-test",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 9.4
+  },
+  {
+   "suite": "page-test",
+   "round": 5,
+   "at": "2026-10-08T22:37:14+00:00",
+   "commit": "e416f64",
+   "command": "node --test src/**/*.test.ts",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 111.8
+  },
+  {
+   "suite": "page-fuzz",
+   "round": 5,
+   "at": "2026-10-08T22:37:50+00:00",
+   "commit": "e416f64",
+   "command": "node --test src/**/*.fuzz.test.ts",
+   "env": {
+    "FUZZ_SCALE": "3",
+    "FUZZ_SEED": "1005"
+   },
+   "seed": "FUZZ_SEED 1005",
+   "ok": true,
+   "exit": 0,
+   "seconds": 36.6
+  },
+  {
+   "suite": "rust-test",
+   "round": 6,
+   "at": "2026-10-08T22:38:15+00:00",
+   "commit": "e416f64",
+   "command": "cargo test --workspace --locked -q",
+   "env": {
+    "NOIR_REQUIRE_GPU": "1"
+   },
+   "seed": "fixed seeds",
+   "ok": true,
+   "exit": 0,
+   "seconds": 24.8
+  },
+  {
+   "suite": "determinism",
+   "round": 6,
+   "at": "2026-10-08T22:38:16+00:00",
+   "commit": "e416f64",
+   "command": "cargo test -p noir_core --test determinism -q",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 0.7
+  },
+  {
+   "suite": "kernels-fuzz",
+   "round": 6,
+   "at": "2026-10-08T22:38:24+00:00",
+   "commit": "e416f64",
+   "command": "cargo test -p noir_core --test kernels_fuzz -q",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 8.7
+  },
+  {
+   "suite": "chaos",
+   "round": 6,
+   "at": "2026-10-08T22:38:28+00:00",
+   "commit": "e416f64",
+   "command": "cargo run --release -q --bin chaos -- --seeds 3000 --ops 2000 --first-seed 18000 --shared-threads 4 --shared-ops 40000",
+   "env": {},
+   "seed": "seeds 18000..20999",
+   "ok": true,
+   "exit": 0,
+   "seconds": 3.6
+  },
+  {
+   "suite": "stress",
+   "round": 6,
+   "at": "2026-10-08T22:38:37+00:00",
+   "commit": "e416f64",
+   "command": "cargo run --release -q --features gpu --bin stress -- --pool-mib 768 --steps 4 --seed 13",
+   "env": {},
+   "seed": "seed 13",
+   "ok": true,
+   "exit": 0,
+   "seconds": 8.7
+  },
+  {
+   "suite": "native-test",
+   "round": 6,
+   "at": "2026-10-08T22:38:46+00:00",
+   "commit": "e416f64",
+   "command": "sh tools/selfheal/checks.sh native-test",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 9.5
+  },
+  {
+   "suite": "page-test",
+   "round": 6,
+   "at": "2026-10-08T22:40:35+00:00",
+   "commit": "e416f64",
+   "command": "node --test src/**/*.test.ts",
+   "env": {},
+   "seed": "fixed",
+   "ok": true,
+   "exit": 0,
+   "seconds": 108.8
+  },
+  {
+   "suite": "page-fuzz",
+   "round": 6,
+   "at": "2026-10-08T22:41:11+00:00",
+   "commit": "e416f64",
+   "command": "node --test src/**/*.fuzz.test.ts",
+   "env": {
+    "FUZZ_SCALE": "3",
+    "FUZZ_SEED": "1006"
+   },
+   "seed": "FUZZ_SEED 1006",
+   "ok": true,
+   "exit": 0,
+   "seconds": 35.6
+  }
+ ],
+ "suites": {
+  "rust-test": {
+   "sipoc": {
+    "supplier": "crimson_noir_os workspace (noir_core, the hosted runtime, the boot crate's tests)",
+    "input": "the committed sources, containment.nix and containment.lock",
+    "process": "cargo test --workspace --locked (CPU, and the GPU twin on lavapipe when NOIR_REQUIRE_GPU=1)",
+    "output": "every unit, determinism, kernel-fuzz, terminal-fuzz and GPU-twin test green",
+    "customer": "the release bake (build-release.yml) and the self-test the booted image runs"
+   },
+   "runs": 10,
+   "passes": 10,
+   "failures": 0,
+   "pass_rate": 1.0,
+   "posterior_mean_pass_probability": 0.9166666666666666,
+   "wilson_lower_95": 0.7224671969739421,
+   "seconds_total": 254.0,
+   "last": "2026-10-08T22:38:15+00:00"
+  },
+  "determinism": {
+   "sipoc": {
+    "supplier": "noir_core (kernels.rs, lanes.rs, matrix.rs, system.rs, term.rs)",
+    "input": "the scripted run of the locked configuration, run whole and tick by tick",
+    "process": "cargo test -p noir_core --test determinism",
+    "output": "bit-identical matrices, the pinned fingerprint 0x83765bab, zero hot-path allocations",
+    "customer": "the booted image's self-test, which must reproduce the build machine's answer"
+   },
+   "runs": 10,
+   "passes": 10,
+   "failures": 0,
+   "pass_rate": 1.0,
+   "posterior_mean_pass_probability": 0.9166666666666666,
+   "wilson_lower_95": 0.7224671969739421,
+   "seconds_total": 7.8,
+   "last": "2026-10-08T22:38:16+00:00"
+  },
+  "kernels-fuzz": {
+   "sipoc": {
+    "supplier": "noir_core kernels (the scalar reference and the SIMD lanes)",
+    "input": "seeded adversarial rows and worlds (masks of all ones, NaN positions, extreme weights)",
+    "process": "cargo test -p noir_core --test kernels_fuzz",
+    "output": "the SIMD tick leaves the scalar tick's bits; a tick touches only its own row",
+    "customer": "containment (the dropped-pointer and loop-breaker defenses) and the GPU twin"
+   },
+   "runs": 10,
+   "passes": 10,
+   "failures": 0,
+   "pass_rate": 1.0,
+   "posterior_mean_pass_probability": 0.9166666666666666,
+   "wilson_lower_95": 0.7224671969739421,
+   "seconds_total": 84.5,
+   "last": "2026-10-08T22:38:24+00:00"
+  },
+  "chaos": {
+   "sipoc": {
+    "supplier": "native/kv-pager (the structure-of-arrays page table)",
+    "input": "3000 fresh seeds a round x 2,000 chaotic spawn/fork/append/despawn ops, pools of 4..128 pages, three keyings",
+    "process": "cargo run --release --bin chaos -- --first-seed <round x seeds>",
+    "output": "no page lost or mapped twice, every agent reads back its tokens, no false refusal, every page reclaimed",
+    "customer": "a native host's paged attention (corrupt attention is the failure this guards)"
+   },
+   "runs": 10,
+   "passes": 10,
+   "failures": 0,
+   "pass_rate": 1.0,
+   "posterior_mean_pass_probability": 0.9166666666666666,
+   "wilson_lower_95": 0.7224671969739421,
+   "seconds_total": 38.3,
+   "last": "2026-10-08T22:38:28+00:00"
+  },
+  "stress": {
+   "sipoc": {
+    "supplier": "native/kv-pager GPU pool and the paged-attention WGSL kernel",
+    "input": "100 agents in 10 squads on a 16x16 grid, a fixed pool, synthetic keys and values, seed <round>",
+    "process": "cargo run --release --features gpu --bin stress -- --pool-mib 768 --steps 4 --seed <round>",
+    "output": "every agent's attention equals a CPU reference from its own tokens; the no-sharing baseline is refused",
+    "customer": "the local model's decode on a native host"
+   },
+   "runs": 10,
+   "passes": 10,
+   "failures": 0,
+   "pass_rate": 1.0,
+   "posterior_mean_pass_probability": 0.9166666666666666,
+   "wilson_lower_95": 0.7224671969739421,
+   "seconds_total": 86.2,
+   "last": "2026-10-08T22:38:37+00:00"
+  },
+  "native-test": {
+   "sipoc": {
+    "supplier": "native/routing, native/kv-pager, native/kv-pager-wasm",
+    "input": "the committed sources",
+    "process": "cargo test in each crate (the chaos property tests among them)",
+    "output": "every native test green",
+    "customer": "the page's WebAssembly modules (the air-gap check rebuilds them from these crates)"
+   },
+   "runs": 10,
+   "passes": 10,
+   "failures": 0,
+   "pass_rate": 1.0,
+   "posterior_mean_pass_probability": 0.9166666666666666,
+   "wilson_lower_95": 0.7224671969739421,
+   "seconds_total": 94.1,
+   "last": "2026-10-08T22:38:46+00:00"
+  },
+  "page-test": {
+   "sipoc": {
+    "supplier": "src/ (the page's ten stages)",
+    "input": "the committed sources",
+    "process": "node --test src/**/*.test.ts",
+    "output": "the whole page suite green (the drivers' hazard table held to its reference among them)",
+    "customer": "the single-file build the page ships as"
+   },
+   "runs": 10,
+   "passes": 10,
+   "failures": 0,
+   "pass_rate": 1.0,
+   "posterior_mean_pass_probability": 0.9166666666666666,
+   "wilson_lower_95": 0.7224671969739421,
+   "seconds_total": 1081.0,
+   "last": "2026-10-08T22:40:35+00:00"
+  },
+  "page-fuzz": {
+   "sipoc": {
+    "supplier": "the seeded property suites (src/**/*.fuzz.test.ts, property.ts)",
+    "input": "FUZZ_SCALE=3, FUZZ_SEED=<round> (cases the fixed seeds never draw)",
+    "process": "node --test src/**/*.fuzz.test.ts",
+    "output": "every property holds on this round's cases; a failure prints the seed and run that replay it",
+    "customer": "the nightly fuzz workflow (fuzz.yml) and the audits"
+   },
+   "runs": 10,
+   "passes": 10,
+   "failures": 0,
+   "pass_rate": 1.0,
+   "posterior_mean_pass_probability": 0.9166666666666666,
+   "wilson_lower_95": 0.7224671969739421,
+   "seconds_total": 358.3,
+   "last": "2026-10-08T22:41:11+00:00"
+  }
+ },
+ "generated": "2026-10-08T22:41:11+00:00",
+ "commit": "e416f64",
+ "note": "posterior_mean_pass_probability is the mean of Beta(passes + 1, failures + 1), the pass probability under a uniform prior; wilson_lower_95 is the Wilson score interval's lower bound at 95%."
+}

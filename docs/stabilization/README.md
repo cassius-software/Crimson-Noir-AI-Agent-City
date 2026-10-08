@@ -12,12 +12,12 @@ claims. What breaks if it is removed? The log is a file of numbers with no state
 ## Running the loop
 
 ```sh
-python3 tools/stabilize/stabilize.py --rounds 3 --require-gpu --chaos-seeds 3000 --fuzz-scale 3
+python3 tools/stabilize/stabilize.py --rounds 3 --first-round 10 --require-gpu --chaos-seeds 3000 --fuzz-scale 3
 ```
 
 Each round runs every suite once; the chaos fuzzer draws a fresh block of seeds each round and the page's property
 suites a fresh `FUZZ_SEED`, so rounds sample new cases rather than replaying the same ones. `--only chaos,page-fuzz`
-runs a subset. The loop exits 1 if any run failed, and keeps the failing run's output tail in the log for the next
+runs a subset; `--first-round` sets the round number the seeds follow, so a later run draws seeds no earlier run drew. The loop exits 1 if any run failed, and keeps the failing run's output tail in the log for the next
 iteration to work from. `--require-gpu` makes the GPU twin's absence a failure (CI sets it; a machine with Mesa's
 lavapipe passes).
 
