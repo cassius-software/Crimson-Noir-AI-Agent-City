@@ -1,0 +1,58 @@
+# Why does this file exist? The seeded property suites (02_Define_The_Rules/property.ts; the *.fuzz.test.ts files)
+# run in ci.yml on every change with their fixed seeds, so a change is judged against the same cases every time.
+# This workflow runs the same suites once a night with every property's case count multiplied (FUZZ_SCALE) and its
+# seed offset by the run number (FUZZ_SEED), so each night draws cases the fixed seeds never do, and a defect the
+# audits did not reach surfaces on its own, before anyone asks for an audit. A failure prints the seed and run count
+# that replay it with no knob set, so the finding is reproduced locally with the printed `{ seed, runs }`.
+# `workflow_dispatch` runs it on demand, with the scale and seed of one's choosing.
+# What breaks if it is removed? New cases are drawn only when someone runs an audit.
+
+name: fuzz
+
+on:
+  schedule:
+    - cron: '17 3 * * *'   # nightly, 03:17 UTC
+  workflow_dispatch:
+    inputs:
+      scale:
+        description: The multiplier on every property's case count (FUZZ_SCALE)
+        required: false
+        default: '20'
+        type: string
+      seed:
+        description: Added to every property's seed (FUZZ_SEED; the run number when empty)
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  page:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: The property suites, scaled and from a fresh seed
+        env:
+          FUZZ_SCALE: ${{ inputs.scale || '20' }}
+          FUZZ_SEED: ${{ inputs.seed || github.run_number }}
+        run: |
+          echo "FUZZ_SCALE=$FUZZ_SCALE FUZZ_SEED=$FUZZ_SEED"
+          node --test "src/**/*.fuzz.test.ts"

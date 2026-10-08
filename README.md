@@ -1250,7 +1250,9 @@ its own physics of the city and of every player's car, and is the only word on w
 physics realm is the prediction that hides the latency.
 
 - **The host** (`10_Network/replication.node.ts`) is Node-only and never bundled: `npm run serve:net` starts it (Node 22
-  strips the types; `NET_HOST`, `NET_PORT`, `NET_SECRET`, `NET_SEED`, `NET_CARS`, `NET_TICK_HZ`), and it prints its
+  strips the types; `NET_HOST`, `NET_PORT`, `NET_SECRET`, `NET_SEED`, `NET_CARS`, `NET_TICK_HZ`, and `NET_TRUST_PROXY=1`
+  behind the operator's proxy, so the failure throttle keys on the address the proxy forwards rather than the proxy's
+  own), and it prints its
   address, the world it holds (`city/1337/36` unless `NET_SEED` or `NET_CARS` says otherwise: the seed's city and
   the size of its fleet) and an operator token good for a day. It is dependency-free: `node:http` takes the upgrade,
   the RFC 6455 frames are read and written by hand, ping is answered with pong, close is a handshake. Session tokens
@@ -1423,7 +1425,9 @@ physics realm is the prediction that hides the latency.
   through the podium east of the spawn sidewalk, an injected velocity of three runs, a door into a car 284 m away, a
   car claimed beside the player but off every ring, a door out of a car never taken, and a wheel never taken.
 - **Fuzzing and the parity proof** (Phase 13). Seeded, replayable property suites
-  (`02_Define_The_Rules/property.ts`) fuzz every layer:
+  (`02_Define_The_Rules/property.ts`) fuzz every layer, with their fixed seeds on every change (`ci.yml`) and, every
+  night, at twenty times the case count from a fresh seed (`.github/workflows/fuzz.yml`: `FUZZ_SCALE` and
+  `FUZZ_SEED`; a failure prints the `{ seed, runs }` that replay it with no knob set):
   - the protocol core (`protocol.fuzz.test.ts`): validators total, closed and idempotent over 50,000 near misses;
     seals refused for any change; the room's invariants over 400 adversarial sessions on a chaotic clock;
   - the host over real sockets (`host.fuzz.test.ts`): 360 hostile connections a run (random bytes, broken upgrades,

@@ -28,7 +28,7 @@ import {
   type ClientMessage, type InputMessage, type RemotePlayer, type FootRun, type Run, type ServerMessage,
 } from './replication.ts'
 import {
-  acceptKey, AUTH_FAILURES, closePayload, loggable, MIN_SECRET, mintToken, nodeMac, OP, offeredToken, PINGS_PER_SECOND, readFrame, startHost, verifyToken,
+  acceptKey, AUTH_FAILURES, closePayload, forwardedFor, loggable, MIN_SECRET, mintToken, nodeMac, OP, offeredToken, PINGS_PER_SECOND, readFrame, startHost, verifyToken,
   writeFrame, type Host, type HostOptions,
 } from './replication.node.ts'
 
@@ -125,7 +125,7 @@ function maskedFrame(opcode: number, payload: Buffer = Buffer.alloc(0)): Buffer 
 }
 
 /** An upgrade over a raw socket: the status line and headers the host answers with, and the socket. */
-function rawUpgrade(host: Host, protocol: string | null): Promise<{ socket: Socket; chunks: Buffer[]; head: string }> {
+function rawUpgrade(host: Host, protocol: string | null, headers: string[] = []): Promise<{ socket: Socket; chunks: Buffer[]; head: string }> {
   return new Promise((resolve, reject) => {
     const socket = connect(host.port, host.host)
     const chunks: Buffer[] = []
@@ -146,7 +146,8 @@ function rawUpgrade(host: Host, protocol: string | null): Promise<{ socket: Sock
     socket.on('close', done)
     socket.on('connect', () => {
       const proto = protocol === null ? '' : `Sec-WebSocket-Protocol: ${protocol}\r\n`
-      socket.write(`GET / HTTP/1.1\r\nHost: ${host.host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n${proto}\r\n`)
+      const extra = headers.map((h) => `${h}\r\n`).join('')
+      socket.write(`GET / HTTP/1.1\r\nHost: ${host.host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n${proto}${extra}\r\n`)
     })
   })
 }
@@ -229,6 +230,52 @@ test('the upgrade\'s token: onyx.4 and exactly one auth entry; the host\'s seals
 })
 
 // ---------------------------------------------------------------- over a socket
+
+test('behind a trusted proxy the failure throttle keys on the address the proxy forwards: one client\'s bad tokens never throttle another\'s; a host that trusts no proxy ignores the header', async () => {
+  // The pure reading: the last entry (the one the nearest proxy appended), only when it is an IP literal.
+  assert.equal(forwardedFor(undefined), null)
+  assert.equal(forwardedFor('203.0.113.5'), '203.0.113.5')
+  assert.equal(forwardedFor(' 198.51.100.7 , 203.0.113.5 '), '203.0.113.5', 'a balancer before the proxy: the proxy\'s entry is last')
+  assert.equal(forwardedFor(['198.51.100.7', '2001:db8::1']), '2001:db8::1', 'a repeated header is joined')
+  assert.equal(forwardedFor('::ffff:203.0.113.5'), '::ffff:203.0.113.5')
+  for (const bad of ['', 'unknown', 'evil.example', '203.0.113.5:443', '[2001:db8::1]', `1.${'1'.repeat(60)}`, '203.0.113.5\u0000']) assert.equal(forwardedFor(bad), null, JSON.stringify(bad))
+  // A trusting host: each forwarded address has its own budget, and the socket's address is the fallback.
+  const trusting = await plane({ trustProxy: true })
+  try {
+    const head = async (headers: string[]): Promise<string> => {
+      const r = await rawUpgrade(trusting, `${SUBPROTOCOL}, ${AUTH_PREFIX}forged`, headers)
+      r.socket.destroy()
+      return r.head
+    }
+    for (let i = 0; i < AUTH_FAILURES.burst; i++) assert.match(await head(['X-Forwarded-For: 203.0.113.5']), /^HTTP\/1\.1 401 /, `client A's failure ${i}`)
+    assert.match(await head(['X-Forwarded-For: 203.0.113.5']), /^HTTP\/1\.1 429 /, 'client A has spent its failures')
+    assert.match(await head(['X-Forwarded-For: 203.0.113.6']), /^HTTP\/1\.1 401 /, 'client B is not throttled by A')
+    assert.match(await head(['X-Forwarded-For: 198.51.100.7, 203.0.113.5']), /^HTTP\/1\.1 429 /, 'the proxy\'s own entry names the client, whatever a balancer wrote before it')
+    for (let i = 0; i < AUTH_FAILURES.burst; i++) assert.match(await head([]), /^HTTP\/1\.1 401 /, `the socket's own address, failure ${i}`)
+    assert.match(await head([]), /^HTTP\/1\.1 429 /, 'the socket address has its own budget')
+    assert.match(await head(['X-Forwarded-For: not-an-address']), /^HTTP\/1\.1 429 /, 'a header that is no address falls back to the socket')
+    assert.match(await head(['X-Forwarded-For: 203.0.113.7']), /^HTTP\/1\.1 401 /, 'a fresh client is still answered')
+    const good = await rawUpgrade(trusting, `${SUBPROTOCOL}, ${AUTH_PREFIX}${trusting.token('Ada')}`, ['X-Forwarded-For: 203.0.113.5'])
+    assert.match(good.head, /^HTTP\/1\.1 101 /, 'a good token from a throttled client is still admitted')
+    good.socket.destroy()
+    await until(() => trusting.connections() === 0, 'the good socket let go')
+  } finally {
+    await trusting.close()
+  }
+  // A host that trusts no proxy: the header changes nothing, so a direct client cannot buy fresh budgets by inventing addresses.
+  const direct = await plane()
+  try {
+    const head = async (headers: string[]): Promise<string> => {
+      const r = await rawUpgrade(direct, `${SUBPROTOCOL}, ${AUTH_PREFIX}forged`, headers)
+      r.socket.destroy()
+      return r.head
+    }
+    for (let i = 0; i < AUTH_FAILURES.burst; i++) assert.match(await head([`X-Forwarded-For: 203.0.113.${i}`]), /^HTTP\/1\.1 401 /)
+    assert.match(await head(['X-Forwarded-For: 203.0.113.99']), /^HTTP\/1\.1 429 /, 'one socket address, one budget, whatever the header says')
+  } finally {
+    await direct.close()
+  }
+})
 
 test('no upgrade without a good token: missing, forged, expired or another secret\'s is a 401 with no socket; an address that keeps failing gets 429s, but a good token still gets in', async () => {
   const host = await plane()
