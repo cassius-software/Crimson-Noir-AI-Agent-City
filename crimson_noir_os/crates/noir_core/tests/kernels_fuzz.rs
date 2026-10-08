@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It is the adversarial property suite over the core's public API: the branchless kernels,
 //! the Global Matrix and its scripted run, the bitonic network and the configuration parser, driven by a seeded
 //! splitmix64 so every failing case names the seed that replays it. Each test pins a bound the design claims and an

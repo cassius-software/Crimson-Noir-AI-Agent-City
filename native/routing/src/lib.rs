@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! The track arithmetic a car fleet runs every step (src/06_Make_Decisions/tracks.ts: pose_at, project_onto,
 //! next_stop, speed_limit_at, over rings of straights on lane lines and quadratic Bézier corners with an arc-length
 //! look-up table), as a dependency-free WebAssembly core with a C ABI over linear memory.

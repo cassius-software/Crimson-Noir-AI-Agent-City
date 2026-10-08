@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It proves the quality autoscaler (governor.ts) on the top of its range, the MAXIMUM
  * profile: a console-class desktop (8 cores / 16 threads, a discrete RDNA2-class GPU of about 10 TFLOPS, 16 GB or

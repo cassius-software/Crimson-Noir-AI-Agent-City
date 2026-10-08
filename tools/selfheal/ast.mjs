@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban
+// SPDX-License-Identifier: MIT
+// Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 /**
  * Why does this file exist? It is the map from a failure's file and line to the syntax tree: the smallest
  * declaration that contains the line (a function, method, class, variable statement or interface in TypeScript and

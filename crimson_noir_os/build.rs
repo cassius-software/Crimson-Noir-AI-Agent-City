@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It is the declarative configuration's generator for the hosted runtime: it reads
 //! `containment.nix`, refuses it unless it obeys the system's rules and matches the digest pinned in
 //! `containment.lock`, runs the self-test's scripted swarm on the build machine, and writes the locked tables

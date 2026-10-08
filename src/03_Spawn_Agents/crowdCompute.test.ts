@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? crowd.wgsl and the two halves of the crowd must agree byte for byte (uniform
  * layout, bindings, readback offsets, the render frame), and the WGSL mirrors of the civic rules must agree

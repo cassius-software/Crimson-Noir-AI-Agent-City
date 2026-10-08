@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 """
 Why does this file exist? It is the SMT half of the formal verification step (tools/verify/fvps.sh): the index
 arithmetic the kernels and the routing core are built from, stated as theorems over 32-bit words and IEEE doubles

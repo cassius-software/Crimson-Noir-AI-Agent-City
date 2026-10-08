@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is what a person may look like: a body, an outfit and its colours chosen from the
  * city's own business-casual wardrobe, packed into one word the crowd shader reads. The wardrobe is closed by

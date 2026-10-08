@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is a script's walk (SimControls.avatar.walk, which the spatial harness drives) as plain
  * arithmetic, so it can be proved in Node against the physics realm itself (simCore.test.ts): what a request holds (a

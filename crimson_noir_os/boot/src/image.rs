@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It is the bootable image's life, from the firmware's call to the system's loop: the
 //! screen (the Graphics Output Protocol's linear framebuffer), the declared arena taken from the firmware, the clock
 //! calibrated against the firmware's stall, the hand-over (ExitBootServices: from then on the machine is the image's

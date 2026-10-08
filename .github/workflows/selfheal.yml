@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 # Why does this file exist? It is the self-healing half of the pipeline. When ci.yml or build-release.yml ends in
 # failure, this workflow spawns the remediation agent (tools/selfheal/agent.mjs) on the commit that failed, in a
 # runner of its own:

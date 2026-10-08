@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the authoritative check of a Crimson Noir OS weight ledger, pure and synchronous, for
  * the host's second door (ledger.node.ts). The OS's agents learn one way only: an agent whose role was declared with

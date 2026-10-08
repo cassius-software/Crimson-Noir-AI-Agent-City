@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It pins the telemetry pipeline (telemetry.ts) where it must not move: the Process
  * kernel's vectors (the same numbers the hosted runtime's telemetry.rs and telemetry.wgsl pin, so edge, fog and

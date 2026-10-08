@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It is the firmware boundary of the bootable image, written out by hand from the UEFI
 //! specification (2.10): the system table, the boot services the image calls before it takes the machine over (pages,
 //! the memory map, the protocol lookup, the stall, the watchdog, ExitBootServices), the text console for the one

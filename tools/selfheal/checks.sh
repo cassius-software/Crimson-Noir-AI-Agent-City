@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 # Why does this file exist? It is the one list of the checks the pipeline runs, by name, so that ci.yml, the
 # self-healing agent (tools/selfheal/agent.mjs) and its sandbox run exactly the same commands and a check is spelled
 # once. `sh tools/selfheal/checks.sh NAME...` runs the named checks in order from the repository root and exits 1 on
@@ -8,7 +11,7 @@
 set -u
 cd "$(dirname "$0")/../.."
 
-ALL="page-tsc page-lint page-test page-build page-smoke native-test rust-test rust-clippy fvps-smt fvps-wasm fvps-kani selfheal-test"
+ALL="page-tsc page-lint page-test page-build page-smoke native-test rust-test rust-clippy fvps-smt fvps-wasm fvps-kani selfheal-test license-headers"
 
 run_one() {
   case "$1" in
@@ -24,6 +27,7 @@ run_one() {
     fvps-wasm)     sh tools/verify/fvps.sh wasm ;;
     fvps-kani)     sh tools/verify/fvps.sh kani ;;
     selfheal-test) node --test tools/selfheal/*.test.mjs ;;
+    license-headers) node tools/license/headers.mjs check ;;
     *) echo "checks.sh: no check named $1" >&2; return 2 ;;
   esac
 }

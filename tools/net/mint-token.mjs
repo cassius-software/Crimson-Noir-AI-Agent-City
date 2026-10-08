@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Copyright (c) 2026 Julian Cassius Subban
+// SPDX-License-Identifier: MIT
+// Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 /**
  * Why does this file exist? It mints a session token for the authoritative host, offline, from the operator's secret:
  * one per player and one per Crimson Noir OS runtime. A subject is one connection (a second under the same name

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It builds the tutorial's room from the system's own data. The server room is the swarm's
 //! floor: every rack stands where the Global Matrix has a wall, every docking pad where it has a station, half a metre
 //! to a cell, so what the tutorial shows is the state it tests. It also stages the five whys along the real aisles

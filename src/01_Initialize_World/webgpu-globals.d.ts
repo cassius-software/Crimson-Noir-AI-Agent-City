@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 // Why does this file exist? TypeScript's DOM lib types the WebGPU interfaces but not the flag
 // namespaces browsers expose as globals; the raw compute passes need them.
 // What breaks if it is removed? `tsc` rejects every GPUBufferUsage / GPUMapMode reference.

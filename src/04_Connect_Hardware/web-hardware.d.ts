@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? TypeScript's DOM lib does not type WebHID, Web Serial or Web Bluetooth,
  * and the unit tests type-check without the DOM lib at all. These are the minimal structural shapes

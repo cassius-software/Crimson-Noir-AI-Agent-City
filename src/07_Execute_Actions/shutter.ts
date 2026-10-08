@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the 180° shutter: motion blur reconstructed from the scene pass's velocity
  * buffer, so each presented frame carries the smear of 1/48 s of motion (a car's along its own path, a pedestrian's

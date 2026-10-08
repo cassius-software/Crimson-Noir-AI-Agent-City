@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 // Why does this file exist? It is the fog's Process stage of the IIoT telemetry pipeline on the GPU: one invocation
 // per frame, the digest of the frame's eight 32-bit words (FNV-1a over their little-endian bytes, finished with the
 // lowbias32 mixer the swarm uses), telemetry.rs `frame_digest` and the page's telemetry.ts `frameDigest` word for

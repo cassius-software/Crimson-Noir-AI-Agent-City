@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It is the declarative configuration's generator for the bootable image, and its dependency
 //! lock: it locks `containment.nix` against `containment.lock` and runs the self-test's scripted swarm on the build
 //! machine (noir_core::generate, as the hosted runtime's build does), writing the tables the image boots with; and it

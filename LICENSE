@@ -1,10 +1,46 @@
 LICENSE
 
-Copyright (c) 2026 the ONYX authors. "ONYX" is the product's provisional working name; the name,
-logo and trade dress are Reserved Material (see NOTICE.md).
+Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+
+Crimson Noir OS / Agent City is dual-licensed: its core is proprietary, its auxiliary tooling is open source, and
+the game mechanics it expresses are offered under the ORC License. Every source file says which licence it is under
+in a header at its top (its SPDX-License-Identifier line); `node tools/license/headers.mjs check` verifies them.
+"ONYX" is the page's provisional working name; the names, logos and trade dress are Reserved Material (NOTICE.md).
 
 
-1. ORC License
+1. The proprietary core (LicenseRef-CrimsonNoir-Proprietary)
+
+These directories and files are the proprietary core. They are copyright Julian Cassius Subban, all rights
+reserved, under the terms in LICENSES/LicenseRef-CrimsonNoir-Proprietary.txt. No licence to them is granted by
+this file, by the repository being readable, or by a release:
+
+  crimson_noir_os/   the operating system: the bootable UEFI image, the hosted runtime, noir_core, the
+                     shaders, the containment configuration and its proof harnesses
+  src/               the page's runtime: the world, the rules, the agents, the hardware layer, the senses, the
+                     decisions, the actions, the swarm, the cognition and the network
+  native/            the native cores (the routing core, the KV pager and its WebAssembly module)
+  world/             the compiled region pack and its previews
+  index.html, vite.config.ts   the page's entry and its build
+
+Headers: "Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved." and
+"SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary".
+
+
+2. The open-source auxiliary tooling (MIT)
+
+These directories and files are auxiliary tooling, open source under the MIT License (LICENSES/MIT.txt),
+copyright Julian Cassius Subban:
+
+  tools/             the build, verification, self-healing, world-compilation, network smoke and licence tools
+  deploy/            the host's deployment: compose, nginx, the tunnel and the one-touch deploy script
+  .github/           the workflows
+  docs/              the design documents and audits
+  Dockerfile, publish.ps1   the container build and the publish script
+
+Headers: "Copyright (c) 2026 Julian Cassius Subban" and "SPDX-License-Identifier: MIT".
+
+
+3. ORC License (the game mechanics)
 
 This product is licensed under the ORC License located at the Library of Congress at TX 9-307-067 and available online at various locations including www.azoralaw.com/orclicense and others. All warranties are disclaimed as set forth therein.
 
@@ -21,33 +57,30 @@ this product is based on, how to credit this product, its Reserved Material, and
 Designated Licensed Material. The build embeds NOTICE.md in dist/index.html, so the notice travels
 with the product.
 
-
-2. What the ORC License covers here
-
-The ORC License licenses game mechanics ("Licensed Material"): in this product, the degrees-of-
-success check rules and the checks, envelopes and rulings built on them, as listed in NOTICE.md. You
-may use, adapt and share them under the terms of the ORC License.
-
-The ORC License does not license software code as such, and it does not license Reserved Material.
-The product name, logo and trade dress, and the product's visual art, models, materials and sound
-design, are Reserved Material. No right in them is granted by this file.
-
-
-3. Software code
-
-The source code, shaders and build configuration of this product are copyright the ONYX authors.
-Except for the rights the ORC License grants in the Licensed Material they express, no license to the
-code is granted by this file.
+The ORC License licenses game mechanics ("Licensed Material"): in this product, the degrees-of-success check rules
+and the checks, envelopes and rulings built on them, as listed in NOTICE.md. You may use, adapt and share them
+under the terms of the ORC License. The ORC License does not license software code as such (sections 1 and 2 above
+govern the code), and it does not license Reserved Material. The product name, logo and trade dress, and the
+product's visual art, models, materials and sound design, are Reserved Material. No right in them is granted by
+this file.
 
 
 4. Third-party software
 
 The build bundles third-party open-source software (React, three.js, Rapier, Tailwind CSS). Each
-package remains under its own license, not under the ORC License. NOTICE.md lists them; their full
-license texts are embedded at the end of dist/index.html by the build.
+package remains under its own license, not under any licence above. NOTICE.md lists them; their full
+license texts are embedded at the end of dist/index.html by the build. The bootable image links font8x8 (MIT) and
+log (MIT OR Apache-2.0); crimson_noir_os/NOTICE.txt carries their notices.
 
 
-5. No warranty
+5. Prior releases of Crimson Noir OS
+
+Crimson Noir OS up to and including the v1.0.1-stable-release media was published under "MIT OR Apache-2.0". Those
+releases stay available under those licences, as those licences provide; the core is proprietary from this version
+on (LICENSES/LicenseRef-CrimsonNoir-Proprietary.txt, section 8).
+
+
+6. No warranty
 
 THIS PRODUCT IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
 LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! A paged KV cache for a native host that runs the local model on the GPU itself: the page table of PagedAttention
 //! with prefix caching and copy-on-write, and the WGSL attention kernel that reads it.
 //!

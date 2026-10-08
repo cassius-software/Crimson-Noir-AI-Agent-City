@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It proves the Claude API provider (claudeApi.ts): only a gateway on this machine (http or
  * https to a loopback address) is ever addressed, and nothing is sent without a key; the request is the one the API takes (the version and key

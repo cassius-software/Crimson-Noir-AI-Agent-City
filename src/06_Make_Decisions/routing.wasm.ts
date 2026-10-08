@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the fixed track network's arc-length arithmetic (native/routing, the WebAssembly core routingWasm.ts loads; tracks.ts stays the reference), compiled to WebAssembly
  * and carried here as base64 so the single-file build needs no cargo and no loader: 13254 bytes, SHA-256

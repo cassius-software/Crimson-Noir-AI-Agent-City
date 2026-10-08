@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It pins the code dissolve's page-side half (dissolve.ts) and the identity scans it
  * takes from contact.ts: a touched slot is at 1 in the same frame, an untouched one falls to exactly 0 over

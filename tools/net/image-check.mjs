@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Copyright (c) 2026 Julian Cassius Subban
+// SPDX-License-Identifier: MIT
+// Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 /**
  * Why does this file exist? It is the host image's proof that it runs, executed by the Dockerfile inside the image as
  * built (its Node, its /app, its user), before the image can be tagged:

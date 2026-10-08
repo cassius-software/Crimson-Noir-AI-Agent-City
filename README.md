@@ -1699,6 +1699,15 @@ Preliminary trademark notes for ONYX, AEGIS and SENTIS are in `NOTICE.md`: Unity
 inference package named Sentis, and Aegis is a naval weapons system. Commission a clearance search
 before you settle the name.
 
+## Licensing
+
+The product is dual-licensed (`LICENSE`): the core (`src/`, `crimson_noir_os/`, `native/`, `world/`, the page's
+entry and build) is proprietary, copyright (c) 2026 Julian Cassius Subban, all rights reserved
+(`LICENSES/LicenseRef-CrimsonNoir-Proprietary.txt`); the auxiliary tooling (`tools/`, `deploy/`, `.github/`,
+`docs/`, the container build and the publish script) is open source under MIT (`LICENSES/MIT.txt`); the game
+mechanics are offered under the ORC License (`NOTICE.md`). Every source file opens with its licence header, and
+`node tools/license/headers.mjs check` (CI's `license-headers` check) fails on a file without one.
+
 ## Browser support and what is verified
 
 Verified in headless Brave (WebGPU, AMD GCN-5 integrated GPU, 1280×720), about 75–85 fps:

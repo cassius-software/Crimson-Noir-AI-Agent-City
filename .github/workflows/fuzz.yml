@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 # Why does this file exist? The seeded property suites (02_Define_The_Rules/property.ts; the *.fuzz.test.ts files)
 # run in ci.yml on every change with their fixed seeds, so a change is judged against the same cases every time.
 # This workflow runs the same suites once a night with every property's case count multiplied (FUZZ_SCALE) and its

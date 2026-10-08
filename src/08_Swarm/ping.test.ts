@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It pins the ping (ping.ts) and the head's look ray (head.ts aimRay): the ray is the
  * camera's forward for any yaw and pitch (checked against a real three.js camera, so the two can never disagree);

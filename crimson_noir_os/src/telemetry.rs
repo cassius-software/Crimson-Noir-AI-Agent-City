@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It is the hosted runtime's side of the IIoT telemetry pipeline (the page's
 //! src/10_Network/telemetry.ts): the Process kernel that digests a frame of eight 32-bit words, the chain fold that
 //! folds a digest into a node's running head, and the vectors both twins and the WGSL shader

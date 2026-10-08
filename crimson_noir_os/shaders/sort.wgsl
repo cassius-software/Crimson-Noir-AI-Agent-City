@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 // Why does this file exist? It is one pass of the bitonic sort on the GPU: kernels.rs `bitonic_pass`, one invocation
 // per comparator. The comparators of a pass touch disjoint pairs, so they run in parallel; the network is fixed, so
 // there is no branch (min and max select the order). The tutorial's eight files use the same network on the CPU.

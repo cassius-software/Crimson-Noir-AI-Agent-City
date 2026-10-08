@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 // Why does this file exist? It is the swarm's tick on the GPU: crates/noir_core/src/kernels.rs `agent_tick`, the same
 // arithmetic line for line, one invocation per agent slot. Like the CPU kernel it has no branch (no if, else, switch,
 // while or loop: a test reads this file and refuses one): every decision is a 1/0 mask folded into arithmetic,

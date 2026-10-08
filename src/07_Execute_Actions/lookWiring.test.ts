@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It pins the character customizer's wiring (Phase 9.1): the crowd carries one look word per
  * agent in a page-only storage attribute (crowd.look) that every body material reads in both passes, whose bits stand
@@ -163,7 +166,7 @@ test('app: the player\'s look is kept under its own key, worn on agent 0 from th
   assert.match(concierge, /data-concierge="chip-look"/)
   assert.match(concierge, /data-action="look"/)
   const card = read('./Customizer.tsx')
-  assert.match(card, /^\/\*\*\n \* Why does this file exist\?[\s\S]*What breaks if it is removed\?/, 'the header')
+  assert.match(card, /^(?:\/\/[^\n]*\n)*\/\*\*\n \* Why does this file exist\?[\s\S]*What breaks if it is removed\?/, 'the header (after the licence lines)')
   assert.match(card, /from '\.\.\/03_Spawn_Agents\/look\.ts'/)
   assert.doesNotMatch(card, /engine\.ts|three\/|simProtocol|bridge\.ts/, 'the card knows only the wardrobe model')
   for (const name of ['LOOK_PRESETS', 'lookOptions', 'lookFromSeed', 'formatLookCode', 'parseLookCode', 'withLookSlot']) assert.ok(card.includes(name), name)

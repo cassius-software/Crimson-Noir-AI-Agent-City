@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It proves the network ghosts' view (netView.ts) in Node over the real three graph: a pose
  * on foot becomes an instance of the crowd's business-casual body with its feet at the pose and its front turned

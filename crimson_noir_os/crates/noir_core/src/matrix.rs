@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It owns the Global Matrix: the agent swarm pool as flat 1-D arrays (structure of
 //! arrays: the Position Array `px`/`pz` as `Vec<f32>`, the State Array of 1/0 masks and words as `Vec<u32>`), sized
 //! exactly by the declared configuration and allocated once. There is no agent type and no method on one: an agent is

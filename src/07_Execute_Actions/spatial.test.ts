@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It proves the spatial harness (spatial.ts, harness.ts `spatial`) on the real city. The plan
  * comes from the seed alone and reaches every district, the shore, the pier and six kinds of street; each probe starts

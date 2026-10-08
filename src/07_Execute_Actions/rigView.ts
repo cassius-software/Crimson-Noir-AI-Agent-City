@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It draws the promoted pedestrians' rigs on the page: the realm's rig stream
  * (simProtocol.ts RIG_POSE, one slice per slot) gives each rig's thirteen shape poses, and this view poses one

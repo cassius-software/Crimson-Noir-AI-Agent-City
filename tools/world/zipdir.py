@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 # Why does this file exist? A remote zip's table of contents, read with two small range requests (the end record, then
 # the central directory), so the world compiler fetches only the member it needs. Standard library only.
 # What breaks if it is removed? Every building extract downloads a whole province's archive to find one member.

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It pins the code dissolve's wiring (Phase 7.2): the meshes carry their `dissolve`
  * amounts (one float per prop instance, per car body and per wheel slot, per pedestrian) and take the helper over

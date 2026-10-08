@@ -22,7 +22,7 @@ This product is based on the following Licensed Material:
 
 If you use our Licensed Material in your own published works, please credit us as follows:
 
-- ONYX © 2026 the ONYX authors.
+- ONYX © 2026 Julian Cassius Subban.
 
 Naming the upstream work is attribution only, as Section III(b) of the ORC License requires. This
 product is not affiliated with, sponsored or endorsed by Paizo Inc. or any other licensor (Section
@@ -130,8 +130,8 @@ release; each one is something the release engineering could not confirm.
 
 ### Operator must verify
 
-1. **Copyright holder.** "the ONYX authors" stands in for the legal name of the rights holder (person
-   or company) in `LICENSE` and in the credit line above. Replace it with the real legal name.
+1. **Copyright holder.** Resolved: the rights holder is Julian Cassius Subban, named in `LICENSE`, in the
+   credit line above and in every source file's header (`tools/license/headers.mjs` checks them).
 2. **Upstream attribution wording.** Section III(b)(i) of the ORC License asks for attribution "worded
    in any accurate and reasonable manner so requested by such parties". The Player Core credit line
    above was taken from secondary sources (the ORC notices published on pf2orc.d20pfsrd.com), not from
@@ -141,9 +141,10 @@ release; each one is something the release engineering could not confirm.
    misfortune. Nothing from GM Core (for example, DC-by-level tables) is used: every DC here is an
    original number. Confirm no other ORC work was drawn on. If one was, add it to the attribution.
 4. **Licensing the code.** The ORC License grants no licence to software code (the ORC AxE, "Digital
-   Applications of the ORC License"). As written, `LICENSE` licenses the mechanics under ORC and
-   reserves all other rights in the code. If the code is meant to be open source, add a software
-   licence for it, for example MIT or Apache-2.0, alongside the ORC notice. Have counsel review the
+   Applications of the ORC License"). `LICENSE` licenses the mechanics under ORC, keeps the core
+   (`src/`, `crimson_noir_os/`, `native/`, `world/`) proprietary under
+   `LICENSES/LicenseRef-CrimsonNoir-Proprietary.txt`, and opens the auxiliary tooling (`tools/`,
+   `deploy/`, `.github/`, `docs/`) under MIT (`LICENSES/MIT.txt`). Have counsel review the
    combination. The same AxE section warns that assigning all rights in the code to a distributor, as
    some software publishers and stores require, would violate the ORC License: the product's new game
    mechanics must stay offered under it. Check any store or publishing agreement for such a clause.

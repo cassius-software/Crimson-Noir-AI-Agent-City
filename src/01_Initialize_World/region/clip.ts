@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? A region is a box cut out of surveyed data whose features run past it: a lake of 18,000
  * shoreline vertices, a river, streets that leave the box. The world compiler keeps exactly what lies inside: polygons

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It is the first thing a person sees: the 5-Whys tutorial, the system's self-test told as
 //! a short noir film in the server room. Five questions, each answered by a check that runs live while it is
 //! explained: the memory march of the arena's free part and the allocator's seal, the scripted swarm run against the

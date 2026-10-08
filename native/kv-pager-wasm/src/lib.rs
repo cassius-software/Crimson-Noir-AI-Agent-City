@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! kv-pager's page table (native/kv-pager/src/02_page_table.rs, the part with no GPU) behind a C ABI over linear
 //! memory, built to WebAssembly for the cognition router (src/09_Cognition/prefixCache.ts): the prompt-prefix page
 //! table that makes the prefix ordering of every system prompt explicit and measurable.

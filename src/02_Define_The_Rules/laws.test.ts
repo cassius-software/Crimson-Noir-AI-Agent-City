@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It pins the Ring-0 bouncer's ranking: the First Law stop envelope forward and
  * in reverse, the player's instruction outranking self-preservation (Second Law), an AI driver protecting

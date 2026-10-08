@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It proves the active ragdoll's body in real Rapier (the realm's own build): the rig is the
  * eleven segments, thirteen shapes and ten joints it claims, starts where and as the crowd had the person, and leaves

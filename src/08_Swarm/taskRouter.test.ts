@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It proves the task gateway's contract (taskRouter.ts, P1–P10). The pure core is checked
  * exhaustively against brute force: the gate and the choice of tethers over every swarm of up to three people and

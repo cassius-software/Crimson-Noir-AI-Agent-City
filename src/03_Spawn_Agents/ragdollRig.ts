@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the physical body of an active ragdoll in the realm's Rapier world: eleven capsule
  * segments (pelvis, torso, head, upper and lower legs with flat feet, upper and lower arms) joined by ten powered

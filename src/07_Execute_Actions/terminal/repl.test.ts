@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It pins R0, the console's own stack machine: the arithmetic, comparison, logic, stack
  * and memory words with 32-bit wrap; colon definitions with recursion (fib 20 is 6765) and redefinition; if/else/then,
@@ -219,7 +222,7 @@ test('air gap: repl.ts has no import line and names no door to the host', () => 
   assert.doesNotMatch(src, /^\s*import\b/m, 'an import line')
   assert.doesNotMatch(src, /\bimport\s*\(|\brequire\s*\(/, 'a dynamic import')
   assert.doesNotMatch(src, /\b(Function|eval|globalThis|window|document|fetch|setTimeout|setInterval|queueMicrotask|requestAnimationFrame|Date|Math|XMLHttpRequest|WebSocket|Worker|localStorage|indexedDB|navigator|process|crypto)\b/, 'a host door')
-  assert.match(src, /^\/\*\*\n \* Why does this file exist\?/, 'the header')
+  assert.match(src, /^(?:\/\/[^\n]*\n)*\/\*\*\n \* Why does this file exist\?/, 'the header (after the licence lines)')
   assert.match(src, /What breaks if it is removed\?/, 'the header')
   assert.doesNotMatch(src, /\bnew Function\b|\bwith\s*\(/)
 })

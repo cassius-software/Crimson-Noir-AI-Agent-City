@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It observes the running city and packages each HUD tick as a SIPOC X
  * snapshot (Supplier, Input, Process, Output, Customer, eXperience), shaped so a later phase can

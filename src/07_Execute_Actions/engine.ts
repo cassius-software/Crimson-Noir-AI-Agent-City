@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It wires the causal stages into one frame on the page: input (keyboard, mouse,
  * touch, gamepad, HAL peripherals) → controls sent to the physics realm → the first-person head → the crowd's

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the seating plan for up to four players at one screen: which hardware drives
  * which player. Seat 0 is the keyboard, the mouse and the touch overlay (player 1); gamepads take seats by

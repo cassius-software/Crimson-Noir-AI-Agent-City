@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It is what the bootable image does to the x86-64 machine itself once the firmware has let
 //! go: port I/O; the COM1 serial line the log is written to (a test harness reads it); the time-stamp counter, the only
 //! clock it needs; its own GDT and IDT, so that every one of the 32 CPU exceptions (a page fault, a general protection
