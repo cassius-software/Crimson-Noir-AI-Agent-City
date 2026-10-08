@@ -1,4 +1,4 @@
-//! Why does this file exist? It is the Sith Lord Terminal: the operator's console once the self-test has passed. It is
+//! Why does this file exist? It is the Crimson Terminal: the operator's console once the self-test has passed. It is
 //! a small Forth, so it is a programming language and not a menu: numbers and words on a data stack, definitions,
 //! variables and arrays in its own dictionary, IF/ELSE, BEGIN loops, counted DO loops and recursion. That makes it
 //! Turing complete in the usual sense of a real machine (bounded by its declared memory and its step budget); the
@@ -1718,7 +1718,7 @@ pub fn render(t: &Term, sys: &mut System, lk: &Locked) {
     // The header: the name, and the swarm's state.
     text::fill(&mut tg, 0, 0, w as i32, 12, 0x2a0710);
     text::fill(&mut tg, 0, 12, w as i32, 1, RED);
-    text::draw(&mut tg, 4, 2, 1, 0xffd0d6, "SITH LORD TERMINAL");
+    text::draw(&mut tg, 4, 2, 1, 0xffd0d6, "CRIMSON TERMINAL");
     let alive = m.alive.iter().filter(|&&a| a == 1).count();
     let mut status: Buf<96> = Buf::new();
     let _ = write!(status, "tick {}  alive {}  {}  lock {}", t.tick, alive, if t.running { "RUNNING" } else { "stopped" }, &lk.digest[..8.min(lk.digest.len())]);

@@ -15,7 +15,7 @@ declared in one locked configuration file.
 - **The 5-Whys tutorial is the self-test.** A tutor in a business-casual server room asks five questions. Each is
   answered by a check that runs live on screen. The last is a sort of eight files by a fixed network, proved for
   every input. A failed check stops at a hardware-fault screen.
-- **The Sith Lord Terminal** follows: a small Forth over the raw arrays, the kernels, the compute knobs and the locked
+- **The Crimson Terminal** follows: a small Forth over the raw arrays, the kernels, the compute knobs and the locked
   configuration.
 
 Licensed under either of [Apache-2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT), at your option.
@@ -30,7 +30,7 @@ rendered at 640x360 and scaled 2x.
 | ![The intro: the tutor walks in; the content card](docs/screenshots/01-intro.png) | ![Why 1: the live memory march and the seal](docs/screenshots/02-memory.png) |
 | ![Why 2: the scripted run matches the build's fingerprint](docs/screenshots/03-compute.png) | ![Why 3: the containment cage around the looper's trap](docs/screenshots/04-containment.png) |
 | ![Why 4: the screen's read-back at the crash cart](docs/screenshots/05-display.png) | ![Why 5: the sort, a comparator mid-swap](docs/screenshots/06-sort.png) |
-| ![Self-test passed](docs/screenshots/07-passed.png) | ![The Sith Lord Terminal: a session, the floor map, the swarm running](docs/screenshots/09-terminal.png) |
+| ![Self-test passed](docs/screenshots/07-passed.png) | ![The Crimson Terminal: a session, the floor map, the swarm running (shot before the rename, so its header still reads the old name)](docs/screenshots/09-terminal.png) |
 
 ## Quick start
 
@@ -284,7 +284,8 @@ These are stated plainly so nobody has to discover them.
 
 **Trademarks**
 
-- "Sith" is a third-party trademark (Lucasfilm). Clear it, or rename the terminal, before any commercial release.
+- The terminal was named the "Sith Lord Terminal" until Phase 17; "Sith" is a third-party trademark (Lucasfilm), so it
+  is the Crimson Terminal now. The screenshot gallery's terminal shot predates the rename.
 
 **Licences**
 

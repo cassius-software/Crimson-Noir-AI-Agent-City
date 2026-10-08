@@ -2,7 +2,7 @@
 //! desktop, with the GPU. `selftest` (the default) runs the self-test's scripted swarm on the CPU and on the GPU (the
 //! WGSL kernels through wgpu) and holds both against the build's proof and each other, word for word, then relaxes
 //! the routing fields, sorts a million keys and digests the telemetry frames on both; `frames DIR` renders the 5-Whys tutorial and a terminal
-//! session as PNG frames; `terminal` is the Sith Lord Terminal on standard input and output; `info` prints the locked
+//! session as PNG frames; `terminal` is the Crimson Terminal on standard input and output; `info` prints the locked
 //! configuration; `bridge [ws://127.0.0.1:PORT]` sends the scripted run's weight ledger to the Phase 12 host for
 //! verification and adopts the verified weights in a fresh runtime (bridge.rs; loopback only, token in CRIMSON_TOKEN).
 //! The bootable image has none of this. Logging goes through `log` (env_logger: RUST_LOG=info shows the GPU's progress).
@@ -237,7 +237,7 @@ fn frames(dir: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The Sith Lord Terminal on standard input and output (the swarm ticks only when told to: `tick`).
+/// The Crimson Terminal on standard input and output (the swarm ticks only when told to: `tick`).
 fn terminal() -> Result<(), String> {
     let d = locked::DIMS;
     let mut sys = allocate(&d)?;
