@@ -16,7 +16,7 @@ use std::vec::Vec;
 
 use crate::config::{self, CAP_MEMORY, CAP_MOVE, CAP_ROUTE, CAP_SPAWN, Config, Dims};
 use crate::hash::mix32;
-use crate::kernels::{self, FATE_DROPPED, FATE_FLUSHED, FATE_REAPED, INF, agent_tick, step_of, tick};
+use crate::kernels::{self, FATE_DROPPED, FATE_FLUSHED, FATE_REAPED, INF, agent_tick, step_of, tick, tick_scalar};
 use crate::matrix::{self, GOLDEN_TICKS, Matrix, ROGUE_TICK, golden, row_is_zero};
 
 const SAMPLE: &str = include_str!("../../../containment.nix");
@@ -85,16 +85,26 @@ fn code_of(src: &str) -> String {
 
 #[test]
 fn the_hot_path_has_no_branch_in_its_source() {
-    let code = code_of(include_str!("kernels.rs"));
-    for word in ["if", "else", "match", "while", "loop", "return"] {
-        let found = code
-            .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-            .any(|w| w == word);
-        assert!(!found, "kernels.rs uses `{word}`");
+    for (name, src) in [("kernels.rs", include_str!("kernels.rs")), ("lanes.rs", include_str!("lanes.rs"))] {
+        // The lane type's own tests are ordinary tests: only the code above them is the hot path.
+        let code = code_of(src.split("#[cfg(test)]").next().unwrap_or(""));
+        for word in ["if", "else", "match", "while", "loop", "return"] {
+            let found = code
+                .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                .any(|w| w == word);
+            assert!(!found, "{name} uses `{word}`");
+        }
+        for token in ["&&", "||", "?"] {
+            assert!(!code.contains(token), "{name} uses `{token}`");
+        }
     }
-    for token in ["&&", "||", "?"] {
-        assert!(!code.contains(token), "kernels.rs uses `{token}`");
-    }
+}
+
+/// On x86_64 (every host the runtime is built for, and the CI runners) the lanes are SSE2 registers, so the tests
+/// above and the fuzz suite hold the packed arithmetic, not a portable stand-in, to the scalar reference.
+#[test]
+fn on_x86_64_the_lanes_are_packed_registers() {
+    assert_eq!(crate::lanes::PACKED, cfg!(target_arch = "x86_64"));
 }
 
 #[test]
@@ -404,5 +414,37 @@ fn the_committed_canonical_form_is_the_configurations() {
         include_str!("../../../containment.canonical"),
         config::canonical(&c),
         "regenerate it: cargo run -q -- canonical > containment.canonical"
+    );
+}
+
+/// Ticks per second of the scalar reference and of the SIMD lanes on the shipped configuration (4,096 agents), for
+/// the record: `cargo test --release -p noir_core --lib bench_the_tick -- --ignored --nocapture`. Not a check.
+#[test]
+#[ignore]
+fn bench_the_tick() {
+    let c = sample();
+    let d = &c.dims;
+    let mut a = spawned(&c);
+    let mut b = spawned(&c);
+    let ticks = 2000u32;
+    let t0 = std::time::Instant::now();
+    for t in 0..ticks {
+        tick_scalar(d, &mut a, t);
+    }
+    let scalar = t0.elapsed();
+    let t0 = std::time::Instant::now();
+    for t in 0..ticks {
+        tick(d, &mut b, t);
+    }
+    let lanes = t0.elapsed();
+    assert_eq!(matrix::fingerprint(&a), matrix::fingerprint(&b));
+    std::eprintln!(
+        "bench: {ticks} ticks of {} agents: scalar {:.1} ms ({:.0} ticks/s), lanes {:.1} ms ({:.0} ticks/s), packed={}",
+        d.capacity,
+        scalar.as_secs_f64() * 1e3,
+        ticks as f64 / scalar.as_secs_f64(),
+        lanes.as_secs_f64() * 1e3,
+        ticks as f64 / lanes.as_secs_f64(),
+        crate::lanes::PACKED
     );
 }

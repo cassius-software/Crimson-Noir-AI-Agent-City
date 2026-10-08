@@ -22,7 +22,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use noir_core::config::{
     CAP_LEARN, CAP_MOVE, CAP_ROUTE, Config, Dims, canonical, declared_bytes, digest_hex, locked_digest, parse, validate,
 };
-use noir_core::kernels::{FATE_DOCKED, FATE_FLUSHED, FATE_REAPED, INF, Tally, agent_tick, flush, relax_pass, step_of, tick};
+use noir_core::kernels::{FATE_DOCKED, FATE_FLUSHED, FATE_REAPED, INF, Tally, agent_tick, flush, relax_pass, step_of, tick, tick_scalar};
+use noir_core::lanes::{LANES, PACKED};
 use noir_core::matrix::{self, GOLDEN_TICKS, Matrix, fingerprint, golden, golden_begin, golden_step, row_is_zero};
 use noir_core::sort::{NETWORK8, bitonic_sort, is_sorted, network, reference_sort, run_network, zero_one_proof};
 
@@ -368,6 +369,43 @@ fn visiting_order_and_repetition_cannot_change_a_tick() {
             assert_eq!(diff(&a, &b), [], "{tag}: the same tick twice");
             assert_eq!(diff(&a, &c3), [], "{tag}: a random visiting order");
             assert_eq!(fingerprint(&a), fingerprint(&c3), "{tag}");
+        }
+    }
+}
+
+/// The SIMD tick (`tick`, LANES agents a register) leaves every bit the scalar reference (`tick_scalar`, `agent_tick`
+/// one slot at a time) leaves, on any row at all (masks of all ones, positions off the floor or not a number,
+/// weights at the extremes, a goal past the stations, a clock past its cap) and any world, with the same tally; on
+/// x86_64 the lanes are SSE2 instructions (PACKED), so this is the packed arithmetic held to the scalar.
+#[test]
+fn the_simd_lanes_leave_the_bits_the_scalar_kernel_leaves() {
+    assert_eq!(PACKED, cfg!(target_arch = "x86_64"), "on x86_64 the lanes are packed registers");
+    for (k, c) in configs().iter().enumerate() {
+        let d = &c.dims;
+        assert_eq!(d.capacity % LANES, 0, "a validated capacity is whole lane groups");
+        let seed = 0x5eed_0051 + k as u64;
+        let mut r = Rng::new(seed);
+        let mut a = world(c);
+        for t in 0..400u32 {
+            let n = [0, 1, LANES, 16, d.capacity][r.below(5)];
+            for _ in 0..n {
+                let i = r.below(d.capacity);
+                scramble(&mut r, d, &mut a, i);
+            }
+            if t % 25 == 7 {
+                scramble_world(&mut r, d, &mut a);
+            }
+            for _ in 0..r.below(6) {
+                let i = r.below(d.capacity);
+                a.req[i] |= 1 << r.below(6);
+            }
+            let mut b = copy(d, &a);
+            let ta = tick(d, &mut a, t);
+            let tb = tick_scalar(d, &mut b, t);
+            let tag = format!("config {k} seed {seed:#x} tick {t}");
+            assert_eq!(ta, tb, "{tag}: the tally");
+            assert_eq!(diff(&a, &b), [], "{tag}: the SIMD tick and the scalar tick leave different bits");
+            assert_eq!(fingerprint(&a), fingerprint(&b), "{tag}");
         }
     }
 }

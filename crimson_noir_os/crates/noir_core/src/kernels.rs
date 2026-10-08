@@ -15,6 +15,7 @@
 
 use crate::config::{CAP_LEARN, CAP_MEMORY, CAP_MOVE, CAP_ROUTE, Dims};
 use crate::hash::mix32;
+use crate::lanes::{F32x4, LANES, U32x4, mix32x4};
 use crate::matrix::Matrix;
 
 /// What a station's field holds for a wall or a cell it cannot reach.
@@ -63,8 +64,32 @@ pub fn step_of(d: &Dims) -> f32 {
     d.step_eighths as f32 * 0.125
 }
 
-/// One tick of the whole pool.
+/// One tick of the whole pool: LANES agents at a time through the SIMD kernel (`tick_lanes`), then any slots past
+/// the last full lane group one at a time through the scalar reference (a capacity is a power of two of at least
+/// 64, so there are none; the arithmetic is the same either way).
 pub fn tick(d: &Dims, m: &mut Matrix, t: u32) -> Tally {
+    let step = step_of(d);
+    let mut tally = Tally::default();
+    let groups = d.capacity / LANES;
+    for g in 0..groups {
+        let fate = tick_lanes(d, m, g * LANES, t, step);
+        tally.dropped += fate.and(U32x4::splat(FATE_DROPPED)).sum();
+        tally.flushed += fate.and(U32x4::splat(FATE_FLUSHED)).shr::<1>().sum();
+        tally.reaped += fate.and(U32x4::splat(FATE_REAPED)).shr::<2>().sum();
+        tally.docked += fate.and(U32x4::splat(FATE_DOCKED)).shr::<3>().sum();
+    }
+    for i in groups * LANES..d.capacity {
+        let fate = agent_tick(d, m, i, t, step);
+        tally.dropped += fate & FATE_DROPPED;
+        tally.flushed += (fate & FATE_FLUSHED) >> 1;
+        tally.reaped += (fate & FATE_REAPED) >> 2;
+        tally.docked += (fate & FATE_DOCKED) >> 3;
+    }
+    tally
+}
+
+/// The same tick, one agent at a time through the scalar reference kernel alone (what the SIMD kernel is held to).
+pub fn tick_scalar(d: &Dims, m: &mut Matrix, t: u32) -> Tally {
     let step = step_of(d);
     let mut tally = Tally::default();
     for i in 0..d.capacity {
@@ -226,6 +251,175 @@ pub fn agent_tick(d: &Dims, m: &mut Matrix, i: usize, t: u32, step: f32) -> u32 
     wipe(d, m, i, wide((flushed | reaped) ^ 1));
     let fate = violated | (flushed << 1) | (reaped << 2) | (docked << 3);
     m.fate[i] = fate;
+    fate
+}
+
+/// The tick of LANES agent slots `i0 .. i0 + LANES` at once: `agent_tick` line for line, every word a lane of a SIMD
+/// register and every 1/0 mask a lane of ones and zeros, the same arithmetic in the same order (lanes.rs says which
+/// operations are packed instructions and which are the scalar operation lane by lane), so the lanes leave the bits
+/// the scalar kernel leaves. The slots' rows are disjoint and the shared world is only read, so LANES agents in one
+/// register are as isolated from each other as LANES agents visited in turn. Returns the lanes' fate bits.
+#[inline(always)]
+pub fn tick_lanes(d: &Dims, m: &mut Matrix, i0: usize, t: u32, step: f32) -> U32x4 {
+    let w = d.width as u32;
+    let depth = d.depth as u32;
+    let stations = d.stations as u32;
+    let cells = w * depth;
+    let wv = U32x4::splat(w);
+    let one = U32x4::splat(1);
+    let zero = U32x4::zero();
+    let lanes = U32x4::iota(i0 as u32);
+    let row = i0..i0 + LANES;
+
+    // The 1/0 masks are bit 0 of their words, whatever else a word holds.
+    let a = U32x4::load(&m.alive[row.clone()]).and(one);
+    let caps = U32x4::load(&m.caps[row.clone()]);
+    let reaped = U32x4::load(&m.doomed[row.clone()]).and(one);
+
+    // Where each agent stands, and what its station's field says about the four cells around it.
+    let px = F32x4::load(&m.px[row.clone()]);
+    let pz = F32x4::load(&m.pz[row.clone()]);
+    let cx = px.to_u32_sat().min_u(U32x4::splat(w - 1));
+    let cz = pz.to_u32_sat().min_u(U32x4::splat(depth - 1));
+    let c = cz.mul(wv).add(cx);
+    let g = U32x4::load(&m.goal[row.clone()]).and(U32x4::splat(stations - 1));
+    let base = g.mul(U32x4::splat(cells));
+    let east = cx.add(one).min_u(U32x4::splat(w - 1));
+    // `cx.saturating_sub(1)` is `max(cx, 1) - 1`.
+    let west = cx.lt_u(one).sel(one, cx).sub(one);
+    let north = cz.add(one).min_u(U32x4::splat(depth - 1));
+    let south = cz.lt_u(one).sel(one, cz).sub(one);
+    let here = U32x4::gather(&m.field, base.add(c));
+    let fe = U32x4::gather(&m.field, base.add(cz.mul(wv)).add(east));
+    let fw = U32x4::gather(&m.field, base.add(cz.mul(wv)).add(west));
+    let fnorth = U32x4::gather(&m.field, base.add(north.mul(wv)).add(cx));
+    let fsouth = U32x4::gather(&m.field, base.add(south.mul(wv)).add(cx));
+
+    // The closest of the four, ties broken east, west, north, south.
+    let (plus, minus) = (one, U32x4::splat(u32::MAX));
+    let mut best = fe;
+    let mut dx = plus;
+    let mut dz = zero;
+    let b = fw.lt_u(best);
+    best = b.sel(fw, best);
+    dx = b.sel(minus, dx);
+    dz = b.sel(zero, dz);
+    let b = fnorth.lt_u(best);
+    best = b.sel(fnorth, best);
+    dx = b.sel(zero, dx);
+    dz = b.sel(plus, dz);
+    let b = fsouth.lt_u(best);
+    best = b.sel(fsouth, best);
+    dx = b.sel(zero, dx);
+    dz = b.sel(minus, dz);
+
+    // An agent without the route privilege patrols its heading instead: 0 east, 1 west, 2 north, 3 south.
+    let routes = caps.and(U32x4::splat(CAP_ROUTE)).nz();
+    let h = U32x4::load(&m.heading[row.clone()]).and(U32x4::splat(3));
+    let hdx = h.eq(zero).sel(plus, h.eq(one).sel(minus, zero));
+    let hdz = h.eq(U32x4::splat(2)).sel(plus, h.eq(U32x4::splat(3)).sel(minus, zero));
+    let dx = routes.sel(dx, hdx);
+    let dz = routes.sel(dz, hdz);
+    let want = a.and(routes.sel(best.lt_u(here), one));
+    let arrived = a.and(routes).and(here.eq(zero));
+
+    // What each agent asks for this tick, and the dropped-pointer defense (a mask times a constant is the constant
+    // under the mask widened).
+    let learns = arrived.and(caps.and(U32x4::splat(CAP_LEARN)).nz());
+    let writes = a.and(caps.and(U32x4::splat(CAP_MEMORY)).nz());
+    let asked = U32x4::load(&m.req[row.clone()])
+        .or(U32x4::splat(CAP_MOVE).and(want.wide()))
+        .or(U32x4::splat(CAP_ROUTE).and(routes.and(a).wide()))
+        .or(U32x4::splat(CAP_LEARN).and(learns.wide()))
+        .or(U32x4::splat(CAP_MEMORY).and(writes.wide()));
+    let violated = a.and(asked.and(caps.xor(minus)).nz());
+    let ok = a.and(violated.xor(one));
+
+    // Move one step toward the chosen cell, unless that cell is a wall (the target clamped to the floor as signed
+    // words: `.max(0).min(w - 1)`).
+    let tx = cx.add(dx);
+    let tx = tx.gt_i(zero).sel(tx, zero);
+    let tx = tx.gt_i(U32x4::splat(w - 1)).sel(U32x4::splat(w - 1), tx);
+    let tz = cz.add(dz);
+    let tz = tz.gt_i(zero).sel(tz, zero);
+    let tz = tz.gt_i(U32x4::splat(depth - 1)).sel(U32x4::splat(depth - 1), tz);
+    let blocked = U32x4::gather(&m.walls, tz.mul(wv).add(tx)).and(one);
+    let moves = ok.and(want).and(caps.and(U32x4::splat(CAP_MOVE)).nz());
+    let go = moves.and(blocked.xor(one));
+    let stepv = F32x4::splat(step);
+    let px = px.add(dx.to_f32().mul(stepv).mul(go.to_f32())).clamp_each(0.0, w as f32 - 0.125);
+    let pz = pz.add(dz.to_f32().mul(stepv).mul(go.to_f32())).clamp_each(0.0, depth as f32 - 0.125);
+    let heading = h.xor(moves.and(blocked).and(routes.xor(one)));
+
+    // The loop breaker: the same failure, at the same cell, the same way, again and again.
+    let fail = moves.and(blocked);
+    let way = dx.add(one).or(dz.add(one).shl::<2>());
+    let sig = mix32x4(c.shl::<4>().or(way)).or(one).and(fail.wide());
+    let last = U32x4::load(&m.last[row.clone()]);
+    let same = sig.eq(last);
+    let run = U32x4::load(&m.run[row.clone()]).and(same.wide()).add(one).and(fail.wide());
+    let flushed = a.and(run.lt_u(U32x4::splat(d.loop_limit)).xor(one));
+
+    // Docking: learn how quick the trip was (Q16.16: 64 / (ticks + 64)), then pick the next station by learned weight
+    // plus a little exploration noise.
+    let docked = arrived.and(ok);
+    let stationsv = U32x4::splat(stations);
+    let wi = lanes.mul(stationsv).add(g);
+    let clock = U32x4::load(&m.clock[row.clone()]);
+    let reward = U32x4::splat(1 << 22).div_each(clock.min_u(U32x4::splat(1 << 20)).add(U32x4::splat(64)));
+    let lw = U32x4::gather_i(&m.weights, wi);
+    let learned = learns.and(ok);
+    let lw = lw.add(reward.sub(lw).sra(d.learn_shift).and(learned.wide()));
+    wi.scatter_i(&mut m.weights, lw);
+    let mut pick = g;
+    let mut top = U32x4::splat(i32::MIN as u32);
+    let salt = lanes.xor(U32x4::splat((t << 12) ^ 0x9e37_79b9));
+    for s in 0..stations {
+        let sv = U32x4::splat(s);
+        let noise = mix32x4(salt.xor(U32x4::splat(s << 24))).rem(d.explore + 1);
+        let weight = U32x4::gather_i(&m.weights, lanes.mul(stationsv).add(sv)).add(noise);
+        let cand = sv.eq(g).sel(U32x4::splat(i32::MIN as u32), weight);
+        let better = cand.gt_i(top);
+        top = better.sel(cand, top);
+        pick = better.sel(sv, pick);
+    }
+    let goal = docked.sel(pick, g);
+    let trips = U32x4::load(&m.trips[row.clone()]).add(docked);
+    let clock = clock.add(one).and(docked.xor(one).wide()).and(a.wide());
+
+    // Memory: each agent logs where it stood into its own block; the index is masked into the block.
+    let slot = lanes.mul(U32x4::splat(d.block_words as u32)).add(U32x4::splat(t & (d.block_words as u32 - 1)));
+    let logged = c.or(way.shl::<16>()).or(U32x4::splat(0x8000_0000));
+    let held = U32x4::gather(&m.memory, slot);
+    slot.scatter(&mut m.memory, writes.and(ok).sel(logged, held));
+
+    // Requests last one tick. A dropped pointer stops acting now and is zeroed during the next tick; a flush zeroes
+    // the row at once; a row dropped last tick is zeroed now: every word of the row is kept under `keep`.
+    let keep = flushed.or(reaped).xor(one).wide();
+    px.bits().and(keep).as_f32().store(&mut m.px[row.clone()]);
+    pz.bits().and(keep).as_f32().store(&mut m.pz[row.clone()]);
+    a.and(violated.xor(one)).and(keep).store(&mut m.alive[row.clone()]);
+    violated.and(keep).store(&mut m.doomed[row.clone()]);
+    caps.and(keep).store(&mut m.caps[row.clone()]);
+    zero.store(&mut m.req[row.clone()]);
+    U32x4::load(&m.role[row.clone()]).and(keep).store(&mut m.role[row.clone()]);
+    goal.and(keep).store(&mut m.goal[row.clone()]);
+    run.and(keep).store(&mut m.run[row.clone()]);
+    sig.and(keep).store(&mut m.last[row.clone()]);
+    trips.and(keep).store(&mut m.trips[row.clone()]);
+    clock.and(keep).store(&mut m.clock[row.clone()]);
+    heading.and(keep).store(&mut m.heading[row.clone()]);
+    for (l, &k) in keep.to_array().iter().enumerate() {
+        let i = i0 + l;
+        for w in &mut m.weights[i * d.stations..(i + 1) * d.stations] {
+            *w &= k as i32;
+        }
+        for w in &mut m.memory[i * d.block_words..(i + 1) * d.block_words] {
+            *w &= k;
+        }
+    }
+    let fate = violated.or(flushed.shl::<1>()).or(reaped.shl::<2>()).or(docked.shl::<3>());
+    fate.store(&mut m.fate[row]);
     fate
 }
 

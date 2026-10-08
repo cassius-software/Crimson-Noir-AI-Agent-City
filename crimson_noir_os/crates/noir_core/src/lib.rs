@@ -15,6 +15,7 @@ extern crate std;
 pub mod config;
 pub mod hash;
 pub mod kernels;
+pub mod lanes;
 pub mod matrix;
 pub mod render;
 pub mod scene;
