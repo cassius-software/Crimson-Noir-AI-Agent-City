@@ -29,6 +29,11 @@ COPY crimson_noir_os/crates ./crimson_noir_os/crates
 COPY crimson_noir_os/boot ./crimson_noir_os/boot
 COPY crimson_noir_os/build.rs crimson_noir_os/containment.nix crimson_noir_os/containment.lock crimson_noir_os/containment.seal ./crimson_noir_os/
 RUN mkdir -p crimson_noir_os/src && echo 'fn main() {}' > crimson_noir_os/src/main.rs && (cd crimson_noir_os && cargo fetch --locked)
+# The native crates' dependencies too (native-test and fvps-wasm build them; kv-pager pulls wgpu), from their locks.
+COPY native/routing/Cargo.toml native/routing/Cargo.lock ./native/routing/
+COPY native/kv-pager/Cargo.toml native/kv-pager/Cargo.lock ./native/kv-pager/
+COPY native/kv-pager-wasm/Cargo.toml native/kv-pager-wasm/Cargo.lock ./native/kv-pager-wasm/
+RUN for c in routing kv-pager kv-pager-wasm; do mkdir -p native/$c/src && touch native/$c/src/lib.rs && (cd native/$c && cargo fetch --locked); done
 RUN groupadd -g 10001 sandbox && useradd -u 10001 -g 10001 -M -d /tmp/home -s /bin/sh sandbox \
     && mkdir -p /build /work && chown sandbox:sandbox /build /work \
     && chmod -R a+rX /deps /fetch /usr/local/cargo /usr/local/rustup
