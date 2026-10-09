@@ -119,7 +119,7 @@ test('the cull reads the body out of the word (binding 13, the page\'s pass alon
   const wgsl = read('../03_Spawn_Agents/crowd.wgsl')
   assert.match(wgsl, /@group\(0\) @binding\(13\) var<storage, read> look: array<u32>;/)
   const cull = between(wgsl, 'fn cull(', '\n}')
-  before(cull, 'let lod = select(1u, 0u, d < P.lodDistance);', 'let w = look[i];', 'after the lod')
+  before(cull, 'let lod = select(1u, 0u, d < lodCut(P.lodDistance, rand(i, LOD_SALT)));', 'let w = look[i];', 'after the lod')
   assert.ok(cull.includes('let variant = select(i % VARIANTS, (w >> 1u) & 3u, (w & 1u) == 1u);'), 'the hashed body unless bit 0 is set')
   before(cull, 'let variant = select(', 'let draw = lod * VARIANTS + variant;', 'before the draw list')
   assert.equal(wgsl.match(/\blook\[/g)?.length, 1, 'read once, in the cull')

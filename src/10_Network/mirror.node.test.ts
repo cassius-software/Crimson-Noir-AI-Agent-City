@@ -18,7 +18,7 @@ import { CITY, CITY_SIZE, generateCity, inLot, streetFurniture } from '../01_Ini
 import { RING0, Ring0Auditor } from '../02_Define_The_Rules/ring0.ts'
 import { poseAt, projectOnto } from '../06_Make_Decisions/tracks.ts'
 import { EXIT_SIDE, HELD_CARS } from '../07_Execute_Actions/carRig.ts'
-import { SimCore } from '../07_Execute_Actions/simCore.ts'
+import { SHIFT_MAX, SimCore } from '../07_Execute_Actions/simCore.ts'
 import { doorOf, ENTER_RANGE, footWish, MODES, POSE, RUN, type CarBodyState, type DriveControls, type FootControls, type SimCommand, type StepState } from '../07_Execute_Actions/simProtocol.ts'
 import { GARAGE } from './garage.node.ts'
 import { carViolation, Mirror, MIRROR, personViolation, substeps, worldOf, type MirrorPose, type MoveInput } from './mirror.node.ts'
@@ -50,7 +50,7 @@ async function client(m: Mirror, id: number) {
   const start = m.join(id)
   const sim = await SimCore.create({ seed: SEED, cars: 0, agents: 256, boxes: generateCity(SEED), furniture: streetFurniture(SEED), spawn: m.spawnOf(id), debug: false }, null)
   const poses = new Float32Array(Math.max(1, sim.meta.count) * POSE.stride)
-  let cmds: SimCommand[] = [{ c: 'room', on: true }, { c: 'teleport', x: start.x, z: start.z }]
+  let cmds: SimCommand[] = [{ c: 'room', on: true }, { c: 'teleport', x: start.x, z: start.z, y: start.y }]
   const step = (dt: number, foot: FootControls): MoveInput & { n: number } => {
     const st = sim.step({ dt, foot, drive: IDLE, cmds }, poses)
     cmds = []
@@ -58,7 +58,7 @@ async function client(m: Mirror, id: number) {
     const w = footWish(foot.x, foot.z)
     return { mode: 'foot', segs: [[w.x, w.z, n]], heading: foot.heading, claim: { x: st.avatar.x, y: st.avatar.y, z: st.avatar.z }, n }
   }
-  return { start, step, snap: (p: MirrorPose) => { cmds = [{ c: 'teleport', x: p.x, z: p.z }] } }
+  return { start, step, snap: (p: MirrorPose) => { cmds = [{ c: 'teleport', x: p.x, z: p.z, y: p.y }] } }
 }
 
 /**
@@ -71,7 +71,7 @@ async function roomPage(m: Mirror, id: number) {
   const start = m.join(id)
   const sim = await SimCore.create({ seed: SEED, cars: m.garage.cars, agents: 256, boxes: generateCity(SEED), furniture: streetFurniture(SEED), spawn: start, debug: false, tracks: true }, null)
   const poses = new Float32Array(sim.meta.count * POSE.stride)
-  let cmds: SimCommand[] = [{ c: 'room', on: true }, { c: 'teleport', x: start.x, z: start.z }]
+  let cmds: SimCommand[] = [{ c: 'room', on: true }, { c: 'teleport', x: start.x, z: start.z, y: start.y }]
   const step = (o: { dt?: number; foot?: FootControls; drive?: DriveControls; cmds?: SimCommand[] } = {}): { st: StepState; input: MoveInput } => {
     const foot = o.foot ?? { x: 0, z: 0, heading: 0 }
     const st = { ...sim.step({ dt: o.dt ?? 1 / 60, foot, drive: o.drive ?? IDLE, cmds: [...cmds, ...(o.cmds ?? [])] }, poses), t: 'state' as const, id: 0 }
@@ -91,7 +91,7 @@ async function roomPage(m: Mirror, id: number) {
   }
   /** The room's correction, as the engine applies it: at the wheel the car in the room's state, on foot a teleport. */
   const correct = (p: MirrorPose): void => {
-    cmds = p.car ? [{ c: 'netCar', i: p.car.index, state: p.car.state }] : [{ c: 'teleport', x: p.x, z: p.z }]
+    cmds = p.car ? [{ c: 'netCar', i: p.car.index, state: p.car.state }] : [{ c: 'teleport', x: p.x, z: p.z, y: p.y }]
   }
   const chassis = (i: number) => ({ x: poses[i * POSE.stride + POSE.x], y: poses[i * POSE.stride + POSE.y], z: poses[i * POSE.stride + POSE.z], heading: poses[i * POSE.stride + POSE.heading] })
   return { start, step, correct, chassis }
@@ -226,13 +226,18 @@ test('after a snap the client and the mirror take the same next steps: both put 
   // The client lies once; the room refuses it and snaps it to the truth.
   const lie = c.step(1 / 60, { x: 1, z: RUN, heading: 0 })
   assert.ok(!m.judge(1, { ...lie, claim: { ...lie.claim, z: lie.claim.z + 5 } }).ok)
-  c.snap(m.settle(1))
-  // From here every honest frame is the truth again, to the bit.
+  const standing = m.pose(1).y
+  const truth = m.settle(1)
+  // Put down where it stood: a correction lifts the capsule by nothing (it used to be 5 cm, for one frame).
+  assert.equal(truth.y, standing)
+  c.snap(truth)
+  // From here every honest frame is the truth again, to the bit, and the figure never leaves the ground.
   for (let k = 0; k < 120; k++) {
     const input = c.step(k % 3 === 0 ? 0.05 : 1 / 60, { x: Math.sin(k / 20) * RUN, z: Math.cos(k / 20) * RUN, heading: 0 })
     const v = m.judge(1, input)
     const off = offOf(v.pose, input.claim)
     assert.ok(v.ok && off === 0, `frame ${k} after the snap: ${v.ok ? `${off} m` : v.reason}`)
+    if (k < 2) assert.ok(Math.abs(input.claim.y - standing) < 1e-3, `frame ${k} after the snap: y ${input.claim.y} against ${standing} standing`)
   }
 })
 
@@ -537,6 +542,8 @@ test('a page that drifts from the replay within MIRROR.drift is kept as the mirr
   assert.equal(drifted.ok, true)
   assert.equal(drifted.ok && drifted.resync, `claim 50.0 µm from the mirror's pose`)
   assert.deepEqual([m.pose(1).x, m.pose(1).z], [honest.x, honest.z], 'kept as the mirror replayed it, not as claimed')
+  // The page's realm takes a drift shift up to this bound and no further (simCore.ts SHIFT_MAX).
+  assert.equal(SHIFT_MAX, MIRROR.drift.foot)
   // Past MIRROR.drift: refused and undone.
   const before = m.pose(1)
   const next = page.walk(1, segs)

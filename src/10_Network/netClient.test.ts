@@ -18,7 +18,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { RUN } from '../07_Execute_Actions/simProtocol.ts'
 import { createHmac } from 'node:crypto'
-import { createNetClient, HOST_REFUSALS, KEEPALIVE_MS, MAX_IN_FLIGHT, netServer, type Move, type MoveStatus, type NetClient, type NetSocket, type NetStatus } from './netClient.ts'
+import { createNetClient, EASE_S, HOST_REFUSALS, KEEPALIVE_MS, MAX_IN_FLIGHT, netServer, type Move, type MoveStatus, type NetClient, type NetSocket, type NetStatus } from './netClient.ts'
 import { netServer as gate } from '../02_Define_The_Rules/airgap.ts'
 import { planeAuthority, planeStep } from './plane.node.ts'
 import {
@@ -485,6 +485,76 @@ test('a correction empties what is pending: the room drops everything sent under
   // A drift resync is snapped to like any correction, but it is not one of the player's.
   s.onmessage?.({ data: sealMessage({ t: 'correct', fix: 3, ack: 3, you, reason: 'claim 5.0 µm', tick: 2, drift: true }, 4, 'token') })
   assert.deepEqual([c.correction()?.fix, c.correction()?.drift, c.corrections, c.corrected], [3, true, 1, 'claim'])
+})
+
+test('a drift on foot under the same correction: nothing in flight is dropped, the body is owed the difference once, and a resync of an input claimed before the shift landed asks only for what is still missing', () => {
+  let socket: NetSocket | null = null
+  const c = createNetClient({ now: () => 0, every: () => () => {}, open: () => (socket = { send() {}, close() {}, onopen: null, onmessage: null, onclose: null, onerror: null }) })
+  assert.equal(c.connect('wss://localhost:8788', 'token', 'Ada', WORLD), null)
+  const s = socket as unknown as NetSocket
+  s.onopen?.({})
+  let n = 0
+  const you = (x: number, y: number, z: number) => ({ id: 1, name: 'Ada', x, y, z, heading: 0, vx: 0, vz: 0, speed: 0, driving: false })
+  s.onmessage?.({ data: sealMessage({ t: 'welcome', v: PROTOCOL_VERSION, id: 1, tick: 0, tickHz: 20, fix: 1, you: you(0, 0.92, 0), players: [] }, ++n, 'token') })
+  // Five inputs in flight, the page's realm at z = k, all under epoch 0 (no shift yet).
+  for (let z = 1; z <= 5; z++) c.move({ mode: 'foot', x: 0, z: 1, n: 1, heading: 0, at: { x: 0, y: 0.92, z }, fix: 1, shift: 0 })
+  assert.equal(c.drift(), null, 'nothing owed before a resync')
+  // The room kept input 2 but has it 40 µm further along x (and 3 µm lower): owed exactly that, once; nothing dropped,
+  // no correction counted, the truth to snap to unchanged.
+  const d = { x: 40e-6, y: -3e-6 }
+  s.onmessage?.({ data: sealMessage({ t: 'correct', fix: 1, ack: 2, you: you(d.x, 0.92 + d.y, 2), reason: 'claim 40.1 µm', tick: 1, drift: true }, ++n, 'token') })
+  assert.deepEqual(c.pending().map((i) => i.seq), [1, 2, 3, 4, 5], 'every input in flight is still read by the room')
+  assert.deepEqual([c.corrections, c.correction()?.fix, c.correction()?.reason], [0, 1, 'welcome'])
+  const first = c.drift()!
+  assert.equal(first.epoch, 1)
+  assert.ok(Math.abs(first.x - d.x) < 1e-12 && Math.abs(first.y - d.y) < 1e-12 && Math.abs(first.z) < 1e-12, JSON.stringify(first))
+  assert.equal(c.drift(), null, 'taken once')
+  // Input 3 was claimed before the shift landed: the room, replaying from its truth, has it off by the same drift. The page
+  // has already been carried by it, so nothing more is owed.
+  s.onmessage?.({ data: sealMessage({ t: 'correct', fix: 1, ack: 3, you: you(d.x, 0.92 + d.y, 3), reason: 'claim 40.1 µm', tick: 1, drift: true }, ++n, 'token') })
+  const again = c.drift()
+  assert.ok(again === null || Math.hypot(again.x, again.y, again.z) < 1e-12, `owed again: ${JSON.stringify(again)}`)
+  // A step run after the shift (epoch 1) that drifts by 5 µm more: owed only those 5 µm.
+  c.move({ mode: 'foot', x: 0, z: 1, n: 1, heading: 0, at: { x: d.x, y: 0.92 + d.y, z: 6 }, fix: 1, shift: 1 })
+  s.onmessage?.({ data: sealMessage({ t: 'correct', fix: 1, ack: 6, you: you(d.x + 5e-6, 0.92 + d.y, 6), reason: 'claim 5.0 µm', tick: 2, drift: true }, ++n, 'token') })
+  const more = c.drift()!
+  assert.ok(Math.abs(more.x - 5e-6) < 1e-12 && Math.abs(more.y) < 1e-12, JSON.stringify(more))
+  // A drift answering an input the room has acknowledged and the page forgot, or at the wheel, owes nothing.
+  s.onmessage?.({ data: sealMessage({ t: 'snapshot', tick: 3, ack: 6, fix: 1, you: you(0, 0.92, 6), players: [] }, ++n, 'token') })
+  s.onmessage?.({ data: sealMessage({ t: 'correct', fix: 1, ack: 6, you: you(1, 0.92, 6), reason: 'late', tick: 3, drift: true }, ++n, 'token') })
+  assert.equal(c.drift(), null)
+  // A real correction after it: the old way, everything in flight dropped and nothing owed.
+  c.move({ mode: 'foot', x: 0, z: 1, n: 1, heading: 0, at: { x: 0, y: 0.92, z: 7 }, fix: 1, shift: 2 })
+  s.onmessage?.({ data: sealMessage({ t: 'correct', fix: 1, ack: 7, you: you(0.1, 0.92, 7), reason: 'claim 0.1 m', tick: 4, drift: true }, ++n, 'token') })
+  s.onmessage?.({ data: sealMessage({ t: 'correct', fix: 2, ack: 7, you: you(0, 0.92, 0), reason: 'claim', tick: 4 }, ++n, 'token') })
+  assert.deepEqual([c.pending().length, c.drift(), c.corrections], [0, null, 1])
+})
+
+test('remote players glide onto each snapshot: eased in over EASE_S from where they were drawn, a teleport drawn at once', () => {
+  let socket: NetSocket | null = null
+  let clock = 1000
+  const c = createNetClient({ now: () => clock, every: () => () => {}, open: () => (socket = { send() {}, close() {}, onopen: null, onmessage: null, onclose: null, onerror: null }) })
+  assert.equal(c.connect('wss://localhost:8788', 'token', 'Ada', WORLD), null)
+  const s = socket as unknown as NetSocket
+  s.onopen?.({})
+  let n = 0
+  const p = (id: number, x: number, vx = 0) => ({ id, name: `P${id}`, x, y: 0.92, z: 0, heading: 0, vx, vz: 0, speed: Math.abs(vx), driving: false })
+  const you = p(1, 0)
+  s.onmessage?.({ data: sealMessage({ t: 'welcome', v: PROTOCOL_VERSION, id: 1, tick: 0, tickHz: 20, fix: 1, you, players: [] }, ++n, 'token') })
+  s.onmessage?.({ data: sealMessage({ t: 'snapshot', tick: 1, ack: 0, fix: 1, you, players: [p(2, 0), p(3, 0)] }, ++n, 'token') })
+  const x = (id: number, at: number) => c.poses(at).find((q) => q.id === id)!.x
+  assert.equal(x(2, clock), 0, 'new to the page: drawn where the room has them')
+  // 50 ms on, the room has player 2 half a metre along (it stopped), player 3 twenty metres away (a door, a correction).
+  clock += 50
+  s.onmessage?.({ data: sealMessage({ t: 'snapshot', tick: 2, ack: 0, fix: 1, you, players: [p(2, 0.5), p(3, 20)] }, ++n, 'token') })
+  assert.equal(x(2, clock), 0, 'no jump on arrival: still where it was drawn')
+  assert.ok(Math.abs(x(2, clock + EASE_S * 500) - 0.25) < 1e-9, 'half way after half the ease')
+  assert.equal(x(2, clock + EASE_S * 1000), 0.5, 'on the room\'s pose once the ease is over')
+  assert.equal(x(3, clock), 20, 'past EASE_MAX: a teleport, drawn at once')
+  // Never a step larger than the ease asks for: drawn every 4 ms through the ease, no move over 0.5 m × 4 ms / EASE_S.
+  let worst = 0
+  for (let t = 0; t < EASE_S * 1000; t += 4) worst = Math.max(worst, Math.abs(x(2, clock + t + 4) - x(2, clock + t)))
+  assert.ok(worst <= (0.5 * 4) / (EASE_S * 1000) + 1e-9, `${worst} m in 4 ms`)
 })
 
 test('a host the core refuses: HOST_REFUSALS malformed messages and the client leaves with the reason (an injected socket)', () => {

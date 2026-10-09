@@ -534,7 +534,7 @@ test('the whole path: from the console through the gateway to a real local serve
     const live: Piece[] = []
     r.stream!.subscribe((p) => live.push(p))
     const lines = await r.pending
-    assert.deepEqual(live.map((p) => `${p.kind}:${p.text}`), ['thinking:hmm', 'text:Grip scales\n', 'text:tyre friction.'])
+    assert.deepEqual(live.map((p) => `${p.kind}:${p.text}`), ['thinking:hmm', 'text:Grip scales\n', 'text:tyre ', 'text:friction.'], 'a whole word at a time, each screened (14A)')
     assert.deepEqual(lines?.slice(0, 2), [{ kind: 'out', text: 'Grip scales' }, { kind: 'out', text: 'tyre friction.' }])
     assert.match(lines?.[2].text ?? '', /^-- answered in \d+\.\d s, after 1 tokens of thinking --$/)
     const asked = srv.seen[1]

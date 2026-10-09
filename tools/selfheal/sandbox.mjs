@@ -36,8 +36,18 @@ import { join } from 'node:path'
 
 export const IMAGE = 'crimson-noir-selfheal-sandbox'
 
-/** What is left out of the copy, at any depth: build output, dependencies the image carries, the history. */
-export const EXCLUDE = ['.git', 'node_modules', 'target', 'dist', 'dist-ssr', 'dist-pilot', '.cache', '__pycache__']
+/**
+ * A developer's local AI tooling: assistant settings, permission lists, chat histories and MCP server configs. They
+ * name the developer's own paths and tools, they are never part of the product, and nothing in the pipeline reads
+ * them, so they stay out of git (.gitignore), out of both image build contexts (.dockerignore,
+ * Dockerfile.sandbox.dockerignore) and out of the tree the sandbox is given (EXCLUDE). src/zeroTrust.test.ts holds
+ * all four to this list.
+ */
+export const AI_TOOLING = ['.claude', '.cursor', '.continue', '.codeium', '.windsurf', '.aider.conf.yml', '.aider.chat.history.md',
+  '.aider.input.history', '.aider.tags.cache.v3', '.mcp.json', 'CLAUDE.local.md']
+
+/** What is left out of the copy, at any depth: build output, dependencies the image carries, the history, local AI tooling. */
+export const EXCLUDE = ['.git', 'node_modules', 'target', 'dist', 'dist-ssr', 'dist-pilot', '.cache', '__pycache__', ...AI_TOOLING]
 
 /**
  * The containment policy, as data, so the tests can hold it and the report can print it. Every entry is a

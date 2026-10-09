@@ -120,7 +120,8 @@ test('pacer: browser timestamps (rounded to 0.1 ms, jittered) keep the 3:2 caden
 })
 
 test('pacer: jittered vsync timestamps keep 24 a second and never hurry a frame', () => {
-  for (const [hz, amp] of [[60, 1], [60, 3], [90, 1], [144, 0.5], [120, 2]] as const) {
+  // 165 and 240 Hz at ±1–1.5 ms once lost frames: the jitter pushed ticks past the drop threshold, and each re-anchored.
+  for (const [hz, amp] of [[60, 1], [60, 3], [90, 1], [144, 0.5], [120, 2], [165, 1], [165, 1.5], [240, 1.5]] as const) {
     const noise = lcg(hz * 100 + amp)
     const p = new FramePacer()
     const shown = run(p, hz, 20, 1000, () => noise() * amp)

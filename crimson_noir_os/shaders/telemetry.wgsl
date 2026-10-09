@@ -6,7 +6,8 @@
 // lowbias32 mixer the swarm uses), telemetry.rs `frame_digest` and the page's telemetry.ts `frameDigest` word for
 // word. Integer arithmetic only, no branch, no float: every GPU, and the CPU, computes the same bits, so the cloud can
 // refuse a frame whose fog digest differs from the edge's own. The frame count is a uniform; an invocation past it
-// writes nothing (its index is clamped to the last frame and its write masked by rewriting that frame's own digest).
+// writes nothing (its index is clamped to the last frame and its write masked by rewriting that frame's own digest);
+// a frame count of 0 clamps to frame 0 rather than wrapping to every index (the host never sends 0: digests() refuses).
 // What breaks if it is removed? The fog has no digest to agree with the edge about.
 
 struct Params {
@@ -45,7 +46,7 @@ fn fnv_word(h0: u32, w: u32) -> u32 {
 
 @compute @workgroup_size(64)
 fn digest(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let f = min(gid.x, P.frames - 1u);
+    let f = min(gid.x, max(P.frames, 1u) - 1u);
     let at = f * FRAME_WORDS;
     var h = FNV_OFFSET;
     h = fnv_word(h, words[at]);

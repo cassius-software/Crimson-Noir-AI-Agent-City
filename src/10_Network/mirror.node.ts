@@ -223,7 +223,8 @@ export class Mirror {
       b.driving = false
     }
     const s = b.avatar.state()
-    b.avatar.teleport(s.x, s.z)
+    // Put down where it stands (the page's realm is teleported to the same height): a correction lifts nothing.
+    b.avatar.teleport(s.x, s.z, s.y)
     return this.pose(id)
   }
 
@@ -241,10 +242,13 @@ export class Mirror {
     return this.pose(id)
   }
 
-  /** The client's side of a correction: peer `id` put down standing at (x, z), as the page's realm is by a teleport. */
-  place(id: number, x: number, z: number): MirrorPose {
+  /**
+   * The client's side of a correction: peer `id` put down at (x, z), as the page's realm is by a teleport: at the
+   * truth's height `y` when given (a room's correction), else standing.
+   */
+  place(id: number, x: number, z: number, y?: number): MirrorPose {
     const b = this.#body(id)
-    b.avatar.teleport(x, z)
+    b.avatar.teleport(x, z, y)
     b.driving = false
     return this.pose(id)
   }

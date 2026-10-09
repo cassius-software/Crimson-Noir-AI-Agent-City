@@ -15,7 +15,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { generateCity, streetFurniture } from '../01_Initialize_World/city.ts'
-import { projectOnto, tangentAt } from '../06_Make_Decisions/tracks.ts'
+import { cornerAhead, projectOnto, tangentAt } from '../06_Make_Decisions/tracks.ts'
 import { exitPoint, headingOf, planFleet } from '../07_Execute_Actions/carRig.ts'
 import { Physics } from '../07_Execute_Actions/physics.ts'
 import { SimCore } from '../07_Execute_Actions/simCore.ts'
@@ -222,17 +222,20 @@ test('the lane envelope: the fleet\'s own cars stay within every door bound, in 
   const p = await Physics.create(generateCity(SEED), streetFurniture(SEED))
   const fleet = new Fleet(p, CARS, SEED, { network: g.network, exposeRig: true })
   let clock = 0, lat = 0, dh = 0, over = 0
+  /** The most lateral on a straight and in a corner (cornerAhead 0), every frame: a cut lasts only a few frames. */
+  const lane = { straight: 0, corner: 0 }
   const most = { rise: 0, fall: 0, side: 0, back: 0, yaw: 0, tilt: 0, up: 1, low: Infinity, high: -Infinity }
   for (let k = 0; k < 1800; k++) {
     clock += 1 / 60
     fleet.think(1 / 60, clock)
     p.step(1 / 60, (h) => fleet.updateControllers(h))
-    if (k % 6) continue
     for (let i = 0; i < CARS; i++) {
       const v = fleet.vehicles[i], track = g.network.tracks[g.plan[i].track]
       const at = fleet.position(v)
       const pr = projectOnto(track, at.x, at.z)
       lat = Math.max(lat, Math.abs(pr.lateral))
+      if (cornerAhead(track, pr.s) === 0) lane.corner = Math.max(lane.corner, Math.abs(pr.lateral))
+      else lane.straight = Math.max(lane.straight, Math.abs(pr.lateral))
       const tg = tangentAt(track, pr.s)
       let d = fleet.heading(v) - Math.atan2(tg[0], tg[1])
       d = Math.atan2(Math.sin(d), Math.cos(d))
@@ -253,6 +256,10 @@ test('the lane envelope: the fleet\'s own cars stay within every door bound, in 
     }
   }
   assert.ok(lat < GARAGE.lane, `lateral ${lat.toFixed(3)} m`)
+  // The lane the track followers hold, every frame (trackDriver.ts: pure pursuit with lateral feedback): never past
+  // 0.78 m in a corner nor 0.53 m on a straight, the bounds GARAGE.lane documents (measured: 0.58 and 0.18).
+  assert.ok(lane.corner < 0.78, `${lane.corner.toFixed(3)} m off the lane in a corner`)
+  assert.ok(lane.straight < 0.53, `${lane.straight.toFixed(3)} m off the lane on a straight`)
   assert.ok(lat > 0.3, 'corners are cut: the envelope is not slack for nothing')
   assert.ok(dh < GARAGE.heading, `heading ${dh.toFixed(3)} rad`)
   assert.equal(over, 0)

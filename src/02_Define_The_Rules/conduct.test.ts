@@ -103,3 +103,11 @@ test('a disengaged answer is nothing: no text, no thinking, no tokens, and its r
   assert.equal(disengaged('stop'), false)
   assert.equal(disengaged(undefined), false)
 })
+
+test('digits and signs written for letters inside a word are read as those letters; a number alone stays a number', () => {
+  for (const t of ['k1ll the engine', 'you 1d10t', '$h1t happens', 'st3al the car', 'b0mb', 'sh00t']) assert.equal(screen(t).admissible, false, t)
+  for (const t of ['route 401 at 4 km', 'meet at 7, 3 cars, 5 people', 'the 2026 budget', 'covid19 and h1n1 reports', 'a 4x4 truck', 'mp3 player']) {
+    assert.equal(screen(t).admissible, true, t)
+  }
+  assert.equal(normalise('k1ll 2026'), 'kill 2026')
+})

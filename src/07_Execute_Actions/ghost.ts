@@ -44,6 +44,8 @@ export const GHOST = Object.freeze({
   speedSpread: 6,
   /** Rows of fading trail behind a column's head. */
   trail: 10,
+  /** Distinct glyph ids a cell draws from (2^22: three ids apart stay whole numbers in f32, below 2^24). */
+  glyphIds: 4194304,
   /** How far the city behind dims while the view is on (0..1). */
   dim: 0.8,
   /** A pedestrian further than this is not drawn (the envelopes of a whole city would be noise), m. */
@@ -290,8 +292,10 @@ export function ghostComposite(image: Node<'vec4'>, mask: TextureNode, g: Pick<G
       const behind = head.sub(c.y)
       const trail = select(behind.greaterThanEqual(0), exp(behind.negate().div(GHOST.trail)), float(0))
       const roll = floor(g.seconds.mul(column.mul(4).add(1)).add(hash(c.x.add(c.y.mul(131)))))
-      const id = hash(c.x.mul(17.1).add(c.y.mul(311.7)).add(roll.mul(0.37)))
-      const r1 = uint(hash(id.add(0.13)).mul(65535)), r2 = uint(hash(id.add(0.71)).mul(65535)), r3 = uint(hash(id.add(0.37)).mul(15.99))
+      // The glyph's id as a whole number below 2^22, and its three draws hashed from it at 2^22 apart: hash() takes its
+      // seed's integer part, so draws seeded off a 0..1 id saw two seeds each and the alphabet showed four glyphs.
+      const id = floor(hash(c.x.mul(17.1).add(c.y.mul(311.7)).add(roll.mul(0.37))).mul(GHOST.glyphIds))
+      const r1 = uint(hash(id).mul(65535)), r2 = uint(hash(id.add(GHOST.glyphIds)).mul(65535)), r3 = uint(hash(id.add(GHOST.glyphIds * 2)).mul(15.99))
       const bits = r1.bitAnd(r2).bitOr(uint(1).shiftLeft(r3))
       const ink = glyphInk(bits, local, cellPx)
       const facing = mix(float(0.55), float(1), m.z)

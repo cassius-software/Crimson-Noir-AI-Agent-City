@@ -12,3 +12,15 @@ dist
 dist-ssr
 dist-pilot
 **/__pycache__
+# A developer's local AI tooling, at any depth, whatever an allowlist line above admits (tools/selfheal/sandbox.mjs AI_TOOLING)
+**/.claude
+**/.cursor
+**/.continue
+**/.codeium
+**/.windsurf
+**/.aider.conf.yml
+**/.aider.chat.history.md
+**/.aider.input.history
+**/.aider.tags.cache.v3
+**/.mcp.json
+**/CLAUDE.local.md

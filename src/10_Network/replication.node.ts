@@ -420,13 +420,12 @@ export async function startHost(o: HostOptions): Promise<Host> {
         let input = false
         if (read.ok) {
           input = read.msg.t === 'input'
-          const fixWas = c.peer.fix, seqWas = c.peer.seq
+          const fixWas = c.peer.fix, seqWas = c.peer.seq, resyncsWas = c.peer.resyncs
           out = handle(room, c.peer, read.msg, now(), verify)
           if (input) {
-            if (c.peer.fix !== fixWas) {
-              if (out.refused === undefined) stats.resynced++
-              else stats.corrected++
-            }
+            // A drift on foot spends no correction number: the peer's own resync count says it was put back.
+            if (c.peer.resyncs !== resyncsWas) stats.resynced++
+            else if (c.peer.fix !== fixWas) stats.corrected++
             else if (c.peer.seq !== seqWas) stats.kept++
             else stats.stale++
           }

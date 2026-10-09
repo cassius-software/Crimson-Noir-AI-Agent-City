@@ -278,6 +278,8 @@ export interface NetMove {
   at: { x: number; y: number; z: number }
   door?: NetDoor
   fix: number
+  /** The newest drift shift the realm had applied (NetHost.drift's epoch). */
+  shift: number
 }
 
 /**
@@ -285,8 +287,8 @@ export interface NetMove {
  * the mind is: the engine holds no network code and never opens a socket. The room is authoritative and this page's
  * physics realm is the prediction: each new realm state while `status` is 'joined' is reported as one move (player 1's
  * step, paired with the request that ran it), and the room's correction, when a new one arrives, is applied as a
- * teleport to the truth; the room's poses are read for the draw. It never sends a chat line or a ping of its own, and
- * nothing it reads goes to the physics realm but that teleport.
+ * teleport to the truth (a drift on foot as a shift of the live body); the room's poses are read for the draw. It never
+ * sends a chat line or a ping of its own, and nothing it reads goes to the physics realm but that teleport and shift.
  */
 export interface NetHost {
   readonly status: NetState
@@ -305,7 +307,9 @@ export interface NetHost {
    */
   move(m: NetMove): 'sent' | 'held' | 'idle' | 'stale' | 'refused'
   /** The newest correction (the truth to snap to and its number; at the wheel the car's state too; `drift` for a kept input the page is only put back after), or null before the welcome. */
-  correction(): { fix: number; x: number; z: number; car?: { index: number; state: CarBodyState }; drift?: true } | null
+  correction(): { fix: number; x: number; y: number; z: number; car?: { index: number; state: CarBodyState }; drift?: true } | null
+  /** A drift the room kept on foot, taken once: the live body is carried by it (a 'shift'), nothing rewound; null when none. */
+  drift(): { epoch: number; x: number; y: number; z: number } | null
   /** Every other player's pose, carried forward to `now` (ms). */
   poses(now?: number): readonly NetPeer[]
   /** Inputs the room has not yet applied. */
@@ -457,7 +461,9 @@ export class Engine {
    * The walking velocity (as the realm clamps it) and the correction of the step request in flight (one at a time):
    * its state is the room's next move.
    */
-  private netSent = { x: 0, z: 0, fix: 0 }
+  private netSent = { x: 0, z: 0, fix: 0, shift: 0 }
+  /** The newest drift shift sent to the realm (netClient.ts drift epoch); the steps run after it are stamped with it. */
+  private netShift = 0
   /** The newest realm state as a move for the room, until netFrame reports it. */
   private netMove: NetMove | null = null
   /** The newest correction whose teleport has been queued for the realm (0: none this session). */
@@ -985,8 +991,16 @@ export class Engine {
       this.netFix = fix.fix
       // Ahead of anything the player queued meanwhile (an E pressed on this frame): it then acts on the truth, and the
       // door it takes is reported against the truth (simProtocol.ts doorOf).
-      this.sim.send(fix.car ? { c: 'netCar', i: fix.car.index, state: fix.car.state } : { c: 'teleport', x: fix.x, z: fix.z }, true)
+      // On foot at the truth's own height: put down where the room has the capsule standing, so nothing hops.
+      this.sim.send(fix.car ? { c: 'netCar', i: fix.car.index, state: fix.car.state } : { c: 'teleport', x: fix.x, z: fix.z, y: fix.y }, true)
       if (fix.fix > 1 && !fix.drift) this.toast('Network', 'the room put you back where it has you')
+    }
+    // A drift the room kept on foot: the live body carried by it, nothing rewound (netClient.ts drift). After any
+    // teleport above, so a correction in the same frame still wins.
+    const drift = c.drift()
+    if (drift) {
+      this.netShift = drift.epoch
+      this.sim.send({ c: 'shift', dx: drift.x, dy: drift.y, dz: drift.z }, true)
     }
     this.netPeers = c.poses(performance.now())
     // A voice whose player is no longer in the room (or never arrived) is let go after the grace.
@@ -1012,10 +1026,10 @@ export class Engine {
     if (s.driving >= 0) {
       const p = s.poses, o = s.driving * POSE.stride
       const at = { x: p[o + POSE.x], y: p[o + POSE.y], z: p[o + POSE.z] }
-      return { mode: 'drive', x: 0, z: 0, ...(s.wheels && { wheels: s.wheels }), n, heading: p[o + POSE.heading], at, fix: sent.fix, ...(door && { door }) }
+      return { mode: 'drive', x: 0, z: 0, ...(s.wheels && { wheels: s.wheels }), n, heading: p[o + POSE.heading], at, fix: sent.fix, shift: sent.shift, ...(door && { door }) }
     }
     const a = s.avatar
-    return { mode: 'foot', x: sent.x, z: sent.z, n, heading: this.foot.heading, at: { x: a.x, y: a.y, z: a.z }, fix: sent.fix, ...(door && { door }) }
+    return { mode: 'foot', x: sent.x, z: sent.z, n, heading: this.foot.heading, at: { x: a.x, y: a.y, z: a.z }, fix: sent.fix, shift: sent.shift, ...(door && { door }) }
   }
 
   /** The session over: no poses drawn or placed, every peer voice let go, a join still waiting told why, the room mode off. */
@@ -1026,6 +1040,8 @@ export class Engine {
     this.netMove = null
     this.netFix = 0
     this.netSent.fix = 0
+    this.netShift = 0
+    this.netSent.shift = 0
     for (const v of this.netVoices.values()) v.voice.detach()
     this.netVoices.clear()
     this.peerPlaces.length = 0
@@ -1353,6 +1369,7 @@ export class Engine {
       this.netSent.x = w.x
       this.netSent.z = w.z
       this.netSent.fix = this.netFix
+      this.netSent.shift = this.netShift
     }
     if (sim.request({ dt: this.pendingDt, foot, drive })) this.pendingDt = 0
     const postMs = performance.now() - physicsStart

@@ -16,7 +16,7 @@ import { test } from 'node:test'
 import { DRIVER_REACTION, KERNEL } from '../02_Define_The_Rules/civic.ts'
 import { createRng, rollCheck, type CheckResult } from '../02_Define_The_Rules/degrees.ts'
 import { forAll } from '../02_Define_The_Rules/property.ts'
-import { EPISODE_CLEAR, HAZARDS, HazardTable, PERSON_STOP } from './hazards.ts'
+import { EPISODE_CLEAR, HAZARDS, HazardTable, PERSON_STOP, REACTION_SLACK } from './hazards.ts'
 
 /** The state machine as traffic.ts wrote it before the table: the reference. */
 class Reference {
@@ -31,13 +31,14 @@ class Reference {
     return this.hazard ? DRIVER_REACTION.latency[this.hazard.degree] : Infinity
   }
   get reacted(): boolean {
-    return this.hazard !== null && this.hazardSeconds >= this.reactionLatency
+    return this.hazard !== null && this.hazardSeconds >= this.reactionLatency - REACTION_SLACK
   }
   perceive(personAhead: number, dt: number): number {
     const present = personAhead < KERNEL.range
     if (present && !this.hazard) {
       this.hazard = rollCheck(DRIVER_REACTION.modifier, DRIVER_REACTION.dc, this.rng)
-      this.hazardSeconds = 0
+      // The frame the person is first seen is a frame of looking at them.
+      this.hazardSeconds = dt
       this.clearSeconds = 0
     } else if (this.hazard) {
       this.hazardSeconds += dt
@@ -91,6 +92,23 @@ test('the table answers as the reference state machine does, step for step, on s
       if (ref.hazard !== null && sameCheck === null) sameCheck = ref.hazard
     }
   })
+})
+
+test('Perception to the frame: at 60 Hz each degree reacts on frame round(latency × 60), counting the frame the person is first seen', () => {
+  for (const [degree, latency] of DRIVER_REACTION.latency.entries()) {
+    // A seed whose first roll lands on this degree.
+    let seed = 1
+    while (rollCheck(DRIVER_REACTION.modifier, DRIVER_REACTION.dc, createRng(seed)).degree !== degree) seed++
+    const table = new HazardTable()
+    const r = table.add(createRng(seed))
+    let frame = 0
+    while (!table.reacted(r) && frame < 1000) {
+      frame++
+      table.perceive(r, 5, 1 / 60)
+    }
+    assert.equal(table.check(r)!.degree, degree)
+    assert.equal(frame, Math.round(latency * 60), `degree ${degree}: ${latency} s is ${Math.round(latency * 60)} frames, reacted on frame ${frame}`)
+  }
 })
 
 test('rows are independent, and stay so as the table grows past its first allocation', () => {

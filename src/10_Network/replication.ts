@@ -863,12 +863,18 @@ export function correct(room: Room, peer: Peer, reason: string, now: number): Ou
 
 /**
  * A page put back after an input the room kept: it had drifted from the authority's replay within the authority's
- * bound (the two physics engines meeting two boxes touched at once in their own orders). The page snaps as to any
- * correction, but nothing is refused and nothing counts toward removal: the truth is the authority's replay either way.
+ * bound (the two physics engines meeting two boxes touched at once in their own orders). Nothing is refused and nothing
+ * counts toward removal: the truth is the authority's replay either way.
+ * On foot nothing is put down and no correction number is spent: the room keeps its replay moving and every input the
+ * page sent after this one stays good, and the reply (`drift`, under the same `fix`, `ack` this input) carries the
+ * truth at the end of this input, which the page takes up as a sub-millimetre shift of the live body (netClient.ts
+ * drift), not a rewind to a standing pose. At the wheel the car is put down and rebuilt as for any correction (the
+ * page's car must be built from the room's own numbers to take the same next step).
  */
 export function resync(room: Room, peer: Peer, reason: string, now: number): Outcome {
   peer.resyncs++
-  return { reply: snap(room, peer, reason, now, true) }
+  if (peer.driving) return { reply: snap(room, peer, reason, now, true) }
+  return { reply: { t: 'correct', fix: peer.fix, ack: peer.seq, you: pose(peer, true), reason, tick: room.tick, drift: true } }
 }
 
 /**

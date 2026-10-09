@@ -563,7 +563,8 @@ test('gatedAsk: Rejected never asks the model; Authorized asks at once for the b
   mind.say('text', 'tyre friction.')
   mind.finish('Grip scales tyre friction.')
   const y = await yes.result
-  assert.deepEqual(seen, ['thinking:hmm', 'text:Grip scales ', 'text:tyre friction.'])
+  // Text is shown a whole word at a time (each screened first); the last word once the answer has ended.
+  assert.deepEqual(seen, ['thinking:hmm', 'text:Grip scales ', 'text:tyre ', 'text:friction.'])
   assert.deepEqual([y.state, y.text, y.thinking, y.done, y.tokens, y.error], ['Authorized', 'Grip scales tyre friction.', 1, 'stop', 7, undefined])
   // The tether breaks mid-answer: Aborted at once with the text before; the model's signal aborted; nothing more shown.
   seen.length = 0
@@ -1042,6 +1043,72 @@ test('say auto on: a whole answer is said aloud by whoever gave it, through the 
   assert.equal((await meanwhile.result).speech, undefined, 'never over something being said')
   assert.equal(voice.sent.length, 2)
   op.sayStop()
+})
+
+test('14A on the way out: an answer is screened as it streams; a refused word is never shown, said or remembered, even split across pieces', async () => {
+  const gate = new FakeGate()
+  const mind = new FakeMind()
+  const voice = new FakeVoice()
+  voice.auto = true
+  const out = new FakeOut()
+  const notes: string[] = []
+  const diary: Diary = { recall: () => [], note: (_b, kind, _s, text) => notes.push(`${kind} ${text}`) }
+  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary })
+  op.unlock()
+  const seen: string[] = []
+  const a = op.ask(['Rust'], 'what now?')
+  a.follow((p) => seen.push(p.text))
+  mind.say('text', 'You should ')
+  mind.say('text', 'go and k')
+  mind.say('text', 'ill the')
+  assert.equal(mind.signal?.aborted, true, 'the model is stopped the moment the answer fails the screen')
+  mind.say('text', ' engine.')
+  const r = await within(a.result)
+  assert.deepEqual([r.state, r.text, r.disengaged, r.done, r.speech], ['Authorized', '', true, 'disengaged', undefined])
+  assert.deepEqual(seen, ['You should ', 'go and '], 'nothing of the refused word reached the terminal')
+  assert.ok(!seen.join('').includes('k'), 'not even its first letter')
+  // A phrase that only forms across many pieces, long after the screen's window began.
+  const long = op.ask(['Rust'], 'and then?')
+  for (let k = 0; k < 40; k++) mind.say('text', `fine words ${k} `)
+  mind.say('text', 'beat them ')
+  mind.say('text', 'up')
+  mind.finish('…')
+  const l = await within(long.result)
+  assert.equal(l.disengaged, true, 'the last word completes the phrase: refused at the end')
+  // A model's own refusal with some text before it: shown as no reply, never said aloud, never noted.
+  const refusal = op.ask(['Rust'], 'something odd')
+  mind.say('text', 'I would rather not. ')
+  mind.finish('I would rather not.', 'refusal')
+  const f = await within(refusal.result)
+  assert.deepEqual([f.disengaged, f.speech], [true, undefined])
+  // A clean answer is shown whole, said and noted as before.
+  const fine = op.ask(['Rust'], 'grip?')
+  mind.say('text', 'Grip scales ')
+  mind.say('text', 'tyre friction.')
+  mind.finish('Grip scales tyre friction.')
+  const g = await within(fine.result)
+  assert.equal(g.text, 'Grip scales tyre friction.')
+  assert.ok(g.speech)
+  await ticks()
+  assert.deepEqual(voice.sent.map((x) => x.text), ['Grip scales tyre friction.'], 'only the clean answer reached the speech server')
+  assert.deepEqual(notes, ['ask grip? → Grip scales tyre friction.'], 'only the clean answer is remembered')
+  op.sayStop()
+})
+
+test('14A on the way out keeps up with a long stream: each piece screens a bounded window, not the whole answer again', async () => {
+  const gate = new FakeGate()
+  const mind = new FakeMind()
+  const a = gatedAsk(gate, mind, ['Rust'], 'tell me everything')
+  let shown = ''
+  a.follow((p) => { shown += p.text })
+  const t0 = performance.now()
+  for (let k = 0; k < 4000; k++) mind.say('text', `token${k % 97} `)
+  const ms = performance.now() - t0
+  mind.finish('')
+  const r = await within(a.result)
+  assert.equal(r.disengaged, undefined)
+  assert.equal(shown, r.text, 'every word shown, in order, once')
+  assert.ok(ms < 2000, `4,000 pieces screened in ${ms.toFixed(0)} ms`)
 })
 
 test('speakable: white space folded; a long answer ends on its last whole sentence, or word, within SAY_CHARS', () => {

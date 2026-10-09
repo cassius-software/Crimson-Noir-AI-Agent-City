@@ -14,7 +14,7 @@
  * What breaks if it is removed? The pedestrians are simulated but never drawn.
  */
 import {
-  CULL_PASSES, CULL_READBACK_SIZE, crowdShader, packCullParams, PARAMS_SIZE, PASS_BINDINGS, sanitizeCull, VARIANTS,
+  CULL_EASE, CULL_PASSES, CULL_READBACK_SIZE, crowdShader, packCullParams, PARAMS_SIZE, PASS_BINDINGS, sanitizeCull, VARIANTS,
   type CullInput, type CullSettings, type PassName, type SharedBuffers,
 } from './crowdCompute.ts'
 
@@ -40,7 +40,12 @@ export class CrowdCull {
   private readonly paramF32 = new Float32Array(this.paramBytes)
   private readonly paramU32 = new Uint32Array(this.paramBytes)
   private readonly staging: Staging[] = []
+  /** The settings drawn this frame, gliding from `from` toward `target` over CULL_EASE.glide steps. */
   private cull: CullSettings = { lodDistance: 0, nearRadius: 0, density: 1, maxDistance: 1e6 }
+  private from: CullSettings = this.cull
+  private target: CullSettings = this.cull
+  private glided = 0
+  private configured = false
   private frame = 0
   private readFrame = 0
   /** Until the first frame from the worker lands, the render buffers hold zeros: nobody is culled in (or drawn). */
@@ -95,9 +100,30 @@ export class CrowdCull {
     }
   }
 
-  /** Draw distances and crowd density (the quality governor's knobs); takes effect on the next step(). */
+  /**
+   * Draw distances and crowd density (the quality governor's knobs). The first setting is drawn from the next step();
+   * a later one is glided to over CULL_EASE.glide steps from what is being drawn, so a tier change pops nobody. A draw
+   * distance of 0 (nobody drawn, as in a region) is taken at once.
+   */
   setCull(s: CullSettings): void {
-    this.cull = sanitizeCull(s)
+    const target = sanitizeCull(s)
+    const now = !this.configured || target.maxDistance === 0
+    this.configured = true
+    this.from = now ? target : this.cull
+    this.target = target
+    this.glided = 0
+    if (now) this.cull = target
+  }
+
+  /** One step of the glide: the drawn settings a step further from `from` to `target`. */
+  private glide(): void {
+    if (this.cull === this.target) return
+    this.glided++
+    const t = Math.min(1, this.glided / CULL_EASE.glide)
+    if (t >= 1) { this.cull = this.target; return }
+    const a = this.from, b = this.target
+    const at = (x: number, y: number) => x + (y - x) * t
+    this.cull = { lodDistance: at(a.lodDistance, b.lodDistance), nearRadius: at(a.nearRadius, b.nearRadius), density: at(a.density, b.density), maxDistance: at(a.maxDistance, b.maxDistance) }
   }
 
   /**
@@ -145,6 +171,7 @@ export class CrowdCull {
   /** Culls for this camera: resets the indirect draws, compacts who is drawn, and reads the counts back. */
   step(input: CullInput): void {
     this.frame++
+    this.glide()
     packCullParams(this.paramF32, this.paramU32, this.frame, this.agentCount, this.cull, input)
     const queue = this.device.queue
     queue.writeBuffer(this.params, 0, this.paramBytes)

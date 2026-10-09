@@ -72,7 +72,7 @@ test('each realm state: one move, paired with the request that ran it; a new cor
   // The request in flight (one at a time) remembers what the room must replay: the walking velocity it asks for and the
   // correction it carries out (a teleport queued by netFrame rides the next request).
   before(frame, 'readControls(input, driving >= 0, foot, drive)', 'if (!sim.pending) {', 'the controls of this frame')
-  assert.match(frame, /if \(!sim\.pending\) \{\n(?:\s*\/\/.*\n)*\s*const w = footWish\(foot\.x, foot\.z\)\n\s*this\.netSent\.x = w\.x\n\s*this\.netSent\.z = w\.z\n\s*this\.netSent\.fix = this\.netFix\n\s*\}\n\s*if \(sim\.request\(\{ dt: this\.pendingDt, foot, drive \}\)\) this\.pendingDt = 0\n/, 'recorded just before the one request line, which is unchanged: the velocity the realm applies')
+  assert.match(frame, /if \(!sim\.pending\) \{\n(?:\s*\/\/.*\n)*\s*const w = footWish\(foot\.x, foot\.z\)\n\s*this\.netSent\.x = w\.x\n\s*this\.netSent\.z = w\.z\n\s*this\.netSent\.fix = this\.netFix\n\s*this\.netSent\.shift = this\.netShift\n\s*\}\n\s*if \(sim\.request\(\{ dt: this\.pendingDt, foot, drive \}\)\) this\.pendingDt = 0\n/, 'recorded just before the one request line, which is unchanged: the velocity the realm applies')
   // Its answer is the next state the worker sends: paired there, before anything else reads it.
   const received = between(src, '  private received(s: StepState, prev: StepState): void {', '\n  }\n')
   assert.match(received, /^ {4}this\.fresh = true\n(?:\s*\/\/.*\n)*\s*if \(this\.netClient\?\.status === 'joined'\) this\.netMove = this\.netMoveOf\(s\)$/m)
@@ -82,6 +82,7 @@ test('each realm state: one move, paired with the request that ran it; a new cor
   assert.match(moveOf, /const door = doorOf\(s\.events\)/, 'the step\'s own door: never one a correction made or forced')
   assert.equal(moveOf.match(/\.\.\.\(door && \{ door \}\)/g)?.length, 2, 'on foot and at the wheel')
   assert.match(moveOf, /fix: sent\.fix/)
+  assert.equal(moveOf.match(/shift: sent\.shift/g)?.length, 2, 'the drift epoch the step ran under, on foot and at the wheel')
   // The door rule itself: the last of the step's own doors, a later correction cancelling it.
   const doors = between(read('./simProtocol.ts'), 'export function doorOf(', '\n}\n')
   assert.match(doors, /door = e\.room \? undefined : \{ enter: \{ car: e\.index, state: e\.state \} \}/)
@@ -89,10 +90,13 @@ test('each realm state: one move, paired with the request that ran it; a new cor
   const nf = between(src, '  private netFrame(', '  /**\n   * A realm state as the room')
   assert.match(nf, /if \(state !== 'joined'\) return/, 'nothing offered or read between sessions')
   assert.match(nf, /const m = this\.netMove\n\s*this\.netMove = null\n(?:\s*\/\/.*\n)*\s*if \(m\) \{\n\s*const done = c\.move\(m\)\n\s*if \(done === 'stale' \|\| done === 'refused'\) this\.netDropped\+\+/, 'each state reported once; dropped only what the room could not keep')
-  assert.match(nf, /if \(fix && fix\.fix > this\.netFix\) \{\n\s*this\.netFix = fix\.fix\n(?:\s*\/\/[^\n]*\n)*\s*this\.sim\.send\(fix\.car \? \{ c: 'netCar', i: fix\.car\.index, state: fix\.car\.state \} : \{ c: 'teleport', x: fix\.x, z: fix\.z \}, true\)/, 'each correction once: the car in the room\'s state, or a teleport, ahead of anything the player queued')
+  assert.match(nf, /if \(fix && fix\.fix > this\.netFix\) \{\n\s*this\.netFix = fix\.fix\n(?:\s*\/\/[^\n]*\n)*\s*this\.sim\.send\(fix\.car \? \{ c: 'netCar', i: fix\.car\.index, state: fix\.car\.state \} : \{ c: 'teleport', x: fix\.x, z: fix\.z, y: fix\.y \}, true\)/, 'each correction once: the car in the room\'s state, or a teleport at the truth\'s own height, ahead of anything the player queued')
+  // A drift on foot: the live body carried by what the room still asks, after the correction above, stamped on the steps after it.
+  assert.match(nf, /const drift = c\.drift\(\)\n\s*if \(drift\) \{\n\s*this\.netShift = drift\.epoch\n\s*this\.sim\.send\(\{ c: 'shift', dx: drift\.x, dy: drift\.y, dz: drift\.z \}, true\)/)
+  before(nf, "c: 'teleport'", "c: 'shift'", 'a correction in the same frame is queued first; the shift then applies on the truth')
   assert.match(nf, /if \(fix\.fix > 1 && !fix\.drift\) this\.toast\(/, 'a drift resync is no correction to tell the player about')
   assert.match(nf, /this\.sim\.send\(\{ c: 'room', on: true \}, true\)/, 'the room mode on the welcome, ahead of its teleport and of the player\'s commands')
-  assert.equal(nf.match(/sim\.send\(/g)?.length, 2, 'the room mode and the correction are all the room may ask of the realm')
+  assert.equal(nf.match(/sim\.send\(/g)?.length, 3, 'the room mode, the correction and the drift shift are all the room may ask of the realm')
   // The realm client's lane for them: what is sent `first` goes ahead of everything queued the ordinary way.
   const client = read('./simClient.ts')
   assert.match(client, /if \(first\) this\.#first\.push\(cmd\)\n\s*else this\.#queue\.push\(cmd\)/)
@@ -139,7 +143,7 @@ test('the room\'s chat and pings become captions through the feed; the snapshot 
   assert.match(between(src, '  private netFrame(', '  /**\n   * A realm state as the room'), /this\.simTime - v\.since >= NET\.voiceGraceS && !this\.netPeers\.some\(\(p\) => p\.id === id\)/)
   // A session over forgets its corrections (the next one starts from the welcome) and takes the realm out of room mode.
   const letGo = between(src, '  private netLetGo(why: string): void {', '\n  }\n')
-  assert.match(letGo, /this\.netMove = null\n\s*this\.netFix = 0\n\s*this\.netSent\.fix = 0/)
+  assert.match(letGo, /this\.netMove = null\n\s*this\.netFix = 0\n\s*this\.netSent\.fix = 0\n\s*this\.netShift = 0\n\s*this\.netSent\.shift = 0/)
   assert.match(letGo, /if \(this\.netRoom && !this\.halted && !this\.disposed\) this\.sim\.send\(\{ c: 'room', on: false \}, true\)/)
 })
 

@@ -110,7 +110,7 @@ try {
   // The client's own prediction: the controller the page's realm runs, on the same city.
   const predictor = await Mirror.create(SEED, CARS)
   predictor.join(welcome.id)
-  predictor.place(welcome.id, welcome.you.x, welcome.you.z)
+  predictor.place(welcome.id, welcome.you.x, welcome.you.z, welcome.you.y)
   let seq = 0, fix = welcome.fix
   let truth = welcome.you
   const input = (segs, claim, o = {}) => ({ t: 'input', seq: ++seq, ack: 0, fix, mode: 'foot', segs, heading: 0, claim, ...o })
@@ -157,7 +157,7 @@ try {
     rows.push({ name, ok, ms, reason: hit?.msg.reason ?? 'no correction', first, still })
     if (hit) {
       fix = hit.msg.fix
-      predictor.place(welcome.id, hit.msg.you.x, hit.msg.you.z)
+      predictor.place(welcome.id, hit.msg.you.x, hit.msg.you.z, hit.msg.you.y)
     }
   }
   const at = { x: truth.x, y: truth.y, z: truth.z }

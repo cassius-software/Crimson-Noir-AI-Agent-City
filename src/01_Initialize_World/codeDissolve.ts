@@ -18,7 +18,7 @@
  */
 import type { MeshStandardNodeMaterial, Node, NodeBuilder } from 'three/webgpu'
 import {
-  Fn, bool, clamp, dot, exp, float, floor, fract, hash, length, materialColor, max, mix, positionLocal, positionPrevious,
+  Fn, bool, clamp, dot, exp, float, floor, fract, hash, length, materialColor, max, mix, mod, positionLocal, positionPrevious,
   screenCoordinate, screenSize, select, smoothstep, step, time, vec2, vec3,
 } from 'three/tsl'
 
@@ -37,6 +37,14 @@ export const CODE_DISSOLVE = Object.freeze({
   fold: 0.999,
   /** An amount below this leaves the mesh exactly as it was. */
   idle: 0.001,
+  /**
+   * Rows a column's survival keys repeat after (the key is the column times keyRows + 3 plus the fallen row mod keyRows:
+   * a whole number under 2^24, exact in f32, never negative, so three's hash, which takes the seed's integer part as a
+   * u32, sees a different seed for every cell however long the page has run).
+   */
+  keyRows: 4096,
+  /** The amount past which the mesh casts no shadow (the shadow pass cannot see the screen's cells: it fades as a whole). */
+  shadowGone: 0.5,
 })
 
 type V2 = Node<'vec2'>
@@ -98,8 +106,10 @@ function fallingCells(amount: F1): { alive: Node<'bool'>; ink: F1 } {
   const column = hash(c.x.mul(7.13).add(0.5))
   const rows = size.y.div(cellH)
   const fallen = time.mul(column.mul(CODE_DISSOLVE.speedSpread).add(CODE_DISSOLVE.speed))
-  // Survival: half the row's height down the screen (0 at the top), half a hash sliding down with the column.
-  const key = hash(c.x.mul(7.13).add(floor(c.y.sub(fallen)).mul(0.61)).add(column.mul(3.1)))
+  // Survival: half the row's height down the screen (0 at the top), half a hash sliding down with the column. The seed is
+  // a whole number per (column, fallen row): CODE_DISSOLVE.keyRows says why.
+  const row = mod(floor(c.y.sub(fallen)), CODE_DISSOLVE.keyRows)
+  const key = hash(c.x.mul(CODE_DISSOLVE.keyRows + 3).add(row))
   const survival = mix(key, clamp(c.y.div(rows), 0, 1), 0.5)
   const alive = survival.greaterThanEqual(amount)
   // The head of each column and its trail, as the ghost view's columns fall.
@@ -120,8 +130,10 @@ function fallingCells(amount: F1): { alive: Node<'bool'>; ink: F1 } {
  * - positionNode: at an amount of `fold` or more every vertex sits on `origin` (zero-area triangles, nothing
  *   rasterised: the crowd's own-body pattern); an existing positionNode is kept under it, and a pass that writes
  *   motion vectors folds positionPrevious the same way, so the velocity buffer sees no motion from the fold.
- * - maskNode: the existing mask AND the cell's survival (an idle amount keeps every cell), so the shadow pass, which
- *   honours the mask, drops the same cells.
+ * - maskNode: the existing mask AND the cell's survival (an idle amount keeps every cell). The cells are the screen's,
+ *   which the shadow pass cannot share (its screen is the shadow map: other cells, sliding over the ground), so
+ *   maskShadowNode is the existing shadow mask (or mask) AND an amount under CODE_DISSOLVE.shadowGone: the mesh's
+ *   shadow stays whole and then goes, with no crawling pattern.
  * - colorNode: the base shading (its RGB) dimmed by (1 − amount); emissiveNode: the existing emissive plus the glyph ink in
  *   `colour`, scaled by the amount and the glow. Roughness and metalness are untouched.
  * Returns the same material.
@@ -140,7 +152,10 @@ export function applyCodeDissolve(material: MeshStandardNodeMaterial, amount: F1
   const idle = amount.lessThan(CODE_DISSOLVE.idle)
   const survives = idle.or(alive)
   const existingMask = material.maskNode as Node<'bool'> | null
+  const existingShadowMask = (material.maskShadowNode ?? existingMask) as Node<'bool'> | null
   material.maskNode = existingMask ? bool(existingMask).and(survives) : survives
+  const casts = amount.lessThan(CODE_DISSOLVE.shadowGone)
+  material.maskShadowNode = existingShadowMask ? bool(existingShadowMask).and(casts) : casts
 
   const base = vec3((material.colorNode ?? materialColor) as Node<'vec3'>)
   material.colorNode = base.mul(float(1).sub(amount))

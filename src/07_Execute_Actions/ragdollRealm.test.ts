@@ -44,26 +44,33 @@ class FakeCrowd implements CrowdSensor {
   lost: string | null = null
   readonly xz: Float32Array
   readonly activity: Uint8Array
+  /** Every figure's facing as the GPU reads it back (pos.w); NaN: none. */
+  readonly heading: Float32Array
   #frame: Float32Array | null = null
   constructor(agents = AGENTS) {
     this.agentCount = agents
     this.xz = new Float32Array(agents * 2).fill(NaN)
     this.activity = new Uint8Array(agents)
+    this.heading = new Float32Array(agents).fill(NaN)
   }
   step(input: CrowdStepInput): void {
     this.readout = {
       seq: input.seq, time: input.time - input.dt, hazardsAhead: Float32Array.from(this.ahead), hazardsBehind: Float32Array.from(this.behind),
       stats: { nudges: 0, waiting: 0, crossing: 0, retreating: 0 }, xz: Float32Array.from(this.xz), activity: Uint8Array.from(this.activity),
+      heading: Float32Array.from(this.heading),
     }
     this.#frame = new Float32Array(this.agentCount * 12)
   }
   takeFlags(): number { const f = this.flags; this.flags = 0; return f }
   takeFrame(): Float32Array | null { const f = this.#frame; this.#frame = null; return f }
   recycle(): void {}
-  /** Puts pedestrian `i` at (x, z) for the next reading. */
-  place(i: number, x: number, z: number): void {
+  /** The realm's handbacks (CrowdSensor.place with a heading), in order. */
+  readonly handedBack: { i: number; x: number; z: number; heading: number }[] = []
+  /** Puts pedestrian `i` at (x, z) for the next reading (the tests' crowd walking them; the realm's handback with a heading). */
+  place(i: number, x: number, z: number, heading?: number): void {
     this.xz[2 * i] = x
     this.xz[2 * i + 1] = z
+    if (heading !== undefined) this.handedBack.push({ i, x, z, heading })
   }
 }
 
@@ -171,39 +178,64 @@ test('a shove in the crowd near the operator promotes one person: the rig sits d
   assert.ok((timeIn.get('seated') ?? 0) >= SEATED_TIME - H, 'seated at least SEATED_TIME')
   assert.equal(s.physics.bodies, bodies0 - 11, 'the rig\'s eleven bodies are gone')
   assert.equal(sim.halted, false)
-  // The blend back (recovering) ends with the slot free; the handback jump is what the crowd walked meanwhile.
+  // The blend back (recovering) ends with the slot free; the crowd was told to put the person where the rig stood.
   for (let i = 0; i < (RISE_TIME + SETTLE_BLEND) * 60 + 2; i++) s = step()
   assert.equal(s.kernel.audit.panic, null)
-  console.log(`[ragdollRealm] shove episode: promoted → handed back in ${episode.toFixed(2)} s (${visited.join(' → ')}); the crowd's figure walked ${(1.4 * episode).toFixed(2)} m meanwhile`)
+  // The crowd is told where to put them (the stand-in's figure, walked into the shover, may have shoved them in turn).
+  assert.equal(crowd.handedBack.filter((h) => h.i === 1).length, 1, 'one handback of the person shoved')
+  console.log(`[ragdollRealm] shove episode: promoted → handed back in ${episode.toFixed(2)} s (${visited.join(' → ')}); the crowd's figure had walked ${(1.4 * episode).toFixed(2)} m meanwhile and was put back where the rig stood`)
 })
 
-test('the handback jump and the cost: measured against a figure that stands still and one that walks on', async () => {
-  // The jump as the page sees it: the rig's pelvis in the last stream that carried it, against the crowd's figure now.
-  const measure = async (walk: number): Promise<{ jump: number; seconds: number; msPerStep: number; stepsWithRig: number }> => {
+test('the handback jump and the cost: none, whether the crowd\'s figure stood still meanwhile or walked on', async () => {
+  // The jump as the page sees it: the rig's pelvis in the last stream that carried it, against the crowd's figure in the
+  // first stream without it. The stand-in crowd walks the person on as the GPU would, from wherever it was last put.
+  const measure = async (walk: number): Promise<{ jump: number; seconds: number; msPerStep: number; stepsWithRig: number; heading: number; rigYaw: number }> => {
     const { crowd, step } = await core()
     let s = shove(crowd, step, 1, 2, 2.6, { x: OPEN.x + 3, z: OPEN.z })
     const t0 = s.simTime
-    let px = OPEN.x + 3
-    const last = { x: 0, z: 0 }
+    let px = OPEN.x + 3, pz = OPEN.z
+    const last = { x: 0, z: 0, yaw: 0 }
     let ms = 0, n = 0
     while (slots(s.rigs!).length > 0 && n < 20 * 60) {
-      last.x = s.rigs![RIG_POSE.segments]
-      last.z = s.rigs![RIG_POSE.segments + 2]
-      px += walk * H
-      crowd.place(1, px, OPEN.z)
+      const o = RIG_POSE.segments
+      last.x = s.rigs![o]
+      last.z = s.rigs![o + 2]
+      const q = { x: s.rigs![o + 3], y: s.rigs![o + 4], z: s.rigs![o + 5], w: s.rigs![o + 6] }
+      // The pelvis's forward (+z rotated by q), as the realm reads the facing it hands back.
+      last.yaw = Math.atan2(2 * (q.x * q.z + q.w * q.y), 1 - 2 * (q.x * q.x + q.y * q.y))
+      const put = crowd.handedBack.at(-1)
+      if (put) { px = put.x; pz = put.z; crowd.handedBack.length = 0 }
+      else { px += walk * H; crowd.place(1, px, pz) }
       const a = performance.now()
       s = step()
       ms += performance.now() - a
       n++
     }
-    return { jump: Math.hypot(px - last.x, OPEN.z - last.z), seconds: s.simTime - t0, msPerStep: ms / n, stepsWithRig: n }
+    const figure = { x: crowd.readout!.xz[2], z: crowd.readout!.xz[3] }
+    return { jump: Math.hypot(figure.x - last.x, figure.z - last.z), seconds: s.simTime - t0, msPerStep: ms / n, stepsWithRig: n, heading: 0, rigYaw: last.yaw }
   }
   const still = await measure(0)
   const walking = await measure(1.4)
-  // A hard shove carries the rig: the figure that stood still reappears where it was pushed from.
-  assert.ok(still.jump < 4, `standing still, the figure reappears ${still.jump.toFixed(2)} m from the rig`)
-  assert.ok(walking.jump < 1.4 * walking.seconds + 4, `walking on, the figure reappears ${walking.jump.toFixed(2)} m from the rig after ${walking.seconds.toFixed(2)} s`)
+  // The figure reappears where the rig's pelvis last stood, to the float (it is put there before the crowd moves it).
+  assert.ok(still.jump < 1e-3, `standing still meanwhile, the figure reappears ${still.jump.toFixed(4)} m from the rig`)
+  assert.ok(walking.jump < 1e-3, `walking on meanwhile, the figure reappears ${walking.jump.toFixed(4)} m from the rig after ${walking.seconds.toFixed(2)} s`)
   console.log(`[ragdollRealm] handback jump: ${still.jump.toFixed(2)} m with the figure standing still, ${walking.jump.toFixed(2)} m with it walking on at 1.4 m/s for ${walking.seconds.toFixed(2)} s; one rig costs ${still.msPerStep.toFixed(3)} ms per realm step over ${still.stepsWithRig} steps`)
+})
+
+test('promoted facing the way the crowd had them facing: someone standing still is not turned to face +z', async () => {
+  const yawOf = (rigs: Float32Array): number => {
+    const o = RIG_POSE.segments
+    const q = { x: rigs[o + 3], y: rigs[o + 4], z: rigs[o + 5], w: rigs[o + 6] }
+    return Math.atan2(2 * (q.x * q.z + q.w * q.y), 1 - 2 * (q.x * q.x + q.y * q.y))
+  }
+  for (const facing of [Math.PI / 2, -2.4]) {
+    const { crowd, step } = await core()
+    crowd.heading[1] = facing
+    const s = shove(crowd, step, 1, 2, 2.6, { x: OPEN.x + 3, z: OPEN.z })
+    assert.deepEqual(slots(s.rigs!).map((l) => l.agent), [1])
+    const off = Math.abs(Math.atan2(Math.sin(yawOf(s.rigs!) - facing), Math.cos(yawOf(s.rigs!) - facing)))
+    assert.ok(off < 0.25, `facing ${facing.toFixed(2)}: the rig faces ${yawOf(s.rigs!).toFixed(2)}`)
+  }
 })
 
 test('eight rigs at once: the pool never exceeds RIG_SLOTS, never promotes the operator\'s own figure, and costs what it costs', async () => {
@@ -278,7 +310,13 @@ test('a car driven at a seated rig: the Sanctuary flips its shapes, no panic, th
       trace.push(s.poses[2 * POSE.stride + POSE.speed])
     }
     assert.equal(sim.halted, false, sim.panic ?? '')
-    return { at, trace, flips: s.kernel.sensorFlips - flips0, z: s.poses[2 * POSE.stride + POSE.z], panic: s.kernel.audit.panic }
+    // After the car has gone: how far the rig's pelvis slides on its own over the next second (a sidestep's velocity
+    // left behind would carry it on).
+    const pelvis = (): { x: number; z: number } => ({ x: s.rigs?.[RIG_POSE.segments] ?? NaN, z: s.rigs?.[RIG_POSE.segments + 2] ?? NaN })
+    const after = pelvis()
+    for (let i = 0; i < 60 && !sim.halted; i++) s = step()
+    const slid = Math.hypot(pelvis().x - after.x, pelvis().z - after.z)
+    return { at, trace, flips: s.kernel.sensorFlips - flips0, z: s.poses[2 * POSE.stride + POSE.z], panic: s.kernel.audit.panic, slid }
   }
   const rig = await run(await seated())
   const open = await run({ ...(await core({ debug: true })), at: rig.at })
@@ -290,6 +328,8 @@ test('a car driven at a seated rig: the Sanctuary flips its shapes, no panic, th
   for (let i = 0; i < open.trace.length; i++) worst = Math.max(worst, Math.abs(rig.trace[i] - open.trace[i]))
   assert.ok(worst < 0.05, `speed trace differs by ${worst.toFixed(3)} m/s from open road`)
   assert.ok(Math.abs(rig.z - open.z) < 0.05, `ends ${Math.abs(rig.z - open.z).toFixed(3)} m from the open-road run`)
+  // The sidesteps leave nothing behind: once the car is gone the rig sits where it sat (measured: 6 mm).
+  assert.ok(rig.slid < 0.05, `after the car the seated rig slid ${rig.slid.toFixed(3)} m in a second`)
   console.log(`[ragdollRealm] a car at 12 m/s through a seated rig: ${rig.flips} flips, speed within ${worst.toFixed(3)} m/s of open road, end within ${Math.abs(rig.z - open.z).toFixed(3)} m, no panic`)
 })
 

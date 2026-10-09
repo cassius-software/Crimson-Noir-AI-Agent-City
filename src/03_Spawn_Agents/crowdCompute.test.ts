@@ -42,7 +42,7 @@ registerHooks({
 const USAGE = { MAP_READ: 1, MAP_WRITE: 2, COPY_SRC: 4, COPY_DST: 8, INDEX: 16, VERTEX: 32, UNIFORM: 64, STORAGE: 128, INDIRECT: 256, QUERY_RESOLVE: 512 } as const
 Object.assign(globalThis, { GPUBufferUsage: USAGE, GPUMapMode: { READ: 1, WRITE: 2 } })
 
-const { CULL_PASSES, FLAG_NON_FINITE, MAX_CARS, PARAMS_SIZE, PASS_BINDINGS, RENDER_FLOATS, SIM_PASSES, VARIANTS, agentQuota, corridorReach, crowdShader, packFrustumPlanes, packSimParams, simReadbackSize } = await import('./crowdCompute.ts')
+const { CULL_EASE, CULL_PASSES, FLAG_NON_FINITE, MAX_CARS, PARAMS_SIZE, PASS_BINDINGS, RENDER_FLOATS, SIM_PASSES, VARIANTS, agentQuota, corridorReach, crowdShader, packFrustumPlanes, packSimParams, simReadbackSize } = await import('./crowdCompute.ts')
 const { CROWD_SUBSTEP, CrowdSim } = await import('./crowdSim.ts')
 const { CrowdCull, MAX_HIDDEN } = await import('./crowdCull.ts')
 const { MAX_CARS: SENSOR_MAX_CARS, PEDESTRIAN_MAX_SPEED } = await import('./crowdSensor.ts')
@@ -791,8 +791,8 @@ test('Params: every field each side writes lands where the WGSL struct reads it,
   for (const line of [
     'if (d >= P.aux.z) { return; }',
     'var visible = d < P.nearRadius;',
-    'if (i != PLAYER_INDEX && rand(i, DENSITY_SALT) >= P.aux.y) { return; }',
-    'let lod = select(1u, 0u, d < P.lodDistance);',
+    'if (i != PLAYER_INDEX && rand(i, DENSITY_SALT) >= densityCut(d, P.nearRadius, P.aux.y)) { return; }',
+    'let lod = select(1u, 0u, d < lodCut(P.lodDistance, rand(i, LOD_SALT)));',
   ]) assert.ok(cull.includes(line), line)
   assert.ok(cull.indexOf('rand(i, DENSITY_SALT)') > cull.indexOf('if (!visible) {'), 'the lottery only thins people beyond nearRadius')
 })
@@ -1039,31 +1039,91 @@ test('the page: the hide mask sinks the listed figures below the cull\'s floor i
   assert.equal(crowd.hidden.length, 0)
 })
 
-test('setCull takes effect on the next step, is copied, and is sanitised', async () => {
+test('setCull: the first setting is drawn from the next step; a later one glides there over CULL_EASE.glide steps; copied and sanitised', async () => {
   const settings = { lodDistance: 30, nearRadius: 22, density: 0.6, maxDistance: 180 }
   const { device, crowd } = await cullRig(settings)
   settings.density = 0.1 // the caller's object is not retained
   crowd.step(cullInput)
   let p = params(device, 'crowd.cullParams')
-  assert.equal(p.f[p.at('aux') + 1], Math.fround(0.6))
+  const sent = () => {
+    p = params(device, 'crowd.cullParams')
+    return [p.f[p.at('lodDistance')], p.f[p.at('nearRadius')], p.f[p.at('aux') + 1], p.f[p.at('aux') + 2]]
+  }
+  assert.deepEqual(sent(), [30, 22, Math.fround(0.6), 180])
   const next = { lodDistance: 18, nearRadius: 9, density: 0.25, maxDistance: 70 }
   crowd.setCull(next)
   assert.equal(params(device, 'crowd.cullParams').f[p.at('aux') + 1], Math.fround(0.6), 'nothing is written before the next step')
+  // A tier change: every knob moves a 1/glide of the way per step, monotonically, and lands exactly.
+  let last = [30, 22, 0.6, 180]
+  for (let k = 1; k <= CULL_EASE.glide; k++) {
+    crowd.step(cullInput)
+    const now = sent()
+    const t = k / CULL_EASE.glide
+    const want = [30 + (18 - 30) * t, 22 + (9 - 22) * t, 0.6 + (0.25 - 0.6) * t, 180 + (70 - 180) * t]
+    for (let j = 0; j < 4; j++) {
+      assert.ok(Math.abs(now[j] - want[j]) < 1e-4, `step ${k} knob ${j}: ${now[j]} vs ${want[j]}`)
+      assert.ok(now[j] <= last[j] + 1e-6, `step ${k} knob ${j} moves one way`)
+      assert.ok(Math.abs(now[j] - last[j]) <= Math.abs(want[j] - (j === 0 ? 30 : j === 1 ? 22 : j === 2 ? 0.6 : 180)) / k + 1e-4, 'no jump')
+    }
+    last = now
+  }
+  assert.deepEqual(sent(), [18, 9, 0.25, 70])
   crowd.step(cullInput)
-  p = params(device, 'crowd.cullParams')
-  assert.deepEqual([p.f[p.at('lodDistance')], p.f[p.at('nearRadius')], p.f[p.at('aux') + 1], p.f[p.at('aux') + 2]], [18, 9, 0.25, 70])
+  assert.deepEqual(sent(), [18, 9, 0.25, 70], 'and stays')
+  // A change mid-glide starts from what is drawn, not from where the last glide began.
+  crowd.setCull({ lodDistance: 48, nearRadius: 9, density: 0.25, maxDistance: 70 })
+  crowd.step(cullInput)
+  const mid = sent()[0]
+  crowd.setCull({ lodDistance: 18, nearRadius: 9, density: 0.25, maxDistance: 70 })
+  crowd.step(cullInput)
+  assert.ok(Math.abs(sent()[0] - mid) <= 30 / CULL_EASE.glide + 1e-4, 'reversing mid-glide does not jump')
+  // A draw distance of 0 (a region: nobody of the crowd drawn) is taken at once.
+  crowd.setCull({ lodDistance: 18, nearRadius: 9, density: 0.25, maxDistance: 0 })
+  crowd.step(cullInput)
+  assert.equal(sent()[3], 0)
   const cases: [number, number, number, number, number, number][] = [
     // lod/near, density, maxDistance → sent lod/near, density, maxDistance
     [12, 1.7, Infinity, 12, 1, 1e6], [-3, -0.2, -5, 0, 0, 0], [NaN, NaN, NaN, 0, 1, 1e6], [Infinity, 0, 0, 1e6, 0, 0], [40, 1, 250, 40, 1, 250],
   ]
   for (const [dist, density, maxDistance, sd, d, m] of cases) {
     crowd.setCull({ lodDistance: dist, nearRadius: dist, density, maxDistance })
-    crowd.step(cullInput)
-    p = params(device, 'crowd.cullParams')
-    const sent = [p.f[p.at('lodDistance')], p.f[p.at('nearRadius')], p.f[p.at('aux') + 1], p.f[p.at('aux') + 2]]
-    assert.deepEqual(sent, [sd, sd, d, m], `distance ${dist}, density ${density}, maxDistance ${maxDistance}`)
-    assert.ok(sent.every(Number.isFinite), 'WGSL never sees Infinity or NaN')
+    for (let k = 0; k < CULL_EASE.glide; k++) {
+      crowd.step(cullInput)
+      assert.ok(sent().every(Number.isFinite), 'WGSL never sees Infinity or NaN, gliding or not')
+    }
+    assert.deepEqual(sent(), [sd, sd, d, m], `distance ${dist}, density ${density}, maxDistance ${maxDistance}`)
   }
+})
+
+test('the cull eases its rings: the density cut falls from everyone at nearRadius to density over DENSITY_FADE, and the LOD ring is spread per person', () => {
+  const { densityCut, lodCut } = transpile(['densityCut', 'lodCut'], { f32: true })
+  for (const density of [0, 0.25, 0.6, 1]) {
+    assert.equal(densityCut(9.99, 10, density), 1, 'inside the near radius everyone')
+    assert.equal(densityCut(10, 10, density), 1, 'at the near radius everyone: no wall')
+    assert.ok(Math.abs(densityCut(10 + CULL_EASE.fade, 10, density) - density) < 1e-6, 'the full fade later, the density')
+    assert.ok(Math.abs(densityCut(500, 10, density) - density) < 1e-6)
+    let prev = 1
+    for (let d = 10; d <= 10 + CULL_EASE.fade; d += 0.25) {
+      const cut = densityCut(d, 10, density)
+      assert.ok(cut <= prev + 1e-7 && prev - cut <= ((1 - density) * 0.25) / CULL_EASE.fade + 1e-6, `d ${d}: the cut falls steadily`)
+      prev = cut
+    }
+  }
+  assert.equal(lodCut(0, 0.99), 0, 'no detailed bodies stays none')
+  assert.ok(Math.abs(lodCut(30, 0) - 30 * (1 - CULL_EASE.lodSpread / 2)) < 1e-4 && Math.abs(lodCut(30, 0.5) - 30) < 1e-6)
+  // People cross the ring a few at a time: of 4,096 fixed draws, no 1 cm band holds more than a handful.
+  const cuts = Array.from({ length: 4096 }, (_, i) => lodCut(30, ((Math.imul(i + 1, 2654435761) >>> 8) / 16777216)))
+  const bands = new Map<number, number>()
+  for (const c of cuts) bands.set(Math.floor(c * 100), (bands.get(Math.floor(c * 100)) ?? 0) + 1)
+  assert.ok(Math.max(...bands.values()) <= 16, `${Math.max(...bands.values())} cross together`)
+  assert.ok(MODULE.includes('rand(i, DENSITY_SALT) >= densityCut(d, P.nearRadius, P.aux.y)') && MODULE.includes('d < lodCut(P.lodDistance, rand(i, LOD_SALT))'), 'the cull uses both')
+})
+
+test('the draw lists hold every agent per (LOD, body): a worn look can put the whole crowd on one body', () => {
+  for (const n of [0, 1, 7, 4096, 14_000]) assert.equal(agentQuota(n), n)
+  const consts = constants(crowdShader(14_000))
+  assert.equal(Number(consts.get('AGENT_QUOTA')), 14_000)
+  assert.equal(Number(consts.get('LIST_LOD_STRIDE')), 14_000 * VARIANTS)
 })
 
 test('the crowd sensing constants the worker relies on match the shader', () => {

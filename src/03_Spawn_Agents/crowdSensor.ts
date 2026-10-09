@@ -74,6 +74,8 @@ export interface CrowdReadout {
   xz: Float32Array
   /** Every pedestrian's ACTIVITY (skills.ts) in this readback. */
   activity: Uint8Array
+  /** Every pedestrian's facing (pos.w, radians, atan2(x, z)) in this readback; absent from a sensor that has none. */
+  heading?: Float32Array
 }
 
 /** The GPU pedestrian sensor as SimCore sees it. */
@@ -91,4 +93,9 @@ export interface CrowdSensor {
   recycle(buffer: ArrayBuffer): void
   /** Why the sensor stopped working for good (device lost), or null. */
   readonly lost: string | null
+  /**
+   * Puts pedestrian `agent` at (x, z) facing `heading`, standing, before the next step (a ragdoll handed back where its
+   * rig stood: ragdollRealm.ts). Absent from a sensor that cannot be written.
+   */
+  place?(agent: number, x: number, z: number, heading: number): void
 }

@@ -51,6 +51,7 @@ async function page(url: string, token: string, name: string, clock: { now: numb
   const poses = new Float32Array(sim.meta.count * POSE.stride)
   const client: NetClient = createNetClient({ now: () => clock.now, every: () => () => {} })
   let fix = 0
+  let shift = 0
   let room = false
   const queued: SimCommand[] = []
   let st: StepState | null = null
@@ -64,21 +65,26 @@ async function page(url: string, token: string, name: string, clock: { now: numb
       const c = client.correction()
       if (c && c.fix > fix) {
         fix = c.fix
-        queued.push(c.car ? { c: 'netCar', i: c.car.index, state: c.car.state } : { c: 'teleport', x: c.x, z: c.z })
+        queued.push(c.car ? { c: 'netCar', i: c.car.index, state: c.car.state } : { c: 'teleport', x: c.x, z: c.z, y: c.y })
+      }
+      const d = client.drift()
+      if (d) {
+        shift = d.epoch
+        queued.push({ c: 'shift', dx: d.x, dy: d.y, dz: d.z })
       }
     }
     const foot = o.foot ?? { x: 0, z: 0 }
     const w = footWish(foot.x, foot.z)
-    const sent = { x: w.x, z: w.z, fix }
+    const sent = { x: w.x, z: w.z, fix, shift }
     const s = { ...sim.step({ dt: H, foot: { ...foot, heading: 0 }, drive: o.drive ?? IDLE, cmds: [...queued.splice(0), ...(o.cmds ?? [])] }, poses), t: 'state' as const, id: 0 }
     st = s
     const door = doorOf(s.events)
     let m: Move
     if (s.driving >= 0) {
       const at = { x: poses[s.driving * POSE.stride + POSE.x], y: poses[s.driving * POSE.stride + POSE.y], z: poses[s.driving * POSE.stride + POSE.z] }
-      m = { mode: 'drive', x: 0, z: 0, ...(s.wheels && { wheels: s.wheels }), n: s.physics.steps, heading: poses[s.driving * POSE.stride + POSE.heading], at, fix: sent.fix }
+      m = { mode: 'drive', x: 0, z: 0, ...(s.wheels && { wheels: s.wheels }), n: s.physics.steps, heading: poses[s.driving * POSE.stride + POSE.heading], at, fix: sent.fix, shift: sent.shift }
     } else {
-      m = { mode: 'foot', x: sent.x, z: sent.z, n: s.physics.steps, heading: 0, at: { x: s.avatar.x, y: s.avatar.y, z: s.avatar.z }, fix: sent.fix }
+      m = { mode: 'foot', x: sent.x, z: sent.z, n: s.physics.steps, heading: 0, at: { x: s.avatar.x, y: s.avatar.y, z: s.avatar.z }, fix: sent.fix, shift: sent.shift }
     }
     if (door) m = { ...m, door }
     if (o.lie) m = { ...m, at: { ...m.at, x: m.at.x + o.lie } }
@@ -196,6 +202,29 @@ test('prediction and snap reconciliation end to end: two players walk to cars, d
     await until(() => { const t = truthOf(ada), r = ada.reported!; return t.x === r.at.x && t.z === r.at.z }, 'the room and Ada agree again, to the bit')
     assert.equal(ada.client.corrections, 1)
 
+    // A drift on foot, as two engines can leave one: Ada's realm 50 µm off the room's replay while she walks on. The room
+    // keeps every input (no correction number spent, nothing in flight dropped); her body is carried back by the
+    // difference, never rewound to where the drifted input ended: she only ever moves forward, by a step's length.
+    const fixBefore = ada.client.correction()!.fix, resyncedBefore = host.stats().resynced
+    const walk = { x: 0, z: RUN }
+    let z = ada.st.avatar.z, worstBack = 0, worstStep = 0
+    const stepped = (): void => {
+      const now = ada.st.avatar.z
+      worstBack = Math.max(worstBack, z - now)
+      worstStep = Math.max(worstStep, Math.abs(now - z))
+      z = now
+    }
+    await tick(1, () => { ada.frame({ foot: walk, cmds: [{ c: 'shift', dx: 50e-6, dy: 0, dz: 0 }] }); stepped(); bob.frame() })
+    await tick(60, () => { ada.frame({ foot: walk }); stepped(); bob.frame() })
+    await until(() => host.stats().resynced > resyncedBefore, 'the drift put back')
+    await tick(30, () => { ada.frame({ foot: walk }); stepped(); bob.frame() })
+    await until(() => { const t = truthOf(ada), r = ada.reported!; return t.x === r.at.x && t.y === r.at.y && t.z === r.at.z }, 'the room and Ada agree again, to the bit, with no correction')
+    assert.equal(ada.client.correction()!.fix, fixBefore, 'no correction number spent')
+    assert.equal(ada.client.corrections, 1, 'a drift is not counted')
+    assert.equal(worstBack, 0, 'never pulled back')
+    assert.ok(worstStep <= RUN * H + 1e-4, `the largest step ${(worstStep * 1000).toFixed(3)} mm, a run's substep at most`)
+    const drifted = host.stats().resynced - resyncedBefore
+
     // A chassis claim written into the report at the wheel: the room keeps its replay, corrects with the car's state,
     // and the page, its car rebuilt in exactly that state, drives on honest.
     const c = errand(ada, 120, 0.2)
@@ -221,7 +250,7 @@ test('prediction and snap reconciliation end to end: two players walk to cars, d
     assert.equal(ada.client.corrections, 2, `no correction after the snap: ${ada.client.corrected}`)
     assert.equal(bob.client.corrections, 0)
     assert.equal(host.stats().corrected, 2)
-    assert.equal(host.stats().resynced, 1)
+    assert.equal(host.stats().resynced, drifted + 1, 'the drifts on foot and the one at the wheel')
     ada.client.leave()
     bob.client.leave()
   } finally {

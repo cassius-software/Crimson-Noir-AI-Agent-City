@@ -25,6 +25,12 @@ export const EPISODE_CLEAR = 1
 /** Rows the table starts with; it doubles when full. */
 const FIRST_ROWS = 32
 
+/**
+ * How far short of a degree's latency a summed clock may fall and still be at it, s: sixty steps of 1/60 add up to a
+ * hair under one second in doubles, and a driver must react on the frame the latency ends, not one or two later.
+ */
+export const REACTION_SLACK = 1e-9
+
 /** The two answers `perceive` can give, multiplexed by index rather than by a branch. */
 const NO_ROOM = Infinity
 
@@ -90,7 +96,7 @@ export class HazardTable {
 
   /** 1 once row `r`'s driver has noticed the person of the current episode, else 0. */
   reactedMask(r: number): number {
-    return this.#live[r] & +(this.#seconds[r] >= this.#latency[r])
+    return this.#live[r] & +(this.#seconds[r] >= this.#latency[r] - REACTION_SLACK)
   }
 
   /** True once row `r`'s driver has noticed the person of the current episode. */
@@ -113,7 +119,8 @@ export class HazardTable {
     const goes = live & (starts ^ 1)
     // One roll per episode: the draw is the one conditional, since a number not drawn cannot be multiplexed.
     const rolled = starts ? rollCheck(DRIVER_REACTION.modifier, DRIVER_REACTION.dc, this.#rng[r]) : null
-    const seconds = (this.#seconds[r] + dt) * goes
+    // The frame the person is first seen counts: the driver has been looking at them for it.
+    const seconds = (this.#seconds[r] + dt) * (goes | starts)
     const clear = (this.#clear[r] + dt) * goes * (present ^ 1)
     const ends = goes & +(clear >= EPISODE_CLEAR)
     const keep = ends ^ 1
@@ -124,7 +131,7 @@ export class HazardTable {
     this.#clear[r] = clear * keep
     this.#latency[r] = [Infinity, latency][liveNext]
     this.#check[r] = [null, [this.#check[r], rolled][starts]][liveNext]
-    const reacted = liveNext & +(seconds * keep >= this.#latency[r])
+    const reacted = liveNext & +(seconds * keep >= this.#latency[r] - REACTION_SLACK)
     return [NO_ROOM, personAhead - PERSON_STOP][present & reacted]
   }
 }
