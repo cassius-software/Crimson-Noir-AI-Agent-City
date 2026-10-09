@@ -18,3 +18,15 @@ src/**/*.d.ts
 !tools/net/image-check.mjs
 !crimson_noir_os/containment.lock
 !crimson_noir_os/containment.seal
+# A developer's local AI tooling, at any depth, whatever an allowlist line above admits (tools/selfheal/sandbox.mjs AI_TOOLING)
+**/.claude
+**/.cursor
+**/.continue
+**/.codeium
+**/.windsurf
+**/.aider.conf.yml
+**/.aider.chat.history.md
+**/.aider.input.history
+**/.aider.tags.cache.v3
+**/.mcp.json
+**/CLAUDE.local.md

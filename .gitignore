@@ -32,3 +32,17 @@ crimson_noir_os/target
 
 # Python bytecode of the verification and self-heal scripts
 __pycache__/
+
+# A developer's local AI tooling (assistant settings, permission lists, chat histories, MCP configs): never committed,
+# never in an image or the sandbox (tools/selfheal/sandbox.mjs AI_TOOLING; src/zeroTrust.test.ts checks the lists)
+.claude/
+.cursor/
+.continue/
+.codeium/
+.windsurf/
+.aider.conf.yml
+.aider.chat.history.md
+.aider.input.history
+.aider.tags.cache.v3
+.mcp.json
+CLAUDE.local.md
