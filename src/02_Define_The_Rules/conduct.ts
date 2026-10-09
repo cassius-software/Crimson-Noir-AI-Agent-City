@@ -87,11 +87,19 @@ const LOOKALIKES: Readonly<Record<string, string>> = Object.freeze({
 const LOOKALIKE = new RegExp(`[${Object.keys(LOOKALIKES).join('')}]`, 'gu')
 
 /**
+ * Digits and signs written for the letters they look like inside a word ("k1ll", "1d10t", "$h1t", "@ss"). Only a run
+ * that mixes them with letters is read this way, so a number on its own stays a number ("2026", "4 km", "route 401").
+ */
+const LEET: Readonly<Record<string, string>> = Object.freeze({ '0': 'o', '1': 'i', '3': 'e', '4': 'a', '5': 's', '7': 't', '@': 'a', '$': 's' })
+const LEET_WORD = /[a-z0-9@$]+/g
+
+/**
  * Text as the screen reads it: what a reader sees, in plain lower-case Latin. Marks are dropped (diacritics, and the
  * combining marks some use to decorate a word); line breaks and tabs are spaces; characters that draw nothing (zero-width
  * spaces and joiners, the soft hyphen, the word joiner, bidi controls, variation selectors, control characters) are
  * removed outright, so they cannot split a word the reader sees whole; look-alike letters of other alphabets are read
- * as the Latin letter they imitate; then anything but letters and digits is a single space.
+ * as the Latin letter they imitate, and digits or signs mixed into a word as the letters they stand for (LEET); then
+ * anything but letters and digits is a single space.
  */
 export function normalise(text: string): string {
   return String(text)
@@ -101,6 +109,7 @@ export function normalise(text: string): string {
     .replace(/[\p{Default_Ignorable_Code_Point}\p{Cf}\p{Cc}]/gu, '')
     .replace(LOOKALIKE, (ch) => LOOKALIKES[ch] ?? ch)
     .toLowerCase()
+    .replace(LEET_WORD, (w) => (/[a-z]/.test(w) && /[0-9@$]/.test(w) ? w.replace(/[0-9@$]/g, (ch) => LEET[ch] ?? ch) : w))
     .replace(/[^a-z0-9]+/g, ' ')
     .trim()
 }

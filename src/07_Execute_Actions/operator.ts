@@ -623,28 +623,60 @@ export function gatedAsk(gate: SkillGate, mind: Mind, skills: readonly string[],
   const followers = new Set<(p: Piece) => void>()
   const stopper = new AbortController()
   const t0 = now()
+  /** Every piece of text that arrived; `shown` of it has reached the followers (through the last whole word). */
   let text = ''
+  let shown = 0
   let thinking = 0
+  /** The answer itself failed the 14A screen: the model was stopped, and the agent does not engage. */
+  let refused = false
   const remembered = (bound: readonly GateTether[]): Memories[] =>
     diary ? bound.map((t) => ({ agent: t.agent, lines: [...diary.recall(t.agent)] })).filter((m) => m.lines.length > 0) : []
+  const tell = (p: Piece) => {
+    for (const fn of [...followers]) {
+      try {
+        fn(p)
+      } catch {
+        // a follower's own failure does not stop the answer
+      }
+    }
+  }
+  // 14A on the way out: the answer is screened as it streams, before any of it is shown (and so before it can be said
+  // or remembered). Text reaches the followers a whole word at a time, the newest words screened with the words before
+  // them (a phrase can span pieces), so a refused word is never shown even in part. A refusal stops the model at once.
+  const pass = (more: string, end: boolean) => {
+    if (refused) return
+    text += more
+    const from = windowStart(text, shown)
+    if (!screen(text.slice(from)).admissible || (end && !screen(text).admissible)) {
+      refused = true
+      stopper.abort(new DOMException('the answer failed the 14A screen', 'AbortError'))
+      return
+    }
+    const cut = end ? text.length : wordEnd(text, shown)
+    if (cut > shown) {
+      tell({ kind: 'text', text: text.slice(shown, cut) })
+      shown = cut
+    }
+  }
   // 14A: an inadmissible prompt (violence, toxicity, illegality) is not engaged with: it reaches no model, whichever
   // provider answers, nothing streams, and the answer is nothing at once.
   const handle = gate.submit(skills, (lease) => screen(prompt).admissible ? mind.answer(
     { tethers: lease.bound, prompt, signal: AbortSignal.any([lease.signal, stopper.signal]), memories: remembered(lease.bound) },
     (p) => lease.use(() => {
-      if (p.kind === 'text') text += p.text
-      else thinking++
-      for (const fn of [...followers]) {
-        try {
-          fn(p)
-        } catch {
-          // a follower's own failure does not stop the answer
-        }
+      if (p.kind === 'text') pass(p.text, false)
+      else if (!refused) {
+        thinking++
+        tell(p)
       }
     }),
-  ) : Promise.resolve(DISENGAGED))
+  ).then((answer) => {
+    // The last word, held back until the answer ended, is shown once the whole answer passes.
+    lease.use(() => pass('', true))
+    return answer
+  }) : Promise.resolve(DISENGAGED))
   const result = handle.verdict.then((v): AskResult => {
     const ms = now() - t0
+    if (refused) return { state: 'Authorized', text: '', thinking, done: DISENGAGED.reason, tokens: 0, ms, disengaged: true }
     if (v.state !== 'Authorized') return { state: v.state, text, thinking, reason: v.message, ms }
     if (v.outcome.ok) {
       const { reason, tokens, promptHash } = v.outcome.value
@@ -667,6 +699,22 @@ export function gatedAsk(gate: SkillGate, mind: Mind, skills: readonly string[],
     result,
     stop: () => stopper.abort(new DOMException('stopped by the operator', 'AbortError')),
   })
+}
+
+/** Longest lexicon phrase, in characters, a streamed window reaches back for before the text already shown. */
+const SCREEN_REACH = 96
+
+/** Where the streamed screen's window starts: a word boundary at least SCREEN_REACH before `shown` (or the start). */
+function windowStart(text: string, shown: number): number {
+  if (shown <= SCREEN_REACH) return 0
+  const at = text.slice(0, shown - SCREEN_REACH).search(/\s\S*$/)
+  return at < 0 ? 0 : at
+}
+
+/** The end of the last whole word of `text` (just past its last whitespace), never before `shown`. */
+function wordEnd(text: string, shown: number): number {
+  const m = /\s(?=\S*$)/.exec(text.slice(shown))
+  return m ? shown + m.index + 1 : shown
 }
 
 /** A promise that rejects with the signal's reason once it aborts (never settles otherwise). */
@@ -879,10 +927,10 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
       }
       const result = a.result.then((r): AskResult => {
         // A prompt the agent did not engage with is not acknowledged: nothing of it is remembered either.
-        if (!disengaged(r.done)) diary?.note(a.bound, 'ask', asNamed(skills, a.bound), `${words.split('\n')[0]} → ${r.text}`, r.state, began, r.promptHash, taskOutcome(r))
+        if (!disengaged(r.done) && !r.disengaged) diary?.note(a.bound, 'ask', asNamed(skills, a.bound), `${words.split('\n')[0]} → ${r.text}`, r.state, began, r.promptHash, taskOutcome(r))
         // Said aloud as well (say auto on): a whole answer, through the gate again, while nothing else is being said.
         const v = voice?.settings()
-        if (r.state !== 'Authorized' || r.error !== undefined || !r.text.trim() || !v?.auto || v.voice === null || !speech || saying) return r
+        if (r.state !== 'Authorized' || r.error !== undefined || r.disengaged || disengaged(r.done) || !r.text.trim() || !v?.auto || v.voice === null || !speech || saying) return r
         const s = say(skills, speakable(r.text))
         return { ...r, speech: s.result }
       })

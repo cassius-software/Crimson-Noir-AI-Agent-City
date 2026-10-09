@@ -191,11 +191,18 @@ export function onRoad(x: number, z: number): boolean {
   return Math.min(ox, oz) < CITY.roadHalf
 }
 
-/** True when the straight walk from (ax, az) to (bx, bz) never touches a carriageway. */
+/**
+ * True when the straight walk from (ax, az) to (bx, bz) never touches a carriageway and never cuts through a building
+ * lot (round a block's corner the straight line crosses the lot: the crowd's pushOut would hold the walker against
+ * its face, short of the point, for good). Grazing the lot's edge is fine: pushOut slides a walker along the face.
+ */
 export function sidewalkPath(ax: number, az: number, bx: number, bz: number): boolean {
   const d = Math.hypot(bx - ax, bz - az)
   const n = Math.max(1, Math.ceil(d / PATH_STEP))
-  for (let k = 0; k <= n; k++) if (onRoad(ax + ((bx - ax) * k) / n, az + ((bz - az) * k) / n)) return false
+  for (let k = 0; k <= n; k++) {
+    const x = ax + ((bx - ax) * k) / n, z = az + ((bz - az) * k) / n
+    if (onRoad(x, z) || inLot(x, z)) return false
+  }
   return true
 }
 

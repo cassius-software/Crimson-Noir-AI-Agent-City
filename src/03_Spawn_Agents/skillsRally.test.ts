@@ -69,3 +69,19 @@ test('the rule is pure: the same inputs give the same answer, and the field is n
   assert.equal(a, b)
   assert.deepEqual(xz, copy)
 })
+
+test('round a block\'s corner the straight walk would cut through the building lot: refused (pushOut would hold them against its face)', () => {
+  const xz = field()
+  // The lot of the block east of x = 2·pitch and north of z = 3·pitch starts lotHalf short of its centre.
+  const lot = { x: 2 * CITY.pitch + CITY.pitch / 2 - CITY.lotHalf, z: 3 * CITY.pitch + CITY.pitch / 2 - CITY.lotHalf }
+  const corner = { x: 2 * CITY.pitch + CITY.lane, z: 3 * CITY.pitch + CITY.lane }
+  put(xz, 3, corner.x, lot.z + 2.5) // up the west face of the lot
+  const round = { x: lot.x + 2.5, z: corner.z } // along the south face, round the corner
+  assert.equal(whyNotRally(corner, xz, 3, round.x, round.z), 'no sidewalk from where they stand to the rally point')
+  // The same recruit sent to the corner itself, or along their own face, walks the sidewalk.
+  assert.equal(whyNotRally(corner, xz, 3, corner.x, corner.z), null)
+  assert.equal(whyNotRally(corner, xz, 3, corner.x, lot.z + 6), null)
+  // Someone already at the corner may be sent round it.
+  put(xz, 4, corner.x, corner.z)
+  assert.equal(whyNotRally(corner, xz, 4, round.x, round.z), null)
+})

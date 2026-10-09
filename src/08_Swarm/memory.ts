@@ -466,8 +466,11 @@ export class SwarmMemory {
   /** The operator tier's view (operator.ts Diary): prompt lines for a person, and a note of what a task did with people. */
   diary(): Diary {
     return Object.freeze({
-      // What they remember, then what they have learned (fixed sentences only, after the episodes).
-      recall: (agent: number): readonly string[] => [...this.recall(agent).map((e) => recollection(e)), ...learnedLines(this.weights(agent))],
+      // What they remember, then what they have learned (fixed sentences only, after the episodes). 14A: a remembered line
+      // that fails the screen (a diary kept before answers were screened, or a store edited by hand) is never recalled.
+      recall: (agent: number): readonly string[] => [
+        ...this.recall(agent).map((e) => recollection(e)).filter((l) => screen(l).admissible), ...learnedLines(this.weights(agent)),
+      ],
       note: (bound: readonly GateTether[], kind: 'run' | 'ask' | 'say', skills: readonly string[], text: string, state: RunState, at: number, promptHash?: string, outcome?: Outcome): void => {
         for (const t of bound) {
           void this.record(t.agent, {

@@ -180,6 +180,12 @@ test('a task\'s note reaches every person it was bound to, with their own serial
   assert.equal((await memory.ledger(11)).at(-1)?.promptHash, prompt)
   assert.equal((await memory.ledger(22)).at(-1)?.promptHash, undefined, 'a hash that is not one is not noted')
   assert.doesNotMatch(d.recall(11).at(-1) ?? '', /[0-9a-f]{64}/)
+  // 14A: a stored line that fails the screen (a diary kept before answers were screened) is never recalled.
+  const before = d.recall(11).length
+  d.note([{ agent: 11, serial: 1, skills: ['Rust'] }], 'ask', ['Rust'], 'q → you idiot', 'Authorized', Date.now())
+  await settle()
+  assert.equal((await memory.ledger(11)).at(-1)?.text, 'q → you idiot', 'the ledger keeps its record (the chain is not rewritten)')
+  assert.equal(d.recall(11).length, before, 'but it never reaches a prompt')
 })
 
 test('a ledger is a timeline: a task noted when it ends goes where it began, before the release that cut it short; the chain is rebuilt from there', async () => {
