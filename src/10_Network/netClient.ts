@@ -25,6 +25,7 @@
  * What breaks if it is removed? The page cannot join a host; the host and the core are unchanged.
  */
 import {
+  blend,
   admissibleChat, authProtocol, emptyReplica, LIMITS, openServerFrame, peerBuckets, predict, PROTOCOL_VERSION, reconcile, sealMessage, SUBPROTOCOL,
   take, type CarFix, type ClientMessage, type Door, type InputMessage, type PeerBuckets, type PingRelayMessage, type ChatRelayMessage,
   type RemotePlayer, type Replica, type Run,
@@ -83,7 +84,12 @@ export interface Move {
   at: { x: number; y: number; z: number }
   door?: Door
   fix: number
+  /** The newest drift shift (NetClient.drift's `epoch`) the realm had applied when it ran this step; 0 before any. */
+  shift?: number
 }
+
+/** A drift resync to apply to the live body: carry player 1 by (x, y, z), and stamp the steps run after it `epoch`. */
+export interface DriftShift { epoch: number; x: number; y: number; z: number }
 
 /**
  * What became of a step: sent in an input, held for the next one (the input rate is spent), idle (no substep and no
@@ -115,6 +121,13 @@ export interface NetClient {
   move(m: Move): MoveStatus
   /** The newest correction (null before the welcome): the engine snaps to it once, when its `fix` is new to the page. */
   correction(): Correction | null
+  /**
+   * The drift the room's on-foot resyncs still ask for, taken once (null when none): the engine carries the live body by
+   * it (simProtocol.ts 'shift') and stamps the steps run after with its `epoch` (Move.shift), so a resync that answers
+   * an input sent before the shift landed asks only for what is still missing. Nothing is rewound, nothing in flight is
+   * dropped.
+   */
+  drift(): DriftShift | null
   /** A chat line, screened here first: false when inadmissible, not joined, or over rate. */
   sendChat(text: string): boolean
   sendPing(kind: PingKind, x: number, y: number, z: number): boolean
@@ -153,6 +166,14 @@ export const HOST_REFUSALS = LIMITS.refusalsBeforeKick
  */
 export const MAX_IN_FLIGHT = LIMITS.inputBurst - 30
 
+/**
+ * s: a new snapshot's poses are eased in from where the page was drawing each player over this long (two of the room's
+ * ticks at 20 Hz), so a player's figure glides onto the room's newer pose instead of jumping to it.
+ */
+export const EASE_S = 0.1
+/** m: farther than this between the drawn pose and the new one is a teleport (a correction, a door), drawn at once. */
+export const EASE_MAX = 3
+
 export function createNetClient(o: NetClientOptions = {}): NetClient {
   const now = o.now ?? (() => Date.now())
   const open = o.open ?? ((url: string, protocols: string[]): NetSocket => {
@@ -170,15 +191,24 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
   let refusals = 0
   let buckets: PeerBuckets = peerBuckets(now(), 1)
   let snapshotAt = 0
+  /** Each remote player as the page was drawing them when the newest snapshot arrived: where the ease starts. */
+  let easeFrom = new Map<number, RemotePlayer>()
   let unsent: InputMessage[] = []
   // The authority: the newest correction received, and the steps not yet sent (runs of one mode, claimed at `claim`).
   let fix = 0
   let truth: Correction | null = null
   let corrections = 0
   let corrected: string | null = null
+  /**
+   * Drift resyncs on foot: the shift asked for and not yet taken (`owed`), every epoch's total shift since the session
+   * began (`shifts[e]`, epoch 0 none), and the epoch each input in flight was claimed under (its last step's).
+   */
+  let owed: { x: number; y: number; z: number } | null = null
+  let shifts: { x: number; y: number; z: number }[] = [{ x: 0, y: 0, z: 0 }]
+  const claimedUnder = new Map<number, number>()
   let world = ''
   /** Steps not yet sent: runs of one mode (each a run's key, then its substeps last), claimed at `claim`, after `door`. */
-  let held: { mode: 'foot' | 'drive'; segs: number[][]; heading: number; claim: { x: number; y: number; z: number }; door?: Door } | null = null
+  let held: { mode: 'foot' | 'drive'; segs: number[][]; heading: number; claim: { x: number; y: number; z: number }; shift: number; door?: Door } | null = null
   /** When anything last went out, ms (the keepalive's clock), and the keepalive's stop. */
   let lastSent = 0
   let stopKeepalive: (() => void) | null = null
@@ -243,7 +273,13 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
         setStatus('joined')
         return
       case 'correct':
-        if (status !== 'joined' || msg.fix <= fix) return
+        if (status !== 'joined') return
+        // On foot, a drift under the correction the page already has: the input was kept, everything after it stands.
+        if (msg.drift && msg.fix === fix && !msg.car && !msg.you.driving) {
+          resynced(msg.ack, msg.you)
+          return
+        }
+        if (msg.fix <= fix) return
         fix = msg.fix
         truth = { fix: msg.fix, x: msg.you.x, y: msg.you.y, z: msg.you.z, reason: msg.reason, ...(msg.car && { car: msg.car }), ...(msg.drift && { drift: true as const }) }
         // A drift resync (an input the room kept, the page put back) is no correction of the player's.
@@ -255,13 +291,17 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
         // under the correction before is dropped by the room unread: nothing is pending any more.
         held = null
         unsent = []
+        claimedUnder.clear()
+        owed = null
         return
       case 'snapshot': {
         const next = reconcile(replica, msg)
         if (next !== replica) {
+          const at = now()
+          easeFrom = new Map(drawn(at).map((p) => [p.id, p]))
           replica = next
-          snapshotAt = now()
-          unsent = unsent.filter((i) => i.seq > replica.ack)
+          snapshotAt = at
+          acked(replica.ack)
         }
         return
       }
@@ -276,6 +316,23 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
         // The next snapshot carries the room; nothing to do here.
         return
     }
+  }
+
+  /**
+   * Every remote player at `at`, ms: the newest snapshot carried forward by its own velocity, its position and heading
+   * eased in over EASE_S from where the page drew them when it arrived (a player new to the page, or one that moved past EASE_MAX, at once).
+   */
+  const drawn = (at: number): readonly RemotePlayer[] => {
+    const dt = (at - snapshotAt) / 1000
+    const ahead = dt > 0 ? replica.players.map((p) => predict(p, dt)) : replica.players
+    if (easeFrom.size === 0 || !(dt < EASE_S)) return ahead
+    const k = Math.max(0, dt) / EASE_S
+    return ahead.map((p) => {
+      const from = easeFrom.get(p.id)
+      if (!from || from.driving !== p.driving || Math.hypot(p.x - from.x, p.z - from.z) > EASE_MAX) return p
+      // The pose eased; the velocity is the room's newest (what the figure's gait and the next prediction read).
+      return Object.freeze({ ...blend(from, p, k), vx: p.vx, vz: p.vz, speed: p.speed })
+    })
   }
 
   /** A run's substeps (its last entry), and whether two runs share a key (everything but the substeps). */
@@ -306,7 +363,33 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
       ...(h.door && { door: h.door }),
     }
     unsent.push(msg)
+    claimedUnder.set(msg.seq, h.shift)
     return send(msg)
+  }
+
+  /** What is in flight, cut to the inputs after `ack` (and the epochs they were claimed under with them). */
+  const acked = (ack: number): void => {
+    unsent = unsent.filter((i) => i.seq > ack)
+    for (const s of claimedUnder.keys()) if (s <= ack) claimedUnder.delete(s)
+  }
+
+  /**
+   * An on-foot drift resync for input `ack`, under the current correction: the room's truth at its end against where the
+   * page claimed it, less every shift the page has already asked for since that claim. The rest is owed to the body.
+   */
+  const resynced = (ack: number, you: { x: number; y: number; z: number }): void => {
+    const sent = unsent.find((i) => i.seq === ack)
+    const under = claimedUnder.get(ack)
+    if (!sent || under === undefined || sent.mode !== 'foot') return
+    const now = shifts[shifts.length - 1], then = shifts[under]
+    const pending = owed ?? { x: 0, y: 0, z: 0 }
+    const d = {
+      x: you.x - sent.claim.x - (now.x - then.x) - pending.x,
+      y: you.y - sent.claim.y - (now.y - then.y) - pending.y,
+      z: you.z - sent.claim.z - (now.z - then.z) - pending.z,
+    }
+    if (![d.x, d.y, d.z].every(Number.isFinite)) return
+    owed = { x: pending.x + d.x, y: pending.y + d.y, z: pending.z + d.z }
   }
 
   /** The keepalive: what is held goes out once the rate allows, and a client silent for KEEPALIVE_MS acknowledges the newest snapshot. */
@@ -344,6 +427,10 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
       refusals = 0
       buckets = peerBuckets(now(), 1)
       unsent = []
+      claimedUnder.clear()
+      owed = null
+      shifts = [{ x: 0, y: 0, z: 0 }]
+      easeFrom = new Map()
       key = token
       sent = 0
       received = 0
@@ -395,10 +482,19 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
       if (sameKey(last, key)) last[last.length - 1] += n
       else segs.push([...key, n])
       const keep = door ?? held?.door
-      held = { mode: m.mode, segs, heading: m.heading, claim: { x: m.at.x, y: m.at.y, z: m.at.z }, ...(keep && { door: keep }) }
+      const shift = Number.isInteger(m.shift) && m.shift! >= 0 && m.shift! < shifts.length ? m.shift! : 0
+      held = { mode: m.mode, segs, heading: m.heading, claim: { x: m.at.x, y: m.at.y, z: m.at.z }, shift, ...(keep && { door: keep }) }
       return flush(false) ? 'sent' : 'held'
     },
     correction: () => truth,
+    drift() {
+      if (!owed) return null
+      const last = shifts[shifts.length - 1]
+      shifts.push({ x: last.x + owed.x, y: last.y + owed.y, z: last.z + owed.z })
+      const out = { epoch: shifts.length - 1, ...owed }
+      owed = null
+      return out
+    },
     get corrections() { return corrections },
     get corrected() { return corrected },
     sendChat(text) {
@@ -412,10 +508,7 @@ export function createNetClient(o: NetClientOptions = {}): NetClient {
       if (!take(buckets.ping, now())) return false
       return send({ t: 'ping', seq: ++said, kind, x, y, z })
     },
-    poses(at = now()) {
-      const dt = (at - snapshotAt) / 1000
-      return dt > 0 ? replica.players.map((p) => predict(p, dt)) : replica.players
-    },
+    poses: (at = now()) => drawn(at),
     pending: () => unsent,
     get stalled() { return unsent.length >= MAX_IN_FLIGHT },
     leave() {

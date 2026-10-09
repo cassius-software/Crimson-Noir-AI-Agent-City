@@ -71,6 +71,7 @@ export class CrowdSim implements CrowdSensor {
       stats: { nudges: 0, waiting: 0, crossing: 0, retreating: 0 },
       xz: new Float32Array(agentCount * 2).fill(NaN),
       activity: new Uint8Array(agentCount),
+      heading: new Float32Array(agentCount).fill(NaN),
     }
     const storage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
     this.#params = device.createBuffer({ label: 'crowd.params', size: PARAMS_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
@@ -146,7 +147,21 @@ export class CrowdSim implements CrowdSensor {
     if (buffer instanceof ArrayBuffer && buffer.byteLength === this.agentCount * RENDER_FLOATS * 4 && this.#pool.length < 4) this.#pool.push(buffer)
   }
 
-  /** GPU-side placement of every pedestrian. The CPU never writes a pedestrian coordinate. */
+  /**
+   * A ragdoll handed back (ragdollRealm.ts): pedestrian `agent` put where its rig's pelvis stood, facing as it faced,
+   * standing (velocity, walk phase and speed zero), before the next step. The one coordinate the CPU ever writes, and
+   * only for someone the realm had promoted: never the player's figure (index 0), never a non-finite value.
+   */
+  place(agent: number, x: number, z: number, heading: number): void {
+    if (this.#lost !== null) return
+    if (!(Number.isInteger(agent) && agent > 0 && agent < this.agentCount)) return
+    if (![x, z, heading].every(Number.isFinite)) return
+    const queue = this.#device.queue
+    queue.writeBuffer(this.#pos, agent * 16, new Float32Array([x, 0, z, heading]))
+    queue.writeBuffer(this.#vel, agent * 16, new Float32Array(4))
+  }
+
+  /** GPU-side placement of every pedestrian at boot. */
   #spawn(): void {
     packSimParams(this.#paramF32, this.#paramU32, 0, this.agentCount, { seq: 0, dt: 0, time: 0, player: { x: 0, z: 0, heading: 0, speed: 0, visible: false }, cars: [], summons: [] })
     this.#device.queue.writeBuffer(this.#params, 0, this.#paramBytes)
@@ -247,10 +262,11 @@ export class CrowdSim implements CrowdSensor {
       const frame = new Float32Array(this.#pool.pop() ?? new ArrayBuffer(n * 4))
       frame.set(new Float32Array(bytes, SIM_READ_RENDER, n))
       // This realm's own copy of where everyone stands (pos.xz) and what they are doing (pose.w), for recruitment.
-      const xz = r.xz, activity = r.activity, pose = 8 * this.agentCount
+      const xz = r.xz, activity = r.activity, heading = r.heading!, pose = 8 * this.agentCount
       for (let i = 0; i < this.agentCount; i++) {
         xz[2 * i] = frame[4 * i]
         xz[2 * i + 1] = frame[4 * i + 2]
+        heading[i] = frame[4 * i + 3]
         activity[i] = frame[pose + 4 * i + 3]
       }
       if (this.#pendingFrame) this.recycle(this.#pendingFrame.buffer as ArrayBuffer)

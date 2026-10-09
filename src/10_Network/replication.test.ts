@@ -602,7 +602,7 @@ test('hopping from car to car is no faster than a run: a pair reaches at most 5.
   })
 })
 
-test('a kept input the page drifted from is put back (drift): a correction to the page, never a refusal and never counted toward removal', () => {
+test('a kept input the page drifted from is put back (drift): on foot no correction number is spent and nothing in flight is dropped; never a refusal, never counted toward removal', () => {
   const base = planeAuthority()
   const authority: Authority = { ...base, judge: (id, m) => { const v = base.judge(id, m); return v.ok ? { ...v, resync: 'claim 5.0 µm from the plane\'s pose' } : v } }
   const room = createRoom(authority)
@@ -614,9 +614,10 @@ test('a kept input the page drifted from is put back (drift): a correction to th
     assert.equal(out.refused, undefined, `input ${k}`)
     assert.equal(out.kick, undefined)
     const reply = out.reply as { t: string; drift?: boolean; ack: number; fix: number }
-    assert.deepEqual([reply.t, reply.drift, reply.ack, reply.fix], ['correct', true, k, k + 1], 'kept (acknowledged) and put back')
+    // The same correction number: every input the page sent after this one, under it, is still read (none dropped).
+    assert.deepEqual([reply.t, reply.drift, reply.ack, reply.fix], ['correct', true, k, 1], 'kept (acknowledged), the page shifted, not rewound')
   }
-  assert.deepEqual([a.seq, a.corrections, a.refusals, a.resyncs], [40, 0, 0, 40])
+  assert.deepEqual([a.seq, a.fix, a.corrections, a.refusals, a.resyncs], [40, 1, 0, 0, 40])
   assert.equal(a.buckets.corrections.tokens, tokens, 'the corrections allowance untouched')
   // On the wire: drift is true or absent.
   const c = { t: 'correct', fix: 2, ack: 1, you: player(1), reason: 'r', tick: 1 }

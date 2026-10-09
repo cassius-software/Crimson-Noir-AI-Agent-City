@@ -651,7 +651,7 @@ test('the mirror on the socket: crafted illegal movement is refused and correcte
     // The client's own prediction: the same controller on the same city (the page's realm agrees within a micrometre,
     // mirror.node.test.ts), put down at the welcome's spawn as the page is.
     predictor.join(w.id)
-    predictor.place(w.id, w.you.x, w.you.z)
+    predictor.place(w.id, w.you.x, w.you.z, w.you.y)
     let seq = 0
     let fix = w.fix
     const walk = (runs: FootRun[]): InputMessage => {
@@ -684,7 +684,7 @@ test('the mirror on the socket: crafted illegal movement is refused and correcte
       assert.equal(corr.fix, fix + 1)
       fix = corr.fix
       // The client snaps: put down standing at the truth.
-      predictor.place(w.id, corr.you.x, corr.you.z)
+      predictor.place(w.id, corr.you.x, corr.you.z, corr.you.y)
       return c.at[i] - t0
     }
     const ms: number[] = []
@@ -732,7 +732,7 @@ test('a room of walkers on the mirror: every honest input kept, each judged in w
     for (let k = 0; k < N; k++) welcomes.push(await join(host, clients[k], `Walker ${k}`))
     for (const w of welcomes) {
       predictor.join(w.id)
-      predictor.place(w.id, w.you.x, w.you.z)
+      predictor.place(w.id, w.you.x, w.you.z, w.you.y)
     }
     for (let i = 1; i <= STEPS; i++) {
       for (let k = 0; k < N; k++) {

@@ -51,6 +51,8 @@ const MAX_DT = 0.1
 const MAX_COMMANDS = 64
 /** A harness may blind person sensing for at most this long, ms. */
 const MAX_BLIND_MS = 20_000
+/** The largest drift resync ('shift') the realm takes, m: the room's own bound on an honest page's drift on foot (mirror.node.ts MIRROR.drift.foot; mirror.node.test.ts holds them equal). */
+export const SHIFT_MAX = 0.25
 /** How long the crowd may take to deliver its first reading at boot, ms. */
 const CROWD_PRIME_MS = 10_000
 /**
@@ -662,8 +664,21 @@ export class SimCore {
         const k = this.#player(cmd.player)
         const x = finite(cmd.x, NaN), z = finite(cmd.z, NaN)
         if (Number.isNaN(x) || Number.isNaN(z)) throw new Error('teleport: x and z must be finite')
+        const y = cmd.y === undefined ? undefined : finite(cmd.y, NaN)
+        if (Number.isNaN(y)) throw new Error('teleport: y must be finite')
         if (this.#driving[k]) this.#interact(k, true)
-        this.#avatars[k].teleport(x, z)
+        this.#avatars[k].teleport(x, z, y)
+        return
+      }
+      case 'shift': {
+        if (!this.#room) throw new Error('shift: only a network room resyncs the player')
+        const dx = finite(cmd.dx, NaN), dy = finite(cmd.dy, NaN), dz = finite(cmd.dz, NaN)
+        if ([dx, dy, dz].some(Number.isNaN)) throw new Error('shift: dx, dy and dz must be finite')
+        // A drift is sub-millimetre (MIRROR.drift.foot bounds it); anything larger is not a drift.
+        if (Math.hypot(dx, dy, dz) > SHIFT_MAX) throw new Error(`shift: more than ${SHIFT_MAX} m is a correction, not a drift`)
+        // At the wheel the room corrects the car itself (netCar); a resync for the walk the page has left is moot.
+        if (this.#driving[0]) return
+        this.#avatars[0].shift(dx, dy, dz)
         return
       }
       case 'setMode': {
@@ -1005,6 +1020,13 @@ export class SimCore {
     // The odometers now: the reading this step returns measured the cars here. Kept as long as a reading can be used.
     this.#dispatches.push({ seq, time: this.#simTime, odo: this.#odo.slice() })
     while (this.#dispatches.length > 1 && this.#dispatches[0].time < this.#simTime - CROWD_STALE_S - MAX_DT) this.#dispatches.shift()
+    // The ragdolls handed back this step stand where their rigs stood before this crowd step moves anyone; the realm
+    // keeps drawing each rig's last pose until this step's reading arrives with them there.
+    if (this.#realm) {
+      const handbacks = this.#realm.takeHandbacks()
+      for (const h of handbacks) crowd.place?.(h.agent, h.x, h.z, h.heading)
+      if (handbacks.length > 0) this.#realm.placed(seq, crowd.place !== undefined)
+    }
     crowd.step({
       seq, dt, time: this.#simTime,
       player: { x: a.x, z: a.z, heading: this.#bodyHeading[0], speed: this.#driving[0] ? 0 : a.speed, visible: this.#driving[0] === null },

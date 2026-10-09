@@ -425,7 +425,7 @@ test('the room over time on the mirror: thousands of ticks with eight walkers, e
     const o = handle(R.room, R.peers[k], { t: 'join', v: PROTOCOL_VERSION, token: 'tok', name: `Walker ${k}`, world: mirror.world }, now, () => true)
     assert.ok(o.reply && o.reply.t === 'welcome', 'welcomed')
     predictor.join(o.reply.id)
-    predictor.place(o.reply.id, o.reply.you.x, o.reply.you.z)
+    predictor.place(o.reply.id, o.reply.you.x, o.reply.you.z, o.reply.you.y)
   }
   const g = gen(0x5eed)
   const seqs = new Array<number>(PEERS).fill(0)
@@ -438,7 +438,7 @@ test('the room over time on the mirror: thousands of ticks with eight walkers, e
       const runs: FootRun[] = [[g.float(-RUN, RUN), g.float(-RUN, RUN), 1]]
       const claim = predictor.walk(p.id, runs)
       const r = apply(R, k, { t: 'input', seq: ++seqs[k], ack: R.room.tick, fix: p.fix, mode: 'foot', segs: runs, heading: g.float(-3, 3), claim: { x: claim.x, y: claim.y, z: claim.z } }, now)
-      if (r.corrected) { corrected++; predictor.place(p.id, p.x, p.z) }
+      if (r.corrected) { corrected++; predictor.place(p.id, p.x, p.z, p.y) }
       assert.ok(!r.gone, `walker ${k} removed at tick ${tk}`)
     }
     const bytes = tick(R)
@@ -524,7 +524,7 @@ test('determinism on the mirror: two mirrors of one city, fed one seeded random 
   const fixes = new Array<number>(8).fill(1)
   const r = play(g, A, B, 300, (R, k, runs) => {
     const p = R.peers[k]
-    if (p.fix !== fixes[k]) { fixes[k] = p.fix; predictor.place(p.id, p.x, p.z) }
+    if (p.fix !== fixes[k]) { fixes[k] = p.fix; predictor.place(p.id, p.x, p.z, p.y) }
     const at = predictor.walk(p.id, runs)
     return { x: at.x, y: at.y, z: at.z }
   })

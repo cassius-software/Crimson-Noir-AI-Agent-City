@@ -367,14 +367,16 @@ test('an AI car stops short of a person in its lane, whatever its Perception deg
   }
 })
 
-test('a person stepping out just beyond the envelope: the First Law stops the car, as one intervention', async () => {
+test('a person stepping out just beyond the envelope: a slow driver is stopped by the First Law, as one intervention; a quick one stops on their own', async () => {
   // 40 km/h reaches 12 m from the person 1.59 s in; the envelope there is 10.8 m.
   const appearAt = (32 - CAR.halfLength - 12) / TRAFFIC.speedLimit
-  for (const natural of [1, 18]) {
+  // A critical failure (1 s to notice): the First Law brakes, and holds to a standstill. A success (0.25 s, counted to the
+  // frame: hazards.ts REACTION_SLACK) brakes before the envelope is reached, with nothing for the First Law to do.
+  for (const [natural, interventions] of [[1, 1], [18, 0]]) {
     const { fleet, v, minGap } = await aiMeetsPerson(natural, appearAt)
     assert.ok(Math.abs(fleet.speed(v)) < 0.05)
     assert.ok(minGap >= KERNEL.standoff, `natural ${natural}: came within ${minGap.toFixed(2)} m`)
-    assert.equal(fleet.bouncer.counts[1], 1, 'emergency braking holds to a standstill: one rising edge, no pulsing')
+    assert.equal(fleet.bouncer.counts[1], interventions, `natural ${natural}: emergency braking holds to a standstill: at most one rising edge, no pulsing`)
   }
 })
 

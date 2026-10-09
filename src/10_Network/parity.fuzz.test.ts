@@ -89,6 +89,7 @@ async function page(url: string, token: string, name: string, clock: { now: numb
   const poses = new Float32Array(sim.meta.count * POSE.stride)
   const client: NetClient = createNetClient({ now: () => clock.now, open, every: () => () => {} })
   let fix = 0
+  let shift = 0
   let room = false
   const queued: SimCommand[] = []
   let st: StepState | null = null
@@ -100,11 +101,16 @@ async function page(url: string, token: string, name: string, clock: { now: numb
       const c = client.correction()
       if (c && c.fix > fix) {
         fix = c.fix
-        queued.push(c.car ? { c: 'netCar', i: c.car.index, state: c.car.state } : { c: 'teleport', x: c.x, z: c.z })
+        queued.push(c.car ? { c: 'netCar', i: c.car.index, state: c.car.state } : { c: 'teleport', x: c.x, z: c.z, y: c.y })
+      }
+      const d = client.drift()
+      if (d) {
+        shift = d.epoch
+        queued.push({ c: 'shift', dx: d.x, dy: d.y, dz: d.z })
       }
     }
     const w = footWish(foot.x, foot.z)
-    const sentFix = fix
+    const sentFix = fix, sentShift = shift
     const s = { ...sim.step({ dt, foot: { ...foot, heading: 0 }, drive, cmds: [...queued.splice(0), ...cmds] }, poses), t: 'state' as const, id: 0 }
     st = s
     const door = doorOf(s.events)
@@ -112,14 +118,14 @@ async function page(url: string, token: string, name: string, clock: { now: numb
     let m: Move
     if (s.driving >= 0) {
       const o = s.driving * POSE.stride
-      m = { mode: 'drive', x: 0, z: 0, ...(s.wheels && { wheels: s.wheels }), n: s.physics.steps, heading: poses[o + POSE.heading], at: { x: poses[o + POSE.x], y: poses[o + POSE.y], z: poses[o + POSE.z] }, fix: sentFix }
+      m = { mode: 'drive', x: 0, z: 0, ...(s.wheels && { wheels: s.wheels }), n: s.physics.steps, heading: poses[o + POSE.heading], at: { x: poses[o + POSE.x], y: poses[o + POSE.y], z: poses[o + POSE.z] }, fix: sentFix, shift: sentShift }
       // A crash: the car shed more than 5 m/s in one frame with the brakes off.
       const speed = Math.abs(poses[o + POSE.speed])
       if (speedWas - speed > 5 && s.wheels && s.wheels.brake === 0 && !s.wheels.handbrake) crashes++
       speedWas = speed
       driven += s.physics.steps
     } else {
-      m = { mode: 'foot', x: w.x, z: w.z, n: s.physics.steps, heading: 0, at: { x: s.avatar.x, y: s.avatar.y, z: s.avatar.z }, fix: sentFix }
+      m = { mode: 'foot', x: w.x, z: w.z, n: s.physics.steps, heading: 0, at: { x: s.avatar.x, y: s.avatar.y, z: s.avatar.z }, fix: sentFix, shift: sentShift }
       speedWas = 0
     }
     if (door) m = { ...m, door }
@@ -204,7 +210,7 @@ test('parity under sustained adversarial load: two drivers on a chaotic network,
       const c = eve.correction()
       if (c && c.fix > eveFix) {
         eveFix = c.fix
-        predictor.place(eve.id, c.x, c.z)
+        predictor.place(eve.id, c.x, c.z, c.y)
       }
       const v = { x: eg.float(-RUN, RUN), z: eg.float(-RUN, RUN) }
       const at = predictor.walk(eve.id, [[v.x, v.z, n]])

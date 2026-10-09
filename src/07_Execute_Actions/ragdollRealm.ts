@@ -10,8 +10,11 @@
  * KERB_SPEED) or a slip (drawn from the realm's seeded rng at a very low rate) — offers that person to the promotion
  * pool. A promoted person gets a rig built where the crowd had them, moving as they moved; every substep the pool
  * steps the machine on what the rig measures (perturbed, catch step, sitting down, seated, recovering), the rig is
- * driven with that state's gains, and on recovery the rig is removed and the person is the crowd's again (the crowd
- * simulated them meanwhile, so the page shows their figure where the crowd has it: the handback jump).
+ * driven with that state's gains, and on recovery the rig is removed and the person is the crowd's again: the crowd is
+ * told to put them where the rig's pelvis stood, facing as it faced (`takeHandbacks`, CrowdSensor.place), and the slot
+ * keeps streaming the rig's last pose until a crowd reading taken after that write arrives, so the page never draws the
+ * figure where the crowd had walked it meanwhile (the handback jump, measured as `lastJump`, is the distance between
+ * the last pose streamed and the figure the page then draws).
  *
  * A vehicle is never a cause. The pool refuses one by name, no car's push is ever offered, nobody standing within
  * VEHICLE_CLEARANCE of a moving car is promoted, and once a rig exists every one of its thirteen shapes is a ward of
@@ -78,11 +81,21 @@ interface Shape {
 }
 
 interface Slot {
-  /** The pedestrian promoted into this slot, or −1 while free. */
+  /** The pedestrian promoted into this slot (or held after it), or −1 while free. */
   agent: number
   rig: BodyRig | null
   readonly shapes: Shape[]
+  /**
+   * After a handback: the rig's last RIG_POSE slice, streamed in place of the removed rig until the crowd reading `until`
+   * (the first crowd step after the crowd was told where the person is; −1 until that step is dispatched) arrives.
+   */
+  hold: { pose: Float32Array; x: number; z: number; until: number } | null
+  /** The RIG_STATES code the stream last carried for this slot. */
+  drawn: number
 }
+
+/** A promoted person handed back: where the crowd is to put them (the rig's pelvis on the ground) and their facing. */
+export interface Handback { agent: number; x: number; z: number; heading: number }
 
 export interface RealmStats {
   promotions: number
@@ -133,15 +146,19 @@ export class RagdollRealm {
   #near: number[] = []
   readonly #readings = new Map<number, Reading>()
   readonly #at = { x: 0, y: 0, z: 0 }
+  /** Every pedestrian's facing in the newest reading (NaN where the reading carries none). */
+  #heading: Float32Array
+  readonly #handbacks: Handback[] = []
 
   constructor(physics: Physics, sanctuary: Sanctuary, seed: number, agentCount: number) {
     if (POOL_CAPACITY !== RIG_SLOTS) throw new Error(`the rig stream holds ${RIG_SLOTS} slots, the pool ${POOL_CAPACITY}`)
     this.#physics = physics
     this.#sanctuary = sanctuary
     this.#rng = createRng((seed ^ 0x5a1b) >>> 0)
-    this.#slots = Array.from({ length: RIG_SLOTS }, () => ({ agent: -1, rig: null, shapes: [] }))
+    this.#slots = Array.from({ length: RIG_SLOTS }, () => ({ agent: -1, rig: null, shapes: [], hold: null, drawn: 0 }))
     this.#prevXZ = new Float32Array(agentCount * 2).fill(NaN)
     this.#xz = new Float32Array(agentCount * 2).fill(NaN)
+    this.#heading = new Float32Array(agentCount).fill(NaN)
     Object.freeze(this)
   }
 
@@ -152,11 +169,30 @@ export class RagdollRealm {
     return n
   }
 
-  /** The pedestrians promoted now (their crowd figures are hidden on the page), in slot order. */
+  /** The pedestrians promoted now, or handed back and still held (their crowd figures are hidden on the page), in slot order. */
   promoted(): number[] {
     const out: number[] = []
-    for (const s of this.#slots) if (s.rig) out.push(s.agent)
+    for (const s of this.#slots) if (s.rig || s.hold) out.push(s.agent)
     return out
+  }
+
+  /** The handbacks since the last call, for the crowd to put down (CrowdSensor.place) before its next step. */
+  takeHandbacks(): Handback[] {
+    const out = this.#handbacks.slice()
+    this.#handbacks.length = 0
+    return out
+  }
+
+  /**
+   * The crowd step `seq` was dispatched after the handbacks taken were written: each held slot waits for its reading.
+   * `written` false (a crowd that cannot be written): the hold ends now and the figure is drawn where the crowd has it.
+   */
+  placed(seq: number, written: boolean): void {
+    for (const s of this.#slots) {
+      if (!s.hold || s.hold.until >= 0) continue
+      if (written) s.hold.until = seq
+      else this.#release(s, null)
+    }
   }
 
   /** The balance state of pedestrian `agent`, or null when they are the crowd's alone. */
@@ -176,6 +212,9 @@ export class RagdollRealm {
     const xz = readout.xz
     const n = Math.min(xz.length, this.#xz.length) >>> 1
     const prev = this.#prevXZ, cur = this.#xz
+    if (readout.heading) this.#heading.set(readout.heading.subarray(0, Math.min(readout.heading.length, this.#heading.length)))
+    // A held slot ends with the first reading taken after the crowd was told where the person is.
+    for (const s of this.#slots) if (s.hold && s.hold.until >= 0 && readout.seq >= s.hold.until) this.#release(s, xz)
     const dt = readout.time - this.#prevTime
     const hadPrev = this.#prevSeq >= 0 && dt > 0 && dt <= MAX_READING_GAP
     cur.set(xz.subarray(0, 2 * n))
@@ -209,7 +248,8 @@ export class RagdollRealm {
         const speed = Math.hypot(v[0], v[1])
         const decision = this.#pool.offer({
           id: i, distance: Math.hypot(x - opX, z - opZ), perturbation: { cause, impulse },
-          x, y: 0, z, vx: v[0], vy: 0, vz: v[1], heading: speed > 0.1 ? Math.atan2(v[0], v[1]) : 0,
+          // Facing where the crowd had them facing (someone standing at a crossing too), else along their walk.
+          x, y: 0, z, vx: v[0], vy: 0, vz: v[1], heading: finite(this.#heading[i]) ? this.#heading[i] : speed > 0.1 ? Math.atan2(v[0], v[1]) : 0,
         })
         if (decision.kind !== 'promoted') return false
         const len = Math.hypot(dirX, dirZ)
@@ -367,10 +407,22 @@ export class RagdollRealm {
     this.#slots.forEach((s, slot) => {
       const o = slot * RIG_POSE.stride
       if (!s.rig) {
-        out.fill(0, o, o + RIG_POSE.stride)
-        out[o + RIG_POSE.agent] = -1
+        if (s.hold) out.set(s.hold.pose, o)
+        else {
+          out.fill(0, o, o + RIG_POSE.stride)
+          out[o + RIG_POSE.agent] = -1
+        }
         return
       }
+      this.#slice(s, out, o)
+      s.drawn = out[o + RIG_POSE.state]
+    })
+    return out
+  }
+
+  /** Slot `s`'s RIG_POSE slice (its rig as it stands now) into `out` at `o`. */
+  #slice(s: Slot, out: Float32Array, o: number): void {
+    {
       out[o + RIG_POSE.agent] = s.agent
       out[o + RIG_POSE.state] = Math.max(0, RIG_STATES.indexOf(this.#pool.get(s.agent)?.machine.state ?? 'perturbed'))
       s.shapes.forEach((shape, j) => {
@@ -379,13 +431,36 @@ export class RagdollRealm {
         out[b] = at.x; out[b + 1] = at.y; out[b + 2] = at.z
         out[b + 3] = q.x; out[b + 4] = q.y; out[b + 5] = q.z; out[b + 6] = q.w
       })
-    })
-    return out
+    }
   }
 
-  /** Removes every rig (tests). */
+  /** Removes every rig and every hold (tests). */
   dispose(): void {
     for (const s of this.#slots) if (s.rig) this.#free(s.agent)
+    for (const s of this.#slots) if (s.hold) this.#release(s, null)
+  }
+
+  /**
+   * A held slot freed: the figure is the crowd's again. `xz`, the reading that ends the hold: the handback jump is the
+   * last pose streamed against where that reading has the person.
+   */
+  #release(s: Slot, xz: Float32Array | null): void {
+    const h = s.hold
+    if (!h) return
+    if (xz) {
+      const cx = xz[2 * s.agent], cz = xz[2 * s.agent + 1]
+      const jump = finite(cx) && finite(cz) ? Math.hypot(h.x - cx, h.z - cz) : NaN
+      if (finite(jump)) {
+        this.stats.lastJump = jump
+        if (jump > this.stats.maxJump) this.stats.maxJump = jump
+      }
+    }
+    // The reading before had them where the crowd walked them meanwhile: no velocity is read across the put-down (it
+    // would read as a shove or a trip and promote them again).
+    this.#prevXZ[2 * s.agent] = NaN
+    this.#prevXZ[2 * s.agent + 1] = NaN
+    s.hold = null
+    s.agent = -1
   }
 
   #slot(agent: number): Slot | undefined {
@@ -402,6 +477,8 @@ export class RagdollRealm {
 
   #build(agent: number): void {
     const member = this.#pool.get(agent)
+    // Promoted again while still held from the last handback: the hold ends (the new rig is drawn instead).
+    for (const s of this.#slots) if (s.hold && s.agent === agent) this.#release(s, null)
     const slot = this.#slots.find((s) => s.agent < 0)
     if (!member || !slot) return
     const rig = buildRig(this.#physics.world, member.spawn)
@@ -426,19 +503,26 @@ export class RagdollRealm {
   #free(agent: number): void {
     const slot = this.#slot(agent)
     if (!slot?.rig) return
-    // The handback jump: where the rig stood against where the crowd has the person now.
-    const p = slot.rig.bodies.pelvis.translation(this.#at)
-    const cx = this.#xz[2 * agent], cz = this.#xz[2 * agent + 1]
-    const jump = finite(cx) && finite(cz) ? Math.hypot(p.x - cx, p.z - cz) : NaN
-    if (finite(jump)) {
-      this.stats.lastJump = jump
-      if (jump > this.stats.maxJump) this.stats.maxJump = jump
-    }
+    // The handback: the crowd puts the person where the pelvis stands, facing as it faces, and the slot streams the rig's
+    // last pose until the crowd's reading has them there.
+    const pelvis = slot.rig.bodies.pelvis
+    // Copied out: the scratch the translation lands in is reused by every shape the slice below reads.
+    const at = pelvis.translation(this.#at)
+    const p = { x: at.x, z: at.z }
+    const f = rotate(pelvis.rotation(), { x: 0, y: 0, z: 1 })
+    const heading = Math.hypot(f.x, f.z) > 1e-6 ? Math.atan2(f.x, f.z) : 0
+    const pose = new Float32Array(RIG_POSE.stride)
+    this.#slice(slot, pose, 0)
+    // The state the page last drew (the machine has moved on to recovering, which the stream never shows).
+    pose[RIG_POSE.state] = slot.drawn
     this.stats.handbacks++
     removeRig(this.#physics.world, slot.rig)
     slot.rig = null
-    slot.agent = -1
     for (const shape of slot.shapes) shape.floating = false
+    if (finite(p.x) && finite(p.z)) {
+      this.#handbacks.push({ agent, x: p.x, z: p.z, heading })
+      slot.hold = { pose, x: p.x, z: p.z, until: -1 }
+    } else slot.agent = -1
   }
 
   #push(rig: BodyRig, push: Perturbation, dirX: number, dirZ: number): void {

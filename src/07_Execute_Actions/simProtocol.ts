@@ -173,7 +173,13 @@ export type SimCommand =
   // `player` picks the avatar (0..players − 1, default 0): a car another player is driving is refused.
   | { c: 'interact'; player?: number }
   | { c: 'reset' }
-  | { c: 'teleport'; x: number; z: number; player?: number }
+  // `y`: put down at that height (a network room's truth), else just above standing height.
+  | { c: 'teleport'; x: number; z: number; y?: number; player?: number }
+  /**
+   * A network room's drift resync: player 1, on foot, carried by (dx, dy, dz) with nothing else
+   * changed. Refused outside a room and at the wheel (a car's correction is a netCar).
+   */
+  | { c: 'shift'; dx: number; dy: number; dz: number }
   | { c: 'setMode'; i: number; mode: 'ai' | 'parked' }
   | { c: 'recover'; i: number; x?: number; z?: number; heading?: number }
   | { c: 'intent'; i: number; throttle: number; brake: number; steer: number }

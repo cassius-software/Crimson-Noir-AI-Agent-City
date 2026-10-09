@@ -172,18 +172,37 @@ export class Avatar {
     this.nudgeZ = 0
   }
 
-  teleport(x: number, z: number): void {
-    this.body.setTranslation({ x, y: HALF_HEIGHT + RADIUS + 0.05, z }, true)
+  /**
+   * Puts the avatar down at (x, z): at height `y` when given (a network room's truth, where the capsule already stood,
+   * so a correction does not lift the figure for a frame), else just above standing height.
+   */
+  teleport(x: number, z: number, y?: number): void {
+    const at = { x, y: y !== undefined && Number.isFinite(y) ? y : HALF_HEIGHT + RADIUS + 0.05, z }
+    this.body.setTranslation(at, true)
     // The collider follows at once (a move right after reads the collider, not the body): the first step after a
     // teleport starts where the teleport put the avatar, in the realm as in the mirror.
     this.physics.world.propagateModifiedBodyPositionsToColliders()
-    if (!this.ghost) this.body.setNextKinematicTranslation({ x, y: HALF_HEIGHT + RADIUS + 0.05, z })
+    if (!this.ghost) this.body.setNextKinematicTranslation(at)
     // Put down in the air: the next move starts falling from rest, whatever the last one ended on (so a client's realm
     // and the mirror, teleported to the same point, take the same next step).
     this.fall = 0
     this.grounded = false
     this.nudgeX = 0
     this.nudgeZ = 0
+  }
+
+  /**
+   * Carries the capsule by (dx, dy, dz) and nothing else: how it was moving, whether it stands, its fall and nudge all
+   * stay. A network room's drift resync: the page's sub-millimetre difference from the room's
+   * replay taken up under the player's feet, with no rewind and no stop, where a teleport would put them down standing.
+   */
+  shift(dx: number, dy: number, dz: number): void {
+    if (![dx, dy, dz].every(Number.isFinite)) return
+    const t = this.body.translation(this.at)
+    const at = { x: t.x + dx, y: t.y + dy, z: t.z + dz }
+    this.body.setTranslation(at, true)
+    this.physics.world.propagateModifiedBodyPositionsToColliders()
+    if (!this.ghost) this.body.setNextKinematicTranslation(at)
   }
 
   /** Where the capsule is and how it was moving: everything the next move reads. */
