@@ -16,7 +16,8 @@
     "serve:net": "node src/10_Network/replication.node.ts",
     "smoke:net": "node tools/net/smoke.mjs",
     "smoke:bridge": "node tools/net/bridge-smoke.mjs",
-    "test": "node --test \"src/**/*.test.ts\""
+    "test": "node --test \"src/**/*.test.ts\"",
+    "verify": "node tools/verify/fvps.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-simd-compat": "^0.21.0",

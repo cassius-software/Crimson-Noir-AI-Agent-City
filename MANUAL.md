@@ -29,6 +29,7 @@ npm run dev      # local dev server
 npm run build    # typecheck (app + tests), then emit dist/index.html: one file, every asset inlined
 npm test         # 1,316 tests (node --test), including real Rapier physics and a real WebSocket host in Node
 npm run lint     # oxlint
+npm run verify   # the formal verification step (tools/verify/fvps.sh for cmd and PowerShell too): see FVPS below
 npm run serve:net  # the optional network host (Node only, never bundled): see Networking
 npm run smoke:net  # the host as a process of its own, attacked with crafted illegal movement: see Networking
 npm run smoke:bridge  # Crimson Noir OS's hosted runtime against the host's ledger door: see Networking
@@ -1855,7 +1856,8 @@ devices.
 
 ## Formal verification, self-healing CI and telemetry (Phase 18)
 
-**The formal verification step (FVPS).** `sh tools/verify/fvps.sh` runs before every release bake
+**The formal verification step (FVPS).** `sh tools/verify/fvps.sh` (`npm run verify` on a machine without a POSIX
+shell: tools/verify/fvps.mjs runs the same four parts) runs before every release bake
 (`build-release.yml` refuses to bake a commit whose proofs fail) and in `ci.yml` on every pull request and push to
 `main`: the `fvps` job runs the theorems, the IR scan and the air gap in minutes, and the `kani` matrix runs the
 proof harnesses in six groups on parallel runners (the longest harness takes about ten minutes; the `rust` and

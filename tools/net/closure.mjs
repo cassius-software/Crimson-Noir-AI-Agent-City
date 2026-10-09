@@ -16,7 +16,7 @@
  * Usage: node tools/net/closure.mjs ENTRY... [--into DIR]
  * What breaks if it is removed? The Dockerfile has no way to build a minimal image of the host.
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { stripTypeScriptTypes } from 'node:module'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -102,7 +102,9 @@ function packageEntry(dir) {
 
 function walk(file) {
   if (files.has(file)) return
-  if (!existsSync(file)) throw new Error(`missing module ${relative(ROOT, file)}`)
+  // statSync, not existsSync: existsSync answers false to every error, so a file the machine would not let us open
+  // (an on-access scanner holding it, EPERM on Windows) read as "missing"; the real error names the real cause.
+  try { statSync(file) } catch (e) { throw new Error(e.code === 'ENOENT' ? `missing module ${relative(ROOT, file)}` : `cannot read ${relative(ROOT, file)}: ${e.message}`) }
   files.add(file)
   const src = uncommented(runnable(file))
   const specs = [...src.matchAll(STATIC)].map((m) => m[2]).concat([...src.matchAll(BARE)].map((m) => m[1]))
@@ -134,6 +136,8 @@ for (const dir of packages.values()) {
   for (const f of readdirSync(dir)) if (f === 'package.json' || /^(licen[cs]e|notice|copying)/i.test(f)) files.add(join(dir, f))
 }
 
+// The list is printed with forward slashes on every platform: the image is built on Linux, and closure.node.test.ts
+// compares it with the URLs Node loaded, which are always forward-slashed; the copy below joins with the host's own.
 const list = [...files].map((f) => relative(ROOT, f)).sort()
 for (const f of list) if (f.startsWith('..') || f.split(sep).includes('..')) throw new Error(`outside the repository: ${f}`)
 if (into) {
@@ -142,4 +146,4 @@ if (into) {
     copyFileSync(join(ROOT, f), join(into, f))
   }
 }
-console.log(list.join('\n'))
+console.log(list.map((f) => f.split(sep).join('/')).join('\n'))
