@@ -4,7 +4,8 @@
 # Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 # Why does this file exist? It is the formal verification step of the pipeline (FVPS), one command: `sh
 # tools/verify/fvps.sh [all|kani [HARNESS...]|smt|wasm|ir]`, run by ci.yml and before every release bake (build-release.yml), and
-# by tools/selfheal/checks.sh. It hard-fails the build when any proof fails:
+# by tools/selfheal/checks.sh. It hard-fails the build when any proof fails. A machine without a POSIX shell (Windows
+# cmd.exe or PowerShell) runs the same step as `npm run verify` (tools/verify/fvps.mjs, kept one for one with this file):
 # - kani: the Kani model checker (CBMC, bit-precise) over the proof harnesses in
 #   crimson_noir_os/crates/noir_core/src/verify.rs (the kernels: an agent's tick touches only its own row, weights
 #   and memory block, stays on the floor, never traps) and native/routing/src/verify.rs (the WebAssembly routing

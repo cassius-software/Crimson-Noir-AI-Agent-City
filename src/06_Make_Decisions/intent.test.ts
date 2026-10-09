@@ -12,7 +12,7 @@
  * loop past five, or a module path could leak into the card, and nothing would notice.
  */
 import assert from 'node:assert/strict'
-import { existsSync } from 'node:fs'
+import { statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { test } from 'node:test'
 import { classify, FiveWhys, GOAL_MAX, MAX_WHYS, timeName, type Brief, type Control, type PlanStep } from './intent.ts'
@@ -316,7 +316,9 @@ test('every module a brief names exists under src/', () => {
     for (const line of p.brief.markdown.matchAll(/`([^`]+)`/g)) if (line[1] !== 'src/') named.add(line[1])
   }
   assert.ok(named.size >= 20, `${named.size} modules named`)
-  for (const m of named) assert.ok(existsSync(resolve(SRC, m)), m)
+  // statSync, not existsSync: existsSync answers false to every error, and on a machine whose scanner holds a fresh
+  // file (EPERM on Windows) that read as "the module is missing"; a throw here carries the real cause.
+  for (const m of named) assert.doesNotThrow(() => statSync(resolve(SRC, m)), m)
 })
 
 test('deterministic: the same goal and answers always give the same brief', () => {

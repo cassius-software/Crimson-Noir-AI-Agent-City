@@ -60,12 +60,21 @@ npm run dev
 npm test
 
 # Run the formal verification step (Z3 theorems + WebAssembly air gap + LLVM IR scan + Kani harnesses)
-# Needs `cargo kani`, `pip install z3-solver` and the wasm32-unknown-unknown target; `smt`, `wasm`, `ir` or `kani` runs one part.
-sh tools/verify/fvps.sh
+# Needs `cargo kani`, `pip install z3-solver` and the wasm32-unknown-unknown target; `-- smt`, `wasm`, `ir` or `kani` runs one part.
+# (CI and the release bake run the same step as `sh tools/verify/fvps.sh`; `npm run verify` is that script for cmd and PowerShell too.)
+npm run verify
 
 # Single-file production build (all assets, shaders & WASM inlined)
 npm run build
 ```
+
+**On Windows**, `npm install`, `npm run dev`, `npm test`, `npm run verify` and `npm run build` run as written from cmd.exe or
+PowerShell (Node 22 or newer; no `sh` is needed). Use `git clone`, or extract the ZIP somewhere other than `Downloads`
+before the first run: a fresh download carries the mark of the web, and a scanner that holds those files on first
+open can make `npm test` fail a handful of files with `EPERM: operation not permitted, open '…\src\…\x.ts'` while the
+test runner's parallel processes import them at once. No test asserts anything in those failures; a second `npm test`
+once the scanner has seen the files, or an exclusion for the folder, should clear them.
+Kani (the `kani` part of the proofs) runs on Linux and macOS only: use WSL for that part.
 
 Open `dist/index.html` directly: no server, and it works offline. It needs WebGPU: a current Chrome, Edge or
 Brave on desktop and Android, or Safari 26 on iPhone, iPad and Mac. `?boot=tty` needs none.
