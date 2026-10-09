@@ -39,11 +39,11 @@ export const GARAGE = Object.freeze({
   door: 0.5,
   /**
    * An AI car the room does not hold: within this of its own ring's lane, m. The lane is computed from the seed; how far
-   * a car on it strays is the fleet's own: measured over a minute of 36 cars, 0.53 m at most on straights and 0.78 m in
-   * corners (garage.node.test.ts measures it again).
+   * a car on it strays is the fleet's own: never past 0.53 m on straights nor 0.78 m in corners, every frame (measured
+   * over a minute of 36 cars: 0.18 m and 0.58 m; garage.node.test.ts measures it again, every frame).
    */
   lane: 1.0,
-  /** …facing along its ring within this, rad (measured: 0.29 at most). */
+  /** …facing along its ring within this, rad (measured every frame: 0.35 at most). */
   heading: 0.5,
   /**
    * …moving along its own heading: forward no faster than its ring's speed limit and this, nor backward faster than

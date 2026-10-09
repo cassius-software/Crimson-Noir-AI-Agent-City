@@ -8,8 +8,9 @@
  * else is the street driver's: the same hold-at-red commitment at a stop line, the same following rule on
  * followSpeed with the same throttle gate (so the Ring-0 bouncer's Third Law never has to intervene), the same
  * hazard episode (HazardEpisode: one Perception roll per person, latency by degree, a comfortable stop at the
- * standoff), the same pure pursuit. It adds the don't-block-the-box hold (roomToClear) that keeps a queue from
- * standing on a crosswalk, and it steers back to its ring when it has been set down off it (a recover elsewhere).
+ * standoff), the same pure pursuit. It adds a lateral feedback on the aim (so it never cuts a corner past 0.78 m),
+ * the don't-block-the-box hold (roomToClear) that keeps a queue from standing on a crosswalk, and it steers back to
+ * its ring when it has been set down off it (a recover elsewhere).
  * It holds no physics handle: the track is a frozen pure object behind an ES-private field.
  * What breaks if it is removed? Cars fall back to the random street-hopping Driver and jams become possible
  * again (tracks.test.ts INV-2..4 no longer describe the live fleet).
@@ -135,11 +136,18 @@ export class TrackDriver implements DriverLike {
     const ahead = cornerAhead(track, s)
     const look = ahead === 0 || this.#rejoining ? Math.max(4.5, p.speed * 0.7) : Math.min(Math.max(6, p.speed * 0.9), ahead + 1)
     const aim = poseAt(track, s + look)
+    // Pure pursuit alone cuts a corner: it chords toward a point already round the bend, so a car on a ring's tight
+    // right turn ran up to 0.79 m inside its lane mid-corner and left it still 0.56 m in. Moving the aim as far the
+    // other way as the car has strayed (lateral feedback, gain 1) holds it to 0.58 m in corners and 0.18 m on
+    // straights every frame (garage.node.test.ts, the lane envelope: within GARAGE.lane's 0.78 m and 0.53 m). Not
+    // while rejoining: there the lateral is metres, and the aim on the ring itself is the way back.
+    const back = this.#rejoining ? 0 : lateral
+    const ax = aim.x + back * aim.tangentZ, az = aim.z - back * aim.tangentX
 
     // Pure pursuit toward the aim point (traffic.ts:217-223).
     const fx = Math.sin(p.heading), fz = Math.cos(p.heading)
     const rx = -fz, rz = fx
-    const tx = aim.x - p.x, tz = aim.z - p.z
+    const tx = ax - p.x, tz = az - p.z
     const ld = Math.max(Math.hypot(tx, tz), 1)
     const alpha = Math.atan2(tx * rx + tz * rz, tx * fx + tz * fz)
     const steer = Math.max(-0.6, Math.min(0.6, -Math.atan((2 * WHEELBASE * Math.sin(alpha)) / ld)))

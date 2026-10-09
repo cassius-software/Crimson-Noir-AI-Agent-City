@@ -852,10 +852,73 @@ test('a fleet on tracks: a car set down off its ring leaves the ring\'s order wh
   for (let k = 0; k < 60; k++) physics.step(H, (h) => fleet.updateControllers(h))
   fleet.think(H, 1)
   assert.equal((b.driver as TrackDriver).rejoining, true, 'b noticed it is off its ring')
-  // From the next frame b is out of the ring's order: a's ring gap is Infinity and its rays (which skip the cars on
-  // rings) find nothing, so a is fed a clear road, not a queue behind a car that is not there.
+  // From the next frame b is out of the ring's order: a's ring gap is Infinity and its rays (which see b, steering back,
+  // only where it stands) find nothing, so a is fed a clear road, not a queue behind a car that is not there.
   fleet.think(H, 1)
   assert.equal(spy.fed, Infinity, `a was fed ${spy.fed.toFixed(2)} m behind b's projection while b stands 40 m off the ring`)
   assert.equal((b.driver as TrackDriver).ringGap, Infinity)
+  assert.equal(fleet.bouncer.counts[3], 0)
+})
+
+test('a fleet on tracks: a car steering back to its ring is seen by the rays where it stands, though it is in no ring\'s order', async () => {
+  const physics = await Physics.create([], NO_FURNITURE)
+  const network = buildTrackNetwork(SEED)
+  const fleet = new Fleet(physics, 2, SEED, { exposeRig: true, network })
+  const [a, b] = fleet.vehicles
+  class Spy extends TrackDriver {
+    fed = Infinity
+    command(p: Parameters<TrackDriver['command']>[0], signalSeconds: number, gap: number, dt: number, personAhead?: number) {
+      this.fed = gap
+      return super.command(p, signalSeconds, gap, dt, personAhead)
+    }
+  }
+  // a on ring 0; b, a car of another ring set down (a recover elsewhere) on ring 0's lane 12 m ahead of a, facing along
+  // it: b steers back to its own ring, so it is in neither ring's order, yet it stands in a's path.
+  const track = network.tracks[0], sA = 20
+  const pA = poseAt(track, sA), pB = poseAt(track, sA + 12)
+  const other = network.tracks.find((t) => t.kind === 'car' && t.id !== 0 && Math.abs(projectOnto(t, pB.x, pB.z).lateral) > 20)!
+  const spy = new Spy(track, sA, createRng(1))
+  a.driver = spy
+  b.driver = new TrackDriver(other, 0, createRng(2))
+  fleet.recover(a, pA.x, pA.z, pA.heading)
+  fleet.recover(b, pB.x, pB.z, pB.heading)
+  for (let k = 0; k < 60; k++) physics.step(H, (h) => fleet.updateControllers(h))
+  fleet.think(H, 1)
+  assert.equal((b.driver as TrackDriver).rejoining, true, 'b noticed it is off its ring')
+  fleet.think(H, 1)
+  const toCar = 12 - 2 * CAR.halfLength - 0.1
+  assert.ok(Math.abs(spy.fed - toCar) < 0.3, `a was fed ${spy.fed.toFixed(2)} m with b ${toCar.toFixed(2)} m ahead of its bumper`)
+})
+
+test('a fleet on tracks: zero jams behind a parked car on the lane: a follower queues behind it, then after PASS_AFTER drives on through it', async () => {
+  const physics = await Physics.create([], NO_FURNITURE)
+  const network = buildTrackNetwork(SEED)
+  const fleet = new Fleet(physics, 2, SEED, { exposeRig: true, network })
+  const [a, b] = fleet.vehicles
+  // Both on ring 0: a at a seat, b left parked on the lane 30 m ahead (a player stepped out of it there).
+  const track = network.tracks[0], sA = 20, sB = 50
+  const pA = poseAt(track, sA), pB = poseAt(track, sB)
+  a.driver = new TrackDriver(track, sA, createRng(1))
+  b.driver = new TrackDriver(track, sB, createRng(2))
+  fleet.recover(a, pA.x, pA.z, pA.heading)
+  fleet.recover(b, pB.x, pB.z, pB.heading)
+  b.mode = 'parked'
+  const d = a.driver as TrackDriver
+  let queuedFor = 0, minGap = Infinity, passedAt = -1
+  for (let frame = 0; frame < 40 * 60 && passedAt < 0; frame++) {
+    fleet.think(H, frame * H)
+    physics.step(H, (h) => fleet.updateControllers(h))
+    const gap = d.progress - sB
+    // Until it has waited, a holds back; after, it drives through the chassis (cars never pair: collision.ts).
+    if (queuedFor < 5.5) minGap = Math.min(minGap, -gap - 2 * CAR.halfLength)
+    if (fleet.speed(a) < 0.3 && -gap - 2 * CAR.halfLength < 4) queuedFor += H
+    if (gap > 2 * CAR.halfLength) passedAt = frame * H
+  }
+  assert.ok(passedAt >= 0, `a is still queued behind the parked car after 40 s (${queuedFor.toFixed(1)} s standing behind it)`)
+  assert.ok(minGap >= 1, `a closed to ${minGap.toFixed(2)} m behind the parked car before it waited`)
+  assert.ok(queuedFor >= 5.9, `a stood behind the parked car only ${queuedFor.toFixed(1)} s: it queues first`)
+  assert.ok(passedAt < 25, `a passed only at ${passedAt.toFixed(1)} s`)
+  assert.equal(b.mode, 'parked', 'the parked car stays where it was left')
+  assert.equal(fleet.bouncer.counts[1], 0)
   assert.equal(fleet.bouncer.counts[3], 0)
 })

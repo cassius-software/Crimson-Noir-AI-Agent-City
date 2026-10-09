@@ -46,6 +46,15 @@ const HOLD_CLEAR = KERNEL.standoff + 0.5
 const GAP_RANGE = 22
 /** A parked car this far (lateral, m) off its ring or nearer counts in the ring's order; further, it stands elsewhere. */
 const ON_LANE = 3
+/**
+ * Seconds a track follower stands queued right behind a parked car on its ring before it drives on through it. A car the
+ * player leaves on a lane is held there (in a network room the room holds it where it was left), and chassis never pair
+ * (collision.ts), so the queue behind it is courtesy, not physics: bounded, the ring keeps lapping (zero jams).
+ */
+const PASS_AFTER = 6
+/** A follower this close behind a parked car (bumper gap, m) and standing (QUEUED_SPEED, m/s) is queued behind it. */
+const QUEUED_GAP = 4
+const QUEUED_SPEED = 0.3
 
 export interface Vehicle {
   /** Slot in the Fleet (its rig, its footprint). Fixed at creation: a rewritten index cannot re-point a vehicle at another car. */
@@ -181,15 +190,29 @@ export class Fleet {
   readonly #network: TrackNetwork | null
   /** Per vehicle: the bumper gap to the car ahead on its ring this frame (Infinity: alone, or not on a ring). */
   readonly #trackGap: Float64Array
+  /** Per vehicle: 1 while in its ring's order this frame (a follower left out of it lets go of what it was passing). */
+  readonly #ranked: Uint8Array
+  /** Per vehicle: the car next ahead of it in its ring's order this frame (−1: none, or not in an order). */
+  readonly #ahead: Int32Array
+  /** Per vehicle: seconds it has stood queued right behind a parked car on its ring. */
+  readonly #waited: Float64Array
+  /** Per vehicle: the parked car it waited out (PASS_AFTER) and now drives through, until it is past it (−1: none). */
+  readonly #passing: Int32Array
   /** Scratch: the vehicles on rings this frame, sorted by (track, arc length). */
   readonly #ringOrder: number[] = []
   /** Collider handle -> vehicle index, for the bonnet rays' filter. */
   readonly #byCollider = new Map<number, number>()
   readonly #ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 1 })
-  /** The bonnet rays' filter on a track: a chassis on a ring is not an obstacle (the ring gap places it exactly). */
+  /**
+   * The bonnet rays' filter on a track: a chassis on a ring is not an obstacle (the ring gap places it exactly), except a
+   * car steering back to its ring: it is in no ring's order (#ringGaps), so the rays are what sees it where it really is
+   * (a follower would otherwise drive into it), and they see it only there, never at its projection.
+   */
   readonly #notOnTrack = (c: RAPIER.Collider): boolean => {
     const i = this.#byCollider.get(c.handle)
-    return i === undefined || !this.#onRing(this.vehicles[i])
+    if (i === undefined) return true
+    const v = this.vehicles[i]
+    return !this.#onRing(v) || (v.mode === 'ai' && (v.driver as TrackDriver).rejoining)
   }
   readonly #states: CarState[] = []
   readonly #prints: VehicleFootprint[] = []
@@ -229,6 +252,10 @@ export class Fleet {
     // to drive the AI. The room's authority reads the same plan.
     const plan = planFleet(count, seed, this.#network)
     this.#trackGap = new Float64Array(count).fill(Infinity)
+    this.#ranked = new Uint8Array(count)
+    this.#ahead = new Int32Array(count).fill(-1)
+    this.#waited = new Float64Array(count)
+    this.#passing = new Int32Array(count).fill(-1)
     this.#crowdAhead = new Float32Array(count).fill(Infinity)
     this.#crowdBehind = new Float32Array(count).fill(Infinity)
     this.#emergency = new Int8Array(count)
@@ -425,12 +452,16 @@ export class Fleet {
    * counted only while on their lane) sorted by (track, arc length), then the bumper gap ahead of each within its
    * ring, wrapping (the rule of tracks.ts ringGaps; Infinity alone). Player-driven cars are left to the rays. A car
    * steering back to its ring from off it (rejoining: set down elsewhere, say by a harness) is not in the order
-   * either: its projection names a point on the ring where no car stands, and a follower would queue behind it.
+   * either: its projection names a point on the ring where no car stands, and a follower would queue behind it (the
+   * bonnet rays see it instead: #notOnTrack). A follower that has waited out a parked car (#passing) reads its gap to
+   * the car beyond it, until it is past.
    */
   #ringGaps(): void {
     const order = this.#ringOrder
     order.length = 0
     this.#trackGap.fill(Infinity)
+    this.#ranked.fill(0)
+    this.#ahead.fill(-1)
     for (const v of this.vehicles) {
       if (!this.#onRing(v)) continue
       const driver = v.driver as TrackDriver
@@ -439,7 +470,10 @@ export class Fleet {
         if (Math.abs(driver.locate(t.x, t.z).lateral) > ON_LANE) continue
       } else if (driver.rejoining) continue
       order.push(v.index)
+      this.#ranked[v.index] = 1
     }
+    // Out of the order (taken, steering back, let go): whatever it was driving through is behind it.
+    for (let i = 0; i < this.#passing.length; i++) if (!this.#ranked[i]) this.#passing[i] = -1
     const at = (i: number) => this.vehicles[i].driver as TrackDriver
     order.sort((a, b) => at(a).track - at(b).track || at(a).progress - at(b).progress)
     const network = this.#network
@@ -449,10 +483,17 @@ export class Fleet {
       let b = a + 1
       while (b < order.length && at(order[b]).track === track) b++
       if (b - a > 1) {
-        const L = network.tracks[track].length
+        const L = network.tracks[track].length, n = b - a
         for (let k = a; k < b; k++) {
-          const ahead = k + 1 < b ? at(order[k + 1]).progress : at(order[a]).progress + L
-          this.#trackGap[order[k]] = ahead - at(order[k]).progress - 2 * CAR.halfLength
+          const i = order[k]
+          let j = a + ((k - a + 1) % n)
+          this.#ahead[i] = order[j]
+          // Past the parked car it was driving through (or it was taken, or let go): queue as ever.
+          if (this.#passing[i] !== order[j] || this.vehicles[order[j]].mode !== 'parked') this.#passing[i] = -1
+          else if (n === 2) continue
+          else j = a + ((j - a + 1) % n)
+          const ahead = at(order[j]).progress + (j > k ? 0 : L)
+          this.#trackGap[i] = ahead - at(i).progress - 2 * CAR.halfLength
         }
       }
       a = b
@@ -553,7 +594,18 @@ export class Fleet {
       // On a ring: the least of the rays (walls, poles, cars off the rings) and the ring's own gap ahead; the same
       // number is the driver's following gap and the bouncer's obstacleAhead.
       const onRing = this.#onRing(v)
-      if (onRing) (v.driver as TrackDriver).ringGap = this.#trackGap[i]
+      if (onRing) {
+        // Queued right behind a parked car: after PASS_AFTER seconds, on through it (#ringGaps reads past it from the
+        // next frame). Counted from the frame's own order and speed, so it is as deterministic as the rest of think().
+        const u = this.#ahead[i]
+        const queued = u >= 0 && this.vehicles[u].mode === 'parked' && this.#passing[i] !== u && this.#trackGap[i] < QUEUED_GAP && p.speed < QUEUED_SPEED
+        this.#waited[i] = queued ? this.#waited[i] + dt : 0
+        if (this.#waited[i] >= PASS_AFTER) {
+          this.#passing[i] = u
+          this.#waited[i] = 0
+        }
+        ;(v.driver as TrackDriver).ringGap = this.#trackGap[i]
+      }
       const gap = onRing ? Math.min(this.#gapAhead(v, true), this.#trackGap[i]) : this.gapAhead(v)
       const cmd = v.driver.command(p, signalSeconds, gap, dt, this.personAhead(v))
       this.#aim[i] = Number.isFinite(cmd.steer) ? cmd.steer : 0
