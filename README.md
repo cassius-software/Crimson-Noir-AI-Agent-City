@@ -1993,7 +1993,7 @@ described in Networking above.
   - `pending()` kept the acknowledged inputs after a correction; seven tests checked less than their names said, and
     the smoke test's honest walk passed only if a snapshot landed in a 200 ms window; three source files had no
     header (a test now holds every one to it).
-- **Version:** 1.4.0 (`package.json`, `brand.ts`); the current release tag is `v1.0.1-stable-release` (Phase 18, baked from main with the proofs); `v1.0.0-stable-release` is the earlier one.
+- **Version:** 1.4.0 (`package.json`, `brand.ts`); the current release tag is `v1.1.0-stable-release` (Phase 19, baked from main with the proofs; the first under the proprietary licence); `v1.0.1-stable-release` and `v1.0.0-stable-release` are the earlier ones.
 
 **1.4.0-beta.1 (Agent City v1.0 Stable Beta)**: the operator's directive for Phases 7 to 10. The architecture
 behind it, item by item with the tests that prove each, is `docs/agent-city-v1-beta-blueprint.md`.

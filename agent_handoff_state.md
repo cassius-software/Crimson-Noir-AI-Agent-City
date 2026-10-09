@@ -5,6 +5,10 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
 
 ## Where things stand (updated as work lands)
 
+- Phase 19 (the commercial release overhaul: the data-oriented SIMD core, the zero-trust self-heal sandbox, dual
+  licensing and brand assets; PRs #9 to #12, with #6, #7 and #8 before them) is merged into main and released as
+  `v1.1.0-stable-release` on 2026-10-09 from 2ad02e1: see the Phase 19 section at the end. The published EFI's
+  stamp is now the commit's alone (a build here gives the same bytes).
 - Phase 18 (formal verification, self-healing CI/CD, IIoT telemetry) is merged into main (PRs #3 and #4) and
   released as `v1.0.1-stable-release` on 2026-10-08 (the bake runs the proofs first and refuses a commit whose proofs
   fail): see the Phase 18 section at the end, including why the published EFI's TimeDateStamp is not this
@@ -744,3 +748,53 @@ Verified: tsc, oxlint, `npm test` 1,302/1,302, smoke:net, `docker compose config
 **17.3 (done, Julian's decision on 2026-10-08):** the terminal is the Crimson Terminal (code, tests, README; the
 screenshot predates it). **Still the operator's call (17.4):** settling the product name; the real-target checks (a physical UEFI boot, a real Let's Encrypt issuance, publish.ps1 under Windows
 PowerShell 5.1, a room from two browser tabs, `?players=4` on a real GPU); branch protection on main requiring ci.yml.
+
+## Phase 19 (operator directive, 2026-10-08): the commercial release overhaul, and `v1.1.0-stable-release`
+
+Three tracks from the operator's four-part directive, each on its own branch and PR, all merged by the operator on
+2026-10-08 (ci.yml green on the merge commit 2ad02e1, run 37861920678, the six Kani groups included):
+
+- **Data-oriented SIMD core (PR #12).** The swarm's tick runs four agents a SSE2 register (`lanes.rs`,
+  `kernels::tick_lanes`; plain lane loops on the UEFI target, built with SSE off), held bit for bit to the unchanged
+  scalar `agent_tick` that the Kani harnesses prove, with a fuzz test over adversarial matrices comparing every word.
+  The KV page table and the drivers' hazard machine are structure-of-arrays tables; the pager's WebAssembly module is
+  rebuilt. Fingerprint 0x83765bab unchanged. 4,096 agents: 3,799 ticks/s scalar, 4,537 in lanes (1.19x; bound by the
+  routing-field gathers). `tools/stabilize` ran every suite ten rounds on fresh seeds: 80 of 80 green, posterior pass
+  0.917 a suite, Wilson 95% lower bound 0.722 (`docs/stabilization/progress.json`). Not converted: `crowd.wgsl`'s
+  branches (no reference test), the page's object wrappers. No proof covers the SIMD kernel beyond the fuzz.
+- **Zero-trust self-heal sandbox (PR #10).** The sandbox mounts nothing of the host (tar stream onto a
+  noexec/nosuid/nodev tmpfs, read-only root, unprivileged, every capability dropped, loopback-only netns, an
+  environment allowlist refusing credential-shaped names). The `sandbox` CI job runs the escape probes contained (all
+  denied) and in a weakened control (the named ones escape) and keeps the evidence as an artifact. The kernel's
+  namespace, seccomp and mount-flag semantics are argued, not proved.
+- **Dual licensing and brand (PRs #9 and #11).** Proprietary core (Copyright (c) 2026 Julian Cassius Subban. All
+  Rights Reserved.) on src/, crimson_noir_os/, native/, world/, brand/, the page entry and build; MIT on tools/,
+  deploy/, .github/, docs/, Dockerfile, publish.ps1; a header on every source file and a CI check for it. Releases
+  up to v1.0.1 stay MIT OR Apache-2.0. The ORC grant on the mechanics is unchanged (counsel still to review the
+  combination). brand/tokens.json, four SVG marks, STYLE.md, preview.html, the page's token stylesheet.
+
+Before them on main since v1.0.1: PR #6 (the EFI stamp is the commit's alone: `/DEBUG:NONE` in `.cargo/config.toml`),
+PR #7 (Phase 17.5 and 17.6: per-client throttles behind the proxy, nightly fuzz), PR #8 (17.3: the Crimson Terminal).
+
+**Release (2026-10-09, the operator's "go, fill in the blanks").** build-release.yml run 37863601029, dispatched on
+main (2ad02e1) with the new tag `v1.1.0-stable-release` (a minor bump: new licence terms and a rewritten core), title
+"Crimson Noir OS v1.1.0 Stable Release", notes written from the merged PR bodies. Five minutes: proofs (smt, wasm,
+ir) passed, the core and hosted-runtime tests passed, the second clean bake gave the same bytes, QEMU booted the disk
+image through SELFTEST PASS (4.8 s), TUTORIAL 6 PASSED (71.3 s), TERMINAL READY, golden MATCH (0x83765bab) and POWER
+OFF (76.4 s), and the ISO to SELFTEST PASS (5.0 s). Published:
+https://github.com/exitwoundscassius-ux/Crimson-Noir-AI-Agent-City/releases/tag/v1.1.0-stable-release with 8 files:
+crimson_noir_os.img (37,748,736 bytes, 170db152…), crimson_noir_os.iso (36,036,608 bytes, 6e3fd44b…), BOOTX64.EFI
+(233,984 bytes, 74bbd347…), containment.nix, containment.lock, NOTICE.txt, LICENSE (one proprietary licence where
+v1.0.1 shipped LICENSE-MIT and LICENSE-APACHE) and SHA256SUMS.
+- The stamp is the commit's. The published BOOTX64.EFI's PE TimeDateStamp is 0x095d3559. The same commit built in
+  this container (rustup 1.97.0, `cargo build --locked -p crimson_boot --target x86_64-unknown-uefi --release`) gives
+  the identical 233,984 bytes, SHA-256 74bbd347…: PR #6's `/DEBUG:NONE` holds across hosts, which v1.0.1's stamp
+  (0xefa3b9b5 on the runner, 0xe9cd5aa1 here) did not. The value differs from PR #6's 0x245203b6 because PR #12
+  changed the code the hash covers.
+- Earlier releases are unchanged: `v1.0.1-stable-release` (Phase 18 media, the per-host stamp), `v1.0.0-stable-release`
+  and `stable-beta` (pre-Phase-18 media).
+
+**Still the operator's call:** Phase 17.4's real-target checks (a physical UEFI boot of this release's image, a real
+Let's Encrypt issuance, publish.ps1 under Windows PowerShell 5.1, a room from two browser tabs); branch protection on
+main requiring ci.yml; counsel on the ORC grant beside the proprietary core; the OS README's terminal screenshot
+(still the pre-rename header until reshot from a real boot).
