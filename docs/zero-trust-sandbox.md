@@ -62,7 +62,7 @@ Honestly, in three tiers:
 - The production host (`deploy/docker-compose.yml`) is a different containment with its own document; the
   `NET_TRUST_PROXY` there is the public web host's reverse proxy, not an agent egress path.
 - The page's in-browser air gap (`src/02_Define_The_Rules/airgap.ts`) and the WebAssembly air gap
-  (`tools/verify/wasm_airgap.py`) are documented in `zero-trust-audit.md` and `README.md`.
+  (`tools/verify/wasm_airgap.py`) are documented in `zero-trust-audit.md` and `MANUAL.md`.
 
 ## Running it by hand
 
