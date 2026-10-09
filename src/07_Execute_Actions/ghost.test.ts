@@ -169,6 +169,30 @@ test('glyphs: 16 strokes on the 3 × 3 lattice, all different, each half a side 
   }
 })
 
+/** three's TSL `hash` on the CPU: PCG on the seed's integer part as a u32, to [0, 1). */
+function pcg(seed: number): number {
+  const u = seed <= 0 ? 0 : seed >= 2 ** 32 ? 2 ** 32 - 1 : Math.trunc(seed)
+  const state = (Math.imul(u >>> 0, 747796405) + 2891336453) >>> 0
+  const word = Math.imul(((state >>> ((state >>> 28) + 4)) ^ state) >>> 0, 277803737) >>> 0
+  return (((word >>> 22) ^ word) >>> 0) / 2 ** 32
+}
+
+test('glyphs: the cells draw from the whole alphabet (draws seeded off a 0..1 id saw two seeds each: four glyphs)', () => {
+  const f = Math.fround
+  const glyphOf = (cx: number, cy: number, roll: number) => {
+    const id = Math.floor(f(pcg(f(f(f(cx * 17.1) + f(cy * 311.7)) + f(roll * 0.37))) * GHOST.glyphIds))
+    const r1 = Math.trunc(f(pcg(id) * 65535)), r2 = Math.trunc(f(pcg(f(id + GHOST.glyphIds)) * 65535)), r3 = Math.trunc(f(pcg(f(id + GHOST.glyphIds * 2)) * 15.99))
+    assert.ok(id + GHOST.glyphIds * 2 < 2 ** 24, 'every seed is a whole number f32 holds exactly')
+    return ((r1 & r2) | (1 << r3)) >>> 0
+  }
+  const glyphs = new Set<number>()
+  for (let cx = 0; cx < 70; cx++) for (let cy = 0; cy < GHOST.rows; cy++) glyphs.add(glyphOf(cx, cy, 3))
+  assert.ok(glyphs.size >= 1000, `${glyphs.size} distinct glyphs on a screen of ${70 * GHOST.rows} cells`)
+  const src = readFileSync(new URL('./ghost.ts', import.meta.url), 'utf8')
+  assert.match(src, /const id = floor\(hash\(c\.x\.mul\(17\.1\)\.add\(c\.y\.mul\(311\.7\)\)\.add\(roll\.mul\(0\.37\)\)\)\.mul\(GHOST\.glyphIds\)\)/)
+  assert.match(src, /r1 = uint\(hash\(id\)\.mul\(65535\)\), r2 = uint\(hash\(id\.add\(GHOST\.glyphIds\)\)\.mul\(65535\)\), r3 = uint\(hash\(id\.add\(GHOST\.glyphIds \* 2\)\)\.mul\(15\.99\)\)/)
+})
+
 test('colours: a green for each kind; kinds are small whole numbers the mask can round', () => {
   assert.deepEqual(Object.values(GHOST_KIND), [1, 2, 3, 4])
   for (const [k, [r, g, b]] of Object.entries(GHOST_COLOR)) {

@@ -58,7 +58,9 @@ const MIN_HOLD = 0.6
  * A tick later than any steady cadence puts one (more than ¾ of a refresh past due: a dropped frame, a stall, a
  * hidden tab) is presented and the cadence restarts on it (keeping the learned phase), so the next frame is a full
  * period away: the pacer never hurries frames to catch up, and no two frames are ever closer than MIN_HOLD of a
- * period. A refresh too slow for 24 presents every tick. A clock that runs backwards re-anchors. Allocation-free.
+ * period. Both tolerances (half a refresh early, ¾ late) widen by the timestamps' measured jitter, so a jittery
+ * high-refresh display (165 Hz at ±1 ms) keeps the grid instead of re-anchoring and losing frames. A refresh too slow
+ * for 24 presents every tick. A clock that runs backwards re-anchors. Allocation-free.
  */
 export class FramePacer {
   readonly periodMs: number
@@ -74,6 +76,8 @@ export class FramePacer {
   private filled = 0
   private next = 0
   private refresh = DEFAULT_REFRESH_MS
+  /** The tick intervals' spread above the refresh estimate, ms (0 on a clean display). */
+  private jitter = 0
   private readonly presented = new Float64Array(RATE_WINDOW)
 
   constructor(fps: number = CINEMA.fps) {
@@ -106,11 +110,12 @@ export class FramePacer {
       this.base = nowMs + this.periodMs
       return this.present(nowMs)
     }
-    const half = this.refresh / 2
+    const half = this.refresh / 2 + this.jitter
     const late = nowMs - (this.base + this.phase)
     if (late < -half || nowMs - this.lastPresentMs < this.periodMs * MIN_HOLD) return false
-    // A steady cadence is never more than half a refresh late; ¾ leaves room for clock rounding at the ties.
-    if (late > this.refresh * 0.75) {
+    // A steady cadence is never more than half a refresh late (plus its jitter); ¾ leaves room for clock rounding at
+    // the ties.
+    if (late > this.refresh * 0.75 + 2 * this.jitter) {
       this.base = nowMs + this.periodMs
     } else {
       this.base += this.periodMs
@@ -143,6 +148,10 @@ export class FramePacer {
     s.set(this.intervals.subarray(0, this.filled))
     s.sort()
     this.refresh = s[(this.filled - 1) >> 2]
+    // The timestamps' jitter: how far the middle interval sits above the short ones, capped at a quarter refresh (a
+    // display dropping half its ticks is not jitter). The cadence's tolerances widen by it, so a tick a millisecond
+    // off at 165 Hz is neither refused as early nor taken for a drop.
+    this.jitter = Math.min(this.refresh / 4, s[(this.filled - 1) >> 1] - this.refresh)
   }
 }
 

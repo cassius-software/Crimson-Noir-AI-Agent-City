@@ -31,9 +31,10 @@ const CROSS_NONE: f32 = 0.0;
 const CROSS_WAIT: f32 = 1.0;
 const CROSS_WALK: f32 = 2.0;
 
-// Hash salts: independent streams for the walk-start roll and the draw-density lottery.
+// Hash salts: independent streams for the walk-start roll, the draw-density lottery and the detailed-body distance.
 const WALK_SALT: u32 = 0x2545f491u;
 const DENSITY_SALT: u32 = 0x68e31da4u;
+const LOD_SALT: u32 = 0x3c6ef372u;
 
 // IEEE 754 binary32 exponent bits: all set means infinite or not a number.
 const EXP_MASK: u32 = 0x7f800000u;
@@ -617,11 +618,24 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
   brain[i] = b;
 }
 
+// The density lottery's cut at distance d: everyone at the near radius, falling linearly to `density` over
+// DENSITY_FADE metres beyond it (a fixed draw below the cut is drawn, so people thin out instead of popping at a wall).
+fn densityCut(d: f32, near: f32, density: f32) -> f32 {
+  let t = clamp((d - near) / DENSITY_FADE, 0.0, 1.0);
+  return 1.0 + (density - 1.0) * t;
+}
+
+// A person's detailed-body distance: lodDistance spread by ±LOD_SPREAD/2 on their fixed draw r in [0, 1), so the
+// bodies at a ring (or a tier change moving it) swap a few at a time. Zero stays zero.
+fn lodCut(lodDistance: f32, r: f32) -> f32 {
+  return lodDistance * (1.0 + (r - 0.5) * LOD_SPREAD);
+}
+
 // Visibility + density + LOD compaction: every drawn agent is appended to its (variant, LOD) draw
 // list and bumps that indirect draw's instance count. Agents close to the camera are kept even when
-// outside the frustum so their shadows still land in view. Beyond nearRadius only a `density`
-// fraction is drawn, chosen by a fixed per-agent lottery so the same people stay on screen (and
-// raising the density only adds people). Nobody is drawn beyond the max draw distance.
+// outside the frustum so their shadows still land in view. Beyond nearRadius the drawn fraction
+// falls to `density` over DENSITY_FADE metres, chosen by a fixed per-agent lottery so the same people
+// stay on screen (and raising the density only adds people). Nobody is drawn beyond the max draw distance.
 @compute @workgroup_size(128)
 fn cull(@builtin(global_invocation_id) gid: vec3u) {
   let i = gid.x;
@@ -634,7 +648,7 @@ fn cull(@builtin(global_invocation_id) gid: vec3u) {
   var visible = d < P.nearRadius;
   if (!visible) {
     // The avatar is never thinned out.
-    if (i != PLAYER_INDEX && rand(i, DENSITY_SALT) >= P.aux.y) { return; }
+    if (i != PLAYER_INDEX && rand(i, DENSITY_SALT) >= densityCut(d, P.nearRadius, P.aux.y)) { return; }
     visible = true;
     for (var k = 0u; k < 6u; k++) {
       let pl = P.planes[k];
@@ -645,7 +659,7 @@ fn cull(@builtin(global_invocation_id) gid: vec3u) {
     }
   }
   if (!visible) { return; }
-  let lod = select(1u, 0u, d < P.lodDistance);
+  let lod = select(1u, 0u, d < lodCut(P.lodDistance, rand(i, LOD_SALT)));
   // The body: the look word's (bits 1-2) when one is worn (bit 0), else the index's.
   let w = look[i];
   let variant = select(i % VARIANTS, (w >> 1u) & 3u, (w & 1u) == 1u);

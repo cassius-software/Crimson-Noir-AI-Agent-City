@@ -334,7 +334,9 @@ export class CrowdView {
       g.setIndirect(this.drawArgs, d * 20)
       const mesh = new InstancedMesh(g, this.material(buffers, lod * quota * VARIANTS + v * quota, v), quota)
       // Instance matrices stay identity: placement comes from the storage buffers and culling is
-      // done on the GPU, so the CPU-side bounds must be ignored.
+      // done on the GPU, so the CPU-side bounds must be ignored. Every body can hold the whole crowd (agentQuota),
+      // so the eight meshes share one identity matrix buffer rather than eight.
+      if (this.meshes.length > 0) mesh.instanceMatrix = this.meshes[0].instanceMatrix
       mesh.frustumCulled = false
       mesh.castShadow = true
       mesh.receiveShadow = true

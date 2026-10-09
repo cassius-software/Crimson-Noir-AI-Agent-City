@@ -133,9 +133,24 @@ export interface CullSettings {
   maxDistance: number
 }
 
+/**
+ * Slots per (LOD, body) draw list: every agent. A worn look picks the body (crowd.wgsl cull), so nothing bounds how
+ * many people share one; a quarter each (the index's own spread) let the lists overrun into the next body's.
+ */
 export function agentQuota(agentCount: number): number {
-  return Math.ceil(agentCount / VARIANTS)
+  return Math.max(0, Math.floor(agentCount))
 }
+
+/**
+ * How the cull eases its boundaries so nobody pops (crowd.wgsl densityCut/lodCut, CrowdCull's glide):
+ * - fade: metres beyond nearRadius over which the density lottery's cut falls from everyone to `density`, so the
+ *   near ring is not a wall people appear at;
+ * - lodSpread: each person's detailed-body distance is lodDistance × (1 ± lodSpread/2) by a fixed per-agent draw, so
+ *   a tier change (or walking across the ring) swaps bodies a few at a time instead of a whole ring in one frame;
+ * - glide: frames over which a new setting is reached (linearly) from the one being drawn, so a quality tier change
+ *   reads as a drift, not a cut. A first setting, and a draw distance of 0 (nobody drawn), are taken at once.
+ */
+export const CULL_EASE = { fade: 8, lodSpread: 0.2, glide: 30 } as const
 
 /**
  * Metres from a car's centre beyond which nobody is in its First-Law corridor, driving on or reversing
@@ -168,6 +183,8 @@ function header(agentCount: number): string {
     `const AGENT_QUOTA: u32 = ${quota}u;`,
     `const LIST_LOD_STRIDE: u32 = ${quota * VARIANTS}u;`,
     `const PLAYER_INDEX: u32 = ${PLAYER_INDEX}u;`,
+    `const DENSITY_FADE: f32 = ${f(CULL_EASE.fade)};`,
+    `const LOD_SPREAD: f32 = ${f(CULL_EASE.lodSpread)};`,
     `const SIGNAL_CYCLE: f32 = ${f(SIGNAL.cycle)};`,
     `const SIGNAL_EW_AMBER: f32 = ${f(SIGNAL.ewAmber)};`,
     `const SIGNAL_WALK: f32 = ${f(SIGNAL.walkSeconds)};`,

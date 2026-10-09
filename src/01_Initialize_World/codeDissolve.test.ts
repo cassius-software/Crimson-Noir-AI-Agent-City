@@ -14,8 +14,9 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { readFileSync } from 'node:fs'
 import { MeshStandardNodeMaterial, type Node, type NodeBuilder } from 'three/webgpu'
-import { Fn, attribute, float, frontFacing, positionLocal, positionPrevious, stack, setCurrentStack, uniform, vec3 } from 'three/tsl'
+import { Fn, attribute, float, frontFacing, positionLocal, positionPrevious, screenCoordinate, screenSize, stack, setCurrentStack, uniform, vec3 } from 'three/tsl'
 import { BINARY_GLYPHS, CODE_DISSOLVE, applyCodeDissolve } from './codeDissolve.ts'
 
 type N = { type?: string; op?: string; condNode?: unknown; ifNode?: unknown; elseNode?: unknown; aNode?: unknown; bNode?: unknown; getChildren?: () => Iterable<unknown> }
@@ -154,4 +155,56 @@ test('no renderer is needed: the nodes are three\'s, nothing in the graph is a p
   for (const root of [m.maskNode, m.colorNode, m.emissiveNode] as Node[]) {
     for (const n of reach(root)) assert.ok(!(n as { isPassNode?: boolean }).isPassNode, 'no pass in a material graph')
   }
+})
+
+/** three's TSL `hash` on the CPU (crowd.ts tslHash): PCG on the seed's integer part, as a u32 (a WGSL f32 → u32 saturates). */
+function pcg(seed: number): number {
+  const u = seed <= 0 ? 0 : seed >= 2 ** 32 ? 2 ** 32 - 1 : Math.trunc(seed)
+  const state = (Math.imul(u >>> 0, 747796405) + 2891336453) >>> 0
+  const word = Math.imul(((state >>> ((state >>> 28) + 4)) ^ state) >>> 0, 277803737) >>> 0
+  return (((word >>> 22) ^ word) >>> 0) / 2 ** 32
+}
+
+test('the survival keys stay a different seed per cell however long the page has run (a fractional, signed seed collapsed to one key in minutes)', () => {
+  const f = Math.fround
+  // The shader's arithmetic in f32 at 1080p (40 rows of 27 px cells, 17 px wide): column, fall, row, key.
+  const cols = Math.floor(1920 / Math.floor(27 * 0.64)), rows = CODE_DISSOLVE.rows
+  const keySeed = (cx: number, cy: number, t: number): number => {
+    const column = pcg(f(f(cx * 7.13) + 0.5))
+    const fallen = f(t * f(f(column * CODE_DISSOLVE.speedSpread) + CODE_DISSOLVE.speed))
+    const r = Math.floor(f(cy - fallen))
+    const row = f(r - CODE_DISSOLVE.keyRows * Math.floor(r / CODE_DISSOLVE.keyRows))
+    return f(f(cx * (CODE_DISSOLVE.keyRows + 3)) + row)
+  }
+  for (const t of [0, 60, 600, 3600, 86_400]) {
+    const keys = new Set<number>()
+    for (let cx = 0; cx < cols; cx++) {
+      for (let cy = 0; cy < rows; cy++) {
+        const seed = keySeed(cx, cy, t)
+        assert.ok(Number.isInteger(seed) && seed >= 0 && seed < 2 ** 24, `t ${t}: seed ${seed} is not a whole number in f32's exact range`)
+        keys.add(pcg(seed))
+      }
+    }
+    assert.ok(keys.size >= 0.9 * cols * rows, `t ${t} s: ${keys.size} distinct keys of ${cols * rows}`)
+  }
+  // The source builds exactly that seed.
+  const src = readFileSync(new URL('./codeDissolve.ts', import.meta.url), 'utf8')
+  assert.match(src, /const row = mod\(floor\(c\.y\.sub\(fallen\)\), CODE_DISSOLVE\.keyRows\)\n\s*const key = hash\(c\.x\.mul\(CODE_DISSOLVE\.keyRows \+ 3\)\.add\(row\)\)/)
+})
+
+test('the shadow is masked by the amount alone: no screen cell reaches the shadow pass, an existing shadow mask is kept', () => {
+  const amount = uniform(0)
+  const m = applyCodeDissolve(new MeshStandardNodeMaterial(), amount, vec3(0), GREEN)
+  assert.ok(m.maskShadowNode, 'a shadow mask of its own')
+  const screenNodes = new Set<N>([...reach(screenCoordinate), ...reach(screenSize)].filter((n) => n.type === 'ScreenNode'))
+  assert.ok(screenNodes.size > 0)
+  const screen = (n: N) => screenNodes.has(n)
+  assert.ok([...reach(m.maskNode)].some(screen), 'the visible mask is the screen\'s cells')
+  assert.ok(![...reach(m.maskShadowNode)].some(screen), 'the shadow mask reads no screen coordinate')
+  assert.ok(reach(m.maskShadowNode).has(amount as unknown as N), 'it reads the amount')
+  const own = uniform(true)
+  const kept = new MeshStandardNodeMaterial()
+  kept.maskShadowNode = own as unknown as Node<'bool'>
+  applyCodeDissolve(kept, amount, vec3(0), GREEN)
+  assert.ok(reach(kept.maskShadowNode).has(own as unknown as N), 'an existing shadow mask is ANDed, not replaced')
 })
