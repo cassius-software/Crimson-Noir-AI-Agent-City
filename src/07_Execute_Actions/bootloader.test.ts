@@ -110,7 +110,9 @@ test('app: ?boot=tty mounts the full-screen terminal alone over the offline brid
   const app = read('../App.tsx')
   assert.match(app, /boot: q\.get\('boot'\) === 'tty' \? 'tty' : 'gui'/)
   assert.match(app, /const \[options\] = useState\(readOptions\)/, 'read once')
-  assert.match(app, /options\.boot === 'tty' \? <TtyShell \/> : <GuiShell options=\{options\} \/>/)
+  // The console shell mounts before the onboarding or the city is even considered: nothing of either reaches it.
+  assert.match(app, /if \(options\.boot === 'tty'\) return <TtyShell \/>/)
+  assert.match(app, /<GuiShell options=\{shellOptions\} plan=\{\{ choice, pack: outcome\?\.pack \?\? null, zone \}\} \/>/)
   const tty = between(app, 'function TtyShell() {', 'function App() {')
   assert.match(tty, /<Terminal bridge=\{TTY_BRIDGE\} fullscreen onOpenChange=\{noop\} onBoot=\{reboot\} \/>/)
   assert.match(tty, /bg-black/)
@@ -121,7 +123,7 @@ test('app: ?boot=tty mounts the full-screen terminal alone over the offline brid
   assert.match(reboot, /url\.searchParams\.delete\('boot'\)/)
   assert.match(reboot, /window\.location\.assign\(url\.toString\(\)\)/)
   // The engine's useEffect lives in the GUI shell, the only one that reads the canvas.
-  const gui = between(app, 'function GuiShell({ options }: { options: Options }) {', 'export default App')
+  const gui = between(app, 'function GuiShell({ options, plan }: { options: Options; plan: MapPlan }) {', 'export default App')
   assert.ok(gui.includes('Engine.create(canvas, { ...options, region })'))
   assert.equal(app.match(/Engine\.create\(/g)?.length, 1)
   assert.match(gui, /<Terminal bridge=\{bridge\} onOpenChange=\{onTermOpen\} onBoot=\{reboot\} \/>/)

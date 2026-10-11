@@ -53,7 +53,8 @@ export interface MacroCity {
   footprints: Uint32Array
 }
 
-const hash2 = (seed: number, a: number, b: number): number => {
+/** A stable hash of (seed, a, b) in [0, 1). */
+export const hash2 = (seed: number, a: number, b: number): number => {
   let h = (seed ^ Math.imul(a, 0x27d4eb2d) ^ Math.imul(b, 0x165667b1)) >>> 0
   h = Math.imul(h ^ (h >>> 15), 0x85ebca6b)
   h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35)
@@ -61,7 +62,7 @@ const hash2 = (seed: number, a: number, b: number): number => {
 }
 
 /** Smooth value noise in [0, 1) at (x, z), lattice spacing `scale` blocks. */
-function noise(seed: number, x: number, z: number, scale: number): number {
+export function noise(seed: number, x: number, z: number, scale: number): number {
   const fx = x / scale, fz = z / scale
   const ix = Math.floor(fx), iz = Math.floor(fz)
   const tx = fx - ix, tz = fz - iz
@@ -114,12 +115,49 @@ class UnionFind {
   }
 }
 
-/** Generates the macro city for `seed`, `blocks` × `blocks` (default 256). Deterministic. */
-export function generateMacroCity(seed: number, blocks: number = MACRO.blocks): MacroCity {
+/** Adds one footprint to a lot: decimetres from the lot's corner (0…260), and its floors. */
+export type PushFootprint = (lot: number, x0: number, z0: number, x1: number, z1: number, floors: number) => void
+
+/**
+ * A plan another generator hands in (california.ts): where each lot kind goes, and, per lot, what stands on it. Without
+ * one the river-and-lake city of this file is generated; the street network is built the same way either way.
+ */
+export interface MacroPlan {
+  /** The lot kind at block (k, m). */
+  lotAt(k: number, m: number): LotKind
+  /** The footprints of lot `lot` (index m · blocks + k) of kind `kind`, drawn with the lot's own rng `r`. Absent: this file's. */
+  footprints?(lot: number, kind: LotKind, k: number, m: number, r: () => number, push: PushFootprint): void
+}
+
+/** This file's own footprints: towers and twin slabs downtown, two rows of houses, a shed, a hall, a park pavilion. */
+export function defaultFootprints(li: number, kind: LotKind, _k: number, _m: number, r: () => number, push: PushFootprint): void {
+  if (kind === LOT.downtown) {
+    if (r() < 0.45) push(li, 10, 10, 250, 250, 12 + Math.floor(r() * 40))
+    else { push(li, 0, 0, 125, 260, 6 + Math.floor(r() * 20)); push(li, 135, 0, 260, 260, 6 + Math.floor(r() * 20)) }
+  } else if (kind === LOT.residential) {
+    const cols = 2 + Math.floor(r() * 3), rows = 2
+    const w = Math.floor(260 / cols)
+    for (let c = 0; c < cols; c++) for (let q = 0; q < rows; q++) push(li, c * w + 8, q * 130 + 20, (c + 1) * w - 8, q * 130 + 110, 2 + Math.floor(r() * 3))
+  } else if (kind === LOT.industrial) {
+    push(li, 20, 20, 240, 200 + Math.floor(r() * 40), 1 + Math.floor(r() * 2))
+  } else if (kind === LOT.civic) {
+    push(li, 40, 40, 220, 220, 3 + Math.floor(r() * 4))
+  } else if (kind === LOT.park && r() < 0.2) {
+    push(li, 110, 110, 150, 150, 1)
+  }
+}
+
+/**
+ * Generates the macro city for `seed`, `blocks` × `blocks` (default 256). Deterministic. With a `plan` the lots and
+ * footprints are its (california.ts); the streets are laid the same way over them.
+ */
+export function generateMacroCity(seed: number, blocks: number = MACRO.blocks, plan?: MacroPlan): MacroCity {
   if (!Number.isInteger(blocks) || blocks < 8 || blocks > 1024) throw new RangeError('blocks must be an integer in 8…1024')
   const B = blocks
   const lots = new Uint8Array(B * B)
-  for (let m = 0; m < B; m++) for (let k = 0; k < B; k++) lots[m * B + k] = lotKindAt(seed, B, k, m)
+  const lotKind = plan ? plan.lotAt : (k: number, m: number) => lotKindAt(seed, B, k, m)
+  const footprints = plan?.footprints ?? defaultFootprints
+  for (let m = 0; m < B; m++) for (let k = 0; k < B; k++) lots[m * B + k] = lotKind(k, m)
   const lot = (k: number, m: number): number => (k < 0 || m < 0 || k >= B || m >= B ? LOT.water : lots[m * B + k])
   const water = (k: number, m: number) => lot(k, m) === LOT.water
   const every = Math.min(MACRO.arterialEvery, Math.max(4, B >> 2))
@@ -168,23 +206,10 @@ export function generateMacroCity(seed: number, blocks: number = MACRO.blocks): 
   }
 
   const fp: number[] = []
-  const push = (li: number, x0: number, z0: number, x1: number, z1: number, floors: number) => fp.push(li, x0, z0, x1, z1, floors)
+  const push: PushFootprint = (li, x0, z0, x1, z1, floors) => fp.push(li, x0, z0, x1, z1, floors)
   for (let m = 0; m < B; m++) for (let k = 0; k < B; k++) {
-    const kind = lots[m * B + k], li = m * B + k, r = createRng(seed ^ Math.imul(li + 1, 0x9e3779b1))
-    if (kind === LOT.downtown) {
-      if (r() < 0.45) push(li, 10, 10, 250, 250, 12 + Math.floor(r() * 40))
-      else { push(li, 0, 0, 125, 260, 6 + Math.floor(r() * 20)); push(li, 135, 0, 260, 260, 6 + Math.floor(r() * 20)) }
-    } else if (kind === LOT.residential) {
-      const cols = 2 + Math.floor(r() * 3), rows = 2
-      const w = Math.floor(260 / cols)
-      for (let c = 0; c < cols; c++) for (let q = 0; q < rows; q++) push(li, c * w + 8, q * 130 + 20, (c + 1) * w - 8, q * 130 + 110, 2 + Math.floor(r() * 3))
-    } else if (kind === LOT.industrial) {
-      push(li, 20, 20, 240, 200 + Math.floor(r() * 40), 1 + Math.floor(r() * 2))
-    } else if (kind === LOT.civic) {
-      push(li, 40, 40, 220, 220, 3 + Math.floor(r() * 4))
-    } else if (kind === LOT.park && r() < 0.2) {
-      push(li, 110, 110, 150, 150, 1)
-    }
+    const kind = lots[m * B + k] as LotKind, li = m * B + k
+    footprints(li, kind, k, m, createRng(seed ^ Math.imul(li + 1, 0x9e3779b1)), push)
   }
   return { seed, blocks: B, lots, hStreets, vStreets, footprints: Uint32Array.from(fp) }
 }

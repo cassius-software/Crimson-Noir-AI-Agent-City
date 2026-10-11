@@ -1,0 +1,441 @@
+{
+  "format": "zone/1",
+  "seed": 1337,
+  "blocks": 256,
+  "pitch": 40,
+  "size": 10240,
+  "region": {
+    "id": 2,
+    "slug": "las-vistas",
+    "name": "Las Vistas",
+    "biome": "desert neon",
+    "climate": "hot, dry, clear nights",
+    "character": "one strip of lit hotels, low houses around it"
+  },
+  "extent": {
+    "k0": 108,
+    "m0": 32,
+    "k1": 224,
+    "m1": 187
+  },
+  "area": {
+    "blocks": 9627,
+    "km2": 15.403,
+    "shareOfLand": 0.174
+  },
+  "centroid": {
+    "k": 153.16,
+    "m": 114.89
+  },
+  "elevation": {
+    "min": 0.35,
+    "mean": 0.577,
+    "max": 0.893
+  },
+  "moisture": {
+    "mean": 0.269
+  },
+  "terrain": {
+    "ocean": 0,
+    "shore": 0,
+    "flat": 6220,
+    "hill": 3397,
+    "ridge": 10,
+    "canyon": 0
+  },
+  "lots": {
+    "downtown": 386,
+    "residential": 7813,
+    "industrial": 650,
+    "park": 670,
+    "plaza": 21,
+    "water": 0,
+    "civic": 87
+  },
+  "buildings": {
+    "count": 41326,
+    "floors": {
+      "min": 1,
+      "mean": 1.26,
+      "max": 38
+    },
+    "tallest": {
+      "k": 159,
+      "m": 75,
+      "floors": 38
+    }
+  },
+  "streets": {
+    "arterial": 1219,
+    "local": 17276,
+    "pedestrian": 93,
+    "bridge": 0
+  },
+  "districts": [
+    {
+      "name": "Topazcombe Heights",
+      "kind": "residential",
+      "blocks": 4975,
+      "extent": {
+        "k0": 108,
+        "m0": 32,
+        "k1": 160,
+        "m1": 187
+      },
+      "centroid": {
+        "k": 135.17,
+        "m": 111.24
+      }
+    },
+    {
+      "name": "Canvasdene Heights",
+      "kind": "residential",
+      "blocks": 2819,
+      "extent": {
+        "k0": 161,
+        "m0": 64,
+        "k1": 224,
+        "m1": 165
+      },
+      "centroid": {
+        "k": 187.36,
+        "m": 121.5
+      }
+    },
+    {
+      "name": "Lupinview Centre",
+      "kind": "downtown",
+      "blocks": 386,
+      "extent": {
+        "k0": 158,
+        "m0": 64,
+        "k1": 161,
+        "m1": 165
+      },
+      "centroid": {
+        "k": 160.02,
+        "m": 114.98
+      }
+    },
+    {
+      "name": "Laureldale Park",
+      "kind": "park",
+      "blocks": 226,
+      "extent": {
+        "k0": 140,
+        "m0": 124,
+        "k1": 155,
+        "m1": 146
+      },
+      "centroid": {
+        "k": 146.52,
+        "m": 137.32
+      }
+    },
+    {
+      "name": "Warblergrove Park",
+      "kind": "park",
+      "blocks": 129,
+      "extent": {
+        "k0": 109,
+        "m0": 150,
+        "k1": 128,
+        "m1": 158
+      },
+      "centroid": {
+        "k": 119.3,
+        "m": 154
+      }
+    },
+    {
+      "name": "Falconford Yards",
+      "kind": "industrial",
+      "blocks": 86,
+      "extent": {
+        "k0": 124,
+        "m0": 43,
+        "k1": 144,
+        "m1": 55
+      },
+      "centroid": {
+        "k": 132.83,
+        "m": 48.49
+      }
+    },
+    {
+      "name": "Pebbleside Park",
+      "kind": "park",
+      "blocks": 50,
+      "extent": {
+        "k0": 131,
+        "m0": 49,
+        "k1": 137,
+        "m1": 56
+      },
+      "centroid": {
+        "k": 134.48,
+        "m": 52.98
+      }
+    },
+    {
+      "name": "Martenhollow Yards",
+      "kind": "industrial",
+      "blocks": 49,
+      "extent": {
+        "k0": 146,
+        "m0": 124,
+        "k1": 154,
+        "m1": 140
+      },
+      "centroid": {
+        "k": 151.11,
+        "m": 130.93
+      }
+    },
+    {
+      "name": "Oatdale Yards",
+      "kind": "industrial",
+      "blocks": 49,
+      "extent": {
+        "k0": 137,
+        "m0": 130,
+        "k1": 155,
+        "m1": 148
+      },
+      "centroid": {
+        "k": 143.34,
+        "m": 142.13
+      }
+    },
+    {
+      "name": "Clayvale Park",
+      "kind": "park",
+      "blocks": 43,
+      "extent": {
+        "k0": 123,
+        "m0": 88,
+        "k1": 132,
+        "m1": 93
+      },
+      "centroid": {
+        "k": 127.66,
+        "m": 90.9
+      }
+    },
+    {
+      "name": "Poppybury Yards",
+      "kind": "industrial",
+      "blocks": 41,
+      "extent": {
+        "k0": 110,
+        "m0": 156,
+        "k1": 127,
+        "m1": 163
+      },
+      "centroid": {
+        "k": 118.35,
+        "m": 159.55
+      }
+    },
+    {
+      "name": "Bronzeford Yards",
+      "kind": "industrial",
+      "blocks": 35,
+      "extent": {
+        "k0": 215,
+        "m0": 125,
+        "k1": 224,
+        "m1": 132
+      },
+      "centroid": {
+        "k": 219.7,
+        "m": 128.07
+      }
+    },
+    {
+      "name": "Duskgrove Park",
+      "kind": "park",
+      "blocks": 31,
+      "extent": {
+        "k0": 142,
+        "m0": 61,
+        "k1": 146,
+        "m1": 67
+      },
+      "centroid": {
+        "k": 144.5,
+        "m": 64.5
+      }
+    },
+    {
+      "name": "Shaleholm Park",
+      "kind": "park",
+      "blocks": 28,
+      "extent": {
+        "k0": 162,
+        "m0": 79,
+        "k1": 164,
+        "m1": 90
+      },
+      "centroid": {
+        "k": 163.29,
+        "m": 84.21
+      }
+    },
+    {
+      "name": "Micawald Yards",
+      "kind": "industrial",
+      "blocks": 28,
+      "extent": {
+        "k0": 129,
+        "m0": 88,
+        "k1": 138,
+        "m1": 93
+      },
+      "centroid": {
+        "k": 134.04,
+        "m": 90.75
+      }
+    },
+    {
+      "name": "Velvethollow Yards",
+      "kind": "industrial",
+      "blocks": 28,
+      "extent": {
+        "k0": 152,
+        "m0": 96,
+        "k1": 155,
+        "m1": 109
+      },
+      "centroid": {
+        "k": 153.71,
+        "m": 104.86
+      }
+    },
+    {
+      "name": "Honeystead Park",
+      "kind": "park",
+      "blocks": 27,
+      "extent": {
+        "k0": 125,
+        "m0": 44,
+        "k1": 130,
+        "m1": 48
+      },
+      "centroid": {
+        "k": 127.91,
+        "m": 46.43
+      }
+    },
+    {
+      "name": "Clovermoor Park",
+      "kind": "park",
+      "blocks": 27,
+      "extent": {
+        "k0": 142,
+        "m0": 159,
+        "k1": 147,
+        "m1": 164
+      },
+      "centroid": {
+        "k": 144.94,
+        "m": 162.2
+      }
+    },
+    {
+      "name": "Starlingfield Park",
+      "kind": "park",
+      "blocks": 26,
+      "extent": {
+        "k0": 204,
+        "m0": 133,
+        "k1": 210,
+        "m1": 137
+      },
+      "centroid": {
+        "k": 207.81,
+        "m": 135.42
+      }
+    },
+    {
+      "name": "Pepperknoll Yards",
+      "kind": "industrial",
+      "blocks": 20,
+      "extent": {
+        "k0": 115,
+        "m0": 96,
+        "k1": 120,
+        "m1": 101
+      },
+      "centroid": {
+        "k": 117.95,
+        "m": 99.35
+      }
+    },
+    {
+      "name": "Lanterndene Yards",
+      "kind": "industrial",
+      "blocks": 20,
+      "extent": {
+        "k0": 188,
+        "m0": 105,
+        "k1": 191,
+        "m1": 110
+      },
+      "centroid": {
+        "k": 189.9,
+        "m": 107.75
+      }
+    },
+    {
+      "name": "Hickoryhaven Park",
+      "kind": "park",
+      "blocks": 20,
+      "extent": {
+        "k0": 167,
+        "m0": 116,
+        "k1": 173,
+        "m1": 119
+      },
+      "centroid": {
+        "k": 170.85,
+        "m": 117.6
+      }
+    },
+    {
+      "name": "Brackenford Yards",
+      "kind": "industrial",
+      "blocks": 19,
+      "extent": {
+        "k0": 143,
+        "m0": 77,
+        "k1": 145,
+        "m1": 84
+      },
+      "centroid": {
+        "k": 144.45,
+        "m": 81.45
+      }
+    },
+    {
+      "name": "Loomhurst Yards",
+      "kind": "industrial",
+      "blocks": 19,
+      "extent": {
+        "k0": 162,
+        "m0": 84,
+        "k1": 165,
+        "m1": 92
+      },
+      "centroid": {
+        "k": 164.45,
+        "m": 89.18
+      }
+    }
+  ],
+  "neighbours": [
+    "san-cero",
+    "dusty-basin",
+    "starwood-hills"
+  ]
+}

@@ -4,7 +4,9 @@
 /**
  * Why does this file exist? It is the page's React shell: the city (`GuiShell`) or the console alone (`TtyShell`, under
  * `?boot=tty`), the engine mounted with the page's options, and around it the boot veil, the HUD, the concierge, the
- * wardrobe card and the touch and console overlays. It builds what the engine is handed through its seams instead of
+ * wardrobe card and the touch and console overlays. A first visit opens on the concierge's onboarding instead
+ * (07_Execute_Actions/onboarding), which builds the California-analog coast in the background and hands the city its
+ * outcome; the map walked (the coast, the embedded region, or the procedural city) is decided here (loadMap). It builds what the engine is handed through its seams instead of
  * importing (the cognition router, the network client), keeps the visitor's look and session token, and screens the
  * room's names and chat under 14A once more as they arrive.
  * What breaks if it is removed? Nothing is mounted: the page is blank.
@@ -39,7 +41,15 @@ import { clampPlayers } from './07_Execute_Actions/viewports.ts'
 import type { PlanStep } from './06_Make_Decisions/intent.ts'
 import { BRAND } from './brand.ts'
 import embeddedRegion, { regionFirst } from 'virtual:region-pack'
-import { regionWanted, validatePack, type RegionPack } from './01_Initialize_World/region/pack.ts'
+import { validatePack, type RegionPack } from './01_Initialize_World/region/pack.ts'
+import { ZONE, type Zone } from './01_Initialize_World/california.ts'
+import { CaliforniaBuilder } from './01_Initialize_World/californiaClient.ts'
+import { zoneOf } from './01_Initialize_World/californiaPack.ts'
+import { builderPort } from './01_Initialize_World/californiaWorkerPort.ts'
+import { screenNames } from './01_Initialize_World/assets/cc0.ts'
+import { Onboarding, type Outcome } from './07_Execute_Actions/onboarding/Onboarding.tsx'
+import { loadOnboarding, mapWanted, needsOnboarding, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
+import { modelVoice, scriptedVoice, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
 
 const HUD_INTERVAL_MS = 100
 /** Where the cognition router's settings (the provider, each provider's server and model, the network key) are kept between visits. */
@@ -50,6 +60,9 @@ const SPEECH_KEY = 'civic-simulation:speech:v1'
 const ANSWER_TAIL = 72
 /** Where the network session token (`net join <url> <token>`) is kept between visits, like the cognition key; never in the page source. */
 const NET_TOKEN_KEY = 'civic-simulation:net:v1'
+
+/** The page's own fetch, held to this machine (airgap.ts loopbackFetch): the model and speech clients speak through it, and nothing else does. */
+const pageFetch = loopbackFetch((url, init) => window.fetch(url, init))
 
 /** The page's local storage for one key; a browser that refuses storage keeps the settings for this visit only. */
 const pageStore = (key: string) => ({
@@ -129,14 +142,31 @@ function activityText(a: { thinking: number; tail: string } | null, speaking: nu
 
 /**
  * The region every build carries (vite.config.ts regionPack), unpacked and checked when the page walks it: ?region=on
- * in any build, by default in the pilot build (pack.ts regionWanted); null for the procedural city (?region=off, or by
- * default). Nothing is fetched: the bytes are in this file.
+ * in any build, by default in the pilot build. Nothing is fetched: the bytes are in this file. Its names pass the CC0
+ * gate (assets/cc0.ts) on the way, as every asset that reaches the page does.
  */
-async function loadRegion(): Promise<RegionPack | null> {
-  if (!regionWanted(new URLSearchParams(window.location.search).get('region'), regionFirst)) return null
+async function loadRegion(): Promise<RegionPack> {
   const bytes = Uint8Array.from(atob(embeddedRegion), (c) => c.charCodeAt(0))
   const text = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text()
-  return validatePack(JSON.parse(text))
+  const pack = validatePack(JSON.parse(text))
+  const purged = screenNames([pack.name, ...pack.names, ...pack.attribution], 'embedded region')
+  if (purged.length) throw new Error(`the embedded region names something after a weapon: ${purged.map((p) => p.asset).join(', ')}`)
+  return pack
+}
+
+/** Which map the page walks and, for the generated coast, the pack the onboarding already built and where it starts. */
+interface MapPlan { choice: MapChoice; pack: RegionPack | null; zone: Zone }
+
+/**
+ * The map the engine is handed: the embedded region, the California-analog coast (the pack the onboarding built, or one
+ * built now in the worker for ?map=california and returning visitors), or null for the procedural city.
+ */
+async function loadMap(plan: MapPlan): Promise<RegionPack | null> {
+  if (plan.choice === 'region') return loadRegion()
+  if (plan.choice !== 'california') return null
+  if (plan.pack) return plan.pack
+  const b = new CaliforniaBuilder(readOptions().seed, builderPort())
+  try { return await b.pack(plan.zone) } finally { b.dispose() }
 }
 
 /** Which shell the page boots: 'gui' (the city) or 'tty' (?boot=tty: the full-screen console alone, no engine). */
@@ -211,14 +241,38 @@ function TtyShell() {
   )
 }
 
+/**
+ * The voice the onboarding speaks with: the configured model backend's rewording when it answers in time, else the
+ * script. With the Claude provider selected and no key kept, nothing is asked (the script is the voice): a first visit
+ * on a fresh machine makes no request at all.
+ */
+function onboardingVoice(): Voice {
+  const router = createMindRouter({ fetch: pageFetch, store: pageStore(COGNITION_KEY) })
+  const s = router.settings()
+  if (s.provider === 'claude' && !s.key) return scriptedVoice()
+  return modelVoice(router, (line) => (/morning, sunset or night/i.test(line) ? ['morning', 'sunset', 'night'] : /sound on/i.test(line) ? ['sound'] : []))
+}
+
 function App() {
   // Read once: the boot track decides which shell mounts, so the hooks of each shell live in that shell.
   const [options] = useState(readOptions)
-  return options.boot === 'tty' ? <TtyShell /> : <GuiShell options={options} />
+  // A first visit (no saved onboarding, no profile) opens on the concierge's onboarding, which builds the coast in the
+  // background and hands its outcome here; a returning visitor goes straight to the map they chose (script.ts).
+  const [saved] = useState<SavedOnboarding | null>(loadOnboarding)
+  const [onboard] = useState(() => needsOnboarding(new URLSearchParams(window.location.search), saved, loadProfile()))
+  const [outcome, setOutcome] = useState<Outcome | null>(null)
+  const [voice] = useState(onboardingVoice)
+  if (options.boot === 'tty') return <TtyShell />
+  if (onboard && !outcome) return <Onboarding seed={options.seed} onDone={setOutcome} port={builderPort} voice={voice} />
+  const chosen = outcome?.saved ?? saved
+  const choice = mapWanted(new URLSearchParams(window.location.search), chosen, regionFirst)
+  const zone = zoneOf(chosen?.place) ?? ZONE.delMar
+  const shellOptions = outcome?.options ? { ...options, ...outcome.options } : options
+  return <GuiShell options={shellOptions} plan={{ choice, pack: outcome?.pack ?? null, zone }} />
 }
 
 /** The city: the engine over the canvas, the HUD, the Concierge, the touch controls and the drop-down console. */
-function GuiShell({ options }: { options: Options }) {
+function GuiShell({ options, plan }: { options: Options; plan: MapPlan }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const engineRef = useRef<Engine | null>(null)
   const termOpenRef = useRef(false)
@@ -318,7 +372,7 @@ function GuiShell({ options }: { options: Options }) {
     }
     const onResize = () => engine?.resize()
 
-    loadRegion().then((region) => Engine.create(canvas, { ...options, region })).then(
+    loadMap(plan).then((region) => Engine.create(canvas, { ...options, region })).then(
       (e) => {
         if (cancelled) {
           e.dispose()
@@ -344,7 +398,7 @@ function GuiShell({ options }: { options: Options }) {
         // machine, or a model server on this machine, swapped at the console. Its fetch is the page's own (already held
         // to this machine by the air gap main.tsx installed) under the gate's own wrapper once more. Its answer's pieces
         // are shown on the HUD only after the lease let them through.
-        const local = createMindRouter({ fetch: loopbackFetch((url, init) => window.fetch(url, init)), store: pageStore(COGNITION_KEY) })
+        const local = createMindRouter({ fetch: pageFetch, store: pageStore(COGNITION_KEY) })
         const mind: Mind = {
           ...local,
           answer: (req, onPiece) => {
@@ -364,7 +418,7 @@ function GuiShell({ options }: { options: Options }) {
         unfollow = followRecruiter(memory, r)
         // The local speech server (only ever asked on the operator's command, only on this machine): the audio it
         // returns is placed by the engine's soundscape at the speaker's head.
-        const voice = createLocalSpeech({ fetch: loopbackFetch((url, init) => window.fetch(url, init)), store: pageStore(SPEECH_KEY) })
+        const voice = createLocalSpeech({ fetch: pageFetch, store: pageStore(SPEECH_KEY) })
         // A walk ping (go or gather) at a sidewalk point near the operator asks an Active recruit over to it: the engine
         // plans it from its own copies (08_Swarm/ping.ts rallyPlan), the recruiter checks the page's copy, the physics
         // realm decides on its own readings; its answer is a toast either way.
@@ -450,7 +504,7 @@ function GuiShell({ options }: { options: Options }) {
       if ((window as { recruit?: unknown }).recruit) delete (window as { recruit?: unknown }).recruit
       engine?.dispose()
     }
-  }, [options, wearLook])
+  }, [options, plan, wearLook])
 
   return (
     <main className="relative h-full w-full overflow-hidden bg-slate-900">

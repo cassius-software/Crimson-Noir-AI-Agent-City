@@ -1,0 +1,307 @@
+{
+  "format": "zone/1",
+  "seed": 1337,
+  "blocks": 256,
+  "pitch": 40,
+  "size": 10240,
+  "region": {
+    "id": 4,
+    "slug": "starwood-hills",
+    "name": "Starwood Hills",
+    "biome": "mansions",
+    "climate": "warm hillside",
+    "character": "one house to a lot, gardens, a view of the coast"
+  },
+  "extent": {
+    "k0": 64,
+    "m0": 72,
+    "k1": 128,
+    "m1": 255
+  },
+  "area": {
+    "blocks": 8142,
+    "km2": 13.027,
+    "shareOfLand": 0.147
+  },
+  "centroid": {
+    "k": 95.44,
+    "m": 178.99
+  },
+  "elevation": {
+    "min": 0.255,
+    "mean": 0.452,
+    "max": 0.605
+  },
+  "moisture": {
+    "mean": 0.353
+  },
+  "terrain": {
+    "ocean": 0,
+    "shore": 0,
+    "flat": 5744,
+    "hill": 2398,
+    "ridge": 0,
+    "canyon": 0
+  },
+  "lots": {
+    "downtown": 0,
+    "residential": 7263,
+    "industrial": 0,
+    "park": 812,
+    "plaza": 0,
+    "water": 0,
+    "civic": 67
+  },
+  "buildings": {
+    "count": 7458,
+    "floors": {
+      "min": 1,
+      "mean": 2.49,
+      "max": 6
+    },
+    "tallest": {
+      "k": 88,
+      "m": 92,
+      "floors": 6
+    }
+  },
+  "streets": {
+    "arterial": 1043,
+    "local": 14696,
+    "pedestrian": 3,
+    "bridge": 0
+  },
+  "districts": [
+    {
+      "name": "Tallowrigg Heights",
+      "kind": "residential",
+      "blocks": 7252,
+      "extent": {
+        "k0": 64,
+        "m0": 72,
+        "k1": 128,
+        "m1": 255
+      },
+      "centroid": {
+        "k": 96.08,
+        "m": 177.3
+      }
+    },
+    {
+      "name": "Quillview Park",
+      "kind": "park",
+      "blocks": 242,
+      "extent": {
+        "k0": 89,
+        "m0": 187,
+        "k1": 110,
+        "m1": 220
+      },
+      "centroid": {
+        "k": 101.51,
+        "m": 205.84
+      }
+    },
+    {
+      "name": "Laurelglen Park",
+      "kind": "park",
+      "blocks": 113,
+      "extent": {
+        "k0": 69,
+        "m0": 206,
+        "k1": 78,
+        "m1": 227
+      },
+      "centroid": {
+        "k": 73.14,
+        "m": 217.32
+      }
+    },
+    {
+      "name": "Daisygate Park",
+      "kind": "park",
+      "blocks": 101,
+      "extent": {
+        "k0": 78,
+        "m0": 106,
+        "k1": 87,
+        "m1": 119
+      },
+      "centroid": {
+        "k": 82.43,
+        "m": 112.22
+      }
+    },
+    {
+      "name": "Marigoldhaven Park",
+      "kind": "park",
+      "blocks": 87,
+      "extent": {
+        "k0": 69,
+        "m0": 242,
+        "k1": 75,
+        "m1": 255
+      },
+      "centroid": {
+        "k": 72.4,
+        "m": 248.51
+      }
+    },
+    {
+      "name": "Basaltwood Park",
+      "kind": "park",
+      "blocks": 54,
+      "extent": {
+        "k0": 95,
+        "m0": 130,
+        "k1": 101,
+        "m1": 138
+      },
+      "centroid": {
+        "k": 98.63,
+        "m": 134.56
+      }
+    },
+    {
+      "name": "Sumachollow Park",
+      "kind": "park",
+      "blocks": 40,
+      "extent": {
+        "k0": 115,
+        "m0": 219,
+        "k1": 120,
+        "m1": 227
+      },
+      "centroid": {
+        "k": 117.8,
+        "m": 223.88
+      }
+    },
+    {
+      "name": "Candlelea Park",
+      "kind": "park",
+      "blocks": 37,
+      "extent": {
+        "k0": 95,
+        "m0": 248,
+        "k1": 101,
+        "m1": 253
+      },
+      "centroid": {
+        "k": 98.72,
+        "m": 251.18
+      }
+    },
+    {
+      "name": "Ottermoor Park",
+      "kind": "park",
+      "blocks": 35,
+      "extent": {
+        "k0": 104,
+        "m0": 239,
+        "k1": 110,
+        "m1": 245
+      },
+      "centroid": {
+        "k": 107.41,
+        "m": 242.93
+      }
+    },
+    {
+      "name": "Ternwood Park",
+      "kind": "park",
+      "blocks": 34,
+      "extent": {
+        "k0": 70,
+        "m0": 169,
+        "k1": 79,
+        "m1": 172
+      },
+      "centroid": {
+        "k": 74.38,
+        "m": 171.15
+      }
+    },
+    {
+      "name": "Fiddlebrook Park",
+      "kind": "park",
+      "blocks": 27,
+      "extent": {
+        "k0": 78,
+        "m0": 133,
+        "k1": 84,
+        "m1": 137
+      },
+      "centroid": {
+        "k": 81.5,
+        "m": 135.8
+      }
+    },
+    {
+      "name": "Quaillea Park",
+      "kind": "park",
+      "blocks": 15,
+      "extent": {
+        "k0": 64,
+        "m0": 151,
+        "k1": 66,
+        "m1": 156
+      },
+      "centroid": {
+        "k": 65.37,
+        "m": 153.83
+      }
+    },
+    {
+      "name": "Sprucebank Park",
+      "kind": "park",
+      "blocks": 13,
+      "extent": {
+        "k0": 80,
+        "m0": 152,
+        "k1": 84,
+        "m1": 154
+      },
+      "centroid": {
+        "k": 82.19,
+        "m": 153.5
+      }
+    },
+    {
+      "name": "Asterknoll Heights",
+      "kind": "residential",
+      "blocks": 11,
+      "extent": {
+        "k0": 68,
+        "m0": 248,
+        "k1": 70,
+        "m1": 255
+      },
+      "centroid": {
+        "k": 68.86,
+        "m": 252.86
+      }
+    },
+    {
+      "name": "Violetwood Park",
+      "kind": "park",
+      "blocks": 10,
+      "extent": {
+        "k0": 107,
+        "m0": 151,
+        "k1": 108,
+        "m1": 155
+      },
+      "centroid": {
+        "k": 108,
+        "m": 153.5
+      }
+    }
+  ],
+  "neighbours": [
+    "del-mar-metropolis",
+    "san-cero",
+    "las-vistas",
+    "dusty-basin"
+  ]
+}

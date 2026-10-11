@@ -1,0 +1,54 @@
+{
+  "format": "california/1",
+  "seed": 1337,
+  "blocks": 256,
+  "pitch": 40,
+  "size": 10240,
+  "fingerprint": "eca81303",
+  "land": {
+    "blocks": 55334,
+    "km2": 88.534
+  },
+  "regions": [
+    {
+      "id": 0,
+      "slug": "del-mar-metropolis",
+      "name": "Del Mar Metropolis",
+      "biome": "coastal",
+      "blocks": 5044,
+      "file": "del-mar-metropolis.json"
+    },
+    {
+      "id": 1,
+      "slug": "san-cero",
+      "name": "San Cero",
+      "biome": "hills and fog",
+      "blocks": 6835,
+      "file": "san-cero.json"
+    },
+    {
+      "id": 2,
+      "slug": "las-vistas",
+      "name": "Las Vistas",
+      "biome": "desert neon",
+      "blocks": 9627,
+      "file": "las-vistas.json"
+    },
+    {
+      "id": 3,
+      "slug": "dusty-basin",
+      "name": "Dusty Basin",
+      "biome": "desert and canyons",
+      "blocks": 25686,
+      "file": "dusty-basin.json"
+    },
+    {
+      "id": 4,
+      "slug": "starwood-hills",
+      "name": "Starwood Hills",
+      "biome": "mansions",
+      "blocks": 8142,
+      "file": "starwood-hills.json"
+    }
+  ]
+}
