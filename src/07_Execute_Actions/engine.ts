@@ -71,6 +71,7 @@ import { CONTACT, ContactPulse, PoleIndex, carGap, carsWithin, peopleWithin, peo
 import { DISSOLVE, DissolveSet, carsOverlapping, copyDirty, poleSlot, type DissolveBuffer } from './dissolve.ts'
 import { CINEMA, FramePacer, SHUTTER_SECONDS, exposureFor, type CameraMark } from './cinema.ts'
 import { updateVolumetrics, type Volumetrics } from './volumetrics.ts'
+import { FrameRate, withCloudFallback } from '../09_Cognition/cloudFallback.ts'
 import { operatorBridge, type Diary, type Mind, type SimControls, type SkillGate, type SpeechClip, type SpeechOut, type Utterance, type Voice } from './operator.ts'
 import { applyQuality, type QualityTargets } from './quality.ts'
 import { SPEECH, Soundscape, sharedAudioContext, wallsBetween, type AudioFrame, type PeerVoice } from './audio.ts'
@@ -423,6 +424,8 @@ export class Engine {
   private readonly options: EngineConfig
   private readonly quality: QualityRig
   private readonly clock = new FrameClock()
+  /** The rolling frame rate the cloud fallback throttle reads (09_Cognition/cloudFallback.ts): pushed every frame. */
+  private readonly frameRate = new FrameRate()
   private readonly trigger: TriggerFeedback
   private readonly frustum = new Frustum()
   private readonly projScreen = new Matrix4()
@@ -441,10 +444,10 @@ export class Engine {
   private captionsOn: boolean
   /** A scripted walk (SimControls.avatar.walk): the velocity it asks for, and until when (performance.now() ms). */
   private readonly scriptedWalk: ScriptedWalk = { x: 0, z: 0, until: 0 }
-  /** Every pedestrian's x, z from the newest crowd frame, refreshed at most CROWD_COPY_MS apart (SimControls.crowd.positions). */
-  private crowdXZ = new Float32Array(0)
   private crowdCopiedAt = -Infinity
-  /** Every pedestrian's x, y, z, heading from the same copy (the ping's capsules, 08_Swarm/ping.ts PingWorld.frame). */
+  /** Every pedestrian's x, z as last read off the bridge for SimControls.crowd.positions (reused: read, then copied out). Empty before the first reading. */
+  private crowdXZ = new Float32Array(0)
+  /** Every pedestrian's x, y, z, heading copied from a crowd frame at most CROWD_COPY_MS apart (the ping's capsules, 08_Swarm/ping.ts PingWorld.frame). */
   private crowdPose = new Float32Array(0)
   /** The ping: the head's look ray, the last thing it met, the board of marks standing, and a point to project them. */
   private readonly ray: AimRay = { ox: 0, oy: 0, oz: 0, dx: 0, dy: 0, dz: -1 }
@@ -1181,11 +1184,6 @@ export class Engine {
     if (s.crowdFrame && now - this.crowdCopiedAt >= CROWD_COPY_MS) {
       const n = this.options.agents, frame = s.crowdFrame
       if (frame.length >= 4 * n) {
-        if (this.crowdXZ.length !== 2 * n) this.crowdXZ = new Float32Array(2 * n)
-        for (let i = 0; i < n; i++) {
-          this.crowdXZ[2 * i] = frame[4 * i]
-          this.crowdXZ[2 * i + 1] = frame[4 * i + 2]
-        }
         if (this.crowdPose.length !== 4 * n) this.crowdPose = new Float32Array(4 * n)
         this.crowdPose.set(frame.subarray(0, 4 * n))
         this.crowdCopiedAt = now
@@ -1334,6 +1332,7 @@ export class Engine {
     const realDt = this.lastMs < 0 ? 16.7 : nowMs - this.lastMs
     this.lastMs = nowMs
     this.clock.push(realDt)
+    this.frameRate.push(nowMs)
     // The governor reads the raw frame interval (not the clamped simulation step); it holds while nothing is drawn
     // (setRendering), since an idle GPU would read as room to step the tier up.
     if (this.rendering && this.quality.governor.sample(realDt, nowMs) !== null) this.applyTier()
@@ -1888,8 +1887,11 @@ export class Engine {
    * it returns is played through speechOut(); `diary` is the swarm's memory (08_Swarm/memory.ts), which the engine
    * never reads. The gate, mind, voice and diary given on the first call are the ones kept.
    */
-  terminalBridge(gate: SkillGate, mind: Mind, voice?: Voice, diary?: Diary): TerminalBridge {
+  terminalBridge(gate: SkillGate, givenMind: Mind, voice?: Voice, diary?: Diary): TerminalBridge {
     if (this.bridge) return this.bridge
+    // The cloud fallback throttle in front of the mind App built: while this page's frames are slow, a complex prompt
+    // bound for a model server on this machine goes to the router's cloud provider instead (nothing when it has none).
+    const mind = withCloudFallback(givenMind, this.frameRate)
     const hal = this.input.hal
     const audio = this.audio
     const governor = this.quality.governor
@@ -2117,7 +2119,16 @@ export class Engine {
       },
       crowd: {
         stats: () => this.crowdStats(),
-        positions: () => this.crowdXZ.slice(),
+        // Straight off the zero-copy bridge (sharedBridge.ts): the realm's newest publish, no message in between. A
+        // publish in progress for every spin (never on the page's thread: it does not block) leaves the last copy.
+        positions: () => {
+          const b = sim.bridge
+          if (b.counts.agents === 0) return new Float32Array(0)
+          if (this.crowdXZ.length !== 2 * b.counts.agents) this.crowdXZ = new Float32Array(2 * b.counts.agents)
+          if (b.seq === 0) return new Float32Array(0)
+          b.agentXZ(this.crowdXZ)
+          return this.crowdXZ.slice()
+        },
         cull: (c) => {
           const cur = this.quality.live.cull
           this.quality.targets.setCrowd({ lodDistance: c.lodDistance ?? cur.lodDistance, nearRadius: c.nearRadius ?? cur.nearRadius, density: c.density ?? cur.density, maxDistance: c.maxDistance ?? cur.maxDistance })

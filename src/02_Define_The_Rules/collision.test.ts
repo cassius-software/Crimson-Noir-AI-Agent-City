@@ -18,7 +18,7 @@ import { test } from 'node:test'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ALL_GROUPS, AVATAR_GROUPS, COLLISION, GROUP, interactionGroups, VEHICLE_CHASSIS_GROUPS, WHEEL_RAY_GROUPS } from './collision.ts'
+import { ALL_GROUPS, AVATAR_GROUPS, COLLISION, GROUP, interactionGroups, RAGDOLL_GROUPS, VEHICLE_CHASSIS_GROUPS, WHEEL_RAY_GROUPS } from './collision.ts'
 import { PERTURBATION_CAUSES, POOL_CAPACITY } from '../03_Spawn_Agents/ragdoll.ts'
 import { RIG_SLOTS } from '../07_Execute_Actions/simProtocol.ts'
 
@@ -134,7 +134,19 @@ test('the group arithmetic: Rapier packing, the ragdoll bit read from ragdollRig
   assert.ok(m, 'ragdollRig.ts declares RAGDOLL_GROUP as a hex literal')
   assert.equal(GROUP.ragdoll, Number(m![1]), 'the bit table holds the bit the rig uses')
   assert.equal(GROUP.ragdoll, 0x0004)
-  assert.match(rig, /\(RAGDOLL_GROUP << 16\) \| \(0xffff & ~RAGDOLL_GROUP\)/, 'the rig packs (membership << 16) | filter, as interactionGroups does')
+  const packed = rig.match(/const GROUPS = \(RAGDOLL_GROUP << 16\) \| \(0xffff & ~\(RAGDOLL_GROUP \| (0x[0-9a-f]+) \| (0x[0-9a-f]+)\)\)/i)
+  assert.ok(packed, 'the rig packs (membership << 16) | filter, filtering out itself and two more bits')
+  assert.deepEqual(new Set([Number(packed![1]), Number(packed![2])]), new Set([GROUP.vehicle, GROUP.query]), 'the two bits are the chassis and the wheel ray')
+  assert.equal((GROUP.ragdoll << 16) | (0xffff & ~(GROUP.ragdoll | Number(packed![1]) | Number(packed![2]))), RAGDOLL_GROUPS, 'the rig\'s literal is the bit table\'s RAGDOLL_GROUPS')
+  // A ragdoll is out of the vehicle layer: a chassis and a wheel ray have no bit a segment lets in, in either direction.
+  assert.equal(RAGDOLL_GROUPS, (0x0004 << 16) | (0xffff & ~(0x0004 | 0x0002 | 0x0001)))
+  assert.equal(RAGDOLL_GROUPS, 0x0004fff8)
+  const pairs = (a: number, b: number): boolean => ((a >>> 16) & (b & 0xffff)) !== 0 && ((b >>> 16) & (a & 0xffff)) !== 0
+  assert.equal(pairs(RAGDOLL_GROUPS, VEHICLE_CHASSIS_GROUPS), false, 'a segment never meets a chassis')
+  assert.equal(pairs(RAGDOLL_GROUPS, WHEEL_RAY_GROUPS), false, 'a wheel ray never finds a segment')
+  assert.equal(pairs(RAGDOLL_GROUPS, RAGDOLL_GROUPS), false, 'segments never meet each other')
+  assert.equal(pairs(RAGDOLL_GROUPS, AVATAR_GROUPS), false, 'the avatar passes through a rig')
+  assert.equal(pairs(RAGDOLL_GROUPS, interactionGroups(0xffff, 0xffff)), true, 'the ground and the buildings (default groups) hold a segment up')
 
   assert.equal(GROUP.vehicle & GROUP.ragdoll, 0)
   assert.equal(GROUP.query & GROUP.vehicle, 0)

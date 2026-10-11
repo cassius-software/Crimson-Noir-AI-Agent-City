@@ -103,4 +103,9 @@ export interface CrowdSensor {
    * rig stood: ragdollRealm.ts). Absent from a sensor that cannot be written.
    */
   place?(agent: number, x: number, z: number, heading: number): void
+  /**
+   * Routes the pedestrians asked over towards (x, z): the flow field (06_Make_Decisions/flowField.ts) is solved for
+   * the cell under that point and lands before a later step. Absent from a sensor that has no field.
+   */
+  routeTo?(x: number, z: number): void
 }

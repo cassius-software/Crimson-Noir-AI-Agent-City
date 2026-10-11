@@ -78,9 +78,15 @@ export const JOINTS: readonly Readonly<JointSpec>[] = Object.freeze([
   { parent: 'upperArmR', child: 'lowerArmR', kind: 'revolute', at: [-0.24, 1.24], limits: [-2.4, 0], rest: -0.2, scale: 0.1 },
 ])
 
-/** Contact group of rig segments: they meet the world, never another segment. Rapier packs membership << 16 | filter. */
+/**
+ * Contact group of rig segments: they meet the world, never another segment, and never a vehicle's chassis (bit
+ * 0x0002) or wheel ray (bit 0x0001): a rig is out of the vehicle layer, so a car reaching one exchanges no impulse
+ * and cannot ride up on it. Rapier packs membership << 16 | filter. The realm's bit table (02_Define_The_Rules,
+ * RAGDOLL_GROUPS) says the same, and its test holds this literal equal to it; the table is not imported here, as this
+ * file's wording is held to balance alone.
+ */
 export const RAGDOLL_GROUP = 0x0004
-const GROUPS = (RAGDOLL_GROUP << 16) | (0xffff & ~RAGDOLL_GROUP)
+const GROUPS = (RAGDOLL_GROUP << 16) | (0xffff & ~(RAGDOLL_GROUP | 0x0002 | 0x0001))
 
 /**
  * The assist, the stand-in for what legs and ankles do for a standing person (applyAssist): an upright turn of the torso

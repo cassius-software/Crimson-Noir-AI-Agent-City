@@ -40,7 +40,8 @@ registerHooks({
 })
 
 const USAGE = { MAP_READ: 1, MAP_WRITE: 2, COPY_SRC: 4, COPY_DST: 8, INDEX: 16, VERTEX: 32, UNIFORM: 64, STORAGE: 128, INDIRECT: 256, QUERY_RESOLVE: 512 } as const
-Object.assign(globalThis, { GPUBufferUsage: USAGE, GPUMapMode: { READ: 1, WRITE: 2 } })
+const TEXTURE_USAGE = { COPY_SRC: 1, COPY_DST: 2, TEXTURE_BINDING: 4, STORAGE_BINDING: 8, RENDER_ATTACHMENT: 16 } as const
+Object.assign(globalThis, { GPUBufferUsage: USAGE, GPUMapMode: { READ: 1, WRITE: 2 }, GPUTextureUsage: TEXTURE_USAGE })
 
 const { CULL_EASE, CULL_PASSES, FLAG_NON_FINITE, MAX_CARS, PARAMS_SIZE, PASS_BINDINGS, RENDER_FLOATS, SIM_PASSES, VARIANTS, agentQuota, corridorReach, crowdShader, packFrustumPlanes, packSimParams, simReadbackSize } = await import('./crowdCompute.ts')
 const { CROWD_SUBSTEP, CrowdSim } = await import('./crowdSim.ts')
@@ -92,6 +93,10 @@ function bindings(code: string): Map<string, Binding> {
   const out = new Map<string, Binding>()
   for (const m of uncomment(code).matchAll(/@group\(0\)\s*@binding\((\d+)\)\s*var<([^>]*)>\s*(\w+)\s*:\s*([^;]+);/g)) {
     out.set(m[3], { binding: Number(m[1]), space: m[2].split(',')[0].trim(), type: m[4].trim() })
+  }
+  // A texture binding has no address space: `var name: texture_2d<f32>;`.
+  for (const m of uncomment(code).matchAll(/@group\(0\)\s*@binding\((\d+)\)\s*var\s+(\w+)\s*:\s*(texture[^;]+);/g)) {
+    out.set(m[2], { binding: Number(m[1]), space: 'texture', type: m[3].trim() })
   }
   return out
 }
@@ -418,11 +423,32 @@ class MockBuffer {
 }
 
 interface Pipeline { entryPoint: string; getBindGroupLayout(i: number): { entryPoint: string } }
-interface Group { label: string; entryPoint: string; entries: { binding: number; buffer: MockBuffer }[] }
+interface Group { label: string; entryPoint: string; entries: { binding: number; buffer: MockBuffer | undefined; texture?: MockTexture }[] }
+
+class MockTexture {
+  readonly label: string
+  readonly width: number
+  readonly height: number
+  readonly format: string
+  readonly usage: number
+  readonly bytes: Uint8Array
+  constructor(d: { label?: string; size: { width: number; height: number }; format: string; usage: number }) {
+    this.label = d.label ?? ''
+    this.width = d.size.width
+    this.height = d.size.height
+    this.format = d.format
+    this.usage = d.usage
+    assert.equal(d.format, 'rg32float')
+    this.bytes = new Uint8Array(this.width * this.height * 8)
+  }
+  createView(): { texture: MockTexture } { return { texture: this } }
+  f32(): Float32Array { return new Float32Array(this.bytes.buffer) }
+}
 interface Commands { ops: (() => void)[] }
 
 class MockDevice {
   readonly buffers: MockBuffer[] = []
+  readonly textures: MockTexture[] = []
   readonly groups: Group[] = []
   readonly maps: MapRequest[] = []
   readonly log: string[] = []
@@ -433,6 +459,15 @@ class MockDevice {
   readonly lost = new Promise<{ reason: string; message: string }>((resolve) => { this.#loseDevice = resolve })
   lose(reason: string, message: string): void { this.#loseDevice({ reason, message }) }
   readonly queue = {
+    writeTexture: (dst: { texture: MockTexture }, data: ArrayBufferView, layout: { bytesPerRow: number }, size: { width: number; height: number }) => {
+      const t = dst.texture
+      assert.ok(t.usage & TEXTURE_USAGE.COPY_DST, `${t.label}: not COPY_DST`)
+      assert.equal(size.width, t.width)
+      assert.equal(size.height, t.height)
+      assert.equal(layout.bytesPerRow, t.width * 8)
+      t.bytes.set(new Uint8Array(data.buffer, data.byteOffset, t.bytes.length))
+      this.log.push(`writeTexture ${t.label}`)
+    },
     writeBuffer: (b: MockBuffer, offset: number, data: ArrayBuffer | ArrayBufferView, dataOffset = 0, size?: number) => {
       const unit = data instanceof ArrayBuffer ? 1 : (data as unknown as { BYTES_PER_ELEMENT?: number }).BYTES_PER_ELEMENT ?? 1
       const whole = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
@@ -467,8 +502,13 @@ class MockDevice {
     const entryPoint = d.compute.entryPoint
     return { entryPoint, getBindGroupLayout: (i: number) => { assert.equal(i, 0); return { entryPoint } } }
   }
-  createBindGroup(d: { label: string; layout: { entryPoint: string }; entries: { binding: number; resource: { buffer: MockBuffer } }[] }): Group {
-    const g = { label: d.label, entryPoint: d.layout.entryPoint, entries: d.entries.map((e) => ({ binding: e.binding, buffer: e.resource.buffer })) }
+  createTexture(d: { label?: string; size: { width: number; height: number }; format: string; usage: number }): MockTexture {
+    const t = new MockTexture(d)
+    this.textures.push(t)
+    return t
+  }
+  createBindGroup(d: { label: string; layout: { entryPoint: string }; entries: { binding: number; resource: { buffer?: MockBuffer; texture?: MockTexture } }[] }): Group {
+    const g = { label: d.label, entryPoint: d.layout.entryPoint, entries: d.entries.map((e) => ({ binding: e.binding, buffer: e.resource.buffer, texture: e.resource.texture })) }
     this.groups.push(g)
     return g
   }
@@ -721,8 +761,14 @@ test('the worker builds only the simulation passes and the page only the cull, e
     assert.deepEqual(device.groups.map((g) => g.entryPoint).sort(), [...passes].sort())
     for (const g of device.groups) {
       assert.deepEqual(g.entries.map((e) => e.binding), [...PASS_BINDINGS[g.entryPoint as keyof typeof PASS_BINDINGS]])
-      for (const { binding, buffer } of g.entries) {
+      for (const { binding, buffer, texture } of g.entries) {
         const v = vars.find((x) => x.binding === binding)!
+        if (v.space === 'texture') {
+          assert.ok(texture && !buffer, `${g.entryPoint} binding ${binding}: a texture view`)
+          assert.ok(texture!.usage & TEXTURE_USAGE.TEXTURE_BINDING, `${g.entryPoint} binding ${binding}: sampled`)
+          continue
+        }
+        assert.ok(buffer, `${g.entryPoint} binding ${binding}: a buffer`)
         const runtime = /^array<[^,]+>$/.test(v.type)
         const min = runtime ? layoutOf(v.type.slice(6, -1), MODULE).size : layoutOf(v.type, MODULE).size
         assert.ok(buffer.size >= min, `${g.entryPoint} binding ${binding}: ${buffer.size} < ${min}`)
@@ -1633,7 +1679,9 @@ test('simulate: a summons comes after the safety reflexes, is taken only on the 
     // The standoff binds the step actually taken: inside SUMMON_STOP, nothing of it carries them towards the operator.
     'if (asked) { let to = at - me; let dd = length(to); if (dd > 1e-4 && dd < SUMMON_STOP) { let u = to / dd; let inward = dot(nv, u); if (inward > 0.0) { nv -= u * inward; } } }',
     // Tethered and fallen behind: hurrying, never past TETHER_PACE; someone walking over keeps their own pace.
-    'let pace = select(b.a.z, max(b.a.z, TETHER_PACE * clamp((dist - SUMMON_STOP) / 2.0, 0.0, 1.0)), tethered); desired = dirTo(me, at) * pace * clamp(dist - SUMMON_STOP, 0.25, 1.0); activity = ACT_COMING; }',
+    // The way to walk: the flow field's direction under their feet (round the buildings) when it has one and the operator
+    // is beyond the last stretch; the straight line otherwise, so they arrive and stop as before.
+    'let pace = select(b.a.z, max(b.a.z, TETHER_PACE * clamp((dist - SUMMON_STOP) / 2.0, 0.0, 1.0)), tethered); let flow = flowAt(me); let way = select(dirTo(me, at), flow, dot(flow, flow) > 0.5 && dist > 4.0 * SUMMON_STOP); desired = way * pace * clamp(dist - SUMMON_STOP, 0.25, 1.0); activity = ACT_COMING; }',
     // The kerb, coming or talking: someone on the road heads back to it; a step that would leave it is not taken.
     'if (road) { desired = curbwards(me) * b.a.z; } else { if (onRoad(me + vec2f(desired.x, 0.0) * 0.5)) { desired.x = 0.0; } if (onRoad(me + vec2f(0.0, desired.y) * 0.5)) { desired.y = 0.0; } } } else {',
     'ps.w = activity; pose[i] = ps;',

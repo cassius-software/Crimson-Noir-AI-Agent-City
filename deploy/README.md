@@ -142,7 +142,11 @@ On each client machine:
 1. Put the proxy's name into `bridge-tunnel.conf` (twice).
 2. Start it. The file's header has the commands for nginx, Docker on Linux, and Docker Desktop.
 3. Connect through it:
-   - **The game** (`dist/index.html`, opened as a file): `net join ws://127.0.0.1:8787 <token>`.
+   - **The game** (`dist/index.html`, opened as a file): `net join ws://127.0.0.1:8787 <token>`. A server that
+     serves the file instead should send `Cross-Origin-Opener-Policy: same-origin` and
+     `Cross-Origin-Embedder-Policy: require-corp` (what `npm run preview` sends), so the page is cross-origin
+     isolated and shares its physics memory bridge with the worker (docs/zero-copy-bridge.md); the page loads
+     nothing cross-origin, so the headers cost it nothing.
    - **A Crimson Noir OS runtime:** read the token without leaving it in the shell's history, then run the bridge:
      ```sh
      read -rs CRIMSON_TOKEN && export CRIMSON_TOKEN

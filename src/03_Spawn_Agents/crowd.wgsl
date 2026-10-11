@@ -104,6 +104,11 @@ struct Brain {
 // The page's look word per agent (look.ts packLook; 0 = as hashed), read by the cull alone for the body to draw:
 // no simulation pass binds it, so nothing of it reaches the pedestrians' motion or the First-Law sensing.
 @group(0) @binding(13) var<storage, read> look: array<u32>;
+// The flow field towards the operator (06_Make_Decisions/flowField.ts, solved on this device by flowField.wgsl): one
+// texel per FLOW_CELL-metre cell of the city, the unit direction to walk from there round the buildings, zero where
+// there is none (a wall, no route, or no field yet). A sampled texture, read by the summons alone: simulate is at the
+// eight-storage-buffer limit, and nothing of it reaches the First-Law sensing.
+@group(0) @binding(14) var flowField: texture_2d<f32>;
 
 // ---------------------------------------------------------------- hashing and dice
 
@@ -113,6 +118,14 @@ fn pcg(v: u32) -> u32 {
   return (w >> 22u) ^ w;
 }
 fn hash2(a: u32, b: u32) -> u32 { return pcg(a ^ pcg(b + 0x9e3779b9u)); }
+
+// The flow field's direction under (x, z): the texel of the cell under the point, zero outside the grid.
+fn flowAt(p: vec2f) -> vec2f {
+  let dims = vec2i(textureDimensions(flowField));
+  let c = vec2i(floor((p - vec2f(FLOW_ORIGIN_X, FLOW_ORIGIN_Z)) * FLOW_INV_CELL));
+  if (any(c < vec2i(0)) || any(c >= dims)) { return vec2f(0.0); }
+  return textureLoad(flowField, c, 0).xy;
+}
 
 // True when either component is infinite or not a number. Read from the bits, not by comparison: a
 // compiler may assume no NaN and fold `x != x` or `!(abs(x) < big)` away, the exponent it cannot.
@@ -542,7 +555,11 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
     } else {
       // Tethered and fallen behind: hurry (TETHER_PACE, under the 3 m/s cap), easing to their own pace near.
       let pace = select(b.a.z, max(b.a.z, TETHER_PACE * clamp((dist - SUMMON_STOP) / 2.0, 0.0, 1.0)), tethered);
-      desired = dirTo(me, at) * pace * clamp(dist - SUMMON_STOP, 0.25, 1.0);
+      // Round the buildings: the flow field's direction under their feet when it has one, the straight line on the
+      // last stretch (so they arrive and stop as before) and wherever the field is silent.
+      let flow = flowAt(me);
+      let way = select(dirTo(me, at), flow, dot(flow, flow) > 0.5 && dist > 4.0 * SUMMON_STOP);
+      desired = way * pace * clamp(dist - SUMMON_STOP, 0.25, 1.0);
       activity = ACT_COMING;
     }
     if (road) {

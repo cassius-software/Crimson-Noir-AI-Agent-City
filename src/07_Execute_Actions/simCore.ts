@@ -22,6 +22,7 @@
  * What breaks if it is removed? The worker has nothing to run, and the page has no simulation.
  */
 import { CITY, CITY_SIZE, inLot } from '../01_Initialize_World/city.ts'
+import { cityGrid, regionGrid, type FlowGrid } from '../06_Make_Decisions/flowField.ts'
 import { KERNEL } from '../02_Define_The_Rules/civic.ts'
 import { auditCraft, panicReason, RING0, Ring0Auditor, type AuditPerson, type AuditVehicle } from '../02_Define_The_Rules/ring0.ts'
 import type { KernelStats } from '../05_Observe_Environment/telemetry.ts'
@@ -77,8 +78,12 @@ export type SimCoreOptions = Omit<SimInit, 't'>
 /** How far a region's containment slab reaches past its bounds, m: its ground tiles reach 100 m past the edge wall. */
 const REGION_SLAB_MARGIN = 200
 
-/** Builds the realm's GPU pedestrian sensor (the worker passes crowdSim.ts on its own device; tests pass stand-ins). */
-export type CrowdFactory = (agents: number) => Promise<CrowdSensor>
+/**
+ * Builds the realm's GPU pedestrian sensor (the worker passes crowdSim.ts on its own device; tests pass stand-ins), over
+ * the flow field's grid of this world (06_Make_Decisions/flowField.ts: the city's buildings and streets, or a region's
+ * walls), which the sensor solves routes on.
+ */
+export type CrowdFactory = (agents: number, grid: FlowGrid) => Promise<CrowdSensor>
 
 /** One step's input after the host has checked its shape (every number is still clamped here). */
 export interface StepInput {
@@ -276,7 +281,9 @@ export class SimCore {
       return o.region ? { x, z } : offLot(x, z)
     })
     const physics = await Physics.create(o.boxes, o.furniture, o.region ?? null)
-    const crowd = makeCrowd ? await makeCrowd(agents) : null
+    // The flow field's grid of this world: the region's walls over its bounds, or the city's buildings and streets.
+    const grid = o.region ? regionGrid(o.region.bounds, o.region.walls) : cityGrid(o.boxes)
+    const crowd = makeCrowd ? await makeCrowd(agents, grid) : null
     physics.streamAt(spawn.x, spawn.z)
     for (const p of spawns) physics.streamAt(p.x, p.z)
     const core = new SimCore(physics, { ...o, cars, agents, seed: Math.floor(finite(o.seed)) >>> 0, spawn, spawns }, crowd)
@@ -298,6 +305,11 @@ export class SimCore {
 
   get panic(): string | null {
     return this.#panic
+  }
+
+  /** Every pedestrian's activity code in the newest crowd readout (crowdSensor.ts), or null before one (for the bridge's state words). */
+  get crowdActivity(): Uint8Array | null {
+    return this.#crowd?.readout?.activity ?? null
   }
 
   /** A render frame's buffer the page handed back, for the crowd to fill again. */
@@ -1033,6 +1045,9 @@ export class SimCore {
       for (const h of handbacks) crowd.place?.(h.agent, h.x, h.z, h.heading)
       if (handbacks.length > 0) this.#realm.placed(seq, crowd.place !== undefined)
     }
+    // Someone asked over routes round the buildings by the flow field towards the operator: solved again (on the
+    // crowd's own device) each time the operator stands in another cell; nobody asked over, no field is asked for.
+    if (this.#recruits.length > 0 && this.#driving[0] === null) crowd.routeTo?.(a.x, a.z)
     crowd.step({
       seq, dt, time: this.#simTime,
       player: { x: a.x, z: a.z, heading: this.#bodyHeading[0], speed: this.#driving[0] ? 0 : a.speed, visible: this.#driving[0] === null },

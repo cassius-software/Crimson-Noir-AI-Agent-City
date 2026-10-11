@@ -8,11 +8,15 @@
  * pedestrians) and keeps the newest state the worker sent
  * back, with the crowd's render frame when one came. The page renders from that state, one step behind the
  * worker (the price of running physics in parallel with rendering), and hands the pose and crowd buffers back
- * for reuse. It holds numbers and a Worker handle; nothing in it can reach a Rapier body or a pedestrian.
+ * for reuse. It holds numbers and a Worker handle; nothing in it can reach a Rapier body or a pedestrian. It also owns
+ * the page's end of the zero-copy bridge (sharedBridge.ts): on a cross-origin isolated page a SharedArrayBuffer the
+ * worker fills after every step (sent once, after `ready`), which the page reads with no message and no copy; elsewhere
+ * a plain buffer of the same layout the client fills itself from each state, so readers never know the difference.
  * What breaks if it is removed? The page cannot start or talk to the physics realm.
  */
 import PhysicsWorker from './physics.worker.ts?worker&inline'
-import { MAX_PLAYERS, type DriveControls, type FootControls, type FromWorker, type PlayerControls, type SimCommand, type SimInit, type SimMeta, type StepState } from './simProtocol.ts'
+import { MAX_PLAYERS, POSE, type DriveControls, type FootControls, type FromWorker, type PlayerControls, type SimCommand, type SimInit, type SimMeta, type StepState } from './simProtocol.ts'
+import { canShareMemory, packAgents, packAvatars, packVehicles, PhysicsBridge } from './sharedBridge.ts'
 
 /** Commands waiting for the next step request; a flood beyond this is dropped here (the worker caps them too). */
 const MAX_QUEUE = 256
@@ -27,6 +31,8 @@ export interface StepInput {
 
 export class SimClient {
   readonly meta: SimMeta
+  /** The zero-copy bridge: shared with the worker when the page is cross-origin isolated, else filled here per state. */
+  readonly bridge: PhysicsBridge
   readonly #worker: Worker
   #state: StepState
   #onState: ((s: StepState, prev: StepState) => void) | null = null
@@ -45,20 +51,26 @@ export class SimClient {
   /** Players 1..3's controls, sent with every step request (setPlayers); null for one player. */
   #players: PlayerControls[] | null = null
 
-  private constructor(worker: Worker, meta: SimMeta, first: StepState) {
+  private constructor(worker: Worker, meta: SimMeta, first: StepState, bridge: PhysicsBridge) {
     this.#worker = worker
     this.meta = meta
+    this.bridge = bridge
     this.#state = first
+    if (!bridge.shared) this.#fill(first)
     worker.onmessage = (e: MessageEvent<FromWorker>) => this.#receive(e.data)
     worker.onerror = (e) => { e.preventDefault(); this.#fault(`Physics realm fault: ${e.message || 'worker error'}`) }
     Object.freeze(this)
   }
 
-  /** Builds the world in a new worker and resolves once its first state has arrived. */
-  static create(init: Omit<SimInit, 't'>): Promise<SimClient> {
+  /**
+   * Builds the world in a new worker and resolves once its first state has arrived. `share`: whether the bridge may
+   * be a SharedArrayBuffer (by default, whether this page is cross-origin isolated: sharedBridge.ts canShareMemory).
+   */
+  static create(init: Omit<SimInit, 't'>, share: boolean = canShareMemory()): Promise<SimClient> {
     const worker = new PhysicsWorker({ name: 'physics' })
     return new Promise((resolve, reject) => {
       let meta: SimMeta | null = null
+      let bridge: PhysicsBridge | null = null
       const fail = (why: string) => { worker.terminate(); reject(new Error(why)) }
       worker.onerror = (e) => { e.preventDefault(); fail(`physics worker failed to start: ${e.message || 'unknown error'}`) }
       worker.onmessage = (e: MessageEvent<FromWorker>) => {
@@ -67,11 +79,14 @@ export class SimClient {
         if (m.t === 'panic') return fail(m.reason)
         if (m.t === 'ready') {
           meta = m.meta
+          // The bridge is laid out from the world the worker built; shared memory goes over once, before the first step.
+          bridge = PhysicsBridge.create({ vehicles: meta.count, avatars: meta.players, agents: meta.agents }, share)
+          if (bridge.shared) worker.postMessage({ t: 'bridge', buffer: bridge.buffer })
           const idle = { steer: 0, fwd: 0, back: 0, handbrake: false }
           worker.postMessage({ t: 'step', id: 0, dt: 0, foot: { x: 0, z: 0, heading: 0 }, drive: idle, cmds: [] })
           return
         }
-        if (m.t === 'state' && meta) resolve(new SimClient(worker, meta, m))
+        if (m.t === 'state' && meta && bridge) resolve(new SimClient(worker, meta, m, bridge))
       }
       worker.postMessage({ t: 'init', ...init } satisfies SimInit)
     })
@@ -154,6 +169,8 @@ export class SimClient {
       const prev = this.#state
       this.#state = m
       this.#pending = false
+      // Without shared memory the bridge is this page's own: filled from the state before anyone reads it.
+      if (!this.bridge.shared) this.#fill(m)
       // The previous frame's poses and craft are no longer read once the new state is in: hand them back.
       this.#spare = prev.poses.buffer as ArrayBuffer
       this.#spareCraft = prev.craft ? (prev.craft.buffer as ArrayBuffer) : null
@@ -172,6 +189,16 @@ export class SimClient {
     }
     if (m.t === 'panic') return this.#fault(m.reason)
     if (m.t === 'error') return this.#fault(`Physics realm fault: ${m.message}`)
+  }
+
+  /** The plain-buffer bridge filled from a state: the same words the worker writes over shared memory. */
+  #fill(s: StepState): void {
+    const b = this.bridge
+    b.publish(s.id, s.simTime, s.drivings, (f32, i32) => {
+      packVehicles(f32, i32, b.vehicles, s.poses, b.counts.vehicles, POSE.stride, POSE.mode)
+      packAvatars(f32, i32, b.avatars, s.avatars, b.counts.avatars)
+      if (s.crowdFrame) packAgents(f32, i32, b.agents, s.crowdFrame, b.counts.agents, null)
+    })
   }
 
   #fault(reason: string): void {

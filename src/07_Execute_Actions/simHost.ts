@@ -5,13 +5,15 @@
  * Why does this file exist? It is the physics worker's door: the only code that reads what the page sends.
  * It treats every message as untrusted data: one init (a second is refused), then step requests whose shape
  * it checks before SimCore clamps every number; anything else is counted as refused and dropped. It replies
- * with plain-data state (the pose buffer is transferred, never shared) and, once the Ring-0 audit has halted
+ * with plain-data state (the pose buffer is transferred, never shared; the one shared memory is the page's bridge of
+ * sharedBridge.ts, which the realm only ever writes, under its lock, after a step) and, once the Ring-0 audit has halted
  * the simulation or this realm faults, with a panic, after which it answers nothing. No DOM, no worker API:
  * physics.worker.ts binds it to postMessage, and the node tests drive it with a plain function.
  * What breaks if it is removed? The worker cannot hear the page, and nothing vets what the page says.
  */
 import { SimCore, type SimCoreOptions } from './simCore.ts'
 import { MAX_PLAYERS, POSE, RIG_POSE, TRACK_POSE, type FromWorker, type SimInit } from './simProtocol.ts'
+import { packAgents, packAvatars, packVehicles, PhysicsBridge } from './sharedBridge.ts'
 import type { RegionGround } from './physics.ts'
 
 export type Post = (msg: FromWorker, transfer?: Transferable[]) => void
@@ -67,6 +69,8 @@ export function createSimHost(post: Post, create: (o: SimCoreOptions) => Promise
   const craftPool: ArrayBuffer[] = []
   /** Rig stream buffers the page handed back (ragdoll on), ready for reuse. */
   const rigPool: ArrayBuffer[] = []
+  /** The page's zero-copy bridge once it has sent one that fits (sharedBridge.ts); written after every step. */
+  let bridge: PhysicsBridge | null = null
   /** Simulated seconds the page may still spend, refilled at TIME_RATE × wall time. */
   let bank = TIME_BANK
   let lastWall = now()
@@ -115,6 +119,14 @@ export function createSimHost(post: Post, create: (o: SimCoreOptions) => Promise
       }
       return
     }
+    if (data.t === 'bridge') {
+      if (!core) return refuse('bridge before init')
+      if (bridge) return refuse('bridge: already bridged')
+      const opened = PhysicsBridge.open(data.buffer, { vehicles: core.meta.count, avatars: core.meta.players, agents: core.meta.agents })
+      if (!opened) return refuse('bridge: not a SharedArrayBuffer of the layout this world needs')
+      bridge = opened
+      return
+    }
     if (data.t !== 'step') return refuse(`unknown message '${String(data.t)}'`)
     if (!core) return refuse('step before init')
     const id = typeof data.id === 'number' && Number.isFinite(data.id) ? data.id : 0
@@ -150,6 +162,16 @@ export function createSimHost(post: Post, create: (o: SimCoreOptions) => Promise
         players: players.map((p) => ({ foot: (isRecord(p.foot) ? p.foot : {}) as never, drive: (isRecord(p.drive) ? p.drive : {}) as never })),
         cmds: Array.isArray(data.cmds) ? data.cmds : [],
       }, new Float32Array(buffer), craft ? new Float32Array(craft) : null, rigs ? new Float32Array(rigs) : null)
+      // The zero-copy bridge, written under its lock before the state is posted: the page may read it the moment
+      // the publish count moves, with no message in between. The poses and the frame are the audited buffers above.
+      if (bridge && !core.halted) {
+        const frame = state.crowdFrame, activity = core.crowdActivity
+        bridge.publish(id, state.simTime, state.drivings, (f32, i32, b) => {
+          packVehicles(f32, i32, b.vehicles, state.poses, b.counts.vehicles, POSE.stride, POSE.mode)
+          packAvatars(f32, i32, b.avatars, state.avatars, b.counts.avatars)
+          if (frame) packAgents(f32, i32, b.agents, frame, b.counts.agents, activity)
+        })
+      }
       // Anything else the page put in the message (a hazard array, GPU flags, a clock) is never read.
       const transfer: Transferable[] = [buffer]
       if (state.crowdFrame) transfer.push(state.crowdFrame.buffer as ArrayBuffer)

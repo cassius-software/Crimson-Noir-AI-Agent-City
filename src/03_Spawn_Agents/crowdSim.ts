@@ -14,11 +14,13 @@
  * What breaks if it is removed? Nobody walks, and the Ring-0 Bouncer is blind to pedestrians.
  */
 import {
-  crowdShader, decodeHazard, GRID_CAP, GRID_CELLS, HAZARD_NONE, HAZARD_SLOTS, MAX_CARS, packSimParams, PARAMS_SIZE,
+  crowdShader, decodeHazard, FLOW_BINDING, GRID_CAP, GRID_CELLS, HAZARD_NONE, HAZARD_SLOTS, MAX_CARS, packSimParams, PARAMS_SIZE,
   PASS_BINDINGS, RENDER_FLOATS, SIM_PASSES, SIM_READ_HAZARDS, SIM_READ_RENDER, simReadbackSize, STATS_FLAGS, STATS_SIZE,
   type PassName,
 } from './crowdCompute.ts'
 import { AGENTS_RANGE, type CrowdReadout, type CrowdSensor, type CrowdStepInput } from './crowdSensor.ts'
+import { cpuFlowSolver, nearestOpen, type FlowGrid, type FlowSolver } from '../06_Make_Decisions/flowField.ts'
+import { createFlowTexture, FlowFieldGpu, writeFlowTexture } from '../06_Make_Decisions/flowFieldGpu.ts'
 
 /**
  * Longest crowd substep, s. The stagger springs in simulate (K_TILT 120, C_TILT 15, semi-implicit Euler) diverge
@@ -59,10 +61,19 @@ export class CrowdSim implements CrowdSensor {
   /** Render-frame buffers handed back by the page, reused so a frame is not an allocation. */
   readonly #pool: ArrayBuffer[] = []
   #lost: string | null = null
+  /** The flow field's grid (06_Make_Decisions/flowField.ts) and its texture, sampled by simulate (binding 14). */
+  readonly #grid: FlowGrid | null
+  readonly #flowTexture: GPUTexture
+  /** Who solves the field: the GPU (flowField.wgsl) once its pipelines validated, else the CPU; null with no grid. */
+  #solver: FlowSolver | null = null
+  /** The goal cell the field was last asked for (−1: none yet), so standing still asks for nothing. */
+  #goal = -1
 
-  private constructor(device: GPUDevice, agentCount: number) {
+  private constructor(device: GPUDevice, agentCount: number, grid: FlowGrid | null) {
     this.#device = device
     this.agentCount = agentCount
+    this.#grid = grid
+    this.#flowTexture = createFlowTexture(device, grid)
     this.#readout = {
       seq: 0,
       time: -Infinity,
@@ -96,13 +107,15 @@ export class CrowdSim implements CrowdSensor {
       0: this.#params, 1: this.#pos, 2: this.#vel, 3: this.#pose, 4: brain, 5: gridCount, 6: gridSlots,
       7: gridCount, 8: gridSlots, 9: this.#statsBuffer, 12: this.#hazardBuffer,
     }
-    const module = device.createShaderModule({ label: 'crowd.wgsl', code: crowdShader(agentCount) })
+    const flowView = this.#flowTexture.createView({ label: 'crowd.flow' })
+    const placement = grid ? { originX: grid.originX, originZ: grid.originZ, cell: grid.cell } : undefined
+    const module = device.createShaderModule({ label: 'crowd.wgsl', code: crowdShader(agentCount, placement) })
     for (const name of SIM_PASSES) {
       const pipeline = device.createComputePipeline({ label: `crowd.${name}`, layout: 'auto', compute: { module, entryPoint: name } })
       const group = device.createBindGroup({
         label: `crowd.${name}`,
         layout: pipeline.getBindGroupLayout(0),
-        entries: PASS_BINDINGS[name].map((binding) => ({ binding, resource: { buffer: resources[binding] } })),
+        entries: PASS_BINDINGS[name].map((binding) => ({ binding, resource: binding === FLOW_BINDING ? flowView : { buffer: resources[binding] } })),
       })
       this.#pipelines.set(name, { pipeline, group })
     }
@@ -111,16 +124,45 @@ export class CrowdSim implements CrowdSensor {
     void lost?.then((info) => { this.#lost = `GPU device lost (${info.reason}): ${info.message || 'no message'}` })
   }
 
-  /** Builds the pipelines (surfacing WGSL errors) and places every pedestrian. */
-  static async create(device: GPUDevice, agentCount: number): Promise<CrowdSim> {
+  /**
+   * Builds the pipelines (surfacing WGSL errors) and places every pedestrian. With a flow grid, the field's solver
+   * too: the GPU's (flowFieldGpu.ts) when its pipelines validate on this device, else the CPU's, the same field.
+   */
+  static async create(device: GPUDevice, agentCount: number, grid: FlowGrid | null = null): Promise<CrowdSim> {
     const [lo, hi] = AGENTS_RANGE
     if (!(Number.isInteger(agentCount) && agentCount >= lo && agentCount <= hi)) throw new Error(`agents must be ${lo}–${hi}, got ${agentCount}`)
     device.pushErrorScope('validation')
-    const crowd = new CrowdSim(device, agentCount)
+    const crowd = new CrowdSim(device, agentCount, grid)
     crowd.#spawn()
     const error = await device.popErrorScope()
     if (error) throw new Error(`crowd.wgsl pipeline validation failed: ${error.message}`)
+    if (grid) {
+      try {
+        crowd.#solver = await FlowFieldGpu.create(device, grid, crowd.#flowTexture)
+      } catch (e) {
+        console.warn(`[crowd] the flow field is solved on the CPU: ${e instanceof Error ? e.message : String(e)}`)
+        crowd.#solver = cpuFlowSolver(grid, (solution) => writeFlowTexture(device, crowd.#flowTexture, grid, solution))
+      }
+    }
     return crowd
+  }
+
+  /** Where the field is solved: 'gpu', 'cpu', or null with no grid (a console readout). */
+  get flowSolver(): 'gpu' | 'cpu' | null {
+    return this.#solver === null ? null : this.#solver instanceof FlowFieldGpu ? 'gpu' : 'cpu'
+  }
+
+  /**
+   * Routes the summoned towards (x, z): the field is solved for the nearest open cell to the point, once per change
+   * of that cell, and lands in the flow texture before a later step (the summoned walk the old field until then).
+   */
+  routeTo(x: number, z: number): void {
+    const grid = this.#grid, solver = this.#solver
+    if (!grid || !solver || this.#lost !== null || !Number.isFinite(x) || !Number.isFinite(z)) return
+    const goal = nearestOpen(grid, x, z)
+    if (goal < 0 || goal === this.#goal) return
+    this.#goal = goal
+    solver.solve([goal]).catch((e: unknown) => { console.warn(`[crowd] flow field: ${e instanceof Error ? e.message : String(e)}`) })
   }
 
   get readout(): CrowdReadout | null {

@@ -218,8 +218,36 @@ function regionPack(mode: string): Plugin {
   }
 }
 
+/**
+ * Cross-origin isolation for the dev and preview servers. With these two headers the page may share memory
+ * with its physics worker (07_Execute_Actions/sharedBridge.ts over a SharedArrayBuffer; without them the bridge is a
+ * plain buffer the page fills itself, and nothing else changes). The page loads nothing cross-origin (index.html's
+ * policy allows no host but this machine), so `require-corp` costs it nothing. A deployment that serves dist/index.html
+ * from its own server sends the same two headers to get the same (deploy/README.md).
+ */
+export const ISOLATION_HEADERS: Readonly<Record<string, string>> = Object.freeze({
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Embedder-Policy': 'require-corp',
+})
+
+/**
+ * The isolation headers on every response of the dev and preview servers. A plugin's hook rather than a server
+ * section of the config, so both servers keep Vite's own loopback host (zeroTrust.test.ts holds the config to that):
+ * only the headers change, nothing about where the servers listen.
+ */
+function isolation(): Plugin {
+  const add = (res: { setHeader(name: string, value: string): void }): void => {
+    for (const [name, value] of Object.entries(ISOLATION_HEADERS)) res.setHeader(name, value)
+  }
+  return {
+    name: 'cross-origin-isolation',
+    configureServer: (dev) => { dev.middlewares.use((_req, res, next) => { add(res); next() }) },
+    configurePreviewServer: (preview) => { preview.middlewares.use((_req, res, next) => { add(res); next() }) },
+  }
+}
+
 export default defineConfig(({ mode }) => ({
-  plugins: [react(), tailwindcss(), brand(), notices(), regionPack(mode), viteSingleFile()],
+  plugins: [react(), tailwindcss(), brand(), notices(), regionPack(mode), viteSingleFile(), isolation()],
   worker: { plugins: () => [workerNotices()] },
   build: { outDir: mode === 'pilot' ? 'dist-pilot' : 'dist' },
 }))

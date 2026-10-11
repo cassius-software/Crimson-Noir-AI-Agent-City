@@ -25,6 +25,7 @@ import { test } from 'node:test'
 import { CAR } from './car.ts'
 import { SimCore, type StepInput } from './simCore.ts'
 import { createSimHost } from './simHost.ts'
+import { bridgeBytes, PhysicsBridge, SLOT } from './sharedBridge.ts'
 import { POSE, RUN, TRACK_KINDS, TRACK_POSE, WALK, type FromWorker, type SimInit } from './simProtocol.ts'
 import { auditCraft } from '../02_Define_The_Rules/ring0.ts'
 import { buildTrackNetwork } from '../06_Make_Decisions/tracks.ts'
@@ -1199,4 +1200,47 @@ test('rally: refused for a point inside a building lot (the crowd never enters o
   assert.equal(s.recruits.some((r) => r.agent === one), false)
   s = refused({ agent: one, x: WALK_AT.x, z: WALK_AT.z + 3 }, /nobody by that number was asked over/)
   plain(s)
+})
+
+test('the message door bridges shared memory: only a SharedArrayBuffer of the exact layout, once, filled under the lock after every step', async () => {
+  const out: FromWorker[] = []
+  const crowd = new FakeCrowd()
+  crowd.xz.fill(0)
+  crowd.activity.fill(2)
+  const handle = createSimHost((msg) => out.push(msg), (o) => SimCore.create(o, async () => crowd))
+  await handle({ t: 'bridge', buffer: new SharedArrayBuffer(64) })
+  await handle({ t: 'init', seed: 11, cars: 3, agents: AGENTS, boxes: [], furniture: NO_FURNITURE, spawn: OPEN, debug: false } satisfies SimInit)
+  const ready = out[0]
+  assert.ok(ready.t === 'ready')
+  const counts = { vehicles: ready.meta.count, avatars: ready.meta.players, agents: ready.meta.agents }
+  const wrong = PhysicsBridge.create({ ...counts, agents: counts.agents + 1 }, true)
+  await handle({ t: 'bridge', buffer: wrong.buffer })
+  await handle({ t: 'bridge', buffer: new ArrayBuffer(bridgeBytes(counts)) })
+  const bridge = PhysicsBridge.create(counts, true)
+  await handle({ t: 'bridge', buffer: bridge.buffer })
+  await handle({ t: 'bridge', buffer: PhysicsBridge.create(counts, true).buffer })
+  await handle(hostStep(1))
+  const st = out.at(-1)
+  assert.ok(st?.t === 'state')
+  if (st?.t !== 'state') return
+  assert.equal(st.rejected, 4, 'before init, the wrong size, a plain buffer, and a second bridge were each refused')
+  assert.equal(bridge.seq, 1, 'one publish per step')
+  assert.equal(bridge.step, 1)
+  assert.equal(wrong.seq, 0)
+  for (let i = 0; i < counts.vehicles; i++) {
+    const o = bridge.vehicles + SLOT.stride * i, p = i * POSE.stride
+    assert.equal(bridge.f32[o + SLOT.x], st.poses[p + POSE.x], `car ${i} x`)
+    assert.equal(bridge.f32[o + SLOT.y], st.poses[p + POSE.y], `car ${i} y`)
+    assert.equal(bridge.f32[o + SLOT.z], st.poses[p + POSE.z], `car ${i} z`)
+    assert.equal(bridge.i32[o + SLOT.state], st.poses[p + POSE.mode], `car ${i} mode`)
+  }
+  assert.equal(bridge.f32[bridge.avatars + SLOT.x], st.avatar.x)
+  assert.equal(bridge.f32[bridge.avatars + SLOT.z], st.avatar.z)
+  assert.equal(bridge.i32[bridge.avatars + SLOT.state], 1, 'enabled, not shielded')
+  assert.equal(bridge.f32[bridge.agents + SLOT.x], 7, 'the frame the fake crowd primed')
+  assert.equal(bridge.i32[bridge.agents + SLOT.state], 2, 'the activity the readout names')
+  assert.equal(bridge.driving(0), -1)
+  await handle(hostStep(2))
+  assert.equal(bridge.seq, 2)
+  assert.equal(bridge.step, 2)
 })
