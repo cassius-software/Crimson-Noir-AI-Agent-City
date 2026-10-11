@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It turns a generated macro map (macroCity.ts, california.ts) into a region pack (pack.ts),
+ * Why does this file exist? It turns a generated macro map (macroCity.ts, lakefront.ts) into a region pack (pack.ts),
  * the one document the engine already knows how to walk: every street becomes a road at its class and lanes, every run
  * of water blocks a water polygon, every footprint a building at its floors' height, and every street line gets a
- * fictitious name from the region word lists. So the California-analog map the onboarding builds in the background is
+ * fictitious name from the region word lists. So the lakefront metropolis the onboarding builds in the background is
  * walked through the same regionWorld.ts path as a surveyed region, with nothing new in the engine.
  * What breaks if it is removed? A generated map can be drawn as a minimap and written out as layouts, but never walked.
  */

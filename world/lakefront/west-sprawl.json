@@ -1,0 +1,453 @@
+{
+  "format": "zone/1",
+  "seed": 1337,
+  "blocks": 256,
+  "pitch": 40,
+  "size": 10240,
+  "region": {
+    "id": 1,
+    "slug": "west-sprawl",
+    "name": "West Sprawl",
+    "biome": "suburban sprawl",
+    "character": "a wide suburban grid with towers around its hubs; Transit City is the main one"
+  },
+  "extent": {
+    "k0": 0,
+    "m0": 0,
+    "k1": 127,
+    "m1": 185
+  },
+  "area": {
+    "blocks": 14824,
+    "km2": 23.718,
+    "shareOfLand": 0.317
+  },
+  "centroid": {
+    "k": 45.75,
+    "m": 102.42
+  },
+  "elevation": {
+    "min": 0.204,
+    "mean": 0.41,
+    "max": 0.796
+  },
+  "terrain": {
+    "lake": 0,
+    "shore": 110,
+    "flat": 11373,
+    "ravine": 254,
+    "bluff": 0,
+    "ridge": 3087
+  },
+  "lots": {
+    "downtown": 10,
+    "residential": 12591,
+    "industrial": 1065,
+    "park": 1025,
+    "plaza": 8,
+    "water": 0,
+    "civic": 125
+  },
+  "buildings": {
+    "count": 89604,
+    "floors": {
+      "min": 1,
+      "mean": 2,
+      "max": 41
+    },
+    "tallest": {
+      "k": 63,
+      "m": 126,
+      "floors": 41
+    }
+  },
+  "streets": {
+    "arterial": 1990,
+    "local": 26084,
+    "pedestrian": 4,
+    "bridge": 17
+  },
+  "landmarks": [
+    {
+      "name": "Transit City",
+      "kind": "hub",
+      "k": 64,
+      "m": 128,
+      "floors": 41
+    },
+    {
+      "name": "Cobblewick Station",
+      "kind": "hub",
+      "k": 32,
+      "m": 64,
+      "floors": 0
+    }
+  ],
+  "districts": [
+    {
+      "name": "Trilliumwald Heights",
+      "kind": "residential",
+      "blocks": 10815,
+      "extent": {
+        "k0": 0,
+        "m0": 0,
+        "k1": 90,
+        "m1": 183
+      },
+      "centroid": {
+        "k": 35.18,
+        "m": 97.89
+      }
+    },
+    {
+      "name": "Sparrowhaven Heights",
+      "kind": "residential",
+      "blocks": 1704,
+      "extent": {
+        "k0": 85,
+        "m0": 92,
+        "k1": 127,
+        "m1": 145
+      },
+      "centroid": {
+        "k": 108.29,
+        "m": 115.52
+      }
+    },
+    {
+      "name": "Beechworth Park",
+      "kind": "park",
+      "blocks": 254,
+      "extent": {
+        "k0": 81,
+        "m0": 92,
+        "k1": 93,
+        "m1": 147
+      },
+      "centroid": {
+        "k": 87.49,
+        "m": 119.68
+      }
+    },
+    {
+      "name": "Ploverstead Yards",
+      "kind": "industrial",
+      "blocks": 112,
+      "extent": {
+        "k0": 16,
+        "m0": 62,
+        "k1": 31,
+        "m1": 85
+      },
+      "centroid": {
+        "k": 20.66,
+        "m": 73.79
+      }
+    },
+    {
+      "name": "Thistledale Yards",
+      "kind": "industrial",
+      "blocks": 93,
+      "extent": {
+        "k0": 4,
+        "m0": 161,
+        "k1": 23,
+        "m1": 184
+      },
+      "centroid": {
+        "k": 11.23,
+        "m": 176.16
+      }
+    },
+    {
+      "name": "Larkwold Park",
+      "kind": "park",
+      "blocks": 86,
+      "extent": {
+        "k0": 44,
+        "m0": 80,
+        "k1": 55,
+        "m1": 92
+      },
+      "centroid": {
+        "k": 51.03,
+        "m": 87.64
+      }
+    },
+    {
+      "name": "Cypresshaven Park",
+      "kind": "park",
+      "blocks": 86,
+      "extent": {
+        "k0": 6,
+        "m0": 161,
+        "k1": 19,
+        "m1": 174
+      },
+      "centroid": {
+        "k": 10.95,
+        "m": 165.76
+      }
+    },
+    {
+      "name": "Catkinglen Yards",
+      "kind": "industrial",
+      "blocks": 85,
+      "extent": {
+        "k0": 51,
+        "m0": 169,
+        "k1": 73,
+        "m1": 184
+      },
+      "centroid": {
+        "k": 63.58,
+        "m": 178.31
+      }
+    },
+    {
+      "name": "Tinderwood Yards",
+      "kind": "industrial",
+      "blocks": 84,
+      "extent": {
+        "k0": 7,
+        "m0": 124,
+        "k1": 24,
+        "m1": 136
+      },
+      "centroid": {
+        "k": 17.01,
+        "m": 133.13
+      }
+    },
+    {
+      "name": "Flintmead Park",
+      "kind": "park",
+      "blocks": 74,
+      "extent": {
+        "k0": 79,
+        "m0": 107,
+        "k1": 85,
+        "m1": 119
+      },
+      "centroid": {
+        "k": 82,
+        "m": 112.81
+      }
+    },
+    {
+      "name": "Irondene Heights",
+      "kind": "residential",
+      "blocks": 65,
+      "extent": {
+        "k0": 65,
+        "m0": 174,
+        "k1": 73,
+        "m1": 182
+      },
+      "centroid": {
+        "k": 69.5,
+        "m": 178.62
+      }
+    },
+    {
+      "name": "Laurelknoll Yards",
+      "kind": "industrial",
+      "blocks": 63,
+      "extent": {
+        "k0": 43,
+        "m0": 137,
+        "k1": 56,
+        "m1": 146
+      },
+      "centroid": {
+        "k": 48.6,
+        "m": 142.88
+      }
+    },
+    {
+      "name": "Fawnbank Yards",
+      "kind": "industrial",
+      "blocks": 59,
+      "extent": {
+        "k0": 32,
+        "m0": 16,
+        "k1": 40,
+        "m1": 29
+      },
+      "centroid": {
+        "k": 35.65,
+        "m": 23.13
+      }
+    },
+    {
+      "name": "Willetfold Yards",
+      "kind": "industrial",
+      "blocks": 59,
+      "extent": {
+        "k0": 62,
+        "m0": 95,
+        "k1": 72,
+        "m1": 109
+      },
+      "centroid": {
+        "k": 66.01,
+        "m": 100.31
+      }
+    },
+    {
+      "name": "Peppervale Park",
+      "kind": "park",
+      "blocks": 48,
+      "extent": {
+        "k0": 16,
+        "m0": 84,
+        "k1": 21,
+        "m1": 93
+      },
+      "centroid": {
+        "k": 18.75,
+        "m": 89.23
+      }
+    },
+    {
+      "name": "Brookbank Park",
+      "kind": "park",
+      "blocks": 43,
+      "extent": {
+        "k0": 34,
+        "m0": 17,
+        "k1": 38,
+        "m1": 27
+      },
+      "centroid": {
+        "k": 36.36,
+        "m": 21.48
+      }
+    },
+    {
+      "name": "Poppywood Yards",
+      "kind": "industrial",
+      "blocks": 41,
+      "extent": {
+        "k0": 6,
+        "m0": 0,
+        "k1": 11,
+        "m1": 12
+      },
+      "centroid": {
+        "k": 9.01,
+        "m": 6.48
+      }
+    },
+    {
+      "name": "Pigeonshaw Yards",
+      "kind": "industrial",
+      "blocks": 38,
+      "extent": {
+        "k0": 43,
+        "m0": 79,
+        "k1": 55,
+        "m1": 92
+      },
+      "centroid": {
+        "k": 48.76,
+        "m": 84.84
+      }
+    },
+    {
+      "name": "Curlewworth Park",
+      "kind": "park",
+      "blocks": 37,
+      "extent": {
+        "k0": 96,
+        "m0": 131,
+        "k1": 101,
+        "m1": 138
+      },
+      "centroid": {
+        "k": 98.88,
+        "m": 134.69
+      }
+    },
+    {
+      "name": "Larklea Park",
+      "kind": "park",
+      "blocks": 35,
+      "extent": {
+        "k0": 61,
+        "m0": 102,
+        "k1": 65,
+        "m1": 110
+      },
+      "centroid": {
+        "k": 63.59,
+        "m": 106.61
+      }
+    },
+    {
+      "name": "Granitebury Park",
+      "kind": "park",
+      "blocks": 30,
+      "extent": {
+        "k0": 6,
+        "m0": 97,
+        "k1": 12,
+        "m1": 101
+      },
+      "centroid": {
+        "k": 9.43,
+        "m": 99.43
+      }
+    },
+    {
+      "name": "Merlinreach Park",
+      "kind": "park",
+      "blocks": 28,
+      "extent": {
+        "k0": 51,
+        "m0": 124,
+        "k1": 57,
+        "m1": 129
+      },
+      "centroid": {
+        "k": 54.71,
+        "m": 127
+      }
+    },
+    {
+      "name": "Calicowell Yards",
+      "kind": "industrial",
+      "blocks": 28,
+      "extent": {
+        "k0": 31,
+        "m0": 178,
+        "k1": 41,
+        "m1": 183
+      },
+      "centroid": {
+        "k": 36.21,
+        "m": 181.89
+      }
+    },
+    {
+      "name": "Mistleview Yards",
+      "kind": "industrial",
+      "blocks": 27,
+      "extent": {
+        "k0": 77,
+        "m0": 133,
+        "k1": 84,
+        "m1": 138
+      },
+      "centroid": {
+        "k": 80.94,
+        "m": 136.02
+      }
+    }
+  ],
+  "neighbours": [
+    "lakefront-metropolis",
+    "the-east-bluffs",
+    "north-ridge"
+  ]
+}

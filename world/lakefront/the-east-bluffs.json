@@ -1,0 +1,447 @@
+{
+  "format": "zone/1",
+  "seed": 1337,
+  "blocks": 256,
+  "pitch": 40,
+  "size": 10240,
+  "region": {
+    "id": 2,
+    "slug": "the-east-bluffs",
+    "name": "The East Bluffs",
+    "biome": "bluffs over the lake",
+    "character": "houses on the cliffs above the east shore, a hub inland"
+  },
+  "extent": {
+    "k0": 128,
+    "m0": 0,
+    "k1": 255,
+    "m1": 185
+  },
+  "area": {
+    "blocks": 13352,
+    "km2": 21.363,
+    "shareOfLand": 0.285
+  },
+  "centroid": {
+    "k": 215.13,
+    "m": 103.28
+  },
+  "elevation": {
+    "min": 0.22,
+    "mean": 0.454,
+    "max": 0.804
+  },
+  "terrain": {
+    "lake": 0,
+    "shore": 0,
+    "flat": 9242,
+    "ravine": 364,
+    "bluff": 890,
+    "ridge": 2856
+  },
+  "lots": {
+    "downtown": 12,
+    "residential": 11692,
+    "industrial": 462,
+    "park": 1050,
+    "plaza": 4,
+    "water": 0,
+    "civic": 132
+  },
+  "buildings": {
+    "count": 82563,
+    "floors": {
+      "min": 1,
+      "mean": 2,
+      "max": 41
+    },
+    "tallest": {
+      "k": 206,
+      "m": 127,
+      "floors": 41
+    }
+  },
+  "streets": {
+    "arterial": 1809,
+    "local": 23331,
+    "pedestrian": 4,
+    "bridge": 34
+  },
+  "landmarks": [
+    {
+      "name": "Cricketdown Town Centre",
+      "kind": "hub",
+      "k": 208,
+      "m": 128,
+      "floors": 41
+    }
+  ],
+  "districts": [
+    {
+      "name": "Hawthornbury Heights",
+      "kind": "residential",
+      "blocks": 9672,
+      "extent": {
+        "k0": 186,
+        "m0": 0,
+        "k1": 255,
+        "m1": 184
+      },
+      "centroid": {
+        "k": 226,
+        "m": 95.4
+      }
+    },
+    {
+      "name": "Lavendercroft Heights",
+      "kind": "residential",
+      "blocks": 1422,
+      "extent": {
+        "k0": 157,
+        "m0": 92,
+        "k1": 187,
+        "m1": 160
+      },
+      "centroid": {
+        "k": 173.76,
+        "m": 122.97
+      }
+    },
+    {
+      "name": "Ivorycrest Park",
+      "kind": "park",
+      "blocks": 546,
+      "extent": {
+        "k0": 182,
+        "m0": 92,
+        "k1": 255,
+        "m1": 185
+      },
+      "centroid": {
+        "k": 196.89,
+        "m": 151.62
+      }
+    },
+    {
+      "name": "Chalkknoll Heights",
+      "kind": "residential",
+      "blocks": 509,
+      "extent": {
+        "k0": 128,
+        "m0": 92,
+        "k1": 142,
+        "m1": 135
+      },
+      "centroid": {
+        "k": 134.18,
+        "m": 115.8
+      }
+    },
+    {
+      "name": "Brookgarth Park",
+      "kind": "park",
+      "blocks": 140,
+      "extent": {
+        "k0": 232,
+        "m0": 161,
+        "k1": 255,
+        "m1": 174
+      },
+      "centroid": {
+        "k": 243.23,
+        "m": 167.85
+      }
+    },
+    {
+      "name": "Umbergate Heights",
+      "kind": "residential",
+      "blocks": 89,
+      "extent": {
+        "k0": 183,
+        "m0": 165,
+        "k1": 189,
+        "m1": 181
+      },
+      "centroid": {
+        "k": 186.19,
+        "m": 172.26
+      }
+    },
+    {
+      "name": "Ternshaw Park",
+      "kind": "park",
+      "blocks": 66,
+      "extent": {
+        "k0": 196,
+        "m0": 151,
+        "k1": 209,
+        "m1": 155
+      },
+      "centroid": {
+        "k": 203,
+        "m": 153.5
+      }
+    },
+    {
+      "name": "Tansywald Yards",
+      "kind": "industrial",
+      "blocks": 56,
+      "extent": {
+        "k0": 240,
+        "m0": 7,
+        "k1": 255,
+        "m1": 19
+      },
+      "centroid": {
+        "k": 245.96,
+        "m": 14.14
+      }
+    },
+    {
+      "name": "Orchidholm Park",
+      "kind": "park",
+      "blocks": 52,
+      "extent": {
+        "k0": 247,
+        "m0": 6,
+        "k1": 255,
+        "m1": 12
+      },
+      "centroid": {
+        "k": 251.94,
+        "m": 9.62
+      }
+    },
+    {
+      "name": "Heatherbrook Yards",
+      "kind": "industrial",
+      "blocks": 45,
+      "extent": {
+        "k0": 179,
+        "m0": 160,
+        "k1": 187,
+        "m1": 181
+      },
+      "centroid": {
+        "k": 182.81,
+        "m": 168.19
+      }
+    },
+    {
+      "name": "Pineconeview Park",
+      "kind": "park",
+      "blocks": 33,
+      "extent": {
+        "k0": 241,
+        "m0": 50,
+        "k1": 246,
+        "m1": 56
+      },
+      "centroid": {
+        "k": 243.95,
+        "m": 53.53
+      }
+    },
+    {
+      "name": "Pebblefold Park",
+      "kind": "park",
+      "blocks": 29,
+      "extent": {
+        "k0": 249,
+        "m0": 178,
+        "k1": 255,
+        "m1": 182
+      },
+      "centroid": {
+        "k": 253.05,
+        "m": 180.5
+      }
+    },
+    {
+      "name": "Beechcombe Park",
+      "kind": "park",
+      "blocks": 27,
+      "extent": {
+        "k0": 205,
+        "m0": 42,
+        "k1": 209,
+        "m1": 48
+      },
+      "centroid": {
+        "k": 206.98,
+        "m": 45.5
+      }
+    },
+    {
+      "name": "Starlingfield Park",
+      "kind": "park",
+      "blocks": 26,
+      "extent": {
+        "k0": 204,
+        "m0": 133,
+        "k1": 210,
+        "m1": 137
+      },
+      "centroid": {
+        "k": 207.81,
+        "m": 135.42
+      }
+    },
+    {
+      "name": "Reedcroft Yards",
+      "kind": "industrial",
+      "blocks": 24,
+      "extent": {
+        "k0": 223,
+        "m0": 131,
+        "k1": 226,
+        "m1": 137
+      },
+      "centroid": {
+        "k": 224.96,
+        "m": 134.25
+      }
+    },
+    {
+      "name": "Hickoryhaven Park",
+      "kind": "park",
+      "blocks": 20,
+      "extent": {
+        "k0": 167,
+        "m0": 116,
+        "k1": 173,
+        "m1": 119
+      },
+      "centroid": {
+        "k": 170.85,
+        "m": 117.6
+      }
+    },
+    {
+      "name": "Pewterholm Park",
+      "kind": "park",
+      "blocks": 19,
+      "extent": {
+        "k0": 251,
+        "m0": 33,
+        "k1": 254,
+        "m1": 39
+      },
+      "centroid": {
+        "k": 252.66,
+        "m": 36.34
+      }
+    },
+    {
+      "name": "Hickoryrigg Yards",
+      "kind": "industrial",
+      "blocks": 18,
+      "extent": {
+        "k0": 223,
+        "m0": 98,
+        "k1": 226,
+        "m1": 103
+      },
+      "centroid": {
+        "k": 225.28,
+        "m": 100.61
+      }
+    },
+    {
+      "name": "Ochreshaw Park",
+      "kind": "park",
+      "blocks": 18,
+      "extent": {
+        "k0": 241,
+        "m0": 124,
+        "k1": 244,
+        "m1": 129
+      },
+      "centroid": {
+        "k": 243.11,
+        "m": 126.78
+      }
+    },
+    {
+      "name": "Cottonwald Park",
+      "kind": "park",
+      "blocks": 17,
+      "extent": {
+        "k0": 232,
+        "m0": 79,
+        "k1": 236,
+        "m1": 83
+      },
+      "centroid": {
+        "k": 234.74,
+        "m": 81.26
+      }
+    },
+    {
+      "name": "Calicoholm Park",
+      "kind": "park",
+      "blocks": 14,
+      "extent": {
+        "k0": 170,
+        "m0": 134,
+        "k1": 173,
+        "m1": 137
+      },
+      "centroid": {
+        "k": 171.79,
+        "m": 136
+      }
+    },
+    {
+      "name": "Beechholm Yards",
+      "kind": "industrial",
+      "blocks": 13,
+      "extent": {
+        "k0": 242,
+        "m0": 48,
+        "k1": 247,
+        "m1": 55
+      },
+      "centroid": {
+        "k": 245.81,
+        "m": 51.27
+      }
+    },
+    {
+      "name": "Bitternhurst Yards",
+      "kind": "industrial",
+      "blocks": 13,
+      "extent": {
+        "k0": 243,
+        "m0": 160,
+        "k1": 255,
+        "m1": 160
+      },
+      "centroid": {
+        "k": 249.5,
+        "m": 160.5
+      }
+    },
+    {
+      "name": "Indigoside Park",
+      "kind": "park",
+      "blocks": 12,
+      "extent": {
+        "k0": 215,
+        "m0": 80,
+        "k1": 217,
+        "m1": 83
+      },
+      "centroid": {
+        "k": 216.5,
+        "m": 82
+      }
+    }
+  ],
+  "neighbours": [
+    "lakefront-metropolis",
+    "west-sprawl",
+    "north-ridge",
+    "the-grand-ravine"
+  ]
+}

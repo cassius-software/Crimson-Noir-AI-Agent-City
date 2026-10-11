@@ -126,19 +126,23 @@ beside it. The page inflates the pack itself (the browser's own gzip stream); no
 
 - `?region=on` walks the region in any build. The default build opens on the procedural city, where the traffic, the
   crowd and the tracks are; the region has none of them yet (see Not there yet).
-- `?map=california` walks the Sunfall Coast instead: a fictitious California-analog map generated from the world seed
-  (`?seed`) by fractal Brownian motion (`src/01_Initialize_World/california.ts`), 64 blocks (2.56 km) across in the
-  page, with five regions under CC0 fictitious names: Del Mar Metropolis (the coast: towers, a port), San Cero (hills
-  and fog), Las Vistas (desert neon: one strip of hotels), Dusty Basin (desert and canyons) and Starwood Hills
-  (mansions). The map is built in a worker while the concierge's onboarding talks a first visitor through four
-  one-word questions, and turned into a region pack (`region/fromMacro.ts`), so it is walked through the same region
-  path: like the surveyed region, it has no traffic or crowd yet. The visitor's answers are saved, so the next visit
-  opens on the same coast at the chosen region; `?map=city` or `?region=off` opens the procedural city, `?onboarding=0`
-  skips the onboarding (the expert path) and `?onboarding=1` shows it again. The full 256-block map's structural
-  layouts, one JSON file per region with an index, are committed under `world/california/` and regenerated with
-  `node tools/world/california.mjs` (`--check` compares; `california.test.ts` fails while they are stale). Every name
-  a map or pack carries passes the CC0 asset gate (`src/01_Initialize_World/assets/cc0.ts`), which purges anything
-  naming a gun, rifle, pistol or weapon.
+- `?map=lakefront` walks Lakefront Metro instead: a fictitious great-lake metropolis generated from the world seed
+  (`?seed`) by `src/01_Initialize_World/lakefront.ts`, 64 blocks (2.56 km) across in the page and 256 (10.24 km) in
+  the committed layouts. A massive lake fills the south behind a wandering shore with a harbour; a highly dense
+  financial core stands against the water with The Spire (168 floors, 554 m) on the waterfront; deep ravines, meandering
+  by fractal Brownian motion, slice the grid from the north to the lake and are crossed only by the arterials' bridges;
+  and a suburban grid sprawls north, west and east with transit hubs, nodes of skyscrapers, inside it. Five regions
+  under CC0 fictitious names: Lakefront Metropolis (the core and the old city), West Sprawl (its main hub is Transit
+  City), The East Bluffs (houses on the cliffs above the east shore), North Ridge (the northern sprawl on its rise) and
+  The Grand Ravine (the main ravine and the streets along it). The map is built in a worker while the concierge's
+  onboarding talks a first visitor through four one-word questions, and turned into a region pack
+  (`region/fromMacro.ts`), so it is walked through the same region path: like the surveyed region, it has no traffic or
+  crowd yet. The visitor's answers are saved, so the next visit opens on the same city at the chosen region;
+  `?map=city` or `?region=off` opens the procedural city, `?onboarding=0` skips the onboarding (the expert path) and
+  `?onboarding=1` shows it again. The structural layouts, one JSON file per region with an index naming The Spire and
+  the hubs, are committed under `world/lakefront/` and regenerated with `node tools/world/lakefront.mjs` (`--check`
+  compares; `lakefront.test.ts` fails while they are stale). Every name a map or pack carries passes the CC0 asset gate
+  (`src/01_Initialize_World/assets/cc0.ts`), which purges anything naming a gun, rifle, pistol or weapon.
 - The pilot build opens on the region, and `?region=off` shows the procedural city instead:
 
 ```sh

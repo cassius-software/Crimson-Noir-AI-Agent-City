@@ -5,8 +5,8 @@
  * Why does this file exist? It is the page's React shell: the city (`GuiShell`) or the console alone (`TtyShell`, under
  * `?boot=tty`), the engine mounted with the page's options, and around it the boot veil, the HUD, the concierge, the
  * wardrobe card and the touch and console overlays. A first visit opens on the concierge's onboarding instead
- * (07_Execute_Actions/onboarding), which builds the California-analog coast in the background and hands the city its
- * outcome; the map walked (the coast, the embedded region, or the procedural city) is decided here (loadMap). It builds what the engine is handed through its seams instead of
+ * (07_Execute_Actions/onboarding), which builds the lakefront metropolis in the background and hands the city its
+ * outcome; the map walked (the metropolis, the embedded region, or the procedural city) is decided here (loadMap). It builds what the engine is handed through its seams instead of
  * importing (the cognition router, the network client), keeps the visitor's look and session token, and screens the
  * room's names and chat under 14A once more as they arrive.
  * What breaks if it is removed? Nothing is mounted: the page is blank.
@@ -42,10 +42,10 @@ import type { PlanStep } from './06_Make_Decisions/intent.ts'
 import { BRAND } from './brand.ts'
 import embeddedRegion, { regionFirst } from 'virtual:region-pack'
 import { validatePack, type RegionPack } from './01_Initialize_World/region/pack.ts'
-import { ZONE, type Zone } from './01_Initialize_World/california.ts'
-import { CaliforniaBuilder } from './01_Initialize_World/californiaClient.ts'
-import { zoneOf } from './01_Initialize_World/californiaPack.ts'
-import { builderPort } from './01_Initialize_World/californiaWorkerPort.ts'
+import { ZONE, type Zone } from './01_Initialize_World/lakefront.ts'
+import { LakefrontBuilder } from './01_Initialize_World/lakefrontClient.ts'
+import { zoneOf } from './01_Initialize_World/lakefrontPack.ts'
+import { builderPort } from './01_Initialize_World/lakefrontWorkerPort.ts'
 import { screenNames } from './01_Initialize_World/assets/cc0.ts'
 import { Onboarding, type Outcome } from './07_Execute_Actions/onboarding/Onboarding.tsx'
 import { loadOnboarding, mapWanted, needsOnboarding, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
@@ -154,18 +154,18 @@ async function loadRegion(): Promise<RegionPack> {
   return pack
 }
 
-/** Which map the page walks and, for the generated coast, the pack the onboarding already built and where it starts. */
+/** Which map the page walks and, for the generated metropolis, the pack the onboarding already built and where it starts. */
 interface MapPlan { choice: MapChoice; pack: RegionPack | null; zone: Zone }
 
 /**
- * The map the engine is handed: the embedded region, the California-analog coast (the pack the onboarding built, or one
- * built now in the worker for ?map=california and returning visitors), or null for the procedural city.
+ * The map the engine is handed: the embedded region, the lakefront metropolis (the pack the onboarding built, or one
+ * built now in the worker for ?map=lakefront and returning visitors), or null for the procedural city.
  */
 async function loadMap(plan: MapPlan): Promise<RegionPack | null> {
   if (plan.choice === 'region') return loadRegion()
-  if (plan.choice !== 'california') return null
+  if (plan.choice !== 'lakefront') return null
   if (plan.pack) return plan.pack
-  const b = new CaliforniaBuilder(readOptions().seed, builderPort())
+  const b = new LakefrontBuilder(readOptions().seed, builderPort())
   try { return await b.pack(plan.zone) } finally { b.dispose() }
 }
 
@@ -256,7 +256,7 @@ function onboardingVoice(): Voice {
 function App() {
   // Read once: the boot track decides which shell mounts, so the hooks of each shell live in that shell.
   const [options] = useState(readOptions)
-  // A first visit (no saved onboarding, no profile) opens on the concierge's onboarding, which builds the coast in the
+  // A first visit (no saved onboarding, no profile) opens on the concierge's onboarding, which builds the metropolis in the
   // background and hands its outcome here; a returning visitor goes straight to the map they chose (script.ts).
   const [saved] = useState<SavedOnboarding | null>(loadOnboarding)
   const [onboard] = useState(() => needsOnboarding(new URLSearchParams(window.location.search), saved, loadProfile()))
@@ -266,7 +266,7 @@ function App() {
   if (onboard && !outcome) return <Onboarding seed={options.seed} onDone={setOutcome} port={builderPort} voice={voice} />
   const chosen = outcome?.saved ?? saved
   const choice = mapWanted(new URLSearchParams(window.location.search), chosen, regionFirst)
-  const zone = zoneOf(chosen?.place) ?? ZONE.delMar
+  const zone = zoneOf(chosen?.place) ?? ZONE.metropolis
   const shellOptions = outcome?.options ? { ...options, ...outcome.options } : options
   return <GuiShell options={shellOptions} plan={{ choice, pack: outcome?.pack ?? null, zone }} />
 }

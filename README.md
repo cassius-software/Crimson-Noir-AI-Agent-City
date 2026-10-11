@@ -80,12 +80,13 @@ Open `dist/index.html` directly: no server, and it works offline. It needs WebGP
 Brave on desktop and Android, or Safari 26 on iPhone, iPad and Mac. `?boot=tty` needs none.
 
 A first visit opens on Wren, the concierge, who asks four one-word questions (a name, where to start, the time of day,
-sound) while the Sunfall Coast, a fictitious California-analog map of five regions (Del Mar Metropolis, San Cero,
-Las Vistas, Dusty Basin, Starwood Hills), is generated in the background from the world seed; the answers are kept,
-so a return visit opens on the same coast. `?onboarding=0` skips to the procedural city (the expert path),
-`?onboarding=1` shows the onboarding again, `?map=california` walks the coast and `?map=city` the procedural city
-regardless of what was saved; `?region=on` is the surveyed region as before. The coast's structural layouts are
-committed under `world/california/` (`node tools/world/california.mjs` regenerates them; `--check` compares).
+sound) while Lakefront Metro, a fictitious great-lake metropolis of five regions (Lakefront Metropolis with The Spire,
+West Sprawl with Transit City, The East Bluffs, North Ridge, The Grand Ravine), is generated in the background from
+the world seed; the answers are kept, so a return visit opens on the same city. `?onboarding=0` skips to the
+procedural city (the expert path), `?onboarding=1` shows the onboarding again, `?map=lakefront` walks the metropolis
+and `?map=city` the procedural city regardless of what was saved; `?region=on` is the surveyed region as before. The
+metropolis's structural layouts are committed under `world/lakefront/` (`node tools/world/lakefront.mjs` regenerates
+them; `--check` compares).
 
 ---
 

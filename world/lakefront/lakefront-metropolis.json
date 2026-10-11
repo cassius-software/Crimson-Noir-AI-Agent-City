@@ -1,0 +1,416 @@
+{
+  "format": "zone/1",
+  "seed": 1337,
+  "blocks": 256,
+  "pitch": 40,
+  "size": 10240,
+  "region": {
+    "id": 0,
+    "slug": "lakefront-metropolis",
+    "name": "Lakefront Metropolis",
+    "biome": "financial core on the water",
+    "character": "the dense core, The Spire on the waterfront, apartment blocks and the port lands"
+  },
+  "extent": {
+    "k0": 73,
+    "m0": 136,
+    "k1": 181,
+    "m1": 184
+  },
+  "area": {
+    "blocks": 3083,
+    "km2": 4.933,
+    "shareOfLand": 0.066
+  },
+  "centroid": {
+    "k": 122.26,
+    "m": 162.59
+  },
+  "elevation": {
+    "min": 0.214,
+    "mean": 0.293,
+    "max": 0.635
+  },
+  "terrain": {
+    "lake": 0,
+    "shore": 98,
+    "flat": 2520,
+    "ravine": 172,
+    "bluff": 293,
+    "ridge": 0
+  },
+  "lots": {
+    "downtown": 668,
+    "residential": 1648,
+    "industrial": 282,
+    "park": 387,
+    "plaza": 45,
+    "water": 0,
+    "civic": 53
+  },
+  "buildings": {
+    "count": 4693,
+    "floors": {
+      "min": 1,
+      "mean": 11.4,
+      "max": 168
+    },
+    "tallest": {
+      "k": 128,
+      "m": 174,
+      "floors": 168
+    }
+  },
+  "streets": {
+    "arterial": 399,
+    "local": 5195,
+    "pedestrian": 161,
+    "bridge": 21
+  },
+  "landmarks": [
+    {
+      "name": "The Spire",
+      "kind": "spire",
+      "k": 128,
+      "m": 174,
+      "floors": 168
+    }
+  ],
+  "districts": [
+    {
+      "name": "Larchhaven Heights",
+      "kind": "residential",
+      "blocks": 747,
+      "extent": {
+        "k0": 95,
+        "m0": 136,
+        "k1": 138,
+        "m1": 174
+      },
+      "centroid": {
+        "k": 115.42,
+        "m": 148.44
+      }
+    },
+    {
+      "name": "Crystaldene Centre",
+      "kind": "downtown",
+      "blocks": 654,
+      "extent": {
+        "k0": 98,
+        "m0": 153,
+        "k1": 135,
+        "m1": 180
+      },
+      "centroid": {
+        "k": 117.92,
+        "m": 166.36
+      }
+    },
+    {
+      "name": "Poplarford Heights",
+      "kind": "residential",
+      "blocks": 450,
+      "extent": {
+        "k0": 73,
+        "m0": 149,
+        "k1": 95,
+        "m1": 182
+      },
+      "centroid": {
+        "k": 84.27,
+        "m": 169.43
+      }
+    },
+    {
+      "name": "Magpiewold Heights",
+      "kind": "residential",
+      "blocks": 443,
+      "extent": {
+        "k0": 156,
+        "m0": 145,
+        "k1": 177,
+        "m1": 182
+      },
+      "centroid": {
+        "k": 165.15,
+        "m": 164.87
+      }
+    },
+    {
+      "name": "Dapplevale Park",
+      "kind": "park",
+      "blocks": 172,
+      "extent": {
+        "k0": 91,
+        "m0": 146,
+        "k1": 100,
+        "m1": 182
+      },
+      "centroid": {
+        "k": 94.53,
+        "m": 164.76
+      }
+    },
+    {
+      "name": "Sumachollow Yards",
+      "kind": "industrial",
+      "blocks": 128,
+      "extent": {
+        "k0": 165,
+        "m0": 160,
+        "k1": 181,
+        "m1": 182
+      },
+      "centroid": {
+        "k": 174.13,
+        "m": 174.48
+      }
+    },
+    {
+      "name": "Lichenholm Park",
+      "kind": "park",
+      "blocks": 60,
+      "extent": {
+        "k0": 107,
+        "m0": 150,
+        "k1": 128,
+        "m1": 155
+      },
+      "centroid": {
+        "k": 117.3,
+        "m": 152.8
+      }
+    },
+    {
+      "name": "Ravenknoll Park",
+      "kind": "park",
+      "blocks": 48,
+      "extent": {
+        "k0": 167,
+        "m0": 160,
+        "k1": 176,
+        "m1": 165
+      },
+      "centroid": {
+        "k": 172.42,
+        "m": 163.25
+      }
+    },
+    {
+      "name": "Tansygarth Park",
+      "kind": "park",
+      "blocks": 47,
+      "extent": {
+        "k0": 177,
+        "m0": 166,
+        "k1": 181,
+        "m1": 177
+      },
+      "centroid": {
+        "k": 179.27,
+        "m": 171.82
+      }
+    },
+    {
+      "name": "Aspenstead Yards",
+      "kind": "industrial",
+      "blocks": 38,
+      "extent": {
+        "k0": 73,
+        "m0": 169,
+        "k1": 82,
+        "m1": 174
+      },
+      "centroid": {
+        "k": 78.39,
+        "m": 171.76
+      }
+    },
+    {
+      "name": "Yarrowfield Yards",
+      "kind": "industrial",
+      "blocks": 35,
+      "extent": {
+        "k0": 74,
+        "m0": 182,
+        "k1": 95,
+        "m1": 184
+      },
+      "centroid": {
+        "k": 84.53,
+        "m": 183.47
+      }
+    },
+    {
+      "name": "Ledgerreach Park",
+      "kind": "park",
+      "blocks": 24,
+      "extent": {
+        "k0": 113,
+        "m0": 174,
+        "k1": 127,
+        "m1": 177
+      },
+      "centroid": {
+        "k": 120.58,
+        "m": 175.67
+      }
+    },
+    {
+      "name": "Hollydale Yards",
+      "kind": "industrial",
+      "blocks": 21,
+      "extent": {
+        "k0": 173,
+        "m0": 160,
+        "k1": 180,
+        "m1": 165
+      },
+      "centroid": {
+        "k": 177.83,
+        "m": 162.83
+      }
+    },
+    {
+      "name": "Opalshaw Yards",
+      "kind": "industrial",
+      "blocks": 17,
+      "extent": {
+        "k0": 160,
+        "m0": 152,
+        "k1": 163,
+        "m1": 157
+      },
+      "centroid": {
+        "k": 162.38,
+        "m": 154.62
+      }
+    },
+    {
+      "name": "Rookview Yards",
+      "kind": "industrial",
+      "blocks": 16,
+      "extent": {
+        "k0": 82,
+        "m0": 152,
+        "k1": 88,
+        "m1": 155
+      },
+      "centroid": {
+        "k": 85.5,
+        "m": 154.19
+      }
+    },
+    {
+      "name": "Millstoneside Park",
+      "kind": "park",
+      "blocks": 16,
+      "extent": {
+        "k0": 160,
+        "m0": 169,
+        "k1": 164,
+        "m1": 172
+      },
+      "centroid": {
+        "k": 162.5,
+        "m": 171
+      }
+    },
+    {
+      "name": "Yarrowrigg Yards",
+      "kind": "industrial",
+      "blocks": 16,
+      "extent": {
+        "k0": 101,
+        "m0": 177,
+        "k1": 112,
+        "m1": 181
+      },
+      "centroid": {
+        "k": 106.88,
+        "m": 179.38
+      }
+    },
+    {
+      "name": "Rushcrest Centre",
+      "kind": "downtown",
+      "blocks": 13,
+      "extent": {
+        "k0": 156,
+        "m0": 171,
+        "k1": 158,
+        "m1": 176
+      },
+      "centroid": {
+        "k": 157.58,
+        "m": 173.58
+      }
+    },
+    {
+      "name": "Hazelhurst Park",
+      "kind": "park",
+      "blocks": 13,
+      "extent": {
+        "k0": 129,
+        "m0": 174,
+        "k1": 135,
+        "m1": 176
+      },
+      "centroid": {
+        "k": 132.42,
+        "m": 175.35
+      }
+    },
+    {
+      "name": "Slatefold Yards",
+      "kind": "industrial",
+      "blocks": 9,
+      "extent": {
+        "k0": 150,
+        "m0": 180,
+        "k1": 158,
+        "m1": 180
+      },
+      "centroid": {
+        "k": 154.5,
+        "m": 180.5
+      }
+    },
+    {
+      "name": "Millstonedale Heights",
+      "kind": "residential",
+      "blocks": 8,
+      "extent": {
+        "k0": 175,
+        "m0": 182,
+        "k1": 181,
+        "m1": 183
+      },
+      "centroid": {
+        "k": 178.88,
+        "m": 183.38
+      }
+    },
+    {
+      "name": "Mallowholm Park",
+      "kind": "park",
+      "blocks": 7,
+      "extent": {
+        "k0": 73,
+        "m0": 170,
+        "k1": 75,
+        "m1": 172
+      },
+      "centroid": {
+        "k": 74.21,
+        "m": 171.5
+      }
+    }
+  ],
+  "neighbours": [
+    "west-sprawl",
+    "the-east-bluffs",
+    "the-grand-ravine"
+  ]
+}

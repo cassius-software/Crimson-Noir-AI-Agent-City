@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is the page's handle on the map builder (california.worker.ts): start the build for a seed
+ * Why does this file exist? It is the page's handle on the map builder (lakefront.worker.ts): start the build for a seed
  * the moment the onboarding opens, hear each stage in plain words, and ask for the pack once the visitor has chosen
  * where to start. Where workers are not available (a test, an odd embedding) it builds on the page's thread instead,
  * with the same stages, so the onboarding never depends on a worker existing.
- * What breaks if it is removed? The onboarding and `?map=california` have no way to build the map in the background.
+ * What breaks if it is removed? The onboarding and `?map=lakefront` have no way to build the map in the background.
  */
-import { generateCalifornia, type CaliforniaMap, type Zone } from './california.ts'
-import { BUILD_STAGES, WALK_BLOCKS, packOf, type BuildStage, type FromWorker, type ToWorker } from './californiaPack.ts'
+import { generateLakefront, type LakefrontMap, type Zone } from './lakefront.ts'
+import { BUILD_STAGES, WALK_BLOCKS, packOf, type BuildStage, type FromWorker, type ToWorker } from './lakefrontPack.ts'
 import type { RegionPack } from './region/pack.ts'
 
 /** Something that posts to and hears from the builder: a Worker, or the inline stand-in. */
@@ -21,7 +21,7 @@ export interface BuilderPort {
 
 /** The builder run on this thread, for pages and tests without workers: same protocol, same stages, same bytes. */
 export function inlinePort(): BuilderPort {
-  let map: CaliforniaMap | null = null
+  let map: LakefrontMap | null = null
   const port: BuilderPort = {
     onmessage: null,
     terminate: () => { map = null },
@@ -30,7 +30,7 @@ export function inlinePort(): BuilderPort {
       try {
         if (m.kind === 'build') {
           for (const stage of BUILD_STAGES.slice(0, 2)) say({ kind: 'stage', stage })
-          map = generateCalifornia(m.seed, m.blocks)
+          map = generateLakefront(m.seed, m.blocks)
           for (const stage of BUILD_STAGES.slice(2, 5)) say({ kind: 'stage', stage })
           const zoneBlocks = new Array<number>(6).fill(0)
           for (const z of map.zones) zoneBlocks[z]++
@@ -61,7 +61,7 @@ export interface BuilderEvents {
  * The map builder: `start` begins the build at once; `pack(zone)` resolves with the region pack starting in that zone
  * (after the build, however early it is asked); `dispose` ends the worker. One builder, one seed.
  */
-export class CaliforniaBuilder {
+export class LakefrontBuilder {
   private readonly port: BuilderPort
   private built: Promise<readonly number[]>
   private resolveBuilt!: (zoneBlocks: readonly number[]) => void

@@ -4,20 +4,20 @@
 /**
  * Why does this file exist? It is the first thing a new visitor sees: a quiet full-screen card on the brand's ink where
  * Wren, the concierge, talks them into their city in plain words. Four short turns (a name, where to start, what time of
- * day, sound on or off), each answered with one typed word or one tap, while the California-analog map is built in the
- * background (californiaClient.ts over its worker) and its progress is told in plain words under the conversation; a
+ * day, sound on or off), each answered with one typed word or one tap, while the lakefront metropolis is built in the
+ * background (lakefrontClient.ts over its worker) and its progress is told in plain words under the conversation; a
  * small map of the five regions appears as soon as it is built, with the visitor's start marked. At the end one button
  * walks in. A returning visitor never sees this (script.ts needsOnboarding); someone who knows their way around has a
  * skip link to the expert path (the procedural city, the page's own defaults). The words are the script's, or the
  * configured model's rewording of them when it answers in time (voice.ts). Built from the brand tokens alone
  * (src/brand/tokens.css): ink, titanium, one crimson dot.
  * What breaks if it is removed? A first visitor is dropped into the city with no idea what it is or what to do, and the
- * California map is never built for them.
+ * lakefront map is never built for them.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type JSX } from 'react'
-import { REGIONS, ZONE, type Zone } from '../../01_Initialize_World/california.ts'
-import { CaliforniaBuilder, type BuilderPort } from '../../01_Initialize_World/californiaClient.ts'
-import { STAGE_WORDS, type BuildStage } from '../../01_Initialize_World/californiaPack.ts'
+import { REGIONS, ZONE, type Zone } from '../../01_Initialize_World/lakefront.ts'
+import { LakefrontBuilder, type BuilderPort } from '../../01_Initialize_World/lakefrontClient.ts'
+import { STAGE_WORDS, type BuildStage } from '../../01_Initialize_World/lakefrontPack.ts'
 import type { RegionPack } from '../../01_Initialize_World/region/pack.ts'
 import { NAME_MAX, saveProfile, sanitizeName, seedFromName } from '../../05_Observe_Environment/profile.ts'
 import { MonolithLogo } from '../../MonolithLogo.tsx'
@@ -38,7 +38,7 @@ export interface Outcome {
 
 interface Turn { who: 'wren' | 'you'; text: string }
 
-/** The ink shades the five regions and the sea are drawn in on the small map (titanium steps; crimson is the start). */
+/** The ink shades the five regions and the lake are drawn in on the small map (titanium steps; crimson is the start). */
 const ZONE_INK: readonly string[] = ['#5a5a60', '#8c8c90', '#c8c8cc', '#2c2e36', '#e7e9ec', '#0a0a0e']
 
 /** The small map: one pixel per block, the five regions in titanium, the sea in ink, the start as a crimson dot. */
@@ -63,7 +63,7 @@ function ZoneMap({ zones, blocks, start }: { zones: Uint8Array; blocks: number; 
       ctx.beginPath(); ctx.arc(sk / sn, sm / sn, Math.max(1.5, blocks / 40), 0, Math.PI * 2); ctx.fill()
     }
   }, [zones, blocks, start])
-  const where = start === null ? 'Your city, seen from above: five regions and the sea.' : `Your city from above. The red dot is where you start: ${REGIONS[start].name}.`
+  const where = start === null ? 'Your city, seen from above: five regions and the lake.' : `Your city from above. The red dot is where you start: ${REGIONS[start].name}.`
   return <canvas ref={ref} role="img" aria-label={where} className="h-28 w-28 rounded-noir-control border border-noir-titanium-800 [image-rendering:pixelated]" style={{ imageRendering: 'pixelated' }} />
 }
 
@@ -71,7 +71,7 @@ export interface OnboardingProps {
   /** The world seed (the page's `?seed`, 1337 by default): the map is built for it. */
   seed: number
   onDone(outcome: Outcome): void
-  /** The builder's port: the worker (californiaWorkerPort.ts builderPort), or the inline one. */
+  /** The builder's port: the worker (lakefrontWorkerPort.ts builderPort), or the inline one. */
   port(): BuilderPort
   /** Who says the lines: the script, or the configured model over it (voice.ts). */
   voice?: Voice
@@ -88,15 +88,15 @@ export function Onboarding({ seed, onDone, port, voice = scriptedVoice() }: Onbo
   const [failed, setFailed] = useState<string | null>(null)
   const [leaving, setLeaving] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
-  const builderRef = useRef<CaliforniaBuilder | null>(null)
+  const builderRef = useRef<LakefrontBuilder | null>(null)
   const doneRef = useRef(onDone)
   useEffect(() => { doneRef.current = onDone }, [onDone])
 
   // The build starts the moment the card opens, before a word is said.
   useEffect(() => {
-    let b: CaliforniaBuilder
+    let b: LakefrontBuilder
     try {
-      b = new CaliforniaBuilder(seed, port(), {
+      b = new LakefrontBuilder(seed, port(), {
         onStage: (s) => setStage(s),
         onBuilt: (_counts, grid) => setZones({ grid, blocks: Math.round(Math.sqrt(grid.length)) }),
       })
@@ -105,7 +105,7 @@ export function Onboarding({ seed, onDone, port, voice = scriptedVoice() }: Onbo
       return
     }
     builderRef.current = b
-    b.pack(ZONE.delMar).catch((err: unknown) => setFailed(err instanceof Error ? err.message : String(err)))
+    b.pack(ZONE.metropolis).catch((err: unknown) => setFailed(err instanceof Error ? err.message : String(err)))
     return () => { b.dispose(); builderRef.current = null }
   }, [seed, port])
 
@@ -144,7 +144,7 @@ export function Onboarding({ seed, onDone, port, voice = scriptedVoice() }: Onbo
     const saved = outcomeOf(answers)
     saveOnboarding(saved)
     let pack: RegionPack | null = null
-    try { pack = (await builderRef.current?.pack(answers.place ?? ZONE.delMar)) ?? null } catch (err) { setFailed(err instanceof Error ? err.message : String(err)) }
+    try { pack = (await builderRef.current?.pack(answers.place ?? ZONE.metropolis)) ?? null } catch (err) { setFailed(err instanceof Error ? err.message : String(err)) }
     doneRef.current({ saved, options: optionsFrom(answers), pack })
   }, [answers, leaving])
 

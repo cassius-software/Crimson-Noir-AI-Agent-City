@@ -1,0 +1,288 @@
+{
+  "format": "zone/1",
+  "seed": 1337,
+  "blocks": 256,
+  "pitch": 40,
+  "size": 10240,
+  "region": {
+    "id": 4,
+    "slug": "the-grand-ravine",
+    "name": "The Grand Ravine",
+    "biome": "ravine",
+    "character": "the deep green valley running from the north to the lake, and the streets along its edges"
+  },
+  "extent": {
+    "k0": 135,
+    "m0": 0,
+    "k1": 183,
+    "m1": 179
+  },
+  "area": {
+    "blocks": 3721,
+    "km2": 5.954,
+    "shareOfLand": 0.08
+  },
+  "centroid": {
+    "k": 156.38,
+    "m": 89.63
+  },
+  "elevation": {
+    "min": 0.233,
+    "mean": 0.447,
+    "max": 0.786
+  },
+  "terrain": {
+    "lake": 0,
+    "shore": 12,
+    "flat": 1609,
+    "ravine": 1438,
+    "bluff": 0,
+    "ridge": 662
+  },
+  "lots": {
+    "downtown": 0,
+    "residential": 1686,
+    "industrial": 0,
+    "park": 2021,
+    "plaza": 0,
+    "water": 0,
+    "civic": 14
+  },
+  "buildings": {
+    "count": 12107,
+    "floors": {
+      "min": 1,
+      "mean": 1.98,
+      "max": 6
+    },
+    "tallest": {
+      "k": 163,
+      "m": 40,
+      "floors": 6
+    }
+  },
+  "streets": {
+    "arterial": 342,
+    "local": 4471,
+    "pedestrian": 3,
+    "bridge": 162
+  },
+  "landmarks": [],
+  "districts": [
+    {
+      "name": "Dapplemoor Park",
+      "kind": "park",
+      "blocks": 1979,
+      "extent": {
+        "k0": 136,
+        "m0": 0,
+        "k1": 182,
+        "m1": 179
+      },
+      "centroid": {
+        "k": 155.4,
+        "m": 90.37
+      }
+    },
+    {
+      "name": "Martenmead Heights",
+      "kind": "residential",
+      "blocks": 423,
+      "extent": {
+        "k0": 150,
+        "m0": 95,
+        "k1": 163,
+        "m1": 179
+      },
+      "centroid": {
+        "k": 156.58,
+        "m": 141.78
+      }
+    },
+    {
+      "name": "Poplarside Heights",
+      "kind": "residential",
+      "blocks": 317,
+      "extent": {
+        "k0": 146,
+        "m0": 20,
+        "k1": 169,
+        "m1": 75
+      },
+      "centroid": {
+        "k": 159.6,
+        "m": 46.65
+      }
+    },
+    {
+      "name": "Firgate Heights",
+      "kind": "residential",
+      "blocks": 219,
+      "extent": {
+        "k0": 165,
+        "m0": 22,
+        "k1": 183,
+        "m1": 63
+      },
+      "centroid": {
+        "k": 175.75,
+        "m": 42.68
+      }
+    },
+    {
+      "name": "Quillwald Heights",
+      "kind": "residential",
+      "blocks": 197,
+      "extent": {
+        "k0": 136,
+        "m0": 91,
+        "k1": 149,
+        "m1": 123
+      },
+      "centroid": {
+        "k": 142.98,
+        "m": 107.79
+      }
+    },
+    {
+      "name": "Autumnmoor Heights",
+      "kind": "residential",
+      "blocks": 182,
+      "extent": {
+        "k0": 135,
+        "m0": 146,
+        "k1": 144,
+        "m1": 178
+      },
+      "centroid": {
+        "k": 139.27,
+        "m": 162.93
+      }
+    },
+    {
+      "name": "Opalthorpe Heights",
+      "kind": "residential",
+      "blocks": 135,
+      "extent": {
+        "k0": 151,
+        "m0": 66,
+        "k1": 166,
+        "m1": 88
+      },
+      "centroid": {
+        "k": 158.25,
+        "m": 76.97
+      }
+    },
+    {
+      "name": "Lavenderbury Heights",
+      "kind": "residential",
+      "blocks": 95,
+      "extent": {
+        "k0": 170,
+        "m0": 0,
+        "k1": 180,
+        "m1": 15
+      },
+      "centroid": {
+        "k": 175.29,
+        "m": 7.66
+      }
+    },
+    {
+      "name": "Spruceford Heights",
+      "kind": "residential",
+      "blocks": 77,
+      "extent": {
+        "k0": 156,
+        "m0": 0,
+        "k1": 165,
+        "m1": 13
+      },
+      "centroid": {
+        "k": 160.5,
+        "m": 7.42
+      }
+    },
+    {
+      "name": "Hazelwell Heights",
+      "kind": "residential",
+      "blocks": 31,
+      "extent": {
+        "k0": 137,
+        "m0": 75,
+        "k1": 142,
+        "m1": 86
+      },
+      "centroid": {
+        "k": 139.69,
+        "m": 81.85
+      }
+    },
+    {
+      "name": "Irisfield Park",
+      "kind": "park",
+      "blocks": 25,
+      "extent": {
+        "k0": 178,
+        "m0": 34,
+        "k1": 182,
+        "m1": 42
+      },
+      "centroid": {
+        "k": 180.18,
+        "m": 37.62
+      }
+    },
+    {
+      "name": "Gorsebrook Park",
+      "kind": "park",
+      "blocks": 8,
+      "extent": {
+        "k0": 161,
+        "m0": 115,
+        "k1": 163,
+        "m1": 118
+      },
+      "centroid": {
+        "k": 162.75,
+        "m": 117.25
+      }
+    },
+    {
+      "name": "Aspenhollow Park",
+      "kind": "park",
+      "blocks": 5,
+      "extent": {
+        "k0": 155,
+        "m0": 168,
+        "k1": 156,
+        "m1": 171
+      },
+      "centroid": {
+        "k": 156.1,
+        "m": 170.1
+      }
+    },
+    {
+      "name": "Bitternbank Heights",
+      "kind": "residential",
+      "blocks": 4,
+      "extent": {
+        "k0": 138,
+        "m0": 142,
+        "k1": 138,
+        "m1": 145
+      },
+      "centroid": {
+        "k": 138.5,
+        "m": 144
+      }
+    }
+  ],
+  "neighbours": [
+    "lakefront-metropolis",
+    "the-east-bluffs",
+    "north-ridge"
+  ]
+}

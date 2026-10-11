@@ -10,8 +10,8 @@
  * names a shader, a seed or a frame rate. The React card (Onboarding.tsx) only renders this.
  * What breaks if it is removed? The onboarding has no words, no choices and no memory of the visitor's answers.
  */
-import { REGIONS, ZONE, type Zone } from '../../01_Initialize_World/california.ts'
-import { zoneOf } from '../../01_Initialize_World/californiaPack.ts'
+import { REGIONS, ZONE, type Zone } from '../../01_Initialize_World/lakefront.ts'
+import { zoneOf } from '../../01_Initialize_World/lakefrontPack.ts'
 import type { Profile } from '../../05_Observe_Environment/profile.ts'
 
 /** The steps, in order. */
@@ -23,11 +23,11 @@ export interface Choice<T> { label: string; value: T; blurb: string }
 
 /** Where to start: one plain word per region, and what the visitor is told about it. */
 export const PLACES: readonly Choice<Zone>[] = Object.freeze([
-  { label: 'Beach', value: ZONE.delMar, blurb: 'A big city by the sea, with tall towers and a busy port.' },
-  { label: 'Hills', value: ZONE.sanCero, blurb: 'Steep streets, little houses in rows, and fog in the mornings.' },
-  { label: 'Neon', value: ZONE.lasVistas, blurb: 'One long street of bright hotels in the desert.' },
-  { label: 'Desert', value: ZONE.dustyBasin, blurb: 'Wide open land, canyons, and a few lonely farmhouses.' },
-  { label: 'Mansions', value: ZONE.starwood, blurb: 'Big houses with gardens on the hills above the city.' },
+  { label: 'Downtown', value: ZONE.metropolis, blurb: 'Tall towers by the lake, and The Spire, the tallest of all.' },
+  { label: 'West', value: ZONE.westSprawl, blurb: 'Quiet streets of houses, and a busy place called Transit City.' },
+  { label: 'East', value: ZONE.eastBluffs, blurb: 'Houses on the cliffs, looking out over the lake.' },
+  { label: 'North', value: ZONE.northRidge, blurb: 'Wide streets up on the ridge, with towers around the stations.' },
+  { label: 'Ravine', value: ZONE.grandRavine, blurb: 'A deep green valley running right through the city.' },
 ])
 export const TIMES: readonly Choice<number>[] = Object.freeze([
   { label: 'Morning', value: 9, blurb: 'Fresh light, long shadows.' },
@@ -80,7 +80,7 @@ export function nextStep(step: Step): Step {
 export function answer(a: Answers, step: Step, value: unknown): Answers {
   switch (step) {
     case 'name': return { ...a, name: typeof value === 'string' ? value : '' }
-    case 'place': return { ...a, place: PLACES.some((p) => p.value === value) ? (value as Zone) : ZONE.delMar }
+    case 'place': return { ...a, place: PLACES.some((p) => p.value === value) ? (value as Zone) : ZONE.metropolis }
     case 'time': return { ...a, hour: TIMES.some((t) => t.value === value) ? (value as number) : 17 }
     case 'sound': return { ...a, audio: value === true }
     default: return a
@@ -143,7 +143,7 @@ export function clearOnboarding(store: KeyStore | null = browserStore()): void {
 /** The saved outcome of finished answers. */
 export function outcomeOf(a: Answers): SavedOnboarding {
   const o = optionsFrom(a)
-  return { v: 1, place: REGIONS[a.place ?? ZONE.delMar].slug, hour: o.startHour, audio: o.audio, skipped: false }
+  return { v: 1, place: REGIONS[a.place ?? ZONE.metropolis].slug, hour: o.startHour, audio: o.audio, skipped: false }
 }
 
 /** The saved outcome of the expert path ("I know my way around"): the procedural city, the page's own defaults. */
@@ -163,18 +163,18 @@ export function needsOnboarding(q: URLSearchParams, saved: SavedOnboarding | nul
   return saved === null && profile === null
 }
 
-export type MapChoice = 'california' | 'region' | 'city'
+export type MapChoice = 'lakefront' | 'region' | 'city'
 
 /**
  * Which map the page walks: `?region=on` the embedded surveyed region (and by default in the pilot build, as before);
- * `?map=california` the generated coast, `?map=city` or `?region=off` the procedural city; with nothing in the URL, the
- * coast the visitor chose in the onboarding, else the procedural city.
+ * `?map=lakefront` the generated metropolis, `?map=city` or `?region=off` the procedural city; with nothing in the URL,
+ * the metropolis the visitor chose in the onboarding, else the procedural city.
  */
 export function mapWanted(q: URLSearchParams, saved: SavedOnboarding | null, regionFirst: boolean): MapChoice {
   const region = q.get('region'), map = q.get('map')
   if (region === 'on') return 'region'
-  if (map === 'california' || map === 'coast') return 'california'
+  if (map === 'lakefront' || map === 'metro') return 'lakefront'
   if (map === 'city' || region === 'off') return 'city'
   if (regionFirst) return 'region'
-  return saved && !saved.skipped && saved.place !== null ? 'california' : 'city'
+  return saved && !saved.skipped && saved.place !== null ? 'lakefront' : 'city'
 }

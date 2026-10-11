@@ -119,12 +119,15 @@ class UnionFind {
 export type PushFootprint = (lot: number, x0: number, z0: number, x1: number, z1: number, floors: number) => void
 
 /**
- * A plan another generator hands in (california.ts): where each lot kind goes, and, per lot, what stands on it. Without
- * one the river-and-lake city of this file is generated; the street network is built the same way either way.
+ * A plan another generator hands in (lakefront.ts): where each lot kind goes, which blocks no street may cross, and,
+ * per lot, what stands on it. Without one the river-and-lake city of this file is generated; the street network is
+ * built the same way either way.
  */
 export interface MacroPlan {
   /** The lot kind at block (k, m). */
   lotAt(k: number, m: number): LotKind
+  /** Whether block (k, m) is uncrossable like water (a ravine): no local street over it, arterials bridge it. Absent: water alone. */
+  blocked?(k: number, m: number): boolean
   /** The footprints of lot `lot` (index m · blocks + k) of kind `kind`, drawn with the lot's own rng `r`. Absent: this file's. */
   footprints?(lot: number, kind: LotKind, k: number, m: number, r: () => number, push: PushFootprint): void
 }
@@ -149,7 +152,7 @@ export function defaultFootprints(li: number, kind: LotKind, _k: number, _m: num
 
 /**
  * Generates the macro city for `seed`, `blocks` × `blocks` (default 256). Deterministic. With a `plan` the lots and
- * footprints are its (california.ts); the streets are laid the same way over them.
+ * footprints are its (lakefront.ts); the streets are laid the same way over them.
  */
 export function generateMacroCity(seed: number, blocks: number = MACRO.blocks, plan?: MacroPlan): MacroCity {
   if (!Number.isInteger(blocks) || blocks < 8 || blocks > 1024) throw new RangeError('blocks must be an integer in 8…1024')
@@ -159,7 +162,8 @@ export function generateMacroCity(seed: number, blocks: number = MACRO.blocks, p
   const footprints = plan?.footprints ?? defaultFootprints
   for (let m = 0; m < B; m++) for (let k = 0; k < B; k++) lots[m * B + k] = lotKind(k, m)
   const lot = (k: number, m: number): number => (k < 0 || m < 0 || k >= B || m >= B ? LOT.water : lots[m * B + k])
-  const water = (k: number, m: number) => lot(k, m) === LOT.water
+  const blocked = plan?.blocked
+  const water = (k: number, m: number) => lot(k, m) === LOT.water || (blocked !== undefined && k >= 0 && m >= 0 && k < B && m < B && blocked(k, m))
   const every = Math.min(MACRO.arterialEvery, Math.max(4, B >> 2))
 
   const hStreets = new Uint8Array((B + 1) * B)

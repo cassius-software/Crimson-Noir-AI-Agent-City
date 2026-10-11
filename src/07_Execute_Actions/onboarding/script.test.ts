@@ -11,7 +11,7 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { REGIONS, ZONE } from '../../01_Initialize_World/california.ts'
+import { REGIONS, ZONE } from '../../01_Initialize_World/lakefront.ts'
 import type { Answer, Mind, Piece } from '../operator.ts'
 import {
   NO_ANSWERS, ONBOARDING_KEY, PLACES, SKIPPED, SOUNDS, STEPS, TIMES, answer, choicesFor, lineFor, loadOnboarding, mapWanted, needsOnboarding, nextStep,
@@ -51,15 +51,15 @@ test('answers move the conversation on, and an unknown answer falls to a sane de
   let a = answer(NO_ANSWERS, 'name', 'Julian')
   assert.equal(a.name, 'Julian')
   assert.match(lineFor('place', a, 'Wren'), /Julian/)
-  a = answer(a, 'place', ZONE.starwood)
-  assert.match(lineFor('time', a, 'Wren'), /Big houses/)
-  assert.equal(said('place', a), 'Mansions')
+  a = answer(a, 'place', ZONE.eastBluffs)
+  assert.match(lineFor('time', a, 'Wren'), /cliffs/)
+  assert.equal(said('place', a), 'East')
   a = answer(a, 'time', 22)
   a = answer(a, 'sound', false)
   assert.deepEqual(optionsFrom(a), { startHour: 22, audio: false })
   assert.equal(said('sound', a), 'Off')
   const odd = answer(answer(answer(NO_ANSWERS, 'place', 99), 'time', 'noon'), 'sound', 'maybe')
-  assert.equal(odd.place, ZONE.delMar)
+  assert.equal(odd.place, ZONE.metropolis)
   assert.equal(odd.hour, 17)
   assert.equal(odd.audio, false)
   assert.equal(said('name', NO_ANSWERS), 'I’d rather not say')
@@ -69,9 +69,9 @@ test('answers move the conversation on, and an unknown answer falls to a sane de
 test('the outcome is saved and read back; a corrupt or foreign entry reads as nothing', () => {
   const store = fakeStore()
   assert.equal(loadOnboarding(store), null)
-  const a = answer(answer(answer(answer(NO_ANSWERS, 'name', 'J'), 'place', ZONE.lasVistas), 'time', 9), 'sound', true)
+  const a = answer(answer(answer(answer(NO_ANSWERS, 'name', 'J'), 'place', ZONE.northRidge), 'time', 9), 'sound', true)
   const out = outcomeOf(a)
-  assert.deepEqual(out, { v: 1, place: 'las-vistas', hour: 9, audio: true, skipped: false })
+  assert.deepEqual(out, { v: 1, place: 'north-ridge', hour: 9, audio: true, skipped: false })
   saveOnboarding(out, store)
   assert.deepEqual(loadOnboarding(store), out)
   saveOnboarding(SKIPPED, store)
@@ -97,11 +97,11 @@ test('the onboarding is shown on a first visit only, as the URL says, never in t
 
 test('which map: the URL first, then the visitor\'s saved choice, else the procedural city', () => {
   const q = (s: string) => new URLSearchParams(s)
-  const chosen = { v: 1 as const, place: 'san-cero', hour: 9, audio: true, skipped: false }
+  const chosen = { v: 1 as const, place: 'west-sprawl', hour: 9, audio: true, skipped: false }
   assert.equal(mapWanted(q(''), null, false), 'city')
-  assert.equal(mapWanted(q(''), chosen, false), 'california')
+  assert.equal(mapWanted(q(''), chosen, false), 'lakefront')
   assert.equal(mapWanted(q(''), SKIPPED, false), 'city')
-  assert.equal(mapWanted(q('map=california'), null, false), 'california')
+  assert.equal(mapWanted(q('map=lakefront'), null, false), 'lakefront')
   assert.equal(mapWanted(q('map=city'), chosen, false), 'city')
   assert.equal(mapWanted(q('region=off'), chosen, false), 'city')
   assert.equal(mapWanted(q('region=on'), chosen, false), 'region')
