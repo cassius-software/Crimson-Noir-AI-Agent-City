@@ -1,0 +1,97 @@
+{
+  "format": "lakefront/1",
+  "seed": 1337,
+  "blocks": 256,
+  "pitch": 40,
+  "size": 10240,
+  "fingerprint": "b967943b",
+  "land": {
+    "blocks": 46778,
+    "km2": 74.845
+  },
+  "lake": {
+    "blocks": 18758,
+    "km2": 30.013
+  },
+  "spire": {
+    "name": "The Spire",
+    "k": 128,
+    "m": 174,
+    "floors": 168,
+    "heightMetres": 554.4
+  },
+  "hubs": [
+    {
+      "name": "Transit City",
+      "region": "West Sprawl",
+      "k": 64,
+      "m": 128
+    },
+    {
+      "name": "Cobblewick Station",
+      "region": "West Sprawl",
+      "k": 32,
+      "m": 64
+    },
+    {
+      "name": "Merlinreach Centre",
+      "region": "North Ridge",
+      "k": 128,
+      "m": 32
+    },
+    {
+      "name": "Emberbrook Station",
+      "region": "North Ridge",
+      "k": 192,
+      "m": 48
+    },
+    {
+      "name": "Cricketdown Town Centre",
+      "region": "The East Bluffs",
+      "k": 208,
+      "m": 128
+    }
+  ],
+  "regions": [
+    {
+      "id": 0,
+      "slug": "lakefront-metropolis",
+      "name": "Lakefront Metropolis",
+      "biome": "financial core on the water",
+      "blocks": 3083,
+      "file": "lakefront-metropolis.json"
+    },
+    {
+      "id": 1,
+      "slug": "west-sprawl",
+      "name": "West Sprawl",
+      "biome": "suburban sprawl",
+      "blocks": 14824,
+      "file": "west-sprawl.json"
+    },
+    {
+      "id": 2,
+      "slug": "the-east-bluffs",
+      "name": "The East Bluffs",
+      "biome": "bluffs over the lake",
+      "blocks": 13352,
+      "file": "the-east-bluffs.json"
+    },
+    {
+      "id": 3,
+      "slug": "north-ridge",
+      "name": "North Ridge",
+      "biome": "northern sprawl on a rise",
+      "blocks": 11798,
+      "file": "north-ridge.json"
+    },
+    {
+      "id": 4,
+      "slug": "the-grand-ravine",
+      "name": "The Grand Ravine",
+      "biome": "ravine",
+      "blocks": 3721,
+      "file": "the-grand-ravine.json"
+    }
+  ]
+}
