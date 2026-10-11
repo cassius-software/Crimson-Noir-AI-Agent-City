@@ -78,6 +78,9 @@ Kani (the `kani` part of the proofs) runs on Linux and macOS only: use WSL for t
 
 Open `dist/index.html` directly: no server, and it works offline. It needs WebGPU: a current Chrome, Edge or
 Brave on desktop and Android, or Safari 26 on iPhone, iPad and Mac. `?boot=tty` needs none.
+`npm run dev` and `npm run preview` serve the page cross-origin isolated (the COOP and COEP headers), so the physics
+realm and the page share one memory bridge for every position (docs/zero-copy-bridge.md); the file opened from disk
+uses the same bridge over a private buffer. A server of your own sends the same two headers to get the shared path.
 
 ---
 

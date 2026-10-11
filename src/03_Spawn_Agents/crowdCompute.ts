@@ -15,6 +15,7 @@ import { cityWgsl, CITY_SIZE } from '../01_Initialize_World/city.ts'
 import crowdSource from './crowd.wgsl?raw'
 import { MAX_CARS, type CrowdStepInput } from './crowdSensor.ts'
 import { ACTIVITY, INTERVIEW_DISTANCE, RECRUIT_SLOTS, SUMMON_ACCEPT, TETHER_PACE } from './skills.ts'
+import { FLOW } from '../06_Make_Decisions/flowField.ts'
 
 export { MAX_CARS }
 export const VARIANTS = 4
@@ -167,7 +168,7 @@ export function corridorReach(c: CarState): number {
   return Math.hypot(c.halfLength, half) + Math.min((2 * rhoK) / k, KERNEL.range * rhoK) + 0.01
 }
 
-function header(agentCount: number): string {
+function header(agentCount: number, flow: FlowPlacement): string {
   const f = (n: number) => (Number.isInteger(n) ? `${n}.0` : `${n}`)
   const quota = agentQuota(agentCount)
   return [
@@ -203,17 +204,28 @@ function header(agentCount: number): string {
     `const SUMMON_STOP: f32 = ${f(INTERVIEW_DISTANCE)};`,
     `const SUMMON_ACCEPT: f32 = ${f(SUMMON_ACCEPT)};`,
     `const TETHER_PACE: f32 = ${f(TETHER_PACE)};`,
+    `const FLOW_ORIGIN_X: f32 = ${f(flow.originX)};`,
+    `const FLOW_ORIGIN_Z: f32 = ${f(flow.originZ)};`,
+    `const FLOW_INV_CELL: f32 = ${f(1 / flow.cell)};`,
     ...Object.entries(ACTIVITY).map(([k, v]) => `const ACT_${k.replace(/[A-Z]/g, (c) => `_${c}`).toUpperCase()}: f32 = ${f(v)};`),
     '',
   ].join('\n')
 }
 
-/** The complete WGSL module: shared constants from the CPU, then crowd.wgsl. */
-export function crowdShader(agentCount: number): string {
-  return header(agentCount) + crowdSource
+/** Where the flow field's grid lies (06_Make_Decisions/flowField.ts FlowGrid): its origin and cell, baked into the shader. */
+export interface FlowPlacement { originX: number; originZ: number; cell: number }
+/** The placement with no field: the city's origin and cell (the page's cull never samples the field). */
+export const NO_FLOW: FlowPlacement = Object.freeze({ originX: 0, originZ: 0, cell: FLOW.cell })
+
+/** The complete WGSL module: shared constants from the CPU (the flow grid's placement among them), then crowd.wgsl. */
+export function crowdShader(agentCount: number, flow: FlowPlacement = NO_FLOW): string {
+  return header(agentCount, flow) + crowdSource
 }
 
 export type PassName = 'clearGrid' | 'binAgents' | 'spawn' | 'simulate' | 'cull'
+
+/** The flow field texture's binding (crowd.wgsl flowField, a texture_2d: the one binding that is not a buffer). */
+export const FLOW_BINDING = 14
 
 /**
  * Bindings each entry point statically uses; `layout: 'auto'` gives each pipeline exactly these, so
@@ -223,7 +235,7 @@ export const PASS_BINDINGS: Readonly<Record<PassName, readonly number[]>> = {
   clearGrid: [5],
   binAgents: [0, 1, 2, 5, 6],
   spawn: [0, 1, 2, 3, 4],
-  simulate: [0, 1, 2, 3, 4, 7, 8, 9, 12],
+  simulate: [0, 1, 2, 3, 4, 7, 8, 9, 12, FLOW_BINDING],
   cull: [0, 1, 10, 11, 13],
 }
 /** The passes the physics worker runs (simulation and First-Law sensing), and the one the page runs (drawing). */

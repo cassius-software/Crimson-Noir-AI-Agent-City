@@ -431,6 +431,7 @@ function mindLines(m: MindStatus): Line[] {
   if (m.api !== undefined) lines.push(out(row('api', m.api === 'chat' ? 'chat: /v1/chat/completions (ask api generate for /api/generate)' : `${m.api}: /api/generate (ask api chat for /v1/chat/completions)`)))
   if (m.think !== undefined) lines.push(out(row('think', m.api === 'chat' ? 'not sent in the chat format: the server decides' : m.think ? 'on: it reasons before it answers' : 'off: it answers without reasoning first (ask think on)')))
   if (m.cache !== undefined) lines.push(out(row('cache', m.cache)))
+  if (m.fallback !== undefined) lines.push(out(row('fallback', m.fallback)))
   if (m.installed === null) return [...lines, err(`ask: ${m.error ?? (network ? 'the gateway to the Claude API did not answer' : 'the local model server did not answer')}`)]
   if (!m.installed.length) return [...lines, out(row('installed', 'no models'))]
   lines.push(...m.installed.map((name, i) => out(row(i === 0 ? 'installed' : '', name === m.model ? `${name}  (chosen)` : name))))

@@ -397,9 +397,17 @@ export interface StepState {
   blind: boolean
 }
 
+/**
+ * The page's zero-copy bridge (07_Execute_Actions/sharedBridge.ts), sent once after `ready`: a SharedArrayBuffer of
+ * exactly the layout the worker's meta implies (bridgeBytes of count, players, agents), which the realm fills after
+ * every step with every vehicle's, avatar's and pedestrian's x, y, z and state. Anything else is refused and counted.
+ * Only on a cross-origin isolated page: elsewhere the page keeps a plain buffer of its own and fills it itself.
+ */
+export interface SimBridge { t: 'bridge'; buffer: SharedArrayBuffer }
+
 export interface SimReady { t: 'ready'; meta: SimMeta }
 export interface SimPanic { t: 'panic'; reason: string }
 export interface SimFailure { t: 'error'; message: string }
 
-export type ToWorker = SimInit | StepRequest
+export type ToWorker = SimInit | SimBridge | StepRequest
 export type FromWorker = SimReady | StepState | SimPanic | SimFailure

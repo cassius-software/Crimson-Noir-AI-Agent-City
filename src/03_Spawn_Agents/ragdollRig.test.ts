@@ -66,7 +66,9 @@ test('a rig starts where and as the crowd had the person: position, heading, vel
     const v = b.linvel()
     assert.deepEqual([v.x, v.y, v.z].map((n) => Math.round(n * 1e6) / 1e6), [1.3, 0, -0.4])
   }
-  assert.equal(rig.bodies.torso.collider(0).collisionGroups(), (RAGDOLL_GROUP << 16) | (0xffff & ~RAGDOLL_GROUP))
+  // Out of the vehicle layer (collision.ts RAGDOLL_GROUPS): membership the ragdoll bit, filtering out itself, the chassis bit and the wheel-ray bit.
+  assert.equal(rig.bodies.torso.collider(0).collisionGroups(), (RAGDOLL_GROUP << 16) | (0xffff & ~(RAGDOLL_GROUP | 0x0002 | 0x0001)))
+  assert.equal(rig.bodies.lowerLegL.collider(1).collisionGroups(), rig.bodies.torso.collider(0).collisionGroups(), 'the foot too')
   assert.equal(rig.groundY, 0.15)
 })
 
