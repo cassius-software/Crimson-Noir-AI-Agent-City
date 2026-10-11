@@ -39,7 +39,7 @@ const LAWS = [
 ] as const
 
 const CORE_NAMES = [
-  'help', 'stats', 'laws', 'kernel', 'quality', 'time', 'audio', 'ghost', 'render', 'captions', 'ping', 'look', 'hal', 'recruit', 'memory', 'clear', 'history', 'echo',
+  'help', 'stats', 'laws', 'kernel', 'quality', 'time', 'audio', 'ghost', 'rain', 'render', 'captions', 'ping', 'look', 'hal', 'recruit', 'memory', 'clear', 'history', 'echo',
   'uname', 'whoami', 'version', 'boot', 'r0', 'exit',
 ]
 const OPERATOR_NAMES = ['operator', 'run', 'ask', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
@@ -383,6 +383,7 @@ function fake(): Fake {
     },
     audio: (arg) => { f.calls.push(`audio ${arg}`); return `audio status ${arg ?? '-'}` },
     ghost: (arg) => { f.calls.push(`ghost ${arg}`); return arg ?? 'off' },
+    rain: (arg) => { f.calls.push(`rain ${arg}`); return arg ?? 'off' },
     render: (arg) => { f.calls.push(`render ${arg}`); return arg ?? 'on' },
     captions: (arg) => { f.calls.push(`captions ${arg}`); return `captions: ${arg ?? 'on'}` },
     ping: undefined as unknown as FakePing,
@@ -788,7 +789,7 @@ test('air gap: while locked, across every command and completion, the only knobs
     'recruit rally 7', 'recruit rally 7 1 2', 'look show 7', 'look top 2', 'look code ABCD-EFGH', 'net join ws://127.0.0.1:8787 tok']
   for (const l of sweep) void run(l, b, ['help'])
   const touched = new Set(b.calls.map((c) => c.split(' ')[0]))
-  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'ghost', 'look', 'memory', 'net', 'pair', 'ping', 'quality', 'recruit', 'render', 'setClock', 'stats'])
+  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'ghost', 'look', 'memory', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'setClock', 'stats'])
   // The swarm's memory is only ever read while locked: nobody's ledger is erased.
   const reads = new Set(b.calls.filter((c) => c.startsWith('memory ')).map((c) => c.split(' ')[1]))
   assert.deepEqual([...reads].sort(), ['status'])
@@ -1498,6 +1499,21 @@ test('ghost: status, on and off through the bridge\'s one view-only knob; anythi
   }
   assert.equal(b.calls.length, 3, 'a refused line touches nothing')
   assert.deepEqual(complete('ghost '), ['ghost off', 'ghost on'])
+})
+
+test('rain: status, on and off through the bridge\'s one knob (the mode reaches the physics realm through the engine); anything else is refused', () => {
+  const b = fake()
+  assert.deepEqual(texts(run('rain', b, [])), ['rain off'])
+  assert.deepEqual(texts(run('rain on', b, [])), ['rain on'])
+  assert.deepEqual(texts(run('rain off', b, [])), ['rain off'])
+  assert.deepEqual(b.calls, ['rain undefined', 'rain on', 'rain off'])
+  for (const l of ['rain maybe', 'rain on now']) {
+    const r = run(l, b, [])
+    assert.ok(isErr(r), l)
+    assert.match(texts(r).join('\n'), /usage: rain \[on\|off\]/)
+  }
+  assert.equal(b.calls.length, 3, 'a refused line touches nothing')
+  assert.deepEqual(complete('rain '), ['rain off', 'rain on'])
 })
 
 test('render and captions: status, on and off through their one view-only knob each; anything else is refused before the bridge', () => {

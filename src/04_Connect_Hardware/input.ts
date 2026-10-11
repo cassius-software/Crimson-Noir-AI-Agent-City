@@ -18,7 +18,7 @@ import type { GamepadLike } from './web-hardware.d.ts'
 
 export type { Analog, PadFamily } from './gamepad.ts'
 
-export type Action = 'interact' | 'reset' | 'timeForward' | 'timeBack' | 'ghost' | 'ping'
+export type Action = 'interact' | 'reset' | 'timeForward' | 'timeBack' | 'ghost' | 'matrix' | 'ping'
 
 /** Hold-type touch buttons. `run` is a toggle on the touch layout, but the state lives here. */
 export type TouchButton = 'brake' | 'handbrake' | 'run'
@@ -34,6 +34,8 @@ const ACTION_KEYS: Record<string, Action> = {
   BracketRight: 'timeForward',
   BracketLeft: 'timeBack',
   KeyG: 'ghost',
+  /** Matrix mode (01_Initialize_World/matrixMode.ts): falling code on every surface, people and cars passing through each other. */
+  KeyM: 'matrix',
   /** A ping where the head looks (08_Swarm/ping.ts); also the middle mouse button and a pad's right shoulder. */
   KeyQ: 'ping',
 }

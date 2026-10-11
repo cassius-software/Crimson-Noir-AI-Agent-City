@@ -155,6 +155,8 @@ export class SimCore {
   /** This realm's own clock (the sum of accepted dt): harness time limits never trust the page's clock. */
   #simTime = 0
   #blindUntil = -1
+  /** Matrix mode (the `matrix` command): the crowd's physics mask keeps the static world alone. */
+  #matrixMode = false
   #panic: string | null = null
   #sanctuaryOn = true
   readonly #hazardOverride = new Map<number, number>()
@@ -716,6 +718,10 @@ export class SimCore {
         fleet.setTuning(cmd.key, finite(cmd.value, NaN))
         return
       }
+      case 'matrix': {
+        this.#matrixMode = cmd.on === true
+        return
+      }
       case 'blind': {
         // Blinding person sensing weakens the kernel on purpose (a harness proving the Sanctuary alone): only a
         // ?debug worker grants it, never a production one, whoever asks. Turning it off is always allowed.
@@ -1032,6 +1038,7 @@ export class SimCore {
       player: { x: a.x, z: a.z, heading: this.#bodyHeading[0], speed: this.#driving[0] ? 0 : a.speed, visible: this.#driving[0] === null },
       cars: this.#fleet.crowdStates(),
       summons: this.#summons,
+      matrixMode: this.#matrixMode,
     })
   }
 

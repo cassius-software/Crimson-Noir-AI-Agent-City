@@ -17,13 +17,14 @@
 import {
   BoxGeometry, BufferGeometry, CapsuleGeometry, Color, CylinderGeometry, Float32BufferAttribute,
   IndirectStorageBufferAttribute, InstancedMesh, LatheGeometry, MeshStandardNodeMaterial, SphereGeometry,
-  StorageBufferAttribute, Vector2, type Node, type NodeBuilder, type UniformNode,
+  StorageBufferAttribute, Vector2, type Node, type NodeBuilder, type UniformNode, type Vector4,
 } from 'three/webgpu'
 import {
   Fn, attribute, cameraPosition, float, hash, instanceIndex, mix, normalLocal, positionLocal, positionPrevious, select, step,
   storage, time, uint, uniform, uniformArray, varyingProperty, vec3, vec4, wgslFn,
 } from 'three/tsl'
 import { CODE_DISSOLVE, applyCodeDissolve } from '../01_Initialize_World/codeDissolve.ts'
+import { applyMatrixMode } from '../01_Initialize_World/matrixMode.ts'
 import { PLAYER_INDEX, VARIANTS, agentQuota } from './crowdCompute.ts'
 import { LOOK_FIELD, LOOK_SCALE, WARDROBE, type LookSlot, type PaletteName } from './look.ts'
 
@@ -300,7 +301,11 @@ export class CrowdView {
    */
   readonly frameSeconds: UniformNode<'float', number> = uniform(0)
 
-  constructor(agentCount: number) {
+  /** The page's global-state uniform (01_Initialize_World/matrixMode.ts); null, the bodies have no matrix mode. */
+  private readonly matrixMode: UniformNode<'vec4', Vector4> | null
+
+  constructor(agentCount: number, matrixMode: UniformNode<'vec4', Vector4> | null = null) {
+    this.matrixMode = matrixMode
     const quota = agentQuota(agentCount)
     this.pos = new StorageBufferAttribute(new Float32Array(agentCount * 4), 4)
     this.vel = new StorageBufferAttribute(new Float32Array(agentCount * 4), 4)
@@ -472,6 +477,8 @@ export class CrowdView {
     m.colorNode = color
     m.roughnessNode = roughness
     m.metalnessNode = float(0)
+    // Matrix mode (matrixMode.ts), over the body's own colour; the dissolve below reads the dimmed colour as its base.
+    if (this.matrixMode) applyMatrixMode(m, this.matrixMode)
     // The code dissolve, over everything above, with the body's feet as its origin (fresh reads: nothing of posed()'s
     // graph is shared across the fold's branches).
     const feet = b.pos.element(b.lists.element(instanceIndex.add(uint(listBase)))).xyz

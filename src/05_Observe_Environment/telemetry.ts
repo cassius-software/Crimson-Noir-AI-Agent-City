@@ -202,6 +202,8 @@ export interface SipocSnapshot {
     camera?: CameraStats
     /** Ghost view is on: the physics shapes drawn as code over the frame (view-only). */
     ghost?: boolean
+    /** Matrix mode on (01_Initialize_World/matrixMode.ts). */
+    matrix?: boolean
     /**
      * Whether the city is drawn (engine.setRendering, the console's render knob). False is Track B's override: the
      * canvas is black while physics, audio and the console keep running.

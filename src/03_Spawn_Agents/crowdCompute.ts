@@ -15,6 +15,7 @@ import { cityWgsl, CITY_SIZE } from '../01_Initialize_World/city.ts'
 import crowdSource from './crowd.wgsl?raw'
 import { MAX_CARS, type CrowdStepInput } from './crowdSensor.ts'
 import { ACTIVITY, INTERVIEW_DISTANCE, RECRUIT_SLOTS, SUMMON_ACCEPT, TETHER_PACE } from './skills.ts'
+import { PHYSICS_LAYER, packGlobalState, type GlobalState } from '../01_Initialize_World/globalState.ts'
 
 export { MAX_CARS }
 export const VARIANTS = 4
@@ -28,8 +29,9 @@ const GRID_DIM = Math.ceil((CITY_SIZE - GRID_ORIGIN * 2) / GRID_CELL)
 export const GRID_CELLS = GRID_DIM * GRID_DIM
 export const GRID_CAP = 8
 
-// Byte layout of struct Params (crowd.wgsl).
-const PARAMS_PLANES = 80
+// Byte layout of struct Params (crowd.wgsl): the global word (globalState.ts GlobalState) sits at 80, the planes after it.
+const PARAMS_GLOBAL = 80
+const PARAMS_PLANES = PARAMS_GLOBAL + 16
 const PARAMS_CARS = PARAMS_PLANES + 6 * 16
 /** struct Summon { at: vec2f, agent: u32, flags: u32 } × RECRUIT_SLOTS, after the cars; agent 0 is an empty slot. */
 const PARAMS_SUMMONS = PARAMS_CARS + MAX_CARS * 32
@@ -93,6 +95,8 @@ export interface CullInput {
   camera: { x: number; y: number; z: number }
   /** Six frustum planes as [nx, ny, nz, constant]; inside when n·p + c ≥ 0. */
   planes: Float32Array
+  /** Matrix mode's global state (globalState.ts), packed into Params.global like the simulation's; absent: all zero. */
+  global?: GlobalState
 }
 
 /** A plane as a camera frustum gives it (three's Plane, or anything shaped like it). */
@@ -199,6 +203,8 @@ function header(agentCount: number): string {
     `const KERNEL_RANGE: f32 = ${f(KERNEL.range)};`,
     `const CAR_AXLE: f32 = ${f(WHEELBASE / 2)};`,
     `const FLAG_NON_FINITE: u32 = ${FLAG_NON_FINITE}u;`,
+    `const PHYSICS_BODY: u32 = ${PHYSICS_LAYER.body}u;`,
+    `const PHYSICS_VEHICLE: u32 = ${PHYSICS_LAYER.vehicle}u;`,
     `const SUMMON_SLOTS: u32 = ${RECRUIT_SLOTS}u;`,
     `const SUMMON_STOP: f32 = ${f(INTERVIEW_DISTANCE)};`,
     `const SUMMON_ACCEPT: f32 = ${f(SUMMON_ACCEPT)};`,
@@ -273,6 +279,9 @@ function packCrowdParams(f: Float32Array, u: Uint32Array, frame: number, agentCo
   f[5] = input.time
   f[8] = input.player.x; f[9] = input.player.z; f[10] = input.player.heading; f[11] = input.player.speed
   f[12] = input.player.visible ? 1 : 0
+  // The global word: the step's own clock and the mode; the floating origin is the page's and the simulation never
+  // reads it (its positions stay absolute: the fingerprinted run is the same whoever looks at it).
+  packGlobalState(f, PARAMS_GLOBAL / 4, { time: input.time, on: input.matrixMode === true, originX: 0, originZ: 0 })
   for (let j = 0; j < cars; j++) {
     const c = input.cars[j]
     const o = PARAMS_CARS / 4 + j * 8
@@ -293,6 +302,7 @@ export function packCullParams(f: Float32Array, u: Uint32Array, frame: number, a
   f[7] = cull.nearRadius
   f[13] = cull.density; f[14] = cull.maxDistance
   f[16] = input.camera.x; f[17] = input.camera.y; f[18] = input.camera.z
+  packGlobalState(f, PARAMS_GLOBAL / 4, input.global)
   f.set(input.planes.subarray(0, 24), PARAMS_PLANES / 4)
 }
 

@@ -10,10 +10,11 @@
  */
 import {
   CylinderGeometry, DoubleSide, ExtrudeGeometry, InstancedBufferAttribute, InstancedMesh, Matrix4, MeshStandardNodeMaterial,
-  Quaternion, Shape, Vector3, type UniformNode,
+  Quaternion, Shape, Vector3, type UniformNode, type Vector4,
 } from 'three/webgpu'
 import { abs, attribute, float, frontFacing, length, normalGeometry, positionGeometry, positionLocal, select, vec2, vec3 } from 'three/tsl'
 import { applyCodeDissolve } from '../01_Initialize_World/codeDissolve.ts'
+import { applyMatrixMode } from '../01_Initialize_World/matrixMode.ts'
 import { CAR, RIDE_HEIGHT, WHEELS } from './car.ts'
 import { DISSOLVE_COLOR } from './dissolve.ts'
 import { POSE } from './simProtocol.ts'
@@ -57,8 +58,11 @@ export class FleetView {
   private readonly up = new Vector3(0, 1, 0)
   private readonly axle = new Vector3(0, 0, 1)
 
-  /** `paint`: body colour per vehicle, 0xRRGGBB (sRGB); `night`: 0 by day, 1 at night (lamp glow). */
-  constructor(suv: readonly boolean[], paint: readonly number[], night: UniformNode<'float', number>) {
+  /**
+   * `paint`: body colour per vehicle, 0xRRGGBB (sRGB); `night`: 0 by day, 1 at night (lamp glow); `matrixMode`: the
+   * page's global-state uniform (01_Initialize_World/matrixMode.ts), or null for a fleet without matrix mode.
+   */
+  constructor(suv: readonly boolean[], paint: readonly number[], night: UniformNode<'float', number>, matrixMode: UniformNode<'vec4', Vector4> | null = null) {
     const count = suv.length
     this.count = count
     this.suv = suv
@@ -103,6 +107,8 @@ export class FleetView {
     const origin = positionLocal.mul(0)
     this.dissolve = { bodies: new InstancedBufferAttribute(new Float32Array(slots), 1), wheels: new InstancedBufferAttribute(new Float32Array(slots * 4), 1) }
     bodyGeo.setAttribute('dissolve', this.dissolve.bodies)
+    // Matrix mode (matrixMode.ts) over the shell's own colour, under the dissolve.
+    if (matrixMode) applyMatrixMode(mat, matrixMode)
     applyCodeDissolve(mat, amount, origin, DISSOLVE_COLOR.cars)
     this.bodies = new InstancedMesh(bodyGeo, mat, slots)
     this.bodies.count = count
@@ -116,6 +122,7 @@ export class FleetView {
     wheelMat.metalnessNode = select(rim, float(0.9), float(0))
     wheelMat.roughnessNode = select(rim, float(0.3), float(0.85))
     wheelGeo.setAttribute('dissolve', this.dissolve.wheels)
+    if (matrixMode) applyMatrixMode(wheelMat, matrixMode)
     applyCodeDissolve(wheelMat, amount, origin, DISSOLVE_COLOR.cars)
     this.wheels = new InstancedMesh(wheelGeo, wheelMat, slots * 4)
     this.wheels.count = count * 4

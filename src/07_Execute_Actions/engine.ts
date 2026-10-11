@@ -370,6 +370,8 @@ export class Engine {
   private readonly crowdFrameSeconds: UniformNode<'float', number>
   /** Ghost view: the physics shapes as code over the finished frame (G, or the console's ghost). */
   private readonly ghost: GhostView
+  /** Matrix mode (01_Initialize_World/matrixMode.ts): on or off as last asked (M, or the console's matrix). */
+  private matrixOn = false
   /** When the last frame was drawn, ms (the ghost view's fade runs on drawn frames). */
   private lastDrawnMs = Number.NaN
   /** The region being walked (?region), its places (street names, the minimap), or null in the procedural city. */
@@ -663,13 +665,13 @@ export class Engine {
     const applied = mask(first)
     applyQuality(applied, targets)
 
-    const view0 = new CrowdView(options.agents)
+    const view0 = new CrowdView(options.agents, world.matrixMode.globalState)
     const sim = await simBoot
     if (sim.meta.agents !== options.agents) throw new Error(`the physics worker simulates ${sim.meta.agents} pedestrians, the page draws ${options.agents}`)
-    const view = new FleetView(sim.meta.suv, sim.meta.paint, world.night)
+    const view = new FleetView(sim.meta.suv, sim.meta.paint, world.night, world.matrixMode.globalState)
     view.sync(sim.state.poses)
     // The rigs of the promoted pedestrians (the realm's rig stream; none with the ragdoll off or in a region).
-    const rigView = new RigView(sim.meta.rigSlots)
+    const rigView = new RigView(sim.meta.rigSlots, world.matrixMode.globalState)
     rigView.sync(sim.state.rigs)
     world.scene.add(...view0.meshes, view.bodies, view.wheels, ...rigView.meshes)
     // The network ghosts (netView.ts): two hidden instanced meshes until a session's poses arrive, compiled with the rest.
@@ -824,6 +826,19 @@ export class Engine {
     if (on && this.views.length > 1) return 'needs the post-processing chain, which is off while the screen is split'
     if (on && !this.options.post) return 'needs the post-processing chain, which ?post=0 turned off'
     return on ? 'on: every physics shape as code (G to hide)' : 'off'
+  }
+
+  /**
+   * Matrix mode on or off (01_Initialize_World/matrixMode.ts): falling code on every surface, drawn in world space by
+   * the surfaces' own materials (the sky untouched), and in the physics realm the pedestrians' mask reduced to the
+   * static world, so people and cars pass through each other while the ground still holds them. The page's uniform
+   * and the realm's crowd take the same global state (the uniform is set every frame; the realm is told now).
+   * Returns the status line the toast and the console print.
+   */
+  setMatrix(on: boolean): string {
+    this.matrixOn = on
+    this.sim.send({ c: 'matrix', on })
+    return on ? 'on: falling code on every surface; people and cars pass through each other (M to leave)' : 'off'
   }
 
   /**
@@ -1337,6 +1352,7 @@ export class Engine {
     if (input.take('timeForward')) { this.hours = (this.hours + 1) % 24; this.toast('Clock', formatClock(this.hours)) }
     if (input.take('timeBack')) { this.hours = (this.hours + 23) % 24; this.toast('Clock', formatClock(this.hours)) }
     if (input.take('ghost')) this.toast('Ghost view', this.setGhost(!this.ghost.on))
+    if (input.take('matrix')) this.toast('Matrix mode', this.setMatrix(!this.matrixOn))
     if (input.take('reset') && driving >= 0) sim.send({ c: 'reset' })
 
     // Controls for the physics realm (controls.ts readControls, the same maths for every seat); it applies the set that
@@ -1447,8 +1463,11 @@ export class Engine {
       this.view.sync(st.poses)
       this.fresh = false
     }
+    // Matrix mode's global state for this frame: the realm's clock (the one its crowd packs), the mode, and the
+    // floating origin anchored to this camera. Every surface's uniform and the cull's Params take it from here.
+    this.world.matrixMode.set(st.simTime, this.matrixOn, cam.position.x, cam.position.z)
     // Who is drawn for this camera, over the newest pedestrian frame from the worker.
-    this.crowd.step({ camera: { x: cam.position.x, y: cam.position.y, z: cam.position.z }, planes: this.planes })
+    this.crowd.step({ camera: { x: cam.position.x, y: cam.position.y, z: cam.position.z }, planes: this.planes, global: this.world.matrixMode.state })
     // The signal lights run on the worker's clock: the same one its cars and its pedestrians obey.
     this.sun = this.world.update(this.hours, st.simTime, focusX, focusZ)
     // Sun shafts: the camera matrices are final (head rig) and the sun colour is this frame's.
@@ -1495,7 +1514,7 @@ export class Engine {
     v.frustum.setFromProjectionMatrix(v.projScreen)
     packFrustumPlanes(v.frustum.planes, v.planes)
     v.eye.x = cam.position.x; v.eye.y = cam.position.y; v.eye.z = cam.position.z
-    this.crowd.step({ camera: v.eye, planes: v.planes })
+    this.crowd.step({ camera: v.eye, planes: v.planes, global: this.world.matrixMode.state })
     this.world.follow(cam)
     this.frameView(v)
     this.gpu.renderer.render(this.world.scene, cam)
@@ -1826,6 +1845,7 @@ export class Engine {
         gpuRenderMs: this.gpuRenderMs, gpuComputeMs: this.crowd.gpuMs, physicsMs: st.physics.workerMs, rapierMs: st.physics.stepMs,
         postMs: this.postMs,
         ghost: this.ghost.on,
+        matrix: this.matrixOn,
         rendering: this.rendering,
         contact: { wipe: this.contactPulse.value, kind: this.contactPulse.kind, count: this.contactPulse.count },
         dissolve: { active: this.dissolve.active, count: this.dissolve.count },
@@ -1900,6 +1920,7 @@ export class Engine {
       hal: Object.freeze({ summary: () => hal.summary(), devices: () => hal.devices(), pair: (k: 'hid' | 'serial' | 'bluetooth') => hal.pair(k) }),
       adapter: () => this.adapter,
       ghost: (arg?: 'on' | 'off') => (arg === undefined ? (this.ghost.on ? 'on' : 'off') : this.setGhost(arg === 'on')),
+      rain: (arg?: 'on' | 'off') => (arg === undefined ? (this.matrixOn ? 'on' : 'off') : this.setMatrix(arg === 'on')),
       render: (arg?: 'on' | 'off') => (arg === undefined ? (this.rendering ? 'on' : 'off') : this.setRendering(arg === 'on')),
       captions: (arg?: 'on' | 'off') => (arg === undefined ? (this.captionsOn ? 'captions: on' : 'captions: off') : this.setCaptions(arg === 'on')),
       // Pings are view-only marks (a walk ping is offered to the host's recruiter through onRally, never sent anywhere).

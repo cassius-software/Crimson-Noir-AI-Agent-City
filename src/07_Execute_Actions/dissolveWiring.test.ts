@@ -21,10 +21,8 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { InstancedBufferAttribute, type InstancedMesh, type MeshStandardNodeMaterial } from 'three/webgpu'
 import { uniform } from 'three/tsl'
-import { PROP_DISSOLVE_INK } from '../01_Initialize_World/world.ts'
 import { chassisBox } from './car.ts'
 import { DISSOLVE, DISSOLVE_COLOR, DissolveBuffer, DissolveSet, carsOverlapping, copyDirty } from './dissolve.ts'
-import { FleetView } from './fleetView.ts'
 import { POSE } from './simProtocol.ts'
 
 // Vite's `?raw` import, for Node (crowdCompute.test.ts's hook): crowd.ts imports the crowd's WGSL that way.
@@ -36,6 +34,8 @@ registerHooks({
   },
 })
 const { CrowdView, PEOPLE_DISSOLVE_INK } = await import('../03_Spawn_Agents/crowd.ts')
+const { PROP_DISSOLVE_INK } = await import('../01_Initialize_World/world.ts')
+const { FleetView } = await import('./fleetView.ts')
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8')
 const between = (src: string, from: string, to: string): string => {

@@ -66,6 +66,7 @@ const CORE = [
   { name: 'time', usage: 'time [HH[:MM]]', summary: 'show or set the city clock' },
   { name: 'audio', usage: 'audio [on|off|0-100]', summary: 'show or set the soundscape' },
   { name: 'ghost', usage: 'ghost [on|off]', summary: 'ghost view: the physics shapes as code over the frame (view-only; G)' },
+  { name: 'rain', usage: 'rain [on|off]', summary: 'falling code on every surface, in world space; people and cars pass through each other (M)' },
   { name: 'render', usage: 'render [on|off]', summary: 'draw the city, or stop drawing it (physics, audio and this console keep running)' },
   { name: 'captions', usage: 'captions [on|off]', summary: 'closed captions for every sound: engines, signals, speech, pings (view-only)' },
   { name: 'ping', usage: 'ping [go|look|gather|wait|clear]', summary: 'mark where you look for your swarm (view-only; shown on the minimap and captioned; Q); alone, the marks standing' },
@@ -141,6 +142,7 @@ const ARGS: Record<string, readonly string[]> = {
   quality: ['0', '1', '2', '3', '4', 'auto'],
   audio: ['off', 'on'],
   ghost: ['off', 'on'],
+  rain: ['off', 'on'],
   render: ['off', 'on'],
   captions: ['off', 'on'],
   ping: ['clear', ...PING_KINDS],
@@ -504,7 +506,7 @@ type Handler = (args: string[], b: TerminalBridge, history: readonly string[], l
 const bare = (name: Name, fn: (b: TerminalBridge, history: readonly string[], line: string) => CommandResult): Handler =>
   (args, b, history, line) => (args.length ? fail(`${name}: unexpected argument '${args[0]}'`, usage(name)) : fn(b, history, line))
 
-/** A one-knob on|off command (ghost, render, captions): the status alone, or the knob set; anything else is refused before the bridge. */
+/** A one-knob on|off command (ghost, rain, render, captions): the status alone, or the knob set; anything else is refused before the bridge. */
 const knob = (name: Name, fn: (b: TerminalBridge, arg: 'on' | 'off' | undefined) => string): Handler => (args, b) => {
   if (args.length > 1) return fail(usage(name))
   if (args.length && args[0] !== 'on' && args[0] !== 'off') return fail(`${name}: invalid argument '${args[0]}'`, usage(name))
@@ -595,6 +597,8 @@ const HANDLERS: Record<Name, Handler> = {
   },
 
   ghost: knob('ghost', (b, arg) => `ghost view ${b.ghost(arg)}`),
+
+  rain: knob('rain', (b, arg) => `rain ${b.rain(arg)}`),
 
   render: knob('render', (b, arg) => `render ${b.render(arg)}`),
 

@@ -28,6 +28,7 @@ import { regionMeshes, type RegionLayout, type RegionScene } from './region/regi
 import type { RegionPack } from './region/pack.ts'
 import { SIGNAL } from '../02_Define_The_Rules/civic.ts'
 import { applyCodeDissolve } from './codeDissolve.ts'
+import { applyMatrixMode, createMatrixMode, type MatrixMode } from './matrixMode.ts'
 
 export class WebGPUUnavailableError extends Error {}
 
@@ -112,6 +113,12 @@ export interface World {
   night: UniformNode<'float', number>
   /** Seconds on the shared signal clock (drivers and pedestrians read the same value). */
   signalClock: UniformNode<'float', number>
+  /**
+   * Matrix mode (matrixMode.ts): the global-state uniform every surface here reads (the buildings, the streets, the
+   * lake, the props, a region's meshes), which the fleet, the rigs and the crowd take too; the engine sets it once a
+   * frame and tells the physics realm the mode. The sky never takes it: it is drawn as ever, in every mode.
+   */
+  matrixMode: MatrixMode
   /** Sun by day, moon by night: the one shadow-casting light (quality.ts tunes its shadow map). */
   sun: DirectionalLight
   /** Procedural texture resolution, texels per edge: the largest resident size not above `size` (FBM_SIZES).
@@ -190,7 +197,7 @@ function instanced(geo: BufferGeometry, mat: MeshStandardNodeMaterial, matrices:
 /** A fresh, all-solid dissolve attribute for `instances` slots. */
 const dissolveAttribute = (instances: number): InstancedBufferAttribute => new InstancedBufferAttribute(new Float32Array(instances), 1)
 
-function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', number>, signalClock: UniformNode<'float', number>): { meshes: InstancedMesh[]; dissolve: PropDissolve } {
+function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', number>, signalClock: UniformNode<'float', number>, matrixMode: MatrixMode): { meshes: InstancedMesh[]; dissolve: PropDissolve } {
   const part = attribute('part', 'float')
   // The code dissolve: a per-instance amount, read by the helper in every stage; the origin is the instance's own
   // (positionLocal × 0, which the instance matrix maps to where the pole stands), so a gone prop folds to its foot.
@@ -210,6 +217,7 @@ function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', 
   lampMat.roughnessNode = float(0.45)
   lampMat.emissiveNode = vec3(1.0, 0.82, 0.55).mul(step(0.5, part).mul(night).mul(6))
   lampGeo.setAttribute('dissolve', dissolve.lamps)
+  applyMatrixMode(lampMat, matrixMode.globalState)
   applyCodeDissolve(lampMat, amount, origin, PROP_DISSOLVE_INK)
 
   // Street trees: trunk (part 0) and a three-lobed canopy (part 1) that sways in the wind.
@@ -232,6 +240,7 @@ function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', 
     return positionLocal.add(swayed)
   })()
   treeGeo.setAttribute('dissolve', dissolve.trees)
+  applyMatrixMode(treeMat, matrixMode.globalState)
   applyCodeDissolve(treeMat, amount, origin, PROP_DISSOLVE_INK)
 
   // Traffic signals: pole, head (part 1), and red / amber / green lenses (parts 2, 3, 4) facing local +z.
@@ -261,6 +270,7 @@ function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', 
   signalMat.metalnessNode = float(0.4)
   signalMat.emissiveNode = lens(2, red, [1.0, 0.08, 0.04]).add(lens(3, amber, [1.0, 0.55, 0.05])).add(lens(4, green, [0.1, 1.0, 0.45]))
   signalGeo.setAttribute('dissolve', dissolve.signals)
+  applyMatrixMode(signalMat, matrixMode.globalState)
   applyCodeDissolve(signalMat, amount, origin, PROP_DISSOLVE_INK)
 
   const meshes = [
@@ -283,6 +293,8 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   const furniture: Furniture = region ? { lamps: [], trees: [], signals: [] } : streetFurniture(seed)
   const night = uniform(0)
   const signalClock = uniform(0)
+  // Matrix mode's one uniform: every surface below takes it; the sky (next) does not.
+  const matrixMode = createMatrixMode()
 
   const skyParams = { turbidity: 3.2, rayleigh: 1.6, mieCoefficient: 0.004, mieDirectionalG: 0.78, cloudCoverage: 0.32 }
   const makeSky = () => {
@@ -329,7 +341,7 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   // Each box's finish (city.ts STYLE), per instance: it moves with its matrix when the instances are re-sorted.
   const styles = new InstancedBufferAttribute(new Float32Array(boxes.length), 1)
   unit.setAttribute('style', styles)
-  const buildings = new InstancedMesh(unit, buildingMaterial(fbm, night), boxes.length)
+  const buildings = new InstancedMesh(unit, applyMatrixMode(buildingMaterial(fbm, night), matrixMode.globalState), boxes.length)
   const matrices = boxes.map(([x0, y0, z0, x1, y1, z1]) => {
     const o = new Object3D()
     o.position.set((x0 + x1) / 2, y0, (z0 + z1) / 2)
@@ -361,27 +373,27 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   buildings.receiveShadow = true
   buildings.name = 'Buildings'
   if (!region) scene.add(buildings)
-  const regionScene = region ? regionMeshes(region.pack, region.layout, fbm, night) : null
+  const regionScene = region ? regionMeshes(region.pack, region.layout, fbm, night, matrixMode.globalState) : null
   if (regionScene) for (const m of regionScene.meshes) scene.add(m)
 
   // The ground stops at the seawall; the lake takes over from there (never water over ground: at a distance the
   // two would fight for the depth buffer).
   const south = CITY_CENTER - 1600, north = CITY_CENTER + 1600
   const landDepth = LAKE.shore + LAKE.wall.thickness - south
-  const ground = new Mesh(new PlaneGeometry(3200, landDepth).rotateX(-Math.PI / 2).translate(CITY_CENTER, 0, south + landDepth / 2), groundMaterial(fbm, night))
+  const ground = new Mesh(new PlaneGeometry(3200, landDepth).rotateX(-Math.PI / 2).translate(CITY_CENTER, 0, south + landDepth / 2), applyMatrixMode(groundMaterial(fbm, night), matrixMode.globalState))
   ground.receiveShadow = true
   ground.renderOrder = 1
   ground.name = 'Streets'
   if (!region) scene.add(ground)
   const lakeDepth = north - (LAKE.shore + LAKE.wall.thickness)
-  const lake = new Mesh(new PlaneGeometry(3200, lakeDepth).rotateX(-Math.PI / 2).translate(CITY_CENTER, LAKE.water, north - lakeDepth / 2), waterMaterial(fbm))
+  const lake = new Mesh(new PlaneGeometry(3200, lakeDepth).rotateX(-Math.PI / 2).translate(CITY_CENTER, LAKE.water, north - lakeDepth / 2), applyMatrixMode(waterMaterial(fbm), matrixMode.globalState))
   lake.receiveShadow = true
   lake.name = 'Lake'
   // A region has no street furniture: its dissolve attributes are empty (nothing to write, nothing drawn).
   let dissolve: PropDissolve = { lamps: dissolveAttribute(0), trees: dissolveAttribute(0), signals: dissolveAttribute(0) }
   if (!region) {
     scene.add(lake)
-    const props = furnitureMeshes(furniture, fbm, night, signalClock)
+    const props = furnitureMeshes(furniture, fbm, night, signalClock, matrixMode)
     for (const mesh of props.meshes) scene.add(mesh)
     dissolve = props.dissolve
   }
@@ -475,5 +487,5 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   const setTextureSize = (size: number) => { fbm.setSize(size) }
   const follow = (other: PerspectiveCamera) => { sky.position.copy(other.position) }
 
-  return { scene, camera, boxes, furniture, night, signalClock, sun, setTextureSize, tuning, resorted: region ? [] : [buildings], follow, region: regionScene, dissolve, update }
+  return { scene, camera, boxes, furniture, night, signalClock, matrixMode, sun, setTextureSize, tuning, resorted: region ? [] : [buildings], follow, region: regionScene, dissolve, update }
 }

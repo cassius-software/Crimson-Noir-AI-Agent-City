@@ -60,6 +60,7 @@ at all (see Track B under Ring-0 console).
 | Ping (mark a spot or a person where you look) | Q, or the middle mouse button | right shoulder button | Ping |
 | Clock −1 h / +1 h | `[` `]` | D-pad left / right | |
 | Ghost view | G | | |
+| Matrix mode | M | | |
 | Hide HUD | H | | |
 | Ring-0 console | `~` (Backquote) | | |
 
@@ -201,6 +202,27 @@ away; everything else dims behind the code. `G` again, or `ghost off`, fades it 
   it still does.
 - **Every tier.** It lives in the post chain, so while it is on the chain runs even at the Minimal tier. With
   `?post=0` there is no chain, and `ghost on` says so; the same while the screen is split (see Split screen).
+
+## Matrix mode
+
+`M`, or `rain on` in the console, turns every surface of the city into falling green code, drawn in world space by
+the surfaces' own materials (`01_Initialize_World/matrixMesh.wgsl`, bound by `matrixMode.ts`): a roof takes its
+columns from its (x, z), a wall from its own plane, so the code sits on the facades, the streets, the lake, the
+props, the cars and the people and moves with them as the camera moves. The sky is never touched: it is drawn as
+ever. `M` again, or `rain off`, restores every surface at once.
+
+- **One global state.** Both pipelines read one word, `global_state` = (time, matrix mode, floating origin x, z),
+  defined once (`01_Initialize_World/globalState.ts`): the materials' uniform, and the crowd's `Params.global`
+  (`03_Spawn_Agents/crowd.wgsl`), so the drawing and the simulation cannot disagree about the mode.
+- **Physics.** In matrix mode every pedestrian's physics mask drops to the static world's layer alone
+  (`crowd.wgsl physicsMaskFor`): the ground still holds them at street level and the lots and the city's edge still
+  keep them out of the buildings, while the other pedestrians and the cars pass through them with no push, no
+  stagger and no step back. The First-Law sensing is untouched: a car still sees whoever is in its path, and the
+  Sanctuary and the kernel run as usual. Cars already pass through cars (`02_Define_The_Rules/collision.ts`).
+- **Floating origin.** The pattern is a `fract()` of the world position, which loses precision far from the
+  world's origin. The page anchors an origin at the camera, snapped to whole metres, and the shader computes its
+  columns relative to it, adding the origin back into the column's id as a whole number, so the pattern is the same
+  wherever the camera stands and never slides as the origin steps.
 
 ## Ghost-mode collision
 
@@ -552,7 +574,7 @@ while you type.
   drawn agents (near, far, total); fps, frame time, p95, CPU and GPU time; quality tier; kernel
   counters. `stats --once` prints a single frame.
 - The core commands, as `help` prints them: `help [command]`, `stats [--once]`, `laws`, `kernel`,
-  `quality [auto|0-4]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `render [on|off]`,
+  `quality [auto|0-4]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `render [on|off]`,
   `captions [on|off]`, `ping [go|look|gather|wait|clear]`,
   `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
   `recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]`, `memory [<agent>|forget <agent>|forget all]`,

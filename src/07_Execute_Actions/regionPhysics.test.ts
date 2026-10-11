@@ -12,14 +12,27 @@
  * What breaks if it is removed? The avatar could walk through surveyed buildings, into the lake or off the map.
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { registerHooks } from 'node:module'
 import { test } from 'node:test'
-import { layoutOf, regionPhysics } from '../01_Initialize_World/region/regionWorld.ts'
+import { fileURLToPath } from 'node:url'
 import { REGION_FORMAT, polygons, pushPolygon, type RegionPack } from '../01_Initialize_World/region/pack.ts'
 import type { Pt } from '../01_Initialize_World/region/clip.ts'
 import { Physics } from './physics.ts'
 import { Avatar } from './player.ts'
 import { SimCore } from './simCore.ts'
 import { createSimHost } from './simHost.ts'
+
+// Vite's `?raw` import, for Node (crowdCompute.test.ts's hook): the world's matrix mode (01_Initialize_World/
+// matrixMode.ts) imports its WGSL that way, so the modules that take it are imported once the hook is in place.
+registerHooks({
+  load(url, context, nextLoad) {
+    if (!url.endsWith('.wgsl?raw')) return nextLoad(url, context)
+    const text = readFileSync(fileURLToPath(url.slice(0, -'?raw'.length)), 'utf8')
+    return { format: 'module', source: `export default ${JSON.stringify(text)}`, shortCircuit: true }
+  },
+})
+const { layoutOf, regionPhysics } = await import('../01_Initialize_World/region/regionWorld.ts')
 
 const H = 1 / 60
 
