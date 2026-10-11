@@ -88,3 +88,15 @@ export const WHEEL_RAY_GROUPS = interactionGroups(GROUP.query, ALL_GROUPS & ~GRO
  * ever; a rig meets cars and the world exactly as it did, with the Sanctuary between it and every car.
  */
 export const AVATAR_GROUPS = interactionGroups(ALL_GROUPS, ALL_GROUPS & ~GROUP.ragdoll)
+
+/**
+ * A rig segment is a member of `ragdoll` and filters `ragdoll`, `vehicle` and `query` out: segments never meet each
+ * other (the joints hold a rig together); a chassis (membership `vehicle`) and a wheel ray (membership `query`) have no
+ * bit a segment lets in, so the broad phase never pairs a fallen person with a car's body or a wheel. A ragdoll is out
+ * of the vehicle layer: a car that reaches one exchanges no impulse and never rides up on it, so a fallen person is
+ * neither shoved by traffic nor a jam it piles up behind. The Sanctuary still shields every segment before a car can
+ * reach it, and the Ring-0 audit still halts the realm if one does: this removes the contact, not the law. Against
+ * the ground and the buildings (default groups) a segment is as solid as ever, and the avatar still passes through it
+ * (AVATAR_GROUPS filters `ragdoll` out). ragdollRig.ts gives every segment and foot these groups.
+ */
+export const RAGDOLL_GROUPS = interactionGroups(GROUP.ragdoll, ALL_GROUPS & ~(GROUP.ragdoll | GROUP.vehicle | GROUP.query))

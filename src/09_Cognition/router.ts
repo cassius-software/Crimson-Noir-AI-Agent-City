@@ -63,6 +63,11 @@ export interface MindRouter extends Mind {
   /** Sets the Claude provider's effort (empty clears it); returns it. */
   setEffort(level: string): string | null
   readonly provider: Provider
+  /**
+   * The cloud provider on its own (the Claude API through the gateway on this machine), whichever provider is chosen:
+   * the cloud fallback throttle (cloudFallback.ts) hands complex prompts to it while the frames are slow.
+   */
+  readonly cloud: Mind
 }
 
 export function createMindRouter({ fetch: fetchFn, store }: { fetch: FetchLike; store?: SettingsStore }): MindRouter {
@@ -132,6 +137,7 @@ export function createMindRouter({ fetch: fetchFn, store }: { fetch: FetchLike; 
     get provider() {
       return kept.provider
     },
+    cloud: claude,
     settings: () => {
       const s = active().settings()
       const own = { provider: kept.provider, key: kept.provider === 'claude' ? maskKey(kept.claude.key) : undefined, effort: kept.provider === 'claude' ? kept.claude.effort ?? undefined : undefined }

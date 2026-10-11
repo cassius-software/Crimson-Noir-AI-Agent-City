@@ -155,7 +155,7 @@ export interface Mind {
    * is spoken to in (absent: the mind has one only). `provider`: which model provider answers (absent: the mind has one
    * only); `key`: the network provider's key, masked (null: none set); `effort`: how hard it works (absent: its default).
    */
-  settings(): { server: string; model: string | null; think?: boolean; api?: string; provider?: string; key?: string | null; effort?: string; cache?: string }
+  settings(): { server: string; model: string | null; think?: boolean; api?: string; provider?: string; key?: string | null; effort?: string; cache?: string; fallback?: string }
   setServer(url: string): string
   setModel(name: string): string
   /** Whether the model reasons before it answers; returns the new value. Absent: the mind has no such switch. */
@@ -350,6 +350,8 @@ export interface MindStatus {
   readonly effort?: string
   /** The prompt-prefix page table's counts, one line (absent: the mind keeps none, or has paged nothing yet). */
   readonly cache?: string
+  /** The cloud fallback throttle's state, one line (09_Cognition/cloudFallback.ts; absent: the mind has none in front of it). */
+  readonly fallback?: string
   readonly installed: readonly string[] | null
   readonly error?: string
 }
@@ -938,10 +940,11 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
     },
     askStatus: (): Promise<MindStatus> => {
       if (!unlocked) throw locked('ask')
-      const { server, model, think, api, provider, key, effort, cache } = mind.settings()
+      const { server, model, think, api, provider, key, effort, cache, fallback } = mind.settings()
       const base = {
         server, model, ...(think !== undefined && { think }), ...(api !== undefined && { api }),
         ...(provider !== undefined && { provider }), ...(key !== undefined && { key }), ...(effort !== undefined && { effort }), ...(cache !== undefined && { cache }),
+        ...(fallback !== undefined && { fallback }),
       }
       return mind.installed().then(
         (installed) => ({ ...base, installed }),
