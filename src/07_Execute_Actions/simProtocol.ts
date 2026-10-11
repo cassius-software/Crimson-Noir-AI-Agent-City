@@ -185,6 +185,13 @@ export type SimCommand =
   | { c: 'intent'; i: number; throttle: number; brake: number; steer: number }
   | { c: 'tune'; key: keyof CarTuning; value: number }
   | { c: 'blind'; on: boolean; ttlMs?: number }
+  /**
+   * Matrix mode (01_Initialize_World/matrixMode.ts) for the crowd: on, the pedestrians keep only the static world's
+   * physics layer (crowd.wgsl physicsMaskFor), so people and cars phase through them while the ground and the lots
+   * still hold them; the First-Law sensing and the Sanctuary are untouched. The page's own surfaces take the mode
+   * from the same global state, so the drawing and the simulation agree.
+   */
+  | { c: 'matrix'; on: boolean }
   // Recruitment (skills.ts): ask someone with `skill` within earshot over. `agent` is the page's pick; the worker
   // checks it against its own readings and, if it no longer qualifies, asks the nearest person who does. `id` is
   // echoed by the 'recruit' event that answers it.

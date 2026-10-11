@@ -14,12 +14,13 @@
  * What breaks if it is removed? A region pack can be compiled but never walked.
  */
 import {
-  BufferGeometry, Float32BufferAttribute, Mesh, MeshStandardNodeMaterial, PlaneGeometry, ShapeUtils, Vector2, type Node, type UniformNode,
+  BufferGeometry, Float32BufferAttribute, Mesh, MeshStandardNodeMaterial, PlaneGeometry, ShapeUtils, Vector2, type Node, type UniformNode, type Vector4,
 } from 'three/webgpu'
 import { abs, attribute, float, fract, mix, positionWorld, smoothstep, step, vec3 } from 'three/tsl'
 import { STYLE } from '../city.ts'
 import type { FbmSet } from '../fbmTexture.ts'
 import { buildingMaterial, waterMaterial } from '../materials.ts'
+import { applyMatrixMode } from '../matrixMode.ts'
 import { type Pt, type Rect } from './clip.ts'
 import { BUILDING_KIND, DM, FLOW, ROAD_CLASS, WATER_KIND, polygonAt, polygonCount, roadAt, type RegionPack } from './pack.ts'
 
@@ -471,11 +472,12 @@ export interface RegionScene {
 }
 
 /** Everything the page draws for a region. */
-export function regionMeshes(pack: RegionPack, l: RegionLayout, fbm: FbmSet, night: UniformNode<'float', number>): RegionScene {
+export function regionMeshes(pack: RegionPack, l: RegionLayout, fbm: FbmSet, night: UniformNode<'float', number>, matrixMode: UniformNode<'vec4', Vector4> | null = null): RegionScene {
   const meshes: Mesh[] = []
   let vertices = 0
+  // Every surface takes matrix mode (01_Initialize_World/matrixMode.ts), as the city's do.
   const add = (g: BufferGeometry, m: MeshStandardNodeMaterial, name: string, shadow: boolean, order = 0) => {
-    const mesh = new Mesh(g, m)
+    const mesh = new Mesh(g, matrixMode ? applyMatrixMode(m, matrixMode) : m)
     mesh.name = name
     mesh.receiveShadow = true
     mesh.castShadow = shadow

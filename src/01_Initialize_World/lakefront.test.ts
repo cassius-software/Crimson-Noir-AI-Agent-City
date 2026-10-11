@@ -15,6 +15,7 @@
  */
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
+import { registerHooks } from 'node:module'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -26,7 +27,17 @@ import { LOT, STREET, fnv1a, generateMacroCity, serializeMacroCity, walkable, na
 import { forbiddenWordIn } from './assets/cc0.ts'
 import { macroToRegionPack } from './region/fromMacro.ts'
 import { polygonCount, validatePack } from './region/pack.ts'
-import { RegionPlaces, layoutOf, regionPhysics } from './region/regionWorld.ts'
+
+// Vite's `?raw` import, for Node (crowdCompute.test.ts's hook): regionWorld.ts takes matrix mode (matrixMode.ts),
+// which imports its WGSL that way, so it is imported once the hook is in place.
+registerHooks({
+  load(url, context, nextLoad) {
+    if (!url.endsWith('.wgsl?raw')) return nextLoad(url, context)
+    const text = readFileSync(fileURLToPath(url.slice(0, -'?raw'.length)), 'utf8')
+    return { format: 'module', source: `export default ${JSON.stringify(text)}`, shortCircuit: true }
+  },
+})
+const { RegionPlaces, layoutOf, regionPhysics } = await import('./region/regionWorld.ts')
 
 const SEEDS = [1337, 7, 42, 90210]
 const B = 64

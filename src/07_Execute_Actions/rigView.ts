@@ -10,7 +10,8 @@
  * is promoted, and where their rig stands, is the realm's alone.
  * What breaks if it is removed? A promoted person's figure is hidden and nothing stands in their place.
  */
-import { CapsuleGeometry, Color, InstancedMesh, Matrix4, MeshStandardNodeMaterial, Quaternion, Vector3 } from 'three/webgpu'
+import { CapsuleGeometry, Color, InstancedMesh, Matrix4, MeshStandardNodeMaterial, Quaternion, Vector3, type UniformNode, type Vector4 } from 'three/webgpu'
+import { applyMatrixMode } from '../01_Initialize_World/matrixMode.ts'
 import { attireColour } from '../03_Spawn_Agents/crowd.ts'
 import { RIG_POSE, RIG_SEGMENTS } from './simProtocol.ts'
 
@@ -31,12 +32,14 @@ export class RigView {
   private readonly v = new Vector3()
   private readonly c = new Color()
 
-  constructor(slots: number) {
+  /** `matrixMode`: the page's global-state uniform (01_Initialize_World/matrixMode.ts), or null for rigs without matrix mode. */
+  constructor(slots: number, matrixMode: UniformNode<'vec4', Vector4> | null = null) {
     this.slots = Math.max(0, Math.floor(slots))
     // WebGPU refuses a zero-sized binding: a realm without rigs still gets one (never drawn) instance.
     const count = Math.max(1, this.slots)
     this.coloured = new Int32Array(count).fill(-1)
     const material = new MeshStandardNodeMaterial({ roughness: 0.85, metalness: 0 })
+    if (matrixMode) applyMatrixMode(material, matrixMode)
     this.meshes = RIG_SEGMENTS.map(([name, halfHeight, radius]) => {
       const geometry = new CapsuleGeometry(radius, 2 * halfHeight, 3, 10)
       // A foot lies along its lower leg's z (the realm's flat foot), not up its y.

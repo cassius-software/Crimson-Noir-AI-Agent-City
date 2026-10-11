@@ -725,15 +725,16 @@ test('no pass needs more than the default 8 storage buffers per stage', () => {
 test('struct layouts obey the uniform address-space rules and match the CPU sizes', () => {
   const p = layoutOf('Params', MODULE)
   const m = p.members!
-  assert.equal(p.size, 1840)
+  assert.equal(p.size, 1856)
   assert.equal(p.size, PARAMS_SIZE)
   assert.equal(m.get('player')!.offset, 32)
   assert.equal(m.get('aux')!.offset, 48)
   assert.equal(m.get('camera')!.offset, 64)
-  assert.equal(m.get('planes')!.offset, 80)
-  assert.equal(m.get('cars')!.offset, 176)
+  assert.equal(m.get('global')!.offset, 80)
+  assert.equal(m.get('planes')!.offset, 96)
+  assert.equal(m.get('cars')!.offset, 192)
   // The operator's summons ride after the cars: RECRUIT_SLOTS × (at.xy, agent, flags).
-  assert.equal(m.get('summons')!.offset, 176 + MAX_CARS * 32)
+  assert.equal(m.get('summons')!.offset, 192 + MAX_CARS * 32)
   assert.equal(layoutOf('array<Summon, SUMMON_SLOTS>', MODULE).size, RECRUIT_SLOTS * 16)
   const sm = layoutOf('Summon', MODULE)
   assert.equal(sm.size, 16)
@@ -813,7 +814,13 @@ test('Params: every field each side writes lands where the WGSL struct reads it,
   assert.deepEqual(carField(1, 'b'), [0.92, 2.3, -0.1, corridorReach(input.cars[1])].map(f32))
   // The worker draws nothing: no camera, frustum, distances or density reach its uniform.
   assert.deepEqual([f[at('lodDistance')], f[at('nearRadius')], f[at('aux') + 1], f[at('aux') + 2]], [0, 0, 0, 0])
-  assert.ok([...f.subarray(at('camera'), at('planes') + 24)].every((x) => x === 0))
+  assert.ok([...f.subarray(at('camera'), at('camera') + 4)].every((x) => x === 0))
+  assert.ok([...f.subarray(at('planes'), at('planes') + 24)].every((x) => x === 0))
+  // The global word (globalState.ts): the step's clock and the mode (off here); the floating origin is the page's
+  // alone, so the worker packs zero for it.
+  assert.deepEqual([...f.subarray(at('global'), at('global') + 4)], [f32(input.time), 0, 0, 0])
+  crowd.step(simInput({ matrixMode: true }))
+  assert.deepEqual([...params(device, 'crowd.params').f.subarray(at('global'), at('global') + 4)], [f32(input.time), 1, 0, 0])
   // The shader reads them by these names: Car.b = (half width, half length, curvature, corridor reach), aux =
   // (avatar visible, density beyond nearRadius, max draw distance, -).
   assert.match(flat('simulate'), /corridorGap\(lz, -lx, car\.b\.x, car\.b\.y, car\.b\.z, -CAR_AXLE\)/)
@@ -830,6 +837,10 @@ test('Params: every field each side writes lands where the WGSL struct reads it,
   assert.deepEqual([...c.f.subarray(c.at('aux'), c.at('aux') + 4)], [0, 0.6, 180, 0].map(f32))
   assert.deepEqual([...c.f.subarray(c.at('camera'), c.at('camera') + 4)], [3, 4, 5, 0])
   assert.deepEqual([...c.f.subarray(c.at('planes'), c.at('planes') + 24)], [...planes])
+  // The global word is the page's state, packed where the worker packs its own (the same offset, the same packer).
+  assert.deepEqual([...c.f.subarray(c.at('global'), c.at('global') + 4)], [0, 0, 0, 0], 'absent: all zero')
+  page.crowd.step({ ...cullInput, global: { time: 7.25, on: true, originX: -3, originZ: 512 } })
+  assert.deepEqual([...params(page.device, 'crowd.cullParams').f.subarray(c.at('global'), c.at('global') + 4)], [7.25, 1, -3, 512])
   // The page simulates nothing: no step, no cars, no player, no clock in its uniform.
   assert.deepEqual([c.f[c.at('dt')], c.f[c.at('time')], c.u[c.at('carCount')], c.f[c.at('signalTime')]], [0, 0, 0, 0])
   assert.ok([...c.f.subarray(c.at('player'), c.at('player') + 4)].every((x) => x === 0))

@@ -18,6 +18,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFileSync } from 'node:fs'
+import { registerHooks } from 'node:module'
+import { fileURLToPath } from 'node:url'
 import { InstancedMesh, BoxGeometry, MeshStandardNodeMaterial, PerspectiveCamera, Scene, type WebGPURenderer } from 'three/webgpu'
 import { vec2, velocity } from 'three/tsl'
 import {
@@ -25,8 +27,18 @@ import {
 } from './cinema.ts'
 import { SHUTTER, ShutterNode, tileSize } from './shutter.ts'
 import { buildPost, pickMotion } from './postfx.ts'
-import { ndStopsFor } from '../01_Initialize_World/world.ts'
 import { sunAt } from '../01_Initialize_World/solar.ts'
+
+// Vite's `?raw` import, for Node (crowdCompute.test.ts's hook): the world's matrix mode (01_Initialize_World/
+// matrixMode.ts) imports its WGSL that way, so the modules that take it are imported once the hook is in place.
+registerHooks({
+  load(url, context, nextLoad) {
+    if (!url.endsWith('.wgsl?raw')) return nextLoad(url, context)
+    const text = readFileSync(fileURLToPath(url.slice(0, -'?raw'.length)), 'utf8')
+    return { format: 'module', source: `export default ${JSON.stringify(text)}`, shortCircuit: true }
+  },
+})
+const { ndStopsFor } = await import('../01_Initialize_World/world.ts')
 
 const PERIOD = 1000 / 24
 

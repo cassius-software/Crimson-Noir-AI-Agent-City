@@ -64,6 +64,11 @@ struct Params {
   player: vec4f, // x, z, heading, speed
   aux: vec4f,    // player visible, draw density beyond nearRadius (0..1), max draw distance, -
   camera: vec4f, // x, y, z, -
+  // Matrix mode's global state, the one word 01_Initialize_World/globalState.ts packs for every pipeline that takes
+  // the mode (this one and the mesh surface matrixMesh.wgsl): time (s), matrix mode (1 on, 0 off), the page's
+  // floating origin (x, z, m). The simulation reads the mode alone: its own geometry is lot-relative (streetOffsets,
+  // pushOut), and its positions stay absolute so the fingerprinted run is the same whoever looks at it.
+  global: vec4f,
   planes: array<vec4f, 6>,
   cars: array<Car, MAX_CARS>,
   summons: array<Summon, SUMMON_SLOTS>,
@@ -237,6 +242,20 @@ fn corridorGap(u: f32, left: f32, halfWidth: f32, halfLength: f32, curvature: f3
   return select(-1.0, travel, best < TAU && travel <= KERNEL_RANGE);
 }
 
+// ---------------------------------------------------------------- physics layers
+
+// The physics mask a pedestrian carries this tick (01_Initialize_World/globalState.ts PHYSICS_LAYER, PHYSICS_MASK): every layer, or in
+// matrix mode the static world alone (bit 0: the ground that holds them at y = 0, the lots pushOut keeps them out
+// of, the city's edge), so the other pedestrians (bit 1) and the cars (bit 2) phase through them while they stay
+// grounded. The First-Law sensing is not a contact and keeps its eyes: a car still sees whoever is in its path.
+fn physicsMaskFor(global_state: vec4f) -> u32 {
+  var physics_mask: u32;
+  if (global_state.y > 0.5) { physics_mask = 0x00000001u; } else { physics_mask = 0xFFFFFFFFu; }
+  return physics_mask;
+}
+// 1.0 when the mask selects the layer, else 0.0: a factor the contact's whole effect is multiplied by.
+fn layerOn(mask: u32, layer: u32) -> f32 { return select(0.0, 1.0, (mask & layer) != 0u); }
+
 // ---------------------------------------------------------------- city geometry
 
 fn cellOf(p: vec2f) -> vec2i {
@@ -381,6 +400,11 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
   var ps = pose[i];
   var b = brain[i];
   var me = p.xz;
+  let physicsMask = physicsMaskFor(P.global);
+  // The other pedestrians' and the cars' contact with this person, 1 or 0 by the mask (the static world's bit is
+  // never consulted: the ground, the lots and the city's edge hold everyone, in every mode).
+  let bodies = layerOn(physicsMask, PHYSICS_BODY);
+  let vehicles = layerOn(physicsMask, PHYSICS_VEHICLE);
 
   var sep = vec2f(0.0);
   var ali = vec2f(0.0);
@@ -398,11 +422,11 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
         let d = me - q.xy;
         let d2 = dot(d, d);
         if (d2 < 1e-6) { continue; }
-        if (d2 < SEP_R2) { sep += d / d2; }
+        if (d2 < SEP_R2) { sep += d / d2 * bodies; }
         if (d2 < NEIGH_R2) {
-          ali += q.zw;
-          coh += q.xy;
-          cnt += 1.0;
+          ali += q.zw * bodies;
+          coh += q.xy * bodies;
+          cnt += bodies;
         }
       }
     }
@@ -428,8 +452,10 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
       let behind = corridorGap(-lz, -lx, car.b.x, car.b.y, car.b.z, CAR_AXLE);
       if (behind >= 0.0) { atomicMin(&hazards[MAX_CARS + j], u32(behind * 100.0)); }
     }
-    let hw = car.b.x + BODY_PAD;
-    let hl = car.b.y + BODY_PAD;
+    // The contact and the save are the vehicle layer's: off the mask, a car passes through this person (and the
+    // person through the car) with no push, no stagger, no step back; the sensing above still counted them.
+    let hw = (car.b.x + BODY_PAD) * vehicles;
+    let hl = (car.b.y + BODY_PAD) * vehicles;
     if (abs(lx) < hw && abs(lz) < hl) {
       if (hw - abs(lx) < hl - abs(lz)) { lx = select(-hw, hw, lx >= 0.0); } else { lz = select(-hl, hl, lz >= 0.0); }
       let pushed = car.a.xy + r * lx + f * lz;
@@ -439,7 +465,7 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
       b.b.x += 1.2;
       b.b.y += 4.0;
       atomicAdd(&stats[0], 1u);
-    } else if (road && b.c.z <= 0.0 && abs(car.a.w) > 1.0 && lz > 0.0 && lz < YIELD_LOOKAHEAD && abs(lx) < 2.6) {
+    } else if (road && vehicles > 0.5 && b.c.z <= 0.0 && abs(car.a.w) > 1.0 && lz > 0.0 && lz < YIELD_LOOKAHEAD && abs(lx) < 2.6) {
       let dc = YIELD_DC + i32(round(YIELD_DC_BONUS * clamp(abs(car.a.w) / 12.0, 0.0, 1.0)));
       let nat = d20(i, hash2(j, u32(P.time * 2.0)));
       let deg = degreeOf(nat, nat + YIELD_MOD, dc);

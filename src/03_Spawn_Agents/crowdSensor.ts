@@ -55,6 +55,11 @@ export interface CrowdStepInput {
   cars: readonly CarState[]
   /** At most RECRUIT_SLOTS (skills.ts); an invalid one is left out of the uniform. */
   summons: readonly Summon[]
+  /**
+   * Matrix mode (01_Initialize_World/matrixMode.ts): the pedestrians keep only the static world's physics layer, so
+   * people and cars phase through them while the ground and the lots still hold them. Absent: off.
+   */
+  matrixMode?: boolean
 }
 
 /** The newest decoded readback. */
