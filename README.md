@@ -6,7 +6,7 @@
 ![SIMD Engine](https://img.shields.io/badge/Swarm%20Ticks-SIMD%20Lanes-blue)
 ![Tests](https://img.shields.io/badge/Tests-1%2C316-darkgreen)
 ![Dual-License](https://img.shields.io/badge/Core-Proprietary%20%7C%20Tools%3A%20MIT-crimson)
-[![Release](https://img.shields.io/badge/Release-v1.1.0--stable--release-black)](https://github.com/exitwoundscassius-ux/Crimson-Noir-AI-Agent-City/releases/tag/v1.1.0-stable-release)
+[![Release](https://img.shields.io/badge/Release-v1.0.0--stable--beta-black)](https://github.com/exitwoundscassius-ux/Crimson-Noir-AI-Agent-City/releases/tag/v1.0.0-stable-beta)
 
 **Crimson Noir** is an offline, mathematically contained multi-agent simulation and operating-system substrate
 that compiles to a single, self-contained HTML file (`dist/index.html`) or to a bootable bare-metal UEFI image.
@@ -105,8 +105,10 @@ them; `--check` compares).
 
 ### Release
 
-The current release is [**v1.1.0-stable-release**](https://github.com/exitwoundscassius-ux/Crimson-Noir-AI-Agent-City/releases/tag/v1.1.0-stable-release)
-(Crimson Noir OS v1.1.0 Stable Release), baked from `main` with the proofs: a GPT disk image and a hybrid UEFI ISO
+The current release is [**v1.0.0-stable-beta**](https://github.com/exitwoundscassius-ux/Crimson-Noir-AI-Agent-City/releases/tag/v1.0.0-stable-beta)
+(Crimson Noir Agent City v1.0.0 Stable Beta, 2026-10-12; its number was set below the earlier
+[v1.1.0-stable-release](https://github.com/exitwoundscassius-ux/Crimson-Noir-AI-Agent-City/releases/tag/v1.1.0-stable-release)
+on purpose, see [CHANGELOG.md](CHANGELOG.md)), baked from `main` with the proofs: a GPT disk image and a hybrid UEFI ISO
 for a UEFI x86-64 machine with Secure Boot off, the `BOOTX64.EFI` application, its locked configuration, and
 `SHA256SUMS`. The media are reproducible: the same commit built with Rust 1.97.0 gives the same bytes, and the EFI's
 stamp is a hash of the code alone. Before publishing, CI booted the disk image in QEMU through the self-test, the

@@ -189,6 +189,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      actions: write   # to dispatch windows-app.yml for a tag this job makes (see the last step)
     env:
       COMMIT: ${{ needs.bake.outputs.commit }}
     steps:
@@ -255,3 +256,24 @@ jobs:
               gh release create "$TAG" media/* --target "$COMMIT" --title "$title" --notes-file "$notes" --prerelease="$prerelease"
             fi
           fi
+
+      - name: Ask windows-app.yml for the Windows app on a tag made here
+        # A tag this job made was pushed with the workflow's own token, for which GitHub starts no tag-push run, so the
+        # Windows app would never reach the release; windows-app.yml dispatched with the tag builds that commit and
+        # uploads to this release. A tag pushed by a person already has its own windows-app run. Best effort: a failure
+        # here leaves the OS release as published, and "Run workflow" on windows-app.yml with the tag does the same.
+        if: ${{ !cancelled() }}
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "$TAG" in
+            v*)
+              if [ "$(gh api "repos/$GH_REPO/actions/workflows/windows-app.yml/runs?event=push&branch=$TAG&per_page=1" --jq '.total_count')" = 0 ]; then
+                gh workflow run windows-app.yml --ref "${GITHUB_REF_NAME}" -f "tag=$TAG" \
+                  || echo "::warning::could not dispatch windows-app.yml for $TAG: run it by hand with the tag as its input"
+              else
+                echo "the tag push already started windows-app.yml for $TAG"
+              fi ;;
+            *) echo "no Windows app for a tag outside v*" ;;
+          esac
