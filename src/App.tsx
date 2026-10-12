@@ -50,6 +50,8 @@ import { screenNames } from './01_Initialize_World/assets/cc0.ts'
 import { Onboarding, type Outcome } from './07_Execute_Actions/onboarding/Onboarding.tsx'
 import { loadOnboarding, mapWanted, needsOnboarding, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
 import { modelVoice, scriptedVoice, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
+import { useMentor } from './07_Execute_Actions/onboarding/useMentor.ts'
+import type { Event as MentorEvent } from './09_Cognition/tutorial.ts'
 
 const HUD_INTERVAL_MS = 100
 /** Where the cognition router's settings (the provider, each provider's server and model, the network key) are kept between visits. */
@@ -268,11 +270,13 @@ function App() {
   const choice = mapWanted(new URLSearchParams(window.location.search), chosen, regionFirst)
   const zone = zoneOf(chosen?.place) ?? ZONE.metropolis
   const shellOptions = outcome?.options ? { ...options, ...outcome.options } : options
-  return <GuiShell options={shellOptions} plan={{ choice, pack: outcome?.pack ?? null, zone }} />
+  // Wren watches the first minutes of a visitor who has just walked in from the onboarding (never the expert path).
+  const mentored = outcome !== null && !outcome.saved.skipped
+  return <GuiShell options={shellOptions} plan={{ choice, pack: outcome?.pack ?? null, zone }} mentored={mentored} voice={voice} />
 }
 
 /** The city: the engine over the canvas, the HUD, the Concierge, the touch controls and the drop-down console. */
-function GuiShell({ options, plan }: { options: Options; plan: MapPlan }) {
+function GuiShell({ options, plan, mentored, voice }: { options: Options; plan: MapPlan; mentored: boolean; voice: Voice }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const engineRef = useRef<Engine | null>(null)
   const termOpenRef = useRef(false)
@@ -293,6 +297,12 @@ function GuiShell({ options, plan }: { options: Options; plan: MapPlan }) {
   const [veilDone, setVeilDone] = useState(false)
   // A Ring-0 kernel panic: the engine is halted and the reason is shown over everything.
   const [locked, setLocked] = useState<string | null>(null)
+  // Wren's quiet watch over a first visitor (onboarding/useMentor.ts): its lines reach the Concierge as nudges, and a
+  // prompt sent to someone in the city is reported to it from the mind below (noteRef, built once with the engine).
+  const { nudge, note: noteMentor } = useMentor({ active: mentored && veilDone, engine, hud, family: hud?.supplier.glyphs ?? 'keyboard', name: profile?.name ?? '', voice })
+  const noteRef = useRef<(e: MentorEvent) => void>(noteMentor)
+  useEffect(() => { noteRef.current = noteMentor }, [noteMentor])
+  const onGoal = useCallback(() => noteRef.current('goal'), [])
 
   useEffect(() => { engine?.setPlayerName(profile?.name ?? '') }, [engine, profile])
   // The player's own body wears it from the start (agent PLAYER_INDEX; the engine writes the crowd's look word).
@@ -404,6 +414,7 @@ function GuiShell({ options, plan }: { options: Options; plan: MapPlan }) {
           answer: (req, onPiece) => {
             const live = { thinking: 0, tail: '' }
             answering = live
+            noteRef.current('talk')
             return local.answer(req, (p) => {
               onPiece(p)
               if (p.kind === 'text') live.tail = (live.tail + p.text).slice(-ANSWER_TAIL)
@@ -523,6 +534,8 @@ function GuiShell({ options, plan }: { options: Options; plan: MapPlan }) {
           dark={hud.customer.daylight < 0.35}
           onIntent={applyIntent}
           onLook={openLook}
+          nudge={nudge}
+          onGoal={onGoal}
         />
       )}
       {hud && (

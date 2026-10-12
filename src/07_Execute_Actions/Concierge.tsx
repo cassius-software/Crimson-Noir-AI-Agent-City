@@ -26,6 +26,7 @@ import { NAME_MAX, saveProfile, sanitizeName, seedFromName, type Profile } from 
 import { FiveWhys, GOAL_MAX, type Brief, type Control, type PlanStep, type WhyStep } from '../06_Make_Decisions/intent.ts'
 import { controlHints, isPadFamily, type GlyphFamily } from './glyphs.ts'
 import { GlyphKey } from './Hud.tsx'
+import type { Nudge } from '../09_Cognition/tutorial.ts'
 
 /** The Concierge's name, for any other surface that mentions them. */
 export const CONCIERGE_NAME = 'Wren'
@@ -38,9 +39,11 @@ const WREN = {
   settleMs: 8000,
   /** Ground covered, from any input, that counts as the first movement and puts an open card away. */
   settleMetres: 1,
+  /** How long one of Wren's unasked lines (a nudge from the mentor, 09_Cognition/tutorial.ts) stays open before the chip. */
+  nudgeMs: 14000,
 } as const
 
-type View = 'ask' | 'greet' | 'help' | 'chip' | 'goal'
+type View = 'ask' | 'greet' | 'help' | 'chip' | 'goal' | 'nudge'
 type Mood = 'new' | 'back' | 'renamed' | 'skipped'
 
 /** Keys that mean the player is under way: the open card steps aside. */
@@ -141,9 +144,17 @@ export interface ConciergeProps {
   goal?: { text: string; answers?: readonly string[] }
   /** Optional: the host opens the wardrobe (Customizer.tsx); the chip and the full list then offer it. */
   onLook?(): void
+  /**
+   * Optional: a line Wren says unasked (the mentor's nudge, 09_Cognition/tutorial.ts): shown as the card when it is a
+   * new one (its id changed) and no question or goal is open, then settled into the chip like a greeting. Its text may
+   * change while it shows (the model's rewording arriving).
+   */
+  nudge?: Nudge | null
+  /** Optional: the player opened the goal dialogue (the mentor counts it as talking to Wren). */
+  onGoal?(): void
 }
 
-export function Concierge({ visible, profile, onProfile, family, driving, dark = false, settleMs = WREN.settleMs, travelled, onIntent, goal, onLook }: ConciergeProps) {
+export function Concierge({ visible, profile, onProfile, family, driving, dark = false, settleMs = WREN.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal }: ConciergeProps) {
   const small = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
   const short = useSyncExternalStore(SHORT.subscribe, SHORT.matches, SHORT.server)
   const [view, setView] = useState<View>(() => (goal ? 'goal' : profile ? 'greet' : 'ask'))
@@ -165,6 +176,7 @@ export function Concierge({ visible, profile, onProfile, family, driving, dark =
   // Previous props, for adjusting state while rendering (React's pattern for reacting to a prop change).
   const [seenProfile, setSeenProfile] = useState(profile)
   const [seenDriving, setSeenDriving] = useState(driving)
+  const [seenNudge, setSeenNudge] = useState(0)
 
   const name = given || profile?.name || ''
   const open = (v: View) => {
@@ -271,6 +283,7 @@ export function Concierge({ visible, profile, onProfile, family, driving, dark =
     setDialogue(NO_GOAL)
     setCopied('no')
     open('goal')
+    onGoal?.()
   }
   const copyBrief = () => {
     const md = dialogue.brief?.markdown
@@ -293,13 +306,19 @@ export function Concierge({ visible, profile, onProfile, family, driving, dark =
     setSeenDriving(driving)
     if (view !== 'chip') settle()
   }
+  // A new line from the mentor opens the card, unless the player is mid-question or mid-goal (it waits its turn: the
+  // next line comes with its own id). A nudge is never shown twice.
+  if (nudge && nudge.id !== seenNudge) {
+    setSeenNudge(nudge.id)
+    if (view === 'chip' || view === 'greet' || view === 'help' || view === 'nudge') open('nudge')
+  }
 
   // Greetings settle into the chip; so does the name question for a controller player, who may have no
   // keyboard — unless they have started typing (typing into the field leaves the family unchanged).
   const padAsk = view === 'ask' && isPadFamily(family) && draft === ''
   useEffect(() => {
-    if (!visible || (view !== 'greet' && !padAsk)) return
-    const id = window.setTimeout(() => setView('chip'), settleMs)
+    if (!visible || (view !== 'greet' && view !== 'nudge' && !padAsk)) return
+    const id = window.setTimeout(() => setView('chip'), view === 'nudge' ? Math.max(settleMs, WREN.nudgeMs * (settleMs / WREN.settleMs)) : settleMs)
     return () => window.clearTimeout(id)
   }, [visible, view, padAsk, family, epoch, settleMs])
 
@@ -418,6 +437,7 @@ export function Concierge({ visible, profile, onProfile, family, driving, dark =
       : <>What would you like the city to do? The time of day, the crowds, the traffic, how it runs, where to go — say it plainly.</>
     )
     : view === 'help' ? (name ? <>Here’s everything you can do, <bdi>{name}</bdi>.</> : <>Here’s everything you can do.</>)
+    : view === 'nudge' ? (nudge?.text ?? '')
     : mood === 'new' ? <>Great to meet you, <bdi className="font-semibold">{name}</bdi>. Your avatar is ready — let’s get you moving.</>
     : mood === 'renamed' ? <>Got it — I’ll call you <bdi className="font-semibold">{name}</bdi> from now on. Your avatar is ready.</>
     : mood === 'back' ? <>Welcome back, <bdi className="font-semibold">{name}</bdi>. Your avatar is ready whenever you are.</>
@@ -578,6 +598,17 @@ export function Concierge({ visible, profile, onProfile, family, driving, dark =
             <button type="button" onClick={openGoal} className={`${gap} block ${link}`} data-action="goal">
               or tell me what you’d like the city to do
             </button>
+          )}
+
+          {view === 'nudge' && (
+            <div className={`${gap} flex flex-wrap gap-x-4 gap-y-1`}>
+              <button type="button" onClick={settle} className={link} data-action="later">
+                Got it
+              </button>
+              <button type="button" onClick={openGoal} className={link} data-action="goal">
+                Tell {WREN.name} a goal
+              </button>
+            </div>
           )}
 
           {view === 'help' && (

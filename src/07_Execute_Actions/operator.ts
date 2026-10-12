@@ -23,6 +23,8 @@ import type { CrowdStats } from '../03_Spawn_Agents/crowdCompute.ts'
 import type { KernelStats, QualityState, SipocSnapshot } from '../05_Observe_Environment/telemetry.ts'
 import type { OperatorBridge } from './terminal/bridge.ts'
 import { harnesses, runHarness, type HarnessReport } from './harness.ts'
+import type { AgentContext } from '../08_Swarm/shortTerm.ts'
+export type { AgentContext } from '../08_Swarm/shortTerm.ts'
 
 /** What the ENGINE provides (engine.ts implements it). Rich enough for scripts and harnesses. */
 export interface SimControls {
@@ -155,7 +157,7 @@ export interface Mind {
    * is spoken to in (absent: the mind has one only). `provider`: which model provider answers (absent: the mind has one
    * only); `key`: the network provider's key, masked (null: none set); `effort`: how hard it works (absent: its default).
    */
-  settings(): { server: string; model: string | null; think?: boolean; api?: string; provider?: string; key?: string | null; effort?: string; cache?: string; fallback?: string }
+  settings(): { server: string; model: string | null; think?: boolean; api?: string; provider?: string; key?: string | null; effort?: string; cache?: string; fallback?: string; scripted?: string }
   setServer(url: string): string
   setModel(name: string): string
   /** Whether the model reasons before it answers; returns the new value. Absent: the mind has no such switch. */
@@ -169,7 +171,20 @@ export interface Mind {
   /** The network provider's effort (empty clears it); returns it. Absent: no provider takes one. */
   setEffort?(level: string): string | null
   installed(signal?: AbortSignal): Promise<string[]>
-  answer(req: { tethers: readonly GateTether[]; prompt: string; signal: AbortSignal; memories?: readonly Memories[] }, onPiece: (p: Piece) => void): Promise<Answer>
+  answer(req: AnswerRequest, onPiece: (p: Piece) => void): Promise<Answer>
+}
+
+/**
+ * What a mind is asked: the people bound, the prompt, the signal that cuts it off, what each remembers of the operator
+ * (the swarm's long-term ledger, Memories) and, when the host senses it, where each stands and what just happened to
+ * them (08_Swarm/shortTerm.ts AgentContext). Every provider renders these into one system prompt the same way.
+ */
+export interface AnswerRequest {
+  tethers: readonly GateTether[]
+  prompt: string
+  signal: AbortSignal
+  memories?: readonly Memories[]
+  context?: readonly AgentContext[]
 }
 
 /** What one of the people an answer speaks for remembers of the operator (Diary.recall), oldest first. */
@@ -259,6 +274,19 @@ export interface Senses {
   readonly voice?: Voice
   readonly speech?: SpeechOut
   readonly diary?: Diary
+  readonly awareness?: Awareness
+}
+
+/**
+ * The swarm's here and now as the operator tier uses it (08_Swarm/shortTerm.ts over the engine's readings, handed in by
+ * the host like the diary): where a person stands and what just happened to them, for a prompt; and a note of a moment
+ * between them and the player (what was asked, what was said), kept for the next few prompts only.
+ */
+export interface Awareness {
+  /** Where `agent` stands and the last few moments with them, or null when nothing is known. */
+  context(agent: number): AgentContext | null
+  /** Notes a moment between `agent` and `who` (what was said or done), now, where they stand. */
+  remember(agent: number, who: string, what: string): void
 }
 
 /** What a say ended as. */
@@ -352,6 +380,8 @@ export interface MindStatus {
   readonly cache?: string
   /** The cloud fallback throttle's state, one line (09_Cognition/cloudFallback.ts; absent: the mind has none in front of it). */
   readonly fallback?: string
+  /** Answers the script gave because no backend was answering, one line (09_Cognition/scripted.ts; absent until one has). */
+  readonly scripted?: string
   readonly installed: readonly string[] | null
   readonly error?: string
 }
@@ -621,7 +651,7 @@ export function gatedExec(gate: SkillGate, skills: readonly string[], script: st
  * before; a stop or a server failure is Authorized with the reason (the tether held). With a diary, the answer carries
  * what each bound person remembers.
  */
-export function gatedAsk(gate: SkillGate, mind: Mind, skills: readonly string[], prompt: string, diary?: Diary): GatedAsk & { stop(): void } {
+export function gatedAsk(gate: SkillGate, mind: Mind, skills: readonly string[], prompt: string, diary?: Diary, awareness?: Awareness): GatedAsk & { stop(): void } {
   const followers = new Set<(p: Piece) => void>()
   const stopper = new AbortController()
   const t0 = now()
@@ -633,6 +663,16 @@ export function gatedAsk(gate: SkillGate, mind: Mind, skills: readonly string[],
   let refused = false
   const remembered = (bound: readonly GateTether[]): Memories[] =>
     diary ? bound.map((t) => ({ agent: t.agent, lines: [...diary.recall(t.agent)] })).filter((m) => m.lines.length > 0) : []
+  // The here and now of each bound person, read in the step the request starts (where they stand this moment).
+  const aware = (bound: readonly GateTether[]): AgentContext[] => {
+    if (!awareness) return []
+    const out: AgentContext[] = []
+    for (const t of [...new Set(bound.map((b) => b.agent))]) {
+      const c = awareness.context(t)
+      if (c && (c.surroundings !== null || c.recent.length > 0)) out.push(c)
+    }
+    return out
+  }
   const tell = (p: Piece) => {
     for (const fn of [...followers]) {
       try {
@@ -663,7 +703,7 @@ export function gatedAsk(gate: SkillGate, mind: Mind, skills: readonly string[],
   // 14A: an inadmissible prompt (violence, toxicity, illegality) is not engaged with: it reaches no model, whichever
   // provider answers, nothing streams, and the answer is nothing at once.
   const handle = gate.submit(skills, (lease) => screen(prompt).admissible ? mind.answer(
-    { tethers: lease.bound, prompt, signal: AbortSignal.any([lease.signal, stopper.signal]), memories: remembered(lease.bound) },
+    { tethers: lease.bound, prompt, signal: AbortSignal.any([lease.signal, stopper.signal]), memories: remembered(lease.bound), ...(awareness && { context: aware(lease.bound) }) },
     (p) => lease.use(() => {
       if (p.kind === 'text') pass(p.text, false)
       else if (!refused) {
@@ -865,7 +905,7 @@ const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(
  */
 export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sleep: (ms: number) => Promise<void> = wait, senses: Senses = {}): OperatorBridge {
   const api = scriptApi(sim)
-  const { voice, speech, diary } = senses
+  const { voice, speech, diary, awareness } = senses
   let unlocked = false
   let running: string | null = null
   let asking: (GatedAsk & { stop(): void }) | null = null
@@ -886,7 +926,11 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
       void s.result.then(() => { if (saying === s) saying = null })
     }
     // A line the 14A screen kept unsaid is not remembered either: it would come back in the next prompt.
-    void s.result.then((r) => { if (!r.silent) diary?.note(s.bound.slice(0, 1), 'say', asNamed(skills, s.bound), words, r.state, began, undefined, taskOutcome(r)) })
+    void s.result.then((r) => {
+      if (r.silent) return
+      diary?.note(s.bound.slice(0, 1), 'say', asNamed(skills, s.bound), words, r.state, began, undefined, taskOutcome(r))
+      if (r.state === 'Authorized' && s.bound.length) awareness?.remember(s.bound[0].agent, 'you', `said aloud: ${words}`)
+    })
     return s
   }
   return Object.freeze({
@@ -922,14 +966,18 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
       if (mind.settings().model === null) throw new Error('choose a model first: ask model <name> (type ask to list them)')
       const words = String(prompt)
       const began = Date.now()
-      const a = gatedAsk(gate, mind, skills, words, diary)
+      const a = gatedAsk(gate, mind, skills, words, diary, awareness)
       if (a.state === 'Authorized') {
         asking = a
         void a.result.then(() => { if (asking === a) asking = null })
       }
       const result = a.result.then((r): AskResult => {
         // A prompt the agent did not engage with is not acknowledged: nothing of it is remembered either.
-        if (!disengaged(r.done) && !r.disengaged) diary?.note(a.bound, 'ask', asNamed(skills, a.bound), `${words.split('\n')[0]} → ${r.text}`, r.state, began, r.promptHash, taskOutcome(r))
+        if (!disengaged(r.done) && !r.disengaged) {
+          diary?.note(a.bound, 'ask', asNamed(skills, a.bound), `${words.split('\n')[0]} → ${r.text}`, r.state, began, r.promptHash, taskOutcome(r))
+          // The moment itself, for the next few prompts: what the player asked and what was answered.
+          if (r.state === 'Authorized' && r.text.trim()) for (const t of a.bound) awareness?.remember(t.agent, 'the player', `asked "${words.split('\n')[0]}" and you answered "${r.text}"`)
+        }
         // Said aloud as well (say auto on): a whole answer, through the gate again, while nothing else is being said.
         const v = voice?.settings()
         if (r.state !== 'Authorized' || r.error !== undefined || r.disengaged || disengaged(r.done) || !r.text.trim() || !v?.auto || v.voice === null || !speech || saying) return r
@@ -940,11 +988,11 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
     },
     askStatus: (): Promise<MindStatus> => {
       if (!unlocked) throw locked('ask')
-      const { server, model, think, api, provider, key, effort, cache, fallback } = mind.settings()
+      const { server, model, think, api, provider, key, effort, cache, fallback, scripted } = mind.settings()
       const base = {
         server, model, ...(think !== undefined && { think }), ...(api !== undefined && { api }),
         ...(provider !== undefined && { provider }), ...(key !== undefined && { key }), ...(effort !== undefined && { effort }), ...(cache !== undefined && { cache }),
-        ...(fallback !== undefined && { fallback }),
+        ...(fallback !== undefined && { fallback }), ...(scripted !== undefined && { scripted }),
       }
       return mind.installed().then(
         (installed) => ({ ...base, installed }),

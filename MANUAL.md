@@ -385,6 +385,16 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   plan, and "Copy brief" gives an engineer a note naming the modules each step would touch. This engine
   (`06_Make_Decisions/intent.ts`) is deterministic and offline: no language model, no network, and no
   console syntax is ever shown.
+- **Wren's first five minutes.** A visitor who has just walked in from the onboarding is watched quietly
+  (`09_Cognition/tutorial.ts`, fed by `07_Execute_Actions/onboarding/useMentor.ts`): when they have done nothing
+  for thirty seconds, Wren says one line in the card, in the shape of a why and then a how ("Ever wonder what's
+  behind you? Hold the mouse button down and drag…"), then settles back into the chip. One line at a time, at least
+  forty-five seconds apart, in a fixed order (looking around, walking to The Spire, talking to someone, the M key,
+  the clock keys), skipping anything already done (a turn of the head, standing under the tower, a prompt sent, M
+  pressed, the clock turned) and anything the device cannot do (a touch screen has no console or keys), and
+  nothing after five minutes. It is never called a lesson. The line is the script's, or the configured model's
+  rewording when it answers in time and keeps the key or name the line needs. Nothing of it is saved; the expert
+  path (`?onboarding=0`, "I know my way around") and returning visitors are never watched.
 
 ## The character customizer
 
@@ -1092,6 +1102,20 @@ how work with it has gone (from −1 to +1), and whether answers have run long.
 - **On the console.** `memory` prints each tethered person's weights under their line
   (`weights: Rust +0.90 (8), brevity +0.25 (4) (the stored copy matches the chain)`); `memory <agent>` ends with
   them and the sentences they produce; `memory forget` forgets what was learned with what was remembered.
+
+### The here and now (short-term memory)
+
+Beside the ledger, every pedestrian keeps a short-term memory for the visit (`08_Swarm/shortTerm.ts`): a ring of
+the last three moments between them and you (who, what was said or done, where they stood, the time on the city's
+clock), oldest dropped first, and a one-sentence account of their surroundings, read from the page's own copies
+the moment a prompt starts ("Standing near The Spire in Lakefront Metro at 17:02, looking at a dark red car a few
+steps away, with 2 people close by."). Both go to the end of the system prompt under one heading per person,
+within a fixed budget (about 150 tokens), after what they remember from the ledger, so every provider (Claude,
+Ollama, llama.cpp, and the cloud fallback) answers from that place and moment. An `ask` and its answer, a `say`,
+and a walk ping that waves someone over are the moments kept. Nothing of it is stored, and nothing reaches the
+physics worker or the agents' sandboxed code. With no model backend answering (the gateway or the local server is
+down), the person still answers in a few scripted sentences built from that same context
+(`09_Cognition/scripted.ts`); `ask` then shows a `scripted` line counting those answers.
 
 ## The cinema camera
 

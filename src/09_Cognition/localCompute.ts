@@ -17,7 +17,8 @@
 import { loopbackServer } from '../02_Define_The_Rules/airgap.ts'
 import { AGENT_SYSTEM_PROMPT_CORE } from '../02_Define_The_Rules/conduct.ts'
 import { sha256 } from '../02_Define_The_Rules/integrity.ts'
-import type { Answer, GateTether, Memories, Mind, Piece } from '../07_Execute_Actions/operator.ts'
+import type { AgentContext, Answer, AnswerRequest as MindRequest, GateTether, Memories, Mind, Piece } from '../07_Execute_Actions/operator.ts'
+import { contextSection } from '../08_Swarm/shortTerm.ts'
 
 /**
  * The server's address as an origin ("http://localhost:11434"), if it is on this machine: http or https, a loopback
@@ -82,6 +83,7 @@ export const BASE_REALITY = [
   'You are a person in a city simulation, standing with its operator and tethered to them in person.',
   'You answer only from the expertise named below; if a question needs anything else, say which skill it needs and stop.',
   'You may be told what you remember of the operator, oldest first: use it only where it helps with the question.',
+  'You may be told where you stand right now and what just happened between you and the player: speak from that place and moment, as someone who was there.',
   'Be brief and practical. Plain text: no headings, no tables.',
 ].join('\n')
 
@@ -90,17 +92,20 @@ export const BASE_REALITY = [
  * skills they bring as the whole of the expertise, and what each remembers of the operator (oldest first; only the
  * people bound, only what the memory gave). The same people with the same memories always give the same prompt.
  */
-export function systemPrompt(tethers: readonly GateTether[], memories: readonly Memories[] = []): string {
+export function systemPrompt(tethers: readonly GateTether[], memories: readonly Memories[] = [], context: readonly AgentContext[] = []): string {
   const skills = [...new Set(tethers.flatMap((t) => t.skills))]
   const who = tethers.map((t) => `agent ${t.agent} (${t.skills.join(', ')})`).join(' and ')
   const history = memories
     .filter((m) => m.lines.length > 0 && tethers.some((t) => t.agent === m.agent))
     .flatMap((m) => [`Agent ${m.agent} remembers, oldest first:`, ...m.lines.map((l) => `- ${l}`)])
+  // The here and now last (08_Swarm/shortTerm.ts): it changes every moment, so it must not break the cached prefix.
+  const now = contextSection(tethers.map((t) => t.agent), context)
   return [
     BASE_REALITY,
     `You are answering for ${who}.`,
     `Your expertise is exactly: ${skills.join(', ')}.`,
     ...history,
+    ...now,
   ].join('\n')
 }
 
@@ -418,8 +423,8 @@ export function createLocalCompute({ fetch: fetchFn, store, defaults = {} }: { f
       return think
     },
     installed: (signal?: AbortSignal) => installedModels(fetchFn, server, signal, api),
-    answer: (req: { tethers: readonly GateTether[]; prompt: string; signal: AbortSignal; memories?: readonly Memories[] }, onPiece: (p: Piece) => void): Promise<Answer> => {
-      const system = systemPrompt(req.tethers, req.memories)
+    answer: (req: MindRequest, onPiece: (p: Piece) => void): Promise<Answer> => {
+      const system = systemPrompt(req.tethers, req.memories, req.context)
       const r = { server, model, system, prompt: req.prompt, signal: req.signal, think }
       // The hash of the exact string sent, for the audit: computed here, over `system` as it goes into the request.
       return (api === 'chat' ? chat(fetchFn, r, onPiece) : generate(fetchFn, r, onPiece)).then((a) => ({ ...a, promptHash: promptHash(system) }))
