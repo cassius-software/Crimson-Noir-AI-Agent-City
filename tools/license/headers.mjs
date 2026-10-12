@@ -39,10 +39,11 @@ export const HEADERS = {
 
 /**
  * The licence a path falls under, by its first directory (or its name at the root). The proprietary core is the
- * OS, the native cores, the page's runtime (agents, rules, cognition, network) and the page's build; the auxiliary
+ * OS, the native cores, the page's runtime (agents, rules, cognition, network), the page's build and the desktop
+ * shell (src-tauri); the auxiliary
  * tooling is everything that builds, checks, heals, deploys or publishes it. LICENSE lists the same split.
  */
-export const PROPRIETARY_DIRS = ['src', 'crimson_noir_os', 'native', 'world', 'brand']
+export const PROPRIETARY_DIRS = ['src', 'crimson_noir_os', 'native', 'world', 'brand', 'src-tauri']
 export const MIT_DIRS = ['tools', 'deploy', '.github', 'docs']
 const ROOT_FILES = {
   'index.html': 'proprietary',

@@ -1674,6 +1674,38 @@ releases, byte for byte (the same seats, drivers and paint from the same stream)
   have not been re-run in a browser with tracks on, and Node's `spatial.test.ts` builds the realm without the
   flag.
 
+## The Windows app
+
+The city ships as a one-click Windows program as well as the single page: `src-tauri/` is a Tauri 2 shell (Rust)
+around the very same `dist/index.html`, built by `npm run app:build` (the Vite build runs first as Tauri's
+`beforeBuildCommand`, then `cargo build --release` and the NSIS installer). The `windows-app` workflow builds it on
+every pull request and push to main (artifacts `windows-installer-<version>` and `windows-portable-<version>`) and,
+when a `v*` tag is pushed, puts both on the tag's release beside the OS media.
+
+- **Installing.** Download `Crimson Noir Agent City_<version>_x64-setup.exe` and double-click it. It installs for
+  the current user (no administrator prompt) and puts a shortcut in the Start menu. The file is not code-signed, so
+  SmartScreen may ask once ("More info", then "Run anyway"). The bare `.exe` in the portable artifact runs from any
+  folder; both need the WebView2 runtime, which Windows 10 and 11 carry (the installer fetches it if a machine has
+  none).
+- **The window.** It has no system decorations: the page draws the title bar (`src/07_Execute_Actions/TitleBar.tsx`),
+  a frosted glass strip in the brand's tokens over a backdrop blur, draggable, with minimise, maximise and close
+  through Tauri's window API; the capabilities file (`src-tauri/capabilities/default.json`) admits exactly those
+  commands and nothing else of the host. On Windows 11 the window asks for Mica behind the strip; a Windows that
+  cannot keeps the page's own black. The bar mounts only inside the Tauri window (`desktopShell.ts` reads what Tauri
+  injects at `window.__TAURI__`); a browser tab renders nothing and lays out as before, and the page bundles no Tauri
+  package.
+- **The bridge.** Tauri serves the page from its own origin, and its responses carry the two cross-origin isolation
+  headers (`app.security.headers` in `tauri.conf.json`), so `crossOriginIsolated` is true and the physics realm and
+  the page share one `SharedArrayBuffer` (docs/zero-copy-bridge.md), the same path as `npm run dev`. Should a
+  WebView2 ever not isolate, the bridge falls back to its private buffer and nothing else changes.
+- **The air gap holds.** The page's policy and its loopback gate are unchanged in the app: Tauri's own IPC fetch is
+  refused by the gate like any other host and Tauri falls back to its message channel, which is how the title bar's
+  commands travel. Nothing in the app reaches a host but this machine.
+- **Development.** `npm run app:dev` opens the window over the Vite dev server (`npm run dev` is its
+  `beforeDevCommand`). Building needs Rust (1.85 or newer) and, on Windows, the Visual Studio C++ build tools; on
+  Linux, `libwebkit2gtk-4.1-dev` and friends. The icon set (`src-tauri/icons/`) is generated from
+  `brand/marks/crimson-noir-mark.svg` with `npx tauri icon brand/marks/crimson-noir-mark.svg -o src-tauri/icons`.
+
 ## Constraints
 
 - **Single file.** `vite-plugin-singlefile` inlines everything, and Rapier's WASM ships embedded. Do
