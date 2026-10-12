@@ -9,12 +9,18 @@
  */
 import LakefrontWorker from './lakefront.worker.ts?worker&inline'
 import { inlinePort, type BuilderPort } from './lakefrontClient.ts'
+import { trackWorker } from '../07_Execute_Actions/longTasks.ts'
 
 /** A port to the builder: a worker where the page has them, the inline builder otherwise. */
 export function builderPort(): BuilderPort {
   if (typeof Worker !== 'function') return inlinePort()
   try {
-    return new LakefrontWorker({ name: 'lakefront' }) as unknown as BuilderPort
+    const worker = new LakefrontWorker({ name: 'lakefront' }) as unknown as BuilderPort
+    // Counted among the live worker threads (longTasks.ts) until the client terminates it.
+    const untrack = trackWorker()
+    const terminate = worker.terminate.bind(worker)
+    worker.terminate = () => { terminate(); untrack() }
+    return worker
   } catch {
     return inlinePort()
   }
