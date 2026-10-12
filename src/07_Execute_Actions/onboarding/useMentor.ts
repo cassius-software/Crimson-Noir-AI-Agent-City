@@ -105,7 +105,9 @@ export function useMentor({ active, engine, hud, family, name, voice, now = () =
     }
     const note = (e: Event) => mentor.current?.note(e, now())
     const onKey = (e: KeyboardEvent) => {
-      if (e.isComposing || isEditable(e.target)) return
+      if (e.isComposing) return
+      // Typing into a field (a name, a goal, the console) is being busy, not a key of the game.
+      if (isEditable(e.target)) { note('input'); return }
       if (MOVE_KEYS.has(e.code)) note('move')
       else if (e.code === 'KeyM') note('mode')
       else if (e.code === 'BracketLeft' || e.code === 'BracketRight') note('clock')
