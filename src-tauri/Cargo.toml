@@ -5,7 +5,7 @@
 # (package.json, src/brand.ts); release them together.
 [package]
 name = "crimson-noir-app"
-version = "1.4.0"
+version = "1.0.0-stable-beta"
 description = "Crimson Noir Agent City as a one-click desktop app"
 authors = ["Julian Cassius Subban"]
 license = "LicenseRef-CrimsonNoir-Proprietary"

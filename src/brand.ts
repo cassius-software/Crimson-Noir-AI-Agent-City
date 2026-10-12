@@ -11,7 +11,7 @@ export const BRAND = {
   /** Provisional working name (see README, "Brand"). */
   name: 'ONYX',
   tagline: 'An enterprise in the palm of your hands.',
-  version: '1.4.0',
+  version: '1.0.0-stable-beta',
   /** Host name in the terminal prompt and `uname`. */
   host: 'onyx',
 } as const
