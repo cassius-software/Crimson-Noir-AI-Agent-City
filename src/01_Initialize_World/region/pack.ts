@@ -122,3 +122,23 @@ export function validatePack(u: unknown): RegionPack {
   if (p.water.name.some((i) => i < 0 || i >= p.names.length)) fail('a water body names a missing name')
   return p
 }
+
+/**
+ * The tallest building in a pack and where it stands: the centre of its outer ring, metres in the pack's frame, and
+ * its height, metres. The generated metropolis puts The Spire here (lakefront.ts); a surveyed region, its highest
+ * tower. Null when the pack has no buildings.
+ */
+export function tallestBuilding(pack: Pick<RegionPack, 'buildings'>): { x: number; z: number; height: number } | null {
+  const b = pack.buildings
+  let best = -1, h = -Infinity
+  for (let i = 0; i < polygonCount(b); i++) {
+    const height = b.height[i] ?? 0
+    if (height > h) { h = height; best = i }
+  }
+  if (best < 0) return null
+  const outer = polygonAt(b, best)[0] ?? []
+  if (!outer.length) return null
+  let x = 0, z = 0
+  for (const [px, pz] of outer) { x += px; z += pz }
+  return { x: x / outer.length, z: z / outer.length, height: h }
+}

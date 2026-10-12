@@ -36,7 +36,9 @@ import { BRAND } from '../brand.ts'
 import { buildWorld, createRenderer, gpuBufferOf, LIGHT_TUNE_RANGE, ndStopsFor, type Gpu, type LightTuning, type World } from '../01_Initialize_World/world.ts'
 import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
 import { RegionPlaces, layoutOf, regionPhysics } from '../01_Initialize_World/region/regionWorld.ts'
-import type { RegionPack } from '../01_Initialize_World/region/pack.ts'
+import { tallestBuilding, type RegionPack } from '../01_Initialize_World/region/pack.ts'
+import { LANDMARK } from '../01_Initialize_World/lakefront.ts'
+import { METRO } from '../01_Initialize_World/lakefrontPack.ts'
 import { formatClock, sunAt, type SunState } from '../01_Initialize_World/solar.ts'
 import { SIGNAL, signalFor, walkAllowed } from '../02_Define_The_Rules/civic.ts'
 import { THREE_LAWS } from '../02_Define_The_Rules/laws.ts'
@@ -72,7 +74,9 @@ import { DISSOLVE, DissolveSet, carsOverlapping, copyDirty, poleSlot, type Disso
 import { CINEMA, FramePacer, SHUTTER_SECONDS, exposureFor, type CameraMark } from './cinema.ts'
 import { updateVolumetrics, type Volumetrics } from './volumetrics.ts'
 import { FrameRate, withCloudFallback } from '../09_Cognition/cloudFallback.ts'
-import { operatorBridge, type Diary, type Mind, type SimControls, type SkillGate, type SpeechClip, type SpeechOut, type Utterance, type Voice } from './operator.ts'
+import { withScriptedFallback } from '../09_Cognition/scripted.ts'
+import { describeSurroundings, paintWord, ShortTermMemory, type AgentContext } from '../08_Swarm/shortTerm.ts'
+import { operatorBridge, type Awareness, type Diary, type Mind, type SimControls, type SkillGate, type SpeechClip, type SpeechOut, type Utterance, type Voice } from './operator.ts'
 import { applyQuality, type QualityTargets } from './quality.ts'
 import { SPEECH, Soundscape, sharedAudioContext, wallsBetween, type AudioFrame, type PeerVoice } from './audio.ts'
 import { roomAt, type Room } from './acoustics.ts'
@@ -339,6 +343,16 @@ export interface DebugSim {
   next(): Promise<StepState>
 }
 
+/** The city's one named landmark, in the engine's frame: the tallest tower, which the generated metropolis makes The Spire. */
+export interface Landmark { readonly name: string; readonly x: number; readonly z: number; readonly height: number }
+
+/** The landmark of a walked pack: its tallest building, named The Spire in the generated metropolis (lakefrontPack.ts METRO), else 'the tallest tower'. */
+export function landmarkOf(pack: RegionPack, offset: { x: number; z: number }): Landmark | null {
+  const t = tallestBuilding(pack)
+  if (!t) return null
+  return Object.freeze({ name: pack.name === METRO.name ? LANDMARK.spire : 'the tallest tower', x: t.x + offset.x, z: t.z + offset.z, height: t.height })
+}
+
 export class Engine {
   readonly errors: string[] = []
   readonly input: Input
@@ -378,6 +392,10 @@ export class Engine {
   /** The region being walked (?region), its places (street names, the minimap), or null in the procedural city. */
   private readonly places: RegionPlaces | null
   private readonly regionName: string | null
+  /** The one landmark the city has (the tallest tower: The Spire in the generated metropolis), in the engine's frame, or null in the procedural city. */
+  private readonly landmarkAt: Landmark | null
+  /** The swarm's short-term memory (08_Swarm/shortTerm.ts): the last few moments between each recruit and the player, this visit only. */
+  private readonly moments = new ShortTermMemory()
   /** Ghost-mode collision's transition (contact.ts): the city's poles, the wipe's pulse, and the nearest pedestrian's
    *  gap to the user's body as of the newest crowd frame (on foot, and at the wheel). */
   private readonly poles: PoleIndex
@@ -535,10 +553,11 @@ export class Engine {
   private constructor(p: {
     canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; rigView: RigView
     post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; crowdFrameSeconds: UniformNode<'float', number>; ghost: GhostView
-    options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; netView: NetView
+    options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; netView: NetView
   }) {
     this.places = p.places
     this.regionName = p.options.region?.name ?? null
+    this.landmarkAt = p.landmark
     this.canvas = p.canvas
     this.gpu = p.gpu
     this.world = p.world
@@ -622,6 +641,7 @@ export class Engine {
     }
     const layout = pack ? layoutOf(pack) : null
     const places = pack && layout ? new RegionPlaces(pack, layout) : null
+    const landmark = pack && layout ? landmarkOf(pack, layout.offset) : null
     const world = buildWorld(gpu.renderer, options.seed, pack && layout ? { pack, layout } : null)
     // In a region: a sidewalk of the arterial nearest the region's origin (its downtown), facing along the street.
     const start = places && layout ? places.spawn({ x: layout.offset.x, z: layout.offset.z }) : null
@@ -713,7 +733,7 @@ export class Engine {
     if (options.profile) crowd.enableProfiling()
     const engine = new Engine({
       canvas, gpu, world, crowd, sim, view, rigView, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, ghost, options,
-      quality: { governor, targets, applied, mask, live }, places,
+      quality: { governor, targets, applied, mask, live }, places, landmark,
       // The code dissolve's crowd amounts: allocated by the draws above like the frame's buffers, written the same way.
       crowdDissolve: gpuBufferOf(gpu.renderer, view0.dissolve),
       crowdLook,
@@ -1087,6 +1107,61 @@ export class Engine {
     return out
   }
 
+  /** The city's one landmark (The Spire in the generated metropolis; the tallest tower of a surveyed region), or null in the procedural city. */
+  landmark(): Landmark | null {
+    return this.landmarkAt
+  }
+
+  /** Where pedestrian `agent` stands in the newest reading (a recruit's measured place), else where the player's body is. */
+  private standingOf(agent: number): { x: number; z: number; isPlayer: boolean } {
+    const st = this.sim.state
+    const r = st.recruits.find((v) => v.agent === agent)
+    if (r && Number.isFinite(r.x + r.z)) return { x: r.x, z: r.z, isPlayer: false }
+    return { x: st.avatar.x, z: st.avatar.z, isPlayer: true }
+  }
+
+  /** The place under a point in the city's own words: a region's street corner, or the procedural city's district. */
+  private placeOf(x: number, z: number): string {
+    return this.places ? this.regionPlace(x, z) : districtName(x, z)
+  }
+
+  /**
+   * What pedestrian `agent` has around them this moment, in one plain sentence (08_Swarm/shortTerm.ts): the place,
+   * the landmark and how far, the nearest car and its paint, the people close by, the clock. Read from the page's own
+   * copies (the newest state, the fleet's paint); nothing is asked of the physics realm.
+   */
+  private surroundingsOf(agent: number): string | null {
+    const st = this.sim.state
+    const at = this.standingOf(agent)
+    const l = this.landmarkAt
+    const car = this.nearestCar(at.x, at.z, 40)
+    const o = car * POSE.stride
+    let people = 0
+    for (const r of st.recruits) if (r.agent !== agent && r.arrived && Number.isFinite(r.x + r.z) && Math.hypot(r.x - at.x, r.z - at.z) < 8) people++
+    const toPlayer = at.isPlayer ? 0 : Math.hypot(st.avatar.x - at.x, st.avatar.z - at.z)
+    const d = this.sun.daylight
+    return describeSurroundings({
+      place: this.placeOf(at.x, at.z),
+      landmark: l ? { name: l.name, metres: Math.hypot(l.x - at.x, l.z - at.z) } : null,
+      car: car >= 0 ? { colour: paintWord(this.sim.meta.paint[car] ?? Number.NaN), metres: Math.hypot(st.poses[o + POSE.x] - at.x, st.poses[o + POSE.z] - at.z) } : null,
+      people,
+      withPlayer: toPlayer < 4,
+      clock: formatClock(this.hours),
+      daylight: d >= 0.35 ? 'day' : d >= 0.1 ? 'dusk' : 'night',
+    })
+  }
+
+  /** The swarm's here and now for the operator tier (operator.ts Awareness): its contexts read from this page's copies, its moments kept here. */
+  private awareness(): Awareness {
+    return Object.freeze({
+      context: (agent: number): AgentContext | null => ({ agent, surroundings: this.surroundingsOf(agent), recent: this.moments.recent(agent) }),
+      remember: (agent: number, who: string, what: string): void => {
+        const at = this.standingOf(agent)
+        this.moments.remember(agent, { who, what, where: this.placeOf(at.x, at.z), at: this.simTime, clock: formatClock(this.hours) })
+      },
+    })
+  }
+
   /** Enter the nearest car, or leave the current one on the driver's (left) side (decided in the physics realm). */
   interact(): void {
     this.sim.send({ c: 'interact' })
@@ -1140,6 +1215,8 @@ export class Engine {
         const fn = this.onRally
         if (fn) {
           try { fn(plan.request) } catch (e) { this.errors.push(`rally: ${e instanceof Error ? e.message : String(e)}`) }
+          // A moment the person will remember in their next few answers: the player waved them over.
+          this.awareness().remember(plan.request.agent, 'the player', ping.kind === 'gather' ? 'gathered everyone over to the sidewalk' : 'waved you over to the sidewalk')
         }
       } else {
         this.toast('Rally', plan.reason)
@@ -1891,7 +1968,9 @@ export class Engine {
     if (this.bridge) return this.bridge
     // The cloud fallback throttle in front of the mind App built: while this page's frames are slow, a complex prompt
     // bound for a model server on this machine goes to the router's cloud provider instead (nothing when it has none).
-    const mind = withCloudFallback(givenMind, this.frameRate)
+    // Behind it, the script (09_Cognition/scripted.ts): with no backend answering, the city's people still answer in
+    // a few plain sentences from where they stand and what just happened, and the console says the answer was scripted.
+    const mind = withScriptedFallback(withCloudFallback(givenMind, this.frameRate))
     const hal = this.input.hal
     const audio = this.audio
     const governor = this.quality.governor
@@ -1934,7 +2013,7 @@ export class Engine {
       }),
       // The operator tier: unlockable, sandboxed, built over simControls() (never over the engine itself), its
       // scripts bound to the swarm through the gate.
-      operator: operatorBridge(this.simControls(), gate, mind, undefined, { voice, speech: this.speechOut(), diary }),
+      operator: operatorBridge(this.simControls(), gate, mind, undefined, { voice, speech: this.speechOut(), diary, awareness: this.awareness() }),
       record: Object.freeze({
         start: (source: RecorderSource) => this.startRecording(source),
         stop: () => this.stopRecording(),

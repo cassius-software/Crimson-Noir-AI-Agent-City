@@ -128,6 +128,7 @@ test('the system prompt is the bound people\'s skills: who they are, all they kn
     'You are a person in a city simulation, standing with its operator and tethered to them in person.',
     'You answer only from the expertise named below; if a question needs anything else, say which skill it needs and stop.',
     'You may be told what you remember of the operator, oldest first: use it only where it helps with the question.',
+    'You may be told where you stand right now and what just happened between you and the player: speak from that place and moment, as someone who was there.',
     'Be brief and practical. Plain text: no headings, no tables.',
     'You are answering for agent 17 (Rust, Python).',
     'Your expertise is exactly: Rust, Python.',
@@ -780,4 +781,31 @@ test('chat, the whole path over a real socket: ask api chat from the console; pi
   } finally {
     await new Promise<void>((r) => { server.closeAllConnections(); server.close(() => r()) })
   }
+})
+
+test('the system prompt ends with where each bound person stands and what just happened to them, under one heading each, after the memories, and nothing of anyone else', () => {
+  const bound = [{ agent: 11, serial: 1, skills: ['Rust'] }, { agent: 22, serial: 2, skills: ['Go'] }]
+  const plain = systemPrompt(bound)
+  assert.equal(systemPrompt(bound, [], []), plain)
+  assert.equal(systemPrompt(bound, [], [{ agent: 11, surroundings: null, recent: [] }]), plain, 'nothing known: the same prompt')
+  const moment = { who: 'the player', what: 'asked "hi" and you answered "hello"', where: 'Aurel St & 3rd Ave', at: 5, clock: '17:01' }
+  const p = systemPrompt(bound, [{ agent: 11, lines: ['2 h ago: you were asked over for Rust and joined the operator'] }], [
+    { agent: 22, surroundings: 'Standing at Lakefront Metro.', recent: [] },
+    { agent: 99, surroundings: 'somewhere else', recent: [moment] },
+    { agent: 11, surroundings: 'Standing near The Spire in Lakefront Metro at 17:02.', recent: [moment] },
+  ])
+  assert.equal(p, [
+    BASE_REALITY,
+    'You are answering for agent 11 (Rust) and agent 22 (Go).',
+    'Your expertise is exactly: Rust, Go.',
+    'Agent 11 remembers, oldest first:',
+    '- 2 h ago: you were asked over for Rust and joined the operator',
+    'Agent 22, right now:',
+    '- Standing at Lakefront Metro.',
+    'Agent 11, right now:',
+    '- Standing near The Spire in Lakefront Metro at 17:02.',
+    'Just before this, oldest first:',
+    '- 17:01 Aurel St & 3rd Ave: the player asked "hi" and you answered "hello"',
+  ].join('\n'))
+  assert.ok(p.startsWith(plain), 'the here and now comes last, so the cached prefix is untouched')
 })

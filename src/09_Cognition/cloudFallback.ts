@@ -15,7 +15,7 @@
  * What breaks if it is removed? A heavy prompt to a local model contends with the frames on the same machine, and
  * the page stutters while it thinks.
  */
-import type { Answer, GateTether, Memories, Mind, Piece } from '../07_Execute_Actions/operator.ts'
+import type { Answer, AnswerRequest as MindRequest, Mind, Piece } from '../07_Execute_Actions/operator.ts'
 
 /** The throttle's policy, frozen. */
 export const FALLBACK = Object.freeze({
@@ -72,14 +72,15 @@ export class FrameRate {
   }
 }
 
-export interface AnswerRequest { tethers: readonly GateTether[]; prompt: string; signal: AbortSignal; memories?: readonly Memories[] }
+export type AnswerRequest = MindRequest
 
-/** A complex swarm intent: more than one person speaks, the prompt is long, or what they remember is in it. */
+/** A complex swarm intent: more than one person speaks, the prompt is long, or what they remember (long term, or the last moments) is in it. */
 export function isComplex(req: AnswerRequest): boolean {
   const agents = new Set(req.tethers.map((t) => t.agent)).size
   if (agents > 1) return true
   if (req.prompt.length > FALLBACK.promptChars) return true
-  return (req.memories?.some((m) => m.lines.length > 0)) === true
+  if ((req.memories?.some((m) => m.lines.length > 0)) === true) return true
+  return (req.context?.some((c) => c.recent.length > 0)) === true
 }
 
 /** The provider names the cognition router gives a model server on this machine (router.ts Provider). */

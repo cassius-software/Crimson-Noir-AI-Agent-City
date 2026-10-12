@@ -16,7 +16,7 @@
  * operator tier (gatedAsk), before a prompt reaches this router.
  * What breaks if it is removed? `ask` has one provider and no way to swap it; an offline environment has no drop-in.
  */
-import type { Answer, GateTether, Memories, Mind, Piece } from '../07_Execute_Actions/operator.ts'
+import type { Answer, AnswerRequest, GateTether, Mind, Piece } from '../07_Execute_Actions/operator.ts'
 import { CLAUDE_GATEWAY, claudeAnswer, claudeModels, claudeServer, DEFAULT_CLAUDE_MODEL, EFFORTS, isEffort, maskKey } from './claudeApi.ts'
 import { BASE_REALITY, createLocalCompute, promptHash, systemPrompt, type FetchLike, type SettingsStore } from './localCompute.ts'
 import { createPrefixCache } from './prefixCache.ts'
@@ -103,8 +103,8 @@ export function createMindRouter({ fetch: fetchFn, store }: { fetch: FetchLike; 
 
   // The Claude provider answers with the hash of the exact system prompt it sent, as the local providers do (the
   // swarm's memory records it, so an audit can prove what the model was given).
-  const claudeAnswerHashed = async (req: { tethers: readonly GateTether[]; prompt: string; signal: AbortSignal; memories?: readonly Memories[] }, onPiece: (p: Piece) => void): Promise<Answer> => {
-    const system = systemPrompt(req.tethers, req.memories)
+  const claudeAnswerHashed = async (req: AnswerRequest, onPiece: (p: Piece) => void): Promise<Answer> => {
+    const system = systemPrompt(req.tethers, req.memories, req.context)
     const answer = await claudeAnswer(fetchFn, {
       server: kept.claude.server, key: kept.claude.key ?? '', model: kept.claude.model, system, prompt: req.prompt, signal: req.signal,
       ...(kept.claude.effort && { effort: kept.claude.effort }),
@@ -128,8 +128,7 @@ export function createMindRouter({ fetch: fetchFn, store }: { fetch: FetchLike; 
       return n
     },
     installed: (signal?: AbortSignal) => claudeModels(fetchFn, kept.claude.server, kept.claude.key ?? '', signal),
-    answer: (req: { tethers: readonly GateTether[]; prompt: string; signal: AbortSignal; memories?: readonly Memories[] }, onPiece: (p: Piece) => void): Promise<Answer> =>
-      claudeAnswerHashed(req, onPiece),
+    answer: (req: AnswerRequest, onPiece: (p: Piece) => void): Promise<Answer> => claudeAnswerHashed(req, onPiece),
   })
   const active = (): Mind => (kept.provider === 'claude' ? claude : local())
 
@@ -178,7 +177,7 @@ export function createMindRouter({ fetch: fetchFn, store }: { fetch: FetchLike; 
     },
     installed: (signal?: AbortSignal) => active().installed(signal),
     answer: async (req, onPiece) => {
-      await cache.page(agentKey(req.tethers), systemPrompt(req.tethers, req.memories))
+      await cache.page(agentKey(req.tethers), systemPrompt(req.tethers, req.memories, req.context))
       return active().answer(req, onPiece)
     },
   }

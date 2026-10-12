@@ -186,3 +186,9 @@ test('behind the throttle, the real router sends an offloaded prompt to the Clau
   assert.equal(simple.text, 'from the local model')
   assert.ok(urls.every((u) => u.startsWith('http://localhost:11434/')), urls.join(', '))
 })
+
+test('a prompt carrying the last moments with someone is complex too', () => {
+  const ctx = (recent: number) => [{ agent: 1, surroundings: null, recent: Array.from({ length: recent }, (_, i) => ({ who: 'the player', what: `said ${i}`, where: '', at: i, clock: '17:00' })) }]
+  assert.equal(isComplex(request({ context: ctx(0) })), false, 'surroundings alone are cheap')
+  assert.equal(isComplex(request({ context: ctx(1) })), true)
+})
