@@ -70,16 +70,21 @@ jobs:
           restore-keys: windows-app-${{ env.RUST_TOOLCHAIN }}-
       - run: npm ci --no-audit --no-fund
       - name: The page, then the app (npm run build, cargo build --release, the NSIS installer)
-        run: npm run app:build
+        # The cache above restores src-tauri/target with the installers of earlier versions still in bundle/nsis;
+        # they go first, so only this version's installer is collected below.
+        run: |
+          rm -rf src-tauri/target/release/bundle
+          npm run app:build
       - name: Collect the installer and the bare executable
         id: version
         run: |
           version=$(node -p "require('./package.json').version")
           echo "version=$version" >> "$GITHUB_OUTPUT"
           mkdir -p out/installer out/portable
-          cp src-tauri/target/release/bundle/nsis/*-setup.exe out/installer/
+          cp src-tauri/target/release/bundle/nsis/*"_${version}_"*-setup.exe out/installer/
           cp src-tauri/target/release/*.exe out/portable/
           ls -l out/installer out/portable
+          [ "$(ls out/installer | wc -l)" = 1 ] || { echo "::error::expected exactly one installer for $version"; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-installer-${{ steps.version.outputs.version }}
@@ -118,6 +123,10 @@ jobs:
             echo "waiting for build-release.yml to create the release $TAG ($i)"; sleep 60
           done
           if gh release view "$TAG" > /dev/null 2>&1; then
+            # An installer of another version left on the release by an earlier run goes before the upload.
+            for asset in $(gh release view "$TAG" --json assets --jq '.assets[].name' | grep -E '\.exe$' || true); do
+              [ -e "media/$asset" ] || gh release delete-asset "$TAG" "$asset" --yes
+            done
             gh release upload "$TAG" media/* --clobber
           else
             echo "::warning::no release $TAG after the wait: creating it with the Windows app alone (build-release.yml adds the OS media when it runs)"
