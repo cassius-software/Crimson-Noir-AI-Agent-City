@@ -46,3 +46,6 @@ __pycache__/
 .aider.tags.cache.v3
 .mcp.json
 CLAUDE.local.md
+
+# Tauri build output of the desktop app (src-tauri/.gitignore keeps its own)
+src-tauri/target

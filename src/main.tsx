@@ -12,6 +12,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { TitleBar } from './07_Execute_Actions/TitleBar.tsx'
 
 // Before anything else the page does: the global's outbound primitives are held to this machine and frozen
 // (02_Define_The_Rules/airgap.ts). The imports above evaluate first, and none of them addresses anything at load
@@ -20,6 +21,7 @@ installAirgap(globalThis)
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
+    <TitleBar />
     <App />
   </StrictMode>,
 )

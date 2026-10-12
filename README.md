@@ -76,6 +76,16 @@ test runner's parallel processes import them at once. No test asserts anything i
 once the scanner has seen the files, or an exclusion for the folder, should clear them.
 Kani (the `kani` part of the proofs) runs on Linux and macOS only: use WSL for that part.
 
+**The Windows app.** No Node, no terminal: download `Crimson Noir Agent City_<version>_x64-setup.exe` from the
+[latest release](https://github.com/exitwoundscassius-ux/Crimson-Noir-AI-Agent-City/releases) (or the
+`windows-installer-*` artifact of the latest [windows-app](https://github.com/exitwoundscassius-ux/Crimson-Noir-AI-Agent-City/actions/workflows/windows-app.yml)
+run), double-click it, and the city opens in its own borderless window with a frosted glass title bar. It installs
+for the current user, so no administrator prompt; SmartScreen may ask once because the file is not code-signed
+(More info, Run anyway). The `windows-portable-*` artifact is the bare `.exe` that runs from anywhere. The app is
+the same single page in a Tauri 2 window (src-tauri/): WebView2 runs the WebGPU city, the physics realm shares one
+memory bridge with the page, and nothing in the app reaches a host but this machine. To build it yourself:
+`npm run app:build` (Rust and the Visual Studio C++ build tools; NSIS is fetched by Tauri).
+
 Open `dist/index.html` directly: no server, and it works offline. It needs WebGPU: a current Chrome, Edge or
 Brave on desktop and Android, or Safari 26 on iPhone, iPad and Mac. `?boot=tty` needs none.
 `npm run dev` and `npm run preview` serve the page cross-origin isolated (the COOP and COEP headers), so the physics

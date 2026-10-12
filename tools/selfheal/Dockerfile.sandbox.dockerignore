@@ -8,6 +8,7 @@
 node_modules
 crimson_noir_os/target
 native/*/target
+src-tauri/target
 dist
 dist-ssr
 dist-pilot
