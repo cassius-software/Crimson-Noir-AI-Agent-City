@@ -408,7 +408,7 @@ dependencies = [
 
 [[package]]
 name = "crimson-noir-app"
-version = "1.4.0"
+version = "1.0.0-stable-beta"
 dependencies = [
  "tauri",
  "tauri-build",

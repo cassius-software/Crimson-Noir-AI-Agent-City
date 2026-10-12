@@ -1,7 +1,7 @@
 {
   "name": "civic-simulation",
   "private": true,
-  "version": "1.4.0",
+  "version": "1.0.0-stable-beta",
   "description": "A civic city simulation in one self-contained WebGPU page: GPU pedestrians, Rapier3D traffic and a Three Laws safety kernel.",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
