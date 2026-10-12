@@ -28,11 +28,14 @@
  * client the way it hands in the mind, the engine holds no network code, and each frame it offers the client player
  * 1's desired velocity and heading and reads back the room's poses, drawn as pose-only ghosts (netView.ts) that are
  * never bodies in the physics realm; the room's chat and pings become captions, a peer's voice a placed voice.
- * App.tsx owns the requestAnimationFrame loop and calls frame().
+ * App.tsx owns the requestAnimationFrame loop and calls frame(). Beside that loop, a PerformanceObserver on the
+ * browser's `longtask` entries (longTasks.ts) writes one silent console line per main-thread stall over 50 ms,
+ * with the heap and the live worker count, so a micro-stutter leaves evidence; where the API is missing it is a no-op.
  * What breaks if it is removed? Nothing runs; every module is inert without this orchestration.
  */
 import { Frustum, Matrix4, Vector3, type PerspectiveCamera, type RenderPipeline, type UniformNode } from 'three/webgpu'
 import { BRAND } from '../brand.ts'
+import { watchLongTasks } from './longTasks.ts'
 import { buildWorld, createRenderer, gpuBufferOf, LIGHT_TUNE_RANGE, ndStopsFor, type Gpu, type LightTuning, type World } from '../01_Initialize_World/world.ts'
 import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
 import { RegionPlaces, layoutOf, regionPhysics } from '../01_Initialize_World/region/regionWorld.ts'
@@ -543,6 +546,8 @@ export class Engine {
   private walked = 0
   private driven = 0
   private disposed = false
+  /** Uninstalls the long-task observer (longTasks.ts); a no-op where the browser has none. */
+  private readonly stopLongTasks: () => void
   /** Why the simulation halted, when the worker's state could not carry it (a fault in the physics realm). */
   private lockReason: string | null = null
   /** Set by a Ring-0 kernel panic: the frame loop is frozen from then on (App stops scheduling frames). */
@@ -619,6 +624,7 @@ export class Engine {
       if (error) this.toast('Recording stopped', `${error} · ${st.frames} frames kept`)
     }
     p.sim.listen((s, prev) => this.received(s, prev), (reason) => this.panicked(reason))
+    this.stopLongTasks = watchLongTasks()
     p.gpu.device.addEventListener('uncapturederror', (e) => this.errors.push((e as GPUUncapturedErrorEvent).error.message))
     void p.gpu.device.lost.then((info) => { if (!this.disposed) this.errors.push(`device lost: ${info.message}`) })
   }
@@ -2267,6 +2273,7 @@ export class Engine {
 
   dispose(): void {
     this.disposed = true
+    this.stopLongTasks()
     if (this.recorder.state.active) void this.recorder.stop().catch(() => {})
     this.cameraTrack?.stop()
     this.netUnvoice?.()

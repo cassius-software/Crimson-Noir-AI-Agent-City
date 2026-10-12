@@ -15,6 +15,7 @@
  * What breaks if it is removed? The page cannot start or talk to the physics realm.
  */
 import PhysicsWorker from './physics.worker.ts?worker&inline'
+import { trackWorker } from './longTasks.ts'
 import { MAX_PLAYERS, POSE, type DriveControls, type FootControls, type FromWorker, type PlayerControls, type SimCommand, type SimInit, type SimMeta, type StepState } from './simProtocol.ts'
 import { canShareMemory, packAgents, packAvatars, packVehicles, PhysicsBridge } from './sharedBridge.ts'
 
@@ -34,6 +35,8 @@ export class SimClient {
   /** The zero-copy bridge: shared with the worker when the page is cross-origin isolated, else filled here per state. */
   readonly bridge: PhysicsBridge
   readonly #worker: Worker
+  /** Takes the worker off the live-thread count (longTasks.ts) once it is terminated. */
+  readonly #untrack: () => void
   #state: StepState
   #onState: ((s: StepState, prev: StepState) => void) | null = null
   #onPanic: ((reason: string) => void) | null = null
@@ -51,8 +54,9 @@ export class SimClient {
   /** Players 1..3's controls, sent with every step request (setPlayers); null for one player. */
   #players: PlayerControls[] | null = null
 
-  private constructor(worker: Worker, meta: SimMeta, first: StepState, bridge: PhysicsBridge) {
+  private constructor(worker: Worker, untrack: () => void, meta: SimMeta, first: StepState, bridge: PhysicsBridge) {
     this.#worker = worker
+    this.#untrack = untrack
     this.meta = meta
     this.bridge = bridge
     this.#state = first
@@ -68,10 +72,11 @@ export class SimClient {
    */
   static create(init: Omit<SimInit, 't'>, share: boolean = canShareMemory()): Promise<SimClient> {
     const worker = new PhysicsWorker({ name: 'physics' })
+    const untrack = trackWorker()
     return new Promise((resolve, reject) => {
       let meta: SimMeta | null = null
       let bridge: PhysicsBridge | null = null
-      const fail = (why: string) => { worker.terminate(); reject(new Error(why)) }
+      const fail = (why: string) => { worker.terminate(); untrack(); reject(new Error(why)) }
       worker.onerror = (e) => { e.preventDefault(); fail(`physics worker failed to start: ${e.message || 'unknown error'}`) }
       worker.onmessage = (e: MessageEvent<FromWorker>) => {
         const m = e.data
@@ -86,7 +91,7 @@ export class SimClient {
           worker.postMessage({ t: 'step', id: 0, dt: 0, foot: { x: 0, z: 0, heading: 0 }, drive: idle, cmds: [] })
           return
         }
-        if (m.t === 'state' && meta && bridge) resolve(new SimClient(worker, meta, m, bridge))
+        if (m.t === 'state' && meta && bridge) resolve(new SimClient(worker, untrack, meta, m, bridge))
       }
       worker.postMessage({ t: 'init', ...init } satisfies SimInit)
     })
@@ -211,5 +216,6 @@ export class SimClient {
   terminate(): void {
     this.#closed = true
     this.#worker.terminate()
+    this.#untrack()
   }
 }
