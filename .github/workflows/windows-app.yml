@@ -7,6 +7,9 @@
 # pushed, on that tag's GitHub Release beside the OS media that build-release.yml bakes. The two workflows run on the
 # same tag push; this one waits for the release build-release.yml creates and only makes one itself when none appears,
 # so neither tramples the other (build-release.yml uploads into an existing release with --clobber).
+# A tag that build-release.yml makes itself (a "Run workflow" bake of a tag that did not exist) is made with the
+# workflow's own token, and GitHub starts no tag-push run for such a tag; so build-release.yml dispatches this
+# workflow with the tag as its input, which builds that tag's commit and uploads to its release the same way.
 # What breaks if it is removed? Nobody gets an .exe without a Windows machine with Rust, Node and NSIS on it.
 
 name: windows-app
@@ -17,12 +20,17 @@ on:
     branches: [main]
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: A v* tag whose commit to build and whose GitHub Release to upload the app to (empty builds this ref, artifacts only)
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: windows-app-${{ github.ref }}
+  group: windows-app-${{ inputs.tag || github.ref }}
   cancel-in-progress: true
 
 defaults:
@@ -42,6 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.tag || github.ref }}
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
@@ -86,7 +95,7 @@ jobs:
   # its bake is done (a quarter of an hour or more after the push); this job waits for it, and creates it only when
   # none exists after the wait, so a failed bake still leaves the Windows app where a person looks for it.
   release:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag, 'v'))
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -102,7 +111,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           for i in $(seq 1 80); do
             if gh release view "$TAG" > /dev/null 2>&1; then break; fi

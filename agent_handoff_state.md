@@ -5,6 +5,15 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
 
 ## Where things stand (updated as work lands)
 
+- Phase 2 of the V2 stable release (the one-click Windows app, Wren's quiet first minutes and the swarm's short-term
+  memory, long-task telemetry, the version and the changelog; PRs #20 to #23) is merged into main and released as
+  `v1.0.0-stable-beta` on 2026-10-12 from 6a6b3ff (run 38195437087: proofs, two identical bakes, both QEMU boots, the
+  eight OS files; `BOOTX64.EFI` is byte for byte v1.1.0's, SHA-256 74bbd347…, since no OS source changed). The product
+  version is 1.0.0-stable-beta (from 1.4.0, as directed; it sorts below the earlier tags) and `CHANGELOG.md` records
+  every release. The Windows app did not reach that release on its own: the release workflow made the tag with its
+  own token, for which GitHub starts no tag-push run; windows-app.yml now takes the tag as an input and
+  build-release.yml dispatches it. Phase 21 (the V2 overhaul: matrix mode, Lakefront Metro, the zero-copy bridge;
+  PRs #17 to #19) is in that release too.
 - Phase 19 (the commercial release overhaul: the data-oriented SIMD core, the zero-trust self-heal sandbox, dual
   licensing and brand assets; PRs #9 to #12, with #6, #7 and #8 before them) is merged into main and released as
   `v1.1.0-stable-release` on 2026-10-09 from 2ad02e1: see the Phase 19 section at the end. The published EFI's
