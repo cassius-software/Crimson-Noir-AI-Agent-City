@@ -1,0 +1,35 @@
+# Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+# SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+# Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
+# The desktop shell: a Tauri 2 window around the built page (dist/index.html). Its version is the page's
+# (package.json, src/brand.ts); release them together.
+[package]
+name = "crimson-noir-app"
+version = "1.4.0"
+description = "Crimson Noir Agent City as a one-click desktop app"
+authors = ["Julian Cassius Subban"]
+license = "LicenseRef-CrimsonNoir-Proprietary"
+edition = "2021"
+rust-version = "1.85"
+publish = false
+
+[lib]
+name = "crimson_noir_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+# Mica behind the frosted glass title bar, Windows 11 only; the call is best effort (src/lib.rs).
+[target.'cfg(windows)'.dependencies]
+window-vibrancy = "0.8"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
