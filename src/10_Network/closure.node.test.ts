@@ -15,7 +15,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import { test } from 'node:test'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const HOOK = `import { registerHooks } from 'node:module'
@@ -35,7 +35,9 @@ test('the image carries exactly the modules the host loads', { timeout: 120_000 
   writeFileSync(trace, '')
   const env: NodeJS.ProcessEnv = { ...process.env, TRACE_OUT: trace, NET_PORT: '0', NET_SECRET: 'closure-test-secret-0123456789', NET_PRINT_TOKEN: '0' }
   delete env.NET_SECRET_FILE
-  const host = spawn(process.execPath, ['--import', hook, 'src/10_Network/replication.node.ts'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] })
+  // `--import` takes a URL or a path: on Windows an absolute path (C:\...) is read as a URL with protocol 'c:' and
+  // refused (ERR_UNSUPPORTED_ESM_URL_SCHEME), so the hook is named by its file: URL on every platform.
+  const host = spawn(process.execPath, ['--import', pathToFileURL(hook).href, 'src/10_Network/replication.node.ts'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] })
   let out = ''
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`the host did not start:\n${out}`)), 60_000)

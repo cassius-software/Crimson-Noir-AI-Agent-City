@@ -1096,19 +1096,29 @@ test('14A on the way out: an answer is screened as it streams; a refused word is
 })
 
 test('14A on the way out keeps up with a long stream: each piece screens a bounded window, not the whole answer again', async () => {
-  const gate = new FakeGate()
-  const mind = new FakeMind()
-  const a = gatedAsk(gate, mind, ['Rust'], 'tell me everything')
-  let shown = ''
-  a.follow((p) => { shown += p.text })
-  const t0 = performance.now()
-  for (let k = 0; k < 4000; k++) mind.say('text', `token${k % 97} `)
-  const ms = performance.now() - t0
-  mind.finish('')
-  const r = await within(a.result)
-  assert.equal(r.disengaged, undefined)
-  assert.equal(shown, r.text, 'every word shown, in order, once')
-  assert.ok(ms < 2000, `4,000 pieces screened in ${ms.toFixed(0)} ms`)
+  // A stream of n pieces, timed. The claim is the window: the work per piece does not grow with the answer, so four
+  // times the pieces cost about four times the milliseconds (sixteen if every piece screened, or searched, the whole
+  // answer: windowStart did, until it walked back from the reach). The ratio holds on any machine; the absolute bound
+  // is loose on purpose (a laptop running the suite in parallel took 2.4 s for 4,000 pieces that take 80 ms here).
+  const stream = async (n: number): Promise<number> => {
+    const gate = new FakeGate()
+    const mind = new FakeMind()
+    const a = gatedAsk(gate, mind, ['Rust'], 'tell me everything')
+    let shown = ''
+    a.follow((p) => { shown += p.text })
+    const t0 = performance.now()
+    for (let k = 0; k < n; k++) mind.say('text', `token${k % 97} `)
+    const ms = performance.now() - t0
+    mind.finish('')
+    const r = await within(a.result)
+    assert.equal(r.disengaged, undefined)
+    assert.equal(shown, r.text, 'every word shown, in order, once')
+    return ms
+  }
+  const short = await stream(1000)
+  const long = await stream(4000)
+  assert.ok(long < 8 * Math.max(short, 5), `1,000 pieces in ${short.toFixed(0)} ms, 4,000 in ${long.toFixed(0)} ms: the window is not bounded`)
+  assert.ok(long < 4000, `4,000 pieces screened in ${long.toFixed(0)} ms`)
 })
 
 test('speakable: white space folded; a long answer ends on its last whole sentence, or word, within SAY_CHARS', () => {

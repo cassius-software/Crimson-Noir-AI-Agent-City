@@ -749,7 +749,11 @@ const SCREEN_REACH = 96
 /** Where the streamed screen's window starts: a word boundary at least SCREEN_REACH before `shown` (or the start). */
 function windowStart(text: string, shown: number): number {
   if (shown <= SCREEN_REACH) return 0
-  const at = text.slice(0, shown - SCREEN_REACH).search(/\s\S*$/)
+  // The last whitespace before the reach, found walking back from it: a search over the whole prefix from its start
+  // made every piece cost the length of the answer so far (4,000 pieces took sixteen times 1,000), and the window
+  // is bounded only if finding it is too.
+  let at = shown - SCREEN_REACH - 1
+  while (at >= 0 && !/\s/.test(text[at])) at--
   return at < 0 ? 0 : at
 }
 
