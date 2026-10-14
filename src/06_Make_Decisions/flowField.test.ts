@@ -172,9 +172,15 @@ test('in the city the route to someone behind a building goes round it, along th
   const lot = { x: 3.5 * CITY.pitch, z: 3.5 * CITY.pitch }
   const operator = { x: lot.x, z: 3 * CITY.pitch + CITY.roadHalf + 1 }
   const recruit = { x: lot.x, z: 4 * CITY.pitch - CITY.roadHalf - 1 }
-  const t0 = performance.now()
-  const { dir } = solveFlow(g, [nearestOpen(g, operator.x, operator.z)])
-  const ms = performance.now() - t0
+  // The budget is the solve's own speed, so the best of three: one timing is the machine's load as much as the
+  // algorithm (a laptop running the whole suite in parallel measured 278 ms for a solve that takes 40 ms alone).
+  let dir!: Float32Array
+  let ms = Infinity
+  for (let k = 0; k < 3; k++) {
+    const t0 = performance.now()
+    dir = solveFlow(g, [nearestOpen(g, operator.x, operator.z)]).dir
+    ms = Math.min(ms, performance.now() - t0)
+  }
   const path = trace(g, dir, recruit.x, recruit.z)
   assert.ok(path.length > 5, 'a route exists')
   for (const p of path) {
