@@ -170,7 +170,7 @@ test('a real worker writes under the lock while the main thread reads: never tor
     workerData: { buffer: b.buffer, words: HEADER.words, stride: SLOT.stride, slots, spins: 256, waitMs: 2, lockAt: HEADER.lock, seqAt: HEADER.seq, stepAt: HEADER.step },
   })
   const done = new Promise<{ step: number; skipped: number }>((resolve, reject) => { worker.once('message', resolve); worker.once('error', reject) })
-  let reads = 0, whole = 0, contended = 0, lastSeq = 0, longest = 0
+  let reads = 0, whole = 0, contended = 0, lastSeq = 0, longest = 0, slow = 0
   const until = Date.now() + 150
   while (Date.now() < until) {
     const t0 = performance.now()
@@ -181,7 +181,9 @@ test('a real worker writes under the lock while the main thread reads: never tor
       }
       return true
     })
-    longest = Math.max(longest, performance.now() - t0)
+    const took = performance.now() - t0
+    longest = Math.max(longest, took)
+    if (took >= 50) slow++
     reads++
     if (r === undefined) contended++
     else if (r) whole++
@@ -195,6 +197,9 @@ test('a real worker writes under the lock while the main thread reads: never tor
   assert.ok(w.step > 100, `the worker published ${w.step} steps`)
   assert.ok(b.seq >= w.step - w.skipped - 1, 'every publish moved seq')
   assert.ok(whole > 0, 'the main thread read whole publishes')
-  assert.ok(longest < 50, `the longest read took ${longest.toFixed(2)} ms: the main thread never blocked`)
+  // A read that waited on the lock would take the worker's hold, and every contended read would: blocking shows as
+  // many slow reads, not one. One read in tens of thousands over 50 ms is the OS taking the core away (a laptop
+  // running the whole suite measured one 80 ms read among them), so the bound is on the share, not the maximum.
+  assert.ok(slow <= reads / 1000, `${slow} of ${reads} reads took 50 ms or more (the longest ${longest.toFixed(2)} ms): the main thread never blocks`)
   assert.equal(reads, whole + contended)
 })
