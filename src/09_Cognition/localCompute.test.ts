@@ -549,14 +549,16 @@ test('the whole path: from the console through the gateway to a real local serve
 test('the whole path: the tether breaks mid-answer and the request is cut; the operator can stop one; a server that is not running is a sentence', async () => {
   const srv = await modelServer()
   try {
-    // The operator walks away while it answers: the drop lands between two pieces, as a new state does.
+    // The operator walks away while it answers: the drop lands between two pieces, as a new state does. A microtask,
+    // not a timer: a timer runs after any I/O already queued, so on a machine slow enough to have the next piece in
+    // hand it landed a word late (a laptop under the whole suite showed 'w0 w1 w2 w3').
     const src = new Mirror([A, B])
     const { term } = operatorConsole(src, srv.url)
     const r = shell('ask rust: explain everything', term, [])
     const live: string[] = []
     r.stream!.subscribe((p) => {
       live.push(p.text)
-      if (live.length === 3) setTimeout(() => src.emit([B]), 0)
+      if (live.length === 3) queueMicrotask(() => src.emit([B]))
     })
     assert.deepEqual(await within(r.pending!), [{ kind: 'out', text: 'w0 w1 w2' }, { kind: 'err', text: 'ask: Aborted (Spatial Tether Lost): agent 11 (Rust, Python): no longer tethered to the operator' }])
     await ended(srv)
@@ -567,7 +569,7 @@ test('the whole path: the tether breaks mid-answer and the request is cut; the o
     const s = operatorConsole(src2, srv.url)
     const stopped = shell('ask rust: explain everything', s.term, [])
     let n = 0
-    stopped.stream!.subscribe(() => { if (++n === 2) setTimeout(() => shell('ask stop', s.term, []), 0) })
+    stopped.stream!.subscribe(() => { if (++n === 2) queueMicrotask(() => shell('ask stop', s.term, [])) })
     const sl = await within(stopped.pending!)
     assert.deepEqual(sl?.at(-1), { kind: 'err', text: 'ask: stopped by the operator' })
     assert.deepEqual(sl?.slice(0, -1), [{ kind: 'out', text: 'w0 w1' }])

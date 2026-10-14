@@ -155,8 +155,14 @@ test('the door needs a token, is shut without a pinned digest, and the room keep
       new Promise((r) => { const ws = new WebSocket(url, protocols); ws.onopen = () => { ws.close(); r(false) }; ws.onerror = () => r(true) })
     assert.ok(await refused(shut.url, [LEDGER_SUBPROTOCOL, AUTH_PREFIX + shut.token('x')]), 'no pinned digest: no door')
     assert.ok(await refused(forged.url, [LEDGER_SUBPROTOCOL, `${AUTH_PREFIX}forged`]), 'a forged token: 401')
+    // What one refusal costs the host in upgrades depends on the client: Node 22's WebSocket makes one connection,
+    // Node 24's retries a refused upgrade once and makes two (seen on Windows and on Linux alike). Both refusals were
+    // answered 401 and none 429: the second costs exactly what the first did, and nothing was throttled.
+    const perRefusal = forged.stats().unauthorized
+    assert.ok(perRefusal === 1 || perRefusal === 2, `${perRefusal} upgrades for one refused connection`)
     assert.ok(await refused(forged.url, [LEDGER_SUBPROTOCOL]), 'no token: 401')
-    assert.equal(forged.stats().unauthorized, 2)
+    assert.equal(forged.stats().unauthorized, 2 * perRefusal)
+    assert.equal(forged.stats().throttled, 0)
     // Offering the room's protocol goes to the room, whatever else is offered.
     const ws = new WebSocket(forged.url, [SUBPROTOCOL, LEDGER_SUBPROTOCOL, AUTH_PREFIX + forged.token('player')])
     await new Promise<void>((r) => { ws.onopen = () => r() })
