@@ -165,16 +165,39 @@ export function needsOnboarding(q: URLSearchParams, saved: SavedOnboarding | nul
 
 export type MapChoice = 'lakefront' | 'region' | 'city'
 
+/** A map the visitor chose at the console (`map city|lakefront`), kept between visits; null means no preference. */
+export type StoredMap = 'city' | 'lakefront'
+export const MAP_KEY = 'civic-simulation:map:v1'
+
+export function loadMapChoice(store: KeyStore | null = browserStore()): StoredMap | null {
+  if (!store) return null
+  try {
+    const v = store.getItem(MAP_KEY)
+    return v === 'city' || v === 'lakefront' ? v : null
+  } catch { return null }
+}
+
+/** Keeps the choice, or forgets it with null (the default order of mapWanted applies again). */
+export function saveMapChoice(choice: StoredMap | null, store: KeyStore | null = browserStore()): void {
+  if (!store) return
+  try {
+    if (choice === null) store.removeItem(MAP_KEY)
+    else store.setItem(MAP_KEY, choice)
+  } catch { /* storage unavailable */ }
+}
+
 /**
  * Which map the page walks: `?region=on` the embedded surveyed region (and by default in the pilot build, as before);
  * `?map=lakefront` the generated metropolis, `?map=city` or `?region=off` the procedural city; with nothing in the URL,
- * the metropolis the visitor chose in the onboarding, else the procedural city.
+ * the map chosen at the console (`stored`, kept between visits: the desktop app has no address bar), else the
+ * metropolis the visitor chose in the onboarding, else the procedural city.
  */
-export function mapWanted(q: URLSearchParams, saved: SavedOnboarding | null, regionFirst: boolean): MapChoice {
+export function mapWanted(q: URLSearchParams, saved: SavedOnboarding | null, regionFirst: boolean, stored: StoredMap | null = null): MapChoice {
   const region = q.get('region'), map = q.get('map')
   if (region === 'on') return 'region'
   if (map === 'lakefront' || map === 'metro') return 'lakefront'
   if (map === 'city' || region === 'off') return 'city'
+  if (stored !== null) return stored
   if (regionFirst) return 'region'
   return saved && !saved.skipped && saved.place !== null ? 'lakefront' : 'city'
 }

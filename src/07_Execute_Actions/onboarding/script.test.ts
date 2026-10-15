@@ -14,7 +14,7 @@ import { test } from 'node:test'
 import { REGIONS, ZONE } from '../../01_Initialize_World/lakefront.ts'
 import type { Answer, Mind, Piece } from '../operator.ts'
 import {
-  NO_ANSWERS, ONBOARDING_KEY, PLACES, SKIPPED, SOUNDS, STEPS, TIMES, answer, choicesFor, lineFor, loadOnboarding, mapWanted, needsOnboarding, nextStep,
+  MAP_KEY, NO_ANSWERS, ONBOARDING_KEY, PLACES, SKIPPED, SOUNDS, STEPS, TIMES, answer, choicesFor, lineFor, loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, nextStep, saveMapChoice,
   optionsFrom, outcomeOf, said, saveOnboarding,
 } from './script.ts'
 import { modelVoice, mustKeep, scriptedVoice } from './voice.ts'
@@ -107,6 +107,27 @@ test('which map: the URL first, then the visitor\'s saved choice, else the proce
   assert.equal(mapWanted(q('region=on'), chosen, false), 'region')
   assert.equal(mapWanted(q(''), chosen, true), 'region')
   assert.equal(mapWanted(q('region=off'), null, true), 'city')
+})
+
+test('a map chosen at the console is kept between visits and beats the onboarding and the pilot default, never the URL', () => {
+  const q = (s: string) => new URLSearchParams(s)
+  const chosen = { v: 1 as const, place: 'west-sprawl', hour: 9, audio: true, skipped: false }
+  assert.equal(mapWanted(q(''), chosen, false, 'city'), 'city')
+  assert.equal(mapWanted(q(''), null, false, 'lakefront'), 'lakefront')
+  assert.equal(mapWanted(q(''), chosen, true, 'city'), 'city')
+  assert.equal(mapWanted(q('map=lakefront'), null, false, 'city'), 'lakefront')
+  assert.equal(mapWanted(q('region=on'), null, false, 'city'), 'region')
+  const store = new Map<string, string>()
+  const kv = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v) }, removeItem: (k: string) => { store.delete(k) } }
+  assert.equal(loadMapChoice(kv), null)
+  saveMapChoice('city', kv)
+  assert.equal(store.get(MAP_KEY), 'city')
+  assert.equal(loadMapChoice(kv), 'city')
+  saveMapChoice(null, kv)
+  assert.equal(loadMapChoice(kv), null)
+  store.set(MAP_KEY, 'moon')
+  assert.equal(loadMapChoice(kv), null, 'an unknown word is no choice')
+  assert.equal(loadMapChoice(null), null)
 })
 
 const mindThat = (reply: (prompt: string, onPiece: (p: Piece) => void, signal: AbortSignal) => Promise<void>): Mind => ({

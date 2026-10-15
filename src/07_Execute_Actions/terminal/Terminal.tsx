@@ -94,13 +94,15 @@ const Scrollback = memo(function Scrollback({ rows, prompt }: { rows: readonly R
   )
 })
 
-export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot }: {
+export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onMap }: {
   bridge: TerminalBridge | null
   onOpenChange(open: boolean): void
   /** Track B: the console is the whole page, open from the start; the toggle key and Esc never close it. */
   fullscreen?: boolean
   /** A `boot gui|tty` result: the host reloads the page on that track. */
   onBoot?(track: 'gui' | 'tty'): void
+  /** A `map` result: the host keeps the choice and reloads on that map (`default` forgets it). */
+  onMap?(choice: 'city' | 'lakefront' | 'default'): void
 }) {
   const [open, setOpen] = useState(fullscreen)
   const [rows, setRows] = useState<Row[]>(() => motd((bridge ?? OFFLINE).brand).map((l, i) => ({ ...l, id: -1 - i })))
@@ -312,6 +314,7 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot }: {
     }
     if (r.close && !fullscreen) setOpen(false)
     if (r.boot) onBoot?.(r.boot)
+    if (r.map) onMap?.(r.map)
   }
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {

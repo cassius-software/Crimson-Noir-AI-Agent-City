@@ -48,7 +48,7 @@ import { zoneOf } from './01_Initialize_World/lakefrontPack.ts'
 import { builderPort } from './01_Initialize_World/lakefrontWorkerPort.ts'
 import { screenNames } from './01_Initialize_World/assets/cc0.ts'
 import { Onboarding, type Outcome } from './07_Execute_Actions/onboarding/Onboarding.tsx'
-import { loadOnboarding, mapWanted, needsOnboarding, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
+import { loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
 import { modelVoice, scriptedVoice, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
 import { useMentor } from './07_Execute_Actions/onboarding/useMentor.ts'
 import type { Event as MentorEvent } from './09_Cognition/tutorial.ts'
@@ -190,6 +190,19 @@ function reboot(track: BootTrack): void {
   window.location.assign(url.toString())
 }
 
+/**
+ * Reloads the page on a map (the console's `map city|lakefront|default`): the choice is kept between visits, because
+ * the desktop app has no address bar to say `?map=` in, and the URL's own map words are dropped so the kept choice
+ * (or, after `default`, the usual order: the onboarding's metropolis, else the procedural city) decides.
+ */
+function remap(choice: 'city' | 'lakefront' | 'default'): void {
+  saveMapChoice(choice === 'default' ? null : choice)
+  const url = new URL(window.location.href)
+  url.searchParams.delete('map')
+  url.searchParams.delete('region')
+  window.location.assign(url.toString())
+}
+
 function readOptions(): Options {
   const q = new URLSearchParams(window.location.search)
   const num = (key: string, fallback: number, min: number, max: number) => {
@@ -238,7 +251,7 @@ const noop = (): void => {}
 function TtyShell() {
   return (
     <main className="relative h-full w-full overflow-hidden bg-black">
-      <Terminal bridge={TTY_BRIDGE} fullscreen onOpenChange={noop} onBoot={reboot} />
+      <Terminal bridge={TTY_BRIDGE} fullscreen onOpenChange={noop} onBoot={reboot} onMap={remap} />
     </main>
   )
 }
@@ -267,7 +280,7 @@ function App() {
   if (options.boot === 'tty') return <TtyShell />
   if (onboard && !outcome) return <Onboarding seed={options.seed} onDone={setOutcome} port={builderPort} voice={voice} />
   const chosen = outcome?.saved ?? saved
-  const choice = mapWanted(new URLSearchParams(window.location.search), chosen, regionFirst)
+  const choice = mapWanted(new URLSearchParams(window.location.search), chosen, regionFirst, loadMapChoice())
   const zone = zoneOf(chosen?.place) ?? ZONE.metropolis
   const shellOptions = outcome?.options ? { ...options, ...outcome.options } : options
   // Wren watches the first minutes of a visitor who has just walked in from the onboarding (never the expert path).
@@ -455,8 +468,11 @@ function GuiShell({ options, plan, mentored, voice }: { options: Options; plan: 
         }
         if (termOpenRef.current || lookOpenRef.current) e.input.suspend(true)
         setEngine(e)
+        const engineBridge = e.terminalBridge(gate, mind, voice, memory.diary())
         setBridge(Object.freeze({
-          ...e.terminalBridge(gate, mind, voice, memory.diary()),
+          ...engineBridge,
+          // The map this shell walks, for the console's `map` status line (the choice itself is remap's).
+          brand: Object.freeze({ ...engineBridge.brand, map: plan.choice }),
           recruit: recruitBridge(r),
           memory: memoryBridge(memory, r),
           net: netBridge(e.net, pageStore(NET_TOKEN_KEY)),
@@ -548,7 +564,7 @@ function GuiShell({ options, plan, mentored, voice }: { options: Options; plan: 
           dark={hud.customer.daylight < 0.35}
         />
       )}
-      <Terminal bridge={bridge} onOpenChange={onTermOpen} onBoot={reboot} />
+      <Terminal bridge={bridge} onOpenChange={onTermOpen} onBoot={reboot} onMap={remap} />
       {/* From the first render: React swaps index.html's identical splash for this, which fades into the city
           once the first snapshot exists (or lifts to show the error card). */}
       <BootVeil ready={hud !== null || error !== null} onDone={() => setVeilDone(true)} />

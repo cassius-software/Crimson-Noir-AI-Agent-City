@@ -211,8 +211,9 @@ export interface LookBridge {
  * only report. A method may throw; the terminal prints the message and carries on.
  */
 export interface TerminalBridge {
-  /** `track`: which shell mounted the console: 'gui' (the city, the engine's bridge) or 'tty' (?boot=tty: the full-screen console alone). */
-  readonly brand: { name: string; version: string; host: string; track?: 'gui' | 'tty' }
+  /** `track`: which shell mounted the console: 'gui' (the city, the engine's bridge) or 'tty' (?boot=tty: the full-screen console alone).
+   *  `map`: which map the city shell walks (onboarding/script.ts MapChoice), for the `map` command's status line. */
+  readonly brand: { name: string; version: string; host: string; track?: 'gui' | 'tty'; map?: 'lakefront' | 'region' | 'city' }
   stats(): Ring0Stats
   laws(): readonly LawText[]
   /** Local solar time as HH:MM. */
