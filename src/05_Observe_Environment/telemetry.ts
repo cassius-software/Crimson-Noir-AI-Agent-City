@@ -242,8 +242,10 @@ export interface SipocSnapshot {
   kernel: KernelStats
   quality: QualityState
   customer: {
-    /** The surveyed region being walked (its fictional name), or null in the procedural city. */
+    /** The region being walked (its fictional name), or null in the procedural city. */
     region?: string | null
+    /** The region has a street window (its people, traffic and signals are real); absent or false in a surveyed region. */
+    streets?: boolean
     /** The name the user gave the Concierge ('' until they do). */
     name: string
     clock: string; daylight: number; viewYaw: number; district: string; speedKmh: number; gear: string

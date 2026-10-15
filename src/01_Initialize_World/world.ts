@@ -26,6 +26,7 @@ import { FbmSet } from './fbmTexture.ts'
 import { sunAt, type SunState } from './solar.ts'
 import { regionMeshes, type RegionLayout, type RegionScene } from './region/regionWorld.ts'
 import type { RegionPack } from './region/pack.ts'
+import { windowFurniture, type StreetGrid } from './region/streets.ts'
 import { SIGNAL } from '../02_Define_The_Rules/civic.ts'
 import { applyCodeDissolve } from './codeDissolve.ts'
 import { applyMatrixMode, createMatrixMode, type MatrixMode } from './matrixMode.ts'
@@ -285,12 +286,14 @@ function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', 
  * The world under its sky. With a region (a pack and where it sits), the region's surveyed buildings, streets and water
  * stand in for the procedural city: no city boxes, no street furniture, no city ground or lake.
  */
-export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pack: RegionPack; layout: RegionLayout } | null = null): World {
+export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pack: RegionPack; layout: RegionLayout; streets?: StreetGrid | null } | null = null): World {
   const scene = new Scene()
   const camera = new PerspectiveCamera(62, 1, 0.1, 2400)
   const plan = region ? [] : generateBuildings(seed)
   const boxes = plan.map((b) => b.box)
-  const furniture: Furniture = region ? { lamps: [], trees: [], signals: [] } : streetFurniture(seed)
+  // A region's street furniture stands along its street window (region/streets.ts), where its people walk; a surveyed
+  // region without one has none.
+  const furniture: Furniture = region ? (region.streets ? windowFurniture(region.streets, seed) : { lamps: [], trees: [], signals: [] }) : streetFurniture(seed)
   const night = uniform(0)
   const signalClock = uniform(0)
   // Matrix mode's one uniform: every surface below takes it; the sky (next) does not.
@@ -389,10 +392,10 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   const lake = new Mesh(new PlaneGeometry(3200, lakeDepth).rotateX(-Math.PI / 2).translate(CITY_CENTER, LAKE.water, north - lakeDepth / 2), applyMatrixMode(waterMaterial(fbm), matrixMode.globalState))
   lake.receiveShadow = true
   lake.name = 'Lake'
-  // A region has no street furniture: its dissolve attributes are empty (nothing to write, nothing drawn).
+  // A region without street furniture has empty dissolve attributes (nothing to write, nothing drawn).
   let dissolve: PropDissolve = { lamps: dissolveAttribute(0), trees: dissolveAttribute(0), signals: dissolveAttribute(0) }
-  if (!region) {
-    scene.add(lake)
+  if (!region) scene.add(lake)
+  if (!region || region.streets) {
     const props = furnitureMeshes(furniture, fbm, night, signalClock, matrixMode)
     for (const mesh of props.meshes) scene.add(mesh)
     dissolve = props.dissolve

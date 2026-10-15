@@ -39,7 +39,8 @@ import { MODES } from './simProtocol.ts'
 import { MAX_CARS, type CrowdReadout, type CrowdSensor, type CrowdStepInput } from '../03_Spawn_Agents/crowdSensor.ts'
 import { ACTIVITY, APPROACH_SECONDS, RALLY_RANGE, RECRUIT_SLOTS, RELEASE_DISTANCE, skillsOf, TETHER_PACE, type Skill } from '../03_Spawn_Agents/skills.ts'
 import type { SimEvent } from './simProtocol.ts'
-import { inLot } from '../01_Initialize_World/city.ts'
+import { CITY, inLot } from '../01_Initialize_World/city.ts'
+import { SEG, cityStreetGrid, hSeg, streetCapacity, vSeg, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 
 const H = 1 / 60
 const NO_FURNITURE = { lamps: [], trees: [], signals: [] }
@@ -1162,6 +1163,78 @@ test('tracks on: a step returns the pose buffer and the craft buffer, plain data
   const st4 = out[4].msg
   assert.ok(st4.t === 'state' && st4.craft === null, 'a halted realm ships no craft')
   assert.equal(out[5].msg.t, 'panic')
+})
+
+/**
+ * A region with a street window at (2000, 2000): the city's grid moved there, with the east-west streets of line 8
+ * dropped (two superblock rows), the north-south line 4 a pedestrian street, and a lake with no street at all in the
+ * south-east corner. The region's ground covers it with a margin.
+ */
+function windowedRegion(): { region: { bounds: { x0: number; z0: number; x1: number; z1: number }; walls: number[] }; streets: StreetGrid } {
+  const streets = cityStreetGrid()
+  streets.originX = 2000
+  streets.originZ = 2000
+  const B = streets.blocks
+  for (let k = 0; k < B; k++) streets.h[8 * B + k] = 0
+  for (let m = 0; m < B; m++) streets.v[4 * B + m] = SEG.walk
+  for (let m = 12; m <= B; m++) for (let k = 12; k < B; k++) streets.h[m * B + k] = 0
+  for (let k = 12; k <= B; k++) for (let m = 12; m < B; m++) streets.v[k * B + m] = 0
+  return { region: { bounds: { x0: 1900, z0: 1900, x1: 2740, z1: 2740 }, walls: [] }, streets }
+}
+
+test('a region with a street window: the fleet is seated on the window\'s rings and drives them, the crowd is built for the window, no craft', async () => {
+  const { region, streets } = windowedRegion()
+  const crowd = new FakeCrowd()
+  const given: (StreetGrid | null)[] = []
+  const sim = await SimCore.create({ seed: 5, cars: 12, agents: AGENTS, boxes: [], furniture: NO_FURNITURE, spawn: { x: 2200, z: 2200 }, debug: false, region, streets, tracks: true }, async (_agents, _grid, w) => { given.push(w); return crowd })
+  assert.equal(given.length, 1)
+  assert.deepEqual(given[0], streets, 'the crowd factory is handed the window')
+  assert.equal(sim.meta.count, 12)
+  assert.equal(sim.meta.craft, 0, 'no elevated loop, drones or planes over a region')
+  assert.equal(sim.meta.rigSlots, 0)
+  const poses = new Float32Array(sim.meta.count * POSE.stride)
+  const start: [number, number][] = []
+  let s = sim.step({ dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds: [] }, poses, new Float32Array(0))
+  for (let i = 0; i < 12; i++) start.push([s.poses[i * POSE.stride], s.poses[i * POSE.stride + 2]])
+  for (let n = 0; n < 600; n++) s = sim.step({ dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds: [] }, poses, new Float32Array(0))
+  assert.equal(sim.halted, false, sim.panic ?? '')
+  const P = CITY.pitch
+  let moved = 0
+  for (let i = 0; i < 12; i++) {
+    const x = s.poses[i * POSE.stride], z = s.poses[i * POSE.stride + 2]
+    const lx = x - streets.originX, lz = z - streets.originZ
+    assert.ok(lx > -8 && lx < 16 * P + 8 && lz > -8 && lz < 16 * P + 8, `car ${i} at ${x}, ${z} is off the window`)
+    // Within the carriageway of a street cars use, or in an intersection box.
+    const k = Math.round(lx / P), m = Math.round(lz / P)
+    const dx = Math.abs(lx - k * P), dz = Math.abs(lz - m * P)
+    const onV = dx <= streets.roadHalf + 0.5 && (vSeg(streets, k, Math.floor(lz / P)) & SEG.drive)
+    const onH = dz <= streets.roadHalf + 0.5 && (hSeg(streets, Math.floor(lx / P), m) & SEG.drive)
+    const box = dx <= 8 && dz <= 8
+    assert.ok(onV || onH || box, `car ${i} at ${lx.toFixed(1)}, ${lz.toFixed(1)} is off every car street`)
+    if (Math.hypot(x - start[i][0], z - start[i][1]) > 5) moved++
+  }
+  assert.ok(moved >= 8, `${moved} of 12 cars drove in 10 s`)
+  // Every car's streets are the window's: none drives the pedestrian line 4 or the dropped line 8 or the lake.
+  const crowdCars = crowd.steps.at(-1)!.cars
+  assert.equal(crowdCars.length, 12, 'the crowd senses every car')
+})
+
+test('a street window seats no more cars than its rings hold: the fleet is clamped to the window\'s capacity', async () => {
+  const { region, streets } = windowedRegion()
+  // A window with two car streets and one closed cell: a handful of seats.
+  const small = cityStreetGrid()
+  small.originX = 2000; small.originZ = 2000
+  small.h.fill(0); small.v.fill(0)
+  const B = small.blocks
+  for (const k of [2, 3]) { small.h[2 * B + k] = 3; small.h[4 * B + k] = 3 }
+  for (const m of [2, 3]) { small.v[2 * B + m] = 3; small.v[4 * B + m] = 3 }
+  const seats = streetCapacity(small, 5)
+  assert.ok(seats > 0 && seats < MAX_CARS, `${seats} seats`)
+  const sim = await SimCore.create({ seed: 5, cars: MAX_CARS, agents: AGENTS, boxes: [], furniture: NO_FURNITURE, spawn: { x: 2200, z: 2200 }, debug: false, region, streets: small, tracks: true }, null)
+  assert.equal(sim.meta.count, seats)
+  // With tracks off the drivers hop the procedural grid, as before: the window does not bound them.
+  const free = await SimCore.create({ seed: 5, cars: 3, agents: AGENTS, boxes: [], furniture: NO_FURNITURE, spawn: { x: 2200, z: 2200 }, debug: false, region, streets, tracks: false }, null)
+  assert.equal(free.meta.count, 3)
 })
 
 test('tracks on over a surveyed region: the fleet keeps its network but no corridor is laid over the region (no craft)', async () => {

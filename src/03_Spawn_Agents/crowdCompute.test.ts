@@ -43,7 +43,8 @@ const USAGE = { MAP_READ: 1, MAP_WRITE: 2, COPY_SRC: 4, COPY_DST: 8, INDEX: 16, 
 const TEXTURE_USAGE = { COPY_SRC: 1, COPY_DST: 2, TEXTURE_BINDING: 4, STORAGE_BINDING: 8, RENDER_ATTACHMENT: 16 } as const
 Object.assign(globalThis, { GPUBufferUsage: USAGE, GPUMapMode: { READ: 1, WRITE: 2 }, GPUTextureUsage: TEXTURE_USAGE })
 
-const { CULL_EASE, CULL_PASSES, FLAG_NON_FINITE, MAX_CARS, PARAMS_SIZE, PASS_BINDINGS, RENDER_FLOATS, SIM_PASSES, VARIANTS, agentQuota, corridorReach, crowdShader, packFrustumPlanes, packSimParams, simReadbackSize } = await import('./crowdCompute.ts')
+const { CULL_EASE, CULL_PASSES, FLAG_NON_FINITE, MAX_CARS, PARAMS_SIZE, PARAMS_STREETS, PASS_BINDINGS, RENDER_FLOATS, SIM_PASSES, VARIANTS, agentQuota, corridorReach, crowdShader, geometryOf, packFrustumPlanes, packSimParams, simReadbackSize } = await import('./crowdCompute.ts')
+const { STREET_VEC4S, cityStreetGrid, packStreets } = await import('../01_Initialize_World/region/streets.ts')
 const { CROWD_SUBSTEP, CrowdSim } = await import('./crowdSim.ts')
 const { CrowdCull, MAX_HIDDEN } = await import('./crowdCull.ts')
 const { MAX_CARS: SENSOR_MAX_CARS, PEDESTRIAN_MAX_SPEED } = await import('./crowdSensor.ts')
@@ -150,7 +151,9 @@ const roundUp = (k: number, n: number) => Math.ceil(n / k) * k
 
 /** WGSL host-shareable layout (the storage rules; uniform extras are asserted separately). */
 function layoutOf(type: string, code: string): Layout {
-  const scalar: Record<string, [number, number]> = { f32: [4, 4], i32: [4, 4], u32: [4, 4], vec2f: [8, 8], vec3f: [12, 16], vec4f: [16, 16], 'atomic<u32>': [4, 4] }
+  const scalar: Record<string, [number, number]> = {
+    f32: [4, 4], i32: [4, 4], u32: [4, 4], vec2f: [8, 8], vec3f: [12, 16], vec4f: [16, 16], vec2u: [8, 8], vec3u: [12, 16], vec4u: [16, 16], vec2i: [8, 8], vec4i: [16, 16], 'atomic<u32>': [4, 4],
+  }
   if (scalar[type]) return { size: scalar[type][0], align: scalar[type][1] }
   const arr = /^array<(.+),\s*(\w+)>$/.exec(type)
   if (arr) {
@@ -725,8 +728,11 @@ test('no pass needs more than the default 8 storage buffers per stage', () => {
 test('struct layouts obey the uniform address-space rules and match the CPU sizes', () => {
   const p = layoutOf('Params', MODULE)
   const m = p.members!
-  assert.equal(p.size, 1856)
+  // The street window's bit field rides last: STREET_VEC4S rows of vec4u after the summons.
+  assert.equal(p.size, 1856 + STREET_VEC4S * 16)
   assert.equal(p.size, PARAMS_SIZE)
+  assert.equal(m.get('streets')!.offset, 192 + MAX_CARS * 32 + RECRUIT_SLOTS * 16)
+  assert.equal(m.get('streets')!.offset, PARAMS_STREETS)
   assert.equal(m.get('player')!.offset, 32)
   assert.equal(m.get('aux')!.offset, 48)
   assert.equal(m.get('camera')!.offset, 64)
@@ -1714,7 +1720,7 @@ test('simulate: a summons comes after the safety reflexes, is taken only on the 
 test('a released recruit resumes from their own block\'s corner, reachable along the sidewalk from anywhere on it', () => {
   assert.equal(
     functions(MODULE).get('cornerOf')!.body.replace(/\s+/g, ' '),
-    '{ let k = i32(round(p.x / CITY_PITCH)); let m = i32(round(p.y / CITY_PITCH)); let o = streetOffsets(p); return cornerPos(k, m, select(-1.0, 1.0, o.x >= 0.0), select(-1.0, 1.0, o.y >= 0.0)); }',
+    '{ let km = nearestLines(p); let o = streetOffsets(p); return cornerPos(km.x, km.y, select(-1.0, 1.0, o.x >= 0.0), select(-1.0, 1.0, o.y >= 0.0)); }',
   )
   // The same arithmetic on the CPU (WGSL round() is half-to-even; no sidewalk point sits on a half).
   const cornerOf = (x: number, z: number): [number, number] => {
@@ -1737,6 +1743,46 @@ test('a released recruit resumes from their own block\'s corner, reachable along
     checked++
   }
   assert.ok(checked > 3000)
+})
+
+test('a street window: the shader is compiled for its corner and widths, and its segments ride in Params.streets every step', async () => {
+  const window = cityStreetGrid()
+  window.originX = 2960; window.originZ = 2560; window.roadHalf = 3.3; window.lane = 4.9
+  window.h.fill(0, 0, 3); window.h[3] = 1; window.v[5] = 1
+  const g = geometryOf(window)
+  assert.deepEqual(g, { originX: 2960, originZ: 2560, roadHalf: 3.3, lane: 4.9, spawnK: 3, spawnM: 0 })
+  const code = crowdShader(AGENTS, undefined, g)
+  const c = constants(code)
+  assert.deepEqual([c.get('CITY_ORIGIN_X'), c.get('CITY_ORIGIN_Z'), c.get('CITY_ROAD_HALF'), c.get('CITY_LANE'), c.get('SPAWN_K'), c.get('SPAWN_M')], [2960, 2560, 3.3, 4.9, 3, 0])
+  assert.deepEqual([c.get('GRID_ORIGIN_X'), c.get('GRID_ORIGIN_Z')], [2960 - 8, 2560 - 8], 'the hash grid moves with the window')
+  assert.equal(c.get('CITY_BLOCKS'), CITY.blocks, 'the window is the city\'s size')
+  assert.equal(c.get('STREET_VEC4S'), STREET_VEC4S)
+  // The city's own module: at the origin, with the city's widths.
+  const city = constants(MODULE)
+  assert.deepEqual([city.get('CITY_ORIGIN_X'), city.get('CITY_ORIGIN_Z'), city.get('CITY_ROAD_HALF'), city.get('CITY_LANE'), city.get('GRID_ORIGIN_X')], [0, 0, CITY.roadHalf, CITY.lane, -8])
+  // The worker's crowd over the window: the module is the window's, and the words land after the summons, every substep.
+  const device = new MockDevice()
+  const crowd = await CrowdSim.create(device as unknown as GPUDevice, AGENTS, null, window)
+  assert.equal(device.shader, code)
+  const words = packStreets(window)
+  const read = () => [...params(device, 'crowd.params').u.subarray(PARAMS_STREETS / 4, PARAMS_STREETS / 4 + STREET_VEC4S * 4)]
+  assert.deepEqual(read(), [...words], 'the spawn pass sees the window')
+  crowd.step(simInput())
+  assert.deepEqual(read(), [...words])
+  assert.equal(words[0] & 3, 0, 'segment h(0, 0) dropped'); assert.equal((words[0] >>> 6) & 3, 1, 'segment h(3, 0) walked, not driven')
+  // The city's rig packs every segment.
+  const { device: cityDevice, crowd: cityCrowd } = await simRig()
+  cityCrowd.step(simInput())
+  const cityWords = [...params(cityDevice, 'crowd.params').u.subarray(PARAMS_STREETS / 4, PARAMS_STREETS / 4 + STREET_VEC4S * 4)]
+  assert.deepEqual(cityWords, [...packStreets(cityStreetGrid())])
+  assert.ok(cityWords.slice(0, 34).every((w) => w === 0xffffffff), 'every bit of every segment')
+  assert.throws(() => packSimParams(new Float32Array(PARAMS_SIZE / 4), new Uint32Array(PARAMS_SIZE / 4), 1, AGENTS, simInput(), new Uint32Array(3)), RangeError)
+  // The shader gates its corner graph on the field: no block edge without its segment, no crosswalk without its corner.
+  const next = functions(MODULE).get('nextCorner')!.body.replace(/\s+/g, ' ')
+  assert.ok(next.includes('let alongX = walkable(hSeg(min(k, nk), m));') && next.includes('let acrossX = cornerExists(k, m, -sx, sz);'))
+  assert.ok(next.includes('if (r < 0.38 && alongX)') && next.includes('if (r < 0.76 && alongZ)') && next.includes('if (r < 0.88 && acrossX)'), 'the same dice as before')
+  assert.ok(functions(MODULE).get('isCrossing')!.body.includes('roadV(km.x, km.y)'), 'a crosswalk waits only over a street cars run on')
+  assert.ok(functions(MODULE).get('onRoad')!.body.includes('roadV(km.x, km.y)'), 'a line without cars is no carriageway')
 })
 
 test('packFrustumPlanes: six planes into the cull layout, in order; anything else refused', () => {

@@ -11,6 +11,26 @@ from `1.4.0`, so this release sorts below the three before it (`v1.1.0-stable-re
 `v1.0.0-stable-release`) under npm, cargo and GitHub ordering. Crimson Noir OS keeps its own crate and containment
 version, `0.9.0` (the technical design document's), which is sealed into `containment.lock` and unchanged.
 
+## [Unreleased]
+
+### Added
+
+- **Lakefront Metro has people and traffic.** The generated metropolis was walked through the surveyed-region path,
+  which by design gives a region no fleet and hides the pedestrian crowd, so every first visit read Population 0 and
+  Vehicles 0. Its streets lie on the procedural city's 40 m pitch, so a *street window* of 16 × 16 blocks around where
+  the visitor starts is now read back from the region pack's roads (`src/01_Initialize_World/region/streets.ts`): the
+  GPU crowd (`crowd.wgsl`) is compiled for the window's corner and street widths and takes, per segment, whether a
+  sidewalk runs along it and whether cars use it, so its corner graph never walks a dropped street and only waits at
+  crosswalks over streets with cars; the fleet is seated on rings laid over the window's whole cells (disjoint
+  rectangles whose every side is a car street, so the zero-jam invariant of `tracks.ts` holds; the fleet is clamped to
+  the rings' seats); lamps, trees and signal poles stand along the window's streets; the HUD shows the real counts and
+  the signal cycle. The procedural city compiles to the same shader with every street present at the origin.
+- Generated streets cars use are two lanes, one each way (arterials were four), and the lake's shore wall is cut where
+  a bridge crosses it, so a car can drive onto the bridge. A surveyed region whose roads are not on the grid is
+  unchanged: empty fleet, hidden crowd.
+- Unverified in the cloud (no GPU): the rendered crowd and traffic on the metropolis; `naga` validates both shader
+  variants, and the window, the rings, the realm's seating and the uniform layout are tested in Node.
+
 ## [1.0.0-stable-beta] - 2026-10-12
 
 The V2 stable release overhaul (Phase 21, PRs #17, #18 and #19) and Phase 2 (PRs #20, #21 and #22), with everything

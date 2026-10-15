@@ -100,8 +100,10 @@ West Sprawl with Transit City, The East Bluffs, North Ridge, The Grand Ravine), 
 the world seed; the answers are kept, so a return visit opens on the same city. `?onboarding=0` skips to the
 procedural city (the expert path), `?onboarding=1` shows the onboarding again, `?map=lakefront` walks the metropolis
 and `?map=city` the procedural city regardless of what was saved; `?region=on` is the surveyed region as before. The
-metropolis's structural layouts are committed under `world/lakefront/` (`node tools/world/lakefront.mjs` regenerates
-them; `--check` compares).
+metropolis has its own crowd and traffic: a 16 × 16-block street window around where the visitor starts is read back
+from its streets, the GPU pedestrians walk its sidewalks and the car fleet drives rings over its whole cells, with
+lamps and signals along its streets (`src/01_Initialize_World/region/streets.ts`). The metropolis's structural layouts
+are committed under `world/lakefront/` (`node tools/world/lakefront.mjs` regenerates them; `--check` compares).
 
 ---
 
