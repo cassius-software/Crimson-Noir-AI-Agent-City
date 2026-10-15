@@ -40,7 +40,7 @@ const LAWS = [
 
 const CORE_NAMES = [
   'help', 'stats', 'laws', 'kernel', 'quality', 'time', 'audio', 'ghost', 'rain', 'render', 'captions', 'ping', 'look', 'hal', 'recruit', 'memory', 'clear', 'history', 'echo',
-  'uname', 'whoami', 'version', 'boot', 'r0', 'exit',
+  'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'exit',
 ]
 const OPERATOR_NAMES = ['operator', 'run', 'ask', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
 
@@ -722,7 +722,7 @@ test('clear, history, whoami, version, uname and exit', () => {
 test('the brand always comes from the bridge', () => {
   const b = unlocked()
   const everything = ['help', 'stats', 'laws', 'kernel', 'quality', 'time', 'audio', 'hal', 'version', 'uname -a', 'api', 'harness', 'record', 'sim', 'operator',
-    'render', 'captions', 'ping', 'look', 'boot', 'r0', 'net', 'recruit']
+    'render', 'captions', 'ping', 'look', 'boot', 'map', 'r0', 'net', 'recruit']
     .flatMap((c) => texts(run(c, b, [])))
     .concat(motd(BRAND).map((l) => l.text))
     .join('\n')
@@ -1650,6 +1650,27 @@ test('look: the look worn (or a pedestrian\'s), a slot by number or name, a pres
   assert.deepEqual([...LOOK_SLOT_ARGS], [...LOOK_SLOTS])
   assert.deepEqual([...LOOK_BODY_ARGS], [...LOOK_BODIES].sort())
   assert.deepEqual([...LOOK_PRESET_ARGS], LOOK_PRESETS.map((p) => p.name).sort())
+})
+
+test('map: the map the shell walks; map city|lakefront|default hands the host a reload, never the same map twice; no bridge call', () => {
+  const b = fake()
+  assert.deepEqual(texts(run('map', b, [])), ['map: none (this console alone; boot gui walks a map)'])
+  const lake = { ...b, brand: { ...b.brand, map: 'lakefront' as const } }
+  assert.deepEqual(texts(run('map', lake, [])), ['map: lakefront (the generated metropolis: no people or traffic yet; map city for them)'])
+  assert.deepEqual(texts(run('map status', lake, [])), ['map: lakefront (the generated metropolis: no people or traffic yet; map city for them)'])
+  const city = run('map city', lake, [])
+  assert.equal(city.map, 'city')
+  assert.deepEqual(city.lines, [{ kind: 'sys', text: 'map city: reloading into the procedural city (people and traffic)...' }])
+  assert.deepEqual(run('map lakefront', lake, []), { lines: [{ kind: 'sys', text: 'map: already on lakefront' }] })
+  const back = run('map lakefront', { ...b, brand: { ...b.brand, map: 'city' as const } }, [])
+  assert.equal(back.map, 'lakefront')
+  const forget = run('map default', lake, [])
+  assert.equal(forget.map, 'default')
+  assert.deepEqual(forget.lines, [{ kind: 'sys', text: 'map: choice forgotten; reloading on the default map...' }])
+  assert.equal(run('map moon', lake, []).lines[0].kind, 'err')
+  assert.equal(run('map moon', lake, []).map, undefined)
+  const t = offlineBridge({ ...BRAND, track: 'tty', map: 'city' })
+  assert.deepEqual(texts(run('map', t, [])), ['map: none (this console alone; boot gui walks a map)'])
 })
 
 test('boot: the track the console was mounted on; boot gui|tty hands the host a reload, never the same track twice; no bridge call', () => {

@@ -76,6 +76,7 @@ drives a player of its own (see Split screen).
 | `?fps=60` | Frame-rate target (default: estimated from the display, held within 60–90) |
 | `?crowd=14000` | Pedestrians, from 256 to 60,000 (default: 14,000 on a desktop GPU, 8,000 on a phone, 5,000 on the weakest devices) |
 | `?cars=36` | Cars, at most 48 |
+| `?map=city` | The procedural city (people and traffic); `?map=lakefront` the generated metropolis; `?region=on` the embedded surveyed map. With neither, the console's `map` choice, else the onboarding's metropolis, else the city |
 | `?time=17` | Start hour (default 17:00, golden hour) |
 | `?day=24` | Real minutes per simulated day |
 | `?scale=1` | Base pixel ratio |
@@ -606,7 +607,11 @@ while you type.
   `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
   `recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]`, `memory [<agent>|forget <agent>|forget all]`,
   `clear`, `history`, `echo [text]`, `uname [-asnrvmi]`, `whoami`, `version`, `boot [gui|tty|status]`,
-  `r0 <words...>|r0 reset|r0 words`, `exit`.
+  `map [city|lakefront|default|status]`, `r0 <words...>|r0 reset|r0 words`, `exit`.
+- `map` says which map the city shell walks. `map city` reloads into the procedural city (its 14,000 pedestrians and
+  its traffic), `map lakefront` into the generated metropolis (no people or traffic of its own yet), and the choice
+  is kept between visits until `map default` forgets it; the desktop app has no address bar, so this is its way to
+  choose. A `?map=` or `?region=` word in the URL still wins for that visit.
 - `render off` stops drawing: the canvas is cleared to black once and the HUD shows `RENDER OFF · console only ·
   render on`, while the physics realm, the step requests, the head pose, the haptics, the audio, the captions and
   the console keep running. The quality governor holds its tier while nothing is drawn. `render on` resumes with a

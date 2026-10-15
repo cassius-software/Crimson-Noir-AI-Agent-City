@@ -45,7 +45,8 @@ export interface TextStream {
  * settles. `clear` wipes the screen, `close` hides the console, `boot` asks the host to reload the page on
  * that track ('gui': the city; 'tty': the full-screen console alone, ?boot=tty).
  */
-export interface CommandResult { lines: Line[]; clear?: boolean; live?: 'stats'; close?: boolean; boot?: 'gui' | 'tty'; pending?: Promise<Line[]>; stream?: TextStream }
+/** `map`: the host keeps the choice (`default` forgets it) and reloads the page on that map (App.tsx remap). */
+export interface CommandResult { lines: Line[]; clear?: boolean; live?: 'stats'; close?: boolean; boot?: 'gui' | 'tty'; map?: 'city' | 'lakefront' | 'default'; pending?: Promise<Line[]>; stream?: TextStream }
 
 /** Highest quality tier index (tiers are 0 = lowest … 4 = highest). */
 const MAX_TIER = 4
@@ -81,6 +82,7 @@ const CORE = [
   { name: 'whoami', usage: 'whoami', summary: 'print the current user' },
   { name: 'version', usage: 'version', summary: 'print the product version' },
   { name: 'boot', usage: 'boot [gui|tty|status]', summary: 'which shell is up; boot gui reloads as the city, boot tty as this console alone (?boot=tty, no 3D engine)' },
+  { name: 'map', usage: 'map [city|lakefront|default|status]', summary: 'which map is walked; map city reloads into the procedural city (people and traffic), map lakefront into the metropolis; the choice is kept until map default' },
   { name: 'r0', usage: 'r0 <words...>|r0 reset|r0 words', summary: "the console's own stack machine (Turing-complete, sandboxed: it reaches nothing of the city)" },
   { name: 'exit', usage: 'exit', summary: 'close the console (also ` or Esc)' },
 ] as const
@@ -151,6 +153,7 @@ const ARGS: Record<string, readonly string[]> = {
   'look hairStyle': ['long', 'short'],
   'look preset': LOOK_PRESET_ARGS,
   boot: ['gui', 'status', 'tty'],
+  map: ['city', 'default', 'lakefront', 'status'],
   r0: ['reset', 'words'],
   hal: ['pair'],
   'hal pair': ['ble', 'hid', 'serial'],
@@ -784,6 +787,25 @@ const HANDLERS: Record<Name, Handler> = {
     if (a !== 'gui' && a !== 'tty') return fail(`boot: unknown track '${a}'`, usage('boot'))
     if (a === track) return { lines: [sys(`boot: already on ${a}`)] }
     return { lines: [sys(a === 'tty' ? 'booting tty: reloading as this console alone (no 3D engine)...' : 'booting gui: reloading as the city...')], boot: a }
+  },
+
+  /** Which map the city shell walks; a change is a reload (App.tsx remap), like `boot`: the engine is built for one map. */
+  map(args, b) {
+    const a = args[0]
+    const current = b.brand.map
+    const described: Record<'city' | 'lakefront' | 'region', string> = {
+      city: 'city (the procedural city: people and traffic)',
+      lakefront: 'lakefront (the generated metropolis: no people or traffic yet; map city for them)',
+      region: 'region (the embedded surveyed map: no people or traffic)',
+    }
+    if (a === undefined || a === 'status') {
+      if (b.brand.track === 'tty' || current === undefined) return { lines: [out('map: none (this console alone; boot gui walks a map)')] }
+      return { lines: [out(`map: ${described[current]}`)] }
+    }
+    if (a === 'default') return { lines: [sys('map: choice forgotten; reloading on the default map...')], map: 'default' }
+    if (a !== 'city' && a !== 'lakefront') return fail(`map: unknown map '${a}'`, usage('map'))
+    if (a === current) return { lines: [sys(`map: already on ${a}`)] }
+    return { lines: [sys(a === 'city' ? 'map city: reloading into the procedural city (people and traffic)...' : 'map lakefront: reloading into the metropolis...')], map: a }
   },
 
   // Raw: the rest of the line is an R0 line for the session's machine. No bridge is touched: the machine is blind.

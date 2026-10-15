@@ -75,7 +75,7 @@ test('engine: setRendering clears the canvas once when turning off, cuts when tu
 test('bridge: render() is on the TerminalBridge, the offline stand-in refuses it, and the brand may name its track', () => {
   const src = read('./terminal/bridge.ts')
   assert.match(src, /^ {2}render\(arg\?: 'on' \| 'off'\): string$/m)
-  assert.match(src, /readonly brand: \{ name: string; version: string; host: string; track\?: 'gui' \| 'tty' \}/)
+  assert.match(src, /readonly brand: \{ name: string; version: string; host: string; track\?: 'gui' \| 'tty'; map\?: 'lakefront' \| 'region' \| 'city' \}/)
   const off = offlineBridge({ name: 'T', version: '0', host: 't', track: 'tty' })
   assert.throws(() => off.render(), /engine not running/)
   assert.throws(() => off.render('off'), /engine not running/)
@@ -114,7 +114,7 @@ test('app: ?boot=tty mounts the full-screen terminal alone over the offline brid
   assert.match(app, /if \(options\.boot === 'tty'\) return <TtyShell \/>/)
   assert.match(app, /<GuiShell options=\{shellOptions\} plan=\{\{ choice, pack: outcome\?\.pack \?\? null, zone \}\} mentored=\{mentored\} voice=\{voice\} \/>/)
   const tty = between(app, 'function TtyShell() {', 'function App() {')
-  assert.match(tty, /<Terminal bridge=\{TTY_BRIDGE\} fullscreen onOpenChange=\{noop\} onBoot=\{reboot\} \/>/)
+  assert.match(tty, /<Terminal bridge=\{TTY_BRIDGE\} fullscreen onOpenChange=\{noop\} onBoot=\{reboot\} onMap=\{remap\} \/>/)
   assert.match(tty, /bg-black/)
   assert.doesNotMatch(tty, /canvas|Engine|navigator\.gpu|Worker|audio|Hud|TouchControls|Concierge|BootVeil|useEffect|requestAnimationFrame/, 'no city at all')
   assert.match(app, /const TTY_BRIDGE: TerminalBridge = offlineBridge\(\{ \.\.\.BRAND, track: 'tty' \}\)/)
@@ -126,7 +126,7 @@ test('app: ?boot=tty mounts the full-screen terminal alone over the offline brid
   const gui = between(app, 'function GuiShell({ options, plan, mentored, voice }: { options: Options; plan: MapPlan; mentored: boolean; voice: Voice }) {', 'export default App')
   assert.ok(gui.includes('Engine.create(canvas, { ...options, region })'))
   assert.equal(app.match(/Engine\.create\(/g)?.length, 1)
-  assert.match(gui, /<Terminal bridge=\{bridge\} onOpenChange=\{onTermOpen\} onBoot=\{reboot\} \/>/)
+  assert.match(gui, /<Terminal bridge=\{bridge\} onOpenChange=\{onTermOpen\} onBoot=\{reboot\} onMap=\{remap\} \/>/)
 })
 
 test('hud: the black canvas is explained by a chip that outlives the H key', () => {
