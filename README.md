@@ -71,10 +71,12 @@ npm run build
 **On Windows**, `npm install`, `npm run dev`, `npm test`, `npm run verify` and `npm run build` run as written from cmd.exe or
 PowerShell (Node 22 or newer; no `sh` is needed). Use `git clone`, or extract the ZIP somewhere other than `Downloads`
 before the first run: a fresh download carries the mark of the web, and a scanner that holds those files on first
-open can make `npm test` fail a handful of files with `EPERM: operation not permitted, open '…\src\…\x.ts'` while the
-test runner's parallel processes import them at once. No test asserts anything in those failures; a second `npm test`
-once the scanner has seen the files, or an exclusion for the folder, should clear them.
-Kani (the `kani` part of the proofs) runs on Linux and macOS only: use WSL for that part.
+open fails `npm test` file by file with `EPERM: operation not permitted, open '…\src\…\x.ts'` while the runner's
+parallel processes import them at once (no test asserts anything in those failures). On Windows `npm test` first opens
+every file of the checkout one at a time, waiting out the scanner (tools/test/warm.mjs), and says when the folder is
+inside `Downloads`; a folder the scanner has already seen, or an exclusion for it, runs clean from the first try.
+Kani (the `kani` part of the proofs) runs on Linux and macOS only: `npm run verify` leaves it out on Windows and says
+so in its last line; use WSL for that part.
 
 **The Windows app.** No Node, no terminal: download `Crimson Noir Agent City_<version>_x64-setup.exe` from the
 [latest release](https://github.com/exitwoundscassius-ux/Crimson-Noir-AI-Agent-City/releases) (or the
