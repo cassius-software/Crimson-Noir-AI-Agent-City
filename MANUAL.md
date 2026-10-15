@@ -1952,7 +1952,7 @@ devices.
 ## Formal verification, self-healing CI and telemetry (Phase 18)
 
 **The formal verification step (FVPS).** `sh tools/verify/fvps.sh` (`npm run verify` on a machine without a POSIX
-shell: tools/verify/fvps.mjs runs the same four parts) runs before every release bake
+shell: tools/verify/fvps.mjs runs the same four parts, leaving Kani out on Windows and saying so) runs before every release bake
 (`build-release.yml` refuses to bake a commit whose proofs fail) and in `ci.yml` on every pull request and push to
 `main`: the `fvps` job runs the theorems, the IR scan and the air gap in minutes, and the `kani` matrix runs the
 proof harnesses in six groups on parallel runners (the longest harness takes about ten minutes; the `rust` and

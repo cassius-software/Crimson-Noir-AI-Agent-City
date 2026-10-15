@@ -19,6 +19,7 @@
     "smoke:bridge": "node tools/net/bridge-smoke.mjs",
     "smoke:net": "node tools/net/smoke.mjs",
     "tauri": "tauri",
+    "pretest": "node tools/test/warm.mjs",
     "test": "node --test \"src/**/*.test.ts\"",
     "verify": "node tools/verify/fvps.mjs"
   },

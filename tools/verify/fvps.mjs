@@ -15,7 +15,9 @@
  *   locations with backslashes, so the bytes differ from the committed (Linux-built) modules by construction and the
  *   comparison is skipped with a note;
  * - ir: the routing core's LLVM IR, scanned for external calls exactly as fvps.sh scans it;
- * - kani: `cargo kani` per harness; Kani runs on Linux and macOS only, so on Windows it says to use WSL.
+ * - kani: `cargo kani` per harness. Kani runs on Linux and macOS only, so on Windows `npm run verify` (all) leaves it out
+ *   with a note and its last line says so, since no proof failed; `npm run verify -- kani` on Windows is an error
+ *   (use WSL).
  * What breaks if it is removed? A Windows machine cannot run the proofs the README names without WSL or Git Bash.
  */
 import { spawnSync } from 'node:child_process'
@@ -29,6 +31,8 @@ const WINDOWS = process.platform === 'win32'
 const args = process.argv.slice(2)
 const mode = args[0] ?? 'all'
 let status = 0
+/** The parts not run on this platform, named in the last line so a pass never reads as more than it is. */
+const skipped = []
 
 const CORE_HARNESSES = [
   'masks_mean_what_the_kernels_take_them_to_mean', 'compare_exchange_orders_the_pair', 'bitonic_pass_stays_in_bounds',
@@ -128,8 +132,12 @@ function kaniOne(dir, harness, extra) {
 
 // `kani` alone runs every harness; `kani NAME...` runs the named ones. The routing harnesses run with the checker's
 // floating-point checks off (--no-overflow-checks), as fvps.sh explains: a NaN is not a trap; traps are the subject.
-function runKani(wanted) {
-  if (WINDOWS) { error('kani: Kani runs on Linux and macOS only; run `sh tools/verify/fvps.sh kani` under WSL'); return }
+function runKani(wanted, { optional = false } = {}) {
+  if (WINDOWS) {
+    const why = 'Kani runs on Linux and macOS only; run `sh tools/verify/fvps.sh kani` under WSL'
+    if (optional) { console.log(`kani: not run on Windows (${why})`); skipped.push('kani') } else error(`kani: ${why}`)
+    return
+  }
   if (run('cargo-kani', ['--version'], { capture: true }).missing) { error('cargo kani is not installed (cargo install kani-verifier && cargo kani setup)'); return }
   const pick = (h) => wanted.length === 0 || wanted.includes(h)
   for (const h of CORE_HARNESSES) if (pick(h)) kaniOne('crimson_noir_os', h, ['-p', 'noir_core'])
@@ -137,7 +145,7 @@ function runKani(wanted) {
 }
 
 switch (mode) {
-  case 'all': runSmt(); runWasm(); runIr(); runKani([]); break
+  case 'all': runSmt(); runWasm(); runIr(); runKani([], { optional: WINDOWS }); break
   case 'kani': runKani(args.slice(1)); break
   case 'smt': runSmt(); break
   case 'wasm': runWasm(); break
@@ -145,4 +153,5 @@ switch (mode) {
   default: console.error('fvps.mjs: all|kani|smt|wasm|ir'); process.exit(2)
 }
 if (status !== 0) { console.log('::error::FVPS: a proof failed; the build is refused'); process.exit(1) }
-console.log(`FVPS (${mode}): every proof holds`)
+if (skipped.length > 0) console.log(`FVPS (${mode}): every proof that runs on this platform holds; not run here: ${skipped.join(', ')}`)
+else console.log(`FVPS (${mode}): every proof holds`)
