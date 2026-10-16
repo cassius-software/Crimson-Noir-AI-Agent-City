@@ -100,7 +100,7 @@ export interface OperatorBridge {
   /** The local speech server's address, voice, model and auto setting, and (asking the server) the voices it lists. */
   sayStatus(): Promise<VoiceStatus>
   /** Chooses the server (this machine only), the voice or the model, or turns auto on or off; returns the new value. */
-  saySet(key: 'model' | 'server' | 'voice' | 'auto', value: string): string
+  saySet(key: 'model' | 'server' | 'voice' | 'auto' | 'provider' | 'key', value: string): string
   /** Stops whatever is being said, if anything (the operator's own stop); returns what it did. */
   sayStop(): string
   api(): ReturnType<typeof apiDoc>
@@ -136,7 +136,7 @@ export interface RecordBridge {
  */
 export interface RecruitBridge {
   /** Resolves with the outcome: who is coming over, or why nobody is. */
-  ask(skill: string): Promise<{ ok: boolean; message: string }>
+  ask(skill: string): Promise<{ ok: boolean; message: string; agent?: number }>
   /**
    * Asks the Active recruit `agent` to walk to the sidewalk point (x, z), usually the one the operator pinged
    * (`ping`): the page checks the point and the tether on its own copy, the physics worker decides on its own
@@ -267,6 +267,49 @@ export interface TerminalBridge {
   net?: NetBridge
   /** Absent until the host keeps a look for the player (the terminal then says so). */
   look?: LookBridge
+  /** Absent until the host keeps a roster of the player's own agents (the terminal then says so). */
+  agent?: AgentBridge
+  /** Absent until the host has a concierge that can speak (the terminal then says so). */
+  concierge?: ConciergeBridge
+  /** A goal in plain words, planned as Sloane plans one (06_Make_Decisions/intent.ts) with what can be done now done; absent in the console shell. */
+  goal?(text: string): GoalPlan
+}
+
+/** What came of a goal: the root the plan answers, each step and its state, and notes for what nothing maps to. */
+export interface GoalPlan {
+  readonly root: string
+  readonly steps: readonly { readonly label: string; readonly state: 'done' | 'later' | 'failed'; readonly detail?: string }[]
+  readonly notes: readonly string[]
+}
+
+/**
+ * The player's own agents (08_Swarm/roster.ts): named, given pronouns, a role, a voice and a look, hired into a
+ * pedestrian with a skill (through the recruiter) and dressed in that look, let go, forgotten. Every line is for the
+ * console; the identities also reach the prompts of the people hired and the voice `say` speaks them in.
+ */
+export interface AgentBridge {
+  /** Every record, a few lines each; one line when the roster is empty. */
+  list(): string[]
+  add(name: string): string[]
+  set(name: string, field: 'pronouns' | 'role' | 'voice' | 'look' | 'name', value: string): string[]
+  /** Asks someone nearby with `skill` over as `name` and dresses them; resolves with the outcome. */
+  hire(name: string, skill: string): Promise<string>
+  /** Lets `name`'s pedestrian go (the record stays). */
+  dismiss(name: string): string
+  forget(name: string): string
+  /** The twelve voice profiles, one line each. */
+  voices(): string[]
+}
+
+/** Sloane's spoken voice (onboarding/speaker.ts): the switch, the browser voice preferred, the tier a line takes, a line said now. */
+export interface ConciergeBridge {
+  status(): string[]
+  on(on: boolean): string
+  /** Prefers a browser voice by name ('' clears the preference); returns the line for the console. */
+  voice(name: string): string
+  voices(): string[]
+  /** Says `text` now; resolves with the tier that said it. */
+  say(text: string): Promise<string>
 }
 
 /** Rapier world counters, the shape of Physics.stats. */

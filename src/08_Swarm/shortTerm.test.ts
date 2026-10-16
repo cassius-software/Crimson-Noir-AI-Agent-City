@@ -95,3 +95,11 @@ test('the prompt section: one heading per person, the surroundings then the mome
   assert.deepEqual(section, ['Agent 17, right now:', '- Standing in the city.'])
   assert.deepEqual(contextSection([1], undefined), [])
 })
+
+test('a hired agent\'s identity comes first in their section, under the heading, and alone is enough for a heading', () => {
+  const lines = contextLines({ agent: 17, identity: 'You go by Nova (she/her), a quant analyst.', surroundings: 'Standing at Lakefront Metro.', recent: [] })
+  assert.deepEqual(lines, ['Agent 17, right now:', '- You go by Nova (she/her), a quant analyst.', '- Standing at Lakefront Metro.'])
+  assert.deepEqual(contextLines({ agent: 1, identity: 'You go by Kai.', surroundings: null, recent: [] }), ['Agent 1, right now:', '- You go by Kai.'])
+  assert.deepEqual(contextLines({ agent: 1, identity: '  ', surroundings: null, recent: [] }), [], 'a blank identity is none')
+  assert.deepEqual(contextLines({ agent: 1, identity: null, surroundings: null, recent: [] }), [])
+})

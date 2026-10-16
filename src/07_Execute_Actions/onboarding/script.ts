@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is the onboarding conversation as plain data: what Wren, the concierge, says at each step,
+ * Why does this file exist? It is the onboarding conversation as plain data: what Sloane, the concierge, says at each step,
  * the few one-word choices a brand-new visitor is offered (where to start, what time of day, sound on or off), how an
  * answer moves the conversation on, what the answers become as the page's options and as the saved choice a returning
  * visitor is taken back to, and when the onboarding is shown at all (a first visit, unless the URL says otherwise; never
@@ -13,6 +13,9 @@
 import { REGIONS, ZONE, type Zone } from '../../01_Initialize_World/lakefront.ts'
 import { zoneOf } from '../../01_Initialize_World/lakefrontPack.ts'
 import type { Profile } from '../../05_Observe_Environment/profile.ts'
+
+/** The concierge's name: Sloane (they/them), the one voice the page greets, guides and nudges with. */
+export const CONCIERGE_NAME = 'Sloane'
 
 /** The steps, in order. */
 export type Step = 'name' | 'place' | 'time' | 'sound' | 'ready'
@@ -46,7 +49,7 @@ export const NO_ANSWERS: Answers = Object.freeze({ name: '', place: null, hour: 
 /** The name used when the visitor would rather not give one. */
 export const NO_NAME = 'friend'
 
-/** Wren's line for a step, given the answers so far (plain words, one or two short sentences). */
+/** Sloane's line for a step, given the answers so far (plain words, one or two short sentences). */
 export function lineFor(step: Step, a: Answers, concierge: string): string {
   const name = a.name || NO_NAME
   switch (step) {

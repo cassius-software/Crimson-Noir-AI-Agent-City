@@ -20,7 +20,7 @@ ghost mode), take any car, see every physics shape in ghost view (`G`), or open 
 four people can play on one screen, and the operator can join a room hosted on this machine.
 
 It opens with no clicks. A black Monolith splash fades straight into the street at golden hour, and
-Wren, the concierge, asks what to call you: type a name and press Enter, then walk. Wren's chip also opens the
+Sloane, the concierge, asks what to call you: type a name and press Enter, then walk. Sloane's chip also opens the
 wardrobe.
 
 ```sh
@@ -319,11 +319,14 @@ shoved, no pole stops you, and the people keep their line.
 
 ## First person, WebXR-ready
 
-The camera is only ever the avatar's head (`07_Execute_Actions/player.ts`, `HeadRig`). There is no
-orbit, chase or detached camera and no zoom.
+The camera is only ever the avatar's head (`07_Execute_Actions/head.ts`, `HeadRig`; `player.ts` is the physics
+worker's character controller, not a camera). There is no orbit, chase or detached camera and no zoom.
 
-- **On foot:** the eye is 1.7 m above the feet, and the mouse, touch drag or right stick turn the head
-  (yaw and pitch, no roll). The body faces where you look. Your own body is not drawn to your eye, but it
+- **On foot:** the eye is 1.7 m above the feet for the reference body, and the mouse, touch drag or right stick turn
+  the head (yaw and pitch, no roll). The wardrobe's **Height** moves the eye with the body (`eyeHeightFor`: 1.7 m
+  times the body's height scale, held within 1.2–2.2 m), eased in like a curb step, never snapped: a tall look sees
+  over the crowd, a short one looks up at it. The body faces where you look. Your own body is not drawn to your eye,
+  but it
   still casts its shadow.
 - **Driving:** the eye sits at the driver's seat (left side). The head turns with the car and can look
   about 110° either way within the cabin. The car's shell is drawn from inside (cowl, pillars, roof
@@ -375,12 +378,21 @@ reading order. The rects tile the canvas exactly, in whole pixels.
 
 - **Boot:** the page is black with the Monolith from its first paint. There are no loading bars or
   text. Once the city is running it fades from black into the first-person view at golden hour.
-- **Wren, the concierge** (they/them), introduces themselves on a frosted-glass card and asks what to
+- **Sloane, the concierge** (they/them), introduces themselves on a frosted-glass card and asks what to
   call you. The name field is already focused: type and press Enter (Esc skips).
   - The name labels your avatar in the HUD and is kept in this browser only (`localStorage`, key
     `civic-simulation:profile:v1`). A returning visitor is welcomed back by name without the question.
-  - Wren then gives two or three tips and settles into a small chip. The chip's **Look** button ("Change my look"
+  - Sloane then gives two or three tips and settles into a small chip. The chip's **Look** button ("Change my look"
     in the full list) opens the wardrobe card: see The character customizer.
+- **Sloane's voice** (`07_Execute_Actions/onboarding/speaker.ts`). With the sound on, Sloane says each line the card
+  shows (the greeting, the goal questions, a nudge) and, in the onboarding, each line after you chose sound on. Two
+  tiers, chosen per line, neither a download: the operator's speech provider when it has a voice chosen (`say voice`,
+  see Speech), heard at your own head with no walls between; otherwise the browser's own speech synthesis, in an
+  offline voice only (a voice the browser would fetch from a network service is never picked), a little lower and
+  slower than it comes (Sloane's `velvet` profile). A provider that fails mid-line hands the line to the browser's
+  voice; a new line cuts the one before. Nothing is said while the sound is off or `sloane off` is set (kept
+  between visits, key `civic-simulation:concierge:v1`). No neural voice model ships with the page, so the browser
+  tier sounds like the operating system's own voices and no better; `sloane` in the console says which tier speaks.
 - **Pings and captions on the HUD.** The minimap rings every standing ping in its kind's colour, fading as it
   expires, and the newest shows as a chip over the world with what it asks, what it landed on and the distance (see
   Pings and the rally). The chip goes with `H`; the caption strip and the MIC chip do not (see Spatial audio).
@@ -388,18 +400,20 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   that pad's layout: the two letter layouts (A or B at the south button), numbered shoulders and stick clicks,
   or button positions (South, East, North) for a pad it does not recognise. On phones it switches to touch
   labels. Hints are plain letters, numbers, positions and arrows: no platform names, logos or button symbols.
-- **Tell Wren a goal.** From the chip, say what you want in plain words ("make it night and less
-  crowded", "it feels laggy"). Wren asks up to five short "why" questions with quick replies, then shows a
+- **Tell Sloane a goal.** From the chip, say what you want in plain words ("make it night and less
+  crowded", "it feels laggy"). Sloane asks up to five short "why" questions with quick replies, then shows a
   brief: the steps it can apply now (clock, quality, sound) are done at once, the rest are laid out as a
   plan, and "Copy brief" gives an engineer a note naming the modules each step would touch. This engine
   (`06_Make_Decisions/intent.ts`) is deterministic and offline: no language model, no network, and no
   console syntax is ever shown.
-- **Wren's first five minutes.** A visitor who has just walked in from the onboarding is watched quietly
+- **Sloane's first five minutes.** A visitor who has just walked in from the onboarding is watched quietly
   (`09_Cognition/tutorial.ts`, fed by `07_Execute_Actions/onboarding/useMentor.ts`): when they have done nothing
-  for thirty seconds, Wren says one line in the card, in the shape of a why and then a how ("Ever wonder what's
-  behind you? Hold the mouse button down and drag…"), then settles back into the chip. One line at a time, at least
+  for thirty seconds, Sloane says one line in the card, in the shape of a why and then a how ("Ever wonder what's
+  behind you? Hold the mouse button down and drag…"), then settles back into the chip. Opening the wardrobe counts
+  as having found it. One line at a time, at least
   forty-five seconds apart, in a fixed order (looking around, walking to The Spire, talking to someone, the M key,
-  the clock keys), skipping anything already done (a turn of the head, standing under the tower, a prompt sent, M
+  the clock keys, the wardrobe on Sloane's chip), skipping anything already done (a turn of the head, standing under
+  the tower, a prompt sent, M
   pressed, the clock turned) and anything the device cannot do (a touch screen has no console or keys), and
   nothing after five minutes. It is never called a lesson. The line is the script's, or the configured model's
   rewording when it answers in time and keeps the key or name the line needs. Nothing of it is saved; the expert
@@ -407,7 +421,7 @@ reading order. The rects tile the canvas exactly, in whole pixels.
 
 ## The character customizer
 
-Wren's chip has a **Look** button ("Change my look" in the full list) that opens the wardrobe card
+Sloane's chip has a **Look** button ("Change my look" in the full list) that opens the wardrobe card
 (`07_Execute_Actions/Customizer.tsx`). The console's `look` edits the same look (see Ring-0 console).
 
 - **The wardrobe** (`03_Spawn_Agents/look.ts`) is the crowd's own, and closed by construction. A look is fourteen
@@ -437,8 +451,22 @@ Wren's chip has a **Look** button ("Change my look" in the full list) that opens
 - **Kept here.** The look is kept in this browser only (`localStorage`, key `civic-simulation:look:v1`,
   `05_Observe_Environment/lookStore.ts`), separate from the profile, so a renamed visitor keeps their outfit;
   every stored value goes through `validateLook` on the way in.
-- **Limits.** Only the player is dressed so far: recruits are not dressed automatically, though `look show <agent>`
-  reads what any pedestrian wears. The tie's cloth, the bag's leather and the skirt suit's hose keep their hashed
+- **Your agents** (`08_Swarm/roster.ts`). The card's second row of tabs holds the agents you make your own, at most
+  twelve: type a name (one word, screened under 14A like any name the city shows) and press Add. Each tab sets their
+  pronouns (they/them, she/her, he/him, any), a role in your words (one line, at most 48 characters, held to the same
+  14A screen as names), a voice (one of twelve profiles, six that lean neither way, three lighter, three deeper, or a
+  voice name your speech provider lists), and a look over the same wardrobe. **Hear** says a line in that voice: a
+  profile shapes the browser's offline voice; a provider voice is said by the provider at your head.
+  `agent hire <name> [<skill>]` in the console asks someone nearby with that skill over as them, dresses that pedestrian in the
+  agent's look, and from then on their prompts are told who they are ("You go by Nova (she/her), a quant analyst.")
+  and `say` speaks them in their provider voice. A hire lasts while that person stays with you: one who leaves or is
+  dismissed is let go and dressed as the city dresses them, and no hire outlasts the visit. The roster itself is kept
+  in this browser only (key `civic-simulation:roster:v1`); every stored record is validated on the way in. Forget
+  removes an agent from the roster and dresses their pedestrian as the city does; it does not break the tether
+  (`recruit dismiss` does).
+- **Limits.** Recruits who are not on your roster are not dressed automatically, though `look show <agent>`
+  reads what any pedestrian wears. A voice profile shapes only the browser's voice (pitch and rate); a provider
+  voice is the provider's to sound like. The tie's cloth, the bag's leather and the skirt suit's hose keep their hashed
   colours (the word is full). Whether agent 0's hashed look and `lookFromSeed(0)` agree on the GPU is a browser
   check not yet made (see Browser support).
 
@@ -615,7 +643,8 @@ while you type.
   `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
   `recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]`, `memory [<agent>|forget <agent>|forget all]`,
   `clear`, `history`, `echo [text]`, `uname [-asnrvmi]`, `whoami`, `version`, `boot [gui|tty|status]`,
-  `map [city|lakefront|default|status]`, `r0 <words...>|r0 reset|r0 words`, `exit`.
+  `map [city|lakefront|default|status]`, `r0 <words...>|r0 reset|r0 words`, `agent [...]`, `sloane [...]`,
+  `goal <words...>`, `exit`.
 - `map` says which map the city shell walks. `map city` reloads into the procedural city (its 14,000 pedestrians and
   its traffic), `map lakefront` into the generated metropolis (no people or traffic of its own yet), and the choice
   is kept between visits until `map default` forgets it; the desktop app has no address bar, so this is its way to
@@ -643,8 +672,18 @@ while you type.
   skills, and the last outcome.
 - `memory` says where the swarm's memory is kept, how many people it holds, and what each person tethered now
   remembers; `memory <agent>` lists one pedestrian's episodes (see The swarm's memory below).
-- `history` and the Up arrow never show a key typed to `ask key` or a token typed to `net join`: both are kept
-  as dots.
+- `agent` lists your agents; `agent new <name>` adds one; `agent <name> pronouns|role|voice|look|name <value...>`
+  sets one field (a look as a code from the wardrobe); `agent hire <name> [<skill>]` asks someone with that skill
+  (the first skill unless named) over as them; `agent dismiss <name>` lets them go; `agent forget <name>` removes
+  them; `agent voices` lists the twelve profiles (see The character customizer).
+- `sloane` says whether Sloane speaks, in which tier, and in which voice; `sloane on|off` switches the voice (the
+  card stays); `sloane voice <name>` prefers a browser voice by name or a word of it; `sloane voices` lists the
+  browser's offline voices; `sloane say <text...>` has Sloane say a line now (see Onboarding and the spatial HUD).
+- `goal <words...>` plans a goal as Sloane's card does (at most 160 characters): the steps it can take now (the
+  clock, the quality tier, the sound) are applied and printed `done`, the rest `later`, a step that failed `failed`
+  with why, and words nothing in the city maps to yet are named.
+- `history` and the Up arrow never show a key typed to `ask key` or `say key` or a token typed to `net join`: all
+  are kept as dots.
 
 ### Track B: the console alone
 
@@ -740,7 +779,7 @@ unlocked:
 - `record start [canvas|camera]`, `record stop`, `record status` record the simulation view (default) or the
   webcam (explicit; the browser asks for permission) as an `.agv` file: the product's own container, one packet
   per encoded frame (AV1, falling back to H.264 then VP9) with that frame's real telemetry alongside it — clock,
-  tier, mode, position, kernel and audit counters, Wren's active brief. The file goes only where you choose it
+  tier, mode, position, kernel and audit counters, Sloane's active brief. The file goes only where you choose it
   (the save dialog, or a download at stop where the dialog is unavailable); nothing is transmitted anywhere,
   and the recorder contains no network code. `05_Observe_Environment/agv.ts` reads the format back.
 - `net join <ws-url> [<token>]`, `net leave` and `net forget` run the opt-in network session (see Networking);
@@ -1106,6 +1145,17 @@ with the product: you run your own server under its own licence, and the city wo
 - **When it cannot speak, it says why in one sentence:** no server answering, running but refusing this page
   (a page opened from a file sends the origin `null`), no such voice, not a speech server, the server's own
   failure, or the city's sound being off (`audio on`).
+- **ElevenLabs, optional and off by default.** `say provider elevenlabs` switches the provider to ElevenLabs'
+  text-to-speech API, spoken to through a gateway on this machine (`http://localhost:8090` unless `say server`
+  says otherwise; an example is in `docs/zero-trust-audit.md`). The recommended setup keeps the key in the gateway, so
+  the page holds none; `say key <key>` instead keeps one in this browser's local storage, sent only to that loopback
+  gateway, shown masked everywhere (status, settings) and kept as dots in `history`; `say key none` clears it.
+  `say voice <name or id>` picks the voice (a name is looked up first), `say model <id>` the model
+  (`eleven_turbo_v2_5` unless you change it). `say provider local` goes back to the local server, whose settings are
+  kept separately. A refused key, an unknown voice, an answer that is not audio or a gateway that is down each come
+  back as one sentence.
+- **Each agent their own voice.** A hired agent on your roster (see The character customizer) whose voice is a
+  provider voice name speaks `say` in it; the provider's chosen voice is untouched.
 - **What it cannot do.** It talks only to a loopback address, and any other is refused before anything is sent.
   It sends nothing unless you type `say` (or turn auto on), and no referrer. The engine holds no network code:
   it only decodes and places the audio App's client fetched (`SpeechOut` in `operator.ts`). Nothing from any
@@ -1519,8 +1569,8 @@ physics realm is the prediction that hides the latency.
   never in a step request, never sensed by the crowd. The engine holds no network code either: App builds the client
   and hands it in through the `NetHost` seam (`netWiring.test.ts`). The room's chat and pings reach the captions; a
   remote ping is cued where it landed and captioned under the sender's name, goes on no board and asks nobody over.
-- **The page** (`netClient.ts`). `net join <ws-url> [<token>]` (operator tier) joins a room under the name Wren knows
-  you by ("Visitor" before you have one), in the city of this page's `?seed` with its fleet (`?cars`) on the track
+- **The page** (`netClient.ts`). `net join <ws-url> [<token>]` (operator tier) joins a room under the name Sloane
+  knows you by ("Visitor" before you have one), in the city of this page's `?seed` with its fleet (`?cars`) on the track
   network. A page walking the surveyed region (`?region=on`) or with the track network off (`?tracks=0`) cannot join:
   the mirror holds the procedural city and the fleet's plan. The client speaks ws or wss only to `localhost` or
   `127.0.0.1`, the hosts the page's content security policy reaches: the host on this machine, or the local end of a

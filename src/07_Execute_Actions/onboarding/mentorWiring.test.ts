@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is the evidence that Wren's watch is wired through the page: the hook's small readers
+ * Why does this file exist? It is the evidence that Sloane's watch is wired through the page: the hook's small readers
  * (the HUD's clock to hours, the glyph family to the mentor's word), the Concierge taking a nudge as a view of its own
  * that waits while a question or goal is open, App handing the nudge over and reporting a prompt sent to someone, and
  * the engine's awareness feeding every provider's prompt and remembering a rally. Source-level, as the other wiring
  * tests are: the components need a browser to render.
- * What breaks if it is removed? A hook or a prop could be dropped and Wren would watch, and say, nothing.
+ * What breaks if it is removed? A hook or a prop could be dropped and Sloane would watch, and say, nothing.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -50,7 +50,7 @@ test('the Concierge takes a nudge as its own view: opened only from the chip, a 
   assert.doesNotMatch(shown, /[Tt]utorial|lesson/, 'never called a lesson in the card either')
 })
 
-test('App: Wren watches a first visitor who walked in from the onboarding, hands her lines to the card, and reports a prompt sent to someone', () => {
+test('App: Sloane watches a first visitor who walked in from the onboarding, hands their lines to the card, and reports a prompt sent to someone', () => {
   const src = read('../../App.tsx')
   assert.match(src, /const mentored = outcome !== null && !outcome\.saved\.skipped/)
   assert.match(src, /useMentor\(\{ active: mentored && veilDone/)

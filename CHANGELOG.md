@@ -52,6 +52,27 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   unchanged: empty fleet, hidden crowd.
 - Unverified in the cloud (no GPU): the rendered crowd and traffic on the metropolis; `naga` validates both shader
   variants, and the window, the rings, the realm's seating and the uniform layout are tested in Node.
+- **Sloane speaks.** The concierge says each line the card shows, and the onboarding's lines once the visitor chose
+  sound on: through the operator's speech provider at the player's own head when it has a voice chosen, otherwise the
+  browser's own speech synthesis in an offline voice only (a network voice is never picked). No neural voice model is
+  bundled: the browser tier sounds like the operating system's voices. `sloane [on|off|voice <name>|voices|say <text>]`
+  in the console. Unverified from the cloud (no speakers): how either tier sounds.
+- **Your own agents.** A roster of up to twelve named agents (pronouns, a role screened under 14A, one of twelve voice
+  profiles or a provider voice, a look from the crowd's wardrobe) in a second tab of the wardrobe card, with a Hear
+  button, and `agent [new|hire|dismiss|forget|voices|<name> <field> <value>]` in the console. Hiring asks someone
+  nearby over and dresses them; a hired agent's prompts are told who they are, and `say` speaks them in their own
+  provider voice.
+- **ElevenLabs as an optional speech provider**, off by default: `say provider elevenlabs`, through a gateway on this
+  machine (`http://localhost:8090`; an nginx example in `docs/zero-trust-audit.md`). A key typed to `say key` stays in
+  this browser, masked, kept as dots in `history`, and is sent only to the loopback gateway.
+- **`goal <words...>`** in the console: Sloane's goal planner, applying what it can now (clock, quality, sound).
+- Sloane's quiet first-minutes watch gains one more line: the wardrobe on the chip.
+
+### Changed
+
+- **Wren is now Sloane** throughout the page, the console and the docs (history entries keep the old name).
+- **The eye height follows the avatar's height**: 1.7 m times the body's height scale, within 1.2–2.2 m, eased in.
+  Unverified from the cloud (no GPU): how it looks.
 
 ### Fixed
 

@@ -205,13 +205,19 @@ export interface Memories {
  * are spoken as well.
  */
 export interface Voice {
-  settings(): { server: string; model: string | null; voice: string | null; auto: boolean }
+  /** `provider`: which speech provider answers (absent: the voice has one only); `key`: a network provider's key, masked (null: none kept). */
+  settings(): { server: string; model: string | null; voice: string | null; auto: boolean; provider?: string; key?: string | null }
   setServer(url: string): string
   setModel(name: string): string
   setVoice(name: string): string
   setAuto(on: boolean): boolean
+  /** Chooses the provider (absent: the voice has one only). */
+  setProvider?(name: string): string
+  /** Keeps a network provider's key on the page (empty or 'none' clears it); returns it masked (absent: no provider takes one). */
+  setKey?(key: string): string | null
   voices(signal?: AbortSignal): Promise<string[] | null>
-  synthesize(text: string, signal: AbortSignal): Promise<ArrayBuffer>
+  /** The audio for `text`, in the chosen voice, or in `voice` (a hired agent's own) when given. */
+  synthesize(text: string, signal: AbortSignal, voice?: string): Promise<ArrayBuffer>
 }
 
 /** Decoded speech, ready to play (opaque to this tier): how long it lasts. */
@@ -281,6 +287,8 @@ export interface Senses {
   readonly speech?: SpeechOut
   readonly diary?: Diary
   readonly awareness?: Awareness
+  /** The voice a hired agent speaks in (08_Swarm/roster.ts), or null for the chosen one. */
+  readonly voiceOf?: (agent: number) => string | null
 }
 
 /**
@@ -326,6 +334,9 @@ export interface VoiceStatus {
   readonly model: string | null
   readonly voice: string | null
   readonly auto: boolean
+  /** The provider that answers (absent: the voice has one only); a network provider's key, masked. */
+  readonly provider?: string
+  readonly key?: string | null
   /** The voices the server lists; null when it keeps no list, or did not answer (`error` then says why). */
   readonly voices: readonly string[] | null
   readonly error?: string
@@ -787,7 +798,7 @@ function abortion(signal: AbortSignal): Promise<never> {
  * the tether breaks the speech is cut, wherever it is (synthesizing, decoding or mid-word). A stop, a server failure
  * or a soundscape that cannot sound is Authorized with the reason (the tether held).
  */
-export function gatedSay(gate: SkillGate, voice: Voice, out: SpeechOut, skills: readonly string[], text: string): GatedSay & { stop(): void } {
+export function gatedSay(gate: SkillGate, voice: Voice, out: SpeechOut, skills: readonly string[], text: string, voiceOf?: (agent: number) => string | null): GatedSay & { stop(): void } {
   const stopper = new AbortController()
   const t0 = now()
   let seconds: number | undefined
@@ -799,12 +810,22 @@ export function gatedSay(gate: SkillGate, voice: Voice, out: SpeechOut, skills: 
       return lease.bound[0]
     }
     const signal = AbortSignal.any([lease.signal, stopper.signal])
-    const bytes = await voice.synthesize(text, signal)
+    const speaker = lease.bound[0]
+    // A hired agent speaks in the voice their identity names (08_Swarm/roster.ts); anyone else in the chosen voice.
+    const own = voiceOf?.(speaker.agent) ?? null
+    let bytes: ArrayBuffer
+    try {
+      bytes = await voice.synthesize(text, signal, own ?? undefined)
+    } catch (e) {
+      // Their voice is not one the provider has (a name from the other provider, after `say provider`): the chosen
+      // voice says it instead, so a provider switch never leaves a hired agent mute.
+      if (own === null || signal.aborted || (e as { code?: unknown } | null)?.code !== 'voice') throw e
+      bytes = await voice.synthesize(text, signal)
+    }
     signal.throwIfAborted()
     const clip = await out.decode(bytes)
     signal.throwIfAborted()
     seconds = clip.seconds
-    const speaker = lease.bound[0]
     // P5: the tether is checked against the newest copy of the swarm and the speech started in that one step.
     const speaking = lease.use(() => out.play(clip, speaker.agent, text))
     const cut = (): void => speaking.stop()
@@ -915,7 +936,7 @@ const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(
  */
 export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sleep: (ms: number) => Promise<void> = wait, senses: Senses = {}): OperatorBridge {
   const api = scriptApi(sim)
-  const { voice, speech, diary, awareness } = senses
+  const { voice, speech, diary, awareness, voiceOf } = senses
   let unlocked = false
   let running: string | null = null
   let asking: (GatedAsk & { stop(): void }) | null = null
@@ -930,7 +951,7 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
   const say = (skills: readonly string[], words: string): GatedSay => {
     const { voice: v, speech: out } = speaker()
     const began = Date.now()
-    const s = gatedSay(gate, v, out, skills, words)
+    const s = gatedSay(gate, v, out, skills, words, voiceOf)
     if (s.state === 'Authorized') {
       saying = s
       void s.result.then(() => { if (saying === s) saying = null })
@@ -1085,23 +1106,33 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
       if (!unlocked) throw locked('say')
       const { voice: v } = speaker()
       const s = v.settings()
-      const base = { server: s.server, model: s.model, voice: s.voice, auto: s.auto, speaking: saying !== null }
+      const base = { server: s.server, model: s.model, voice: s.voice, auto: s.auto, speaking: saying !== null, ...(s.provider !== undefined && { provider: s.provider }), ...(s.key !== undefined && { key: s.key }) }
       return v.voices().then(
         (voices): VoiceStatus => ({ ...base, voices }),
         (e: unknown): VoiceStatus => ({ ...base, voices: null, error: text(e) }),
       )
     },
-    saySet: (key: 'model' | 'server' | 'voice' | 'auto', value: string): string => {
+    saySet: (key: 'model' | 'server' | 'voice' | 'auto' | 'provider' | 'key', value: string): string => {
       if (!unlocked) throw locked('say')
       const { voice: v } = speaker()
       if (key === 'model') return v.setModel(value)
       if (key === 'server') return v.setServer(value)
       if (key === 'voice') return v.setVoice(value)
+      if (key === 'provider') {
+        if (!v.setProvider) throw new Error('this page has one speech provider only')
+        const p = v.setProvider(value)
+        return p === 'elevenlabs' ? 'elevenlabs: the ElevenLabs API through a gateway on this machine (best with the key in the gateway; say key <key> keeps one in this browser)' : 'local: a speech server on this machine'
+      }
+      if (key === 'key') {
+        if (!v.setKey) throw new Error('no speech provider on this page takes a key')
+        const masked = v.setKey(value)
+        return masked === null ? 'none: cleared (the gateway on this machine adds the key)' : `${masked}: kept in this browser's local storage (say key none clears it)`
+      }
       if (key === 'auto') {
         if (value !== 'on' && value !== 'off') throw new TypeError('say auto takes on or off')
         return v.setAuto(value === 'on') ? 'on: answers are said aloud by whoever gives them' : 'off'
       }
-      throw new TypeError(`nothing to set called '${String(key)}': server, voice, model or auto`)
+      throw new TypeError(`nothing to set called '${String(key)}': server, voice, model, auto, provider or key`)
     },
     sayStop: (): string => {
       if (!unlocked) throw locked('say')

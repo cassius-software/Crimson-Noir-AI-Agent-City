@@ -10,7 +10,7 @@
  * touch. It is deterministic and offline — no language model, no I/O, no clock, no randomness — so the
  * same goal and answers always give the same brief. It never writes code and never shows terminal syntax;
  * module paths appear only in the copyable brief.
- * What breaks if it is removed? Wren can only greet and list controls: a goal typed into the Concierge
+ * What breaks if it is removed? Sloane can only greet and list controls: a goal typed into the Concierge
  * has nowhere to go.
  */
 import { formatClock } from '../01_Initialize_World/solar.ts'
@@ -150,7 +150,7 @@ const UNSUPPORTED: readonly (Unmapped & { re: RegExp })[] = [
   { re: /\b(?:vr|virtual reality|headset|webxr|xr)\b/,
     label: 'A headset: the head rig is ready for one, but there is no XR session yet', modules: ['07_Execute_Actions/player.ts', '07_Execute_Actions/engine.ts'] },
   { re: /\b(?:change|different|new|customi[sz]e|edit|pick|choose) (?:my |the )?(?:avatar|character|outfit|clothes|body|face|skin|hair)\b|\b(?:avatar|outfit|clothes|clothing|hair|skin colou?r)\b/,
-    label: 'Your look: the wardrobe is a tap away (Look on Wren\'s chip, or Change my look in the full list): presets, swatches and a code to share', modules: ['07_Execute_Actions/Customizer.tsx', '03_Spawn_Agents/look.ts', '05_Observe_Environment/lookStore.ts'] },
+    label: 'Your look: the wardrobe is a tap away (Look on Sloane\'s chip, or Change my look in the full list): presets, swatches and a code to share', modules: ['07_Execute_Actions/Customizer.tsx', '03_Spawn_Agents/look.ts', '05_Observe_Environment/lookStore.ts'] },
   { re: /\b(?:save (?:the |my )?(?:game|city|progress|state)|load (?:the |my )?(?:game|save)|checkpoint|photo mode|record(?:ing)? (?:a |the )?(?:video|clip)|screenshots?|share (?:this|it|the city))\b/,
     label: 'Saving, sharing and photo mode: not in the city yet (your name is the only thing remembered)', modules: ['05_Observe_Environment/profile.ts', 'App.tsx'] },
 ]

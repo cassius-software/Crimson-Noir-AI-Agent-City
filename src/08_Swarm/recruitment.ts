@@ -646,7 +646,7 @@ export function hudLine(r: Recruiter, tasks = 0, activity = ''): { listening: bo
  */
 export function recruitBridge(r: Recruiter): RecruitBridge {
   return Object.freeze({
-    ask: (skill: string) => r.recruit(skill).then((o) => ({ ok: o.ok, message: o.message })),
+    ask: (skill: string) => r.recruit(skill).then((o) => ({ ok: o.ok, message: o.message, ...(o.ok && o.agent >= 0 ? { agent: o.agent } : {}) })),
     rally: (agent: number, x: number, z: number) => r.rally(agent, x, z).then((o) => ({ ok: o.ok, message: o.message })),
     listen: () => r.listen().then(micLine),
     stop: () => micLine(r.stop()),
