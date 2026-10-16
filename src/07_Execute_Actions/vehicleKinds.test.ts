@@ -17,9 +17,10 @@ import { registerHooks } from 'node:module'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { uniform } from 'three/tsl'
-import { CAR, KIND, VEHICLE_KINDS, chassisBox, kindFromDraw, kindOf } from './car.ts'
+import { CAR, KIND, RIDE_HEIGHT, VEHICLE_KINDS, chassisBox, kindFromDraw, kindOf } from './car.ts'
 import { planFleet } from './carRig.ts'
 import { DISSOLVE } from './dissolve.ts'
+import { DRIVER_EYE } from './head.ts'
 import { Physics } from './physics.ts'
 import { Fleet } from './vehicles.ts'
 import { SimCore } from './simCore.ts'
@@ -33,7 +34,7 @@ registerHooks({
     return { format: 'module', source: `export default ${JSON.stringify(text)}`, shortCircuit: true }
   },
 })
-const { FleetView, PROFILES } = await import('./fleetView.ts')
+const { FleetView, PROFILES, carBodyGeometry, lampEdges } = await import('./fleetView.ts')
 
 const H = 1 / 60
 const NO_FURNITURE = { lamps: [], trees: [], signals: [] }
@@ -85,6 +86,46 @@ test('every silhouette fits its chassis class: within the box plus the dissolve 
   }
 })
 
+test('the driver\'s eye sits inside every kind\'s body, clear of its shell by the near plane\'s half-height', () => {
+  // Driving is first person only, and the driven car is never dissolved: an eye outside the profile looks at the
+  // outside of the body. head.ts inVehicle scales the eye's height and width with the kind, not its length.
+  const camera = { near: 0.1, fov: 62 }
+  const halfHeight = camera.near * Math.tan(((camera.fov / 2) * Math.PI) / 180)
+  for (const k of VEHICLE_KINDS) {
+    const [sx, sy] = k.scale
+    const pts = PROFILES[k.id].map(([x, y]) => [x * sx, (y - RIDE_HEIGHT) * sy] as const)
+    const ex = DRIVER_EYE.x, ey = DRIVER_EYE.y * sy
+    let inside = false, clear = Infinity
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const [xi, yi] = pts[i], [xj, yj] = pts[j]
+      if ((yi > ey) !== (yj > ey) && ex < ((xj - xi) * (ey - yi)) / (yj - yi) + xi) inside = !inside
+      const dx = xj - xi, dy = yj - yi, t = Math.max(0, Math.min(1, ((ex - xi) * dx + (ey - yi) * dy) / (dx * dx + dy * dy)))
+      clear = Math.min(clear, Math.hypot(xi + t * dx - ex, yi + t * dy - ey))
+    }
+    assert.ok(inside, `${k.id}: the eye is outside the body`)
+    assert.ok(clear >= halfHeight, `${k.id}: the eye is ${clear.toFixed(3)} m from the shell`)
+  }
+})
+
+test('every kind has head lamps, tail lamps and so brake lights: the lamp masks start at its own nose and tail', () => {
+  // fleetView.ts bodyMaterial: a lamp is a front (rear) face past lampEdges' nose (tail), 0.6–0.8 m above the road.
+  assert.deepEqual(lampEdges('sedan'), { nose: 2.34 - 0.19, tail: -2.33 + 0.18 }, 'the sedan\'s lamps where they always were')
+  for (const k of VEHICLE_KINDS) {
+    const { nose, tail } = lampEdges(k.id)
+    const geo = carBodyGeometry(k.id)
+    const pos = geo.getAttribute('position'), nrm = geo.getAttribute('normal')
+    let heads = 0, tails = 0
+    for (let t = 0; t < pos.count; t += 3) {
+      const xs = [pos.getX(t), pos.getX(t + 1), pos.getX(t + 2)], ys = [pos.getY(t), pos.getY(t + 1), pos.getY(t + 2)].map((y) => y + RIDE_HEIGHT)
+      const band = Math.min(...ys) < 0.8 && Math.max(...ys) > 0.6
+      if (band && nrm.getX(t) > 0.4 && Math.max(...xs) > nose) heads++
+      if (band && nrm.getX(t) < -0.4 && Math.min(...xs) < tail) tails++
+    }
+    assert.ok(heads > 0 && tails > 0, `${k.id}: ${heads} head-lamp faces, ${tails} tail-lamp faces`)
+    geo.dispose()
+  }
+})
+
 test('planFleet: each car carries its kind, suv is the kind\'s class, and the classes are what the same seeds drew before', () => {
   for (const seed of [11, 1337, 7]) {
     const { cars } = planFleet(64, seed, null)
@@ -96,6 +137,16 @@ test('planFleet: each car carries its kind, suv is the kind\'s class, and the cl
     assert.ok(kinds.size >= 7, `seed ${seed}: ${kinds.size} kinds in 64 cars`)
     const heavy = cars.filter((c) => c.suv).length
     assert.ok(heavy >= 10 && heavy <= 30, `seed ${seed}: ${heavy} heavy of 64 (three in ten expected)`)
+  }
+  // Every slot's class, as the code before the kinds drew it (`rng() < 0.3`, at 14354c2): a saved room or a network
+  // plan of these seeds sets down the same chassis in every slot.
+  const before: Record<number, string> = {
+    11: '0010000000001010000000000100011110101000000100001010010100010001',
+    1337: '0000000010001110100000000000000010000101000101110000001001011001',
+    7: '0010010100001001011101001001001000101010001001001000001000100001',
+  }
+  for (const [seed, bits] of Object.entries(before)) {
+    assert.equal(planFleet(64, Number(seed), null).cars.map((c) => (c.suv ? '1' : '0')).join(''), bits, `seed ${seed}`)
   }
   // The seed the pass-through tests use laid out "both sedans and SUVs" in 8 cars before; it still does.
   const eight = planFleet(8, 11, null).cars

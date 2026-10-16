@@ -78,7 +78,8 @@ export function interactionGroups(membership: number, filter: number): number {
 /**
  * A chassis is a member of `vehicle` and filters `vehicle` out: chassis vs chassis has no common bit in either
  * direction, so the broad phase never pairs them (no contact, no impulse). Against anything with default groups
- * (ground, buildings, the avatar) both tests pass, so a car is as solid as ever to the world and to people.
+ * (ground, buildings) both tests pass, so a car is as solid as ever to the world; the avatar's capsule filters
+ * `vehicle` out (AVATAR_GROUPS) and walks through it.
  */
 export const VEHICLE_CHASSIS_GROUPS = interactionGroups(GROUP.vehicle, ALL_GROUPS & ~GROUP.vehicle)
 

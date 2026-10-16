@@ -7,7 +7,8 @@
  * velocity untouched (a control run with the avatar left solid shows the impact); the avatar is nudged out
  * of the footprint and never into a wall; it is solid again once the car has gone, after one flip per pass
  * (on a curve and between two cars too); while shielded the character controller still slides along
- * walls and can never be trapped inside a car; and a standing car shields nobody: with the realm's chassis groups
+ * walls and can never be trapped inside a car; a car pulling away shields a person who comes within 0.3 m of it
+ * (they can run after it), and nobody farther off; and a standing car shields nobody: with the realm's chassis groups
  * the avatar walks through a parked car untouched (collision.ts avatarThroughCars).
  * What breaks if it is removed? A physics or tuning change could let a car run into a person unnoticed.
  */
@@ -342,11 +343,17 @@ test('a shielded avatar is never trapped inside a car that stops on top of it', 
   assert.equal(r.log.contacts, 0)
   const now = r.car.body.translation()
   assert.ok(Math.hypot(now.x - parked.x, now.z - parked.z) < 1e-6, 'the stopped car was pushed')
-  // Solid again, the avatar walks into the stopped car and is blocked by it like any obstacle.
+  // Solid again, the avatar walks back into the stopped car, now with the realm's chassis groups (collision.ts
+  // avatarThroughCars; this rig's default groups would let the capsule shove the box): into it with no shield, no
+  // contact, and the car unmoved.
+  r.car.collider.setCollisionGroups(VEHICLE_CHASSIS_GROUPS)
   const side = Math.sign(out.w)
   for (let i = 0; i < 60; i++) r.step({ x: 0, z: -side * 2 })
-  assert.ok(Math.abs(local(r.car, r.avatar!.x, r.avatar!.z).w) >= HALF_WIDTH - 0.04 + RADIUS)
+  assert.ok(Math.abs(local(r.car, r.avatar!.x, r.avatar!.z).w) < HALF_WIDTH, 'walked into the stopped car')
   assert.equal(r.sanctuary.flips, 1)
+  assert.equal(r.log.contacts, 0)
+  const after = r.car.body.translation()
+  assert.ok(Math.hypot(after.x - parked.x, after.z - parked.z) < 1e-6, 'the stopped car was pushed')
 })
 
 test('a car respawned on top of a standing person neither shields nor moves them: a standing chassis and the avatar never pair', async () => {
@@ -389,6 +396,31 @@ test('a car pulling away from a person just behind it, or passing in the next la
   lane.launch(14)
   for (let i = 0; i < 90; i++) lane.step()
   assert.equal(lane.sanctuary.flips, 0)
+})
+
+test('a car pulling away shields a person once their centre is within 0.3 m of its footprint, at a face or a corner, and nobody farther off', async () => {
+  // A footprint pulling away cannot reach anyone, so its sweep never fires; but people on foot walk into cars and can
+  // run after one (sanctuary.ts CLOSE). A standing car shields nobody at any distance.
+  const physics = await Physics.create([], { lamps: [], trees: [], signals: [] })
+  const world = physics.world
+  const d = (m: number) => m / Math.SQRT2
+  const cases: readonly (readonly [string, number, number, boolean])[] = [
+    ['0.29 m behind', -(HALF_LENGTH + 0.29), 0, true],
+    ['0.31 m behind', -(HALF_LENGTH + 0.31), 0, false],
+    ['0.29 m off the rear-left corner', -(HALF_LENGTH + d(0.29)), -(HALF_WIDTH + d(0.29)), true],
+    ['0.31 m off the rear-left corner', -(HALF_LENGTH + d(0.31)), -(HALF_WIDTH + d(0.31)), false],
+    ['inside, at the back', -(HALF_LENGTH - 0.2), 0, true],
+  ]
+  for (const speed of [0.6, 0]) {
+    for (const [where, x, z, near] of cases) {
+      const sanctuary = new Sanctuary(world)
+      const body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(x, 0.92, z))
+      sanctuary.register({ body, collider: world.createCollider(RAPIER.ColliderDesc.capsule(0.6, RADIUS), body), radius: RADIUS, halfHeight: 0.6 })
+      sanctuary.guard([{ ...footprint(EAST), vx: speed, speed }], H)
+      assert.equal(sanctuary.isSensor(0), near && speed > 0, `${where}, the car at ${speed} m/s`)
+      world.removeRigidBody(body)
+    }
+  }
 })
 
 test('a person out of the world (seated in a car) is never shielded', async () => {

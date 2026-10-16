@@ -49,9 +49,10 @@ export const PROFILES: Readonly<Record<VehicleKind['id'], Profile>> = Object.fre
   suv: [[-2.3, 0.3], [-2.33, 0.6], [-2.25, 1.0], [-2.1, 1.42], [-1.6, 1.46], [0.4, 1.44], [1.1, 1.02], [2.18, 0.84], [2.34, 0.56], [2.3, 0.3]],
   // Low roof, long bonnet.
   coupe: [[-2.3, 0.3], [-2.33, 0.56], [-2.2, 0.84], [-1.5, 0.9], [-0.9, 1.26], [0.1, 1.3], [0.9, 1.0], [1.4, 0.84], [2.2, 0.74], [2.34, 0.52], [2.3, 0.3]],
-  // A cab forward of a flat bed.
+  // A cab forward of a flat bed. The cab's back wall stands behind the driver's eye (head.ts DRIVER_EYE), so they
+  // sit under its roof.
   utility: [
-    [-2.3, 0.4], [-2.33, 0.7], [-2.3, 1.0], [-2.25, 1.05], [-0.2, 1.05], [-0.2, 0.95], [0.2, 0.95], [0.3, 1.52], [0.5, 1.56],
+    [-2.3, 0.4], [-2.33, 0.7], [-2.3, 1.0], [-2.25, 1.05], [-0.9, 1.05], [-0.9, 0.95], [-0.6, 0.95], [-0.5, 1.52], [-0.3, 1.56],
     [1.5, 1.52], [1.9, 1.1], [2.2, 0.9], [2.34, 0.6], [2.3, 0.4],
   ],
 })
@@ -70,6 +71,15 @@ export function carBodyGeometry(kind: VehicleKind['id'] = 'sedan'): ExtrudeGeome
   return g
 }
 
+/**
+ * Where a kind's lamps begin, along its length: 0.19 m in from its nose and 0.18 m in from its tail (the sedan's ±2.15),
+ * so a shorter body (the pod, the courier) still has head lamps, tail lamps and brake lights.
+ */
+export function lampEdges(kind: VehicleKind['id']): { nose: number; tail: number } {
+  const xs = PROFILES[kind].map(([x]) => x)
+  return { nose: Math.max(...xs) - 0.19, tail: Math.min(...xs) + 0.18 }
+}
+
 type B = Node<'bool'>
 
 /** Where a kind's body is glass, from the vertex's geometry position (height above the road `y`) and normal. */
@@ -81,7 +91,7 @@ function glassOf(id: VehicleKind['id'], p: Node<'vec3'>, n: Node<'vec3'>, y: Nod
     case 'van': return greenhouse.and(p.x.greaterThan(0.8))
     case 'coach': return y.greaterThan(1.0).and(y.lessThan(1.46)).and(abs(n.y).lessThan(0.8))
     case 'courier': return y.greaterThan(1.15).and(abs(n.y).lessThan(0.8))
-    case 'utility': return greenhouse.and(p.x.greaterThan(0.2))
+    case 'utility': return greenhouse.and(p.x.greaterThan(-0.6))
     default: return greenhouse
   }
 }
@@ -191,15 +201,16 @@ export class FleetView {
     const n = normalGeometry
     const y = p.y.add(RIDE_HEIGHT)
     const glass = glassOf(kind.id, p, n, y)
-    const front = p.x.greaterThan(2.15).and(n.x.greaterThan(0.4))
-    const rear = p.x.lessThan(-2.15).and(n.x.lessThan(-0.4))
+    const edges = lampEdges(kind.id)
+    const front = p.x.greaterThan(edges.nose).and(n.x.greaterThan(0.4))
+    const rear = p.x.lessThan(edges.tail).and(n.x.lessThan(-0.4))
     const lampBand = y.greaterThan(0.6).and(y.lessThan(0.8))
     const head = front.and(lampBand).and(abs(p.z).greaterThan(0.42))
     const tail = rear.and(lampBand).and(abs(p.z).greaterThan(0.38))
     const grille = front.and(y.lessThan(0.6)).and(y.greaterThan(0.36)).and(abs(p.z).lessThan(0.55))
     const bumper = y.lessThan(0.42)
     // The utility rig's bed is bare dark steel; the courier's shell is matte.
-    const bed = kind.id === 'utility' ? p.x.lessThan(-0.2).and(y.greaterThanEqual(0.94)) : null
+    const bed = kind.id === 'utility' ? p.x.lessThan(-0.9).and(y.greaterThanEqual(0.94)) : null
     const body = attribute('paint', 'vec3')
     let exterior = select(glass, vec3(0.02, 0.025, 0.03), select(head, vec3(0.9, 0.9, 0.88), select(tail, vec3(0.5, 0.03, 0.03), select(grille.or(bumper), vec3(0.03, 0.03, 0.035), body))))
     if (bed) exterior = select(bed, vec3(0.06, 0.06, 0.062), exterior)

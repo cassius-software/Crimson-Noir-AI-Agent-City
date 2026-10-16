@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It pins the contact wipe's decisions (contact.ts): the pole index agrees with a brute
- * force over the real city, gaps to boxes and bodies are exact, the avatar's own row and hidden rows are never met,
- * the deepest contact wins, and the pulse opens over `attack`, holds, clears over `release`, plays whole for a
- * glancing touch and counts each passage once. It also pins the wiring: the engine scans each crowd frame before
- * the upload hands it back, updates the pulse every animation frame, and keeps the post chain on while the wipe
- * plays; the composite runs on either uniform.
- * What breaks if it is removed? The wipe could fire on the user's own body, miss a lamp one cell over, stutter
- * on a glancing touch, or vanish at the Minimal tier, unnoticed.
+ * Why does this file exist? It pins the passage decisions (contact.ts): the pole index agrees with a brute force
+ * over the real city, gaps to boxes and bodies are exact, the avatar's own row and hidden rows are never met, the
+ * deepest contact wins, and the pulse opens over `attack`, holds, clears over `release`, plays whole for a glancing
+ * touch and counts each passage once. It also pins the wiring: the engine scans each crowd frame before the upload
+ * hands it back and updates the pulse every animation frame, and nothing of it reaches the frame as a whole: the
+ * post chain runs on the quality tier alone and ghost.ts and postfx.ts take no contact uniform.
+ * What breaks if it is removed? The passage could fire on the user's own body, miss a lamp one cell over or stutter
+ * on a glancing touch, or a full-screen overlay could come back, unnoticed.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'

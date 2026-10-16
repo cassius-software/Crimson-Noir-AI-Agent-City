@@ -8,10 +8,10 @@
  * step; the moment one would reach a person, that person's collider flips from Solid to Sensor in the same
  * call. A sensor takes part in no contact, so the vehicle passes with no impulse on either side. The person
  * is nudged sideways out of the footprint (never through a wall) and turns solid again once every vehicle
- * has kept its distance for a moment. A standing vehicle is no reason to shield or to nudge: people on foot
- * walk through parked cars (collision.ts avatarThroughCars), and the Ring-0 audit reads a shielded person as
- * one the law let a car reach, so the shield is kept for cars that move. GPU pedestrians are not Rapier bodies (crowd.wgsl nudges them
- * itself); the Rapier people are the players' avatars and, while a pedestrian near the operator is promoted
+ * has kept its distance for a moment. People on foot walk through cars (collision.ts avatarThroughCars), so
+ * a standing vehicle is no reason to shield anyone, and any moving one close by is, whichever way it moves: a
+ * car pulling away cannot reach a person, but a person running after it can reach the car. GPU pedestrians are
+ * not Rapier bodies (crowd.wgsl nudges them itself); the Rapier people are the players' avatars and, while a pedestrian near the operator is promoted
  * to a physical body, each segment of that body, registered as a ward of its own and rebound (rebind) each
  * time its slot is built again.
  * What breaks if it is removed? A car that reaches the avatar runs into an immovable kinematic capsule: the
@@ -53,7 +53,7 @@ const LOOKAHEAD_STEPS = 2
  * the lookahead (a 5.2 m/s run moves 0.17 m in 2/60 s) and Rapier's contact prediction distance.
  */
 const MARGIN = 0.25
-/** m/s. A footprint point slower than this is standing still: a parked car stays a solid obstacle. */
+/** m/s. A footprint point slower than this is standing still: a parked car is no reason to shield. */
 const MOVING = 0.1
 /**
  * m/s. A footprint point opening the gap faster than this is pulling away (or being pushed away by the
@@ -61,13 +61,15 @@ const MOVING = 0.1
  */
 const RECEDING = 0.05
 /**
- * Metres of overlap inside a MOVING vehicle's footprint that shield the person on their own, whatever the sweep
- * says of the step (a spin or a slide can carry a footprint onto someone between two sweeps). A standing vehicle
- * shields nobody for overlap: a person on foot walks through a parked car (02_Define_The_Rules/collision.ts
- * avatarThroughCars; a rig's segments never pair with a chassis either), so there is no contact to depenetrate
- * and nothing to nudge them out of; the moment the car moves, the sweep shields them as it does anyone inside.
+ * Metres from a MOVING vehicle's footprint within which a person's centre is shielded whatever the sweep says of the
+ * step. A footprint pulling away cannot reach a person, but a person on foot walks into cars (02_Define_The_Rules/
+ * collision.ts avatarThroughCars; a rig's segments never pair with a chassis either) and can run into one pulling
+ * away, or stand in one that spins or slides. Ring-0 reads a solid centre within 0.1 m of a moving footprint on both
+ * axes (0.14 m at a corner) as an impact, and a run covers 0.09 m a substep, so a person shielded at 0.3 m never gets
+ * there solid; one standing just behind a car that pulls away, farther than this, is no reason to shield. A standing
+ * vehicle shields nobody for closeness: there is no contact to avoid; the moment it moves, the sweep or this does.
  */
-const DEEP = 0.1
+const CLOSE = 0.3
 /** Extra metres the nudge clears beyond the margin, so the restore check passes with room to spare. */
 const EXIT = 0.05
 /**
@@ -234,9 +236,10 @@ export class Sanctuary {
         const approaching = moving && !receding
         const sweeping = approaching && gap <= Math.max(0, closing) * tau + MARGIN
         const passing = approaching && gap <= RELEASE
-        const reaches = sweeping || (moving && gap < -DEEP)
         const near = gap <= MARGIN
-        if (reaches) danger = true
+        // Shield: a footprint whose sweep reaches the person over the coming step, or a moving one CLOSE to their
+        // centre whichever way it moves (its centre's speed counts as well as the nearest point's, as Ring-0 reads it).
+        if (sweeping || (reach < CLOSE && (moving || v.vx * v.vx + v.vz * v.vz > MOVING * MOVING))) danger = true
         // Any moving vehicle this close holds the shield, even one falling away for the moment: a turning
         // car's flank can pull back from the person just before its rear corner swings back in.
         if (near || (moving && gap <= RELEASE)) occupied = true
@@ -245,7 +248,7 @@ export class Sanctuary {
         // passing vehicle to clear a parked one), and the vehicle already pushed against keeps its turn
         // within a rank, so a person between two vehicles is not bounced from one to the other. A vehicle
         // pulling away is not pushed against unless it still overlaps the person.
-        if (passing || reaches || (near && !(receding && gap > 0))) {
+        if (passing || sweeping || (near && !(receding && gap > 0))) {
           const rank = (sweeping || passing ? 4 : 2) + (v.id === ward.sideOf ? 1 : 0)
           if (rank > pushRank || (rank === pushRank && gap < pushGap)) {
             push = v

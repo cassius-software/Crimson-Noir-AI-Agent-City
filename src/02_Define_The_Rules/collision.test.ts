@@ -158,7 +158,7 @@ test('the group arithmetic: Rapier packing, the ragdoll bit read from ragdollRig
   const meets = (a: number, b: number) => ((a >>> 16) & b & 0xffff) !== 0 && ((b >>> 16) & a & 0xffff) !== 0
   const DEFAULT = interactionGroups(ALL_GROUPS, ALL_GROUPS)
   assert.equal(meets(VEHICLE_CHASSIS_GROUPS, VEHICLE_CHASSIS_GROUPS), false, 'chassis vs chassis: no pair')
-  assert.equal(meets(VEHICLE_CHASSIS_GROUPS, DEFAULT), true, 'chassis vs ground, building, avatar: solid')
+  assert.equal(meets(VEHICLE_CHASSIS_GROUPS, DEFAULT), true, 'chassis vs ground, building: solid')
   assert.equal(meets(WHEEL_RAY_GROUPS, VEHICLE_CHASSIS_GROUPS), false, 'a wheel ray never finds a chassis')
   assert.equal(meets(WHEEL_RAY_GROUPS, DEFAULT), true, 'a wheel ray finds the road')
   assert.equal(meets(DEFAULT, VEHICLE_CHASSIS_GROUPS), true, 'the obstacle rays (default groups) still find a chassis')

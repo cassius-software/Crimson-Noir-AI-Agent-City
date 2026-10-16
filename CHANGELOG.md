@@ -26,22 +26,6 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 - **A clear core in the code dissolve.** A mesh you pass through now opens around your eye: cells within 0.85 m of
   the camera are gone and the falling-column pattern is whole again from 2.2 m out (`CODE_DISSOLVE.coreInner` and
   `coreOuter`), so you look out through open code. The core is local to the mesh being passed through.
-
-### Changed
-
-- **On foot you walk through cars.** The avatar's capsule no longer pairs with a vehicle chassis
-  (`COLLISION.avatarThroughCars`, `AVATAR_GROUPS`): a parked car is passed, not pushed, and its mesh dissolves as
-  you enter it. The First Law is untouched: the Bouncer still brakes for you and holds a car still while you stand
-  in its footprint, the Sanctuary still shields you from a moving car, and the Ring-0 audit still reads a moving car
-  over a solid person as an impact. The Sanctuary no longer shields or nudges anyone for overlapping a standing car.
-
-### Removed
-
-- **The full-screen contact wipe.** The iris of code that opened from the centre of the frame on every contact
-  (ghost view's composite, `contact.ts`) is gone: a passage shows on the mesh passed through alone, and the post chain
-  no longer turns on for one. `output.contact.wipe` in the telemetry is now `output.contact.passage`, the same
-  envelope, which nothing draws.
-
 - **Lakefront Metro has people and traffic.** The generated metropolis was walked through the surveyed-region path,
   which by design gives a region no fleet and hides the pedestrian crowd, so every first visit read Population 0 and
   Vehicles 0. Its streets lie on the procedural city's 40 m pitch, so a *street window* of 16 × 16 blocks around where
@@ -57,6 +41,23 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   unchanged: empty fleet, hidden crowd.
 - Unverified in the cloud (no GPU): the rendered crowd and traffic on the metropolis; `naga` validates both shader
   variants, and the window, the rings, the realm's seating and the uniform layout are tested in Node.
+
+### Changed
+
+- **On foot you walk through cars.** The avatar's capsule no longer pairs with a vehicle chassis
+  (`COLLISION.avatarThroughCars`, `AVATAR_GROUPS`): a parked car is passed, not pushed, and its mesh dissolves as
+  you enter it. The First Law is untouched: the Bouncer still brakes for you and holds a car still while you stand
+  in its footprint, the Sanctuary still shields you from a moving car, and the Ring-0 audit still reads a moving car
+  over a solid person as an impact. The Sanctuary no longer shields or nudges anyone for overlapping a standing car,
+  and it now shields anyone within 0.3 m of a moving one whichever way it moves, since you can run after a car pulling
+  away.
+
+### Removed
+
+- **The full-screen contact wipe.** The iris of code that opened from the centre of the frame on every contact
+  (ghost view's composite, `contact.ts`) is gone: a passage shows on the mesh passed through alone, and the post chain
+  no longer turns on for one. `output.contact.wipe` in the telemetry is now `output.contact.passage`, the same
+  envelope, which nothing draws.
 
 ## [1.0.0-stable-beta] - 2026-10-12
 
