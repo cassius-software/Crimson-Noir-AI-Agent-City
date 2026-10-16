@@ -76,5 +76,5 @@ test('the operator tier: the context rides every request beside the memories, an
   const local = read('../../09_Cognition/localCompute.ts')
   assert.match(local, /systemPrompt\(req\.tethers, req\.memories, req\.context\)/)
   const router = read('../../09_Cognition/router.ts')
-  assert.equal((router.match(/systemPrompt\(req\.tethers, req\.memories, req\.context\)/g) ?? []).length, 2, 'the Claude provider and the prefix page table')
+  assert.equal((router.match(/systemPrompt\(req\.tethers, req\.memories, req\.context\)/g) ?? []).length, 3, 'the Claude provider, the scripted provider and the prefix page table')
 })

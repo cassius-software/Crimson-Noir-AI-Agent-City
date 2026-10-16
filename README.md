@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/cover.jpg" alt="Crimson Noir: Agent City cover art: an operator on a night terrace above the city recruits an agent, while a drone halts at a glowing safety perimeter" width="440">
+</p>
+
 # CRIMSON NOIR // AGENT CITY
 ### Deterministic Zero-Trust Agent Architecture & Bare-Metal Civic Simulation
 
@@ -6,7 +10,7 @@
 ![SIMD Engine](https://img.shields.io/badge/Swarm%20Ticks-SIMD%20Lanes-blue)
 ![Tests](https://img.shields.io/badge/Tests-1%2C316-darkgreen)
 ![Dual-License](https://img.shields.io/badge/Core-Proprietary%20%7C%20Tools%3A%20MIT-crimson)
-[![Release](https://img.shields.io/badge/Release-v1.0.0--stable--beta-black)](https://github.com/exitwoundscassius-ux/Crimson-Noir-AI-Agent-City/releases/tag/v1.0.0-stable-beta)
+[![Release](https://img.shields.io/badge/Release-v1.0.0--stable--beta-black)](https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/releases/tag/v1.0.0-stable-beta)
 
 **Crimson Noir** is an offline, mathematically contained multi-agent simulation and operating-system substrate
 that compiles to a single, self-contained HTML file (`dist/index.html`) or to a bootable bare-metal UEFI image.
@@ -32,8 +36,9 @@ verified, history) is [MANUAL.md](MANUAL.md). The bare-metal system has its own 
 * **Zero-Trust Containment:** Three layers of network isolation in the page: one loopback-only gate that every
   client asks before it addresses anything, an air gap that replaces and freezes every outbound primitive of the
   global object, and a Content-Security-Policy that admits loopback only. The cognitive gateway speaks to Claude
-  (default model `claude-opus-5-5`) through a loopback proxy the operator runs, or to a local Ollama or llama.cpp
-  server; no model, server or key ships with the product. The self-healing agent's checks run in a container
+  (default model `claude-opus-5-5`) through a loopback proxy the operator runs, to a local Ollama, llama.cpp or
+  other OpenAI-compatible server, or to a deterministic script with no backend at all; no model, server or key
+  ships with the product. The self-healing agent's checks run in a container
   that mounts nothing of the host, and 38 adversarial escape probes (egress, daemon sockets, execution,
   privilege, credentials) are denied inside it on every CI run, with a weakened control where the same probes
   must escape. The kernel and Docker are the trusted base: tested and argued, not proved
@@ -79,8 +84,8 @@ Kani (the `kani` part of the proofs) runs on Linux and macOS only: `npm run veri
 so in its last line; use WSL for that part.
 
 **The Windows app.** No Node, no terminal: download `Crimson Noir Agent City_<version>_x64-setup.exe` from the
-[latest release](https://github.com/exitwoundscassius-ux/Crimson-Noir-AI-Agent-City/releases) (or the
-`windows-installer-*` artifact of the latest [windows-app](https://github.com/exitwoundscassius-ux/Crimson-Noir-AI-Agent-City/actions/workflows/windows-app.yml)
+[latest release](https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/releases) (or the
+`windows-installer-*` artifact of the latest [windows-app](https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/actions/workflows/windows-app.yml)
 run), double-click it, and the city opens in its own borderless window with a frosted glass title bar. It installs
 for the current user, so no administrator prompt; SmartScreen may ask once because the file is not code-signed
 (More info, Run anyway). The `windows-portable-*` artifact is the bare `.exe` that runs from anywhere. The app is
@@ -109,9 +114,9 @@ are committed under `world/lakefront/` (`node tools/world/lakefront.mjs` regener
 
 ### Release
 
-The current release is [**v1.0.0-stable-beta**](https://github.com/exitwoundscassius-ux/Crimson-Noir-AI-Agent-City/releases/tag/v1.0.0-stable-beta)
+The current release is [**v1.0.0-stable-beta**](https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/releases/tag/v1.0.0-stable-beta)
 (Crimson Noir Agent City v1.0.0 Stable Beta, 2026-10-12; its number was set below the earlier
-[v1.1.0-stable-release](https://github.com/exitwoundscassius-ux/Crimson-Noir-AI-Agent-City/releases/tag/v1.1.0-stable-release)
+[v1.1.0-stable-release](https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/releases/tag/v1.1.0-stable-release)
 on purpose, see [CHANGELOG.md](CHANGELOG.md)), baked from `main` with the proofs: a GPT disk image and a hybrid UEFI ISO
 for a UEFI x86-64 machine with Secure Boot off, the `BOOTX64.EFI` application, its locked configuration, and
 `SHA256SUMS`. The media are reproducible: the same commit built with Rust 1.97.0 gives the same bytes, and the EFI's

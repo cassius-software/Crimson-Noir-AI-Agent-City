@@ -59,7 +59,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD ["/nodejs/bin/node", "-e", "require('node:http').get({host:'127.0.0.1',port:process.env.NET_PORT||8787,path:'/',timeout:4000},r=>process.exit(r.statusCode===426?0:1)).on('error',()=>process.exit(1)).on('timeout',()=>process.exit(1))"]
 LABEL org.opencontainers.image.title="crimson-noir-host" \
       org.opencontainers.image.description="The authoritative host of Crimson Noir AI Agent City: the room and the ledger door" \
-      org.opencontainers.image.source="https://github.com/exitwoundscassius-ux/Crimson-Noir-AI-Agent-City" \
+      org.opencontainers.image.source="https://github.com/cassius-software/Crimson-Noir-AI-Agent-City" \
       org.opencontainers.image.licenses="LicenseRef-ONYX"
 CMD ["src/10_Network/replication.node.ts"]
 

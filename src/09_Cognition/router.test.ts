@@ -18,7 +18,8 @@ import { run as shell } from '../07_Execute_Actions/terminal/commands.ts'
 import type { TerminalBridge } from '../07_Execute_Actions/terminal/bridge.ts'
 import { CLAUDE_GATEWAY, DEFAULT_CLAUDE_MODEL } from './claudeApi.ts'
 import { BASE_REALITY, DEFAULT_MODEL, DEFAULT_SERVER, promptHash, systemPrompt, type FetchLike } from './localCompute.ts'
-import { createMindRouter, DEFAULT_PROVIDER, LLAMACPP_MODEL, LLAMACPP_SERVER, PROVIDERS } from './router.ts'
+import { createMindRouter, DEFAULT_PROVIDER, LLAMACPP_MODEL, LLAMACPP_SERVER, OPENAI_MODEL, OPENAI_SERVER, PROVIDER_TEXT, PROVIDERS, SCRIPTED_SERVER } from './router.ts'
+import { SCRIPTED } from './scripted.ts'
 
 const enc = new TextEncoder()
 const stream = (text: string, type: string): Response => new Response(new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode(text)); c.close() } }), { status: 200, headers: { 'content-type': type } })
@@ -51,14 +52,49 @@ const TETHER: GateTether = { agent: 7, serial: 1, skills: ['Rust', 'Python'] }
 test('the Claude API is the provider unless the operator chooses another; each provider has its own server and model', () => {
   const r = createMindRouter({ fetch: anyServer().f })
   assert.equal(DEFAULT_PROVIDER, 'claude')
-  assert.deepEqual(PROVIDERS, ['claude', 'ollama', 'llamacpp'])
+  assert.deepEqual(PROVIDERS, ['claude', 'ollama', 'llamacpp', 'openai', 'scripted'])
   assert.deepEqual(r.settings(), { provider: 'claude', server: CLAUDE_GATEWAY, model: DEFAULT_CLAUDE_MODEL, key: null, effort: undefined })
   assert.equal(r.setProvider('ollama'), 'ollama')
   assert.deepEqual(r.settings(), { provider: 'ollama', server: DEFAULT_SERVER, model: DEFAULT_MODEL, think: false, api: 'generate', key: undefined, effort: undefined })
   assert.equal(r.setProvider('LlamaCpp'), 'llamacpp')
   assert.deepEqual(r.settings(), { provider: 'llamacpp', server: LLAMACPP_SERVER, model: LLAMACPP_MODEL, think: false, api: 'chat', key: undefined, effort: undefined })
-  assert.throws(() => r.setProvider('gpt'), /ask provider takes claude, ollama, llamacpp/)
+  assert.throws(() => r.setProvider('gpt'), /ask provider takes claude, ollama, llamacpp, openai, scripted/)
   assert.equal(r.provider, 'llamacpp')
+  assert.equal(r.setProvider('openai'), 'openai')
+  assert.deepEqual(r.settings(), { provider: 'openai', server: OPENAI_SERVER, model: OPENAI_MODEL, think: false, api: 'chat', key: undefined, effort: undefined })
+  assert.equal(r.setProvider('scripted'), 'scripted')
+  assert.deepEqual(r.settings(), { provider: 'scripted', server: SCRIPTED_SERVER, model: SCRIPTED, key: undefined, effort: undefined })
+  assert.throws(() => r.setServer('http://localhost:1'), /the scripted provider has no server/)
+  assert.throws(() => r.setModel('x'), /the scripted provider has no model/)
+})
+
+test('ask connect: the provider, its server and (claude) its key in one line; a bad address or a key for a local provider changes nothing', () => {
+  const store = memoryStore()
+  const r = createMindRouter({ fetch: anyServer().f, store })
+  assert.equal(r.connect('openai', 'http://127.0.0.1:8000'), `${PROVIDER_TEXT.openai}; server http://127.0.0.1:8000`)
+  assert.deepEqual([r.provider, r.settings().server], ['openai', 'http://127.0.0.1:8000'])
+  assert.equal(r.connect('claude', 'http://localhost:9000', 'sk-ant-api03-abcdefghijklmnop-1234'), `${PROVIDER_TEXT.claude}; server http://localhost:9000, key sk-ant…1234`)
+  assert.deepEqual([r.provider, r.settings().server, r.settings().key], ['claude', 'http://localhost:9000', 'sk-ant…1234'])
+  assert.equal(r.connect('scripted'), PROVIDER_TEXT.scripted)
+  assert.equal(r.provider, 'scripted')
+  assert.throws(() => r.connect('ollama', 'https://api.example.com'), /must be on this machine/)
+  assert.equal(r.provider, 'scripted', 'a bad address left the provider as it was')
+  assert.throws(() => r.connect('claude', 'https://api.anthropic.com'), /speaks only to a gateway on this machine/)
+  // A key typed where the url goes is refused without being echoed: only a plain address is quoted back.
+  assert.throws(() => r.connect('claude', 'https://api.anthropic.com'), /, not 'https:\/\/api\.anthropic\.com'$/)
+  for (const [p, v] of [['claude', 'sk-ant-api03-SECRETSECRET-9999'], ['openai', 'sk-proj-SECRET-9999'], ['ollama', 'http://user:SECRET@example.com']] as const) {
+    assert.throws(() => r.connect(p, v), (e: unknown) => e instanceof Error && !e.message.includes('SECRET') && /the second word must be a server url/.test(e.message), `${p}: the value is not in the message`)
+  }
+  assert.throws(() => r.connect('ollama', 'http://localhost:11434', 'k'), /the ollama provider takes no key/)
+  assert.throws(() => r.connect('scripted', 'http://localhost:1'), /takes no server and no key/)
+  assert.throws(() => r.connect('gpt'), /ask connect takes claude, ollama, llamacpp, openai, scripted/)
+  assert.equal(r.connect('Ollama'), PROVIDER_TEXT.ollama)
+  assert.equal(r.provider, 'ollama')
+  // Kept: a new router over the same store wakes as the last connect left it, the openai server included.
+  const again = createMindRouter({ fetch: anyServer().f, store })
+  assert.equal(again.provider, 'ollama')
+  again.setProvider('openai')
+  assert.equal(again.settings().server, 'http://127.0.0.1:8000')
 })
 
 test('the settings are kept between visits, each provider\'s own: a swap back finds them as they were; a broken store is the defaults', () => {
@@ -113,11 +149,16 @@ test('every provider answers with the same system prompt, the conduct core first
     const a = await r.answer({ tethers: [TETHER], prompt: 'hi', signal: new AbortController().signal }, () => {})
     answers.push(a.text)
   }
-  assert.deepEqual(answers, ['claude says hi', 'ollama says hi', 'llama says hi'])
+  assert.equal(answers[4].startsWith('You ask about "hi"'), true, 'the scripted provider answers from the script')
+  assert.deepEqual(answers.slice(0, 4), ['claude says hi', 'ollama says hi', 'llama says hi', 'llama says hi'])
   const expected = systemPrompt([TETHER])
   assert.ok(expected.startsWith(AGENT_SYSTEM_PROMPT_CORE + '\n'), 'the core opens every prompt')
   assert.ok(BASE_REALITY.startsWith(AGENT_SYSTEM_PROMPT_CORE))
-  const [claude, ollama, llama] = srv.calls.filter((c) => c.body !== null)
+  const sent = srv.calls.filter((c) => c.body !== null)
+  assert.equal(sent.length, 4, 'the scripted provider sent nothing')
+  const [claude, ollama, llama, openai] = sent
+  assert.equal(openai.url, 'http://localhost:1234/v1/chat/completions')
+  assert.equal((openai.body as { messages: { content: string }[] }).messages[0].content, expected)
   assert.equal(claude.url, 'http://localhost:8089/v1/messages')
   assert.equal((claude.body as { system: string }).system, expected)
   assert.equal(claude.headers['x-api-key'], 'sk-ant-test')
@@ -188,7 +229,7 @@ test('from the console: ask provider swaps, ask key keeps the key masked, ask al
   assert.deepEqual(shell('ask effort low', b, []).lines, [{ kind: 'out', text: 'effort    low' }])
   const status = await shell('ask', b, []).pending
   assert.deepEqual(status?.slice(0, 5), [
-    { kind: 'out', text: 'provider  claude: the Claude API through a gateway on this machine (ask provider ollama|llamacpp for a model on this machine)' },
+    { kind: 'out', text: 'provider  claude: the Claude API through a gateway on this machine (ask provider ollama|llamacpp|openai for a model on this machine, scripted for none)' },
     { kind: 'out', text: 'server    http://localhost:8089  (a gateway on this machine only)' },
     { kind: 'out', text: 'model     claude-opus-5-5' },
     { kind: 'out', text: "key       sk-ant…1234  (kept in this browser's local storage: ask key none clears it)" },
@@ -202,7 +243,24 @@ test('from the console: ask provider swaps, ask key keeps the key masked, ask al
   assert.deepEqual(claude?.[0], { kind: 'out', text: 'claude says hi' })
   assert.deepEqual(shell('ask key none', b, []).lines, [{ kind: 'out', text: 'key       none: cleared (the gateway on this machine adds the key)' }])
   assert.deepEqual(shell('ask effort none', b, []).lines, [{ kind: 'out', text: "effort    none: the provider's own default" }])
-  assert.deepEqual(shell('ask provider gpt', b, []).lines, [{ kind: 'err', text: 'ask: ask provider takes claude, ollama, llamacpp' }])
+  assert.deepEqual(shell('ask provider gpt', b, []).lines, [{ kind: 'err', text: 'ask: ask connect takes claude, ollama, llamacpp, openai, scripted, then an optional server url and, for claude, a key' }])
+  // The scripted provider from the console: it reports itself, lists nothing to install, and answers from the script.
+  assert.deepEqual(shell('ask provider scripted', b, []).lines, [{ kind: 'out', text: `provider  ${PROVIDER_TEXT.scripted}` }])
+  assert.deepEqual((await shell('ask', b, []).pending)?.slice(0, 3), [
+    { kind: 'out', text: 'provider  scripted: no backend; the script answers on this page, and nothing reaches any network (ask provider claude|ollama|llamacpp|openai for a model)' },
+    { kind: 'out', text: 'server    none: nothing is addressed' },
+    { kind: 'out', text: 'model     none: the script' },
+  ])
+  const before = srv.calls.length
+  const scripted = await shell('ask rust: hi', b, []).pending
+  assert.match(scripted?.[0]?.text ?? '', /^You ask about "hi"/)
+  assert.equal(srv.calls.length, before, 'nothing was sent')
+  const leaked = shell('ask connect claude sk-ant-api03-SECRETSECRET-9999', b, []).lines
+  assert.equal(leaked.length, 1)
+  assert.equal(leaked[0].kind, 'err')
+  assert.ok(!leaked[0].text.includes('SECRET'), 'a key typed where the url goes is not printed back')
+  assert.deepEqual(shell('ask connect openai http://localhost:1234', b, []).lines, [{ kind: 'out', text: `provider  ${PROVIDER_TEXT.openai}; server http://localhost:1234` }])
+  assert.deepEqual((await shell('ask rust: hi', b, []).pending)?.[0], { kind: 'out', text: 'llama says hi' })
   assert.deepEqual(shell('ask key', b, []).lines, [{ kind: 'err', text: 'usage: ask key <key|none>' }])
 })
 
@@ -224,6 +282,7 @@ test('14A over any provider: an inadmissible prompt reaches no server, streams n
     assert.deepEqual(live, [], `${p}: nothing streamed`)
   }
   assert.deepEqual(notes, [], 'nothing of it is remembered')
+  shell('ask provider llamacpp', b, [])
   const fine = await shell('ask rust: how does grip work?', b, []).pending
   assert.equal(fine?.[0]?.text, 'llama says hi')
   assert.deepEqual(notes, ['ask: how does grip work? → llama says hi'])
