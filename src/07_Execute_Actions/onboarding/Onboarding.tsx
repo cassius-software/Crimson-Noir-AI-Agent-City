@@ -3,7 +3,7 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the first thing a new visitor sees: a quiet full-screen card on the brand's ink where
- * Wren, the concierge, talks them into their city in plain words. Four short turns (a name, where to start, what time of
+ * Sloane, the concierge, talks them into their city in plain words. Four short turns (a name, where to start, what time of
  * day, sound on or off), each answered with one typed word or one tap, while the lakefront metropolis is built in the
  * background (lakefrontClient.ts over its worker) and its progress is told in plain words under the conversation; a
  * small map of the five regions appears as soon as it is built, with the visitor's start marked. At the end one button
@@ -36,7 +36,7 @@ export interface Outcome {
   pack: RegionPack | null
 }
 
-interface Turn { who: 'wren' | 'you'; text: string }
+interface Turn { who: 'sloane' | 'you'; text: string }
 
 /** The ink shades the five regions and the lake are drawn in on the small map (titanium steps; crimson is the start). */
 const ZONE_INK: readonly string[] = ['#5a5a60', '#8c8c90', '#c8c8cc', '#2c2e36', '#e7e9ec', '#0a0a0e']
@@ -75,9 +75,11 @@ export interface OnboardingProps {
   port(): BuilderPort
   /** Who says the lines: the script, or the configured model over it (voice.ts). */
   voice?: Voice
+  /** Sloane's spoken voice (speaker.ts): the last line is said aloud once the visitor has chosen sound on. */
+  speaker?: { speak(text: string): Promise<unknown>; stop(): void }
 }
 
-export function Onboarding({ seed, onDone, port, voice = scriptedVoice() }: OnboardingProps): JSX.Element {
+export function Onboarding({ seed, onDone, port, voice = scriptedVoice(), speaker }: OnboardingProps): JSX.Element {
   const [step, setStep] = useState<Step>('name')
   const [answers, setAnswers] = useState<Answers>(NO_ANSWERS)
   const [turns, setTurns] = useState<Turn[]>([])
@@ -109,7 +111,7 @@ export function Onboarding({ seed, onDone, port, voice = scriptedVoice() }: Onbo
     return () => { b.dispose(); builderRef.current = null }
   }, [seed, port])
 
-  // Wren's line for the step: the script at once, the model's rewording if it comes in time.
+  // Sloane's line for the step: the script at once, the model's rewording if it comes in time.
   useEffect(() => {
     const scripted = lineFor(step, answers, CONCIERGE_NAME)
     setLine(scripted)
@@ -122,12 +124,24 @@ export function Onboarding({ seed, onDone, port, voice = scriptedVoice() }: Onbo
 
   useEffect(() => { if (step === 'name') inputRef.current?.focus() }, [step])
 
+  // Sloane speaks the lines after the sound question, once the visitor said On (before it nothing is known of their
+  // wish, so nothing sounds); the line is said as shown, and the model's rewording, if it comes, is not said twice.
+  const speakerRef = useRef(speaker)
+  useEffect(() => { speakerRef.current = speaker }, [speaker])
+  useEffect(() => {
+    if (answers.audio !== true || step === 'name' || step === 'place' || step === 'time' || step === 'sound') return
+    void speakerRef.current?.speak(lineFor(step, answers, CONCIERGE_NAME))
+    // The scripted line is said; a rewording arriving later changes the card, not the voice.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, answers.audio])
+  useEffect(() => () => speakerRef.current?.stop(), [])
+
   const choices = useMemo(() => choicesFor(step), [step])
 
   const take = useCallback((value: unknown) => {
     const next = answer(answers, step, value)
     setAnswers(next)
-    setTurns((t) => [...t, { who: 'wren', text: line }, { who: 'you', text: said(step, next) }])
+    setTurns((t) => [...t, { who: 'sloane', text: line }, { who: 'you', text: said(step, next) }])
     setStep(nextStep(step))
   }, [answers, step, line])
 
@@ -173,7 +187,7 @@ export function Onboarding({ seed, onDone, port, voice = scriptedVoice() }: Onbo
 
         <ol className="flex flex-col gap-2 text-[15px] leading-5" aria-label="What was said so far">
           {turns.map((t, i) => (
-            <li key={i} className={t.who === 'wren' ? 'max-w-[90%] text-noir-titanium-400' : 'max-w-[90%] self-end rounded-noir-control border border-noir-titanium-800 bg-noir-ink-2 px-3 py-1.5 text-noir-titanium-100'}>
+            <li key={i} className={t.who === 'sloane' ? 'max-w-[90%] text-noir-titanium-400' : 'max-w-[90%] self-end rounded-noir-control border border-noir-titanium-800 bg-noir-ink-2 px-3 py-1.5 text-noir-titanium-100'}>
               {t.text}
             </li>
           ))}

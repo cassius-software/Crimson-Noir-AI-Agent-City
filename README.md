@@ -94,7 +94,7 @@ Brave on desktop and Android, or Safari 26 on iPhone, iPad and Mac. `?boot=tty` 
 realm and the page share one memory bridge for every position (docs/zero-copy-bridge.md); the file opened from disk
 uses the same bridge over a private buffer. A server of your own sends the same two headers to get the shared path.
 
-A first visit opens on Wren, the concierge, who asks four one-word questions (a name, where to start, the time of day,
+A first visit opens on Sloane, the concierge, who asks four one-word questions (a name, where to start, the time of day,
 sound) while Lakefront Metro, a fictitious great-lake metropolis of five regions (Lakefront Metropolis with The Spire,
 West Sprawl with Transit City, The East Bluffs, North Ridge, The Grand Ravine), is generated in the background from
 the world seed; the answers are kept, so a return visit opens on the same city. `?onboarding=0` skips to the

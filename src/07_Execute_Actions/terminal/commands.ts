@@ -19,11 +19,16 @@
  * What breaks if it is removed? The terminal cannot interpret a single line.
  */
 import type {
-  AskResult, ExecResult, GateTether, HalDevice, HarnessReport, LookBridge, LookChange, MemoryBridge, MindStatus, NetBridge, NetReport, OperatorBridge,
+  AgentBridge, AskResult, ConciergeBridge, ExecResult, GateTether, GoalPlan, HalDevice, HarnessReport, LookBridge, LookChange, MemoryBridge, MindStatus, NetBridge, NetReport, OperatorBridge,
   Piece, PingKind, PingPick, RecordBridge, RecruitBridge, Ring0Stats, RunResult, SayResult, TerminalBridge, VoiceStatus,
 } from './bridge.ts'
 import type { QualityState, RecordingState } from '../../05_Observe_Environment/telemetry.ts'
 import { Machine } from './repl.ts'
+
+/** The roster's pronoun choices, as its usage line names them (08_Swarm/roster.ts PRONOUNS; roster.test.ts pins the two). */
+export const PRONOUN_WORDS = 'they/them|she/her|he/him|any'
+/** A goal is at most this long (06_Make_Decisions/intent.ts GOAL_MAX; intent.test.ts pins the two). */
+export const GOAL_CHARS = 160
 
 export type LineKind = 'out' | 'err' | 'cmd' | 'sys'
 
@@ -72,6 +77,9 @@ const CORE = [
   { name: 'captions', usage: 'captions [on|off]', summary: 'closed captions for every sound: engines, signals, speech, pings (view-only)' },
   { name: 'ping', usage: 'ping [go|look|gather|wait|clear]', summary: 'mark where you look for your swarm (view-only; shown on the minimap and captioned; Q); alone, the marks standing' },
   { name: 'look', usage: 'look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]', summary: "your look from the crowd's wardrobe (body, height, build, skin, hair, top, bottom, shirt, shoes, tie, eyewear, bag, cup)" },
+  { name: 'agent', usage: 'agent [new <name>|<name> pronouns|role|voice|look|name <value...>|hire <name> [<skill>]|dismiss <name>|forget <name>|voices]', summary: 'your own agents: name, pronouns, role, voice and look; hire one into a pedestrian with a skill (they answer ask and say as themselves)' },
+  { name: 'sloane', usage: 'sloane [on|off|voice <name>|voices|say <text...>]', summary: "the concierge's spoken voice: the speech provider's voice at your own head when say has one, else the browser's offline voice" },
+  { name: 'goal', usage: 'goal <words...>', summary: 'tell the city a goal in plain words, as you would tell Sloane: what can be done now is done, the rest is explained' },
   { name: 'hal', usage: 'hal [pair hid|serial|ble]', summary: 'hardware bus devices; pair a controller' },
   { name: 'recruit', usage: 'recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]', summary: 'ask someone nearby with a skill over, or an Active recruit to the pinged point; listen by voice (on-device)' },
   { name: 'memory', usage: 'memory [<agent>|forget <agent>|forget all]', summary: 'what the people you recruit remember in this city; forget erases it (operator)' },
@@ -92,7 +100,7 @@ const OPERATOR = [
   { name: 'operator', usage: 'operator [unlock|lock|status]', summary: 'the operator tier: scripts, tuning keys, harnesses' },
   { name: 'run', usage: 'run <skill>[,<skill>...]: <js...>', summary: 'run a script against sim.* while someone tethered has the skill (Shift+Enter adds a line)' },
   { name: 'ask', usage: 'ask [<skill>[,<skill>...]: <prompt...>|provider <name>|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|stop]', summary: 'ask the model, answering as someone tethered with the skill; the answer streams in' },
-  { name: 'say', usage: 'say [<skill>[,<skill>...]: <text...>|voice <name>|model <name>|server <url>|auto on|off|stop]', summary: 'said aloud by someone tethered with the skill, from where they stand (local speech server)' },
+  { name: 'say', usage: 'say [<skill>[,<skill>...]: <text...>|voice <name>|model <name>|server <url>|provider local|elevenlabs|key <key>|none|auto on|off|stop]', summary: 'said aloud by someone tethered with the skill, from where they stand (a speech server on this machine; or ElevenLabs through a gateway on it)' },
   { name: 'api', usage: 'api [path]', summary: 'the script API, or one branch of it' },
   { name: 'get', usage: 'get [path]', summary: 'read physics.* and shaders.* tuning keys' },
   { name: 'set', usage: 'set <path> <value>', summary: 'write a physics.* or shaders.* tuning key' },
@@ -109,7 +117,7 @@ type Name = (typeof COMMANDS)[number]['name']
 const NAMES: readonly string[] = COMMANDS.map((c) => c.name).sort()
 
 /** Commands whose argument is the rest of the line, untokenized (a script, a prompt or an R0 line keeps its quotes and newlines). */
-const RAW: ReadonlySet<string> = new Set(['run', 'ask', 'say', 'r0'])
+const RAW: ReadonlySet<string> = new Set(['run', 'ask', 'say', 'r0', 'goal', 'agent', 'sloane'])
 
 /** A persistent R0 machine (repl.ts): the terminal keeps one for the life of the console, so definitions outlive a line. */
 export interface ReplSession { machine: Machine }
@@ -149,6 +157,8 @@ const ARGS: Record<string, readonly string[]> = {
   captions: ['off', 'on'],
   ping: ['clear', ...PING_KINDS],
   look: [...LOOK_ACTIONS, ...LOOK_SLOT_ARGS].sort(),
+  agent: ['dismiss', 'forget', 'hire', 'new', 'voices'],
+  sloane: ['off', 'on', 'say', 'voice', 'voices'],
   'look body': LOOK_BODY_ARGS,
   'look hairStyle': ['long', 'short'],
   'look preset': LOOK_PRESET_ARGS,
@@ -166,8 +176,9 @@ const ARGS: Record<string, readonly string[]> = {
   'ask api': ['chat', 'generate'],
   'ask provider': ['claude', 'llamacpp', 'ollama'],
   'ask effort': ['high', 'low', 'max', 'medium', 'none', 'xhigh'],
-  say: [...SKILL_ARGS.map((s) => `${s}:`), 'auto', 'model', 'server', 'stop', 'voice'].sort(),
+  say: [...SKILL_ARGS.map((s) => `${s}:`), 'auto', 'key', 'model', 'provider', 'server', 'stop', 'voice'].sort(),
   'say auto': ['off', 'on'],
+  'say provider': ['elevenlabs', 'local'],
   memory: ['forget'],
   'memory forget': ['all'],
   api: ['avatar', 'clock', 'console', 'crowd', 'kernel', 'physics', 'quality', 'shaders', 'signal', 'sleep', 'snapshot', 'vehicles'],
@@ -234,6 +245,22 @@ function lookOf(b: TerminalBridge): LookBridge {
   if (!l) throw new Error('look not available on this bridge')
   return l
 }
+
+function rosterOf(b: TerminalBridge): AgentBridge {
+  const a = b.agent
+  if (!a) throw new Error('the roster is not available on this bridge')
+  return a
+}
+
+function conciergeOf(b: TerminalBridge): ConciergeBridge {
+  const c = b.concierge
+  if (!c) throw new Error('the concierge is not available on this bridge')
+  return c
+}
+
+const AGENT_FIELDS = ['pronouns', 'role', 'voice', 'look', 'name'] as const
+type AgentField = (typeof AGENT_FIELDS)[number]
+const isAgentField = (v: string): v is AgentField => (AGENT_FIELDS as readonly string[]).includes(v)
 
 /** A pedestrian's number as typed (`memory 7`, `look show 7`, `recruit rally 7`), or null. */
 const agentOf = (a: string): number | null => (/^\d{1,9}$/.test(a) ? Number(a) : null)
@@ -370,7 +397,9 @@ function sayLines(r: SayResult): Line[] {
 /** `say` alone: the speech server, the voice and model chosen, auto, and the voices the server lists. */
 function voiceLines(v: VoiceStatus): Line[] {
   const lines = [
+    ...(v.provider !== undefined ? [out(row('provider', v.provider === 'elevenlabs' ? 'elevenlabs: through a gateway on this machine' : 'local: a speech server on this machine'))] : []),
     out(row('server', `${v.server}  (this machine only)`)),
+    ...(v.provider === 'elevenlabs' ? [out(row('key', v.key ?? 'none on the page: the gateway adds it (say key <key> keeps one here)'))] : []),
     out(row('voice', v.voice ?? 'none chosen: say voice <name>')),
     out(row('model', v.model ?? "the server's default")),
     out(row('auto', v.auto ? 'on: answers to ask are said aloud' : 'off')),
@@ -379,7 +408,9 @@ function voiceLines(v: VoiceStatus): Line[] {
   if (v.error !== undefined) return [...lines, err(`say: ${v.error}`)]
   if (v.voices === null) return [...lines, sys("the server keeps no list of voices: name one its documentation gives (say voice <name>)")]
   if (!v.voices.length) return [...lines, out(row('voices', 'none'))]
-  lines.push(...v.voices.map((name, i) => out(row(i === 0 ? 'voices' : '', name === v.voice ? `${name}  (chosen)` : name))))
+  // A listed voice is its name, or 'Name (id)' from ElevenLabs: the chosen one by either.
+  const chosen = (name: string): boolean => v.voice !== null && (name === v.voice || name.startsWith(`${v.voice} (`) || name.endsWith(` (${v.voice})`))
+  lines.push(...v.voices.map((name, i) => out(row(i === 0 ? 'voices' : '', chosen(name) ? `${name}  (chosen)` : name))))
   return lines
 }
 
@@ -644,6 +675,72 @@ const HANDLERS: Record<Name, Handler> = {
     return { lines: l.set(change).map(out) }
   },
 
+  /** The roster (08_Swarm/roster.ts). A raw line: names and roles keep their spaces. */
+  agent(args, b) {
+    const a = rosterOf(b)
+    const rest = (args[0] ?? '').trim()
+    if (!rest) return { lines: a.list().map(out) }
+    if (rest === 'voices') return { lines: [sys('voice profiles (the browser tier shapes a voice with them; a provider voice is named instead):'), ...a.voices().map(out)] }
+    const m = /^(\S+)\s+(\S+)(?:\s+([\s\S]*))?$/.exec(rest)
+    if (!m) return fail(usage('agent'))
+    const [, first, second, tail = ''] = m
+    const value = tail.trim()
+    try {
+      if (first === 'new') return value ? fail(usage('agent')) : { lines: a.add(second).map(out) }
+      if (first === 'dismiss') return value ? fail(usage('agent')) : { lines: [out(`agent: ${a.dismiss(second)}`)] }
+      if (first === 'forget') return value ? fail(usage('agent')) : { lines: [out(`agent: ${a.forget(second)}`)] }
+      if (first === 'hire') {
+        const skills = b.recruit?.skills() ?? []
+        const skill = value || skills[0] || ''
+        if (!skill) return fail('agent: name a skill to hire with: agent hire <name> <skill>')
+        if (value && skills.length && !skills.some((k) => k.toLowerCase() === value.toLowerCase())) return fail(`agent: unknown skill '${value}': ${skills.join(', ')}`)
+        const pending = a.hire(second, skill).then((t) => [out(`agent: ${t}`)], (e: unknown) => [err(`agent: ${message(e)}`)])
+        return { lines: [sys(`agent: asking someone with ${skill} over as ${second}...`)], pending }
+      }
+      // agent <name> <field> <value...>
+      if (!isAgentField(second)) return fail(`agent: nothing to set called '${second}': ${AGENT_FIELDS.join(', ')}`, usage('agent'))
+      if (!value) return fail(`usage: agent <name> ${second} <${second === 'pronouns' ? PRONOUN_WORDS : second === 'voice' ? 'profile|provider voice> (agent voices lists the profiles' : second === 'look' ? 'code|none' : 'value'}>`)
+      return { lines: a.set(first, second, value).map(out) }
+    } catch (e) {
+      return fail(`agent: ${message(e)}`)
+    }
+  },
+
+  /** Sloane's spoken voice (onboarding/speaker.ts). A raw line: a voice name or a line to say keeps its spaces. */
+  sloane(args, b) {
+    const c = conciergeOf(b)
+    const rest = (args[0] ?? '').trim()
+    if (!rest) return { lines: c.status().map(out) }
+    if (rest === 'on' || rest === 'off') return { lines: [out(`sloane: ${c.on(rest === 'on')}`)] }
+    if (rest === 'voices') return { lines: c.voices().map(out) }
+    const m = /^(voice|say)(?:\s+([\s\S]*))?$/.exec(rest)
+    if (!m) return fail(usage('sloane'))
+    const value = (m[2] ?? '').trim()
+    if (m[1] === 'voice') return { lines: [out(row('voice', c.voice(value)))] }
+    if (!value) return fail('usage: sloane say <text...>')
+    const pending = c.say(value).then((t) => [sys(`sloane: ${t}`)], (e: unknown) => [err(`sloane: ${message(e)}`)])
+    return { lines: [], pending }
+  },
+
+  /** A goal in plain words: the host plans it as Sloane would (06_Make_Decisions/intent.ts) and applies what it can now. */
+  goal(args, b) {
+    const text = (args[0] ?? '').trim()
+    if (!text) return fail(usage('goal'))
+    if (text.length > GOAL_CHARS) return fail(`goal: at most ${GOAL_CHARS} characters`)
+    if (!b.goal) return fail('goal: not available on this bridge')
+    let plan: GoalPlan
+    try {
+      plan = b.goal(text)
+    } catch (e) {
+      return fail(`goal: ${message(e)}`)
+    }
+    const lines: Line[] = plan.steps.map((st) => (st.state === 'failed' ? err(`  failed   ${st.label}${st.detail ? `: ${st.detail}` : ''}`) : out(`  ${st.state.padEnd(8)} ${st.label}`)))
+    for (const n of plan.notes) lines.push(sys(`  ${n}`))
+    if (!lines.length) lines.push(sys('  nothing in the city maps to that yet'))
+    const done = plan.steps.some((st) => st.state === 'done')
+    return { lines: [out(plan.root), ...lines, ...(!done && plan.steps.length ? [sys('  nothing could be done now: the rest needs the operator, or a restart')] : [])] }
+  },
+
   hal(args, b) {
     if (!args.length) {
       const devices = b.hal.devices()
@@ -905,11 +1002,11 @@ const HANDLERS: Record<Name, Handler> = {
     const rest = args[0] ?? ''
     if (!rest) return { lines: [], pending: Promise.resolve(op.sayStatus()).then(voiceLines, (e: unknown): Line[] => [err(`say: ${message(e)}`)]) }
     if (rest === 'stop') return { lines: [out(`say: ${op.sayStop()}`)] }
-    const set = /^(voice|model|server|auto)(?:\s+([\s\S]*))?$/.exec(rest)
+    const set = /^(voice|model|server|auto|provider|key)(?:\s+([\s\S]*))?$/.exec(rest)
     if (set) {
-      const key = set[1] as 'voice' | 'model' | 'server' | 'auto'
+      const key = set[1] as 'voice' | 'model' | 'server' | 'auto' | 'provider' | 'key'
       const value = (set[2] ?? '').trim()
-      if (!value) return fail(`usage: say ${key} <${key === 'server' ? 'url' : key === 'auto' ? 'on|off' : 'name'}>`)
+      if (!value) return fail(`usage: say ${key} <${key === 'server' ? 'url' : key === 'auto' ? 'on|off' : key === 'provider' ? 'local|elevenlabs' : key === 'key' ? 'key|none' : 'name'}>`)
       return { lines: [out(row(key, op.saySet(key, value)))] }
     }
     const intent = runIntent(rest)
@@ -1090,11 +1187,11 @@ export function run(input: string, bridge: TerminalBridge, history: readonly str
 }
 
 /**
- * A line as the console's history keeps it: a key given to `ask key` and a token given to `net join` are replaced
- * by dots, so `history` and the Up arrow never show a secret typed earlier. Every other line is kept as typed.
+ * A line as the console's history keeps it: a key given to `ask key` or `say key` and a token given to `net join` are
+ * replaced by dots, so `history` and the Up arrow never show a secret typed earlier. Every other line is kept as typed.
  */
 export function redactForHistory(line: string): string {
-  return line.replace(/^(\s*ask\s+key\s+)\S[\s\S]*$/, '$1••••').replace(/^(\s*net\s+join\s+\S+\s+)\S[\s\S]*$/, '$1••••')
+  return line.replace(/^(\s*(?:ask|say)\s+key\s+)\S[\s\S]*$/, '$1••••').replace(/^(\s*net\s+join\s+\S+\s+)\S[\s\S]*$/, '$1••••')
 }
 
 /**

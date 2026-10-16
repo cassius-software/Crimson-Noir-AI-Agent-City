@@ -419,3 +419,8 @@ test('brief() is always available and grows as answers arrive', () => {
   assert.deepEqual(after.plan.map((s) => [s.control, s.value, s.immediate]), [['audio', 30, true]])
   assert.equal(after.root, 'You want the sound softer.')
 })
+
+test('the console\'s goal command keeps the same limit as the Concierge (terminal/commands.ts GOAL_CHARS)', async () => {
+  const { GOAL_CHARS } = await import('../07_Execute_Actions/terminal/commands.ts')
+  assert.equal(GOAL_CHARS, GOAL_MAX)
+})

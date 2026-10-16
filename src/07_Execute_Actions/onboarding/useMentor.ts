@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is the page's side of Wren's quiet watch (09_Cognition/tutorial.ts Mentor): the React
+ * Why does this file exist? It is the page's side of Sloane's quiet watch (09_Cognition/tutorial.ts Mentor): the React
  * hook that starts the watch when a first visitor has walked in and the city is on screen, feeds the mentor what the
  * page sees (the HUD's snapshot a few times a second: where the visitor stands, where the head points, how far they
  * have walked, whether falling code is on, the clock) and what the visitor does (the walking and look keys, a drag,
  * the M key, the clock keys, a touch), asks it once a second whether there is something to say, and hands the line to
  * the Concierge card as a nudge, in the model's rewording when a backend is configured and answers in time (the
  * onboarding's own Voice), else word for word. It listens only; nothing here writes to the engine or the simulation.
- * What breaks if it is removed? Wren watches nobody: the mentor has no clock, no eyes and no mouth on the page.
+ * What breaks if it is removed? Sloane watches nobody: the mentor has no clock, no eyes and no mouth on the page.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SipocSnapshot } from '../../05_Observe_Environment/telemetry.ts'
@@ -44,7 +44,7 @@ function isEditable(t: EventTarget | null): boolean {
 }
 
 export interface MentorProps {
-  /** Whether Wren watches at all: a first visitor who walked in from the onboarding, with the city on screen. */
+  /** Whether Sloane watches at all: a first visitor who walked in from the onboarding, with the city on screen. */
   active: boolean
   engine: Engine | null
   hud: SipocSnapshot | null
@@ -60,8 +60,8 @@ export interface MentorProps {
 }
 
 /**
- * Wren's watch as React state: `nudge` is the line to show (null when none; a new one has a new id), `note` is for
- * the host to report what readings cannot show (a prompt sent to someone, a goal told to Wren).
+ * Sloane's watch as React state: `nudge` is the line to show (null when none; a new one has a new id), `note` is for
+ * the host to report what readings cannot show (a prompt sent to someone, a goal told to Sloane).
  */
 export function useMentor({ active, engine, hud, family, name, voice, now = () => performance.now(), timing }: MentorProps): { nudge: Nudge | null; note(e: Event): void } {
   const mentor = useRef<Mentor | null>(null)

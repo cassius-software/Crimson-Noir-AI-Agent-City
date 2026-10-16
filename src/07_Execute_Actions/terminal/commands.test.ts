@@ -21,7 +21,7 @@ import {
 import {
   offlineBridge, ring0Stats, type AskResult, type GatedAsk, type GatedRun, type GatedSay, type HalDevice, type LookBridge, type LookChange, type MemoryBridge,
   type NetBridge, type NetReport, type OperatorBridge, type Piece, type PingBridge, type PingPick, type PingPoint, type RecordBridge, type RecruitBridge, type Ring0Stats,
-  type SayResult, type TerminalBridge,
+  type SayResult, type TerminalBridge, type AgentBridge, type ConciergeBridge,
 } from './bridge.ts'
 import { SKILLS } from '../../03_Spawn_Agents/skills.ts'
 import { LOOK_BODIES, LOOK_PRESETS, LOOK_SLOTS } from '../../03_Spawn_Agents/look.ts'
@@ -39,7 +39,7 @@ const LAWS = [
 ] as const
 
 const CORE_NAMES = [
-  'help', 'stats', 'laws', 'kernel', 'quality', 'time', 'audio', 'ghost', 'rain', 'render', 'captions', 'ping', 'look', 'hal', 'recruit', 'memory', 'clear', 'history', 'echo',
+  'help', 'stats', 'laws', 'kernel', 'quality', 'time', 'audio', 'ghost', 'rain', 'render', 'captions', 'ping', 'look', 'agent', 'sloane', 'goal', 'hal', 'recruit', 'memory', 'clear', 'history', 'echo',
   'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'exit',
 ]
 const OPERATOR_NAMES = ['operator', 'run', 'ask', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
@@ -192,6 +192,7 @@ function fakeOperator(): FakeOp {
         f.voice.auto = value === 'on'
         return f.voice.auto ? 'on: answers are said aloud by whoever gives them' : 'off'
       }
+      if (key === "provider" || key === "key") return value
       f.voice[key] = value
       return value
     },
@@ -1080,7 +1081,7 @@ test('say: alone it reports the server, the voice, the model, auto and the voice
     const no = run(line, b, [])
     assert.deepEqual(texts(no), [
       'say: name the skill of whoever should say it first, e.g. say rust: over here',
-      'usage: say [<skill>[,<skill>...]: <text...>|voice <name>|model <name>|server <url>|auto on|off|stop]',
+      'usage: say [<skill>[,<skill>...]: <text...>|voice <name>|model <name>|server <url>|provider local|elevenlabs|key <key>|none|auto on|off|stop]',
     ], line)
     assert.equal(no.pending, undefined, line)
   }
@@ -1317,7 +1318,7 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.deepEqual(complete('h'), ['hal', 'harness', 'help', 'history'])
   assert.deepEqual(complete('he'), ['help'])
   assert.deepEqual(complete('st'), ['stats'])
-  assert.deepEqual(complete('s'), ['say', 'set', 'sim', 'stats'])
+  assert.deepEqual(complete('s'), ['say', 'set', 'sim', 'sloane', 'stats'])
   assert.deepEqual(complete('zz'), [])
   assert.equal(complete('').length, CORE_NAMES.length + OPERATOR_NAMES.length)
   assert.deepEqual(complete('hal '), ['hal pair'])
@@ -1788,10 +1789,89 @@ test('redactForHistory: a typed key or token is kept as dots, every other line a
   assert.equal(redactForHistory('net join wss://room.example 6f9a-token'), 'net join wss://room.example ••••')
   assert.equal(redactForHistory('ask key'), 'ask key')
   assert.equal(redactForHistory('ask key none'), 'ask key ••••')
+  assert.equal(redactForHistory('say key sk_0123456789abcdef'), 'say key ••••', 'the speech provider\'s key likewise')
+  assert.equal(redactForHistory('say key'), 'say key')
+  assert.equal(redactForHistory('say voice Sarah'), 'say voice Sarah')
   assert.equal(redactForHistory('ask model m'), 'ask model m')
   assert.equal(redactForHistory('net join wss://room.example'), 'net join wss://room.example')
   assert.equal(redactForHistory('echo ask key x'), 'echo ask key x')
   assert.equal(redactForHistory(''), '')
   const b = fake()
   assert.deepEqual(texts(run('history', b, ['ask key ••••', 'net join wss://room.example ••••'])), ['    1  ask key ••••', '    2  net join wss://room.example ••••', '    3  history'])
+})
+
+test('say with ElevenLabs: the provider and the masked key are shown, and the chosen voice is marked whether it was named or pasted as its id', async () => {
+  const b = unlocked()
+  b.operator.sayStatus = () => Promise.resolve({ server: 'http://localhost:8090', model: 'eleven_turbo_v2_5', voice: 'Sarah', auto: false, provider: 'elevenlabs' as const, key: 'sk_0…cdef', voices: ['Adam (pNInz6obpgDQGcFmaJgB)', 'Sarah (EXAVITQu4vr4xnSDxMaL)'], speaking: false })
+  const shown = (await run('say', b, []).pending)!.map((l) => l.text)
+  assert.deepEqual(shown.slice(0, 3), ['provider  elevenlabs: through a gateway on this machine', 'server    http://localhost:8090  (this machine only)', 'key       sk_0…cdef'])
+  assert.deepEqual(shown.slice(-2), ['voices    Adam (pNInz6obpgDQGcFmaJgB)', '          Sarah (EXAVITQu4vr4xnSDxMaL)  (chosen)'])
+  b.operator.sayStatus = () => Promise.resolve({ server: 'http://localhost:8090', model: null, voice: 'EXAVITQu4vr4xnSDxMaL', auto: false, provider: 'elevenlabs' as const, key: null, voices: ['Sarah (EXAVITQu4vr4xnSDxMaL)'], speaking: false })
+  assert.equal((await run('say', b, []).pending)!.at(-1)!.text, 'voices    Sarah (EXAVITQu4vr4xnSDxMaL)  (chosen)')
+})
+
+test('agent, sloane and goal: the roster, the concierge\'s voice and a goal in plain words, each over its own bridge; raw lines keep their spaces; absent bridges say so', async () => {
+  const b = fake()
+  assert.deepEqual(texts(run('agent', b, [])), ['agent: the roster is not available on this bridge'])
+  assert.deepEqual(texts(run('sloane', b, [])), ['sloane: the concierge is not available on this bridge'])
+  assert.deepEqual(texts(run('goal make it night', b, [])), ['goal: not available on this bridge'])
+  const agentCalls: string[] = []
+  const a: AgentBridge = {
+    list: () => { agentCalls.push('list'); return ['Nova  she/her  a quant analyst'] },
+    add: (name) => { agentCalls.push(`add ${name}`); return [`${name}  they/them`] },
+    set: (name, field, value) => { agentCalls.push(`set ${name} ${field} ${value}`); if (value === 'bad') throw new Error('not a look code from this wardrobe'); return [`${name}  ${field}=${value}`] },
+    hire: (name, skill) => { agentCalls.push(`hire ${name} ${skill}`); return Promise.resolve(`${name} is on the way: agent 77 (${skill}) is coming over`) },
+    dismiss: (name) => { agentCalls.push(`dismiss ${name}`); return `${name} let go` },
+    forget: (name) => { agentCalls.push(`forget ${name}`); return `${name} forgotten` },
+    voices: () => ['velvet  smooth and unhurried; Sloane\'s own'],
+  }
+  const conciergeCalls: string[] = []
+  const c: ConciergeBridge = {
+    status: () => ['switch    on  (sloane on|off)'],
+    on: (on) => { conciergeCalls.push(`on ${on}`); return on ? 'on: Sloane speaks while the sound is on' : 'off: Sloane is text on the card' },
+    voice: (name) => { conciergeCalls.push(`voice ${name}`); return 'Microsoft Zira' },
+    voices: () => ['Microsoft David', 'Microsoft Zira'],
+    say: (text) => { conciergeCalls.push(`say ${text}`); return Promise.resolve("said by the browser's own offline voice") },
+  }
+  const goals: string[] = []
+  const t = { ...b, agent: a, concierge: c, goal: (text: string) => { goals.push(text); return { root: `Root of: ${text}`, steps: [{ label: 'Set the clock to 21:00', state: 'done' as const }, { label: 'Fewer people', state: 'later' as const }, { label: 'Quality', state: 'failed' as const, detail: 'no tier' }], notes: ['“x”: nothing in the city maps to that yet'] } } }
+  assert.deepEqual(texts(run('agent', t, [])), ['Nova  she/her  a quant analyst'])
+  assert.deepEqual(texts(run('agent new Nova', t, [])), ['Nova  they/them'])
+  assert.deepEqual(texts(run('agent Nova role a quant analyst on the desk', t, [])), ['Nova  role=a quant analyst on the desk'])
+  assert.deepEqual(texts(run('agent Nova pronouns she/her', t, [])), ['Nova  pronouns=she/her'])
+  assert.deepEqual(texts(run('agent Nova look bad', t, [])), ['agent: not a look code from this wardrobe'])
+  assert.deepEqual(texts(run('agent Nova colour red', t, [])), ["agent: nothing to set called 'colour': pronouns, role, voice, look, name", 'usage: agent [new <name>|<name> pronouns|role|voice|look|name <value...>|hire <name> [<skill>]|dismiss <name>|forget <name>|voices]'])
+  assert.deepEqual(texts(run('agent Nova pronouns', t, [])), ['usage: agent <name> pronouns <they/them|she/her|he/him|any>'])
+  const hire = run('agent hire Nova Rust', t, [])
+  assert.deepEqual(texts(hire), ['agent: asking someone with Rust over as Nova...'])
+  assert.deepEqual(await hire.pending, [{ kind: 'out', text: 'agent: Nova is on the way: agent 77 (Rust) is coming over' }])
+  assert.deepEqual(texts(run('agent hire Nova', t, [])), ['agent: asking someone with Rust over as Nova...'], 'the first skill by default')
+  assert.deepEqual(texts(run('agent hire Nova Knitting', t, [])), [`agent: unknown skill 'Knitting': ${SKILLS.join(', ')}`])
+  assert.deepEqual(texts(run('agent dismiss Nova', t, [])), ['agent: Nova let go'])
+  assert.deepEqual(texts(run('agent forget Nova', t, [])), ['agent: Nova forgotten'])
+  assert.equal(kinds(run('agent voices', t, []))[0], 'sys')
+  assert.deepEqual(agentCalls, ['list', 'add Nova', 'set Nova role a quant analyst on the desk', 'set Nova pronouns she/her', 'set Nova look bad', 'hire Nova Rust', 'hire Nova Rust', 'dismiss Nova', 'forget Nova'])
+  assert.deepEqual(texts(run('sloane', t, [])), ['switch    on  (sloane on|off)'])
+  assert.deepEqual(texts(run('sloane off', t, [])), ['sloane: off: Sloane is text on the card'])
+  assert.deepEqual(texts(run('sloane voice Microsoft Zira', t, [])), ['voice     Microsoft Zira'])
+  assert.deepEqual(texts(run('sloane voices', t, [])), ['Microsoft David', 'Microsoft Zira'])
+  const said = run('sloane say Hello there, friend.', t, [])
+  assert.deepEqual(said.lines, [])
+  assert.deepEqual(await said.pending, [{ kind: 'sys', text: "sloane: said by the browser's own offline voice" }])
+  assert.deepEqual(texts(run('sloane say', t, [])), ['usage: sloane say <text...>'])
+  assert.deepEqual(conciergeCalls, ['on false', 'voice Microsoft Zira', 'say Hello there, friend.'])
+  const g = run('goal make it night and less crowded', t, [])
+  assert.deepEqual(goals, ['make it night and less crowded'])
+  assert.deepEqual(g.lines, [
+    { kind: 'out', text: 'Root of: make it night and less crowded' },
+    { kind: 'out', text: '  done     Set the clock to 21:00' },
+    { kind: 'out', text: '  later    Fewer people' },
+    { kind: 'err', text: '  failed   Quality: no tier' },
+    { kind: 'sys', text: '  “x”: nothing in the city maps to that yet' },
+  ])
+  assert.deepEqual(texts(run('goal', t, [])), ['usage: goal <words...>'])
+  assert.deepEqual(texts(run(`goal ${'x'.repeat(161)}`, t, [])), ['goal: at most 160 characters'])
+  assert.deepEqual(complete('agent '), ['agent dismiss', 'agent forget', 'agent hire', 'agent new', 'agent voices'])
+  assert.deepEqual(complete('sloane v'), ['sloane voice', 'sloane voices'])
+  assert.deepEqual(complete('agent hire '), [], 'the name comes first: no skill is offered in its place')
 })

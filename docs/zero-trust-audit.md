@@ -70,6 +70,7 @@ The 02 stage has no outbound vector. Its contribution is the gate.
 | `localCompute.ts generate`, `chat`, `installedModels`, `diagnose` | A loopback origin plus the API's own path. `diagnose` makes a `no-cors` probe of `${server}/api/version`. Before Phase 11.1 the check was this file's own; a copy that drifted would have been a second definition of "this machine". | `loopbackServer` is the gate's, re-exported; the structural test fails if this file parses a URL itself. `localCompute.test.ts` keeps its full table of accepted and refused addresses, now run against the gate. |
 | `localCompute.ts createLocalCompute setServer`, the saved `server` | Same: a saved or typed address. | Both go through `loopbackServer`; an off-machine one is refused with the sentence the console prints. |
 | `localSpeech.ts speak`, `voices`, `createLocalSpeech` | A loopback origin, `/v1/audio/speech` and `/v1/audio/voices`, with the line to be said. | `loopbackServer` from `localCompute.ts` (the gate's); the fetch is `loopbackFetch(window.fetch)`. |
+| `localSpeech.ts synthesizeEleven`, `elevenVoices` (`say provider elevenlabs`, off by default) | A loopback origin (`http://localhost:8090` by default), `/v1/text-to-speech/<voice>` and `/v1/voices`, with the line to be said and, only if one was typed to `say key`, an `xi-api-key` header. | The same `loopbackServer`, checked again on every request (a saved server off this machine is replaced by the default when the settings are read); the fetch is the same guarded one. The key is masked in every status line and setting and kept as dots in `history` (`redactForHistory`); `localSpeech.test.ts` checks a request to `https://api.elevenlabs.io` is refused before anything is sent. |
 | `router.ts createMindRouter` | The chosen provider's settings. `setModel` takes a free string, sent in the body to a loopback origin only. The key is set and masked here. | `setServer` for the Claude provider refuses anything `claudeServer` refuses; the error names the rule. `router.test.ts` checks every provider's request URL is loopback. |
 | The key in local storage (`App.tsx COGNITION_KEY`) | Any script on the page's origin can read it. With an outbound primitive it would leave; without one it cannot. | The installed guard leaves a script no `fetch`, `WebSocket`, `XMLHttpRequest`, `EventSource`, `sendBeacon`, `WebTransport` or `RTCPeerConnection` that reaches off this machine. The vectors the guard does not close (last section) remain the way out, and the README's advice stands: treat it as a testing key and clear it with `ask key none`. |
 
@@ -138,6 +139,37 @@ scripts, so encryption would add no protection. What that means:
 | Another page opened from a file in the same browser profile | In Chromium-based browsers, yes: every page opened from a file shares one storage area. | That page is not under this page's guard or policy. |
 | Another site on the web | No: storage is per origin. | |
 | Anyone with the operator's browser profile on disk | Yes: local storage is a file in the profile. | |
+
+**The speech provider's key works the same way.** `say provider elevenlabs` speaks to a gateway on this machine
+(`http://localhost:8090` by default), never to ElevenLabs directly. Recommended again: the gateway holds the key and
+the page holds none. The ElevenLabs API wants the key in `xi-api-key`; unlike the Claude API it has no header that
+makes it answer a browser's preflight through a plain proxy, so this gateway answers CORS itself, for the page's own
+origin only (a gateway that allowed any origin would let any site you visit spend your credits through it):
+
+```
+map $http_origin $speech_origin {
+  default "";
+  "http://localhost:4173" $http_origin;   # npm run preview; add "null" for a page opened from a file,
+                                          # and the desktop app's origin if you use it
+}
+server {
+  listen 127.0.0.1:8090;
+  location /v1/ {
+    if ($speech_origin = "") { return 403; }
+    add_header Access-Control-Allow-Origin $speech_origin always;
+    add_header Access-Control-Allow-Headers "content-type, accept, xi-api-key" always;
+    add_header Access-Control-Allow-Methods "GET, POST" always;
+    if ($request_method = OPTIONS) { return 204; }
+    proxy_pass https://api.elevenlabs.io;
+    proxy_set_header Host api.elevenlabs.io;
+    proxy_ssl_server_name on;
+    include /etc/nginx/elevenlabs-key.conf;   # proxy_set_header xi-api-key "<key>";  (mode 600)
+  }
+}
+```
+
+`say key <key>` instead keeps the key in this browser's local storage (`civic-simulation:speech:v1`, the
+`elevenlabs.key` field, in plain text), with exactly the readers in the table above; `say key none` deletes it.
 
 So a key typed to the console should be a testing key: scoped, with a spending limit, revoked when the testing ends,
 and cleared with `ask key none` (which also deletes it from storage). Serving the page from `npm run preview`

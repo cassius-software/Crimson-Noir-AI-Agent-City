@@ -58,6 +58,8 @@ export interface SurroundingsView {
 /** What one agent brings to a prompt: where they are and what just happened to them. */
 export interface AgentContext {
   readonly agent: number
+  /** Who they go by and what they are for, when the player hired them as one of their own (08_Swarm/roster.ts identityLine); else absent or null. */
+  readonly identity?: string | null
   /** The surroundings sentence, or null when nothing is known. */
   readonly surroundings: string | null
   /** The last moments, oldest first. */
@@ -180,9 +182,12 @@ export function contextLines(ctx: AgentContext, budget: number = CONTEXT_BUDGET)
     return true
   }
   const head = `Agent ${ctx.agent}, right now:`
-  if (ctx.surroundings === null && ctx.recent.length === 0) return out
+  const identity = typeof ctx.identity === 'string' && ctx.identity.trim() ? ctx.identity.trim() : null
+  if (ctx.surroundings === null && ctx.recent.length === 0 && identity === null) return out
   out.push(head)
   spent += head.length + 1
+  // Who they are comes first and is never cut by the budget's halving below: it is one short line.
+  if (identity !== null) take(`- ${identity}`)
   // The surroundings take at most half the budget, so a long sentence never crowds the moments out.
   if (ctx.surroundings) take(`- ${clipLine(ctx.surroundings, Math.max(40, Math.floor(budget / 2)))}`)
   if (ctx.recent.length) {

@@ -9,6 +9,11 @@
  * breaking, or the operator's own stop), and turns every way the server can fail into one plain sentence. No speech
  * engine is bundled: the server is a separate program the operator runs, under its own licence, and nothing sent to
  * it can leave the machine. What it returns is only bytes; the soundscape decodes and places them (audio.ts).
+ * A second, optional provider (say provider elevenlabs) speaks the ElevenLabs text-to-speech API, through a gateway
+ * on this machine exactly as the Claude provider does (09_Cognition/claudeApi.ts): the page addresses a loopback
+ * origin only, the gateway holds the key (or `say key <key>` keeps one in this browser, masked everywhere it is
+ * shown), and nothing is sent until the operator chooses that provider. Off by default: the local server is the
+ * product's voice.
  * What breaks if it is removed? `say` has nothing behind it. Nothing else in the city needs it.
  */
 import { loopbackServer, type FetchLike, type SettingsStore } from './localCompute.ts'
@@ -16,6 +21,16 @@ import type { Voice } from '../07_Execute_Actions/operator.ts'
 
 /** Where the local speech server listens unless the operator says otherwise (say server <url>). */
 export const DEFAULT_SPEECH_SERVER = 'http://localhost:8880'
+/** The speech providers: a speech server on this machine, or the ElevenLabs API through a gateway on this machine. */
+export const SPEECH_PROVIDERS = ['local', 'elevenlabs'] as const
+export type SpeechProvider = (typeof SPEECH_PROVIDERS)[number]
+export const DEFAULT_SPEECH_PROVIDER: SpeechProvider = 'local'
+/** The gateway the ElevenLabs provider speaks to unless the operator names another loopback address (say server <url>). */
+export const ELEVEN_GATEWAY = 'http://localhost:8090'
+/** The ElevenLabs model asked unless the operator chooses another (say model <name>): the low-latency one. */
+export const DEFAULT_ELEVEN_MODEL = 'eleven_turbo_v2_5'
+/** An ElevenLabs voice id as the API issues them (a name the operator typed instead is looked up in its list). */
+const ELEVEN_ID = /^[A-Za-z0-9]{20}$/
 /** Longest text one request carries, characters (about a minute of speech). A longer text is refused, never cut here. */
 export const SPEECH_CHARS = 1200
 /** Largest answer read, bytes: a minute of 24 kHz 16-bit mono WAV is 2.9 MB, so anything past this is not one utterance. */
@@ -200,64 +215,237 @@ function nameOf(what: 'model' | 'voice', name: unknown): string {
   return n
 }
 
-/**
- * The local speech server as the operator tier uses it (operator.ts Voice): the server's address (a loopback address;
- * the default unless the operator set one), the voice (none until the operator chooses one: voice names differ from
- * one server to the next, so none is guessed), the model (optional: sent only once chosen), and whether answers to
- * `ask` are spoken as well; all kept in `store`. Utterances and the voices the server lists.
- */
-export function createLocalSpeech({ fetch: fetchFn, store }: { fetch: FetchLike; store?: SettingsStore }): Voice {
-  let server = DEFAULT_SPEECH_SERVER
-  let model: string | null = null
-  let voice: string | null = null
-  let auto = false
+/** A key as it is shown: the first few and last few characters, never the middle (claudeApi.ts shows keys the same way). */
+export function maskSpeechKey(key: string | null): string | null {
+  if (key === null) return null
+  return key.length <= 8 ? '****' : `${key.slice(0, 4)}…${key.slice(-4)}`
+}
+
+/** An ElevenLabs request that failed before any answer: its abort, or the gateway down or refusing this page. */
+async function elevenUnreachable(fetchFn: FetchLike, server: string, signal: AbortSignal | undefined, error: unknown): Promise<unknown> {
+  if (signal?.aborted) return signal.reason
+  if (error instanceof DOMException && error.name === 'AbortError') return error
   try {
-    const saved: unknown = JSON.parse(store?.load() ?? 'null')
-    if (typeof saved === 'object' && saved !== null) {
-      const s = saved as { server?: unknown; model?: unknown; voice?: unknown; auto?: unknown }
-      server = loopbackServer(s.server) ?? DEFAULT_SPEECH_SERVER
-      model = typeof s.model === 'string' && s.model.trim() ? s.model.trim() : null
-      voice = typeof s.voice === 'string' && s.voice.trim() ? s.voice.trim() : null
-      auto = s.auto === true
+    await fetchFn(`${server}/`, { mode: 'no-cors', cache: 'no-store', referrerPolicy: 'no-referrer' })
+    return new SpeechError('refused', `the ElevenLabs gateway at ${server} is running but refused this page: allow this page's origin in it (a page opened from a file sends 'null'), or open the page from http://localhost`)
+  } catch {
+    return new SpeechError('offline', `no ElevenLabs gateway is answering at ${server}: start it (docs/zero-trust-audit.md has an example), or point say at it (say server <url>)`)
+  }
+}
+
+/** A non-2xx answer from the ElevenLabs gateway as one sentence, from ElevenLabs' own error body when it sends one. */
+async function elevenFailure(res: Response, voice: string | null, path: string): Promise<SpeechError> {
+  let message = ''
+  let status = ''
+  try {
+    const body = JSON.parse(await res.text()) as { detail?: { status?: unknown } } | null
+    message = said(body)
+    status = typeof body?.detail?.status === 'string' ? body.detail.status : ''
+  } catch {
+    // not JSON: the status alone
+  }
+  if (res.status === 401) return new SpeechError('refused', 'ElevenLabs refused the key (401): put the key in the gateway on this machine, or say key <key>')
+  if (res.status === 403) return new SpeechError('refused', `the ElevenLabs gateway refused this page (403)${message ? `: ${sentence(message)}` : ''}`)
+  if (voice !== null && (res.status === 404 || res.status === 400 || res.status === 422) && /voice/i.test(`${status} ${message}`)) {
+    return new SpeechError('voice', `ElevenLabs has no voice '${voice}': type say to list the ones it has, and name one or paste its id`)
+  }
+  if (res.status === 404) return new SpeechError('server', `the gateway at this address has no ${path}: is it the ElevenLabs gateway? (say server <url>)`)
+  return new SpeechError('server', `ElevenLabs failed (${res.status})${message ? `: ${sentence(message)}` : ''}`)
+}
+
+/**
+ * One ElevenLabs utterance through the gateway at `server` (a loopback origin, or nothing is sent): POST
+ * /v1/text-to-speech/<voice> with the text and the model, MP3 asked for (the soundscape decodes any format the browser
+ * reads), the key as the `xi-api-key` header only when one is kept on the page (else the gateway adds its own). A
+ * voice that is not an id is looked up by name in the gateway's list first ('Name (id)', as `say` lists them, is
+ * the id). Failures are one sentence each, naming the gateway.
+ */
+export async function synthesizeEleven(
+  fetchFn: FetchLike,
+  req: { server: string; key: string | null; model: string; voice: string; text: string; signal?: AbortSignal },
+): Promise<ArrayBuffer> {
+  const server = loopbackServer(req.server)
+  if (server === null) throw new SpeechError('refused', `not a gateway on this machine: ${String(req.server)}`)
+  const text = typeof req.text === 'string' ? req.text.trim() : ''
+  if (!text) throw new SpeechError('text', 'nothing to say')
+  if (text.length > SPEECH_CHARS) throw new SpeechError('text', `too long to say at once: ${text.length} characters (at most ${SPEECH_CHARS})`)
+  const listed = /\(([A-Za-z0-9]{20})\)\s*$/.exec(req.voice)
+  let voice = listed ? listed[1] : req.voice.trim()
+  if (!ELEVEN_ID.test(voice)) {
+    const list = await elevenVoices(fetchFn, server, req.key, req.signal)
+    const found = list.find((v) => v.name.toLowerCase() === voice.toLowerCase())
+    if (!found) throw new SpeechError('voice', `ElevenLabs has no voice '${voice}': type say to list the ones it has, and name one or paste its id`)
+    voice = found.id
+  }
+  const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'audio/mpeg', ...(req.key ? { 'xi-api-key': req.key } : {}) }
+  const body = JSON.stringify({ text, model_id: req.model })
+  let res: Response
+  try {
+    res = await fetchFn(`${server}/v1/text-to-speech/${encodeURIComponent(voice)}?output_format=mp3_44100_128`, {
+      method: 'POST', headers, body, signal: req.signal, cache: 'no-store', referrerPolicy: 'no-referrer',
+    })
+  } catch (e) {
+    throw await elevenUnreachable(fetchFn, server, req.signal, e)
+  }
+  if (!res.ok) throw await elevenFailure(res, req.voice, '/v1/text-to-speech')
+  const type = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase()
+  if (type && !type.startsWith('audio/') && type !== 'application/octet-stream') {
+    throw new SpeechError('unreadable', `the gateway answered with ${type}, not audio`)
+  }
+  return readAll(res, req.signal)
+}
+
+/** The voices ElevenLabs lists for the key (GET /v1/voices): name and id, sorted by name. */
+export async function elevenVoices(fetchFn: FetchLike, server: string, key: string | null, signal?: AbortSignal): Promise<{ name: string; id: string }[]> {
+  const origin = loopbackServer(server)
+  if (origin === null) throw new SpeechError('refused', `not a gateway on this machine: ${String(server)}`)
+  let res: Response
+  try {
+    res = await fetchFn(`${origin}/v1/voices`, { signal, cache: 'no-store', referrerPolicy: 'no-referrer', headers: key ? { 'xi-api-key': key } : {} })
+  } catch (e) {
+    throw await elevenUnreachable(fetchFn, origin, signal, e)
+  }
+  if (!res.ok) throw await elevenFailure(res, null, '/v1/voices')
+  let body: unknown
+  try {
+    body = await res.json()
+  } catch {
+    throw new SpeechError('unreadable', "the gateway's list of voices could not be read")
+  }
+  const list = (body as { voices?: unknown } | null)?.voices
+  if (!Array.isArray(list)) throw new SpeechError('unreadable', "the gateway's list of voices could not be read")
+  const out: { name: string; id: string }[] = []
+  for (const v of list) {
+    if (typeof v !== 'object' || v === null) continue
+    const { voice_id: id, name } = v as { voice_id?: unknown; name?: unknown }
+    if (typeof id === 'string' && ELEVEN_ID.test(id) && typeof name === 'string' && name.trim()) out.push({ name: name.trim(), id })
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/** What is kept between visits: the provider chosen, each provider's own settings, and auto. v1 records (the local server alone) still read. */
+interface Kept {
+  v: 2
+  provider: SpeechProvider
+  auto: boolean
+  local: { server: string; model: string | null; voice: string | null }
+  elevenlabs: { server: string; model: string; voice: string | null; key: string | null }
+}
+
+const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null)
+
+/** A kept record read back, whatever version wrote it; the defaults for anything missing or unreadable. */
+export function readKept(raw: string | null | undefined): Kept {
+  const kept: Kept = {
+    v: 2, provider: DEFAULT_SPEECH_PROVIDER, auto: false,
+    local: { server: DEFAULT_SPEECH_SERVER, model: null, voice: null },
+    elevenlabs: { server: ELEVEN_GATEWAY, model: DEFAULT_ELEVEN_MODEL, voice: null, key: null },
+  }
+  try {
+    const saved: unknown = JSON.parse(raw ?? 'null')
+    if (typeof saved !== 'object' || saved === null) return kept
+    const s = saved as { v?: unknown; server?: unknown; model?: unknown; voice?: unknown; auto?: unknown; provider?: unknown; local?: unknown; elevenlabs?: unknown }
+    kept.auto = s.auto === true
+    if (s.v === 2) {
+      if (s.provider === 'elevenlabs') kept.provider = 'elevenlabs'
+      const l = (typeof s.local === 'object' && s.local !== null ? s.local : {}) as { server?: unknown; model?: unknown; voice?: unknown }
+      kept.local = { server: loopbackServer(l.server) ?? DEFAULT_SPEECH_SERVER, model: str(l.model), voice: str(l.voice) }
+      const e = (typeof s.elevenlabs === 'object' && s.elevenlabs !== null ? s.elevenlabs : {}) as { server?: unknown; model?: unknown; voice?: unknown; key?: unknown }
+      kept.elevenlabs = { server: loopbackServer(e.server) ?? ELEVEN_GATEWAY, model: str(e.model) ?? DEFAULT_ELEVEN_MODEL, voice: str(e.voice), key: str(e.key) }
+    } else {
+      kept.local = { server: loopbackServer(s.server) ?? DEFAULT_SPEECH_SERVER, model: str(s.model), voice: str(s.voice) }
     }
   } catch {
     // nothing kept, or not readable: the defaults
   }
+  return kept
+}
+
+/**
+ * The operator's voice as the operator tier uses it (operator.ts Voice): the provider chosen (`local`, the speech
+ * server on this machine, unless the operator chose `elevenlabs`, the ElevenLabs API through a gateway on this
+ * machine), that provider's server (a loopback address), its voice (none until the operator chooses one: voice names
+ * differ from one server to the next, so none is guessed), its model (the local server's is optional; ElevenLabs has
+ * a default), the ElevenLabs key when one is kept on the page, and whether answers to `ask` are spoken as well; all
+ * kept in `store`. Utterances (optionally in another voice of the same provider, a hired agent's) and the voices the
+ * provider lists.
+ */
+export function createLocalSpeech({ fetch: fetchFn, store }: { fetch: FetchLike; store?: SettingsStore }): Voice {
+  let raw: string | null | undefined
+  try {
+    raw = store?.load()
+  } catch {
+    raw = null // storage refused: the defaults
+  }
+  const kept = readKept(raw)
   const keep = (): void => {
     try {
-      store?.save(JSON.stringify({ v: 1, server, model, voice, auto }))
+      store?.save(JSON.stringify(kept))
     } catch {
       // storage refused: the settings last for this visit
     }
   }
+  const current = () => (kept.provider === 'elevenlabs' ? kept.elevenlabs : kept.local)
+  const voices = async (signal?: AbortSignal): Promise<string[] | null> => {
+    if (kept.provider === 'elevenlabs') {
+      const list = await elevenVoices(fetchFn, kept.elevenlabs.server, kept.elevenlabs.key, signal)
+      return list.map((v) => `${v.name} (${v.id})`)
+    }
+    return speechVoices(fetchFn, kept.local.server, signal)
+  }
+  const say = (text: string, signal: AbortSignal, voice: string): Promise<ArrayBuffer> => {
+    if (kept.provider === 'elevenlabs') {
+      const e = kept.elevenlabs
+      return synthesizeEleven(fetchFn, { server: e.server, key: e.key, model: e.model, voice, text, signal })
+    }
+    const l = kept.local
+    return synthesize(fetchFn, { server: l.server, model: l.model, voice, text, signal })
+  }
   return Object.freeze({
-    settings: () => ({ server, model, voice, auto }),
+    settings: () => ({ server: current().server, model: current().model, voice: current().voice, auto: kept.auto, provider: kept.provider, key: maskSpeechKey(kept.elevenlabs.key) }),
+    setProvider: (name: string): SpeechProvider => {
+      const p = typeof name === 'string' ? name.trim().toLowerCase() : ''
+      if (p !== 'local' && p !== 'elevenlabs') throw new Error(`no speech provider called '${String(name)}': local or elevenlabs`)
+      kept.provider = p
+      keep()
+      return p
+    },
+    setKey: (key: string): string | null => {
+      const k = typeof key === 'string' ? key.trim() : ''
+      if (/[\r\n\s]/.test(k)) throw new Error('a key is one word')
+      kept.elevenlabs.key = k && k !== 'none' ? k : null
+      keep()
+      return maskSpeechKey(kept.elevenlabs.key)
+    },
     setServer: (url: string): string => {
       const origin = loopbackServer(url)
-      if (origin === null) throw new Error(`the local speech server must be on this machine (localhost, 127.0.0.1 or [::1]), not '${String(url)}'`)
-      server = origin
+      if (origin === null) throw new Error(`the ${kept.provider === 'elevenlabs' ? 'gateway' : 'local speech server'} must be on this machine (localhost, 127.0.0.1 or [::1]), not '${String(url)}'`)
+      current().server = origin
       keep()
-      return server
+      return origin
     },
     setModel: (name: string): string => {
-      model = nameOf('model', name)
+      const m = nameOf('model', name)
+      current().model = m
       keep()
-      return model
+      return m
     },
     setVoice: (name: string): string => {
-      voice = nameOf('voice', name)
+      const v = nameOf('voice', name)
+      current().voice = v
       keep()
-      return voice
+      return v
     },
     setAuto: (on: boolean): boolean => {
-      auto = on === true
+      kept.auto = on === true
       keep()
-      return auto
+      return kept.auto
     },
-    voices: (signal?: AbortSignal) => speechVoices(fetchFn, server, signal),
-    synthesize: (text: string, signal: AbortSignal): Promise<ArrayBuffer> => {
-      if (voice === null) return Promise.reject(new SpeechError('voice', 'choose a voice first: say voice <name> (type say to list them)'))
-      return synthesize(fetchFn, { server, model, voice, text, signal })
+    voices,
+    synthesize: (text: string, signal: AbortSignal, voice?: string): Promise<ArrayBuffer> => {
+      const chosen = typeof voice === 'string' && voice.trim() ? voice.trim() : current().voice
+      if (chosen === null) return Promise.reject(new SpeechError('voice', 'choose a voice first: say voice <name> (type say to list them)'))
+      return say(text, signal, chosen)
     },
   })
 }
