@@ -17,13 +17,14 @@
 import { RAPIER } from './physics.ts'
 import { CAR, chassisBox, kindFromDraw, kindOf, RIDE_HEIGHT, WHEELS, type CarTuning, type DriveMode } from './car.ts'
 import { CITY, inLot } from '../01_Initialize_World/city.ts'
+import { containInRoom, penetrates, ROOM, toLocal, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { KERNEL } from '../02_Define_The_Rules/civic.ts'
 import { VEHICLE_CHASSIS_GROUPS, WHEEL_RAY_GROUPS } from '../02_Define_The_Rules/collision.ts'
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
 import { Driver, type DriverLike } from '../06_Make_Decisions/traffic.ts'
 import { TrackDriver } from '../06_Make_Decisions/trackDriver.ts'
 import { assignSlots, poseAt, type TrackNetwork } from '../06_Make_Decisions/tracks.ts'
-import type { CarBodyState } from './simProtocol.ts'
+import { PERSON, type CarBodyState } from './simProtocol.ts'
 
 const AIR_DENSITY = 1.225
 const GRAVITY = 9.81
@@ -167,17 +168,27 @@ export function clampSpeed(body: RAPIER.RigidBody, max: number): boolean {
 
 /**
  * Where the driver is put down when leaving a car whose chassis stands at (x, z) facing `heading`: EXIT_SIDE m to the
- * car's left, or to its right when the left lies in a building lot. The realm's rule (simCore.ts #interact) and the
+ * car's left, or to its right when the left lies in a building lot. A car left inside one of the seed's `rooms`
+ * (interiors.ts; every point there is in a lot) puts them on whichever side has room for them clear of the glass and
+ * the furniture, else on the left side's nearest free point indoors. The realm's rule (simCore.ts #interact) and the
  * room's check of it are this one function.
  */
-export function exitPoint(x: number, z: number, heading: number): { x: number; z: number } {
+export function exitPoint(x: number, z: number, heading: number, rooms: readonly Workplace[] = []): { x: number; z: number } {
   const lx = Math.cos(heading), lz = -Math.sin(heading)
-  let ex = x + lx * EXIT_SIDE, ez = z + lz * EXIT_SIDE
-  if (inLot(ex, ez, EXIT_LOT_PAD)) {
-    ex = x - lx * EXIT_SIDE
-    ez = z - lz * EXIT_SIDE
+  const left = { x: x + lx * EXIT_SIDE, z: z + lz * EXIT_SIDE }
+  const right = { x: x - lx * EXIT_SIDE, z: z - lz * EXIT_SIDE }
+  const within = (room: Workplace, p: { x: number; z: number }, pad: number) => {
+    const { u, v } = toLocal(room, p.x, p.z)
+    return Math.max(Math.abs(u), Math.abs(v)) < CITY.lotHalf - ROOM.wall - pad
   }
-  return { x: ex, z: ez }
+  const room = rooms.find((r) => within(r, { x, z }, 0))
+  if (room) {
+    const fits = (p: { x: number; z: number }) => within(room, p, PERSON.radius) && !penetrates(room, p.x, p.z, PERSON.radius)
+    if (fits(left)) return left
+    if (fits(right)) return right
+    return containInRoom(room, { x, z }, left, PERSON.radius)
+  }
+  return inLot(left.x, left.z, EXIT_LOT_PAD) ? right : left
 }
 
 // Scratch for the substep (no allocation per car per substep).

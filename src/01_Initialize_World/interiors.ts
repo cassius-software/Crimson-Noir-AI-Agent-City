@@ -44,6 +44,12 @@ export const ROOM = Object.freeze({
   stations: 8,
   /** The hub, m along u from the lot centre: the point just inside the doorway every route passes through. */
   hub: 11,
+  /**
+   * The aisles, m either side of the room's axis: someone found standing inside with no workday leg (let go there)
+   * walks out along the nearer one to the hub. Every layout keeps them clear of anything but the back wall's pieces,
+   * which nobody stands behind; a straight line to the hub could press them on the back of a table on the axis.
+   */
+  aisle: 3,
   /** A pedestrian's reach, m: the crowd's containment pad (crowd.wgsl pushOut's). */
   pad: 0.35,
 } as const)
@@ -63,6 +69,12 @@ export const WORK = Object.freeze({
   /** A worker's day, s: the shift, then the rest of the cycle off duty on the streets. */
   cycle: 480,
   shift: 300,
+  /**
+   * The last leg's arrival, m: a worker reaching their station is at work this close. Wider than the crowd's
+   * separation lets two people stand (about 0.65 m), so a second worker dealt an occupied station sits down beside
+   * the first instead of waiting behind them; the working spring then holds both at the desk.
+   */
+  seat: 0.9,
   /** Hash salt of the worker lottery, its station and its shift's start (crowd.wgsl WORK_SALT). */
   salt: 0x7f4a7c15,
 } as const)

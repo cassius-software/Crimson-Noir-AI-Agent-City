@@ -232,11 +232,13 @@ function header(agentCount: number, flow: FlowPlacement, geometry: Readonly<Stre
     `const ROOM_STATIONS: u32 = ${ROOM.stations}u;`,
     `const ROOM_WALL: f32 = ${f(ROOM.wall)};`,
     `const ROOM_DOOR: f32 = ${f(ROOM.door)};`,
+    `const ROOM_AISLE: f32 = ${f(ROOM.aisle)};`,
     `const WORK_ONE_IN: u32 = ${workOneIn(agentCount)}u;`,
     `const WORK_CYCLE: f32 = ${f(WORK.cycle)};`,
     `const WORK_SHIFT: f32 = ${f(WORK.shift)};`,
     `const WORK_SALT: u32 = ${WORK.salt}u;`,
     `const WORK_DEAL: u32 = ${WORK.deal}u;`,
+    `const WORK_SEAT: f32 = ${f(WORK.seat)};`,
     ...Object.entries(ACTIVITY).map(([k, v]) => `const ACT_${k.replace(/[A-Z]/g, (c) => `_${c}`).toUpperCase()}: f32 = ${f(v)};`),
     '',
   ].join('\n')

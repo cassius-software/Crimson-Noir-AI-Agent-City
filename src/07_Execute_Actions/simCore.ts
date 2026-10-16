@@ -159,6 +159,8 @@ export class SimCore {
   readonly #crowd: CrowdSensor | null
   /** Per player: the car they drive, or null on foot. */
   readonly #driving: (Vehicle | null)[]
+  /** The city's indoor workplaces (none in a region): a car left in one puts its driver down indoors. */
+  readonly #rooms: readonly Workplace[]
   /** This realm's own clock (the sum of accepted dt): harness time limits never trust the page's clock. */
   #simTime = 0
   #blindUntil = -1
@@ -211,9 +213,10 @@ export class SimCore {
   /** Player 1 took a door this step (a network room hears one a step). */
   #doored = false
 
-  private constructor(physics: Physics, o: SimCoreOptions, crowd: CrowdSensor | null) {
+  private constructor(physics: Physics, o: SimCoreOptions, crowd: CrowdSensor | null, rooms: readonly Workplace[]) {
     this.#physics = physics
     this.#crowd = crowd
+    this.#rooms = rooms
     this.#debug = o.debug === true
     const r = o.region?.bounds
     this.#auditor = r
@@ -295,7 +298,7 @@ export class SimCore {
     const crowd = makeCrowd ? await makeCrowd(agents, grid, o.region ? (o.streets ?? null) : null, rooms) : null
     physics.streamAt(spawn.x, spawn.z)
     for (const p of spawns) physics.streamAt(p.x, p.z)
-    const core = new SimCore(physics, { ...o, cars, agents, seed: Math.floor(finite(o.seed)) >>> 0, spawn, spawns }, crowd)
+    const core = new SimCore(physics, { ...o, cars, agents, seed: Math.floor(finite(o.seed)) >>> 0, spawn, spawns }, crowd, rooms ?? [])
     if (crowd) {
       core.#stepCrowd(0)
       const t0 = now()
@@ -916,7 +919,7 @@ export class SimCore {
       const t = fleet.position(v, this.#pos)
       const h = fleet.heading(v)
       // carRig.ts exitPoint: the realm's rule and the room's check of it are one function.
-      const { x: ex, z: ez } = exitPoint(t.x, t.z, h)
+      const { x: ex, z: ez } = exitPoint(t.x, t.z, h, this.#rooms)
       v.mode = 'parked'
       // In a network room a car stops where its driver leaves it: its brakes would otherwise answer the bouncer, whose
       // pedestrians only this page sees, and the room's authority holds the car where it was left. A car the room took

@@ -144,7 +144,11 @@ export function cellCentre(grid: FlowGrid, c: number): { x: number; z: number } 
   return { x: grid.originX + (i + 0.5) * grid.cell, z: grid.originZ + (j + 0.5) * grid.cell }
 }
 
-/** The nearest unblocked cell to (x, z) within `radius` cells (the cell itself first), or −1. */
+/**
+ * The nearest unblocked cell to (x, z) within `radius` cells (the cell itself first), or −1. Nearest by the distance to
+ * each cell's centre, not by cell steps: someone against a room's glass, their own cell in the wall, is given the cell
+ * on their side of it, never the one behind the glass that only a tie of steps could pick.
+ */
 export function nearestOpen(grid: FlowGrid, x: number, z: number, radius = 3): number {
   const i0 = Math.min(grid.width - 1, Math.max(0, Math.floor((x - grid.originX) / grid.cell)))
   const j0 = Math.min(grid.height - 1, Math.max(0, Math.floor((z - grid.originZ) / grid.cell)))
@@ -155,7 +159,8 @@ export function nearestOpen(grid: FlowGrid, x: number, z: number, radius = 3): n
       if (i < 0 || j < 0 || i >= grid.width || j >= grid.height) continue
       const c = j * grid.width + i
       if (grid.weight[c] === 0) continue
-      const d = di * di + dj * dj
+      const ex = grid.originX + (i + 0.5) * grid.cell - x, ez = grid.originZ + (j + 0.5) * grid.cell - z
+      const d = ex * ex + ez * ez
       if (d < bestD) { bestD = d; best = c }
     }
   }

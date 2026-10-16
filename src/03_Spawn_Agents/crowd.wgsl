@@ -117,7 +117,7 @@ struct Params {
 // a = (goal.xy, preferred speed, retreat speed)
 // b = (tilt velocity, bend velocity, crossing state, summons: 0 none, 1 coming over, 2 interviewing)
 // c = (retreat dir.xy, retreat timer, freeze timer)
-// d = (workday phase WORK_*, the room it is in or heading for, -, -)
+// d = (workday phase WORK_*, the room it is in or heading for, the leaving row's v in the room's frame, -)
 struct Brain {
   a: vec4f,
   b: vec4f,
@@ -381,6 +381,12 @@ fn roomOf(p: vec2f) -> i32 {
 fn insideRoom(r: u32, p: vec2f) -> bool {
   let l = abs(roomLocal(r, p));
   return max(l.x, l.y) < CITY_LOT_HALF - ROOM_WALL;
+}
+// The room whose walls p stands inside (strictly: the doorway's band is the street's), or -1.
+fn indoors(p: vec2f) -> i32 {
+  let r = roomOf(p);
+  if (r >= 0 && insideRoom(u32(r), p)) { return r; }
+  return -1;
 }
 // Where a step from `was` to `to` ends in room r's lot (interiors.ts containInRoom): the walls are a band between the
 // room (|u|, |v| < lotHalf − wall) and the street (beyond lotHalf), each grown by pad; a step landing in the band is put
@@ -795,9 +801,11 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
       // Tethered and fallen behind: hurry (TETHER_PACE, under the 3 m/s cap), easing to their own pace near.
       let pace = select(b.a.z, max(b.a.z, TETHER_PACE * clamp((dist - SUMMON_STOP) / 2.0, 0.0, 1.0)), tethered);
       // Round the buildings: the flow field's direction under their feet when it has one, the straight line on the
-      // last stretch (so they arrive and stop as before) and wherever the field is silent.
+      // last stretch (so they arrive and stop as before) and wherever the field is silent. A room's glass between
+      // them (one inside, the other not) is no last stretch: the field takes them round by the doorway.
       let flow = flowAt(me);
-      let way = select(dirTo(me, at), flow, dot(flow, flow) > 0.5 && dist > 4.0 * SUMMON_STOP);
+      let far = dist > 4.0 * SUMMON_STOP || indoors(me) != indoors(at);
+      let way = select(dirTo(me, at), flow, dot(flow, flow) > 0.5 && far);
       desired = way * pace * clamp(dist - SUMMON_STOP, 0.25, 1.0);
       activity = ACT_COMING;
     }
@@ -810,27 +818,34 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
   } else {
     // The workday. A worker's phase is theirs alone (nobody else ever has one); off duty it is WORK_OFF and they walk
     // the corner graph like everyone. On shift the next corner reached is chosen towards the workplace, and from the
-    // workplace's corner the legs below take over. Anyone standing inside a room with no phase (a recruit the operator
-    // let go indoors, a fallen person set back on their feet there) leaves it by the hub and the doorway.
+    // workplace's corner the legs below take over. Anyone standing inside a room on the corner graph (a recruit the
+    // operator let go indoors, a fallen person set back on their feet there, a step in the doorway's band put back
+    // inside) leaves it first, along the nearer aisle to the hub and out by the doorway: before the shift's dice, so
+    // a worker let go indoors on shift walks out before commuting in, never at a corner through the glass.
     let slot = workerSlot(i);
     var phase = b.d.x;
     var room = u32(b.d.y);
+    var row = b.d.z;
+    if (phase < 1.5) {
+      let here = indoors(me);
+      if (here >= 0) {
+        phase = WORK_LEAVE_ROW;
+        room = u32(here);
+        row = select(-ROOM_AISLE, ROOM_AISLE, roomLocal(room, me).y >= 0.0);
+      }
+    }
     if (slot >= 0) {
       // Their own workplace, until a shift ends (the leaving legs keep whichever room they are in).
       if (phase < 6.5) { room = u32(slot) / ROOM_STATIONS; }
       let duty = onDuty(i, P.time);
       if (phase < 0.5 && duty) { phase = WORK_COMMUTE; }
-      if (phase > 5.5 && phase < 6.5 && !duty) { phase = WORK_LEAVE_ROW; }
+      if (phase > 5.5 && phase < 6.5 && !duty) {
+        phase = WORK_LEAVE_ROW;
+        row = P.rooms[room].stations[u32(slot) % ROOM_STATIONS].y;
+      }
     } else if (phase > 0.5 && phase < 6.5) {
       // No workplace any more (never, in one world): finish by walking out from wherever this leg is.
       phase = select(WORK_OFF, WORK_LEAVE_HUB, phase > 2.5);
-    }
-    if (phase < 0.5) {
-      let here = roomOf(me);
-      if (here >= 0 && insideRoom(u32(here), me)) {
-        phase = WORK_LEAVE_HUB;
-        room = u32(here);
-      }
     }
     if (phase >= WORK_APPROACH) {
       working = true;
@@ -840,8 +855,9 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
       var dest = doorFront(room);
       var arrive = WORK_ARRIVE + 0.2;
       if ((phase > 2.5 && phase < 3.5) || (phase > 7.5 && phase < 8.5)) { dest = roomWorld(room, vec2f(P.rooms[room].b.x, 0.0)); arrive = WORK_ARRIVE; }
-      if ((phase > 3.5 && phase < 4.5) || (phase > 6.5 && phase < 7.5)) { dest = roomWorld(room, vec2f(P.rooms[room].b.x, st.y)); arrive = WORK_ARRIVE; }
-      if (phase > 4.5 && phase < 6.5) { dest = station; arrive = WORK_ARRIVE; }
+      if (phase > 3.5 && phase < 4.5) { dest = roomWorld(room, vec2f(P.rooms[room].b.x, st.y)); arrive = WORK_ARRIVE; }
+      if (phase > 6.5 && phase < 7.5) { dest = roomWorld(room, vec2f(P.rooms[room].b.x, row)); arrive = WORK_ARRIVE; }
+      if (phase > 4.5 && phase < 6.5) { dest = station; arrive = WORK_SEAT; }
       let to = dest - me;
       let dist = length(to);
       if (phase > 5.5 && phase < 6.5) {
@@ -905,7 +921,7 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
       }
     }
     }
-    b.d = vec4f(phase, f32(room), 0.0, 0.0);
+    b.d = vec4f(phase, f32(room), row, 0.0);
   }
   b.b.z = crossing;
 

@@ -16,7 +16,9 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { CITY, HERITAGE_COLUMNS, STYLE, districtOfLot, generateBuildings, type Box } from './city.ts'
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
-import { cellAt, cityGrid, flowAt, nearestOpen, solveFlow, trace, UNREACHED } from '../06_Make_Decisions/flowField.ts'
+import { cellAt, cellCentre, cityGrid, flowAt, nearestOpen, solveFlow, trace, UNREACHED } from '../06_Make_Decisions/flowField.ts'
+import { exitPoint } from '../07_Execute_Actions/carRig.ts'
+import { PERSON } from '../07_Execute_Actions/simProtocol.ts'
 import {
   ROOM, ROOM_FLOATS, ROOMS_FLOATS, WORK, WORKPLACE_KINDS, workOneIn, containInRoom, doorDir, doorFront, insideRoom, onDuty, packRooms, penetrates, routeIn,
   targetCorner, toLocal, toWorld, workerSlot, workplaceLots, workplaces, type Workplace,
@@ -144,6 +146,31 @@ test('the flow field routes through the doorway to every station, and back out o
   }
 })
 
+test('an operator against a room\'s glass is given the flow goal on their own side of it, outside or in', () => {
+  for (const seed of SEEDS) {
+    const grid = cityGrid(generateBuildings(seed).map((b) => b.box))
+    for (const room of workplaces(seed)) {
+      // Standing on the sidewalk against each of the four faces (away from the doorway), the goal is outside.
+      for (const [nu, nv] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        for (const off of [-8, -5, 5, 8]) {
+          for (const gap of [PERSON.radius + 0.05, 0.5, 0.65]) {
+            const at = toWorld(room, nu * (h + gap) + Math.abs(nv) * off, nv * (h + gap) + Math.abs(nu) * off)
+            const c = cellCentre(grid, nearestOpen(grid, at.x, at.z))
+            const l = toLocal(room, c.x, c.z)
+            assert.ok(Math.max(Math.abs(l.u), Math.abs(l.v)) > h, `${room.kind} seed ${seed}: the goal for (${at.x}, ${at.z}) is behind the glass`)
+          }
+        }
+      }
+      // Inside, against the doorway's wall either side of the opening, it is indoors.
+      for (const off of [-6, 6]) {
+        const at = toWorld(room, h - ROOM.wall - ROOM.pad, off)
+        const c = cellCentre(grid, nearestOpen(grid, at.x, at.z))
+        assert.ok(insideRoom(room, c.x, c.z), `${room.kind} seed ${seed}: the goal for an operator inside is inside`)
+      }
+    }
+  }
+})
+
 /** The crowd's step, mirrored (crowd.wgsl simulate's last lines): a step towards `to` with a jostle, then the containment and the slide. */
 function walk(room: Workplace, me: { x: number; z: number }, to: { x: number; z: number }, jostle: { x: number; z: number }, dt: number, mayEnter: boolean): { x: number; z: number } {
   const dx = to.x - me.x, dz = to.z - me.z
@@ -240,6 +267,135 @@ test('the doorway is shut to a passer-by jostled off the sidewalk, open only to 
   }
 })
 
+type XZ = { x: number; z: number }
+/** One step of a body (crowd.wgsl simulate's last lines): steer with the separation, mix, cap, contain, slide. */
+function bodyStep(room: Workplace, b: { me: XZ; v: XZ }, desired: XZ, sep: XZ, dt: number): void {
+  const k = Math.min(1, Math.max(0, dt * 5))
+  let vx = b.v.x + (desired.x + sep.x * 0.8 - b.v.x) * k, vz = b.v.z + (desired.z + sep.z * 0.8 - b.v.z) * k
+  const sp = Math.hypot(vx, vz)
+  if (sp > 3) { vx *= 3 / sp; vz *= 3 / sp }
+  const next = { x: b.me.x + vx * dt, z: b.me.z + vz * dt }
+  const held = containInRoom(room, b.me, next)
+  const rx = held.x - next.x, rz = held.z - next.z
+  if (rx * rx + rz * rz > 1e-10) {
+    const r = Math.hypot(rx, rz), into = (vx * rx + vz * rz) / r
+    if (into < 0) { vx -= (rx / r) * into; vz -= (rz / r) * into }
+  }
+  b.me = held
+  b.v = { x: vx, z: vz }
+}
+/** A workday leg's walk (crowd.wgsl): at the person's pace, easing in over the last 1.5 m. */
+function legWalk(me: XZ, dest: XZ, pace: number): XZ {
+  const dx = dest.x - me.x, dz = dest.z - me.z, dist = Math.hypot(dx, dz)
+  if (dist <= 1e-3) return { x: 0, z: 0 }
+  const s = (pace * Math.min(1, Math.max(0.3, dist / 1.5))) / dist
+  return { x: dx * s, z: dz * s }
+}
+/** Seconds to walk `legs` (each reached within its radius), or Infinity when the walk stalls; penetrations counted. */
+function walkLegs(room: Workplace, start: XZ, legs: readonly { at: XZ; arrive: number }[], pace: number, dt: number, limit: number): { t: number; penetrations: number; end: XZ } {
+  const b = { me: start, v: { x: 0, z: 0 } }
+  let leg = 0, penetrations = 0
+  for (let t = 0; t < limit; t += dt) {
+    if (Math.hypot(legs[leg].at.x - b.me.x, legs[leg].at.z - b.me.z) < legs[leg].arrive && ++leg === legs.length) return { t, penetrations, end: b.me }
+    bodyStep(room, b, legWalk(b.me, legs[leg].at, pace), { x: 0, z: 0 }, dt)
+    if (penetrates(room, b.me.x, b.me.z)) penetrations++
+  }
+  return { t: Infinity, penetrations, end: b.me }
+}
+
+test('anyone let go inside a room walks out along the nearer aisle, the hub and the doorway, from anywhere in every room; the straight line to the hub could stall', () => {
+  for (const seed of SEEDS) {
+    for (const room of workplaces(seed)) {
+      // The aisles are clear from the back wall's pieces to the hub (nobody stands behind those: they touch the wall).
+      for (const v of [-ROOM.aisle, ROOM.aisle]) {
+        for (let u = -(h - ROOM.wall - ROOM.pad); u <= ROOM.hub; u += 0.25) {
+          const p = toWorld(room, u, v)
+          if (penetrates(room, p.x, p.z)) {
+            const piece = room.furniture.find(({ box: [x0, , z0, x1, , z1] }) => p.x > x0 - ROOM.pad && p.x < x1 + ROOM.pad && p.z > z0 - ROOM.pad && p.z < z1 + ROOM.pad)!
+            const corners = [[piece.box[0], piece.box[2]], [piece.box[3], piece.box[5]]].map(([x, z]) => toLocal(room, x, z).u)
+            assert.ok(Math.min(...corners) < -(h - ROOM.wall - ROOM.pad), `${room.kind}: the aisle at v ${v} is blocked at u ${u} by a piece off the back wall`)
+          }
+        }
+      }
+      // From every free point inside, the shader's leaving legs (WORK_LEAVE_ROW → HUB → DOOR) reach the sidewalk.
+      for (let u = -12; u <= 12; u += 1) {
+        for (let v = -12; v <= 12; v += 1) {
+          const start = toWorld(room, u, v)
+          if (penetrates(room, start.x, start.z)) continue
+          const legs = [
+            { at: toWorld(room, ROOM.hub, v >= 0 ? ROOM.aisle : -ROOM.aisle), arrive: 0.6 },
+            { at: toWorld(room, ROOM.hub, 0), arrive: 0.6 },
+            { at: doorFront(room), arrive: 0.8 },
+          ]
+          const r = walkLegs(room, start, legs, 1.1, 0.05, 90)
+          assert.ok(Number.isFinite(r.t), `${room.kind} seed ${seed}: let go at (${u}, ${v}), stalled at (${toLocal(room, r.end.x, r.end.z).u.toFixed(2)}, ${toLocal(room, r.end.x, r.end.z).v.toFixed(2)})`)
+          assert.equal(r.penetrations, 0, `${room.kind} seed ${seed}: from (${u}, ${v})`)
+        }
+      }
+    }
+  }
+  // Why the aisle: in the boardroom, from just behind the plinth on the room's axis, the straight line to the hub
+  // presses on its back face and stays there.
+  const boardroom = workplaces(1337).find((r) => r.kind === 'boardroom')!
+  const straight = walkLegs(boardroom, toWorld(boardroom, 1, 0.2), [{ at: toWorld(boardroom, ROOM.hub, 0), arrive: 0.6 }], 1.1, 0.05, 90)
+  assert.equal(straight.t, Infinity, 'the straight line to the hub stalls behind the plinth')
+})
+
+// The indoor legs' 0.6 m arrival sits inside the separation's equilibrium (about 0.62-0.65 m behind a worker at the
+// desk, at the slower paces): with it, B stood behind A as a commuter until A's shift ended.
+test('a second worker dealt an occupied station sits down beside the first: WORK.seat is wider than the separation lets them come', () => {
+  const room = workplaces(1337)[0]
+  const st = room.stations[0]
+  const station = { x: st.x, z: st.z }
+  const sepOf = (a: XZ, b: XZ): XZ => {
+    const dx = a.x - b.x, dz = a.z - b.z, d2 = dx * dx + dz * dz
+    return d2 > 1e-6 && d2 < 0.64 ? { x: dx / d2, z: dz / d2 } : { x: 0, z: 0 }
+  }
+  for (const dt of [1 / 60, 1 / 30, 0.05]) {
+    for (const pace of [1.1, 1.2, 1.3, 1.4, 1.5]) {
+      // A at work on the station (the working spring), B walking the last leg from the row's start.
+      const a = { me: { ...station }, v: { x: 0, z: 0 } }
+      const b = { me: toWorld(room, ROOM.hub, st.v), v: { x: 0, z: 0 } }
+      let seated = false, closest = Infinity
+      for (let t = 0; t < 40 && !seated; t += dt) {
+        const was = { a: { ...a.me }, b: { ...b.me } }
+        const dx = station.x - a.me.x, dz = station.z - a.me.z, da = Math.hypot(dx, dz)
+        const hold = da > 1e-3 ? { x: (dx / da) * Math.min(da * 3, 1.3), z: (dz / da) * Math.min(da * 3, 1.3) } : { x: 0, z: 0 }
+        bodyStep(room, a, hold, sepOf(was.a, was.b), dt)
+        bodyStep(room, b, legWalk(b.me, station, pace), sepOf(was.b, was.a), dt)
+        const db = Math.hypot(station.x - b.me.x, station.z - b.me.z)
+        closest = Math.min(closest, db)
+        seated = db < WORK.seat
+      }
+      assert.ok(seated, `pace ${pace}, dt ${dt.toFixed(3)}: B stalled ${closest.toFixed(3)} m from the station`)
+    }
+  }
+})
+
+test('a car left inside a room puts its driver down indoors, clear of the glass and the furniture; outside, the rule is unchanged', () => {
+  for (const seed of SEEDS) {
+    const rooms = workplaces(seed)
+    for (const room of rooms) {
+      for (let u = -10; u <= 10; u += 2.5) {
+        for (let v = -11; v <= 11; v += 2) {
+          const car = toWorld(room, u, v)
+          if (penetrates(room, car.x, car.z, 1)) continue
+          for (const heading of [0, 0.3, Math.PI / 2, Math.PI, 4.4]) {
+            const p = exitPoint(car.x, car.z, heading, rooms)
+            const l = toLocal(room, p.x, p.z)
+            assert.ok(Math.max(Math.abs(l.u), Math.abs(l.v)) <= h - ROOM.wall - PERSON.radius + 1e-9, `${room.kind}: out of a car at (${u}, ${v}) into the glass`)
+            assert.ok(!penetrates(room, p.x, p.z, PERSON.radius - 1e-6), `${room.kind}: out of a car at (${u}, ${v}) heading ${heading} into a piece of furniture`)
+          }
+        }
+      }
+    }
+    // On the street, the left side unless that is in a lot: what it always was.
+    for (const [x, z, hd] of [[CITY.pitch * 3, CITY.pitch * 4 + 3, 0], [CITY.pitch * 6 + 2, CITY.pitch * 5 + 20, Math.PI / 2], [CITY.pitch * 8 + 20, CITY.pitch * 8 + 2, 1.1]]) {
+      assert.deepEqual(exitPoint(x, z, hd, rooms), exitPoint(x, z, hd))
+    }
+  }
+})
+
 test('the commute: the workplace corner is on the doorway street, on the room\'s block, and the door front lies along its lane', () => {
   for (const seed of SEEDS) {
     for (const room of workplaces(seed)) {
@@ -324,5 +480,15 @@ test('the shader carries the same numbers: ROOM_*, WORK_* and the workday in cro
   }
   assert.ok(src.includes('let held = contain(me, next, 0.35, mayEnter || asked);'), 'every step is contained, the doorway open to the workday and the summons')
   assert.ok(src.includes('if (into < 0.0) { nv -= wallN * into; }'), 'the refused part of a step leaves the velocity: the slide')
+  // Someone inside a room on the corner graph walks out first, before the shift's dice can start a commute (a worker
+  // let go indoors on shift would otherwise walk the corner graph into the glass for good), along the nearer aisle.
+  const rescue = src.indexOf('let here = indoors(me);')
+  assert.ok(rescue > 0 && rescue < src.indexOf('if (phase < 0.5 && duty) { phase = WORK_COMMUTE; }'), 'the indoor exit runs before the duty promotion')
+  assert.ok(src.includes('if (phase < 1.5) {') && src.includes('row = select(-ROOM_AISLE, ROOM_AISLE, roomLocal(room, me).y >= 0.0);'))
+  assert.ok(src.includes('dest = roomWorld(room, vec2f(P.rooms[room].b.x, row));'), 'the leaving row is the one carried in b.d.z')
+  assert.ok(src.includes('b.d = vec4f(phase, f32(room), row, 0.0);'))
+  assert.ok(src.includes('if (phase > 4.5 && phase < 6.5) { dest = station; arrive = WORK_SEAT; }'), 'the station is reached at WORK.seat')
+  // A recruit with a room's glass between them and the operator follows the flow field round by the doorway.
+  assert.ok(src.includes('let far = dist > 4.0 * SUMMON_STOP || indoors(me) != indoors(at);'))
   assert.equal(STYLE.glass, 10)
 })
