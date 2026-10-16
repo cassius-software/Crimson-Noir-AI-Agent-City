@@ -15,6 +15,28 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Two more model providers and `ask connect`.** The cognition router (`src/09_Cognition/router.ts`) gains `openai`
+  (any OpenAI-compatible chat-completions server on this machine, LM Studio's `http://localhost:1234` by default) and
+  `scripted` (no backend: every answer is the deterministic script, nothing is addressed). `ask connect <provider>
+  [<url>] [<key>]` chooses a provider and points it in one line, checked before anything changes; the key is kept out
+  of the console's history. The air gap is unchanged: every server is a loopback address.
+- **The swarm orchestrator (`swarm`).** `swarm run [--agents <1-5>] <goal>` splits a goal over up to five roles
+  (architect, coder, tester, auditor, verifier), each one gated prompt through the operator tier, each reading the
+  answers before it; `swarm plan`, `swarm status`, `swarm stop`, `swarm roles`, `swarm guardrails`, `swarm audit`.
+  The orchestrator (`src/08_Swarm/orchestrator.ts`) issues no script and changes nothing in the city; a host can
+  call the same surface from a voice line (`bridge.operator.swarm`).
+- **The guardrail layer (`src/02_Define_The_Rules/guardrails.ts`).** Six named invariants every swarm step passes
+  before a model is asked and after it answers (operator stop, the gateway's tether, the 14A screen on prompt and
+  answer, loopback only, a budget, a verifying chain), and a hash-chained audit trail (SHA-256 of each entry's
+  canonical body and the hash before it) the console prints and verifies. Rules over text, settings and counts,
+  held by tests; not a proof about a model, which the manual says in those words.
+- **A licence audit** (`docs/ip-audit.md`) and two compliance tests: every licence in the npm tree is on a
+  permissive allow-list (MPL-2.0 only in `lightningcss`, a build tool that is never bundled), and none of the engines
+  or character tools an upgrade plan feared (the audit names them) appears in any text file of the repository. The
+  Rust trees are listed; their licences could not be confirmed from the cloud (no registry access) and the audit says
+  how to. It flags one MPL-2.0 crate (`option-ext`) that, as far as the lockfile shows, is compiled into the Windows
+  app, for counsel to confirm.
+
 - **Lakefront Metro has people and traffic.** The generated metropolis was walked through the surveyed-region path,
   which by design gives a region no fleet and hides the pedestrian crowd, so every first visit read Population 0 and
   Vehicles 0. Its streets lie on the procedural city's 40 m pitch, so a *street window* of 16 × 16 blocks around where

@@ -750,9 +750,19 @@ unlocked:
   script that times out loses its lease too, so an abandoned script cannot keep calling `sim` afterwards.
 - `ask <skill>[,<skill>...]: <prompt>` asks the chosen model provider, answering as the tethered people who have
   the skill; the answer streams in live (see The model providers below). `ask` alone reports the provider, the
-  server, the model, the masked key and the effort, and what the server has; `ask provider claude|ollama|llamacpp`,
-  `ask key <key>|none`, `ask effort <level>`, `ask model <name>` and `ask server <url>` set it up; `ask stop` stops
-  an answer. An inadmissible prompt gets `-- no reply --` and reaches no model.
+  server, the model, the masked key and the effort, and what the server has; `ask provider
+  claude|ollama|llamacpp|openai|scripted`, `ask connect <provider> [<url>] [<key>]` (the provider, its server and the
+  Claude provider's key in one line, checked before anything changes), `ask key <key>|none`, `ask effort <level>`,
+  `ask model <name>` and `ask server <url>` set it up; `ask stop` stops an answer. An inadmissible prompt gets
+  `-- no reply --` and reaches no model.
+- `swarm run [--agents <1-5>] <goal>` splits a goal over up to five roles (the Prime Architect, who needs someone
+  tethered with Design; the Systems Coder, TypeScript; the Sim-to-Real Tester, Testing; the Mechanistic Auditor,
+  Security; the Legal/IP Verifier, Writing) and asks them one after another, each one prompt through the same gate
+  as `ask`, each reading the answers before it; the answers stream in, then the report. `swarm plan` prints the
+  steps without asking; `swarm` alone the state; `swarm stop` ends a run at its current step; `swarm roles` and
+  `swarm guardrails` explain the roles and the six invariants every step passes before a model is asked and after it
+  answers (see The swarm orchestrator below); `swarm audit` prints the hash-chained record of every run this visit
+  and verifies it from genesis.
 - `say <skill>[,<skill>...]: <text>` has the tethered person with the skill say the text aloud, from where
   they stand (see Speech below). `say` alone reports the speech server, the voice and the voices it has;
   `say voice <name>`, `say model <name>`, `say server <url>` and `say auto on|off` set it up; `say stop` cuts
@@ -957,8 +967,8 @@ operator tier knows only its shape (`SkillGate` in `operator.ts`) and never impo
 ### The model providers (`ask`)
 
 `ask rust: how does car.grip work?` asks a model, as the person tethered to you who knows Rust.
-`09_Cognition/router.ts` is the router: one `Mind` behind which three providers answer, swapped at the console
-without a restart (`ask provider <name>`):
+`09_Cognition/router.ts` is the router: one `Mind` behind which five providers answer, swapped at the console
+without a restart (`ask provider <name>`, or `ask connect <provider> [<url>] [<key>]` in one line):
 
 - **`claude`**: the Claude Messages API through a gateway the operator runs on this machine
   (`09_Cognition/claudeApi.ts`; `http://localhost:8089` unless `ask server` names another loopback address), with
@@ -969,6 +979,13 @@ without a restart (`ask provider <name>`):
 - **`llamacpp`**: a packaged, quantized model under a llama.cpp server on this machine (`localCompute.ts` in the
   OpenAI-compatible chat-completions format, at `http://localhost:8080`, the one model the server was started
   with), for offline environments.
+- **`openai`**: any other server on this machine that speaks the OpenAI-compatible chat-completions format (LM
+  Studio at its default `http://localhost:1234`, vLLM, a loopback proxy), with its own address and the model it
+  lists (`ask model <name>`). OpenAI's own service is not reachable: the air gap admits loopback addresses only, so
+  a hosted model needs a gateway on this machine, like the Claude provider's.
+- **`scripted`**: no backend at all. Every answer is the deterministic script (`09_Cognition/scripted.ts`) built
+  from what a model would have been told, nothing is addressed and nothing is installed; `ask` says so. The same
+  script already stands in for the other providers when their server is down.
 
 No model and no model server ships with the product: you run your own, or bring your own key, and the city works
 exactly the same without either.
@@ -989,12 +1006,14 @@ exactly the same without either.
   second layer.
 - **Setting it up.** `ask` alone shows the provider, the server, the model, and what the server has; for the
   Claude provider also the key, masked (its first six and last four characters, never the whole) and the effort.
-  `ask provider claude|ollama|llamacpp` swaps; `ask model <name>` and `ask server <url>` set the chosen provider's
-  own; `ask key <key>` sets the Claude provider's key and `ask key none` clears it;
+  `ask provider claude|ollama|llamacpp|openai|scripted` swaps, and `ask connect <provider> [<url>] [<key>]` swaps and
+  points it in one line (a bad address leaves everything as it was); `ask model <name>` and `ask server <url>` set the
+  chosen provider's own; `ask key <key>` sets the Claude provider's key and `ask key none` clears it;
   `ask effort low|medium|high|xhigh|max|none` how hard the model works on an answer (the API's own default when
   unset); `ask think on|off` and `ask api generate|chat` apply to the local providers as before. Each provider keeps
   its own server and model between visits, in one store in this browser's local storage
-  (`civic-simulation:cognition:v2`).
+  (`civic-simulation:cognition:v2`; the store's own version is 3 since the `openai` provider joined it, read back
+  from the earlier shape without loss).
 - **The key: keep it in the gateway.** The recommended setup holds no key in the page at all: the gateway on this
   machine adds the key to every request it forwards, `ask key none` leaves the page with none, and with none the
   page sends no `x-api-key` header. A key typed to `ask key <key>` is kept in the same local-storage record, in
@@ -1068,6 +1087,40 @@ agent shares (the conduct core and the base reality) is one chain of pages, fork
 a prompt's parts is explicit and measurable. `ask` prints the table's counts on a `cache` line (prefix hits, pages,
 copies). It makes the prefix ordering visible on this page; the model server's own key-value cache is still the
 server's.
+
+
+### The swarm orchestrator (`swarm`)
+
+`08_Swarm/orchestrator.ts` is the orchestrator behind `swarm run <goal>`: a goal split over up to five roles, each
+a step of a fixed chain (the coder reads the architect, the tester reads both, and so on), each step one prompt
+through the operator tier's gated ask, so whichever provider is chosen answers it, only while someone tethered to
+you has the role's skill, and the 14A screen sees it on the way in and out. Steps run one after another (the
+operator tier answers one prompt at a time); a refusal, a lost tether, a server failure or `swarm stop` ends the
+run there, with everything before it kept in the report. A server that does not answer counts as a failure even
+though the page's script stands in for it everywhere else: canned text is not a role's work, so the run stops at that
+step and says so (with `ask provider scripted` chosen on purpose, the script's answers are the run). Each step is
+shown what the steps before it answered, sharing what is left of the prompt quota after its brief and the goal: a
+short answer whole, a long one cut at a word boundary (at most 1,500 characters each) with a note of how much was
+shown, so the last role always fits the quota. The roles are prompts, not separate agents with tools:
+the orchestrator issues no script, changes nothing in the city and writes no file. It answers in text, on the
+console, and a host can call the same surface (`bridge.operator.swarm.run(goal)`) from a voice line.
+
+- **The guardrails** (`02_Define_The_Rules/guardrails.ts`). Before a model is asked and again before its answer is
+  used, each step passes six named invariants: `HumanOverrideSupreme` (a stopped run admits no step),
+  `CapabilityTethered` (the capability gateway's own verdict, recorded), `ConductScreen14A` (the prompt and the
+  answer pass the screen), `LoopbackOnly` (the chosen provider's server is on this machine, or there is none),
+  `BudgetWithinQuota` (at most 8 steps, a goal of 600 characters, a prompt of 6,000, an answer of 12,000 and
+  24,576 tokens a run) and `ProvenanceChained` (the audit chain verifies before every step). Every one is a rule
+  over text, settings and counts, applied the same way every time; `swarm guardrails` prints them. They are not a
+  proof about a model, and they do not look inside one: no model and no weights ship with the product, so there is
+  nothing to inspect or clamp. The screen is a lexicon, as it is for `ask`; the model's own judgement under the
+  conduct core is the second layer.
+- **The audit trail.** Every plan, step, answer, refusal, stop and end is an entry: its kind, the step and role,
+  the SHA-256 of what went in and what came out, the hash of the exact system prompt the model was given, the
+  invariants that refused it, and one line of note; each entry's hash is the SHA-256 of its canonical body followed
+  by the hash before it, from a genesis of zeros (the same construction as the OS weight ledger). `swarm audit`
+  prints the newest entries and walks the whole chain; a changed, dropped or reordered entry is named. The chain
+  lives for the visit; nothing is transmitted.
 
 ### Speech (`say`)
 

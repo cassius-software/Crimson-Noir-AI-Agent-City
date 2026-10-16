@@ -15,7 +15,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
-  HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, SKILL_ARGS, commonPrefix, complete, continuationPrompt, formatRecording, formatStats, isToggleKey, motd,
+  HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, PROVIDER_ARGS, SKILL_ARGS, commonPrefix, complete, continuationPrompt, formatRecording, formatStats, isToggleKey, motd,
   recallsHistory, redactForHistory, replSession, run, type CommandResult, type Line,
 } from './commands.ts'
 import {
@@ -27,6 +27,9 @@ import { SKILLS } from '../../03_Spawn_Agents/skills.ts'
 import { LOOK_BODIES, LOOK_PRESETS, LOOK_SLOTS } from '../../03_Spawn_Agents/look.ts'
 import { PING_KINDS, PING_WORDS } from '../../08_Swarm/ping.ts'
 import { apiDoc, exec, scriptApi, type SimControls } from '../operator.ts'
+import { createSwarm } from '../../08_Swarm/orchestrator.ts'
+import { INVARIANTS, INVARIANT_TEXT } from '../../02_Define_The_Rules/guardrails.ts'
+import { PROVIDERS } from '../../09_Cognition/router.ts'
 import { harnesses } from '../harness.ts'
 import type { QualityState, RecordingState, SipocSnapshot } from '../../05_Observe_Environment/telemetry.ts'
 
@@ -42,7 +45,7 @@ const CORE_NAMES = [
   'help', 'stats', 'laws', 'kernel', 'quality', 'time', 'audio', 'ghost', 'rain', 'render', 'captions', 'ping', 'look', 'agent', 'sloane', 'goal', 'hal', 'recruit', 'memory', 'clear', 'history', 'echo',
   'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'exit',
 ]
-const OPERATOR_NAMES = ['operator', 'run', 'ask', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
+const OPERATOR_NAMES = ['operator', 'run', 'ask', 'swarm', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
 
 const IDLE: RecordingState = { active: false, source: null, seconds: 0, frames: 0, bytes: 0, dropped: 0, codec: '' }
 
@@ -150,6 +153,13 @@ function fakeOperator(): FakeOp {
       f.opCalls.push('askStatus')
       return Promise.resolve({ ...f.mind, installed: ['a-model', 'test-model'] })
     },
+    askConnect: (provider, url, key) => {
+      f.opCalls.push(`askConnect ${provider} ${url ?? '-'} ${key ? '<key>' : '-'}`)
+      f.mind.provider = provider
+      if (url) f.mind.server = url
+      return `${provider}: connected${url ? `; server ${url}` : ''}${key ? '; key ••••' : ''}`
+    },
+    swarm: undefined as unknown as FakeOp['swarm'],
     askSet: (key, value) => {
       f.opCalls.push(`askSet ${key} ${value}`)
       if (key === 'server' && !value.startsWith('http://localhost')) throw new Error(`the local model server must be on this machine (localhost, 127.0.0.1 or [::1]), not '${value}'`)
@@ -211,6 +221,8 @@ function fakeOperator(): FakeOp {
       return Promise.resolve({ name, pass: name !== 'traffic-lights', lines: [`ran ${name}`], ms: 1234 })
     },
   }
+  // The swarm over the fake's own ask: the same gate answers (f.answer), one step at a time.
+  f.swarm = createSwarm({ ask: (skills, prompt) => f.ask(skills, prompt), endpoint: () => (f.mind.provider === 'scripted' ? null : f.mind.server) })
   return f
 }
 
@@ -469,7 +481,7 @@ test('help lists every command with usage, in two groups; help <cmd> explains on
   assert.match(all, /hal \[pair hid\|serial\|ble\]/)
   assert.match(all, /operator \[unlock\|lock\|status\]/)
   assert.match(all, /run <skill>\[,<skill>\.\.\.\]: <js\.\.\.>/)
-  assert.match(all, /ask \[<skill>\[,<skill>\.\.\.\]: <prompt\.\.\.>\|provider <name>\|model <name>\|server <url>\|key <key>\|effort <level>\|think on\|off\|api <format>\|stop\]/)
+  assert.match(all, /ask \[<skill>\[,<skill>\.\.\.\]: <prompt\.\.\.>\|provider <name>\|connect <provider> \[<url>\] \[<key>\]\|model <name>\|server <url>\|key <key>\|effort <level>\|think on\|off\|api <format>\|stop\]/)
   assert.match(all, /harness \[list\|run <name>\]/)
   assert.match(all, /record \[start \[canvas\|camera\]\|stop\|status\]/)
   assert.match(all, /recruit \[<skill>\|rally <agent> \[<x> <z>\]\|listen\|stop\|install\|dismiss\]/)
@@ -736,7 +748,8 @@ test('the brand always comes from the bridge', () => {
 test('air gap: a failing or offline bridge becomes error lines, never an exception', () => {
   const off = offlineBridge(BRAND)
   for (const c of ['stats', 'stats --once', 'laws', 'kernel', 'quality', 'quality 2', 'time', 'time 8', 'audio', 'audio on', 'hal', 'hal pair hid',
-    'operator', 'operator unlock', 'operator lock', 'run 1 + 1', 'run rust: 1 + 1', 'ask', 'ask rust: hi', 'ask model m', 'ask stop', 'say', 'say rust: hi',
+    'operator', 'operator unlock', 'operator lock', 'run 1 + 1', 'run rust: 1 + 1', 'ask', 'ask rust: hi', 'ask model m', 'ask connect ollama', 'ask stop', 'say', 'say rust: hi',
+    'swarm', 'swarm status', 'swarm roles', 'swarm guardrails', 'swarm audit', 'swarm plan x', 'swarm run x', 'swarm stop',
     'say voice v', 'say stop', 'memory', 'memory 7', 'memory forget 7', 'api', 'api clock', 'get', 'set physics.car.power 1', 'harness', 'harness list', 'harness run sanctuary', 'sim',
     'record', 'record status', 'record start', 'record start camera', 'record stop', 'render', 'render off', 'captions', 'captions on', 'ping', 'ping go', 'ping clear',
     'look', 'look show 7', 'look reset', 'look top 2', 'recruit', 'recruit rally 7', 'recruit rally 7 1 2']) {
@@ -761,7 +774,7 @@ test('air gap: a failing or offline bridge becomes error lines, never an excepti
   // A bridge from before the operator tier (no `operator`): the operator commands say so.
   const old = fake()
   Object.assign(old, { operator: undefined })
-  for (const c of ['operator', 'run 1', 'ask', 'ask rust: hi', 'say', 'say rust: hi', 'memory forget 7', 'api', 'get', 'set physics.x 1', 'harness']) {
+  for (const c of ['operator', 'run 1', 'ask', 'ask rust: hi', 'say', 'say rust: hi', 'memory forget 7', 'api', 'get', 'set physics.x 1', 'harness', 'swarm', 'swarm run x']) {
     assert.match(only(run(c, old, [])).text, /operator tier not available/, c)
   }
   // A bridge from before the swarm's memory (no `memory`): the memory command says so.
@@ -822,7 +835,7 @@ test('air gap: while locked, across every command and completion, the only knobs
 test('air gap: the terminal files reach nothing at runtime beyond React, the brand and each other', () => {
   const allowedTypes = [
     '../../02_Define_The_Rules/laws.ts', '../../03_Spawn_Agents/look.ts', '../../04_Connect_Hardware/hal.ts', '../../05_Observe_Environment/telemetry.ts',
-    '../../05_Observe_Environment/recorder.ts', '../operator.ts', '../harness.ts',
+    '../../05_Observe_Environment/recorder.ts', '../operator.ts', '../harness.ts', '../../08_Swarm/orchestrator.ts',
   ]
   // repl.ts is the console's own machine: a runtime import, and the one terminal module that imports nothing itself.
   const allowedRuntime = ['react', '../../brand.ts', './bridge.ts', './commands.ts', './repl.ts']
@@ -1021,7 +1034,7 @@ test('ask: alone it reports the server, the model and what the server has; model
   assert.deepEqual(texts(run('ask think', b, [])), ['usage: ask think <on|off>'])
   for (const line of ['ask how does grip work?', 'ask 42: hi', 'ask "a: b"']) {
     const no = run(line, b, [])
-    assert.deepEqual(texts(no), ['ask: name the skill the answer needs first, e.g. ask rust: how does car.grip work?', 'usage: ask [<skill>[,<skill>...]: <prompt...>|provider <name>|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|stop]'], line)
+    assert.deepEqual(texts(no), ['ask: name the skill the answer needs first, e.g. ask rust: how does car.grip work?', 'usage: ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|stop]'], line)
     assert.equal(no.pending, undefined, line)
   }
   assert.ok(isErr(run('ask rust:', b, [])))
@@ -1318,7 +1331,7 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.deepEqual(complete('h'), ['hal', 'harness', 'help', 'history'])
   assert.deepEqual(complete('he'), ['help'])
   assert.deepEqual(complete('st'), ['stats'])
-  assert.deepEqual(complete('s'), ['say', 'set', 'sim', 'sloane', 'stats'])
+  assert.deepEqual(complete('s'), ['say', 'set', 'sim', 'sloane', 'stats', 'swarm'])
   assert.deepEqual(complete('zz'), [])
   assert.equal(complete('').length, CORE_NAMES.length + OPERATOR_NAMES.length)
   assert.deepEqual(complete('hal '), ['hal pair'])
@@ -1369,9 +1382,12 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.deepEqual(complete('run rust: s'), [])
   assert.deepEqual(complete('api si'), ['api signal'])
   assert.deepEqual(complete('ask s'), ['ask security:', 'ask server', 'ask shaders:', 'ask stop'])
-  assert.equal(complete('ask ').length, SKILL_ARGS.length + 8)
+  assert.equal(complete('ask ').length, SKILL_ARGS.length + 9)
   assert.deepEqual(complete('ask m'), ['ask model'])
-  assert.deepEqual(complete('ask provider '), ['ask provider claude', 'ask provider llamacpp', 'ask provider ollama'])
+  assert.deepEqual(complete('ask provider '), ['ask provider claude', 'ask provider llamacpp', 'ask provider ollama', 'ask provider openai', 'ask provider scripted'])
+  assert.deepEqual(complete('ask connect '), PROVIDER_ARGS.map((p) => `ask connect ${p}`))
+  assert.deepEqual(complete('swarm '), ['swarm audit', 'swarm guardrails', 'swarm plan', 'swarm roles', 'swarm run', 'swarm status', 'swarm stop'])
+  assert.deepEqual(complete('swarm audit '), ['swarm audit verify'])
   assert.deepEqual(complete('ask effort m'), ['ask effort max', 'ask effort medium'])
   assert.deepEqual(complete('ask think '), ['ask think off', 'ask think on'])
   assert.deepEqual(complete('ask think o'), ['ask think off', 'ask think on'])
@@ -1383,6 +1399,8 @@ test('completion: command names, then arguments, as whole lines', () => {
 
 test('the harness names offered by completion are the harnesses that exist', () => {
   assert.deepEqual([...HARNESS_NAMES], harnesses().map((h) => h.name).sort())
+  // The providers the console completes are the router's, sorted (the console must not import the router).
+  assert.deepEqual([...PROVIDER_ARGS], [...PROVIDERS].sort())
 })
 
 test('multi-line editing helpers: a same-width continuation prompt, history only from the buffer edges', () => {
@@ -1781,6 +1799,129 @@ test('net: status reads at any time as rows; join, leave and forget are the oper
   const older = fake()
   Object.assign(older, { net: undefined })
   for (const c of ['net', 'net status', 'net leave']) assert.match(only(run(c, older, [])).text, /network not available/, c)
+})
+
+test('ask connect: the provider, its address and a key in one line, through the bridge alone; a bare connect is refused; the key never shows', () => {
+  const b = unlocked()
+  assert.deepEqual(run('ask connect ollama', b, []).lines, [{ kind: 'out', text: 'provider  ollama: connected' }])
+  assert.deepEqual(run('ask connect openai http://localhost:1234', b, []).lines, [{ kind: 'out', text: 'provider  openai: connected; server http://localhost:1234' }])
+  assert.deepEqual(run('ask connect claude http://localhost:8089 sk-ant-secret', b, []).lines, [{ kind: 'out', text: 'provider  claude: connected; server http://localhost:8089; key ••••' }])
+  assert.deepEqual(b.operator.opCalls.filter((c) => c.startsWith('askConnect')), ['askConnect ollama - -', 'askConnect openai http://localhost:1234 -', 'askConnect claude http://localhost:8089 <key>'])
+  assert.deepEqual(texts(run('ask connect', b, [])), ['usage: ask connect <claude|llamacpp|ollama|openai|scripted> [<url>] [<key>]'])
+  assert.equal(redactForHistory('ask connect claude http://localhost:8089 sk-ant-secret'), 'ask connect claude http://localhost:8089 ••••')
+  assert.equal(redactForHistory('ask connect ollama http://localhost:11434'), 'ask connect ollama http://localhost:11434')
+  // A key typed where the url goes (the url is optional) is dotted too, with anything after it.
+  assert.equal(redactForHistory('ask connect claude sk-ant-api03-SECRET-9999'), 'ask connect claude ••••')
+  assert.equal(redactForHistory('ask connect claude sk-ant-api03-SECRET-9999 http://localhost:8089'), 'ask connect claude ••••')
+  assert.equal(redactForHistory('ask connect openai sk-proj-SECRET'), 'ask connect openai ••••')
+  assert.equal(redactForHistory('ask connect claude http://user:SECRET@localhost:8089'), 'ask connect claude ••••')
+  assert.equal(redactForHistory('ask connect claude HTTP://localhost:8089 sk-ant-x'), 'ask connect claude HTTP://localhost:8089 ••••')
+  assert.equal(redactForHistory('ask connect claude'), 'ask connect claude')
+  const locked = fake()
+  assert.deepEqual(texts(run('ask connect ollama', locked, [])), ["ask: locked; type 'operator unlock' first"])
+})
+
+test('swarm: locked until operator unlock; alone it is idle; roles and guardrails are the orchestrator\'s own words; plan prints the DAG and asks nothing', () => {
+  const locked = fake()
+  assert.deepEqual(texts(run('swarm', locked, [])), ["swarm: locked; type 'operator unlock' first"])
+  const b = unlocked()
+  assert.deepEqual(texts(run('swarm', b, [])), ['swarm     idle (swarm run <goal> starts one; swarm roles, swarm guardrails explain it)', 'audit     empty'])
+  assert.deepEqual(texts(run('swarm status', b, [])), texts(run('swarm', b, [])))
+  const roles = texts(run('swarm roles', b, []))
+  assert.equal(roles.length, 1 + b.operator.swarm.roles.length)
+  for (const r of b.operator.swarm.roles) assert.ok(roles.some((l) => l.includes(r.title) && l.includes(r.skill)), r.title)
+  // The guardrail lines are pinned to guardrails.ts (the console must not import it); every invariant is named with its text.
+  const guard = texts(run('swarm guardrails', b, []))
+  for (const name of INVARIANTS) assert.ok(guard.some((l) => l.includes(name) && l.includes(INVARIANT_TEXT[name])), name)
+  assert.ok(guard.some((l) => /not a proof about a model/.test(l)))
+  const plan = texts(run('swarm plan --agents 3 audit the braking envelope', b, []))
+  assert.equal(plan[0], 'swarm plan: 3 roles for "audit the braking envelope"')
+  assert.equal(plan[1], '  architect Prime Architect       needs Design      first')
+  assert.equal(plan[2], '  coder     Systems Coder         needs TypeScript  after architect')
+  assert.equal(plan[3], '  tester    Sim-to-Real Tester    needs Testing     after architect, coder')
+  assert.equal(b.operator.opCalls.filter((c) => c.startsWith('ask ')).length, 0, 'a plan asks nothing')
+  assert.deepEqual(texts(run('swarm plan', b, [])), ['usage: swarm plan [--agents <1-5>] <goal...>'])
+  assert.deepEqual(texts(run('swarm plan --agents 9 x', b, [])), ['swarm: --agents takes 1 to 5'])
+  // A flag the pattern did not take is a typo, not part of the goal: nothing is planned or run on it.
+  for (const line of ['swarm run --agents', 'swarm run --agents=2 check the brakes', 'swarm run check the brakes --agents 2', 'swarm plan x --agents']) {
+    const verb = line.split(' ')[1]
+    assert.deepEqual(texts(run(line, b, [])), [`swarm: --agents takes a whole number and goes before the goal: swarm ${verb} --agents <1-5> <goal...>`], line)
+  }
+  assert.equal(b.operator.swarm.status().running, false, 'nothing started')
+  assert.deepEqual(texts(run('swarm plan --agents two x', b, [])), ["swarm: --agents takes a whole number, not 'two'"])
+  assert.deepEqual(texts(run('swarm dance', b, [])), ["swarm: unknown command 'dance'", 'usage: swarm [run [--agents <1-5>] <goal...>|plan [--agents <1-5>] <goal...>|status|stop|roles|guardrails|audit [verify]]'])
+  assert.deepEqual(texts(run('swarm audit', b, [])), ['swarm: no audit entries yet (swarm run <goal> writes them)', "chain: 0 entries verify from genesis; head 0000000000000000… (SHA-256 of each entry's canonical body and the hash before it)"])
+  assert.deepEqual(texts(run('swarm stop', b, [])), ['swarm: no swarm is running'])
+})
+
+test('swarm run: one gated ask per role in order, each prompt carrying the goal and the answers before it; the answers stream, the report follows, the audit chain verifies', async () => {
+  const b = unlocked()
+  const r = run('swarm run --agents 2 name the parts of the kernel', b, [])
+  assert.deepEqual(texts(r), ['swarm: 2 roles for "name the parts of the kernel"; first the Prime Architect (Design)'])
+  const live: string[] = []
+  r.stream?.subscribe((p) => live.push(`${p.kind}:${p.text}`))
+  const lines = await r.pending
+  const asks = b.operator.opCalls.filter((c) => c.startsWith('ask '))
+  assert.equal(asks.length, 2)
+  assert.match(asks[0], /^ask Design: You are the architect\./)
+  assert.match(asks[0], /Goal: name the parts of the kernel/)
+  assert.match(asks[1], /^ask TypeScript: You are the coder\./)
+  assert.match(asks[1], /From the Prime Architect:\nGrip scales\ntyre friction\.$/, 'the coder reads the architect')
+  assert.deepEqual(live, ['thinking:hmm', 'text:Grip scales\n', 'text:tyre friction.', 'text:\n', 'thinking:hmm', 'text:Grip scales\n', 'text:tyre friction.', 'text:\n'])
+  assert.deepEqual(lines?.map((l) => l.kind), ['sys', 'out', 'out', 'sys', 'sys', 'out', 'out', 'sys', 'sys'])
+  assert.deepEqual(lines?.map((l) => l.text).slice(0, 3), ['-- Prime Architect (Design) --', 'Grip scales', 'tyre friction.'])
+  assert.match(lines?.[3]?.text ?? '', /^ {3}answered in \d+\.\d s$/)
+  assert.equal(lines?.[4]?.text, '-- Systems Coder (TypeScript) --')
+  assert.match(lines?.[8]?.text ?? '', /^-- swarm done: 2 steps in \d+\.\d s; audit head [0-9a-f]{16}… \(swarm audit\) --$/)
+  // The chain: plan, then step and answer for each role, then end; it verifies; the status says how big it is.
+  const audit = texts(run('swarm audit', b, []))
+  assert.deepEqual(audit.map((l) => l.trim().split(/\s+/)[1]), ['plan', 'step', 'answer', 'step', 'answer', 'end', '6'])
+  assert.match(audit.at(-1) ?? '', /^chain: 6 entries verify from genesis; head [0-9a-f]{16}…/)
+  assert.deepEqual(texts(run('swarm', b, [])), ['swarm     idle (swarm run <goal> starts one; swarm roles, swarm guardrails explain it)', `audit     6 entries, head ${b.operator.swarm.audit()[5].hash.slice(0, 16)}… (swarm audit)`])
+  assert.deepEqual(texts(run('swarm audit verify', b, [])).at(-1), audit.at(-1))
+})
+
+test('swarm run: a step the gateway rejects ends the run there, in the gateway\'s words, and is written to the chain as CapabilityTethered', async () => {
+  const b = unlocked()
+  b.operator.answer = 'reject'
+  const lines = await run('swarm run --agents 2 x', b, []).pending
+  assert.deepEqual(lines?.map((l) => l.text), [
+    '-- Prime Architect (Design) --',
+    '   rejected: Rejected (Insufficient Capabilities): nobody tethered to the operator has Design',
+    `swarm: ended after 1 of 2 steps; audit head ${b.operator.swarm.audit().at(-1)!.hash.slice(0, 16)}… (swarm audit)`,
+  ])
+  assert.equal(b.operator.opCalls.filter((c) => c.startsWith('ask ')).length, 1, 'the coder was never asked')
+  const audit = texts(run('swarm audit', b, []))
+  assert.ok(audit.some((l) => /^ +2 {2}refusal architect [0-9a-f]{12} {2}CapabilityTethered: Rejected \(Insufficient Capabilities\): nobody tethered to the operator has Design$/.test(l)), audit.join('\n'))
+  // A new run may start once the last has ended; a lost tether mid-answer ends a run the same way.
+  b.operator.answer = 'abort'
+  const aborted = await run('swarm run --agents 1 y', b, []).pending
+  assert.match(aborted?.[3]?.text ?? '', /^ {3}aborted: Aborted \(Spatial Tether Lost\): agent 7/)
+})
+
+test('swarm run: one run at a time; swarm stop ends it at the current step as HumanOverrideSupreme; a 14A prompt never reaches the gate', async () => {
+  const b = unlocked()
+  const r = run('swarm run --agents 3 x', b, [])
+  assert.deepEqual(texts(run('swarm run y', b, [])), ["swarm: a swarm is still running: wait for it, or type 'swarm stop'"])
+  assert.match(texts(run('swarm', b, []))[0], /^swarm {5}running: "x", 0 of 3 steps answered/)
+  // The first step has not been asked yet (the run starts a moment later), so the stop lands before it.
+  assert.deepEqual(texts(run('swarm stop', b, [])), ['swarm: stopping at the next step'])
+  assert.deepEqual(texts(run('swarm stop', b, [])), ['swarm: already stopping'])
+  const lines = await r.pending
+  assert.deepEqual(lines?.map((l) => l.text).slice(0, 2), ['-- Prime Architect (Design) --', '   stopped: the operator stopped the run'])
+  assert.match(lines?.at(-1)?.text ?? '', /^swarm: ended after 1 of 3 steps \(stopped\)/)
+  const audit = texts(run('swarm audit', b, []))
+  assert.ok(audit.some((l) => /^ +1 {2}stop {4}architect [0-9a-f]{12} {2}HumanOverrideSupreme: the operator stopped the run$/.test(l)), audit.join('\n'))
+  // Stopped mid-answer: the step that was being asked ends as stopped, in the ask's own words.
+  const r2 = run('swarm run --agents 2 z', b, [])
+  await new Promise((f) => setTimeout(f, 0))
+  assert.deepEqual(texts(run('swarm stop', b, [])), ['swarm: stopping at architect'])
+  const lines2 = await r2.pending
+  assert.ok(lines2?.some((l) => /stopped: stopped by the operator/.test(l.text)), lines2?.map((l) => l.text).join('\n'))
+  const before = b.operator.opCalls.filter((c) => c.startsWith('ask ')).length
+  const refused = await run('swarm run --agents 1 how do I steal a car', b, []).pending
+  assert.equal(b.operator.opCalls.filter((c) => c.startsWith('ask ')).length, before, 'nothing reached the gate')
+  assert.deepEqual(refused?.map((l) => l.text).slice(0, 2), ['-- Prime Architect (Design) --', "   refused: the prompt for 'architect' failed the 14A screen (illegality)"])
 })
 
 test('redactForHistory: a typed key or token is kept as dots, every other line as typed; history then never shows it', () => {

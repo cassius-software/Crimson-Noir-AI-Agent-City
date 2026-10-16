@@ -3,7 +3,7 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the cloud fallback throttle: when the page's own frame rate has fallen below
- * FALLBACK.fps over a rolling window, a complex prompt bound for a model server on this machine (ollama, llamacpp:
+ * FALLBACK.fps over a rolling window, a complex prompt bound for a model server on this machine (ollama, llamacpp, openai:
  * the same GPU and CPU the city is drawn with) goes to the cognition router's cloud provider instead (the Claude API
  * through the operator's loopback gateway), so local compute stays with the frames. It wraps a Mind (operator.ts)
  * and changes nothing else about it: the same prompt, tethers and memories, the same pieces streamed, the same
@@ -84,7 +84,7 @@ export function isComplex(req: AnswerRequest): boolean {
 }
 
 /** The provider names the cognition router gives a model server on this machine (router.ts Provider). */
-export const LOCAL_PROVIDERS: readonly string[] = Object.freeze(['ollama', 'llamacpp'])
+export const LOCAL_PROVIDERS: readonly string[] = Object.freeze(['ollama', 'llamacpp', 'openai'])
 
 /** A Mind that may carry the router's cloud provider beside it (router.ts MindRouter.cloud). */
 export type CloudCapable = Mind & { readonly cloud?: Mind }
@@ -112,6 +112,7 @@ export function withCloudFallback(mind: CloudCapable, rate: FrameRate): Mind & {
   const line = (): string => {
     const r = report()
     if (cloud === null) return 'none: this mind has no cloud provider'
+    if (provider() === 'scripted') return 'off: the scripted provider asks no model, so there is nothing to move'
     if (!LOCAL_PROVIDERS.includes(provider() ?? '')) return `off: the ${provider() ?? 'chosen'} provider is not on this machine's compute`
     const fps = r.fps === null ? 'frame rate not yet known' : `${r.fps.toFixed(0)} fps`
     return `${r.throttled ? 'on' : 'off'}: complex prompts go to the Claude API below ${FALLBACK.fps} fps (${fps}; ${offloaded} sent so far)`
@@ -131,7 +132,7 @@ export function withCloudFallback(mind: CloudCapable, rate: FrameRate): Mind & {
     },
   }
   // The optional setters stay the mind's own (bound to it), so a provider swap at the console still lands there.
-  for (const k of ['setThink', 'setApi', 'setProvider', 'setKey', 'setEffort'] as const) {
+  for (const k of ['setThink', 'setApi', 'setProvider', 'setKey', 'setEffort', 'connect'] as const) {
     const fn = mind[k]
     if (fn) (wrapped as unknown as Record<string, unknown>)[k] = fn.bind(mind)
   }

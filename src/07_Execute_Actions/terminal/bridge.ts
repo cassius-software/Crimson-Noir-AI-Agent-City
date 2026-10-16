@@ -23,6 +23,7 @@ import type {
 } from '../operator.ts'
 import type { HarnessReport, harnesses } from '../harness.ts'
 import type { LookChange } from '../../03_Spawn_Agents/look.ts'
+import type { Swarm } from '../../08_Swarm/orchestrator.ts'
 
 export type {
   HalDevice, LawText, AskResult, ExecResult, GatedAsk, GatedRun, GatedSay, GateTether, MindStatus, Piece, RunResult, RunState, SayResult,
@@ -76,8 +77,19 @@ export interface OperatorBridge {
    * off; returns the new value. Throws on a bad one.
    */
   askSet(key: 'model' | 'server' | 'think' | 'api' | 'provider' | 'key' | 'effort', value: string): string
+  /**
+   * `ask connect`: the provider and, when given, its server and (the Claude provider's) key in one line
+   * (09_Cognition/router.ts connect); returns what the provider is and what was set. Throws on a bad one, and while locked.
+   */
+  askConnect(provider: string, url?: string, key?: string): string
   /** Stops the answer being generated, if any (the operator's own stop); returns what it did. */
   askStop(): string
+  /**
+   * The swarm orchestrator (08_Swarm/orchestrator.ts) over this tier's gated ask: a goal split over up to five roles,
+   * each one prompt through the gateway and the guardrails, with the hash-chained audit trail of every run. The host
+   * (a voice line, the onboarding) reaches it through this same surface. `run` throws while locked.
+   */
+  swarm: SwarmBridge
   /**
    * Text said aloud through the local speech server, through the capability gateway like a prompt: decided at once,
    * said by the first person it is bound to from where they stand (the voice follows them), and cut off the moment the
@@ -95,6 +107,9 @@ export interface OperatorBridge {
   harnesses(): ReturnType<typeof harnesses>
   harness(name: string): Promise<HarnessReport>
 }
+
+/** The swarm as the console and the host see it (08_Swarm/orchestrator.ts Swarm): plan, run, status, stop, the audit trail. */
+export type SwarmBridge = Pick<Swarm, 'plan' | 'run' | 'status' | 'stop' | 'audit' | 'verify' | 'roles' | 'quota'>
 
 /**
  * The .agv recorder (recorder.ts), operator-gated by the terminal. `start` prompts — the save dialog,
@@ -339,8 +354,9 @@ export function offlineBridge(brand: TerminalBridge['brand']): TerminalBridge {
     ping: { at: down, list: down, newest: down, clear: down },
     operator: {
       unlock: down, lock: down, unlocked: down, exec: down, tuning: down, tune: down,
-      ask: down, askStatus: down, askSet: down, askStop: down, say: down, sayStatus: down, saySet: down, sayStop: down,
+      ask: down, askStatus: down, askSet: down, askConnect: down, askStop: down, say: down, sayStatus: down, saySet: down, sayStop: down,
       api: down, harnesses: down, harness: down,
+      swarm: { plan: down, run: down, status: down, stop: down, audit: down, verify: down, get roles() { return down() }, get quota() { return down() } },
     },
     record: { start: down, stop: down, status: down, supported: down },
     recruit: { ask: down, rally: down, listen: down, stop: down, install: down, dismiss: down, status: down, skills: () => [] },
