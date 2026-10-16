@@ -15,6 +15,17 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Eight kinds of vehicle.** The fleet is drawn from `VEHICLE_KINDS` (`src/07_Execute_Actions/car.ts`): an executive
+  sedan, a transit pod, a logistics van, a transit coach, a courier robot, a security SUV, a gullwing coupe and a
+  utility rig, each with its own side profile, glass, lights (brake lights from the brake demand, a cabin glow at night
+  on the pod and the coach, an amber beacon on the rig) and wheel size (`fleetView.ts`, one instanced mesh per kind).
+  They ride on the two chassis classes that were already proven against the First Law (the sedan's and the SUV's), and
+  the seeded draw that used to pick "SUV or sedan" now picks the kind with the heavy kinds on the old SUV share, so
+  every seed's fleet keeps the same chassis in every slot. `SimMeta.kind` and the `entered` event carry the kind; the
+  HUD names it. The look is untested on a GPU in the cloud.
+- **A clear core in the code dissolve.** A mesh you pass through now opens around your eye: cells within 0.85 m of
+  the camera are gone and the falling-column pattern is whole again from 2.2 m out (`CODE_DISSOLVE.coreInner` and
+  `coreOuter`), so you look out through open code. The core is local to the mesh being passed through.
 - **Two more model providers and `ask connect`.** The cognition router (`src/09_Cognition/router.ts`) gains `openai`
   (any OpenAI-compatible chat-completions server on this machine, LM Studio's `http://localhost:1234` by default) and
   `scripted` (no backend: every answer is the deterministic script, nothing is addressed). `ask connect <provider>
@@ -73,9 +84,29 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 - **Wren is now Sloane** throughout the page, the console and the docs (history entries keep the old name).
 - **The eye height follows the avatar's height**: 1.7 m times the body's height scale, within 1.2–2.2 m, eased in.
   Unverified from the cloud (no GPU): how it looks.
+- **On foot you walk through cars.** The avatar's capsule no longer pairs with a vehicle chassis
+  (`COLLISION.avatarThroughCars`, `AVATAR_GROUPS`): a parked car is passed, not pushed, and its mesh dissolves as
+  you enter it. The First Law is untouched: the Bouncer still brakes for you and holds a car still while you stand
+  in its footprint, the Sanctuary still shields you from a moving car, and the Ring-0 audit still reads a moving car
+  over a solid person as an impact. The Sanctuary no longer shields or nudges anyone for overlapping a standing car,
+  and it now shields anyone within 0.3 m of a moving one whichever way it moves, since you can run after a car pulling
+  away; a car pulling away nudges nobody.
+
+### Removed
+
+- **The full-screen contact wipe.** The iris of code that opened from the centre of the frame on every contact
+  (ghost view's composite, `contact.ts`) is gone: a passage shows on the mesh passed through alone, and the post chain
+  no longer turns on for one. `output.contact.wipe` in the telemetry is now `output.contact.passage`, the same
+  envelope, which nothing draws.
 
 ### Fixed
 
+- **A runner beside a turning car could halt the realm.** At full lock a car's centre heads into its inner flank while
+  the overhang behind the rear axle swings away; the Ring-0 audit judges a touch by the centre and the Sanctuary judged
+  it by the flank, so a runner reaching the inner rear corner stayed solid where the audit read an impact
+  ("Perimeter breached", 19 of 36 runs in the new test). The Sanctuary now takes the faster of the two. A promoted
+  pedestrian's foot is measured where the audit sees it, off its lower leg, instead of at the leg's origin. Both were
+  older than the walk-through change.
 - **The periodic freeze** (docs/stutter-and-depth.md): the sky probe (the scene's reflection map) refreshed every 0.2 game
   hours, 12 s of real time at `?day=24`, by baking into a new render target and assigning its new texture to
   `scene.environment`; three.js keys every material's shader on that texture's node, so each refresh rebuilt every

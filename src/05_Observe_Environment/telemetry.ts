@@ -210,10 +210,11 @@ export interface SipocSnapshot {
      */
     rendering?: boolean
     /**
-     * Ghost-mode collision's contact wipe (contact.ts): how far the iris of code is open (0..1), the kind the user's
-     * body last passed through (GHOST_KIND; 0 none), and how many passages have played a wipe since boot.
+     * Ghost-mode collision's passages (contact.ts): the passage envelope (0..1, up while the user's body is inside a
+     * lamp, a car or a person and down after), the kind last passed through (GHOST_KIND; 0 none), and how many
+     * passages there have been since boot. Nothing is drawn over the frame for one: the mesh itself dissolves.
      */
-    contact?: { wipe: number; kind: number; count: number }
+    contact?: { passage: number; kind: number; count: number }
     /**
      * The code dissolve (dissolve.ts): how many mesh instances (poles, cars, people) are dissolved or reinstantiating
      * now, and how many passages have dissolved one since boot.

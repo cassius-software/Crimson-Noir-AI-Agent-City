@@ -26,8 +26,12 @@ const MAX_LIFT = 0.35
  * solid unless told otherwise.
  */
 const SOLIDS = RAPIER.QueryFilterFlags.EXCLUDE_SENSORS
-/** While shielded, vehicles are not obstacles either: every dynamic body in this world is a vehicle chassis. */
-const PASS_VEHICLES = RAPIER.QueryFilterFlags.EXCLUDE_SENSORS | RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC
+/**
+ * On foot, vehicles are not obstacles (collision.ts avatarThroughCars; every dynamic body in this world is a vehicle
+ * chassis): the avatar walks through a parked car as through a lamp, and the car's mesh dissolves around the camera.
+ * The flag doubles the groups (AVATAR_GROUPS already drops every chassis pair), so neither alone can let a car back in.
+ */
+const PASS_VEHICLES = SOLIDS | RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC
 /**
  * A ghost (player 1 in a network room) and the network's mirror: only fixed geometry is an obstacle. No vehicle, no
  * other player (kinematic capsules), no sensor. The same flags on both sides, so the page's move and the server's
@@ -84,8 +88,8 @@ export class Avatar {
     this.controller.enableAutostep(0.35, 0.2, false)
     this.controller.enableSnapToGround(0.4)
     this.controller.setMaxSlopeClimbAngle(0.8)
-    // The player can shove a parked car a little; cars cannot shove the player through walls.
-    this.controller.setApplyImpulsesToDynamicBodies(true)
+    // The avatar meets no dynamic body (every one is a car it walks through), so it has no impulse to apply to one.
+    this.controller.setApplyImpulsesToDynamicBodies(false)
     this.person = { body: this.body, collider: this.collider, radius: RADIUS, halfHeight: HALF_HEIGHT }
     if (this.mirror) world.propagateModifiedBodyPositionsToColliders()
   }
@@ -111,9 +115,8 @@ export class Avatar {
     want.z = vz * dt + this.nudgeZ
     this.nudgeX = 0
     this.nudgeZ = 0
-    // Shielded (a sensor): cars pass through, so they must not block, trap or be shoved by the avatar. A ghost meets
-    // only fixed geometry.
-    const flags = this.ghost ? GHOST : this.collider.isSensor() ? PASS_VEHICLES : SOLIDS
+    // Cars never block, trap or are shoved by the avatar, shielded or not. A ghost meets only fixed geometry.
+    const flags = this.ghost ? GHOST : PASS_VEHICLES
     this.controller.computeColliderMovement(this.collider, want, flags, AVATAR_GROUPS)
     this.grounded = this.controller.computedGrounded()
     const d = this.controller.computedMovement(this.moved)

@@ -7,7 +7,9 @@
  * machine is wired to a few pedestrians near the operator (03_Spawn_Agents/ragdoll.ts over ragdollRig.ts, run by
  * 07_Execute_Actions/ragdollRealm.ts) and a vehicle is never a cause of it; there is no combat; street furniture is
  * sensors (the ghost-mode law, physics.ts); and people and cars meet only through the Sanctuary (sanctuary.ts), which
- * flips a person — an avatar's capsule or a rig's segment — to a sensor before a car can reach them. It also holds
+ * flips a person — an avatar's capsule or a rig's segment — to a sensor before a car can reach them; and on foot the
+ * avatar walks through a car as through a lamp (the ghost-mode law: the capsule's groups drop every chassis pair, so
+ * a parked car is passed, not pushed, and the mesh dissolves as the camera enters it). It also holds
  * the realm's group bit table and the packed interaction groups the fleet gives its chassis colliders and its wheel
  * rays (vehicles.ts) and the avatar gives its capsule (player.ts). It is pure — no Rapier import — so it runs in
  * Node without WASM and the page may import it; collision.test.ts is the structural guard that keeps the ragdoll's
@@ -34,6 +36,13 @@ export const COLLISION = Object.freeze({
   furniture: 'sensor',
   /** People and cars meet only through the Sanctuary's Solid -> Sensor flip and its nudge. */
   peopleAndCars: 'sanctuary',
+  /**
+   * The avatar on foot passes through every car, parked or rolling, as through a lamp: its capsule and a chassis never
+   * pair (AVATAR_GROUPS filters `vehicle` out), so there is no impulse either way, nothing to shove and nothing to be
+   * shoved by; the car's mesh dissolves around the camera instead (07_Execute_Actions/dissolve.ts). The First Law is
+   * untouched: the bouncer still brakes every car for the avatar in its corridor, and the Sanctuary still shields.
+   */
+  avatarThroughCars: true,
   /**
    * No rail vehicle runs on the street plane: no surface tram, no level crossing. Trains ride the elevated loop
    * (06_Make_Decisions/tracks.ts TRACKS.train.deck, 9 m), timetabled and never a vehicle a person can meet, and the
@@ -69,7 +78,8 @@ export function interactionGroups(membership: number, filter: number): number {
 /**
  * A chassis is a member of `vehicle` and filters `vehicle` out: chassis vs chassis has no common bit in either
  * direction, so the broad phase never pairs them (no contact, no impulse). Against anything with default groups
- * (ground, buildings, the avatar) both tests pass, so a car is as solid as ever to the world and to people.
+ * (ground, buildings) both tests pass, so a car is as solid as ever to the world; the avatar's capsule filters
+ * `vehicle` out (AVATAR_GROUPS) and walks through it.
  */
 export const VEHICLE_CHASSIS_GROUPS = interactionGroups(GROUP.vehicle, ALL_GROUPS & ~GROUP.vehicle)
 
@@ -81,13 +91,14 @@ export const VEHICLE_CHASSIS_GROUPS = interactionGroups(GROUP.vehicle, ALL_GROUP
 export const WHEEL_RAY_GROUPS = interactionGroups(GROUP.query, ALL_GROUPS & ~GROUP.vehicle)
 
 /**
- * An avatar's capsule is a member of everything and filters `ragdoll` out: a rig segment (membership `ragdoll`) and
- * the avatar have no common bit in that direction, so the broad phase never pairs them and the ghost-mode law holds
- * for a promoted person too (the avatar walks through them, nobody is shoved). The character controller is given the
- * same groups for its own sweeps (player.ts). Against cars, the ground and the buildings the avatar is as solid as
- * ever; a rig meets cars and the world exactly as it did, with the Sanctuary between it and every car.
+ * An avatar's capsule is a member of everything and filters `ragdoll` and `vehicle` out: a rig segment (membership
+ * `ragdoll`) or a chassis (membership `vehicle`) and the avatar have no common bit in that direction, so the broad
+ * phase never pairs them and the ghost-mode law holds for a promoted person and for a car alike (the avatar walks
+ * through them, nobody and nothing is shoved). The character controller is given the same groups for its own sweeps
+ * (player.ts), so a parked car is not an obstacle to it either. Against the ground and the buildings the avatar is as
+ * solid as ever; a rig meets cars and the world exactly as it did, with the Sanctuary between it and every car.
  */
-export const AVATAR_GROUPS = interactionGroups(ALL_GROUPS, ALL_GROUPS & ~GROUP.ragdoll)
+export const AVATAR_GROUPS = interactionGroups(ALL_GROUPS, ALL_GROUPS & ~(GROUP.ragdoll | GROUP.vehicle))
 
 /**
  * A rig segment is a member of `ragdoll` and filters `ragdoll`, `vehicle` and `query` out: segments never meet each

@@ -18,8 +18,8 @@
  */
 import type { MeshStandardNodeMaterial, Node, NodeBuilder } from 'three/webgpu'
 import {
-  Fn, bool, clamp, dot, exp, float, floor, fract, hash, length, materialColor, max, mix, mod, positionLocal, positionPrevious,
-  screenCoordinate, screenSize, select, smoothstep, step, time, vec2, vec3,
+  Fn, bool, cameraPosition, clamp, dot, exp, float, floor, fract, hash, length, materialColor, max, mix, mod, positionLocal,
+  positionPrevious, positionWorld, screenCoordinate, screenSize, select, smoothstep, step, time, vec2, vec3,
 } from 'three/tsl'
 
 /** The look of the falling code a mesh becomes. */
@@ -45,6 +45,12 @@ export const CODE_DISSOLVE = Object.freeze({
   keyRows: 4096,
   /** The amount past which the mesh casts no shadow (the shadow pass cannot see the screen's cells: it fades as a whole). */
   shadowGone: 0.5,
+  /**
+   * The clear core around the eye on a dissolving mesh, m: fragments nearer than coreInner to the camera are wholly gone,
+   * the column pattern is whole again at coreOuter and beyond. Only a mesh whose amount is above `idle` has a core.
+   */
+  coreInner: 0.85,
+  coreOuter: 2.2,
 })
 
 type V2 = Node<'vec2'>
@@ -125,12 +131,24 @@ function fallingCells(amount: F1): { alive: Node<'bool'>; ink: F1 } {
 }
 
 /**
+ * The amount this fragment dissolves by: the instance's `amount`, raised to 1 in the clear core around the camera
+ * (CODE_DISSOLVE.coreInner) and eased back to the instance's by coreOuter. An idle instance keeps its amount everywhere:
+ * the core belongs to the mesh being passed through, never to the frame.
+ */
+export function localAmount(amount: F1): F1 {
+  const core = float(1).sub(smoothstep(CODE_DISSOLVE.coreInner, CODE_DISSOLVE.coreOuter, length(positionWorld.sub(cameraPosition))))
+  const active = step(CODE_DISSOLVE.idle, amount)
+  return max(amount, core.mul(active))
+}
+
+/**
  * Makes `material` dissolve by `amount` (a float node: 0 solid, 1 gone; per instance, from an instanced attribute or
  * a storage element) into falling green binary code of `colour` (linear RGB).
  * - positionNode: at an amount of `fold` or more every vertex sits on `origin` (zero-area triangles, nothing
  *   rasterised: the crowd's own-body pattern); an existing positionNode is kept under it, and a pass that writes
  *   motion vectors folds positionPrevious the same way, so the velocity buffer sees no motion from the fold.
- * - maskNode: the existing mask AND the cell's survival (an idle amount keeps every cell). The cells are the screen's,
+ * - maskNode: the existing mask AND the cell's survival at the fragment's local amount (localAmount: the instance's,
+ *   raised to 1 in the clear core around the eye; an idle amount keeps every cell). The cells are the screen's,
  *   which the shadow pass cannot share (its screen is the shadow map: other cells, sliding over the ground), so
  *   maskShadowNode is the existing shadow mask (or mask) AND an amount under CODE_DISSOLVE.shadowGone: the mesh's
  *   shadow stays whole and then goes, with no crawling pattern.
@@ -148,7 +166,8 @@ export function applyCodeDissolve(material: MeshStandardNodeMaterial, amount: F1
     return folded
   })()
 
-  const { alive, ink } = fallingCells(amount)
+  const local = localAmount(amount)
+  const { alive, ink } = fallingCells(local)
   const idle = amount.lessThan(CODE_DISSOLVE.idle)
   const survives = idle.or(alive)
   const existingMask = material.maskNode as Node<'bool'> | null
@@ -158,8 +177,8 @@ export function applyCodeDissolve(material: MeshStandardNodeMaterial, amount: F1
   material.maskShadowNode = existingShadowMask ? bool(existingShadowMask).and(casts) : casts
 
   const base = vec3((material.colorNode ?? materialColor) as Node<'vec3'>)
-  material.colorNode = base.mul(float(1).sub(amount))
-  const glow = vec3(...colour).mul(ink).mul(amount).mul(CODE_DISSOLVE.glow)
+  material.colorNode = base.mul(float(1).sub(local))
+  const glow = vec3(...colour).mul(ink).mul(local).mul(CODE_DISSOLVE.glow)
   const existingEmissive = material.emissiveNode as Node<'vec3'> | null
   material.emissiveNode = existingEmissive ? vec3(existingEmissive).add(glow) : glow
   return material

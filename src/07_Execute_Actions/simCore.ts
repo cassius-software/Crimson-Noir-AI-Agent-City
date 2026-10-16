@@ -252,6 +252,7 @@ export class SimCore {
       count: n,
       agents: crowd ? crowd.agentCount : 0,
       suv: this.#fleet.vehicles.map((v) => v.suv),
+      kind: this.#fleet.vehicles.map((v) => v.kind),
       paint: [...this.#fleet.paint],
       person: { radius: this.#avatars[0].person.radius, halfHeight: this.#avatars[0].person.halfHeight },
       debug: this.#debug,
@@ -970,7 +971,7 @@ export class SimCore {
     this.#avatars[k].setEnabled(false)
     const s = state ?? fleet.bodyState(v)
     if (this.#room && k === 0) fleet.rebuild(v, s)
-    this.#events.push({ e: 'entered', player: k, index: v.index, heading: fleet.heading(v), suv: v.suv, state: s, ...(byRoom && { room: true }) })
+    this.#events.push({ e: 'entered', player: k, index: v.index, heading: fleet.heading(v), suv: v.suv, kind: v.kind, state: s, ...(byRoom && { room: true }) })
   }
 
   /**

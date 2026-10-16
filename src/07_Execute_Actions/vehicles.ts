@@ -61,6 +61,9 @@ export interface Vehicle {
   readonly index: number
   driver: DriverLike
   mode: DriveMode
+  /** Index into car.ts VEHICLE_KINDS: the silhouette the page draws and the HUD's name for it. */
+  kind: number
+  /** The heavy chassis class (the SUV's box, mass, power and drag): VEHICLE_KINDS[kind].heavy. */
   suv: boolean
   /** kg */
   mass: number
@@ -264,8 +267,8 @@ export class Fleet {
 
     const paint: number[] = []
     for (let i = 0; i < count; i++) {
-      const { pose, suv, driver } = plan.cars[i]
-      const vehicle = this.#create(i, pose.x, pose.z, pose.heading, suv, driver)
+      const { pose, kind, suv, driver } = plan.cars[i]
+      const vehicle = this.#create(i, pose.x, pose.z, pose.heading, kind, suv, driver)
       paint.push(plan.cars[i].paint)
       this.vehicles.push(vehicle)
       this.#commands.push({ throttle: 0, brake: 0, steer: 0 })
@@ -278,13 +281,13 @@ export class Fleet {
     Object.freeze(this)
   }
 
-  #create(index: number, x: number, z: number, heading: number, suv: boolean, driver: DriverLike): Vehicle {
+  #create(index: number, x: number, z: number, heading: number, kind: number, suv: boolean, driver: DriverLike): Vehicle {
     const rig = buildCarRig(this.#physics.world, x, z, heading, suv)
     const { mass } = rig
     this.#rigs[index] = rig
     this.#byCollider.set(rig.collider.handle, index)
     const vehicle: Vehicle = {
-      index, driver, mode: 'ai', suv, mass, steer: 0,
+      index, driver, mode: 'ai', kind, suv, mass, steer: 0,
       lastCommand: { throttle: 0, brake: 0, steer: 0 }, handbrake: false,
     }
     return Object.defineProperty(vehicle, 'index', { writable: false, configurable: false })

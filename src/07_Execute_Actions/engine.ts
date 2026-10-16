@@ -22,7 +22,7 @@
  * camera of their own, an avatar of their own in the physics realm (SimInit.spawns, StepRequest.players, the realm's
  * avatars and drivings), a seat at the input's table, a viewport of the one canvas and a soundscape of their own in
  * head space over one shared audio context; view 0 is player 1's and is this engine's own camera, head and soundscape,
- * so with one player nothing of this changes. The post chain, the ghost view, the contact wipe, the dissolve scans,
+ * so with one player nothing of this changes. The post chain, the ghost view, the passage pulse, the dissolve scans,
  * the ping, the captions, the haptics and the HUD stay player 1's, and the post chain is off while the screen is split.
  * A network session (10_Network, opt-in) reaches the engine only through the NetHost seam: App hands in the page's
  * client the way it hands in the mind, the engine holds no network code, and each frame it offers the client player
@@ -60,7 +60,7 @@ import { FrameClock, type GlyphFamily, type KernelStats, type NetReport, type Ne
 import { MemorySink, Recorder, fileSink, markdownFor, type RecorderSink, type RecorderSource } from '../05_Observe_Environment/recorder.ts'
 import type { AgentTelemetry } from '../05_Observe_Environment/agv.ts'
 import { Governor, defaultAgents, profileDevice, readDeviceHints, tierRange, type QualityKnobs } from '../05_Observe_Environment/governor.ts'
-import { CAR_TUNE_RANGE, chassisBox, clampTuning, type CarTuning } from './car.ts'
+import { CAR_TUNE_RANGE, chassisBox, clampTuning, kindOf, type CarTuning } from './car.ts'
 import { FleetView } from './fleetView.ts'
 import { RigView } from './rigView.ts'
 import { NetView, type RemotePose } from './netView.ts'
@@ -404,7 +404,7 @@ export class Engine {
   private readonly landmarkAt: Landmark | null
   /** The swarm's short-term memory (08_Swarm/shortTerm.ts): the last few moments between each recruit and the player, this visit only. */
   private readonly moments = new ShortTermMemory()
-  /** Ghost-mode collision's transition (contact.ts): the city's poles, the wipe's pulse, and the nearest pedestrian's
+  /** Ghost-mode collision's passages (contact.ts): the city's poles, the passage pulse, and the nearest pedestrian's
    *  gap to the user's body as of the newest crowd frame (on foot, and at the wheel). */
   private readonly poles: PoleIndex
   private readonly contactPulse = new ContactPulse()
@@ -712,12 +712,12 @@ export class Engine {
     const view0 = new CrowdView(options.agents, world.matrixMode.globalState)
     const sim = await simBoot
     if (sim.meta.agents !== options.agents) throw new Error(`the physics worker simulates ${sim.meta.agents} pedestrians, the page draws ${options.agents}`)
-    const view = new FleetView(sim.meta.suv, sim.meta.paint, world.night, world.matrixMode.globalState)
+    const view = new FleetView(sim.meta.kind, sim.meta.paint, world.night, world.matrixMode.globalState)
     view.sync(sim.state.poses)
     // The rigs of the promoted pedestrians (the realm's rig stream; none with the ragdoll off or in a region).
     const rigView = new RigView(sim.meta.rigSlots, world.matrixMode.globalState)
     rigView.sync(sim.state.rigs)
-    world.scene.add(...view0.meshes, view.bodies, view.wheels, ...rigView.meshes)
+    world.scene.add(...view0.meshes, ...view.bodies, view.wheels, ...rigView.meshes)
     // The network ghosts (netView.ts): two hidden instanced meshes until a session's poses arrive, compiled with the rest.
     const netView = new NetView()
     world.scene.add(netView.people, netView.cars)
@@ -1290,7 +1290,7 @@ export class Engine {
         this.crowdCopiedAt = now
       }
     }
-    // The contact wipe's view of the crowd: who is nearest the user's body in this frame (and, for the code dissolve,
+    // The passage pulse's view of the crowd: who is nearest the user's body in this frame (and, for the code dissolve,
     // whose bodies it is inside).
     if (s.crowdFrame) this.contactScan(s)
     // The promoted pedestrians' rigs: their figures are hidden in the render copy (before the upload re-applies the
@@ -1314,7 +1314,7 @@ export class Engine {
         this.carHeading = ev.heading
         this.input.yaw = yawFacing(ev.heading)
         const g = (a: Parameters<typeof glyph>[0]) => glyph(a, this.glyphs)
-        this.toast(ev.suv ? 'SUV' : 'Sedan', `${g('throttle')} / ${g('brake')} throttle and brake · ${g('handbrake')} handbrake · ${g('interact')} to exit`)
+        this.toast(kindOf(ev.kind).name, `${g('throttle')} / ${g('brake')} throttle and brake · ${g('handbrake')} handbrake · ${g('interact')} to exit`)
       } else if (ev.e === 'exited') {
         this.pulseUntil = 0
         this.toast('Vehicle parked', 'Hazards on, doors locked.')
@@ -1536,7 +1536,7 @@ export class Engine {
       const h = p[o + POSE.heading]
       input.yaw = carriedYaw(input.yaw, this.carHeading, h)
       this.carHeading = h
-      this.rig.inVehicle(cam, t, r, this.sim.meta.suv[driving], input.yaw, input.pitch)
+      this.rig.inVehicle(cam, t, r, this.sim.meta.kind[driving], input.yaw, input.pitch)
     } else {
       // The body faces where the head looks (forward (sin h, cos h) = the view's horizontal forward).
       this.avatarHeading = input.yaw + Math.PI
@@ -1553,7 +1553,7 @@ export class Engine {
     // are dropped here, every frame, so none waits to be taken.
     for (let k = 1; k < this.views.length; k++) this.input.intent(this.views[k].seat).take('ping')
 
-    // Ghost-mode collision: what the user's body passes through this frame shapes the contact wipe (drawn frames read it).
+    // Ghost-mode collision: what the user's body passes through this frame shapes the passage pulse (telemetry).
     // On the wall clock (the pulse bounds a step itself), not the simulation's capped step: at a low frame rate the
     // wipe must not outlast its passage.
     this.contactPulse.update(this.contactNow(st), realDt / 1000)
@@ -1605,13 +1605,11 @@ export class Engine {
     updateVolumetrics(this.volumetrics, cam, this.sun, this.world.sun.color)
     this.volumetrics.strength.value = this.quality.live.volumetrics ? this.volumetricsScale : 0
 
-    // The contact wipe lives in the post chain like ghost view: while it plays the chain runs (unless ?post=0).
-    const wipe = this.contactPulse.value
-    const post = this.quality.live.post || (wipe > 0 && this.options.post)
+    // A passage (contact.ts) draws nothing over the frame: the mesh passed through dissolves on its own (flushDissolve
+    // below), so the post chain runs on the quality tier alone.
+    const post = this.quality.live.post
     if (this.cinema) this.expose(this.cinema, nowMs, st.driving, post)
     this.ghost.update(st.poses, (nowMs - this.lastDrawnMs) / 1000, nowMs / 1000)
-    this.ghost.contact.value = wipe
-    this.ghost.contactKind.value = this.contactPulse.kind
     this.lastDrawnMs = nowMs
     // The code dissolve's amounts, to the meshes that read them, before the frame that reads them.
     this.flushDissolve()
@@ -1666,7 +1664,7 @@ export class Engine {
       const h = p[o + POSE.heading]
       seat.yaw = carriedYaw(seat.yaw, v.carHeading, h)
       v.carHeading = h
-      v.rig.inVehicle(v.camera, t, r, this.sim.meta.suv[d], seat.yaw, seat.pitch)
+      v.rig.inVehicle(v.camera, t, r, this.sim.meta.kind[d], seat.yaw, seat.pitch)
     } else {
       const av = st.avatars[k] ?? st.avatar
       v.rig.onFoot(v.camera, av.x, av.feetY, av.z, seat.yaw, seat.pitch, dt)
@@ -1755,7 +1753,8 @@ export class Engine {
     if (set.cars.dirty) {
       copyDirty(set.cars, fleet.bodies.array as Float32Array)
       copyDirty(set.cars, fleet.wheels.array as Float32Array, 4)
-      fleet.bodies.needsUpdate = true
+      // The body amounts are staged by vehicle index; the view scatters them to each silhouette's own attribute.
+      this.view.flushDissolve()
       fleet.wheels.needsUpdate = true
       set.cars.clean()
     }
@@ -1985,7 +1984,7 @@ export class Engine {
         ghost: this.ghost.on,
         matrix: this.matrixOn,
         rendering: this.rendering,
-        contact: { wipe: this.contactPulse.value, kind: this.contactPulse.kind, count: this.contactPulse.count },
+        contact: { passage: this.contactPulse.value, kind: this.contactPulse.kind, count: this.contactPulse.count },
         dissolve: { active: this.dissolve.active, count: this.dissolve.count },
         ...(pings && { pings }),
         ...(this.netClient && { net: { state: this.netClient.status, peers: this.netPeers.length, dropped: this.netDropped } }),

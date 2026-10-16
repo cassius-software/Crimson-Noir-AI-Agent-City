@@ -41,7 +41,7 @@ export interface CinemaPost {
 }
 
 /** Ghost view's layer: the collider proxies' scene and the composite's two uniforms (ghost.ts). */
-export type GhostLayer = Pick<GhostView, 'scene' | 'strength' | 'seconds' | 'contact' | 'contactKind'>
+export type GhostLayer = Pick<GhostView, 'scene' | 'strength' | 'seconds'>
 
 /** Where the velocity buffer needs help: instanced meshes whose instances world.ts re-orders at runtime. */
 export interface CinemaScene { resorted: readonly Mesh[] }

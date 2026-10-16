@@ -6,16 +6,21 @@
  * 10–14 m/s meeting a standing avatar turns the avatar into a sensor before any contact and passes with its
  * velocity untouched (a control run with the avatar left solid shows the impact); the avatar is nudged out
  * of the footprint and never into a wall; it is solid again once the car has gone, after one flip per pass
- * (on a curve and between two cars too); and while shielded the character controller still slides along
- * walls and can never be trapped inside a car.
+ * (on a curve and between two cars too); while shielded the character controller still slides along
+ * walls and can never be trapped inside a car; a car pulling away shields a person who comes within 0.3 m of it
+ * (they can run after it), and nobody farther off, and nudges nobody; a rig's foot is measured where the Ring-0 audit
+ * sees it; and a standing car shields nobody: with the realm's chassis groups the avatar walks through a parked car
+ * untouched (collision.ts avatarThroughCars).
  * What breaks if it is removed? A physics or tuning change could let a car run into a person unnoticed.
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { Physics, RAPIER } from './physics.ts'
 import { Avatar } from './player.ts'
 import { Sanctuary, type PersonBody, type VehicleFootprint } from './sanctuary.ts'
 import type { Box } from '../01_Initialize_World/city.ts'
+import { VEHICLE_CHASSIS_GROUPS } from '../02_Define_The_Rules/collision.ts'
 
 const H = 1 / 60
 /** Fleet's sedan footprint and the avatar capsule. */
@@ -102,6 +107,11 @@ interface Options {
   shield: boolean
   car?: { x: number; z: number; heading: number }
   walls?: Box[]
+  /**
+   * Collision groups for the car's chassis. Unset, the test car keeps Rapier's default (it meets the avatar), so the
+   * shield is proven by contrast with a control run; the realm's VEHICLE_CHASSIS_GROUPS never pair with the avatar.
+   */
+  groups?: number
 }
 
 interface Log {
@@ -121,6 +131,7 @@ async function rig(o: Options) {
   const world = physics.world
   const start = o.car ?? { x: -20, z: 0, heading: EAST }
   const car = (o.kind === 'sedan' ? sedan : box)(world, start.x, start.z, start.heading)
+  if (o.groups !== undefined) car.collider.setCollisionGroups(o.groups)
   const avatar = o.person ? new Avatar(physics, o.person.x, o.person.z) : null
   const sanctuary = new Sanctuary(world)
   if (avatar && o.shield) sanctuary.register(avatar.person)
@@ -334,32 +345,48 @@ test('a shielded avatar is never trapped inside a car that stops on top of it', 
   assert.equal(r.log.contacts, 0)
   const now = r.car.body.translation()
   assert.ok(Math.hypot(now.x - parked.x, now.z - parked.z) < 1e-6, 'the stopped car was pushed')
-  // Solid again, the avatar walks into the stopped car and is blocked by it like any obstacle.
+  // Solid again, the avatar walks back into the stopped car, now with the realm's chassis groups (collision.ts
+  // avatarThroughCars; this rig's default groups would let the capsule shove the box): into it with no shield, no
+  // contact, and the car unmoved.
+  r.car.collider.setCollisionGroups(VEHICLE_CHASSIS_GROUPS)
   const side = Math.sign(out.w)
   for (let i = 0; i < 60; i++) r.step({ x: 0, z: -side * 2 })
-  assert.ok(Math.abs(local(r.car, r.avatar!.x, r.avatar!.z).w) >= HALF_WIDTH - 0.04 + RADIUS)
+  assert.ok(Math.abs(local(r.car, r.avatar!.x, r.avatar!.z).w) < HALF_WIDTH, 'walked into the stopped car')
   assert.equal(r.sanctuary.flips, 1)
+  assert.equal(r.log.contacts, 0)
+  const after = r.car.body.translation()
+  assert.ok(Math.hypot(after.x - parked.x, after.z - parked.z) < 1e-6, 'the stopped car was pushed')
 })
 
-test('a car respawned on top of a standing person shields them although it is not moving', async () => {
-  // Fleet.recover() can set a car down anywhere; Rapier would otherwise depenetrate it off the kinematic avatar.
-  const r = await rig({ kind: 'box', person: { x: 0, z: 0 }, shield: true, car: { x: 0.5, z: 0.3, heading: EAST } })
+test('a car respawned on top of a standing person neither shields nor moves them: a standing chassis and the avatar never pair', async () => {
+  // Fleet.recover() can set a car down anywhere. With the realm's chassis groups there is no contact to depenetrate,
+  // so the person stays where they stand, solid, inside the car (which dissolves around the camera on the page).
+  const r = await rig({ kind: 'box', person: { x: 0, z: 0 }, shield: true, car: { x: 0.5, z: 0.3, heading: EAST }, groups: VEHICLE_CHASSIS_GROUPS })
   for (let i = 0; i < 90; i++) r.step()
-  assert.equal(r.log.firstSensor, 0, 'shielded in the very first guard()')
+  assert.equal(r.sanctuary.flips, 0, 'a standing car shields nobody')
   assert.equal(r.log.contacts, 0)
   const t = r.car.body.translation()
   assert.ok(Math.hypot(t.x - 0.5, t.z - 0.3) < 1e-6, 'the car was shoved')
-  assert.ok(Math.abs(local(r.car, r.avatar!.x, r.avatar!.z).w) >= HALF_WIDTH + RADIUS + MARGIN)
+  assert.ok(Math.hypot(r.avatar!.x, r.avatar!.z) < 1e-3, `the person was moved: (${r.avatar!.x.toFixed(3)}, ${r.avatar!.z.toFixed(3)})`)
   assert.equal(r.avatar!.collider.isSensor(), false)
+  // The moment the car moves with them inside, the sweep shields them and the nudge carries them clear.
+  r.car.body.setLinvel({ x: 3, y: 0, z: 0 }, true)
+  for (let i = 0; i < 90; i++) r.step()
+  assert.equal(r.sanctuary.flips, 1)
+  assert.equal(r.log.contacts, 0)
+  assert.ok(Math.abs(local(r.car, r.avatar!.x, r.avatar!.z).w) >= HALF_WIDTH + RADIUS + MARGIN || Math.abs(local(r.car, r.avatar!.x, r.avatar!.z).u) > HALF_LENGTH, 'carried clear')
 })
 
-test('a parked car stays a solid obstacle: walking into it never shields the avatar', async () => {
-  const r = await rig({ kind: 'sedan', person: { x: 0, z: 3 }, shield: true, car: { x: 0, z: 0, heading: EAST } })
+test('a parked car: the avatar walks through it, never shielded, never nudged (collision.ts avatarThroughCars)', async () => {
+  const r = await rig({ kind: 'sedan', person: { x: 0, z: 3 }, shield: true, car: { x: 0, z: 0, heading: EAST }, groups: VEHICLE_CHASSIS_GROUPS })
   for (let i = 0; i < 60; i++) r.step()
-  for (let i = 0; i < 120; i++) r.step({ x: 0, z: -2 })
+  for (let i = 0; i < 180; i++) r.step({ x: 0, z: -2 })
   assert.equal(r.sanctuary.flips, 0)
-  const { w } = local(r.car, r.avatar!.x, r.avatar!.z)
-  assert.ok(Math.abs(w) >= HALF_WIDTH - 0.04 + RADIUS, `walked into the parked car: w = ${w.toFixed(3)}`)
+  assert.equal(r.log.contacts, 0)
+  const { u, w } = local(r.car, r.avatar!.x, r.avatar!.z)
+  assert.ok(w < -(HALF_WIDTH + RADIUS), `out the far side of the parked car: w = ${w.toFixed(3)}`)
+  assert.ok(Math.abs(u) < 0.05 && Math.abs(r.avatar!.x) < 0.05, `in a straight line: u = ${u.toFixed(3)}`)
+  assert.ok(Math.abs(r.avatar!.z - (3 - 2 * 3)) < 0.3, `at walking pace throughout: z = ${r.avatar!.z.toFixed(2)}`)
 })
 
 test('a car pulling away from a person just behind it, or passing in the next lane, shields nobody', async () => {
@@ -371,6 +398,66 @@ test('a car pulling away from a person just behind it, or passing in the next la
   lane.launch(14)
   for (let i = 0; i < 90; i++) lane.step()
   assert.equal(lane.sanctuary.flips, 0)
+})
+
+test('a car pulling away shields a person once their centre is within 0.3 m of its footprint, at a face or a corner, and nobody farther off', async () => {
+  // A footprint pulling away cannot reach anyone, so its sweep never fires; but people on foot walk into cars and can
+  // run after one (sanctuary.ts CLOSE). A standing car shields nobody at any distance.
+  const physics = await Physics.create([], { lamps: [], trees: [], signals: [] })
+  const world = physics.world
+  const d = (m: number) => m / Math.SQRT2
+  const cases: readonly (readonly [string, number, number, boolean])[] = [
+    ['0.29 m behind', -(HALF_LENGTH + 0.29), 0, true],
+    ['0.31 m behind', -(HALF_LENGTH + 0.31), 0, false],
+    ['0.29 m off the rear-left corner', -(HALF_LENGTH + d(0.29)), -(HALF_WIDTH + d(0.29)), true],
+    ['0.31 m off the rear-left corner', -(HALF_LENGTH + d(0.31)), -(HALF_WIDTH + d(0.31)), false],
+    ['inside, at the back', -(HALF_LENGTH - 0.2), 0, true],
+  ]
+  for (const speed of [0.6, 0]) {
+    for (const [where, x, z, near] of cases) {
+      const sanctuary = new Sanctuary(world)
+      const body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(x, 0.92, z))
+      sanctuary.register({ body, collider: world.createCollider(RAPIER.ColliderDesc.capsule(0.6, RADIUS), body), radius: RADIUS, halfHeight: 0.6 })
+      sanctuary.guard([{ ...footprint(EAST), vx: speed, speed }], H)
+      assert.equal(sanctuary.isSensor(0), near && speed > 0, `${where}, the car at ${speed} m/s`)
+      world.removeRigidBody(body)
+    }
+  }
+})
+
+test('a person standing just behind a car that pulls away is shielded but never nudged: the car clears them by itself', async () => {
+  for (const behind of [0.05, 0.25, 0.29]) {
+    const r = await rig({ kind: 'box', person: { x: 0, z: 0 }, shield: true, car: { x: HALF_LENGTH + behind, z: 0, heading: EAST }, groups: VEHICLE_CHASSIS_GROUPS })
+    for (let i = 0; i < 10; i++) r.step()
+    r.launch(3)
+    for (let i = 0; i < 90; i++) r.step()
+    assert.equal(r.sanctuary.flips, 1, `${behind} m behind`)
+    assert.ok(Math.hypot(r.avatar!.x, r.avatar!.z) < 1e-3, `${behind} m behind: moved to (${r.avatar!.x.toFixed(3)}, ${r.avatar!.z.toFixed(3)})`)
+    assert.equal(r.avatar!.collider.isSensor(), false, `${behind} m behind: solid again once the car has gone`)
+  }
+})
+
+test('a shape off its body\'s origin (a rig\'s foot) is measured where the Ring-0 audit sees it: the offset carried by the body', async () => {
+  const physics = await Physics.create([], { lamps: [], trees: [], signals: [] })
+  const world = physics.world
+  const quarter = { x: 0, y: Math.SQRT1_2, z: 0, w: Math.SQRT1_2 }
+  // The origin 0.45 m behind a car pulling away (outside CLOSE), the shape 0.25 m nearer it: 0.2 m, inside.
+  const cases: readonly (readonly [string, RAPIER.Rotation, readonly [number, number, number] | undefined, boolean])[] = [
+    ['no offset', { x: 0, y: 0, z: 0, w: 1 }, undefined, false],
+    ['offset along +x', { x: 0, y: 0, z: 0, w: 1 }, [0.25, 0, 0], true],
+    ['offset along +z, the body turned a quarter about +y (z to x)', quarter, [0, 0, 0.25], true],
+    ['offset along −x', { x: 0, y: 0, z: 0, w: 1 }, [-0.25, 0, 0], false],
+  ]
+  // ragdollRealm.ts hands every foot its offset.
+  assert.match(readFileSync(new URL('./ragdollRealm.ts', import.meta.url), 'utf8'), /offset: spec\.foot \? FOOT\.offset : undefined/)
+  for (const [where, rotation, offset, near] of cases) {
+    const sanctuary = new Sanctuary(world)
+    const body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(-(HALF_LENGTH + 0.45), 0.92, 0).setRotation(rotation))
+    sanctuary.register({ body, collider: world.createCollider(RAPIER.ColliderDesc.capsule(0.1, 0.08), body), radius: 0.08, halfHeight: 0.1, offset })
+    sanctuary.guard([{ ...footprint(EAST), vx: 0.6, speed: 0.6 }], H)
+    assert.equal(sanctuary.isSensor(0), near, where)
+    world.removeRigidBody(body)
+  }
 })
 
 test('a person out of the world (seated in a car) is never shielded', async () => {
@@ -521,7 +608,10 @@ test('with the real Fleet in the engine order (guard, nudge, move, updateControl
   const baseline = await run(false, false)
   const control = await run(true, false)
   const shielded = await run(true, true)
-  assert.ok(control.contacts > 0 && Math.min(...control.speeds) < 12 - 5, 'control run: the car should run into the solid avatar')
+  // The real fleet's chassis and the avatar's capsule never pair (collision.ts avatarThroughCars), so even the solid,
+  // unshielded avatar is passed with no contact and no change of speed: the Sanctuary is the law's second line here.
+  assert.equal(control.contacts, 0, 'control run: a real chassis never pairs with the avatar, shielded or not')
+  assert.ok(worstChange(control.speeds, baseline.speeds) < 0.01, 'control run: the unshielded avatar changed the car\'s speed')
   assert.equal(shielded.contacts, 0)
   const worst = worstChange(shielded.speeds, baseline.speeds)
   assert.ok(worst < 0.01, `the person changed the car's speed by ${worst.toFixed(4)} m/s`)

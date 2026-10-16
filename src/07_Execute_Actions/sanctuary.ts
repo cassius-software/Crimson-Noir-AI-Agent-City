@@ -8,8 +8,10 @@
  * step; the moment one would reach a person, that person's collider flips from Solid to Sensor in the same
  * call. A sensor takes part in no contact, so the vehicle passes with no impulse on either side. The person
  * is nudged sideways out of the footprint (never through a wall) and turns solid again once every vehicle
- * has kept its distance for a moment. GPU pedestrians are not Rapier bodies (crowd.wgsl nudges them
- * itself); the Rapier people are the players' avatars and, while a pedestrian near the operator is promoted
+ * has kept its distance for a moment. People on foot walk through cars (collision.ts avatarThroughCars), so
+ * a standing vehicle is no reason to shield anyone, and any moving one close by is, whichever way it moves: a
+ * car pulling away cannot reach a person, but a person running after it can reach the car. GPU pedestrians are
+ * not Rapier bodies (crowd.wgsl nudges them itself); the Rapier people are the players' avatars and, while a pedestrian near the operator is promoted
  * to a physical body, each segment of that body, registered as a ward of its own and rebound (rebind) each
  * time its slot is built again.
  * What breaks if it is removed? A car that reaches the avatar runs into an immovable kinematic capsule: the
@@ -17,8 +19,12 @@
  */
 import { RAPIER } from './physics.ts'
 
-/** A person in the Rapier world: an upright capsule (`halfHeight` of the cylinder part, `radius`). */
-export interface PersonBody { body: RAPIER.RigidBody; collider: RAPIER.Collider; radius: number; halfHeight: number }
+/**
+ * A person in the Rapier world: an upright capsule (`halfHeight` of the cylinder part, `radius`). `offset`: where the
+ * shape sits in its body's frame when not at its origin (a rig's foot, off its lower leg), so the guard measures it
+ * where the Ring-0 audit does.
+ */
+export interface PersonBody { body: RAPIER.RigidBody; collider: RAPIER.Collider; radius: number; halfHeight: number; offset?: readonly [number, number, number] }
 
 /**
  * A vehicle as the sanctuary sees it: a rectangle in (x, z); forward is (sin heading, cos heading). The Fleet
@@ -51,7 +57,7 @@ const LOOKAHEAD_STEPS = 2
  * the lookahead (a 5.2 m/s run moves 0.17 m in 2/60 s) and Rapier's contact prediction distance.
  */
 const MARGIN = 0.25
-/** m/s. A footprint point slower than this is standing still: a parked car stays a solid obstacle. */
+/** m/s. A footprint point slower than this is standing still: a parked car is no reason to shield. */
 const MOVING = 0.1
 /**
  * m/s. A footprint point opening the gap faster than this is pulling away (or being pushed away by the
@@ -59,11 +65,15 @@ const MOVING = 0.1
  */
 const RECEDING = 0.05
 /**
- * Metres of overlap that only a teleport or a respawn can produce: a character controller stops 0.02 m
- * from the chassis collider, which sits 0.04 m inside the footprint. Overlap this deep shields the person
- * even from a stationary vehicle, so Rapier never depenetrates a car off a person.
+ * Metres from a MOVING vehicle's footprint within which a person's centre is shielded whatever the sweep says of the
+ * step. A footprint pulling away cannot reach a person, but a person on foot walks into cars (02_Define_The_Rules/
+ * collision.ts avatarThroughCars; a rig's segments never pair with a chassis either) and can run into one pulling
+ * away, or stand in one that spins or slides. Ring-0 reads a solid centre within 0.1 m of a moving footprint on both
+ * axes (0.14 m at a corner) as an impact, and a run covers 0.09 m a substep, so a person shielded at 0.3 m never gets
+ * there solid; one standing just behind a car that pulls away, farther than this, is no reason to shield. A standing
+ * vehicle shields nobody for closeness: there is no contact to avoid; the moment it moves, the sweep or this does.
  */
-const DEEP = 0.1
+const CLOSE = 0.3
 /** Extra metres the nudge clears beyond the margin, so the restore check passes with room to spare. */
 const EXIT = 0.05
 /**
@@ -112,6 +122,7 @@ export class Sanctuary {
   private flipCount = 0
   // Scratch, so guard() does not allocate per substep.
   private readonly at = { x: 0, y: 0, z: 0 }
+  private readonly turn = { x: 0, y: 0, z: 0, w: 1 }
   private readonly pos = { x: 0, y: 0, z: 0 }
   private readonly dir = { x: 0, y: 0, z: 0 }
   private readonly upright = { x: 0, y: 0, z: 0, w: 1 }
@@ -193,7 +204,7 @@ export class Sanctuary {
       out.dz = 0
       // A ghost stays a sensor, untouched and never nudged.
       if (ward.ghost) continue
-      const { body, collider, radius } = ward.person
+      const { collider, radius } = ward.person
       if (!collider.isValid()) {
         ward.sensor = false
         continue
@@ -203,7 +214,7 @@ export class Sanctuary {
         this.restore(ward)
         continue
       }
-      const p = body.translation(this.at)
+      const p = this.centre(ward.person)
       let danger = false, occupied = false
       let push: VehicleFootprint | null = null, pushRank = 0, pushGap = Infinity, pushW = 0
       for (let j = 0; j < vehicles.length; j++) {
@@ -223,16 +234,20 @@ export class Sanctuary {
         const qu = Math.max(-v.halfLength, Math.min(v.halfLength, u)), qw = Math.max(-v.halfWidth, Math.min(v.halfWidth, w))
         const qx = qu * fx - qw * fz, qz = qu * fz + qw * fx
         const vx = v.vx + wy * qz, vz = v.vz - wy * qx
-        const speed = Math.hypot(vx, vz)
-        const closing = inside ? speed : (vx * (rx - qx) + vz * (rz - qz)) / reach
-        const moving = speed > MOVING
+        // The Ring-0 audit judges a touch by the chassis centre's velocity toward the person (ring0.ts IMPACT), which
+        // on a turning car can head into the inner flank while that flank's own point swings away: the faster of the
+        // two closes, so the sweep never reads a car as pulling away that the audit reads as driving in.
+        const speed = Math.hypot(vx, vz), centreSpeed = Math.hypot(v.vx, v.vz)
+        const closing = inside ? Math.max(speed, centreSpeed) : Math.max(vx * (rx - qx) + vz * (rz - qz), v.vx * (rx - qx) + v.vz * (rz - qz)) / reach
+        const moving = speed > MOVING || centreSpeed > MOVING
         const receding = moving && closing < -RECEDING
         const approaching = moving && !receding
         const sweeping = approaching && gap <= Math.max(0, closing) * tau + MARGIN
         const passing = approaching && gap <= RELEASE
-        const reaches = sweeping || gap < -DEEP
         const near = gap <= MARGIN
-        if (reaches) danger = true
+        // Shield: a footprint whose sweep reaches the person over the coming step, or a moving one CLOSE to their
+        // centre whichever way it moves.
+        if (sweeping || (moving && reach < CLOSE)) danger = true
         // Any moving vehicle this close holds the shield, even one falling away for the moment: a turning
         // car's flank can pull back from the person just before its rear corner swings back in.
         if (near || (moving && gap <= RELEASE)) occupied = true
@@ -240,8 +255,9 @@ export class Sanctuary {
         // person outranks one that is only near or standing on them (a person is never nudged toward a
         // passing vehicle to clear a parked one), and the vehicle already pushed against keeps its turn
         // within a rank, so a person between two vehicles is not bounced from one to the other. A vehicle
-        // pulling away is not pushed against unless it still overlaps the person.
-        if (passing || reaches || (near && !(receding && gap > 0))) {
+        // pulling away is never pushed against: it clears the person by itself, and one standing just behind it,
+        // shielded for being CLOSE, stays where they stand.
+        if (passing || sweeping || (near && !receding)) {
           const rank = (sweeping || passing ? 4 : 2) + (v.id === ward.sideOf ? 1 : 0)
           if (rank > pushRank || (rank === pushRank && gap < pushGap)) {
             push = v
@@ -265,6 +281,20 @@ export class Sanctuary {
       if (push) this.nudge(ward, push, pushW, p, h, out)
     }
     return this.nudges
+  }
+
+  /** Where the Ring-0 audit sees the person: their body's origin, or the shape's offset carried by the body. Scratch. */
+  private centre(person: PersonBody): RAPIER.Vector {
+    const t = person.body.translation(this.at)
+    const o = person.offset
+    if (!o) return t
+    // o rotated by the body's quaternion: o + w·c + q×c with c = 2·(q×o).
+    const q = person.body.rotation(this.turn)
+    const cx = 2 * (q.y * o[2] - q.z * o[1]), cy = 2 * (q.z * o[0] - q.x * o[2]), cz = 2 * (q.x * o[1] - q.y * o[0])
+    t.x += o[0] + q.w * cx + (q.y * cz - q.z * cy)
+    t.y += o[1] + q.w * cy + (q.z * cx - q.x * cz)
+    t.z += o[2] + q.w * cz + (q.x * cy - q.y * cx)
+    return t
   }
 
   /** True while any registered person is a sensor. */

@@ -153,7 +153,7 @@ test('the view: the crowd\'s body and the fleet\'s car, hidden until poses arriv
   assert.match(create, /const netView = new NetView\(\)\n\s*world\.scene\.add\(netView\.people, netView\.cars\)/)
   before(create, 'world.scene.add(netView.people, netView.cars)', 'compileAsync(', 'compiled with the rest')
   assert.match(read('../03_Spawn_Agents/crowd.ts'), /^export function bodyGeometry\(variant: number, detailed = true\): BufferGeometry \{$/m)
-  assert.match(read('./fleetView.ts'), /^export function carBodyGeometry\(\): ExtrudeGeometry \{$/m)
+  assert.match(read('./fleetView.ts'), /^export function carBodyGeometry\(kind: VehicleKind\['id'\] = 'sedan'\): ExtrudeGeometry \{$/m)
   const view = read('./netView.ts')
   assert.match(view, /import \{ bodyGeometry \} from '\.\.\/03_Spawn_Agents\/crowd\.ts'/)
   assert.match(view, /import \{ carBodyGeometry \} from '\.\/fleetView\.ts'/)

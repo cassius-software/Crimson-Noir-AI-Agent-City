@@ -494,7 +494,8 @@ export class RagdollRealm {
         shape.floating = false
         this.#sanctuary.rebind(shape.ward, shape.person)
       } else {
-        const person: PersonBody = { body, collider, radius: spec.radius, halfHeight: spec.halfHeight }
+        // A foot is a collider off its lower leg's origin: the Sanctuary measures it there, as the audit does (#shapeAt).
+        const person: PersonBody = { body, collider, radius: spec.radius, halfHeight: spec.halfHeight, offset: spec.foot ? FOOT.offset : undefined }
         slot.shapes[j] = { spec, person, ward: this.#sanctuary.register(person), floating: false }
       }
     })

@@ -5,7 +5,7 @@
  * Why does this file exist? Ghost view: the physics world as the physics engine sees it, drawn as falling code over
  * the finished frame.
  * - The collider proxies render into a mask of their own, with the same camera: every building's box, the lamp,
- *   tree and signal poles, every car's chassis box, every pedestrian's contact envelope, and the shapes of every
+ *   tree and signal poles, every car's chassis box, every pedestrian's body envelope, and the shapes of every
  *   promoted pedestrian's rig (rigView.ts; its instance matrices are shared, so they cost nothing more here).
  * - A screen-space pass fills each shape with columns of procedural glyphs, traces its outline, and dims the city
  *   behind it. The glyphs are original: strokes on a small lattice, chosen by a hash; no font and no borrowed
@@ -52,13 +52,6 @@ export const GHOST = Object.freeze({
   peopleRange: 160,
   /** Seconds to fade in or out. */
   fade: 0.25,
-  /**
-   * The contact wipe (contact.ts): the iris of code opens from the centre of the frame to past its corners at full
-   * cover (radius in screen heights), behind a soft front this wide, dimming the city this much.
-   */
-  wipeRadius: 1.4,
-  wipeSoft: 0.18,
-  wipeDim: 0.85,
 })
 
 /** The colour of each kind (display-referred: composited after the output transform). Greens throughout. */
@@ -106,12 +99,6 @@ export interface GhostView {
   /** The composite's inputs: 0..1 how far the view is on (faded), and the rain's clock, s. */
   readonly strength: UniformNode<'float', number>
   readonly seconds: UniformNode<'float', number>
-  /**
-   * The contact wipe, independent of the view: 0..1 how far the iris of code has opened (contact.ts ContactPulse),
-   * and the kind met (GHOST_KIND, for its colour). The page sets both every drawn frame.
-   */
-  readonly contact: UniformNode<'float', number>
-  readonly contactKind: UniformNode<'float', number>
   /** Whether the operator asked for the view (the fade follows). */
   readonly on: boolean
   setOn(on: boolean): void
@@ -167,7 +154,7 @@ export function createGhost(src: GhostSource): GhostView {
   cars.count = src.suv.length
   cars.frustumCulled = false
 
-  // People: every pedestrian's contact envelope, placed on the GPU from the crowd's own buffer (the same one the
+  // People: every pedestrian's body envelope, placed on the GPU from the crowd's own buffer (the same one the
   // crowd is drawn from); beyond peopleRange folded to a point (no triangles), and the player's own body, whose
   // envelope holds the camera, culled like the driven car.
   const pos = storage(src.crowdPos, 'vec4', src.agents).toReadOnly()
@@ -190,11 +177,9 @@ export function createGhost(src: GhostSource): GhostView {
   }
   const strength = uniform(0)
   const seconds = uniform(0)
-  const contact = uniform(0)
-  const contactKind = uniform(0)
   let on = false
   return {
-    scene, strength, seconds, contact, contactKind,
+    scene, strength, seconds,
     get on() { return on },
     setOn(next: boolean) { on = next },
     update(poses: Float32Array, dt: number, now: number) {
@@ -202,7 +187,7 @@ export function createGhost(src: GhostSource): GhostView {
       const step = Number.isFinite(dt) && dt > 0 ? Math.min(1, dt / GHOST.fade) : 1
       strength.value = strength.value < target ? Math.min(target, strength.value + step) : Math.max(target, strength.value - step)
       scene.visible = strength.value > 0
-      // The rain's clock runs whether or not the view shows: the contact wipe falls in the same columns.
+      // The rain's clock runs whether or not the view shows, so the columns are mid-fall when it fades in.
       seconds.value = Number.isFinite(now) ? now : 0
       if (!scene.visible) return
       for (let i = 0; i < src.suv.length; i++) cars.setMatrixAt(i, chassisMatrix(poses, i, src.suv[i], m4))
@@ -261,14 +246,15 @@ const kindColor = (kind: F1): V3 => {
 }
 
 /**
- * The finished frame with ghost view and the contact wipe composited over it (image: display-referred, after FXAA).
- * Both off (strength and contact 0) it is the image, untouched: the whole branch is skipped on two uniforms.
+ * The finished frame with ghost view composited over it (image: display-referred, after FXAA). Off (strength 0) it is
+ * the image, untouched: the whole branch is skipped on one uniform. Nothing else is ever laid over the frame as a
+ * whole: a passage through a lamp, a car or a person shows on that mesh alone (01_Initialize_World/codeDissolve.ts).
  */
-export function ghostComposite(image: Node<'vec4'>, mask: TextureNode, g: Pick<GhostView, 'strength' | 'seconds' | 'contact' | 'contactKind'>): Node<'vec4'> {
+export function ghostComposite(image: Node<'vec4'>, mask: TextureNode, g: Pick<GhostView, 'strength' | 'seconds'>): Node<'vec4'> {
   // Frame and mask are the call's inputs (not captured), so the graph shows both: the finished frame and the pass.
   const composite = Fn(([frame, shapes]: [Node<'vec4'>, TextureNode]) => {
     const out = vec4(frame).toVar()
-    If(g.strength.greaterThan(0).or(g.contact.greaterThan(0)), () => {
+    If(g.strength.greaterThan(0), () => {
       const px = screenCoordinate.xy
       const size = screenSize
       const last = ivec2(size.sub(1))
@@ -301,21 +287,13 @@ export function ghostComposite(image: Node<'vec4'>, mask: TextureNode, g: Pick<G
       const facing = mix(float(0.55), float(1), m.z)
       const glyph = ink.mul(float(0.18).add(trail.mul(0.82)))
       const code = glyph.mul(facing).mul(inside)
-      // The contact wipe: an iris of the same code opening from the centre of the frame (the point of passage), its
-      // front a brighter ring while it moves.
-      const d = length(px.sub(size.mul(0.5)).div(size.y))
-      const radius = g.contact.mul(GHOST.wipeRadius)
-      const wipe = float(1).sub(smoothstep(radius.sub(GHOST.wipeSoft), radius, d)).mul(step(1e-4, g.contact))
-      const front = smoothstep(radius.sub(GHOST.wipeSoft), radius.sub(GHOST.wipeSoft * 0.3), d).mul(wipe).mul(float(1).sub(step(0.999, g.contact)))
       // The city recedes into a dark green; the shapes light up.
       const base = out.rgb
       const lum = dot(base, vec3(0.2126, 0.7152, 0.0722))
       const recede = vec3(0.01, 0.035, 0.02).add(vec3(0.08, 0.2, 0.11).mul(lum))
       const k = g.strength
       const light = kindColor(kind).mul(code.add(edge.mul(0.9))).mul(k)
-      const wash = kindColor(g.contactKind).mul(glyph.mul(1.1).add(front.mul(0.35))).mul(wipe)
-      const dim = max(k.mul(GHOST.dim), wipe.mul(GHOST.wipeDim))
-      out.assign(vec4(mix(base, recede, dim).add(light).add(wash), out.a))
+      out.assign(vec4(mix(base, recede, k.mul(GHOST.dim)).add(light), out.a))
     })
     return out
   })
