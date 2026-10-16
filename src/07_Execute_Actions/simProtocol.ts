@@ -11,6 +11,7 @@
  */
 import type { Box, Furniture } from '../01_Initialize_World/city.ts'
 import type { RegionGround } from './physics.ts'
+import type { StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import type { KernelStats } from '../05_Observe_Environment/telemetry.ts'
 import type { CrowdSimStats } from '../03_Spawn_Agents/crowdSensor.ts'
 import type { CarTuning, DriveMode } from './car.ts'
@@ -127,8 +128,16 @@ export interface SimInit {
    */
   region?: RegionGround | null
   /**
-   * Seat the AI fleet on the fixed track network (06_Make_Decisions/tracks.ts, built in the worker from the seed) and
-   * drive it with track followers; anything but true keeps the random street-hopping drivers.
+   * A region's street window (01_Initialize_World/region/streets.ts): the CITY.blocks × CITY.blocks blocks of a generated
+   * map the crowd walks and the fleet drives. With one, a region has people and traffic like the city: the crowd is
+   * compiled for the window and the cars are seated on its rings (with tracks on). Absent (or null) for the city and
+   * for a surveyed region (hidden crowd, empty fleet).
+   */
+  streets?: StreetGrid | null
+  /**
+   * Seat the AI fleet on the fixed track network (06_Make_Decisions/tracks.ts, built in the worker from the seed, or
+   * the street window's rings in a region with one) and drive it with track followers; anything but true keeps the
+   * random street-hopping drivers.
    */
   tracks?: boolean
   /**

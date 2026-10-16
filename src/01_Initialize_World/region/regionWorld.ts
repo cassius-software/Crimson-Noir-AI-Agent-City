@@ -84,10 +84,12 @@ export function regionPhysics(pack: RegionPack, l: RegionLayout): RegionPhysics 
       }
     }
   }
-  // The lake's shoreline, but not where the region's edge cut it: an edge lying along one side of the box.
+  // The lake's shoreline, but not where the region's edge cut it: an edge lying along one side of the box, and not
+  // where a road crosses it (a bridge: the wall is cut for the road's whole width, carriageway and sidewalks).
   const b = l.bounds
   const alongBox = (p: Pt, q: Pt) => (Math.abs(p[0] - b.x0) < 0.2 && Math.abs(q[0] - b.x0) < 0.2) || (Math.abs(p[0] - b.x1) < 0.2 && Math.abs(q[0] - b.x1) < 0.2) ||
     (Math.abs(p[1] - b.z0) < 0.2 && Math.abs(q[1] - b.z0) < 0.2) || (Math.abs(p[1] - b.z1) < 0.2 && Math.abs(q[1] - b.z1) < 0.2)
+  const bridges = roadCrossings(pack, l)
   for (let i = 0; i < polygonCount(pack.water); i++) {
     if (pack.water.kind[i] !== WATER_KIND.lake) continue
     for (const ring of polygonAt(pack.water, i)) {
@@ -95,7 +97,7 @@ export function regionPhysics(pack: RegionPack, l: RegionLayout): RegionPhysics 
       for (let k = 0; k < r.length; k++) {
         const p = r[k], q = r[(k + 1) % r.length]
         if (alongBox(p, q)) continue
-        w.push(p[0], p[1], q[0], q[1], SHORE_WALL)
+        for (const [a, c] of bridges.cut(p, q)) w.push(a[0], a[1], c[0], c[1], SHORE_WALL)
       }
     }
   }
@@ -103,6 +105,57 @@ export function regionPhysics(pack: RegionPack, l: RegionLayout): RegionPhysics 
   const c: Pt[] = [[b.x0, b.z0], [b.x1, b.z0], [b.x1, b.z1], [b.x0, b.z1]]
   for (let k = 0; k < 4; k++) w.push(c[k][0], c[k][1], c[(k + 1) % 4][0], c[(k + 1) % 4][1], EDGE_WALL)
   return { bounds: b, walls: new Float32Array(w) }
+}
+
+/**
+ * Where roads cross a wall: the pieces of a wall segment left once every road that crosses or touches it has cut a gap
+ * of its own width (regionWorld roadWidth: the carriageway and, where it has them, the sidewalks). A bridge over the
+ * lake is a road across the shoreline; without the gap, a car driving it would hit the shore wall.
+ */
+function roadCrossings(pack: RegionPack, l: RegionLayout): { cut(p: Pt, q: Pt): [Pt, Pt][] } {
+  const roads: { a: Pt; b: Pt; half: number }[] = []
+  for (let i = 0; i < pack.roads.cls.length; i++) {
+    const cls = pack.roads.cls[i]
+    if (cls === ROAD_CLASS.ferry) continue
+    const { carriage, sidewalk } = roadWidth(cls, pack.roads.lanes[i])
+    const half = carriage / 2 + (sidewalk ? SIDEWALK : 0)
+    const pts = shift(l, roadAt(pack, i))
+    for (let k = 0; k + 1 < pts.length; k++) roads.push({ a: pts[k], b: pts[k + 1], half })
+  }
+  return {
+    cut(p, q) {
+      const dx = q[0] - p[0], dz = q[1] - p[1], len = Math.hypot(dx, dz)
+      if (!(len > 1e-6)) return []
+      const gaps: [number, number][] = []
+      for (const { a, b, half } of roads) {
+        // The two segments' crossing, as fractions along each; a road end on the wall (a bridge starting at the shore)
+        // counts, as does a wall end on the road.
+        const ex = b[0] - a[0], ez = b[1] - a[1]
+        const den = dx * ez - dz * ex
+        if (Math.abs(den) < 1e-9) continue
+        const t = ((a[0] - p[0]) * ez - (a[1] - p[1]) * ex) / den
+        const u = ((a[0] - p[0]) * dz - (a[1] - p[1]) * dx) / den
+        const eps = 1e-6
+        if (t < -eps || t > 1 + eps || u < -eps || u > 1 + eps) continue
+        // The gap along the wall: the road's half-width, widened by the crossing's slant.
+        const cos = Math.abs(dx * ez - dz * ex) / (len * Math.hypot(ex, ez))
+        const reach = half / Math.max(cos, 0.2) / len
+        gaps.push([t - reach, t + reach])
+      }
+      if (gaps.length === 0) return [[p, q]]
+      gaps.sort((g, h) => g[0] - h[0])
+      const out: [Pt, Pt][] = []
+      const at = (t: number): Pt => [p[0] + dx * t, p[1] + dz * t]
+      let from = 0
+      for (const [g0, g1] of gaps) {
+        if (g0 > from && g0 - from > 0.05 / len) out.push([at(from), at(Math.min(g0, 1))])
+        from = Math.max(from, g1)
+        if (from >= 1) break
+      }
+      if (from < 1 && 1 - from > 0.05 / len) out.push([at(from), q])
+      return out
+    },
+  }
 }
 
 // ---------------------------------------------------------------- places

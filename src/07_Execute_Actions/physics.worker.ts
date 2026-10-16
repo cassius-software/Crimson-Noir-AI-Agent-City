@@ -16,6 +16,7 @@
 import { installAirgap } from '../02_Define_The_Rules/airgap.ts'
 import { CrowdSim } from '../03_Spawn_Agents/crowdSim.ts'
 import type { FlowGrid } from '../06_Make_Decisions/flowField.ts'
+import type { StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { createRoutingCore } from '../06_Make_Decisions/routingWasm.ts'
 import { useRoutingCore } from '../06_Make_Decisions/tracks.ts'
 import { createSimHost } from './simHost.ts'
@@ -36,14 +37,14 @@ const scope = self as unknown as {
  * The crowd's own GPU device, requested here in the worker. There is no fallback: without WebGPU in the worker
  * the realm refuses to start rather than let the page sense pedestrians for it.
  */
-async function gpuCrowd(agents: number, grid: FlowGrid): Promise<CrowdSim> {
+async function gpuCrowd(agents: number, grid: FlowGrid, streets: StreetGrid | null): Promise<CrowdSim> {
   const gpu = scope.navigator.gpu
   if (!gpu) throw new Error('WebGPU is not available inside the physics worker (the pedestrian sensing needs it there)')
   const adapter = await gpu.requestAdapter({ powerPreference: 'high-performance' })
   if (!adapter) throw new Error('no WebGPU adapter inside the physics worker')
   const device = await adapter.requestDevice({ label: 'physics-realm crowd' })
   device.addEventListener('uncapturederror', (e) => console.error('[physics worker] crowd GPU error:', (e as GPUUncapturedErrorEvent).error.message))
-  return CrowdSim.create(device, agents, grid)
+  return CrowdSim.create(device, agents, grid, streets)
 }
 
 const handle = createSimHost((m, transfer) => scope.postMessage(m, transfer ?? []), (o) => SimCore.create(o, gpuCrowd))

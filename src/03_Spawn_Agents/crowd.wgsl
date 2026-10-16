@@ -14,7 +14,9 @@
 //
 // CITY_*, TRAFFIC_*, SIGNAL_*, YIELD_*, WALK_*, KERNEL_*, CAR_*, GRID_*, SUMMON_*, ACT_* and the limits below are
 // prepended at runtime from city.ts / civic.ts / crowdCompute.ts so the CPU and GPU share one set of
-// numbers.
+// numbers. The streets are a window of CITY_BLOCKS × CITY_BLOCKS blocks at CITY_PITCH from CITY_ORIGIN_X/Z: the
+// procedural city itself (every street present, at the origin), or a window of a generated region (Lakefront Metro,
+// 01_Initialize_World/region/streets.ts), where Params.streets says which segments exist and which carry cars.
 
 const TAU: f32 = 6.28318530718;
 const PI: f32 = 3.14159265359;
@@ -72,6 +74,10 @@ struct Params {
   planes: array<vec4f, 6>,
   cars: array<Car, MAX_CARS>,
   summons: array<Summon, SUMMON_SLOTS>,
+  // The street window's segments (streets.ts packStreets): two bits per segment, a sidewalk along it (bit 0) and cars
+  // on it (bit 1); the east-west segments (index m · CITY_BLOCKS + k) then the north-south ((CITY_BLOCKS + 1) ·
+  // CITY_BLOCKS + k · CITY_BLOCKS + m). The procedural city sets every bit.
+  streets: array<vec4u, STREET_VEC4S>,
 }
 
 // a = (goal.xy, preferred speed, retreat speed)
@@ -259,11 +265,44 @@ fn layerOn(mask: u32, layer: u32) -> f32 { return select(0.0, 1.0, (mask & layer
 // ---------------------------------------------------------------- city geometry
 
 fn cellOf(p: vec2f) -> vec2i {
-  return clamp(vec2i(floor((p - vec2f(GRID_ORIGIN)) / GRID_CELL)), vec2i(0), vec2i(GRID_DIM - 1));
+  return clamp(vec2i(floor((p - vec2f(GRID_ORIGIN_X, GRID_ORIGIN_Z)) / GRID_CELL)), vec2i(0), vec2i(GRID_DIM - 1));
 }
 fn cellId(c: vec2i) -> u32 { return u32(c.y * GRID_DIM + c.x); }
 
-fn lotCenter(p: vec2f) -> vec2f { return (floor(p / CITY_PITCH) + 0.5) * CITY_PITCH; }
+// The window's corner: street k runs along x = CITY_ORIGIN_X + k · CITY_PITCH, street m along z = CITY_ORIGIN_Z + m · CITY_PITCH.
+fn origin() -> vec2f { return vec2f(CITY_ORIGIN_X, CITY_ORIGIN_Z); }
+
+// ---------------------------------------------------------------- the street window
+
+// The bits of segment `index` of Params.streets (streets.ts packStreets).
+fn segBits(index: u32) -> u32 {
+  let bit = index * 2u;
+  let w = P.streets[(bit / 32u) / 4u][(bit / 32u) % 4u];
+  return (w >> (bit % 32u)) & 3u;
+}
+// The east-west segment at line m between k and k + 1, and the north-south one at line k between m and m + 1; none
+// outside the window.
+fn hSeg(k: i32, m: i32) -> u32 {
+  if (k < 0 || k >= CITY_BLOCKS || m < 0 || m > CITY_BLOCKS) { return 0u; }
+  return segBits(u32(m * CITY_BLOCKS + k));
+}
+fn vSeg(k: i32, m: i32) -> u32 {
+  if (m < 0 || m >= CITY_BLOCKS || k < 0 || k > CITY_BLOCKS) { return 0u; }
+  return segBits(u32((CITY_BLOCKS + 1) * CITY_BLOCKS + k * CITY_BLOCKS + m));
+}
+fn walkable(bits: u32) -> bool { return (bits & 1u) != 0u; }
+fn driveable(bits: u32) -> bool { return (bits & 2u) != 0u; }
+// A sidewalk corner exists where one of its two streets does: quadrant (sx, sz) of intersection (k, m).
+fn cornerExists(k: i32, m: i32, sx: f32, sz: f32) -> bool {
+  let hk = select(k - 1, k, sx > 0.0);
+  let vm = select(m - 1, m, sz > 0.0);
+  return walkable(hSeg(hk, m)) || walkable(vSeg(k, vm));
+}
+// Cars run on the north-south street at line k by intersection m (either side of it), or the east-west one at line m by k.
+fn roadV(k: i32, m: i32) -> bool { return driveable(vSeg(k, m)) || driveable(vSeg(k, m - 1)); }
+fn roadH(k: i32, m: i32) -> bool { return driveable(hSeg(k, m)) || driveable(hSeg(k - 1, m)); }
+
+fn lotCenter(p: vec2f) -> vec2f { return (floor((p - origin()) / CITY_PITCH) + 0.5) * CITY_PITCH + origin(); }
 fn pushOut(p: vec2f, pad: f32) -> vec2f {
   let c = lotCenter(p);
   let l = p - c;
@@ -272,13 +311,18 @@ fn pushOut(p: vec2f, pad: f32) -> vec2f {
   if (lim - abs(l.x) < lim - abs(l.y)) { return vec2f(c.x + select(-lim, lim, l.x >= 0.0), p.y); }
   return vec2f(p.x, c.y + select(-lim, lim, l.y >= 0.0));
 }
-fn clampCity(p: vec2f) -> vec2f { return clamp(p, vec2f(-6.5), vec2f(CITY_SIZE + 6.5)); }
+fn clampCity(p: vec2f) -> vec2f { return clamp(p, origin() - 6.5, origin() + CITY_SIZE + 6.5); }
 
 // Signed offsets from the nearest north-south (x) and east-west (y) street centrelines.
-fn streetOffsets(p: vec2f) -> vec2f { return p - round(p / CITY_PITCH) * CITY_PITCH; }
+fn streetOffsets(p: vec2f) -> vec2f { return (p - origin()) - round((p - origin()) / CITY_PITCH) * CITY_PITCH; }
+// The nearest intersection's indices.
+fn nearestLines(p: vec2f) -> vec2i { return vec2i(round((p - origin()) / CITY_PITCH)); }
+// On a carriageway: within CITY_ROAD_HALF of a street's centreline where cars run (a pedestrian street, or a line with no
+// street in this window, is not a road: people walk its whole width).
 fn onRoad(p: vec2f) -> bool {
   let o = abs(streetOffsets(p));
-  return min(o.x, o.y) < CITY_ROAD_HALF;
+  let km = nearestLines(p);
+  return (o.x < CITY_ROAD_HALF && roadV(km.x, km.y)) || (o.y < CITY_ROAD_HALF && roadH(km.x, km.y));
 }
 // Shortest way back to a sidewalk from the roadway.
 fn curbwards(p: vec2f) -> vec2f {
@@ -288,35 +332,49 @@ fn curbwards(p: vec2f) -> vec2f {
 }
 
 fn cornerPos(k: i32, m: i32, sx: f32, sz: f32) -> vec2f {
-  return vec2f(f32(k) * CITY_PITCH + sx * CITY_LANE, f32(m) * CITY_PITCH + sz * CITY_LANE);
+  return vec2f(CITY_ORIGIN_X + f32(k) * CITY_PITCH + sx * CITY_LANE, CITY_ORIGIN_Z + f32(m) * CITY_PITCH + sz * CITY_LANE);
 }
 
-// Pedestrians walk a graph of sidewalk corners: two crosswalks and two block edges leave every corner.
+// Pedestrians walk a graph of sidewalk corners: two crosswalks and two block edges leave every corner, each taken only
+// where the window has the street (a block edge needs its segment, a crosswalk its far corner). The same dice as ever:
+// where every street exists (the procedural city) the choice is the one it always was; a corner with no way out holds.
 fn nextCorner(t: vec2f, seed: u32) -> vec2f {
-  let k = i32(round(t.x / CITY_PITCH));
-  let m = i32(round(t.y / CITY_PITCH));
-  let sx = select(-1.0, 1.0, t.x - f32(k) * CITY_PITCH >= 0.0);
-  let sz = select(-1.0, 1.0, t.y - f32(m) * CITY_PITCH >= 0.0);
+  let km = nearestLines(t);
+  let k = km.x;
+  let m = km.y;
+  let sx = select(-1.0, 1.0, t.x - (CITY_ORIGIN_X + f32(k) * CITY_PITCH) >= 0.0);
+  let sz = select(-1.0, 1.0, t.y - (CITY_ORIGIN_Z + f32(m) * CITY_PITCH) >= 0.0);
   let nk = k + i32(sx);
   let nm = m + i32(sz);
+  let alongX = walkable(hSeg(min(k, nk), m));
+  let alongZ = walkable(vSeg(k, min(m, nm)));
+  let acrossX = cornerExists(k, m, -sx, sz);
+  let acrossZ = cornerExists(k, m, sx, -sz);
   let r = rand(seed, 17u);
-  if (r < 0.38 && nk >= 0 && nk <= CITY_BLOCKS) { return cornerPos(nk, m, -sx, sz); }
-  if (r < 0.76 && nm >= 0 && nm <= CITY_BLOCKS) { return cornerPos(k, nm, sx, -sz); }
-  if (r < 0.88) { return cornerPos(k, m, -sx, sz); }
-  return cornerPos(k, m, sx, -sz);
+  if (r < 0.38 && alongX) { return cornerPos(nk, m, -sx, sz); }
+  if (r < 0.76 && alongZ) { return cornerPos(k, nm, sx, -sz); }
+  if (r < 0.88 && acrossX) { return cornerPos(k, m, -sx, sz); }
+  if (acrossZ) { return cornerPos(k, m, sx, -sz); }
+  if (acrossX) { return cornerPos(k, m, -sx, sz); }
+  if (alongZ) { return cornerPos(k, nm, sx, -sz); }
+  if (alongX) { return cornerPos(nk, m, -sx, sz); }
+  return t;
 }
 // The sidewalk corner nearest p on p's own block (both street offsets keep their sign): reachable along the
 // sidewalk without crossing a street. A released recruit resumes their day from there.
 fn cornerOf(p: vec2f) -> vec2f {
-  let k = i32(round(p.x / CITY_PITCH));
-  let m = i32(round(p.y / CITY_PITCH));
+  let km = nearestLines(p);
   let o = streetOffsets(p);
-  return cornerPos(k, m, select(-1.0, 1.0, o.x >= 0.0), select(-1.0, 1.0, o.y >= 0.0));
+  return cornerPos(km.x, km.y, select(-1.0, 1.0, o.x >= 0.0), select(-1.0, 1.0, o.y >= 0.0));
 }
 
-// Moving between two corners of the same intersection means using a crosswalk.
+// Moving between two corners of the same intersection means using a crosswalk: over the street cars run on, the walk
+// signal is waited for (a pedestrian street, or a line with none in this window, is crossed at will).
 fn isCrossing(a: vec2f, b: vec2f) -> bool {
-  return all(round(a / CITY_PITCH) == round(b / CITY_PITCH));
+  let km = nearestLines(a);
+  if (!all(km == nearestLines(b))) { return false; }
+  if (abs(b.x - a.x) > abs(b.y - a.y)) { return roadV(km.x, km.y); }
+  return roadH(km.x, km.y);
 }
 
 fn approachAngle(a: f32, b: f32, maxStep: f32) -> f32 {
@@ -357,8 +415,15 @@ fn binAgents(@builtin(global_invocation_id) gid: vec3u) {
 fn spawn(@builtin(global_invocation_id) gid: vec3u) {
   let i = gid.x;
   if (i >= P.agentCount) { return; }
-  let k = i32(hash2(i, 1u) % u32(CITY_BLOCKS));
-  let m = i32(hash2(i, 2u) % u32(CITY_BLOCKS));
+  // A block edge with a sidewalk: the first dice where every street exists (the procedural city), else the next few
+  // throws, else the window's first (SPAWN_K, SPAWN_M; streets.ts spawnSegment).
+  var k = i32(hash2(i, 1u) % u32(CITY_BLOCKS));
+  var m = i32(hash2(i, 2u) % u32(CITY_BLOCKS));
+  for (var t = 1u; t < 16u && !walkable(hSeg(k, m)); t++) {
+    k = i32(hash2(i, 1u + t * 64u) % u32(CITY_BLOCKS));
+    m = i32(hash2(i, 2u + t * 64u) % u32(CITY_BLOCKS + 1));
+  }
+  if (!walkable(hSeg(k, m))) { k = SPAWN_K; m = SPAWN_M; }
   let sz = select(-1.0, 1.0, (hash2(i, 6u) & 1u) == 1u);
   // Start somewhere along a block edge heading east (never mid-crosswalk).
   let c = cornerPos(k, m, 1.0, sz);

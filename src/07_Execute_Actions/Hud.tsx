@@ -247,8 +247,8 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
               <Kpi label="Waiting at lights" value={s.process.waiting.toLocaleString()} muted={muted} />
               <Kpi label="On crosswalks" value={s.process.crossing.toLocaleString()} muted={muted} />
             </div>
-            {/* A region has no traffic signals yet: the procedural grid's cycle would mean nothing there. */}
-            {!c.region && (
+            {/* A surveyed region has no traffic signals: the shared cycle would mean nothing there. A street window's follow it. */}
+            {(!c.region || c.streets) && (
               <div className={`mt-3 flex items-center justify-between border-t pt-3 text-[11px] ${rule} ${muted}`}>
                 <div className="flex items-center gap-2">
                   <Signal label="E–W" light={c.signalEW} />
@@ -336,7 +336,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
                 <div className="text-[15px] font-semibold tabular-nums tracking-tight">{c.clock}</div>
               </div>
               <div className={`max-w-full px-3 py-2 text-[11px] ${panel}`}>
-                {!c.region && (
+                {(!c.region || c.streets) && (
                   <div className="flex items-center gap-2">
                     <Signal label="E–W" light={c.signalEW} />
                     <Signal label="N–S" light={c.signalNS} />

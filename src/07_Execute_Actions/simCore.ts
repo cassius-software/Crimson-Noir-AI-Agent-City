@@ -35,6 +35,7 @@ import { exitPoint, HELD_CARS } from './carRig.ts'
 import { TrackFleet } from './trackFleet.ts'
 import { RagdollRealm } from './ragdollRealm.ts'
 import { buildTrackNetwork } from '../06_Make_Decisions/tracks.ts'
+import { streetCapacity, streetNetwork, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { AGENTS_RANGE, MAX_CARS, PEDESTRIAN_MAX_SPEED, type CrowdSensor, type Summon } from '../03_Spawn_Agents/crowdSensor.ts'
 import {
   ACTIVITY, APPROACH_SECONDS, AUDIBLE_RADIUS, eligible, findRecruit, RALLY_RANGE, RECRUIT_SLOTS, RECRUITING_PLAYER, RELEASE_DISTANCE, skillNamed, skillsOf, whyNot, whyNotRally,
@@ -83,7 +84,7 @@ const REGION_SLAB_MARGIN = 200
  * the flow field's grid of this world (06_Make_Decisions/flowField.ts: the city's buildings and streets, or a region's
  * walls), which the sensor solves routes on.
  */
-export type CrowdFactory = (agents: number, grid: FlowGrid) => Promise<CrowdSensor>
+export type CrowdFactory = (agents: number, grid: FlowGrid, streets: StreetGrid | null) => Promise<CrowdSensor>
 
 /** One step's input after the host has checked its shape (every number is still clamped here). */
 export interface StepInput {
@@ -218,10 +219,12 @@ export class SimCore {
       ? new Ring0Auditor({ x: (r.x0 + r.x1) / 2, z: (r.z0 + r.z1) / 2 }, { extent: Math.max(r.x1 - r.x0, r.z1 - r.z0) / 2 + REGION_SLAB_MARGIN })
       : new Ring0Auditor({ x: CITY_SIZE / 2, z: CITY_SIZE / 2 })
     // The Rapier handles leave the Fleet only for the debug fault-injection commands (dbgVelocity).
-    // On tracks, the network is built here from the seed: nothing about the routes crosses from the page.
-    const network = o.tracks === true ? buildTrackNetwork(o.seed) : null
+    // On tracks, the network is built here from the seed: nothing about the routes crosses from the page. In a region
+    // with a street window (streets.ts) the rings are the window's, laid over its own car streets.
+    const streets = r ? (o.streets ?? null) : null
+    const network = o.tracks === true ? (streets ? streetNetwork(o.seed, streets) : buildTrackNetwork(o.seed)) : null
     this.#fleet = new Fleet(physics, o.cars, o.seed, { exposeRig: this.#debug, network: network ?? undefined })
-    // The corridors are laid over the city's grid: a surveyed region has no elevated loop and no racetrack over it.
+    // The corridors are laid over the city's grid: a region has no elevated loop and no racetrack over it.
     this.#craft = network && !r ? new TrackFleet(network) : null
     // Every player's body, in player order: Sanctuary ward k and audit person k are player k.
     const spawns = [o.spawn, ...(o.spawns ?? [])]
@@ -264,9 +267,11 @@ export class SimCore {
    * before this resolves, so the Bouncer never runs a step without a pedestrian reading.
    */
   static async create(o: SimCoreOptions, makeCrowd: CrowdFactory | null = null): Promise<SimCore> {
-    // No car the GPU cannot sense: the fleet is never larger than the hazard slots.
-    const cars = Math.floor(finite(o.cars))
+    // No car the GPU cannot sense: the fleet is never larger than the hazard slots. Nor larger than a street window's
+    // rings can seat (the page sizes it so; this is the realm's own bound).
+    let cars = Math.floor(finite(o.cars))
     if (!(cars >= 0 && cars <= MAX_CARS)) throw new Error(`cars must be 0–${MAX_CARS}, got ${o.cars}`)
+    if (o.region && o.streets && o.tracks === true) cars = Math.min(cars, streetCapacity(o.streets, Math.floor(finite(o.seed)) >>> 0))
     const [lo, hi] = AGENTS_RANGE
     const agents = Math.floor(finite(o.agents, lo))
     if (makeCrowd && !(agents >= lo && agents <= hi)) throw new Error(`agents must be ${lo}–${hi}, got ${o.agents}`)
@@ -283,7 +288,7 @@ export class SimCore {
     const physics = await Physics.create(o.boxes, o.furniture, o.region ?? null)
     // The flow field's grid of this world: the region's walls over its bounds, or the city's buildings and streets.
     const grid = o.region ? regionGrid(o.region.bounds, o.region.walls) : cityGrid(o.boxes)
-    const crowd = makeCrowd ? await makeCrowd(agents, grid) : null
+    const crowd = makeCrowd ? await makeCrowd(agents, grid, o.region ? (o.streets ?? null) : null) : null
     physics.streamAt(spawn.x, spawn.z)
     for (const p of spawns) physics.streamAt(p.x, p.z)
     const core = new SimCore(physics, { ...o, cars, agents, seed: Math.floor(finite(o.seed)) >>> 0, spawn, spawns }, crowd)

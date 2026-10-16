@@ -126,8 +126,9 @@ Every build carries it: `dist/index.html` holds the compiled pack (`world/pilot.
 about 3.4 MB of the file's 10 MB), so the one file plays the region from a disk or a stick with no network and nothing
 beside it. The page inflates the pack itself (the browser's own gzip stream); nothing is fetched.
 
-- `?region=on` walks the region in any build. The default build opens on the procedural city, where the traffic, the
-  crowd and the tracks are; the region has none of them yet (see Not there yet).
+- `?region=on` walks the surveyed region in any build. The default build opens on the procedural city, where the
+  traffic, the crowd and the tracks are; the surveyed region has none of them yet (see Not there yet). Lakefront Metro,
+  the generated map, has its own (next).
 - `?map=lakefront` walks Lakefront Metro instead: a fictitious great-lake metropolis generated from the world seed
   (`?seed`) by `src/01_Initialize_World/lakefront.ts`, 64 blocks (2.56 km) across in the page and 256 (10.24 km) in
   the committed layouts. A massive lake fills the south behind a wandering shore with a harbour; a highly dense
@@ -138,8 +139,15 @@ beside it. The page inflates the pack itself (the browser's own gzip stream); no
   City), The East Bluffs (houses on the cliffs above the east shore), North Ridge (the northern sprawl on its rise) and
   The Grand Ravine (the main ravine and the streets along it). The map is built in a worker while the concierge's
   onboarding talks a first visitor through four one-word questions, and turned into a region pack
-  (`region/fromMacro.ts`), so it is walked through the same region path: like the surveyed region, it has no traffic or
-  crowd yet. The visitor's answers are saved, so the next visit opens on the same city at the chosen region;
+  (`region/fromMacro.ts`), so it is walked through the same region path as the surveyed region. Unlike that one it has
+  people and traffic: its streets lie on the city's own 40 m pitch, so a **street window** of 16 × 16 blocks around
+  where the visitor starts (`region/streets.ts`) is read back from the pack's roads, and the GPU crowd walks that
+  window's sidewalks (crowd.wgsl takes the window's corner and, per street segment, whether a sidewalk runs along it and
+  whether cars use it, so nobody walks a dropped street or waits at a crosswalk over a pedestrian street), while the
+  fleet is seated on rings laid over the window's whole cells (disjoint rectangles whose every side is a car street,
+  the zero-jam rule of `tracks.ts` kept) and the lamps, trees and signal poles stand along the window's streets. Every
+  street cars use is two lanes, one each way; a bridge's shore walls are cut for its width. Beyond the window the
+  metropolis is still quiet. The visitor's answers are saved, so the next visit opens on the same city at the chosen region;
   `?map=city` or `?region=off` opens the procedural city, `?onboarding=0` skips the onboarding (the expert path) and
   `?onboarding=1` shows it again. The structural layouts, one JSON file per region with an index naming The Spire and
   the hubs, are committed under `world/lakefront/` and regenerated with `node tools/world/lakefront.mjs` (`--check`
@@ -191,13 +199,13 @@ npm run build:pilot   # dist-pilot/index.html: the same single offline file, ope
   once and builds walls as trimeshes of 250 m tiles, only within two tiles of the player, as they move. The physics
   boots in 0.34 s instead of 6 s, and a region of any size would boot in the same time. The Ring-0 audit's
   containment slab is the region's own.
-- **Not there yet:**
-  - traffic and pedestrians (the AI drives and walks the procedural grid, so the region's fleet is empty and the
-    crowd it keeps is hidden, kilometres away);
-  - the track network and its craft (the rings and corridors are laid over the procedural grid, so a region gets no
-    trains, drones or planes);
+- **Not there yet** (the surveyed region; Lakefront Metro has its street window, above):
+  - traffic and pedestrians (the AI drives and walks the procedural grid, so the surveyed region's fleet is empty and
+    the crowd it keeps is hidden, kilometres away);
+  - the craft (the elevated loop and the corridors are laid over the procedural grid, so no region gets trains,
+    drones or planes);
   - room acoustics (a region's walls live in the physics worker, so every voice there is dry);
-  - traffic signals, street lamps and trees;
+  - traffic signals, street lamps and trees (the surveyed region has none; a street window has them along its streets);
   - terrain (the region is flat: no ravines, no bluffs);
   - elevated roads and bridges (the expressway runs at street level, and you can wade the rivers);
   - varied landmarks;
