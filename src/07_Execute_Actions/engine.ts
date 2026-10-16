@@ -39,6 +39,7 @@ import { watchLongTasks } from './longTasks.ts'
 import { buildWorld, createRenderer, gpuBufferOf, LIGHT_TUNE_RANGE, ndStopsFor, type Gpu, type LightTuning, type World } from '../01_Initialize_World/world.ts'
 import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
 import { RegionPlaces, layoutOf, regionPhysics } from '../01_Initialize_World/region/regionWorld.ts'
+import { streetCapacity, streetGridOf, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { tallestBuilding, type RegionPack } from '../01_Initialize_World/region/pack.ts'
 import { LANDMARK } from '../01_Initialize_World/lakefront.ts'
 import { METRO } from '../01_Initialize_World/lakefrontPack.ts'
@@ -394,6 +395,8 @@ export class Engine {
   private lastDrawnMs = Number.NaN
   /** The region being walked (?region), its places (street names, the minimap), or null in the procedural city. */
   private readonly places: RegionPlaces | null
+  /** The region's street window (region/streets.ts): its people and traffic are real; null in the city and in a surveyed region. */
+  private readonly streets: StreetGrid | null
   private readonly regionName: string | null
   /** The one landmark the city has (the tallest tower: The Spire in the generated metropolis), in the engine's frame, or null in the procedural city. */
   private readonly landmarkAt: Landmark | null
@@ -558,9 +561,10 @@ export class Engine {
   private constructor(p: {
     canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; rigView: RigView
     post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; crowdFrameSeconds: UniformNode<'float', number>; ghost: GhostView
-    options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; netView: NetView
+    options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; netView: NetView
   }) {
     this.places = p.places
+    this.streets = p.streets
     this.regionName = p.options.region?.name ?? null
     this.landmarkAt = p.landmark
     this.canvas = p.canvas
@@ -636,22 +640,28 @@ export class Engine {
     const hints = readDeviceHints(gpu.adapterInfo)
     const profile = profileDevice(hints)
     const pack = requested.region ?? null
-    // A region has no traffic yet: its fleet is empty (the AI drives the procedural grid only).
-    // Nor pedestrians: its crowd is hidden, so it runs at the smallest size the realm takes (the GPU is the region's).
+    const layout = pack ? layoutOf(pack) : null
+    const places = pack && layout ? new RegionPlaces(pack, layout) : null
+    const landmark = pack && layout ? landmarkOf(pack, layout.offset) : null
+    // In a region: a sidewalk of the arterial nearest the region's origin (its downtown), facing along the street.
+    const start = places && layout ? places.spawn({ x: layout.offset.x, z: layout.offset.z }) : null
+    const spawn = start ? { x: start.x, z: start.z } : { x: CITY_SIZE / 2 + CITY.lane, z: CITY_SIZE / 2 + 12 }
+    // A generated region's street window (region/streets.ts): the CITY.blocks × CITY.blocks blocks around the start that
+    // the crowd walks and the fleet drives, so the lakefront metropolis has people and traffic like the city. A surveyed
+    // region whose roads are not on the grid has none: its fleet stays empty and its crowd hidden (the AI drives the
+    // procedural grid only), so it runs at the smallest size the realm takes (the GPU is the region's).
+    const streets = pack && layout ? streetGridOf(pack, layout.offset, spawn) : null
+    const empty = pack !== null && streets === null
     // Split screen: the post chain is player 1's alone (one pipeline, one velocity history, one full-screen pass), so
     // with more than one player it is off at every tier, as ?post=0 is, and every viewport takes the direct path.
     const players = clampPlayers(requested.players)
     const options: EngineConfig = {
       ...requested, players, post: requested.post && players === 1,
-      cars: pack ? 0 : requested.cars, agents: pack ? AGENTS_RANGE[0] : requested.agents ?? defaultAgents(profile), host: hints.host ?? 'browser',
+      // A region's cars ride the window's rings alone (the street-hopping drivers of ?tracks=0 know the procedural grid only).
+      cars: empty ? 0 : streets ? (requested.tracks === false ? 0 : Math.min(requested.cars, streetCapacity(streets, requested.seed))) : requested.cars,
+      agents: empty ? AGENTS_RANGE[0] : requested.agents ?? defaultAgents(profile), host: hints.host ?? 'browser',
     }
-    const layout = pack ? layoutOf(pack) : null
-    const places = pack && layout ? new RegionPlaces(pack, layout) : null
-    const landmark = pack && layout ? landmarkOf(pack, layout.offset) : null
-    const world = buildWorld(gpu.renderer, options.seed, pack && layout ? { pack, layout } : null)
-    // In a region: a sidewalk of the arterial nearest the region's origin (its downtown), facing along the street.
-    const start = places && layout ? places.spawn({ x: layout.offset.x, z: layout.offset.z }) : null
-    const spawn = start ? { x: start.x, z: start.z } : { x: CITY_SIZE / 2 + CITY.lane, z: CITY_SIZE / 2 + 12 }
+    const world = buildWorld(gpu.renderer, options.seed, pack && layout ? { pack, layout, streets } : null)
     // Players 1..3 (split screen) start beside player 0 along the sidewalk (the city's spawn sidewalk runs along z; a
     // region's along its street heading); the realm moves a spawn out of a building lot itself.
     const along = start ? { x: Math.sin(start.heading), z: Math.cos(start.heading) } : { x: 0, z: 1 }
@@ -660,7 +670,7 @@ export class Engine {
     // The physics realm boots (Rapier, the city's colliders or the region's, the fleet) while this thread sets up quality.
     const simBoot = SimClient.create({
       seed: options.seed, cars: options.cars, agents: options.agents, boxes: world.boxes, furniture: world.furniture, spawn, debug: options.debug === true,
-      region: pack && layout ? regionPhysics(pack, layout) : null, tracks: options.tracks !== false,
+      region: pack && layout ? regionPhysics(pack, layout) : null, streets, tracks: options.tracks !== false,
       ragdoll: options.ragdoll !== false && !pack,
       ...(spawns.length > 0 && { spawns }),
     })
@@ -676,8 +686,9 @@ export class Engine {
       : new Governor({ tier: options.quality, auto: false, targetMs, pacerMs, ...range })
     const mask = (k: QualityKnobs): QualityKnobs => ({ ...k, shadows: k.shadows && options.shadows, post: k.post && options.post })
     const first = governor.knobs()
-    // In a region nobody of the procedural crowd is drawn (they walk the procedural grid, kilometres from the region).
-    const hidden = (c: CullSettings): CullSettings => (pack ? { ...c, maxDistance: 0 } : c)
+    // In a region without a street window nobody of the procedural crowd is drawn (they walk the procedural grid,
+    // kilometres from the region).
+    const hidden = (c: CullSettings): CullSettings => (empty ? { ...c, maxDistance: 0 } : c)
     const live: QualityRig['live'] = {
       post: true,
       volumetrics: false,
@@ -739,7 +750,7 @@ export class Engine {
     if (options.profile) crowd.enableProfiling()
     const engine = new Engine({
       canvas, gpu, world, crowd, sim, view, rigView, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, ghost, options,
-      quality: { governor, targets, applied, mask, live }, places, landmark,
+      quality: { governor, targets, applied, mask, live }, places, landmark, streets,
       // The code dissolve's crowd amounts: allocated by the draws above like the frame's buffers, written the same way.
       crowdDissolve: gpuBufferOf(gpu.renderer, view0.dissolve),
       crowdLook,
@@ -1919,9 +1930,10 @@ export class Engine {
       },
       input: { mode: driving ? 'vehicle' : 'foot', nearVehicle: !driving && this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE) >= 0 },
       process: {
-        // A region has no pedestrians of its own yet (the procedural crowd it keeps is hidden, kilometres away).
-        pedestrians: this.places ? 0 : this.options.agents - 1, vehicles: this.options.cars, drawnNear: s.drawnNear, drawnFar: s.drawnFar,
-        waiting: this.places ? 0 : s.waiting, crossing: this.places ? 0 : s.crossing, yielding: s.retreating, safetyNudges: s.nudges, gpu: this.gpu.adapterInfo,
+        // A surveyed region has no pedestrians of its own (the procedural crowd it keeps is hidden, kilometres away); a
+        // generated one walks its street window.
+        pedestrians: this.places && !this.streets ? 0 : this.options.agents - 1, vehicles: this.options.cars, drawnNear: s.drawnNear, drawnFar: s.drawnFar,
+        waiting: this.places && !this.streets ? 0 : s.waiting, crossing: this.places && !this.streets ? 0 : s.crossing, yielding: s.retreating, safetyNudges: s.nudges, gpu: this.gpu.adapterInfo,
         sensingAgeMs: st.crowd.ageMs, sensingLagMs: st.crowd.lagMs, crowdFrames: this.crowdFrames, seed: this.options.seed, host: this.options.host,
       },
       output: {
@@ -1952,6 +1964,7 @@ export class Engine {
         speedKmh, gear,
         x, z, heading, signalEW: signalFor('ew', st.simTime), signalNS: signalFor('ns', st.simTime), signalRemaining: next - phase,
         region: this.regionName,
+        streets: this.streets !== null,
         ...(this.captionsOn && { captions: this.captionLines() }),
       },
       experience: { sessionSeconds: this.simTime, longFrames: this.clock.longFrames, distanceWalked: this.walked, distanceDriven: this.driven },

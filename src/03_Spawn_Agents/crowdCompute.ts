@@ -11,7 +11,8 @@
  * What breaks if it is removed? The two devices would disagree about the shader, the uniform and the frame.
  */
 import { KERNEL, SIGNAL, WALK_START, YIELD_SAVE } from '../02_Define_The_Rules/civic.ts'
-import { cityWgsl, CITY_SIZE } from '../01_Initialize_World/city.ts'
+import { cityWgsl, CITY_GEOMETRY, CITY_SIZE, type StreetGeometry } from '../01_Initialize_World/city.ts'
+import { cityStreetGrid, packStreets, spawnSegment, STREET_VEC4S, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import crowdSource from './crowd.wgsl?raw'
 import { MAX_CARS, type CrowdStepInput } from './crowdSensor.ts'
 import { ACTIVITY, INTERVIEW_DISTANCE, RECRUIT_SLOTS, SUMMON_ACCEPT, TETHER_PACE } from './skills.ts'
@@ -36,7 +37,11 @@ const PARAMS_PLANES = PARAMS_GLOBAL + 16
 const PARAMS_CARS = PARAMS_PLANES + 6 * 16
 /** struct Summon { at: vec2f, agent: u32, flags: u32 } × RECRUIT_SLOTS, after the cars; agent 0 is an empty slot. */
 const PARAMS_SUMMONS = PARAMS_CARS + MAX_CARS * 32
-export const PARAMS_SIZE = PARAMS_SUMMONS + RECRUIT_SLOTS * 16
+/** The street window's bit field (streets.ts packStreets), STREET_VEC4S × vec4u, after the summons. */
+export const PARAMS_STREETS = PARAMS_SUMMONS + RECRUIT_SLOTS * 16
+export const PARAMS_SIZE = PARAMS_STREETS + STREET_VEC4S * 16
+/** The procedural city's street words: every segment a street cars use (the default every step is packed with). */
+const CITY_STREETS = packStreets(cityStreetGrid())
 
 /** Axle spacing, m (vehicles.ts CAR.wheelbase): the axles sit this far apart about the chassis centre. */
 const WHEELBASE = 2.8
@@ -172,13 +177,15 @@ export function corridorReach(c: CarState): number {
   return Math.hypot(c.halfLength, half) + Math.min((2 * rhoK) / k, KERNEL.range * rhoK) + 0.01
 }
 
-function header(agentCount: number, flow: FlowPlacement): string {
+function header(agentCount: number, flow: FlowPlacement, geometry: Readonly<StreetGeometry>): string {
   const f = (n: number) => (Number.isInteger(n) ? `${n}.0` : `${n}`)
   const quota = agentQuota(agentCount)
   return [
-    cityWgsl(),
+    cityWgsl(geometry),
     `const GRID_CELL: f32 = ${f(GRID_CELL)};`,
-    `const GRID_ORIGIN: f32 = ${f(GRID_ORIGIN)};`,
+    `const GRID_ORIGIN_X: f32 = ${f(geometry.originX + GRID_ORIGIN)};`,
+    `const GRID_ORIGIN_Z: f32 = ${f(geometry.originZ + GRID_ORIGIN)};`,
+    `const STREET_VEC4S: u32 = ${STREET_VEC4S}u;`,
     `const GRID_DIM: i32 = ${GRID_DIM};`,
     `const GRID_CELLS: u32 = ${GRID_CELLS}u;`,
     `const GRID_CAP: u32 = ${GRID_CAP}u;`,
@@ -223,9 +230,21 @@ export interface FlowPlacement { originX: number; originZ: number; cell: number 
 /** The placement with no field: the city's origin and cell (the page's cull never samples the field). */
 export const NO_FLOW: FlowPlacement = Object.freeze({ originX: 0, originZ: 0, cell: FLOW.cell })
 
-/** The complete WGSL module: shared constants from the CPU (the flow grid's placement among them), then crowd.wgsl. */
-export function crowdShader(agentCount: number, flow: FlowPlacement = NO_FLOW): string {
-  return header(agentCount, flow) + crowdSource
+/**
+ * The street geometry a window compiles the shader with (city.ts StreetGeometry): its corner, its streets' widths, and
+ * the first block edge with a sidewalk as the spawn of last resort.
+ */
+export function geometryOf(streets: StreetGrid): StreetGeometry {
+  const spawn = spawnSegment(streets)
+  return { originX: streets.originX, originZ: streets.originZ, roadHalf: streets.roadHalf, lane: streets.lane, spawnK: spawn.k, spawnM: spawn.m }
+}
+
+/**
+ * The complete WGSL module: shared constants from the CPU (the flow grid's placement and the street geometry among
+ * them), then crowd.wgsl. The page's cull compiles it with the city's geometry: the cull reads no street.
+ */
+export function crowdShader(agentCount: number, flow: FlowPlacement = NO_FLOW, geometry: Readonly<StreetGeometry> = CITY_GEOMETRY): string {
+  return header(agentCount, flow, geometry) + crowdSource
 }
 
 export type PassName = 'clearGrid' | 'binAgents' | 'spawn' | 'simulate' | 'cull'
@@ -259,9 +278,14 @@ export function sanitizeCull(s: CullSettings): CullSettings {
   }
 }
 
-/** The Params words the simulation reads (the cull fields stay zero: the worker draws nothing). */
-export function packSimParams(f: Float32Array, u: Uint32Array, frame: number, agentCount: number, input: CrowdStepInput): void {
+/**
+ * The Params words the simulation reads (the cull fields stay zero: the worker draws nothing). `streets` is the window's
+ * bit field (streets.ts packStreets); absent, the procedural city's (every segment).
+ */
+export function packSimParams(f: Float32Array, u: Uint32Array, frame: number, agentCount: number, input: CrowdStepInput, streets: Uint32Array = CITY_STREETS): void {
   packCrowdParams(f, u, frame, agentCount, input)
+  if (streets.length !== STREET_VEC4S * 4) throw new RangeError(`the street field is ${STREET_VEC4S * 4} words, got ${streets.length}`)
+  u.set(streets, PARAMS_STREETS / 4)
   // Whoever the operator asked over. Only a real pedestrian (never the player's own body, never out of range) at a
   // finite spot takes a slot, each once; anything else leaves the slot empty (agent 0), and so the person's day alone.
   const summons = input.summons ?? []

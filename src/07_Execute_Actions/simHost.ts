@@ -15,6 +15,8 @@ import { SimCore, type SimCoreOptions } from './simCore.ts'
 import { MAX_PLAYERS, POSE, RIG_POSE, TRACK_POSE, type FromWorker, type SimInit } from './simProtocol.ts'
 import { packAgents, packAvatars, packVehicles, PhysicsBridge } from './sharedBridge.ts'
 import type { RegionGround } from './physics.ts'
+import { CITY } from '../01_Initialize_World/city.ts'
+import { WINDOW_BLOCKS, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 
 export type Post = (msg: FromWorker, transfer?: Transferable[]) => void
 
@@ -41,6 +43,33 @@ function regionOf(u: unknown): RegionGround | null | undefined {
   if (!list || list.length % 5 !== 0 || list.length > 5 * 4_000_000) return undefined
   for (let i = 0; i < list.length; i++) if (typeof list[i] !== 'number' || !Number.isFinite(list[i])) return undefined
   return { bounds: { x0: x0 as number, z0: z0 as number, x1: x1 as number, z1: z1 as number }, walls: list }
+}
+
+/**
+ * A region's street window, checked: null when there is none, undefined when it is malformed (a finite origin on the
+ * pitch, WINDOW_BLOCKS blocks, finite positive widths, segment lists of the right length with bits 0..3).
+ */
+function streetsOf(u: unknown): StreetGrid | null | undefined {
+  if (u === undefined || u === null) return null
+  if (!isRecord(u)) return undefined
+  const { originX, originZ, blocks, roadHalf, lane, furniture, h, v } = u
+  if (![originX, originZ, roadHalf, lane, furniture].every((n) => typeof n === 'number' && Number.isFinite(n))) return undefined
+  if (blocks !== WINDOW_BLOCKS || (originX as number) % CITY.pitch !== 0 || (originZ as number) % CITY.pitch !== 0) return undefined
+  if (!((roadHalf as number) > 0 && (lane as number) > (roadHalf as number) && (furniture as number) > 0)) return undefined
+  const n = (WINDOW_BLOCKS + 1) * WINDOW_BLOCKS
+  const list = (x: unknown): Uint8Array | null => {
+    const a = x instanceof Uint8Array || Array.isArray(x) ? (x as ArrayLike<number>) : null
+    if (!a || a.length !== n) return null
+    const out = new Uint8Array(n)
+    for (let i = 0; i < n; i++) {
+      if (!(Number.isInteger(a[i]) && a[i] >= 0 && a[i] <= 3)) return null
+      out[i] = a[i]
+    }
+    return out
+  }
+  const hs = list(h), vs = list(v)
+  if (!hs || !vs) return undefined
+  return { originX: originX as number, originZ: originZ as number, blocks: WINDOW_BLOCKS, roadHalf: roadHalf as number, lane: lane as number, furniture: furniture as number, h: hs, v: vs }
 }
 
 /**
@@ -108,9 +137,14 @@ export function createSimHost(post: Post, create: (o: SimCoreOptions) => Promise
           post({ t: 'error', message: `init: spawns must be at most ${MAX_PLAYERS - 1} finite x, z pairs` })
           return
         }
+        const streets = streetsOf(init.streets)
+        if (streets === undefined) {
+          post({ t: 'error', message: `init: a street window is ${WINDOW_BLOCKS} blocks on the pitch with segment bits` })
+          return
+        }
         core = await create({
           seed: init.seed, cars: init.cars, agents: init.agents, boxes: init.boxes, furniture: init.furniture, spawn: init.spawn, spawns, debug: init.debug === true, region,
-          tracks: init.tracks === true, ragdoll: init.ragdoll === true,
+          streets: region ? streets : null, tracks: init.tracks === true, ragdoll: init.ragdoll === true,
         })
         for (let i = 0; i < refusedEarly; i++) core.noteRejected('message before init')
         post({ t: 'ready', meta: core.meta })

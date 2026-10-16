@@ -337,15 +337,36 @@ export function streetFurniture(seed: number): Furniture {
 }
 
 /** City constants injected ahead of every WGSL module so the GPU grid is the same grid. */
-export function cityWgsl(): string {
+/**
+ * The street geometry the crowd shader is compiled with: where the window of CITY.blocks × CITY.blocks streets lies
+ * (its north-west corner, engine metres), the road half-width and the pedestrian lane of its streets, and the block edge
+ * (k, m) someone is placed on when the dice find no street (never, in the city). The city's own is CITY_GEOMETRY; a
+ * generated region's comes from its street window (region/streets.ts).
+ */
+export interface StreetGeometry {
+  originX: number
+  originZ: number
+  roadHalf: number
+  lane: number
+  spawnK: number
+  spawnM: number
+}
+
+export const CITY_GEOMETRY: Readonly<StreetGeometry> = Object.freeze({ originX: 0, originZ: 0, roadHalf: CITY.roadHalf, lane: CITY.lane, spawnK: 0, spawnM: 0 })
+
+export function cityWgsl(g: Readonly<StreetGeometry> = CITY_GEOMETRY): string {
   const f = (n: number) => (Number.isInteger(n) ? `${n}.0` : `${n}`)
   return [
     `const CITY_PITCH: f32 = ${f(CITY.pitch)};`,
     `const CITY_LOT_HALF: f32 = ${f(CITY.lotHalf)};`,
-    `const CITY_LANE: f32 = ${f(CITY.lane)};`,
-    `const CITY_ROAD_HALF: f32 = ${f(CITY.roadHalf)};`,
+    `const CITY_LANE: f32 = ${f(g.lane)};`,
+    `const CITY_ROAD_HALF: f32 = ${f(g.roadHalf)};`,
     `const CITY_BLOCKS: i32 = ${CITY.blocks};`,
     `const CITY_SIZE: f32 = ${f(CITY_SIZE)};`,
+    `const CITY_ORIGIN_X: f32 = ${f(g.originX)};`,
+    `const CITY_ORIGIN_Z: f32 = ${f(g.originZ)};`,
+    `const SPAWN_K: i32 = ${g.spawnK};`,
+    `const SPAWN_M: i32 = ${g.spawnM};`,
     `const TRAFFIC_LANE: f32 = ${f(TRAFFIC.laneOffset)};`,
   ].join('\n')
 }

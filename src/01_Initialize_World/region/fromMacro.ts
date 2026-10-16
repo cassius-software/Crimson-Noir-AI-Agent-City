@@ -59,10 +59,14 @@ export function streetNames(seed: number, blocks: number, kinds: (h: boolean, li
   return { names, h, v }
 }
 
-/** What a street kind is as a road: its class and lanes (none: not a road). */
+/**
+ * What a street kind is as a road: its class and lanes (none: not a road). Every street cars use has two lanes, one
+ * each way, like the procedural city's: the crowd walks the sidewalk beyond them and the fleet drives the right-hand
+ * one (region/streets.ts). A pedestrian street is a one-lane road: walked, never driven.
+ */
 export function roadOf(kind: number): { cls: number; lanes: number } | null {
   switch (kind) {
-    case STREET.arterial: case STREET.bridge: return { cls: ROAD_CLASS.arterial, lanes: 4 }
+    case STREET.arterial: case STREET.bridge: return { cls: ROAD_CLASS.arterial, lanes: 2 }
     case STREET.local: return { cls: ROAD_CLASS.local, lanes: 2 }
     case STREET.pedestrian: return { cls: ROAD_CLASS.local, lanes: 1 }
     default: return null

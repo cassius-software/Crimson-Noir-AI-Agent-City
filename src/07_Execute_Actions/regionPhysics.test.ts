@@ -21,6 +21,8 @@ import type { Pt } from '../01_Initialize_World/region/clip.ts'
 import { Physics } from './physics.ts'
 import { Avatar } from './player.ts'
 import { SimCore } from './simCore.ts'
+import type { SimInit } from './simProtocol.ts'
+import { cityStreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { createSimHost } from './simHost.ts'
 
 // Vite's `?raw` import, for Node (crowdCompute.test.ts's hook): the world's matrix mode (01_Initialize_World/
@@ -152,4 +154,33 @@ test('the core audits a region against its own slab, and the worker refuses a ma
   const handle = createSimHost((m: unknown) => posts.push(m), async (o) => SimCore.create(o, null))
   await handle({ t: 'init', seed: 1, cars: 0, agents: 256, boxes: [], furniture: { lamps: [], trees: [], signals: [] }, spawn: s, debug: false, region: { bounds: { x0: 5, z0: 0, x1: 1, z1: 9 }, walls: [] } })
   assert.match(JSON.stringify(posts.at(-1)), /a region needs finite bounds and walls in fives/)
+})
+
+test('the worker refuses a malformed street window and takes a sound one', async () => {
+  const s = at(-150, -100)
+  const init = (streets: unknown) => ({ t: 'init' as const, seed: 1, cars: 0, agents: 256, boxes: [], furniture: { lamps: [], trees: [], signals: [] }, spawn: s, debug: false, region: regionPhysics(p, L), streets })
+  const refused = async (streets: unknown, why: string) => {
+    const posts: unknown[] = []
+    const handle = createSimHost((m: unknown) => posts.push(m), async (o) => SimCore.create(o, null))
+    await handle(init(streets) as unknown as SimInit)
+    assert.match(JSON.stringify(posts.at(-1)), /a street window is 16 blocks on the pitch with segment bits/, why)
+  }
+  const sound = cityStreetGrid()
+  sound.originX = 2000
+  sound.originZ = 2000
+  await refused({ ...sound, blocks: 8 }, 'the shader is compiled for CITY.blocks')
+  await refused({ ...sound, originX: 2010 }, 'off the pitch')
+  await refused({ ...sound, h: Uint8Array.from(sound.h).fill(5, 0, 1) }, 'a bit beyond walk and drive')
+  await refused({ ...sound, v: sound.v.subarray(1) }, 'a segment short')
+  await refused({ ...sound, lane: 2 }, 'the lane inside the carriageway')
+  await refused(7, 'not a record')
+  const posts: unknown[] = []
+  const handle = createSimHost((m: unknown) => posts.push(m), async (o) => SimCore.create(o, null))
+  await handle(init(sound) as unknown as SimInit)
+  assert.equal((posts.at(-1) as { t: string }).t, 'ready')
+  // Without a region the window means nothing: the city is the city.
+  const city: unknown[] = []
+  const cityHandle = createSimHost((m: unknown) => city.push(m), async (o) => { assert.equal(o.streets, null); return SimCore.create(o, null) })
+  await cityHandle({ ...init(sound), region: null } as unknown as SimInit)
+  assert.equal((city.at(-1) as { t: string }).t, 'ready')
 })
