@@ -1694,7 +1694,7 @@ test('simulate: a summons comes after the safety reflexes, is taken only on the 
     // Tethered and fallen behind: hurrying, never past TETHER_PACE; someone walking over keeps their own pace.
     // The way to walk: the flow field's direction under their feet (round the buildings) when it has one and the operator
     // is beyond the last stretch; the straight line otherwise, so they arrive and stop as before.
-    'let pace = select(b.a.z, max(b.a.z, TETHER_PACE * clamp((dist - SUMMON_STOP) / 2.0, 0.0, 1.0)), tethered); let flow = flowAt(me); let way = select(dirTo(me, at), flow, dot(flow, flow) > 0.5 && dist > 4.0 * SUMMON_STOP); desired = way * pace * clamp(dist - SUMMON_STOP, 0.25, 1.0); activity = ACT_COMING; }',
+    'let pace = select(b.a.z, max(b.a.z, TETHER_PACE * clamp((dist - SUMMON_STOP) / 2.0, 0.0, 1.0)), tethered); let flow = flowAt(me); let far = dist > 4.0 * SUMMON_STOP || indoors(me) != indoors(at); let way = select(dirTo(me, at), flow, dot(flow, flow) > 0.5 && far); desired = way * pace * clamp(dist - SUMMON_STOP, 0.25, 1.0); activity = ACT_COMING; }',
     // The kerb, coming or talking: someone on the road heads back to it; a step that would leave it is not taken.
     'if (road) { desired = curbwards(me) * b.a.z; } else { if (onRoad(me + vec2f(desired.x, 0.0) * 0.5)) { desired.x = 0.0; } if (onRoad(me + vec2f(0.0, desired.y) * 0.5)) { desired.y = 0.0; } } } else {',
     'ps.w = activity; pose[i] = ps;',
