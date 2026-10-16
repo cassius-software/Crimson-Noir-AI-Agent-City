@@ -30,8 +30,29 @@ import { windowFurniture, type StreetGrid } from './region/streets.ts'
 import { SIGNAL } from '../02_Define_The_Rules/civic.ts'
 import { applyCodeDissolve } from './codeDissolve.ts'
 import { applyMatrixMode, createMatrixMode, type MatrixMode } from './matrixMode.ts'
+import { EnvProbe } from './envProbe.ts'
 
 export class WebGPUUnavailableError extends Error {}
+
+/**
+ * Pins a SkyMesh to the far plane under either depth convention. three's SkyMesh sets its clip-space z to w, which is
+ * the far plane with a conventional depth buffer (z/w = 1) but the NEAR plane with a reversed one, where it would
+ * pass the (flipped, greater-or-equal) depth test over the whole city and paint sky over everything. With a reversed
+ * buffer the far plane is z/w = 0, the value the buffer is cleared to; the sky writes no depth (SkyMesh sets
+ * depthWrite false) and draws after the opaque city (renderOrder 2, world.ts), so it shows exactly where nothing
+ * else was drawn, as before. Exported for the wiring test; the vertex node is otherwise SkyMesh's own.
+ */
+export function skyAtFarPlane(sky: SkyMesh, reversedDepth: boolean): void {
+  if (!reversedDepth) return
+  const inner = sky.material.vertexNode
+  if (!inner) return
+  // The sky's own node goes in as the argument, so it stays a visible child of the wrapper (the wiring test walks it).
+  sky.material.vertexNode = Fn(([own]: [Node<'vec4'>]) => {
+    const p = own.toVar()
+    p.z.assign(float(0))
+    return p
+  })(inner as unknown as Node<'vec4'>)
+}
 
 /**
  * The ink of a dissolving prop: the ghost view's pole green (ghost.ts GHOST_COLOR.pole, linear RGB). Stage 01 cannot
@@ -54,7 +75,14 @@ export interface Gpu {
 
 export async function createRenderer(canvas: HTMLCanvasElement, pixelRatio: number, profile = false): Promise<Gpu> {
   if (!('gpu' in navigator) || !navigator.gpu) throw new WebGPUUnavailableError('This browser does not expose WebGPU (navigator.gpu).')
-  const renderer = new WebGPURenderer({ canvas, antialias: false, powerPreference: 'high-performance', trackTimestamp: profile })
+  // Reversed depth: a depth32float buffer that keeps near-equal precision out to the far plane, so the streets and
+  // sidewalks laid 3.5 and 4.5 cm over the ground (regionWorld.ts) and the lake 2 cm over it do not fight the ground
+  // at a distance. With the plain 24-bit buffer the resolution at d metres is about d² · 6e-7 m for this camera (near
+  // 0.1 m): 4 cm at 260 m, 60 cm at 1,000 m, which is the flashing on far streets. Reversed, it is d · 1.2e-7 m
+  // (0.12 mm at 1,000 m). three flips the depth functions, the shadow bias and the clear value itself; the sky, which
+  // puts itself on the far plane by hand, is told in buildWorld (skyAtFarPlane). WebGPU always honours the setting
+  // (only the WebGL backend can refuse it), and createRenderer insists on the WebGPU backend below.
+  const renderer = new WebGPURenderer({ canvas, antialias: false, powerPreference: 'high-performance', trackTimestamp: profile, reversedDepthBuffer: true })
   await renderer.init()
   const backend = renderer.backend as unknown as { isWebGPUBackend?: boolean; device?: GPUDevice; adapter?: GPUAdapter }
   if (!backend.isWebGPUBackend || !backend.device) {
@@ -305,6 +333,7 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
     s.scale.setScalar(1000)
     for (const [k, v] of Object.entries(skyParams) as [keyof typeof skyParams, number][]) s[k].value = v
     s.frustumCulled = false
+    skyAtFarPlane(s, renderer.reversedDepthBuffer)
     return s
   }
   const sky = makeSky()
@@ -322,8 +351,13 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   const envSky = makeSky()
   envScene.add(envSky)
   const pmrem = new PMREMGenerator(renderer)
-  let envTarget: ReturnType<PMREMGenerator['fromScene']> | null = null
-  let envHours = -99
+  // The probe's schedule (envProbe.ts): every bake after the first renders into the first bake's target, so
+  // scene.environment stays one texture object and no material is re-keyed. One console line per bake
+  // ("[envprobe] 3.1 ms"), five a minute at ?day=24, sits beside the [longtask] lines in a saved console log.
+  const envProbe = new EnvProbe<ReturnType<PMREMGenerator['fromScene']>>(
+    (reuse) => pmrem.fromScene(envScene, 0.02, 0.1, 100, { renderTarget: reuse }),
+    { onBake: (ms) => console.debug('[envprobe]', `${Math.round(ms * 10) / 10} ms`) },
+  )
 
   const hemi = new HemisphereLight(0xbfd4ea, 0x3a3530, 0.6)
   scene.add(hemi)
@@ -465,15 +499,9 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
     hazeDensity.value = (0.0022 + 0.0012 * (1 - day)) * tuning.haze
     renderer.toneMappingExposure = 2 ** -ndStopsFor(day) * tuning.exposure
 
-    // Refresh the environment probe as the light changes (about every 12 game minutes).
-    if (Math.abs(hours - envHours) > 0.2) {
-      envHours = hours
-      envSky.sunPosition.value.set(s.x, s.y, s.z)
-      const next = pmrem.fromScene(envScene, 0.02)
-      scene.environment = next.texture
-      envTarget?.dispose()
-      envTarget = next
-    }
+    // Refresh the environment probe as the light changes (about every 12 game minutes), into the same target.
+    envSky.sunPosition.value.set(s.x, s.y, s.z)
+    if (envProbe.refresh(hours) && scene.environment !== envProbe.target!.texture) scene.environment = envProbe.target!.texture
     scene.environmentIntensity = (0.12 + 0.28 * day) * fill * tuning.fill
     placeLampLights(focusX, focusZ, 1 - day)
 

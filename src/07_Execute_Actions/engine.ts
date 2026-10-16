@@ -1549,7 +1549,9 @@ export class Engine {
     }
     const cam = this.world.camera
     this.projScreen.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)
-    this.frustum.setFromProjectionMatrix(this.projScreen)
+    // The camera's own conventions: WebGPU's [0, 1] clip depth, reversed since the renderer asked for it (world.ts
+    // createRenderer); without them the near and far planes come out as WebGL's and, reversed, swap.
+    this.frustum.setFromProjectionMatrix(this.projScreen, cam.coordinateSystem, cam.reversedDepth)
     packFrustumPlanes(this.frustum.planes, this.planes)
 
     if (this.fresh) {
@@ -1604,7 +1606,7 @@ export class Engine {
   private presentView(v: PlayerView): void {
     const cam = v.camera
     v.projScreen.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)
-    v.frustum.setFromProjectionMatrix(v.projScreen)
+    v.frustum.setFromProjectionMatrix(v.projScreen, cam.coordinateSystem, cam.reversedDepth)
     packFrustumPlanes(v.frustum.planes, v.planes)
     v.eye.x = cam.position.x; v.eye.y = cam.position.y; v.eye.z = cam.position.z
     this.crowd.step({ camera: v.eye, planes: v.planes, global: this.world.matrixMode.state })

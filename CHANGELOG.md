@@ -31,6 +31,22 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 - Unverified in the cloud (no GPU): the rendered crowd and traffic on the metropolis; `naga` validates both shader
   variants, and the window, the rings, the realm's seating and the uniform layout are tested in Node.
 
+### Fixed
+
+- **The periodic freeze** (docs/stutter-and-depth.md): the sky probe (the scene's reflection map) refreshed every 0.2 game
+  hours, 12 s of real time at `?day=24`, by baking into a new render target and assigning its new texture to
+  `scene.environment`; three.js keys every material's shader on that texture's node, so each refresh rebuilt every
+  material in the scene on the main thread. The probe now bakes into one reused render target
+  (`src/01_Initialize_World/envProbe.ts`), so the environment stays one texture object and a refresh costs only the
+  generator's passes; each bake writes one `[envprobe]` console line beside the `[longtask]` telemetry. That the
+  freeze is gone can only be seen on a machine with a GPU.
+- **Far surfaces flashing**: the renderer now asks three.js for a reversed depth buffer (`depth32float`, near at 1),
+  whose resolution follows perspective (0.12 mm at 1 km instead of 60 cm with the 24-bit forward buffer), so the
+  Lakefront streets and sidewalks laid 3.5 to 4.5 cm over the ground no longer fight it at a distance. The sky mesh is
+  pinned to the far plane under the reversed convention (three's SkyMesh pins itself to what becomes the near plane),
+  and the crowd cull's frustum is cut with the camera's own coordinate system and depth convention. Unverified from
+  the cloud: the look on a real GPU.
+
 ## [1.0.0-stable-beta] - 2026-10-12
 
 The V2 stable release overhaul (Phase 21, PRs #17, #18 and #19) and Phase 2 (PRs #20, #21 and #22), with everything

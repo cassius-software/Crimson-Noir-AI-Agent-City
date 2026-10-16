@@ -55,6 +55,10 @@ a message, which is worth having on its own; whether it removes the stutter Juli
 trace of a live page (DevTools, Performance tab, record 30 s, look for the "Major GC" bars and what runs just before
 them). That trace cannot be taken from the cloud container, which has no GPU and cannot run the physics worker.
 
+*Later (October 2026):* the periodic work was found by reading the frame path: the sky probe's PMREM refresh every
+0.2 game hours (12 s at `?day=24`) allocated a new render target and re-keyed every material in the scene. See
+docs/stutter-and-depth.md for the finding and the fix.
+
 ## 2. The vector flow field
 
 `src/06_Make_Decisions/flowField.ts` is the CPU reference: a grid of 2 m cells over the city (buildings blocked after
