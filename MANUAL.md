@@ -1,12 +1,12 @@
-# ONYX: the manual
+# Crimson Noir: Agent City, the manual
 
 *An enterprise in the palm of your hands.*
 
 > This is the full manual of Crimson Noir // Agent City. The overview, quickstart, release and licence are in
 > [README.md](README.md).
 
-> **ONYX is a provisional working name.** The name lives in one place, `src/brand.ts`; see
-> [Brand](#brand) before choosing the final one.
+> **The product is Crimson Noir: Agent City.** Inside the app, the splash, the HUD and the terminal prompt still
+> show ONYX, a provisional working name that lives in one place, `src/brand.ts`; see [Brand](#brand).
 
 A business-casual, non-violent civic simulation that ships as one self-contained HTML file. It is a
 16 × 16-block city under a moving sun: a downtown of towers, a heritage quarter of stone and brick rows, and a
@@ -1857,7 +1857,8 @@ when a `v*` tag is pushed, puts both on the tag's release beside the OS media.
 ## Brand
 
 The mark is the Monolith: a black rounded square with an open white triangle
-(`MonolithLogo.tsx`). The favicon is generated from the same SVG. "ONYX" is provisional.
+(`MonolithLogo.tsx`). The favicon is generated from the same SVG. The product is Crimson Noir: Agent City;
+"ONYX", the working name the app shows from `src/brand.ts`, is provisional.
 The design system is Crimson Noir (`brand/STYLE.md`): Vantablack and anodized titanium surfaces with one crimson
 line, the system face, a 4pt grid. Its tokens are `brand/tokens.json`, the page reads them from
 `src/brand/tokens.css` (custom properties and Tailwind utilities), the marks are in `brand/marks/`, and
