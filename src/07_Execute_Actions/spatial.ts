@@ -17,6 +17,7 @@
 import {
   CITY, CITY_SIZE, LAKE, districtOfLot, generateBuildings, streetFurniture, type Box, type District,
 } from '../01_Initialize_World/city.ts'
+import { insideRoom, workplaceLots, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { TRAFFIC } from '../02_Define_The_Rules/civic.ts'
 import { Driver } from '../06_Make_Decisions/traffic.ts'
 import { PERSON, RUN } from './simProtocol.ts'
@@ -145,13 +146,15 @@ export function planCity(seed: number): PlanCity {
  */
 export function spatialPlan(seed: number, city: PlanCity = planCity(seed)): SpatialPlan {
   const { boxes, poles } = city
+  const rooms = workplaceLots(seed)
   const r = PERSON.radius
   const walks: WalkProbe[] = []
   const districts: District[] = ['downtown', 'heritage', 'lakefront', 'park']
   for (const district of districts) {
+    // The workplace lots (interiors.ts) are open at the doorway: a run into one meets no face. They are passed over.
     const lots: [number, number][] = []
     for (let k = -1; k <= CITY.blocks; k++) {
-      for (let m = -1; m < CITY.blocks; m++) if (districtOfLot(k, m) === district) lots.push([k, m])
+      for (let m = -1; m < CITY.blocks; m++) if (districtOfLot(k, m) === district && !rooms.some((r) => r.k === k && r.m === m)) lots.push([k, m])
     }
     lots.sort((a, b) => mix(seed, a[0], a[1]) - mix(seed, b[0], b[1]))
     let taken = 0
@@ -330,8 +333,12 @@ export interface CrowdFinding {
   readonly examples: readonly string[]
 }
 
-/** Checks one reading of the crowd (x, z per agent, as SimControls.crowd.positions returns it) against its invariants. */
-export function checkCrowd(xz: ArrayLike<number>, into?: { counts: Record<keyof Omit<CrowdFinding, 'examples'>, number>; examples: string[] }): CrowdFinding {
+/**
+ * Checks one reading of the crowd (x, z per agent, as SimControls.crowd.positions returns it) against its invariants.
+ * `rooms` are the seed's indoor workplaces (interiors.ts): someone inside one of them, or in its doorway, is where the
+ * workday put them, not inside a lot.
+ */
+export function checkCrowd(xz: ArrayLike<number>, into?: { counts: Record<keyof Omit<CrowdFinding, 'examples'>, number>; examples: string[] }, rooms: readonly Pick<Workplace, 'cx' | 'cz' | 'side'>[] = []): CrowdFinding {
   const acc = into ?? { counts: { measured: 0, unplaced: 0, inLot: 0, outside: 0, nonFinite: 0, offCrosswalk: 0 }, examples: [] }
   const c = acc.counts
   const n = Math.floor(xz.length / 2)
@@ -350,7 +357,7 @@ export function checkCrowd(xz: ArrayLike<number>, into?: { counts: Record<keyof 
       continue
     }
     const lx = x - (Math.floor(x / pitch) + 0.5) * pitch, lz = z - (Math.floor(z / pitch) + 0.5) * pitch
-    if (Math.max(Math.abs(lx), Math.abs(lz)) < CITY.lotHalf + CROWD_LOT_PAD - CROWD_EPS) {
+    if (Math.max(Math.abs(lx), Math.abs(lz)) < CITY.lotHalf + CROWD_LOT_PAD - CROWD_EPS && !rooms.some((r) => insideRoom(r, x, z))) {
       c.inLot++
       note(i, x, z, 'inside a lot')
       continue

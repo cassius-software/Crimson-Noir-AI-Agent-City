@@ -56,7 +56,7 @@ class FakeCrowd implements CrowdSensor {
   step(input: CrowdStepInput): void {
     this.readout = {
       seq: input.seq, time: input.time - input.dt, hazardsAhead: Float32Array.from(this.ahead), hazardsBehind: Float32Array.from(this.behind),
-      stats: { nudges: 0, waiting: 0, crossing: 0, retreating: 0 }, xz: Float32Array.from(this.xz), activity: Uint8Array.from(this.activity),
+      stats: { nudges: 0, waiting: 0, crossing: 0, retreating: 0, working: 0 }, xz: Float32Array.from(this.xz), activity: Uint8Array.from(this.activity),
       heading: Float32Array.from(this.heading),
     }
     this.#frame = new Float32Array(this.agentCount * 12)

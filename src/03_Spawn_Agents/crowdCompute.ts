@@ -18,6 +18,7 @@ import { MAX_CARS, type CrowdStepInput } from './crowdSensor.ts'
 import { ACTIVITY, INTERVIEW_DISTANCE, RECRUIT_SLOTS, SUMMON_ACCEPT, TETHER_PACE } from './skills.ts'
 import { PHYSICS_LAYER, packGlobalState, type GlobalState } from '../01_Initialize_World/globalState.ts'
 import { FLOW } from '../06_Make_Decisions/flowField.ts'
+import { ROOM, ROOMS_FLOATS, WORK, workOneIn } from '../01_Initialize_World/interiors.ts'
 
 export { MAX_CARS }
 export const VARIANTS = 4
@@ -39,7 +40,11 @@ const PARAMS_CARS = PARAMS_PLANES + 6 * 16
 const PARAMS_SUMMONS = PARAMS_CARS + MAX_CARS * 32
 /** The street window's bit field (streets.ts packStreets), STREET_VEC4S × vec4u, after the summons. */
 export const PARAMS_STREETS = PARAMS_SUMMONS + RECRUIT_SLOTS * 16
-export const PARAMS_SIZE = PARAMS_STREETS + STREET_VEC4S * 16
+/** The indoor workplaces (interiors.ts packRooms: struct Room × ROOM.slots), after the streets. */
+export const PARAMS_ROOMS = PARAMS_STREETS + STREET_VEC4S * 16
+export const PARAMS_SIZE = PARAMS_ROOMS + ROOMS_FLOATS * 4
+/** No rooms at all (a region): every slot empty. */
+const NO_ROOMS = new Float32Array(ROOMS_FLOATS)
 /** The procedural city's street words: every segment a street cars use (the default every step is packed with). */
 const CITY_STREETS = packStreets(cityStreetGrid())
 
@@ -81,6 +86,8 @@ export interface CrowdStats {
   waiting: number
   crossing: number
   retreating: number
+  /** People at a workstation indoors (01_Initialize_World/interiors.ts); absent from a crowd that does not count them. */
+  working?: number
 }
 
 export interface CarState {
@@ -220,6 +227,16 @@ function header(agentCount: number, flow: FlowPlacement, geometry: Readonly<Stre
     `const FLOW_ORIGIN_X: f32 = ${f(flow.originX)};`,
     `const FLOW_ORIGIN_Z: f32 = ${f(flow.originZ)};`,
     `const FLOW_INV_CELL: f32 = ${f(1 / flow.cell)};`,
+    `const ROOM_SLOTS: u32 = ${ROOM.slots}u;`,
+    `const ROOM_FURNITURE: u32 = ${ROOM.furniture}u;`,
+    `const ROOM_STATIONS: u32 = ${ROOM.stations}u;`,
+    `const ROOM_WALL: f32 = ${f(ROOM.wall)};`,
+    `const ROOM_DOOR: f32 = ${f(ROOM.door)};`,
+    `const WORK_ONE_IN: u32 = ${workOneIn(agentCount)}u;`,
+    `const WORK_CYCLE: f32 = ${f(WORK.cycle)};`,
+    `const WORK_SHIFT: f32 = ${f(WORK.shift)};`,
+    `const WORK_SALT: u32 = ${WORK.salt}u;`,
+    `const WORK_DEAL: u32 = ${WORK.deal}u;`,
     ...Object.entries(ACTIVITY).map(([k, v]) => `const ACT_${k.replace(/[A-Z]/g, (c) => `_${c}`).toUpperCase()}: f32 = ${f(v)};`),
     '',
   ].join('\n')
@@ -280,12 +297,15 @@ export function sanitizeCull(s: CullSettings): CullSettings {
 
 /**
  * The Params words the simulation reads (the cull fields stay zero: the worker draws nothing). `streets` is the window's
- * bit field (streets.ts packStreets); absent, the procedural city's (every segment).
+ * bit field (streets.ts packStreets); absent, the procedural city's (every segment). `rooms` is the indoor workplaces'
+ * block (interiors.ts packRooms); absent, no rooms.
  */
-export function packSimParams(f: Float32Array, u: Uint32Array, frame: number, agentCount: number, input: CrowdStepInput, streets: Uint32Array = CITY_STREETS): void {
+export function packSimParams(f: Float32Array, u: Uint32Array, frame: number, agentCount: number, input: CrowdStepInput, streets: Uint32Array = CITY_STREETS, rooms: Float32Array = NO_ROOMS): void {
   packCrowdParams(f, u, frame, agentCount, input)
   if (streets.length !== STREET_VEC4S * 4) throw new RangeError(`the street field is ${STREET_VEC4S * 4} words, got ${streets.length}`)
   u.set(streets, PARAMS_STREETS / 4)
+  if (rooms.length !== ROOMS_FLOATS) throw new RangeError(`the rooms block is ${ROOMS_FLOATS} floats, got ${rooms.length}`)
+  f.set(rooms, PARAMS_ROOMS / 4)
   // Whoever the operator asked over. Only a real pedestrian (never the player's own body, never out of range) at a
   // finite spot takes a slot, each once; anything else leaves the slot empty (agent 0), and so the person's day alone.
   const summons = input.summons ?? []

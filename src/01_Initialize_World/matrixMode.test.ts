@@ -120,7 +120,7 @@ test('both pipelines read the one word the same way: y is the mode in the surfac
   assert.ok(crowd.includes('} else if (road && vehicles > 0.5 &&'))
   // Grounded in every mode: the written position's y is 0, and the lot and city containment take no mask.
   assert.ok(crowd.includes('pos[i] = vec4f(me.x, 0.0, me.y, p.w);'))
-  assert.ok(crowd.includes('me = clampCity(pushOut(next, 0.35));'))
+  assert.ok(crowd.includes('let held = contain(me, next, 0.35, mayEnter || asked);') && crowd.includes('me = clampCity(held);'))
   // The First-Law sensing is not gated: a car still sees whoever is in its path.
   assert.ok(crowd.includes('if (ahead >= 0.0) { atomicMin(&hazards[j], u32(ahead * 100.0)); }'))
 })

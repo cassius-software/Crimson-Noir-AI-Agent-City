@@ -17,6 +17,7 @@ import {
   CITY, CITY_CENTER, CITY_SIZE, HERITAGE_COLUMNS, LAKE, STYLE, cityWgsl, districtName, districtOfLot, generateBuildings, generateCity,
   streetFurniture, type Box, type Building,
 } from './city.ts'
+import { ROOM, workplaceLots } from './interiors.ts'
 
 const SEEDS = [1337, 7, 42, 90210]
 const lotOf = (x: number, z: number) => [Math.floor(x / CITY.pitch), Math.floor(z / CITY.pitch)] as const
@@ -95,6 +96,13 @@ test('every built lot is solid at eye height; the parks are open ground (a pavil
         if (districtOfLot(k, m) === 'park') {
           assert.ok(!covers, `${seed}: park ${k},${m} is built over`)
           assert.ok(mine.length <= 1 && mine.every(({ box, style }) => box[4] <= 4 && style === STYLE.concrete), `${seed}: park ${k},${m}: ${JSON.stringify(mine)}`)
+        } else if (workplaceLots(seed).some((w) => w.k === k && w.m === m)) {
+          // A workplace lot (interiors.ts): a room behind glass walls under the podium, open at its doorway alone.
+          assert.ok(!covers, `${seed}: workplace ${k},${m} is solid`)
+          const glass = mine.filter(({ style }) => style === STYLE.glass)
+          assert.equal(glass.length, 5, `${seed}: workplace ${k},${m} has four glass walls, the doorway's in two`)
+          assert.ok(glass.every(({ box }) => box[1] === 0 && box[4] === ROOM.height))
+          assert.ok(mine.some(({ box }) => box[1] === ROOM.height && box[0] === cx - h && box[3] === cx + h && box[2] === cz - h && box[5] === cz + h), `${seed}: the ceiling slab carries the podium`)
         } else {
           assert.ok(covers, `${seed}: lot ${k},${m} (${districtOfLot(k, m)}) is open at eye height`)
         }

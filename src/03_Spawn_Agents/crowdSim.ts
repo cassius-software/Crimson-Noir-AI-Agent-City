@@ -22,6 +22,7 @@ import { AGENTS_RANGE, type CrowdReadout, type CrowdSensor, type CrowdStepInput 
 import { cpuFlowSolver, nearestOpen, type FlowGrid, type FlowSolver } from '../06_Make_Decisions/flowField.ts'
 import { createFlowTexture, FlowFieldGpu, writeFlowTexture } from '../06_Make_Decisions/flowFieldGpu.ts'
 import { packStreets, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
+import { packRooms, type Workplace } from '../01_Initialize_World/interiors.ts'
 
 /**
  * Longest crowd substep, s. The stagger springs in simulate (K_TILT 120, C_TILT 15, semi-implicit Euler) diverge
@@ -49,6 +50,7 @@ export class CrowdSim implements CrowdSensor {
   readonly #paramF32 = new Float32Array(this.#paramBytes)
   readonly #paramU32 = new Uint32Array(this.#paramBytes)
   readonly #zeroStats = new Uint32Array(3)
+  readonly #zeroWorking = new Uint32Array(1)
   readonly #zeroFlags = new Uint32Array(1)
   readonly #clearHazards = new Uint32Array(HAZARD_SLOTS).fill(HAZARD_NONE)
   readonly #staging: Staging[] = []
@@ -71,19 +73,22 @@ export class CrowdSim implements CrowdSensor {
   #goal = -1
   /** The street window's bit field (streets.ts packStreets), packed into Params every step; undefined: the city's. */
   readonly #streets: Uint32Array | undefined
+  /** The indoor workplaces' block (interiors.ts packRooms), packed into Params every step; undefined: none. */
+  readonly #rooms: Float32Array | undefined
 
-  private constructor(device: GPUDevice, agentCount: number, grid: FlowGrid | null, streets: StreetGrid | null) {
+  private constructor(device: GPUDevice, agentCount: number, grid: FlowGrid | null, streets: StreetGrid | null, rooms: readonly Workplace[] | null) {
     this.#device = device
     this.agentCount = agentCount
     this.#grid = grid
     this.#streets = streets ? packStreets(streets) : undefined
+    this.#rooms = rooms && rooms.length > 0 ? packRooms(rooms) : undefined
     this.#flowTexture = createFlowTexture(device, grid)
     this.#readout = {
       seq: 0,
       time: -Infinity,
       hazardsAhead: new Float32Array(MAX_CARS).fill(Infinity),
       hazardsBehind: new Float32Array(MAX_CARS).fill(Infinity),
-      stats: { nudges: 0, waiting: 0, crossing: 0, retreating: 0 },
+      stats: { nudges: 0, waiting: 0, crossing: 0, retreating: 0, working: 0 },
       xz: new Float32Array(agentCount * 2).fill(NaN),
       activity: new Uint8Array(agentCount),
       heading: new Float32Array(agentCount).fill(NaN),
@@ -93,7 +98,7 @@ export class CrowdSim implements CrowdSensor {
     this.#pos = device.createBuffer({ label: 'crowd.pos', size: agentCount * 16, usage: storage | GPUBufferUsage.COPY_SRC })
     this.#vel = device.createBuffer({ label: 'crowd.vel', size: agentCount * 16, usage: storage | GPUBufferUsage.COPY_SRC })
     this.#pose = device.createBuffer({ label: 'crowd.pose', size: agentCount * 16, usage: storage | GPUBufferUsage.COPY_SRC })
-    const brain = device.createBuffer({ label: 'crowd.brain', size: agentCount * 48, usage: storage })
+    const brain = device.createBuffer({ label: 'crowd.brain', size: agentCount * 64, usage: storage })
     const gridCount = device.createBuffer({ label: 'crowd.gridCount', size: GRID_CELLS * 4, usage: storage })
     const gridSlots = device.createBuffer({ label: 'crowd.gridSlots', size: GRID_CELLS * GRID_CAP * 16, usage: storage })
     this.#statsBuffer = device.createBuffer({ label: 'crowd.stats', size: STATS_SIZE, usage: storage | GPUBufferUsage.COPY_SRC })
@@ -132,13 +137,14 @@ export class CrowdSim implements CrowdSensor {
    * Builds the pipelines (surfacing WGSL errors) and places every pedestrian. With a flow grid, the field's solver
    * too: the GPU's (flowFieldGpu.ts) when its pipelines validate on this device, else the CPU's, the same field. With
    * a street window (streets.ts: a generated region's), the shader is compiled for the window's corner and street
-   * widths and the window's segments are what the people walk; without one, the procedural city's.
+   * widths and the window's segments are what the people walk; without one, the procedural city's. With `rooms` (the
+   * city's indoor workplaces, interiors.ts), one person in WORK.oneIn has a station in one and commutes to it.
    */
-  static async create(device: GPUDevice, agentCount: number, grid: FlowGrid | null = null, streets: StreetGrid | null = null): Promise<CrowdSim> {
+  static async create(device: GPUDevice, agentCount: number, grid: FlowGrid | null = null, streets: StreetGrid | null = null, rooms: readonly Workplace[] | null = null): Promise<CrowdSim> {
     const [lo, hi] = AGENTS_RANGE
     if (!(Number.isInteger(agentCount) && agentCount >= lo && agentCount <= hi)) throw new Error(`agents must be ${lo}–${hi}, got ${agentCount}`)
     device.pushErrorScope('validation')
-    const crowd = new CrowdSim(device, agentCount, grid, streets)
+    const crowd = new CrowdSim(device, agentCount, grid, streets, rooms)
     crowd.#spawn()
     const error = await device.popErrorScope()
     if (error) throw new Error(`crowd.wgsl pipeline validation failed: ${error.message}`)
@@ -211,7 +217,7 @@ export class CrowdSim implements CrowdSensor {
 
   /** GPU-side placement of every pedestrian at boot. */
   #spawn(): void {
-    packSimParams(this.#paramF32, this.#paramU32, 0, this.agentCount, { seq: 0, dt: 0, time: 0, player: { x: 0, z: 0, heading: 0, speed: 0, visible: false }, cars: [], summons: [] }, this.#streets)
+    packSimParams(this.#paramF32, this.#paramU32, 0, this.agentCount, { seq: 0, dt: 0, time: 0, player: { x: 0, z: 0, heading: 0, speed: 0, visible: false }, cars: [], summons: [] }, this.#streets, this.#rooms)
     this.#device.queue.writeBuffer(this.#params, 0, this.#paramBytes)
     const enc = this.#device.createCommandEncoder({ label: 'crowd.spawn' })
     const pass = enc.beginComputePass()
@@ -232,11 +238,12 @@ export class CrowdSim implements CrowdSensor {
     const queue = this.#device.queue
     for (let sub = 1; sub <= k; sub++) {
       this.#frame++
-      packSimParams(this.#paramF32, this.#paramU32, this.#frame, this.agentCount, { ...input, dt: h, time: input.time - dt + h * sub }, this.#streets)
+      packSimParams(this.#paramF32, this.#paramU32, this.#frame, this.agentCount, { ...input, dt: h, time: input.time - dt + h * sub }, this.#streets, this.#rooms)
       queue.writeBuffer(this.#params, 0, this.#paramBytes)
       // stats[0] (safety nudges) is cumulative and stats[4] (the Ring-0 flags) sticky; the per-step counters
-      // between them are reset.
+      // between them, and the working count after them, are reset.
       queue.writeBuffer(this.#statsBuffer, 4, this.#zeroStats)
+      queue.writeBuffer(this.#statsBuffer, 20, this.#zeroWorking)
       // Every car starts the step seeing nobody; simulate lowers each slot with atomicMin.
       queue.writeBuffer(this.#hazardBuffer, 0, this.#clearHazards)
       const enc = this.#device.createCommandEncoder({ label: 'crowd.step' })
@@ -292,6 +299,7 @@ export class CrowdSim implements CrowdSensor {
       r.stats.waiting = u[1]
       r.stats.crossing = u[2]
       r.stats.retreating = u[3]
+      r.stats.working = u[5]
       // Reported: accumulated until the audit takes it, and cleared on the GPU (a readback already in flight
       // may report it once more).
       const flags = u[STATS_FLAGS]

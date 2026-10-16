@@ -7,12 +7,16 @@
 // car that touches someone only pushes them aside), First-Law hazard sensing for every car (nearest
 // person in its corridor ahead and behind), spring-damper staggers, the Ring-0 flag for a non-finite
 // pedestrian state, the operator's summons (a person asked over walks to the operator along the sidewalk
-// and stops to talk, the safety reflexes still first), and the visibility/density/LOD compaction that feeds
-// the indirect draws. Pedestrian coordinates are only ever written here, on the GPU.
+// and stops to talk, the safety reflexes still first), the workday (one person in WORK_ONE_IN has a station in
+// one of the city's indoor workplaces, 01_Initialize_World/interiors.ts: on shift they walk the corner graph to the
+// workplace's block, along the sidewalk to its doorway, in to their station and work there, then walk out and back
+// to their day), the containment that keeps everyone out of the lots but lets a room's doorway through and slides
+// a step along a wall or a piece of furniture instead of into it, and the visibility/density/LOD compaction that
+// feeds the indirect draws. Pedestrian coordinates are only ever written here, on the GPU.
 // What breaks if it is removed? Nobody spawns, walks, waits for a light, or gets drawn, and no car
 // can see the people in its path.
 //
-// CITY_*, TRAFFIC_*, SIGNAL_*, YIELD_*, WALK_*, KERNEL_*, CAR_*, GRID_*, SUMMON_*, ACT_* and the limits below are
+// CITY_*, TRAFFIC_*, SIGNAL_*, YIELD_*, WALK_*, KERNEL_*, CAR_*, GRID_*, SUMMON_*, ROOM_*, WORK_*, ACT_* and the limits below are
 // prepended at runtime from city.ts / civic.ts / crowdCompute.ts so the CPU and GPU share one set of
 // numbers. The streets are a window of CITY_BLOCKS × CITY_BLOCKS blocks at CITY_PITCH from CITY_ORIGIN_X/Z: the
 // procedural city itself (every street present, at the origin), or a window of a generated region (Lakefront Metro,
@@ -33,6 +37,22 @@ const CROSS_NONE: f32 = 0.0;
 const CROSS_WAIT: f32 = 1.0;
 const CROSS_WALK: f32 = 2.0;
 
+// The workday's phases (Brain.d.x). Off duty a worker walks the streets like anyone; on shift they commute: the
+// corner graph towards the workplace's corner, the sidewalk to the door front, in through the doorway to the hub,
+// across to their station's row, along it to the station, work; then the same legs out, and back to their day.
+const WORK_OFF: f32 = 0.0;
+const WORK_COMMUTE: f32 = 1.0;
+const WORK_APPROACH: f32 = 2.0;
+const WORK_ENTER: f32 = 3.0;
+const WORK_ROW: f32 = 4.0;
+const WORK_STATION: f32 = 5.0;
+const WORK_WORKING: f32 = 6.0;
+const WORK_LEAVE_ROW: f32 = 7.0;
+const WORK_LEAVE_HUB: f32 = 8.0;
+const WORK_LEAVE_DOOR: f32 = 9.0;
+// A step indoors or to the door front counts as arrived this close, m (a corner: 1.3).
+const WORK_ARRIVE: f32 = 0.6;
+
 // Hash salts: independent streams for the walk-start roll, the draw-density lottery and the detailed-body distance.
 const WALK_SALT: u32 = 0x2545f491u;
 const DENSITY_SALT: u32 = 0x68e31da4u;
@@ -52,6 +72,18 @@ struct Summon {
   at: vec2f,
   agent: u32,
   flags: u32,
+}
+
+// An indoor workplace (01_Initialize_World/interiors.ts packRooms): a downtown lot whose ground floor is a room behind
+// glass walls ROOM_WALL thick with a doorway 2 · ROOM_DOOR wide on one street front. a = (lot centre x, z, doorway side:
+// 0 faces +z, 1 −z, 2 +x, 3 −x; present), b = (the hub's u, m inside the doorway; furniture count; -, -), furniture =
+// (x0, z0, x1, z1) city boxes a step slides round, stations = (u, v, facing yaw, present) in the room's frame (u from
+// the back wall to the doorway, v across). A room with a.w = 0 is an empty slot (a region has none).
+struct Room {
+  a: vec4f,
+  b: vec4f,
+  furniture: array<vec4f, ROOM_FURNITURE>,
+  stations: array<vec4f, ROOM_STATIONS>,
 }
 
 struct Params {
@@ -78,15 +110,19 @@ struct Params {
   // on it (bit 1); the east-west segments (index m · CITY_BLOCKS + k) then the north-south ((CITY_BLOCKS + 1) ·
   // CITY_BLOCKS + k · CITY_BLOCKS + m). The procedural city sets every bit.
   streets: array<vec4u, STREET_VEC4S>,
+  // The indoor workplaces (interiors.ts): the procedural city's six, or empty slots in a region.
+  rooms: array<Room, ROOM_SLOTS>,
 }
 
 // a = (goal.xy, preferred speed, retreat speed)
 // b = (tilt velocity, bend velocity, crossing state, summons: 0 none, 1 coming over, 2 interviewing)
 // c = (retreat dir.xy, retreat timer, freeze timer)
+// d = (workday phase WORK_*, the room it is in or heading for, -, -)
 struct Brain {
   a: vec4f,
   b: vec4f,
   c: vec4f,
+  d: vec4f,
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
@@ -99,7 +135,7 @@ struct Brain {
 @group(0) @binding(7) var<storage, read> gridCountR: array<u32>;
 @group(0) @binding(8) var<storage, read> gridSlotsR: array<vec4f>;
 // nudges, waiting, crossing, retreating, flags (bit 0: a non-finite pedestrian state was computed; sticky
-// until the CPU has read it back, for the Ring-0 audit), -, -, -.
+// until the CPU has read it back, for the Ring-0 audit), working (at a station this step), -, -.
 @group(0) @binding(9) var<storage, read_write> stats: array<atomic<u32>, 8>;
 @group(0) @binding(10) var<storage, read_write> drawArgs: array<atomic<u32>>;
 @group(0) @binding(11) var<storage, read_write> drawLists: array<u32>;
@@ -313,6 +349,110 @@ fn pushOut(p: vec2f, pad: f32) -> vec2f {
 }
 fn clampCity(p: vec2f) -> vec2f { return clamp(p, origin() - 6.5, origin() + CITY_SIZE + 6.5); }
 
+// ---------------------------------------------------------------- the indoor workplaces (interiors.ts, mirrored there)
+
+// The room frame's u axis in the city for a doorway side, and its v axis (u turned a quarter clockwise).
+fn doorDir(side: f32) -> vec2f {
+  if (side < 0.5) { return vec2f(0.0, 1.0); }
+  if (side < 1.5) { return vec2f(0.0, -1.0); }
+  if (side < 2.5) { return vec2f(1.0, 0.0); }
+  return vec2f(-1.0, 0.0);
+}
+fn acrossDir(d: vec2f) -> vec2f { return vec2f(d.y, -d.x); }
+// A city point in room r's frame (u, v), and back.
+fn roomLocal(r: u32, p: vec2f) -> vec2f {
+  let d = doorDir(P.rooms[r].a.z);
+  let q = p - P.rooms[r].a.xy;
+  return vec2f(dot(q, d), dot(q, acrossDir(d)));
+}
+fn roomWorld(r: u32, uv: vec2f) -> vec2f {
+  let d = doorDir(P.rooms[r].a.z);
+  return P.rooms[r].a.xy + d * uv.x + acrossDir(d) * uv.y;
+}
+// The room whose lot p lies in (the lot square and the street halves round it), or -1.
+fn roomOf(p: vec2f) -> i32 {
+  let c = lotCenter(p);
+  for (var r = 0u; r < ROOM_SLOTS; r++) {
+    if (P.rooms[r].a.w > 0.5 && all(abs(c - P.rooms[r].a.xy) < vec2f(0.5))) { return i32(r); }
+  }
+  return -1;
+}
+// True when p is inside room r's walls (not in them: the doorway's band counts as the street).
+fn insideRoom(r: u32, p: vec2f) -> bool {
+  let l = abs(roomLocal(r, p));
+  return max(l.x, l.y) < CITY_LOT_HALF - ROOM_WALL;
+}
+// Where a step from `was` to `to` ends in room r's lot (interiors.ts containInRoom): the walls are a band between the
+// room (|u|, |v| < lotHalf − wall) and the street (beyond lotHalf), each grown by pad; a step landing in the band is put
+// back on the side it came from, projected to that side's nearest free point so the rest of the step slides along the
+// wall. Through the doorway (|v| < door − pad on the door side) the band is open, to whoever `mayEnter` (a worker
+// on an entering or leaving leg, someone asked over following the flow field, anyone already inside: never a passer-by
+// jostled off the sidewalk, who would stand lost in a room). Inside, each furniture box grown by pad pushes a step
+// out along its least-penetrated axis.
+fn containRoom(r: u32, was: vec2f, to: vec2f, pad: f32, mayEnter: bool) -> vec2f {
+  let limOut = CITY_LOT_HALF + pad;
+  let limIn = CITY_LOT_HALF - ROOM_WALL - pad;
+  var l = roomLocal(r, to);
+  let m = max(abs(l.x), abs(l.y));
+  let inDoor = l.x > 0.0 && abs(l.y) < ROOM_DOOR - pad && mayEnter;
+  if (m > limIn && m < limOut && !inDoor) {
+    let f = abs(roomLocal(r, was));
+    if (max(f.x, f.y) < CITY_LOT_HALF - ROOM_WALL * 0.5) {
+      l = clamp(l, vec2f(-limIn), vec2f(limIn));
+    } else if (limOut - abs(l.x) < limOut - abs(l.y)) {
+      l.x = select(-limOut, limOut, l.x >= 0.0);
+    } else {
+      l.y = select(-limOut, limOut, l.y >= 0.0);
+    }
+  }
+  var p = roomWorld(r, l);
+  let n = min(u32(P.rooms[r].b.y), ROOM_FURNITURE);
+  for (var k = 0u; k < n; k++) {
+    let box = P.rooms[r].furniture[k];
+    let lo = box.xy - pad;
+    let hi = box.zw + pad;
+    if (p.x <= lo.x || p.x >= hi.x || p.y <= lo.y || p.y >= hi.y) { continue; }
+    let dx = min(p.x - lo.x, hi.x - p.x);
+    let dz = min(p.y - lo.y, hi.y - p.y);
+    if (dx < dz) { p.x = select(hi.x, lo.x, p.x - lo.x < hi.x - p.x); } else { p.y = select(hi.y, lo.y, p.y - lo.y < hi.y - p.y); }
+  }
+  return p;
+}
+// The containment of every step: a room's where the step lands in a room's lot, else the lot square's.
+fn contain(was: vec2f, to: vec2f, pad: f32, mayEnter: bool) -> vec2f {
+  let r = roomOf(to);
+  if (r < 0) { return pushOut(to, pad); }
+  return containRoom(u32(r), was, to, pad, mayEnter || insideRoom(u32(r), was));
+}
+// The workday's dice. Agent i's station slot (room · ROOM_STATIONS + station) when one in WORK_ONE_IN has one in a
+// room this world has, else -1; and whether they are on shift at t (each starts at their own moment of the cycle).
+fn workerSlot(i: u32) -> i32 {
+  // The workers are every WORK_ONE_IN-th index (odd: they wear every body), the w-th dealt station w · WORK_DEAL mod
+  // the stations (coprime: every station once before any twice, the rooms in turn).
+  if ((i + 1u) % WORK_ONE_IN != 0u) { return -1; }
+  let w = (i + 1u) / WORK_ONE_IN - 1u;
+  let s = (w * WORK_DEAL) % (ROOM_SLOTS * ROOM_STATIONS);
+  let r = s / ROOM_STATIONS;
+  if (P.rooms[r].a.w < 0.5 || P.rooms[r].stations[s % ROOM_STATIONS].w < 0.5) { return -1; }
+  return i32(s);
+}
+fn onDuty(i: u32, t: f32) -> bool {
+  let s = t + rand(i, WORK_SALT + 2u) * WORK_CYCLE;
+  return s - WORK_CYCLE * floor(s / WORK_CYCLE) < WORK_SHIFT;
+}
+// The door front: the sidewalk lane point outside room r's doorway, where the route leaves the street.
+fn doorFront(r: u32) -> vec2f { return roomWorld(r, vec2f(CITY_PITCH * 0.5 - CITY_LANE, 0.0)); }
+// The sidewalk corner a commuter walks the corner graph to: the corner of the doorway's street on the room's own block
+// (interiors.ts targetCorner); its lane coordinate is the door front's, so the last stretch is straight along the lane.
+fn targetCorner(r: u32) -> vec2f {
+  let km = vec2i(floor((P.rooms[r].a.xy - origin()) / CITY_PITCH));
+  let side = P.rooms[r].a.z;
+  if (side < 0.5) { return cornerPos(km.x, km.y + 1, 1.0, -1.0); }
+  if (side < 1.5) { return cornerPos(km.x, km.y, 1.0, 1.0); }
+  if (side < 2.5) { return cornerPos(km.x + 1, km.y, -1.0, 1.0); }
+  return cornerPos(km.x, km.y, 1.0, 1.0);
+}
+
 // Signed offsets from the nearest north-south (x) and east-west (y) street centrelines.
 fn streetOffsets(p: vec2f) -> vec2f { return (p - origin()) - round((p - origin()) / CITY_PITCH) * CITY_PITCH; }
 // The nearest intersection's indices.
@@ -359,6 +499,33 @@ fn nextCorner(t: vec2f, seed: u32) -> vec2f {
   if (alongZ) { return cornerPos(k, nm, sx, -sz); }
   if (alongX) { return cornerPos(nk, m, -sx, sz); }
   return t;
+}
+// The corner graph with a destination: of the four ways out of corner t (as nextCorner has them, each where the window
+// has the street), the one that brings a commuter nearest `dest` by city blocks (Manhattan: every way out runs along
+// an axis, so the distance falls at every step and the walk ends at the target's corner). A corner with no way nearer
+// (never, where every street exists) falls back to the day's dice.
+fn towardCorner(t: vec2f, dest: vec2f, seed: u32) -> vec2f {
+  let km = nearestLines(t);
+  let k = km.x;
+  let m = km.y;
+  let sx = select(-1.0, 1.0, t.x - (CITY_ORIGIN_X + f32(k) * CITY_PITCH) >= 0.0);
+  let sz = select(-1.0, 1.0, t.y - (CITY_ORIGIN_Z + f32(m) * CITY_PITCH) >= 0.0);
+  let nk = k + i32(sx);
+  let nm = m + i32(sz);
+  let ways = array<vec2f, 4>(cornerPos(nk, m, -sx, sz), cornerPos(k, nm, sx, -sz), cornerPos(k, m, -sx, sz), cornerPos(k, m, sx, -sz));
+  let open = array<bool, 4>(walkable(hSeg(min(k, nk), m)), walkable(vSeg(k, min(m, nm))), cornerExists(k, m, -sx, sz), cornerExists(k, m, sx, -sz));
+  var best = t;
+  var bestD = abs(t.x - dest.x) + abs(t.y - dest.y);
+  for (var w = 0u; w < 4u; w++) {
+    if (!open[w]) { continue; }
+    let d = abs(ways[w].x - dest.x) + abs(ways[w].y - dest.y);
+    if (d < bestD - 1e-3) {
+      bestD = d;
+      best = ways[w];
+    }
+  }
+  if (all(best == t)) { return nextCorner(t, seed); }
+  return best;
 }
 // The sidewalk corner nearest p on p's own block (both street offsets keep their sign): reachable along the
 // sidewalk without crossing a street. A released recruit resumes their day from there.
@@ -438,6 +605,7 @@ fn spawn(@builtin(global_invocation_id) gid: vec3u) {
   b.a = vec4f(select(goal, c, flip), 1.1 + rand(i, 10u) * 0.4, 0.0);
   b.b = vec4f(0.0);
   b.c = vec4f(0.0);
+  b.d = vec4f(0.0);
   brain[i] = b;
 }
 
@@ -558,6 +726,10 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
   var activity = ACT_ROUTINE;
   // True while the summons arm steers this person (coming over or talking): the kerb then binds their whole step.
   var asked = false;
+  // True while the workday steers this person off the corner graph (to the door, indoors, back out): no flocking then,
+  // and the doorway lets them through.
+  var working = false;
+  var mayEnter = false;
 
   // Summons: is this person one the operator asked over, and to where?
   var summoned = false;
@@ -585,6 +757,8 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
     if (!road && crossing != CROSS_WALK && distance(me, at) <= SUMMON_ACCEPT) {
       b.b.w = 1.0;
       crossing = CROSS_NONE;
+      // Whatever the workday was doing, the operator's request comes first; released, they resume their day from a corner.
+      b.d = vec4f(0.0);
     } else {
       summoned = false;
     }
@@ -634,6 +808,63 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
       if (onRoad(me + vec2f(0.0, desired.y) * 0.5)) { desired.y = 0.0; }
     }
   } else {
+    // The workday. A worker's phase is theirs alone (nobody else ever has one); off duty it is WORK_OFF and they walk
+    // the corner graph like everyone. On shift the next corner reached is chosen towards the workplace, and from the
+    // workplace's corner the legs below take over. Anyone standing inside a room with no phase (a recruit the operator
+    // let go indoors, a fallen person set back on their feet there) leaves it by the hub and the doorway.
+    let slot = workerSlot(i);
+    var phase = b.d.x;
+    var room = u32(b.d.y);
+    if (slot >= 0) {
+      // Their own workplace, until a shift ends (the leaving legs keep whichever room they are in).
+      if (phase < 6.5) { room = u32(slot) / ROOM_STATIONS; }
+      let duty = onDuty(i, P.time);
+      if (phase < 0.5 && duty) { phase = WORK_COMMUTE; }
+      if (phase > 5.5 && phase < 6.5 && !duty) { phase = WORK_LEAVE_ROW; }
+    } else if (phase > 0.5 && phase < 6.5) {
+      // No workplace any more (never, in one world): finish by walking out from wherever this leg is.
+      phase = select(WORK_OFF, WORK_LEAVE_HUB, phase > 2.5);
+    }
+    if (phase < 0.5) {
+      let here = roomOf(me);
+      if (here >= 0 && insideRoom(u32(here), me)) {
+        phase = WORK_LEAVE_HUB;
+        room = u32(here);
+      }
+    }
+    if (phase >= WORK_APPROACH) {
+      working = true;
+      mayEnter = phase > 2.5;
+      let st = P.rooms[room].stations[u32(max(slot, 0)) % ROOM_STATIONS];
+      let station = roomWorld(room, st.xy);
+      var dest = doorFront(room);
+      var arrive = WORK_ARRIVE + 0.2;
+      if ((phase > 2.5 && phase < 3.5) || (phase > 7.5 && phase < 8.5)) { dest = roomWorld(room, vec2f(P.rooms[room].b.x, 0.0)); arrive = WORK_ARRIVE; }
+      if ((phase > 3.5 && phase < 4.5) || (phase > 6.5 && phase < 7.5)) { dest = roomWorld(room, vec2f(P.rooms[room].b.x, st.y)); arrive = WORK_ARRIVE; }
+      if (phase > 4.5 && phase < 6.5) { dest = station; arrive = WORK_ARRIVE; }
+      let to = dest - me;
+      let dist = length(to);
+      if (phase > 5.5 && phase < 6.5) {
+        // At work: hold the station (a spring back to it against the jostle), face the desk, lean to it.
+        desired = select(vec2f(0.0), to / dist * min(dist * 3.0, b.a.z), dist > 1e-3);
+        faceDir = vec2f(sin(st.z), cos(st.z));
+        activity = ACT_WORKING;
+        atomicAdd(&stats[5], 1u);
+      } else {
+        desired = select(vec2f(0.0), to / dist * b.a.z * clamp(dist / 1.5, 0.3, 1.0), dist > 1e-3);
+        activity = ACT_COMMUTING;
+        if (dist < arrive) {
+          if (phase > 8.5) {
+            // Out on the sidewalk again: back to the day from this block's nearest corner.
+            phase = WORK_OFF;
+            b.a = vec4f(cornerOf(me), b.a.z, b.a.w);
+          } else {
+            phase += 1.0;
+          }
+        }
+      }
+      crossing = CROSS_NONE;
+    } else {
     let goal = b.a.xy;
     if (crossing == CROSS_WAIT) {
       let d = goal - me;
@@ -654,9 +885,16 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
     }
     if (crossing != CROSS_WAIT) {
       if (distance(me, goal) < 1.3) {
-        let next = nextCorner(goal, hash2(i, P.frame));
-        crossing = select(CROSS_NONE, CROSS_WAIT, isCrossing(goal, next));
-        b.a = vec4f(next, b.a.z, b.a.w);
+        let commuting = phase > 0.5 && phase < 1.5;
+        if (commuting && distance(goal, targetCorner(room)) < 0.5) {
+          // The workplace's corner: along the lane to the door front from here.
+          phase = WORK_APPROACH;
+          crossing = CROSS_NONE;
+        } else {
+          let next = select(nextCorner(goal, hash2(i, P.frame)), towardCorner(goal, targetCorner(room), hash2(i, P.frame)), commuting);
+          crossing = select(CROSS_NONE, CROSS_WAIT, isCrossing(goal, next));
+          b.a = vec4f(next, b.a.z, b.a.w);
+        }
       } else {
         desired = dirTo(me, goal) * b.a.z;
         if (crossing == CROSS_WALK) {
@@ -666,13 +904,15 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
         }
       }
     }
+    }
+    b.d = vec4f(phase, f32(room), 0.0, 0.0);
   }
   b.b.z = crossing;
 
   // Boids steering: separation for everyone, gentle alignment and cohesion for walking flows (not for someone
   // walking over to the operator: a passing stream would carry them off their line).
   var steer = desired + sep * 0.8;
-  if (cnt > 0.0 && dot(desired, desired) > 0.01 && !asked) {
+  if (cnt > 0.0 && dot(desired, desired) > 0.01 && !asked && !working) {
     steer += (ali / cnt - v.xy) * 0.2 + (coh / cnt - me) * 0.04;
   }
   var nv = mix(v.xy, steer, clamp(dt * 5.0, 0.0, 1.0));
@@ -697,13 +937,25 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
   }
   // The new position before containment: clampCity would launder an infinity or a NaN into a corner.
   let next = me + nv * dt;
-  me = clampCity(pushOut(next, 0.35));
+  // The lots hold everyone out, a room's doorway lets its people through (contain). The part of the step a wall or a
+  // piece of furniture refused is taken out of the velocity too, so the step slides along it and the walk phase reads
+  // the speed actually made, with nothing left pressing into the wall.
+  let held = contain(me, next, 0.35, mayEnter || asked);
+  me = clampCity(held);
+  let refused = held - next;
+  if (dot(refused, refused) > 1e-10) {
+    let wallN = normalize(refused);
+    let into = dot(nv, wallN);
+    if (into < 0.0) { nv -= wallN * into; }
+  }
 
   // Stagger: harmonic oscillators pull the torso and body back upright.
   b.b.y += (-K_BEND * ps.y - C_BEND * b.b.y) * dt;
   ps.y += b.b.y * dt;
   b.b.x += (-K_TILT * ps.x - C_TILT * b.b.x) * dt;
   ps.x += b.b.x * dt;
+  // At work: a lean to the desk with a slow nod on it (the springs bring the body back up when the shift ends).
+  if (activity == ACT_WORKING) { ps.y = 0.1 + 0.04 * sin(P.time * 2.5 + f32(i)); }
 
   let spd = length(nv);
   var heading = p.w;

@@ -34,6 +34,8 @@ export const FLOW = Object.freeze({
   roadWeight: 3,
   /** Metres a building is grown by before it is rasterised: a person's reach, so a route never hugs a wall. */
   pad: 0.5,
+  /** A box whose underside is this high, m, is walked under (a room's ceiling slab, a cornice): it blocks nothing. */
+  headroom: 2.0,
   /** Cost of a straight step and of a diagonal one, before the cell's weight (14/10 ≈ √2, in integers). */
   straight: 10,
   diagonal: 14,
@@ -78,11 +80,14 @@ export function emptyGrid(width: number, height: number, originX = 0, originZ = 
 /**
  * Marks every cell whose centre lies in a box ([minX, minY, minZ, maxX, maxY, maxZ]) grown by `pad` as blocked. The
  * centre, not any overlap: a cell half on the sidewalk stays a cell people may walk, so a lane survives beside every lot.
+ * A box that starts at FLOW.headroom or above is walked under (the ceiling slab over a workplace's room, interiors.ts)
+ * and blocks nothing; a region's walls (y 0 to 0) and every box on the ground block as they always did.
  */
 export function blockBoxes(grid: FlowGrid, boxes: readonly Box[], pad = FLOW.pad): void {
   const { width, height, originX, originZ, cell, weight } = grid
-  for (const [x0, , z0, x1, , z1] of boxes) {
+  for (const [x0, y0, z0, x1, , z1] of boxes) {
     if (![x0, z0, x1, z1].every(Number.isFinite)) continue
+    if (y0 >= FLOW.headroom) continue
     const lx = Math.min(x0, x1) - pad, hx = Math.max(x0, x1) + pad, lz = Math.min(z0, z1) - pad, hz = Math.max(z0, z1) + pad
     const i0 = Math.max(0, Math.floor((lx - originX) / cell - 0.5)), i1 = Math.min(width - 1, Math.ceil((hx - originX) / cell - 0.5))
     const j0 = Math.max(0, Math.floor((lz - originZ) / cell - 0.5)), j1 = Math.min(height - 1, Math.ceil((hz - originZ) / cell - 0.5))

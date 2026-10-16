@@ -43,7 +43,8 @@ const USAGE = { MAP_READ: 1, MAP_WRITE: 2, COPY_SRC: 4, COPY_DST: 8, INDEX: 16, 
 const TEXTURE_USAGE = { COPY_SRC: 1, COPY_DST: 2, TEXTURE_BINDING: 4, STORAGE_BINDING: 8, RENDER_ATTACHMENT: 16 } as const
 Object.assign(globalThis, { GPUBufferUsage: USAGE, GPUMapMode: { READ: 1, WRITE: 2 }, GPUTextureUsage: TEXTURE_USAGE })
 
-const { CULL_EASE, CULL_PASSES, FLAG_NON_FINITE, MAX_CARS, PARAMS_SIZE, PARAMS_STREETS, PASS_BINDINGS, RENDER_FLOATS, SIM_PASSES, VARIANTS, agentQuota, corridorReach, crowdShader, geometryOf, packFrustumPlanes, packSimParams, simReadbackSize } = await import('./crowdCompute.ts')
+const { ROOM, ROOM_FLOATS } = await import('../01_Initialize_World/interiors.ts')
+const { CULL_EASE, CULL_PASSES, FLAG_NON_FINITE, MAX_CARS, PARAMS_ROOMS, PARAMS_SIZE, PARAMS_STREETS, PASS_BINDINGS, RENDER_FLOATS, SIM_PASSES, VARIANTS, agentQuota, corridorReach, crowdShader, geometryOf, packFrustumPlanes, packSimParams, simReadbackSize } = await import('./crowdCompute.ts')
 const { STREET_VEC4S, cityStreetGrid, packStreets } = await import('../01_Initialize_World/region/streets.ts')
 const { CROWD_SUBSTEP, CrowdSim } = await import('./crowdSim.ts')
 const { CrowdCull, MAX_HIDDEN } = await import('./crowdCull.ts')
@@ -728,11 +729,16 @@ test('no pass needs more than the default 8 storage buffers per stage', () => {
 test('struct layouts obey the uniform address-space rules and match the CPU sizes', () => {
   const p = layoutOf('Params', MODULE)
   const m = p.members!
-  // The street window's bit field rides last: STREET_VEC4S rows of vec4u after the summons.
-  assert.equal(p.size, 1856 + STREET_VEC4S * 16)
+  // The street window's bit field rides after the summons (STREET_VEC4S rows of vec4u), the indoor workplaces last
+  // (ROOM.slots × struct Room: a, b, ROOM.furniture boxes, ROOM.stations stations, every one a vec4f).
+  assert.equal(p.size, 1856 + STREET_VEC4S * 16 + ROOM.slots * (32 + 16 * (ROOM.furniture + ROOM.stations)))
   assert.equal(p.size, PARAMS_SIZE)
   assert.equal(m.get('streets')!.offset, 192 + MAX_CARS * 32 + RECRUIT_SLOTS * 16)
   assert.equal(m.get('streets')!.offset, PARAMS_STREETS)
+  assert.equal(m.get('rooms')!.offset, PARAMS_STREETS + STREET_VEC4S * 16)
+  assert.equal(m.get('rooms')!.offset, PARAMS_ROOMS)
+  assert.equal(layoutOf('Room', MODULE).size, ROOM_FLOATS * 4)
+  assert.deepEqual([...layoutOf('Room', MODULE).members!].map(([k, v]) => [k, v.offset]), [['a', 0], ['b', 16], ['furniture', 32], ['stations', 32 + ROOM.furniture * 16]])
   assert.equal(m.get('player')!.offset, 32)
   assert.equal(m.get('aux')!.offset, 48)
   assert.equal(m.get('camera')!.offset, 64)
@@ -753,7 +759,7 @@ test('struct layouts obey the uniform address-space rules and match the CPU size
   const c = layoutOf('Car', MODULE)
   assert.equal(c.size, 32)
   assert.equal(c.members!.get('b')!.offset, 16)
-  assert.equal(layoutOf('Brain', MODULE).size, 48)
+  assert.equal(layoutOf('Brain', MODULE).size, 64)
   assert.equal(layoutOf(bindings(MODULE).get('hazards')!.type, MODULE).size, 2 * MAX_CARS * 4)
   // Four counters, the Ring-0 flags word and three spare: 32 bytes, 16-byte aligned.
   assert.equal(layoutOf(bindings(MODULE).get('stats')!.type, MODULE).size, 32)
@@ -969,10 +975,11 @@ test('Ring-0 crowd flag: raised in simulate before containment, latched in the w
   const sim = flat('simulate')
   for (const line of [
     'let next = me + nv * dt;',
-    'me = clampCity(pushOut(next, 0.35));',
+    'let held = contain(me, next, 0.35, mayEnter || asked);',
+    'me = clampCity(held);',
     'if (nonFinite(next) || nonFinite(nv) || nonFinite(vec2f(p.w, phase))) { atomicOr(&stats[4], FLAG_NON_FINITE); }',
   ]) assert.ok(sim.includes(line), line)
-  assert.ok(sim.indexOf('let next = me + nv * dt;') < sim.indexOf('me = clampCity(pushOut(next, 0.35));'))
+  assert.ok(sim.indexOf('let next = me + nv * dt;') < sim.indexOf('me = clampCity(held);'))
   assert.ok(sim.indexOf('atomicOr(&stats[4]') < sim.indexOf('pos[i] = vec4f(me.x, 0.0, me.y, p.w);'), 'flagged before the state is stored')
   assert.ok(flat('nonFinite').includes('any((bitcast<vec2u>(v) & vec2u(EXP_MASK)) == vec2u(EXP_MASK))'))
   // The mask picks out exactly the infinities and NaN of binary32: a huge finite, a denormal and zero pass.
@@ -991,7 +998,7 @@ test('Ring-0 crowd flag: raised in simulate before containment, latched in the w
   crowd.step(simInput()) // raised this step
   crowd.step(simInput()) // the reset of the counters must leave it standing
   assert.equal(stats.u32()[4], FLAG_NON_FINITE, 'sticky across the per-step reset')
-  assert.ok(device.log.filter((l) => l.startsWith('write crowd.stats')).every((l) => l === 'write crowd.stats @4+12'), 'the per-step reset only touches the counters')
+  assert.ok(device.log.filter((l) => l.startsWith('write crowd.stats')).every((l) => l === 'write crowd.stats @4+12' || l === 'write crowd.stats @20+4'), 'the per-step reset only touches the counters (and the working count past the flags)')
   assert.equal(crowd.takeFlags(), 0, 'nothing is reported before a readback resolves')
   await device.flush()
   assert.equal(stats.u32()[4], 0, 'cleared on the GPU once reported')
@@ -1674,7 +1681,7 @@ test('simulate: a summons comes after the safety reflexes, is taken only on the 
     'for (var s = 0u; s < SUMMON_SLOTS; s++) { let q = P.summons[s]; if (q.agent == i && q.flags != 0u) { summoned = true; tethered = (q.flags & 2u) != 0u; at = q.at; } }',
     'summoned = summoned && !nonFinite(at);',
     // Taken only from someone on the sidewalk, not mid-crossing, within reach.
-    'if (!road && crossing != CROSS_WALK && distance(me, at) <= SUMMON_ACCEPT) { b.b.w = 1.0; crossing = CROSS_NONE; } else { summoned = false; }',
+    'if (!road && crossing != CROSS_WALK && distance(me, at) <= SUMMON_ACCEPT) { b.b.w = 1.0; crossing = CROSS_NONE; b.d = vec4f(0.0); } else { summoned = false; }',
     // Released: back to their day from their own block's corner, never mid-street.
     'if (!summoned && b.b.w > 0.0) { b.b.w = 0.0; b.a = vec4f(cornerOf(me), b.a.z, b.a.w); crossing = CROSS_NONE; }',
     // Coming over, slowing near; stopping at SUMMON_STOP; following if the operator walks off.
@@ -1693,7 +1700,7 @@ test('simulate: a summons comes after the safety reflexes, is taken only on the 
     'ps.w = activity; pose[i] = ps;',
     // The kerb binds the step actually taken (after separation and the cap), not only the step asked for; a recruit is
     // not carried along by passing flows.
-    'if (cnt > 0.0 && dot(desired, desired) > 0.01 && !asked) {',
+    'if (cnt > 0.0 && dot(desired, desired) > 0.01 && !asked && !working) {',
     'if (asked && !road) { if (onRoad(me + vec2f(nv.x * dt, 0.0))) { nv.x = 0.0; } if (onRoad(me + vec2f(0.0, nv.y * dt))) { nv.y = 0.0; } } let next = me + nv * dt;',
   ]) at(line)
   assert.ok(at('} else if (summoned) { asked = true;') > 0, 'only the summons arm binds the step to the kerb (never the step back from a car)')
@@ -1712,7 +1719,7 @@ test('simulate: a summons comes after the safety reflexes, is taken only on the 
   assert.ok(!/\bme\s*=|\bnv\s*=|\bb\.c\s*=|pos\[i\]\s*=/.test(arm), 'the arm only asks for a velocity; it never places anyone or touches the reflexes')
   // The velocity it asks for is capped like everyone's, and the move is contained like everyone's.
   assert.ok(sim.indexOf('if (sp > 3.0) { nv *= 3.0 / sp; }') > summon)
-  assert.ok(sim.indexOf('me = clampCity(pushOut(next, 0.35));') > summon)
+  assert.ok(sim.indexOf('me = clampCity(held);') > summon)
   // Never a new way to start a crossing.
   assert.equal(sim.split('crossing = CROSS_WALK').length, 2)
 })

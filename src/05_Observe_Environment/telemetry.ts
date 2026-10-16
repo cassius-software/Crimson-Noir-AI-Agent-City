@@ -184,6 +184,8 @@ export interface SipocSnapshot {
     crowdFrames?: number
     /** The world seed the city was generated from. */
     seed?: number
+    /** People at a workstation in the city's indoor workplaces (01_Initialize_World/interiors.ts); absent in a region. */
+    working?: number
     /** Where the page runs: a browser tab, or a native shell (a Tauri v2 window). */
     host?: 'browser' | 'native'
   }

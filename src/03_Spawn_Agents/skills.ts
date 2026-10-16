@@ -114,9 +114,10 @@ export const RECRUITING_PLAYER = 0
 
 /**
  * What a pedestrian is doing, as the crowd reports it per agent (crowd.wgsl writes it into pose.w): the recruiter
- * reads COMING and INTERVIEWING to know a summons was taken; the others describe their ordinary day.
+ * reads COMING and INTERVIEWING to know a summons was taken; the others describe their ordinary day, the workday's
+ * among them (01_Initialize_World/interiors.ts: `commuting` to or from an indoor workplace, `working` at a station).
  */
-export const ACTIVITY = { routine: 0, waiting: 1, crossing: 2, steppingBack: 3, coming: 4, interviewing: 5 } as const
+export const ACTIVITY = { routine: 0, waiting: 1, crossing: 2, steppingBack: 3, coming: 4, interviewing: 5, working: 6, commuting: 7 } as const
 /** Samples along a recruit's straight path to the operator when checking it stays off the road, m. */
 const PATH_STEP = 0.25
 
