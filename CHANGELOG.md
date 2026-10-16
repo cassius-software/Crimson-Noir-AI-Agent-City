@@ -68,7 +68,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   in its footprint, the Sanctuary still shields you from a moving car, and the Ring-0 audit still reads a moving car
   over a solid person as an impact. The Sanctuary no longer shields or nudges anyone for overlapping a standing car,
   and it now shields anyone within 0.3 m of a moving one whichever way it moves, since you can run after a car pulling
-  away.
+  away; a car pulling away nudges nobody.
 
 ### Removed
 
@@ -79,6 +79,12 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Fixed
 
+- **A runner beside a turning car could halt the realm.** At full lock a car's centre heads into its inner flank while
+  the overhang behind the rear axle swings away; the Ring-0 audit judges a touch by the centre and the Sanctuary judged
+  it by the flank, so a runner reaching the inner rear corner stayed solid where the audit read an impact
+  ("Perimeter breached", 19 of 36 runs in the new test). The Sanctuary now takes the faster of the two. A promoted
+  pedestrian's foot is measured where the audit sees it, off its lower leg, instead of at the leg's origin. Both were
+  older than the walk-through change.
 - **The periodic freeze** (docs/stutter-and-depth.md): the sky probe (the scene's reflection map) refreshed every 0.2 game
   hours, 12 s of real time at `?day=24`, by baking into a new render target and assigning its new texture to
   `scene.environment`; three.js keys every material's shader on that texture's node, so each refresh rebuilt every

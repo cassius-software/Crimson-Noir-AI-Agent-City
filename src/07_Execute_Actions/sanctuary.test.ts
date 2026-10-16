@@ -8,11 +8,13 @@
  * of the footprint and never into a wall; it is solid again once the car has gone, after one flip per pass
  * (on a curve and between two cars too); while shielded the character controller still slides along
  * walls and can never be trapped inside a car; a car pulling away shields a person who comes within 0.3 m of it
- * (they can run after it), and nobody farther off; and a standing car shields nobody: with the realm's chassis groups
- * the avatar walks through a parked car untouched (collision.ts avatarThroughCars).
+ * (they can run after it), and nobody farther off, and nudges nobody; a rig's foot is measured where the Ring-0 audit
+ * sees it; and a standing car shields nobody: with the realm's chassis groups the avatar walks through a parked car
+ * untouched (collision.ts avatarThroughCars).
  * What breaks if it is removed? A physics or tuning change could let a car run into a person unnoticed.
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { Physics, RAPIER } from './physics.ts'
 import { Avatar } from './player.ts'
@@ -420,6 +422,41 @@ test('a car pulling away shields a person once their centre is within 0.3 m of i
       assert.equal(sanctuary.isSensor(0), near && speed > 0, `${where}, the car at ${speed} m/s`)
       world.removeRigidBody(body)
     }
+  }
+})
+
+test('a person standing just behind a car that pulls away is shielded but never nudged: the car clears them by itself', async () => {
+  for (const behind of [0.05, 0.25, 0.29]) {
+    const r = await rig({ kind: 'box', person: { x: 0, z: 0 }, shield: true, car: { x: HALF_LENGTH + behind, z: 0, heading: EAST }, groups: VEHICLE_CHASSIS_GROUPS })
+    for (let i = 0; i < 10; i++) r.step()
+    r.launch(3)
+    for (let i = 0; i < 90; i++) r.step()
+    assert.equal(r.sanctuary.flips, 1, `${behind} m behind`)
+    assert.ok(Math.hypot(r.avatar!.x, r.avatar!.z) < 1e-3, `${behind} m behind: moved to (${r.avatar!.x.toFixed(3)}, ${r.avatar!.z.toFixed(3)})`)
+    assert.equal(r.avatar!.collider.isSensor(), false, `${behind} m behind: solid again once the car has gone`)
+  }
+})
+
+test('a shape off its body\'s origin (a rig\'s foot) is measured where the Ring-0 audit sees it: the offset carried by the body', async () => {
+  const physics = await Physics.create([], { lamps: [], trees: [], signals: [] })
+  const world = physics.world
+  const quarter = { x: 0, y: Math.SQRT1_2, z: 0, w: Math.SQRT1_2 }
+  // The origin 0.45 m behind a car pulling away (outside CLOSE), the shape 0.25 m nearer it: 0.2 m, inside.
+  const cases: readonly (readonly [string, RAPIER.Rotation, readonly [number, number, number] | undefined, boolean])[] = [
+    ['no offset', { x: 0, y: 0, z: 0, w: 1 }, undefined, false],
+    ['offset along +x', { x: 0, y: 0, z: 0, w: 1 }, [0.25, 0, 0], true],
+    ['offset along +z, the body turned a quarter about +y (z to x)', quarter, [0, 0, 0.25], true],
+    ['offset along −x', { x: 0, y: 0, z: 0, w: 1 }, [-0.25, 0, 0], false],
+  ]
+  // ragdollRealm.ts hands every foot its offset.
+  assert.match(readFileSync(new URL('./ragdollRealm.ts', import.meta.url), 'utf8'), /offset: spec\.foot \? FOOT\.offset : undefined/)
+  for (const [where, rotation, offset, near] of cases) {
+    const sanctuary = new Sanctuary(world)
+    const body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(-(HALF_LENGTH + 0.45), 0.92, 0).setRotation(rotation))
+    sanctuary.register({ body, collider: world.createCollider(RAPIER.ColliderDesc.capsule(0.1, 0.08), body), radius: 0.08, halfHeight: 0.1, offset })
+    sanctuary.guard([{ ...footprint(EAST), vx: 0.6, speed: 0.6 }], H)
+    assert.equal(sanctuary.isSensor(0), near, where)
+    world.removeRigidBody(body)
   }
 })
 

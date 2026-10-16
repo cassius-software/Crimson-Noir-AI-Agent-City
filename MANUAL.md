@@ -504,7 +504,12 @@ anywhere in the product.
 - **Sanctuary** (`07_Execute_Actions/sanctuary.ts`). This is the last line of defence, run before
   every Rapier step.
   - A person collider that a moving vehicle is about to reach flips from **Solid to Sensor**, so no
-    impulse is exchanged. The person is nudged aside, never through a wall.
+    impulse is exchanged. The person is nudged aside, never through a wall. "About to reach" is read the way the
+    Ring-0 audit reads it: a car closes on a person at the faster of its centre's velocity and the nearest point's
+    (a turning car's centre heads into its inner flank while the overhang behind the rear axle swings away), and a
+    rig's foot is measured where the audit sees it, off its lower leg.
+  - Any moving car within 0.3 m of a person's centre shields them whichever way it moves, since on foot you can run
+    after a car pulling away. A car pulling away never nudges anyone: it clears them by itself.
   - The collider becomes solid again once every car is clear.
   - Wheel ray casts ignore sensors, so a car never rides over anyone.
   - The GPU pedestrians are never Rapier bodies, so they carry no kinetic impact to begin with. A car

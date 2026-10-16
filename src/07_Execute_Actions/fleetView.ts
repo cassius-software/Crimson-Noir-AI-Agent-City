@@ -90,7 +90,8 @@ function glassOf(id: VehicleKind['id'], p: Node<'vec3'>, n: Node<'vec3'>, y: Nod
     case 'pod': return y.greaterThan(0.7).and(n.y.lessThan(0.9))
     case 'van': return greenhouse.and(p.x.greaterThan(0.8))
     case 'coach': return y.greaterThan(1.0).and(y.lessThan(1.46)).and(abs(n.y).lessThan(0.8))
-    case 'courier': return y.greaterThan(1.15).and(abs(n.y).lessThan(0.8))
+    // A band from just above the lamps to the roof: the driver's eye sits at 1.18, so lower glass is the road ahead.
+    case 'courier': return y.greaterThan(0.85).and(abs(n.y).lessThan(0.8))
     case 'utility': return greenhouse.and(p.x.greaterThan(-0.6))
     default: return greenhouse
   }

@@ -124,6 +124,11 @@ test('every kind has head lamps, tail lamps and so brake lights: the lamp masks 
     assert.ok(heads > 0 && tails > 0, `${k.id}: ${heads} head-lamp faces, ${tails} tail-lamp faces`)
     geo.dispose()
   }
+  // And those are the edges the shader's masks use, not the sedan's fixed bumpers.
+  const src = readFileSync(new URL('./fleetView.ts', import.meta.url), 'utf8')
+  assert.match(src, /const edges = lampEdges\(kind\.id\)\n\s*const front = p\.x\.greaterThan\(edges\.nose\)/)
+  assert.match(src, /const rear = p\.x\.lessThan\(edges\.tail\)/)
+  assert.doesNotMatch(src, /p\.x\.(greaterThan|lessThan)\(-?2\.15\)/)
 })
 
 test('planFleet: each car carries its kind, suv is the kind\'s class, and the classes are what the same seeds drew before', () => {

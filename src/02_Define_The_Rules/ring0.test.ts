@@ -662,6 +662,56 @@ test('live: a runner chasing the rear corner of a car already pulling away is sh
   assert.equal(runs, 72)
 })
 
+test('live: a runner reaching the inner rear of a turning car is shielded, never an IMPACT, at 60 fps and at 20 fps', async () => {
+  // A car at full lock turns about its rear axle: its centre's velocity heads into the inner flank while the overhang
+  // behind the axle swings away from it. The audit judges a touch by the centre's velocity (closing above movingSpeed
+  // within radius + contactMargin); the Sanctuary's sweep takes the faster of that and the flank point's own, so it
+  // never reads as pulling away a car the audit reads as driving in. Before it did, about half of these runs halted
+  // the realm with "Perimeter breached (0.25–0.40 m)".
+  let runs = 0
+  for (const dt of [H, 0.05]) {
+    for (const ut of [-1.7, -1.9, -2.1]) {
+      for (const angle of [0, 30, 60]) {
+        for (let k = 0; k < 2; k++) {
+          const g = await live()
+          g.v.mode = 'player'
+          settle(g, TRACK_X, 0, Math.PI / 2, 2)
+          g.avatar.teleport(TRACK_X + 300, 300)
+          // Hold about 2 m/s at full lock to the left.
+          const cmd = (): Intent => {
+            const sp = g.fleet.speed(g.v)
+            return { throttle: sp < 2 ? Math.min(1, (2 - sp) * 0.5 + 0.15) : 0, brake: sp > 2.3 ? 2 : 0, steer: 0.6 }
+          }
+          for (let t = 0; t < 2; t += dt) liveFrame(g, dt, { x: 0, z: 0 }, cmd())
+          // The car frame: u forward, l to the left (the inner flank), as the audit reads it.
+          const at = (u: number, l: number) => {
+            const c = g.fleet.position(g.v), h = g.fleet.heading(g.v), fx = Math.sin(h), fz = Math.cos(h)
+            return { x: c.x + u * fx + l * fz, z: c.z + u * fz - l * fx }
+          }
+          const a = (angle * Math.PI) / 180, d0 = 1 + k * 0.031
+          const p0 = at(ut - d0 * Math.sin(a), CAR.halfWidth + d0 * Math.cos(a))
+          g.avatar.teleport(p0.x, p0.z)
+          let closest = Infinity
+          for (let t = 0; t < 1.5; t += dt) {
+            const tp = at(ut, CAR.halfWidth - 0.2)
+            const dx = tp.x - g.avatar.x, dz = tp.z - g.avatar.z, n = Math.hypot(dx, dz)
+            liveFrame(g, dt, n > 0.02 ? { x: (RUN * dx) / n, z: (RUN * dz) / n } : { x: 0, z: 0 }, cmd())
+            closest = Math.min(closest, reach(g))
+            if (g.reasons.length) break
+          }
+          const where = `dt ${dt} u ${ut} angle ${angle} start ${d0.toFixed(3)} m`
+          assert.deepEqual(g.reasons, [], where)
+          // Within the Sanctuary's margin of the car (radius 0.3 + 0.25), where the shield is what keeps the audit quiet.
+          assert.ok(closest < 0.55, `${where}: the runner reached the car (${closest.toFixed(3)} m from its box)`)
+          assert.ok(g.sanctuary.flips >= 1, `${where}: and was shielded`)
+          runs++
+        }
+      }
+    }
+  }
+  assert.equal(runs, 36)
+})
+
 // ---------------------------------------------------------------- the watched perimeter and the session stats
 
 test('the watched perimeter: solid people within 1.85 m of a moving footprint are counted per pair, ticks per session, never panicked', () => {

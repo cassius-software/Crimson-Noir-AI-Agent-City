@@ -313,7 +313,8 @@ export class Ring0Auditor {
         // IMPACT: the person's centre inside the moving footprint (+ margin), or their collider touching it while
         // the car was driving INTO them (its velocity toward them, before or after the step, above movingSpeed).
         // Contact alone is not enough: touching the side of a car rolling past, or the back of one pulling away,
-        // is not an impact, and the Sanctuary does not shield those either.
+        // is not an impact. (The Sanctuary is stricter than this audit: it shields a person beside a moving car or
+        // within 0.3 m of one pulling away, sanctuary.ts guard, so it never leaves them solid where this would panic.)
         let impact = moving && du <= contactMargin && dw <= contactMargin
         if (!impact && gap > 0 && gap <= (p.radius ?? 0) + contactMargin) {
           // Outward normal from the footprint's nearest point toward the person, in world (x, z).
