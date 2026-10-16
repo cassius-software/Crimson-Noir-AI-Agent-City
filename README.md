@@ -32,8 +32,9 @@ verified, history) is [MANUAL.md](MANUAL.md). The bare-metal system has its own 
 * **Zero-Trust Containment:** Three layers of network isolation in the page: one loopback-only gate that every
   client asks before it addresses anything, an air gap that replaces and freezes every outbound primitive of the
   global object, and a Content-Security-Policy that admits loopback only. The cognitive gateway speaks to Claude
-  (default model `claude-opus-5-5`) through a loopback proxy the operator runs, or to a local Ollama or llama.cpp
-  server; no model, server or key ships with the product. The self-healing agent's checks run in a container
+  (default model `claude-opus-5-5`) through a loopback proxy the operator runs, to a local Ollama, llama.cpp or
+  other OpenAI-compatible server, or to a deterministic script with no backend at all; no model, server or key
+  ships with the product. The self-healing agent's checks run in a container
   that mounts nothing of the host, and 38 adversarial escape probes (egress, daemon sockets, execution,
   privilege, credentials) are denied inside it on every CI run, with a weakened control where the same probes
   must escape. The kernel and Docker are the trusted base: tested and argued, not proved

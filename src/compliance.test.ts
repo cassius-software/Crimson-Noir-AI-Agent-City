@@ -141,3 +141,67 @@ test('controller hints carry no console maker\'s button symbols, in any family, 
   // The glyph table itself holds none either (not even unused).
   assert.doesNotMatch(readFileSync(join(ROOT, 'src/07_Execute_Actions/glyphs.ts'), 'utf8'), /[✕○△□]/u)
 })
+
+// ---------------------------------------------------------------------------------------------------
+// The dependency tree and the third-party sources the upgrade plan worried about
+
+/** Licences that reach into the code that uses them (strong copyleft, or non-commercial): none may be anywhere in the tree. */
+const STRONG_COPYLEFT = /\b(?:A?GPL|LGPL|SSPL|EUPL|OSL|CPAL|CC-BY-(?:NC|SA)[\w.-]*)\b/i
+/** File-level copyleft: fine in a build tool that is never bundled, never in a runtime dependency. */
+const WEAK_COPYLEFT = /\b(?:MPL|EPL|CDDL)\b/i
+
+test('the npm tree: no GPL, AGPL, LGPL or non-commercial licence anywhere; file-level copyleft only in build tooling that is never bundled', () => {
+  const lock = JSON.parse(readFileSync(join(ROOT, 'package-lock.json'), 'utf8')) as { packages: Record<string, { license?: string; dev?: boolean }> }
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { dependencies: Record<string, string> }
+  const entries = Object.entries(lock.packages).filter(([path]) => path !== '')
+  assert.ok(entries.length > 100, `${entries.length} packages in the lockfile`)
+  const strong = entries.filter(([, v]) => STRONG_COPYLEFT.test(v.license ?? ''))
+  assert.deepEqual(strong.map(([p, v]) => `${p}: ${v.license}`), [])
+  const unlicensed = entries.filter(([, v]) => !v.license)
+  assert.deepEqual(unlicensed.map(([p]) => p), [], 'every package names its licence in the lockfile')
+  const weak = entries.filter(([, v]) => WEAK_COPYLEFT.test(v.license ?? ''))
+  for (const [path, v] of weak) {
+    assert.equal(v.dev, true, `${path} (${v.license}) is a runtime dependency`)
+    assert.match(path, /lightningcss/, `${path}: a weak-copyleft package the audit (docs/ip-audit.md) does not know`)
+  }
+  assert.ok(weak.length > 0, 'lightningcss (MPL-2.0, Tailwind\'s CSS compiler, dev only) is in the tree: update the audit if it leaves')
+  // The four runtime dependencies are permissive, and only they are bundled (the notice test above holds that).
+  for (const name of Object.keys(pkg.dependencies)) {
+    const lic = lock.packages[`node_modules/${name}`]?.license ?? ''
+    assert.match(lic, /^(MIT|Apache-2\.0|BSD-[23]-Clause|ISC|0BSD|Unlicense)$/, `${name}: ${lic}`)
+  }
+})
+
+/** Every file under a directory, whatever its kind (the walker above keeps to the page's own kinds), build output skipped. */
+function* every(dir: string): Generator<string> {
+  for (const name of readdirSync(dir)) {
+    if (name === 'target' || name === 'node_modules' || name === 'dist') continue
+    const p = join(dir, name)
+    if (statSync(p).isDirectory()) yield* every(p)
+    else yield p
+  }
+}
+
+/** The engines and tools the upgrade plan feared were copied in: their names may appear in the audit alone. */
+const FOREIGN_SOURCES = /\b(?:vk_?quake|vkquake3|ioquake|ioq3|quake3|id ?tech|makehuman|mpfb2?)\b/i
+
+test('no code from a copyleft engine or character tool anywhere in the repository (the audit document is the one place their names appear)', () => {
+  const dirs = ['src', 'native', 'crimson_noir_os', 'src-tauri', 'tools', 'world', 'brand', 'deploy', '.github', 'docs']
+  const text = /\.(?:ts|tsx|mts|mjs|js|json|rs|toml|wgsl|glsl|html|css|md|txt|yml|yaml|sh|ps1|py|nix|lock)$/
+  const scanned: string[] = []
+  for (const d of dirs) {
+    let found = false
+    try { found = statSync(join(ROOT, d)).isDirectory() } catch { found = false }
+    if (!found) continue
+    for (const f of every(join(ROOT, d))) if (text.test(f)) scanned.push(f)
+  }
+  for (const f of ['README.md', 'MANUAL.md', 'NOTICE.md', 'LICENSE', 'index.html', 'vite.config.ts', 'package.json', 'Dockerfile']) scanned.push(join(ROOT, f))
+  assert.ok(scanned.length > 300, `${scanned.length} files scanned`)
+  const audit = join(ROOT, 'docs', 'ip-audit.md')
+  for (const f of scanned) {
+    if (f === SELF || f === audit) continue
+    const m = readFileSync(f, 'utf8').match(FOREIGN_SOURCES)
+    assert.equal(m, null, `${relative(ROOT, f)}: "${m?.[0]}"`)
+  }
+  assert.match(readFileSync(audit, 'utf8'), FOREIGN_SOURCES, 'the audit names them, so a reader knows they were looked for')
+})
