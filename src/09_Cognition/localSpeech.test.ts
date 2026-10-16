@@ -24,7 +24,7 @@ import { run as shell } from '../07_Execute_Actions/terminal/commands.ts'
 import { TaskRouter, type SwarmSource } from '../08_Swarm/taskRouter.ts'
 import { createLocalCompute, type FetchLike } from './localCompute.ts'
 import {
-  createLocalSpeech, DEFAULT_SPEECH_SERVER, SPEECH_BYTES, SPEECH_CHARS, SpeechError, speechVoices, synthesize,
+  createLocalSpeech, DEFAULT_SPEECH_SERVER, elevenVoices, maskSpeechKey, SPEECH_BYTES, SPEECH_CHARS, SpeechError, speechVoices, synthesize, synthesizeEleven,
 } from './localSpeech.ts'
 
 // ---------------------------------------------------------------- helpers
@@ -210,7 +210,7 @@ test('the settings: a server on this machine, a chosen voice, an optional model 
   const store = { load: () => kept, save: (s: string) => { kept = s } }
   const { f, calls } = fakeFetch(() => chunked(wav()))
   const v = createLocalSpeech({ fetch: f, store })
-  assert.deepEqual(v.settings(), { server: DEFAULT_SPEECH_SERVER, model: null, voice: null, auto: false })
+  assert.deepEqual(v.settings(), { server: DEFAULT_SPEECH_SERVER, model: null, voice: null, auto: false, provider: 'local', key: null })
   await assert.rejects(v.synthesize('hello', new AbortController().signal), { code: 'voice', message: 'choose a voice first: say voice <name> (type say to list them)' })
   assert.equal(calls.length, 0, 'no voice, no request')
   assert.throws(() => v.setServer('http://example.com:8880'), /must be on this machine/)
@@ -220,16 +220,20 @@ test('the settings: a server on this machine, a chosen voice, an optional model 
   assert.equal(v.setVoice(' v1 '), 'v1')
   assert.equal(v.setModel('open-tts'), 'open-tts')
   assert.equal(v.setAuto(true), true)
-  assert.deepEqual(JSON.parse(kept ?? ''), { v: 1, server: 'http://127.0.0.1:5000', model: 'open-tts', voice: 'v1', auto: true })
+  assert.deepEqual(JSON.parse(kept ?? ''), { v: 2, provider: 'local', auto: true, local: { server: 'http://127.0.0.1:5000', model: 'open-tts', voice: 'v1' }, elevenlabs: { server: 'http://localhost:8090', model: 'eleven_turbo_v2_5', voice: null, key: null } })
   await v.synthesize('hello', new AbortController().signal)
   assert.equal(calls[0].url, 'http://127.0.0.1:5000/v1/audio/speech')
   assert.deepEqual(JSON.parse(String(calls[0].init?.body)), { model: 'open-tts', input: 'hello', voice: 'v1', response_format: 'wav' })
-  // The next visit: the same settings. A saved server off the machine, or unreadable storage: the defaults.
-  assert.deepEqual(createLocalSpeech({ fetch: f, store }).settings(), { server: 'http://127.0.0.1:5000', model: 'open-tts', voice: 'v1', auto: true })
+  // The next visit: the same settings. A saved server off the machine, or unreadable storage: the defaults. A record
+  // the first version wrote (the local server alone) still reads.
+  const local = { provider: 'local', key: null }
+  assert.deepEqual(createLocalSpeech({ fetch: f, store }).settings(), { server: 'http://127.0.0.1:5000', model: 'open-tts', voice: 'v1', auto: true, ...local })
   kept = JSON.stringify({ v: 1, server: 'http://example.com', voice: 'v9', auto: 'yes' })
-  assert.deepEqual(createLocalSpeech({ fetch: f, store }).settings(), { server: DEFAULT_SPEECH_SERVER, model: null, voice: 'v9', auto: false })
+  assert.deepEqual(createLocalSpeech({ fetch: f, store }).settings(), { server: DEFAULT_SPEECH_SERVER, model: null, voice: 'v9', auto: false, ...local })
+  kept = JSON.stringify({ v: 1, server: 'http://localhost:7000', voice: 'v9', model: 'm', auto: true })
+  assert.deepEqual(createLocalSpeech({ fetch: f, store }).settings(), { server: 'http://localhost:7000', model: 'm', voice: 'v9', auto: true, ...local })
   kept = '{not json'
-  assert.deepEqual(createLocalSpeech({ fetch: f, store }).settings(), { server: DEFAULT_SPEECH_SERVER, model: null, voice: null, auto: false })
+  assert.deepEqual(createLocalSpeech({ fetch: f, store }).settings(), { server: DEFAULT_SPEECH_SERVER, model: null, voice: null, auto: false, ...local })
   const broken = { load: () => { throw new Error('denied') }, save: () => { throw new Error('denied') } }
   const b = createLocalSpeech({ fetch: f, store: broken })
   assert.equal(b.setVoice('v1'), 'v1', 'storage refused: the setting lasts for the visit')
@@ -385,6 +389,7 @@ test('the whole path: from the console through the gateway to a real local serve
   try {
     const { router, term, out } = operatorConsole(new Mirror([A, B]), srv.url)
     assert.deepEqual(await shell('say', term, []).pending, [
+      { kind: 'out', text: 'provider  local: a speech server on this machine' },
       { kind: 'out', text: `server    ${srv.url}  (this machine only)` },
       { kind: 'out', text: 'voice     v1' },
       { kind: 'out', text: "model     the server's default" },
@@ -452,4 +457,88 @@ test('the whole path: the tether breaks mid-word and the speech stops; mid-downl
   } finally {
     await srv.close()
   }
+})
+
+// ---------------------------------------------------------------- the ElevenLabs provider (through a gateway on this machine)
+
+test('elevenlabs: off by default; chosen, the request goes to the gateway on this machine with the text, the model, MP3 asked for, and the key only when one is kept; a name is looked up in the list', async () => {
+  let kept: string | null = null
+  const store = { load: () => kept, save: (s: string) => { kept = s } }
+  const mp3 = new Uint8Array([0x49, 0x44, 0x33, 1, 2, 3])
+  const { f, calls } = fakeFetch((url) => {
+    if (url.endsWith('/v1/voices')) return json(200, { voices: [{ voice_id: 'EXAVITQu4vr4xnSDxMaL', name: 'Sarah' }, { voice_id: 'short', name: 'Bad' }, { name: 'nameless' }] })
+    return chunked(mp3, [2], 'audio/mpeg')
+  })
+  const v = createLocalSpeech({ fetch: f, store })
+  assert.equal(v.settings().provider, 'local', 'the local server is the voice until the operator says otherwise')
+  assert.equal(v.setProvider!('ElevenLabs'), 'elevenlabs')
+  assert.deepEqual(v.settings(), { server: 'http://localhost:8090', model: 'eleven_turbo_v2_5', voice: null, auto: false, provider: 'elevenlabs', key: null })
+  assert.throws(() => v.setProvider!('openai'), /no speech provider called 'openai'/)
+  assert.throws(() => v.setServer('https://api.elevenlabs.io'), /gateway must be on this machine/)
+  assert.deepEqual(await v.voices(), ['Sarah (EXAVITQu4vr4xnSDxMaL)'], 'ids the API issues only, by name')
+  assert.equal(calls[0].url, 'http://localhost:8090/v1/voices')
+  assert.deepEqual(calls[0].init?.headers, {}, 'no key kept: none sent (the gateway adds its own)')
+  // No key, no voice: nothing is sent.
+  await assert.rejects(v.synthesize('hello', new AbortController().signal), { code: 'voice' })
+  assert.equal(v.setVoice('Sarah'), 'Sarah')
+  const audio = new Uint8Array(await v.synthesize('hello', new AbortController().signal))
+  assert.deepEqual([...audio], [...mp3], 'the audio comes back byte for byte however it is cut')
+  assert.equal(calls[1].url, 'http://localhost:8090/v1/voices', 'a name is looked up first')
+  assert.equal(calls[2].url, 'http://localhost:8090/v1/text-to-speech/EXAVITQu4vr4xnSDxMaL?output_format=mp3_44100_128')
+  assert.deepEqual(JSON.parse(String(calls[2].init?.body)), { text: 'hello', model_id: 'eleven_turbo_v2_5' })
+  assert.deepEqual(calls[2].init?.headers, { 'content-type': 'application/json', accept: 'audio/mpeg' })
+  // A key kept on the page rides the header, masked everywhere it is shown; an id needs no lookup.
+  assert.equal(v.setKey!('sk_0123456789abcdef'), 'sk_0…cdef')
+  assert.throws(() => v.setKey!('two words'), /one word/)
+  assert.equal(v.setVoice('EXAVITQu4vr4xnSDxMaL'), 'EXAVITQu4vr4xnSDxMaL')
+  await v.synthesize('again', new AbortController().signal)
+  assert.equal(calls[3].url, 'http://localhost:8090/v1/text-to-speech/EXAVITQu4vr4xnSDxMaL?output_format=mp3_44100_128')
+  assert.equal(((calls[3].init?.headers ?? {}) as Record<string, string>)['xi-api-key'], 'sk_0123456789abcdef')
+  assert.equal(v.settings().key, 'sk_0…cdef')
+  assert.doesNotMatch(JSON.stringify(v.settings()), /sk_0123456789abcdef/, 'never whole in the settings')
+  // Kept between visits, each provider's own settings; the local server's untouched.
+  assert.deepEqual(JSON.parse(kept ?? ''), { v: 2, provider: 'elevenlabs', auto: false, local: { server: DEFAULT_SPEECH_SERVER, model: null, voice: null }, elevenlabs: { server: 'http://localhost:8090', model: 'eleven_turbo_v2_5', voice: 'EXAVITQu4vr4xnSDxMaL', key: 'sk_0123456789abcdef' } })
+  const again = createLocalSpeech({ fetch: f, store })
+  assert.equal(again.settings().provider, 'elevenlabs')
+  assert.equal(again.setKey!('none'), null)
+  assert.equal(again.setProvider!('local'), 'local')
+  assert.deepEqual(again.settings(), { server: DEFAULT_SPEECH_SERVER, model: null, voice: null, auto: false, provider: 'local', key: null })
+  // A hired agent's own voice overrides the chosen one for that utterance alone.
+  again.setVoice('v1')
+  await again.synthesize('mine', new AbortController().signal, 'v2')
+  assert.deepEqual(JSON.parse(String(calls[calls.length - 1].init?.body)), { input: 'mine', voice: 'v2', response_format: 'wav' })
+  assert.equal(again.settings().voice, 'v1')
+})
+
+test('elevenlabs: every way the gateway can fail is one plain sentence: a refused key, no such voice, not audio, down', async () => {
+  const failure = (p: Promise<ArrayBuffer>): Promise<SpeechError> => p.then(() => assert.fail('it should have failed'), (e: unknown) => e as SpeechError)
+  const req = { server: 'http://localhost:8090', key: null, model: 'eleven_turbo_v2_5', voice: 'EXAVITQu4vr4xnSDxMaL', text: 'hi' }
+  const e401 = await failure(synthesizeEleven(fakeFetch(() => json(401, { detail: { status: 'invalid_api_key', message: 'nope' } })).f, req))
+  assert.equal(e401.code, 'refused')
+  assert.match(e401.message, /refused the key \(401\)/)
+  const noVoice = await failure(synthesizeEleven(fakeFetch(() => json(200, { voices: [] })).f, { ...req, voice: 'Nobody' }))
+  assert.equal(noVoice.code, 'voice')
+  assert.match(noVoice.message, /no voice 'Nobody'/)
+  const html = await failure(synthesizeEleven(fakeFetch(() => new Response('<html>', { status: 200, headers: { 'content-type': 'text/html' } })).f, req))
+  assert.equal(html.code, 'unreadable')
+  const down = await failure(synthesizeEleven(fakeFetch(() => { throw new TypeError('fetch failed') }).f, req))
+  assert.equal(down.code, 'offline')
+  assert.match(down.message, /no ElevenLabs gateway is answering at http:\/\/localhost:8090/, 'the gateway named, not a local speech server')
+  const gone = await failure(synthesizeEleven(fakeFetch(() => json(404, { detail: { status: 'voice_not_found', message: 'A voice with the voice_id was not found.' } })).f, req))
+  assert.equal(gone.code, 'voice', 'an id the account does not have is a voice, not a missing path')
+  assert.match(gone.message, /ElevenLabs has no voice 'EXAVITQu4vr4xnSDxMaL'/)
+  const notGateway = await failure(synthesizeEleven(fakeFetch(() => new Response('Not Found', { status: 404 })).f, req))
+  assert.equal(notGateway.code, 'server')
+  assert.match(notGateway.message, /no \/v1\/text-to-speech: is it the ElevenLabs gateway\?/)
+  assert.doesNotMatch(notGateway.message, /audio\/speech/)
+  // A voice as say lists it, 'Name (id)': the id, with no lookup.
+  const listed = fakeFetch(() => new Response(new Uint8Array([1, 2]), { status: 200, headers: { 'content-type': 'audio/mpeg' } }))
+  await synthesizeEleven(listed.f, { ...req, voice: 'Sarah (EXAVITQu4vr4xnSDxMaL)' })
+  assert.deepEqual(listed.calls.map((c) => c.url), ['http://localhost:8090/v1/text-to-speech/EXAVITQu4vr4xnSDxMaL?output_format=mp3_44100_128'])
+  const direct = fakeFetch(() => json(200, {}))
+  await assert.rejects(synthesizeEleven(direct.f, { ...req, server: 'https://api.elevenlabs.io', key: 'sk_0123456789abcdef' }), { code: 'refused' })
+  assert.equal(direct.calls.length, 0, 'ElevenLabs itself is off this machine: nothing is sent, the key least of all')
+  await assert.rejects(elevenVoices(fakeFetch(() => json(200, { nope: 1 })).f, 'http://localhost:8090', null), { code: 'unreadable' })
+  assert.equal(maskSpeechKey(null), null)
+  assert.equal(maskSpeechKey('short'), '****')
 })

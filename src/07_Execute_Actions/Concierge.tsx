@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is the spatial HUD's Concierge: Wren (they/them), an original character
- * who meets the player as the boot veil lifts. On a first visit Wren asks what to call them — with a
+ * Why does this file exist? It is the spatial HUD's Concierge: Sloane (they/them), an original character
+ * who meets the player as the boot veil lifts. On a first visit Sloane asks what to call them — with a
  * keyboard the name field is already focused, so they just type and press Enter (zero clicks) — saves
  * the profile that seeds their avatar, and answers by name with three glyph-aware tips. A returning
- * player is welcomed back by name. Either way Wren then offers to take a goal: a plain-language wish
+ * player is welcomed back by name. Either way Sloane then offers to take a goal: a plain-language wish
  * ("make it night", "it feels laggy") that the deterministic 5-Whys engine in intent.ts refines through a
  * few questions with quick-reply chips and a text field, then shows as a brief — the steps the host
  * applied ticked, the rest as a plan — with a copyable architecture brief for an engineer. The card then
@@ -27,11 +27,12 @@ import { FiveWhys, GOAL_MAX, type Brief, type Control, type PlanStep, type WhySt
 import { controlHints, isPadFamily, type GlyphFamily } from './glyphs.ts'
 import { GlyphKey } from './Hud.tsx'
 import type { Nudge } from '../09_Cognition/tutorial.ts'
+import { CONCIERGE_NAME } from './onboarding/script.ts'
 
-/** The Concierge's name, for any other surface that mentions them. */
-export const CONCIERGE_NAME = 'Wren'
+/** The Concierge's name (onboarding/script.ts), for any other surface that mentions them. */
+export { CONCIERGE_NAME }
 
-const WREN = {
+const SLOANE = {
   name: CONCIERGE_NAME,
   pronouns: 'they/them',
   /** How long a greeting stays open before settling into the chip (and how long a controller player,
@@ -39,7 +40,7 @@ const WREN = {
   settleMs: 8000,
   /** Ground covered, from any input, that counts as the first movement and puts an open card away. */
   settleMetres: 1,
-  /** How long one of Wren's unasked lines (a nudge from the mentor, 09_Cognition/tutorial.ts) stays open before the chip. */
+  /** How long one of Sloane's unasked lines (a nudge from the mentor, 09_Cognition/tutorial.ts) stays open before the chip. */
   nudgeMs: 14000,
 } as const
 
@@ -145,16 +146,18 @@ export interface ConciergeProps {
   /** Optional: the host opens the wardrobe (Customizer.tsx); the chip and the full list then offer it. */
   onLook?(): void
   /**
-   * Optional: a line Wren says unasked (the mentor's nudge, 09_Cognition/tutorial.ts): shown as the card when it is a
+   * Optional: a line Sloane says unasked (the mentor's nudge, 09_Cognition/tutorial.ts): shown as the card when it is a
    * new one (its id changed) and no question or goal is open, then settled into the chip like a greeting. Its text may
    * change while it shows (the model's rewording arriving).
    */
   nudge?: Nudge | null
-  /** Optional: the player opened the goal dialogue (the mentor counts it as talking to Wren). */
+  /** Optional: the player opened the goal dialogue (the mentor counts it as talking to Sloane). */
   onGoal?(): void
+  /** Optional: Sloane's spoken voice (onboarding/speaker.ts): called with each line the card shows, as plain words. */
+  onSay?(text: string): void
 }
 
-export function Concierge({ visible, profile, onProfile, family, driving, dark = false, settleMs = WREN.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal }: ConciergeProps) {
+export function Concierge({ visible, profile, onProfile, family, driving, dark = false, settleMs = SLOANE.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal, onSay }: ConciergeProps) {
   const small = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
   const short = useSyncExternalStore(SHORT.subscribe, SHORT.matches, SHORT.server)
   const [view, setView] = useState<View>(() => (goal ? 'goal' : profile ? 'greet' : 'ask'))
@@ -179,6 +182,21 @@ export function Concierge({ visible, profile, onProfile, family, driving, dark =
   const [seenNudge, setSeenNudge] = useState(0)
 
   const name = given || profile?.name || ''
+  // The line as plain words, for Sloane's voice (onSay): said once per line shown, never for the chip or the full list.
+  // A nudge is one line however it is reworded (the script's words are said; a model's rewording changes the card
+  // only), and a card hidden and shown again (the console, H) is the same line, not a new one: only the chip or the
+  // full list in between lets the same words be said again.
+  const spoken = spokenLine(view, mood, name, nudge, dialogue)
+  const spokenKey = view === 'nudge' && nudge ? `nudge:${nudge.id}` : spoken
+  const sayRef = useRef(onSay)
+  const saidRef = useRef('')
+  useEffect(() => { sayRef.current = onSay }, [onSay])
+  useEffect(() => {
+    if (!spokenKey) { saidRef.current = ''; return }
+    if (!visible || spokenKey === saidRef.current) return
+    saidRef.current = spokenKey
+    sayRef.current?.(spoken)
+  }, [visible, spokenKey, spoken])
   const open = (v: View) => {
     setView(v)
     setEpoch((n) => n + 1)
@@ -318,7 +336,7 @@ export function Concierge({ visible, profile, onProfile, family, driving, dark =
   const padAsk = view === 'ask' && isPadFamily(family) && draft === ''
   useEffect(() => {
     if (!visible || (view !== 'greet' && view !== 'nudge' && !padAsk)) return
-    const id = window.setTimeout(() => setView('chip'), view === 'nudge' ? Math.max(settleMs, WREN.nudgeMs * (settleMs / WREN.settleMs)) : settleMs)
+    const id = window.setTimeout(() => setView('chip'), view === 'nudge' ? Math.max(settleMs, SLOANE.nudgeMs * (settleMs / SLOANE.settleMs)) : settleMs)
     return () => window.clearTimeout(id)
   }, [visible, view, padAsk, family, epoch, settleMs])
 
@@ -349,7 +367,7 @@ export function Concierge({ visible, profile, onProfile, family, driving, dark =
   useEffect(() => {
     if (!visible || view === 'chip' || typing || travelled === undefined || !Number.isFinite(travelled)) return
     if (Number.isNaN(travelFrom.current)) travelFrom.current = travelled
-    else if (travelled - travelFrom.current >= WREN.settleMetres) setView('chip')
+    else if (travelled - travelFrom.current >= SLOANE.settleMetres) setView('chip')
   }, [visible, view, typing, travelled])
 
   const listening = visible && view !== 'chip'
@@ -402,15 +420,15 @@ export function Concierge({ visible, profile, onProfile, family, driving, dark =
       <div className="pointer-events-none absolute inset-0 z-30 font-sans antialiased select-none">
         {pending ? (
           <button type="button" onClick={askForName} className={`${pill} gap-2 py-1 pr-3.5 pl-1`} data-concierge="chip">
-            <WrenMark size={24} />
-            <span className="font-semibold">{WREN.name}</span>{' '}
+            <SloaneMark size={24} />
+            <span className="font-semibold">{SLOANE.name}</span>{' '}
             <span className={`truncate ${muted}`}>{compact ? 'Your name?' : 'What should I call you?'}</span>
           </button>
         ) : (
-          <div className={pill} role="group" aria-label={`${WREN.name}, your concierge`}>
+          <div className={pill} role="group" aria-label={`${SLOANE.name}, your concierge`}>
             <button type="button" onClick={openGoal} className="flex min-w-0 items-center gap-2 py-1 pr-2.5 pl-1" data-concierge="chip">
-              <WrenMark size={24} />
-              <span className="truncate font-semibold">Tell {WREN.name} a goal</span>
+              <SloaneMark size={24} />
+              <span className="truncate font-semibold">Tell {SLOANE.name} a goal</span>
             </button>
             <button type="button" onClick={() => open('help')} className={`shrink-0 border-l py-1.5 pr-3.5 pl-2.5 ${rule} ${muted}`} data-concierge="chip-controls">
               Controls
@@ -430,7 +448,7 @@ export function Concierge({ visible, profile, onProfile, family, driving, dark =
   const { step, brief } = dialogue
   const phase = view !== 'goal' ? null : brief ? 'brief' : step ? 'why' : 'goal'
   const line: ReactNode =
-    view === 'ask' ? <>Hi, I’m {WREN.name}, your concierge. I’ll get you set up — what should I call you?</>
+    view === 'ask' ? <>Hi, I’m {SLOANE.name}, your concierge. I’ll get you set up — what should I call you?</>
     : view === 'goal' ? (
       step ? step.question
       : brief ? brief.root
@@ -460,21 +478,21 @@ export function Concierge({ visible, profile, onProfile, family, driving, dark =
   const done = brief ? brief.plan.filter((s) => dialogue.applied.includes(s.control)) : []
   const later = brief ? brief.plan.filter((s) => !dialogue.applied.includes(s.control)) : []
 
-  // A speaker layout: Wren's mark beside their name and line, everything they offer under the line.
+  // A speaker layout: Sloane's mark beside their name and line, everything they offer under the line.
   const card = (
     <aside
       ref={cardRef}
-      aria-label={`${WREN.name}, your concierge`}
+      aria-label={`${SLOANE.name}, your concierge`}
       data-concierge={view}
       data-phase={phase ?? undefined}
       className={`pointer-events-auto ${at} rounded-3xl border backdrop-blur-2xl backdrop-saturate-150 ${glass} ${tight ? 'px-4 py-3' : 'px-5 py-4'} ${enter}`}
     >
       <div className="flex gap-3">
-        <WrenMark size={tight ? 28 : 32} speaking />
+        <SloaneMark size={tight ? 28 : 32} speaking />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 leading-tight">
-            <span className="text-[14px] font-semibold tracking-tight">{WREN.name}</span>{' '}
-            <span className={`truncate text-[11px] ${muted}`}>Concierge · {WREN.pronouns}</span>
+            <span className="text-[14px] font-semibold tracking-tight">{SLOANE.name}</span>{' '}
+            <span className={`truncate text-[11px] ${muted}`}>Concierge · {SLOANE.pronouns}</span>
             {view !== 'ask' && (
               <button
                 type="button"
@@ -606,7 +624,7 @@ export function Concierge({ visible, profile, onProfile, family, driving, dark =
                 Got it
               </button>
               <button type="button" onClick={openGoal} className={link} data-action="goal">
-                Tell {WREN.name} a goal
+                Tell {SLOANE.name} a goal
               </button>
             </div>
           )}
@@ -614,10 +632,10 @@ export function Concierge({ visible, profile, onProfile, family, driving, dark =
           {view === 'help' && (
             <div className={`${gap} flex flex-wrap gap-x-4 gap-y-1`}>
               <button type="button" onClick={openGoal} className={link} data-action="goal">
-                Tell {WREN.name} a goal
+                Tell {SLOANE.name} a goal
               </button>
               <button type="button" onClick={askForName} className={link}>
-                {name ? 'Change my name' : `Tell ${WREN.name} your name`}
+                {name ? 'Change my name' : `Tell ${SLOANE.name} your name`}
               </button>
               {onLook && (
                 <button type="button" onClick={onLook} className={link} data-action="look">
@@ -668,15 +686,30 @@ function PlanList({ title, steps, ticked, dark }: { title: string; steps: readon
   )
 }
 
-/** Wren's mark: a dark disc with their initial and a warm ring (brighter while they are talking). */
-function WrenMark({ size, speaking = false }: { size: number; speaking?: boolean }) {
+/** The card's line in plain words (the JSX above, without its markup), or '' for a view with nothing to say aloud. */
+function spokenLine(view: View, mood: Mood, name: string, nudge: Nudge | null, dialogue: Pick<Dialogue, 'step' | 'brief'>): string {
+  switch (view) {
+    case 'ask': return `Hi, I’m ${SLOANE.name}, your concierge. I’ll get you set up. What should I call you?`
+    case 'goal': return dialogue.step ? dialogue.step.question : dialogue.brief ? dialogue.brief.root : 'What would you like the city to do? Say it plainly.'
+    case 'nudge': return nudge?.text ?? ''
+    case 'greet':
+      return mood === 'new' ? `Great to meet you, ${name}. Your avatar is ready. Let’s get you moving.`
+        : mood === 'renamed' ? `Got it. I’ll call you ${name} from now on. Your avatar is ready.`
+        : mood === 'back' ? `Welcome back, ${name}. Your avatar is ready whenever you are.`
+        : 'No problem. You can tell me later. Here’s how to get around.'
+    default: return ''
+  }
+}
+
+/** Sloane's mark: a dark disc with their initial and a warm ring (brighter while they are talking). */
+function SloaneMark({ size, speaking = false }: { size: number; speaking?: boolean }) {
   return (
     <span
       aria-hidden
       className={`inline-flex shrink-0 items-center justify-center rounded-full bg-[radial-gradient(circle_at_32%_28%,#475569,#0f172a_62%,#020617)] font-semibold tracking-tight text-white ring-2 ${speaking ? 'ring-amber-300/80' : 'ring-amber-300/45'}`}
       style={{ width: size, height: size, fontSize: Math.round(size * 0.44) }}
     >
-      W
+      S
     </span>
   )
 }

@@ -29,7 +29,7 @@ test('four steps then ready; every choice is one word, at most five of them; eve
   assert.equal(nextStep('ready'), 'ready')
   let a = NO_ANSWERS
   for (const step of STEPS) {
-    const line = lineFor(step, a, 'Wren')
+    const line = lineFor(step, a, 'Sloane')
     assert.ok(line.length > 10 && line.length < 260, line)
     assert.doesNotMatch(line, JARGON, line)
     const choices = choicesFor(step)
@@ -50,9 +50,9 @@ test('four steps then ready; every choice is one word, at most five of them; eve
 test('answers move the conversation on, and an unknown answer falls to a sane default', () => {
   let a = answer(NO_ANSWERS, 'name', 'Julian')
   assert.equal(a.name, 'Julian')
-  assert.match(lineFor('place', a, 'Wren'), /Julian/)
+  assert.match(lineFor('place', a, 'Sloane'), /Julian/)
   a = answer(a, 'place', ZONE.eastBluffs)
-  assert.match(lineFor('time', a, 'Wren'), /cliffs/)
+  assert.match(lineFor('time', a, 'Sloane'), /cliffs/)
   assert.equal(said('place', a), 'East')
   a = answer(a, 'time', 22)
   a = answer(a, 'sound', false)
@@ -63,7 +63,7 @@ test('answers move the conversation on, and an unknown answer falls to a sane de
   assert.equal(odd.hour, 17)
   assert.equal(odd.audio, false)
   assert.equal(said('name', NO_ANSWERS), 'I’d rather not say')
-  assert.match(lineFor('place', NO_ANSWERS, 'Wren'), /friend/)
+  assert.match(lineFor('place', NO_ANSWERS, 'Sloane'), /friend/)
 })
 
 test('the outcome is saved and read back; a corrupt or foreign entry reads as nothing', () => {

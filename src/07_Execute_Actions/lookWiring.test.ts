@@ -7,7 +7,7 @@
  * in for the hashed pieces, proportions and colour slots, and whose body bits the page's cull reads for the mesh to
  * draw; the engine writes the word the way it writes the dissolve amounts and reads it back (setLook, lookOf); the
  * host keeps the player's look under a key of its own, validated on the way in, and wears it on the player's body from
- * the start; the card is reachable from Wren's chip and touches nothing but the wardrobe model; and nothing of it
+ * the start; the card is reachable from Sloane's chip and touches nothing but the wardrobe model; and nothing of it
  * crosses to the physics realm.
  * What breaks if it is removed? A later edit could bind the word in a simulation pass, write it past the agent's slot,
  * drop the shadow pass's varyings (a shadow dressed differently), or keep a look the wardrobe refuses.
@@ -151,7 +151,7 @@ test('engine: the look buffer is the attribute\'s (gpuBufferOf), shared with the
   assert.doesNotMatch(src, /sim\.send\(\{ c: 'look/, 'nothing of it is a command to the realm')
 })
 
-test('app: the player\'s look is kept under its own key, worn on agent 0 from the start, and the card is Wren\'s to open', () => {
+test('app: the player\'s look is kept under its own key, worn on agent 0 from the start, and the card is Sloane\'s to open', () => {
   const app = read('../App.tsx')
   assert.match(app, /const \[look, setLook\] = useState<Look \| null>\(loadLook\)/)
   assert.match(app, /const worn = useMemo\(\(\) => look \?\? \(profile \? lookFromSeed\(profile\.seed\) : null\), \[look, profile\]\)/, 'the seed\'s look by default, one object per look')
@@ -160,7 +160,7 @@ test('app: the player\'s look is kept under its own key, worn on agent 0 from th
   assert.match(app, /onLook=\{openLook\}/)
   assert.match(app, /<Customizer\n\s*visible=\{lookOpen && veilDone && !termOpen && locked === null\}/)
   assert.match(app, /engineRef\.current\?\.input\.suspend\(lookOpen \|\| termOpenRef\.current\)/, 'game input rests while the card has the pointer')
-  assert.match(app, /visible=\{veilDone && hudVisible && !termOpen && !lookOpen\}/, 'Wren steps aside for the card')
+  assert.match(app, /visible=\{veilDone && hudVisible && !termOpen && !lookOpen\}/, 'Sloane steps aside for the card')
   const concierge = read('./Concierge.tsx')
   assert.match(concierge, /onLook\?\(\): void/)
   assert.match(concierge, /data-concierge="chip-look"/)

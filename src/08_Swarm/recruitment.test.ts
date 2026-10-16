@@ -572,7 +572,7 @@ test('the console surface: status lines, asking, dismissing', async () => {
   host.deliver(new Map([[a, [OP.x, OP.z + 2]]]))
   const p = b.ask('networking')
   host.deliver(new Map(), [{ e: 'recruit', id: 1, ok: true, agent: a, skill: 'Networking', distance: 2 }], [view(a, 'Networking')])
-  assert.deepEqual(await p, { ok: true, message: 'Networking: someone 2.0 m away is coming over' })
+  assert.deepEqual(await p, { ok: true, message: 'Networking: someone 2.0 m away is coming over', agent: a }, 'the agent asked over, for the roster to bind')
   assert.match(b.status()[1], /^recruit   Networking\s+coming over\s+2\.0 m {2}1 s$/)
   host.deliver(new Map(), [], [view(a, 'Networking', true)])
   const brings = view(a, 'Networking', true).skills.join(', ')

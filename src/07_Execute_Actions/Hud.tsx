@@ -39,7 +39,7 @@ const FRAME_COMPACT =
   'bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-[max(0.75rem,env(safe-area-inset-left))]'
 
 /** The capture chip steps aside once the player has covered this much ground: by then they know the controls
- *  (and Wren's chip lists them all). */
+ *  (and Sloane's chip lists them all). */
 const HINT_UNTIL_METRES = 30
 /** The chip's second line: what the Concierge's three tips and the in-context prompt do not cover. */
 const CHIP_FOOT: ReadonlySet<ControlAction> = new Set(['run', 'clock', 'console', 'hud'])
@@ -64,7 +64,7 @@ function mediaStore(query: string) {
 const SMALL = mediaStore('(max-width: 639px), (max-height: 499px)')
 const SHORT = mediaStore('(max-height: 499px)')
 /** Room for the capture chip's key row: one line between the minimap and the speed panel, and height left
- *  for the Concierge card above it. Smaller windows get the one-line chip (Wren's list has every key). */
+ *  for the Concierge card above it. Smaller windows get the one-line chip (Sloane's list has every key). */
 const ROOMY = { ...mediaStore('(min-width: 1100px) and (min-height: 600px)'), server: () => true }
 
 export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null }: {
