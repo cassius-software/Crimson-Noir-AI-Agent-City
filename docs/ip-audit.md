@@ -6,16 +6,17 @@ lawyer's reading are listed at the end. It was prompted by an upgrade plan (anot
 might carry code from `vkQuake3` / `ioquake3` (GPLv2) and from MakeHuman / MPFB (AGPLv3 / GPLv3), and that the
 Pathfinder-derived mechanics needed renaming. Each of those claims was checked against the code.
 
-`src/compliance.test.ts` now holds the first two findings as tests, so they stay true: no copyleft licence in the npm
-tree, and none of the named engines' or tools' names anywhere but this document.
+`src/compliance.test.ts` now holds the first two findings as tests, so they stay true: every licence in the npm tree
+is on a permissive allow-list (MPL-2.0 only in one build tool), and none of the named engines' or tools' names in any
+text file of the repository but this document.
 
 ## 1. Third-party source code
 
 | Claim in the plan | Finding |
 |---|---|
-| `vkQuake3` / `ioquake3` C code is linked or bundled | **Not present.** No file in `src/`, `native/`, `crimson_noir_os/`, `src-tauri/`, `tools/`, `world/`, `brand/`, `deploy/`, `.github/` or `docs/` contains `vkquake`, `ioquake`, `quake3`, `id tech` or any Quake source. The renderer is Three.js (MIT) over WebGPU with the product's own WGSL; the OS image renders with `wgpu` (MIT OR Apache-2.0). There is no BSP, PVS or Quake-derived culler to replace. |
+| `vkQuake3` / `ioquake3` C code is linked or bundled | **Not present.** No file in `src/`, `native/`, `crimson_noir_os/`, `src-tauri/`, `tools/`, `world/`, `brand/`, `deploy/`, `.github/` or `docs/` contains `vkquake`, `ioquake`, `ioq3`, `quake3`, `Quake III`, `id tech`, `Id Software` or any Quake source, and there is no C or C++ source in the repository at all. The renderer is Three.js (MIT) over WebGPU with the product's own WGSL; the OS image renders with `wgpu` (MIT OR Apache-2.0). There is no BSP, PVS or Quake-derived culler to replace. |
 | MakeHuman / MPFB Python source is bundled | **Not present.** No `makehuman` or `mpfb` anywhere. The pedestrians are procedural meshes built in `src/03_Spawn_Agents/`; no exported character mesh, skeleton or blendshape from any character tool is in the repository, so there is nothing to re-licence. The CC0 gate (`src/01_Initialize_World/assets/cc0.ts`) is a filter over asset names (it purges weapon words), not a store of CC0 meshes; the plan misread its name. |
-| Pathfinder 2e ability scores (`STR`, `DEX`, …) in production code | **Not present.** No ability score, save or proficiency table from the Pathfinder SRD is in the code. What the product does borrow under the ORC Licence is listed in `NOTICE.md` ("Licensed Material"): the four degrees of success, proficiency ranks, fortune/misfortune and the exact outcome odds (`src/02_Define_The_Rules/degrees.ts`, mirrored in `crowd.wgsl`), plus the checks built on them. The "Vance" persona JSON the plan refers to is in the plan's own source document, not in this repository (the file `context engineered system prompt` at the root is a 22-line research-analyst prompt with no stat block). Renaming scores that do not exist changes nothing; see §4 on the ORC point that does exist. |
+| Pathfinder 2e ability scores (`STR`, `DEX`, …) in production code | **No ability scores.** No ability score (`STR`, `DEX`, `CON`, `INT`, `WIS`, `CHA`) or ability modifier is in the code. What the product does borrow under the ORC Licence is listed in `NOTICE.md` ("Licensed Material"): the four degrees of success, the proficiency ranks **with their bonuses** (`RANK_BONUS` in `src/02_Define_The_Rules/degrees.ts`: untrained +0, trained +2, expert +4, master +6, legendary +8, plus the level from trained up, which is the Pathfinder 2e proficiency table), fortune/misfortune and the exact outcome odds (`degrees.ts`, mirrored in `crowd.wgsl`), and the checks built on them, among them a Reflex-style save (`YIELD_SAVE` in `src/02_Define_The_Rules/civic.ts`, a modifier against a DC; the same wording is in `crowd.wgsl`). The "Vance" persona JSON the plan refers to is in the plan's own source document, not in this repository (the file `context engineered system prompt` at the root is a 22-line research-analyst prompt with no stat block). Renaming scores that do not exist changes nothing; see §4 on the ORC point that does exist. |
 
 ## 2. The npm dependency tree (`package-lock.json`)
 
@@ -59,8 +60,20 @@ cargo license --manifest-path src-tauri/Cargo.toml
   routing core and the WebAssembly host import nothing; the air-gap check proves the modules import nothing).
 - **`src-tauri/Cargo.lock` (407 crates)**: the Tauri 2 stack. Tauri, `wry`, `tao`, `muda`, `tray-icon`,
   `window-vibrancy`, `webview2-com`, the `windows` crates, `serde`, `tokio`, `reqwest`, `url`, `html5ever`,
-  `brotli`, `png`, `uuid`: MIT, Apache-2.0, or both; the ICU crates (`icu_*`, `zerovec`, `yoke`) are Unicode-3.0.
-  **Two to confirm:** the crates compiled **only for Linux targets**, `libappindicator`/`libappindicator-sys`
+  `brotli`, `png`, `uuid`: MIT, Apache-2.0, or both; the ICU crates (`icu_*`, `zerovec`, `yoke`) are Unicode-3.0;
+  `r-efi` (via `getrandom`) is MIT OR Apache-2.0 OR LGPL-2.1-or-later, so a permissive choice is available.
+  **File-level copyleft (MPL-2.0) that reaches the Windows build:** `option-ext` 0.2.0 comes in through
+  `tauri` → `dirs` 7 → `dirs-sys` 0.5 → `option-ext`, and the lockfile records no target condition on that chain, so
+  as far as the lockfile shows it is compiled into the Windows installer and executable that `windows-app.yml`
+  publishes. `option-ext` is MPL-2.0. The Servo CSS crates `cssparser` 0.37, `cssparser-macros`, `selectors` 0.38
+  and `dtoa-short` (believed MPL-2.0) come in through `dom_query`, which both `tauri-utils` and `wry` use; whether
+  they end up in the Windows executable or only in build-time code depends on features and targets the lockfile
+  does not record, so `cargo tree --target x86_64-pc-windows-msvc -i cssparser` on a machine with registry access
+  should settle it. MPL-2.0 is file-level: as commonly read, a proprietary program may link MPL files unchanged,
+  provided the source of those files stays available to recipients and their notices are kept. **For counsel:**
+  confirm that reading for this product, and whether `NOTICE.md` should name these crates and where their source
+  is (crates.io). Nothing here was modified, and no MPL file is copied into the repository.
+  **Two more to confirm:** the crates compiled **only for Linux targets**, `libappindicator`/`libappindicator-sys`
   (the tray on Linux; the crate itself is believed to be LGPL-3.0, wrapping an LGPL system library) and
   `libdbus-sys` (links the system `libdbus`, AFL-2.1 OR GPL-2.0 as a system library). Neither is compiled into the
   product that ships: `windows-app.yml` builds the Windows installer and executable only, where the tray and the
@@ -81,15 +94,20 @@ touch this, since the product uses no ability scores. Nothing in this PR changes
 
 ## 5. What this PR adds to keep it true
 
-- `src/compliance.test.ts`: the npm tree may contain no GPL/AGPL/LGPL/SSPL/EUPL or non-commercial licence; weak
-  copyleft (MPL/EPL/CDDL) only in `devDependencies` and only `lightningcss`; every runtime dependency permissive;
-  and none of the names in §1 anywhere but this file.
+- `src/compliance.test.ts`: every licence in the npm lockfile must be on an allow-list (MIT, Apache-2.0,
+  `Apache-2.0 OR MIT`, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, Unlicense), so a GPL, AGPL, LGPL, SSPL, EUPL,
+  non-commercial, source-available (`BUSL-1.1`, `Elastic-2.0`, PolyForm, Commons Clause) or `UNLICENSED` entry
+  fails it; MPL-2.0 is allowed only for `lightningcss` in `devDependencies`; every runtime dependency is permissive;
+  and none of the names in §1 appears in any text file of the repository (C and C++ sources included, build output
+  and `node_modules` skipped) but this one.
 - This document, under `docs/` (MIT, like the rest of the tooling and documentation).
 
 ## 6. Left for a machine with registry access
 
 1. Run the three `cargo license` commands above and attach the output to this document.
-2. Consider adding `cargo deny check licenses` (with an allow-list of MIT, Apache-2.0, BSD, ISC, Zlib,
-   Unicode-3.0, MPL-2.0-for-build-only) to `ci.yml` beside the `license-headers` job, so the Rust trees are held the
+2. Consider adding `cargo deny check licenses` (with an allow-list of MIT, Apache-2.0, BSD, ISC, Zlib and
+   Unicode-3.0, plus per-crate exceptions for MPL-2.0 naming `option-ext` and, if `cargo tree` shows them in the
+   Windows build, the Servo CSS crates, once counsel has confirmed the MPL reading in §3) to `ci.yml` beside the
+   `license-headers` job, so the Rust trees are held the
    way the npm tree now is. It needs network access to the registry on the runner, which CI has and this session
    did not.

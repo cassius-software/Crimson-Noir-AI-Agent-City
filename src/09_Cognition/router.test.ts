@@ -80,6 +80,11 @@ test('ask connect: the provider, its server and (claude) its key in one line; a 
   assert.throws(() => r.connect('ollama', 'https://api.example.com'), /must be on this machine/)
   assert.equal(r.provider, 'scripted', 'a bad address left the provider as it was')
   assert.throws(() => r.connect('claude', 'https://api.anthropic.com'), /speaks only to a gateway on this machine/)
+  // A key typed where the url goes is refused without being echoed: only a plain address is quoted back.
+  assert.throws(() => r.connect('claude', 'https://api.anthropic.com'), /, not 'https:\/\/api\.anthropic\.com'$/)
+  for (const [p, v] of [['claude', 'sk-ant-api03-SECRETSECRET-9999'], ['openai', 'sk-proj-SECRET-9999'], ['ollama', 'http://user:SECRET@example.com']] as const) {
+    assert.throws(() => r.connect(p, v), (e: unknown) => e instanceof Error && !e.message.includes('SECRET') && /the second word must be a server url/.test(e.message), `${p}: the value is not in the message`)
+  }
   assert.throws(() => r.connect('ollama', 'http://localhost:11434', 'k'), /the ollama provider takes no key/)
   assert.throws(() => r.connect('scripted', 'http://localhost:1'), /takes no server and no key/)
   assert.throws(() => r.connect('gpt'), /ask connect takes claude, ollama, llamacpp, openai, scripted/)
@@ -250,6 +255,10 @@ test('from the console: ask provider swaps, ask key keeps the key masked, ask al
   const scripted = await shell('ask rust: hi', b, []).pending
   assert.match(scripted?.[0]?.text ?? '', /^You ask about "hi"/)
   assert.equal(srv.calls.length, before, 'nothing was sent')
+  const leaked = shell('ask connect claude sk-ant-api03-SECRETSECRET-9999', b, []).lines
+  assert.equal(leaked.length, 1)
+  assert.equal(leaked[0].kind, 'err')
+  assert.ok(!leaked[0].text.includes('SECRET'), 'a key typed where the url goes is not printed back')
   assert.deepEqual(shell('ask connect openai http://localhost:1234', b, []).lines, [{ kind: 'out', text: `provider  ${PROVIDER_TEXT.openai}; server http://localhost:1234` }])
   assert.deepEqual((await shell('ask rust: hi', b, []).pending)?.[0], { kind: 'out', text: 'llama says hi' })
   assert.deepEqual(shell('ask key', b, []).lines, [{ kind: 'err', text: 'usage: ask key <key|none>' }])

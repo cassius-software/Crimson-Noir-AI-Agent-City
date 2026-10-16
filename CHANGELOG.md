@@ -30,11 +30,12 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   answer, loopback only, a budget, a verifying chain), and a hash-chained audit trail (SHA-256 of each entry's
   canonical body and the hash before it) the console prints and verifies. Rules over text, settings and counts,
   held by tests; not a proof about a model, which the manual says in those words.
-- **A licence audit** (`docs/ip-audit.md`) and two compliance tests: no GPL, AGPL, LGPL, SSPL, EUPL or
-  non-commercial licence anywhere in the npm tree (MPL-2.0 only in `lightningcss`, a build tool that is never
-  bundled), and none of the engines or character tools an upgrade plan feared (`vkQuake3`, `ioquake3`, MakeHuman,
-  MPFB) anywhere in the repository. The Rust trees are listed; their licences could not be confirmed from the cloud
-  (no registry access) and the audit says how to.
+- **A licence audit** (`docs/ip-audit.md`) and two compliance tests: every licence in the npm tree is on a
+  permissive allow-list (MPL-2.0 only in `lightningcss`, a build tool that is never bundled), and none of the engines
+  or character tools an upgrade plan feared (the audit names them) appears in any text file of the repository. The
+  Rust trees are listed; their licences could not be confirmed from the cloud (no registry access) and the audit says
+  how to. It flags one MPL-2.0 crate (`option-ext`) that, as far as the lockfile shows, is compiled into the Windows
+  app, for counsel to confirm.
 
 - **Lakefront Metro has people and traffic.** The generated metropolis was walked through the surveyed-region path,
   which by design gives a region no fleet and hides the pedestrian crowd, so every first visit read Population 0 and

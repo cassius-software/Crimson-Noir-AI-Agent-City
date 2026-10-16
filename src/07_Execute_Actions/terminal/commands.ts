@@ -1015,6 +1015,9 @@ const HANDLERS: Record<Name, Handler> = {
     const agents = m[2] === undefined ? undefined : Number(m[2])
     if (agents !== undefined && !Number.isInteger(agents)) return fail(`swarm: --agents takes a whole number, not '${m[2]}'`)
     const goal = (m[3] ?? '').trim()
+    // A flag the pattern above did not take (`--agents` with no number, `--agents=2`, or after the goal) is a typo, not
+    // part of the goal: a run on it would send every role a prompt about the flag.
+    if (/(?:^|\s)--agents(?:[=\s]|$)/.test(goal)) return fail(`swarm: --agents takes a whole number and goes before the goal: swarm ${m[1]} --agents <1-5> <goal...>`)
     if (!goal) return fail(`usage: swarm ${m[1]} [--agents <1-5>] <goal...>`)
     if (m[1] === 'plan') {
       const plan = sw.plan(goal, agents)
@@ -1203,11 +1206,17 @@ export function run(input: string, bridge: TerminalBridge, history: readonly str
 }
 
 /**
- * A line as the console's history keeps it: a key given to `ask key` and a token given to `net join` are replaced
- * by dots, so `history` and the Up arrow never show a secret typed earlier. Every other line is kept as typed.
+ * A line as the console's history keeps it: a key given to `ask key` or `ask connect`, and a token given to
+ * `net join`, are replaced by dots, so `history` and the Up arrow never show a secret typed earlier. After `ask connect
+ * <provider>` only a leading http(s) address is kept; anything else there (a key typed where the url goes) is dotted
+ * with everything after it. Every other line is kept as typed.
  */
 export function redactForHistory(line: string): string {
-  return line.replace(/^(\s*ask\s+key\s+)\S[\s\S]*$/, '$1••••').replace(/^(\s*ask\s+connect\s+\S+\s+\S+\s+)\S[\s\S]*$/, '$1••••').replace(/^(\s*net\s+join\s+\S+\s+)\S[\s\S]*$/, '$1••••')
+  return line
+    .replace(/^(\s*ask\s+key\s+)\S[\s\S]*$/, '$1••••')
+    .replace(/^(\s*ask\s+connect\s+\S+\s+)(?!https?:\/\/[^\s@]*(?:\s|$))\S[\s\S]*$/i, '$1••••')
+    .replace(/^(\s*ask\s+connect\s+\S+\s+\S+\s+)\S[\s\S]*$/, '$1••••')
+    .replace(/^(\s*net\s+join\s+\S+\s+)\S[\s\S]*$/, '$1••••')
 }
 
 /**

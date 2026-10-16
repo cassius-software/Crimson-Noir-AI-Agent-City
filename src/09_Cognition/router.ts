@@ -227,8 +227,11 @@ export function createMindRouter({ fetch: fetchFn, store }: { fetch: FetchLike; 
       if (k && n !== 'claude') throw new Error(`the ${n} provider takes no key: a server on this machine needs none`)
       // Checked before anything changes, so a bad address leaves the provider as it was.
       const target = n === 'claude' ? claude : n === 'ollama' ? ollama : n === 'openai' ? openai : n === 'scripted' ? scripted : llamacpp
-      if (u && n === 'claude' && claudeServer(u) === null) throw new Error(`the Claude provider speaks only to a gateway on this machine (localhost, 127.0.0.1 or [::1]), not '${u}'`)
-      if (u && n !== 'claude' && n !== 'scripted' && claudeServer(u) === null) throw new Error(`the local model server must be on this machine (localhost, 127.0.0.1 or [::1]), not '${u}'`)
+      // A rejected value is quoted only when it reads as a plain address: a key typed where the url goes (`ask connect
+      // claude <key>`) is never echoed back to the screen.
+      const said = /^https?:\/\/[^\s@]*$/i.test(u) ? `, not '${u}'` : ': the second word must be a server url such as http://localhost:8089 (a key alone goes in with ask key <key>)'
+      if (u && n === 'claude' && claudeServer(u) === null) throw new Error(`the Claude provider speaks only to a gateway on this machine (localhost, 127.0.0.1 or [::1])${said}`)
+      if (u && n !== 'claude' && n !== 'scripted' && claudeServer(u) === null) throw new Error(`the local model server must be on this machine (localhost, 127.0.0.1 or [::1])${said}`)
       kept.provider = n
       const set: string[] = []
       if (u) set.push(`server ${target.setServer(u)}`)

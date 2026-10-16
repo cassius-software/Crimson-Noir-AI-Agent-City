@@ -1057,7 +1057,12 @@ a step of a fixed chain (the coder reads the architect, the tester reads both, a
 through the operator tier's gated ask, so whichever provider is chosen answers it, only while someone tethered to
 you has the role's skill, and the 14A screen sees it on the way in and out. Steps run one after another (the
 operator tier answers one prompt at a time); a refusal, a lost tether, a server failure or `swarm stop` ends the
-run there, with everything before it kept in the report. The roles are prompts, not separate agents with tools:
+run there, with everything before it kept in the report. A server that does not answer counts as a failure even
+though the page's script stands in for it everywhere else: canned text is not a role's work, so the run stops at that
+step and says so (with `ask provider scripted` chosen on purpose, the script's answers are the run). Each step is
+shown what the steps before it answered, sharing what is left of the prompt quota after its brief and the goal: a
+short answer whole, a long one cut at a word boundary (at most 1,500 characters each) with a note of how much was
+shown, so the last role always fits the quota. The roles are prompts, not separate agents with tools:
 the orchestrator issues no script, changes nothing in the city and writes no file. It answers in text, on the
 console, and a host can call the same surface (`bridge.operator.swarm.run(goal)`) from a voice line.
 

@@ -14,7 +14,8 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { QUOTA } from '../02_Define_The_Rules/guardrails.ts'
 import type { AskResult, GatedAsk, GateTether, Piece } from '../07_Execute_Actions/operator.ts'
-import { createSwarm, order, planSwarm, ROLES, roleOf, stepPrompt, type SwarmEvent } from './orchestrator.ts'
+import { screen } from '../02_Define_The_Rules/conduct.ts'
+import { createSwarm, cutAtWord, HANDOFF_CHARS, order, planSwarm, ROLES, roleOf, stepPrompt, type SwarmEvent } from './orchestrator.ts'
 
 const TETHER: GateTether = { agent: 7, serial: 1, skills: ['Design', 'TypeScript', 'Testing', 'Security', 'Writing'] }
 
@@ -60,6 +61,10 @@ test('the plan: the first N roles as a chain (a DAG), deterministic; a bad goal 
   assert.throws(() => planSwarm('g'.repeat(QUOTA.goalChars + 1)), new RegExp(`${QUOTA.goalChars + 1} characters; at most ${QUOTA.goalChars}`))
   for (const n of [0, 6, 2.5, Number.NaN]) assert.throws(() => planSwarm('x', n), RangeError, String(n))
   assert.throws(() => planSwarm('x', 3, { ...QUOTA, agents: 2 }), /--agents takes 1 to 2/)
+  // Left out, the count is every role the quota allows, not every role there is.
+  assert.equal(planSwarm('x', undefined, { ...QUOTA, agents: 3 }).agents, 3)
+  assert.equal(createSwarm({ ask: answering().ask, endpoint: () => null, quota: { ...QUOTA, agents: 2 } }).plan('x').agents, 2)
+  assert.equal(planSwarm('x').agents, ROLES.length)
 })
 
 test('order: a topological order, ties by plan order; a cycle or an unknown need is refused', () => {
@@ -75,10 +80,56 @@ test('a step\'s prompt: the role\'s brief, the goal, then each needed answer und
   assert.equal(stepPrompt(p, p.steps[0], new Map()), `${roleOf('architect').brief}\n\nGoal: Name the parts`)
   assert.equal(stepPrompt(p, p.steps[1], new Map([['architect', 'Three parts.\n']])), `${roleOf('coder').brief}\n\nGoal: Name the parts\n\nFrom the Prime Architect:\nThree parts.`)
   assert.equal(stepPrompt(p, p.steps[1], new Map()), `${roleOf('coder').brief}\n\nGoal: Name the parts\n\nFrom the Prime Architect:\n(no answer)`)
-  const long = stepPrompt(p, p.steps[1], new Map([['architect', 'w'.repeat(5000)]]))
-  assert.ok(long.endsWith('\n[cut at 1500 characters]'))
-  assert.ok(long.length < 1800)
+  const long = stepPrompt(p, p.steps[1], new Map([['architect', 'word '.repeat(1000)]]))
+  assert.match(long, /From the Prime Architect:\n(word ){299}word\n\[cut: 1499 of 4999 characters shown\]$/)
+  assert.ok(long.length <= QUOTA.promptChars)
+  // One word longer than the room is dropped whole rather than cut through.
+  assert.ok(stepPrompt(p, p.steps[1], new Map([['architect', 'w'.repeat(5000)]])).endsWith('From the Prime Architect:\n\n[cut: 0 of 5000 characters shown]'))
   assert.ok(stepPrompt(planSwarm('x'), planSwarm('x').steps[4], new Map()).length <= QUOTA.promptChars, 'an empty hand-off fits the quota')
+})
+
+test('cutAtWord: never through a word, so a cut cannot make a fragment the 14A screen refuses', () => {
+  assert.equal(cutAtWord('short', 10), 'short')
+  assert.equal(cutAtWord('the method works', 8), 'the', "'the meth' would have been the cut")
+  assert.equal(screen('the meth').admissible, false, 'the fragment is one the screen refuses')
+  assert.equal(cutAtWord('the method works', 10), 'the method', 'a cut on a boundary keeps the whole word')
+  assert.equal(cutAtWord('the method works', 11), 'the method')
+  assert.equal(cutAtWord('unbroken', 4), '')
+  assert.equal(cutAtWord('a b', 0), '')
+})
+
+test('the hand-offs share the prompt quota: the last of five roles fits it whatever the four before it answered, and a short answer leaves its room to the long ones', () => {
+  const plan = planSwarm('audit the fleet braking envelope')
+  const verifier = plan.steps[4]
+  // The review's case: four answers of 1,679 characters used to make a 6,478-character verifier prompt.
+  const answer = 'The braking envelope holds at the posted limits. '.repeat(35).slice(0, 1679)
+  const four = new Map(verifier.needs.map((id) => [id, answer]))
+  const p = stepPrompt(plan, verifier, four)
+  assert.ok(p.length <= QUOTA.promptChars, `${p.length} characters`)
+  assert.equal(p.match(/\[cut: \d+ of 1679 characters shown\]/g)?.length, 4)
+  assert.equal(screen(p).admissible, true)
+  for (const n of [0, 900, 1500, 3000, QUOTA.answerChars]) {
+    const each = new Map(verifier.needs.map((id) => [id, 'word '.repeat(Math.ceil(n / 5)).slice(0, n)]))
+    assert.ok(stepPrompt(plan, verifier, each).length <= QUOTA.promptChars, `answers of ${n}`)
+  }
+  // A short answer is shown whole; the long ones share what it left, each up to HANDOFF_CHARS.
+  const mixed = new Map<string, string>([['architect', 'Two parts.'], ['coder', 'code '.repeat(2000)], ['tester', 'test '.repeat(2000)], ['auditor', 'Nothing found.']])
+  const q = stepPrompt(plan, verifier, mixed)
+  assert.ok(q.includes('From the Prime Architect:\nTwo parts.\n') && q.endsWith(`From the ${roleOf('auditor').title}:\nNothing found.`))
+  const shown = [...q.matchAll(/\[cut: (\d+) of 9999 characters shown\]/g)].map((m) => Number(m[1]))
+  assert.equal(shown.length, 2)
+  for (const n of shown) assert.ok(n > 1200 && n <= HANDOFF_CHARS, `${n} shown`)
+  // A smaller quota is honoured the same way.
+  assert.ok(stepPrompt(plan, verifier, four, { ...QUOTA, promptChars: 2500 }).length <= 2500)
+})
+
+test('a five-role run with long answers finishes: every step answered, the verifier included', async () => {
+  const f = fakeAsk(() => ({ kind: 'answer', text: 'The braking envelope holds at the posted limits. '.repeat(40) }))
+  const s = createSwarm({ ask: f.ask, endpoint: () => 'http://localhost:11434' })
+  const r = await s.run('audit the fleet braking envelope').result
+  assert.deepEqual(r.steps.map((st) => st.state), ['answered', 'answered', 'answered', 'answered', 'answered'])
+  assert.equal(r.ok, true)
+  for (const a of f.asked) assert.ok(a.prompt.length <= QUOTA.promptChars)
 })
 
 test('a run: every step in order, one at a time, each prompt carrying the goal and what came before; pieces stream; the report and the chain agree', async () => {
@@ -181,6 +232,27 @@ test('a 14A goal reaches no gate; the token budget ends a run; the quota handed 
   assert.equal(budget.steps[1].note, '120 tokens spent (at most 100)')
   assert.equal(t.quota.tokens, 100)
   assert.equal(g.asked.length, 2)
+  // A server's count below zero spends nothing and gives no budget back.
+  const h = fakeAsk((_s, _p, n) => ({ kind: 'answer', text: 'ok', tokens: n === 0 ? -1000 : 60 }))
+  const u = createSwarm({ ask: h.ask, endpoint: () => null, quota: { ...QUOTA, tokens: 100 } })
+  const negative = await u.run('goal', 3).result
+  assert.deepEqual(negative.steps.map((st) => [st.id, st.state, st.tokens]), [['architect', 'answered', 0], ['coder', 'answered', 60], ['tester', 'refused', 60]])
+  assert.equal(negative.steps[2].note, '120 tokens spent (at most 100)')
+})
+
+test('the script standing in for a server that did not answer ends the run; the scripted provider chosen on purpose does not', async () => {
+  const canned = () => ({ kind: 'answer' as const, text: 'You ask about the goal.', done: 'scripted', tokens: 0 })
+  const f = fakeAsk(canned)
+  const s = createSwarm({ ask: f.ask, endpoint: () => 'http://localhost:11434' })
+  const r = await s.run('goal', 3).result
+  assert.deepEqual(r.steps.map((st) => [st.id, st.state, st.note]), [['architect', 'failed', 'no backend was answering at http://localhost:11434: the script stood in, so the run stops here']])
+  assert.equal(r.ok, false)
+  assert.equal(f.asked.length, 1)
+  assert.deepEqual(s.audit().map((e) => e.kind), ['plan', 'step', 'refusal', 'end'])
+  const g = fakeAsk(canned)
+  const chosen = await createSwarm({ ask: g.ask, endpoint: () => null }).run('goal', 3).result
+  assert.deepEqual(chosen.steps.map((st) => st.state), ['answered', 'answered', 'answered'])
+  assert.match(chosen.steps[0].note, /\(scripted: the chosen provider is the script\)$/)
 })
 
 test('stop: before the first step it refuses the step as HumanOverrideSupreme; mid-answer it stops the ask and ends the run; what came before is kept', async () => {

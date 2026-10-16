@@ -1809,6 +1809,13 @@ test('ask connect: the provider, its address and a key in one line, through the 
   assert.deepEqual(texts(run('ask connect', b, [])), ['usage: ask connect <claude|llamacpp|ollama|openai|scripted> [<url>] [<key>]'])
   assert.equal(redactForHistory('ask connect claude http://localhost:8089 sk-ant-secret'), 'ask connect claude http://localhost:8089 ••••')
   assert.equal(redactForHistory('ask connect ollama http://localhost:11434'), 'ask connect ollama http://localhost:11434')
+  // A key typed where the url goes (the url is optional) is dotted too, with anything after it.
+  assert.equal(redactForHistory('ask connect claude sk-ant-api03-SECRET-9999'), 'ask connect claude ••••')
+  assert.equal(redactForHistory('ask connect claude sk-ant-api03-SECRET-9999 http://localhost:8089'), 'ask connect claude ••••')
+  assert.equal(redactForHistory('ask connect openai sk-proj-SECRET'), 'ask connect openai ••••')
+  assert.equal(redactForHistory('ask connect claude http://user:SECRET@localhost:8089'), 'ask connect claude ••••')
+  assert.equal(redactForHistory('ask connect claude HTTP://localhost:8089 sk-ant-x'), 'ask connect claude HTTP://localhost:8089 ••••')
+  assert.equal(redactForHistory('ask connect claude'), 'ask connect claude')
   const locked = fake()
   assert.deepEqual(texts(run('ask connect ollama', locked, [])), ["ask: locked; type 'operator unlock' first"])
 })
@@ -1833,7 +1840,13 @@ test('swarm: locked until operator unlock; alone it is idle; roles and guardrail
   assert.equal(plan[3], '  tester    Sim-to-Real Tester    needs Testing     after architect, coder')
   assert.equal(b.operator.opCalls.filter((c) => c.startsWith('ask ')).length, 0, 'a plan asks nothing')
   assert.deepEqual(texts(run('swarm plan', b, [])), ['usage: swarm plan [--agents <1-5>] <goal...>'])
-  assert.deepEqual(texts(run('swarm plan --agents 9 x', b, [])), ['swarm: swarm: --agents takes 1 to 5'])
+  assert.deepEqual(texts(run('swarm plan --agents 9 x', b, [])), ['swarm: --agents takes 1 to 5'])
+  // A flag the pattern did not take is a typo, not part of the goal: nothing is planned or run on it.
+  for (const line of ['swarm run --agents', 'swarm run --agents=2 check the brakes', 'swarm run check the brakes --agents 2', 'swarm plan x --agents']) {
+    const verb = line.split(' ')[1]
+    assert.deepEqual(texts(run(line, b, [])), [`swarm: --agents takes a whole number and goes before the goal: swarm ${verb} --agents <1-5> <goal...>`], line)
+  }
+  assert.equal(b.operator.swarm.status().running, false, 'nothing started')
   assert.deepEqual(texts(run('swarm plan --agents two x', b, [])), ["swarm: --agents takes a whole number, not 'two'"])
   assert.deepEqual(texts(run('swarm dance', b, [])), ["swarm: unknown command 'dance'", 'usage: swarm [run [--agents <1-5>] <goal...>|plan [--agents <1-5>] <goal...>|status|stop|roles|guardrails|audit [verify]]'])
   assert.deepEqual(texts(run('swarm audit', b, [])), ['swarm: no audit entries yet (swarm run <goal> writes them)', "chain: 0 entries verify from genesis; head 0000000000000000… (SHA-256 of each entry's canonical body and the hash before it)"])

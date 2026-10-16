@@ -61,46 +61,78 @@ export interface SwarmPlan {
 /**
  * The plan for a goal: the first `agents` roles, each step reading every step before it (a chain, which is a DAG),
  * so the coder reads the architect, the tester reads both, and so on. Deterministic: the same goal and count give
- * the same plan. Throws on an empty or over-long goal, or a count outside 1..ROLES.length.
+ * the same plan. Left out, the count is every role the quota allows. Throws on an empty or over-long goal, or a count
+ * outside 1..min(ROLES.length, quota.agents).
  */
-export function planSwarm(goal: string, agents = ROLES.length, quota: Quota = QUOTA): SwarmPlan {
+export function planSwarm(goal: string, agents?: number, quota: Quota = QUOTA): SwarmPlan {
+  const most = Math.min(ROLES.length, quota.agents)
+  const n = agents ?? most
   const g = typeof goal === 'string' ? goal.replace(/\s+/g, ' ').trim() : ''
-  if (!g) throw new Error('swarm: state the goal, e.g. swarm run audit the fleet\'s braking envelope')
-  if (g.length > quota.goalChars) throw new Error(`swarm: the goal is ${g.length} characters; at most ${quota.goalChars}`)
-  if (!Number.isInteger(agents) || agents < 1 || agents > Math.min(ROLES.length, quota.agents)) throw new RangeError(`swarm: --agents takes 1 to ${Math.min(ROLES.length, quota.agents)}`)
-  const roles = ROLES.slice(0, agents)
+  if (!g) throw new Error('state the goal, e.g. swarm run audit the fleet\'s braking envelope')
+  if (g.length > quota.goalChars) throw new Error(`the goal is ${g.length} characters; at most ${quota.goalChars}`)
+  if (!Number.isInteger(n) || n < 1 || n > most) throw new RangeError(`--agents takes 1 to ${most}`)
+  const roles = ROLES.slice(0, n)
   const steps = roles.map((r, i) => Object.freeze({ id: r.id, role: r.id, needs: Object.freeze(roles.slice(0, i).map((p) => p.id)) }))
-  return Object.freeze({ goal: g, agents, steps: Object.freeze(steps) })
+  return Object.freeze({ goal: g, agents: n, steps: Object.freeze(steps) })
 }
 
 /** The steps in an order that runs every step after the steps it needs (Kahn's algorithm, ties by plan order). Throws on a cycle or an unknown need. */
 export function order(steps: readonly SwarmStep[]): string[] {
   const ids = new Set(steps.map((s) => s.id))
   const left = new Map(steps.map((s) => [s.id, new Set(s.needs)]))
-  for (const [id, needs] of left) for (const n of needs) if (!ids.has(n)) throw new Error(`swarm: step '${id}' needs unknown step '${n}'`)
+  for (const [id, needs] of left) for (const n of needs) if (!ids.has(n)) throw new Error(`step '${id}' needs unknown step '${n}'`)
   const out: string[] = []
   while (out.length < steps.length) {
     const next = steps.find((s) => !out.includes(s.id) && left.get(s.id)!.size === 0)
-    if (!next) throw new Error('swarm: the plan has a cycle')
+    if (!next) throw new Error('the plan has a cycle')
     out.push(next.id)
     for (const needs of left.values()) needs.delete(next.id)
   }
   return out
 }
 
-/** How much of a previous answer a step is shown, characters; the rest is cut with a note. */
-const HANDOFF_CHARS = 1500
+/** The most of one previous answer a step is shown, characters, however much room the prompt has. */
+export const HANDOFF_CHARS = 1500
 
-/** The prompt a step is asked: its role's brief, the goal, and what the steps it needs answered. */
-export function stepPrompt(plan: SwarmPlan, step: SwarmStep, answers: ReadonlyMap<string, string>): string {
+/**
+ * `text` cut to at most `n` characters at a word boundary: a cut through a word could leave a fragment that is a
+ * word of its own (the 14A screen reads words), so the partial last word goes too. A single word longer than `n` is
+ * dropped whole.
+ */
+export function cutAtWord(text: string, n: number): string {
+  if (text.length <= n) return text
+  if (n <= 0) return ''
+  if (/\s/.test(text[n])) return text.slice(0, n).trimEnd()
+  const head = text.slice(0, n)
+  const i = head.search(/\s\S*$/)
+  return i < 0 ? '' : head.slice(0, i).trimEnd()
+}
+
+/**
+ * The prompt a step is asked: its role's brief, the goal, and what the steps it needs answered. The hand-offs share
+ * what is left of quota.promptChars after the brief, the goal and their headings: a short answer is shown whole and
+ * leaves its room to the longer ones, each at most HANDOFF_CHARS, and a cut one ends with a note of how much was
+ * shown. So the prompt fits the quota whatever the earlier steps answered, and the last role is not refused for it.
+ */
+export function stepPrompt(plan: SwarmPlan, step: SwarmStep, answers: ReadonlyMap<string, string>, quota: Quota = QUOTA): string {
   const role = roleOf(step.role)
-  const parts = [role.brief, '', `Goal: ${plan.goal}`]
-  for (const id of step.needs) {
-    const from = roleOf(id as RoleId)
-    const text = (answers.get(id) ?? '').trim()
-    const shown = text.length > HANDOFF_CHARS ? `${text.slice(0, HANDOFF_CHARS).trimEnd()}\n[cut at ${HANDOFF_CHARS} characters]` : text
-    parts.push('', `From the ${from.title}:`, shown || '(no answer)')
-  }
+  const head = [role.brief, '', `Goal: ${plan.goal}`]
+  const from = step.needs.map((id) => ({ id, title: roleOf(id as RoleId).title, text: (answers.get(id) ?? '').trim() }))
+  // Every character but the hand-off text itself, with each note at its longest.
+  const note = (shown: number, of: number): string => `\n[cut: ${shown} of ${of} characters shown]`
+  const fixed = head.join('\n').length + from.reduce((n, f) => n + `\n\nFrom the ${f.title}:\n`.length + Math.max('(no answer)'.length, note(f.text.length, f.text.length).length), 0)
+  let room = Math.max(0, quota.promptChars - fixed)
+  const shown = new Map<string, string>()
+  // Shortest first: each takes at most an equal share of what is left, so the long ones get what the short ones left.
+  const byLength = [...from].sort((a, b) => a.text.length - b.text.length)
+  byLength.forEach((f, i) => {
+    const share = Math.min(HANDOFF_CHARS, Math.floor(room / (byLength.length - i)))
+    const cut = cutAtWord(f.text, share)
+    shown.set(f.id, cut.length < f.text.length ? `${cut}${note(cut.length, f.text.length)}` : f.text)
+    room -= cut.length
+  })
+  const parts = [...head]
+  for (const f of from) parts.push('', `From the ${f.title}:`, shown.get(f.id) || '(no answer)')
   return parts.join('\n')
 }
 
@@ -217,10 +249,11 @@ export function createSwarm({ ask, endpoint, quota = QUOTA, now = Date.now }: { 
         const step = plan.steps.find((s) => s.id === id)!
         const role = roleOf(step.role)
         const base = { id: step.id, role: step.role, title: role.title, skill: role.skill, text: '', tokens: 0, failed: [] as readonly Invariant[] }
-        const prompt = stepPrompt(plan, step, answers)
+        const prompt = stepPrompt(plan, step, answers, quota)
         const ts = now()
         // Before the model: the pre-conditions (guardrails.ts admitStep). A refusal ends the run here, recorded.
-        const pre = admitStep({ step: step.id, role: role.title, skills: [role.skill], prompt, stopped: state.stopped, endpoint: endpoint(), spent: state.spent, chainOk: chain.verify().ok }, quota)
+        const ep = endpoint()
+        const pre = admitStep({ step: step.id, role: role.title, skills: [role.skill], prompt, stopped: state.stopped, endpoint: ep, spent: state.spent, chainOk: chain.verify().ok }, quota)
         if (!pre.admitted) {
           const note = pre.reasons.join('; ')
           record(state.stopped ? 'stop' : 'refusal', step.id, role.title, prompt, '', null, pre.failed, note)
@@ -247,7 +280,9 @@ export function createSwarm({ ask, endpoint, quota = QUOTA, now = Date.now }: { 
           const r: AskResult = await a.result
           off()
           state.asking = null
-          state.spent = { steps: state.spent.steps + 1, tokens: state.spent.tokens + (r.tokens ?? 0) }
+          // A count below zero (or not a number) from a server spends nothing; it never gives budget back.
+          const tokens = Math.max(0, Number(r.tokens) || 0)
+          state.spent = { steps: state.spent.steps + 1, tokens: state.spent.tokens + tokens }
           const ms = now() - ts
           if (r.state !== 'Authorized') {
             const v = tetherVerdict(r.state, r.reason)
@@ -275,18 +310,27 @@ export function createSwarm({ ask, endpoint, quota = QUOTA, now = Date.now }: { 
             ended = true
             break
           }
+          // The chosen provider addresses a server, yet the script answered (the engine's withScriptedFallback stands
+          // in when no backend answers): canned text is not a role's work, so the run ends here, as a server failure.
+          if (r.done === 'scripted' && ep !== null) {
+            const note = `no backend was answering at ${ep}: the script stood in, so the run stops here`
+            record('refusal', step.id, role.title, prompt, r.text, null, [], note)
+            finish({ ...base, state: 'failed', text: r.text, ms, note })
+            ended = true
+            break
+          }
           // After the model: the post-conditions (guardrails.ts admitAnswer), on the whole answer.
-          const post = admitAnswer(step.id, r.text, r.tokens ?? 0, { tokens: state.spent.tokens - (r.tokens ?? 0) }, quota)
+          const post = admitAnswer(step.id, r.text, tokens, { tokens: state.spent.tokens - tokens }, quota)
           if (!post.admitted) {
             record('refusal', step.id, role.title, prompt, r.text, r.promptHash ?? null, post.failed, post.reasons.join('; '))
-            finish({ ...base, state: 'refused', ms, tokens: r.tokens ?? 0, failed: post.failed, note: post.reasons.join('; ') })
+            finish({ ...base, state: 'refused', ms, tokens, failed: post.failed, note: post.reasons.join('; ') })
             ended = true
             break
           }
           answers.set(step.id, r.text)
-          const note = `answered in ${(ms / 1000).toFixed(1)} s${r.done === 'length' ? ' (cut at the token limit)' : ''}${r.done === 'scripted' ? ' (scripted: no backend was answering)' : ''}`
+          const note = `answered in ${(ms / 1000).toFixed(1)} s${r.done === 'length' ? ' (cut at the token limit)' : ''}${r.done === 'scripted' ? ' (scripted: the chosen provider is the script)' : ''}`
           record('answer', step.id, role.title, prompt, r.text, r.promptHash ?? null, [], note)
-          finish({ ...base, state: 'answered', text: r.text, ms, tokens: r.tokens ?? 0, ...(r.promptHash !== undefined && { promptHash: r.promptHash }), note })
+          finish({ ...base, state: 'answered', text: r.text, ms, tokens, ...(r.promptHash !== undefined && { promptHash: r.promptHash }), note })
           state.done++
         } else {
           const r = await a.result
