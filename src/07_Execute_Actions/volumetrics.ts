@@ -44,7 +44,9 @@ export const RAYS = {
   /** Linear HDR gain of a fully lit shaft (sunlit surfaces are about 2; the sky near the sun saturates anyway,
    *  so the shafts read on facades, people and the road whose ray paths cross sky). */
   gain: 1.5,
-  /** Depth this close to the far plane is sky (24-bit depth resolves ~6e-8; the ground ends at ~1600 m ≈ 6e-5). */
+  /** Depth this close to the far plane is sky: the sky mesh writes no depth, so sky pixels hold the clear value (1, or
+   *  0 with the reversed buffer world.ts asks for); the ground ends at ~1600 m, which is ~6e-5 from the far plane
+   *  either way, and a 24-bit buffer resolves ~6e-8. */
   skyEpsilon: 1e-5,
 } as const
 

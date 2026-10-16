@@ -831,6 +831,40 @@ test('gatedSay: Rejected never reaches the speech server; Authorized is said by 
   assert.equal(out.stops, 0)
 })
 
+test('gatedSay: a hired agent speaks in their own voice; one the provider does not have falls back to the chosen voice; nobody else is given one', async () => {
+  const gate = new FakeGate()
+  const out = new FakeOut()
+  const voice = new FakeVoice()
+  const asked: (string | undefined)[] = []
+  const base = voice.synthesize.bind(voice)
+  voice.synthesize = (text: string, signal: AbortSignal, v?: string) => {
+    asked.push(v)
+    if (v === 'Sarah') return Promise.reject(Object.assign(new Error("the local speech server has no voice 'Sarah'"), { code: 'voice' }))
+    return base(text, signal)
+  }
+  const own = gatedSay(gate, voice, out, ['Rust'], 'one', (agent) => (agent === 7 ? 'af_bella' : null))
+  await ticks()
+  voice.audio()
+  await ticks()
+  out.finish()
+  assert.equal((await within(own.result)).state, 'Authorized')
+  // A voice from the other provider (kept from before `say provider`): said in the chosen voice instead of not at all.
+  const other = gatedSay(gate, voice, out, ['Rust'], 'two', () => 'Sarah')
+  await ticks()
+  voice.audio()
+  await ticks()
+  out.finish()
+  assert.equal((await within(other.result)).state, 'Authorized')
+  const plain = gatedSay(gate, voice, out, ['Rust'], 'three', () => null)
+  await ticks()
+  voice.audio()
+  await ticks()
+  out.finish()
+  assert.equal((await within(plain.result)).state, 'Authorized')
+  assert.deepEqual(asked, ['af_bella', 'Sarah', undefined, undefined])
+  assert.deepEqual(out.played, [7, 7, 7])
+})
+
 test('gatedSay: the tether breaks while it downloads (never played) or mid-word (cut at once); the operator stops it; failures are sentences', async () => {
   const gate = new FakeGate()
   const voice = new FakeVoice()

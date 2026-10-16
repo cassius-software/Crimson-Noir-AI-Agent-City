@@ -50,7 +50,13 @@ import { screenNames } from './01_Initialize_World/assets/cc0.ts'
 import { Onboarding, type Outcome } from './07_Execute_Actions/onboarding/Onboarding.tsx'
 import { loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
 import { modelVoice, scriptedVoice, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
+import { ConciergeSpeaker, conciergeBridge, synthEnv, type ConciergeOut } from './07_Execute_Actions/onboarding/speaker.ts'
 import { useMentor } from './07_Execute_Actions/onboarding/useMentor.ts'
+import { agentBridge, identityLine, Roster, voiceProfile } from './08_Swarm/roster.ts'
+import { SKILLS } from './03_Spawn_Agents/skills.ts'
+import { FiveWhys } from './06_Make_Decisions/intent.ts'
+import type { GoalPlan } from './07_Execute_Actions/terminal/bridge.ts'
+import type { Voice as SpeechVoice } from './07_Execute_Actions/operator.ts'
 import type { Event as MentorEvent } from './09_Cognition/tutorial.ts'
 
 const HUD_INTERVAL_MS = 100
@@ -277,19 +283,51 @@ function App() {
   const [onboard] = useState(() => needsOnboarding(new URLSearchParams(window.location.search), saved, loadProfile()))
   const [outcome, setOutcome] = useState<Outcome | null>(null)
   const [voice] = useState(onboardingVoice)
+  // Sloane's spoken voice, one for the onboarding and the city (the link is filled in once the engine is up).
+  const [link] = useState<SpeakerLink>(() => ({ sound: () => true, source: null }))
+  const [speaker] = useState(() => new ConciergeSpeaker({ env: synthEnv(), sound: () => link.sound(), source: () => link.source }))
   if (options.boot === 'tty') return <TtyShell />
-  if (onboard && !outcome) return <Onboarding seed={options.seed} onDone={setOutcome} port={builderPort} voice={voice} />
+  if (onboard && !outcome) return <Onboarding seed={options.seed} onDone={setOutcome} port={builderPort} voice={voice} speaker={speaker} />
   const chosen = outcome?.saved ?? saved
   const choice = mapWanted(new URLSearchParams(window.location.search), chosen, regionFirst, loadMapChoice())
   const zone = zoneOf(chosen?.place) ?? ZONE.metropolis
   const shellOptions = outcome?.options ? { ...options, ...outcome.options } : options
-  // Wren watches the first minutes of a visitor who has just walked in from the onboarding (never the expert path).
+  // Sloane watches the first minutes of a visitor who has just walked in from the onboarding (never the expert path).
   const mentored = outcome !== null && !outcome.saved.skipped
-  return <GuiShell options={shellOptions} plan={{ choice, pack: outcome?.pack ?? null, zone }} mentored={mentored} voice={voice} />
+  return <GuiShell options={shellOptions} plan={{ choice, pack: outcome?.pack ?? null, zone }} mentored={mentored} voice={voice} speaker={speaker} link={link} />
 }
 
+/**
+ * The console's `goal` (terminal/bridge.ts GoalPlan): the goal planned as Sloane plans one (06_Make_Decisions/intent.ts),
+ * its immediate steps applied through the same knobs the Concierge uses (the clock, the quality tier, the sound).
+ */
+function goalPlan(text: string, b: Pick<TerminalBridge, 'setClock' | 'quality' | 'audio'>): GoalPlan {
+  const brief = new FiveWhys(text).brief()
+  const steps: { label: string; state: 'done' | 'later' | 'failed'; detail?: string }[] = []
+  for (const step of brief.plan) {
+    if (!step.immediate) { steps.push({ label: step.label, state: 'later' }); continue }
+    try {
+      if (step.control === 'time' && typeof step.value === 'number') b.setClock(step.value)
+      else if (step.control === 'quality' && (step.value === 'auto' || typeof step.value === 'number')) b.quality(step.value)
+      else if (step.control === 'audio' && (step.value === 'on' || step.value === 'off' || typeof step.value === 'number')) b.audio(step.value)
+      else { steps.push({ label: step.label, state: 'later' }); continue }
+      steps.push({ label: step.label, state: 'done' })
+    } catch (e) {
+      steps.push({ label: step.label, state: 'failed', detail: e instanceof Error ? e.message : String(e) })
+    }
+  }
+  return { root: brief.root, steps, notes: brief.unmapped }
+}
+
+/**
+ * What Sloane's voice reads of the page (onboarding/speaker.ts): whether the sound is on (the onboarding before the
+ * city is up: yes, the card only asks once sound was chosen on; the city: its soundscape's state), and the operator's
+ * speech provider with the soundscape that places it at the player's head, once the engine exists.
+ */
+interface SpeakerLink { sound(): boolean; source: { voice: SpeechVoice; out: ConciergeOut } | null }
+
 /** The city: the engine over the canvas, the HUD, the Concierge, the touch controls and the drop-down console. */
-function GuiShell({ options, plan, mentored, voice }: { options: Options; plan: MapPlan; mentored: boolean; voice: Voice }) {
+function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: Options; plan: MapPlan; mentored: boolean; voice: Voice; speaker: ConciergeSpeaker; link: SpeakerLink }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const engineRef = useRef<Engine | null>(null)
   const termOpenRef = useRef(false)
@@ -303,14 +341,30 @@ function GuiShell({ options, plan, mentored, voice }: { options: Options; plan: 
   // Read synchronously, so the very first render already knows a returning visitor.
   const [profile, setProfile] = useState<Profile | null>(loadProfile)
   // The look the visitor chose (lookStore.ts), or null: then their own seed's look (the first use of profile.seed),
-  // or, unnamed, the hash's for the player's body. The wardrobe card is Wren's to open.
+  // or, unnamed, the hash's for the player's body. The wardrobe card is Sloane's to open.
   const [look, setLook] = useState<Look | null>(loadLook)
   const [lookOpen, setLookOpen] = useState(false)
+  // The player's own agents (08_Swarm/roster.ts): the card's second tab and the console's `agent` share it; the engine
+  // reads who a hired pedestrian goes by for their prompts, and `say` speaks them in their own provider voice.
+  const [roster] = useState(() => new Roster())
+  const [agents, setAgents] = useState(() => roster.list())
+  useEffect(() => roster.onChange(() => setAgents(roster.list())), [roster])
+  useEffect(() => {
+    engine?.setIdentities((agent) => { const id = roster.byAgent(agent); return id ? identityLine(id) : null })
+    return () => engine?.setIdentities(null)
+  }, [engine, roster])
+  // The card re-dresses a hired agent at once; a profile name is the browser tier's, not a provider voice.
+  const wearAgentLook = useCallback((name: string, next: Look | null) => {
+    const id = roster.set(name, 'look', next)
+    if (id.agent !== null) engineRef.current?.setLook(id.agent, id.look)
+  }, [roster])
+  const onSay = useCallback((text: string) => { void speaker.speak(text) }, [speaker])
+  const onHear = useCallback((voice: string, line: string) => { void speaker.preview(line, voice) }, [speaker])
   const lookOpenRef = useRef(false)
   const [veilDone, setVeilDone] = useState(false)
   // A Ring-0 kernel panic: the engine is halted and the reason is shown over everything.
   const [locked, setLocked] = useState<string | null>(null)
-  // Wren's quiet watch over a first visitor (onboarding/useMentor.ts): its lines reach the Concierge as nudges, and a
+  // Sloane's quiet watch over a first visitor (onboarding/useMentor.ts): its lines reach the Concierge as nudges, and a
   // prompt sent to someone in the city is reported to it from the mind below (noteRef, built once with the engine).
   const { nudge, note: noteMentor } = useMentor({ active: mentored && veilDone, engine, hud, family: hud?.supplier.glyphs ?? 'keyboard', name: profile?.name ?? '', voice })
   const noteRef = useRef<(e: MentorEvent) => void>(noteMentor)
@@ -326,7 +380,7 @@ function GuiShell({ options, plan, mentored, voice }: { options: Options; plan: 
   const wornRef = useRef<Look | null>(null)
   const seedRef = useRef(PLAYER_INDEX)
   useEffect(() => { wornRef.current = worn; seedRef.current = profile?.seed ?? PLAYER_INDEX }, [worn, profile])
-  const openLook = useCallback(() => setLookOpen(true), [])
+  const openLook = useCallback(() => { setLookOpen(true); noteRef.current('wardrobe') }, [])
   const closeLook = useCallback(() => setLookOpen(false), [])
 
   // A brief's immediate steps go through the terminal bridge (the same four operator knobs), never the engine.
@@ -372,7 +426,7 @@ function GuiShell({ options, plan, mentored, voice }: { options: Options; plan: 
     let engine: Engine | null = null
     let recruiter: Recruiter | null = null
     let router: TaskRouter | null = null
-    /** Stops writing the recruiter's events into the swarm's memory. */
+    /** Stops following the recruiter: its events into the swarm's memory, its list into the roster's hires. */
     let unfollow: (() => void) | null = null
     /** The answer streaming in from the local model, for the HUD (null when none is). */
     let answering: { thinking: number; tail: string } | null = null
@@ -439,10 +493,23 @@ function GuiShell({ options, plan, mentored, voice }: { options: Options; plan: 
         // only if the browser refuses it), fed by the recruiter's arrivals and releases and by the operator tier's
         // tasks (its diary). Nothing in it reaches the physics worker.
         const memory = new SwarmMemory(deferredLedger((async () => indexedDbLedger(window.indexedDB))()), options.seed)
-        unfollow = followRecruiter(memory, r)
+        const unfollowMemory = followRecruiter(memory, r)
+        // A hire on the roster lasts while that person stays with the operator: one the recruiter's list no longer has
+        // (they left, or were dismissed) is let go and dressed as the city dresses them. Every hire ends with the city.
+        const unmirror = r.onMirror((list) => { for (const agent of roster.keepOnly(list.map((v) => v.agent))) e.setLook(agent, null) })
+        unfollow = () => { unfollowMemory(); unmirror(); roster.keepOnly([]) }
         // The local speech server (only ever asked on the operator's command, only on this machine): the audio it
         // returns is placed by the engine's soundscape at the speaker's head.
         const voice = createLocalSpeech({ fetch: pageFetch, store: pageStore(SPEECH_KEY) })
+        // Sloane's voice now reads the city's sound and can speak through the operator's provider at the player's head.
+        // Only a running soundscape is sound on: not off, not suspended in a hidden tab, not locked before a gesture.
+        link.sound = () => e.audio.status().state === 'running'
+        link.source = { voice, out: e.conciergeOut() }
+        // A hired agent's own provider voice (a profile name is the browser tier's, not a provider voice).
+        const voiceOf = (agent: number): string | null => {
+          const v = roster.byAgent(agent)?.voice ?? null
+          return v !== null && voiceProfile(v) === null ? v : null
+        }
         // A walk ping (go or gather) at a sidewalk point near the operator asks an Active recruit over to it: the engine
         // plans it from its own copies (08_Swarm/ping.ts rallyPlan), the recruiter checks the page's copy, the physics
         // realm decides on its own readings; its answer is a toast either way.
@@ -468,12 +535,15 @@ function GuiShell({ options, plan, mentored, voice }: { options: Options; plan: 
         }
         if (termOpenRef.current || lookOpenRef.current) e.input.suspend(true)
         setEngine(e)
-        const engineBridge = e.terminalBridge(gate, mind, voice, memory.diary())
+        const engineBridge = e.terminalBridge(gate, mind, voice, memory.diary(), voiceOf)
         setBridge(Object.freeze({
           ...engineBridge,
           // The map this shell walks, for the console's `map` status line (the choice itself is remap's).
           brand: Object.freeze({ ...engineBridge.brand, map: plan.choice }),
           recruit: recruitBridge(r),
+          agent: agentBridge(roster, { recruit: (skill) => recruitBridge(r).ask(skill), wear: (agent, look) => e.setLook(agent, look), skills: () => SKILLS }),
+          concierge: conciergeBridge(speaker),
+          goal: (text: string) => goalPlan(text, engineBridge),
           memory: memoryBridge(memory, r),
           net: netBridge(e.net, pageStore(NET_TOKEN_KEY)),
           // The player's look: App's state is the one source (the wardrobe card and the console share it).
@@ -523,6 +593,9 @@ function GuiShell({ options, plan, mentored, voice }: { options: Options; plan: 
       cancelAnimationFrame(raf)
       window.removeEventListener('resize', onResize)
       engineRef.current = null
+      speaker.stop()
+      link.source = null
+      link.sound = () => true
       setEngine(null)
       setBridge(null)
       unfollow?.()
@@ -531,7 +604,7 @@ function GuiShell({ options, plan, mentored, voice }: { options: Options; plan: 
       if ((window as { recruit?: unknown }).recruit) delete (window as { recruit?: unknown }).recruit
       engine?.dispose()
     }
-  }, [options, plan, wearLook])
+  }, [options, plan, wearLook, link, roster, speaker])
 
   return (
     <main className="relative h-full w-full overflow-hidden bg-slate-900">
@@ -552,6 +625,7 @@ function GuiShell({ options, plan, mentored, voice }: { options: Options; plan: 
           onLook={openLook}
           nudge={nudge}
           onGoal={onGoal}
+          onSay={onSay}
         />
       )}
       {hud && (
@@ -562,6 +636,10 @@ function GuiShell({ options, plan, mentored, voice }: { options: Options; plan: 
           onChange={wearLook}
           onClose={closeLook}
           dark={hud.customer.daylight < 0.35}
+          agents={agents}
+          roster={roster}
+          onAgentLook={wearAgentLook}
+          onHear={onHear}
         />
       )}
       <Terminal bridge={bridge} onOpenChange={onTermOpen} onBoot={reboot} onMap={remap} />

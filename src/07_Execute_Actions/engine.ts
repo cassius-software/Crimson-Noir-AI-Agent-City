@@ -48,8 +48,10 @@ import { SIGNAL, signalFor, walkAllowed } from '../02_Define_The_Rules/civic.ts'
 import { THREE_LAWS } from '../02_Define_The_Rules/laws.ts'
 import { kernelPanic } from '../02_Define_The_Rules/ring0Panic.ts'
 import { CrowdView } from '../03_Spawn_Agents/crowd.ts'
-import { LOOK_NONE, packLook, unpackLook, validateLook, type Look } from '../03_Spawn_Agents/look.ts'
-import { packFrustumPlanes, type CrowdStats, type CullSettings } from '../03_Spawn_Agents/crowdCompute.ts'
+import { heightScale, LOOK_NONE, packLook, unpackLook, validateLook, type Look } from '../03_Spawn_Agents/look.ts'
+import type { ConciergeOut } from './onboarding/speaker.ts'
+import { CONCIERGE_NAME as CONCIERGE_LABEL } from './onboarding/script.ts'
+import { packFrustumPlanes, PLAYER_INDEX, type CrowdStats, type CullSettings } from '../03_Spawn_Agents/crowdCompute.ts'
 import { CrowdCull } from '../03_Spawn_Agents/crowdCull.ts'
 import { AGENTS_RANGE } from '../03_Spawn_Agents/crowdSensor.ts'
 import { Input, TriggerFeedback } from '../04_Connect_Hardware/input.ts'
@@ -62,7 +64,7 @@ import { CAR_TUNE_RANGE, chassisBox, clampTuning, kindOf, type CarTuning } from 
 import { FleetView } from './fleetView.ts'
 import { RigView } from './rigView.ts'
 import { NetView, type RemotePose } from './netView.ts'
-import { HeadRig, aimRay, carriedYaw, yawFacing, type AimRay } from './head.ts'
+import { HeadRig, aimRay, carriedYaw, eyeHeightFor, yawFacing, type AimRay } from './head.ts'
 import { SimClient } from './simClient.ts'
 import { applyWalk, requestWalk, type ScriptedWalk } from './scriptedWalk.ts'
 import {
@@ -463,6 +465,8 @@ export class Engine {
   /** The 2 m cells the listener and the speaker were last found in: their rooms (acoustics.ts) are recomputed on a change. */
   private listenerCell = Number.NaN
   private speakerCell = Number.NaN
+  /** Sloane is speaking (conciergeOut): the voice is kept at the player's own head. */
+  private conciergeVoice = false
   /** The soundscape's closed captions (captions.ts), fed by every sound event with the head pose as the listener. */
   private readonly captions = new CaptionTrack()
   private captionsOn: boolean
@@ -896,6 +900,9 @@ export class Engine {
     if (word < 0) return false
     this.lookWords[agent] = word
     this.gpu.device.queue.writeBuffer(this.crowdLook, agent * 4, this.lookWords, agent, 1)
+    // The player's own body sets the first-person eye: a taller look sees over the crowd, a shorter one looks up at
+    // it (head.ts eyeHeightFor; the hash's body keeps the reference eye).
+    if (agent === PLAYER_INDEX) this.rig.setEyeHeight(eyeHeightFor(look === null ? 1 : heightScale(look)))
     return true
   }
 
@@ -1171,7 +1178,7 @@ export class Engine {
   /** The swarm's here and now for the operator tier (operator.ts Awareness): its contexts read from this page's copies, its moments kept here. */
   private awareness(): Awareness {
     return Object.freeze({
-      context: (agent: number): AgentContext | null => ({ agent, surroundings: this.surroundingsOf(agent), recent: this.moments.recent(agent) }),
+      context: (agent: number): AgentContext | null => ({ agent, identity: this.identityOf?.(agent) ?? null, surroundings: this.surroundingsOf(agent), recent: this.moments.recent(agent) }),
       remember: (agent: number, who: string, what: string): void => {
         const at = this.standingOf(agent)
         this.moments.remember(agent, { who, what, where: this.placeOf(at.x, at.z), at: this.simTime, clock: formatClock(this.hours) })
@@ -1351,6 +1358,34 @@ export class Engine {
     })
   }
 
+  /**
+   * Where Sloane's voice is heard (onboarding/speaker.ts ConciergeOut): the soundscape at the player's own head, the
+   * voice following the head while it lasts, with no walls between (it is in the earbuds, not on the street). Only
+   * audio flows through it: the bytes come from the host's speech client. Built per call, frozen.
+   */
+  conciergeOut(): ConciergeOut {
+    const clips = new WeakMap<SpeechClip, AudioBuffer>()
+    return Object.freeze({
+      decode: async (bytes: ArrayBuffer): Promise<SpeechClip> => {
+        const buffer = await this.audio.decodeSpeech(bytes)
+        const clip: SpeechClip = Object.freeze({ seconds: buffer.duration })
+        clips.set(clip, buffer)
+        return clip
+      },
+      play: (clip: SpeechClip, text: string): Utterance => {
+        const buffer = clips.get(clip)
+        if (!buffer) throw new Error('not speech this soundscape decoded')
+        if (this.halted || this.disposed) throw new Error('the city has stopped')
+        const eye = this.rig.pose
+        // Player 1's soundscape alone: `speaker` stays, so split-screen players still hear the pedestrian where they are.
+        const u = this.audio.speak(buffer, eye.x, eye.z, 0, text, { agent: PLAYER_INDEX, label: CONCIERGE_LABEL })
+        this.speakerCell = Number.NaN
+        this.conciergeVoice = true
+        return u
+      },
+    })
+  }
+
   /** The pedestrian speaking aloud now (speechOut), or −1. */
   get speaking(): number {
     return this.speaker >= 0 && this.audio.speaking ? this.speaker : -1
@@ -1382,6 +1417,7 @@ export class Engine {
         const u = this.audio.speak(buffer, at.x, at.z, this.wallsTo(at.x, at.z), text, { agent, label })
         this.speaker = agent
         this.speakerCell = Number.NaN
+        this.conciergeVoice = false
         if (this.views.length === 1) return u
         // Split: the same clip at the same head for every other player, muffled by the walls from their own head; a
         // soundscape that cannot sound (still locked, failed) is skipped. One utterance: its stop stops them all.
@@ -1549,7 +1585,9 @@ export class Engine {
     }
     const cam = this.world.camera
     this.projScreen.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)
-    this.frustum.setFromProjectionMatrix(this.projScreen)
+    // The camera's own conventions: WebGPU's [0, 1] clip depth, reversed since the renderer asked for it (world.ts
+    // createRenderer); without them the near and far planes come out as WebGL's and, reversed, swap.
+    this.frustum.setFromProjectionMatrix(this.projScreen, cam.coordinateSystem, cam.reversedDepth)
     packFrustumPlanes(this.frustum.planes, this.planes)
 
     if (this.fresh) {
@@ -1602,7 +1640,7 @@ export class Engine {
   private presentView(v: PlayerView): void {
     const cam = v.camera
     v.projScreen.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)
-    v.frustum.setFromProjectionMatrix(v.projScreen)
+    v.frustum.setFromProjectionMatrix(v.projScreen, cam.coordinateSystem, cam.reversedDepth)
     packFrustumPlanes(v.frustum.planes, v.planes)
     v.eye.x = cam.position.x; v.eye.y = cam.position.y; v.eye.z = cam.position.z
     this.crowd.step({ camera: v.eye, planes: v.planes, global: this.world.matrixMode.state })
@@ -1790,11 +1828,13 @@ export class Engine {
       f.room = Number.isNaN(cell) ? undefined : roomAt(this.world.boxes, cam.position.x, cam.position.z)
     }
     // The person speaking, where the newest state has them (NaN: nobody, or not measured; the voice then holds).
-    const speaking = this.speaker >= 0 && this.audio.speaking ? st.recruits.find((r) => r.agent === this.speaker) : undefined
+    // Sloane (conciergeOut) is at this head, with no walls between.
+    const pedestrian = this.speaker >= 0 ? st.recruits.find((r) => r.agent === this.speaker) : undefined
+    const speaking = !this.audio.speaking ? undefined : this.conciergeVoice ? { x: cam.position.x, z: cam.position.z } : pedestrian
     const sp = f.speaker!
     sp.x = speaking ? speaking.x : Number.NaN
     sp.z = speaking ? speaking.z : Number.NaN
-    sp.walls = speaking && Number.isFinite(speaking.x + speaking.z) ? this.wallsTo(speaking.x, speaking.z) : 0
+    sp.walls = speaking && !this.conciergeVoice && Number.isFinite(speaking.x + speaking.z) ? this.wallsTo(speaking.x, speaking.z) : 0
     const speakerCell = speaking && !this.places ? cellOf(speaking.x, speaking.z) : Number.NaN
     if (speakerCell !== this.speakerCell) {
       this.speakerCell = speakerCell
@@ -1808,7 +1848,11 @@ export class Engine {
     if (this.captions.size > 0 && this.audio.status().state !== 'running') this.captions.clear()
     // Split: every other player's soundscape from their own head (their room, their cabin, the speaker's walls from
     // them); the speaker's room is the same room whoever listens.
-    for (let k = 1; k < this.views.length; k++) this.listenFor(this.views[k], k, st, dt, speaking, sp.room)
+    // Sloane speaks to player 1 alone: the others go on hearing the pedestrian, wherever they are.
+    for (let k = 1; k < this.views.length; k++) {
+      if (this.conciergeVoice) this.listenFor(this.views[k], k, st, dt, pedestrian, undefined)
+      else this.listenFor(this.views[k], k, st, dt, speaking, sp.room)
+    }
   }
 
   /** One more player's frame (listenFor): their head's room, the walls from their head to the speaker, then their soundscape. */
@@ -1982,7 +2026,7 @@ export class Engine {
    * it returns is played through speechOut(); `diary` is the swarm's memory (08_Swarm/memory.ts), which the engine
    * never reads. The gate, mind, voice and diary given on the first call are the ones kept.
    */
-  terminalBridge(gate: SkillGate, givenMind: Mind, voice?: Voice, diary?: Diary): TerminalBridge {
+  terminalBridge(gate: SkillGate, givenMind: Mind, voice?: Voice, diary?: Diary, voiceOf?: (agent: number) => string | null): TerminalBridge {
     if (this.bridge) return this.bridge
     // The cloud fallback throttle in front of the mind App built: while this page's frames are slow, a complex prompt
     // bound for a model server on this machine goes to the router's cloud provider instead (nothing when it has none).
@@ -2031,7 +2075,7 @@ export class Engine {
       }),
       // The operator tier: unlockable, sandboxed, built over simControls() (never over the engine itself), its
       // scripts bound to the swarm through the gate.
-      operator: operatorBridge(this.simControls(), gate, mind, undefined, { voice, speech: this.speechOut(), diary, awareness: this.awareness() }),
+      operator: operatorBridge(this.simControls(), gate, mind, undefined, { voice, speech: this.speechOut(), diary, awareness: this.awareness(), voiceOf }),
       record: Object.freeze({
         start: (source: RecorderSource) => this.startRecording(source),
         stop: () => this.stopRecording(),
@@ -2051,6 +2095,14 @@ export class Engine {
   /** The Concierge hands over the name the user chose; it labels their avatar in the HUD. */
   setPlayerName(name: string): void {
     this.playerName = name
+  }
+
+  /** Who a hired pedestrian goes by (08_Swarm/roster.ts identityLine), for the prompts of the people the operator asks; null for anyone else. */
+  private identityOf: ((agent: number) => string | null) | null = null
+
+  /** Hands the engine the roster's view of its pedestrians (App.tsx): read on every prompt, never copied. */
+  setIdentities(fn: ((agent: number) => string | null) | null): void {
+    this.identityOf = fn
   }
 
   /** One telemetry record for the frame being encoded: real state only, never an invented observation. */

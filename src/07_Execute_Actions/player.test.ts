@@ -18,7 +18,7 @@ import { PITCH_LIMIT as INPUT_PITCH_LIMIT } from '../04_Connect_Hardware/input.t
 import { KIND, VEHICLE_KINDS } from './car.ts'
 import { Physics } from './physics.ts'
 import { Avatar } from './player.ts'
-import { carriedYaw, DRIVER_EYE, EYE_HEIGHT, HEAD_TURN_LIMIT, HeadRig, PITCH_LIMIT, yawFacing } from './head.ts'
+import { carriedYaw, DRIVER_EYE, EYE_HEIGHT, EYE_RANGE, eyeHeightFor, HEAD_TURN_LIMIT, HeadRig, PITCH_LIMIT, yawFacing } from './head.ts'
 
 const H = 1 / 60
 const close = (a: number, b: number, eps = 1e-9) => Math.abs(a - b) < eps
@@ -51,6 +51,26 @@ test('on foot: the eye is EYE_HEIGHT above the feet and the camera looks along t
   // matrixWorldInverse is fresh for the frustum the engine builds right after.
   const probe = new Vector3(10, 1.72, -4).applyMatrix4(cam.matrixWorldInverse)
   assert.ok(probe.length() < 1e-9)
+})
+
+test('the eye follows the body: setEyeHeight is held within EYE_RANGE, eased in like a step, and eyeHeightFor scales the reference eye', () => {
+  assert.equal(eyeHeightFor(1), EYE_HEIGHT)
+  assert.ok(close(eyeHeightFor(0.94), 1.598) && close(eyeHeightFor(1.08), 1.836), 'the wardrobe\'s shortest and tallest bodies')
+  assert.equal(eyeHeightFor(0), EYE_RANGE[0])
+  assert.equal(eyeHeightFor(100), EYE_RANGE[1])
+  assert.equal(eyeHeightFor(Number.NaN), EYE_HEIGHT)
+  const rig = new HeadRig(), cam = new PerspectiveCamera()
+  assert.equal(rig.eyeHeight, EYE_HEIGHT)
+  rig.onFoot(cam, 0, 0, 0, 0, 0, H)
+  assert.ok(close(cam.position.y, EYE_HEIGHT))
+  assert.equal(rig.setEyeHeight(1.9), 1.9)
+  assert.equal(rig.setEyeHeight(Number.NaN), 1.9, 'a non-finite height leaves it')
+  assert.equal(rig.setEyeHeight(9), EYE_RANGE[1])
+  rig.setEyeHeight(1.9)
+  rig.onFoot(cam, 0, 0, 0, 0, 0, H)
+  assert.ok(cam.position.y > EYE_HEIGHT && cam.position.y < 1.9, 'eased, not snapped')
+  for (let i = 0; i < 120; i++) rig.onFoot(cam, 0, 0, 0, 0, 0, H)
+  assert.ok(close(cam.position.y, 1.9, 1e-3), 'and there within a second')
 })
 
 test('yawFacing looks straight along a heading, forward (sin h, cos h)', () => {

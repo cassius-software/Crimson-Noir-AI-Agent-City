@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is Wren's quiet way of showing a brand-new visitor the city without ever calling it a
- * lesson: for the first five minutes after they walk in, Wren watches what they do (look around, walk, go to The
+ * Why does this file exist? It is Sloane's quiet way of showing a brand-new visitor the city without ever calling it a
+ * lesson: for the first five minutes after they walk in, Sloane watches what they do (look around, walk, go to The
  * Spire, talk to someone, press M, turn the clock) and, when they have done nothing for half a minute, says one thing
  * in the chat, in the shape of the Five Whys: first why they might want something ("Ever wonder what's behind you?"),
  * then how. One line at a time, a long pause between lines, never the same line twice, nothing for what they have
@@ -15,17 +15,17 @@
  * beautiful city and leaves.
  */
 
-/** The things worth finding out, in the order Wren offers them (each only if not yet done, and only where it exists). */
-export type Discovery = 'look' | 'spire' | 'talk' | 'mode' | 'clock'
-export const DISCOVERIES: readonly Discovery[] = Object.freeze(['look', 'spire', 'talk', 'mode', 'clock'])
+/** The things worth finding out, in the order Sloane offers them (each only if not yet done, and only where it exists). */
+export type Discovery = 'look' | 'spire' | 'talk' | 'mode' | 'clock' | 'wardrobe'
+export const DISCOVERIES: readonly Discovery[] = Object.freeze(['look', 'spire', 'talk', 'mode', 'clock', 'wardrobe'])
 
-/** How patient Wren is, ms. */
+/** How patient Sloane is, ms. */
 export const WATCH = Object.freeze({
-  /** Nothing done for this long and Wren says something. */
+  /** Nothing done for this long and Sloane says something. */
   quietMs: 30_000,
-  /** The least time between two of Wren's lines, so a visitor who is simply slow is not nagged. */
+  /** The least time between two of Sloane's lines, so a visitor who is simply slow is not nagged. */
   cooldownMs: 45_000,
-  /** How long after walking in Wren keeps watching. */
+  /** How long after walking in Sloane keeps watching. */
   watchMs: 300_000,
   /** How far a visitor has to be from the landmark to have been there, metres. */
   landmarkMetres: 90,
@@ -40,14 +40,14 @@ export const WATCH = Object.freeze({
 /** How the visitor drives the page: a keyboard and mouse, a controller, or a touch screen (the words change with it). */
 export type InputFamily = 'keyboard' | 'pad' | 'touch'
 
-/** What Wren knows about this city and visitor before the watch starts. */
+/** What Sloane knows about this city and visitor before the watch starts. */
 export interface MentorOptions {
   /** The city's landmark and where it stands, or null (then there is nothing to walk to). */
   landmark: { name: string; x: number; z: number } | null
   /** Whether the city has people walking about (the procedural city), or is the quiet generated metropolis. */
   people: boolean
   family: InputFamily
-  /** The visitor's name, or '' (Wren then says nothing in its place). */
+  /** The visitor's name, or '' (Sloane then says nothing in its place). */
   name?: string
   /** What is already found out (a reload), skipped. */
   done?: readonly Discovery[]
@@ -56,7 +56,7 @@ export interface MentorOptions {
   watchMs?: number
 }
 
-/** One of Wren's lines: which discovery it leads to, the words, and the words a model's rewording must keep. */
+/** One of Sloane's lines: which discovery it leads to, the words, and the words a model's rewording must keep. */
 export interface Nudge {
   readonly id: number
   readonly discovery: Discovery
@@ -79,7 +79,7 @@ export interface Reading {
 }
 
 /** An event the page reports outright (keys, taps, a chat opened), beyond what a reading shows. */
-export type Event = 'look' | 'move' | 'talk' | 'goal' | 'mode' | 'clock' | 'input'
+export type Event = 'look' | 'move' | 'talk' | 'goal' | 'mode' | 'clock' | 'input' | 'wardrobe'
 
 /** What the visitor does to turn the head, in their own device's words. */
 const LOOK_HOW: Readonly<Record<InputFamily, string>> = Object.freeze({
@@ -107,10 +107,11 @@ export function available(d: Discovery, o: Pick<MentorOptions, 'landmark' | 'peo
     case 'talk': return true
     case 'mode': return o.family !== 'touch'
     case 'clock': return o.family !== 'touch'
+    case 'wardrobe': return true
   }
 }
 
-/** Wren's line for a discovery: the why first, the how after. Plain words; no lesson named. */
+/** Sloane's line for a discovery: the why first, the how after. Plain words; no lesson named. */
 export function lineFor(d: Discovery, o: Pick<MentorOptions, 'landmark' | 'people' | 'family' | 'name'>): { text: string; keep: readonly string[] } {
   const name = o.name?.trim() ? `, ${o.name.trim()}` : ''
   switch (d) {
@@ -129,11 +130,13 @@ export function lineFor(d: Discovery, o: Pick<MentorOptions, 'landmark' | 'peopl
       return { text: 'Wondering what this city is made of underneath? Press M once and every wall turns into falling code. Press M again to bring it back.', keep: ['press M'] }
     case 'clock':
       return { text: 'Want to see this place at night? Press ] a few times and the hours roll forward; [ rolls them back. Sunset here is worth waiting for.', keep: [']'] }
+    case 'wardrobe':
+      return { text: `Ever wonder how the city sees you${name}? Tap Look on my chip and the wardrobe opens: everything the city wears, and a short code to share your look with a friend.`, keep: ['Look'] }
   }
 }
 
 /**
- * Wren's watch over the first minutes: told when the visitor walks in (`start`), fed readings (`read`) and events
+ * Sloane's watch over the first minutes: told when the visitor walks in (`start`), fed readings (`read`) and events
  * (`note`), and asked a few times a second (`tick`) whether now is a moment to say something. Everything is timed
  * from the clock values it is given, never from Date.now, so a test can run five minutes in a microsecond.
  */
@@ -176,12 +179,12 @@ export class Mentor {
     return this.#done
   }
 
-  /** What is still to find, in Wren's order. */
+  /** What is still to find, in Sloane's order. */
   get pending(): readonly Discovery[] {
     return DISCOVERIES.filter((d) => !this.#done.has(d))
   }
 
-  /** How many lines Wren has said. */
+  /** How many lines Sloane has said. */
   get said(): number {
     return this.#said
   }
@@ -190,7 +193,7 @@ export class Mentor {
   note(e: Event, now: number): void {
     if (!this.started) return
     this.#lastActive = now
-    if (e === 'look' || e === 'mode' || e === 'clock') this.#done.add(e)
+    if (e === 'look' || e === 'mode' || e === 'clock' || e === 'wardrobe') this.#done.add(e)
     if (e === 'talk' || e === 'goal') this.#done.add('talk')
   }
 
@@ -215,7 +218,7 @@ export class Mentor {
   }
 
   /**
-   * Whether this is a moment for Wren to speak: the watch is on, the visitor has been quiet for quietMs, the last line
+   * Whether this is a moment for Sloane to speak: the watch is on, the visitor has been quiet for quietMs, the last line
    * was cooldownMs ago or more, and something is left to find. Returns the line (marked as said) or null.
    */
   tick(now: number): Nudge | null {

@@ -41,9 +41,27 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   unchanged: empty fleet, hidden crowd.
 - Unverified in the cloud (no GPU): the rendered crowd and traffic on the metropolis; `naga` validates both shader
   variants, and the window, the rings, the realm's seating and the uniform layout are tested in Node.
+- **Sloane speaks.** The concierge says each line the card shows, and the onboarding's lines once the visitor chose
+  sound on: through the operator's speech provider at the player's own head when it has a voice chosen, otherwise the
+  browser's own speech synthesis in an offline voice only (a network voice is never picked). No neural voice model is
+  bundled: the browser tier sounds like the operating system's voices. `sloane [on|off|voice <name>|voices|say <text>]`
+  in the console. Unverified from the cloud (no speakers): how either tier sounds.
+- **Your own agents.** A roster of up to twelve named agents (pronouns, a role screened under 14A, one of twelve voice
+  profiles or a provider voice, a look from the crowd's wardrobe) in a second tab of the wardrobe card, with a Hear
+  button, and `agent [new|hire|dismiss|forget|voices|<name> <field> <value>]` in the console. Hiring asks someone
+  nearby over and dresses them; a hired agent's prompts are told who they are, and `say` speaks them in their own
+  provider voice.
+- **ElevenLabs as an optional speech provider**, off by default: `say provider elevenlabs`, through a gateway on this
+  machine (`http://localhost:8090`; an nginx example in `docs/zero-trust-audit.md`). A key typed to `say key` stays in
+  this browser, masked, kept as dots in `history`, and is sent only to the loopback gateway.
+- **`goal <words...>`** in the console: Sloane's goal planner, applying what it can now (clock, quality, sound).
+- Sloane's quiet first-minutes watch gains one more line: the wardrobe on the chip.
 
 ### Changed
 
+- **Wren is now Sloane** throughout the page, the console and the docs (history entries keep the old name).
+- **The eye height follows the avatar's height**: 1.7 m times the body's height scale, within 1.2–2.2 m, eased in.
+  Unverified from the cloud (no GPU): how it looks.
 - **On foot you walk through cars.** The avatar's capsule no longer pairs with a vehicle chassis
   (`COLLISION.avatarThroughCars`, `AVATAR_GROUPS`): a parked car is passed, not pushed, and its mesh dissolves as
   you enter it. The First Law is untouched: the Bouncer still brakes for you and holds a car still while you stand
@@ -58,6 +76,22 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   (ghost view's composite, `contact.ts`) is gone: a passage shows on the mesh passed through alone, and the post chain
   no longer turns on for one. `output.contact.wipe` in the telemetry is now `output.contact.passage`, the same
   envelope, which nothing draws.
+
+### Fixed
+
+- **The periodic freeze** (docs/stutter-and-depth.md): the sky probe (the scene's reflection map) refreshed every 0.2 game
+  hours, 12 s of real time at `?day=24`, by baking into a new render target and assigning its new texture to
+  `scene.environment`; three.js keys every material's shader on that texture's node, so each refresh rebuilt every
+  material in the scene on the main thread. The probe now bakes into one reused render target
+  (`src/01_Initialize_World/envProbe.ts`), so the environment stays one texture object and a refresh costs only the
+  generator's passes; each bake writes one `[envprobe]` console line beside the `[longtask]` telemetry. That the
+  freeze is gone can only be seen on a machine with a GPU.
+- **Far surfaces flashing**: the renderer now asks three.js for a reversed depth buffer (`depth32float`, near at 1),
+  whose resolution follows perspective (0.12 mm at 1 km instead of 60 cm with the 24-bit forward buffer), so the
+  Lakefront streets and sidewalks laid 3.5 to 4.5 cm over the ground no longer fight it at a distance. The sky mesh is
+  pinned to the far plane under the reversed convention (three's SkyMesh pins itself to what becomes the near plane),
+  and the crowd cull's frustum is cut with the camera's own coordinate system and depth convention. Unverified from
+  the cloud: the look on a real GPU.
 
 ## [1.0.0-stable-beta] - 2026-10-12
 

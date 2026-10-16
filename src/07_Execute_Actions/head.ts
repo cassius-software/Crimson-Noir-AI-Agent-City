@@ -15,8 +15,19 @@ import { kindOf } from './car.ts'
 /** Input clamps look to it; defined beside the look tuning so the hardware stage imports nothing from here. */
 export { PITCH_LIMIT } from '../04_Connect_Hardware/input.ts'
 
-/** Eye above the feet, standing, m. */
+/** Eye above the feet, standing, m: the eye of the crowd's reference body (03_Spawn_Agents/look.ts heightScale 1). */
 export const EYE_HEIGHT = 1.7
+/** The eye may be set this far above the feet, m (the wardrobe's shortest and tallest bodies lie well inside). */
+export const EYE_RANGE: readonly [number, number] = Object.freeze([1.2, 2.2] as [number, number])
+/**
+ * The eye height of a body drawn at `scale` times the reference height (look.ts heightScale): EYE_HEIGHT scaled,
+ * held within EYE_RANGE; a non-finite scale is the reference eye.
+ */
+export function eyeHeightFor(scale: number): number {
+  const h = EYE_HEIGHT * scale
+  if (!Number.isFinite(h)) return EYE_HEIGHT
+  return h < EYE_RANGE[0] ? EYE_RANGE[0] : h > EYE_RANGE[1] ? EYE_RANGE[1] : h
+}
 /** Max |head yaw| relative to the car's nose while seated, rad (110°: a shoulder check, not a look back). */
 export const HEAD_TURN_LIMIT = (110 * Math.PI) / 180
 /**
@@ -74,10 +85,26 @@ export class HeadRig {
   private eyeY = EYE_HEIGHT
   /** The next onFoot() snaps (first frame, or the last pose was the driver's seat). */
   private snap = true
+  /** How far above the feet this head's eye sits, m (setEyeHeight: the body's own height from the wardrobe). */
+  private eye = EYE_HEIGHT
 
-  /** Eye EYE_HEIGHT above the avatar's feet. Vertical steps (curbs) are smoothed; horizontal motion never is. */
+  /**
+   * Sets the eye's height above the feet, m, held within EYE_RANGE (a non-finite value leaves it). The change is
+   * eased in like a step (STEP_EASE), never snapped, so a slider dragged in the wardrobe moves the view smoothly.
+   */
+  setEyeHeight(metres: number): number {
+    if (Number.isFinite(metres)) this.eye = metres < EYE_RANGE[0] ? EYE_RANGE[0] : metres > EYE_RANGE[1] ? EYE_RANGE[1] : metres
+    return this.eye
+  }
+
+  /** The eye's height above the feet, m. */
+  get eyeHeight(): number {
+    return this.eye
+  }
+
+  /** Eye `eyeHeight` above the avatar's feet. Vertical steps (curbs) are smoothed; horizontal motion never is. */
   onFoot(camera: PerspectiveCamera, feetX: number, feetY: number, feetZ: number, yaw: number, pitch: number, dt: number): void {
-    const target = feetY + EYE_HEIGHT
+    const target = feetY + this.eye
     if (Number.isFinite(target)) {
       if (this.snap || !(Math.abs(target - this.eyeY) < SNAP)) {
         this.eyeY = target

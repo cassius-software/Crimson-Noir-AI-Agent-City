@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is the evidence for Wren's quiet watch: nothing is said for thirty seconds, one line
+ * Why does this file exist? It is the evidence for Sloane's quiet watch: nothing is said for thirty seconds, one line
  * then, the next only after the cooldown and another quiet spell, in the fixed order, skipping what the visitor has
  * already found (by a reading or an event) and what their device cannot do, never the same line twice, and nothing
  * after five minutes. Every line is plain words that never call it a lesson, and keeps the word a rewording must.
- * What breaks if it is removed? A nagging, repeating or mistimed Wren would ship unnoticed.
+ * What breaks if it is removed? A nagging, repeating or mistimed Sloane would ship unnoticed.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
@@ -29,7 +29,7 @@ test('nothing for thirty quiet seconds, then one line; the next only after the c
   const second = m.tick((30 + WATCH.cooldownMs / S) * S)
   assert.ok(second && second.discovery === 'spire' && second.id === 2)
   assert.deepEqual([...m.discovered], ['look', 'spire'])
-  assert.deepEqual(m.pending, ['talk', 'mode', 'clock'])
+  assert.deepEqual(m.pending, ['talk', 'mode', 'clock', 'wardrobe'])
 })
 
 test('doing things resets the quiet timer, and some things are discoveries: a turn of the head, falling code, the clock, standing under the landmark, talking', () => {
@@ -51,6 +51,9 @@ test('doing things resets the quiet timer, and some things are discoveries: a tu
   m.note('clock', 54 * S)
   assert.ok(m.discovered.has('clock'))
   m.note('talk', 55 * S)
+  assert.deepEqual(m.pending, ['wardrobe'])
+  m.note('wardrobe', 56 * S)
+  assert.ok(m.discovered.has('wardrobe'), 'the wardrobe card opened')
   assert.deepEqual(m.pending, [])
   assert.equal(m.tick(200 * S), null, 'everything found: nothing to say')
   assert.equal(m.over, true)
@@ -76,7 +79,7 @@ test('the watch ends after five minutes; a visitor who does nothing hears at mos
     const n = m.tick(t * S)
     if (n) said.push(n.discovery)
   }
-  assert.deepEqual(said, ['look', 'spire', 'talk', 'mode', 'clock'].slice(0, said.length))
+  assert.deepEqual(said, ['look', 'spire', 'talk', 'mode', 'clock', 'wardrobe'].slice(0, said.length))
   assert.equal(new Set(said).size, said.length, 'never the same line twice')
   assert.ok(said.length <= Math.ceil(WATCH.watchMs / WATCH.cooldownMs) + 1)
   assert.equal(m.over, true)
@@ -97,9 +100,9 @@ test('what the device cannot do, and what is already known, is skipped: no landm
   assert.equal(available('clock', { landmark: null, people: false, family: 'touch' }), false)
   assert.equal(available('talk', { landmark: null, people: false, family: 'touch' }), true)
   const touch = new Mentor({ landmark: null, people: false, family: 'touch' })
-  assert.deepEqual(touch.pending, ['look', 'talk'])
+  assert.deepEqual(touch.pending, ['look', 'talk', 'wardrobe'])
   const back = new Mentor({ landmark: spire, people: true, family: 'keyboard', done: ['look', 'spire'] })
-  assert.deepEqual(back.pending, ['talk', 'mode', 'clock'])
+  assert.deepEqual(back.pending, ['talk', 'mode', 'clock', 'wardrobe'])
   const idle = new Mentor({ landmark: spire, people: true, family: 'keyboard' })
   assert.equal(idle.tick(10_000 * S), null, 'never started: never speaks')
   idle.note('move', 0)
