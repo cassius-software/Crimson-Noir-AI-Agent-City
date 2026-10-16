@@ -24,6 +24,7 @@ import type { KernelStats, QualityState, SipocSnapshot } from '../05_Observe_Env
 import type { OperatorBridge } from './terminal/bridge.ts'
 import { harnesses, runHarness, type HarnessReport } from './harness.ts'
 import type { AgentContext } from '../08_Swarm/shortTerm.ts'
+import { createSwarm } from '../08_Swarm/orchestrator.ts'
 export type { AgentContext } from '../08_Swarm/shortTerm.ts'
 
 /** What the ENGINE provides (engine.ts implements it). Rich enough for scripts and harnesses. */
@@ -170,6 +171,11 @@ export interface Mind {
   setKey?(key: string): string | null
   /** The network provider's effort (empty clears it); returns it. Absent: no provider takes one. */
   setEffort?(level: string): string | null
+  /**
+   * One line: the provider and, when given, its server and (the network provider's) key; returns what the provider
+   * is and what was set (09_Cognition/router.ts connect). Absent: the mind has one provider only.
+   */
+  connect?(provider: string, url?: string, key?: string): string
   installed(signal?: AbortSignal): Promise<string[]>
   answer(req: AnswerRequest, onPiece: (p: Piece) => void): Promise<Answer>
 }
@@ -958,6 +964,50 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
     })
     return s
   }
+  /** One prompt through the gate, with its stop: `ask` hands it out without the stop, the swarm keeps it. */
+  const askThrough = (skills: readonly string[], prompt: string): GatedAsk & { stop(): void } => {
+    if (!unlocked) throw locked('ask')
+    if (asking) throw new Error("an answer is still coming: wait for it, or type 'ask stop'")
+    if (mind.settings().model === null) throw new Error('choose a model first: ask model <name> (type ask to list them)')
+    const words = String(prompt)
+    const began = Date.now()
+    const a = gatedAsk(gate, mind, skills, words, diary, awareness)
+    if (a.state === 'Authorized') {
+      asking = a
+      void a.result.then(() => { if (asking === a) asking = null })
+    }
+    const result = a.result.then((r): AskResult => {
+      // A prompt the agent did not engage with is not acknowledged: nothing of it is remembered either.
+      if (!disengaged(r.done) && !r.disengaged) {
+        diary?.note(a.bound, 'ask', asNamed(skills, a.bound), `${words.split('\n')[0]} → ${r.text}`, r.state, began, r.promptHash, taskOutcome(r))
+        // The moment itself, for the next few prompts: what the player asked and what was answered.
+        if (r.state === 'Authorized' && r.text.trim()) for (const t of a.bound) awareness?.remember(t.agent, 'the player', `asked "${words.split('\n')[0]}" and you answered "${r.text}"`)
+      }
+      // Said aloud as well (say auto on): a whole answer, through the gate again, while nothing else is being said.
+      const v = voice?.settings()
+      if (r.state !== 'Authorized' || r.error !== undefined || r.disengaged || disengaged(r.done) || !r.text.trim() || !v?.auto || v.voice === null || !speech || saying) return r
+      const s = say(skills, speakable(r.text))
+      return { ...r, speech: s.result }
+    })
+    return Object.freeze({ state: a.state, bound: a.bound, follow: a.follow, result, stop: a.stop })
+  }
+  // The swarm orchestrator (08_Swarm/orchestrator.ts) over the same gated ask, one step at a time; it reads the chosen
+  // provider's server each step (none for the scripted provider) for the loopback invariant.
+  const orchestrator = createSwarm({
+    ask: askThrough,
+    endpoint: () => {
+      const s = mind.settings()
+      return s.provider === 'scripted' ? null : s.server
+    },
+  })
+  // A run is refused while locked, like a prompt (a host's voice line reaches this surface too, not only the console).
+  const swarm: typeof orchestrator = Object.freeze({
+    ...orchestrator,
+    run: (goal: string, agents?: number) => {
+      if (!unlocked) throw locked('ask')
+      return orchestrator.run(goal, agents)
+    },
+  })
   return Object.freeze({
     unlock: () => { unlocked = true },
     lock: () => { unlocked = false },
@@ -986,31 +1036,15 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
       throw new TypeError(`no tuning table '${String(table)}': physics or shaders`)
     },
     ask: (skills: readonly string[], prompt: string): GatedAsk => {
-      if (!unlocked) throw locked('ask')
-      if (asking) throw new Error("an answer is still coming: wait for it, or type 'ask stop'")
-      if (mind.settings().model === null) throw new Error('choose a model first: ask model <name> (type ask to list them)')
-      const words = String(prompt)
-      const began = Date.now()
-      const a = gatedAsk(gate, mind, skills, words, diary, awareness)
-      if (a.state === 'Authorized') {
-        asking = a
-        void a.result.then(() => { if (asking === a) asking = null })
-      }
-      const result = a.result.then((r): AskResult => {
-        // A prompt the agent did not engage with is not acknowledged: nothing of it is remembered either.
-        if (!disengaged(r.done) && !r.disengaged) {
-          diary?.note(a.bound, 'ask', asNamed(skills, a.bound), `${words.split('\n')[0]} → ${r.text}`, r.state, began, r.promptHash, taskOutcome(r))
-          // The moment itself, for the next few prompts: what the player asked and what was answered.
-          if (r.state === 'Authorized' && r.text.trim()) for (const t of a.bound) awareness?.remember(t.agent, 'the player', `asked "${words.split('\n')[0]}" and you answered "${r.text}"`)
-        }
-        // Said aloud as well (say auto on): a whole answer, through the gate again, while nothing else is being said.
-        const v = voice?.settings()
-        if (r.state !== 'Authorized' || r.error !== undefined || r.disengaged || disengaged(r.done) || !r.text.trim() || !v?.auto || v.voice === null || !speech || saying) return r
-        const s = say(skills, speakable(r.text))
-        return { ...r, speech: s.result }
-      })
-      return Object.freeze({ state: a.state, bound: a.bound, follow: a.follow, result })
+      const { stop: _stop, ...handle } = askThrough(skills, prompt)
+      return Object.freeze(handle)
     },
+    askConnect: (provider: string, url?: string, key?: string): string => {
+      if (!unlocked) throw locked('ask')
+      if (!mind.connect) throw new Error('this page has one model provider only')
+      return mind.connect(provider, url, key)
+    },
+    swarm,
     askStatus: (): Promise<MindStatus> => {
       if (!unlocked) throw locked('ask')
       const { server, model, think, api, provider, key, effort, cache, fallback, scripted } = mind.settings()
@@ -1030,8 +1064,9 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
       if (key === 'server') return mind.setServer(value)
       if (key === 'provider') {
         if (!mind.setProvider) throw new Error('this page has one model provider only')
-        const p = mind.setProvider(value)
-        return p === 'claude' ? 'claude: the Claude API through a gateway on this machine (best with the key in the gateway; ask key <key> keeps one in this browser)' : p === 'ollama' ? 'ollama: a model server on this machine (the Ollama API)' : `${p}: a packaged model under a llama.cpp server on this machine`
+        // The router's own line on the provider (09_Cognition/router.ts PROVIDER_TEXT) when it has one; the name otherwise.
+        if (mind.connect) return mind.connect(value)
+        return mind.setProvider(value)
       }
       if (key === 'key') {
         if (!mind.setKey) throw new Error('no provider on this page takes a key')

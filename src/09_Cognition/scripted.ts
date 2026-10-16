@@ -84,7 +84,7 @@ export function withScriptedFallback(mind: Mind): Mind & { readonly scripted: nu
     },
   }
   // The optional setters stay the mind's own (bound to it), so a provider swap at the console still lands there.
-  for (const k of ['setThink', 'setApi', 'setProvider', 'setKey', 'setEffort'] as const) {
+  for (const k of ['setThink', 'setApi', 'setProvider', 'setKey', 'setEffort', 'connect'] as const) {
     const fn = mind[k]
     if (fn) (wrapped as unknown as Record<string, unknown>)[k] = fn.bind(mind)
   }

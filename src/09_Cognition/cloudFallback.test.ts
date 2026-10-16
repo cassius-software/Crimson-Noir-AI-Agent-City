@@ -63,7 +63,7 @@ test('a complex intent: more than one person, a long prompt, or memories in it',
   assert.equal(isComplex(request({ prompt: 'x'.repeat(FALLBACK.promptChars + 1) })), true)
   assert.equal(isComplex(request({ memories: [{ agent: 1, lines: [] }] })), false)
   assert.equal(isComplex(request({ memories: [{ agent: 1, lines: ['they asked my name'] }] })), true)
-  assert.deepEqual([...LOCAL_PROVIDERS], ['ollama', 'llamacpp'])
+  assert.deepEqual([...LOCAL_PROVIDERS], ['ollama', 'llamacpp', 'openai'])
 })
 
 /** A mind that records what it was asked and streams one piece. */
@@ -137,6 +137,16 @@ test('routing: the cloud provider only when slow, local, complex and present; th
   assert.equal(already.fallback.throttled, true)
   await already.answer(complex, onPiece)
   assert.equal(cloud.asked.length, 2)
+  // An OpenAI-compatible server on this machine (LM Studio and the like) shares the GPU too, so it is spared the same way.
+  already.setProvider!('openai')
+  assert.equal(already.fallback.throttled, true)
+  await already.answer(complex, onPiece)
+  assert.equal(cloud.asked.length, 3)
+  assert.equal(local.asked.length, 4)
+  // The script asks no model at all: nothing to move, and the line says so rather than calling it remote.
+  already.setProvider!('scripted')
+  assert.equal(already.fallback.throttled, false)
+  assert.equal(already.settings().fallback, 'off: the scripted provider asks no model, so there is nothing to move')
 
   // No cloud provider at all: the throttle does nothing but say so.
   const alone = fakeMind('alone', 'ollama')

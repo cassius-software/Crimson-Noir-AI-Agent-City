@@ -11,7 +11,9 @@
  * names the skills it needs (`run rust: …`) and runs only if the capability gateway authorizes it; the
  * console prints the gateway's three states as they happen: Authorized, Rejected, Aborted. A prompt to the
  * local model (`ask rust: …`) goes through the same gateway, and its answer streams in live; so does speech
- * (`say rust: …`), said by the person it is bound to. `memory` reads what the people recruited remember. The view
+ * (`say rust: …`), said by the person it is bound to; `swarm run <goal>` splits a goal over up to five roles, each one
+ * such prompt through the gateway and the guardrails, with a hash-chained audit trail (`swarm audit`). `memory` reads
+ * what the people recruited remember. The view
  * knobs (`ghost`, `render`, `captions`), the pings (`ping`: a mark where the head looks; `recruit rally` sends an
  * Active recruit to it, through the same worker checks as asking), the player's look (`look`) and the opt-in network
  * session (`net`, operator-gated) go through the bridge the same way. `boot` asks the host to reload on a track
@@ -23,6 +25,7 @@ import type {
   Piece, PingKind, PingPick, RecordBridge, RecruitBridge, Ring0Stats, RunResult, SayResult, TerminalBridge, VoiceStatus,
 } from './bridge.ts'
 import type { QualityState, RecordingState } from '../../05_Observe_Environment/telemetry.ts'
+import type { SwarmReport, SwarmStatus } from '../../08_Swarm/orchestrator.ts'
 import { Machine } from './repl.ts'
 
 /** The roster's pronoun choices, as its usage line names them (08_Swarm/roster.ts PRONOUNS; roster.test.ts pins the two). */
@@ -99,7 +102,8 @@ const CORE = [
 const OPERATOR = [
   { name: 'operator', usage: 'operator [unlock|lock|status]', summary: 'the operator tier: scripts, tuning keys, harnesses' },
   { name: 'run', usage: 'run <skill>[,<skill>...]: <js...>', summary: 'run a script against sim.* while someone tethered has the skill (Shift+Enter adds a line)' },
-  { name: 'ask', usage: 'ask [<skill>[,<skill>...]: <prompt...>|provider <name>|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|stop]', summary: 'ask the model, answering as someone tethered with the skill; the answer streams in' },
+  { name: 'ask', usage: 'ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|stop]', summary: 'ask the model, answering as someone tethered with the skill; the answer streams in' },
+  { name: 'swarm', usage: 'swarm [run [--agents <1-5>] <goal...>|plan [--agents <1-5>] <goal...>|status|stop|roles|guardrails|audit [verify]]', summary: 'a goal over up to five roles (architect, coder, tester, auditor, verifier), one gated prompt each, guardrails before and after, a hash-chained audit trail' },
   { name: 'say', usage: 'say [<skill>[,<skill>...]: <text...>|voice <name>|model <name>|server <url>|provider local|elevenlabs|key <key>|none|auto on|off|stop]', summary: 'said aloud by someone tethered with the skill, from where they stand (a speech server on this machine; or ElevenLabs through a gateway on it)' },
   { name: 'api', usage: 'api [path]', summary: 'the script API, or one branch of it' },
   { name: 'get', usage: 'get [path]', summary: 'read physics.* and shaders.* tuning keys' },
@@ -117,11 +121,14 @@ type Name = (typeof COMMANDS)[number]['name']
 const NAMES: readonly string[] = COMMANDS.map((c) => c.name).sort()
 
 /** Commands whose argument is the rest of the line, untokenized (a script, a prompt or an R0 line keeps its quotes and newlines). */
-const RAW: ReadonlySet<string> = new Set(['run', 'ask', 'say', 'r0', 'goal', 'agent', 'sloane'])
+const RAW: ReadonlySet<string> = new Set(['run', 'ask', 'say', 'r0', 'goal', 'agent', 'sloane', 'swarm'])
 
 /** A persistent R0 machine (repl.ts): the terminal keeps one for the life of the console, so definitions outlive a line. */
 export interface ReplSession { machine: Machine }
 export const replSession = (): ReplSession => ({ machine: new Machine() })
+
+/** The model providers, as typed after `ask provider` (commands.test.ts pins them to 09_Cognition/router.ts, which this file must not import). */
+export const PROVIDER_ARGS = ['claude', 'llamacpp', 'ollama', 'openai', 'scripted'] as const
 
 /** The harness names, for completion (commands.test.ts pins them to harness.ts, which this file must not import). */
 export const HARNESS_NAMES = ['brake-distance', 'first-law-floor', 'kernel-stop', 'sanctuary', 'spatial', 'traffic-lights'] as const
@@ -171,10 +178,13 @@ const ARGS: Record<string, readonly string[]> = {
   uname: ['-a'],
   operator: ['lock', 'status', 'unlock'],
   run: SKILL_ARGS.map((s) => `${s}:`),
-  ask: [...SKILL_ARGS.map((s) => `${s}:`), 'api', 'effort', 'key', 'model', 'provider', 'server', 'stop', 'think'].sort(),
+  ask: [...SKILL_ARGS.map((s) => `${s}:`), 'api', 'connect', 'effort', 'key', 'model', 'provider', 'server', 'stop', 'think'].sort(),
   'ask think': ['off', 'on'],
   'ask api': ['chat', 'generate'],
-  'ask provider': ['claude', 'llamacpp', 'ollama'],
+  'ask provider': PROVIDER_ARGS,
+  'ask connect': PROVIDER_ARGS,
+  swarm: ['audit', 'guardrails', 'plan', 'roles', 'run', 'status', 'stop'],
+  'swarm audit': ['verify'],
   'ask effort': ['high', 'low', 'max', 'medium', 'none', 'xhigh'],
   say: [...SKILL_ARGS.map((s) => `${s}:`), 'auto', 'key', 'model', 'provider', 'server', 'stop', 'voice'].sort(),
   'say auto': ['off', 'on'],
@@ -452,14 +462,52 @@ function lookChange(action: string, rest: readonly string[]): LookChange | strin
   return rest.length ? { kind: 'slot', slot, value: rest.join(' ') } : `usage: look ${slot} <n|name>`
 }
 
+/** Audit entries `swarm audit` prints at most (the newest). */
+const AUDIT_SHOWN = 24
+
+/** The guardrail invariants, in one line each (commands.test.ts pins them to 02_Define_The_Rules/guardrails.ts, which this file must not import). */
+const INVARIANT_LINES: readonly (readonly [string, string])[] = [
+  ['HumanOverrideSupreme', 'a run the operator has stopped admits no further step, whatever else holds'],
+  ['CapabilityTethered', "a step runs only while someone tethered to the operator has its role's skill (the capability gateway decides)"],
+  ['ConductScreen14A', 'the prompt a role is given and the answer it gives both pass the 14A screen (a lexicon; the model under the conduct core is the second layer)'],
+  ['LoopbackOnly', 'the model endpoint a step reaches is on this machine, or there is none (the scripted provider)'],
+  ['BudgetWithinQuota', 'steps, prompt length, answer length and tokens stay within the quota'],
+  ['ProvenanceChained', 'the hash-chained audit trail verifies before every step; a tampered record stops the run'],
+]
+
+/** `swarm` alone: whether a run is on, where it is, what it has spent, and the audit trail's size and head. */
+function swarmStatusLines(s: SwarmStatus): Line[] {
+  const lines = [out(row('swarm', s.running ? `running: "${s.goal ?? ''}", ${s.done} of ${s.total} steps answered${s.step ? `, asking ${s.step}` : ''}${s.stopped ? ' (stopping)' : ''}` : 'idle (swarm run <goal> starts one; swarm roles, swarm guardrails explain it)'))]
+  if (s.running) lines.push(out(row('spent', `${s.spent.steps} step${s.spent.steps === 1 ? '' : 's'}, ${s.spent.tokens} tokens`)))
+  lines.push(out(row('audit', s.audit ? `${s.audit} entries, head ${s.head.slice(0, 16)}… (swarm audit)` : 'empty')))
+  return lines
+}
+
+/** A finished run: each step's answer under its role, how each ended, then the whole. */
+function swarmReportLines(r: SwarmReport): Line[] {
+  const lines: Line[] = []
+  for (const st of r.steps) {
+    lines.push(sys(`-- ${st.title} (${st.skill}) --`))
+    lines.push(...textLines(st.text))
+    if (st.state === 'answered') lines.push(sys(`   ${st.note}`))
+    else lines.push(err(`   ${st.state}: ${st.note}`))
+  }
+  lines.push(r.ok ? sys(`-- swarm done: ${r.steps.length} step${r.steps.length === 1 ? '' : 's'} in ${(r.ms / 1000).toFixed(1)} s; audit head ${r.head.slice(0, 16)}… (swarm audit) --`) : err(`swarm: ended after ${r.steps.length} of ${r.agents} steps${r.stopped ? ' (stopped)' : ''}; audit head ${r.head.slice(0, 16)}… (swarm audit)`))
+  return lines
+}
+
 /** `ask` alone: the provider, where its server is, the model chosen, and what the server says it has. */
 function mindLines(m: MindStatus): Line[] {
   const network = m.provider === 'claude'
+  const scripted = m.provider === 'scripted'
   const lines: Line[] = []
   if (m.provider !== undefined) {
-    lines.push(out(row('provider', network ? 'claude: the Claude API through a gateway on this machine (ask provider ollama|llamacpp for a model on this machine)' : `${m.provider}: a model server on this machine (ask provider claude for the Claude API)`)))
+    lines.push(out(row('provider', network ? 'claude: the Claude API through a gateway on this machine (ask provider ollama|llamacpp|openai for a model on this machine, scripted for none)'
+      : scripted ? 'scripted: no backend; the script answers on this page, and nothing reaches any network (ask provider claude|ollama|llamacpp|openai for a model)'
+        : `${m.provider}: a model server on this machine (ask provider claude for the Claude API)`)))
   }
-  lines.push(out(row('server', network ? `${m.server}  (a gateway on this machine only)` : `${m.server}  (this machine only)`)), out(row('model', m.model ?? 'none chosen: ask model <name>')))
+  if (scripted) lines.push(out(row('server', 'none: nothing is addressed')), out(row('model', 'none: the script')))
+  else lines.push(out(row('server', network ? `${m.server}  (a gateway on this machine only)` : `${m.server}  (this machine only)`)), out(row('model', m.model ?? 'none chosen: ask model <name>')))
   if (network) {
     lines.push(out(row('key', m.key ? `${m.key}  (kept in this browser's local storage: ask key none clears it)` : 'none in this page: the gateway on this machine adds it (recommended)')))
     lines.push(out(row('effort', m.effort ?? "the model's default (ask effort low|medium|high|xhigh|max)")))
@@ -470,6 +518,7 @@ function mindLines(m: MindStatus): Line[] {
   if (m.fallback !== undefined) lines.push(out(row('fallback', m.fallback)))
   if (m.scripted !== undefined) lines.push(out(row('scripted', m.scripted)))
   if (m.installed === null) return [...lines, err(`ask: ${m.error ?? (network ? 'the gateway to the Claude API did not answer' : 'the local model server did not answer')}`)]
+  if (scripted) return lines
   if (!m.installed.length) return [...lines, out(row('installed', 'no models'))]
   lines.push(...m.installed.map((name, i) => out(row(i === 0 ? 'installed' : '', name === m.model ? `${name}  (chosen)` : name))))
   if (m.model === null) lines.push(sys('choose one that writes text: ask model <name>'))
@@ -973,11 +1022,17 @@ const HANDLERS: Record<Name, Handler> = {
     const rest = args[0] ?? ''
     if (!rest) return { lines: [], pending: Promise.resolve(op.askStatus()).then(mindLines, (e: unknown): Line[] => [err(`ask: ${message(e)}`)]) }
     if (rest === 'stop') return { lines: [out(`ask: ${op.askStop()}`)] }
+    // One line for a provider and its address (and the Claude provider's key): the router checks everything before it changes anything.
+    const connect = /^connect(?:\s+(\S+))?(?:\s+(\S+))?(?:\s+(\S+))?\s*$/.exec(rest)
+    if (connect) {
+      if (!connect[1]) return fail(`usage: ask connect <${PROVIDER_ARGS.join('|')}> [<url>] [<key>]`)
+      return { lines: [out(row('provider', op.askConnect(connect[1], connect[2], connect[3])))] }
+    }
     const set = /^(model|server|think|api|provider|key|effort)(?:\s+([\s\S]*))?$/.exec(rest)
     if (set) {
       const key = set[1] as 'model' | 'server' | 'think' | 'api' | 'provider' | 'key' | 'effort'
       const value = (set[2] ?? '').trim()
-      const takes = { model: 'name', server: 'url', api: 'generate|chat', think: 'on|off', provider: 'claude|ollama|llamacpp', key: 'key|none', effort: 'low|medium|high|xhigh|max|none' }[key]
+      const takes = { model: 'name', server: 'url', api: 'generate|chat', think: 'on|off', provider: PROVIDER_ARGS.join('|'), key: 'key|none', effort: 'low|medium|high|xhigh|max|none' }[key]
       if (!value) return fail(`usage: ask ${key} <${takes}>`)
       return { lines: [out(row(key, op.askSet(key, value)))] }
     }
@@ -1015,6 +1070,67 @@ const HANDLERS: Record<Name, Handler> = {
     const r = op.say(intent.skills, intent.script)
     const pending = Promise.resolve(r.result).then(sayLines, (e: unknown): Line[] => [err(`say: ${message(e)}`)])
     return { lines: r.state === 'Authorized' ? [sys(`say: Authorized: said by ${tetherText(r.bound[0])}`)] : [], pending }
+  },
+
+  // Raw: `run`/`plan` keep the goal as typed (after an optional --agents N). The orchestrator decides each step through
+  // the same gate as `ask`; the console shows each step's answer live, then the report, and `swarm audit` the chain.
+  swarm(args, b) {
+    const op = operatorOf(b)
+    if (!op.unlocked()) return locked('swarm')
+    const rest = (args[0] ?? '').trim()
+    const sw = op.swarm
+    if (!rest || rest === 'status') return { lines: swarmStatusLines(sw.status()) }
+    if (rest === 'stop') return { lines: [out(`swarm: ${sw.stop()}`)] }
+    if (rest === 'roles') {
+      const width = Math.max(...sw.roles.map((r) => r.title.length)) + 2
+      return { lines: [sys('The roles, in the order they are rallied; each step is answered by someone tethered to you with the skill:'), ...sw.roles.map((r) => out(`  ${r.title.padEnd(width)}${r.skill.padEnd(12)}${r.brief.split('. ')[1] ?? ''}`))] }
+    }
+    if (rest === 'guardrails') {
+      const q = sw.quota
+      return {
+        lines: [
+          sys('Every step passes these before a model is asked and after it answers; a failure ends the run and is written to the audit trail:'),
+          ...INVARIANT_LINES.map(([name, text]) => out(`  ${name.padEnd(22)}${text}`)),
+          sys(`quota: ${q.agents} roles, ${q.steps} steps, a goal of ${q.goalChars} characters, a prompt of ${q.promptChars}, an answer of ${q.answerChars}, ${q.tokens} tokens a run`),
+          sys('These are rules over text, settings and counts, applied the same way every time; they are not a proof about a model, and no model ships to inspect.'),
+        ],
+      }
+    }
+    const audit = /^audit(?:\s+(verify))?$/.exec(rest)
+    if (audit) {
+      const entries = sw.audit()
+      const v = sw.verify()
+      const shown = entries.slice(-AUDIT_SHOWN)
+      const lines: Line[] = entries.length ? [] : [sys('swarm: no audit entries yet (swarm run <goal> writes them)')]
+      if (entries.length > shown.length) lines.push(sys(`… ${entries.length - shown.length} earlier entries`))
+      for (const e of shown) lines.push(out(`${String(e.seq).padStart(4)}  ${e.kind.padEnd(8)}${(e.step || '-').padEnd(10)}${e.hash.slice(0, 12)}  ${e.failed.length ? `${e.failed.join(',')}: ` : ''}${e.note}`))
+      lines.push(v.ok ? sys(`chain: ${v.length} entries verify from genesis; head ${v.head.slice(0, 16)}… (SHA-256 of each entry's canonical body and the hash before it)`) : err(`chain: BROKEN at entry ${v.at}: ${v.why}`))
+      return { lines }
+    }
+    const m = /^(run|plan)(?:\s+--agents\s+(\S+))?(?:\s+([\s\S]*))?$/.exec(rest)
+    if (!m) return fail(`swarm: unknown command '${rest.split(/\s+/)[0]}'`, usage('swarm'))
+    const agents = m[2] === undefined ? undefined : Number(m[2])
+    if (agents !== undefined && !Number.isInteger(agents)) return fail(`swarm: --agents takes a whole number, not '${m[2]}'`)
+    const goal = (m[3] ?? '').trim()
+    // A flag the pattern above did not take (`--agents` with no number, `--agents=2`, or after the goal) is a typo, not
+    // part of the goal: a run on it would send every role a prompt about the flag.
+    if (/(?:^|\s)--agents(?:[=\s]|$)/.test(goal)) return fail(`swarm: --agents takes a whole number and goes before the goal: swarm ${m[1]} --agents <1-5> <goal...>`)
+    if (!goal) return fail(`usage: swarm ${m[1]} [--agents <1-5>] <goal...>`)
+    if (m[1] === 'plan') {
+      const plan = sw.plan(goal, agents)
+      return { lines: [sys(`swarm plan: ${plan.agents} role${plan.agents === 1 ? '' : 's'} for "${plan.goal}"`), ...plan.steps.map((st) => { const r = sw.roles.find((x) => x.id === st.role)!; return out(`  ${st.id.padEnd(10)}${r.title.padEnd(22)}needs ${r.skill.padEnd(12)}${st.needs.length ? `after ${st.needs.join(', ')}` : 'first'}`) }), sys('swarm run runs it: each step is one gated prompt, answered by someone tethered to you with that skill.')] }
+    }
+    const run = sw.run(goal, agents)
+    const pending = run.result.then(swarmReportLines, (e: unknown): Line[] => [err(`swarm: ${message(e)}`)])
+    const stream: TextStream = {
+      subscribe: (fn) => run.follow((ev) => {
+        if (ev.kind === 'piece') fn(ev.piece)
+        else if (ev.kind === 'step' && ev.step.state === 'answered') fn({ kind: 'text', text: '\n' })
+      }),
+    }
+    const first = run.plan.steps[0]
+    const role = sw.roles.find((r) => r.id === first.role)!
+    return { lines: [sys(`swarm: ${run.plan.agents} role${run.plan.agents === 1 ? '' : 's'} for "${run.plan.goal}"; first the ${role.title} (${role.skill})`)], pending, stream }
   },
 
   api(args, b) {
@@ -1187,11 +1303,17 @@ export function run(input: string, bridge: TerminalBridge, history: readonly str
 }
 
 /**
- * A line as the console's history keeps it: a key given to `ask key` or `say key` and a token given to `net join` are
- * replaced by dots, so `history` and the Up arrow never show a secret typed earlier. Every other line is kept as typed.
+ * A line as the console's history keeps it: a key given to `ask key`, `say key` or `ask connect`, and a token given to
+ * `net join`, are replaced by dots, so `history` and the Up arrow never show a secret typed earlier. After `ask connect
+ * <provider>` only a leading http(s) address is kept; anything else there (a key typed where the url goes) is dotted
+ * with everything after it. Every other line is kept as typed.
  */
 export function redactForHistory(line: string): string {
-  return line.replace(/^(\s*(?:ask|say)\s+key\s+)\S[\s\S]*$/, '$1••••').replace(/^(\s*net\s+join\s+\S+\s+)\S[\s\S]*$/, '$1••••')
+  return line
+    .replace(/^(\s*(?:ask|say)\s+key\s+)\S[\s\S]*$/, '$1••••')
+    .replace(/^(\s*ask\s+connect\s+\S+\s+)(?!https?:\/\/[^\s@]*(?:\s|$))\S[\s\S]*$/i, '$1••••')
+    .replace(/^(\s*ask\s+connect\s+\S+\s+\S+\s+)\S[\s\S]*$/, '$1••••')
+    .replace(/^(\s*net\s+join\s+\S+\s+)\S[\s\S]*$/, '$1••••')
 }
 
 /**
