@@ -22,7 +22,7 @@ import { PERSON, POSE } from './simProtocol.ts'
 
 const near = (a: number, b: number, eps = 1e-5) => Math.abs(a - b) <= eps
 
-test('the kinds are the ghost view\'s, so the wipe takes the same greens', () => {
+test('the kinds are the ghost view\'s, so the dissolve takes the same greens', () => {
   assert.equal(CONTACT_KIND.pole, GHOST_KIND.pole)
   assert.equal(CONTACT_KIND.vehicle, GHOST_KIND.vehicle)
   assert.equal(CONTACT_KIND.person, GHOST_KIND.person)
@@ -164,7 +164,7 @@ test('the pulse: a glancing touch still plays the whole wipe; a new passage coun
   assert.ok(p.value <= 1)
 })
 
-test('wiring: scanned before the upload, pulsed every animation frame, the chain kept on while it plays', () => {
+test('wiring: scanned before the upload, pulsed every animation frame; nothing of it reaches the frame as a whole', () => {
   const src = readFileSync(new URL('./engine.ts', import.meta.url), 'utf8')
   const received = src.slice(src.indexOf('  private received('), src.indexOf('    for (const ev of s.events) {'))
   assert.ok(received.indexOf('this.contactScan(s)') > 0 && received.indexOf('this.contactScan(s)') < received.indexOf('this.crowd.upload('), 'the frame is read before it goes back to the worker')
@@ -172,8 +172,11 @@ test('wiring: scanned before the upload, pulsed every animation frame, the chain
   assert.ok(frameFn.indexOf('this.contactPulse.update(this.contactNow(st), realDt / 1000)') > 0, 'every animation frame, on the wall clock')
   assert.ok(frameFn.indexOf('this.contactPulse.update(') < frameFn.indexOf('this.present('), 'before the drawn frame reads it')
   const present = src.slice(src.indexOf('  private present('), src.indexOf('  private contactScan('))
-  assert.match(present, /const post = this\.quality\.live\.post \|\| \(wipe > 0 && this\.options\.post\)/)
-  assert.ok(present.indexOf('this.ghost.contact.value = wipe') < present.indexOf('this.post.render()'))
+  assert.match(present, /const post = this\.quality\.live\.post\n/, 'the post chain runs on the quality tier alone: no passage turns it on')
+  assert.ok(!present.includes('this.ghost.contact'), 'the pulse reaches no uniform of the composite')
   const ghost = readFileSync(new URL('./ghost.ts', import.meta.url), 'utf8')
-  assert.match(ghost, /If\(g\.strength\.greaterThan\(0\)\.or\(g\.contact\.greaterThan\(0\)\)/)
+  assert.match(ghost, /If\(g\.strength\.greaterThan\(0\), /, 'the composite runs on ghost view alone')
+  for (const word of ['contact', 'wipe', 'iris']) assert.ok(!ghost.includes(word), `ghost.ts has no ${word}: no full-screen overlay for a passage`)
+  const postfx = readFileSync(new URL('./postfx.ts', import.meta.url), 'utf8')
+  assert.ok(!postfx.includes('contact'), 'the post chain takes no contact uniform')
 })

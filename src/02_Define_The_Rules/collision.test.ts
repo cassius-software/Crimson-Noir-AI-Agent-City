@@ -76,7 +76,7 @@ function runtimeSources(): [string, string][] {
 
 test('COLLISION is frozen and says: cars pass through cars, the ragdoll wired, no combat, sensor furniture, the sanctuary between people and cars', () => {
   assert.ok(Object.isFrozen(COLLISION))
-  assert.deepEqual(COLLISION, { vehicleOnVehicle: false, ragdoll: true, combat: false, furniture: 'sensor', peopleAndCars: 'sanctuary', surfaceRail: false })
+  assert.deepEqual(COLLISION, { vehicleOnVehicle: false, ragdoll: true, combat: false, furniture: 'sensor', peopleAndCars: 'sanctuary', avatarThroughCars: true, surfaceRail: false })
   assert.equal(COLLISION.surfaceRail, false)
   assert.equal(COLLISION.vehicleOnVehicle, false)
   assert.equal(COLLISION.ragdoll, true)
@@ -166,9 +166,10 @@ test('the group arithmetic: Rapier packing, the ragdoll bit read from ragdollRig
   assert.equal(meets(ragdoll, VEHICLE_CHASSIS_GROUPS), true, 'a rig segment meets a chassis as it meets the world: the Sanctuary stands between them')
   assert.equal(meets(ragdoll, DEFAULT), true, 'a rig segment stands on the ground')
   assert.equal(meets(ragdoll, ragdoll), false, 'segments never meet each other')
-  assert.equal(AVATAR_GROUPS, 0xfffffffb)
+  assert.equal(AVATAR_GROUPS, 0xfffffff9)
   assert.equal(meets(AVATAR_GROUPS, ragdoll), false, 'the avatar walks through a promoted person (the ghost-mode law)')
-  assert.equal(meets(AVATAR_GROUPS, VEHICLE_CHASSIS_GROUPS), true, 'and is as solid as ever to a car')
+  assert.equal(meets(AVATAR_GROUPS, VEHICLE_CHASSIS_GROUPS), false, 'and through a car, parked or rolling: no impulse either way')
+  assert.equal(meets(AVATAR_GROUPS, WHEEL_RAY_GROUPS), true, 'a wheel ray still sees the capsule by groups (the EXCLUDE_KINEMATIC flag keeps it off people)')
   assert.equal(meets(AVATAR_GROUPS, DEFAULT), true, 'and to the ground and the buildings')
   assert.equal(meets(WHEEL_RAY_GROUPS, ragdoll), true, 'a wheel ray finds a solid segment (a sensor one it excludes by flag, as it does the avatar)')
 })

@@ -64,7 +64,7 @@ test('wiring: a seat, a head and a control set per player; the pinned step reque
   before(frame, 'this.poseView(this.views[k], k, st, dt)', 'this.pacer.tick(nowMs)', 'posed every animation frame, drawn or not')
   assert.ok(!frame.includes('.render('), 'frame() itself draws nothing')
   const pose = between(src, '  private poseView(', '  /** "Region')
-  assert.match(pose, /v\.rig\.inVehicle\(v\.camera, t, r, this\.sim\.meta\.suv\[d\], seat\.yaw, seat\.pitch\)/)
+  assert.match(pose, /v\.rig\.inVehicle\(v\.camera, t, r, this\.sim\.meta\.kind\[d\], seat\.yaw, seat\.pitch\)/)
   assert.match(pose, /v\.rig\.onFoot\(v\.camera, av\.x, av\.feetY, av\.z, seat\.yaw, seat\.pitch, dt\)/)
   assert.match(pose, /const av = st\.avatars\[k\] \?\? st\.avatar/, 'the realm\'s avatar for that player')
   // The client: the standing list goes out with every request, after the request's own fields.

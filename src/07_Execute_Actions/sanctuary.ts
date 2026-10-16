@@ -8,7 +8,9 @@
  * step; the moment one would reach a person, that person's collider flips from Solid to Sensor in the same
  * call. A sensor takes part in no contact, so the vehicle passes with no impulse on either side. The person
  * is nudged sideways out of the footprint (never through a wall) and turns solid again once every vehicle
- * has kept its distance for a moment. GPU pedestrians are not Rapier bodies (crowd.wgsl nudges them
+ * has kept its distance for a moment. A standing vehicle is no reason to shield or to nudge: people on foot
+ * walk through parked cars (collision.ts avatarThroughCars), and the Ring-0 audit reads a shielded person as
+ * one the law let a car reach, so the shield is kept for cars that move. GPU pedestrians are not Rapier bodies (crowd.wgsl nudges them
  * itself); the Rapier people are the players' avatars and, while a pedestrian near the operator is promoted
  * to a physical body, each segment of that body, registered as a ward of its own and rebound (rebind) each
  * time its slot is built again.
@@ -59,9 +61,11 @@ const MOVING = 0.1
  */
 const RECEDING = 0.05
 /**
- * Metres of overlap that only a teleport or a respawn can produce: a character controller stops 0.02 m
- * from the chassis collider, which sits 0.04 m inside the footprint. Overlap this deep shields the person
- * even from a stationary vehicle, so Rapier never depenetrates a car off a person.
+ * Metres of overlap inside a MOVING vehicle's footprint that shield the person on their own, whatever the sweep
+ * says of the step (a spin or a slide can carry a footprint onto someone between two sweeps). A standing vehicle
+ * shields nobody for overlap: a person on foot walks through a parked car (02_Define_The_Rules/collision.ts
+ * avatarThroughCars; a rig's segments never pair with a chassis either), so there is no contact to depenetrate
+ * and nothing to nudge them out of; the moment the car moves, the sweep shields them as it does anyone inside.
  */
 const DEEP = 0.1
 /** Extra metres the nudge clears beyond the margin, so the restore check passes with room to spare. */
@@ -230,7 +234,7 @@ export class Sanctuary {
         const approaching = moving && !receding
         const sweeping = approaching && gap <= Math.max(0, closing) * tau + MARGIN
         const passing = approaching && gap <= RELEASE
-        const reaches = sweeping || gap < -DEEP
+        const reaches = sweeping || (moving && gap < -DEEP)
         const near = gap <= MARGIN
         if (reaches) danger = true
         // Any moving vehicle this close holds the shield, even one falling away for the moment: a turning

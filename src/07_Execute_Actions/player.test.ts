@@ -15,6 +15,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { PerspectiveCamera, Quaternion, Vector3 } from 'three/webgpu'
 import { PITCH_LIMIT as INPUT_PITCH_LIMIT } from '../04_Connect_Hardware/input.ts'
+import { KIND, VEHICLE_KINDS } from './car.ts'
 import { Physics } from './physics.ts'
 import { Avatar } from './player.ts'
 import { carriedYaw, DRIVER_EYE, EYE_HEIGHT, HEAD_TURN_LIMIT, HeadRig, PITCH_LIMIT, yawFacing } from './head.ts'
@@ -100,7 +101,7 @@ test('teleports and car exits snap the eye; bad numbers hold the last good pose;
   rig.onFoot(cam, 0, 0, 0, 0, 0, H)
   rig.onFoot(cam, 0, 5, 0, 0, 0, H)
   assert.equal(cam.position.y, 5 + EYE_HEIGHT, 'a >1 m change is a teleport')
-  rig.inVehicle(cam, { x: 0, y: 0.56, z: 0 }, { x: 0, y: 0, z: 0, w: 1 }, false, 0, 0)
+  rig.inVehicle(cam, { x: 0, y: 0.56, z: 0 }, { x: 0, y: 0, z: 0, w: 1 }, KIND.sedan, 0, 0)
   rig.onFoot(cam, 2, 0.1, 0, 0, 0, H)
   assert.equal(cam.position.y, 0.1 + EYE_HEIGHT, 'first frame out of the car stands up at once')
   rig.onFoot(cam, 2, Number.NaN, 0, Number.NaN, Number.POSITIVE_INFINITY, H)
@@ -117,7 +118,7 @@ test('in a car: the eye is DRIVER_EYE carried by the chassis pose, on the left, 
   const rig = new HeadRig(), cam = new PerspectiveCamera()
   for (let h = -3; h <= 3; h += 0.5) {
     const q = chassis(h)
-    rig.inVehicle(cam, { x: 5, y: 0.56, z: 7 }, q, false, yawFacing(h), 0)
+    rig.inVehicle(cam, { x: 5, y: 0.56, z: 7 }, q, KIND.sedan, yawFacing(h), 0)
     const dx = cam.position.x - 5, dz = cam.position.z - 7
     const ahead = dx * Math.sin(h) + dz * Math.cos(h)
     const left = dx * Math.cos(h) - dz * Math.sin(h)
@@ -129,15 +130,22 @@ test('in a car: the eye is DRIVER_EYE carried by the chassis pose, on the left, 
   }
   // The rotation is exact for any chassis attitude (compared with three's quaternion maths).
   const q = new Quaternion(0.12, -0.4, 0.21, 0.88).normalize()
-  rig.inVehicle(cam, { x: 1, y: 2, z: 3 }, q, false, 0.3, 0.1)
+  rig.inVehicle(cam, { x: 1, y: 2, z: 3 }, q, KIND.sedan, 0.3, 0.1)
   const want = new Vector3(DRIVER_EYE.x, DRIVER_EYE.y, DRIVER_EYE.z).applyQuaternion(q).add(new Vector3(1, 2, 3))
   assert.ok(cam.position.distanceTo(want) < 1e-9)
   assert.equal(cam.rotation.z, 0, 'a rolled chassis never rolls the head')
   assert.ok(close(cam.rotation.x, 0.1) && close(cam.rotation.y, 0.3))
-  // The SUV body is the sedan scaled (1, 1.16, 1.03): the seat, and so the eye, rises with it.
-  rig.inVehicle(cam, { x: 0, y: 0.56, z: 0 }, { x: 0, y: 0, z: 0, w: 1 }, true, 0, 0)
+  // The SUV body is the sedan scaled (1, 1.16, 1.03): the seat, and so the eye, rises with it; every kind's eye follows its scale.
+  rig.inVehicle(cam, { x: 0, y: 0.56, z: 0 }, { x: 0, y: 0, z: 0, w: 1 }, KIND.suv, 0, 0)
   assert.ok(close(cam.position.y, 0.56 + DRIVER_EYE.y * 1.16, 1e-9))
   assert.ok(close(cam.position.z, DRIVER_EYE.z * 1.03, 1e-9) && close(cam.position.x, DRIVER_EYE.x, 1e-9))
+  for (const [k, kind] of VEHICLE_KINDS.entries()) {
+    rig.inVehicle(cam, { x: 0, y: 0.56, z: 0 }, { x: 0, y: 0, z: 0, w: 1 }, k, 0, 0)
+    assert.ok(close(cam.position.y, 0.56 + DRIVER_EYE.y * kind.scale[1], 1e-9) && close(cam.position.z, DRIVER_EYE.z * kind.scale[2], 1e-9), kind.id)
+  }
+  // Not a kind: the sedan's eye.
+  rig.inVehicle(cam, { x: 0, y: 0.56, z: 0 }, { x: 0, y: 0, z: 0, w: 1 }, 99, 0, 0)
+  assert.ok(close(cam.position.y, 0.56 + DRIVER_EYE.y, 1e-9))
 })
 
 test('carriedYaw: the head turns with the car, continuously across the heading seam', () => {
@@ -214,7 +222,7 @@ test('real Fleet car: the driver\'s eye sits inside the cabin, over the left sea
   for (let i = 0; i < 90; i++) physics.step(H, (h) => fleet.updateControllers(h))
   const rig = new HeadRig(), cam = new PerspectiveCamera()
   const h = fleet.heading(car)
-  rig.inVehicle(cam, fleet.position(car), fleet.rotation(car), car.suv, yawFacing(h), 0)
+  rig.inVehicle(cam, fleet.position(car), fleet.rotation(car), car.kind, yawFacing(h), 0)
   const t = fleet.position(car)
   const dx = cam.position.x - t.x, dz = cam.position.z - t.z
   const ahead = dx * Math.sin(h) + dz * Math.cos(h), left = dx * Math.cos(h) - dz * Math.sin(h)

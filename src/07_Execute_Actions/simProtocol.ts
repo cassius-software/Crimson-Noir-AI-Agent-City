@@ -152,7 +152,10 @@ export interface SimMeta {
   count: number
   /** Pedestrians in the worker's crowd, and so in every render frame (12 floats each). */
   agents: number
+  /** Per vehicle: the heavy chassis class (the SUV's box; car.ts chassisBox). Every scan of a chassis reads this. */
   suv: boolean[]
+  /** Per vehicle: its kind, an index into car.ts VEHICLE_KINDS (the silhouette drawn, the HUD's name). */
+  kind: number[]
   /** Body colour per vehicle, 0xRRGGBB (sRGB). */
   paint: number[]
   person: { radius: number; halfHeight: number }
@@ -305,7 +308,7 @@ export type SimEvent =
    * `state`: the car's full state the moment the player took the wheel, before this step's substeps (what a network
    * room's authority takes over). `room`: the room's correction seated them (netCar), not the player.
    */
-  | { e: 'entered'; player: number; index: number; heading: number; suv: boolean; state: CarBodyState; room?: boolean }
+  | { e: 'entered'; player: number; index: number; heading: number; suv: boolean; kind: number; state: CarBodyState; room?: boolean }
   /** `forced`: a teleport or a network room's correction took the player out (no door of theirs). */
   | { e: 'exited'; player: number; x: number; z: number; heading: number; forced?: boolean }
   | { e: 'rejected'; reason: string }

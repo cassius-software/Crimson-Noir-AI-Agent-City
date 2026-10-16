@@ -10,6 +10,7 @@
  */
 import type { PerspectiveCamera } from 'three/webgpu'
 import { clampPitch } from '../04_Connect_Hardware/input.ts'
+import { kindOf } from './car.ts'
 
 /** Input clamps look to it; defined beside the look tuning so the hardware stage imports nothing from here. */
 export { PITCH_LIMIT } from '../04_Connect_Hardware/input.ts'
@@ -24,8 +25,8 @@ export const HEAD_TURN_LIMIT = (110 * Math.PI) / 180
  * road, about 0.22 m under the roof skin and 0.9 m behind the windscreen at eye level, over the left seat.
  */
 export const DRIVER_EYE: { readonly x: number; readonly y: number; readonly z: number } = Object.freeze({ x: -0.1, y: 0.62, z: -0.36 })
-/** The SUV is the sedan body scaled (1, 1.16, 1.03) about the chassis origin (fleetView.ts sync). */
-const SUV_SCALE = { y: 1.16, z: 1.03 } as const
+// Each kind's body is the profile scaled about the chassis origin (car.ts VEHICLE_KINDS, fleetView.ts sync): the eye
+// rises and moves out with it, as the SUV's always did (1.16 up, 1.03 across).
 /** Eye-height easing on a step up or down, s (time constant). */
 const STEP_EASE = 0.08
 /** The eye never trails the body's height by more than this, m. */
@@ -90,13 +91,15 @@ export class HeadRig {
   }
 
   /**
-   * Eye at DRIVER_EYE carried by the chassis pose (SUV eye raised by the SUV's 1.16 body scale, and moved out
-   * with its 1.03 width). The head stays level: the chassis carries the eye point, never the view's roll.
+   * Eye at DRIVER_EYE carried by the chassis pose, raised and moved out by the kind's body scale (car.ts
+   * VEHICLE_KINDS; `kind` is the index, the SUV's eye 1.16 up and 1.03 across as before). The head stays level: the
+   * chassis carries the eye point, never the view's roll.
    */
-  inVehicle(camera: PerspectiveCamera, pos: { x: number; y: number; z: number }, rot: { x: number; y: number; z: number; w: number }, suv: boolean, yaw: number, pitch: number): void {
+  inVehicle(camera: PerspectiveCamera, pos: { x: number; y: number; z: number }, rot: { x: number; y: number; z: number; w: number }, kind: number, yaw: number, pitch: number): void {
+    const [, sy, sz] = kindOf(kind).scale
     const ex = DRIVER_EYE.x
-    const ey = DRIVER_EYE.y * (suv ? SUV_SCALE.y : 1)
-    const ez = DRIVER_EYE.z * (suv ? SUV_SCALE.z : 1)
+    const ey = DRIVER_EYE.y * sy
+    const ez = DRIVER_EYE.z * sz
     // v' = v + w·t + q×t with t = 2·(q×v): the eye offset rotated by the chassis quaternion.
     const qx = rot.x, qy = rot.y, qz = rot.z, qw = rot.w
     const tx = 2 * (qy * ez - qz * ey), ty = 2 * (qz * ex - qx * ez), tz = 2 * (qx * ey - qy * ex)

@@ -15,7 +15,7 @@
  * What breaks if it is removed? The fleet has no cars, and the room's authority could not replay one.
  */
 import { RAPIER } from './physics.ts'
-import { CAR, chassisBox, RIDE_HEIGHT, WHEELS, type CarTuning, type DriveMode } from './car.ts'
+import { CAR, chassisBox, kindFromDraw, kindOf, RIDE_HEIGHT, WHEELS, type CarTuning, type DriveMode } from './car.ts'
 import { CITY, inLot } from '../01_Initialize_World/city.ts'
 import { KERNEL } from '../02_Define_The_Rules/civic.ts'
 import { VEHICLE_CHASSIS_GROUPS, WHEEL_RAY_GROUPS } from '../02_Define_The_Rules/collision.ts'
@@ -266,9 +266,10 @@ export const AUTHORED: Readonly<CarTuning> = Object.freeze({ power: 1, drag: 1, 
 /** Body colours, 0xRRGGBB (sRGB). Picked from the seeded stream in spawn order, so every car keeps its colour. */
 const PAINT = [0xf2f2f0, 0x111214, 0xa9adb3, 0x5c6168, 0x1d2f55, 0x7a1a1f, 0x2d3e33, 0xc9c1ad, 0x2a4f7a, 0x3a3a3c]
 
-/** One car of the fleet's seeded plan: where it starts, whether it is an SUV, its AI driver, its paint, and its ring (−1: none). */
+/** One car of the fleet's seeded plan: where it starts, its kind (car.ts VEHICLE_KINDS) and so whether it is of the heavy chassis class (`suv`), its AI driver, its paint, and its ring (−1: none). */
 export interface PlannedCar {
   pose: { x: number; z: number; heading: number }
+  kind: number
   suv: boolean
   driver: DriverLike
   paint: number
@@ -290,14 +291,14 @@ export function planFleet(count: number, seed: number, network: TrackNetwork | n
   const seatsOf = network ? assignSlots(network, count, rng) : null
   for (let i = 0; i < count; i++) {
     let pose: { x: number; z: number; heading: number }
-    let suv: boolean
+    let kind: number
     let driver: DriverLike
     let track = -1
     if (network && seatsOf) {
       const seat = seatsOf[i]
       const t = network.tracks[seat.track]
       pose = poseAt(t, seat.s)
-      suv = rng() < 0.3
+      kind = kindFromDraw(rng())
       driver = new TrackDriver(t, seat.s, rng)
       track = seat.track
     } else {
@@ -320,11 +321,11 @@ export function planFleet(count: number, seed: number, network: TrackNetwork | n
       const [k, m] = from
       const s = 12 + rng() * 10
       pose = Driver.lanePose([k, m], dir, s)
-      suv = rng() < 0.3
+      kind = kindFromDraw(rng())
       driver = new Driver([k, m], dir, rng)
     }
     const paint = PAINT[Math.floor(rng() * PAINT.length)]
-    cars.push({ pose, suv, driver, paint, track })
+    cars.push({ pose, kind, suv: kindOf(kind).heavy, driver, paint, track })
   }
   return { cars, rng }
 }

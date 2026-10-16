@@ -4,12 +4,13 @@
 /**
  * Why does this file exist? Ghost-mode collision has no impact to show, so the page shows the passage instead: when
  * the user's body (the avatar on foot, the driven car's chassis at the wheel) meets a lamp, a tree, a signal pole, a
- * pedestrian or (on foot) a car, the frame washes into code for a moment (ghost.ts ghostComposite's contact iris).
- * This file decides when: an index of the poles, the nearest person and car, and the pulse that shapes the wipe.
- * It also names which ones: the identity scans (PoleIndex.within/withinBox, peopleWithin/peopleWithinBox,
- * carsWithin) list every pole, person and car the body is inside, for the code dissolve (dissolve.ts).
+ * pedestrian or (on foot) a car, that mesh alone dissolves into falling code (dissolve.ts over
+ * 01_Initialize_World/codeDissolve.ts); nothing is drawn over the frame as a whole. This file decides when: an index
+ * of the poles, the nearest person and car, and the pulse that shapes the passage's envelope (telemetry, and the
+ * count of passages). It also names which ones: the identity scans (PoleIndex.within/withinBox,
+ * peopleWithin/peopleWithinBox, carsWithin) list every pole, person and car the body is inside, for the dissolve.
  * - View-only, like ghost view: it reads what the page already holds (the city's furniture, the worker's audited
- *   state, the crowd's render frame) and writes two uniforms. Nothing reaches the physics realm.
+ *   state, the crowd's render frame). Nothing reaches the physics realm.
  * - Pure and allocation-free per frame, so it is tested here without a GPU.
  * What breaks if it is removed? Walking through someone clips the camera through their body with no transition,
  * and ghost mode reads as a bug rather than a rule.
@@ -24,11 +25,11 @@ export type ContactKind = (typeof CONTACT_KIND)[keyof typeof CONTACT_KIND]
 
 /** The pulse and the index. */
 export const CONTACT = Object.freeze({
-  /** Seconds for the wipe to cover the frame once a contact starts. */
+  /** Seconds for the passage envelope to reach 1 once a contact starts. */
   attack: 0.12,
-  /** The shortest wipe: a glancing touch still plays this long at full cover, s. */
+  /** The shortest passage: a glancing touch still holds the envelope at 1 this long, s. */
   hold: 0.2,
-  /** Seconds for the wipe to clear after the last contact. */
+  /** Seconds for the envelope to clear after the last contact. */
   release: 0.55,
   /** The pole index's cell edge, m (every pole radius is far smaller). */
   cell: 4,
@@ -295,9 +296,10 @@ export function touching(gaps: { pole: number; person: number; vehicle: number }
 }
 
 /**
- * The wipe's envelope, 0..1: up over `attack` while touching, held at least `hold` at full cover once it gets
- * there, down over `release` after. The kind is the last thing met (the colour stays while the wipe clears).
- * `count` is every contact that started a wipe.
+ * The passage's envelope, 0..1: up over `attack` while touching, held at least `hold` at 1 once it gets there, down
+ * over `release` after. The kind is the last thing met (it stays while the envelope clears). `count` is every
+ * contact that started a passage. It is telemetry (engine.ts snapshot `contact`): no shader reads it, and nothing is
+ * drawn over the frame from it.
  */
 export class ContactPulse {
   value = 0
@@ -317,7 +319,7 @@ export class ContactPulse {
     } else if (this.value > 0) {
       if (this.value >= 1 && this.held < CONTACT.hold) this.held += step
       else this.value = Math.max(0, this.value - step / CONTACT.release)
-      // A touch released before full cover still climbs to it: every contact plays the whole wipe.
+      // A touch released before the envelope reaches 1 still climbs to it: every contact counts as a whole passage.
       if (this.wasTouching && this.value < 1) this.value = Math.min(1, this.value + step / CONTACT.attack)
     }
     if (this.value === 0) this.kind = CONTACT_KIND.none

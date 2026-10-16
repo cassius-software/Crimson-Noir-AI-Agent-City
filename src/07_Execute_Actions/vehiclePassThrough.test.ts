@@ -5,7 +5,7 @@
  * Why does this file exist? It proves in real Rapier (the WASM build runs in Node) that cars pass through cars and
  * that nothing else changed: a rolling car passes a parked car on its line exactly as over open ground (no contact
  * pair, no speed change, the parked car unmoved), its wheel rays never lift it onto the other chassis, a wall still
- * stops it, the avatar still stops at a parked car's face, the ground still carries the wheels at ride height, and
+ * stops it, the avatar on foot walks through a parked car (collision.ts avatarThroughCars), the ground still carries the wheels at ride height, and
  * every chassis collider carries the groups collision.ts derives. The Sanctuary's own regression (sanctuary.test.ts,
  * the engine-order test with the real Fleet) covers people and cars.
  * What breaks if it is removed? A chassis could pair with a chassis again (a car pushed into a person's path by
@@ -19,6 +19,7 @@ import { VEHICLE_CHASSIS_GROUPS, WHEEL_RAY_GROUPS } from '../02_Define_The_Rules
 import { RIDE_HEIGHT } from './car.ts'
 import { Physics } from './physics.ts'
 import { Avatar } from './player.ts'
+import { Sanctuary } from './sanctuary.ts'
 import { CAR, Fleet, type Vehicle } from './vehicles.ts'
 
 const H = 1 / 60
@@ -86,24 +87,36 @@ test('a wall still stops a car, and the ground still carries the wheels at ride 
   assert.ok(Math.abs(open.rest - RIDE_HEIGHT) < 0.05, `settled at ${open.rest.toFixed(3)} m, ride height ${RIDE_HEIGHT}`)
 })
 
-test('the avatar still stops at a parked car\'s face: cars stay solid to people', async () => {
+test('the avatar on foot walks straight through a parked car, as through a lamp: no stop, no lift, the car unmoved', async () => {
   const physics = await Physics.create([], NONE)
   const fleet = new Fleet(physics, 1, SEED, { exposeRig: true })
   const car = fleet.vehicles[0]
   car.mode = 'parked'
   fleet.recover(car, TRACK_X, 0, EAST)
   for (let i = 0; i < 60; i++) physics.step(H, (h) => fleet.updateControllers(h))
-  const avatar = new Avatar(physics, TRACK_X - 10, 0)
-  for (let i = 0; i < 360; i++) {
+  const carStart = fleet.position(car)
+  const avatar = new Avatar(physics, TRACK_X - 8, 0)
+  // The Sanctuary is on, as in the realm: a standing car is no reason to shield or to nudge.
+  const sanctuary = new Sanctuary(physics.world)
+  sanctuary.register(avatar.person)
+  const feet0 = avatar.body.translation().y
+  let maxLift = 0
+  for (let i = 0; i < 480; i++) {
     physics.step(H, (h) => {
+      const n = sanctuary.guard(fleet.footprints(), h)[0]
+      avatar.nudge(n.dx, n.dz)
       avatar.move(2, 0, h)
       fleet.updateControllers(h)
     })
+    maxLift = Math.max(maxLift, avatar.body.translation().y - feet0)
   }
-  const face = fleet.position(car).x - CAR.halfLength
-  assert.ok(avatar.x < face, `stopped at the car's face: x ${avatar.x.toFixed(2)}, face ${face.toFixed(2)}`)
-  assert.ok(avatar.x > face - 1, `walked up to it: x ${avatar.x.toFixed(2)}, face ${face.toFixed(2)}`)
-  assert.ok(Math.abs(avatar.z) < 0.5 && avatar.body.translation().y < 1.2, 'never lifted onto or pushed round the car')
+  assert.equal(sanctuary.flips, 0, 'a parked car shields nobody')
+  const back = fleet.position(car).x + CAR.halfLength
+  assert.ok(avatar.x > back + 1, `walked out the back of the car: x ${avatar.x.toFixed(2)}, back ${back.toFixed(2)}`)
+  assert.ok(Math.abs(avatar.x - (TRACK_X - 8 + 2 * 8)) < 0.5, `at walking pace throughout (8 s at 2 m/s): x ${avatar.x.toFixed(2)}`)
+  assert.ok(Math.abs(avatar.z) < 0.05 && maxLift < 0.05, `never lifted onto or pushed round the car: z ${avatar.z.toFixed(3)}, lift ${maxLift.toFixed(3)}`)
+  const carEnd = fleet.position(car)
+  assert.ok(Math.hypot(carEnd.x - carStart.x, carEnd.z - carStart.z) < 0.01, 'the car was not shoved')
 })
 
 test('every chassis carries the collision groups collision.ts derives; the wheel rays accept theirs', async () => {

@@ -261,18 +261,23 @@ shoved, no pole stops you, and the people keep their line.
 - **The crowd never sees you as a neighbour.** The avatar is not put in the grid the pedestrians steer by
   (`crowd.wgsl` `binAgents`), so none of them steps aside, falls in beside you, or drifts toward you. Someone you ask
   over still keeps their talking distance: that comes from the summons, not from collision.
-- **What stays solid:** the ground, the buildings, the seawall, the pier's deck and railings, and the cars, to people
-  and to the world. Cars stay solid to people because the kernel is built on that: the Bouncer brakes for you, and the
-  Sanctuary turns you into a sensor when a car is about to reach you. The Ring-0 audit treats a car overlapping a solid
-  person as an impact. None of that changed. Cars are no longer solid to each other.
+- **What stays solid:** the ground, the buildings, the seawall, the pier's deck and railings, to people and to the
+  world; and the cars to the world. On foot you walk through a car, parked or rolling, as through a lamp
+  (`COLLISION.avatarThroughCars`): your capsule and a chassis never pair, so there is no impulse either way, and the
+  car's mesh dissolves around your eye as you enter it. The kernel does not rest on cars being solid to people: the
+  Bouncer brakes every car for you, holds one still while you stand inside its footprint, and the Sanctuary turns you
+  into a sensor when a moving car is about to reach you. The Ring-0 audit treats a moving car overlapping a solid
+  person as an impact; a standing one is no reason to shield, so a parked car neither shields nor nudges you. Cars are
+  not solid to each other either.
 - **Cars pass through cars** (`02_Define_The_Rules/collision.ts`). The realm's contact policy is one frozen record,
   `COLLISION`, beside `CIVIC`'s `violence: false`: no vehicle-on-vehicle contact, the ragdoll balance machine wired
   with no vehicle ever a cause (see The balance machine under The ethical kernel), no combat, furniture as sensors,
   the Sanctuary between people and cars. Every chassis collider carries a collision group that filters other
   chassis out, and every wheel ray filters them out too, so a chassis pair is dropped in Rapier's broad phase: no
-  contact, no impulse, and a wheel cannot ride up on a car it passes through. The ground, the buildings, the seawall,
-  the pier and the avatar keep the default groups, so a car is as solid as before to the world and to people: you
-  still stop at a parked car's face. The AI drivers' bonnet rays keep the default groups too, so other cars stay
+  contact, no impulse, and a wheel cannot ride up on a car it passes through. The ground, the buildings, the seawall
+  and the pier keep the default groups, so a car is as solid as before to the world; the avatar's capsule filters
+  chassis out too, so you walk through a parked car and shove nothing (`vehiclePassThrough.test.ts` walks the avatar
+  straight through one with the Sanctuary on: no stop, no lift, no flip, the car unmoved). The AI drivers' bonnet rays keep the default groups too, so other cars stay
   obstacles to the Third Law, and CCD stays on every chassis. `vehiclePassThrough.test.ts` (real Rapier in Node)
   rolls a car at 10 m/s through a parked car on its line: it ends on the same line within 0.05 m and at the same
   speed within 0.05 m/s as over open road, the parked car moves under 1 mm, the rolling car never lifts more than
@@ -293,9 +298,12 @@ shoved, no pole stops you, and the people keep their line.
     and a `1` drawn from strokes, no font. The same mask governs the shadow pass, so a dissolving mesh loses its
     shadow with its body. While nothing dissolves the materials draw exactly as before, and the cinema camera's
     velocity buffer is untouched.
-  - It composes with the contact iris: the iris washes the frame, the dissolve removes the mesh. A touched slot is
-    at 1 the same frame; an untouched one falls to exactly 0 over the release. Each passage counts once.
-  - **View-only**, like ghost view and the iris: it reads what the page already holds (the city's furniture, the
+  - Around your eye the dissolving mesh has a clear core: every cell of a fragment within 0.85 m of the camera is
+    gone, and the column pattern is whole again from 2.2 m out (`CODE_DISSOLVE.coreInner`/`coreOuter`), so you look
+    out through open code rather than into a wall of glyphs. The core belongs to the mesh you are inside: a mesh
+    whose amount is idle has none, however close you stand, and nothing is drawn over the frame as a whole. A touched
+    slot is at 1 the same frame; an untouched one falls to exactly 0 over the release. Each passage counts once.
+  - **View-only**, like ghost view: it reads what the page already holds (the city's furniture, the
     audited state, the crowd's newest frame) and writes instance attributes. Nothing reaches the physics worker, no
     pedestrian moves, no pole stops anyone. `sim` and `__SIM__` report it as `output.dissolve`: how many instances
     are dissolved or reinstantiating now, and how many passages since boot. Its scans allocate nothing per frame.
@@ -303,19 +311,12 @@ shoved, no pole stops you, and the people keep their line.
     cinema shutter a dissolving mesh's smear is sampled from the cells that survive. The envelope, the scans and the
     material graph are tested in Node; the compiled shader has not been seen in a WebGPU browser in this
     environment (see Browser support).
-- **The transition.** Where the camera goes through something, the frame washes into code for a moment
-  (`07_Execute_Actions/contact.ts`, drawn by ghost view's composite).
-  - It triggers on foot on a pole, a person or a car (the Sanctuary letting one through you). At the wheel it
-    triggers on a pole or a person.
-  - An iris of the ghost view's falling glyphs opens from the centre of the frame in 0.12 s, in the green of what you
-    met. It holds at least 0.2 s and clears over 0.55 s. A glancing touch plays the whole wipe.
-  - **View-only**, like ghost view. It reads what the page already has (the city's furniture, the audited state, the
-    crowd's newest frame) and sets two uniforms. It is composited after the shutter, the film curve and FXAA, so it is
-    never smeared or graded.
-  - While a wipe plays the post chain runs, even at the Minimal tier, unless `?post=0`. There, for that moment, the
-    film curve stands in for the direct path's ACES under the code.
-  - `sim` and `__SIM__` report it as `output.contact`: how far the iris is open, the kind met, and how many
-    passages since boot.
+- **No full-screen transition.** Nothing is drawn over the frame as a whole when you pass through something: the
+  mesh you are inside dissolves, and that is the whole effect. (Earlier builds opened an iris of code from the centre
+  of the frame on every contact; it is gone, and the post chain no longer turns on for a passage.) The passage is
+  still measured (`07_Execute_Actions/contact.ts`): `sim` and `__SIM__` report `output.contact` as the passage
+  envelope (0..1, up over 0.12 s while your body is inside a lamp, a car or a person, held 0.2 s, down over 0.55 s),
+  the kind met, and how many passages since boot.
 
 ## First person, WebXR-ready
 
@@ -363,7 +364,7 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   iris) is player 1's alone and is off while the screen is split: every viewport takes the direct ACES path, and
   `ghost on` says so. The sun's shadow focus, the lamp lights and the building sort follow player 1, so the other
   viewports get shadows only near player 1. The HUD, the captions, the pings, the code dissolve's scans, the
-  contact wipe, the haptics, recruitment and the operator tier stay player 1's. Players 2–4 are not drawn as crowd
+  passage count, the haptics, recruitment and the operator tier stay player 1's. Players 2–4 are not drawn as crowd
   figures, so a pedestrian may walk through them; they are protected exactly on the CPU, and safety does not rest
   on the figure.
 - **Cost.** The crowd cull runs once per camera per presented frame, and `stats` reflects the last view. `sim` and
@@ -1625,9 +1626,22 @@ Every source file opens with "Why does this file exist? / What breaks if it is r
 
 ## Vehicles
 
-Sedans and SUVs are Rapier raycast vehicles:
+Eight kinds of vehicle (`07_Execute_Actions/car.ts` `VEHICLE_KINDS`: an executive sedan, a transit pod, a logistics
+van, a transit coach, a courier robot, a security SUV, a gullwing coupe and a utility rig) are drawn over two chassis
+classes of Rapier raycast vehicle, the sedan's and the SUV's (box, mass, power, drag), each proven once against the
+First Law's stopping envelope in `vehicles.test.ts`. A kind picks a class and a body: its own extruded side profile
+(`fleetView.ts` `PROFILES`), scaled about the chassis origin, with its own glass (the pod's canopy, the coach's window
+band, the van's and the rig's cab), brake lights that follow the brake demand, a warm cabin light through the glass at
+night on the pod and the coach, an amber flashing beacon on the rig's roof, and wheels sized to it. Every silhouette
+stays inside its class's box plus the dissolve's reach (`vehicleKinds.test.ts`), so the camera never enters a body
+the dissolve has not taken; a silhouette longer than its box, a full-length coach or an articulated bus, would need a
+stopping envelope of its own and is not one of these. The fleet's one seeded draw that used to decide "SUV or
+sedan" now decides the kind, with the heavy kinds on exactly the old SUV share, so every fleet a seed laid out before
+keeps the same chassis class in every slot (saved rooms, the network's plan and the determinism golden are
+untouched). The realm's `meta` carries `kind` beside `suv`; the HUD names the kind when you take a wheel.
 - **Collisions:** strict CCD on every chassis; cars pass through cars (collision groups,
-  `02_Define_The_Rules/collision.ts`; see Ghost-mode collision) and stay solid to people and to the world.
+  `02_Define_The_Rules/collision.ts`; see Ghost-mode collision), stay solid to the world, and let the avatar on foot
+  walk through them (`avatarThroughCars`).
 - **Steering:** Ackermann geometry (the inner front wheel steers more).
 - **Resistance:** aerodynamic drag and rolling resistance. Coast-down from 50 km/h is about
   0.3 m/s².

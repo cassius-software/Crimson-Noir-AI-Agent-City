@@ -84,28 +84,39 @@ test('the inks the lower stages repeat are the ghost view\'s greens dissolve.ts 
   assert.deepEqual([...PEOPLE_DISSOLVE_INK], [...DISSOLVE_COLOR.people])
 })
 
-test('the fleet: a dissolve amount per body slot and four per car for the wheels, the cabin mask kept under the dissolve', () => {
-  const view = new FleetView([false, true, false], [0x808080, 0x101010, 0x204060], uniform(0))
-  const bodies = view.bodies.geometry.getAttribute('dissolve') as InstancedBufferAttribute
+test('the fleet: a dissolve amount per vehicle staged and scattered to each kind\'s mesh, four per car for the wheels, the cabin mask kept under the dissolve', () => {
+  // Two sedans (kind 0) and one SUV (kind 5): the staging is by vehicle index, each kind's attribute by its own slots.
+  const view = new FleetView([0, 5, 0], [0x808080, 0x101010, 0x204060], uniform(0))
   const wheels = view.wheels.geometry.getAttribute('dissolve') as InstancedBufferAttribute
-  assert.ok(bodies instanceof InstancedBufferAttribute && wheels instanceof InstancedBufferAttribute)
-  assert.equal(bodies, view.dissolve.bodies)
+  assert.ok(view.dissolve.bodies instanceof InstancedBufferAttribute && wheels instanceof InstancedBufferAttribute)
   assert.equal(wheels, view.dissolve.wheels)
-  assert.equal(bodies.itemSize, 1)
+  assert.equal(view.dissolve.bodies.itemSize, 1)
   assert.equal(wheels.itemSize, 1)
-  assert.equal(bodies.count, 3)
+  assert.equal(view.dissolve.bodies.count, 3, 'one staged amount per vehicle')
   assert.equal(wheels.count, 12, 'wheel w of car i is slot i * 4 + w')
-  assert.ok([...(bodies.array as Float32Array)].every((v) => v === 0), 'every car solid at boot')
+  assert.ok([...(view.dissolve.bodies.array as Float32Array)].every((v) => v === 0), 'every car solid at boot')
+  assert.equal(view.bodies.length, 8, 'one mesh per kind')
+  const sedans = view.bodies[0].geometry.getAttribute('dissolve') as InstancedBufferAttribute
+  const suvs = view.bodies[5].geometry.getAttribute('dissolve') as InstancedBufferAttribute
+  assert.equal(sedans.count, 2)
+  assert.equal(suvs.count, 1)
+  assert.deepEqual([...view.kindOf], [0, 5, 0])
+  assert.deepEqual([...view.slotOf], [0, 0, 1])
+  ;(view.dissolve.bodies.array as Float32Array).set([0.25, 1, 0.5])
+  view.flushDissolve()
+  assert.deepEqual([...(sedans.array as Float32Array)], [0.25, 0.5], 'the sedans\' slots, in vehicle order')
+  assert.deepEqual([...(suvs.array as Float32Array)], [1])
   // An empty fleet keeps its one slot (WebGPU refuses a zero-sized binding), as the paint attribute does.
   const empty = new FleetView([], [], uniform(0))
   assert.equal(empty.dissolve.bodies.count, 1)
   assert.equal(empty.dissolve.wheels.count, 4)
-  for (const mesh of [view.bodies, view.wheels]) {
+  for (const mesh of empty.bodies) assert.equal((mesh.geometry.getAttribute('dissolve') as InstancedBufferAttribute).count, 1)
+  for (const mesh of [...view.bodies, view.wheels]) {
     const m = materialOf(mesh)
     assert.ok(m.positionNode && m.maskNode && m.emissiveNode && m.colorNode, `${mesh.name}: the helper set its nodes`)
   }
-  // The cabin shell's mask (frontFacing.or(glass.not())) is still in the body material's mask graph.
-  assert.ok([...reach(materialOf(view.bodies).maskNode)].some((n) => n.isFrontFacingNode === true), 'the body mask still reads frontFacing')
+  // The cabin shell's mask (frontFacing.or(glass.not())) is still in every body material's mask graph.
+  for (const mesh of view.bodies) assert.ok([...reach(materialOf(mesh).maskNode)].some((n) => n.isFrontFacingNode === true), `${mesh.name}: the body mask still reads frontFacing`)
   assert.ok(![...reach(materialOf(view.wheels).maskNode)].some((n) => n.isFrontFacingNode === true), 'the wheels had no mask to keep')
 })
 

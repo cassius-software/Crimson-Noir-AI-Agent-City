@@ -15,6 +15,33 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Eight kinds of vehicle.** The fleet is drawn from `VEHICLE_KINDS` (`src/07_Execute_Actions/car.ts`): an executive
+  sedan, a transit pod, a logistics van, a transit coach, a courier robot, a security SUV, a gullwing coupe and a
+  utility rig, each with its own side profile, glass, lights (brake lights from the brake demand, a cabin glow at night
+  on the pod and the coach, an amber beacon on the rig) and wheel size (`fleetView.ts`, one instanced mesh per kind).
+  They ride on the two chassis classes that were already proven against the First Law (the sedan's and the SUV's), and
+  the seeded draw that used to pick "SUV or sedan" now picks the kind with the heavy kinds on the old SUV share, so
+  every seed's fleet keeps the same chassis in every slot. `SimMeta.kind` and the `entered` event carry the kind; the
+  HUD names it. The look is untested on a GPU in the cloud.
+- **A clear core in the code dissolve.** A mesh you pass through now opens around your eye: cells within 0.85 m of
+  the camera are gone and the falling-column pattern is whole again from 2.2 m out (`CODE_DISSOLVE.coreInner` and
+  `coreOuter`), so you look out through open code. The core is local to the mesh being passed through.
+
+### Changed
+
+- **On foot you walk through cars.** The avatar's capsule no longer pairs with a vehicle chassis
+  (`COLLISION.avatarThroughCars`, `AVATAR_GROUPS`): a parked car is passed, not pushed, and its mesh dissolves as
+  you enter it. The First Law is untouched: the Bouncer still brakes for you and holds a car still while you stand
+  in its footprint, the Sanctuary still shields you from a moving car, and the Ring-0 audit still reads a moving car
+  over a solid person as an impact. The Sanctuary no longer shields or nudges anyone for overlapping a standing car.
+
+### Removed
+
+- **The full-screen contact wipe.** The iris of code that opened from the centre of the frame on every contact
+  (ghost view's composite, `contact.ts`) is gone: a passage shows on the mesh passed through alone, and the post chain
+  no longer turns on for one. `output.contact.wipe` in the telemetry is now `output.contact.passage`, the same
+  envelope, which nothing draws.
+
 - **Lakefront Metro has people and traffic.** The generated metropolis was walked through the surveyed-region path,
   which by design gives a region no fleet and hides the pedestrian crowd, so every first visit read Population 0 and
   Vehicles 0. Its streets lie on the procedural city's 40 m pitch, so a *street window* of 16 × 16 blocks around where

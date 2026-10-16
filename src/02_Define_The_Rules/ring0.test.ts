@@ -592,31 +592,37 @@ test('live, in engine order: a runner stepping into an AI car\'s lane inside its
   }
 })
 
-test('live: a runner ramming the back of a car pulling away is a watched breach, never an IMPACT, at 60 fps and at 20 fps', async () => {
-  // Only a receding car can be touched while solid (the Sanctuary shields against every approaching one),
-  // and the character controller keeps the avatar's surface at the chassis collider, 0.05 m inside the
-  // footprint: rammed as hard as a run can, their centre stays 0.2 m outside the box, twice the contact
-  // margin. Measured 0.208 m at 60 fps and 0.231 m at 20 fps on this build (0.220 and 0.229 m on the 12-block
-  // city's slab; 0.205 m at throttle 0.05).
+test('live: a runner ramming the back of a car trying to pull away runs through it, the car held by the First Law, never an IMPACT, at 60 fps and at 20 fps', async () => {
+  // The avatar and a chassis never pair (collision.ts avatarThroughCars), so nothing keeps the runner's centre out
+  // of the footprint, and a standing car shields nobody (sanctuary.ts DEEP). What keeps the audit quiet is the
+  // bouncer: a person inside the widened footprint is 0 m away, so the driver's throttle is refused until the
+  // runner is out the front and clear of the standoff. The runner goes in at the back and out at the front of a
+  // car that never gets going; no shield, no contact, no violation. (The driver floors it once the runner is in: a
+  // car already creeping when someone enters is a moving one, which the Sanctuary shields and nudges clear of.)
   for (const dt of [H, 0.05]) {
     const g = await live()
     g.v.mode = 'player'
     settle(g, TRACK_X, 0, Math.PI / 2, 0)
     g.avatar.teleport(TRACK_X - CAR.halfLength - 0.4, 0.1)
-    let fastest = 0, nearest = Infinity, breaches = 0
+    let touched = false, deepest = Infinity, fastestInside = 0, frames = 0, floored = false
     for (let t = 0; t < 5; t += dt) {
-      breaches += liveFrame(g, dt, { x: RUN, z: 0 }, { throttle: 0.3, brake: 0, steer: 0 }).perimeterBreaches
+      floored ||= reach(g) === 0
+      liveFrame(g, dt, { x: RUN, z: 0 }, { throttle: floored ? 0.3 : 0, brake: 0, steer: 0 })
       const lv = g.fleet.velocity(g.v), planar = Math.hypot(lv.x, lv.z)
-      if (planar > RING0.movingSpeed && !g.sanctuary.isSensor(0)) nearest = Math.min(nearest, reach(g))
-      let touching = false
-      g.physics.world.contactPair(g.avatar.collider, g.fleet.rig(g.v).collider, (m) => { if (m.numContacts() > 0) touching = true })
-      if (touching) fastest = Math.max(fastest, planar)
+      g.physics.world.contactPair(g.avatar.collider, g.fleet.rig(g.v).collider, (m) => { if (m.numContacts() > 0) touched = true })
+      if (reach(g) === 0) {
+        frames++
+        deepest = Math.min(deepest, Math.abs(g.avatar.x - g.fleet.position(g.v).x))
+        fastestInside = Math.max(fastestInside, planar)
+      }
     }
     assert.deepEqual(g.reasons, [], `dt ${dt}`)
-    assert.ok(fastest > RING0.movingSpeed, `dt ${dt}: the car was doing ${fastest.toFixed(2)} m/s while touched, so the case is exercised`)
-    assert.ok(nearest >= 2 * RING0.contactMargin && nearest < 0.35, `dt ${dt}: ${nearest.toFixed(3)} m from the moving footprint`)
-    assert.ok(breaches > 0, `dt ${dt}: a moving car with someone against it is inside the watched perimeter`)
-    assert.equal(g.sanctuary.flips, 0, `dt ${dt}: a car pulling away is never a reason to shield`)
+    assert.equal(touched, false, `dt ${dt}: the capsule and the chassis never exchange contact`)
+    assert.ok(frames > 0 && deepest < 0.5, `dt ${dt}: the runner passed the chassis centre (nearest ${deepest.toFixed(2)} m)`)
+    assert.ok(fastestInside <= RING0.movingSpeed, `dt ${dt}: the car was held while someone was inside its footprint (${fastestInside.toFixed(2)} m/s)`)
+    assert.equal(g.sanctuary.flips, 0, `dt ${dt}: a standing car is never a reason to shield`)
+    assert.ok(Math.abs(g.avatar.z - 0.1) < 0.05, `dt ${dt}: never nudged off the line (z ${g.avatar.z.toFixed(3)})`)
+    assert.ok(reach(g) > 2, `dt ${dt}: out the front and clear`)
   }
 })
 

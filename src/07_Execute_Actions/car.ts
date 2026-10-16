@@ -2,10 +2,15 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? The car as plain numbers: dimensions, powertrain constants, tuning bounds and
- * wheel layout. Both realms read it: the physics worker builds and drives the Rapier vehicles from it
- * (vehicles.ts), and the main thread draws them and maps the player's controls with it (fleetView.ts,
- * engine.ts). It imports nothing, so the page's own bundle never pulls in Rapier.
+ * Why does this file exist? The car as plain numbers: dimensions, powertrain constants, tuning bounds, wheel layout
+ * and the eight kinds of vehicle the fleet is drawn from (VEHICLE_KINDS). Both realms read it: the physics worker
+ * builds and drives the Rapier vehicles from it (vehicles.ts), and the main thread draws them and maps the player's
+ * controls with it (fleetView.ts, engine.ts). It imports nothing, so the page's own bundle never pulls in Rapier.
+ * The kinds are two chassis classes under eight silhouettes: a light class (the sedan's box, mass and power) and a
+ * heavy class (the SUV's), each proven once in vehicles.test.ts against the First Law's stopping envelope; a kind
+ * picks a class and a body (its profile and scale in fleetView.ts, within DISSOLVE.reach of the class's box, so the
+ * dissolve still has the mesh before the camera does). A silhouette longer than its box, a full coach or an
+ * articulated bus, would need a stopping envelope of its own and is not one of these.
  * What breaks if it is removed? The two realms would each need their own copy of the car, and could drift.
  */
 
@@ -67,6 +72,57 @@ export const WHEELS: readonly (readonly [number, number])[] = [
 export const RIDE_HEIGHT = 0.56
 
 export type DriveMode = 'ai' | 'player' | 'parked'
+
+/** How a kind of vehicle is drawn and lit (fleetView.ts); its physics is its chassis class (`heavy`). */
+export interface VehicleKind {
+  /** Stable id, the profile's name in fleetView.ts. */
+  readonly id: 'sedan' | 'pod' | 'van' | 'coach' | 'courier' | 'suv' | 'coupe' | 'utility'
+  /** What the HUD calls it. */
+  readonly name: string
+  /** The heavy chassis class: the SUV's box (chassisBox(true)), mass, power and drag. False: the sedan's. */
+  readonly heavy: boolean
+  /** The body profile scaled about the chassis origin: along the car, up, across. */
+  readonly scale: readonly [number, number, number]
+  /** Wheel radius as a fraction of CAR.wheelRadius (the drawn wheel; the raycast wheel is the class's). */
+  readonly wheel: number
+  /** Extra lights: 'none', a warm 'interior' glow through the glass at night, or an amber roof 'beacon'. */
+  readonly lights: 'none' | 'interior' | 'beacon'
+}
+
+/**
+ * The eight kinds, in the order a kind index names them (SimMeta.kind, Vehicle.kind). The mix a fleet draws is
+ * kindFromDraw below: three in ten heavy, as the fleet has always been.
+ */
+export const VEHICLE_KINDS: readonly VehicleKind[] = Object.freeze([
+  { id: 'sedan', name: 'Executive sedan', heavy: false, scale: [1, 1, 1], wheel: 1, lights: 'none' },
+  { id: 'pod', name: 'Transit pod', heavy: false, scale: [0.9, 1.08, 1], wheel: 0.85, lights: 'interior' },
+  { id: 'van', name: 'Logistics van', heavy: true, scale: [1, 1.3, 1.03], wheel: 1, lights: 'none' },
+  { id: 'coach', name: 'Transit coach', heavy: true, scale: [1, 1.4, 1.06], wheel: 1.05, lights: 'interior' },
+  { id: 'courier', name: 'Courier robot', heavy: false, scale: [0.6, 0.75, 0.7], wheel: 0.6, lights: 'none' },
+  { id: 'suv', name: 'Security SUV', heavy: true, scale: [1, 1.16, 1.03], wheel: 1.08, lights: 'none' },
+  { id: 'coupe', name: 'Gullwing coupe', heavy: false, scale: [1, 0.88, 1], wheel: 1, lights: 'none' },
+  { id: 'utility', name: 'Utility rig', heavy: true, scale: [1, 1.28, 1.04], wheel: 1.08, lights: 'beacon' },
+].map((k) => Object.freeze({ ...k, scale: Object.freeze(k.scale) }) as VehicleKind))
+
+/** The kind index of `id`. */
+export const KIND = Object.freeze(Object.fromEntries(VEHICLE_KINDS.map((k, i) => [k.id, i])) as Record<VehicleKind['id'], number>)
+
+/**
+ * The kind one draw `u` (0 ≤ u < 1 from the fleet's seeded stream) picks. Heavy kinds take u < 0.3, light kinds the
+ * rest, so `VEHICLE_KINDS[kindFromDraw(u)].heavy === u < 0.3`: the one draw that used to decide "SUV or sedan" now
+ * decides the kind, and every fleet a seed laid out before keeps the same chassis class in every slot. Out of range
+ * (NaN, ≥ 1, negative) is the sedan.
+ */
+export function kindFromDraw(u: number): number {
+  if (!(u >= 0 && u < 1)) return KIND.sedan
+  if (u < 0.3) return u < 0.12 ? KIND.suv : u < 0.2 ? KIND.van : u < 0.26 ? KIND.coach : KIND.utility
+  return u < 0.66 ? KIND.sedan : u < 0.78 ? KIND.pod : u < 0.86 ? KIND.courier : KIND.coupe
+}
+
+/** The kind's record, the sedan's for an index that is not one. */
+export function kindOf(kind: number): VehicleKind {
+  return VEHICLE_KINDS[Number.isInteger(kind) && kind >= 0 && kind < VEHICLE_KINDS.length ? kind : 0]
+}
 
 /**
  * Scale factors the Ring-0 operator may set on the fleet (1 = the authored car). The bounds keep the First

@@ -10,7 +10,7 @@
  * the update that lets untouched ones fall back, the dirty range each buffer needs re-uploaded, and the count of
  * passages. The identities come from the allocation-free scans in contact.ts (PoleIndex.within, peopleWithin,
  * carsWithin); poleSlot maps a pole's index in that one list to its mesh and slot.
- * - View-only, like the contact wipe: it reads what the page already holds and writes instance attributes. Nothing
+ * - View-only, like the passage pulse: it reads what the page already holds and writes instance attributes. Nothing
  *   reaches the physics realm; no pedestrian moves, no pole stops anyone.
  * - Pure and allocation-free per frame, so it is tested here without a GPU.
  * What breaks if it is removed? Every mesh stays solid: the camera clips through a lamp's pole or a person's body
@@ -37,7 +37,7 @@ export const DISSOLVE = Object.freeze({
 export const DISSOLVE_KINDS = Object.freeze(['lamps', 'trees', 'signals', 'cars', 'people'] as const)
 export type DissolveKind = (typeof DISSOLVE_KINDS)[number]
 
-/** The ink of each kind: the ghost view's greens, so a dissolving mesh matches the wipe's colour (linear RGB). */
+/** The ink of each kind: the ghost view's greens, so a dissolving mesh matches ghost view's colour for it (linear RGB). */
 export const DISSOLVE_COLOR: Readonly<Record<DissolveKind, readonly [number, number, number]>> = Object.freeze({
   lamps: GHOST_COLOR.pole,
   trees: GHOST_COLOR.pole,
