@@ -1314,7 +1314,10 @@ export class Engine {
         this.carHeading = ev.heading
         this.input.yaw = yawFacing(ev.heading)
         const g = (a: Parameters<typeof glyph>[0]) => modeGlyph(a, this.glyphs, true)
-        this.toast(kindOf(ev.kind).name, `${g('throttle')} / ${g('brake')} throttle and brake · ${g('handbrake')} handbrake · ${g('interact')} to leave`)
+        // Touch names its buttons in words, so "Handbrake handbrake" would read twice: it says what each one does.
+        this.toast(kindOf(ev.kind).name, this.glyphs === 'touch'
+          ? `${g('throttle')} to drive · ${g('brake')} to brake or reverse · ${g('interact')} to leave`
+          : `${g('throttle')} / ${g('brake')} throttle and brake · ${g('handbrake')} handbrake · ${g('interact')} to leave`)
       } else if (ev.e === 'exited') {
         this.pulseUntil = 0
         this.toast('Vehicle parked', 'Hazards on, doors locked.')
