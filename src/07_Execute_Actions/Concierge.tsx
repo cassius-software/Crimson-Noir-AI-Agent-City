@@ -20,7 +20,7 @@
  * below the centre and above the HUD's bottom-centre prompts; phone upright, the band under the header and
  * minimap (clear of the on-screen keyboard); phone in landscape, bottom-centre between the thumbs.
  */
-import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useEffectEvent, useRef, useState, useSyncExternalStore, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { ORC_NOTICE } from '../02_Define_The_Rules/degrees.ts'
 import { NAME_MAX, saveProfile, sanitizeName, seedFromName, type Profile } from '../05_Observe_Environment/profile.ts'
 import { FiveWhys, GOAL_MAX, type Brief, type Control, type PlanStep, type WhyStep } from '../06_Make_Decisions/intent.ts'
@@ -82,10 +82,12 @@ const [ORC_BEFORE, ORC_AFTER] = ORC_NOTICE.split(ORC_REGISTRATION)
  *  ends above them; in landscape on foot it stands in the band between the stick and the buttons (on a narrow
  *  phone it gives up the stick's inner edge rather than shrink under 15.5 rem); at the wheel it stands over
  *  them. On a short screen every card scrolls inside its own height rather than run off the top (the controls
- *  list grows by the Menu's row on touch). The chip stands under the minimap; on a short touch screen in landscape
- *  it rises to end above the buttons when they reach up that far, and if that would meet the minimap it moves left
- *  of it, narrowing (its goal text truncates) to stay clear of the HUD's left column (17 rem of panels and toasts,
- *  which also keeps it off the stick), down to 10.5 rem: under about 600 px across that floor can still reach a toast.
+ *  list grows by the Menu's row on touch). The chip stands under the minimap and under the HUD's panels, whose foot
+ *  and right edge the HUD publishes as --hud-bottom and --hud-right; its toasts start below the chip (--chip-bottom,
+ *  published here). On a short touch screen in landscape it rises to end above the buttons when they reach up that
+ *  far, and if that would meet the minimap it moves left of it, narrowing (its goal text truncates) to stay clear of
+ *  the HUD's left column (17 rem of status chips and toasts, which also keeps it off the stick) and, level with the
+ *  panels, of their right edge, down to 10.5 rem: under about 600 px across that floor can still reach a toast.
  *  Which placements apply follows the touch overlay being on screen (`overlay`), not the glyphs: a pad paired with a
  *  phone shows its glyphs while the buttons stay.
  *  Desktop: a column from just below the centre of view down to the HUD frame. The card stands at its foot
@@ -103,9 +105,15 @@ const CARD_AT = {
 } as const
 const CHIP_AT = {
   wide: 'bottom-[calc(max(1.25rem,env(safe-area-inset-bottom))+13.75rem)] left-[max(1.25rem,env(safe-area-inset-left))] max-w-[18rem]',
-  compact: 'top-[calc(max(0.75rem,env(safe-area-inset-top))+7.5rem)] right-[max(0.75rem,env(safe-area-inset-right))] max-w-[18rem]',
-  compactDriving: 'top-[calc(max(0.75rem,env(safe-area-inset-top))+11.75rem)] right-[max(0.75rem,env(safe-area-inset-right))] max-w-[18rem]',
-  shortTouch: '[--chip-top:min(calc(max(0.75rem,env(safe-area-inset-top))_+_7.5rem),calc(100dvh_-_var(--touch-top,0px)_-_2.5rem))] [--chip-right:calc(max(0.75rem,env(safe-area-inset-right))_+_clamp(0rem,calc((max(0.75rem,env(safe-area-inset-top))_+_7.25rem_-_var(--chip-top))_*_100),7.5rem))] top-(--chip-top) right-(--chip-right) max-w-[max(10.5rem,min(18rem,calc(100%_-_var(--chip-right)_-_max(0.75rem,env(safe-area-inset-left,0px))_-_17.5rem)))]',
+  compact: 'right-[max(0.75rem,env(safe-area-inset-right))] max-w-[18rem]',
+  shortTouch: '[--chip-top:min(calc(max(0.75rem,env(safe-area-inset-top))_+_7.5rem),calc(100dvh_-_var(--touch-top,0px)_-_2.5rem))] [--chip-right:calc(max(0.75rem,env(safe-area-inset-right))_+_clamp(0rem,calc((max(0.75rem,env(safe-area-inset-top))_+_7.25rem_-_var(--chip-top))_*_100),7.5rem))] [--chip-left:max(calc(max(0.75rem,env(safe-area-inset-left,0px))_+_17.5rem),min(calc(var(--hud-right,0px)_+_0.5rem),calc(max(0.75rem,env(safe-area-inset-left,0px))_+_17.5rem_+_clamp(0px,calc((var(--hud-bottom,0px)_+_0.25rem_-_var(--chip-top))_*_10000),100vw))))] top-(--chip-top) right-(--chip-right) max-w-[max(10.5rem,min(18rem,calc(100%_-_var(--chip-right)_-_var(--chip-left))))]',
+} as const
+/** The compact chip's top (inline, not a class, because the same expression is published as --chip-bottom): under
+ *  the minimap, or the speed chip at the wheel, and under the HUD's panels (--hud-bottom, from Hud.tsx) when they
+ *  reach lower, as a readout with a device line does on an upright phone. */
+const CHIP_TOP = {
+  foot: 'max(calc(max(0.75rem, env(safe-area-inset-top)) + 7.5rem), calc(var(--hud-bottom, 0px) + 0.5rem))',
+  driving: 'max(calc(max(0.75rem, env(safe-area-inset-top)) + 11.75rem), calc(var(--hud-bottom, 0px) + 0.5rem))',
 } as const
 
 /** A media query as a stable external store (same queries as the HUD's compact layout). */
@@ -420,10 +428,26 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
     if (visible && fielded) focusField()
   }, [visible, fielded, epoch])
 
-  if (!visible) return null
-
   const compact = small || overlay
   const layout = !compact ? 'wide' : short ? 'short' : 'tall'
+  // The chip under the minimap publishes its foot as --chip-bottom, and the HUD's toasts start below it rather than
+  // pass under it. A ref callback (a new one when the top changes), cleaned up when the chip goes.
+  const chipTop = layout === 'wide' || (layout === 'short' && overlay && landscape) ? null : CHIP_TOP[layout === 'tall' && driving ? 'driving' : 'foot']
+  const chipRef = useCallback((el: HTMLElement | null) => {
+    if (!el || !chipTop) return
+    const root = document.documentElement.style
+    const publish = () => root.setProperty('--chip-bottom', `calc(${chipTop} + ${Math.round(el.offsetHeight)}px)`)
+    publish()
+    const watch = typeof ResizeObserver === 'function' ? new ResizeObserver(publish) : null
+    watch?.observe(el)
+    return () => {
+      watch?.disconnect()
+      root.removeProperty('--chip-bottom')
+    }
+  }, [chipTop])
+
+  if (!visible) return null
+
   const glass = dark
     ? 'border-white/10 bg-slate-900/60 text-slate-50 shadow-[0_20px_60px_rgba(0,0,0,0.45)]'
     : 'border-white/70 bg-white/70 text-slate-900 shadow-[0_20px_60px_rgba(15,23,42,0.28)]'
@@ -433,18 +457,19 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
 
   if (view === 'chip') {
     const pending = !name && !skipped
-    const at = layout === 'wide' ? CHIP_AT.wide : layout === 'tall' ? (driving ? CHIP_AT.compactDriving : CHIP_AT.compact) : overlay && landscape ? CHIP_AT.shortTouch : CHIP_AT.compact
+    const at = layout === 'wide' ? CHIP_AT.wide : chipTop ? CHIP_AT.compact : CHIP_AT.shortTouch
     const pill = `pointer-events-auto absolute ${at} flex items-center rounded-full border text-[12px] backdrop-blur-xl backdrop-saturate-150 ${glass} ${enter}`
+    const style = chipTop ? { top: chipTop } : undefined
     return (
       <div className="pointer-events-none absolute inset-0 z-30 font-sans antialiased select-none">
         {pending ? (
-          <button type="button" onClick={askForName} className={`${pill} gap-2 py-1 pr-3.5 pl-1`} data-concierge="chip">
+          <button ref={chipRef} type="button" onClick={askForName} className={`${pill} gap-2 py-1 pr-3.5 pl-1`} style={style} data-concierge="chip">
             <SloaneMark size={24} />
             <span className="font-semibold">{SLOANE.name}</span>{' '}
             <span className={`truncate ${muted}`}>{compact ? 'Your name?' : 'What should I call you?'}</span>
           </button>
         ) : (
-          <div className={pill} role="group" aria-label={`${SLOANE.name}, your concierge`}>
+          <div ref={chipRef} className={pill} style={style} role="group" aria-label={`${SLOANE.name}, your concierge`}>
             <button type="button" onClick={openGoal} className="flex min-w-0 items-center gap-2 py-1 pr-2.5 pl-1" data-concierge="chip">
               <SloaneMark size={24} />
               <span className="truncate font-semibold">Tell {SLOANE.name} a goal</span>

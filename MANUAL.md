@@ -80,10 +80,11 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
   screen (under 500 px tall) the Brake and Handbrake buttons are a size smaller. Sloane's card stands clear of the
   buttons: on foot in the band between the stick and the buttons (on a phone under 600 px across it gives up the
   stick's inner edge rather than grow too narrow), at the wheel over the buttons, and it scrolls inside itself when a
-  short screen cannot hold it. Her chip stands under the minimap; on a short phone in landscape it rises to end above
-  the buttons, and where there is no room under the minimap (a phone under browser bars) it moves left of it, its goal
-  text cut short to keep clear of the HUD's panels on the left (under about 600 px across it can still reach a
-  passing message there). This follows the touch buttons being on screen, so a pad paired with a phone keeps it. The
+  short screen cannot hold it. Her chip stands under the minimap and the HUD's panels, and the HUD's messages start
+  below it; on a short phone in landscape it rises to end above the buttons, and where there is no room under the
+  minimap (a phone under browser bars) it moves left of it, its goal text cut short to keep clear of the HUD's panels
+  on the left (under about 600 px across it can still reach a passing message there). On a short screen the HUD's
+  readout keeps to three lines: a paired pad's line takes the First Law counter's place. This follows the touch buttons being on screen, so a pad paired with a phone keeps it. The
   browser smoke test checks, at six phone and tablet sizes both ways up and at two landscape views under browser bars,
   on foot, driving and driving with a paired pad, that every control is on screen and clear of the others, the stick,
   the speedometer, Sloane's chip and her Controls card, that the chip is clear of the stick, the minimap and the HUD's

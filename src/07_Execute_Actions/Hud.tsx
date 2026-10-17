@@ -39,6 +39,31 @@ const FRAME_COMPACT =
   'absolute top-[max(0.75rem,env(safe-area-inset-top))] right-[max(0.75rem,env(safe-area-inset-right))] ' +
   'bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-[max(0.75rem,env(safe-area-inset-left))]'
 
+/** Where the compact layout's panels end (the header, the readout and the status chips under them, not the
+ *  toasts), for Sloane's chip (Concierge.tsx), which keeps clear of them: --hud-bottom is the height from the
+ *  screen's top to their foot, --hud-right the width from its left edge to their right edge. The toasts make
+ *  room for the chip instead: while it stands under the minimap it publishes its own foot as --chip-bottom,
+ *  and they start below it. A ref callback, so it runs when the panels mount and cleans up when they go. */
+function publishPanels(el: HTMLDivElement | null) {
+  if (!el) return
+  const root = document.documentElement.style
+  const publish = () => {
+    const r = el.getBoundingClientRect()
+    root.setProperty('--hud-bottom', `${Math.round(r.bottom)}px`)
+    root.setProperty('--hud-right', `${Math.round(r.right)}px`)
+  }
+  publish()
+  const watch = typeof ResizeObserver === 'function' ? new ResizeObserver(publish) : null
+  watch?.observe(el)
+  window.addEventListener('resize', publish)
+  return () => {
+    watch?.disconnect()
+    window.removeEventListener('resize', publish)
+    root.removeProperty('--hud-bottom')
+    root.removeProperty('--hud-right')
+  }
+}
+
 /** The capture chip steps aside once the player has covered this much ground: by then they know the controls
  *  (and Sloane's chip lists them all). */
 const HINT_UNTIL_METRES = 30
@@ -326,40 +351,46 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
       {visible && compact && (
         <div className={FRAME_COMPACT}>
           <div className="absolute top-0 left-0 flex max-w-[calc(100%_-_7.75rem)] flex-col items-start gap-2">
-            {/* Landscape phone: header and readout side by side (wrapping if narrow), so the toast
-                below them ends above the touch stick. Otherwise `contents` keeps them in the column. */}
-            <div className={short ? 'flex max-w-full flex-wrap items-start gap-2' : 'contents'}>
-              <div className={`flex max-w-full items-center gap-2.5 py-2 pr-3.5 pl-2.5 ${panel}`} data-hud="panel">
-                <MonolithLogo size={28} title="" />
-                <div className="min-w-0">
-                  <div className="flex min-w-0 items-center text-[14px] leading-tight font-semibold tracking-tight">{BRAND.name}{nameTag}</div>
-                  <div className={`truncate text-[11px] ${muted}`}>{c.district}</div>
-                </div>
-                <div className={divider} />
-                <div className="text-[15px] font-semibold tabular-nums tracking-tight">{c.clock}</div>
-              </div>
-              <div className={`max-w-full px-3 py-2 text-[11px] ${panel}`} data-hud="panel">
-                {(!c.region || c.streets) && (
-                  <div className="flex items-center gap-2">
-                    <Signal label="E–W" light={c.signalEW} />
-                    <Signal label="N–S" light={c.signalNS} />
-                    <span className={`tabular-nums ${muted}`}>{c.signalRemaining.toFixed(0)}s</span>
+            <div ref={publishPanels} className="flex max-w-full flex-col items-start gap-2">
+              {/* Landscape phone: header and readout side by side (wrapping if narrow), so the toast
+                  below them ends above the touch stick. Otherwise `contents` keeps them in the column. */}
+              <div className={short ? 'flex max-w-full flex-wrap items-start gap-2' : 'contents'}>
+                <div className={`flex max-w-full items-center gap-2.5 py-2 pr-3.5 pl-2.5 ${panel}`} data-hud="panel">
+                  <MonolithLogo size={28} title="" />
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center text-[14px] leading-tight font-semibold tracking-tight">{BRAND.name}{nameTag}</div>
+                    <div className={`truncate text-[11px] ${muted}`}>{c.district}</div>
                   </div>
-                )}
-                <div className={`mt-1 truncate tabular-nums ${muted}`}>
-                  {s.output.camera ? `${s.output.camera.fps.toFixed(0)} fps · ${s.output.fps.toFixed(0)} Hz` : `${s.output.fps.toFixed(0)} fps`} · {q.label}{q.auto ? ' · auto' : ''}
+                  <div className={divider} />
+                  <div className="text-[15px] font-semibold tabular-nums tracking-tight">{c.clock}</div>
                 </div>
-                <div className={`truncate tabular-nums ${muted}`}>
-                  First Law {k.law1.toLocaleString()} · {k.sensorFlips.toLocaleString()} flips
+                {/* On a short screen the readout keeps to three lines and 12 rem, so it stays beside the header and
+                    above Sloane's chip: a device line (a paired pad) takes the First Law line's place. */}
+                <div className={`${tight ? 'max-w-[min(100%,12rem)]' : 'max-w-full'} px-3 py-2 text-[11px] ${panel}`} data-hud="panel">
+                  {(!c.region || c.streets) && (
+                    <div className="flex items-center gap-2">
+                      <Signal label="E–W" light={c.signalEW} />
+                      <Signal label="N–S" light={c.signalNS} />
+                      <span className={`tabular-nums ${muted}`}>{c.signalRemaining.toFixed(0)}s</span>
+                    </div>
+                  )}
+                  <div className={`mt-1 truncate tabular-nums ${muted}`}>
+                    {s.output.camera ? `${s.output.camera.fps.toFixed(0)} fps · ${s.output.fps.toFixed(0)} Hz` : `${s.output.fps.toFixed(0)} fps`} · {q.label}{q.auto ? ' · auto' : ''}
+                  </div>
+                  {!(tight && s.supplier.hal) && (
+                    <div className={`truncate tabular-nums ${muted}`}>
+                      First Law {k.law1.toLocaleString()} · {k.sensorFlips.toLocaleString()} flips
+                    </div>
+                  )}
+                  {s.supplier.hal && <div className={`truncate ${muted}`}>{s.supplier.hal}</div>}
                 </div>
-                {s.supplier.hal && <div className={`truncate ${muted}`}>{s.supplier.hal}</div>}
               </div>
+              {recChip}
+              {micChip}
+              {ghostChip}
+              {renderChip}
             </div>
-            {recChip}
-            {micChip}
-            {ghostChip}
-            {renderChip}
-            <div className="flex w-68 max-w-full flex-col gap-2">{toasts}</div>
+            <div className="mt-[max(0px,calc(var(--chip-bottom,0px)_-_var(--hud-bottom,0px)))] flex w-68 max-w-full flex-col gap-2">{toasts}</div>
           </div>
 
           <div className="absolute top-0 right-0 flex flex-col items-end gap-2" data-hud="minimap">
