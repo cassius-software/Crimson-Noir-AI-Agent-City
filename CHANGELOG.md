@@ -32,7 +32,8 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   veil adds "Still starting…" with Restart and Open the console; it fails nothing (a software adapter takes
   minutes). `index.html` gains a classic-script watchdog in the head, before the page's module, that shows a card
   with Restart when the page's script never ran (a download cut off, a browser too old to read it, an error while it
-  loaded) and takes React's uncaught errors, and a `<noscript>` that says how to turn JavaScript on and that the Files
+  loaded), adding what the city will need where the browser plainly lacks it (a secure address, iOS 26, WebGPU), and
+  takes React's uncaught errors, and a `<noscript>` that says how to turn JavaScript on and that the Files
   app's preview runs no scripts. In headless Chromium (`tools/browser/smoke.mjs fail`): WebGPU taken away (desktop and
   iPhone sizes, upright too), a genuinely insecure origin (`http://lan.test`), no adapter, a hung adapter request, a
   download cut in half, the page's device lost after the boot (a wrapped `lost` promise: headless Chrome cannot reset

@@ -6,9 +6,10 @@
  * nothing else of the page does: it is classic ES5 (no arrow, no let or const, no template), it sits in <head> before
  * the page's module (in the source and, once built, in dist/index.html, where the single file puts the module in the
  * head too), and, run here in a fake page, it draws its card with Restart focused when the module never ran (a cut-off
- * download), when it could not be read (a SyntaxError) or when it threw while loading, and stays out of the way once
- * main.tsx said it started; Enter and a pad's A restart, and the console it may offer keeps the page's other query
- * words. The <noscript> words and main.tsx's hand-over of React's uncaught errors are pinned too.
+ * download), when it could not be read (a SyntaxError) or when it threw while loading, adds what the city will need
+ * where the browser plainly lacks it (a secure address, iOS 26, WebGPU; nothing under ?boot=tty), and stays out of
+ * the way once main.tsx said it started; Enter and a pad's A restart, and the console it may offer keeps the page's
+ * other query words. The <noscript> words and main.tsx's hand-over of React's uncaught errors are pinned too.
  * What breaks if it is removed? A browser that cannot run the page could be left on a black splash with nothing to
  * press, in the installed iPhone app and the Windows app that have no reload of their own, with no test to notice.
  */
@@ -43,7 +44,6 @@ test('the watchdog is classic ES5 in <head> before the page\'s module, in the so
   const code = watchdog(SOURCE)
   assert.doesNotMatch(code, /=>|`|\b(?:let|const|class|async|await)\s/, 'ES5: an old browser parses it')
   assert.doesNotMatch(code, /\binset:|overflow-wrap:\s*anywhere/, 'and lays the card out')
-  assert.doesNotMatch(code, /WebGPU/, 'a page that never ran knows nothing of the GPU (and the console needs none)')
   if (existsSync(DIST)) {
     const built = readFileSync(DIST, 'utf8')
     assertOrder(built, 'dist/index.html')
@@ -91,6 +91,8 @@ class Page {
   body: El
   document: { body: El; documentElement: El; activeElement: El | null; createElement(t: string): El; createTextNode(t: string): { text: string }; querySelector(q: string): unknown }
   window: Record<string, unknown>
+  ua = 'TestAgent/1.0'
+  nav: Record<string, unknown> = {}
   constructor(search = '') {
     this.body = new El('body', this)
     this.document = {
@@ -110,7 +112,7 @@ class Page {
     const context = createContext({
       window: this.window,
       document: this.document,
-      navigator: { userAgent: 'TestAgent/1.0', getGamepads: () => this.pads },
+      navigator: { userAgent: this.ua, getGamepads: () => this.pads, ...this.nav },
       setTimeout: (f: () => void) => { this.timers.push(f) },
       setInterval: (f: () => void) => { this.intervals.push(f) },
     })
@@ -158,6 +160,26 @@ test('a SyntaxError or a throw while loading has its own words and its message; 
   fine.fire('error', { error: { name: 'Error', message: 'later' } })
   fine.fire('load')
   assert.equal(fine.card, undefined, 'main.tsx said it started: no card')
+})
+
+test('what the city will need, where the browser plainly lacks it; nothing of the GPU under ?boot=tty', () => {
+  const words = (p: Page) => { p.run(watchdog(SOURCE)); p.fire('load'); return p.card!.all().map((e) => e.text).join(' ') }
+  const old = new Page('?map=lakefront')
+  old.ua = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1'
+  assert.match(words(old), /needs iOS 26 on this iPhone \(iPhone 11, iPhone SE \(2nd generation\) and newer\)/)
+  const ipad = new Page()
+  ipad.ua = 'Mozilla/5.0 (iPad; CPU OS 17_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.7 Mobile/15E148 Safari/604.1'
+  assert.match(words(ipad), /needs iPadOS 26 on this iPad/)
+  const plain = new Page()
+  plain.window.isSecureContext = false
+  assert.match(words(plain), /needs a secure address: open the page over https:\/\//)
+  assert.match(words(new Page()), /needs WebGPU: a current Chrome, Edge or Brave, or Safari 26/, 'no navigator.gpu')
+  const fine = new Page()
+  fine.nav = { gpu: {} }
+  assert.doesNotMatch(words(fine), /also needs/, 'a browser with WebGPU on a secure page is told nothing more')
+  const tty = new Page('?boot=tty')
+  tty.ua = old.ua
+  assert.doesNotMatch(words(tty), /also needs|WebGPU|iOS 26/, 'the console needs no GPU and no iOS 26')
 })
 
 test('__bootFatal draws once, offers the console on ?boot=tty keeping the other query words, and Enter and A restart', () => {

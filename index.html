@@ -109,13 +109,26 @@
         w.addEventListener('error', function (e) {
           if (!w.__bootDone) seen.push(e.error || { name: '', message: e.message })
         })
+        // What the city itself will need once the page runs, where this browser plainly lacks it: a secure address,
+        // iOS 26 on an iPhone or iPad (Safari's Version token), WebGPU. Nothing under ?boot=tty: the console needs none.
+        function needs() {
+          var ua = navigator.userAgent, ios = /\b(iPhone|iPad|iPod)\b/.exec(ua), v = /\bVersion\/(\d+)/.exec(ua)
+          if (/[?&]boot=tty(?:&|$)/.test(w.location.search)) return []
+          if (w.isSecureContext === false) return ['The city also needs a secure address: open the page over https://.']
+          if (ios && v && +v[1] < 26) {
+            return [ios[1] === 'iPad' ? 'The city also needs iPadOS 26 on this iPad.' : 'The city also needs iOS 26 on this iPhone (iPhone 11, iPhone SE (2nd generation) and newer).']
+          }
+          if (!('gpu' in navigator)) return ['The city also needs WebGPU: a current Chrome, Edge or Brave, or Safari 26.']
+          return []
+        }
         w.addEventListener('load', function () {
           setTimeout(function () {
             if (w.__bootDone) return
             var name = appName(), first = seen[0], update = 'If it happens again, update the browser (on an iPhone or iPad: Settings > General > Software Update).'
-            if (!first) fatal(name + ' couldn’t start', ['The page did not finish downloading, or this browser did not run its script.', 'Restart to load it again.', update], 'the page’s script never ran', false)
-            else if (first.name === 'SyntaxError') fatal(name + ' couldn’t start', ['This browser could not read the page’s script: it is older than ' + name + ' needs, or the download was cut off.', 'Restart to load it again.', update], 'SyntaxError: ' + first.message, false)
-            else fatal(name + ' couldn’t start', ['The page stopped while it was loading.', 'Restart to load it again.', update], (first.name ? first.name + ': ' : '') + first.message, false)
+            var then = ['Restart to load it again.', update].concat(needs())
+            if (!first) fatal(name + ' couldn’t start', ['The page did not finish downloading, or this browser did not run its script.'].concat(then), 'the page’s script never ran', false)
+            else if (first.name === 'SyntaxError') fatal(name + ' couldn’t start', ['This browser could not read the page’s script: it is older than ' + name + ' needs, or the download was cut off.'].concat(then), 'SyntaxError: ' + first.message, false)
+            else fatal(name + ' couldn’t start', ['The page stopped while it was loading.'].concat(then), (first.name ? first.name + ': ' : '') + first.message, false)
           }, 0)
         })
       })()
