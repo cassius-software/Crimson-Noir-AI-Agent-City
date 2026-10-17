@@ -194,7 +194,7 @@ test('Android without WebGPU: one tap hands this address to Chrome; never in Chr
   const ff = card(FF)
   assert.equal(ff.headline, 'Open this page in Chrome')
   assert.equal(ff.openIn?.label, 'Open in Chrome')
-  assert.equal(ff.openIn?.href, 'intent://cassius-software.github.io/Crimson-Noir-AI-Agent-City/?map=city#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=https%3A%2F%2Fplay.google.com%2Fstore%2Fapps%2Fdetails%3Fid%3Dcom.android.chrome;end', 'the page, its query kept, its fragment dropped')
+  assert.equal(ff.openIn?.href, 'intent://cassius-software.github.io/Crimson-Noir-AI-Agent-City/?map=city#Intent;scheme=https;package=com.android.chrome;end', 'the page, its query kept, its fragment dropped')
   assert.equal(platformOf(SAMSUNG).browser, 'other', 'Samsung Internet is not Chrome')
   assert.ok(card(SAMSUNG).openIn, 'Samsung Internet')
   assert.ok(card(UA.androidWebView).openIn, 'an app\'s built-in browser')

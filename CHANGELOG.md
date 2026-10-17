@@ -36,7 +36,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   names the step the boot is on. The page's 10 MB script moved to the end of the page, so a slow connection shows the
   splash while it downloads instead of a blank page (the browser smoke holds the script back and checks). Firefox,
   Samsung Internet and in-app browsers on Android, which have no WebGPU, get **Open in Chrome** as the card's first
-  button. A first visit
+  button (an intent: link; the page still names no address off the machine). A first visit
   is checked (a secure page, WebGPU, a full adapter) before the onboarding, so a browser that cannot run the city
   gets the card instead of the whole onboarding first. After 20 s of visible time without a first frame the boot
   veil adds "Still starting…" with Restart and Open the console; it fails nothing (a software adapter takes

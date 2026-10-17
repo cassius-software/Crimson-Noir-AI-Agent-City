@@ -163,16 +163,16 @@ export function classify(error: unknown, env: Env): Failure {
 /**
  * Pure. On Android, a browser without WebGPU (Firefox, Samsung Internet, an app's built-in browser, or a Custom Tab
  * of one, as a link tapped in another app opens) gets a button that hands this very address to Chrome: an intent:
- * link, which Android browsers pass to the app it names, falling back to Chrome's Play Store page where Chrome is
- * missing. Never in Chrome itself (Brave and Edge report as Chrome or Edge), the installed app or the Windows app,
- * and never without an http(s) address to hand over.
+ * link, which Android browsers pass to the app it names (Chrome comes with almost every Android phone; where it is
+ * missing the tap does nothing and the card's words still say to install it: no store address is named here, the
+ * page names no address off this machine, airgap.test.ts). Never in Chrome itself (Brave and Edge report as Chrome
+ * or Edge), the installed app or the Windows app, and never without an http(s) address to hand over.
  */
 export function openInChrome(env: Pick<Env, 'href' | 'standalone' | 'native'>, p: Platform): { label: string; href: string } | null {
   if (p.os !== 'android' || ((p.browser === 'chrome' || p.browser === 'edge') && !p.inApp) || env.standalone || env.native) return null
   const m = /^(https?):\/\/([^#]+)/.exec(env.href ?? '')
   if (!m) return null
-  const store = encodeURIComponent('https://play.google.com/store/apps/details?id=com.android.chrome')
-  return { label: 'Open in Chrome', href: `intent://${m[2]}#Intent;scheme=${m[1]};package=com.android.chrome;S.browser_fallback_url=${store};end` }
+  return { label: 'Open in Chrome', href: `intent://${m[2]}#Intent;scheme=${m[1]};package=com.android.chrome;end` }
 }
 
 /** How a halt reads: a graphics reset, a physics realm fault, a frame loop that kept failing, or a real Ring-0 audit. */

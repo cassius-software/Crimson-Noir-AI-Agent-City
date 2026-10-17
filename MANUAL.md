@@ -2007,7 +2007,7 @@ bar and no reload of their own, so the page carries its own way out.
   on a slow connection the splash shows while it downloads instead of a blank page; after the first visit the
   installed copy opens offline.
 - **Firefox and other browsers on Android** have no WebGPU: the card's first button, **Open in Chrome**, hands the
-  same address to Chrome (to Chrome's Play Store page where Chrome is missing). A link tapped in another app opens in
+  same address to Chrome (which comes with almost every Android phone). A link tapped in another app opens in
   the phone's default browser, which may be Firefox.
 - **After the start.** A lost GPU (the page's device, or the crowd's in the physics worker) halts the city with a
   graphics-reset card; lost while the page was hidden (another app, another tab, or switching away while the city
