@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  controlHints, familyOf, glyph, glyphKind, isPadFamily, spokenGlyph, type ControlAction, type GlyphFamily,
+  controlHints, familyOf, glyph, glyphKind, isPadFamily, modeGlyph, spokenGlyph, type ControlAction, type GlyphFamily,
 } from './glyphs.ts'
 
 const ACTIONS: readonly ControlAction[] = ['move', 'look', 'run', 'interact', 'handbrake', 'reset', 'throttle', 'brake', 'clock', 'console', 'hud', 'ghost', 'ping']
@@ -77,6 +77,10 @@ test('touch glyphs are the on-screen control labels; the keyboard\'s one-key act
   assert.equal(t.console, 'Menu')
   assert.equal(t.hud, 'Menu')
   assert.equal(t.ghost, 'Menu')
+  // In the car the door button reads Exit car, so the car's toast names that button (engine.ts).
+  assert.equal(modeGlyph('interact', 'touch', true), 'Exit car')
+  assert.equal(modeGlyph('interact', 'touch', false), 'Enter car')
+  assert.equal(modeGlyph('interact', 'keyboard', true), 'E')
 })
 
 test('every glyph is plain text or an arrow: no private-use logo code points, no button symbols', () => {
@@ -162,13 +166,13 @@ test('all controls: complete per family, unbound ones skipped', () => {
     'L=Steer', 'R2=Accelerate', 'L2=Brake · reverse', 'East=Handbrake', 'North=Right the car', 'South=Leave the car', 'R1=Ping a spot or a person',
     'R=Look around', 'D-pad ◀ ▶=Clock −1 h / +1 h', '~=Ring-0 console', 'H=Hide the HUD', 'G=Ghost view',
   ])
+  // Touch's Menu holds four keyboard rows: one row says so, or the list would push a landscape phone's card off the top.
   assert.deepEqual(summary('touch', false, 'all'), [
-    'Stick=Walk', 'Drag=Look around', 'Run=Run', 'Enter car=Enter a car', 'Ping=Ping a spot or a person',
-    'Menu=Clock −1 h / +1 h', 'Menu=Ring-0 console', 'Menu=Hide the HUD', 'Menu=Ghost view',
+    'Stick=Walk', 'Drag=Look around', 'Run=Run', 'Enter car=Enter a car', 'Ping=Ping a spot or a person', 'Menu=Clock, console, HUD, ghost view',
   ])
   assert.deepEqual(summary('touch', true, 'all'), [
     'Stick=Steer and accelerate', 'Brake=Brake · reverse', 'Handbrake=Handbrake', 'Reset=Right the car', 'Exit car=Leave the car', 'Ping=Ping a spot or a person', 'Drag=Look around',
-    'Menu=Clock −1 h / +1 h', 'Menu=Ring-0 console', 'Menu=Hide the HUD', 'Menu=Ghost view',
+    'Menu=Clock, console, HUD, ghost view',
   ])
   for (const f of FAMILIES) {
     for (const d of [false, true]) {

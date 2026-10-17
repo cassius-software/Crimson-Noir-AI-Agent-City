@@ -12,7 +12,7 @@
  */
 import { BRAND } from '../brand.ts'
 import { DUALSENSE_FILTERS, DualSense, dualSenseName, isDualSense } from './dualsense.ts'
-import { genericLayoutOf, padName, parsePadId } from './gamepad.ts'
+import { isUsablePad, padName, parsePadId, pressesFaceButton } from './gamepad.ts'
 import { LineLink, NUS, openBle, openSerial, type ByteChannel } from './lineLink.ts'
 import type { BleDevice, GamepadLike, HardwareNavigator, HidConnectionEvent, HidDevice, SerialConnectionEvent, SerialPort } from './web-hardware.d.ts'
 
@@ -55,6 +55,8 @@ interface PadSlot {
   dev: HalDevice
   index: number
   id: string
+  /** A standard pad, or one without the mapping whose face button has been pressed: passed on to the mapper. */
+  awake: boolean
   vendor: number
   product: number
   pad: GamepadLike
@@ -76,12 +78,13 @@ const errorName = (e: unknown) => (typeof e === 'object' && e !== null && 'name'
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 /** Reads live state (TypeScript would otherwise keep a pre-await narrowing). */
 const gone = (e: { dev: HalDevice }) => e.dev.state === 'disconnected'
-/** The hardware list's word on a pad without the standard mapping: how gamepad.ts GenericPads reads it, if at all. */
-function genericDetail(p: GamepadLike): string {
-  if (p.axes.length < 2 || p.buttons.length < 4) return 'non-standard mapping (ignored: no stick)'
-  const layout = genericLayoutOf(p)
-  if (layout === 'evdev') return 'non-standard mapping (read in Linux order: sticks, triggers, d-pad)'
-  return layout === 'four-axis' ? 'non-standard mapping (best guess: two sticks, face buttons)' : 'non-standard mapping (best guess: left stick, face buttons)'
+/**
+ * The hardware list's word on a pad without the standard mapping: whether gamepad.ts GenericPads reads it, and whether
+ * it has been woken (readPads passes such a pad on only after one of its first four buttons is pressed).
+ */
+function genericDetail(p: GamepadLike, awake: boolean): string {
+  if (!isUsablePad(p)) return 'non-standard mapping (ignored: no stick)'
+  return awake ? 'non-standard mapping (best guess by position)' : 'non-standard mapping (press a face button on it to use it)'
 }
 const copy = (d: HalDevice): HalDevice => ({ id: d.id, transport: d.transport, name: d.name, state: d.state, detail: d.detail })
 
@@ -250,7 +253,8 @@ export class HalBus {
 
   /**
    * Per frame, from Input.poll: the pads to read — browser pads plus HID-decoded DualSense pads, minus a browser
-   * pad whose controller the HID driver is already decoding. Also refreshes gamepad rumble. Reuses one array.
+   * pad whose controller the HID driver is already decoding, and minus a pad without the standard mapping until one of
+   * its face buttons has been pressed. Also refreshes gamepad rumble. Reuses one array.
    */
   readPads(): readonly GamepadLike[] {
     const list = this.padList
@@ -274,6 +278,13 @@ export class HalBus {
         if (!p || !p.connected) continue
         const s = this.slotOf(p.index)
         if (s && s.hidden === frame) continue
+        // A pad without the standard mapping waits for a face button: a flight stick, a wheel or a throttle quadrant
+        // (browsers report those the same way) left alone never takes a split-screen seat or moves anyone.
+        if (s && !s.awake) {
+          if (!isUsablePad(p) || !pressesFaceButton(p)) continue
+          s.awake = true
+          s.dev.detail = genericDetail(p, true)
+        }
         list.push(p)
       }
     }
@@ -528,9 +539,9 @@ export class HalBus {
         this.slots.push({
           dev: {
             id: `gamepad:${p.index}`, transport: 'gamepad', name: padName(p.id), state: 'ready',
-            detail: standard ? `standard mapping${p.vibrationActuator?.playEffect ? ' · rumble' : ''}` : genericDetail(p),
+            detail: standard ? `standard mapping${p.vibrationActuator?.playEffect ? ' · rumble' : ''}` : genericDetail(p, false),
           },
-          index: p.index, id: p.id, vendor: ids?.vendor ?? -1, product: ids?.product ?? -1, pad: p, frame, hidden: 0, rumble: 0, rumbleAt: -1e9,
+          index: p.index, id: p.id, awake: standard, vendor: ids?.vendor ?? -1, product: ids?.product ?? -1, pad: p, frame, hidden: 0, rumble: 0, rumbleAt: -1e9,
         })
       }
     }

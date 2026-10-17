@@ -87,7 +87,7 @@ test('wiring: every seat\'s door and reset reach the realm for its own avatar, a
   const loop = between(src, "if (input.take('reset') && driving >= 0) sim.send({ c: 'reset' })", 'readControls(input, driving >= 0, foot, drive)')
   assert.match(loop, /for \(let k = 1; k < this\.views\.length; k\+\+\)/)
   assert.match(loop, /const seat = input\.intent\(this\.views\[k\]\.seat\)/)
-  assert.match(loop, /if \(seat\.take\('interact'\)\) sim\.send\(\{ c: 'interact', player: k \}\)/)
+  assert.match(loop, /if \(seat\.take\('interact'\) && !this\.netRoom\) sim\.send\(\{ c: 'interact', player: k \}\)/, 'no door of theirs in a network room')
   assert.match(loop, /if \(seat\.take\('reset'\) && \(st\.drivings\[k\] \?\? -1\) >= 0\) sim\.send\(\{ c: 'reset', player: k \}\)/)
   const proto = read('./simProtocol.ts')
   assert.match(proto, /\| \{ c: 'reset'; player\?: number \}/)

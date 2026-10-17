@@ -104,31 +104,53 @@ export function isStandardPad(p: GamepadLike | null | undefined): p is GamepadLi
 
 /**
  * A pad the city reads: a standard one, or one without the standard mapping that has a stick and four buttons
- * (GenericPads reads it by position, as a best guess).
+ * (GenericPads reads it by position, as a best guess). The HAL passes on such a pad only once one of its first four
+ * buttons has been pressed (hal.ts readPads), so a flight stick, a wheel or a throttle quadrant left on the desk never
+ * takes a seat or moves anyone.
  */
 export function isUsablePad(p: GamepadLike | null | undefined): p is GamepadLike {
   return !!p && p.connected && (p.mapping === 'standard' || (p.axes.length >= 2 && p.buttons.length >= 4))
 }
 
-/** How GenericPads read a pad without the standard mapping (hal.ts shows it beside the pad's name). */
+/** How GenericPads read a pad without the standard mapping (the HAL's line for it says "best guess by position"). */
 export type GenericLayout = 'evdev' | 'four-axis' | 'stick-only'
 
-/** An axis resting past this is a trigger (it rests at one end), never a stick: read as one, it would spin the view. */
-const REST_TRIGGER = 0.5
+/** A stick axis within this of 0 is centred: one is read only once it has been. */
+const CENTRED = PAD_TUNING.stickDeadzone
+/** A trigger axis at or below this is at rest (the Linux kernel's triggers rest at −1, their minimum). */
+const AT_REST = -0.9
 
-interface GenericView { id: string; layout: GenericLayout; rest: Float32Array; axes: number[]; buttons: { pressed: boolean; value: number }[]; pad: GamepadLike }
+interface GenericView {
+  id: string
+  layout: GenericLayout
+  /** Per axis, read as a stick: seen centred since the pad appeared, so read from then on. */
+  centred: Uint8Array
+  /** Per axis, read as a trigger: seen at rest since the pad appeared, so read from then on. */
+  rested: Uint8Array
+  axes: number[]
+  buttons: { pressed: boolean; value: number }[]
+  pad: GamepadLike
+}
 
 /**
  * Pads whose browser reports no standard mapping (mapping ''), turned into a standard-shaped view by position. Most
  * still put the left stick on axes 0/1 and the face buttons first, so those always map (walk, steer with the stick,
- * which also drives: controls.ts reads stick Y as throttle; south enters a car, east is the handbrake). The rest
- * depends on what the axes do at rest, read when the pad is first seen:
- * - 'evdev': six or more axes with 2 and 5 resting at one end. That is the Linux kernel's order for a pad with
- *   analog triggers (left stick, left trigger, right stick, right trigger, then the d-pad as two axes), which
- *   Firefox on Linux passes through: the right stick looks, the triggers brake and throttle, the d-pad steps the
- *   clock, and the buttons after the shoulders are remapped to select, start, home and the stick clicks.
- * - 'four-axis': exactly four axes, none resting at an end: the right stick is axes 2/3 (most HID pads); buttons
- *   past the shoulders are dropped, since their order differs from pad to pad.
+ * which also drives: controls.ts reads stick Y as throttle; south enters a car, east is the handbrake). Nothing is
+ * known of an axis until it is seen doing what its part does, so nothing moves on its own:
+ * - an axis read as a stick counts only once it has been seen centred: a stick held when the pad appears comes alive
+ *   when it is let go, and a lever or slider parked off centre never drives or turns anyone;
+ * - an axis read as a trigger counts only once it has been seen at rest, at its low end: one held when the pad appears,
+ *   or one a browser reports as 0 until it is first pressed (Firefox), reads nothing rather than half a pull.
+ * The layout:
+ * - 'evdev': six or more axes, recognised the first time axes 2 and 5 sit at their low end while 3 and 4 are centred.
+ *   That is the Linux kernel's order for a pad with analog triggers (left stick, left trigger, right stick, right
+ *   trigger, then the d-pad as two axes), which Firefox and Chromium on Linux pass through for a pad they do not know
+ *   (and HID's own order, X Y Z Rx Ry Rz, elsewhere): the right stick looks, the triggers brake and throttle, the d-pad
+ *   steps the clock, and the buttons after the shoulders are remapped to select, start, home and the stick clicks.
+ *   Until then the pad reads as 'stick-only', so a browser that hides the triggers' rest until they are pressed gets
+ *   the full layout once they have been.
+ * - 'four-axis': exactly four axes: the right stick is axes 2/3 (most HID pads); buttons past the shoulders are
+ *   dropped, since their order differs from pad to pad.
  * - 'stick-only': anything else: the left stick and the first six buttons; no look, so a mislabelled axis never
  *   spins the head.
  * One view per slot, made when a pad first appears there; each read only copies numbers into it.
@@ -141,33 +163,33 @@ export class GenericPads {
     const slot = p.index & (SLOTS - 1)
     let v = this.views[slot]
     if (!v || v.id !== p.id) v = this.views[slot] = GenericPads.make(p)
+    GenericPads.observe(v, p)
     const out = v.axes, b = v.buttons
     for (let k = 0; k < b.length; k++) { b[k].pressed = false; b[k].value = 0 }
-    out[0] = stickAxis(p, v.rest, 0)
-    out[1] = stickAxis(p, v.rest, 1)
+    out[0] = stickAxis(p, v, 0)
+    out[1] = stickAxis(p, v, 1)
     out[2] = 0
     out[3] = 0
     for (let k = 0; k < 6; k++) copyButton(p, k, b[k])
     if (v.layout === 'evdev') {
-      out[2] = stickAxis(p, v.rest, 3)
-      out[3] = stickAxis(p, v.rest, 4)
-      triggerAxis(p, v.rest, 2, b[PAD.l2])
-      triggerAxis(p, v.rest, 5, b[PAD.r2])
+      out[2] = stickAxis(p, v, 3)
+      out[3] = stickAxis(p, v, 4)
+      triggerAxis(p, v, 2, b[PAD.l2])
+      triggerAxis(p, v, 5, b[PAD.r2])
       copyButton(p, 6, b[PAD.select])
       copyButton(p, 7, b[PAD.start])
       copyButton(p, 8, b[PAD.home])
       copyButton(p, 9, b[PAD.l3])
       copyButton(p, 10, b[PAD.r3])
-      if (p.axes.length >= 8) {
-        const hx = axisAt(p, 6), hy = axisAt(p, 7)
-        hatButton(b[PAD.left], hx < -0.5)
-        hatButton(b[PAD.right], hx > 0.5)
-        hatButton(b[PAD.up], hy < -0.5)
-        hatButton(b[PAD.down], hy > 0.5)
-      }
+      // A hat rests centred like a stick: two axes that never have (sliders, say) step no clock.
+      const hx = stickAxis(p, v, 6), hy = stickAxis(p, v, 7)
+      hatButton(b[PAD.left], hx < -0.5)
+      hatButton(b[PAD.right], hx > 0.5)
+      hatButton(b[PAD.up], hy < -0.5)
+      hatButton(b[PAD.down], hy > 0.5)
     } else if (v.layout === 'four-axis') {
-      out[2] = stickAxis(p, v.rest, 2)
-      out[3] = stickAxis(p, v.rest, 3)
+      out[2] = stickAxis(p, v, 2)
+      out[3] = stickAxis(p, v, 3)
     }
     return v.pad
   }
@@ -184,13 +206,24 @@ export class GenericPads {
 
   private static make(p: GamepadLike): GenericView {
     const n = p.axes.length
-    const rest = Float32Array.from(p.axes, (x) => (Number.isFinite(x) ? x : 0))
-    const end = (i: number) => i < n && Math.abs(rest[i]) > REST_TRIGGER
-    const layout: GenericLayout = n >= 6 && end(2) && end(5) ? 'evdev' : n === 4 && ![0, 1, 2, 3].some(end) ? 'four-axis' : 'stick-only'
     const axes = [0, 0, 0, 0]
     const buttons = Array.from({ length: 17 }, () => ({ pressed: false, value: 0 }))
     const pad: GamepadLike = { id: p.id, index: p.index, connected: true, mapping: 'standard', timestamp: 0, axes, buttons }
-    return { id: p.id, layout, rest, axes, buttons, pad }
+    return { id: p.id, layout: n === 4 ? 'four-axis' : 'stick-only', centred: new Uint8Array(n), rested: new Uint8Array(n), axes, buttons, pad }
+  }
+
+  /** What this read shows about each axis, and the kernel's order once its signature is seen. */
+  private static observe(v: GenericView, p: GamepadLike): void {
+    const n = Math.min(p.axes.length, v.centred.length)
+    for (let i = 0; i < n; i++) {
+      const x = axisAt(p, i)
+      if (Math.abs(x) <= CENTRED) v.centred[i] = 1
+      if (x <= AT_REST) v.rested[i] = 1
+    }
+    if (v.layout === 'stick-only' && n >= 6) {
+      const centred = (i: number) => Math.abs(axisAt(p, i)) <= CENTRED
+      if (axisAt(p, 2) <= AT_REST && axisAt(p, 5) <= AT_REST && centred(3) && centred(4)) v.layout = 'evdev'
+    }
   }
 }
 
@@ -200,16 +233,14 @@ function axisAt(p: GamepadLike, i: number): number {
   return Number.isFinite(x) ? x : 0
 }
 
-/** Axis `i` as a stick: one that rests at an end is a trigger after all, and reads centred. */
-function stickAxis(p: GamepadLike, rest: Float32Array, i: number): number {
-  return Math.abs(rest[i] ?? 0) > REST_TRIGGER ? 0 : axisAt(p, i)
+/** Axis `i` as a stick: nothing until it has been seen centred. */
+function stickAxis(p: GamepadLike, v: GenericView, i: number): number {
+  return v.centred[i] ? axisAt(p, i) : 0
 }
 
-/** Axis `i` as a trigger: from its rest (one end) to the other end is 0..1. */
-function triggerAxis(p: GamepadLike, rest: Float32Array, i: number, to: { pressed: boolean; value: number }): void {
-  const r = rest[i] ?? 0
-  const span = Math.abs(r) > REST_TRIGGER ? -Math.sign(r) * 2 : 1
-  const t = Math.max(0, Math.min(1, (axisAt(p, i) - r) / span))
+/** Axis `i` as a trigger: from rest (−1) to fully pulled (+1) is 0..1, nothing until it has been seen at rest. */
+function triggerAxis(p: GamepadLike, v: GenericView, i: number, to: { pressed: boolean; value: number }): void {
+  const t = v.rested[i] ? Math.max(0, Math.min(1, (axisAt(p, i) + 1) / 2)) : 0
   to.value = t
   to.pressed = t > PAD_TUNING.press
 }
@@ -226,11 +257,10 @@ function hatButton(to: { pressed: boolean; value: number }, on: boolean): void {
   to.value = on ? 1 : 0
 }
 
-/** How a pad without the standard mapping is read, for the hardware list (hal.ts). */
-export function genericLayoutOf(p: GamepadLike): GenericLayout {
-  const g = new GenericPads()
-  g.view(p)
-  return g.layoutOf(p.index) ?? 'stick-only'
+/** The first four buttons, a pad's face buttons on every layout: one pressed wakes a pad without the standard mapping (hal.ts). */
+export function pressesFaceButton(p: GamepadLike): boolean {
+  for (let k = 0; k < 4; k++) if (isPressed(p.buttons[k])) return true
+  return false
 }
 
 /**
@@ -278,6 +308,8 @@ export class PadMapper {
   family: PadFamily | null = null
   private readonly prev = new Uint32Array(SLOTS)
   private readonly seen = new Uint8Array(SLOTS)
+  /** The slots read last time: a pad absent then is new this read. */
+  private readonly before = new Uint8Array(SLOTS)
   private readonly v = { x: 0, y: 0 }
   /** Slot of the pad used most recently, −1 = none. */
   private lastSlot = -1
@@ -296,7 +328,8 @@ export class PadMapper {
     for (let i = 0; i < n; i++) {
       const raw = pads![i]
       if (!isUsablePad(raw)) continue
-      const p = isStandardPad(raw) ? raw : this.generic.view(raw)
+      const standard = isStandardPad(raw)
+      const p = standard ? raw : this.generic.view(raw)
       count++
       firstPad ??= p
       const slot = p.index & (SLOTS - 1)
@@ -317,6 +350,9 @@ export class PadMapper {
       const nb = Math.min(b.length, SLOTS)
       for (let k = 0; k < nb; k++) if (isPressed(b[k])) bits |= 1 << k
       bits >>>= 0
+      // A pad without the standard mapping arrives with the face button that woke it (hal.ts) held: that press only
+      // wakes it, it never enters a car or resets one.
+      if (!standard && !this.before[slot]) this.prev[slot] = bits
       const rising = (bits & ~this.prev[slot]) >>> 0
       this.prev[slot] = bits
       if (rising & (1 << PAD.south)) edges |= PAD_EDGE.interact
@@ -334,6 +370,7 @@ export class PadMapper {
       }
     }
     for (let s = 0; s < SLOTS; s++) if (!this.seen[s]) { this.prev[s] = 0; this.generic.forget(s) }
+    this.before.set(this.seen)
     if (l3) this.running = !this.running
     else if (bestMove === 0) this.running = false
     out.run = this.running

@@ -19,7 +19,7 @@ import { Physics } from './physics.ts'
 import { Fleet, type Vehicle } from './vehicles.ts'
 import { SimCore, type StepInput } from './simCore.ts'
 import { createSimHost } from './simHost.ts'
-import { MAX_PLAYERS, POSE, RUN, type FromWorker, type SimInit } from './simProtocol.ts'
+import { MAX_PLAYERS, MODES, POSE, RUN, type FromWorker, type SimInit } from './simProtocol.ts'
 import { inLot } from '../01_Initialize_World/city.ts'
 
 const H = 1 / 60
@@ -445,6 +445,36 @@ test('a reset rights the car of the player it names: player 1\'s at the wheel, n
   rejected = s.rejected
   s = step({ cmds: [{ c: 'reset', player: 7 }, { c: 'reset', player: 0.5 }] })
   assert.equal(s.rejected, rejected + 2)
+  assert.equal(sim.halted, false, sim.panic ?? '')
+})
+
+test('a network room replays player 1 alone: the others are taken out of their cars as it starts, and their doors are refused in it', async () => {
+  const { sim, poses, step } = await core(true)
+  const lane = OPEN.x + 3.5, z = OPEN.z + 40
+  step({ cmds: [
+    { c: 'teleport', x: OPEN.x, z, player: 1 }, { c: 'teleport', x: OPEN.x - 30, z: OPEN.z - 200 },
+    { c: 'dbgMode', i: 0, mode: 'parked' }, { c: 'recover', i: 0, x: lane, z, heading: Math.PI },
+  ] })
+  for (let i = 0; i < 60; i++) step()
+  let s = step({ cmds: [{ c: 'interact', player: 1 }] })
+  assert.deepEqual(s.drivings, [-1, 0, -1, -1], 'player 2 at the wheel of car 0')
+  for (let i = 0; i < 10; i++) step()
+  // The room starts: player 2 is out (a forced exit, no door of theirs) and car 0 goes back to its ring's traffic.
+  s = step({ cmds: [{ c: 'room', on: true }] })
+  assert.deepEqual(s.drivings, [-1, -1, -1, -1])
+  const out = s.events.find((e) => e.e === 'exited')
+  assert.ok(out && out.e === 'exited' && out.player === 1 && out.forced === true, JSON.stringify(s.events))
+  assert.equal(MODES[poses[POSE.mode]], 'ai', 'back to traffic, not left parked where the room holds nothing')
+  // Beside the car again, player 2's door is refused while the room lasts; player 1's own door still opens.
+  step({ cmds: [{ c: 'dbgMode', i: 0, mode: 'parked' }, { c: 'recover', i: 0, x: lane, z, heading: Math.PI }, { c: 'teleport', x: OPEN.x, z, player: 1 }] })
+  for (let i = 0; i < 30; i++) step()
+  const rejected = step().rejected
+  s = step({ cmds: [{ c: 'interact', player: 1 }] })
+  assert.equal(s.rejected, rejected + 1, 'refused')
+  assert.deepEqual(s.drivings, [-1, -1, -1, -1])
+  step({ cmds: [{ c: 'room', on: false }] })
+  s = step({ cmds: [{ c: 'interact', player: 1 }] })
+  assert.deepEqual(s.drivings, [-1, 0, -1, -1], 'out of the room, the door opens again')
   assert.equal(sim.halted, false, sim.panic ?? '')
 })
 

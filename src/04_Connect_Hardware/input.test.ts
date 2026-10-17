@@ -8,8 +8,10 @@
  * lock, a click (no drag) captures the pointer, pitch is clamped to ±PITCH_LIMIT, the terminal and lost
  * focus end a drag, touch drag uses first-person sensitivity, the right stick turns the head,
  * `padFamily` follows the controller used last, the ping is one edge from Q, the middle mouse button
- * (never a drag) and a pad's right shoulder, a Command chord holds no key, Space and the arrows are the game's,
- * raw mouse counts are asked for and a driver's spike is dropped, and a mouse puts a touch laptop's overlay away.
+ * (never a drag) and a pad's right shoulder, a Command chord holds no key, Space and the arrows never click a
+ * button the mouse left focused (one reached with Tab keeps Space), raw mouse counts are asked for and a driver's
+ * spike is dropped (judged by rate, so a busy frame's merged movement is kept), and a mouse puts a touch laptop's
+ * overlay away, Run toggle and all, but never a touch-first tablet's.
  * What breaks if it is removed? A regression to orbit-camera input (a wheel zoom, a click that must come
  * first, an unclamped pitch that flips the view) could ship unnoticed.
  */
@@ -222,17 +224,27 @@ test('a touch laptop: a finger brings the touch overlay, the mouse moving again 
   assert.equal(input.touch, true, 'a finger moving is not the mouse')
   doc.dispatchEvent(ev('pointermove', { pointerType: 'mouse', movementX: 0, movementY: 0 }))
   assert.equal(input.touch, true, 'a mouse event that did not move (a synthetic one) changes nothing')
+  // The Run toggle left on goes with its button: the keyboard walks again until Shift.
+  input.setTouchButton('run', true)
+  input.poll(1 / 60)
+  assert.equal(input.analog.run, true)
+  assert.equal(input.mouseHidesTouch, true)
   doc.dispatchEvent(ev('pointermove', { pointerType: 'mouse', movementX: 3, movementY: -1 }))
   assert.equal(input.touch, false)
   assert.equal(input.device, 'keyboard+mouse')
-  // A tablet whose primary pointer is the finger keeps the overlay when a mouse moves.
+  assert.equal(input.touchHeld('run'), false, 'the latch is let go with the overlay')
+  input.poll(1 / 60)
+  assert.equal(input.analog.run, false)
+  // A tablet whose primary pointer is the finger keeps the overlay (and the latch) when a mouse moves.
   const m = globalThis as unknown as { matchMedia?: unknown }
   m.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} })
   try {
     const tablet = new Input(canvas as unknown as HTMLCanvasElement, new HalBus({ navigator: { getGamepads: () => [] } }))
-    tablet.engageTouch()
+    assert.equal(tablet.mouseHidesTouch, false, 'its overlay takes a mouse press like a finger (TouchControls.tsx)')
+    tablet.setTouchButton('run', true)
     doc.dispatchEvent(ev('pointermove', { pointerType: 'mouse', movementX: 3, movementY: -1 }))
     assert.equal(tablet.touch, true)
+    assert.equal(tablet.touchHeld('run'), true)
     tablet.dispose()
   } finally {
     delete m.matchMedia
@@ -257,19 +269,40 @@ test('a Command chord holds nothing (macOS sends no keyup for its letter); Comma
   assert.equal(input.down('ShiftRight'), true)
 })
 
-test('Space and the arrows are the game\'s (no focused button clicked, no scroll); the canvas has no context menu', () => {
-  const key = (code: string) => Object.assign(new Event('keydown', { cancelable: true }), { code, repeat: false })
-  for (const code of ['Space', 'ArrowUp', 'ArrowLeft']) {
-    const e = key(code)
-    doc.dispatchEvent(e)
-    assert.equal(e.defaultPrevented, true, code)
-    assert.equal(input.down(code), true, code)
+test('Space and the arrows never click a button the mouse left focused (one reached with Tab keeps Space); the canvas has no context menu', () => {
+  const key = (code: string, target?: object) => {
+    const e = Object.assign(new Event('keydown', { cancelable: true }), { code, repeat: false })
+    if (target) Object.defineProperty(e, 'target', { value: target })
+    return e
   }
-  const w = key('KeyW')
+  const button = (focusVisible: boolean) => ({ tagName: 'BUTTON', matches: (q: string) => q === ':focus-visible' && focusVisible })
+  for (const code of ['Space', 'ArrowUp', 'ArrowLeft']) {
+    // Over a button the mouse clicked (it kept the focus): the game's, never a second click or a scroll.
+    const clicked = key(code, button(false))
+    doc.dispatchEvent(clicked)
+    assert.equal(clicked.defaultPrevented, true, code)
+    assert.equal(input.down(code), true, code)
+    // Nothing focused: there is no default to stop, so the Concierge still reads the key as movement.
+    const page = key(code, { tagName: 'BODY', matches: () => false })
+    doc.dispatchEvent(page)
+    assert.equal(page.defaultPrevented, false, `${code} on the page`)
+  }
+  // A Concierge chip reached with Tab: Space presses it, as the keyboard does everywhere.
+  const tabbed = key('Space', button(true))
+  doc.dispatchEvent(tabbed)
+  assert.equal(tabbed.defaultPrevented, false, 'a :focus-visible button keeps Space')
+  // Under pointer lock every Space and arrow is the game's.
+  canvas.dispatchEvent(mouse('pointerdown', 0, 0))
+  canvas.dispatchEvent(mouse('pointerup', 0, 0))
+  assert.equal(input.locked, true)
+  const locked = key('Space', { tagName: 'BODY', matches: () => false })
+  doc.dispatchEvent(locked)
+  assert.equal(locked.defaultPrevented, true, 'locked')
+  doc.exitPointerLock()
+  const w = key('KeyW', button(false))
   doc.dispatchEvent(w)
   assert.equal(w.defaultPrevented, false, 'letters keep their default')
-  const typed = key('Space')
-  Object.defineProperty(typed, 'target', { value: { tagName: 'TEXTAREA' } })
+  const typed = key('Space', { tagName: 'TEXTAREA' })
   doc.dispatchEvent(typed)
   assert.equal(typed.defaultPrevented, false, 'a space typed in a field is a space')
   const menu = new Event('contextmenu', { cancelable: true })
@@ -310,7 +343,7 @@ test('a drag ends when the button is found released, when focus is lost, and whe
   assert.ok(input.yaw < yaw, 'resumed')
 })
 
-test('raw mouse counts are asked for, a plain lock where they are refused; a spike from a still mouse is dropped, a flick is kept', async () => {
+test('raw mouse counts are asked for, a plain lock where they are refused; a spike is dropped, a flick and a busy frame\'s movement are kept', async () => {
   const asked: unknown[] = []
   const lockWith = canvas.requestPointerLock.bind(canvas)
   let refuse = true
@@ -324,18 +357,37 @@ test('raw mouse counts are asked for, a plain lock where they are refused; a spi
   await new Promise((r) => setTimeout(r, 0))
   assert.deepEqual(asked, [{ unadjustedMovement: true }, undefined], 'refused, then a plain lock')
   assert.equal(input.locked, true)
+  // Events a frame apart (16 ms), as the browser stamps them.
+  let t = 1000
+  const move = (dx: number, after = 16) => {
+    t += after
+    const e = ev('mousemove', { movementX: dx, movementY: 0 })
+    Object.defineProperty(e, 'timeStamp', { value: t })
+    doc.dispatchEvent(e)
+  }
   const yaw = input.yaw
-  doc.dispatchEvent(ev('mousemove', { movementX: 900, movementY: 0 }))
-  assert.equal(input.yaw, yaw, 'a 900-count jump out of stillness is a spike')
-  doc.dispatchEvent(ev('mousemove', { movementX: 6, movementY: 0 }))
+  move(900)
+  assert.equal(input.yaw, yaw, 'a 900-count jump as the lock starts is a spike')
+  move(6)
   assert.ok(close(input.yaw, yaw - 6 * LOOK.mouse), 'the next move looks')
   // A flick ramps up: every event is kept.
   let expect = input.yaw
   for (const dx of [40, 120, 300, 600, 380]) {
-    doc.dispatchEvent(ev('mousemove', { movementX: dx, movementY: 0 }))
+    move(dx)
     expect -= dx * LOOK.mouse
   }
   assert.ok(close(input.yaw, expect), 'the flick turned the head in full')
+  // A steady turn, then a 200 ms frame (a region loading): the browser merges its moves into one event of 600 counts,
+  // no faster than the turn. Kept: the view turns the whole way.
+  for (let i = 0; i < 10; i++) move(50)
+  expect = input.yaw
+  move(600, 200)
+  assert.ok(close(input.yaw, expect - 600 * LOOK.mouse), 'a busy frame\'s movement is a look')
+  // Mid-turn, a jump at many times the turn's rate in one frame is a driver's spike.
+  move(50)
+  expect = input.yaw
+  move(900)
+  assert.equal(input.yaw, expect, 'dropped')
   doc.exitPointerLock()
   // Where raw counts are granted, one request is enough.
   refuse = false

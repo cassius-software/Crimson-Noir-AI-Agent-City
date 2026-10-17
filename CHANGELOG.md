@@ -15,6 +15,23 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The city played in a real browser in CI** (`tools/browser/smoke.mjs`, the `browser` job in `ci.yml`). Chromium
+  boots the built page on its software WebGPU adapter (SwiftShader) and plays it through the same events a person
+  makes: as a desktop (keys, a mouse drag, a pad, the console, a car entered, driven and left), as an iPhone (the touch
+  stick, a look drag, both thumbs at once, the Menu and each of its items, and at four phone and tablet sizes both ways
+  up, on foot and driving, every control on screen and clear of the others, the stick and Sloane's chip), as two
+  players on two pads, opened from disk, pinned at Ultra, and as the console alone. A page exception, a GPU
+  validation error, a lost device or the crowd's flow field falling back to the CPU fails it. A software adapter
+  says nothing about speed, heat or a real GPU's driver.
+- **A Menu on touch screens.** Phones had no way to the console, the clock, ghost view, rain mode or hiding the HUD.
+  A round Menu button rides with the action buttons and opens a sheet of them; the console opens from the tap
+  itself, so iOS raises the keyboard, and shows a Close button on a touch screen.
+- **Pads without the standard mapping** (some Bluetooth pads, pads Firefox on Linux does not recognise) were ignored;
+  they are now read by position as a best guess, which `hal` names, once one of their face buttons is pressed: a
+  throttle quadrant, pedals or a wheel left plugged in never takes a player's seat, and an axis is read only after it
+  is seen where its part rests, so a held stick, a parked lever or a slider moves nothing on its own. Valve's vendor
+  id and Safari's PlayStation pad names get their glyphs. Tested against recorded layouts in Node and with a stand-in
+  pad in the browser; no real pad on Linux, Safari or a Steam Deck has been tried.
 - **Eight kinds of vehicle.** The fleet is drawn from `VEHICLE_KINDS` (`src/07_Execute_Actions/car.ts`): an executive
   sedan, a transit pod, a logistics van, a transit coach, a courier robot, a security SUV, a gullwing coupe and a
   utility rig, each with its own side profile, glass, lights (brake lights from the brake demand, a cabin glow at night
@@ -112,6 +129,28 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   envelope, which nothing draws.
 
 ### Fixed
+
+- **The city never started on some Chromium builds**: three r186 sets `swizzle: 'rgba'` on every texture view, and
+  builds that still type that field as a dictionary threw on the first one. `world.ts` drops the identity swizzle.
+- **The crowd's flow field always ran on the CPU**: both of its GPU pipelines used an automatic layout holding only
+  the bindings each entry point reads, so its six-binding group failed validation on every device and the page fell
+  back silently. They now share one explicit layout, held equal to `flowField.wgsl`.
+- **Players 2–4 could not enter, leave or right a car** in split screen: the frame loop took those presses from player
+  1 only. Each pad's south and north buttons now act for its own player. In a network room, which replays player 1
+  alone, only player 1 opens a car door, and anyone else driving when the room starts is put out of the car.
+- **Command chords on a Mac left the avatar walking** (macOS sends no key-up for a letter pressed with Command):
+  a Command chord holds no key, and Command's key-up lets go of the held ones.
+- **Space clicked the last button the mouse pressed**: Space and the arrows never click a button the mouse left
+  focused, and are always the game's under a captured mouse; a button reached with Tab still presses with Space. The
+  right mouse button opens no menu over the city, and the arrows and the right Shift move and run too.
+- **Safari zoomed the page into any text field under 16 px**; on a touch screen every field now reads at 16 px.
+- **A mouse driver's spike could spin the view**: a captured mouse asks for raw counts where the browser has them, and
+  a jump far faster than the mouse was moving is dropped (judged per millisecond, so a long frame's merged movement is
+  kept).
+- **Touch layout on small and upright phones**: held upright while driving, Ping, Reset and Exit car stand in a
+  column clear of the stick; the Menu's sheet never runs off the top; Sloane's card scrolls inside itself on a short
+  screen; a mouse moving on a touch laptop puts the overlay away (and its Run toggle with it), while a tablet whose
+  main pointer is the finger keeps it.
 
 - **A runner beside a turning car could halt the realm.** At full lock a car's centre heads into its inner flank while
   the overhang behind the rear axle swings away; the Ring-0 audit judges a touch by the centre and the Sanctuary judged

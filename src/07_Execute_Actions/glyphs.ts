@@ -138,9 +138,19 @@ function driveGlyph(action: ControlAction, family: GlyphFamily): string | undefi
   return undefined
 }
 
+/** The glyph for an action as the player sees it in the current mode (in the car the touch door button reads "Exit car"). */
+export function modeGlyph(action: ControlAction, family: GlyphFamily, driving: boolean): string {
+  return (driving ? driveGlyph(action, family) : undefined) ?? glyph(action, family)
+}
+
+/** Touch's one row for everything its Menu holds: the four keyboard rows it stands for would push a landscape phone's
+ *  card off the screen. */
+const TOUCH_MENU_LABEL = 'Clock, console, HUD, ghost view'
+
 /**
  * Control hints for the current mode. 'tips' = the Concierge's three; 'all' = every control the family
- * has (unbound ones skipped, and the touch stick's throttle folded into "Steer and accelerate").
+ * has (unbound ones skipped, the touch stick's throttle folded into "Steer and accelerate", and the touch
+ * Menu's actions into one row).
  */
 export function controlHints(family: GlyphFamily, driving: boolean, scope: 'tips' | 'all'): Hint[] {
   const group = family === 'keyboard' || family === 'touch' ? family : 'pad'
@@ -150,8 +160,13 @@ export function controlHints(family: GlyphFamily, driving: boolean, scope: 'tips
   }
   const out: Hint[] = []
   for (const [action, label] of rows) {
-    const g = (driving ? driveGlyph(action, family) : undefined) ?? glyph(action, family)
-    if (g) out.push({ action, glyph: g, kind: glyphKind(action, family), label })
+    const g = modeGlyph(action, family, driving)
+    if (!g) continue
+    if (family === 'touch' && g === GLYPHS.touch.console) {
+      if (!out.some((h) => h.glyph === g)) out.push({ action, glyph: g, kind: glyphKind(action, family), label: TOUCH_MENU_LABEL })
+      continue
+    }
+    out.push({ action, glyph: g, kind: glyphKind(action, family), label })
   }
   return out
 }

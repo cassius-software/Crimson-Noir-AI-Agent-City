@@ -68,21 +68,33 @@ A ping pressed again within a second asks the next kind: go, look, gather, wait 
 Recruitment). With `?players=2`…`4` the keyboard, the mouse and touch stay player 1's, and each further gamepad
 drives a player of its own, entering, leaving and righting its own car (see Split screen).
 
-- **Touch.** The round Menu button on the right edge opens a sheet with the keyboard's one-key actions. The console
-  opens from the tap itself, so the on-screen keyboard comes up, and shows a Close button on a touch screen. Every
-  text field reads at 16 px on a touch screen, so Safari does not zoom the page when one takes focus. Held upright
-  while driving, Ping, Reset and Exit car stand in a column, clear of the stick. On a touch laptop the overlay
-  goes away as soon as the mouse moves, and comes back with the next touch.
-- **Mouse and keyboard.** A captured mouse asks for raw counts (`unadjustedMovement`) where the browser has them,
-  and a jump of more than 400 counts out of a still mouse (a driver's spike) is dropped. Space and the arrows are
-  the game's while no field has focus, so they never click a button that kept the focus. A Command chord on a Mac
-  (Cmd+A, Cmd+Tab) holds no key, since macOS sends no key-up for its letter. The right mouse button opens no menu
-  over the city. Keys are read by place (`KeyboardEvent.code`), so on AZERTY the walk keys are Z Q S D.
+- **Touch.** The round Menu button (three lines) rides with the action buttons at the bottom right: beside them in
+  landscape, above them held upright, and beside Ping at the wheel. It opens a sheet with the keyboard's one-key
+  actions, upward and to the button's left, never past the top of the screen (a sheet taller than the room scrolls);
+  turning the phone or getting in or out of a car closes it. The console opens from the tap itself, so the on-screen
+  keyboard comes up, and shows a Close button on a touch screen. Every text field reads at 16 px on a touch screen,
+  so Safari does not zoom the page when one takes focus. Held upright while driving, Ping, Reset and Exit car stand
+  in a column, clear of the stick. The browser smoke test checks, at four phone and tablet sizes both ways up, on
+  foot and driving, that every control is on screen and clear of the others, the stick and Sloane's chip. Sloane's
+  card scrolls inside itself when a short screen cannot hold it. On a touch laptop the overlay goes away as soon as
+  the mouse moves (the Run toggle with it), and comes back with the next touch; on a tablet whose main pointer is
+  the finger (an iPad with a trackpad) it stays, and a mouse drag there looks like a finger's.
+- **Mouse and keyboard.** A captured mouse asks for raw counts (`unadjustedMovement`) where the browser has them. A
+  jump of more than 400 counts arriving at many times the speed of the moves before it (a driver's spike) is dropped;
+  speed is counts per millisecond between events, so a long frame whose moves the browser merged into one event is
+  kept. Space and the arrows never click a button the mouse left focused, and under a captured mouse they are always
+  the game's; a button reached with Tab (Sloane's chips) still presses with Space. A Command chord on a Mac (Cmd+A,
+  Cmd+Tab) holds no key, since macOS sends no key-up for its letter. The right mouse button opens no menu over the
+  city. Keys are read by place (`KeyboardEvent.code`), so on AZERTY the walk keys are Z Q S D.
 - **Gamepads.** A pad with the standard mapping is read as the table says. One without it (some Bluetooth pads, and
-  pads Firefox on Linux does not recognise) is read by position as a best guess, and `hal` says how: the left stick
-  and the first face buttons always; the Linux kernel's order in full (both sticks, the triggers, the d-pad) when
-  axes 2 and 5 rest at one end; a right stick on axes 2/3 when there are exactly four axes and none rests at an
-  end. An axis resting at one end is never read as a stick, so a guess cannot spin the view.
+  pads Firefox on Linux does not recognise) waits until one of its first four buttons (its face buttons) is pressed,
+  so a throttle quadrant, pedals or a wheel left plugged in never takes a player's seat; that press only wakes it.
+  `hal` lists it meanwhile, with what to press, and a device without a stick is never used. Awake, it is read by
+  position as a best guess, and `hal` says how: the left stick and the first face buttons always; the Linux kernel's
+  order in full (both sticks, the triggers, the d-pad) once axes 2 and 5 are seen resting at one end with 3 and 4
+  centred; a right stick on axes 2/3 when there are exactly four axes. Each axis is read only after it is seen where
+  its part rests (a stick centred, a trigger at its end), so a stick held when the pad wakes, a parked lever or a
+  slider never moves anything on its own, and a guess cannot spin the view.
 
 ## URL options
 
@@ -375,7 +387,10 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   people to every part of the ethical kernel (see Up to four avatars under The ethical kernel). Each viewport is
   its own player's head (`HeadRig`), posed from that player's avatar or the car they drive; a pad's right stick
   turns it with the first player's curve and rates. Each pad's south button enters and leaves a car for its own
-  player, and its north button rights that player's car (`interact` and `reset` carry the player).
+  player, and its north button rights that player's car (`interact` and `reset` carry the player). In a network
+  room (see Networking) the room replays player 1 alone, so there only player 1 opens a car door: a player already
+  driving when the room starts is put out of the car, and the other pads' south button does nothing until it
+  ends.
 - **Every player hears their own city.** Each has a soundscape of their own, in head space, over one shared audio
   context: Web Audio has one listener per context, so that listener stays at the identity and every source is
   placed relative to each head, with smaller car-voice and murmur pools per player. Speech and cues fan out to
