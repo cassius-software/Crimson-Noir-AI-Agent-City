@@ -412,7 +412,8 @@ const SCENARIOS = {
        * The touch layout on phones and tablets of every size, both ways up, and in landscape under browser bars (an
        * iPhone SE in Safari, a 360 dp Android phone in Chrome): each control on screen, none over another, the stick's
        * zone, the speedometer, Sloane's chip or her tallest card (the Controls list); the chip clear of the stick, the
-       * minimap and the HUD's panels, and as wide as its buttons; and the Menu's sheet inside the screen. Below 600 px
+       * minimap and the HUD's panels, and as wide as its buttons; the HUD's panels, with two of its messages raised at
+       * each size, clear of the buttons and the stick's base; and the Menu's sheet inside the screen. Below 600 px
        * across, the card may give up the stick's inner edge. Leaves the iPhone in landscape.
        */
       const SIZES = [[874, 402], [667, 375], [956, 440], [568, 320], [640, 360], [1180, 820]]
@@ -439,7 +440,7 @@ const SCENARIOS = {
         const chip = document.querySelector('[data-concierge="chip"]')
         const pill = chip && (chip.closest('[role="group"]') || chip)
         const hud = (name) => { const e = document.querySelector(\`[data-hud="\${name}"]\`); return e && shown(e) ? box(e) : null }
-        const panels = [...document.querySelectorAll('[data-hud="panel"]')].filter(shown).map(box)
+        const panels = [...document.querySelectorAll('[data-hud="panel"]')].filter(shown).map((e) => ({ text: e.textContent.trim().slice(0, 24), ...box(e) }))
         const parts = pill ? [...pill.querySelectorAll('button')].filter(shown).map(box) : []
         return { w: innerWidth, h: innerHeight, zone: zone ? box(zone) : null, buttons, chip: pill && shown(pill) ? box(pill) : null, parts, minimap: hud('minimap'), speed: hud('speed'), panels }
       })()`
@@ -452,6 +453,9 @@ const SCENARIOS = {
             const portrait = height > width
             await p.b.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true, screenOrientation: portrait ? { type: 'portraitPrimary', angle: 0 } : { type: 'landscapePrimary', angle: 90 } })
             await p.frames(3)
+            // Two of the HUD's messages up at every size (they last six seconds): the car's long one, newest, and a short one.
+            await p.eval(`(() => { const e = window.__SIM__.engine; e.toast('Clock', '18:00'); e.toast('Transit coach', 'Stick ▲ to drive · Brake to brake or reverse · Exit car to leave') })()`)
+            await p.frames(2)
             const L = await p.eval(LAYOUT)
             const at = `${width}x${height}`
             if (!L.zone || L.w !== width) { bad.push(`${at}: no stick zone or the size did not take`); continue }
@@ -465,6 +469,13 @@ const SCENARIOS = {
             if (L.chip && L.minimap && meets(L.chip, L.minimap)) bad.push(`${at}: Sloane's chip over the minimap`)
             if (L.chip && L.speed && meets(L.chip, L.speed)) bad.push(`${at}: Sloane's chip over the speedometer`)
             if (L.chip && L.panels.some((q) => meets(L.chip, q))) bad.push(`${at}: Sloane's chip over a HUD panel`)
+            // The stick's base at rest: 116 px in the middle of its 184 px zone.
+            const base = { l: L.zone.l + 34, t: L.zone.t + 34, r: L.zone.r - 34, b: L.zone.b - 34 }
+            for (const q of L.panels) {
+              const what = q.text ? `the HUD's "${q.text}"` : 'a HUD panel'
+              for (const b of L.buttons) if (meets(q, b)) bad.push(`${at}: ${what} under ${b.name}`)
+              if (meets(q, base)) bad.push(`${at}: ${what} over the stick`)
+            }
             if (L.chip && L.parts.some((q) => q.l < L.chip.l - 1 || q.r > L.chip.r + 1)) bad.push(`${at}: Sloane's chip narrower than its buttons`)
             for (let i = 0; i < L.buttons.length; i++) for (let j = i + 1; j < L.buttons.length; j++) {
               if (meets(L.buttons[i], L.buttons[j])) bad.push(`${at}: ${L.buttons[i].name} over ${L.buttons[j].name}`)

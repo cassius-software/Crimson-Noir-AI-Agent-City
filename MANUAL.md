@@ -80,20 +80,21 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
   screen (under 500 px tall) the Brake and Handbrake buttons are a size smaller. Sloane's card stands clear of the
   buttons: on foot in the band between the stick and the buttons (on a phone under 600 px across it gives up the
   stick's inner edge rather than grow too narrow), at the wheel over the buttons, and it scrolls inside itself when a
-  short screen cannot hold it. Her chip stands under the minimap and the HUD's panels, and the HUD's messages start
-  below it; on a short phone in landscape it rises to end above the buttons, and where there is no room under the
-  minimap (a phone under browser bars) it moves left of it, its goal text cut short to keep clear of the HUD's panels
-  on the left (under about 600 px across it can still reach a passing message there). On a short screen the HUD's
-  readout keeps to three lines: a paired pad's line takes the First Law counter's place. This follows the touch buttons being on screen, so a pad paired with a phone keeps it. The
-  browser smoke test checks, at six phone and tablet sizes both ways up and at two landscape views under browser bars,
-  on foot, driving and driving with a paired pad, that every control is on screen and clear of the others, the stick,
-  the speedometer, Sloane's chip and her Controls card, that the chip is clear of the stick, the minimap and the HUD's
-  panels and as wide as its buttons, and that the Menu's sheet stays inside the screen. On a touch laptop the overlay
-  goes away as soon as the mouse moves (the Run toggle with it), and comes back with the next touch. On a tablet whose
-  main pointer stays the finger with a mouse or trackpad attached (an iPad in Safari 26, going by WebKit's source and
-  not yet tried on an iPad; a Windows 2-in-1 in tablet mode) the overlay stays, and a mouse drag there looks like a
-  finger's; if the browser comes to report a fine main pointer, it behaves like a touch laptop (the overlay goes, the
-  Run toggle with it).
+  short screen cannot hold it. Her chip stands under the minimap and the HUD's panels, above the buttons; held
+  upright, the HUD's messages start below it on foot, and at the wheel one message, cut to a line, stands above it; on
+  a short phone in landscape it rises to end above the buttons, and where there is no room under the minimap (a phone
+  under browser bars) it moves left of it, its goal text cut short to keep clear of the HUD's panels on the left
+  (under about 600 px across it can still reach a passing message there). On a short screen the HUD's readout keeps to
+  three lines: a paired pad's line takes the First Law counter's place. This follows the touch buttons being on
+  screen, so a pad paired with a phone keeps it. The browser smoke test checks, at six phone and tablet sizes both
+  ways up and at two landscape views under browser bars, on foot, driving and driving with a paired pad, that every
+  control is on screen and clear of the others, the stick, the speedometer, Sloane's chip and her Controls card, that
+  the chip is clear of the stick, the minimap and the HUD's panels and as wide as its buttons, and that the Menu's
+  sheet stays inside the screen. On a touch laptop the overlay goes away as soon as the mouse moves (the Run toggle
+  with it), and comes back with the next touch. On a tablet whose main pointer stays the finger with a mouse or
+  trackpad attached (an iPad in Safari 26, going by WebKit's source and not yet tried on an iPad; a Windows 2-in-1 in
+  tablet mode) the overlay stays, and a mouse drag there looks like a finger's; if the browser comes to report a fine
+  main pointer, it behaves like a touch laptop (the overlay goes, the Run toggle with it).
 - **Mouse and keyboard.** A captured mouse asks for raw counts (`unadjustedMovement`) where the browser has them. A
   jump of more than 400 counts arriving at many times the speed of the moves before it (a driver's spike) is dropped;
   speed is counts per millisecond between events, so a long frame whose moves the browser merged into one event is

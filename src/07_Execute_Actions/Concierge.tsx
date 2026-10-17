@@ -82,12 +82,13 @@ const [ORC_BEFORE, ORC_AFTER] = ORC_NOTICE.split(ORC_REGISTRATION)
  *  ends above them; in landscape on foot it stands in the band between the stick and the buttons (on a narrow
  *  phone it gives up the stick's inner edge rather than shrink under 15.5 rem); at the wheel it stands over
  *  them. On a short screen every card scrolls inside its own height rather than run off the top (the controls
- *  list grows by the Menu's row on touch). The chip stands under the minimap and under the HUD's panels, whose foot
- *  and right edge the HUD publishes as --hud-bottom and --hud-right; its toasts start below the chip (--chip-bottom,
- *  published here). On a short touch screen in landscape it rises to end above the buttons when they reach up that
- *  far, and if that would meet the minimap it moves left of it, narrowing (its goal text truncates) to stay clear of
- *  the HUD's left column (17 rem of status chips and toasts, which also keeps it off the stick) and, level with the
- *  panels, of their right edge, down to 10.5 rem: under about 600 px across that floor can still reach a toast.
+ *  list grows by the Menu's row on touch). The chip stands under the minimap and under the HUD's panels (their foot
+ *  is --hud-bottom, published by the HUD), ending above the touch buttons; upright on foot the HUD's toasts start
+ *  below it (--chip-bottom, published here), and at the wheel one toast stands with the panels and the chip below it. On a short touch screen in landscape it rises to end above the buttons when they reach up that far, and
+ *  if that would meet the minimap it moves left of it, narrowing (its goal text truncates) to stay clear of the HUD's
+ *  left column (17 rem of status chips and toasts, which also keeps it off the stick) and, level with the header and
+ *  readout (--hud-row-bottom), of their right edge (--hud-right), down to 10.5 rem: under about 600 px across that
+ *  floor can still reach a toast.
  *  Which placements apply follows the touch overlay being on screen (`overlay`), not the glyphs: a pad paired with a
  *  phone shows its glyphs while the buttons stay.
  *  Desktop: a column from just below the centre of view down to the HUD frame. The card stands at its foot
@@ -106,14 +107,15 @@ const CARD_AT = {
 const CHIP_AT = {
   wide: 'bottom-[calc(max(1.25rem,env(safe-area-inset-bottom))+13.75rem)] left-[max(1.25rem,env(safe-area-inset-left))] max-w-[18rem]',
   compact: 'right-[max(0.75rem,env(safe-area-inset-right))] max-w-[18rem]',
-  shortTouch: '[--chip-top:min(calc(max(0.75rem,env(safe-area-inset-top))_+_7.5rem),calc(100dvh_-_var(--touch-top,0px)_-_2.5rem))] [--chip-right:calc(max(0.75rem,env(safe-area-inset-right))_+_clamp(0rem,calc((max(0.75rem,env(safe-area-inset-top))_+_7.25rem_-_var(--chip-top))_*_100),7.5rem))] [--chip-left:max(calc(max(0.75rem,env(safe-area-inset-left,0px))_+_17.5rem),min(calc(var(--hud-right,0px)_+_0.5rem),calc(max(0.75rem,env(safe-area-inset-left,0px))_+_17.5rem_+_clamp(0px,calc((var(--hud-bottom,0px)_+_0.25rem_-_var(--chip-top))_*_10000),100vw))))] top-(--chip-top) right-(--chip-right) max-w-[max(10.5rem,min(18rem,calc(100%_-_var(--chip-right)_-_var(--chip-left))))]',
+  shortTouch: '[--chip-top:min(calc(max(0.75rem,env(safe-area-inset-top))_+_7.5rem),calc(100dvh_-_var(--touch-top,0px)_-_2.5rem))] [--chip-right:calc(max(0.75rem,env(safe-area-inset-right))_+_clamp(0rem,calc((max(0.75rem,env(safe-area-inset-top))_+_7.25rem_-_var(--chip-top))_*_100),7.5rem))] [--chip-left:max(calc(max(0.75rem,env(safe-area-inset-left,0px))_+_17.5rem),min(calc(var(--hud-right,0px)_+_0.5rem),calc(max(0.75rem,env(safe-area-inset-left,0px))_+_17.5rem_+_clamp(0px,calc((var(--hud-row-bottom,0px)_+_0.25rem_-_var(--chip-top))_*_10000),100vw))))] top-(--chip-top) right-(--chip-right) max-w-[max(10.5rem,min(18rem,calc(100%_-_var(--chip-right)_-_var(--chip-left))))]',
 } as const
 /** The compact chip's top (inline, not a class, because the same expression is published as --chip-bottom): under
  *  the minimap, or the speed chip at the wheel, and under the HUD's panels (--hud-bottom, from Hud.tsx) when they
- *  reach lower, as a readout with a device line does on an upright phone. */
+ *  reach lower, as a readout with a device line does on an upright phone, but always ending above the touch buttons
+ *  (where both cannot hold it stands over a panel, which takes no taps, never over a button). */
 const CHIP_TOP = {
-  foot: 'max(calc(max(0.75rem, env(safe-area-inset-top)) + 7.5rem), calc(var(--hud-bottom, 0px) + 0.5rem))',
-  driving: 'max(calc(max(0.75rem, env(safe-area-inset-top)) + 11.75rem), calc(var(--hud-bottom, 0px) + 0.5rem))',
+  foot: 'min(max(calc(max(0.75rem, env(safe-area-inset-top)) + 7.5rem), calc(var(--hud-bottom, 0px) + 0.5rem)), calc(100dvh - var(--touch-top, 0px) - 2.5rem))',
+  driving: 'min(max(calc(max(0.75rem, env(safe-area-inset-top)) + 11.75rem), calc(var(--hud-bottom, 0px) + 0.5rem)), calc(100dvh - var(--touch-top, 0px) - 2.5rem))',
 } as const
 
 /** A media query as a stable external store (same queries as the HUD's compact layout). */
@@ -430,8 +432,8 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
 
   const compact = small || overlay
   const layout = !compact ? 'wide' : short ? 'short' : 'tall'
-  // The chip under the minimap publishes its foot as --chip-bottom, and the HUD's toasts start below it rather than
-  // pass under it. A ref callback (a new one when the top changes), cleaned up when the chip goes.
+  // The chip under the minimap publishes its foot as --chip-bottom, and upright on foot the HUD's toasts start below
+  // it rather than pass under it. A ref callback (a new one when the top changes), cleaned up when the chip goes.
   const chipTop = layout === 'wide' || (layout === 'short' && overlay && landscape) ? null : CHIP_TOP[layout === 'tall' && driving ? 'driving' : 'foot']
   const chipRef = useCallback((el: HTMLElement | null) => {
     if (!el || !chipTop) return

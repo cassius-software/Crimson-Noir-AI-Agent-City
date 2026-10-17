@@ -39,27 +39,35 @@ const FRAME_COMPACT =
   'absolute top-[max(0.75rem,env(safe-area-inset-top))] right-[max(0.75rem,env(safe-area-inset-right))] ' +
   'bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-[max(0.75rem,env(safe-area-inset-left))]'
 
-/** Where the compact layout's panels end (the header, the readout and the status chips under them, not the
- *  toasts), for Sloane's chip (Concierge.tsx), which keeps clear of them: --hud-bottom is the height from the
- *  screen's top to their foot, --hud-right the width from its left edge to their right edge. The toasts make
- *  room for the chip instead: while it stands under the minimap it publishes its own foot as --chip-bottom,
- *  and they start below it. A ref callback, so it runs when the panels mount and cleans up when they go. */
+/** Where the compact layout's panels end, for Sloane's chip (Concierge.tsx), which keeps clear of them:
+ *  --hud-bottom is the height from the screen's top to the foot of the panels and the status chips under them
+ *  (and of the toast, upright at the wheel), --hud-row-bottom to the foot of the header and readout
+ *  alone, and --hud-right the width from the screen's left edge to the right edge of the header and readout's
+ *  last line (a landscape phone sets them side by side, wrapping when narrow). Upright on foot the toasts make
+ *  room for the chip instead: while it stands under the minimap it publishes its own foot as --chip-bottom, and
+ *  they start below it. A ref callback, so it runs when the panels mount and cleans up when they go. */
 function publishPanels(el: HTMLDivElement | null) {
   if (!el) return
   const root = document.documentElement.style
+  const row = Array.from(el.querySelector('[data-hud-row]')?.children ?? [])
   const publish = () => {
-    const r = el.getBoundingClientRect()
-    root.setProperty('--hud-bottom', `${Math.round(r.bottom)}px`)
-    root.setProperty('--hud-right', `${Math.round(r.right)}px`)
+    root.setProperty('--hud-bottom', `${Math.round(el.getBoundingClientRect().bottom)}px`)
+    const rects = row.map((p) => p.getBoundingClientRect())
+    const foot = Math.max(0, ...rects.map((r) => r.bottom))
+    const right = Math.max(0, ...rects.filter((r) => r.bottom > foot - 1).map((r) => r.right))
+    root.setProperty('--hud-row-bottom', `${Math.round(foot)}px`)
+    root.setProperty('--hud-right', `${Math.round(right)}px`)
   }
   publish()
   const watch = typeof ResizeObserver === 'function' ? new ResizeObserver(publish) : null
   watch?.observe(el)
+  for (const p of row) watch?.observe(p)
   window.addEventListener('resize', publish)
   return () => {
     watch?.disconnect()
     window.removeEventListener('resize', publish)
     root.removeProperty('--hud-bottom')
+    root.removeProperty('--hud-row-bottom')
     root.removeProperty('--hud-right')
   }
 }
@@ -225,12 +233,15 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   )
 
   // Compact: the toasts stack under the header, so only as many as clear the touch stick below them
-  // (one, on a single body line, on a phone held in landscape).
+  // (one, on a single body line, on a short screen, where they stay under the panels). Upright on foot they
+  // start below Sloane's chip; at the wheel the buttons reach across the screen, so they cannot run on below
+  // it: one toast on a single body line stands under the panels, measured with them, and the chip below it.
   const tight = compact && short
-  const toasts = (compact ? s.toasts.slice(0, short ? 1 : 2) : s.toasts).map((t) => (
+  const stacked = compact && !short && driving
+  const toasts = (compact ? s.toasts.slice(0, short || stacked ? 1 : 2) : s.toasts).map((t) => (
     <div key={t.id} className={`px-4 py-2.5 ${panel}`} data-hud="panel">
-      <div className={`text-[13px] font-semibold ${tight ? 'truncate' : ''}`}>{t.title}</div>
-      <div className={`text-xs ${muted} ${tight ? 'truncate' : ''}`}>{t.body}</div>
+      <div className={`text-[13px] font-semibold ${tight || stacked ? 'truncate' : ''}`}>{t.title}</div>
+      <div className={`text-xs ${muted} ${tight || stacked ? 'truncate' : ''}`}>{t.body}</div>
     </div>
   ))
   const speedChip = (
@@ -354,7 +365,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
             <div ref={publishPanels} className="flex max-w-full flex-col items-start gap-2">
               {/* Landscape phone: header and readout side by side (wrapping if narrow), so the toast
                   below them ends above the touch stick. Otherwise `contents` keeps them in the column. */}
-              <div className={short ? 'flex max-w-full flex-wrap items-start gap-2' : 'contents'}>
+              <div className={short ? 'flex max-w-full flex-wrap items-start gap-2' : 'contents'} data-hud-row>
                 <div className={`flex max-w-full items-center gap-2.5 py-2 pr-3.5 pl-2.5 ${panel}`} data-hud="panel">
                   <MonolithLogo size={28} title="" />
                   <div className="min-w-0">
@@ -389,8 +400,9 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
               {micChip}
               {ghostChip}
               {renderChip}
+              {stacked && <div className="flex w-68 max-w-full flex-col gap-2">{toasts}</div>}
             </div>
-            <div className="mt-[max(0px,calc(var(--chip-bottom,0px)_-_var(--hud-bottom,0px)))] flex w-68 max-w-full flex-col gap-2">{toasts}</div>
+            {!stacked && <div className={`${short ? '' : 'mt-[max(0px,calc(var(--chip-bottom,0px)_-_var(--hud-bottom,0px)))]'} flex w-68 max-w-full flex-col gap-2`}>{toasts}</div>}
           </div>
 
           <div className="absolute top-0 right-0 flex flex-col items-end gap-2" data-hud="minimap">

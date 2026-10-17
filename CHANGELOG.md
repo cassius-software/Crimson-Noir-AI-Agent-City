@@ -161,7 +161,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   Sloane's card stands clear of the buttons and scrolls inside itself on a short screen, and her chip rises above the
   buttons on a short phone in landscape (moving left of the minimap under browser bars), also with a pad paired; on an
   upright phone her chip covered the foot of the HUD's readout and, at the wheel, the car's message, and it now stands
-  below the HUD's panels with the messages below it; the brakes are a size smaller on a short screen; at the wheel the Menu sits before Ping, clear of the speedometer; a
+  below the HUD's panels (at the wheel below the message, cut to a line) and above the buttons; the brakes are a size smaller on a short screen; at the wheel the Menu sits before Ping, clear of the speedometer; a
   mouse moving on a touch laptop puts the overlay away (and its Run toggle with it), while a tablet whose main pointer
   is the finger keeps it.
 
