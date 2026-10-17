@@ -56,7 +56,8 @@ export interface TextStream {
 /** `map`: the host keeps the choice (`default` forgets it) and reloads the page on that map (App.tsx remap). */
 export interface CommandResult { lines: Line[]; clear?: boolean; live?: 'stats'; close?: boolean; boot?: 'gui' | 'tty'; map?: 'city' | 'lakefront' | 'default'; pending?: Promise<Line[]>; stream?: TextStream }
 
-/** Highest quality tier index (tiers are 0 = lowest … 4 = highest). */
+/** Quality tier indices: -1 = Lite (governor.ts LITE, below the table) … 0 = Minimal … 4 = Ultra. */
+const MIN_TIER = -1
 const MAX_TIER = 4
 /** A script slower than this gets its wall time printed after its output. */
 const SLOW_MS = 500
@@ -71,7 +72,7 @@ const CORE = [
   { name: 'stats', usage: 'stats [--once]', summary: 'live Rapier3D, frame, crowd and kernel readout' },
   { name: 'laws', usage: 'laws', summary: 'the three laws the kernel enforces, in rank order' },
   { name: 'kernel', usage: 'kernel', summary: 'interventions per law, Solid->Sensor flips' },
-  { name: 'quality', usage: 'quality [auto|0-4]', summary: 'show or set the render quality tier' },
+  { name: 'quality', usage: 'quality [auto|lite|-1|0-4]', summary: 'show or set the render quality tier' },
   { name: 'time', usage: 'time [HH[:MM]]', summary: 'show or set the city clock' },
   { name: 'audio', usage: 'audio [on|off|0-100]', summary: 'show or set the soundscape' },
   { name: 'ghost', usage: 'ghost [on|off]', summary: 'ghost view: the physics shapes as code over the frame (view-only; G)' },
@@ -156,7 +157,7 @@ const LOOK_ACTIONS = ['code', 'preset', 'random', 'reset', 'show'] as const
 const ARGS: Record<string, readonly string[]> = {
   help: NAMES,
   stats: ['--once'],
-  quality: ['0', '1', '2', '3', '4', 'auto'],
+  quality: ['-1', '0', '1', '2', '3', '4', 'auto', 'lite'],
   audio: ['off', 'on'],
   ghost: ['off', 'on'],
   rain: ['off', 'on'],
@@ -307,8 +308,9 @@ export function auditLine(a: { ticks: number; perimeterBreaches: number; velocit
   return `ticks ${count(a.ticks)}  perimeter ${count(a.perimeterBreaches)}  caps ${count(a.velocityCaps)}  closest ${closest}  panic ${a.panic ?? 'none'}`
 }
 
+/** The quality line; a lite device profile says so, which is why its range stops at Minimal and its boot is lighter. */
 export function formatQuality(q: QualityState): string {
-  return `tier ${q.tier} ${q.label} (${q.auto ? 'auto' : 'fixed'})  scale ${fixed(q.renderScale, 2)}x  budget ${fixed(q.targetMs, 1)} ms`
+  return `tier ${q.tier} ${q.label} (${q.auto ? 'auto' : 'fixed'})  scale ${fixed(q.renderScale, 2)}x  budget ${fixed(q.targetMs, 1)} ms${q.lite ? '  lite profile' : ''}`
 }
 
 /** The cinema camera's row (none with ?cinema=0): presented frames, the shutter, the ND, the cuts. ASCII only. */
@@ -656,7 +658,8 @@ const HANDLERS: Record<Name, Handler> = {
     if (!args.length) return { lines: [out(formatQuality(b.quality()))] }
     const a = args[0]
     if (a === 'auto') return { lines: [out(formatQuality(b.quality('auto')))] }
-    if (/^\d$/.test(a) && Number(a) <= MAX_TIER) return { lines: [out(formatQuality(b.quality(Number(a))))] }
+    if (a === 'lite') return { lines: [out(formatQuality(b.quality(MIN_TIER)))] }
+    if (/^(?:-1|\d)$/.test(a) && Number(a) >= MIN_TIER && Number(a) <= MAX_TIER) return { lines: [out(formatQuality(b.quality(Number(a))))] }
     return fail(`quality: invalid tier '${a}'`, usage('quality'))
   },
 

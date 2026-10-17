@@ -138,6 +138,8 @@ export interface QualityState {
   renderScale: number
   /** Frame-time target the governor holds, ms. */
   targetMs: number
+  /** The device profile is lite (governor.ts DeviceProfile.lite: an entry-level phone GPU, or ?lite=1); absent otherwise. */
+  lite?: boolean
 }
 
 /** The cinema camera as the HUD and the console show it. */

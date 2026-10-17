@@ -86,8 +86,10 @@ test('the crowd cull cuts its frustum with the camera\'s coordinate system and d
 })
 
 test('the environment probe bakes through EnvProbe into one reused target and points the scene at it once', () => {
-  assert.match(world, /import \{ EnvProbe \} from '\.\/envProbe\.ts'/)
-  assert.match(world, /pmrem\.fromScene\(envScene, 0\.02, 0\.1, 100, \{ renderTarget: reuse \}\)/)
+  assert.match(world, /import \{ ENV_PROBE_STEP_HOURS, EnvProbe \} from '\.\/envProbe\.ts'/)
+  // Every bake the same size (FULL_WORLD's 256, LITE_WORLD's 64), so the reused target always fits.
+  assert.match(world, /pmrem\.fromScene\(envScene, 0\.02, 0\.1, 100, \{ renderTarget: reuse, size: probeSize \}\)/)
+  assert.match(world, /const probeSize = detail\.probeSize\n/)
   assert.match(world, /if \(envProbe\.refresh\(hours\) && scene\.environment !== envProbe\.target!\.texture\) scene\.environment = envProbe\.target!\.texture/)
   // The sun is moved on the probe's sky before the bake that reads it.
   const update = world.slice(world.indexOf('const update = ('))

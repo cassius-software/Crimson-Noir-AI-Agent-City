@@ -15,6 +15,7 @@ import assert from 'node:assert/strict'
 import { statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { test } from 'node:test'
+import { LITE_TIER } from '../05_Observe_Environment/governor.ts'
 import { classify, FiveWhys, GOAL_MAX, MAX_WHYS, timeName, type Brief, type Control, type PlanStep } from './intent.ts'
 
 const SRC = resolve(import.meta.dirname, '..')
@@ -89,7 +90,9 @@ test('classification: the whole taxonomy is case, punctuation and spacing tolera
   assert.deepEqual(summary('Ｎｉｇｈｔ'), ['time=22'], 'NFKC folds full-width letters')
   assert.deepEqual(summary('２１：３０'), ['time=21.5'], 'and full-width digits and colons')
   assert.ok(summary('I keep running into people').includes('crowd'), 'bumping into a crowd is not an ask for harm')
-  assert.deepEqual(summary('lowest quality'), ['quality=0'])
+  assert.deepEqual(summary('lowest quality'), ['quality=-1'], 'the lowest setting is Lite, below Minimal')
+  assert.deepEqual(summary('potato'), ['quality=-1'])
+  assert.deepEqual(summary('minimal'), ['quality=0'], 'Minimal by name stays Minimal')
   assert.deepEqual(summary(''), [])
   assert.deepEqual(summary('\u0000​'), [])
 })
@@ -152,7 +155,7 @@ test('why-questions follow the answers by depth', () => {
   perf.answer('Steady first')
   assert.equal(perf.next(), null)
   assert.equal(perf.brief().root, 'A steady frame rate matters more to you than detail.')
-  assert.deepEqual(perf.brief().plan.map((s) => [s.control, s.value, s.immediate]), [['quality', 1, true]])
+  assert.deepEqual(perf.brief().plan.map((s) => [s.control, s.value, s.immediate, s.ceiling]), [['quality', 1, true, true]], 'a steady frame never raises the tier')
 
   const walk = ask('just looking')
   walk.answer('Look around')
@@ -302,7 +305,8 @@ test('every path ends, in at most five whys, with a well-formed brief', () => {
       assert.ok(s.label.length > 0 && s.modules.length > 0, `${p.goal}: ${s.control}`)
       assert.equal(s.immediate, s.control === 'time' || s.control === 'quality' || s.control === 'audio', `${p.goal}: only host controls are immediate`)
       if (s.control === 'time') assert.ok(typeof s.value === 'number' && s.value >= 0 && s.value < 24)
-      if (s.control === 'quality') assert.ok(s.value === 'auto' || (typeof s.value === 'number' && s.value >= 0 && s.value <= 4))
+      if (s.control === 'quality') assert.ok(s.value === 'auto' || (typeof s.value === 'number' && s.value >= LITE_TIER && s.value <= 4))
+      if (s.ceiling) assert.ok(s.control === 'quality' && typeof s.value === 'number' && s.value < 4, `${p.goal}: only a lowered quality is a ceiling`)
       if (s.control === 'audio') assert.ok(s.value === 'on' || s.value === 'off' || (typeof s.value === 'number' && s.value >= 0 && s.value <= 100))
     }
     assert.equal(new Set(p.brief.plan.map((s) => s.control)).size, p.brief.plan.length, `${p.goal}: one step per control`)
@@ -423,4 +427,18 @@ test('brief() is always available and grows as answers arrive', () => {
 test('the console\'s goal command keeps the same limit as the Concierge (terminal/commands.ts GOAL_CHARS)', async () => {
   const { GOAL_CHARS } = await import('../07_Execute_Actions/terminal/commands.ts')
   assert.equal(GOAL_CHARS, GOAL_MAX)
+})
+
+test('a fix for heat or a slow frame is a ceiling on the tier, never a raise; a named tier is a target', () => {
+  // The host (App.tsx qualityFor) pins the lower of a ceiling and the live tier, so a phone on Lite stays on Lite.
+  const plan = (goal: string, ...answers: string[]) => {
+    const w = ask(goal, ...answers)
+    return w.brief().plan.filter((s) => s.control === 'quality').map((s) => [s.value, s.ceiling ?? false])
+  }
+  assert.deepEqual(plan('my phone is hot'), [[1, true]])
+  assert.deepEqual(plan('battery'), [[1, true]])
+  assert.deepEqual(plan('it feels laggy', 'All the time', 'Steady first'), [[1, true]])
+  assert.deepEqual(plan('low quality'), [[1, false]], 'asking for Low by name pins Low')
+  assert.deepEqual(plan('lowest quality'), [[LITE_TIER, false]])
+  assert.deepEqual(plan('ultra'), [[4, false]])
 })

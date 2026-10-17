@@ -145,6 +145,12 @@ export interface SimInit {
    * off): anything but true keeps every pedestrian on the GPU alone, and the rig stream null. Never in a region.
    */
   ragdoll?: boolean
+  /**
+   * Run the scheduled craft (the trains, drones and planes of trackFleet.ts) with tracks on in the city: anything but
+   * false runs them. False (a lite boot: no page code draws them yet) skips the stream as a region does: meta.craft is 0
+   * and every state's craft buffer null.
+   */
+  craft?: boolean
 }
 
 /** Static facts about the world the worker built, sent once in `ready`. */
