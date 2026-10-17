@@ -631,6 +631,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           profile={profile}
           onProfile={setProfile}
           family={hud.supplier.glyphs}
+          overlay={hud.supplier.touch}
           driving={hud.input.mode === 'vehicle'}
           dark={hud.customer.daylight < 0.35}
           onIntent={applyIntent}

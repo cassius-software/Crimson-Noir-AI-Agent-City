@@ -5,15 +5,15 @@
  * Why does this file exist? It pins the page-side wiring of local split screen (viewports.ts, seats.ts, controls.ts,
  * audio.ts Design B), which the engine, the input, the realm client and the host carry and Node cannot run: the
  * player count from the URL into the engine, the extra avatars asked of the physics realm at boot and their controls
- * in every step request through the one pinned request line, a seat and a head per player posed every animation
- * frame, the view loop inside present() alone (one clear of the whole canvas before the first scissored draw, the
- * crowd culled for each camera before its draw, the sky re-centred per head, view 0's exact draw lines untouched),
- * the viewports cut again on resize, a soundscape per player in head space over one shared context fed from its own
- * head, speech and cues fanned out, the snapshot's report, the post chain off while split, and that nothing of it
- * reaches the physics realm's modules.
- * What breaks if it is removed? Split screen could quietly draw every viewport from player 1's head, cull once for
- * four cameras, clear per quadrant (and lose three of them), leave players 2–4 without a body in the realm or a
- * listener of their own, or let the one-player path change, unnoticed.
+ * in every step request through the one pinned request line, each seat's door and reset sent for its own avatar, a
+ * seat and a head per player posed every animation frame, the view loop inside present() alone (one clear of the
+ * whole canvas before the first scissored draw, the crowd culled for each camera before its draw, the sky re-centred
+ * per head, view 0's exact draw lines untouched), the viewports cut again on resize, a soundscape per player in head
+ * space over one shared context fed from its own head, speech and cues fanned out, the snapshot's report, the post
+ * chain off while split, and that nothing of it reaches the physics realm's modules.
+ * What breaks if it is removed? Players 2–4 could lose their car door again, and split screen could quietly draw
+ * every viewport from player 1's head, cull once for four cameras, clear per quadrant (and lose three of them), leave
+ * players 2–4 without a body in the realm or a listener of their own, or let the one-player path change, unnoticed.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -80,6 +80,17 @@ test('wiring: a seat, a head and a control set per player; the pinned step reque
   assert.match(poll, /this\.seats\.seatOf\(p\.index\) === KEYBOARD_SEAT\) mine\.push\(p\)/)
   assert.match(poll, /this\.padSeats\[s - 1\]\.poll\(pads, this\.seats, s as Seat, dt, now\)/)
   assert.match(input, /intent\(seat: Seat\): PlayerIntent \{/)
+})
+
+test('wiring: every seat\'s door and reset reach the realm for its own avatar, a reset only from the wheel', () => {
+  const src = read('./engine.ts')
+  const loop = between(src, "if (input.take('reset') && driving >= 0) sim.send({ c: 'reset' })", 'readControls(input, driving >= 0, foot, drive)')
+  assert.match(loop, /for \(let k = 1; k < this\.views\.length; k\+\+\)/)
+  assert.match(loop, /const seat = input\.intent\(this\.views\[k\]\.seat\)/)
+  assert.match(loop, /if \(seat\.take\('interact'\) && !this\.netRoom\) sim\.send\(\{ c: 'interact', player: k \}\)/, 'no door of theirs in a network room')
+  assert.match(loop, /if \(seat\.take\('reset'\) && \(st\.drivings\[k\] \?\? -1\) >= 0\) sim\.send\(\{ c: 'reset', player: k \}\)/)
+  const proto = read('./simProtocol.ts')
+  assert.match(proto, /\| \{ c: 'reset'; player\?: number \}/)
 })
 
 test('wiring: the view loop lives in present() after view 0, one clear before the first scissored draw, a cull per camera before its draw', () => {

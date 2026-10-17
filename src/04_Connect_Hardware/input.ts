@@ -12,7 +12,7 @@
  * What breaks if it is removed? The player cannot move, look, drive or interact.
  */
 import { HalBus } from './hal.ts'
-import { createAnalog, isStandardPad, PAD_EDGE, PadLook, PadMapper, type Analog, type PadFamily } from './gamepad.ts'
+import { createAnalog, isUsablePad, PAD_EDGE, PadLook, PadMapper, type Analog, type PadFamily } from './gamepad.ts'
 import { KEYBOARD_SEAT, PadSeat, SEATS, SeatTable, type PlayerIntent, type Seat } from './seats.ts'
 import type { GamepadLike } from './web-hardware.d.ts'
 
@@ -40,6 +40,9 @@ const ACTION_KEYS: Record<string, Action> = {
   KeyQ: 'ping',
 }
 
+/** Modifier keys: held alone they are keys like any other (Shift runs); with Command they start no chord. */
+const MODIFIER_CODES: ReadonlySet<string> = new Set(['ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight'])
+
 /** First-person look sensitivities. Look right = yaw down, look up = pitch up. */
 export const LOOK = {
   /** rad per mouse count (pointer lock) or CSS pixel (dragging without it) */
@@ -49,6 +52,16 @@ export const LOOK = {
   touchPitch: 0.0042,
   /** A press that travels at most this many CSS pixels before release is a click (it captures the pointer). */
   clickSlop: 6,
+  /**
+   * Mouse counts in one event (|x| + |y|) past which a jump far faster than the mouse was moving is a driver spike, not
+   * a look (the spike filter judges counts per millisecond, so a busy frame's merged movement is never one).
+   */
+  spike: 400,
+  /** Milliseconds without a move, over at least two frames, after which the mouse was at rest. */
+  rest: 50,
+  /** Counts per millisecond past which a jump out of rest (over `spike` counts) is a driver's spike: a hand starting a
+   *  turn is slower, even a fast one's first frame, and a long frame's merged move is as slow as the hand. */
+  spikeFromRest: 16,
 } as const
 
 /** Typing in the terminal (or any field) must never drive the car. */
@@ -59,6 +72,17 @@ export function isEditableTarget(t: EventTarget | null): boolean {
   const tag = typeof el.tagName === 'string' ? el.tagName.toUpperCase() : ''
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
 }
+
+const errorName = (e: unknown): string => (typeof e === 'object' && e !== null && 'name' in e ? String((e as { name: unknown }).name) : '')
+
+/** The page itself (nothing focused): Space and the arrows have no default there to stop, so the Concierge reads them. */
+function isPage(t: EventTarget | null): boolean {
+  const tag = (t as { tagName?: unknown } | null)?.tagName
+  return typeof tag !== 'string' || ['BODY', 'HTML', 'CANVAS'].includes(tag.toUpperCase())
+}
+
+/** The event's time, or now for one that carries none (a synthetic event). */
+const stamp = (e: Event): number => (Number.isFinite(e.timeStamp) && e.timeStamp > 0 ? e.timeStamp : performance.now())
 
 function coarsePointer(): MediaQueryList | null {
   try { return typeof matchMedia === 'function' ? matchMedia('(pointer: coarse)') : null } catch { return null }
@@ -75,7 +99,7 @@ export class Input {
   /** Merged gamepad + touch, refreshed by poll(). moveY > 0 = forward, steer > 0 = left. */
   readonly analog: Analog = createAnalog()
   readonly hal: HalBus
-  /** Coarse-pointer touch device: touch controls are shown. */
+  /** Touch controls are shown: a coarse-pointer touch device, or any touch since the mouse last moved. */
   touch = false
   /** Terminal open: keyboard and mouse are ignored. */
   suspended = false
@@ -93,6 +117,30 @@ export class Input {
   private readonly held: Record<TouchButton, boolean> = { brake: false, handbrake: false, run: false }
   /** The primary mouse button is down on the canvas without pointer lock: moving it turns the head. */
   private drag: { id: number; x: number; y: number; travel: number } | null = null
+  /** Rate (|x| + |y| counts per ms) and time of the last locked mouse movement, for the spike filter (−1: none yet). */
+  private lastRate = 0
+  private lastMoveAt = -1
+  /** Frames polled since the last locked mouse movement: two or more (and LOOK.rest ms) and the mouse was at rest, not
+   *  held up. */
+  private pollsSinceMove = 0
+  /** When the last frame polled (the clock events are stamped on), so a move out of rest is timed over its own frame. */
+  private lastPollAt = -1
+  /** The page's clock in milliseconds, as events are stamped (performance.now()). */
+  private readonly now: () => number
+  /**
+   * A pointer press is under way: the focus it brings is the pointer's (focusin). From pointerdown until the click that
+   * ends it (a finger's tap focuses only after it lifts), a Tab, or the window losing focus; other keys, a held key's
+   * repeats included, leave it.
+   */
+  private pointerLast = false
+  /**
+   * The control a pointer press focused. Space would press it again and an arrow scroll its panel, so for it those keys
+   * are the game's. One reached with Tab keeps Space, the keyboard's way to press it. Decided when the focus moves, not
+   * at the key: Chromium counts a key as keyboard use (:focus-visible) before the key's own event is handled.
+   */
+  private pointerFocus: EventTarget | null = null
+  /** The primary pointer is coarse (a phone, a tablet's finger): the touch overlay stays whatever else moves. */
+  private readonly coarse: MediaQueryList | null
   /** The seating plan (seats.ts): one seat until setPlayers; pads are dealt to seats only then. */
   readonly seats = new SeatTable()
   /** Seats 1..3's pad-only intents (seats.ts PadSeat), read each poll while the table has more than one seat. */
@@ -100,28 +148,70 @@ export class Input {
   /** The pads in seat 0 this frame (seated mode), refilled without allocation. */
   private readonly mine: GamepadLike[] = []
 
-  constructor(canvas: HTMLCanvasElement, hal: HalBus = new HalBus()) {
+  constructor(canvas: HTMLCanvasElement, hal: HalBus = new HalBus(), now: () => number = () => performance.now()) {
     this.canvas = canvas
     this.hal = hal
+    this.now = now
     const on = <K extends keyof DocumentEventMap>(target: Document | HTMLElement, type: K, fn: (e: DocumentEventMap[K]) => void, opts?: AddEventListenerOptions) => {
       target.addEventListener(type, fn as EventListener, opts)
       this.disposers.push(() => target.removeEventListener(type, fn as EventListener, opts))
     }
+    // Capture phase: these see every press and focus before any handler can stop them.
+    on(document, 'pointerdown', (e) => {
+      this.pointerLast = true
+      // A press on the control that already has the focus moves no focus, so no focusin follows: it is the pointer's.
+      const active = document.activeElement
+      if (active && (active === e.target || active.contains(e.target as Node))) this.pointerFocus = active
+    }, { capture: true })
+    on(document, 'click', () => { this.pointerLast = false }, { capture: true })
+    // Focus coming back to the control that had it (the window or tab regained) keeps what it was.
+    on(document, 'focusin', (e) => { if (e.target !== this.pointerFocus) this.pointerFocus = this.pointerLast ? e.target : null }, { capture: true })
     on(document, 'keydown', (e) => {
-      if (this.suspended || isEditableTarget(e.target)) return
+      const target = e.target
+      if (e.code === 'Tab') this.pointerLast = false
+      if (this.suspended || isEditableTarget(target)) return
+      // A Command chord (Cmd+A, Cmd+Tab) is the system's: macOS sends no keyup for its letter, which would stay held.
+      if (e.metaKey && !MODIFIER_CODES.has(e.code)) return
       this.keys.add(e.code)
       this.lastSource = 'keyboard+mouse'
       const action = ACTION_KEYS[e.code]
       if (action && !e.repeat) this.queued.add(action)
-      if (e.code === 'Space' && this.locked) e.preventDefault()
+      // Space is the handbrake and the arrows walk: under pointer lock, and over a control a pointer press left focused
+      // (pointerFocus), they never click it again or scroll its panel.
+      if ((e.code === 'Space' || e.code.startsWith('Arrow')) && (this.locked || (target === this.pointerFocus && !isPage(target)))) e.preventDefault()
     })
-    // Always honoured: a key pressed before focus moved into a field must still release.
-    on(document, 'keyup', (e) => this.keys.delete(e.code))
+    // Always honoured: a key pressed before focus moved into a field must still release. Command coming up drops
+    // every held key, since macOS swallows the keyup of any key released while it was down (held keys repeat back).
+    on(document, 'keyup', (e) => {
+      if (e.code === 'MetaLeft' || e.code === 'MetaRight') this.keys.clear()
+      else this.keys.delete(e.code)
+    })
+    // The canvas's right-click is a look drag's other button, not the browser's menu.
+    on(canvas, 'contextmenu', (e) => e.preventDefault())
     on(document, 'mousemove', (e) => {
       if (!this.locked || this.suspended) return
       // Back on the mouse after a controller: the HUD's glyphs follow the hand, not the last button pressed.
       if (e.movementX || e.movementY) this.lastSource = 'keyboard+mouse'
-      this.look(e.movementX, e.movementY, LOOK.mouse, LOOK.mouse)
+      // Without raw input, Chromium on Windows reports the odd jump of hundreds of counts out of nowhere (the first
+      // move after the lock can carry the cursor's trip to the centre): one that size, at more than eight times the
+      // rate the mouse was moving, is dropped. Rates, not sizes: a busy frame (a region loading, a pipeline compiling)
+      // merges every move it held up into one event, large but no faster, and that is kept, as is a real flick, which
+      // ramps up over a few events. While the mouse keeps moving, the event after a dropped one is judged against the
+      // dropped one's rate, so two in a row are never dropped. Out of rest (LOOK.rest ms and two frames with no move;
+      // without the frames the page was held up, not the hand) the mouse was moving at zero, so the move is timed over
+      // the frame it arrived in (since the last poll, at least one 60 Hz frame) and is a spike past
+      // LOOK.spikeFromRest: a jump inside an ordinary frame, never a long frame's merged move.
+      const size = Math.abs(e.movementX) + Math.abs(e.movementY)
+      const at = stamp(e)
+      const rested = this.lastMoveAt < 0 || (this.pollsSinceMove >= 2 && at - this.lastMoveAt >= LOOK.rest)
+      this.pollsSinceMove = 0
+      const rate = rested
+        ? size / Math.max(16, this.lastPollAt < 0 ? 0 : at - this.lastPollAt)
+        : size / Math.min(1000, Math.max(1, at - this.lastMoveAt))
+      const spike = size > LOOK.spike && rate > (rested ? LOOK.spikeFromRest : 8 * this.lastRate + 2.5)
+      this.lastRate = Number.isFinite(rate) ? rate : 0
+      this.lastMoveAt = at
+      if (!spike) this.look(e.movementX, e.movementY, LOOK.mouse, LOOK.mouse)
     })
     // Zero-click look: press and drag turns the head without capturing the pointer; a press released
     // without travelling is a click, and a click captures the pointer for mouse look without a button.
@@ -166,23 +256,43 @@ export class Input {
     on(canvas, 'lostpointercapture', (e) => { if (this.drag?.id === e.pointerId) this.drag = null })
     on(document, 'pointerlockchange', () => {
       this.locked = document.pointerLockElement === canvas
+      this.lastRate = 0
+      this.lastMoveAt = -1
       if (this.locked) this.endDrag()
     })
     // Focus or the page lost mid-press: key-ups and pointer-ups may never arrive, so nothing may stay held.
-    const onBlur = () => this.releaseHeld()
+    const onBlur = () => { this.releaseHeld(); this.pointerLast = false }
     window.addEventListener('blur', onBlur)
     this.disposers.push(() => window.removeEventListener('blur', onBlur))
     on(document, 'visibilitychange', () => { if (document.visibilityState === 'hidden') this.releaseHeld() })
 
-    const coarse = coarsePointer()
+    const coarse = (this.coarse = coarsePointer())
     const hasTouch = () => (typeof navigator !== 'undefined' ? navigator.maxTouchPoints : 0) > 0
     this.touch = !!coarse?.matches && hasTouch()
     if (coarse && typeof coarse.addEventListener === 'function') {
-      const onChange = () => { this.touch = coarse.matches && hasTouch() }
+      const onChange = () => {
+        if (coarse.matches && hasTouch()) this.touch = true
+        else this.hideTouch()
+      }
       coarse.addEventListener('change', onChange)
       this.disposers.push(() => coarse.removeEventListener('change', onChange))
     }
+    // A touch laptop, or a tablet driven by a mouse (a fine primary pointer): the mouse moving again puts the touch
+    // overlay away, so its clicks reach the canvas (and capture it) instead of the overlay's look zone, and the Run
+    // toggle, whose button goes with it, is let go (Shift runs now). A phone or a tablet whose primary pointer is the
+    // finger keeps its overlay whatever else is plugged in (mouseHidesTouch).
+    on(document, 'pointermove', (e) => {
+      if (!this.touch || e.pointerType !== 'mouse' || !(e.movementX || e.movementY) || !this.mouseHidesTouch) return
+      this.hideTouch()
+      this.lastSource = 'keyboard+mouse'
+    })
     void hal.autoconnect()
+  }
+
+  /** The touch overlay goes away, and with it the Run toggle its button latched (Shift runs now). */
+  private hideTouch(): void {
+    this.touch = false
+    this.held.run = false
   }
 
   /** Turns the head by a pointer movement (same sense as the mouse: right turns right, up looks up). */
@@ -193,11 +303,21 @@ export class Input {
     this.lastLook = performance.now()
   }
 
+  /**
+   * Raw mouse counts where the browser has them (no OS acceleration, none of its spikes); where it refuses the option
+   * (NotSupportedError: a platform without raw input), a plain lock, still inside the click's user activation.
+   */
   private capturePointer(): void {
+    const plain = () => {
+      try {
+        const lock = this.canvas.requestPointerLock() as unknown
+        if (lock instanceof Promise) lock.catch(() => {})
+      } catch { /* pointer lock unavailable (embedded, denied, or re-requested too soon after Esc) */ }
+    }
     try {
-      const lock = this.canvas.requestPointerLock() as unknown
-      if (lock instanceof Promise) lock.catch(() => {})
-    } catch { /* pointer lock unavailable (embedded, denied, or re-requested too soon after Esc) */ }
+      const lock = this.canvas.requestPointerLock({ unadjustedMovement: true }) as unknown
+      if (lock instanceof Promise) lock.catch((e: unknown) => { if (errorName(e) === 'NotSupportedError' && !this.locked) plain() })
+    } catch { plain() }
   }
 
   private endDrag(): void {
@@ -217,6 +337,15 @@ export class Input {
     this.stick.y = 0
     this.held.brake = false
     this.held.handbrake = false
+  }
+
+  /**
+   * The mouse moving puts the touch overlay away: the primary pointer is fine (a touch laptop). On a phone or a tablet
+   * whose primary pointer is the finger the overlay stays, so its look zone and stick take a mouse press like a finger
+   * (TouchControls.tsx), or the mouse could not look there at all.
+   */
+  get mouseHidesTouch(): boolean {
+    return !this.coarse?.matches
   }
 
   /** Pointer locked, touch controls engaged, or a gamepad in use. */
@@ -300,6 +429,8 @@ export class Input {
 
   /** Once per frame, before the engine reads input: gamepads → analog and actions, right stick → head yaw/pitch. */
   poll(dt: number): void {
+    if (this.pollsSinceMove < 2) this.pollsSinceMove++
+    this.lastPollAt = this.now()
     // Read once: readPads pumps the pads' rumble and syncs their slots; the same list is dealt to every seat.
     const pads = this.hal.readPads()
     let edges: number
@@ -309,7 +440,7 @@ export class Input {
       mine.length = 0
       for (let i = 0; i < pads.length; i++) {
         const p = pads[i]
-        if (isStandardPad(p) && this.seats.seatOf(p.index) === KEYBOARD_SEAT) mine.push(p)
+        if (isUsablePad(p) && this.seats.seatOf(p.index) === KEYBOARD_SEAT) mine.push(p)
       }
       edges = this.mapper.read(mine, this.pad)
       const now = performance.now()

@@ -20,7 +20,7 @@
  * below the centre and above the HUD's bottom-centre prompts; phone upright, the band under the header and
  * minimap (clear of the on-screen keyboard); phone in landscape, bottom-centre between the thumbs.
  */
-import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useEffectEvent, useRef, useState, useSyncExternalStore, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { ORC_NOTICE } from '../02_Define_The_Rules/degrees.ts'
 import { NAME_MAX, saveProfile, sanitizeName, seedFromName, type Profile } from '../05_Observe_Environment/profile.ts'
 import { FiveWhys, GOAL_MAX, type Brief, type Control, type PlanStep, type WhyStep } from '../06_Make_Decisions/intent.ts'
@@ -75,8 +75,22 @@ const [ORC_BEFORE, ORC_AFTER] = ORC_NOTICE.split(ORC_REGISTRATION)
 /** Card and chip positions per layout (full class strings, so Tailwind sees them). The HUD's matching
  *  geometry: wide frame 1.25 rem, minimap 13 rem bottom-left, bottom-centre capture hint ≈ 2.6 rem tall
  *  (4.4 rem with its key row) and enter prompt at 5 rem + 2.5 rem tall; compact frame 0.75 rem, minimap
- *  7 rem top-right with the speed chip (≈ 3.6 rem) under it while driving; touch stick zone and buttons
- *  ≈ 12.5 rem square in the bottom corners.
+ *  7 rem top-right with the speed chip (≈ 3.6 rem) under it while driving. Touch (TouchControls.tsx): the
+ *  stick's zone 11.5 rem square 0.5 rem from the bottom-left corner (its right edge 12 rem in), and the buttons
+ *  in the bottom-right, whose top and left edges the overlay publishes as --touch-top and --touch-left (the
+ *  fallbacks stand for the frame before it has). Every touch card keeps clear of the buttons: held upright it
+ *  ends above them; in landscape on foot it stands in the band between the stick and the buttons (on a narrow
+ *  phone it gives up the stick's inner edge rather than shrink under 15.5 rem); at the wheel it stands over
+ *  them. On a short screen every card scrolls inside its own height rather than run off the top (the controls
+ *  list grows by the Menu's row on touch). The chip stands under the minimap and under the HUD's panels (their foot
+ *  is --hud-bottom, published by the HUD), ending above the touch buttons; upright on foot the HUD's toasts start
+ *  below it (--chip-bottom, published here), and at the wheel one toast stands with the panels and the chip below it. On a short touch screen in landscape it rises to end above the buttons when they reach up that far, and
+ *  if that would meet the minimap it moves left of it, narrowing (its goal text truncates) to stay clear of the HUD's
+ *  left column (17 rem of status chips and toasts, which also keeps it off the stick) and, level with the header and
+ *  readout (--hud-row-bottom), of their right edge (--hud-right), down to 10.5 rem: under about 600 px across that
+ *  floor can still reach a toast.
+ *  Which placements apply follows the touch overlay being on screen (`overlay`), not the glyphs: a pad paired with a
+ *  phone shows its glyphs while the buttons stay.
  *  Desktop: a column from just below the centre of view down to the HUD frame. The card stands at its foot
  *  on a spacer that clears the bottom-centre prompts; in a short window the spacer gives way first (down to
  *  the capture hint, which has its key row only under the HUD's ROOMY query, repeated here), so the card
@@ -84,14 +98,24 @@ const [ORC_BEFORE, ORC_AFTER] = ORC_NOTICE.split(ORC_REGISTRATION)
 const WIDE_COLUMN = 'absolute top-[calc(50%+1rem)] bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-1/2 flex w-[min(38rem,max(22rem,calc(100%_-_30.5rem)))] -translate-x-1/2 flex-col justify-end'
 const WIDE_SPACER = 'h-[8.5rem] min-h-[3.25rem] shrink [@media(min-width:1100px)_and_(min-height:600px)]:min-h-[5rem]'
 const CARD_AT = {
-  tall: 'top-[calc(max(0.75rem,env(safe-area-inset-top))+8.75rem)] right-[max(0.75rem,env(safe-area-inset-right))] left-[max(0.75rem,env(safe-area-inset-left))] mx-auto max-w-[28rem]',
-  short: 'bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-1/2 w-[min(28rem,calc(100%_-_26rem))] min-w-[18rem] -translate-x-1/2',
-  shortRaised: 'bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+4.5rem)] left-1/2 w-[min(28rem,calc(100%_-_26rem))] min-w-[18rem] -translate-x-1/2',
+  tall: 'top-[calc(max(0.75rem,env(safe-area-inset-top))+8.75rem)] right-[max(0.75rem,env(safe-area-inset-right))] left-[max(0.75rem,env(safe-area-inset-left))] mx-auto max-h-[calc(100dvh_-_max(0.75rem,env(safe-area-inset-top))_-_8.75rem_-_max(0.75rem,env(safe-area-inset-bottom)))] max-w-[28rem] overflow-y-auto overscroll-contain',
+  tallTouch: 'top-[calc(max(0.75rem,env(safe-area-inset-top))+8.75rem)] right-[max(0.75rem,env(safe-area-inset-right))] left-[max(0.75rem,env(safe-area-inset-left))] mx-auto max-h-[calc(100dvh_-_max(0.75rem,env(safe-area-inset-top))_-_8.75rem_-_var(--touch-top,0.75rem)_-_0.5rem)] max-w-[28rem] overflow-y-auto overscroll-contain',
+  short: 'bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-[max(calc(env(safe-area-inset-left,0px)+0.75rem),min(calc(env(safe-area-inset-left,0px)+12.5rem),calc(100%_-_var(--touch-left,12rem)_-_16rem)))] right-[calc(var(--touch-left,12rem)_+_0.5rem)] mx-auto max-h-[calc(100dvh_-_max(0.75rem,env(safe-area-inset-bottom))_-_max(0.75rem,env(safe-area-inset-top)))] max-w-[28rem] overflow-y-auto overscroll-contain',
+  shortDriving: 'bottom-[calc(var(--touch-top,10.5rem)_+_0.5rem)] left-[max(calc(env(safe-area-inset-left,0px)+0.75rem),min(calc(env(safe-area-inset-left,0px)+12.5rem),calc(100%_-_max(0.75rem,env(safe-area-inset-right))_-_15.5rem)))] right-[max(0.75rem,env(safe-area-inset-right))] mx-auto max-h-[calc(100dvh_-_var(--touch-top,10.5rem)_-_0.5rem_-_max(0.75rem,env(safe-area-inset-top)))] max-w-[28rem] overflow-y-auto overscroll-contain',
+  shortRaised: 'bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+4.5rem)] left-1/2 max-h-[calc(100dvh_-_max(0.75rem,env(safe-area-inset-bottom))_-_4.5rem_-_max(0.75rem,env(safe-area-inset-top)))] w-[min(28rem,calc(100%_-_26rem_-_env(safe-area-inset-left,0px)_-_env(safe-area-inset-right,0px)))] min-w-[18rem] -translate-x-1/2 overflow-y-auto overscroll-contain',
 } as const
 const CHIP_AT = {
-  wide: 'bottom-[calc(max(1.25rem,env(safe-area-inset-bottom))+13.75rem)] left-[max(1.25rem,env(safe-area-inset-left))]',
-  compact: 'top-[calc(max(0.75rem,env(safe-area-inset-top))+7.5rem)] right-[max(0.75rem,env(safe-area-inset-right))]',
-  compactDriving: 'top-[calc(max(0.75rem,env(safe-area-inset-top))+11.75rem)] right-[max(0.75rem,env(safe-area-inset-right))]',
+  wide: 'bottom-[calc(max(1.25rem,env(safe-area-inset-bottom))+13.75rem)] left-[max(1.25rem,env(safe-area-inset-left))] max-w-[18rem]',
+  compact: 'right-[max(0.75rem,env(safe-area-inset-right))] max-w-[18rem]',
+  shortTouch: '[--chip-top:min(calc(max(0.75rem,env(safe-area-inset-top))_+_7.5rem),calc(100dvh_-_var(--touch-top,0px)_-_2.5rem))] [--chip-right:calc(max(0.75rem,env(safe-area-inset-right))_+_clamp(0rem,calc((max(0.75rem,env(safe-area-inset-top))_+_7.25rem_-_var(--chip-top))_*_100),7.5rem))] [--chip-left:max(calc(max(0.75rem,env(safe-area-inset-left,0px))_+_17.5rem),min(calc(var(--hud-right,0px)_+_0.5rem),calc(max(0.75rem,env(safe-area-inset-left,0px))_+_17.5rem_+_clamp(0px,calc((var(--hud-row-bottom,0px)_+_0.25rem_-_var(--chip-top))_*_10000),100vw))))] top-(--chip-top) right-(--chip-right) max-w-[max(10.5rem,min(18rem,calc(100%_-_var(--chip-right)_-_var(--chip-left))))]',
+} as const
+/** The compact chip's top (inline, not a class, because the same expression is published as --chip-bottom): under
+ *  the minimap, or the speed chip at the wheel, and under the HUD's panels (--hud-bottom, from Hud.tsx) when they
+ *  reach lower, as a readout with a device line does on an upright phone, but always ending above the touch buttons
+ *  (where both cannot hold it stands over a panel, which takes no taps, never over a button). */
+const CHIP_TOP = {
+  foot: 'min(max(calc(max(0.75rem, env(safe-area-inset-top)) + 7.5rem), calc(var(--hud-bottom, 0px) + 0.5rem)), calc(100dvh - var(--touch-top, 0px) - 2.5rem))',
+  driving: 'min(max(calc(max(0.75rem, env(safe-area-inset-top)) + 11.75rem), calc(var(--hud-bottom, 0px) + 0.5rem)), calc(100dvh - var(--touch-top, 0px) - 2.5rem))',
 } as const
 
 /** A media query as a stable external store (same queries as the HUD's compact layout). */
@@ -110,6 +134,7 @@ function mediaStore(query: string) {
 }
 const SMALL = mediaStore('(max-width: 639px), (max-height: 499px)')
 const SHORT = mediaStore('(max-height: 499px)')
+const LANDSCAPE = mediaStore('(orientation: landscape)')
 
 function isEditable(t: EventTarget | null): boolean {
   if (!t || typeof t !== 'object') return false
@@ -128,6 +153,9 @@ export interface ConciergeProps {
   onProfile(p: Profile): void
   /** Control glyphs matching the input in use (snapshot.supplier.glyphs). */
   family: GlyphFamily
+  /** Optional: the touch overlay is on screen (snapshot.supplier.touch); the card and chip keep clear of its buttons.
+   *  Defaults to touch glyphs. */
+  overlay?: boolean
   driving: boolean
   /** Optional: the HUD's night glass (snapshot.customer.daylight < 0.35). */
   dark?: boolean
@@ -157,9 +185,10 @@ export interface ConciergeProps {
   onSay?(text: string): void
 }
 
-export function Concierge({ visible, profile, onProfile, family, driving, dark = false, settleMs = SLOANE.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal, onSay }: ConciergeProps) {
+export function Concierge({ visible, profile, onProfile, family, overlay = family === 'touch', driving, dark = false, settleMs = SLOANE.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal, onSay }: ConciergeProps) {
   const small = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
   const short = useSyncExternalStore(SHORT.subscribe, SHORT.matches, SHORT.server)
+  const landscape = useSyncExternalStore(LANDSCAPE.subscribe, LANDSCAPE.matches, LANDSCAPE.server)
   const [view, setView] = useState<View>(() => (goal ? 'goal' : profile ? 'greet' : 'ask'))
   const [mood, setMood] = useState<Mood>(() => (profile ? 'back' : 'new'))
   /** The name given this session: the parent's `profile` may lag it by a render. */
@@ -401,10 +430,26 @@ export function Concierge({ visible, profile, onProfile, family, driving, dark =
     if (visible && fielded) focusField()
   }, [visible, fielded, epoch])
 
+  const compact = small || overlay
+  const layout = !compact ? 'wide' : short ? 'short' : 'tall'
+  // The chip under the minimap publishes its foot as --chip-bottom, and upright on foot the HUD's toasts start below
+  // it rather than pass under it. A ref callback (a new one when the top changes), cleaned up when the chip goes.
+  const chipTop = layout === 'wide' || (layout === 'short' && overlay && landscape) ? null : CHIP_TOP[layout === 'tall' && driving ? 'driving' : 'foot']
+  const chipRef = useCallback((el: HTMLElement | null) => {
+    if (!el || !chipTop) return
+    const root = document.documentElement.style
+    const publish = () => root.setProperty('--chip-bottom', `calc(${chipTop} + ${Math.round(el.offsetHeight)}px)`)
+    publish()
+    const watch = typeof ResizeObserver === 'function' ? new ResizeObserver(publish) : null
+    watch?.observe(el)
+    return () => {
+      watch?.disconnect()
+      root.removeProperty('--chip-bottom')
+    }
+  }, [chipTop])
+
   if (!visible) return null
 
-  const compact = small || family === 'touch'
-  const layout = !compact ? 'wide' : short ? 'short' : 'tall'
   const glass = dark
     ? 'border-white/10 bg-slate-900/60 text-slate-50 shadow-[0_20px_60px_rgba(0,0,0,0.45)]'
     : 'border-white/70 bg-white/70 text-slate-900 shadow-[0_20px_60px_rgba(15,23,42,0.28)]'
@@ -414,18 +459,19 @@ export function Concierge({ visible, profile, onProfile, family, driving, dark =
 
   if (view === 'chip') {
     const pending = !name && !skipped
-    const at = layout === 'wide' ? CHIP_AT.wide : driving && layout === 'tall' ? CHIP_AT.compactDriving : CHIP_AT.compact
-    const pill = `pointer-events-auto absolute ${at} flex max-w-[18rem] items-center rounded-full border text-[12px] backdrop-blur-xl backdrop-saturate-150 ${glass} ${enter}`
+    const at = layout === 'wide' ? CHIP_AT.wide : chipTop ? CHIP_AT.compact : CHIP_AT.shortTouch
+    const pill = `pointer-events-auto absolute ${at} flex items-center rounded-full border text-[12px] backdrop-blur-xl backdrop-saturate-150 ${glass} ${enter}`
+    const style = chipTop ? { top: chipTop } : undefined
     return (
       <div className="pointer-events-none absolute inset-0 z-30 font-sans antialiased select-none">
         {pending ? (
-          <button type="button" onClick={askForName} className={`${pill} gap-2 py-1 pr-3.5 pl-1`} data-concierge="chip">
+          <button ref={chipRef} type="button" onClick={askForName} className={`${pill} gap-2 py-1 pr-3.5 pl-1`} style={style} data-concierge="chip">
             <SloaneMark size={24} />
             <span className="font-semibold">{SLOANE.name}</span>{' '}
             <span className={`truncate ${muted}`}>{compact ? 'Your name?' : 'What should I call you?'}</span>
           </button>
         ) : (
-          <div className={pill} role="group" aria-label={`${SLOANE.name}, your concierge`}>
+          <div ref={chipRef} className={pill} style={style} role="group" aria-label={`${SLOANE.name}, your concierge`}>
             <button type="button" onClick={openGoal} className="flex min-w-0 items-center gap-2 py-1 pr-2.5 pl-1" data-concierge="chip">
               <SloaneMark size={24} />
               <span className="truncate font-semibold">Tell {SLOANE.name} a goal</span>
@@ -461,7 +507,7 @@ export function Concierge({ visible, profile, onProfile, family, driving, dark =
     : mood === 'back' ? <>Welcome back, <bdi className="font-semibold">{name}</bdi>. Your avatar is ready whenever you are.</>
     : <>No problem — you can tell me later. Here’s how to get around.</>
   const wide = layout === 'wide'
-  const at = wide ? 'relative shrink-0' : `absolute ${layout === 'tall' ? CARD_AT.tall : driving || family !== 'touch' ? CARD_AT.shortRaised : CARD_AT.short}`
+  const at = wide ? 'relative shrink-0' : `absolute ${layout === 'tall' ? (overlay ? CARD_AT.tallTouch : CARD_AT.tall) : !overlay ? CARD_AT.shortRaised : driving ? CARD_AT.shortDriving : CARD_AT.short}`
   const tight = layout === 'short'
   // Desktop: three columns. Phones: the full list in two columns, the three tips as a wrapping row (short).
   const list = layout === 'wide' ? 'grid grid-cols-3 gap-x-4 gap-y-2' : view === 'help' ? 'grid grid-cols-2 gap-x-4 gap-y-2' : 'flex flex-wrap gap-x-4 gap-y-2'

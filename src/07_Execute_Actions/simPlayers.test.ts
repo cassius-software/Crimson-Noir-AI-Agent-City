@@ -19,7 +19,7 @@ import { Physics } from './physics.ts'
 import { Fleet, type Vehicle } from './vehicles.ts'
 import { SimCore, type StepInput } from './simCore.ts'
 import { createSimHost } from './simHost.ts'
-import { MAX_PLAYERS, POSE, RUN, type FromWorker, type SimInit } from './simProtocol.ts'
+import { MAX_PLAYERS, MODES, POSE, RUN, type FromWorker, type SimInit } from './simProtocol.ts'
 import { inLot } from '../01_Initialize_World/city.ts'
 
 const H = 1 / 60
@@ -415,6 +415,76 @@ test('adversarial: player 2 drives at player 0 standing in the lane and the Boun
   assert.ok(Math.abs(s.avatars[1].x - before[1].x) < 0.01 && Math.abs(s.avatars[1].z - before[1].z) < 0.01, 'infinite walking is no walking')
   assert.ok(s.avatars.every((a) => Number.isFinite(a.x) && Number.isFinite(a.y) && Number.isFinite(a.z) && Number.isFinite(a.speed)))
   assert.ok(Array.from(poses).every(Number.isFinite), 'every pose finite')
+  assert.equal(sim.halted, false, sim.panic ?? '')
+})
+
+test('a reset rights the car of the player it names: player 1\'s at the wheel, nobody\'s for a player on foot, a bad player refused', async () => {
+  const { sim, poses, step } = await core(true)
+  const lane = OPEN.x + 3.5, z = OPEN.z + 40
+  step({ cmds: [
+    { c: 'teleport', x: OPEN.x, z, player: 1 }, { c: 'teleport', x: OPEN.x - 30, z: OPEN.z - 200 },
+    { c: 'teleport', x: OPEN.x + 40, z: OPEN.z - 210, player: 2 }, { c: 'teleport', x: OPEN.x + 40, z: OPEN.z - 230, player: 3 },
+    { c: 'dbgMode', i: 0, mode: 'parked' }, { c: 'recover', i: 0, x: lane, z, heading: Math.PI },
+  ] })
+  for (let i = 0; i < 60; i++) step()
+  let s = step({ cmds: [{ c: 'interact', player: 1 }] })
+  assert.deepEqual(s.drivings, [-1, 0, -1, -1])
+  for (let i = 0; i < 30; i++) step()
+  // Player 0 (on foot) and player 2 (on foot) reset: neither has a car, so nothing moves and nothing is refused.
+  let rejected = step().rejected
+  const y0 = poses[POSE.y], x0 = poses[POSE.x], z0 = poses[POSE.z]
+  s = step({ cmds: [{ c: 'reset' }, { c: 'reset', player: 2 }] })
+  assert.equal(s.rejected, rejected)
+  assert.ok(Math.abs(poses[POSE.y] - y0) < 0.05 && Math.abs(poses[POSE.x] - x0) < 0.05 && Math.abs(poses[POSE.z] - z0) < 0.05, 'car 0 untouched')
+  // Player 1's own reset lifts their car where it stands.
+  s = step({ cmds: [{ c: 'reset', player: 1 }] })
+  assert.equal(s.rejected, rejected, 'player 1\'s reset went through')
+  assert.ok(poses[POSE.y] > y0 + 0.2, `righted (lifted to ${poses[POSE.y].toFixed(2)} m)`)
+  assert.deepEqual(s.drivings, [-1, 0, -1, -1])
+  // A player outside 0..3 is refused, like interact's.
+  rejected = s.rejected
+  s = step({ cmds: [{ c: 'reset', player: 7 }, { c: 'reset', player: 0.5 }] })
+  assert.equal(s.rejected, rejected + 2)
+  assert.equal(sim.halted, false, sim.panic ?? '')
+})
+
+test('a network room replays player 1 alone: the others are taken out of their cars as it starts and their doors are refused in it, while player 1\'s opens', async () => {
+  const { sim, poses, step } = await core(true)
+  const lane = OPEN.x + 3.5, z = OPEN.z + 40
+  step({ cmds: [
+    { c: 'teleport', x: OPEN.x, z, player: 1 }, { c: 'teleport', x: OPEN.x - 30, z: OPEN.z - 200 },
+    { c: 'dbgMode', i: 0, mode: 'parked' }, { c: 'recover', i: 0, x: lane, z, heading: Math.PI },
+  ] })
+  for (let i = 0; i < 60; i++) step()
+  let s = step({ cmds: [{ c: 'interact', player: 1 }] })
+  assert.deepEqual(s.drivings, [-1, 0, -1, -1], 'player 2 at the wheel of car 0')
+  for (let i = 0; i < 10; i++) step()
+  // The room starts: player 2 is out (a forced exit, no door of theirs) and car 0 goes back to its ring's traffic.
+  s = step({ cmds: [{ c: 'room', on: true }] })
+  assert.deepEqual(s.drivings, [-1, -1, -1, -1])
+  const out = s.events.find((e) => e.e === 'exited')
+  assert.ok(out && out.e === 'exited' && out.player === 1 && out.forced === true, JSON.stringify(s.events))
+  assert.equal(MODES[poses[POSE.mode]], 'ai', 'back to traffic, not left parked where the room holds nothing')
+  // The room replays its authority's physics, so the test's own hooks are refused in it too: the car stays where the
+  // room left it, beside player 2.
+  s = step({ cmds: [{ c: 'dbgMode', i: 0, mode: 'parked' }] })
+  assert.ok(s.events.some((e) => e.e === 'rejected' && e.reason.startsWith('dbgMode: refused in a network room')), JSON.stringify(s.events))
+  // Beside the car, player 2's door is refused while the room lasts, for that reason; player 1's own door opens.
+  step({ cmds: [{ c: 'teleport', x: poses[POSE.x] - 3.5, z: poses[POSE.z], player: 1 }] })
+  for (let i = 0; i < 5; i++) step()
+  s = step({ cmds: [{ c: 'interact', player: 1 }] })
+  assert.ok(s.events.some((e) => e.e === 'rejected' && e.reason.includes('only player 1 opens a car door')), JSON.stringify(s.events))
+  assert.deepEqual(s.drivings, [-1, -1, -1, -1])
+  step({ cmds: [{ c: 'teleport', x: poses[POSE.x] + 3.5, z: poses[POSE.z] }] })
+  for (let i = 0; i < 5; i++) step()
+  s = step({ cmds: [{ c: 'interact' }] })
+  assert.deepEqual(s.drivings, [0, -1, -1, -1], 'player 1 takes the wheel in the room')
+  for (let i = 0; i < 10; i++) step()
+  s = step({ cmds: [{ c: 'interact' }] })
+  assert.deepEqual(s.drivings, [-1, -1, -1, -1], 'and leaves it')
+  step({ cmds: [{ c: 'room', on: false }] })
+  s = step({ cmds: [{ c: 'interact', player: 1 }] })
+  assert.deepEqual(s.drivings, [-1, 0, -1, -1], 'out of the room, player 2\'s door opens again')
   assert.equal(sim.halted, false, sim.panic ?? '')
 })
 

@@ -11,7 +11,14 @@
  *   avatar, ghost view and rain mode toggled from their keys, and a car entered, driven and left;
  * - phone: an iPhone's user agent, screen and touch (no mouse, no keyboard): the virtual stick walking, a drag on the
  *   right half turning the head, both thumbs at once, the Run and Ping buttons, and the menu that reaches what a
- *   keyboard reaches (the console, the clock, ghost view, rain mode, hiding the HUD);
+ *   keyboard reaches (the console, the clock, ghost view, rain mode, hiding the HUD), also with a thumb on the stick;
+ *   on foot and at the wheel, at six phone and tablet sizes both ways up, every control on screen and clear of the
+ *   others, the stick, the speedometer, Sloane's chip and her Controls card, the chip clear of the stick and the
+ *   minimap, and the Menu's sheet inside the screen; a car entered from its button and, held upright while driving,
+ *   Ping, Reset and Exit car clear of the stick, every text field reads at 16 px, and a mouse moving over a
+ *   touch-first screen leaves the touch overlay where it is;
+ * - split: two players (?players=2) on two pads, one of them without the standard mapping: that pad moves nobody until
+ *   a face button wakes it, then walks player 1, and player 2's own pad enters and leaves a car of their own;
  * - file: dist/index.html opened from disk, the way the README says to play, with no server and so no cross-origin
  *   isolation (the bridge's private-buffer path);
  * - ultra: the top tier pinned, so the shadowed, post and volumetric pipelines are compiled once and must validate;
@@ -63,18 +70,25 @@ const IPHONE = {
   height: 402,
 }
 
-/** A standard-mapping pad the page reads through navigator.getGamepads, set from the test (axes, then button values). */
+/**
+ * Up to four pads the page reads through navigator.getGamepads, set from the test (axes, then pressed buttons). A pad is
+ * standard-mapped unless connected with another mapping (a pad the browser does not recognise reports '').
+ */
 const PAD_SHIM = `(() => {
-  const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }))
-  const pad = { id: 'Smoke Pad (STANDARD GAMEPAD Vendor: 045e Product: 028e)', index: 0, connected: true, mapping: 'standard',
-    timestamp: 0, axes: [0, 0, 0, 0], buttons, vibrationActuator: null, hapticActuators: [] }
-  let on = false
-  Object.defineProperty(Navigator.prototype, 'getGamepads', { configurable: true, value: () => on ? [pad, null, null, null] : [null, null, null, null] })
+  const pads = [null, null, null, null]
+  Object.defineProperty(Navigator.prototype, 'getGamepads', { configurable: true, value: () => pads.slice() })
   window.__smokePad = {
-    connect() { on = true; pad.timestamp = performance.now(); const e = new Event('gamepadconnected'); e.gamepad = pad; window.dispatchEvent(e) },
-    set(axes, pressed = []) {
+    connect(i = 0, mapping = 'standard') {
+      const id = mapping === 'standard' ? 'Smoke Pad ' + i + ' (STANDARD GAMEPAD Vendor: 045e Product: 028e)' : 'Smoke Pad ' + i + ' (Vendor: 0079 Product: 0006)'
+      const pad = { id, index: i, connected: true, mapping, timestamp: performance.now(), axes: [0, 0, 0, 0],
+        buttons: Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 })), vibrationActuator: null, hapticActuators: [] }
+      pads[i] = pad
+      const e = new Event('gamepadconnected'); e.gamepad = pad; window.dispatchEvent(e)
+    },
+    set(axes, pressed = [], i = 0) {
+      const pad = pads[i]
       pad.axes = axes.slice()
-      buttons.forEach((b, i) => { b.pressed = pressed.includes(i); b.touched = b.pressed; b.value = b.pressed ? 1 : 0 })
+      pad.buttons.forEach((b, k) => { b.pressed = pressed.includes(k); b.touched = b.pressed; b.value = b.pressed ? 1 : 0 })
       pad.timestamp = performance.now()
     },
   }
@@ -178,6 +192,15 @@ async function open(chrome, { mobile = false, width = 960, height = 540 } = {}) 
   return page
 }
 
+/** A page expression: the car nearest player k's avatar, told to park; its index, or −1 without one. */
+const nearestCarParked = (k) => `(() => { const e = window.__SIM__.engine, st = e.sim.state, a = st.avatars[${k}]
+  let best = -1, d = Infinity
+  for (let i = 0; i < e.sim.meta.count; i++) { const q = (st.poses[i * 28] - a.x) ** 2 + (st.poses[i * 28 + 2] - a.z) ** 2; if (q < d) { d = q; best = i } }
+  if (best >= 0) window.__SIM__.sim.send({ c: 'setMode', i: best, mode: 'parked' })
+  return best })()`
+/** Where to stand beside a parked car to reach its door, tried in turn (the car's heading is not known here). */
+const SIDES = [[2.6, 0], [-2.6, 0], [0, 2.6], [0, -2.6]]
+
 const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z)
 /** Signed difference of two yaws, wrapped to (−π, π]. */
 const turn = (a, b) => Math.atan2(Math.sin(b - a), Math.cos(b - a))
@@ -255,15 +278,11 @@ const SCENARIOS = {
       await p.tap('Escape', 'Escape', 27)
 
       // A car: the nearest one is parked, the avatar stands beside it, E enters, W drives, E leaves.
-      const car = await p.eval(`(() => { const e = window.__SIM__.engine, st = e.sim.state, a = st.avatar
-        let best = -1, d = Infinity
-        for (let i = 0; i < e.sim.meta.count; i++) { const k = (st.poses[i * 28] - a.x) ** 2 + (st.poses[i * 28 + 2] - a.z) ** 2; if (k < d) { d = k; best = i } }
-        if (best >= 0) window.__SIM__.sim.send({ c: 'setMode', i: best, mode: 'parked' })
-        return best })()`)
+      const car = await p.eval(nearestCarParked(0))
       let drove = false
       if (car >= 0) {
         await p.waitFor(`Math.abs(window.__SIM__.engine.sim.state.poses[${car} * 28 + 8]) < 0.2`, 60_000).catch(() => {})
-        for (const [ox, oz] of [[2.6, 0], [-2.6, 0], [0, 2.6], [0, -2.6]]) {
+        for (const [ox, oz] of SIDES) {
           await p.eval(`(() => { const P = window.__SIM__.engine.sim.state.poses; window.__SIM__.teleport(P[${car} * 28] + ${ox}, P[${car} * 28 + 2] + ${oz}) })()`)
           if (await p.waitFor('window.__SIM__.snapshot().input.nearVehicle', 15_000).then(() => true, () => false)) break
         }
@@ -339,8 +358,10 @@ const SCENARIOS = {
         await p.touch('touchStart', [[c[0], c[1], id]])
         await p.touch('touchEnd', [])
       }
+      // The Menu button shown (two are placed while driving, one per orientation).
+      const menuAt = () => p.eval(`(() => { const b = [...document.querySelectorAll('button[aria-label="Menu"]')].find((b) => b.getBoundingClientRect().width > 0); if (!b) return null; const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2] })()`)
       const openMenu = async () => {
-        const at = await centre('button[aria-label="Menu"]')
+        const at = await menuAt()
         if (!at) return null
         await tapAt(at, 5)
         return p.waitFor(`(() => { const m = document.querySelector('[role="menu"]'); return m && [...m.querySelectorAll('button')].map((b) => b.textContent.trim()) })()`, 10_000).catch(() => null)
@@ -386,8 +407,235 @@ const SCENARIOS = {
           check(shut, 'phone: Close shuts the console')
         }
       }
+
+      /**
+       * The touch layout on phones and tablets of every size, both ways up, and in landscape under browser bars (an
+       * iPhone SE in Safari, a 360 dp Android phone in Chrome): each control on screen, none over another, the stick's
+       * zone, the speedometer, Sloane's chip or her tallest card (the Controls list); the chip clear of the stick, the
+       * minimap and the HUD's panels, and as wide as its buttons; the HUD's panels, with two of its messages raised at
+       * each size, clear of the buttons and the stick's base; and the Menu's sheet inside the screen. Below 600 px
+       * across, the card may give up the stick's inner edge. Leaves the iPhone in landscape.
+       */
+      const SIZES = [[874, 402], [667, 375], [956, 440], [568, 320], [640, 360], [1180, 820]]
+      const VIEWS = [...SIZES.flatMap(([long, short]) => [[long, short], [short, long]]), [667, 325], [752, 280]]
+      const rectOf = (selector) => `(() => { const e = document.querySelector(${JSON.stringify(selector)}); if (!e) return null; const r = e.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom } })()`
+      const buttonIn = (selector, text) => `(() => { const b = [...document.querySelectorAll(${JSON.stringify(selector)})].find((b) => b.textContent.trim() === ${JSON.stringify(text)}); if (!b) return null; const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2] })()`
+      // A first visit's chip asks a name; skipped, it offers Controls, which opens Sloane's tallest card.
+      const chipAt = await centre('[data-concierge="chip"]')
+      if (chipAt && !(await centre('[data-concierge="chip-controls"]'))) {
+        await tapAt(chipAt, 10)
+        const skip = await p.waitFor(buttonIn('aside[data-concierge] button', 'Skip'), 10_000).catch(() => null)
+        if (skip) await tapAt(skip, 11)
+        const close = await p.waitFor(`(${rectOf('aside[data-concierge] button[aria-label="Close"]')}) && ${JSON.stringify(true)}`, 10_000).then(() => centre('aside[data-concierge] button[aria-label="Close"]'), () => null)
+        if (close) await tapAt(close, 12)
+      }
+      const controlsChip = await p.waitFor(`!!document.querySelector('[data-concierge="chip-controls"]')`, 10_000).then(() => true, () => false)
+      check(controlsChip, 'phone: Sloane\'s chip offers her Controls card once the name is skipped')
+      const LAYOUT = `(() => {
+        const box = (e) => { const r = e.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom } }
+        const shown = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
+        const zone = [...document.querySelectorAll('div[aria-hidden]')].find((d) => d.style.width === '184px' && d.style.height === '184px')
+        const layer = zone && zone.closest('.z-10')
+        const buttons = layer ? [...layer.querySelectorAll('button')].filter(shown).map((b) => ({ name: b.getAttribute('aria-label') || b.textContent.trim(), ...box(b) })) : []
+        const chip = document.querySelector('[data-concierge="chip"]')
+        const pill = chip && (chip.closest('[role="group"]') || chip)
+        const hud = (name) => { const e = document.querySelector(\`[data-hud="\${name}"]\`); return e && shown(e) ? box(e) : null }
+        const panels = [...document.querySelectorAll('[data-hud="panel"]')].filter(shown).map((e) => ({ text: e.textContent.trim().slice(0, 24), ...box(e) }))
+        const parts = pill ? [...pill.querySelectorAll('button')].filter(shown).map(box) : []
+        return { w: innerWidth, h: innerHeight, zone: zone ? box(zone) : null, buttons, chip: pill && shown(pill) ? box(pill) : null, parts, minimap: hud('minimap'), speed: hud('speed'), panels }
+      })()`
+      const meets = (a, b) => a.l < b.r - 1 && b.l < a.r - 1 && a.t < b.b - 1 && b.t < a.b - 1
+      const inside = (a, w, h) => a.l >= -1 && a.t >= -1 && a.r <= w + 1 && a.b <= h + 1
+      const layouts = async (mode, views = VIEWS) => {
+        const bad = []
+        for (const [width, height] of views) {
+          {
+            const portrait = height > width
+            await p.b.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true, screenOrientation: portrait ? { type: 'portraitPrimary', angle: 0 } : { type: 'landscapePrimary', angle: 90 } })
+            await p.frames(3)
+            // Two of the HUD's messages up at every size (they last six seconds): the car's long one, newest, and a short one.
+            await p.eval(`(() => { const e = window.__SIM__.engine; e.toast('Clock', '18:00'); e.toast('Transit coach', 'Stick ▲ to drive · Brake to brake or reverse · Exit car to leave') })()`)
+            await p.frames(2)
+            const L = await p.eval(LAYOUT)
+            const at = `${width}x${height}`
+            if (!L.zone || L.w !== width) { bad.push(`${at}: no stick zone or the size did not take`); continue }
+            for (const b of L.buttons) {
+              if (!inside(b, L.w, L.h)) bad.push(`${at}: ${b.name} off screen`)
+              if (meets(b, L.zone)) bad.push(`${at}: ${b.name} over the stick`)
+              if (L.chip && meets(b, L.chip)) bad.push(`${at}: ${b.name} under Sloane's chip`)
+              if (L.speed && meets(b, L.speed)) bad.push(`${at}: ${b.name} over the speedometer`)
+            }
+            if (L.chip && meets(L.chip, L.zone)) bad.push(`${at}: Sloane's chip over the stick`)
+            if (L.chip && L.minimap && meets(L.chip, L.minimap)) bad.push(`${at}: Sloane's chip over the minimap`)
+            if (L.chip && L.speed && meets(L.chip, L.speed)) bad.push(`${at}: Sloane's chip over the speedometer`)
+            if (L.chip && L.panels.some((q) => meets(L.chip, q))) bad.push(`${at}: Sloane's chip over a HUD panel`)
+            // The stick's base at rest: 116 px in the middle of its 184 px zone.
+            const base = { l: L.zone.l + 34, t: L.zone.t + 34, r: L.zone.r - 34, b: L.zone.b - 34 }
+            for (const q of L.panels) {
+              const what = q.text ? `the HUD's "${q.text}"` : 'a HUD panel'
+              for (const b of L.buttons) if (meets(q, b)) bad.push(`${at}: ${what} under ${b.name}`)
+              if (meets(q, base)) bad.push(`${at}: ${what} over the stick`)
+            }
+            if (L.chip && L.parts.some((q) => q.l < L.chip.l - 1 || q.r > L.chip.r + 1)) bad.push(`${at}: Sloane's chip narrower than its buttons`)
+            for (let i = 0; i < L.buttons.length; i++) for (let j = i + 1; j < L.buttons.length; j++) {
+              if (meets(L.buttons[i], L.buttons[j])) bad.push(`${at}: ${L.buttons[i].name} over ${L.buttons[j].name}`)
+            }
+            if (!L.buttons.some((b) => b.name === 'Menu')) bad.push(`${at}: no Menu button`)
+            const controls = await centre('[data-concierge="chip-controls"]')
+            if (controls) await tapAt(controls, 13)
+            const card = controls ? await p.waitFor(rectOf('aside[data-concierge="help"]'), 5_000).catch(() => null) : null
+            if (!card) bad.push(`${at}: Sloane's Controls card did not open`)
+            else {
+              await p.frames(2)
+              const settled = (await p.eval(rectOf('aside[data-concierge="help"]'))) ?? card
+              if (!inside(settled, L.w, L.h)) bad.push(`${at}: Sloane's card runs off screen ${JSON.stringify(settled)}`)
+              for (const b of L.buttons) if (meets(settled, b)) bad.push(`${at}: Sloane's card over ${b.name}`)
+              if (L.w >= 600 && meets(settled, L.zone)) bad.push(`${at}: Sloane's card over the stick`)
+              const shut = await centre('aside[data-concierge] button[aria-label="Close"]')
+              if (shut) await tapAt(shut, 14)
+              await p.waitFor(`!document.querySelector('aside[data-concierge]')`, 5_000).catch(() => bad.push(`${at}: Sloane's card did not close`))
+            }
+            const items = await openMenu()
+            const sheet = await p.eval(`(() => { const m = document.querySelector('[role="menu"]'); if (!m) return null; const r = m.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom } })()`)
+            if (!Array.isArray(items) || !sheet) bad.push(`${at}: the Menu did not open`)
+            else if (!inside(sheet, L.w, L.h)) bad.push(`${at}: the Menu's sheet runs off screen ${JSON.stringify(sheet)}`)
+            const again = await menuAt()
+            if (again) await tapAt(again, 9)
+            await p.waitFor(`!document.querySelector('[role="menu"]')`, 5_000).catch(() => bad.push(`${at}: the Menu did not close`))
+          }
+        }
+        await p.b.send('Emulation.setDeviceMetricsOverride', { width: IPHONE.width, height: IPHONE.height, deviceScaleFactor: 1, mobile: true, screenOrientation: { type: 'landscapePrimary', angle: 90 } })
+        await p.frames(3)
+        check(bad.length === 0, `phone: ${mode}, at ${views.length} phone and tablet views, every control is on screen and clear of the others, the stick, the speedometer, Sloane's chip and her card, the chip clear of the HUD, and the Menu opens inside the screen`, bad.slice(0, 24).join('; '))
+      }
+      await layouts('on foot')
+      // The Menu opens with the other thumb on the stick, as Ping and Run do (a browser makes no click of a tap then).
+      const mAt = await menuAt()
+      if (mAt) {
+        await p.touch('touchStart', [[100, H - 100, 20]])
+        await p.touch('touchStart', [[100, H - 100, 20], [mAt[0], mAt[1], 21]])
+        await p.touch('touchMove', [[100, H - 100, 20]])
+        const opened = await p.waitFor(`!!document.querySelector('[role="menu"]')`, 5_000).then(() => true, () => false)
+        await p.touch('touchEnd', [])
+        check(opened, 'phone: the Menu opens with the other thumb holding the stick')
+        await tapAt(mAt, 22)
+        await p.waitFor(`!document.querySelector('[role="menu"]')`, 5_000).catch(() => {})
+      }
+
+      // A field on a touch screen reads at 16 px whatever its own size, so Safari does not zoom into it.
+      const px = await p.eval(`(() => { const i = document.createElement('input'); i.className = 'text-[12px]'; document.body.append(i); const f = getComputedStyle(i).fontSize; i.remove(); return f })()`)
+      check(px === '16px', 'phone: a 12 px text field reads at 16 px on a touch screen', px)
+      // A mouse moving over a phone (a touch-first screen) leaves the touch overlay where it is.
+      await p.mouse('mouseMoved', 300, 200)
+      await p.mouse('mouseMoved', 340, 210)
+      await p.frames(2)
+      check((await p.snap()).touch === true, 'phone: a mouse moving over a touch-first screen keeps the touch controls')
+
+      // Driving, held upright: the car's Ping, Reset and Exit car stay clear of the stick's zone.
+      const car = await p.eval(nearestCarParked(0))
+      let inCar = false
+      if (car >= 0) {
+        await p.waitFor(`Math.abs(window.__SIM__.engine.sim.state.poses[${car} * 28 + 8]) < 0.2`, 60_000).catch(() => {})
+        for (const [ox, oz] of SIDES) {
+          await p.eval(`(() => { const P = window.__SIM__.engine.sim.state.poses; window.__SIM__.teleport(P[${car} * 28] + ${ox}, P[${car} * 28 + 2] + ${oz}) })()`)
+          if (await p.waitFor('window.__SIM__.snapshot().input.nearVehicle', 15_000).then(() => true, () => false)) break
+        }
+        const enter = await p.waitFor(`(() => { const b = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Enter car'); if (!b) return null; const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2] })()`, 10_000).catch(() => null)
+        if (enter) {
+          await tapAt(enter, 8)
+          inCar = await p.waitFor(`window.__SIM__.snapshot().input.mode === 'vehicle'`, 20_000).then(() => true, () => false)
+        }
+      }
+      check(inCar, 'phone: the Enter car button enters the nearest car')
+      if (inCar) {
+        await layouts('driving')
+        // A pad paired with the phone: its glyphs show, the touch buttons stay, and so does the layout around them.
+        await p.eval(`window.__smokePad.connect(0)`)
+        await p.eval(`window.__smokePad.set([0, 0, 0.6, 0])`)
+        await p.frames(4)
+        await p.eval(`window.__smokePad.set([0, 0, 0, 0])`)
+        await p.frames(2)
+        const glyphs = await p.eval(`window.__SIM__.snapshot().supplier.glyphs`)
+        check(glyphs !== 'touch' && (await p.snap()).touch === true, 'phone: a paired pad shows its glyphs and the touch buttons stay', glyphs)
+        await layouts('driving with a paired pad', [[874, 402], [752, 280], [667, 325]])
+        await p.b.send('Emulation.setDeviceMetricsOverride', { width: IPHONE.height, height: IPHONE.width, deviceScaleFactor: 1, mobile: true, screenOrientation: { type: 'portraitPrimary', angle: 0 } })
+        await p.frames(3)
+        const boxes = await p.eval(`(() => {
+          const box = (e) => { const r = e.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom } }
+          const zone = [...document.querySelectorAll('div[aria-hidden]')].find((d) => d.style.width === '184px' && d.style.height === '184px')
+          const buttons = ['Ping', 'Reset', 'Exit car'].map((t) => [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === t))
+          return zone && buttons.every(Boolean) ? { zone: box(zone), buttons: buttons.map(box) } : null })()`)
+        const clear = !!boxes && boxes.buttons.every((b) => b.l >= boxes.zone.r || b.b <= boxes.zone.t)
+        check(clear, 'phone: held upright while driving, Ping, Reset and Exit car stay clear of the stick', JSON.stringify(boxes))
+        await p.shot('phone-portrait')
+      }
       await p.shot('phone')
       p.health('phone')
+    } finally { await p.b.close() }
+  },
+
+  async split(chrome, origin) {
+    const p = await open(chrome)
+    try {
+      await p.goto(`${origin}/?${LIGHT}&players=2`)
+      await p.booted()
+      const views = await p.eval('window.__SIM__.snapshot().output.players?.count ?? 1')
+      check(views === 2, 'split: ?players=2 cuts the screen in two', `${views} views`)
+      // Seats go to the pads in turn: the first pad to appear takes player 2's seat, the next player 1's. A pad without
+      // the standard mapping appears only once a face button wakes it (hal.ts), and that press does nothing more.
+      await p.eval('window.__smokePad.connect(0)')
+      await p.frames(2)
+      await p.eval("window.__smokePad.connect(1, '')")
+      await p.frames(4)
+      const at = () => p.eval('(() => { const st = window.__SIM__.engine.sim.state; return { p1: st.avatars[0], p2: st.avatars[1], drivings: st.drivings.slice() } })()')
+      const asleep = await at()
+      await p.eval('window.__smokePad.set([0, -1, 0, 0], [], 1)')
+      await p.frames(10)
+      await p.eval('window.__smokePad.set([0, 0, 0, 0], [], 1)')
+      check(dist(asleep.p1, (await at()).p1) < 0.05, 'split: a pad without the standard mapping moves nobody before a face button wakes it')
+      await p.eval('window.__smokePad.set([0, 0, 0, 0], [0], 1)')
+      await p.frames(2)
+      await p.eval('window.__smokePad.set([0, 0, 0, 0], [], 1)')
+      await p.frames(2)
+      const a0 = await at()
+      await p.eval('window.__smokePad.set([0, -1, 0, 0], [], 1)')
+      await p.frames(10)
+      await p.eval('window.__smokePad.set([0, 0, 0, 0], [], 1)')
+      await p.frames(2)
+      const a1 = await at()
+      check(dist(a0.p1, a1.p1) > 0.5, 'split: a pad without the standard mapping walks player 1 (read by position)', `${dist(a0.p1, a1.p1).toFixed(2)} m`)
+
+      // Player 2's pad (seat 1): south beside a parked car enters it for player 2, and again leaves it. A press is one
+      // frame's edge: the release must be seen before the next press counts.
+      const padTap = async (button) => {
+        await p.eval(`window.__smokePad.set([0, 0, 0, 0], [${button}], 0)`)
+        await p.frames(2)
+        await p.eval('window.__smokePad.set([0, 0, 0, 0], [], 0)')
+        await p.frames(2)
+      }
+      const car = await p.eval(nearestCarParked(1))
+      let entered = false
+      if (car >= 0) {
+        await p.waitFor(`Math.abs(window.__SIM__.engine.sim.state.poses[${car} * 28 + 8]) < 0.2`, 60_000).catch(() => {})
+        for (const [ox, oz] of SIDES) {
+          await p.eval(`(() => { const P = window.__SIM__.engine.sim.state.poses; window.__SIM__.sim.send({ c: 'teleport', x: P[${car} * 28] + ${ox}, z: P[${car} * 28 + 2] + ${oz}, player: 1 }) })()`)
+          await p.frames(4)
+          await padTap(0)
+          entered = await p.waitFor(`window.__SIM__.engine.sim.state.drivings[1] === ${car}`, 5_000).then(() => true, () => false)
+          if (entered) break
+        }
+      }
+      const d = await at()
+      check(entered && d.drivings[0] === -1, 'split: player 2\'s pad enters a car for player 2, not player 1', JSON.stringify(d.drivings))
+      if (entered) {
+        await padTap(0)
+        const out = await p.waitFor('window.__SIM__.engine.sim.state.drivings[1] === -1', 20_000).then(() => true, () => false)
+        check(out, 'split: and leaves it again')
+      }
+      const e = await p.snap()
+      check(e.errors.length === 0, 'split: the engine recorded no error', e.errors.join(' | ').slice(0, 300))
+      await p.shot('split')
+      p.health('split')
     } finally { await p.b.close() }
   },
 

@@ -184,7 +184,8 @@ export interface PlayerControls { foot: FootControls; drive: DriveControls }
 export type SimCommand =
   // `player` picks the avatar (0..players − 1, default 0): a car another player is driving is refused.
   | { c: 'interact'; player?: number }
-  | { c: 'reset' }
+  // `player` picks whose car is righted (default 0); a player on foot has none, and the reset does nothing.
+  | { c: 'reset'; player?: number }
   // `y`: put down at that height (a network room's truth), else just above standing height.
   | { c: 'teleport'; x: number; z: number; y?: number; player?: number }
   /**

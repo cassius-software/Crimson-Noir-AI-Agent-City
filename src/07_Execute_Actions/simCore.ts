@@ -637,8 +637,10 @@ export class SimCore {
     switch (cmd.c) {
       case 'interact': {
         const k = this.#player(cmd.player)
-        // A network room hears one door a step from player 1: each input of the room's carries one.
-        if (this.#room && k === 0) {
+        // A network room hears one door a step from player 1: each input of the room's carries one. Its authority
+        // replays player 1 alone, so the other local players keep off its cars (it holds the ones player 1 left).
+        if (this.#room && k !== 0) throw new Error('interact: in a network room only player 1 opens a car door')
+        if (this.#room) {
           if (this.#doored) throw new Error('interact: one door a step in a network room')
           this.#doored = true
         }
@@ -653,8 +655,10 @@ export class SimCore {
         // The authored car: the room's authority replays it with the authored tuning.
         if (on) for (const key of TUNING_KEYS) fleet.setTuning(key, 1)
         // A new session's room holds no car for player 1: every car left parked before it (in a session before, or
-        // out of one) goes back to its ring's traffic, where the room expects a car it does not hold.
+        // out of one) goes back to its ring's traffic, where the room expects a car it does not hold. The other local
+        // players get out first (their doors are refused in the room), so their cars go back too.
         if (on) {
+          for (let k = 1; k < this.#driving.length; k++) if (this.#driving[k]) this.#interact(k, true)
           for (const v of fleet.vehicles) if (v.mode === 'parked' && !this.#driving.includes(v)) fleet.release(v)
           this.#held.length = 0
         }
@@ -678,8 +682,9 @@ export class SimCore {
       }
       case 'reset': {
         this.#notInRoom(cmd.c)
-        // Player 0's car, righted where it stands: never put down beside a player on foot (the driver is inside).
-        const v = this.#driving[0]
+        // The player's car (player 0's by default), righted where it stands: never put down beside a player on foot
+        // (the driver is inside).
+        const v = this.#driving[this.#player(cmd.player)]
         if (!v) return
         const at = fleet.position(v, this.#pos)
         this.#clearOfPeople('reset', at.x, at.z)

@@ -37,7 +37,8 @@ export type GlyphKind = 'key' | 'button' | 'stick' | 'pill'
 /** One control hint: what to press and what it does. */
 export interface Hint { action: ControlAction; glyph: string; kind: GlyphKind; label: string }
 
-/** '' = the family has no control for the action (touch has no clock, console or HUD toggle). */
+/** '' = the family has no control for the action. Touch reaches the clock, the console, the HUD and ghost view
+ *  through its Menu button (TouchControls.tsx). */
 const GLYPHS = {
   keyboard: {
     move: 'W A S D', look: 'Mouse', run: 'Shift', interact: 'E', handbrake: 'Space', reset: 'R',
@@ -61,7 +62,7 @@ const GLYPHS = {
   },
   touch: {
     move: 'Stick', look: 'Drag', run: 'Run', interact: 'Enter car', handbrake: 'Handbrake', reset: 'Reset',
-    throttle: 'Stick ▲', brake: 'Brake', clock: '', console: '', hud: '', ghost: '', ping: 'Ping',
+    throttle: 'Stick ▲', brake: 'Brake', clock: 'Menu', console: 'Menu', hud: 'Menu', ghost: 'Menu', ping: 'Ping',
   },
 } as const satisfies Record<GlyphFamily, Record<ControlAction, string>>
 
@@ -137,9 +138,19 @@ function driveGlyph(action: ControlAction, family: GlyphFamily): string | undefi
   return undefined
 }
 
+/** The glyph for an action as the player sees it in the current mode (in the car the touch door button reads "Exit car"). */
+export function modeGlyph(action: ControlAction, family: GlyphFamily, driving: boolean): string {
+  return (driving ? driveGlyph(action, family) : undefined) ?? glyph(action, family)
+}
+
+/** Touch's one row for everything its Menu holds: the four keyboard rows it stands for would push a landscape phone's
+ *  card off the screen. */
+const TOUCH_MENU_LABEL = 'Clock, console, HUD, ghost view'
+
 /**
  * Control hints for the current mode. 'tips' = the Concierge's three; 'all' = every control the family
- * has (unbound ones skipped, and the touch stick's throttle folded into "Steer and accelerate").
+ * has (unbound ones skipped, the touch stick's throttle folded into "Steer and accelerate", and the touch
+ * Menu's actions into one row).
  */
 export function controlHints(family: GlyphFamily, driving: boolean, scope: 'tips' | 'all'): Hint[] {
   const group = family === 'keyboard' || family === 'touch' ? family : 'pad'
@@ -149,8 +160,13 @@ export function controlHints(family: GlyphFamily, driving: boolean, scope: 'tips
   }
   const out: Hint[] = []
   for (const [action, label] of rows) {
-    const g = (driving ? driveGlyph(action, family) : undefined) ?? glyph(action, family)
-    if (g) out.push({ action, glyph: g, kind: glyphKind(action, family), label })
+    const g = modeGlyph(action, family, driving)
+    if (!g) continue
+    if (family === 'touch' && g === GLYPHS.touch.console) {
+      if (!out.some((h) => h.glyph === g)) out.push({ action, glyph: g, kind: glyphKind(action, family), label: TOUCH_MENU_LABEL })
+      continue
+    }
+    out.push({ action, glyph: g, kind: glyphKind(action, family), label })
   }
   return out
 }

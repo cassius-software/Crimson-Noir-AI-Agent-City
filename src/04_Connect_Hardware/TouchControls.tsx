@@ -6,15 +6,15 @@
  * overlay with a floating virtual stick on the left (walk, or steer + throttle), drag on the right half to
  * turn the first-person head (yaw and pitch), and context buttons — Enter/Exit car when relevant, Run on
  * foot, Brake, Handbrake and Reset while driving, and Ping (a mark where the head looks) in both modes. A Menu
- * button on the right edge opens what a keyboard reaches with one key and a phone has no key for: the Ring-0 console
- * (and through it `ask`, the agents and every setting), the clock an hour back or on, ghost view, rain mode, and
- * hiding the HUD. Only its own controls take pointer events, so the rest of the HUD stays click-through.
+ * button beside them opens what a keyboard reaches with one key and a phone has no key for: the Ring-0 console (and
+ * through it `ask`, the agents and every setting), the clock an hour back or on, ghost view, rain mode, and hiding the
+ * HUD. Only its own controls take pointer events, so the rest of the HUD stays click-through.
  * What breaks if it is removed? Touch devices can neither move, look nor drive.
  *
  * Every control acts on pointer events, never on `click`: browsers synthesize a click only for a lone tap, so a
  * button pressed while the other thumb holds the stick would never fire.
  */
-import { useEffect, useReducer, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent } from 'react'
 import type { Input, TouchButton } from './input.ts'
 
 const STICK = { zone: 184, base: 116, knob: 52, travel: 42, deadPx: 5 } as const
@@ -64,6 +64,16 @@ function TouchLayer({ input, driving, nearVehicle, menu }: Props) {
   const [, rerender] = useReducer((n: number) => n + 1, 0)
   // Bumped when the window loses focus or the page is hidden: the controls remount, dropping every drag and hold.
   const [epoch, reset] = useReducer((n: number) => n + 1, 0)
+  // The open Menu's sheet stands beside the button that opened it (null: closed).
+  const [menuAt, setMenuAt] = useState<DOMRect | null>(null)
+  const closeMenu = useCallback(() => setMenuAt(null), [])
+  // Getting in or out of a car, or a remount, moves the button: the sheet closes (a turn of the phone closes it too,
+  // MenuSheet). Adjusted while rendering, from the values seen last, so it never shows a frame beside nothing.
+  const [menuFor, setMenuFor] = useState({ driving, epoch })
+  if (menuFor.driving !== driving || menuFor.epoch !== epoch) {
+    setMenuFor({ driving, epoch })
+    setMenuAt(null)
+  }
 
   // Buttons that unmount mid-press never see their pointerup: release what this mode was holding.
   useEffect(() => () => {
@@ -89,8 +99,38 @@ function TouchLayer({ input, driving, nearVehicle, menu }: Props) {
     }
   }, [input])
 
+  // Where the buttons stand, for Sloane's card (Concierge.tsx), which keeps clear of them: --touch-top is the height
+  // from the screen's foot to the buttons' top edge, --touch-left the width from its right edge to their left edge.
+  const cluster = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = cluster.current
+    if (!el) return
+    const root = document.documentElement.style
+    const publish = () => {
+      const r = el.getBoundingClientRect()
+      root.setProperty('--touch-top', `${Math.round(window.innerHeight - r.top)}px`)
+      root.setProperty('--touch-left', `${Math.round(window.innerWidth - r.left)}px`)
+    }
+    publish()
+    const watch = typeof ResizeObserver === 'function' ? new ResizeObserver(publish) : null
+    watch?.observe(el)
+    window.addEventListener('resize', publish)
+    return () => {
+      watch?.disconnect()
+      window.removeEventListener('resize', publish)
+      root.removeProperty('--touch-top')
+      root.removeProperty('--touch-left')
+    }
+  }, [epoch])
+
   const run = input.touchHeld('run')
   const press = (fn: () => void) => () => { input.engageTouch(); fn() }
+  // The Menu rides with the action buttons, never over them, the stick, Sloane's chip or the speedometer, at any phone
+  // size: on foot above Ping and Run (beside Enter car near one), at the wheel just before Ping (in landscape the row
+  // above the brakes reads Menu, Ping, Reset, Exit car; beside the brakes it would meet the speedometer, which stands
+  // between the thumbs on a short phone, and above the column it would meet the chip). Held upright on a phone under
+  // 376 px across, the rows that would reach over the stick's zone stand as columns instead.
+  const menuButton = menu && <MenuButton open={menuAt !== null} onToggle={(at) => { input.engageTouch(); setMenuAt((o) => (o ? null : at)) }} />
 
   return (
     <>
@@ -99,25 +139,36 @@ function TouchLayer({ input, driving, nearVehicle, menu }: Props) {
         <Stick key={`stick-${epoch}`} input={input} />
         <div
           key={`buttons-${epoch}`}
+          ref={cluster}
           className="pointer-events-none absolute flex flex-col items-end gap-3"
           style={{ right: `calc(env(safe-area-inset-right, 0px) + ${INSET}px)`, bottom: `calc(env(safe-area-inset-bottom, 0px) + ${INSET}px)` }}
         >
           {driving ? (
-            <>
-              <div className="flex gap-3">
-                <TapButton label="Ping" onTap={press(() => input.press('ping'))} />
-                <TapButton label="Reset" onTap={press(() => input.press('reset'))} />
-                <TapButton label="Exit car" onTap={press(() => input.press('interact'))} />
+            <div className="flex flex-col items-end gap-3">
+              {/* A column in portrait: as a row, Ping would sit over the stick's zone on a phone held upright. Under
+                  376 px across, Reset and Exit car share a row above the brakes, which stand one over the other. */}
+              <div className="flex gap-3 portrait:flex-col portrait:items-end">
+                <div className="flex items-center gap-3">
+                  {menuButton}
+                  <TapButton label="Ping" onTap={press(() => input.press('ping'))} />
+                </div>
+                <div className="flex gap-3 portrait:flex-col portrait:items-end portrait:max-[376px]:flex-row">
+                  <TapButton label="Reset" onTap={press(() => input.press('reset'))} />
+                  <TapButton label="Exit car" onTap={press(() => input.press('interact'))} />
+                </div>
               </div>
-              <div className="flex items-end gap-3">
-                <HoldButton label="Handbrake" size={72} button="handbrake" input={input} />
-                <HoldButton label="Brake" size={84} button="brake" input={input} />
+              <div className="flex items-end gap-3 portrait:max-[376px]:flex-col">
+                <HoldButton label="Handbrake" size={BRAKE_SIZE.handbrake} button="handbrake" input={input} />
+                <HoldButton label="Brake" size={BRAKE_SIZE.brake} button="brake" input={input} />
               </div>
-            </>
+            </div>
           ) : (
-            <>
-              {nearVehicle && <TapButton label="Enter car" onTap={press(() => input.press('interact'))} />}
-              <div className="flex items-end gap-3">
+            <div className="flex flex-col items-end gap-3">
+              <div className="flex items-end gap-3 portrait:max-[376px]:flex-col-reverse">
+                {menuButton}
+                {nearVehicle && <TapButton label="Enter car" onTap={press(() => input.press('interact'))} />}
+              </div>
+              <div className="flex items-end gap-3 portrait:max-[376px]:flex-col">
                 <TapButton label="Ping" round onTap={press(() => input.press('ping'))} />
                 <TapButton
                   label="Run"
@@ -126,11 +177,11 @@ function TouchLayer({ input, driving, nearVehicle, menu }: Props) {
                   onTap={() => { input.setTouchButton('run', !input.touchHeld('run')); rerender() }}
                 />
               </div>
-            </>
+            </div>
           )}
         </div>
       </div>
-      {menu && <Menu key={`menu-${epoch}`} input={input} host={menu} />}
+      {menu && menuAt && <MenuSheet input={input} host={menu} at={menuAt} onClose={closeMenu} />}
     </>
   )
 }
@@ -138,7 +189,9 @@ function TouchLayer({ input, driving, nearVehicle, menu }: Props) {
 /**
  * Right half: drag to turn the head — the view follows the finger like a mouse (right turns right, up looks
  * up) at Input's first-person touch sensitivity. One finger at a time; the others belong to the stick and
- * buttons.
+ * buttons. A mouse press on a touch laptop is not a finger: it is left alone (moving the mouse puts the whole overlay
+ * away, Input.mouseHidesTouch), so the mouse keeps its own look. On a tablet whose primary pointer is the finger the
+ * overlay stays, and there a mouse or trackpad drag looks like a finger's.
  */
 function LookZone({ input }: { input: Input }) {
   const look = useRef<{ id: number; x: number; y: number } | null>(null)
@@ -148,7 +201,7 @@ function LookZone({ input }: { input: Input }) {
       aria-hidden
       className={`${CONTROL} absolute top-0 right-0 bottom-0 w-1/2`}
       onPointerDown={(e) => {
-        if (look.current && owns(e, look.current.id)) return
+        if ((e.pointerType === 'mouse' && input.mouseHidesTouch) || (look.current && owns(e, look.current.id))) return
         capture(e)
         look.current = { id: e.pointerId, x: e.clientX, y: e.clientY }
         input.engageTouch()
@@ -209,7 +262,7 @@ function Stick({ input }: { input: Input }) {
         height: STICK.zone,
       }}
       onPointerDown={(e) => {
-        if (!zone.current || (drag.current && owns(e, drag.current.id))) return
+        if ((e.pointerType === 'mouse' && input.mouseHidesTouch) || !zone.current || (drag.current && owns(e, drag.current.id))) return
         capture(e)
         const rect = zone.current.getBoundingClientRect()
         const cx = Math.max(rect.left + r, Math.min(rect.right - r, e.clientX))
@@ -239,18 +292,59 @@ function Stick({ input }: { input: Input }) {
 }
 
 /**
- * The keyboard's one-key actions for a phone: a round Menu button half-way down the right edge (clear of the stick,
- * the action buttons and the HUD's corners) opening a sheet beside it. Its items act on `click`, a whole tap: the console's has
- * to, since iOS raises the keyboard only for a focus made while the tap is handled, and a menu is never pressed with
- * the other thumb busy. The clock items leave the sheet open for another hour; the rest close it, as does a tap
- * anywhere else (that tap lands on a backdrop and does nothing more).
+ * The round Menu button among the action buttons; it reports where it stands, for its sheet. Opens on pointerdown, like the buttons beside it: a browser makes a click only of a lone tap, so a click would never
+ * come while the other thumb holds the stick. A click with no press before it (keyboard or assistive activation) also
+ * toggles it.
  */
-function Menu({ input, host }: { input: Input; host: TouchMenuHost }) {
-  const [open, setOpen] = useState(false)
+function MenuButton({ open, onToggle }: { open: boolean; onToggle: (at: DOMRect) => void }) {
+  const pointerAt = useRef(-1e9)
+  const stamp = (e: PointerEvent<HTMLButtonElement>) => { pointerAt.current = e.timeStamp }
+  return (
+    <button
+      type="button"
+      aria-label="Menu"
+      aria-expanded={open}
+      aria-haspopup="menu"
+      onPointerDown={(e) => {
+        stamp(e)
+        if (e.pointerType !== 'mouse' || e.button === 0) onToggle(e.currentTarget.getBoundingClientRect())
+      }}
+      onPointerUp={stamp}
+      onPointerCancel={stamp}
+      onClick={(e) => { if (e.timeStamp - pointerAt.current > 600) onToggle(e.currentTarget.getBoundingClientRect()) }}
+      onContextMenu={noMenu}
+      className={`${CONTROL} flex h-12 w-12 shrink-0 flex-col items-center justify-center gap-[5px] rounded-full ${open ? GLASS_ON : GLASS}`}
+    >
+      <span className="block h-[2px] w-5 rounded-full bg-current" />
+      <span className="block h-[2px] w-5 rounded-full bg-current" />
+      <span className="block h-[2px] w-5 rounded-full bg-current" />
+    </button>
+  )
+}
+
+/** The sheet's width with its padding and border (its items are at least 148 px), for where it fits. */
+const SHEET_W = 172
+
+/**
+ * The keyboard's one-key actions for a phone, in a sheet that opens upward from the Menu button's foot, to its left, or,
+ * where there is no room to its left (a narrow phone held upright), upward from the button's top with their right edges
+ * aligned: it never runs off the screen (its height is capped to the room above, and it scrolls past that; its items
+ * keep their height), and it leaves the button showing. Its items act on `click`, a whole tap: the console's has to,
+ * since iOS raises the keyboard only for a focus made while the tap is handled. The clock items leave the sheet open
+ * for another hour; the rest close it, as does a tap anywhere else (that tap lands on a backdrop and does nothing more;
+ * the click that ends the tap which opened the sheet lands there too, and is not a tap on it) and a turn of the phone,
+ * which moves the button.
+ */
+function MenuSheet({ input, host, at, onClose }: { input: Input; host: TouchMenuHost; at: DOMRect; onClose: () => void }) {
+  useEffect(() => {
+    window.addEventListener('resize', onClose)
+    return () => window.removeEventListener('resize', onClose)
+  }, [onClose])
+  const pressed = useRef(false)
   const act = (fn: () => void, close = true) => () => {
     input.engageTouch()
     fn()
-    if (close) setOpen(false)
+    if (close) onClose()
   }
   const items: { label: string; on?: boolean; run: () => void; keep?: boolean }[] = [
     { label: 'Console', run: host.onConsole },
@@ -260,45 +354,43 @@ function Menu({ input, host }: { input: Input; host: TouchMenuHost }) {
     { label: 'Rain mode', on: host.rain, run: () => input.press('matrix') },
     { label: host.hudVisible ? 'Hide HUD' : 'Show HUD', run: host.onHud },
   ]
+  const beside = at.left - 12 - SHEET_W >= 8
+  const sheet: CSSProperties = beside
+    ? {
+        right: Math.max(8, window.innerWidth - at.left + 12),
+        bottom: Math.max(8, window.innerHeight - at.bottom),
+        maxHeight: `calc(${Math.round(at.bottom)}px - max(12px, env(safe-area-inset-top, 0px)))`,
+      }
+    : {
+        right: Math.max(8, window.innerWidth - at.right),
+        bottom: Math.max(8, window.innerHeight - at.top + 12),
+        maxHeight: `calc(${Math.round(at.top - 12)}px - max(12px, env(safe-area-inset-top, 0px)))`,
+      }
   // Its own layer above the HUD cards and the Concierge (z-30), below the console: an open sheet must not hide under the
-  // action buttons or the Concierge on a short landscape screen.
+  // Concierge on a short landscape screen.
   return (
     <div className="pointer-events-none absolute inset-0 z-40 select-none" style={ROOT_STYLE}>
-      {open && <div aria-hidden className={`${CONTROL} absolute inset-0`} onClick={() => setOpen(false)} onContextMenu={noMenu} />}
       <div
-        className="pointer-events-none absolute flex items-center gap-3"
-        style={{ right: `calc(env(safe-area-inset-right, 0px) + ${INSET}px)`, top: '50%', transform: 'translateY(-50%)' }}
-      >
-        {open && (
-          <div role="menu" aria-label="Menu" className={`${CONTROL} flex flex-col gap-1.5 rounded-2xl p-2 ${GLASS}`}>
-            {items.map((it) => (
-              <button
-                key={it.label}
-                type="button"
-                role={it.on === undefined ? 'menuitem' : 'menuitemcheckbox'}
-                aria-checked={it.on}
-                onClick={act(it.run, !it.keep)}
-                onContextMenu={noMenu}
-                className={`${CONTROL} h-11 min-w-[148px] rounded-xl px-4 text-left text-[13px] font-semibold tracking-tight ${it.on ? 'bg-white/80 text-slate-900' : 'text-white'}`}
-              >
-                {it.on === undefined ? it.label : `${it.label} · ${it.on ? 'On' : 'Off'}`}
-              </button>
-            ))}
-          </div>
-        )}
-        <button
-          type="button"
-          aria-label="Menu"
-          aria-expanded={open}
-          aria-haspopup="menu"
-          onClick={() => { input.engageTouch(); setOpen((o) => !o) }}
-          onContextMenu={noMenu}
-          className={`${CONTROL} flex h-12 w-12 flex-col items-center justify-center gap-[5px] rounded-full ${open ? GLASS_ON : GLASS}`}
-        >
-          <span className="block h-[2px] w-5 rounded-full bg-current" />
-          <span className="block h-[2px] w-5 rounded-full bg-current" />
-          <span className="block h-[2px] w-5 rounded-full bg-current" />
-        </button>
+        aria-hidden
+        className={`${CONTROL} absolute inset-0`}
+        onPointerDown={() => { pressed.current = true }}
+        onClick={() => { if (pressed.current) onClose() }}
+        onContextMenu={noMenu}
+      />
+      <div role="menu" aria-label="Menu" style={sheet} className={`pointer-events-auto absolute flex touch-pan-y flex-col gap-1.5 overflow-y-auto overscroll-contain rounded-2xl p-2 select-none ${GLASS}`}>
+        {items.map((it) => (
+          <button
+            key={it.label}
+            type="button"
+            role={it.on === undefined ? 'menuitem' : 'menuitemcheckbox'}
+            aria-checked={it.on}
+            onClick={act(it.run, !it.keep)}
+            onContextMenu={noMenu}
+            className={`pointer-events-auto h-11 min-w-[148px] shrink-0 touch-pan-y rounded-xl px-4 text-left text-[13px] font-semibold tracking-tight select-none ${it.on ? 'bg-white/80 text-slate-900' : 'text-white'}`}
+          >
+            {it.on === undefined ? it.label : `${it.label} · ${it.on ? 'On' : 'Off'}`}
+          </button>
+        ))}
       </div>
     </div>
   )
@@ -334,8 +426,18 @@ function TapButton({ label, onTap, pressed, round }: { label: string; onTap: () 
   )
 }
 
+/**
+ * The brakes' sizes (full class strings, so Tailwind sees them): 72 and 84 px, and 64 and 72 px on a short screen (the
+ * HUD's and Sloane's short query), where the row above them would otherwise reach up to Sloane's chip under the
+ * minimap on a phone in landscape.
+ */
+const BRAKE_SIZE = {
+  handbrake: 'size-[72px] [@media(max-height:499px)]:size-16',
+  brake: 'size-[84px] [@media(max-height:499px)]:size-[72px]',
+} as const
+
 /** Down while a finger is on it; pointer capture keeps it down when the thumb slides off the edge. */
-function HoldButton({ label, size, button, input }: { label: string; size: number; button: TouchButton; input: Input }) {
+function HoldButton({ label, size, button, input }: { label: string; size: string; button: TouchButton; input: Input }) {
   const [down, setDown] = useState(false)
   const set = (on: boolean) => {
     setDown(on)
@@ -350,8 +452,7 @@ function HoldButton({ label, size, button, input }: { label: string; size: numbe
       onPointerCancel={() => set(false)}
       onLostPointerCapture={() => set(false)}
       onContextMenu={noMenu}
-      className={`${CONTROL} flex items-center justify-center rounded-full font-semibold tracking-tight ${label.length > 6 ? 'text-[11px]' : 'text-[13px]'} ${down ? GLASS_ON : GLASS}`}
-      style={{ width: size, height: size }}
+      className={`${CONTROL} ${size} flex items-center justify-center rounded-full font-semibold tracking-tight ${label.length > 6 ? 'text-[11px]' : 'text-[13px]'} ${down ? GLASS_ON : GLASS}`}
     >
       {label}
     </button>

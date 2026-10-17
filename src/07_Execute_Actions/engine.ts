@@ -88,7 +88,7 @@ import { SPEECH, Soundscape, sharedAudioContext, wallsBetween, type AudioFrame, 
 import { roomAt, type Room } from './acoustics.ts'
 import { CaptionTrack, captionText } from './captions.ts'
 import { ring0Stats, type TerminalBridge } from './terminal/bridge.ts'
-import { familyOf, glyph } from './glyphs.ts'
+import { familyOf, modeGlyph, type glyph } from './glyphs.ts'
 import { PING_KINDS, PING_WORDS, PingBoard, pickPing, pingLine, rallyPlan, type Ping, type Pick, type PingKind, type RallyRequest } from '../08_Swarm/ping.ts'
 
 export interface EngineOptions {
@@ -1313,8 +1313,11 @@ export class Engine {
         // Sit down facing the windscreen; the head then turns with the car.
         this.carHeading = ev.heading
         this.input.yaw = yawFacing(ev.heading)
-        const g = (a: Parameters<typeof glyph>[0]) => glyph(a, this.glyphs)
-        this.toast(kindOf(ev.kind).name, `${g('throttle')} / ${g('brake')} throttle and brake · ${g('handbrake')} handbrake · ${g('interact')} to exit`)
+        const g = (a: Parameters<typeof glyph>[0]) => modeGlyph(a, this.glyphs, true)
+        // Touch names its buttons in words, so "Handbrake handbrake" would read twice: it says what each one does.
+        this.toast(kindOf(ev.kind).name, this.glyphs === 'touch'
+          ? `${g('throttle')} to drive · ${g('brake')} to brake or reverse · ${g('interact')} to leave`
+          : `${g('throttle')} / ${g('brake')} throttle and brake · ${g('handbrake')} handbrake · ${g('interact')} to leave`)
       } else if (ev.e === 'exited') {
         this.pulseUntil = 0
         this.toast('Vehicle parked', 'Hazards on, doors locked.')
@@ -1483,6 +1486,13 @@ export class Engine {
     if (input.take('ghost')) this.toast('Ghost view', this.setGhost(!this.ghost.on))
     if (input.take('matrix')) this.toast('Matrix mode', this.setMatrix(!this.matrixOn))
     if (input.take('reset') && driving >= 0) sim.send({ c: 'reset' })
+    // The other seats' doors and resets, each for its own avatar (their pads queue them on their own intents). In a
+    // network room only player 1 drives (simCore.ts 'interact'): the others' presses are taken and go nowhere.
+    for (let k = 1; k < this.views.length; k++) {
+      const seat = input.intent(this.views[k].seat)
+      if (seat.take('interact') && !this.netRoom) sim.send({ c: 'interact', player: k })
+      if (seat.take('reset') && (st.drivings[k] ?? -1) >= 0) sim.send({ c: 'reset', player: k })
+    }
 
     // Controls for the physics realm (controls.ts readControls, the same maths for every seat); it applies the set that
     // matches its own state (on foot or at the wheel). The other local players' sets ride in the same request

@@ -423,6 +423,33 @@ test('gamepads: listed, read every frame, rumble refreshed while held and reset 
   await bus.dispose()
 })
 
+test('a pad without the standard mapping is passed on only once a face button wakes it; one without a stick never', async () => {
+  const odd = (index: number, id: string, pressed: number[] = [], axes = [0, 0, 0, 0]): GamepadLike => ({ ...pad(index, id, pressed), mapping: '', axes })
+  const standard = pad(2, 'Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)')
+  const pads: (GamepadLike | null)[] = [odd(0, 'Throttle Quadrant', [], [-0.4, -0.45, 0.3, -0.6]), odd(1, 'Pedals', [], [0]), standard]
+  const bus = new HalBus({ navigator: nav({ pads }) })
+  assert.deepEqual(bus.readPads(), [standard], 'a quadrant left on the desk, and pedals with no stick, are not passed on')
+  const detail = () => bus.devices().map((d) => [d.name, d.detail])
+  assert.deepEqual(detail(), [
+    ['Throttle Quadrant', 'non-standard mapping (press a face button on it to use it)'],
+    ['Pedals', 'non-standard mapping (ignored: no stick)'],
+    ['Wireless Controller', 'standard mapping · rumble'],
+  ])
+  pads[0] = odd(0, 'Throttle Quadrant', [6])
+  assert.deepEqual(bus.readPads(), [standard], 'a button past the face buttons does not wake it')
+  pads[0] = odd(0, 'Throttle Quadrant', [1])
+  assert.deepEqual(bus.readPads(), [pads[0], standard], 'its east button: awake')
+  pads[0] = odd(0, 'Throttle Quadrant')
+  assert.deepEqual(bus.readPads(), [pads[0], standard], 'and it stays awake')
+  assert.equal(detail()[0][1], 'non-standard mapping (best guess by position)')
+  pads[1] = odd(1, 'Pedals', [0], [0])
+  assert.equal(bus.readPads().length, 2, 'a stickless device stays out')
+  // Another device in the slot starts asleep again.
+  pads[0] = odd(0, 'Racing Wheel')
+  assert.deepEqual(bus.readPads(), [standard])
+  await bus.dispose()
+})
+
 test('one physical DualSense is never driven twice: HID owns its rumble and, when live, its input', async () => {
   let now = 0
   const hid = new MockHidApi()
