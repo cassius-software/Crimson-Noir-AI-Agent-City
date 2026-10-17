@@ -944,7 +944,7 @@ const HANDLERS: Record<Name, Handler> = {
     const current = b.brand.map
     const described: Record<'city' | 'lakefront' | 'region', string> = {
       city: 'city (the procedural city: people and traffic)',
-      lakefront: 'lakefront (the generated metropolis: no people or traffic yet; map city for them)',
+      lakefront: 'lakefront (the generated metropolis: people, traffic and indoor workplaces in the 16 blocks round where you start)',
       region: 'region (the embedded surveyed map: no people or traffic)',
     }
     if (a === undefined || a === 'status') {
