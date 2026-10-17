@@ -1930,6 +1930,53 @@ when a `v*` tag is pushed, puts both on the tag's release beside the OS media.
   Linux, `libwebkit2gtk-4.1-dev` and friends. The icon set (`src-tauri/icons/`) is generated from
   `brand/marks/crimson-noir-mark.svg` with `npx tauri icon brand/marks/crimson-noir-mark.svg -o src-tauri/icons`.
 
+## On an iPhone (the web app)
+
+The latest iPhone plays the whole city in Safari, on its own GPU: Safari 26 (iOS 26) turns WebGPU on by default, and
+the page picks the phone's tier itself (Autoscaling). Safari gives WebGPU only to a secure page, one served over
+https: the Files app only previews `dist/index.html`, and the page served over plain http on the home network
+(`http://192.168.1.20:4173`) gets no WebGPU and shows no city. `npm run build:web` writes `dist-web/`, the same page made installable
+by `tools/web/pwa.mjs`:
+- a manifest (`manifest.webmanifest`: the name, full screen, black) and the home-screen icon, which the page's
+  head names; its content policy gains `manifest-src 'self'` so the browser may read the manifest, and nothing else;
+- a service worker (`sw.js`) that keeps a copy of every file on the phone after the first visit. From then on the
+  city starts with no network at all, airplane mode included. A new build reaches the phone the next time it opens
+  online: it is fetched in the background, and the launch after that runs it;
+- the two cross-origin isolation headers, added by the service worker to the page it serves (a static host cannot
+  send them), so from the second launch the physics realm and the page share one memory bridge, as in the Windows
+  app. Where a browser does not honour headers from a service worker, the bridge uses its private buffer and nothing
+  else changes.
+
+Serve the folder over https, open the address in Safari, then Share > Add to Home Screen: the city opens full screen
+from its icon, with the touch controls (Controls). Two ways to serve it:
+- **GitHub Pages (a public address).** Once, in GitHub: the repository's Settings > Pages > Source: GitHub Actions.
+  Then Actions > web > Run workflow (`.github/workflows/web.yml`; it never runs on its own). The city is then at
+  `https://cassius-software.github.io/Crimson-Noir-AI-Agent-City/`, for anyone with the address (the repository and
+  its releases are public already). GitHub serves the files and runs nothing.
+- **Your own devices only (Tailscale).** Tailscale on the PC and on the iPhone, with HTTPS certificates turned on for
+  the tailnet (Tailscale's admin console, DNS: MagicDNS and HTTPS Certificates). On the PC, after
+  `npm run build:web`: `tailscale serve --bg <full path of dist-web>`. The iPhone opens
+  `https://<pc name>.<tailnet name>.ts.net/`; only devices signed in to your tailnet reach it, and the certificate is
+  a real one, so Safari trusts it.
+
+What the phone copy keeps, and what it cannot have yet:
+- **The air gap is the page's own.** The policy and the loopback gate are unchanged: the page connects to its own
+  host (which only serves these files) and to the phone's own `localhost`, nowhere else.
+- **Models.** Every model provider lives on a computer's loopback (The model providers), and an iPhone runs none,
+  so on the phone Sloane speaks from her script with the phone's own voices and `ask` has no model to answer from.
+- **The shared address.** `cassius-software.github.io` is one origin for every Pages site of the organization, and
+  any of them could read what this one saves in the browser, a model key typed into the console included. Publish
+  other Pages sites under the organization only if you trust them, or use the Tailscale way.
+- **Storage.** A site added to the home screen keeps its storage; Safari may clear a site visited only in a tab after
+  weeks unused.
+
+What is verified: the CI's browser job runs the installable copy in Chrome as an iPhone (`tools/browser/smoke.mjs
+pwa`): the browser reads the manifest through the page's policy, the icons load, the service worker installs, the
+second load is cross-origin isolated, and with the host stopped the city starts from the phone's copy with its touch
+controls. `src/webApp.test.ts` holds the policy change, the icons and the service worker's answers. Not verified, and
+needing a real iPhone: Safari's WebGPU in the physics worker, the home-screen launch, the isolation headers from a
+service worker in Safari, and heat and memory over a long session.
+
 ## Constraints
 
 - **Single file.** `vite-plugin-singlefile` inlines everything, and Rapier's WASM ships embedded. Do

@@ -1,0 +1,55 @@
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
+# Why does this file exist? It publishes the installable copy of the city (dist-web/, written by tools/web/pwa.mjs) on
+# GitHub Pages, so an iPhone can open it over https (Safari gives WebGPU to a secure page only), add it to the home
+# screen and play it offline. It runs only when someone starts it (Actions > web > Run workflow, on main or a tag),
+# never on a push, and it needs the repository's Pages source set to "GitHub Actions" once (Settings > Pages). The
+# address is https://<owner>.github.io/<repository>/; MANUAL.md "On an iPhone" says what is and is not served.
+# What breaks if it is removed? Nothing else: dist-web/ can still be served from any https host by hand.
+
+name: web
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One publication at a time; a second run waits for the first rather than cancelling a deployment halfway.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: The single-file build, made installable (manifest, icons, offline service worker)
+        run: npm run build:web
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist-web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

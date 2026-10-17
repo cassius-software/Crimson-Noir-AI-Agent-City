@@ -22,7 +22,11 @@
  * - file: dist/index.html opened from disk, the way the README says to play, with no server and so no cross-origin
  *   isolation (the bridge's private-buffer path);
  * - ultra: the top tier pinned, so the shadowed, post and volumetric pipelines are compiled once and must validate;
- * - tty: the console alone (?boot=tty), which must not touch WebGPU at all.
+ * - tty: the console alone (?boot=tty), which must not touch WebGPU at all;
+ * - pwa: the installable copy a phone plays (tools/web/pwa.mjs, built from dist/ into a temporary folder) served as a
+ *   static host serves it, to an iPhone: the manifest read through the page's policy, the icons, the service worker
+ *   installed, the second load cross-origin isolated by the worker, and the city started from the phone's copy with
+ *   the host gone.
  * Every scenario also fails on an exception in the page, a GPU validation error, a lost device, or the crowd's flow
  * field falling back to the CPU. It serves dist/ itself on 127.0.0.1 with the two isolation headers, writes a
  * screenshot per scenario to --out (default: a temporary directory), prints one row per check and exits 1 if any fails.
@@ -31,11 +35,12 @@
  * the proof that the city renders and that every control reaches the avatar.
  */
 import { createServer } from 'node:http'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, extname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Browser, findChrome, SOFTWARE_WEBGPU } from './cdp.mjs'
+import { APP_NAME, build as buildWeb, ICONS } from '../web/pwa.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const DIST = join(ROOT, 'dist', 'index.html')
@@ -204,6 +209,27 @@ const SIDES = [[2.6, 0], [-2.6, 0], [0, 2.6], [0, -2.6]]
 const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z)
 /** Signed difference of two yaws, wrapped to (−π, π]. */
 const turn = (a, b) => Math.atan2(Math.sin(b - a), Math.cos(b - a))
+
+/** Serves a folder the way a static host such as GitHub Pages does: its files by name, the folder's index, and no isolation headers. */
+async function serveStatic(dir) {
+  const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.webmanifest': 'application/manifest+json', '.png': 'image/png' }
+  const files = new Set(readdirSync(dir))
+  const server = createServer((req, res) => {
+    const name = new URL(req.url ?? '/', 'http://x').pathname.slice(1) || 'index.html'
+    if (!files.has(name)) { res.writeHead(404).end(); return }
+    res.writeHead(200, { 'Content-Type': TYPES[extname(name)] ?? 'application/octet-stream', 'Cache-Control': 'no-store' }).end(readFileSync(join(dir, name)))
+  })
+  await new Promise((r) => server.listen(0, '127.0.0.1', r))
+  return { origin: `http://127.0.0.1:${server.address().port}`, close: () => { server.closeAllConnections(); server.close() } }
+}
+
+/** Navigates again to `url` and waits until the new document has booted (the old one is marked, so it cannot answer). */
+async function reload(p, url) {
+  await p.eval('window.__smokeOld = true')
+  await p.goto(url)
+  await p.waitFor('document.readyState !== "loading" && !window.__smokeOld', 60_000)
+  await p.booted()
+}
 
 const SCENARIOS = {
   async desktop(chrome, origin) {
@@ -681,6 +707,46 @@ const SCENARIOS = {
       await p.shot('tty')
       check(p.errors.length === 0, 'tty: no exception in the page', p.errors.slice(0, 3).join(' | ').slice(0, 400))
     } finally { await p.b.close() }
+  },
+
+  /**
+   * The installable copy (tools/web/pwa.mjs, built here from dist/ into a temporary folder) served as a static host
+   * serves it, to an iPhone's user agent: the browser reads the manifest through the page's policy, the icons load, the
+   * service worker installs, the second load is cross-origin isolated by the worker's headers, and with the host gone
+   * the city still starts, from the worker's copy.
+   */
+  async pwa(chrome) {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-city-web-'))
+    buildWeb({ out: dir })
+    const site = await serveStatic(dir)
+    const p = await open(chrome, { mobile: true })
+    try {
+      const url = `${site.origin}/?${LIGHT}`
+      await p.goto(url)
+      await p.booted()
+      const m = await p.b.send('Page.getAppManifest')
+      const data = (() => { try { return JSON.parse(m.data ?? '') } catch { return null } })()
+      check(data?.name === APP_NAME && (m.errors ?? []).length === 0, 'pwa: the browser reads the manifest the page names, through its policy', `${m.url} ${JSON.stringify(m.errors ?? []).slice(0, 200)}`)
+      const icons = await p.eval(`Promise.all(${JSON.stringify(ICONS.map((i) => i.name))}.map((f) => fetch(f).then((r) => r.ok && r.headers.get('content-type'))))`)
+      check(icons.every((t) => t === 'image/png'), 'pwa: the home-screen icons load', icons.join(', '))
+      const active = await p.waitFor(`Promise.race([navigator.serviceWorker.ready.then((r) => r.active && r.active.state === 'activated'), new Promise((r) => setTimeout(() => r(false), 2000))])`, 120_000).then(() => true, () => false)
+      check(active, 'pwa: the service worker installs and activates')
+      await reload(p, url)
+      const iso = await p.eval(`!!navigator.serviceWorker.controller && globalThis.crossOriginIsolated === true && typeof SharedArrayBuffer === 'function'`)
+      check(iso, 'pwa: from the second load the worker serves the page, isolated (the shared-memory bridge)')
+      site.close()
+      await reload(p, url)
+      const s = await p.snap()
+      const f0 = s.crowdFrames
+      const ran = await p.waitFor(`window.__SIM__.snapshot().process.crowdFrames > ${f0 + 2}`, 60_000).then(() => true, () => false)
+      check(ran && s.touch, 'pwa: with the host gone the city starts from the offline copy, touch controls up', `touch=${s.touch}`)
+      await p.shot('pwa-offline')
+      p.health('pwa')
+    } finally {
+      site.close()
+      await p.b.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
   },
 }
 

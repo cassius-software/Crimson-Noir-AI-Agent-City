@@ -94,10 +94,18 @@ memory bridge with the page, and nothing in the app reaches a host but this mach
 `npm run app:build` (Rust and the Visual Studio C++ build tools; NSIS is fetched by Tauri).
 
 Open `dist/index.html` directly: no server, and it works offline. It needs WebGPU: a current Chrome, Edge or
-Brave on desktop and Android, or Safari 26 on iPhone, iPad and Mac. `?boot=tty` needs none.
+Brave on desktop and Android, or Safari 26 on a Mac (an iPhone or iPad plays the web app, below). `?boot=tty` needs
+none.
 `npm run dev` and `npm run preview` serve the page cross-origin isolated (the COOP and COEP headers), so the physics
 realm and the page share one memory bridge for every position (docs/zero-copy-bridge.md); the file opened from disk
 uses the same bridge over a private buffer. A server of your own sends the same two headers to get the shared path.
+
+**On an iPhone or iPad.** Safari gives WebGPU only to a page served over https, so a phone plays the installable
+copy: `npm run build:web` writes `dist-web/`, the same page with a manifest, its icons and a service worker that keeps
+it on the phone. Serve that folder over https, either on GitHub Pages (once: Settings > Pages > Source: GitHub
+Actions; then Actions > web > Run workflow) or through Tailscale to your own devices only, open it in Safari, then
+Share > Add to Home Screen: it opens full screen with the touch controls and, after the first visit, starts with no
+network. MANUAL.md, On an iPhone, has the steps, what CI checks and what still needs a real iPhone.
 
 A first visit opens on Sloane, the concierge, who asks four one-word questions (a name, where to start, the time of day,
 sound) while Lakefront Metro, a fictitious great-lake metropolis of five regions (Lakefront Metropolis with The Spire,
