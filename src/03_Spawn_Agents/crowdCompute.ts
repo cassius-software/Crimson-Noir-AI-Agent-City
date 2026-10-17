@@ -15,7 +15,7 @@ import { cityWgsl, CITY_GEOMETRY, CITY_SIZE, type StreetGeometry } from '../01_I
 import { cityStreetGrid, packStreets, spawnSegment, STREET_VEC4S, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import crowdSource from './crowd.wgsl?raw'
 import { MAX_CARS, type CrowdStepInput } from './crowdSensor.ts'
-import { ACTIVITY, INTERVIEW_DISTANCE, RECRUIT_SLOTS, SUMMON_ACCEPT, TETHER_PACE } from './skills.ts'
+import { ACTIVITY, INTERVIEW_DISTANCE, RECRUIT_SLOTS, SUMMON_ACCEPT, TETHER_PACE, TRAIL, type OperatorTrail } from './skills.ts'
 import { PHYSICS_LAYER, packGlobalState, type GlobalState } from '../01_Initialize_World/globalState.ts'
 import { FLOW } from '../06_Make_Decisions/flowField.ts'
 import { ROOM, ROOMS_FLOATS, WORK, workOneIn } from '../01_Initialize_World/interiors.ts'
@@ -45,9 +45,16 @@ export const PARAMS_STREETS = PARAMS_SUMMONS + RECRUIT_SLOTS * 16
 export const PARAMS_ROOMS = PARAMS_STREETS + STREET_VEC4S * 16
 /** The commute's route table (region/workplaces.ts packRoutes: ROUTE_VEC4S × vec4u), after the rooms. */
 export const PARAMS_ROUTES = PARAMS_ROOMS + ROOMS_FLOATS * 4
-export const PARAMS_SIZE = PARAMS_ROUTES + ROUTE_VEC4S * 16
+/** Rows of the operator's trail (skills.ts OperatorTrail): two points (x, z, x, z) to a vec4f. */
+export const TRAIL_VEC4S = TRAIL.points / 2
+/** The operator's trail on foot (TRAIL_VEC4S × vec4f, newest first), after the route table; then how many points are set (u32). */
+export const PARAMS_TRAIL = PARAMS_ROUTES + ROUTE_VEC4S * 16
+export const PARAMS_TRAIL_COUNT = PARAMS_TRAIL + TRAIL_VEC4S * 16
+export const PARAMS_SIZE = PARAMS_TRAIL_COUNT + 16
 /** No rooms at all (a region without workplaces): every slot empty. */
 const NO_ROOMS = new Float32Array(ROOMS_FLOATS)
+/** No operator's trail: every point zero, and none of them set. */
+const NO_TRAIL = new Float32Array(TRAIL.points * 2)
 /** No route table (the procedural city, whose commute is the greedy walk): every intersection unrouted. */
 const NO_ROUTES = new Uint32Array(ROUTE_VEC4S * 4)
 /** The procedural city's street words: every segment a street cars use (the default every step is packed with). */
@@ -242,6 +249,9 @@ function header(agentCount: number, flow: FlowPlacement, geometry: Readonly<Stre
     `const ROOM_ROUND: f32 = ${f(ROOM.round)};`,
     `const ROUTE_ROOM_VEC4S: u32 = ${ROUTE_ROOM_VEC4S}u;`,
     `const ROUTE_VEC4S: u32 = ${ROUTE_VEC4S}u;`,
+    `const TRAIL_POINTS: u32 = ${TRAIL.points}u;`,
+    `const TRAIL_VEC4S: u32 = ${TRAIL_VEC4S}u;`,
+    `const TRAIL_NEAR: f32 = ${f(TRAIL.near)};`,
     `const WORK_ONE_IN: u32 = ${workOneIn(agentCount)}u;`,
     `const WORK_CYCLE: f32 = ${f(WORK.cycle)};`,
     `const WORK_SHIFT: f32 = ${f(WORK.shift)};`,
@@ -310,11 +320,12 @@ export function sanitizeCull(s: CullSettings): CullSettings {
  * The Params words the simulation reads (the cull fields stay zero: the worker draws nothing). `streets` is the window's
  * bit field (streets.ts packStreets); absent, the procedural city's (every segment). `rooms` is the indoor workplaces'
  * block (interiors.ts packRooms); absent, no rooms. `routes` is the commute's route table over a street window
- * (region/workplaces.ts packRoutes); absent, none: every room is walked to greedily, as in the procedural city.
+ * (region/workplaces.ts packRoutes); absent, none: every room is walked to greedily, as in the procedural city. `trail`
+ * is the operator's way on foot (skills.ts OperatorTrail); absent, none.
  */
 export function packSimParams(
   f: Float32Array, u: Uint32Array, frame: number, agentCount: number, input: CrowdStepInput, streets: Uint32Array = CITY_STREETS, rooms: Float32Array = NO_ROOMS,
-  routes: Uint32Array = NO_ROUTES,
+  routes: Uint32Array = NO_ROUTES, trail?: Readonly<OperatorTrail>,
 ): void {
   packCrowdParams(f, u, frame, agentCount, input)
   if (streets.length !== STREET_VEC4S * 4) throw new RangeError(`the street field is ${STREET_VEC4S * 4} words, got ${streets.length}`)
@@ -323,6 +334,8 @@ export function packSimParams(
   f.set(rooms, PARAMS_ROOMS / 4)
   if (routes.length !== ROUTE_VEC4S * 4) throw new RangeError(`the route table is ${ROUTE_VEC4S * 4} words, got ${routes.length}`)
   u.set(routes, PARAMS_ROUTES / 4)
+  f.set(trail ? trail.xz.subarray(0, TRAIL.points * 2) : NO_TRAIL, PARAMS_TRAIL / 4)
+  u[PARAMS_TRAIL_COUNT / 4] = trail ? Math.min(TRAIL.points, Math.max(0, Math.floor(trail.count))) : 0
   // Whoever the operator asked over. Only a real pedestrian (never the player's own body, never out of range) at a
   // finite spot takes a slot, each once; anything else leaves the slot empty (agent 0), and so the person's day alone.
   const summons = input.summons ?? []

@@ -255,7 +255,19 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   landscape a message stood over the stick (and, 568 px across, the Menu), and it now takes the readout's place; the brakes are a size smaller on a short screen; at the wheel the Menu sits before Ping, clear of the speedometer; a
   mouse moving on a touch laptop puts the overlay away (and its Run toggle with it), while a tablet whose main pointer
   is the finger keeps it.
-
+- **Someone asked over could be lost in a room or by its glass.** An operator up on an AGV dock, resting in a table's
+  corner or leaning on a piece's end sent the recruit back to the hub or held them on the next face, and a recruit in
+  tow lost the operator in a dead end between the docks or round the end of a long rack. The way across a room now
+  aims at the floor beside the piece (0.40 m off it), and follows the operator's own trail on foot where neither a
+  straight line nor one piece's corner leads (`OperatorTrail` in `skills.ts`: their last 16 points, packed into the
+  crowd's uniform after the route table). Whether the glass stands between two people is now an exact line test
+  against the panes of the room either one stands by, so someone in the doorway's band no longer talks through a
+  jamb or flips between talking and coming; they start talking only where they see the operator clear of the glass
+  and go round a jamb's outer corner into the opening. On the street the straight last stretch is taken only where it
+  cuts no lot (a recruit who ran behind no longer stalls at a lot's corner short of an operator standing at a room's
+  side wall), and the car's exit point is checked against the glass exactly, so a driver is never put out through a
+  jamb's corner. The crowd shader and its test mirror changed together; `naga` validates both variants. Unverified
+  from the cloud (no GPU): the recruits on screen.
 - **A runner beside a turning car could halt the realm.** At full lock a car's centre heads into its inner flank while
   the overhang behind the rear axle swings away; the Ring-0 audit judges a touch by the centre and the Sanctuary judged
   it by the flank, so a runner reaching the inner rear corner stayed solid where the audit read an impact
