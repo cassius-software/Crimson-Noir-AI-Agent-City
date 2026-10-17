@@ -12,7 +12,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createAnalog, type Analog } from '../04_Connect_Hardware/gamepad.ts'
-import { CONTROL_KEYS, readControls, type ControlSource } from './controls.ts'
+import { CONTROL_ALT_KEYS, CONTROL_KEYS, readControls, type ControlSource } from './controls.ts'
 import { RUN, WALK, type DriveControls, type FootControls } from './simProtocol.ts'
 
 /** A stand-in for one player's intent: held keys in a Set, a hand-built Analog. */
@@ -63,6 +63,30 @@ test('the keys are the README\'s: WASD, left Shift to run, Space for the handbra
   assert.ok(Object.isFrozen(CONTROL_KEYS))
   assert.equal(WALK, 2.0)
   assert.equal(RUN, 5.2)
+})
+
+test('the arrows and the right Shift are second keys: the same numbers as WASD and the left Shift, on foot and at the wheel', () => {
+  assert.deepEqual(CONTROL_ALT_KEYS, { forward: 'ArrowUp', back: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', run: 'ShiftRight' })
+  assert.ok(Object.isFrozen(CONTROL_ALT_KEYS))
+  const pairs: [string[], string[]][] = [
+    [['KeyW'], ['ArrowUp']], [['KeyS'], ['ArrowDown']], [['KeyA'], ['ArrowLeft']], [['KeyD'], ['ArrowRight']],
+    [['KeyW', 'KeyD', 'ShiftLeft'], ['ArrowUp', 'ArrowRight', 'ShiftRight']], [['KeyS', 'KeyA'], ['ArrowDown', 'ArrowLeft']],
+  ]
+  for (const yaw of [0, 1.1, -2.7]) {
+    for (const [keys, alt] of pairs) {
+      for (const driving of [false, true]) {
+        const f1 = foot(), d1 = drive(), f2 = foot(), d2 = drive()
+        readControls(intent({ yaw, keys }), driving, f1, d1)
+        readControls(intent({ yaw, keys: alt }), driving, f2, d2)
+        assert.deepEqual([f2, d2], [f1, d1], `${alt.join('+')} = ${keys.join('+')} (yaw ${yaw}, ${driving ? 'driving' : 'on foot'})`)
+      }
+    }
+  }
+  // Both keys for one move are one move, not two.
+  const f1 = foot(), f2 = foot(), d = drive()
+  readControls(intent({ keys: ['KeyW', 'ArrowUp'] }), false, f1, d)
+  readControls(intent({ keys: ['KeyW'] }), false, f2, d)
+  assert.deepEqual(f1, f2)
 })
 
 test('on foot: stand, walk, run, the normalised diagonal and the half-pushed stick, at yaw 0', () => {

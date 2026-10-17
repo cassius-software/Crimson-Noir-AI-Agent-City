@@ -104,7 +104,8 @@ function TouchLayer({ input, driving, nearVehicle, menu }: Props) {
         >
           {driving ? (
             <>
-              <div className="flex gap-3">
+              {/* A column in portrait: as a row, Ping would sit over the stick's zone on a phone held upright. */}
+              <div className="flex gap-3 portrait:flex-col portrait:items-end">
                 <TapButton label="Ping" onTap={press(() => input.press('ping'))} />
                 <TapButton label="Reset" onTap={press(() => input.press('reset'))} />
                 <TapButton label="Exit car" onTap={press(() => input.press('interact'))} />
@@ -138,7 +139,8 @@ function TouchLayer({ input, driving, nearVehicle, menu }: Props) {
 /**
  * Right half: drag to turn the head — the view follows the finger like a mouse (right turns right, up looks
  * up) at Input's first-person touch sensitivity. One finger at a time; the others belong to the stick and
- * buttons.
+ * buttons. A mouse press is not a finger: on a touch laptop it is left alone (and moving the mouse puts the whole
+ * overlay away, input.ts), so the mouse keeps its own look.
  */
 function LookZone({ input }: { input: Input }) {
   const look = useRef<{ id: number; x: number; y: number } | null>(null)
@@ -148,7 +150,7 @@ function LookZone({ input }: { input: Input }) {
       aria-hidden
       className={`${CONTROL} absolute top-0 right-0 bottom-0 w-1/2`}
       onPointerDown={(e) => {
-        if (look.current && owns(e, look.current.id)) return
+        if (e.pointerType === 'mouse' || (look.current && owns(e, look.current.id))) return
         capture(e)
         look.current = { id: e.pointerId, x: e.clientX, y: e.clientY }
         input.engageTouch()
@@ -209,7 +211,7 @@ function Stick({ input }: { input: Input }) {
         height: STICK.zone,
       }}
       onPointerDown={(e) => {
-        if (!zone.current || (drag.current && owns(e, drag.current.id))) return
+        if (e.pointerType === 'mouse' || !zone.current || (drag.current && owns(e, drag.current.id))) return
         capture(e)
         const rect = zone.current.getBoundingClientRect()
         const cx = Math.max(rect.left + r, Math.min(rect.right - r, e.clientX))
@@ -239,8 +241,9 @@ function Stick({ input }: { input: Input }) {
 }
 
 /**
- * The keyboard's one-key actions for a phone: a round Menu button half-way down the right edge (clear of the stick,
- * the action buttons and the HUD's corners) opening a sheet beside it. Its items act on `click`, a whole tap: the console's has
+ * The keyboard's one-key actions for a phone: a round Menu button a little above half-way down the right edge (clear
+ * of the stick, the action buttons, even a landscape phone's driving row, and the HUD's corners) opening a sheet
+ * beside it, which scrolls rather than leave a short screen. Its items act on `click`, a whole tap: the console's has
  * to, since iOS raises the keyboard only for a focus made while the tap is handled, and a menu is never pressed with
  * the other thumb busy. The clock items leave the sheet open for another hour; the rest close it, as does a tap
  * anywhere else (that tap lands on a backdrop and does nothing more).
@@ -267,10 +270,10 @@ function Menu({ input, host }: { input: Input; host: TouchMenuHost }) {
       {open && <div aria-hidden className={`${CONTROL} absolute inset-0`} onClick={() => setOpen(false)} onContextMenu={noMenu} />}
       <div
         className="pointer-events-none absolute flex items-center gap-3"
-        style={{ right: `calc(env(safe-area-inset-right, 0px) + ${INSET}px)`, top: '50%', transform: 'translateY(-50%)' }}
+        style={{ right: `calc(env(safe-area-inset-right, 0px) + ${INSET}px)`, top: 'calc(50% - 28px)', transform: 'translateY(-50%)' }}
       >
         {open && (
-          <div role="menu" aria-label="Menu" className={`${CONTROL} flex flex-col gap-1.5 rounded-2xl p-2 ${GLASS}`}>
+          <div role="menu" aria-label="Menu" className={`pointer-events-auto flex max-h-[calc(100dvh-24px)] touch-pan-y flex-col gap-1.5 overflow-y-auto overscroll-contain rounded-2xl p-2 select-none ${GLASS}`}>
             {items.map((it) => (
               <button
                 key={it.label}

@@ -3,7 +3,8 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the Gamepad API driver: it reads W3C "standard"-mapped pads (and the
- * HAL's HID-decoded DualSense, which uses the same shape) into one Analog frame plus edge-triggered
+ * HAL's HID-decoded DualSense, which uses the same shape; a pad without the mapping is read by position, as a
+ * best guess, GenericPads) into one Analog frame plus edge-triggered
  * actions — radial dead zones, a quadratic look curve, the L3 run latch — names pads for the HAL, tells
  * which controller family was used last (for the HUD's button glyphs), and turns the right stick into
  * first-person head motion (PadLook). It is pure (no DOM), so every mapping is unit-tested in Node.
@@ -102,6 +103,137 @@ export function isStandardPad(p: GamepadLike | null | undefined): p is GamepadLi
 }
 
 /**
+ * A pad the city reads: a standard one, or one without the standard mapping that has a stick and four buttons
+ * (GenericPads reads it by position, as a best guess).
+ */
+export function isUsablePad(p: GamepadLike | null | undefined): p is GamepadLike {
+  return !!p && p.connected && (p.mapping === 'standard' || (p.axes.length >= 2 && p.buttons.length >= 4))
+}
+
+/** How GenericPads read a pad without the standard mapping (hal.ts shows it beside the pad's name). */
+export type GenericLayout = 'evdev' | 'four-axis' | 'stick-only'
+
+/** An axis resting past this is a trigger (it rests at one end), never a stick: read as one, it would spin the view. */
+const REST_TRIGGER = 0.5
+
+interface GenericView { id: string; layout: GenericLayout; rest: Float32Array; axes: number[]; buttons: { pressed: boolean; value: number }[]; pad: GamepadLike }
+
+/**
+ * Pads whose browser reports no standard mapping (mapping ''), turned into a standard-shaped view by position. Most
+ * still put the left stick on axes 0/1 and the face buttons first, so those always map (walk, steer with the stick,
+ * which also drives: controls.ts reads stick Y as throttle; south enters a car, east is the handbrake). The rest
+ * depends on what the axes do at rest, read when the pad is first seen:
+ * - 'evdev': six or more axes with 2 and 5 resting at one end. That is the Linux kernel's order for a pad with
+ *   analog triggers (left stick, left trigger, right stick, right trigger, then the d-pad as two axes), which
+ *   Firefox on Linux passes through: the right stick looks, the triggers brake and throttle, the d-pad steps the
+ *   clock, and the buttons after the shoulders are remapped to select, start, home and the stick clicks.
+ * - 'four-axis': exactly four axes, none resting at an end: the right stick is axes 2/3 (most HID pads); buttons
+ *   past the shoulders are dropped, since their order differs from pad to pad.
+ * - 'stick-only': anything else: the left stick and the first six buttons; no look, so a mislabelled axis never
+ *   spins the head.
+ * One view per slot, made when a pad first appears there; each read only copies numbers into it.
+ */
+export class GenericPads {
+  private readonly views: (GenericView | null)[] = Array.from({ length: SLOTS }, () => null)
+
+  /** The standard-shaped view of `p` (a pad isUsablePad accepts that is not standard), refreshed from its state. */
+  view(p: GamepadLike): GamepadLike {
+    const slot = p.index & (SLOTS - 1)
+    let v = this.views[slot]
+    if (!v || v.id !== p.id) v = this.views[slot] = GenericPads.make(p)
+    const out = v.axes, b = v.buttons
+    for (let k = 0; k < b.length; k++) { b[k].pressed = false; b[k].value = 0 }
+    out[0] = stickAxis(p, v.rest, 0)
+    out[1] = stickAxis(p, v.rest, 1)
+    out[2] = 0
+    out[3] = 0
+    for (let k = 0; k < 6; k++) copyButton(p, k, b[k])
+    if (v.layout === 'evdev') {
+      out[2] = stickAxis(p, v.rest, 3)
+      out[3] = stickAxis(p, v.rest, 4)
+      triggerAxis(p, v.rest, 2, b[PAD.l2])
+      triggerAxis(p, v.rest, 5, b[PAD.r2])
+      copyButton(p, 6, b[PAD.select])
+      copyButton(p, 7, b[PAD.start])
+      copyButton(p, 8, b[PAD.home])
+      copyButton(p, 9, b[PAD.l3])
+      copyButton(p, 10, b[PAD.r3])
+      if (p.axes.length >= 8) {
+        const hx = axisAt(p, 6), hy = axisAt(p, 7)
+        hatButton(b[PAD.left], hx < -0.5)
+        hatButton(b[PAD.right], hx > 0.5)
+        hatButton(b[PAD.up], hy < -0.5)
+        hatButton(b[PAD.down], hy > 0.5)
+      }
+    } else if (v.layout === 'four-axis') {
+      out[2] = stickAxis(p, v.rest, 2)
+      out[3] = stickAxis(p, v.rest, 3)
+    }
+    return v.pad
+  }
+
+  /** How the pad in this slot is read, or null for none seen there. */
+  layoutOf(index: number): GenericLayout | null {
+    return this.views[index & (SLOTS - 1)]?.layout ?? null
+  }
+
+  /** The slot's pad went away: the next one there is measured afresh. */
+  forget(slot: number): void {
+    this.views[slot & (SLOTS - 1)] = null
+  }
+
+  private static make(p: GamepadLike): GenericView {
+    const n = p.axes.length
+    const rest = Float32Array.from(p.axes, (x) => (Number.isFinite(x) ? x : 0))
+    const end = (i: number) => i < n && Math.abs(rest[i]) > REST_TRIGGER
+    const layout: GenericLayout = n >= 6 && end(2) && end(5) ? 'evdev' : n === 4 && ![0, 1, 2, 3].some(end) ? 'four-axis' : 'stick-only'
+    const axes = [0, 0, 0, 0]
+    const buttons = Array.from({ length: 17 }, () => ({ pressed: false, value: 0 }))
+    const pad: GamepadLike = { id: p.id, index: p.index, connected: true, mapping: 'standard', timestamp: 0, axes, buttons }
+    return { id: p.id, layout, rest, axes, buttons, pad }
+  }
+}
+
+/** Axis `i`, centred when missing or broken. */
+function axisAt(p: GamepadLike, i: number): number {
+  const x = p.axes[i]
+  return Number.isFinite(x) ? x : 0
+}
+
+/** Axis `i` as a stick: one that rests at an end is a trigger after all, and reads centred. */
+function stickAxis(p: GamepadLike, rest: Float32Array, i: number): number {
+  return Math.abs(rest[i] ?? 0) > REST_TRIGGER ? 0 : axisAt(p, i)
+}
+
+/** Axis `i` as a trigger: from its rest (one end) to the other end is 0..1. */
+function triggerAxis(p: GamepadLike, rest: Float32Array, i: number, to: { pressed: boolean; value: number }): void {
+  const r = rest[i] ?? 0
+  const span = Math.abs(r) > REST_TRIGGER ? -Math.sign(r) * 2 : 1
+  const t = Math.max(0, Math.min(1, (axisAt(p, i) - r) / span))
+  to.value = t
+  to.pressed = t > PAD_TUNING.press
+}
+
+function copyButton(p: GamepadLike, from: number, to: { pressed: boolean; value: number }): void {
+  const src = p.buttons[from]
+  if (!src) return
+  to.pressed = src.pressed
+  to.value = Number.isFinite(src.value) ? src.value : 0
+}
+
+function hatButton(to: { pressed: boolean; value: number }, on: boolean): void {
+  to.pressed = on
+  to.value = on ? 1 : 0
+}
+
+/** How a pad without the standard mapping is read, for the hardware list (hal.ts). */
+export function genericLayoutOf(p: GamepadLike): GenericLayout {
+  const g = new GenericPads()
+  g.view(p)
+  return g.layoutOf(p.index) ?? 'stick-only'
+}
+
+/**
  * Which labels a controller carries, by layout (glyphs.ts names each): 'abxy' letters with A at the south
  * button, 'bayx' letters with B there, 'numbered' shoulders and stick clicks (L1 L2 L3) with unlettered face
  * buttons, 'generic' when nobody recognised the pad (every control named by position).
@@ -109,18 +241,19 @@ export function isStandardPad(p: GamepadLike | null | undefined): p is GamepadLi
 export type PadFamily = 'abxy' | 'bayx' | 'numbered' | 'generic'
 
 /** The layout behind each console maker's USB vendor id (USB-IF assignments; 0x054c is also the DualSense's,
- *  hal.ts). */
-export const PAD_VENDOR_LAYOUT: Readonly<Record<number, PadFamily>> = { 0x054c: 'numbered', 0x045e: 'abxy', 0x057e: 'bayx' }
+ *  hal.ts), and Valve's 0x28de: Steam Input's virtual pad and the Steam Deck put A at the south button. */
+export const PAD_VENDOR_LAYOUT: Readonly<Record<number, PadFamily>> = { 0x054c: 'numbered', 0x045e: 'abxy', 0x057e: 'bayx', 0x28de: 'abxy' }
 
 /**
  * A pad's layout from its id: the USB vendor when the browser reports one. Ids without a vendor fall back to what
- * they say: Chromium on Windows marks every XInput pad "(XInput …)" (the letters layout), and the HAL's HID-decoded
- * DualSense is "DualSense (HID)". Anything else is generic: named by position, never mislabelled.
+ * they say: Chromium on Windows marks every XInput pad "(XInput …)" (the letters layout), the HAL's HID-decoded
+ * DualSense is "DualSense (HID)", and Safari names the PlayStation pads. Anything else is generic: named by position,
+ * never mislabelled.
  */
 export function padFamilyOf(id: string): PadFamily {
   const vendor = parsePadId(id)?.vendor
   if (vendor !== undefined && PAD_VENDOR_LAYOUT[vendor]) return PAD_VENDOR_LAYOUT[vendor]
-  if (/dualsense/i.test(id)) return 'numbered'
+  if (/dualsense|dualshock/i.test(id)) return 'numbered'
   if (/\bxinput\b/i.test(id)) return 'abxy'
   return 'generic'
 }
@@ -149,6 +282,8 @@ export class PadMapper {
   /** Slot of the pad used most recently, −1 = none. */
   private lastSlot = -1
   private familyId = ''
+  /** Pads without the standard mapping, read by position. */
+  readonly generic = new GenericPads()
 
   /** Fills `out` (zeroed first) and returns PAD_EDGE bits for buttons that went down since the last read. */
   read(pads: ArrayLike<GamepadLike | null | undefined> | null, out: Analog): number {
@@ -159,8 +294,9 @@ export class PadMapper {
     const dz = PAD_TUNING.stickDeadzone, v = this.v
     const n = pads ? pads.length : 0
     for (let i = 0; i < n; i++) {
-      const p = pads![i]
-      if (!isStandardPad(p)) continue
+      const raw = pads![i]
+      if (!isUsablePad(raw)) continue
+      const p = isStandardPad(raw) ? raw : this.generic.view(raw)
       count++
       firstPad ??= p
       const slot = p.index & (SLOTS - 1)
@@ -197,7 +333,7 @@ export class PadMapper {
         this.lastSlot = slot
       }
     }
-    for (let s = 0; s < SLOTS; s++) if (!this.seen[s]) this.prev[s] = 0
+    for (let s = 0; s < SLOTS; s++) if (!this.seen[s]) { this.prev[s] = 0; this.generic.forget(s) }
     if (l3) this.running = !this.running
     else if (bestMove === 0) this.running = false
     out.run = this.running

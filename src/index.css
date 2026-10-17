@@ -43,3 +43,14 @@ html[data-shell='tauri'] #root {
   border-bottom: var(--noir-line) solid color-mix(in srgb, var(--noir-titanium-800) 70%, transparent);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
+
+/* Safari on a phone zooms the page into any field under 16px the moment it takes focus, and leaves it zoomed over a
+   city whose canvas and controls take every touch (touch-action: none), so the page cannot be pinched back. On a
+   touch screen every field reads at 16px: unlayered, this wins over the utility classes' smaller sizes. */
+@media (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: max(16px, 1em);
+  }
+}

@@ -418,6 +418,36 @@ test('adversarial: player 2 drives at player 0 standing in the lane and the Boun
   assert.equal(sim.halted, false, sim.panic ?? '')
 })
 
+test('a reset rights the car of the player it names: player 1\'s at the wheel, nobody\'s for a player on foot, a bad player refused', async () => {
+  const { sim, poses, step } = await core(true)
+  const lane = OPEN.x + 3.5, z = OPEN.z + 40
+  step({ cmds: [
+    { c: 'teleport', x: OPEN.x, z, player: 1 }, { c: 'teleport', x: OPEN.x - 30, z: OPEN.z - 200 },
+    { c: 'teleport', x: OPEN.x + 40, z: OPEN.z - 210, player: 2 }, { c: 'teleport', x: OPEN.x + 40, z: OPEN.z - 230, player: 3 },
+    { c: 'dbgMode', i: 0, mode: 'parked' }, { c: 'recover', i: 0, x: lane, z, heading: Math.PI },
+  ] })
+  for (let i = 0; i < 60; i++) step()
+  let s = step({ cmds: [{ c: 'interact', player: 1 }] })
+  assert.deepEqual(s.drivings, [-1, 0, -1, -1])
+  for (let i = 0; i < 30; i++) step()
+  // Player 0 (on foot) and player 2 (on foot) reset: neither has a car, so nothing moves and nothing is refused.
+  let rejected = step().rejected
+  const y0 = poses[POSE.y], x0 = poses[POSE.x], z0 = poses[POSE.z]
+  s = step({ cmds: [{ c: 'reset' }, { c: 'reset', player: 2 }] })
+  assert.equal(s.rejected, rejected)
+  assert.ok(Math.abs(poses[POSE.y] - y0) < 0.05 && Math.abs(poses[POSE.x] - x0) < 0.05 && Math.abs(poses[POSE.z] - z0) < 0.05, 'car 0 untouched')
+  // Player 1's own reset lifts their car where it stands.
+  s = step({ cmds: [{ c: 'reset', player: 1 }] })
+  assert.equal(s.rejected, rejected, 'player 1\'s reset went through')
+  assert.ok(poses[POSE.y] > y0 + 0.2, `righted (lifted to ${poses[POSE.y].toFixed(2)} m)`)
+  assert.deepEqual(s.drivings, [-1, 0, -1, -1])
+  // A player outside 0..3 is refused, like interact's.
+  rejected = s.rejected
+  s = step({ cmds: [{ c: 'reset', player: 7 }, { c: 'reset', player: 0.5 }] })
+  assert.equal(s.rejected, rejected + 2)
+  assert.equal(sim.halted, false, sim.panic ?? '')
+})
+
 test('adversarial: a surveyed region takes spawns too: kept as given (no lots), on the slab, validated like the city\'s', async () => {
   const region = { bounds: { x0: -200, z0: -150, x1: 200, z1: 150 }, walls: [] }
   const base = { seed: 1, cars: 1, agents: AGENTS, boxes: [], furniture: NO_FURNITURE, spawn: { x: -150, z: -100 }, debug: false, region }

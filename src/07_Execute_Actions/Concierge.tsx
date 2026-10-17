@@ -76,7 +76,8 @@ const [ORC_BEFORE, ORC_AFTER] = ORC_NOTICE.split(ORC_REGISTRATION)
  *  geometry: wide frame 1.25 rem, minimap 13 rem bottom-left, bottom-centre capture hint ≈ 2.6 rem tall
  *  (4.4 rem with its key row) and enter prompt at 5 rem + 2.5 rem tall; compact frame 0.75 rem, minimap
  *  7 rem top-right with the speed chip (≈ 3.6 rem) under it while driving; touch stick zone and buttons
- *  ≈ 12.5 rem square in the bottom corners.
+ *  ≈ 12.5 rem square in the bottom corners, inside a landscape phone's side insets (the short card's width
+ *  gives those up too, or it covers the stick and Ping).
  *  Desktop: a column from just below the centre of view down to the HUD frame. The card stands at its foot
  *  on a spacer that clears the bottom-centre prompts; in a short window the spacer gives way first (down to
  *  the capture hint, which has its key row only under the HUD's ROOMY query, repeated here), so the card
@@ -85,8 +86,8 @@ const WIDE_COLUMN = 'absolute top-[calc(50%+1rem)] bottom-[max(1.25rem,env(safe-
 const WIDE_SPACER = 'h-[8.5rem] min-h-[3.25rem] shrink [@media(min-width:1100px)_and_(min-height:600px)]:min-h-[5rem]'
 const CARD_AT = {
   tall: 'top-[calc(max(0.75rem,env(safe-area-inset-top))+8.75rem)] right-[max(0.75rem,env(safe-area-inset-right))] left-[max(0.75rem,env(safe-area-inset-left))] mx-auto max-w-[28rem]',
-  short: 'bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-1/2 w-[min(28rem,calc(100%_-_26rem))] min-w-[18rem] -translate-x-1/2',
-  shortRaised: 'bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+4.5rem)] left-1/2 w-[min(28rem,calc(100%_-_26rem))] min-w-[18rem] -translate-x-1/2',
+  short: 'bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-1/2 w-[min(28rem,calc(100%_-_26rem_-_env(safe-area-inset-left,0px)_-_env(safe-area-inset-right,0px)))] min-w-[18rem] -translate-x-1/2',
+  shortRaised: 'bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+4.5rem)] left-1/2 w-[min(28rem,calc(100%_-_26rem_-_env(safe-area-inset-left,0px)_-_env(safe-area-inset-right,0px)))] min-w-[18rem] -translate-x-1/2',
 } as const
 const CHIP_AT = {
   wide: 'bottom-[calc(max(1.25rem,env(safe-area-inset-bottom))+13.75rem)] left-[max(1.25rem,env(safe-area-inset-left))]',

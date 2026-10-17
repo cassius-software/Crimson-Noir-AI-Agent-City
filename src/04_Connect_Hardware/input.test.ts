@@ -7,8 +7,9 @@
  * contract: no zoom and no wheel handling, dragging with the primary button turns the head without pointer
  * lock, a click (no drag) captures the pointer, pitch is clamped to ±PITCH_LIMIT, the terminal and lost
  * focus end a drag, touch drag uses first-person sensitivity, the right stick turns the head,
- * `padFamily` follows the controller used last, and the ping is one edge from Q, the middle mouse button
- * (never a drag) and a pad's right shoulder.
+ * `padFamily` follows the controller used last, the ping is one edge from Q, the middle mouse button
+ * (never a drag) and a pad's right shoulder, a Command chord holds no key, Space and the arrows are the game's,
+ * raw mouse counts are asked for and a driver's spike is dropped, and a mouse puts a touch laptop's overlay away.
  * What breaks if it is removed? A regression to orbit-camera input (a wheel zoom, a click that must come
  * first, an unclamped pitch that flips the view) could ship unnoticed.
  */
@@ -213,6 +214,69 @@ test('ping: Q, the middle mouse button and the right shoulder queue one edge eac
   assert.equal(input.take('ping'), true, 'the touch button and the harness press it')
 })
 
+test('a touch laptop: a finger brings the touch overlay, the mouse moving again puts it away', () => {
+  assert.equal(input.touch, false, 'no coarse pointer here')
+  canvas.dispatchEvent(ev('pointerdown', { pointerId: 7, pointerType: 'touch', button: 0, buttons: 1, clientX: 10, clientY: 10 }))
+  assert.equal(input.touch, true)
+  doc.dispatchEvent(ev('pointermove', { pointerType: 'touch', movementX: 5, movementY: 0 }))
+  assert.equal(input.touch, true, 'a finger moving is not the mouse')
+  doc.dispatchEvent(ev('pointermove', { pointerType: 'mouse', movementX: 0, movementY: 0 }))
+  assert.equal(input.touch, true, 'a mouse event that did not move (a synthetic one) changes nothing')
+  doc.dispatchEvent(ev('pointermove', { pointerType: 'mouse', movementX: 3, movementY: -1 }))
+  assert.equal(input.touch, false)
+  assert.equal(input.device, 'keyboard+mouse')
+  // A tablet whose primary pointer is the finger keeps the overlay when a mouse moves.
+  const m = globalThis as unknown as { matchMedia?: unknown }
+  m.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} })
+  try {
+    const tablet = new Input(canvas as unknown as HTMLCanvasElement, new HalBus({ navigator: { getGamepads: () => [] } }))
+    tablet.engageTouch()
+    doc.dispatchEvent(ev('pointermove', { pointerType: 'mouse', movementX: 3, movementY: -1 }))
+    assert.equal(tablet.touch, true)
+    tablet.dispose()
+  } finally {
+    delete m.matchMedia
+  }
+})
+
+test('a Command chord holds nothing (macOS sends no keyup for its letter); Command coming up drops every held key', () => {
+  doc.dispatchEvent(ev('keydown', { code: 'MetaLeft', metaKey: true }))
+  doc.dispatchEvent(ev('keydown', { code: 'KeyA', metaKey: true }))
+  doc.dispatchEvent(ev('keydown', { code: 'KeyE', metaKey: true, repeat: false }))
+  doc.dispatchEvent(ev('keyup', { code: 'MetaLeft' }))
+  assert.equal(input.down('KeyA'), false, 'Cmd+A is the system\'s')
+  assert.equal(input.take('interact'), false, 'Cmd+E opens no door')
+  // W held, then Command pressed and W let go under it (no keyup reaches the page): Command's keyup releases W.
+  doc.dispatchEvent(ev('keydown', { code: 'KeyW' }))
+  doc.dispatchEvent(ev('keydown', { code: 'MetaRight', metaKey: true }))
+  assert.equal(input.down('KeyW'), true)
+  doc.dispatchEvent(ev('keyup', { code: 'MetaRight' }))
+  assert.equal(input.down('KeyW'), false)
+  // Shift is a key of its own, chord or not.
+  doc.dispatchEvent(ev('keydown', { code: 'ShiftRight', metaKey: true }))
+  assert.equal(input.down('ShiftRight'), true)
+})
+
+test('Space and the arrows are the game\'s (no focused button clicked, no scroll); the canvas has no context menu', () => {
+  const key = (code: string) => Object.assign(new Event('keydown', { cancelable: true }), { code, repeat: false })
+  for (const code of ['Space', 'ArrowUp', 'ArrowLeft']) {
+    const e = key(code)
+    doc.dispatchEvent(e)
+    assert.equal(e.defaultPrevented, true, code)
+    assert.equal(input.down(code), true, code)
+  }
+  const w = key('KeyW')
+  doc.dispatchEvent(w)
+  assert.equal(w.defaultPrevented, false, 'letters keep their default')
+  const typed = key('Space')
+  Object.defineProperty(typed, 'target', { value: { tagName: 'TEXTAREA' } })
+  doc.dispatchEvent(typed)
+  assert.equal(typed.defaultPrevented, false, 'a space typed in a field is a space')
+  const menu = new Event('contextmenu', { cancelable: true })
+  canvas.dispatchEvent(menu)
+  assert.equal(menu.defaultPrevented, true)
+})
+
 test('a drag ends when the button is found released, when focus is lost, and when the terminal opens', () => {
   const yaw = input.yaw
   canvas.dispatchEvent(mouse('pointerdown', 0, 0))
@@ -244,6 +308,43 @@ test('a drag ends when the button is found released, when focus is lost, and whe
   canvas.dispatchEvent(mouse('pointerdown', 0, 0))
   canvas.dispatchEvent(mouse('pointermove', 5, 0))
   assert.ok(input.yaw < yaw, 'resumed')
+})
+
+test('raw mouse counts are asked for, a plain lock where they are refused; a spike from a still mouse is dropped, a flick is kept', async () => {
+  const asked: unknown[] = []
+  const lockWith = canvas.requestPointerLock.bind(canvas)
+  let refuse = true
+  canvas.requestPointerLock = ((o?: unknown) => {
+    asked.push(o)
+    if (o && refuse) return Promise.reject(Object.assign(new Error('raw input unavailable'), { name: 'NotSupportedError' }))
+    return lockWith()
+  }) as typeof canvas.requestPointerLock
+  canvas.dispatchEvent(mouse('pointerdown', 0, 0))
+  canvas.dispatchEvent(mouse('pointerup', 0, 0))
+  await new Promise((r) => setTimeout(r, 0))
+  assert.deepEqual(asked, [{ unadjustedMovement: true }, undefined], 'refused, then a plain lock')
+  assert.equal(input.locked, true)
+  const yaw = input.yaw
+  doc.dispatchEvent(ev('mousemove', { movementX: 900, movementY: 0 }))
+  assert.equal(input.yaw, yaw, 'a 900-count jump out of stillness is a spike')
+  doc.dispatchEvent(ev('mousemove', { movementX: 6, movementY: 0 }))
+  assert.ok(close(input.yaw, yaw - 6 * LOOK.mouse), 'the next move looks')
+  // A flick ramps up: every event is kept.
+  let expect = input.yaw
+  for (const dx of [40, 120, 300, 600, 380]) {
+    doc.dispatchEvent(ev('mousemove', { movementX: dx, movementY: 0 }))
+    expect -= dx * LOOK.mouse
+  }
+  assert.ok(close(input.yaw, expect), 'the flick turned the head in full')
+  doc.exitPointerLock()
+  // Where raw counts are granted, one request is enough.
+  refuse = false
+  asked.length = 0
+  canvas.dispatchEvent(mouse('pointerdown', 0, 0))
+  canvas.dispatchEvent(mouse('pointerup', 0, 0))
+  await new Promise((r) => setTimeout(r, 0))
+  assert.deepEqual(asked, [{ unadjustedMovement: true }])
+  assert.equal(input.locked, true)
 })
 
 test('the terminal releases pointer lock', () => {

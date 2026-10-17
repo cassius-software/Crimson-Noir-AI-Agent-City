@@ -49,24 +49,40 @@ at all (see Track B under Ring-0 console).
 
 ## Controls
 
-| | Keyboard and mouse | Gamepad (standard mapping) | Touch |
+| | Keyboard and mouse | Gamepad | Touch |
 |---|---|---|---|
-| Walk / drive | W A S D | left stick; right trigger throttle, left trigger brake | left thumb stick |
+| Walk / drive | W A S D, or the arrow keys | left stick; right trigger throttle, left trigger brake | left thumb stick |
 | Look (head) | drag with the mouse, or click to capture it | right stick | drag on the right half |
-| Run | Shift | left-stick click | Run button |
+| Run | Shift (either) | left-stick click | Run button |
 | Enter / exit a car | E | south face button | Enter car / Exit car |
 | Handbrake | Space | east face button | Handbrake |
 | Right the car | R | north face button | Reset |
 | Ping (mark a spot or a person where you look) | Q, or the middle mouse button | right shoulder button | Ping |
-| Clock −1 h / +1 h | `[` `]` | D-pad left / right | |
-| Ghost view | G | | |
-| Matrix mode | M | | |
-| Hide HUD | H | | |
-| Ring-0 console | `~` (Backquote) | | |
+| Clock −1 h / +1 h | `[` `]` | D-pad left / right | Menu: Clock −1 h / +1 h |
+| Ghost view | G | | Menu: Ghost view |
+| Rain mode | M | | Menu: Rain mode |
+| Hide HUD | H | | Menu: Hide HUD |
+| Ring-0 console | `~` (Backquote) | | Menu: Console (Close shuts it) |
 
 A ping pressed again within a second asks the next kind: go, look, gather, wait (see Pings and the rally under
 Recruitment). With `?players=2`…`4` the keyboard, the mouse and touch stay player 1's, and each further gamepad
-drives a player of its own (see Split screen).
+drives a player of its own, entering, leaving and righting its own car (see Split screen).
+
+- **Touch.** The round Menu button on the right edge opens a sheet with the keyboard's one-key actions. The console
+  opens from the tap itself, so the on-screen keyboard comes up, and shows a Close button on a touch screen. Every
+  text field reads at 16 px on a touch screen, so Safari does not zoom the page when one takes focus. Held upright
+  while driving, Ping, Reset and Exit car stand in a column, clear of the stick. On a touch laptop the overlay
+  goes away as soon as the mouse moves, and comes back with the next touch.
+- **Mouse and keyboard.** A captured mouse asks for raw counts (`unadjustedMovement`) where the browser has them,
+  and a jump of more than 400 counts out of a still mouse (a driver's spike) is dropped. Space and the arrows are
+  the game's while no field has focus, so they never click a button that kept the focus. A Command chord on a Mac
+  (Cmd+A, Cmd+Tab) holds no key, since macOS sends no key-up for its letter. The right mouse button opens no menu
+  over the city. Keys are read by place (`KeyboardEvent.code`), so on AZERTY the walk keys are Z Q S D.
+- **Gamepads.** A pad with the standard mapping is read as the table says. One without it (some Bluetooth pads, and
+  pads Firefox on Linux does not recognise) is read by position as a best guess, and `hal` says how: the left stick
+  and the first face buttons always; the Linux kernel's order in full (both sticks, the triggers, the d-pad) when
+  axes 2 and 5 rest at one end; a right stick on axes 2/3 when there are exactly four axes and none rests at an
+  end. An axis resting at one end is never read as a stick, so a guess cannot spin the view.
 
 ## URL options
 
@@ -358,7 +374,8 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   sidewalk (`SimInit.spawns`), send their controls in the same step request (`StepRequest.players`), and are
   people to every part of the ethical kernel (see Up to four avatars under The ethical kernel). Each viewport is
   its own player's head (`HeadRig`), posed from that player's avatar or the car they drive; a pad's right stick
-  turns it with the first player's curve and rates.
+  turns it with the first player's curve and rates. Each pad's south button enters and leaves a car for its own
+  player, and its north button rights that player's car (`interact` and `reset` carry the player).
 - **Every player hears their own city.** Each has a soundscape of their own, in head space, over one shared audio
   context: Web Audio has one listener per context, so that listener stays at the identity and every source is
   placed relative to each head, with smaller car-voice and murmur pools per player. Speech and cues fan out to
@@ -1316,8 +1333,9 @@ run `hal pair …` in the console.
   - The host then sends one JSON telemetry line at up to 10 Hz.
   - `PING` is answered with `PONG`. Serial runs at 115200 8N1; BLE writes go to RX `6e400002…` and
     the host listens on TX `6e400003…`.
-- **Gamepad API.** Any standard-mapped controller works, no pairing needed. With `?players`, a second, third and
-  fourth pad each drive a player of their own (see Split screen); haptics stay one level for every pad.
+- **Gamepad API.** Any standard-mapped controller works, no pairing needed; one without the standard mapping is read
+  by position (see Controls), and its line in `hal` names the guess. With `?players`, a second, third and fourth pad
+  each drive a player of their own (see Split screen); haptics stay one level for every pad.
 
 Every API degrades silently where it is missing. Safari and Firefox have no WebHID, Web Serial or
 Web Bluetooth.

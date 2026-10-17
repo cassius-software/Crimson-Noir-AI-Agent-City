@@ -11,7 +11,11 @@
  *   avatar, ghost view and rain mode toggled from their keys, and a car entered, driven and left;
  * - phone: an iPhone's user agent, screen and touch (no mouse, no keyboard): the virtual stick walking, a drag on the
  *   right half turning the head, both thumbs at once, the Run and Ping buttons, and the menu that reaches what a
- *   keyboard reaches (the console, the clock, ghost view, rain mode, hiding the HUD);
+ *   keyboard reaches (the console, the clock, ghost view, rain mode, hiding the HUD); a car entered from its button and,
+ *   held upright while driving, Ping, Reset and Exit car stay clear of the stick, every text field reads at 16 px, and
+ *   a mouse moving over a touch-first screen leaves the touch overlay where it is;
+ * - split: two players (?players=2) on two pads, one of them without the standard mapping: that pad walks player 1,
+ *   and player 2's own pad enters and leaves a car of their own;
  * - file: dist/index.html opened from disk, the way the README says to play, with no server and so no cross-origin
  *   isolation (the bridge's private-buffer path);
  * - ultra: the top tier pinned, so the shadowed, post and volumetric pipelines are compiled once and must validate;
@@ -63,18 +67,25 @@ const IPHONE = {
   height: 402,
 }
 
-/** A standard-mapping pad the page reads through navigator.getGamepads, set from the test (axes, then button values). */
+/**
+ * Up to four pads the page reads through navigator.getGamepads, set from the test (axes, then pressed buttons). A pad is
+ * standard-mapped unless connected with another mapping (a pad the browser does not recognise reports '').
+ */
 const PAD_SHIM = `(() => {
-  const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }))
-  const pad = { id: 'Smoke Pad (STANDARD GAMEPAD Vendor: 045e Product: 028e)', index: 0, connected: true, mapping: 'standard',
-    timestamp: 0, axes: [0, 0, 0, 0], buttons, vibrationActuator: null, hapticActuators: [] }
-  let on = false
-  Object.defineProperty(Navigator.prototype, 'getGamepads', { configurable: true, value: () => on ? [pad, null, null, null] : [null, null, null, null] })
+  const pads = [null, null, null, null]
+  Object.defineProperty(Navigator.prototype, 'getGamepads', { configurable: true, value: () => pads.slice() })
   window.__smokePad = {
-    connect() { on = true; pad.timestamp = performance.now(); const e = new Event('gamepadconnected'); e.gamepad = pad; window.dispatchEvent(e) },
-    set(axes, pressed = []) {
+    connect(i = 0, mapping = 'standard') {
+      const id = mapping === 'standard' ? 'Smoke Pad ' + i + ' (STANDARD GAMEPAD Vendor: 045e Product: 028e)' : 'Smoke Pad ' + i + ' (Vendor: 0079 Product: 0006)'
+      const pad = { id, index: i, connected: true, mapping, timestamp: performance.now(), axes: [0, 0, 0, 0],
+        buttons: Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 })), vibrationActuator: null, hapticActuators: [] }
+      pads[i] = pad
+      const e = new Event('gamepadconnected'); e.gamepad = pad; window.dispatchEvent(e)
+    },
+    set(axes, pressed = [], i = 0) {
+      const pad = pads[i]
       pad.axes = axes.slice()
-      buttons.forEach((b, i) => { b.pressed = pressed.includes(i); b.touched = b.pressed; b.value = b.pressed ? 1 : 0 })
+      pad.buttons.forEach((b, k) => { b.pressed = pressed.includes(k); b.touched = b.pressed; b.value = b.pressed ? 1 : 0 })
       pad.timestamp = performance.now()
     },
   }
@@ -178,6 +189,15 @@ async function open(chrome, { mobile = false, width = 960, height = 540 } = {}) 
   return page
 }
 
+/** A page expression: the car nearest player k's avatar, told to park; its index, or −1 without one. */
+const nearestCarParked = (k) => `(() => { const e = window.__SIM__.engine, st = e.sim.state, a = st.avatars[${k}]
+  let best = -1, d = Infinity
+  for (let i = 0; i < e.sim.meta.count; i++) { const q = (st.poses[i * 28] - a.x) ** 2 + (st.poses[i * 28 + 2] - a.z) ** 2; if (q < d) { d = q; best = i } }
+  if (best >= 0) window.__SIM__.sim.send({ c: 'setMode', i: best, mode: 'parked' })
+  return best })()`
+/** Where to stand beside a parked car to reach its door, tried in turn (the car's heading is not known here). */
+const SIDES = [[2.6, 0], [-2.6, 0], [0, 2.6], [0, -2.6]]
+
 const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z)
 /** Signed difference of two yaws, wrapped to (−π, π]. */
 const turn = (a, b) => Math.atan2(Math.sin(b - a), Math.cos(b - a))
@@ -255,15 +275,11 @@ const SCENARIOS = {
       await p.tap('Escape', 'Escape', 27)
 
       // A car: the nearest one is parked, the avatar stands beside it, E enters, W drives, E leaves.
-      const car = await p.eval(`(() => { const e = window.__SIM__.engine, st = e.sim.state, a = st.avatar
-        let best = -1, d = Infinity
-        for (let i = 0; i < e.sim.meta.count; i++) { const k = (st.poses[i * 28] - a.x) ** 2 + (st.poses[i * 28 + 2] - a.z) ** 2; if (k < d) { d = k; best = i } }
-        if (best >= 0) window.__SIM__.sim.send({ c: 'setMode', i: best, mode: 'parked' })
-        return best })()`)
+      const car = await p.eval(nearestCarParked(0))
       let drove = false
       if (car >= 0) {
         await p.waitFor(`Math.abs(window.__SIM__.engine.sim.state.poses[${car} * 28 + 8]) < 0.2`, 60_000).catch(() => {})
-        for (const [ox, oz] of [[2.6, 0], [-2.6, 0], [0, 2.6], [0, -2.6]]) {
+        for (const [ox, oz] of SIDES) {
           await p.eval(`(() => { const P = window.__SIM__.engine.sim.state.poses; window.__SIM__.teleport(P[${car} * 28] + ${ox}, P[${car} * 28 + 2] + ${oz}) })()`)
           if (await p.waitFor('window.__SIM__.snapshot().input.nearVehicle', 15_000).then(() => true, () => false)) break
         }
@@ -386,8 +402,101 @@ const SCENARIOS = {
           check(shut, 'phone: Close shuts the console')
         }
       }
+
+      // A field on a touch screen reads at 16 px whatever its own size, so Safari does not zoom into it.
+      const px = await p.eval(`(() => { const i = document.createElement('input'); i.className = 'text-[12px]'; document.body.append(i); const f = getComputedStyle(i).fontSize; i.remove(); return f })()`)
+      check(px === '16px', 'phone: a 12 px text field reads at 16 px on a touch screen', px)
+      // A mouse moving over a phone (a touch-first screen) leaves the touch overlay where it is.
+      await p.mouse('mouseMoved', 300, 200)
+      await p.mouse('mouseMoved', 340, 210)
+      await p.frames(2)
+      check((await p.snap()).touch === true, 'phone: a mouse moving over a touch-first screen keeps the touch controls')
+
+      // Driving, held upright: the car's Ping, Reset and Exit car stay clear of the stick's zone.
+      const car = await p.eval(nearestCarParked(0))
+      let inCar = false
+      if (car >= 0) {
+        await p.waitFor(`Math.abs(window.__SIM__.engine.sim.state.poses[${car} * 28 + 8]) < 0.2`, 60_000).catch(() => {})
+        for (const [ox, oz] of SIDES) {
+          await p.eval(`(() => { const P = window.__SIM__.engine.sim.state.poses; window.__SIM__.teleport(P[${car} * 28] + ${ox}, P[${car} * 28 + 2] + ${oz}) })()`)
+          if (await p.waitFor('window.__SIM__.snapshot().input.nearVehicle', 15_000).then(() => true, () => false)) break
+        }
+        const enter = await p.waitFor(`(() => { const b = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Enter car'); if (!b) return null; const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2] })()`, 10_000).catch(() => null)
+        if (enter) {
+          await tapAt(enter, 8)
+          inCar = await p.waitFor(`window.__SIM__.snapshot().input.mode === 'vehicle'`, 20_000).then(() => true, () => false)
+        }
+      }
+      check(inCar, 'phone: the Enter car button enters the nearest car')
+      if (inCar) {
+        await p.b.send('Emulation.setDeviceMetricsOverride', { width: IPHONE.height, height: IPHONE.width, deviceScaleFactor: 1, mobile: true, screenOrientation: { type: 'portraitPrimary', angle: 0 } })
+        await p.frames(3)
+        const boxes = await p.eval(`(() => {
+          const box = (e) => { const r = e.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom } }
+          const zone = [...document.querySelectorAll('div[aria-hidden]')].find((d) => d.style.width === '184px' && d.style.height === '184px')
+          const buttons = ['Ping', 'Reset', 'Exit car'].map((t) => [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === t))
+          return zone && buttons.every(Boolean) ? { zone: box(zone), buttons: buttons.map(box) } : null })()`)
+        const clear = !!boxes && boxes.buttons.every((b) => b.l >= boxes.zone.r || b.b <= boxes.zone.t)
+        check(clear, 'phone: held upright while driving, Ping, Reset and Exit car stay clear of the stick', JSON.stringify(boxes))
+        await p.shot('phone-portrait')
+      }
       await p.shot('phone')
       p.health('phone')
+    } finally { await p.b.close() }
+  },
+
+  async split(chrome, origin) {
+    const p = await open(chrome)
+    try {
+      await p.goto(`${origin}/?${LIGHT}&players=2`)
+      await p.booted()
+      const views = await p.eval('window.__SIM__.snapshot().output.players?.count ?? 1')
+      check(views === 2, 'split: ?players=2 cuts the screen in two', `${views} views`)
+      // Seats go to the pads in turn: the first pad to appear takes player 2's seat, the next player 1's.
+      await p.eval('window.__smokePad.connect(0)')
+      await p.frames(2)
+      await p.eval("window.__smokePad.connect(1, '')")
+      await p.frames(4)
+      const at = () => p.eval('(() => { const st = window.__SIM__.engine.sim.state; return { p1: st.avatars[0], p2: st.avatars[1], drivings: st.drivings.slice() } })()')
+      const a0 = await at()
+      await p.eval('window.__smokePad.set([0, -1, 0, 0], [], 1)')
+      await p.frames(10)
+      await p.eval('window.__smokePad.set([0, 0, 0, 0], [], 1)')
+      await p.frames(2)
+      const a1 = await at()
+      check(dist(a0.p1, a1.p1) > 0.5, 'split: a pad without the standard mapping walks player 1 (read by position)', `${dist(a0.p1, a1.p1).toFixed(2)} m`)
+
+      // Player 2's pad (seat 1): south beside a parked car enters it for player 2, and again leaves it. A press is one
+      // frame's edge: the release must be seen before the next press counts.
+      const padTap = async (button) => {
+        await p.eval(`window.__smokePad.set([0, 0, 0, 0], [${button}], 0)`)
+        await p.frames(2)
+        await p.eval('window.__smokePad.set([0, 0, 0, 0], [], 0)')
+        await p.frames(2)
+      }
+      const car = await p.eval(nearestCarParked(1))
+      let entered = false
+      if (car >= 0) {
+        await p.waitFor(`Math.abs(window.__SIM__.engine.sim.state.poses[${car} * 28 + 8]) < 0.2`, 60_000).catch(() => {})
+        for (const [ox, oz] of SIDES) {
+          await p.eval(`(() => { const P = window.__SIM__.engine.sim.state.poses; window.__SIM__.sim.send({ c: 'teleport', x: P[${car} * 28] + ${ox}, z: P[${car} * 28 + 2] + ${oz}, player: 1 }) })()`)
+          await p.frames(4)
+          await padTap(0)
+          entered = await p.waitFor(`window.__SIM__.engine.sim.state.drivings[1] === ${car}`, 5_000).then(() => true, () => false)
+          if (entered) break
+        }
+      }
+      const d = await at()
+      check(entered && d.drivings[0] === -1, 'split: player 2\'s pad enters a car for player 2, not player 1', JSON.stringify(d.drivings))
+      if (entered) {
+        await padTap(0)
+        const out = await p.waitFor('window.__SIM__.engine.sim.state.drivings[1] === -1', 20_000).then(() => true, () => false)
+        check(out, 'split: and leaves it again')
+      }
+      const e = await p.snap()
+      check(e.errors.length === 0, 'split: the engine recorded no error', e.errors.join(' | ').slice(0, 300))
+      await p.shot('split')
+      p.health('split')
     } finally { await p.b.close() }
   },
 

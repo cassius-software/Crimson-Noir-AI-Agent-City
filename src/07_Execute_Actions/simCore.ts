@@ -678,8 +678,9 @@ export class SimCore {
       }
       case 'reset': {
         this.#notInRoom(cmd.c)
-        // Player 0's car, righted where it stands: never put down beside a player on foot (the driver is inside).
-        const v = this.#driving[0]
+        // The player's car (player 0's by default), righted where it stands: never put down beside a player on foot
+        // (the driver is inside).
+        const v = this.#driving[this.#player(cmd.player)]
         if (!v) return
         const at = fleet.position(v, this.#pos)
         this.#clearOfPeople('reset', at.x, at.z)

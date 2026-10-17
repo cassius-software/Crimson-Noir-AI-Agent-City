@@ -12,7 +12,7 @@
  * What breaks if it is removed? The player cannot move, look, drive or interact.
  */
 import { HalBus } from './hal.ts'
-import { createAnalog, isStandardPad, PAD_EDGE, PadLook, PadMapper, type Analog, type PadFamily } from './gamepad.ts'
+import { createAnalog, isUsablePad, PAD_EDGE, PadLook, PadMapper, type Analog, type PadFamily } from './gamepad.ts'
 import { KEYBOARD_SEAT, PadSeat, SEATS, SeatTable, type PlayerIntent, type Seat } from './seats.ts'
 import type { GamepadLike } from './web-hardware.d.ts'
 
@@ -40,6 +40,9 @@ const ACTION_KEYS: Record<string, Action> = {
   KeyQ: 'ping',
 }
 
+/** Modifier keys: held alone they are keys like any other (Shift runs); with Command they start no chord. */
+const MODIFIER_CODES: ReadonlySet<string> = new Set(['ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight'])
+
 /** First-person look sensitivities. Look right = yaw down, look up = pitch up. */
 export const LOOK = {
   /** rad per mouse count (pointer lock) or CSS pixel (dragging without it) */
@@ -49,6 +52,8 @@ export const LOOK = {
   touchPitch: 0.0042,
   /** A press that travels at most this many CSS pixels before release is a click (it captures the pointer). */
   clickSlop: 6,
+  /** Mouse counts in one event (|x| + |y|) past which a jump from a near-still mouse is a driver spike, not a look. */
+  spike: 400,
 } as const
 
 /** Typing in the terminal (or any field) must never drive the car. */
@@ -59,6 +64,8 @@ export function isEditableTarget(t: EventTarget | null): boolean {
   const tag = typeof el.tagName === 'string' ? el.tagName.toUpperCase() : ''
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
 }
+
+const errorName = (e: unknown): string => (typeof e === 'object' && e !== null && 'name' in e ? String((e as { name: unknown }).name) : '')
 
 function coarsePointer(): MediaQueryList | null {
   try { return typeof matchMedia === 'function' ? matchMedia('(pointer: coarse)') : null } catch { return null }
@@ -75,7 +82,7 @@ export class Input {
   /** Merged gamepad + touch, refreshed by poll(). moveY > 0 = forward, steer > 0 = left. */
   readonly analog: Analog = createAnalog()
   readonly hal: HalBus
-  /** Coarse-pointer touch device: touch controls are shown. */
+  /** Touch controls are shown: a coarse-pointer touch device, or any touch since the mouse last moved. */
   touch = false
   /** Terminal open: keyboard and mouse are ignored. */
   suspended = false
@@ -93,6 +100,8 @@ export class Input {
   private readonly held: Record<TouchButton, boolean> = { brake: false, handbrake: false, run: false }
   /** The primary mouse button is down on the canvas without pointer lock: moving it turns the head. */
   private drag: { id: number; x: number; y: number; travel: number } | null = null
+  /** Size (|x| + |y|) of the last locked mouse movement, for the spike filter. */
+  private lastMove = 0
   /** The seating plan (seats.ts): one seat until setPlayers; pads are dealt to seats only then. */
   readonly seats = new SeatTable()
   /** Seats 1..3's pad-only intents (seats.ts PadSeat), read each poll while the table has more than one seat. */
@@ -109,19 +118,34 @@ export class Input {
     }
     on(document, 'keydown', (e) => {
       if (this.suspended || isEditableTarget(e.target)) return
+      // A Command chord (Cmd+A, Cmd+Tab) is the system's: macOS sends no keyup for its letter, which would stay held.
+      if (e.metaKey && !MODIFIER_CODES.has(e.code)) return
       this.keys.add(e.code)
       this.lastSource = 'keyboard+mouse'
       const action = ACTION_KEYS[e.code]
       if (action && !e.repeat) this.queued.add(action)
-      if (e.code === 'Space' && this.locked) e.preventDefault()
+      // Space is the handbrake, never a click on whichever button kept the focus (nor a page scroll); the arrows walk.
+      if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault()
     })
-    // Always honoured: a key pressed before focus moved into a field must still release.
-    on(document, 'keyup', (e) => this.keys.delete(e.code))
+    // Always honoured: a key pressed before focus moved into a field must still release. Command coming up drops
+    // every held key, since macOS swallows the keyup of any key released while it was down (held keys repeat back).
+    on(document, 'keyup', (e) => {
+      if (e.code === 'MetaLeft' || e.code === 'MetaRight') this.keys.clear()
+      else this.keys.delete(e.code)
+    })
+    // The canvas's right-click is a look drag's other button, not the browser's menu.
+    on(canvas, 'contextmenu', (e) => e.preventDefault())
     on(document, 'mousemove', (e) => {
       if (!this.locked || this.suspended) return
       // Back on the mouse after a controller: the HUD's glyphs follow the hand, not the last button pressed.
       if (e.movementX || e.movementY) this.lastSource = 'keyboard+mouse'
-      this.look(e.movementX, e.movementY, LOOK.mouse, LOOK.mouse)
+      // Without raw input, Chromium on Windows reports the odd jump of hundreds of counts out of nowhere (the first
+      // move after the lock can carry the cursor's trip to the centre): one that size from a near-still mouse is
+      // dropped. A real flick ramps up over a few events and is kept; at most one event in a row is ever dropped.
+      const size = Math.abs(e.movementX) + Math.abs(e.movementY)
+      const spike = size > LOOK.spike && size > 8 * this.lastMove + 40
+      this.lastMove = Number.isFinite(size) ? size : 0
+      if (!spike) this.look(e.movementX, e.movementY, LOOK.mouse, LOOK.mouse)
     })
     // Zero-click look: press and drag turns the head without capturing the pointer; a press released
     // without travelling is a click, and a click captures the pointer for mouse look without a button.
@@ -166,6 +190,7 @@ export class Input {
     on(canvas, 'lostpointercapture', (e) => { if (this.drag?.id === e.pointerId) this.drag = null })
     on(document, 'pointerlockchange', () => {
       this.locked = document.pointerLockElement === canvas
+      this.lastMove = 0
       if (this.locked) this.endDrag()
     })
     // Focus or the page lost mid-press: key-ups and pointer-ups may never arrive, so nothing may stay held.
@@ -182,6 +207,14 @@ export class Input {
       coarse.addEventListener('change', onChange)
       this.disposers.push(() => coarse.removeEventListener('change', onChange))
     }
+    // A touch laptop, or a tablet driven by a mouse (a fine primary pointer): the mouse moving again puts the touch
+    // overlay away, so its clicks reach the canvas (and capture it) instead of the overlay's look zone. A phone or a
+    // tablet whose primary pointer is the finger keeps its overlay whatever else is plugged in.
+    on(document, 'pointermove', (e) => {
+      if (!this.touch || e.pointerType !== 'mouse' || !(e.movementX || e.movementY) || coarse?.matches) return
+      this.touch = false
+      this.lastSource = 'keyboard+mouse'
+    })
     void hal.autoconnect()
   }
 
@@ -193,11 +226,21 @@ export class Input {
     this.lastLook = performance.now()
   }
 
+  /**
+   * Raw mouse counts where the browser has them (no OS acceleration, none of its spikes); where it refuses the option
+   * (NotSupportedError: a platform without raw input), a plain lock, still inside the click's user activation.
+   */
   private capturePointer(): void {
+    const plain = () => {
+      try {
+        const lock = this.canvas.requestPointerLock() as unknown
+        if (lock instanceof Promise) lock.catch(() => {})
+      } catch { /* pointer lock unavailable (embedded, denied, or re-requested too soon after Esc) */ }
+    }
     try {
-      const lock = this.canvas.requestPointerLock() as unknown
-      if (lock instanceof Promise) lock.catch(() => {})
-    } catch { /* pointer lock unavailable (embedded, denied, or re-requested too soon after Esc) */ }
+      const lock = this.canvas.requestPointerLock({ unadjustedMovement: true }) as unknown
+      if (lock instanceof Promise) lock.catch((e: unknown) => { if (errorName(e) === 'NotSupportedError' && !this.locked) plain() })
+    } catch { plain() }
   }
 
   private endDrag(): void {
@@ -309,7 +352,7 @@ export class Input {
       mine.length = 0
       for (let i = 0; i < pads.length; i++) {
         const p = pads[i]
-        if (isStandardPad(p) && this.seats.seatOf(p.index) === KEYBOARD_SEAT) mine.push(p)
+        if (isUsablePad(p) && this.seats.seatOf(p.index) === KEYBOARD_SEAT) mine.push(p)
       }
       edges = this.mapper.read(mine, this.pad)
       const now = performance.now()

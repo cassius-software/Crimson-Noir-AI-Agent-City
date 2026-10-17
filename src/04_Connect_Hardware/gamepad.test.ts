@@ -5,7 +5,8 @@
  * Why does this file exist? It proves the standard-gamepad mapping the contract promises: left stick
  * move/steer (steer > 0 = left), right stick look, right trigger throttle, left trigger brake, south button
  * interact, north reset, east handbrake, right shoulder ping, left-stick click run latch, d-pad left/right clock — with dead zones, edge detection, multi-pad merge,
- * non-standard pads ignored, browser pad ids parsed, the controller family the HUD's glyphs follow, and the
+ * pads without the standard mapping read by position (left stick and face buttons always; the Linux kernel's axis
+ * order in full; never a resting trigger read as a stick), browser pad ids parsed, the controller family the HUD's glyphs follow, and the
  * right stick's first-person head motion (rates, curve, rim boost, easing, frame-rate independence).
  * What breaks if it is removed? A mapping slip (a flipped axis, a repeating edge, a wrong glyph family, a
  * head that drifts after the stick is released) could ship unnoticed.
@@ -13,7 +14,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  createAnalog, PAD, PAD_EDGE, PAD_LOOK, PAD_TUNING, PadLook, PadMapper, padFamilyOf, padName, parsePadId, radialDeadzone, triggerValue,
+  createAnalog, GenericPads, genericLayoutOf, isUsablePad, PAD, PAD_EDGE, PAD_LOOK, PAD_TUNING, PadLook, PadMapper, padFamilyOf, padName, parsePadId,
+  radialDeadzone, triggerValue,
 } from './gamepad.ts'
 import type { GamepadLike } from './web-hardware.d.ts'
 
@@ -117,7 +119,7 @@ test('L3 latches run while the left stick is deflected; centring or another clic
   assert.equal(a.run, false, 'second click toggles off')
 })
 
-test('several pads merge; non-standard and disconnected pads are ignored; used/active track input', () => {
+test('several pads merge; disconnected and stickless pads are ignored; used/active track input', () => {
   const m = new PadMapper(), a = createAnalog()
   assert.equal(m.used, false)
   m.read([pad({ index: 0, axes: [0.3, 0, 0, 0] }), pad({ index: 1, axes: [0, -0.9, 0, 0], values: { [PAD.r2]: 0.6 } }), null], a)
@@ -125,13 +127,84 @@ test('several pads merge; non-standard and disconnected pads are ignored; used/a
   assert.ok(a.throttle > 0.5)
   assert.equal(m.used, true)
   assert.equal(m.active, true)
-  m.read([pad({ mapping: '', pressed: [PAD.south], axes: [1, 1, 1, 1] }), pad({ connected: false, pressed: [PAD.south] }), pad({ index: 2 })], a)
+  m.read([pad({ index: 3, mapping: '', pressed: [PAD.south], axes: [1] }), pad({ connected: false, pressed: [PAD.south] }), pad({ index: 2 })], a)
   assert.deepEqual(a, createAnalog())
   assert.equal(m.active, false)
   assert.equal(m.used, true, 'a standard pad is still present')
   m.read([], a)
   assert.equal(m.used, false, 'cleared when every pad is gone')
   assert.equal(m.read(null, a), 0)
+})
+
+test('a pad without the standard mapping: the left stick walks and drives, south enters a car, east is the handbrake', () => {
+  const m = new PadMapper(), a = createAnalog()
+  const generic = (axes: number[], pressed: number[] = []) => pad({ id: 'USB Gamepad', mapping: '', axes, pressed })
+  assert.equal(isUsablePad(generic([0, 0])), true)
+  assert.equal(isUsablePad(pad({ mapping: '', axes: [0] })), false, 'no stick')
+  // First seen at rest, then pushed forward with south pressed: a walk and a door.
+  m.read([generic([0, 0, 0, 0])], a)
+  const edges = m.read([generic([0, -1, 0, 0], [PAD.south])], a)
+  assert.equal(edges & PAD_EDGE.interact, PAD_EDGE.interact)
+  assert.ok(a.moveY > 0.9, `forward (${a.moveY})`)
+  assert.equal(m.active, true)
+  assert.equal(m.used, true)
+  m.read([generic([0.8, 0, 0, 0], [PAD.east])], a)
+  assert.ok(a.steer < -0.6, 'stick right steers right')
+  assert.equal(a.handbrake, true)
+  // Four axes, none resting at an end: axes 2/3 are the right stick. Buttons past the shoulders are dropped.
+  m.read([generic([0, 0, 0.9, 0], [6, 7, 9])], a)
+  assert.ok(a.lookX > 0.5, 'right stick looks')
+  assert.equal(a.throttle, 0, 'button 7 is not taken for a trigger on a pad of unknown order')
+  assert.equal(a.brake, 0)
+  assert.equal(genericLayoutOf(generic([0, 0, 0, 0])), 'four-axis')
+  assert.equal(genericLayoutOf(generic([0, 0, 0, 0, 0])), 'stick-only')
+})
+
+test('the Linux kernel\'s axis order (triggers resting at −1 on axes 2 and 5): sticks, triggers, d-pad and the remapped buttons', () => {
+  const m = new PadMapper(), a = createAnalog()
+  const evdev = (axes: number[], pressed: number[] = []) => pad({ id: '45e-28e-Generic X-Box pad', index: 1, mapping: '', axes, pressed })
+  const rest = [0, 0, -1, 0, 0, -1, 0, 0]
+  assert.equal(genericLayoutOf(evdev(rest)), 'evdev')
+  m.read([evdev(rest)], a)
+  assert.deepEqual(a, createAnalog(), 'at rest: no throttle, no brake, no look (the triggers are not sticks)')
+  m.read([evdev([0, 0, -1, 0.9, -0.9, 1])], a)
+  assert.ok(a.lookX > 0.5 && a.lookY > 0.5, 'right stick on axes 3/4')
+  assert.equal(a.throttle, 1, 'right trigger fully pulled')
+  assert.equal(a.brake, 0)
+  m.read([evdev([0, 0, 0, 0, 0, -1])], a)
+  assert.ok(close(a.brake, triggerValue({ pressed: false, value: 0.5 })), `left trigger half way (${a.brake})`)
+  // The d-pad is two axes: right steps the clock on, left back.
+  m.read([evdev(rest)], a)
+  assert.equal(m.read([evdev([0, 0, -1, 0, 0, -1, 1, 0])], a) & PAD_EDGE.timeForward, PAD_EDGE.timeForward)
+  m.read([evdev(rest)], a)
+  assert.equal(m.read([evdev([0, 0, -1, 0, 0, -1, -1, 0])], a) & PAD_EDGE.timeBack, PAD_EDGE.timeBack)
+  // Buttons: 0-5 as they are (5 is the right shoulder: a ping); 9 is the left stick click (the run latch).
+  m.read([evdev(rest)], a)
+  assert.equal(m.read([evdev(rest, [PAD.r1])], a) & PAD_EDGE.ping, PAD_EDGE.ping)
+  m.read([evdev([0, -1, -1, 0, 0, -1], [9])], a)
+  assert.equal(a.run, true, 'button 9 is the left stick click here')
+})
+
+test('a resting trigger is never read as a stick, and a new pad in a slot is measured afresh', () => {
+  const g = new GenericPads()
+  // Four axes, axis 2 resting at −1 (a trigger): not the four-axis layout, so no look at all.
+  const odd = pad({ id: 'Odd pad', mapping: '', axes: [0, 0, -1, 0] })
+  const v = g.view(odd)
+  assert.equal(g.layoutOf(0), 'stick-only')
+  assert.deepEqual(v.axes, [0, 0, 0, 0])
+  assert.equal(v.mapping, 'standard')
+  // A stick held off-centre when first seen counts as its rest and reads centred (no spin), never stuck.
+  const held = pad({ id: 'Held pad', index: 4, mapping: '', axes: [0, -1, 0, 0] })
+  assert.equal(g.view(held).axes[1], 0)
+  // Another pad in slot 0: measured again from its own rest.
+  const next = pad({ id: 'Next pad', mapping: '', axes: [0, 0, 0, 0] })
+  assert.equal(g.view(next).axes.length, 4)
+  assert.equal(g.layoutOf(0), 'four-axis')
+  g.forget(0)
+  assert.equal(g.layoutOf(0), null)
+  // Broken numbers read as centred.
+  const broken = g.view(pad({ id: 'Broken', index: 5, mapping: '', axes: [Number.NaN, Infinity, 0, 0] }))
+  assert.ok(broken.axes.every(Number.isFinite))
 })
 
 test('edge state is per pad: a press on a second pad is its own edge', () => {
@@ -174,6 +247,11 @@ test('pad layout: the USB vendor first, then what the id says, else generic (nam
   // No vendor in the id: Chromium's XInput pads on Windows, the HAL's HID-decoded DualSense; any other bare name
   // (Safari reports none) is generic.
   assert.equal(padFamilyOf('Controller (XInput STANDARD GAMEPAD)'), 'abxy')
+  // Valve's vendor id: Steam Input's virtual pad and the Steam Deck put A at the south button; Safari names the
+  // PlayStation pads without a vendor id.
+  assert.equal(padFamilyOf('Steam Virtual Gamepad (STANDARD GAMEPAD Vendor: 28de Product: 11ff)'), 'abxy')
+  assert.equal(padFamilyOf('28de-1205-Steam Deck'), 'abxy')
+  assert.equal(padFamilyOf('DUALSHOCK 4 Wireless Controller'), 'numbered')
   assert.equal(padFamilyOf('DualSense Wireless Controller'), 'numbered')
   assert.equal(padFamilyOf('DualSense Edge (HID)'), 'numbered')
   assert.equal(padFamilyOf('Wireless Controller'), 'generic')
@@ -197,8 +275,8 @@ test('PadMapper.family follows the pad used most recently; null before use and o
   assert.equal(m.family, 'numbered', 'the other pad moved a stick')
   m.read([pad({ index: 1, id: xb })], a)
   assert.equal(m.family, 'abxy', 'the used pad was unplugged: a pad still connected stands in')
-  m.read([pad({ index: 1, id: xb, mapping: '' })], a)
-  assert.equal(m.family, null, 'no standard pad left')
+  m.read([pad({ index: 1, id: xb, mapping: '', axes: [0] })], a)
+  assert.equal(m.family, null, 'no usable pad left (a stickless one is not)')
   m.read([pad({ index: 3, id: 'Controller (XInput STANDARD GAMEPAD)', values: { [PAD.r2]: 0.8 } })], a)
   assert.equal(m.family, 'abxy', 'a trigger counts as use')
   m.read([], a)

@@ -145,10 +145,12 @@ test('deterministic: the same frames give the same plan, whatever the pads\' ord
   assert.deepEqual(forward[forward.length - 1], [-1, 8, 9, -1])
 })
 
-test('only connected standard pads seat; a pad index below zero has no seat; seats outside the table read empty', () => {
+test('only connected, usable pads seat (a stickless one does not, one without the standard mapping does); a pad index below zero has no seat; seats outside the table read empty', () => {
   const t = new SeatTable(4)
-  t.assign([pad({ index: 0, mapping: '' }), pad({ index: 1, connected: false }), null, undefined, pad({ index: 2 })])
+  t.assign([pad({ index: 0, mapping: '', axes: [0] }), pad({ index: 1, connected: false }), null, undefined, pad({ index: 2 })])
   assert.deepEqual(plan(t), [-1, 2, -1, -1])
+  t.assign([pad({ index: 0, mapping: '', axes: [0] }), pad({ index: 2 }), pad({ index: 5, mapping: '' })])
+  assert.deepEqual(plan(t), [-1, 2, 5, -1], 'the pad without the standard mapping takes the next seat')
   assert.equal(t.seatOf(-1), -1)
   assert.equal(t.padIndexOf(-1), -1)
   assert.equal(t.padIndexOf(4), -1)

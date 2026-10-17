@@ -1483,6 +1483,12 @@ export class Engine {
     if (input.take('ghost')) this.toast('Ghost view', this.setGhost(!this.ghost.on))
     if (input.take('matrix')) this.toast('Matrix mode', this.setMatrix(!this.matrixOn))
     if (input.take('reset') && driving >= 0) sim.send({ c: 'reset' })
+    // The other seats' doors and resets, each for its own avatar (their pads queue them on their own intents).
+    for (let k = 1; k < this.views.length; k++) {
+      const seat = input.intent(this.views[k].seat)
+      if (seat.take('interact')) sim.send({ c: 'interact', player: k })
+      if (seat.take('reset') && (st.drivings[k] ?? -1) >= 0) sim.send({ c: 'reset', player: k })
+    }
 
     // Controls for the physics realm (controls.ts readControls, the same maths for every seat); it applies the set that
     // matches its own state (on foot or at the wheel). The other local players' sets ride in the same request

@@ -12,7 +12,7 @@
  */
 import { BRAND } from '../brand.ts'
 import { DUALSENSE_FILTERS, DualSense, dualSenseName, isDualSense } from './dualsense.ts'
-import { padName, parsePadId } from './gamepad.ts'
+import { genericLayoutOf, padName, parsePadId } from './gamepad.ts'
 import { LineLink, NUS, openBle, openSerial, type ByteChannel } from './lineLink.ts'
 import type { BleDevice, GamepadLike, HardwareNavigator, HidConnectionEvent, HidDevice, SerialConnectionEvent, SerialPort } from './web-hardware.d.ts'
 
@@ -76,6 +76,13 @@ const errorName = (e: unknown) => (typeof e === 'object' && e !== null && 'name'
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 /** Reads live state (TypeScript would otherwise keep a pre-await narrowing). */
 const gone = (e: { dev: HalDevice }) => e.dev.state === 'disconnected'
+/** The hardware list's word on a pad without the standard mapping: how gamepad.ts GenericPads reads it, if at all. */
+function genericDetail(p: GamepadLike): string {
+  if (p.axes.length < 2 || p.buttons.length < 4) return 'non-standard mapping (ignored: no stick)'
+  const layout = genericLayoutOf(p)
+  if (layout === 'evdev') return 'non-standard mapping (read in Linux order: sticks, triggers, d-pad)'
+  return layout === 'four-axis' ? 'non-standard mapping (best guess: two sticks, face buttons)' : 'non-standard mapping (best guess: left stick, face buttons)'
+}
 const copy = (d: HalDevice): HalDevice => ({ id: d.id, transport: d.transport, name: d.name, state: d.state, detail: d.detail })
 
 function defaultNavigator(): HardwareNavigator | null {
@@ -521,7 +528,7 @@ export class HalBus {
         this.slots.push({
           dev: {
             id: `gamepad:${p.index}`, transport: 'gamepad', name: padName(p.id), state: 'ready',
-            detail: standard ? `standard mapping${p.vibrationActuator?.playEffect ? ' · rumble' : ''}` : 'non-standard mapping (ignored)',
+            detail: standard ? `standard mapping${p.vibrationActuator?.playEffect ? ' · rumble' : ''}` : genericDetail(p),
           },
           index: p.index, id: p.id, vendor: ids?.vendor ?? -1, product: ids?.product ?? -1, pad: p, frame, hidden: 0, rumble: 0, rumbleAt: -1e9,
         })

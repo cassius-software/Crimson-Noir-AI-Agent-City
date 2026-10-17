@@ -15,7 +15,7 @@
  * every pad would merge into one body again.
  */
 import { clampPitch, type Action } from './input.ts'
-import { createAnalog, isStandardPad, PAD_EDGE, PadLook, PadMapper, type Analog, type PadFamily } from './gamepad.ts'
+import { createAnalog, isUsablePad, PAD_EDGE, PadLook, PadMapper, type Analog, type PadFamily } from './gamepad.ts'
 import type { GamepadLike } from './web-hardware.d.ts'
 
 /** Seats at the table: player 1 at seat 0. */
@@ -60,13 +60,13 @@ export function queueEdges(edges: number, queued: Set<Action>): void {
 
 type PadList = ArrayLike<GamepadLike | null | undefined> | null | undefined
 
-/** The standard pad with the lowest index in `pads` above `after` (−1 none). Duplicated indices count once. */
+/** The usable pad (isUsablePad) with the lowest index in `pads` above `after` (−1 none). Duplicated indices count once. */
 function nextPadIndex(pads: PadList, after: number): number {
   let best = -1
   const n = pads ? pads.length : 0
   for (let i = 0; i < n; i++) {
     const p = pads![i]
-    if (!isStandardPad(p) || p.index <= after) continue
+    if (!isUsablePad(p) || p.index <= after) continue
     if (best < 0 || p.index < best) best = p.index
   }
   return best
@@ -76,7 +76,7 @@ function hasPad(pads: PadList, index: number): boolean {
   const n = pads ? pads.length : 0
   for (let i = 0; i < n; i++) {
     const p = pads![i]
-    if (isStandardPad(p) && p.index === index) return true
+    if (isUsablePad(p) && p.index === index) return true
   }
   return false
 }
@@ -224,7 +224,7 @@ export class PadSeat implements PlayerIntent {
     const n = pads ? pads.length : 0
     for (let i = 0; i < n; i++) {
       const p = pads![i]
-      if (isStandardPad(p) && table.seatOf(p.index) === seat) mine.push(p)
+      if (isUsablePad(p) && table.seatOf(p.index) === seat) mine.push(p)
     }
     const a = this.analog
     queueEdges(this.mapper.read(mine, a), this.queued)

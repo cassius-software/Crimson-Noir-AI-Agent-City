@@ -37,7 +37,8 @@ export type GlyphKind = 'key' | 'button' | 'stick' | 'pill'
 /** One control hint: what to press and what it does. */
 export interface Hint { action: ControlAction; glyph: string; kind: GlyphKind; label: string }
 
-/** '' = the family has no control for the action (touch has no clock, console or HUD toggle). */
+/** '' = the family has no control for the action. Touch reaches the clock, the console, the HUD and ghost view
+ *  through its Menu button (TouchControls.tsx). */
 const GLYPHS = {
   keyboard: {
     move: 'W A S D', look: 'Mouse', run: 'Shift', interact: 'E', handbrake: 'Space', reset: 'R',
@@ -61,7 +62,7 @@ const GLYPHS = {
   },
   touch: {
     move: 'Stick', look: 'Drag', run: 'Run', interact: 'Enter car', handbrake: 'Handbrake', reset: 'Reset',
-    throttle: 'Stick ▲', brake: 'Brake', clock: '', console: '', hud: '', ghost: '', ping: 'Ping',
+    throttle: 'Stick ▲', brake: 'Brake', clock: 'Menu', console: 'Menu', hud: 'Menu', ghost: 'Menu', ping: 'Ping',
   },
 } as const satisfies Record<GlyphFamily, Record<ControlAction, string>>
 
