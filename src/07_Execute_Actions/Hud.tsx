@@ -49,19 +49,20 @@ const FRAME_COMPACT =
 function publishPanels(el: HTMLDivElement | null) {
   if (!el) return
   const root = document.documentElement.style
-  const row = Array.from(el.querySelector('[data-hud-row]')?.children ?? [])
   const publish = () => {
     root.setProperty('--hud-bottom', `${Math.round(el.getBoundingClientRect().bottom)}px`)
+    // Read afresh each time: on a short screen a toast swaps in for the readout (and is watched from then on).
+    const row = Array.from(el.querySelector('[data-hud-row]')?.children ?? [])
+    for (const p of row) watch?.observe(p)
     const rects = row.map((p) => p.getBoundingClientRect())
     const foot = Math.max(0, ...rects.map((r) => r.bottom))
     const right = Math.max(0, ...rects.filter((r) => r.bottom > foot - 1).map((r) => r.right))
     root.setProperty('--hud-row-bottom', `${Math.round(foot)}px`)
     root.setProperty('--hud-right', `${Math.round(right)}px`)
   }
-  publish()
   const watch = typeof ResizeObserver === 'function' ? new ResizeObserver(publish) : null
+  publish()
   watch?.observe(el)
-  for (const p of row) watch?.observe(p)
   window.addEventListener('resize', publish)
   return () => {
     watch?.disconnect()
@@ -233,9 +234,9 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   )
 
   // Compact: the toasts stack under the header, so only as many as clear the touch stick below them
-  // (one, on a single body line, on a short screen, where they stay under the panels). Upright on foot they
-  // start below Sloane's chip; at the wheel the buttons reach across the screen, so they cannot run on below
-  // it: one toast on a single body line stands under the panels, measured with them, and the chip below it.
+  // (one, on a single body line, on a short screen, where it stands in the readout's place). Upright on foot
+  // they start below Sloane's chip; at the wheel the buttons reach across the screen, so they cannot run on
+  // below it: one toast on a single body line stands under the panels, measured with them, and the chip below it.
   const tight = compact && short
   const stacked = compact && !short && driving
   const toasts = (compact ? s.toasts.slice(0, short || stacked ? 1 : 2) : s.toasts).map((t) => (
@@ -363,8 +364,9 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
         <div className={FRAME_COMPACT}>
           <div className="absolute top-0 left-0 flex max-w-[calc(100%_-_7.75rem)] flex-col items-start gap-2">
             <div ref={publishPanels} className="flex max-w-full flex-col items-start gap-2">
-              {/* Landscape phone: header and readout side by side (wrapping if narrow), so the toast
-                  below them ends above the touch stick. Otherwise `contents` keeps them in the column. */}
+              {/* Landscape phone: header and readout side by side (wrapping if narrow), and a toast takes the
+                  readout's place while it shows, so nothing reaches down to the touch stick or the buttons.
+                  Otherwise `contents` keeps them in the column. */}
               <div className={short ? 'flex max-w-full flex-wrap items-start gap-2' : 'contents'} data-hud-row>
                 <div className={`flex max-w-full items-center gap-2.5 py-2 pr-3.5 pl-2.5 ${panel}`} data-hud="panel">
                   <MonolithLogo size={28} title="" />
@@ -377,24 +379,26 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
                 </div>
                 {/* On a short screen the readout keeps to three lines and 12 rem, so it stays beside the header and
                     above Sloane's chip: a device line (a paired pad) takes the First Law line's place. */}
-                <div className={`${tight ? 'max-w-[min(100%,12rem)]' : 'max-w-full'} px-3 py-2 text-[11px] ${panel}`} data-hud="panel">
-                  {(!c.region || c.streets) && (
-                    <div className="flex items-center gap-2">
-                      <Signal label="E–W" light={c.signalEW} />
-                      <Signal label="N–S" light={c.signalNS} />
-                      <span className={`tabular-nums ${muted}`}>{c.signalRemaining.toFixed(0)}s</span>
+                {tight && toasts.length > 0 ? <div className="flex w-48 max-w-full flex-col gap-2">{toasts}</div> : (
+                  <div className={`${tight ? 'max-w-[min(100%,12rem)]' : 'max-w-full'} px-3 py-2 text-[11px] ${panel}`} data-hud="panel">
+                    {(!c.region || c.streets) && (
+                      <div className="flex items-center gap-2">
+                        <Signal label="E–W" light={c.signalEW} />
+                        <Signal label="N–S" light={c.signalNS} />
+                        <span className={`tabular-nums ${muted}`}>{c.signalRemaining.toFixed(0)}s</span>
+                      </div>
+                    )}
+                    <div className={`mt-1 truncate tabular-nums ${muted}`}>
+                      {s.output.camera ? `${s.output.camera.fps.toFixed(0)} fps · ${s.output.fps.toFixed(0)} Hz` : `${s.output.fps.toFixed(0)} fps`} · {q.label}{q.auto ? ' · auto' : ''}
                     </div>
-                  )}
-                  <div className={`mt-1 truncate tabular-nums ${muted}`}>
-                    {s.output.camera ? `${s.output.camera.fps.toFixed(0)} fps · ${s.output.fps.toFixed(0)} Hz` : `${s.output.fps.toFixed(0)} fps`} · {q.label}{q.auto ? ' · auto' : ''}
+                    {!(tight && s.supplier.hal) && (
+                      <div className={`truncate tabular-nums ${muted}`}>
+                        First Law {k.law1.toLocaleString()} · {k.sensorFlips.toLocaleString()} flips
+                      </div>
+                    )}
+                    {s.supplier.hal && <div className={`truncate ${muted}`}>{s.supplier.hal}</div>}
                   </div>
-                  {!(tight && s.supplier.hal) && (
-                    <div className={`truncate tabular-nums ${muted}`}>
-                      First Law {k.law1.toLocaleString()} · {k.sensorFlips.toLocaleString()} flips
-                    </div>
-                  )}
-                  {s.supplier.hal && <div className={`truncate ${muted}`}>{s.supplier.hal}</div>}
-                </div>
+                )}
               </div>
               {recChip}
               {micChip}
@@ -402,7 +406,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
               {renderChip}
               {stacked && <div className="flex w-68 max-w-full flex-col gap-2">{toasts}</div>}
             </div>
-            {!stacked && <div className={`${short ? '' : 'mt-[max(0px,calc(var(--chip-bottom,0px)_-_var(--hud-bottom,0px)))]'} flex w-68 max-w-full flex-col gap-2`}>{toasts}</div>}
+            {!stacked && !short && <div className="mt-[max(0px,calc(var(--chip-bottom,0px)_-_var(--hud-bottom,0px)))] flex w-68 max-w-full flex-col gap-2">{toasts}</div>}
           </div>
 
           <div className="absolute top-0 right-0 flex flex-col items-end gap-2" data-hud="minimap">

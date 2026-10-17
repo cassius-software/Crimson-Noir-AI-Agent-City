@@ -20,7 +20,8 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   makes: as a desktop (keys, a mouse drag, a pad, the console, a car entered, driven and left), as an iPhone (the touch
   stick, a look drag, both thumbs at once, the Menu and each of its items, and at six phone and tablet sizes both ways
   up and two landscape views under browser bars, on foot, driving and with a paired pad, every control on screen and
-  clear of the others, the stick, the speedometer, Sloane's chip and her Controls card), as two
+  clear of the others, the stick, the speedometer, Sloane's chip and her Controls card, and the HUD and its messages
+  clear of the buttons and the stick), as two
   players on two pads, opened from disk, pinned at Ultra, and as the console alone. A page exception, a GPU
   validation error, a lost device or the crowd's flow field falling back to the CPU fails it. A software adapter
   says nothing about speed, heat or a real GPU's driver.
@@ -161,7 +162,8 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   Sloane's card stands clear of the buttons and scrolls inside itself on a short screen, and her chip rises above the
   buttons on a short phone in landscape (moving left of the minimap under browser bars), also with a pad paired; on an
   upright phone her chip covered the foot of the HUD's readout and, at the wheel, the car's message, and it now stands
-  below the HUD's panels (at the wheel below the message, cut to a line) and above the buttons; the brakes are a size smaller on a short screen; at the wheel the Menu sits before Ping, clear of the speedometer; a
+  below the HUD's panels (at the wheel below the message, cut to a line) and above the buttons; on a short phone in
+  landscape a message stood over the stick (and, 568 px across, the Menu), and it now takes the readout's place; the brakes are a size smaller on a short screen; at the wheel the Menu sits before Ping, clear of the speedometer; a
   mouse moving on a touch laptop puts the overlay away (and its Run toggle with it), while a tablet whose main pointer
   is the finger keeps it.
 
