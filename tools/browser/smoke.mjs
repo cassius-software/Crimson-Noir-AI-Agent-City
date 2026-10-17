@@ -275,6 +275,17 @@ async function open(chrome, { mobile = false, width = 960, height = 540, args = 
   return page
 }
 
+/** A browser faking the lite scenario's phone (ANDROID, MALI_G52) before any page loads. */
+async function androidPhone(chrome) {
+  const p = await open(chrome, { width: ANDROID.width, height: ANDROID.height })
+  await p.b.send('Emulation.setUserAgentOverride', { userAgent: ANDROID.userAgent, platform: 'Linux armv8l', userAgentMetadata: ANDROID.metadata })
+  await p.b.send('Emulation.setDeviceMetricsOverride', { width: ANDROID.width, height: ANDROID.height, deviceScaleFactor: ANDROID.dpr, mobile: true, screenOrientation: { type: 'portraitPrimary', angle: 0 } })
+  await p.b.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 })
+  await p.b.send('Emulation.setHardwareConcurrencyOverride', { hardwareConcurrency: 8 }).catch(() => {})
+  await p.b.send('Page.addScriptToEvaluateOnNewDocument', { source: MALI_G52 })
+  return p
+}
+
 /** A page expression: the car nearest player k's avatar, told to park; its index, or −1 without one. */
 const nearestCarParked = (k) => `(() => { const e = window.__SIM__.engine, st = e.sim.state, a = st.avatars[${k}]
   let best = -1, d = Infinity
@@ -775,13 +786,8 @@ const SCENARIOS = {
   },
 
   async lite(chrome, origin) {
-    const p = await open(chrome, { width: ANDROID.width, height: ANDROID.height })
+    const p = await androidPhone(chrome)
     try {
-      await p.b.send('Emulation.setUserAgentOverride', { userAgent: ANDROID.userAgent, platform: 'Linux armv8l', userAgentMetadata: ANDROID.metadata })
-      await p.b.send('Emulation.setDeviceMetricsOverride', { width: ANDROID.width, height: ANDROID.height, deviceScaleFactor: ANDROID.dpr, mobile: true, screenOrientation: { type: 'portraitPrimary', angle: 0 } })
-      await p.b.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 })
-      await p.b.send('Emulation.setHardwareConcurrencyOverride', { hardwareConcurrency: 8 }).catch(() => {})
-      await p.b.send('Page.addScriptToEvaluateOnNewDocument', { source: MALI_G52 })
       // Not the light load: its crowd, cars and scale would stand in for the defaults this scenario is here to see.
       await p.goto(`${origin}/?debug&onboarding=0&audio=0`)
       await p.booted()
@@ -807,6 +813,20 @@ const SCENARIOS = {
       await p.shot('lite')
       p.health('lite')
     } finally { await p.b.close() }
+    // The same phone with ?lite=0: the profile it had before (Minimal, 5,000 pedestrians, 36 cars), and the post chain
+    // compiled at boot as on every uncapped device, which also shows the pipeline count above can see it.
+    const q = await androidPhone(chrome)
+    try {
+      await q.goto(`${origin}/?debug&onboarding=0&audio=0&lite=0`)
+      await q.booted()
+      const s = await q.eval(`(() => { const S = window.__SIM__, s = S.snapshot(), e = S.engine
+        return { quality: s.quality, agents: e.sim.meta.agents, cars: e.sim.meta.count, max: e.quality.governor.max, pipelines: window.__smokePipelines } })()`)
+      check(s.quality.tier === 0 && s.quality.label === 'Minimal' && s.quality.lite === undefined && s.max === 2, 'lite: ?lite=0 gives the phone its old profile (Minimal, capped at Medium)', JSON.stringify(s.quality))
+      check(s.agents === 5000 && s.cars === 36, 'lite: ?lite=0 simulates 5,000 pedestrians and 36 cars', `${s.agents}, ${s.cars}`)
+      check(s.pipelines && s.pipelines.twoTargets > 0, 'lite: ?lite=0 compiles the post chain at boot (colour-and-velocity pipelines counted)',
+        s.pipelines ? `${s.pipelines.render} render pipelines, ${s.pipelines.twoTargets} with two targets` : 'not counted')
+      q.health('lite (?lite=0)')
+    } finally { await q.b.close() }
   },
 
   async tty(chrome, origin) {

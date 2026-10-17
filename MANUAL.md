@@ -1450,8 +1450,11 @@ are no toasts and no settings menu, and the console's `quality` command is the o
   `quality -1` or `quality lite`) pins the Lite tier on any device without the rest of the profile. The HUD shows
   the tier as Lite, and the console's quality line (`quality`, `stats`, `sim`) ends with `lite profile` on a lite
   profile. A lite page runs 12 cars by default, so it names a different world from a default network room's 36; join
-  one with `?cars=36`. Tried so far only in CI's headless Chromium on SwiftShader with a faked Mali-G52 adapter (the
-  browser smoke's `lite` scenario), not on a real Mali phone: what it saves on one is not measured.
+  one with `?cars=36`. Tried so far only in headless Chromium on SwiftShader with a faked Mali-G52 adapter (the
+  browser smoke's `lite` scenario): the faked phone booted on Lite with 2,500 pedestrians and 12 cars, drew frames,
+  and its page compiled 31 render pipelines, none of them the post chain's; the same phone with `?lite=0` compiled 94,
+  37 of them the post chain's colour-and-velocity passes. Not tried on a real Mali phone: its boot time and frame rate
+  are not measured.
 
 **The two ends of the range.** `docs/autoscaler/README.md` drives the governor as a flagship phone (Safari 26, 120 Hz,
 touch) and as a console-class desktop (16 threads, a 10 TFLOPS GPU, 4K at 60 Hz or 144 Hz, tab and native shell)

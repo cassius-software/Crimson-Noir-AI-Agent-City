@@ -33,7 +33,9 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   with `lite profile`. Valhall and Immortalis, Adreno 6xx and newer, Xclipse, iPhones, desktops, the Windows app and
   software rasterizers keep their profiles (unit tests pin each). Tried in CI's headless Chromium on SwiftShader with a
   faked Mali-G52 adapter, Android client hints, 4 GB and a 412 × 915 screen at a device pixel ratio of 2.625 (the
-  browser smoke's new `lite` scenario), not on a real Mali phone: boot time and frame rate there are not measured.
+  browser smoke's new `lite` scenario): the faked phone booted on Lite with 2,500 pedestrians and 12 cars and drew
+  frames, and its page compiled 31 render pipelines against 94 for the same phone with `?lite=0`. Not tried on a real
+  Mali phone: boot time and frame rate there are not measured.
 
 - **Never a dead end.** Wherever the city cannot start or stops, the page now says why in words for the device it
   runs on and offers a way out, with nothing else needed: the installed iPhone app (full screen, no address bar, no
