@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is the evidence for the flow field: the grid from the city's boxes and streets, the
- * two CPU solvers (relaxation, which the GPU repeats pass by pass, and the bucket queue) reaching the same costs on
+ * Why does this file exist? It is the evidence for the flow field: the grid from the city's boxes and streets (and a
+ * region's, with the boxes of the rooms it holds: a room as the city's, a route into it only by its doorway), the two
+ * CPU solvers (relaxation, which the GPU repeats pass by pass, and the bucket queue) reaching the same costs on
  * random mazes, directions that route round a wall and prefer the sidewalk to the road, and the GPU wiring driven on a
  * mock device whose dispatches run the reference's own passes: the batches, the ping-pong, the early stop at a batch
  * that changed nothing, the direction pass into the texture, and the fallback. It also reads flowField.wgsl and holds
@@ -16,6 +17,7 @@ import { registerHooks } from 'node:module'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { CITY, CITY_SIZE, type Box } from '../01_Initialize_World/city.ts'
+import { ROOM, WORKPLACE_KINDS, toLocal, toWorld, workplacesAt, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
 import {
   blockBoxes, cellAt, cellCentre, cityGrid, cpuFlowSolver, DIAGONAL_UNIT, directions, emptyGrid, FLOW, flowAt, NEIGHBOURS, nearestOpen,
@@ -81,6 +83,42 @@ test('the grid: cells of FLOW.cell metres from an origin, boxes grown by the pad
   assert.equal(region.originX, -8)
   assert.equal(region.weight[cellAt(region, 0.5, 5)], 0, 'the wall')
   assert.equal(region.weight[cellAt(region, -7, 5)], 1)
+})
+
+test('a region\'s grid takes the boxes of its rooms: a room rasterises as the city\'s, whole cells on, and a route from the street behind it comes in by the doorway', () => {
+  // A window of 3 × 3 lots at the region's corner (regionWorld.ts REGION_CORNER, 2000 m: a thousand whole cells), a
+  // room on its middle lot, its doorway each way in turn; the city's room on its own middle lot of the first 3 × 3.
+  const boxes = (r: Workplace): Box[] => [...r.shell, ...r.furniture].map((b) => b.box)
+  const h = CITY.lotHalf
+  for (const side of [0, 1, 2, 3] as const) {
+    const [room] = workplacesAt([{ kind: WORKPLACE_KINDS[side], k: 51, m: 51, side }])
+    const [inCity] = workplacesAt([{ kind: WORKPLACE_KINDS[side], k: 1, m: 1, side }])
+    const grid = regionGrid({ x0: 2000, z0: 2000, x1: 2000 + 3 * CITY.pitch, z1: 2000 + 3 * CITY.pitch }, [], boxes(room))
+    const city = cityGrid(boxes(inCity))
+    let blocked = 0
+    for (let j = 0; j < grid.height; j++) {
+      for (let i = 0; i < grid.width; i++) {
+        const wall = grid.weight[j * grid.width + i] === 0
+        assert.equal(wall, city.weight[j * city.width + i] === 0, `side ${side}: cell ${i}, ${j}`)
+        if (wall) blocked++
+      }
+    }
+    assert.ok(blocked > 4 * 10, `side ${side}: ${blocked} cells of glass and furniture`)
+    // From the middle of the street behind the back wall to every station: round the lot and in by the doorway.
+    const back = toWorld(room, -CITY.pitch / 2, 0)
+    for (const st of room.stations) {
+      const { cost, dir } = solveFlow(grid, [nearestOpen(grid, st.x, st.z, 1)])
+      assert.ok(cost[cellAt(grid, back.x, back.z)] < UNREACHED, `side ${side} ${room.kind}: the street reaches the station`)
+      const path = trace(grid, dir, back.x, back.z)
+      const end = path.at(-1)!
+      assert.ok(Math.hypot(end.x - st.x, end.z - st.z) < 2 * grid.cell, `side ${side} ${room.kind}: the trace ends at the station`)
+      for (const p of path) {
+        const { u, v } = toLocal(room, p.x, p.z)
+        const m = Math.max(Math.abs(u), Math.abs(v))
+        if (m > h - ROOM.wall && m < h) assert.ok(u > 0 && Math.abs(v) < ROOM.door, `side ${side} ${room.kind}: the trace is in the doorway at (${p.x}, ${p.z})`)
+      }
+    }
+  }
 })
 
 test('relaxation and the bucket queue reach the same costs on random mazes, and the relaxation converges within the limit', () => {

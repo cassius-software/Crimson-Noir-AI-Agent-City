@@ -21,8 +21,8 @@ import { EXIT_SIDE, exitPoint } from '../07_Execute_Actions/carRig.ts'
 import { APPROACH_SECONDS, INTERVIEW_DISTANCE, TETHER_PACE } from '../03_Spawn_Agents/skills.ts'
 import { PERSON } from '../07_Execute_Actions/simProtocol.ts'
 import {
-  ROOM, ROOM_FLOATS, ROOMS_FLOATS, WORK, WORKPLACE_KINDS, workOneIn, containInRoom, doorDir, doorFront, insideRoom, onDuty, packRooms, penetrates, routeIn,
-  targetCorner, toLocal, toWorld, workerSlot, workplaceLots, workplaces, type Workplace,
+  ROOM, ROOM_FLOATS, ROOMS_FLOATS, WORK, WORKPLACE_KINDS, workOneIn, containInRoom, doorDir, doorFront, drawRooms, insideRoom, onDuty, packRooms, penetrates,
+  routeIn, targetCorner, toLocal, toWorld, workerSlot, workplaceLots, workplaces, workplacesAt, type Workplace,
 } from './interiors.ts'
 
 const SEEDS = [1337, 7, 42, 2026]
@@ -41,6 +41,59 @@ test('six rooms, one per kind, on six different inner downtown lots, from the se
     }
   }
   assert.notDeepEqual(workplaceLots(1337), workplaceLots(7), 'another seed, other lots')
+})
+
+test('the rooms are made from their lots alone: the seed picks the lots, workplacesAt builds the same six from them', () => {
+  for (let seed = 0; seed <= 20; seed++) assert.deepEqual(workplacesAt(workplaceLots(seed)), workplaces(seed), `seed ${seed}`)
+  // Lots handed in from elsewhere (a region's, region/workplaces.ts) give rooms on those lots, in that order, and fewer
+  // than six lots give fewer rooms.
+  const lots = [{ kind: 'clinic', k: 61, m: 57, side: 2 }, { kind: 'boardroom', k: 58, m: 60, side: 0 }] as const
+  const rooms = workplacesAt(lots, () => 9)
+  assert.deepEqual(rooms.map((r) => [r.kind, r.k, r.m, r.side, r.cx, r.cz]), [['clinic', 61, 57, 2, 61.5 * CITY.pitch, 57.5 * CITY.pitch], ['boardroom', 58, 60, 0, 58.5 * CITY.pitch, 60.5 * CITY.pitch]])
+  assert.ok(rooms.every((r) => r.shell[5].box[4] === 9), 'the ceiling slab rises to the podium it was given')
+})
+
+test('the route in starts on the lane it is given: a region\'s 4.9 m lane puts the door front at u = 15.1, as the shader compiled for it does', () => {
+  for (const room of workplaces(1337)) {
+    for (let s = 0; s < ROOM.stations; s++) {
+      assert.ok(Math.abs(toLocal(room, routeIn(room, s)[0].x, routeIn(room, s)[0].z).u - (CITY.pitch / 2 - CITY.lane)) < 1e-9, 'the city\'s own lane by default')
+      const legs = routeIn(room, s, 4.9)
+      const front = toLocal(room, legs[0].x, legs[0].z)
+      assert.ok(Math.abs(front.u - 15.1) < 1e-9 && Math.abs(front.v) < 1e-9, `${room.kind} station ${s}: the door front at u ${front.u}`)
+      assert.deepEqual(legs.slice(1), routeIn(room, s).slice(1), 'indoors the legs are the room\'s own')
+    }
+  }
+})
+
+test('the minimap draws each room near the view: the lot in the accent colour, its floor inside the walls, the doorway open on its street front', () => {
+  type Fill = { style: string; x: number; z: number; w: number; h: number }
+  const canvas = () => {
+    const fills: Fill[] = []
+    return { fills, ctx: { fillStyle: '', fillRect(x: number, z: number, w: number, h: number) { fills.push({ style: String(this.fillStyle), x, z, w, h }) } } }
+  }
+  const rooms = workplaces(42)
+  const near = rooms[0]
+  for (const dark of [false, true]) {
+    const { fills, ctx } = canvas()
+    drawRooms(ctx, rooms, near.cx + 20, near.cz - 30, dark)
+    const drawn = rooms.filter((r) => Math.abs(r.cx - near.cx - 20) <= 150 && Math.abs(r.cz - near.cz + 30) <= 150)
+    assert.ok(drawn.includes(near) && drawn.length < rooms.length, 'the test needs a room in view and one beyond it')
+    assert.equal(fills.length, drawn.length * 3, 'three fills per room in view, none for a room beyond it')
+    drawn.forEach((r, i) => {
+      const [lot, floor, door] = fills.slice(3 * i, 3 * i + 3)
+      assert.deepEqual([lot.x, lot.z, lot.w, lot.h], [r.cx - h, r.cz - h, 2 * h, 2 * h], `${r.kind}: the whole lot`)
+      assert.ok(floor.x > lot.x && floor.x + floor.w < lot.x + lot.w && floor.z > lot.z && floor.z + floor.h < lot.z + lot.h && floor.style !== lot.style, `${r.kind}: the floor inside the walls`)
+      assert.equal(door.style, floor.style, 'the doorway is cut in the floor\'s colour')
+      const d = doorDir(r.side), mid = { x: door.x + door.w / 2, z: door.z + door.h / 2 }
+      const l = toLocal(r, mid.x, mid.z)
+      assert.ok(l.u > h - 2 && l.u < h && Math.abs(l.v) < 1e-9, `${r.kind}: the gap is on the doorway's wall`)
+      assert.equal(d.x !== 0 ? door.h : door.w, ROOM.door * 2, `${r.kind}: as wide as the doorway`)
+    })
+    // A wider radius takes in the rest.
+    const all = canvas()
+    drawRooms(all.ctx, rooms, near.cx, near.cz, dark, 1e4)
+    assert.equal(all.fills.length, rooms.length * 3)
+  }
 })
 
 test('the room frame: u runs to the doorway, v across it, and the four sides are the four street fronts', () => {
@@ -524,13 +577,14 @@ function roomWay(room: Workplace, me: XZ, to: XZ): XZ {
   }
   return dirTo(me, aim)
 }
-function summonWay(grid: ReturnType<typeof cityGrid>, dir: Float32Array, rooms: readonly Workplace[], me: XZ, at: XZ, dist: number): XZ {
+function summonWay(grid: ReturnType<typeof cityGrid>, dir: Float32Array, rooms: readonly Workplace[], me: XZ, at: XZ, dist: number, lane: number = CITY.lane): XZ {
   const mine = indoorsOf(rooms, me), theirs = indoorsOf(rooms, at)
   if (mine >= 0 && mine === theirs) return roomWay(rooms[mine], me, at)
   let flow = flowAt(grid, dir, me.x, me.z)
   if (mine !== theirs) {
     const r = rooms[mine >= 0 ? mine : theirs]
-    const l = toLocal(r, me.x, me.z), front = CITY.pitch / 2 - CITY.lane
+    // The door front's u is the compiled CITY_LANE's: the city's 5.8 m lane, a region window's 4.9 m one.
+    const l = toLocal(r, me.x, me.z), front = CITY.pitch / 2 - lane
     if (Math.abs(l.v) < ROOM.door + 1.5 && l.u > h - ROOM.wall - 1.5 && l.u < front + 1) return dirTo(me, toWorld(r, mine < 0 ? ROOM.hub : front, 0))
     if (mine >= 0) return roomWay(r, me, toWorld(r, ROOM.hub + 1, l.v >= 0 ? ROOM.aisle : -ROOM.aisle))
     if (flow.x * flow.x + flow.z * flow.z <= 0.5) {
@@ -733,7 +787,7 @@ test('the commute: the workplace corner is on the doorway street, on the room\'s
   }
 })
 
-test('the uniform: six slots of a, b, furniture and stations as vec4s, zero where empty, and a region packs nothing', () => {
+test('the uniform: six slots of a, b, furniture and stations as vec4s, zero where a slot is empty, all zero with no rooms', () => {
   const rooms = workplaces(42)
   const f = packRooms(rooms)
   assert.equal(f.length, ROOMS_FLOATS)
