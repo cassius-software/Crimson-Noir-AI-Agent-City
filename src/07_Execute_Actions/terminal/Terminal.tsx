@@ -12,10 +12,13 @@
  * black, and no key closes it; a `boot` result is handed to the host (onBoot), which reloads on that track.
  * One R0 machine (`r0`, repl.ts) lives for the life of the console, so definitions outlive a line; a typed key or
  * token never enters the history as typed (redactForHistory).
+ * A touch screen has no tilde key: the host opens the console through its handle (TerminalHandle.open, the touch
+ * menu's Console item), and a Close button shows on coarse pointers only.
  * What breaks if it is removed? Operators lose the live Rapier3D / crowd / kernel readout, the quality,
  * clock, audio and hardware-pairing controls, and the operator tier's scripts, answers and harnesses.
  */
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type SyntheticEvent } from 'react'
+import { memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type Ref, type SyntheticEvent } from 'react'
+import { flushSync } from 'react-dom'
 import { BRAND } from '../../brand.ts'
 import { offlineBridge, type TerminalBridge } from './bridge.ts'
 import { commonPrefix, complete, continuationPrompt, formatStats, isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type Line, type ReplSession } from './commands.ts'
@@ -61,6 +64,10 @@ font:inherit;color:transparent;caret-color:transparent;opacity:0;resize:none;ove
 @keyframes r0-blink{50%{background:transparent;color:inherit}}
 @media (max-width:640px){.r0-root{font-size:12px}}
 @media (pointer:coarse){.r0-input{font-size:16px}}
+.r0-close{display:none}
+@media (pointer:coarse){.r0-root[data-open]:not([data-full]) .r0-close{display:block;position:absolute;z-index:1;
+top:calc(env(safe-area-inset-top,0px) + 6px);right:max(12px,env(safe-area-inset-right,0px));min-width:72px;height:40px;padding:0 14px;
+border:1px solid #5a5a5a;border-radius:6px;background:#111;color:#ececec;font:600 13px/1 ${FONT};touch-action:manipulation}}
 @media (prefers-reduced-motion:reduce){.r0-root,.r0-root[data-open]{transition:none}.r0-cursor{animation:none}}
 `
 
@@ -94,7 +101,16 @@ const Scrollback = memo(function Scrollback({ rows, prompt }: { rows: readonly R
   )
 })
 
-export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onMap }: {
+/** What the host can do besides the toggle key, which a touch screen does not have. */
+export interface TerminalHandle {
+  /**
+   * Opens the console and focuses its prompt before returning. iOS raises the on-screen keyboard only for a focus made
+   * while the tap that asked for it is still being handled, so call this from the tap's own click handler.
+   */
+  open(): void
+}
+
+export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onMap, ref }: {
   bridge: TerminalBridge | null
   onOpenChange(open: boolean): void
   /** Track B: the console is the whole page, open from the start; the toggle key and Esc never close it. */
@@ -103,6 +119,7 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
   onBoot?(track: 'gui' | 'tty'): void
   /** A `map` result: the host keeps the choice and reloads on that map (`default` forgets it). */
   onMap?(choice: 'city' | 'lakefront' | 'default'): void
+  ref?: Ref<TerminalHandle>
 }) {
   const [open, setOpen] = useState(fullscreen)
   const [rows, setRows] = useState<Row[]>(() => motd((bridge ?? OFFLINE).brand).map((l, i) => ({ ...l, id: -1 - i })))
@@ -132,6 +149,15 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
   const fullRef = useRef(fullscreen)
   /** The console's R0 machine (commands.ts `r0`), made on the first line that needs it. */
   const session = useRef<ReplSession | null>(null)
+
+  useImperativeHandle(ref, () => ({
+    open() {
+      if (fullRef.current) return
+      // Committed now, not on the next render: the prompt must be visible and not inert when it takes focus.
+      flushSync(() => setOpen(true))
+      inputRef.current?.focus({ preventScroll: true })
+    },
+  }), [])
 
   useEffect(() => {
     bridgeRef.current = bridge
@@ -410,6 +436,7 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
       onMouseUp={onMouseUp}
     >
       <style href="ring0-terminal" precedence="default">{CSS}</style>
+      <button type="button" className="r0-close" onClick={() => setOpen(false)}>Close</button>
       <div ref={scrollRef} className="r0-scroll" onScroll={onScroll}>
         {/* Only the scrollback is a live region: the redrawn stats frame and the echoed prompt are not announced. */}
         <div role="log" aria-label="Ring-0 output">

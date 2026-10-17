@@ -4,12 +4,15 @@
 # Why does this file exist? It is the standing verification of every change: the checks that were run by hand in a
 # container at the end of each phase, run here on every pull request and every push to main, and the formal
 # verification step (FVPS) with them. The checks are the ones tools/selfheal/checks.sh names, so a contributor, this
-# workflow and the self-healing agent run the same commands. Three jobs run side by side:
+# workflow and the self-healing agent run the same commands. These jobs run side by side:
 # - page: tsc, oxlint, the 1,300-test suite, the single-file build with its no-server-code check, the host's smoke
 #   test, and the self-healing agent's own tests;
 # - rust: the OS workspace's tests on CPU and GPU (lavapipe) and clippy on every target, the native crates' tests,
 #   and the WebAssembly modules rebuilt and compared with the committed ones (the air-gap check);
 # - fvps: the formal step's fast parts: the SMT theorems, the LLVM-IR call graph and the WebAssembly air gap;
+# - browser: the built page in the runner's Chrome on the software WebGPU adapter (tools/browser/smoke.mjs): the 3D
+#   city booted as a desktop, as an iPhone, from disk and at the Ultra tier, every control driven (keyboard, mouse, a
+#   gamepad, touch and the touch menu), and the console alone; the screenshots are kept as an artifact;
 # - sandbox: the self-healing agent's zero-trust container (tools/selfheal/sandbox.mjs) tried from the inside:
 #   the escape probes (tools/sandbox/probe.sh) contained, the same probes in a weakened control, and two checks
 #   run contained (tools/sandbox/verify.mjs); the evidence is kept as an artifact;
@@ -104,6 +107,32 @@ jobs:
           rustup default "$RUST_TOOLCHAIN"
       - name: The SMT theorems, the IR call graph and the WebAssembly air gap
         run: sh tools/verify/fvps.sh smt && sh tools/verify/fvps.sh ir && sh tools/verify/fvps.sh wasm
+
+  # The page as a person meets it: Chrome on SwiftShader's WebGPU, which renders a few frames a second, so every check
+  # waits on the page's own state. A red run here is a browser-visible bug the Node suite cannot see.
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: The build, then the city in Chrome as a desktop, an iPhone, a file, at Ultra, and the console alone
+        env:
+          BROWSER_SHOTS: ${{ runner.temp }}/browser
+        run: sh tools/selfheal/checks.sh page-build page-browser
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-smoke-${{ github.run_id }}
+          path: ${{ runner.temp }}/browser/
+          if-no-files-found: ignore
+          retention-days: 30
 
   # The containment of the self-healing agent's sandbox, verified empirically: every escape attempt denied inside
   # it, the same attempts succeeding once the containment is taken away (so the probes are live), and the checks
