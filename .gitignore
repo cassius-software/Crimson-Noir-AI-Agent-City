@@ -23,6 +23,8 @@ dist-ssr
 *.sln
 *.sw?
 dist-pilot
+# The installable copy for a phone (npm run build:web, tools/web/pwa.mjs)
+dist-web
 
 # Rust build output of the native crates (their wasm is committed as generated .ts modules)
 native/*/target

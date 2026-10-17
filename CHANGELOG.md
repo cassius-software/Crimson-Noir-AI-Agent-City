@@ -15,6 +15,16 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The city on an iPhone or iPad.** Safari gives WebGPU only to a page served over https, and an iPhone had no way
+  to play the city at all. `npm run build:web` (`tools/web/pwa.mjs`) writes `dist-web/`: the same page with a
+  manifest, its icons and a service worker that keeps every file on the device, so it installs to the home screen,
+  opens full screen and, after the first visit, starts with no network; the worker also gives the page the two
+  isolation headers a static host cannot send, for the shared memory bridge. The `web` workflow publishes it on GitHub
+  Pages when someone runs it (it never runs on its own, and needs Pages turned on once); Tailscale serves it to your
+  own devices only. CI's browser job installs it in Chrome as an iPhone and starts it with the host gone. Not yet
+  tried on a real iPhone: Safari's WebGPU in the physics worker, the home-screen launch, the headers from a service
+  worker in Safari, and heat and memory over a long session. On a phone there is no model provider (they run on a
+  computer's loopback), so Sloane speaks from her script.
 - **The city played in a real browser in CI** (`tools/browser/smoke.mjs`, the `browser` job in `ci.yml`). Chromium
   boots the built page on its software WebGPU adapter (SwiftShader) and plays it through the same events a person
   makes: as a desktop (keys, a mouse drag, a pad, the console, a car entered, driven and left), as an iPhone (the touch

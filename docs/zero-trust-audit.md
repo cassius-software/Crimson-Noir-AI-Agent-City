@@ -176,6 +176,17 @@ and cleared with `ask key none` (which also deletes it from storage). Serving th
 (`http://localhost:4173`) instead of opening it as a file gives it an origin of its own, which closes the
 shared-file-storage row.
 
+## The installable web copy (`tools/web/pwa.mjs`)
+
+`npm run build:web` writes `dist-web/`, the same page made installable for a phone (MANUAL, On an iPhone): a manifest,
+the icons and a service worker. It can be served from a host off this machine (GitHub Pages, or a tailnet).
+
+| Where | What it could reach | What closes it |
+|---|---|---|
+| The service worker (`sw.js`, written by `pwa.mjs worker`) | It has a global of its own, which `installAirgap` never sees, and the browser hands it every request the page makes. It answers only GET requests for its own origin, from its cache or, for a file the cache lacks, from that origin; it never builds a URL. A request for any other origin (a loopback model server, anything) it leaves to the browser, so the page's guard and policy decide it as before. | `src/webApp.test.ts` runs the worker against a fake cache: another origin and a POST are left alone, a page load gets the cached page, and only its own older caches are dropped. |
+| The policy of the web copy's page | `manifest-src 'self'` is added so the browser may read the manifest from the page's own origin. | `webApp.test.ts` holds every other directive equal to `index.html`'s; the builder refuses a page whose policy already names a manifest source. |
+| The page's own origin, on a host off this machine | The guard admits the page's own origin (The gate). On GitHub Pages that is `cassius-software.github.io`, which answers file reads only. Every Pages site of the organization shares that origin, and so its local storage: a key typed to `ask key` on the published copy could be read by another Pages site of the organization. | By choice: publish only trusted Pages sites under the organization, or serve the copy through Tailscale instead (MANUAL says so). The model providers stay loopback only, and an iPhone runs none. |
+
 ## What cannot be closed from the page's scripts
 
 These are vectors a script in the page's realm still has after `installAirgap`, because they are not functions a

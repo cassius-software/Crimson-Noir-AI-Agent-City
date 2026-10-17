@@ -12,7 +12,8 @@
 # - fvps: the formal step's fast parts: the SMT theorems, the LLVM-IR call graph and the WebAssembly air gap;
 # - browser: the built page in the runner's Chrome on the software WebGPU adapter (tools/browser/smoke.mjs): the 3D
 #   city booted as a desktop, as an iPhone, from disk and at the Ultra tier, every control driven (keyboard, mouse, a
-#   gamepad, touch and the touch menu), and the console alone; the screenshots are kept as an artifact;
+#   gamepad, touch and the touch menu), the console alone, and the installable copy a phone plays (its manifest,
+#   its service worker, a start with the host gone); the screenshots are kept as an artifact;
 # - sandbox: the self-healing agent's zero-trust container (tools/selfheal/sandbox.mjs) tried from the inside:
 #   the escape probes (tools/sandbox/probe.sh) contained, the same probes in a weakened control, and two checks
 #   run contained (tools/sandbox/verify.mjs); the evidence is kept as an artifact;
