@@ -30,7 +30,13 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   own words. The console shell (`?boot=tty`) gains **Back to the city**, which a pad's A or a tap presses, so a player
   sent there from a card with only a pad or a touch screen can come back. The cards let go of the mouse (pointer lock)
   so Restart can be clicked, Enter on **Details** opens it rather than restarting, and an open console no longer
-  takes Enter from a card over it. A first visit
+  takes Enter from a card over it. Found on a real Android phone: a GPU the phone took back while the city loaded in
+  the background (switching to another app) showed "three has not allocated a GPU buffer for crowd.look yet"; it is
+  now the graphics-reset card, and the page restarts by itself once the player is back. The "Still starting" line
+  names the step the boot is on. The page's 10 MB script moved to the end of the page, so a slow connection shows the
+  splash while it downloads instead of a blank page (the browser smoke holds the script back and checks). Firefox,
+  Samsung Internet and in-app browsers on Android, which have no WebGPU, get **Open in Chrome** as the card's first
+  button. A first visit
   is checked (a secure page, WebGPU, a full adapter) before the onboarding, so a browser that cannot run the city
   gets the card instead of the whole onboarding first. After 20 s of visible time without a first frame the boot
   veil adds "Still starting…" with Restart and Open the console; it fails nothing (a software adapter takes

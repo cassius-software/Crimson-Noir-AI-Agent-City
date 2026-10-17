@@ -4,8 +4,8 @@
 /**
  * Why does this file exist? It pins the page's last way out, index.html's boot watchdog, which has to work where
  * nothing else of the page does: it is classic ES5 (no arrow, no let or const, no template), it sits in <head> before
- * the page's module (in the source and, once built, in dist/index.html, where the single file puts the module in the
- * head too), and, run here in a fake page, it draws its card with Restart focused when the module never ran (a cut-off
+ * the page's module (in the source and, once built, in dist/index.html, where the module stands after the splash at
+ * the end of the body: vite.config.ts moduleAfterBody), and, run here in a fake page, it draws its card with Restart focused when the module never ran (a cut-off
  * download), when it could not be read (a SyntaxError) or when it threw while loading, adds what the city will need
  * where the browser plainly lacks it (a secure address, iOS 26, WebGPU; nothing under ?boot=tty), and stays out of
  * the way once main.tsx said it started; Enter and a pad's A restart, and the console it may offer keeps the page's
@@ -17,6 +17,7 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { Script, createContext } from 'node:vm'
+import { moduleAfterBody } from '../vite.config.ts'
 
 const SOURCE = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
 const DIST = new URL('../dist/index.html', import.meta.url)
@@ -49,6 +50,22 @@ test('the watchdog is classic ES5 in <head> before the page\'s module, in the so
     assertOrder(built, 'dist/index.html')
     assert.doesNotMatch(watchdog(built), /%BRAND_/, 'the brand tokens are filled in')
     assert.match(built, /<noscript>/)
+  }
+})
+
+test('the built page paints its splash before the 10 MB module has downloaded: the module ends the body', () => {
+  const page = '<html><head><script id="boot-watchdog">w()</script><script type="module" crossorigin>a("<script>");b()</script><style>x</style></head><body><div id="root">splash</div><noscript>n</noscript></body></html>'
+  const moved = moduleAfterBody(page)
+  assert.equal(moved, '<html><head><script id="boot-watchdog">w()</script><style>x</style></head><body><div id="root">splash</div><noscript>n</noscript><script type="module" crossorigin>a("<script>");b()</script>\n  </body></html>')
+  assert.equal(moved.length, page.length + 3, 'nothing lost but the line break added')
+  const two = page.replace('<style>', '<script type="module">c()</script><style>')
+  assert.equal(moduleAfterBody(two), two, 'two module scripts: left as it is')
+  assert.equal(moduleAfterBody('<html><body></body></html>'), '<html><body></body></html>', 'none: left as it is')
+  if (existsSync(DIST)) {
+    const built = readFileSync(DIST, 'utf8')
+    const mod = built.indexOf('<script type="module"'), root = built.indexOf('<div id="root">'), body = built.lastIndexOf('</body>')
+    assert.ok(root > 0 && root < mod, 'dist/index.html: the splash comes before the module')
+    assert.ok(built.indexOf('</script>', mod) < body, 'dist/index.html: and the module ends inside the body')
   }
 })
 

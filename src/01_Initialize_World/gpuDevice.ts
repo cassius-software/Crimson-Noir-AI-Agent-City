@@ -20,13 +20,18 @@
 /** Why the page has no GPU device: the codes the recovery card words (bootFailure.ts). */
 export type GpuFailure = 'insecure' | 'no-api' | 'no-adapter' | 'compat-only' | 'device' | 'gpu-reset'
 
-/** The page cannot have the WebGPU device the city needs; `code` says why. */
+/**
+ * The page cannot have the WebGPU device the city needs; `code` says why. `background`: it happened while the page
+ * was hidden (a 'gpu-reset' while the player was in another app), so the page may restart by itself once it is back.
+ */
 export class WebGPUUnavailableError extends Error {
   readonly code: GpuFailure
-  constructor(code: GpuFailure, message: string) {
+  readonly background: boolean
+  constructor(code: GpuFailure, message: string, background = false) {
     super(message)
     this.name = 'WebGPUUnavailableError'
     this.code = code
+    this.background = background
   }
 }
 

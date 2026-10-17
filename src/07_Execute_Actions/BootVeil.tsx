@@ -24,6 +24,7 @@ import { MonolithLogo } from '../MonolithLogo.tsx'
 import { StillStarting } from './RecoveryCard.tsx'
 import { waitedFor } from './bootFailure.ts'
 
+
 const BOOT_VEIL = {
   /** Once ready, the mark stays at least this long, so a fast start still reads as a deliberate reveal. */
   holdMs: 500,
@@ -47,8 +48,9 @@ function prefersReducedMotion(): boolean {
 }
 
 /** `ready`: the first frames are on screen. `onDone` fires once, when the veil is fully transparent
- *  (it then renders nothing). `onConsole`: the console's way out on the 'Still starting' line (none, no line). */
-export function BootVeil({ ready, onDone, onConsole }: { ready: boolean; onDone(): void; onConsole?: () => void }): JSX.Element | null {
+ *  (it then renders nothing). `onConsole`: the console's way out on the 'Still starting' line (none, no line).
+ *  `stage`: what the city is doing, named on that line (bootFailure.ts BOOT_STAGE). */
+export function BootVeil({ ready, onDone, onConsole, stage }: { ready: boolean; onDone(): void; onConsole?: () => void; stage?: string }): JSX.Element | null {
   const [phase, setPhase] = useState<Phase>('cover')
   const [fadeMs, setFadeMs] = useState<number>(BOOT_VEIL.fadeMs)
   const [slow, setSlow] = useState(false)
@@ -111,7 +113,7 @@ export function BootVeil({ ready, onDone, onConsole }: { ready: boolean; onDone(
       <div className="boot-mark" role={slow ? 'img' : undefined} aria-label={slow ? `${BRAND.name} is starting` : undefined}>
         <MonolithLogo title="" />
       </div>
-      {slow && !fading && onConsole && <StillStarting onConsole={onConsole} />}
+      {slow && !fading && onConsole && <StillStarting onConsole={onConsole} stage={stage} />}
     </div>
   )
 }

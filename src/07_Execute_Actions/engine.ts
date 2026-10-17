@@ -92,6 +92,12 @@ import { ring0Stats, type TerminalBridge } from './terminal/bridge.ts'
 import { familyOf, modeGlyph, type glyph } from './glyphs.ts'
 import { PING_KINDS, PING_WORDS, PingBoard, pickPing, pingLine, rallyPlan, type Ping, type Pick, type PingKind, type RallyRequest } from '../08_Swarm/ping.ts'
 
+/**
+ * Where Engine.create has got to, for the boot veil's 'Still starting' line (bootFailure.ts BOOT_STAGE): a player who
+ * has waited, and a bug report, can tell a slow shader compile on a phone from a boot that stopped.
+ */
+export type BootStage = 'gpu' | 'world' | 'physics' | 'shaders' | 'frame'
+
 export interface EngineOptions {
   /** Pedestrians to simulate; absent: as many as the device profile allows (governor.ts defaultAgents). */
   agents?: number
@@ -645,17 +651,24 @@ export class Engine {
     })
   }
 
-  static async create(canvas: HTMLCanvasElement, requested: EngineOptions): Promise<Engine> {
+  static async create(canvas: HTMLCanvasElement, requested: EngineOptions, onStage: (stage: BootStage) => void = () => {}): Promise<Engine> {
+    onStage('gpu')
     const gpu = await createRenderer(canvas, requested.pixelRatio, requested.profile)
+    onStage('world')
     // A boot that fails partway lets go of what it took: the page's GPU device (releaseGpu) and the physics worker, so
     // the recovery card is not left over a device and a worker still running, and the worker's own later rejection is
     // never unhandled. A loss of the device while the city is built fails the boot as a graphics reset.
+    // Whether the page was hidden at any time during the boot: a phone takes the GPU back from an app in the
+    // background (switching apps while the city loads), and such a loss lets the page restart by itself once it is
+    // back (App.tsx). The loss may only be reported after the player has returned, so the whole boot counts.
     let simBoot: Promise<SimClient> | null = null
-    const boot: { lost: GPUDeviceLostInfo | null } = { lost: null }
+    const boot: { lost: GPUDeviceLostInfo | null; hidden: boolean } = { lost: null, hidden: document.hidden }
+    const onVisibility = (): void => { if (document.hidden) boot.hidden = true }
+    document.addEventListener('visibilitychange', onVisibility)
     void gpu.device.lost.then((info) => { if (info.reason !== 'destroyed') boot.lost = info })
     const stillThere = (): void => {
       const l = boot.lost
-      if (l) throw new WebGPUUnavailableError('gpu-reset', `The GPU device was lost while the city was built (${l.reason}): ${l.message || 'no message'}`)
+      if (l) throw new WebGPUUnavailableError('gpu-reset', `The GPU device was lost while the city was built (${l.reason}): ${l.message || 'no message'}`, boot.hidden)
     }
     try {
       // The device profile first: it decides the starting tier and, unless the page said (?crowd), how many pedestrians
@@ -729,6 +742,7 @@ export class Engine {
       applyQuality(applied, targets)
 
       const view0 = new CrowdView(options.agents, world.matrixMode.globalState)
+      onStage('physics')
       const sim = await simBoot
       if (sim.meta.agents !== options.agents) throw new Error(`the physics worker simulates ${sim.meta.agents} pedestrians, the page draws ${options.agents}`)
       const view = new FleetView(sim.meta.kind, sim.meta.paint, world.night, world.matrixMode.globalState)
@@ -751,7 +765,9 @@ export class Engine {
       world.update(options.startHour, 0, spawn.x, spawn.z)
       // Compile off the critical path, then draw once so three allocates every storage buffer the
       // compute passes share (crowd state, draw lists, indirect draw arguments).
+      onStage('shaders')
       await gpu.renderer.compileAsync(world.scene, world.camera)
+      onStage('frame')
       // Draw once on BOTH paths (post and direct), so a later quality step that toggles post never compiles a
       // pipeline mid-game; the boot veil hides these frames. They draw inside a validation scope: a draw the browser's
       // WebGPU refuses, or a device lost meanwhile, fails the boot with its own words instead of lifting the veil onto
@@ -794,7 +810,13 @@ export class Engine {
     } catch (e) {
       void simBoot?.then((s) => s.terminate(), () => {})
       releaseGpu(gpu)
+      // gpuBufferOf names a loss three saw before the page's own handler ran: the same reset, hidden or not.
+      if (e instanceof WebGPUUnavailableError && e.code === 'gpu-reset' && !e.background && boot.hidden) {
+        throw new WebGPUUnavailableError('gpu-reset', e.message, true)
+      }
       throw e
+    } finally {
+      document.removeEventListener('visibilitychange', onVisibility)
     }
   }
 

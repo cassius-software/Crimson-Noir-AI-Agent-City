@@ -32,8 +32,8 @@ import type { SipocSnapshot } from './05_Observe_Environment/telemetry.ts'
 import { BootVeil } from './07_Execute_Actions/BootVeil.tsx'
 import { LockScreen, RecoveryCard } from './07_Execute_Actions/RecoveryCard.tsx'
 import { usePadNav } from './07_Execute_Actions/padNav.ts'
-import { AUTO_RELOAD_KEY, autoReload, classify, explainHalt, firstScreen, FRAME_FAULT, haltClass, pageEnv } from './07_Execute_Actions/bootFailure.ts'
-import { probeGpu, type GpuProbe } from './01_Initialize_World/gpuDevice.ts'
+import { AUTO_RELOAD_KEY, autoReload, BOOT_STAGE, classify, explainHalt, firstScreen, FRAME_FAULT, haltClass, pageEnv } from './07_Execute_Actions/bootFailure.ts'
+import { probeGpu, WebGPUUnavailableError, type GpuProbe } from './01_Initialize_World/gpuDevice.ts'
 import { Concierge } from './07_Execute_Actions/Concierge.tsx'
 import { Customizer } from './07_Execute_Actions/Customizer.tsx'
 import { loadProfile, type Profile } from './05_Observe_Environment/profile.ts'
@@ -208,9 +208,10 @@ function reboot(track: BootTrack): void {
 const toConsole = (): void => reboot('tty')
 
 /**
- * A graphics reset while the page was hidden (the player was in another app or tab): once the page is visible again
- * it restarts by itself, at most once per AUTO_RELOAD_GAP_MS and never where the time of the last restart cannot be
- * kept (bootFailure.ts autoReload); a reset seen while visible keeps the card and its Restart. Returns the unwatch.
+ * A graphics reset while the page was hidden (the player was in another app or tab, or switched away while the city
+ * loaded): once the page is visible again (at once, if it already is) it restarts by itself, at most once per
+ * AUTO_RELOAD_GAP_MS and never where the time of the last restart cannot be kept (bootFailure.ts autoReload); a reset
+ * seen while visible keeps the card and its Restart. Returns the unwatch.
  */
 function reloadWhenVisible(hiddenAtLoss: boolean): () => void {
   if (!hiddenAtLoss) return noop
@@ -232,6 +233,11 @@ function reloadWhenVisible(hiddenAtLoss: boolean): () => void {
       return
     }
     window.location.reload()
+  }
+  // A boot that failed in the background may only report it once the player is back: then it is now.
+  if (!document.hidden) {
+    back()
+    return noop
   }
   document.addEventListener('visibilitychange', back)
   return () => document.removeEventListener('visibilitychange', back)
@@ -349,7 +355,7 @@ function App() {
   if (options.boot === 'tty') return <TtyShell />
   if (onboard && !outcome) {
     const first = firstScreen({ onboard, probe })
-    if (first === 'probing') return <BootVeil ready={false} onDone={noop} onConsole={toConsole} />
+    if (first === 'probing') return <BootVeil ready={false} onDone={noop} onConsole={toConsole} stage={BOOT_STAGE.probe} />
     if (first === 'card' && probe && !probe.ok) return <RecoveryCard failure={classify(probe.error, pageEnv())} onConsole={toConsole} />
     return <Onboarding seed={options.seed} onDone={setOutcome} port={builderPort} voice={voice} speaker={speaker} />
   }
@@ -405,6 +411,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
   const [adapter, setAdapter] = useState('')
   // Why the boot failed (whatever was thrown, words from bootFailure.ts classify), or null while nothing has.
   const [error, setError] = useState<{ cause: unknown } | null>(null)
+  // What the boot is doing, for the veil's 'Still starting' line (bootFailure.ts BOOT_STAGE).
+  const [stage, setStage] = useState<string>(BOOT_STAGE.map)
   // Read synchronously, so the very first render already knows a returning visitor.
   const [profile, setProfile] = useState<Profile | null>(loadProfile)
   // The look the visitor chose (lookStore.ts), or null: then their own seed's look (the first use of profile.seed),
@@ -541,12 +549,14 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
     }
     const onResize = () => engine?.resize()
 
-    loadMap(plan).then((region) => Engine.create(canvas, { ...options, region })).then(
+    const onStage = (st: keyof typeof BOOT_STAGE) => { if (!cancelled) setStage(BOOT_STAGE[st]) }
+    loadMap(plan).then((region) => Engine.create(canvas, { ...options, region }, onStage)).then(
       (e) => {
         if (cancelled) {
           e.dispose()
           return
         }
+        onStage('crowd')
         engine = e
         engineRef.current = e
         // Recruitment: voice (on-device) and the console, over the engine's narrow host. A halt closes the microphone.
@@ -680,7 +690,11 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
         }
         raf = requestAnimationFrame(loop)
       },
-      (err: unknown) => setError({ cause: err }),
+      (err: unknown) => {
+        setError({ cause: err })
+        // The phone took the GPU back while the city loaded in the background: restart once the player is back.
+        if (!cancelled && err instanceof WebGPUUnavailableError && err.code === 'gpu-reset' && err.background) unwatch = reloadWhenVisible(true)
+      },
     )
     return () => {
       cancelled = true
@@ -756,7 +770,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
       <Terminal ref={termRef} bridge={bridge} onOpenChange={onTermOpen} onBoot={reboot} onMap={remap} />
       {/* From the first render: React swaps index.html's identical splash for this, which fades into the city
           once the first snapshot exists (or lifts to show the recovery card or the lock screen). */}
-      <BootVeil ready={hud !== null || error !== null || locked !== null} onDone={() => setVeilDone(true)} onConsole={toConsole} />
+      <BootVeil ready={hud !== null || error !== null || locked !== null} onDone={() => setVeilDone(true)} onConsole={toConsole} stage={stage} />
       {/* A real Ring-0 audit failure keeps its lock screen; a graphics reset, a realm fault or a frame loop that kept
           failing, like a failed boot, gets the recovery card (bootFailure.ts). Both have Restart, focused. */}
       {failure === null && locked !== null && <LockScreen reason={locked} />}

@@ -47,13 +47,38 @@ test('padStep: A presses, the d-pad moves focus, and only a button that goes dow
 test('the boot veil: the \'Still starting\' line after 20 s of visible time, a hint that never fails the boot', () => {
   assert.match(VEIL, /slowMs: 20_000,/)
   assert.match(VEIL, /waited = waitedFor\(waited, t - last, document\.hidden\)/)
-  assert.match(VEIL, /\{slow && !fading && onConsole && <StillStarting onConsole=\{onConsole\} \/>\}/)
+  assert.match(VEIL, /\{slow && !fading && onConsole && <StillStarting onConsole=\{onConsole\} stage=\{stage\} \/>\}/)
   assert.doesNotMatch(VEIL.slice(VEIL.indexOf('const id = window.setInterval'), VEIL.indexOf('}, [ready, slow, phase, onConsole])')), /onDone|reject|throw/, 'only the line')
   // Visible time only: a phone switched away for a minute is not counted, nor a suspended page's long gap.
   assert.equal(waitedFor(0, 1_000, false), 1_000)
   assert.equal(waitedFor(5_000, 60_000, true), 5_000, 'hidden: nothing')
   assert.equal(waitedFor(5_000, 60_000, false), 7_000, 'a suspended page\'s gap counts for two ticks')
-  assert.match(APP, /<BootVeil ready=\{hud !== null \|\| error !== null \|\| locked !== null\} onDone=\{\(\) => setVeilDone\(true\)\} onConsole=\{toConsole\} \/>/)
+  assert.match(APP, /<BootVeil ready=\{hud !== null \|\| error !== null \|\| locked !== null\} onDone=\{\(\) => setVeilDone\(true\)\} onConsole=\{toConsole\} stage=\{stage\} \/>/)
+})
+
+test('the \'Still starting\' line names the step: every step Engine.create reports, in order, and App\'s own around it', () => {
+  const create = ENGINE.slice(ENGINE.indexOf('  static async create('), ENGINE.indexOf('  /** The minimap'))
+  const order = ['gpu', 'world', 'physics', 'shaders', 'frame'].map((st) => create.indexOf(`onStage('${st}')`))
+  assert.ok(order.every((i) => i > 0), `each step reported: ${order}`)
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'in the order the boot takes them')
+  assert.ok(create.indexOf("onStage('gpu')") < create.indexOf('createRenderer('), 'the device step before the device is asked for')
+  assert.ok(create.indexOf("onStage('shaders')") < create.indexOf('compileAsync('), 'the shaders before they compile')
+  assert.match(APP, /Engine\.create\(canvas, \{ \.\.\.options, region \}, onStage\)/)
+  assert.match(APP, /if \(first === 'probing'\) return <BootVeil ready=\{false\} onDone=\{noop\} onConsole=\{toConsole\} stage=\{BOOT_STAGE\.probe\} \/>/)
+  assert.match(CARD, /Still starting\{stage \? `: \$\{stage\}` : ''\}… a slow GPU can take a few minutes\./)
+})
+
+test('a GPU lost while the city loaded in the background: the boot says so, and the page restarts once the player is back', () => {
+  const create = ENGINE.slice(ENGINE.indexOf('  static async create('), ENGINE.indexOf('  /** The minimap'))
+  assert.match(create, /hidden: document\.hidden \}/, 'hidden when the boot began')
+  assert.match(create, /const onVisibility = \(\): void => \{ if \(document\.hidden\) boot\.hidden = true \}/, 'or at any time during it')
+  assert.match(create, /new WebGPUUnavailableError\('gpu-reset', `The GPU device was lost while the city was built[^`]*`, boot\.hidden\)/)
+  assert.match(create, /\} finally \{\n\s+document\.removeEventListener\('visibilitychange', onVisibility\)/)
+  // three draws nothing on a lost device, so the first missing buffer is the reset too (world.ts gpuBufferOf).
+  assert.match(read('../01_Initialize_World/world.ts'), /_isDeviceLost === true\) \{\n\s+throw new WebGPUUnavailableError\('gpu-reset'/)
+  assert.match(APP, /if \(!cancelled && err instanceof WebGPUUnavailableError && err\.code === 'gpu-reset' && err\.background\) unwatch = reloadWhenVisible\(true\)/)
+  const fn = APP.slice(APP.indexOf('function reloadWhenVisible('), APP.indexOf('/**', APP.indexOf('function reloadWhenVisible(')))
+  assert.match(fn, /if \(!document\.hidden\) \{\n\s+back\(\)\n\s+return noop\n\s+\}/, 'already back: at once')
 })
 
 test('the cards: Restart reloads the page and has focus; Open the console is the ?boot=tty shell', () => {
@@ -61,7 +86,7 @@ test('the cards: Restart reloads the page and has focus; Open the console is the
   for (const [name, from, to] of [['RecoveryCard', 'export function RecoveryCard', 'export function LockScreen'], ['LockScreen', 'export function LockScreen', 'export function StillStarting']]) {
     const c = CARD.slice(CARD.indexOf(from), CARD.indexOf(to))
     assert.match(c, /<button ref=\{restartRef\} type="button" autoFocus onClick=\{restart\}/, `${name}: Restart, focused`)
-    assert.match(c, /useTakeFocus\(restartRef\)/, `${name}: focused again after mount, the mouse let go`)
+    assert.match(c, /useTakeFocus\((?:openIn \? openRef : )?restartRef\)/, `${name}: focused again after mount, the mouse let go`)
     assert.match(c, /usePadNav\(root\)\n\s+useEnterRestarts\(\)/, `${name}: a pad's A and Enter`)
     assert.match(c, /role="alertdialog"/, `${name}: announced`)
   }
@@ -71,7 +96,10 @@ test('the cards: Restart reloads the page and has focus; Open the console is the
   assert.match(card, /<details[\s\S]*\{failure\.detail\}[\s\S]*\{line\}[\s\S]*<\/details>/, 'the raw message and the copyable line under Details')
   assert.match(APP, /const toConsole = \(\): void => reboot\('tty'\)/)
   // Pointer lock would keep every click on the canvas beneath: the mouse is the player's again before Restart is focused.
-  assert.match(CARD, /function useTakeFocus\([^)]*\): void \{\n\s+useEffect\(\(\) => \{\n\s+if \(document\.pointerLockElement\) document\.exitPointerLock\(\)\n\s+restartRef\.current\?\.focus\(\)/)
+  assert.match(CARD, /function useTakeFocus\([^)]*\): void \{\n\s+useEffect\(\(\) => \{\n\s+if \(document\.pointerLockElement\) document\.exitPointerLock\(\)\n\s+first\.current\?\.focus\(\)/)
+  // Another browser one tap away (Firefox on Android): the first button, focused; Restart stays.
+  assert.match(card, /\{openIn && \(\n\s+<button ref=\{openRef\} type="button" onClick=\{\(\) => \{ window\.location\.href = openIn\.href \}\}/)
+  assert.match(card, /useTakeFocus\(openIn \? openRef : restartRef\)/)
   // Enter restarts from anywhere but a field, a focused button (which takes it natively) or Details (which opens).
   assert.match(CARD, /e\.target\.closest\('button, summary'\)\)\) return\n\s+e\.preventDefault\(\)\n\s+restart\(\)/)
 })
@@ -87,7 +115,7 @@ test('the console shell: a way back to the city a pad or a finger can press, and
 
 test('App: the card on a failed boot and on every halt but a Ring-0 audit, which keeps its lock screen', () => {
   assert.match(APP, /const \[error, setError\] = useState<\{ cause: unknown \} \| null>\(null\)/)
-  assert.match(APP, /\(err: unknown\) => setError\(\{ cause: err \}\),/, 'whatever Engine.create threw, classified by the card')
+  assert.match(APP, /\(err: unknown\) => \{\n\s+setError\(\{ cause: err \}\)\n/, 'whatever Engine.create threw, classified by the card')
   assert.match(APP, /const failure = error !== null \? classify\(error\.cause, env\) : locked !== null && haltClass\(locked\) !== 'audit' \? explainHalt\(locked, env\) : null/)
   assert.match(APP, /\{failure === null && locked !== null && <LockScreen reason=\{locked\} \/>\}/)
   assert.match(APP, /\{failure && <RecoveryCard failure=\{failure\} adapter=\{adapter\} onConsole=\{toConsole\} \/>\}/)
@@ -134,7 +162,7 @@ test('engine: a lost page device halts as a graphics reset; the first frame draw
   const create = ENGINE.slice(ENGINE.indexOf('  static async create('), ENGINE.indexOf('  /** The minimap'))
   assert.match(create, /gpu\.device\.pushErrorScope\('validation'\)\n\s+gpu\.renderer\.render\(world\.scene, world\.camera\)\n\s+post\.render\(\)\n\s+const invalid = await gpu\.device\.popErrorScope\(\)/)
   assert.match(create, /if \(invalid\) throw new Error\(`the first frame failed WebGPU validation: \$\{invalid\.message\}`\)/)
-  assert.match(create, /\} catch \(e\) \{\n\s+void simBoot\?\.then\(\(s\) => s\.terminate\(\), \(\) => \{\}\)\n\s+releaseGpu\(gpu\)\n\s+throw e\n\s+\}/)
+  assert.match(create, /\} catch \(e\) \{\n\s+void simBoot\?\.then\(\(s\) => s\.terminate\(\), \(\) => \{\}\)\n\s+releaseGpu\(gpu\)\n[\s\S]*?\n\s+throw e\n\s+\} finally \{/)
   assert.ok(create.indexOf('try {') < create.indexOf('buildWorld('), 'everything after the device is inside the try')
   assert.match(ENGINE, /releaseGpu\(this\.gpu\)/, 'dispose lets go the same way')
 })

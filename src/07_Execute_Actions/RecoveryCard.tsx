@@ -25,12 +25,12 @@ function restart(): void {
   window.location.reload()
 }
 
-/** The mouse back to the player (the city may have held it in pointer lock), then focus on Restart. */
-function useTakeFocus(restartRef: RefObject<HTMLButtonElement | null>): void {
+/** The mouse back to the player (the city may have held it in pointer lock), then focus on the first button. */
+function useTakeFocus(first: RefObject<HTMLButtonElement | null>): void {
   useEffect(() => {
     if (document.pointerLockElement) document.exitPointerLock()
-    restartRef.current?.focus()
-  }, [restartRef])
+    first.current?.focus()
+  }, [first])
 }
 
 /**
@@ -64,8 +64,10 @@ const SAFE_PADDING = {
 export function RecoveryCard({ failure, adapter = '', onConsole }: { failure: Failure; adapter?: string; onConsole(): void }): JSX.Element {
   const root = useRef<HTMLDivElement>(null)
   const restartRef = useRef<HTMLButtonElement>(null)
+  const openRef = useRef<HTMLButtonElement>(null)
   const title = useId(), body = useId()
-  useTakeFocus(restartRef)
+  const openIn = failure.openIn ?? null
+  useTakeFocus(openIn ? openRef : restartRef)
   usePadNav(root)
   useEnterRestarts()
   const line = detailsLine(adapter, typeof navigator === 'undefined' ? '' : navigator.userAgent)
@@ -89,7 +91,13 @@ export function RecoveryCard({ failure, adapter = '', onConsole }: { failure: Fa
           {failure.steps.map((s) => <li key={s} className="break-words">{s}</li>)}
         </ul>
         <div className="mt-5 flex flex-wrap gap-2">
-          <button ref={restartRef} type="button" autoFocus onClick={restart} className={`${BUTTON} bg-slate-900 text-white ring-slate-400 hover:bg-slate-700`}>
+          {/* A browser that can run the city, one tap away (bootFailure.ts openInChrome): then it is the first button. */}
+          {openIn && (
+            <button ref={openRef} type="button" onClick={() => { window.location.href = openIn.href }} className={`${BUTTON} bg-slate-900 text-white ring-slate-400 hover:bg-slate-700`}>
+              {openIn.label}
+            </button>
+          )}
+          <button ref={restartRef} type="button" autoFocus onClick={restart} className={`${BUTTON} ${openIn ? 'border border-slate-300 bg-white text-slate-900 ring-slate-300 hover:bg-slate-100' : 'bg-slate-900 text-white ring-slate-400 hover:bg-slate-700'}`}>
             Restart
           </button>
           <button type="button" onClick={onConsole} className={`${BUTTON} border border-slate-300 bg-white text-slate-900 ring-slate-300 hover:bg-slate-100`}>
@@ -139,7 +147,7 @@ export function LockScreen({ reason }: { reason: string }): JSX.Element {
  * The boot veil's line once the city has been starting for a while (BootVeil.tsx): not a failure (a software adapter
  * takes minutes), only a way out for someone who has waited. Restart takes focus only if nothing else has it.
  */
-export function StillStarting({ onConsole }: { onConsole(): void }): JSX.Element {
+export function StillStarting({ onConsole, stage }: { onConsole(): void; stage?: string }): JSX.Element {
   const root = useRef<HTMLDivElement>(null)
   const restartRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
@@ -148,7 +156,7 @@ export function StillStarting({ onConsole }: { onConsole(): void }): JSX.Element
   usePadNav(root)
   return (
     <div ref={root} role="status" className="absolute inset-x-4 bottom-6 flex flex-col items-center gap-3 font-sans text-sm text-slate-300 sm:bottom-10">
-      <p className="text-center">Still starting… a slow GPU can take a few minutes.</p>
+      <p className="text-center">Still starting{stage ? `: ${stage}` : ''}… a slow GPU can take a few minutes.</p>
       <div className="flex flex-wrap justify-center gap-2">
         <button ref={restartRef} type="button" onClick={restart} className={`${BUTTON} border border-white/25 bg-white/10 text-white ring-white/40 hover:bg-white/20`}>
           Restart

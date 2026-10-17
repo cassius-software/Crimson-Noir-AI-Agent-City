@@ -2001,10 +2001,18 @@ bar and no reload of their own, so the page carries its own way out.
 - **Before the onboarding.** A first visit checks the page is secure, has WebGPU and gets a full adapter before the
   onboarding starts; a browser that cannot run the city gets the card instead.
 - **A slow start** is not a failure: after 20 s of visible time without a first frame the boot veil adds "Still
-  starting…" with Restart and Open the console, and the boot goes on.
+  starting…" with the step it is on (asking for the graphics device, building the city, starting the physics,
+  preparing the shaders, which is the long step on a phone, drawing the first frame, waiting for the crowd) and
+  Restart and Open the console, and the boot goes on. The page's 10 MB script now stands at the end of the page, so
+  on a slow connection the splash shows while it downloads instead of a blank page; after the first visit the
+  installed copy opens offline.
+- **Firefox and other browsers on Android** have no WebGPU: the card's first button, **Open in Chrome**, hands the
+  same address to Chrome (to Chrome's Play Store page where Chrome is missing). A link tapped in another app opens in
+  the phone's default browser, which may be Firefox.
 - **After the start.** A lost GPU (the page's device, or the crowd's in the physics worker) halts the city with a
-  graphics-reset card; lost while the page was hidden (another app, another tab), the page restarts by itself once it
-  is shown again, at most once every two minutes. A physics fault and a frame loop that fails 30 frames in a row
+  graphics-reset card; lost while the page was hidden (another app, another tab, or switching away while the city
+  loads, when a phone short of memory takes the GPU back), the page restarts by itself once it is shown again, at
+  most once every two minutes. A physics fault and a frame loop that fails 30 frames in a row
   halt with the card too. Only a real Ring-0 audit failure shows **SYSTEM LOCKED**, now with Restart.
 - **When the page's script never runs** (a download cut off, a browser too old to read it, scripts off): a small
   classic script in `index.html`'s head shows a card with Restart, adding what the city will need where the browser

@@ -28,10 +28,12 @@
  *   installed, the second load cross-origin isolated by the worker, and the city started from the phone's copy with
  *   the host gone;
  * - fail: the ways out when the city cannot start or stops, each in its own browser: navigator.gpu taken away (the
- *   card before a first visit's onboarding, at desktop and phone size, Restart focused and taken by Enter, the pad's
- *   d-pad and A reaching the console shell), a genuinely insecure origin (lan.test mapped to this machine over plain
- *   http), no adapter, a boot that never finishes (the 'Still starting' line), a download cut off mid-script (the
- *   index.html watchdog), and, after a boot, the page's GPU device lost (the reset card, no reload while the page is
+ *   card before a first visit's onboarding, at desktop and phone size and in Firefox on Android with Open in Chrome
+ *   first, Restart focused and taken by Enter, the pad's
+ *   d-pad and A reaching the console shell, and its Back to the city back again), a genuinely insecure origin
+ *   (lan.test mapped to this machine over plain http), no adapter, a boot that never finishes (the 'Still starting'
+ *   line, naming the step), a download cut off mid-script (the index.html watchdog), a slow download (the splash
+ *   before the module has arrived), and, after a boot, the page's GPU device lost (the reset card, no reload while the page is
  *   visible), a realm halt for a lost crowd device, and a frame that throws on every frame. Where a failure is the
  *   point, the GPU-error check is left out; nothing may throw uncaught in any of them.
  * Every scenario also fails on an exception in the page, a GPU validation error, a lost device, or the crowd's flow
@@ -51,6 +53,8 @@ import { APP_NAME, build as buildWeb, ICONS } from '../web/pwa.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const DIST = join(ROOT, 'dist', 'index.html')
+/** How long `?smoke-slow` holds the page's module back (serve). */
+const SLOW_HOLD_MS = 8_000
 
 const arg = (name) => {
   const i = process.argv.indexOf(`--${name}`)
@@ -112,6 +116,8 @@ const FRAME_COUNTER = `(() => { window.__smokeFrames = 0; const tick = () => { w
 /**
  * Serves dist/index.html (and nothing else) on 127.0.0.1 with the isolation headers the dev and preview servers send.
  * `?smoke-cut` serves the first half of it, as a download cut off in the middle of the page's script would arrive.
+ * `?smoke-slow` holds back the page's module script (everything from it on) for SLOW_HOLD_MS, as a phone on a slow
+ * connection waits for the 10 MB of it.
  */
 async function serve() {
   const html = readFileSync(DIST)
@@ -124,7 +130,11 @@ async function serve() {
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',
       'Cache-Control': 'no-store',
-    }).end(body)
+    })
+    const held = url.searchParams.has('smoke-slow') ? html.indexOf('<script type="module"') : -1
+    if (held < 0) { res.end(body); return }
+    res.write(html.subarray(0, held))
+    setTimeout(() => res.end(html.subarray(held)), SLOW_HOLD_MS)
   })
   await new Promise((r) => server.listen(0, '127.0.0.1', r))
   return { server, origin: `http://127.0.0.1:${server.address().port}`, port: server.address().port }
@@ -776,10 +786,12 @@ const SCENARIOS = {
     const cases = [
       ['no WebGPU, before the onboarding', () => noGpu(chrome, origin, false)],
       ['no WebGPU on a phone', () => noGpu(chrome, origin, true)],
+      ['no WebGPU in Firefox on Android', () => androidFirefox(chrome, origin)],
       ['insecure origin', () => insecure(chrome, port)],
       ['no adapter', () => cardFor(chrome, `${origin}/?${LIGHT}`, 'no-adapter', 'No graphics adapter for WebGPU', NO_ADAPTER, 'fail-no-adapter')],
       ['a boot that never finishes', () => stillStarting(chrome, origin)],
       ['a download cut off', () => cutOff(chrome, origin)],
+      ['a slow download', () => slowDownload(chrome, origin)],
       ['the page\'s device lost after the boot', () => pageDeviceLost(chrome, origin)],
       ['a realm halt for a lost crowd device', () => afterBoot(chrome, origin, 'halt',
         `window.__SIM__.engine.halt('Sensing Failure: pedestrian sensing stopped (GPU device lost (unknown): test).')`, 'gpu-reset', 'The graphics device was reset')],
@@ -842,6 +854,29 @@ async function cardFor(chrome, url, kind, headline, init, shot) {
     await expectCard(p, `fail ${kind}`, kind, headline)
     await p.shot(shot)
     check(p.errors.length === 0, `fail ${kind}: no exception in the page`, p.errors.slice(0, 3).join(' | ').slice(0, 400))
+  } finally { await p.b.close() }
+}
+
+/**
+ * Firefox on an Android phone (no WebGPU there), as a link tapped in another app opens it: the card's first button,
+ * focused, hands the page to Chrome (its intent: address is pinned in bootFailure.test.ts; headless Chrome has no
+ * Android to hand it to). Restart and Open the console stay.
+ */
+async function androidFirefox(chrome, origin) {
+  const what = 'fail no-api (Firefox on Android)'
+  const p = await open(chrome)
+  try {
+    await p.b.send('Emulation.setUserAgentOverride', { userAgent: 'Mozilla/5.0 (Android 14; Mobile; rv:144.0) Gecko/144.0 Firefox/144.0', platform: 'Linux armv8l' })
+    await p.b.send('Emulation.setDeviceMetricsOverride', { width: 412, height: 915, deviceScaleFactor: 1, mobile: true, screenOrientation: { type: 'portraitPrimary', angle: 0 } })
+    await p.b.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 })
+    await p.b.send('Page.addScriptToEvaluateOnNewDocument', { source: NO_GPU })
+    await p.goto(`${origin}/?debug&audio=0`)
+    const card = await p.waitFor(`(() => { const c = ${CARD}; return c && c.kind === 'no-api' && c })()`, BOOT_MS).catch(() => null)
+    check(!!card && card.headline === 'Open this page in Chrome', `${what}: the card says “Open this page in Chrome”`, card ? card.headline : 'no card')
+    check(!!card && JSON.stringify(card.buttons) === JSON.stringify(['Open in Chrome', 'Restart', 'Open the console']) && card.focused === 'Open in Chrome',
+      `${what}: Open in Chrome first and focused, then Restart and Open the console`, card ? `${card.buttons} / focus ${card.focused}` : '')
+    await p.shot('fail-no-gpu-android-firefox')
+    check(p.errors.length === 0, `${what}: no exception in the page`, p.errors.slice(0, 3).join(' | ').slice(0, 400))
   } finally { await p.b.close() }
 }
 
@@ -925,6 +960,8 @@ async function stillStarting(chrome, origin) {
     await p.goto(`${origin}/?${LIGHT}`)
     const line = await p.waitFor(`(() => { const s = document.querySelector('.boot-veil [role="status"]'); return s && /Still starting/.test(s.textContent) && [...s.querySelectorAll('button')].map((b) => b.textContent).join(',') })()`, 90_000).catch(() => null)
     check(line === 'Restart,Open the console', 'fail stalled: after 20 s the veil says it is still starting, with Restart and Open the console', String(line))
+    const said = await p.eval(`document.querySelector('.boot-veil [role="status"] p')?.textContent ?? ''`)
+    check(said.includes('asking for the graphics device'), 'fail stalled: and names the step it is stuck on (the adapter request)', said)
     check(!(await p.eval(CARD)), 'fail stalled: and nothing is declared failed')
     await p.shot('fail-still-starting')
     check(p.errors.length === 0, 'fail stalled: no exception in the page', p.errors.slice(0, 3).join(' | ').slice(0, 400))
@@ -939,6 +976,23 @@ async function cutOff(chrome, origin) {
     const name = await p.waitFor(`document.querySelector('meta[name="application-name"]')?.content`, 30_000)
     await expectCard(p, 'fail cut-off', 'page', `${name} couldn’t start`, ['Restart'])
     await p.shot('fail-cut-off')
+  } finally { await p.b.close() }
+}
+
+/**
+ * A slow download: while the page's module is still on its way, the splash is already there (the module ends the body:
+ * vite.config.ts moduleAfterBody), and once it arrives the city starts as usual.
+ */
+async function slowDownload(chrome, origin) {
+  const p = await open(chrome)
+  try {
+    await p.goto(`${origin}/?smoke-slow&${LIGHT}`)
+    const early = await p.waitFor(`document.readyState === 'loading' && !window.__bootDone && !!document.querySelector('#root .boot-veil') && 'splash'`, SLOW_HOLD_MS - 2_000).catch(() => null)
+    const painted = await p.eval(`performance.getEntriesByType('paint').map((e) => e.name).join(',')`)
+    check(early === 'splash', 'fail slow download: the splash is on the page while the module is still downloading', `paint entries: ${painted || 'none'}`)
+    await p.booted()
+    check(true, 'fail slow download: and the city starts once it has arrived')
+    check(p.errors.length === 0, 'fail slow download: no exception in the page', p.errors.slice(0, 3).join(' | ').slice(0, 400))
   } finally { await p.b.close() }
 }
 

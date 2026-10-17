@@ -136,11 +136,18 @@ export function releaseGpu(gpu: Pick<Gpu, 'renderer' | 'device'>): void {
   void Promise.resolve(gpu.renderer.dispose()).catch(() => {}).finally(() => gpu.device.destroy())
 }
 
-/** The GPUBuffer three created for an attribute. Valid after the attribute has been drawn once. */
+/**
+ * The GPUBuffer three created for an attribute. Valid after the attribute has been drawn once. three draws nothing
+ * once its device is lost (Renderer._isDeviceLost: a phone taking the GPU back while the page was in the background),
+ * so a missing buffer then is a graphics reset, not a bug, and says so.
+ */
 export function gpuBufferOf(renderer: WebGPURenderer, attribute: BufferAttribute): GPUBuffer {
   const data = (renderer.backend as unknown as { get(o: object): { buffer?: GPUBuffer } }).get(attribute)
-  if (!data.buffer) throw new Error(`three has not allocated a GPU buffer for "${attribute.name}" yet`)
-  return data.buffer
+  if (data.buffer) return data.buffer
+  if ((renderer as unknown as { _isDeviceLost?: boolean })._isDeviceLost === true) {
+    throw new WebGPUUnavailableError('gpu-reset', `The GPU device was lost before the city's first frame ("${attribute.name}" was never drawn)`)
+  }
+  throw new Error(`three has not allocated a GPU buffer for "${attribute.name}" yet`)
 }
 
 /** Scale factors the Ring-0 operator may set on the lighting; the engine clamps them to LIGHT_TUNE_RANGE. */

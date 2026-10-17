@@ -19,7 +19,7 @@ import { WebGPUUnavailableError, type GpuFailure } from '../01_Initialize_World/
 import { panicReason } from '../02_Define_The_Rules/ring0.ts'
 import { coded } from './simProtocol.ts'
 import {
-  AUTO_RELOAD_GAP_MS, autoReload, classify, detailsLine, explainHalt, firstScreen, FRAME_FAULT, GRAPHICS_RESET, haltClass, installedApp, kindOf, platformOf,
+  AUTO_RELOAD_GAP_MS, autoReload, classify, detailsLine, explainHalt, firstScreen, FRAME_FAULT, GRAPHICS_RESET, haltClass, installedApp, kindOf, openInChrome, platformOf,
   WEBGPU_LINE, type Env, type Failure,
 } from './bootFailure.ts'
 
@@ -184,6 +184,26 @@ test('installedApp: standalone anywhere, iOS\'s own flag, fullscreen only on And
   assert.equal(m({ fullscreen: true, ua: UA.chromeLinux }), false, 'Chrome on Linux in F11')
   assert.equal(m({ fullscreen: true, ua: UA.edgeWindows }), false, 'Edge in F11')
   assert.equal(m({}), false, 'a plain tab')
+})
+
+test('Android without WebGPU: one tap hands this address to Chrome; never in Chrome, the installed app or elsewhere', () => {
+  const FF = 'Mozilla/5.0 (Android 14; Mobile; rv:144.0) Gecko/144.0 Firefox/144.0'
+  const SAMSUNG = 'Mozilla/5.0 (Linux; Android 14; SM-A546B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/28.0 Chrome/130.0.0.0 Mobile Safari/537.36'
+  const href = 'https://cassius-software.github.io/Crimson-Noir-AI-Agent-City/?map=city#x'
+  const card = (ua: string, o: Partial<Env> = {}) => classify(err('no-api'), env(ua, { touchPoints: 5, href, ...o }))
+  const ff = card(FF)
+  assert.equal(ff.headline, 'Open this page in Chrome')
+  assert.equal(ff.openIn?.label, 'Open in Chrome')
+  assert.equal(ff.openIn?.href, 'intent://cassius-software.github.io/Crimson-Noir-AI-Agent-City/?map=city#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=https%3A%2F%2Fplay.google.com%2Fstore%2Fapps%2Fdetails%3Fid%3Dcom.android.chrome;end', 'the page, its query kept, its fragment dropped')
+  assert.equal(platformOf(SAMSUNG).browser, 'other', 'Samsung Internet is not Chrome')
+  assert.ok(card(SAMSUNG).openIn, 'Samsung Internet')
+  assert.ok(card(UA.androidWebView).openIn, 'an app\'s built-in browser')
+  assert.equal(card(UA.androidChrome).openIn, null, 'Chrome itself (and Brave, which reports as Chrome)')
+  assert.equal(card(FF, { standalone: true }).openIn, null, 'the installed app')
+  assert.equal(card(UA.firefoxLinux).openIn, null, 'Firefox on a desktop')
+  assert.equal(card(FF, { href: 'file:///sdcard/index.html' }).openIn, null, 'no web address to hand over')
+  assert.equal(classify(err('no-adapter'), env(FF, { href })).openIn, null, 'only where WebGPU itself is missing')
+  assert.equal(openInChrome({ href, standalone: false, native: true }, platformOf(FF)), null, 'the Windows app')
 })
 
 test('haltClass: the real halt reasons; Ring-0 copy for audits only', () => {

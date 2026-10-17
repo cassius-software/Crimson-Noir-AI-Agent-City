@@ -18,6 +18,7 @@
  * lock screen blames a broken invariant for a routine GPU reset.
  */
 import { BRAND } from '../brand.ts'
+import type { BootStage } from './engine.ts'
 import { nativeHost } from '../05_Observe_Environment/governor.ts'
 import type { GpuProbe } from '../01_Initialize_World/gpuDevice.ts'
 
@@ -33,6 +34,8 @@ export interface Failure {
   steps: string[]
   webgpuLine: string | null
   detail: string
+  /** A browser that can run the city, one tap away (openInChrome): the card's first button. */
+  openIn?: { label: string; href: string } | null
 }
 
 /** What the words depend on, read once from the page (pageEnv) or handed in by a test. */
@@ -47,6 +50,8 @@ export interface Env {
   origin: string
   /** navigator.maxTouchPoints: an iPad asking for the desktop site reports a Mac with touch. */
   touchPoints: number
+  /** The page's own address (location.href), for a button that opens it in another browser. */
+  href?: string
 }
 
 /** The device and browser behind a user agent, as far as the words need them. */
@@ -107,6 +112,7 @@ export function pageEnv(): Env {
     native: nativeHost(globalThis),
     origin: typeof location === 'undefined' ? '' : location.origin,
     touchPoints: nav.maxTouchPoints ?? 0,
+    href: typeof location === 'undefined' ? '' : location.href,
   }
 }
 
@@ -119,6 +125,7 @@ export function platformOf(ua: string, touchPoints = 0, standalone = false): Pla
     : /Macintosh|Mac OS X/.test(ua) ? 'mac' : /Linux|X11/.test(ua) ? 'linux' : 'other'
   const iosOther = ios && /CriOS|FxiOS|EdgiOS|OPiOS|OPT\//.test(ua)
   const browser: Platform['browser'] = /Firefox\/|FxiOS/.test(ua) ? 'firefox' : /Edg\/|EdgA\/|EdgiOS/.test(ua) ? 'edge'
+    : /SamsungBrowser\//.test(ua) ? 'other'
     : /Chrome\/|CriOS|Chromium\//.test(ua) ? 'chrome' : /Safari\//.test(ua) || (ios && !iosOther) ? 'safari' : 'other'
   const inApp = (ios && !standalone && !/Safari\//.test(ua)) || (android && /; wv\)/.test(ua))
   const v = /Version\/(\d+)/.exec(ua)
@@ -149,7 +156,23 @@ export function kindOf(error: unknown, env: Pick<Env, 'secure'>): FailureKind {
 export function classify(error: unknown, env: Env): Failure {
   const kind = kindOf(error, env)
   const message = messageOf(error).trim()
-  return { ...words(kind, env, platformOf(env.ua, env.touchPoints, env.standalone)), kind, detail: message || 'No message was given.' }
+  const p = platformOf(env.ua, env.touchPoints, env.standalone)
+  return { ...words(kind, env, p), kind, detail: message || 'No message was given.', openIn: kind === 'no-api' ? openInChrome(env, p) : null }
+}
+
+/**
+ * Pure. On Android, a browser without WebGPU (Firefox, Samsung Internet, an app's built-in browser, or a Custom Tab
+ * of one, as a link tapped in another app opens) gets a button that hands this very address to Chrome: an intent:
+ * link, which Android browsers pass to the app it names, falling back to Chrome's Play Store page where Chrome is
+ * missing. Never in Chrome itself (Brave and Edge report as Chrome or Edge), the installed app or the Windows app,
+ * and never without an http(s) address to hand over.
+ */
+export function openInChrome(env: Pick<Env, 'href' | 'standalone' | 'native'>, p: Platform): { label: string; href: string } | null {
+  if (p.os !== 'android' || ((p.browser === 'chrome' || p.browser === 'edge') && !p.inApp) || env.standalone || env.native) return null
+  const m = /^(https?):\/\/([^#]+)/.exec(env.href ?? '')
+  if (!m) return null
+  const store = encodeURIComponent('https://play.google.com/store/apps/details?id=com.android.chrome')
+  return { label: 'Open in Chrome', href: `intent://${m[2]}#Intent;scheme=${m[1]};package=com.android.chrome;S.browser_fallback_url=${store};end` }
 }
 
 /** How a halt reads: a graphics reset, a physics realm fault, a frame loop that kept failing, or a real Ring-0 audit. */
@@ -415,3 +438,18 @@ export function firstScreen(o: { onboard: boolean; probe: GpuProbe | null }): 'c
   if (o.probe === null) return 'probing'
   return o.probe.ok ? 'onboarding' : 'card'
 }
+
+/**
+ * What the boot veil's 'Still starting' line says the city is doing (engine.ts BootStage, and App's own steps around
+ * it): the shaders are the long step on a phone, and a line that names the step tells a slow phone from a stopped boot.
+ */
+export const BOOT_STAGE: Readonly<Record<BootStage | 'probe' | 'map' | 'crowd', string>> = Object.freeze({
+  probe: 'checking this browser’s graphics',
+  map: 'loading the map',
+  gpu: 'asking for the graphics device',
+  world: 'building the city',
+  physics: 'starting the physics',
+  shaders: 'preparing the shaders (the long step on a phone)',
+  frame: 'drawing the first frame',
+  crowd: 'waiting for the crowd',
+})
