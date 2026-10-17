@@ -18,7 +18,7 @@
  */
 import { useEffect, useRef, useSyncExternalStore } from 'react'
 import { CITY, CITY_SIZE, LAKE, districtOfLot } from '../01_Initialize_World/city.ts'
-import { ROOM, doorDir, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
+import { drawRooms, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { TRAFFIC } from '../02_Define_The_Rules/civic.ts'
 import type { HudPing, Light, SipocSnapshot } from '../05_Observe_Environment/telemetry.ts'
 import { BRAND } from '../brand.ts'
@@ -284,7 +284,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
               <Kpi label="Vehicles" value={s.process.vehicles} muted={muted} />
               <Kpi label="Waiting at lights" value={s.process.waiting.toLocaleString()} muted={muted} />
               <Kpi label="On crosswalks" value={s.process.crossing.toLocaleString()} muted={muted} />
-              {/* The city's indoor workplaces (interiors.ts): who is at a workstation now. A region has none. */}
+              {/* The indoor workplaces (interiors.ts), the city's or a generated region's: who is at a workstation now. A surveyed region has none. */}
               {s.process.working !== undefined && <Kpi label="At work indoors" value={s.process.working.toLocaleString()} muted={muted} />}
             </div>
             {/* A surveyed region has no traffic signals: the shared cycle would mean nothing there. A street window's follow it. */}
@@ -564,23 +564,9 @@ function cityMap(ctx: CanvasRenderingContext2D, x: number, z: number, dark: bool
       ctx.fill()
     }
   }
-  // The indoor workplaces: the lot drawn as a room (its floor in the accent colour inside the walls) with the doorway
-  // open on its street front, so the way in reads on the map.
-  if (seed !== undefined) {
-    for (const r of roomsOf(seed)) {
-      if (Math.abs(r.cx - x) > 150 || Math.abs(r.cz - z) > 150) continue
-      ctx.fillStyle = dark ? '#b45309' : '#f59e0b'
-      ctx.fillRect(r.cx - lotHalf, r.cz - lotHalf, lotHalf * 2, lotHalf * 2)
-      const inner = lotHalf - ROOM.wall * 3
-      ctx.fillStyle = dark ? '#451a03' : '#fef3c7'
-      ctx.fillRect(r.cx - inner, r.cz - inner, inner * 2, inner * 2)
-      const d = doorDir(r.side)
-      const w = ROOM.door * 2, depth = lotHalf - inner + 0.2
-      const gx = r.cx + d.x * (lotHalf - depth / 2), gz = r.cz + d.z * (lotHalf - depth / 2)
-      const [gw, gh] = d.x !== 0 ? [depth, w] : [w, depth]
-      ctx.fillRect(gx - gw / 2, gz - gh / 2, gw, gh)
-    }
-  }
+  // The indoor workplaces: the lot drawn as a room with the doorway open on its street front (interiors.ts drawRooms,
+  // which a region's map layer draws its rooms with too).
+  if (seed !== undefined) drawRooms(ctx, roomsOf(seed), x, z, dark)
   // Roads.
   ctx.fillStyle = dark ? '#334155' : '#ffffff'
   for (let i = 0; i <= CITY.blocks; i++) {
