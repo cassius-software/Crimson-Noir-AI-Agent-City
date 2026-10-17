@@ -12,6 +12,7 @@
 import type { Box, Furniture } from '../01_Initialize_World/city.ts'
 import type { RegionGround } from './physics.ts'
 import type { StreetGrid } from '../01_Initialize_World/region/streets.ts'
+import type { WorkplaceLot } from '../01_Initialize_World/interiors.ts'
 import type { KernelStats } from '../05_Observe_Environment/telemetry.ts'
 import type { CrowdSimStats } from '../03_Spawn_Agents/crowdSensor.ts'
 import type { CarTuning, DriveMode } from './car.ts'
@@ -135,6 +136,13 @@ export interface SimInit {
    */
   streets?: StreetGrid | null
   /**
+   * A generated region's indoor workplaces (01_Initialize_World/region/workplaces.ts regionWorkplaceLots): at most
+   * six lots of the street window, each with its kind and its doorway's street front, which the page picked from its
+   * pack and the worker builds the same rooms from (interiors.ts workplacesAt), so the two never disagree. Their boxes
+   * come in `boxes`. Only with a street window; absent (or null) for none, and for the city, whose rooms are its seed's.
+   */
+  workplaces?: WorkplaceLot[] | null
+  /**
    * Seat the AI fleet on the fixed track network (06_Make_Decisions/tracks.ts, built in the worker from the seed, or
    * the street window's rings in a region with one) and drive it with track followers; anything but true keeps the
    * random street-hopping drivers.
@@ -172,6 +180,11 @@ export interface SimMeta {
   players: number
   /** Rig slots in every rig stream (RIG_SLOTS with the ragdoll on in the city; 0 off, or in a region: the stream is null). */
   rigSlots: number
+  /**
+   * Indoor workplaces this realm's crowd was handed (01_Initialize_World/interiors.ts): the city's six, a generated
+   * region's that came in SimInit.workplaces, none in a surveyed region or without a crowd. A read-out for the page.
+   */
+  rooms: number
 }
 
 /**

@@ -23,7 +23,7 @@
  */
 import { CITY, CITY_SIZE, inLot } from '../01_Initialize_World/city.ts'
 import { cityGrid, regionGrid, type FlowGrid } from '../06_Make_Decisions/flowField.ts'
-import { workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
+import { workplaces, workplacesAt, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { KERNEL } from '../02_Define_The_Rules/civic.ts'
 import { auditCraft, panicReason, RING0, Ring0Auditor, type AuditPerson, type AuditVehicle } from '../02_Define_The_Rules/ring0.ts'
 import type { KernelStats } from '../05_Observe_Environment/telemetry.ts'
@@ -94,7 +94,7 @@ const REGION_SLAB_MARGIN = 200
 /**
  * Builds the realm's GPU pedestrian sensor (the worker passes crowdSim.ts on its own device; tests pass stand-ins), over
  * the flow field's grid of this world (06_Make_Decisions/flowField.ts: the city's buildings and streets, or a region's
- * walls), which the sensor solves routes on.
+ * walls and the boxes it holds), which the sensor solves routes on, and with the world's indoor workplaces (null for none).
  */
 export type CrowdFactory = (agents: number, grid: FlowGrid, streets: StreetGrid | null, rooms: readonly Workplace[] | null) => Promise<CrowdSensor>
 
@@ -170,7 +170,7 @@ export class SimCore {
   readonly #crowd: CrowdSensor | null
   /** Per player: the car they drive, or null on foot. */
   readonly #driving: (Vehicle | null)[]
-  /** The city's indoor workplaces (none in a region): a car left in one puts its driver down indoors. */
+  /** The indoor workplaces (the city's, or a generated region's: none in a surveyed one): a car left in one puts its driver down indoors. */
   readonly #rooms: readonly Workplace[]
   /** This realm's own clock (the sum of accepted dt): harness time limits never trust the page's clock. */
   #simTime = 0
@@ -275,6 +275,7 @@ export class SimCore {
       craft: this.#craft?.count ?? 0,
       players,
       rigSlots: this.#realm ? RIG_SLOTS : 0,
+      rooms: crowd ? rooms.length : 0,
     })
     Object.freeze(this)
   }
@@ -303,10 +304,14 @@ export class SimCore {
       return o.region ? { x, z } : offLot(x, z)
     })
     const physics = await Physics.create(o.boxes, o.furniture, o.region ?? null)
-    // The flow field's grid of this world: the region's walls over its bounds, or the city's buildings and streets.
-    const grid = o.region ? regionGrid(o.region.bounds, o.region.walls) : cityGrid(o.boxes)
-    // The city's indoor workplaces (interiors.ts), from the seed like the city's boxes; a region has none.
-    const rooms = o.region ? null : workplaces(Math.floor(finite(o.seed)) >>> 0)
+    // The flow field's grid of this world: the region's walls over its bounds and the boxes it holds (a generated
+    // region's rooms), or the city's buildings and streets.
+    const grid = o.region ? regionGrid(o.region.bounds, o.region.walls, o.boxes) : cityGrid(o.boxes)
+    // The indoor workplaces (interiors.ts): the city's from the seed like its boxes, a generated region's from the lots
+    // the page picked (they need its street window); a region without them has none.
+    const rooms = o.region
+      ? (o.streets && o.workplaces?.length ? workplacesAt(o.workplaces) : null)
+      : workplaces(Math.floor(finite(o.seed)) >>> 0)
     const crowd = makeCrowd ? await makeCrowd(agents, grid, o.region ? (o.streets ?? null) : null, rooms) : null
     physics.streamAt(spawn.x, spawn.z)
     for (const p of spawns) physics.streamAt(p.x, p.z)
