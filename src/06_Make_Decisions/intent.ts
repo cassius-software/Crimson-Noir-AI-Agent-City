@@ -14,7 +14,7 @@
  * has nowhere to go.
  */
 import { formatClock } from '../01_Initialize_World/solar.ts'
-import { TIERS } from '../05_Observe_Environment/governor.ts'
+import { LITE_TIER, TIERS, knobsOf } from '../05_Observe_Environment/governor.ts'
 
 export type Control = 'time' | 'quality' | 'audio' | 'crowd' | 'cars' | 'district' | 'walk' | 'drive' | 'console' | 'controls'
 
@@ -596,9 +596,9 @@ function stepFor(h: Hyp, f: Frame): PlanStep | null {
     }
     case 'quality': {
       if (h.value === 'auto') return step('Let the quality govern itself', true)
-      if (typeof h.value !== 'number' || !TIERS[h.value]) return null
+      if (typeof h.value !== 'number' || !Number.isInteger(h.value) || h.value < LITE_TIER || h.value >= TIERS.length) return null
       const light = h.value === TIERS.length - 1 && f.tags.has('light')
-      return step(`Set the quality to ${TIERS[h.value].label}${light ? ' (the golden-hour light shafts come with it)' : ''}`, true, light ? ['07_Execute_Actions/volumetrics.ts'] : [])
+      return step(`Set the quality to ${knobsOf(h.value).label}${light ? ' (the golden-hour light shafts come with it)' : ''}`, true, light ? ['07_Execute_Actions/volumetrics.ts'] : [])
     }
     case 'audio':
       if (h.value === 'off') return step('Turn the sound off', true)

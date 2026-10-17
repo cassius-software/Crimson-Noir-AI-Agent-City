@@ -22,6 +22,11 @@
  * - file: dist/index.html opened from disk, the way the README says to play, with no server and so no cross-origin
  *   isolation (the bridge's private-buffer path);
  * - ultra: the top tier pinned, so the shadowed, post and volumetric pipelines are compiled once and must validate;
+ * - lite: the weakest phone the city serves, faked in full (an entry-level Android handset in Chrome: its user agent and
+ *   client hints, 412 × 915 at a device pixel ratio of 2.625, touch, 4 GB, and a WebGPU adapter reading 'arm / bifrost'
+ *   like a Mali-G52), loaded without the light load's crowd, cars and scale, so the device profile decides them: the
+ *   Lite tier, 2,500 pedestrians, 12 cars, frames drawn, and the post chain never compiled. SwiftShader still draws
+ *   it: this proves the path from the profile to the boot, not a Mali's speed;
  * - tty: the console alone (?boot=tty), which must not touch WebGPU at all;
  * - pwa: the installable copy a phone plays (tools/web/pwa.mjs, built from dist/ into a temporary folder) served as a
  *   static host serves it, to an iPhone: the manifest read through the page's policy, the icons, the service worker
@@ -39,7 +44,8 @@
  * Every scenario also fails on an exception in the page, a GPU validation error, a lost device, or the crowd's flow
  * field falling back to the CPU. It serves dist/ itself on 127.0.0.1 with the two isolation headers, writes a
  * screenshot per scenario to --out (default: a temporary directory), prints one row per check and exits 1 if any fails.
- * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,...,fail]. Needs `npm run build`.
+ * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,lite,tty,pwa,fail].
+ * Needs `npm run build`.
  * What breaks if it is removed? Nothing at runtime; the page loses its only end-to-end check in a browser, and with it
  * the proof that the city renders and that every control reaches the avatar.
  */
@@ -108,6 +114,52 @@ const PAD_SHIM = `(() => {
       pad.timestamp = performance.now()
     },
   }
+})()`
+
+/**
+ * The weakest phone the city serves, as Chrome on Android describes it (lite scenario): the reduced user agent, the
+ * client hints that say mobile, a portrait 412 × 915 CSS-pixel screen at a device pixel ratio of 2.625, five touch points.
+ */
+const ANDROID = {
+  userAgent: 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36',
+  metadata: { platform: 'Android', platformVersion: '14.0.0', architecture: '', model: '', mobile: true },
+  width: 412,
+  height: 915,
+  dpr: 2.625,
+}
+
+/**
+ * Its GPU and memory, set before the page's scripts: WebGPU's adapter info (the adapter's and the device's copy) reads
+ * vendor 'arm' and architecture 'bifrost', as Chrome reports a Mali-G52, every other field the real adapter's; and
+ * navigator.deviceMemory reads 4. The page's render pipelines are counted too, with how many write two colour targets:
+ * only the post chain's scene pass under the cinema camera does (colour and velocity), so none means it was never
+ * compiled. An init script reaches the page, not the physics worker, which reads no adapter info.
+ */
+const MALI_G52 = `(() => {
+  const fake = (real) => {
+    if (!real) return real
+    const out = {}
+    for (const k of Object.getOwnPropertyNames(Object.getPrototypeOf(real))) if (k !== 'constructor') out[k] = real[k]
+    return Object.assign(out, { vendor: 'arm', architecture: 'bifrost' })
+  }
+  const wrap = (proto, key) => {
+    const d = Object.getOwnPropertyDescriptor(proto, key)
+    if (d && d.get) Object.defineProperty(proto, key, { configurable: true, get() { return fake(d.get.call(this)) } })
+  }
+  if (typeof GPUAdapter !== 'undefined') wrap(GPUAdapter.prototype, 'info')
+  if (typeof GPUDevice !== 'undefined') {
+    wrap(GPUDevice.prototype, 'adapterInfo')
+    window.__smokePipelines = { render: 0, twoTargets: 0 }
+    const count = (desc) => {
+      window.__smokePipelines.render++
+      if ((desc && desc.fragment && desc.fragment.targets || []).length >= 2) window.__smokePipelines.twoTargets++
+    }
+    for (const key of ['createRenderPipeline', 'createRenderPipelineAsync']) {
+      const own = GPUDevice.prototype[key]
+      if (typeof own === 'function') GPUDevice.prototype[key] = function (desc) { count(desc); return own.call(this, desc) }
+    }
+  }
+  Object.defineProperty(Navigator.prototype, 'deviceMemory', { configurable: true, get: () => 4 })
 })()`
 
 /** Counts animation frames, so a check can wait for the page to have read its input n more times. */
@@ -719,6 +771,41 @@ const SCENARIOS = {
       check(s.errors.length === 0, 'ultra: shadows, post and volumetrics compile and validate', s.errors.join(' | ').slice(0, 300))
       await p.shot('ultra')
       p.health('ultra')
+    } finally { await p.b.close() }
+  },
+
+  async lite(chrome, origin) {
+    const p = await open(chrome, { width: ANDROID.width, height: ANDROID.height })
+    try {
+      await p.b.send('Emulation.setUserAgentOverride', { userAgent: ANDROID.userAgent, platform: 'Linux armv8l', userAgentMetadata: ANDROID.metadata })
+      await p.b.send('Emulation.setDeviceMetricsOverride', { width: ANDROID.width, height: ANDROID.height, deviceScaleFactor: ANDROID.dpr, mobile: true, screenOrientation: { type: 'portraitPrimary', angle: 0 } })
+      await p.b.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 })
+      await p.b.send('Emulation.setHardwareConcurrencyOverride', { hardwareConcurrency: 8 }).catch(() => {})
+      await p.b.send('Page.addScriptToEvaluateOnNewDocument', { source: MALI_G52 })
+      // Not the light load: its crowd, cars and scale would stand in for the defaults this scenario is here to see.
+      await p.goto(`${origin}/?debug&onboarding=0&audio=0`)
+      await p.booted()
+      const s = await p.eval(`(() => { const S = window.__SIM__, s = S.snapshot(), e = S.engine, g = e.quality.governor
+        return { quality: s.quality, reason: g.reason, min: g.min, max: g.max, pedestrians: s.process.pedestrians, vehicles: s.process.vehicles,
+          agents: e.sim.meta.agents, cars: e.sim.meta.count, craft: e.sim.meta.craft, rigSlots: e.sim.meta.rigSlots, gpu: s.process.gpu,
+          post: e.quality.live.post, ratio: e.gpu.renderer.getPixelRatio(), dpr: window.devicePixelRatio, crowdFrames: s.process.crowdFrames,
+          mobile: navigator.userAgentData && navigator.userAgentData.mobile, memory: navigator.deviceMemory, pipelines: window.__smokePipelines } })()`)
+      check(s.gpu === 'arm / bifrost' && s.mobile === true && s.memory === 4 && s.dpr === ANDROID.dpr, 'lite: the page sees the faked phone (adapter, client hints, memory, pixel ratio)', `${s.gpu}, mobile ${s.mobile}, ${s.memory} GB, dpr ${s.dpr}`)
+      const q = s.quality
+      check(q.tier === -1 && q.label === 'Lite' && q.auto === true && q.lite === true, 'lite: the governor starts it at tier -1, labelled Lite, in auto with the lite profile', JSON.stringify(q))
+      check(s.reason === '' && s.min === -1 && s.max === 0, 'lite: it started there (no step yet), and its automatic range is Lite..Minimal', `reason '${s.reason}', range ${s.min}..${s.max}`)
+      check(s.agents === 2500 && s.pedestrians === 2499, 'lite: 2,500 pedestrians simulated (the profile\'s default)', `${s.agents} simulated, ${s.pedestrians} besides the player`)
+      check(s.cars === 12 && s.vehicles === 12, 'lite: 12 cars (the profile\'s default)', `${s.cars} in the realm, ${s.vehicles} reported`)
+      check(s.craft === 0 && s.rigSlots === 0, 'lite: no scheduled craft and no ragdoll rigs in the realm', `craft ${s.craft}, rig slots ${s.rigSlots}`)
+      check(Math.abs(s.ratio - 0.5) < 1e-9, 'lite: the canvas draws at half the CSS pixel edge whatever the device pixel ratio', `pixel ratio ${s.ratio}`)
+      check(s.post === false && s.pipelines && s.pipelines.render > 0 && s.pipelines.twoTargets === 0, 'lite: the post chain is off and was never compiled (no colour-and-velocity pipeline)',
+        s.pipelines ? `${s.pipelines.render} render pipelines, ${s.pipelines.twoTargets} with two targets` : 'not counted')
+      const ran = await p.waitFor(`window.__SIM__.snapshot().process.crowdFrames > ${s.crowdFrames + 2} && window.__SIM__.snapshot().output.fps > 0`, 60_000).then(() => true, () => false)
+      check(ran, 'lite: frames are drawn and the crowd runs')
+      const hud = await p.eval(`document.body.innerText.includes('Lite')`)
+      check(hud, 'lite: the HUD shows the tier as Lite')
+      await p.shot('lite')
+      p.health('lite')
     } finally { await p.b.close() }
   },
 

@@ -222,7 +222,7 @@ export interface LookBridge {
 
 /**
  * Implemented by the host (App/engine). Arguments mirror the command line: `quality` takes 'auto' or a
- * tier 0–4, `audio` takes 'on' / 'off' or a volume in percent (0–100). Called with no argument, both
+ * tier from -1 (Lite) to 4, `audio` takes 'on' / 'off' or a volume in percent (0–100). Called with no argument, both
  * only report. A method may throw; the terminal prints the message and carries on.
  */
 export interface TerminalBridge {

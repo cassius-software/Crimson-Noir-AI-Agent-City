@@ -268,7 +268,8 @@ function readOptions(): Options {
   return {
     // Absent: the device profile decides (governor.ts defaultAgents: 14,000 on a desktop GPU, fewer on phones).
     agents: q.has('crowd') ? Math.round(num('crowd', 14000, 256, 60000)) : undefined,
-    cars: Math.round(num('cars', 36, 0, 48)),
+    // Absent: the device profile decides (governor.ts defaultCars: 36, or 12 on a lite profile).
+    cars: q.has('cars') ? Math.round(num('cars', 36, 0, 48)) : undefined,
     pixelRatio: num('scale', Math.min(window.devicePixelRatio, 1), 0.25, 2),
     seed: Math.round(num('seed', 1337, 0, 2 ** 31)),
     // Golden hour: the sun about 10° up in the west (solar.ts), long warm light for the first look.
@@ -277,7 +278,8 @@ function readOptions(): Options {
     shadows: q.get('shadows') !== '0',
     post: q.get('post') !== '0',
     profile: q.has('profile'),
-    quality: quality === null || quality === 'auto' ? 'auto' : Math.round(num('quality', 3, 0, 4)),
+    // -1 (or the word 'lite') is Lite, below Minimal; 0…4 are Minimal…Ultra.
+    quality: quality === null || quality === 'auto' ? 'auto' : quality === 'lite' ? -1 : Math.round(num('quality', 3, -1, 4)),
     targetFps: Math.round(num('fps', 0, 0, 240)),
     audio: q.get('audio') !== '0',
     // Closed captions of every spatial sound (captions.ts); ?captions=0 keeps the HUD's strip empty.
@@ -293,6 +295,9 @@ function readOptions(): Options {
     ragdoll: q.get('ragdoll') !== '0',
     // Local split screen: ?players=2..4 cuts the canvas into a viewport per player (viewports.ts clamps it to 1..4).
     players: clampPlayers(q.get('players')),
+    // The lite profile (governor.ts DeviceProfile.lite): ?lite=1 forces it on any device, ?lite=0 keeps it off; absent,
+    // the device profile decides (an entry-level phone GPU such as a Mali-G52 is lite).
+    lite: q.get('lite') === '1' ? true : q.get('lite') === '0' ? false : undefined,
   }
 }
 

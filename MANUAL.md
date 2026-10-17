@@ -131,10 +131,11 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 
 | Option | Meaning |
 |---|---|
-| `?quality=auto` (default) | The quality governor picks the tier; `?quality=0`…`4` pins one: Minimal, Low, Medium, High, Ultra |
+| `?quality=auto` (default) | The quality governor picks the tier; `?quality=0`…`4` pins one: Minimal, Low, Medium, High, Ultra; `?quality=-1` or `?quality=lite` pins Lite, below Minimal (see Autoscaling) |
 | `?fps=60` | Frame-rate target (default: estimated from the display, held within 60–90) |
-| `?crowd=14000` | Pedestrians, from 256 to 60,000 (default: 14,000 on a desktop GPU, 8,000 on a phone, 5,000 on the weakest devices) |
-| `?cars=36` | Cars, at most 48 |
+| `?crowd=14000` | Pedestrians, from 256 to 60,000 (default: 14,000 on a desktop GPU, 8,000 on a phone, 5,000 on the weakest devices, 2,500 on a lite profile) |
+| `?cars=36` | Cars, at most 48 (default: 36, or 12 on a lite profile) |
+| `?lite=1`, `?lite=0` | Forces the lite profile on any device, or keeps it off one the profile would make lite (default: the device profile decides; see Autoscaling) |
 | `?map=city` | The procedural city (people and traffic); `?map=lakefront` the generated metropolis; `?region=on` the embedded surveyed map. With neither, the console's `map` choice, else the onboarding's metropolis, else the city |
 | `?time=17` | Start hour (default 17:00, golden hour) |
 | `?day=24` | Real minutes per simulated day |
@@ -286,7 +287,8 @@ away; everything else dims behind the code. `G` again, or `ghost off`, fades it 
   the ND, the film curve and FXAA. It writes nothing to the velocity buffer, so it never smears. The city behind
   it still does.
 - **Every tier.** It lives in the post chain, so while it is on the chain runs even at the Minimal tier. With
-  `?post=0` there is no chain, and `ghost on` says so; the same while the screen is split (see Split screen).
+  `?post=0` there is no chain, and `ghost on` says so; the same while the screen is split (see Split screen) and on
+  a lite profile, whose boot never compiles the chain (`?lite=0` brings it back; see Autoscaling).
 
 ## Matrix mode
 
@@ -708,7 +710,7 @@ while you type.
   drawn agents (near, far, total); fps, frame time, p95, CPU and GPU time; quality tier; kernel
   counters. `stats --once` prints a single frame.
 - The core commands, as `help` prints them: `help [command]`, `stats [--once]`, `laws`, `kernel`,
-  `quality [auto|0-4]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `render [on|off]`,
+  `quality [auto|lite|-1|0-4]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `render [on|off]`,
   `captions [on|off]`, `ping [go|look|gather|wait|clear]`,
   `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
   `recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]`, `memory [<agent>|forget <agent>|forget all]`,
@@ -1423,8 +1425,33 @@ are no toasts and no settings menu, and the console's `quality` command is the o
   architecture but not its name, so an AMD card starts on High there (it cannot be told from an integrated chip of
   its architecture) and the first probe takes it to Ultra about 6 s after boot.
 - **How many pedestrians.** Unless `?crowd` says, the profile decides at boot: 14,000 wherever it starts on
-  Medium or above, 8,000 on a phone, and 5,000 on the weakest GPUs and software rasterizers. The simulation's size
-  is fixed for the session (the GPU buffers are sized for it). The tiers then scale how many are drawn.
+  Medium or above, 8,000 on a phone, 5,000 on the weakest GPUs and software rasterizers, and 2,500 on a lite profile.
+  The simulation's size is fixed for the session (the GPU buffers are sized for it). The tiers then scale how many
+  are drawn.
+- **The lite profile and the Lite tier.** Entry-level phone GPUs get a profile of their own: a phone (not a flagship)
+  whose adapter is ARM Bifrost or Midgard (a Mali-G52 reads `arm / bifrost` in Chrome), Imagination PowerVR, or Adreno
+  5xx and older, and any phone that reports 2 GB of memory or less. Valhall and Immortalis, Adreno 6xx and newer,
+  Xclipse, iPhones, desktops, laptops, the native shell and software rasterizers keep their profiles. A lite profile:
+  - starts on **Lite**, tier -1, below Minimal: half the base pixel ratio's edge, no shadows or post, and a thinner,
+    shorter crowd draw (density 0.15, detailed bodies within 8 m, always drawn within 6 m, nobody beyond 80 m). Its
+    automatic range is Lite to Minimal, so it never reaches a tier that needs post or shadows;
+  - simulates 2,500 pedestrians and 12 cars unless `?crowd` or `?cars` says (a region's street window still caps the
+    cars);
+  - boots a lighter city, decided before anything compiles: the post chain capped off as with `?post=0` and never
+    drawn at boot (so its passes and the velocity copies of every material are never compiled), no lamp point lights
+    (the lamp heads and the ground's lamp pools still glow), a 64² environment probe baked once a game hour instead
+    of 256² every 12 game minutes, a cloudless sky, coarser tree canopies and signal lenses (about half the street
+    furniture's triangles), and a building re-sort every 24 m instead of 6 m;
+  - gives the physics realm no street-furniture sensors (nothing there queries them; the page keeps the furniture for
+    drawing, contact, the dissolve and ghost view), no balance machine, and no scheduled craft (nothing draws them
+    yet). The physics rate and its substeps are unchanged.
+
+  `?lite=1` forces the profile on any device and `?lite=0` turns it off. `?quality=-1` (or `lite`, and the console's
+  `quality -1` or `quality lite`) pins the Lite tier on any device without the rest of the profile. The HUD shows
+  the tier as Lite, and the console's quality line (`quality`, `stats`, `sim`) ends with `lite profile` on a lite
+  profile. A lite page runs 12 cars by default, so it names a different world from a default network room's 36; join
+  one with `?cars=36`. Tried so far only in CI's headless Chromium on SwiftShader with a faked Mali-G52 adapter (the
+  browser smoke's `lite` scenario), not on a real Mali phone: what it saves on one is not measured.
 
 **The two ends of the range.** `docs/autoscaler/README.md` drives the governor as a flagship phone (Safari 26, 120 Hz,
 touch) and as a console-class desktop (16 threads, a 10 TFLOPS GPU, 4K at 60 Hz or 144 Hz, tab and native shell)

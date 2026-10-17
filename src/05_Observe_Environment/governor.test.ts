@@ -15,7 +15,7 @@ import { test } from 'node:test'
 import { Frustum, Matrix4, PerspectiveCamera, RepeatWrapping, Vector3 } from 'three/webgpu'
 import { vec2 } from 'three/tsl'
 import {
-  CROWD_DEFAULT, Governor, TIERS, defaultAgents, degradeBudgetMs, estimateRefreshHz, nativeHost, profileDevice, readDeviceHints, tierRange, type DeviceHints,
+  CARS_DEFAULT, CROWD_DEFAULT, Governor, LITE, LITE_TIER, TIERS, defaultAgents, defaultCars, knobsOf, degradeBudgetMs, estimateRefreshHz, nativeHost, profileDevice, readDeviceHints, tierRange, type DeviceHints,
   type QualityKnobs,
 } from './governor.ts'
 import { PARKED_SHADOW_MAP, applyQuality, type QualityTargets } from '../07_Execute_Actions/quality.ts'
@@ -103,6 +103,27 @@ test('tiers: High keeps the pre-governor look (bar a thinner far crowd); the low
   assert.equal(TIERS[4].shadowMapSize, 4096)
   assert.equal(TIERS[4].crowdDensity, 1)
   assert.equal(Math.max(...TIERS.map((t) => t.textureSize)), Math.max(...FBM_SIZES))
+})
+
+test('tiers: Lite is tier -1, below Minimal and outside the table; knobsOf reads every tier', () => {
+  assert.equal(LITE_TIER, -1)
+  assert.equal(knobsOf(LITE_TIER), LITE)
+  for (let t = 0; t < TIERS.length; t++) assert.equal(knobsOf(t), TIERS[t])
+  assert.ok(!TIERS.includes(LITE), 'no index of the table moves: ?quality=0…4 and the console keep their meaning')
+  assert.ok(Object.isFrozen(LITE))
+  assert.deepEqual({ ...LITE }, {
+    label: 'Lite', renderScale: 0.5, shadows: false, shadowMapSize: 1024, post: false, volumetrics: false,
+    crowdDensity: 0.15, lodDistance: 8, nearRadius: 6, maxDistance: 80, textureSize: 64,
+  })
+  // The same rules as the table, one step further down.
+  const min = TIERS[0]
+  assert.ok(LITE.renderScale >= 0.5 && LITE.crowdDensity > 0)
+  assert.ok(LITE.nearRadius <= LITE.lodDistance && LITE.lodDistance < LITE.maxDistance)
+  assert.ok(FBM_SIZES.includes(LITE.textureSize))
+  for (const k of ['renderScale', 'crowdDensity', 'lodDistance', 'nearRadius', 'maxDistance', 'textureSize'] as const) assert.ok(LITE[k] <= min[k], `Lite.${k} <= Minimal.${k}`)
+  const cost = (k: QualityKnobs) => k.renderScale + Number(k.shadows) + Number(k.post) + Number(k.volumetrics) + k.crowdDensity + k.maxDistance / 1000 + k.shadowMapSize / 8192 + k.textureSize / 1024
+  assert.ok(cost(LITE) < cost(min), 'Lite is strictly less work than Minimal')
+  assert.ok(!new Set(TIERS.map((t) => t.label)).has(LITE.label))
 })
 
 /** Pedestrians drawn per the WGSL `cull` pass (crowd.wgsl): nobody at or beyond maxDistance; everyone
@@ -514,9 +535,10 @@ test('controls: auto off freezes the tier; setTier clamps and ignores NaN; knobs
   g.setTier(9)
   assert.equal(g.tier, 4)
   g.setTier(-2)
-  assert.equal(g.tier, 0)
+  assert.equal(g.tier, -1, 'clamped to Lite, the lowest tier a manual choice reaches')
+  assert.equal(g.knobs(), LITE)
   g.setTier(NaN)
-  assert.equal(g.tier, 0)
+  assert.equal(g.tier, -1)
   g.setTier(1.4)
   assert.equal(g.tier, 1)
   assert.equal(g.knobs(), TIERS[1])
@@ -525,6 +547,45 @@ test('controls: auto off freezes the tier; setTier clamps and ignores NaN; knobs
   assert.equal(c.changes.length, 1, 'only the net change is reported')
   assert.equal(c.changes[0].tier, 1)
   assert.equal(c.run(1, hz(60)).changes.length, 1)
+})
+
+test('lite: a manual choice may pin Lite at any range; the automatic range reaches it only when asked (tierRange of a lite profile)', () => {
+  const pinned = new Governor({ tier: -1, auto: false })
+  assert.equal(pinned.tier, -1)
+  assert.equal(pinned.knobs(), LITE)
+  assert.deepEqual(pinned.state(), { tier: -1, label: 'Lite', auto: false, renderScale: 0.5, targetMs: pinned.targetMs })
+  assert.equal(new Governor({ tier: -7, auto: false }).tier, -1, 'nothing below Lite')
+  // The default automatic range stops at Minimal: a start or a slow device below it is held at 0.
+  assert.equal(new Governor({ tier: -1, auto: true }).tier, 0)
+  const desk = new Governor({ tier: 1, auto: true })
+  new Clock(desk).run(60, 50)
+  assert.equal(desk.tier, 0, 'overload never walks a normal profile into Lite')
+  pinned.setAuto(true)
+  assert.equal(pinned.tier, 0, 'auto clamps a pinned Lite back into the default range')
+  // A range asked below Lite is clamped to it.
+  const deep = new Governor({ tier: 0, auto: true, min: -5, max: 0 })
+  new Clock(deep).run(40, 50)
+  assert.equal(deep.tier, -1)
+})
+
+test('lite: inside Lite..Minimal the governor steps down to Lite under load, probes back to Minimal with headroom, never above', () => {
+  const g = new Governor({ tier: -1, auto: true, min: -1, max: 0, lite: true })
+  assert.equal(g.tier, -1, 'a lite profile starts at Lite')
+  assert.deepEqual(g.state(), { tier: -1, label: 'Lite', auto: true, renderScale: 0.5, targetMs: g.targetMs, lite: true })
+  const c = new Clock(g).run(20, hz(60))
+  assert.deepEqual(c.changes.map((x) => x.tier), [0], 'headroom: one probe up to Minimal')
+  c.run(30, 50)
+  assert.deepEqual(c.changes.map((x) => x.tier), [0, -1], 'overload: back down to Lite, and no further')
+  c.run(300, hz(60))
+  assert.ok(c.changes.every((x) => x.tier >= -1 && x.tier <= 0), JSON.stringify(c.changes))
+  assert.equal(g.tier, 0, 'the backed-off probe returns to Minimal')
+  assert.equal(g.state().label, 'Minimal')
+  assert.equal(g.state().lite, true, 'the profile stays lite whatever the tier')
+  // Manual choices still reach every tier.
+  g.setTier(4)
+  assert.equal(g.tier, 4)
+  g.setTier(-1)
+  assert.equal(g.knobs(), LITE)
 })
 
 test('controls: malformed samples and a clock that jumps backwards are harmless', () => {
@@ -581,54 +642,57 @@ const phone = { mobileHint: true, maxTouchPoints: 5, coarsePointer: true, screen
 
 test('profile: desktop GPUs', () => {
   const p = (h: Partial<DeviceHints>) => profileDevice({ ...base, userAgent: WIN, ...h })
-  assert.deepEqual(p({ adapter: 'nvidia / lovelace' }), { mobile: false, gpuClass: 'discrete', startTier: 4 })
-  assert.deepEqual(p({ adapter: 'nvidia / blackwell / NVIDIA GeForce RTX 5080' }), { mobile: false, gpuClass: 'discrete', startTier: 4 })
-  assert.deepEqual(p({ adapter: 'nvidia / pascal' }), { mobile: false, gpuClass: 'discrete', startTier: 3 })
-  assert.deepEqual(p({ adapter: 'nvidia / ampere', cores: 4 }), { mobile: false, gpuClass: 'discrete', startTier: 3 })
-  assert.deepEqual(p({ adapter: 'amd / rdna-3' }), { mobile: false, gpuClass: 'discrete', startTier: 3 })
-  assert.deepEqual(p({ adapter: 'amd / rdna-3 / AMD Radeon RX 7900 XTX' }), { mobile: false, gpuClass: 'discrete', startTier: 4 })
-  assert.deepEqual(p({ adapter: 'amd / rdna-3 / AMD Radeon 780M Graphics' }), { mobile: false, gpuClass: 'integrated', startTier: 2 })
-  assert.deepEqual(p({ adapter: 'intel / gen-12hp' }), { mobile: false, gpuClass: 'discrete', startTier: 3 })
-  assert.deepEqual(p({ adapter: 'intel / xe-lpg / Intel(R) Arc(TM) Graphics' }), { mobile: false, gpuClass: 'integrated', startTier: 2 })
-  assert.deepEqual(p({ adapter: 'intel / gen-12lp' }), { mobile: false, gpuClass: 'integrated', startTier: 2 })
-  assert.deepEqual(p({ adapter: 'intel / gen-9' }), { mobile: false, gpuClass: 'integrated', startTier: 1 })
-  assert.deepEqual(p({ adapter: 'intel / gen-9', memoryGb: 4 }), { mobile: false, gpuClass: 'integrated', startTier: 0 })
-  assert.deepEqual(p({ adapter: 'qualcomm / adreno-x1' }), { mobile: false, gpuClass: 'integrated', startTier: 2 })
-  assert.deepEqual(p({ adapter: 'apple / metal-3', userAgent: MAC }), { mobile: false, gpuClass: 'integrated', startTier: 3 })
-  assert.deepEqual(p({ adapter: 'apple / metal-3', userAgent: MAC, screenPixels: 2560 * 1440 }), { mobile: false, gpuClass: 'integrated', startTier: 2 })
-  assert.deepEqual(p({ adapter: 'nvidia / lovelace', screenPixels: 3840 * 2160 }), { mobile: false, gpuClass: 'discrete', startTier: 3 })
-  assert.deepEqual(p({ adapter: '', userAgent: MAC_SAFARI }), { mobile: false, gpuClass: 'unknown', startTier: 2 })
-  assert.deepEqual(p({ adapter: 'unknown adapter' }), { mobile: false, gpuClass: 'unknown', startTier: 2 })
-  assert.deepEqual(p({ adapter: 'google / swiftshader' }), { mobile: false, gpuClass: 'unknown', startTier: 0 })
-  assert.deepEqual(p({ adapter: 'microsoft / / Microsoft Basic Render Driver' }), { mobile: false, gpuClass: 'unknown', startTier: 0 })
+  assert.deepEqual(p({ adapter: 'nvidia / lovelace' }), { mobile: false, gpuClass: 'discrete', startTier: 4, lite: false })
+  assert.deepEqual(p({ adapter: 'nvidia / blackwell / NVIDIA GeForce RTX 5080' }), { mobile: false, gpuClass: 'discrete', startTier: 4, lite: false })
+  assert.deepEqual(p({ adapter: 'nvidia / pascal' }), { mobile: false, gpuClass: 'discrete', startTier: 3, lite: false })
+  assert.deepEqual(p({ adapter: 'nvidia / ampere', cores: 4 }), { mobile: false, gpuClass: 'discrete', startTier: 3, lite: false })
+  assert.deepEqual(p({ adapter: 'amd / rdna-3' }), { mobile: false, gpuClass: 'discrete', startTier: 3, lite: false })
+  assert.deepEqual(p({ adapter: 'amd / rdna-3 / AMD Radeon RX 7900 XTX' }), { mobile: false, gpuClass: 'discrete', startTier: 4, lite: false })
+  assert.deepEqual(p({ adapter: 'amd / rdna-3 / AMD Radeon 780M Graphics' }), { mobile: false, gpuClass: 'integrated', startTier: 2, lite: false })
+  assert.deepEqual(p({ adapter: 'intel / gen-12hp' }), { mobile: false, gpuClass: 'discrete', startTier: 3, lite: false })
+  assert.deepEqual(p({ adapter: 'intel / xe-lpg / Intel(R) Arc(TM) Graphics' }), { mobile: false, gpuClass: 'integrated', startTier: 2, lite: false })
+  assert.deepEqual(p({ adapter: 'intel / gen-12lp' }), { mobile: false, gpuClass: 'integrated', startTier: 2, lite: false })
+  assert.deepEqual(p({ adapter: 'intel / gen-9' }), { mobile: false, gpuClass: 'integrated', startTier: 1, lite: false })
+  assert.deepEqual(p({ adapter: 'intel / gen-9', memoryGb: 4 }), { mobile: false, gpuClass: 'integrated', startTier: 0, lite: false })
+  assert.deepEqual(p({ adapter: 'qualcomm / adreno-x1' }), { mobile: false, gpuClass: 'integrated', startTier: 2, lite: false })
+  assert.deepEqual(p({ adapter: 'apple / metal-3', userAgent: MAC }), { mobile: false, gpuClass: 'integrated', startTier: 3, lite: false })
+  assert.deepEqual(p({ adapter: 'apple / metal-3', userAgent: MAC, screenPixels: 2560 * 1440 }), { mobile: false, gpuClass: 'integrated', startTier: 2, lite: false })
+  assert.deepEqual(p({ adapter: 'nvidia / lovelace', screenPixels: 3840 * 2160 }), { mobile: false, gpuClass: 'discrete', startTier: 3, lite: false })
+  assert.deepEqual(p({ adapter: '', userAgent: MAC_SAFARI }), { mobile: false, gpuClass: 'unknown', startTier: 2, lite: false })
+  assert.deepEqual(p({ adapter: 'unknown adapter' }), { mobile: false, gpuClass: 'unknown', startTier: 2, lite: false })
+  assert.deepEqual(p({ adapter: 'google / swiftshader' }), { mobile: false, gpuClass: 'unknown', startTier: 0, lite: false })
+  assert.deepEqual(p({ adapter: 'microsoft / / Microsoft Basic Render Driver' }), { mobile: false, gpuClass: 'unknown', startTier: 0, lite: false })
   const LINUX = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'
-  assert.deepEqual(p({ adapter: 'mesa', userAgent: LINUX }), { mobile: false, gpuClass: 'unknown', startTier: 0 })
-  assert.deepEqual(p({ adapter: 'intel / gen-12lp / Mesa Intel(R) Xe Graphics (TGL GT2)', userAgent: LINUX }), { mobile: false, gpuClass: 'integrated', startTier: 2 })
-  assert.deepEqual(p({ adapter: 'arm / valhall', userAgent: CROS, coarsePointer: true, maxTouchPoints: 10 }), { mobile: false, gpuClass: 'mobile', startTier: 1 })
+  assert.deepEqual(p({ adapter: 'mesa', userAgent: LINUX }), { mobile: false, gpuClass: 'unknown', startTier: 0, lite: false })
+  assert.deepEqual(p({ adapter: 'intel / gen-12lp / Mesa Intel(R) Xe Graphics (TGL GT2)', userAgent: LINUX }), { mobile: false, gpuClass: 'integrated', startTier: 2, lite: false })
+  assert.deepEqual(p({ adapter: 'arm / valhall', userAgent: CROS, coarsePointer: true, maxTouchPoints: 10 }), { mobile: false, gpuClass: 'mobile', startTier: 1, lite: false })
 })
 
 test('profile: phones and tablets', () => {
   const p = (h: Partial<DeviceHints>) => profileDevice({ ...base, ...h })
-  assert.deepEqual(p({ ...phone, userAgent: ANDROID, adapter: 'qualcomm / adreno-7xx' }), { mobile: true, gpuClass: 'mobile', startTier: 1 })
-  assert.deepEqual(p({ ...phone, userAgent: ANDROID, adapter: 'arm / valhall' }), { mobile: true, gpuClass: 'mobile', startTier: 1 })
-  assert.deepEqual(p({ ...phone, userAgent: ANDROID, adapter: 'arm / valhall', memoryGb: 4 }), { mobile: true, gpuClass: 'mobile', startTier: 0 })
-  assert.deepEqual(p({ ...phone, userAgent: ANDROID, adapter: 'samsung / rdna-2' }), { mobile: true, gpuClass: 'mobile', startTier: 1 })
-  assert.deepEqual(p({ ...phone, userAgent: ANDROID, adapter: 'qualcomm / adreno-6xx' }), { mobile: true, gpuClass: 'mobile', startTier: 0 })
-  assert.deepEqual(p({ ...phone, userAgent: ANDROID, adapter: 'img-tec / rogue' }), { mobile: true, gpuClass: 'mobile', startTier: 0 })
-  assert.deepEqual(p({ ...phone, userAgent: ANDROID, mobileHint: undefined, adapter: 'arm / bifrost' }), { mobile: true, gpuClass: 'mobile', startTier: 0 })
+  assert.deepEqual(p({ ...phone, userAgent: ANDROID, adapter: 'qualcomm / adreno-7xx' }), { mobile: true, gpuClass: 'mobile', startTier: 1, lite: false })
+  assert.deepEqual(p({ ...phone, userAgent: ANDROID, adapter: 'arm / valhall' }), { mobile: true, gpuClass: 'mobile', startTier: 1, lite: false })
+  assert.deepEqual(p({ ...phone, userAgent: ANDROID, adapter: 'arm / valhall', memoryGb: 4 }), { mobile: true, gpuClass: 'mobile', startTier: 0, lite: false })
+  assert.deepEqual(p({ ...phone, userAgent: ANDROID, adapter: 'samsung / rdna-2' }), { mobile: true, gpuClass: 'mobile', startTier: 1, lite: false })
+  assert.deepEqual(p({ ...phone, userAgent: ANDROID, adapter: 'qualcomm / adreno-6xx' }), { mobile: true, gpuClass: 'mobile', startTier: 0, lite: false })
+  // Entry-level phone GPUs are lite profiles: they start at Lite, below Minimal (governor.ts LITE).
+  assert.deepEqual(p({ ...phone, userAgent: ANDROID, adapter: 'img-tec / rogue' }), { mobile: true, gpuClass: 'mobile', startTier: -1, lite: true })
+  assert.deepEqual(p({ ...phone, userAgent: ANDROID, mobileHint: undefined, adapter: 'arm / bifrost' }), { mobile: true, gpuClass: 'mobile', startTier: -1, lite: true })
   // Safari: no userAgentData, no deviceMemory; adapter info may be empty.
   const safari = { ...phone, mobileHint: undefined, memoryGb: undefined }
-  assert.deepEqual(p({ ...safari, userAgent: IPHONE, adapter: 'apple / common-3' }), { mobile: true, gpuClass: 'mobile', startTier: 1 })
-  assert.deepEqual(p({ ...safari, userAgent: IPHONE, adapter: '' }), { mobile: true, gpuClass: 'unknown', startTier: 1 })
+  assert.deepEqual(p({ ...safari, userAgent: IPHONE, adapter: 'apple / common-3' }), { mobile: true, gpuClass: 'mobile', startTier: 1, lite: false })
+  assert.deepEqual(p({ ...safari, userAgent: IPHONE, adapter: '' }), { mobile: true, gpuClass: 'unknown', startTier: 1, lite: false })
   // iPadOS asks for the desktop site: a Mac user agent with multi-touch.
-  assert.deepEqual(p({ ...safari, userAgent: MAC_SAFARI, adapter: 'apple / common-3', screenPixels: 1024 * 1366 }), { mobile: true, gpuClass: 'mobile', startTier: 1 })
+  assert.deepEqual(p({ ...safari, userAgent: MAC_SAFARI, adapter: 'apple / common-3', screenPixels: 1024 * 1366 }), { mobile: true, gpuClass: 'mobile', startTier: 1, lite: false })
   // A plain Mac with a trackpad is not an iPad.
   assert.equal(p({ userAgent: MAC_SAFARI, adapter: 'apple / common-3', maxTouchPoints: 0 }).mobile, false)
 })
 
 test('profile: tierRange keeps phones at Medium or below', () => {
-  assert.deepEqual(tierRange({ mobile: true, gpuClass: 'mobile', startTier: 1 }), { min: 0, max: 2 })
-  assert.deepEqual(tierRange({ mobile: false, gpuClass: 'discrete', startTier: 4 }), { min: 0, max: 4 })
+  assert.deepEqual(tierRange({ mobile: true, gpuClass: 'mobile', startTier: 1, lite: false }), { min: 0, max: 2 })
+  assert.deepEqual(tierRange({ mobile: false, gpuClass: 'discrete', startTier: 4, lite: false }), { min: 0, max: 4 })
+  // A lite profile's range is Lite..Minimal: no tier that needs post or shadows, neither of which its boot compiles.
+  assert.deepEqual(tierRange({ mobile: true, gpuClass: 'mobile', startTier: -1, lite: true }), { min: -1, max: 0 })
 })
 
 test('profile: readDeviceHints degrades to neutral values outside a browser', () => {
@@ -1008,7 +1072,19 @@ test('crowd: the pedestrians simulated when the page does not say, by profile', 
   assert.equal(p({ adapter: 'intel / gen-9', memoryGb: 4 }), CROWD_DEFAULT.minimal)
   assert.equal(p({ ...phone, userAgent: ANDROID, adapter: 'qualcomm / adreno-7xx' }), CROWD_DEFAULT.phone)
   assert.equal(p({ ...phone, userAgent: ANDROID, adapter: 'qualcomm / adreno-6xx' }), CROWD_DEFAULT.minimal)
-  assert.deepEqual(CROWD_DEFAULT, { full: 14000, phone: 8000, minimal: 5000 })
+  assert.deepEqual(CROWD_DEFAULT, { full: 14000, phone: 8000, minimal: 5000, lite: 2500 })
+})
+
+test('crowd and cars: a lite profile simulates the fewest pedestrians and a third of the fleet', () => {
+  const p = (h: Partial<DeviceHints>, lite?: boolean) => profileDevice({ ...base, ...h }, lite)
+  const mali = p({ ...phone, userAgent: ANDROID, adapter: 'arm / bifrost' })
+  assert.equal(defaultAgents(mali), CROWD_DEFAULT.lite)
+  assert.equal(defaultCars(mali), CARS_DEFAULT.lite)
+  assert.deepEqual(CARS_DEFAULT, { full: 36, lite: 12 })
+  for (const other of [p({ userAgent: WIN, adapter: 'nvidia / lovelace' }), p({ userAgent: WIN, adapter: 'google / swiftshader' }), p({ ...phone, userAgent: ANDROID, adapter: 'qualcomm / adreno-6xx' })]) {
+    assert.equal(defaultCars(other), CARS_DEFAULT.full)
+    assert.notEqual(defaultAgents(other), CROWD_DEFAULT.lite)
+  }
 })
 
 test('host: a Tauri v2 window is told from a browser tab, by what Tauri injects', () => {
@@ -1020,7 +1096,7 @@ test('host: a Tauri v2 window is told from a browser tab, by what Tauri injects'
   // A native shell on Windows 11 is WebView2: the desktop profile, top tier and full crowd for a high-end GPU.
   const WEBVIEW2 = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0'
   const native = profileDevice({ ...base, userAgent: WEBVIEW2, adapter: 'nvidia / blackwell / NVIDIA GeForce RTX 5080', host: 'native' })
-  assert.deepEqual(native, { mobile: false, gpuClass: 'discrete', startTier: 4 })
+  assert.deepEqual(native, { mobile: false, gpuClass: 'discrete', startTier: 4, lite: false })
   assert.deepEqual(tierRange(native), { min: 0, max: 4 })
   assert.equal(defaultAgents(native), CROWD_DEFAULT.full)
 })

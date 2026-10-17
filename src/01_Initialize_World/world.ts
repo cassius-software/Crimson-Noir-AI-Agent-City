@@ -30,7 +30,7 @@ import { windowFurniture, type StreetGrid } from './region/streets.ts'
 import { SIGNAL } from '../02_Define_The_Rules/civic.ts'
 import { applyCodeDissolve } from './codeDissolve.ts'
 import { applyMatrixMode, createMatrixMode, type MatrixMode } from './matrixMode.ts'
-import { EnvProbe } from './envProbe.ts'
+import { ENV_PROBE_STEP_HOURS, EnvProbe } from './envProbe.ts'
 import { acquireDevice, adapterLine, WebGPUUnavailableError } from './gpuDevice.ts'
 
 export { WebGPUUnavailableError } from './gpuDevice.ts'
@@ -219,6 +219,41 @@ export interface World {
   update(hours: number, signalSeconds: number, focusX: number, focusZ: number): SunState
 }
 
+/**
+ * How much of the world's fixed cost a boot builds: chosen once (engine.ts, from the device profile) before anything
+ * compiles, because the lamp lights are part of every lit material's pipeline key and the geometry is built once.
+ * FULL_WORLD is the city as authored; LITE_WORLD is the one a lite profile (an entry-level phone GPU) boots.
+ */
+export interface WorldDetail {
+  /** Real PointLights on the lamps nearest the player, always present (0: the lamps are emissive only after dark). */
+  lampLights: number
+  /** Environment probe cube edge, texels (three's PMREMGenerator size). */
+  probeSize: number
+  /** Game hours the clock moves between two probe bakes (envProbe.ts). */
+  probeStepHours: number
+  /** Sky clouds, 0..1 (a uniform; 0 skips the sky shader's cloud noise). */
+  cloudCoverage: number
+  /** Tree canopy lobes: IcosahedronGeometry detail. */
+  canopyDetail: number
+  /** Signal lenses: SphereGeometry width and height segments. */
+  lensSegments: readonly [number, number]
+  /** How far the focus moves before the buildings are re-sorted front to back, m. */
+  resortMetres: number
+}
+
+export const FULL_WORLD: Readonly<WorldDetail> = Object.freeze({
+  lampLights: 6, probeSize: 256, probeStepHours: ENV_PROBE_STEP_HOURS, cloudCoverage: 0.32, canopyDetail: 1, lensSegments: [10, 6] as const, resortMetres: 6,
+})
+
+/**
+ * The lite boot: no lamp PointLights (shorter lit shaders; the lamp heads and the ground's lamp pools stay emissive), a
+ * 64² probe baked once a game hour, a cloudless sky, canopies of 20 faces a lobe and coarser lenses (about half the
+ * street furniture's triangles), and a building re-sort every 24 m.
+ */
+export const LITE_WORLD: Readonly<WorldDetail> = Object.freeze({
+  lampLights: 0, probeSize: 64, probeStepHours: 1, cloudCoverage: 0, canopyDetail: 0, lensSegments: [6, 4] as const, resortMetres: 24,
+})
+
 /** Whether the pass being built writes motion vectors (three's builder knows; its typings leave the method out). */
 const needsPrevious = (b: NodeBuilder): boolean => (b as NodeBuilder & { needsPreviousData(): boolean }).needsPreviousData()
 
@@ -268,7 +303,7 @@ function instanced(geo: BufferGeometry, mat: MeshStandardNodeMaterial, matrices:
 /** A fresh, all-solid dissolve attribute for `instances` slots. */
 const dissolveAttribute = (instances: number): InstancedBufferAttribute => new InstancedBufferAttribute(new Float32Array(instances), 1)
 
-function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', number>, signalClock: UniformNode<'float', number>, matrixMode: MatrixMode): { meshes: InstancedMesh[]; dissolve: PropDissolve } {
+function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', number>, signalClock: UniformNode<'float', number>, matrixMode: MatrixMode, detail: Readonly<WorldDetail>): { meshes: InstancedMesh[]; dissolve: PropDissolve } {
   const part = attribute('part', 'float')
   // The code dissolve: a per-instance amount, read by the helper in every stage; the origin is the instance's own
   // (positionLocal × 0, which the instance matrix maps to where the pole stands), so a gone prop folds to its foot.
@@ -294,9 +329,9 @@ function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', 
   // Street trees: trunk (part 0) and a three-lobed canopy (part 1) that sways in the wind.
   const treeGeo = assemble([
     [new CylinderGeometry(0.12, 0.18, 3.2, 7).translate(0, 1.6, 0), 0],
-    [new IcosahedronGeometry(1.6, 1).translate(0, 4.2, 0), 1],
-    [new IcosahedronGeometry(1.2, 1).translate(0.9, 3.7, 0.3), 1],
-    [new IcosahedronGeometry(1.1, 1).translate(-0.7, 3.9, -0.5), 1],
+    [new IcosahedronGeometry(1.6, detail.canopyDetail).translate(0, 4.2, 0), 1],
+    [new IcosahedronGeometry(1.2, detail.canopyDetail).translate(0.9, 3.7, 0.3), 1],
+    [new IcosahedronGeometry(1.1, detail.canopyDetail).translate(-0.7, 3.9, -0.5), 1],
   ])
   const treeMat = new MeshStandardNodeMaterial()
   const leafTone = fbm.sample(positionWorld.xz.div(7)).r
@@ -315,12 +350,13 @@ function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', 
   applyCodeDissolve(treeMat, amount, origin, PROP_DISSOLVE_INK)
 
   // Traffic signals: pole, head (part 1), and red / amber / green lenses (parts 2, 3, 4) facing local +z.
+  const [lensW, lensH] = detail.lensSegments
   const signalGeo = assemble([
     [new CylinderGeometry(0.08, 0.1, 5.0, 8).translate(0, 2.5, 0), 0],
     [new BoxGeometry(0.36, 1.05, 0.28).translate(0, 4.4, 0.1), 1],
-    [new SphereGeometry(0.1, 10, 6).scale(1, 1, 0.4).translate(0, 4.75, 0.25), 2],
-    [new SphereGeometry(0.1, 10, 6).scale(1, 1, 0.4).translate(0, 4.42, 0.25), 3],
-    [new SphereGeometry(0.1, 10, 6).scale(1, 1, 0.4).translate(0, 4.09, 0.25), 4],
+    [new SphereGeometry(0.1, lensW, lensH).scale(1, 1, 0.4).translate(0, 4.75, 0.25), 2],
+    [new SphereGeometry(0.1, lensW, lensH).scale(1, 1, 0.4).translate(0, 4.42, 0.25), 3],
+    [new SphereGeometry(0.1, lensW, lensH).scale(1, 1, 0.4).translate(0, 4.09, 0.25), 4],
   ])
   signalGeo.setAttribute('signalAxis', new InstancedBufferAttribute(new Float32Array(f.signals.map((s) => s[3])), 1))
   const signalMat = new MeshStandardNodeMaterial()
@@ -354,9 +390,10 @@ function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', 
 
 /**
  * The world under its sky. With a region (a pack and where it sits), the region's surveyed buildings, streets and water
- * stand in for the procedural city: no city boxes, no street furniture, no city ground or lake.
+ * stand in for the procedural city: no city boxes, no street furniture, no city ground or lake. `detail`: FULL_WORLD, or
+ * LITE_WORLD for a lite device profile.
  */
-export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pack: RegionPack; layout: RegionLayout; streets?: StreetGrid | null } | null = null): World {
+export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pack: RegionPack; layout: RegionLayout; streets?: StreetGrid | null } | null = null, detail: Readonly<WorldDetail> = FULL_WORLD): World {
   const scene = new Scene()
   const camera = new PerspectiveCamera(62, 1, 0.1, 2400)
   const plan = region ? [] : generateBuildings(seed)
@@ -369,7 +406,7 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   // Matrix mode's one uniform: every surface below takes it; the sky (next) does not.
   const matrixMode = createMatrixMode()
 
-  const skyParams = { turbidity: 3.2, rayleigh: 1.6, mieCoefficient: 0.004, mieDirectionalG: 0.78, cloudCoverage: 0.32 }
+  const skyParams = { turbidity: 3.2, rayleigh: 1.6, mieCoefficient: 0.004, mieDirectionalG: 0.78, cloudCoverage: detail.cloudCoverage }
   const makeSky = () => {
     const s = new SkyMesh()
     s.scale.setScalar(1000)
@@ -395,10 +432,12 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   const pmrem = new PMREMGenerator(renderer)
   // The probe's schedule (envProbe.ts): every bake after the first renders into the first bake's target, so
   // scene.environment stays one texture object and no material is re-keyed. One console line per bake
-  // ("[envprobe] 3.1 ms"), five a minute at ?day=24, sits beside the [longtask] lines in a saved console log.
+  // ("[envprobe] 3.1 ms"), five a minute at ?day=24, sits beside the [longtask] lines in a saved console log. The
+  // size is the same for every bake (the reused target is that size).
+  const probeSize = detail.probeSize
   const envProbe = new EnvProbe<ReturnType<PMREMGenerator['fromScene']>>(
-    (reuse) => pmrem.fromScene(envScene, 0.02, 0.1, 100, { renderTarget: reuse }),
-    { onBake: (ms) => console.debug('[envprobe]', `${Math.round(ms * 10) / 10} ms`) },
+    (reuse) => pmrem.fromScene(envScene, 0.02, 0.1, 100, { renderTarget: reuse, size: probeSize }),
+    { stepHours: detail.probeStepHours, onBake: (ms) => console.debug('[envprobe]', `${Math.round(ms * 10) / 10} ms`) },
   )
 
   const hemi = new HemisphereLight(0xbfd4ea, 0x3a3530, 0.6)
@@ -434,7 +473,7 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   // One InstancedMesh is one draw, so three cannot depth-sort it. Re-ordering instances front to back
   // lets early-z reject hidden facades before their procedural fragment shading runs.
   const sortBuildings = (x: number, z: number) => {
-    if (Math.hypot(x - sortedAt.x, z - sortedAt.z) < 6) return
+    if (Math.hypot(x - sortedAt.x, z - sortedAt.z) < detail.resortMetres) return
     sortedAt.x = x
     sortedAt.z = z
     const d = centre.map(([cx, cz]) => (cx - x) ** 2 + (cz - z) ** 2)
@@ -472,14 +511,15 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   let dissolve: PropDissolve = { lamps: dissolveAttribute(0), trees: dissolveAttribute(0), signals: dissolveAttribute(0) }
   if (!region) scene.add(lake)
   if (!region || region.streets) {
-    const props = furnitureMeshes(furniture, fbm, night, signalClock, matrixMode)
+    const props = furnitureMeshes(furniture, fbm, night, signalClock, matrixMode, detail)
     for (const mesh of props.meshes) scene.add(mesh)
     dissolve = props.dissolve
   }
 
   // Real light from the lamps nearest the player, so people, cars and facades are lit after dark
-  // (the rest of the lamps are emissive only). Always present, so dusk never triggers a recompile.
-  const lampLights = Array.from({ length: 6 }, () => {
+  // (the rest of the lamps are emissive only). Always present, so dusk never triggers a recompile; a lite boot has
+  // none, and every lamp is emissive only.
+  const lampLights = Array.from({ length: detail.lampLights }, () => {
     const l = new PointLight(0xffd6a0, 0, 24, 2)
     scene.add(l)
     return l
@@ -488,7 +528,7 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   const nearest: number[] = []
   const placeLampLights = (fx: number, fz: number, nightness: number) => {
     nearest.length = 0
-    if (!lampHeads.length) return
+    if (!lampHeads.length || !lampLights.length) return
     const d = lampHeads.map(([x, , z]) => (x - fx) ** 2 + (z - fz) ** 2)
     for (let n = 0; n < lampLights.length; n++) {
       let best = -1

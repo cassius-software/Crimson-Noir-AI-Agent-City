@@ -37,7 +37,7 @@ import { Frustum, Matrix4, Vector3, type PerspectiveCamera, type RenderPipeline,
 import { BRAND } from '../brand.ts'
 import { GRAPHICS_RESET } from './bootFailure.ts'
 import { watchLongTasks } from './longTasks.ts'
-import { buildWorld, createRenderer, gpuBufferOf, LIGHT_TUNE_RANGE, ndStopsFor, releaseGpu, WebGPUUnavailableError, type Gpu, type LightTuning, type World } from '../01_Initialize_World/world.ts'
+import { buildWorld, createRenderer, FULL_WORLD, gpuBufferOf, LIGHT_TUNE_RANGE, LITE_WORLD, ndStopsFor, releaseGpu, WebGPUUnavailableError, type Gpu, type LightTuning, type World } from '../01_Initialize_World/world.ts'
 import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
 import { RegionPlaces, layoutOf, regionPhysics } from '../01_Initialize_World/region/regionWorld.ts'
 import { streetCapacity, streetGridOf, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
@@ -60,7 +60,7 @@ import { KEYBOARD_SEAT, type Seat } from '../04_Connect_Hardware/seats.ts'
 import { FrameClock, type GlyphFamily, type KernelStats, type NetReport, type NetState, type SeatView, type SipocSnapshot, type Toast } from '../05_Observe_Environment/telemetry.ts'
 import { MemorySink, Recorder, fileSink, markdownFor, type RecorderSink, type RecorderSource } from '../05_Observe_Environment/recorder.ts'
 import type { AgentTelemetry } from '../05_Observe_Environment/agv.ts'
-import { Governor, defaultAgents, profileDevice, readDeviceHints, tierRange, type QualityKnobs } from '../05_Observe_Environment/governor.ts'
+import { Governor, defaultAgents, defaultCars, profileDevice, readDeviceHints, tierRange, type QualityKnobs } from '../05_Observe_Environment/governor.ts'
 import { CAR_TUNE_RANGE, chassisBox, clampTuning, kindOf, type CarTuning } from './car.ts'
 import { FleetView } from './fleetView.ts'
 import { RigView } from './rigView.ts'
@@ -101,7 +101,8 @@ export type BootStage = 'gpu' | 'world' | 'physics' | 'shaders' | 'frame'
 export interface EngineOptions {
   /** Pedestrians to simulate; absent: as many as the device profile allows (governor.ts defaultAgents). */
   agents?: number
-  cars: number
+  /** AI cars (?cars, 0–48); absent: the device profile decides (governor.ts defaultCars: 36, or 12 on a lite profile). */
+  cars?: number
   pixelRatio: number
   seed: number
   /** Starting local solar time, hours. */
@@ -112,7 +113,7 @@ export interface EngineOptions {
   shadows: boolean
   post: boolean
   profile: boolean
-  /** A fixed quality tier (0–4), or 'auto' for the governor. */
+  /** A fixed quality tier (-1 Lite … 4 Ultra), or 'auto' for the governor. */
   quality: number | 'auto'
   /** Frame-rate target; 0 = estimate from the display (held within 60–90). */
   targetFps: number
@@ -152,10 +153,18 @@ export interface EngineOptions {
    * one turns the post chain off (it is player 1's alone); the HUD stays player 1's.
    */
   players?: number
+  /**
+   * The lite profile (?lite=1 on, ?lite=0 off; absent: the device profile decides, governor.ts profileDevice): start at
+   * Lite with the automatic range Lite..Minimal, and boot the lighter city (Engine.create).
+   */
+  lite?: boolean
 }
 
-/** The options as the engine runs them: the crowd's size decided, the player count clamped, and where the page runs. */
-export type EngineConfig = EngineOptions & { agents: number; players: number; host: 'browser' | 'native' }
+/**
+ * The options as the engine runs them: the crowd's and the fleet's sizes decided, the player count clamped, where the
+ * page runs, and whether the device profile is lite.
+ */
+export type EngineConfig = EngineOptions & { agents: number; cars: number; players: number; host: 'browser' | 'native'; lite: boolean }
 
 /**
  * Guardrail haptics (rumble 0..1, sent through the HAL bus, which picks WebHID or the Gamepad API and never
@@ -184,6 +193,8 @@ const ORIGIN_FLIP = false
 const NET = { defaultName: 'Visitor', voiceGraceS: 5 } as const
 /** No remote players: the one empty list netFrame holds between sessions. */
 const NO_PEERS: readonly RemotePose[] = Object.freeze([])
+/** A lite boot's street furniture as the physics realm gets it: none (the page keeps its own lists). */
+const NO_FURNITURE = Object.freeze({ lamps: [], trees: [], signals: [] })
 
 /**
  * One local player's view: their head (HeadRig) on a camera of their own, its frustum pack for the crowd cull, the
@@ -671,10 +682,12 @@ export class Engine {
       if (l) throw new WebGPUUnavailableError('gpu-reset', `The GPU device was lost while the city was built (${l.reason}): ${l.message || 'no message'}`, boot.hidden)
     }
     try {
-      // The device profile first: it decides the starting tier and, unless the page said (?crowd), how many pedestrians
-      // the physics realm simulates (the GPU buffers are sized for them at boot; the governor scales how many are drawn).
+      // The device profile first: it decides the starting tier and, unless the page said (?crowd, ?cars), how many
+      // pedestrians and cars the physics realm simulates (the GPU buffers are sized for them at boot; the governor scales
+      // how many are drawn). ?lite overrides its lite flag either way.
       const hints = readDeviceHints(gpu.adapterInfo)
-      const profile = profileDevice(hints)
+      const profile = profileDevice(hints, requested.lite)
+      const lite = profile.lite
       const pack = requested.region ?? null
       const layout = pack ? layoutOf(pack) : null
       const places = pack && layout ? new RegionPlaces(pack, layout) : null
@@ -689,25 +702,31 @@ export class Engine {
       const streets = pack && layout ? streetGridOf(pack, layout.offset, spawn) : null
       const empty = pack !== null && streets === null
       // Split screen: the post chain is player 1's alone (one pipeline, one velocity history, one full-screen pass), so
-      // with more than one player it is off at every tier, as ?post=0 is, and every viewport takes the direct path.
+      // with more than one player it is off at every tier, as ?post=0 is, and every viewport takes the direct path. A
+      // lite profile caps it off the same way: its tiers never use it, and its boot never compiles it (below).
       const players = clampPlayers(requested.players)
+      const cars = requested.cars ?? defaultCars(profile)
       const options: EngineConfig = {
-        ...requested, players, post: requested.post && players === 1,
+        ...requested, players, post: requested.post && players === 1 && !lite, lite,
         // A region's cars ride the window's rings alone (the street-hopping drivers of ?tracks=0 know the procedural grid only).
-        cars: empty ? 0 : streets ? (requested.tracks === false ? 0 : Math.min(requested.cars, streetCapacity(streets, requested.seed))) : requested.cars,
+        cars: empty ? 0 : streets ? (requested.tracks === false ? 0 : Math.min(cars, streetCapacity(streets, requested.seed))) : cars,
         agents: empty ? AGENTS_RANGE[0] : requested.agents ?? defaultAgents(profile), host: hints.host ?? 'browser',
       }
-      const world = buildWorld(gpu.renderer, options.seed, pack && layout ? { pack, layout, streets } : null)
+      const world = buildWorld(gpu.renderer, options.seed, pack && layout ? { pack, layout, streets } : null, lite ? LITE_WORLD : FULL_WORLD)
       // Players 1..3 (split screen) start beside player 0 along the sidewalk (the city's spawn sidewalk runs along z; a
       // region's along its street heading); the realm moves a spawn out of a building lot itself.
       const along = start ? { x: Math.sin(start.heading), z: Math.cos(start.heading) } : { x: 0, z: 1 }
       const spawns: { x: number; z: number }[] = []
       for (let k = 1; k < players; k++) spawns.push({ x: spawn.x + along.x * SPLIT.spawnGap * k, z: spawn.z + along.z * SPLIT.spawnGap * k })
       // The physics realm boots (Rapier, the city's colliders or the region's, the fleet) while this thread sets up quality.
+      // A lite boot hands it a lighter world: no street-furniture sensors (every worker query excludes sensors and they
+      // exchange no contact, so they only cost the broad phase; the page keeps world.furniture for drawing, the pole
+      // index, the contact pulse, the dissolve and the ghost view), no ragdoll, and no scheduled craft (nothing on the
+      // page draws them yet).
       simBoot = SimClient.create({
-        seed: options.seed, cars: options.cars, agents: options.agents, boxes: world.boxes, furniture: world.furniture, spawn, debug: options.debug === true,
-        region: pack && layout ? regionPhysics(pack, layout) : null, streets, tracks: options.tracks !== false,
-        ragdoll: options.ragdoll !== false && !pack,
+        seed: options.seed, cars: options.cars, agents: options.agents, boxes: world.boxes, furniture: lite ? NO_FURNITURE : world.furniture, spawn,
+        debug: options.debug === true, region: pack && layout ? regionPhysics(pack, layout) : null, streets, tracks: options.tracks !== false,
+        ragdoll: options.ragdoll !== false && !pack && !lite, craft: !lite,
         ...(spawns.length > 0 && { spawns }),
       })
 
@@ -718,8 +737,8 @@ export class Engine {
       const targetMs = options.targetFps > 0 ? 1000 / options.targetFps : undefined
       const pacerMs = options.cinema === false ? undefined : 1000 / CINEMA.fps
       const governor = options.quality === 'auto'
-        ? new Governor({ tier: profile.startTier, auto: true, targetMs, pacerMs, ...range })
-        : new Governor({ tier: options.quality, auto: false, targetMs, pacerMs, ...range })
+        ? new Governor({ tier: profile.startTier, auto: true, targetMs, pacerMs, lite, ...range })
+        : new Governor({ tier: options.quality, auto: false, targetMs, pacerMs, lite, ...range })
       const mask = (k: QualityKnobs): QualityKnobs => ({ ...k, shadows: k.shadows && options.shadows, post: k.post && options.post })
       const first = governor.knobs()
       // In a region without a street window nobody of the procedural crowd is drawn (they walk the procedural grid,
@@ -747,14 +766,16 @@ export class Engine {
       if (sim.meta.agents !== options.agents) throw new Error(`the physics worker simulates ${sim.meta.agents} pedestrians, the page draws ${options.agents}`)
       const view = new FleetView(sim.meta.kind, sim.meta.paint, world.night, world.matrixMode.globalState)
       view.sync(sim.state.poses)
-      // The rigs of the promoted pedestrians (the realm's rig stream; none with the ragdoll off or in a region).
+      // The rigs of the promoted pedestrians (the realm's rig stream; none with the ragdoll off, in a region or on a lite
+      // boot). Without rig slots their thirteen meshes would only ever draw nothing, every frame: they stay out.
       const rigView = new RigView(sim.meta.rigSlots, world.matrixMode.globalState)
       rigView.sync(sim.state.rigs)
-      world.scene.add(...view0.meshes, ...view.bodies, view.wheels, ...rigView.meshes)
+      const rigMeshes = sim.meta.rigSlots > 0 ? rigView.meshes : []
+      world.scene.add(...view0.meshes, ...view.bodies, view.wheels, ...rigMeshes)
       // The network ghosts (netView.ts): two hidden instanced meshes until a session's poses arrive, compiled with the rest.
       const netView = new NetView()
       world.scene.add(netView.people, netView.cars)
-      const ghost = createGhost({ boxes: world.boxes, furniture: world.furniture, suv: sim.meta.suv, crowdPos: view0.pos, agents: options.agents, rigs: rigView.meshes })
+      const ghost = createGhost({ boxes: world.boxes, furniture: world.furniture, suv: sim.meta.suv, crowdPos: view0.pos, agents: options.agents, rigs: rigMeshes })
       const { pipeline: post, volumetrics, cinema } = buildPost(gpu.renderer, world.scene, world.camera, options.cinema === false ? null : { resorted: world.resorted }, ghost)
 
       const w = Math.max(1, canvas.clientWidth), h = Math.max(1, canvas.clientHeight)
@@ -771,10 +792,11 @@ export class Engine {
       // Draw once on BOTH paths (post and direct), so a later quality step that toggles post never compiles a
       // pipeline mid-game; the boot veil hides these frames. They draw inside a validation scope: a draw the browser's
       // WebGPU refuses, or a device lost meanwhile, fails the boot with its own words instead of lifting the veil onto
-      // a city that never presents.
+      // a city that never presents. With post capped off (?post=0, split screen, a lite profile) the chain can never
+      // run, so it is not drawn: three then never compiles its passes or the velocity copies of every material.
       gpu.device.pushErrorScope('validation')
       gpu.renderer.render(world.scene, world.camera)
-      post.render()
+      if (options.post) post.render()
       const invalid = await gpu.device.popErrorScope()
       stillThere()
       if (invalid) throw new Error(`the first frame failed WebGPU validation: ${invalid.message}`)
@@ -924,6 +946,7 @@ export class Engine {
     this.ghost.setOn(on)
     this.applyTier()
     if (on && this.views.length > 1) return 'needs the post-processing chain, which is off while the screen is split'
+    if (on && !this.options.post && this.options.lite) return 'needs the post-processing chain, which the lite profile turned off (?lite=0 keeps it)'
     if (on && !this.options.post) return 'needs the post-processing chain, which ?post=0 turned off'
     return on ? 'on: every physics shape as code (G to hide)' : 'off'
   }

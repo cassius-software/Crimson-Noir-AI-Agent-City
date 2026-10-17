@@ -15,6 +15,26 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **A Lite tier and a lite profile for entry-level phone GPUs.** A phone whose WebGPU adapter is ARM Bifrost or
+  Midgard (Chrome reports a Mali-G52 as `arm / bifrost`), Imagination PowerVR or Adreno 5xx and older, or that reports
+  2 GB of memory or less, now profiles as lite (`governor.ts` `DeviceProfile.lite`); it used to start on Minimal with
+  5,000 pedestrians and compile the whole post chain at boot. A lite profile starts on **Lite**, tier -1 below Minimal
+  (half the base pixel ratio's edge, a thinner and shorter crowd draw), and its automatic range stops at Minimal, so
+  nothing it skipped at boot is ever needed mid-game. It simulates 2,500 pedestrians and 12 cars unless `?crowd` or
+  `?cars` says, and boots a lighter city: the post chain capped off as with `?post=0` and not drawn at boot (any boot
+  with the chain capped off, `?post=0` and split screen included, now skips that draw, so three never compiles its
+  passes and velocity copies; an uncapped boot is unchanged), no lamp point lights, a 64² environment probe baked once
+  a game hour, no clouds, coarser canopies and signal lenses (about half the street furniture's triangles), a
+  building re-sort every 24 m, and a physics realm without the street-furniture sensors, the balance machine or the
+  scheduled craft (a new `SimInit.craft` flag, on by default). The rig meshes are left out of any scene without rig
+  slots. Lite is outside the tier table, so `?quality=0`…`4` and every existing tier index keep their meaning;
+  `?quality=-1` or `?quality=lite` and the console's `quality -1` or `quality lite` pin it, and `?lite=1` / `?lite=0`
+  force the profile on or off. The HUD and the snapshot show the tier as Lite, and the console's quality line ends
+  with `lite profile`. Valhall and Immortalis, Adreno 6xx and newer, Xclipse, iPhones, desktops, the Windows app and
+  software rasterizers keep their profiles (unit tests pin each). Tried in CI's headless Chromium on SwiftShader with a
+  faked Mali-G52 adapter, Android client hints, 4 GB and a 412 × 915 screen at a device pixel ratio of 2.625 (the
+  browser smoke's new `lite` scenario), not on a real Mali phone: boot time and frame rate there are not measured.
+
 - **Never a dead end.** Wherever the city cannot start or stops, the page now says why in words for the device it
   runs on and offers a way out, with nothing else needed: the installed iPhone app (full screen, no address bar, no
   reload) and the Windows app (no browser chrome) had none before. One recovery card

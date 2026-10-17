@@ -239,8 +239,9 @@ export class SimCore {
     const streets = r ? (o.streets ?? null) : null
     const network = o.tracks === true ? (streets ? streetNetwork(o.seed, streets) : buildTrackNetwork(o.seed)) : null
     this.#fleet = new Fleet(physics, o.cars, o.seed, { exposeRig: this.#debug, network: network ?? undefined })
-    // The corridors are laid over the city's grid: a region has no elevated loop and no racetrack over it.
-    this.#craft = network && !r ? new TrackFleet(network) : null
+    // The corridors are laid over the city's grid: a region has no elevated loop and no racetrack over it. A lite boot
+    // asks for none (SimInit.craft false): nothing on the page draws them yet.
+    this.#craft = network && !r && o.craft !== false ? new TrackFleet(network) : null
     // Every player's body, in player order: Sanctuary ward k and audit person k are player k.
     const spawns = [o.spawn, ...(o.spawns ?? [])]
     this.#avatars = Object.freeze(spawns.map((p) => new Avatar(physics, p.x, p.z)))
