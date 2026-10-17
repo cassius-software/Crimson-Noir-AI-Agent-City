@@ -129,7 +129,7 @@ export class HalBus {
 
   constructor(opts: HalOptions = {}) {
     this.nav = opts.navigator === undefined ? defaultNavigator() : opts.navigator
-    this.brand = opts.brand ?? { name: BRAND.name, version: BRAND.version }
+    this.brand = opts.brand ?? { name: BRAND.short, version: BRAND.version }
     this.now = opts.now ?? (() => performance.now())
     this.hidInterval = opts.hidIntervalMs ?? 25
     this.bleConnectMs = opts.bleConnectMs ?? 10000

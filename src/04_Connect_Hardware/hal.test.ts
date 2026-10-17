@@ -339,7 +339,9 @@ test('serial: granted HAL/1 device handshakes; a silent one errors; telemetry is
   const bus = new HalBus({ navigator: nav({ serial }), now: () => now })
   await bus.autoconnect()
   assert.deepEqual(bus.devices().map((d) => [d.transport, d.name, d.state, d.detail]), [['serial', 'Dash Panel', 'ready', 'HAL/1 · serial']])
-  assert.equal(good.written[0], `HELLO ${BRAND.name}/${BRAND.version}\n`)
+  // The short name, as one token: the line protocol has no room for the full name's spaces.
+  assert.equal(BRAND.short, 'Crimson Noir')
+  assert.equal(good.written[0], `HELLO Crimson-Noir/${BRAND.version}\n`)
   for (let i = 0; i < 5; i++) bus.telemetry({ speedKmh: i, gear: 'D', parked: false })
   await sleep(2)
   assert.deepEqual(good.written.filter((l) => l.startsWith('{')), ['{"speedKmh":0,"gear":"D","parked":false}\n'])

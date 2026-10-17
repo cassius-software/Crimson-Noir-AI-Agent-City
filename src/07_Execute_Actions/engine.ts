@@ -2149,7 +2149,7 @@ export class Engine {
    */
   private async startRecording(source: RecorderSource): Promise<string> {
     if (this.recorder.state.active) throw new Error('already recording')
-    const brand = BRAND.name.toLowerCase()
+    const brand = BRAND.host
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
     const name = `${brand}-${stamp}.agv`
     const picker = (globalThis as { showSaveFilePicker?: (o: unknown) => Promise<FileSystemFileHandle> }).showSaveFilePicker

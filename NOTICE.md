@@ -22,7 +22,7 @@ This product is based on the following Licensed Material:
 
 If you use our Licensed Material in your own published works, please credit us as follows:
 
-- ONYX © 2026 Julian Cassius Subban.
+- Crimson Noir: Agent City © 2026 Julian Cassius Subban.
 
 Naming the upstream work is attribution only, as Section III(b) of the ORC License requires. This
 product is not affiliated with, sponsored or endorsed by Paizo Inc. or any other licensor (Section
@@ -53,9 +53,9 @@ limited to:
 ## Reserved Material
 
 Reserved Material elements in this product include, but may not be limited to: the product name
-ONYX (the provisional working name set in `src/brand.ts`) and the terminal host name derived from it;
-the product logo, a black rounded square with an open white triangle (`MonolithLogo`,
-`MONOLITH_SVG`), at every size and as the favicon; the product's trade dress, namely the frosted-glass
+Crimson Noir: Agent City and its short form Crimson Noir (set in `src/brand.ts`), and the terminal host name derived
+from them; the product logo, a city skyline of five towers and a spire over one crimson line on an ink rounded square
+(`MonolithLogo`, `MONOLITH_SVG`), at every size, as the favicon and as the app and home-screen icons; the product's trade dress, namely the frosted-glass
 HUD, the boot splash, the Concierge card and the arrangement of their panels; the visual art of the city, its procedural
 models, materials and textures; the product's sound design; and all elements designated as Reserved
 Material under the ORC License.
@@ -199,8 +199,9 @@ release; each one is something the release engineering could not confirm.
 
 ### Candidate names: trademark notes (AEGIS, ONYX, SENTIS)
 
-Preliminary findings from web searches in September 2026. These results were not checked against
-the USPTO, CIPO or EUIPO registers.
+The product's name was settled on 2026-10-16 as Crimson Noir: Agent City, and none of these names is shown in the
+product any more; the notes are kept for counsel. Preliminary findings from web searches in September 2026. These
+results were not checked against the USPTO, CIPO or EUIPO registers.
 
 - **SENTIS: high risk.** Sentis is Unity Technologies' on-device neural-network inference package for
   games and apps (`com.unity.ai.inference`, displayed as "Sentis"). Unity filed UNITY SENTIS with the

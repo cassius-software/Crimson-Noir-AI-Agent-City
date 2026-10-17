@@ -16,6 +16,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { Script, createContext } from 'node:vm'
+import { BRAND } from './brand.ts'
 
 // tools/ is plain JavaScript with no types; a computed specifier keeps the page's typecheck off it.
 const PWA: string = '../tools/web/pwa.mjs'
@@ -76,7 +77,10 @@ function pngSize(file: string): [number, number] {
 test('the manifest names the product, full screen from the folder, and every icon is the PNG of the size it declares', () => {
   const m = web.manifest()
   assert.equal(m.name, 'Crimson Noir: Agent City')
-  assert.equal(m.short_name, 'Agent City')
+  assert.equal(m.short_name, 'Crimson Noir')
+  // The page and the home screen carry one name: brand.ts's.
+  assert.equal(web.APP_NAME, BRAND.name)
+  assert.equal(web.SHORT_NAME, BRAND.short)
   assert.equal(m.start_url, './')
   assert.equal(m.scope, './')
   assert.equal(m.display, 'fullscreen')

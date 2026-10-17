@@ -5,7 +5,7 @@ Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
 Crimson Noir OS / Agent City is dual-licensed: its core is proprietary, its auxiliary tooling is open source, and
 the game mechanics it expresses are offered under the ORC License. Every source file says which licence it is under
 in a header at its top (its SPDX-License-Identifier line); `node tools/license/headers.mjs check` verifies them.
-"ONYX" is the page's provisional working name; the names, logos and trade dress are Reserved Material (NOTICE.md).
+The product's name is Crimson Noir: Agent City; the names, logos and trade dress are Reserved Material (NOTICE.md).
 
 
 1. The proprietary core (LicenseRef-CrimsonNoir-Proprietary)
