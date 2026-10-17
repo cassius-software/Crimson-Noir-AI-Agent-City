@@ -14,8 +14,8 @@ are in `brand/marks/`. `brand/preview.html` shows all of it in one page.
 1. **Minimal.** One accent, two materials, one face. A screen shows what the operator needs and nothing it does not.
 2. **Industrial luxury.** Surfaces are Vantablack and anodized titanium: matte, flat, hairline-edged. No gradients,
    no glow, no frosted glass, no drop shadow but the mark's own.
-3. **Precise geometry.** Everything sits on a 4pt grid; corners share the mark's family of radii; crimson is a line,
-   a point or a triangle, never a wash.
+3. **Precise geometry.** Everything sits on a 4pt grid; corners share the mark's family of radii; crimson is a line
+   or a point, never a wash.
 4. **Quiet motion.** Two durations, one curve. Things reveal; they do not bounce.
 
 ## Palette

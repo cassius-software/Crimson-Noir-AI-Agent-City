@@ -124,12 +124,12 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 ### Changed
 
 - **The app is called Crimson Noir: Agent City everywhere, with a new mark.** The page title, the boot splash, the
-  HUD, the "couldn't start" card, the Windows title bar, the console's `version`, `uname` and prompt, recordings'
-  file names and the shipped notice all said ONYX, the old working name, and showed its black square with a white
-  triangle. They now read Crimson Noir: Agent City (Crimson Noir on a phone's HUD and home screen) and show a new
-  mark drawn from the cover art: five towers and a spire over one crimson street line on an ink square. The Windows
-  app's icons and installer icon and the home-screen icons are rendered from the same shapes. Unverified without a
-  GPU: how the mark looks in the running city.
+  HUD, the "couldn't start" card, the Windows title bar, the console's `version`, `uname` and prompt, recordings' file
+  names and the shipped notice all showed the old working name and its black square with a white triangle. They now
+  read Crimson Noir: Agent City (Crimson Noir on a phone's HUD and home screen) and show a new mark drawn from the
+  cover art: five towers and a spire over one crimson street line on an ink square. The Windows app's icons and
+  installer icon and the home-screen icons are rendered from the same shapes. Unverified without a GPU: how the mark
+  looks in the running city.
 - **The crowd slides along walls**: the part of a step a wall or a piece of furniture refuses is taken out of the
   pedestrian's velocity, so they slide along it instead of pressing into it. Nobody walked into buildings before
   either: every lot was solid and the crowd kept 0.35 m outside it.

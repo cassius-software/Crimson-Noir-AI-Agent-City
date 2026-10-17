@@ -151,13 +151,13 @@ release; each one is something the release engineering could not confirm.
 5. **Notice placement.** The ORC Notice is on the Concierge card and embedded, with the full attribution,
    in `dist/index.html`. If the product is listed in a store or on a web page, repeat this notice in its
    credits or legal page ("in a reasonable manner based on the medium", Section III).
-6. **Name clearance.** `BRAND.name` is provisional. The notes below are preliminary web research,
-   not a clearance search. Commission a full search (USPTO, CIPO, EUIPO; classes 9, 41 and 42) before
+6. **Name clearance.** `BRAND.name` is Crimson Noir: Agent City (settled 2026-10-16). The notes below are
+   preliminary web research on the earlier candidates, not a clearance search. Commission a full search (USPTO, CIPO, EUIPO; classes 9, 41 and 42) before
    filing or launching. When the name changes, update `src/brand.ts`, this file and `LICENSE`.
    `degrees.test.ts` fails if this file does not name the current `BRAND.name`.
-7. **Logo clearance.** A triangle in a dark rounded square is a simple geometric mark. Compare it with
-   triangle marks in software and developer tools (for example Vercel's triangle) before registering.
-   "Monolith" is only the internal component name. Do not use it as a public name: MONOLITH is
+7. **Logo clearance.** A city skyline in a dark rounded square is a common motif. Compare it with skyline
+   and city-silhouette marks in games and software before registering. "Monolith" is only the internal
+   component name, kept from the earlier triangle mark. Do not use it as a public name: MONOLITH is
    associated in games with Monolith Productions (Warner Bros. Games; the studio closed in 2025, but
    the mark may still be held) and Monolith Soft (Nintendo).
 8. **"14A".** 14A is a Canadian provincial film classification, not a video-game rating (games in

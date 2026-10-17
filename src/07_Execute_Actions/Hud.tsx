@@ -371,7 +371,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
                 <div className={`flex max-w-full items-center gap-2.5 py-2 pr-3.5 pl-2.5 ${panel}`} data-hud="panel">
                   <MonolithLogo size={28} title="" />
                   <div className="min-w-0">
-                    <div className="flex min-w-0 items-center text-[14px] leading-tight font-semibold tracking-tight">{BRAND.short}{nameTag}</div>
+                    <div className="flex min-w-0 items-center text-[14px] leading-tight font-semibold tracking-tight"><span className="shrink-0 whitespace-nowrap">{BRAND.short}</span>{nameTag}</div>
                     <div className={`truncate text-[11px] ${muted}`}>{c.district}</div>
                   </div>
                   <div className={divider} />

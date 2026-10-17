@@ -71,7 +71,7 @@ export function TitleBar() {
     >
       <div data-tauri-drag-region className="flex h-full items-center gap-3 pl-3">
         <span className="pointer-events-none flex"><MonolithLogo size={16} title="" /></span>
-        <span data-tauri-drag-region className="noir-label text-noir-titanium-200">{BRAND.name}</span>
+        <span data-tauri-drag-region className="noir-label text-noir-titanium-200">{BRAND.short}</span>
         <span data-tauri-drag-region className="noir-label hidden sm:inline">Agent City</span>
       </div>
       <div className="flex h-full items-stretch">
