@@ -154,10 +154,24 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   the downtown, chosen from the seed. Each replaces its lot's solid podium with glass walls, a 4 m doorway on one
   street, a ceiling and furniture, and has eight stations. A share of the GPU crowd works there in shifts (5 minutes
   of every 8): they walk the streets to the doorway, in to their station, work there and walk back out. The HUD shows
-  "At work indoors" and the rooms on the minimap; the console's `sim` line ends `at work N`. The Lakefront Metro map
-  has no rooms yet (`map city` shows them). Unverified from the cloud (no GPU): the rooms and the workday on screen;
-  `naga` validates both shader variants, and the containment, the routes and the workday's legs are tested in Node
-  on a mirror of the shader's step (500 walkers over 5,000 steps, none through a wall or a piece of furniture).
+  "At work indoors" and the rooms on the minimap; the console's `sim` line ends `at work N`. Unverified from the
+  cloud (no GPU): the rooms and the workday on screen; `naga` validates both shader variants, and the containment,
+  the routes and the workday's legs are tested in Node on a mirror of the shader's step (500 walkers over 5,000
+  steps, none through a wall or a piece of furniture).
+- **The six workplaces in Lakefront Metro too** (`src/01_Initialize_World/region/workplaces.ts`): `?map=lakefront`
+  gets the same six rooms, inside the 16-block street window round where you start. A lot is a candidate when one of
+  its street fronts is a two-way street with a sidewalk that can be walked to from the start; the transit hubs come
+  first (their podium becomes the room's ceiling and their tower is carried above it), then the lots the other
+  buildings fill, nearest the start first; never the tallest building's lot and never one under water. The page picks
+  the lots and sends them to the physics worker (`SimInit.workplaces`, checked there), so the rooms drawn, the rooms
+  walled in Rapier and the flow field, and the rooms the crowd walks to are the same six. A generated window has
+  missing and pedestrian-only streets, where the city's greedy walk from corner to corner can stall for good, so each
+  room has a route table over the window's intersections (`packRoutes`, read by the crowd shader's `commuteCorner`);
+  the procedural city's table is all zero and its commute is unchanged. The HUD's "At work indoors" and the minimap's
+  rooms now show on that map, and `map` says so. The browser smoke boots `?map=lakefront` and checks that the six
+  rooms reached the crowd; it does not wait for anyone to reach work, since the software renderer runs that map's
+  realm at about a tenth of real time: a longer run on it saw the first worker at a station after 81 s of realm time,
+  about 20 minutes. Unverified from the cloud (no GPU): the rooms on screen and the workday at full speed there.
 
 ### Changed
 
