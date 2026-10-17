@@ -8,15 +8,15 @@
 // person in its corridor ahead and behind), spring-damper staggers, the Ring-0 flag for a non-finite
 // pedestrian state, the operator's summons (a person asked over walks to the operator along the sidewalk
 // and stops to talk, the safety reflexes still first), the workday (one person in WORK_ONE_IN has a station in
-// one of the city's indoor workplaces, 01_Initialize_World/interiors.ts: on shift they walk the corner graph to the
-// workplace's block, along the sidewalk to its doorway, in to their station and work there, then walk out and back
-// to their day), the containment that keeps everyone out of the lots but lets a room's doorway through and slides
+// one of the indoor workplaces, 01_Initialize_World/interiors.ts, the city's or a generated region's: on shift they
+// walk the corner graph to the workplace's block, by the route table where a street window has one, along the
+// sidewalk to its doorway, in to their station and work there, then walk out and back to their day), the containment that keeps everyone out of the lots but lets a room's doorway through and slides
 // a step along a wall or a piece of furniture instead of into it, and the visibility/density/LOD compaction that
 // feeds the indirect draws. Pedestrian coordinates are only ever written here, on the GPU.
 // What breaks if it is removed? Nobody spawns, walks, waits for a light, or gets drawn, and no car
 // can see the people in its path.
 //
-// CITY_*, TRAFFIC_*, SIGNAL_*, YIELD_*, WALK_*, KERNEL_*, CAR_*, GRID_*, SUMMON_*, ROOM_*, WORK_*, ACT_* and the limits below are
+// CITY_*, TRAFFIC_*, SIGNAL_*, YIELD_*, WALK_*, KERNEL_*, CAR_*, GRID_*, SUMMON_*, ROOM_*, ROUTE_*, WORK_*, ACT_* and the limits below are
 // prepended at runtime from city.ts / civic.ts / crowdCompute.ts so the CPU and GPU share one set of
 // numbers. The streets are a window of CITY_BLOCKS × CITY_BLOCKS blocks at CITY_PITCH from CITY_ORIGIN_X/Z: the
 // procedural city itself (every street present, at the origin), or a window of a generated region (Lakefront Metro,
@@ -78,7 +78,7 @@ struct Summon {
 // glass walls ROOM_WALL thick with a doorway 2 · ROOM_DOOR wide on one street front. a = (lot centre x, z, doorway side:
 // 0 faces +z, 1 −z, 2 +x, 3 −x; present), b = (the hub's u, m inside the doorway; furniture count; -, -), furniture =
 // (x0, z0, x1, z1) city boxes a step slides round, stations = (u, v, facing yaw, present) in the room's frame (u from
-// the back wall to the doorway, v across). A room with a.w = 0 is an empty slot (a region has none).
+// the back wall to the doorway, v across). A room with a.w = 0 is an empty slot (a region without workplaces has none).
 struct Room {
   a: vec4f,
   b: vec4f,
@@ -110,8 +110,19 @@ struct Params {
   // on it (bit 1); the east-west segments (index m · CITY_BLOCKS + k) then the north-south ((CITY_BLOCKS + 1) ·
   // CITY_BLOCKS + k · CITY_BLOCKS + m). The procedural city sets every bit.
   streets: array<vec4u, STREET_VEC4S>,
-  // The indoor workplaces (interiors.ts): the procedural city's six, or empty slots in a region.
+  // The indoor workplaces (interiors.ts): the procedural city's six, a generated region's (on lots of its street
+  // window, region/workplaces.ts), or empty slots in a region without them.
   rooms: array<Room, ROOM_SLOTS>,
+  // The commute's route table (region/workplaces.ts packRoutes): per room slot, ROUTE_ROOM_VEC4S rows of four bits per
+  // window intersection (index m · (CITY_BLOCKS + 1) + k, eight to a word): the street to take to come one intersection
+  // nearer the room's workplace corner (1 +x, 2 −x, 3 +z, 4 −z), 5 at its own intersection, 0 where it cannot be
+  // reached. All zero in the procedural city, whose commute is the greedy walk (towardCorner).
+  routes: array<vec4u, ROUTE_VEC4S>,
+  // The operator's way on foot (skills.ts OperatorTrail, packed by crowdCompute.ts): the last TRAIL_POINTS points they
+  // passed, each at least 0.75 m from the one before, newest first, two to a row (x, z, x, z), restarted when they jump
+  // (a teleport, out of a car); trailCount of them are set. Someone asked over follows it across a room (roomWay).
+  trail: array<vec4f, TRAIL_VEC4S>,
+  trailCount: u32,
 }
 
 // a = (goal.xy, preferred speed, retreat speed)
@@ -448,20 +459,66 @@ fn onDuty(i: u32, t: f32) -> bool {
 }
 // The door front: the sidewalk lane point outside room r's doorway, where the route leaves the street.
 fn doorFront(r: u32) -> vec2f { return roomWorld(r, vec2f(CITY_PITCH * 0.5 - CITY_LANE, 0.0)); }
-// Whether a room's glass stands between p and q: one of them inside its walls and the other not, and the line between
-// them leaving by a wall, not out through the doorway's opening (across the doorway wall's inner face, and its outer
-// face too when the one outside stands beyond it, within the opening).
-fn walled(p: vec2f, q: vec2f) -> bool {
-  let a = indoors(p);
-  let b = indoors(q);
-  if (a == b) { return false; }
-  let r = u32(select(b, a, a >= 0));
-  let i = roomLocal(r, select(q, p, a >= 0));
-  let o = roomLocal(r, select(p, q, a >= 0));
-  let inner = CITY_LOT_HALF - ROOM_WALL;
-  if (o.x <= inner || abs(mix(i.y, o.y, (inner - i.x) / (o.x - i.x))) >= ROOM_DOOR) { return true; }
-  return o.x > CITY_LOT_HALF && abs(mix(i.y, o.y, (CITY_LOT_HALF - i.x) / (o.x - i.x))) >= ROOM_DOOR;
+// Whether the segment from a to a + d passes through the open box (lo, hi): a slab test. A segment along a face, or one
+// that only touches it, does not.
+fn hitsBox(a: vec2f, d: vec2f, lo: vec2f, hi: vec2f) -> bool {
+  var t0 = 0.0;
+  var t1 = 1.0;
+  if (abs(d.x) < 1e-6) {
+    if (a.x <= lo.x || a.x >= hi.x) { return false; }
+  } else {
+    let ta = (lo.x - a.x) / d.x;
+    let tb = (hi.x - a.x) / d.x;
+    t0 = max(t0, min(ta, tb));
+    t1 = min(t1, max(ta, tb));
+  }
+  if (abs(d.y) < 1e-6) {
+    if (a.y <= lo.y || a.y >= hi.y) { return false; }
+  } else {
+    let ta = (lo.y - a.y) / d.y;
+    let tb = (hi.y - a.y) / d.y;
+    t0 = max(t0, min(ta, tb));
+    t1 = min(t1, max(ta, tb));
+  }
+  return t0 < t1;
 }
+// Pane k of a room's glass in its frame, (u0, v0, u1, v1) (interiors.ts glassPanes, the shell's walls): the back wall,
+// the two side walls, and the doorway's wall either side of the opening.
+fn glassPane(k: u32) -> vec4f {
+  let h = CITY_LOT_HALF;
+  let i = CITY_LOT_HALF - ROOM_WALL;
+  switch (k) {
+    case 0u: { return vec4f(-h, -h, -i, h); }
+    case 1u: { return vec4f(-i, -h, i, -i); }
+    case 2u: { return vec4f(-i, i, i, h); }
+    case 3u: { return vec4f(i, -h, h, -ROOM_DOOR); }
+    default: { return vec4f(i, ROOM_DOOR, h, h); }
+  }
+}
+// Whether the segment from a to b crosses room r's glass, each pane grown by `pad` (0: the glass itself; the
+// containment's reach: what it holds people out of). Exact, in the room's frame, where the panes are boxes
+// (interiors.ts crossesGlass).
+fn crossesGlass(r: u32, a: vec2f, b: vec2f, pad: f32) -> bool {
+  let p = roomLocal(r, a);
+  let d = roomLocal(r, b) - p;
+  for (var k = 0u; k < 5u; k++) {
+    let g = glassPane(k);
+    if (hitsBox(p, d, g.xy - pad, g.zw + pad)) { return true; }
+  }
+  return false;
+}
+// The room whose glass, each pane grown by `pad`, stands between p and q, or -1: the line between them crosses a pane of
+// the room whose lot either of them stands in. Exact on both sides of the doorway's inner face, so someone in the
+// doorway's band is judged by the same line as anyone a millimetre inside it, and at the jambs' corners.
+fn glassBetween(p: vec2f, q: vec2f, pad: f32) -> i32 {
+  let a = roomOf(p);
+  if (a >= 0 && crossesGlass(u32(a), p, q, pad)) { return a; }
+  let b = roomOf(q);
+  if (b >= 0 && b != a && crossesGlass(u32(b), p, q, pad)) { return b; }
+  return -1;
+}
+// Whether a room's glass stands between p and q.
+fn walled(p: vec2f, q: vec2f) -> bool { return glassBetween(p, q, 0.0) >= 0; }
 // The way out off room r's nearer wall face for someone outside it at p.
 fn offGlass(r: u32, p: vec2f) -> vec2f {
   let l = roomLocal(r, p);
@@ -469,44 +526,70 @@ fn offGlass(r: u32, p: vec2f) -> vec2f {
   let d = doorDir(P.rooms[r].a.z);
   return d * n.x + acrossDir(d) * n.y;
 }
-// Whether the line from a to b keeps clear of room r's furniture, each box grown by `pad` (a slab test per box). A
-// line along a grown face, or leaving it, is clear: someone the containment holds on a face can walk off it.
+// Whether the line from a to b keeps clear of room r's furniture, each box grown by `pad`. A line along a grown face,
+// or leaving it, is clear: someone the containment holds on a face can walk off it.
 fn clearOfFurniture(r: u32, a: vec2f, b: vec2f, pad: f32) -> bool {
-  let d = b - a;
   let n = min(u32(P.rooms[r].b.y), ROOM_FURNITURE);
   for (var k = 0u; k < n; k++) {
     let box = P.rooms[r].furniture[k];
-    let lo = box.xy - pad;
-    let hi = box.zw + pad;
-    var t0 = 0.0;
-    var t1 = 1.0;
-    if (abs(d.x) < 1e-6) {
-      if (a.x <= lo.x || a.x >= hi.x) { continue; }
-    } else {
-      let ta = (lo.x - a.x) / d.x;
-      let tb = (hi.x - a.x) / d.x;
-      t0 = max(t0, min(ta, tb));
-      t1 = min(t1, max(ta, tb));
-    }
-    if (abs(d.y) < 1e-6) {
-      if (a.y <= lo.y || a.y >= hi.y) { continue; }
-    } else {
-      let ta = (lo.y - a.y) / d.y;
-      let tb = (hi.y - a.y) / d.y;
-      t0 = max(t0, min(ta, tb));
-      t1 = min(t1, max(ta, tb));
-    }
-    if (t0 < t1) { return false; }
+    if (hitsBox(a, b - a, box.xy - pad, box.zw + pad)) { return false; }
   }
   return true;
 }
-// The way across room r from me to `to` round its furniture: the straight line when it is clear, else by the corner of
-// a piece (ROOM_ROUND beyond its grown corner, on the floor and clear of the other pieces) that makes the shortest
-// clear two-leg walk; with none, out along the nearer aisle towards the hub, from where one opens. The crowd's flow
-// field cannot do this: its 2 m cells run straight through a conveyor or a rack 0.8 m deep.
-fn roomWay(r: u32, me: vec2f, to: vec2f) -> vec2f {
+// The spot someone asked over across room r makes for in place of p: p, or where p is on a piece of furniture or
+// within a body's reach of one (the operator up on an AGV dock, in a table's corner, leaning on its end), the nearest
+// point ROOM_PAD and 5 cm off that piece that stays on the floor. A line to it can be clear where every line to p
+// runs into the piece, and it never leads along the band between the line test's reach and the containment's, where
+// the containment would refuse every step of it.
+fn offFurniture(r: u32, p: vec2f) -> vec2f {
+  let g = ROOM_PAD + 0.05;
+  let reach = CITY_LOT_HALF - ROOM_WALL - ROOM_PAD;
+  var q = p;
+  let n = min(u32(P.rooms[r].b.y), ROOM_FURNITURE);
+  for (var k = 0u; k < n; k++) {
+    let box = P.rooms[r].furniture[k];
+    let lo = box.xy - g;
+    let hi = box.zw + g;
+    if (any(q <= lo) || any(q >= hi)) { continue; }
+    var best = 1e9;
+    var spot = q;
+    for (var f = 0u; f < 4u; f++) {
+      let c = select(vec2f(select(lo.x, hi.x, f == 1u), q.y), vec2f(q.x, select(lo.y, hi.y, f == 3u)), f >= 2u);
+      let l = abs(roomLocal(r, c));
+      if (max(l.x, l.y) < reach && distance(c, q) < best) {
+        best = distance(c, q);
+        spot = c;
+      }
+    }
+    q = spot;
+  }
+  return q;
+}
+// Point k of the operator's trail (newest first), as someone asked over across room r makes for it (offFurniture).
+fn trailSpot(r: u32, k: u32) -> vec2f {
+  let row = P.trail[k / 2u];
+  return offFurniture(r, select(row.xy, row.zw, (k & 1u) != 0u));
+}
+// The way across room r from me to `to` round its furniture: the straight line to it (offFurniture's spot for it) when
+// that is clear. Else, for someone coming to the operator (`follow`), the operator's own way: the newest point of
+// their trail in a clear line with no glass between, or once level with it the one after it (the operator walked from
+// one to the next, round whatever corner hides it), which leads into a dead end and round the end of a long piece where
+// no one corner opens, and out of a room the operator has left. Else by the corner of a piece (ROOM_ROUND beyond its
+// grown corner, on the floor and clear of the other pieces) that makes the shortest clear two-leg walk; with none, out
+// along the nearer aisle towards the hub, from where one may open. The crowd's flow field cannot do this: its 2 m
+// cells run straight through a conveyor or a rack 0.8 m deep.
+fn roomWay(r: u32, me: vec2f, to: vec2f, follow: bool) -> vec2f {
   let clear = ROOM_PAD - 0.05;
-  if (clearOfFurniture(r, me, to, clear)) { return dirTo(me, to); }
+  let goal = offFurniture(r, to);
+  if (clearOfFurniture(r, me, goal, clear)) { return dirTo(me, goal); }
+  if (follow) {
+    for (var k = 0u; k < min(P.trailCount, TRAIL_POINTS); k++) {
+      let t = trailSpot(r, k);
+      if (!clearOfFurniture(r, me, t, clear) || walled(me, t)) { continue; }
+      let next = select(trailSpot(r, max(k, 1u) - 1u), goal, k == 0u);
+      return dirTo(me, select(t, next, distance(me, next) <= distance(t, next)));
+    }
+  }
   let n = min(u32(P.rooms[r].b.y), ROOM_FURNITURE);
   let reach = CITY_LOT_HALF - ROOM_WALL - ROOM_PAD;
   var best = 1e9;
@@ -516,43 +599,103 @@ fn roomWay(r: u32, me: vec2f, to: vec2f) -> vec2f {
     for (var c = 0u; c < 4u; c++) {
       let q = select(box.xy - (ROOM_PAD + ROOM_ROUND), box.zw + (ROOM_PAD + ROOM_ROUND), vec2<bool>((c & 1u) != 0u, (c & 2u) != 0u));
       let l = roomLocal(r, q);
-      let cost = distance(me, q) + distance(q, to);
+      let cost = distance(me, q) + distance(q, goal);
       if (max(abs(l.x), abs(l.y)) >= reach || cost >= best) { continue; }
-      if (!clearOfFurniture(r, q, q, ROOM_PAD) || !clearOfFurniture(r, me, q, clear) || !clearOfFurniture(r, q, to, clear)) { continue; }
+      if (!clearOfFurniture(r, q, q, ROOM_PAD) || !clearOfFurniture(r, me, q, clear) || !clearOfFurniture(r, q, goal, clear)) { continue; }
       best = cost;
       aim = q;
     }
   }
   return dirTo(me, aim);
 }
-// The way for someone asked over at `me` to the operator at `at`, `dist` away. In the operator's room, round its
-// furniture (roomWay). Otherwise round the buildings: the flow field's direction under their feet when it has one, the
-// straight line on the last stretch (so they arrive and stop as before) and wherever the field is silent. One of them
-// inside a room and the other not is no last stretch. Near that room's doorway the way is its axis (to the hub going
-// in, to the door front going out: the field's doorway cells point straight at a jamb). Inside, it is out the way a
+// The spot someone asked over on the street makes for in place of p: p, or where p is within a body's reach of a lot
+// (the operator leaning on a building, on a room's glass, or in its doorway by a jamb), the nearest point ROOM_PAD and
+// 5 cm off it: out of the lot's square (pushOut), or out of each pane of a room's glass grown so.
+fn offLot(p: vec2f) -> vec2f {
+  let g = ROOM_PAD + 0.05;
+  let r = roomOf(p);
+  if (r < 0) { return pushOut(p, g); }
+  var l = roomLocal(u32(r), p);
+  for (var k = 0u; k < 5u; k++) {
+    let b = glassPane(k);
+    let lo = b.xy - g;
+    let hi = b.zw + g;
+    if (any(l <= lo) || any(l >= hi)) { continue; }
+    let dlo = l - lo;
+    let dhi = hi - l;
+    let m = min(dlo, dhi);
+    if (m.x < m.y) { l.x = select(hi.x, lo.x, dlo.x < dhi.x); } else { l.y = select(hi.y, lo.y, dlo.y < dhi.y); }
+  }
+  return roomWorld(u32(r), l);
+}
+// Whether the segment from a to b cuts the containment of the lot p stands by: a building's lot square, or a room's
+// glass, grown by `pad`.
+fn lotCut(p: vec2f, a: vec2f, b: vec2f, pad: f32) -> bool {
+  let r = roomOf(p);
+  if (r >= 0) { return crossesGlass(u32(r), a, b, pad); }
+  let c = lotCenter(p);
+  return hitsBox(a, b - a, c - (CITY_LOT_HALF + pad), c + (CITY_LOT_HALF + pad));
+}
+// The way for someone asked over at `me` to the operator at `at`, `dist` away, with the glass of room `pane` between
+// them (glassBetween with no pad; -1 for none). In the operator's room, round its furniture (roomWay). Otherwise round the
+// buildings: the flow field's direction under their feet when it has one, the straight line on the last stretch (so
+// they arrive and stop as before) and wherever the field is silent. One of them inside a room and the other not, or a
+// room's glass between them, is no last stretch. Near that room's doorway the way is its axis (to the hub going in to
+// the operator, else to the door front: the field's doorway cells point straight at a jamb). Inside, it is out the way a
 // worker leaves, along the nearer aisle to just past the hub, so they cross into the doorway's reach instead of
 // hovering on the point. Outside, it is the field, and pressed on the glass, where the cell under them is the wall's,
-// the field one cell out from it.
-fn summonWay(me: vec2f, at: vec2f, dist: f32) -> vec2f {
+// the field one cell out from it. The operator's trail serves whoever comes to the operator, never to a rally point:
+// its newest point is by the summons.
+fn summonWay(me: vec2f, at: vec2f, dist: f32, pane: i32) -> vec2f {
   let mine = indoors(me);
   let theirs = indoors(at);
-  if (mine >= 0 && mine == theirs) { return roomWay(u32(mine), me, at); }
+  let follow = P.trailCount > 0u && distance(P.trail[0].xy, at) < TRAIL_NEAR;
+  if (mine >= 0 && mine == theirs) { return roomWay(u32(mine), me, at, follow); }
   var flow = flowAt(me);
-  if (mine != theirs) {
-    let r = u32(select(theirs, mine, mine >= 0));
+  if (mine != theirs || pane >= 0) {
+    let r = u32(select(select(pane, theirs, theirs >= 0), mine, mine >= 0));
     let l = roomLocal(r, me);
     let front = CITY_PITCH * 0.5 - CITY_LANE;
-    if (abs(l.y) < ROOM_DOOR + 1.5 && l.x > CITY_LOT_HALF - ROOM_WALL - 1.5 && l.x < front + 1.0) {
-      return dirTo(me, roomWorld(r, vec2f(select(front, P.rooms[r].b.x, mine < 0), 0.0)));
+    if (abs(l.y) < ROOM_DOOR + 1.5 && l.x > CITY_LOT_HALF - ROOM_WALL - 1.5 && l.x < front + 1.0 && (mine != theirs || l.x < CITY_LOT_HALF)) {
+      return dirTo(me, roomWorld(r, vec2f(select(front, P.rooms[r].b.x, mine < 0 && theirs == i32(r)), 0.0)));
     }
-    if (mine >= 0) { return roomWay(r, me, roomWorld(r, vec2f(P.rooms[r].b.x + 1.0, select(-ROOM_AISLE, ROOM_AISLE, l.y >= 0.0)))); }
+    if (mine >= 0) { return roomWay(r, me, roomWorld(r, vec2f(P.rooms[r].b.x + 1.0, select(-ROOM_AISLE, ROOM_AISLE, l.y >= 0.0))), follow); }
     if (dot(flow, flow) <= 0.5) {
       let here = roomOf(me);
       if (here >= 0) { flow = flowAt(me + offGlass(u32(here), me) / FLOW_INV_CELL); }
     }
     if (dot(flow, flow) > 0.5) { return flow; }
   }
-  return select(dirTo(me, at), flow, dot(flow, flow) > 0.5 && dist > 4.0 * SUMMON_STOP);
+  // The last stretch is the straight line to the operator (offLot's spot for them) only where it cuts no lot's
+  // containment (the pad less a millimetre: walking along a face someone is held on is no cut), so nobody is slid
+  // along a face until they stand level with the operator short of its corner. A doorway's jamb in the way (one of
+  // them in the opening's band, the other outside beside it) is gone round by its outer corner, just off the opening,
+  // where the field's 2 m cells see nothing to go round; anything else by the field's arrow, one cell off the glass
+  // where the cell under them is silent.
+  let goal = offLot(at);
+  let pad = ROOM_PAD - 1e-3;
+  if (dist <= 4.0 * SUMMON_STOP) {
+    if (!lotCut(me, me, goal, pad) && !lotCut(goal, me, goal, pad)) { return dirTo(me, goal); }
+    let r = roomOf(me);
+    if (r >= 0 && r == roomOf(goal)) {
+      var best = 1e9;
+      var aim = goal;
+      for (var s = -1.0; s < 2.0; s += 2.0) {
+        let c = roomWorld(u32(r), vec2f(CITY_LOT_HALF + ROOM_PAD + 0.05, s * (ROOM_DOOR - ROOM_PAD - 0.05)));
+        let cost = distance(me, c) + distance(c, goal);
+        if (cost < best && !crossesGlass(u32(r), me, c, pad) && !crossesGlass(u32(r), c, goal, pad)) {
+          best = cost;
+          aim = c;
+        }
+      }
+      if (best < 1e9) { return dirTo(me, aim); }
+    }
+  }
+  if (dot(flow, flow) <= 0.5) {
+    let here = roomOf(me);
+    if (here >= 0) { flow = flowAt(me + offGlass(u32(here), me) / FLOW_INV_CELL); }
+  }
+  return select(dirTo(me, goal), flow, dot(flow, flow) > 0.5);
 }
 // The sidewalk corner a commuter walks the corner graph to: the corner of the doorway's street on the room's own block
 // (interiors.ts targetCorner); its lane coordinate is the door front's, so the last stretch is straight along the lane.
@@ -638,6 +781,36 @@ fn towardCorner(t: vec2f, dest: vec2f, seed: u32) -> vec2f {
   }
   if (all(best == t)) { return nextCorner(t, seed); }
   return best;
+}
+// The route table's code for room r at window intersection km (Params.routes): 0 outside the window.
+fn routeWay(r: u32, km: vec2i) -> u32 {
+  if (any(km < vec2i(0)) || any(km > vec2i(CITY_BLOCKS))) { return 0u; }
+  let n = u32(km.y * (CITY_BLOCKS + 1) + km.x);
+  let w = r * ROUTE_ROOM_VEC4S * 4u + n / 8u;
+  return (P.routes[w / 4u][w % 4u] >> ((n % 8u) * 4u)) & 15u;
+}
+// Whether room r is walked to by the route table: its own workplace corner's intersection is marked (never in the
+// procedural city, whose table is all zero).
+fn routed(r: u32) -> bool { return routeWay(r, nearestLines(targetCorner(r))) == 5u; }
+// The next corner of a commute from corner t to room r's workplace corner. In a window whose table routes the room,
+// the street the table gives, along it where t stands on its side and over the crosswalk to that side first where
+// not (that corner exists: the street has a sidewalk); at the workplace's own intersection, the greedy walk, which
+// always arrives within one intersection; where the table has no way (a corner cut off from the room), the day's dice.
+// Unrouted (the procedural city), the greedy walk alone, as it always was.
+fn commuteCorner(t: vec2f, r: u32, seed: u32) -> vec2f {
+  let dest = targetCorner(r);
+  let km = nearestLines(t);
+  let way = routeWay(r, km);
+  if (!routed(r) || way == 5u) { return towardCorner(t, dest, seed); }
+  if (way == 0u) { return nextCorner(t, seed); }
+  let k = km.x;
+  let m = km.y;
+  let sx = select(-1.0, 1.0, t.x - (CITY_ORIGIN_X + f32(k) * CITY_PITCH) >= 0.0);
+  let sz = select(-1.0, 1.0, t.y - (CITY_ORIGIN_Z + f32(m) * CITY_PITCH) >= 0.0);
+  if (way == 1u) { return select(cornerPos(k, m, 1.0, sz), cornerPos(k + 1, m, -1.0, sz), sx > 0.0); }
+  if (way == 2u) { return select(cornerPos(k, m, -1.0, sz), cornerPos(k - 1, m, 1.0, sz), sx < 0.0); }
+  if (way == 3u) { return select(cornerPos(k, m, sx, 1.0), cornerPos(k, m + 1, sx, -1.0), sz > 0.0); }
+  return select(cornerPos(k, m, sx, -1.0), cornerPos(k, m - 1, sx, 1.0), sz < 0.0);
 }
 // The sidewalk corner nearest p on p's own block (both street offsets keep their sign): reachable along the
 // sidewalk without crossing a street. A released recruit resumes their day from there.
@@ -847,6 +1020,7 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
   var summoned = false;
   var tethered = false;
   var glass = false;
+  var seen = false;
   var at = vec2f(0.0);
   for (var s = 0u; s < SUMMON_SLOTS; s++) {
     let q = P.summons[s];
@@ -895,9 +1069,14 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
     let d = at - me;
     let dist = length(d);
     // Nobody talks through a room's glass: across it they keep coming (or come again, when the operator walked in or
-    // out without them), round by the doorway, at their full pace (the glass is no last stretch).
-    glass = walled(me, at);
-    if (b.b.w < 1.5 && dist <= SUMMON_STOP && !glass) {
+    // out without them), round by the doorway, at their full pace (the glass is no last stretch). They start talking
+    // only where they see the operator clear of the glass (the line to offLot's spot for them keeps the reach of a
+    // room's line test, ROOM_PAD - 0.05, off every pane), and stop only once the line crosses the glass itself: someone
+    // jostled at the edge of a jamb's shadow keeps to one or the other instead of flipping between them every frame.
+    let pane = glassBetween(me, at, 0.0);
+    glass = pane >= 0;
+    seen = glassBetween(me, offLot(at), ROOM_PAD - 0.05) < 0;
+    if (b.b.w < 1.5 && dist <= SUMMON_STOP && seen) {
       b.b.w = 2.0;
     } else if (b.b.w > 1.5 && (dist > SUMMON_STOP * 1.5 || glass)) {
       b.b.w = 1.0;
@@ -911,7 +1090,7 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
       // Tethered and fallen behind: hurry (TETHER_PACE, under the 3 m/s cap), easing to their own pace near.
       let far = select(dist, max(dist, SUMMON_STOP + 2.0), glass);
       let pace = select(b.a.z, max(b.a.z, TETHER_PACE * clamp((far - SUMMON_STOP) / 2.0, 0.0, 1.0)), tethered);
-      desired = summonWay(me, at, dist) * pace * clamp(far - SUMMON_STOP, 0.25, 1.0);
+      desired = summonWay(me, at, dist, pane) * pace * clamp(far - SUMMON_STOP, 0.25, 1.0);
       activity = ACT_COMING;
     }
     if (road) {
@@ -943,7 +1122,9 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
       // Their own workplace, until a shift ends (the leaving legs keep whichever room they are in).
       if (phase < 6.5) { room = u32(slot) / ROOM_STATIONS; }
       let duty = onDuty(i, P.time);
-      if (phase < 0.5 && duty) { phase = WORK_COMMUTE; }
+      // A routed commute starts only from a corner the table reaches the room from: someone whose day has taken them
+      // where the window cuts them off from it keeps that day, and the station waits for its other workers.
+      if (phase < 0.5 && duty && (!routed(room) || routeWay(room, nearestLines(b.a.xy)) != 0u)) { phase = WORK_COMMUTE; }
       if (phase > 5.5 && phase < 6.5 && !duty) {
         phase = WORK_LEAVE_ROW;
         row = P.rooms[room].stations[u32(slot) % ROOM_STATIONS].y;
@@ -1012,7 +1193,7 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
           phase = WORK_APPROACH;
           crossing = CROSS_NONE;
         } else {
-          let next = select(nextCorner(goal, hash2(i, P.frame)), towardCorner(goal, targetCorner(room), hash2(i, P.frame)), commuting);
+          let next = select(nextCorner(goal, hash2(i, P.frame)), commuteCorner(goal, room, hash2(i, P.frame)), commuting);
           crossing = select(CROSS_NONE, CROSS_WAIT, isCrossing(goal, next));
           b.a = vec4f(next, b.a.z, b.a.w);
         }
@@ -1040,9 +1221,9 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
   let sp = length(nv);
   if (sp > 3.0) { nv *= 3.0 / sp; }
   // Nor does the crowd's jostle (recruits queueing behind them, above all) carry someone asked over inside SUMMON_STOP:
-  // there, the part of the step taken towards the operator is dropped (not across a room's glass, where the way round
-  // may lead towards them). Before the kerb clip, which has the last word.
-  if (asked && !glass) {
+  // there, the part of the step taken towards the operator is dropped (not where they do not see the operator clear of
+  // a room's glass, where the way round may lead towards them). Before the kerb clip, which has the last word.
+  if (asked && seen) {
     let to = at - me;
     let dd = length(to);
     if (dd > 1e-4 && dd < SUMMON_STOP) {

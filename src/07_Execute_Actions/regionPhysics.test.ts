@@ -7,8 +7,11 @@
  * - the avatar stands on the region's 100 m ground tiles at its skin, far from the origin, and never sinks;
  * - a building's walls stop it, at any angle, from outside, and a courtyard's walls from inside;
  * - the lake's shoreline stops it, the region's edge stops it, and a street between buildings does not;
+ * - a workplace's room (interiors.ts, as a generated region holds them: regionWorld.ts hollowLots) is solid as in
+ *   the city: its back wall stops the avatar and its doorway lets it in; and the hollowed pack has no wall left on a
+ *   room's lot;
  * - the core audits a region against a slab that holds it, not the city's;
- * - the worker's door refuses a malformed region.
+ * - the worker's door refuses a malformed region, and malformed workplaces each with its own reason.
  * What breaks if it is removed? The avatar could walk through surveyed buildings, into the lake or off the map.
  */
 import assert from 'node:assert/strict'
@@ -18,11 +21,15 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { REGION_FORMAT, polygons, pushPolygon, type RegionPack } from '../01_Initialize_World/region/pack.ts'
 import type { Pt } from '../01_Initialize_World/region/clip.ts'
+import { regionWorkplaceLots } from '../01_Initialize_World/region/workplaces.ts'
+import { doorDir, toLocal, toWorld, workplacesAt } from '../01_Initialize_World/interiors.ts'
+import { ZONE, generateLakefront } from '../01_Initialize_World/lakefront.ts'
+import { packOf } from '../01_Initialize_World/lakefrontPack.ts'
 import { Physics } from './physics.ts'
 import { Avatar } from './player.ts'
 import { SimCore } from './simCore.ts'
 import type { SimInit } from './simProtocol.ts'
-import { cityStreetGrid } from '../01_Initialize_World/region/streets.ts'
+import { cityStreetGrid, streetGridOf } from '../01_Initialize_World/region/streets.ts'
 import { createSimHost } from './simHost.ts'
 
 // Vite's `?raw` import, for Node (crowdCompute.test.ts's hook): the world's matrix mode (01_Initialize_World/
@@ -34,7 +41,7 @@ registerHooks({
     return { format: 'module', source: `export default ${JSON.stringify(text)}`, shortCircuit: true }
   },
 })
-const { layoutOf, regionPhysics } = await import('../01_Initialize_World/region/regionWorld.ts')
+const { RegionPlaces, hollowLots, layoutOf, regionPhysics } = await import('../01_Initialize_World/region/regionWorld.ts')
 
 const H = 1 / 60
 
@@ -123,6 +130,45 @@ test('real Rapier: the lake\'s shore and the region\'s edge stop the avatar; ope
   assert.ok(Math.abs(street.x - -60) < 1, `open ground, 40 m in 20 s: ${street.x.toFixed(2)}`)
 })
 
+test('real Rapier: a workplace in a region is solid as in the city: its back wall stops the avatar, its doorway lets it in', async () => {
+  // A room on the lot south-west of the tower, its doorway facing +z: its boxes are the colliders the worker builds
+  // beside the region's walls.
+  const [room] = workplacesAt([{ kind: 'roboticsLab', k: 52, m: 52, side: 0 }])
+  const boxes = [...room.shell, ...room.furniture].map((b) => b.box)
+  const d = doorDir(room.side)
+  const walkU = async (u: number, speed: number, seconds: number) => {
+    const physics = await Physics.create(boxes, { lamps: [], trees: [], signals: [] }, regionPhysics(p, L))
+    const s = toWorld(room, u, 0)
+    physics.streamAt(s.x, s.z)
+    const a = new Avatar(physics, s.x, s.z)
+    for (let i = 0; i < seconds * 60; i++) physics.step(H, (h) => a.move(speed * d.x, speed * d.z, h))
+    return toLocal(room, a.x, a.z)
+  }
+  // From the street behind towards the doorway: the back wall's outer face is at u = −13.
+  const back = await walkU(-20, 2, 8)
+  assert.ok(back.u > -13.5 && back.u < -13.2, `stopped at the back wall: u ${back.u.toFixed(3)}`)
+  // From the street in front, in through the doorway past the glass (its inner face at u = 12.5), to the hub.
+  const door = await walkU(20, -2, 4.5)
+  assert.ok(door.u < 12 && door.u > 9 && Math.abs(door.v) < 0.5, `in through the doorway: (${door.u.toFixed(2)}, ${door.v.toFixed(2)})`)
+})
+
+test('the hollowed pack walls nothing on a room\'s lot, and with no lots it walls as the pack does', () => {
+  const pack = packOf(generateLakefront(1337, 64), ZONE.metropolis)
+  const layout = layoutOf(pack)
+  const start = new RegionPlaces(pack, layout).spawn({ x: layout.offset.x, z: layout.offset.z })
+  const lots = regionWorkplaceLots(pack, layout, streetGridOf(pack, layout.offset, start)!, start, 1337)
+  assert.equal(lots.length, 6)
+  const before = regionPhysics(pack, layout).walls
+  const walls = regionPhysics(hollowLots(pack, layout, lots).pack, layout).walls
+  assert.ok(walls.length < before.length, `${before.length / 5} walls, ${walls.length / 5} hollowed`)
+  for (let k = 0; k < walls.length; k += 5) {
+    for (const [x, z] of [[walls[k], walls[k + 1]], [walls[k + 2], walls[k + 3]]]) {
+      for (const l of lots) assert.ok(!(Math.abs(x - (l.k + 0.5) * 40) < 13 && Math.abs(z - (l.m + 0.5) * 40) < 13), `a wall at (${x}, ${z}) on lot ${l.k},${l.m}`)
+    }
+  }
+  assert.deepEqual(regionPhysics(hollowLots(pack, layout, []).pack, layout).walls, before)
+})
+
 test('streaming: only the wall tiles around the player exist; walking to a far wall builds its tile before it is reached', async () => {
   // Two walls 3 km apart across a long region, each a north–south wall 20 m long at z 1000..1020.
   const walls = new Float32Array([1100, 1000, 1100, 1020, 10, 4100, 1000, 4100, 1020, 10])
@@ -183,4 +229,39 @@ test('the worker refuses a malformed street window and takes a sound one', async
   const cityHandle = createSimHost((m: unknown) => city.push(m), async (o) => { assert.equal(o.streets, null); return SimCore.create(o, null) })
   await cityHandle({ ...init(sound), region: null } as unknown as SimInit)
   assert.equal((city.at(-1) as { t: string }).t, 'ready')
+})
+
+test('the worker refuses malformed workplaces, each with its own reason, and hands sound ones to the core', async () => {
+  const s = at(-150, -100)
+  const sound = cityStreetGrid()
+  sound.originX = 2000
+  sound.originZ = 2000
+  const lots = [{ kind: 'roboticsLab', k: 52, m: 52, side: 0 }, { kind: 'boardroom', k: 54, m: 52, side: 3 }]
+  const init = (workplaces: unknown, streets: unknown = sound) => ({ t: 'init' as const, seed: 1, cars: 0, agents: 256, boxes: [], furniture: { lamps: [], trees: [], signals: [] }, spawn: s, debug: false, region: regionPhysics(p, L), streets, workplaces })
+  const answer = async (msg: unknown, create = async (o: Parameters<typeof SimCore.create>[0]) => SimCore.create(o, null)) => {
+    const posts: unknown[] = []
+    await createSimHost((m: unknown) => posts.push(m), create)(msg as SimInit)
+    return posts.at(-1) as { t: string; message?: string }
+  }
+  const refused = async (msg: unknown, reason: RegExp, why: string) => {
+    const last = await answer(msg)
+    assert.equal(last.t, 'error', why)
+    assert.match(last.message ?? '', reason, why)
+  }
+  await refused(init(lots, null), /^init: workplaces need a region's street window$/, 'no street window')
+  await refused({ ...init(lots), region: null }, /^init: workplaces need a region's street window$/, 'the city has its own')
+  await refused(init({ 0: lots[0] }), /^init: workplaces are a list of at most 6$/, 'not a list')
+  await refused(init([...lots, ...lots, ...lots, lots[0]]), /^init: workplaces are a list of at most 6$/, 'seven')
+  await refused(init([{ ...lots[0], k: 49 }]), /^init: a workplace stands on a lot of the street window$/, 'west of the window')
+  await refused(init([{ ...lots[0], m: 66 }]), /^init: a workplace stands on a lot of the street window$/, 'south of the window')
+  await refused(init([{ ...lots[0], k: 52.5 }]), /^init: a workplace stands on a lot of the street window$/, 'between lots')
+  await refused(init([{ ...lots[0], side: 4 }]), /^init: a workplace's doorway faces one of its lot's four streets \(0 to 3\)$/, 'no fifth street')
+  await refused(init([{ ...lots[0], kind: 'casino' }]), /^init: a workplace is one of the six kinds$/, 'an unknown kind')
+  await refused(init([lots[0], { ...lots[1], k: 52 }]), /^init: one workplace to a lot$/, 'two on a lot')
+  // Sound ones reach the core as they were sent; none is no workplaces.
+  const handed: unknown[] = []
+  const take = async (o: Parameters<typeof SimCore.create>[0]) => { handed.push(o.workplaces); return SimCore.create(o, null) }
+  assert.equal((await answer(init(lots), take)).t, 'ready')
+  assert.equal((await answer(init(undefined), take)).t, 'ready')
+  assert.deepEqual(handed, [lots, []])
 })

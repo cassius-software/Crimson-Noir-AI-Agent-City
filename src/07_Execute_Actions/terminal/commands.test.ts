@@ -1676,8 +1676,8 @@ test('map: the map the shell walks; map city|lakefront|default hands the host a 
   const b = fake()
   assert.deepEqual(texts(run('map', b, [])), ['map: none (this console alone; boot gui walks a map)'])
   const lake = { ...b, brand: { ...b.brand, map: 'lakefront' as const } }
-  assert.deepEqual(texts(run('map', lake, [])), ['map: lakefront (the generated metropolis: no people or traffic yet; map city for them)'])
-  assert.deepEqual(texts(run('map status', lake, [])), ['map: lakefront (the generated metropolis: no people or traffic yet; map city for them)'])
+  assert.deepEqual(texts(run('map', lake, [])), ['map: lakefront (the generated metropolis: people, traffic and indoor workplaces in the 16 blocks round where you start)'])
+  assert.deepEqual(texts(run('map status', lake, [])), ['map: lakefront (the generated metropolis: people, traffic and indoor workplaces in the 16 blocks round where you start)'])
   const city = run('map city', lake, [])
   assert.equal(city.map, 'city')
   assert.deepEqual(city.lines, [{ kind: 'sys', text: 'map city: reloading into the procedural city (people and traffic)...' }])

@@ -113,6 +113,41 @@ export const RECRUIT_SLOTS = 8
 export const RECRUITING_PLAYER = 0
 
 /**
+ * The operator's way on foot as the crowd's uniform carries it (crowd.wgsl Params.trail): someone asked over to the
+ * operator follows it across a room where neither a straight line nor one piece's corner leads (into the row of AGV
+ * docks along a wall, round the end of a long rack), and out of a room the operator has left. `points` of them, each
+ * at least `spacing` m from the one before, newest first; a step of more than `jump` m (a teleport, out of a car)
+ * starts it again. It serves a summons to the operator's own position alone: one whose newest point is within `near`
+ * m of it, never a rally point.
+ */
+export const TRAIL = Object.freeze({ points: 16, spacing: 0.75, jump: 3, near: 1 } as const)
+
+/** The operator's recent way on foot (TRAIL), as the physics worker's crowd keeps it and packs it every step (crowdCompute.ts). */
+export class OperatorTrail {
+  /** (x, z) per point, newest first, as the uniform takes them. */
+  readonly xz = new Float32Array(TRAIL.points * 2)
+  /** How many points are set. */
+  count = 0
+
+  /** The operator at (x, z) this step, on foot or not: in a car (or nowhere to be seen) there is no way on foot. */
+  update(x: number, z: number, onFoot: boolean): void {
+    if (!onFoot || !Number.isFinite(Math.fround(x)) || !Number.isFinite(Math.fround(z))) {
+      this.count = 0
+      return
+    }
+    if (this.count > 0) {
+      const d = Math.hypot(x - this.xz[0], z - this.xz[1])
+      if (d > TRAIL.jump) this.count = 0
+      else if (d < TRAIL.spacing) return
+    }
+    this.xz.copyWithin(2, 0, (TRAIL.points - 1) * 2)
+    this.xz[0] = x
+    this.xz[1] = z
+    this.count = Math.min(TRAIL.points, this.count + 1)
+  }
+}
+
+/**
  * What a pedestrian is doing, as the crowd reports it per agent (crowd.wgsl writes it into pose.w): the recruiter
  * reads COMING and INTERVIEWING to know a summons was taken; the others describe their ordinary day, the workday's
  * among them (01_Initialize_World/interiors.ts: `commuting` to or from an indoor workplace, `working` at a station).

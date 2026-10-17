@@ -6,9 +6,10 @@
  * Why does this file exist? It is the browser smoke test of the built page (`npm run smoke:browser`): the 3D city booted
  * in a real Chrome or Chromium on the software WebGPU adapter (cdp.mjs SOFTWARE_WEBGPU), driven through the same input
  * events a person makes, on each kind of device the page has to work on:
- * - desktop: keyboard walking, a mouse drag turning the head, a gamepad (a standard-mapping pad stood in for the real
- *   one) walking and turning, the Ring-0 console opened with the tilde key and answering, typing in it never moving the
- *   avatar, ghost view and rain mode toggled from their keys, and a car entered, driven and left;
+ * - desktop: the procedural city's six indoor workplaces handed to its crowd, keyboard walking, a mouse drag turning
+ *   the head, a gamepad (a standard-mapping pad stood in for the real one) walking and turning, the Ring-0 console
+ *   opened with the tilde key and answering, typing in it never moving the avatar, ghost view and rain mode toggled from
+ *   their keys, and a car entered, driven and left;
  * - phone: an iPhone's user agent, screen and touch (no mouse, no keyboard): the virtual stick walking, a drag on the
  *   right half turning the head, both thumbs at once, the Run and Ping buttons, and the menu that reaches what a
  *   keyboard reaches (the console, the clock, ghost view, rain mode, hiding the HUD), also with a thumb on the stick;
@@ -27,6 +28,8 @@
  *   static host serves it, to an iPhone: the manifest read through the page's policy, the icons, the service worker
  *   installed, the second load cross-origin isolated by the worker, and the city started from the phone's copy with
  *   the host gone;
+ * - lakefront: the generated metropolis (?map=lakefront, built in the page's worker from the seed), whose crowd walks
+ *   its street window with the six workplaces the page picked from the pack and the HUD counting who is at work;
  * - fail: the ways out when the city cannot start or stops, each in its own browser: navigator.gpu taken away (the
  *   card before a first visit's onboarding, at desktop and phone size and in Firefox on Android with Open in Chrome
  *   first, Restart focused and taken by Enter, the pad's
@@ -271,6 +274,9 @@ const SCENARIOS = {
       check(advanced, 'desktop: the crowd simulation advances', `${f0} -> ${(await p.snap()).crowdFrames}`)
       const cards = await p.eval(`document.querySelectorAll('[data-failure]').length + (window.__bootDone === true ? 0 : 100)`)
       check(cards === 0, 'desktop: a city that started has no recovery card, and the boot watchdog stood down', `cards+watchdog=${cards}`)
+      // The physics worker reports how many rooms its crowd was handed (SimMeta.rooms).
+      const rooms = await p.eval('window.__SIM__.engine.sim.meta.rooms')
+      check(rooms === 6, 'desktop: the city\'s six indoor workplaces reached the crowd', `${rooms} rooms`)
 
       // Walk: W held (layout-independent code), the avatar moves.
       await p.mouse('mousePressed', 480, 270, 1)
@@ -775,6 +781,29 @@ const SCENARIOS = {
       await p.b.close()
       rmSync(dir, { recursive: true, force: true })
     }
+  },
+
+  async lakefront(chrome, origin) {
+    const p = await open(chrome)
+    try {
+      await p.goto(`${origin}/?map=lakefront&${LIGHT}`)
+      await p.booted()
+      // The rooms as the page drew them (the lots it picked from the pack) and as the physics worker's crowd was handed
+      // them (SimMeta.rooms: the worker builds them from the lots it was sent).
+      const r = await p.eval(`(() => { const e = window.__SIM__.engine, s = window.__SIM__.snapshot()
+        return { region: e.places !== null, window: e.streets !== null, drawn: e.rooms.length, crowd: e.sim.meta.rooms,
+          people: s.process.pedestrians, working: s.process.working, errors: window.__SIM__.errors().slice(0, 5) } })()`)
+      check(r.region && r.window, 'lakefront: ?map=lakefront walks the generated metropolis through its street window', `region ${r.region}, window ${r.window}`)
+      check(r.people > 0, 'lakefront: the window has people', `${r.people} pedestrians`)
+      check(r.drawn === 6 && r.crowd === 6, 'lakefront: six indoor workplaces drawn, and six reached the worker\'s crowd', `${r.drawn} drawn, ${r.crowd} in the worker's crowd`)
+      check(Number.isInteger(r.working) && r.working >= 0, 'lakefront: the HUD counts who is at work indoors', `working ${r.working}`)
+      const f0 = (await p.snap()).crowdFrames
+      const advanced = await p.waitFor(`window.__SIM__.snapshot().process.crowdFrames > ${f0 + 2}`, 60_000).then(() => true, () => false)
+      check(advanced, 'lakefront: the crowd simulation advances', `${f0} -> ${(await p.snap()).crowdFrames}`)
+      check(r.errors.length === 0, 'lakefront: the engine recorded no error', r.errors.join(' | ').slice(0, 300))
+      await p.shot('lakefront')
+      p.health('lakefront')
+    } finally { await p.b.close() }
   },
 
   /**

@@ -121,12 +121,17 @@ export function cityGrid(boxes: readonly Box[], cell = FLOW.cell): FlowGrid {
   return grid
 }
 
-/** A surveyed region's grid over its bounds: open ground, with its walls (x0, z0, x1, z1, height; five numbers each) blocked. */
-export function regionGrid(bounds: { x0: number; z0: number; x1: number; z1: number }, walls: ArrayLike<number>, cell = FLOW.cell): FlowGrid {
+/**
+ * A region's grid over its bounds: open ground, with its walls (x0, z0, x1, z1, height; five numbers each) blocked,
+ * and its boxes as the city's are (a generated region's workplaces, regionWorld.ts hollowLots: the glass and the
+ * furniture block, the ceiling slab and what it carries are walked under).
+ */
+export function regionGrid(bounds: { x0: number; z0: number; x1: number; z1: number }, walls: ArrayLike<number>, boxes: readonly Box[] = [], cell = FLOW.cell): FlowGrid {
   const w = Math.max(1, Math.ceil((bounds.x1 - bounds.x0) / cell)), h = Math.max(1, Math.ceil((bounds.z1 - bounds.z0) / cell))
   const grid = emptyGrid(w, h, bounds.x0, bounds.z0, cell)
-  const boxes: Box[] = []
-  for (let k = 0; k + 4 < walls.length; k += 5) boxes.push([walls[k], 0, walls[k + 1], walls[k + 2], 0, walls[k + 3]])
+  const segments: Box[] = []
+  for (let k = 0; k + 4 < walls.length; k += 5) segments.push([walls[k], 0, walls[k + 1], walls[k + 2], 0, walls[k + 3]])
+  blockBoxes(grid, segments)
   blockBoxes(grid, boxes)
   return grid
 }

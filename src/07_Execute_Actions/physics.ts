@@ -165,6 +165,21 @@ function regionColliders(world: RAPIER.World, fixed: RAPIER.RigidBody, r: Region
   return new WallStream(world, fixed, r.walls, ground)
 }
 
+/**
+ * Every box as a fixed cuboid: the city's buildings, and in a region the boxes it holds (a generated region's
+ * workplaces, regionWorld.ts hollowLots: the glass, the furniture, the ceiling slab and what it carries). A box that is
+ * not finite or has no extent is no collider.
+ */
+function boxColliders(world: RAPIER.World, fixed: RAPIER.RigidBody, boxes: readonly Box[]): void {
+  for (const [x0, y0, z0, x1, y1, z1] of boxes) {
+    if (![x0, y0, z0, x1, y1, z1].every(Number.isFinite) || !(x1 > x0 && y1 > y0 && z1 > z0)) continue
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid((x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2).setTranslation((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2),
+      fixed,
+    )
+  }
+}
+
 export class Physics {
   readonly world: RAPIER.World
   readonly stats: PhysicsStats = { stepMs: 0, steps: 0, bodies: 0, colliders: 0, ccd: 0 }
@@ -207,16 +222,12 @@ export class Physics {
     if (region) {
       const p = new Physics(world)
       p.walls = regionColliders(world, fixed, region)
+      boxColliders(world, fixed, boxes)
       world.step()
       return p
     }
     groundColliders(world, fixed)
-    for (const [x0, y0, z0, x1, y1, z1] of boxes) {
-      world.createCollider(
-        RAPIER.ColliderDesc.cuboid((x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2).setTranslation((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2),
-        fixed,
-      )
-    }
+    boxColliders(world, fixed, boxes)
     // Ghost mode: street furniture is in the world (ghost view draws it, a query can find it) but exchanges no
     // contact. The avatar and every car pass through lamps, trees and signal poles; the character controller,
     // the wheels, the AI's obstacle ray and the ground guard all exclude sensors.

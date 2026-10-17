@@ -17,7 +17,7 @@
 import { RAPIER } from './physics.ts'
 import { CAR, chassisBox, kindFromDraw, kindOf, RIDE_HEIGHT, WHEELS, type CarTuning, type DriveMode } from './car.ts'
 import { CITY, inLot } from '../01_Initialize_World/city.ts'
-import { insideRoom, penetrates, ROOM, toLocal, type Workplace } from '../01_Initialize_World/interiors.ts'
+import { crossesGlass, insideRoom, penetrates, ROOM, toLocal, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { KERNEL } from '../02_Define_The_Rules/civic.ts'
 import { VEHICLE_CHASSIS_GROUPS, WHEEL_RAY_GROUPS } from '../02_Define_The_Rules/collision.ts'
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
@@ -195,16 +195,9 @@ export function exitPoint(x: number, z: number, heading: number, rooms: readonly
   if (!room) return inLot(left.x, left.z, EXIT_LOT_PAD) ? { x: x - lx * EXIT_SIDE, z: z - lz * EXIT_SIDE } : left
   const indoors = reach(room, { x, z }) < CITY.lotHalf - ROOM.wall
   const street = (p: { x: number; z: number }) => !indoors && !inLot(p.x, p.z, EXIT_LOT_PAD)
-  // The line out to p crosses no wall (the band outside the doorway's opening): 32 samples, 7 cm apart, under the
-  // wall's 0.5 m.
-  const seen = (p: { x: number; z: number }) => {
-    for (let k = 1; k <= 32; k++) {
-      const { u, v } = toLocal(room, x + ((p.x - x) * k) / 32, z + ((p.z - z) * k) / 32)
-      const m = Math.max(Math.abs(u), Math.abs(v))
-      if (m > CITY.lotHalf - ROOM.wall && m < CITY.lotHalf && !(u > 0 && Math.abs(v) < ROOM.door)) return false
-    }
-    return true
-  }
+  // The line out to p crosses no pane of glass, exactly: 32 samples 6.6 cm apart missed a line that clips a jamb's
+  // inner corner by a few centimetres.
+  const seen = (p: { x: number; z: number }) => !crossesGlass(room, { x, z }, p)
   const clear = (p: { x: number; z: number }) => ((insideRoom(room, p.x, p.z) && !penetrates(room, p.x, p.z, PERSON.radius)) || street(p)) && seen(p)
   const walls = (p: { x: number; z: number }) => (reach(room, p) < CITY.lotHalf - ROOM.wall - PERSON.radius || street(p)) && seen(p)
   const fx = Math.sin(heading), fz = Math.cos(heading)

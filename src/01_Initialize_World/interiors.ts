@@ -246,7 +246,7 @@ function layouts(): Record<WorkplaceKind, Layout> {
  * never the ring, the heritage quarter, the lakefront rows or the park, so every room has four streets and a doorway
  * side the dice may pick freely. Lots and sides from the seed alone.
  */
-export function workplaceLots(seed: number): { kind: WorkplaceKind; k: number; m: number; side: Side }[] {
+export function workplaceLots(seed: number): WorkplaceLot[] {
   const rng = createRng(seed ^ 0x1a7e)
   const k0 = HERITAGE_COLUMNS, k1 = CITY.blocks // downtown columns [k0, k1)
   const m0 = 0, m1 = CITY.blocks - 2 // downtown rows [m0, m1): the lakefront row and the park are below
@@ -266,11 +266,23 @@ function worldBox(room: { cx: number; cz: number; side: Side }, u0: number, v0: 
   return [Math.min(p.x, q.x), y0, Math.min(p.z, q.z), Math.max(p.x, q.x), y1, Math.max(p.z, q.z)]
 }
 
+/** A workplace's lot: its kind, the lot (between streets k and k + 1, m and m + 1) and its doorway's street front. */
+export interface WorkplaceLot { kind: WorkplaceKind; k: number; m: number; side: Side }
+
 /** The seed's six workplaces, geometry and all. `podium` gives a lot's podium height (the ceiling slab's top). */
 export function workplaces(seed: number, podium: (k: number, m: number) => number = () => ROOM.height + 1): Workplace[] {
+  return workplacesAt(workplaceLots(seed), podium)
+}
+
+/**
+ * The workplaces on the given lots, geometry and all: the city's from its seed (workplaces), or a region's lots chosen
+ * from its pack (region/workplaces.ts), which the physics worker receives as plain data and builds the same rooms
+ * from. At most ROOM.slots of them; the order is the station slots'. `podium` gives a lot's podium height.
+ */
+export function workplacesAt(lots: readonly WorkplaceLot[], podium: (k: number, m: number) => number = () => ROOM.height + 1): Workplace[] {
   const L = layouts()
   const h = CITY.lotHalf, w = ROOM.wall, inner = h - w
-  return workplaceLots(seed).map(({ kind, k, m, side }) => {
+  return lots.map(({ kind, k, m, side }) => {
     const cx = (k + 0.5) * CITY.pitch, cz = (m + 0.5) * CITY.pitch
     const room = { cx, cz, side }
     const layout = L[kind]
@@ -336,17 +348,18 @@ export function targetCorner(room: { k: number; m: number; side: Side }, lane = 
 }
 
 /** The door front: the point on the sidewalk lane outside the doorway, where the route leaves the street. */
-export function doorFront(room: { cx: number; cz: number; side: Side }, lane = CITY.lane): { x: number; z: number } {
+export function doorFront(room: { cx: number; cz: number; side: Side }, lane: number = CITY.lane): { x: number; z: number } {
   return toWorld(room, CITY.pitch / 2 - lane, 0)
 }
 
 /**
  * The legs of the walk from the door front to station `s`: through the doorway to the hub, across to the station's
- * row, along the row to the station. Leaving is the same walk backwards.
+ * row, along the row to the station. Leaving is the same walk backwards. `lane` is the street's pedestrian lane, the
+ * one the shader is compiled with (the city's CITY.lane, a region window's WINDOW_GEOMETRY.lane): the door front is on it.
  */
-export function routeIn(room: Workplace, s: number): { x: number; z: number }[] {
+export function routeIn(room: Workplace, s: number, lane: number = CITY.lane): { x: number; z: number }[] {
   const st = room.stations[s]
-  return [doorFront(room), toWorld(room, ROOM.hub, 0), toWorld(room, ROOM.hub, st.v), { x: st.x, z: st.z }]
+  return [doorFront(room, lane), toWorld(room, ROOM.hub, 0), toWorld(room, ROOM.hub, st.v), { x: st.x, z: st.z }]
 }
 
 // ---------------------------------------------------------------- the containment (the shader's, mirrored)
@@ -388,6 +401,49 @@ export function containInRoom(room: { cx: number; cz: number; side: Side; furnit
   return p
 }
 
+/**
+ * A room's glass in its own frame, [u0, v0, u1, v1] (crowd.wgsl pane): the back wall, the two side walls, and the
+ * doorway's wall either side of the opening, as the shell builds them.
+ */
+export function glassPanes(): readonly (readonly [number, number, number, number])[] {
+  const h = CITY.lotHalf, i = h - ROOM.wall, d = ROOM.door
+  return [[-h, -h, -i, h], [-i, -h, i, -i], [-i, i, i, h], [i, -h, h, -d], [i, d, h, h]]
+}
+
+/**
+ * Whether the segment from a to a + d passes through the open box (lo, hi) (crowd.wgsl hitsBox): a slab test. A segment
+ * along a face, or one that only touches it, does not.
+ */
+export function hitsBox(a: { u: number; v: number }, d: { u: number; v: number }, lo: { u: number; v: number }, hi: { u: number; v: number }): boolean {
+  let t0 = 0, t1 = 1
+  if (Math.abs(d.u) < 1e-6) {
+    if (a.u <= lo.u || a.u >= hi.u) return false
+  } else {
+    const ta = (lo.u - a.u) / d.u, tb = (hi.u - a.u) / d.u
+    t0 = Math.max(t0, Math.min(ta, tb)); t1 = Math.min(t1, Math.max(ta, tb))
+  }
+  if (Math.abs(d.v) < 1e-6) {
+    if (a.v <= lo.v || a.v >= hi.v) return false
+  } else {
+    const ta = (lo.v - a.v) / d.v, tb = (hi.v - a.v) / d.v
+    t0 = Math.max(t0, Math.min(ta, tb)); t1 = Math.min(t1, Math.max(ta, tb))
+  }
+  return t0 < t1
+}
+
+/**
+ * Whether the segment from a to b (city metres) crosses the room's glass, each pane grown by `pad` (crowd.wgsl
+ * crossesGlass): exact, in the room's frame, where the panes are boxes, so a line that clips a jamb's corner by a
+ * millimetre crosses it and one through the opening does not. The crowd asks it whether two people see each other
+ * (walled) and whether a last stretch cuts a room's containment; a car's driver is never put out where the line from
+ * the chassis reaches only through glass (carRig.ts exitPoint).
+ */
+export function crossesGlass(room: { cx: number; cz: number; side: Side }, a: { x: number; z: number }, b: { x: number; z: number }, pad = 0): boolean {
+  const p = toLocal(room, a.x, a.z), q = toLocal(room, b.x, b.z)
+  const d = { u: q.u - p.u, v: q.v - p.v }
+  return glassPanes().some(([u0, v0, u1, v1]) => hitsBox(p, d, { u: u0 - pad, v: v0 - pad }, { u: u1 + pad, v: v1 + pad }))
+}
+
 /** True when (x, z) is inside the walls of a room, the doorway's band included (checkCrowd's exemption). */
 export function insideRoom(room: { cx: number; cz: number; side: Side }, x: number, z: number): boolean {
   const { u, v } = toLocal(room, x, z)
@@ -405,6 +461,36 @@ export function penetrates(room: { cx: number; cz: number; side: Side; furniture
     if (x > x0 - pad + eps && x < x1 + pad - eps && z > z0 - pad + eps && z < z1 + pad - eps) return true
   }
   return false
+}
+
+// ---------------------------------------------------------------- the minimap
+
+/** What drawRooms needs of a canvas: a fill colour and rectangles (a CanvasRenderingContext2D is one). */
+export interface RoomCanvas {
+  fillStyle: string | object
+  fillRect(x: number, y: number, w: number, h: number): void
+}
+
+/**
+ * The rooms within `radius` metres of (x, z) on a minimap already in the engine's metres (the HUD's city map, a
+ * region's map layer after its buildings and streets): the lot in the accent colour, its floor inside the walls, and
+ * the doorway cut through on its street front in the floor's colour, so the way in reads on the map.
+ */
+export function drawRooms(ctx: RoomCanvas, rooms: readonly Workplace[], x: number, z: number, dark: boolean, radius = 150): void {
+  const lotHalf = CITY.lotHalf
+  for (const r of rooms) {
+    if (Math.abs(r.cx - x) > radius || Math.abs(r.cz - z) > radius) continue
+    ctx.fillStyle = dark ? '#b45309' : '#f59e0b'
+    ctx.fillRect(r.cx - lotHalf, r.cz - lotHalf, lotHalf * 2, lotHalf * 2)
+    const inner = lotHalf - ROOM.wall * 3
+    ctx.fillStyle = dark ? '#451a03' : '#fef3c7'
+    ctx.fillRect(r.cx - inner, r.cz - inner, inner * 2, inner * 2)
+    const d = doorDir(r.side)
+    const w = ROOM.door * 2, depth = lotHalf - inner + 0.2
+    const gx = r.cx + d.x * (lotHalf - depth / 2), gz = r.cz + d.z * (lotHalf - depth / 2)
+    const [gw, gh] = d.x !== 0 ? [depth, w] : [w, depth]
+    ctx.fillRect(gx - gw / 2, gz - gh / 2, gw, gh)
+  }
 }
 
 // ---------------------------------------------------------------- the uniform (crowd.wgsl Params.rooms)

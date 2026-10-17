@@ -91,13 +91,15 @@ export function RecoveryCard({ failure, adapter = '', onConsole }: { failure: Fa
           {failure.steps.map((s) => <li key={s} className="break-words">{s}</li>)}
         </ul>
         <div className="mt-5 flex flex-wrap gap-2">
-          {/* A browser that can run the city, one tap away (bootFailure.ts openInChrome): then it is the first button. */}
+          {/* A browser that can run the city, one tap away (bootFailure.ts openInChrome): then it is the first button.
+              React focuses an autoFocus button as it mounts, before useTakeFocus runs: only the button that is to have
+              focus carries it, so focus never rests on Restart in between. */}
           {openIn && (
-            <button ref={openRef} type="button" onClick={() => { window.location.href = openIn.href }} className={`${BUTTON} bg-slate-900 text-white ring-slate-400 hover:bg-slate-700`}>
+            <button ref={openRef} type="button" autoFocus onClick={() => { window.location.href = openIn.href }} className={`${BUTTON} bg-slate-900 text-white ring-slate-400 hover:bg-slate-700`}>
               {openIn.label}
             </button>
           )}
-          <button ref={restartRef} type="button" autoFocus onClick={restart} className={`${BUTTON} ${openIn ? 'border border-slate-300 bg-white text-slate-900 ring-slate-300 hover:bg-slate-100' : 'bg-slate-900 text-white ring-slate-400 hover:bg-slate-700'}`}>
+          <button ref={restartRef} type="button" autoFocus={!openIn} onClick={restart} className={`${BUTTON} ${openIn ? 'border border-slate-300 bg-white text-slate-900 ring-slate-300 hover:bg-slate-100' : 'bg-slate-900 text-white ring-slate-400 hover:bg-slate-700'}`}>
             Restart
           </button>
           <button type="button" onClick={onConsole} className={`${BUTTON} border border-slate-300 bg-white text-slate-900 ring-slate-300 hover:bg-slate-100`}>
