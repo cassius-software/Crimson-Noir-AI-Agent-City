@@ -889,6 +889,15 @@ async function noGpu(chrome, origin, phone) {
     const tty = await p.waitFor(`location.search.includes('boot=tty') && !!document.querySelector('[aria-label$="Ring-0 terminal"][data-full]')`, 60_000).then(() => true, () => false)
     check(tty, `${what}: the pad's A on Open the console opens the console shell (?boot=tty)`)
     await p.shot('fail-no-gpu-console')
+    // And back: the console shell's pad (a new page: the pad connects again, A first held, as a real pad would be).
+    await p.eval('window.__smokePad.connect(0); window.__smokePad.set([0, 0, 0, 0], [0])')
+    await p.frames(4)
+    check(await p.eval(`location.search.includes('boot=tty')`), `${what}: an A held into the console shell presses nothing`)
+    await p.eval('window.__smokePad.set([0, 0, 0, 0], [])')
+    await p.frames(4)
+    await p.eval('window.__smokePad.set([0, 0, 0, 0], [0])')
+    const back = await p.waitFor(`!location.search.includes('boot=tty') && !!document.querySelector('[data-failure="no-api"]')`, 60_000).then(() => true, () => false)
+    check(back, `${what}: the pad's A on the console's Back to the city returns to the city (its card here)`)
     check(p.errors.length === 0, `${what}: no exception in the page`, p.errors.slice(0, 3).join(' | ').slice(0, 400))
   } finally { await p.b.close() }
 }

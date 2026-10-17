@@ -14,7 +14,7 @@
  * What breaks if it is removed? A failed boot is a bare message with nothing to press, and a halted city a black
  * screen with no control.
  */
-import { useEffect, useId, useRef, type JSX } from 'react'
+import { useEffect, useId, useRef, type JSX, type RefObject } from 'react'
 import { MonolithLogo } from '../MonolithLogo.tsx'
 import { isEditableTarget } from '../04_Connect_Hardware/input.ts'
 import { detailsLine, type Failure } from './bootFailure.ts'
@@ -25,15 +25,24 @@ function restart(): void {
   window.location.reload()
 }
 
+/** The mouse back to the player (the city may have held it in pointer lock), then focus on Restart. */
+function useTakeFocus(restartRef: RefObject<HTMLButtonElement | null>): void {
+  useEffect(() => {
+    if (document.pointerLockElement) document.exitPointerLock()
+    restartRef.current?.focus()
+  }, [restartRef])
+}
+
 /**
- * Enter anywhere but a text field restarts while a way-out screen is up (focus may have been clicked away from the
- * button). The console beneath keeps its own Enter.
+ * Enter anywhere but a text field, a button or the card's Details line restarts while a way-out screen is up (focus
+ * may have been clicked away from the button). A focused button and Details take Enter natively; the console beneath
+ * leaves keys aimed at the screen alone (Terminal.tsx).
  */
 function useEnterRestarts(active = true): void {
   useEffect(() => {
     if (!active) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Enter' || e.repeat || isEditableTarget(e.target) || (e.target instanceof HTMLElement && e.target.closest('button'))) return
+      if (e.key !== 'Enter' || e.repeat || isEditableTarget(e.target) || (e.target instanceof HTMLElement && e.target.closest('button, summary'))) return
       e.preventDefault()
       restart()
     }
@@ -56,7 +65,7 @@ export function RecoveryCard({ failure, adapter = '', onConsole }: { failure: Fa
   const root = useRef<HTMLDivElement>(null)
   const restartRef = useRef<HTMLButtonElement>(null)
   const title = useId(), body = useId()
-  useEffect(() => { restartRef.current?.focus() }, [])
+  useTakeFocus(restartRef)
   usePadNav(root)
   useEnterRestarts()
   const line = detailsLine(adapter, typeof navigator === 'undefined' ? '' : navigator.userAgent)
@@ -105,7 +114,7 @@ export function RecoveryCard({ failure, adapter = '', onConsole }: { failure: Fa
 export function LockScreen({ reason }: { reason: string }): JSX.Element {
   const root = useRef<HTMLDivElement>(null)
   const restartRef = useRef<HTMLButtonElement>(null)
-  useEffect(() => { restartRef.current?.focus() }, [])
+  useTakeFocus(restartRef)
   usePadNav(root)
   useEnterRestarts()
   return (

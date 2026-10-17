@@ -26,7 +26,11 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   and **Open the console** (`?boot=tty`, which needs no GPU). A pad's A presses the focused button and its d-pad
   moves between them. The home-screen app and the Windows app are never told to edit an address or switch browsers.
   The Ring-0 lock screen (**SYSTEM LOCKED**) keeps its copy for a real audit failure and gains a focused Restart;
-  a lost GPU (the page's or the crowd's) and a physics fault get the card, worded as a graphics reset. A first visit
+  a lost GPU (the page's or the crowd's) gets the card, worded as a graphics reset, and a physics fault gets it in its
+  own words. The console shell (`?boot=tty`) gains **Back to the city**, which a pad's A or a tap presses, so a player
+  sent there from a card with only a pad or a touch screen can come back. The cards let go of the mouse (pointer lock)
+  so Restart can be clicked, Enter on **Details** opens it rather than restarting, and an open console no longer
+  takes Enter from a card over it. A first visit
   is checked (a secure page, WebGPU, a full adapter) before the onboarding, so a browser that cannot run the city
   gets the card instead of the whole onboarding first. After 20 s of visible time without a first frame the boot
   veil adds "Still starting…" with Restart and Open the console; it fails nothing (a software adapter takes

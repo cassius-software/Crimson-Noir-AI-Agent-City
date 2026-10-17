@@ -9,7 +9,7 @@
  * the page has always shown are matched as well, so nothing that used to be explained is lost. The words follow the
  * device: Safari's own 'Version/NN' token (Safari 26 on iOS still reports the OS as 18_6), an app's built-in browser on
  * iPhone (no 'Safari/' token) or on Android ('; wv)'), Chrome, Firefox or Edge, Linux, the installed home-screen app
- * (display-mode standalone or fullscreen, which has no address bar to edit and no other browser to switch to) and the
+ * (display-mode standalone, or fullscreen on Android, which has no address bar to edit and no other browser to switch to) and the
  * Windows app (Tauri). The 'needs WebGPU' line appears only where WebGPU itself is what is missing. It also holds the
  * guard for the one automatic restart after a graphics reset in the background (autoReload) and the gate before a
  * first visit's onboarding (firstScreen). Pure: pageEnv() is the only reader of the browser, and the tests hand in
@@ -40,7 +40,7 @@ export interface Env {
   ua: string
   /** window.isSecureContext. */
   secure: boolean
-  /** The installed web app (display-mode standalone or fullscreen, or iOS's navigator.standalone): no address bar. */
+  /** The installed web app (installedApp: display-mode standalone, fullscreen on Android, iOS's navigator.standalone): no address bar. */
   standalone: boolean
   /** The Windows app (Tauri): no browser chrome at all. */
   native: boolean
@@ -84,6 +84,16 @@ const KNOWN: readonly [RegExp, FailureKind][] = [
   [/^(?:SYSTEM LOCKED: )?Physics realm fault/, 'realm-fault'],
 ]
 
+/**
+ * Pure. Whether the page runs as the installed web app. The manifest asks for display 'fullscreen' (tools/web/pwa.mjs):
+ * Android honours it, iOS and the desktop install fall back to standalone. A desktop tab in the browser's own full
+ * screen (F11) also matches display-mode fullscreen, and has an address bar to go back to, so fullscreen counts only on
+ * Android, where a tab cannot go full screen that way.
+ */
+export function installedApp(m: { standalone: boolean; fullscreen: boolean; iosStandalone: boolean; ua: string }): boolean {
+  return m.standalone || m.iosStandalone || (m.fullscreen && /Android/.test(m.ua))
+}
+
 /** The page's own environment (the one reader of the browser here; every value guarded for odd embeddings). */
 export function pageEnv(): Env {
   const nav = (typeof navigator === 'undefined' ? {} : navigator) as Partial<Navigator> & { standalone?: unknown }
@@ -93,7 +103,7 @@ export function pageEnv(): Env {
   return {
     ua: nav.userAgent ?? '',
     secure: typeof isSecureContext === 'boolean' ? isSecureContext : true,
-    standalone: media('(display-mode: standalone)') || media('(display-mode: fullscreen)') || nav.standalone === true,
+    standalone: installedApp({ standalone: media('(display-mode: standalone)'), fullscreen: media('(display-mode: fullscreen)'), iosStandalone: nav.standalone === true, ua: nav.userAgent ?? '' }),
     native: nativeHost(globalThis),
     origin: typeof location === 'undefined' ? '' : location.origin,
     touchPoints: nav.maxTouchPoints ?? 0,

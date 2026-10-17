@@ -61,7 +61,7 @@ test('the cards: Restart reloads the page and has focus; Open the console is the
   for (const [name, from, to] of [['RecoveryCard', 'export function RecoveryCard', 'export function LockScreen'], ['LockScreen', 'export function LockScreen', 'export function StillStarting']]) {
     const c = CARD.slice(CARD.indexOf(from), CARD.indexOf(to))
     assert.match(c, /<button ref=\{restartRef\} type="button" autoFocus onClick=\{restart\}/, `${name}: Restart, focused`)
-    assert.match(c, /useEffect\(\(\) => \{ restartRef\.current\?\.focus\(\) \}, \[\]\)/, `${name}: focused again after mount`)
+    assert.match(c, /useTakeFocus\(restartRef\)/, `${name}: focused again after mount, the mouse let go`)
     assert.match(c, /usePadNav\(root\)\n\s+useEnterRestarts\(\)/, `${name}: a pad's A and Enter`)
     assert.match(c, /role="alertdialog"/, `${name}: announced`)
   }
@@ -70,6 +70,19 @@ test('the cards: Restart reloads the page and has focus; Open the console is the
   assert.match(card, /\{failure\.webgpuLine && </, 'the WebGPU line only where WebGPU is what is missing')
   assert.match(card, /<details[\s\S]*\{failure\.detail\}[\s\S]*\{line\}[\s\S]*<\/details>/, 'the raw message and the copyable line under Details')
   assert.match(APP, /const toConsole = \(\): void => reboot\('tty'\)/)
+  // Pointer lock would keep every click on the canvas beneath: the mouse is the player's again before Restart is focused.
+  assert.match(CARD, /function useTakeFocus\([^)]*\): void \{\n\s+useEffect\(\(\) => \{\n\s+if \(document\.pointerLockElement\) document\.exitPointerLock\(\)\n\s+restartRef\.current\?\.focus\(\)/)
+  // Enter restarts from anywhere but a field, a focused button (which takes it natively) or Details (which opens).
+  assert.match(CARD, /e\.target\.closest\('button, summary'\)\)\) return\n\s+e\.preventDefault\(\)\n\s+restart\(\)/)
+})
+
+test('the console shell: a way back to the city a pad or a finger can press, and the console leaves its keys alone', () => {
+  const tty = APP.slice(APP.indexOf('function TtyShell() {'), APP.indexOf('function onboardingVoice('))
+  assert.match(tty, /usePadNav\(back\)/, 'its own pad scope (never the terminal\'s hidden Close)')
+  assert.match(tty, /<div ref=\{back\} data-way-out=""[^>]*z-\[10000\][^>]*>\s*<button type="button" onClick=\{\(\) => reboot\('gui'\)\}[^>]*>\s*Back to the city/)
+  // The console's window-capture keydown would pull Enter on a card's (or this) button into its hidden prompt.
+  const term = read('./terminal/Terminal.tsx')
+  assert.match(term, /if \(inside\) return[^\n]*\n(\s+\/\/[^\n]*\n)+\s+if \(e\.target instanceof Element && e\.target\.closest\('\[role="alertdialog"\], \[data-way-out\]'\)\) return\n\s+\/\/ Aimed elsewhere/)
 })
 
 test('App: the card on a failed boot and on every halt but a Ring-0 audit, which keeps its lock screen', () => {

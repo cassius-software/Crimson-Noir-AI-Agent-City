@@ -235,6 +235,9 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
         return
       }
       if (inside) return // the prompt's own handler takes it (and stops it at the React root)
+      // Aimed at a way out over the console (RecoveryCard.tsx's screens, TtyShell's 'Back to the city' in App.tsx):
+      // its focused button keeps Enter and Space.
+      if (e.target instanceof Element && e.target.closest('[role="alertdialog"], [data-way-out]')) return
       // Aimed elsewhere (focus fell to the page): keep it from the game, and pull typing back to the prompt.
       // Chords are left alone so Ctrl+C still copies a selection made in the scrollback.
       e.stopImmediatePropagation()

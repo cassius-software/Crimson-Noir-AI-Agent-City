@@ -19,7 +19,7 @@ import { WebGPUUnavailableError, type GpuFailure } from '../01_Initialize_World/
 import { panicReason } from '../02_Define_The_Rules/ring0.ts'
 import { coded } from './simProtocol.ts'
 import {
-  AUTO_RELOAD_GAP_MS, autoReload, classify, detailsLine, explainHalt, firstScreen, FRAME_FAULT, GRAPHICS_RESET, haltClass, kindOf, platformOf,
+  AUTO_RELOAD_GAP_MS, autoReload, classify, detailsLine, explainHalt, firstScreen, FRAME_FAULT, GRAPHICS_RESET, haltClass, installedApp, kindOf, platformOf,
   WEBGPU_LINE, type Env, type Failure,
 } from './bootFailure.ts'
 
@@ -173,6 +173,17 @@ test('the installed iPhone app and the Windows app are never told to edit an add
     assert.doesNotMatch(text(classify(coded(code, 'x'), env(UA.homeScreen, HOME_SCREEN))), NO, `home screen ${code}`)
     assert.doesNotMatch(text(classify(coded(code, 'x'), env(UA.edgeWindows, TAURI))), NO, `Tauri ${code}`)
   }
+})
+
+test('installedApp: standalone anywhere, iOS\'s own flag, fullscreen only on Android (a desktop F11 tab is a tab)', () => {
+  const m = (o: Partial<Parameters<typeof installedApp>[0]>) => installedApp({ standalone: false, fullscreen: false, iosStandalone: false, ua: UA.chromeLinux, ...o })
+  assert.equal(m({ fullscreen: true, ua: UA.androidChrome }), true, 'the Android app (the manifest asks for fullscreen)')
+  assert.equal(m({ standalone: true, ua: UA.homeScreen }), true, 'iOS falls back to standalone')
+  assert.equal(m({ iosStandalone: true, ua: UA.homeScreen }), true, 'iOS\'s navigator.standalone')
+  assert.equal(m({ standalone: true, ua: UA.edgeWindows }), true, 'a desktop install falls back to standalone')
+  assert.equal(m({ fullscreen: true, ua: UA.chromeLinux }), false, 'Chrome on Linux in F11')
+  assert.equal(m({ fullscreen: true, ua: UA.edgeWindows }), false, 'Edge in F11')
+  assert.equal(m({}), false, 'a plain tab')
 })
 
 test('haltClass: the real halt reasons; Ring-0 copy for audits only', () => {

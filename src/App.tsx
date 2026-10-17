@@ -31,6 +31,7 @@ import { isEditableTarget } from './04_Connect_Hardware/input.ts'
 import type { SipocSnapshot } from './05_Observe_Environment/telemetry.ts'
 import { BootVeil } from './07_Execute_Actions/BootVeil.tsx'
 import { LockScreen, RecoveryCard } from './07_Execute_Actions/RecoveryCard.tsx'
+import { usePadNav } from './07_Execute_Actions/padNav.ts'
 import { AUTO_RELOAD_KEY, autoReload, classify, explainHalt, firstScreen, FRAME_FAULT, haltClass, pageEnv } from './07_Execute_Actions/bootFailure.ts'
 import { probeGpu, type GpuProbe } from './01_Initialize_World/gpuDevice.ts'
 import { Concierge } from './07_Execute_Actions/Concierge.tsx'
@@ -292,11 +293,19 @@ function readOptions(): Options {
 /**
  * Track B: the bare console. Nothing of the city is built: no canvas, no Engine.create, no WebGPU adapter request,
  * no physics worker, no audio, no HUD. The terminal runs over the offline bridge (the identity commands work; the
- * rest says 'engine not running'); a `boot gui` result reloads into the city.
+ * rest says 'engine not running'); a `boot gui` result reloads into the city, and so does 'Back to the city', the one
+ * way back for a player who came here from a recovery card with only a pad or a touch screen (its A presses it).
  */
 function TtyShell() {
+  const back = useRef<HTMLDivElement>(null)
+  usePadNav(back)
   return (
     <main className="relative h-full w-full overflow-hidden bg-black">
+      <div ref={back} data-way-out="" className="absolute right-[max(0.75rem,env(safe-area-inset-right))] top-[max(0.75rem,env(safe-area-inset-top))] z-[10000]">
+        <button type="button" onClick={() => reboot('gui')} className="min-h-11 rounded-xl border border-white/25 bg-black/80 px-4 py-2 font-sans text-sm font-semibold text-slate-200 outline-none ring-white/40 hover:bg-white/10 focus-visible:ring-4">
+          Back to the city
+        </button>
+      </div>
       <Terminal bridge={TTY_BRIDGE} fullscreen onOpenChange={noop} onBoot={reboot} onMap={remap} />
     </main>
   )

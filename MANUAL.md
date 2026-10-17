@@ -764,7 +764,8 @@ cinema camera, the HUD. Track B is this console on its own.
   WebGPU request, no physics worker, no audio (`App.tsx` is `App` → `GuiShell` or `TtyShell`). The identity
   commands (`version`, `uname`, `help`, `boot`, `r0`, `history`, `echo`, `clear`) work; everything that needs the
   city says `engine not running`. The message of the day says so: `Track B: this console alone; no 3D engine was
-  built`. `boot gui` reloads the page as the city, `boot tty` from the city reloads it as the console, and `boot`
+  built`. `boot gui` (or the **Back to the city** button at the top right, which a pad's A also presses) reloads the
+  page as the city, `boot tty` from the city reloads it as the console, and `boot`
   alone (or `boot status`) says which track is up. Neither the toggle key, Esc nor `exit` closes a full-screen
   console. `docs/track-b-console.png` is a screenshot of it.
 - **`render off`** is Track B's override from inside Track A: the console takes the screen while the realm keeps
@@ -1985,7 +1986,9 @@ bar and no reload of their own, so the page carries its own way out.
 - **The recovery card** (`src/07_Execute_Actions/RecoveryCard.tsx`) says what happened in words for this device and
   browser (`bootFailure.ts`), with **Restart** (the page loaded again, focused: Enter takes it) and **Open the
   console** (`?boot=tty`, which needs no GPU). A pad's A presses the focused button and its d-pad moves between them;
-  a button held when the card appears does nothing until it is let go. Under **Details** are the raw message and
+  a button held when the card appears does nothing until it is let go. The console shell has **Back to the city** at
+  its top right, which a pad's A or a tap presses. The cards let go of the mouse if the city held it (pointer lock),
+  and Enter on Details opens it. Under **Details** are the raw message and
   one line (build, adapter, user agent) to copy into a bug report. Where WebGPU itself is what is missing, the card
   ends with what the city needs: a current Chrome, Edge or Brave on desktop or Android, or Safari 26.
 - **What it tells whom.** An insecure address (plain http to another machine, such as `http://192.168.1.20:4173`) is
