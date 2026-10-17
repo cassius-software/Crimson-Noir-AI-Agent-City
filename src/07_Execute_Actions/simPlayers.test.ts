@@ -448,7 +448,7 @@ test('a reset rights the car of the player it names: player 1\'s at the wheel, n
   assert.equal(sim.halted, false, sim.panic ?? '')
 })
 
-test('a network room replays player 1 alone: the others are taken out of their cars as it starts, and their doors are refused in it', async () => {
+test('a network room replays player 1 alone: the others are taken out of their cars as it starts and their doors are refused in it, while player 1\'s opens', async () => {
   const { sim, poses, step } = await core(true)
   const lane = OPEN.x + 3.5, z = OPEN.z + 40
   step({ cmds: [
@@ -465,16 +465,26 @@ test('a network room replays player 1 alone: the others are taken out of their c
   const out = s.events.find((e) => e.e === 'exited')
   assert.ok(out && out.e === 'exited' && out.player === 1 && out.forced === true, JSON.stringify(s.events))
   assert.equal(MODES[poses[POSE.mode]], 'ai', 'back to traffic, not left parked where the room holds nothing')
-  // Beside the car again, player 2's door is refused while the room lasts; player 1's own door still opens.
-  step({ cmds: [{ c: 'dbgMode', i: 0, mode: 'parked' }, { c: 'recover', i: 0, x: lane, z, heading: Math.PI }, { c: 'teleport', x: OPEN.x, z, player: 1 }] })
-  for (let i = 0; i < 30; i++) step()
-  const rejected = step().rejected
+  // The room replays its authority's physics, so the test's own hooks are refused in it too: the car stays where the
+  // room left it, beside player 2.
+  s = step({ cmds: [{ c: 'dbgMode', i: 0, mode: 'parked' }] })
+  assert.ok(s.events.some((e) => e.e === 'rejected' && e.reason.startsWith('dbgMode: refused in a network room')), JSON.stringify(s.events))
+  // Beside the car, player 2's door is refused while the room lasts, for that reason; player 1's own door opens.
+  step({ cmds: [{ c: 'teleport', x: poses[POSE.x] - 3.5, z: poses[POSE.z], player: 1 }] })
+  for (let i = 0; i < 5; i++) step()
   s = step({ cmds: [{ c: 'interact', player: 1 }] })
-  assert.equal(s.rejected, rejected + 1, 'refused')
+  assert.ok(s.events.some((e) => e.e === 'rejected' && e.reason.includes('only player 1 opens a car door')), JSON.stringify(s.events))
   assert.deepEqual(s.drivings, [-1, -1, -1, -1])
+  step({ cmds: [{ c: 'teleport', x: poses[POSE.x] + 3.5, z: poses[POSE.z] }] })
+  for (let i = 0; i < 5; i++) step()
+  s = step({ cmds: [{ c: 'interact' }] })
+  assert.deepEqual(s.drivings, [0, -1, -1, -1], 'player 1 takes the wheel in the room')
+  for (let i = 0; i < 10; i++) step()
+  s = step({ cmds: [{ c: 'interact' }] })
+  assert.deepEqual(s.drivings, [-1, -1, -1, -1], 'and leaves it')
   step({ cmds: [{ c: 'room', on: false }] })
   s = step({ cmds: [{ c: 'interact', player: 1 }] })
-  assert.deepEqual(s.drivings, [-1, 0, -1, -1], 'out of the room, the door opens again')
+  assert.deepEqual(s.drivings, [-1, 0, -1, -1], 'out of the room, player 2\'s door opens again')
   assert.equal(sim.halted, false, sim.panic ?? '')
 })
 

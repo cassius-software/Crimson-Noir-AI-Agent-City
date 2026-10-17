@@ -7,8 +7,10 @@
  * interact, north reset, east handbrake, right shoulder ping, left-stick click run latch, d-pad left/right clock — with dead zones, edge detection, multi-pad merge,
  * pads without the standard mapping read by position (the face button that wakes one doing nothing else; left stick
  * and face buttons always; the Linux kernel's axis
- * order in full once its triggers are seen at rest; an axis read only after it is seen where its part rests, so a held
- * stick, a held trigger, a trigger a browser reports as 0, a parked lever or a slider never moves anything on its own),
+ * order in full once its triggers have sat at rest, and dropped for good when a stick and a hat stand there instead (the
+ * joystick driver's order, Chromium's on Windows); an axis read only after it is seen resting where its part rests,
+ * timed in milliseconds whatever the frame rate, so a held stick, a held trigger, a trigger a browser reports as 0, a
+ * pedal passing or pausing in the middle, a parked lever or a slider never moves anything on its own),
  * browser pad ids parsed, the controller family the HUD's glyphs follow, and the
  * right stick's first-person head motion (rates, curve, rim boost, easing, frame-rate independence).
  * What breaks if it is removed? A mapping slip (a flipped axis, a repeating edge, a wrong glyph family, a
@@ -17,7 +19,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  createAnalog, GenericPads, isUsablePad, PAD, PAD_EDGE, PAD_LOOK, PAD_TUNING, PadLook, PadMapper, padFamilyOf, padName, parsePadId,
+  createAnalog, GENERIC_MS, GenericPads, isUsablePad, PAD, PAD_EDGE, PAD_LOOK, PAD_TUNING, PadLook, PadMapper, padFamilyOf, padName, parsePadId,
   radialDeadzone, triggerValue,
 } from './gamepad.ts'
 import type { GamepadLike } from './web-hardware.d.ts'
@@ -39,6 +41,16 @@ function pad(opts: { index?: number; id?: string; axes?: number[]; pressed?: num
 }
 
 const close = (a: number, b: number, eps = 1e-9) => Math.abs(a - b) < eps
+
+/** A frame at 60 frames a second, and the reads it takes at `frame` ms apart to hold a pattern for `ms` (the first read
+ *  of a run counts no time; one more covers rounding). */
+const FRAME_MS = 1000 / 60
+const readsFor = (ms: number, frame = FRAME_MS) => Math.ceil(ms / frame) + 2
+/** A PadMapper whose clock moves `frame` ms per read, as the page's does at a steady frame rate. */
+function mapper(frame = FRAME_MS): PadMapper {
+  let t = 0
+  return new PadMapper(() => (t += frame))
+}
 
 test('radial dead zone zeroes the centre, rescales the rest and clamps corners', () => {
   const v = { x: 9, y: 9 }
@@ -140,7 +152,7 @@ test('several pads merge; disconnected and stickless pads are ignored; used/acti
 })
 
 test('a pad without the standard mapping: the left stick walks and drives, south enters a car, east is the handbrake', () => {
-  const m = new PadMapper(), a = createAnalog()
+  const m = mapper(), a = createAnalog()
   const generic = (axes: number[], pressed: number[] = []) => pad({ id: 'USB Gamepad', mapping: '', axes, pressed })
   assert.equal(isUsablePad(generic([0, 0])), true)
   assert.equal(isUsablePad(pad({ mapping: '', axes: [0] })), false, 'no stick')
@@ -161,12 +173,12 @@ test('a pad without the standard mapping: the left stick walks and drives, south
   assert.equal(a.brake, 0)
   assert.equal(m.generic.layoutOf(0), 'four-axis')
   const g = new GenericPads()
-  g.view(generic([0, 0, 0, 0, 0]))
+  g.view(generic([0, 0, 0, 0, 0]), 0)
   assert.equal(g.layoutOf(0), 'stick-only')
 })
 
 test('the face button that wakes a pad without the standard mapping does nothing else; a standard pad\'s first press acts', () => {
-  const m = new PadMapper(), a = createAnalog()
+  const m = mapper(), a = createAnalog()
   const generic = (pressed: number[] = []) => pad({ id: 'USB Gamepad', mapping: '', pressed })
   // hal.ts passes such a pad on only from the read where a face button is down: that press is the wake.
   assert.equal(m.read([generic([PAD.south])], a), 0, 'no door opened by the wake')
@@ -182,11 +194,13 @@ test('the face button that wakes a pad without the standard mapping does nothing
 })
 
 test('the Linux kernel\'s axis order (triggers resting at −1 on axes 2 and 5): sticks, triggers, d-pad and the remapped buttons', () => {
-  const m = new PadMapper(), a = createAnalog()
+  const m = mapper(), a = createAnalog()
   const evdev = (axes: number[], pressed: number[] = []) => pad({ id: '45e-28e-Generic X-Box pad', index: 1, mapping: '', axes, pressed })
   const rest = [0, 0, -1, 0, 0, -1, 0, 0]
   m.read([evdev(rest)], a)
-  assert.equal(m.generic.layoutOf(1), 'evdev', 'triggers at rest, right stick centred: the kernel\'s order')
+  assert.equal(m.generic.layoutOf(1), 'stick-only', 'one read is not a rest')
+  for (let i = 1; i < readsFor(GENERIC_MS.rest); i++) m.read([evdev(rest)], a)
+  assert.equal(m.generic.layoutOf(1), 'evdev', 'triggers at rest, sticks centred, for half a second: the kernel\'s order')
   assert.deepEqual(a, createAnalog(), 'at rest: no throttle, no brake, no look (the triggers are not sticks)')
   m.read([evdev([0, 0, -1, 0.9, -0.9, 1])], a)
   assert.ok(a.lookX > 0.5 && a.lookY > 0.5, 'right stick on axes 3/4')
@@ -204,24 +218,47 @@ test('the Linux kernel\'s axis order (triggers resting at −1 on axes 2 and 5):
   assert.equal(m.read([evdev(rest, [PAD.r1])], a) & PAD_EDGE.ping, PAD_EDGE.ping)
   m.read([evdev([0, -1, -1, 0, 0, -1], [9])], a)
   assert.equal(a.run, true, 'button 9 is the left stick click here')
+  // Half throttle and half brake held together, wavering as fingers do, for seconds: still the kernel's order.
+  for (let i = 0; i < readsFor(3000); i++) m.read([evdev([0, 0, (i % 3) * 0.03 - 0.03, 0, 0, (i % 2) * 0.05, 0, 0])], a)
+  assert.equal(m.generic.layoutOf(1), 'evdev', 'triggers held at half by fingers are not a stick and a hat at rest')
+})
+
+test('a pad\'s axes are timed in milliseconds, not reads: the same at 144 frames a second, and a stall is not a rest', () => {
+  const a = createAnalog()
+  const evdev = (axes: number[]) => pad({ id: '45e-28e-Generic X-Box pad', mapping: '', axes })
+  const rest = [0, 0, -1, 0, 0, -1, 0, 0]
+  const fast = mapper(1000 / 144)
+  for (let i = 0; i < readsFor(GENERIC_MS.rest); i++) fast.read([evdev(rest)], a)
+  assert.equal(fast.generic.layoutOf(0), 'stick-only', 'half a second\'s worth of reads at 60 Hz is a fifth of a second at 144 Hz')
+  for (let i = 0; i < readsFor(GENERIC_MS.rest, 1000 / 144); i++) fast.read([evdev(rest)], a)
+  assert.equal(fast.generic.layoutOf(0), 'evdev')
+  // Reads two seconds apart (a tab in the background): each counts for GENERIC_MS.gap at most.
+  const slow = mapper(2000)
+  for (let i = 0; i < GENERIC_MS.rest / GENERIC_MS.gap; i++) slow.read([evdev(rest)], a)
+  assert.equal(slow.generic.layoutOf(0), 'stick-only')
+  slow.read([evdev(rest)], a)
+  assert.equal(slow.generic.layoutOf(0), 'evdev')
 })
 
 test('a stick or trigger held when the pad is first seen moves nothing, then works once let go', () => {
-  const m = new PadMapper(), a = createAnalog()
-  // A four-axis pad first seen with its left stick pushed forward: no walk until the stick has been centred once.
+  const m = mapper(), a = createAnalog()
+  // A four-axis pad first seen with its left stick pushed forward: no walk until the stick has rested centred.
   const four = (axes: number[]) => pad({ id: 'USB Gamepad', mapping: '', axes })
   m.read([four([0, -0.9, 0, 0])], a)
   assert.equal(a.moveY, 0, 'held at first sight: nothing yet')
   m.read([four([0, 0, 0, 0])], a)
   m.read([four([0, -1, 0, 0])], a)
-  assert.ok(a.moveY > 0.9, `let go once, then it walks (${a.moveY})`)
+  assert.equal(a.moveY, 0, 'passing the middle is not resting there')
+  for (let i = 0; i < readsFor(GENERIC_MS.settle); i++) m.read([four([0, 0.004, 0, 0])], a)
+  m.read([four([0, -1, 0, 0])], a)
+  assert.ok(a.moveY > 0.9, `let go and rested, then it walks (${a.moveY})`)
   // The kernel's order, first seen with the right trigger held: never read backwards (no throttle when let go).
-  const n = new PadMapper()
+  const n = mapper()
   const evdev = (axes: number[]) => pad({ id: '45e-28e-Generic X-Box pad', index: 2, mapping: '', axes })
   n.read([evdev([0, 0, -1, 0, 0, 0.9, 0, 0])], a)
   assert.equal(a.throttle, 0)
   assert.equal(n.generic.layoutOf(2), 'stick-only', 'not the kernel\'s order until both triggers are seen at rest')
-  n.read([evdev([0, 0, -1, 0, 0, -1, 0, 0])], a)
+  for (let i = 0; i < readsFor(GENERIC_MS.rest); i++) n.read([evdev([0, 0, -1, 0, 0, -1, 0, 0])], a)
   assert.equal(n.generic.layoutOf(2), 'evdev')
   assert.equal(a.throttle, 0, 'let go: no throttle')
   assert.equal(n.active, false)
@@ -230,14 +267,16 @@ test('a stick or trigger held when the pad is first seen moves nothing, then wor
 })
 
 test('a browser that reports untouched triggers as 0 (Firefox) gets the full layout once they have been pressed', () => {
-  const m = new PadMapper(), a = createAnalog()
+  const m = mapper(), a = createAnalog()
   const ff = (axes: number[], pressed: number[] = []) => pad({ id: '45e-28e-Generic X-Box pad', mapping: '', axes, pressed })
   m.read([ff([0, 0, 0, 0, 0, 0, 0, 0], [PAD.south])], a)
   assert.equal(m.generic.layoutOf(0), 'stick-only')
   assert.equal(a.throttle, 0, 'a trigger reading 0 is not half pulled')
+  // The right trigger squeezed to about half and held there a while before the left one is ever pressed.
+  for (let i = 0; i < readsFor(2 * GENERIC_MS.rest); i++) m.read([ff([0, 0, 0, 0, 0, (i % 4) * 0.03 - 0.04, 0, 0])], a)
   m.read([ff([0, 0, 1, 0, 0, 1, 0, 0])], a)
   assert.equal(a.throttle, 0, 'not read before it has been seen at rest')
-  m.read([ff([0, 0, -1, 0, 0, -1, 0, 0])], a)
+  for (let i = 0; i < readsFor(GENERIC_MS.rest); i++) m.read([ff([0, 0, -1, 0, 0, -1, 0, 0])], a)
   assert.equal(m.generic.layoutOf(0), 'evdev', 'pressed and let go: now known')
   m.read([ff([0, 0, -1, 0.9, 0, 1, 0, 0])], a)
   assert.ok(a.lookX > 0.5, 'right stick on axis 3 looks')
@@ -245,31 +284,92 @@ test('a browser that reports untouched triggers as 0 (Firefox) gets the full lay
 })
 
 test('levers and sliders parked off centre (a throttle quadrant, a flight stick\'s slider) never drive, turn or step the clock', () => {
-  const m = new PadMapper(), a = createAnalog()
+  const m = mapper(), a = createAnalog()
   const quadrant = (axes: number[]) => pad({ id: 'Throttle Quadrant', mapping: '', axes })
   for (let i = 0; i < 3; i++) m.read([quadrant([-0.4, -0.45, 0.3, -0.6])], a)
   assert.deepEqual(a, createAnalog())
   assert.equal(m.active, false)
   // The kernel's order with a slider on axis 6 resting at −1: no hat, so no clock step.
-  const n = new PadMapper()
+  const n = mapper()
   const stick = (axes: number[]) => pad({ id: 'Flight stick', index: 1, mapping: '', axes })
-  n.read([stick([0, 0, -1, 0, 0, -1, -1, 0])], a)
+  for (let i = 0; i < readsFor(GENERIC_MS.rest); i++) n.read([stick([0, 0, -1, 0, 0, -1, -1, 0])], a)
+  assert.equal(n.generic.layoutOf(1), 'evdev')
   assert.equal(n.read([stick([0, 0, -1, 0, 0, -1, -1, 0])], a) & PAD_EDGE.timeBack, 0)
+})
+
+test('a pedal resting at an end is never taken for a stick, even after passing the middle or pausing there under a foot', () => {
+  for (const frame of [FRAME_MS, 1000 / 144]) {
+    const m = mapper(frame), a = createAnalog()
+    // A wheel: the wheel on axis 0, then accelerator, brake and clutch pedals resting at +1 (fully up).
+    const wheel = (axes: number[], pressed: number[] = []) => pad({ id: '46d-c24f-Racing Wheel', mapping: '', axes, pressed })
+    m.read([wheel([0, 1, 1, 1, 0, 0], [PAD.south])], a)
+    // The accelerator on axis 1 (the left stick's Y by position) pressed to the floor and let go, then held near half
+    // for three seconds, wavering as a foot does: up again, it reads nothing, where a stick there would walk backwards
+    // for good.
+    for (const y of [0.6, 0.1, -0.4, -1, -0.3, 0, 0.5, 1]) m.read([wheel([0, y, 1, 1, 0, 0])], a)
+    for (let i = 0; i < readsFor(3000, frame); i++) m.read([wheel([0.02, 0.05 + 0.03 * Math.sin(i / 7), 1, 1, 0, 0])], a)
+    m.read([wheel([0, 1, 1, 1, 0, 0])], a)
+    assert.equal(a.moveY, 0, `the pedal at rest moves nobody (${frame.toFixed(1)} ms frames)`)
+    assert.equal(m.active, false)
+    assert.ok(Math.abs(a.steer) < 1e-9, 'the wheel centred steers nowhere')
+    m.read([wheel([0.8, 1, 1, 1, 0, 0])], a)
+    assert.ok(a.steer < -0.6, 'the wheel (first seen centred) steers at once')
+  }
+})
+
+test('a stick and a hat where the kernel puts its triggers (the joystick driver, Chromium on Windows) are dropped for good once at rest', () => {
+  const a = createAnalog()
+  // The joystick driver's order: X Y (left stick), Z Rz (right stick), then the hat as two axes.
+  const joy = (axes: number[]) => pad({ id: '79-11-USB Gamepad', mapping: '', axes })
+  const m = mapper()
+  for (let i = 0; i < 40; i++) m.read([joy([0, 0, 0, 0, 0, 0])], a)
+  // The right stick pushed left (axis 2) and the hat held up (axis 5) at once, for a moment: nothing changes.
+  for (let i = 0; i < 5; i++) m.read([joy([0, 0, -1, 0, 0, -1])], a)
+  assert.equal(m.generic.layoutOf(0), 'stick-only')
+  // Held that way for half a second, it is taken for the kernel's order: while it lasts, moving them brakes and
+  // throttles. Let go, both rest centred and steady, and within half a second the order is dropped, for good.
+  for (let i = 0; i < readsFor(GENERIC_MS.rest); i++) m.read([joy([0, 0, -1, 0, 0, -1])], a)
+  assert.equal(m.generic.layoutOf(0), 'evdev', 'the one misreading this rule allows')
+  m.read([joy([0, 0, 0.6, 0, 0, -1])], a)
+  assert.ok(a.brake > 0.7, `the misread stick brakes as it moves (${a.brake})`)
+  for (let i = 0; i < readsFor(GENERIC_MS.rest); i++) m.read([joy([0, 0, 0.004, 0, 0, 0])], a)
+  assert.equal(m.generic.layoutOf(0), 'stick-only')
+  assert.equal(a.throttle, 0)
+  assert.equal(a.brake, 0)
+  for (let i = 0; i < readsFor(3 * GENERIC_MS.rest); i++) m.read([joy([0, 0, -1, 0, 0, -1])], a)
+  assert.equal(m.generic.layoutOf(0), 'stick-only', 'dropped once, never taken again')
+  assert.equal(a.throttle, 0)
+  assert.equal(a.brake, 0)
+  // Chromium on Windows: X Y Z, two unused axes, Rz (the right stick on axes 2 and 5), then the hat on axis 9, which
+  // rests out of range. The same once-only misreading, held up and to the left.
+  const hid = (axes: number[]) => pad({ id: 'USB Gamepad (Vendor: 0079 Product: 0011)', index: 1, mapping: '', axes })
+  const n = mapper()
+  const at = (x: number, y: number) => [0, 0, x, 0, 0, y, 0, 0, 0, 1.2857]
+  for (let i = 0; i < readsFor(GENERIC_MS.rest); i++) n.read([hid(at(-1, -1))], a)
+  assert.equal(n.generic.layoutOf(1), 'evdev')
+  for (let i = 0; i < readsFor(GENERIC_MS.rest); i++) n.read([hid(at(0, 0))], a)
+  assert.equal(n.generic.layoutOf(1), 'stick-only')
+  for (let i = 0; i < readsFor(3 * GENERIC_MS.rest); i++) n.read([hid(at(-1, -1))], a)
+  assert.equal(n.generic.layoutOf(1), 'stick-only')
+  assert.equal(a.throttle, 0)
+  assert.equal(a.brake, 0)
 })
 
 test('a new pad in a slot is measured afresh; broken numbers read as centred', () => {
   const g = new GenericPads()
+  let t = 0
+  const read = (p: GamepadLike) => g.view(p, (t += FRAME_MS))
   const held = pad({ id: 'Held pad', mapping: '', axes: [0, -1, 0, 0] })
-  assert.equal(g.view(held).axes[1], 0)
-  assert.equal(g.view(pad({ id: 'Held pad', mapping: '', axes: [0, 0, 0, 0] })).axes[1], 0)
-  assert.equal(g.view(pad({ id: 'Held pad', mapping: '', axes: [0, -1, 0, 0] })).axes[1], -1, 'centred once: read')
+  assert.equal(read(held).axes[1], 0)
+  for (let i = 0; i < readsFor(GENERIC_MS.settle); i++) assert.equal(read(pad({ id: 'Held pad', mapping: '', axes: [0, 0, 0, 0] })).axes[1], 0)
+  assert.equal(read(pad({ id: 'Held pad', mapping: '', axes: [0, -1, 0, 0] })).axes[1], -1, 'rested centred: read')
   // Another pad in slot 0: measured again from scratch.
   const next = pad({ id: 'Next pad', mapping: '', axes: [0, -1, 0, 0] })
-  assert.equal(g.view(next).axes[1], 0)
+  assert.equal(read(next).axes[1], 0)
   assert.equal(g.layoutOf(0), 'four-axis')
   g.forget(0)
   assert.equal(g.layoutOf(0), null)
-  const broken = g.view(pad({ id: 'Broken', index: 5, mapping: '', axes: [Number.NaN, Infinity, 0, 0] }))
+  const broken = read(pad({ id: 'Broken', index: 5, mapping: '', axes: [Number.NaN, Infinity, 0, 0] }))
   assert.ok(broken.axes.every(Number.isFinite))
   assert.equal(broken.mapping, 'standard')
 })

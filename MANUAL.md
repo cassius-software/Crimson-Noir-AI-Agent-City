@@ -68,33 +68,60 @@ A ping pressed again within a second asks the next kind: go, look, gather, wait 
 Recruitment). With `?players=2`…`4` the keyboard, the mouse and touch stay player 1's, and each further gamepad
 drives a player of its own, entering, leaving and righting its own car (see Split screen).
 
-- **Touch.** The round Menu button (three lines) rides with the action buttons at the bottom right: beside them in
-  landscape, above them held upright, and beside Ping at the wheel. It opens a sheet with the keyboard's one-key
-  actions, upward and to the button's left, never past the top of the screen (a sheet taller than the room scrolls);
-  turning the phone or getting in or out of a car closes it. The console opens from the tap itself, so the on-screen
-  keyboard comes up, and shows a Close button on a touch screen. Every text field reads at 16 px on a touch screen,
-  so Safari does not zoom the page when one takes focus. Held upright while driving, Ping, Reset and Exit car stand
-  in a column, clear of the stick. The browser smoke test checks, at four phone and tablet sizes both ways up, on
-  foot and driving, that every control is on screen and clear of the others, the stick and Sloane's chip. Sloane's
-  card scrolls inside itself when a short screen cannot hold it. On a touch laptop the overlay goes away as soon as
-  the mouse moves (the Run toggle with it), and comes back with the next touch; on a tablet whose main pointer is
-  the finger (an iPad with a trackpad) it stays, and a mouse drag there looks like a finger's.
+- **Touch.** The round Menu button (three lines) rides with the action buttons at the bottom right: on foot above
+  Ping and Run (beside Enter car near one), at the wheel just before Ping (the row above the brakes, in landscape).
+  Like them it answers the touch itself, so it opens with the other thumb on the stick. It opens a sheet with the
+  keyboard's one-key actions, upward and to the button's left (above the button where there is no room to its left),
+  never past the edge of the screen (a sheet taller than the room scrolls); turning the phone or getting in or out of
+  a car closes it. The console opens from the tap itself, so the on-screen keyboard comes up, and shows a Close button
+  on a touch screen. Every text field reads at 16 px on a touch screen, so Safari does not zoom the page when one
+  takes focus. Held upright while driving, Ping, Reset and Exit car stand in a column, clear of the stick (on a phone
+  under 376 px across, Reset and Exit car share a row above the brakes, which stand one over the other). On a short
+  screen (under 500 px tall) the Brake and Handbrake buttons are a size smaller. Sloane's card stands clear of the
+  buttons: on foot in the band between the stick and the buttons (on a phone under 600 px across it gives up the
+  stick's inner edge rather than grow too narrow), at the wheel over the buttons, and it scrolls inside itself when a
+  short screen cannot hold it. Her chip stands under the minimap; on a short phone in landscape it rises to end above
+  the buttons, and where there is no room under the minimap (a phone under browser bars) it moves left of it, its goal
+  text cut short to keep clear of the HUD's panels on the left (under about 600 px across it can still reach a
+  passing message there). This follows the touch buttons being on screen, so a pad paired with a phone keeps it. The
+  browser smoke test checks, at six phone and tablet sizes both ways up and at two landscape views under browser bars,
+  on foot, driving and driving with a paired pad, that every control is on screen and clear of the others, the stick,
+  the speedometer, Sloane's chip and her Controls card, that the chip is clear of the stick, the minimap and the HUD's
+  panels and as wide as its buttons, and that the Menu's sheet stays inside the screen. On a touch laptop the overlay
+  goes away as soon as the mouse moves (the Run toggle with it), and comes back with the next touch. On a tablet whose
+  main pointer stays the finger with a mouse or trackpad attached (an iPad in Safari 26, going by WebKit's source and
+  not yet tried on an iPad; a Windows 2-in-1 in tablet mode) the overlay stays, and a mouse drag there looks like a
+  finger's; if the browser comes to report a fine main pointer, it behaves like a touch laptop (the overlay goes, the
+  Run toggle with it).
 - **Mouse and keyboard.** A captured mouse asks for raw counts (`unadjustedMovement`) where the browser has them. A
   jump of more than 400 counts arriving at many times the speed of the moves before it (a driver's spike) is dropped;
   speed is counts per millisecond between events, so a long frame whose moves the browser merged into one event is
-  kept. Space and the arrows never click a button the mouse left focused, and under a captured mouse they are always
-  the game's; a button reached with Tab (Sloane's chips) still presses with Space. A Command chord on a Mac (Cmd+A,
-  Cmd+Tab) holds no key, since macOS sends no key-up for its letter. The right mouse button opens no menu over the
-  city. Keys are read by place (`KeyboardEvent.code`), so on AZERTY the walk keys are Z Q S D.
+  kept, and while the mouse keeps moving, two events in a row are never dropped. Once the mouse has rested (50 ms and
+  two frames without a move), the next move is timed over the frame it arrived in: a jump of more than 400 counts at
+  over 16 counts per millisecond is a spike, while a turn from rest and a long frame's merged move are kept (a flick
+  fast enough to cover 400 counts in its first 25 ms loses that first frame). Space and the arrows never click a
+  button a mouse click or a tap left focused, also after switching to another window and back or with a key held
+  through the tap, and under a captured mouse they are always the game's; a button reached with Tab (Sloane's chips)
+  still presses with Space. A Command chord on a Mac (Cmd+A, Cmd+Tab) holds no key, since macOS sends no key-up for
+  its letter. The right mouse button opens no menu over the city. Keys are read by place (`KeyboardEvent.code`), so
+  on AZERTY the walk keys are Z Q S D.
 - **Gamepads.** A pad with the standard mapping is read as the table says. One without it (some Bluetooth pads, and
   pads Firefox on Linux does not recognise) waits until one of its first four buttons (its face buttons) is pressed,
   so a throttle quadrant, pedals or a wheel left plugged in never takes a player's seat; that press only wakes it.
   `hal` lists it meanwhile, with what to press, and a device without a stick is never used. Awake, it is read by
-  position as a best guess, and `hal` says how: the left stick and the first face buttons always; the Linux kernel's
-  order in full (both sticks, the triggers, the d-pad) once axes 2 and 5 are seen resting at one end with 3 and 4
-  centred; a right stick on axes 2/3 when there are exactly four axes. Each axis is read only after it is seen where
-  its part rests (a stick centred, a trigger at its end), so a stick held when the pad wakes, a parked lever or a
-  slider never moves anything on its own, and a guess cannot spin the view.
+  position, and `hal` lists it as a best guess by position: the left stick and the first face buttons always; the
+  Linux kernel's order in full (both sticks, the triggers, the d-pad) once axes 2 and 5 have sat at one end for half
+  a second with the sticks centred; a right stick on axes 2/3 when there are exactly four axes. Each axis is read only
+  after it is seen resting where its part rests (a stick centred, a trigger at its end), timed in seconds whatever
+  the frame rate. An axis already off centre when the pad wakes must sit centred and still (within 1% of its travel)
+  for a second and a half before it counts as a stick, so a stick held then comes alive a moment after it is let go,
+  while a pedal, a trigger or a lever resting at an end never walks or drives anyone, even after passing the middle
+  or pausing there under a foot. A pad that puts a stick or a hat on axes 2 and 5 (the joystick driver's order on
+  Linux; Chromium on Windows puts a pad's right stick there) is taken for the kernel's order if it is held at one end
+  for half a second; until both sit centred and still for half a second, moving them brakes and throttles (at half
+  when centred), and then the order is dropped for good. Two real triggers held still at half pull together for half
+  a second drop it too, until the pad reconnects. It is still a guess: a lever parked at its middle when the pad
+  wakes, or a pair of triggers on a four-axis pad, is read as a stick and can turn or spin the view.
 
 ## URL options
 

@@ -18,8 +18,9 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 - **The city played in a real browser in CI** (`tools/browser/smoke.mjs`, the `browser` job in `ci.yml`). Chromium
   boots the built page on its software WebGPU adapter (SwiftShader) and plays it through the same events a person
   makes: as a desktop (keys, a mouse drag, a pad, the console, a car entered, driven and left), as an iPhone (the touch
-  stick, a look drag, both thumbs at once, the Menu and each of its items, and at four phone and tablet sizes both ways
-  up, on foot and driving, every control on screen and clear of the others, the stick and Sloane's chip), as two
+  stick, a look drag, both thumbs at once, the Menu and each of its items, and at six phone and tablet sizes both ways
+  up and two landscape views under browser bars, on foot, driving and with a paired pad, every control on screen and
+  clear of the others, the stick, the speedometer, Sloane's chip and her Controls card), as two
   players on two pads, opened from disk, pinned at Ultra, and as the console alone. A page exception, a GPU
   validation error, a lost device or the crowd's flow field falling back to the CPU fails it. A software adapter
   says nothing about speed, heat or a real GPU's driver.
@@ -29,7 +30,11 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 - **Pads without the standard mapping** (some Bluetooth pads, pads Firefox on Linux does not recognise) were ignored;
   they are now read by position as a best guess, which `hal` names, once one of their face buttons is pressed: a
   throttle quadrant, pedals or a wheel left plugged in never takes a player's seat, and an axis is read only after it
-  is seen where its part rests, so a held stick, a parked lever or a slider moves nothing on its own. Valve's vendor
+  is seen resting where its part rests (timed in seconds, whatever the frame rate), so a held stick, a pedal passing
+  or pausing in the middle, a parked lever or a slider moves nothing on its own. A stick or a hat where the Linux
+  kernel puts its triggers can be taken for its order once, if held at one end for half a second; it brakes and
+  throttles as it moves until it has rested centred for half a second, and then the order is dropped for good.
+  Valve's vendor
   id and Safari's PlayStation pad names get their glyphs. Tested against recorded layouts in Node and with a stand-in
   pad in the browser; no real pad on Linux, Safari or a Steam Deck has been tried.
 - **Eight kinds of vehicle.** The fleet is drawn from `VEHICLE_KINDS` (`src/07_Execute_Actions/car.ts`): an executive
@@ -140,17 +145,24 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   alone, only player 1 opens a car door, and anyone else driving when the room starts is put out of the car.
 - **Command chords on a Mac left the avatar walking** (macOS sends no key-up for a letter pressed with Command):
   a Command chord holds no key, and Command's key-up lets go of the held ones.
-- **Space clicked the last button the mouse pressed**: Space and the arrows never click a button the mouse left
-  focused, and are always the game's under a captured mouse; a button reached with Tab still presses with Space. The
+- **Space clicked the last button the mouse pressed**: Space and the arrows never click a button a mouse click or a
+  tap left focused (also after another window and back, or with a key held through the tap), and are always the
+  game's under a captured mouse; a button reached with Tab still presses with Space (where it came from is judged as
+  focus arrives, since Chromium counts any key as keyboard use). The
   right mouse button opens no menu over the city, and the arrows and the right Shift move and run too.
 - **Safari zoomed the page into any text field under 16 px**; on a touch screen every field now reads at 16 px.
 - **A mouse driver's spike could spin the view**: a captured mouse asks for raw counts where the browser has them, and
   a jump far faster than the mouse was moving is dropped (judged per millisecond, so a long frame's merged movement is
-  kept).
+  kept; out of rest a move is timed over its own frame, so a jump out of stillness is a spike and a turn from rest is
+  not; two events in a row are never dropped while the mouse moves).
 - **Touch layout on small and upright phones**: held upright while driving, Ping, Reset and Exit car stand in a
-  column clear of the stick; the Menu's sheet never runs off the top; Sloane's card scrolls inside itself on a short
-  screen; a mouse moving on a touch laptop puts the overlay away (and its Run toggle with it), while a tablet whose
-  main pointer is the finger keeps it.
+  column clear of the stick, and on a phone under 376 px across the rows that would reach the stick stand as columns;
+  the Menu opens from the touch itself, so it works with a thumb on the stick, and its sheet never runs off the screen;
+  Sloane's card stands clear of the buttons and scrolls inside itself on a short screen, and her chip rises above the
+  buttons on a short phone in landscape (moving left of the minimap under browser bars), also with a pad paired; the
+  brakes are a size smaller on a short screen; at the wheel the Menu sits before Ping, clear of the speedometer; a
+  mouse moving on a touch laptop puts the overlay away (and its Run toggle with it), while a tablet whose main pointer
+  is the finger keeps it.
 
 - **A runner beside a turning car could halt the realm.** At full lock a car's centre heads into its inner flank while
   the overhang behind the rear axle swings away; the Ring-0 audit judges a touch by the centre and the Sanctuary judged

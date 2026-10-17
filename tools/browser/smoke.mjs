@@ -11,11 +11,12 @@
  *   avatar, ghost view and rain mode toggled from their keys, and a car entered, driven and left;
  * - phone: an iPhone's user agent, screen and touch (no mouse, no keyboard): the virtual stick walking, a drag on the
  *   right half turning the head, both thumbs at once, the Run and Ping buttons, and the menu that reaches what a
- *   keyboard reaches (the console, the clock, ghost view, rain mode, hiding the HUD); on foot and at the wheel, at four
- *   phone and tablet sizes both ways up, every control on screen and clear of the others, the stick and Sloane's chip,
- *   and the Menu's sheet inside the screen; a car entered from its button and, held upright while driving, Ping, Reset
- *   and Exit car clear of the stick, every text field reads at 16 px, and a mouse moving over a touch-first screen
- *   leaves the touch overlay where it is;
+ *   keyboard reaches (the console, the clock, ghost view, rain mode, hiding the HUD), also with a thumb on the stick;
+ *   on foot and at the wheel, at six phone and tablet sizes both ways up, every control on screen and clear of the
+ *   others, the stick, the speedometer, Sloane's chip and her Controls card, the chip clear of the stick and the
+ *   minimap, and the Menu's sheet inside the screen; a car entered from its button and, held upright while driving,
+ *   Ping, Reset and Exit car clear of the stick, every text field reads at 16 px, and a mouse moving over a
+ *   touch-first screen leaves the touch overlay where it is;
  * - split: two players (?players=2) on two pads, one of them without the standard mapping: that pad moves nobody until
  *   a face button wakes it, then walks player 1, and player 2's own pad enters and leaves a car of their own;
  * - file: dist/index.html opened from disk, the way the README says to play, with no server and so no cross-origin
@@ -408,10 +409,27 @@ const SCENARIOS = {
       }
 
       /**
-       * The touch layout on phones and tablets of every size, both ways up: each control on screen, none over another,
-       * the stick's zone or Sloane's chip, and the Menu's sheet inside the screen. Leaves the iPhone in landscape.
+       * The touch layout on phones and tablets of every size, both ways up, and in landscape under browser bars (an
+       * iPhone SE in Safari, a 360 dp Android phone in Chrome): each control on screen, none over another, the stick's
+       * zone, the speedometer, Sloane's chip or her tallest card (the Controls list); the chip clear of the stick, the
+       * minimap and the HUD's panels, and as wide as its buttons; and the Menu's sheet inside the screen. Below 600 px
+       * across, the card may give up the stick's inner edge. Leaves the iPhone in landscape.
        */
-      const SIZES = [[874, 402], [667, 375], [956, 440], [1180, 820]]
+      const SIZES = [[874, 402], [667, 375], [956, 440], [568, 320], [640, 360], [1180, 820]]
+      const VIEWS = [...SIZES.flatMap(([long, short]) => [[long, short], [short, long]]), [667, 325], [752, 280]]
+      const rectOf = (selector) => `(() => { const e = document.querySelector(${JSON.stringify(selector)}); if (!e) return null; const r = e.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom } })()`
+      const buttonIn = (selector, text) => `(() => { const b = [...document.querySelectorAll(${JSON.stringify(selector)})].find((b) => b.textContent.trim() === ${JSON.stringify(text)}); if (!b) return null; const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2] })()`
+      // A first visit's chip asks a name; skipped, it offers Controls, which opens Sloane's tallest card.
+      const chipAt = await centre('[data-concierge="chip"]')
+      if (chipAt && !(await centre('[data-concierge="chip-controls"]'))) {
+        await tapAt(chipAt, 10)
+        const skip = await p.waitFor(buttonIn('aside[data-concierge] button', 'Skip'), 10_000).catch(() => null)
+        if (skip) await tapAt(skip, 11)
+        const close = await p.waitFor(`(${rectOf('aside[data-concierge] button[aria-label="Close"]')}) && ${JSON.stringify(true)}`, 10_000).then(() => centre('aside[data-concierge] button[aria-label="Close"]'), () => null)
+        if (close) await tapAt(close, 12)
+      }
+      const controlsChip = await p.waitFor(`!!document.querySelector('[data-concierge="chip-controls"]')`, 10_000).then(() => true, () => false)
+      check(controlsChip, 'phone: Sloane\'s chip offers her Controls card once the name is skipped')
       const LAYOUT = `(() => {
         const box = (e) => { const r = e.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom } }
         const shown = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
@@ -420,15 +438,18 @@ const SCENARIOS = {
         const buttons = layer ? [...layer.querySelectorAll('button')].filter(shown).map((b) => ({ name: b.getAttribute('aria-label') || b.textContent.trim(), ...box(b) })) : []
         const chip = document.querySelector('[data-concierge="chip"]')
         const pill = chip && (chip.closest('[role="group"]') || chip)
-        return { w: innerWidth, h: innerHeight, zone: zone ? box(zone) : null, buttons, chip: pill && shown(pill) ? box(pill) : null }
+        const hud = (name) => { const e = document.querySelector(\`[data-hud="\${name}"]\`); return e && shown(e) ? box(e) : null }
+        const panels = [...document.querySelectorAll('[data-hud="panel"]')].filter(shown).map(box)
+        const parts = pill ? [...pill.querySelectorAll('button')].filter(shown).map(box) : []
+        return { w: innerWidth, h: innerHeight, zone: zone ? box(zone) : null, buttons, chip: pill && shown(pill) ? box(pill) : null, parts, minimap: hud('minimap'), speed: hud('speed'), panels }
       })()`
       const meets = (a, b) => a.l < b.r - 1 && b.l < a.r - 1 && a.t < b.b - 1 && b.t < a.b - 1
       const inside = (a, w, h) => a.l >= -1 && a.t >= -1 && a.r <= w + 1 && a.b <= h + 1
-      const layouts = async (mode) => {
+      const layouts = async (mode, views = VIEWS) => {
         const bad = []
-        for (const [long, short] of SIZES) {
-          for (const portrait of [false, true]) {
-            const [width, height] = portrait ? [short, long] : [long, short]
+        for (const [width, height] of views) {
+          {
+            const portrait = height > width
             await p.b.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true, screenOrientation: portrait ? { type: 'portraitPrimary', angle: 0 } : { type: 'landscapePrimary', angle: 90 } })
             await p.frames(3)
             const L = await p.eval(LAYOUT)
@@ -438,11 +459,31 @@ const SCENARIOS = {
               if (!inside(b, L.w, L.h)) bad.push(`${at}: ${b.name} off screen`)
               if (meets(b, L.zone)) bad.push(`${at}: ${b.name} over the stick`)
               if (L.chip && meets(b, L.chip)) bad.push(`${at}: ${b.name} under Sloane's chip`)
+              if (L.speed && meets(b, L.speed)) bad.push(`${at}: ${b.name} over the speedometer`)
             }
+            if (L.chip && meets(L.chip, L.zone)) bad.push(`${at}: Sloane's chip over the stick`)
+            if (L.chip && L.minimap && meets(L.chip, L.minimap)) bad.push(`${at}: Sloane's chip over the minimap`)
+            if (L.chip && L.speed && meets(L.chip, L.speed)) bad.push(`${at}: Sloane's chip over the speedometer`)
+            if (L.chip && L.panels.some((q) => meets(L.chip, q))) bad.push(`${at}: Sloane's chip over a HUD panel`)
+            if (L.chip && L.parts.some((q) => q.l < L.chip.l - 1 || q.r > L.chip.r + 1)) bad.push(`${at}: Sloane's chip narrower than its buttons`)
             for (let i = 0; i < L.buttons.length; i++) for (let j = i + 1; j < L.buttons.length; j++) {
               if (meets(L.buttons[i], L.buttons[j])) bad.push(`${at}: ${L.buttons[i].name} over ${L.buttons[j].name}`)
             }
             if (!L.buttons.some((b) => b.name === 'Menu')) bad.push(`${at}: no Menu button`)
+            const controls = await centre('[data-concierge="chip-controls"]')
+            if (controls) await tapAt(controls, 13)
+            const card = controls ? await p.waitFor(rectOf('aside[data-concierge="help"]'), 5_000).catch(() => null) : null
+            if (!card) bad.push(`${at}: Sloane's Controls card did not open`)
+            else {
+              await p.frames(2)
+              const settled = (await p.eval(rectOf('aside[data-concierge="help"]'))) ?? card
+              if (!inside(settled, L.w, L.h)) bad.push(`${at}: Sloane's card runs off screen ${JSON.stringify(settled)}`)
+              for (const b of L.buttons) if (meets(settled, b)) bad.push(`${at}: Sloane's card over ${b.name}`)
+              if (L.w >= 600 && meets(settled, L.zone)) bad.push(`${at}: Sloane's card over the stick`)
+              const shut = await centre('aside[data-concierge] button[aria-label="Close"]')
+              if (shut) await tapAt(shut, 14)
+              await p.waitFor(`!document.querySelector('aside[data-concierge]')`, 5_000).catch(() => bad.push(`${at}: Sloane's card did not close`))
+            }
             const items = await openMenu()
             const sheet = await p.eval(`(() => { const m = document.querySelector('[role="menu"]'); if (!m) return null; const r = m.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom } })()`)
             if (!Array.isArray(items) || !sheet) bad.push(`${at}: the Menu did not open`)
@@ -454,9 +495,21 @@ const SCENARIOS = {
         }
         await p.b.send('Emulation.setDeviceMetricsOverride', { width: IPHONE.width, height: IPHONE.height, deviceScaleFactor: 1, mobile: true, screenOrientation: { type: 'landscapePrimary', angle: 90 } })
         await p.frames(3)
-        check(bad.length === 0, `phone: ${mode}, at ${SIZES.length * 2} phone and tablet sizes both ways up, every control is on screen and clear of the others, the stick and Sloane's chip, and the Menu opens inside the screen`, bad.slice(0, 6).join('; '))
+        check(bad.length === 0, `phone: ${mode}, at ${views.length} phone and tablet views, every control is on screen and clear of the others, the stick, the speedometer, Sloane's chip and her card, the chip clear of the HUD, and the Menu opens inside the screen`, bad.slice(0, 24).join('; '))
       }
       await layouts('on foot')
+      // The Menu opens with the other thumb on the stick, as Ping and Run do (a browser makes no click of a tap then).
+      const mAt = await menuAt()
+      if (mAt) {
+        await p.touch('touchStart', [[100, H - 100, 20]])
+        await p.touch('touchStart', [[100, H - 100, 20], [mAt[0], mAt[1], 21]])
+        await p.touch('touchMove', [[100, H - 100, 20]])
+        const opened = await p.waitFor(`!!document.querySelector('[role="menu"]')`, 5_000).then(() => true, () => false)
+        await p.touch('touchEnd', [])
+        check(opened, 'phone: the Menu opens with the other thumb holding the stick')
+        await tapAt(mAt, 22)
+        await p.waitFor(`!document.querySelector('[role="menu"]')`, 5_000).catch(() => {})
+      }
 
       // A field on a touch screen reads at 16 px whatever its own size, so Safari does not zoom into it.
       const px = await p.eval(`(() => { const i = document.createElement('input'); i.className = 'text-[12px]'; document.body.append(i); const f = getComputedStyle(i).fontSize; i.remove(); return f })()`)
@@ -485,6 +538,15 @@ const SCENARIOS = {
       check(inCar, 'phone: the Enter car button enters the nearest car')
       if (inCar) {
         await layouts('driving')
+        // A pad paired with the phone: its glyphs show, the touch buttons stay, and so does the layout around them.
+        await p.eval(`window.__smokePad.connect(0)`)
+        await p.eval(`window.__smokePad.set([0, 0, 0.6, 0])`)
+        await p.frames(4)
+        await p.eval(`window.__smokePad.set([0, 0, 0, 0])`)
+        await p.frames(2)
+        const glyphs = await p.eval(`window.__SIM__.snapshot().supplier.glyphs`)
+        check(glyphs !== 'touch' && (await p.snap()).touch === true, 'phone: a paired pad shows its glyphs and the touch buttons stay', glyphs)
+        await layouts('driving with a paired pad', [[874, 402], [752, 280], [667, 325]])
         await p.b.send('Emulation.setDeviceMetricsOverride', { width: IPHONE.height, height: IPHONE.width, deviceScaleFactor: 1, mobile: true, screenOrientation: { type: 'portraitPrimary', angle: 0 } })
         await p.frames(3)
         const boxes = await p.eval(`(() => {

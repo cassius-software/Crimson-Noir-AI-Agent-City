@@ -9,9 +9,13 @@
  * focus end a drag, touch drag uses first-person sensitivity, the right stick turns the head,
  * `padFamily` follows the controller used last, the ping is one edge from Q, the middle mouse button
  * (never a drag) and a pad's right shoulder, a Command chord holds no key, Space and the arrows never click a
- * button the mouse left focused (one reached with Tab keeps Space), raw mouse counts are asked for and a driver's
- * spike is dropped (judged by rate, so a busy frame's merged movement is kept), and a mouse puts a touch laptop's
- * overlay away, Run toggle and all, but never a touch-first tablet's.
+ * button a pointer press left focused (one reached with Tab keeps Space; decided when the focus moves, since Chromium
+ * reads every keydown as keyboard use, and kept when the window's focus comes back or a key repeats through a tap),
+ * raw mouse counts are asked for and a driver's spike is dropped (judged by rate, so a busy frame's merged movement,
+ * a turn from rest, a long frame out of rest and a 125 Hz mouse on a 240 Hz screen are kept, a jump out of stillness
+ * is not, and never two in a row), and a mouse
+ * puts a touch laptop's overlay away, Run toggle and all, but never a touch-first tablet's (until its primary pointer
+ * turns fine).
  * What breaks if it is removed? A regression to orbit-camera input (a wheel zoom, a click that must come
  * first, an unclamped pitch that flips the view) could ship unnoticed.
  */
@@ -237,7 +241,8 @@ test('a touch laptop: a finger brings the touch overlay, the mouse moving again 
   assert.equal(input.analog.run, false)
   // A tablet whose primary pointer is the finger keeps the overlay (and the latch) when a mouse moves.
   const m = globalThis as unknown as { matchMedia?: unknown }
-  m.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} })
+  const query = { matches: true, change: null as (() => void) | null, addEventListener(_: string, f: () => void) { this.change = f }, removeEventListener() {} }
+  m.matchMedia = () => query
   try {
     const tablet = new Input(canvas as unknown as HTMLCanvasElement, new HalBus({ navigator: { getGamepads: () => [] } }))
     assert.equal(tablet.mouseHidesTouch, false, 'its overlay takes a mouse press like a finger (TouchControls.tsx)')
@@ -245,6 +250,11 @@ test('a touch laptop: a finger brings the touch overlay, the mouse moving again 
     doc.dispatchEvent(ev('pointermove', { pointerType: 'mouse', movementX: 3, movementY: -1 }))
     assert.equal(tablet.touch, true)
     assert.equal(tablet.touchHeld('run'), true)
+    // A trackpad attached: the primary pointer is fine now, and the overlay goes, Run toggle and all.
+    query.matches = false
+    query.change?.()
+    assert.equal(tablet.touch, false)
+    assert.equal(tablet.touchHeld('run'), false, 'the latch goes with the overlay')
     tablet.dispose()
   } finally {
     delete m.matchMedia
@@ -275,22 +285,77 @@ test('Space and the arrows never click a button the mouse left focused (one reac
     if (target) Object.defineProperty(e, 'target', { value: target })
     return e
   }
-  const button = (focusVisible: boolean) => ({ tagName: 'BUTTON', matches: (q: string) => q === ':focus-visible' && focusVisible })
+  // Chromium counts a key as keyboard use before the key's own event runs, so a button reads :focus-visible inside every
+  // keydown, the first Space after a click included: how it was focused is decided when the focus moves.
+  const button = () => ({ tagName: 'BUTTON', matches: (q: string) => q === ':focus-visible' })
+  const focus = (target: object) => {
+    const e = new Event('focusin')
+    Object.defineProperty(e, 'target', { value: target })
+    doc.dispatchEvent(e)
+  }
+  const clicked = button()
+  doc.dispatchEvent(ev('pointerdown', { pointerType: 'mouse', button: 0 }))
+  focus(clicked)
   for (const code of ['Space', 'ArrowUp', 'ArrowLeft']) {
     // Over a button the mouse clicked (it kept the focus): the game's, never a second click or a scroll.
-    const clicked = key(code, button(false))
-    doc.dispatchEvent(clicked)
-    assert.equal(clicked.defaultPrevented, true, code)
+    const e = key(code, clicked)
+    doc.dispatchEvent(e)
+    assert.equal(e.defaultPrevented, true, code)
     assert.equal(input.down(code), true, code)
     // Nothing focused: there is no default to stop, so the Concierge still reads the key as movement.
     const page = key(code, { tagName: 'BODY', matches: () => false })
     doc.dispatchEvent(page)
     assert.equal(page.defaultPrevented, false, `${code} on the page`)
   }
-  // A Concierge chip reached with Tab: Space presses it, as the keyboard does everywhere.
-  const tabbed = key('Space', button(true))
+  // Tab on to a Concierge chip: Space presses it, as the keyboard does everywhere.
+  doc.dispatchEvent(key('Tab', clicked))
+  const chip = button()
+  focus(chip)
+  const tabbed = key('Space', chip)
   doc.dispatchEvent(tabbed)
-  assert.equal(tabbed.defaultPrevented, false, 'a :focus-visible button keeps Space')
+  assert.equal(tabbed.defaultPrevented, false, 'a button reached with Tab keeps Space')
+  // Clicked once it has the focus (the focus does not move, so no focusin comes): Space is the game's again.
+  const focused = doc as unknown as { activeElement?: object }
+  focused.activeElement = chip
+  const click = ev('pointerdown', { pointerType: 'mouse', button: 0 })
+  Object.defineProperty(click, 'target', { value: chip })
+  doc.dispatchEvent(click)
+  delete focused.activeElement
+  const again = key('Space', chip)
+  doc.dispatchEvent(again)
+  assert.equal(again.defaultPrevented, true, 'the same button clicked after Tab')
+  // Any key, then Alt+Tab away and back: the window's focus comes back to the button with a focusin of its own, and
+  // the button stays the pointer's.
+  doc.dispatchEvent(key('AltLeft', chip))
+  win.dispatchEvent(new Event('blur'))
+  focus(chip)
+  const back = key('Space', chip)
+  doc.dispatchEvent(back)
+  assert.equal(back.defaultPrevented, true, 'back from another window, still the pointer\'s')
+  // Pressed with a finger while W is held: a tap focuses only once the finger lifts, after the key's repeats.
+  doc.dispatchEvent(Object.assign(key('KeyW', { tagName: 'BODY', matches: () => false }), { repeat: true }))
+  doc.dispatchEvent(ev('click'))
+  doc.dispatchEvent(ev('pointerdown', { pointerType: 'touch', button: 0 }))
+  doc.dispatchEvent(Object.assign(key('KeyW', { tagName: 'BODY', matches: () => false }), { repeat: true }))
+  const run = button()
+  focus(run)
+  doc.dispatchEvent(ev('click'))
+  const held = key('Space', run)
+  doc.dispatchEvent(held)
+  assert.equal(held.defaultPrevented, true, 'a key held through a tap leaves the tap\'s focus the pointer\'s')
+  // The press over (its click came), a focus that follows is not the pointer's: Space presses it.
+  const later = button()
+  focus(later)
+  const moved = key('Space', later)
+  doc.dispatchEvent(moved)
+  assert.equal(moved.defaultPrevented, false, 'a focus after the press ended is the keyboard\'s')
+  // A finger's tap focuses like a click.
+  doc.dispatchEvent(ev('pointerdown', { pointerType: 'touch', button: 0 }))
+  const menuButton = button()
+  focus(menuButton)
+  const tapped = key('Space', menuButton)
+  doc.dispatchEvent(tapped)
+  assert.equal(tapped.defaultPrevented, true, 'a tapped button')
   // Under pointer lock every Space and arrow is the game's.
   canvas.dispatchEvent(mouse('pointerdown', 0, 0))
   canvas.dispatchEvent(mouse('pointerup', 0, 0))
@@ -299,7 +364,7 @@ test('Space and the arrows never click a button the mouse left focused (one reac
   doc.dispatchEvent(locked)
   assert.equal(locked.defaultPrevented, true, 'locked')
   doc.exitPointerLock()
-  const w = key('KeyW', button(false))
+  const w = key('KeyW', menuButton)
   doc.dispatchEvent(w)
   assert.equal(w.defaultPrevented, false, 'letters keep their default')
   const typed = key('Space', { tagName: 'TEXTAREA' })
@@ -343,7 +408,11 @@ test('a drag ends when the button is found released, when focus is lost, and whe
   assert.ok(input.yaw < yaw, 'resumed')
 })
 
-test('raw mouse counts are asked for, a plain lock where they are refused; a spike is dropped, a flick and a busy frame\'s movement are kept', async () => {
+test('raw mouse counts are asked for, a plain lock where they are refused; a spike is dropped, a flick, a turn from rest and a busy frame\'s movement are kept', async () => {
+  // Events and frames on one clock, as the page's are (performance.now()).
+  let t = 1000
+  input.dispose()
+  input = new Input(canvas as unknown as HTMLCanvasElement, new HalBus({ navigator: { getGamepads: () => pads } }), () => t)
   const asked: unknown[] = []
   const lockWith = canvas.requestPointerLock.bind(canvas)
   let refuse = true
@@ -357,13 +426,20 @@ test('raw mouse counts are asked for, a plain lock where they are refused; a spi
   await new Promise((r) => setTimeout(r, 0))
   assert.deepEqual(asked, [{ unadjustedMovement: true }, undefined], 'refused, then a plain lock')
   assert.equal(input.locked, true)
-  // Events a frame apart (16 ms), as the browser stamps them.
-  let t = 1000
-  const move = (dx: number, after = 16) => {
-    t += after
+  // Events a frame apart (16 ms), as the browser stamps them, with the frame's poll before each.
+  const send = (dx: number) => {
     const e = ev('mousemove', { movementX: dx, movementY: 0 })
     Object.defineProperty(e, 'timeStamp', { value: t })
     doc.dispatchEvent(e)
+  }
+  const move = (dx: number, after = 16) => {
+    t += after
+    input.poll(after / 1000)
+    send(dx)
+  }
+  /** The mouse at rest for `ms`: frames run with no movement. */
+  const rest = (ms: number) => {
+    for (let k = 0; k < ms / 16; k++) { t += 16; input.poll(1 / 60) }
   }
   const yaw = input.yaw
   move(900)
@@ -378,16 +454,56 @@ test('raw mouse counts are asked for, a plain lock where they are refused; a spi
   }
   assert.ok(close(input.yaw, expect), 'the flick turned the head in full')
   // A steady turn, then a 200 ms frame (a region loading): the browser merges its moves into one event of 600 counts,
-  // no faster than the turn. Kept: the view turns the whole way.
+  // no faster than the turn, with no frame polled in between. Kept: the view turns the whole way.
   for (let i = 0; i < 10; i++) move(50)
   expect = input.yaw
-  move(600, 200)
+  t += 200
+  const merged = ev('mousemove', { movementX: 600, movementY: 0 })
+  Object.defineProperty(merged, 'timeStamp', { value: t })
+  doc.dispatchEvent(merged)
   assert.ok(close(input.yaw, expect - 600 * LOOK.mouse), 'a busy frame\'s movement is a look')
-  // Mid-turn, a jump at many times the turn's rate in one frame is a driver's spike.
+  // Half a second at rest, then a jump of 900 counts in one event: a spike out of stillness, dropped.
+  rest(500)
+  expect = input.yaw
+  move(900)
+  assert.equal(input.yaw, expect, 'a spike after a rest is dropped')
+  // Half a second at rest, then a quick about-face at 30 fps: every frame of it is kept.
+  rest(500)
+  expect = input.yaw
+  for (const dx of [106, 448, 595, 236, 43]) {
+    move(dx, 33)
+    expect -= dx * LOOK.mouse
+  }
+  assert.ok(close(input.yaw, expect), 'a turn from rest turns the head in full')
+  // Mid-turn, a jump at many times the turn's rate in one frame is a driver's spike; the next event is judged against
+  // it, so two in a row are never dropped.
   move(50)
   expect = input.yaw
   move(900)
   assert.equal(input.yaw, expect, 'dropped')
+  move(900)
+  assert.ok(close(input.yaw, expect - 900 * LOOK.mouse), 'the event after a dropped one is kept')
+  // At rest, then a 200 ms frame (a region loading) in which the hand starts turning: its merged move of 600 counts
+  // arrives with no frame polled since the one before the stall. As slow as the hand: kept.
+  rest(500)
+  expect = input.yaw
+  t += 16
+  input.poll(1 / 60)
+  t += 200
+  send(600)
+  assert.ok(close(input.yaw, expect - 600 * LOOK.mouse), 'a long frame\'s move out of rest is a look')
+  // A mouse reporting at 125 Hz on a 240 Hz screen: two frames between events, never a rest. A fast turn is kept whole.
+  rest(500)
+  expect = input.yaw
+  for (const dx of [60, 200, 450, 500, 500, 500, 300]) {
+    t += 4
+    input.poll(1 / 240)
+    t += 4
+    input.poll(1 / 240)
+    send(dx)
+    expect -= dx * LOOK.mouse
+  }
+  assert.ok(close(input.yaw, expect), 'a 125 Hz mouse\'s turn on a 240 Hz screen is kept')
   doc.exitPointerLock()
   // Where raw counts are granted, one request is enough.
   refuse = false

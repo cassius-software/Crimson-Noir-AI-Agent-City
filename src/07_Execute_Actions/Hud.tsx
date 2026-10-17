@@ -203,13 +203,13 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   // (one, on a single body line, on a phone held in landscape).
   const tight = compact && short
   const toasts = (compact ? s.toasts.slice(0, short ? 1 : 2) : s.toasts).map((t) => (
-    <div key={t.id} className={`px-4 py-2.5 ${panel}`}>
+    <div key={t.id} className={`px-4 py-2.5 ${panel}`} data-hud="panel">
       <div className={`text-[13px] font-semibold ${tight ? 'truncate' : ''}`}>{t.title}</div>
       <div className={`text-xs ${muted} ${tight ? 'truncate' : ''}`}>{t.body}</div>
     </div>
   ))
   const speedChip = (
-    <div className={`flex items-center gap-2.5 py-2 pr-2.5 pl-3.5 ${panel}`}>
+    <div className={`flex items-center gap-2.5 py-2 pr-2.5 pl-3.5 ${panel}`} data-hud="speed">
       <div className="text-right">
         <div className="text-2xl leading-none font-semibold tabular-nums tracking-tight">{c.speedKmh.toFixed(0)}</div>
         <div className={`mt-0.5 text-[10px] ${muted}`}>km/h · {c.gear}</div>
@@ -329,7 +329,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
             {/* Landscape phone: header and readout side by side (wrapping if narrow), so the toast
                 below them ends above the touch stick. Otherwise `contents` keeps them in the column. */}
             <div className={short ? 'flex max-w-full flex-wrap items-start gap-2' : 'contents'}>
-              <div className={`flex max-w-full items-center gap-2.5 py-2 pr-3.5 pl-2.5 ${panel}`}>
+              <div className={`flex max-w-full items-center gap-2.5 py-2 pr-3.5 pl-2.5 ${panel}`} data-hud="panel">
                 <MonolithLogo size={28} title="" />
                 <div className="min-w-0">
                   <div className="flex min-w-0 items-center text-[14px] leading-tight font-semibold tracking-tight">{BRAND.name}{nameTag}</div>
@@ -338,7 +338,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
                 <div className={divider} />
                 <div className="text-[15px] font-semibold tabular-nums tracking-tight">{c.clock}</div>
               </div>
-              <div className={`max-w-full px-3 py-2 text-[11px] ${panel}`}>
+              <div className={`max-w-full px-3 py-2 text-[11px] ${panel}`} data-hud="panel">
                 {(!c.region || c.streets) && (
                   <div className="flex items-center gap-2">
                     <Signal label="E–W" light={c.signalEW} />
@@ -362,7 +362,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
             <div className="flex w-68 max-w-full flex-col gap-2">{toasts}</div>
           </div>
 
-          <div className="absolute top-0 right-0 flex flex-col items-end gap-2">
+          <div className="absolute top-0 right-0 flex flex-col items-end gap-2" data-hud="minimap">
             <Minimap s={s} dark={dark} ui={208 / 112} layer={mapLayer} className={`h-28 w-28 overflow-hidden rounded-full border-2 ${mapRing} shadow-[0_8px_24px_rgba(15,23,42,0.3)]`} />
             {driving && !short && speedChip}
           </div>
