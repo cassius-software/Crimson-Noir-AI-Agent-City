@@ -37,6 +37,89 @@
       }
       .boot-mark > svg { display: block; width: 100%; height: 100%; filter: drop-shadow(0px 10px 15px rgba(0, 0, 0, 0.2)); }
     </style>
+    <!-- The boot watchdog: classic ES5, before the page's module, so it runs on any browser that runs scripts at all.
+         If the module never ran (a download cut off, a browser too old to read it, an error while it loaded), the page
+         would stay a black splash with nothing to press, and the installed iPhone app (full screen) and the Windows
+         app have no reload of their own: at load, unless the module said it started (window.__bootDone, main.tsx), it
+         draws a card with the reason and Restart (focused; Enter, a pad's A). main.tsx hands it React's uncaught
+         errors too (window.__bootFatal). Pinned by src/bootWatchdog.test.ts, which also keeps it before the module in
+         dist/index.html. -->
+    <script id="boot-watchdog">
+      (function () {
+        var w = window, d = document, seen = [], shown = false
+        function make(tag, css, text) {
+          var e = d.createElement(tag)
+          if (css) e.setAttribute('style', css)
+          if (text) e.appendChild(d.createTextNode(text))
+          return e
+        }
+        function appName() {
+          var m = d.querySelector('meta[name="application-name"]')
+          return (m && m.getAttribute('content')) || 'The city'
+        }
+        function restart() { w.location.reload() }
+        function toConsole() {
+          var q = w.location.search.replace(/^\?/, '').split('&'), out = ['boot=tty'], i
+          for (i = 0; i < q.length; i++) if (q[i] && q[i].split('=')[0] !== 'boot') out.push(q[i])
+          w.location.assign(w.location.pathname + '?' + out.join('&') + w.location.hash)
+        }
+        function button(text, dark, act) {
+          var b = make('button', 'min-height:44px;margin:0 8px 8px 0;padding:8px 16px;border-radius:12px;font:600 14px system-ui,sans-serif;cursor:pointer;' +
+            (dark ? 'border:0;background:#0f172a;color:#fff' : 'border:1px solid #cbd5e1;background:#fff;color:#0f172a'), text)
+          b.type = 'button'
+          b.onclick = act
+          return b
+        }
+        // title: the headline; lines: what happened and what to do; detail: the raw reason; withConsole: offer the
+        // ?boot=tty shell too (only once the page's script has run: before that the console cannot load either).
+        function fatal(title, lines, detail, withConsole) {
+          if (shown) return
+          shown = true
+          var shade = make('div', 'position:fixed;top:0;right:0;bottom:0;left:0;z-index:10002;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:16px;padding:max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));background:rgba(0,0,0,.7);font:14px/1.6 system-ui,sans-serif')
+          var card = make('div', 'box-sizing:border-box;width:100%;max-width:576px;max-height:100%;overflow-y:auto;padding:20px;border-radius:16px;background:#f8fafc;color:#0f172a')
+          var head = make('h1', 'margin:0 0 12px;font-size:18px;line-height:1.4', title), i
+          shade.setAttribute('role', 'alertdialog')
+          shade.setAttribute('aria-modal', 'true')
+          shade.setAttribute('aria-label', title)
+          shade.setAttribute('data-failure', 'page')
+          card.appendChild(head)
+          for (i = 0; i < lines.length; i++) card.appendChild(make('p', 'margin:0 0 8px;word-wrap:break-word;word-break:break-word', lines[i]))
+          var row = make('div', 'margin-top:16px'), again = button('Restart', true, restart)
+          row.appendChild(again)
+          if (withConsole) row.appendChild(button('Open the console', false, toConsole))
+          card.appendChild(row)
+          card.appendChild(make('p', 'margin:8px 0 0;font:11px/1.5 ui-monospace,monospace;color:#64748b;word-wrap:break-word;word-break:break-word',
+            (detail || 'No message was given.') + ' · build %BRAND_VERSION% · ' + navigator.userAgent))
+          shade.appendChild(card)
+          ;(d.body || d.documentElement).appendChild(shade)
+          again.focus()
+          w.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' && !(e.target && e.target.tagName === 'BUTTON')) restart()
+          })
+          var held = true
+          setInterval(function () {
+            var pads = [], down = false, j
+            try { pads = navigator.getGamepads ? navigator.getGamepads() : [] } catch (err) { pads = [] }
+            for (j = 0; j < pads.length; j++) if (pads[j] && pads[j].buttons[0] && pads[j].buttons[0].pressed) down = true
+            if (down && !held) (d.activeElement && d.activeElement.tagName === 'BUTTON' ? d.activeElement : again).click()
+            held = down
+          }, 50)
+        }
+        w.__bootFatal = fatal
+        w.addEventListener('error', function (e) {
+          if (!w.__bootDone) seen.push(e.error || { name: '', message: e.message })
+        })
+        w.addEventListener('load', function () {
+          setTimeout(function () {
+            if (w.__bootDone) return
+            var name = appName(), first = seen[0], update = 'If it happens again, update the browser (on an iPhone or iPad: Settings > General > Software Update).'
+            if (!first) fatal(name + ' couldn’t start', ['The page did not finish downloading, or this browser did not run its script.', 'Restart to load it again.', update], 'the page’s script never ran', false)
+            else if (first.name === 'SyntaxError') fatal(name + ' couldn’t start', ['This browser could not read the page’s script: it is older than ' + name + ' needs, or the download was cut off.', 'Restart to load it again.', update], 'SyntaxError: ' + first.message, false)
+            else fatal(name + ' couldn’t start', ['The page stopped while it was loading.', 'Restart to load it again.', update], (first.name ? first.name + ': ' : '') + first.message, false)
+          }, 0)
+        })
+      })()
+    </script>
   </head>
   <body>
     <!-- React replaces this on mount with the identical BootVeil, which then fades into the city. -->
@@ -50,6 +133,17 @@
         <!-- /source-only -->
       </div>
     </div>
+    <!-- Scripts off (a setting, a content blocker, or the Files app's preview, which runs none): words instead of a
+         black splash forever. -->
+    <noscript>
+      <div style="position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 10002; display: flex; align-items: center; justify-content: center; padding: 16px; background: #000; color: #e2e8f0; font: 15px/1.6 system-ui, sans-serif">
+        <div style="max-width: 576px">
+          <p style="margin: 0 0 12px; font-size: 18px; font-weight: 600; color: #fff">%BRAND_NAME% needs JavaScript</p>
+          <p style="margin: 0 0 8px">Turn JavaScript on for this page, then open it again. On an iPhone or iPad: Settings &gt; Apps &gt; Safari &gt; Advanced &gt; JavaScript (before iOS 18: Settings &gt; Safari &gt; Advanced).</p>
+          <p style="margin: 0">Opened from the Files app? Its preview runs no scripts: open the page's https:// address in Safari instead.</p>
+        </div>
+      </div>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
