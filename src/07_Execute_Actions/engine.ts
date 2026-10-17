@@ -60,7 +60,7 @@ import { KEYBOARD_SEAT, type Seat } from '../04_Connect_Hardware/seats.ts'
 import { FrameClock, type GlyphFamily, type KernelStats, type NetReport, type NetState, type SeatView, type SipocSnapshot, type Toast } from '../05_Observe_Environment/telemetry.ts'
 import { MemorySink, Recorder, fileSink, markdownFor, type RecorderSink, type RecorderSource } from '../05_Observe_Environment/recorder.ts'
 import type { AgentTelemetry } from '../05_Observe_Environment/agv.ts'
-import { Governor, defaultAgents, defaultCars, profileDevice, readDeviceHints, tierRange, type QualityKnobs } from '../05_Observe_Environment/governor.ts'
+import { Governor, defaultAgents, defaultCars, liteJoinHint, profileDevice, readDeviceHints, tierRange, type QualityKnobs } from '../05_Observe_Environment/governor.ts'
 import { CAR_TUNE_RANGE, chassisBox, clampTuning, kindOf, type CarTuning } from './car.ts'
 import { FleetView } from './fleetView.ts'
 import { RigView } from './rigView.ts'
@@ -164,7 +164,11 @@ export interface EngineOptions {
  * The options as the engine runs them: the crowd's and the fleet's sizes decided, the player count clamped, where the
  * page runs, and whether the device profile is lite.
  */
-export type EngineConfig = EngineOptions & { agents: number; cars: number; players: number; host: 'browser' | 'native'; lite: boolean }
+export type EngineConfig = EngineOptions & {
+  agents: number; cars: number; players: number; host: 'browser' | 'native'; lite: boolean
+  /** The fleet's size came from the device profile (no ?cars): a lite page's join explains a timeout by it. */
+  carsDefaulted: boolean
+}
 
 /**
  * Guardrail haptics (rumble 0..1, sent through the HAL bus, which picks WebHID or the Gamepad API and never
@@ -707,7 +711,7 @@ export class Engine {
       const players = clampPlayers(requested.players)
       const cars = requested.cars ?? defaultCars(profile)
       const options: EngineConfig = {
-        ...requested, players, post: requested.post && players === 1 && !lite, lite,
+        ...requested, players, post: requested.post && players === 1 && !lite, lite, carsDefaulted: requested.cars === undefined,
         // A region's cars ride the window's rings alone (the street-hopping drivers of ?tracks=0 know the procedural grid only).
         cars: empty ? 0 : streets ? (requested.tracks === false ? 0 : Math.min(cars, streetCapacity(streets, requested.seed))) : cars,
         agents: empty ? AGENTS_RANGE[0] : requested.agents ?? defaultAgents(profile), host: hints.host ?? 'browser',
@@ -1110,7 +1114,10 @@ export class Engine {
         this.toast('Network', `joined as player ${c.id}`)
       } else if (state === 'closed') {
         const why = c.reason ?? 'closed'
-        this.netJoin?.reject(new Error(why))
+        // A default room refuses a lite page's smaller fleet by its world name without a reply, so that join ends in the
+        // host's join timeout: the console's line names the likely cause rather than the bare timeout.
+        const hint = why === 'join timeout' ? liteJoinHint(this.options.lite, this.options.carsDefaulted, this.sim.meta.suv.length) : ''
+        this.netJoin?.reject(new Error(why + hint))
         this.netJoin = null
         this.netLetGo(why)
         this.toast('Network', `session ended: ${why}`)

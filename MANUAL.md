@@ -1397,11 +1397,13 @@ or a native shell. Under the cinema camera it also holds the camera's 24 frames 
 are no toasts and no settings menu, and the console's `quality` command is the only manual control. While
 `render off` holds the screen, the governor holds its tier: frames without a draw would read as cheap.
 
-- **Starting tier:** a device profile (adapter, touch, cores, memory) picks the starting tier. Phones
-  start on Minimal or Low and are capped at Medium in auto mode.
-- **Tiers:** there are five, Minimal to Ultra. They scale render resolution, shadows and shadow-map
-  size, post-processing, and the crowd's LOD distance, near radius, draw distance and **density**.
-  Density is a stable per-agent hash, so the same people stay visible.
+- **Starting tier:** a device profile (adapter, touch, cores, memory) picks the starting tier. Phones start on Minimal
+  or Low and are capped at Medium in auto mode; a lite profile (an entry-level phone GPU, below) starts on Lite and is
+  capped at Minimal.
+- **Tiers:** there are six: Lite (tier -1, reached automatically only on a lite profile, or pinned by hand) and
+  Minimal to Ultra. They scale render resolution, shadows and shadow-map size, post-processing, and the crowd's LOD
+  distance, near radius, draw distance and **density**. Density is a stable per-agent hash, so the same people stay
+  visible.
 - **Stepping down:** when FPS stays below 60 for more than 2 s (with 5 % vsync tolerance, so a clean
   60 Hz display never trips it), the governor steps down one tier. That thins the crowd's drawn
   InstancedMesh count and lowers the procedural texture resolution (256 → 192 → 128 → 64). Textures are
@@ -1409,8 +1411,10 @@ are no toasts and no settings menu, and the console's `quality` command is the o
 - **Stepping up:** only after several seconds of headroom, with cooldowns and backoff so it never
   oscillates. Both render paths are compiled during the boot splash, so a later tier change never
   compiles a pipeline mid-game.
-- **Floor and ceiling:** phones start on Minimal or Low and are capped at Medium in auto mode; the
-  browser exposes no thermal state, so frame time is the proxy. Ultra adds the volumetrics.
+- **Floor and ceiling:** in auto mode phones are capped at Medium and a lite profile at Minimal; the browser exposes
+  no thermal state, so frame time is the proxy. Ultra adds the volumetrics. Sloane's fixes for heat, battery or a slow
+  frame ("my phone is hot", "it's laggy") pin Low at most and never raise the tier: a device already below Low stays
+  where it is.
 - **Under the cinema camera:** the governor still reads every animation frame, so it keeps input and physics
   at the display's rate. Only 24 of those frames a second are drawn, so each drawn frame gets more GPU time, and
   the governor usually settles a tier or two higher than it does with `?cinema=0`. Two rules are specific to it:
@@ -1428,10 +1432,12 @@ are no toasts and no settings menu, and the console's `quality` command is the o
   Medium or above, 8,000 on a phone, 5,000 on the weakest GPUs and software rasterizers, and 2,500 on a lite profile.
   The simulation's size is fixed for the session (the GPU buffers are sized for it). The tiers then scale how many
   are drawn.
-- **The lite profile and the Lite tier.** Entry-level phone GPUs get a profile of their own: a phone (not a flagship)
-  whose adapter is ARM Bifrost or Midgard (a Mali-G52 reads `arm / bifrost` in Chrome), Imagination PowerVR, or Adreno
-  5xx and older, and any phone that reports 2 GB of memory or less. Valhall and Immortalis, Adreno 6xx and newer,
-  Xclipse, iPhones, desktops, laptops, the native shell and software rasterizers keep their profiles. A lite profile:
+- **The lite profile and the Lite tier.** Entry-level phone GPUs get a profile of their own: any phone whose adapter
+  is ARM Bifrost or Midgard (a Mali-G52 reads `arm / bifrost` in Chrome, and so does an older flagship's Mali-G76,
+  since Chrome names only the architecture), Imagination PowerVR Rogue, Furian or B-Series (Dawn: `img-tec / rogue`; a
+  bare `img-tec` only on 4 GB or less, so a D-Series is not lite), or Adreno 5xx and older, and any phone that reports
+  2 GB of memory or less. Valhall and Immortalis, Adreno 6xx and newer, Xclipse, iPhones, desktops, laptops, the
+  native shell and software rasterizers keep their profiles. A lite profile:
   - starts on **Lite**, tier -1, below Minimal: half the base pixel ratio's edge, no shadows or post, and a thinner,
     shorter crowd draw (density 0.15, detailed bodies within 8 m, always drawn within 6 m, nobody beyond 80 m). Its
     automatic range is Lite to Minimal, so it never reaches a tier that needs post or shadows;
@@ -1447,14 +1453,15 @@ are no toasts and no settings menu, and the console's `quality` command is the o
     yet). The physics rate and its substeps are unchanged.
 
   `?lite=1` forces the profile on any device and `?lite=0` turns it off. `?quality=-1` (or `lite`, and the console's
-  `quality -1` or `quality lite`) pins the Lite tier on any device without the rest of the profile. The HUD shows
-  the tier as Lite, and the console's quality line (`quality`, `stats`, `sim`) ends with `lite profile` on a lite
-  profile. A lite page runs 12 cars by default, so it names a different world from a default network room's 36; join
-  one with `?cars=36`. Tried so far only in headless Chromium on SwiftShader with a faked Mali-G52 adapter (the
-  browser smoke's `lite` scenario): the faked phone booted on Lite with 2,500 pedestrians and 12 cars, drew frames,
-  and its page compiled 31 render pipelines, none of them the post chain's; the same phone with `?lite=0` compiled 94,
-  37 of them the post chain's colour-and-velocity passes. Not tried on a real Mali phone: its boot time and frame rate
-  are not measured.
+  `quality -1` or `quality lite`) pins the Lite tier on any device without the rest of the profile. The HUD shows the
+  tier as Lite, and the console's quality line (`quality`, `stats`, `sim`) ends with `lite profile` on a lite profile.
+  A lite page runs 12 cars by default, so it names a different world from a default network room's 36; join one with
+  `?cars=36`. The room refuses the smaller fleet without a reply, so the console's `net join` ends in a join timeout,
+  and on a lite page that kept its default fleet the line says so and names `?cars=36`. Tried so far only in headless
+  Chromium on SwiftShader with a faked Mali-G52 adapter (the browser smoke's `lite` scenario): the faked phone booted
+  on Lite with 2,500 pedestrians and 12 cars, drew frames, and its page compiled 31 render pipelines, none of them the
+  post chain's; the same phone with `?lite=0` compiled 94, 37 of them the post chain's colour-and-velocity passes. Not
+  tried on a real Mali phone: its boot time and frame rate are not measured.
 
 **The two ends of the range.** `docs/autoscaler/README.md` drives the governor as a flagship phone (Safari 26, 120 Hz,
 touch) and as a console-class desktop (16 threads, a 10 TFLOPS GPU, 4K at 60 Hz or 144 Hz, tab and native shell)

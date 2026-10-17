@@ -14,7 +14,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  CARS_DEFAULT, CROWD_DEFAULT, Governor, LITE, TIERS, defaultAgents, defaultCars, knobsOf, profileDevice, readDeviceHints, tierRange,
+  CARS_DEFAULT, CROWD_DEFAULT, Governor, LITE, TIERS, defaultAgents, defaultCars, knobsOf, liteJoinHint, profileDevice, readDeviceHints, tierRange,
   type DeviceHints, type DeviceProfile,
 } from './governor.ts'
 import { CINEMA } from '../07_Execute_Actions/cinema.ts'
@@ -162,6 +162,14 @@ test('lite 2: the other entry-level families are lite too: Midgard, PowerVR, Adr
   }
   assert.equal(boot({ ...MALI_G52, adapter: 'qualcomm / adreno-7xx', memory: 2 }).profile.lite, true, '2 GB: lite whatever the GPU')
   assert.equal(boot({ ...MALI_G52, adapter: 'arm / valhall', memory: 4 }).profile.lite, false, '4 GB on its own is not')
+  // Dawn names every Imagination GPU 'img-tec', the D-Series in current flagships too: the vendor alone is not entry-level.
+  for (const adapter of ['img-tec / b-series', 'imagination / / PowerVR B-Series BXM-8-256', 'img-tec / furian']) {
+    assert.equal(boot({ ...MALI_G52, adapter, memory: 8 }).profile.lite, true, adapter)
+  }
+  for (const adapter of ['img-tec / d-series', 'img-tec', 'imagination / / PowerVR D-Series DXT-48-1536']) {
+    assert.equal(boot({ ...MALI_G52, adapter, memory: 8 }).profile.lite, false, `${adapter} on 8 GB`)
+  }
+  assert.equal(boot({ ...MALI_G52, adapter: 'img-tec', memory: 4 }).profile.lite, true, 'a bare img-tec on 4 GB or less is')
 })
 
 // ---------------------------------------------------------------------------------------------------
@@ -179,4 +187,14 @@ test('lite 3: ?lite=1 makes any device a lite profile; ?lite=0 gives the Mali-G5
   assert.deepEqual([off.agents, off.cars, off.governor.tier], [5000, 36, 0])
   // Absent, the hints decide.
   assert.equal(boot(MALI_G52, undefined).profile.lite, true)
+})
+
+test('lite 3: a lite page whose fleet came from the profile explains a join timeout by it; any other page does not', () => {
+  // A default room runs 36 cars and refuses a 12-car world without a reply (replication.ts 'join: world').
+  const hint = liteJoinHint(true, true, CARS_DEFAULT.lite)
+  assert.match(hint, /12 cars/)
+  assert.match(hint, /\?cars=36/)
+  assert.equal(liteJoinHint(true, false, CARS_DEFAULT.lite), '', '?cars chose the fleet: the page knows what it asked for')
+  assert.equal(liteJoinHint(true, true, CARS_DEFAULT.full), '', 'a lite page on the full fleet names the default world')
+  assert.equal(liteJoinHint(false, true, CARS_DEFAULT.full), '')
 })

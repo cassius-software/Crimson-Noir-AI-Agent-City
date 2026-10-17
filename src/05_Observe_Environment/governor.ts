@@ -173,10 +173,14 @@ export function profileDevice(h: DeviceHints, lite?: boolean): DeviceProfile {
     start = flagship ? 1 : 0
     if (h.memoryGb !== undefined && h.memoryGb <= 4) start = 0
     // Entry-level phone GPUs: Mali's Bifrost and Midgard generations (Chrome names only the architecture, so a G52 MC2
-    // reads the same as a G76; a browser that gives the description names the model), Imagination's PowerVR parts, and
-    // Adreno 5xx or older. Valhall, Immortalis, Adreno 6xx and newer, Xclipse and Apple are not. A phone that says it
-    // has 2 GB or less is short of memory for the city whatever its GPU.
-    const entryGpu = /bifrost|midgard|mali-?g(?:31|51|52|71|72|76)\b|mali-?t\d{3}\b|img-?tec|imagination|powervr|rogue/.test(a) ||
+    // reads the same as a G76; a browser that gives the description names the model), Imagination's older and smaller
+    // parts, and Adreno 5xx or older. Valhall, Immortalis, Adreno 6xx and newer, Xclipse and Apple are not. A phone that
+    // says it has 2 GB or less is short of memory for the city whatever its GPU.
+    // Imagination by its vendor alone is not enough: Dawn names every one 'img-tec', the current D-Series flagship parts
+    // too, so only Rogue, Furian and B-Series (by architecture or description) count, or a bare vendor on 4 GB or less.
+    const imgEntry = /rogue|furian|b-?series|powervr ?(?:sgx|g[em]\d)/.test(a) ||
+      (/^(?:img-?tec|imagination)[\s/]*$/.test(a) && h.memoryGb !== undefined && h.memoryGb <= 4)
+    const entryGpu = /bifrost|midgard|mali-?g(?:31|51|52|71|72|76)\b|mali-?t\d{3}\b/.test(a) || imgEntry ||
       /adreno(?:tm)?[1-5](?:\d\d|xx)/.test(c)
     weak = (!flagship && entryGpu) || (h.memoryGb !== undefined && h.memoryGb <= 2)
   } else {
@@ -220,6 +224,17 @@ export function defaultAgents(p: DeviceProfile): number {
 export const CARS_DEFAULT = Object.freeze({ full: 36, lite: 12 })
 export function defaultCars(p: DeviceProfile): number {
   return p.lite ? CARS_DEFAULT.lite : CARS_DEFAULT.full
+}
+
+/**
+ * Why a lite page's network join may have timed out: its fleet came from the profile (no ?cars), so its world names
+ * fewer cars than a default room runs, and the room refuses it without a word (replication.ts 'join: world') until the
+ * host's join deadline closes it. Empty when the page chose its fleet or runs the full one. The wording says "if":
+ * a bad token or a full room also ends in a join timeout.
+ */
+export function liteJoinHint(lite: boolean, carsDefaulted: boolean, cars: number): string {
+  if (!lite || !carsDefaulted || cars === CARS_DEFAULT.full) return ''
+  return ` (this lite page runs ${cars} cars; if the room runs the default ${CARS_DEFAULT.full}, open the page with ?cars=${CARS_DEFAULT.full} to join it)`
 }
 
 /** The governor's automatic range for a device: phones and tablets stop at Medium (heat and battery

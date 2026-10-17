@@ -264,7 +264,8 @@ function readOptions(): Options {
     const v = Number(q.get(key))
     return q.has(key) && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback
   }
-  const quality = q.get('quality')
+  // Lowercased once so ?quality=Lite or ?quality=AUTO read as the words they are (num() reads the raw value for digits).
+  const quality = q.get('quality')?.toLowerCase() ?? null
   return {
     // Absent: the device profile decides (governor.ts defaultAgents: 14,000 on a desktop GPU, fewer on phones).
     agents: q.has('crowd') ? Math.round(num('crowd', 14000, 256, 60000)) : undefined,
@@ -374,6 +375,15 @@ function App() {
 }
 
 /**
+ * The tier a brief's quality step pins: its own value, or, for a ceiling (a fix for heat or a slow frame), the lower of
+ * that and the live tier, so the fix never moves a device onto a heavier tier than the one it is on.
+ */
+function qualityFor(step: PlanStep, b: Pick<TerminalBridge, 'quality'>): 'auto' | number {
+  const v = step.value as 'auto' | number
+  return step.ceiling && typeof v === 'number' ? Math.min(v, b.quality().tier) : v
+}
+
+/**
  * The console's `goal` (terminal/bridge.ts GoalPlan): the goal planned as Sloane plans one (06_Make_Decisions/intent.ts),
  * its immediate steps applied through the same knobs the Concierge uses (the clock, the quality tier, the sound).
  */
@@ -384,7 +394,7 @@ function goalPlan(text: string, b: Pick<TerminalBridge, 'setClock' | 'quality' |
     if (!step.immediate) { steps.push({ label: step.label, state: 'later' }); continue }
     try {
       if (step.control === 'time' && typeof step.value === 'number') b.setClock(step.value)
-      else if (step.control === 'quality' && (step.value === 'auto' || typeof step.value === 'number')) b.quality(step.value)
+      else if (step.control === 'quality' && (step.value === 'auto' || typeof step.value === 'number')) b.quality(qualityFor(step, b))
       else if (step.control === 'audio' && (step.value === 'on' || step.value === 'off' || typeof step.value === 'number')) b.audio(step.value)
       else { steps.push({ label: step.label, state: 'later' }); continue }
       steps.push({ label: step.label, state: 'done' })
@@ -468,7 +478,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
     const b = bridge
     if (!b) return false
     if (step.control === 'time' && typeof step.value === 'number') { b.setClock(step.value); return true }
-    if (step.control === 'quality' && (step.value === 'auto' || typeof step.value === 'number')) { b.quality(step.value); return true }
+    if (step.control === 'quality' && (step.value === 'auto' || typeof step.value === 'number')) { b.quality(qualityFor(step, b)); return true }
     if (step.control === 'audio' && (step.value === 'on' || step.value === 'off' || typeof step.value === 'number')) { b.audio(step.value); return true }
     return false
   }, [bridge])
