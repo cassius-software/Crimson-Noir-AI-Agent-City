@@ -116,8 +116,8 @@ export type SwarmBridge = Pick<Swarm, 'plan' | 'run' | 'status' | 'stop' | 'audi
  * and the camera for source 'camera' — so the terminal calls it synchronously inside the Enter keydown,
  * like pair(); the host must reach showSaveFilePicker / getUserMedia before its first await. It
  * resolves with the codec in use ('av01.0.04M.08', 'avc1.42E01F', 'vp09.00.10.08'). `stop` flushes
- * and closes the file and resolves with where it went, e.g. "saved to onyx-2026….agv" or "downloaded
- * onyx-2026….agv" (may be ''). `status` is the live RecordingState the HUD shows; `supported` says why
+ * and closes the file and resolves with where it went, e.g. "saved to crimson-noir-2026….agv" or "downloaded
+ * crimson-noir-2026….agv" (may be ''). `status` is the live RecordingState the HUD shows; `supported` says why
  * this browser cannot record, if it cannot. Nothing is ever transmitted: the only sink is a local file.
  */
 export interface RecordBridge {

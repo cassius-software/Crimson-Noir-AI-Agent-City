@@ -60,7 +60,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
 LABEL org.opencontainers.image.title="crimson-noir-host" \
       org.opencontainers.image.description="The authoritative host of Crimson Noir AI Agent City: the room and the ledger door" \
       org.opencontainers.image.source="https://github.com/cassius-software/Crimson-Noir-AI-Agent-City" \
-      org.opencontainers.image.licenses="LicenseRef-ONYX"
+      org.opencontainers.image.licenses="LicenseRef-CrimsonNoir-Proprietary"
 CMD ["src/10_Network/replication.node.ts"]
 
 # 4. The proof: the image as built starts the host, opens its ledger door on the lock, and mints a token.

@@ -2,11 +2,11 @@
 
 *An enterprise in the palm of your hands.*
 
-> This is the full manual of Crimson Noir // Agent City. The overview, quickstart, release and licence are in
+> This is the full manual of Crimson Noir: Agent City. The overview, quickstart, release and licence are in
 > [README.md](README.md).
 
-> **The product is Crimson Noir: Agent City.** Inside the app, the splash, the HUD and the terminal prompt still
-> show ONYX, a provisional working name that lives in one place, `src/brand.ts`; see [Brand](#brand).
+> **The product is Crimson Noir: Agent City.** Its name and its mark live in one place, `src/brand.ts`; see
+> [Brand](#brand).
 
 A business-casual, non-violent civic simulation that ships as one self-contained HTML file. It is a
 16 × 16-block city under a moving sun: a downtown of towers, a heritage quarter of stone and brick rows, and a
@@ -19,7 +19,7 @@ through people, lamps and trees, which dissolve into falling green binary code a
 ghost mode), take any car, see every physics shape in ghost view (`G`), or open the Ring-0 console with `~`. Up to
 four people can play on one screen, and the operator can join a room hosted on this machine.
 
-It opens with no clicks. A black Monolith splash fades straight into the street at golden hour, and
+It opens with no clicks. A black splash with the skyline mark fades straight into the street at golden hour, and
 Sloane, the concierge, asks what to call you: type a name and press Enter, then walk. Sloane's chip also opens the
 wardrobe.
 
@@ -441,7 +441,7 @@ reading order. The rects tile the canvas exactly, in whole pixels.
 
 ## Onboarding and the spatial HUD
 
-- **Boot:** the page is black with the Monolith from its first paint. There are no loading bars or
+- **Boot:** the page is black with the mark from its first paint. There are no loading bars or
   text. Once the city is running it fades from black into the first-person view at golden hour.
 - **Sloane, the concierge** (they/them), introduces themselves on a frosted-glass card and asks what to
   call you. The name field is already focused: type and press Enter (Esc skips).
@@ -2093,16 +2093,19 @@ reset and a real pad.
 
 ## Brand
 
-The mark is the Monolith: a black rounded square with an open white triangle
-(`MonolithLogo.tsx`). The favicon is generated from the same SVG. The product is Crimson Noir: Agent City;
-"ONYX", the working name the app shows from `src/brand.ts`, is provisional.
+The product is Crimson Noir: Agent City, named in one place, `src/brand.ts`: `BRAND.name` everywhere it fits, and
+`BRAND.short`, "Crimson Noir", where it does not (the phone HUD, the home-screen label, the HAL handshake). The
+terminal's host name and a recording's file name start `crimson-noir`.
+The mark is the city's skyline from the cover art (`docs/cover.jpg`): an ink rounded square with a titanium hairline,
+five towers in titanium, the tallest with a spire, and one crimson street line under them. `MonolithLogo.tsx` draws
+it and `MONOLITH_SVG` in `brand.ts` carries it for the favicon and the boot splash (both keep the name of the earlier
+Monolith mark); the Windows app's icons and the home-screen icons are rendered from the same shapes.
 The design system is Crimson Noir (`brand/STYLE.md`): Vantablack and anodized titanium surfaces with one crimson
 line, the system face, a 4pt grid. Its tokens are `brand/tokens.json`, the page reads them from
 `src/brand/tokens.css` (custom properties and Tailwind utilities), the marks are in `brand/marks/`, and
 `brand/preview.html` shows them; the Crimson Terminal's colours are the same tokens.
-Preliminary trademark notes for ONYX, AEGIS and SENTIS are in `NOTICE.md`: Unity sells an AI
-inference package named Sentis, and Aegis is a naval weapons system. Commission a clearance search
-before you settle the name.
+Trademark notes on the earlier candidate names are in the operator notes of `NOTICE.md`. Commission a clearance
+search for Crimson Noir before you register it.
 
 ## Licensing
 

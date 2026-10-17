@@ -6,7 +6,7 @@
  * emit exactly one self-contained dist/index.html. viteSingleFile inlines every script, stylesheet and
  * asset; nothing may be served from public/, because Vite copies those as loose files. Two small
  * plugins make that one file carry the brand (title, favicon and the black boot splash with the
- * Monolith, all from src/brand.ts) and its legal notices (NOTICE.md plus the license text of every
+ * skyline mark, all from src/brand.ts) and its legal notices (NOTICE.md plus the license text of every
  * bundled npm package).
  * The pilot build (`vite build --mode pilot`, npm run build:pilot) is the same page with a surveyed region embedded
  * (world/pilot.region.json.gz, compiled by tools/world), written to dist-pilot/index.html: still one file, still offline.
@@ -26,7 +26,7 @@ const ROOT = dirname(fileURLToPath(import.meta.url))
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 
 /** Tokens index.html may use. Text is HTML-escaped. Base64 keeps the favicon URI free of '%' (Vite's
- *  %ENV% syntax) and quotes. BRAND_MARK is the Monolith as inline SVG markup for the boot splash: inline,
+ *  %ENV% syntax) and quotes. BRAND_MARK is the mark as inline SVG markup for the boot splash: inline,
  *  it is painted with the page's first frame (no image decode), exactly as BootVeil.tsx paints it. */
 export const BRAND_TOKENS: Readonly<Record<string, string>> = {
   '%BRAND_NAME%': escapeHtml(BRAND.name),

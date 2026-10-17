@@ -6,5 +6,6 @@
 <svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Crimson Noir">
   <title>Crimson Noir (one colour)</title>
   <rect width="120" height="120" rx="28" fill="currentColor"/>
-  <path fill-rule="evenodd" clip-rule="evenodd" d="M60 25L90 77H30L60 25ZM60 48L46 72H74L60 48Z" fill="#ffffff"/>
+  <path d="M24 84V64H38V84ZM40 84V48H43V43H49V48H52V84ZM54 84V32H57V26H59V13H61V26H63V32H66V84ZM68 84V42H80V84ZM82 84V60H96V84Z" fill="#ffffff"/>
+  <rect x="24" y="88" width="72" height="4" fill="#ffffff"/>
 </svg>

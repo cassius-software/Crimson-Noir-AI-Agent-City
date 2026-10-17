@@ -28,9 +28,10 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
-/** The product's name (decided 2026-10-16), and the few letters an iPhone shows under the home-screen icon. */
+/** The product's name (decided 2026-10-16), and the few letters a phone shows under the home-screen icon: BRAND.name
+ *  and BRAND.short in src/brand.ts (src/webApp.test.ts keeps them equal). */
 export const APP_NAME = 'Crimson Noir: Agent City'
-export const SHORT_NAME = 'Agent City'
+export const SHORT_NAME = 'Crimson Noir'
 
 /** The icons, from the Windows app's set (src-tauri/icons): published name, source, square size in pixels. */
 export const ICONS = Object.freeze([

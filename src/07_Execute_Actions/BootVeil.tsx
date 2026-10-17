@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is the boot sequence: a black full-screen veil with the Monolith centred
+ * Why does this file exist? It is the boot sequence: a black full-screen veil with the mark centred
  * on it while the GPU pipelines compile, then a fade from black straight into the first-person view. No
  * spinner, no bar, and no text beyond an accessible label until the city has kept the player waiting
  * BOOT_VEIL.slowMs of visible time: then one quiet line says it is still starting and offers Restart and

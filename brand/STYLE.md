@@ -14,8 +14,8 @@ are in `brand/marks/`. `brand/preview.html` shows all of it in one page.
 1. **Minimal.** One accent, two materials, one face. A screen shows what the operator needs and nothing it does not.
 2. **Industrial luxury.** Surfaces are Vantablack and anodized titanium: matte, flat, hairline-edged. No gradients,
    no glow, no frosted glass, no drop shadow but the mark's own.
-3. **Precise geometry.** Everything sits on a 4pt grid; corners share the mark's family of radii; crimson is a line,
-   a point or a triangle, never a wash.
+3. **Precise geometry.** Everything sits on a 4pt grid; corners share the mark's family of radii; crimson is a line
+   or a point, never a wash.
 4. **Quiet motion.** Two durations, one curve. Things reveal; they do not bounce.
 
 ## Palette
@@ -37,9 +37,9 @@ are in `brand/marks/`. `brand/preview.html` shows all of it in one page.
 | `crimson-tint` | `#ffd0d6` | a title on crimson-deep |
 | `crimson-muted` | `#d0b0b6` | a status on crimson-deep |
 | `amber` | `#d89a2a` | caution only |
-| `white` | `#ffffff` | an echoed command; the Monolith's triangle |
+| `white` | `#ffffff` | an echoed command; the one-colour mark's skyline |
 
-Rules: crimson covers at most a line, a dot or the inner triangle of the mark; a screen never has two crimson
+Rules: crimson covers at most a line, a dot or the mark's street line; a screen never has two crimson
 surfaces. Text is titanium on ink; never ink on titanium except in print. Contrast: `titanium-200` on `ink` is
 13.9:1, `titanium-400` on `ink` is 6.1:1, `crimson` on `ink` is 4.6:1 (text at 15px and above only; prefer it for
 lines and dots).
@@ -74,19 +74,20 @@ Numbers are tabular (`font-variant-numeric: tabular-nums`) wherever they change 
 
 ## Marks
 
-- **The mark** (`brand/marks/crimson-noir-mark.svg`): an ink rounded square (rx 28 of 120) with a titanium hairline
-  ring, the open triangle of the Monolith in `titanium-200`, its inner triangle filled `crimson`. The Monolith
-  (`src/MonolithLogo.tsx`: black field, white open triangle) is the same geometry one step quieter; the favicon and
-  the boot veil keep it until the operator clears the final mark.
-- **One colour** (`crimson-noir-mark-mono.svg`): the field takes `currentColor`, the triangle is white. For print,
-  embossing and anywhere crimson cannot be reproduced.
+- **The mark** (`brand/marks/crimson-noir-mark.svg`): the city's skyline from the cover art (`docs/cover.jpg`). An
+  ink rounded square (rx 28 of 120) with a titanium hairline ring, five towers in `titanium-200` (the tallest with a
+  spire), and one `crimson` street line under them. The page draws the same shapes (`src/MonolithLogo.tsx`,
+  `MONOLITH_SVG` in `src/brand.ts`) for the favicon, the boot veil, the HUD and the title bar, and the Windows app's
+  and home-screen icons are rendered from them (`src-tauri/icons/`).
+- **One colour** (`crimson-noir-mark-mono.svg`): the field takes `currentColor`, the skyline and the street line are
+  white. For print, embossing and anywhere crimson cannot be reproduced.
 - **The wordmark** (`crimson-noir-wordmark.svg`): the mark, CRIMSON NOIR in display weight, a crimson rule, a label
   line. 520 × 120.
 - **The terminal glyph** (`crimson-terminal-glyph.svg`): the Crimson Terminal's own icon, its header bar and rule
   in miniature with a prompt chevron and a crimson cursor.
-- Clear space is the inner triangle's height (24 of 120) on every side. Minimum size 24px. Never recolour the
-  triangle, rotate the mark, add a shadow beyond `drop-shadow(0 10px 15px rgba(0,0,0,.2))`, or set it on anything
-  but ink, black or white.
+- Clear space is 24 of 120 on every side. Minimum size 16px (the title bar). Never recolour the skyline or the
+  street line, rotate the mark, add a shadow beyond `drop-shadow(0 10px 15px rgba(0,0,0,.2))`, or set it on
+  anything but ink, black or white.
 
 ## Structure
 
