@@ -448,6 +448,61 @@ fn onDuty(i: u32, t: f32) -> bool {
 }
 // The door front: the sidewalk lane point outside room r's doorway, where the route leaves the street.
 fn doorFront(r: u32) -> vec2f { return roomWorld(r, vec2f(CITY_PITCH * 0.5 - CITY_LANE, 0.0)); }
+// Whether p stands in a room's doorway or within a metre of the opening, inside or out: there the glass is no wall
+// between two people (they can see and talk through the opening).
+fn byDoorway(p: vec2f) -> bool {
+  let r = roomOf(p);
+  if (r < 0) { return false; }
+  let l = roomLocal(u32(r), p);
+  return abs(l.y) < ROOM_DOOR && abs(l.x - (CITY_LOT_HALF - ROOM_WALL * 0.5)) < ROOM_WALL * 0.5 + 1.0;
+}
+// Whether a room's glass stands between p and q: one of them inside its walls, the other not, neither by its doorway.
+fn walled(p: vec2f, q: vec2f) -> bool {
+  return indoors(p) != indoors(q) && !byDoorway(p) && !byDoorway(q);
+}
+// The way out off room r's nearer wall face for someone outside it at p.
+fn offGlass(r: u32, p: vec2f) -> vec2f {
+  let l = roomLocal(r, p);
+  let n = select(vec2f(0.0, sign(l.y)), vec2f(sign(l.x), 0.0), abs(l.x) >= abs(l.y));
+  let d = doorDir(P.rooms[r].a.z);
+  return d * n.x + acrossDir(d) * n.y;
+}
+// The way the flow field leads someone at `me` from the cell under p: to the centre of the cell that one steps to, so
+// a body off a corridor's centre line (pressed on the end of a rack the field's 2 m cells run past) is drawn back onto
+// it instead of pushing on along the arrow, where sliding has nowhere to go. Zero where the field is silent.
+fn flowWay(me: vec2f, p: vec2f) -> vec2f {
+  let f = flowAt(p);
+  if (dot(f, f) <= 0.5) { return vec2f(0.0); }
+  let o = vec2f(FLOW_ORIGIN_X, FLOW_ORIGIN_Z);
+  return dirTo(me, o + (floor((p - o) * FLOW_INV_CELL) + 0.5 + round(f)) / FLOW_INV_CELL);
+}
+// The way for someone asked over at `me` to the operator at `at`, `dist` away: round the buildings, the flow field's
+// way when it has one, the straight line on the last stretch (so they arrive and stop as
+// before) and wherever the field is silent. One of them inside a room and the other not is no last stretch. Near that
+// room's doorway the way is its axis (to the hub going in, to the door front going out: the field's doorway cells
+// point straight at a jamb). Inside, it is out the way a worker leaves, along the nearer aisle to the hub, aimed 1 m
+// past it so they cross into the doorway's reach instead of hovering on the point. Outside, it is the field, and
+// pressed on the glass, where the cell under them is the wall's, the field one cell out from it.
+fn summonWay(me: vec2f, at: vec2f, dist: f32) -> vec2f {
+  let mine = indoors(me);
+  let theirs = indoors(at);
+  var flow = flowWay(me, me);
+  if (mine != theirs) {
+    let r = u32(select(theirs, mine, mine >= 0));
+    let l = roomLocal(r, me);
+    let front = CITY_PITCH * 0.5 - CITY_LANE;
+    if (abs(l.y) < ROOM_DOOR + 1.5 && l.x > CITY_LOT_HALF - ROOM_WALL - 1.5 && l.x < front + 1.0) {
+      return dirTo(me, roomWorld(r, vec2f(select(front, P.rooms[r].b.x, mine < 0), 0.0)));
+    }
+    if (mine >= 0) { return dirTo(me, roomWorld(r, vec2f(P.rooms[r].b.x + 1.0, select(-ROOM_AISLE, ROOM_AISLE, l.y >= 0.0)))); }
+    if (dot(flow, flow) <= 0.5) {
+      let here = roomOf(me);
+      if (here >= 0) { flow = flowWay(me, me + offGlass(u32(here), me) / FLOW_INV_CELL); }
+    }
+    if (dot(flow, flow) > 0.5) { return flow; }
+  }
+  return select(dirTo(me, at), flow, dot(flow, flow) > 0.5 && dist > 4.0 * SUMMON_STOP);
+}
 // The sidewalk corner a commuter walks the corner graph to: the corner of the doorway's street on the room's own block
 // (interiors.ts targetCorner); its lane coordinate is the door front's, so the last stretch is straight along the lane.
 fn targetCorner(r: u32) -> vec2f {
@@ -787,9 +842,11 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
     // someone already on the road heads back to the kerb. If the operator walks off, follow (the tether).
     let d = at - me;
     let dist = length(d);
-    if (b.b.w < 1.5 && dist <= SUMMON_STOP) {
+    // Nobody talks through a room's glass: across it they keep coming (or come again, when the operator walked in or
+    // out without them), round by the doorway.
+    if (b.b.w < 1.5 && dist <= SUMMON_STOP && !walled(me, at)) {
       b.b.w = 2.0;
-    } else if (b.b.w > 1.5 && dist > SUMMON_STOP * 1.5) {
+    } else if (b.b.w > 1.5 && (dist > SUMMON_STOP * 1.5 || walled(me, at))) {
       b.b.w = 1.0;
     }
     if (b.b.w > 1.5) {
@@ -800,13 +857,7 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
     } else {
       // Tethered and fallen behind: hurry (TETHER_PACE, under the 3 m/s cap), easing to their own pace near.
       let pace = select(b.a.z, max(b.a.z, TETHER_PACE * clamp((dist - SUMMON_STOP) / 2.0, 0.0, 1.0)), tethered);
-      // Round the buildings: the flow field's direction under their feet when it has one, the straight line on the
-      // last stretch (so they arrive and stop as before) and wherever the field is silent. A room's glass between
-      // them (one inside, the other not) is no last stretch: the field takes them round by the doorway.
-      let flow = flowAt(me);
-      let far = dist > 4.0 * SUMMON_STOP || indoors(me) != indoors(at);
-      let way = select(dirTo(me, at), flow, dot(flow, flow) > 0.5 && far);
-      desired = way * pace * clamp(dist - SUMMON_STOP, 0.25, 1.0);
+      desired = summonWay(me, at, dist) * pace * clamp(dist - SUMMON_STOP, 0.25, 1.0);
       activity = ACT_COMING;
     }
     if (road) {
