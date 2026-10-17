@@ -34,6 +34,8 @@ export const FLOW = Object.freeze({
   roadWeight: 3,
   /** Metres a building is grown by before it is rasterised: a person's reach, so a route never hugs a wall. */
   pad: 0.5,
+  /** A box whose underside is this high, m, is walked under (a room's ceiling slab, a cornice): it blocks nothing. */
+  headroom: 2.0,
   /** Cost of a straight step and of a diagonal one, before the cell's weight (14/10 ≈ √2, in integers). */
   straight: 10,
   diagonal: 14,
@@ -78,11 +80,14 @@ export function emptyGrid(width: number, height: number, originX = 0, originZ = 
 /**
  * Marks every cell whose centre lies in a box ([minX, minY, minZ, maxX, maxY, maxZ]) grown by `pad` as blocked. The
  * centre, not any overlap: a cell half on the sidewalk stays a cell people may walk, so a lane survives beside every lot.
+ * A box that starts at FLOW.headroom or above is walked under (the ceiling slab over a workplace's room, interiors.ts)
+ * and blocks nothing; a region's walls (y 0 to 0) and every box on the ground block as they always did.
  */
 export function blockBoxes(grid: FlowGrid, boxes: readonly Box[], pad = FLOW.pad): void {
   const { width, height, originX, originZ, cell, weight } = grid
-  for (const [x0, , z0, x1, , z1] of boxes) {
+  for (const [x0, y0, z0, x1, , z1] of boxes) {
     if (![x0, z0, x1, z1].every(Number.isFinite)) continue
+    if (y0 >= FLOW.headroom) continue
     const lx = Math.min(x0, x1) - pad, hx = Math.max(x0, x1) + pad, lz = Math.min(z0, z1) - pad, hz = Math.max(z0, z1) + pad
     const i0 = Math.max(0, Math.floor((lx - originX) / cell - 0.5)), i1 = Math.min(width - 1, Math.ceil((hx - originX) / cell - 0.5))
     const j0 = Math.max(0, Math.floor((lz - originZ) / cell - 0.5)), j1 = Math.min(height - 1, Math.ceil((hz - originZ) / cell - 0.5))
@@ -139,7 +144,11 @@ export function cellCentre(grid: FlowGrid, c: number): { x: number; z: number } 
   return { x: grid.originX + (i + 0.5) * grid.cell, z: grid.originZ + (j + 0.5) * grid.cell }
 }
 
-/** The nearest unblocked cell to (x, z) within `radius` cells (the cell itself first), or −1. */
+/**
+ * The nearest unblocked cell to (x, z) within `radius` cells (the cell itself first), or −1. Nearest by the distance to
+ * each cell's centre, not by cell steps: someone against a room's glass, their own cell in the wall, is given the cell
+ * on their side of it, never the one behind the glass that only a tie of steps could pick.
+ */
 export function nearestOpen(grid: FlowGrid, x: number, z: number, radius = 3): number {
   const i0 = Math.min(grid.width - 1, Math.max(0, Math.floor((x - grid.originX) / grid.cell)))
   const j0 = Math.min(grid.height - 1, Math.max(0, Math.floor((z - grid.originZ) / grid.cell)))
@@ -150,7 +159,8 @@ export function nearestOpen(grid: FlowGrid, x: number, z: number, radius = 3): n
       if (i < 0 || j < 0 || i >= grid.width || j >= grid.height) continue
       const c = j * grid.width + i
       if (grid.weight[c] === 0) continue
-      const d = di * di + dj * dj
+      const ex = grid.originX + (i + 0.5) * grid.cell - x, ez = grid.originZ + (j + 0.5) * grid.cell - z
+      const d = ex * ex + ez * ez
       if (d < bestD) { bestD = d; best = c }
     }
   }

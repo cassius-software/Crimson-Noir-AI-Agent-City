@@ -18,6 +18,7 @@
  */
 import { useEffect, useRef, useSyncExternalStore } from 'react'
 import { CITY, CITY_SIZE, LAKE, districtOfLot } from '../01_Initialize_World/city.ts'
+import { ROOM, doorDir, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { TRAFFIC } from '../02_Define_The_Rules/civic.ts'
 import type { HudPing, Light, SipocSnapshot } from '../05_Observe_Environment/telemetry.ts'
 import { BRAND } from '../brand.ts'
@@ -246,6 +247,8 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
               <Kpi label="Vehicles" value={s.process.vehicles} muted={muted} />
               <Kpi label="Waiting at lights" value={s.process.waiting.toLocaleString()} muted={muted} />
               <Kpi label="On crosswalks" value={s.process.crossing.toLocaleString()} muted={muted} />
+              {/* The city's indoor workplaces (interiors.ts): who is at a workstation now. A region has none. */}
+              {s.process.working !== undefined && <Kpi label="At work indoors" value={s.process.working.toLocaleString()} muted={muted} />}
             </div>
             {/* A surveyed region has no traffic signals: the shared cycle would mean nothing there. A street window's follow it. */}
             {(!c.region || c.streets) && (
@@ -489,7 +492,14 @@ function MouseIcon() {
 }
 
 /** The procedural city's map around (x, z): the lake, the lots and parks, the street grid. */
-function cityMap(ctx: CanvasRenderingContext2D, x: number, z: number, dark: boolean): void {
+/** The seed's workplaces, for the minimap (interiors.ts is pure and seeded: the same six the city hollowed). */
+let roomsFor: { seed: number; rooms: readonly Workplace[] } | null = null
+function roomsOf(seed: number): readonly Workplace[] {
+  if (roomsFor?.seed !== seed) roomsFor = { seed, rooms: workplaces(seed) }
+  return roomsFor.rooms
+}
+
+function cityMap(ctx: CanvasRenderingContext2D, x: number, z: number, dark: boolean, seed?: number): void {
   const { pitch, lotHalf, roadHalf } = CITY
   // The lake beyond the seawall.
   ctx.fillStyle = dark ? '#0c2a3a' : '#9cc9dd'
@@ -505,6 +515,23 @@ function cityMap(ctx: CanvasRenderingContext2D, x: number, z: number, dark: bool
       ctx.beginPath()
       ctx.roundRect(cx - lotHalf, cz - lotHalf, lotHalf * 2, lotHalf * 2, 2)
       ctx.fill()
+    }
+  }
+  // The indoor workplaces: the lot drawn as a room (its floor in the accent colour inside the walls) with the doorway
+  // open on its street front, so the way in reads on the map.
+  if (seed !== undefined) {
+    for (const r of roomsOf(seed)) {
+      if (Math.abs(r.cx - x) > 150 || Math.abs(r.cz - z) > 150) continue
+      ctx.fillStyle = dark ? '#b45309' : '#f59e0b'
+      ctx.fillRect(r.cx - lotHalf, r.cz - lotHalf, lotHalf * 2, lotHalf * 2)
+      const inner = lotHalf - ROOM.wall * 3
+      ctx.fillStyle = dark ? '#451a03' : '#fef3c7'
+      ctx.fillRect(r.cx - inner, r.cz - inner, inner * 2, inner * 2)
+      const d = doorDir(r.side)
+      const w = ROOM.door * 2, depth = lotHalf - inner + 0.2
+      const gx = r.cx + d.x * (lotHalf - depth / 2), gz = r.cz + d.z * (lotHalf - depth / 2)
+      const [gw, gh] = d.x !== 0 ? [depth, w] : [w, depth]
+      ctx.fillRect(gx - gw / 2, gz - gh / 2, gw, gh)
     }
   }
   // Roads.
@@ -540,7 +567,7 @@ function Minimap({ s, dark, ui, className, layer = null }: { s: SipocSnapshot; d
     ctx.scale(scale, scale)
     ctx.translate(-x, -z)
     if (layer) layer(ctx, x, z, 150, dark)
-    else cityMap(ctx, x, z, dark)
+    else cityMap(ctx, x, z, dark, s.process.seed)
     // Vehicles.
     for (const car of s.map) {
       if (Math.abs(car.x - x) > 150 || Math.abs(car.z - z) > 150) continue

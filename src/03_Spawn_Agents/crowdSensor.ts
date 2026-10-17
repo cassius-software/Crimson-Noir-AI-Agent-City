@@ -32,6 +32,8 @@ export interface CrowdSimStats {
   waiting: number
   crossing: number
   retreating: number
+  /** Pedestrians at a workstation indoors (01_Initialize_World/interiors.ts) this step. */
+  working: number
 }
 
 /** One person the operator has asked over (skills.ts): they walk to (x, z), the operator, and stop there. */

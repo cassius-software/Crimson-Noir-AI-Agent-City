@@ -23,6 +23,7 @@
  */
 import { CITY, CITY_SIZE, inLot } from '../01_Initialize_World/city.ts'
 import { cityGrid, regionGrid, type FlowGrid } from '../06_Make_Decisions/flowField.ts'
+import { workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { KERNEL } from '../02_Define_The_Rules/civic.ts'
 import { auditCraft, panicReason, RING0, Ring0Auditor, type AuditPerson, type AuditVehicle } from '../02_Define_The_Rules/ring0.ts'
 import type { KernelStats } from '../05_Observe_Environment/telemetry.ts'
@@ -84,7 +85,7 @@ const REGION_SLAB_MARGIN = 200
  * the flow field's grid of this world (06_Make_Decisions/flowField.ts: the city's buildings and streets, or a region's
  * walls), which the sensor solves routes on.
  */
-export type CrowdFactory = (agents: number, grid: FlowGrid, streets: StreetGrid | null) => Promise<CrowdSensor>
+export type CrowdFactory = (agents: number, grid: FlowGrid, streets: StreetGrid | null, rooms: readonly Workplace[] | null) => Promise<CrowdSensor>
 
 /** One step's input after the host has checked its shape (every number is still clamped here). */
 export interface StepInput {
@@ -158,6 +159,8 @@ export class SimCore {
   readonly #crowd: CrowdSensor | null
   /** Per player: the car they drive, or null on foot. */
   readonly #driving: (Vehicle | null)[]
+  /** The city's indoor workplaces (none in a region): a car left in one puts its driver down indoors. */
+  readonly #rooms: readonly Workplace[]
   /** This realm's own clock (the sum of accepted dt): harness time limits never trust the page's clock. */
   #simTime = 0
   #blindUntil = -1
@@ -210,9 +213,10 @@ export class SimCore {
   /** Player 1 took a door this step (a network room hears one a step). */
   #doored = false
 
-  private constructor(physics: Physics, o: SimCoreOptions, crowd: CrowdSensor | null) {
+  private constructor(physics: Physics, o: SimCoreOptions, crowd: CrowdSensor | null, rooms: readonly Workplace[]) {
     this.#physics = physics
     this.#crowd = crowd
+    this.#rooms = rooms
     this.#debug = o.debug === true
     const r = o.region?.bounds
     this.#auditor = r
@@ -289,10 +293,12 @@ export class SimCore {
     const physics = await Physics.create(o.boxes, o.furniture, o.region ?? null)
     // The flow field's grid of this world: the region's walls over its bounds, or the city's buildings and streets.
     const grid = o.region ? regionGrid(o.region.bounds, o.region.walls) : cityGrid(o.boxes)
-    const crowd = makeCrowd ? await makeCrowd(agents, grid, o.region ? (o.streets ?? null) : null) : null
+    // The city's indoor workplaces (interiors.ts), from the seed like the city's boxes; a region has none.
+    const rooms = o.region ? null : workplaces(Math.floor(finite(o.seed)) >>> 0)
+    const crowd = makeCrowd ? await makeCrowd(agents, grid, o.region ? (o.streets ?? null) : null, rooms) : null
     physics.streamAt(spawn.x, spawn.z)
     for (const p of spawns) physics.streamAt(p.x, p.z)
-    const core = new SimCore(physics, { ...o, cars, agents, seed: Math.floor(finite(o.seed)) >>> 0, spawn, spawns }, crowd)
+    const core = new SimCore(physics, { ...o, cars, agents, seed: Math.floor(finite(o.seed)) >>> 0, spawn, spawns }, crowd, rooms ?? [])
     if (crowd) {
       core.#stepCrowd(0)
       const t0 = now()
@@ -475,7 +481,7 @@ export class SimCore {
       tuning: { ...this.#fleet.tuning },
       haptics,
       crowd: {
-        stats: { ...(this.#crowd?.readout?.stats ?? { nudges: 0, waiting: 0, crossing: 0, retreating: 0 }) },
+        stats: { ...(this.#crowd?.readout?.stats ?? { nudges: 0, waiting: 0, crossing: 0, retreating: 0, working: 0 }) },
         ageMs: this.#crowdAgeMs,
         lagMs: (this.#crowd as { lagMs?: number } | null)?.lagMs ?? 0,
       },
@@ -913,7 +919,7 @@ export class SimCore {
       const t = fleet.position(v, this.#pos)
       const h = fleet.heading(v)
       // carRig.ts exitPoint: the realm's rule and the room's check of it are one function.
-      const { x: ex, z: ez } = exitPoint(t.x, t.z, h)
+      const { x: ex, z: ez } = exitPoint(t.x, t.z, h, this.#rooms)
       v.mode = 'parked'
       // In a network room a car stops where its driver leaves it: its brakes would otherwise answer the bouncer, whose
       // pedestrians only this page sees, and the room's authority holds the car where it was left. A car the room took

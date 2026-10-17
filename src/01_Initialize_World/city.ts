@@ -10,6 +10,7 @@
  */
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
 import { TRAFFIC } from '../02_Define_The_Rules/civic.ts'
+import { hollowWorkplaces } from './interiors.ts'
 
 export const CITY = {
   /** Blocks per axis. Streets run along x = k·pitch and z = m·pitch, k,m ∈ [0, blocks]. */
@@ -74,9 +75,10 @@ export function districtName(x: number, z: number): string {
 /**
  * How the building material dresses a box (world.ts hands it over per instance): 'mixed' is a downtown lot's own mix
  * of curtain wall, stone, brick and panel; the rest are finishes. Only 'mixed', 'stone', 'brick' and 'condo' have
- * windows and shopfronts; trim, roofs, plain concrete and masonry, the pier's deck and its rails have none.
+ * windows and shopfronts; trim, roofs, plain concrete and masonry, the pier's deck and its rails have none. 'glass' is
+ * the floor-to-ceiling curtain wall of a workplace's ground floor (interiors.ts): the downtown mix's glass, chosen.
  */
-export const STYLE = Object.freeze({ mixed: 0, stone: 1, brick: 2, trim: 3, roof: 4, concrete: 5, masonry: 6, condo: 7, deck: 8, rail: 9 })
+export const STYLE = Object.freeze({ mixed: 0, stone: 1, brick: 2, trim: 3, roof: 4, concrete: 5, masonry: 6, condo: 7, deck: 8, rail: 9, glass: 10 })
 
 /** A box and its finish. */
 export interface Building { box: Box; style: number }
@@ -229,7 +231,11 @@ function shoreline(add: Add): void {
   add([g0, pier.deck, end - 0.2, g1, top, end], STYLE.rail)
 }
 
-/** Every box in the city and its finish, from the seed alone. */
+/**
+ * Every box in the city and its finish, from the seed alone: the lots' buildings, the shoreline, and the six workplace
+ * lots hollowed into rooms (interiors.ts hollowWorkplaces: their podium becomes glass walls with a doorway, a ceiling
+ * slab and furniture; the towers above and every other lot are as generated).
+ */
 export function generateBuildings(seed: number): Building[] {
   const rng = createRng(seed)
   const out: Building[] = []
@@ -251,6 +257,7 @@ export function generateBuildings(seed: number): Building[] {
     }
   }
   shoreline(add)
+  hollowWorkplaces(seed, out)
   return out
 }
 

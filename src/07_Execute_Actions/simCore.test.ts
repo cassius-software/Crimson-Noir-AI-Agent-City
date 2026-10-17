@@ -83,7 +83,7 @@ class FakeCrowd implements CrowdSensor {
     const read = () => {
       this.readout = {
         seq: input.seq, time: input.time - input.dt, hazardsAhead: Float32Array.from(this.ahead), hazardsBehind: Float32Array.from(this.behind),
-        stats: { nudges: 1, waiting: 2, crossing: 3, retreating: 4 }, xz: Float32Array.from(this.xz), activity: Uint8Array.from(this.activity),
+        stats: { nudges: 1, waiting: 2, crossing: 3, retreating: 4, working: 0 }, xz: Float32Array.from(this.xz), activity: Uint8Array.from(this.activity),
       }
       this.#frame = new Float32Array(this.agentCount * 12).fill(7)
       this.flags |= this.flagOnRead
@@ -137,7 +137,7 @@ test('a step returns plain data only, structured-clone safe, with finite poses a
   assert.equal(sim.meta.agents, AGENTS)
   assert.equal(sim.meta.suv.length, 4)
   assert.equal(sim.meta.debug, false)
-  assert.deepEqual(s.crowd.stats, { nudges: 1, waiting: 2, crossing: 3, retreating: 4 })
+  assert.deepEqual(s.crowd.stats, { nudges: 1, waiting: 2, crossing: 3, retreating: 4, working: 0 })
   assert.ok(s.crowdFrame instanceof Float32Array && s.crowdFrame.length === AGENTS * 12)
   assert.ok(Math.abs(s.crowd.ageMs! - H * 1000) < 1e-6, 'the reading the Bouncer used was one step old')
   assert.ok(Object.isFrozen(sim) && Object.isFrozen(SimCore.prototype))

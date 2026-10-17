@@ -1264,7 +1264,7 @@ const HANDLERS: Record<Name, Handler> = {
         out(row('quality', formatQuality(s.quality))),
         out(row('frame', `${fixed(s.fps, 1)} fps  ${fixed(s.frameMs, 2)} ms  p95 ${fixed(s.p95Ms, 2)} ms`)),
         ...cameraRows(s).map(out),
-        out(row('agents', `drawn ${count(a.drawnNear + a.drawnFar)} of ${count(a.population)}  waiting ${count(a.waiting)}  crossing ${count(a.crossing)}`)),
+        out(row('agents', `drawn ${count(a.drawnNear + a.drawnFar)} of ${count(a.population)}  waiting ${count(a.waiting)}  crossing ${count(a.crossing)}${a.working === undefined ? '' : `  at work ${count(a.working)}`}`)),
         out(row('vehicles', count(s.vehicles))),
         out(row('rapier3d', `step ${fixed(r.stepMs, 3)} ms  bodies ${count(r.bodies)}  colliders ${count(r.colliders)}  ccd ${count(r.ccd)}`)),
         out(row('kernel', `law1 ${count(k.law1)}  law2 ${count(k.law2)}  law3 ${count(k.law3)}  flips ${count(k.sensorFlips)}  shielded ${k.shielded ? 'yes' : 'no'}`)),

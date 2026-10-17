@@ -1929,7 +1929,7 @@ export class Engine {
   /** The crowd's figures: what the page drew, and what the worker's crowd did. */
   private crowdStats(): CrowdStats {
     const w = this.sim.state.crowd.stats
-    return { drawnNear: this.crowd.stats.drawnNear, drawnFar: this.crowd.stats.drawnFar, nudges: w.nudges, waiting: w.waiting, crossing: w.crossing, retreating: w.retreating }
+    return { drawnNear: this.crowd.stats.drawnNear, drawnFar: this.crowd.stats.drawnFar, nudges: w.nudges, waiting: w.waiting, crossing: w.crossing, retreating: w.retreating, working: w.working }
   }
 
   private kernelStats(): KernelStats {
@@ -1976,6 +1976,8 @@ export class Engine {
         pedestrians: this.places && !this.streets ? 0 : this.options.agents - 1, vehicles: this.options.cars, drawnNear: s.drawnNear, drawnFar: s.drawnFar,
         waiting: this.places && !this.streets ? 0 : s.waiting, crossing: this.places && !this.streets ? 0 : s.crossing, yielding: s.retreating, safetyNudges: s.nudges, gpu: this.gpu.adapterInfo,
         sensingAgeMs: st.crowd.ageMs, sensingLagMs: st.crowd.lagMs, crowdFrames: this.crowdFrames, seed: this.options.seed, host: this.options.host,
+        // The procedural city's indoor workplaces (interiors.ts); a region has none.
+        ...(this.places ? {} : { working: s.working ?? 0 }),
       },
       output: {
         fps, frameMs: mean, p50Ms: p50, p95Ms: p95, cpuMs: this.cpuMs,

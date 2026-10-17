@@ -19,6 +19,7 @@ import {
   alongWalk, checkCrowd, crowdFailures, judgeCar, judgeLanding, judgeWalk, OFF_CROSSWALK_SHARE, spatialPlan, STOP_TOLERANCE, streetFailures,
   type CarProbe, type CrowdFinding, type WalkProbe,
 } from './spatial.ts'
+import { workplaces } from '../01_Initialize_World/interiors.ts'
 import { RUN } from './simProtocol.ts'
 
 export interface HarnessReport { name: string; pass: boolean; lines: string[]; ms: number }
@@ -437,6 +438,7 @@ async function spatial(ctx: Ctx): Promise<boolean> {
   const sim = ctx.sim
   const seed = sim.snapshot().process?.seed ?? DEFAULT_SEED
   const plan = spatialPlan(seed)
+  const rooms = workplaces(seed)
   const home = sim.avatar.position()
   let pass = true
   try {
@@ -446,7 +448,7 @@ async function spatial(ctx: Ctx): Promise<boolean> {
     for (let r = 0; r < CROWD_READINGS; r++) {
       const xz = sim.crowd.positions()
       if (xz.length >= 4) {
-        checkCrowd(xz, acc)
+        checkCrowd(xz, acc, rooms)
         readings++
         people = xz.length / 2 - 1
       }

@@ -61,7 +61,7 @@ class StandInCrowd implements CrowdSensor {
   step(input: CrowdStepInput): void {
     this.readout = {
       seq: input.seq, time: input.time - input.dt, hazardsAhead: new Float32Array(MAX_CARS).fill(Infinity), hazardsBehind: new Float32Array(MAX_CARS).fill(Infinity),
-      stats: { nudges: 0, waiting: 0, crossing: 0, retreating: 0 }, xz: this.xz, activity: new Uint8Array(this.agentCount),
+      stats: { nudges: 0, waiting: 0, crossing: 0, retreating: 0, working: 0 }, xz: this.xz, activity: new Uint8Array(this.agentCount),
     }
   }
   takeFlags(): number { return 0 }

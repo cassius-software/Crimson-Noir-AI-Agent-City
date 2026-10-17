@@ -34,7 +34,7 @@ export interface Ring0Stats {
   fps: number; frameMs: number; p95Ms: number; cpuMs: number; gpuRenderMs: number; gpuComputeMs: number
   /** stepMs: one world.step(); physicsMs: one whole step in the physics worker; steps: substeps last step. */
   rapier: { stepMs: number; physicsMs: number; steps: number; bodies: number; colliders: number; ccd: number }
-  agents: { population: number; drawnNear: number; drawnFar: number; waiting: number; crossing: number; yielding: number; nudges: number }
+  agents: { population: number; drawnNear: number; drawnFar: number; waiting: number; crossing: number; yielding: number; nudges: number; working?: number }
   vehicles: number
   quality: QualityState
   kernel: KernelStats
@@ -327,6 +327,7 @@ export function ring0Stats(s: SipocSnapshot, physics: PhysicsCounters): Ring0Sta
     agents: {
       population: p.pedestrians, drawnNear: p.drawnNear, drawnFar: p.drawnFar,
       waiting: p.waiting, crossing: p.crossing, yielding: p.yielding, nudges: p.safetyNudges,
+      ...(p.working === undefined ? {} : { working: p.working }),
     },
     vehicles: p.vehicles,
     quality: s.quality,

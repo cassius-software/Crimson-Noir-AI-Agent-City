@@ -869,7 +869,7 @@ class StillCrowd implements CrowdSensor {
     this.readout = {
       seq: input.seq, time: input.time - input.dt,
       hazardsAhead: new Float32Array(MAX_CARS).fill(Infinity), hazardsBehind: new Float32Array(MAX_CARS).fill(Infinity),
-      stats: { nudges: 0, waiting: 0, crossing: 0, retreating: 0 }, xz: Float32Array.from(this.xz), activity: Uint8Array.from(this.activity),
+      stats: { nudges: 0, waiting: 0, crossing: 0, retreating: 0, working: 0 }, xz: Float32Array.from(this.xz), activity: Uint8Array.from(this.activity),
     }
     const frame = new Float32Array(AGENTS * 12).fill(NaN)
     for (let i = 0; i < AGENTS; i++) {

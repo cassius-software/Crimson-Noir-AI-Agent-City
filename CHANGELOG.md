@@ -78,9 +78,21 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   this browser, masked, kept as dots in `history`, and is sent only to the loopback gateway.
 - **`goal <words...>`** in the console: Sloane's goal planner, applying what it can now (clock, quality, sound).
 - Sloane's quiet first-minutes watch gains one more line: the wardrobe on the chip.
+- **Six indoor workplaces in the procedural city** (`src/01_Initialize_World/interiors.ts`): a robotics lab, a
+  boardroom, a logistics warehouse, a triage clinic, legal chambers and a telemetry command room, one in each sixth of
+  the downtown, chosen from the seed. Each replaces its lot's solid podium with glass walls, a 4 m doorway on one
+  street, a ceiling and furniture, and has eight stations. A share of the GPU crowd works there in shifts (5 minutes
+  of every 8): they walk the streets to the doorway, in to their station, work there and walk back out. The HUD shows
+  "At work indoors" and the rooms on the minimap; the console's `sim` line ends `at work N`. The Lakefront Metro map
+  has no rooms yet (`map city` shows them). Unverified from the cloud (no GPU): the rooms and the workday on screen;
+  `naga` validates both shader variants, and the containment, the routes and the workday's legs are tested in Node
+  on a mirror of the shader's step (500 walkers over 5,000 steps, none through a wall or a piece of furniture).
 
 ### Changed
 
+- **The crowd slides along walls**: the part of a step a wall or a piece of furniture refuses is taken out of the
+  pedestrian's velocity, so they slide along it instead of pressing into it. Nobody walked into buildings before
+  either: every lot was solid and the crowd kept 0.35 m outside it.
 - **Wren is now Sloane** throughout the page, the console and the docs (history entries keep the old name).
 - **The eye height follows the avatar's height**: 1.7 m times the body's height scale, within 1.2–2.2 m, eased in.
   Unverified from the cloud (no GPU): how it looks.

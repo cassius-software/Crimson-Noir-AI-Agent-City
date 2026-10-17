@@ -181,9 +181,10 @@ test('the replication core takes its 14A verdicts from conduct.ts screen, and th
       '../07_Execute_Actions/simProtocol.ts', './garage.node.ts', './replication.ts',
     ],
     // Its garage (Phase 13): one car's physics shared with the page (carRig.ts) and the track network's geometry, again
-    // never the page's realm, its fleet or its bouncer.
+    // never the page's realm, its fleet or its bouncer. The seed's indoor workplaces (interiors.ts, pure geometry the
+    // city already hollows) say where a car left in one puts its driver.
     'garage.node.ts': [
-      '../01_Initialize_World/city.ts', '../02_Define_The_Rules/ring0.ts', '../06_Make_Decisions/tracks.ts', '../07_Execute_Actions/carRig.ts',
+      '../01_Initialize_World/city.ts', '../01_Initialize_World/interiors.ts', '../02_Define_The_Rules/ring0.ts', '../06_Make_Decisions/tracks.ts', '../07_Execute_Actions/carRig.ts',
       '../07_Execute_Actions/physics.ts', '../07_Execute_Actions/simProtocol.ts',
     ],
     'plane.node.ts': ['../07_Execute_Actions/simProtocol.ts', './replication.ts'],

@@ -17,13 +17,14 @@
 import { RAPIER } from './physics.ts'
 import { CAR, chassisBox, kindFromDraw, kindOf, RIDE_HEIGHT, WHEELS, type CarTuning, type DriveMode } from './car.ts'
 import { CITY, inLot } from '../01_Initialize_World/city.ts'
+import { insideRoom, penetrates, ROOM, toLocal, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { KERNEL } from '../02_Define_The_Rules/civic.ts'
 import { VEHICLE_CHASSIS_GROUPS, WHEEL_RAY_GROUPS } from '../02_Define_The_Rules/collision.ts'
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
 import { Driver, type DriverLike } from '../06_Make_Decisions/traffic.ts'
 import { TrackDriver } from '../06_Make_Decisions/trackDriver.ts'
 import { assignSlots, poseAt, type TrackNetwork } from '../06_Make_Decisions/tracks.ts'
-import type { CarBodyState } from './simProtocol.ts'
+import { PERSON, type CarBodyState } from './simProtocol.ts'
 
 const AIR_DENSITY = 1.225
 const GRAVITY = 9.81
@@ -37,6 +38,12 @@ export const NOT_PEOPLE = RAPIER.QueryFilterFlags.EXCLUDE_SENSORS | RAPIER.Query
 export const EXIT_SIDE = 2.1
 /** How far a lot is kept from the exit point, m: an exit into a building lot is taken on the car's other side. */
 const EXIT_LOT_PAD = 0.4
+/**
+ * In a room, where neither side is free, the exit point is swung towards the bonnet or the boot in steps of this
+ * (radians), as far as it still clears the chassis's side by a person's radius (EXIT_SIDE from the centre throughout).
+ */
+const EXIT_SWING = Math.PI / 20
+const EXIT_SWINGS = Math.floor(Math.acos((CAR.halfWidth + PERSON.radius) / EXIT_SIDE) / EXIT_SWING)
 
 /** A car's Rapier handles and what its physics reads of it. */
 export interface CarRig {
@@ -167,17 +174,49 @@ export function clampSpeed(body: RAPIER.RigidBody, max: number): boolean {
 
 /**
  * Where the driver is put down when leaving a car whose chassis stands at (x, z) facing `heading`: EXIT_SIDE m to the
- * car's left, or to its right when the left lies in a building lot. The realm's rule (simCore.ts #interact) and the
- * room's check of it are this one function.
+ * car's left, or to its right when the left lies in a building lot. A car in the lot of one of the seed's `rooms`
+ * (interiors.ts: inside it, or across its doorway; every point there is in a lot, so the lot rule cannot tell floor
+ * from glass) puts them where they stand clear of the glass and the furniture: indoors or in the doorway, or, for a car
+ * not wholly inside, out on the street. The left side first, then the right, each then swung by EXIT_SWING towards the
+ * bonnet and the boot, as far as the point clears the chassis's side. Boxed in there (a car wedged between a wall and
+ * a desk), on round to the bonnet and the boot, where the driver squeezes out against the chassis; and with nowhere
+ * clear of the furniture either, the first of those points inside the walls. Never one the line from the chassis
+ * centre reaches only through glass (a car askew in the doorway has a jamb beside it). Always EXIT_SIDE from the
+ * chassis centre. The realm's rule (simCore.ts #interact) and the room's check of it are this one function.
  */
-export function exitPoint(x: number, z: number, heading: number): { x: number; z: number } {
+export function exitPoint(x: number, z: number, heading: number, rooms: readonly Workplace[] = []): { x: number; z: number } {
   const lx = Math.cos(heading), lz = -Math.sin(heading)
-  let ex = x + lx * EXIT_SIDE, ez = z + lz * EXIT_SIDE
-  if (inLot(ex, ez, EXIT_LOT_PAD)) {
-    ex = x - lx * EXIT_SIDE
-    ez = z - lz * EXIT_SIDE
+  const left = { x: x + lx * EXIT_SIDE, z: z + lz * EXIT_SIDE }
+  const reach = (room: Workplace, p: { x: number; z: number }) => {
+    const { u, v } = toLocal(room, p.x, p.z)
+    return Math.max(Math.abs(u), Math.abs(v))
   }
-  return { x: ex, z: ez }
+  const room = rooms.find((r) => reach(r, { x, z }) < CITY.lotHalf + EXIT_LOT_PAD)
+  if (!room) return inLot(left.x, left.z, EXIT_LOT_PAD) ? { x: x - lx * EXIT_SIDE, z: z - lz * EXIT_SIDE } : left
+  const indoors = reach(room, { x, z }) < CITY.lotHalf - ROOM.wall
+  const street = (p: { x: number; z: number }) => !indoors && !inLot(p.x, p.z, EXIT_LOT_PAD)
+  // The line out to p crosses no wall (the band outside the doorway's opening): 32 samples, 7 cm apart, under the
+  // wall's 0.5 m.
+  const seen = (p: { x: number; z: number }) => {
+    for (let k = 1; k <= 32; k++) {
+      const { u, v } = toLocal(room, x + ((p.x - x) * k) / 32, z + ((p.z - z) * k) / 32)
+      const m = Math.max(Math.abs(u), Math.abs(v))
+      if (m > CITY.lotHalf - ROOM.wall && m < CITY.lotHalf && !(u > 0 && Math.abs(v) < ROOM.door)) return false
+    }
+    return true
+  }
+  const clear = (p: { x: number; z: number }) => ((insideRoom(room, p.x, p.z) && !penetrates(room, p.x, p.z, PERSON.radius)) || street(p)) && seen(p)
+  const walls = (p: { x: number; z: number }) => (reach(room, p) < CITY.lotHalf - ROOM.wall - PERSON.radius || street(p)) && seen(p)
+  const fx = Math.sin(heading), fz = Math.cos(heading)
+  const ring: { x: number; z: number }[] = []
+  for (let k = 0; k * EXIT_SWING <= Math.PI / 2 + 1e-9; k++) {
+    for (const turn of k === 0 ? [0] : [k, -k]) {
+      const c = Math.cos(turn * EXIT_SWING), s = Math.sin(turn * EXIT_SWING)
+      for (const side of [1, -1]) ring.push({ x: x + (side * c * lx + s * fx) * EXIT_SIDE, z: z + (side * c * lz + s * fz) * EXIT_SIDE })
+    }
+  }
+  const beside = 2 * (1 + 2 * EXIT_SWINGS)
+  return ring.slice(0, beside).find(clear) ?? ring.slice(beside).find(clear) ?? ring.find(walls) ?? left
 }
 
 // Scratch for the substep (no allocation per car per substep).

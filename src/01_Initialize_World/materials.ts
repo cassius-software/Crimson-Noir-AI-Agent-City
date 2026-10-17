@@ -77,7 +77,8 @@ export function buildingMaterial(fbm: FbmSet, night: UniformNode<'float', number
   const seed = hash(lot.x.mul(57.1).add(lot.y.mul(13.7)))
   const style = attribute('style', 'float') as unknown as F
   const mixed = isStyle(style, STYLE.mixed)
-  const glassStyle = mixed.and(seed.lessThan(0.42))
+  // The workplaces' ground floors (interiors.ts) are curtain wall whatever their lot's mix.
+  const glassStyle = mixed.and(seed.lessThan(0.42)).or(isStyle(style, STYLE.glass))
   const stoneStyle = mixed.and(seed.greaterThanEqual(0.42).and(seed.lessThan(0.74))).or(isStyle(style, STYLE.stone))
   const brickStyle = mixed.and(seed.greaterThanEqual(0.74).and(seed.lessThan(0.88))).or(isStyle(style, STYLE.brick))
   const condoStyle = isStyle(style, STYLE.condo)
