@@ -16,6 +16,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { WebGPUUnavailableError, type GpuFailure } from '../01_Initialize_World/gpuDevice.ts'
+import { BRAND } from '../brand.ts'
 import { panicReason } from '../02_Define_The_Rules/ring0.ts'
 import { coded } from './simProtocol.ts'
 import {
@@ -244,6 +245,7 @@ test('firstScreen: the onboarding only for a browser that can run the city; the 
 })
 
 test('detailsLine: the build, the adapter and the user agent on one copyable line', () => {
-  assert.match(detailsLine('google / swiftshader', UA.chromeLinux), /^\S+ \S+ · google \/ swiftshader · Mozilla\/5\.0 \(X11/)
+  const line = detailsLine('google / swiftshader', UA.chromeLinux)
+  assert.ok(line.startsWith(`${BRAND.name} ${BRAND.version} · google / swiftshader · Mozilla/5.0 (X11`), line)
   assert.match(detailsLine('', ''), /adapter unknown · user agent unknown$/)
 })
