@@ -15,6 +15,32 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Never a dead end.** Wherever the city cannot start or stops, the page now says why in words for the device it
+  runs on and offers a way out, with nothing else needed: the installed iPhone app (full screen, no address bar, no
+  reload) and the Windows app (no browser chrome) had none before. One recovery card
+  (`src/07_Execute_Actions/RecoveryCard.tsx`) replaces the old bare message: a headline and the steps for this
+  device and browser from one classifier (`bootFailure.ts`: an insecure address, no WebGPU, no adapter, a reduced
+  compatibility-only adapter, a refused device, no WebGPU in the physics worker, WebAssembly off, a rejected shader,
+  a graphics reset, a stalled crowd, a physics fault, a frame loop that kept failing), the raw message and one
+  copyable line (build, adapter, user agent) under Details, **Restart** (a page reload, focused, so Enter takes it)
+  and **Open the console** (`?boot=tty`, which needs no GPU). A pad's A presses the focused button and its d-pad
+  moves between them. The home-screen app and the Windows app are never told to edit an address or switch browsers.
+  The Ring-0 lock screen (**SYSTEM LOCKED**) keeps its copy for a real audit failure and gains a focused Restart;
+  a lost GPU (the page's or the crowd's) and a physics fault get the card, worded as a graphics reset. A first visit
+  is checked (a secure page, WebGPU, a full adapter) before the onboarding, so a browser that cannot run the city
+  gets the card instead of the whole onboarding first. After 20 s of visible time without a first frame the boot
+  veil adds "Still starting…" with Restart and Open the console; it fails nothing (a software adapter takes
+  minutes). `index.html` gains a classic-script watchdog in the head, before the page's module, that shows a card
+  with Restart when the page's script never ran (a download cut off, a browser too old to read it, an error while it
+  loaded) and takes React's uncaught errors, and a `<noscript>` that says how to turn JavaScript on and that the Files
+  app's preview runs no scripts. In headless Chromium (`tools/browser/smoke.mjs fail`): WebGPU taken away (desktop and
+  iPhone sizes, upright too), a genuinely insecure origin (`http://lan.test`), no adapter, a hung adapter request, a
+  download cut in half, the page's device lost after the boot (a wrapped `lost` promise: headless Chrome cannot reset
+  its software adapter on demand), a realm halt for a lost crowd device and a frame that throws each show the right
+  card with Restart focused; Enter restarts and a stand-in pad reaches the console. Not tried on real hardware: an
+  iPhone (Safari's wording, the settings paths, the home-screen app), the Windows app's WebView2, a real driver reset,
+  a real pad.
+
 - **The city on an iPhone or iPad.** Safari gives WebGPU only to a page served over https, and an iPhone had no way
   to play the city at all. `npm run build:web` (`tools/web/pwa.mjs`) writes `dist-web/`: the same page with a
   manifest, its icons and a service worker that keeps every file on the device, so it installs to the home screen,
@@ -145,6 +171,26 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   envelope, which nothing draws.
 
 ### Fixed
+
+- **A lost GPU left a city that ran on invisibly.** The page's own device lost after the boot (a driver reset, the GPU
+  process gone, a phone taking the memory back) only wrote to the error list while the HUD carried on over a frozen
+  frame; it now halts the city and shows the graphics-reset card. Lost while the page was hidden, the page restarts
+  by itself when it is shown again, at most once every two minutes and never where it cannot keep the time of the
+  last restart (no storage); lost while visible, the card waits for Restart.
+- **The frame loop could die silently**: one throw in a frame stopped the requestAnimationFrame loop for good, a
+  frozen city with a live page. A throw before the first frame now fails the boot with the card; after it the loop
+  carries on, and 30 throws in a row halt the city with the card.
+- **Boot failures that hung or leaked.** The lakefront map builder's worker crashing left the onboarding waiting
+  forever (its error event now rejects the build); a physics worker fault while the page compiled was swallowed and
+  the city started on a closed client with frozen physics (it is held and refuses the boot); a boot that failed
+  partway kept its GPU device and physics worker running under the message (both are released); the first frame now
+  draws inside a WebGPU validation scope, so a draw the browser refuses fails the boot with its words. The crowd's
+  10 s window for its first GPU reading counts only the time the worker ran, so an iPhone switched to another app
+  while the city starts no longer comes back to a failure.
+- **The adapter is the worker's.** The page now asks for the GPU itself, as the physics worker does (a full adapter,
+  high performance), and hands the device to three.js with the same features three would ask for, instead of three's
+  own request at the compatibility feature level; the answer tells the card which of no adapter, a compatibility-only
+  adapter or a refused device it is. Every existing scenario of the browser smoke still boots.
 
 - **The city never started on some Chromium builds**: three r186 sets `swizzle: 'rgba'` on every texture view, and
   builds that still type that field as a dictionary threw on the first one. `world.ts` drops the identity swizzle.

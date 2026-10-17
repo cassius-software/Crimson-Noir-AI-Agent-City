@@ -586,7 +586,7 @@ anywhere in the product.
   100 m/s; a *solid* person overlapped by a moving vehicle (an impact: the Bouncer and the Sanctuary both
   failed); a moving vehicle within the 1.5 m standoff of a solid person in its path *without* an emergency stop
   applied (the Bouncer failed). A panic logs `[RING-0 FATAL]`, disconnects the hardware bus, halts physics,
-  rendering and audio, shows **SYSTEM LOCKED**, and throws out of the frame. Speeds over 50 m/s are clamped and
+  rendering and audio, shows **SYSTEM LOCKED** with a Restart button, and throws out of the frame. Speeds over 50 m/s are clamped and
   counted rather than panicked, and the 1.85 m radius around any moving vehicle is a watched perimeter whose
   breaches are counted, because verified First-Law stops land 1.71–1.97 m from the bumper and the Sanctuary's
   nudge leaves a shielded person 1.52 m from a car's centreline. The audit's counters are in the console
@@ -1976,6 +1976,45 @@ second load is cross-origin isolated, and with the host stopped the city starts 
 controls. `src/webApp.test.ts` holds the policy change, the icons and the service worker's answers. Not verified, and
 needing a real iPhone: Safari's WebGPU in the physics worker, the home-screen launch, the isolation headers from a
 service worker in Safari, and heat and memory over a long session.
+
+## When the city cannot start or stops
+
+No failure leaves a black screen with nothing to press: the installed iPhone app and the Windows app have no address
+bar and no reload of their own, so the page carries its own way out.
+
+- **The recovery card** (`src/07_Execute_Actions/RecoveryCard.tsx`) says what happened in words for this device and
+  browser (`bootFailure.ts`), with **Restart** (the page loaded again, focused: Enter takes it) and **Open the
+  console** (`?boot=tty`, which needs no GPU). A pad's A presses the focused button and its d-pad moves between them;
+  a button held when the card appears does nothing until it is let go. Under **Details** are the raw message and
+  one line (build, adapter, user agent) to copy into a bug report. Where WebGPU itself is what is missing, the card
+  ends with what the city needs: a current Chrome, Edge or Brave on desktop or Android, or Safari 26.
+- **What it tells whom.** An insecure address (plain http to another machine, such as `http://192.168.1.20:4173`) is
+  named as the problem, not the browser. Without WebGPU, an iPhone before iOS 26 is told it needs iOS 26 (which
+  runs on iPhone 11, iPhone SE (2nd generation) and newer); Safari 26 with WebGPU off is pointed at Lockdown Mode
+  and the feature flag; another browser on iOS, or an app's built-in browser, is sent to Safari; Android Chrome to
+  an update, an Android app's built-in browser to Chrome; Firefox to `dom.webgpu.enabled`; Chrome on Linux with no
+  adapter to `chrome://gpu` and its Vulkan flags (and NixOS's `hardware.graphics.enable`). The home-screen app and
+  the Windows app are never told to edit an address or switch browsers.
+- **Before the onboarding.** A first visit checks the page is secure, has WebGPU and gets a full adapter before the
+  onboarding starts; a browser that cannot run the city gets the card instead.
+- **A slow start** is not a failure: after 20 s of visible time without a first frame the boot veil adds "Still
+  starting…" with Restart and Open the console, and the boot goes on.
+- **After the start.** A lost GPU (the page's device, or the crowd's in the physics worker) halts the city with a
+  graphics-reset card; lost while the page was hidden (another app, another tab), the page restarts by itself once it
+  is shown again, at most once every two minutes. A physics fault and a frame loop that fails 30 frames in a row
+  halt with the card too. Only a real Ring-0 audit failure shows **SYSTEM LOCKED**, now with Restart.
+- **When the page's script never runs** (a download cut off, a browser too old to read it, scripts off): a small
+  classic script in `index.html`'s head shows a card with Restart, and `<noscript>` says how to turn JavaScript on.
+  The Files app only previews `dist/index.html` and runs no scripts: open the page's https address in Safari.
+
+What is verified: the classifier's words against real user agents (iOS 18 and 26 Safari, iOS Chrome, in-app
+browsers, Android Chrome and WebView, Firefox and Chrome on Linux, Edge on Windows, the Windows app) in
+`bootFailure.test.ts`; the watchdog in a fake page in `bootWatchdog.test.ts`; and in headless Chromium
+(`tools/browser/smoke.mjs fail`) WebGPU taken away, a genuinely insecure origin, no adapter, a hung boot, a cut-off
+download, the page's device lost (by a wrapped `lost` promise), a realm halt and a throwing frame, each with the right
+card and Restart focused, Enter restarting and a stand-in pad reaching the console. Not verified, and needing the
+device: the words and settings paths on a real iPhone, the home-screen app, the Windows app's WebView2, a real driver
+reset and a real pad.
 
 ## Constraints
 
