@@ -70,7 +70,7 @@ test('no WebGPU: each device gets its own way out', () => {
   assert.match(text(ios18), /Safari 18 doesn’t turn WebGPU on/)
   const ios26 = classify(err('no-api'), env(UA.ios26, IPHONE))
   assert.equal(ios26.headline, 'WebGPU is turned off in Safari', 'Safari 26 is told about Lockdown Mode, not to update')
-  assert.match(text(ios26), /Lockdown Mode/)
+  assert.match(text(ios26), /page menu beside the address, then Website Settings, and turn Lockdown Mode off for this site/, 'Safari on iOS has no Settings for This Website')
   const home = classify(err('no-api'), env(UA.homeScreen, HOME_SCREEN))
   assert.match(home.headline, /This iPhone needs iOS 26/)
   assert.match(text(home), /open the app again/)

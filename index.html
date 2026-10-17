@@ -118,13 +118,16 @@
         // What the city itself will need once the page runs, where this browser plainly lacks it: a secure address,
         // iOS 26 on an iPhone or iPad (Safari's Version token), WebGPU. Nothing under ?boot=tty: the console needs none.
         function needs() {
-          var ua = navigator.userAgent, ios = /\b(iPhone|iPad|iPod)\b/.exec(ua), v = /\bVersion\/(\d+)/.exec(ua)
+          var ua = navigator.userAgent, ios = /\b(iPhone|iPad|iPod)\b/.exec(ua), v = /\bVersion\/(\d+)/.exec(ua), gpu = 'gpu' in navigator
           if (/[?&]boot=tty(?:&|$)/.test(w.location.search)) return []
           if (w.isSecureContext === false) return ['The city also needs a secure address: open the page over https://.']
-          if (ios && v && +v[1] < 26) {
+          // A home-screen app on an iPhone carries no Version/ token, so an old iOS shows there only as a missing WebGPU.
+          if (ios && (v ? +v[1] < 26 : navigator.standalone === true && !gpu)) {
             return [ios[1] === 'iPad' ? 'The city also needs iPadOS 26 on this iPad.' : 'The city also needs iOS 26 on this iPhone (iPhone 11, iPhone SE (2nd generation) and newer).']
           }
-          if (!('gpu' in navigator)) return ['The city also needs WebGPU: a current Chrome, Edge or Brave, or Safari 26.']
+          if (!gpu) {
+            return [w.__TAURI_INTERNALS__ ? 'The city also needs WebGPU: update WebView2 (Windows Update) and the graphics driver.' : 'The city also needs WebGPU: a current Chrome, Edge or Brave, or Safari 26.']
+          }
           return []
         }
         w.addEventListener('load', function () {

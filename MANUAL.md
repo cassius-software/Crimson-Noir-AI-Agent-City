@@ -2016,7 +2016,8 @@ bar and no reload of their own, so the page carries its own way out.
   halt with the card too. Only a real Ring-0 audit failure shows **SYSTEM LOCKED**, now with Restart.
 - **When the page's script never runs** (a download cut off, a browser too old to read it, scripts off): a small
   classic script in `index.html`'s head shows a card with Restart, adding what the city will need where the browser
-  plainly lacks it (a secure address, iOS 26 on an older iPhone, WebGPU; nothing of the kind under `?boot=tty`), and
+  plainly lacks it (a secure address, iOS 26 on an older iPhone, in Safari or the home-screen app, WebGPU, which the
+  Windows app gets from an updated WebView2; nothing of the kind under `?boot=tty`), and
   `<noscript>` says how to turn JavaScript on.
   The Files app only previews `dist/index.html` and runs no scripts: open the page's https address in Safari.
 

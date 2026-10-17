@@ -118,7 +118,7 @@ class Page {
       activeElement: null,
       createElement: (t) => new El(t, this),
       createTextNode: (t) => ({ text: t }),
-      querySelector: (q) => (q === 'meta[name="application-name"]' ? { getAttribute: () => 'ONYX' } : null),
+      querySelector: (q) => (q === 'meta[name="application-name"]' ? { getAttribute: () => 'Crimson Noir: Agent City' } : null),
     }
     this.window = {
       location: { search, pathname: '/play/index.html', hash: '', reload: () => { this.reloads++ }, assign: (u: string) => { this.assigned.push(u) } },
@@ -149,7 +149,7 @@ test('a module that never ran: at load the card says so, with Restart focused an
   p.fire('load')
   const card = p.card
   assert.ok(card, 'the card is up')
-  assert.equal(card.all().find((e) => e.tagName === 'H1')?.text, 'ONYX couldn’t start', 'the name from the page\'s application-name')
+  assert.equal(card.all().find((e) => e.tagName === 'H1')?.text, 'Crimson Noir: Agent City couldn’t start', 'the name from the page\'s application-name')
   assert.match(card.all().map((e) => e.text).join(' '), /did not finish downloading, or this browser did not run its script/)
   assert.match(card.all().map((e) => e.text).join(' '), /Software Update/)
   assert.deepEqual(p.buttons().map((b) => b.text), ['Restart'], 'the console is in the same script that never ran')
@@ -164,7 +164,7 @@ test('a SyntaxError or a throw while loading has its own words and its message; 
   old.fire('error', { error: { name: 'SyntaxError', message: 'Unexpected token \'?\'' } })
   old.fire('load')
   const words = old.card!.all().map((e) => e.text).join(' ')
-  assert.match(words, /could not read the page’s script: it is older than ONYX needs, or the download was cut off/)
+  assert.match(words, /could not read the page’s script: it is older than Crimson Noir: Agent City needs, or the download was cut off/)
   assert.match(words, /SyntaxError: Unexpected token '\?' · build %BRAND_VERSION% · TestAgent\/1\.0/, 'the detail line (the token is filled at build)')
   const threw = new Page()
   threw.run(watchdog(SOURCE))
@@ -191,6 +191,19 @@ test('what the city will need, where the browser plainly lacks it; nothing of th
   plain.window.isSecureContext = false
   assert.match(words(plain), /needs a secure address: open the page over https:\/\//)
   assert.match(words(new Page()), /needs WebGPU: a current Chrome, Edge or Brave, or Safari 26/, 'no navigator.gpu')
+  const home = new Page()
+  home.ua = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148'
+  home.nav = { standalone: true }
+  assert.match(words(home), /needs iOS 26 on this iPhone/, 'a home-screen app has no Version\/ token: no WebGPU there means an old iOS')
+  const homeNew = new Page()
+  homeNew.ua = home.ua
+  homeNew.nav = { standalone: true, gpu: {} }
+  assert.doesNotMatch(words(homeNew), /also needs/, 'a home-screen app with WebGPU is told nothing more')
+  const app = new Page()
+  app.window.__TAURI_INTERNALS__ = {}
+  const appWords = words(app)
+  assert.match(appWords, /needs WebGPU: update WebView2 \(Windows Update\) and the graphics driver/, 'the Windows app')
+  assert.doesNotMatch(appWords, /Chrome|Safari/, 'the Windows app cannot switch browsers')
   const fine = new Page()
   fine.nav = { gpu: {} }
   assert.doesNotMatch(words(fine), /also needs/, 'a browser with WebGPU on a secure page is told nothing more')
@@ -203,7 +216,7 @@ test('__bootFatal draws once, offers the console on ?boot=tty keeping the other 
   const p = new Page('?map=lakefront&boot=gui&players=2')
   p.run(watchdog(SOURCE))
   const fatal = p.window.__bootFatal as (t: string, l: string[], d: string, c: boolean) => void
-  fatal('ONYX stopped', ['Something failed.'], 'Error: boom', true)
+  fatal('Crimson Noir: Agent City stopped', ['Something failed.'], 'Error: boom', true)
   fatal('again', [], '', false)
   assert.equal(p.body.children.length, 1, 'once')
   assert.deepEqual(p.buttons().map((b) => b.text), ['Restart', 'Open the console'])

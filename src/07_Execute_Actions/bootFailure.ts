@@ -211,6 +211,19 @@ export function detailsLine(adapter: string, ua: string): string {
 const flags = (p: Platform): string => (p.browser === 'edge' ? 'edge' : 'chrome')
 
 /** Pure. The headline, steps and WebGPU line of a class, for this device. */
+/**
+ * Lockdown Mode (WebGPU and WebAssembly off) on an iPhone or iPad. A site is excluded from Safari's own page menu
+ * (Settings only lists the sites already excluded); the home-screen app has no page menu, so only the switch itself.
+ */
+function iosLockdown(standalone: boolean): string {
+  return standalone
+    ? 'Lockdown Mode turns it off: turn it off in Settings > Privacy & Security > Lockdown Mode, then open the app again.'
+    : 'Lockdown Mode turns it off: in Safari tap the page menu beside the address, then Website Settings, and turn Lockdown Mode off for this site, or turn it off in Settings > Privacy & Security > Lockdown Mode.'
+}
+
+/** Lockdown Mode on a Mac: per site in Safari's own settings for the website, or the switch in System Settings. */
+const MAC_LOCKDOWN = 'Lockdown Mode turns it off in Safari: choose Safari > Settings for This Website and untick Enable Lockdown Mode, or turn it off in System Settings > Privacy & Security > Lockdown Mode.'
+
 function words(kind: FailureKind, env: Env, p: Platform): Omit<Failure, 'kind' | 'detail'> {
   const phone = p.os === 'ios' || p.os === 'android'
   const device = p.ipad ? 'iPad' : 'iPhone'
@@ -254,7 +267,7 @@ function words(kind: FailureKind, env: Env, p: Platform): Omit<Failure, 'kind' |
         if (p.safari !== null && p.safari >= 26) {
           return w('WebGPU is turned off in Safari', [
             'Safari 26 has WebGPU on unless something turned it off.',
-            'Lockdown Mode turns it off: Settings > Privacy & Security > Lockdown Mode, then exclude this site.',
+            iosLockdown(env.standalone),
             'Or check Settings > Apps > Safari > Advanced > Feature Flags > WebGPU.',
           ], true)
         }
@@ -364,8 +377,8 @@ function words(kind: FailureKind, env: Env, p: Platform): Omit<Failure, 'kind' |
     case 'wasm':
       return w('WebAssembly is turned off', [
         'The city’s physics runs as WebAssembly, which this browser has switched off.',
-        p.os === 'ios' ? 'Lockdown Mode turns it off: Settings > Privacy & Security > Lockdown Mode, then exclude this site.'
-          : p.os === 'mac' ? 'Lockdown Mode turns it off: System Settings > Privacy & Security > Lockdown Mode, then exclude this site.'
+        p.os === 'ios' ? iosLockdown(env.standalone)
+          : p.os === 'mac' && p.browser === 'safari' ? MAC_LOCKDOWN
             : 'Allow WebAssembly for this site, or turn off the security setting or extension that blocks it.',
       ])
     case 'shader':
