@@ -29,17 +29,24 @@ const ENGINE = read('./engine.ts')
 const pad = (...held: number[]) => ({ buttons: Array.from({ length: 16 }, (_, i) => ({ pressed: held.includes(i) })) })
 
 test('padStep: A presses, the d-pad moves focus, and only a button that goes down counts', () => {
-  assert.deepEqual(padStep(new Set(), [pad(PAD.a)]).action, 'press')
-  assert.deepEqual(padStep(new Set(), [pad(PAD.down)]).action, 'next')
-  assert.deepEqual(padStep(new Set(), [pad(PAD.right)]).action, 'next')
-  assert.deepEqual(padStep(new Set(), [pad(PAD.up)]).action, 'previous')
-  assert.deepEqual(padStep(new Set(), [pad(PAD.left)]).action, 'previous')
-  assert.deepEqual(padStep(new Set(), [null, undefined]).action, null, 'no pads, nothing')
-  const held = padStep(new Set(), [pad(PAD.a)]).held
-  assert.equal(padStep(held, [pad(PAD.a)]).action, null, 'held A: nothing until it is let go')
-  assert.equal(padStep(padStep(held, [pad()]).held, [pad(PAD.a)]).action, 'press', 'let go and pressed again')
+  const there = padStep(new Set(), [pad(), pad()]).held // two pads, nothing held: the poll before
+  assert.deepEqual(padStep(there, [pad(PAD.a)]).action, 'press')
+  assert.deepEqual(padStep(there, [pad(PAD.down)]).action, 'next')
+  assert.deepEqual(padStep(there, [pad(PAD.right)]).action, 'next')
+  assert.deepEqual(padStep(there, [pad(PAD.up)]).action, 'previous')
+  assert.deepEqual(padStep(there, [pad(PAD.left)]).action, 'previous')
+  assert.deepEqual(padStep(there, [null, undefined]).action, null, 'no pads, nothing')
+  const held = padStep(there, [pad(PAD.a), pad()]).held
+  assert.equal(padStep(held, [pad(PAD.a), pad()]).action, null, 'held A: nothing until it is let go')
+  assert.equal(padStep(padStep(held, [pad(), pad()]).held, [pad(PAD.a), pad()]).action, 'press', 'let go and pressed again')
   assert.equal(padStep(held, [pad(PAD.a), pad(PAD.a)]).action, 'press', 'another pad\'s A is its own press')
-  assert.equal(padStep(new Set(), [pad(PAD.a, PAD.down)]).action, 'press', 'A first')
+  assert.equal(padStep(there, [pad(PAD.a, PAD.down)]).action, 'press', 'A first')
+  // A pad that shows up with A held (the browser reveals a pad on a button press: the A that left the last page).
+  const appeared = padStep(new Set(), [pad(PAD.a)])
+  assert.equal(appeared.action, null, 'a pad that appears with A down: nothing')
+  assert.equal(padStep(appeared.held, [pad(PAD.a)]).action, null, 'still held: nothing')
+  assert.equal(padStep(padStep(appeared.held, [pad()]).held, [pad(PAD.a)]).action, 'press', 'let go and pressed: a press')
+  assert.equal(padStep(there, [pad(), pad(), pad(PAD.a)]).action, null, 'a third pad arriving with A down: nothing')
   // usePadNav: the first poll only learns what is held, so the A that was driving cannot restart the city.
   assert.match(read('./padNav.ts'), /const first = prev === null[\s\S]*if \(!first && action && el\)/)
 })

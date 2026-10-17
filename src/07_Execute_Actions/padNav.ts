@@ -7,7 +7,9 @@
  * buttons. A halt has closed the game's own hardware bus (engine.ts halt) and the frame loop that read the pad has
  * stopped, so these screens read the pads themselves: A (the standard mapping's button 0) presses the button that has
  * focus, the d-pad moves focus between the screen's buttons. A press is an edge: a button already held when the screen
- * appears does nothing until it is let go, so the A that was driving a car cannot restart the city by accident. The
+ * appears, or when its pad first shows up (a browser shows a page a pad only once one of its buttons is pressed, so
+ * the A that pressed 'Open the console' can be the one that reveals it on the next page), does nothing until it is let
+ * go, so the A that was driving a car cannot restart the city by accident. The
  * keyboard needs nothing here: the screens focus their first button, and Enter presses a focused button natively.
  * What breaks if it is removed? A player with only a pad has no way out of a failed boot or a halted city.
  */
@@ -23,16 +25,18 @@ export type PadAction = 'press' | 'next' | 'previous' | null
 interface PadLike { buttons: readonly { pressed: boolean }[] }
 
 /**
- * Pure. The buttons held across every pad now (as "pad:button"), and the action this poll asks for: a button counts
- * only on the poll it goes down (it was not held at the previous poll), A before the d-pad.
+ * Pure. The buttons held across every pad now (as "pad:button", and each pad present as "pad:"), and the action this
+ * poll asks for: a button counts only on the poll it goes down (it was not held at the previous poll) on a pad that
+ * was there at the previous poll, A before the d-pad.
  */
 export function padStep(prev: ReadonlySet<string>, pads: readonly (PadLike | null | undefined)[]): { held: Set<string>; action: PadAction } {
   const held = new Set<string>()
   pads.forEach((p, i) => {
     if (!p) return
+    held.add(`${i}:`)
     for (const b of [PAD.a, PAD.up, PAD.down, PAD.left, PAD.right]) if (p.buttons[b]?.pressed) held.add(`${i}:${b}`)
   })
-  const down = (b: number) => [...held].some((k) => k.endsWith(`:${b}`) && !prev.has(k))
+  const down = (b: number) => [...held].some((k) => k.endsWith(`:${b}`) && !prev.has(k) && prev.has(k.slice(0, k.indexOf(':') + 1)))
   const action: PadAction = down(PAD.a) ? 'press' : down(PAD.down) || down(PAD.right) ? 'next' : down(PAD.up) || down(PAD.left) ? 'previous' : null
   return { held, action }
 }

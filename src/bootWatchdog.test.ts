@@ -224,6 +224,15 @@ test('__bootFatal draws once, offers the console on ?boot=tty keeping the other 
   p.pads = [{ buttons: [{ pressed: true }] }]
   for (const f of p.intervals) f()
   assert.equal(p.reloads, 2, 'a fresh press of A presses the focused Restart')
+  // A second pad that shows up with A down (a browser reveals a pad on a press) presses nothing until it is let go.
+  p.pads = [{ buttons: [{ pressed: false }] }, { buttons: [{ pressed: true }] }]
+  for (const f of p.intervals) f()
+  assert.equal(p.reloads, 2, 'a pad appearing with A down: nothing')
+  p.pads = [{ buttons: [{ pressed: false }] }, { buttons: [{ pressed: false }] }]
+  for (const f of p.intervals) f()
+  p.pads = [{ buttons: [{ pressed: false }] }, { buttons: [{ pressed: true }] }]
+  for (const f of p.intervals) f()
+  assert.equal(p.reloads, 3, 'then let go and pressed: a press')
 })
 
 test('main.tsx hands React\'s uncaught errors to the watchdog and stands it down once it has run', () => {

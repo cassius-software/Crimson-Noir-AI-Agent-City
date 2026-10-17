@@ -96,13 +96,19 @@
           w.addEventListener('keydown', function (e) {
             if (e.key === 'Enter' && !(e.target && e.target.tagName === 'BUTTON')) restart()
           })
-          var held = true
+          // A pad's A: a press only on a pad that was there, A up, at the last look (a pad revealed by its own press,
+          // or one whose A was held when the card appeared, presses nothing until A is released).
+          var was = null
           setInterval(function () {
-            var pads = [], down = false, j
+            var pads = [], now = {}, press = false, j
             try { pads = navigator.getGamepads ? navigator.getGamepads() : [] } catch (err) { pads = [] }
-            for (j = 0; j < pads.length; j++) if (pads[j] && pads[j].buttons[0] && pads[j].buttons[0].pressed) down = true
-            if (down && !held) (d.activeElement && d.activeElement.tagName === 'BUTTON' ? d.activeElement : again).click()
-            held = down
+            for (j = 0; j < pads.length; j++) {
+              if (!pads[j]) continue
+              now[j] = !!(pads[j].buttons[0] && pads[j].buttons[0].pressed)
+              if (now[j] && was && was[j] === false) press = true
+            }
+            if (press) (d.activeElement && d.activeElement.tagName === 'BUTTON' ? d.activeElement : again).click()
+            was = now
           }, 50)
         }
         w.__bootFatal = fatal
