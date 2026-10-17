@@ -572,22 +572,29 @@ fn trailSpot(r: u32, k: u32) -> vec2f {
 }
 // The way across room r from me to `to` round its furniture: the straight line to it (offFurniture's spot for it) when
 // that is clear. Else, for someone coming to the operator (`follow`), the operator's own way: the newest point of
-// their trail in a clear line with no glass between, or once level with it the one after it (the operator walked from
-// one to the next, round whatever corner hides it), which leads into a dead end and round the end of a long piece where
-// no one corner opens, and out of a room the operator has left. Else by the corner of a piece (ROOM_ROUND beyond its
-// grown corner, on the floor and clear of the other pieces) that makes the shortest clear two-leg walk; with none, out
-// along the nearer aisle towards the hub, from where one may open. The crowd's flow field cannot do this: its 2 m
+// their trail in a clear line with no glass between, or once level with it the one after it where no piece stands
+// between (the operator walked from one to the next, round whatever corner hides it), which leads into a dead end and
+// round the end of a long piece where no one corner opens, and out of a room the operator has left. Only the part of
+// the trail the crowd can walk serves: from each point to the one after it, and on to `to` when the operator is there
+// (`there`), the line is clear and crosses no glass. The operator steps over an AGV dock; the containment holds
+// everyone off it, so a trail over one would pin them on its face. Else by the corner of a piece (ROOM_ROUND beyond
+// its grown corner, on the floor and clear of the other pieces) that makes the shortest clear two-leg walk; with none,
+// out along the nearer aisle towards the hub, from where one may open. The crowd's flow field cannot do this: its 2 m
 // cells run straight through a conveyor or a rack 0.8 m deep.
-fn roomWay(r: u32, me: vec2f, to: vec2f, follow: bool) -> vec2f {
+fn roomWay(r: u32, me: vec2f, to: vec2f, follow: bool, there: bool) -> vec2f {
   let clear = ROOM_PAD - 0.05;
   let goal = offFurniture(r, to);
   if (clearOfFurniture(r, me, goal, clear)) { return dirTo(me, goal); }
   if (follow) {
+    var next = goal;
     for (var k = 0u; k < min(P.trailCount, TRAIL_POINTS); k++) {
       let t = trailSpot(r, k);
-      if (!clearOfFurniture(r, me, t, clear) || walled(me, t)) { continue; }
-      let next = select(trailSpot(r, max(k, 1u) - 1u), goal, k == 0u);
-      return dirTo(me, select(t, next, distance(me, next) <= distance(t, next)));
+      if ((k > 0u || there) && (!clearOfFurniture(r, t, next, clear) || walled(t, next))) { break; }
+      if (clearOfFurniture(r, me, t, clear) && !walled(me, t)) {
+        let on = distance(me, next) <= distance(t, next) && clearOfFurniture(r, me, next, 0.0) && !walled(me, next);
+        return dirTo(me, select(t, next, on));
+      }
+      next = t;
     }
   }
   let n = min(u32(P.rooms[r].b.y), ROOM_FURNITURE);
@@ -650,7 +657,7 @@ fn summonWay(me: vec2f, at: vec2f, dist: f32, pane: i32) -> vec2f {
   let mine = indoors(me);
   let theirs = indoors(at);
   let follow = P.trailCount > 0u && distance(P.trail[0].xy, at) < TRAIL_NEAR;
-  if (mine >= 0 && mine == theirs) { return roomWay(u32(mine), me, at, follow); }
+  if (mine >= 0 && mine == theirs) { return roomWay(u32(mine), me, at, follow, true); }
   var flow = flowAt(me);
   if (mine != theirs || pane >= 0) {
     let r = u32(select(select(pane, theirs, theirs >= 0), mine, mine >= 0));
@@ -659,7 +666,7 @@ fn summonWay(me: vec2f, at: vec2f, dist: f32, pane: i32) -> vec2f {
     if (abs(l.y) < ROOM_DOOR + 1.5 && l.x > CITY_LOT_HALF - ROOM_WALL - 1.5 && l.x < front + 1.0 && (mine != theirs || l.x < CITY_LOT_HALF)) {
       return dirTo(me, roomWorld(r, vec2f(select(front, P.rooms[r].b.x, mine < 0 && theirs == i32(r)), 0.0)));
     }
-    if (mine >= 0) { return roomWay(r, me, roomWorld(r, vec2f(P.rooms[r].b.x + 1.0, select(-ROOM_AISLE, ROOM_AISLE, l.y >= 0.0))), follow); }
+    if (mine >= 0) { return roomWay(r, me, roomWorld(r, vec2f(P.rooms[r].b.x + 1.0, select(-ROOM_AISLE, ROOM_AISLE, l.y >= 0.0))), follow, false); }
     if (dot(flow, flow) <= 0.5) {
       let here = roomOf(me);
       if (here >= 0) { flow = flowAt(me + offGlass(u32(here), me) / FLOW_INV_CELL); }
@@ -670,8 +677,10 @@ fn summonWay(me: vec2f, at: vec2f, dist: f32, pane: i32) -> vec2f {
   // containment (the pad less a millimetre: walking along a face someone is held on is no cut), so nobody is slid
   // along a face until they stand level with the operator short of its corner. A doorway's jamb in the way (one of
   // them in the opening's band, the other outside beside it) is gone round by its outer corner, just off the opening,
-  // where the field's 2 m cells see nothing to go round; anything else by the field's arrow, one cell off the glass
-  // where the cell under them is silent.
+  // where the field's 2 m cells see nothing to go round. A lot with no room in it is gone round by the corner of its
+  // square, just off it: the field walks across a park, and round a building standing back from its lot's edge, where
+  // the containment holds everyone out of the whole square, so its arrow would pin them on the square's face. Anything
+  // else by the field's arrow, one cell off the glass where the cell under them is silent.
   let goal = offLot(at);
   let pad = ROOM_PAD - 1e-3;
   if (dist <= 4.0 * SUMMON_STOP) {
@@ -686,6 +695,22 @@ fn summonWay(me: vec2f, at: vec2f, dist: f32, pane: i32) -> vec2f {
         if (cost < best && !crossesGlass(u32(r), me, c, pad) && !crossesGlass(u32(r), c, goal, pad)) {
           best = cost;
           aim = c;
+        }
+      }
+      if (best < 1e9) { return dirTo(me, aim); }
+    }
+    let p = select(goal, me, lotCut(me, me, goal, pad));
+    if (roomOf(p) < 0) {
+      let c = lotCenter(p);
+      let g = CITY_LOT_HALF + ROOM_PAD + 0.05;
+      var best = 1e9;
+      var aim = goal;
+      for (var k = 0u; k < 4u; k++) {
+        let q = c + vec2f(select(-g, g, (k & 1u) != 0u), select(-g, g, (k & 2u) != 0u));
+        let cost = distance(me, q) + distance(q, goal);
+        if (cost < best && !lotCut(me, me, q, pad) && !lotCut(goal, me, q, pad) && !lotCut(me, q, goal, pad) && !lotCut(goal, q, goal, pad)) {
+          best = cost;
+          aim = q;
         }
       }
       if (best < 1e9) { return dirTo(me, aim); }
