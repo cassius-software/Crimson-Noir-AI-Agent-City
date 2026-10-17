@@ -8,15 +8,15 @@
 // person in its corridor ahead and behind), spring-damper staggers, the Ring-0 flag for a non-finite
 // pedestrian state, the operator's summons (a person asked over walks to the operator along the sidewalk
 // and stops to talk, the safety reflexes still first), the workday (one person in WORK_ONE_IN has a station in
-// one of the city's indoor workplaces, 01_Initialize_World/interiors.ts: on shift they walk the corner graph to the
-// workplace's block, along the sidewalk to its doorway, in to their station and work there, then walk out and back
-// to their day), the containment that keeps everyone out of the lots but lets a room's doorway through and slides
+// one of the indoor workplaces, 01_Initialize_World/interiors.ts, the city's or a generated region's: on shift they
+// walk the corner graph to the workplace's block, by the route table where a street window has one, along the
+// sidewalk to its doorway, in to their station and work there, then walk out and back to their day), the containment that keeps everyone out of the lots but lets a room's doorway through and slides
 // a step along a wall or a piece of furniture instead of into it, and the visibility/density/LOD compaction that
 // feeds the indirect draws. Pedestrian coordinates are only ever written here, on the GPU.
 // What breaks if it is removed? Nobody spawns, walks, waits for a light, or gets drawn, and no car
 // can see the people in its path.
 //
-// CITY_*, TRAFFIC_*, SIGNAL_*, YIELD_*, WALK_*, KERNEL_*, CAR_*, GRID_*, SUMMON_*, ROOM_*, WORK_*, ACT_* and the limits below are
+// CITY_*, TRAFFIC_*, SIGNAL_*, YIELD_*, WALK_*, KERNEL_*, CAR_*, GRID_*, SUMMON_*, ROOM_*, ROUTE_*, WORK_*, ACT_* and the limits below are
 // prepended at runtime from city.ts / civic.ts / crowdCompute.ts so the CPU and GPU share one set of
 // numbers. The streets are a window of CITY_BLOCKS × CITY_BLOCKS blocks at CITY_PITCH from CITY_ORIGIN_X/Z: the
 // procedural city itself (every street present, at the origin), or a window of a generated region (Lakefront Metro,
@@ -78,7 +78,7 @@ struct Summon {
 // glass walls ROOM_WALL thick with a doorway 2 · ROOM_DOOR wide on one street front. a = (lot centre x, z, doorway side:
 // 0 faces +z, 1 −z, 2 +x, 3 −x; present), b = (the hub's u, m inside the doorway; furniture count; -, -), furniture =
 // (x0, z0, x1, z1) city boxes a step slides round, stations = (u, v, facing yaw, present) in the room's frame (u from
-// the back wall to the doorway, v across). A room with a.w = 0 is an empty slot (a region has none).
+// the back wall to the doorway, v across). A room with a.w = 0 is an empty slot (a region without workplaces has none).
 struct Room {
   a: vec4f,
   b: vec4f,
@@ -110,8 +110,14 @@ struct Params {
   // on it (bit 1); the east-west segments (index m · CITY_BLOCKS + k) then the north-south ((CITY_BLOCKS + 1) ·
   // CITY_BLOCKS + k · CITY_BLOCKS + m). The procedural city sets every bit.
   streets: array<vec4u, STREET_VEC4S>,
-  // The indoor workplaces (interiors.ts): the procedural city's six, or empty slots in a region.
+  // The indoor workplaces (interiors.ts): the procedural city's six, a generated region's (on lots of its street
+  // window, region/workplaces.ts), or empty slots in a region without them.
   rooms: array<Room, ROOM_SLOTS>,
+  // The commute's route table (region/workplaces.ts packRoutes): per room slot, ROUTE_ROOM_VEC4S rows of four bits per
+  // window intersection (index m · (CITY_BLOCKS + 1) + k, eight to a word): the street to take to come one intersection
+  // nearer the room's workplace corner (1 +x, 2 −x, 3 +z, 4 −z), 5 at its own intersection, 0 where it cannot be
+  // reached. All zero in the procedural city, whose commute is the greedy walk (towardCorner).
+  routes: array<vec4u, ROUTE_VEC4S>,
 }
 
 // a = (goal.xy, preferred speed, retreat speed)
@@ -639,6 +645,36 @@ fn towardCorner(t: vec2f, dest: vec2f, seed: u32) -> vec2f {
   if (all(best == t)) { return nextCorner(t, seed); }
   return best;
 }
+// The route table's code for room r at window intersection km (Params.routes): 0 outside the window.
+fn routeWay(r: u32, km: vec2i) -> u32 {
+  if (any(km < vec2i(0)) || any(km > vec2i(CITY_BLOCKS))) { return 0u; }
+  let n = u32(km.y * (CITY_BLOCKS + 1) + km.x);
+  let w = r * ROUTE_ROOM_VEC4S * 4u + n / 8u;
+  return (P.routes[w / 4u][w % 4u] >> ((n % 8u) * 4u)) & 15u;
+}
+// Whether room r is walked to by the route table: its own workplace corner's intersection is marked (never in the
+// procedural city, whose table is all zero).
+fn routed(r: u32) -> bool { return routeWay(r, nearestLines(targetCorner(r))) == 5u; }
+// The next corner of a commute from corner t to room r's workplace corner. In a window whose table routes the room,
+// the street the table gives, along it where t stands on its side and over the crosswalk to that side first where
+// not (that corner exists: the street has a sidewalk); at the workplace's own intersection, the greedy walk, which
+// always arrives within one intersection; where the table has no way (a corner cut off from the room), the day's dice.
+// Unrouted (the procedural city), the greedy walk alone, as it always was.
+fn commuteCorner(t: vec2f, r: u32, seed: u32) -> vec2f {
+  let dest = targetCorner(r);
+  let km = nearestLines(t);
+  let way = routeWay(r, km);
+  if (!routed(r) || way == 5u) { return towardCorner(t, dest, seed); }
+  if (way == 0u) { return nextCorner(t, seed); }
+  let k = km.x;
+  let m = km.y;
+  let sx = select(-1.0, 1.0, t.x - (CITY_ORIGIN_X + f32(k) * CITY_PITCH) >= 0.0);
+  let sz = select(-1.0, 1.0, t.y - (CITY_ORIGIN_Z + f32(m) * CITY_PITCH) >= 0.0);
+  if (way == 1u) { return select(cornerPos(k, m, 1.0, sz), cornerPos(k + 1, m, -1.0, sz), sx > 0.0); }
+  if (way == 2u) { return select(cornerPos(k, m, -1.0, sz), cornerPos(k - 1, m, 1.0, sz), sx < 0.0); }
+  if (way == 3u) { return select(cornerPos(k, m, sx, 1.0), cornerPos(k, m + 1, sx, -1.0), sz > 0.0); }
+  return select(cornerPos(k, m, sx, -1.0), cornerPos(k, m - 1, sx, 1.0), sz < 0.0);
+}
 // The sidewalk corner nearest p on p's own block (both street offsets keep their sign): reachable along the
 // sidewalk without crossing a street. A released recruit resumes their day from there.
 fn cornerOf(p: vec2f) -> vec2f {
@@ -943,7 +979,9 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
       // Their own workplace, until a shift ends (the leaving legs keep whichever room they are in).
       if (phase < 6.5) { room = u32(slot) / ROOM_STATIONS; }
       let duty = onDuty(i, P.time);
-      if (phase < 0.5 && duty) { phase = WORK_COMMUTE; }
+      // A routed commute starts only from a corner the table reaches the room from: someone whose day has taken them
+      // where the window cuts them off from it keeps that day, and the station waits for its other workers.
+      if (phase < 0.5 && duty && (!routed(room) || routeWay(room, nearestLines(b.a.xy)) != 0u)) { phase = WORK_COMMUTE; }
       if (phase > 5.5 && phase < 6.5 && !duty) {
         phase = WORK_LEAVE_ROW;
         row = P.rooms[room].stations[u32(slot) % ROOM_STATIONS].y;
@@ -1012,7 +1050,7 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
           phase = WORK_APPROACH;
           crossing = CROSS_NONE;
         } else {
-          let next = select(nextCorner(goal, hash2(i, P.frame)), towardCorner(goal, targetCorner(room), hash2(i, P.frame)), commuting);
+          let next = select(nextCorner(goal, hash2(i, P.frame)), commuteCorner(goal, room, hash2(i, P.frame)), commuting);
           crossing = select(CROSS_NONE, CROSS_WAIT, isCrossing(goal, next));
           b.a = vec4f(next, b.a.z, b.a.w);
         }

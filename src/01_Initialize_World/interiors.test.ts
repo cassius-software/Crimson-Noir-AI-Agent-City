@@ -848,7 +848,7 @@ test('the workday\'s dice: a share of the crowd that gives each station about WO
 test('the shader carries the same numbers: ROOM_*, WORK_* and the workday in crowd.wgsl', async () => {
   const { readFileSync } = await import('node:fs')
   const src = readFileSync(new URL('../03_Spawn_Agents/crowd.wgsl', import.meta.url), 'utf8')
-  for (const name of ['fn containRoom(', 'fn contain(', 'fn roomOf(', 'fn workerSlot(', 'fn onDuty(', 'fn towardCorner(', 'fn targetCorner(', 'fn doorFront(', 'rooms: array<Room, ROOM_SLOTS>']) {
+  for (const name of ['fn containRoom(', 'fn contain(', 'fn roomOf(', 'fn workerSlot(', 'fn onDuty(', 'fn towardCorner(', 'fn commuteCorner(', 'fn targetCorner(', 'fn doorFront(', 'rooms: array<Room, ROOM_SLOTS>', 'routes: array<vec4u, ROUTE_VEC4S>']) {
     assert.ok(src.includes(name), name)
   }
   assert.ok(src.includes('let held = contain(me, next, 0.35, mayEnter || asked);'), 'every step is contained, the doorway open to the workday and the summons')
@@ -856,7 +856,7 @@ test('the shader carries the same numbers: ROOM_*, WORK_* and the workday in cro
   // Someone inside a room on the corner graph walks out first, before the shift's dice can start a commute (a worker
   // let go indoors on shift would otherwise walk the corner graph into the glass for good), along the nearer aisle.
   const rescue = src.indexOf('let here = indoors(me);')
-  assert.ok(rescue > 0 && rescue < src.indexOf('if (phase < 0.5 && duty) { phase = WORK_COMMUTE; }'), 'the indoor exit runs before the duty promotion')
+  assert.ok(rescue > 0 && rescue < src.indexOf('if (phase < 0.5 && duty && (!routed(room) || routeWay(room, nearestLines(b.a.xy)) != 0u)) { phase = WORK_COMMUTE; }'), 'the indoor exit runs before the duty promotion')
   assert.ok(src.includes('if (phase < 1.5) {') && src.includes('row = select(-ROOM_AISLE, ROOM_AISLE, roomLocal(room, me).y >= 0.0);'))
   assert.ok(src.includes('dest = roomWorld(room, vec2f(P.rooms[room].b.x, row));'), 'the leaving row is the one carried in b.d.z')
   assert.ok(src.includes('b.d = vec4f(phase, f32(room), row, 0.0);'))

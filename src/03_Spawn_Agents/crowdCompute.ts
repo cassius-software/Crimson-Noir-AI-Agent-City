@@ -19,6 +19,7 @@ import { ACTIVITY, INTERVIEW_DISTANCE, RECRUIT_SLOTS, SUMMON_ACCEPT, TETHER_PACE
 import { PHYSICS_LAYER, packGlobalState, type GlobalState } from '../01_Initialize_World/globalState.ts'
 import { FLOW } from '../06_Make_Decisions/flowField.ts'
 import { ROOM, ROOMS_FLOATS, WORK, workOneIn } from '../01_Initialize_World/interiors.ts'
+import { ROUTE_ROOM_VEC4S, ROUTE_VEC4S } from '../01_Initialize_World/region/workplaces.ts'
 
 export { MAX_CARS }
 export const VARIANTS = 4
@@ -42,9 +43,13 @@ const PARAMS_SUMMONS = PARAMS_CARS + MAX_CARS * 32
 export const PARAMS_STREETS = PARAMS_SUMMONS + RECRUIT_SLOTS * 16
 /** The indoor workplaces (interiors.ts packRooms: struct Room × ROOM.slots), after the streets. */
 export const PARAMS_ROOMS = PARAMS_STREETS + STREET_VEC4S * 16
-export const PARAMS_SIZE = PARAMS_ROOMS + ROOMS_FLOATS * 4
-/** No rooms at all (a region): every slot empty. */
+/** The commute's route table (region/workplaces.ts packRoutes: ROUTE_VEC4S × vec4u), after the rooms. */
+export const PARAMS_ROUTES = PARAMS_ROOMS + ROOMS_FLOATS * 4
+export const PARAMS_SIZE = PARAMS_ROUTES + ROUTE_VEC4S * 16
+/** No rooms at all (a region without workplaces): every slot empty. */
 const NO_ROOMS = new Float32Array(ROOMS_FLOATS)
+/** No route table (the procedural city, whose commute is the greedy walk): every intersection unrouted. */
+const NO_ROUTES = new Uint32Array(ROUTE_VEC4S * 4)
 /** The procedural city's street words: every segment a street cars use (the default every step is packed with). */
 const CITY_STREETS = packStreets(cityStreetGrid())
 
@@ -235,6 +240,8 @@ function header(agentCount: number, flow: FlowPlacement, geometry: Readonly<Stre
     `const ROOM_AISLE: f32 = ${f(ROOM.aisle)};`,
     `const ROOM_PAD: f32 = ${f(ROOM.pad)};`,
     `const ROOM_ROUND: f32 = ${f(ROOM.round)};`,
+    `const ROUTE_ROOM_VEC4S: u32 = ${ROUTE_ROOM_VEC4S}u;`,
+    `const ROUTE_VEC4S: u32 = ${ROUTE_VEC4S}u;`,
     `const WORK_ONE_IN: u32 = ${workOneIn(agentCount)}u;`,
     `const WORK_CYCLE: f32 = ${f(WORK.cycle)};`,
     `const WORK_SHIFT: f32 = ${f(WORK.shift)};`,
@@ -302,14 +309,20 @@ export function sanitizeCull(s: CullSettings): CullSettings {
 /**
  * The Params words the simulation reads (the cull fields stay zero: the worker draws nothing). `streets` is the window's
  * bit field (streets.ts packStreets); absent, the procedural city's (every segment). `rooms` is the indoor workplaces'
- * block (interiors.ts packRooms); absent, no rooms.
+ * block (interiors.ts packRooms); absent, no rooms. `routes` is the commute's route table over a street window
+ * (region/workplaces.ts packRoutes); absent, none: every room is walked to greedily, as in the procedural city.
  */
-export function packSimParams(f: Float32Array, u: Uint32Array, frame: number, agentCount: number, input: CrowdStepInput, streets: Uint32Array = CITY_STREETS, rooms: Float32Array = NO_ROOMS): void {
+export function packSimParams(
+  f: Float32Array, u: Uint32Array, frame: number, agentCount: number, input: CrowdStepInput, streets: Uint32Array = CITY_STREETS, rooms: Float32Array = NO_ROOMS,
+  routes: Uint32Array = NO_ROUTES,
+): void {
   packCrowdParams(f, u, frame, agentCount, input)
   if (streets.length !== STREET_VEC4S * 4) throw new RangeError(`the street field is ${STREET_VEC4S * 4} words, got ${streets.length}`)
   u.set(streets, PARAMS_STREETS / 4)
   if (rooms.length !== ROOMS_FLOATS) throw new RangeError(`the rooms block is ${ROOMS_FLOATS} floats, got ${rooms.length}`)
   f.set(rooms, PARAMS_ROOMS / 4)
+  if (routes.length !== ROUTE_VEC4S * 4) throw new RangeError(`the route table is ${ROUTE_VEC4S * 4} words, got ${routes.length}`)
+  u.set(routes, PARAMS_ROUTES / 4)
   // Whoever the operator asked over. Only a real pedestrian (never the player's own body, never out of range) at a
   // finite spot takes a slot, each once; anything else leaves the slot empty (agent 0), and so the person's day alone.
   const summons = input.summons ?? []
