@@ -92,7 +92,7 @@ test('the cards: Restart reloads the page and has focus; Open the console is the
   assert.match(CARD, /function restart\(\): void \{\n\s+window\.location\.reload\(\)\n\}/, 'a reload, never a remount')
   for (const [name, from, to] of [['RecoveryCard', 'export function RecoveryCard', 'export function LockScreen'], ['LockScreen', 'export function LockScreen', 'export function StillStarting']]) {
     const c = CARD.slice(CARD.indexOf(from), CARD.indexOf(to))
-    assert.match(c, /<button ref=\{restartRef\} type="button" autoFocus onClick=\{restart\}/, `${name}: Restart, focused`)
+    assert.match(c, /<button ref=\{restartRef\} type="button" autoFocus(?:=\{!openIn\})? onClick=\{restart\}/, `${name}: Restart, focused`)
     assert.match(c, /useTakeFocus\((?:openIn \? openRef : )?restartRef\)/, `${name}: focused again after mount, the mouse let go`)
     assert.match(c, /usePadNav\(root\)\n\s+useEnterRestarts\(\)/, `${name}: a pad's A and Enter`)
     assert.match(c, /role="alertdialog"/, `${name}: announced`)
@@ -105,8 +105,12 @@ test('the cards: Restart reloads the page and has focus; Open the console is the
   // Pointer lock would keep every click on the canvas beneath: the mouse is the player's again before Restart is focused.
   assert.match(CARD, /function useTakeFocus\([^)]*\): void \{\n\s+useEffect\(\(\) => \{\n\s+if \(document\.pointerLockElement\) document\.exitPointerLock\(\)\n\s+first\.current\?\.focus\(\)/)
   // Another browser one tap away (Firefox on Android): the first button, focused; Restart stays.
-  assert.match(card, /\{openIn && \(\n\s+<button ref=\{openRef\} type="button" onClick=\{\(\) => \{ window\.location\.href = openIn\.href \}\}/)
+  assert.match(card, /\{openIn && \(\n\s+<button ref=\{openRef\} type="button" autoFocus onClick=\{\(\) => \{ window\.location\.href = openIn\.href \}\}/)
   assert.match(card, /useTakeFocus\(openIn \? openRef : restartRef\)/)
+  // React focuses an autoFocus button as it mounts, before the effect: Restart carries it only when it is the one to
+  // have focus, or a look between the mount and the effect finds focus on Restart (seen in the browser smoke).
+  assert.match(card, /<button ref=\{restartRef\} type="button" autoFocus=\{!openIn\}/)
+  assert.equal(card.match(/type="button" autoFocus/g)?.length, 2, 'Open in Chrome and Restart, never both at once')
   // Enter restarts from anywhere but a field, a focused button (which takes it natively) or Details (which opens).
   assert.match(CARD, /e\.target\.closest\('button, summary'\)\)\) return\n\s+e\.preventDefault\(\)\n\s+restart\(\)/)
 })
