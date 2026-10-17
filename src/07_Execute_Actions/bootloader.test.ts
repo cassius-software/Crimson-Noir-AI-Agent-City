@@ -126,7 +126,9 @@ test('app: ?boot=tty mounts the full-screen terminal alone over the offline brid
   const gui = between(app, 'function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: Options; plan: MapPlan; mentored: boolean; voice: Voice; speaker: ConciergeSpeaker; link: SpeakerLink }) {', 'export default App')
   assert.ok(gui.includes('Engine.create(canvas, { ...options, region })'))
   assert.equal(app.match(/Engine\.create\(/g)?.length, 1)
-  assert.match(gui, /<Terminal bridge=\{bridge\} onOpenChange=\{onTermOpen\} onBoot=\{reboot\} onMap=\{remap\} \/>/)
+  assert.match(gui, /<Terminal ref=\{termRef\} bridge=\{bridge\} onOpenChange=\{onTermOpen\} onBoot=\{reboot\} onMap=\{remap\} \/>/)
+  // A touch screen has no tilde key: the touch menu's Console item opens it through the handle.
+  assert.match(gui, /onConsole: \(\) => termRef\.current\?\.open\(\)/)
 })
 
 test('hud: the black canvas is explained by a chip that outlives the H key', () => {

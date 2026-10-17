@@ -5,9 +5,10 @@
  * Why does this file exist? It is the touch Supplier for phones and tablets: a frosted-glass, thumb-sized
  * overlay with a floating virtual stick on the left (walk, or steer + throttle), drag on the right half to
  * turn the first-person head (yaw and pitch), and context buttons — Enter/Exit car when relevant, Run on
- * foot, Brake, Handbrake and Reset while driving, and Ping (a mark where the head looks) in both modes. Only
- * its own controls take pointer events, so the rest of
- * the HUD stays click-through.
+ * foot, Brake, Handbrake and Reset while driving, and Ping (a mark where the head looks) in both modes. A Menu
+ * button on the right edge opens what a keyboard reaches with one key and a phone has no key for: the Ring-0 console
+ * (and through it `ask`, the agents and every setting), the clock an hour back or on, ghost view, rain mode, and
+ * hiding the HUD. Only its own controls take pointer events, so the rest of the HUD stays click-through.
  * What breaks if it is removed? Touch devices can neither move, look nor drive.
  *
  * Every control acts on pointer events, never on `click`: browsers synthesize a click only for a lone tap, so a
@@ -40,14 +41,26 @@ function owns(e: PointerEvent<HTMLElement>, id: number): boolean {
 
 const noMenu = (e: MouseEvent) => e.preventDefault()
 
-interface Props { input: Input; driving: boolean; nearVehicle: boolean }
-
-export function TouchControls({ input, driving, nearVehicle }: Props) {
-  if (!input.touch) return null
-  return <TouchLayer input={input} driving={driving} nearVehicle={nearVehicle} />
+/** What the menu reaches outside the input layer: the host owns the console and the HUD. */
+export interface TouchMenuHost {
+  /** Opens the Ring-0 console; called from the tap's click handler, so iOS raises the keyboard (TerminalHandle.open). */
+  onConsole(): void
+  /** Shows or hides the HUD (the H key). */
+  onHud(): void
+  hudVisible: boolean
+  /** Ghost view and rain mode as the last snapshot reported them, so their items read On or Off. */
+  ghost: boolean
+  rain: boolean
 }
 
-function TouchLayer({ input, driving, nearVehicle }: Props) {
+interface Props { input: Input; driving: boolean; nearVehicle: boolean; menu?: TouchMenuHost }
+
+export function TouchControls({ input, driving, nearVehicle, menu }: Props) {
+  if (!input.touch) return null
+  return <TouchLayer input={input} driving={driving} nearVehicle={nearVehicle} menu={menu} />
+}
+
+function TouchLayer({ input, driving, nearVehicle, menu }: Props) {
   const [, rerender] = useReducer((n: number) => n + 1, 0)
   // Bumped when the window loses focus or the page is hidden: the controls remount, dropping every drag and hold.
   const [epoch, reset] = useReducer((n: number) => n + 1, 0)
@@ -80,42 +93,45 @@ function TouchLayer({ input, driving, nearVehicle }: Props) {
   const press = (fn: () => void) => () => { input.engageTouch(); fn() }
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-10 select-none" style={ROOT_STYLE}>
-      <LookZone key={`look-${epoch}`} input={input} />
-      <Stick key={`stick-${epoch}`} input={input} />
-      <div
-        key={`buttons-${epoch}`}
-        className="pointer-events-none absolute flex flex-col items-end gap-3"
-        style={{ right: `calc(env(safe-area-inset-right, 0px) + ${INSET}px)`, bottom: `calc(env(safe-area-inset-bottom, 0px) + ${INSET}px)` }}
-      >
-        {driving ? (
-          <>
-            <div className="flex gap-3">
-              <TapButton label="Ping" onTap={press(() => input.press('ping'))} />
-              <TapButton label="Reset" onTap={press(() => input.press('reset'))} />
-              <TapButton label="Exit car" onTap={press(() => input.press('interact'))} />
-            </div>
-            <div className="flex items-end gap-3">
-              <HoldButton label="Handbrake" size={72} button="handbrake" input={input} />
-              <HoldButton label="Brake" size={84} button="brake" input={input} />
-            </div>
-          </>
-        ) : (
-          <>
-            {nearVehicle && <TapButton label="Enter car" onTap={press(() => input.press('interact'))} />}
-            <div className="flex items-end gap-3">
-              <TapButton label="Ping" round onTap={press(() => input.press('ping'))} />
-              <TapButton
-                label="Run"
-                pressed={run}
-                round
-                onTap={() => { input.setTouchButton('run', !input.touchHeld('run')); rerender() }}
-              />
-            </div>
-          </>
-        )}
+    <>
+      <div className="pointer-events-none absolute inset-0 z-10 select-none" style={ROOT_STYLE}>
+        <LookZone key={`look-${epoch}`} input={input} />
+        <Stick key={`stick-${epoch}`} input={input} />
+        <div
+          key={`buttons-${epoch}`}
+          className="pointer-events-none absolute flex flex-col items-end gap-3"
+          style={{ right: `calc(env(safe-area-inset-right, 0px) + ${INSET}px)`, bottom: `calc(env(safe-area-inset-bottom, 0px) + ${INSET}px)` }}
+        >
+          {driving ? (
+            <>
+              <div className="flex gap-3">
+                <TapButton label="Ping" onTap={press(() => input.press('ping'))} />
+                <TapButton label="Reset" onTap={press(() => input.press('reset'))} />
+                <TapButton label="Exit car" onTap={press(() => input.press('interact'))} />
+              </div>
+              <div className="flex items-end gap-3">
+                <HoldButton label="Handbrake" size={72} button="handbrake" input={input} />
+                <HoldButton label="Brake" size={84} button="brake" input={input} />
+              </div>
+            </>
+          ) : (
+            <>
+              {nearVehicle && <TapButton label="Enter car" onTap={press(() => input.press('interact'))} />}
+              <div className="flex items-end gap-3">
+                <TapButton label="Ping" round onTap={press(() => input.press('ping'))} />
+                <TapButton
+                  label="Run"
+                  pressed={run}
+                  round
+                  onTap={() => { input.setTouchButton('run', !input.touchHeld('run')); rerender() }}
+                />
+              </div>
+            </>
+          )}
+        </div>
       </div>
-    </div>
+      {menu && <Menu key={`menu-${epoch}`} input={input} host={menu} />}
+    </>
   )
 }
 
@@ -218,6 +234,72 @@ function Stick({ input }: { input: Input }) {
         className="absolute rounded-full border border-white/80 bg-white/80 shadow-[0_4px_14px_rgba(15,23,42,0.35)]"
         style={{ left: half - STICK.knob / 2, top: half - STICK.knob / 2, width: STICK.knob, height: STICK.knob }}
       />
+    </div>
+  )
+}
+
+/**
+ * The keyboard's one-key actions for a phone: a round Menu button half-way down the right edge (clear of the stick,
+ * the action buttons and the HUD's corners) opening a sheet beside it. Its items act on `click`, a whole tap: the console's has
+ * to, since iOS raises the keyboard only for a focus made while the tap is handled, and a menu is never pressed with
+ * the other thumb busy. The clock items leave the sheet open for another hour; the rest close it, as does a tap
+ * anywhere else (that tap lands on a backdrop and does nothing more).
+ */
+function Menu({ input, host }: { input: Input; host: TouchMenuHost }) {
+  const [open, setOpen] = useState(false)
+  const act = (fn: () => void, close = true) => () => {
+    input.engageTouch()
+    fn()
+    if (close) setOpen(false)
+  }
+  const items: { label: string; on?: boolean; run: () => void; keep?: boolean }[] = [
+    { label: 'Console', run: host.onConsole },
+    { label: 'Clock −1 h', run: () => input.press('timeBack'), keep: true },
+    { label: 'Clock +1 h', run: () => input.press('timeForward'), keep: true },
+    { label: 'Ghost view', on: host.ghost, run: () => input.press('ghost') },
+    { label: 'Rain mode', on: host.rain, run: () => input.press('matrix') },
+    { label: host.hudVisible ? 'Hide HUD' : 'Show HUD', run: host.onHud },
+  ]
+  // Its own layer above the HUD cards and the Concierge (z-30), below the console: an open sheet must not hide under the
+  // action buttons or the Concierge on a short landscape screen.
+  return (
+    <div className="pointer-events-none absolute inset-0 z-40 select-none" style={ROOT_STYLE}>
+      {open && <div aria-hidden className={`${CONTROL} absolute inset-0`} onClick={() => setOpen(false)} onContextMenu={noMenu} />}
+      <div
+        className="pointer-events-none absolute flex items-center gap-3"
+        style={{ right: `calc(env(safe-area-inset-right, 0px) + ${INSET}px)`, top: '50%', transform: 'translateY(-50%)' }}
+      >
+        {open && (
+          <div role="menu" aria-label="Menu" className={`${CONTROL} flex flex-col gap-1.5 rounded-2xl p-2 ${GLASS}`}>
+            {items.map((it) => (
+              <button
+                key={it.label}
+                type="button"
+                role={it.on === undefined ? 'menuitem' : 'menuitemcheckbox'}
+                aria-checked={it.on}
+                onClick={act(it.run, !it.keep)}
+                onContextMenu={noMenu}
+                className={`${CONTROL} h-11 min-w-[148px] rounded-xl px-4 text-left text-[13px] font-semibold tracking-tight ${it.on ? 'bg-white/80 text-slate-900' : 'text-white'}`}
+              >
+                {it.on === undefined ? it.label : `${it.label} · ${it.on ? 'On' : 'Off'}`}
+              </button>
+            ))}
+          </div>
+        )}
+        <button
+          type="button"
+          aria-label="Menu"
+          aria-expanded={open}
+          aria-haspopup="menu"
+          onClick={() => { input.engageTouch(); setOpen((o) => !o) }}
+          onContextMenu={noMenu}
+          className={`${CONTROL} flex h-12 w-12 flex-col items-center justify-center gap-[5px] rounded-full ${open ? GLASS_ON : GLASS}`}
+        >
+          <span className="block h-[2px] w-5 rounded-full bg-current" />
+          <span className="block h-[2px] w-5 rounded-full bg-current" />
+          <span className="block h-[2px] w-5 rounded-full bg-current" />
+        </button>
+      </div>
     </div>
   )
 }

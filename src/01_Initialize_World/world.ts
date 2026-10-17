@@ -73,8 +73,31 @@ export interface Gpu {
   adapterInfo: string
 }
 
+/** A GPUTexture's prototype as far as tolerateIdentitySwizzle touches it. */
+interface ViewMaker { createView(descriptor?: { swizzle?: string }): unknown }
+const SWIZZLE_SAFE = Symbol.for('crimson-noir.identity-swizzle')
+
+/**
+ * three r186 puts `swizzle: 'rgba'` on every texture view it creates (GPUTextureViewDescriptor.js). Chromium builds whose
+ * WebGPU still declared that field a dictionary (Chromium 141 is one, and the browsers built on it) refuse the string with
+ * a TypeError ("The provided value is not of type 'GPUTextureComponentSwizzle'") on the first view the city draws into,
+ * and the page stops at its first frame. 'rgba' is the identity and the default, so it is dropped before the call: where
+ * the field is understood nothing changes, where it is not the view is created as it always was. Any other swizzle
+ * (none is used here) passes through untouched. Idempotent; exported for the test, which hands in a fake prototype.
+ */
+export function tolerateIdentitySwizzle(proto: ViewMaker | undefined = (globalThis as { GPUTexture?: { prototype: ViewMaker } }).GPUTexture?.prototype): void {
+  if (!proto || (proto as unknown as Record<symbol, boolean>)[SWIZZLE_SAFE]) return
+  const native = proto.createView
+  proto.createView = function (this: unknown, descriptor?: { swizzle?: string }) {
+    if (descriptor && descriptor.swizzle === 'rgba') descriptor.swizzle = undefined
+    return native.call(this, descriptor)
+  }
+  ;(proto as unknown as Record<symbol, boolean>)[SWIZZLE_SAFE] = true
+}
+
 export async function createRenderer(canvas: HTMLCanvasElement, pixelRatio: number, profile = false): Promise<Gpu> {
   if (!('gpu' in navigator) || !navigator.gpu) throw new WebGPUUnavailableError('This browser does not expose WebGPU (navigator.gpu).')
+  tolerateIdentitySwizzle()
   // Reversed depth: a depth32float buffer that keeps near-equal precision out to the far plane, so the streets and
   // sidewalks laid 3.5 and 4.5 cm over the ground (regionWorld.ts) and the lake 2 cm over it do not fight the ground
   // at a distance. With the plain 24-bit buffer the resolution at d metres is about d² · 6e-7 m for this camera (near

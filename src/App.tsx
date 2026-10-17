@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Engine, type EngineOptions } from './07_Execute_Actions/engine.ts'
 import { Hud } from './07_Execute_Actions/Hud.tsx'
-import { Terminal } from './07_Execute_Actions/terminal/Terminal.tsx'
+import { Terminal, type TerminalHandle } from './07_Execute_Actions/terminal/Terminal.tsx'
 import { offlineBridge, type LookBridge, type NetBridge, type TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
 import { hudLine, recruitBridge, Recruiter } from './08_Swarm/recruitment.ts'
 import { TaskRouter } from './08_Swarm/taskRouter.ts'
@@ -331,6 +331,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const engineRef = useRef<Engine | null>(null)
   const termOpenRef = useRef(false)
+  const termRef = useRef<TerminalHandle>(null)
   const [engine, setEngine] = useState<Engine | null>(null)
   const [bridge, setBridge] = useState<TerminalBridge | null>(null)
   const [termOpen, setTermOpen] = useState(false)
@@ -611,7 +612,18 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
       <canvas ref={canvasRef} className="block h-full w-full touch-none" />
       <Hud s={hud} adapter={adapter} visible={hudVisible} terminalOpen={termOpen} mapLayer={engine?.mapLayer ?? null} />
       {engine && hud && !termOpen && (
-        <TouchControls input={engine.input} driving={hud.input.mode === 'vehicle'} nearVehicle={hud.input.nearVehicle} />
+        <TouchControls
+          input={engine.input}
+          driving={hud.input.mode === 'vehicle'}
+          nearVehicle={hud.input.nearVehicle}
+          menu={{
+            onConsole: () => termRef.current?.open(),
+            onHud: () => setHudVisible((v) => !v),
+            hudVisible,
+            ghost: hud.output.ghost === true,
+            rain: hud.output.matrix === true,
+          }}
+        />
       )}
       {hud && (
         <Concierge
@@ -642,7 +654,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           onHear={onHear}
         />
       )}
-      <Terminal bridge={bridge} onOpenChange={onTermOpen} onBoot={reboot} onMap={remap} />
+      <Terminal ref={termRef} bridge={bridge} onOpenChange={onTermOpen} onBoot={reboot} onMap={remap} />
       {/* From the first render: React swaps index.html's identical splash for this, which fades into the city
           once the first snapshot exists (or lifts to show the error card). */}
       <BootVeil ready={hud !== null || error !== null} onDone={() => setVeilDone(true)} />

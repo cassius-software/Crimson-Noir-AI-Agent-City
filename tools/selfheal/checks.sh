@@ -28,6 +28,9 @@ run_one() {
     fvps-kani)     sh tools/verify/fvps.sh kani ;;
     selfheal-test) node --test tools/selfheal/*.test.mjs ;;
     license-headers) node tools/license/headers.mjs check ;;
+    # Not in ALL: it needs a Chrome or Chromium (ci.yml's browser job has one) and dist/ from page-build. The
+    # screenshots go to $BROWSER_SHOTS when it is set.
+    page-browser)  node tools/browser/smoke.mjs ${BROWSER_SHOTS:+--out "$BROWSER_SHOTS"} ;;
     # Not in ALL: it passes only inside the docker sandbox (tools/sandbox/verify.mjs runs it there, and ci.yml's
     # sandbox job); on a host it reports the host's escapes, which is its control.
     sandbox-probe) sh tools/sandbox/probe.sh ;;

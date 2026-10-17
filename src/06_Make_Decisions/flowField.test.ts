@@ -33,7 +33,7 @@ registerHooks({
 const USAGE = { MAP_READ: 1, MAP_WRITE: 2, COPY_SRC: 4, COPY_DST: 8, UNIFORM: 64, STORAGE: 128 } as const
 const TEXTURE_USAGE = { COPY_SRC: 1, COPY_DST: 2, TEXTURE_BINDING: 4, STORAGE_BINDING: 8 } as const
 Object.assign(globalThis, { GPUBufferUsage: USAGE, GPUMapMode: { READ: 1, WRITE: 2 }, GPUTextureUsage: TEXTURE_USAGE })
-const { FLOW_BINDINGS, FLOW_WORKGROUP, FlowFieldGpu, RELAX_BATCH, createFlowTexture, flowShader, relaxLimit, writeFlowTexture } = await import('./flowFieldGpu.ts')
+const { FLOW_BINDINGS, FLOW_FORMAT, FLOW_WORKGROUP, FlowFieldGpu, RELAX_BATCH, createFlowTexture, flowLayoutEntries, flowShader, relaxLimit, writeFlowTexture } = await import('./flowFieldGpu.ts')
 
 const SOURCE = readFileSync(new URL('./flowField.wgsl', import.meta.url), 'utf8')
 
@@ -232,12 +232,32 @@ test('flowField.wgsl declares the reference\'s constants, neighbour order, bindi
   assert.match(src, /if \(v < best\) \{ best = v; \}/)
 })
 
+test('the explicit bind group layout is flowField.wgsl\'s declarations, binding for binding and kind for kind', () => {
+  const src = flowShader()
+  const declared = [...src.matchAll(/@group\(0\) @binding\((\d+)\) var(<[^>]*>)? (\w+): ([^;]+);/g)]
+    .map(([, b, space, name, type]) => ({ binding: Number(b), space: space ?? '', name, type: type.trim() }))
+  const entries = flowLayoutEntries()
+  assert.deepEqual(entries.map((e) => e.binding).sort(), declared.map((d) => d.binding).sort(), 'the same bindings')
+  for (const d of declared) {
+    const e = entries.find((x) => x.binding === d.binding)!
+    assert.equal(e.visibility, 4, `${d.name}: compute only`)
+    if (d.space === '<uniform>') assert.equal(e.buffer?.type, 'uniform', d.name)
+    else if (d.space === '<storage, read>') assert.equal(e.buffer?.type, 'read-only-storage', d.name)
+    else if (d.space === '<storage, read_write>') assert.equal(e.buffer?.type, 'storage', d.name)
+    else {
+      assert.equal(d.type, `texture_storage_2d<${FLOW_FORMAT}, write>`, d.name)
+      assert.deepEqual(e.storageTexture, { access: 'write-only', format: FLOW_FORMAT, viewDimension: '2d' }, d.name)
+    }
+  }
+})
+
 // ---------------------------------------------------------------- the GPU wiring on a mock device
 
 interface MockBuffer { label: string; size: number; usage: number; bytes: Uint8Array; mapped: boolean }
 interface MockTexture { label: string; width: number; height: number; usage: number; bytes: Uint8Array }
 type Entry = { binding: number; buffer?: MockBuffer; texture?: MockTexture }
-interface Group { entryPoint: string; entries: Entry[] }
+interface Layout { entries: GPUBindGroupLayoutEntry[] }
+interface Group { layout: Layout; entries: Entry[] }
 
 /**
  * A device whose dispatches run the reference passes on the mock buffers: `relax` is relaxStep over the bound cost
@@ -284,23 +304,30 @@ function mockDevice(grid: FlowGrid, opts: { validationError?: string } = {}) {
       return t
     },
     createShaderModule: (d: { code: string }) => { shader = d.code; return {} },
-    createComputePipeline: (d: { layout: string; compute: { entryPoint: string } }) => {
-      assert.equal(d.layout, 'auto')
-      return { entryPoint: d.compute.entryPoint, getBindGroupLayout: () => ({ entryPoint: d.compute.entryPoint }) }
+    createBindGroupLayout: (d: Layout): Layout => ({ entries: d.entries }),
+    createPipelineLayout: (d: { bindGroupLayouts: Layout[] }) => ({ bindGroupLayouts: d.bindGroupLayouts }),
+    createComputePipeline: (d: { layout: 'auto' | { bindGroupLayouts: Layout[] }; compute: { entryPoint: string } }) => {
+      // With 'auto' a pipeline's group holds only the bindings its own entry point uses (relax never reads `flow`,
+      // direction never writes `costOut`), so one bind group naming all six cannot serve both: a real device refuses it
+      // and the field was solved on the CPU. The solver must hand both pipelines its one explicit layout.
+      assert.notEqual(d.layout, 'auto', `${d.compute.entryPoint}: layout 'auto'`)
+      const layout = (d.layout as { bindGroupLayouts: Layout[] }).bindGroupLayouts[0]
+      return { entryPoint: d.compute.entryPoint, layout, getBindGroupLayout: () => layout }
     },
-    createBindGroup: (d: { layout: { entryPoint: string }; entries: { binding: number; resource: { buffer?: MockBuffer; texture?: MockTexture } }[] }): Group => ({
-      entryPoint: d.layout.entryPoint,
-      entries: d.entries.map((e) => ({ binding: e.binding, buffer: e.resource.buffer, texture: e.resource.texture })),
-    }),
+    createBindGroup: (d: { layout: Layout; entries: { binding: number; resource: { buffer?: MockBuffer; texture?: MockTexture } }[] }): Group => {
+      // WebGPU's rule: a bind group names exactly the bindings of its layout, no more and no fewer.
+      assert.deepEqual(d.entries.map((e) => e.binding).sort(), d.layout.entries.map((e) => e.binding).sort(), 'bind group entries match the layout')
+      return { layout: d.layout, entries: d.entries.map((e) => ({ binding: e.binding, buffer: e.resource.buffer, texture: e.resource.texture })) }
+    },
     createCommandEncoder: () => {
       const ops: (() => void)[] = []
       return {
         beginComputePass: () => {
-          let pipeline: { entryPoint: string } | null = null
+          let pipeline: { entryPoint: string; layout: Layout } | null = null
           let group: Group | null = null
           return {
-            setPipeline: (p: { entryPoint: string }) => { pipeline = p },
-            setBindGroup: (i: number, g: Group) => { assert.equal(i, 0); assert.equal(g.entryPoint, pipeline!.entryPoint); group = g },
+            setPipeline: (p: { entryPoint: string; layout: Layout }) => { pipeline = p },
+            setBindGroup: (i: number, g: Group) => { assert.equal(i, 0); assert.equal(g.layout, pipeline!.layout); group = g },
             dispatchWorkgroups: (n: number) => {
               const g = group!, ep = pipeline!.entryPoint
               assert.equal(n, Math.ceil(grid.width * grid.height / FLOW_WORKGROUP))

@@ -91,12 +91,15 @@ test('nothing runs a command through a shell: no exec or execSync from child_pro
 
 test('one module serves the network (the authenticated room host); every test server binds 127.0.0.1 on port 0', () => {
   const HOST = 'src/10_Network/replication.node.ts'
+  // The browser smoke test serves dist/index.html to its own headless browser for the length of a run: a test server
+  // in a tool's file, held to the test servers' rule.
+  const HARNESSES = ['tools/browser/smoke.mjs']
   const servers: string[] = []
   const loose: string[] = []
   for (const { f, text } of SOURCES) {
     if (f === SELF) continue
     if (!/\bcreateServer\s*\(|\bcreateSecureServer\s*\(|\b(?:Deno|Bun)\.serve\s*\(/.test(text)) continue
-    if (/\.test\.[cm]?[jt]sx?$/.test(f)) {
+    if (/\.test\.[cm]?[jt]sx?$/.test(f) || HARNESSES.includes(f)) {
       for (const m of text.matchAll(/\.listen\(([^)]*)\)/g)) if (!/^\s*0\s*,\s*'127\.0\.0\.1'/.test(m[1])) loose.push(`${f}: listen(${m[1]})`)
     } else servers.push(f)
   }

@@ -47,6 +47,22 @@ export function writeFlowTexture(device: GPUDevice, texture: GPUTexture, grid: F
   device.queue.writeTexture({ texture }, solution.dir, { bytesPerRow: grid.width * 8, rowsPerImage: grid.height }, { width: grid.width, height: grid.height })
 }
 
+/**
+ * The bind group layout both entry points share, binding for binding as flowField.wgsl declares them (a test holds the
+ * two equal). GPUShaderStage.COMPUTE is 4; the literal keeps this callable where the WebGPU globals are absent (Node).
+ */
+export function flowLayoutEntries(): GPUBindGroupLayoutEntry[] {
+  const COMPUTE = 4
+  return [
+    { binding: FLOW_BINDINGS.grid, visibility: COMPUTE, buffer: { type: 'uniform' } },
+    { binding: FLOW_BINDINGS.weight, visibility: COMPUTE, buffer: { type: 'read-only-storage' } },
+    { binding: FLOW_BINDINGS.costIn, visibility: COMPUTE, buffer: { type: 'read-only-storage' } },
+    { binding: FLOW_BINDINGS.costOut, visibility: COMPUTE, buffer: { type: 'storage' } },
+    { binding: FLOW_BINDINGS.flow, visibility: COMPUTE, storageTexture: { access: 'write-only', format: FLOW_FORMAT, viewDimension: '2d' } },
+    { binding: FLOW_BINDINGS.changed, visibility: COMPUTE, buffer: { type: 'storage' } },
+  ]
+}
+
 interface Groups { relaxAB: GPUBindGroup; relaxBA: GPUBindGroup; directionA: GPUBindGroup; directionB: GPUBindGroup }
 
 export class FlowFieldGpu implements FlowSolver {
@@ -81,12 +97,17 @@ export class FlowFieldGpu implements FlowSolver {
     this.#staging = device.createBuffer({ label: 'flow.readback', size: 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST })
     this.#seed = new Int32Array(cells)
     const module = device.createShaderModule({ label: 'flowField.wgsl', code: flowSource })
-    this.#relax = device.createComputePipeline({ label: 'flow.relax', layout: 'auto', compute: { module, entryPoint: 'relax' } })
-    this.#direction = device.createComputePipeline({ label: 'flow.direction', layout: 'auto', compute: { module, entryPoint: 'direction' } })
-    const group = (label: string, pipeline: GPUComputePipeline, costIn: GPUBuffer, costOut: GPUBuffer): GPUBindGroup =>
+    // One explicit layout for both entry points. With layout 'auto' each pipeline's group holds only the bindings its
+    // own entry point uses (relax never touches `flow`, direction never `costOut` or `changed`), so a bind group that
+    // names all six fails validation on every device and the field was always solved on the CPU.
+    const layout = device.createBindGroupLayout({ label: 'flow.layout', entries: flowLayoutEntries() })
+    const pipelineLayout = device.createPipelineLayout({ label: 'flow.pipeline', bindGroupLayouts: [layout] })
+    this.#relax = device.createComputePipeline({ label: 'flow.relax', layout: pipelineLayout, compute: { module, entryPoint: 'relax' } })
+    this.#direction = device.createComputePipeline({ label: 'flow.direction', layout: pipelineLayout, compute: { module, entryPoint: 'direction' } })
+    const group = (label: string, costIn: GPUBuffer, costOut: GPUBuffer): GPUBindGroup =>
       device.createBindGroup({
         label,
-        layout: pipeline.getBindGroupLayout(0),
+        layout,
         entries: [
           { binding: FLOW_BINDINGS.grid, resource: { buffer: gridWords } },
           { binding: FLOW_BINDINGS.weight, resource: { buffer: weight } },
@@ -97,10 +118,10 @@ export class FlowFieldGpu implements FlowSolver {
         ],
       })
     this.#groups = {
-      relaxAB: group('flow.relax.ab', this.#relax, this.#costA, this.#costB),
-      relaxBA: group('flow.relax.ba', this.#relax, this.#costB, this.#costA),
-      directionA: group('flow.direction.a', this.#direction, this.#costA, this.#costB),
-      directionB: group('flow.direction.b', this.#direction, this.#costB, this.#costA),
+      relaxAB: group('flow.relax.ab', this.#costA, this.#costB),
+      relaxBA: group('flow.relax.ba', this.#costB, this.#costA),
+      directionA: group('flow.direction.a', this.#costA, this.#costB),
+      directionB: group('flow.direction.b', this.#costB, this.#costA),
     }
   }
 

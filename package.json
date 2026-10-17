@@ -17,6 +17,7 @@
     "preview": "vite preview",
     "serve:net": "node src/10_Network/replication.node.ts",
     "smoke:bridge": "node tools/net/bridge-smoke.mjs",
+    "smoke:browser": "node tools/browser/smoke.mjs",
     "smoke:net": "node tools/net/smoke.mjs",
     "tauri": "tauri",
     "pretest": "node tools/test/warm.mjs",
