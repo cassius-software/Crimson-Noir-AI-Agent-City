@@ -180,8 +180,9 @@ export function clampSpeed(body: RAPIER.RigidBody, max: number): boolean {
  * not wholly inside, out on the street. The left side first, then the right, each then swung by EXIT_SWING towards the
  * bonnet and the boot, as far as the point clears the chassis's side. Boxed in there (a car wedged between a wall and
  * a desk), on round to the bonnet and the boot, where the driver squeezes out against the chassis; and with nowhere
- * clear of the furniture either, the first of those points inside the walls. Always EXIT_SIDE from the chassis centre.
- * The realm's rule (simCore.ts #interact) and the room's check of it are this one function.
+ * clear of the furniture either, the first of those points inside the walls. Never one the line from the chassis
+ * centre reaches only through glass (a car askew in the doorway has a jamb beside it). Always EXIT_SIDE from the
+ * chassis centre. The realm's rule (simCore.ts #interact) and the room's check of it are this one function.
  */
 export function exitPoint(x: number, z: number, heading: number, rooms: readonly Workplace[] = []): { x: number; z: number } {
   const lx = Math.cos(heading), lz = -Math.sin(heading)
@@ -194,8 +195,18 @@ export function exitPoint(x: number, z: number, heading: number, rooms: readonly
   if (!room) return inLot(left.x, left.z, EXIT_LOT_PAD) ? { x: x - lx * EXIT_SIDE, z: z - lz * EXIT_SIDE } : left
   const indoors = reach(room, { x, z }) < CITY.lotHalf - ROOM.wall
   const street = (p: { x: number; z: number }) => !indoors && !inLot(p.x, p.z, EXIT_LOT_PAD)
-  const clear = (p: { x: number; z: number }) => (insideRoom(room, p.x, p.z) && !penetrates(room, p.x, p.z, PERSON.radius)) || street(p)
-  const walls = (p: { x: number; z: number }) => reach(room, p) < CITY.lotHalf - ROOM.wall - PERSON.radius || street(p)
+  // The line out to p crosses no wall (the band outside the doorway's opening): 32 samples, 7 cm apart, under the
+  // wall's 0.5 m.
+  const seen = (p: { x: number; z: number }) => {
+    for (let k = 1; k <= 32; k++) {
+      const { u, v } = toLocal(room, x + ((p.x - x) * k) / 32, z + ((p.z - z) * k) / 32)
+      const m = Math.max(Math.abs(u), Math.abs(v))
+      if (m > CITY.lotHalf - ROOM.wall && m < CITY.lotHalf && !(u > 0 && Math.abs(v) < ROOM.door)) return false
+    }
+    return true
+  }
+  const clear = (p: { x: number; z: number }) => ((insideRoom(room, p.x, p.z) && !penetrates(room, p.x, p.z, PERSON.radius)) || street(p)) && seen(p)
+  const walls = (p: { x: number; z: number }) => (reach(room, p) < CITY.lotHalf - ROOM.wall - PERSON.radius || street(p)) && seen(p)
   const fx = Math.sin(heading), fz = Math.cos(heading)
   const ring: { x: number; z: number }[] = []
   for (let k = 0; k * EXIT_SWING <= Math.PI / 2 + 1e-9; k++) {

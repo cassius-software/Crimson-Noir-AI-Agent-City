@@ -233,6 +233,8 @@ function header(agentCount: number, flow: FlowPlacement, geometry: Readonly<Stre
     `const ROOM_WALL: f32 = ${f(ROOM.wall)};`,
     `const ROOM_DOOR: f32 = ${f(ROOM.door)};`,
     `const ROOM_AISLE: f32 = ${f(ROOM.aisle)};`,
+    `const ROOM_PAD: f32 = ${f(ROOM.pad)};`,
+    `const ROOM_ROUND: f32 = ${f(ROOM.round)};`,
     `const WORK_ONE_IN: u32 = ${workOneIn(agentCount)}u;`,
     `const WORK_CYCLE: f32 = ${f(WORK.cycle)};`,
     `const WORK_SHIFT: f32 = ${f(WORK.shift)};`,

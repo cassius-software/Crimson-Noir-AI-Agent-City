@@ -52,6 +52,11 @@ export const ROOM = Object.freeze({
   aisle: 3,
   /** A pedestrian's reach, m: the crowd's containment pad (crowd.wgsl pushOut's). */
   pad: 0.35,
+  /**
+   * How far beyond a piece of furniture's grown corner someone asked over across a room turns round it, m
+   * (crowd.wgsl roomWay): clear of the grazing line, inside the 1.2 m gap between two racks.
+   */
+  round: 0.25,
 } as const)
 
 /** The crowd's workday, frozen. */

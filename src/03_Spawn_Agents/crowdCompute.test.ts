@@ -1686,16 +1686,17 @@ test('simulate: a summons comes after the safety reflexes, is taken only on the 
     'if (!summoned && b.b.w > 0.0) { b.b.w = 0.0; b.a = vec4f(cornerOf(me), b.a.z, b.a.w); crossing = CROSS_NONE; }',
     // Coming over, slowing near; stopping at SUMMON_STOP; following if the operator walks off; never talking through
     // a room's glass.
-    'if (b.b.w < 1.5 && dist <= SUMMON_STOP && !walled(me, at)) { b.b.w = 2.0; } else if (b.b.w > 1.5 && (dist > SUMMON_STOP * 1.5 || walled(me, at))) { b.b.w = 1.0; }',
+    'glass = walled(me, at); if (b.b.w < 1.5 && dist <= SUMMON_STOP && !glass) { b.b.w = 2.0; } else if (b.b.w > 1.5 && (dist > SUMMON_STOP * 1.5 || glass)) { b.b.w = 1.0; }',
     // Talking: a conversational distance held against the crowd's jostling, with a dead band; facing the operator;
     // stepping back as fast as the operator walks towards them.
     'if (b.b.w > 1.5) { let gap = dist - SUMMON_STOP; desired = dirTo(me, at) * select(0.0, clamp(gap * 4.0, -2.4, 0.6), abs(gap) > 0.2); faceDir = d; activity = ACT_INTERVIEWING; }',
     // The standoff binds the step actually taken: inside SUMMON_STOP, nothing of it carries them towards the operator.
-    'if (asked) { let to = at - me; let dd = length(to); if (dd > 1e-4 && dd < SUMMON_STOP) { let u = to / dd; let inward = dot(nv, u); if (inward > 0.0) { nv -= u * inward; } } }',
+    'if (asked && !glass) { let to = at - me; let dd = length(to); if (dd > 1e-4 && dd < SUMMON_STOP) { let u = to / dd; let inward = dot(nv, u); if (inward > 0.0) { nv -= u * inward; } } }',
     // Tethered and fallen behind: hurrying, never past TETHER_PACE; someone walking over keeps their own pace.
-    // The way to walk (summonWay): the flow field round the buildings when the operator is beyond the last stretch or
-    // behind a room's glass; the straight line otherwise, so they arrive and stop as before.
-    'let pace = select(b.a.z, max(b.a.z, TETHER_PACE * clamp((dist - SUMMON_STOP) / 2.0, 0.0, 1.0)), tethered); desired = summonWay(me, at, dist) * pace * clamp(dist - SUMMON_STOP, 0.25, 1.0); activity = ACT_COMING; }',
+    // The way to walk (summonWay): round a room's furniture in the operator's room; the flow field round the buildings
+    // when the operator is beyond the last stretch or behind a room's glass; the straight line otherwise, so they
+    // arrive and stop as before. Behind the glass nobody is on the last stretch: full pace.
+    'let far = select(dist, max(dist, SUMMON_STOP + 2.0), glass); let pace = select(b.a.z, max(b.a.z, TETHER_PACE * clamp((far - SUMMON_STOP) / 2.0, 0.0, 1.0)), tethered); desired = summonWay(me, at, dist) * pace * clamp(far - SUMMON_STOP, 0.25, 1.0); activity = ACT_COMING; }',
     // The kerb, coming or talking: someone on the road heads back to it; a step that would leave it is not taken.
     'if (road) { desired = curbwards(me) * b.a.z; } else { if (onRoad(me + vec2f(desired.x, 0.0) * 0.5)) { desired.x = 0.0; } if (onRoad(me + vec2f(0.0, desired.y) * 0.5)) { desired.y = 0.0; } } } else {',
     'ps.w = activity; pose[i] = ps;',
@@ -1706,8 +1707,8 @@ test('simulate: a summons comes after the safety reflexes, is taken only on the 
   ]) at(line)
   assert.ok(at('} else if (summoned) { asked = true;') > 0, 'only the summons arm binds the step to the kerb (never the step back from a car)')
   assert.ok(at('if (sp > 3.0) { nv *= 3.0 / sp; }') < at('if (asked && !road) {'), 'after the cap: the step actually taken')
-  assert.ok(at('if (sp > 3.0) { nv *= 3.0 / sp; }') < at('if (asked) { let to = at - me;'), 'the standoff clip binds the capped step')
-  assert.ok(at('if (asked) { let to = at - me;') < at('if (asked && !road) {'), 'the kerb clip comes last: it has the final word')  // Order: the car loop (sensing, the nudge, the Reflex save) first; then freeze and step back, which outrank a summons;
+  assert.ok(at('if (sp > 3.0) { nv *= 3.0 / sp; }') < at('if (asked && !glass) { let to = at - me;'), 'the standoff clip binds the capped step')
+  assert.ok(at('if (asked && !glass) { let to = at - me;') < at('if (asked && !road) {'), 'the kerb clip comes last: it has the final word')  // Order: the car loop (sensing, the nudge, the Reflex save) first; then freeze and step back, which outrank a summons;
   // then the summons; then the ordinary day. The summons is an arm of that chain, never an early return.
   const cars = at('for (var j = 0u; j < P.carCount; j++)')
   const freeze = at('if (b.c.w > 0.0) { b.c.w -= dt; activity = ACT_STEPPING_BACK; }')

@@ -18,7 +18,7 @@ import { CITY, HERITAGE_COLUMNS, STYLE, districtOfLot, generateBuildings, type B
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
 import { cellAt, cellCentre, cityGrid, flowAt, nearestOpen, solveFlow, trace, UNREACHED } from '../06_Make_Decisions/flowField.ts'
 import { EXIT_SIDE, exitPoint } from '../07_Execute_Actions/carRig.ts'
-import { INTERVIEW_DISTANCE } from '../03_Spawn_Agents/skills.ts'
+import { APPROACH_SECONDS, INTERVIEW_DISTANCE, TETHER_PACE } from '../03_Spawn_Agents/skills.ts'
 import { PERSON } from '../07_Execute_Actions/simProtocol.ts'
 import {
   ROOM, ROOM_FLOATS, ROOMS_FLOATS, WORK, WORKPLACE_KINDS, workOneIn, containInRoom, doorDir, doorFront, insideRoom, onDuty, packRooms, penetrates, routeIn,
@@ -386,6 +386,37 @@ function chassisHits(room: Workplace, car: XZ, heading: number): boolean {
   })
 }
 
+/** A room's glass in its own frame, [u0, v0, u1, v1]: the back wall, the two side walls, the doorway wall either side of the opening. */
+function glassOf(): number[][] {
+  const w = ROOM.wall, d = ROOM.door
+  return [[-h, -h, -h + w, h], [-h, h - w, h, h], [-h, -h, h, -h + w], [h - w, d, h, h], [h - w, -h, h, -d]]
+}
+/** Whether a car's chassis at `car` facing `heading` overlaps the room's glass (separating axes, in the room's frame). */
+function chassisInGlass(room: Workplace, car: XZ, heading: number): boolean {
+  const c = toLocal(room, car.x, car.z), f = toLocal(room, room.cx + Math.sin(heading), room.cz + Math.cos(heading))
+  const corners = [[1, 1], [1, -1], [-1, 1], [-1, -1]].map(([a, b]) => ({ u: c.u + f.u * a * 2.3 - f.v * b * 0.92, v: c.v + f.v * a * 2.3 + f.u * b * 0.92 }))
+  return glassOf().some(([u0, v0, u1, v1]) => {
+    if (Math.max(...corners.map((p) => p.u)) <= u0 || Math.min(...corners.map((p) => p.u)) >= u1) return false
+    if (Math.max(...corners.map((p) => p.v)) <= v0 || Math.min(...corners.map((p) => p.v)) >= v1) return false
+    const box = [[u0, v0], [u0, v1], [u1, v0], [u1, v1]]
+    const pf = box.map(([u, v]) => (u - c.u) * f.u + (v - c.v) * f.v), pl = box.map(([u, v]) => -(u - c.u) * f.v + (v - c.v) * f.u)
+    return !(Math.max(...pf) <= -2.3 || Math.min(...pf) >= 2.3 || Math.max(...pl) <= -0.92 || Math.min(...pl) >= 0.92)
+  })
+}
+/** Whether the line from a to b passes through the room's glass (a slab test per pane, in the room's frame). */
+function throughGlass(room: Workplace, a: XZ, b: XZ): boolean {
+  const p = toLocal(room, a.x, a.z), q = toLocal(room, b.x, b.z), du = q.u - p.u, dv = q.v - p.v
+  return glassOf().some(([u0, v0, u1, v1]) => {
+    let t0 = 0, t1 = 1
+    for (const [o, d, lo, hi] of [[p.u, du, u0, u1], [p.v, dv, v0, v1]]) {
+      if (Math.abs(d) < 1e-12) { if (o <= lo || o >= hi) return false; continue }
+      const ta = (lo - o) / d, tb = (hi - o) / d
+      t0 = Math.max(t0, Math.min(ta, tb)); t1 = Math.min(t1, Math.max(ta, tb))
+    }
+    return t0 < t1
+  })
+}
+
 test('a car left in a room or across its doorway puts its driver where they fit: indoors clear of glass and furniture, or out on the street from the doorway; outside, the rule is unchanged', () => {
   const lim = h - ROOM.wall
   let indoorPoses = 0, doorPoses = 0, swung = 0, squeezed = 0
@@ -400,6 +431,7 @@ test('a car left in a room or across its doorway puts its driver where they fit:
     const inRoom = insideRoom(room, p.x, p.z) && !penetrates(room, p.x, p.z, PERSON.radius - 1e-6)
     const street = Math.max(Math.abs(l.u), Math.abs(l.v)) >= h + PERSON.radius
     assert.ok(indoor ? inRoom : inRoom || street, `${at}: into the glass or a piece of furniture, at (${l.u.toFixed(2)}, ${l.v.toFixed(2)})`)
+    assert.ok(!throughGlass(room, car, p), `${at}: out through the glass, to (${l.u.toFixed(2)}, ${l.v.toFixed(2)})`)
   }
   for (const seed of [1337, 42]) {
     const rooms = workplaces(seed)
@@ -417,15 +449,15 @@ test('a car left in a room or across its doorway puts its driver where they fit:
           }
         }
       }
-      // Standing across the doorway, nose out or in, a little askew: the jambs either side.
-      for (let u = lim - 2.3; u <= h + 2.3; u += 0.25) {
-        for (let v = -0.5; v <= 0.5; v += 0.25) {
-          for (const turn of [0, 0.12, -0.12, Math.PI, Math.PI + 0.12, Math.PI - 0.12]) {
-            const car = toWorld(room, u, v), heading = out + turn
-            const corners = [[1, 1], [1, -1], [-1, 1], [-1, -1]].map(([a, b]) => toLocal(room, car.x + Math.sin(heading) * a * 2.3 + Math.cos(heading) * b * 0.92, car.z + Math.cos(heading) * a * 2.3 - Math.sin(heading) * b * 0.92))
-            if (corners.some((c) => Math.abs(c.v) >= ROOM.door) || chassisHits(room, car, heading)) continue
+      // Standing across the doorway, any way round it fits between the jambs: the glass beside it either way.
+      for (let u = lim - 2.3; u <= h + 2.3; u += 0.1) {
+        for (let v = -1.5; v <= 1.5; v += 0.25) {
+          for (let k = 0; k < 32; k++) {
+            const turn = (k * Math.PI) / 16, car = toWorld(room, u, v), heading = out + turn
+            if (chassisInGlass(room, car, heading) || chassisHits(room, car, heading)) continue
             doorPoses++
-            check(rooms, room, car, heading, Math.max(Math.abs(u), Math.abs(v)) < lim, `${room.kind} seed ${seed}: out of a car across the doorway at (${u}, ${v}) turned ${turn.toFixed(2)}`)
+            const c = toLocal(room, car.x, car.z)
+            check(rooms, room, car, heading, Math.max(Math.abs(c.u), Math.abs(c.v)) < lim, `${room.kind} seed ${seed}: out of a car across the doorway at (${u.toFixed(2)}, ${v}) turned ${turn.toFixed(2)}`)
           }
         }
       }
@@ -445,35 +477,69 @@ const lotC = (p: XZ): XZ => ({ x: (Math.floor(p.x / CITY.pitch) + 0.5) * CITY.pi
 const roomAt = (rooms: readonly Workplace[], p: XZ) => { const c = lotC(p); return rooms.findIndex((r) => Math.abs(c.x - r.cx) < 0.5 && Math.abs(c.z - r.cz) < 0.5) }
 const strictlyIn = (r: Workplace, p: XZ) => { const l = toLocal(r, p.x, p.z); return Math.max(Math.abs(l.u), Math.abs(l.v)) < h - ROOM.wall }
 const indoorsOf = (rooms: readonly Workplace[], p: XZ) => { const r = roomAt(rooms, p); return r >= 0 && strictlyIn(rooms[r], p) ? r : -1 }
-const byDoorway = (rooms: readonly Workplace[], p: XZ) => {
-  const r = roomAt(rooms, p)
-  if (r < 0) return false
-  const l = toLocal(rooms[r], p.x, p.z)
-  return Math.abs(l.v) < ROOM.door && Math.abs(l.u - (h - ROOM.wall / 2)) < ROOM.wall / 2 + 1
+const walled = (rooms: readonly Workplace[], p: XZ, q: XZ) => {
+  const a = indoorsOf(rooms, p), b = indoorsOf(rooms, q)
+  if (a === b) return false
+  const r = rooms[a >= 0 ? a : b], inner = h - ROOM.wall
+  const i = a >= 0 ? toLocal(r, p.x, p.z) : toLocal(r, q.x, q.z), o = a >= 0 ? toLocal(r, q.x, q.z) : toLocal(r, p.x, p.z)
+  const across = (u: number) => Math.abs(i.v + ((o.v - i.v) * (u - i.u)) / (o.u - i.u))
+  if (o.u <= inner || across(inner) >= ROOM.door) return true
+  return o.u > h && across(h) >= ROOM.door
 }
-const walled = (rooms: readonly Workplace[], p: XZ, q: XZ) => indoorsOf(rooms, p) !== indoorsOf(rooms, q) && !byDoorway(rooms, p) && !byDoorway(rooms, q)
 const dirTo = (a: XZ, b: XZ): XZ => { const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz); return l > 1e-4 ? { x: dx / l, z: dz / l } : { x: 0, z: 0 } }
-function flowWay(grid: ReturnType<typeof cityGrid>, dir: Float32Array, me: XZ, p: XZ): XZ {
-  const f = flowAt(grid, dir, p.x, p.z)
-  if (f.x * f.x + f.z * f.z <= 0.5) return { x: 0, z: 0 }
-  const c = cellCentre(grid, cellAt(grid, p.x, p.z))
-  return dirTo(me, { x: c.x + Math.round(f.x) * grid.cell, z: c.z + Math.round(f.z) * grid.cell })
+function clearOfFurniture(room: Workplace, a: XZ, b: XZ, pad: number): boolean {
+  const dx = b.x - a.x, dz = b.z - a.z
+  for (const { box: [x0, , z0, x1, , z1] } of room.furniture) {
+    let t0 = 0, t1 = 1
+    if (Math.abs(dx) < 1e-6) {
+      if (a.x <= x0 - pad || a.x >= x1 + pad) continue
+    } else {
+      const ta = (x0 - pad - a.x) / dx, tb = (x1 + pad - a.x) / dx
+      t0 = Math.max(t0, Math.min(ta, tb)); t1 = Math.min(t1, Math.max(ta, tb))
+    }
+    if (Math.abs(dz) < 1e-6) {
+      if (a.z <= z0 - pad || a.z >= z1 + pad) continue
+    } else {
+      const ta = (z0 - pad - a.z) / dz, tb = (z1 + pad - a.z) / dz
+      t0 = Math.max(t0, Math.min(ta, tb)); t1 = Math.min(t1, Math.max(ta, tb))
+    }
+    if (t0 < t1) return false
+  }
+  return true
+}
+function roomWay(room: Workplace, me: XZ, to: XZ): XZ {
+  const clear = ROOM.pad - 0.05
+  if (clearOfFurniture(room, me, to, clear)) return dirTo(me, to)
+  const reach = h - ROOM.wall - ROOM.pad, g = ROOM.pad + ROOM.round
+  let best = 1e9, aim = toWorld(room, ROOM.hub, toLocal(room, me.x, me.z).v >= 0 ? ROOM.aisle : -ROOM.aisle)
+  for (const { box: [x0, , z0, x1, , z1] } of room.furniture) {
+    for (let c = 0; c < 4; c++) {
+      const q = { x: c & 1 ? x1 + g : x0 - g, z: c & 2 ? z1 + g : z0 - g }, l = toLocal(room, q.x, q.z)
+      const cost = Math.hypot(q.x - me.x, q.z - me.z) + Math.hypot(to.x - q.x, to.z - q.z)
+      if (Math.max(Math.abs(l.u), Math.abs(l.v)) >= reach || cost >= best) continue
+      if (!clearOfFurniture(room, q, q, ROOM.pad) || !clearOfFurniture(room, me, q, clear) || !clearOfFurniture(room, q, to, clear)) continue
+      best = cost
+      aim = q
+    }
+  }
+  return dirTo(me, aim)
 }
 function summonWay(grid: ReturnType<typeof cityGrid>, dir: Float32Array, rooms: readonly Workplace[], me: XZ, at: XZ, dist: number): XZ {
   const mine = indoorsOf(rooms, me), theirs = indoorsOf(rooms, at)
-  let flow = flowWay(grid, dir, me, me)
+  if (mine >= 0 && mine === theirs) return roomWay(rooms[mine], me, at)
+  let flow = flowAt(grid, dir, me.x, me.z)
   if (mine !== theirs) {
     const r = rooms[mine >= 0 ? mine : theirs]
     const l = toLocal(r, me.x, me.z), front = CITY.pitch / 2 - CITY.lane
     if (Math.abs(l.v) < ROOM.door + 1.5 && l.u > h - ROOM.wall - 1.5 && l.u < front + 1) return dirTo(me, toWorld(r, mine < 0 ? ROOM.hub : front, 0))
-    if (mine >= 0) return dirTo(me, toWorld(r, ROOM.hub + 1, l.v >= 0 ? ROOM.aisle : -ROOM.aisle))
+    if (mine >= 0) return roomWay(r, me, toWorld(r, ROOM.hub + 1, l.v >= 0 ? ROOM.aisle : -ROOM.aisle))
     if (flow.x * flow.x + flow.z * flow.z <= 0.5) {
       const here = roomAt(rooms, me)
       if (here >= 0) {
         const q = rooms[here], k = toLocal(q, me.x, me.z)
         const n = Math.abs(k.u) >= Math.abs(k.v) ? { u: Math.sign(k.u), v: 0 } : { u: 0, v: Math.sign(k.v) }
         const o = toWorld(q, k.u + n.u * grid.cell, k.v + n.v * grid.cell)
-        flow = flowWay(grid, dir, me, o)
+        flow = flowAt(grid, dir, o.x, o.z)
       }
     }
     if (flow.x * flow.x + flow.z * flow.z > 0.5) return flow
@@ -487,18 +553,23 @@ function containAny(rooms: readonly Workplace[], was: XZ, to: XZ): XZ {
   if (Math.abs(lx) >= lim || Math.abs(lz) >= lim) return to
   return lim - Math.abs(lx) < lim - Math.abs(lz) ? { x: c.x + (lx >= 0 ? lim : -lim), z: to.z } : { x: to.x, z: c.z + (lz >= 0 ? lim : -lim) }
 }
-/** Seconds until someone asked over at `from` arrives (talking, SUMMON_STOP from the operator at `at`), or Infinity. */
-function summon(grid: ReturnType<typeof cityGrid>, dir: Float32Array, rooms: readonly Workplace[], from: XZ, at: XZ, pace: number, dt: number, limit: number): { t: number; end: XZ } {
+/**
+ * Seconds until someone asked over at `from` arrives (talking, SUMMON_STOP from the operator, who stands at `op` or
+ * walks it as a function of time), or Infinity; and where they end.
+ */
+function summon(grid: ReturnType<typeof cityGrid>, dir: Float32Array, rooms: readonly Workplace[], from: XZ, op: XZ | ((t: number) => XZ), pace: number, dt: number, limit: number): { t: number; end: XZ } {
   const a = { me: from, v: { x: 0, z: 0 } }
   for (let t = 0; t < limit; t += dt) {
-    const dist = Math.hypot(at.x - a.me.x, at.z - a.me.z)
-    if (dist <= STOP && !walled(rooms, a.me, at)) return { t, end: a.me }
-    const k = pace * Math.min(1, Math.max(0.25, dist - STOP)), way = summonWay(grid, dir, rooms, a.me, at, dist)
+    const at = typeof op === 'function' ? op(t) : op
+    const dist = Math.hypot(at.x - a.me.x, at.z - a.me.z), glass = walled(rooms, a.me, at)
+    if (dist <= STOP && !glass) return { t, end: a.me }
+    const far = glass ? Math.max(dist, STOP + 2) : dist
+    const k = pace * Math.min(1, Math.max(0.25, far - STOP)), way = summonWay(grid, dir, rooms, a.me, at, dist)
     const m = Math.min(1, dt * 5)
     let nv = { x: a.v.x + (way.x * k - a.v.x) * m, z: a.v.z + (way.z * k - a.v.z) * m }
     const sp = Math.hypot(nv.x, nv.z)
     if (sp > 3) nv = { x: (nv.x * 3) / sp, z: (nv.z * 3) / sp }
-    if (dist > 1e-4 && dist < STOP) {
+    if (!glass && dist > 1e-4 && dist < STOP) {
       const ux = (at.x - a.me.x) / dist, uz = (at.z - a.me.z) / dist, inward = nv.x * ux + nv.z * uz
       if (inward > 0) nv = { x: nv.x - ux * inward, z: nv.z - uz * inward }
     }
@@ -546,6 +617,102 @@ test('someone asked over across a room\'s glass comes round by the doorway and a
     }
   }
   assert.ok(runs > 1000, `${runs} runs`)
+  // A metre or two away through the glass is no last stretch: the way round is walked at full pace, inside the time
+  // a recruit has to arrive (the operator stepped in or out by the doorway while they were coming).
+  const rooms = workplaces(1337), room = rooms[0], grid = cityGrid(generateBuildings(1337).map((b) => b.box))
+  for (const [op, from] of [[[13.5, 3], [12, 7.5]], [[12.2, 8], [13.4, 8]]]) {
+    const at = toWorld(room, op[0], op[1])
+    const dir = solveFlow(grid, [nearestOpen(grid, at.x, at.z)]).dir
+    const r = summon(grid, dir, rooms, toWorld(room, from[0], from[1]), at, 1.1, 1 / 60, 60)
+    assert.ok(r.t < APPROACH_SECONDS, `from (${from}) round to the operator at (${op}): ${r.t.toFixed(1)} s`)
+  }
+})
+
+test('someone asked over inside a room comes round its furniture to the operator, standing anywhere or walking past the pieces', () => {
+  let runs = 0
+  for (const seed of [1337, 42]) {
+    const grid = cityGrid(generateBuildings(seed).map((b) => b.box))
+    const silent = new Float32Array(grid.width * grid.height * 2)
+    const rooms = workplaces(seed)
+    for (const room of rooms) {
+      // Free floor on a 3 m lattice: the operators on it, the recruits on the same lattice shifted by 1.5 m.
+      const lim = h - ROOM.wall - ROOM.pad - 0.05
+      const free = (o: number) => {
+        const out: { u: number; v: number; at: XZ }[] = []
+        for (let u = -lim + o; u <= lim; u += 3) for (let v = -lim + o; v <= lim; v += 3) {
+          const at = toWorld(room, u, v)
+          if (!penetrates(room, at.x, at.z, ROOM.pad + 0.05)) out.push({ u, v, at })
+        }
+        return out
+      }
+      const recruits = free(1.5)
+      for (const op of free(0)) {
+        for (const r of recruits) {
+          const d = Math.hypot(r.at.x - op.at.x, r.at.z - op.at.z)
+          if (d <= STOP || d > 12) continue
+          runs++
+          const end = summon(grid, silent, rooms, r.at, op.at, TETHER_PACE, 1 / 30, 60)
+          const e = toLocal(room, end.end.x, end.end.z)
+          assert.ok(Number.isFinite(end.t), `${room.kind} seed ${seed}: from (${r.u.toFixed(1)}, ${r.v.toFixed(1)}) to the operator at (${op.u.toFixed(1)}, ${op.v.toFixed(1)}): still coming at (${e.u.toFixed(2)}, ${e.v.toFixed(2)})`)
+        }
+      }
+    }
+  }
+  assert.ok(runs > 5000, `${runs} runs`)
+  // An operator walking round the pieces with a recruit in tow (the walks that pinned them behind a pedestal, a
+  // conveyor and, past the last 6 m, on the conveyor's back face): seed 1337, from just inside the doorway.
+  const rooms = workplaces(1337)
+  const grid = cityGrid(generateBuildings(1337).map((b) => b.box))
+  const walk = (pts: number[][], speed: number) => (t: number): XZ => {
+    let left = t * speed
+    for (let k = 1; k < pts.length; k++) {
+      const [ax, az] = pts[k - 1], [bx, bz] = pts[k], len = Math.hypot(bx - ax, bz - az)
+      if (left <= len) return { x: ax + ((bx - ax) * left) / len, z: az + ((bz - az) * left) / len }
+      left -= len
+    }
+    const [x, z] = pts[pts.length - 1]
+    return { x, z }
+  }
+  for (const [kind, pts, speed] of [
+    ['roboticsLab', [[11, 0], [8, -10.5], [1, -10.5], [1, -4.6], [3, -4.6]], 2],
+    ['warehouse', [[11, 0], [7, 8], [-11.3, 8], [-11.3, 4.6], [-5, 4.6]], 2],
+    ['warehouse', [[11, 0], [7, 8], [-11.3, 8], [-11.3, 2], [-8, -2.75]], 3],
+  ] as const) {
+    const room = rooms.find((r) => r.kind === kind)!
+    const path = pts.map(([u, v]) => { const p = toWorld(room, u, v); return [p.x, p.z] })
+    const end = summon(grid, new Float32Array(grid.width * grid.height * 2), rooms, toWorld(room, 12, 1.5), walk(path, speed), TETHER_PACE, 1 / 60, 90)
+    const e = toLocal(room, end.end.x, end.end.z)
+    assert.ok(Number.isFinite(end.t), `${kind}: following the operator round the pieces, stuck at (${e.u.toFixed(2)}, ${e.v.toFixed(2)})`)
+  }
+})
+
+test('on the street, someone asked over beyond the last stretch follows the field\'s arrow round a lot\'s corner', () => {
+  // Seed 1337: the operator 6.2 m off the street line by the lot at (540, 620), whose building stands back from its
+  // edge, so the field's column along that edge is open, its cell centres 0.35 m inside the lot's containment. Aiming
+  // at those centres pinned the recruit on the lot's face; the arrow takes them round.
+  const grid = cityGrid(generateBuildings(1337).map((b) => b.box)), rooms = workplaces(1337)
+  const at = { x: 526.2, z: 613 }
+  const dir = solveFlow(grid, [nearestOpen(grid, at.x, at.z)]).dir
+  for (const pace of [1.1, 1.3, TETHER_PACE]) {
+    const r = summon(grid, dir, rooms, { x: 526.5, z: 605 }, at, pace, 1 / 60, 30)
+    assert.ok(Number.isFinite(r.t), `pace ${pace}: still coming at (${r.end.x.toFixed(2)}, ${r.end.z.toFixed(2)})`)
+  }
+})
+
+test('nobody talks through a doorway\'s jamb: the glass stands between two people unless the line between them passes through the opening', () => {
+  const room = workplaces(1337)[0], rooms = [room]
+  const at = (u: number, v: number) => toWorld(room, u, v)
+  // Through the opening, inside to outside and back, and both in the doorway's band: no glass.
+  for (const [a, b] of [[[12, 0], [13.4, 0.5]], [[12.1, 1.5], [13.35, 1.9]], [[11, -1], [14, -1.8]], [[12.7, 1], [13.3, -1]]]) {
+    assert.equal(walled(rooms, at(a[0], a[1]), at(b[0], b[1])), false, `(${a}) to (${b})`)
+    assert.equal(walled(rooms, at(b[0], b[1]), at(a[0], a[1])), false, `(${b}) to (${a})`)
+  }
+  // The reviewer's pair (the recruit inside beside the jamb, the operator outside by the opening), the jamb's far
+  // side, and the side and back walls: glass.
+  for (const [a, b] of [[[12.09, 2.76], [13.35, 1.95]], [[12, 2.5], [13.4, 1.96]], [[12, 3], [13.5, 3]], [[0, 12], [0, 13.6]], [[-12, 0], [-13.5, 0]]]) {
+    assert.equal(walled(rooms, at(a[0], a[1]), at(b[0], b[1])), true, `(${a}) to (${b})`)
+    assert.equal(walled(rooms, at(b[0], b[1]), at(a[0], a[1])), true, `(${b}) to (${a})`)
+  }
 })
 
 test('the commute: the workplace corner is on the doorway street, on the room\'s block, and the door front lies along its lane', () => {
@@ -640,17 +807,26 @@ test('the shader carries the same numbers: ROOM_*, WORK_* and the workday in cro
   assert.ok(src.includes('dest = roomWorld(room, vec2f(P.rooms[room].b.x, row));'), 'the leaving row is the one carried in b.d.z')
   assert.ok(src.includes('b.d = vec4f(phase, f32(room), row, 0.0);'))
   assert.ok(src.includes('if (phase > 4.5 && phase < 6.5) { dest = station; arrive = WORK_SEAT; }'), 'the station is reached at WORK.seat')
-  // A recruit with a room's glass between them and the operator comes round by the doorway, and never talks through
-  // it: the lines the summons mirror above copies.
+  // A recruit comes round a room's furniture, and round by its doorway when its glass stands between them and the
+  // operator, never talking through it: the lines the summons mirror above copies.
   for (const line of [
-    'if (b.b.w < 1.5 && dist <= SUMMON_STOP && !walled(me, at)) {',
-    '} else if (b.b.w > 1.5 && (dist > SUMMON_STOP * 1.5 || walled(me, at))) {',
-    'desired = summonWay(me, at, dist) * pace * clamp(dist - SUMMON_STOP, 0.25, 1.0);',
-    'return dirTo(me, o + (floor((p - o) * FLOW_INV_CELL) + 0.5 + round(f)) / FLOW_INV_CELL);',
+    'glass = walled(me, at);',
+    'if (b.b.w < 1.5 && dist <= SUMMON_STOP && !glass) {',
+    '} else if (b.b.w > 1.5 && (dist > SUMMON_STOP * 1.5 || glass)) {',
+    'let far = select(dist, max(dist, SUMMON_STOP + 2.0), glass);',
+    'desired = summonWay(me, at, dist) * pace * clamp(far - SUMMON_STOP, 0.25, 1.0);',
+    'if (asked && !glass) {',
+    'if (o.x <= inner || abs(mix(i.y, o.y, (inner - i.x) / (o.x - i.x))) >= ROOM_DOOR) { return true; }',
+    'return o.x > CITY_LOT_HALF && abs(mix(i.y, o.y, (CITY_LOT_HALF - i.x) / (o.x - i.x))) >= ROOM_DOOR;',
+    'if (mine >= 0 && mine == theirs) { return roomWay(u32(mine), me, at); }',
     'return dirTo(me, roomWorld(r, vec2f(select(front, P.rooms[r].b.x, mine < 0), 0.0)));',
-    'if (mine >= 0) { return dirTo(me, roomWorld(r, vec2f(P.rooms[r].b.x + 1.0, select(-ROOM_AISLE, ROOM_AISLE, l.y >= 0.0)))); }',
-    'if (here >= 0) { flow = flowWay(me, me + offGlass(u32(here), me) / FLOW_INV_CELL); }',
+    'if (mine >= 0) { return roomWay(r, me, roomWorld(r, vec2f(P.rooms[r].b.x + 1.0, select(-ROOM_AISLE, ROOM_AISLE, l.y >= 0.0)))); }',
+    'if (here >= 0) { flow = flowAt(me + offGlass(u32(here), me) / FLOW_INV_CELL); }',
     'return select(dirTo(me, at), flow, dot(flow, flow) > 0.5 && dist > 4.0 * SUMMON_STOP);',
+    'let clear = ROOM_PAD - 0.05;',
+    'let q = select(box.xy - (ROOM_PAD + ROOM_ROUND), box.zw + (ROOM_PAD + ROOM_ROUND), vec2<bool>((c & 1u) != 0u, (c & 2u) != 0u));',
+    'if (max(abs(l.x), abs(l.y)) >= reach || cost >= best) { continue; }',
+    'if (!clearOfFurniture(r, q, q, ROOM_PAD) || !clearOfFurniture(r, me, q, clear) || !clearOfFurniture(r, q, to, clear)) { continue; }',
   ]) assert.ok(src.includes(line), line)
   assert.equal(STYLE.glass, 10)
 })
