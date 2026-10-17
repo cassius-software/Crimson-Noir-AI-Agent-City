@@ -50,6 +50,24 @@ export function inlinePort(): BuilderPort {
   return port
 }
 
+/** The builder's Worker as builderPort holds it: a port that can also fail as a whole (its script, an uncaught throw). */
+export interface BuilderWorker extends BuilderPort {
+  onerror: ((e: { message?: string; preventDefault?(): void }) => void) | null
+}
+
+/**
+ * The worker as a port whose own failure reaches the client as an error message (the worker reports it as an `error`
+ * event, never as a message): the build and every pack asked for reject with it instead of waiting forever, so a
+ * returning visitor is not left on the splash and the onboarding goes on to the first city.
+ */
+export function reportingPort(worker: BuilderWorker): BuilderPort {
+  worker.onerror = (e) => {
+    e.preventDefault?.()
+    worker.onmessage?.({ data: { kind: 'error', message: `the map builder stopped: ${e.message || 'worker error'}` } })
+  }
+  return worker
+}
+
 export interface BuilderEvents {
   /** Each stage of the build, in order, as plain words are wanted. */
   onStage?(stage: BuildStage): void
@@ -69,6 +87,8 @@ export class LakefrontBuilder {
   private readonly waiting = new Map<number, { resolve(p: RegionPack): void; reject(e: Error): void }>()
   private next = 1
   private disposed = false
+  /** The error that ended the builder (its build or its whole worker): every later pack rejects with it. */
+  private failed: Error | null = null
   readonly seed: number
   readonly blocks: number
 
@@ -85,7 +105,12 @@ export class LakefrontBuilder {
       else if (m.kind === 'pack') { this.waiting.get(m.id)?.resolve(m.pack); this.waiting.delete(m.id) }
       else if (m.kind === 'error') {
         const err = new Error(m.message)
-        if (m.id !== undefined) { this.waiting.get(m.id)?.reject(err); this.waiting.delete(m.id) } else this.rejectBuilt(err)
+        if (m.id !== undefined) { this.waiting.get(m.id)?.reject(err); this.waiting.delete(m.id); return }
+        // An error that names no request is the build's, or the whole worker's: nothing it was asked will come now.
+        this.failed = err
+        this.rejectBuilt(err)
+        for (const w of this.waiting.values()) w.reject(err)
+        this.waiting.clear()
       }
     }
     port.postMessage({ kind: 'build', seed, blocks })
@@ -95,6 +120,7 @@ export class LakefrontBuilder {
   async pack(zone: Zone): Promise<RegionPack> {
     await this.built
     if (this.disposed) throw new Error('the map builder was disposed')
+    if (this.failed) throw this.failed
     const id = this.next++
     return new Promise<RegionPack>((resolve, reject) => {
       this.waiting.set(id, { resolve, reject })

@@ -16,7 +16,7 @@
  */
 import PhysicsWorker from './physics.worker.ts?worker&inline'
 import { trackWorker } from './longTasks.ts'
-import { MAX_PLAYERS, POSE, type DriveControls, type FootControls, type FromWorker, type PlayerControls, type SimCommand, type SimInit, type SimMeta, type StepState } from './simProtocol.ts'
+import { coded, MAX_PLAYERS, POSE, type DriveControls, type FootControls, type FromWorker, type PlayerControls, type SimCommand, type SimFailureCode, type SimInit, type SimMeta, type StepState } from './simProtocol.ts'
 import { canShareMemory, packAgents, packAvatars, packVehicles, PhysicsBridge } from './sharedBridge.ts'
 
 /** Commands waiting for the next step request; a flood beyond this is dropped here (the worker caps them too). */
@@ -51,6 +51,11 @@ export class SimClient {
   #first: SimCommand[] = []
   #dropped = 0
   #closed = false
+  /**
+   * A fault that came before anyone listened (a worker error or panic between `ready` and the engine's listen(), while
+   * the page still compiles): held, so listen() hands it on rather than the city starting on a closed client.
+   */
+  #missed: string | null = null
   /** Players 1..3's controls, sent with every step request (setPlayers); null for one player. */
   #players: PlayerControls[] | null = null
 
@@ -76,11 +81,12 @@ export class SimClient {
     return new Promise((resolve, reject) => {
       let meta: SimMeta | null = null
       let bridge: PhysicsBridge | null = null
-      const fail = (why: string) => { worker.terminate(); untrack(); reject(new Error(why)) }
+      // The worker's class of the failure (no WebGPU in the worker, no WebAssembly) stays on the error for the card.
+      const fail = (why: string, code?: SimFailureCode) => { worker.terminate(); untrack(); reject(code ? coded(code, why) : new Error(why)) }
       worker.onerror = (e) => { e.preventDefault(); fail(`physics worker failed to start: ${e.message || 'unknown error'}`) }
       worker.onmessage = (e: MessageEvent<FromWorker>) => {
         const m = e.data
-        if (m.t === 'error') return fail(m.message)
+        if (m.t === 'error') return fail(m.message, m.code)
         if (m.t === 'panic') return fail(m.reason)
         if (m.t === 'ready') {
           meta = m.meta
@@ -104,11 +110,20 @@ export class SimClient {
 
   /**
    * `onState` runs for each new state, before the next frame renders it; `onPanic` once, when the worker's
-   * Ring-0 audit halts the simulation or the physics realm faults.
+   * Ring-0 audit halts the simulation or the physics realm faults. A fault that came before this call is handed to
+   * `onPanic` now.
    */
   listen(onState: (s: StepState, prev: StepState) => void, onPanic: (reason: string) => void): void {
     this.#onState = onState
     this.#onPanic = onPanic
+    const missed = this.#missed
+    this.#missed = null
+    if (missed !== null) onPanic(missed)
+  }
+
+  /** The fault that closed this client before anyone listened, or null (Engine.create refuses to start on one). */
+  get fault(): string | null {
+    return this.#missed
   }
 
   /** True while a step request is out (the worker has not answered it yet). */
@@ -209,7 +224,8 @@ export class SimClient {
   #fault(reason: string): void {
     if (this.#closed) return
     this.#closed = true
-    this.#onPanic?.(reason)
+    if (this.#onPanic) this.#onPanic(reason)
+    else this.#missed = reason
   }
 
   /** Stops the worker (dispose). */

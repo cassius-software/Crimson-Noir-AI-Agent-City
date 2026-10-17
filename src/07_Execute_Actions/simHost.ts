@@ -12,7 +12,7 @@
  * What breaks if it is removed? The worker cannot hear the page, and nothing vets what the page says.
  */
 import { SimCore, type SimCoreOptions } from './simCore.ts'
-import { MAX_PLAYERS, POSE, RIG_POSE, TRACK_POSE, type FromWorker, type SimInit } from './simProtocol.ts'
+import { failureCode, MAX_PLAYERS, POSE, RIG_POSE, TRACK_POSE, type FromWorker, type SimInit } from './simProtocol.ts'
 import { packAgents, packAvatars, packVehicles, PhysicsBridge } from './sharedBridge.ts'
 import type { RegionGround } from './physics.ts'
 import { CITY } from '../01_Initialize_World/city.ts'
@@ -149,7 +149,9 @@ export function createSimHost(post: Post, create: (o: SimCoreOptions) => Promise
         for (let i = 0; i < refusedEarly; i++) core.noteRejected('message before init')
         post({ t: 'ready', meta: core.meta })
       } catch (e) {
-        post({ t: 'error', message: `init: ${message(e)}` })
+        // The class of the failure, when the worker knew it (no WebGPU in the worker, no WebAssembly), goes with the words.
+        const code = failureCode(e)
+        post({ t: 'error', message: `init: ${message(e)}`, ...(code && { code }) })
       }
       return
     }
