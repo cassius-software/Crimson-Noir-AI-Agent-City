@@ -246,8 +246,40 @@ function isolation(): Plugin {
   }
 }
 
+/**
+ * The page's module script, moved from <head> to the end of <body>. Vite puts the entry in <head>, and once
+ * viteSingleFile has inlined it there it is about 10 MB of text before the body: a browser paints nothing of the body
+ * until all of it has arrived, so a first visit on a phone over a slow connection is a blank page for as long as the
+ * download takes (it read as a load that never ends). At the end of the body the splash is on screen while it
+ * downloads, and the boot watchdog (in <head>) has long been running. Nothing else changes: an inline module script
+ * runs when the document has been parsed wherever it stands. Pure, for the test (bootWatchdog.test.ts); a page without
+ * exactly one module script is left as it is.
+ */
+export function moduleAfterBody(html: string): string {
+  const open = html.indexOf('<script type="module"')
+  if (open < 0 || html.indexOf('<script type="module"', open + 1) >= 0) return html
+  const end = html.indexOf('</script>', open) + '</script>'.length
+  const body = html.lastIndexOf('</body>')
+  if (end < '</script>'.length || body < end) return html
+  return html.slice(0, open) + html.slice(end, body) + html.slice(open, end) + '\n  ' + html.slice(body)
+}
+
+/** Build only, after viteSingleFile has inlined the scripts (its generateBundle runs first: same order, earlier). */
+function moduleLast(): Plugin {
+  return {
+    name: 'module-after-body',
+    apply: 'build',
+    enforce: 'post',
+    generateBundle(_options, bundle) {
+      for (const file of Object.values(bundle)) {
+        if (file.type === 'asset' && file.fileName.endsWith('.html') && typeof file.source === 'string') file.source = moduleAfterBody(file.source)
+      }
+    },
+  }
+}
+
 export default defineConfig(({ mode }) => ({
-  plugins: [react(), tailwindcss(), brand(), notices(), regionPack(mode), viteSingleFile(), isolation()],
+  plugins: [react(), tailwindcss(), brand(), notices(), regionPack(mode), viteSingleFile(), moduleLast(), isolation()],
   worker: { plugins: () => [workerNotices()] },
   build: { outDir: mode === 'pilot' ? 'dist-pilot' : 'dist' },
 }))

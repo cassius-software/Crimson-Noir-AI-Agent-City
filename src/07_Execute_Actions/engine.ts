@@ -35,8 +35,9 @@
  */
 import { Frustum, Matrix4, Vector3, type PerspectiveCamera, type RenderPipeline, type UniformNode } from 'three/webgpu'
 import { BRAND } from '../brand.ts'
+import { GRAPHICS_RESET } from './bootFailure.ts'
 import { watchLongTasks } from './longTasks.ts'
-import { buildWorld, createRenderer, gpuBufferOf, LIGHT_TUNE_RANGE, ndStopsFor, type Gpu, type LightTuning, type World } from '../01_Initialize_World/world.ts'
+import { buildWorld, createRenderer, gpuBufferOf, LIGHT_TUNE_RANGE, ndStopsFor, releaseGpu, WebGPUUnavailableError, type Gpu, type LightTuning, type World } from '../01_Initialize_World/world.ts'
 import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
 import { RegionPlaces, layoutOf, regionPhysics } from '../01_Initialize_World/region/regionWorld.ts'
 import { streetCapacity, streetGridOf, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
@@ -90,6 +91,12 @@ import { CaptionTrack, captionText } from './captions.ts'
 import { ring0Stats, type TerminalBridge } from './terminal/bridge.ts'
 import { familyOf, modeGlyph, type glyph } from './glyphs.ts'
 import { PING_KINDS, PING_WORDS, PingBoard, pickPing, pingLine, rallyPlan, type Ping, type Pick, type PingKind, type RallyRequest } from '../08_Swarm/ping.ts'
+
+/**
+ * Where Engine.create has got to, for the boot veil's 'Still starting' line (bootFailure.ts BOOT_STAGE): a player who
+ * has waited, and a bug report, can tell a slow shader compile on a phone from a boot that stopped.
+ */
+export type BootStage = 'gpu' | 'world' | 'physics' | 'shaders' | 'frame'
 
 export interface EngineOptions {
   /** Pedestrians to simulate; absent: as many as the device profile allows (governor.ts defaultAgents). */
@@ -634,134 +641,183 @@ export class Engine {
     p.sim.listen((s, prev) => this.received(s, prev), (reason) => this.panicked(reason))
     this.stopLongTasks = watchLongTasks()
     p.gpu.device.addEventListener('uncapturederror', (e) => this.errors.push((e as GPUUncapturedErrorEvent).error.message))
-    void p.gpu.device.lost.then((info) => { if (!this.disposed) this.errors.push(`device lost: ${info.message}`) })
+    // The page's own device lost (a driver reset, the GPU process gone, a phone taking the memory back): three draws
+    // nothing from then on, so the city would carry on invisibly under a live HUD. It halts as a graphics reset
+    // (bootFailure.ts haltClass), and the host shows the recovery card. Its own destroy() (dispose) is not a loss.
+    void p.gpu.device.lost.then((info) => {
+      if (this.disposed || info.reason === 'destroyed') return
+      this.errors.push(`device lost: ${info.message}`)
+      this.halt(`${GRAPHICS_RESET} the page's GPU device was lost (${info.reason}): ${info.message || 'no message'}`)
+    })
   }
 
-  static async create(canvas: HTMLCanvasElement, requested: EngineOptions): Promise<Engine> {
+  static async create(canvas: HTMLCanvasElement, requested: EngineOptions, onStage: (stage: BootStage) => void = () => {}): Promise<Engine> {
+    onStage('gpu')
     const gpu = await createRenderer(canvas, requested.pixelRatio, requested.profile)
-    // The device profile first: it decides the starting tier and, unless the page said (?crowd), how many pedestrians
-    // the physics realm simulates (the GPU buffers are sized for them at boot; the governor scales how many are drawn).
-    const hints = readDeviceHints(gpu.adapterInfo)
-    const profile = profileDevice(hints)
-    const pack = requested.region ?? null
-    const layout = pack ? layoutOf(pack) : null
-    const places = pack && layout ? new RegionPlaces(pack, layout) : null
-    const landmark = pack && layout ? landmarkOf(pack, layout.offset) : null
-    // In a region: a sidewalk of the arterial nearest the region's origin (its downtown), facing along the street.
-    const start = places && layout ? places.spawn({ x: layout.offset.x, z: layout.offset.z }) : null
-    const spawn = start ? { x: start.x, z: start.z } : { x: CITY_SIZE / 2 + CITY.lane, z: CITY_SIZE / 2 + 12 }
-    // A generated region's street window (region/streets.ts): the CITY.blocks × CITY.blocks blocks around the start that
-    // the crowd walks and the fleet drives, so the lakefront metropolis has people and traffic like the city. A surveyed
-    // region whose roads are not on the grid has none: its fleet stays empty and its crowd hidden (the AI drives the
-    // procedural grid only), so it runs at the smallest size the realm takes (the GPU is the region's).
-    const streets = pack && layout ? streetGridOf(pack, layout.offset, spawn) : null
-    const empty = pack !== null && streets === null
-    // Split screen: the post chain is player 1's alone (one pipeline, one velocity history, one full-screen pass), so
-    // with more than one player it is off at every tier, as ?post=0 is, and every viewport takes the direct path.
-    const players = clampPlayers(requested.players)
-    const options: EngineConfig = {
-      ...requested, players, post: requested.post && players === 1,
-      // A region's cars ride the window's rings alone (the street-hopping drivers of ?tracks=0 know the procedural grid only).
-      cars: empty ? 0 : streets ? (requested.tracks === false ? 0 : Math.min(requested.cars, streetCapacity(streets, requested.seed))) : requested.cars,
-      agents: empty ? AGENTS_RANGE[0] : requested.agents ?? defaultAgents(profile), host: hints.host ?? 'browser',
+    onStage('world')
+    // A boot that fails partway lets go of what it took: the page's GPU device (releaseGpu) and the physics worker, so
+    // the recovery card is not left over a device and a worker still running, and the worker's own later rejection is
+    // never unhandled. A loss of the device while the city is built fails the boot as a graphics reset.
+    // Whether the page was hidden at any time during the boot: a phone takes the GPU back from an app in the
+    // background (switching apps while the city loads), and such a loss lets the page restart by itself once it is
+    // back (App.tsx). The loss may only be reported after the player has returned, so the whole boot counts.
+    let simBoot: Promise<SimClient> | null = null
+    const boot: { lost: GPUDeviceLostInfo | null; hidden: boolean } = { lost: null, hidden: document.hidden }
+    const onVisibility = (): void => { if (document.hidden) boot.hidden = true }
+    document.addEventListener('visibilitychange', onVisibility)
+    void gpu.device.lost.then((info) => { if (info.reason !== 'destroyed') boot.lost = info })
+    const stillThere = (): void => {
+      const l = boot.lost
+      if (l) throw new WebGPUUnavailableError('gpu-reset', `The GPU device was lost while the city was built (${l.reason}): ${l.message || 'no message'}`, boot.hidden)
     }
-    const world = buildWorld(gpu.renderer, options.seed, pack && layout ? { pack, layout, streets } : null)
-    // Players 1..3 (split screen) start beside player 0 along the sidewalk (the city's spawn sidewalk runs along z; a
-    // region's along its street heading); the realm moves a spawn out of a building lot itself.
-    const along = start ? { x: Math.sin(start.heading), z: Math.cos(start.heading) } : { x: 0, z: 1 }
-    const spawns: { x: number; z: number }[] = []
-    for (let k = 1; k < players; k++) spawns.push({ x: spawn.x + along.x * SPLIT.spawnGap * k, z: spawn.z + along.z * SPLIT.spawnGap * k })
-    // The physics realm boots (Rapier, the city's colliders or the region's, the fleet) while this thread sets up quality.
-    const simBoot = SimClient.create({
-      seed: options.seed, cars: options.cars, agents: options.agents, boxes: world.boxes, furniture: world.furniture, spawn, debug: options.debug === true,
-      region: pack && layout ? regionPhysics(pack, layout) : null, streets, tracks: options.tracks !== false,
-      ragdoll: options.ragdoll !== false && !pack,
-      ...(spawns.length > 0 && { spawns }),
-    })
+    try {
+      // The device profile first: it decides the starting tier and, unless the page said (?crowd), how many pedestrians
+      // the physics realm simulates (the GPU buffers are sized for them at boot; the governor scales how many are drawn).
+      const hints = readDeviceHints(gpu.adapterInfo)
+      const profile = profileDevice(hints)
+      const pack = requested.region ?? null
+      const layout = pack ? layoutOf(pack) : null
+      const places = pack && layout ? new RegionPlaces(pack, layout) : null
+      const landmark = pack && layout ? landmarkOf(pack, layout.offset) : null
+      // In a region: a sidewalk of the arterial nearest the region's origin (its downtown), facing along the street.
+      const start = places && layout ? places.spawn({ x: layout.offset.x, z: layout.offset.z }) : null
+      const spawn = start ? { x: start.x, z: start.z } : { x: CITY_SIZE / 2 + CITY.lane, z: CITY_SIZE / 2 + 12 }
+      // A generated region's street window (region/streets.ts): the CITY.blocks × CITY.blocks blocks around the start that
+      // the crowd walks and the fleet drives, so the lakefront metropolis has people and traffic like the city. A surveyed
+      // region whose roads are not on the grid has none: its fleet stays empty and its crowd hidden (the AI drives the
+      // procedural grid only), so it runs at the smallest size the realm takes (the GPU is the region's).
+      const streets = pack && layout ? streetGridOf(pack, layout.offset, spawn) : null
+      const empty = pack !== null && streets === null
+      // Split screen: the post chain is player 1's alone (one pipeline, one velocity history, one full-screen pass), so
+      // with more than one player it is off at every tier, as ?post=0 is, and every viewport takes the direct path.
+      const players = clampPlayers(requested.players)
+      const options: EngineConfig = {
+        ...requested, players, post: requested.post && players === 1,
+        // A region's cars ride the window's rings alone (the street-hopping drivers of ?tracks=0 know the procedural grid only).
+        cars: empty ? 0 : streets ? (requested.tracks === false ? 0 : Math.min(requested.cars, streetCapacity(streets, requested.seed))) : requested.cars,
+        agents: empty ? AGENTS_RANGE[0] : requested.agents ?? defaultAgents(profile), host: hints.host ?? 'browser',
+      }
+      const world = buildWorld(gpu.renderer, options.seed, pack && layout ? { pack, layout, streets } : null)
+      // Players 1..3 (split screen) start beside player 0 along the sidewalk (the city's spawn sidewalk runs along z; a
+      // region's along its street heading); the realm moves a spawn out of a building lot itself.
+      const along = start ? { x: Math.sin(start.heading), z: Math.cos(start.heading) } : { x: 0, z: 1 }
+      const spawns: { x: number; z: number }[] = []
+      for (let k = 1; k < players; k++) spawns.push({ x: spawn.x + along.x * SPLIT.spawnGap * k, z: spawn.z + along.z * SPLIT.spawnGap * k })
+      // The physics realm boots (Rapier, the city's colliders or the region's, the fleet) while this thread sets up quality.
+      simBoot = SimClient.create({
+        seed: options.seed, cars: options.cars, agents: options.agents, boxes: world.boxes, furniture: world.furniture, spawn, debug: options.debug === true,
+        region: pack && layout ? regionPhysics(pack, layout) : null, streets, tracks: options.tracks !== false,
+        ragdoll: options.ragdoll !== false && !pack,
+        ...(spawns.length > 0 && { spawns }),
+      })
 
-    // Start on the tier the device profile suggests (or the one the URL pins), before anything compiles:
-    // the first applyQuality decides which shadow variant the materials are built with. Under the cinema camera the
-    // governor holds its 24 presented frames as well as the animation frames' 60 FPS floor.
-    const range = tierRange(profile)
-    const targetMs = options.targetFps > 0 ? 1000 / options.targetFps : undefined
-    const pacerMs = options.cinema === false ? undefined : 1000 / CINEMA.fps
-    const governor = options.quality === 'auto'
-      ? new Governor({ tier: profile.startTier, auto: true, targetMs, pacerMs, ...range })
-      : new Governor({ tier: options.quality, auto: false, targetMs, pacerMs, ...range })
-    const mask = (k: QualityKnobs): QualityKnobs => ({ ...k, shadows: k.shadows && options.shadows, post: k.post && options.post })
-    const first = governor.knobs()
-    // In a region without a street window nobody of the procedural crowd is drawn (they walk the procedural grid,
-    // kilometres from the region).
-    const hidden = (c: CullSettings): CullSettings => (empty ? { ...c, maxDistance: 0 } : c)
-    const live: QualityRig['live'] = {
-      post: true,
-      volumetrics: false,
-      cull: hidden({ lodDistance: first.lodDistance, nearRadius: first.nearRadius, density: first.crowdDensity, maxDistance: first.maxDistance }),
-      crowd: null,
+      // Start on the tier the device profile suggests (or the one the URL pins), before anything compiles:
+      // the first applyQuality decides which shadow variant the materials are built with. Under the cinema camera the
+      // governor holds its 24 presented frames as well as the animation frames' 60 FPS floor.
+      const range = tierRange(profile)
+      const targetMs = options.targetFps > 0 ? 1000 / options.targetFps : undefined
+      const pacerMs = options.cinema === false ? undefined : 1000 / CINEMA.fps
+      const governor = options.quality === 'auto'
+        ? new Governor({ tier: profile.startTier, auto: true, targetMs, pacerMs, ...range })
+        : new Governor({ tier: options.quality, auto: false, targetMs, pacerMs, ...range })
+      const mask = (k: QualityKnobs): QualityKnobs => ({ ...k, shadows: k.shadows && options.shadows, post: k.post && options.post })
+      const first = governor.knobs()
+      // In a region without a street window nobody of the procedural crowd is drawn (they walk the procedural grid,
+      // kilometres from the region).
+      const hidden = (c: CullSettings): CullSettings => (empty ? { ...c, maxDistance: 0 } : c)
+      const live: QualityRig['live'] = {
+        post: true,
+        volumetrics: false,
+        cull: hidden({ lodDistance: first.lodDistance, nearRadius: first.nearRadius, density: first.crowdDensity, maxDistance: first.maxDistance }),
+        crowd: null,
+      }
+      const targets: QualityTargets = {
+        renderer: gpu.renderer, sun: world.sun, basePixelRatio: options.pixelRatio,
+        setCrowd: (c) => { live.cull = hidden(c); live.crowd?.setCull(live.cull) },
+        setPost: (on) => { live.post = on },
+        setVolumetrics: (on) => { live.volumetrics = on },
+        setTextureSize: (size) => world.setTextureSize(size),
+      }
+      const applied = mask(first)
+      applyQuality(applied, targets)
+
+      const view0 = new CrowdView(options.agents, world.matrixMode.globalState)
+      onStage('physics')
+      const sim = await simBoot
+      if (sim.meta.agents !== options.agents) throw new Error(`the physics worker simulates ${sim.meta.agents} pedestrians, the page draws ${options.agents}`)
+      const view = new FleetView(sim.meta.kind, sim.meta.paint, world.night, world.matrixMode.globalState)
+      view.sync(sim.state.poses)
+      // The rigs of the promoted pedestrians (the realm's rig stream; none with the ragdoll off or in a region).
+      const rigView = new RigView(sim.meta.rigSlots, world.matrixMode.globalState)
+      rigView.sync(sim.state.rigs)
+      world.scene.add(...view0.meshes, ...view.bodies, view.wheels, ...rigView.meshes)
+      // The network ghosts (netView.ts): two hidden instanced meshes until a session's poses arrive, compiled with the rest.
+      const netView = new NetView()
+      world.scene.add(netView.people, netView.cars)
+      const ghost = createGhost({ boxes: world.boxes, furniture: world.furniture, suv: sim.meta.suv, crowdPos: view0.pos, agents: options.agents, rigs: rigView.meshes })
+      const { pipeline: post, volumetrics, cinema } = buildPost(gpu.renderer, world.scene, world.camera, options.cinema === false ? null : { resorted: world.resorted }, ghost)
+
+      const w = Math.max(1, canvas.clientWidth), h = Math.max(1, canvas.clientHeight)
+      gpu.renderer.setSize(w, h, false)
+      world.camera.aspect = w / h
+      world.camera.updateProjectionMatrix()
+      world.camera.position.set(spawn.x, 1.7, spawn.z + 4)
+      world.update(options.startHour, 0, spawn.x, spawn.z)
+      // Compile off the critical path, then draw once so three allocates every storage buffer the
+      // compute passes share (crowd state, draw lists, indirect draw arguments).
+      onStage('shaders')
+      await gpu.renderer.compileAsync(world.scene, world.camera)
+      onStage('frame')
+      // Draw once on BOTH paths (post and direct), so a later quality step that toggles post never compiles a
+      // pipeline mid-game; the boot veil hides these frames. They draw inside a validation scope: a draw the browser's
+      // WebGPU refuses, or a device lost meanwhile, fails the boot with its own words instead of lifting the veil onto
+      // a city that never presents.
+      gpu.device.pushErrorScope('validation')
+      gpu.renderer.render(world.scene, world.camera)
+      post.render()
+      const invalid = await gpu.device.popErrorScope()
+      stillThere()
+      if (invalid) throw new Error(`the first frame failed WebGPU validation: ${invalid.message}`)
+      // The render buffers exist once three has drawn them (above); the worker's first frame goes straight in. The
+      // looks (03_Spawn_Agents/look.ts): every body material reads the attribute, so the draws allocated it as well;
+      // the cull reads each agent's body from it, setLook writes it.
+      const crowdLook = gpuBufferOf(gpu.renderer, view0.look)
+      const crowd = await CrowdCull.create(gpu.device, {
+        pos: gpuBufferOf(gpu.renderer, view0.pos),
+        vel: gpuBufferOf(gpu.renderer, view0.vel),
+        pose: gpuBufferOf(gpu.renderer, view0.pose),
+        drawArgs: gpuBufferOf(gpu.renderer, view0.drawArgs),
+        drawLists: gpuBufferOf(gpu.renderer, view0.drawLists),
+        look: crowdLook,
+      }, view0.drawTemplate, options.agents, live.cull)
+      live.crowd = crowd
+      if (sim.state.crowdFrame) crowd.upload(sim.state.crowdFrame)
+      if (options.profile) crowd.enableProfiling()
+      // A worker fault while the page compiled (SimClient holds it until someone listens) refuses the boot here, and a
+      // device lost since the first frame does too: neither may become a city that stands still.
+      if (sim.fault !== null) throw new Error(sim.fault)
+      stillThere()
+      const engine = new Engine({
+        canvas, gpu, world, crowd, sim, view, rigView, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, ghost, options,
+        quality: { governor, targets, applied, mask, live }, places, landmark, streets,
+        // The code dissolve's crowd amounts: allocated by the draws above like the frame's buffers, written the same way.
+        crowdDissolve: gpuBufferOf(gpu.renderer, view0.dissolve),
+        crowdLook,
+        netView,
+      })
+      if (start) engine.input.yaw = yawFacing(start.heading)
+      return engine
+    } catch (e) {
+      void simBoot?.then((s) => s.terminate(), () => {})
+      releaseGpu(gpu)
+      // gpuBufferOf names a loss three saw before the page's own handler ran: the same reset, hidden or not.
+      if (e instanceof WebGPUUnavailableError && e.code === 'gpu-reset' && !e.background && boot.hidden) {
+        throw new WebGPUUnavailableError('gpu-reset', e.message, true)
+      }
+      throw e
+    } finally {
+      document.removeEventListener('visibilitychange', onVisibility)
     }
-    const targets: QualityTargets = {
-      renderer: gpu.renderer, sun: world.sun, basePixelRatio: options.pixelRatio,
-      setCrowd: (c) => { live.cull = hidden(c); live.crowd?.setCull(live.cull) },
-      setPost: (on) => { live.post = on },
-      setVolumetrics: (on) => { live.volumetrics = on },
-      setTextureSize: (size) => world.setTextureSize(size),
-    }
-    const applied = mask(first)
-    applyQuality(applied, targets)
-
-    const view0 = new CrowdView(options.agents, world.matrixMode.globalState)
-    const sim = await simBoot
-    if (sim.meta.agents !== options.agents) throw new Error(`the physics worker simulates ${sim.meta.agents} pedestrians, the page draws ${options.agents}`)
-    const view = new FleetView(sim.meta.kind, sim.meta.paint, world.night, world.matrixMode.globalState)
-    view.sync(sim.state.poses)
-    // The rigs of the promoted pedestrians (the realm's rig stream; none with the ragdoll off or in a region).
-    const rigView = new RigView(sim.meta.rigSlots, world.matrixMode.globalState)
-    rigView.sync(sim.state.rigs)
-    world.scene.add(...view0.meshes, ...view.bodies, view.wheels, ...rigView.meshes)
-    // The network ghosts (netView.ts): two hidden instanced meshes until a session's poses arrive, compiled with the rest.
-    const netView = new NetView()
-    world.scene.add(netView.people, netView.cars)
-    const ghost = createGhost({ boxes: world.boxes, furniture: world.furniture, suv: sim.meta.suv, crowdPos: view0.pos, agents: options.agents, rigs: rigView.meshes })
-    const { pipeline: post, volumetrics, cinema } = buildPost(gpu.renderer, world.scene, world.camera, options.cinema === false ? null : { resorted: world.resorted }, ghost)
-
-    const w = Math.max(1, canvas.clientWidth), h = Math.max(1, canvas.clientHeight)
-    gpu.renderer.setSize(w, h, false)
-    world.camera.aspect = w / h
-    world.camera.updateProjectionMatrix()
-    world.camera.position.set(spawn.x, 1.7, spawn.z + 4)
-    world.update(options.startHour, 0, spawn.x, spawn.z)
-    // Compile off the critical path, then draw once so three allocates every storage buffer the
-    // compute passes share (crowd state, draw lists, indirect draw arguments).
-    await gpu.renderer.compileAsync(world.scene, world.camera)
-    // Draw once on BOTH paths (post and direct), so a later quality step that toggles post never compiles a
-    // pipeline mid-game; the boot veil hides these frames.
-    gpu.renderer.render(world.scene, world.camera)
-    post.render()
-    // The render buffers exist once three has drawn them (above); the worker's first frame goes straight in. The
-    // looks (03_Spawn_Agents/look.ts): every body material reads the attribute, so the draws allocated it as well;
-    // the cull reads each agent's body from it, setLook writes it.
-    const crowdLook = gpuBufferOf(gpu.renderer, view0.look)
-    const crowd = await CrowdCull.create(gpu.device, {
-      pos: gpuBufferOf(gpu.renderer, view0.pos),
-      vel: gpuBufferOf(gpu.renderer, view0.vel),
-      pose: gpuBufferOf(gpu.renderer, view0.pose),
-      drawArgs: gpuBufferOf(gpu.renderer, view0.drawArgs),
-      drawLists: gpuBufferOf(gpu.renderer, view0.drawLists),
-      look: crowdLook,
-    }, view0.drawTemplate, options.agents, live.cull)
-    live.crowd = crowd
-    if (sim.state.crowdFrame) crowd.upload(sim.state.crowdFrame)
-    if (options.profile) crowd.enableProfiling()
-    const engine = new Engine({
-      canvas, gpu, world, crowd, sim, view, rigView, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, ghost, options,
-      quality: { governor, targets, applied, mask, live }, places, landmark, streets,
-      // The code dissolve's crowd amounts: allocated by the draws above like the frame's buffers, written the same way.
-      crowdDissolve: gpuBufferOf(gpu.renderer, view0.dissolve),
-      crowdLook,
-      netView,
-    })
-    if (start) engine.input.yaw = yawFacing(start.heading)
-    return engine
   }
 
   /** The minimap's layer in a region (its water, buildings and streets near a point); null in the procedural city. */
@@ -2361,6 +2417,6 @@ export class Engine {
     // Input.dispose() also disposes the hardware bus, which resets trigger effects and closes ports.
     this.input.dispose()
     this.sim.terminate()
-    this.gpu.renderer.dispose()
+    releaseGpu(this.gpu)
   }
 }

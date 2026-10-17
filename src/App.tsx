@@ -29,8 +29,11 @@ import type { GateHandle, GateLease, Mind, SkillGate } from './07_Execute_Action
 import { TouchControls } from './04_Connect_Hardware/TouchControls.tsx'
 import { isEditableTarget } from './04_Connect_Hardware/input.ts'
 import type { SipocSnapshot } from './05_Observe_Environment/telemetry.ts'
-import { MonolithLogo } from './MonolithLogo.tsx'
 import { BootVeil } from './07_Execute_Actions/BootVeil.tsx'
+import { LockScreen, RecoveryCard } from './07_Execute_Actions/RecoveryCard.tsx'
+import { usePadNav } from './07_Execute_Actions/padNav.ts'
+import { AUTO_RELOAD_KEY, autoReload, BOOT_STAGE, classify, explainHalt, firstScreen, FRAME_FAULT, haltClass, pageEnv } from './07_Execute_Actions/bootFailure.ts'
+import { probeGpu, WebGPUUnavailableError, type GpuProbe } from './01_Initialize_World/gpuDevice.ts'
 import { Concierge } from './07_Execute_Actions/Concierge.tsx'
 import { Customizer } from './07_Execute_Actions/Customizer.tsx'
 import { loadProfile, type Profile } from './05_Observe_Environment/profile.ts'
@@ -60,6 +63,11 @@ import type { Voice as SpeechVoice } from './07_Execute_Actions/operator.ts'
 import type { Event as MentorEvent } from './09_Cognition/tutorial.ts'
 
 const HUD_INTERVAL_MS = 100
+/**
+ * Frames in a row that may throw once the city is up before it halts as a frame-loop fault (bootFailure.ts): one
+ * transient throw costs a frame, not the session; a throw on every frame is a stopped city with a card, not a frozen one.
+ */
+const FRAME_FAULTS = 30
 /** Where the cognition router's settings (the provider, each provider's server and model, the network key) are kept between visits. */
 const COGNITION_KEY = 'civic-simulation:cognition:v2'
 /** Where the local speech server's settings (its server, voice, model, auto) are kept between visits. */
@@ -196,6 +204,45 @@ function reboot(track: BootTrack): void {
   window.location.assign(url.toString())
 }
 
+/** The cards' 'Open the console': the ?boot=tty shell, which needs no GPU (the only console route on a touch screen). */
+const toConsole = (): void => reboot('tty')
+
+/**
+ * A graphics reset while the page was hidden (the player was in another app or tab, or switched away while the city
+ * loaded): once the page is visible again (at once, if it already is) it restarts by itself, at most once per
+ * AUTO_RELOAD_GAP_MS and never where the time of the last restart cannot be kept (bootFailure.ts autoReload); a reset
+ * seen while visible keeps the card and its Restart. Returns the unwatch.
+ */
+function reloadWhenVisible(hiddenAtLoss: boolean): () => void {
+  if (!hiddenAtLoss) return noop
+  const back = () => {
+    if (document.hidden) return
+    document.removeEventListener('visibilitychange', back)
+    let lastMs: number | null = null
+    let storageOk = true
+    try {
+      const v = localStorage.getItem(AUTO_RELOAD_KEY)
+      lastMs = v === null ? null : Number(v)
+    } catch {
+      storageOk = false
+    }
+    if (!autoReload({ lastMs, nowMs: Date.now(), hiddenAtLoss, storageOk })) return
+    try {
+      localStorage.setItem(AUTO_RELOAD_KEY, String(Date.now()))
+    } catch {
+      return
+    }
+    window.location.reload()
+  }
+  // A boot that failed in the background may only report it once the player is back: then it is now.
+  if (!document.hidden) {
+    back()
+    return noop
+  }
+  document.addEventListener('visibilitychange', back)
+  return () => document.removeEventListener('visibilitychange', back)
+}
+
 /**
  * Reloads the page on a map (the console's `map city|lakefront|default`): the choice is kept between visits, because
  * the desktop app has no address bar to say `?map=` in, and the URL's own map words are dropped so the kept choice
@@ -208,6 +255,8 @@ function remap(choice: 'city' | 'lakefront' | 'default'): void {
   url.searchParams.delete('region')
   window.location.assign(url.toString())
 }
+
+const noop = (): void => {}
 
 function readOptions(): Options {
   const q = new URLSearchParams(window.location.search)
@@ -247,16 +296,22 @@ function readOptions(): Options {
   }
 }
 
-const noop = (): void => {}
-
 /**
  * Track B: the bare console. Nothing of the city is built: no canvas, no Engine.create, no WebGPU adapter request,
  * no physics worker, no audio, no HUD. The terminal runs over the offline bridge (the identity commands work; the
- * rest says 'engine not running'); a `boot gui` result reloads into the city.
+ * rest says 'engine not running'); a `boot gui` result reloads into the city, and so does 'Back to the city', the one
+ * way back for a player who came here from a recovery card with only a pad or a touch screen (its A presses it).
  */
 function TtyShell() {
+  const back = useRef<HTMLDivElement>(null)
+  usePadNav(back)
   return (
     <main className="relative h-full w-full overflow-hidden bg-black">
+      <div ref={back} data-way-out="" className="absolute right-[max(0.75rem,env(safe-area-inset-right))] top-[max(0.75rem,env(safe-area-inset-top))] z-[10000]">
+        <button type="button" onClick={() => reboot('gui')} className="min-h-11 rounded-xl border border-white/25 bg-black/80 px-4 py-2 font-sans text-sm font-semibold text-slate-200 outline-none ring-white/40 hover:bg-white/10 focus-visible:ring-4">
+          Back to the city
+        </button>
+      </div>
       <Terminal bridge={TTY_BRIDGE} fullscreen onOpenChange={noop} onBoot={reboot} onMap={remap} />
     </main>
   )
@@ -286,8 +341,24 @@ function App() {
   // Sloane's spoken voice, one for the onboarding and the city (the link is filled in once the engine is up).
   const [link] = useState<SpeakerLink>(() => ({ sound: () => true, source: null }))
   const [speaker] = useState(() => new ConciergeSpeaker({ env: synthEnv(), sound: () => link.sound(), source: () => link.source }))
+  // A first visit is asked of nobody until a quick look says this browser can run the city at all (a secure page,
+  // navigator.gpu, a core adapter: gpuDevice.ts probeGpu); one that cannot gets the recovery card instead of the whole
+  // onboarding and a metropolis build first. The splash stays up meanwhile. Never for ?boot=tty, which needs no GPU.
+  const [probe, setProbe] = useState<GpuProbe | null>(null)
+  const probing = options.boot !== 'tty' && onboard
+  useEffect(() => {
+    if (!probing) return
+    let live = true
+    void probeGpu(navigator.gpu, window.isSecureContext !== false, window.location.origin).then((p) => { if (live) setProbe(p) })
+    return () => { live = false }
+  }, [probing])
   if (options.boot === 'tty') return <TtyShell />
-  if (onboard && !outcome) return <Onboarding seed={options.seed} onDone={setOutcome} port={builderPort} voice={voice} speaker={speaker} />
+  if (onboard && !outcome) {
+    const first = firstScreen({ onboard, probe })
+    if (first === 'probing') return <BootVeil ready={false} onDone={noop} onConsole={toConsole} stage={BOOT_STAGE.probe} />
+    if (first === 'card' && probe && !probe.ok) return <RecoveryCard failure={classify(probe.error, pageEnv())} onConsole={toConsole} />
+    return <Onboarding seed={options.seed} onDone={setOutcome} port={builderPort} voice={voice} speaker={speaker} />
+  }
   const chosen = outcome?.saved ?? saved
   const choice = mapWanted(new URLSearchParams(window.location.search), chosen, regionFirst, loadMapChoice())
   const zone = zoneOf(chosen?.place) ?? ZONE.metropolis
@@ -338,7 +409,10 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
   const [hud, setHud] = useState<SipocSnapshot | null>(null)
   const [hudVisible, setHudVisible] = useState(true)
   const [adapter, setAdapter] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  // Why the boot failed (whatever was thrown, words from bootFailure.ts classify), or null while nothing has.
+  const [error, setError] = useState<{ cause: unknown } | null>(null)
+  // What the boot is doing, for the veil's 'Still starting' line (bootFailure.ts BOOT_STAGE).
+  const [stage, setStage] = useState<string>(BOOT_STAGE.map)
   // Read synchronously, so the very first render already knows a returning visitor.
   const [profile, setProfile] = useState<Profile | null>(loadProfile)
   // The look the visitor chose (lookStore.ts), or null: then their own seed's look (the first use of profile.seed),
@@ -434,28 +508,55 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
     let raf = 0
     let cancelled = false
     let lastHud = 0
+    /** Whether the HUD has had its first snapshot (the veil lifts on it), and how many frames in a row have thrown. */
+    let shown = false
+    let throws = 0
+    /** Stops watching for the page's return after a graphics reset in the background (reloadWhenVisible). */
+    let unwatch = noop
 
     // The single requestAnimationFrame loop: the engine advances one synchronized step per tick and
-    // React only sees a snapshot every HUD_INTERVAL_MS, so the HUD never re-renders at frame rate.
+    // React only sees a snapshot every HUD_INTERVAL_MS, so the HUD never re-renders at frame rate. A frame that throws
+    // never ends the loop silently: before the first snapshot it is the boot's failure (the card); after it, the loop
+    // carries on, and FRAME_FAULTS throws in a row halt the city as a frame-loop fault (the card again).
     const loop = (now: number) => {
       if (!engine || engine.halted) return
-      engine.frame(now)
-      if (now - lastHud > HUD_INTERVAL_MS) {
-        lastHud = now
-        const s = engine.snapshot()
-        if (recruiter) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, activityText(answering, engine.speaking))
-        setHud(s)
+      try {
+        engine.frame(now)
+        if (now - lastHud > HUD_INTERVAL_MS) {
+          lastHud = now
+          const s = engine.snapshot()
+          if (recruiter) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, activityText(answering, engine.speaking))
+          setHud(s)
+          shown = true
+        }
+        throws = 0
+      } catch (err) {
+        // A frame that halted the city itself (a Ring-0 panic throws out of the frame) keeps that halt's own screen.
+        if (engine.halted) return
+        console.error(err)
+        const why = `${FRAME_FAULT} ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`
+        if (!shown) {
+          setError({ cause: err })
+          engine.halt(why)
+          return
+        }
+        if (++throws >= FRAME_FAULTS) {
+          engine.halt(why)
+          return
+        }
       }
       raf = requestAnimationFrame(loop)
     }
     const onResize = () => engine?.resize()
 
-    loadMap(plan).then((region) => Engine.create(canvas, { ...options, region })).then(
+    const onStage = (st: keyof typeof BOOT_STAGE) => { if (!cancelled) setStage(BOOT_STAGE[st]) }
+    loadMap(plan).then((region) => Engine.create(canvas, { ...options, region }, onStage)).then(
       (e) => {
         if (cancelled) {
           e.dispose()
           return
         }
+        onStage('crowd')
         engine = e
         engineRef.current = e
         // Recruitment: voice (on-device) and the console, over the engine's narrow host. A halt closes the microphone.
@@ -533,6 +634,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           tasks.dispose()
           r.dispose()
           setLocked(reason)
+          // A graphics reset in the background restarts once the player is back (once per two minutes at most).
+          if (haltClass(reason) === 'gpu-reset') unwatch = reloadWhenVisible(document.hidden)
         }
         if (termOpenRef.current || lookOpenRef.current) e.input.suspend(true)
         setEngine(e)
@@ -587,11 +690,16 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
         }
         raf = requestAnimationFrame(loop)
       },
-      (err: unknown) => setError(err instanceof Error ? err.message : String(err)),
+      (err: unknown) => {
+        setError({ cause: err })
+        // The phone took the GPU back while the city loaded in the background: restart once the player is back.
+        if (!cancelled && err instanceof WebGPUUnavailableError && err.code === 'gpu-reset' && err.background) unwatch = reloadWhenVisible(true)
+      },
     )
     return () => {
       cancelled = true
       cancelAnimationFrame(raf)
+      unwatch()
       window.removeEventListener('resize', onResize)
       engineRef.current = null
       speaker.stop()
@@ -606,6 +714,10 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
       engine?.dispose()
     }
   }, [options, plan, wearLook, link, roster, speaker])
+
+  // The boot's failure first; else a halt that is not an audit. Words for this device (bootFailure.ts).
+  const env = useMemo(() => pageEnv(), [])
+  const failure = error !== null ? classify(error.cause, env) : locked !== null && haltClass(locked) !== 'audit' ? explainHalt(locked, env) : null
 
   return (
     <main className="relative h-full w-full overflow-hidden bg-slate-900">
@@ -657,36 +769,12 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
       )}
       <Terminal ref={termRef} bridge={bridge} onOpenChange={onTermOpen} onBoot={reboot} onMap={remap} />
       {/* From the first render: React swaps index.html's identical splash for this, which fades into the city
-          once the first snapshot exists (or lifts to show the error card). */}
-      <BootVeil ready={hud !== null || error !== null} onDone={() => setVeilDone(true)} />
-      {locked && (
-        <div role="alertdialog" aria-live="assertive" className="absolute inset-0 z-[10000] flex items-center justify-center bg-black p-8 font-mono text-sm text-slate-200">
-          <div className="max-w-2xl">
-            <div className="text-xs tracking-[0.3em] text-rose-400">[RING-0 FATAL]</div>
-            <div className="mt-3 text-2xl font-semibold text-white">SYSTEM LOCKED</div>
-            <div className="mt-2 break-words text-slate-300">{locked}</div>
-            <div className="mt-6 text-xs text-slate-500">
-              The Ring-0 audit found a broken invariant after the physics step. Physics and rendering are halted and the
-              hardware bus has been disconnected. Reload the page to start again.
-            </div>
-          </div>
-        </div>
-      )}
-      {error && (
-        <div className="absolute inset-0 flex items-center justify-center p-8 font-sans text-sm">
-          <div className="max-w-xl rounded-2xl border border-white/70 bg-white/80 p-6 text-slate-900 shadow-2xl backdrop-blur-xl">
-            <div className="mb-3 flex items-center gap-3">
-              <MonolithLogo size={36} title="" />
-              <div className="text-lg font-semibold">{BRAND.name} couldn’t start</div>
-            </div>
-            <div>{error}</div>
-            <div className="mt-3 text-xs text-slate-500">
-              {BRAND.name} needs WebGPU: a current Chrome, Edge or Brave on desktop or Android, or Safari 26 on iPhone, iPad and Mac.
-              The crowd simulation runs as WGSL compute and has no WebGL path.
-            </div>
-          </div>
-        </div>
-      )}
+          once the first snapshot exists (or lifts to show the recovery card or the lock screen). */}
+      <BootVeil ready={hud !== null || error !== null || locked !== null} onDone={() => setVeilDone(true)} onConsole={toConsole} stage={stage} />
+      {/* A real Ring-0 audit failure keeps its lock screen; a graphics reset, a realm fault or a frame loop that kept
+          failing, like a failed boot, gets the recovery card (bootFailure.ts). Both have Restart, focused. */}
+      {failure === null && locked !== null && <LockScreen reason={locked} />}
+      {failure && <RecoveryCard failure={failure} adapter={adapter} onConsole={toConsole} />}
     </main>
   )
 }

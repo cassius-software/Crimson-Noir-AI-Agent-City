@@ -124,7 +124,7 @@ test('app: ?boot=tty mounts the full-screen terminal alone over the offline brid
   assert.match(reboot, /window\.location\.assign\(url\.toString\(\)\)/)
   // The engine's useEffect lives in the GUI shell, the only one that reads the canvas.
   const gui = between(app, 'function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: Options; plan: MapPlan; mentored: boolean; voice: Voice; speaker: ConciergeSpeaker; link: SpeakerLink }) {', 'export default App')
-  assert.ok(gui.includes('Engine.create(canvas, { ...options, region })'))
+  assert.ok(gui.includes('Engine.create(canvas, { ...options, region }, onStage)'))
   assert.equal(app.match(/Engine\.create\(/g)?.length, 1)
   assert.match(gui, /<Terminal ref=\{termRef\} bridge=\{bridge\} onOpenChange=\{onTermOpen\} onBoot=\{reboot\} onMap=\{remap\} \/>/)
   // A touch screen has no tilde key: the touch menu's Console item opens it through the handle.

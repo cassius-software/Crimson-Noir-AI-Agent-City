@@ -9,7 +9,9 @@
  * under a `…` continuation prompt) so operator scripts can be typed in place.
  * A local model's answer (`ask`) streams in live under the scrollback until its final lines replace it.
  * With `fullscreen` (Track B, ?boot=tty) it is the whole page instead: open from the first render, full height,
- * black, and no key closes it; a `boot` result is handed to the host (onBoot), which reloads on that track.
+ * black, and no key closes it; a `boot` result is handed to the host (onBoot), which reloads on that track. Its text
+ * starts below the host's 'Back to the city' button (App.tsx TtyShell: the same top offset plus the button's 44 px
+ * and a gap), so the button never covers the first lines on a phone; change the two together.
  * One R0 machine (`r0`, repl.ts) lives for the life of the console, so definitions outlive a line; a typed key or
  * token never enters the history as typed (redactForHistory).
  * A touch screen has no tilde key: the host opens the console through its handle (TerminalHandle.open, the touch
@@ -47,7 +49,8 @@ background:rgba(0,0,0,0.85);color:#c8c8c8;font:13px/1.4 ${FONT};font-variant-lig
 border-bottom:1px solid #3a3a3a;user-select:text;-webkit-user-select:text;cursor:text;
 transform:translateY(-100%);visibility:hidden;pointer-events:none;transition:transform 140ms ease-in,visibility 0s linear 140ms}
 .r0-root[data-open]{transform:none;visibility:visible;pointer-events:auto;transition:transform 160ms ease-out,visibility 0s}
-.r0-root[data-full]{height:100%;min-height:0;transform:none;visibility:visible;pointer-events:auto;border-bottom:0;background:#000;transition:none}
+.r0-root[data-full]{height:100%;min-height:0;transform:none;visibility:visible;pointer-events:auto;border-bottom:0;background:#000;transition:none;
+padding-top:calc(max(0.75rem,env(safe-area-inset-top,0px)) + 3.25rem)}
 .r0-root ::selection{background:#c8c8c8;color:#000}
 .r0-scroll{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;white-space:pre-wrap;overflow-wrap:anywhere;
 scrollbar-width:thin;scrollbar-color:#4a4a4a transparent}
@@ -235,6 +238,9 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
         return
       }
       if (inside) return // the prompt's own handler takes it (and stops it at the React root)
+      // Aimed at a way out over the console (RecoveryCard.tsx's screens, TtyShell's 'Back to the city' in App.tsx):
+      // its focused button keeps Enter and Space.
+      if (e.target instanceof Element && e.target.closest('[role="alertdialog"], [data-way-out]')) return
       // Aimed elsewhere (focus fell to the page): keep it from the game, and pull typing back to the prompt.
       // Chords are left alone so Ctrl+C still copies a selection made in the scrollback.
       e.stopImmediatePropagation()

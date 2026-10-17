@@ -427,7 +427,25 @@ export interface SimBridge { t: 'bridge'; buffer: SharedArrayBuffer }
 
 export interface SimReady { t: 'ready'; meta: SimMeta }
 export interface SimPanic { t: 'panic'; reason: string }
-export interface SimFailure { t: 'error'; message: string }
+/**
+ * Why the realm could not start, when the worker can tell (the recovery card words it: bootFailure.ts): no WebGPU
+ * inside the worker although the page has it, or no WebAssembly for Rapier.
+ */
+export type SimFailureCode = 'worker-gpu' | 'wasm'
+export const SIM_FAILURE_CODES: readonly SimFailureCode[] = Object.freeze(['worker-gpu', 'wasm'])
+/** The realm could not start (`init: …`); `code` when the worker knows the class of the failure. */
+export interface SimFailure { t: 'error'; message: string; code?: SimFailureCode }
+
+/** An Error carrying a SimFailureCode (the worker throws it; simHost forwards the code; SimClient keeps it). */
+export function coded(code: SimFailureCode, message: string): Error & { code: SimFailureCode } {
+  return Object.assign(new Error(message), { code })
+}
+
+/** The SimFailureCode an error carries, or undefined (a DOMException's numeric `code` is not one). */
+export function failureCode(e: unknown): SimFailureCode | undefined {
+  const c = typeof e === 'object' && e !== null ? (e as { code?: unknown }).code : undefined
+  return SIM_FAILURE_CODES.includes(c as SimFailureCode) ? (c as SimFailureCode) : undefined
+}
 
 export type ToWorker = SimInit | SimBridge | StepRequest
 export type FromWorker = SimReady | StepState | SimPanic | SimFailure

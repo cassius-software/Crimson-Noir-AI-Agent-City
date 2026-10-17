@@ -26,11 +26,20 @@
  * - pwa: the installable copy a phone plays (tools/web/pwa.mjs, built from dist/ into a temporary folder) served as a
  *   static host serves it, to an iPhone: the manifest read through the page's policy, the icons, the service worker
  *   installed, the second load cross-origin isolated by the worker, and the city started from the phone's copy with
- *   the host gone.
+ *   the host gone;
+ * - fail: the ways out when the city cannot start or stops, each in its own browser: navigator.gpu taken away (the
+ *   card before a first visit's onboarding, at desktop and phone size and in Firefox on Android with Open in Chrome
+ *   first, Restart focused and taken by Enter, the pad's
+ *   d-pad and A reaching the console shell, and its Back to the city back again), a genuinely insecure origin
+ *   (lan.test mapped to this machine over plain http), no adapter, a boot that never finishes (the 'Still starting'
+ *   line, naming the step), a download cut off mid-script (the index.html watchdog), a slow download (the splash
+ *   before the module has arrived), and, after a boot, the page's GPU device lost (the reset card, no reload while the page is
+ *   visible), a realm halt for a lost crowd device, and a frame that throws on every frame. Where a failure is the
+ *   point, the GPU-error check is left out; nothing may throw uncaught in any of them.
  * Every scenario also fails on an exception in the page, a GPU validation error, a lost device, or the crowd's flow
  * field falling back to the CPU. It serves dist/ itself on 127.0.0.1 with the two isolation headers, writes a
  * screenshot per scenario to --out (default: a temporary directory), prints one row per check and exits 1 if any fails.
- * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,...]. Needs `npm run build`.
+ * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,...,fail]. Needs `npm run build`.
  * What breaks if it is removed? Nothing at runtime; the page loses its only end-to-end check in a browser, and with it
  * the proof that the city renders and that every control reaches the avatar.
  */
@@ -44,6 +53,8 @@ import { APP_NAME, build as buildWeb, ICONS } from '../web/pwa.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const DIST = join(ROOT, 'dist', 'index.html')
+/** How long `?smoke-slow` holds the page's module back (serve). */
+const SLOW_HOLD_MS = 8_000
 
 const arg = (name) => {
   const i = process.argv.indexOf(`--${name}`)
@@ -102,21 +113,31 @@ const PAD_SHIM = `(() => {
 /** Counts animation frames, so a check can wait for the page to have read its input n more times. */
 const FRAME_COUNTER = `(() => { window.__smokeFrames = 0; const tick = () => { window.__smokeFrames++; requestAnimationFrame(tick) }; requestAnimationFrame(tick) })()`
 
-/** Serves dist/index.html (and nothing else) on 127.0.0.1 with the isolation headers the dev and preview servers send. */
+/**
+ * Serves dist/index.html (and nothing else) on 127.0.0.1 with the isolation headers the dev and preview servers send.
+ * `?smoke-cut` serves the first half of it, as a download cut off in the middle of the page's script would arrive.
+ * `?smoke-slow` holds back the page's module script (everything from it on) for SLOW_HOLD_MS, as a phone on a slow
+ * connection waits for the 10 MB of it.
+ */
 async function serve() {
   const html = readFileSync(DIST)
   const server = createServer((req, res) => {
-    const path = new URL(req.url ?? '/', 'http://x').pathname
+    const url = new URL(req.url ?? '/', 'http://x'), path = url.pathname
     if (path !== '/' && path !== '/index.html') { res.writeHead(404).end(); return }
+    const body = url.searchParams.has('smoke-cut') ? html.subarray(0, Math.floor(html.length / 2)) : html
     res.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8',
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',
       'Cache-Control': 'no-store',
-    }).end(html)
+    })
+    const held = url.searchParams.has('smoke-slow') ? html.indexOf('<script type="module"') : -1
+    if (held < 0) { res.end(body); return }
+    res.write(html.subarray(0, held))
+    setTimeout(() => res.end(html.subarray(held)), SLOW_HOLD_MS)
   })
   await new Promise((r) => server.listen(0, '127.0.0.1', r))
-  return { server, origin: `http://127.0.0.1:${server.address().port}` }
+  return { server, origin: `http://127.0.0.1:${server.address().port}`, port: server.address().port }
 }
 
 /** A page, its errors and its console, with the helpers the scenarios share. */
@@ -136,9 +157,14 @@ class Page {
   async goto(url) {
     await this.b.send('Page.navigate', { url })
   }
-  /** Waits for the engine (window.__SIM__) and a few rendered frames. */
+  /**
+   * Waits for the engine (window.__SIM__), a few rendered frames, and the boot veil lifting: it takes every touch and
+   * click while it covers the page (BootVeil.tsx holds it half a second after the first frame), and a person waits for
+   * the city to show before touching it too.
+   */
   async booted() {
     await this.waitFor('!!window.__SIM__ && window.__SIM__.snapshot().output.fps > 0', BOOT_MS)
+    await this.waitFor(`!document.querySelector('.boot-veil[data-phase="cover"]')`, 30_000)
   }
   snap() {
     // On foot the avatar's capsule; at the wheel the driven car's pose (POSE: x at 0, z at 2, 28 floats a body).
@@ -182,8 +208,8 @@ class Page {
   }
 }
 
-async function open(chrome, { mobile = false, width = 960, height = 540 } = {}) {
-  const b = await Browser.launch(chrome, [...SOFTWARE_WEBGPU, `--window-size=${width},${height}`])
+async function open(chrome, { mobile = false, width = 960, height = 540, args = [] } = {}) {
+  const b = await Browser.launch(chrome, [...SOFTWARE_WEBGPU, `--window-size=${width},${height}`, ...args])
   const page = new Page(b)
   await b.send('Page.addScriptToEvaluateOnNewDocument', { source: PAD_SHIM })
   await b.send('Page.addScriptToEvaluateOnNewDocument', { source: FRAME_COUNTER })
@@ -243,6 +269,8 @@ const SCENARIOS = {
       const f0 = s.crowdFrames
       const advanced = await p.waitFor(`window.__SIM__.snapshot().process.crowdFrames > ${f0 + 2}`, 60_000).then(() => true, () => false)
       check(advanced, 'desktop: the crowd simulation advances', `${f0} -> ${(await p.snap()).crowdFrames}`)
+      const cards = await p.eval(`document.querySelectorAll('[data-failure]').length + (window.__bootDone === true ? 0 : 100)`)
+      check(cards === 0, 'desktop: a city that started has no recovery card, and the boot watchdog stood down', `cards+watchdog=${cards}`)
 
       // Walk: W held (layout-independent code), the avatar moves.
       await p.mouse('mousePressed', 480, 270, 1)
@@ -748,6 +776,256 @@ const SCENARIOS = {
       rmSync(dir, { recursive: true, force: true })
     }
   },
+
+  /**
+   * The ways out (src/07_Execute_Actions/RecoveryCard.tsx, bootFailure.ts, index.html's watchdog), each in its own
+   * browser so one cannot leave the next a broken profile. The exception check stays; the GPU-error check is left out
+   * where a lost or missing GPU is the point.
+   */
+  async fail(chrome, origin, port) {
+    const cases = [
+      ['no WebGPU, before the onboarding', () => noGpu(chrome, origin, false)],
+      ['no WebGPU on a phone', () => noGpu(chrome, origin, true)],
+      ['no WebGPU in Firefox on Android', () => androidFirefox(chrome, origin)],
+      ['insecure origin', () => insecure(chrome, port)],
+      ['no adapter', () => cardFor(chrome, `${origin}/?${LIGHT}`, 'no-adapter', 'No graphics adapter for WebGPU', NO_ADAPTER, 'fail-no-adapter')],
+      ['a boot that never finishes', () => stillStarting(chrome, origin)],
+      ['a download cut off', () => cutOff(chrome, origin)],
+      ['a slow download', () => slowDownload(chrome, origin)],
+      ['the page\'s device lost after the boot', () => pageDeviceLost(chrome, origin)],
+      ['a realm halt for a lost crowd device', () => afterBoot(chrome, origin, 'halt',
+        `window.__SIM__.engine.halt('Sensing Failure: pedestrian sensing stopped (GPU device lost (unknown): test).')`, 'gpu-reset', 'The graphics device was reset')],
+      ['a frame that throws', () => afterBoot(chrome, origin, 'frame',
+        `(() => { window.__SIM__.engine.frame = () => { throw new Error('smoke: a frame that throws') } })()`, 'frame', 'The city stopped drawing')],
+    ]
+    for (const [name, run] of cases) {
+      try { await run() } catch (e) { check(false, `fail: ${name} ran to the end`, e instanceof Error ? e.message.slice(0, 400) : String(e)) }
+    }
+  },
+}
+
+/** Takes WebGPU away from the page (the init script runs before the page's own scripts). */
+const NO_GPU = `delete Navigator.prototype.gpu`
+/** A browser that has WebGPU but no adapter for this page (core or compatibility). */
+const NO_ADAPTER = `GPU.prototype.requestAdapter = function () { return Promise.resolve(null) }`
+/** An adapter request that never answers: the boot hangs with no failure to show. */
+const HUNG = `GPU.prototype.requestAdapter = function () { return new Promise(() => {}) }`
+/**
+ * The page's device, whose loss the test decides: requestDevice's device is handed over with a `lost` that also
+ * settles when window.__smokeLose(message) is called, as a driver reset would settle it (reason 'unknown'). Only the
+ * page's device: an init script does not reach the physics worker. headless Chrome has no way to reset its software
+ * adapter on demand, and the page's own destroy() reads as 'destroyed', which is not a loss.
+ */
+const LOSABLE = `(() => {
+  const ask = GPUAdapter.prototype.requestDevice
+  GPUAdapter.prototype.requestDevice = async function (...a) {
+    const d = await ask.apply(this, a)
+    let lose
+    const fake = new Promise((r) => { lose = r })
+    Object.defineProperty(d, 'lost', { configurable: true, value: Promise.race([d.lost, fake]) })
+    window.__smokeLose = (message) => lose({ reason: 'unknown', message })
+    return d
+  }
+})()`
+
+/** The card on screen: its kind, headline, the text of the focused element, and its buttons. */
+const CARD = `(() => {
+  const c = document.querySelector('[role="alertdialog"][data-failure]')
+  if (!c) return null
+  return { kind: c.dataset.failure, headline: (c.querySelector('h1') || {}).textContent || '', focused: document.activeElement ? document.activeElement.textContent : '',
+    buttons: [...c.querySelectorAll('button')].map((b) => b.textContent), text: c.textContent }
+})()`
+
+/** Waits for the card of `kind` and checks its headline, its buttons and that Restart has focus. */
+async function expectCard(p, what, kind, headline, buttons = ['Restart', 'Open the console']) {
+  const card = await p.waitFor(`(() => { const c = ${CARD}; return c && c.kind === ${JSON.stringify(kind)} && c })()`, BOOT_MS).catch(() => null)
+  const seen = card ?? (await p.eval(CARD).catch(() => null))
+  check(!!card && card.headline === headline, `${what}: the ${kind} card says “${headline}”`, seen ? `${seen.kind}: ${seen.headline}` : 'no card')
+  check(!!card && JSON.stringify(card.buttons) === JSON.stringify(buttons) && card.focused === 'Restart', `${what}: ${buttons.join(' and ')}, Restart focused`, card ? `${card.buttons} / focus ${card.focused}` : '')
+  return card
+}
+
+/** Opens `url` in a fresh browser with `init` run before the page's scripts, and checks the card of `kind`. */
+async function cardFor(chrome, url, kind, headline, init, shot) {
+  const p = await open(chrome)
+  try {
+    await p.b.send('Page.addScriptToEvaluateOnNewDocument', { source: init })
+    await p.goto(url)
+    await expectCard(p, `fail ${kind}`, kind, headline)
+    await p.shot(shot)
+    check(p.errors.length === 0, `fail ${kind}: no exception in the page`, p.errors.slice(0, 3).join(' | ').slice(0, 400))
+  } finally { await p.b.close() }
+}
+
+/**
+ * Firefox on an Android phone (no WebGPU there), as a link tapped in another app opens it: the card's first button,
+ * focused, hands the page to Chrome (its intent: address is pinned in bootFailure.test.ts; headless Chrome has no
+ * Android to hand it to). Restart and Open the console stay.
+ */
+async function androidFirefox(chrome, origin) {
+  const what = 'fail no-api (Firefox on Android)'
+  const p = await open(chrome)
+  try {
+    await p.b.send('Emulation.setUserAgentOverride', { userAgent: 'Mozilla/5.0 (Android 14; Mobile; rv:144.0) Gecko/144.0 Firefox/144.0', platform: 'Linux armv8l' })
+    await p.b.send('Emulation.setDeviceMetricsOverride', { width: 412, height: 915, deviceScaleFactor: 1, mobile: true, screenOrientation: { type: 'portraitPrimary', angle: 0 } })
+    await p.b.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 })
+    await p.b.send('Page.addScriptToEvaluateOnNewDocument', { source: NO_GPU })
+    await p.goto(`${origin}/?debug&audio=0`)
+    const card = await p.waitFor(`(() => { const c = ${CARD}; return c && c.kind === 'no-api' && c })()`, BOOT_MS).catch(() => null)
+    check(!!card && card.headline === 'Open this page in Chrome', `${what}: the card says “Open this page in Chrome”`, card ? card.headline : 'no card')
+    check(!!card && JSON.stringify(card.buttons) === JSON.stringify(['Open in Chrome', 'Restart', 'Open the console']) && card.focused === 'Open in Chrome',
+      `${what}: Open in Chrome first and focused, then Restart and Open the console`, card ? `${card.buttons} / focus ${card.focused}` : '')
+    await p.shot('fail-no-gpu-android-firefox')
+    check(p.errors.length === 0, `${what}: no exception in the page`, p.errors.slice(0, 3).join(' | ').slice(0, 400))
+  } finally { await p.b.close() }
+}
+
+/**
+ * navigator.gpu gone on a first visit (no ?onboarding=0): the probe shows the card instead of the onboarding. Enter
+ * restarts (the page loads again, card and all); on the desktop a pad's d-pad moves to Open the console and A opens
+ * the console shell.
+ */
+async function noGpu(chrome, origin, phone) {
+  const what = phone ? 'fail no-api (phone)' : 'fail no-api'
+  const p = await open(chrome, { mobile: phone })
+  try {
+    await p.b.send('Page.addScriptToEvaluateOnNewDocument', { source: NO_GPU })
+    await p.goto(`${origin}/?debug&audio=0`)
+    const card = await expectCard(p, what, 'no-api', phone ? 'WebGPU is turned off in Safari' : 'This browser has no WebGPU')
+    check(!!card && /needs WebGPU/.test(card.text), `${what}: the card says what the city needs`)
+    const behind = await p.eval(`document.querySelectorAll('canvas').length + document.querySelectorAll('[role="alertdialog"]').length`)
+    check(behind === 1, `${what}: the card alone, no onboarding or city behind it`, `canvases + dialogs = ${behind}`)
+    await p.shot(phone ? 'fail-no-gpu-phone' : 'fail-no-gpu')
+    if (phone) {
+      // Held upright: the card fits the narrow screen (it scrolls inside itself where it must, never the page).
+      await p.b.send('Emulation.setDeviceMetricsOverride', { width: IPHONE.height, height: IPHONE.width, deviceScaleFactor: 1, mobile: true, screenOrientation: { type: 'portraitPrimary', angle: 0 } })
+      await p.frames(2)
+      const fits = await p.eval(`(() => { const r = document.querySelector('[role="alertdialog"] > div').getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight && document.documentElement.scrollWidth <= innerWidth })()`)
+      check(fits, `${what}: upright, the card fits the screen with no sideways scroll`)
+      await p.shot('fail-no-gpu-phone-upright')
+      return
+    }
+    // Enter on the focused Restart: the page loads again (the old document is marked, so only a new one answers).
+    await p.eval('window.__smokeOld = true')
+    await p.b.send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'Enter', key: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: '\r' })
+    await p.b.send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'Enter', key: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 })
+    const again = await p.waitFor(`!window.__smokeOld && !!document.querySelector('[data-failure="no-api"]')`, 60_000).then(() => true, () => false)
+    check(again, `${what}: Enter restarts (the page loads again)`)
+    // A pad: the d-pad moves focus to Open the console, A presses it.
+    await p.eval('window.__smokePad.connect(0); window.__smokePad.set([0, 0, 0, 0], [])')
+    await p.frames(4)
+    await p.eval('window.__smokePad.set([0, 0, 0, 0], [13])')
+    await p.frames(4)
+    await p.eval('window.__smokePad.set([0, 0, 0, 0], [])')
+    const moved = await p.waitFor(`document.activeElement && document.activeElement.textContent === 'Open the console'`, 10_000).then(() => true, () => false)
+    check(moved, `${what}: the pad's d-pad moves focus to Open the console`)
+    await p.frames(4)
+    await p.eval('window.__smokePad.set([0, 0, 0, 0], [0])')
+    const tty = await p.waitFor(`location.search.includes('boot=tty') && !!document.querySelector('[aria-label$="Ring-0 terminal"][data-full]')`, 60_000).then(() => true, () => false)
+    check(tty, `${what}: the pad's A on Open the console opens the console shell (?boot=tty)`)
+    await p.shot('fail-no-gpu-console')
+    // And back: the console shell's pad (a new page: the pad connects again, A first held, as a real pad would be).
+    await p.eval('window.__smokePad.connect(0); window.__smokePad.set([0, 0, 0, 0], [0])')
+    await p.frames(4)
+    check(await p.eval(`location.search.includes('boot=tty')`), `${what}: an A held into the console shell presses nothing`)
+    await p.eval('window.__smokePad.set([0, 0, 0, 0], [])')
+    await p.frames(4)
+    await p.eval('window.__smokePad.set([0, 0, 0, 0], [0])')
+    const back = await p.waitFor(`!location.search.includes('boot=tty') && !!document.querySelector('[data-failure="no-api"]')`, 60_000).then(() => true, () => false)
+    check(back, `${what}: the pad's A on the console's Back to the city returns to the city (its card here)`)
+    check(p.errors.length === 0, `${what}: no exception in the page`, p.errors.slice(0, 3).join(' | ').slice(0, 400))
+  } finally { await p.b.close() }
+}
+
+/** A genuinely insecure origin: lan.test resolves to this machine and the page is opened over plain http. */
+async function insecure(chrome, port) {
+  // Chrome would first try lan.test over https (HttpsUpgrades); plain http is the point here.
+  const p = await open(chrome, { args: ['--host-resolver-rules=MAP lan.test 127.0.0.1', '--disable-features=Translate,MediaRouter,HttpsUpgrades'] })
+  try {
+    await p.goto(`http://lan.test:${port}/?${LIGHT}`)
+    const card = await expectCard(p, 'fail insecure', 'insecure', 'This page needs a secure address')
+    const secure = await p.eval('window.isSecureContext')
+    check(secure === false && !!card && card.text.includes(`http://lan.test:${port}`), 'fail insecure: the page really is insecure, and the card names its address', `isSecureContext=${secure}`)
+    check(!!card && !/needs WebGPU/.test(card.text), 'fail insecure: no WebGPU line (the address is the problem)')
+    await p.shot('fail-insecure')
+    check(p.errors.length === 0, 'fail insecure: no exception in the page', p.errors.slice(0, 3).join(' | ').slice(0, 400))
+  } finally { await p.b.close() }
+}
+
+/** An adapter request that never answers: after the veil's slow time the 'Still starting' line, nothing failed. */
+async function stillStarting(chrome, origin) {
+  const p = await open(chrome)
+  try {
+    await p.b.send('Page.addScriptToEvaluateOnNewDocument', { source: HUNG })
+    await p.goto(`${origin}/?${LIGHT}`)
+    const line = await p.waitFor(`(() => { const s = document.querySelector('.boot-veil [role="status"]'); return s && /Still starting/.test(s.textContent) && [...s.querySelectorAll('button')].map((b) => b.textContent).join(',') })()`, 90_000).catch(() => null)
+    check(line === 'Restart,Open the console', 'fail stalled: after 20 s the veil says it is still starting, with Restart and Open the console', String(line))
+    const said = await p.eval(`document.querySelector('.boot-veil [role="status"] p')?.textContent ?? ''`)
+    check(said.includes('asking for the graphics device'), 'fail stalled: and names the step it is stuck on (the adapter request)', said)
+    check(!(await p.eval(CARD)), 'fail stalled: and nothing is declared failed')
+    await p.shot('fail-still-starting')
+    check(p.errors.length === 0, 'fail stalled: no exception in the page', p.errors.slice(0, 3).join(' | ').slice(0, 400))
+  } finally { await p.b.close() }
+}
+
+/** The first half of the page: the module is cut off, never runs, and the watchdog shows its card at load. */
+async function cutOff(chrome, origin) {
+  const p = await open(chrome)
+  try {
+    await p.goto(`${origin}/?smoke-cut&${LIGHT}`)
+    const name = await p.waitFor(`document.querySelector('meta[name="application-name"]')?.content`, 30_000)
+    await expectCard(p, 'fail cut-off', 'page', `${name} couldn’t start`, ['Restart'])
+    await p.shot('fail-cut-off')
+  } finally { await p.b.close() }
+}
+
+/**
+ * A slow download: while the page's module is still on its way, the splash is already there (the module ends the body:
+ * vite.config.ts moduleAfterBody), and once it arrives the city starts as usual.
+ */
+async function slowDownload(chrome, origin) {
+  const p = await open(chrome)
+  try {
+    await p.goto(`${origin}/?smoke-slow&${LIGHT}`)
+    const early = await p.waitFor(`document.readyState === 'loading' && !window.__bootDone && !!document.querySelector('#root .boot-veil') && 'splash'`, SLOW_HOLD_MS - 2_000).catch(() => null)
+    const painted = await p.eval(`performance.getEntriesByType('paint').map((e) => e.name).join(',')`)
+    check(early === 'splash', 'fail slow download: the splash is on the page while the module is still downloading', `paint entries: ${painted || 'none'}`)
+    await p.booted()
+    check(true, 'fail slow download: and the city starts once it has arrived')
+    check(p.errors.length === 0, 'fail slow download: no exception in the page', p.errors.slice(0, 3).join(' | ').slice(0, 400))
+  } finally { await p.b.close() }
+}
+
+/** Boots the light city with the page's device losable, loses it, and checks the reset card stays (no reload while visible). */
+async function pageDeviceLost(chrome, origin) {
+  const p = await open(chrome)
+  try {
+    await p.b.send('Page.addScriptToEvaluateOnNewDocument', { source: LOSABLE })
+    await p.goto(`${origin}/?${LIGHT}`)
+    await p.booted()
+    await p.eval(`window.__smokeOld = true; window.__smokeLose('smoke: the driver reset')`)
+    await expectCard(p, 'fail reset', 'gpu-reset', 'The graphics device was reset')
+    await p.frames(30)
+    const stayed = await p.eval(`window.__smokeOld === true && document.visibilityState === 'visible' && localStorage.getItem('civic-simulation:gpu-reload:v1') === null`)
+    check(stayed, 'fail reset: lost while visible, the page does not reload by itself')
+    const halted = await p.eval('window.__SIM__.engine.halted')
+    check(halted === true, 'fail reset: the city halted (it draws nothing on a lost device)')
+    await p.shot('fail-reset')
+    check(p.errors.length === 0, 'fail reset: no exception in the page', p.errors.slice(0, 3).join(' | ').slice(0, 400))
+  } finally { await p.b.close() }
+}
+
+/** Boots the light city, runs `act` in the page, and checks the card of `kind`. */
+async function afterBoot(chrome, origin, name, act, kind, headline) {
+  const p = await open(chrome)
+  try {
+    await p.goto(`${origin}/?${LIGHT}`)
+    await p.booted()
+    await p.eval(act)
+    await expectCard(p, `fail ${name}`, kind, headline)
+    await p.shot(`fail-${name}`)
+    check(p.errors.length === 0, `fail ${name}: no exception in the page`, p.errors.slice(0, 3).join(' | ').slice(0, 400))
+  } finally { await p.b.close() }
 }
 
 async function main() {
@@ -763,12 +1041,12 @@ async function main() {
   mkdirSync(OUT, { recursive: true })
   console.log(`browser  ${chrome}`)
   console.log(`shots    ${OUT}`)
-  const { server, origin } = await serve()
+  const { server, origin, port } = await serve()
   try {
     for (const [name, run] of Object.entries(SCENARIOS)) {
       if (ONLY && !ONLY.includes(name)) continue
       const t0 = Date.now()
-      try { await run(chrome, origin) } catch (e) { check(false, `${name}: ran to the end`, e instanceof Error ? e.message.slice(0, 400) : String(e)) }
+      try { await run(chrome, origin, port) } catch (e) { check(false, `${name}: ran to the end`, e instanceof Error ? e.message.slice(0, 400) : String(e)) }
       console.log(`      ${name}: ${((Date.now() - t0) / 1000).toFixed(0)} s`)
     }
   } finally { server.close() }

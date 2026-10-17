@@ -8,14 +8,15 @@
  * What breaks if it is removed? The page builds the map on its own thread.
  */
 import LakefrontWorker from './lakefront.worker.ts?worker&inline'
-import { inlinePort, type BuilderPort } from './lakefrontClient.ts'
+import { inlinePort, reportingPort, type BuilderPort, type BuilderWorker } from './lakefrontClient.ts'
 import { trackWorker } from '../07_Execute_Actions/longTasks.ts'
 
 /** A port to the builder: a worker where the page has them, the inline builder otherwise. */
 export function builderPort(): BuilderPort {
   if (typeof Worker !== 'function') return inlinePort()
   try {
-    const worker = new LakefrontWorker({ name: 'lakefront' }) as unknown as BuilderPort
+    // Its failure as a whole (a script that does not load, an uncaught throw) reaches the client as an error.
+    const worker = reportingPort(new LakefrontWorker({ name: 'lakefront' }) as unknown as BuilderWorker)
     // Counted among the live worker threads (longTasks.ts) until the client terminates it.
     const untrack = trackWorker()
     const terminate = worker.terminate.bind(worker)

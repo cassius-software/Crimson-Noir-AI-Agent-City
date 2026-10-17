@@ -31,8 +31,9 @@ import { SIGNAL } from '../02_Define_The_Rules/civic.ts'
 import { applyCodeDissolve } from './codeDissolve.ts'
 import { applyMatrixMode, createMatrixMode, type MatrixMode } from './matrixMode.ts'
 import { EnvProbe } from './envProbe.ts'
+import { acquireDevice, adapterLine, WebGPUUnavailableError } from './gpuDevice.ts'
 
-export class WebGPUUnavailableError extends Error {}
+export { WebGPUUnavailableError } from './gpuDevice.ts'
 
 /**
  * Pins a SkyMesh to the far plane under either depth convention. three's SkyMesh sets its clip-space z to w, which is
@@ -96,7 +97,10 @@ export function tolerateIdentitySwizzle(proto: ViewMaker | undefined = (globalTh
 }
 
 export async function createRenderer(canvas: HTMLCanvasElement, pixelRatio: number, profile = false): Promise<Gpu> {
-  if (!('gpu' in navigator) || !navigator.gpu) throw new WebGPUUnavailableError('This browser does not expose WebGPU (navigator.gpu).')
+  // The device is asked for here, not by three (gpuDevice.ts): a core adapter as the physics worker asks, three's own
+  // features, and a coded error naming the real cause when there is none. Handed a device, three makes no request of
+  // its own and so never falls back to WebGL2, which would also claim the canvas for good.
+  const { adapter, device } = await acquireDevice(navigator.gpu, window.isSecureContext !== false, window.location.origin)
   tolerateIdentitySwizzle()
   // Reversed depth: a depth32float buffer that keeps near-equal precision out to the far plane, so the streets and
   // sidewalks laid 3.5 and 4.5 cm over the ground (regionWorld.ts) and the lake 2 cm over it do not fight the ground
@@ -105,12 +109,12 @@ export async function createRenderer(canvas: HTMLCanvasElement, pixelRatio: numb
   // (0.12 mm at 1,000 m). three flips the depth functions, the shadow bias and the clear value itself; the sky, which
   // puts itself on the far plane by hand, is told in buildWorld (skyAtFarPlane). WebGPU always honours the setting
   // (only the WebGL backend can refuse it), and createRenderer insists on the WebGPU backend below.
-  const renderer = new WebGPURenderer({ canvas, antialias: false, powerPreference: 'high-performance', trackTimestamp: profile, reversedDepthBuffer: true })
+  const renderer = new WebGPURenderer({ canvas, antialias: false, powerPreference: 'high-performance', trackTimestamp: profile, reversedDepthBuffer: true, device })
   await renderer.init()
-  const backend = renderer.backend as unknown as { isWebGPUBackend?: boolean; device?: GPUDevice; adapter?: GPUAdapter }
+  const backend = renderer.backend as unknown as { isWebGPUBackend?: boolean; device?: GPUDevice }
   if (!backend.isWebGPUBackend || !backend.device) {
-    renderer.dispose()
-    throw new WebGPUUnavailableError('WebGPU adapter unavailable; three.js fell back to WebGL2, which cannot run the WGSL crowd.')
+    releaseGpu({ renderer, device })
+    throw new WebGPUUnavailableError('no-adapter', 'WebGPU adapter unavailable; three.js fell back to WebGL2, which cannot run the WGSL crowd.')
   }
   renderer.setPixelRatio(pixelRatio)
   renderer.toneMapping = ACESFilmicToneMapping
@@ -119,16 +123,31 @@ export async function createRenderer(canvas: HTMLCanvasElement, pixelRatio: numb
   renderer.shadowMap.enabled = true
   // PCFSoftShadowMap was removed from three's WebGPU renderer; PCF with a blur radius replaces it.
   renderer.shadowMap.type = PCFShadowMap
-  const info = backend.adapter?.info ?? (backend.device as GPUDevice & { adapterInfo?: GPUAdapterInfo }).adapterInfo
-  const adapterInfo = info ? [info.vendor, info.architecture, info.description].filter(Boolean).join(' / ') : 'unknown adapter'
-  return { renderer, device: backend.device, adapterInfo }
+  // The device's own copy first (what the profile always read), the adapter's where a browser has no device copy.
+  const info = (device as GPUDevice & { adapterInfo?: GPUAdapterInfo }).adapterInfo ?? adapter.info
+  return { renderer, device, adapterInfo: adapterLine(info) }
 }
 
-/** The GPUBuffer three created for an attribute. Valid after the attribute has been drawn once. */
+/**
+ * Lets go of the page's GPU: three's resources, then the device. three destroys only a device it made itself, and this
+ * one is the page's (acquireDevice), so a disposed engine or a boot that failed partway destroys it here.
+ */
+export function releaseGpu(gpu: Pick<Gpu, 'renderer' | 'device'>): void {
+  void Promise.resolve(gpu.renderer.dispose()).catch(() => {}).finally(() => gpu.device.destroy())
+}
+
+/**
+ * The GPUBuffer three created for an attribute. Valid after the attribute has been drawn once. three draws nothing
+ * once its device is lost (Renderer._isDeviceLost: a phone taking the GPU back while the page was in the background),
+ * so a missing buffer then is a graphics reset, not a bug, and says so.
+ */
 export function gpuBufferOf(renderer: WebGPURenderer, attribute: BufferAttribute): GPUBuffer {
   const data = (renderer.backend as unknown as { get(o: object): { buffer?: GPUBuffer } }).get(attribute)
-  if (!data.buffer) throw new Error(`three has not allocated a GPU buffer for "${attribute.name}" yet`)
-  return data.buffer
+  if (data.buffer) return data.buffer
+  if ((renderer as unknown as { _isDeviceLost?: boolean })._isDeviceLost === true) {
+    throw new WebGPUUnavailableError('gpu-reset', `The GPU device was lost before the city's first frame ("${attribute.name}" was never drawn)`)
+  }
+  throw new Error(`three has not allocated a GPU buffer for "${attribute.name}" yet`)
 }
 
 /** Scale factors the Ring-0 operator may set on the lighting; the engine clamps them to LIGHT_TUNE_RANGE. */

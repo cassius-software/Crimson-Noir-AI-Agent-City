@@ -56,8 +56,19 @@ const MAX_COMMANDS = 64
 const MAX_BLIND_MS = 20_000
 /** The largest drift resync ('shift') the realm takes, m: the room's own bound on an honest page's drift on foot (mirror.node.ts MIRROR.drift.foot; mirror.node.test.ts holds them equal). */
 export const SHIFT_MAX = 0.25
-/** How long the crowd may take to deliver its first reading at boot, ms. */
-const CROWD_PRIME_MS = 10_000
+/** How long the crowd may take to deliver its first reading at boot, ms of the worker actually running (primeElapsed). */
+export const CROWD_PRIME_MS = 10_000
+/**
+ * The most one wait between two looks for the crowd's first reading counts towards CROWD_PRIME_MS, ms. The wait asks for
+ * 1 ms; a much longer one is the worker having been suspended (an iPhone switched to another app while the city
+ * started, the likeliest thing to do while it starts), not the GPU being slow, and the clock kept running meanwhile.
+ */
+export const PRIME_GAP_MS = 250
+
+/** Pure. The priming time that counts after one more wait from `last` to `now` (ms): the wait, capped at PRIME_GAP_MS. */
+export function primeElapsed(elapsed: number, last: number, now: number): number {
+  return elapsed + Math.min(Math.max(0, now - last), PRIME_GAP_MS)
+}
 /**
  * Beyond this age (s) a crowd reading is not trusted at all: every car is fed a person at the bumper and holds
  * until the sensor answers again. Younger readings are shortened continuously (#feedHazards).
@@ -301,11 +312,17 @@ export class SimCore {
     const core = new SimCore(physics, { ...o, cars, agents, seed: Math.floor(finite(o.seed)) >>> 0, spawn, spawns }, crowd, rooms ?? [])
     if (crowd) {
       core.#stepCrowd(0)
-      const t0 = now()
+      // Only the time the worker ran counts: a phone that suspended it while the player looked at another app comes
+      // back to the same window, not to a failure.
+      let primed = 0
+      let last = now()
       while (crowd.readout === null) {
         if (crowd.lost) throw new Error(`pedestrian sensing failed to start: ${crowd.lost}`)
-        if (now() - t0 > CROWD_PRIME_MS) throw new Error('pedestrian sensing failed to start: no reading from the GPU')
+        if (primed > CROWD_PRIME_MS) throw new Error('pedestrian sensing failed to start: no reading from the GPU')
         await new Promise((r) => setTimeout(r, 1))
+        const t = now()
+        primed = primeElapsed(primed, last, t)
+        last = t
       }
     }
     return core

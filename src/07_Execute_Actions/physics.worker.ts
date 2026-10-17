@@ -21,12 +21,19 @@ import type { Workplace } from '../01_Initialize_World/interiors.ts'
 import { createRoutingCore } from '../06_Make_Decisions/routingWasm.ts'
 import { useRoutingCore } from '../06_Make_Decisions/tracks.ts'
 import { createSimHost } from './simHost.ts'
-import { SimCore } from './simCore.ts'
+import { SimCore, type SimCoreOptions } from './simCore.ts'
+import { coded } from './simProtocol.ts'
 
 installAirgap(globalThis)
-// The track arithmetic as WebAssembly (routingWasm.ts): the fleet's rings are laid into its arena on first sight.
-// oxlint-disable-next-line react/rules-of-hooks -- not a React hook: tracks.ts takes its routing core
-useRoutingCore(createRoutingCore())
+// The track arithmetic as WebAssembly (routingWasm.ts): the fleet's rings are laid into its arena on first sight. The
+// core is optional (tracks.ts answers every call itself), so a browser that refuses it does not stop the worker here:
+// the realm still starts if it can, and says why if it cannot (Rapier needs WebAssembly too: realm below).
+try {
+  // oxlint-disable-next-line react/rules-of-hooks -- not a React hook: tracks.ts takes its routing core
+  useRoutingCore(createRoutingCore())
+} catch (e) {
+  console.warn(`[physics worker] the routing core did not load; the TypeScript tracks answer instead: ${e instanceof Error ? e.message : String(e)}`)
+}
 
 const scope = self as unknown as {
   postMessage(message: unknown, transfer: Transferable[]): void
@@ -40,15 +47,21 @@ const scope = self as unknown as {
  */
 async function gpuCrowd(agents: number, grid: FlowGrid, streets: StreetGrid | null, rooms: readonly Workplace[] | null): Promise<CrowdSim> {
   const gpu = scope.navigator.gpu
-  if (!gpu) throw new Error('WebGPU is not available inside the physics worker (the pedestrian sensing needs it there)')
+  if (!gpu) throw coded('worker-gpu', 'WebGPU is not available inside the physics worker (the pedestrian sensing needs it there)')
   const adapter = await gpu.requestAdapter({ powerPreference: 'high-performance' })
-  if (!adapter) throw new Error('no WebGPU adapter inside the physics worker')
+  if (!adapter) throw coded('worker-gpu', 'no WebGPU adapter inside the physics worker')
   const device = await adapter.requestDevice({ label: 'physics-realm crowd' })
   device.addEventListener('uncapturederror', (e) => console.error('[physics worker] crowd GPU error:', (e as GPUUncapturedErrorEvent).error.message))
   return CrowdSim.create(device, agents, grid, streets, rooms)
 }
 
-const handle = createSimHost((m, transfer) => scope.postMessage(m, transfer ?? []), (o) => SimCore.create(o, gpuCrowd))
+/** The realm, built on init. Rapier is WebAssembly: a browser with it switched off (Lockdown Mode, a policy) cannot build one. */
+function realm(o: SimCoreOptions): Promise<SimCore> {
+  if (typeof WebAssembly !== 'object') return Promise.reject(coded('wasm', 'WebAssembly is turned off in this browser (the physics needs it)'))
+  return SimCore.create(o, gpuCrowd)
+}
+
+const handle = createSimHost((m, transfer) => scope.postMessage(m, transfer ?? []), realm)
 // One message at a time, in arrival order; init is the only asynchronous one and the page waits for it.
 let queue: Promise<void> = Promise.resolve()
 scope.onmessage = (e) => {
