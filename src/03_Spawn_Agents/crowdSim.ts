@@ -19,6 +19,7 @@ import {
   type PassName,
 } from './crowdCompute.ts'
 import { AGENTS_RANGE, type CrowdReadout, type CrowdSensor, type CrowdStepInput } from './crowdSensor.ts'
+import { OperatorTrail } from './skills.ts'
 import { cpuFlowSolver, nearestOpen, type FlowGrid, type FlowSolver } from '../06_Make_Decisions/flowField.ts'
 import { createFlowTexture, FlowFieldGpu, writeFlowTexture } from '../06_Make_Decisions/flowFieldGpu.ts'
 import { packStreets, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
@@ -81,6 +82,8 @@ export class CrowdSim implements CrowdSensor {
    * every step; undefined without a window or without rooms: the procedural city's commute, the greedy walk.
    */
   readonly #routes: Uint32Array | undefined
+  /** The operator's way on foot (skills.ts OperatorTrail), from the avatar every step: what a recruit follows across a room. */
+  readonly #trail = new OperatorTrail()
 
   private constructor(device: GPUDevice, agentCount: number, grid: FlowGrid | null, streets: StreetGrid | null, rooms: readonly Workplace[] | null) {
     this.#device = device
@@ -244,9 +247,10 @@ export class CrowdSim implements CrowdSensor {
     const k = Math.max(1, Math.ceil(dt / CROWD_SUBSTEP - 1e-9))
     const h = dt / k
     const queue = this.#device.queue
+    this.#trail.update(input.player.x, input.player.z, input.player.visible)
     for (let sub = 1; sub <= k; sub++) {
       this.#frame++
-      packSimParams(this.#paramF32, this.#paramU32, this.#frame, this.agentCount, { ...input, dt: h, time: input.time - dt + h * sub }, this.#streets, this.#rooms, this.#routes)
+      packSimParams(this.#paramF32, this.#paramU32, this.#frame, this.agentCount, { ...input, dt: h, time: input.time - dt + h * sub }, this.#streets, this.#rooms, this.#routes, this.#trail)
       queue.writeBuffer(this.#params, 0, this.#paramBytes)
       // stats[0] (safety nudges) is cumulative and stats[4] (the Ring-0 flags) sticky; the per-step counters
       // between them, and the working count after them, are reset.

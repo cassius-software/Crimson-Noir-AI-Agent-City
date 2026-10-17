@@ -401,6 +401,49 @@ export function containInRoom(room: { cx: number; cz: number; side: Side; furnit
   return p
 }
 
+/**
+ * A room's glass in its own frame, [u0, v0, u1, v1] (crowd.wgsl pane): the back wall, the two side walls, and the
+ * doorway's wall either side of the opening, as the shell builds them.
+ */
+export function glassPanes(): readonly (readonly [number, number, number, number])[] {
+  const h = CITY.lotHalf, i = h - ROOM.wall, d = ROOM.door
+  return [[-h, -h, -i, h], [-i, -h, i, -i], [-i, i, i, h], [i, -h, h, -d], [i, d, h, h]]
+}
+
+/**
+ * Whether the segment from a to a + d passes through the open box (lo, hi) (crowd.wgsl hitsBox): a slab test. A segment
+ * along a face, or one that only touches it, does not.
+ */
+export function hitsBox(a: { u: number; v: number }, d: { u: number; v: number }, lo: { u: number; v: number }, hi: { u: number; v: number }): boolean {
+  let t0 = 0, t1 = 1
+  if (Math.abs(d.u) < 1e-6) {
+    if (a.u <= lo.u || a.u >= hi.u) return false
+  } else {
+    const ta = (lo.u - a.u) / d.u, tb = (hi.u - a.u) / d.u
+    t0 = Math.max(t0, Math.min(ta, tb)); t1 = Math.min(t1, Math.max(ta, tb))
+  }
+  if (Math.abs(d.v) < 1e-6) {
+    if (a.v <= lo.v || a.v >= hi.v) return false
+  } else {
+    const ta = (lo.v - a.v) / d.v, tb = (hi.v - a.v) / d.v
+    t0 = Math.max(t0, Math.min(ta, tb)); t1 = Math.min(t1, Math.max(ta, tb))
+  }
+  return t0 < t1
+}
+
+/**
+ * Whether the segment from a to b (city metres) crosses the room's glass, each pane grown by `pad` (crowd.wgsl
+ * crossesGlass): exact, in the room's frame, where the panes are boxes, so a line that clips a jamb's corner by a
+ * millimetre crosses it and one through the opening does not. The crowd asks it whether two people see each other
+ * (walled) and whether a last stretch cuts a room's containment; a car's driver is never put out where the line from
+ * the chassis reaches only through glass (carRig.ts exitPoint).
+ */
+export function crossesGlass(room: { cx: number; cz: number; side: Side }, a: { x: number; z: number }, b: { x: number; z: number }, pad = 0): boolean {
+  const p = toLocal(room, a.x, a.z), q = toLocal(room, b.x, b.z)
+  const d = { u: q.u - p.u, v: q.v - p.v }
+  return glassPanes().some(([u0, v0, u1, v1]) => hitsBox(p, d, { u: u0 - pad, v: v0 - pad }, { u: u1 + pad, v: v1 + pad }))
+}
+
 /** True when (x, z) is inside the walls of a room, the doorway's band included (checkCrowd's exemption). */
 export function insideRoom(room: { cx: number; cz: number; side: Side }, x: number, z: number): boolean {
   const { u, v } = toLocal(room, x, z)
