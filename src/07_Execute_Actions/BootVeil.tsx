@@ -4,11 +4,15 @@
 /**
  * Why does this file exist? It is the boot sequence: a black full-screen veil with the Monolith centred
  * on it while the GPU pipelines compile, then a fade from black straight into the first-person view. No
- * spinner, no bar, no text beyond an accessible label. It renders the same classes as the static splash
- * in index.html (whose <style> is their one definition), so when React mounts it takes over the page
+ * spinner, no bar, and no text beyond an accessible label until the city has kept the player waiting
+ * BOOT_VEIL.slowMs of visible time: then one quiet line says it is still starting and offers Restart and
+ * the console (RecoveryCard.tsx StillStarting). That line never fails the boot (a software adapter takes
+ * minutes), it only gives a player who has waited a way out. It renders the same classes as the static
+ * splash in index.html (whose <style> is their one definition), so when React mounts it takes over the page
  * pixel for pixel and nothing jumps.
  * What breaks if it is removed? The city pops in abruptly from a black page, half-built frames and the
- * first shader compiles are visible, and the HUD shows before there is anything to read.
+ * first shader compiles are visible, the HUD shows before there is anything to read, and a hung boot is a
+ * black screen with nothing to press.
  *
  * Layering: z-index 1000 (index.html) sits above the HUD, touch controls and Concierge, below the Ring-0
  * terminal (9999). The veil takes pointer events while it covers the page and none from the moment the
@@ -17,6 +21,8 @@
 import { useEffect, useRef, useState, type JSX } from 'react'
 import { BRAND } from '../brand.ts'
 import { MonolithLogo } from '../MonolithLogo.tsx'
+import { StillStarting } from './RecoveryCard.tsx'
+import { waitedFor } from './bootFailure.ts'
 
 const BOOT_VEIL = {
   /** Once ready, the mark stays at least this long, so a fast start still reads as a deliberate reveal. */
@@ -26,6 +32,11 @@ const BOOT_VEIL = {
   reducedFadeMs: 250,
   /** Extra wait before onDone if the transition never reports its end (hidden tab, no compositor). */
   graceMs: 150,
+  /**
+   * Visible time (ms) without a first frame before the 'Still starting' line and its buttons show. A hint, never a
+   * timeout: nothing is rejected, so the software adapter's minutes-long boot (the browser smoke) still completes.
+   */
+  slowMs: 20_000,
   ease: 'cubic-bezier(0.4, 0, 0.2, 1)',
 } as const
 
@@ -36,13 +47,29 @@ function prefersReducedMotion(): boolean {
 }
 
 /** `ready`: the first frames are on screen. `onDone` fires once, when the veil is fully transparent
- *  (it then renders nothing). */
-export function BootVeil({ ready, onDone }: { ready: boolean; onDone(): void }): JSX.Element | null {
+ *  (it then renders nothing). `onConsole`: the console's way out on the 'Still starting' line (none, no line). */
+export function BootVeil({ ready, onDone, onConsole }: { ready: boolean; onDone(): void; onConsole?: () => void }): JSX.Element | null {
   const [phase, setPhase] = useState<Phase>('cover')
   const [fadeMs, setFadeMs] = useState<number>(BOOT_VEIL.fadeMs)
+  const [slow, setSlow] = useState(false)
   const onDoneRef = useRef(onDone)
   const reported = useRef(false)
   useEffect(() => { onDoneRef.current = onDone }, [onDone])
+
+  // Not ready after slowMs of visible time: the line with its buttons (hidden time, as on a phone switched away, is
+  // not counted). Once shown it stays until the veil fades.
+  useEffect(() => {
+    if (ready || slow || phase !== 'cover' || !onConsole) return
+    let waited = 0
+    let last = performance.now()
+    const id = window.setInterval(() => {
+      const t = performance.now()
+      waited = waitedFor(waited, t - last, document.hidden)
+      last = t
+      if (waited >= BOOT_VEIL.slowMs) setSlow(true)
+    }, 1000)
+    return () => window.clearInterval(id)
+  }, [ready, slow, phase, onConsole])
 
   // Ready → hold → fade. Once fading, `ready` going false again does not bring the veil back.
   useEffect(() => {
@@ -72,8 +99,8 @@ export function BootVeil({ ready, onDone }: { ready: boolean; onDone(): void }):
   return (
     <div
       className="boot-veil"
-      role="img"
-      aria-label={`${BRAND.name} is starting`}
+      role={slow ? undefined : 'img'}
+      aria-label={slow ? undefined : `${BRAND.name} is starting`}
       aria-hidden={fading || undefined}
       data-phase={phase}
       style={fading ? { opacity: 0, pointerEvents: 'none', transition: `opacity ${fadeMs}ms ${BOOT_VEIL.ease}` } : undefined}
@@ -81,9 +108,10 @@ export function BootVeil({ ready, onDone }: { ready: boolean; onDone(): void }):
         if (e.target === e.currentTarget && e.propertyName === 'opacity') setPhase('done')
       }}
     >
-      <div className="boot-mark">
+      <div className="boot-mark" role={slow ? 'img' : undefined} aria-label={slow ? `${BRAND.name} is starting` : undefined}>
         <MonolithLogo title="" />
       </div>
+      {slow && !fading && onConsole && <StillStarting onConsole={onConsole} />}
     </div>
   )
 }
