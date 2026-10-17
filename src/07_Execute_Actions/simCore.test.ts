@@ -12,7 +12,8 @@
  * commands are refused unless the worker was built for ?debug; malformed, unknown or flooding commands are
  * counted and dropped; the Ring-0 audit runs in the realm right after the substeps and halts it for good on an
  * impact, a non-finite pedestrian or a lost sensor, and a frame whose flags halted it never ships; the fleet is
- * never larger than what the GPU senses; a recruitment request is decided on the realm's own readings of the
+ * never larger than what the GPU senses; a region's workplaces reach the crowd, wall its flow field and keep a driver
+ * who leaves a car indoors out of the glass; a recruitment request is decided on the realm's own readings of the
  * crowd (earshot, the sidewalk, the skill, the slots), answered by an event, carried to the crowd as a summons,
  * and released on every way an interview can end; and the message door (simHost) accepts one init, refuses everything
  * else it does not know, ignores any pedestrian data the page slips in, transfers the pose and crowd buffers
@@ -41,6 +42,9 @@ import { ACTIVITY, APPROACH_SECONDS, RALLY_RANGE, RECRUIT_SLOTS, RELEASE_DISTANC
 import type { SimEvent } from './simProtocol.ts'
 import { CITY, inLot } from '../01_Initialize_World/city.ts'
 import { SEG, cityStreetGrid, hSeg, streetCapacity, vSeg, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
+import { ROOM, WORKPLACE_KINDS, toLocal, toWorld, workplacesAt, type Workplace, type WorkplaceLot } from '../01_Initialize_World/interiors.ts'
+import { cellAt, type FlowGrid } from '../06_Make_Decisions/flowField.ts'
+import { exitPoint } from './carRig.ts'
 
 const H = 1 / 60
 const NO_FURNITURE = { lamps: [], trees: [], signals: [] }
@@ -1090,6 +1094,7 @@ test('tracks on: a step returns the pose buffer and the craft buffer, plain data
   const reference = new TrackFleet(buildTrackNetwork(11))
   assert.equal(sim.meta.craft, reference.count)
   assert.ok(sim.meta.craft > 900)
+  assert.equal(sim.meta.rooms, 6, 'the city\'s crowd has its six workplaces')
   const poses = new Float32Array(sim.meta.count * POSE.stride)
   const craft = new Float32Array(sim.meta.craft * TRACK_POSE.stride)
   const input = { dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds: [] }
@@ -1192,6 +1197,7 @@ test('a region with a street window: the fleet is seated on the window\'s rings 
   assert.equal(sim.meta.count, 12)
   assert.equal(sim.meta.craft, 0, 'no elevated loop, drones or planes over a region')
   assert.equal(sim.meta.rigSlots, 0)
+  assert.equal(sim.meta.rooms, 0, 'no workplaces sent: none')
   const poses = new Float32Array(sim.meta.count * POSE.stride)
   const start: [number, number][] = []
   let s = sim.step({ dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds: [] }, poses, new Float32Array(0))
@@ -1217,6 +1223,46 @@ test('a region with a street window: the fleet is seated on the window\'s rings 
   // Every car's streets are the window's: none drives the pedestrian line 4 or the dropped line 8 or the lake.
   const crowdCars = crowd.steps.at(-1)!.cars
   assert.equal(crowdCars.length, 12, 'the crowd senses every car')
+})
+
+test('a region with its workplaces: the crowd is handed the rooms, their boxes wall the flow field, and a driver who leaves a car indoors stays out of the glass', async () => {
+  const { region, streets } = windowedRegion()
+  // Six rooms along the window's third row of lots, every doorway on its line-3 street (the window's lots 1, 3, … 11).
+  const lots: WorkplaceLot[] = WORKPLACE_KINDS.map((kind, n) => ({ kind, k: 51 + 2 * n, m: 52, side: 0 }))
+  const rooms = workplacesAt(lots)
+  const boxes = rooms.flatMap((r) => [...r.shell, ...r.furniture].map((b) => b.box))
+  const room = rooms[0]
+  // A car in the robotics lab beside its +v wall, facing the back wall: its left is indoors, its right in the glass.
+  const car = toWorld(room, 8, 10.6), heading = Math.PI
+  const given: { grid: FlowGrid; rooms: readonly Workplace[] | null }[] = []
+  const stand = toWorld(room, 8, 7.4)
+  const sim = await SimCore.create({ seed: 5, cars: 1, agents: AGENTS, boxes, furniture: NO_FURNITURE, spawn: stand, debug: true, region, streets, workplaces: lots }, async (_agents, grid, _w, r) => {
+    given.push({ grid, rooms: r })
+    return new FakeCrowd()
+  })
+  assert.equal(given.length, 1)
+  assert.deepEqual(given[0].rooms, rooms, 'the crowd is handed the six rooms')
+  assert.equal(sim.meta.rooms, 6, 'and the page is told so (the browser smoke reads it)')
+  const { grid } = given[0]
+  const wall = toWorld(room, -CITY.lotHalf + ROOM.wall / 2, 0), hub = toWorld(room, ROOM.hub, 0)
+  assert.equal(grid.weight[cellAt(grid, wall.x, wall.z)], 0, 'the back wall blocks its cell')
+  assert.notEqual(grid.weight[cellAt(grid, hub.x, hub.z)], 0, 'the hub is open')
+  // Parked there, entered and left: put down indoors by the room's rule, which the lot rule alone would not.
+  const poses = new Float32Array(sim.meta.count * POSE.stride)
+  const step = (cmds: StepInput['cmds'] = []) => sim.step({ dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds }, poses)
+  step([{ c: 'dbgMode', i: 0, mode: 'parked' }, { c: 'recover', i: 0, x: car.x, z: car.z, heading }])
+  for (let i = 0; i < 60; i++) step()
+  assert.equal(step([{ c: 'interact' }]).driving, 0)
+  for (let i = 0; i < 30; i++) step()
+  const at = { x: poses[0], z: poses[2] }, h = poses[POSE.heading]
+  const indoors = exitPoint(at.x, at.z, h, rooms), lotRule = exitPoint(at.x, at.z, h)
+  assert.ok(Math.max(Math.abs(toLocal(room, lotRule.x, lotRule.z).u), Math.abs(toLocal(room, lotRule.x, lotRule.z).v)) > CITY.lotHalf - ROOM.wall - 0.3, 'the lot rule alone would put the driver in the glass')
+  const s = step([{ c: 'interact' }])
+  assert.equal(s.driving, -1)
+  assert.ok(Math.hypot(s.avatar.x - indoors.x, s.avatar.z - indoors.z) < 0.2, `put down at the room's exit: (${s.avatar.x.toFixed(2)}, ${s.avatar.z.toFixed(2)})`)
+  const l = toLocal(room, s.avatar.x, s.avatar.z)
+  assert.ok(Math.max(Math.abs(l.u), Math.abs(l.v)) < CITY.lotHalf - ROOM.wall - 0.3, `indoors, clear of the glass: (${l.u.toFixed(2)}, ${l.v.toFixed(2)})`)
+  assert.equal(sim.halted, false, sim.panic ?? '')
 })
 
 test('a street window seats no more cars than its rings hold: the fleet is clamped to the window\'s capacity', async () => {
