@@ -18,7 +18,7 @@ run_one() {
     page-tsc)      npx tsc -b ;;
     page-lint)     npx oxlint ;;
     page-test)     node --test "src/**/*.test.ts" ;;
-    page-build)    npm run build && ! grep -qE 'from *"node:(net|http|https|fs|child_process)"|replication\.node|mirror\.node' dist/index.html ;;
+    page-build)    npm run build && ! grep -qE 'from *"node:(net|http|https|fs|child_process)"|replication\.node|mirror\.node' dist/index.html && node tools/verify/page_dist.mjs ;;
     page-smoke)    node tools/net/smoke.mjs ;;
     native-test)   cargo test --manifest-path native/routing/Cargo.toml && cargo test --manifest-path native/kv-pager/Cargo.toml && cargo test --manifest-path native/kv-pager-wasm/Cargo.toml ;;
     rust-test)     (cd crimson_noir_os && cargo test --workspace --locked) ;;

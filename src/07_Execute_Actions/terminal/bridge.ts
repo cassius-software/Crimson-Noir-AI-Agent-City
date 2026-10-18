@@ -7,9 +7,9 @@
  * quality tier, audio, ghost view, drawing, captions, hardware pairing), the view-only pings and the player's look,
  * recruitment (asking someone nearby over by skill, or an Active recruit to a pinged point: the one knob that
  * reaches a pedestrian, and only through the physics worker's own checks), the swarm's memory (read, or erased on
- * command), the opt-in network session and, behind an explicit `operator unlock`, the operator tier
- * (sandboxed scripts, prompts to the local model, speech, tuning keys, physics harnesses, the local .agv recorder)
- * that the engine builds over its SimControls. A script, a prompt or speech runs only through the capability gateway:
+ * command), the opt-in network session, the model file kept in this page and, behind an explicit `operator unlock`,
+ * the operator tier (sandboxed scripts, prompts to the local model, speech, tuning keys, physics harnesses, the local
+ * .agv recorder) that the engine builds over its SimControls. A script, a prompt or speech runs only through the capability gateway:
  * while someone tethered to the operator has the skills it names, and no longer. The console itself holds no engine,
  * physics, agent, gateway or storage reference: capability only ever flows through here.
  * What breaks if it is removed? The terminal has nothing to observe or tune and does not compile.
@@ -183,6 +183,24 @@ export interface NetBridge {
   forget(): string
 }
 
+/**
+ * The model file kept in this page (09_Cognition/inPage.ts, the in-page provider): `ask file` and `ask gpu` reach it
+ * without `operator unlock`, since they keep a file or a setting and send no prompt. `pick` opens the browser's file
+ * picker, so the terminal calls it synchronously inside the Enter keydown (user activation), like pair(); it resolves
+ * with what was kept, or that nothing was chosen. `forget` drops the kept model of that name (every one, with no name),
+ * `load` loads the chosen one now (clearing a failed load or a crash mark from before), `unload` frees it, `gpu` says
+ * whether it runs on the GPU (auto: as this device suits), and `log` is the runtime's newest lines, oldest first. Each
+ * resolves with, or returns, one line for the console; each may throw or reject with the reason.
+ */
+export interface ModelBridge {
+  pick(): Promise<string>
+  forget(name?: string): Promise<string>
+  load(): Promise<string>
+  unload(): Promise<string>
+  gpu(mode: 'auto' | 'on' | 'off'): string
+  log(): readonly string[]
+}
+
 /** A ping's kind (08_Swarm/ping.ts PingKind): what the operator means by the mark. */
 export type PingKind = 'go' | 'look' | 'gather' | 'wait'
 
@@ -267,6 +285,8 @@ export interface TerminalBridge {
   net?: NetBridge
   /** Absent until the host keeps a look for the player (the terminal then says so). */
   look?: LookBridge
+  /** Absent when the host cannot keep a model file in this page (the terminal then says so). */
+  model?: ModelBridge
   /** Absent until the host keeps a roster of the player's own agents (the terminal then says so). */
   agent?: AgentBridge
   /** Absent until the host has a concierge that can speak (the terminal then says so). */
@@ -363,5 +383,6 @@ export function offlineBridge(brand: TerminalBridge['brand']): TerminalBridge {
     recruit: { ask: down, rally: down, listen: down, stop: down, install: down, dismiss: down, status: down, skills: () => [] },
     memory: { status: down, ledger: down, forget: down },
     look: { show: down, set: down },
+    model: { pick: down, forget: down, load: down, unload: down, gpu: down, log: down },
   }
 }

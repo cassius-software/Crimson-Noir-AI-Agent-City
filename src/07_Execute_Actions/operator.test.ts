@@ -11,7 +11,8 @@
  * in the same step and reports an abort at once; `gatedSay` never reaches the speech server when rejected, starts the
  * speech only through the lease at the first person bound, and cuts it the moment the tether breaks; the diary notes
  * every task for the people bound and answers carry what they remember; the API docs match the facade; the bridge
- * surface refuses everything while locked and runs every script, prompt and utterance through the gate. (The real
+ * surface refuses everything while locked and runs every script, prompt and utterance through the gate, and a model
+ * running in this page gives the swarm no endpoint to check (and its own words when no file is kept). (The real
  * gateway, 08_Swarm/taskRouter.ts, is proven against this tier in 08_Swarm/taskRouter.test.ts.)
  * What breaks if it is removed? A member leaking an engine reference, or a script escaping the sandbox's
  * shape or its tether, would only be found by an operator.
@@ -625,6 +626,49 @@ test('operatorBridge ask: locked, one answer at a time, a model must be chosen; 
   // The server did not answer: the status says so instead of failing.
   mind.installed = () => Promise.reject(new Error('no local model server is answering at http://localhost:12345'))
   assert.deepEqual(await op.askStatus(), { server: 'http://localhost:12345', model: null, installed: null, error: 'no local model server is answering at http://localhost:12345' })
+})
+
+/** A model running in this page as the router presents it (09_Cognition/router.ts): no address, chosen or found by auto. */
+class PageMind extends FakeMind {
+  readonly how: { provider: string; found?: string }
+  constructor(how: { provider: string; found?: string }) {
+    super()
+    this.how = how
+    this.server = 'this page'
+    this.model = 'tiny.gguf'
+  }
+  override settings() {
+    return { ...super.settings(), ...this.how, runtime: 'this browser runs it (one thread)', storage: 'kept in this page' }
+  }
+}
+
+test('a model running in this page (chosen, or found by auto) has no endpoint, so the swarm runs over it; with no file kept, the refusal says where to choose one', async () => {
+  for (const how of [{ provider: 'inpage' }, { provider: 'auto', found: 'inpage' }]) {
+    const mind = new PageMind(how)
+    const op = operatorBridge(fakeSim(), new FakeGate(), mind)
+    op.unlock()
+    const status = await op.askStatus()
+    assert.deepEqual([status.server, status.runtime, status.storage], ['this page', 'this browser runs it (one thread)', 'kept in this page'], 'the runtime and storage rows reach the console')
+    const run = op.swarm.run('name the parts', 1)
+    for (let i = 0; i < 50 && !mind.asked.length; i++) await ticks()
+    assert.equal(mind.asked.length, 1, `${JSON.stringify(how)}: the step was admitted and asked`)
+    mind.finish('The parts are three.')
+    const r = await within(run.result)
+    assert.deepEqual(r.steps.map((st) => [st.state, st.failed]), [['answered', []]], JSON.stringify(how))
+    // No model chosen (none kept, or the chosen one forgotten): refused before the gate is asked, both ways said.
+    mind.model = null
+    assert.throws(() => op.ask(['Rust'], 'hi'), /^Error: choose a model first: Menu › Model file, or ask file \(or ask model <name> for a file already kept: type ask to list them\)$/)
+  }
+  // The same 'this page' given as a server's address is no address on this machine: the loopback invariant refuses
+  // the step, so the run above went ahead only because a model in this page has no endpoint at all.
+  const served = new PageMind({ provider: 'ollama' })
+  const op = operatorBridge(fakeSim(), new FakeGate(), served)
+  op.unlock()
+  const r = await within(op.swarm.run('name the parts', 1).result)
+  assert.deepEqual(r.steps.map((st) => [st.state, st.failed]), [['refused', ['LoopbackOnly']]])
+  assert.equal(served.asked.length, 0)
+  served.model = null
+  assert.throws(() => op.ask(['Rust'], 'hi'), /^Error: choose a model first: ask model <name> \(type ask to list them\)$/)
 })
 
 test('leasedApi: the facade\'s shape, no safety member at any depth, frozen, plain arrows; every call goes through the lease, none once it refuses', () => {

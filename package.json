@@ -15,6 +15,7 @@
     "lint": "oxlint",
     "native:test": "cargo test --manifest-path native/routing/Cargo.toml && cargo test --manifest-path native/kv-pager/Cargo.toml && cargo test --manifest-path native/kv-pager-wasm/Cargo.toml",
     "native:wasm": "node tools/native/build-wasm.mjs",
+    "native:wllama": "node tools/native/wllama-pack.mjs",
     "preview": "vite preview",
     "serve:net": "node src/10_Network/replication.node.ts",
     "smoke:bridge": "node tools/net/bridge-smoke.mjs",
@@ -27,6 +28,7 @@
   },
   "dependencies": {
     "@dimforge/rapier3d-simd-compat": "^0.21.0",
+    "@wllama/wllama": "3.8.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "three": "^0.186.1"

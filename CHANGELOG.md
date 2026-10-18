@@ -15,6 +15,45 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **A model in the page itself (`ask provider inpage`).** A sixth provider answers with a GGUF model file the
+  operator picks (Menu › Model file on a touch screen, `ask file` in the console, or the file dropped on the city on a
+  computer), kept in the browser's own storage for the page and run inside it by llama.cpp compiled to WebAssembly
+  (wllama 3.8.1, llama.cpp b11364), with no server, no address and no request, so a phone gets a model of its own.
+  Picking a file keeps it (every file's header is read first, and a file that is not one whole model that writes text
+  is refused with its reason; split models are chosen as all their parts), chooses it and switches the provider to
+  `inpage`; a computer loads it at once, a phone at the first ask. `auto` looks for it after the three model servers
+  and before the Claude gateway (`ollama`, `llamacpp`, `openai`, `inpage`, `claude`), only when a file is kept and
+  chosen, and with nothing kept every look reads as before. The page decides where it runs and how large a model
+  may be from the device (`09_Cognition/inPagePlan.ts`): the GPU on a computer whose GPU device has shader-f16, the
+  processor on phones (`ask gpu auto|on|off` changes it), threads only on a cross-origin isolated page, a context
+  of 8,192 tokens on a computer and 4,096 on a phone (never more than the model was trained on), and size limits per device (on a computer's processor a
+  warning above 3 GB and a refusal above 3.75 GB, since a page has 4 GB of memory in all; on a phone 1 GB and the
+  lesser of 2 GB and 40 % of its memory; on the lite profile 0.6 GB and 1.5 GB). While it loads or answers, the
+  city's quality is held under a cap (`governor.ts hold`: Low on an integrated GPU, Minimal on a phone, Lite on the
+  lite profile), and nothing under the hold counts against a tier. `ask file load|unload|forget <name>|log` and `ask
+  gpu` work without `operator unlock`; `ask` alone gains `runtime` and `storage` rows. A crash guard keeps a model
+  the page died loading from loading again on its own until `ask file load` (a page that closes or a tab still
+  loading in another window is not taken for a crash); a GPU load that fails is tried once on
+  the processor; a phone unloads the model after a minute in the background, and every device after 10 minutes idle;
+  every load and answer is raced against watchdogs, so a damaged runtime or a stalled one fails instead of hanging.
+  The cloud fallback never moves its prompts. The runtime is the one dependency added (`@wllama/wllama`, exact), and
+  its WebAssembly module is committed gzipped in `third_party/wllama/3.8.1/` with its sums, import list, licence and
+  notices, embedded in `dist/index.html` as base64 and checked against its sha256 by the build and again by the page
+  before it runs; the page grows by about 3.7 MB, to about 14 MB, and stays one file. Only
+  `09_Cognition/wllamaRuntime.ts` names wllama: it switches wllama's CDN build off the moment it makes one, hands it a
+  cache that keeps nothing, and never calls its download paths, which `10_Network/airgap.test.ts` now pins.
+  `tools/verify/page_dist.mjs` (after every CI build) holds `dist/` to exactly `index.html`, a size budget, no `.gguf`
+  and the reviewed hosts, and `tools/verify/wasm_airgap.py` gains a third policy that holds the pinned module's
+  bytes and imports to what was reviewed, with no npm. NOTICE.md, LICENSE and `docs/ip-audit.md` name wllama, llama.cpp
+  and what is compiled into the module. CI's browser smoke runs it in Chrome with a tiny generated model
+  (`tools/browser/tinyGguf.mjs`): picked at the console and from the Menu on the lite profile, loaded, answering,
+  stopped, kept across a reload, the crash guard, a swarm step, the city's tier held while it works and given back
+  after, and the installed copy's model answering with the host gone, with no request off the page's origin from the
+  page or any of wllama's workers. A page opened from a file cannot run it (Chromium refuses wllama's module worker on
+  an opaque origin): it keeps nothing and says so, which the smoke checks too. Checked by hand in a headless Chromium
+  141: a prompt too long, a file that is not a model, a context too large for the page's memory, a damaged runtime,
+  an unload during an answer, a stop in a long prefill, and one thread not isolated. Not tried: a real model, an Android phone, a real GPU, the Windows app's WebView2. Firefox and
+  Safari (the iPhone included) do not run it yet: the script answers there, and `ask` says why.
 - **A model on this machine answers with nothing typed at the console.** The model provider is now `auto` unless you choose one
   (`09_Cognition/router.ts`): at an ask it asks Ollama (`:11434`), a llama.cpp server (`:8080`) and an
   OpenAI-compatible server such as LM Studio (`:1234`) for their models at once, each for at most 2 s, and answers
@@ -100,7 +139,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   takes Enter from a card over it. Found on a real Android phone: a GPU the phone took back while the city loaded in
   the background (switching to another app) showed "three has not allocated a GPU buffer for crowd.look yet"; it is
   now the graphics-reset card, and the page restarts by itself once the player is back. The "Still starting" line
-  names the step the boot is on. The page's 10 MB script moved to the end of the page, so a slow connection shows the
+  names the step the boot is on. The page's script (about 14 MB) moved to the end of the page, so a slow connection shows the
   splash while it downloads instead of a blank page (the browser smoke holds the script back and checks). Firefox,
   Samsung Internet and in-app browsers on Android, which have no WebGPU, get **Open in Chrome** as the card's first
   button (an intent: link; the page still names no address off the machine). A first visit
@@ -128,8 +167,8 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   Pages when someone runs it (it never runs on its own, and needs Pages turned on once); Tailscale serves it to your
   own devices only. CI's browser job installs it in Chrome as an iPhone and starts it with the host gone. Not yet
   tried on a real iPhone: Safari's WebGPU in the physics worker, the home-screen launch, the headers from a service
-  worker in Safari, and heat and memory over a long session. On a phone there is no model provider (they run on a
-  computer's loopback), so Sloane speaks from her script.
+  worker in Safari, and heat and memory over a long session. On an iPhone there is no model provider (the servers
+  run on a computer's loopback, and Safari cannot run the model in the page yet), so Sloane speaks from her script.
 - **The city played in a real browser in CI** (`tools/browser/smoke.mjs`, the `browser` job in `ci.yml`). Chromium
   boots the built page on its software WebGPU adapter (SwiftShader) and plays it through the same events a person
   makes: as a desktop (keys, a mouse drag, a pad, the console, a car entered, driven and left), as an iPhone (the touch

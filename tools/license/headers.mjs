@@ -10,7 +10,7 @@
  * license-headers); `node tools/license/headers.mjs apply` writes the missing headers in place and leaves correct
  * ones alone. A header goes at the top of the file, after any line that must stay first (a shebang, a Dockerfile
  * `# syntax=` directive, a PowerShell `#Requires`). Files whose text is hashed or sealed (containment.*), data,
- * lockfiles, JSON and prose are not headed.
+ * lockfiles, JSON and prose are not headed, and nothing under third_party/ (other authors' code, pinned as published).
  * What breaks if it is removed? A new file ships without saying who owns it and under which licence, and nothing
  * notices.
  */
@@ -45,6 +45,12 @@ export const HEADERS = {
  */
 export const PROPRIETARY_DIRS = ['src', 'crimson_noir_os', 'native', 'world', 'brand', 'src-tauri']
 export const MIT_DIRS = ['tools', 'deploy', '.github', 'docs']
+/**
+ * Never headed, whatever a file in them is: third-party code pinned as its authors publish it (third_party/wllama: the
+ * in-page model runtime's module, its sums and its notices). It is theirs, under their licences, and a header of ours
+ * would both misstate that and change bytes whose hashes are checked.
+ */
+export const THIRD_PARTY_DIRS = ['third_party']
 const ROOT_FILES = {
   'index.html': 'proprietary',
   'vite.config.ts': 'proprietary',
@@ -55,6 +61,7 @@ const ROOT_FILES = {
 
 export function licenseOf(rel) {
   const [head] = rel.split('/')
+  if (THIRD_PARTY_DIRS.includes(head)) return null
   if (rel in ROOT_FILES) return ROOT_FILES[rel]
   if (PROPRIETARY_DIRS.includes(head)) return 'proprietary'
   if (MIT_DIRS.includes(head)) return 'mit'

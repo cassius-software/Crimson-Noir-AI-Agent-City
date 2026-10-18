@@ -11,7 +11,7 @@
  *   capability gateway (08_Swarm/taskRouter.ts) is that check, and its verdict is recorded here.
  * - ConductScreen14A: the prompt a role is given, and the answer it gives, pass the 14A screen (conduct.ts).
  * - LoopbackOnly: the model endpoint the step would reach is on this machine (airgap.ts loopbackServer), or there is
- *   none at all (the scripted provider).
+ *   none at all (the scripted provider, or a model running in this page).
  * - BudgetWithinQuota: steps, prompt and answer length and tokens stay within QUOTA.
  * - ProvenanceChained: the audit chain so far verifies, so no step runs on a record that has been tampered with.
  * What this is and is not: every check here is a rule over text, settings and counts, applied the same way every
@@ -37,7 +37,7 @@ export const INVARIANT_TEXT: Readonly<Record<Invariant, string>> = Object.freeze
   HumanOverrideSupreme: 'a run the operator has stopped admits no further step, whatever else holds',
   CapabilityTethered: "a step runs only while someone tethered to the operator has its role's skill (the capability gateway decides)",
   ConductScreen14A: 'the prompt a role is given and the answer it gives both pass the 14A screen (a lexicon; the model under the conduct core is the second layer)',
-  LoopbackOnly: 'the model endpoint a step reaches is on this machine, or there is none (the scripted provider)',
+  LoopbackOnly: 'the model endpoint a step reaches is on this machine, or there is none (the scripted provider, or a model running in this page)',
   BudgetWithinQuota: 'steps, prompt length, answer length and tokens stay within the quota',
   ProvenanceChained: 'the hash-chained audit trail verifies before every step; a tampered record stops the run',
 })

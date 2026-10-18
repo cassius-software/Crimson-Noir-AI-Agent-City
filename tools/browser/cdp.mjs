@@ -7,7 +7,10 @@
  * answers to file descriptor 4, each message a JSON text ended by a NUL byte. One page is opened and attached in
  * flattened mode, so every command names its session. The browser smoke test (smoke.mjs) is built on it, and the
  * desktop launcher (tools/web/launch.mjs) finds its browser and runs its --check with it; nothing in the shipped page
- * imports it.
+ * imports it. Two more things for a test that must prove a page reaches nothing off this machine: loopbackOnly(), the
+ * switches and environment that leave the browser no name to resolve but 127.0.0.1 and no proxy to go round that, and
+ * watchTargets(), which attaches every worker the page starts (and every worker those start), records every request,
+ * socket and security message from each of them, and audits them.
  * What breaks if it is removed? The browser smoke test cannot start a browser, and the launcher cannot find one.
  */
 import { spawn } from 'node:child_process'
@@ -29,6 +32,27 @@ export const SOFTWARE_WEBGPU = Object.freeze([
   '--use-gl=angle',
   '--enable-unsafe-swiftshader',
 ])
+
+/** The host rules that leave a browser no name to resolve but this machine's address: every other request fails before it leaves. */
+export const LOOPBACK_RULES = 'MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'
+
+const RULES_SWITCH = '--host-resolver-rules='
+
+/**
+ * `args` and `env` for a browser that can reach nothing but this machine. Chrome reads one --host-resolver-rules
+ * switch, so every one in `args` is merged into a single switch, the caller's own rules first (the first rule that maps
+ * a host wins, so a `MAP lan.test 127.0.0.1` still maps), then LOOPBACK_RULES. --no-proxy-server is added, and every
+ * *_proxy variable is left out of the environment: Chrome on Linux honours them, and a proxy resolves names itself,
+ * past the rules.
+ */
+export function loopbackOnly(args = [], env = process.env) {
+  const own = args.filter((a) => a.startsWith(RULES_SWITCH)).map((a) => a.slice(RULES_SWITCH.length).replace(/^"(.*)"$/, '$1').trim()).filter(Boolean)
+  const rest = args.filter((a) => !a.startsWith(RULES_SWITCH) && a !== '--no-proxy-server')
+  return {
+    args: [...rest, `${RULES_SWITCH}${[...own, LOOPBACK_RULES].join(', ')}`, '--no-proxy-server'],
+    env: Object.fromEntries(Object.entries(env).filter(([k]) => !/_proxy$/i.test(k))),
+  }
+}
 
 /** Where a Chrome or Chromium usually lives, most specific first. `CHROME` (or --chrome) overrides all of them. */
 function candidates() {
@@ -115,14 +139,17 @@ export class Browser {
     })
   }
 
-  /** Starts the browser and opens one blank page. `args` are extra switches (SOFTWARE_WEBGPU, a window size). */
-  static async launch(chrome, args = []) {
+  /**
+   * Starts the browser and opens one blank page. `args` are extra switches (SOFTWARE_WEBGPU, a window size); `env`
+   * is the browser's environment (this process's by default; loopbackOnly() gives one without proxies).
+   */
+  static async launch(chrome, args = [], { env = process.env } = {}) {
     const profile = mkdtempSync(join(tmpdir(), 'agent-city-smoke-'))
     const child = spawn(chrome, [
       '--headless', '--remote-debugging-pipe', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
       '--no-sandbox', '--mute-audio', '--disable-background-timer-throttling', '--disable-renderer-backgrounding',
       '--disable-backgrounding-occluded-windows', '--disable-features=Translate,MediaRouter', ...args, 'about:blank',
-    ], { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] })
+    ], { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'], env })
     const browser = new Browser(child, profile)
     const { targetId } = await browser.send('Target.createTarget', { url: 'about:blank' }, '')
     const { sessionId } = await browser.send('Target.attachToTarget', { targetId, flatten: true }, '')
@@ -193,4 +220,109 @@ export class Browser {
     }
     try { rmSync(this.#profile, { recursive: true, force: true, maxRetries: 3 }) } catch { /* a locked profile on Windows */ }
   }
+}
+
+/** The targets a page's scripts can start that run code of their own: workers of every kind. */
+const WORKER_TYPES = new Set(['worker', 'shared_worker', 'service_worker'])
+
+/**
+ * Everything a page and every worker it starts sent, as watchTargets() recorded it:
+ * - `requests`: each Network.requestWillBeSent, with the kind of target that sent it ('page', 'worker'…);
+ * - `failed`: each Network.loadingFailed, with its URL, its error and why it was blocked (a CSP refusal reads 'csp');
+ * - `sockets`: each WebSocket and WebTransport opened (requestWillBeSent never shows them);
+ * - `security`: each Log.entryAdded whose source is 'security' (a worker's CSP violation shows only there);
+ * - `discovered` and `attached`: the worker targets the browser said were created, and those this watch attached
+ *   (each with the kind of target that started it: a worker's own workers are `nested` in the audit);
+ * - `errors`: the commands a target did not take (a short-lived worker gone before them).
+ */
+export class TargetWatch {
+  /** sessionId -> { type, url, targetId } for the page and every attached worker. */
+  sessions = new Map()
+  discovered = new Map()
+  attached = new Map()
+  requests = []
+  failed = []
+  sockets = []
+  security = []
+  errors = []
+
+  /**
+   * What was recorded, judged: the requests whose URL `allowed` refuses, every socket, every security message, and the
+   * workers discovered but never attached.
+   */
+  audit(allowed) {
+    const workers = {}
+    for (const t of this.attached.values()) workers[t.type] = (workers[t.type] ?? 0) + 1
+    return {
+      requests: this.requests.length,
+      fromWorkers: this.requests.filter((r) => r.type !== 'page').length,
+      offOrigin: this.requests.filter((r) => !allowed(r.url)),
+      sockets: [...this.sockets],
+      security: [...this.security],
+      discovered: this.discovered.size,
+      attached: this.attached.size,
+      missing: [...this.discovered.entries()].filter(([id]) => !this.attached.has(id)).map(([, t]) => t),
+      workers,
+      nested: [...this.attached.values()].filter((t) => WORKER_TYPES.has(t.parent)).length,
+      errors: this.errors.length,
+    }
+  }
+}
+
+/**
+ * Watches the browser's page and every worker it starts, at any depth. Target.setAutoAttach (flattened, so each
+ * worker gets a session of its own) is sent on the page and sent again on every worker session as it attaches: a
+ * worker's own workers (wllama's pthread workers) are attached only then. Network and Log are enabled on every
+ * session, and Target.setDiscoverTargets lists every worker the browser creates, so a worker never attached shows as
+ * discovered and missing. `wait` (waitForDebuggerOnStart) holds each new worker until it is set up; a service worker
+ * is then released first and set up after, since Network.enable on a paused service worker never answers.
+ * Call it before the page navigates.
+ */
+export async function watchTargets(browser, { wait = false } = {}) {
+  const w = new TargetWatch()
+  const typeOf = (sid) => w.sessions.get(sid)?.type ?? (sid ? 'unknown' : 'browser')
+  const urls = new Map()
+  const instrument = async (sid, type, waiting) => {
+    const send = (method, params = {}) => browser.send(method, params, sid).catch((e) => { w.errors.push({ type, method, error: e.message }) })
+    const setUp = () => Promise.all([
+      send('Network.enable'),
+      send('Log.enable'),
+      send('Target.setAutoAttach', { autoAttach: true, flatten: true, waitForDebuggerOnStart: wait }),
+    ])
+    if (!waiting) return setUp()
+    if (type === 'service_worker') {
+      // Released first: the commands go out in the order sent, so the worker runs before Network.enable reaches it.
+      const run = send('Runtime.runIfWaitingForDebugger')
+      await Promise.all([run, setUp()])
+      return
+    }
+    await setUp()
+    await send('Runtime.runIfWaitingForDebugger')
+  }
+  browser.on('Target.targetCreated', ({ targetInfo: t }) => {
+    if (WORKER_TYPES.has(t.type)) w.discovered.set(t.targetId, { type: t.type, url: t.url })
+  })
+  browser.on('Target.attachedToTarget', (p, parent) => {
+    const t = p.targetInfo
+    w.sessions.set(p.sessionId, { type: t.type, url: t.url, targetId: t.targetId })
+    // `parent`: the kind of target whose session attached it ('page', or 'worker' for a worker's own worker).
+    if (WORKER_TYPES.has(t.type)) w.attached.set(t.targetId, { type: t.type, url: t.url, parent: typeOf(parent) })
+    void instrument(p.sessionId, t.type, p.waitingForDebugger === true)
+  })
+  browser.on('Network.requestWillBeSent', (p, sid) => {
+    urls.set(`${sid}:${p.requestId}`, p.request.url)
+    w.requests.push({ type: typeOf(sid), url: p.request.url })
+  })
+  browser.on('Network.loadingFailed', (p, sid) => {
+    w.failed.push({ type: typeOf(sid), url: urls.get(`${sid}:${p.requestId}`) ?? '', error: p.errorText ?? '', blocked: p.blockedReason ?? null })
+  })
+  browser.on('Network.webSocketCreated', (p, sid) => w.sockets.push({ type: typeOf(sid), kind: 'WebSocket', url: p.url }))
+  browser.on('Network.webTransportCreated', (p, sid) => w.sockets.push({ type: typeOf(sid), kind: 'WebTransport', url: p.url }))
+  browser.on('Log.entryAdded', ({ entry }, sid) => {
+    if (entry.source === 'security') w.security.push({ type: typeOf(sid), text: String(entry.text ?? '').slice(0, 300), url: entry.url ?? '' })
+  })
+  w.sessions.set(browser.sessionId, { type: 'page', url: '', targetId: '' })
+  await browser.send('Target.setDiscoverTargets', { discover: true }, '')
+  await instrument(browser.sessionId, 'page', false)
+  return w
 }

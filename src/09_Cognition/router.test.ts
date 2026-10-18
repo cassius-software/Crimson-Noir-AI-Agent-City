@@ -7,18 +7,19 @@
  * answers with the same system prompt (the conduct core first); the local providers still address only this machine
  * and the Claude provider only https or a loopback gateway; the key is kept masked and never shown whole; and the
  * operator tier's whole path (the console, the gateway, the 14A screen) runs the same over any provider: an
- * inadmissible prompt reaches no provider at all and is not remembered.
+ * inadmissible prompt reaches no provider at all and is not remembered. The in-page provider is a stand-in here (the
+ * host hands the real one, inPage.ts): with none handed, it keeps nothing, takes no server or key, and answers 'offline'.
  * What breaks if it is removed? A swap could change what an agent is, or a prompt reach a server it should not.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { AGENT_SYSTEM_PROMPT_CORE } from '../02_Define_The_Rules/conduct.ts'
-import { operatorBridge, type Diary, type GateHandle, type GateLease, type GateTether, type SimControls, type SkillGate } from '../07_Execute_Actions/operator.ts'
+import { operatorBridge, type Answer, type AnswerRequest, type Diary, type GateHandle, type GateLease, type GateTether, type Mind, type Piece, type SimControls, type SkillGate } from '../07_Execute_Actions/operator.ts'
 import { run as shell } from '../07_Execute_Actions/terminal/commands.ts'
 import type { TerminalBridge } from '../07_Execute_Actions/terminal/bridge.ts'
 import { CLAUDE_GATEWAY, DEFAULT_CLAUDE_MODEL } from './claudeApi.ts'
-import { BASE_REALITY, DEFAULT_MODEL, DEFAULT_SERVER, promptHash, systemPrompt, type FetchLike } from './localCompute.ts'
-import { createMindRouter, DEFAULT_PROVIDER, LLAMACPP_MODEL, LLAMACPP_SERVER, OPENAI_MODEL, OPENAI_SERVER, PROVIDER_TEXT, PROVIDERS, SCRIPTED_SERVER } from './router.ts'
+import { BASE_REALITY, CognitionError, DEFAULT_MODEL, DEFAULT_SERVER, promptHash, systemPrompt, type FetchLike, type SettingsStore } from './localCompute.ts'
+import { createMindRouter, DEFAULT_PROVIDER, INPAGE_SERVER, LLAMACPP_MODEL, LLAMACPP_SERVER, NO_INPAGE_RUNTIME, OPENAI_MODEL, OPENAI_SERVER, PROVIDER_TEXT, PROVIDERS, SCRIPTED_SERVER } from './router.ts'
 import { SCRIPTED } from './scripted.ts'
 
 const enc = new TextEncoder()
@@ -49,10 +50,35 @@ const memoryStore = () => {
 
 const TETHER: GateTether = { agent: 7, serial: 1, skills: ['Rust', 'Python'] }
 
+/**
+ * A stand-in for the model file kept in this page (the host's inPage.ts): one file kept, an answer at once with the
+ * hash of the system prompt it was given, and no request at all. `calls` notes what was asked of it; `store` is the
+ * slice of the router's store it was handed.
+ */
+function keptInPage() {
+  const calls: string[] = []
+  let store: SettingsStore | null = null
+  const factory = (s: SettingsStore): Mind => {
+    store = s
+    return {
+      settings: () => ({ server: INPAGE_SERVER, model: 'tiny.gguf', runtime: 'this browser runs it (one thread)', storage: 'kept in this page' }),
+      setServer: () => { throw new Error('no server') },
+      setModel: (name: string) => name,
+      installed: async () => { calls.push('installed'); return ['tiny.gguf'] },
+      answer: async (req: AnswerRequest, onPiece: (p: Piece) => void): Promise<Answer> => {
+        calls.push('answer')
+        onPiece({ kind: 'text', text: 'inpage says hi' })
+        return { text: 'inpage says hi', thinking: 0, tokens: 3, reason: 'stop', promptHash: promptHash(systemPrompt(req.tethers, req.memories, req.context)) }
+      },
+    }
+  }
+  return { factory, calls, store: () => store }
+}
+
 test('auto is the provider unless the operator chooses another; each provider has its own server and model', () => {
   const r = createMindRouter({ fetch: anyServer().f })
   assert.equal(DEFAULT_PROVIDER, 'auto')
-  assert.deepEqual(PROVIDERS, ['auto', 'claude', 'ollama', 'llamacpp', 'openai', 'scripted'])
+  assert.deepEqual(PROVIDERS, ['auto', 'claude', 'ollama', 'llamacpp', 'openai', 'inpage', 'scripted'])
   // Before an ask has looked: Ollama's settings stand for what auto will try first, and it says it has not looked.
   assert.deepEqual(r.settings(), { provider: 'auto', server: DEFAULT_SERVER, model: DEFAULT_MODEL, think: false, api: 'generate', key: undefined, effort: undefined, auto: 'nothing found yet: the next ask looks on this machine' })
   assert.throws(() => r.setModel('x'), /auto has not found a model on this machine yet/)
@@ -62,7 +88,7 @@ test('auto is the provider unless the operator chooses another; each provider ha
   assert.deepEqual(r.settings(), { provider: 'ollama', server: DEFAULT_SERVER, model: DEFAULT_MODEL, think: false, api: 'generate', key: undefined, effort: undefined })
   assert.equal(r.setProvider('LlamaCpp'), 'llamacpp')
   assert.deepEqual(r.settings(), { provider: 'llamacpp', server: LLAMACPP_SERVER, model: LLAMACPP_MODEL, think: false, api: 'chat', key: undefined, effort: undefined })
-  assert.throws(() => r.setProvider('gpt'), /ask provider takes auto, claude, ollama, llamacpp, openai, scripted/)
+  assert.throws(() => r.setProvider('gpt'), /ask provider takes auto, claude, ollama, llamacpp, openai, inpage, scripted/)
   assert.equal(r.provider, 'llamacpp')
   assert.equal(r.setProvider('openai'), 'openai')
   assert.deepEqual(r.settings(), { provider: 'openai', server: OPENAI_SERVER, model: OPENAI_MODEL, think: false, api: 'chat', key: undefined, effort: undefined })
@@ -92,7 +118,7 @@ test('ask connect: the provider, its server and (claude) its key in one line; a 
   assert.throws(() => r.connect('ollama', 'http://localhost:11434', 'k'), /the ollama provider takes no key/)
   assert.throws(() => r.connect('scripted', 'http://localhost:1'), /takes no server and no key/)
   assert.throws(() => r.connect('auto', 'http://localhost:1'), /auto takes no server and no key/)
-  assert.throws(() => r.connect('gpt'), /ask connect takes auto, claude, ollama, llamacpp, openai, scripted/)
+  assert.throws(() => r.connect('gpt'), /ask connect takes auto, claude, ollama, llamacpp, openai, inpage, scripted/)
   assert.equal(r.connect('Ollama'), PROVIDER_TEXT.ollama)
   assert.equal(r.provider, 'ollama')
   // Kept: a new router over the same store wakes as the last connect left it, the openai server included.
@@ -127,6 +153,46 @@ test('the settings are kept between visits, each provider\'s own: a swap back fi
   assert.equal(c.setProvider('ollama'), 'ollama', 'a store that refuses to save still lets the visit go on')
 })
 
+test('the in-page provider with no runtime handed (Node, the onboarding page): it keeps nothing, makes no request, answers offline, and takes no server or key', async () => {
+  const srv = anyServer()
+  const r = createMindRouter({ fetch: srv.f })
+  assert.equal(r.connect('inpage'), PROVIDER_TEXT.inpage)
+  assert.equal(r.provider, 'inpage')
+  assert.deepEqual(r.settings(), { provider: 'inpage', server: INPAGE_SERVER, model: null, runtime: NO_INPAGE_RUNTIME, storage: 'none', key: undefined, effort: undefined })
+  assert.deepEqual(await r.installed(), [])
+  await assert.rejects(r.answer({ tethers: [TETHER], prompt: 'hi', signal: new AbortController().signal }, () => {}), (e: unknown) => e instanceof CognitionError && e.code === 'offline' && e.message === NO_INPAGE_RUNTIME)
+  assert.throws(() => r.setServer('http://localhost:1'), /the inpage provider has no server: the model runs in this page/)
+  assert.throws(() => r.setModel('tiny.gguf'), /no in-page runtime here/)
+  assert.throws(() => r.setThink!(true), /the inpage provider has no think switch/)
+  assert.deepEqual(srv.calls, [], 'nothing was asked of any server')
+  // A url or a key is refused in plain words, and leaves the provider as it was.
+  r.setProvider('ollama')
+  assert.throws(() => r.connect('inpage', 'http://localhost:8080'), /^Error: the inpage provider takes no server and no key: the model runs in this page/)
+  assert.throws(() => r.connect('inpage', '', 'sk-ant-x'), /the inpage provider takes no server and no key/)
+  assert.equal(r.provider, 'ollama')
+})
+
+test('the in-page provider keeps its own settings in its own slice of the router\'s store: kept between visits, never read or changed by the router', () => {
+  const store = memoryStore()
+  const first = keptInPage()
+  const a = createMindRouter({ fetch: anyServer().f, store, inPage: first.factory })
+  first.store()!.save('{"model":"tiny.gguf","gpu":"off"}')
+  a.setProvider('openai')
+  a.setServer('http://localhost:4321')
+  const saved = JSON.parse(String(store.json)) as Record<string, unknown>
+  assert.equal(saved.inpage, '{"model":"tiny.gguf","gpu":"off"}', 'beside the others, as the mind wrote it')
+  const second = keptInPage()
+  const b = createMindRouter({ fetch: anyServer().f, store, inPage: second.factory })
+  assert.equal(second.store()!.load(), '{"model":"tiny.gguf","gpu":"off"}', 'handed back on the next visit')
+  b.setProvider('ollama')
+  assert.equal(JSON.parse(String(store.json)).inpage, '{"model":"tiny.gguf","gpu":"off"}', 'a save of the router\'s own keeps it')
+  // A slice that is not text is not the mind's: it gets nothing.
+  const odd = { load: () => JSON.stringify({ v: 3, provider: 'inpage', inpage: { model: 'x' } }), save: () => {} }
+  const third = keptInPage()
+  assert.equal(createMindRouter({ fetch: anyServer().f, store: odd, inPage: third.factory }).provider, 'inpage')
+  assert.equal(third.store()!.load(), null)
+})
+
 test('the key: set, masked, cleared; the effort: one of the API\'s, or none; both belong to the Claude provider only', () => {
   const r = createMindRouter({ fetch: anyServer().f })
   r.setProvider('claude')
@@ -148,7 +214,8 @@ test('the key: set, masked, cleared; the effort: one of the API\'s, or none; bot
 
 test('every provider answers with the same system prompt, the conduct core first; every one of them only on this machine, the Claude one through its gateway', async () => {
   const srv = anyServer()
-  const r = createMindRouter({ fetch: srv.f })
+  const page = keptInPage()
+  const r = createMindRouter({ fetch: srv.f, inPage: page.factory })
   r.setKey('sk-ant-test')
   const answers: string[] = []
   for (const p of PROVIDERS) {
@@ -156,13 +223,14 @@ test('every provider answers with the same system prompt, the conduct core first
     const a = await r.answer({ tethers: [TETHER], prompt: 'hi', signal: new AbortController().signal }, () => {})
     answers.push(a.text)
   }
-  assert.equal(answers[5].startsWith('You ask about "hi"'), true, 'the scripted provider answers from the script')
-  assert.deepEqual(answers.slice(0, 5), ['ollama says hi', 'claude says hi', 'ollama says hi', 'llama says hi', 'llama says hi'], 'auto found Ollama first')
+  assert.equal(answers[6].startsWith('You ask about "hi"'), true, 'the scripted provider answers from the script')
+  assert.deepEqual(answers.slice(0, 6), ['ollama says hi', 'claude says hi', 'ollama says hi', 'llama says hi', 'llama says hi', 'inpage says hi'], 'auto found Ollama first')
+  assert.deepEqual(page.calls, ['answer'], 'the page\'s own model answered once, for its own provider: auto found a server first and never asked it')
   const expected = systemPrompt([TETHER])
   assert.ok(expected.startsWith(AGENT_SYSTEM_PROMPT_CORE + '\n'), 'the core opens every prompt')
   assert.ok(BASE_REALITY.startsWith(AGENT_SYSTEM_PROMPT_CORE))
   const sent = srv.calls.filter((c) => c.body !== null)
-  assert.equal(sent.length, 5, 'the scripted provider sent nothing')
+  assert.equal(sent.length, 5, 'the in-page and scripted providers sent nothing')
   const [auto, claude, ollama, llama, openai] = sent
   assert.equal(auto.url, 'http://localhost:11434/api/generate')
   assert.equal((auto.body as { system: string }).system, expected)
@@ -218,9 +286,9 @@ function gate(): SkillGate {
   }
 }
 
-function bridgeOver(fetchFn: FetchLike, diary?: Diary): TerminalBridge {
+function bridgeOver(fetchFn: FetchLike, diary?: Diary, inPage?: (store: SettingsStore) => Mind): TerminalBridge {
   const sim = {} as SimControls
-  const op = operatorBridge(sim, gate(), createMindRouter({ fetch: fetchFn }), undefined, { diary })
+  const op = operatorBridge(sim, gate(), createMindRouter({ fetch: fetchFn, ...(inPage && { inPage }) }), undefined, { diary })
   return { operator: op } as unknown as TerminalBridge
 }
 
@@ -254,7 +322,7 @@ test('from the console: ask provider swaps, ask key keeps the key masked, ask al
   assert.deepEqual(claude?.[0], { kind: 'out', text: 'claude says hi' })
   assert.deepEqual(shell('ask key none', b, []).lines, [{ kind: 'out', text: 'key       none: cleared (the gateway on this machine adds the key)' }])
   assert.deepEqual(shell('ask effort none', b, []).lines, [{ kind: 'out', text: "effort    none: the provider's own default" }])
-  assert.deepEqual(shell('ask provider gpt', b, []).lines, [{ kind: 'err', text: 'ask: ask connect takes auto, claude, ollama, llamacpp, openai, scripted, then an optional server url and, for claude, a key' }])
+  assert.deepEqual(shell('ask provider gpt', b, []).lines, [{ kind: 'err', text: 'ask: ask connect takes auto, claude, ollama, llamacpp, openai, inpage, scripted, then an optional server url and, for claude, a key' }])
   // The scripted provider from the console: it reports itself, lists nothing to install, and answers from the script.
   assert.deepEqual(shell('ask provider scripted', b, []).lines, [{ kind: 'out', text: `provider  ${PROVIDER_TEXT.scripted}` }])
   assert.deepEqual((await shell('ask', b, []).pending)?.slice(0, 3), [
@@ -275,11 +343,32 @@ test('from the console: ask provider swaps, ask key keeps the key masked, ask al
   assert.deepEqual(shell('ask key', b, []).lines, [{ kind: 'err', text: 'usage: ask key <key|none>' }])
 })
 
+test('from the console, the in-page provider with nothing kept: its own rows, and an ask is refused before anything is asked, with where to choose a file', async () => {
+  const srv = anyServer()
+  const b = bridgeOver(srv.f)
+  shell('operator unlock', b, [])
+  assert.deepEqual(shell('ask provider inpage', b, []).lines, [{ kind: 'out', text: `provider  ${PROVIDER_TEXT.inpage}` }])
+  assert.deepEqual(await shell('ask', b, []).pending, [
+    { kind: 'out', text: 'provider  inpage: a model file kept in this page, run here on this device; nothing is addressed (ask file chooses the file, ask gpu where it runs)' },
+    { kind: 'out', text: 'server    none: the model runs in this page' },
+    { kind: 'out', text: 'model     none chosen: Menu › Model file, or ask file' },
+    { kind: 'out', text: `runtime   ${NO_INPAGE_RUNTIME}` },
+    { kind: 'out', text: 'storage   none' },
+    { kind: 'out', text: 'installed no model file kept: Menu › Model file, or ask file' },
+  ])
+  assert.deepEqual(shell('ask rust: hi', b, []).lines, [{ kind: 'err', text: 'ask: choose a model first: Menu › Model file, or ask file (or ask model <name> for a file already kept: type ask to list them)' }])
+  assert.deepEqual(shell('ask connect inpage http://localhost:8080', b, []).lines, [{ kind: 'err', text: 'ask: the inpage provider takes no server and no key: the model runs in this page (Menu › Model file, or ask file, chooses one)' }])
+  // The router's page has no model bridge (App wires one for the city): `ask file` says this page cannot hold one.
+  assert.deepEqual(shell('ask file', b, []).lines, [{ kind: 'err', text: 'ask: this page cannot hold a model file' }])
+  assert.deepEqual(srv.calls, [], 'nothing was asked of any server')
+})
+
 test('14A over any provider: an inadmissible prompt reaches no server, streams nothing, answers "no reply" and is not remembered; a refusal by the model is the same no reply', async () => {
   const srv = anyServer()
   const notes: string[] = []
   const diary: Diary = { recall: () => [], note: (_b, kind, _s, text) => { notes.push(`${kind}: ${text}`) } }
-  const b = bridgeOver(srv.f, diary)
+  const page = keptInPage()
+  const b = bridgeOver(srv.f, diary, page.factory)
   shell('operator unlock', b, [])
   shell('ask key k', b, [])
   for (const p of PROVIDERS) {
@@ -293,6 +382,7 @@ test('14A over any provider: an inadmissible prompt reaches no server, streams n
     assert.deepEqual(live, [], `${p}: nothing streamed`)
   }
   assert.deepEqual(notes, [], 'nothing of it is remembered')
+  assert.deepEqual(page.calls, [], 'the page\'s own model was never asked either')
   shell('ask provider llamacpp', b, [])
   const fine = await shell('ask rust: how does grip work?', b, []).pending
   assert.equal(fine?.[0]?.text, 'llama says hi')
@@ -328,7 +418,7 @@ test('the prefix cache: no line before a prompt is paged; then every answer page
 
 test('every provider answers with the hash of the exact system prompt it sent, the Claude provider included (the audit\'s provenance)', async () => {
   const srv = anyServer()
-  const r = createMindRouter({ fetch: srv.f })
+  const r = createMindRouter({ fetch: srv.f, inPage: keptInPage().factory })
   const expected = promptHash(systemPrompt([TETHER]))
   for (const p of PROVIDERS) {
     r.setProvider(p)

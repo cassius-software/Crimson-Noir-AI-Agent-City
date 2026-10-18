@@ -20,13 +20,25 @@ the build unless:
     (`--rebuilt PATH`), the rebuilt module is byte-identical to the committed one.
 A trap inside the module (`unreachable`, an out-of-bounds load) stops that call and nothing else: the harnesses in
 native/routing/src/verify.rs prove the routing core reaches none on a well-formed or malformed arena.
+A third policy, pinned third-party, holds a module this repository does not build to what was reviewed when it was
+pinned: wllama's build of llama.cpp, the in-page model runtime (third_party/wllama/<version>/, written from the npm
+package by tools/native/wllama-pack.mjs). It reads the committed gz with the standard library alone (gzip, hashlib),
+so it runs where there is no node_modules: the rust and fvps jobs and the release bake. It refuses the build unless:
+  - the module's bytes hash to the line SHA256SUMS names for it, and the gz to its own line;
+  - its imports are exactly the reviewed list in IMPORTS, all from `env` and `wasi_snapshot_preview1` (the
+    Emscripten glue the page's adapter instantiates it with), and no import is named for a socket, a connection or a
+    request (sock, connect, accept, send, recv, fetch, http, xhr, websocket): whatever the module reaches, it reaches
+    through a function the page's own JavaScript hands it, under the page's policy;
+  - its one memory is imported, shared, with 64-bit addresses and a maximum (flags 7), and it defines no memory of
+    its own.
 What breaks if it is removed? A crate change that adds an import, or a stale committed module, reaches the page
-unnoticed.
+unnoticed; so does a pinned runtime swapped for one that imports more than was reviewed.
 """
 from __future__ import annotations
 
 import argparse
 import base64
+import gzip
 import hashlib
 import re
 import sys
@@ -55,7 +67,19 @@ MODULES = {
 
 SECTION = {0: "custom", 1: "type", 2: "import", 3: "function", 4: "table", 5: "memory", 6: "global", 7: "export",
            8: "start", 9: "element", 10: "code", 11: "data", 12: "datacount"}
-KIND = {0: "func", 1: "table", 2: "memory", 3: "global"}
+KIND = {0: "func", 1: "table", 2: "memory", 3: "global", 4: "tag"}
+
+# Modules this repository does not build, pinned as published and held to what was reviewed (the third policy).
+PINNED = {
+    "wllama": {
+        "dir": ROOT / "third_party/wllama/3.8.1",
+        "gz": "wllama.wasm.gz",
+        "raw": "wllama.wasm",
+        "modules": {"env", "wasi_snapshot_preview1"},
+        "memory_flags": 7,  # bit 0 a maximum, bit 1 shared, bit 2 64-bit addresses (memory64)
+    },
+}
+NETWORK = re.compile(r"sock|connect|accept|send|recv|fetch|http|xhr|websocket", re.IGNORECASE)
 
 
 def leb(buf: bytes, i: int) -> tuple[int, int]:
@@ -93,6 +117,92 @@ def exports(body: bytes) -> list[tuple[str, str]]:
         _, j = leb(body, j)
         out.append((name, KIND.get(kind, str(kind))))
     return out
+
+
+def imports(body: bytes) -> list[tuple[str, str, str, int | None]]:
+    """The import section in order: module, name, kind, and a memory's limit flags (None for any other kind)."""
+    cnt, j = leb(body, 0)
+    out = []
+    for _ in range(cnt):
+        n, j = leb(body, j)
+        module = body[j:j + n].decode()
+        j += n
+        n, j = leb(body, j)
+        name = body[j:j + n].decode()
+        j += n
+        kind = body[j]
+        j += 1
+        flags = None
+        if kind == 0:  # a function: its type index
+            _, j = leb(body, j)
+        elif kind in (1, 2):  # limits (a table's after its element type): flags, minimum, and a maximum when bit 0 is set
+            j += kind == 1
+            lim = body[j]
+            _, j = leb(body, j + 1)
+            if lim & 1:
+                _, j = leb(body, j)
+            flags = lim if kind == 2 else None
+        elif kind == 3:  # a global: its value type and mutability
+            j += 2
+        elif kind == 4:  # a tag: its attribute and type index
+            _, j = leb(body, j + 1)
+        else:
+            raise ValueError(f"import {module}.{name}: unknown kind {kind}")
+        out.append((module, name, KIND[kind], flags))
+    if j != len(body):
+        raise ValueError("the import section does not end where its size says")
+    return out
+
+
+def sha256sums(text: str) -> dict[str, str]:
+    """sha256sum's lines (`<hex>  <name>`) as name to hash."""
+    out = {}
+    for line in text.splitlines():
+        m = re.fullmatch(r"([0-9a-f]{64}) [ *](.+)", line)
+        if m:
+            out[m.group(2)] = m.group(1)
+    return out
+
+
+def check_pinned(name: str, spec: dict) -> list[str]:
+    problems = []
+    d = spec["dir"]
+    gz = (d / spec["gz"]).read_bytes()
+    raw = gzip.decompress(gz)
+    sha = hashlib.sha256(raw).hexdigest()
+    sums = sha256sums((d / "SHA256SUMS").read_text())
+    if sums.get(spec["raw"]) != sha:
+        problems.append(f"{name}: the module in {spec['gz']} hashes to {sha[:16]}…, not the {spec['raw']} line of SHA256SUMS")
+    if sums.get(spec["gz"]) != hashlib.sha256(gz).hexdigest():
+        problems.append(f"{name}: {spec['gz']} does not hash to its line of SHA256SUMS")
+    secs = sections(raw)
+    found = []
+    for sid, body in secs:
+        if sid == 2:
+            found += imports(body)
+    listed = [line for line in (d / "IMPORTS").read_text().splitlines() if line]
+    lines = [f"{m}.{n} {k}" for m, n, k, _ in found]
+    if lines != listed:
+        extra = sorted(set(lines) - set(listed))
+        missing = sorted(set(listed) - set(lines))
+        problems.append(f"{name}: the imports are not the reviewed IMPORTS list (not listed: {extra}; listed but absent: {missing}"
+                        f"{'; the same set in another order' if not extra and not missing else ''})")
+    foreign = sorted({m for m, _, _, _ in found} - spec["modules"])
+    if foreign:
+        problems.append(f"{name}: imports from {foreign}; only {sorted(spec['modules'])} are allowed")
+    network = [f"{m}.{n}" for m, n, _, _ in found if NETWORK.search(n) or NETWORK.search(m)]
+    if network:
+        problems.append(f"{name}: imports named for the network: {network}")
+    memories = [(m, n, f) for m, n, k, f in found if k == "memory"]
+    if len(memories) != 1 or memories[0][2] != spec["memory_flags"]:
+        problems.append(f"{name}: memory imports {[(f'{m}.{n}', f) for m, n, f in memories]}; exactly one, with flags {spec['memory_flags']} (shared, 64-bit, a maximum)")
+    own = sum(leb(body, 0)[0] for sid, body in secs if sid == 5)
+    if own:
+        problems.append(f"{name}: the module defines {own} memory of its own")
+    print(f"{name} (pinned): {len(raw)} bytes from {len(gz)} gzipped, sha256 {sha[:16]}…, {len(found)} imports "
+          f"({', '.join(f'{sum(1 for x in found if x[0] == m)} {m}' for m in sorted({x[0] for x in found}))}), "
+          f"memory flags {[f for _, _, f in memories]}, {own} memory of its own")
+    return problems
 
 
 def module_bytes(file: Path, prefix: str) -> tuple[bytes, str]:
@@ -162,11 +272,13 @@ def main() -> int:
     problems = []
     problems += check("routing", MODULES["routing"], a.rebuilt_routing)
     problems += check("kv-pager", MODULES["kv-pager"], a.rebuilt_kv_pager)
+    problems += check_pinned("wllama", PINNED["wllama"])
     for p in problems:
         print("::error::" + p)
     if problems:
         return 1
-    print("wasm_airgap: both modules import nothing, own one memory, export only what the host binds")
+    print("wasm_airgap: both modules import nothing, own one memory, export only what the host binds; the pinned wllama "
+          "module is the reviewed one and imports only its listed host functions and one shared 64-bit memory")
     return 0
 
 

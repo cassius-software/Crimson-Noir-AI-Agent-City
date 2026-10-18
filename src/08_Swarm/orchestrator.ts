@@ -212,7 +212,7 @@ export interface Swarm {
 
 /**
  * The orchestrator over a gated ask: `endpoint` reads the chosen provider's server each step (null when the provider
- * reaches no network at all), `now` is the clock the audit trail stamps.
+ * reaches no network at all: the script, or a model running in this page), `now` is the clock the audit trail stamps.
  */
 export function createSwarm({ ask, endpoint, quota = QUOTA, now = Date.now }: { ask: AskFn; endpoint: () => string | null; quota?: Quota; now?: () => number }): Swarm {
   const chain = new AuditChain()
@@ -310,9 +310,10 @@ export function createSwarm({ ask, endpoint, quota = QUOTA, now = Date.now }: { 
             ended = true
             break
           }
-          // The chosen provider addresses a server, yet the script answered (the engine's withScriptedFallback stands
-          // in when no backend answers): canned text is not a role's work, so the run ends here, as a server failure.
-          if (r.done === 'scripted' && ep !== null) {
+          // The script answered, yet the script is not the chosen provider: one that addresses a server, or a model in
+          // this page that could not run (no endpoint, but the engine's withScriptedFallback stood in and says why).
+          // Canned text is not a role's work, so the run ends here, as a server failure.
+          if (r.done === 'scripted' && (ep !== null || r.standIn !== undefined)) {
             const note = r.standIn !== undefined ? `no model answered, so the script stood in and the run stops here: ${r.standIn}` : `no backend was answering at ${ep}: the script stood in, so the run stops here`
             record('refusal', step.id, role.title, prompt, r.text, null, [], note)
             finish({ ...base, state: 'failed', text: r.text, ms, note })

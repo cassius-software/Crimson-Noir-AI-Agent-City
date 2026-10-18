@@ -77,4 +77,6 @@ test('the operator tier: the context rides every request beside the memories, an
   assert.match(local, /systemPrompt\(req\.tethers, req\.memories, req\.context\)/)
   const router = read('../../09_Cognition/router.ts')
   assert.equal((router.match(/systemPrompt\(req\.tethers, req\.memories, req\.context\)/g) ?? []).length, 3, 'the Claude provider, the scripted provider and the prefix page table')
+  const inPage = read('../../09_Cognition/inPage.ts')
+  assert.equal((inPage.match(/systemPrompt\(req\.tethers, req\.memories, req\.context\)/g) ?? []).length, 1, 'the model kept in this page')
 })

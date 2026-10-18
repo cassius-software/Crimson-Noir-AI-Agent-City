@@ -7,8 +7,9 @@
  * turn the first-person head (yaw and pitch), and context buttons — Enter/Exit car when relevant, Run on
  * foot, Brake, Handbrake and Reset while driving, and Ping (a mark where the head looks) in both modes. A Menu
  * button beside them opens what a keyboard reaches with one key and a phone has no key for: the Ring-0 console (and
- * through it `ask`, the agents and every setting), the clock an hour back or on, ghost view, rain mode, and hiding the
- * HUD. Only its own controls take pointer events, so the rest of the HUD stays click-through.
+ * through it `ask`, the agents and every setting), the model file kept in this page (the browser's file picker), the
+ * clock an hour back or on, ghost view, rain mode, and hiding the HUD. Only its own controls take pointer events, so
+ * the rest of the HUD stays click-through.
  * What breaks if it is removed? Touch devices can neither move, look nor drive.
  *
  * Every control acts on pointer events, never on `click`: browsers synthesize a click only for a lone tap, so a
@@ -45,6 +46,11 @@ const noMenu = (e: MouseEvent) => e.preventDefault()
 export interface TouchMenuHost {
   /** Opens the Ring-0 console; called from the tap's click handler, so iOS raises the keyboard (TerminalHandle.open). */
   onConsole(): void
+  /**
+   * Opens the browser's file picker for the model file kept in this page; called from the tap's click handler, since a
+   * browser opens its picker only inside a tap. Absent: the item is not shown (the host keeps no model file).
+   */
+  onModelFile?: () => void
   /** Shows or hides the HUD (the H key). */
   onHud(): void
   hudVisible: boolean
@@ -330,7 +336,8 @@ const SHEET_W = 172
  * where there is no room to its left (a narrow phone held upright), upward from the button's top with their right edges
  * aligned: it never runs off the screen (its height is capped to the room above, and it scrolls past that; its items
  * keep their height), and it leaves the button showing. Its items act on `click`, a whole tap: the console's has to,
- * since iOS raises the keyboard only for a focus made while the tap is handled. The clock items leave the sheet open
+ * since iOS raises the keyboard only for a focus made while the tap is handled, and the model file's too, since a
+ * browser opens its file picker only while a tap is handled. The clock items leave the sheet open
  * for another hour; the rest close it, as does a tap anywhere else (that tap lands on a backdrop and does nothing more;
  * the click that ends the tap which opened the sheet lands there too, and is not a tap on it) and a turn of the phone,
  * which moves the button.
@@ -348,6 +355,7 @@ function MenuSheet({ input, host, at, onClose }: { input: Input; host: TouchMenu
   }
   const items: { label: string; on?: boolean; run: () => void; keep?: boolean }[] = [
     { label: 'Console', run: host.onConsole },
+    ...(host.onModelFile ? [{ label: 'Model file', run: host.onModelFile }] : []),
     { label: 'Clock −1 h', run: () => input.press('timeBack'), keep: true },
     { label: 'Clock +1 h', run: () => input.press('timeForward'), keep: true },
     { label: 'Ghost view', on: host.ghost, run: () => input.press('ghost') },

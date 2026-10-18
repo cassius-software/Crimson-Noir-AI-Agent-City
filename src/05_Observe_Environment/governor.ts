@@ -14,7 +14,9 @@
  * target, backed off harder after every failure. It is silent: a tier change raises no toast and needs
  * no settings menu. Below Minimal sits Lite (tier -1, outside the TIERS table so no existing index moves): only a
  * lite device profile (an entry-level phone GPU such as a Mali-G52, or ?lite=1) reaches it automatically, and the
- * same profile makes the boot itself lighter (engine.ts: fewer pedestrians and cars, no post chain compiled).
+ * same profile makes the boot itself lighter (engine.ts: fewer pedestrians and cars, no post chain compiled). While the
+ * in-page model works the city can be held under a lower tier (hold()): the device is busy with the model, so nothing
+ * that happens under the hold counts against a tier, and the release returns the tier the city had.
  * What breaks if it is removed? Quality is frozen at one tier: phones stutter at desktop settings,
  * desktops look like phones at phone settings, and the terminal's `quality` command drives nothing.
  */
@@ -395,9 +397,14 @@ export class Governor {
   private lastNow = 0
   private arrivedAt = 0
   private refineAfter = 0
-  private lastChange: 'none' | 'up' | 'down' | 'manual' = 'none'
+  private lastChange: 'none' | 'up' | 'down' | 'manual' | 'hold' = 'none'
   /** Why the tier last changed, in a few words (for the console and the probes). */
   private why = ''
+  /** The hold's ceiling (hold()), inside the automatic range; null when nothing holds the city. */
+  private cap: number | null = null
+  /** The automatic tier a release returns to: the tier when the hold began, or the one auto would have taken when it
+   *  was turned back on under the hold. Null under a manual tier and whenever nothing holds the city. */
+  private restore: number | null = null
   /** Per tier, at index tier - LITE_TIER (Lite has a slot of its own): step downs remembered, when, and the probe wait. */
   private readonly fails = new Uint32Array(TIERS.length + 1)
   private readonly failedAt = new Float64Array(TIERS.length + 1).fill(-Infinity)
@@ -438,7 +445,7 @@ export class Governor {
   /** Whether the cinema camera's presented frames are held too. */
   get pacer(): boolean { return this.pacerMs > 0 }
   /** Why the tier last changed: 'frames below 60 FPS' ('frames below target' under ?fps), 'camera behind', 'probe',
-   *  'manual', or '' (never). */
+   *  'manual', 'held' (a hold lowered it), 'released' (a hold let it back up), or '' (never). */
   get reason(): string { return this.why }
 
   /** One frame the cinema camera presented, at `nowMs` (the same clock as sample()). Ignored without a camera. */
@@ -484,11 +491,14 @@ export class Governor {
 
   state(): QualityState {
     const k = knobsOf(this.current)
-    return { tier: this.current, label: k.label, auto: this.adaptive, renderScale: k.renderScale, targetMs: this.holdMs, ...(this.lite && { lite: true }) }
+    return {
+      tier: this.current, label: k.label, auto: this.adaptive, renderScale: k.renderScale, targetMs: this.holdMs,
+      ...(this.lite && { lite: true }), ...(this.cap !== null && { held: this.cap }),
+    }
   }
 
   /** Feed one frame: `frameMs` is the rAF interval, `nowMs` a monotonic clock. Returns the tier when it
-   *  changed since the last call (including setTier / setAuto changes, so knobs can be applied in one
+   *  changed since the last call (including setTier / setAuto / hold changes, so knobs can be applied in one
    *  place), else null. Allocation-free. */
   sample(frameMs: number, nowMs: number): number | null {
     if (!Number.isFinite(nowMs)) return this.report()
@@ -555,7 +565,10 @@ export class Governor {
     this.adaptive = auto
     if (!auto) return
     const from = this.current
-    this.current = clampTier(from, this.min, this.max)
+    const free = clampTier(from, this.min, this.max)
+    // Under a hold the city waits below the cap, and the tier auto would have taken is the one the release returns to.
+    if (this.cap !== null) this.restore = Math.max(this.restore ?? free, free)
+    this.current = Math.min(free, this.ceiling())
     this.lastChange = 'manual'
     this.arrivedAt = this.lastNow
     this.reset(this.lastNow, this.current === from ? 0 : GOV.cooldownMs)
@@ -565,6 +578,8 @@ export class Governor {
   setTier(tier: number): void {
     if (!Number.isFinite(tier)) return
     this.adaptive = false
+    // The operator's choice replaces the tier a release would have returned to.
+    this.restore = null
     const t = clampTier(tier, LITE_TIER)
     if (t === this.current) return
     this.current = t
@@ -572,6 +587,40 @@ export class Governor {
     this.why = 'manual'
     this.arrivedAt = this.lastNow
     this.reset(this.lastNow, GOV.cooldownMs)
+  }
+
+  /**
+   * Holds the automatic tier at or below `cap` while something else needs the device, or releases it (null). The
+   * in-page model is that something: while it works the city is slower because the model has the GPU or the cores, not
+   * because the tier is too heavy, so nothing under the hold counts against a tier. A tier above the cap drops to it at
+   * once, probes stop at it, and a step down under it is taken but not remembered (no back-off, no failed probe). The
+   * cap is clamped into the automatic range: a lite profile stops at Lite, and no other device walks into it. The
+   * release returns to the tier from before the hold (or the higher one a probe reached under it) with the usual
+   * cooldown, and drops the frames sampled under the hold, so they never read as a slowdown afterwards. A second hold
+   * moves the cap the same way: down at once, or up as far as the tier from before the hold. A manual tier wins: the cap
+   * is recorded (state() shows it) and the tier left alone; turning auto back on lands under the cap. `nowMs` is the
+   * clock sample() is fed. Like setTier, a tier change is reported by the next sample(); the caller applies the knobs.
+   */
+  hold(cap: number | null, nowMs: number): void {
+    if (cap !== null && !Number.isFinite(cap)) return
+    if (cap === null && this.cap === null) return
+    const now = Number.isFinite(nowMs) ? nowMs : this.lastNow
+    if (this.cap === null) this.restore = this.adaptive ? this.current : null
+    this.cap = cap === null ? null : clampTier(cap, this.min, this.max)
+    const from = this.current
+    if (this.adaptive) this.current = Math.min(Math.max(from, this.restore ?? from), this.ceiling())
+    if (this.current !== from) {
+      this.why = this.current < from ? 'held' : 'released'
+      this.lastChange = 'hold'
+      this.arrivedAt = now
+    }
+    if (this.current !== from || this.cap === null) this.reset(now, GOV.cooldownMs)
+    if (this.cap === null) this.restore = null
+  }
+
+  /** The highest tier the automatic governor may take: its range's max, or the hold's cap while held. */
+  private ceiling(): number {
+    return this.cap ?? this.max
   }
 
   private report(): number | null {
@@ -655,7 +704,7 @@ export class Governor {
         return
       }
     }
-    if (this.current < this.max && now >= this.blockedUntil[slot(this.current + 1)] && !above(miss5, n5, 0.97)) {
+    if (this.current < this.ceiling() && now >= this.blockedUntil[slot(this.current + 1)] && !above(miss5, n5, 0.97)) {
       this.why = 'probe'
       this.step(now, 1)
     }
@@ -668,13 +717,16 @@ export class Governor {
     const to = clampTier(from + delta, this.min, this.max)
     if (to === from) return
     if (to < from) {
-      const failed = this.lastChange === 'up' && now - this.arrivedAt < GOV.probeMs
-      const i = slot(from)
-      if (now - this.failedAt[i] >= GOV.forgetMs) this.fails[i] = 0
-      this.fails[i]++
-      this.failedAt[i] = now
-      const wait = Math.min(GOV.maxBackoffMs, GOV.backoffMs * 2 ** (this.fails[i] - (failed ? 0 : 1)))
-      this.blockedUntil[i] = Math.max(this.blockedUntil[i], now + wait)
+      // Under a hold the device is busy with something else: the step is taken, but not remembered against the tier.
+      if (this.cap === null) {
+        const failed = this.lastChange === 'up' && now - this.arrivedAt < GOV.probeMs
+        const i = slot(from)
+        if (now - this.failedAt[i] >= GOV.forgetMs) this.fails[i] = 0
+        this.fails[i]++
+        this.failedAt[i] = now
+        const wait = Math.min(GOV.maxBackoffMs, GOV.backoffMs * 2 ** (this.fails[i] - (failed ? 0 : 1)))
+        this.blockedUntil[i] = Math.max(this.blockedUntil[i], now + wait)
+      }
       this.lastChange = 'down'
     } else this.lastChange = 'up'
     this.current = to

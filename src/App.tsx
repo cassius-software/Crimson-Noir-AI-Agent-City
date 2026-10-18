@@ -7,20 +7,30 @@
  * wardrobe card and the touch and console overlays. A first visit opens on the concierge's onboarding instead
  * (07_Execute_Actions/onboarding), which builds the lakefront metropolis in the background and hands the city its
  * outcome; the map walked (the metropolis, the embedded region, or the procedural city) is decided here (loadMap). It builds what the engine is handed through its seams instead of
- * importing (the cognition router, the network client), keeps the visitor's look and session token, and screens the
- * room's names and chat under 14A once more as they arrive.
+ * importing (the cognition router with the model kept in this page, the network client), keeps the visitor's look and
+ * session token, and screens the room's names and chat under 14A once more as they arrive. The model file kept in this
+ * page is picked here too: one hidden file input, opened from the console's `ask file` or the Menu, or a file dropped on
+ * the city on a desktop.
  * What breaks if it is removed? Nothing is mounted: the page is blank.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Engine, type EngineOptions } from './07_Execute_Actions/engine.ts'
 import { Hud } from './07_Execute_Actions/Hud.tsx'
 import { Terminal, type TerminalHandle } from './07_Execute_Actions/terminal/Terminal.tsx'
-import { offlineBridge, type LookBridge, type NetBridge, type TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
+import { offlineBridge, type LookBridge, type ModelBridge, type NetBridge, type TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
 import { hudLine, recruitBridge, Recruiter } from './08_Swarm/recruitment.ts'
 import { TaskRouter } from './08_Swarm/taskRouter.ts'
 import { deferredLedger, followRecruiter, indexedDbLedger, memoryBridge, SwarmMemory } from './08_Swarm/memory.ts'
 import { loopbackFetch } from './02_Define_The_Rules/airgap.ts'
 import { createMindRouter } from './09_Cognition/router.ts'
+import { createInPageMind, type InPageMind } from './09_Cognition/inPage.ts'
+import { runtimeMode } from './09_Cognition/inPageCaps.ts'
+import { holdTier, type GpuMode, type PlanEnv } from './09_Cognition/inPagePlan.ts'
+import { createModelStore, workerCopy, type KeptModel } from './09_Cognition/modelStore.ts'
+import CopyWorker from './09_Cognition/modelStore.worker.ts?worker&inline'
+import { createWllamaRuntime } from './09_Cognition/wllamaRuntime.ts'
+import { canShareMemory } from './07_Execute_Actions/sharedBridge.ts'
+import { trackWorker } from './07_Execute_Actions/longTasks.ts'
 import { createLocalSpeech } from './09_Cognition/localSpeech.ts'
 import { createNetClient } from './10_Network/netClient.ts'
 import { admissibleChat, admissibleName } from './10_Network/replication.ts'
@@ -79,6 +89,45 @@ const NET_TOKEN_KEY = 'civic-simulation:net:v1'
 
 /** The page's own fetch, held to this machine (airgap.ts loopbackFetch): the model and speech clients speak through it, and nothing else does. */
 const pageFetch = loopbackFetch((url, init) => window.fetch(url, init))
+
+/** `make()` the first time it is asked for, and the same value every time after. */
+function once<T>(make: () => T): () => T {
+  let made: { value: T } | null = null
+  return () => (made ??= { value: make() }).value
+}
+
+/**
+ * One copy worker (modelStore.worker.ts, bundled into this file like the physics worker), counted among the page's
+ * live workers (longTasks.ts) until workerCopy ends it.
+ */
+function copyWorker(): Worker {
+  const worker = new CopyWorker({ name: 'model-copy' })
+  const untrack = trackWorker()
+  const terminate = worker.terminate.bind(worker)
+  worker.terminate = () => { terminate(); untrack() }
+  return worker
+}
+
+/**
+ * The runtime under the model kept in this page (09_Cognition/wllamaRuntime.ts), one per page, made the first time
+ * that model is asked about (whether this page can run one included): it starts nothing until a model loads.
+ * ?debug lets its native log through.
+ */
+const PAGE_RUNTIME = once(() => createWllamaRuntime({ debug: new URLSearchParams(window.location.search).has('debug') }))
+/**
+ * Why this page cannot run the model kept in it (inPageCaps.ts runtimeMode: the browser lacks a piece, or the page was
+ * opened from a file), or null: where it cannot, the Menu offers no Model file and `ask file` opens no picker.
+ */
+const PAGE_MODEL_REFUSAL = once((): string | null => {
+  const mode = runtimeMode(PAGE_RUNTIME().caps())
+  return mode.ok ? null : mode.reason
+})
+/** Where the page keeps model files (its own storage, 09_Cognition/modelStore.ts), one per page, each file copied by a worker of its own. */
+const PAGE_MODELS = once(() => createModelStore({ copy: workerCopy(copyWorker) }))
+/** The toasts' title for the model file kept in this page. */
+const MODEL_FILE = 'Model file'
+/** How long after the page has its focus back a file picker that said nothing (no change, no cancel) counts as closed. */
+const PICK_SETTLE_MS = 1000
 
 /** The page's local storage for one key; a browser that refuses storage keeps the settings for this visit only. */
 const pageStore = (key: string) => ({
@@ -147,13 +196,96 @@ function lookBridge(host: { worn(): Look; seed(): number; wear(look: Look): void
 }
 
 /**
- * The HUD's view of the operator's local model and voice: an answer streaming in (its latest words, or that the model
- * is still thinking), or who is speaking aloud.
+ * The HUD's view of the operator's local model and voice: an answer streaming in (its latest words, that the model
+ * is still thinking, or what the model in this page is doing first: loading, reading the prompt), what the model in
+ * this page is doing with no answer waiting (loading, a file being kept), or who is speaking aloud.
  */
-function activityText(a: { thinking: number; tail: string } | null, speaking: number): string {
-  if (!a) return speaking >= 0 ? `Speaking · agent ${speaking}` : ''
+function activityText(a: { thinking: number; tail: string } | null, speaking: number, model: string | null = null): string {
+  if (!a) return model ? `${model.charAt(0).toUpperCase()}${model.slice(1)}` : speaking >= 0 ? `Speaking · agent ${speaking}` : ''
   if (a.tail) return `Answering: …${a.tail.replace(/\s+/g, ' ').trimStart()}`
+  if (model) return `Answering · ${model}`
   return a.thinking ? `Answering · thinking (${a.thinking})` : 'Answering · waiting for the model'
+}
+
+/** An error as the plain words it carries. */
+const plain = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
+/** "1.2 GB", "640 MB" or "153 KB". */
+function sizeText(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`
+  if (bytes >= 1024 ** 2) return `${Math.round(bytes / 1024 ** 2)} MB`
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`
+}
+
+/** navigator.deviceMemory in GB (Chromium only, rounded by the browser), or undefined where the browser does not say. */
+function deviceMemory(): number | undefined {
+  const m = (navigator as { deviceMemory?: unknown }).deviceMemory
+  return typeof m === 'number' && Number.isFinite(m) && m > 0 ? m : undefined
+}
+
+/** The console's line for `ask gpu <mode>`: where the model kept in this page runs from its next load. */
+function gpuLine(mode: GpuMode): string {
+  if (mode === 'on') return 'on: the model runs on the GPU from its next load (one the GPU cannot load runs on the processor)'
+  if (mode === 'off') return 'off: the model runs on the processor from its next load'
+  return 'auto: the model runs on the GPU from its next load on a desktop whose GPU has shader-f16, else on the processor'
+}
+
+/** The browser's file picker over the page's hidden file input (filePicker). */
+interface FilePicker {
+  open(): Promise<File[] | null>
+  dispose(): void
+}
+
+/**
+ * The browser's file picker over one hidden file input, which has no accept attribute (a phone greys out a .gguf it
+ * has no type for). open() clicks the input at once, so it must be called inside the tap or the key that asked (a
+ * browser opens its picker only then, and refuses here without one), and resolves with the files chosen, or null for
+ * none: on the input's change or cancel, or, where a browser sends neither, PICK_SETTLE_MS after the page has its focus
+ * back. The input is emptied after each read, so the same file can be chosen again. A choice that arrives after its
+ * picker counted as closed goes to `late`.
+ */
+function filePicker(input: HTMLInputElement, late: (files: File[]) => void): FilePicker {
+  let waiting: ((files: File[] | null) => void) | null = null
+  let timer = 0
+  const read = (): File[] | null => {
+    const files = Array.from(input.files ?? [])
+    input.value = ''
+    return files.length ? files : null
+  }
+  const settle = (files: File[] | null): void => {
+    window.clearTimeout(timer)
+    window.removeEventListener('focus', onFocus)
+    const w = waiting
+    waiting = null
+    if (w) w(files)
+    else if (files) late(files)
+  }
+  const onChange = (): void => settle(read())
+  const onCancel = (): void => settle(null)
+  function onFocus(): void {
+    window.clearTimeout(timer)
+    timer = window.setTimeout(() => { if (waiting) settle(read()) }, PICK_SETTLE_MS)
+  }
+  input.addEventListener('change', onChange)
+  input.addEventListener('cancel', onCancel)
+  return {
+    open: () => {
+      const activation = (navigator as { userActivation?: { isActive?: boolean } }).userActivation
+      if (activation && activation.isActive === false) return Promise.reject(new Error('the browser opens its file picker only from a tap or a key: Menu › Model file, or ask file at the console'))
+      // A picker still waiting (its browser never said how it closed) counts as closed with nothing chosen.
+      settle(null)
+      const chosen = new Promise<File[] | null>((resolve) => { waiting = resolve })
+      input.value = ''
+      window.addEventListener('focus', onFocus)
+      input.click()
+      return chosen
+    },
+    dispose: () => {
+      input.removeEventListener('change', onChange)
+      input.removeEventListener('cancel', onCancel)
+      settle(null)
+    },
+  }
 }
 
 /**
@@ -325,14 +457,16 @@ function TtyShell() {
 
 /**
  * The voice the onboarding speaks with: the configured model backend's rewording when it answers in time, else the
- * script. With the auto provider (the default), the scripted provider, or the Claude provider and no key kept, nothing
- * is asked (the script is the voice): a first visit on a fresh machine makes no request at all, and the scripted
- * provider, which answers a request with nobody tethered with a line of its own, never rewords the guide's lines.
+ * script. With the auto provider (the default), the scripted provider, the in-page provider, or the Claude provider and
+ * no key kept, nothing is asked (the script is the voice): a first visit on a fresh machine makes no request at all,
+ * the scripted provider, which answers a request with nobody tethered with a line of its own, never rewords the
+ * guide's lines, and a model file kept in this page is never loaded while the city is still being built (this router
+ * is handed no runtime for one).
  */
 function onboardingVoice(): Voice {
   const router = createMindRouter({ fetch: pageFetch, store: pageStore(COGNITION_KEY) })
   const s = router.settings()
-  if (s.provider === 'auto' || s.provider === 'scripted' || (s.provider === 'claude' && !s.key)) return scriptedVoice()
+  if (s.provider === 'auto' || s.provider === 'scripted' || s.provider === 'inpage' || (s.provider === 'claude' && !s.key)) return scriptedVoice()
   return modelVoice(router, (line) => (/morning, sunset or night/i.test(line) ? ['morning', 'sunset', 'night'] : /sound on/i.test(line) ? ['sound'] : []))
 }
 
@@ -416,6 +550,12 @@ interface SpeakerLink { sound(): boolean; source: { voice: SpeechVoice; out: Con
 /** The city: the engine over the canvas, the HUD, the Concierge, the touch controls and the drop-down console. */
 function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: Options; plan: MapPlan; mentored: boolean; voice: Voice; speaker: ConciergeSpeaker; link: SpeakerLink }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  // The city's element (a model file dropped on it is kept, on a desktop) and the hidden file input the picker opens.
+  const mainRef = useRef<HTMLElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  // The Menu's Model file: the picker opened inside the tap, then the file kept (set once the engine is up).
+  const modelFileRef = useRef<(() => void) | null>(null)
+  const onModelFile = useCallback(() => modelFileRef.current?.(), [])
   const engineRef = useRef<Engine | null>(null)
   const termOpenRef = useRef(false)
   const termRef = useRef<TerminalHandle>(null)
@@ -521,6 +661,14 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
     let unfollow: (() => void) | null = null
     /** The answer streaming in from the local model, for the HUD (null when none is). */
     let answering: { thinking: number; tail: string } | null = null
+    /** The city router's model kept in this page (inPage.ts), shut down with the city; null until the engine is up. */
+    let inPageMind: InPageMind | null = null
+    /** What the model in this page is doing, for the HUD's activity line: its own phase (loading, reading the prompt)
+     *  and a model file being kept (its copy's progress); null when neither is. */
+    let modelPhase: string | null = null
+    let keepLine: string | null = null
+    /** Takes back what the model's wiring added to the page (the picker, the drop, the page's lifecycle). */
+    let unModel = noop
     let raf = 0
     let cancelled = false
     let lastHud = 0
@@ -541,7 +689,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
         if (now - lastHud > HUD_INTERVAL_MS) {
           lastHud = now
           const s = engine.snapshot()
-          if (recruiter) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, activityText(answering, engine.speaking))
+          if (recruiter) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, activityText(answering, engine.speaking, modelPhase ?? keepLine))
           setHud(s)
           shown = true
         }
@@ -590,10 +738,31 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           },
         }
         // The cognition router (only ever asked on the operator's command): the Claude API through a gateway on this
-        // machine, or a model server on this machine, swapped at the console. Its fetch is the page's own (already held
-        // to this machine by the air gap main.tsx installed) under the gate's own wrapper once more. Its answer's pieces
-        // are shown on the HUD only after the lease let them through.
-        const local = createMindRouter({ fetch: pageFetch, store: pageStore(COGNITION_KEY) })
+        // machine, a model server on this machine, or the model file kept in this page, swapped at the console. Its
+        // fetch is the page's own (already held to this machine by the air gap main.tsx installed) under the gate's own
+        // wrapper once more. Its answer's pieces are shown on the HUD only after the lease let them through.
+        // The model kept in this page (09_Cognition/inPage.ts) is this router's one in-page mind, over the page's one
+        // runtime and store: it plans by the engine's profile of this device, holds the city's tier down while it loads
+        // or answers (inPagePlan.ts holdTier), and says what it is doing on the HUD's activity line. The onboarding's
+        // router has none: a model is never loaded while the city is still being built.
+        const device = (): Omit<PlanEnv, 'gpuMode' | 'gpuFailed'> => ({
+          mobile: e.profile.mobile, lite: e.profile.lite, gpuClass: e.profile.gpuClass,
+          cores: navigator.hardwareConcurrency || 4, memoryGb: deviceMemory(), isolated: canShareMemory(), f16: e.gpuF16,
+        })
+        let inPage!: InPageMind
+        const local = createMindRouter({
+          fetch: pageFetch,
+          store: pageStore(COGNITION_KEY),
+          inPage: (store) => (inPage = createInPageMind({
+            runtime: () => PAGE_RUNTIME(),
+            store: PAGE_MODELS(),
+            kept: store,
+            env: device,
+            busy: (on, place) => e.holdQuality(on && place ? holdTier(device(), place.gpu) : null),
+            onPhase: (text) => { modelPhase = text },
+          })),
+        })
+        inPageMind = inPage
         const mind: Mind = {
           ...local,
           answer: (req, onPiece) => {
@@ -646,6 +815,10 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
         })
         e.setNet(net)
         e.onHalt = (reason) => {
+          // A graphics reset takes the model in this page off the GPU for good (inPage.ts noteGpuReset), before it is
+          // shut down with the rest of the city.
+          if (haltClass(reason) === 'gpu-reset') inPage.noteGpuReset()
+          void inPage.dispose()
           unfollow?.()
           tasks.dispose()
           r.dispose()
@@ -653,6 +826,97 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           // A graphics reset in the background restarts once the player is back (once per two minutes at most).
           if (haltClass(reason) === 'gpu-reset') unwatch = reloadWhenVisible(document.hidden)
         }
+        // The model file kept in this page, picked or dropped: kept (copied into the page's storage, its progress on
+        // the HUD's activity line), then chosen, with the inpage provider answering from now on; a desktop loads it at
+        // once so the first ask does not wait, a phone only when asked. One file is copied at a time; files kept earlier
+        // stay kept until forgotten. Where this page cannot run the model, inPage.keep refuses before anything is copied
+        // or chosen, so the provider is left as it was.
+        let keeping = false
+        let hinted = false
+        const keepPicked = async (files: readonly File[]): Promise<string> => {
+          if (keeping) throw new Error('a model file is being kept in this page already: wait for it to finish')
+          keeping = true
+          keepLine = 'keeping the model file in this page'
+          let kept: KeptModel
+          try {
+            kept = await inPage.keep(files, (done, total) => {
+              keepLine = `keeping the model file in this page ${total > 0 ? Math.min(100, Math.max(0, Math.floor((done / total) * 100))) : 0}%`
+            })
+          } finally {
+            keeping = false
+            keepLine = null
+          }
+          local.setProvider('inpage')
+          local.setModel(kept.name)
+          // A served page that is not cross-origin isolated but has the service worker gets isolation (the worker adds
+          // the headers) by reloading once, and with it more than one thread for the model: said once a visit.
+          if (!hinted && /^https?:$/.test(window.location.protocol) && window.crossOriginIsolated !== true && navigator.serviceWorker?.controller) {
+            hinted = true
+            e.toast(MODEL_FILE, 'reload once to let the model use more than one thread')
+          }
+          const warm = !e.profile.mobile && !e.profile.lite
+          if (warm) void inPage.load().then((line) => e.toast(MODEL_FILE, line), (err: unknown) => e.toast(MODEL_FILE, plain(err)))
+          return `${kept.name} is kept in this page (${sizeText(kept.bytes)}${kept.durable ? '' : ', for this visit only'}): the inpage provider answers with it now${warm ? ', and it is loading' : ''}`
+        }
+        /** A pick from the Menu or a drop: what was kept, or why not, as a toast (the console prints its own). */
+        const keepAndSay = (chosen: Promise<File[] | null>): void => {
+          void chosen.then((files) => (files ? keepPicked(files) : null)).then((line) => { if (line) e.toast(MODEL_FILE, line) }, (err: unknown) => e.toast(MODEL_FILE, plain(err)))
+        }
+        const input = fileRef.current
+        const picker = input ? filePicker(input, (files) => keepAndSay(Promise.resolve(files))) : null
+        // The picker opens at once, inside the tap or the Enter keydown that asked: nothing is awaited before it. Where
+        // this page cannot run the model it does not open at all, and the reason is the answer (inPage.keep refuses too).
+        const pickFiles = (): Promise<File[] | null> => {
+          const cannot = PAGE_MODEL_REFUSAL()
+          if (cannot !== null) return Promise.reject(new Error(cannot))
+          return picker ? picker.open() : Promise.reject(new Error('this page has no file picker'))
+        }
+        modelFileRef.current = () => keepAndSay(pickFiles())
+        // A .gguf (or every part of a split one) dropped on the city is kept as a pick is, on a desktop (a phone has
+        // nothing to drag). Any file dropped is the page's, so the browser never leaves the city to open it.
+        const main = mainRef.current
+        const onDragOver = (ev: DragEvent): void => {
+          if (!ev.dataTransfer?.types.includes('Files')) return
+          ev.preventDefault()
+          ev.dataTransfer.dropEffect = 'copy'
+        }
+        const onDrop = (ev: DragEvent): void => {
+          const files = Array.from(ev.dataTransfer?.files ?? [])
+          if (!files.length) return
+          ev.preventDefault()
+          const models = files.filter((f) => /\.gguf$/i.test(f.name))
+          if (models.length) keepAndSay(Promise.resolve(models))
+          else e.toast(MODEL_FILE, 'only a .gguf model file (or every part of a split one) can be dropped on the city')
+        }
+        if (main && !e.profile.mobile) {
+          main.addEventListener('dragover', onDragOver)
+          main.addEventListener('drop', onDrop)
+        }
+        // The page in the background: a phone unloads the model after a minute there (inPage.ts background); the page
+        // back in view keeps it. A page that unloads (a reload, a closed tab, the city's own restart) did not die in a
+        // load it was running, so it takes that load's crash mark with it (inPage.ts leave): only a page the system
+        // kills, which runs no pagehide, leaves one.
+        const onVisibility = (): void => { if (document.hidden) inPage.background(); else inPage.foreground() }
+        const onPageHide = (): void => { inPage.leave(); inPage.background() }
+        document.addEventListener('visibilitychange', onVisibility)
+        window.addEventListener('pagehide', onPageHide)
+        unModel = () => {
+          modelFileRef.current = null
+          picker?.dispose()
+          main?.removeEventListener('dragover', onDragOver)
+          main?.removeEventListener('drop', onDrop)
+          document.removeEventListener('visibilitychange', onVisibility)
+          window.removeEventListener('pagehide', onPageHide)
+        }
+        // The console's `ask file` and `ask gpu` (terminal/bridge.ts ModelBridge).
+        const modelBridge: ModelBridge = Object.freeze({
+          pick: () => pickFiles().then((files) => (files ? keepPicked(files) : 'no model file was chosen')),
+          forget: (name?: string) => inPage.forget(name),
+          load: () => inPage.load(),
+          unload: () => inPage.unload(),
+          gpu: (mode: GpuMode) => gpuLine(inPage.setGpu(mode)),
+          log: () => inPage.log(),
+        })
         if (termOpenRef.current || lookOpenRef.current) e.input.suspend(true)
         setEngine(e)
         const engineBridge = e.terminalBridge(gate, mind, voice, memory.diary(), voiceOf)
@@ -666,6 +930,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           goal: (text: string) => goalPlan(text, engineBridge),
           memory: memoryBridge(memory, r),
           net: netBridge(e.net, pageStore(NET_TOKEN_KEY)),
+          model: modelBridge,
           // The player's look: App's state is the one source (the wardrobe card and the console share it).
           look: lookBridge({
             worn: () => wornRef.current ?? lookFromSeed(seedRef.current),
@@ -726,6 +991,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
       unfollow?.()
       router?.dispose()
       recruiter?.dispose()
+      unModel()
+      void inPageMind?.dispose()
       if ((window as { recruit?: unknown }).recruit) delete (window as { recruit?: unknown }).recruit
       engine?.dispose()
     }
@@ -736,8 +1003,11 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
   const failure = error !== null ? classify(error.cause, env) : locked !== null && haltClass(locked) !== 'audit' ? explainHalt(locked, env) : null
 
   return (
-    <main className="relative h-full w-full overflow-hidden bg-slate-900">
+    <main ref={mainRef} className="relative h-full w-full overflow-hidden bg-slate-900">
       <canvas ref={canvasRef} className="block h-full w-full touch-none" />
+      {/* The picker's file input: no accept (a phone greys out a .gguf it has no type for), and hidden by its size
+          and opacity, never by display, so every browser still opens it from a click. */}
+      <input ref={fileRef} type="file" multiple tabIndex={-1} aria-hidden="true" className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0" />
       <Hud s={hud} adapter={adapter} visible={hudVisible} terminalOpen={termOpen} mapLayer={engine?.mapLayer ?? null} />
       {engine && hud && !termOpen && (
         <TouchControls
@@ -746,6 +1016,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           nearVehicle={hud.input.nearVehicle}
           menu={{
             onConsole: () => termRef.current?.open(),
+            // No Model file where this page cannot run the model (PAGE_MODEL_REFUSAL).
+            onModelFile: PAGE_MODEL_REFUSAL() === null ? onModelFile : undefined,
             onHud: () => setHudVisible((v) => !v),
             hudVisible,
             ghost: hud.output.ghost === true,
