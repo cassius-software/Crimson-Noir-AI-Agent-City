@@ -37,6 +37,7 @@ copyright Julian Cassius Subban:
   .github/           the workflows
   docs/              the design documents and audits
   Dockerfile, publish.ps1   the container build and the publish script
+  flake.nix                 the Nix flake (its packages and NixOS module are under tools/nix/)
 
 Headers: "Copyright (c) 2026 Julian Cassius Subban" and "SPDX-License-Identifier: MIT".
 

@@ -1,0 +1,82 @@
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
+# Why does this file exist? It checks the Nix flake (flake.nix) the way a NixOS desktop uses it, on every pull request
+# and every push to main: Nix installed from its release installer (the installer's hash pinned below, the tarball's
+# hash pinned inside it), then
+# - `nix flake check`: the page built from source in Nix's sandbox, the launcher package around it, and the NixOS
+#   module evaluated on a minimal system;
+# - the page Nix built compared byte for byte with `npm run build`, so the city a Nix user gets is the one the ci
+#   workflow tests;
+# - the packaged command's own `--check`: tools/web/launch.mjs serves the Nix page and boots the city in the package's
+#   Chromium on the software WebGPU adapter;
+# - the browser smoke's desktop and Ultra scenarios in that same Chromium (tools/browser/smoke.mjs), the Chromium
+#   flake.lock pins rather than the runner's Chrome; the screenshots are kept as an artifact.
+# It is its own workflow, not a ci job: the self-healing agent answers ci and build-release failures only, and a Nix
+# fault is not one of those. `workflow_dispatch` lets a person run it on any branch.
+# What breaks if it is removed? A change to the lockfile, the build or the launcher could break `nix run` and the
+# NixOS module, and only a NixOS machine would show it.
+
+name: nix
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nix-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  NIX_VERSION: '2.34.6'
+  # sha256 of https://releases.nixos.org/nix/nix-2.34.6/install, which pins each platform's tarball by hash in turn.
+  NIX_INSTALL_SHA256: 'bf6d12da4aeaae38ab509dc736df648597bcdee051046ea76d3d53d5b18fa54a'
+
+jobs:
+  flake:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Nix, with its daemon and the flakes feature
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSfL "https://releases.nixos.org/nix/nix-$NIX_VERSION/install" -o "$RUNNER_TEMP/install-nix"
+          echo "$NIX_INSTALL_SHA256  $RUNNER_TEMP/install-nix" | sha256sum -c -
+          printf 'experimental-features = nix-command flakes\nmax-jobs = auto\n' > "$RUNNER_TEMP/nix.conf"
+          sh "$RUNNER_TEMP/install-nix" --daemon --yes --no-channel-add --nix-extra-conf-file "$RUNNER_TEMP/nix.conf"
+          echo /nix/var/nix/profiles/default/bin >> "$GITHUB_PATH"
+      - name: nix flake check (the page, the launcher package, the NixOS module)
+        run: nix flake check --print-build-logs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: The page Nix built is the page npm builds
+        run: |
+          npm run build
+          cmp dist/index.html "$(nix build .#page --no-link --print-out-paths)/share/crimson-noir-agent-city/index.html"
+      - name: The packaged command boots the city (crimson-noir-agent-city --check)
+        run: '"$(nix build .#default --no-link --print-out-paths)/bin/crimson-noir-agent-city" --check'
+      - name: The browser smoke's desktop and Ultra scenarios in the package's Chromium
+        run: |
+          CHROME="$(nix build .#default.chromium --no-link --print-out-paths)/bin/chromium" \
+            node tools/browser/smoke.mjs --only desktop,ultra --out "$RUNNER_TEMP/nix-smoke"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nix-smoke-${{ github.run_id }}
+          path: ${{ runner.temp }}/nix-smoke/
+          if-no-files-found: ignore
+          retention-days: 30

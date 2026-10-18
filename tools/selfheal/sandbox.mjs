@@ -46,8 +46,13 @@ export const IMAGE = 'crimson-noir-selfheal-sandbox'
 export const AI_TOOLING = ['.claude', '.cursor', '.continue', '.codeium', '.windsurf', '.aider.conf.yml', '.aider.chat.history.md',
   '.aider.input.history', '.aider.tags.cache.v3', '.mcp.json', 'CLAUDE.local.md']
 
-/** What is left out of the copy, at any depth: build output, dependencies the image carries, the history, local AI tooling. */
-export const EXCLUDE = ['.git', 'node_modules', 'target', 'dist', 'dist-ssr', 'dist-pilot', '.cache', '__pycache__', ...AI_TOOLING]
+/** What is left out of the copy, at any depth: build output, dependencies the image carries, the history, Nix's
+ *  result links and direnv cache (links into a store the container does not have), local AI tooling. A trailing `*`
+ *  matches any rest of the name, as tar's --exclude does. */
+export const EXCLUDE = ['.git', 'node_modules', 'target', 'dist', 'dist-ssr', 'dist-pilot', '.cache', '__pycache__', 'result', 'result-*', '.direnv', ...AI_TOOLING]
+
+/** Whether a path's part is one EXCLUDE names. */
+export const excluded = (part) => EXCLUDE.some((e) => (e.endsWith('*') ? part.startsWith(e.slice(0, -1)) : part === e))
 
 /**
  * The containment policy, as data, so the tests can hold it and the report can print it. Every entry is a
@@ -126,7 +131,7 @@ export const ENTRY = [
 /** A fresh copy of `tree` under the temp directory; the caller removes it. */
 export function copyTree(tree) {
   const dir = mkdtempSync(join(tmpdir(), 'selfheal-'))
-  cpSync(tree, dir, { recursive: true, filter: (src) => !src.slice(tree.length + 1).split('/').some((part) => EXCLUDE.includes(part)) })
+  cpSync(tree, dir, { recursive: true, filter: (src) => !src.slice(tree.length + 1).split('/').some(excluded) })
   return dir
 }
 
@@ -136,7 +141,7 @@ export function copyTree(tree) {
  * `.` entry would make tar restore the mount point's mode and time, which that user may not.
  */
 export function tarTree(tree) {
-  const entries = readdirSync(tree).filter((n) => !EXCLUDE.includes(n))
+  const entries = readdirSync(tree).filter((n) => !excluded(n))
   if (entries.length === 0) throw new Error(`sandbox: nothing to send from ${tree}`)
   const r = spawnSync('tar', ['-C', tree, ...EXCLUDE.map((e) => `--exclude=${e}`), '-cf', '-', ...entries], { maxBuffer: 1024 * 1024 * 1024 })
   if (r.status !== 0) throw new Error(`sandbox: tar of ${tree} failed: ${r.stderr}`)

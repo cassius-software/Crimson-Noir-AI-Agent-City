@@ -15,6 +15,30 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **NixOS: the city in one command.** `nix run github:cassius-software/Crimson-Noir-AI-Agent-City` (a new
+  `flake.nix`, nixpkgs from the NixOS 26.05 release pinned in `flake.lock`) builds the page from source in Nix's
+  sandbox (`tools/nix/page.nix`: npm installs the lockfile's packages by their integrity hashes, about 89 MB on
+  x86-64 because the other platforms' native binaries are left unfetched; the page is byte for byte the one
+  `npm run build` writes), serves it on `http://127.0.0.1:4180` to this machine only with the two isolation headers,
+  and opens it in Chromium as an app window with WebGPU on Vulkan and a profile of its own (`tools/web/launch.mjs`,
+  packaged with an app-menu entry by `tools/nix/app.nix`). Words after `--` become the page's query. A second start
+  joins a running server only when it signs a fresh nonce with this user's token (the token itself is never sent), so
+  another user's program on the port never gets the profile's window; a window on another launcher's server closes
+  with it. `nixosModules.default` (`programs.crimson-noir-agent-city.enable`) installs it built
+  from the system's own nixpkgs, turns on `hardware.graphics.enable` and gives the signed-in user a DualSense's raw
+  HID node for WebHID. The page's package is marked unfree (LICENSE, section 1): the flake's own outputs allow it by
+  name, and a NixOS configuration allows it in `nixpkgs.config.allowUnfreePredicate`. In a checkout, the module builds
+  from the files git tracks and nothing else in the folder. `nix develop` has the contributor tools. A new `nix`
+  workflow runs `nix flake check`, compares the Nix page with npm's, boots the city with the packaged command's
+  `--check` and runs the browser smoke's desktop and Ultra scenarios in the package's Chromium 155. The zero-trust test
+  now also requires the launcher to bind `127.0.0.1` and the Nix source to leave out local AI tooling; `CHROME` may
+  name a command on `PATH` (tools/browser/cdp.mjs). On another Linux, Nix's Chromium cannot load the system's GPU
+  driver, so the city shows its "No graphics adapter for WebGPU" card; the MANUAL points such systems at a browser of
+  their own (`CHROME=google-chrome-stable`), and the launcher says so when Chromium's sandbox stops it from starting
+  at all. The window has its own Wayland name (`chrome-127.0.0.1__-AgentCity`, a hidden menu entry gives it the
+  icon). Not verified: a real
+  NixOS desktop (a hardware GPU, Chromium's own sandbox, the menu entry, the DualSense rules), and the `aarch64-linux`
+  outputs, which CI neither builds nor evaluates.
 - **A Lite tier and a lite profile for entry-level phone GPUs.** A phone whose WebGPU adapter is ARM Bifrost or
   Midgard (Chrome reports a Mali-G52 as `arm / bifrost`), Imagination PowerVR Rogue, Furian or B-Series (a bare
   `img-tec` only on 4 GB or less) or Adreno 5xx and older, or that reports 2 GB of memory or less, now profiles as

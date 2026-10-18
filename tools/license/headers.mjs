@@ -49,6 +49,7 @@ const ROOT_FILES = {
   'index.html': 'proprietary',
   'vite.config.ts': 'proprietary',
   Dockerfile: 'mit',
+  'flake.nix': 'mit',
   'publish.ps1': 'mit',
 }
 
@@ -103,9 +104,14 @@ export function withHeader(text, kind, style, name) {
   return [...lines.slice(0, n), ...header, ...lines.slice(n)].join('\n')
 }
 
+/** Whether an entry, at any depth, is something Nix leaves in a checkout (as .gitignore has it): `nix build`'s result
+ *  links (into the store, or dangling once it is collected; a build run in a subfolder leaves one there) and direnv's
+ *  cache of the dev shell. Never source, and never to be walked. */
+export const nixLeftover = (name) => name === '.direnv' || name === 'result' || name.startsWith('result-')
+
 function* files(dir) {
   for (const name of readdirSync(dir)) {
-    if (name === '.git' || name === 'node_modules' || name === 'target' || name === 'dist') continue
+    if (name === '.git' || name === 'node_modules' || name === 'target' || name === 'dist' || nixLeftover(name)) continue
     const p = join(dir, name)
     if (statSync(p).isDirectory()) yield* files(p)
     else yield p

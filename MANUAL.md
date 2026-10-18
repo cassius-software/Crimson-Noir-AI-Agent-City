@@ -2015,6 +2015,126 @@ controls. `src/webApp.test.ts` holds the policy change, the icons and the servic
 needing a real iPhone: Safari's WebGPU in the physics worker, the home-screen launch, the isolation headers from a
 service worker in Safari, and heat and memory over a long session.
 
+## On NixOS
+
+A NixOS desktop is meant to run the city on its own GPU through Chromium's WebGPU on Vulkan: Mesa's radv on an AMD
+Radeon (console-class RDNA parts included), ANV on Intel, or NVIDIA's driver where the configuration sets
+`services.xserver.videoDrivers = [ "nvidia" ]`. The page picks its tier from the GPU itself (Autoscaling); nothing in
+the flake pins one. No hardware GPU has run it yet (what is verified is at the end of this section).
+
+**Installing it.** The flake's NixOS module puts the city in the app menu, with its icon:
+
+```nix
+{
+  inputs.nixpkgs.url = "https://channels.nixos.org/nixos-26.05/nixexprs.tar.xz";  # your system's channel
+  inputs.agent-city.url = "github:cassius-software/Crimson-Noir-AI-Agent-City";
+  inputs.agent-city.inputs.nixpkgs.follows = "nixpkgs";
+  outputs = { nixpkgs, agent-city, ... }: {
+    nixosConfigurations.my-pc = nixpkgs.lib.nixosSystem {
+      modules = [
+        ./configuration.nix
+        agent-city.nixosModules.default
+        ({ lib, ... }: {
+          programs.crimson-noir-agent-city.enable = true;
+          nixpkgs.config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [ "crimson-noir-agent-city-page" ];
+        })
+      ];
+    };
+  };
+}
+```
+
+The module (`tools/nix/module.nix`) builds the package from the system's own nixpkgs, so Chromium and the Vulkan
+driver come from one set of libraries (a Chromium from an older nixpkgs can fail to load a newer system's driver);
+turns on
+`hardware.graphics.enable` (the Vulkan driver WebGPU needs; a configuration that sets it keeps its own value); and,
+unless `programs.crimson-noir-agent-city.dualsense = false;`, gives the signed-in user a DualSense's or DualSense
+Edge's raw HID node, over USB and Bluetooth, so the browser's WebHID can drive its trigger resistance, rumble and light
+bar (Hardware); the plain gamepad needs none of that. The page is the proprietary core (LICENSE, section 1) and its
+package says so (`meta.license` is unfree), so a configuration allows it by name, as above; one that already has an
+`allowUnfreePredicate` adds the name to its own. (A configuration that lists the flake's
+`packages.<system>.default` itself skips that check: the flake's own package set allows the page already.) A
+configuration without flakes can import `tools/nix/module.nix` from a checkout; the page is then built from the files
+git tracks there and nothing else in the folder. Git lets only the checkout's owner read it: `sudo nixos-rebuild`
+passes your user on, but a root shell or an unattended upgrade needs the checkout in root's git `safe.directory`.
+
+**Trying it without installing.**
+
+```
+nix run github:cassius-software/Crimson-Noir-AI-Agent-City
+```
+
+Flakes are still an experimental Nix feature: a stock NixOS needs
+`nix.settings.experimental-features = [ "nix-command" "flakes" ];` (or `--extra-experimental-features "nix-command
+flakes"` on the command). In a checkout, `nix run .` does the same. The first run builds the page from source in Nix's
+sandbox (`tools/nix/page.nix`: npm installs the lockfile's packages for this platform, each fetched by its integrity
+hash, about 89 MB on x86-64, then `npm run build`; the result is byte for byte the page `npm run build` writes) and
+fetches Chromium from the NixOS binary cache. Its nixpkgs is the NixOS 26.05 release pinned in `flake.lock`, and
+Chromium from it can fail to load the GPU driver of a newer NixOS (today's nixos-unstable driver needs a newer glibc
+than 26.05's): the city then starts without a GPU adapter. On such a system the module avoids it for good, or build
+from the system's nixpkgs: on a flake-built NixOS,
+`nix run --override-input nixpkgs nixpkgs github:cassius-software/Crimson-Noir-AI-Agent-City` (its registry names the
+system's nixpkgs); on a channel-based one, `--override-input nixpkgs path:/nix/var/nix/profiles/per-user/root/channels/nixos`
+(the registry there names nixpkgs-unstable).
+
+**What the command does** (`crimson-noir-agent-city`, which is `tools/web/launch.mjs` with Node 24):
+- **Serves the page on `http://127.0.0.1:4180`, to this machine only,** with the two cross-origin isolation headers,
+  so the physics realm and the page share one memory bridge as under `npm run preview`. It answers `/` (and
+  `/index.html`) and nothing else, uncached, so a rebuilt page shows on the next start. The address stays the same
+  from one run to the next because the page keeps its settings (the onboarding's answers, the map, a model key typed to
+  the console) per address; `--port` moves it, and the page then starts as on a first visit. Ollama accepts the
+  address by default (it allows `127.0.0.1` origins); another model server may need the origin allowed in its own
+  settings (The model providers).
+- **Opens Chromium as an app window** with WebGPU on (`--enable-unsafe-webgpu` and Vulkan) and a profile of its own
+  (`~/.local/state/crimson-noir-agent-city/chromium`, under `$XDG_STATE_HOME` when set; the profile's folder in it is
+  `AgentCity`, which also names the window under Wayland), so the switches apply even while another Chromium is open. In a Wayland session Chromium opens a native Wayland window; `--x11` (or
+  `AGENT_CITY_X11=1`) runs it through XWayland instead. Closing the window stops the server; Ctrl+C in the terminal
+  closes the window.
+- **A second start** while one runs opens another window on the same server, but only when the server proves it is
+  this user's: a serving launcher keeps a random token in a file only this user can read (in `$XDG_RUNTIME_DIR`, else
+  the state folder), and the second start asks it to sign a fresh random value with that token; the token itself never
+  leaves the file. Any user of the machine can take a port on 127.0.0.1, and a server of theirs would otherwise get
+  this profile's window, and with it the keys saved for that address; such a port is refused instead. A window opened
+  on another launcher's server closes when that server stops.
+- **Words after `--`** become the page's query (URL options): `nix run github:cassius-software/Crimson-Noir-AI-Agent-City
+  -- quality=4 map=lakefront players=2`. The switches: `--port N`, `--dir <folder>` (another build, such as a
+  checkout's `dist/`), `--no-browser` (serve only and print the address, for a browser of your own), `--check` (the
+  CI check below) and `--help`. `CHROME` names another browser, by path or as a command on `PATH`
+  (`CHROME=google-chrome-stable`); `AGENT_CITY_CHROME_FLAGS` adds switches, each starting with `--` and with no space
+  inside its value (an `--enable-features` list joins the launcher's own: Chromium keeps only the last list it is
+  given); `AGENT_CITY_PORT` and `AGENT_CITY_DIST` set the port and the page.
+
+`nix develop` opens a shell with Node 24, Chromium (as `CHROME`, for the browser smoke), rustup, Python with z3 (for
+`npm run verify -- smt`) and git.
+
+**On another Linux with Nix.** The command runs, but Nix's Chromium cannot load the distribution's GPU driver (the
+driver's libraries are not where Nix's programs look for them), so the page finds no WebGPU adapter and shows its
+"No graphics adapter for WebGPU" card. Where the distribution restricts unprivileged user namespaces (Ubuntu 23.10 and
+newer), Nix's Chromium cannot start its sandbox either and stops at start; the launcher says so. In both cases open it
+in a browser installed from the distribution or its vendor, which brings the system's driver and sandbox (a snap's
+confinement may keep it out of the profile folder), for example Google Chrome:
+`CHROME=google-chrome-stable nix run github:cassius-software/Crimson-Noir-AI-Agent-City`. The launcher, its server and
+the page built from source stay the same.
+
+What is verified: the `nix` workflow (`.github/workflows/nix.yml`) runs on every pull request and push to main on an
+x86-64 Ubuntu runner: `nix flake check` (the page built in the sandbox, the package, and the module evaluated on a
+minimal NixOS system, its package evaluating once the page is allowed and refused while it is not), the Nix page
+compared byte for byte with `npm run build`, `crimson-noir-agent-city --check` (the packaged command's server serves
+the page and the city boots headless in the package's Chromium on the software adapter, cross-origin isolated, with no
+exception on the page), and the browser smoke's desktop and Ultra scenarios in that Chromium.
+`src/desktopLauncher.test.ts` holds the address, the headers, the token, the one features list and the flake's shape.
+By hand, in a Linux container (Ubuntu 24.04, not NixOS) running as root, so with `--no-sandbox` and the software
+adapter's switches (`--use-vulkan=swiftshader --use-angle=swiftshader --use-gl=angle --enable-unsafe-swiftshader`)
+added through `AGENT_CITY_CHROME_FLAGS`: the packaged command opened the city in an app window on a virtual display, a
+second start opened a second window on the same server, a server forging the launcher's answer on a port was refused,
+and closing the window or Ctrl+C closed Chromium, stopped the server and freed the port; under a headless Wayland
+compositor Chromium named the window `chrome-127.0.0.1__-AgentCity`, the name of the package's hidden desktop entry; and
+run as an ordinary user where user namespaces are switched off, Nix's Chromium stopped at start and the launcher printed
+its hint. Not verified, and needing a real NixOS
+desktop: a hardware GPU (radv, ANV or NVIDIA), Chromium's own sandbox (every run here had it off), a desktop shell
+matching the window to its menu entry and icon, the DualSense rules, and heat over a long session. The
+`aarch64-linux` outputs are declared but neither built nor evaluated by CI.
+
 ## When the city cannot start or stops
 
 No failure leaves a black screen with nothing to press: the installed iPhone app and the Windows app have no address
@@ -2149,7 +2269,7 @@ search for Crimson Noir before you register it.
 The product is dual-licensed (`LICENSE`): the core (`src/`, `crimson_noir_os/`, `native/`, `world/`, `brand/`, the page's
 entry and build) is proprietary, copyright (c) 2026 Julian Cassius Subban, all rights reserved
 (`LICENSES/LicenseRef-CrimsonNoir-Proprietary.txt`); the auxiliary tooling (`tools/`, `deploy/`, `.github/`,
-`docs/`, the container build and the publish script) is open source under MIT (`LICENSES/MIT.txt`); the game
+`docs/`, the container build, the publish script and the Nix flake) is open source under MIT (`LICENSES/MIT.txt`); the game
 mechanics are offered under the ORC License (`NOTICE.md`). Every source file opens with its licence header, and
 `node tools/license/headers.mjs check` (CI's `license-headers` check) fails on a file without one.
 

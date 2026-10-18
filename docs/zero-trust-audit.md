@@ -149,6 +149,7 @@ origin only (a gateway that allowed any origin would let any site you visit spen
 ```
 map $http_origin $speech_origin {
   default "";
+  "http://127.0.0.1:4180" $http_origin;   # the Nix launcher (nix run)
   "http://localhost:4173" $http_origin;   # npm run preview; add "null" for a page opened from a file,
                                           # and the desktop app's origin if you use it
 }
@@ -173,8 +174,9 @@ server {
 
 So a key typed to the console should be a testing key: scoped, with a spending limit, revoked when the testing ends,
 and cleared with `ask key none` (which also deletes it from storage). Serving the page from `npm run preview`
-(`http://localhost:4173`) instead of opening it as a file gives it an origin of its own, which closes the
-shared-file-storage row.
+(`http://localhost:4173`), or from the Nix launcher (`http://127.0.0.1:4180`, which also gives its Chromium a
+profile of its own and opens that profile only on a server that proves it holds this user's token), instead of
+opening it as a file gives it an origin of its own, which closes the shared-file-storage row.
 
 ## The installable web copy (`tools/web/pwa.mjs`)
 

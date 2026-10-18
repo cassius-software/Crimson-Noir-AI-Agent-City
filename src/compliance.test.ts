@@ -22,6 +22,11 @@ import { glyph, type ControlAction, type GlyphFamily } from './07_Execute_Action
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const SELF = fileURLToPath(import.meta.url)
 
+/** What Nix leaves in a checkout, at any depth (tools/license/headers.mjs nixLeftover): `nix build`'s result links
+ *  into the store (dangling once it is collected) and direnv's cache of the dev shell, which holds the whole of
+ *  nixpkgs. Neither is the repository's text, and the store's copy of the page is not the source. */
+const nixLeftover = (name: string) => name === '.direnv' || name === 'result' || name.startsWith('result-')
+
 // ---------------------------------------------------------------------------------------------------
 // Licences
 
@@ -79,6 +84,7 @@ const SCRUBBED: readonly RegExp[] = [/\bxbox\b/i, /\bnintendo\b/i, /\bjoy-?cons?
 
 function* files(dir: string): Generator<string> {
   for (const name of readdirSync(dir)) {
+    if (nixLeftover(name)) continue
     const p = join(dir, name)
     if (statSync(p).isDirectory()) yield* files(p)
     else if (/\.(ts|tsx|wgsl|css|html|md)$/.test(name)) yield p
@@ -183,7 +189,7 @@ test('the npm tree: every licence on a permissive allow-list (so no GPL, AGPL, L
 /** Every file under a directory, whatever its kind (the walker above keeps to the page's own kinds), build output skipped. */
 function* every(dir: string): Generator<string> {
   for (const name of readdirSync(dir)) {
-    if (name === 'target' || name === 'node_modules' || name === 'dist' || name === '.git') continue
+    if (name === 'target' || name === 'node_modules' || name === 'dist' || name === '.git' || nixLeftover(name)) continue
     const p = join(dir, name)
     if (statSync(p).isDirectory()) yield* every(p)
     else yield p
