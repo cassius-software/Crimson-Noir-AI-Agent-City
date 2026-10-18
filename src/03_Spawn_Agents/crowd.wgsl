@@ -576,8 +576,9 @@ fn trailSpot(r: u32, k: u32) -> vec2f {
 // between (the operator walked from one to the next, round whatever corner hides it), which leads into a dead end and
 // round the end of a long piece where no one corner opens, and out of a room the operator has left. Only the part of
 // the trail the crowd can walk serves: from each point to the one after it, and on to `to` when the operator is there
-// (`there`), the line is clear and crosses no glass. The operator steps over an AGV dock; the containment holds
-// everyone off it, so a trail over one would pin them on its face. Else by the corner of a piece (ROOM_ROUND beyond
+// (`there`), the line passes through no piece and no glass. The operator steps over an AGV dock; the containment
+// holds everyone off it, so a trail over one would pin them on its face. A line cutting a piece's grown corner is no
+// gap: the operator's body goes round the corner on an arc, and the containment slides the crowd round it too. Else by the corner of a piece (ROOM_ROUND beyond
 // its grown corner, on the floor and clear of the other pieces) that makes the shortest clear two-leg walk; with none,
 // out along the nearer aisle towards the hub, from where one may open. The crowd's flow field cannot do this: its 2 m
 // cells run straight through a conveyor or a rack 0.8 m deep.
@@ -589,7 +590,7 @@ fn roomWay(r: u32, me: vec2f, to: vec2f, follow: bool, there: bool) -> vec2f {
     var next = goal;
     for (var k = 0u; k < min(P.trailCount, TRAIL_POINTS); k++) {
       let t = trailSpot(r, k);
-      if ((k > 0u || there) && (!clearOfFurniture(r, t, next, clear) || walled(t, next))) { break; }
+      if ((k > 0u || there) && (!clearOfFurniture(r, t, next, 0.0) || walled(t, next))) { break; }
       if (clearOfFurniture(r, me, t, clear) && !walled(me, t)) {
         let on = distance(me, next) <= distance(t, next) && clearOfFurniture(r, me, next, 0.0) && !walled(me, next);
         return dirTo(me, select(t, next, on));
@@ -679,12 +680,15 @@ fn summonWay(me: vec2f, at: vec2f, dist: f32, pane: i32) -> vec2f {
   // them in the opening's band, the other outside beside it) is gone round by its outer corner, just off the opening,
   // where the field's 2 m cells see nothing to go round. A lot with no room in it is gone round by the corner of its
   // square, just off it: the field walks across a park, and round a building standing back from its lot's edge, where
-  // the containment holds everyone out of the whole square, so its arrow would pin them on the square's face. Anything
-  // else by the field's arrow, one cell off the glass where the cell under them is silent.
+  // the containment holds everyone out of the whole square, so its arrow would pin them on the square's face. First,
+  // though, the spot on their own face nearest an operator inside the lot, where that is within talking reach; and
+  // only a corner within the last stretch of the operator, or walking to it would take them past the stretch's edge,
+  // where the arrow turns them back. Anything else by the field's arrow, one cell off the glass where the cell under
+  // them is silent.
   let goal = offLot(at);
   let pad = ROOM_PAD - 1e-3;
   if (dist <= 4.0 * SUMMON_STOP) {
-    if (!lotCut(me, me, goal, pad) && !lotCut(goal, me, goal, pad)) { return dirTo(me, goal); }
+    if (!lotCut(me, me, goal, pad) && !lotCut(goal, me, goal, pad)) { return arriveAt(me, goal); }
     let r = roomOf(me);
     if (r >= 0 && r == roomOf(goal)) {
       var best = 1e9;
@@ -703,12 +707,15 @@ fn summonWay(me: vec2f, at: vec2f, dist: f32, pane: i32) -> vec2f {
     if (roomOf(p) < 0) {
       let c = lotCenter(p);
       let g = CITY_LOT_HALF + ROOM_PAD + 0.05;
+      let l = me - c;
+      let own = c + select(vec2f(clamp(at.x - c.x, -g, g), sign(l.y) * g), vec2f(sign(l.x) * g, clamp(at.y - c.y, -g, g)), abs(l.x) >= abs(l.y));
+      if (distance(own, at) < SUMMON_STOP - 0.05 && !lotCut(me, me, own, pad) && !lotCut(goal, me, own, pad)) { return dirTo(me, own); }
       var best = 1e9;
       var aim = goal;
       for (var k = 0u; k < 4u; k++) {
         let q = c + vec2f(select(-g, g, (k & 1u) != 0u), select(-g, g, (k & 2u) != 0u));
         let cost = distance(me, q) + distance(q, goal);
-        if (cost < best && !lotCut(me, me, q, pad) && !lotCut(goal, me, q, pad) && !lotCut(me, q, goal, pad) && !lotCut(goal, q, goal, pad)) {
+        if (cost < best && distance(q, at) <= 4.0 * SUMMON_STOP && !lotCut(me, me, q, pad) && !lotCut(goal, me, q, pad) && !lotCut(me, q, goal, pad) && !lotCut(goal, q, goal, pad)) {
           best = cost;
           aim = q;
         }
@@ -720,7 +727,7 @@ fn summonWay(me: vec2f, at: vec2f, dist: f32, pane: i32) -> vec2f {
     let here = roomOf(me);
     if (here >= 0) { flow = flowAt(me + offGlass(u32(here), me) / FLOW_INV_CELL); }
   }
-  return select(dirTo(me, goal), flow, dot(flow, flow) > 0.5);
+  return select(arriveAt(me, goal), flow, dot(flow, flow) > 0.5);
 }
 // The sidewalk corner a commuter walks the corner graph to: the corner of the doorway's street on the room's own block
 // (interiors.ts targetCorner); its lane coordinate is the door front's, so the last stretch is straight along the lane.
@@ -865,6 +872,10 @@ fn dirTo(a: vec2f, b: vec2f) -> vec2f {
   let l = length(d);
   return select(vec2f(0.0), d / l, l > 1e-4);
 }
+// dirTo, slowing to a stop within a quarter metre of b: someone asked over to an operator out of their reach (a metre
+// or more into a park) stands on the spot nearest them, as they stood held on the lot's face, instead of stepping back
+// and forth across it.
+fn arriveAt(a: vec2f, b: vec2f) -> vec2f { return dirTo(a, b) * min(distance(a, b) * 4.0, 1.0); }
 
 // ---------------------------------------------------------------- passes
 

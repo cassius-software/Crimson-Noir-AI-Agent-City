@@ -544,6 +544,8 @@ const glassBetween = (rooms: readonly Workplace[], p: XZ, q: XZ, pad = 0) => {
 }
 const walled = (rooms: readonly Workplace[], p: XZ, q: XZ) => glassBetween(rooms, p, q) >= 0
 const dirTo = (a: XZ, b: XZ): XZ => { const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz); return l > 1e-4 ? { x: dx / l, z: dz / l } : { x: 0, z: 0 } }
+/** crowd.wgsl arriveAt: dirTo, slowing to a stop within ARRIVE of b. */
+const arriveAt = (a: XZ, b: XZ): XZ => { const d = dirTo(a, b), k = Math.min(1, Math.hypot(b.x - a.x, b.z - a.z) / 0.25); return { x: d.x * k, z: d.z * k } }
 /** hitsBox in city coordinates (its u, v are x, z here). */
 const hits = (a: XZ, b: XZ, lo: XZ, hi: XZ) => hitsBox({ u: a.x, v: a.z }, { u: b.x - a.x, v: b.z - a.z }, { u: lo.x, v: lo.z }, { u: hi.x, v: hi.z })
 function clearOfFurniture(room: Workplace, a: XZ, b: XZ, pad: number): boolean {
@@ -578,7 +580,7 @@ function roomWay(rooms: readonly Workplace[], room: Workplace, me: XZ, to: XZ, t
     let next = goal
     for (let k = 0; k < Math.min(trail.count, TRAIL.points); k++) {
       const t = trailSpot(room, trail, k)
-      if ((k > 0 || there) && (!clearOfFurniture(room, t, next, clear) || walled(rooms, t, next))) break
+      if ((k > 0 || there) && (!clearOfFurniture(room, t, next, 0) || walled(rooms, t, next))) break
       if (clearOfFurniture(room, me, t, clear) && !walled(rooms, me, t)) {
         const on = Math.hypot(next.x - me.x, next.z - me.z) <= Math.hypot(next.x - t.x, next.z - t.z) && clearOfFurniture(room, me, next, 0) && !walled(rooms, me, next)
         return dirTo(me, on ? next : t)
@@ -651,7 +653,7 @@ function summonWay(grid: ReturnType<typeof cityGrid>, dir: Float32Array, rooms: 
   }
   const goal = offLot(rooms, at), pad = ROOM.pad - 1e-3
   if (dist <= 4 * STOP) {
-    if (!lotCut(rooms, me, me, goal, pad) && !lotCut(rooms, goal, me, goal, pad)) return dirTo(me, goal)
+    if (!lotCut(rooms, me, me, goal, pad) && !lotCut(rooms, goal, me, goal, pad)) return arriveAt(me, goal)
     const r = roomAt(rooms, me)
     if (r >= 0 && r === roomAt(rooms, goal)) {
       let best = 1e9, aim = goal
@@ -664,18 +666,21 @@ function summonWay(grid: ReturnType<typeof cityGrid>, dir: Float32Array, rooms: 
     }
     const p = lotCut(rooms, me, me, goal, pad) ? me : goal
     if (roomAt(rooms, p) < 0) {
-      const c = lotC(p), g = h + ROOM.pad + 0.05
+      const c = lotC(p), g = h + ROOM.pad + 0.05, l = { x: me.x - c.x, z: me.z - c.z }
+      const clampG = (x: number) => Math.min(g, Math.max(-g, x))
+      const own = Math.abs(l.x) >= Math.abs(l.z) ? { x: c.x + Math.sign(l.x) * g, z: c.z + clampG(at.z - c.z) } : { x: c.x + clampG(at.x - c.x), z: c.z + Math.sign(l.z) * g }
+      if (Math.hypot(own.x - at.x, own.z - at.z) < STOP - 0.05 && !lotCut(rooms, me, me, own, pad) && !lotCut(rooms, goal, me, own, pad)) return dirTo(me, own)
       let best = 1e9, aim = goal
       for (let k = 0; k < 4; k++) {
         const q = { x: c.x + (k & 1 ? g : -g), z: c.z + (k & 2 ? g : -g) }
         const cost = Math.hypot(q.x - me.x, q.z - me.z) + Math.hypot(goal.x - q.x, goal.z - q.z)
-        if (cost < best && !lotCut(rooms, me, me, q, pad) && !lotCut(rooms, goal, me, q, pad) && !lotCut(rooms, me, q, goal, pad) && !lotCut(rooms, goal, q, goal, pad)) { best = cost; aim = q }
+        if (cost < best && Math.hypot(q.x - at.x, q.z - at.z) <= 4 * STOP && !lotCut(rooms, me, me, q, pad) && !lotCut(rooms, goal, me, q, pad) && !lotCut(rooms, me, q, goal, pad) && !lotCut(rooms, goal, q, goal, pad)) { best = cost; aim = q }
       }
       if (best < 1e9) return dirTo(me, aim)
     }
   }
   if (flow.x * flow.x + flow.z * flow.z <= 0.5) offGlass()
-  return flow.x * flow.x + flow.z * flow.z > 0.5 ? flow : dirTo(me, goal)
+  return flow.x * flow.x + flow.z * flow.z > 0.5 ? flow : arriveAt(me, goal)
 }
 function containAny(rooms: readonly Workplace[], was: XZ, to: XZ): XZ {
   const r = roomAt(rooms, to)
@@ -1097,6 +1102,71 @@ test('a recruit in tow never takes the operator\'s trail over an AGV dock: the o
   assert.equal(fails.length, 0, `${fails.length} of ${runs}: ${fails.slice(0, 6).join('; ')}`)
 })
 
+test('the trail still leads round the end of a long piece the operator rounds close: a body goes round a corner on an arc, its trail cuts the corner', () => {
+  // The operator's capsule slides round the end of the robotics lab's rack and of the warehouse's conveyor 0.32 m off
+  // it; the trail's line between the spots either side cuts the corner's square grown 0.30 m, though not the piece.
+  const fails: string[] = []
+  let runs = 0
+  for (const seed of [1337, 7]) {
+    const rooms = workplaces(seed), grid = cityGrid(generateBuildings(seed).map((b) => b.box)), field = fieldFor(grid)
+    for (const [kind, pts] of [
+      ['roboticsLab', [[11, 0], [5.8, 11.2], [-11.32, 11.2], [-11.32, 9.6], [-11.23, 9.37], [-11, 9.28], [-10.5, 8]]],
+      ['warehouse', [[11, 0], [0, 4.9], [-10, 4.9], [-10.23, 4.97], [-10.32, 5.2], [-10.32, 6.4], [-10.23, 6.63], [-10, 6.72], [-9, 7.2]]],
+    ] as const) {
+      const room = rooms.find((r) => r.kind === kind)!
+      for (const dt of [1 / 30, 1 / 60, 1 / 120]) {
+        const f = follow(grid, field, rooms, toWorld(room, 12.8, 0.3), walkPath(pathIn(room, pts), 2), { limit: 40, dt })
+        runs++
+        if (f.broke >= 0 || !f.talking.at(-1)) {
+          const e = toLocal(room, f.end.x, f.end.z)
+          fails.push(`${kind} seed ${seed}, dt ${dt.toFixed(3)}: ${f.broke >= 0 ? `the tether broke at ${f.broke.toFixed(1)} s` : 'still coming'} at (${e.u.toFixed(2)}, ${e.v.toFixed(2)})`)
+        }
+      }
+    }
+  }
+  assert.equal(fails.length, 0, `${fails.length} of ${runs}: ${fails.slice(0, 6).join('; ')}`)
+})
+
+test('the last stretch by a lot with nothing on it talks from the recruit\'s own face when the operator is in reach of it, and never shuffles at its 6 m edge', () => {
+  const rooms = workplaces(1337), grid = cityGrid(generateBuildings(1337).map((b) => b.box)), field = fieldFor(grid)
+  const fails: string[] = []
+  let runs = 0
+  for (const k of [3, 8, 13]) {
+    const c = { x: (k + 0.5) * CITY.pitch, z: (CITY.blocks - 0.5) * CITY.pitch }
+    for (const [sx, sz, swap] of [[1, 1, false], [-1, -1, false], [1, 1, true], [-1, 1, true]] as const) {
+      const at = (x: number, z: number): XZ => (swap ? { x: c.x + sx * z, z: c.z + sz * x } : { x: c.x + sx * x, z: c.z + sz * z })
+      const local = (p: XZ) => (swap ? { x: (p.z - c.z) * sz, z: (p.x - c.x) * sx } : { x: (p.x - c.x) * sx, z: (p.z - c.z) * sz })
+      // The reviewer's walk: the operator asks someone 2.5 m along the east lane, walks on round the corner and stops
+      // in the park a metre in from both faces, a little nearer the far one. Asked fresh, at the slowest own pace, the
+      // recruit talks from the east face inside the summons' time; in tow, as soon.
+      for (const [stopX, stopZ] of [[11.97, 12.2], [12.1, 12.25], [12.25, 12.4]]) {
+        for (const tethered of [false, true]) {
+          const f = follow(grid, field, rooms, at(14.2, 3.5), walkPath([at(14.2, 6), at(14.2, 12.2), at(stopX, stopZ)], 2), { limit: 25, tethered, base: 1.1 })
+          runs++
+          if (f.firstTalk < 0 || f.firstTalk > (tethered ? 10 : APPROACH_SECONDS)) {
+            const e = local(f.end)
+            fails.push(`lot ${k} (${sx}, ${sz})${swap ? ' turned' : ''} to (${stopX}, ${stopZ})${tethered ? ' in tow' : ''}: ${f.firstTalk < 0 ? 'never talked' : `talked at ${f.firstTalk.toFixed(1)} s`}, at (${e.x.toFixed(2)}, ${e.z.toFixed(2)})`)
+          }
+        }
+      }
+      // The operator 4-5 m inside the park, out of reach of every face: the recruit stands still on the face, as
+      // before, never turning back and forth between the corner and the field's arrow at the last stretch's 6 m.
+      for (const [stopX, stopZ] of [[8, 10], [8.5, 9.5], [9, 10.5]]) {
+        const f = follow(grid, field, rooms, at(14.2, -6.5), walkPath([at(14.2, -4), at(14.2, 10), at(stopX, stopZ)], 2), { limit: 30 })
+        runs++
+        const tail = f.me.slice(-300)
+        let reversals = 0
+        for (let i = 2; i < tail.length; i++) {
+          const a = { x: tail[i - 1].x - tail[i - 2].x, z: tail[i - 1].z - tail[i - 2].z }, b = { x: tail[i].x - tail[i - 1].x, z: tail[i].z - tail[i - 1].z }
+          if (Math.hypot(a.x, a.z) > 1e-4 && Math.hypot(b.x, b.z) > 1e-4 && a.x * b.x + a.z * b.z < 0) reversals++
+        }
+        if (reversals > 3) fails.push(`lot ${k} (${sx}, ${sz})${swap ? ' turned' : ''} to (${stopX}, ${stopZ}): ${reversals} reversals in the last 5 s at (${local(f.end).x.toFixed(3)}, ${local(f.end).z.toFixed(3)}), ${Math.hypot(f.end.x - f.at.at(-1)!.x, f.end.z - f.at.at(-1)!.z).toFixed(3)} m away`)
+      }
+    }
+  }
+  assert.equal(fails.length, 0, `${fails.length} of ${runs}: ${fails.slice(0, 6).join('; ')}`)
+})
+
 test('on the street, the last stretch round a lot with nothing on it goes by its corner: the field walks across a park, the containment holds everyone out of it', () => {
   // The reviewer's walk by park lot (8, 15) at (340, 620): along the lot's east lane and into the park just past its
   // corner, the recruit tethered behind. The same at every corner of every park lot of seed 1337, both ways round.
@@ -1238,22 +1308,25 @@ test('the shader carries the same numbers: ROOM_*, WORK_* and the workday in cro
     'if (here >= 0) { flow = flowAt(me + offGlass(u32(here), me) / FLOW_INV_CELL); }',
     'let goal = offLot(at);',
     'let pad = ROOM_PAD - 1e-3;',
-    'if (!lotCut(me, me, goal, pad) && !lotCut(goal, me, goal, pad)) { return dirTo(me, goal); }',
+    'if (!lotCut(me, me, goal, pad) && !lotCut(goal, me, goal, pad)) { return arriveAt(me, goal); }',
+    'fn arriveAt(a: vec2f, b: vec2f) -> vec2f { return dirTo(a, b) * min(distance(a, b) * 4.0, 1.0); }',
     'let c = roomWorld(u32(r), vec2f(CITY_LOT_HALF + ROOM_PAD + 0.05, s * (ROOM_DOOR - ROOM_PAD - 0.05)));',
     'if (cost < best && !crossesGlass(u32(r), me, c, pad) && !crossesGlass(u32(r), c, goal, pad)) {',
     'let p = select(goal, me, lotCut(me, me, goal, pad));',
     'if (roomOf(p) < 0) {',
     'let g = CITY_LOT_HALF + ROOM_PAD + 0.05;',
     'let q = c + vec2f(select(-g, g, (k & 1u) != 0u), select(-g, g, (k & 2u) != 0u));',
-    'if (cost < best && !lotCut(me, me, q, pad) && !lotCut(goal, me, q, pad) && !lotCut(me, q, goal, pad) && !lotCut(goal, q, goal, pad)) {',
-    'return select(dirTo(me, goal), flow, dot(flow, flow) > 0.5);',
+    'let own = c + select(vec2f(clamp(at.x - c.x, -g, g), sign(l.y) * g), vec2f(sign(l.x) * g, clamp(at.y - c.y, -g, g)), abs(l.x) >= abs(l.y));',
+    'if (distance(own, at) < SUMMON_STOP - 0.05 && !lotCut(me, me, own, pad) && !lotCut(goal, me, own, pad)) { return dirTo(me, own); }',
+    'if (cost < best && distance(q, at) <= 4.0 * SUMMON_STOP && !lotCut(me, me, q, pad) && !lotCut(goal, me, q, pad) && !lotCut(me, q, goal, pad) && !lotCut(goal, q, goal, pad)) {',
+    'return select(arriveAt(me, goal), flow, dot(flow, flow) > 0.5);',
     'if (r >= 0) { return crossesGlass(u32(r), a, b, pad); }',
     'return hitsBox(a, b - a, c - (CITY_LOT_HALF + pad), c + (CITY_LOT_HALF + pad));',
     'let clear = ROOM_PAD - 0.05;',
     'let goal = offFurniture(r, to);',
     'if (clearOfFurniture(r, me, goal, clear)) { return dirTo(me, goal); }',
     'var next = goal;',
-    'if ((k > 0u || there) && (!clearOfFurniture(r, t, next, clear) || walled(t, next))) { break; }',
+    'if ((k > 0u || there) && (!clearOfFurniture(r, t, next, 0.0) || walled(t, next))) { break; }',
     'if (clearOfFurniture(r, me, t, clear) && !walled(me, t)) {',
     'let on = distance(me, next) <= distance(t, next) && clearOfFurniture(r, me, next, 0.0) && !walled(me, next);',
     'return dirTo(me, select(t, next, on));',
