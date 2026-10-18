@@ -194,7 +194,7 @@ test('what the city will need, where the browser plainly lacks it; nothing of th
   const home = new Page()
   home.ua = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148'
   home.nav = { standalone: true }
-  assert.match(words(home), /needs iOS 26 on this iPhone/, 'a home-screen app has no Version\/ token: no WebGPU there means an old iOS')
+  assert.match(words(home), /needs iOS 26 on this iPhone/, 'a home-screen app has no Version/ token: no WebGPU there means an old iOS')
   const homeNew = new Page()
   homeNew.ua = home.ua
   homeNew.nav = { standalone: true, gpu: {} }

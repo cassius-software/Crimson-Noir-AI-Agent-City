@@ -12,7 +12,9 @@
  * one tier, and every step down thins the drawn crowd and (below High) lowers the procedural texture
  * resolution, along with render scale, shadows and post. Steps up are slow probes toward the 60–90
  * target, backed off harder after every failure. It is silent: a tier change raises no toast and needs
- * no settings menu.
+ * no settings menu. Below Minimal sits Lite (tier -1, outside the TIERS table so no existing index moves): only a
+ * lite device profile (an entry-level phone GPU such as a Mali-G52, or ?lite=1) reaches it automatically, and the
+ * same profile makes the boot itself lighter (engine.ts: fewer pedestrians and cars, no post chain compiled).
  * What breaks if it is removed? Quality is frozen at one tier: phones stutter at desktop settings,
  * desktops look like phones at phone settings, and the terminal's `quality` command drives nothing.
  */
@@ -56,6 +58,20 @@ export const TIERS: readonly QualityKnobs[] = Object.freeze([
   frozen({ label: 'Ultra', renderScale: 1, shadows: true, shadowMapSize: 4096, post: true, volumetrics: true, crowdDensity: 1, lodDistance: 45, nearRadius: 30, maxDistance: 700, textureSize: 256 }),
 ])
 
+/**
+ * Lite, tier -1: below Minimal for entry-level phone GPUs (DeviceProfile.lite). It is not in TIERS, so ?quality=0…4, the
+ * console's tier numbers and every index the governor's tests pin keep their meaning; knobsOf reads it. Half the base
+ * pixel ratio's edge (a quarter of its pixels), no shadows or post, and a thinner, shorter crowd draw than Minimal.
+ */
+export const LITE: QualityKnobs = frozen({ label: 'Lite', renderScale: 0.5, shadows: false, shadowMapSize: 1024, post: false, volumetrics: false, crowdDensity: 0.15, lodDistance: 8, nearRadius: 6, maxDistance: 80, textureSize: 64 })
+/** Lite's tier index: the lowest a manual choice may pin, and the automatic floor of a lite profile (tierRange). */
+export const LITE_TIER = -1
+
+/** The knobs of tier `t`, from LITE_TIER (Lite) to TIERS.length - 1 (Ultra). Every read of a tier's knobs goes here. */
+export function knobsOf(t: number): QualityKnobs {
+  return t < 0 ? LITE : TIERS[t]
+}
+
 const TOP = TIERS.length - 1
 const clampTier = (t: number, lo = 0, hi = TOP) => Math.min(hi, Math.max(lo, Math.round(t)))
 
@@ -81,7 +97,11 @@ export interface DeviceHints {
   host?: 'browser' | 'native'
 }
 
-export interface DeviceProfile { mobile: boolean; gpuClass: 'mobile' | 'integrated' | 'discrete' | 'unknown'; startTier: number }
+/**
+ * `lite`: an entry-level phone GPU (or ?lite=1): the profile starts at Lite, the governor's automatic range is
+ * Lite..Minimal, and the boot takes the lighter world (engine.ts Engine.create).
+ */
+export interface DeviceProfile { mobile: boolean; gpuClass: 'mobile' | 'integrated' | 'discrete' | 'unknown'; startTier: number; lite: boolean }
 
 /** Browser only; degrades to neutral values where an API is missing. */
 export function readDeviceHints(adapter: string): DeviceHints {
@@ -112,8 +132,9 @@ export function nativeHost(g: object): boolean {
 /** Pure. GPU family from WebGPU adapter info (Dawn's vendor / architecture names, plus the description
  *  when a browser exposes it), form factor from the user agent, then a conservative starting tier:
  *  a start that is too high costs about a second of late frames, one too low costs several seconds of
- *  lower quality per tier while the governor probes upward. */
-export function profileDevice(h: DeviceHints): DeviceProfile {
+ *  lower quality per tier while the governor probes upward. `lite` is the page's ?lite: true makes any device a lite
+ *  profile, false keeps every device off it, absent lets the hints decide. */
+export function profileDevice(h: DeviceHints, lite?: boolean): DeviceProfile {
   const ua = h.userAgent
   const a = h.adapter.toLowerCase()
   const c = a.replace(/[^a-z0-9]+/g, '')
@@ -144,12 +165,24 @@ export function profileDevice(h: DeviceHints): DeviceProfile {
   else if (mobileGpu) gpuClass = 'mobile'
 
   let start: number
+  let weak = false
   if (software) start = 0
   else if (mobile) {
     const flagship = apple || /adreno[789]|immortalis|gen5|xclipse|samsung/.test(c) ||
       (/valhall/.test(a) && (h.memoryGb ?? 0) >= 8) || (gpuClass === 'unknown' && ios)
     start = flagship ? 1 : 0
     if (h.memoryGb !== undefined && h.memoryGb <= 4) start = 0
+    // Entry-level phone GPUs: Mali's Bifrost and Midgard generations (Chrome names only the architecture, so a G52 MC2
+    // reads the same as a G76; a browser that gives the description names the model), Imagination's older and smaller
+    // parts, and Adreno 5xx or older. Valhall, Immortalis, Adreno 6xx and newer, Xclipse and Apple are not. A phone that
+    // says it has 2 GB or less is short of memory for the city whatever its GPU.
+    // Imagination by its vendor alone is not enough: Dawn names every one 'img-tec', the current D-Series flagship parts
+    // too, so only Rogue, Furian and B-Series (by architecture or description) count, or a bare vendor on 4 GB or less.
+    const imgEntry = /rogue|furian|b-?series|powervr ?(?:sgx|g[em]\d)/.test(a) ||
+      (/^(?:img-?tec|imagination)[\s/]*$/.test(a) && h.memoryGb !== undefined && h.memoryGb <= 4)
+    const entryGpu = /bifrost|midgard|mali-?g(?:31|51|52|71|72|76)\b|mali-?t\d{3}\b/.test(a) || imgEntry ||
+      /adreno(?:tm)?[1-5](?:\d\d|xx)/.test(c)
+    weak = (!flagship && entryGpu) || (h.memoryGb !== undefined && h.memoryGb <= 2)
   } else {
     if (gpuClass === 'discrete') {
       const highEnd = h.cores >= 8 && ((nvidia && /ampere|lovelace|blackwell|rtx ?[345]0[6-9]0/.test(a)) ||
@@ -165,25 +198,50 @@ export function profileDevice(h: DeviceHints): DeviceProfile {
     if (h.memoryGb !== undefined && h.memoryGb <= 4) start--
     if (h.cores > 0 && h.cores < 4) start--
   }
-  return { mobile, gpuClass, startTier: clampTier(start) }
+  const isLite = lite ?? weak
+  return { mobile, gpuClass, startTier: isLite ? LITE_TIER : clampTier(start), lite: isLite }
 }
 
 /**
  * Pedestrians to simulate when the page does not say (?crowd): the whole crowd wherever the profile starts at Medium
  * or above; fewer where simulating it would itself cost the frame (phones, and the weakest GPUs and software
- * rasterizers, which start at Minimal). The simulation size is fixed at boot (the GPU buffers are sized for it);
- * the governor then scales how many of them are drawn.
+ * rasterizers, which start at Minimal), and fewest on a lite profile. The simulation size is fixed at boot (the GPU
+ * buffers are sized for it); the governor then scales how many of them are drawn.
  */
-export const CROWD_DEFAULT = Object.freeze({ full: 14000, phone: 8000, minimal: 5000 })
+export const CROWD_DEFAULT = Object.freeze({ full: 14000, phone: 8000, minimal: 5000, lite: 2500 })
 export function defaultAgents(p: DeviceProfile): number {
+  if (p.lite) return CROWD_DEFAULT.lite
   if (p.startTier <= 0) return CROWD_DEFAULT.minimal
   if (p.mobile) return CROWD_DEFAULT.phone
   return CROWD_DEFAULT.full
 }
 
+/**
+ * AI cars when the page does not say (?cars): the fleet a default network room runs (mirror.node.ts MIRROR.cars), or a
+ * third of it on a lite profile, where each car's Rapier wheel rays and the crowd shader's per-car loop are a real
+ * share of the frame. Fixed at boot like the crowd: the pose buffers and the fleet's meshes are sized for it.
+ */
+export const CARS_DEFAULT = Object.freeze({ full: 36, lite: 12 })
+export function defaultCars(p: DeviceProfile): number {
+  return p.lite ? CARS_DEFAULT.lite : CARS_DEFAULT.full
+}
+
+/**
+ * Why a lite page's network join may have timed out: its fleet came from the profile (no ?cars), so its world names
+ * fewer cars than a default room runs, and the room refuses it without a word (replication.ts 'join: world') until the
+ * host's join deadline closes it. Empty when the page chose its fleet or runs the full one. The wording says "if":
+ * a bad token or a full room also ends in a join timeout.
+ */
+export function liteJoinHint(lite: boolean, carsDefaulted: boolean, cars: number): string {
+  if (!lite || !carsDefaulted || cars === CARS_DEFAULT.full) return ''
+  return ` (this lite page runs ${cars} cars; if the room runs the default ${CARS_DEFAULT.full}, open the page with ?cars=${CARS_DEFAULT.full} to join it)`
+}
+
 /** The governor's automatic range for a device: phones and tablets stop at Medium (heat and battery
- *  bite long before the frame rate does); manual `setTier` may still go anywhere. */
+ *  bite long before the frame rate does), and a lite profile at Minimal, below every tier that needs post or shadows
+ *  (neither is compiled at its boot); manual `setTier` may still go anywhere. */
 export function tierRange(p: DeviceProfile): { min: number; max: number } {
+  if (p.lite) return { min: LITE_TIER, max: 0 }
   return { min: 0, max: p.mobile ? 2 : TOP }
 }
 
@@ -289,6 +347,9 @@ const GOV = {
   presentUp: 0.97,
 } as const
 
+/** A tier's index in the governor's per-tier arrays: Lite (-1) is slot 0. */
+const slot = (t: number) => t - LITE_TIER
+
 /** p-th percentile of n samples is above a threshold when this many samples exceed it (the same
  *  floor-index convention as FrameClock). */
 const above = (over: number, n: number, p: number) => over >= n - Math.floor(n * p)
@@ -337,9 +398,12 @@ export class Governor {
   private lastChange: 'none' | 'up' | 'down' | 'manual' = 'none'
   /** Why the tier last changed, in a few words (for the console and the probes). */
   private why = ''
-  private readonly fails = new Uint32Array(TIERS.length)
-  private readonly failedAt = new Float64Array(TIERS.length).fill(-Infinity)
-  private readonly blockedUntil = new Float64Array(TIERS.length)
+  /** Per tier, at index tier - LITE_TIER (Lite has a slot of its own): step downs remembered, when, and the probe wait. */
+  private readonly fails = new Uint32Array(TIERS.length + 1)
+  private readonly failedAt = new Float64Array(TIERS.length + 1).fill(-Infinity)
+  private readonly blockedUntil = new Float64Array(TIERS.length + 1)
+  /** The device profile's lite flag, shown with the tier (state()). */
+  private readonly lite: boolean
   /** The cinema camera's frame period, ms (0: no camera, every animation frame is drawn). */
   private readonly pacerMs: number
   private readonly presents = new Float64Array(PRESENT_RING)
@@ -352,13 +416,16 @@ export class Governor {
    * 60 FPS floor whatever the display's refresh (input and physics; the pictures come 24 a second), and the camera's
    * presented frames (present()) must keep up too.
    */
-  constructor(opts: { tier: number; auto: boolean; targetMs?: number; min?: number; max?: number; pacerMs?: number }) {
+  constructor(opts: { tier: number; auto: boolean; targetMs?: number; min?: number; max?: number; pacerMs?: number; lite?: boolean }) {
     this.pacerMs = Number.isFinite(opts.pacerMs) && (opts.pacerMs as number) > 0 ? opts.pacerMs as number : 0
-    this.min = clampTier(Number.isFinite(opts.min) ? opts.min as number : 0)
+    // The automatic range reaches Lite only when the caller asks (tierRange of a lite profile); by default it stops at
+    // Minimal, so no other device ever walks down into it.
+    this.min = clampTier(Number.isFinite(opts.min) ? opts.min as number : 0, LITE_TIER)
     this.max = clampTier(Number.isFinite(opts.max) ? opts.max as number : TOP, this.min)
     this.adaptive = opts.auto
+    this.lite = opts.lite === true
     const t = Number.isFinite(opts.tier) ? opts.tier : 3
-    this.current = opts.auto ? clampTier(t, this.min, this.max) : clampTier(t)
+    this.current = opts.auto ? clampTier(t, this.min, this.max) : clampTier(t, LITE_TIER)
     this.reported = this.current
     // Infinity (1000 / 0 from an unset FPS option) or NaN means "not given", not "never late".
     const target = Number.isFinite(opts.targetMs) && (opts.targetMs as number) > 0 ? opts.targetMs as number : 0
@@ -413,11 +480,11 @@ export class Governor {
   /** Frame time the governor holds, ms: 1000 / clamp(refresh, 60, 90) once the refresh is known. */
   get targetMs(): number { return this.holdMs }
 
-  knobs(): QualityKnobs { return TIERS[this.current] }
+  knobs(): QualityKnobs { return knobsOf(this.current) }
 
   state(): QualityState {
-    const k = TIERS[this.current]
-    return { tier: this.current, label: k.label, auto: this.adaptive, renderScale: k.renderScale, targetMs: this.holdMs }
+    const k = knobsOf(this.current)
+    return { tier: this.current, label: k.label, auto: this.adaptive, renderScale: k.renderScale, targetMs: this.holdMs, ...(this.lite && { lite: true }) }
   }
 
   /** Feed one frame: `frameMs` is the rAF interval, `nowMs` a monotonic clock. Returns the tier when it
@@ -494,11 +561,11 @@ export class Governor {
     this.reset(this.lastNow, this.current === from ? 0 : GOV.cooldownMs)
   }
 
-  /** Manual choice of any tier (0…4, not limited to the automatic range); turns auto off. */
+  /** Manual choice of any tier (-1…4, Lite to Ultra, not limited to the automatic range); turns auto off. */
   setTier(tier: number): void {
     if (!Number.isFinite(tier)) return
     this.adaptive = false
-    const t = clampTier(tier)
+    const t = clampTier(tier, LITE_TIER)
     if (t === this.current) return
     this.current = t
     this.lastChange = 'manual'
@@ -588,7 +655,7 @@ export class Governor {
         return
       }
     }
-    if (this.current < this.max && now >= this.blockedUntil[this.current + 1] && !above(miss5, n5, 0.97)) {
+    if (this.current < this.max && now >= this.blockedUntil[slot(this.current + 1)] && !above(miss5, n5, 0.97)) {
       this.why = 'probe'
       this.step(now, 1)
     }
@@ -602,11 +669,12 @@ export class Governor {
     if (to === from) return
     if (to < from) {
       const failed = this.lastChange === 'up' && now - this.arrivedAt < GOV.probeMs
-      if (now - this.failedAt[from] >= GOV.forgetMs) this.fails[from] = 0
-      this.fails[from]++
-      this.failedAt[from] = now
-      const wait = Math.min(GOV.maxBackoffMs, GOV.backoffMs * 2 ** (this.fails[from] - (failed ? 0 : 1)))
-      this.blockedUntil[from] = Math.max(this.blockedUntil[from], now + wait)
+      const i = slot(from)
+      if (now - this.failedAt[i] >= GOV.forgetMs) this.fails[i] = 0
+      this.fails[i]++
+      this.failedAt[i] = now
+      const wait = Math.min(GOV.maxBackoffMs, GOV.backoffMs * 2 ** (this.fails[i] - (failed ? 0 : 1)))
+      this.blockedUntil[i] = Math.max(this.blockedUntil[i], now + wait)
       this.lastChange = 'down'
     } else this.lastChange = 'up'
     this.current = to

@@ -1182,6 +1182,26 @@ function windowedRegion(): { region: { bounds: { x0: number; z0: number; x1: num
   return { region: { bounds: { x0: 1900, z0: 1900, x1: 2740, z1: 2740 }, walls: [] }, streets }
 }
 
+test('craft off (a lite boot, SimInit.craft false): tracks on and the fleet on its rings, but no scheduled craft, as in a region', async () => {
+  const sim = await SimCore.create({ seed: 11, cars: 4, agents: AGENTS, boxes: [], furniture: NO_FURNITURE, spawn: { x: OPEN.x, z: OPEN.z }, debug: false, tracks: true, craft: false }, async () => new FakeCrowd())
+  assert.equal(sim.meta.craft, 0)
+  assert.equal(sim.meta.count, 4, 'the fleet is unchanged')
+  const poses = new Float32Array(sim.meta.count * POSE.stride)
+  const input = { dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds: [] }
+  let s = sim.step(input, poses, new Float32Array(TRACK_POSE.stride))
+  for (let k = 0; k < 30; k++) s = sim.step(input, poses, null)
+  assert.equal(s.craft, null, 'whatever buffer is passed')
+  assert.equal(s.kernel.audit.panic, null)
+  assert.equal(sim.halted, false)
+  // The door passes the flag on; absent, the craft run (the default every existing page and server keeps).
+  const seen: unknown[] = []
+  for (const craft of [false, undefined]) {
+    const handle = createSimHost(() => {}, (o) => { seen.push(o.craft); return SimCore.create(o, async () => new FakeCrowd()) })
+    await handle({ t: 'init', seed: 11, cars: 2, agents: AGENTS, boxes: [], furniture: NO_FURNITURE, spawn: OPEN, debug: false, tracks: true, ...(craft === false && { craft }) } satisfies SimInit)
+  }
+  assert.deepEqual(seen, [false, true])
+})
+
 test('a region with a street window: the fleet is seated on the window\'s rings and drives them, the crowd is built for the window, no craft', async () => {
   const { region, streets } = windowedRegion()
   const crowd = new FakeCrowd()

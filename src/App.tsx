@@ -264,11 +264,13 @@ function readOptions(): Options {
     const v = Number(q.get(key))
     return q.has(key) && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback
   }
-  const quality = q.get('quality')
+  // Lowercased once so ?quality=Lite or ?quality=AUTO read as the words they are (num() reads the raw value for digits).
+  const quality = q.get('quality')?.toLowerCase() ?? null
   return {
     // Absent: the device profile decides (governor.ts defaultAgents: 14,000 on a desktop GPU, fewer on phones).
     agents: q.has('crowd') ? Math.round(num('crowd', 14000, 256, 60000)) : undefined,
-    cars: Math.round(num('cars', 36, 0, 48)),
+    // Absent: the device profile decides (governor.ts defaultCars: 36, or 12 on a lite profile).
+    cars: q.has('cars') ? Math.round(num('cars', 36, 0, 48)) : undefined,
     pixelRatio: num('scale', Math.min(window.devicePixelRatio, 1), 0.25, 2),
     seed: Math.round(num('seed', 1337, 0, 2 ** 31)),
     // Golden hour: the sun about 10° up in the west (solar.ts), long warm light for the first look.
@@ -277,7 +279,8 @@ function readOptions(): Options {
     shadows: q.get('shadows') !== '0',
     post: q.get('post') !== '0',
     profile: q.has('profile'),
-    quality: quality === null || quality === 'auto' ? 'auto' : Math.round(num('quality', 3, 0, 4)),
+    // -1 (or the word 'lite') is Lite, below Minimal; 0…4 are Minimal…Ultra.
+    quality: quality === null || quality === 'auto' ? 'auto' : quality === 'lite' ? -1 : Math.round(num('quality', 3, -1, 4)),
     targetFps: Math.round(num('fps', 0, 0, 240)),
     audio: q.get('audio') !== '0',
     // Closed captions of every spatial sound (captions.ts); ?captions=0 keeps the HUD's strip empty.
@@ -293,6 +296,9 @@ function readOptions(): Options {
     ragdoll: q.get('ragdoll') !== '0',
     // Local split screen: ?players=2..4 cuts the canvas into a viewport per player (viewports.ts clamps it to 1..4).
     players: clampPlayers(q.get('players')),
+    // The lite profile (governor.ts DeviceProfile.lite): ?lite=1 forces it on any device, ?lite=0 keeps it off; absent,
+    // the device profile decides (an entry-level phone GPU such as a Mali-G52 is lite).
+    lite: q.get('lite') === '1' ? true : q.get('lite') === '0' ? false : undefined,
   }
 }
 
@@ -369,6 +375,15 @@ function App() {
 }
 
 /**
+ * The tier a brief's quality step pins: its own value, or, for a ceiling (a fix for heat or a slow frame), the lower of
+ * that and the live tier, so the fix never moves a device onto a heavier tier than the one it is on.
+ */
+function qualityFor(step: PlanStep, b: Pick<TerminalBridge, 'quality'>): 'auto' | number {
+  const v = step.value as 'auto' | number
+  return step.ceiling && typeof v === 'number' ? Math.min(v, b.quality().tier) : v
+}
+
+/**
  * The console's `goal` (terminal/bridge.ts GoalPlan): the goal planned as Sloane plans one (06_Make_Decisions/intent.ts),
  * its immediate steps applied through the same knobs the Concierge uses (the clock, the quality tier, the sound).
  */
@@ -379,7 +394,7 @@ function goalPlan(text: string, b: Pick<TerminalBridge, 'setClock' | 'quality' |
     if (!step.immediate) { steps.push({ label: step.label, state: 'later' }); continue }
     try {
       if (step.control === 'time' && typeof step.value === 'number') b.setClock(step.value)
-      else if (step.control === 'quality' && (step.value === 'auto' || typeof step.value === 'number')) b.quality(step.value)
+      else if (step.control === 'quality' && (step.value === 'auto' || typeof step.value === 'number')) b.quality(qualityFor(step, b))
       else if (step.control === 'audio' && (step.value === 'on' || step.value === 'off' || typeof step.value === 'number')) b.audio(step.value)
       else { steps.push({ label: step.label, state: 'later' }); continue }
       steps.push({ label: step.label, state: 'done' })
@@ -463,7 +478,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
     const b = bridge
     if (!b) return false
     if (step.control === 'time' && typeof step.value === 'number') { b.setClock(step.value); return true }
-    if (step.control === 'quality' && (step.value === 'auto' || typeof step.value === 'number')) { b.quality(step.value); return true }
+    if (step.control === 'quality' && (step.value === 'auto' || typeof step.value === 'number')) { b.quality(qualityFor(step, b)); return true }
     if (step.control === 'audio' && (step.value === 'on' || step.value === 'off' || typeof step.value === 'number')) { b.audio(step.value); return true }
     return false
   }, [bridge])

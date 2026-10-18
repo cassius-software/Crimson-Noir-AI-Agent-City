@@ -271,7 +271,7 @@ const autoRuns = () => [S.cap(), S.sixty(), S.overload(), S.thermal(), S.backoff
 // 1. Recognised as a phone
 
 test('phone 1: Safari 26 on the phone profiles as a phone: Low start, Medium cap, the phone crowd', () => {
-  assert.deepEqual(PROFILE, { mobile: true, gpuClass: 'mobile', startTier: 1 })
+  assert.deepEqual(PROFILE, { mobile: true, gpuClass: 'mobile', startTier: 1, lite: false })
   assert.equal(TIERS[PROFILE.startTier].label, 'Low')
   assert.deepEqual(RANGE, { min: 0, max: 2 })
   assert.equal(TIERS[RANGE.max].label, 'Medium')

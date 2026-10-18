@@ -209,7 +209,8 @@ export interface HostOptions {
   tickHz?: number
   /** The city the mirror builds and a joining page must be walking (the page's ?seed; 1337 by default). */
   seed?: number
-  /** The fleet a joining page must be running (the page's ?cars; 36 by default, mirror.node.ts MIRROR.cars). */
+  /** The fleet a joining page must be running (the page's ?cars; 36 by default, mirror.node.ts MIRROR.cars; a lite
+   *  page defaults to 12 and joins a default room only with ?cars=36). */
   cars?: number
   /** Another authority than the mirror (the protocol's tests run the open plane, plane.node.ts). */
   authority?: Authority

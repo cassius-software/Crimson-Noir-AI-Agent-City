@@ -401,7 +401,7 @@ test('profile: the console-class desktop as its globals describe it — Ultra, 1
       adapter: 'nvidia / ampere', userAgent: d.userAgent, mobileHint: false, maxTouchPoints: 0, coarsePointer: false,
       cores: 16, memoryGb: 8, screenPixels: 2560 * 1440, host: 'browser',
     }, label)
-    assert.deepEqual(b.profile, { mobile: false, gpuClass: 'discrete', startTier: 4 }, label)
+    assert.deepEqual(b.profile, { mobile: false, gpuClass: 'discrete', startTier: 4, lite: false }, label)
     assert.equal(TIERS[b.profile.startTier].label, 'Ultra')
     assert.deepEqual(tierRange(b.profile), { min: 0, max: 4 }, `${label}: the automatic range reaches Ultra`)
     assert.equal(b.agents, 14000, `${label}: the README's full crowd for a desktop GPU`)
@@ -421,7 +421,7 @@ test('profile: the same machine in the native Tauri v2 shell is recognised (proc
     assert.equal(n.host, 'native', 'the snapshot says so (engine.ts: process.host = hints.host)')
     assert.equal(n.hints.userAgent, EDGE, 'WebView2: desktop Chromium')
     assert.deepEqual(n.profile, b.profile, 'the same profile as the tab')
-    assert.deepEqual(n.profile, { mobile: false, gpuClass: 'discrete', startTier: 4 })
+    assert.deepEqual(n.profile, { mobile: false, gpuClass: 'discrete', startTier: 4, lite: false })
     assert.equal(n.agents, 14000)
     assert.deepEqual(tierRange(n.profile), tierRange(b.profile))
   }
@@ -445,7 +445,7 @@ test('profile: the RDNA2 card starts on Ultra where the browser names it, on Hig
       // (RDNA2_NAMED), it starts on Ultra like its NVIDIA Ampere peers of the same 2020 generation (this test found
       // profileDevice's AMD pattern was /rdna[34]/; it is /rdna[234]/, and the \brx\b|radeon pro guard still keeps
       // the RDNA2 APUs out).
-      assert.deepEqual(b.profile, { mobile: false, gpuClass: 'discrete', startTier: start }, `${adapter} (${d.native ? 'native' : 'tab'})`)
+      assert.deepEqual(b.profile, { mobile: false, gpuClass: 'discrete', startTier: start, lite: false }, `${adapter} (${d.native ? 'native' : 'tab'})`)
       assert.equal(b.agents, 14000, 'the full crowd either way (Medium or above)')
       assert.deepEqual(tierRange(b.profile), { min: 0, max: 4 })
     }
@@ -463,7 +463,7 @@ test('profile: the RDNA2 card starts on Ultra where the browser names it, on Hig
 test('profile: the 4K panel at 100 % scaling (3840 × 2160 CSS pixels) starts one tier lower, as governor.ts documents', () => {
   const b = boot({ ...TAB_4K, screen: SCREEN_4K_100 })
   assert.equal(b.hints.screenPixels, 3840 * 2160)
-  assert.deepEqual(b.profile, { mobile: false, gpuClass: 'discrete', startTier: 3 }, '"4K at 100 % scaling": High')
+  assert.deepEqual(b.profile, { mobile: false, gpuClass: 'discrete', startTier: 3, lite: false }, '"4K at 100 % scaling": High')
   assert.equal(b.agents, 14000)
   const climb = scenario('boot-tab-4k100pct-60')
   assert.deepEqual(climb.path, [4], 'the first probe takes it to Ultra')

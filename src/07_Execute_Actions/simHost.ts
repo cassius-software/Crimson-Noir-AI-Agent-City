@@ -144,7 +144,7 @@ export function createSimHost(post: Post, create: (o: SimCoreOptions) => Promise
         }
         core = await create({
           seed: init.seed, cars: init.cars, agents: init.agents, boxes: init.boxes, furniture: init.furniture, spawn: init.spawn, spawns, debug: init.debug === true, region,
-          streets: region ? streets : null, tracks: init.tracks === true, ragdoll: init.ragdoll === true,
+          streets: region ? streets : null, tracks: init.tracks === true, ragdoll: init.ragdoll === true, craft: init.craft !== false,
         })
         for (let i = 0; i < refusedEarly; i++) core.noteRejected('message before init')
         post({ t: 'ready', meta: core.meta })

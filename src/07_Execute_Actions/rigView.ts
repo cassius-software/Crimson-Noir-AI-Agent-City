@@ -65,6 +65,9 @@ export class RigView {
   sync(rigs: Float32Array | null): void {
     const list = this.hidden
     list.length = 0
+    // No rig slots (the ragdoll off, a region, a lite boot): the one instance stays scaled to nothing, so there is
+    // nothing to write or upload (the engine leaves these meshes out of the scene then).
+    if (this.slots === 0) return
     const valid = rigs instanceof Float32Array && rigs.length >= this.slots * RIG_POSE.stride
     for (let s = 0; s < Math.max(1, this.slots); s++) {
       const o = s * RIG_POSE.stride

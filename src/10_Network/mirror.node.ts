@@ -51,7 +51,8 @@ export const MIRROR = Object.freeze({
    * without it counting against it; past it, the claim is a lie: refused (on foot undone) and counted.
    */
   drift: Object.freeze({ foot: 0.25, drive: 1 }),
-  /** The fleet a room's page runs when it does not say (the page's own default, engine.ts). */
+  /** The fleet a room's page runs when it does not say (a full page's default, governor.ts CARS_DEFAULT.full); a lite
+   *  page defaults to 12, names another world and must open with ?cars=36 to join. */
   cars: 36,
   /** The room's players start a sidewalk step apart along the page's own spawn sidewalk (engine.ts), m, cycling. */
   spawnGap: 1.5,

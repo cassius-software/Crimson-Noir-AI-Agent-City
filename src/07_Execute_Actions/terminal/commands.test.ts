@@ -475,7 +475,7 @@ test('help lists every command with usage, in two groups; help <cmd> explains on
     assert.match(all, new RegExp(`^  ${name}\\b`, 'm'), `help is missing ${name}`)
   }
   assert.match(all, /stats \[--once\]/)
-  assert.match(all, /quality \[auto\|0-4\]/)
+  assert.match(all, /quality \[auto\|lite\|-1\|0-4\]/)
   assert.match(all, /time \[HH\[:MM\]\]/)
   assert.match(all, /audio \[on\|off\|0-100\]/)
   assert.match(all, /hal \[pair hid\|serial\|ble\]/)
@@ -539,6 +539,15 @@ test('formatStats shows Rapier3D latency, substeps, bodies, colliders, CCD, draw
     assert.ok(l.length <= 80, `line too wide (${l.length}): ${l}`)
     assert.match(l, /^[\x20-\x7e]*$/, `non-ASCII in: ${l}`)
   }
+})
+
+test('formatStats on a lite profile: tier -1 reads Lite, and the line says the profile is lite (still 80 columns, ASCII)', () => {
+  const s = { ...sampleStats(), quality: { tier: -1, label: 'Lite', auto: true, renderScale: 0.5, targetMs: 16.7, lite: true } }
+  const lines = formatStats(s)
+  assert.ok(lines.includes('quality   tier -1 Lite (auto)  scale 0.50x  budget 16.7 ms  lite profile'), lines.join('\n'))
+  for (const l of lines) assert.ok(l.length <= 80 && /^[\x20-\x7e]*$/.test(l), l)
+  // Not lite: the line is as it always was.
+  assert.ok(!formatStats(sampleStats()).some((l) => l.includes('lite')))
 })
 
 test('formatStats and sim add the cinema camera row after the frame row: presented rate, shutter, ND, cuts (none without it)', () => {
@@ -611,9 +620,12 @@ test('quality: show, auto, a fixed tier; invalid tiers never reach the bridge', 
   assert.match(only(run('quality auto', b, [])).text, /\(auto\)/)
   assert.match(only(run('quality 0', b, [])).text, /^tier 0 /)
   assert.match(only(run('quality 4', b, [])).text, /^tier 4 /)
-  assert.deepEqual(b.calls, ['quality undefined', 'quality 2', 'quality auto', 'quality 0', 'quality 4'])
+  // Lite, below Minimal: by its number or its name.
+  assert.match(only(run('quality -1', b, [])).text, /^tier -1 /)
+  assert.match(only(run('quality lite', b, [])).text, /^tier -1 /)
+  assert.deepEqual(b.calls, ['quality undefined', 'quality 2', 'quality auto', 'quality 0', 'quality 4', 'quality -1', 'quality -1'])
   b.calls.length = 0
-  for (const bad of ['5', '-1', '1.5', '02', 'max', '3 4', '']) {
+  for (const bad of ['5', '-2', '-0', '1.5', '02', 'max', 'Lite', '3 4', '']) {
     const r = run(bad ? `quality ${bad}` : 'quality ""', b, [])
     assert.ok(isErr(r), `quality ${bad} should fail`)
   }
@@ -1340,6 +1352,8 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.deepEqual(complete('hal pair '), ['hal pair ble', 'hal pair hid', 'hal pair serial'])
   assert.deepEqual(complete('hal pair s'), ['hal pair serial'])
   assert.deepEqual(complete('quality a'), ['quality auto'])
+  assert.deepEqual(complete('quality l'), ['quality lite'])
+  assert.deepEqual(complete('quality -'), ['quality -1'])
   assert.deepEqual(complete('audio o'), ['audio off', 'audio on'])
   assert.deepEqual(complete('stats -'), ['stats --once'])
   assert.deepEqual(complete('help hi'), ['help history'])

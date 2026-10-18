@@ -14,7 +14,7 @@
  * has nowhere to go.
  */
 import { formatClock } from '../01_Initialize_World/solar.ts'
-import { TIERS } from '../05_Observe_Environment/governor.ts'
+import { LITE_TIER, TIERS, knobsOf } from '../05_Observe_Environment/governor.ts'
 
 export type Control = 'time' | 'quality' | 'audio' | 'crowd' | 'cars' | 'district' | 'walk' | 'drive' | 'console' | 'controls'
 
@@ -27,6 +27,9 @@ export interface PlanStep {
   value?: number | string
   /** true = the Concierge can apply it now through the host (time, quality, audio); false = needs a restart or the operator. */
   immediate: boolean
+  /** quality only: the value is a ceiling, not a target. A fix for heat or a slow frame never raises the tier, so the
+   *  host pins the lower of this value and the live tier (an entry-level phone on Lite stays on Lite). */
+  ceiling?: true
   /** The modules an engineer would touch to go further (the "architecture" part), e.g. ['01_Initialize_World/solar.ts']. */
   modules: string[]
 }
@@ -188,7 +191,9 @@ const RULES: readonly Rule[] = [
   one(/\b(?:battery|batteries|hot|heat(?:ing)?|warm|too warm|overheat(?:s|ing)?|fan|fans|thermals?|cool(?:er)? down|cooler)\b/, 'quality', 1, 0.9, 'battery'),
   one(/\b(?:ultra|max(?:imum|ed)?|highest|best|top|full) ?(?:quality|graphics|detail|settings|fidelity|res(?:olution)?)\b|\b(?:ultra|max(?:ed)? out|max fidelity)\b/, 'quality', 4, 0.9, 'fidelity'),
   one(/\b(?:prett(?:y|ier)|nicer|beautiful|gorgeous|stunning|sharp(?:er)?|crisp(?:er)?|detail(?:ed|s)?|fidelity|better (?:looking|graphics|visuals)|looks? better|graphics|visuals|shadows|god ?rays|light ?shafts|sun ?rays|volumetrics?|glow|hdr|eye candy|cinematic|photo ?real(?:istic)?)\b/, 'quality', 4, 0.85, 'fidelity'),
-  one(/\b(?:lowest (?:quality|settings|graphics)|minimal|potato)\b/, 'quality', 0, 1),
+  // The lowest setting is Lite now (governor.ts LITE_TIER, below Minimal); asking for Minimal by name still means Minimal.
+  one(/\b(?:lowest (?:quality|settings|graphics)|potato)\b/, 'quality', LITE_TIER, 1),
+  one(/\bminimal\b/, 'quality', 0, 1),
   one(/\b(?:low|lower|reduce|drop|turn down)(?: the)? (?:quality|graphics|settings|detail|resolution)\b/, 'quality', 1, 1),
   one(/\bmedium (?:quality|graphics|settings)\b/, 'quality', 2, 1),
   one(/\bhigh (?:quality|graphics|settings)\b/, 'quality', 3, 1),
@@ -596,9 +601,11 @@ function stepFor(h: Hyp, f: Frame): PlanStep | null {
     }
     case 'quality': {
       if (h.value === 'auto') return step('Let the quality govern itself', true)
-      if (typeof h.value !== 'number' || !TIERS[h.value]) return null
+      if (typeof h.value !== 'number' || !Number.isInteger(h.value) || h.value < LITE_TIER || h.value >= TIERS.length) return null
       const light = h.value === TIERS.length - 1 && f.tags.has('light')
-      return step(`Set the quality to ${TIERS[h.value].label}${light ? ' (the golden-hour light shafts come with it)' : ''}`, true, light ? ['07_Execute_Actions/volumetrics.ts'] : [])
+      // Heat, battery and a slow frame ask for less work, so the tier named is the most the host may pin, never a raise.
+      if (h.value < TIERS.length - 1 && any(f, 'smooth', 'steady', 'battery', 'perf-root')) return { ...step(`Lower the quality to ${knobsOf(h.value).label} or below`, true), ceiling: true }
+      return step(`Set the quality to ${knobsOf(h.value).label}${light ? ' (the golden-hour light shafts come with it)' : ''}`, true, light ? ['07_Execute_Actions/volumetrics.ts'] : [])
     }
     case 'audio':
       if (h.value === 'off') return step('Turn the sound off', true)
