@@ -12,7 +12,8 @@
  * 'offline' or 'refused') falls back to the script. The script is deterministic (the same request gives the same
  * words), carries no model and makes no request, and its words are screened on the way out like any answer (the
  * operator tier's 14A screen in gatedAsk sees every piece). A script is never mistaken for a model: the answer's
- * reason says 'scripted' and the console's `ask` settings say whether the last answer was.
+ * reason says 'scripted' and its standIn says why no model answered, so the console says so under the answer and
+ * neither the diary nor the short-term memory keeps the script's words as something a person said.
  * What breaks if it is removed? With no backend, `ask` fails with a server message, and the city's people are mute.
  */
 import type { Answer, AnswerRequest, Mind, Piece } from '../07_Execute_Actions/operator.ts'
@@ -76,7 +77,8 @@ export function withScriptedFallback(mind: Mind): Mind & { readonly scripted: nu
         scripted++
         const text = scriptedAnswer(req)
         onPiece({ kind: 'text', text })
-        return { text, thinking: 0, tokens: 0, reason: SCRIPTED }
+        // Why the model did not answer goes with the script's words, so the console says so and nothing remembers them.
+        return { text, thinking: 0, tokens: 0, reason: SCRIPTED, standIn: (err as Error).message }
       }
     },
     get scripted(): number {

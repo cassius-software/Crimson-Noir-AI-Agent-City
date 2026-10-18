@@ -313,7 +313,7 @@ export function createSwarm({ ask, endpoint, quota = QUOTA, now = Date.now }: { 
           // The chosen provider addresses a server, yet the script answered (the engine's withScriptedFallback stands
           // in when no backend answers): canned text is not a role's work, so the run ends here, as a server failure.
           if (r.done === 'scripted' && ep !== null) {
-            const note = `no backend was answering at ${ep}: the script stood in, so the run stops here`
+            const note = r.standIn !== undefined ? `no model answered, so the script stood in and the run stops here: ${r.standIn}` : `no backend was answering at ${ep}: the script stood in, so the run stops here`
             record('refusal', step.id, role.title, prompt, r.text, null, [], note)
             finish({ ...base, state: 'failed', text: r.text, ms, note })
             ended = true

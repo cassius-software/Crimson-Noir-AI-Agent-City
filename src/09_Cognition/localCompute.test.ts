@@ -179,14 +179,19 @@ test('the system prompt carries what each bound person remembers, oldest first, 
 test('an answer streams piece by piece, thinking apart from text, and the request asks for a bounded context and answer', async () => {
   const { f, calls } = fakeFetch(() => streamed(SAMPLE))
   const pieces: string[] = []
-  const signal = new AbortController().signal
+  const stopper = new AbortController()
+  const signal = stopper.signal
   const a = await generate(f, { server: 'http://localhost:11434/', model: 'm', system: 'S', prompt: 'P', signal }, (p) => pieces.push(`${p.kind}:${p.text}`))
   assert.deepEqual(pieces, ['thinking:Hmm, ', 'thinking:grip…', 'text:Grip scales ', 'text:tyre friction — naïve 東京.'])
   assert.deepEqual(a, { text: 'Grip scales tyre friction — naïve 東京.', thinking: 2, tokens: 42, reason: 'stop' })
   assert.equal(calls.length, 1)
   assert.equal(calls[0].url, 'http://localhost:11434/api/generate')
   const init = calls[0].init!
-  assert.deepEqual([init.method, init.signal, init.referrerPolicy, init.cache], ['POST', signal, 'no-referrer', 'no-store'])
+  assert.deepEqual([init.method, init.referrerPolicy, init.cache], ['POST', 'no-referrer', 'no-store'])
+  // The request's signal is the caller's with the timeouts beside it: it aborts the moment the caller's does.
+  assert.ok(init.signal instanceof AbortSignal && !init.signal.aborted)
+  stopper.abort(new Error('stop'))
+  assert.equal(init.signal.aborted, true)
   assert.deepEqual(JSON.parse(String(init.body)), { model: 'm', system: 'S', prompt: 'P', stream: true, think: false, options: { num_ctx: CONTEXT_TOKENS, num_predict: ANSWER_TOKENS } })
   // Not a server on this machine: nothing is sent at all.
   const none = fakeFetch(() => streamed(SAMPLE))
@@ -624,14 +629,19 @@ async function collectChat(res: Response): Promise<{ pieces: string[]; answer: A
 test('chat: server-sent events stream piece by piece, thinking under either name apart from text; the request is a system and a user message', async () => {
   const { f, calls } = fakeFetch(() => streamed(CHAT))
   const pieces: string[] = []
-  const signal = new AbortController().signal
+  const stopper = new AbortController()
+  const signal = stopper.signal
   const a = await chat(f, { server: 'http://127.0.0.1:8080/v1', model: 'm', system: 'S', prompt: 'P', signal, think: true }, (p) => pieces.push(`${p.kind}:${p.text}`))
   assert.deepEqual(pieces, ['thinking:Hmm, ', 'thinking:grip…', 'text:Grip scales ', 'text:tyre friction — naïve 東京.'])
   assert.deepEqual(a, { text: 'Grip scales tyre friction — naïve 東京.', thinking: 2, tokens: 42, reason: 'stop' })
   assert.equal(calls.length, 1)
   assert.equal(calls[0].url, 'http://127.0.0.1:8080/v1/chat/completions', 'the path is added to the origin')
   const init = calls[0].init!
-  assert.deepEqual([init.method, init.signal, init.referrerPolicy, init.cache], ['POST', signal, 'no-referrer', 'no-store'])
+  assert.deepEqual([init.method, init.referrerPolicy, init.cache], ['POST', 'no-referrer', 'no-store'])
+  // The request's signal is the caller's with the timeouts beside it: it aborts the moment the caller's does.
+  assert.ok(init.signal instanceof AbortSignal && !init.signal.aborted)
+  stopper.abort(new Error('stop'))
+  assert.equal(init.signal.aborted, true)
   assert.equal((init.headers as Record<string, string>).accept, 'text/event-stream')
   assert.deepEqual(JSON.parse(String(init.body)), {
     model: 'm', messages: [{ role: 'system', content: 'S' }, { role: 'user', content: 'P' }],

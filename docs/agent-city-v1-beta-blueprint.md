@@ -390,6 +390,13 @@ a gateway the operator runs on this machine (`CLAUDE_GATEWAY`, `http://localhost
 ruling the README recorded is back in force for every client; `docs/zero-trust-audit.md` is the audit, with what the
 guard cannot close from script.
 
+**Superseded (local models, after the stable beta).** The default provider is now `auto` (`router.ts`
+`DEFAULT_PROVIDER`): at an ask it asks the model servers on this machine (Ollama, a llama.cpp server, an
+OpenAI-compatible server such as LM Studio) and then the Claude gateway, in `AUTO_ORDER`, and answers with the first that
+lists a text model. The Claude provider answers when chosen with `ask provider claude`, or when auto finds nothing
+earlier in that order. The router test above is now "auto is the provider unless the operator chooses another; each
+provider has its own server and model", and `router.auto.test.ts` proves the looking.
+
 ### 8.4 Pings and closed captions
 
 **What the directive asked.** "A ping system for non-verbal agent commands and closed captioning for all spatial

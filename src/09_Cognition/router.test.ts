@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It proves the cognition router (router.ts): the Claude API is the provider unless the
- * operator chooses another; a swap is one setting, kept between visits with each provider's own; every provider
+ * Why does this file exist? It proves the cognition router (router.ts): auto (the first model that answers on this
+ * machine) is the provider unless the operator chooses another; a swap is one setting, kept between visits with each provider's own; every provider
  * answers with the same system prompt (the conduct core first); the local providers still address only this machine
  * and the Claude provider only https or a loopback gateway; the key is kept masked and never shown whole; and the
  * operator tier's whole path (the console, the gateway, the 14A screen) runs the same over any provider: an
@@ -49,16 +49,20 @@ const memoryStore = () => {
 
 const TETHER: GateTether = { agent: 7, serial: 1, skills: ['Rust', 'Python'] }
 
-test('the Claude API is the provider unless the operator chooses another; each provider has its own server and model', () => {
+test('auto is the provider unless the operator chooses another; each provider has its own server and model', () => {
   const r = createMindRouter({ fetch: anyServer().f })
-  assert.equal(DEFAULT_PROVIDER, 'claude')
-  assert.deepEqual(PROVIDERS, ['claude', 'ollama', 'llamacpp', 'openai', 'scripted'])
+  assert.equal(DEFAULT_PROVIDER, 'auto')
+  assert.deepEqual(PROVIDERS, ['auto', 'claude', 'ollama', 'llamacpp', 'openai', 'scripted'])
+  // Before an ask has looked: Ollama's settings stand for what auto will try first, and it says it has not looked.
+  assert.deepEqual(r.settings(), { provider: 'auto', server: DEFAULT_SERVER, model: DEFAULT_MODEL, think: false, api: 'generate', key: undefined, effort: undefined, auto: 'nothing found yet: the next ask looks on this machine' })
+  assert.throws(() => r.setModel('x'), /auto has not found a model on this machine yet/)
+  assert.equal(r.setProvider('claude'), 'claude')
   assert.deepEqual(r.settings(), { provider: 'claude', server: CLAUDE_GATEWAY, model: DEFAULT_CLAUDE_MODEL, key: null, effort: undefined })
   assert.equal(r.setProvider('ollama'), 'ollama')
   assert.deepEqual(r.settings(), { provider: 'ollama', server: DEFAULT_SERVER, model: DEFAULT_MODEL, think: false, api: 'generate', key: undefined, effort: undefined })
   assert.equal(r.setProvider('LlamaCpp'), 'llamacpp')
   assert.deepEqual(r.settings(), { provider: 'llamacpp', server: LLAMACPP_SERVER, model: LLAMACPP_MODEL, think: false, api: 'chat', key: undefined, effort: undefined })
-  assert.throws(() => r.setProvider('gpt'), /ask provider takes claude, ollama, llamacpp, openai, scripted/)
+  assert.throws(() => r.setProvider('gpt'), /ask provider takes auto, claude, ollama, llamacpp, openai, scripted/)
   assert.equal(r.provider, 'llamacpp')
   assert.equal(r.setProvider('openai'), 'openai')
   assert.deepEqual(r.settings(), { provider: 'openai', server: OPENAI_SERVER, model: OPENAI_MODEL, think: false, api: 'chat', key: undefined, effort: undefined })
@@ -87,7 +91,8 @@ test('ask connect: the provider, its server and (claude) its key in one line; a 
   }
   assert.throws(() => r.connect('ollama', 'http://localhost:11434', 'k'), /the ollama provider takes no key/)
   assert.throws(() => r.connect('scripted', 'http://localhost:1'), /takes no server and no key/)
-  assert.throws(() => r.connect('gpt'), /ask connect takes claude, ollama, llamacpp, openai, scripted/)
+  assert.throws(() => r.connect('auto', 'http://localhost:1'), /auto takes no server and no key/)
+  assert.throws(() => r.connect('gpt'), /ask connect takes auto, claude, ollama, llamacpp, openai, scripted/)
   assert.equal(r.connect('Ollama'), PROVIDER_TEXT.ollama)
   assert.equal(r.provider, 'ollama')
   // Kept: a new router over the same store wakes as the last connect left it, the openai server included.
@@ -100,6 +105,7 @@ test('ask connect: the provider, its server and (claude) its key in one line; a 
 test('the settings are kept between visits, each provider\'s own: a swap back finds them as they were; a broken store is the defaults', () => {
   const store = memoryStore()
   const a = createMindRouter({ fetch: anyServer().f, store })
+  a.setProvider('claude')
   a.setKey('sk-ant-api03-secret-key-material-9876')
   a.setEffort('high')
   a.setModel('claude-sonnet-5-5')
@@ -117,12 +123,13 @@ test('the settings are kept between visits, each provider\'s own: a swap back fi
   b.setProvider('claude')
   assert.deepEqual([b.settings().model, b.settings().key, b.settings().effort], ['claude-sonnet-5-5', 'sk-ant…9876', 'high'])
   const c = createMindRouter({ fetch: anyServer().f, store: { load: () => '{broken', save: () => { throw new Error('refused') } } })
-  assert.equal(c.provider, 'claude')
+  assert.equal(c.provider, 'auto')
   assert.equal(c.setProvider('ollama'), 'ollama', 'a store that refuses to save still lets the visit go on')
 })
 
 test('the key: set, masked, cleared; the effort: one of the API\'s, or none; both belong to the Claude provider only', () => {
   const r = createMindRouter({ fetch: anyServer().f })
+  r.setProvider('claude')
   assert.equal(r.setKey('  sk-ant-api03-abcdefghijklmnop-1234 '), 'sk-ant…1234')
   assert.equal(r.settings().key, 'sk-ant…1234')
   assert.equal(r.setKey(''), null)
@@ -149,16 +156,19 @@ test('every provider answers with the same system prompt, the conduct core first
     const a = await r.answer({ tethers: [TETHER], prompt: 'hi', signal: new AbortController().signal }, () => {})
     answers.push(a.text)
   }
-  assert.equal(answers[4].startsWith('You ask about "hi"'), true, 'the scripted provider answers from the script')
-  assert.deepEqual(answers.slice(0, 4), ['claude says hi', 'ollama says hi', 'llama says hi', 'llama says hi'])
+  assert.equal(answers[5].startsWith('You ask about "hi"'), true, 'the scripted provider answers from the script')
+  assert.deepEqual(answers.slice(0, 5), ['ollama says hi', 'claude says hi', 'ollama says hi', 'llama says hi', 'llama says hi'], 'auto found Ollama first')
   const expected = systemPrompt([TETHER])
   assert.ok(expected.startsWith(AGENT_SYSTEM_PROMPT_CORE + '\n'), 'the core opens every prompt')
   assert.ok(BASE_REALITY.startsWith(AGENT_SYSTEM_PROMPT_CORE))
   const sent = srv.calls.filter((c) => c.body !== null)
-  assert.equal(sent.length, 4, 'the scripted provider sent nothing')
-  const [claude, ollama, llama, openai] = sent
+  assert.equal(sent.length, 5, 'the scripted provider sent nothing')
+  const [auto, claude, ollama, llama, openai] = sent
+  assert.equal(auto.url, 'http://localhost:11434/api/generate')
+  assert.equal((auto.body as { system: string }).system, expected)
   assert.equal(openai.url, 'http://localhost:1234/v1/chat/completions')
   assert.equal((openai.body as { messages: { content: string }[] }).messages[0].content, expected)
+  assert.equal((openai.body as { model: string }).model, 'local-gguf', 'the first model the server lists, for the placeholder name')
   assert.equal(claude.url, 'http://localhost:8089/v1/messages')
   assert.equal((claude.body as { system: string }).system, expected)
   assert.equal(claude.headers['x-api-key'], 'sk-ant-test')
@@ -180,6 +190,7 @@ test('every provider answers with the same system prompt, the conduct core first
 test('installed: each provider\'s own list; the Claude provider asks the gateway with no key in the page, or with one', async () => {
   const srv = anyServer()
   const r = createMindRouter({ fetch: srv.f })
+  r.setProvider('claude')
   assert.deepEqual(await r.installed(), ['claude-opus-5-5'])
   assert.equal('x-api-key' in srv.calls[0].headers, false, 'the gateway adds the key')
   r.setKey('k')
@@ -243,7 +254,7 @@ test('from the console: ask provider swaps, ask key keeps the key masked, ask al
   assert.deepEqual(claude?.[0], { kind: 'out', text: 'claude says hi' })
   assert.deepEqual(shell('ask key none', b, []).lines, [{ kind: 'out', text: 'key       none: cleared (the gateway on this machine adds the key)' }])
   assert.deepEqual(shell('ask effort none', b, []).lines, [{ kind: 'out', text: "effort    none: the provider's own default" }])
-  assert.deepEqual(shell('ask provider gpt', b, []).lines, [{ kind: 'err', text: 'ask: ask connect takes claude, ollama, llamacpp, openai, scripted, then an optional server url and, for claude, a key' }])
+  assert.deepEqual(shell('ask provider gpt', b, []).lines, [{ kind: 'err', text: 'ask: ask connect takes auto, claude, ollama, llamacpp, openai, scripted, then an optional server url and, for claude, a key' }])
   // The scripted provider from the console: it reports itself, lists nothing to install, and answers from the script.
   assert.deepEqual(shell('ask provider scripted', b, []).lines, [{ kind: 'out', text: `provider  ${PROVIDER_TEXT.scripted}` }])
   assert.deepEqual((await shell('ask', b, []).pending)?.slice(0, 3), [
@@ -290,6 +301,7 @@ test('14A over any provider: an inadmissible prompt reaches no server, streams n
   const refusing: FetchLike = async () => stream(sse({ type: 'message_delta', delta: { stop_reason: 'refusal' }, usage: { output_tokens: 0 } }, { type: 'message_stop' }), 'text/event-stream')
   const c = bridgeOver(refusing, diary)
   shell('operator unlock', c, [])
+  shell('ask provider claude', c, [])
   shell('ask key k', c, [])
   assert.deepEqual(await shell('ask rust: tell me about the harbour', c, []).pending, [{ kind: 'sys', text: '-- no reply --' }])
   assert.equal(notes.length, 1, 'a refusal is not remembered either')

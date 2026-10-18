@@ -36,10 +36,15 @@ npm run smoke:bridge  # Crimson Noir OS's hosted runtime against the host's ledg
 sudo deploy/deploy-live.sh HOST EMAIL  # the host in production on a server, behind Let's Encrypt TLS: see deploy/README.md
 ```
 
-Open `dist/index.html` directly: no server, and it works offline. The page sends nothing anywhere unless the
-operator chooses the Claude provider with their own key (`ask provider claude`) or joins a session with `net join`.
-The local model providers and `say` talk only to a model server and a speech server on this same machine, and only
-when asked (see The model providers, Speech and Networking). It needs WebGPU:
+Open `dist/index.html` directly: no server, and it works offline. The page sends nothing off this machine except
+through a gateway to the Claude API that the operator runs on it with their own key, and to a session the operator
+joins with `net join`. The gateway, when one is running, is asked when the operator chooses it (`ask provider
+claude`), when the default provider `auto` finds no model on this machine answering (first for its list of models,
+which it asks the Claude API for; also when a model stops answering partway through a visit), and by the cloud
+fallback while the frame rate is low. While a model on this machine answers, `auto` asks the gateway nothing. The
+local model providers and `say`
+talk only to a model server and a speech server on this same machine, and only when asked (see The model providers,
+Speech and Networking). It needs WebGPU:
 
 - **Desktop and Android:** a current Chrome, Edge or Brave.
 - **iPhone, iPad and Mac:** Safari 26.
@@ -824,7 +829,7 @@ unlocked:
 - `ask <skill>[,<skill>...]: <prompt>` asks the chosen model provider, answering as the tethered people who have
   the skill; the answer streams in live (see The model providers below). `ask` alone reports the provider, the
   server, the model, the masked key and the effort, and what the server has; `ask provider
-  claude|ollama|llamacpp|openai|scripted`, `ask connect <provider> [<url>] [<key>]` (the provider, its server and the
+  auto|claude|ollama|llamacpp|openai|scripted`, `ask connect <provider> [<url>] [<key>]` (the provider, its server and the
   Claude provider's key in one line, checked before anything changes), `ask key <key>|none`, `ask effort <level>`,
   `ask model <name>` and `ask server <url>` set it up; `ask stop` stops an answer. An inadmissible prompt gets
   `-- no reply --` and reaches no model.
@@ -1041,24 +1046,52 @@ operator tier knows only its shape (`SkillGate` in `operator.ts`) and never impo
 
 `ask rust: how does car.grip work?` asks a model, as the person tethered to you who knows Rust.
 `09_Cognition/router.ts` is the router: one `Mind` behind which five providers answer, swapped at the console
-without a restart (`ask provider <name>`, or `ask connect <provider> [<url>] [<key>]` in one line):
+without a restart (`ask provider <name>`, or `ask connect <provider> [<url>] [<key>]` in one line), or the first of
+them that answers (`auto`):
 
+- **`auto`**, the provider unless you choose another: at an ask, the first model server answering on this machine,
+  in this order: Ollama (`http://localhost:11434`), a llama.cpp server (`http://localhost:8080`), an
+  OpenAI-compatible server such as LM Studio (`http://localhost:1234`), then the Claude gateway
+  (`http://localhost:8089`), each at the address its own provider is set to. The three on this machine are asked for
+  their models at once, each for at most 2 s, and the first in that order with a model that writes text answers
+  (embedding, reranking and speech models are passed over, by name); only when none has one is the gateway asked,
+  since it asks the Claude API. A server that is running but whose list fails is named as such. It is kept for the visit, and looked for again when it stops
+  answering before any of an answer has arrived (so the next ask finds whatever answers now) and at `ask` alone (so a
+  server started since, earlier in that order, takes over). An Ollama whose model you never chose (the default, or
+  one auto chose earlier) but which lacks it is given the default if it has it now, else the first text model it
+  has; one you chose with `ask model` is left alone. Models Ollama runs on its own cloud (marked so in its list, or, in the chat format, by a name ending in `cloud`) are never chosen this way, since a
+  prompt to one leaves the machine. A model server installed with its own defaults therefore answers with nothing
+  typed at the console, on a page that server allows (see Which pages a model server answers, below). With nothing
+  answering, the script stands in (below), labelled as such; the reason names every address looked at, and each
+  server found running but refusing this page, holding no text model, or too slow to list its models. `ask` alone looks again and shows what was
+  found on a `found` row; `ask model`, `ask server`, `ask think` and `ask api` then set the found provider's own,
+  and `ask provider <name>` keeps one.
 - **`claude`**: the Claude Messages API through a gateway the operator runs on this machine
   (`09_Cognition/claudeApi.ts`; `http://localhost:8089` unless `ask server` names another loopback address), with
-  the operator's own key. It is the provider unless the operator chooses another, for testing. No gateway ships
-  with the product.
+  the operator's own key. No gateway ships with the product.
 - **`ollama`**: a model server on this machine speaking the Ollama API (`09_Cognition/localCompute.ts`,
   `/api/generate`, at `http://localhost:11434`).
 - **`llamacpp`**: a packaged, quantized model under a llama.cpp server on this machine (`localCompute.ts` in the
   OpenAI-compatible chat-completions format, at `http://localhost:8080`, the one model the server was started
   with), for offline environments.
 - **`openai`**: any other server on this machine that speaks the OpenAI-compatible chat-completions format (LM
-  Studio at its default `http://localhost:1234`, vLLM, a loopback proxy), with its own address and the model it
-  lists (`ask model <name>`). OpenAI's own service is not reachable: the air gap admits loopback addresses only, so
-  a hosted model needs a gateway on this machine, like the Claude provider's.
+  Studio at its default `http://localhost:1234`, vLLM, a loopback proxy), with its own address and the first text
+  model it lists unless you choose one (`ask model <name>`). For both chat-format providers the model reads
+  `default` until you choose one: before the first answer the server is asked which models it lists, and the first
+  that writes text, in the server's own order, is sent (asked once per server, and again after the server says it no
+  longer has it), since a server that serves several refuses a name it does not know; once an answer has asked, `ask`
+  names it on the model row and marks it `(chosen)`. LM Studio is asked its own list first (`/api/v0/models`), which
+  says which models are loaded, and is asked it again before every answer and at `ask` alone: with its just-in-time
+  loading on (its default) the OpenAI-compatible list holds every model downloaded, so the one loaded now is sent
+  rather than a second one loaded beside it. A model is judged by its own name, not the
+  folders of a file path a llama.cpp server lists. OpenAI's own service is not reachable: the air gap admits loopback addresses
+  only, so a hosted model needs a gateway on this machine, like the Claude provider's.
 - **`scripted`**: no backend at all. Every answer is the deterministic script (`09_Cognition/scripted.ts`) built
   from what a model would have been told, nothing is addressed and nothing is installed; `ask` says so. The same
-  script already stands in for the other providers when their server is down.
+  script stands in for the other providers when their server is down or refuses this page, and then says so: under
+  its words the console prints `ask: no model answered, so the script spoke instead:` and the reason; neither the
+  swarm's memory nor the person's short-term memory keeps those words, and `say auto` does not say them aloud, so
+  canned lines never come back in a later prompt as if someone had said them.
 
 No model and no model server ships with the product: you run your own, or bring your own key, and the city works
 exactly the same without either.
@@ -1079,7 +1112,7 @@ exactly the same without either.
   second layer.
 - **Setting it up.** `ask` alone shows the provider, the server, the model, and what the server has; for the
   Claude provider also the key, masked (its first six and last four characters, never the whole) and the effort.
-  `ask provider claude|ollama|llamacpp|openai|scripted` swaps, and `ask connect <provider> [<url>] [<key>]` swaps and
+  `ask provider auto|claude|ollama|llamacpp|openai|scripted` swaps, and `ask connect <provider> [<url>] [<key>]` swaps and
   points it in one line (a bad address leaves everything as it was); `ask model <name>` and `ask server <url>` set the
   chosen provider's own; `ask key <key>` sets the Claude provider's key and `ask key none` clears it;
   `ask effort low|medium|high|xhigh|max|none` how hard the model works on an answer (the API's own default when
@@ -1133,18 +1166,34 @@ exactly the same without either.
   arrives once the tether is gone.
 - **When it cannot answer, it says why in one sentence:** no server answering (start it, or point `ask`
   at it), running but refusing this page, no such model, a model that does not write text, the
-  server's own failure (for example, out of memory), or, for the Claude provider, no key or the API's own refusal
-  of the key or the request.
+  server's own failure (for example, out of memory), a server that sends nothing (below), or, for the Claude
+  provider, no key or the API's own refusal of the key or the request.
+- **How long it waits.** A local server has 5 minutes to send the first line of an answer (room to load a model
+  from a slow disk and read the prompt on a modest machine; a server that sends its headers at once still has the
+  whole 5 minutes) and, once the answer has begun, 2 minutes between lines. Past either, the request is closed and
+  one sentence says which wait ran out; when nothing came at all, it adds that the model may still be loading (ask
+  again) or be too big for this machine (choose a smaller one). `ask stop` ends one sooner, as before.
 - **A page opened from a file.** The browser sends that page's origin as `null`, and a local server
   usually refuses it: Ollama does by default. `ask` detects this (a server that is up but refusing is
   told apart from one that is down) and says so. Open the page from `http://localhost` instead
   (`npm run preview` serves `dist` on `http://localhost:4173`, which Ollama allows by default), or allow
   the page's origin in the server's own settings.
+- **Which pages a model server answers.** Ollama answers pages from `localhost` and `127.0.0.1` on any port (the
+  preview, the NixOS launcher's `http://127.0.0.1:4180`) by default, but not the Windows app
+  (`http://tauri.localhost`) or the public web copy (`https://cassius-software.github.io`): for those, add the origin
+  to `OLLAMA_ORIGINS` where Ollama starts (on Windows, `setx OLLAMA_ORIGINS "http://tauri.localhost"` in cmd, then quit
+  and restart Ollama from its tray icon). A llama.cpp server (`llama-server`) answers any page unless it was started
+  with its tools or agent options; LM Studio answers pages only with CORS turned on (Enable CORS in its server settings, or
+  `lms server start --cors`). On a
+  cross-origin isolated page (the launcher, the preview, the Windows app and the installed web copy all are) a
+  server refusing the origin cannot be told from one that is not running, so the sentence says it may be either.
 - **Bounded.** Every request to a local server asks for a context of 8,192 tokens and an answer of at most 2,048
   (the Ollama format is the one that bounds the context). A model's own maximum can be far larger, and a server
   that sizes its memory to it can fail before the first word (seen here: a 4B model asking for 20.5 GB). Running
   a model beside the city costs frame rate, and the quality governor drops the tier to compensate.
-- **What it cannot do.** It sends nothing unless you type `ask`, and nothing polls in the background. No provider
+- **What it cannot do.** It sends nothing unless you type `ask`, and nothing polls in the background. Under `auto`,
+  an ask with nothing found yet, an ask whose server stops answering before any of its answer arrived, and `ask`
+  alone first ask the four servers above for their lists of models, all on this machine. No provider
   can leave the machine: every one of them asks the one gate (`02_Define_The_Rules/airgap.ts loopbackServer`)
   before anything is sent, and the fetch they are handed is the page's own under the gate's wrapper. The engine
   holds no network code: App builds the router and hands it to the operator tier, which knows only its shape
@@ -1304,7 +1353,8 @@ Ollama, llama.cpp, and the cloud fallback) answers from that place and moment. A
 and a walk ping that waves someone over are the moments kept. Nothing of it is stored, and nothing reaches the
 physics worker or the agents' sandboxed code. With no model backend answering (the gateway or the local server is
 down), the person still answers in a few scripted sentences built from that same context
-(`09_Cognition/scripted.ts`); `ask` then shows a `scripted` line counting those answers.
+(`09_Cognition/scripted.ts`), marked as the script under its words and kept in neither memory; `ask` then shows a
+`scripted` line counting those answers.
 
 ## The cinema camera
 

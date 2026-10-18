@@ -129,7 +129,7 @@ export interface ReplSession { machine: Machine }
 export const replSession = (): ReplSession => ({ machine: new Machine() })
 
 /** The model providers, as typed after `ask provider` (commands.test.ts pins them to 09_Cognition/router.ts, which this file must not import). */
-export const PROVIDER_ARGS = ['claude', 'llamacpp', 'ollama', 'openai', 'scripted'] as const
+export const PROVIDER_ARGS = ['auto', 'claude', 'llamacpp', 'ollama', 'openai', 'scripted'] as const
 
 /** The harness names, for completion (commands.test.ts pins them to harness.ts, which this file must not import). */
 export const HARNESS_NAMES = ['brake-distance', 'first-law-floor', 'kernel-stop', 'sanctuary', 'spatial', 'traffic-lights'] as const
@@ -390,6 +390,8 @@ function askLines(r: AskResult): Line[] {
   if (r.error !== undefined) return [...answer, err(`ask: ${r.error}`)]
   // 14A: the agent did not engage (the conduct screen, or the model's own refusal): no reply, and nothing about it.
   if (r.disengaged) return [sys('-- no reply --')]
+  // The script stood in for a model that did not answer: said plainly, so its words are never taken for a model's.
+  if (r.standIn !== undefined) return [...answer, err(`ask: no model answered, so the script spoke instead: ${r.standIn}`)]
   const none = answer.length ? [] : [sys(r.thinking > 0 ? '(no answer: the model spent its tokens thinking)' : '(the model returned no text)')]
   const thought = r.thinking > 0 ? `, after ${r.thinking} tokens of thinking` : ''
   const cut = r.done === 'length' ? ' (cut at the token limit)' : ''
@@ -500,16 +502,27 @@ function swarmReportLines(r: SwarmReport): Line[] {
 
 /** `ask` alone: the provider, where its server is, the model chosen, and what the server says it has. */
 function mindLines(m: MindStatus): Line[] {
-  const network = m.provider === 'claude'
+  const auto = m.provider === 'auto'
+  // Under auto, what it found decides the rows below (the gateway's key and effort when it found the Claude gateway).
+  const network = m.provider === 'claude' || (auto && m.key !== undefined)
   const scripted = m.provider === 'scripted'
   const lines: Line[] = []
   if (m.provider !== undefined) {
-    lines.push(out(row('provider', network ? 'claude: the Claude API through a gateway on this machine (ask provider ollama|llamacpp|openai for a model on this machine, scripted for none)'
-      : scripted ? 'scripted: no backend; the script answers on this page, and nothing reaches any network (ask provider claude|ollama|llamacpp|openai for a model)'
-        : `${m.provider}: a model server on this machine (ask provider claude for the Claude API)`)))
+    lines.push(out(row('provider', auto ? 'auto: the first model that answers on this machine, kept until it stops answering; ask alone looks again (ask provider ollama|llamacpp|openai|claude to choose one)'
+      : network ? 'claude: the Claude API through a gateway on this machine (ask provider ollama|llamacpp|openai for a model on this machine, scripted for none)'
+        : scripted ? 'scripted: no backend; the script answers on this page, and nothing reaches any network (ask provider claude|ollama|llamacpp|openai for a model)'
+          : `${m.provider}: a model server on this machine (ask provider claude for the Claude API)`)))
   }
+  if (m.auto !== undefined) lines.push(out(row('found', m.auto)))
+  // 'default' in the chat format is the placeholder the client resolves to the model the server has loaded (LM Studio
+  // says which), else the first it lists that writes text, in its own order (localCompute.ts ANY_MODEL); `resolved`
+  // names it once an answer has asked.
+  const placeholder = m.model === 'default' && m.api === 'chat'
+  const model = m.model === null ? 'none chosen: ask model <name>'
+    : placeholder ? (m.resolved !== undefined ? `${m.resolved}  (the model the server has loaded, else the first it lists that writes text; ask model <name> to choose)` : 'default: the model the server has loaded, else the first it lists that writes text, asked at the next answer (ask model <name> to choose)')
+      : m.model
   if (scripted) lines.push(out(row('server', 'none: nothing is addressed')), out(row('model', 'none: the script')))
-  else lines.push(out(row('server', network ? `${m.server}  (a gateway on this machine only)` : `${m.server}  (this machine only)`)), out(row('model', m.model ?? 'none chosen: ask model <name>')))
+  else lines.push(out(row('server', network ? `${m.server}  (a gateway on this machine only)` : `${m.server}  (this machine only)`)), out(row('model', model)))
   if (network) {
     lines.push(out(row('key', m.key ? `${m.key}  (kept in this browser's local storage: ask key none clears it)` : 'none in this page: the gateway on this machine adds it (recommended)')))
     lines.push(out(row('effort', m.effort ?? "the model's default (ask effort low|medium|high|xhigh|max)")))
@@ -519,10 +532,11 @@ function mindLines(m: MindStatus): Line[] {
   if (m.cache !== undefined) lines.push(out(row('cache', m.cache)))
   if (m.fallback !== undefined) lines.push(out(row('fallback', m.fallback)))
   if (m.scripted !== undefined) lines.push(out(row('scripted', m.scripted)))
-  if (m.installed === null) return [...lines, err(`ask: ${m.error ?? (network ? 'the gateway to the Claude API did not answer' : 'the local model server did not answer')}`)]
+  if (m.installed === null) return [...lines, err(`ask: ${m.error ?? (auto ? 'no model answered on this machine' : network ? 'the gateway to the Claude API did not answer' : 'the local model server did not answer')}`)]
   if (scripted) return lines
   if (!m.installed.length) return [...lines, out(row('installed', 'no models'))]
-  lines.push(...m.installed.map((name, i) => out(row(i === 0 ? 'installed' : '', name === m.model ? `${name}  (chosen)` : name))))
+  const answers = placeholder ? m.resolved : m.model
+  lines.push(...m.installed.map((name, i) => out(row(i === 0 ? 'installed' : '', name === answers ? `${name}  (chosen)` : name))))
   if (m.model === null) lines.push(sys('choose one that writes text: ask model <name>'))
   return lines
 }

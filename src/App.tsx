@@ -325,13 +325,14 @@ function TtyShell() {
 
 /**
  * The voice the onboarding speaks with: the configured model backend's rewording when it answers in time, else the
- * script. With the Claude provider selected and no key kept, nothing is asked (the script is the voice): a first visit
- * on a fresh machine makes no request at all.
+ * script. With the auto provider (the default), the scripted provider, or the Claude provider and no key kept, nothing
+ * is asked (the script is the voice): a first visit on a fresh machine makes no request at all, and the scripted
+ * provider, which answers a request with nobody tethered with a line of its own, never rewords the guide's lines.
  */
 function onboardingVoice(): Voice {
   const router = createMindRouter({ fetch: pageFetch, store: pageStore(COGNITION_KEY) })
   const s = router.settings()
-  if (s.provider === 'claude' && !s.key) return scriptedVoice()
+  if (s.provider === 'auto' || s.provider === 'scripted' || (s.provider === 'claude' && !s.key)) return scriptedVoice()
   return modelVoice(router, (line) => (/morning, sunset or night/i.test(line) ? ['morning', 'sunset', 'night'] : /sound on/i.test(line) ? ['sound'] : []))
 }
 

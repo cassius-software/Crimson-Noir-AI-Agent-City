@@ -15,6 +15,23 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **A model on this machine answers with nothing typed at the console.** The model provider is now `auto` unless you choose one
+  (`09_Cognition/router.ts`): at an ask it asks Ollama (`:11434`), a llama.cpp server (`:8080`) and an
+  OpenAI-compatible server such as LM Studio (`:1234`) for their models at once, each for at most 2 s, and answers
+  with the first in that order that has a model writing text, asking the Claude gateway (`:8089`) only when none
+  has one; it looks again when
+  that server stops answering before an answer has begun, and at `ask` alone, which shows what it found on a `found`
+  row. An Ollama without the default `qwen3-vl:4b` (and not given a model with `ask model`) is given the first text
+  model it has, and the chat-format providers send the first text model their server lists instead of the name
+  `default`, which LM Studio and vLLM refuse (from LM Studio, the model it has loaded at that answer); Ollama's cloud models are never
+  chosen this way. With nothing
+  answering, the reason names every address looked at and each server found running but refusing the page, holding
+  no text model or too slow to list its models; on a cross-origin isolated page it adds that a running server may be
+  refusing the page's origin. A server still has to allow the page (MANUAL, "Which pages a model server answers").
+- **Waits on a model server.** A request is closed when the server sends no line of an answer for 5 minutes, or goes
+  quiet for 2 minutes mid-answer, with one sentence saying which (`localCompute.ts`); before, a server that never answered held
+  `ask` until the operator stopped it.
+
 - **NixOS: the city in one command.** `nix run github:cassius-software/Crimson-Noir-AI-Agent-City` (a new `flake.nix`,
   nixpkgs from the NixOS 26.05 release pinned in `flake.lock`) builds the page from source in Nix's sandbox
   (`tools/nix/page.nix`: npm installs the lockfile's packages by their integrity hashes, about 89 MB on x86-64 because
@@ -224,6 +241,19 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   about 20 minutes. Unverified from the cloud (no GPU): the rooms on screen and the workday at full speed there.
 
 ### Changed
+
+- **Canned answers say so, and are not remembered.** When no model answers and the script stands in, the console
+  prints `ask: no model answered, so the script spoke instead:` and the reason under its words; neither the swarm's
+  memory nor the short-term memory keeps them, and `say auto` does not say them aloud, so a canned line never returns
+  in a later prompt as something a person said. A swarm run the script stood in for ends with that reason. With
+  nobody tethered (the onboarding guide rewording a line), the system prompt now ends with a line saying no one is
+  tethered and the expertise rule does not apply.
+- **The cloud fallback falls back.** When the frame-rate throttle sends a prompt to the Claude gateway and the gateway
+  is not running, the chosen local model answers it after all, and prompts stay local for a minute before the gateway
+  is tried again (`cloudFallback.ts`); before, the script answered in the local model's place. Under `auto` the throttle follows what auto found.
+- **Origins.** `MANUAL.md` says which pages each model server answers by default (Ollama: `localhost` and
+  `127.0.0.1` pages; the Windows app and the web copy need `OLLAMA_ORIGINS`), and on a cross-origin isolated page the
+  "not running" sentence now says the server may instead be refusing the page.
 
 - **The app is called Crimson Noir: Agent City everywhere, with a new mark.** The page title, the boot splash, the
   HUD, the "couldn't start" card, the Windows title bar, the console's `version`, `uname` and prompt, recordings' file
