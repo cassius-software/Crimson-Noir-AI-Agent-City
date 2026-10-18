@@ -1342,7 +1342,7 @@ const SCENARIOS = {
       const allowed = (u) => u === origin || u.startsWith(`${origin}/`) || u.startsWith('blob:') || u.startsWith('data:')
       await settle(() => watch.audit(allowed).missing.length === 0, 3_000)
       const a = watch.audit(allowed)
-      console.log(`      inpage audit: ${a.requests} requests (${a.fromWorkers} from workers), ${a.discovered} workers discovered, ${a.attached} attached (${a.nested} nested), ${a.offOrigin.length} off-origin, ${a.sockets.length} sockets, ${a.security.length} security messages, ${a.errors} commands a worker did not take`)
+      console.log(`      inpage audit: ${a.requests} requests (${a.fromWorkers} from workers), ${a.discovered} workers discovered, ${a.attached} attached (${a.nested} nested), ${a.browserOwned} the browser's own, ${a.offOrigin.length} off-origin, ${a.sockets.length} sockets, ${a.security.length} security messages, ${a.errors} commands a worker did not take`)
       check(a.offOrigin.length === 0 && a.requests > 0 && a.fromWorkers > 0, `inpage: every request from the page and from every worker it started stayed in blob:, data: or ${origin}`,
         `${a.requests} requests, ${a.fromWorkers} from workers${a.offOrigin.length ? `; ${a.offOrigin.slice(0, 3).map((x) => `${x.type} ${x.url.slice(0, 80)}`).join(', ')}` : ''}`)
       check(a.sockets.length === 0, 'inpage: no WebSocket or WebTransport was opened', a.sockets.slice(0, 3).map((x) => `${x.type} ${x.url}`).join(', '))

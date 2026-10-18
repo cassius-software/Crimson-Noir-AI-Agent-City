@@ -7,7 +7,8 @@
  * scenario's own rules first and every other name unresolvable, no proxy switch and no proxy variable; and
  * watchTargets() sends Target.setAutoAttach on the page and again on every worker as it attaches (a worker's own
  * workers are attached only so), enables Network and Log on each, counts a worker the browser created but this watch
- * never attached as missing, and judges every request, socket and security message from any of them.
+ * never attached as missing (a worker of the browser's own, an extension's service worker, apart), and judges every
+ * request, socket and security message from any of them.
  * What breaks if it is removed? A change to the helper could drop a scenario's own host mapping, leave a proxy in the
  * way of the rules, or stop attaching the runtime's threads, and the audit would pass over requests it never saw.
  */
@@ -26,6 +27,7 @@ type Audit = {
   missing: { type: string; url: string }[]
   workers: Record<string, number>
   nested: number
+  browserOwned: number
   errors: number
 }
 type Watch = { audit(allowed: (url: string) => boolean): Audit; failed: { url: string; error: string; blocked: string | null }[] }
@@ -136,6 +138,28 @@ test('watchTargets: a worker the browser created that was never attached is miss
   assert.equal(a.attached, 1)
   assert.deepEqual(a.missing, [{ type: 'worker', url: 'blob:http://127.0.0.1:1/thread' }])
   assert.equal(a.nested, 0)
+})
+
+test('watchTargets: a worker of the browser\'s own (an extension\'s service worker) is counted apart, never as missing', async () => {
+  const b = new FakeBrowser()
+  const w = await cdp.watchTargets(b)
+  // Chrome on the CI runner starts a built-in extension's service worker; no page session attaches it.
+  b.created('x1', 'service_worker', 'chrome-extension://fignfifoniblkonapihmkfakmlgkbkcf/service_worker.js')
+  b.created('x2', 'worker', 'chrome://new-tab-page/worker.js')
+  b.created('w1')
+  b.attach('w1', 's1', 'page')
+  await settle()
+  const a = w.audit(allowed)
+  assert.equal(a.discovered, 1)
+  assert.equal(a.attached, 1)
+  assert.deepEqual(a.missing, [])
+  assert.equal(a.browserOwned, 2)
+  // The page's own workers, whatever their scheme, are still the page's.
+  b.created('d1', 'worker', 'data:text/javascript,1')
+  b.created('h1', 'worker', 'http://127.0.0.1:1/w.js')
+  b.created('n1', 'worker', '')
+  assert.equal(w.audit(allowed).discovered, 4)
+  assert.equal(w.audit(allowed).missing.length, 3)
 })
 
 test('watchTargets: requests off the origin from the page or any worker, every socket and every security message are reported', async () => {

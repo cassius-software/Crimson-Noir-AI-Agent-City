@@ -224,6 +224,11 @@ export class Browser {
 
 /** The targets a page's scripts can start that run code of their own: workers of every kind. */
 const WORKER_TYPES = new Set(['worker', 'shared_worker', 'service_worker'])
+/**
+ * A worker the browser itself owns: an extension's service worker, or a built-in page's. No script of the page started
+ * it and no page session ever attaches it, so it is counted apart, never as a worker of the page gone unwatched.
+ */
+const BROWSER_OWNED = /^(?:chrome|chrome-extension|chrome-untrusted|devtools|edge|about):/
 
 /**
  * Everything a page and every worker it starts sent, as watchTargets() recorded it:
@@ -233,6 +238,7 @@ const WORKER_TYPES = new Set(['worker', 'shared_worker', 'service_worker'])
  * - `security`: each Log.entryAdded whose source is 'security' (a worker's CSP violation shows only there);
  * - `discovered` and `attached`: the worker targets the browser said were created, and those this watch attached
  *   (each with the kind of target that started it: a worker's own workers are `nested` in the audit);
+ * - `browserOwned`: the workers of the browser's own extensions and pages, created by no script of the page;
  * - `errors`: the commands a target did not take (a short-lived worker gone before them).
  */
 export class TargetWatch {
@@ -240,6 +246,7 @@ export class TargetWatch {
   sessions = new Map()
   discovered = new Map()
   attached = new Map()
+  browserOwned = []
   requests = []
   failed = []
   sockets = []
@@ -247,8 +254,8 @@ export class TargetWatch {
   errors = []
 
   /**
-   * What was recorded, judged: the requests whose URL `allowed` refuses, every socket, every security message, and the
-   * workers discovered but never attached.
+   * What was recorded, judged: the requests whose URL `allowed` refuses, every socket, every security message, the
+   * workers discovered but never attached, and how many workers were the browser's own.
    */
   audit(allowed) {
     const workers = {}
@@ -264,6 +271,7 @@ export class TargetWatch {
       missing: [...this.discovered.entries()].filter(([id]) => !this.attached.has(id)).map(([, t]) => t),
       workers,
       nested: [...this.attached.values()].filter((t) => WORKER_TYPES.has(t.parent)).length,
+      browserOwned: this.browserOwned.length,
       errors: this.errors.length,
     }
   }
@@ -274,7 +282,8 @@ export class TargetWatch {
  * worker gets a session of its own) is sent on the page and sent again on every worker session as it attaches: a
  * worker's own workers (wllama's pthread workers) are attached only then. Network and Log are enabled on every
  * session, and Target.setDiscoverTargets lists every worker the browser creates, so a worker never attached shows as
- * discovered and missing. `wait` (waitForDebuggerOnStart) holds each new worker until it is set up; a service worker
+ * discovered and missing (a worker of the browser's own, an extension's service worker, is listed there too, and is
+ * counted apart). `wait` (waitForDebuggerOnStart) holds each new worker until it is set up; a service worker
  * is then released first and set up after, since Network.enable on a paused service worker never answers.
  * Call it before the page navigates.
  */
@@ -300,7 +309,9 @@ export async function watchTargets(browser, { wait = false } = {}) {
     await send('Runtime.runIfWaitingForDebugger')
   }
   browser.on('Target.targetCreated', ({ targetInfo: t }) => {
-    if (WORKER_TYPES.has(t.type)) w.discovered.set(t.targetId, { type: t.type, url: t.url })
+    if (!WORKER_TYPES.has(t.type)) return
+    if (BROWSER_OWNED.test(t.url)) w.browserOwned.push({ type: t.type, url: t.url })
+    else w.discovered.set(t.targetId, { type: t.type, url: t.url })
   })
   browser.on('Target.attachedToTarget', (p, parent) => {
     const t = p.targetInfo
