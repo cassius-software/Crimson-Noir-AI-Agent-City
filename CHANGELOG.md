@@ -281,6 +281,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   landscape a message stood over the stick (and, 568 px across, the Menu), and it now takes the readout's place; the brakes are a size smaller on a short screen; at the wheel the Menu sits before Ping, clear of the speedometer; a
   mouse moving on a touch laptop puts the overlay away (and its Run toggle with it), while a tablet whose main pointer
   is the finger keeps it.
+
 - **Someone asked over could be lost in a room or by its glass.** An operator up on an AGV dock, resting in a table's
   corner or leaning on a piece's end sent the recruit back to the hub or held them on the next face, and a recruit in
   tow lost the operator in a dead end between the docks or round the end of a long rack. The way across a room now
@@ -292,8 +293,16 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   and go round a jamb's outer corner into the opening. On the street the straight last stretch is taken only where it
   cuts no lot (a recruit who ran behind no longer stalls at a lot's corner short of an operator standing at a room's
   side wall), and the car's exit point is checked against the glass exactly, so a driver is never put out through a
-  jamb's corner. The crowd shader and its test mirror changed together; `naga` validates both variants. Unverified
-  from the cloud (no GPU): the recruits on screen.
+  jamb's corner. Five review rounds then swept thousands of walks on the test mirror (some with positions kept in
+  32-bit floats, as the GPU keeps them, at 60 to 144 frames a second); the edge cases they found are fixed, each with
+  a test that failed first. The trail is followed only where the crowd can walk it (never over a dock the operator
+  stepped over), lines along a piece are tested at the containment's own reach so nobody is led into a gap's mouth,
+  and a recruit the corner way brings to a piece's corner walks on from it. By a lot with nothing on it (a park, a
+  building standing back from its edge), a recruit talks from their own face when the operator is in reach of it,
+  goes round its corner otherwise, comes right onto the face instead of easing to a stop millimetres short of
+  talking reach, and stands still level with an operator out of reach instead of trading the field's arrow for the
+  straight line every few frames. The crowd shader and its test mirror changed together; `naga` validates both
+  variants. Unverified from the cloud (no GPU): the recruits on screen.
 - **A runner beside a turning car could halt the realm.** At full lock a car's centre heads into its inner flank while
   the overhang behind the rear axle swings away; the Ring-0 audit judges a touch by the centre and the Sanctuary judged
   it by the flank, so a runner reaching the inner rear corner stayed solid where the audit read an impact

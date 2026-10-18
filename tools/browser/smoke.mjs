@@ -47,7 +47,7 @@
  * Every scenario also fails on an exception in the page, a GPU validation error, a lost device, or the crowd's flow
  * field falling back to the CPU. It serves dist/ itself on 127.0.0.1 with the two isolation headers, writes a
  * screenshot per scenario to --out (default: a temporary directory), prints one row per check and exits 1 if any fails.
- * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,lite,tty,pwa,fail].
+ * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,lite,tty,pwa,lakefront,fail].
  * Needs `npm run build`.
  * What breaks if it is removed? Nothing at runtime; the page loses its only end-to-end check in a browser, and with it
  * the proof that the city renders and that every control reaches the avatar.
