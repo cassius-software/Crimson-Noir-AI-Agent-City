@@ -78,7 +78,7 @@ test('engine: a lite profile caps the post chain off as ?post=0 does, and no cap
 })
 
 test('engine: the lite boot builds the lighter world and hands the realm no furniture sensors, no ragdoll and no craft', () => {
-  assert.match(CREATE, /buildWorld\(gpu\.renderer, options\.seed, pack && layout \? \{ pack, layout, streets \} : null, lite \? LITE_WORLD : FULL_WORLD\)/)
+  assert.match(CREATE, /buildWorld\(gpu\.renderer, options\.seed, pack && layout && hollow \? \{ pack: hollow\.pack, layout: \{ \.\.\.layout, floors: hollow\.floors \}, streets, plan: hollow\.plan \} : null, lite \? LITE_WORLD : FULL_WORLD\)/)
   const sim = between(CREATE, 'simBoot = SimClient.create({', '})')
   assert.match(sim, /furniture: lite \? NO_FURNITURE : world\.furniture/)
   assert.match(sim, /ragdoll: options\.ragdoll !== false && !pack && !lite, craft: !lite,/)

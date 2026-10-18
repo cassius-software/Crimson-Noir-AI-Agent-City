@@ -21,7 +21,7 @@ import {
 } from 'three/tsl'
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js'
 import { buildingMaterial, groundMaterial, waterMaterial } from './materials.ts'
-import { CITY_CENTER, LAKE, generateBuildings, streetFurniture, type Box, type Furniture } from './city.ts'
+import { CITY_CENTER, LAKE, generateBuildings, streetFurniture, type Box, type Building, type Furniture } from './city.ts'
 import { FbmSet } from './fbmTexture.ts'
 import { sunAt, type SunState } from './solar.ts'
 import { regionMeshes, type RegionLayout, type RegionScene } from './region/regionWorld.ts'
@@ -390,13 +390,15 @@ function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', 
 
 /**
  * The world under its sky. With a region (a pack and where it sits), the region's surveyed buildings, streets and water
- * stand in for the procedural city: no city boxes, no street furniture, no city ground or lake. `detail`: FULL_WORLD, or
- * LITE_WORLD for a lite device profile.
+ * stand in for the procedural city: no city ground or lake, and no city boxes but the region's own `plan` (a generated
+ * region's workplaces, regionWorld.ts hollowLots: each room's glass shell, furniture and ceiling slab, and what the slab
+ * carries), drawn, walled and rasterised as the city's are. `detail`: FULL_WORLD, or LITE_WORLD for a lite device
+ * profile.
  */
-export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pack: RegionPack; layout: RegionLayout; streets?: StreetGrid | null } | null = null, detail: Readonly<WorldDetail> = FULL_WORLD): World {
+export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pack: RegionPack; layout: RegionLayout; streets?: StreetGrid | null; plan?: readonly Building[] } | null = null, detail: Readonly<WorldDetail> = FULL_WORLD): World {
   const scene = new Scene()
   const camera = new PerspectiveCamera(62, 1, 0.1, 2400)
-  const plan = region ? [] : generateBuildings(seed)
+  const plan = region ? [...(region.plan ?? [])] : generateBuildings(seed)
   const boxes = plan.map((b) => b.box)
   // A region's street furniture stands along its street window (region/streets.ts), where its people walk; a surveyed
   // region without one has none.
@@ -490,7 +492,7 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   buildings.castShadow = true
   buildings.receiveShadow = true
   buildings.name = 'Buildings'
-  if (!region) scene.add(buildings)
+  if (!region || plan.length > 0) scene.add(buildings)
   const regionScene = region ? regionMeshes(region.pack, region.layout, fbm, night, matrixMode.globalState) : null
   if (regionScene) for (const m of regionScene.meshes) scene.add(m)
 

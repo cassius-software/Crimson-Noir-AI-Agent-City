@@ -39,7 +39,9 @@ import { GRAPHICS_RESET } from './bootFailure.ts'
 import { watchLongTasks } from './longTasks.ts'
 import { buildWorld, createRenderer, FULL_WORLD, gpuBufferOf, LIGHT_TUNE_RANGE, LITE_WORLD, ndStopsFor, releaseGpu, WebGPUUnavailableError, type Gpu, type LightTuning, type World } from '../01_Initialize_World/world.ts'
 import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
-import { RegionPlaces, layoutOf, regionPhysics } from '../01_Initialize_World/region/regionWorld.ts'
+import { RegionPlaces, hollowLots, layoutOf, regionPhysics } from '../01_Initialize_World/region/regionWorld.ts'
+import { regionWorkplaceLots } from '../01_Initialize_World/region/workplaces.ts'
+import { drawRooms, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { streetCapacity, streetGridOf, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { tallestBuilding, type RegionPack } from '../01_Initialize_World/region/pack.ts'
 import { LANDMARK } from '../01_Initialize_World/lakefront.ts'
@@ -424,6 +426,12 @@ export class Engine {
   private readonly regionName: string | null
   /** The one landmark the city has (the tallest tower: The Spire in the generated metropolis), in the engine's frame, or null in the procedural city. */
   private readonly landmarkAt: Landmark | null
+  /**
+   * The world's indoor workplaces (interiors.ts): the city's from its seed, a generated region's on lots of its street
+   * window (region/workplaces.ts), none in a surveyed region. A region's minimap draws them; the HUD counts who is at
+   * work in them.
+   */
+  private readonly rooms: readonly Workplace[]
   /** The swarm's short-term memory (08_Swarm/shortTerm.ts): the last few moments between each recruit and the player, this visit only. */
   private readonly moments = new ShortTermMemory()
   /** Ghost-mode collision's passages (contact.ts): the city's poles, the passage pulse, and the nearest pedestrian's
@@ -587,9 +595,11 @@ export class Engine {
   private constructor(p: {
     canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; rigView: RigView
     post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; crowdFrameSeconds: UniformNode<'float', number>; ghost: GhostView
-    options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; netView: NetView
+    options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]
+    crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; netView: NetView
   }) {
     this.places = p.places
+    this.rooms = p.rooms
     this.streets = p.streets
     this.regionName = p.options.region?.name ?? null
     this.landmarkAt = p.landmark
@@ -716,7 +726,13 @@ export class Engine {
         cars: empty ? 0 : streets ? (requested.tracks === false ? 0 : Math.min(cars, streetCapacity(streets, requested.seed))) : cars,
         agents: empty ? AGENTS_RANGE[0] : requested.agents ?? defaultAgents(profile), host: hints.host ?? 'browser',
       }
-      const world = buildWorld(gpu.renderer, options.seed, pack && layout ? { pack, layout, streets } : null, lite ? LITE_WORLD : FULL_WORLD)
+      // A generated region's indoor workplaces (region/workplaces.ts): up to six lots of its street window near the start,
+      // picked from the pack as it came, then hollowed out of a copy of it (regionWorld.ts hollowLots), which the page
+      // draws with the rooms' boxes and paved floors and the worker walls; the worker gets the lots themselves and builds
+      // the same rooms from them. A surveyed region has no window and no lots: its copy is the pack.
+      const lots = pack && layout && streets ? regionWorkplaceLots(pack, layout, streets, spawn, options.seed) : []
+      const hollow = pack && layout ? hollowLots(pack, layout, lots) : null
+      const world = buildWorld(gpu.renderer, options.seed, pack && layout && hollow ? { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan: hollow.plan } : null, lite ? LITE_WORLD : FULL_WORLD)
       // Players 1..3 (split screen) start beside player 0 along the sidewalk (the city's spawn sidewalk runs along z; a
       // region's along its street heading); the realm moves a spawn out of a building lot itself.
       const along = start ? { x: Math.sin(start.heading), z: Math.cos(start.heading) } : { x: 0, z: 1 }
@@ -729,9 +745,10 @@ export class Engine {
       // page draws them yet).
       simBoot = SimClient.create({
         seed: options.seed, cars: options.cars, agents: options.agents, boxes: world.boxes, furniture: lite ? NO_FURNITURE : world.furniture, spawn,
-        debug: options.debug === true, region: pack && layout ? regionPhysics(pack, layout) : null, streets, tracks: options.tracks !== false,
+        debug: options.debug === true, region: hollow && layout ? regionPhysics(hollow.pack, layout) : null, streets, tracks: options.tracks !== false,
         ragdoll: options.ragdoll !== false && !pack && !lite, craft: !lite,
         ...(spawns.length > 0 && { spawns }),
+        ...(lots.length > 0 && { workplaces: lots }),
       })
 
       // Start on the tier the device profile suggests (or the one the URL pins), before anything compiles:
@@ -826,6 +843,7 @@ export class Engine {
       const engine = new Engine({
         canvas, gpu, world, crowd, sim, view, rigView, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, ghost, options,
         quality: { governor, targets, applied, mask, live }, places, landmark, streets,
+        rooms: hollow ? hollow.rooms : workplaces(options.seed),
         // The code dissolve's crowd amounts: allocated by the draws above like the frame's buffers, written the same way.
         crowdDissolve: gpuBufferOf(gpu.renderer, view0.dissolve),
         crowdLook,
@@ -846,10 +864,11 @@ export class Engine {
     }
   }
 
-  /** The minimap's layer in a region (its water, buildings and streets near a point); null in the procedural city. */
+  /** The minimap's layer in a region (its water, buildings and streets near a point, then its workplaces over the
+   * footprints they were hollowed from, as the city's map draws its own); null in the procedural city. */
   get mapLayer(): ((ctx: CanvasRenderingContext2D, x: number, z: number, radius: number, dark: boolean) => void) | null {
-    const p = this.places
-    return p ? (ctx, x, z, radius, dark) => p.drawMap(ctx, x, z, radius, dark) : null
+    const p = this.places, rooms = this.rooms
+    return p ? (ctx, x, z, radius, dark) => { p.drawMap(ctx, x, z, radius, dark); drawRooms(ctx, rooms, x, z, dark, radius) } : null
   }
 
   resize(): void {
@@ -2072,8 +2091,8 @@ export class Engine {
         pedestrians: this.places && !this.streets ? 0 : this.options.agents - 1, vehicles: this.options.cars, drawnNear: s.drawnNear, drawnFar: s.drawnFar,
         waiting: this.places && !this.streets ? 0 : s.waiting, crossing: this.places && !this.streets ? 0 : s.crossing, yielding: s.retreating, safetyNudges: s.nudges, gpu: this.gpu.adapterInfo,
         sensingAgeMs: st.crowd.ageMs, sensingLagMs: st.crowd.lagMs, crowdFrames: this.crowdFrames, seed: this.options.seed, host: this.options.host,
-        // The procedural city's indoor workplaces (interiors.ts); a region has none.
-        ...(this.places ? {} : { working: s.working ?? 0 }),
+        // The indoor workplaces (interiors.ts): the city's, a generated region's; a surveyed region has none.
+        ...(this.places && this.rooms.length === 0 ? {} : { working: s.working ?? 0 }),
       },
       output: {
         fps, frameMs: mean, p50Ms: p50, p95Ms: p95, cpuMs: this.cpuMs,

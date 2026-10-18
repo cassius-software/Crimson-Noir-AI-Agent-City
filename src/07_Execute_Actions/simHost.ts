@@ -17,6 +17,7 @@ import { packAgents, packAvatars, packVehicles, PhysicsBridge } from './sharedBr
 import type { RegionGround } from './physics.ts'
 import { CITY } from '../01_Initialize_World/city.ts'
 import { WINDOW_BLOCKS, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
+import { ROOM, WORKPLACE_KINDS, type Side, type WorkplaceLot } from '../01_Initialize_World/interiors.ts'
 
 export type Post = (msg: FromWorker, transfer?: Transferable[]) => void
 
@@ -70,6 +71,35 @@ function streetsOf(u: unknown): StreetGrid | null | undefined {
   const hs = list(h), vs = list(v)
   if (!hs || !vs) return undefined
   return { originX: originX as number, originZ: originZ as number, blocks: WINDOW_BLOCKS, roadHalf: roadHalf as number, lane: lane as number, furniture: furniture as number, h: hs, v: vs }
+}
+
+/**
+ * A region's workplaces, checked against its street window (null for none: the city, or a surveyed region): an empty
+ * list when there are none, else the list as plain data, or the reason it is refused. They need a street window; they
+ * are a list of at most ROOM.slots; each stands on a lot of the window (whole lot indices, the engine's), its doorway
+ * faces one of the lot's four streets, it is one of the six kinds, and no lot holds two.
+ */
+function workplacesOf(u: unknown, streets: StreetGrid | null): WorkplaceLot[] | string {
+  if (u === undefined || u === null) return []
+  if (!Array.isArray(u) || u.length > ROOM.slots) return `init: workplaces are a list of at most ${ROOM.slots}`
+  if (u.length === 0) return []
+  if (!streets) return "init: workplaces need a region's street window"
+  const k0 = streets.originX / CITY.pitch, m0 = streets.originZ / CITY.pitch
+  const inWindow = (n: unknown, n0: number): n is number => Number.isInteger(n) && (n as number) >= n0 && (n as number) < n0 + streets.blocks
+  const out: WorkplaceLot[] = []
+  const taken = new Set<string>()
+  for (const w of u) {
+    if (!isRecord(w)) return 'init: a workplace is a kind, a lot (k, m) and a side'
+    const { kind, k, m, side } = w
+    if (!inWindow(k, k0) || !inWindow(m, m0)) return 'init: a workplace stands on a lot of the street window'
+    if (!(side === 0 || side === 1 || side === 2 || side === 3)) return "init: a workplace's doorway faces one of its lot's four streets (0 to 3)"
+    const known = WORKPLACE_KINDS.find((x) => x === kind)
+    if (!known) return 'init: a workplace is one of the six kinds'
+    if (taken.has(`${k},${m}`)) return 'init: one workplace to a lot'
+    taken.add(`${k},${m}`)
+    out.push({ kind: known, k, m, side: side as Side })
+  }
+  return out
 }
 
 /**
@@ -142,9 +172,14 @@ export function createSimHost(post: Post, create: (o: SimCoreOptions) => Promise
           post({ t: 'error', message: `init: a street window is ${WINDOW_BLOCKS} blocks on the pitch with segment bits` })
           return
         }
+        const workplaces = workplacesOf(init.workplaces, region ? streets : null)
+        if (typeof workplaces === 'string') {
+          post({ t: 'error', message: workplaces })
+          return
+        }
         core = await create({
           seed: init.seed, cars: init.cars, agents: init.agents, boxes: init.boxes, furniture: init.furniture, spawn: init.spawn, spawns, debug: init.debug === true, region,
-          streets: region ? streets : null, tracks: init.tracks === true, ragdoll: init.ragdoll === true, craft: init.craft !== false,
+          streets: region ? streets : null, workplaces, tracks: init.tracks === true, ragdoll: init.ragdoll === true, craft: init.craft !== false,
         })
         for (let i = 0; i < refusedEarly; i++) core.noteRejected('message before init')
         post({ t: 'ready', meta: core.meta })

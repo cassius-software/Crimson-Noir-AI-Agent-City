@@ -19,10 +19,12 @@ import {
   type PassName,
 } from './crowdCompute.ts'
 import { AGENTS_RANGE, type CrowdReadout, type CrowdSensor, type CrowdStepInput } from './crowdSensor.ts'
+import { OperatorTrail } from './skills.ts'
 import { cpuFlowSolver, nearestOpen, type FlowGrid, type FlowSolver } from '../06_Make_Decisions/flowField.ts'
 import { createFlowTexture, FlowFieldGpu, writeFlowTexture } from '../06_Make_Decisions/flowFieldGpu.ts'
 import { packStreets, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { packRooms, type Workplace } from '../01_Initialize_World/interiors.ts'
+import { packRoutes } from '../01_Initialize_World/region/workplaces.ts'
 
 /**
  * Longest crowd substep, s. The stagger springs in simulate (K_TILT 120, C_TILT 15, semi-implicit Euler) diverge
@@ -75,6 +77,13 @@ export class CrowdSim implements CrowdSensor {
   readonly #streets: Uint32Array | undefined
   /** The indoor workplaces' block (interiors.ts packRooms), packed into Params every step; undefined: none. */
   readonly #rooms: Float32Array | undefined
+  /**
+   * The commute's route table over the street window to each room (region/workplaces.ts packRoutes), packed into Params
+   * every step; undefined without a window or without rooms: the procedural city's commute, the greedy walk.
+   */
+  readonly #routes: Uint32Array | undefined
+  /** The operator's way on foot (skills.ts OperatorTrail), from the avatar every step: what a recruit follows across a room. */
+  readonly #trail = new OperatorTrail()
 
   private constructor(device: GPUDevice, agentCount: number, grid: FlowGrid | null, streets: StreetGrid | null, rooms: readonly Workplace[] | null) {
     this.#device = device
@@ -82,6 +91,7 @@ export class CrowdSim implements CrowdSensor {
     this.#grid = grid
     this.#streets = streets ? packStreets(streets) : undefined
     this.#rooms = rooms && rooms.length > 0 ? packRooms(rooms) : undefined
+    this.#routes = streets && rooms && rooms.length > 0 ? packRoutes(rooms, streets) : undefined
     this.#flowTexture = createFlowTexture(device, grid)
     this.#readout = {
       seq: 0,
@@ -138,7 +148,8 @@ export class CrowdSim implements CrowdSensor {
    * too: the GPU's (flowFieldGpu.ts) when its pipelines validate on this device, else the CPU's, the same field. With
    * a street window (streets.ts: a generated region's), the shader is compiled for the window's corner and street
    * widths and the window's segments are what the people walk; without one, the procedural city's. With `rooms` (the
-   * city's indoor workplaces, interiors.ts), one person in WORK.oneIn has a station in one and commutes to it.
+   * indoor workplaces, interiors.ts: the city's, or a generated region's on lots of its window), one person in
+   * WORK.oneIn has a station in one and commutes to it; over a window, by the route table to each room.
    */
   static async create(device: GPUDevice, agentCount: number, grid: FlowGrid | null = null, streets: StreetGrid | null = null, rooms: readonly Workplace[] | null = null): Promise<CrowdSim> {
     const [lo, hi] = AGENTS_RANGE
@@ -217,7 +228,7 @@ export class CrowdSim implements CrowdSensor {
 
   /** GPU-side placement of every pedestrian at boot. */
   #spawn(): void {
-    packSimParams(this.#paramF32, this.#paramU32, 0, this.agentCount, { seq: 0, dt: 0, time: 0, player: { x: 0, z: 0, heading: 0, speed: 0, visible: false }, cars: [], summons: [] }, this.#streets, this.#rooms)
+    packSimParams(this.#paramF32, this.#paramU32, 0, this.agentCount, { seq: 0, dt: 0, time: 0, player: { x: 0, z: 0, heading: 0, speed: 0, visible: false }, cars: [], summons: [] }, this.#streets, this.#rooms, this.#routes)
     this.#device.queue.writeBuffer(this.#params, 0, this.#paramBytes)
     const enc = this.#device.createCommandEncoder({ label: 'crowd.spawn' })
     const pass = enc.beginComputePass()
@@ -236,9 +247,10 @@ export class CrowdSim implements CrowdSensor {
     const k = Math.max(1, Math.ceil(dt / CROWD_SUBSTEP - 1e-9))
     const h = dt / k
     const queue = this.#device.queue
+    this.#trail.update(input.player.x, input.player.z, input.player.visible)
     for (let sub = 1; sub <= k; sub++) {
       this.#frame++
-      packSimParams(this.#paramF32, this.#paramU32, this.#frame, this.agentCount, { ...input, dt: h, time: input.time - dt + h * sub }, this.#streets, this.#rooms)
+      packSimParams(this.#paramF32, this.#paramU32, this.#frame, this.agentCount, { ...input, dt: h, time: input.time - dt + h * sub }, this.#streets, this.#rooms, this.#routes, this.#trail)
       queue.writeBuffer(this.#params, 0, this.#paramBytes)
       // stats[0] (safety nudges) is cumulative and stats[4] (the Ring-0 flags) sticky; the per-step counters
       // between them, and the working count after them, are reset.

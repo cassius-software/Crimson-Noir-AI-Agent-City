@@ -11,9 +11,10 @@
 #   and the WebAssembly modules rebuilt and compared with the committed ones (the air-gap check);
 # - fvps: the formal step's fast parts: the SMT theorems, the LLVM-IR call graph and the WebAssembly air gap;
 # - browser: the built page in the runner's Chrome on the software WebGPU adapter (tools/browser/smoke.mjs): the 3D
-#   city booted as a desktop, as an iPhone, from disk and at the Ultra tier, every control driven (keyboard, mouse, a
-#   gamepad, touch and the touch menu), the console alone, and the installable copy a phone plays (its manifest,
-#   its service worker, a start with the host gone); the screenshots are kept as an artifact;
+#   city booted as a desktop, as an iPhone, from disk, at the Ultra tier and on a faked entry-level phone GPU (the
+#   lite profile), every control driven (keyboard, mouse, a gamepad, touch and the touch menu), the console alone, the
+#   installable copy a phone plays (its manifest, its service worker, a start with the host gone), and the Lakefront
+#   Metro map with its workplaces handed to its crowd; the screenshots are kept as an artifact;
 # - sandbox: the self-healing agent's zero-trust container (tools/selfheal/sandbox.mjs) tried from the inside:
 #   the escape probes (tools/sandbox/probe.sh) contained, the same probes in a weakened control, and two checks
 #   run contained (tools/sandbox/verify.mjs); the evidence is kept as an artifact;
@@ -123,7 +124,7 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - name: The build, then the city in Chrome as a desktop, an iPhone, a file, at Ultra, and the console alone
+      - name: The build, then the city in Chrome as a desktop, an iPhone, a file, at Ultra, lite, the console alone, and Lakefront Metro
         env:
           BROWSER_SHOTS: ${{ runner.temp }}/browser
         run: sh tools/selfheal/checks.sh page-build page-browser

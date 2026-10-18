@@ -28,7 +28,7 @@ import { CITY } from '../01_Initialize_World/city.ts'
 // Erased at runtime; the module itself is imported below, once the `?raw` hook is in place.
 import type { CarState, CullInput, CullSettings, SharedBuffers } from './crowdCompute.ts'
 import type { CrowdStepInput } from './crowdSensor.ts'
-import { ACTIVITY, INTERVIEW_DISTANCE, onRoad, RECRUIT_SLOTS, sidewalkPath, SUMMON_ACCEPT, TETHER_PACE } from './skills.ts'
+import { ACTIVITY, INTERVIEW_DISTANCE, onRoad, OperatorTrail, RECRUIT_SLOTS, sidewalkPath, SUMMON_ACCEPT, TETHER_PACE, TRAIL } from './skills.ts'
 
 // Vite's `?raw` import, for Node: the file as a default-exported string.
 registerHooks({
@@ -43,9 +43,14 @@ const USAGE = { MAP_READ: 1, MAP_WRITE: 2, COPY_SRC: 4, COPY_DST: 8, INDEX: 16, 
 const TEXTURE_USAGE = { COPY_SRC: 1, COPY_DST: 2, TEXTURE_BINDING: 4, STORAGE_BINDING: 8, RENDER_ATTACHMENT: 16 } as const
 Object.assign(globalThis, { GPUBufferUsage: USAGE, GPUMapMode: { READ: 1, WRITE: 2 }, GPUTextureUsage: TEXTURE_USAGE })
 
-const { ROOM, ROOM_FLOATS } = await import('../01_Initialize_World/interiors.ts')
-const { CULL_EASE, CULL_PASSES, FLAG_NON_FINITE, MAX_CARS, PARAMS_ROOMS, PARAMS_SIZE, PARAMS_STREETS, PASS_BINDINGS, RENDER_FLOATS, SIM_PASSES, VARIANTS, agentQuota, corridorReach, crowdShader, geometryOf, packFrustumPlanes, packSimParams, simReadbackSize } = await import('./crowdCompute.ts')
+const { ROOM, ROOM_FLOATS, workplaces, workplacesAt } = await import('../01_Initialize_World/interiors.ts')
+const {
+  CULL_EASE, CULL_PASSES, FLAG_NON_FINITE, MAX_CARS, PARAMS_ROOMS, PARAMS_ROUTES, PARAMS_SIZE, PARAMS_STREETS, PARAMS_TRAIL, PARAMS_TRAIL_COUNT, PASS_BINDINGS, RENDER_FLOATS,
+  SIM_PASSES, TRAIL_VEC4S, VARIANTS,
+  agentQuota, corridorReach, crowdShader, geometryOf, packFrustumPlanes, packSimParams, simReadbackSize,
+} = await import('./crowdCompute.ts')
 const { STREET_VEC4S, cityStreetGrid, packStreets } = await import('../01_Initialize_World/region/streets.ts')
+const { ROUTE_LINES, ROUTE_ROOM_VEC4S, ROUTE_VEC4S, packRoutes } = await import('../01_Initialize_World/region/workplaces.ts')
 const { CROWD_SUBSTEP, CrowdSim } = await import('./crowdSim.ts')
 const { CrowdCull, MAX_HIDDEN } = await import('./crowdCull.ts')
 const { MAX_CARS: SENSOR_MAX_CARS, PEDESTRIAN_MAX_SPEED } = await import('./crowdSensor.ts')
@@ -729,14 +734,25 @@ test('no pass needs more than the default 8 storage buffers per stage', () => {
 test('struct layouts obey the uniform address-space rules and match the CPU sizes', () => {
   const p = layoutOf('Params', MODULE)
   const m = p.members!
-  // The street window's bit field rides after the summons (STREET_VEC4S rows of vec4u), the indoor workplaces last
-  // (ROOM.slots × struct Room: a, b, ROOM.furniture boxes, ROOM.stations stations, every one a vec4f).
-  assert.equal(p.size, 1856 + STREET_VEC4S * 16 + ROOM.slots * (32 + 16 * (ROOM.furniture + ROOM.stations)))
+  // The street window's bit field rides after the summons (STREET_VEC4S rows of vec4u), the indoor workplaces after it
+  // (ROOM.slots × struct Room: a, b, ROOM.furniture boxes, ROOM.stations stations, every one a vec4f), and the commute's
+  // route table (ROUTE_VEC4S rows of vec4u: ROUTE_ROOM_VEC4S per room slot), and last the operator's trail (TRAIL_VEC4S
+  // rows of two points each) and its count, padded to the struct's 16-byte alignment.
+  assert.equal(p.size, 1856 + STREET_VEC4S * 16 + ROOM.slots * (32 + 16 * (ROOM.furniture + ROOM.stations)) + ROUTE_VEC4S * 16 + TRAIL_VEC4S * 16 + 16)
   assert.equal(p.size, PARAMS_SIZE)
+  assert.ok(PARAMS_SIZE <= 65536, `${PARAMS_SIZE} bytes: within WebGPU's default maxUniformBufferBindingSize`)
   assert.equal(m.get('streets')!.offset, 192 + MAX_CARS * 32 + RECRUIT_SLOTS * 16)
   assert.equal(m.get('streets')!.offset, PARAMS_STREETS)
   assert.equal(m.get('rooms')!.offset, PARAMS_STREETS + STREET_VEC4S * 16)
   assert.equal(m.get('rooms')!.offset, PARAMS_ROOMS)
+  assert.equal(m.get('routes')!.offset, PARAMS_ROOMS + ROOM.slots * ROOM_FLOATS * 4)
+  assert.equal(m.get('routes')!.offset, PARAMS_ROUTES)
+  assert.equal(ROUTE_VEC4S, ROOM.slots * ROUTE_ROOM_VEC4S)
+  assert.equal(m.get('trail')!.offset, PARAMS_ROUTES + ROUTE_VEC4S * 16)
+  assert.equal(m.get('trail')!.offset, PARAMS_TRAIL)
+  assert.equal(m.get('trailCount')!.offset, PARAMS_TRAIL + TRAIL_VEC4S * 16)
+  assert.equal(m.get('trailCount')!.offset, PARAMS_TRAIL_COUNT)
+  assert.equal(TRAIL_VEC4S * 2, TRAIL.points)
   assert.equal(layoutOf('Room', MODULE).size, ROOM_FLOATS * 4)
   assert.deepEqual([...layoutOf('Room', MODULE).members!].map(([k, v]) => [k, v.offset]), [['a', 0], ['b', 16], ['furniture', 32], ['stations', 32 + ROOM.furniture * 16]])
   assert.equal(m.get('player')!.offset, 32)
@@ -1686,17 +1702,18 @@ test('simulate: a summons comes after the safety reflexes, is taken only on the 
     'if (!summoned && b.b.w > 0.0) { b.b.w = 0.0; b.a = vec4f(cornerOf(me), b.a.z, b.a.w); crossing = CROSS_NONE; }',
     // Coming over, slowing near; stopping at SUMMON_STOP; following if the operator walks off; never talking through
     // a room's glass.
-    'glass = walled(me, at); if (b.b.w < 1.5 && dist <= SUMMON_STOP && !glass) { b.b.w = 2.0; } else if (b.b.w > 1.5 && (dist > SUMMON_STOP * 1.5 || glass)) { b.b.w = 1.0; }',
+    // a room's glass, and starting to talk only where the operator is seen clear of it.
+    'let pane = glassBetween(me, at, 0.0); glass = pane >= 0; seen = glassBetween(me, offLot(at), ROOM_PAD - 0.05) < 0; if (b.b.w < 1.5 && dist <= SUMMON_STOP && seen) { b.b.w = 2.0; } else if (b.b.w > 1.5 && (dist > SUMMON_STOP * 1.5 || glass)) { b.b.w = 1.0; }',
     // Talking: a conversational distance held against the crowd's jostling, with a dead band; facing the operator;
     // stepping back as fast as the operator walks towards them.
     'if (b.b.w > 1.5) { let gap = dist - SUMMON_STOP; desired = dirTo(me, at) * select(0.0, clamp(gap * 4.0, -2.4, 0.6), abs(gap) > 0.2); faceDir = d; activity = ACT_INTERVIEWING; }',
     // The standoff binds the step actually taken: inside SUMMON_STOP, nothing of it carries them towards the operator.
-    'if (asked && !glass) { let to = at - me; let dd = length(to); if (dd > 1e-4 && dd < SUMMON_STOP) { let u = to / dd; let inward = dot(nv, u); if (inward > 0.0) { nv -= u * inward; } } }',
+    'if (asked && seen) { let to = at - me; let dd = length(to); if (dd > 1e-4 && dd < SUMMON_STOP) { let u = to / dd; let inward = dot(nv, u); if (inward > 0.0) { nv -= u * inward; } } }',
     // Tethered and fallen behind: hurrying, never past TETHER_PACE; someone walking over keeps their own pace.
     // The way to walk (summonWay): round a room's furniture in the operator's room; the flow field round the buildings
     // when the operator is beyond the last stretch or behind a room's glass; the straight line otherwise, so they
     // arrive and stop as before. Behind the glass nobody is on the last stretch: full pace.
-    'let far = select(dist, max(dist, SUMMON_STOP + 2.0), glass); let pace = select(b.a.z, max(b.a.z, TETHER_PACE * clamp((far - SUMMON_STOP) / 2.0, 0.0, 1.0)), tethered); desired = summonWay(me, at, dist) * pace * clamp(far - SUMMON_STOP, 0.25, 1.0); activity = ACT_COMING; }',
+    'let far = select(dist, max(dist, SUMMON_STOP + 2.0), glass); let pace = select(b.a.z, max(b.a.z, TETHER_PACE * clamp((far - SUMMON_STOP) / 2.0, 0.0, 1.0)), tethered); desired = summonWay(me, at, dist, pane) * pace * clamp(far - SUMMON_STOP, 0.25, 1.0); activity = ACT_COMING; }',
     // The kerb, coming or talking: someone on the road heads back to it; a step that would leave it is not taken.
     'if (road) { desired = curbwards(me) * b.a.z; } else { if (onRoad(me + vec2f(desired.x, 0.0) * 0.5)) { desired.x = 0.0; } if (onRoad(me + vec2f(0.0, desired.y) * 0.5)) { desired.y = 0.0; } } } else {',
     'ps.w = activity; pose[i] = ps;',
@@ -1707,8 +1724,8 @@ test('simulate: a summons comes after the safety reflexes, is taken only on the 
   ]) at(line)
   assert.ok(at('} else if (summoned) { asked = true;') > 0, 'only the summons arm binds the step to the kerb (never the step back from a car)')
   assert.ok(at('if (sp > 3.0) { nv *= 3.0 / sp; }') < at('if (asked && !road) {'), 'after the cap: the step actually taken')
-  assert.ok(at('if (sp > 3.0) { nv *= 3.0 / sp; }') < at('if (asked && !glass) { let to = at - me;'), 'the standoff clip binds the capped step')
-  assert.ok(at('if (asked && !glass) { let to = at - me;') < at('if (asked && !road) {'), 'the kerb clip comes last: it has the final word')  // Order: the car loop (sensing, the nudge, the Reflex save) first; then freeze and step back, which outrank a summons;
+  assert.ok(at('if (sp > 3.0) { nv *= 3.0 / sp; }') < at('if (asked && seen) { let to = at - me;'), 'the standoff clip binds the capped step')
+  assert.ok(at('if (asked && seen) { let to = at - me;') < at('if (asked && !road) {'), 'the kerb clip comes last: it has the final word')  // Order: the car loop (sensing, the nudge, the Reflex save) first; then freeze and step back, which outrank a summons;
   // then the summons; then the ordinary day. The summons is an arm of that chain, never an early return.
   const cars = at('for (var j = 0u; j < P.carCount; j++)')
   const freeze = at('if (b.c.w > 0.0) { b.c.w -= dt; activity = ACT_STEPPING_BACK; }')
@@ -1792,6 +1809,112 @@ test('a street window: the shader is compiled for its corner and widths, and its
   assert.ok(next.includes('if (r < 0.38 && alongX)') && next.includes('if (r < 0.76 && alongZ)') && next.includes('if (r < 0.88 && acrossX)'), 'the same dice as before')
   assert.ok(functions(MODULE).get('isCrossing')!.body.includes('roadV(km.x, km.y)'), 'a crosswalk waits only over a street cars run on')
   assert.ok(functions(MODULE).get('onRoad')!.body.includes('roadV(km.x, km.y)'), 'a line without cars is no carriageway')
+})
+
+test('the commute\'s route table: packed after the rooms every step over a window with rooms, zero in the city; the shader reads it as packRoutes writes it', async () => {
+  // The table's shape, in the module: a room's nibbles over the window's intersections in whole vec4u rows.
+  const k = constants(MODULE)
+  assert.equal(k.get('ROUTE_VEC4S'), ROUTE_VEC4S)
+  assert.equal(k.get('ROUTE_ROOM_VEC4S'), ROUTE_ROOM_VEC4S)
+  assert.equal(k.get('CITY_BLOCKS')! + 1, ROUTE_LINES, 'one nibble per intersection of the window')
+  // packSimParams: the table where struct Params has it; absent, zero; the wrong length refused.
+  const f = new Float32Array(PARAMS_SIZE / 4), u = new Uint32Array(f.buffer)
+  const table = new Uint32Array(ROUTE_VEC4S * 4).map((_, n) => (n * 2654435761) >>> 0)
+  packSimParams(f, u, 1, AGENTS, simInput(), undefined, undefined, table)
+  assert.deepEqual([...u.subarray(PARAMS_ROUTES / 4, PARAMS_TRAIL / 4)], [...table], 'the table runs up to the operator\'s trail')
+  packSimParams(f, u, 2, AGENTS, simInput())
+  assert.ok(u.subarray(PARAMS_ROUTES / 4, PARAMS_TRAIL / 4).every((w) => w === 0), 'absent: no room routed')
+  assert.throws(() => packSimParams(f, u, 3, AGENTS, simInput(), undefined, undefined, new Uint32Array(ROUTE_VEC4S * 4 - 1)), RangeError)
+  // The worker's crowd over a window with two rooms uploads packRoutes' words, at the spawn and every substep.
+  const window = cityStreetGrid()
+  window.originX = 2000; window.originZ = 2000; window.roadHalf = 3.3; window.lane = 4.9
+  window.h.fill(0, 8 * CITY.blocks, 9 * CITY.blocks)
+  const rooms = workplacesAt([{ kind: 'roboticsLab', k: 52, m: 52, side: 0 }, { kind: 'boardroom', k: 55, m: 51, side: 3 }])
+  const words = packRoutes(rooms, window)
+  assert.ok(words.some((w) => w !== 0) && words.subarray(2 * ROUTE_ROOM_VEC4S * 4).every((w) => w === 0), 'two rooms routed, the other slots empty')
+  const device = new MockDevice()
+  const crowd = await CrowdSim.create(device as unknown as GPUDevice, AGENTS, null, window, rooms)
+  const read = (d: MockDevice) => [...params(d, 'crowd.params').u.subarray(PARAMS_ROUTES / 4, PARAMS_ROUTES / 4 + ROUTE_VEC4S * 4)]
+  assert.deepEqual(read(device), [...words], 'the spawn pass sees the table')
+  crowd.step(simInput({ dt: 0.12 }))
+  assert.deepEqual(read(device), [...words])
+  // The city's crowd, with its own six rooms: every word zero, so its commute is the greedy walk it always was.
+  const city = new MockDevice()
+  const cityCrowd = await CrowdSim.create(city as unknown as GPUDevice, AGENTS, null, null, workplaces(1337))
+  cityCrowd.step(simInput())
+  assert.ok(read(city).every((w) => w === 0))
+  // The shader decodes the table as packRoutes (and its mirror in region/workplaces.test.ts) encodes it, walks the
+  // street it gives, falls back to the greedy walk at the room's own intersection or when the room is not routed (the
+  // city), and to the day's dice where the table has no way; a routed commute starts only where the table has one.
+  for (const line of [
+    'if (any(km < vec2i(0)) || any(km > vec2i(CITY_BLOCKS))) { return 0u; }',
+    'let n = u32(km.y * (CITY_BLOCKS + 1) + km.x);',
+    'let w = r * ROUTE_ROOM_VEC4S * 4u + n / 8u;',
+    'return (P.routes[w / 4u][w % 4u] >> ((n % 8u) * 4u)) & 15u;',
+  ]) assert.ok(flat('routeWay').includes(line), line)
+  assert.ok(flat('routed').includes('return routeWay(r, nearestLines(targetCorner(r))) == 5u;'))
+  for (const line of [
+    'if (!routed(r) || way == 5u) { return towardCorner(t, dest, seed); }',
+    'if (way == 0u) { return nextCorner(t, seed); }',
+    'if (way == 1u) { return select(cornerPos(k, m, 1.0, sz), cornerPos(k + 1, m, -1.0, sz), sx > 0.0); }',
+    'if (way == 2u) { return select(cornerPos(k, m, -1.0, sz), cornerPos(k - 1, m, 1.0, sz), sx < 0.0); }',
+    'if (way == 3u) { return select(cornerPos(k, m, sx, 1.0), cornerPos(k, m + 1, sx, -1.0), sz > 0.0); }',
+    'return select(cornerPos(k, m, sx, -1.0), cornerPos(k, m - 1, sx, 1.0), sz < 0.0);',
+  ]) assert.ok(flat('commuteCorner').includes(line), line)
+  const sim = flat('simulate')
+  assert.ok(sim.includes('if (phase < 0.5 && duty && (!routed(room) || routeWay(room, nearestLines(b.a.xy)) != 0u)) { phase = WORK_COMMUTE; }'), 'the promotion gate')
+  assert.ok(sim.includes('commuteCorner(goal, room, hash2(i, P.frame))') && !sim.includes('towardCorner('), 'the commute walks by the table')
+})
+
+test('the operator\'s trail: their way on foot, newest first, packed after the route table every step; the shader follows it for a summons to the operator alone', async () => {
+  // OperatorTrail: a point every TRAIL.spacing m at least, newest first, TRAIL.points of them at most; a jump of more
+  // than TRAIL.jump m (a teleport) starts it again; in a car, or at a spot the GPU cannot hold, there is none.
+  const t = new OperatorTrail()
+  t.update(10, 20, true)
+  t.update(10.5, 20, true)
+  assert.deepEqual([t.count, t.xz[0], t.xz[1]], [1, 10, 20], 'a step shorter than the spacing adds nothing')
+  t.update(11, 20, true)
+  assert.deepEqual([t.count, ...t.xz.subarray(0, 4)], [2, 11, 20, 10, 20], 'newest first')
+  for (let k = 2; k <= 30; k++) t.update(10 + k * 0.8, 20, true)
+  assert.equal(t.count, TRAIL.points)
+  assert.deepEqual([t.xz[0], t.xz[2 * TRAIL.points - 2]], [Math.fround(10 + 30 * 0.8), Math.fround(10 + 15 * 0.8)], 'the oldest dropped')
+  t.update(t.xz[0] + TRAIL.jump + 0.1, 20, true)
+  assert.equal(t.count, 1, 'a jump starts it again')
+  t.update(t.xz[0] + 1, 20, false)
+  assert.equal(t.count, 0, 'in a car: no way on foot')
+  t.update(5, 5, true)
+  t.update(Number.NaN, 5, true)
+  assert.equal(t.count, 0)
+  t.update(5, 1e39, true)
+  assert.equal(t.count, 0, 'beyond what an f32 holds')
+  // packSimParams: the points and their count where struct Params has them; absent, zero.
+  const f = new Float32Array(PARAMS_SIZE / 4), u = new Uint32Array(f.buffer)
+  const way = new OperatorTrail()
+  for (let k = 0; k < 5; k++) way.update(100 + k, 50 - k, true)
+  packSimParams(f, u, 1, AGENTS, simInput(), undefined, undefined, undefined, way)
+  assert.deepEqual([...f.subarray(PARAMS_TRAIL / 4, PARAMS_TRAIL / 4 + TRAIL.points * 2)], [...way.xz])
+  assert.equal(u[PARAMS_TRAIL_COUNT / 4], 5)
+  assert.ok(u.subarray(PARAMS_TRAIL_COUNT / 4 + 1).every((w) => w === 0), 'padding after the count')
+  packSimParams(f, u, 2, AGENTS, simInput())
+  assert.ok(u.subarray(PARAMS_TRAIL / 4).every((w) => w === 0), 'absent: no trail')
+  // The worker's crowd keeps it from the avatar every step, and drops it while the operator drives.
+  const { device, crowd } = await simRig()
+  const read = () => { const p = params(device, 'crowd.params'); return { count: p.u[p.at('trailCount')], xz: [...p.f.subarray(p.at('trail'), p.at('trail') + 4)] } }
+  const player = (x: number, visible = true) => ({ x, z: 102, heading: 1.5, speed: 1.3, visible })
+  crowd.step(simInput({ player: player(101) }))
+  crowd.step(simInput({ player: player(102) }))
+  assert.deepEqual(read(), { count: 2, xz: [102, 102, 101, 102] })
+  crowd.step(simInput({ player: player(103, false) }))
+  assert.equal(read().count, 0)
+  // The header carries its shape, and the shader reads two points to a row and follows the trail only for a summons to
+  // where its newest point is.
+  const k = constants(MODULE)
+  assert.equal(k.get('TRAIL_POINTS'), TRAIL.points)
+  assert.equal(k.get('TRAIL_VEC4S'), TRAIL_VEC4S)
+  assert.equal(k.get('TRAIL_NEAR'), TRAIL.near)
+  assert.ok(flat('trailSpot').includes('let row = P.trail[k / 2u]; return offFurniture(r, select(row.xy, row.zw, (k & 1u) != 0u));'))
+  assert.ok(flat('roomWay').includes('for (var k = 0u; k < min(P.trailCount, TRAIL_POINTS); k++) {'))
+  assert.ok(flat('summonWay').includes('let follow = P.trailCount > 0u && distance(P.trail[0].xy, at) < TRAIL_NEAR;'))
 })
 
 test('packFrustumPlanes: six planes into the cull layout, in order; anything else refused', () => {

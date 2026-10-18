@@ -10,19 +10,25 @@
  *   tile and dressed by the city's own facade shader (its windows follow each wall, at any angle); roads and sidewalks
  *   as ribbons at their surveyed widths, with centre lines and lane dashes; water; the ground;
  * - the physics: every wall as a segment with its height, the lake's shoreline as a low wall, and the region's edge;
- * - places: the fictional name of the street you stand on and the nearest cross street, and a spawn on a sidewalk.
+ * - places: the fictional name of the street you stand on and the nearest cross street, and a spawn on a sidewalk;
+ * - the workplaces' lots hollowed (hollowLots): the buildings on the lots region/workplaces.ts chose are put out of
+ *   sight and out of the walls, and the rooms (interiors.ts) stand there instead, as boxes the city's renderer and
+ *   colliders take: the glass shell, the furniture, the ceiling slab in the podium's finish, and whatever stood above
+ *   the slab carried on it; each room's floor is paved.
  * What breaks if it is removed? A region pack can be compiled but never walked.
  */
 import {
   BufferGeometry, Float32BufferAttribute, Mesh, MeshStandardNodeMaterial, PlaneGeometry, ShapeUtils, Vector2, type Node, type UniformNode, type Vector4,
 } from 'three/webgpu'
 import { abs, attribute, float, fract, mix, positionWorld, smoothstep, step, vec3 } from 'three/tsl'
-import { STYLE } from '../city.ts'
+import { CITY, STYLE, type Building } from '../city.ts'
 import type { FbmSet } from '../fbmTexture.ts'
+import { ROOM, toWorld, workplacesAt, type Workplace, type WorkplaceLot } from '../interiors.ts'
 import { buildingMaterial, waterMaterial } from '../materials.ts'
 import { applyMatrixMode } from '../matrixMode.ts'
 import { type Pt, type Rect } from './clip.ts'
 import { BUILDING_KIND, DM, FLOW, ROAD_CLASS, WATER_KIND, polygonAt, polygonCount, roadAt, type RegionPack } from './pack.ts'
+import { buildingLot, slabPodium, type LotBuilding } from './workplaces.ts'
 
 type F = Node<'float'>
 
@@ -40,6 +46,8 @@ export interface RegionLayout {
   offset: { x: number; z: number }
   /** The region in the engine's frame. */
   bounds: Rect
+  /** Ground paved as sidewalk besides the streets', in the engine's frame: the workplaces' floors (hollowLots). */
+  floors?: Rect[]
 }
 
 export function layoutOf(pack: RegionPack): RegionLayout {
@@ -76,6 +84,8 @@ export function regionPhysics(pack: RegionPack, l: RegionLayout): RegionPhysics 
   const w: number[] = []
   for (let i = 0; i < polygonCount(pack.buildings); i++) {
     const h = pack.buildings.height[i] / DM
+    // A building of no height is one hollowLots put out of a room's way: it has no walls. No pack writes one.
+    if (!(h > 0)) continue
     for (const ring of polygonAt(pack.buildings, i)) {
       const r = shift(l, ring)
       for (let k = 0; k < r.length; k++) {
@@ -438,18 +448,28 @@ function styleOf(kind: number, height: number, area: number, seed: number): numb
   return seed < 0.6 ? STYLE.brick : seed < 0.85 ? STYLE.stone : STYLE.condo
 }
 
+/** Building i's finish from its outer ring in the engine's frame: styleOf, with the index's own dice. */
+const finishOf = (pack: RegionPack, i: number, outer: readonly Pt[]): number =>
+  styleOf(pack.buildings.kind[i], pack.buildings.height[i] / DM, Math.abs(area2(outer)) / 2, ((i * 2654435761) >>> 0) / 2 ** 32)
+
+/** Building i's finish, as its walls are drawn (a room's ceiling slab and what it carries take their building's). */
+export function buildingStyle(pack: RegionPack, l: RegionLayout, i: number): number {
+  return finishOf(pack, i, shift(l, polygonAt(pack.buildings, i)[0]))
+}
+
 /** Every building of the pack, merged by `tile`-metre tiles, walls and roofs, with the facade attributes. */
 function buildingGeometries(pack: RegionPack, l: RegionLayout, tile: number): Map<string, BufferGeometry> {
   const tiles = new Map<string, Buffers>()
   for (let i = 0; i < polygonCount(pack.buildings); i++) {
+    const h = pack.buildings.height[i] / DM
+    // A building of no height is one hollowLots put out of sight: nothing to draw, and no tile opened for it.
+    if (!(h > 0)) continue
     const rings = polygonAt(pack.buildings, i).map((r) => shift(l, r))
     const outer = rings[0]
     const key = `${Math.floor(outer[0][0] / tile)},${Math.floor(outer[0][1] / tile)}`
     let b = tiles.get(key)
     if (!b) tiles.set(key, (b = buffers('style', 'along')))
-    const h = pack.buildings.height[i] / DM
-    const area = Math.abs(area2(outer)) / 2
-    const style = styleOf(pack.buildings.kind[i], h, area, ((i * 2654435761) >>> 0) / 2 ** 32)
+    const style = finishOf(pack, i, outer)
     // Walls: one quad per edge, facing out of the solid (holes face into the courtyard).
     rings.forEach((r, ri) => {
       // In (x, z) taken as a plane, a counter-clockwise ring (area2 > 0) has its inside on the left of every edge. A wall
@@ -559,6 +579,11 @@ export function regionMeshes(pack: RegionPack, l: RegionLayout, fbm: FbmSet, nig
     const lanes = pack.roads.lanes[i], twoWay = pack.roads.flow[i] === FLOW.both ? 1 : 0
     ribbon(roads, pts, half, 0.045, (across, dist) => ({ across, dist, lanes, twoWay, halfWidth: half }))
   }
+  // The paved floors (the workplaces' rooms and forecourts): each a ribbon along x, at the sidewalks' height.
+  for (const f of l.floors ?? []) {
+    const z = (f.z0 + f.z1) / 2
+    ribbon(walks, [[f.x0, z], [f.x1, z]], (f.z1 - f.z0) / 2, 0.035, (_s, dist) => ({ dist }))
+  }
   add(geometryOf(walks), sidewalkMaterial(fbm), 'RegionSidewalks', false, 3)
   add(geometryOf(roads), asphaltMaterial(fbm), 'RegionRoads', false, 4)
   // Buildings, by tile.
@@ -571,3 +596,80 @@ export function regionMeshes(pack: RegionPack, l: RegionLayout, fbm: FbmSet, nig
   }
 }
 
+
+// ---------------------------------------------------------------- the workplaces
+
+/** A region with its workplaces' lots hollowed (hollowLots): what the page draws and the physics worker walls. */
+export interface HollowRegion {
+  /** The pack, with every building on a chosen lot at height 0 (drawn nowhere and walled nowhere), indices kept. */
+  pack: RegionPack
+  /**
+   * Boxes the city's renderer draws over the region and the physics worker takes as colliders: each room's shell and
+   * furniture, and what stood above its ceiling slab.
+   */
+  plan: Building[]
+  /** The rooms' floors and forecourts, for RegionLayout.floors. */
+  floors: Rect[]
+  rooms: Workplace[]
+}
+
+/**
+ * Whether a ring is one rectangle along the axes (as fromMacro.ts writes every generated footprint): four corners,
+ * every edge along an axis, and the area of its box.
+ */
+const isRect = (r: readonly Pt[]): boolean => {
+  if (r.length !== 4 || !r.every((p, k) => (p[0] === r[(k + 1) % 4][0]) !== (p[1] === r[(k + 1) % 4][1]))) return false
+  const xs = r.map((p) => p[0]), zs = r.map((p) => p[1])
+  const box = (Math.max(...xs) - Math.min(...xs)) * (Math.max(...zs) - Math.min(...zs))
+  return box > 0 && Math.abs(Math.abs(area2(r)) / 2 - box) <= 1e-6 * box
+}
+
+/**
+ * The region with rooms on `lots` (region/workplaces.ts regionWorkplaceLots), as a copy: the pack is only read, since
+ * the page builds its world again whenever it remounts.
+ * - Every building standing on a chosen lot (its box's centre in the lot's square: workplaces.ts buildingLot) gets
+ *   height 0 in the copy, so the meshes and the walls skip it. Every index is kept, so every other building's finish
+ *   (its index's dice) is as before.
+ * - The room's ceiling slab stands for the lot's podium (workplaces.ts slabPodium): its height (the room's and a slab
+ *   at least) and its finish. A lot with no podium gets the slab's least height, in the downtown mix.
+ * - What stood a floor or more above the slab is carried on it, from the slab up, as the box it was and in its own
+ *   finish: a hub's tower over its podium. Only a footprint that is one rectangle along the axes is a box; any other
+ *   is dropped with the rest.
+ * - Each room's floor (its whole lot, the doorway's threshold too) and its forecourt (the doorway's width and half a
+ *   metre either side, out to the sidewalk's edge of the street it faces) are paved, at the sidewalks' height: the
+ *   ground under them is lawn.
+ */
+export function hollowLots(pack: RegionPack, l: RegionLayout, lots: readonly WorkplaceLot[]): HollowRegion {
+  const chosen = new Set(lots.map(({ k, m }) => `${k},${m}`))
+  const height = pack.buildings.height.slice()
+  const on = new Map<string, LotBuilding[]>()
+  for (let i = 0; i < height.length; i++) {
+    const at = buildingLot(pack, l.offset, i)
+    if (!at || !chosen.has(`${at.K},${at.M}`)) continue
+    height[i] = 0
+    const key = `${at.K},${at.M}`
+    on.set(key, [...(on.get(key) ?? []), at.b])
+  }
+  const least = ROOM.height + 0.3
+  const slabOf = (k: number, m: number): { top: number; finish: number } => {
+    const p = slabPodium(on.get(`${k},${m}`) ?? [])
+    return p ? { top: Math.max(p.height, least), finish: buildingStyle(pack, l, p.i) } : { top: least, finish: STYLE.mixed }
+  }
+  const rooms = workplacesAt(lots, (k, m) => slabOf(k, m).top)
+  const plan: Building[] = [], floors: Rect[] = []
+  const rect = (a: { x: number; z: number }, b: { x: number; z: number }): Rect => ({ x0: Math.min(a.x, b.x), z0: Math.min(a.z, b.z), x1: Math.max(a.x, b.x), z1: Math.max(a.z, b.z) })
+  // The sidewalk's edge, m from the lot's centre: the street's centre half a pitch out, less a two-lane carriageway's
+  // half and the sidewalk (fromMacro.ts: every street a car uses has two lanes).
+  const h = CITY.lotHalf, edge = CITY.pitch / 2 - roadWidth(ROAD_CLASS.local, 2).carriage / 2 - SIDEWALK
+  for (const room of rooms) {
+    const { top, finish } = slabOf(room.k, room.m)
+    room.shell[5] = { ...room.shell[5], style: finish }
+    plan.push(...room.shell, ...room.furniture)
+    for (const b of on.get(`${room.k},${room.m}`) ?? []) {
+      const rings = polygonAt(pack.buildings, b.i)
+      if (b.height >= top + 3.3 - 1e-6 && rings.length === 1 && isRect(rings[0])) plan.push({ box: [b.x0, top, b.z0, b.x1, b.height, b.z1], style: buildingStyle(pack, l, b.i) })
+    }
+    floors.push(rect(toWorld(room, -h, -h), toWorld(room, h, h)), rect(toWorld(room, h, -ROOM.door - 0.5), toWorld(room, edge, ROOM.door + 0.5)))
+  }
+  return { pack: { ...pack, buildings: { ...pack.buildings, height } }, plan, floors, rooms }
+}
