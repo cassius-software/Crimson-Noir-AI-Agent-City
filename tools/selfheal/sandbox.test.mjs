@@ -12,13 +12,13 @@
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
 
-import { CONTAINMENT, CREDENTIAL_NAME, ENTRY, ENV_ALLOWED, EXCLUDE, IMAGE, copyTree, dockerArgs, envArgs, tarTree } from './sandbox.mjs'
+import { CONTAINMENT, CREDENTIAL_NAME, ENTRY, ENV_ALLOWED, IMAGE, copyTree, dockerArgs, envArgs, excluded, tarTree } from './sandbox.mjs'
 import { MUST_FLIP, controlArgs, parseProbes } from '../sandbox/verify.mjs'
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
@@ -76,12 +76,18 @@ test('the tree the container receives has no history, installed modules or build
   writeFileSync(join(tree, 'src/a/x.ts'), 'export const x = 1\n')
   writeFileSync(join(tree, 'dist/index.html'), '')
   writeFileSync(join(tree, 'tools/selfheal/checks.sh'), '')
+  // Nix's result links, as `nix build .#page .#default` leaves them: into a store the container does not have.
+  for (const link of ['result', 'result-1', 'src/a/result']) symlinkSync('/nix/store/0000000000000000000000000000000-gone', join(tree, link))
   const listing = spawnSync('tar', ['-tf', '-'], { input: tarTree(tree), encoding: 'utf8' }).stdout.split('\n').filter(Boolean)
   assert.ok(!listing.includes('./') && !listing.includes('.'), 'the tree itself is not an entry')
   assert.ok(listing.includes('src/a/x.ts') && listing.includes('crimson_noir_os/Cargo.toml') && listing.includes('tools/selfheal/checks.sh'))
-  for (const entry of listing) for (const e of EXCLUDE) assert.ok(!entry.split('/').includes(e), `${entry} is excluded`)
+  for (const entry of listing) assert.ok(!entry.split('/').filter(Boolean).some(excluded), `${entry} is excluded`)
+  assert.ok(excluded('result-1') && excluded('.direnv') && !excluded('results.md'))
   const copy = copyTree(tree)
   assert.ok(existsSync(join(copy, 'src/a/x.ts')))
+  // lstat, not existsSync: a dangling link copied over would still read as absent.
+  const there = (p) => { try { lstatSync(p); return true } catch { return false } }
+  for (const link of ['result', 'result-1', 'src/a/result']) assert.ok(there(join(tree, link)) && !there(join(copy, link)), `the host copy leaves out ${link}`)
   assert.ok(!existsSync(join(copy, '.git')) && !existsSync(join(copy, 'crimson_noir_os/target')) && !existsSync(join(copy, 'native/routing/target')), 'the host copy excludes at any depth too')
   rmSync(copy, { recursive: true, force: true })
   rmSync(tree, { recursive: true, force: true })

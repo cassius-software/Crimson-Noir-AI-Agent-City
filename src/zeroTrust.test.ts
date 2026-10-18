@@ -5,12 +5,14 @@
  * Why does this file exist? It holds the repository's attack surface to what the product is, so nothing stray can come
  * back unnoticed (a shell-command HTTP server once sat at the root, unauthenticated, on every interface; a developer's
  * assistant permission list with their own paths was once committed):
- * - no developer's local AI tooling is tracked, and .gitignore, both image build contexts and the self-heal sandbox's
- *   tree keep every name of it out (tools/selfheal/sandbox.mjs AI_TOOLING);
+ * - no developer's local AI tooling is tracked, and .gitignore, both image build contexts, the self-heal sandbox's
+ *   tree and the Nix page's source keep every name of it out (tools/selfheal/sandbox.mjs AI_TOOLING);
  * - nothing runs a command through a shell: no `exec`/`execSync` from child_process and no `shell: true` anywhere;
  *   the tooling that spawns (build, smoke, sandbox, self-heal) names its program and passes an argument vector;
  * - exactly one module serves the network, the room host (src/10_Network/replication.node.ts: token-authenticated,
- *   loopback unless NET_HOST says otherwise, throttled per address); a test's server binds 127.0.0.1 and port 0;
+ *   loopback unless NET_HOST says otherwise, throttled per address); a test's server binds 127.0.0.1 and port 0; the
+ *   desktop launcher (tools/web/launch.mjs, what `nix run` starts) serves the built page to this machine alone, on
+ *   127.0.0.1 and a fixed port, because the page keeps its settings per address;
  * - the page ships no server framework, and the dev server keeps Vite's loopback default.
  * What breaks if it is removed? A shell-executing endpoint, an unauthenticated listener on every interface or an
  * assistant's local config could land in a commit, an image or the sandbox, and only a reader would notice.
@@ -56,7 +58,7 @@ function tracked(): string[] | null {
 
 const isTooling = (path: string) => path.split('/').some((part) => AI_TOOLING.includes(part))
 
-test('no local AI tooling is tracked, and git, both image contexts and the sandbox tree all keep it out', (t) => {
+test('no local AI tooling is tracked, and git, both image contexts, the sandbox tree and the Nix page\'s source all keep it out', (t) => {
   const files = tracked()
   if (files === null) t.diagnostic('no git history here: the tracked-file check is skipped, the ignore lists are still checked')
   else assert.deepEqual(files.filter(isTooling), [], 'tracked AI tooling')
@@ -73,6 +75,9 @@ test('no local AI tooling is tracked, and git, both image contexts and the sandb
     assert.ok(!l.slice(last + 1).some((x) => x.startsWith('!')), `${f}: an allowlist line after the AI-tooling exclusions`)
   }
   for (const name of AI_TOOLING) assert.ok(EXCLUDE.includes(name), `the sandbox tree keeps ${name}`)
+  // The Nix page's source, where it is not git's own file list (an unpacked archive), drops the same names.
+  const pageNix = readFileSync(join(ROOT, 'tools/nix/page.nix'), 'utf8')
+  for (const name of AI_TOOLING) assert.ok(pageNix.includes(`"${name}"`), `tools/nix/page.nix keeps ${name} out of the store`)
 })
 
 test('nothing runs a command through a shell: no exec or execSync from child_process, no shell: true', () => {
@@ -89,11 +94,15 @@ test('nothing runs a command through a shell: no exec or execSync from child_pro
   assert.deepEqual(found, [])
 })
 
-test('one module serves the network (the authenticated room host); every test server binds 127.0.0.1 on port 0', () => {
+test('one module serves the network (the authenticated room host); every test server binds 127.0.0.1 on port 0; the launcher binds 127.0.0.1', () => {
   const HOST = 'src/10_Network/replication.node.ts'
   // The browser smoke test serves dist/index.html to its own headless browser for the length of a run: a test server
   // in a tool's file, held to the test servers' rule.
   const HARNESSES = ['tools/browser/smoke.mjs']
+  // The desktop launcher serves the built page to this machine's own browser. Its port is fixed (4180) because the
+  // page keeps its settings per address, and a page opened from a file instead loses the shared bridge and the local
+  // model servers (MANUAL.md, On NixOS): it may name any port, but only on the loopback literal.
+  const LAUNCHERS = ['tools/web/launch.mjs']
   const servers: string[] = []
   const loose: string[] = []
   for (const { f, text } of SOURCES) {
@@ -101,10 +110,14 @@ test('one module serves the network (the authenticated room host); every test se
     if (!/\bcreateServer\s*\(|\bcreateSecureServer\s*\(|\b(?:Deno|Bun)\.serve\s*\(/.test(text)) continue
     if (/\.test\.[cm]?[jt]sx?$/.test(f) || HARNESSES.includes(f)) {
       for (const m of text.matchAll(/\.listen\(([^)]*)\)/g)) if (!/^\s*0\s*,\s*'127\.0\.0\.1'/.test(m[1])) loose.push(`${f}: listen(${m[1]})`)
+    } else if (LAUNCHERS.includes(f)) {
+      const listens = [...text.matchAll(/\.listen\(([^)]*)\)/g)]
+      if (listens.length === 0) loose.push(`${f}: serves without a listen() this test can read`)
+      for (const m of listens) if (!/^\s*[\w.]+\s*,\s*'127\.0\.0\.1'/.test(m[1])) loose.push(`${f}: listen(${m[1]})`)
     } else servers.push(f)
   }
   assert.deepEqual(servers, [HOST], 'modules that serve')
-  assert.deepEqual(loose, [], 'a test server off loopback or on a fixed port')
+  assert.deepEqual(loose, [], 'a test server off loopback or on a fixed port, or the launcher off loopback')
   const host = readFileSync(join(ROOT, HOST), 'utf8')
   assert.match(host, /const bind = o\.host \?\? '127\.0\.0\.1'/, 'the host binds loopback unless told otherwise')
   assert.match(host, /process\.env\.NET_HOST \?\? '127\.0\.0\.1'/, 'the entry point binds loopback unless NET_HOST says otherwise')

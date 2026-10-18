@@ -58,6 +58,8 @@ const REALM_FILES = [
 
 function* files(dir: string): Generator<string> {
   for (const name of readdirSync(dir)) {
+    // A `nix build` run inside src/ leaves its result link here (tools/license/headers.mjs nixLeftover): not source.
+    if (name === 'result' || name.startsWith('result-') || name === '.direnv') continue
     const p = join(dir, name)
     if (statSync(p).isDirectory()) yield* files(p)
     else if (/\.(ts|tsx)$/.test(name)) yield p

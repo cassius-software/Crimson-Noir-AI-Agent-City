@@ -5,14 +5,15 @@
  * Why does this file exist? It drives a real Chrome or Chromium over the DevTools protocol with no dependency at all:
  * the browser is started with `--remote-debugging-pipe`, which makes it read commands from file descriptor 3 and write
  * answers to file descriptor 4, each message a JSON text ended by a NUL byte. One page is opened and attached in
- * flattened mode, so every command names its session. The browser smoke test (smoke.mjs) is built on it; nothing in the
- * shipped page imports it.
- * What breaks if it is removed? The browser smoke test cannot start a browser.
+ * flattened mode, so every command names its session. The browser smoke test (smoke.mjs) is built on it, and the
+ * desktop launcher (tools/web/launch.mjs) finds its browser and runs its --check with it; nothing in the shipped page
+ * imports it.
+ * What breaks if it is removed? The browser smoke test cannot start a browser, and the launcher cannot find one.
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { accessSync, constants, existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 
 /**
  * Chrome's software WebGPU: Dawn on SwiftShader's Vulkan, presenting through ANGLE on SwiftShader. Without the ANGLE
@@ -49,9 +50,34 @@ function candidates() {
   return out
 }
 
-/** The browser to drive: the explicit path when given (it must exist), else the first candidate found, else null. */
+/** Whether a file can be run: on Windows any file, elsewhere a file with an execute bit for this user. */
+function runnable(p) {
+  try {
+    if (!statSync(p).isFile()) return false
+    if (process.platform !== 'win32') accessSync(p, constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** A path as it is; a bare command name (google-chrome-stable) found on PATH, as a shell would find it: the first
+ *  runnable file of that name, skipping folders and files without an execute bit. */
+function onPath(name) {
+  if (/[/\\]/.test(name)) return existsSync(name) ? name : null
+  for (const dir of (process.env.PATH ?? '').split(delimiter).filter(Boolean)) {
+    for (const ext of process.platform === 'win32' ? ['.exe', ''] : ['']) {
+      const p = join(dir, name + ext)
+      if (runnable(p)) return p
+    }
+  }
+  return null
+}
+
+/** The browser to drive: the explicit one when given (a path that exists, or a command on PATH), else the first
+ *  candidate found, else null. */
 export function findChrome(explicit = process.env.CHROME) {
-  if (explicit) return existsSync(explicit) ? explicit : null
+  if (explicit) return onPath(explicit)
   return candidates().find((p) => existsSync(p)) ?? null
 }
 
@@ -147,7 +173,8 @@ export class Browser {
     const end = Date.now() + ms
     for (;;) {
       let v
-      try { v = await this.eval(expression) } catch { v = undefined }
+      // An expression that throws is not ready yet; a browser that has gone will never be.
+      try { v = await this.eval(expression) } catch (e) { if (this.#closed) throw e; v = undefined }
       if (v) return v
       if (Date.now() > end) throw new Error(`timed out after ${ms} ms waiting for ${expression}`)
       await new Promise((r) => setTimeout(r, every))

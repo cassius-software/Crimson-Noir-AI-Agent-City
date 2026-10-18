@@ -51,3 +51,10 @@ CLAUDE.local.md
 
 # Tauri build output of the desktop app (src-tauri/.gitignore keeps its own)
 src-tauri/target
+
+# Nix: `nix build`'s result links (into the store, dangling once it is collected) and direnv's cache of the dev shell.
+# Tailwind scans what git does not ignore, so an unignored result link would change the page npm builds (the Nix build
+# takes git's files alone: tools/nix/page.nix).
+result
+result-*
+.direnv/
