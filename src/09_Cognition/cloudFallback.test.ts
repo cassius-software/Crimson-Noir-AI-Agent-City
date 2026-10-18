@@ -13,6 +13,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { FALLBACK, FrameRate, isComplex, LOCAL_PROVIDERS, withCloudFallback, type AnswerRequest } from './cloudFallback.ts'
+import { CognitionError } from './localCompute.ts'
 import { createMindRouter } from './router.ts'
 import type { Answer, Mind, Piece } from '../07_Execute_Actions/operator.ts'
 
@@ -201,4 +202,81 @@ test('a prompt carrying the last moments with someone is complex too', () => {
   const ctx = (recent: number) => [{ agent: 1, surroundings: null, recent: Array.from({ length: recent }, (_, i) => ({ who: 'the player', what: `said ${i}`, where: '', at: i, clock: '17:00' })) }]
   assert.equal(isComplex(request({ context: ctx(0) })), false, 'surroundings alone are cheap')
   assert.equal(isComplex(request({ context: ctx(1) })), true)
+})
+
+test('a gateway that is not there: the local model answers after all, prompts stay local for FALLBACK.retryMs, then the gateway is tried again', async () => {
+  assert.equal(FALLBACK.retryMs, 60_000)
+  const cloud = fakeMind('cloud')
+  let up = false
+  const realCloud = cloud.answer
+  cloud.answer = async (req, onPiece) => {
+    if (!up) { cloud.asked.push(req); throw new CognitionError('offline', 'no gateway to the Claude API is answering') }
+    return realCloud(req, onPiece)
+  }
+  const local = fakeMind('local', 'ollama')
+  local.cloud = cloud
+  let t = 1_000_000
+  const mind = withCloudFallback(local, steady(20, 100), () => t)
+  const complex = request({ tethers: [tether(1), tether(2)] })
+  const pieces: Piece[] = []
+  const a = await mind.answer(complex, (p) => { pieces.push(p) })
+  assert.equal(a.text, 'local says hi', 'the operator hears an answer, from the model they chose')
+  assert.deepEqual(pieces, [{ kind: 'text', text: 'local says hi' }])
+  assert.deepEqual([cloud.asked.length, local.asked.length], [1, 1])
+  assert.deepEqual({ ...mind.fallback, fps: null }, { fps: null, throttled: false, offloaded: 1, missed: 1 })
+  assert.match(mind.settings().fallback!, /^off: .*\(20 fps; 1 sent so far; 1 of them unanswered there, so answered here, and prompts stay here for a minute\)$/)
+  // Inside the window the gateway is not asked again.
+  t += FALLBACK.retryMs - 1
+  await mind.answer(complex, () => {})
+  assert.deepEqual([cloud.asked.length, local.asked.length], [1, 2])
+  // After it, the gateway is tried again, and now it answers.
+  t += 1
+  up = true
+  assert.equal((await mind.answer(complex, () => {})).text, 'cloud says hi')
+  assert.equal(mind.fallback.offloaded, 2)
+  assert.match(mind.settings().fallback!, /^on: .*2 sent so far; 1 of them unanswered there, so answered here\)$/)
+})
+
+test('the gateway failing once its answer has begun is that answer\'s failure, and the operator\'s stop is not a miss', async () => {
+  const cloud = fakeMind('cloud')
+  cloud.answer = async (_req, onPiece) => {
+    onPiece({ kind: 'text', text: 'half' })
+    throw new CognitionError('server', 'the Claude API failed (529)')
+  }
+  const local = fakeMind('local', 'llamacpp')
+  local.cloud = cloud
+  const mind = withCloudFallback(local, steady(20, 100))
+  await assert.rejects(mind.answer(request({ tethers: [tether(1), tether(2)] }), () => {}), /529/)
+  assert.equal(local.asked.length, 0)
+  assert.equal(mind.fallback.missed, 0)
+
+  const ctl = new AbortController()
+  const slowCloud = fakeMind('cloud')
+  slowCloud.answer = async (req) => {
+    ctl.abort(new Error('stopped by the operator'))
+    throw req.signal.reason
+  }
+  const local2 = fakeMind('local', 'ollama')
+  local2.cloud = slowCloud
+  const stopped = withCloudFallback(local2, steady(20, 100))
+  await assert.rejects(stopped.answer(request({ tethers: [tether(1), tether(2)], signal: ctl.signal }), () => {}), /stopped by the operator/)
+  assert.equal(local2.asked.length, 0)
+  assert.equal(stopped.fallback.missed, 0)
+})
+
+test('under the auto provider the throttle follows what auto found: a local server is spared, the gateway is not moved, nothing found is said', async () => {
+  const cloud = fakeMind('cloud')
+  const auto = fakeMind('auto', 'auto') as ReturnType<typeof fakeMind> & { found?: string }
+  const settings = auto.settings
+  auto.settings = () => ({ ...settings(), ...(auto.found !== undefined && { found: auto.found }) })
+  auto.cloud = cloud
+  const mind = withCloudFallback(auto, steady(20, 100))
+  assert.equal(mind.settings().fallback, 'off: no model has been found on this machine yet')
+  assert.equal(mind.fallback.throttled, false)
+  auto.found = 'ollama'
+  assert.equal(mind.fallback.throttled, true)
+  await mind.answer(request({ tethers: [tether(1), tether(2)] }), () => {})
+  assert.equal(cloud.asked.length, 1)
+  auto.found = 'claude'
+  assert.equal(mind.settings().fallback, 'off: the claude provider is not on this machine\'s compute')
 })

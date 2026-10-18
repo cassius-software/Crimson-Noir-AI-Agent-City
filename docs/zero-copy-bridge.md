@@ -102,10 +102,13 @@ this removes the contact, not the law. `collision.test.ts` checks every pairing.
 
 `src/09_Cognition/cloudFallback.ts` wraps the mind App hands the engine. `FrameRate` is a ring of frame times; the rate
 is the count over the last two seconds, unknown until thirty frames are in the window. When the rate is below 30 fps,
-the chosen provider is a model server on this machine (`ollama`, `llamacpp`) and the prompt is complex (more than one
+the chosen provider is a model server on this machine (`ollama`, `llamacpp`, `openai`) and the prompt is complex (more than one
 person bound, over 240 characters, or memories in it), `answer` goes to the router's `cloud` provider (the Claude API
 through the loopback gateway, `router.ts`) instead; everything else, and every prompt when the chosen provider is
 already `claude` or the mind has no cloud provider, goes where it always went. The console's `ask` shows a `fallback`
-line with the rate and how many prompts were sent. No new network call exists: the cloud provider is the router's own,
+line with the rate and how many prompts were sent. The gateway is one the operator may never have started: when it fails
+before any of its answer arrived, the chosen local model answers that prompt after all, and prompts stay local for a
+minute (`FALLBACK.retryMs`) before the gateway is tried again; the `fallback` line counts those misses. Under the `auto`
+provider the throttle follows the server auto found. No new network call exists: the cloud provider is the router's own,
 behind the loopback gate. `cloudFallback.test.ts` drives the real router with a fake fetch and sees the offloaded prompt
 reach `http://localhost:8089/v1/messages` and nothing else.

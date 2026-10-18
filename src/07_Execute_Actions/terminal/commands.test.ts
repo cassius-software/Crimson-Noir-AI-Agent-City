@@ -1399,7 +1399,7 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.deepEqual(complete('ask s'), ['ask security:', 'ask server', 'ask shaders:', 'ask stop'])
   assert.equal(complete('ask ').length, SKILL_ARGS.length + 9)
   assert.deepEqual(complete('ask m'), ['ask model'])
-  assert.deepEqual(complete('ask provider '), ['ask provider claude', 'ask provider llamacpp', 'ask provider ollama', 'ask provider openai', 'ask provider scripted'])
+  assert.deepEqual(complete('ask provider '), ['ask provider auto', 'ask provider claude', 'ask provider llamacpp', 'ask provider ollama', 'ask provider openai', 'ask provider scripted'])
   assert.deepEqual(complete('ask connect '), PROVIDER_ARGS.map((p) => `ask connect ${p}`))
   assert.deepEqual(complete('swarm '), ['swarm audit', 'swarm guardrails', 'swarm plan', 'swarm roles', 'swarm run', 'swarm status', 'swarm stop'])
   assert.deepEqual(complete('swarm audit '), ['swarm audit verify'])
@@ -1822,7 +1822,7 @@ test('ask connect: the provider, its address and a key in one line, through the 
   assert.deepEqual(run('ask connect openai http://localhost:1234', b, []).lines, [{ kind: 'out', text: 'provider  openai: connected; server http://localhost:1234' }])
   assert.deepEqual(run('ask connect claude http://localhost:8089 sk-ant-secret', b, []).lines, [{ kind: 'out', text: 'provider  claude: connected; server http://localhost:8089; key ••••' }])
   assert.deepEqual(b.operator.opCalls.filter((c) => c.startsWith('askConnect')), ['askConnect ollama - -', 'askConnect openai http://localhost:1234 -', 'askConnect claude http://localhost:8089 <key>'])
-  assert.deepEqual(texts(run('ask connect', b, [])), ['usage: ask connect <claude|llamacpp|ollama|openai|scripted> [<url>] [<key>]'])
+  assert.deepEqual(texts(run('ask connect', b, [])), ['usage: ask connect <auto|claude|llamacpp|ollama|openai|scripted> [<url>] [<key>]'])
   assert.equal(redactForHistory('ask connect claude http://localhost:8089 sk-ant-secret'), 'ask connect claude http://localhost:8089 ••••')
   assert.equal(redactForHistory('ask connect ollama http://localhost:11434'), 'ask connect ollama http://localhost:11434')
   // A key typed where the url goes (the url is optional) is dotted too, with anything after it.

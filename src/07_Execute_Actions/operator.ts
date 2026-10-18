@@ -145,6 +145,11 @@ export interface Answer {
   readonly reason: string
   /** The SHA-256 of the exact system prompt sent (02_Define_The_Rules/integrity.ts), so an audit can prove what the model was given. */
   readonly promptHash?: string
+  /**
+   * The script answered in place of a model that did not (09_Cognition/scripted.ts withScriptedFallback): why the model
+   * did not, in one line. Absent for a model's answer, and for the scripted provider the operator chose.
+   */
+  readonly standIn?: string
 }
 
 /**
@@ -158,7 +163,7 @@ export interface Mind {
    * is spoken to in (absent: the mind has one only). `provider`: which model provider answers (absent: the mind has one
    * only); `key`: the network provider's key, masked (null: none set); `effort`: how hard it works (absent: its default).
    */
-  settings(): { server: string; model: string | null; think?: boolean; api?: string; provider?: string; key?: string | null; effort?: string; cache?: string; fallback?: string; scripted?: string }
+  settings(): { server: string; model: string | null; think?: boolean; api?: string; provider?: string; key?: string | null; effort?: string; cache?: string; fallback?: string; scripted?: string; auto?: string; found?: string; resolved?: string }
   setServer(url: string): string
   setModel(name: string): string
   /** Whether the model reasons before it answers; returns the new value. Absent: the mind has no such switch. */
@@ -368,6 +373,8 @@ export interface AskResult {
   readonly promptHash?: string
   /** Authorized, but the agent did not engage (the 14A screen, or the model's own refusal): no reply. */
   readonly disengaged?: true
+  /** Authorized and answered by the script in place of a model that did not (Answer.standIn): why the model did not. */
+  readonly standIn?: string
   readonly ms: number
 }
 
@@ -399,6 +406,10 @@ export interface MindStatus {
   readonly fallback?: string
   /** Answers the script gave because no backend was answering, one line (09_Cognition/scripted.ts; absent until one has). */
   readonly scripted?: string
+  /** Under the auto provider: what it found answering, or that it has not looked yet, one line (09_Cognition/router.ts). */
+  readonly auto?: string
+  /** The model the server's placeholder name stood for at the last answer (09_Cognition/localCompute.ts ANY_MODEL). */
+  readonly resolved?: string
   readonly installed: readonly string[] | null
   readonly error?: string
 }
@@ -738,10 +749,10 @@ export function gatedAsk(gate: SkillGate, mind: Mind, skills: readonly string[],
     if (refused) return { state: 'Authorized', text: '', thinking, done: DISENGAGED.reason, tokens: 0, ms, disengaged: true }
     if (v.state !== 'Authorized') return { state: v.state, text, thinking, reason: v.message, ms }
     if (v.outcome.ok) {
-      const { reason, tokens, promptHash } = v.outcome.value
+      const { reason, tokens, promptHash, standIn } = v.outcome.value
       return {
         state: 'Authorized', text, thinking, done: reason, tokens, ms,
-        ...(promptHash !== undefined && { promptHash }), ...(disengaged(reason) && { disengaged: true as const }),
+        ...(promptHash !== undefined && { promptHash }), ...(disengaged(reason) && { disengaged: true as const }), ...(standIn !== undefined && { standIn }),
       }
     }
     if (stopper.signal.aborted) return { state: 'Authorized', text, thinking, error: 'stopped by the operator', stopped: true, ms }
@@ -977,15 +988,18 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
       void a.result.then(() => { if (asking === a) asking = null })
     }
     const result = a.result.then((r): AskResult => {
-      // A prompt the agent did not engage with is not acknowledged: nothing of it is remembered either.
-      if (!disengaged(r.done) && !r.disengaged) {
+      // A prompt the agent did not engage with is not acknowledged: nothing of it is remembered either. Nor are the
+      // script's words when it stood in for a model that did not answer: canned lines would come back in the next
+      // prompt as if a person had said them.
+      if (!disengaged(r.done) && !r.disengaged && r.standIn === undefined) {
         diary?.note(a.bound, 'ask', asNamed(skills, a.bound), `${words.split('\n')[0]} → ${r.text}`, r.state, began, r.promptHash, taskOutcome(r))
         // The moment itself, for the next few prompts: what the player asked and what was answered.
         if (r.state === 'Authorized' && r.text.trim()) for (const t of a.bound) awareness?.remember(t.agent, 'the player', `asked "${words.split('\n')[0]}" and you answered "${r.text}"`)
       }
-      // Said aloud as well (say auto on): a whole answer, through the gate again, while nothing else is being said.
+      // Said aloud as well (say auto on): a whole answer, through the gate again, while nothing else is being said. Not
+      // the script standing in: said aloud, it would be noted and remembered as the person's own words.
       const v = voice?.settings()
-      if (r.state !== 'Authorized' || r.error !== undefined || r.disengaged || disengaged(r.done) || !r.text.trim() || !v?.auto || v.voice === null || !speech || saying) return r
+      if (r.state !== 'Authorized' || r.error !== undefined || r.disengaged || disengaged(r.done) || r.standIn !== undefined || !r.text.trim() || !v?.auto || v.voice === null || !speech || saying) return r
       const s = say(skills, speakable(r.text))
       return { ...r, speech: s.result }
     })
@@ -1047,15 +1061,18 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
     swarm,
     askStatus: (): Promise<MindStatus> => {
       if (!unlocked) throw locked('ask')
-      const { server, model, think, api, provider, key, effort, cache, fallback, scripted } = mind.settings()
-      const base = {
-        server, model, ...(think !== undefined && { think }), ...(api !== undefined && { api }),
-        ...(provider !== undefined && { provider }), ...(key !== undefined && { key }), ...(effort !== undefined && { effort }), ...(cache !== undefined && { cache }),
-        ...(fallback !== undefined && { fallback }), ...(scripted !== undefined && { scripted }),
+      // The settings as they are after the server was asked (the auto provider looks for one as it is asked).
+      const base = () => {
+        const { server, model, think, api, provider, key, effort, cache, fallback, scripted, auto, resolved } = mind.settings()
+        return {
+          server, model, ...(think !== undefined && { think }), ...(api !== undefined && { api }),
+          ...(provider !== undefined && { provider }), ...(key !== undefined && { key }), ...(effort !== undefined && { effort }), ...(cache !== undefined && { cache }),
+          ...(fallback !== undefined && { fallback }), ...(scripted !== undefined && { scripted }), ...(auto !== undefined && { auto }), ...(resolved !== undefined && { resolved }),
+        }
       }
       return mind.installed().then(
-        (installed) => ({ ...base, installed }),
-        (e: unknown) => ({ ...base, installed: null, error: text(e) }),
+        (installed) => ({ ...base(), installed }),
+        (e: unknown) => ({ ...base(), installed: null, error: text(e) }),
       )
     },
     askSet: (key: 'model' | 'server' | 'think' | 'api' | 'provider' | 'key' | 'effort', value: string): string => {

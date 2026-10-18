@@ -11,7 +11,9 @@
  * router's, which speaks only to a loopback origin (02_Define_The_Rules/airgap.ts is the gate). It does nothing at
  * all when the mind has no cloud provider, when the cloud provider is already the chosen one, when the frame rate
  * is unknown (fewer than FALLBACK.minFrames in the window) or fine, and for a simple prompt (one person, a short
- * line, nothing remembered), which a local model answers cheaply.
+ * line, nothing remembered), which a local model answers cheaply. The cloud provider is a gateway the operator may
+ * never have started: when it fails before any of its answer arrived, the local model answers after all, and the
+ * throttle leaves prompts local for FALLBACK.retryMs before it tries the gateway again.
  * What breaks if it is removed? A heavy prompt to a local model contends with the frames on the same machine, and
  * the page stutters while it thinks.
  */
@@ -27,6 +29,8 @@ export const FALLBACK = Object.freeze({
   minFrames: 30,
   /** A prompt longer than this is complex on its own, characters. */
   promptChars: 240,
+  /** After the cloud provider failed to answer, how long prompts stay local before it is tried again, ms. */
+  retryMs: 60_000,
 } as const)
 
 /**
@@ -97,35 +101,55 @@ export interface FallbackReport {
   throttled: boolean
   /** Prompts sent to the cloud provider so far because of the throttle. */
   offloaded: number
+  /** Of those, the ones the cloud provider did not answer, so the local model did. */
+  missed: number
 }
 
 /**
  * The mind with the throttle in front of it: `answer` goes to `mind.cloud` when the frames are slow, a local
  * provider is chosen and the prompt is complex; to `mind` otherwise. `settings()` gains a `fallback` line.
  */
-export function withCloudFallback(mind: CloudCapable, rate: FrameRate): Mind & { readonly fallback: FallbackReport } {
+export function withCloudFallback(mind: CloudCapable, rate: FrameRate, now: () => number = Date.now): Mind & { readonly fallback: FallbackReport } {
   let offloaded = 0
+  let missed = 0
+  /** When the cloud provider last failed to answer (prompts stay local for FALLBACK.retryMs after). */
+  let missedAt = -Infinity
   const cloud = mind.cloud ?? null
-  const provider = (): string | undefined => mind.settings().provider
+  // The provider that answers: the chosen one, or the one the auto provider found (router.ts).
+  const provider = (): string | undefined => {
+    const s = mind.settings()
+    return s.provider === 'auto' ? s.found : s.provider
+  }
   const standsReady = (): boolean => cloud !== null && LOCAL_PROVIDERS.includes(provider() ?? '')
-  const report = (): FallbackReport => ({ fps: rate.fps(), throttled: standsReady() && rate.slow, offloaded })
+  const resting = (): boolean => now() - missedAt < FALLBACK.retryMs
+  const report = (): FallbackReport => ({ fps: rate.fps(), throttled: standsReady() && rate.slow && !resting(), offloaded, missed })
   const line = (): string => {
     const r = report()
     if (cloud === null) return 'none: this mind has no cloud provider'
     if (provider() === 'scripted') return 'off: the scripted provider asks no model, so there is nothing to move'
+    if (provider() === undefined) return 'off: no model has been found on this machine yet'
     if (!LOCAL_PROVIDERS.includes(provider() ?? '')) return `off: the ${provider() ?? 'chosen'} provider is not on this machine's compute`
     const fps = r.fps === null ? 'frame rate not yet known' : `${r.fps.toFixed(0)} fps`
-    return `${r.throttled ? 'on' : 'off'}: complex prompts go to the Claude API below ${FALLBACK.fps} fps (${fps}; ${offloaded} sent so far)`
+    const miss = missed ? `; ${missed} of them unanswered there, so answered here${resting() ? ', and prompts stay here for a minute' : ''}` : ''
+    return `${r.throttled ? 'on' : 'off'}: complex prompts go to the Claude API below ${FALLBACK.fps} fps (${fps}; ${offloaded} sent so far${miss})`
   }
   const wrapped = {
     ...mind,
     settings: () => ({ ...mind.settings(), fallback: line() }),
-    answer: (req: AnswerRequest, onPiece: (p: Piece) => void): Promise<Answer> => {
-      if (cloud !== null && standsReady() && rate.slow && isComplex(req)) {
-        offloaded++
-        return cloud.answer(req, onPiece)
+    answer: async (req: AnswerRequest, onPiece: (p: Piece) => void): Promise<Answer> => {
+      if (cloud === null || !standsReady() || !rate.slow || resting() || !isComplex(req)) return mind.answer(req, onPiece)
+      offloaded++
+      let arrived = false
+      try {
+        return await cloud.answer(req, (p) => { arrived = true; onPiece(p) })
+      } catch (e) {
+        // The gateway is not there (or would not answer): the local model the operator chose answers after all. Once
+        // the cloud's answer has begun, its failure is the answer's.
+        if (arrived || req.signal.aborted) throw e
+        missed++
+        missedAt = now()
+        return mind.answer(req, onPiece)
       }
-      return mind.answer(req, onPiece)
     },
     get fallback(): FallbackReport {
       return report()

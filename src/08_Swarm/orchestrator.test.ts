@@ -20,7 +20,7 @@ import { createSwarm, cutAtWord, HANDOFF_CHARS, order, planSwarm, ROLES, roleOf,
 const TETHER: GateTether = { agent: 7, serial: 1, skills: ['Design', 'TypeScript', 'Testing', 'Security', 'Writing'] }
 
 /** A fake gated ask: answers as told, piece by piece, a tick later; notes every prompt; stop ends the answer early. */
-function fakeAsk(script: (skills: readonly string[], prompt: string, n: number) => { kind: 'answer'; text: string; tokens?: number; done?: string } | { kind: 'reject' } | { kind: 'abort' } | { kind: 'fail'; error: string } | { kind: 'disengaged' } | { kind: 'throw'; error: string }) {
+function fakeAsk(script: (skills: readonly string[], prompt: string, n: number) => { kind: 'answer'; text: string; tokens?: number; done?: string; standIn?: string } | { kind: 'reject' } | { kind: 'abort' } | { kind: 'fail'; error: string } | { kind: 'disengaged' } | { kind: 'throw'; error: string }) {
   const asked: { skills: string[]; prompt: string }[] = []
   let n = 0
   const ask = (skills: readonly string[], prompt: string): GatedAsk & { stop(): void } => {
@@ -39,7 +39,7 @@ function fakeAsk(script: (skills: readonly string[], prompt: string, n: number) 
       if (how.kind === 'fail') return resolve({ state: 'Authorized', text: '', thinking: 0, error: how.error, ms: 3 })
       if (how.kind === 'disengaged') return resolve({ state: 'Authorized', text: '', thinking: 0, done: 'disengaged', tokens: 0, ms: 4, disengaged: true })
       for (const word of how.text.split(/(?<= )/)) for (const fn of followers) fn({ kind: 'text', text: word })
-      resolve({ state: 'Authorized', text: how.text, thinking: 0, done: how.done ?? 'stop', tokens: how.tokens ?? 5, ms: 5, promptHash: 'a'.repeat(64) })
+      resolve({ state: 'Authorized', text: how.text, thinking: 0, done: how.done ?? 'stop', tokens: how.tokens ?? 5, ms: 5, promptHash: 'a'.repeat(64), ...(how.standIn !== undefined && { standIn: how.standIn }) })
     }, 0))
     return { state: 'Authorized', bound: [TETHER], follow: (fn) => { followers.add(fn); return () => { followers.delete(fn) } }, result, stop: () => { stopped = true } }
   }
@@ -249,6 +249,10 @@ test('the script standing in for a server that did not answer ends the run; the 
   assert.equal(r.ok, false)
   assert.equal(f.asked.length, 1)
   assert.deepEqual(s.audit().map((e) => e.kind), ['plan', 'step', 'refusal', 'end'])
+  // The script says why no model answered (the auto provider looked at several servers): the note gives that reason.
+  const why = fakeAsk(() => ({ ...canned(), standIn: 'no model is answering on this machine (looked for ollama at http://localhost:11434, llamacpp at http://localhost:8080)' }))
+  const looked = await createSwarm({ ask: why.ask, endpoint: () => 'http://localhost:11434' }).run('goal', 3).result
+  assert.deepEqual(looked.steps.map((st) => st.note), ['no model answered, so the script stood in and the run stops here: no model is answering on this machine (looked for ollama at http://localhost:11434, llamacpp at http://localhost:8080)'])
   const g = fakeAsk(canned)
   const chosen = await createSwarm({ ask: g.ask, endpoint: () => null }).run('goal', 3).result
   assert.deepEqual(chosen.steps.map((st) => st.state), ['answered', 'answered', 'answered'])

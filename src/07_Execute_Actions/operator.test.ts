@@ -20,7 +20,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   DEFAULT_TIMEOUT_MS, SAY_CHARS, apiDoc, describe, exec, formatValue, gatedAsk, gatedExec, gatedSay, leasedApi, operatorBridge, scriptApi, speakable,
-  type Answer, type Diary, type GateHandle, type GateLease, type GateTether, type GateVerdict, type Memories, type Mind, type Piece, type RunState,
+  type Answer, type Awareness, type Diary, type GateHandle, type GateLease, type GateTether, type GateVerdict, type Memories, type Mind, type Piece, type RunState,
   type ScriptApi, type SimControls, type SkillGate, type SpeechClip, type SpeechOut, type Utterance, type Voice,
 } from './operator.ts'
 import type { SipocSnapshot } from '../05_Observe_Environment/telemetry.ts'
@@ -137,8 +137,8 @@ class FakeMind implements Mind {
       this.#fail?.(e)
     }
   }
-  finish(text: string, reason = 'stop'): void {
-    this.#finish?.({ text, thinking: 0, tokens: 7, reason })
+  finish(text: string, reason = 'stop', standIn?: string): void {
+    this.#finish?.({ text, thinking: 0, tokens: 7, reason, ...(standIn !== undefined && { standIn }) })
   }
   fail(e: unknown): void {
     this.#fail?.(e)
@@ -1079,6 +1079,35 @@ test('say auto on: a whole answer is said aloud by whoever gave it, through the 
   mind.finish('Another answer.')
   assert.equal((await meanwhile.result).speech, undefined, 'never over something being said')
   assert.equal(voice.sent.length, 2)
+  op.sayStop()
+})
+
+test('the script standing in for a model is shown with its reason, and never said aloud, noted or remembered', async () => {
+  const gate = new FakeGate()
+  const mind = new FakeMind()
+  const voice = new FakeVoice()
+  voice.auto = true
+  const out = new FakeOut()
+  const notes: string[] = []
+  const diary: Diary = { recall: () => [], note: (_b, kind, _s, text) => notes.push(`${kind} ${text}`) }
+  const remembered: string[] = []
+  const awareness: Awareness = { context: () => null, remember: (_agent, who, what) => { remembered.push(`${who} ${what}`) } }
+  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary, awareness })
+  op.unlock()
+  const a = op.ask(['Rust'], 'where is the lake?')
+  mind.say('text', 'You ask about the lake.')
+  mind.finish('You ask about the lake.', 'scripted', 'no model is answering on this machine')
+  const r = await within(a.result)
+  assert.deepEqual([r.state, r.text, r.standIn, r.speech], ['Authorized', 'You ask about the lake.', 'no model is answering on this machine', undefined])
+  assert.deepEqual([notes, remembered, voice.sent], [[], [], []])
+  // A model's answer, by contrast, is noted, remembered and said.
+  const b = op.ask(['Rust'], 'and the harbour?')
+  mind.say('text', 'East of here.')
+  mind.finish('East of here.')
+  const s = await within(b.result)
+  assert.ok(s.speech)
+  assert.equal(notes.length, 1)
+  assert.ok(remembered.length >= 1)
   op.sayStop()
 })
 
