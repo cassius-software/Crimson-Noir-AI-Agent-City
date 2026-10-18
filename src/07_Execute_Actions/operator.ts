@@ -162,8 +162,10 @@ export interface Mind {
    * `think`: the model reasons before it answers (absent: the server's own default). `api`: the wire format the server
    * is spoken to in (absent: the mind has one only). `provider`: which model provider answers (absent: the mind has one
    * only); `key`: the network provider's key, masked (null: none set); `effort`: how hard it works (absent: its default).
+   * `runtime` and `storage`: for a model run in this page (09_Cognition/inPage.ts), what runs it and how, and where its
+   * file is kept, one line each (absent for a model behind a server).
    */
-  settings(): { server: string; model: string | null; think?: boolean; api?: string; provider?: string; key?: string | null; effort?: string; cache?: string; fallback?: string; scripted?: string; auto?: string; found?: string; resolved?: string }
+  settings(): { server: string; model: string | null; think?: boolean; api?: string; provider?: string; key?: string | null; effort?: string; cache?: string; fallback?: string; scripted?: string; auto?: string; found?: string; resolved?: string; runtime?: string; storage?: string }
   setServer(url: string): string
   setModel(name: string): string
   /** Whether the model reasons before it answers; returns the new value. Absent: the mind has no such switch. */
@@ -410,6 +412,9 @@ export interface MindStatus {
   readonly auto?: string
   /** The model the server's placeholder name stood for at the last answer (09_Cognition/localCompute.ts ANY_MODEL). */
   readonly resolved?: string
+  /** A model run in this page: what runs it and how, and where its file is kept, one line each (absent for a server). */
+  readonly runtime?: string
+  readonly storage?: string
   readonly installed: readonly string[] | null
   readonly error?: string
 }
@@ -938,6 +943,12 @@ export function apiDoc(): ApiEntry[] {
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
+/** The provider that answers (09_Cognition/router.ts): the chosen one, or the one auto found (absent: one only, or none found yet). */
+const answeringProvider = (mind: Mind): string | undefined => {
+  const s = mind.settings()
+  return s.provider === 'auto' ? s.found : s.provider
+}
+
 /**
  * Builds TerminalBridge.operator for the engine: one facade over `sim`, an unlock latch that gates
  * scripts, prompts, speech, tuning keys and harnesses (the terminal refuses them first; this refuses again), every
@@ -979,7 +990,8 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
   const askThrough = (skills: readonly string[], prompt: string): GatedAsk & { stop(): void } => {
     if (!unlocked) throw locked('ask')
     if (asking) throw new Error("an answer is still coming: wait for it, or type 'ask stop'")
-    if (mind.settings().model === null) throw new Error('choose a model first: ask model <name> (type ask to list them)')
+    // The in-page provider may have files kept with none chosen (the chosen one forgotten): both ways are said.
+    if (mind.settings().model === null) throw new Error(answeringProvider(mind) === 'inpage' ? 'choose a model first: Menu › Model file, or ask file (or ask model <name> for a file already kept: type ask to list them)' : 'choose a model first: ask model <name> (type ask to list them)')
     const words = String(prompt)
     const began = Date.now()
     const a = gatedAsk(gate, mind, skills, words, diary, awareness)
@@ -1005,13 +1017,14 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
     })
     return Object.freeze({ state: a.state, bound: a.bound, follow: a.follow, result, stop: a.stop })
   }
-  // The swarm orchestrator (08_Swarm/orchestrator.ts) over the same gated ask, one step at a time; it reads the chosen
-  // provider's server each step (none for the scripted provider) for the loopback invariant.
+  // The swarm orchestrator (08_Swarm/orchestrator.ts) over the same gated ask, one step at a time; it reads the
+  // answering provider's server each step (none for the scripted provider, or for a model running in this page) for
+  // the loopback invariant.
   const orchestrator = createSwarm({
     ask: askThrough,
     endpoint: () => {
-      const s = mind.settings()
-      return s.provider === 'scripted' ? null : s.server
+      const p = answeringProvider(mind)
+      return p === 'scripted' || p === 'inpage' ? null : mind.settings().server
     },
   })
   // A run is refused while locked, like a prompt (a host's voice line reaches this surface too, not only the console).
@@ -1063,11 +1076,12 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
       if (!unlocked) throw locked('ask')
       // The settings as they are after the server was asked (the auto provider looks for one as it is asked).
       const base = () => {
-        const { server, model, think, api, provider, key, effort, cache, fallback, scripted, auto, resolved } = mind.settings()
+        const { server, model, think, api, provider, key, effort, cache, fallback, scripted, auto, resolved, runtime, storage } = mind.settings()
         return {
           server, model, ...(think !== undefined && { think }), ...(api !== undefined && { api }),
           ...(provider !== undefined && { provider }), ...(key !== undefined && { key }), ...(effort !== undefined && { effort }), ...(cache !== undefined && { cache }),
           ...(fallback !== undefined && { fallback }), ...(scripted !== undefined && { scripted }), ...(auto !== undefined && { auto }), ...(resolved !== undefined && { resolved }),
+          ...(runtime !== undefined && { runtime }), ...(storage !== undefined && { storage }),
         }
       }
       return mind.installed().then(

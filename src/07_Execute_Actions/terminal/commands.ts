@@ -10,8 +10,9 @@
  * simulation only through the bridge's `operator` and `record` surfaces, and only once unlocked. A script
  * names the skills it needs (`run rust: …`) and runs only if the capability gateway authorizes it; the
  * console prints the gateway's three states as they happen: Authorized, Rejected, Aborted. A prompt to the
- * local model (`ask rust: …`) goes through the same gateway, and its answer streams in live; so does speech
- * (`say rust: …`), said by the person it is bound to; `swarm run <goal>` splits a goal over up to five roles, each one
+ * local model (`ask rust: …`) goes through the same gateway, and its answer streams in live (`ask file` keeps a model
+ * file in this page for it, and `ask gpu` says where that runs: neither sends a prompt, so neither waits for the unlock);
+ * so does speech (`say rust: …`), said by the person it is bound to; `swarm run <goal>` splits a goal over up to five roles, each one
  * such prompt through the gateway and the guardrails, with a hash-chained audit trail (`swarm audit`). `memory` reads
  * what the people recruited remember. The view
  * knobs (`ghost`, `render`, `captions`), the pings (`ping`: a mark where the head looks; `recruit rally` sends an
@@ -21,7 +22,7 @@
  * What breaks if it is removed? The terminal cannot interpret a single line.
  */
 import type {
-  AgentBridge, AskResult, ConciergeBridge, ExecResult, GateTether, GoalPlan, HalDevice, HarnessReport, LookBridge, LookChange, MemoryBridge, MindStatus, NetBridge, NetReport, OperatorBridge,
+  AgentBridge, AskResult, ConciergeBridge, ExecResult, GateTether, GoalPlan, HalDevice, HarnessReport, LookBridge, LookChange, MemoryBridge, MindStatus, ModelBridge, NetBridge, NetReport, OperatorBridge,
   Piece, PingKind, PingPick, RecordBridge, RecruitBridge, Ring0Stats, RunResult, SayResult, TerminalBridge, VoiceStatus,
 } from './bridge.ts'
 import type { QualityState, RecordingState } from '../../05_Observe_Environment/telemetry.ts'
@@ -103,7 +104,7 @@ const CORE = [
 const OPERATOR = [
   { name: 'operator', usage: 'operator [unlock|lock|status]', summary: 'the operator tier: scripts, tuning keys, harnesses' },
   { name: 'run', usage: 'run <skill>[,<skill>...]: <js...>', summary: 'run a script against sim.* while someone tethered has the skill (Shift+Enter adds a line)' },
-  { name: 'ask', usage: 'ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|stop]', summary: 'ask the model, answering as someone tethered with the skill; the answer streams in' },
+  { name: 'ask', usage: 'ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|file [forget <name>|load|unload|log]|gpu auto|on|off|stop]', summary: 'ask the model, answering as someone tethered with the skill; the answer streams in' },
   { name: 'swarm', usage: 'swarm [run [--agents <1-5>] <goal...>|plan [--agents <1-5>] <goal...>|status|stop|roles|guardrails|audit [verify]]', summary: 'a goal over up to five roles (architect, coder, tester, auditor, verifier), one gated prompt each, guardrails before and after, a hash-chained audit trail' },
   { name: 'say', usage: 'say [<skill>[,<skill>...]: <text...>|voice <name>|model <name>|server <url>|provider local|elevenlabs|key <key>|none|auto on|off|stop]', summary: 'said aloud by someone tethered with the skill, from where they stand (a speech server on this machine; or ElevenLabs through a gateway on it)' },
   { name: 'api', usage: 'api [path]', summary: 'the script API, or one branch of it' },
@@ -129,7 +130,7 @@ export interface ReplSession { machine: Machine }
 export const replSession = (): ReplSession => ({ machine: new Machine() })
 
 /** The model providers, as typed after `ask provider` (commands.test.ts pins them to 09_Cognition/router.ts, which this file must not import). */
-export const PROVIDER_ARGS = ['auto', 'claude', 'llamacpp', 'ollama', 'openai', 'scripted'] as const
+export const PROVIDER_ARGS = ['auto', 'claude', 'inpage', 'llamacpp', 'ollama', 'openai', 'scripted'] as const
 
 /** The harness names, for completion (commands.test.ts pins them to harness.ts, which this file must not import). */
 export const HARNESS_NAMES = ['brake-distance', 'first-law-floor', 'kernel-stop', 'sanctuary', 'spatial', 'traffic-lights'] as const
@@ -142,6 +143,12 @@ export const SKILL_ARGS = [
   'typescript', 'wgsl', 'writing',
 ] as const
 const RECRUIT_ACTIONS = ['dismiss', 'install', 'listen', 'rally', 'stop'] as const
+
+/** What `ask file` does beside choosing a file (alone, it opens the picker), and the GPU switch's modes. */
+const MODEL_FILE_ACTIONS = ['forget', 'load', 'log', 'unload'] as const
+const GPU_MODES = ['auto', 'off', 'on'] as const
+/** The runtime's log lines `ask file log` prints at most (the newest). */
+const LOG_SHOWN = 40
 
 /** The kinds of ping and their words (commands.test.ts pins them to 08_Swarm/ping.ts, which this file must not import). */
 const PING_KINDS = ['gather', 'go', 'look', 'wait'] as const
@@ -179,8 +186,10 @@ const ARGS: Record<string, readonly string[]> = {
   uname: ['-a'],
   operator: ['lock', 'status', 'unlock'],
   run: SKILL_ARGS.map((s) => `${s}:`),
-  ask: [...SKILL_ARGS.map((s) => `${s}:`), 'api', 'connect', 'effort', 'key', 'model', 'provider', 'server', 'stop', 'think'].sort(),
+  ask: [...SKILL_ARGS.map((s) => `${s}:`), 'api', 'connect', 'effort', 'file', 'gpu', 'key', 'model', 'provider', 'server', 'stop', 'think'].sort(),
   'ask think': ['off', 'on'],
+  'ask file': MODEL_FILE_ACTIONS,
+  'ask gpu': GPU_MODES,
   'ask api': ['chat', 'generate'],
   'ask provider': PROVIDER_ARGS,
   'ask connect': PROVIDER_ARGS,
@@ -248,6 +257,13 @@ function netOf(b: TerminalBridge): NetBridge {
   const n = b.net
   if (!n) throw new Error('network not available on this bridge')
   return n
+}
+
+/** A page whose host keeps no model file (the onboarding page, the TTY shell, an older host) says so in plain words. */
+function modelOf(b: TerminalBridge): ModelBridge {
+  const m = b.model
+  if (!m) throw new Error('this page cannot hold a model file')
+  return m
 }
 
 /** Likewise for a bridge whose host keeps no look (the TTY shell, an older host). */
@@ -474,7 +490,7 @@ const INVARIANT_LINES: readonly (readonly [string, string])[] = [
   ['HumanOverrideSupreme', 'a run the operator has stopped admits no further step, whatever else holds'],
   ['CapabilityTethered', "a step runs only while someone tethered to the operator has its role's skill (the capability gateway decides)"],
   ['ConductScreen14A', 'the prompt a role is given and the answer it gives both pass the 14A screen (a lexicon; the model under the conduct core is the second layer)'],
-  ['LoopbackOnly', 'the model endpoint a step reaches is on this machine, or there is none (the scripted provider)'],
+  ['LoopbackOnly', 'the model endpoint a step reaches is on this machine, or there is none (the scripted provider, or a model running in this page)'],
   ['BudgetWithinQuota', 'steps, prompt length, answer length and tokens stay within the quota'],
   ['ProvenanceChained', 'the hash-chained audit trail verifies before every step; a tampered record stops the run'],
 ]
@@ -503,25 +519,30 @@ function swarmReportLines(r: SwarmReport): Line[] {
 /** `ask` alone: the provider, where its server is, the model chosen, and what the server says it has. */
 function mindLines(m: MindStatus): Line[] {
   const auto = m.provider === 'auto'
-  // Under auto, what it found decides the rows below (the gateway's key and effort when it found the Claude gateway).
+  // Under auto, what it found decides the rows below (the gateway's key and effort when it found the Claude gateway;
+  // the runtime and storage rows when it found the model file kept in this page).
   const network = m.provider === 'claude' || (auto && m.key !== undefined)
+  const inPage = m.provider === 'inpage' || (auto && m.runtime !== undefined)
   const scripted = m.provider === 'scripted'
   const lines: Line[] = []
   if (m.provider !== undefined) {
     lines.push(out(row('provider', auto ? 'auto: the first model that answers on this machine, kept until it stops answering; ask alone looks again (ask provider ollama|llamacpp|openai|claude to choose one)'
       : network ? 'claude: the Claude API through a gateway on this machine (ask provider ollama|llamacpp|openai for a model on this machine, scripted for none)'
         : scripted ? 'scripted: no backend; the script answers on this page, and nothing reaches any network (ask provider claude|ollama|llamacpp|openai for a model)'
-          : `${m.provider}: a model server on this machine (ask provider claude for the Claude API)`)))
+          : inPage ? 'inpage: a model file kept in this page, run here on this device; nothing is addressed (ask file chooses the file, ask gpu where it runs)'
+            : `${m.provider}: a model server on this machine (ask provider claude for the Claude API)`)))
   }
   if (m.auto !== undefined) lines.push(out(row('found', m.auto)))
   // 'default' in the chat format is the placeholder the client resolves to the model the server has loaded (LM Studio
   // says which), else the first it lists that writes text, in its own order (localCompute.ts ANY_MODEL); `resolved`
   // names it once an answer has asked.
   const placeholder = m.model === 'default' && m.api === 'chat'
-  const model = m.model === null ? 'none chosen: ask model <name>'
+  // In this page, none chosen with files kept (the chosen one forgotten) means choosing one of them, not keeping another.
+  const model = m.model === null ? (inPage && !m.installed?.length ? 'none chosen: Menu › Model file, or ask file' : 'none chosen: ask model <name>')
     : placeholder ? (m.resolved !== undefined ? `${m.resolved}  (the model the server has loaded, else the first it lists that writes text; ask model <name> to choose)` : 'default: the model the server has loaded, else the first it lists that writes text, asked at the next answer (ask model <name> to choose)')
       : m.model
   if (scripted) lines.push(out(row('server', 'none: nothing is addressed')), out(row('model', 'none: the script')))
+  else if (inPage) lines.push(out(row('server', 'none: the model runs in this page')), out(row('model', model)))
   else lines.push(out(row('server', network ? `${m.server}  (a gateway on this machine only)` : `${m.server}  (this machine only)`)), out(row('model', model)))
   if (network) {
     lines.push(out(row('key', m.key ? `${m.key}  (kept in this browser's local storage: ask key none clears it)` : 'none in this page: the gateway on this machine adds it (recommended)')))
@@ -529,16 +550,44 @@ function mindLines(m: MindStatus): Line[] {
   }
   if (m.api !== undefined) lines.push(out(row('api', m.api === 'chat' ? 'chat: /v1/chat/completions (ask api generate for /api/generate)' : `${m.api}: /api/generate (ask api chat for /v1/chat/completions)`)))
   if (m.think !== undefined) lines.push(out(row('think', m.api === 'chat' ? 'not sent in the chat format: the server decides' : m.think ? 'on: it reasons before it answers' : 'off: it answers without reasoning first (ask think on)')))
+  if (m.runtime !== undefined) lines.push(out(row('runtime', m.runtime)))
+  if (m.storage !== undefined) lines.push(out(row('storage', m.storage)))
   if (m.cache !== undefined) lines.push(out(row('cache', m.cache)))
   if (m.fallback !== undefined) lines.push(out(row('fallback', m.fallback)))
   if (m.scripted !== undefined) lines.push(out(row('scripted', m.scripted)))
-  if (m.installed === null) return [...lines, err(`ask: ${m.error ?? (auto ? 'no model answered on this machine' : network ? 'the gateway to the Claude API did not answer' : 'the local model server did not answer')}`)]
+  if (m.installed === null) return [...lines, err(`ask: ${m.error ?? (auto ? 'no model answered on this machine' : network ? 'the gateway to the Claude API did not answer' : inPage ? 'the model in this page cannot run here' : 'the local model server did not answer')}`)]
   if (scripted) return lines
-  if (!m.installed.length) return [...lines, out(row('installed', 'no models'))]
+  if (!m.installed.length) return [...lines, out(row('installed', inPage ? 'no model file kept: Menu › Model file, or ask file' : 'no models'))]
   const answers = placeholder ? m.resolved : m.model
   lines.push(...m.installed.map((name, i) => out(row(i === 0 ? 'installed' : '', name === answers ? `${name}  (chosen)` : name))))
-  if (m.model === null) lines.push(sys('choose one that writes text: ask model <name>'))
+  if (m.model === null) lines.push(sys(inPage ? 'choose one of the files kept: ask model <name>' : 'choose one that writes text: ask model <name>'))
   return lines
+}
+
+const isGpuMode = (v: string): v is (typeof GPU_MODES)[number] => (GPU_MODES as readonly string[]).includes(v)
+
+/**
+ * `ask file [forget <name>|load|unload|log]`: alone, the browser's file picker (opened inside the Enter keydown, like
+ * `hal pair`), and the file chosen is kept in this page for the in-page provider; `forget` drops the kept model named
+ * (a bare `forget`, which Tab completes to, is a usage error: it never drops every file kept), `load` and `unload`
+ * load the chosen one now or free it, `log` prints the runtime's newest lines. None of it sends a prompt, so none of
+ * it waits for `operator unlock`.
+ */
+function askFile(b: TerminalBridge, action: string | undefined, name: string): CommandResult {
+  const later = (p: Promise<string>): Promise<Line[]> => Promise.resolve(p).then((t) => [out(row('file', t))], (e: unknown): Line[] => [err(`ask: ${message(e)}`)])
+  if (action === undefined) {
+    const pending = later(modelOf(b).pick())
+    return { lines: [sys("ask: choose the model file (.gguf, or every part of a split one) in the browser's picker...")], pending }
+  }
+  if (action === 'forget') return name ? { lines: [], pending: later(modelOf(b).forget(name)) } : fail('usage: ask file forget <name>')
+  if (name) return fail('usage: ask file [forget <name>|load|unload|log]')
+  if (action === 'load') return { lines: [sys('ask: loading the model in this page...')], pending: later(modelOf(b).load()) }
+  if (action === 'unload') return { lines: [], pending: later(modelOf(b).unload()) }
+  if (action === 'log') {
+    const log = modelOf(b).log().slice(-LOG_SHOWN)
+    return { lines: log.length ? log.map(out) : [sys('ask: the runtime in this page has logged nothing yet')] }
+  }
+  return fail(`ask: no file command '${action}'`, 'usage: ask file [forget <name>|load|unload|log]')
 }
 
 /**
@@ -1033,10 +1082,20 @@ const HANDLERS: Record<Name, Handler> = {
 
   // Raw, like run: the skills the answer needs, a colon, then the prompt (quotes and newlines kept). Alone, it reports
   // the local model server; `model <name>` and `server <url>` set it up; `stop` stops the answer being generated.
+  // `file` and `gpu` come first, before the lock: they keep a model file in this page or a setting, and send no prompt.
   ask(args, b) {
+    const rest = args[0] ?? ''
+    const file = /^file(?:\s+(\S+)(?:\s+([\s\S]*))?)?\s*$/.exec(rest)
+    if (file) return askFile(b, file[1], (file[2] ?? '').trim())
+    const gpu = /^gpu(?:\s+([\s\S]*))?$/.exec(rest)
+    if (gpu) {
+      const mode = (gpu[1] ?? '').trim().toLowerCase()
+      if (!mode) return fail('usage: ask gpu <auto|on|off>')
+      if (!isGpuMode(mode)) return fail('ask: ask gpu takes auto, on or off')
+      return { lines: [out(row('gpu', modelOf(b).gpu(mode)))] }
+    }
     const op = operatorOf(b)
     if (!op.unlocked()) return locked('ask')
-    const rest = args[0] ?? ''
     if (!rest) return { lines: [], pending: Promise.resolve(op.askStatus()).then(mindLines, (e: unknown): Line[] => [err(`ask: ${message(e)}`)]) }
     if (rest === 'stop') return { lines: [out(`ask: ${op.askStop()}`)] }
     // One line for a provider and its address (and the Claude provider's key): the router checks everything before it changes anything.

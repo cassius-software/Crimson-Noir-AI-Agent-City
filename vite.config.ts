@@ -10,11 +10,15 @@
  * bundled npm package).
  * The pilot build (`vite build --mode pilot`, npm run build:pilot) is the same page with a surveyed region embedded
  * (world/pilot.region.json.gz, compiled by tools/world), written to dist-pilot/index.html: still one file, still offline.
+ * The in-page model runtime (wllama's WebAssembly build of llama.cpp) rides in the same way: the committed, pinned
+ * third_party/wllama/<version>/wllama.wasm.gz as base64, checked against its sums and against the npm package.
  * What breaks if it is removed? Both the dev server and the single-file build.
  */
+import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { gunzipSync } from 'node:zlib'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
@@ -58,8 +62,12 @@ function brand(): Plugin {
 
 /** Everything in NOTICE.md from this heading on is for the operator and stays out of the build. */
 export const OPERATOR_NOTES = '\n## Operator notes'
-/** Packages a build plugin writes into the page without them appearing as bundled modules. */
-const GENERATED_INTO_PAGE = ['tailwindcss'] as const
+/**
+ * Packages a build plugin writes into the page without them appearing as bundled modules: Tailwind's generated CSS,
+ * and wllama, whose WebAssembly module wllamaRuntime embeds from the pinned copy of the package's own file (so no
+ * module of the package accounts for it). wllama's notice is embedded whether or not the chunks reach the runtime yet.
+ */
+const GENERATED_INTO_PAGE = ['tailwindcss', '@wllama/wllama'] as const
 /**
  * Package directories bundled into the page's inline workers. Vite builds each `?worker` import as a bundle of
  * its own (the physics worker carries Rapier), so its modules never appear in the page's chunks; the worker
@@ -131,6 +139,11 @@ export function bundledPackageDirs(bundle: Readonly<Record<string, { type: strin
   return [...dirs]
 }
 
+/** Whether a bundle's chunks were built from a module (a virtual module by its \0-prefixed id). */
+export function bundleCarries(bundle: Readonly<Record<string, { type: string; moduleIds?: readonly string[] }>>, id: string): boolean {
+  return Object.values(bundle).some((out) => out.type === 'chunk' && (out.moduleIds ?? []).includes(id))
+}
+
 export function embedNotices(html: string, comment: string): string {
   const at = html.lastIndexOf('</body>')
   return at < 0 ? `${html}\n${comment}\n` : `${html.slice(0, at)}${comment}\n${html.slice(at)}`
@@ -152,7 +165,8 @@ function workerNotices(): Plugin {
  * because viteSingleFile inlines and deletes them later, in generateBundle; the inline workers were built
  * (and recorded by workerNotices) when the page's chunks imported them. The notice goes at the end of the
  * body so <meta charset> stays inside the first 1024 bytes. A runtime dependency without a notice fails the
- * build: a licence must never ship silently missing again.
+ * build: a licence must never ship silently missing again. A page that carries the in-page runtime also carries its
+ * pinned NOTICE (the components compiled into the module, each licence in full: Dawn's asks for it in a binary).
  */
 function notices(): Plugin {
   return {
@@ -179,6 +193,7 @@ function notices(): Plugin {
         const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { dependencies?: Record<string, string> }
         const missing = missingNotices(pkg.dependencies ?? {}, packages)
         if (missing.length) throw new Error(`no licence notice would be embedded for ${missing.join(', ')}: every runtime dependency must ship its licence`)
+        if (bundleCarries(ctx.bundle, `\0${WLLAMA_MODULE}`)) packages.push(runtimeNotice())
         return embedNotices(html, noticesComment(readFileSync(join(ROOT, 'NOTICE.md'), 'utf8'), packages))
       },
     },
@@ -218,6 +233,84 @@ function regionPack(mode: string): Plugin {
   }
 }
 
+/** The id the in-page runtime's adapter imports the pinned wllama module from (src/wllama-runtime.d.ts types it). */
+export const WLLAMA_MODULE = 'virtual:wllama-runtime'
+/** The pinned wllama version: package.json names it exactly, and the pinned directory carries it. */
+export const WLLAMA_VERSION = '3.8.1'
+/** The pinned module, its sums, its import list and its notices (tools/native/wllama-pack.mjs writes them from the
+ *  package; tools/verify/wasm_airgap.py holds the module to its import list without npm). */
+export const WLLAMA_PIN = `third_party/wllama/${WLLAMA_VERSION}`
+/** The module as the npm package publishes it: the build holds the pinned copy to it byte for byte. */
+const WLLAMA_PACKAGE_WASM = 'node_modules/@wllama/wllama/esm/wasm/wllama.wasm'
+
+const sha256Hex = (b: Uint8Array): string => createHash('sha256').update(b).digest('hex')
+
+/** The sha256 a SHA256SUMS text names for a file (sha256sum's `<hex>  <name>` lines), else null. */
+export function sumFor(sums: string, name: string): string | null {
+  for (const line of sums.split(/\r?\n/)) {
+    const m = /^([0-9a-f]{64}) [ *](.+)$/.exec(line)
+    if (m && m[2] === name) return m[1]
+  }
+  return null
+}
+
+/**
+ * The in-page runtime module's source: the pinned module's gzip as base64 (the default export: about 3.2 MB of the
+ * page rather than 11.7 MB for the raw module; the adapter gunzips it itself), the raw module's sha256 (the adapter
+ * checks what it gunzipped against it) and length, and the pinned version. A gz that is not the one SHA256SUMS names,
+ * or that holds another module, throws: a damaged or hand-edited pin fails the build and never ships.
+ */
+export function wllamaModule(gz: Uint8Array, sums: string): string {
+  if (sha256Hex(gz) !== sumFor(sums, 'wllama.wasm.gz')) throw new Error(`${WLLAMA_PIN}/wllama.wasm.gz does not hash to the sha256 its SHA256SUMS names`)
+  const raw = gunzipSync(gz)
+  const sha256 = sha256Hex(raw)
+  if (sha256 !== sumFor(sums, 'wllama.wasm')) throw new Error(`${WLLAMA_PIN}/wllama.wasm.gz holds a module (sha256 ${sha256}) that is not the one its SHA256SUMS names`)
+  return [
+    `export const version = ${JSON.stringify(WLLAMA_VERSION)}`,
+    `export const sha256 = ${JSON.stringify(sha256)}`,
+    `export const bytes = ${raw.length}`,
+    `export default ${JSON.stringify(Buffer.from(gz).toString('base64'))}`,
+  ].join('\n')
+}
+
+/** The pinned runtime's own notice: the components compiled into the module and each one's licence in full. */
+function runtimeNotice(): PackageNotice {
+  return {
+    name: 'wllama.wasm, the in-page model runtime',
+    version: WLLAMA_VERSION,
+    license: 'MIT, BSD-3-Clause, Apache-2.0 WITH LLVM-exception and the others listed below',
+    text: readFileSync(join(ROOT, WLLAMA_PIN, 'NOTICE'), 'utf8').trim(),
+  }
+}
+
+/**
+ * The in-page model runtime: `virtual:wllama-runtime` (src/wllama-runtime.d.ts types it), imported dynamically by
+ * the adapter alone; viteSingleFile inlines it into the one file like everything else, so the page never fetches it.
+ * Shaped like regionPack: the committed gz, checked against SHA256SUMS and against the module the installed
+ * @wllama/wllama publishes; any difference, or a missing file, fails the build loudly.
+ */
+function wllamaRuntime(): Plugin {
+  const resolved = `\0${WLLAMA_MODULE}`
+  return {
+    name: 'wllama-runtime',
+    resolveId: (id) => (id === WLLAMA_MODULE ? resolved : null),
+    load(id) {
+      if (id !== resolved) return null
+      const gz = join(ROOT, WLLAMA_PIN, 'wllama.wasm.gz')
+      const sums = join(ROOT, WLLAMA_PIN, 'SHA256SUMS')
+      if (!existsSync(gz) || !existsSync(sums)) throw new Error(`the build embeds ${WLLAMA_PIN}/wllama.wasm.gz and its SHA256SUMS: write them with npm run native:wllama`)
+      const text = readFileSync(sums, 'utf8')
+      const source = wllamaModule(readFileSync(gz), text)
+      const published = join(ROOT, WLLAMA_PACKAGE_WASM)
+      if (!existsSync(published)) throw new Error(`${WLLAMA_PACKAGE_WASM} is missing: npm ci installs @wllama/wllama ${WLLAMA_VERSION}`)
+      if (sha256Hex(readFileSync(published)) !== sumFor(text, 'wllama.wasm')) {
+        throw new Error(`${WLLAMA_PIN} is not the module the installed @wllama/wllama publishes (${WLLAMA_PACKAGE_WASM}): npm ci, or npm run native:wllama after an upgrade`)
+      }
+      return source
+    },
+  }
+}
+
 /**
  * Cross-origin isolation for the dev and preview servers. With these two headers the page may share memory
  * with its physics worker (07_Execute_Actions/sharedBridge.ts over a SharedArrayBuffer; without them the bridge is a
@@ -248,7 +341,7 @@ function isolation(): Plugin {
 
 /**
  * The page's module script, moved from <head> to the end of <body>. Vite puts the entry in <head>, and once
- * viteSingleFile has inlined it there it is about 10 MB of text before the body: a browser paints nothing of the body
+ * viteSingleFile has inlined it there it is about 14 MB of text before the body: a browser paints nothing of the body
  * until all of it has arrived, so a first visit on a phone over a slow connection is a blank page for as long as the
  * download takes (it read as a load that never ends). At the end of the body the splash is on screen while it
  * downloads, and the boot watchdog (in <head>) has long been running. Nothing else changes: an inline module script
@@ -279,7 +372,7 @@ function moduleLast(): Plugin {
 }
 
 export default defineConfig(({ mode }) => ({
-  plugins: [react(), tailwindcss(), brand(), notices(), regionPack(mode), viteSingleFile(), moduleLast(), isolation()],
+  plugins: [react(), tailwindcss(), brand(), notices(), regionPack(mode), wllamaRuntime(), viteSingleFile(), moduleLast(), isolation()],
   worker: { plugins: () => [workerNotices()] },
   build: { outDir: mode === 'pilot' ? 'dist-pilot' : 'dist' },
 }))

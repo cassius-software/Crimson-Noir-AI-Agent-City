@@ -240,7 +240,7 @@ test('a 14A goal reaches no gate; the token budget ends a run; the quota handed 
   assert.equal(negative.steps[2].note, '120 tokens spent (at most 100)')
 })
 
-test('the script standing in for a server that did not answer ends the run; the scripted provider chosen on purpose does not', async () => {
+test('the script standing in for a server (or a model in this page) that did not answer ends the run; the scripted provider chosen on purpose does not', async () => {
   const canned = () => ({ kind: 'answer' as const, text: 'You ask about the goal.', done: 'scripted', tokens: 0 })
   const f = fakeAsk(canned)
   const s = createSwarm({ ask: f.ask, endpoint: () => 'http://localhost:11434' })
@@ -257,6 +257,15 @@ test('the script standing in for a server that did not answer ends the run; the 
   const chosen = await createSwarm({ ask: g.ask, endpoint: () => null }).run('goal', 3).result
   assert.deepEqual(chosen.steps.map((st) => st.state), ['answered', 'answered', 'answered'])
   assert.match(chosen.steps[0].note, /\(scripted: the chosen provider is the script\)$/)
+  // A model running in this page has no endpoint either, but when it cannot run the script stands in and says why:
+  // that is a failure to answer, not the script chosen on purpose, so the run stops there.
+  const page = fakeAsk(() => ({ ...canned(), standIn: 'this browser cannot run a model in this page (no JSPI)' }))
+  const s2 = createSwarm({ ask: page.ask, endpoint: () => null })
+  const stood = await s2.run('goal', 3).result
+  assert.deepEqual(stood.steps.map((st) => [st.id, st.state, st.note]), [['architect', 'failed', 'no model answered, so the script stood in and the run stops here: this browser cannot run a model in this page (no JSPI)']])
+  assert.equal(stood.ok, false)
+  assert.equal(page.asked.length, 1)
+  assert.deepEqual(s2.audit().map((e) => e.kind), ['plan', 'step', 'refusal', 'end'])
 })
 
 test('stop: before the first step it refuses the step as HumanOverrideSupreme; mid-answer it stops the ask and ends the run; what came before is kept', async () => {

@@ -148,6 +148,17 @@ test('routing: the cloud provider only when slow, local, complex and present; th
   already.setProvider!('scripted')
   assert.equal(already.fallback.throttled, false)
   assert.equal(already.settings().fallback, 'off: the scripted provider asks no model, so there is nothing to move')
+  // A model running in this page shares the frames too, but it is never moved (a phone has no gateway), and the line
+  // says so in its own words rather than calling it remote; chosen, or found by auto.
+  for (const how of [{ provider: 'inpage' }, { provider: 'auto', found: 'inpage' }]) {
+    const page = { ...fakeMind('page'), cloud, settings: () => ({ server: 'this page', model: 'tiny.gguf', ...how }) }
+    const kept = withCloudFallback(page, slow)
+    assert.equal(kept.fallback.throttled, false, JSON.stringify(how))
+    assert.equal(kept.settings().fallback, 'off: the model in this page is never moved to the gateway')
+    const before: number = cloud.asked.length
+    assert.equal((await kept.answer(complex, onPiece)).text, 'page says hi')
+    assert.equal(cloud.asked.length, before, 'the complex prompt stayed in the page')
+  }
 
   // No cloud provider at all: the throttle does nothing but say so.
   const alone = fakeMind('alone', 'ollama')

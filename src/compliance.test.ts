@@ -175,7 +175,11 @@ test('the npm tree: every licence on a permissive allow-list (so no GPL, AGPL, L
     assert.match(path, /lightningcss/, `${path}: a weak-copyleft package the audit (docs/ip-audit.md) does not know`)
   }
   assert.ok(weak.length > 0, 'lightningcss (MPL-2.0, Tailwind\'s CSS compiler, dev only) is in the tree: update the audit if it leaves')
-  // The four runtime dependencies are permissive, and only they are bundled (the notice test above holds that).
+  // The five runtime dependencies are permissive, and only they are bundled (the notice test above holds that):
+  // Rapier (Apache-2.0), React, three.js and wllama (MIT; its pinned WebAssembly module's own components are listed
+  // in third_party/wllama/<version>/NOTICE and in the audit). A sixth is a decision for the audit, not a default.
+  assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@dimforge/rapier3d-simd-compat', '@wllama/wllama', 'react', 'react-dom', 'three'])
+  assert.equal(lock.packages['node_modules/@wllama/wllama']?.license, 'MIT')
   for (const name of Object.keys(pkg.dependencies)) {
     const lic = lock.packages[`node_modules/${name}`]?.license ?? ''
     assert.ok(PERMISSIVE.has(lic), `${name}: ${lic}`)

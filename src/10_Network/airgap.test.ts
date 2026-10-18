@@ -9,8 +9,11 @@
  * machine is in an explicit allowlist, and each allowlisted call site goes through the gate (02_Define_The_Rules/
  * airgap.ts loopbackOnly, or an alias of it, named in the enclosing function); the gate itself is pure, defines every
  * alias and guard in terms of loopbackOnly, and is installed by main.tsx and physics.worker.ts before anything else;
- * the replication core takes its 14A verdicts from conduct.ts; and the network stage's imports stay inside the
- * allowlist (never the realm). What breaks if it is removed? A page file could quietly open a socket of its own,
+ * the replication core takes its 14A verdicts from conduct.ts; the network stage's imports stay inside the allowlist
+ * (never the realm); and the in-page model runtime is reached only through its adapter (09_Cognition/wllamaRuntime.ts:
+ * the one file that names wllama or its pinned module, both imported dynamically), which switches wllama's
+ * compatibility build (a CDN) off the moment it makes an instance, hands it a cache that keeps nothing, and makes the
+ * module a page-made blob: URL, while no source names one of wllama's download paths. What breaks if it is removed? A page file could quietly open a socket of its own,
  * import the host, or name a server off this machine, and "the page sends nothing off this machine" would erode
  * without a test going red.
  */
@@ -154,6 +157,67 @@ test('main.tsx and physics.worker.ts install the air gap on their global before 
     if (name === GATE || name === 'main.tsx' || name === '07_Execute_Actions/physics.worker.ts') continue
     assert.doesNotMatch(code(text), /\binstallAirgap\b/, `${name} installs the gate`)
   }
+})
+
+/** The in-page model runtime's adapter, the only file allowed to name wllama. */
+const ADAPTER = '09_Cognition/wllamaRuntime.ts'
+/** wllama's paths that fetch a model (or its metadata) from the network: none is ever named in src. */
+const DOWNLOADS = /loadModelFromHF|loadModelFromUrl|\.download\(|getHF/
+
+/** The text from the parenthesis at `open` to the one that closes it, both included. */
+function balanced(text: string, open: number): string {
+  let depth = 0
+  for (let i = open; i < text.length; i++) {
+    if (text[i] === '(') depth++
+    else if (text[i] === ')' && --depth === 0) return text.slice(open, i + 1)
+  }
+  return text.slice(open)
+}
+
+test('the in-page runtime is reached only through its adapter, which switches wllama\'s CDN build off at once, hands it a cache that keeps nothing and never names a download path', () => {
+  const sources = runtimeSources()
+  assert.ok(sources.some(([name]) => name === ADAPTER), 'the adapter is among the runtime sources scanned')
+  for (const [name, text] of sources) {
+    const c = code(text)
+    // Comments may say what the adapter does; only the adapter's code names the package or the pinned module.
+    if (name !== ADAPTER) assert.doesNotMatch(c, /@wllama\/|virtual:wllama-runtime/, `${name} names wllama`)
+    assert.doesNotMatch(c, /\.setCompat\((?!null\))/, `${name} points wllama's compatibility build somewhere`)
+    assert.doesNotMatch(c, /\bnew\s+(?!lib\.Wllama\()[\w.]*\bWllama\(/, `${name} makes a wllama of its own`)
+  }
+  // Every source (tests too, but this file) stays off wllama's download paths and its model manager's downloads.
+  for (const f of files(SRC)) {
+    if (f === SELF) continue
+    const c = code(readFileSync(f, 'utf8'))
+    assert.doesNotMatch(c, DOWNLOADS, `${relative(SRC, f)} names a wllama download path`)
+  }
+
+  const adapter = code(readFileSync(join(SRC, ADAPTER), 'utf8'))
+  // Both are imported dynamically (the first time a model loads; the package's types are read the same way), never at module load.
+  assert.deepEqual([...new Set(specifiers(adapter).filter((s) => /wllama/.test(s)))].sort(), ['@wllama/wllama/esm/index.js', 'virtual:wllama-runtime'])
+  assert.doesNotMatch(adapter, /^\s*import\s+[^(]*['"](?:@wllama\/|virtual:wllama-runtime)/m, 'a static import of wllama')
+  // One construction, and the very next statement turns the compatibility build (pointed at a CDN by the constructor) off.
+  const made = [...adapter.matchAll(/(?:const|let)\s+(\w+)\s*=\s*new lib\.Wllama\(/g)]
+  assert.equal(made.length, 1, 'one place makes a wllama')
+  assert.equal(adapter.match(/new lib\.Wllama\(/g)?.length, 1)
+  const [m] = made
+  const open = m.index + m[0].length - 1
+  const args = balanced(adapter, open)
+  const next = adapter.slice(open + args.length)
+  assert.match(next, new RegExp(`^\\s*\\n\\s*${m[1]}\\.setCompat\\(null\\)\\n`), 'setCompat(null) is the next statement after the constructor')
+  // Its cache keeps nothing, so wllama never stores, lists or reads a model of its own.
+  assert.match(args, /\bcacheManager: new lib\.CacheManager\(\[NO_STORAGE\]\)/, 'a cacheManager is passed: the one that keeps nothing')
+  const store = /const NO_STORAGE: WllamaStorage = Object\.freeze\(\{([^]*?)\n\}\)/.exec(adapter)?.[1] ?? ''
+  assert.match(store, /isSupported: \(\) => true/)
+  assert.match(store, /read: async \(\) => null/)
+  assert.match(store, /write: async \(\) => \{\n\s*throw new Error\(/)
+  assert.match(store, /list: async \(\) => \[\]/)
+  // The module reaches wllama as a page-made blob: URL, never a data: URL (wllama pastes its URL into the worker's source).
+  assert.match(adapter, /URL\.createObjectURL\(new Blob\(\[raw\], \{ type: 'application\/wasm' \}\)\)/)
+  assert.doesNotMatch(adapter, /['"`]data:/)
+
+  assert.ok(DOWNLOADS.test('w.loadModelFromHF({})') && DOWNLOADS.test('modelManager.download(u)') && DOWNLOADS.test('getHFModelSource(x)'))
+  assert.ok(!DOWNLOADS.test('a.downloaded') && !DOWNLOADS.test('download: 1'))
+  assert.equal(balanced('f(a(b), c) d', 1), '(a(b), c)')
 })
 
 test('the replication core takes its 14A verdicts from conduct.ts screen, and the stage imports only what the allowlist names', () => {

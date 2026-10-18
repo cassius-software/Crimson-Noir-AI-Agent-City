@@ -4,20 +4,22 @@
 /**
  * Why does this file exist? It proves the router's auto provider (router.ts), the default: at an ask it finds the
  * first model server answering on this machine in AUTO_ORDER (Ollama, llama.cpp, an OpenAI-compatible server such as
- * LM Studio, then the Claude gateway) and answers with it; it passes over a server that is down, hangs, refuses this
- * page or has no model that writes text, and says why; it gives an Ollama without the default model the first text
- * model it has; it looks again when the one it found stops answering, but never once its answer has begun; and with
+ * LM Studio, then a model file kept in this page, then the Claude gateway) and answers with it; it passes over a
+ * server that is down, hangs, refuses this page or has no model that writes text, and says why; it gives an Ollama
+ * without the default model the first text model it has; it looks again when the one it found stops answering, but
+ * never once its answer has begun; the page's own model is only listed by a look (never answered or loaded), named
+ * only when a file is kept, found only when one is chosen, and never taken for a server refusing the page; and with
  * nothing answering it fails the way the script stands in for, so the operator hears canned words labelled as such.
  * What breaks if it is removed? A fresh machine with a model server running could still get only the script, or an
  * answer from a server the operator never meant to use.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { operatorBridge, type AnswerRequest, type Diary, type GateHandle, type GateLease, type Piece, type SimControls, type SkillGate } from '../07_Execute_Actions/operator.ts'
+import { operatorBridge, type Answer, type AnswerRequest, type Diary, type GateHandle, type GateLease, type Mind, type Piece, type SimControls, type SkillGate } from '../07_Execute_Actions/operator.ts'
 import type { TerminalBridge } from '../07_Execute_Actions/terminal/bridge.ts'
 import { run as shell } from '../07_Execute_Actions/terminal/commands.ts'
 import { CognitionError, DEFAULT_MODEL, DEFAULT_SERVER, type FetchLike } from './localCompute.ts'
-import { AUTO_ORDER, createMindRouter, LLAMACPP_SERVER, OPENAI_SERVER, PROVIDER_TEXT } from './router.ts'
+import { AUTO_ORDER, createMindRouter, INPAGE_SERVER, LLAMACPP_SERVER, OPENAI_SERVER, PROVIDER_TEXT } from './router.ts'
 import { SCRIPTED, withScriptedFallback } from './scripted.ts'
 
 const enc = new TextEncoder()
@@ -61,11 +63,39 @@ function machine(servers: Record<string, Server>) {
   return { f, calls, servers }
 }
 
+/**
+ * The model file kept in this page, as the host's in-page mind (inPage.ts) presents it: `kept` is the file kept (null:
+ * none), `why` the reason this browser cannot run it (absent: it can). It notes every call, a load included (the
+ * look must never make one), and answers with `fail` when one is set.
+ */
+function page(kept: string | null, why?: string) {
+  const calls: string[] = []
+  const state: { fail: Error | null } = { fail: null }
+  const mind: Mind & { load(): Promise<string> } = {
+    settings: () => ({ server: INPAGE_SERVER, model: kept, runtime: why ?? 'this browser runs it (one thread)', storage: kept === null ? 'none' : 'kept in this page' }),
+    setServer: () => { throw new Error('no server') },
+    setModel: (name: string) => name,
+    installed: async () => {
+      calls.push('installed')
+      if (why !== undefined) throw new CognitionError('offline', why)
+      return kept === null ? [] : [kept]
+    },
+    answer: async (_req: AnswerRequest, onPiece: (p: Piece) => void): Promise<Answer> => {
+      calls.push('answer')
+      if (state.fail) throw state.fail
+      onPiece({ kind: 'text', text: 'inpage says hi' })
+      return { text: 'inpage says hi', thinking: 0, tokens: 3, reason: 'stop' }
+    },
+    load: async () => { calls.push('load'); return 'loaded' },
+  }
+  return { factory: () => mind, calls, state }
+}
+
 const req = (signal = new AbortController().signal): AnswerRequest => ({ tethers: [{ agent: 7, serial: 1, skills: ['Rust'] }], prompt: 'hi', signal })
 const ask = async (r: { answer(q: AnswerRequest, on: (p: Piece) => void): Promise<{ text: string }> }, q = req()): Promise<string> => (await r.answer(q, () => {})).text
 
 test('auto looks in AUTO_ORDER: the servers on this machine at once, the first in that order that answers with a model wins, and it is kept', async () => {
-  assert.deepEqual([...AUTO_ORDER], ['ollama', 'llamacpp', 'openai', 'claude'])
+  assert.deepEqual([...AUTO_ORDER], ['ollama', 'llamacpp', 'openai', 'inpage', 'claude'])
   const m = machine({ 11434: [DEFAULT_MODEL], 8080: ['local.gguf'], 1234: ['lm-model'], 8089: ['claude-opus-5-5'] })
   const r = createMindRouter({ fetch: m.f })
   assert.equal(await ask(r), '11434 says hi')
@@ -373,6 +403,99 @@ test('ask alone under auto looks again and lists what the one found has; setting
   assert.throws(() => r.connect!('auto', '', 'sk-ant-x'), /auto takes no server and no key/)
 })
 
+test('a model file kept in this page is found after the servers on this machine and before the gateway, which is then not asked; it never stands ahead of a server', async () => {
+  const m = machine({ 8089: ['claude-opus-5-5'] })
+  const p = page('tiny.gguf')
+  const r = createMindRouter({ fetch: m.f, lookMs: 50, inPage: p.factory })
+  assert.equal(await ask(r), 'inpage says hi')
+  const s = r.settings()
+  assert.equal(s.found, 'inpage')
+  assert.equal(s.auto, 'inpage: the model file kept in this page, found ready to run on this device (ask provider inpage keeps it)')
+  assert.deepEqual([s.server, s.model, s.runtime, s.storage, s.key], [INPAGE_SERVER, 'tiny.gguf', 'this browser runs it (one thread)', 'kept in this page', undefined])
+  assert.deepEqual(m.calls.map((c) => new URL(c.url).port), ['11434', '8080', '1234'], 'the three servers on this machine were asked; the gateway never was')
+  assert.deepEqual(p.calls, ['installed', 'answer'])
+  // The next ask goes straight to it: no list is asked of anyone.
+  m.calls.length = 0
+  assert.equal(await ask(r), 'inpage says hi')
+  assert.deepEqual([m.calls, p.calls], [[], ['installed', 'answer', 'answer']])
+  // A server earlier in the order answers: it wins, and the page's own model is not even listed.
+  m.servers[8080] = ['local.gguf']
+  const q = page('tiny.gguf')
+  const l = createMindRouter({ fetch: m.f, lookMs: 50, inPage: q.factory })
+  assert.equal(await ask(l), '8080 says hi')
+  assert.deepEqual(q.calls, [])
+})
+
+test('a look only lists the model file kept in this page: it never answers with it and never loads it', async () => {
+  const m = machine({})
+  const p = page('tiny.gguf')
+  const r = createMindRouter({ fetch: m.f, lookMs: 50, inPage: p.factory })
+  // `ask` alone looks again and lists what the one found has: the file kept.
+  assert.deepEqual(await r.installed(), ['tiny.gguf'])
+  assert.deepEqual(await r.installed(), ['tiny.gguf'])
+  assert.deepEqual(p.calls, ['installed', 'installed', 'installed', 'installed'], 'listed by each look and each list; never answered, never loaded')
+  assert.ok(m.calls.every((c) => new URL(c.url).port !== '8089'), 'the gateway was never asked')
+  // A look that finds nothing (the file cannot run here) asks it nothing more either.
+  const q = page('tiny.gguf', 'a load failed earlier in this visit: ask file load tries again')
+  await assert.rejects(ask(createMindRouter({ fetch: m.f, lookMs: 50, inPage: q.factory })), /; inpage: a load failed earlier in this visit: ask file load tries again: start one/)
+  assert.deepEqual(q.calls, ['installed'])
+})
+
+test('a model file kept in this page that this browser cannot run is passed over with its reason, and never taken for a server refusing the page', async () => {
+  const g = globalThis as { crossOriginIsolated?: boolean }
+  const was = g.crossOriginIsolated
+  try {
+    g.crossOriginIsolated = true
+    // Every server answers, with nothing that writes text, and the gateway is down: nothing but the page's own model
+    // could have raised the hint about a server refusing this page's origin.
+    const m = machine({ 11434: ['nomic-embed-text'], 8080: ['nomic-embed-text-v1.5.Q4_K_M.gguf'], 1234: ['text-embedding-nomic-embed-text-v1.5'] })
+    const why = 'this browser cannot run a model in this page (no JSPI): the script answers instead'
+    const p = page('tiny.gguf', why)
+    await assert.rejects(ask(createMindRouter({ fetch: m.f, lookMs: 50, inPage: p.factory })), (e: unknown) => {
+      assert.ok(e instanceof CognitionError)
+      assert.equal(e.code, 'offline')
+      assert.equal(e.message, `no model is answering on this machine (looked for ollama at ${DEFAULT_SERVER}, llamacpp at ${LLAMACPP_SERVER}, openai at ${OPENAI_SERVER}, the model file kept in this page, claude at http://localhost:8089)`
+        + `; the ollama server at ${DEFAULT_SERVER} is running but has no model that writes text on this machine (ollama pull qwen3-vl:4b)`
+        + `; the llamacpp server at ${LLAMACPP_SERVER} is running but has no model that writes text on this machine`
+        + `; the openai server at ${OPENAI_SERVER} is running but has no model that writes text on this machine`
+        + `; inpage: ${why}`
+        + ': start one, or choose one with ask provider <name>')
+      return true
+    })
+    assert.deepEqual(p.calls, ['installed'], 'listed, never answered or loaded')
+    // With no file kept, the same refusal goes unsaid: the sentence reads as it would with no model in the page at all.
+    const none = page(null, why)
+    const plain = page(null)
+    const said = async (f: ReturnType<typeof page>): Promise<string> => {
+      try {
+        await ask(createMindRouter({ fetch: m.f, lookMs: 50, inPage: f.factory }))
+      } catch (e) {
+        return (e as Error).message
+      }
+      return 'answered'
+    }
+    const quiet = await said(none)
+    assert.equal(quiet, await said(plain))
+    assert.doesNotMatch(quiet, /inpage|this page/)
+  } finally {
+    if (was === undefined) delete g.crossOriginIsolated
+    else g.crossOriginIsolated = was
+  }
+})
+
+test('the model in this page failing to load or run is that answer\'s failure: no second look, so no second load', async () => {
+  const m = machine({})
+  const p = page('tiny.gguf')
+  const r = createMindRouter({ fetch: m.f, lookMs: 50, inPage: p.factory })
+  assert.equal(await ask(r), 'inpage says hi')
+  p.state.fail = new CognitionError('model', 'the model file could not be loaded: not a GGUF file')
+  m.calls.length = 0
+  await assert.rejects(ask(r), /not a GGUF file/)
+  assert.deepEqual(p.calls, ['installed', 'answer', 'answer'], 'listed once, at the first look')
+  assert.deepEqual(m.calls, [], 'no list was asked of any server')
+  assert.equal(r.settings().found, 'inpage')
+})
+
 test('a provider the operator chose is never looked past: nothing else is asked when it is down', async () => {
   const m = machine({ 8080: ['local.gguf'] })
   const r = createMindRouter({ fetch: m.f })
@@ -431,4 +554,48 @@ test('from the console: the script standing in is said under its words and not r
   const after = await shell('ask', b, []).pending
   assert.deepEqual(after?.find((l) => l.text.startsWith('model')), { kind: 'out', text: 'model     local.gguf  (the model the server has loaded, else the first it lists that writes text; ask model <name> to choose)' })
   assert.deepEqual(after?.slice(-2), [{ kind: 'out', text: 'installed all-minilm-l6' }, { kind: 'out', text: '          local.gguf  (chosen)' }])
+})
+
+test('model files kept in this page with none chosen: auto passes them over with how to choose one, and the console never sends the operator to keep another', async () => {
+  const m = machine({})
+  const calls: string[] = []
+  let model: string | null = null
+  const mind: Mind = {
+    settings: () => ({ server: INPAGE_SERVER, model, runtime: 'this browser runs it (one thread)', storage: 'kept in this page' }),
+    setServer: () => { throw new Error('no server') },
+    setModel: (name: string) => (model = name),
+    installed: async () => { calls.push('installed'); return ['small.gguf', 'tiny.gguf'] },
+    answer: async (_q: AnswerRequest, onPiece: (p: Piece) => void): Promise<Answer> => {
+      calls.push(`answer ${model}`)
+      onPiece({ kind: 'text', text: 'inpage says hi' })
+      return { text: 'inpage says hi', thinking: 0, tokens: 3, reason: 'stop' }
+    },
+  }
+  const r = createMindRouter({ fetch: m.f, lookMs: 50, inPage: () => mind })
+  // auto never runs a file nobody chose: the look says how to choose one, and the page's model is named in it.
+  await assert.rejects(ask(r), (e: unknown) => {
+    assert.ok(e instanceof CognitionError)
+    assert.equal(e.code, 'offline')
+    assert.match(e.message, /\(looked for ollama at .*, openai at http:\/\/localhost:1234, the model file kept in this page, claude at http:\/\/localhost:8089\)/)
+    assert.match(e.message, /; inpage: 2 model files are kept in this page but none is chosen \(ask provider inpage, then ask model <name>\): start one/)
+    return true
+  })
+  assert.deepEqual(calls, ['installed'], 'listed, never answered')
+  assert.equal(r.settings().found, undefined)
+  // From the console, as the note says: the rows and the refusal both point at the files kept, not at keeping another.
+  const op = operatorBridge({} as SimControls, gate(), r)
+  const b = { operator: op } as unknown as TerminalBridge
+  shell('operator unlock', b, [])
+  shell('ask provider inpage', b, [])
+  const rows = (await shell('ask', b, []).pending)?.map((l) => l.text) ?? []
+  assert.equal(rows.find((t) => t.startsWith('model')), 'model     none chosen: ask model <name>')
+  assert.deepEqual(rows.slice(-3), ['installed small.gguf', '          tiny.gguf', 'choose one of the files kept: ask model <name>'])
+  assert.deepEqual(shell('ask rust: hi', b, []).lines, [{ kind: 'err', text: 'ask: choose a model first: Menu › Model file, or ask file (or ask model <name> for a file already kept: type ask to list them)' }])
+  shell('ask model tiny.gguf', b, [])
+  assert.deepEqual((await shell('ask rust: hi', b, []).pending)?.[0], { kind: 'out', text: 'inpage says hi' })
+  // Chosen, it is what auto finds.
+  shell('ask provider auto', b, [])
+  assert.equal(await ask(r), 'inpage says hi')
+  assert.equal(r.settings().found, 'inpage')
+  assert.deepEqual(calls.filter((c) => c.startsWith('answer')), ['answer tiny.gguf', 'answer tiny.gguf'])
 })

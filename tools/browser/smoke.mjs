@@ -21,18 +21,34 @@
  * - split: two players (?players=2) on two pads, one of them without the standard mapping: that pad moves nobody until
  *   a face button wakes it, then walks player 1, and player 2's own pad enters and leaves a car of their own;
  * - file: dist/index.html opened from disk, the way the README says to play, with no server and so no cross-origin
- *   isolation (the bridge's private-buffer path);
+ *   isolation (the bridge's private-buffer path); the model in this page cannot run there (Chromium refuses the
+ *   runtime's module worker on a page whose origin is opaque), so `ask file` opens no picker and keeps nothing, and
+ *   the runtime row says why;
  * - ultra: the top tier pinned, so the shadowed, post and volumetric pipelines are compiled once and must validate;
  * - lite: the weakest phone the city serves, faked in full (an entry-level Android handset in Chrome: its user agent and
  *   client hints, 412 × 915 at a device pixel ratio of 2.625, touch, 4 GB, and a WebGPU adapter reading 'arm / bifrost'
  *   like a Mali-G52), loaded without the light load's crowd, cars and scale, so the device profile decides them: the
  *   Lite tier, 2,500 pedestrians, 12 cars, frames drawn, and the post chain never compiled. SwiftShader still draws
- *   it: this proves the path from the profile to the boot, not a Mali's speed;
+ *   it: this proves the path from the profile to the boot, not a Mali's speed. A model file picked from the Menu's
+ *   Model file loads on the processor with the lite profile's row (4,096 tokens of context, at most two threads),
+ *   the city's automatic tier (set to Minimal first) lowered to Lite while it loads and Minimal back after;
+ * - inpage: the model kept in this page (09_Cognition/inPage.ts over wllama), cross-origin isolated and asked for two
+ *   threads, with the tiny model tools/browser/tinyGguf.mjs writes (it answers "aaaa…" until its token limit):
+ *   `ask file` through the console's own Enter and the browser's file picker, `ask gpu off`, someone who knows Design
+ *   recruited from the crowd and asked, the city's automatic tier (set above the cap first) lowered to the cap while the
+ *   model works and the tier from before back after, `ask stop` in the middle of an answer and the next answer whole
+ *   (its reason, its token count and the hash of its prompt), the file still kept after a reload, the crash guard
+ *   (the script stands in, `ask file load` clears it), a swarm step, and `ask gpu on` (whether the answer came from
+ *   the GPU or the processor is recorded). The whole scenario is
+ *   audited: every request from the page and from every worker it started (wllama's and its threads' among them)
+ *   stays in blob:, data: or the page's own origin, no socket is opened, no security message is logged, and every
+ *   worker the browser created was attached. Last, a worker the page makes from a blob is refused a fetch off this
+ *   machine by the page's own policy (a CSP violation, not a failed name lookup);
  * - tty: the console alone (?boot=tty), which must not touch WebGPU at all;
  * - pwa: the installable copy a phone plays (tools/web/pwa.mjs, built from dist/ into a temporary folder) served as a
  *   static host serves it, to an iPhone: the manifest read through the page's policy, the icons, the service worker
- *   installed, the second load cross-origin isolated by the worker, and the city started from the phone's copy with
- *   the host gone;
+ *   installed, the second load cross-origin isolated by the worker, a model file kept from the Menu on that second
+ *   visit, and the city started from the phone's copy with the host gone, the kept model still answering;
  * - lakefront: the generated metropolis (?map=lakefront, built in the page's worker from the seed), whose crowd walks
  *   its street window with the six workplaces the page picked from the pack and the HUD counting who is at work;
  * - fail: the ways out when the city cannot start or stops, each in its own browser: navigator.gpu taken away (the
@@ -45,9 +61,12 @@
  *   visible), a realm halt for a lost crowd device, and a frame that throws on every frame. Where a failure is the
  *   point, the GPU-error check is left out; nothing may throw uncaught in any of them.
  * Every scenario also fails on an exception in the page, a GPU validation error, a lost device, or the crowd's flow
- * field falling back to the CPU. It serves dist/ itself on 127.0.0.1 with the two isolation headers, writes a
- * screenshot per scenario to --out (default: a temporary directory), prints one row per check and exits 1 if any fails.
- * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,lite,tty,pwa,lakefront,fail].
+ * field falling back to the CPU. Every browser can reach nothing but this machine (cdp.mjs loopbackOnly: no name
+ * resolves but 127.0.0.1, and no proxy). It serves dist/ itself on 127.0.0.1 with the two isolation headers, writes a
+ * screenshot per scenario to --out (default: a temporary directory), and the console's transcript where a scenario
+ * types in it, prints one row per check (and an `info` row for what is recorded, not asserted) and exits 1 if any
+ * fails.
+ * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,lite,tty,pwa,inpage,lakefront,fail].
  * Needs `npm run build`.
  * What breaks if it is removed? Nothing at runtime; the page loses its only end-to-end check in a browser, and with it
  * the proof that the city renders and that every control reaches the avatar.
@@ -57,8 +76,11 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { dirname, extname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { Browser, findChrome, SOFTWARE_WEBGPU } from './cdp.mjs'
+import { Browser, findChrome, loopbackOnly, SOFTWARE_WEBGPU, watchTargets } from './cdp.mjs'
+import { HPARAMS, tinyGguf } from './tinyGguf.mjs'
 import { APP_NAME, build as buildWeb, ICONS } from '../web/pwa.mjs'
+import { eligible, onRoad, skillsOf } from '../../src/03_Spawn_Agents/skills.ts'
+import { GUARD_KEY } from '../../src/09_Cognition/inPage.ts'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const DIST = join(ROOT, 'dist', 'index.html')
@@ -80,6 +102,8 @@ const check = (ok, what, detail = '') => {
   console.log(`${ok ? 'ok  ' : 'FAIL'}  ${what}${detail ? `  (${detail})` : ''}`)
   return ok
 }
+/** What is recorded, not asserted (an outcome that differs by browser or platform). */
+const info = (what, detail = '') => console.log(`info  ${what}${detail ? `  (${detail})` : ''}`)
 
 /**
  * The page's light load for a software rasterizer: a small crowd and fleet, half-resolution, the cinema camera off (its
@@ -165,6 +189,9 @@ const MALI_G52 = `(() => {
   Object.defineProperty(Navigator.prototype, 'deviceMemory', { configurable: true, get: () => 4 })
 })()`
 
+/** The in-page model's runtime, asked for the GPU, saying its worker found no adapter (ggml's WebGPU backend; echoed under ?debug). */
+const RUNTIME_NO_ADAPTER = /^\[\w+\] ggml_webgpu: Failed to get an adapter\b/
+
 /** Counts animation frames, so a check can wait for the page to have read its input n more times. */
 const FRAME_COUNTER = `(() => { window.__smokeFrames = 0; const tick = () => { window.__smokeFrames++; requestAnimationFrame(tick) }; requestAnimationFrame(tick) })()`
 
@@ -172,7 +199,7 @@ const FRAME_COUNTER = `(() => { window.__smokeFrames = 0; const tick = () => { w
  * Serves dist/index.html (and nothing else) on 127.0.0.1 with the isolation headers the dev and preview servers send.
  * `?smoke-cut` serves the first half of it, as a download cut off in the middle of the page's script would arrive.
  * `?smoke-slow` holds back the page's module script (everything from it on) for SLOW_HOLD_MS, as a phone on a slow
- * connection waits for the 10 MB of it.
+ * connection waits for the 14 MB of it.
  */
 async function serve() {
   const html = readFileSync(DIST)
@@ -199,6 +226,8 @@ async function serve() {
 class Page {
   errors = []
   console = []
+  /** Every console command() and what it printed, for saveTranscript. */
+  transcript = []
   constructor(browser) {
     this.b = browser
     browser.on('Runtime.exceptionThrown', (p) => this.errors.push(p.exceptionDetails?.exception?.description ?? p.exceptionDetails?.text))
@@ -253,9 +282,56 @@ class Page {
   async shot(name) {
     try { writeFileSync(join(OUT, `${name}.png`), await this.b.screenshot()) } catch (e) { console.log(`      (no screenshot: ${e.message})`) }
   }
-  /** The checks every scenario ends with: nothing thrown, no GPU error, no CPU flow field. */
+  /** Types `line` at the focused console prompt and presses Enter, as a person does (the command runs inside that keydown). */
+  async enter(line) {
+    await this.type(line)
+    await this.tap('Enter', 'Enter', 13)
+  }
+  /**
+   * Clears the console, enters `line` and waits until its scrollback matches `done`; returns the scrollback, one line
+   * a row (or null after `ms`). Starting from an empty scrollback, everything read is what `line` printed.
+   */
+  async command(line, done, ms = 60_000) {
+    await this.enter('clear')
+    await this.waitFor(`(${CONSOLE_LOG}?.innerText ?? '').trim() === ''`, 10_000).catch(() => {})
+    await this.enter(line)
+    const t = await this.waitFor(`(() => { const t = ${CONSOLE_LOG}?.innerText ?? ''; return ${done}.test(t) && t })()`, ms).catch(() => null)
+    this.transcript.push(`$ ${line}\n${t ?? `(nothing matching ${done} after ${ms} ms)\n${await this.eval(`${CONSOLE_LOG}?.innerText ?? ''`).catch(() => '')}`}`)
+    return t
+  }
+  /** Writes every command's output so far to <out>/<name>-console.txt (a failed check's evidence). */
+  saveTranscript(name) {
+    try { writeFileSync(join(OUT, `${name}-console.txt`), this.transcript.join('\n\n')) } catch { /* the report still has the check rows */ }
+  }
+  /** Opens the Ring-0 console with the tilde key (a desktop), its prompt focused. */
+  async openConsole() {
+    await this.tap('Backquote', '`', 192)
+    return this.waitFor(`!!document.querySelector('[aria-label$="Ring-0 terminal"][data-open]') && document.activeElement?.getAttribute('aria-label') === 'Ring-0 command line'`, 10_000).then(() => true, () => false)
+  }
+  /**
+   * From now on the browser's file picker is answered with `paths`, as a person choosing those files would: the
+   * picker is intercepted (Page.fileChooserOpened, which names the input it opened for) and that input given the files
+   * (DOM.setFileInputFiles, which fires its change event). `choosers` counts the pickers the page opened.
+   */
+  async pickWith(paths) {
+    this.picked = paths
+    if (this.choosers !== undefined) return
+    this.choosers = 0
+    this.pickErrors = []
+    this.b.on('Page.fileChooserOpened', (ev, sid) => {
+      if (sid !== this.b.sessionId) return
+      this.choosers++
+      this.b.send('DOM.setFileInputFiles', { files: this.picked, backendNodeId: ev.backendNodeId }).catch((e) => this.pickErrors.push(e.message))
+    })
+    await this.b.send('Page.setInterceptFileChooserDialog', { enabled: true })
+  }
+  /**
+   * The checks every scenario ends with: nothing thrown, no GPU error, no CPU flow field. The in-page model's runtime
+   * logs (under ?debug) that it found no GPU adapter when asked for one in its worker: that is where the model ran
+   * (the scenario records it), not an error of the city's GPU, so that one line is not counted.
+   */
   health(name) {
-    const gpuErrors = this.console.filter((l) => /WebGPU|GPUValidationError|uncaptured|Device Lost|device lost/i.test(l) && !/experimental on this platform/.test(l))
+    const gpuErrors = this.console.filter((l) => /WebGPU|GPUValidationError|uncaptured|Device Lost|device lost/i.test(l) && !/experimental on this platform/.test(l) && !RUNTIME_NO_ADAPTER.test(l))
     check(this.errors.length === 0, `${name}: no exception in the page`, this.errors.slice(0, 3).join(' | ').slice(0, 400))
     check(gpuErrors.length === 0, `${name}: no WebGPU error or lost device`, gpuErrors.slice(0, 3).join(' | ').slice(0, 400))
     const cpuFlow = this.console.find((l) => /flow field is solved on the CPU/.test(l))
@@ -264,7 +340,9 @@ class Page {
 }
 
 async function open(chrome, { mobile = false, width = 960, height = 540, args = [] } = {}) {
-  const b = await Browser.launch(chrome, [...SOFTWARE_WEBGPU, `--window-size=${width},${height}`, ...args])
+  // Nothing but this machine: one resolver switch (a scenario's own rules merged in), no proxy, no proxy variables.
+  const net = loopbackOnly([...SOFTWARE_WEBGPU, `--window-size=${width},${height}`, ...args])
+  const b = await Browser.launch(chrome, net.args, { env: net.env })
   const page = new Page(b)
   await b.send('Page.addScriptToEvaluateOnNewDocument', { source: PAD_SHIM })
   await b.send('Page.addScriptToEvaluateOnNewDocument', { source: FRAME_COUNTER })
@@ -322,6 +400,213 @@ async function reload(p, url) {
   await p.waitFor('document.readyState !== "loading" && !window.__smokeOld', 60_000)
   await p.booted()
 }
+
+/** The console's scrollback, as a page expression. */
+const CONSOLE_LOG = `document.querySelector('[role="log"][aria-label="Ring-0 output"]')`
+
+/** The tiny model's file name (tinyGguf.mjs: an 'a' on every step until max_tokens, never an end of text). */
+const TINY = 'tiny-a.gguf'
+let tinyDir = null
+/** The tiny model, written once for this run into a temporary folder (never committed, never shipped): its path. */
+function tinyModel() {
+  tinyDir ??= mkdtempSync(join(tmpdir(), 'agent-city-gguf-'))
+  const path = join(tinyDir, TINY)
+  if (!existsSync(path)) writeFileSync(path, tinyGguf())
+  return path
+}
+
+/**
+ * The model in this page as the page plans it here (inPagePlan.ts ROWS and HOLD): a desktop on SwiftShader (an
+ * adapter of unknown class, planned as integrated: 2,048 tokens an answer, 8,192 of context, the city held at Low),
+ * the lite profile (4,096 of context, two threads at most, held at Lite) and a phone (512 tokens an answer). A load
+ * asks for no more context than the model was trained on (inPage.ts withinTraining): the tiny model's 4,096.
+ */
+const DESKTOP_PLAN = Object.freeze({ maxTokens: 2048, ctx: 8192, heldTier: 1 })
+const LITE_PLAN = Object.freeze({ ctx: 4096, threads: 2, heldTier: -1 })
+const PHONE_MAX_TOKENS = 512
+
+/** The context the tiny model loads with on the desktop: the plan's, no more than its training (inPage.ts). */
+const DESKTOP_CTX = Math.min(DESKTOP_PLAN.ctx, HPARAMS.nCtxTrain)
+
+/** The last line a command printed (its closing note, or its error), short enough for a report. */
+const lastLine = (t) => (t ?? 'nothing printed in time').trim().split('\n').map((l) => l.trim()).filter(Boolean).at(-1)?.slice(0, 240) ?? ''
+/** Waits until `test()` holds or `ms` have passed. */
+async function settle(test, ms) {
+  for (const end = Date.now() + ms; !test() && Date.now() < end;) await new Promise((r) => setTimeout(r, 100))
+}
+
+/** The answer's line in a console scrollback (the tiny model's run of a's), or ''. */
+const answerIn = (t) => (t ?? '').split('\n').map((l) => l.trim()).find((l) => /^a+$/.test(l)) ?? ''
+/** An ask's end in the console: its closing note, its failure, or the script standing in (not its first line, "ask: Authorized…"). */
+const ASK_DONE = /-- answered in|ask: (?!Authorized)|-- no reply --/
+/** `ask file`'s end: the file kept, or why not (not its first line, "ask: choose the model file…"). */
+const KEPT = /is kept in this page|ask: (?!choose the model file)/
+/** `ask file load`'s end: the model loaded, or why not (not its first line, "ask: loading the model…"). */
+const LOADED = /is loaded in this page|ask: (?!loading the model)/
+/** Why a page opened from a file runs no model (inPageCaps.ts OPAQUE_REASON). */
+const FILE_PAGE = /a page opened from a file cannot start the model's runtime/
+
+/**
+ * Forgets what every recruit remembers (operator), before an answer that must run its whole token limit. The tiny
+ * model reads a byte as a token and its training context is 4,096, all the context the page asks for it (the plan's
+ * 8,192 is a ceiling): each answer of a's is remembered and recalled into the next prompt, which leaves less room.
+ */
+const forgetAll = (p) => p.command('memory forget all', /memory: /)
+
+/**
+ * Every hold the in-page model puts on the city's tier, as it happens: the governor's hold() (which engine.ts
+ * holdQuality calls) is wrapped in the page to note, for each call, the cap asked, the tier just before it, and the
+ * tier and the quality state's `held` just after it (null: released). Returns how many were noted so far.
+ */
+const WATCH_HOLD = `(() => {
+  if (!window.__smokeHeld) {
+    const g = window.__SIM__.engine.quality.governor, hold = g.hold
+    window.__smokeHeld = []
+    g.hold = function (cap, now) {
+      const before = this.state().tier
+      const r = hold.call(this, cap, now)
+      const s = this.state()
+      window.__smokeHeld.push({ cap, before, tier: s.tier, held: s.held ?? null })
+      return r
+    }
+  }
+  return window.__smokeHeld.length
+})()`
+
+/**
+ * Sets the city's automatic tier one above `cap` through the console, as a person would (`quality <n>`, then
+ * `quality auto`, which keeps that tier), so the hold has a tier to lower: SwiftShader has long since stepped the
+ * city down, and on the lite profile it starts at Lite. The governor steps down only after 2 s of slow frames, more
+ * than the console takes to start the work that holds it. Returns the line `quality auto` printed and whether it holds.
+ */
+async function tierAbove(p, cap) {
+  await p.command(`quality ${cap + 1}`, /tier -?\d/)
+  const t = await p.command('quality auto', /\(auto\)/)
+  return { ok: new RegExp(`tier ${cap + 1} \\S+ \\(auto\\)`).test(t ?? ''), line: lastLine(t) }
+}
+
+/** Runs `act`; returns its value, each hold noted while it ran ({ cap, before, tier, held }), and the tier and `held` now. */
+async function holdsWhile(p, act) {
+  const from = await p.eval(WATCH_HOLD)
+  const value = await act()
+  const r = await p.eval(`({ during: window.__smokeHeld.slice(${from}), after: { tier: window.__SIM__.snapshot().quality.tier, held: window.__SIM__.snapshot().quality.held ?? null } })`)
+  return { value, ...r }
+}
+/**
+ * The first hold lowered the tier from above `cap` to `cap` (held at it), the tier stayed at or below `cap` at every
+ * hold while it ran, and the release brought back the tier from before the first hold, with nothing held after.
+ */
+const heldThenReleased = (h, cap) => {
+  const first = h.during[0], last = h.during.at(-1)
+  return h.during.length >= 2 && first.cap === cap && first.held === cap && first.before > cap && first.tier === cap
+    && h.during.slice(0, -1).every((x) => x.tier <= cap) && last.held === null && last.tier === first.before && h.after.held === null
+}
+/** The holds as a short line for a report. */
+const holdLine = (h) => `${h.during.map((x) => `${x.before}->${x.tier} (cap ${x.cap}, held ${x.held})`).join(', ')}; now tier ${h.after.tier}, held ${h.after.held}`
+
+/**
+ * Someone who knows `skill` tethered to the operator (Active), asked over with the console's own `recruit <skill>`
+ * (the console must be open): the page's newest crowd frame is read, the nearest pedestrian with the skill
+ * (skills.ts skillsOf) who may be asked over from a spot beside them (skills.ts eligible: on the sidewalk, within
+ * earshot, no road between) is chosen, the avatar is stood on that spot and they are asked. They walk over in the
+ * crowd's own time (slow on a software GPU), so each is given until they arrive or are let go; another person is tried
+ * when one cannot come. Returns whether one is Active, with a note of each try for the report.
+ */
+async function tether(p, skill, tries = 6) {
+  const notes = []
+  await p.eval(`(() => { if (window.__smokeRecruits) return; window.__smokeRecruits = []; window.__SIM__.engine.recruitHost().onState((s) => { window.__smokeRecruits = s.recruits || [] }) })()`)
+  const state = `(() => { const rs = window.__smokeRecruits || [], S = ${JSON.stringify(skill)}
+    if (rs.some((r) => r.state === 'Active' && r.arrived && r.skills.includes(S))) return 'active'
+    return rs.some((r) => r.skills.includes(S)) ? null : 'gone' })()`
+  if ((await p.eval(state)) === 'active') return { ok: true, notes: ['one was tethered already'] }
+  const tried = new Set()
+  for (let i = 0; i < tries; i++) {
+    const seen = await p.eval(`new Promise((resolve) => { const h = window.__SIM__.engine.recruitHost(); const off = h.onState((s) => {
+      const f = s.crowdFrame; if (!f || f.length < 4 * h.agents) return; off()
+      const xz = new Array(2 * h.agents); for (let k = 0; k < h.agents; k++) { xz[2 * k] = f[4 * k]; xz[2 * k + 1] = f[4 * k + 2] }
+      resolve({ xz, me: h.operator() }) }) })`)
+    if (!seen.me) return { ok: false, notes: [...notes, 'the operator is not on foot'] }
+    const xz = Float32Array.from(seen.xz)
+    let best = null
+    for (let k = 1; 2 * k + 1 < xz.length; k++) {
+      const x = xz[2 * k], z = xz[2 * k + 1]
+      if (tried.has(k) || !skillsOf(k).includes(skill) || !Number.isFinite(x) || onRoad(x, z)) continue
+      const d = Math.hypot(x - seen.me.x, z - seen.me.z)
+      if (best && d >= best.d) continue
+      for (const [ox, oz] of [[1.2, 0], [-1.2, 0], [0, 1.2], [0, -1.2]]) {
+        const at = { x: x + ox, z: z + oz }
+        if (!onRoad(at.x, at.z) && eligible(xz, k, at, skill) >= 0) { best = { k, at, d }; break }
+      }
+    }
+    if (!best) return { ok: false, notes: [...notes, `nobody else with ${skill} on a sidewalk`] }
+    tried.add(best.k)
+    await p.eval(`window.__SIM__.teleport(${best.at.x}, ${best.at.z})`)
+    await p.frames(3)
+    // The recruiter's copy of the crowd is refreshed every 250 ms (recruitment.ts COPY_INTERVAL_MS).
+    await new Promise((r) => setTimeout(r, 400))
+    const t0 = Date.now()
+    const said = lastLine(await p.command(`recruit ${skill.toLowerCase()}`, /recruit: (?!asking for)/, 30_000))
+    if (!/is coming over/.test(said)) { notes.push(`agent ${best.k}: ${said}`); continue }
+    const end = await p.waitFor(state, 180_000).catch(() => 'still walking after 180 s')
+    notes.push(`agent ${best.k}: ${end} after ${Math.round((Date.now() - t0) / 1000)} s`)
+    if (end === 'active') return { ok: true, notes }
+  }
+  return { ok: false, notes }
+}
+
+/**
+ * A worker the page makes from a blob, which inherits the page's policy, fetching a name off this machine: what the
+ * worker saw (its securitypolicyviolation events, and how the fetch ended).
+ */
+const CSP_PROBE_URL = 'https://example.invalid/csp-probe'
+const CSP_PROBE = `new Promise((resolve) => {
+  const src = "self.addEventListener('securitypolicyviolation', (e) => postMessage({ kind: 'violation', directive: e.effectiveDirective, blocked: e.blockedURI }));"
+    + "fetch('${CSP_PROBE_URL}').then(() => postMessage({ kind: 'fetched' }), (e) => postMessage({ kind: 'failed', error: String(e) }))"
+  const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })))
+  const got = []
+  const end = () => { w.terminate(); resolve(got) }
+  w.onmessage = (m) => { got.push(m.data); if (got.some((g) => g.kind === 'violation') && got.some((g) => g.kind !== 'violation')) setTimeout(end, 200) }
+  w.onerror = (e) => { got.push({ kind: 'error', error: String(e.message) }); end() }
+  setTimeout(end, 10000)
+})`
+
+/** Taps (x, y) with one finger. */
+async function tapAt(p, [x, y], id = 40) {
+  await p.touch('touchStart', [[x, y, id]])
+  await p.touch('touchEnd', [])
+}
+
+/** Opens the Menu (the button shown) and taps its item starting with `label` (scrolled to first, as a thumb would); false when either is not there. */
+async function menuTap(p, label) {
+  const at = await p.eval(`(() => { const b = [...document.querySelectorAll('button[aria-label="Menu"]')].find((b) => b.getBoundingClientRect().width > 0); if (!b) return null; const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2] })()`)
+  if (!at) return false
+  await tapAt(p, at, 41)
+  const item = await p.waitFor(`(() => { const b = [...document.querySelectorAll('[role="menu"] button')].find((b) => b.textContent.trim().startsWith(${JSON.stringify(label)})); if (!b) return null; b.scrollIntoView({ block: 'nearest' }); const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2] })()`, 10_000).catch(() => null)
+  if (!item) return false
+  await tapAt(p, item, 42)
+  return true
+}
+
+/** The console opened from the Menu (a touch screen), its prompt focused. */
+async function menuConsole(p) {
+  if (!(await menuTap(p, 'Console'))) return false
+  return p.waitFor(`!!document.querySelector('[aria-label$="Ring-0 terminal"][data-open]') && document.activeElement?.getAttribute('aria-label') === 'Ring-0 command line'`, 10_000).then(() => true, () => false)
+}
+
+/** The Menu's item and the toasts' title for the model file (App.tsx MODEL_FILE). */
+const MODEL_FILE = 'Model file'
+/**
+ * The tiny model picked from the Menu (a touch screen): the tap opens the picker, the file is kept, and the page says
+ * so in a toast. Returns what was tapped and the toast's text, or null when none came.
+ */
+async function menuPick(p) {
+  await p.pickWith([tinyModel()])
+  const tapped = await menuTap(p, MODEL_FILE)
+  const toast = await p.waitFor(`window.__SIM__.engine.toasts.find((t) => t.title === ${JSON.stringify(MODEL_FILE)} && !/^keeping/.test(t.body))?.body`, 120_000).catch(() => null)
+  return { tapped, toast }
+}
+/** The toast a phone shows once the tiny model is kept (no load on a phone until something asks). */
+const KEPT_ON_A_PHONE = new RegExp(`^${TINY.replace('.', '\\.')} is kept in this page \\(153 KB\\): the inpage provider answers with it now$`)
 
 const SCENARIOS = {
   async desktop(chrome, origin) {
@@ -489,8 +774,9 @@ const SCENARIOS = {
         await tapAt(at, 5)
         return p.waitFor(`(() => { const m = document.querySelector('[role="menu"]'); return m && [...m.querySelectorAll('button')].map((b) => b.textContent.trim()) })()`, 10_000).catch(() => null)
       }
+      // An item below the sheet's fold is scrolled to first, as a thumb would (the sheet scrolls past the room it has).
       const tapItem = async (label) => {
-        const c = await p.eval(`(() => { const b = [...document.querySelectorAll('[role="menu"] button')].find((b) => b.textContent.trim().startsWith(${JSON.stringify(label)})); if (!b) return null; const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2] })()`)
+        const c = await p.eval(`(() => { const b = [...document.querySelectorAll('[role="menu"] button')].find((b) => b.textContent.trim().startsWith(${JSON.stringify(label)})); if (!b) return null; b.scrollIntoView({ block: 'nearest' }); const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2] })()`)
         if (c) await tapAt(c, 6)
         return c !== null
       }
@@ -773,9 +1059,28 @@ const SCENARIOS = {
       const f0 = s.crowdFrames
       const ran = await p.waitFor(`window.__SIM__.snapshot().process.crowdFrames > ${f0 + 2}`, 60_000).then(() => true, () => false)
       check(ran, 'file: the city runs from dist/index.html with no server')
+      // No model runs in a page opened from disk: its origin is opaque, and Chromium refuses the runtime's worker (a
+      // module worker made from a blob: URL) there. So ask file opens no picker and keeps nothing, and the runtime row
+      // says why (the picker is still intercepted, so one that opened would be counted).
+      await p.pickWith([tinyModel()])
+      // By now the concierge has greeted, its name field holding the keyboard: skipped, so the tilde reaches the page.
+      await p.eval(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Skip')?.click()`)
+      check(await p.openConsole(), 'file: the tilde key opens the console')
+      const kept = await p.command('ask file', KEPT, 60_000)
+      check(p.choosers === 0 && FILE_PAGE.test(kept ?? '') && !/is kept in this page/.test(kept ?? ''),
+        'file: ask file on a page opened from disk opens no picker, keeps nothing, and says a page opened from a file cannot run the model', `${p.choosers} picker(s); ${lastLine(kept)}`)
+      await p.command('operator unlock', /unlocked/)
+      await p.command('ask provider inpage', /provider\s+\S/)
+      const status = await p.command('ask', /installed|ask: /, 60_000)
+      const row = (status ?? '').split('\n').find((l) => /^\s*runtime\s/.test(l)) ?? ''
+      check(FILE_PAGE.test(row) && !/runs it/.test(row) && /ask: a page opened from a file cannot start/.test(status ?? ''),
+        'file: with the inpage provider chosen, the runtime row and ask say why the model cannot run here', `${row.trim().slice(0, 200)} | ${lastLine(status)}`)
       await p.shot('file')
       p.health('file')
-    } finally { await p.b.close() }
+    } finally {
+      p.saveTranscript('file')
+      await p.b.close()
+    }
   },
 
   async ultra(chrome, origin) {
@@ -816,6 +1121,19 @@ const SCENARIOS = {
       check(ran, 'lite: frames are drawn and the crowd runs')
       const hud = await p.eval(`document.body.innerText.includes('Lite')`)
       check(hud, 'lite: the HUD shows the tier as Lite')
+      // The model in this page on the lite profile: picked from the Menu (the tap opens the picker), kept, loaded only
+      // when asked, on the processor with the lite plan, the city held at Lite while it loads.
+      const pick = await menuPick(p)
+      check(pick.tapped && p.choosers === 1 && KEPT_ON_A_PHONE.test(pick.toast ?? ''), 'lite: Menu › Model file opens the picker from the tap and keeps the file, not loaded until asked',
+        `${pick.tapped ? 'tapped' : 'no Menu item'}, ${p.choosers} picker(s); ${pick.toast}`)
+      check(await menuConsole(p), 'lite: the Menu opens the console')
+      const above = await tierAbove(p, LITE_PLAN.heldTier)
+      check(above.ok, 'lite: quality 0, then quality auto, runs the city at Minimal in auto, above the hold\'s cap', above.line)
+      const load = await holdsWhile(p, () => p.command('ask file load', LOADED, 180_000))
+      const plan = /is loaded in this page \(CPU, (\d+) threads?, (\d+) tokens of context, in [\d.]+ s\)/.exec(load.value ?? '')
+      check(!!plan && Number(plan[1]) >= 1 && Number(plan[1]) <= LITE_PLAN.threads && Number(plan[2]) === LITE_PLAN.ctx,
+        `lite: ask file load runs it on the processor, ${LITE_PLAN.threads} threads at most, ${LITE_PLAN.ctx} tokens of context`, lastLine(load.value))
+      check(heldThenReleased(load, LITE_PLAN.heldTier), 'lite: the city\'s automatic tier is lowered from Minimal to Lite while the model loads, and Minimal comes back after', holdLine(load))
       await p.shot('lite')
       p.health('lite')
     } finally { await p.b.close() }
@@ -875,18 +1193,178 @@ const SCENARIOS = {
       await reload(p, url)
       const iso = await p.eval(`!!navigator.serviceWorker.controller && globalThis.crossOriginIsolated === true && typeof SharedArrayBuffer === 'function'`)
       check(iso, 'pwa: from the second load the worker serves the page, isolated (the shared-memory bridge)')
+      // The second visit keeps the model file (from the Menu, as on a phone).
+      const pick = await menuPick(p)
+      check(pick.tapped && p.choosers === 1 && KEPT_ON_A_PHONE.test(pick.toast ?? ''), 'pwa: the second visit keeps a model file from Menu › Model file',
+        `${pick.tapped ? 'tapped' : 'no Menu item'}, ${p.choosers} picker(s); ${pick.toast}`)
       site.close()
       await reload(p, url)
       const s = await p.snap()
       const f0 = s.crowdFrames
       const ran = await p.waitFor(`window.__SIM__.snapshot().process.crowdFrames > ${f0 + 2}`, 60_000).then(() => true, () => false)
       check(ran && s.touch, 'pwa: with the host gone the city starts from the offline copy, touch controls up', `touch=${s.touch}`)
+      // With the host gone the model kept on the second visit still answers: the runtime is in the page, the file in its storage.
+      check(await menuConsole(p), 'pwa: the Menu opens the console offline')
+      await p.command('operator unlock', /unlocked/)
+      const t = await tether(p, 'Design')
+      check(t.ok, 'pwa: someone who knows Design is tethered offline', t.notes.join('; '))
+      const answer = await p.command('ask design: hi', ASK_DONE, 240_000)
+      check(answerIn(answer).length === PHONE_MAX_TOKENS && /\(cut at the token limit\)/.test(answer ?? '') && p.choosers === 1,
+        `pwa: with the host gone the model kept in this page answers: ${PHONE_MAX_TOKENS} a's (a phone's token limit), with no new pick`, `${answerIn(answer).length} a's; ${lastLine(answer)}`)
       await p.shot('pwa-offline')
       p.health('pwa')
     } finally {
+      p.saveTranscript('pwa')
       site.close()
       await p.b.close()
       rmSync(dir, { recursive: true, force: true })
+    }
+  },
+
+  /**
+   * The model kept in this page (see the file's comment): a desktop with four cores (so two threads), cross-origin
+   * isolated, the tiny model picked through `ask file`. Every check reads what a person reads (the console, the
+   * page's state); the operator tier's own result is read once, for what the console does not print (the token count
+   * and the prompt's hash). The audit covers everything up to the CSP probe, which runs last: its refusal is the point.
+   */
+  async inpage(chrome, origin) {
+    const model = tinyModel()
+    const p = await open(chrome)
+    const watch = await watchTargets(p.b)
+    const url = `${origin}/?${LIGHT}`
+    const max = DESKTOP_PLAN.maxTokens
+    try {
+      await p.b.send('Emulation.setHardwareConcurrencyOverride', { hardwareConcurrency: 4 })
+      await p.pickWith([model])
+      await p.goto(url)
+      await p.booted()
+      check(await p.eval('globalThis.crossOriginIsolated === true'), 'inpage: the page is cross-origin isolated, so the model may use more than one thread')
+      check(await p.openConsole(), 'inpage: the tilde key opens the console')
+      await p.command('operator unlock', /unlocked/)
+
+      // Picked through the console's own Enter: the picker opens inside that keydown, the file is kept, the provider
+      // switches to inpage, and a desktop starts loading it at once.
+      const kept = await p.command('ask file', KEPT, 60_000)
+      check(p.choosers === 1 && new RegExp(`${TINY.replace('.', '\\.')} is kept in this page \\(153 KB\\): the inpage provider answers with it now, and it is loading`).test(kept ?? ''),
+        'inpage: ask file opens the browser\'s picker from the Enter key, keeps the file in this page and answers with it', `${p.choosers} picker(s); ${lastLine(kept)}`)
+      const loaded = await p.command('ask file load', LOADED, 180_000)
+      check(new RegExp(`is loaded in this page \\(CPU, 2 threads, ${DESKTOP_CTX} tokens of context, in [\\d.]+ s\\)`).test(loaded ?? ''),
+        `inpage: it loads on the processor with two threads and ${DESKTOP_CTX} tokens of context (the plan's ${DESKTOP_PLAN.ctx}, no more than the model was trained on)`, lastLine(loaded))
+      const off = await p.command('ask gpu off', /gpu\s+\S/)
+      check(/off: the model runs on the processor from its next load/.test(off ?? ''), 'inpage: ask gpu off keeps it on the processor', lastLine(off))
+      const t1 = await tether(p, 'Design')
+      check(t1.ok, 'inpage: someone who knows Design is recruited from the crowd and tethered', t1.notes.join('; '))
+
+      // An answer through the console: the tiny model's a's, cut at its token limit, the city held while it works (its
+      // automatic tier first set one above the hold's cap, so the hold has a tier to lower).
+      const above = await tierAbove(p, DESKTOP_PLAN.heldTier)
+      check(above.ok, `inpage: quality ${DESKTOP_PLAN.heldTier + 1}, then quality auto, runs the city in auto above the hold's cap`, above.line)
+      const t0 = Date.now()
+      const first = await holdsWhile(p, () => p.command('ask design: hi', ASK_DONE, 180_000))
+      const ms = Date.now() - t0
+      check(answerIn(first.value).length === max && /\(cut at the token limit\)/.test(first.value ?? ''),
+        `inpage: ask design: hi is answered by the model in this page: ${max} a's, cut at its token limit`, `${answerIn(first.value).length} a's in ${ms} ms; ${lastLine(first.value)}`)
+      check(heldThenReleased(first, DESKTOP_PLAN.heldTier), `inpage: the city's automatic tier is lowered to ${DESKTOP_PLAN.heldTier} while the model answers, and the tier from before comes back after`, holdLine(first))
+
+      // ask stop in the middle of an answer: the a's that came before it are kept, none after. The stop is typed while
+      // the answer streams and sent part of the way through the first answer's time (again, sooner or later, when it
+      // landed before the first piece or after the last).
+      let stop = null
+      for (const share of [0.4, 0.15, 0.7]) {
+        await p.enter('clear')
+        await p.enter('ask design: hi')
+        const streaming = await p.waitFor(`!!document.querySelector('[data-streaming]')`, 30_000).then(() => true, () => false)
+        await p.type('ask stop')
+        await new Promise((r) => setTimeout(r, Math.round(ms * share)))
+        await p.tap('Enter', 'Enter', 13)
+        const t = await p.waitFor(`(() => { const t = ${CONSOLE_LOG}?.innerText ?? ''; return /ask: stopped by the operator|-- answered in/.test(t) && t })()`, 60_000).catch(() => null)
+        stop = { share, streaming, part: answerIn(t).length, stopped: /ask: stopped by the operator/.test(t ?? '') }
+        if (stop.stopped && stop.part > 0 && stop.part < max) break
+      }
+      check(!!stop && stop.streaming && stop.stopped && stop.part > 0 && stop.part < max, 'inpage: ask stop in the middle of an answer stops it there (the a\'s before it, none after)', JSON.stringify(stop))
+      // The next answer, as the operator tier returns it (the console prints its text and how it ended, not these).
+      await forgetAll(p)
+      const r = await p.eval(`window.__SIM__.engine.bridge.operator.ask(['Design'], 'hi').result.then(({ speech, ...r }) => r)`)
+      check(r.state === 'Authorized' && r.error === undefined && r.done === 'length' && r.tokens === max && r.text === 'a'.repeat(max) && /^[0-9a-f]{64}$/.test(r.promptHash ?? '') && r.standIn === undefined,
+        `inpage: the next answer is whole: reason length, ${max} tokens, the hash of its prompt, and no stand-in`, JSON.stringify({ ...r, text: `${r.text?.length} chars` }).slice(0, 300))
+
+      // A reload: the file is still kept and chosen, and it answers with no new pick.
+      await reload(p, url)
+      await p.openConsole()
+      await p.command('operator unlock', /unlocked/)
+      const status = await p.command('ask', /installed|ask: /, 60_000)
+      check(/inpage: a model file kept in this page/.test(status ?? '') && new RegExp(`${TINY.replace('.', '\\.')}\\s+\\(chosen\\)`).test(status ?? '') && /storage\s+kept in this page/.test(status ?? ''),
+        'inpage: after a reload the file is still kept in this page, and chosen', (status ?? '').split('\n').filter((l) => /provider|storage|installed|runtime/.test(l)).join(' | ').slice(0, 400))
+      const t2 = await tether(p, 'Design')
+      check(t2.ok, 'inpage: someone who knows Design is tethered again', t2.notes.join('; '))
+      await forgetAll(p)
+      const again = await p.command('ask design: hi', ASK_DONE, 180_000)
+      check(answerIn(again).length === max && p.choosers === 1, 'inpage: and it answers with no new pick', `${p.choosers} picker(s); ${lastLine(again)}`)
+
+      // The crash guard: a page that closed while it was loading leaves its mark; the next page does not load again on
+      // its own (the script stands in, saying why) until the operator's ask file load.
+      await p.eval(`localStorage.setItem(${JSON.stringify(GUARD_KEY)}, JSON.stringify({ model: ${JSON.stringify(TINY)}, gpu: false, at: Date.now() }))`)
+      await reload(p, url)
+      await p.openConsole()
+      await p.command('operator unlock', /unlocked/)
+      const t3 = await tether(p, 'Design')
+      check(t3.ok, 'inpage: someone who knows Design is tethered after the second reload', t3.notes.join('; '))
+      const guarded = await p.command('ask design: hi', ASK_DONE, 120_000)
+      check(/no model answered, so the script spoke instead: .*the page closed while it was loading tiny-a\.gguf last time/.test(guarded ?? '') && !answerIn(guarded),
+        'inpage: after a page that closed mid-load, the script stands in and says why', lastLine(guarded))
+      const cleared = await p.command('ask file load', LOADED, 180_000)
+      const unmarked = await p.eval(`localStorage.getItem(${JSON.stringify(GUARD_KEY)}) === null`)
+      check(/is loaded in this page/.test(cleared ?? '') && unmarked, 'inpage: ask file load clears the mark and loads the model', lastLine(cleared))
+      await forgetAll(p)
+      const after = await p.command('ask design: hi', ASK_DONE, 180_000)
+      check(answerIn(after).length === max, 'inpage: and the model answers again', lastLine(after))
+
+      // A swarm step: the architect (Design), answered by the model in this page, which addresses no server.
+      await forgetAll(p)
+      const swarm = await p.command('swarm run --agents 1 a quieter plaza at night', /-- swarm done|swarm: ended/, 240_000)
+      check(/-- Prime Architect \(Design\) --/.test(swarm ?? '') && answerIn(swarm).length === max && /answered in [\d.]+ s \(cut at the token limit\)/.test(swarm ?? '') && /-- swarm done: 1 step in/.test(swarm ?? ''),
+        'inpage: swarm run --agents 1 completes its step with the model in this page', lastLine(swarm))
+
+      // ask gpu on: SwiftShader's adapter has no shader-f16, so where the answer comes from is recorded, not asserted.
+      const on = await p.command('ask gpu on', /gpu\s+\S/)
+      check(/on: the model runs on the GPU from its next load/.test(on ?? ''), 'inpage: ask gpu on', lastLine(on))
+      const gpuLoad = await p.command('ask file load', LOADED, 180_000)
+      await forgetAll(p)
+      const gpuAnswer = await p.command('ask design: hi', ASK_DONE, 180_000)
+      const where = /\(WebGPU,/.test(gpuLoad ?? '') ? 'the GPU'
+        : /asked for the GPU, the runtime ran it on the processor/.test(gpuLoad ?? '') ? 'the processor (asked for the GPU, the runtime ran it there)'
+          : /\(CPU,/.test(gpuLoad ?? '') ? 'the processor (the GPU load failed, and it was loaded there instead)' : 'nowhere'
+      check(answerIn(gpuAnswer).length === max, 'inpage: with ask gpu on the model still answers', `from ${where}`)
+      const noAdapter = p.console.find((l) => RUNTIME_NO_ADAPTER.test(l))
+      info('inpage: with ask gpu on, the answer came from', `${where}; ${lastLine(gpuLoad)}${noAdapter ? `; the runtime said: ${noAdapter.slice(0, 160)}` : ''}`)
+
+      // The audit, over everything above: a worker started a moment ago is attached a moment after it is created.
+      const allowed = (u) => u === origin || u.startsWith(`${origin}/`) || u.startsWith('blob:') || u.startsWith('data:')
+      await settle(() => watch.audit(allowed).missing.length === 0, 3_000)
+      const a = watch.audit(allowed)
+      console.log(`      inpage audit: ${a.requests} requests (${a.fromWorkers} from workers), ${a.discovered} workers discovered, ${a.attached} attached (${a.nested} nested), ${a.browserOwned} the browser's own, ${a.offOrigin.length} off-origin, ${a.sockets.length} sockets, ${a.security.length} security messages, ${a.errors} commands a worker did not take`)
+      check(a.offOrigin.length === 0 && a.requests > 0 && a.fromWorkers > 0, `inpage: every request from the page and from every worker it started stayed in blob:, data: or ${origin}`,
+        `${a.requests} requests, ${a.fromWorkers} from workers${a.offOrigin.length ? `; ${a.offOrigin.slice(0, 3).map((x) => `${x.type} ${x.url.slice(0, 80)}`).join(', ')}` : ''}`)
+      check(a.sockets.length === 0, 'inpage: no WebSocket or WebTransport was opened', a.sockets.slice(0, 3).map((x) => `${x.type} ${x.url}`).join(', '))
+      check(a.security.length === 0, 'inpage: no security message (a CSP violation among them) from the page or any worker', a.security.slice(0, 3).map((x) => `${x.type}: ${x.text}`).join(' | ').slice(0, 400))
+      check(a.missing.length === 0 && a.discovered === a.attached && a.nested >= 2, 'inpage: every worker the browser created was attached and watched, the runtime\'s own threads among them',
+        `${a.discovered} discovered, ${a.attached} attached, ${a.nested} started by a worker: ${JSON.stringify(a.workers)}${a.missing.length ? `; missing ${a.missing.map((m) => m.url.slice(0, 60) || `a ${m.type} with no URL yet`).join(', ')}` : ''}`)
+
+      // The policy reaches a worker the page makes: a fetch off this machine is a connect-src violation in the worker
+      // (and a security message), not a name that failed to resolve.
+      const saw = await p.eval(CSP_PROBE)
+      await settle(() => watch.security.some((s) => s.text.includes('example.invalid')), 3_000)
+      const violation = saw.find((g) => g.kind === 'violation')
+      const logged = watch.security.find((s) => s.type === 'worker' && s.text.includes('example.invalid'))
+      const dns = watch.failed.find((f) => f.url.startsWith(CSP_PROBE_URL) && /NAME_NOT_RESOLVED/.test(f.error))
+      check(violation?.directive === 'connect-src' && saw.some((g) => g.kind === 'failed') && !!logged && !dns,
+        'inpage: a worker the page makes from a blob is refused a fetch off this machine by the page\'s policy (a connect-src violation, not a failed name lookup)',
+        JSON.stringify({ saw, logged: logged?.text, failed: watch.failed.filter((f) => f.url.startsWith(CSP_PROBE_URL)) }).slice(0, 500))
+      await p.shot('inpage')
+      p.health('inpage')
+    } finally {
+      p.saveTranscript('inpage')
+      await p.b.close()
     }
   },
 
@@ -1185,7 +1663,10 @@ async function main() {
       try { await run(chrome, origin, port) } catch (e) { check(false, `${name}: ran to the end`, e instanceof Error ? e.message.slice(0, 400) : String(e)) }
       console.log(`      ${name}: ${((Date.now() - t0) / 1000).toFixed(0)} s`)
     }
-  } finally { server.close() }
+  } finally {
+    server.close()
+    if (tinyDir) rmSync(tinyDir, { recursive: true, force: true })
+  }
   console.log(failed ? `${failed} check(s) failed` : 'every check passed')
   process.exit(failed ? 1 : 0)
 }

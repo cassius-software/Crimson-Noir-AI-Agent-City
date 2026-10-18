@@ -62,7 +62,7 @@ import { KEYBOARD_SEAT, type Seat } from '../04_Connect_Hardware/seats.ts'
 import { FrameClock, type GlyphFamily, type KernelStats, type NetReport, type NetState, type SeatView, type SipocSnapshot, type Toast } from '../05_Observe_Environment/telemetry.ts'
 import { MemorySink, Recorder, fileSink, markdownFor, type RecorderSink, type RecorderSource } from '../05_Observe_Environment/recorder.ts'
 import type { AgentTelemetry } from '../05_Observe_Environment/agv.ts'
-import { Governor, defaultAgents, defaultCars, liteJoinHint, profileDevice, readDeviceHints, tierRange, type QualityKnobs } from '../05_Observe_Environment/governor.ts'
+import { Governor, defaultAgents, defaultCars, liteJoinHint, profileDevice, readDeviceHints, tierRange, type DeviceProfile, type QualityKnobs } from '../05_Observe_Environment/governor.ts'
 import { CAR_TUNE_RANGE, chassisBox, clampTuning, kindOf, type CarTuning } from './car.ts'
 import { FleetView } from './fleetView.ts'
 import { RigView } from './rigView.ts'
@@ -591,9 +591,14 @@ export class Engine {
   halted = false
   /** The host's lock-screen hook, called once with the panic reason. */
   onHalt: ((reason: string) => void) | null = null
+  /** The device as Engine.create profiled it (governor.ts profileDevice, with ?lite applied): the model in this page plans by it. */
+  readonly profile: DeviceProfile
+  /** Whether the city's GPU device has shader-f16 (gpuDevice.ts asks for it wherever the adapter offers it): the model in
+   *  this page runs on the GPU by default only then (inPagePlan.ts). */
+  readonly gpuF16: boolean
 
   private constructor(p: {
-    canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; rigView: RigView
+    canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; rigView: RigView; profile: DeviceProfile
     post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; crowdFrameSeconds: UniformNode<'float', number>; ghost: GhostView
     options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]
     crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; netView: NetView
@@ -605,6 +610,8 @@ export class Engine {
     this.landmarkAt = p.landmark
     this.canvas = p.canvas
     this.gpu = p.gpu
+    this.profile = p.profile
+    this.gpuF16 = p.gpu.device.features.has('shader-f16')
     this.world = p.world
     this.crowd = p.crowd
     this.sim = p.sim
@@ -841,7 +848,7 @@ export class Engine {
       if (sim.fault !== null) throw new Error(sim.fault)
       stillThere()
       const engine = new Engine({
-        canvas, gpu, world, crowd, sim, view, rigView, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, ghost, options,
+        canvas, gpu, world, crowd, sim, view, rigView, profile, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, ghost, options,
         quality: { governor, targets, applied, mask, live }, places, landmark, streets,
         rooms: hollow ? hollow.rooms : workplaces(options.seed),
         // The code dissolve's crowd amounts: allocated by the draws above like the frame's buffers, written the same way.
@@ -1552,6 +1559,17 @@ export class Engine {
   private rumble(level: number): void {
     this.haptics.rumble = level
     this.input.hal.output(this.haptics)
+  }
+
+  /**
+   * Holds the automatic quality tier at or below `cap` while the model in this page works, or lets it go (null): the
+   * governor's hold (governor.ts hold(), on the clock the frame loop feeds it), then the tier applied at once, as the
+   * console's quality does after setTier. A manual tier is left as it is. Nothing once the engine is disposed.
+   */
+  holdQuality(cap: number | null): void {
+    if (this.disposed) return
+    this.quality.governor.hold(cap, performance.now())
+    this.applyTier()
   }
 
   /** Applies the governor's current tier (minus URL caps) wherever it differs from what is live. */

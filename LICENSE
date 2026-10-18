@@ -69,10 +69,17 @@ this file.
 
 4. Third-party software
 
-The build bundles third-party open-source software (React, three.js, Rapier, Tailwind CSS). Each
-package remains under its own license, not under any licence above. NOTICE.md lists them; their full
-license texts are embedded at the end of dist/index.html by the build. The bootable image links font8x8 (MIT) and
-log (MIT OR Apache-2.0); crimson_noir_os/NOTICE.txt carries their notices.
+The build bundles third-party open-source software (React, three.js, Rapier, Tailwind CSS, and wllama in a page
+that carries the in-page model runtime). Each package remains under its own license, not under any licence above.
+NOTICE.md lists them; their full license texts are embedded at the end of dist/index.html by the build. The bootable
+image links font8x8 (MIT) and log (MIT OR Apache-2.0); crimson_noir_os/NOTICE.txt carries their notices.
+
+The third_party/ directory holds third-party code pinned exactly as its authors publish it, and none of it is under
+any licence above: third_party/wllama/ holds the WebAssembly module of wllama (MIT), its build of llama.cpp (MIT), which
+a page that carries the in-page model runtime carries as that runtime. The NOTICE file beside the module lists what is
+compiled into it (llama.cpp and ggml, nlohmann/json, stb_image, miniaudio, the SHA-256 code llama.cpp vendors, Dawn,
+the Emscripten runtime, musl, LLVM libc++) with each one's licence in full, and the build embeds it in dist/index.html
+whenever the page carries the module.
 
 
 5. Prior releases of Crimson Noir OS

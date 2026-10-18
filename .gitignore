@@ -35,6 +35,11 @@ crimson_noir_os/target
 # Python bytecode of the verification and self-heal scripts
 __pycache__/
 
+# Model files (GGUF): the in-page model keeps the operator's in the browser's own storage, and the tiny test model
+# (tools/browser/tinyGguf.mjs) is written to a run's temporary folder. Never committed (src/09_Cognition/modelStore.test.ts
+# checks that no tracked file starts with the GGUF magic).
+*.gguf
+
 # A developer's local AI tooling (assistant settings, permission lists, chat histories, MCP configs): never committed,
 # never in an image or the sandbox (tools/selfheal/sandbox.mjs AI_TOOLING; src/zeroTrust.test.ts checks the lists)
 .claude/

@@ -87,7 +87,11 @@ export function isComplex(req: AnswerRequest): boolean {
   return (req.context?.some((c) => c.recent.length > 0)) === true
 }
 
-/** The provider names the cognition router gives a model server on this machine (router.ts Provider). */
+/**
+ * The provider names the cognition router gives a model server on this machine (router.ts Provider). The model run in
+ * this page is not one of them: its prompts are never moved (a phone, where it matters most, has no gateway to move
+ * them to).
+ */
 export const LOCAL_PROVIDERS: readonly string[] = Object.freeze(['ollama', 'llamacpp', 'openai'])
 
 /** A Mind that may carry the router's cloud provider beside it (router.ts MindRouter.cloud). */
@@ -127,6 +131,7 @@ export function withCloudFallback(mind: CloudCapable, rate: FrameRate, now: () =
     const r = report()
     if (cloud === null) return 'none: this mind has no cloud provider'
     if (provider() === 'scripted') return 'off: the scripted provider asks no model, so there is nothing to move'
+    if (provider() === 'inpage') return 'off: the model in this page is never moved to the gateway'
     if (provider() === undefined) return 'off: no model has been found on this machine yet'
     if (!LOCAL_PROVIDERS.includes(provider() ?? '')) return `off: the ${provider() ?? 'chosen'} provider is not on this machine's compute`
     const fps = r.fps === null ? 'frame rate not yet known' : `${r.fps.toFixed(0)} fps`

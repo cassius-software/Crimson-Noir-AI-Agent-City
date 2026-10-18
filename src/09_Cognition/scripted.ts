@@ -3,13 +3,14 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is how an agent still answers when no model backend is there: the Claude gateway on
- * this machine is not running, a local model server is down, or the page was opened with no provider set up. Instead
- * of an error in the console the bound people answer in a few scripted sentences built from exactly what a model
- * would have been told (operator.ts AnswerRequest: their skills, where they stand and what just happened, 08_Swarm
- * shortTerm.ts), so a brand-new visitor who talks to someone in the city gets a person answering from that place and
- * moment rather than a message about servers. It wraps a Mind (operator.ts) and changes nothing else about it: when
- * the mind answers, its answer is the answer; only an offline or refused backend (localCompute.ts CognitionError
- * 'offline' or 'refused') falls back to the script. The script is deterministic (the same request gives the same
+ * this machine is not running, a local model server is down, the model file kept in this page cannot run in this
+ * browser, or the page was opened with no provider set up. Instead of an error in the console the bound people
+ * answer in a few scripted sentences built from exactly what a model would have been told (operator.ts
+ * AnswerRequest: their skills, where they stand and what just happened, 08_Swarm shortTerm.ts), so a brand-new
+ * visitor who talks to someone in the city gets a person answering from that place and moment rather than a message
+ * about servers. It wraps a Mind (operator.ts) and changes nothing else about it: when the mind answers, its answer
+ * is the answer; only an offline or refused backend (localCompute.ts CognitionError 'offline' or 'refused') falls
+ * back to the script. The script is deterministic (the same request gives the same
  * words), carries no model and makes no request, and its words are screened on the way out like any answer (the
  * operator tier's 14A screen in gatedAsk sees every piece). A script is never mistaken for a model: the answer's
  * reason says 'scripted' and its standIn says why no model answered, so the console says so under the answer and

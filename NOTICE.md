@@ -88,6 +88,25 @@ ORC License. The build embeds the full license text of every bundled package at 
 | three (three.js) | MIT | three.js authors |
 | @dimforge/rapier3d-simd-compat (Rapier) | Apache-2.0 | Dimforge and the Rapier contributors |
 | tailwindcss (generated CSS) | MIT | Tailwind Labs, Inc. |
+| @wllama/wllama (wllama, the in-page model runtime) | MIT | Xuan Son Nguyen |
+
+**The in-page model runtime.** A page that carries the in-page model runtime carries it as `wllama.wasm`, the
+WebAssembly module @wllama/wllama 3.8.1 publishes, unchanged (pinned in `third_party/wllama/3.8.1/`, with its sha256).
+It is wllama's build of llama.cpp, build b11364-46ca246, and has these compiled into it, each under its own license:
+
+- llama.cpp and ggml, with the parts of its server, mtmd and common code that wllama links (MIT, the ggml authors);
+- nlohmann/json, which llama.cpp vendors (MIT, Niels Lohmann);
+- stb_image, which llama.cpp vendors to decode images (MIT or public domain, Sean Barrett);
+- miniaudio's audio decoders, which llama.cpp vendors (public domain or MIT No Attribution, David Reid);
+- the SHA-256 code llama.cpp vendors (public domain, Igor Pavlov; its rotate-bits.h is MIT, William Casarin);
+- Dawn's emdawnwebgpu, the WebGPU bindings (BSD-3-Clause, the Dawn & Tint Authors);
+- the Emscripten runtime (MIT or the University of Illinois/NCSA license, the Emscripten authors);
+- musl libc, as Emscripten bundles it (MIT, Rich Felker, et al.);
+- LLVM libc++ and libc++abi, as Emscripten bundles them (Apache-2.0 WITH LLVM-exception, the LLVM project).
+
+wllama's JavaScript also carries feature tests from wasm-feature-detect (Apache-2.0, Google Inc.). A page that carries
+the runtime also carries the full text of each of these licenses at the end of `dist/index.html`, from
+`third_party/wllama/3.8.1/NOTICE`.
 
 ## Map data (the surveyed region)
 
@@ -115,11 +134,13 @@ named only to identify what the product runs on; the programming languages are n
 pedestrians have, so the operator can ask for them (`03_Spawn_Agents/skills.ts`); Ollama is named only to identify
 the local model server API the operator's `ask` speaks, OpenAI only to identify the chat-completions wire format
 it can speak instead (`ask api chat`), llama.cpp only to identify the local server that serves packaged models in
-that format (`ask provider llamacpp`), Claude and Anthropic only to identify the network model API the operator can
-choose with a key of their own (`ask provider claude`, `09_Cognition/claudeApi.ts`), and Qwen3-VL only as the model
-`ask` asks the local server for unless the operator chooses another (`09_Cognition/localCompute.ts`). No model and
-no model server ships with the product: the operator's server holds the model under the model's own licence, and the
-network provider answers only with the operator's own key, which stays in their browser. No speech engine, speech
+that format (`ask provider llamacpp`) and the engine compiled into the in-page model runtime (`ask provider inpage`),
+Claude and Anthropic only to identify the network model API the operator can choose with a key of their own
+(`ask provider claude`, `09_Cognition/claudeApi.ts`), and Qwen3-VL only as the model `ask` asks the local server for
+unless the operator chooses another (`09_Cognition/localCompute.ts`). No model and no model server ships with the product:
+the operator's server, or the operator's own model file kept in their browser for the in-page runtime, holds the
+model under the model's own licence, and the network provider answers only with the operator's own key, which stays
+in their browser. No speech engine, speech
 model or voice ships either: the operator's `say` talks to a speech server the operator runs on the same machine
 (`09_Cognition/localSpeech.ts`). This product is not affiliated with or endorsed by any of them.
 

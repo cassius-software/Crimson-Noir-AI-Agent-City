@@ -140,6 +140,8 @@ export interface QualityState {
   targetMs: number
   /** The device profile is lite (governor.ts DeviceProfile.lite: an entry-level phone GPU, or ?lite=1); absent otherwise. */
   lite?: boolean
+  /** The highest tier the governor may take while the in-page model works (governor.ts hold()); absent when not held. */
+  held?: number
 }
 
 /** The cinema camera as the HUD and the console show it. */

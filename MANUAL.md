@@ -39,13 +39,14 @@ sudo deploy/deploy-live.sh HOST EMAIL  # the host in production on a server, beh
 Open `dist/index.html` directly: no server, and it works offline. The page sends nothing off this machine except
 through a gateway to the Claude API that the operator runs on it with their own key, and to a session the operator
 joins with `net join`. The gateway, when one is running, is asked when the operator chooses it (`ask provider
-claude`), when the default provider `auto` finds no model on this machine answering (first for its list of models,
-which it asks the Claude API for; also when a model stops answering partway through a visit), and by the cloud
-fallback while the frame rate is low. While `auto` answers with a model on this machine, it asks the gateway
-nothing; once it has found the gateway it keeps it for the visit, so a model started afterwards is used only when the
-gateway stops answering or `ask` alone looks again. The local model providers and `say`
-talk only to a model server and a speech server on this same machine, and only when asked (see The model providers,
-Speech and Networking). It needs WebGPU:
+claude`), when the default provider `auto` finds no model on this machine answering and no model file kept in the page
+(first for its list of models, which it asks the Claude API for; also when a model stops answering partway through a
+visit), and by the cloud fallback while the frame rate is low. While `auto` answers with a model on this machine, it
+asks the gateway nothing; once it has found the gateway it keeps it for the visit, so a model started afterwards is
+used only when the gateway stops answering or `ask` alone looks again. The local model providers and `say` talk only
+to a model server and a speech server on this same machine, and only when asked (see The model providers, Speech and
+Networking). A model file you keep in the page itself (`ask provider inpage`) runs inside the page and talks to
+nothing at all, on a page that is served rather than opened from a file (see A model in this page). It needs WebGPU:
 
 - **Desktop and Android:** a current Chrome, Edge or Brave.
 - **iPhone, iPad and Mac:** Safari 26.
@@ -69,6 +70,7 @@ at all (see Track B under Ring-0 console).
 | Rain mode | M | | Menu: Rain mode |
 | Hide HUD | H | | Menu: Hide HUD |
 | Ring-0 console | `~` (Backquote) | | Menu: Console (Close shuts it) |
+| A model file for the model in this page | `ask file` in the console, or drop the file on the city | | Menu: Model file |
 
 A ping pressed again within a second asks the next kind: go, look, gather, wait (see Pings and the rally under
 Recruitment). With `?players=2`…`4` the keyboard, the mouse and touch stay player 1's, and each further gamepad
@@ -189,7 +191,7 @@ The map is becoming a real metropolitan region with fictional names: its streets
 are surveyed, and every name is invented. Real fictional cities work the same way. The first piece is a
 pilot region of 12.1 × 7.8 km: the downtown waterfront, its harbour and islands, 49,620 buildings, 11,141 street runs.
 Every build carries it: `dist/index.html` holds the compiled pack (`world/pilot.region.json.gz`, 2.5 MB, as base64,
-about 3.4 MB of the file's 10 MB), so the one file plays the region from a disk or a stick with no network and nothing
+about 3.4 MB of the file's 14 MB), so the one file plays the region from a disk or a stick with no network and nothing
 beside it. The page inflates the pack itself (the browser's own gzip stream); nothing is fetched.
 
 - `?region=on` walks the surveyed region in any build. The default build opens on the procedural city, where the
@@ -827,13 +829,14 @@ unlocked:
   throws instead. `sleep` rejects the moment the tether breaks, and `signal` (an `AbortSignal`, also in
   scope) fires, so a script can stop cleanly. A script that ignores both cannot reach the city again. A
   script that times out loses its lease too, so an abandoned script cannot keep calling `sim` afterwards.
-- `ask <skill>[,<skill>...]: <prompt>` asks the chosen model provider, answering as the tethered people who have
-  the skill; the answer streams in live (see The model providers below). `ask` alone reports the provider, the
-  server, the model, the masked key and the effort, and what the server has; `ask provider
-  auto|claude|ollama|llamacpp|openai|scripted`, `ask connect <provider> [<url>] [<key>]` (the provider, its server and the
-  Claude provider's key in one line, checked before anything changes), `ask key <key>|none`, `ask effort <level>`,
-  `ask model <name>` and `ask server <url>` set it up; `ask stop` stops an answer. An inadmissible prompt gets
-  `-- no reply --` and reaches no model.
+- `ask <skill>[,<skill>...]: <prompt>` asks the chosen model provider, answering as the tethered people who have the
+  skill; the answer streams in live (see The model providers below). `ask` alone reports the provider, the server, the
+  model, the masked key and the effort, and what the server has; `ask provider
+  auto|claude|ollama|llamacpp|openai|inpage|scripted`, `ask connect <provider> [<url>] [<key>]` (the provider, its
+  server and the Claude provider's key in one line, checked before anything changes), `ask key <key>|none`, `ask
+  effort <level>`, `ask model <name>` and `ask server <url>` set it up; `ask stop` stops an answer. `ask file [forget
+  <name>|load|unload|log]` and `ask gpu auto|on|off` keep and run a model file in this page (A model in this page);
+  they send no prompt, so they need no unlock. An inadmissible prompt gets `-- no reply --` and reaches no model.
 - `swarm run [--agents <1-5>] <goal>` splits a goal over up to five roles (the Prime Architect, who needs someone
   tethered with Design; the Systems Coder, TypeScript; the Sim-to-Real Tester, Testing; the Mechanistic Auditor,
   Security; the Legal/IP Verifier, Writing) and asks them one after another, each one prompt through the same gate
@@ -1046,17 +1049,21 @@ operator tier knows only its shape (`SkillGate` in `operator.ts`) and never impo
 ### The model providers (`ask`)
 
 `ask rust: how does car.grip work?` asks a model, as the person tethered to you who knows Rust.
-`09_Cognition/router.ts` is the router: one `Mind` behind which five providers answer, swapped at the console
+`09_Cognition/router.ts` is the router: one `Mind` behind which six providers answer, swapped at the console
 without a restart (`ask provider <name>`, or `ask connect <provider> [<url>] [<key>]` in one line), or the first of
 them that answers (`auto`):
 
 - **`auto`**, the provider unless you choose another: at an ask, the first model server answering on this machine,
   in this order: Ollama (`http://localhost:11434`), a llama.cpp server (`http://localhost:8080`), an
-  OpenAI-compatible server such as LM Studio (`http://localhost:1234`), then the Claude gateway
-  (`http://localhost:8089`), each at the address its own provider is set to. The three on this machine are asked for
-  their models at once, each for at most 2 s, and the first in that order with a model that writes text answers
-  (embedding, reranking and speech models are passed over, by name); only when none has one is the gateway asked,
-  since it asks the Claude API. A server that is running but whose list fails is named as such. It is kept for the visit, and looked for again when it stops
+  OpenAI-compatible server such as LM Studio (`http://localhost:1234`), then a model file kept in this page (`inpage`,
+  below), then the Claude gateway (`http://localhost:8089`), each at the address its own provider is set to. The
+  three on this machine are asked for their models at once, each for at most 2 s, and the first in that order with a
+  model that writes text answers (embedding, reranking and speech models are passed over, by name); only when none
+  has one is the page's own model considered, and it is asked nothing: it is found when a file is kept and chosen
+  (picking a file chooses it) and this browser can run it, and it is not loaded until the ask itself. Files kept with
+  none chosen are passed over with a note that says how to choose one, and with nothing kept the page's model goes
+  unmentioned. Only when that finds nothing is the gateway asked, since it asks the Claude API. A server that is
+  running but whose list fails is named as such. It is kept for the visit, and looked for again when it stops
   answering before any of an answer has arrived (so the next ask finds whatever answers now) and at `ask` alone (so a
   server started since, earlier in that order, takes over). An Ollama whose model you never chose (the default, or
   one auto chose earlier) but which lacks it is given the default if it has it now, else the first text model it
@@ -1087,15 +1094,20 @@ them that answers (`auto`):
   rather than a second one loaded beside it. A model is judged by its own name, not the
   folders of a file path a llama.cpp server lists. OpenAI's own service is not reachable: the air gap admits loopback addresses
   only, so a hosted model needs a gateway on this machine, like the Claude provider's.
-- **`scripted`**: no backend at all. Every answer is the deterministic script (`09_Cognition/scripted.ts`) built
-  from what a model would have been told, nothing is addressed and nothing is installed; `ask` says so. The same
-  script stands in for the other providers when their server is down or refuses this page, and then says so: under
-  its words the console prints `ask: no model answered, so the script spoke instead:` and the reason; neither the
-  swarm's memory nor the person's short-term memory keeps those words, and `say auto` does not say them aloud, so
-  canned lines never come back in a later prompt as if someone had said them.
+- **`inpage`**: a model file you keep in this page, run by the page itself on this device (`09_Cognition/inPage.ts`,
+  llama.cpp compiled to WebAssembly). No server, no address and no request: see A model in this page, below. It takes
+  no server and no key (`ask connect inpage` alone chooses it), and picking a file switches to it.
+- **`scripted`**: no backend at all. Every answer is the deterministic script (`09_Cognition/scripted.ts`) built from
+  what a model would have been told, nothing is addressed and nothing is installed; `ask` says so. The same script
+  stands in for the other providers when their server is down or refuses this page (and for the model in this page
+  when it cannot run here), and then says so: under its words the console prints `ask: no model answered, so the
+  script spoke instead:` and the reason; neither the swarm's memory nor the person's short-term memory keeps those
+  words, and `say auto` does not say them aloud, so canned lines never come back in a later prompt as if someone had
+  said them.
 
-No model and no model server ships with the product: you run your own, or bring your own key, and the city works
-exactly the same without either.
+No model and no model server ships with the product: you run your own, bring your own key, or keep your own model
+file in the page (the page carries the runtime for one, never a model), and the city works exactly the same without
+any of them.
 
 - **The 14A conduct core** (`02_Define_The_Rules/conduct.ts`). Every prompt opens with the same first line,
   whichever provider answers: "You are an entity in a simulation. Maintain strict 14A business-casual behavior. If
@@ -1111,16 +1123,17 @@ exactly the same without either.
   no reply. The screen is applied once, in the operator tier, for every provider; the router has no lexicon.
   Ordinary words that only sometimes mean harm ("fight for the deal") are left to the model under the core, the
   second layer.
-- **Setting it up.** `ask` alone shows the provider, the server, the model, and what the server has; for the
-  Claude provider also the key, masked (its first six and last four characters, never the whole) and the effort.
-  `ask provider auto|claude|ollama|llamacpp|openai|scripted` swaps, and `ask connect <provider> [<url>] [<key>]` swaps and
-  points it in one line (a bad address leaves everything as it was); `ask model <name>` and `ask server <url>` set the
-  chosen provider's own; `ask key <key>` sets the Claude provider's key and `ask key none` clears it;
+- **Setting it up.** `ask` alone shows the provider, the server, the model, and what the server has; for the Claude
+  provider also the key, masked (its first six and last four characters, never the whole) and the effort. `ask
+  provider auto|claude|ollama|llamacpp|openai|inpage|scripted` swaps, and `ask connect <provider> [<url>] [<key>]`
+  swaps and points it in one line (a bad address leaves everything as it was); `ask model <name>` and `ask server
+  <url>` set the chosen provider's own; `ask key <key>` sets the Claude provider's key and `ask key none` clears it;
   `ask effort low|medium|high|xhigh|max|none` how hard the model works on an answer (the API's own default when
   unset); `ask think on|off` and `ask api generate|chat` apply to the local providers as before. Each provider keeps
   its own server and model between visits, in one store in this browser's local storage
-  (`civic-simulation:cognition:v2`; the store's own version is 3 since the `openai` provider joined it, read back
-  from the earlier shape without loss).
+  (`civic-simulation:cognition:v2`; the store's own version is 3 since the `openai` provider joined it, read back from
+  the earlier shape without loss; the in-page provider's file chosen, `think` and `gpu` are one more slice of it, and
+  its model files are kept elsewhere, below).
 - **The key: keep it in the gateway.** The recommended setup holds no key in the page at all: the gateway on this
   machine adds the key to every request it forwards, `ask key none` leaves the page with none, and with none the
   page sends no `x-api-key` header. A key typed to `ask key <key>` is kept in the same local-storage record, in
@@ -1192,15 +1205,16 @@ exactly the same without either.
   (the Ollama format is the one that bounds the context). A model's own maximum can be far larger, and a server
   that sizes its memory to it can fail before the first word (seen here: a 4B model asking for 20.5 GB). Running
   a model beside the city costs frame rate, and the quality governor drops the tier to compensate.
-- **What it cannot do.** It sends nothing unless you type `ask`, and nothing polls in the background. Under `auto`,
-  an ask with nothing found yet, an ask whose server stops answering before any of its answer arrived, and `ask`
-  alone first ask the three model servers above for their lists of models, all on this machine, and the Claude
-  gateway (which asks the Claude API) only when none of them has a model that writes text. No provider
-  can leave the machine: every one of them asks the one gate (`02_Define_The_Rules/airgap.ts loopbackServer`)
-  before anything is sent, and the fetch they are handed is the page's own under the gate's wrapper. The engine
-  holds no network code: App builds the router and hands it to the operator tier, which knows only its shape
-  (`Mind` in `operator.ts`). A model's answer is text: nothing it writes is run or touches the city.
-  `10_Network/airgap.test.ts` pins that no source in the product names an address off this machine.
+- **What it cannot do.** It sends nothing unless you type `ask`, and nothing polls in the background. Under `auto`, an
+  ask with nothing found yet, an ask whose server stops answering before any of its answer arrived, and `ask` alone
+  first ask the three model servers above for their lists of models, all on this machine, then read the list of model
+  files kept in this page (no request), and ask the Claude gateway (which asks the Claude API) only when none of them
+  has a model that writes text. No provider can leave the machine: every one that addresses a server asks the one gate
+  (`02_Define_The_Rules/airgap.ts loopbackServer`) before anything is sent, and the fetch they are handed is the
+  page's own under the gate's wrapper; the in-page provider and the script address nothing. The engine holds no
+  network code: App builds the router and hands it to the operator tier, which knows only its shape (`Mind` in
+  `operator.ts`). A model's answer is text: nothing it writes is run or touches the city. `10_Network/airgap.test.ts`
+  pins that no source in the product names an address off this machine.
 
 #### The prompt-prefix page table
 
@@ -1212,33 +1226,178 @@ a prompt's parts is explicit and measurable. `ask` prints the table's counts on 
 copies). It makes the prefix ordering visible on this page; the model server's own key-value cache is still the
 server's.
 
+### A model in this page (`ask provider inpage`)
+
+The `inpage` provider answers with a model file you choose: a GGUF file (the format llama.cpp reads), kept in the
+browser's own storage for this page on this device, and run inside the page by llama.cpp compiled to WebAssembly
+(wllama 3.8.1, built from llama.cpp b11364, pinned in `third_party/wllama/3.8.1/` and carried inside the page file).
+It needs no model server, no address and no network, and nothing it does leaves the page. It is how a phone, which
+runs no model server, gets a model of its own. The page carries the runtime, never a model: the file is yours, under
+its own licence. The parts: `09_Cognition/inPage.ts` (the provider), `inPagePlan.ts` (the table below),
+`inPageCaps.ts` (what the browser offers), `gguf.ts` (the header check), `modelStore.ts` (keeping the file) and
+`wllamaRuntime.ts`, the only file that touches wllama.
+
+- **Choosing the file.** Three ways, the same from then on:
+  - on a phone or tablet, **Menu › Model file** opens the browser's file picker;
+  - in the console, `ask file` opens it (from the Enter key itself, which is when a browser allows a picker);
+  - on a computer, drop the `.gguf` file, or every part of a split one, on the city.
+
+  The picker has no file-type filter, since a phone greys out a `.gguf` it has no type for: choose the model file
+  itself. Before anything is copied every file's header is read, and anything that is not one whole model that writes
+  text is refused with its reason: not a GGUF, an embedding or reranking model, a vision projector (an `mmproj` file),
+  one part of a split model without the others. The file is then copied into the page's storage (the HUD's activity
+  line reads "Keeping the model file in this page 42%"), chosen, and the provider becomes `inpage`. A computer then
+  loads it at once, so the first ask does not wait ("Loading the model in this page"); a phone loads it at the first
+  ask. From the Menu or a drop, what happened is a toast titled "Model file"; from the console, a `file` row. Where
+  this page cannot run the model (Which browsers, below), nothing is kept: the Menu has no Model file item, and `ask
+  file` or a drop says why without opening the picker or copying anything.
+- **Which browsers.** The runtime needs four things of the browser's WebAssembly: JSPI (it pauses while it reads the
+  file), a shared memory with 64-bit addresses, SIMD and exception handling. Today that means Chrome or Edge 137 or
+  later, on a computer or on Android, the Windows app (WebView2 is Edge's engine) and the NixOS launcher's Chromium.
+  Firefox and Safari, the iPhone and iPad included, do not run it yet. The page asks the browser for the four pieces,
+  not for its name: where one is missing nothing else changes, `ask`'s runtime row names it, and the script answers
+  in the model's place. The page must also be served: opened from a file (`dist/index.html` from disk) its origin is
+  opaque, and Chromium refuses the worker the runtime starts (a module worker made from a `blob:` URL), so there the
+  runtime row says so, no file is kept and the script answers; the preview, the launcher, the Windows app and the web
+  copy all run it. So far only a headless Chromium on Linux has run it (Browser support and what is verified, below).
+- **How large a model.** The page decides from what it knows of the device (`inPagePlan.ts`) and the total size of
+  the model's files. A GB here is 1,024³ bytes, as the console counts. These are starting values, not yet measured on
+  the devices they are for.
+
+  | Device | Runs on | Threads (on a cross-origin isolated page; else one) | Context | Longest answer | Loads with a warning above | Refused above | The city while it works |
+  |---|---|---|---|---|---|---|---|
+  | Computer, discrete GPU | the GPU when the city's GPU device has shader-f16, else the processor | half the cores, at most 8 | 8,192 tokens | 2,048 tokens | 3 GB on the processor, 4 GB on the GPU | 3.75 GB on the processor; no limit on the GPU | its tier kept |
+  | Computer, integrated or unknown GPU | the same | the same | 8,192 tokens | 2,048 tokens | the same | the same | Low at most |
+  | Phone | the processor (`ask gpu on` for the GPU) | the cores less two, from 1 to 4 | 4,096 tokens | 512 tokens | 1 GB | 2 GB, or 40 % of the memory the browser reports (4 GB when it does not say), whichever is less | Minimal at most |
+  | Lite profile (an entry-level phone GPU, or `?lite=1`) | the processor | 2 | 4,096 tokens | 512 tokens | 0.6 GB | 1.5 GB | Lite |
+
+  The processor's limit is WebAssembly's: a page has 4 GB of memory in all, and the weights are read into it, so the
+  model, its context and its working memory must fit together. On the GPU the weights go to the GPU's own memory.
+  Phones and the lite profile also read the prompt in smaller batches and skip the warm-up. A warning shows on the
+  runtime row and in the line that says the model loaded. The context is a ceiling: a model trained on less (its
+  header says how much) loads with what it was trained on, which the runtime row and the load line then show.
+- **Which file.** An instruct (chat) model: llama.cpp writes the prompt with the chat template the file carries.
+  Q4_K_M is the place to start, and Q5_K_M or Q6_K are better where they fit. Avoid the IQ quantizations (IQ1 to IQ4
+  in the file's name): wllama's own advice is that they run slowly and lose quality in this build. As a
+  rough guide, a Q4_K_M file takes about 0.6 GB for each billion parameters: a 0.5B or 1.5B model (about 0.4 GB and
+  1 GB) for a phone, a model of 3B or 4B for a computer's processor.
+- **Split files.** A model can come in parts named `<name>-00001-of-0000N.gguf` to `<name>-0000N-of-0000N.gguf`.
+  Choose or drop every part at once: the page orders them by their names, checks each part's header against the
+  others, and keeps and lists the model under the first part's name without the part number. llama.cpp's own tool
+  makes them, the same in cmd, PowerShell or any other shell: `llama-gguf-split --split-max-size 512M model.gguf
+  model`. One file of more than 2 GB has not been tried here (wllama's own advice is to split it); in parts it loads
+  the same way.
+- **Where the file is kept.** In the browser's own storage for this page (its origin private file system, under
+  `agent-city-models/`), on this device only. Keeping is a copy: the file you picked stays where it was, so the device
+  holds the model twice until you delete the original. Before the copy the browser is asked how much room is left, and
+  a model that would leave less than 64 MB free is refused with both sizes. The copy counts only once every byte is
+  written, so one cut short (a closed tab, a full disk) is swept at the next look, and the page asks the browser to
+  keep its storage, which it may refuse. Each way of opening the city is an origin of its own with storage of its own:
+  the preview, the NixOS launcher, the Windows app and the web copy each keep their own files. Where the browser keeps
+  no files for the page (a private window, for one), the file is held for this visit only, and the storage row says so
+  and why. A file the browser has cleared since is reported as gone: choose it again.
+- **At the console.** `ask file` and `ask gpu` work without `operator unlock`, since neither sends a prompt:
+  - `ask file`: choose and keep a file (above);
+  - `ask file load`: load the chosen file now, and say where it runs and how long it took (it also clears the crash
+    guard and a failed load, below);
+  - `ask file unload`: free it now (the next ask loads it again);
+  - `ask file forget <name>`: drop that model from the page's storage (a bare `forget` drops nothing);
+  - `ask file log`: the runtime's newest 40 log lines (it keeps 200);
+  - `ask gpu auto|on|off`: where it runs from its next load (below).
+
+  Unlocked, `ask` alone shows the provider, a server row reading `none: the model runs in this page`, the file
+  chosen, `think`, a `runtime` row (whether this browser runs it and on how many threads, then where it runs or would,
+  its context and how long the load took, and any warning) and a `storage` row (`kept in this page`, `copying 42%`, or
+  `this visit only:` and why), then the files kept. `ask model <name>` chooses among them, and `ask think on|off` turns
+  the model's thinking on or off for each answer (off unless you turn it on; a model whose template has no switch for
+  it ignores it). `ask connect inpage` takes no address and no key.
+- **Where it runs (`ask gpu`).** `auto`, the start, runs it on the GPU on a computer whose GPU device has
+  shader-f16, and on the processor everywhere else, phones included, so the model never takes the GPU a phone draws
+  the city with. `on` asks for the GPU on any device and `off` keeps it on the processor; the choice holds from the
+  next load and is kept between visits, and the console says so (`on: the model runs on the GPU from its next load
+  (one the GPU cannot load runs on the processor)`). A GPU load that fails is tried once more on the processor, when
+  the model fits there, and the GPU is left alone for the rest of the visit. A runtime asked for the GPU that runs the
+  model on the processor (it does that without a word on a GPU without shader-f16) shows `asked for the GPU, the
+  runtime ran it on the processor` on the runtime row. If the city's graphics device resets (the graphics-reset card)
+  while the model is on the GPU, the model is unloaded and `ask gpu` becomes `off` until you set it back (`ask gpu
+  auto` tries the GPU again).
+- **Threads.** More than one thread needs a cross-origin isolated page: the preview, `npm run dev`, the NixOS
+  launcher, the Windows app, and the installed web copy from its second launch (its service worker adds the headers).
+  Anywhere else it runs on one thread, and the runtime row says so (a page opened from a file runs no model at all:
+  Which browsers, above). When a file is kept on a served page that has its service worker but is not isolated yet
+  (the web copy's first visit), a toast says once: "reload once to let the model use more than one thread".
+- **The city while it works.** While the model loads or answers, the city's automatic quality tier is held down
+  (`governor.ts hold`, the last column above): at most Low on a computer whose GPU is integrated, Minimal on a phone
+  and Lite on a lite profile, where the city and the model share one chip; a computer with a discrete GPU keeps its
+  tier. Under the hold a slow frame is not counted against a tier, and afterwards the tier from before comes back
+  with the usual cooldown. A tier you pinned with `quality` is left as it is. On a slow device, `render off` stops
+  drawing the city while the model works (the physics, the audio and the console keep running), and `render on`
+  brings it back.
+- **When it cannot answer**, one sentence says why:
+  - this browser cannot run it, the page closed while it was loading a model last time, a load failed this visit, or
+    the kept file has gone: the script stands in with the reason, and `auto` moves on;
+  - no file kept: `choose a model first: Menu › Model file, or ask file`;
+  - a model too large for this device (by the size of its files, or because llama.cpp found no room in the page's
+    memory for it and its context, which is said as such with the size it asked for), a file llama.cpp cannot read,
+    or a prompt longer than the model's context: the error, and no second try (a load that failed is not tried again
+    this visit until `ask file load`);
+  - the runtime stopped, or was unloaded mid-answer: the next ask loads it again;
+  - a load that takes more than 10 minutes, a runtime that has not started within 30 s, an answer that sends nothing
+    for 5 minutes or goes quiet for 2 minutes once it has begun: the wait that ran out is named, and the model is let
+    go.
+
+  `ask stop` ends an answer at once, and the model stays loaded. The runtime itself looks for a stop only between two
+  steps, though, and on the processor one step of reading a long prompt can take seconds: a stop it has not honoured
+  within 2 s unloads the model, and the next ask, one already waiting behind the stop included, loads it again.
+- **The crash guard.** A phone short of memory can close the page while a model loads. So the page writes a mark as
+  a load starts (`civic-simulation:inpage:loading:v1`, in local storage) and removes it when the load settles, or
+  when the page unloads during the load (a reload, a closed tab, the city restarting): a mark found later means the
+  page was killed loading, and that model is not loaded again on its own. `ask` says so, the script answers
+  meanwhile, and `ask file load`, or keeping a file again, tries again, on the processor if the load that took the
+  page down was on the GPU. Each mark names a lock the loading page holds (the browser's Web Locks, which it lets go
+  when the page goes, however it goes), so a second tab of the city sees a load running in the first as running,
+  not as a crash, and its `ask file load` leaves that mark alone; where a browser has no Web Locks, every mark found
+  counts as a crash.
+- **Unloading.** A loaded model is unloaded after 10 minutes with no ask, everywhere, and on a phone after a minute
+  with the page in the background, since a hidden tab holding a large heap is the first one the system closes. An
+  answer in flight then ends with that reason, and the next ask loads the model again. `ask file unload` frees it at
+  once.
+- **Privacy.** Nothing about the model leaves the page. The runtime is inside the page file and is checked against its
+  pinned sha256 in the page before it runs; the model is read from the page's own storage; wllama's download paths and
+  its compatibility build, which would come from a CDN, are switched off and never called, which
+  `10_Network/airgap.test.ts` pins. The runtime's workers are made from `blob:` URLs and live under the page's
+  Content-Security-Policy, which admits no host but the page's own and this machine. The kept files and their settings
+  stay in this browser's storage for the page's origin, readable by whatever can read that origin's storage: on the
+  public web copy that origin, `cassius-software.github.io`, is shared by every Pages site of the organization (On an
+  iPhone, The shared address), and that applies to models kept there too. The cloud fallback never moves this model's
+  prompts to the gateway: its row reads `off: the model in this page is never moved to the gateway`.
 
 ### The swarm orchestrator (`swarm`)
 
-`08_Swarm/orchestrator.ts` is the orchestrator behind `swarm run <goal>`: a goal split over up to five roles, each
-a step of a fixed chain (the coder reads the architect, the tester reads both, and so on), each step one prompt
-through the operator tier's gated ask, so whichever provider is chosen answers it, only while someone tethered to
-you has the role's skill, and the 14A screen sees it on the way in and out. Steps run one after another (the
-operator tier answers one prompt at a time); a refusal, a lost tether, a server failure or `swarm stop` ends the
-run there, with everything before it kept in the report. A server that does not answer counts as a failure even
-though the page's script stands in for it everywhere else: canned text is not a role's work, so the run stops at that
-step and says so (with `ask provider scripted` chosen on purpose, the script's answers are the run). Each step is
-shown what the steps before it answered, sharing what is left of the prompt quota after its brief and the goal: a
-short answer whole, a long one cut at a word boundary (at most 1,500 characters each) with a note of how much was
-shown, so the last role always fits the quota. The roles are prompts, not separate agents with tools:
-the orchestrator issues no script, changes nothing in the city and writes no file. It answers in text, on the
-console, and a host can call the same surface (`bridge.operator.swarm.run(goal)`) from a voice line.
+`08_Swarm/orchestrator.ts` is the orchestrator behind `swarm run <goal>`: a goal split over up to five roles, each a
+step of a fixed chain (the coder reads the architect, the tester reads both, and so on), each step one prompt through
+the operator tier's gated ask, so whichever provider is chosen answers it, only while someone tethered to you has the
+role's skill, and the 14A screen sees it on the way in and out. Steps run one after another (the operator tier answers
+one prompt at a time); a refusal, a lost tether, a server failure or `swarm stop` ends the run there, with everything
+before it kept in the report. A server that does not answer counts as a failure even though the page's script stands
+in for it everywhere else, and so does a model in this page that cannot run: canned text is not a role's work, so the
+run stops at that step and says so (with `ask provider scripted` chosen on purpose, the script's answers are the run).
+Each step is shown what the steps before it answered, sharing what is left of the prompt quota after its brief and the
+goal: a short answer whole, a long one cut at a word boundary (at most 1,500 characters each) with a note of how much
+was shown, so the last role always fits the quota. The roles are prompts, not separate agents with tools: the
+orchestrator issues no script, changes nothing in the city and writes no file. It answers in text, on the console, and
+a host can call the same surface (`bridge.operator.swarm.run(goal)`) from a voice line.
 
 - **The guardrails** (`02_Define_The_Rules/guardrails.ts`). Before a model is asked and again before its answer is
   used, each step passes six named invariants: `HumanOverrideSupreme` (a stopped run admits no step),
-  `CapabilityTethered` (the capability gateway's own verdict, recorded), `ConductScreen14A` (the prompt and the
-  answer pass the screen), `LoopbackOnly` (the chosen provider's server is on this machine, or there is none),
-  `BudgetWithinQuota` (at most 8 steps, a goal of 600 characters, a prompt of 6,000, an answer of 12,000 and
-  24,576 tokens a run) and `ProvenanceChained` (the audit chain verifies before every step). Every one is a rule
-  over text, settings and counts, applied the same way every time; `swarm guardrails` prints them. They are not a
-  proof about a model, and they do not look inside one: no model and no weights ship with the product, so there is
-  nothing to inspect or clamp. The screen is a lexicon, as it is for `ask`; the model's own judgement under the
-  conduct core is the second layer.
+  `CapabilityTethered` (the capability gateway's own verdict, recorded), `ConductScreen14A` (the prompt and the answer
+  pass the screen), `LoopbackOnly` (the answering provider's server is on this machine, or there is none: the script,
+  or a model running in this page), `BudgetWithinQuota` (at most 8 steps, a goal of 600 characters, a prompt of 6,000,
+  an answer of 12,000 and 24,576 tokens a run) and `ProvenanceChained` (the audit chain verifies before every step).
+  Every one is a rule over text, settings and counts, applied the same way every time; `swarm guardrails` prints them.
+  They are not a proof about a model, and they do not look inside one: no model and no weights ship with the product,
+  so there is nothing to inspect or clamp. The screen is a lexicon, as it is for `ask`; the model's own judgement
+  under the conduct core is the second layer.
 - **The audit trail.** Every plan, step, answer, refusal, stop and end is an entry: its kind, the step and role,
   the SHA-256 of what went in and what came out, the hash of the exact system prompt the model was given, the
   invariants that refused it, and one line of note; each entry's hash is the SHA-256 of its canonical body followed
@@ -1351,7 +1510,7 @@ clock), oldest dropped first, and a one-sentence account of their surroundings, 
 the moment a prompt starts ("Standing near The Spire in Lakefront Metro at 17:02, looking at a dark red car a few
 steps away, with 2 people close by."). Both go to the end of the system prompt under one heading per person,
 within a fixed budget (about 150 tokens), after what they remember from the ledger, so every provider (Claude,
-Ollama, llama.cpp, and the cloud fallback) answers from that place and moment. An `ask` and its answer, a `say`,
+Ollama, llama.cpp, the model in this page, and the cloud fallback) answers from that place and moment. An `ask` and its answer, a `say`,
 and a walk ping that waves someone over are the moments kept. Nothing of it is stored, and nothing reaches the
 physics worker or the agents' sandboxed code. With no model backend answering (the gateway or the local server is
 down), the person still answers in a few scripted sentences built from that same context
@@ -1467,6 +1626,12 @@ are no toasts and no settings menu, and the console's `quality` command is the o
   no thermal state, so frame time is the proxy. Ultra adds the volumetrics. Sloane's fixes for heat, battery or a slow
   frame ("my phone is hot", "it's laggy") pin Low at most and never raise the tier: a device already below Low stays
   where it is.
+- **While the model in this page works** (A model in this page), the governor is held under a cap (`hold()`): Low
+  on a computer whose GPU is integrated, Minimal on a phone, Lite on a lite profile, and nothing lower on a discrete
+  GPU. A tier above the cap drops to it at once, probes stop at it, and a step down under the hold is taken but not
+  remembered against the tier (the device is busy with the model, not too slow for the tier). The release returns
+  the tier from before with the usual cooldown. A manual tier is left alone; the snapshot's quality carries `held`
+  while the cap is on.
 - **Under the cinema camera:** the governor still reads every animation frame, so it keeps input and physics
   at the display's rate. Only 24 of those frames a second are drawn, so each drawn frame gets more GPU time, and
   the governor usually settles a tier or two higher than it does with `?cinema=0`. Two rules are specific to it:
@@ -1868,22 +2033,22 @@ Every source file opens with "Why does this file exist? / What breaks if it is r
 
 | Stage | Files | Role |
 |---|---|---|
-| — | `brand.ts`, `MonolithLogo.tsx`, `App.tsx` | Product name and mark; the React shell (`App` → `GuiShell`, the city, or `TtyShell`, the console alone under `?boot=tty`): boot veil, HUD, concierge, the wardrobe card, touch and console overlays; it builds the cognition router and the network client and keeps the look and the token |
+| — | `brand.ts`, `MonolithLogo.tsx`, `App.tsx` | Product name and mark; the React shell (`App` → `GuiShell`, the city, or `TtyShell`, the console alone under `?boot=tty`): boot veil, HUD, concierge, the wardrobe card, touch and console overlays; it builds the cognition router (with the model kept in this page, its file picker and its drop) and the network client and keeps the look and the token |
 | 01_Initialize_World | `world.ts`, `city.ts`, `materials.ts`, `fbmTexture.ts`, `solar.ts`, `codeDissolve.ts`, `region/` (`projection.ts`, `grid.ts`, `names.ts`, `clip.ts`, `pack.ts`, `compile.ts`, `regionWorld.ts`) | WebGPU device, city grid, districts, shoreline and furniture, procedural materials (filtered against moiré), sky, sun, haze, the lake; the code dissolve's material helper (any node material into falling green binary code, by a per-instance amount, shadow included); the surveyed region: its projection, fictional names, the compiler's core, the pack format, and its meshes, walls and places |
 | 02_Define_The_Rules | `laws.ts`, `ring0.ts`, `ring0Panic.ts`, `civic.ts`, `collision.ts`, `conduct.ts`, `degrees.ts`, `airgap.ts`, `integrity.ts`, `property.ts` | The seeded, replayable property harness every fuzz suite shares; SHA-256, HMAC and canonical encoding for every hash and seal; the air gap (the one definition of "this machine", and the guard installed on the page's and the worker's globals); Ring-0 bouncer and audit (both run in the physics worker; the audit's craft check), the page's panic lock; kernel limits, signal cycle, speed limit, checks; the contact policy (cars pass through cars, the ragdoll balance machine wired with no vehicle a cause, no combat) and the collision groups (the chassis, the wheel rays, the avatar through a rig); the 14A conduct core and screen; degrees of success |
 | 03_Spawn_Agents | `crowd.wgsl`, `crowdCompute.ts`, `crowdSensor.ts`, `crowdSim.ts`, `crowdCull.ts`, `crowd.ts`, `skills.ts`, `look.ts`, `ragdoll.ts`, `ragdollRig.ts` | GPU pedestrians, their hazard sensing and their summons (in the physics worker), the contract and layouts both sides share, culling/LOD/density and indirect InstancedMesh rendering, the dissolve amounts and the look words (on the page); every pedestrian's skills, the recruitment rules and the rally rule both realms run; the closed wardrobe and the packed look word; the active ragdoll's balance machine, pool and Rapier body (wired by `07_Execute_Actions/ragdollRealm.ts`; `COLLISION.ragdoll: true`, and `collision.test.ts` keeps that the one road to it) |
 | 04_Connect_Hardware | `input.ts`, `hal.ts`, `dualsense.ts`, `lineLink.ts`, `gamepad.ts`, `seats.ts`, `peripheralPolicy.ts`, `TouchControls.tsx` | Keyboard/mouse/touch/gamepad (the ping among the actions), the hardware bus and its drivers; the seating plan for four local players and the per-seat pad intent; the draft default-deny gate for actuating peripherals (microcontrollers, drones; `docs/hal-peripherals-spec.md`), not yet wired |
-| 05_Observe_Environment | `telemetry.ts`, `governor.ts`, `profile.ts`, `lookStore.ts` | SIPOC X snapshot (the dissolve, the pings, the drawing switch, the players, the session and the captions among its optional fields), frame statistics, quality governor, the visitor's name and look |
+| 05_Observe_Environment | `telemetry.ts`, `governor.ts`, `profile.ts`, `lookStore.ts` | SIPOC X snapshot (the dissolve, the pings, the drawing switch, the players, the session and the captions among its optional fields), frame statistics, quality governor (and its hold while the model in this page works), the visitor's name and look |
 | 06_Make_Decisions | `traffic.ts`, `tracks.ts`, `trackDriver.ts`, `routingWasm.ts`, `routing.wasm.ts` (generated from `native/routing`), `intent.ts` | The track arithmetic as WebAssembly, with `tracks.ts` its reference; AI drivers: the street-hopping driver and the track follower, sharing one reaction check and hazard episode; the fixed track network (the car rings, the train loop, the drone corridors, the plane racetrack, the headway seats, the box hold); the 5-Whys intent engine |
 | 07_Execute_Actions | `engine.ts`, `simClient.ts`, `simProtocol.ts`, `physics.worker.ts`, `simHost.ts`, `simCore.ts`, `physics.ts`, `vehicles.ts`, `car.ts`, `carRig.ts`, `fleetView.ts`, `trackFleet.ts`, `ragdollRealm.ts`, `rigView.ts`, `sanctuary.ts`, `player.ts`, `head.ts`, `controls.ts`, `viewports.ts`, `quality.ts`, `audio.ts`, `acoustics.ts`, `captions.ts`, `postfx.ts`, `cinema.ts`, `shutter.ts`, `volumetrics.ts`, `ghost.ts`, `contact.ts`, `dissolve.ts`, `netView.ts`, `operator.ts`, `harness.ts`, `spatial.ts`, `Hud.tsx`, `BootVeil.tsx`, `Concierge.tsx`, `Customizer.tsx`, `glyphs.ts`, `terminal/` (`Terminal.tsx`, `bridge.ts`, `commands.ts`, `repl.ts`) | Frame loop; the physics realm (worker entry, its message door, the simulation core, Rapier world, fleet on its tracks, the car rules the page and the room share (the rig, the substep, the exit point, the fleet's plan), the scheduled craft and their pose stream, the balance machine over the pedestrians near the operator and its rig stream, sanctuary, up to four avatars) and the page's end of it (client, protocol, fleet drawing, rig drawing, first-person heads, per-seat controls, the split-screen arithmetic); quality applier, soundscape (with its speech voice, rooms, peer voices and the sound-event stream), room acoustics, the caption track, post chain, the cinema camera (24 fps pacer, 180° shutter, ND and film response), sun shafts, ghost view, the passage envelope and the code dissolve's envelope, the network ghosts, operator facade and physics harnesses (the spatial sweep's plan among them), HUD, boot veil, concierge, the wardrobe card, control glyphs, console (with R0, its stack machine) |
 | 08_Swarm | `recruitment.ts`, `taskRouter.ts`, `memory.ts`, `ping.ts` | The swarm's hash-chained memory and weight ledger; the operator's voice: on-device continuous speech recognition, the request parser, the main-thread proximity match, the request to the physics worker, the rally request, and the console and `recruit()` fallback; the task gateway that binds skill-bound work to the tethered swarm; the swarm's episodic memory (IndexedDB, by world seed and pedestrian); the ping's pick, board and rally plan |
-| 09_Cognition | `localCompute.ts`, `claudeApi.ts`, `router.ts`, `prefixCache.ts`, `kvPager.wasm.ts` (generated from `native/kv-pager-wasm`), `localSpeech.ts` | The prompt-prefix page table over kv-pager as WebAssembly; the operator's model providers and voice: the router (`claude` through a gateway on this machine with the operator's key; `ollama` and `llamacpp` on this machine), the local client in both wire formats and the Claude client, the system prompt opening with the 14A core and then the tethered people's skills and memories, the streamed answer, the speech client for a speech server on this machine, the audio for the soundscape, the cut when the tether breaks, and every failure as one sentence |
+| 09_Cognition | `localCompute.ts`, `claudeApi.ts`, `router.ts`, `prefixCache.ts`, `kvPager.wasm.ts` (generated from `native/kv-pager-wasm`), `localSpeech.ts`, `inPage.ts`, `inPagePlan.ts`, `inPageCaps.ts`, `gguf.ts`, `modelStore.ts`, `modelStore.worker.ts`, `wllamaRuntime.ts` | The prompt-prefix page table over kv-pager as WebAssembly; the operator's model providers and voice: the router (`claude` through a gateway on this machine with the operator's key; `ollama` and `llamacpp` on this machine), the local client in both wire formats and the Claude client, the system prompt opening with the 14A core and then the tethered people's skills and memories, the streamed answer, the speech client for a speech server on this machine, the audio for the soundscape, the cut when the tether breaks, and every failure as one sentence; the model in this page (`inpage`): its device policy, what the browser offers, the GGUF header check, the file kept in the page's storage (copied by a worker of its own), and the one adapter over wllama |
 | 10_Network | `replication.ts`, `replication.node.ts`, `mirror.node.ts`, `garage.node.ts`, `plane.node.ts`, `netClient.ts`, `telemetry.ts` | The network room: the plain-data protocol core and authoritative room both sides share (validated both ways, rate-limited, screened under 14A, every input judged by an authority and refused ones corrected), the Node-only WebSocket host (HMAC session tokens checked at the upgrade, one connection per player, never bundled), the headless Ring-0 mirror it judges with (the city of the seed in Rapier, the realm's own character controller, the Ring-0 audit) and its garage (every player's car replayed with the page's own car physics, every door checked), an open-plane authority for the protocol's tests, and the opt-in page client that speaks ws or wss only to `localhost` or `127.0.0.1` (the host on this machine, or the local end of a tunnel or proxy), reports the realm's steps and doors, snaps to corrections, and reconciles the room's snapshots into the poses `netView.ts` draws |
 | native/kv-pager | `01_geometry.rs`, `02_page_table.rs`, `03_gpu/`, `bin/stress.rs`, `bin/chaos/` | A paged KV cache (its page table also runs on the page, through `native/kv-pager-wasm`) (prefix caching, copy-on-write, the WGSL decode kernel, the stress and chaos runs); `CAUSAL.md` traces the copy-on-write chain |
 | native/kv-pager-wasm | `lib.rs` | kv-pager's page table (no GPU) behind a C ABI, built to WebAssembly as `09_Cognition/kvPager.wasm.ts` (`npm run native:wasm`) |
 | native/routing | `lib.rs`, `layout.rs`, `math.rs`, `tests.rs`, `verify.rs` (Kani proof harnesses, `cfg(kani)` only) | The track arithmetic in dependency-free Rust, built to WebAssembly as `06_Make_Decisions/routing.wasm.ts`; its layout is defined once in each language and the two are proved equal |
-| tools/native | `build-wasm.mjs` | Builds both crates for `wasm32-unknown-unknown` with the checkout mapped to one fixed prefix (so the bytes are the same on any machine, and no module carries a builder's directory) and writes the generated modules with their sizes and SHA-256 |
-| tools/verify | `fvps.sh`, `fvps_smt.py`, `wasm_airgap.py` | The formal verification step (Phase 18): the Kani harnesses, the Z3 theorems, the WebAssembly air gap and export pin, the routing core's LLVM IR call scan; one command, run before every release bake and in CI |
+| tools/native | `build-wasm.mjs`, `wllama-pack.mjs` | Builds both crates for `wasm32-unknown-unknown` with the checkout mapped to one fixed prefix (so the bytes are the same on any machine, and no module carries a builder's directory) and writes the generated modules with their sizes and SHA-256; pins the in-page model runtime from the npm package into `third_party/wllama/3.8.1/` (`npm run native:wllama`: the module gzipped, its sums and its import list) |
+| tools/verify | `fvps.sh`, `fvps_smt.py`, `wasm_airgap.py`, `page_dist.mjs` | The formal verification step (Phase 18): the Kani harnesses, the Z3 theorems, the WebAssembly air gap and export pin (and the pinned in-page runtime held to its sums and reviewed imports), the routing core's LLVM IR call scan; one command, run before every release bake and in CI; and the check of the built page (one file, its size budget, no model, only reviewed hosts) |
 | tools/sandbox | `probe.sh`, `verify.mjs` | The zero-trust sandbox's escape probes (egress, daemon sockets, workspace-file execution, privilege, credentials) and the experiment that runs them contained, in a weakened control and beside the checks, on every pull request (`docs/zero-trust-sandbox.md`) |
 | tools/selfheal | `agent.mjs`, `checks.sh`, `failures.mjs`, `ast.mjs`, `sandbox.mjs`, `planner.mjs`, `Dockerfile.sandbox` | The self-healing agent (Phase 18): the named checks, failure parsers, syntax-tree loci, the network-off sandbox, the planners (built-in remedies, then Claude) and the bounded remediation loop that opens `selfheal-*` pull requests and never merges |
 
@@ -2052,11 +2217,16 @@ from its icon, with the touch controls (Controls). Two ways to serve it:
 What the phone copy keeps, and what it cannot have yet:
 - **The air gap is the page's own.** The policy and the loopback gate are unchanged: the page connects to its own
   host (which only serves these files) and to the phone's own `localhost`, nowhere else.
-- **Models.** Every model provider lives on a computer's loopback (The model providers), and an iPhone runs none,
-  so on the phone Sloane speaks from her script with the phone's own voices and `ask` has no model to answer from.
-- **The shared address.** `cassius-software.github.io` is one origin for every Pages site of the organization, and
-  any of them could read what this one saves in the browser, a model key typed into the console included. Publish
-  other Pages sites under the organization only if you trust them, or use the Tailscale way.
+- **Models.** The model servers live on a computer's loopback (The model providers), and an iPhone runs none. The
+  model in this page (A model in this page) needs pieces of WebAssembly Safari does not offer yet, so on an iPhone
+  `ask`'s runtime row names what is missing, Sloane speaks from her script with the phone's own voices, and `ask`
+  answers from the script. Menu › Model file still keeps a file there, which cannot run until Safari can: there is
+  no reason to choose one on an iPhone yet. Chrome 137 or later on an Android phone runs a small model in the page
+  (not yet tried on a real phone).
+- **The shared address.** `cassius-software.github.io` is one origin for every Pages site of the organization, and any
+  of them could read what this one saves in the browser, a model key typed into the console and the model files kept
+  in the page included. Publish other Pages sites under the organization only if you trust them, or use the Tailscale
+  way.
 - **Storage.** A site added to the home screen keeps its storage; Safari may clear a site visited only in a tab after
   weeks unused.
 
@@ -2214,8 +2384,8 @@ bar and no reload of their own, so the page carries its own way out.
 - **A slow start** is not a failure: after 20 s of visible time without a first frame the boot veil adds "Still
   starting…" with the step it is on (asking for the graphics device, building the city, starting the physics,
   preparing the shaders, which is the long step on a phone, drawing the first frame, waiting for the crowd) and
-  Restart and Open the console, and the boot goes on. The page's 10 MB script now stands at the end of the page, so
-  on a slow connection the splash shows while it downloads instead of a blank page; after the first visit the
+  Restart and Open the console, and the boot goes on. The page's script (about 14 MB) now stands at the end of the
+  page, so on a slow connection the splash shows while it downloads instead of a blank page; after the first visit the
   installed copy opens offline.
 - **Firefox and other browsers on Android** have no WebGPU: the card's first button, **Open in Chrome**, hands the
   same address to Chrome (which comes with almost every Android phone). A link tapped in another app opens in
@@ -2248,26 +2418,36 @@ reset and a real pad.
   at the end of `dist/index.html`, and fails if `package.json`'s version differs from `BRAND.version`. The
   network host (`10_Network/replication.node.ts`) is Node-only and never bundled: `tsconfig.app.json` excludes
   `src/**/*.node.ts`, `tsconfig.node.json` includes it, and `airgap.test.ts` proves no page source imports it.
+- **File size.** `dist/index.html` is about 14 MB, about 3.7 MB more than before, since it carries the in-page
+  model's runtime (wllama's WebAssembly build of llama.cpp, 8.8 MB, committed gzipped as
+  `third_party/wllama/3.8.1/wllama.wasm.gz` and embedded as base64, about 3.2 MB, with wllama's JavaScript) beside
+  the surveyed region's 3.4 MB.
+  `tools/verify/page_dist.mjs` (after every build in CI) fails unless `dist/` holds exactly `index.html`, no larger
+  than its budget (the measured size plus 3 %), with no `.gguf` file, naming only the reviewed hosts. The page carries
+  no model and never will: a model is the operator's own file, kept in their browser. The build checks the embedded
+  runtime against its pinned sha256 and against the npm package's, and the page checks it again before it runs.
 - **Network.** The page sends nothing off this machine, by construction, in three layers
-  (`02_Define_The_Rules/airgap.ts`). The gate: `loopbackOnly` is the one definition of "this machine" (http, https,
-  ws or wss to `localhost`, `127.0.0.0/8` or `[::1]`, with no credentials), and every client (the model providers,
+  (`02_Define_The_Rules/airgap.ts`). The gate: `loopbackOnly` is the one definition of "this machine" (http, https, ws
+  or wss to `localhost`, `127.0.0.0/8` or `[::1]`, with no credentials), and every client (the model providers,
   speech, the room client) asks it, or an alias of it, before anything is sent. The guard: `main.tsx` calls
   `installAirgap(globalThis)` before anything else, and `physics.worker.ts` on the worker's own global; it replaces
-  `fetch`, `WebSocket`, `EventSource`, `XMLHttpRequest.prototype.open` and `importScripts` with versions that
-  refuse, in one sentence, any URL that is not loopback, the page's own origin or a `blob:`/`data:` URL the page
-  made, removes `RTCPeerConnection`, `WebTransport` and `navigator.sendBeacon` outright, and freezes those
-  properties, so an operator script or an injected one cannot put the originals back. The proof:
-  `10_Network/airgap.test.ts` reads the source and fails if any runtime file names an address off this machine, or
-  an outbound primitive outside its allowlist, or an allowlisted call site whose enclosing function does not go
-  through the gate, or if either entry point does not install the guard first. The page opens no connection at
-  boot and polls nothing; the Claude provider needs a gateway on this machine (`http://localhost:8089`); `net join`
-  reaches a host on this machine. What the guard cannot close from script (loads the HTML parser and CSS make,
-  navigation, a remote `import()`, a fresh realm from an iframe or a blob worker, the browser's own speech
-  recognition) is listed in `docs/zero-trust-audit.md`. Most of it is closed by the Content-Security-Policy
-  `index.html` now carries: nothing loads from or connects to any host but this machine, for the page and for the
-  iframes and blob workers it could create (`connect-src` names only loopback; `frame-src`, `object-src`,
-  `form-action` and `base-uri` are `'none'`). Navigation and the browser's own speech recognition stay open, and
-  the audit says so. Nothing of the network reaches the physics realm.
+  `fetch`, `WebSocket`, `EventSource`, `XMLHttpRequest.prototype.open` and `importScripts` with versions that refuse,
+  in one sentence, any URL that is not loopback, the page's own origin or a `blob:`/`data:` URL the page made, removes
+  `RTCPeerConnection`, `WebTransport` and `navigator.sendBeacon` outright, and freezes those properties, so an
+  operator script or an injected one cannot put the originals back. The proof: `10_Network/airgap.test.ts` reads the
+  source and fails if any runtime file names an address off this machine, or an outbound primitive outside its
+  allowlist, or an allowlisted call site whose enclosing function does not go through the gate, or if either entry
+  point does not install the guard first. The page opens no connection at boot and polls nothing; the Claude provider
+  needs a gateway on this machine (`http://localhost:8089`); `net join` reaches a host on this machine. What the guard
+  cannot close from script (loads the HTML parser and CSS make, navigation, a remote `import()`, a fresh realm from an
+  iframe or a blob worker, the browser's own speech recognition) is listed in `docs/zero-trust-audit.md`. Most of it
+  is closed by the Content-Security-Policy `index.html` now carries: nothing loads from or connects to any host but
+  this machine, for the page and for the iframes and blob workers it could create (`connect-src` names only loopback;
+  `frame-src`, `object-src`, `form-action` and `base-uri` are `'none'`). Navigation and the browser's own speech
+  recognition stay open, and the audit says so. Nothing of the network reaches the physics realm. The in-page model
+  asks the gate nothing, because it addresses nothing: its runtime runs in workers wllama makes from `blob:` URLs,
+  where the guard is not installed, so the policy those workers inherit is what holds them, and the adapter never
+  calls wllama's download paths (`airgap.test.ts` pins it; the audit has the row).
 - **Integrity.** Inter-agent communication is hashed (`02_Define_The_Rules/integrity.ts`): the swarm's memory is
   a SHA-256 chain, an ask records the hash of the system prompt it sent, and every message between the page and a
   room host is sealed with an HMAC-SHA256 over its canonical body and sequence number, keyed by the session
@@ -2277,11 +2457,14 @@ reset and a real pad.
   WebAssembly too: `native/routing` is a dependency-free Rust crate (ring geometry, `pose_at`, `project_onto`,
   `next_stop`, `speed_limit_at` over a fixed arena) compiled to `wasm32-unknown-unknown` and committed as
   `06_Make_Decisions/routing.wasm.ts` (13 KB of WebAssembly as base64, with its SHA-256); the physics worker installs
-  it at start (`routingWasm.ts`, `tracks.ts useRoutingCore`), and the TypeScript in `tracks.ts` stays as the
-  reference and the fallback, proved equal by `routingWasm.test.ts`. `npm run native:wasm` rebuilds both generated
-  modules reproducibly (byte for byte), and `npm run native:test` runs the Rust tests of every crate; the
-  single-file build needs no Rust. WebAssembly is a compilation target, not a lock: it raises the effort of reading
-  the code, but anyone with the file can still disassemble it, and the TypeScript reference ships beside it.
+  it at start (`routingWasm.ts`, `tracks.ts useRoutingCore`), and the TypeScript in `tracks.ts` stays as the reference
+  and the fallback, proved equal by `routingWasm.test.ts`. `npm run native:wasm` rebuilds both generated modules
+  reproducibly (byte for byte), and `npm run native:test` runs the Rust tests of every crate; the single-file build
+  needs no Rust. The in-page model's runtime is the one WebAssembly module the repository does not build: wllama's
+  own, pinned as published, and `tools/verify/wasm_airgap.py` (Python alone, so it runs where npm does not, the
+  release bake included) holds its bytes to the pinned sha256 and its imports to the reviewed list, none of them named
+  for a socket or a request. WebAssembly is a compilation target, not a lock: it raises the effort of reading the
+  code, but anyone with the file can still disassemble it, and the TypeScript reference ships beside it.
 - **Track B.** `?boot=tty` mounts the console with no engine, no WebGPU request and no worker, and `render off`
   stops drawing while the realm runs. A page-side simulation without a renderer is not attempted.
 - **Content.** Civic and non-violent: the internal guideline is Canadian 14A. That is a film
@@ -2337,6 +2520,45 @@ Verified in headless Brave (WebGPU, AMD GCN-5 integrated GPU, 1280×720), about 
 
 The physics worker is verified the same way: the acceptance probes pass against it, and a hostile-script probe on
 the production page finds no physics object in the page and has every crafted message refused.
+
+**The model in this page (unreleased).** What is proved, and where:
+- **In Node, on every CI run:** each part has its suite. The device table (`inPagePlan.test.ts`); the browser checks
+  against fake globals that lack one piece at a time (`inPageCaps.test.ts`); the header check against real GGUF bytes
+  from `tools/browser/tinyGguf.mjs` (`gguf.test.ts`); keeping a file over an in-memory directory, cut short, out of
+  room and visit-only (`modelStore.test.ts`); the provider over a fake runtime, from the order of its checks to the
+  crash guard, the GPU retry and the unloading (`inPage.test.ts`); the adapter over a fake wllama, its watchdogs and
+  the way it reads wllama's failures included (`wllamaRuntime.test.ts`); the governor's hold (`governorHold.test.ts`);
+  App's wiring of the picker, the Menu, the drop and the lifecycle (`inPageWiring.test.ts`); the pin
+  (`wllamaPin.test.ts`); and the air gap's structural checks on the adapter (`airgap.test.ts`).
+- **On the build, in CI:** `dist/` is exactly `index.html`, within its budget, with no `.gguf` and only the reviewed
+  hosts (`tools/verify/page_dist.mjs`); the pinned runtime's bytes and imports are what was reviewed
+  (`tools/verify/wasm_airgap.py`).
+- **In a browser, on every CI run:** the browser job runs the smoke (`tools/browser/smoke.mjs`) on the built page in
+  Chrome on the software WebGPU adapter, and four of its scenarios run the real runtime with the tiny model
+  `tools/browser/tinyGguf.mjs` writes. `inpage`, cross-origin isolated on two threads: the file picked at the
+  console, kept and loaded with two threads and the context the model was trained on; a recruit asked and answered;
+  the city's automatic tier set above the hold first, lowered to the hold while the model works and back after; a
+  stop mid-answer and the next answer whole (its reason, token count and prompt hash); the file still kept after a
+  reload; the crash guard (the script stands in until `ask file load`); a swarm step; and `ask gpu on`. Every request
+  from the page and from every worker it started stays on the page's own origin, `blob:` or `data:`, no socket is
+  opened, and a worker made from a blob is refused a fetch off this machine by the page's policy. `lite`: the file
+  picked from the Menu loads on the processor with the lite profile's row, the tier lowered to Lite while it loads
+  and back after. `pwa`: a file kept on the installed copy's second visit answers with the host gone. `file`: the
+  page opened from disk opens no picker for `ask file`, keeps nothing, and its runtime row gives the reason.
+- **Checked by hand in a headless Chromium 141** (a harness outside the repository), what the smoke does not do:
+  the adapter over the real runtime, not isolated on one thread as well as isolated on two. A prompt longer than the
+  context was refused and the next answer worked; a file that is not a GGUF and a truncated one failed with
+  llama.cpp's reason; a context larger than the page's memory was named as such; a damaged runtime (zeros, cut short,
+  or never arriving) failed instead of hanging; an unload during an answer ended the answer; a stop in the middle of
+  a long prefill let the model go after 2 s, and the next answer loaded it again and answered. Asked for the GPU on
+  the software adapter, it ran on the processor and said so.
+- **Known:** a page opened from a file cannot run the model. wllama always starts its worker as a module worker from
+  a `blob:` URL, and Chromium refuses that on a page whose origin is opaque, so the page refuses first and says to
+  open the city from a server (`npm run preview`, the launcher, the Windows app or the web copy).
+- **Not verified, and needing the device:** a real model (its template, thinking, speed and answers), Android Chrome
+  (the Lite tier on a Mali-G52 phone, keeping a 1 GB file, the unloading in the background, the crash guard after a
+  real kill, the picker and the Menu tap), a real GPU (WebGPU's speed, the frame rate under the hold, a device
+  reset), the Windows app's WebView2, the NixOS launcher, a file over 2 GB, and what an iPhone's runtime row says.
 
 For 1.4.0-beta.1 (Agent City v1.0 Stable Beta), in this environment: a Linux container with Node 22, and a
 headless Chromium whose only WebGPU adapter is software.

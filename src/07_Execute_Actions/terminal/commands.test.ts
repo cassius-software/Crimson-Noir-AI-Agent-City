@@ -4,9 +4,10 @@
 /**
  * Why does this file exist? It pins the Ring-0 shell's behaviour against a fake bridge: parsing, every
  * command's output and argument validation, the synchronous device-pairing call, completion, the toggle
- * key, the air gap (a failing bridge never throws out of run(); while locked, nothing but the knobs, recruitment and
- * reading the swarm's memory is touched and the operator commands are refused), the recruit command (the microphone
- * and the model download requested inside the keydown, outcomes as lines), `say` and `memory`, the operator tier's
+ * key, the air gap (a failing bridge never throws out of run(); while locked, nothing but the knobs, recruitment,
+ * reading the swarm's memory and the model file kept in this page is touched and the operator commands are refused),
+ * the recruit command (the microphone and the model download requested inside the keydown, outcomes as lines), `ask
+ * file` (the picker requested inside the keydown) and `ask gpu`, `say` and `memory`, the operator tier's
  * commands over a sandboxed fake simulation, the multi-line editing helpers, and the content rules for its text.
  * What breaks if it is removed? A console regression (a wrong tier, a picker opened outside the user
  * gesture, a script run while locked, a crash on a bad line) would only show up in the browser.
@@ -20,7 +21,7 @@ import {
 } from './commands.ts'
 import {
   offlineBridge, ring0Stats, type AskResult, type GatedAsk, type GatedRun, type GatedSay, type HalDevice, type LookBridge, type LookChange, type MemoryBridge,
-  type NetBridge, type NetReport, type OperatorBridge, type Piece, type PingBridge, type PingPick, type PingPoint, type RecordBridge, type RecruitBridge, type Ring0Stats,
+  type ModelBridge, type NetBridge, type NetReport, type OperatorBridge, type Piece, type PingBridge, type PingPick, type PingPoint, type RecordBridge, type RecruitBridge, type Ring0Stats,
   type SayResult, type TerminalBridge, type AgentBridge, type ConciergeBridge,
 } from './bridge.ts'
 import { SKILLS } from '../../03_Spawn_Agents/skills.ts'
@@ -93,7 +94,7 @@ interface FakeOp extends OperatorBridge {
   gate: 'open' | 'reject' | 'abort'
   /** How an `ask` ends: answered, rejected, cut off by the tether, the server failing, all thinking, the token limit. */
   answer: 'ok' | 'reject' | 'abort' | 'fail' | 'thinking' | 'length'
-  mind: { server: string; model: string | null; think?: boolean; api?: string; provider?: string; key?: string | null; effort?: string }
+  mind: { server: string; model: string | null; think?: boolean; api?: string; provider?: string; key?: string | null; effort?: string; found?: string; runtime?: string; storage?: string }
   /** How a `say` ends: said, rejected, cut off by the tether, the server failing, the operator's stop. */
   speech: 'ok' | 'reject' | 'abort' | 'fail' | 'stopped'
   /** The ask's answer is said aloud as well (say auto on): how that ends. */
@@ -221,8 +222,15 @@ function fakeOperator(): FakeOp {
       return Promise.resolve({ name, pass: name !== 'traffic-lights', lines: [`ran ${name}`], ms: 1234 })
     },
   }
-  // The swarm over the fake's own ask: the same gate answers (f.answer), one step at a time.
-  f.swarm = createSwarm({ ask: (skills, prompt) => f.ask(skills, prompt), endpoint: () => (f.mind.provider === 'scripted' ? null : f.mind.server) })
+  // The swarm over the fake's own ask: the same gate answers (f.answer), one step at a time; no endpoint for the script
+  // or a model running in this page, as the real tier reads it (operator.ts).
+  f.swarm = createSwarm({
+    ask: (skills, prompt) => f.ask(skills, prompt),
+    endpoint: () => {
+      const p = f.mind.provider === 'auto' ? f.mind.found : f.mind.provider
+      return p === 'scripted' || p === 'inpage' ? null : f.mind.server
+    },
+  })
   return f
 }
 
@@ -362,12 +370,37 @@ function fakeNet(calls: string[]): FakeNet {
   return n
 }
 
+interface FakeModel extends ModelBridge {
+  /** What `pick` resolves with, or how it fails (the operator closed the picker, the file was refused). */
+  picked: Promise<string> | (() => never)
+  lines: string[]
+}
+
+/** Logs to the bridge's shared `calls` (as 'model <verb>'): the model file kept in this page, reachable while locked. */
+function fakeModel(calls: string[]): FakeModel {
+  const m: FakeModel = {
+    picked: Promise.resolve('kept tiny.gguf (1.2 MB) in this page; the inpage provider answers now'),
+    lines: Array.from({ length: 45 }, (_, i) => `runtime line ${i + 1}`),
+    pick: () => {
+      calls.push('model pick')
+      return typeof m.picked === 'function' ? m.picked() : m.picked
+    },
+    forget: (name) => { calls.push(`model forget ${name ?? '-'}`); return Promise.resolve(name ? `forgot ${name}` : 'forgot every model file kept in this page') },
+    load: () => { calls.push('model load'); return Promise.resolve('loaded tiny.gguf on the CPU in 1.2 s') },
+    unload: () => { calls.push('model unload'); return Promise.resolve('unloaded tiny.gguf') },
+    gpu: (mode) => { calls.push(`model gpu ${mode}`); return `${mode}: the model runs ${mode === 'off' ? 'on the CPU' : 'on the GPU when it can'}` },
+    log: () => { calls.push('model log'); return m.lines },
+  }
+  return m
+}
+
 interface Fake extends TerminalBridge {
   calls: string[]
   recruit: FakeRecruit
   ping: FakePing
   look: FakeLook
   net: FakeNet
+  model: FakeModel
   hours: number
   q: QualityState
   devs: HalDevice[]
@@ -415,12 +448,14 @@ function fake(): Fake {
     recruit: undefined as unknown as FakeRecruit,
     look: undefined as unknown as FakeLook,
     net: undefined as unknown as FakeNet,
+    model: undefined as unknown as FakeModel,
   }
   f.ping = fakePing(f.calls)
   f.recruit = fakeRecruit(f.calls)
   f.memory = fakeMemory(f.calls)
   f.look = fakeLook(f.calls)
   f.net = fakeNet(f.calls)
+  f.model = fakeModel(f.calls)
   return f
 }
 
@@ -481,7 +516,7 @@ test('help lists every command with usage, in two groups; help <cmd> explains on
   assert.match(all, /hal \[pair hid\|serial\|ble\]/)
   assert.match(all, /operator \[unlock\|lock\|status\]/)
   assert.match(all, /run <skill>\[,<skill>\.\.\.\]: <js\.\.\.>/)
-  assert.match(all, /ask \[<skill>\[,<skill>\.\.\.\]: <prompt\.\.\.>\|provider <name>\|connect <provider> \[<url>\] \[<key>\]\|model <name>\|server <url>\|key <key>\|effort <level>\|think on\|off\|api <format>\|stop\]/)
+  assert.match(all, /ask \[<skill>\[,<skill>\.\.\.\]: <prompt\.\.\.>\|provider <name>\|connect <provider> \[<url>\] \[<key>\]\|model <name>\|server <url>\|key <key>\|effort <level>\|think on\|off\|api <format>\|file \[forget <name>\|load\|unload\|log\]\|gpu auto\|on\|off\|stop\]/)
   assert.match(all, /harness \[list\|run <name>\]/)
   assert.match(all, /record \[start \[canvas\|camera\]\|stop\|status\]/)
   assert.match(all, /recruit \[<skill>\|rally <agent> \[<x> <z>\]\|listen\|stop\|install\|dismiss\]/)
@@ -806,7 +841,7 @@ test('air gap: a failing or offline bridge becomes error lines, never an excepti
   }
 })
 
-test('air gap: while locked, across every command and completion, the only knobs touched are the view knobs, clock, quality, audio, pairing, pings, the look and recruitment', () => {
+test('air gap: while locked, across every command and completion, the only knobs touched are the view knobs, clock, quality, audio, pairing, pings, the look, recruitment and the model file kept in this page', () => {
   const b = fake()
   const lines = complete('').flatMap((c) => [c, ...complete(`${c} `), ...complete(`${c} `).flatMap((a) => complete(`${a} `))])
   // `operator unlock` is the one line that changes the lock state; every other line runs against the locked tier.
@@ -815,7 +850,12 @@ test('air gap: while locked, across every command and completion, the only knobs
     'recruit rally 7', 'recruit rally 7 1 2', 'look show 7', 'look top 2', 'look code ABCD-EFGH', 'net join ws://127.0.0.1:8787 tok']
   for (const l of sweep) void run(l, b, ['help'])
   const touched = new Set(b.calls.map((c) => c.split(' ')[0]))
-  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'ghost', 'look', 'memory', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'setClock', 'stats'])
+  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'ghost', 'look', 'memory', 'model', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'setClock', 'stats'])
+  // The model file kept in this page and its GPU switch keep a file or a setting and send no prompt, so they need no
+  // unlock (`ask file`, `ask gpu`); the prompt itself (`ask <skill>: ...`) is refused below like every operator command.
+  // No completed line forgets a kept file: `ask file forget` alone names none, so it is refused.
+  const modelVerbs = new Set(b.calls.filter((c) => c.startsWith('model ')).map((c) => c.split(' ')[1]))
+  assert.deepEqual([...modelVerbs].sort(), ['gpu', 'load', 'log', 'pick', 'unload'])
   // The swarm's memory is only ever read while locked: nobody's ledger is erased.
   const reads = new Set(b.calls.filter((c) => c.startsWith('memory ')).map((c) => c.split(' ')[1]))
   assert.deepEqual([...reads].sort(), ['status'])
@@ -1047,7 +1087,7 @@ test('ask: alone it reports the server, the model and what the server has; model
   assert.deepEqual(texts(run('ask think', b, [])), ['usage: ask think <on|off>'])
   for (const line of ['ask how does grip work?', 'ask 42: hi', 'ask "a: b"']) {
     const no = run(line, b, [])
-    assert.deepEqual(texts(no), ['ask: name the skill the answer needs first, e.g. ask rust: how does car.grip work?', 'usage: ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|stop]'], line)
+    assert.deepEqual(texts(no), ['ask: name the skill the answer needs first, e.g. ask rust: how does car.grip work?', 'usage: ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|file [forget <name>|load|unload|log]|gpu auto|on|off|stop]'], line)
     assert.equal(no.pending, undefined, line)
   }
   assert.ok(isErr(run('ask rust:', b, [])))
@@ -1397,9 +1437,13 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.deepEqual(complete('run rust: s'), [])
   assert.deepEqual(complete('api si'), ['api signal'])
   assert.deepEqual(complete('ask s'), ['ask security:', 'ask server', 'ask shaders:', 'ask stop'])
-  assert.equal(complete('ask ').length, SKILL_ARGS.length + 9)
+  assert.equal(complete('ask ').length, SKILL_ARGS.length + 11)
   assert.deepEqual(complete('ask m'), ['ask model'])
-  assert.deepEqual(complete('ask provider '), ['ask provider auto', 'ask provider claude', 'ask provider llamacpp', 'ask provider ollama', 'ask provider openai', 'ask provider scripted'])
+  assert.deepEqual(complete('ask provider '), ['ask provider auto', 'ask provider claude', 'ask provider inpage', 'ask provider llamacpp', 'ask provider ollama', 'ask provider openai', 'ask provider scripted'])
+  assert.deepEqual(complete('ask f'), ['ask file'])
+  assert.deepEqual(complete('ask file '), ['ask file forget', 'ask file load', 'ask file log', 'ask file unload'])
+  assert.deepEqual(complete('ask file lo'), ['ask file load', 'ask file log'])
+  assert.deepEqual(complete('ask gpu '), ['ask gpu auto', 'ask gpu off', 'ask gpu on'])
   assert.deepEqual(complete('ask connect '), PROVIDER_ARGS.map((p) => `ask connect ${p}`))
   assert.deepEqual(complete('swarm '), ['swarm audit', 'swarm guardrails', 'swarm plan', 'swarm roles', 'swarm run', 'swarm status', 'swarm stop'])
   assert.deepEqual(complete('swarm audit '), ['swarm audit verify'])
@@ -1816,13 +1860,91 @@ test('net: status reads at any time as rows; join, leave and forget are the oper
   for (const c of ['net', 'net status', 'net leave']) assert.match(only(run(c, older, [])).text, /network not available/, c)
 })
 
+test('ask file and ask gpu work while locked (they keep a file or a setting, and send no prompt); the picker opens inside the keydown', async () => {
+  const b = fake()
+  assert.equal(b.operator.unlocked(), false)
+  const picked = run('ask file', b, [])
+  assert.deepEqual(b.calls, ['model pick'], 'the picker was asked for before run() returned, inside the user activation')
+  assert.deepEqual(picked.lines, [{ kind: 'sys', text: "ask: choose the model file (.gguf, or every part of a split one) in the browser's picker..." }])
+  assert.deepEqual(await picked.pending, [{ kind: 'out', text: 'file      kept tiny.gguf (1.2 MB) in this page; the inpage provider answers now' }])
+  b.model.picked = () => { throw new Error('nothing was chosen') }
+  assert.deepEqual(run('ask file', b, []).lines, [{ kind: 'err', text: 'ask: nothing was chosen' }])
+  b.model.picked = Promise.reject(new Error('not a model file: tiny.txt is not a GGUF file'))
+  assert.deepEqual(await run('ask file', b, []).pending, [{ kind: 'err', text: 'ask: not a model file: tiny.txt is not a GGUF file' }])
+  assert.deepEqual(await run('ask file forget tiny.gguf', b, []).pending, [{ kind: 'out', text: 'file      forgot tiny.gguf' }])
+  const load = run('ask file load', b, [])
+  assert.deepEqual(load.lines, [{ kind: 'sys', text: 'ask: loading the model in this page...' }])
+  assert.deepEqual(await load.pending, [{ kind: 'out', text: 'file      loaded tiny.gguf on the CPU in 1.2 s' }])
+  assert.deepEqual(await run('ask file unload', b, []).pending, [{ kind: 'out', text: 'file      unloaded tiny.gguf' }])
+  // The log: the runtime's newest 40 lines, oldest first.
+  const log = texts(run('ask file log', b, []))
+  assert.equal(log.length, 40)
+  assert.deepEqual([log[0], log.at(-1)], ['runtime line 6', 'runtime line 45'])
+  b.model.lines = []
+  assert.deepEqual(run('ask file log', b, []).lines, [{ kind: 'sys', text: 'ask: the runtime in this page has logged nothing yet' }])
+  assert.deepEqual(run('ask gpu on', b, []).lines, [{ kind: 'out', text: 'gpu       on: the model runs on the GPU when it can' }])
+  assert.deepEqual(run('ask gpu OFF', b, []).lines, [{ kind: 'out', text: 'gpu       off: the model runs on the CPU' }])
+  assert.deepEqual(b.calls, ['model pick', 'model pick', 'model pick', 'model forget tiny.gguf', 'model load', 'model unload', 'model log', 'model log', 'model gpu on', 'model gpu off'])
+  // Malformed lines are refused before the bridge is reached.
+  b.calls.length = 0
+  assert.deepEqual(texts(run('ask gpu', b, [])), ['usage: ask gpu <auto|on|off>'])
+  assert.deepEqual(texts(run('ask gpu turbo', b, [])), ['ask: ask gpu takes auto, on or off'])
+  assert.deepEqual(texts(run('ask file load now', b, [])), ['usage: ask file [forget <name>|load|unload|log]'])
+  assert.deepEqual(texts(run('ask file bench', b, [])), ["ask: no file command 'bench'", 'usage: ask file [forget <name>|load|unload|log]'])
+  // A bare forget (what Tab gives for `ask file f`) names no file: refused, so Enter on it never drops every file kept.
+  assert.deepEqual(complete('ask file f'), ['ask file forget'])
+  for (const c of ['ask file forget', 'ask file forget  ']) assert.deepEqual(texts(run(c, b, [])), ['usage: ask file forget <name>'], c)
+  assert.deepEqual(b.calls, [])
+  // Nothing of the operator tier was touched, and a prompt is still refused while locked.
+  assert.deepEqual(b.operator.opCalls, [])
+  assert.deepEqual(texts(run('ask rust: hi', b, [])), ["ask: locked; type 'operator unlock' first"])
+  // A page with no model bridge (the onboarding page, the console shell) says so; the offline bridge, that nothing runs yet.
+  const bare = fake()
+  Object.assign(bare, { model: undefined })
+  for (const c of ['ask file', 'ask file forget x', 'ask file load', 'ask file unload', 'ask file log', 'ask gpu on']) {
+    assert.deepEqual(run(c, bare, []).lines, [{ kind: 'err', text: 'ask: this page cannot hold a model file' }], c)
+  }
+  for (const c of ['ask file', 'ask file load', 'ask gpu auto']) assert.deepEqual(run(c, offlineBridge(BRAND), []).lines, [{ kind: 'err', text: 'ask: engine not running' }], c)
+})
+
+test('ask alone over a model running in this page: no server, the runtime and storage rows, and where to keep a file when none is', async () => {
+  const b = unlocked()
+  b.operator.mind = { server: 'this page', model: 'tiny.gguf', provider: 'inpage', think: false, runtime: 'this browser runs it (one thread: the page is not cross-origin isolated)', storage: 'kept in this page' }
+  b.operator.askStatus = () => Promise.resolve({ ...b.operator.mind, installed: ['small.gguf', 'tiny.gguf'] })
+  assert.deepEqual(await run('ask', b, []).pending, [
+    { kind: 'out', text: 'provider  inpage: a model file kept in this page, run here on this device; nothing is addressed (ask file chooses the file, ask gpu where it runs)' },
+    { kind: 'out', text: 'server    none: the model runs in this page' },
+    { kind: 'out', text: 'model     tiny.gguf' },
+    { kind: 'out', text: 'think     off: it answers without reasoning first (ask think on)' },
+    { kind: 'out', text: 'runtime   this browser runs it (one thread: the page is not cross-origin isolated)' },
+    { kind: 'out', text: 'storage   kept in this page' },
+    { kind: 'out', text: 'installed small.gguf' },
+    { kind: 'out', text: '          tiny.gguf  (chosen)' },
+  ])
+  // Found by auto: auto's own provider line, then the same rows as the provider's.
+  b.operator.mind = { ...b.operator.mind, provider: 'auto', found: 'inpage' }
+  b.operator.askStatus = () => Promise.resolve({ ...b.operator.mind, auto: 'inpage: the model file kept in this page, found ready to run on this device (ask provider inpage keeps it)', installed: ['tiny.gguf'] })
+  const found = texts({ lines: (await run('ask', b, []).pending) ?? [] })
+  assert.match(found[0], /^provider {2}auto: /)
+  assert.deepEqual(found.slice(1, 4), ['found     inpage: the model file kept in this page, found ready to run on this device (ask provider inpage keeps it)', 'server    none: the model runs in this page', 'model     tiny.gguf'])
+  // Nothing kept: where to keep one, in the row that lists them, and no model chosen says the same.
+  b.operator.mind = { server: 'this page', model: null, provider: 'inpage', runtime: 'this browser runs it', storage: 'none' }
+  b.operator.askStatus = () => Promise.resolve({ ...b.operator.mind, installed: [] })
+  const none = texts({ lines: (await run('ask', b, []).pending) ?? [] })
+  assert.deepEqual(none.slice(1, 3), ['server    none: the model runs in this page', 'model     none chosen: Menu › Model file, or ask file'])
+  assert.equal(none.at(-1), 'installed no model file kept: Menu › Model file, or ask file')
+  // It cannot run here: the reason, as the mind gives it.
+  b.operator.askStatus = () => Promise.resolve({ ...b.operator.mind, installed: null, error: 'this browser cannot run a model in this page (no JSPI)' })
+  assert.deepEqual((await run('ask', b, []).pending)?.at(-1), { kind: 'err', text: 'ask: this browser cannot run a model in this page (no JSPI)' })
+})
+
 test('ask connect: the provider, its address and a key in one line, through the bridge alone; a bare connect is refused; the key never shows', () => {
   const b = unlocked()
   assert.deepEqual(run('ask connect ollama', b, []).lines, [{ kind: 'out', text: 'provider  ollama: connected' }])
   assert.deepEqual(run('ask connect openai http://localhost:1234', b, []).lines, [{ kind: 'out', text: 'provider  openai: connected; server http://localhost:1234' }])
   assert.deepEqual(run('ask connect claude http://localhost:8089 sk-ant-secret', b, []).lines, [{ kind: 'out', text: 'provider  claude: connected; server http://localhost:8089; key ••••' }])
   assert.deepEqual(b.operator.opCalls.filter((c) => c.startsWith('askConnect')), ['askConnect ollama - -', 'askConnect openai http://localhost:1234 -', 'askConnect claude http://localhost:8089 <key>'])
-  assert.deepEqual(texts(run('ask connect', b, [])), ['usage: ask connect <auto|claude|llamacpp|ollama|openai|scripted> [<url>] [<key>]'])
+  assert.deepEqual(texts(run('ask connect', b, [])), ['usage: ask connect <auto|claude|inpage|llamacpp|ollama|openai|scripted> [<url>] [<key>]'])
   assert.equal(redactForHistory('ask connect claude http://localhost:8089 sk-ant-secret'), 'ask connect claude http://localhost:8089 ••••')
   assert.equal(redactForHistory('ask connect ollama http://localhost:11434'), 'ask connect ollama http://localhost:11434')
   // A key typed where the url goes (the url is optional) is dotted too, with anything after it.

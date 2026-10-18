@@ -53,7 +53,7 @@ test('the watchdog is classic ES5 in <head> before the page\'s module, in the so
   }
 })
 
-test('the built page paints its splash before the 10 MB module has downloaded: the module ends the body', () => {
+test('the built page paints its splash before the 14 MB module has downloaded: the module ends the body', () => {
   const page = '<html><head><script id="boot-watchdog">w()</script><script type="module" crossorigin>a("<script>");b()</script><style>x</style></head><body><div id="root">splash</div><noscript>n</noscript></body></html>'
   const moved = moduleAfterBody(page)
   assert.equal(moved, '<html><head><script id="boot-watchdog">w()</script><style>x</style></head><body><div id="root">splash</div><noscript>n</noscript><script type="module" crossorigin>a("<script>");b()</script>\n  </body></html>')
