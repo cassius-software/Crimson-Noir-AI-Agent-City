@@ -8,7 +8,8 @@
 # package-lock.json already carries, so no second hash has to follow the lockfile. The source is every file git keeps:
 # Tailwind scans the whole tree for class names, so a narrower source would build a different page, and a wider one (a
 # checkout's secrets, local AI tooling, builds) must never reach the store, which every user of the machine can read.
-# The page itself is the proprietary core (LICENSE) and says so in meta.license; this file is MIT.
+# The page and the app icon it installs beside it are the proprietary core (LICENSE; the icon is Reserved Material,
+# NOTICE.md) and say so in meta.license; this file is MIT.
 # What breaks if it is removed? The flake and the NixOS module have no page to serve.
 {
   lib,
@@ -139,10 +140,11 @@ buildNpmPackage {
   installPhase = ''
     runHook preInstall
     install -Dm444 dist/index.html $out/share/crimson-noir-agent-city/index.html
+    install -Dm444 src-tauri/icons/icon.png $out/share/icons/hicolor/512x512/apps/crimson-noir-agent-city.png
     runHook postInstall
   '';
   meta = {
-    description = "The page of Crimson Noir: Agent City, built from source (one self-contained WebGPU HTML file)";
+    description = "The page of Crimson Noir: Agent City, built from source (one self-contained WebGPU HTML file), and its icon";
     homepage = "https://github.com/cassius-software/Crimson-Noir-AI-Agent-City";
     # LICENSE, section 1: the core is All Rights Reserved. Marked unfree, so a NixOS configuration that keeps unfree
     # packages out keeps the module's package out too until it allows this one by name (MANUAL.md, On NixOS). The

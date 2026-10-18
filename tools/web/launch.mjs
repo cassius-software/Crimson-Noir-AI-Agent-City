@@ -115,6 +115,8 @@ export function options(argv = process.argv.slice(2), env = process.env) {
  * The switches for the app window. Chrome keeps only the last --enable-features it is given, so every feature goes in
  * one list: Vulkan (WebGPU's backend on Linux), the window decorations a Wayland window needs (nixpkgs' wrapper asks
  * for them with its own list, which comes first and would otherwise be dropped), and any the extra switches name.
+ * --enable-webgpu-developer-features gives the page the adapter's full name (adapter.info.description, empty
+ * otherwise), which the governor reads to tell an AMD card from an AMD APU and to start a named card on its tier.
  */
 export function chromeFlags({ url, profile, x11 = false, extra = [], env = process.env }) {
   const features = ['Vulkan']
@@ -128,7 +130,8 @@ export function chromeFlags({ url, profile, x11 = false, extra = [], env = proce
   }
   return [
     `--user-data-dir=${profile}`, `--profile-directory=${PROFILE_NAME}`, '--no-first-run', '--no-default-browser-check', '--password-store=basic',
-    `--class=${APP_CLASS}`, '--window-size=1440,900', '--enable-unsafe-webgpu', `--enable-features=${features.join(',')}`,
+    `--class=${APP_CLASS}`, '--window-size=1440,900', '--enable-unsafe-webgpu', '--enable-webgpu-developer-features',
+    `--enable-features=${features.join(',')}`,
     ...(x11 ? ['--ozone-platform=x11'] : []), ...rest, `--app=${url}`,
   ]
 }

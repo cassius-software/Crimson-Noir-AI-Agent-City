@@ -2074,8 +2074,9 @@ Chromium from it can fail to load the GPU driver of a newer NixOS (today's nixos
 than 26.05's): the city then starts without a GPU adapter. On such a system the module avoids it for good, or build
 from the system's nixpkgs: on a flake-built NixOS,
 `nix run --override-input nixpkgs nixpkgs github:cassius-software/Crimson-Noir-AI-Agent-City` (its registry names the
-system's nixpkgs); on a channel-based one, `--override-input nixpkgs path:/nix/var/nix/profiles/per-user/root/channels/nixos`
-(the registry there names nixpkgs-unstable).
+system's nixpkgs); on a channel-based one,
+`nix run --override-input nixpkgs "path:$(readlink -f /nix/var/nix/profiles/per-user/root/channels/nixos)" github:cassius-software/Crimson-Noir-AI-Agent-City`
+(the registry there names nixpkgs-unstable, and Nix refuses a `path:` that runs through the channel's links).
 
 **What the command does** (`crimson-noir-agent-city`, which is `tools/web/launch.mjs` with Node 24):
 - **Serves the page on `http://127.0.0.1:4180`, to this machine only,** with the two cross-origin isolation headers,
@@ -2085,11 +2086,12 @@ system's nixpkgs); on a channel-based one, `--override-input nixpkgs path:/nix/v
   the console) per address; `--port` moves it, and the page then starts as on a first visit. Ollama accepts the
   address by default (it allows `127.0.0.1` origins); another model server may need the origin allowed in its own
   settings (The model providers).
-- **Opens Chromium as an app window** with WebGPU on (`--enable-unsafe-webgpu` and Vulkan) and a profile of its own
-  (`~/.local/state/crimson-noir-agent-city/chromium`, under `$XDG_STATE_HOME` when set; the profile's folder in it is
-  `AgentCity`, which also names the window under Wayland), so the switches apply even while another Chromium is open. In a Wayland session Chromium opens a native Wayland window; `--x11` (or
-  `AGENT_CITY_X11=1`) runs it through XWayland instead. Closing the window stops the server; Ctrl+C in the terminal
-  closes the window.
+- **Opens Chromium as an app window** with WebGPU on (`--enable-unsafe-webgpu` and Vulkan, plus
+  `--enable-webgpu-developer-features` so the page sees the GPU's full name and picks its tier by it) and a profile of
+  its own (`~/.local/state/crimson-noir-agent-city/chromium`, under `$XDG_STATE_HOME` when set; the profile's folder
+  in it is `AgentCity`, which also names the window under Wayland), so the switches apply even while another Chromium
+  is open. In a Wayland session Chromium opens a native Wayland window; `--x11` (or `AGENT_CITY_X11=1`) runs it
+  through XWayland instead. Closing the window stops the server; Ctrl+C in the terminal closes the window.
 - **A second start** while one runs opens another window on the same server, but only when the server proves it is
   this user's: a serving launcher keeps a random token in a file only this user can read (in `$XDG_RUNTIME_DIR`, else
   the state folder), and the second start asks it to sign a fresh random value with that token; the token itself never

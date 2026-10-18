@@ -82,7 +82,7 @@ test('Chrome gets its own profile, an app window, WebGPU, and exactly one --enab
   const url = 'http://127.0.0.1:4180/?quality=4'
   const plain = launcher.chromeFlags({ url, profile: '/state/p', env: {} })
   assert.equal(plain.at(-1), `--app=${url}`, 'the address comes last')
-  assert.ok(plain.includes('--user-data-dir=/state/p') && plain.includes('--enable-unsafe-webgpu') && plain.includes(`--class=${launcher.APP_CLASS}`))
+  assert.ok(plain.includes('--user-data-dir=/state/p') && plain.includes('--enable-unsafe-webgpu') && plain.includes('--enable-webgpu-developer-features') && plain.includes(`--class=${launcher.APP_CLASS}`))
   // The profile's folder is part of the Wayland window's name: Chromium's `Default` would name every 127.0.0.1 app.
   assert.ok(plain.includes(`--profile-directory=${launcher.PROFILE_NAME}`) && launcher.PROFILE_NAME !== 'Default')
   assert.equal(launcher.WAYLAND_APP_ID, `chrome-127.0.0.1__-${launcher.PROFILE_NAME}`)
@@ -271,6 +271,7 @@ test('the flake builds the page with npm\'s lockfile and wraps the launcher with
   assert.match(page, /install -Dm444 dist\/index\.html \$out\/share\/crimson-noir-agent-city\/index\.html/)
   assert.match(page, /fileset = lib\.fileset\.gitTracked root;/, 'in a checkout, git\'s files and nothing the checkout grew')
   assert.match(page, /free = false;/, 'the proprietary core says so (LICENSE, section 1)')
+  assert.match(page, /install -Dm444 src-tauri\/icons\/icon\.png /, 'the icon is Reserved Material: it ships in the unfree package')
 
   const app = read('tools/nix/app.nix')
   assert.match(app, /--set-default AGENT_CITY_DIST \$\{page\}\/share\/crimson-noir-agent-city/)
@@ -279,6 +280,7 @@ test('the flake builds the page with npm\'s lockfile and wraps the launcher with
   assert.match(app, new RegExp(`startupWMClass = "${launcher.APP_CLASS}";`), 'the menu entry finds the X11 window launch.mjs opens')
   assert.ok(app.includes(`name = "${launcher.WAYLAND_APP_ID}";`), 'a hidden entry names the Wayland window')
   assert.match(app, /license = lib\.licenses\.mit;/)
+  assert.ok(!app.includes('src-tauri/icons'), 'the MIT package links the page\'s icon instead of carrying it')
 
   const module = read('tools/nix/module.nix')
   assert.match(module, /hardware\.graphics\.enable = lib\.mkDefault true;/, 'Chromium\'s WebGPU needs the Vulkan driver')

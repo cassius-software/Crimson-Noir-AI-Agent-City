@@ -6,7 +6,8 @@
 # `crimson-noir-agent-city` command that serves the page on http://127.0.0.1:4180 and opens it in Chromium as an app
 # window with WebGPU on Vulkan, an app-menu entry and an icon. It is what `nix run` runs and what the NixOS module
 # installs. CHROME and AGENT_CITY_DIST are defaults only, so CHROME=google-chrome-stable or another page still win.
-# The launcher is MIT; the page it serves is not (tools/nix/page.nix).
+# The launcher is MIT; the page it serves and the icon are not, so both stay in the page's package (tools/nix/page.nix)
+# and this one only links the icon.
 # What breaks if it is removed? `nix run` and the module have no command to start the city.
 {
   lib,
@@ -30,7 +31,6 @@ stdenvNoCC.mkDerivation {
     fileset = lib.fileset.unions [
       (root + "/tools/web/launch.mjs")
       (root + "/tools/browser/cdp.mjs")
-      (root + "/src-tauri/icons/icon.png")
     ];
   };
   nativeBuildInputs = [
@@ -66,7 +66,8 @@ stdenvNoCC.mkDerivation {
     runHook preInstall
     install -Dm444 tools/web/launch.mjs $out/libexec/crimson-noir-agent-city/web/launch.mjs
     install -Dm444 tools/browser/cdp.mjs $out/libexec/crimson-noir-agent-city/browser/cdp.mjs
-    install -Dm444 src-tauri/icons/icon.png $out/share/icons/hicolor/512x512/apps/crimson-noir-agent-city.png
+    mkdir -p $out/share/icons/hicolor/512x512/apps
+    ln -s ${page}/share/icons/hicolor/512x512/apps/crimson-noir-agent-city.png $out/share/icons/hicolor/512x512/apps/
     makeWrapper ${lib.getExe nodejs_24} $out/bin/crimson-noir-agent-city \
       --add-flags $out/libexec/crimson-noir-agent-city/web/launch.mjs \
       --set-default AGENT_CITY_DIST ${page}/share/crimson-noir-agent-city \

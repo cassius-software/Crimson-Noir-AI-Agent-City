@@ -110,11 +110,11 @@ network. MANUAL.md, On an iPhone, has the steps, what CI checks and what still n
 **On NixOS.** `nix run github:cassius-software/Crimson-Noir-AI-Agent-City` (flakes on) builds the page from source,
 serves it on `http://127.0.0.1:4180` with the two isolation headers and opens it in Chromium as an app window with
 WebGPU on Vulkan; words after `--` become the page's query (`-- quality=4 map=lakefront`). To install it, add the
-flake's `nixosModules.default`, set `programs.crimson-noir-agent-city.enable = true;` and allow the page by name (it is
-the proprietary core): it is then built from the system's own nixpkgs, so Chromium can load the system's GPU driver,
-with an app-menu entry and access for a DualSense's triggers over WebHID. On another Linux, Nix's Chromium cannot load
-the system's GPU driver: prefix `CHROME=google-chrome-stable` to use a browser of the system's own. MANUAL.md, On NixOS,
-has the module snippet, what CI checks and what still needs a real NixOS desktop.
+flake's `nixosModules.default`, set `programs.crimson-noir-agent-city.enable = true;` and allow the page by name (it
+is the proprietary core): it is then built from the system's own nixpkgs, so Chromium can load the system's GPU
+driver, with an app-menu entry and access for a DualSense's triggers over WebHID. On another Linux, Nix's Chromium
+cannot load the system's GPU driver: prefix `CHROME=google-chrome-stable` to use a browser installed outside Nix.
+MANUAL.md, On NixOS, has the module snippet, what CI checks and what still needs a real NixOS desktop.
 
 A first visit opens on Sloane, the concierge, who asks four one-word questions (a name, where to start, the time of day,
 sound) while Lakefront Metro, a fictitious great-lake metropolis of five regions (Lakefront Metropolis with The Spire,
