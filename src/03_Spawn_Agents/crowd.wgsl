@@ -583,9 +583,10 @@ fn trailSpot(r: u32, k: u32) -> vec2f {
 // holds everyone off it, so a trail over one would pin them on its face. A line cutting a piece's grown corner is no
 // gap: the operator's body goes round the corner on an arc, and the containment slides the crowd round it too. Else by the corner of a piece (ROOM_ROUND beyond
 // its grown corner, on the floor and clear of the other pieces) that makes the shortest clear two-leg walk, and on the
-// corner or along its leg on from there, straight on: the legs are tested at `clear`, so the straight line refused at
-// `held` from there would hold them on the corner for good; with none, out along the nearer aisle towards the hub,
-// from where one may open. The crowd's flow field cannot do this: its 2 m cells run straight through a conveyor or a
+// corner or along its leg on from there, straight on where that line is clear at `clear` too: the legs are tested at
+// `clear`, so the straight line refused at `held` from there would hold them on the corner for good, while near a
+// 1 m gap in a row of tables a line from beside the leg can run into the next table's end; with none, out along the
+// nearer aisle towards the hub, from where one may open. The crowd's flow field cannot do this: its 2 m cells run straight through a conveyor or a
 // rack 0.8 m deep.
 fn roomWay(r: u32, me: vec2f, to: vec2f, follow: bool, there: bool) -> vec2f {
   let clear = ROOM_PAD - 0.05;
@@ -622,7 +623,7 @@ fn roomWay(r: u32, me: vec2f, to: vec2f, follow: bool, there: bool) -> vec2f {
   }
   let leg = goal - aim;
   let along = clamp(dot(me - aim, leg) / max(dot(leg, leg), 1e-6), 0.0, 1.0);
-  if (best < 1e9 && distance(me, aim + leg * along) < ROOM_ROUND) { return dirTo(me, goal); }
+  if (best < 1e9 && distance(me, aim + leg * along) < ROOM_ROUND && clearOfFurniture(r, me, goal, clear)) { return dirTo(me, goal); }
   return dirTo(me, aim);
 }
 // The spot someone asked over on the street makes for in place of p: p, or where p is within a body's reach of a lot
@@ -694,7 +695,10 @@ fn summonWay(me: vec2f, at: vec2f, dist: f32, pane: i32) -> vec2f {
   // though, the spot on their own face nearest an operator inside the lot, where that is within talking reach; and
   // only a corner within the last stretch of the operator (walking to one further would take them past the stretch's
   // edge, where the arrow turns them back) or with the operator in talking reach of the lot's edge. While the arrow
-  // would take them into the square of the lot they and the operator are by, this way round it holds at any distance.
+  // would take them into the square of the lot they and the operator are by, or the operator stands in that square and
+  // the straight line to the spot on its face is clear, this way holds at any distance: where a building stands back
+  // from its lot's edge the field enters the square beside it, so along the face its arrow runs back the way they came,
+  // and arrow and line would trade every few frames.
   // Anything else by the field's arrow, one cell off the glass where the cell under them is silent. Coming onto a lot's
   // face they walk for a spot a quarter metre past it (`onto`), so they come right onto it at the last stretch's pace
   // and the containment holds them there: easing to a stop on the face itself, they would stand a few millimetres
@@ -703,7 +707,7 @@ fn summonWay(me: vec2f, at: vec2f, dist: f32, pane: i32) -> vec2f {
   let goal = offLot(at);
   let onto = select(goal, pushOut(at, ROOM_PAD - 0.25), roomOf(at) < 0);
   let pad = ROOM_PAD - 1e-3;
-  let inward = dot(flow, flow) > 0.5 && roomOf(me) < 0 && all(abs(lotCenter(me) - lotCenter(goal)) < vec2f(0.5)) && lotCut(me, me, me + flow * 2.0, pad);
+  let inward = dot(flow, flow) > 0.5 && roomOf(me) < 0 && all(abs(lotCenter(me) - lotCenter(goal)) < vec2f(0.5)) && (lotCut(me, me, me + flow * 2.0, pad) || (any(goal != at) && !lotCut(me, me, goal, pad)));
   if (dist <= 4.0 * SUMMON_STOP || inward) {
     if (!lotCut(me, me, goal, pad) && !lotCut(goal, me, goal, pad)) { return arriveAt(me, onto); }
     let r = roomOf(me);
