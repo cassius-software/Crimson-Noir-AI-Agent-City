@@ -582,9 +582,11 @@ fn trailSpot(r: u32, k: u32) -> vec2f {
 // (`there`), the line passes through no piece and no glass. The operator steps over an AGV dock; the containment
 // holds everyone off it, so a trail over one would pin them on its face. A line cutting a piece's grown corner is no
 // gap: the operator's body goes round the corner on an arc, and the containment slides the crowd round it too. Else by the corner of a piece (ROOM_ROUND beyond
-// its grown corner, on the floor and clear of the other pieces) that makes the shortest clear two-leg walk; with none,
-// out along the nearer aisle towards the hub, from where one may open. The crowd's flow field cannot do this: its 2 m
-// cells run straight through a conveyor or a rack 0.8 m deep.
+// its grown corner, on the floor and clear of the other pieces) that makes the shortest clear two-leg walk, and on the
+// corner or along its leg on from there, straight on: the legs are tested at `clear`, so the straight line refused at
+// `held` from there would hold them on the corner for good; with none, out along the nearer aisle towards the hub,
+// from where one may open. The crowd's flow field cannot do this: its 2 m cells run straight through a conveyor or a
+// rack 0.8 m deep.
 fn roomWay(r: u32, me: vec2f, to: vec2f, follow: bool, there: bool) -> vec2f {
   let clear = ROOM_PAD - 0.05;
   let held = ROOM_PAD - 1e-3;
@@ -618,6 +620,9 @@ fn roomWay(r: u32, me: vec2f, to: vec2f, follow: bool, there: bool) -> vec2f {
       aim = q;
     }
   }
+  let leg = goal - aim;
+  let along = clamp(dot(me - aim, leg) / max(dot(leg, leg), 1e-6), 0.0, 1.0);
+  if (best < 1e9 && distance(me, aim + leg * along) < ROOM_ROUND) { return dirTo(me, goal); }
   return dirTo(me, aim);
 }
 // The spot someone asked over on the street makes for in place of p: p, or where p is within a body's reach of a lot
@@ -690,12 +695,17 @@ fn summonWay(me: vec2f, at: vec2f, dist: f32, pane: i32) -> vec2f {
   // only a corner within the last stretch of the operator (walking to one further would take them past the stretch's
   // edge, where the arrow turns them back) or with the operator in talking reach of the lot's edge. While the arrow
   // would take them into the square of the lot they and the operator are by, this way round it holds at any distance.
-  // Anything else by the field's arrow, one cell off the glass where the cell under them is silent.
+  // Anything else by the field's arrow, one cell off the glass where the cell under them is silent. Coming onto a lot's
+  // face they walk for a spot a quarter metre past it (`onto`), so they come right onto it at the last stretch's pace
+  // and the containment holds them there: easing to a stop on the face itself, they would stand a few millimetres
+  // short where a step at 120 frames a second is less than a 32-bit float's spacing, out of talking reach of an
+  // operator 1.15 m into a park.
   let goal = offLot(at);
+  let onto = select(goal, pushOut(at, ROOM_PAD - 0.25), roomOf(at) < 0);
   let pad = ROOM_PAD - 1e-3;
   let inward = dot(flow, flow) > 0.5 && roomOf(me) < 0 && all(abs(lotCenter(me) - lotCenter(goal)) < vec2f(0.5)) && lotCut(me, me, me + flow * 2.0, pad);
   if (dist <= 4.0 * SUMMON_STOP || inward) {
-    if (!lotCut(me, me, goal, pad) && !lotCut(goal, me, goal, pad)) { return arriveAt(me, goal); }
+    if (!lotCut(me, me, goal, pad) && !lotCut(goal, me, goal, pad)) { return arriveAt(me, onto); }
     let r = roomOf(me);
     if (r >= 0 && r == roomOf(goal)) {
       var best = 1e9;
@@ -735,7 +745,7 @@ fn summonWay(me: vec2f, at: vec2f, dist: f32, pane: i32) -> vec2f {
     let here = roomOf(me);
     if (here >= 0) { flow = flowAt(me + offGlass(u32(here), me) / FLOW_INV_CELL); }
   }
-  return select(arriveAt(me, goal), flow, dot(flow, flow) > 0.5);
+  return select(arriveAt(me, onto), flow, dot(flow, flow) > 0.5);
 }
 // The sidewalk corner a commuter walks the corner graph to: the corner of the doorway's street on the room's own block
 // (interiors.ts targetCorner); its lane coordinate is the door front's, so the last stretch is straight along the lane.
@@ -880,9 +890,9 @@ fn dirTo(a: vec2f, b: vec2f) -> vec2f {
   let l = length(d);
   return select(vec2f(0.0), d / l, l > 1e-4);
 }
-// dirTo, slowing to a stop within a quarter metre of b: someone asked over to an operator out of their reach (a metre
-// or more into a park) stands on the spot nearest them, as they stood held on the lot's face, instead of stepping back
-// and forth across it.
+// dirTo, slowing to a stop within a quarter metre of b: someone asked over to an operator out of their reach stands
+// still where they come to instead of stepping back and forth across it (by a room's glass on offLot's spot for them;
+// by a lot held on its face, walking for the spot a quarter metre past it).
 fn arriveAt(a: vec2f, b: vec2f) -> vec2f { return dirTo(a, b) * min(distance(a, b) * 4.0, 1.0); }
 
 // ---------------------------------------------------------------- passes
