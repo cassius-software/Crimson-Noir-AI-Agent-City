@@ -41,8 +41,9 @@ through a gateway to the Claude API that the operator runs on it with their own 
 joins with `net join`. The gateway, when one is running, is asked when the operator chooses it (`ask provider
 claude`), when the default provider `auto` finds no model on this machine answering (first for its list of models,
 which it asks the Claude API for; also when a model stops answering partway through a visit), and by the cloud
-fallback while the frame rate is low. While a model on this machine answers, `auto` asks the gateway nothing. The
-local model providers and `say`
+fallback while the frame rate is low. While `auto` answers with a model on this machine, it asks the gateway
+nothing; once it has found the gateway it keeps it for the visit, so a model started afterwards is used only when the
+gateway stops answering or `ask` alone looks again. The local model providers and `say`
 talk only to a model server and a speech server on this same machine, and only when asked (see The model providers,
 Speech and Networking). It needs WebGPU:
 
@@ -1193,7 +1194,8 @@ exactly the same without either.
   a model beside the city costs frame rate, and the quality governor drops the tier to compensate.
 - **What it cannot do.** It sends nothing unless you type `ask`, and nothing polls in the background. Under `auto`,
   an ask with nothing found yet, an ask whose server stops answering before any of its answer arrived, and `ask`
-  alone first ask the four servers above for their lists of models, all on this machine. No provider
+  alone first ask the three model servers above for their lists of models, all on this machine, and the Claude
+  gateway (which asks the Claude API) only when none of them has a model that writes text. No provider
   can leave the machine: every one of them asks the one gate (`02_Define_The_Rules/airgap.ts loopbackServer`)
   before anything is sent, and the fetch they are handed is the page's own under the gate's wrapper. The engine
   holds no network code: App builds the router and hands it to the operator tier, which knows only its shape
