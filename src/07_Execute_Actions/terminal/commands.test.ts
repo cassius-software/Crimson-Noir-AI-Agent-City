@@ -8,7 +8,9 @@
  * reading the swarm's memory and the model file kept in this page is touched and the operator commands are refused),
  * the recruit command (the microphone and the model download requested inside the keydown, outcomes as lines), `ask
  * file` (the picker requested inside the keydown) and `ask gpu`, `say` and `memory`, the operator tier's
- * commands over a sandboxed fake simulation, the multi-line editing helpers, and the content rules for its text.
+ * commands over a sandboxed fake simulation, the city actions an agent proposes (`act`, `y`/`n` only while one waits,
+ * the lines an ask prints for a proposal, the trail, the follower's lines printed once), the multi-line editing helpers,
+ * and the content rules for its text.
  * What breaks if it is removed? A console regression (a wrong tier, a picker opened outside the user
  * gesture, a script run while locked, a crash on a bad line) would only show up in the browser.
  */
@@ -16,20 +18,21 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
-  HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, PROVIDER_ARGS, SKILL_ARGS, commonPrefix, complete, continuationPrompt, formatRecording, formatStats, isToggleKey, motd,
-  recallsHistory, redactForHistory, replSession, run, type CommandResult, type Line,
+  HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatRecording, formatStats,
+  isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type CommandResult, type Line,
 } from './commands.ts'
 import {
-  offlineBridge, ring0Stats, type AskResult, type GatedAsk, type GatedRun, type GatedSay, type HalDevice, type LookBridge, type LookChange, type MemoryBridge,
-  type ModelBridge, type NetBridge, type NetReport, type OperatorBridge, type Piece, type PingBridge, type PingPick, type PingPoint, type RecordBridge, type RecruitBridge, type Ring0Stats,
-  type SayResult, type TerminalBridge, type AgentBridge, type ConciergeBridge,
+  offlineBridge, ring0Stats, type ActEnd, type ActEvent, type ActsBridge, type AskResult, type GatedAsk, type GatedRun, type GatedSay, type HalDevice, type LookBridge, type LookChange,
+  type MemoryBridge, type ModelBridge, type NetBridge, type NetReport, type OperatorBridge, type PendingAct, type Piece, type PingBridge, type PingPick, type PingPoint, type RecordBridge,
+  type RecruitBridge, type Ring0Stats, type SayResult, type TerminalBridge, type AgentBridge, type ConciergeBridge,
 } from './bridge.ts'
 import { SKILLS } from '../../03_Spawn_Agents/skills.ts'
 import { LOOK_BODIES, LOOK_PRESETS, LOOK_SLOTS } from '../../03_Spawn_Agents/look.ts'
 import { PING_KINDS, PING_WORDS } from '../../08_Swarm/ping.ts'
 import { apiDoc, exec, scriptApi, type SimControls } from '../operator.ts'
 import { createSwarm } from '../../08_Swarm/orchestrator.ts'
-import { INVARIANTS, INVARIANT_TEXT } from '../../02_Define_The_Rules/guardrails.ts'
+import { AuditChain, INVARIANTS, INVARIANT_TEXT, verifyChain, type AuditBody } from '../../02_Define_The_Rules/guardrails.ts'
+import { sha256 } from '../../02_Define_The_Rules/integrity.ts'
 import { PROVIDERS } from '../../09_Cognition/router.ts'
 import { harnesses } from '../harness.ts'
 import type { QualityState, RecordingState, SipocSnapshot } from '../../05_Observe_Environment/telemetry.ts'
@@ -46,7 +49,7 @@ const CORE_NAMES = [
   'help', 'stats', 'laws', 'kernel', 'quality', 'time', 'audio', 'ghost', 'rain', 'render', 'captions', 'ping', 'look', 'agent', 'sloane', 'goal', 'hal', 'recruit', 'memory', 'clear', 'history', 'echo',
   'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'exit',
 ]
-const OPERATOR_NAMES = ['operator', 'run', 'ask', 'swarm', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
+const OPERATOR_NAMES = ['operator', 'run', 'ask', 'swarm', 'act', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
 
 const IDLE: RecordingState = { active: false, source: null, seconds: 0, frames: 0, bytes: 0, dropped: 0, codec: '' }
 
@@ -94,6 +97,11 @@ interface FakeOp extends OperatorBridge {
   gate: 'open' | 'reject' | 'abort'
   /** How an `ask` ends: answered, rejected, cut off by the tether, the server failing, all thinking, the token limit. */
   answer: 'ok' | 'reject' | 'abort' | 'fail' | 'thinking' | 'length'
+  /** What an answered ask reports of its ACTION line (AskResult.act): a proposal now waiting, a refused line, or nothing. */
+  proposal: AskResult['act']
+  /** The answered text (the ACTION line already stripped, as the tier hands it over). */
+  text: string
+  acts: FakeActs
   mind: { server: string; model: string | null; think?: boolean; api?: string; provider?: string; key?: string | null; effort?: string; found?: string; runtime?: string; storage?: string }
   /** How a `say` ends: said, rejected, cut off by the tether, the server failing, the operator's stop. */
   speech: 'ok' | 'reject' | 'abort' | 'fail' | 'stopped'
@@ -105,14 +113,81 @@ interface FakeOp extends OperatorBridge {
 /** The tether the fake gateway binds a script to. */
 const TETHER = { agent: 7, serial: 1, skills: ['Rust', 'Python'] }
 
+/** The city action the fake tier holds for the operator's OK when a test sets `acts.waiting` (acts.ts PendingAct). */
+const PROPOSAL: PendingAct = { seq: 1, who: 'agent 7 (Rust, Python)', agent: 7, serial: 1, skills: ['Rust', 'Python'], verb: 'time', canonical: 'time 22:00', sentence: 'set the clock to 22:00', since: 1_700_000_000_000 }
+
+/** The catalogue rows the fake tier lists (actions.ts catalogueLines prints the real ones; the console prints whatever the tier gives). */
+const CATALOGUE = [
+  '  time      HH:MM, or midnight to night        set the clock',
+  '  rain      on, off                              turn rain mode on or off',
+  '  light     haze, exposure, sun or fill, a number  set a light dial',
+  '  quality   auto, lite, minimal to ultra         pin or free the quality tier',
+  '  cars      park, drive                          park every car, or let them drive',
+  '  crowd     0 to 100                             set the crowd density',
+  '  sound     on, off, 0 to 100                    the sound and its volume',
+]
+
+/** The gateway's own wording for a proposal whose tether broke (02_Define_The_Rules/guardrails.ts tetherVerdict). */
+const TETHER_LOST = 'Aborted (Spatial Tether Lost): agent 7 (Rust, Python): no longer tethered to the operator'
+
+interface FakeActs extends ActsBridge {
+  /** The proposal waiting for the OK; a test sets it (null: nothing waits). */
+  waiting: PendingAct | null
+  /** How an allowed action ends: the done line, a failure in the facade, or the lease gone at `use`. */
+  outcome: 'done' | 'failed' | 'aborted'
+  /** The hash-chained trail a test fills (the real chain, so `act log` prints real hashes and verifies them). */
+  chain: AuditChain
+  followers: Set<(ev: ActEvent) => void>
+}
+
+/**
+ * The proposed city actions as the fake tier keeps them: reads log nothing (they change nothing, and the locked sweep
+ * proves a locked console touches no engine knob through them); `allow` and `refuse` log who decided and end the wait.
+ */
+function fakeActs(f: FakeOp): FakeActs {
+  const ending = (): ActEnd => (a.outcome === 'done' ? { state: 'done', line: 'the clock is set to 22:00' }
+    : a.outcome === 'failed' ? { state: 'failed', line: 'the clock did not take the hour' }
+      : { state: 'aborted', line: TETHER_LOST })
+  const a: FakeActs = {
+    waiting: null,
+    outcome: 'done',
+    chain: new AuditChain(),
+    followers: new Set(),
+    pending: () => a.waiting,
+    follow: (fn) => { a.followers.add(fn); return () => { a.followers.delete(fn) } },
+    allow: (by = 'host') => {
+      f.opCalls.push(`act allow ${by}`)
+      const act = a.waiting
+      if (!act) throw new Error('nothing is waiting for your OK')
+      a.waiting = null
+      return { act, result: Promise.resolve(ending()) }
+    },
+    refuse: (by = 'host') => {
+      f.opCalls.push(`act refuse ${by}`)
+      const act = a.waiting
+      if (!act) throw new Error('nothing is waiting for your OK')
+      a.waiting = null
+      return act
+    },
+    log: () => a.chain.entries(),
+    verify: () => a.chain.verify(),
+    list: () => CATALOGUE,
+  }
+  return a
+}
+
 function fakeOperator(): FakeOp {
   const api = scriptApi(tinySim())
   const f: FakeOp = {
     opCalls: [],
     state: { unlocked: false },
     gate: 'open',
+    proposal: undefined,
+    text: 'Grip scales\ntyre friction.',
+    acts: undefined as unknown as FakeActs,
     unlock: () => { f.opCalls.push('unlock'); f.state.unlocked = true },
-    lock: () => { f.opCalls.push('lock'); f.state.unlocked = false },
+    // The tier withdraws a waiting proposal as it locks (no proposal waits past a lock): the console must read it first.
+    lock: () => { f.opCalls.push('lock'); f.state.unlocked = false; f.acts.waiting = null },
     unlocked: () => f.state.unlocked,
     exec: (skills, script): GatedRun => {
       f.opCalls.push(`exec ${skills.join(',')}: ${script}`)
@@ -130,6 +205,8 @@ function fakeOperator(): FakeOp {
     mind: { server: 'http://localhost:11434', model: 'test-model' },
     ask: (skills, prompt): GatedAsk => {
       f.opCalls.push(`ask ${skills.join(',')}: ${prompt}`)
+      // The tier's own refusal while a proposal waits (operator.ts askThrough), in its words.
+      if (f.acts.waiting) throw new Error('a proposal is waiting: act ok or act no first')
       if (f.mind.model === null) throw new Error('choose a model first: ask model <name> (type ask to list them)')
       if (f.answer === 'reject') {
         const reason = `nobody tethered to the operator has ${skills.join(', ')}`
@@ -142,11 +219,11 @@ function fakeOperator(): FakeOp {
         for (const p of [{ kind: 'thinking', text: 'hmm' }, { kind: 'text', text: 'Grip scales\n' }, { kind: 'text', text: 'tyre friction.' }] as const) {
           for (const fn of followers) fn(p)
         }
-        const text = 'Grip scales\ntyre friction.'
+        const text = f.text
         if (how === 'abort') resolve({ state: 'Aborted', text, thinking: 1, reason: 'agent 7 (Rust, Python): no longer tethered to the operator', ms: 900 })
         else if (how === 'fail') resolve({ state: 'Authorized', text: '', thinking: 0, error: 'no local model server is answering at http://localhost:11434: start it, or point ask at the right address (ask server <url>)', ms: 5 })
         else if (how === 'thinking') resolve({ state: 'Authorized', text: '', thinking: 24, done: 'length', tokens: 24, ms: 2700 })
-        else resolve({ state: 'Authorized', text, thinking: 1, done: how === 'length' ? 'length' : 'stop', tokens: 9, ms: 1234, ...(f.speakAnswer && { speech: Promise.resolve(f.speakAnswer) }) })
+        else resolve({ state: 'Authorized', text, thinking: 1, done: how === 'length' ? 'length' : 'stop', tokens: 9, ms: 1234, ...(f.speakAnswer && { speech: Promise.resolve(f.speakAnswer) }), ...(f.proposal && { act: f.proposal }) })
       }, 0))
       return { state: 'Authorized', bound: [TETHER], follow: (fn) => { followers.add(fn); return () => { followers.delete(fn) } }, result }
     },
@@ -161,10 +238,6 @@ function fakeOperator(): FakeOp {
       return `${provider}: connected${url ? `; server ${url}` : ''}${key ? '; key ••••' : ''}`
     },
     swarm: undefined as unknown as FakeOp['swarm'],
-    acts: {
-      pending: () => null, follow: () => () => {}, log: () => [], list: () => [], verify: () => ({ ok: true, length: 0, head: '0'.repeat(64) }),
-      allow: () => { throw new Error('nothing is waiting for your OK') }, refuse: () => { throw new Error('nothing is waiting for your OK') },
-    },
     askSet: (key, value) => {
       f.opCalls.push(`askSet ${key} ${value}`)
       if (key === 'server' && !value.startsWith('http://localhost')) throw new Error(`the local model server must be on this machine (localhost, 127.0.0.1 or [::1]), not '${value}'`)
@@ -227,14 +300,23 @@ function fakeOperator(): FakeOp {
     },
   }
   // The swarm over the fake's own ask: the same gate answers (f.answer), one step at a time; no endpoint for the script
-  // or a model running in this page, as the real tier reads it (operator.ts).
-  f.swarm = createSwarm({
+  // or a model running in this page, as the real tier reads it (operator.ts). Its `run` is refused while a proposal
+  // waits, as the tier's wrapper refuses it, in the tier's words.
+  const swarm = createSwarm({
     ask: (skills, prompt) => f.ask(skills, prompt),
     endpoint: () => {
       const p = f.mind.provider === 'auto' ? f.mind.found : f.mind.provider
       return p === 'scripted' || p === 'inpage' ? null : f.mind.server
     },
   })
+  f.swarm = {
+    ...swarm,
+    run: (goal, agents) => {
+      if (f.acts.waiting) throw new Error('a proposal is waiting: act ok or act no first')
+      return swarm.run(goal, agents)
+    },
+  }
+  f.acts = fakeActs(f)
   return f
 }
 
@@ -522,6 +604,7 @@ test('help lists every command with usage, in two groups; help <cmd> explains on
   assert.match(all, /run <skill>\[,<skill>\.\.\.\]: <js\.\.\.>/)
   assert.match(all, /ask \[<skill>\[,<skill>\.\.\.\]: <prompt\.\.\.>\|provider <name>\|connect <provider> \[<url>\] \[<key>\]\|model <name>\|server <url>\|key <key>\|effort <level>\|think on\|off\|api <format>\|file \[forget <name>\|load\|unload\|log\]\|gpu auto\|on\|off\|stop\]/)
   assert.match(all, /harness \[list\|run <name>\]/)
+  assert.match(all, /act \[ok\|no\|log \[verify\]\|list\]/)
   assert.match(all, /record \[start \[canvas\|camera\]\|stop\|status\]/)
   assert.match(all, /recruit \[<skill>\|rally <agent> \[<x> <z>\]\|listen\|stop\|install\|dismiss\]/)
   assert.match(all, /render \[on\|off\]/)
@@ -876,7 +959,7 @@ test('air gap: while locked, across every command and completion, the only knobs
   for (const l of ['run 1 + 1', 'run sim.clock.set(3)', 'run rust: sim.clock.set(3)', 'run rust, go: 1', 'ask', 'ask rust: hi', 'ask model m', 'ask server http://localhost:1', 'ask stop',
     'say', 'say rust: over here', 'say voice v', 'say model m', 'say server http://localhost:1', 'say auto on', 'say stop', 'memory forget 7', 'memory forget all',
     'get', 'get physics', 'set physics.car.power 2', 'harness run kernel-stop', 'harness run sanctuary', 'record start', 'record start camera', 'record stop',
-    'net join ws://127.0.0.1:8787 tok', 'net join wss://localhost:8788', 'net leave', 'net forget']) {
+    'net join ws://127.0.0.1:8787 tok', 'net join wss://localhost:8788', 'net leave', 'net forget', 'act ok', 'act no']) {
     const r = run(l, b, [])
     assert.ok(isErr(r), `${l} should be refused while locked`)
     assert.match(texts(r)[0], /^\w+: locked; type 'operator unlock' first$/)
@@ -886,6 +969,18 @@ test('air gap: while locked, across every command and completion, the only knobs
   assert.ok(texts(run('api', b, [])).length > 10)
   assert.ok(texts(run('harness list', b, [])).length === harnesses().length + 1)
   assert.deepEqual(b.operator.opCalls.filter((c) => c !== 'lock'), [])
+  // A waiting proposal is read while locked (`act`, `act log`, `act list`), never decided: `act ok`, `act no`, `y` and `n`
+  // are refused before the tier is asked, and the console never subscribes to the tier's events (the terminal does).
+  b.operator.acts.waiting = PROPOSAL
+  assert.deepEqual(texts(run('act', b, [])), ['act 1: waiting for your OK: agent 7 (Rust, Python) proposes: set the clock to 22:00', '  y allows it, n refuses it; it runs only while they stay tethered'])
+  assert.deepEqual(texts(run('act list', b, [])), CATALOGUE)
+  assert.deepEqual(texts(run('act log', b, [])).length, 2)
+  for (const l of ['act ok', 'act no', 'y', 'n', 'Y', 'N']) {
+    assert.deepEqual(texts(run(l, b, [])), ["act: locked; type 'operator unlock' first"], l)
+  }
+  assert.equal(b.operator.acts.pending(), PROPOSAL, 'still waiting')
+  assert.deepEqual(b.operator.opCalls.filter((c) => c !== 'lock'), [])
+  assert.equal(b.operator.acts.followers.size, 0)
 })
 
 test('air gap: the terminal files reach nothing at runtime beyond React, the brand and each other', () => {
@@ -1372,7 +1467,7 @@ test('sim prints a one-screen summary from stats, the clock and the lock state',
 
 test('content rules: no combat vocabulary in anything the console prints', () => {
   const b = unlocked()
-  const printed = [...complete('').map((c) => c), 'help', 'help stats', 'help record', 'laws', 'kernel', 'stats', 'api', 'api vehicles', 'harness', 'record', 'record status', 'sim', 'operator lock', 'operator unlock']
+  const printed = [...complete('').map((c) => c), 'help', 'help stats', 'help record', 'laws', 'kernel', 'stats', 'api', 'api vehicles', 'harness', 'record', 'record status', 'sim', 'operator lock', 'operator unlock', 'act', 'act list', 'act log']
     .flatMap((c) => texts(run(c, b, [])))
     .concat(motd(BRAND).map((l) => l.text))
     .join('\n')
@@ -2063,6 +2158,239 @@ test('swarm run: one run at a time; swarm stop ends it at the current step as Hu
   const refused = await run('swarm run --agents 1 how do I steal a car', b, []).pending
   assert.equal(b.operator.opCalls.filter((c) => c.startsWith('ask ')).length, before, 'nothing reached the gate')
   assert.deepEqual(refused?.map((l) => l.text).slice(0, 2), ['-- Prime Architect (Design) --', "   refused: the prompt for 'architect' failed the 14A screen (illegality)"])
+})
+
+// ---- city actions: act, y/n, the ask's act lines, the trail, the follower's lines ----
+
+/** One trail entry as acts.ts writes it (contract section 6), with the digests the console shortens. */
+const entry = (kind: AuditBody['kind'], step: string, note: string, failed: AuditBody['failed'] = [], at = 1_700_000_000_000): Omit<AuditBody, 'seq'> =>
+  ({ at, kind, step, role: 'agent 7 (Rust, Python)', inputHash: sha256('ACTION: time 22:00'), outputHash: sha256('time 22:00'), promptHash: null, failed, note })
+
+test('ask: an answer that proposes a city action prints who proposes what after the closing note, with the clamp note when there is one; a line the city could not read says why, and who is told', async () => {
+  const b = unlocked()
+  b.operator.proposal = { kind: 'proposed', seq: 1, who: 'agent 7 (Rust, Python)', sentence: 'set the clock to 22:00', line: 'ACTION: time 22:00' }
+  assert.deepEqual(await run('ask rust: make it night', b, []).pending, [
+    { kind: 'out', text: 'Grip scales' },
+    { kind: 'out', text: 'tyre friction.' },
+    { kind: 'sys', text: '-- answered in 1.2 s, after 1 tokens of thinking --' },
+    { kind: 'out', text: 'act 1: agent 7 (Rust, Python) proposes: set the clock to 22:00' },
+    { kind: 'sys', text: '-- y allows it, n refuses it (act ok, act no); console closed: Y or N on the card --' },
+  ])
+  // A hired agent is named as the tier names them; a clamped dial carries the tier's note.
+  b.operator.proposal = { kind: 'proposed', seq: 2, who: 'Mara (agent 7, Rust, Python)', sentence: 'set the light haze to 4', note: 'clamped from 9', line: 'ACTION: light haze 9' }
+  assert.equal((await run('ask rust: more haze', b, []).pending)?.[3]?.text, 'act 2: Mara (agent 7, Rust, Python) proposes: set the light haze to 4 (clamped from 9)')
+  // An answer that was only its ACTION line is not "no text": the act line says what became of it.
+  b.operator.text = ''
+  assert.deepEqual((await run('ask rust: night', b, []).pending)?.map((l) => l.text), [
+    '-- answered in 1.2 s, after 1 tokens of thinking --',
+    'act 2: Mara (agent 7, Rust, Python) proposes: set the light haze to 4 (clamped from 9)',
+    '-- y allows it, n refuses it (act ok, act no); console closed: Y or N on the card --',
+  ])
+  b.operator.proposal = undefined
+  assert.deepEqual((await run('ask rust: night', b, []).pending)?.map((l) => l.text), ['(no answer: the model spent its tokens thinking)', '-- answered in 1.2 s, after 1 tokens of thinking --'], 'as before without a line')
+  b.operator.text = 'Grip scales\ntyre friction.'
+  // A line the city could not read: the reason, and the agent who is told next time; the gate's refusals name nobody.
+  b.operator.proposal = { kind: 'refused', reason: "no city action called 'teleport' (time, rain, light, quality, cars, crowd, sound)", line: 'ACTION: teleport 10 20', told: 7 }
+  const refused = await run('ask rust: teleport', b, []).pending
+  assert.deepEqual(refused?.slice(3), [{ kind: 'err', text: "act: not run: no city action called 'teleport' (time, rain, light, quality, cars, crowd, sound) (agent 7 is told next time)" }])
+  b.operator.proposal = { kind: 'refused', reason: 'Rejected (Insufficient Capabilities): nobody tethered to the operator has Rust', line: 'ACTION: time 22:00' }
+  assert.deepEqual((await run('ask rust: night', b, []).pending)?.at(-1), { kind: 'err', text: 'act: not run: Rejected (Insufficient Capabilities): nobody tethered to the operator has Rust' })
+  b.operator.proposal = { kind: 'refused', reason: 'the operator tier is locked', line: 'ACTION: time 22:00' }
+  assert.deepEqual((await run('ask rust: night', b, []).pending)?.at(-1), { kind: 'err', text: 'act: not run: the operator tier is locked' })
+  assert.deepEqual(b.calls, [], 'no engine knob was touched')
+})
+
+test('act: alone it says what waits for the OK, or that nothing does; act ok allows it and prints how it ended (done, failed, aborted at the lease); act no refuses it and says who is told; nothing waiting is said so', async () => {
+  const b = unlocked()
+  assert.deepEqual(run('act', b, []).lines, [{ kind: 'sys', text: 'act: nothing is waiting for your OK' }])
+  b.operator.acts.waiting = PROPOSAL
+  assert.deepEqual(run('act', b, []).lines, [
+    { kind: 'out', text: 'act 1: waiting for your OK: agent 7 (Rust, Python) proposes: set the clock to 22:00' },
+    { kind: 'sys', text: '  y allows it, n refuses it; it runs only while they stay tethered' },
+  ])
+  b.operator.acts.waiting = { ...PROPOSAL, note: 'clamped from 9' }
+  assert.equal(texts(run('act', b, []))[0], 'act 1: waiting for your OK: agent 7 (Rust, Python) proposes: set the clock to 22:00 (clamped from 9)')
+  b.operator.acts.waiting = PROPOSAL
+  const ok = run('act ok', b, [])
+  assert.deepEqual(ok.lines, [{ kind: 'sys', text: 'act 1: allowed: set the clock to 22:00' }], 'allowed at once; the end follows')
+  assert.equal(b.operator.opCalls.at(-1), 'act allow console', 'the tier is told the console decided')
+  assert.equal(b.operator.acts.pending(), null, 'nothing waits once allowed')
+  assert.deepEqual(await ok.pending, [{ kind: 'out', text: 'act 1: done: the clock is set to 22:00' }])
+  b.operator.acts.waiting = { ...PROPOSAL, seq: 2 }
+  b.operator.acts.outcome = 'failed'
+  assert.deepEqual(await run('act ok', b, []).pending, [{ kind: 'err', text: 'act 2: failed: the clock did not take the hour' }])
+  b.operator.acts.waiting = { ...PROPOSAL, seq: 3 }
+  b.operator.acts.outcome = 'aborted'
+  assert.deepEqual(await run('y', b, []).pending, [{ kind: 'err', text: `act 3: ${TETHER_LOST}` }], "the gateway's words, never retyped")
+  b.operator.acts.waiting = { ...PROPOSAL, seq: 4 }
+  const no = run('act no', b, [])
+  assert.deepEqual(no.lines, [{ kind: 'sys', text: 'act 4: refused: set the clock to 22:00 (agent 7 is told next time)' }])
+  assert.equal(no.pending, undefined)
+  assert.equal(b.operator.opCalls.at(-1), 'act refuse console')
+  assert.equal(b.operator.acts.pending(), null)
+  // Nothing waiting: the tier's own words, as an error, and nothing pending.
+  for (const l of ['act ok', 'act no']) {
+    const r = run(l, b, [])
+    assert.deepEqual(r.lines, [{ kind: 'err', text: 'act: nothing is waiting for your OK' }], l)
+    assert.equal(r.pending, undefined, l)
+  }
+  // Malformed lines are refused before the tier.
+  const calls = b.operator.opCalls.length
+  assert.deepEqual(texts(run('act dance', b, [])), ["act: unknown command 'dance'", 'usage: act [ok|no|log [verify]|list]'])
+  for (const l of ['act ok now', 'act no 1', 'act log now', 'act list verify', 'act log verify twice']) assert.deepEqual(texts(run(l, b, [])), ['usage: act [ok|no|log [verify]|list]'], l)
+  assert.equal(b.operator.opCalls.length, calls)
+  assert.deepEqual(b.calls, [], 'no engine knob was touched')
+  // Track B (the offline bridge): nothing waits, the catalogue is empty, and a decision or the trail says the engine is not running.
+  const off = offlineBridge(BRAND)
+  assert.deepEqual(texts(run('act', off, [])), ['act: nothing is waiting for your OK'])
+  assert.deepEqual(texts(run('act list', off, [])), [])
+  for (const l of ['act ok', 'act no', 'act log', 'act log verify']) assert.deepEqual(texts(run(l, off, [])), ['act: engine not running'], l)
+  assert.deepEqual(texts(run('y', off, [])), ['ash: y: not found'])
+})
+
+test('y and n: aliases of act ok and act no only while a proposal waits; otherwise unknown words, as before; the whole line, any case; in no table', async () => {
+  const b = unlocked()
+  for (const l of ['y', 'n', 'Y', 'N', ' y ', 'yes', 'no']) assert.deepEqual(texts(run(l, b, [])), [`ash: ${l.trim()}: not found`], l)
+  b.operator.acts.waiting = PROPOSAL
+  // Not the whole line: a word the console does not know, even while a proposal waits.
+  for (const l of ['y please', 'yes', 'no', 'ok', 'act y']) assert.match(texts(run(l, b, []))[0], /not found|unknown command/, l)
+  assert.equal(b.operator.acts.pending(), PROPOSAL, 'still waiting')
+  const y = run(' Y ', b, [])
+  assert.deepEqual(y.lines, [{ kind: 'sys', text: 'act 1: allowed: set the clock to 22:00' }])
+  assert.deepEqual(await y.pending, [{ kind: 'out', text: 'act 1: done: the clock is set to 22:00' }])
+  assert.equal(b.operator.opCalls.at(-1), 'act allow console')
+  assert.deepEqual(texts(run('n', b, [])), ['ash: n: not found'], 'nothing waits any more')
+  b.operator.acts.waiting = { ...PROPOSAL, seq: 2 }
+  assert.deepEqual(run('n', b, []).lines, [{ kind: 'sys', text: 'act 2: refused: set the clock to 22:00 (agent 7 is told next time)' }])
+  assert.equal(b.operator.opCalls.at(-1), 'act refuse console')
+  assert.deepEqual(texts(run('y', b, [])), ['ash: y: not found'])
+  // The console learns no new word: help, completion and the locked sweep never see the aliases.
+  assert.ok(!complete('').includes('y') && !complete('').includes('n'))
+  assert.deepEqual(complete('y'), [])
+  assert.doesNotMatch(texts(run('help', b, [])).join('\n'), /^ {2}[yn]\b/m)
+  // A bridge without the operator tier: `y` stays an unknown word, and nothing throws out of run().
+  const older = { ...fake(), operator: undefined } as unknown as TerminalBridge
+  assert.deepEqual(texts(run('y', older, [])), ['ash: y: not found'])
+})
+
+test('operator lock with a proposal waiting: the lock line, then the withdrawal the tier made (read before the lock); ask stop prints the tier\'s withdrawal; ask and swarm run are refused while one waits, say is not', async () => {
+  const b = unlocked()
+  assert.deepEqual(run('operator lock', b, []).lines, [{ kind: 'out', text: 'operator: locked' }], 'as before with nothing waiting')
+  run('operator unlock', b, [])
+  b.operator.acts.waiting = { ...PROPOSAL, seq: 4 }
+  assert.deepEqual(run('operator lock', b, []).lines, [{ kind: 'out', text: 'operator: locked' }, { kind: 'sys', text: 'act 4: withdrawn: the operator tier is locked' }])
+  assert.equal(b.operator.acts.pending(), null, 'no proposal waits past a lock')
+  run('operator unlock', b, [])
+  b.operator.askStop = () => 'withdrawing act 3: set the crowd to 50%'
+  assert.deepEqual(run('ask stop', b, []).lines, [{ kind: 'out', text: 'ask: withdrawing act 3: set the crowd to 50%' }])
+  // While a proposal waits, a prompt and a swarm run are refused in the tier's words under the command's prefix.
+  b.operator.acts.waiting = PROPOSAL
+  const ask = run('ask rust: hi', b, [])
+  assert.deepEqual(ask.lines, [{ kind: 'err', text: 'ask: a proposal is waiting: act ok or act no first' }])
+  assert.equal(ask.pending, undefined)
+  const swarm = run('swarm run --agents 1 x', b, [])
+  assert.deepEqual(swarm.lines, [{ kind: 'err', text: 'swarm: a proposal is waiting: act ok or act no first' }])
+  assert.equal(swarm.pending, undefined)
+  assert.equal(b.operator.swarm.status().running, false)
+  assert.deepEqual(run('say rust: over here', b, []).lines, [{ kind: 'sys', text: 'say: Authorized: said by agent 7 (Rust, Python)' }], 'speech is not refused')
+  assert.deepEqual(texts(run('act', b, []))[0], 'act 1: waiting for your OK: agent 7 (Rust, Python) proposes: set the clock to 22:00')
+})
+
+test('act log: the trail in the swarm audit\'s row format (the same printer), the newest 24 with the count of earlier ones, then the chain\'s verdict; empty says so; a replaced entry is BROKEN; readable while locked', () => {
+  const b = fake()
+  const genesis = "chain: 0 entries verify from genesis; head 0000000000000000… (SHA-256 of each entry's canonical body and the hash before it)"
+  assert.deepEqual(run('act log', b, []).lines, [{ kind: 'sys', text: 'act: no entries yet (an ask that proposes an action writes them)' }, { kind: 'sys', text: genesis }])
+  assert.deepEqual(texts(run('act log verify', b, [])), texts(run('act log', b, [])))
+  const chain = b.operator.acts.chain
+  chain.append(entry('step', 'act-1', 'proposed: set the clock to 22:00'))
+  chain.append(entry('answer', 'act-1', 'allowed at the console'))
+  chain.append(entry('end', 'act-1', 'done: the clock is set to 22:00'))
+  chain.append(entry('refusal', 'act-', 'not run: the operator tier is locked', ['HumanOverrideSupreme']))
+  chain.append(entry('stop', 'act-2', TETHER_LOST, ['CapabilityTethered']))
+  const e = chain.entries()
+  const r = run('act log', b, [])
+  assert.deepEqual(r.lines, [
+    { kind: 'out', text: `   0  step    act-1     ${e[0].hash.slice(0, 12)}  proposed: set the clock to 22:00` },
+    { kind: 'out', text: `   1  answer  act-1     ${e[1].hash.slice(0, 12)}  allowed at the console` },
+    { kind: 'out', text: `   2  end     act-1     ${e[2].hash.slice(0, 12)}  done: the clock is set to 22:00` },
+    { kind: 'out', text: `   3  refusal act-      ${e[3].hash.slice(0, 12)}  HumanOverrideSupreme: not run: the operator tier is locked` },
+    { kind: 'out', text: `   4  stop    act-2     ${e[4].hash.slice(0, 12)}  CapabilityTethered: ${TETHER_LOST}` },
+    { kind: 'sys', text: `chain: 5 entries verify from genesis; head ${e[4].hash.slice(0, 16)}… (SHA-256 of each entry's canonical body and the hash before it)` },
+  ])
+  assert.deepEqual(texts(run('act log verify', b, [])), texts(r))
+  // The same printer as the swarm's: the swarm's trail with these entries prints the same rows.
+  b.operator.swarm = { ...b.operator.swarm, audit: () => chain.entries(), verify: () => chain.verify() }
+  run('operator unlock', b, [])
+  assert.deepEqual(texts(run('swarm audit', b, [])), texts(r))
+  // Long trails: the newest 24, after a count of the rest.
+  for (let i = 5; i < 30; i++) chain.append(entry('step', `act-${i}`, `proposed: set the clock to ${String(i).padStart(2, '0')}:00`))
+  const long = texts(run('act log', b, []))
+  assert.equal(long[0], '… 6 earlier entries')
+  assert.equal(long.length, 26)
+  assert.match(long[1], /^ {3}6 {2}step {4}act-6 {5}[0-9a-f]{12} {2}proposed: set the clock to 06:00$/)
+  assert.match(long.at(-1) ?? '', /^chain: 30 entries verify from genesis; head [0-9a-f]{16}…/)
+  // An entry replaced from outside: the row still prints, the verdict says where it broke.
+  const tampered = chain.entries().map((x, i) => (i === 1 ? { ...x, note: 'allowed by the host' } : x))
+  b.operator.acts.log = () => tampered
+  b.operator.acts.verify = () => verifyChain(tampered)
+  const broken = run('act log verify', b, [])
+  assert.deepEqual(broken.lines.at(-1), { kind: 'err', text: 'chain: BROKEN at entry 1: its hash is not the hash of its body' })
+  assert.deepEqual(b.calls, [], 'no engine knob was touched')
+})
+
+test('act list: one row per verb, the tier\'s own rows, readable while locked', () => {
+  const b = fake()
+  const r = run('act list', b, [])
+  assert.deepEqual(texts(r), CATALOGUE)
+  assert.deepEqual(texts(r), [...b.operator.acts.list()])
+  assert.ok(kinds(r).every((k) => k === 'out'))
+  assert.equal(r.lines.length, 7)
+  assert.deepEqual(complete('act '), ['act list', 'act log', 'act no', 'act ok'])
+  assert.deepEqual(complete('act log '), ['act log verify'])
+  assert.deepEqual(complete('act l'), ['act list', 'act log'])
+  assert.deepEqual(b.operator.opCalls, [])
+})
+
+test('actEventLines: printed once; nothing for a proposal or for what the console itself decided, exact lines for the card, a host and the gateway', () => {
+  const act = Object.freeze({ ...PROPOSAL })
+  const done: ActEnd = { state: 'done', line: 'the clock is set to 22:00' }
+  // The ask that made the proposal prints it; `act ok` and `act no` print their own lines: the follower adds nothing.
+  assert.deepEqual(actEventLines({ kind: 'proposed', act }), [])
+  assert.deepEqual(actEventLines({ kind: 'allowed', act, by: 'console' }), [])
+  assert.deepEqual(actEventLines({ kind: 'ended', act, end: done, by: 'console' }), [])
+  assert.deepEqual(actEventLines({ kind: 'ended', act, end: { state: 'refused', line: 'refused at the console' }, by: 'console' }), [])
+  assert.deepEqual(actEventLines({ kind: 'ended', act, end: { state: 'withdrawn', line: 'ask stop' }, by: 'console' }), [])
+  // Decided elsewhere: where, and the city's own words.
+  assert.deepEqual(actEventLines({ kind: 'allowed', act, by: 'card' }), [{ kind: 'sys', text: 'act 1: allowed on the card: set the clock to 22:00' }])
+  assert.deepEqual(actEventLines({ kind: 'allowed', act, by: 'host' }), [{ kind: 'sys', text: 'act 1: allowed by the host: set the clock to 22:00' }])
+  assert.deepEqual(actEventLines({ kind: 'ended', act, end: { state: 'refused', line: 'refused on the card' }, by: 'card' }), [{ kind: 'sys', text: 'act 1: refused on the card: set the clock to 22:00' }])
+  assert.deepEqual(actEventLines({ kind: 'ended', act, end: { state: 'refused', line: 'refused by the host' }, by: 'host' }), [{ kind: 'sys', text: 'act 1: refused by the host: set the clock to 22:00' }])
+  assert.deepEqual(actEventLines({ kind: 'ended', act, end: done, by: 'card' }), [{ kind: 'out', text: 'act 1: done: the clock is set to 22:00' }])
+  assert.deepEqual(actEventLines({ kind: 'ended', act, end: { state: 'failed', line: 'the clock did not take the hour' }, by: 'host' }), [{ kind: 'err', text: 'act 1: failed: the clock did not take the hour' }])
+  assert.deepEqual(actEventLines({ kind: 'ended', act: { ...act, seq: 5 }, end: { state: 'aborted', line: TETHER_LOST }, by: 'gateway' }), [{ kind: 'err', text: `act 5: ${TETHER_LOST}` }])
+  // The gateway's message alone as the end line prints the same line: the wording is never retyped, never doubled.
+  assert.deepEqual(actEventLines({ kind: 'ended', act, end: { state: 'aborted', line: 'agent 7 (Rust, Python): no longer tethered to the operator' }, by: 'gateway' }), [{ kind: 'err', text: `act 1: ${TETHER_LOST}` }])
+  assert.deepEqual(actEventLines({ kind: 'ended', act, end: { state: 'withdrawn', line: 'the operator tier is locked' }, by: 'host' }), [{ kind: 'sys', text: 'act 1: withdrawn: the operator tier is locked' }])
+  assert.deepEqual(actEventLines({ kind: 'ended', act, end: { state: 'withdrawn', line: 'withdrawn: ask stop' }, by: 'host' }), [{ kind: 'sys', text: 'act 1: withdrawn: ask stop' }])
+  // Pure: the same event prints the same lines, and nothing in it is changed.
+  const ev: ActEvent = Object.freeze({ kind: 'ended', act, end: Object.freeze(done), by: 'card' })
+  assert.deepEqual(actEventLines(ev), actEventLines(ev))
+  assert.deepEqual(ev, { kind: 'ended', act: PROPOSAL, end: done, by: 'card' })
+  const all = [actEventLines({ kind: 'allowed', act, by: 'card' }), actEventLines({ kind: 'ended', act, end: done, by: 'card' })].flat().map((l) => l.text).join('\n')
+  assert.doesNotMatch(all, /[!]|\b(attack|kill|weapon|target|shoot|gun|violence|injur\w*|damage)\b/i)
+})
+
+test('Terminal: subscribes to the tier\'s act events on mount and appends actEventLines, keyed on the bridge; the offline bridge\'s follow and pending never throw', () => {
+  const src = readFileSync(new URL('./Terminal.tsx', import.meta.url), 'utf8')
+  assert.match(src, /import \{[^}]*\bactEventLines\b[^}]*\} from '\.\/commands\.ts'/)
+  assert.match(src, /useEffect\(\(\) => \(bridge \?\? OFFLINE\)\.operator\.acts\.follow\(\(ev\) => append\(actEventLines\(ev\)\)\), \[bridge, append\]\)/)
+  // Subscribed once the `append` it calls exists, before the first render's effects run in order.
+  assert.ok(src.indexOf('const append = useCallback(') < src.indexOf('.operator.acts.follow('))
+  const off = offlineBridge(BRAND)
+  assert.equal(off.operator.acts.pending(), null)
+  const unsubscribe = off.operator.acts.follow(() => { throw new Error('never called') })
+  assert.equal(typeof unsubscribe, 'function')
+  assert.doesNotThrow(() => unsubscribe())
 })
 
 test('redactForHistory: a typed key or token is kept as dots, every other line as typed; history then never shows it', () => {

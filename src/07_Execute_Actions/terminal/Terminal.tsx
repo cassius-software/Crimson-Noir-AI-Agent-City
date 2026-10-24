@@ -7,7 +7,9 @@
  * and tunes the city only through the TerminalBridge; while it is open it owns the keyboard, so no
  * keystroke typed here reaches the game. The prompt is a multi-line buffer (Shift+Enter adds a line
  * under a `…` continuation prompt) so operator scripts can be typed in place.
- * A local model's answer (`ask`) streams in live under the scrollback until its final lines replace it.
+ * A local model's answer (`ask`) streams in live under the scrollback until its final lines replace it. A city action
+ * an agent proposed and decided off the console (the card, a host, the gateway) is printed here as it happens, open or
+ * hidden (commands.ts actEventLines over the bridge's `operator.acts.follow`), so the scrollback is complete on reopening.
  * With `fullscreen` (Track B, ?boot=tty) it is the whole page instead: open from the first render, full height,
  * black, and no key closes it; a `boot` result is handed to the host (onBoot), which reloads on that track. Its text
  * starts below the host's 'Back to the city' button (App.tsx TtyShell: the same top offset plus the button's 44 px
@@ -23,7 +25,7 @@ import { memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, use
 import { flushSync } from 'react-dom'
 import { BRAND } from '../../brand.ts'
 import { offlineBridge, type TerminalBridge } from './bridge.ts'
-import { commonPrefix, complete, continuationPrompt, formatStats, isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type Line, type ReplSession } from './commands.ts'
+import { actEventLines, commonPrefix, complete, continuationPrompt, formatStats, isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type Line, type ReplSession } from './commands.ts'
 
 const MAX_ROWS = 600
 const MAX_HISTORY = 200
@@ -187,6 +189,11 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
       return next.length > MAX_ROWS ? next.slice(next.length - MAX_ROWS) : next
     })
   }, [])
+
+  // Every city action event the console did not cause (allowed or refused on the card or by a host, ended by the
+  // gateway) is printed as it happens, hidden or not; the console's own `act ok` / `act no` print theirs, so each line
+  // is printed once. The offline bridge's follow is a no-op, so this holds on Track B and before the engine is up.
+  useEffect(() => (bridge ?? OFFLINE).operator.acts.follow((ev) => append(actEventLines(ev))), [bridge, append])
 
   /** Ends a live view, leaving its last frame in the scrollback. */
   const stopLive = useCallback(() => {

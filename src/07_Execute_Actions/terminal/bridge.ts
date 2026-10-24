@@ -270,8 +270,8 @@ export interface TerminalBridge {
   /** Ghost view (view-only: the physics shapes drawn as code over the frame): on, off, or the status line. */
   ghost(arg?: 'on' | 'off'): string
   /**
-   * The rain (01_Initialize_World/matrixMode.ts, the engine's setMatrix): falling code on every surface, and in the
-   * physics realm people and cars passing through each other (the crowd's physics mask): on, off, or the status line.
+   * The rain (01_Initialize_World's rain-mode module, the engine's rain-mode switch): falling code on every surface, and
+   * in the physics realm people and cars passing through each other (the crowd's physics mask): on, off, or the status line.
    */
   rain(arg?: 'on' | 'off'): string
   /**
