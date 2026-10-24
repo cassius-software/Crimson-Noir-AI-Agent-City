@@ -116,11 +116,11 @@ const TETHER = { agent: 7, serial: 1, skills: ['Rust', 'Python'] }
 /** The city action the fake tier holds for the operator's OK when a test sets `acts.waiting` (acts.ts PendingAct). */
 const PROPOSAL: PendingAct = { seq: 1, who: 'agent 7 (Rust, Python)', agent: 7, serial: 1, skills: ['Rust', 'Python'], verb: 'time', canonical: 'time 22:00', sentence: 'set the clock to 22:00', since: 1_700_000_000_000 }
 
-/** The catalogue rows the fake tier lists (actions.ts catalogueLines prints the real ones; the console prints whatever the tier gives). */
+/** The catalogue rows the fake tier lists: the real ones, as actions.test.ts pins them from catalogueLines() (the console prints whatever the tier gives). */
 const CATALOGUE = [
-  '  time      HH:MM, or midnight to night        set the clock',
+  '  time      HH:MM, or midnight to night          set the clock',
   '  rain      on, off                              turn rain mode on or off',
-  '  light     haze, exposure, sun or fill, a number  set a light dial',
+  '  light     haze, exposure, sun or fill, a number set a light dial',
   '  quality   auto, lite, minimal to ultra         pin or free the quality tier',
   '  cars      park, drive                          park every car, or let them drive',
   '  crowd     0 to 100                             set the crowd density',
@@ -969,15 +969,15 @@ test('air gap: while locked, across every command and completion, the only knobs
   assert.ok(texts(run('api', b, [])).length > 10)
   assert.ok(texts(run('harness list', b, [])).length === harnesses().length + 1)
   assert.deepEqual(b.operator.opCalls.filter((c) => c !== 'lock'), [])
-  // A waiting proposal is read while locked (`act`, `act log`, `act list`), never decided: `act ok`, `act no`, `y` and `n`
-  // are refused before the tier is asked, and the console never subscribes to the tier's events (the terminal does).
+  // A waiting proposal is read while locked (`act`, `act log`, `act list`), never decided: `act ok` and `act no` are
+  // refused before the tier is asked, and the console never subscribes to the tier's events (the terminal does). The
+  // real tier withdraws the proposal when it locks (operator.ts lock), so nothing waits while locked and `y` is then
+  // `not found` as before; this fake holds one to prove the console's own guard.
   b.operator.acts.waiting = PROPOSAL
   assert.deepEqual(texts(run('act', b, [])), ['act 1: waiting for your OK: agent 7 (Rust, Python) proposes: set the clock to 22:00', '  y allows it, n refuses it; it runs only while they stay tethered'])
   assert.deepEqual(texts(run('act list', b, [])), CATALOGUE)
   assert.deepEqual(texts(run('act log', b, [])).length, 2)
-  for (const l of ['act ok', 'act no', 'y', 'n', 'Y', 'N']) {
-    assert.deepEqual(texts(run(l, b, [])), ["act: locked; type 'operator unlock' first"], l)
-  }
+  for (const l of ['act ok', 'act no']) assert.deepEqual(texts(run(l, b, [])), ["act: locked; type 'operator unlock' first"], l)
   assert.equal(b.operator.acts.pending(), PROPOSAL, 'still waiting')
   assert.deepEqual(b.operator.opCalls.filter((c) => c !== 'lock'), [])
   assert.equal(b.operator.acts.followers.size, 0)
@@ -2240,11 +2240,10 @@ test('act: alone it says what waits for the OK, or that nothing does; act ok all
   for (const l of ['act ok now', 'act no 1', 'act log now', 'act list verify', 'act log verify twice']) assert.deepEqual(texts(run(l, b, [])), ['usage: act [ok|no|log [verify]|list]'], l)
   assert.equal(b.operator.opCalls.length, calls)
   assert.deepEqual(b.calls, [], 'no engine knob was touched')
-  // Track B (the offline bridge): nothing waits, the catalogue is empty, and a decision or the trail says the engine is not running.
+  // Track B (the offline bridge): nothing waits, and the catalogue, a decision or the trail say the engine is not running.
   const off = offlineBridge(BRAND)
   assert.deepEqual(texts(run('act', off, [])), ['act: nothing is waiting for your OK'])
-  assert.deepEqual(texts(run('act list', off, [])), [])
-  for (const l of ['act ok', 'act no', 'act log', 'act log verify']) assert.deepEqual(texts(run(l, off, [])), ['act: engine not running'], l)
+  for (const l of ['act list', 'act ok', 'act no', 'act log', 'act log verify']) assert.deepEqual(texts(run(l, off, [])), ['act: engine not running'], l)
   assert.deepEqual(texts(run('y', off, [])), ['ash: y: not found'])
 })
 

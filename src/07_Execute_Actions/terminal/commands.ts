@@ -1285,7 +1285,11 @@ const HANDLERS: Record<Name, Handler> = {
       if (!p) return { lines: [sys('act: nothing is waiting for your OK')] }
       return { lines: [out(`act ${p.seq}: waiting for your OK: ${p.who} proposes: ${p.sentence}${noteOf(p.note)}`), sys('  y allows it, n refuses it; it runs only while they stay tethered')] }
     }
-    if (a === 'list') return { lines: acts.list().map(out) }
+    if (a === 'list') {
+      // The offline bridge lists nothing (bridge.ts): the catalogue lives in the tier, so Track B says what the others say.
+      const rows = acts.list()
+      return rows.length ? { lines: rows.map(out) } : fail('act: engine not running')
+    }
     if (a === 'log') return { lines: auditLines(acts.log(), acts.verify(), 'act: no entries yet (an ask that proposes an action writes them)') }
     if (a !== 'ok' && a !== 'no') return fail(`act: unknown command '${a}'`, usage('act'))
     if (!op.unlocked()) return locked('act')

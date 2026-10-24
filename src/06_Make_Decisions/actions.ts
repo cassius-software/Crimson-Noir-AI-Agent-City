@@ -12,6 +12,7 @@
  * What breaks if it is removed? An answer's ACTION line is text again: nothing an agent says can change the city.
  */
 import { formatClock } from '../01_Initialize_World/solar.ts'
+import { screen } from '../02_Define_The_Rules/conduct.ts'
 import { LITE_TIER, TIERS } from '../05_Observe_Environment/governor.ts'
 import type { ScriptApi } from '../07_Execute_Actions/operator.ts'
 import { classify, TIMES } from './intent.ts'
@@ -231,8 +232,20 @@ function decode(action: Action): Decoded {
   return r.d
 }
 
-/** The model's own verb word, as the refusal names it: letters, digits and a few joiners only, cut short. */
-const quoteVerb = (head: string): string => head.replace(/[^\p{L}\p{N}_.-]/gu, '').slice(0, 24)
+/**
+ * The model's own verb word, as the refusal names it: letters, digits and a few joiners only, cut short, and only when
+ * the word so assembled passes the 14A screen; the stream screen reads `k!i!l!l` or `k.i.l.l` as four letters, so the
+ * stripped word is screened again here, with its joiners and without, and a word the screen refuses is not quoted.
+ * The reason reaches the console, the chain and the proposer's next prompt; every line the city speaks passes the screen.
+ */
+const quoteVerb = (head: string): string | null => {
+  const q = head.replace(/[^\p{L}\p{N}_.-]/gu, '').slice(0, 24)
+  return screen(q).admissible && screen(q.replace(/[_.-]/gu, '')).admissible ? q : null
+}
+const unknownVerb = (head: string): string => {
+  const q = quoteVerb(head)
+  return `no city action ${q === null ? 'by that name' : `called '${q}'`} (${VERBS.join(', ')})`
+}
 
 type ReadBody = { readonly kind: 'none' } | { readonly kind: 'action'; readonly action: Action; readonly note?: string } | { readonly kind: 'refused'; readonly reason: string }
 
@@ -242,7 +255,7 @@ function readBody(body: string): ReadBody {
   const head = (m?.[1] ?? '').toLowerCase()
   const rest = (m?.[2] ?? '').trim()
   const verb = SYNONYMS.get(head)
-  if (verb === undefined) return { kind: 'refused', reason: `no city action called '${quoteVerb(head)}' (${VERBS.join(', ')})` }
+  if (verb === undefined) return { kind: 'refused', reason: unknownVerb(head) }
   if (verb === 'none') return { kind: 'none' }
   const value = (LIGHT_KEYS as readonly string[]).includes(head) ? `${head} ${rest}`.trim() : rest
   const r = readValue(verb, value)

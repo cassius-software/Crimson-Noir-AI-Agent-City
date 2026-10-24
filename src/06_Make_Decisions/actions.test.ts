@@ -195,6 +195,13 @@ test('no city action called: an unknown verb is refused naming it and the seven 
   assert.equal(reason('ACTION: spawn'), hint('spawn'))
   assert.equal(reason('ACTION: avatar.teleport(1, 2)'), hint('avatar.teleport1'))
   assert.equal(reason(`ACTION: ${'x'.repeat(100)}`), hint('x'.repeat(24)), 'cut short')
+  // A lexicon word the stream screen could not see (it reads `k!i!l!l` as four letters) is assembled by the stripping
+  // and must not be quoted back: the reason reaches the console, the chain and the proposer's next prompt.
+  for (const line of ['ACTION: k!i!l!l 10', 'ACTION: s*h*o*o*t now', 'ACTION: w.e.a.p.o.n']) {
+    const r = reason(line)
+    assert.equal(r, 'no city action by that name (time, rain, light, quality, cars, crowd, sound)', line)
+    assert.equal(screen(r).admissible, true, line)
+  }
   const synonyms: [string, string][] = [
     ['time 22:00', 'time 22:00'], ['clock 22:00', 'time 22:00'], ['hour 22:00', 'time 22:00'],
     ['rain on', 'rain on'],
@@ -324,7 +331,7 @@ test('source pin against world.ts: the light ranges mirrored here equal LIGHT_TU
   const self = readFileSync(new URL('./actions.ts', import.meta.url), 'utf8')
   assert.doesNotMatch(self, /from '[^']*(?:world\.ts|three|\.wgsl)[^']*'/, 'the catalogue never pulls the GPU world in')
   const imports = [...self.matchAll(/^import (type )?\{[^}]*\} from '([^']+)'/gm)].map((i) => `${i[1] ?? ''}${i[2]}`).sort()
-  assert.deepEqual(imports, ['../01_Initialize_World/solar.ts', '../05_Observe_Environment/governor.ts', './intent.ts', 'type ../07_Execute_Actions/operator.ts'], 'downward imports only; operator.ts as a type')
+  assert.deepEqual(imports, ['../01_Initialize_World/solar.ts', '../02_Define_The_Rules/conduct.ts', '../05_Observe_Environment/governor.ts', './intent.ts', 'type ../07_Execute_Actions/operator.ts'], 'downward imports only; operator.ts as a type')
   assert.doesNotMatch(self, /fetch\(|WebSocket|localStorage|indexedDB|eval\(|new Function|import\(/, 'pure: no I/O, no code built at run time')
 })
 
