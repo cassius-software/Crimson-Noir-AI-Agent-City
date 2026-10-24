@@ -44,6 +44,16 @@
  *   stays in blob:, data: or the page's own origin, no socket is opened, no security message is logged, and every
  *   worker the browser created was attached. Last, a worker the page makes from a blob is refused a fetch off this
  *   machine by the page's own policy (a CSP violation, not a failed name lookup);
+ * - actions: a city action an agent proposes at the end of an answer (06_Make_Decisions/actions.ts, 07_Execute_Actions/
+ *   acts.ts), driven with no model by the scripted provider chosen on purpose, with one tether (someone who knows
+ *   Design): `ask design: make it night` proposes `set the clock to 22:00`, shown in the console with who proposes it,
+ *   and waits (the clock unchanged); with the console closed the card takes focus on Refuse and the real Y key allows
+ *   it, once (the clock, the HUD and the toast agree); the console opened again holds the card's decision and the done
+ *   line, printed while it was closed; `n` refuses the next proposal and nothing changes; `ask stop` withdraws a
+ *   waiting one; `operator lock` withdraws one and nothing waits past it, `act` reads while locked and `act ok` is
+ *   refused; last, the proposer let go (`recruit dismiss`) ends a waiting proposal in the gateway's words (Aborted,
+ *   Spatial Tether Lost), and `act log verify` shows every proposal, decision and end in a chain of 11 entries that
+ *   verifies from genesis;
  * - tty: the console alone (?boot=tty), which must not touch WebGPU at all;
  * - pwa: the installable copy a phone plays (tools/web/pwa.mjs, built from dist/ into a temporary folder) served as a
  *   static host serves it, to an iPhone: the manifest read through the page's policy, the icons, the service worker
@@ -66,7 +76,7 @@
  * screenshot per scenario to --out (default: a temporary directory), and the console's transcript where a scenario
  * types in it, prints one row per check (and an `info` row for what is recorded, not asserted) and exits 1 if any
  * fails.
- * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,lite,tty,pwa,inpage,lakefront,fail].
+ * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,lite,tty,pwa,inpage,actions,lakefront,fail].
  * Needs `npm run build`.
  * What breaks if it is removed? Nothing at runtime; the page loses its only end-to-end check in a browser, and with it
  * the proof that the city renders and that every control reaches the avatar.
@@ -1364,6 +1374,80 @@ const SCENARIOS = {
       p.health('inpage')
     } finally {
       p.saveTranscript('inpage')
+      await p.b.close()
+    }
+  },
+
+  /**
+   * A city action an agent proposes, with no model: the scripted provider chosen on purpose appends the one line the
+   * prompt plainly asks for (actions.ts scriptedAction over intent.ts classify), the tier shows it and waits, and every
+   * end of a proposal's life is driven in turn: allowed from the card's own key with the console closed, refused with
+   * `n`, withdrawn by `ask stop`, withdrawn by `operator lock`, and ended by the gateway when the one tether is let go.
+   * Everything waits on the console's scrollback and the page's state; `engine.bridge` is a TS-private field read from
+   * plain JS, as the debug handle allows (App.tsx `window.__SIM__.engine`).
+   */
+  async actions(chrome, origin) {
+    const p = await open(chrome)
+    try {
+      await p.goto(`${origin}/?${LIGHT}`)
+      await p.booted()
+      check(await p.openConsole(), 'actions: the tilde key opens the console')
+      await p.command('operator unlock', /unlocked/)
+      // `ask provider scripted` answers `provider  scripted: no backend; …` (router.ts PROVIDER_TEXT).
+      await p.command('ask provider scripted', /provider\s+scripted/)
+      const t = await tether(p, 'Design')
+      check(t.ok, 'actions: someone who knows Design is tethered', t.notes.join('; '))
+      const pend = () => p.eval('window.__SIM__.engine.bridge.operator.acts.pending()?.sentence ?? null')
+      const clock = () => p.eval('window.__SIM__.snapshot().customer.clock')
+      const before = await clock()
+
+      // A proposal: under the answer, who proposes what, waiting; the clock has not moved.
+      const shown = await p.command('ask design: make it night', /act 1: /, 60_000)
+      check(/act 1: agent \d+ \(Design\) proposes: set the clock to 22:00/.test(shown ?? '') && (await pend()) === 'set the clock to 22:00',
+        'actions: the script proposes and the console shows who and what', lastLine(shown))
+      check((await clock()) === before, 'actions: nothing changed before the OK')
+
+      // The console closes: the card takes focus on Refuse, and the real Y key (the pad and the taps shielded) allows it.
+      await p.tap('Escape', 'Escape', 27)
+      const focused = await p.waitFor(`document.activeElement?.closest('[role="alertdialog"][data-act]') !== null && document.activeElement?.textContent === 'Refuse'`, 5_000).then(() => true, () => false)
+      await p.tap('KeyY', 'y', 89)
+      const ran = await p.waitFor(`window.__SIM__.snapshot().customer.clock === '22:00'`, 10_000).then(() => true, () => false)
+      check(focused && ran && (await pend()) === null
+        && await p.eval(`window.__SIM__.engine.toasts.some((t) => t.title === 'City action' && t.body === 'done: the clock is set to 22:00')`)
+        && await p.eval(`document.body.innerText.includes('22:00')`),
+        'actions: Y on the card ran it once; the clock, the HUD and the toast agree', `Refuse focused ${focused}, ran ${ran}, clock ${await clock()}`)
+      check(await p.openConsole(), 'actions: the console opens again')
+      check(/act 1: allowed on the card: set the clock to 22:00\n[\s\S]*act 1: done: the clock is set to 22:00/.test(await p.eval(`${CONSOLE_LOG}?.innerText ?? ''`)),
+        'actions: the card decisions were printed while the console was closed')
+
+      // `n` refuses; `ask stop` withdraws; `operator lock` withdraws, and nothing waits past it.
+      await p.command('ask design: make it noon', /act 2: /, 60_000)
+      const no = await p.command('n', /act 2: refused/)
+      check(/^act 2: refused: set the clock to 12:00 \(agent \d+ is told next time\)$/.test(lastLine(no)) && (await clock()) === '22:00', 'actions: n refuses it and nothing changes', lastLine(no))
+      await p.command('ask design: thin the crowd', /act 3: /, 60_000)
+      const stop = await p.command('ask stop', /ask: /)
+      check(/^ask: withdrawing act 3: set the crowd to 50%$/.test(lastLine(stop)) && (await pend()) === null, 'actions: ask stop withdraws a waiting proposal', lastLine(stop))
+      const tier = await p.eval('window.__SIM__.snapshot().quality.tier')
+      await p.command('ask design: lowest quality please', /act 4: .*set the quality to Lite/, 60_000)
+      const lock = await p.command('operator lock', /withdrawn/)
+      check(/act 4: withdrawn: the operator tier is locked/.test(lock ?? '') && (await pend()) === null && (await p.eval('window.__SIM__.snapshot().quality.tier')) === tier,
+        'actions: no proposal waits past a lock', lastLine(lock))
+      check(/nothing is waiting/.test(await p.command('act', /act: /) ?? '') && /^act: locked; type 'operator unlock' first$/.test(lastLine(await p.command('act ok', /act: /))),
+        'actions: act reads while locked; act ok does not')
+
+      // The one tether let go while a proposal waits: the gateway ends it in its own words, and the trail has everything
+      // (11 entries: 5 step, 1 answer, 1 end, 1 refusal, 3 stop).
+      await p.command('operator unlock', /unlocked/)
+      await p.command('ask design: make it golden hour', /act 5: .*set the clock to 17:23/, 60_000)
+      await p.command('recruit dismiss', /letting 1 person go/)
+      const gone = await p.waitFor('window.__SIM__.engine.bridge.operator.acts.pending() === null', 20_000).then(() => true, () => false)
+      const log = await p.command('act log verify', /chain: /)
+      check(gone && /stop {4}act-5 .*CapabilityTethered: Aborted \(Spatial Tether Lost\): agent \d+ \(Design\): no longer tethered to the operator/.test(log ?? '') && /chain: 11 entries verify from genesis/.test(log ?? '') && (await clock()) === '22:00',
+        'actions: a lost tether ends the proposal in the gateway\'s words; the trail has every proposal, decision and end, and verifies', lastLine(log))
+      await p.shot('actions')
+      p.health('actions')
+    } finally {
+      p.saveTranscript('actions')
       await p.b.close()
     }
   },

@@ -87,6 +87,7 @@ The 02 stage has no outbound vector. Its contribution is the gate.
 | `exec`: `sleep`, `signal`, the timeout | Timers only. A script that outlives its lease loses `sim`; it keeps the realm. | The realm's primitives are guarded regardless of the lease. |
 | `gatedAsk`, `gatedSay` | The router and the speech client, with a screened prompt. | Both clients are loopback-only (above). |
 | `askSet('server', ...)`, the console's `ask server` and `say server` | A typed address. | The provider's own `setServer`, through the gate. |
+| `acts.ts` (the city actions an agent proposes) | The validated facade's catalogue calls and two engine knobs (rain mode, the sound), one `lease.use` each, under the proposer's lease. | The parser admits catalogue verbs only, with clamped values; nothing runs before the operator's OK; the gateway's lease; the hash-chained trail (`act log verify`). |
 
 ## 10_Network (the client the cognition stage shares its rule with)
 
@@ -267,3 +268,5 @@ ending with its token, metered pings, a header deadline, ended refusals) are des
   `tools/verify/wasm_airgap.py` a third policy for the pinned module; `tools/verify/page_dist.mjs` the check that
   `dist/` is one file naming only reviewed hosts. The gate, the guard, the allowlist and the shipped policy are
   unchanged.
+- Later, city actions (PR C): `06_Make_Decisions/actions.ts`, `07_Execute_Actions/acts.ts`, `ActCard.tsx` (row above);
+  the gate, the guard and the allowlist are unchanged.

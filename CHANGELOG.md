@@ -15,6 +15,14 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **City actions, asked each time (ask, act).** An agent's answer may end with one ACTION line from a fixed catalogue
+  (the clock, rain mode, the light dials, the quality tier, the cars, the crowd, the sound); the console and a card show
+  who proposes what, in the city's own words, and nothing runs until you allow it (Y or N on the card, act ok or act no,
+  y or n, a tap, the pad, or a host through bridge.operator.acts). It runs through the task gateway under the proposer's
+  tether, is logged in a hash-chained trail (act log verify) and remembered as a moment and a run; a refusal, ask stop,
+  operator lock, a lost tether and a reload all end it. The system prompt grows by four lines, so every prompt hash
+  moves; pad buttons and touch taps are shielded while a card waits; the scripted provider proposes when chosen on
+  purpose, which the browser smoke's new actions scenario drives with no model.
 - **A model in the page itself (`ask provider inpage`).** A sixth provider answers with a GGUF model file the
   operator picks (Menu › Model file on a touch screen, `ask file` in the console, or the file dropped on the city on a
   computer), kept in the browser's own storage for the page and run inside it by llama.cpp compiled to WebAssembly

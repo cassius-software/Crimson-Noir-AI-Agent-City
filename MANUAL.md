@@ -71,6 +71,7 @@ at all (see Track B under Ring-0 console).
 | Hide HUD | H | | Menu: Hide HUD |
 | Ring-0 console | `~` (Backquote) | | Menu: Console (Close shuts it) |
 | A model file for the model in this page | `ask file` in the console, or drop the file on the city | | Menu: Model file |
+| Allow / refuse a city action an agent proposed | Y / N with the console closed; act ok / act no, or y / n, in it | d-pad and the south face button on the card | tap Allow / Refuse |
 
 A ping pressed again within a second asks the next kind: go, look, gather, wait (see Pings and the rally under
 Recruitment). With `?players=2`…`4` the keyboard, the mouse and touch stay player 1's, and each further gamepad
@@ -836,7 +837,77 @@ unlocked:
   server and the Claude provider's key in one line, checked before anything changes), `ask key <key>|none`, `ask
   effort <level>`, `ask model <name>` and `ask server <url>` set it up; `ask stop` stops an answer. `ask file [forget
   <name>|load|unload|log]` and `ask gpu auto|on|off` keep and run a model file in this page (A model in this page);
-  they send no prompt, so they need no unlock. An inadmissible prompt gets `-- no reply --` and reaches no model.
+  they send no prompt, so they need no unlock. An inadmissible prompt gets `-- no reply --` and reaches no model. The
+  answer may end with one `ACTION:` line; what it proposes is shown as `act N: … proposes: …` and waits for your OK;
+  `ask stop` withdraws it.
+- **City actions, asked each time.** An agent's answer may end with one action from a fixed catalogue, and nothing
+  happens until you allow it. Every provider is told the same four lines, at the end of the system prompt
+  (`06_Make_Decisions/actions.ts ACTION_RULES`, so every prompt hash moved with them):
+
+  ```
+  City actions: to ask the operator for one change to the city, write your answer, then the action alone on the last line, exactly like this example:
+  ACTION: time 20:00
+  The actions: time HH:MM (or midnight, dawn, morning, noon, afternoon, golden hour, sunset, dusk, evening, night); rain on or off; light haze, exposure, sun or fill and a number (1 is the city as authored); quality auto, lite, minimal, low, medium, high or ultra; cars park or drive; crowd 0 to 100; sound on, off or 0 to 100.
+  One ACTION line at most, and none when nothing needs changing (ACTION: none also means none). The operator sees it and allows or refuses it before anything happens, so never say that it happened.
+  ```
+
+  The page reads the line; it never runs it as written. The verb must be one of the seven and the value must fit it (a
+  dial out of its range is clamped, and the console notes `(clamped from 9)`); a line glued to prose, two different
+  lines, an unknown verb or a value of the wrong shape is refused with its reason, nothing is proposed, and the agent
+  is told next time (`act: not run: <reason> (agent 17 is told next time)`); `ACTION: none` proposes nothing. What you
+  are shown is the catalogue's own sentence over the value it read, never the model's words:
+
+  | action (its other names) | values | the sentence shown | once allowed |
+  |---|---|---|---|
+  | `time` (clock, hour) | `HH[:MM]`, `H am` or `H pm`, or midnight, dawn, morning, noon, afternoon, golden hour, sunset, dusk, evening, night | `set the clock to 22:00` | the clock, as `time` sets it; `the clock is set to 22:00` |
+  | `rain` | on, off | `turn rain mode on` | the rain-mode switch, as M flips it; `rain mode is on` |
+  | `light` (lights, lighting; or `haze`, `exposure`, `sun`, `fill` alone) | `haze`, `exposure`, `sun` or `fill` and a number, clamped to the dial's range | `set the light haze to 1.5` | the shader dial, as `set shaders.light.haze` turns it; `the light haze is 1.5` |
+  | `quality` (tier, graphics) | auto, lite, minimal, low, medium, high, ultra | `set the quality to Low`, `let the quality govern itself` | the tier, as `quality` pins or frees it; `the quality is Low` |
+  | `cars` (car, traffic, vehicles) | park, drive | `park every car`, `let every car drive` | every car but the one you drive, 64 at most, parked or handed back to its driver; `8 cars parked` |
+  | `crowd` (people, pedestrians) | 0 to 100, or none, fewer, half, more, full | `set the crowd to 50%` | the crowd's density, until the quality tier next changes; `the crowd is at 50% until the quality tier next changes` |
+  | `sound` (audio, volume) | on, off, 0 to 100 | `turn the sound on`, `set the volume to 40%` | the sound, as `audio` sets it; `the sound is on`, `the volume is 40%` |
+
+  The console prints the proposal under the answer, `act 1: agent 17 (Design) proposes: set the clock to 22:00`
+  (`Mara (agent 17, Design)` once hired) and `-- y allows it, n refuses it (act ok, act no); console closed: Y or N on
+  the card --`; the HUD's activity line reads `Waiting for your OK: agent 17 (Design) proposes: …` meanwhile; a card
+  comes up over the city (over the console too, where it says to type y or n), and with the console closed a toast
+  says who proposes what. **Your OK, on every surface.** In the console, `act ok` or `act no`, or just `y` or `n`
+  (they stand for the two only while a proposal waits; otherwise `y` is not found, as before). With the console
+  closed, the Y and N keys, or Enter or Space on the card's focused button (Refuse first, then Allow). On a pad, the
+  d-pad moves between the two and the south face button presses: the pad's game buttons and the touch cluster's taps
+  are shielded while a card waits, so the same press cannot also put you in a car and so end the proposal; the
+  keyboard, the sticks, the triggers and the mouse are not, so E or a walk away still ends it, in the gateway's words.
+  On a touch screen, a tap on Allow or Refuse. With the drawing off (`render off`) the card is still there: it is not
+  drawn on the canvas. A host (the desktop app, a voice line) reads and decides through `bridge.operator.acts`
+  (`pending`, `follow`, `allow`, `refuse`, `log`, `verify`, `list`). `act` alone says what waits (`act 1: waiting for
+  your OK: …`) or that nothing does. **How it ends.** Allowed, it runs once, through the task gateway under the
+  proposer's own tether, and the console prints `act 1: allowed: …` then `act 1: done: the clock is set to 22:00`
+  (or `act 1: failed: <why>`; a toast says the same with the console closed). Refused, nothing runs: `act 1: refused:
+  … (agent 17 is told next time)`. `ask stop` withdraws a waiting proposal (`ask: withdrawing act 3: …`); `operator
+  lock` withdraws it too (`act 4: withdrawn: the operator tier is locked`), so no proposal waits past a lock, and `act
+  ok` is refused while locked as every other write is. The proposer walking off, getting into a car, being dismissed,
+  or the city halting ends it as the gateway ends any task (`act 5: Aborted (Spatial Tether Lost): …`, and the `Task
+  aborted` toast), and nothing runs. A reload ends it with the page: afterwards nothing waits and `act log` is empty.
+  One proposal waits at a time, and while it waits `ask` and `swarm run` are refused (`a proposal is waiting: act ok
+  or act no first`); `say`, `run`, `get`, `set` and `harness` are not. A decision made on the card or by a host while
+  the console was closed is printed into the scrollback all the same, so it is complete when the console opens again.
+  **The trail.** `act log` prints every proposal, decision and end of this visit (its newest 24 rows) as a
+  hash-chained record in the swarm audit's form, and `act log verify` checks it from genesis (`chain: 11 entries
+  verify from genesis; head …`, or `chain: BROKEN at entry N: <why>`): a proposal is a `step`, an allow an `answer`,
+  a run's end an `end`, a refusal a `refusal` and a withdrawal or a lost tether a `stop`, each with the invariant it
+  upheld (`HumanOverrideSupreme` on your refusals, `ask stop` and the lock; `CapabilityTethered` on the gateway's).
+  The record lives as long as the page and is stored and sent nowhere. **What they remember.** An allowed action is
+  noted in the proposer's ledger as a run (`city action: set the clock to 22:00`, with `ok` or `error`) and teaches
+  as a script does; the decision becomes a moment of their short-term memory, in fixed words (`the player allowed your
+  proposal and the city did it: the clock is set to 22:00`, `refused your proposal: …`, `withdrew your proposal: …
+  (ask stop)`, or `the city could not read your action line: <reason>; nothing was proposed`), so the next answer
+  knows; one that ended with the tether leaves no moment and teaches nothing, like any Aborted task. **What is not an
+  action.** Files, the shell, the network, the player's body (a teleport, a walk), driving a car frame by frame,
+  reloading the page (`map`, `boot`) and spawning or altering anyone are not in the catalogue and cannot be proposed;
+  a line that asks for them is refused by name (`no city action called 'teleport' (time, rain, light, quality, cars,
+  crowd, sound)`). `help` lists the command as `act [ok|no|log [verify]|list]`; `act list` prints the catalogue, and
+  the reads (`act`, `act log`, `act list`) work while locked. The swarm's roles never propose: an `ACTION:` line in a
+  role's answer is text.
 - `swarm run [--agents <1-5>] <goal>` splits a goal over up to five roles (the Prime Architect, who needs someone
   tethered with Design; the Systems Coder, TypeScript; the Sim-to-Real Tester, Testing; the Mechanistic Auditor,
   Security; the Legal/IP Verifier, Writing) and asks them one after another, each one prompt through the same gate
@@ -911,9 +982,11 @@ the swarm's memory to read (erasing it needs the operator tier), and the opt-in 
 operator tier). `boot` asks the host to reload the page on a track, and `r0` touches no bridge at all. Recruitment
 is the one knob that reaches a pedestrian, and it can only ask: to come over, or, an Active recruit, to stand at a
 sidewalk point. The physics worker decides on its own readings whether anyone comes over or goes, and a summoned
-person's safety reflexes still come first. No command can spawn anyone, place or alter an agent, move a vehicle or
-change the physics world: a ping and a look are page-side only, and a rally goes through the same recruitment host
-and worker checks as asking. A unit test enforces that `terminal/*` imports only types from the rest of the engine
+person's safety reflexes still come first. No command can spawn anyone, place or alter an agent or change the
+physics world; the one command that moves a vehicle is an allowed city action (`cars park`, `cars drive`), which
+runs through the operator tier's gate under the proposer's tether, never from the console alone: a ping and a look
+are page-side only, and a rally goes through the same recruitment host and worker checks as asking. A unit test
+enforces that `terminal/*` imports only types from the rest of the engine
 (`repl.ts` imports nothing), and the locked-tier sweep pins the knobs to exactly these. The swarm reaches
 the console the other way round too, read-only: the operator tier is handed the task gateway, which only
 reads the worker's list, and every script must pass it. The console never holds the gateway, the
@@ -1103,7 +1176,9 @@ them that answers (`auto`):
   when it cannot run here), and then says so: under its words the console prints `ask: no model answered, so the
   script spoke instead:` and the reason; neither the swarm's memory nor the person's short-term memory keeps those
   words, and `say auto` does not say them aloud, so canned lines never come back in a later prompt as if someone had
-  said them.
+  said them. Chosen on purpose, it also proposes one city action when the prompt plainly asks for one (the goal
+  planner's classifier, `06_Make_Decisions/intent.ts`), so the browser smoke drives the whole path with no model;
+  standing in for another provider it never proposes, and a stand-in's line is refused besides.
 
 No model and no model server ships with the product: you run your own, bring your own key, or keep your own model
 file in the page (the page carries the runtime for one, never a model), and the city works exactly the same without
@@ -1122,7 +1197,8 @@ any of them.
   inadmissible `say` line is not said (`gatedSay`): it reaches no speech server. A model's own refusal is the same
   no reply. The screen is applied once, in the operator tier, for every provider; the router has no lexicon.
   Ordinary words that only sometimes mean harm ("fight for the deal") are left to the model under the core, the
-  second layer.
+  second layer. An `ACTION:` line is screened with the rest of the answer as it streams; the sentence shown is the
+  catalogue's own words, never the model's.
 - **Setting it up.** `ask` alone shows the provider, the server, the model, and what the server has; for the Claude
   provider also the key, masked (its first six and last four characters, never the whole) and the effort. `ask
   provider auto|claude|ollama|llamacpp|openai|inpage|scripted` swaps, and `ask connect <provider> [<url>] [<key>]`
@@ -1173,7 +1249,9 @@ any of them.
   nobody tethered has the skill, and no server ever hears the prompt. **Authorized**: the request
   starts at once, with the system prompt above. **Aborted (Spatial Tether Lost)**: if you walk away mid-answer,
   the request is cancelled in the state that lets them go, and the server sees the connection close. The
-  console keeps what had arrived. `ask stop` stops an answer yourself. One answer runs at a time.
+  console keeps what had arrived. `ask stop` stops an answer yourself. One answer runs at a time. A city action an
+  agent proposes is a task of its own, bound at once to the people who answered, Authorized while it waits and
+  Aborted (Spatial Tether Lost) with them if they leave before or while it runs.
 - **Live.** The answer streams into the console as the model writes it. A thinking model's thinking
   shows as a live count ("thinking… 57") until its answer starts. The HUD shows the latest words, and
   counts the task bound to the swarm. Each piece reaches the screen only through the lease, so nothing
@@ -1213,8 +1291,10 @@ any of them.
   (`02_Define_The_Rules/airgap.ts loopbackServer`) before anything is sent, and the fetch they are handed is the
   page's own under the gate's wrapper; the in-page provider and the script address nothing. The engine holds no
   network code: App builds the router and hands it to the operator tier, which knows only its shape (`Mind` in
-  `operator.ts`). A model's answer is text: nothing it writes is run or touches the city. `10_Network/airgap.test.ts`
-  pins that no source in the product names an address off this machine.
+  `operator.ts`). A model's answer is text. The one thing in it that can touch the city is one `ACTION:` line from a
+  fixed catalogue (City actions, under The operator tier), shown to you and run only after your OK, under the
+  proposer's tether; files, shell and network are not actions. `10_Network/airgap.test.ts` pins that no source in the
+  product names an address off this machine.
 
 #### The prompt-prefix page table
 
@@ -1385,8 +1465,9 @@ run stops at that step and says so (with `ask provider scripted` chosen on purpo
 Each step is shown what the steps before it answered, sharing what is left of the prompt quota after its brief and the
 goal: a short answer whole, a long one cut at a word boundary (at most 1,500 characters each) with a note of how much
 was shown, so the last role always fits the quota. The roles are prompts, not separate agents with tools: the
-orchestrator issues no script, changes nothing in the city and writes no file. It answers in text, on the console, and
-a host can call the same surface (`bridge.operator.swarm.run(goal)`) from a voice line.
+orchestrator issues no script, proposes no action (an `ACTION:` line in a role's answer is text and runs nothing),
+changes nothing in the city and writes no file. It answers in text, on the console, and a host can call the same
+surface (`bridge.operator.swarm.run(goal)`) from a voice line.
 
 - **The guardrails** (`02_Define_The_Rules/guardrails.ts`). Before a model is asked and again before its answer is
   used, each step passes six named invariants: `HumanOverrideSupreme` (a stopped run admits no step),
@@ -1452,8 +1533,9 @@ the same person in the same city remembers you however many times you ask them o
 is written into its episodes, never used as the key.
 
 - **What is remembered.** Being asked over and arriving (with the skills they brought); being let go, and why;
-  every script, prompt and say they were bound to, with its outcome (Authorized, Rejected, Aborted), the
-  prompt and the start of the answer. Each episode is one short line (at most 280 characters). A ledger keeps
+  every script, prompt, say and allowed city action (noted as a run: `city action: set the clock to 22:00`) they
+  were bound to, with its outcome (Authorized, Rejected, Aborted), the prompt and the start of the answer. Each
+  episode is one short line (at most 280 characters). A ledger keeps
   its newest 200 episodes in time order: a task is noted when it ends but placed where it began, so a say cut
   short by a release comes before it. A prompt the 14A screen refused, or one the model refused, is not noted.
 - **Used in answers.** While someone is tethered, their ledger is loaded, and an `ask` bound to them carries
@@ -1482,9 +1564,10 @@ how work with it has gone (from −1 to +1), and whether answers have run long.
 - **The rule.** Each outcome moves a weight a quarter of the way toward a fixed reward: answered +1 (and brevity
   toward 0), cut −0.25 (brevity toward +1), stopped −0.5 (brevity toward +1), a script that ran +1 and one that
   threw −0.5, a line said +0.5. A Rejected task never involved the person, an Aborted one ended with the tether
-  rather than the work, a server's failure is the server's: none of them teach anything. Only the city's sixteen
-  skill names are learned. A prompt the 14A screen refused, or the model refused, is never noted, so it never
-  trains anyone.
+  rather than the work, a server's failure is the server's: none of them teach anything. An allowed city action
+  teaches as a script does (+1 done, −0.5 failed); a refused or withdrawn one teaches nothing and is a moment only.
+  Only the city's sixteen skill names are learned. A prompt the 14A screen refused, or the model refused, is never
+  noted, so it never trains anyone.
 - **Where it lives.** The weights are a pure fold of the outcomes over the episodes the chain verifies, from the
   weights the episodes dropped off the old end left behind (the ledger's base), so nothing is forgotten when a
   ledger passes 200 episodes. The fold's result is stored in the same IndexedDB row with a hash binding it to the
@@ -1511,7 +1594,8 @@ the moment a prompt starts ("Standing near The Spire in Lakefront Metro at 17:02
 steps away, with 2 people close by."). Both go to the end of the system prompt under one heading per person,
 within a fixed budget (about 150 tokens), after what they remember from the ledger, so every provider (Claude,
 Ollama, llama.cpp, the model in this page, and the cloud fallback) answers from that place and moment. An `ask` and its answer, a `say`,
-and a walk ping that waves someone over are the moments kept. Nothing of it is stored, and nothing reaches the
+a walk ping that waves someone over, and a city action you allowed, refused or withdrew are the moments kept.
+Nothing of it is stored, and nothing reaches the
 physics worker or the agents' sandboxed code. With no model backend answering (the gateway or the local server is
 down), the person still answers in a few scripted sentences built from that same context
 (`09_Cognition/scripted.ts`), marked as the script under its words and kept in neither memory; `ask` then shows a
@@ -2559,6 +2643,31 @@ the production page finds no physics object in the page and has every crafted me
   (the Lite tier on a Mali-G52 phone, keeping a 1 GB file, the unloading in the background, the crash guard after a
   real kill, the picker and the Menu tap), a real GPU (WebGPU's speed, the frame rate under the hold, a device
   reset), the Windows app's WebView2, the NixOS launcher, a file over 2 GB, and what an iPhone's runtime row says.
+
+**City actions (unreleased).** What is proved, and where:
+- **In Node, on every CI run:** the catalogue and its parser (`actions.test.ts`: the eleven answers of the protocol,
+  every verb's names and values, the clamps at both ends of every dial, the refusal hints, every sentence and done line
+  through the 14A screen and the content rules, the light ranges pinned to `world.ts` by source text, the scripted
+  provider's line, one facade call per verb on a recording fake); the keeper (`acts.test.ts`, one test per row of the
+  state machine: a proposal only from the console's ask and only when answered, nothing run before the OK, an allow
+  that runs once through the lease and notes a run, a second allow that runs nothing, refuse, `ask stop` and `operator
+  lock` with their chain kinds and moments, a proposal while locked, a tether lost while it waits and one that slipped
+  between the OK and the run, a facade that throws, a new serial, the gateway's refusal, the chain verifying after
+  every path and failing on a replaced entry, every `step` with one follower); the wiring (`actWiring.test.ts`: the
+  card mounted and the shield set from one state, the HUD line, the follow effects, the suspend expression byte for
+  byte, the engine's senses, the four prompt lines in the base reality, the scripted branch, nothing of the swarm
+  importing the catalogue); and the updated `operator`, `commands`, `input`, `router`, `taskRouter` and
+  `localCompute` tests (the stripped text and the moment, `ask` and `swarm run` refused while a proposal waits, the
+  withdrawals, every new console line and the `y`/`n` aliases, the shield on a pad edge and a tap with the keys live,
+  the scripted provider's line, the same-mirror binding, the prompt's literal).
+- **In a browser, on every CI run:** the `actions` scenario of the smoke, one boot, one tether and the scripted
+  provider: the tilde key opens the console; someone who knows Design is tethered; the script proposes and the console
+  shows who and what; nothing changed before the OK; Y on the card ran it once, and the clock, the HUD and the toast
+  agree; the console opens again; the card decisions were printed while the console was closed; n refuses it and
+  nothing changes; `ask stop` withdraws a waiting proposal; no proposal waits past a lock; `act` reads while locked and
+  `act ok` does not; a lost tether ends the proposal in the gateway's words, and the trail has every proposal, decision
+  and end, and verifies.
+- **Mutations:** 20 bugs planted in this change's code, each caught by the named test.
 
 For 1.4.0-beta.1 (Agent City v1.0 Stable Beta), in this environment: a Linux container with Node 22, and a
 headless Chromium whose only WebGPU adapter is software.
