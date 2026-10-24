@@ -86,6 +86,7 @@ import { FrameRate, withCloudFallback } from '../09_Cognition/cloudFallback.ts'
 import { withScriptedFallback } from '../09_Cognition/scripted.ts'
 import { describeSurroundings, paintWord, ShortTermMemory, type AgentContext } from '../08_Swarm/shortTerm.ts'
 import { operatorBridge, type Awareness, type Diary, type Mind, type SimControls, type SkillGate, type SpeechClip, type SpeechOut, type Utterance, type Voice } from './operator.ts'
+import type { CityKnobs } from '../06_Make_Decisions/actions.ts'
 import { applyQuality, type QualityTargets } from './quality.ts'
 import { SPEECH, Soundscape, sharedAudioContext, wallsBetween, type AudioFrame, type PeerVoice } from './audio.ts'
 import { roomAt, type Room } from './acoustics.ts'
@@ -2159,7 +2160,8 @@ export class Engine {
    * (09_Cognition/localCompute.ts): the engine never learns who is tethered, and holds no network code.
    * Speech comes the same way: `voice` is the host's local speech client (09_Cognition/localSpeech.ts), and what
    * it returns is played through speechOut(); `diary` is the swarm's memory (08_Swarm/memory.ts), which the engine
-   * never reads. The gate, mind, voice and diary given on the first call are the ones kept.
+   * never reads. The gate, mind, voice and diary given on the first call are the ones kept. The name a hired agent
+   * goes by, for who proposes a city action, is the host's too (setNameOf), read when a proposal is made.
    */
   terminalBridge(gate: SkillGate, givenMind: Mind, voice?: Voice, diary?: Diary, voiceOf?: (agent: number) => string | null): TerminalBridge {
     if (this.bridge) return this.bridge
@@ -2171,6 +2173,7 @@ export class Engine {
     const hal = this.input.hal
     const audio = this.audio
     const governor = this.quality.governor
+    const nameOf = (agent: number): string | null => this.nameOfAgent?.(agent) ?? null
     this.bridge = Object.freeze({
       brand: Object.freeze({ name: BRAND.name, version: BRAND.version, host: BRAND.host, track: 'gui' as const }),
       stats: () => ring0Stats(this.snapshot(), this.sim.state.physics),
@@ -2184,12 +2187,8 @@ export class Engine {
         return governor.state()
       },
       audio: (arg?: 'on' | 'off' | number) => {
-        // Every player's soundscape together (they share one context in split screen); the line reads player 1's.
-        for (const v of this.views) {
-          if (arg === 'on') { v.audio.unlock(); v.audio.setEnabled(true) }
-          else if (arg === 'off') v.audio.setEnabled(false)
-          else if (typeof arg === 'number') v.audio.setVolume(arg / 100)
-        }
+        // Every player's soundscape together (setAudio below); the line reads player 1's.
+        if (arg !== undefined) this.setAudio(arg)
         const st = audio.status()
         const split = this.views.length > 1 ? ` · ${this.views.length} players` : ''
         return `audio: ${st.state} · ${st.voices} voices · ${st.hrtf ? 'HRTF' : 'stereo'} · volume ${Math.round(st.volume * 100)}%${split}`
@@ -2208,9 +2207,10 @@ export class Engine {
         newest: () => this.newestPing(),
         clear: () => this.clearPings(),
       }),
-      // The operator tier: unlockable, sandboxed, built over simControls() (never over the engine itself), its
-      // scripts bound to the swarm through the gate.
-      operator: operatorBridge(this.simControls(), gate, mind, undefined, { voice, speech: this.speechOut(), diary, awareness: this.awareness(), voiceOf }),
+      // The operator tier: unlockable, sandboxed, built over simControls() and two host knobs handed in as senses
+      // (rain mode and the sound, for the city actions an agent proposes), never over the engine itself; its scripts
+      // and the allowed actions are bound to the swarm through the gate.
+      operator: operatorBridge(this.simControls(), gate, mind, undefined, { voice, speech: this.speechOut(), diary, awareness: this.awareness(), nameOf, city: this.cityKnobs(), voiceOf }),
       record: Object.freeze({
         start: (source: RecorderSource) => this.startRecording(source),
         stop: () => this.stopRecording(),
@@ -2219,6 +2219,32 @@ export class Engine {
       }),
     })
     return this.bridge
+  }
+
+  /**
+   * The sound for every player together (they share one context in split screen): on unlocks and enables it, off
+   * disables it, a number is the volume in percent. The console's `audio` knob and an allowed city action (`sound`,
+   * through cityKnobs) both come here.
+   */
+  setAudio(arg: 'on' | 'off' | number): void {
+    for (const v of this.views) {
+      if (arg === 'on') { v.audio.unlock(); v.audio.setEnabled(true) }
+      else if (arg === 'off') v.audio.setEnabled(false)
+      else if (typeof arg === 'number') v.audio.setVolume(arg / 100)
+    }
+  }
+
+  /**
+   * The two knobs an allowed city action may turn that are not script facade leaves (06_Make_Decisions/actions.ts
+   * CityKnobs): rain mode (the rain-mode switch, the same one the console's `rain` knob and the M key use) and the
+   * sound. Handed to the operator tier as senses, so the tier stays built over simControls() and these two closures,
+   * never over the engine itself; the tier calls them only under the proposer's lease, after the operator's OK.
+   */
+  cityKnobs(): CityKnobs {
+    return Object.freeze({
+      rain: (on: boolean): void => { this.setMatrix(on) },
+      audio: (level: 'on' | 'off' | number): void => { this.setAudio(level) },
+    })
   }
 
   /** Control glyphs for the input in use; a phone shows touch glyphs even before its first touch. */
@@ -2238,6 +2264,14 @@ export class Engine {
   /** Hands the engine the roster's view of its pedestrians (App.tsx): read on every prompt, never copied. */
   setIdentities(fn: ((agent: number) => string | null) | null): void {
     this.identityOf = fn
+  }
+
+  /** The name a hired pedestrian goes by (08_Swarm/roster.ts), for who proposes a city action (`Mara (agent 17, Design)`); null for anyone else. */
+  private nameOfAgent: ((agent: number) => string | null) | null = null
+
+  /** Hands the engine the roster's names for its pedestrians (App.tsx): read when a city action is proposed, never copied. */
+  setNameOf(fn: ((agent: number) => string | null) | null): void {
+    this.nameOfAgent = fn
   }
 
   /** One telemetry record for the frame being encoded: real state only, never an invented observation. */
