@@ -2656,10 +2656,10 @@ the production page finds no physics object in the page and has every crafted me
   every path and failing on a replaced entry, every `step` with one follower); the wiring (`actWiring.test.ts`: the
   card mounted and the shield set from one state, the HUD line, the follow effects, the suspend expression byte for
   byte, the engine's senses, the four prompt lines in the base reality, the scripted branch, nothing of the swarm
-  importing the catalogue); and the updated `operator`, `commands`, `input`, `router`, `taskRouter` and
-  `localCompute` tests (the stripped text and the moment, `ask` and `swarm run` refused while a proposal waits, the
+  importing the catalogue); and the updated `operator`, `commands`, `input`, `router`, `scripted`, `taskRouter`
+  and `localCompute` tests (the stripped text and the moment, `ask` and `swarm run` refused while a proposal waits, the
   withdrawals, every new console line and the `y`/`n` aliases, the shield on a pad edge and a tap with the keys live,
-  the scripted provider's line, the same-mirror binding, the prompt's literal).
+  the scripted provider's line and the stand-in's none, the same-mirror binding, the prompt's literal).
 - **In a browser, on every CI run:** the `actions` scenario of the smoke, one boot, one tether and the scripted
   provider: the tilde key opens the console; someone who knows Design is tethered; the script proposes and the console
   shows who and what; nothing changed before the OK; Y on the card ran it once, and the clock, the HUD and the toast

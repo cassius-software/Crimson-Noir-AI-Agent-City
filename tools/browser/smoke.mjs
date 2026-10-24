@@ -1403,7 +1403,7 @@ const SCENARIOS = {
 
       // A proposal: under the answer, who proposes what, waiting; the clock has not moved.
       const shown = await p.command('ask design: make it night', /act 1: /, 60_000)
-      check(/act 1: agent \d+ \(Design\) proposes: set the clock to 22:00/.test(shown ?? '') && (await pend()) === 'set the clock to 22:00',
+      check(/act 1: agent \d+ \(Design(?:, [^)]*)?\) proposes: set the clock to 22:00/.test(shown ?? '') && (await pend()) === 'set the clock to 22:00',
         'actions: the script proposes and the console shows who and what', lastLine(shown))
       check((await clock()) === before, 'actions: nothing changed before the OK')
 
@@ -1442,7 +1442,7 @@ const SCENARIOS = {
       await p.command('recruit dismiss', /letting 1 person go/)
       const gone = await p.waitFor('window.__SIM__.engine.bridge.operator.acts.pending() === null', 20_000).then(() => true, () => false)
       const log = await p.command('act log verify', /chain: /)
-      check(gone && /stop {4}act-5 .*CapabilityTethered: Aborted \(Spatial Tether Lost\): agent \d+ \(Design\): no longer tethered to the operator/.test(log ?? '') && /chain: 11 entries verify from genesis/.test(log ?? '') && (await clock()) === '22:00',
+      check(gone && /stop {4}act-5 .*CapabilityTethered: Aborted \(Spatial Tether Lost\): agent \d+ \(Design(?:, [^)]*)?\): no longer tethered to the operator/.test(log ?? '') && /chain: 11 entries verify from genesis/.test(log ?? '') && (await clock()) === '22:00',
         'actions: a lost tether ends the proposal in the gateway\'s words; the trail has every proposal, decision and end, and verifies', lastLine(log))
       await p.shot('actions')
       p.health('actions')
