@@ -161,6 +161,10 @@ function fakeOperator(): FakeOp {
       return `${provider}: connected${url ? `; server ${url}` : ''}${key ? '; key ••••' : ''}`
     },
     swarm: undefined as unknown as FakeOp['swarm'],
+    acts: {
+      pending: () => null, follow: () => () => {}, log: () => [], list: () => [], verify: () => ({ ok: true, length: 0, head: '0'.repeat(64) }),
+      allow: () => { throw new Error('nothing is waiting for your OK') }, refuse: () => { throw new Error('nothing is waiting for your OK') },
+    },
     askSet: (key, value) => {
       f.opCalls.push(`askSet ${key} ${value}`)
       if (key === 'server' && !value.startsWith('http://localhost')) throw new Error(`the local model server must be on this machine (localhost, 127.0.0.1 or [::1]), not '${value}'`)
