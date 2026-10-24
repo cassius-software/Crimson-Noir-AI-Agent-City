@@ -582,6 +582,42 @@ test('whatever the task returns is committed a microtask later against the newes
   assert.equal((await late.verdict).state, 'Aborted')
 })
 
+test('a task submitted inside a settled task\'s .then, with a new state queued behind it, binds the tethers the first task had (a proposed city action\'s premise)', async () => {
+  // The operator tier submits a proposed city action inside the ask's `result.then(...)`: the gateway settles a task
+  // through `Promise.resolve(result).then(...)` (microtasks) and a state arrives by worker message (a macrotask), so
+  // the proposal is authorized against the same list the answer was, before the state that would change it can land.
+  const src = new Mirror([A, B, C])
+  const router = new TaskRouter(src)
+  const answer = deferred<string>()
+  const ask = router.submit('Design', () => answer.promise)
+  assert.deepEqual(agentsOf(ask.lease!.bound), [33])
+  let proposal: TaskHandle<string> | null = null
+  let atSubmit: unknown = null
+  // Two hops, as the tier has them: the gateway's verdict, the ask's result built on it, then the proposal.
+  const result = ask.verdict.then((v) => v)
+  const chained = result.then((v) => {
+    assert.equal(v.state, 'Authorized')
+    proposal = router.submit('Design', never)
+    atSubmit = { state: proposal.state, bound: proposal.lease && agentsOf(proposal.lease.bound), running: router.running }
+  })
+  // The answer settles and, in the same turn, the state that lets C go is queued behind it (a worker message).
+  answer.resolve('ok')
+  setImmediate(() => src.emit([A, B]))
+  await chained
+  assert.deepEqual(atSubmit, { state: 'Authorized', bound: [33], running: 1 }, 'bound to the same tether the answer had, before the new state landed')
+  assert.deepEqual(proposal!.lease!.bound, ask.lease!.bound, 'the very tethers the answer was bound to')
+  await flush()
+  // The queued state then ends the proposal the gateway's way: it never ran under anyone else.
+  assert.equal(proposal!.state, 'Aborted')
+  const v = await proposal!.verdict
+  assert.ok(v.state === 'Aborted' && agentsOf(v.lost).join() === '33' && v.message === 'agent 33 (Audio, Design): no longer tethered to the operator', JSON.stringify(v))
+  assert.equal(router.running, 0)
+  // Had the state landed first, nobody would have had Design: the same submit is Rejected, not re-bound to another person.
+  const late = router.submit('Design', never)
+  assert.deepEqual([late.state, late.lease], ['Rejected', null])
+  router.dispose()
+})
+
 test('the commit and every use read the newest list themselves: a list that changed without a word still breaks the lease (P5, P6)', async () => {
   // The source replaces its list without telling anyone, as if the notification were late or lost.
   const src = new Mirror([A, B, C])

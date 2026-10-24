@@ -96,8 +96,8 @@ function clockHours(h: number, m: number, suffix: string | undefined): number | 
   return h + m / 60
 }
 
-/** Named times of day; a plan says "22:00 (night)" and the root intent says "at night". */
-const TIMES = [
+/** Named times of day; a plan says "22:00 (night)" and the root intent says "at night"; a city action's clock takes them by name (actions.ts). */
+export const TIMES = [
   [0, 'midnight'], [6.25, 'dawn'], [8, 'morning'], [12, 'noon'], [15, 'afternoon'], [17.4, 'golden hour'],
   [18, 'sunset'], [18.5, 'dusk'], [20, 'evening'], [22, 'night'],
 ] as const satisfies readonly (readonly [number, string])[]

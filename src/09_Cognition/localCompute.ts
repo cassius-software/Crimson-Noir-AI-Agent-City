@@ -17,6 +17,7 @@
 import { loopbackServer } from '../02_Define_The_Rules/airgap.ts'
 import { AGENT_SYSTEM_PROMPT_CORE } from '../02_Define_The_Rules/conduct.ts'
 import { sha256 } from '../02_Define_The_Rules/integrity.ts'
+import { ACTION_RULES } from '../06_Make_Decisions/actions.ts'
 import type { AgentContext, Answer, AnswerRequest as MindRequest, GateTether, Memories, Mind, Piece } from '../07_Execute_Actions/operator.ts'
 import { contextSection } from '../08_Swarm/shortTerm.ts'
 
@@ -139,6 +140,8 @@ export const BASE_REALITY = [
   'You may be told what you remember of the operator, oldest first: use it only where it helps with the question.',
   'You may be told where you stand right now and what just happened between you and the player: speak from that place and moment, as someone who was there.',
   'Be brief and practical. Plain text: no headings, no tables.',
+  // The one city action an answer may end with (06_Make_Decisions/actions.ts): in the shared prefix, so every provider sends it.
+  ...ACTION_RULES,
 ].join('\n')
 
 /** What follows the base reality when nobody is bound to the request: the expertise rule has no one to apply to. */
