@@ -129,7 +129,24 @@ const one = (re: RegExp, control: Control, value: Emit['value'], confidence: num
 const PERSON = "(?:a |the |some |those |that |any |every |all the |all )?(?:person|people|someone|somebody|anyone|anybody|everyone|everybody|pedestrians?|walkers?|crowds?|guys?|man|men|woman|women|kids?|child|children|folks|citizens?|residents?|them|him|her)"
 const HARM = new RegExp(`\\b(?:(?:hurt|harm)(?:ing)? ${PERSON}|run(?:ning)? ${PERSON} over|(?:run|drive|plough|plow|mow)(?:ning|ing)? (?:over|down) ${PERSON}|(?:crash|smash|ram|slam|drive|plough|plow)(?:m?ing)? (?:into|through) ${PERSON}|hit(?:ting)? ${PERSON})\\b`)
 
-const UNSURE = /\b(?:(?:i )?(?:don'?t|dont|do not) (?:know|mind|care)|dunno|not sure|no idea|unsure|just (?:browsing|curious|here|visiting|checking)|just looking(?! around)|nothing(?! (?:above|beyond|past|higher than) ultra)(?: really| much| in particular)?|whatever|anything|surprise me|you (?:choose|pick|decide)|no goal|idk|not much|i'?m (?:fine|good|ok|okay)|all good|no thanks?|nope|hmm+|not really)\b|^no$/
+const UNSURE = /\b(?:(?:i )?(?:don'?t|dont|do not) (?:know|mind|care)|dunno|not sure|no idea|unsure|just (?:browsing|curious|here|visiting|checking)|just looking(?! around)|nothing(?: really| much| in particular)?|whatever|anything|surprise me|you (?:choose|pick|decide)|no goal|idk|not much|i'?m (?:fine|good|ok|okay)|all good|no thanks?|nope|hmm+|not really)\b|^no$/
+
+/** Peak by name (the Peak rule's words). */
+const PEAK_NAMED = /\bpeak (?:quality|graphics|settings|detail|fidelity)\b|\b(?:above|beyond|past) ultra\b/
+/**
+ * Words that put a named Peak in doubt in its own clause: a negation ("i don't want peak graphics", "nothing above
+ * ultra"), a turn-down ("turn off peak graphics", "reduce peak quality"), a complaint about its cost ("peak graphics
+ * is too heavy", "it lags on peak settings") or a question about it ("is peak graphics worth it"). Sloane pins Peak,
+ * with auto off and half a gigabyte of graphics memory, only for a clause with none of them; with any, Peak is where
+ * the trouble is and Ultra the most she pins. Broad on purpose: a Peak missed costs one console line (quality peak), a
+ * Peak pinned against the goal can run a small GPU out of memory.
+ */
+const PEAK_DOUBT = /\b(?:no|not|never|none|nothing|without|rather not|no longer|don'?t|dont|do not|doesn'?t|didn'?t|won'?t|can'?t|cannot|isn'?t|aren'?t|wouldn'?t|shouldn'?t|avoid|skip|stop|disable|off|down|lower|reduce|drop|cut|remove|downgrade|less|too|lag\w*|slow\w*|stutter\w*|chopp\w*|jerk\w*|freez\w*|hang\w*|hitch\w*|crash\w*|struggl\w*|handle|heavy|hurt\w*|kill\w*|what|why|how|worth|mean|means|should|whether|hot|heat\w*|warm|overheat\w*|fans?|loud|noisy|battery|batteries|memory|vram)\b/
+/** A goal's clauses (split at punctuation and at and, but, also, plus, then, though, while), each normalized. */
+const clauses = (input: string): string[] =>
+  input.slice(0, 1024).normalize('NFKC').toLowerCase().split(/[,;.!?]+|\b(?:and|but|also|plus|then|though|although|while)\b/).map(normalize)
+/** Whether a clause that names Peak puts it in doubt (PEAK_DOUBT). */
+const peakDoubted = (input: string): boolean => clauses(input).some((c) => PEAK_NAMED.test(c) && PEAK_DOUBT.test(c))
 
 /** Wishes the city cannot grant yet: named in the brief with the modules a change would touch. Matched
  *  first, so "speed up the day" never reads as "day". */
@@ -190,13 +207,11 @@ const RULES: readonly Rule[] = [
   // Performance and fidelity.
   one(/\b(?:lag(?:gy|ging|s)?|slow(?:er|ly)?|sluggish|stutter(?:s|ing|y)?|jank(?:y)?|chopp(?:y|ing)|jerky|frame ?rate|fps|frames?|freez(?:es|ing|e)|hitch(?:es|ing)?|dropp?ing frames|not smooth|smooth(?:er|ly)?|snappier|unresponsive|responsive|performance|faster|quicker)\b/, 'quality', undefined, 0.9, 'performance'),
   one(/\b(?:battery|batteries|hot|heat(?:ing)?|warm|too warm|overheat(?:s|ing)?|fan|fans|thermals?|cool(?:er)? down|cooler)\b/, 'quality', 1, 0.9, 'battery'),
-  // Peak turned down ("turn off peak graphics", "nothing above ultra") is Ultra as a ceiling (stepFor), read before the
-  // Peak rule would take its words as a request for Peak.
-  one(/\b(?:disable|turn off|switch off|turn down|lower|drop|come down|step down|get off)(?: from)?(?: the)? peak\b(?: (?:quality|graphics|settings|detail|fidelity)\b)?|\b(?:no|not|never|without)(?: the)? peak (?:quality|graphics|settings|detail|fidelity)\b|\bpeak(?: (?:quality|graphics|settings|detail|fidelity))? off\b|\b(?:not|never|nothing|don'?t go|no higher|no more) (?:above|beyond|past|higher than|than) ultra\b/, 'quality', TIERS.length - 1, 0.9, 'no-peak'),
   // Peak, above Ultra (governor.ts PEAK_TIER), only when named: "best", "max" and "ultra" keep meaning Ultra, so a casual
   // ask never takes the half gigabyte Peak's shadows need. Before the Ultra rule, which would read "beyond ultra". As
-  // sure as the heat and battery rule, so "hot on peak graphics" keeps that rule's Low (the first of equals).
-  one(/\bpeak (?:quality|graphics|settings|detail|fidelity)\b|\b(?:above|beyond|past) ultra\b/, 'quality', PEAK_TIER, 0.9, 'fidelity'),
+  // sure as the heat and battery rule, so "hot on peak graphics" keeps that rule's Low (the first of equals). A named
+  // Peak in doubt is Ultra at most (PEAK_DOUBT, analyze).
+  one(PEAK_NAMED, 'quality', PEAK_TIER, 0.9, 'fidelity'),
   one(/\b(?:ultra|max(?:imum|ed)?|highest|best|top|full) ?(?:quality|graphics|detail|settings|fidelity|res(?:olution)?)\b|\b(?:ultra|max(?:ed)? out|max fidelity)\b/, 'quality', 4, 0.9, 'fidelity'),
   one(/\b(?:prett(?:y|ier)|nicer|beautiful|gorgeous|stunning|sharp(?:er)?|crisp(?:er)?|detail(?:ed|s)?|fidelity|better (?:looking|graphics|visuals)|looks? better|graphics|visuals|shadows|god ?rays|light ?shafts|sun ?rays|volumetrics?|glow|hdr|eye candy|cinematic|photo ?real(?:istic)?)\b/, 'quality', 4, 0.85, 'fidelity'),
   // The lowest setting is Lite now (governor.ts LITE_TIER, below Minimal); asking for Minimal by name still means Minimal.
@@ -291,6 +306,9 @@ function analyze(input: string): Analysis {
       }
     }
   }
+  // A named Peak in doubt is Ultra at most (stepFor makes it a ceiling), never Peak pinned against the goal.
+  const q = hyps.find((h) => h.control === 'quality')
+  if (q?.value === PEAK_TIER && peakDoubted(input)) { q.value = TIERS.length - 1; tags.add('no-peak') }
   hyps.sort((a, b) => b.confidence - a.confidence || a.at - b.at)
   const flag: Flag = harm ? 'harm' : hyps.length ? 'none' : unsure ? 'unsure' : 'unmapped'
   return { hyps, tags, unmapped, flag }
@@ -531,7 +549,7 @@ const PROBES: readonly Probe[] = [
   },
   {
     key: 'quality.fidelity',
-    when: (f) => has(f, 'quality') && f.tags.has('fidelity') && !any(f, 'detail', 'light'),
+    when: (f) => has(f, 'quality') && f.tags.has('fidelity') && !any(f, 'detail', 'light', 'no-peak'),
     ask: () => ({ question: 'Is it sharper detail you’re after, or the light and the sky?', options: ['Sharper detail', 'The light', 'Both'] }),
     resolve: (a, f) => {
       const k = pick(a, [BOTH, ['light', 'the light', 'light', 'sky', 'sun', 'rays', 'shafts', 'golden', 'atmosphere', 'mood'], ['detail', 'sharper detail', 'sharper', 'detail', 'sharp', 'crisp', 'resolution', 'textures']])
@@ -668,7 +686,7 @@ function rootOf(f: Frame): string {
       if (t('hitch')) return 'The stutter comes in bursts: hitches rather than a steady overload.'
       if (t('smooth')) return 'A steady frame rate matters more to you than detail.'
       if (t('detail-too')) return 'You want a steady frame rate without giving up detail.'
-      if (t('no-peak')) return 'You want the city at Ultra or below, not Peak.'
+      if (t('no-peak')) return t('performance') ? 'You want the city to run smoother.' : 'You want the city at Ultra or below, not Peak.'
       if (p.value === PEAK_TIER && t('performance')) return 'You want the city to run smoother.'
       if (t('light')) return 'You want the golden-hour light at full fidelity.'
       if (t('detail') || t('fidelity')) return 'You want the sharpest picture this machine can draw.'

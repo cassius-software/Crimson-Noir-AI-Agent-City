@@ -51,7 +51,9 @@ const CLASSES: readonly [goal: string, ...expected: (Control | `${Control}=${str
   ['my phone is hot on peak graphics', 'quality=1'], ['battery dies fast with peak quality', 'quality=1'],
   ['the fans spin up on peak settings', 'quality=1'], ['turn off peak graphics', 'quality=4'], ['disable peak quality', 'quality=4'],
   ['lower from peak quality', 'quality=4'], ["don't go beyond ultra", 'quality=4'], ['nothing above ultra please', 'quality=4'],
-  ['peak graphics off', 'quality=4'],
+  ['peak graphics off', 'quality=4'], ["i don't want peak graphics", 'quality=4'], ['do not go above ultra', 'quality=4'],
+  ['reduce peak quality', 'quality=4'], ['avoid peak graphics', 'quality=4'], ['peak graphics is too heavy', 'quality=4'],
+  ['is peak graphics worth it', 'quality=4'], ['nothing really above ultra', 'quality=4'],
   // Sound.
   ['mute', 'audio=off'], ['no sound', 'audio=off'], ['no music', 'audio=off'], ['unmute', 'audio=on'], ['loud', 'audio=100'],
   ['too loud', 'audio=30'], ['volume 40%', 'audio=40'], ['music', 'audio'], ['sound', 'audio'],
@@ -281,10 +283,13 @@ const CORPUS = [
   'speed up the day', 'how do I drive', 'tweak the physics', 'fewer cars and make it night', 'ultra', 'battery is dying', 'noisy',
   'walk faster', 'the console', 'change the time of day', 'music', 'runs slow', 'empty', 'fewer people', 'sound', 'people',
   'traffic', 'settings', 'somewhere new', 'pizza', 'I want a dog and a house by the sea', 'no music at midnight', 'just looking',
-  'peak graphics', 'set quality beyond ultra',
+  'peak graphics', 'set quality beyond ultra', 'peak graphics and golden hour',
+  // Peak named in doubt (PEAK_DOUBT): never 5 on any path.
+  'turn off peak graphics', 'do not go above ultra', "i don't want peak graphics", 'reduce peak quality', 'it lags on peak settings',
+  'my phone is hot on peak graphics', 'peak graphics is too heavy', 'is peak graphics worth it',
 ] as const
 /** The corpus goals that name Peak: the only ones whose plan may reach tier 5. */
-const PEAK_GOALS = new Set(['peak graphics', 'set quality beyond ultra'])
+const PEAK_GOALS = new Set(['peak graphics', 'set quality beyond ultra', 'peak graphics and golden hour'])
 
 interface Path { goal: string; answers: string[]; whys: FiveWhys; brief: Brief }
 /** Every chip path from a goal to the end of its questions. */
@@ -318,7 +323,7 @@ test('every path ends, in at most five whys, with a well-formed brief', () => {
       if (s.control === 'time') assert.ok(typeof s.value === 'number' && s.value >= 0 && s.value < 24)
       if (s.control === 'quality') assert.ok(s.value === 'auto' || (typeof s.value === 'number' && s.value >= LITE_TIER && s.value <= PEAK_TIER))
       if (s.control === 'quality' && s.value === PEAK_TIER) assert.ok(PEAK_GOALS.has(p.goal), `${p.goal}: only a named Peak reaches 5`)
-      if (s.ceiling) assert.ok(s.control === 'quality' && typeof s.value === 'number' && s.value < 4, `${p.goal}: only a lowered quality is a ceiling`)
+      if (s.ceiling) assert.ok(s.control === 'quality' && typeof s.value === 'number' && s.value < PEAK_TIER, `${p.goal}: only a quality below Peak is a ceiling`)
       if (s.control === 'audio') assert.ok(s.value === 'on' || s.value === 'off' || (typeof s.value === 'number' && s.value >= 0 && s.value <= 100))
     }
     assert.equal(new Set(p.brief.plan.map((s) => s.control)).size, p.brief.plan.length, `${p.goal}: one step per control`)
@@ -474,9 +479,19 @@ test('a fix for heat or a slow frame is a ceiling on the tier, never a raise; a 
   assert.deepEqual(plan('the fans spin up on peak settings'), [[1, true]])
   assert.deepEqual(plan('it lags on peak settings'), [[4, true]])
   assert.deepEqual(plan('it lags on peak settings', 'All the time', 'Steady first'), [[1, true]])
-  // Peak turned down is Ultra as a ceiling: a device below Ultra keeps its tier.
+  // Peak in doubt (turned down, declined, a complaint about it, a question) is Ultra as a ceiling: a device below Ultra
+  // keeps its tier. Only Peak's own clause counts.
   assert.deepEqual(plan('turn off peak graphics'), [[4, true]])
+  assert.equal(question('turn off peak graphics'), null, 'no question about detail or light for a Peak turned down')
   assert.deepEqual(plan("don't go beyond ultra"), [[4, true]])
+  assert.deepEqual(plan('do not go above ultra'), [[4, true]])
+  assert.deepEqual(plan("i don't want peak graphics"), [[4, true]])
+  assert.deepEqual(plan('peak graphics is too heavy for my laptop'), [[4, true]])
+  assert.deepEqual(plan('no thanks, peak graphics'), [[5, false]])
+  assert.deepEqual(plan('peak graphics and no traffic'), [[5, false]])
+  // "peak" in its other senses is not the tier.
+  assert.deepEqual(plan('lower the peak traffic'), [])
+  assert.deepEqual(plan('come down from the peak'), [])
   assert.equal(ask('turn off peak graphics').brief().root, 'You want the city at Ultra or below, not Peak.')
   assert.equal(ask('it lags on peak settings').brief().root, 'You want the city to run smoother.')
 })
