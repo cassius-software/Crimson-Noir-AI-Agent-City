@@ -429,7 +429,8 @@ function tinyModel() {
  * The model in this page as the page plans it here (inPagePlan.ts ROWS and HOLD): a desktop on SwiftShader (an
  * adapter of unknown class, planned as integrated: 2,048 tokens an answer, 8,192 of context, the city held at Low),
  * the lite profile (4,096 of context, two threads at most, held at Lite) and a phone (512 tokens an answer). A load
- * asks for no more context than the model was trained on (inPage.ts withinTraining): the tiny model's 4,096.
+ * asks for no more context than the model was trained on (inPage.ts withinTraining): the tiny model's 6,144, below
+ * a computer's plan and above a phone's (tinyGguf.mjs HPARAMS says why).
  */
 const DESKTOP_PLAN = Object.freeze({ maxTokens: 2048, ctx: 8192, heldTier: 1 })
 const LITE_PLAN = Object.freeze({ ctx: 4096, threads: 2, heldTier: -1 })
