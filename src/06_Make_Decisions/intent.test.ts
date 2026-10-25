@@ -15,7 +15,7 @@ import assert from 'node:assert/strict'
 import { statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { test } from 'node:test'
-import { LITE_TIER } from '../05_Observe_Environment/governor.ts'
+import { LITE_TIER, PEAK_TIER } from '../05_Observe_Environment/governor.ts'
 import { classify, FiveWhys, GOAL_MAX, MAX_WHYS, timeName, type Brief, type Control, type PlanStep } from './intent.ts'
 
 const SRC = resolve(import.meta.dirname, '..')
@@ -44,6 +44,9 @@ const CLASSES: readonly [goal: string, ...expected: (Control | `${Control}=${str
   ['it feels laggy', 'quality'], ['lag', 'quality'], ['stutter', 'quality'], ['smoother', 'quality'], ['faster', 'quality'],
   ['runs slow', 'quality'], ['run faster', 'quality'], ['speed it up', 'quality'], ['battery', 'quality=1'], ['my phone is hot', 'quality=1'],
   ['ultra', 'quality=4'], ['prettier', 'quality=4'], ['low quality', 'quality=1'], ['auto quality', 'quality=auto'],
+  // Peak, above Ultra, only when named; "max" and "best" stay Ultra.
+  ['peak quality', 'quality=5'], ['peak graphics', 'quality=5'], ['beyond ultra', 'quality=5'], ['set quality beyond ultra', 'quality=5'],
+  ['max quality', 'quality=4'], ['best graphics', 'quality=4'],
   // Sound.
   ['mute', 'audio=off'], ['no sound', 'audio=off'], ['no music', 'audio=off'], ['unmute', 'audio=on'], ['loud', 'audio=100'],
   ['too loud', 'audio=30'], ['volume 40%', 'audio=40'], ['music', 'audio'], ['sound', 'audio'],
@@ -273,7 +276,10 @@ const CORPUS = [
   'speed up the day', 'how do I drive', 'tweak the physics', 'fewer cars and make it night', 'ultra', 'battery is dying', 'noisy',
   'walk faster', 'the console', 'change the time of day', 'music', 'runs slow', 'empty', 'fewer people', 'sound', 'people',
   'traffic', 'settings', 'somewhere new', 'pizza', 'I want a dog and a house by the sea', 'no music at midnight', 'just looking',
+  'peak graphics', 'set quality beyond ultra',
 ] as const
+/** The corpus goals that name Peak: the only ones whose plan may reach tier 5. */
+const PEAK_GOALS = new Set(['peak graphics', 'set quality beyond ultra'])
 
 interface Path { goal: string; answers: string[]; whys: FiveWhys; brief: Brief }
 /** Every chip path from a goal to the end of its questions. */
@@ -305,12 +311,20 @@ test('every path ends, in at most five whys, with a well-formed brief', () => {
       assert.ok(s.label.length > 0 && s.modules.length > 0, `${p.goal}: ${s.control}`)
       assert.equal(s.immediate, s.control === 'time' || s.control === 'quality' || s.control === 'audio', `${p.goal}: only host controls are immediate`)
       if (s.control === 'time') assert.ok(typeof s.value === 'number' && s.value >= 0 && s.value < 24)
-      if (s.control === 'quality') assert.ok(s.value === 'auto' || (typeof s.value === 'number' && s.value >= LITE_TIER && s.value <= 4))
+      if (s.control === 'quality') assert.ok(s.value === 'auto' || (typeof s.value === 'number' && s.value >= LITE_TIER && s.value <= PEAK_TIER))
+      if (s.control === 'quality' && s.value === PEAK_TIER) assert.ok(PEAK_GOALS.has(p.goal), `${p.goal}: only a named Peak reaches 5`)
       if (s.ceiling) assert.ok(s.control === 'quality' && typeof s.value === 'number' && s.value < 4, `${p.goal}: only a lowered quality is a ceiling`)
       if (s.control === 'audio') assert.ok(s.value === 'on' || s.value === 'off' || (typeof s.value === 'number' && s.value >= 0 && s.value <= 100))
     }
     assert.equal(new Set(p.brief.plan.map((s) => s.control)).size, p.brief.plan.length, `${p.goal}: one step per control`)
   }
+})
+
+test('a named Peak reaches tier 5 through the corpus; "max" and "best" stay Ultra', () => {
+  assert.ok(PEAK_GOALS.has('set quality beyond ultra') && ALL.some((p) => p.goal === 'set quality beyond ultra' && p.brief.plan.some((s) => s.control === 'quality' && s.value === PEAK_TIER)))
+  assert.ok(ALL.some((p) => p.goal === 'peak graphics' && p.brief.plan.some((s) => s.control === 'quality' && s.value === PEAK_TIER)))
+  assert.deepEqual(summary('max quality'), ['quality=4'])
+  assert.deepEqual(summary('best graphics'), ['quality=4'])
 })
 
 test('every module a brief names exists under src/', () => {
@@ -445,4 +459,9 @@ test('a fix for heat or a slow frame is a ceiling on the tier, never a raise; a 
   assert.deepEqual(plan('low quality'), [[1, false]], 'asking for Low by name pins Low')
   assert.deepEqual(plan('lowest quality'), [[LITE_TIER, false]])
   assert.deepEqual(plan('ultra'), [[4, false]])
+  // Peak (tier 5, above the table) only when named, and always the tier to set: 5 is never a ceiling.
+  assert.equal(PEAK_TIER, 5)
+  assert.deepEqual(plan('peak graphics'), [[5, false]])
+  assert.deepEqual(plan('beyond ultra'), [[5, false]])
+  assert.deepEqual(plan('best graphics'), [[4, false]])
 })

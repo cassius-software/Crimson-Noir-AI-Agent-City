@@ -249,6 +249,11 @@ test('quality: the labels, lite and auto, and integers clamped into Lite…Ultra
   assert.equal(sentence(act('ACTION: quality 4')), 'set the quality to Ultra')
 })
 
+test('quality: Peak is the operator\'s alone: its name is refused and 5 clamps to Ultra', () => {
+  assert.deepEqual([proposed('ACTION: quality 5').action.value, proposed('ACTION: quality 5').note], ['ultra', 'clamped from 5'])
+  assert.equal(reason('ACTION: quality peak'), HINTS.quality)
+})
+
 test('rain, cars, crowd and sound: their words and numbers, the clamps at both ends noted, and the hint for anything else', () => {
   assert.equal(canonical('ACTION: rain ON'), 'rain on')
   assert.equal(canonical('ACTION: rain off'), 'rain off')

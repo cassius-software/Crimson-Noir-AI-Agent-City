@@ -60,9 +60,9 @@ export interface TextStream {
 /** `map`: the host keeps the choice (`default` forgets it) and reloads the page on that map (App.tsx remap). */
 export interface CommandResult { lines: Line[]; clear?: boolean; live?: 'stats'; close?: boolean; boot?: 'gui' | 'tty'; map?: 'city' | 'lakefront' | 'default'; pending?: Promise<Line[]>; stream?: TextStream }
 
-/** Quality tier indices: -1 = Lite (governor.ts LITE, below the table) … 0 = Minimal … 4 = Ultra. */
+/** Quality tier indices: -1 = Lite (governor.ts LITE, below the table) … 0 = Minimal … 4 = Ultra … 5 = Peak (governor.ts PEAK, above the table). */
 const MIN_TIER = -1
-const MAX_TIER = 4
+const MAX_TIER = 5
 /** A script slower than this gets its wall time printed after its output. */
 const SLOW_MS = 500
 /** An R0 line that took this many steps or more gets its count printed after its output. */
@@ -76,7 +76,7 @@ const CORE = [
   { name: 'stats', usage: 'stats [--once]', summary: 'live Rapier3D, frame, crowd and kernel readout' },
   { name: 'laws', usage: 'laws', summary: 'the three laws the kernel enforces, in rank order' },
   { name: 'kernel', usage: 'kernel', summary: 'interventions per law, Solid->Sensor flips' },
-  { name: 'quality', usage: 'quality [auto|lite|-1|0-4]', summary: 'show or set the render quality tier' },
+  { name: 'quality', usage: 'quality [auto|lite|peak|-1|0-5]', summary: 'show or set the render quality tier' },
   { name: 'time', usage: 'time [HH[:MM]]', summary: 'show or set the city clock' },
   { name: 'audio', usage: 'audio [on|off|0-100]', summary: 'show or set the soundscape' },
   { name: 'ghost', usage: 'ghost [on|off]', summary: 'ghost view: the physics shapes as code over the frame (view-only; G)' },
@@ -168,7 +168,7 @@ const LOOK_ACTIONS = ['code', 'preset', 'random', 'reset', 'show'] as const
 const ARGS: Record<string, readonly string[]> = {
   help: NAMES,
   stats: ['--once'],
-  quality: ['-1', '0', '1', '2', '3', '4', 'auto', 'lite'],
+  quality: ['-1', '0', '1', '2', '3', '4', '5', 'auto', 'lite', 'peak'],
   audio: ['off', 'on'],
   ghost: ['off', 'on'],
   rain: ['off', 'on'],
@@ -226,7 +226,7 @@ const locked = (name: Name): CommandResult => fail(`${name}: locked; type 'opera
 
 const fixed = (v: number, digits: number): string => (Number.isFinite(v) ? v.toFixed(digits) : '-')
 const count = (v: number): string => (Number.isFinite(v) ? String(Math.round(v)) : '-')
-/** GPU timings are 0 until timestamp queries resolve (?profile), so 0 reads as "not measured". */
+/** GPU timings are 0 until timestamp queries resolve (?profile, or a Peak range at Ultra or Peak), so 0 reads as "not measured". */
 const gpuMs = (v: number): string => (Number.isFinite(v) && v > 0 ? v.toFixed(2) : '-')
 const row = (label: string, text: string): string => label.padEnd(10) + text
 
@@ -330,9 +330,12 @@ export function auditLine(a: { ticks: number; perimeterBreaches: number; velocit
   return `ticks ${count(a.ticks)}  perimeter ${count(a.perimeterBreaches)}  caps ${count(a.velocityCaps)}  closest ${closest}  panic ${a.panic ?? 'none'}`
 }
 
-/** The quality line; a lite device profile says so, which is why its range stops at Minimal and its boot is lighter. */
+/** The quality line; a lite device profile says so, and in auto at Ultra or Peak on a Peak range the GPU reading the
+ *  Peak rule judges against its limit, or that Peak is off for this visit. At most 80 columns in `stats`. */
 export function formatQuality(q: QualityState): string {
-  return `tier ${q.tier} ${q.label} (${q.auto ? 'auto' : 'fixed'})  scale ${fixed(q.renderScale, 2)}x  budget ${fixed(q.targetMs, 1)} ms${q.lite ? '  lite profile' : ''}`
+  const p = q.peak && q.auto && q.tier >= MAX_TIER - 1 ? q.peak : undefined
+  const peak = p ? (p.off ? '  peak off' : `  peak ${p.gpuMs === null ? '-' : fixed(Math.min(p.gpuMs, 999.9), 1)}/${fixed(p.limitMs, 1)} ms`) : ''
+  return `tier ${q.tier} ${q.label} (${q.auto ? 'auto' : 'fixed'})  scale ${fixed(q.renderScale, 2)}x  budget ${fixed(q.targetMs, 1)} ms${q.lite ? '  lite profile' : ''}${peak}`
 }
 
 /** The cinema camera's row (none with ?cinema=0): presented frames, the shutter, the ND, the cuts. ASCII only. */
@@ -789,6 +792,7 @@ const HANDLERS: Record<Name, Handler> = {
     const a = args[0]
     if (a === 'auto') return { lines: [out(formatQuality(b.quality('auto')))] }
     if (a === 'lite') return { lines: [out(formatQuality(b.quality(MIN_TIER)))] }
+    if (a === 'peak') return { lines: [out(formatQuality(b.quality(MAX_TIER)))] }
     if (/^(?:-1|\d)$/.test(a) && Number(a) >= MIN_TIER && Number(a) <= MAX_TIER) return { lines: [out(formatQuality(b.quality(Number(a))))] }
     return fail(`quality: invalid tier '${a}'`, usage('quality'))
   },
