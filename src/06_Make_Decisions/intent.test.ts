@@ -547,6 +547,7 @@ test('a fix for heat or a slow frame is a ceiling on the tier, never a raise; a 
   assert.deepEqual(plan('i do n\'t want peak graphics'), [[4, true]])
   assert.deepEqual(plan('i donʼt want peak graphics'), [[4, true]], 'a modifier-letter apostrophe')
   assert.deepEqual(plan('i don′t want peak graphics'), [[4, true]], 'a prime')
+  for (const g of ['I canʼt hear anything', 'I can′t hear anything']) assert.deepEqual(classify(g), classify("I can't hear anything"), 'one apostrophe everywhere')
   assert.deepEqual(plan("i want peak graphics but my laptop can't handle it"), [[4, true]])
   assert.deepEqual(plan("i don't want golden hour and peak graphics"), [[4, true]])
   assert.deepEqual(plan('peak graphics is slow'), [[4, true]])
@@ -577,18 +578,46 @@ test('a fix for heat or a slow frame is a ceiling on the tier, never a raise; a 
   assert.equal(question('my pc can handle peak graphics'), PEAK_QUESTION)
   assert.equal(ask('my pc can handle peak graphics').brief().root, 'You asked about Peak, the tier above Ultra.')
   assert.deepEqual(plan('my pc can handle peak graphics', 'Set Peak'), [[5, false]])
+  assert.equal(question('my pc can handle peak graphics', 'Set Peak'), 'Is it sharper detail you’re after, or the light and the sky?')
+  assert.equal(question('what is peak quality', 'Set Peak'), 'Is it sharper detail you’re after, or the light and the sky?')
+  assert.equal(ask('what is peak quality', 'Set Peak').brief().root, 'You want the sharpest picture this machine can draw.')
   assert.deepEqual(plan('my pc can handle peak graphics', 'Ultra at most'), [[4, true]])
   assert.deepEqual(plan('my pc can handle peak graphics', 'peak graphics please'), [[5, false]])
-  assert.deepEqual(plan('my pc can handle peak graphics', 'yes'), [[4, true]], 'a yes to an either-or is no ask for Peak')
+  assert.deepEqual(plan('my pc can handle peak graphics', 'yes'), [], 'a yes to an either-or sets nothing')
+  assert.equal(ask('my pc can handle peak graphics', 'yes').brief().root, 'You asked about Peak, the tier above Ultra.')
   assert.deepEqual(plan('my pc can handle peak graphics', 'no'), [[4, true]])
   assert.deepEqual(plan('my pc can handle peak graphics', 'yes but it lags'), [[4, true]])
   assert.deepEqual(plan('my pc can handle peak graphics', 'my laptop is hot'), [[1, true]])
+  assert.deepEqual(plan('my pc can handle peak graphics', 'let it decide'), [['auto', false]])
+  // Typed in place of the chip: Peak with only ways of asking or choosing beside it is Set Peak; a sign, a question or a
+  // word Sloane cannot read is no choice, and a no is Ultra at most.
+  for (const a of ['peak please', 'Peak, thanks', 'set peak please', 'please set peak', 'yes peak', 'yes, set peak', 'set it to peak', 'turn on peak',
+    'go with peak', 'peak mode', 'definitely peak', 'yes go for peak', 'go peak', 'yes!! set peak']) assert.deepEqual(plan('is peak graphics worth it', a), [[5, false]], a)
+  for (const a of ['!peak', '-peak', '¬peak', '~peak', 'not peak', 'no peak please', 'peak, no']) assert.deepEqual(plan('is peak graphics worth it', a), [[4, true]], a)
+  for (const a of ['peak?', 'set peak?', 'не peak', 'peak 👎', '❌ peak', 'peak is expensive', 'what does peak do']) assert.deepEqual(plan('is peak graphics worth it', a), [], a)
   // A plain ask holds only ways of asking and joining words; a question mark only on a request.
   for (const goal of ['can u turn on peak graphics?', 'pls can you turn on peak graphics?', 'could i have peak quality?', 'will you turn on peak graphics?',
     'may i have peak graphics?', 'beyond-ultra', 'peak graphics please', 'keep peak graphics']) assert.deepEqual(plan(goal), [[5, false]], goal)
   assert.deepEqual(plan('sun at its peak, graphics on ultra'), [[4, false]])
   assert.deepEqual(plan('no, not peak. graphics on ultra'), [[4, false]])
   assert.deepEqual(plan('the peak; graphics please'), [[4, false]])
+  for (const goal of ['set it to peak graphics', 'i want it on peak graphics', '“peak graphics” please', 'peak graphics…']) assert.deepEqual(plan(goal), [[5, false]], goal)
+  assert.deepEqual(plan('it set peak graphics again'), [], 'a report, not an ask')
+  // A turn-down before the Peak name takes Peak with it, unless Peak has its own way of asking after it.
+  for (const goal of ['turn off the music and peak graphics', 'stop the music and peak graphics', 'get rid of the cars and peak graphics',
+    'music off, peak graphics too', 'keep the music off and peak graphics too', 'can you turn off the music and peak graphics?']) assert.deepEqual(plan(goal), [[4, true]], goal)
+  assert.equal(ask('turn off the music and peak graphics').brief().plan.find((s) => s.control === 'audio')?.value, 'off')
+  for (const goal of ['turn off the music and turn on peak graphics', 'turn the music off and set peak graphics', 'turn off the sound, i want peak graphics',
+    'less traffic and peak graphics']) assert.deepEqual(plan(goal), [[5, false]], goal)
+  for (const goal of ['chill on peak graphics', 'relax the peak graphics']) assert.deepEqual(plan(goal), [], goal)
+  assert.deepEqual(plan('turn off the music, set it to noon and remove the cars and peak graphics'), [[4, true]], 'the last turn-down before Peak')
+  assert.deepEqual(plan('go all out with peak graphics'), [[5, false]])
+  // Another control's word that may be about Peak, after its name too.
+  assert.deepEqual(plan('peak graphics and mute'), [])
+  assert.deepEqual(plan('peak graphics too early'), [[4, true]])
+  // Struck out with any run of signs or dashes; a question mark outside ASCII is never plain.
+  for (const goal of ['~~peak graphics~~', '--peak graphics', '—peak graphics', '!=peak graphics', 'night,-peak graphics']) assert.deepEqual(plan(goal), [[4, true]], goal)
+  for (const goal of ['peak graphics⸮', '¿peak graphics?', 'peak graphics‽']) assert.deepEqual(plan(goal), [], goal)
   // An answer in words to the detail-or-light question: on Peak, a turn-down, a complaint or another tier counts as if it
   // stood in the goal, whatever cue it also holds; elsewhere only a plain ask for Peak changes the tier.
   assert.deepEqual(plan('peak graphics', "i don't want peak graphics"), [[4, true]])
@@ -602,6 +631,29 @@ test('a fix for heat or a slow frame is a ceiling on the tier, never a raise; a 
   assert.deepEqual(plan('peak graphics', 'Sharper detail'), [[5, false]])
   assert.deepEqual(plan('peak graphics', 'whatever'), [[5, false]])
   assert.deepEqual(plan('make it prettier', 'peak graphics please'), [[5, false]])
+  // Any answer that names Peak sets the tier as a goal would, whichever question it answers.
+  assert.deepEqual(plan('peak graphics and golden hour', 'the light, but not peak graphics'), [[4, true]])
+  assert.deepEqual(plan('peak graphics and golden hour', "i don't want peak graphics"), [[4, true]])
+  assert.deepEqual(plan('peak graphics at night', 'the look, but not peak graphics'), [[4, true]])
+  assert.deepEqual(plan('peak graphics', 'cancel peak graphics'), [], 'named but not plainly turned down: Peak comes off and Sloane asks')
+  assert.equal(question('peak graphics', 'cancel peak graphics'), PEAK_QUESTION)
+  assert.deepEqual(plan('peak graphics', 'cancel peak graphics', 'Set Peak'), [[5, false]])
+  assert.deepEqual(plan('peak graphics', 'cancel peak graphics', 'Ultra at most'), [[4, true]])
+  assert.deepEqual(plan('turn off peak graphics', 'peak graphics'), [[5, false]], 'a plain ask later changes the mind')
+  assert.equal(ask('turn off peak graphics', 'peak graphics').brief().root, 'You want the sharpest picture this machine can draw.')
+  const auto = ask('auto quality and change the time of day', 'night, but not peak graphics').brief()
+  assert.deepEqual(auto.plan.find((s) => s.control === 'quality')?.value, 'auto')
+  assert.equal(auto.root.includes('not Peak'), false, 'auto can still reach Peak, so no "not Peak"')
+  // A slow frame or heat in any answer, or the smoother choice, makes a Peak named anywhere an Ultra ceiling.
+  assert.deepEqual(plan('peak graphics and golden hour', 'it lags'), [[4, true]])
+  assert.deepEqual(plan('peak graphics and golden hour', 'the light, but it lags'), [[4, true]], 'beside a chip cue too')
+  assert.deepEqual(plan('make it prettier', 'is peak graphics worth it'), [[4, false]], 'an Ultra the frame holds stands a passing mention')
+  assert.deepEqual(plan('make it prettier', "i don't want peak graphics"), [[4, true]])
+  assert.deepEqual(plan('peak graphics', 'it runs badly'), [[4, true]])
+  assert.deepEqual(plan('peak graphics', 'cooler please'), [[1, true]])
+  assert.deepEqual(plan('my laptop is hot', 'peak graphics'), [[4, true]])
+  assert.deepEqual(plan('settings', 'Smoother', 'peak graphics'), [[4, true]])
+  assert.deepEqual(plan('fewer people', 'Smoother', 'peak graphics'), [[4, true]])
   assert.deepEqual(plan('make it prettier but my laptop gets hot', "i don't want peak graphics"), [[1, true]], 'a turn-down of Peak never raises a lower tier')
   assert.deepEqual(plan('make it prettier', 'high quality'), [[4, false]], 'as before Peak: the answer is a cue, not a tier')
   assert.deepEqual(plan('peak graphics', 'ultra is fine'), [[4, true]])
