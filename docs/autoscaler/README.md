@@ -79,10 +79,10 @@ Tauri shell.
 | screen | 2560 × 1440 CSS pixels (4K at 150 %, or the 1440p monitor); 3840 × 2160 for 4K at 100 % |
 
 **Profile:** a desktop, starting on Ultra, range Minimal to Ultra (Peak joins it where the browser gives GPU timings:
-section C), 14,000 pedestrians. The native shell profiles the
-same and reports `process.host: 'native'`. An AMD card the browser does not name starts on High: without the name it
-cannot be told from an integrated chip of the same architecture. The first probe takes it to Ultra 5.8 s after
-boot. 4K at 100 % scaling also starts one tier lower and climbs the same way.
+section C), 14,000 pedestrians. The native shell profiles the same and reports `process.host: 'native'`. An AMD card
+the browser does not name starts on High: without the name it cannot be told from an integrated chip of the same
+architecture. The first probe takes it to Ultra 5.8 s after boot. 4K at 100 % scaling also starts one tier lower and
+climbs the same way.
 
 | Scenario | Frames | Path |
 |---|---|---|
