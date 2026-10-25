@@ -48,7 +48,7 @@ test('host: ?lite=1 and ?lite=0 reach the engine, ?quality takes -1 and the word
   const opts = between(APP, 'function readOptions(): Options {', '\n}\n')
   assert.match(opts, /lite: q\.get\('lite'\) === '1' \? true : q\.get\('lite'\) === '0' \? false : undefined,/)
   assert.match(opts, /cars: q\.has\('cars'\) \? Math\.round\(num\('cars', 36, 0, 48\)\) : undefined,/, 'the same clamp when given')
-  assert.match(opts, /quality === 'lite' \? -1 : Math\.round\(num\('quality', 3, -1, 4\)\)/)
+  assert.match(opts, /quality === 'lite' \? -1 : quality === 'peak' \? 5 : Math\.round\(num\('quality', 3, -1, 5\)\)/)
   assert.match(opts, /agents: q\.has\('crowd'\) \? Math\.round\(num\('crowd', 14000, 256, 60000\)\) : undefined,/, '?crowd still wins')
   assert.match(ENGINE, /^ {2}lite\?: boolean$/m, 'EngineOptions.lite')
   assert.match(ENGINE, /^ {2}cars\?: number$/m, 'EngineOptions.cars')

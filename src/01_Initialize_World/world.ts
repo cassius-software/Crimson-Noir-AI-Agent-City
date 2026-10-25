@@ -72,6 +72,9 @@ export interface Gpu {
   renderer: WebGPURenderer
   device: GPUDevice
   adapterInfo: string
+  /** three writes GPU timestamps (trackTimestamp asked and kept: the device has timestamp-query): the engine resolves
+   *  them only then, so three never warns that tracking is off. */
+  timestamps: boolean
 }
 
 /** A GPUTexture's prototype as far as tolerateIdentitySwizzle touches it. */
@@ -96,12 +99,16 @@ export function tolerateIdentitySwizzle(proto: ViewMaker | undefined = (globalTh
   ;(proto as unknown as Record<symbol, boolean>)[SWIZZLE_SAFE] = true
 }
 
-export async function createRenderer(canvas: HTMLCanvasElement, pixelRatio: number, profile = false): Promise<Gpu> {
+export async function createRenderer(canvas: HTMLCanvasElement, pixelRatio: number, profile = false, timestamps: (adapter: string) => boolean = () => false): Promise<Gpu> {
   // The device is asked for here, not by three (gpuDevice.ts): a core adapter as the physics worker asks, three's own
   // features, and a coded error naming the real cause when there is none. Handed a device, three makes no request of
   // its own and so never falls back to WebGL2, which would also claim the canvas for good.
   const { adapter, device } = await acquireDevice(navigator.gpu, window.isSecureContext !== false, window.location.origin)
   tolerateIdentitySwizzle()
+  // The device's own copy first (what the profile always read), the adapter's where a browser has no device copy. Read
+  // before three is made: a Peak candidate's three writes GPU timestamps (engine.ts peakOf, governor.ts peakCandidate).
+  const info = (device as GPUDevice & { adapterInfo?: GPUAdapterInfo }).adapterInfo ?? adapter.info
+  const line = adapterLine(info)
   // Reversed depth: a depth32float buffer that keeps near-equal precision out to the far plane, so the streets and
   // sidewalks laid 3.5 and 4.5 cm over the ground (regionWorld.ts) and the lake 2 cm over it do not fight the ground
   // at a distance. With the plain 24-bit buffer the resolution at d metres is about d² · 6e-7 m for this camera (near
@@ -109,9 +116,9 @@ export async function createRenderer(canvas: HTMLCanvasElement, pixelRatio: numb
   // (0.12 mm at 1,000 m). three flips the depth functions, the shadow bias and the clear value itself; the sky, which
   // puts itself on the far plane by hand, is told in buildWorld (skyAtFarPlane). WebGPU always honours the setting
   // (only the WebGL backend can refuse it), and createRenderer insists on the WebGPU backend below.
-  const renderer = new WebGPURenderer({ canvas, antialias: false, powerPreference: 'high-performance', trackTimestamp: profile, reversedDepthBuffer: true, device })
+  const renderer = new WebGPURenderer({ canvas, antialias: false, powerPreference: 'high-performance', trackTimestamp: profile || timestamps(line), reversedDepthBuffer: true, device })
   await renderer.init()
-  const backend = renderer.backend as unknown as { isWebGPUBackend?: boolean; device?: GPUDevice }
+  const backend = renderer.backend as unknown as { isWebGPUBackend?: boolean; device?: GPUDevice; trackTimestamp?: boolean }
   if (!backend.isWebGPUBackend || !backend.device) {
     releaseGpu({ renderer, device })
     throw new WebGPUUnavailableError('no-adapter', 'WebGPU adapter unavailable; three.js fell back to WebGL2, which cannot run the WGSL crowd.')
@@ -123,9 +130,7 @@ export async function createRenderer(canvas: HTMLCanvasElement, pixelRatio: numb
   renderer.shadowMap.enabled = true
   // PCFSoftShadowMap was removed from three's WebGPU renderer; PCF with a blur radius replaces it.
   renderer.shadowMap.type = PCFShadowMap
-  // The device's own copy first (what the profile always read), the adapter's where a browser has no device copy.
-  const info = (device as GPUDevice & { adapterInfo?: GPUAdapterInfo }).adapterInfo ?? adapter.info
-  return { renderer, device, adapterInfo: adapterLine(info) }
+  return { renderer, device, adapterInfo: line, timestamps: backend.trackTimestamp === true }
 }
 
 /**

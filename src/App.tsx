@@ -412,8 +412,8 @@ function readOptions(): Options {
     shadows: q.get('shadows') !== '0',
     post: q.get('post') !== '0',
     profile: q.has('profile'),
-    // -1 (or the word 'lite') is Lite, below Minimal; 0…4 are Minimal…Ultra.
-    quality: quality === null || quality === 'auto' ? 'auto' : quality === 'lite' ? -1 : Math.round(num('quality', 3, -1, 4)),
+    // -1 (or the word 'lite') is Lite, below Minimal; 0…4 are Minimal…Ultra; 5 (or the word 'peak') is Peak, above Ultra.
+    quality: quality === null || quality === 'auto' ? 'auto' : quality === 'lite' ? -1 : quality === 'peak' ? 5 : Math.round(num('quality', 3, -1, 5)),
     targetFps: Math.round(num('fps', 0, 0, 240)),
     audio: q.get('audio') !== '0',
     // Closed captions of every spatial sound (captions.ts); ?captions=0 keeps the HUD's strip empty.
@@ -432,6 +432,9 @@ function readOptions(): Options {
     // The lite profile (governor.ts DeviceProfile.lite): ?lite=1 forces it on any device, ?lite=0 keeps it off; absent,
     // the device profile decides (an entry-level phone GPU such as a Mali-G52 is lite).
     lite: q.get('lite') === '1' ? true : q.get('lite') === '0' ? false : undefined,
+    // The Peak candidacy (governor.ts peakCandidate): ?peak=1 lets any desktop's governor try Peak, ?peak=0 keeps it off;
+    // absent, the device profile decides. A phone or a lite profile never tries it, and none does without GPU timestamps.
+    peak: q.get('peak') === '1' ? true : q.get('peak') === '0' ? false : undefined,
   }
 }
 

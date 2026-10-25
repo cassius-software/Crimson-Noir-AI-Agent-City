@@ -62,7 +62,7 @@ import { KEYBOARD_SEAT, type Seat } from '../04_Connect_Hardware/seats.ts'
 import { FrameClock, type GlyphFamily, type KernelStats, type NetReport, type NetState, type SeatView, type SipocSnapshot, type Toast } from '../05_Observe_Environment/telemetry.ts'
 import { MemorySink, Recorder, fileSink, markdownFor, type RecorderSink, type RecorderSource } from '../05_Observe_Environment/recorder.ts'
 import type { AgentTelemetry } from '../05_Observe_Environment/agv.ts'
-import { Governor, defaultAgents, defaultCars, liteJoinHint, profileDevice, readDeviceHints, tierRange, type DeviceProfile, type QualityKnobs } from '../05_Observe_Environment/governor.ts'
+import { Governor, defaultAgents, defaultCars, liteJoinHint, peakCandidate, profileDevice, readDeviceHints, tierRange, type DeviceProfile, type QualityKnobs } from '../05_Observe_Environment/governor.ts'
 import { CAR_TUNE_RANGE, chassisBox, clampTuning, kindOf, type CarTuning } from './car.ts'
 import { FleetView } from './fleetView.ts'
 import { RigView } from './rigView.ts'
@@ -87,7 +87,7 @@ import { withScriptedFallback } from '../09_Cognition/scripted.ts'
 import { describeSurroundings, paintWord, ShortTermMemory, type AgentContext } from '../08_Swarm/shortTerm.ts'
 import { operatorBridge, type Awareness, type Diary, type Mind, type SimControls, type SkillGate, type SpeechClip, type SpeechOut, type Utterance, type Voice } from './operator.ts'
 import type { CityKnobs } from '../06_Make_Decisions/actions.ts'
-import { applyQuality, type QualityTargets } from './quality.ts'
+import { applyQuality, refitPixelRatio, type QualityTargets } from './quality.ts'
 import { SPEECH, Soundscape, sharedAudioContext, wallsBetween, type AudioFrame, type PeerVoice } from './audio.ts'
 import { roomAt, type Room } from './acoustics.ts'
 import { CaptionTrack, captionText } from './captions.ts'
@@ -116,7 +116,7 @@ export interface EngineOptions {
   shadows: boolean
   post: boolean
   profile: boolean
-  /** A fixed quality tier (-1 Lite … 4 Ultra), or 'auto' for the governor. */
+  /** A fixed quality tier (-1 Lite … 4 Ultra, 5 Peak), or 'auto' for the governor. */
   quality: number | 'auto'
   /** Frame-rate target; 0 = estimate from the display (held within 60–90). */
   targetFps: number
@@ -161,6 +161,11 @@ export interface EngineOptions {
    * Lite with the automatic range Lite..Minimal, and boot the lighter city (Engine.create).
    */
   lite?: boolean
+  /**
+   * The Peak candidacy (?peak=1 on, ?peak=0 off; absent: the device profile decides, governor.ts peakCandidate): whether
+   * three writes GPU timestamps and, where it then does, whether the governor's automatic range reaches Peak.
+   */
+  peak?: boolean
 }
 
 /**
@@ -686,7 +691,13 @@ export class Engine {
 
   static async create(canvas: HTMLCanvasElement, requested: EngineOptions, onStage: (stage: BootStage) => void = () => {}): Promise<Engine> {
     onStage('gpu')
-    const gpu = await createRenderer(canvas, requested.pixelRatio, requested.profile)
+    // A Peak candidate's three writes GPU timestamps (governor.ts peakCandidate; the Peak rule's evidence, gpuSample):
+    // decided from the adapter line before three is made, by the same profile the city takes below.
+    const peakOf = (line: string): boolean => {
+      const h = readDeviceHints(line)
+      return peakCandidate(h, profileDevice(h, requested.lite), requested.peak)
+    }
+    const gpu = await createRenderer(canvas, requested.pixelRatio, requested.profile, peakOf)
     onStage('world')
     // A boot that fails partway lets go of what it took: the page's GPU device (releaseGpu) and the physics worker, so
     // the recovery card is not left over a device and a worker still running, and the worker's own later rejection is
@@ -710,6 +721,9 @@ export class Engine {
       const hints = readDeviceHints(gpu.adapterInfo)
       const profile = profileDevice(hints, requested.lite)
       const lite = profile.lite
+      // Peak joins the automatic range only where three really writes GPU timestamps: the governor judges Peak on them
+      // alone (under the cinema camera the animation frames show no spare power), so without them it stops at Ultra.
+      const peak = gpu.timestamps && peakCandidate(hints, profile, requested.peak)
       const pack = requested.region ?? null
       const layout = pack ? layoutOf(pack) : null
       const places = pack && layout ? new RegionPlaces(pack, layout) : null
@@ -762,7 +776,7 @@ export class Engine {
       // Start on the tier the device profile suggests (or the one the URL pins), before anything compiles:
       // the first applyQuality decides which shadow variant the materials are built with. Under the cinema camera the
       // governor holds its 24 presented frames as well as the animation frames' 60 FPS floor.
-      const range = tierRange(profile)
+      const range = tierRange(profile, peak)
       const targetMs = options.targetFps > 0 ? 1000 / options.targetFps : undefined
       const pacerMs = options.cinema === false ? undefined : 1000 / CINEMA.fps
       const governor = options.quality === 'auto'
@@ -781,6 +795,9 @@ export class Engine {
       }
       const targets: QualityTargets = {
         renderer: gpu.renderer, sun: world.sun, basePixelRatio: options.pixelRatio,
+        // The drawing buffer stays within the device's largest 2D texture (WebGPU's default 8192: no limits are asked),
+        // whatever ?scale and Peak's 1.25 ask (quality.ts pixelRatioFor).
+        fit: { maxEdge: gpu.device.limits.maxTextureDimension2D, cssEdge: () => Math.max(1, canvas.clientWidth, canvas.clientHeight) },
         setCrowd: (c) => { live.cull = hidden(c); live.crowd?.setCull(live.cull) },
         setPost: (on) => { live.post = on },
         setVolumetrics: (on) => { live.volumetrics = on },
@@ -882,6 +899,8 @@ export class Engine {
   resize(): void {
     const w = Math.max(1, this.canvas.clientWidth), h = Math.max(1, this.canvas.clientHeight)
     this.gpu.renderer.setSize(w, h, false)
+    // A canvas grown past the device's 2D texture limit draws at a lower ratio, and one shrunk back gets its ratio back.
+    refitPixelRatio(this.quality.applied, this.quality.targets)
     this.world.camera.aspect = w / h
     this.world.camera.updateProjectionMatrix()
     // Split: the viewports are cut again and every camera takes its rect's aspect (player 1's included).
@@ -1761,10 +1780,15 @@ export class Engine {
     // The other players' viewports: each culled for its own camera, under the sky re-centred on that head, drawn on the
     // direct path. The sun's shadow focus, the lamp lights and the building sort stay player 1's (world.update above).
     if (split) for (let k = 1; k < this.views.length; k++) this.presentView(this.views[k])
-    if (this.options.profile && !this.resolving) {
+    // GPU timings: for the stats row under ?profile, and while the governor judges Peak (governor.ts wantsGpu, gpuSample);
+    // only where three writes them (Gpu.timestamps).
+    if (this.gpu.timestamps && (this.options.profile || this.quality.governor.wantsGpu) && !this.resolving) {
       this.resolving = true
       this.gpu.renderer.resolveTimestampsAsync('render').then((ms) => {
-        if (typeof ms === 'number' && ms > 0) this.gpuRenderMs = this.gpuRenderMs * 0.9 + ms * 0.1
+        if (typeof ms === 'number' && ms > 0) {
+          this.gpuRenderMs = this.gpuRenderMs * 0.9 + ms * 0.1
+          this.quality.governor.gpuSample(ms, performance.now())
+        }
         this.resolving = false
       }, () => { this.resolving = false })
     }
