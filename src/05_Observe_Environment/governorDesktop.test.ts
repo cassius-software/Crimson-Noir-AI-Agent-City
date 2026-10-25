@@ -726,6 +726,21 @@ test('trace: one CSV row per simulated second of every scenario (written only wi
   assert.ok(lines.some((l) => l.startsWith('steady-60,') && l.split(',')[3] === ''), 'blank camera column without the camera')
 })
 
+test('trace: Peak moved no desktop tier: every committed desktop.csv row\'s scenario, second and tier are what the governor walks today', () => {
+  const committed = readFileSync(DESKTOP_TRACE, 'utf8').trimEnd().split('\n')
+  const today = desktopTraceCsv().trimEnd().split('\n')
+  assert.equal(today.length, committed.length, 'one row per simulated second, as committed')
+  assert.equal(today[0], committed[0])
+  // Scenario, t_seconds, tier_index and tier_name. The fps and camera columns are left out: the committed camera column
+  // is stale in some pinned-ultra rows, and neither column is a tier.
+  const moved: string[] = []
+  for (let i = 1; i < committed.length; i++) {
+    const was = committed[i].split(','), now = today[i].split(',')
+    if ([0, 1, 4, 5].some((c) => was[c] !== now[c])) moved.push(`row ${i}: committed ${committed[i]}, today ${today[i]}`)
+  }
+  assert.deepEqual(moved.slice(0, 5), [], `${moved.length} rows moved`)
+})
+
 if (process.env.AUTOSCALER_TRACE === '1') {
   test('trace: AUTOSCALER_TRACE=1 writes docs/autoscaler/desktop.csv', () => {
     const path = writeDesktopTrace()
