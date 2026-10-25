@@ -1185,7 +1185,9 @@ const SCENARIOS = {
       const pk = await p.eval(PEAK_STATE)
       check(map && pk.mapSize === 8192 && pk.box === '-160,160,160,-160' && Math.abs(pk.ratio - 0.625) < 1e-9 && pk.lod === 90 && pk.errors.length === 0,
         'ultra: Peak pinned allocates the 8192 shadow map, widens the sun\'s box to 160 m, draws at 1.25 times the pixel ratio and validates', JSON.stringify(pk))
+      // The console cleared first (as command() waits for it), so the only Peak left on the page is the HUD's.
       await p.enter('clear')
+      await p.waitFor(`(${CONSOLE_LOG}?.innerText ?? '').trim() === ''`, 10_000).catch(() => {})
       check(await p.eval(`document.body.innerText.includes('Peak')`), 'ultra: the HUD shows Peak')
       await p.shot('ultra-peak')
       await p.command('quality 4', /tier 4 Ultra \(fixed\)/)
