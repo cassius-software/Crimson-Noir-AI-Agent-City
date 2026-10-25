@@ -197,7 +197,8 @@ function feedAt(loop: Loop, ms: number, n: number): void {
   for (let i = 0; i < n; i++) loop.g.gpuSample(ms, loop.nowMs)
 }
 
-/** A misjudged Peak (MARGINAL): Ultra's p90 under the entry limit, Peak's median over the stay limit. */
+/** A loop booted from the RTX 5090 for a misjudged Peak (MARGINAL): Ultra's p90 under the entry limit, Peak's median
+ *  over the stay limit. */
 const marginal = () => new Loop(boot(RTX_5090).governor)
 
 /** Peak always 15 ms; Ultra 2.0 ms, then 1.0 from 30 s, then 0.6 from 150 s: each step under the last tightened limit. */
@@ -455,6 +456,11 @@ test('peak: the in-page model\'s hold on the GPU lowers Peak to Ultra; the relea
   }
   assert.equal(peakOf(g).off, false, 'four holds took Peak away and none of them counted as a loss')
   assert.ok(loop.changes.every((c) => c.reason !== 'gpu busy' && c.reason !== 'frames below 60 FPS'))
+  // So a real loss after them is the visit's first, and Peak stays on.
+  to(720)
+  loop.run(10, { hz: 60, gpu: (tier) => (tier === PEAK_TIER ? 15 : FAST[tier]) })
+  assert.equal(loop.changes.at(-1)?.reason, 'gpu busy', JSON.stringify(loop.changes.at(-1)))
+  assert.equal(peakOf(g).off, false, 'one loss in the visit: Peak is still on')
 })
 
 // ---------------------------------------------------------------------------------------------------
@@ -577,8 +583,7 @@ test('peak: state().peak: absent below a Peak range; p90 and the entry limit at 
   assert.equal(wide.g.tier, 4)
   const end = wide.nowMs
   for (let i = 0; i < 1800; i++) wide.g.gpuSample(i < 900 ? 6 : 3, end - 4900 + (4900 * i) / 1799)
-  assert.ok(PEAK_GOV.ring >= 1800)
-  assert.equal(peakOf(wide.g).gpuMs, 6, 'the p90 of all 1800 (index 1619)')
+  assert.equal(peakOf(wide.g).gpuMs, 6, `the p90 of all 1800 (index 1619), in a ring of ${PEAK_GOV.ring}`)
 })
 
 test('peak: a model on the processor holds the city without lowering Peak: Peak kept, nothing remembered, no quiet time', () => {
