@@ -59,7 +59,7 @@ const frozen = (k: QualityKnobs): QualityKnobs => Object.freeze(k)
  *  pass texels, crowd vertices) and culls the drawn crowd (the InstancedMesh draw counts), down to a few
  *  percent of Ultra's at Minimal; governor.test.ts models the GPU cull to hold that. High keeps the
  *  pre-governor look apart from a slightly thinner far crowd; below it every step also lowers the
- *  procedural texture resolution (256² → 192² → 128² → 64²). Ultra alone adds the golden-hour sun shafts. */
+ *  procedural texture resolution (256² → 192² → 128² → 64²). Ultra (and Peak above it) adds the golden-hour sun shafts. */
 export const TIERS: readonly QualityKnobs[] = Object.freeze([
   frozen({ label: 'Minimal', renderScale: 0.65, shadows: false, shadowMapSize: 1024, post: false, volumetrics: false, crowdDensity: 0.2, lodDistance: 12, nearRadius: 10, maxDistance: 110, textureSize: 64 }),
   frozen({ label: 'Low', renderScale: 0.75, shadows: false, shadowMapSize: 1024, post: true, volumetrics: false, crowdDensity: 0.4, lodDistance: 18, nearRadius: 14, maxDistance: 180, textureSize: 128 }),
@@ -79,8 +79,8 @@ export const LITE_TIER = -1
 
 /**
  * Peak, tier 5: above Ultra for big GPUs. It is not in TIERS (as Lite is not), so TOP, every one-argument tierRange and
- * every index the tests pin keep their meaning; knobsOf reads it. Ultra drawn at 1.25 times the pixels (quality.ts keeps
- * the drawing buffer within the device's largest 2D texture), the sun's shadow box doubled to ±160 m at twice the map
+ * every index the tests pin keep their meaning; knobsOf reads it. Ultra drawn at 1.25 times the resolution on each side,
+ * about 1.56 times the pixels (quality.ts keeps the drawing buffer within the device's largest 2D texture), the sun's shadow box doubled to ±160 m at twice the map
  * edge (the same 3.9 cm texel, so the PCF radius and the biases mean what they mean on Ultra), and detailed bodies out
  * to 90 m. Draw distance and the always-drawn radius stay: the haze hides the city past 700 m, and at density 1
  * everyone is drawn anyway. Reached automatically only on a Peak range (tierRange) and on the GPU's own timings
@@ -898,8 +898,10 @@ export class Governor {
       }
     }
     const next = this.current + 1
+    // Into Peak only unheld: a hold stops the readings (wantsGpu), so the ones from before it must not admit Peak under it,
+    // where the stay rule cannot act.
     if (this.current < this.ceiling() && now >= this.blockedUntil[slot(next)] && !above(miss5, n5, 0.97) &&
-      (next !== PEAK_TIER || this.peakReady(now))) {
+      (next !== PEAK_TIER || (this.cap === null && this.peakReady(now)))) {
       this.why = 'probe'
       this.step(now, 1)
     }

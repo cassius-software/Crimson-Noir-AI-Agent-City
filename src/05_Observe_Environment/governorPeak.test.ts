@@ -538,6 +538,19 @@ test('peak: readings that are not a frame are dropped; a clock running backwards
   off.g.sample(16.7, 10)
   assert.equal(peakOf(off.g).off, true)
   assert.equal(off.g.wantsGpu, false)
+  // Two losses, then the clock runs back: the visit's count stays, so the next loss is the third and turns Peak off.
+  const losses = (l: Loop) => l.changes.filter((c) => c.from === PEAK_TIER && c.tier === 4).length
+  // threeLosses' load: each loss tightens the entry, and Ultra gets quicker in time for the next probe.
+  const load: Load = { hz: 60, gpu: (tier, t) => tier === PEAK_TIER ? 15 : tier === 4 ? (t < 30 ? 2.0 : t < 150 ? 1.0 : 0.6) : 1 }
+  const two = new Loop(boot(RTX_5090).governor)
+  two.until(() => losses(two) === 2, 600, load)
+  assert.equal(losses(two), 2, JSON.stringify(two.changes))
+  assert.equal(peakOf(two.g).off, false)
+  two.g.sample(16.7, 10)
+  two.until(() => losses(two) === 3, 600, load)
+  assert.equal(losses(two), 3, JSON.stringify(two.changes))
+  assert.equal(peakOf(two.g).off, true, 'the third loss of the visit, across the new time origin')
+  assert.equal(two.g.wantsGpu, false)
 })
 
 test('peak: wantsGpu only at Ultra or Peak, in auto, unheld, on a Peak range, not off', () => {
@@ -593,27 +606,69 @@ test('peak: a model on the processor holds the city without lowering Peak: Peak 
   if (cpuCap === null) return
   const loop = new Loop(boot(RTX_5090).governor)
   const g = loop.g
-  const fast = at60(FAST)
-  loop.until(() => g.tier === 5, 7.5, fast)
+  const fast = table(FAST, 7)
+  let heatFrom = Infinity
+  const load: Load = { hz: 60, gpu: (tier, t) => (tier === PEAK_TIER && t >= heatFrom && t < heatFrom + 10 ? 15 : fast(tier)) }
+  loop.until(() => g.tier === 5, 7.5, load)
   assert.equal(g.tier, 5, 'at Peak by 7.5 s')
-  loop.run(30 - loop.t, fast)
-  const before = loop.changes.length
-  g.hold(cpuCap, loop.nowMs)
-  assert.equal(g.tier, 5)
-  assert.equal(g.state().held, 5)
-  assert.equal(g.wantsGpu, false)
-  loop.run(30, fast)
-  assert.equal(loop.changes.length, before, 'nothing moved under the hold')
-  g.hold(null, loop.nowMs)
-  assert.equal(g.tier, 5)
-  assert.equal(g.state().held, undefined)
-  assert.equal(g.wantsGpu, true)
-  loop.run(600 - loop.t, fast)
+  loop.run(30 - loop.t, load)
+  // Three answers at Peak: none moves the tier, counts as a loss (three would turn Peak off) or starts a quiet time.
+  for (let i = 0; i < 3; i++) {
+    const before = loop.changes.length
+    g.hold(cpuCap, loop.nowMs)
+    assert.equal(g.tier, 5)
+    assert.equal(g.state().held, 5)
+    assert.equal(g.wantsGpu, false)
+    loop.run(20, load)
+    assert.equal(loop.changes.length, before, 'nothing moved under the hold')
+    g.hold(null, loop.nowMs)
+    assert.equal(g.tier, 5)
+    assert.equal(g.state().held, undefined)
+    assert.equal(g.wantsGpu, true)
+    loop.run(10, load)
+  }
   assert.equal(loop.changes.length, 1, JSON.stringify(loop.changes))
+  assert.equal(peakOf(g).off, false, 'three answers are not three losses')
+  // Then real heat at Peak for 10 s: one loss, untightened (Peak had been there for minutes), and Peak back after the
+  // back-off of a first loss (20 s), not after the quiet time a release that took Peak away would have started.
+  heatFrom = loop.t + 1
+  loop.until(() => loop.changes.length === 2, 30, load)
+  const c = loop.changes
+  assert.ok(c.length === 2 && c[1].tier === 4 && c[1].reason === 'gpu busy' && c[1].t >= heatFrom && c[1].t <= heatFrom + 3, JSON.stringify(c))
+  assert.ok(near(peakOf(g).limitMs, 1000 / 60 * 0.3), `untightened: ${peakOf(g).limitMs} ms`)
+  loop.run(600 - loop.t, load)
+  assert.equal(c.length, 3, JSON.stringify(c))
+  assert.ok(c[2].tier === 5 && c[2].reason === 'probe' && c[2].t - c[1].t >= 20 && c[2].t - c[1].t <= 25, JSON.stringify(c[2]))
   assert.equal(peakOf(g).off, false)
   // A desktop that is not a Peak candidate is held at Ultra by the same cap, as it was before Peak.
   const plain = new Governor({ tier: 4, auto: true })
   plain.hold(cpuCap, 0)
   assert.equal(plain.state().held, 4)
   assert.equal(plain.tier, 4)
+})
+
+test('peak: a model on the processor that starts at Ultra keeps Ultra until the release: no Peak on readings from before the hold', () => {
+  const cpuCap = holdTier(DISCRETE, false)
+  assert.equal(cpuCap, PEAK_TIER)
+  if (cpuCap === null) return
+  for (const [name, costs] of [['FAST', FAST], ['MARGINAL', MARGINAL]] as const) {
+    // A hold from 3 s: Ultra's readings from before it would fill the entry window by the first probe (about 6 s).
+    const loop = new Loop(boot(RTX_5090).governor)
+    const g = loop.g
+    const load = at60(costs)
+    loop.run(3, load)
+    assert.equal(g.tier, 4, name)
+    g.hold(cpuCap, loop.nowMs)
+    assert.equal(g.state().held, 5, name)
+    assert.equal(g.wantsGpu, false, name)
+    loop.run(30, load)
+    assert.equal(loop.changes.length, 0, `${name}: nothing under the hold, ${JSON.stringify(loop.changes)}`)
+    assert.equal(peakOf(g).limitMs, 1000 / 60 * 0.3, `${name}: nothing tightened`)
+    const release = loop.t
+    g.hold(null, loop.nowMs)
+    loop.run(30, load)
+    const c = loop.changes
+    assert.ok(c.length >= 1 && c[0].tier === 5 && c[0].reason === 'probe', `${name}: ${JSON.stringify(c)}`)
+    assert.ok(c[0].t - release >= 5 && c[0].t - release <= 7.5, `${name}: Peak on readings taken after the release, ${JSON.stringify(c[0])}`)
+  }
 })
