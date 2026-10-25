@@ -127,8 +127,6 @@ test('tiers: Lite is tier -1, below Minimal and outside the table; knobsOf reads
 })
 
 test('tiers: Peak sits above the table like Lite', () => {
-  // quality.ts SHADOW_EXTENT, the sun's box world.ts builds (±80 m); written out here until the applier exports it.
-  const SHADOW_EXTENT = 80
   assert.ok(Object.isFrozen(PEAK))
   assert.ok(!TIERS.includes(PEAK), 'no index of the table moves: TOP, ?quality=0…4 and every automatic range keep their meaning')
   assert.ok(PEAK_TIER === TIERS.length && PEAK_TIER === 5)
