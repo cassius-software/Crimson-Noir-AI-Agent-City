@@ -1421,10 +1421,10 @@ its own licence. The parts: `09_Cognition/inPage.ts` (the provider), `inPagePlan
   runs. Either way Peak does not come straight back when the model stops (that would take the memory again before the
   next answer): the release returns Ultra, and the governor earns Peak again after a quiet spell of 40 seconds, longer
   if the model keeps working, up to 5 minutes. On a discrete card, a model on the processor (a card without
-  shader-f16, or `ask gpu off`) uses none of the card's memory, so Peak stays. Under the hold a slow frame is not counted against a tier, and afterwards the tier
-  from before comes back with the usual cooldown. A tier you pinned with `quality` is left as it is. On a slow device,
-  `render off` stops drawing the city while the model works (the physics, the audio and the console keep running), and
-  `render on` brings it back.
+  shader-f16, or `ask gpu off`) uses none of the card's memory, so Peak stays. Under the hold a slow frame is not
+  counted against a tier, and afterwards a tier below Peak comes back as it was, with the usual cooldown. A tier you
+  pinned with `quality` is left as it is. On a slow device, `render off` stops drawing the city while the model works
+  (the physics, the audio and the console keep running), and `render on` brings it back.
 - **When it cannot answer**, one sentence says why:
   - this browser cannot run it, the page closed while it was loading a model last time, a load failed this visit, or
     the kept file has gone: the script stands in with the reason, and `auto` moves on;
@@ -1721,14 +1721,17 @@ are no toasts and no settings menu, and the console's `quality` command is the o
 - **Floor and ceiling:** in auto mode phones are capped at Medium and a lite profile at Minimal; the browser exposes
   no thermal state, so frame time is the proxy. Ultra and Peak add the volumetrics. Sloane's fixes for heat, battery or
   a slow frame ("my phone is hot", "it's laggy") pin Low at most and never raise the tier: a device already below Low
-  stays where it is.
+  stays where it is. A slow frame named on Peak ("it lags on peak settings") pins Ultra at most, and Low once Sloane
+  hears the trouble is steady.
 - **While the model in this page works** (A model in this page), the governor is held under a cap (`hold()`): Low on a
   computer whose GPU is integrated, Minimal on a phone, Lite on a lite profile, and nothing lower on a discrete GPU,
-  except that Peak comes down to Ultra while the model is on the GPU and is earned back after a quiet spell; with the
-  model on the processor Peak stays. A tier above the cap drops to it at once, probes stop at it, and a step down
-  under the hold is taken but not remembered against the tier (the device is busy with the model, not too slow for the
-  tier). The release returns the tier from before with the usual cooldown. A manual tier is left alone; the snapshot's
-  quality carries `held` while the cap is on.
+  except that Peak comes down to Ultra while the model is on the GPU; with the model on the processor of a discrete
+  card's computer Peak stays. An Apple chip at Peak comes down to Low like any integrated GPU. A tier above the cap
+  drops to it at once, probes stop at it (and never go into Peak under a hold), and a step down under the hold is
+  taken but not remembered against the tier (the device is busy with the model, not too slow for the tier). The
+  release returns the tier from before with the usual cooldown, except where the hold took Peak away: then it returns
+  Ultra, and Peak is earned back after a quiet spell. A manual tier is left alone; the snapshot's quality carries
+  `held` while the cap is on.
 - **Under the cinema camera:** the governor still reads every animation frame, so it keeps input and physics
   at the display's rate. Only 24 of those frames a second are drawn, so each drawn frame gets more GPU time, and
   the governor usually settles a tier or two higher than it does with `?cinema=0`. Two rules are specific to it:
@@ -1767,9 +1770,10 @@ are no toasts and no settings menu, and the console's `quality` command is the o
     `nix run … -- peak=1`) adds `?peak=1`. A console-class AMD chip that reports itself as integrated graphics is not
     picked by itself: give it `?peak=1`. In a browser, add `?peak=1` to the address.
   - **Agents and Sloane.** Agents cannot ask for it. Sloane pins it only when you name it ("peak quality", "beyond
-    ultra"); "best" and "max" still mean Ultra. Named beside a complaint ("hot on peak graphics", "it lags on peak
-    settings"), it is the complaint Sloane fixes, never a reason to pin Peak; "turn off peak graphics" or "nothing
-    above ultra" lowers the quality to Ultra at most.
+    ultra") and nothing in the same part of the sentence doubts it; "best" and "max" still mean Ultra. A no, a
+    turn-down, a complaint about its cost or a question beside it ("i don't want peak graphics", "turn off peak
+    graphics", "peak graphics is too heavy", "is peak graphics worth it") lowers the quality to Ultra at most, and a
+    heat or battery complaint ("hot on peak graphics") gets that complaint's own fix.
   - **Tried so far.** Only in headless Chromium on the software adapter: with a faked RTX 5090 (the browser smoke's
     `peak` scenario), and pinned for a few frames in the `ultra` scenario, also in the Nix package's Chromium. Not
     measured on a real big GPU.

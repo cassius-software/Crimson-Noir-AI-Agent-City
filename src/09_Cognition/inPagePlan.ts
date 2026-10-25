@@ -84,10 +84,11 @@ const ROWS: Readonly<Record<Profile, Pick<Placement, 'ctx' | 'batch' | 'ubatch' 
  * tier, which caps nothing (the governor clamps a cap to the device's range) but still holds the city: the plan's "none
  * (failures not recorded)". A step down while the model has the GPU is then not remembered against the tier, and the
  * release returns the tier from before; a null here would release instead, and every such step would back off. On a
- * Peak machine (governor.ts PEAK_TIER, above the table) the top of the table is Ultra, so a model on the GPU lowers
- * Peak to Ultra, which hands it the half gigabyte Peak's shadows take; the release does not put Peak straight back
- * (governor.ts hold: a quiet spell first), so a conversation does not allocate it again at every answer. A model on
- * the processor never touches that memory: holdTier caps it at Peak instead.
+ * discrete Peak machine (governor.ts PEAK_TIER, above the table) the top of the table is Ultra, so a model on the GPU
+ * lowers Peak to Ultra, which hands it the half gigabyte Peak's shadows take; the release does not put Peak straight
+ * back (governor.ts hold: Ultra, then a quiet spell), so a conversation does not allocate it again at every answer. A
+ * model on that machine's processor never touches the card's memory: holdTier caps it at Peak instead. An Apple chip
+ * is integrated, so it is held at Low wherever the model runs, and its release from Peak returns Ultra the same way.
  */
 const HOLD: Readonly<Record<Profile, number>> = Object.freeze({ discrete: TIERS.length - 1, integrated: 1, phone: 0, lite: LITE_TIER })
 

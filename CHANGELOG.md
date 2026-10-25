@@ -29,8 +29,9 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   not hand it straight back: a quiet 40 s first, doubling. On a discrete card a model on the processor leaves Peak
   where it is; an Apple chip comes down to Low like any integrated GPU, and Ultra comes back first there too.
   `?quality=5|peak` and `quality peak` pin it by hand. Agents cannot propose it, and Sloane pins it only when it is
-  named, and not when it is named in a complaint ("hot on peak graphics" lowers the quality) or turned down ("turn off
-  peak graphics" means Ultra at most). The browser smoke pins Peak in its `ultra` scenario, which the Nix job also
+  named with nothing beside it that doubts it: a no, a turn-down, a complaint or a question ("i don't want peak
+  graphics", "it lags on peak settings", "is peak graphics worth it") means Ultra at most, and a heat or battery
+  complaint keeps its own fix. The browser smoke pins Peak in its `ultra` scenario, which the Nix job also
   runs, and a new `peak` scenario drives the GPU rule on a faked RTX 5090; Peak is not measured on a real big GPU. For
   three upgrades: the rule reads three's timestamp pool (`resolveTimestampsAsync('render')`, kept only with
   `timestamp-query`).
