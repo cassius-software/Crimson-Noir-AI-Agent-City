@@ -28,13 +28,13 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   until reload. The in-page model's hold brings Peak down to Ultra while the model is on the GPU, and the release does
   not hand it straight back: a quiet 40 s first, doubling. On a discrete card a model on the processor leaves Peak
   where it is; an Apple chip comes down to Low like any integrated GPU, and Ultra comes back first there too.
-  `?quality=5|peak` and `quality peak` pin it by hand. Agents cannot propose it, and Sloane pins it only when it is
-  named with nothing beside it that doubts it: a no, a turn-down, a complaint or a question ("i don't want peak
-  graphics", "it lags on peak settings", "is peak graphics worth it") means Ultra at most, and a heat or battery
-  complaint keeps its own fix. The browser smoke pins Peak in its `ultra` scenario, which the Nix job also
-  runs, and a new `peak` scenario drives the GPU rule on a faked RTX 5090; Peak is not measured on a real big GPU. For
-  three upgrades: the rule reads three's timestamp pool (`resolveTimestampsAsync('render')`, kept only with
-  `timestamp-query`).
+  `?quality=5|peak` and `quality peak` pin it by hand. Agents cannot propose it, and Sloane pins it only for a plain
+  ask ("peak graphics", "turn on peak graphics and golden hour"): a no, a turn-down, another tier, a complaint or a
+  question ("i don't want peak graphics", "it lags on peak settings", "is peak graphics worth it?") means Ultra at
+  most, a heat or battery complaint keeps its own fix, and any other mention reads as it did before Peak. The browser
+  smoke pins Peak in its `ultra` scenario, which the Nix job also runs, and a new `peak` scenario drives the GPU rule
+  on a faked RTX 5090; Peak is not measured on a real big GPU. For three upgrades: the rule reads three's timestamp
+  pool (`resolveTimestampsAsync('render')`, kept only with `timestamp-query`).
 - **City actions, asked each time (ask, act).** An agent's answer may end with one ACTION line from a fixed catalogue
   (the clock, rain mode, the light dials, the quality tier, the cars, the crowd, the sound); the console and a card show
   who proposes what, in the city's own words, and nothing runs until you allow it (Y or N on the card, act ok or act no,

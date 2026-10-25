@@ -76,7 +76,7 @@ interface Frame {
 
 /** Lower-case ASCII words one space apart; apostrophes, colons and percent signs survive for times and volumes. */
 function normalize(text: string): string {
-  return text.slice(0, 1024).normalize('NFKC').toLowerCase().replace(/[’‘`´]/g, "'").replace(/[^a-z0-9:'%]+/g, ' ').replace(/\s+/g, ' ').trim()
+  return text.slice(0, 1024).normalize('NFKC').toLowerCase().replace(/[’‘`´ʼ′]/g, "'").replace(/[^a-z0-9:'%]+/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
 /** A goal or answer as kept: one line, no control characters, at most GOAL_MAX characters (a cut never
@@ -133,20 +133,40 @@ const UNSURE = /\b(?:(?:i )?(?:don'?t|dont|do not) (?:know|mind|care)|dunno|not 
 
 /** Peak by name (the Peak rule's words). */
 const PEAK_NAMED = /\bpeak (?:quality|graphics|settings|detail|fidelity)\b|\b(?:above|beyond|past) ultra\b/
+const PEAK_NAMED_ALL = new RegExp(PEAK_NAMED.source, 'g')
+/** Whether one stretch of a goal names Peak: "sun at its peak, graphics on ultra" and "not peak. graphics on ultra" do
+ *  not, though normalize runs their words together. */
+const peakNamed = (input: string): boolean =>
+  input.slice(0, 1024).normalize('NFKC').toLowerCase().split(/[^\p{L}\p{N}\s'’‘`´ʼ′_-]+/u).some((c) => PEAK_NAMED.test(normalize(c)))
 /**
- * Words that put a named Peak in doubt in its own clause: a negation ("i don't want peak graphics", "nothing above
- * ultra"), a turn-down ("turn off peak graphics", "reduce peak quality"), a complaint about its cost ("peak graphics
- * is too heavy", "it lags on peak settings") or a question about it ("is peak graphics worth it"). Sloane pins Peak,
- * with auto off and half a gigabyte of graphics memory, only for a clause with none of them; with any, Peak is where
- * the trouble is and Ultra the most she pins. Broad on purpose: a Peak missed costs one console line (quality peak), a
- * Peak pinned against the goal can run a small GPU out of memory.
+ * The only words a plain ask for Peak holds beside its name and what the other rules took ("turn on peak graphics
+ * please", "i want peak graphics and golden hour", "peak graphics with no traffic"). Any other word reads the goal as it
+ * was read before Peak, so a mention in passing never takes the half gigabyte Peak's shadows need.
  */
-const PEAK_DOUBT = /\b(?:no|not|never|none|nothing|without|rather not|no longer|don'?t|dont|do not|doesn'?t|didn'?t|won'?t|can'?t|cannot|isn'?t|aren'?t|wouldn'?t|shouldn'?t|avoid|skip|stop|disable|off|down|lower|reduce|drop|cut|remove|downgrade|less|too|lag\w*|slow\w*|stutter\w*|chopp\w*|jerk\w*|freez\w*|hang\w*|hitch\w*|crash\w*|struggl\w*|handle|heavy|hurt\w*|kill\w*|what|why|how|worth|mean|means|should|whether|hot|heat\w*|warm|overheat\w*|fans?|loud|noisy|battery|batteries|memory|vram)\b/
-/** A goal's clauses (split at punctuation and at and, but, also, plus, then, though, while), each normalized. */
-const clauses = (input: string): string[] =>
-  input.slice(0, 1024).normalize('NFKC').toLowerCase().split(/[,;.!?]+|\b(?:and|but|also|plus|then|though|although|while)\b/).map(normalize)
-/** Whether a clause that names Peak puts it in doubt (PEAK_DOUBT). */
-const peakDoubted = (input: string): boolean => clauses(input).some((c) => PEAK_NAMED.test(c) && PEAK_DOUBT.test(c))
+const PEAK_PLAIN = new Set([
+  'i', "i'd", 'id', "i'll", 'we', "we'd", "let's", 'lets', 'let', 'me', 'us', 'my', 'want', 'wanna', 'would', 'like',
+  'love', 'need', 'please', 'pls', 'plz', 'give', 'have', 'get', 'use', 'try', 'turn', 'switch', 'set', 'put',
+  'change', 'go', 'make', 'bump', 'crank', 'push', 'take', 'upgrade', 'keep', 'stay', 'stick', 'remain', 'back',
+  'bring', 'restore', 'again', 'prefer', 'only', 'up', 'out', 'on', 'to', 'into', 'at', 'in', 'for', 'with', 'the',
+  'a', 'it', 'mode', 'now', 'then', 'and', 'but', 'also', 'plus', 'too', 'even', 'as', 'well', 'just', 'ok', 'okay', 'yes',
+  'yeah', 'yep', 'yup', 'sure', 'can', 'could', 'you', 'enable', 'show', 'thanks', 'thank', 'all', 'full', 'way',
+  'quality', 'graphics', 'settings', 'detail', 'fidelity', 'level', 'tier', 'preset',
+])
+/**
+ * Words beside a named Peak that turn it down or count its cost: a negation ("i don't want peak graphics"), a turn-down or
+ * a move away ("turn off peak graphics", "get rid of peak graphics", "switch from peak graphics"), or a complaint
+ * ("peak graphics is too heavy", "my card has 4gb"). A plain ask holds none of them save words another rule took, which
+ * do not count ("peak graphics and no traffic" is Peak); any other goal is read for them throughout.
+ */
+const PEAK_DOUBT = /\b(?:no|not|never|none|nothing|nor|neither|without|rather|no longer|nah|nope|n't|(?:don|doesn|didn|won|can|isn|aren|wasn|weren|wouldn|shouldn|couldn|haven|hasn|hadn|ain|needn)'?t|cannot|avoid|skip|stop|disable|off|down|lower|reduce|drop|cut|remove|downgrade|less|undo|revert|rid|quit|exit|end|pause|enough|ditch|instead|from(?! now)|hate|ugly|worse|bad|lag\w*|slow\w*|stutter\w*|chopp\w*|jerk\w*|jank\w*|freez\w*|hang\w*|hitch\w*|crash\w*|struggl\w*|heavy|hurt\w*|kill\w*|hot|heat\w*|warm|overheat\w*|fans?|loud|noisy|battery|batteries|memory|vram|weak|old|cheap|\d+ ?(?:gb|mb))\b|\btoo\s+(?!(?:and|please|now|then|thanks|thank|as|also|ok|okay|i|we)\b)\w+/
+/** A question about Peak ("is peak graphics worth it", "how heavy is peak quality", "does my gpu support peak graphics").
+ *  "Can you" and "could i have" ask for it. */
+const PEAK_ASKED = /\b(?:what|why|how|whether|should|worth|mean|means|which|difference|compare|versus|vs|explain)\b|^(?:is|are|does|do|did|was|were|has|had|am)\b|^(?:can|could|will|would|may) (?!(?:you|i|we|u)\b)/
+/** Another tier beside a named Peak ("from peak graphics to ultra", "set peak graphics to low"): a move to it, not Peak. */
+const OTHER_TIER = /\b(?:ultra|highest|high(?:er)?|medium|mid|low(?:er|est)?|minimal|lite|potato|auto(?:matic)?|adaptive)\b/
+/** A question mark on a request ("can you turn on peak graphics?", "could i have peak quality?"); on anything else it
+ *  doubts Peak. */
+const ASKING = /^(?:please )?(?:(?:can|could|would|will) you|(?:can|could|may) (?:i|we) (?:have|get|use|try|switch|go))\b/
 
 /** Wishes the city cannot grant yet: named in the brief with the modules a change would touch. Matched
  *  first, so "speed up the day" never reads as "day". */
@@ -175,6 +195,8 @@ const UNSUPPORTED: readonly (Unmapped & { re: RegExp })[] = [
   { re: /\b(?:save (?:the |my )?(?:game|city|progress|state)|load (?:the |my )?(?:game|save)|checkpoint|photo mode|record(?:ing)? (?:a |the )?(?:video|clip)|screenshots?|share (?:this|it|the city))\b/,
     label: 'Saving, sharing and photo mode: not in the city yet (your name is the only thing remembered)', modules: ['05_Observe_Environment/profile.ts', 'App.tsx'] },
 ]
+
+const PEAK_RULE = one(PEAK_NAMED, 'quality', PEAK_TIER, 0.9, 'fidelity')
 
 /** Ordered: clock readings and specific phrases before the bare nouns; a match consumes its words, so
  *  "warm light" is golden hour before "warm" can mean a hot device. */
@@ -209,9 +231,9 @@ const RULES: readonly Rule[] = [
   one(/\b(?:battery|batteries|hot|heat(?:ing)?|warm|too warm|overheat(?:s|ing)?|fan|fans|thermals?|cool(?:er)? down|cooler)\b/, 'quality', 1, 0.9, 'battery'),
   // Peak, above Ultra (governor.ts PEAK_TIER), only when named: "best", "max" and "ultra" keep meaning Ultra, so a casual
   // ask never takes the half gigabyte Peak's shadows need. Before the Ultra rule, which would read "beyond ultra". As
-  // sure as the heat and battery rule, so "hot on peak graphics" keeps that rule's Low (the first of equals). A named
-  // Peak in doubt is Ultra at most (PEAK_DOUBT, analyze).
-  one(PEAK_NAMED, 'quality', PEAK_TIER, 0.9, 'fidelity'),
+  // sure as the heat and battery rule, so "hot on peak graphics" keeps that rule's Low (the first of equals). Kept only
+  // for a plain ask (analyze).
+  PEAK_RULE,
   one(/\b(?:ultra|max(?:imum|ed)?|highest|best|top|full) ?(?:quality|graphics|detail|settings|fidelity|res(?:olution)?)\b|\b(?:ultra|max(?:ed)? out|max fidelity)\b/, 'quality', 4, 0.9, 'fidelity'),
   one(/\b(?:prett(?:y|ier)|nicer|beautiful|gorgeous|stunning|sharp(?:er)?|crisp(?:er)?|detail(?:ed|s)?|fidelity|better (?:looking|graphics|visuals)|looks? better|graphics|visuals|shadows|god ?rays|light ?shafts|sun ?rays|volumetrics?|glow|hdr|eye candy|cinematic|photo ?real(?:istic)?)\b/, 'quality', 4, 0.85, 'fidelity'),
   // The lowest setting is Lite now (governor.ts LITE_TIER, below Minimal); asking for Minimal by name still means Minimal.
@@ -268,6 +290,8 @@ const RULES: readonly Rule[] = [
 ]
 
 interface Analysis { hyps: Hyp[]; tags: Set<Tag>; unmapped: Unmapped[]; flag: Flag }
+/** The taxonomy's reading: `rest` is the goal with every matched phrase blanked out; `unsure` the "I don't know" said. */
+interface Reading { hyps: Hyp[]; tags: Set<Tag>; unmapped: Unmapped[]; harm: boolean; unsure: string | null; rest: string }
 
 /** Keeps the stronger reading of a control; among equals the first. A value is never lost to a reading
  *  without one ("noisy roads" stays fewer cars). */
@@ -279,7 +303,8 @@ function mergeHyp(hyps: Hyp[], h: Hyp): void {
   else if (old.value === undefined && h.value !== undefined) hyps[i] = { ...old, value: h.value }
 }
 
-function analyze(input: string): Analysis {
+/** The taxonomy over a goal; with `peak` false the Peak rule sits out and the goal reads as it did before Peak. */
+function read(input: string, peak: boolean): Reading {
   let text = normalize(input)
   const tags = new Set<Tag>()
   const unmapped: Unmapped[] = []
@@ -290,11 +315,12 @@ function analyze(input: string): Analysis {
     const m = u.re.exec(text)
     if (m) { unmapped.push({ label: u.label, modules: u.modules }); consume(m) }
   }
-  let unsure = false
   const unsureMatch = UNSURE.exec(text)
-  if (unsureMatch) { unsure = true; consume(unsureMatch) }
+  const unsure = unsureMatch ? unsureMatch[0] : null
+  if (unsureMatch) consume(unsureMatch)
   if (!harm) {
     for (const r of RULES) {
+      if (r === PEAK_RULE && !peak) continue
       const m = r.re.exec(text)
       if (!m) continue
       consume(m)
@@ -306,11 +332,43 @@ function analyze(input: string): Analysis {
       }
     }
   }
-  // A named Peak in doubt is Ultra at most (stepFor makes it a ceiling), never Peak pinned against the goal.
-  const q = hyps.find((h) => h.control === 'quality')
-  if (q?.value === PEAK_TIER && peakDoubted(input)) { q.value = TIERS.length - 1; tags.add('no-peak') }
+  return { hyps, tags, unmapped, harm, unsure, rest: text }
+}
+
+/** Whether a goal that reads as Peak turns it down, doubts it or asks about it: PEAK_DOUBT, PEAK_ASKED, another tier, a
+ *  question mark, a complaint the other rules read (slow, hot), or an "I don't know" ("i don't mind" is a yes). */
+function peakDoubted(input: string, r: Reading, plain: boolean): boolean {
+  const said = normalize(input)
+  const beside = said.replace(PEAK_NAMED_ALL, ' ')
+  return (r.unsure !== null && !/\bmind\b/.test(r.unsure)) ||
+    r.tags.has('performance') || r.tags.has('battery') || (!plain && PEAK_DOUBT.test(beside)) || PEAK_ASKED.test(said) ||
+    OTHER_TIER.test(beside) || (input.normalize('NFKC').includes('?') && !ASKING.test(said))
+}
+
+/**
+ * Peak is pinned only for a plain ask: Peak named in one stretch of the goal, with nothing beside it but PEAK_PLAIN's
+ * words and what the other rules took, and nothing that doubts it. Anything else reads as it did before Peak, and Peak
+ * turned down, doubted or asked about is Ultra at most: stepFor makes that a ceiling, so the host never raises the tier.
+ */
+function analyze(input: string): Analysis {
+  let r = read(input, peakNamed(input))
+  const q = r.hyps.find((h) => h.control === 'quality')
+  if (q?.value === PEAK_TIER) {
+    const plain = r.rest.split(' ').every((w) => w === '' || PEAK_PLAIN.has(w))
+    const doubted = peakDoubted(input, r, plain)
+    if (doubted || !plain) {
+      r = read(input, false)
+      const b = r.hyps.find((h) => h.control === 'quality')
+      if (doubted && (b === undefined || b.value === undefined || b.value === TIERS.length - 1)) {
+        if (b) b.value = TIERS.length - 1
+        else r.hyps.push({ ...q, value: TIERS.length - 1 })
+        r.tags.add('no-peak')
+      }
+    }
+  }
+  const { hyps, tags, unmapped, harm, unsure } = r
   hyps.sort((a, b) => b.confidence - a.confidence || a.at - b.at)
-  const flag: Flag = harm ? 'harm' : hyps.length ? 'none' : unsure ? 'unsure' : 'unmapped'
+  const flag: Flag = harm ? 'harm' : hyps.length ? 'none' : unsure !== null ? 'unsure' : 'unmapped'
   return { hyps, tags, unmapped, flag }
 }
 
@@ -556,7 +614,8 @@ const PROBES: readonly Probe[] = [
       const light = () => { f.tags.add('light'); if (find(f, 'time')?.value === undefined) put(f, 'time', 17.4, 1, true) }
       if (k === 'light') light()
       else if (k === 'both') { f.tags.add('detail'); light() }
-      else f.tags.add('detail')
+      // Free text can name the tier itself ("i don't want peak graphics", "my laptop is hot"): it joins the frame.
+      else if (k === 'detail' || !absorb(f, a, false).includes('quality')) f.tags.add('detail')
     },
   },
   {

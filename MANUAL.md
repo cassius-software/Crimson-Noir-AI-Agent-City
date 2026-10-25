@@ -1721,8 +1721,9 @@ are no toasts and no settings menu, and the console's `quality` command is the o
 - **Floor and ceiling:** in auto mode phones are capped at Medium and a lite profile at Minimal; the browser exposes
   no thermal state, so frame time is the proxy. Ultra and Peak add the volumetrics. Sloane's fixes for heat, battery or
   a slow frame ("my phone is hot", "it's laggy") pin Low at most and never raise the tier: a device already below Low
-  stays where it is. A slow frame named on Peak ("it lags on peak settings") pins Ultra at most, and Low once Sloane
-  hears the trouble is steady.
+  stays where it is. A slow frame named on Peak ("it lags on peak settings") pins Ultra at most from the console's
+  `goal`; in the card Sloane first asks whether the lag is steady: hitches hand the tier back to auto, and a steady lag
+  pins Low if you put a steady frame rate first (auto if you keep the detail).
 - **While the model in this page works** (A model in this page), the governor is held under a cap (`hold()`): Low on a
   computer whose GPU is integrated, Minimal on a phone, Lite on a lite profile, and nothing lower on a discrete GPU,
   except that Peak comes down to Ultra while the model is on the GPU; with the model on the processor of a discrete
@@ -1769,11 +1770,15 @@ are no toasts and no settings menu, and the console's `quality` command is the o
     graphics memory, and a reload goes back to auto. With the Linux launcher, `crimson-noir-agent-city peak=1` (or
     `nix run … -- peak=1`) adds `?peak=1`. A console-class AMD chip that reports itself as integrated graphics is not
     picked by itself: give it `?peak=1`. In a browser, add `?peak=1` to the address.
-  - **Agents and Sloane.** Agents cannot ask for it. Sloane pins it only when you name it ("peak quality", "beyond
-    ultra") and nothing in the same part of the sentence doubts it; "best" and "max" still mean Ultra. A no, a
-    turn-down, a complaint about its cost or a question beside it ("i don't want peak graphics", "turn off peak
-    graphics", "peak graphics is too heavy", "is peak graphics worth it") lowers the quality to Ultra at most, and a
-    heat or battery complaint ("hot on peak graphics") gets that complaint's own fix.
+  - **Agents and Sloane.** Agents cannot ask for it. Sloane pins it only for a plain ask: you name it ("peak
+    quality", "beyond ultra") between two commas or full stops, with nothing beside it but words like "please", "turn
+    on" or "i want" and the other things you ask for ("peak graphics and no traffic"). "Best" and "max" still mean
+    Ultra. A no, a turn-down, another tier, a complaint about its cost or a question ("i don't want peak graphics",
+    "turn off peak graphics", "ultra instead of peak graphics", "peak graphics is too heavy", "is peak graphics worth
+    it?") lowers the quality to Ultra at most, and a heat or battery complaint ("hot on peak graphics") gets that
+    complaint's own fix. Any other mention ("my pc can handle peak graphics", "sun at its peak, graphics on ultra")
+    reads as it did before Peak: an ask for Ultra. In the card, an answer in words to her detail-or-light question
+    counts the same way.
   - **Tried so far.** Only in headless Chromium on the software adapter: with a faked RTX 5090 (the browser smoke's
     `peak` scenario), and pinned for a few frames in the `ultra` scenario, also in the Nix package's Chromium. Not
     measured on a real big GPU.
