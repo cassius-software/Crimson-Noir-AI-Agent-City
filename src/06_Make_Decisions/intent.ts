@@ -48,7 +48,7 @@ type Value = number | string
 type Tag =
   | 'quiet' | 'noisy' | 'performance' | 'battery' | 'fidelity' | 'music' | 'operator' | 'maybe-operator' | 'fast'
   | 'look' | 'light' | 'crowd-root' | 'busier' | 'hitch' | 'steady' | 'smooth' | 'detail-too' | 'detail'
-  | 'sound-root' | 'feel' | 'perf-root' | 'crossing' | 'look-roads' | 'on-foot' | 'by-car' | 'anywhere'
+  | 'sound-root' | 'feel' | 'perf-root' | 'crossing' | 'look-roads' | 'on-foot' | 'by-car' | 'anywhere' | 'no-peak'
 
 interface Hyp {
   control: Control
@@ -129,7 +129,7 @@ const one = (re: RegExp, control: Control, value: Emit['value'], confidence: num
 const PERSON = "(?:a |the |some |those |that |any |every |all the |all )?(?:person|people|someone|somebody|anyone|anybody|everyone|everybody|pedestrians?|walkers?|crowds?|guys?|man|men|woman|women|kids?|child|children|folks|citizens?|residents?|them|him|her)"
 const HARM = new RegExp(`\\b(?:(?:hurt|harm)(?:ing)? ${PERSON}|run(?:ning)? ${PERSON} over|(?:run|drive|plough|plow|mow)(?:ning|ing)? (?:over|down) ${PERSON}|(?:crash|smash|ram|slam|drive|plough|plow)(?:m?ing)? (?:into|through) ${PERSON}|hit(?:ting)? ${PERSON})\\b`)
 
-const UNSURE = /\b(?:(?:i )?(?:don'?t|dont|do not) (?:know|mind|care)|dunno|not sure|no idea|unsure|just (?:browsing|curious|here|visiting|checking)|just looking(?! around)|nothing(?: really| much| in particular)?|whatever|anything|surprise me|you (?:choose|pick|decide)|no goal|idk|not much|i'?m (?:fine|good|ok|okay)|all good|no thanks?|nope|hmm+|not really)\b|^no$/
+const UNSURE = /\b(?:(?:i )?(?:don'?t|dont|do not) (?:know|mind|care)|dunno|not sure|no idea|unsure|just (?:browsing|curious|here|visiting|checking)|just looking(?! around)|nothing(?! (?:above|beyond|past|higher than) ultra)(?: really| much| in particular)?|whatever|anything|surprise me|you (?:choose|pick|decide)|no goal|idk|not much|i'?m (?:fine|good|ok|okay)|all good|no thanks?|nope|hmm+|not really)\b|^no$/
 
 /** Wishes the city cannot grant yet: named in the brief with the modules a change would touch. Matched
  *  first, so "speed up the day" never reads as "day". */
@@ -190,9 +190,13 @@ const RULES: readonly Rule[] = [
   // Performance and fidelity.
   one(/\b(?:lag(?:gy|ging|s)?|slow(?:er|ly)?|sluggish|stutter(?:s|ing|y)?|jank(?:y)?|chopp(?:y|ing)|jerky|frame ?rate|fps|frames?|freez(?:es|ing|e)|hitch(?:es|ing)?|dropp?ing frames|not smooth|smooth(?:er|ly)?|snappier|unresponsive|responsive|performance|faster|quicker)\b/, 'quality', undefined, 0.9, 'performance'),
   one(/\b(?:battery|batteries|hot|heat(?:ing)?|warm|too warm|overheat(?:s|ing)?|fan|fans|thermals?|cool(?:er)? down|cooler)\b/, 'quality', 1, 0.9, 'battery'),
+  // Peak turned down ("turn off peak graphics", "nothing above ultra") is Ultra as a ceiling (stepFor), read before the
+  // Peak rule would take its words as a request for Peak.
+  one(/\b(?:disable|turn off|switch off|turn down|lower|drop|come down|step down|get off)(?: from)?(?: the)? peak\b(?: (?:quality|graphics|settings|detail|fidelity)\b)?|\b(?:no|not|never|without)(?: the)? peak (?:quality|graphics|settings|detail|fidelity)\b|\bpeak(?: (?:quality|graphics|settings|detail|fidelity))? off\b|\b(?:not|never|nothing|don'?t go|no higher|no more) (?:above|beyond|past|higher than|than) ultra\b/, 'quality', TIERS.length - 1, 0.9, 'no-peak'),
   // Peak, above Ultra (governor.ts PEAK_TIER), only when named: "best", "max" and "ultra" keep meaning Ultra, so a casual
-  // ask never takes the half gigabyte Peak's shadows need. Before the Ultra rule, which would read "beyond ultra".
-  one(/\bpeak (?:quality|graphics|settings|detail|fidelity)\b|\b(?:above|beyond|past) ultra\b/, 'quality', PEAK_TIER, 1, 'fidelity'),
+  // ask never takes the half gigabyte Peak's shadows need. Before the Ultra rule, which would read "beyond ultra". As
+  // sure as the heat and battery rule, so "hot on peak graphics" keeps that rule's Low (the first of equals).
+  one(/\bpeak (?:quality|graphics|settings|detail|fidelity)\b|\b(?:above|beyond|past) ultra\b/, 'quality', PEAK_TIER, 0.9, 'fidelity'),
   one(/\b(?:ultra|max(?:imum|ed)?|highest|best|top|full) ?(?:quality|graphics|detail|settings|fidelity|res(?:olution)?)\b|\b(?:ultra|max(?:ed)? out|max fidelity)\b/, 'quality', 4, 0.9, 'fidelity'),
   one(/\b(?:prett(?:y|ier)|nicer|beautiful|gorgeous|stunning|sharp(?:er)?|crisp(?:er)?|detail(?:ed|s)?|fidelity|better (?:looking|graphics|visuals)|looks? better|graphics|visuals|shadows|god ?rays|light ?shafts|sun ?rays|volumetrics?|glow|hdr|eye candy|cinematic|photo ?real(?:istic)?)\b/, 'quality', 4, 0.85, 'fidelity'),
   // The lowest setting is Lite now (governor.ts LITE_TIER, below Minimal); asking for Minimal by name still means Minimal.
@@ -606,6 +610,10 @@ function stepFor(h: Hyp, f: Frame): PlanStep | null {
     case 'quality': {
       if (h.value === 'auto') return step('Let the quality govern itself', true)
       if (typeof h.value !== 'number' || !Number.isInteger(h.value) || h.value < LITE_TIER || h.value > PEAK_TIER) return null
+      // Peak turned down, or named beside a complaint ("it lags on peak settings"), says where the trouble is: Ultra is the
+      // most the host may pin, never a raise to Peak.
+      if (h.value === PEAK_TIER ? any(f, 'performance', 'battery', 'smooth', 'steady', 'perf-root', 'hitch') : h.value === TIERS.length - 1 && f.tags.has('no-peak'))
+        return { ...step('Lower the quality to Ultra or below', true), value: TIERS.length - 1, ceiling: true }
       const light = h.value >= TIERS.length - 1 && f.tags.has('light')
       // Heat, battery and a slow frame ask for less work, so the tier named is the most the host may pin, never a raise.
       if (h.value < TIERS.length - 1 && any(f, 'smooth', 'steady', 'battery', 'perf-root')) return { ...step(`Lower the quality to ${knobsOf(h.value).label} or below`, true), ceiling: true }
@@ -660,6 +668,8 @@ function rootOf(f: Frame): string {
       if (t('hitch')) return 'The stutter comes in bursts: hitches rather than a steady overload.'
       if (t('smooth')) return 'A steady frame rate matters more to you than detail.'
       if (t('detail-too')) return 'You want a steady frame rate without giving up detail.'
+      if (t('no-peak')) return 'You want the city at Ultra or below, not Peak.'
+      if (p.value === PEAK_TIER && t('performance')) return 'You want the city to run smoother.'
       if (t('light')) return 'You want the golden-hour light at full fidelity.'
       if (t('detail') || t('fidelity')) return 'You want the sharpest picture this machine can draw.'
       if (p.value === 'auto') return 'You want the city to look after its own frame rate.'

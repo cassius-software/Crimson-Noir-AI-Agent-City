@@ -47,6 +47,11 @@ const CLASSES: readonly [goal: string, ...expected: (Control | `${Control}=${str
   // Peak, above Ultra, only when named; "max" and "best" stay Ultra.
   ['peak quality', 'quality=5'], ['peak graphics', 'quality=5'], ['beyond ultra', 'quality=5'], ['set quality beyond ultra', 'quality=5'],
   ['max quality', 'quality=4'], ['best graphics', 'quality=4'],
+  // Peak beside heat or a slow frame keeps that fix's Low; Peak turned down is Ultra (a ceiling: stepFor).
+  ['my phone is hot on peak graphics', 'quality=1'], ['battery dies fast with peak quality', 'quality=1'],
+  ['the fans spin up on peak settings', 'quality=1'], ['turn off peak graphics', 'quality=4'], ['disable peak quality', 'quality=4'],
+  ['lower from peak quality', 'quality=4'], ["don't go beyond ultra", 'quality=4'], ['nothing above ultra please', 'quality=4'],
+  ['peak graphics off', 'quality=4'],
   // Sound.
   ['mute', 'audio=off'], ['no sound', 'audio=off'], ['no music', 'audio=off'], ['unmute', 'audio=on'], ['loud', 'audio=100'],
   ['too loud', 'audio=30'], ['volume 40%', 'audio=40'], ['music', 'audio'], ['sound', 'audio'],
@@ -464,4 +469,14 @@ test('a fix for heat or a slow frame is a ceiling on the tier, never a raise; a 
   assert.deepEqual(plan('peak graphics'), [[5, false]])
   assert.deepEqual(plan('beyond ultra'), [[5, false]])
   assert.deepEqual(plan('best graphics'), [[4, false]])
+  // Peak beside a complaint is where the trouble is, never the tier to set: the complaint's ceiling, or Ultra's.
+  assert.deepEqual(plan('my phone is hot on peak graphics'), [[1, true]])
+  assert.deepEqual(plan('the fans spin up on peak settings'), [[1, true]])
+  assert.deepEqual(plan('it lags on peak settings'), [[4, true]])
+  assert.deepEqual(plan('it lags on peak settings', 'All the time', 'Steady first'), [[1, true]])
+  // Peak turned down is Ultra as a ceiling: a device below Ultra keeps its tier.
+  assert.deepEqual(plan('turn off peak graphics'), [[4, true]])
+  assert.deepEqual(plan("don't go beyond ultra"), [[4, true]])
+  assert.equal(ask('turn off peak graphics').brief().root, 'You want the city at Ultra or below, not Peak.')
+  assert.equal(ask('it lags on peak settings').brief().root, 'You want the city to run smoother.')
 })

@@ -382,6 +382,10 @@ test('rain on please: the scripted provider\'s line over the prompts the smoke t
     ['more cars', 'ACTION: cars drive', 'let every car drive'],
     ['adaptive quality', 'ACTION: quality auto', 'let the quality govern itself'],
     ['ultra graphics', 'ACTION: quality ultra', 'set the quality to Ultra'],
+    // Peak is never a scripted line; a complaint that names it keeps the complaint's fix, and turning it off is Ultra.
+    ['peak graphics', null, null],
+    ['my phone is hot on peak graphics', 'ACTION: quality low', 'set the quality to Low'],
+    ['turn off peak graphics', 'ACTION: quality ultra', 'set the quality to Ultra'],
     ['sound please', 'ACTION: sound on', 'turn the sound on'],
     ['volume 30', 'ACTION: sound 30', 'set the volume to 30%'],
     ['it is raining', null, null],
