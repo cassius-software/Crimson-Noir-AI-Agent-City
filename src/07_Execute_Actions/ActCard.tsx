@@ -9,12 +9,14 @@
  * and Space press the focused button natively), Y allows and N refuses from the keyboard, a pad's south face button
  * presses the focused button and its d-pad moves between them (padNav.ts; the game's own reading of that button is
  * shielded meanwhile, input.ts), and a tap presses either. With the console open the prompt keeps the keyboard and the
- * line path (act ok, act no, y, n) is the way, so the card only shows. It is drawn by the page, independent of the
- * canvas, so it shows with drawing off; it is never mounted on Track B (no engine). Esc is the console's, not the card's.
+ * line path (act ok, act no, y, n) is the way, so the card only shows, except that a Y or N typed while one of its own
+ * buttons has focus (a click or a d-pad press moved it there) answers, since the prompt is not getting that key. It is
+ * drawn by the page, independent of the canvas, so it shows with drawing off; it is never mounted on Track B (no
+ * engine). Esc is the console's, not the card's.
  * What breaks if it is removed? With the console closed a proposal has nothing to press: it waits until the console
  * opens, and a player with only a pad or a touch screen cannot answer it at all.
  */
-import { useEffect, useId, useRef, useState, type JSX } from 'react'
+import { useEffect, useId, useRef, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { isEditableTarget } from '../04_Connect_Hardware/input.ts'
 import type { PendingAct } from './operator.ts'
 import { usePadNav } from './padNav.ts'
@@ -84,10 +86,21 @@ export function ActCard({ act, termOpen, onAllow, onRefuse }: { act: PendingAct;
     return () => window.removeEventListener('keydown', onKey)
   }, [termOpen, decided, act.seq, onAllow, onRefuse])
   usePadNav(root)
+  // The console open and focus inside the card (a click, or the d-pad): Y and N answer here, since the prompt does not
+  // see them (Terminal.tsx leaves keys aimed at an alertdialog alone); any other key stays where it is.
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (!termOpen || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return
+    const key = e.key.toLowerCase()
+    if (key !== 'y' && key !== 'n') return
+    e.preventDefault()
+    e.stopPropagation()
+    decide(key === 'y' ? onAllow : onRefuse)
+  }
   const note = noteWords(act)
   return (
     <div
       ref={root}
+      onKeyDown={onKeyDown}
       role="alertdialog"
       aria-labelledby={title}
       aria-describedby={body}

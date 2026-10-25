@@ -100,7 +100,7 @@ test('the eleven answers of the protocol read as the contract says: proposed, re
   const five = proposed('ACTION: rain on\nSure.\nACTION: rain on')
   assert.deepEqual([five.action.canonical, five.text], ['rain on', 'Sure.'], 'identical lines merge')
   assert.equal(reason('ACTION: rain on\nACTION: time 12:00'), MORE_THAN_ONE)
-  assert.equal(reason('ACTION: teleport 10 20'), "no city action called 'teleport' (time, rain, light, quality, cars, crowd, sound)")
+  assert.equal(reason('ACTION: teleport 10 20'), "no city action called 'teleport' (time, rain, light, quality, cars, crowd, sound, or none)")
   assert.equal(reason('I set the clock for you. ACTION: time 21:00'), NOT_ALONE)
   assert.equal(reason('ACTION: clock 25:00'), 'time takes HH:MM from 00:00 to 23:59, or a name from midnight to night')
   assert.deepEqual(parseAction('ACTION: none'), { kind: 'none', text: '' })
@@ -115,7 +115,7 @@ test('the eleven answers of the protocol read as the contract says: proposed, re
 
 test('a line of its own: a head glued to prose is refused with its reason, a decorated line on its own is read, and the text keeps every other line', () => {
   assert.equal(reason('I set the clock for you. ACTION: time 21:00'), NOT_ALONE)
-  assert.equal(reason('Sure.\nThe next action: open the console.'), NOT_ALONE)
+  assert.equal(parseAction('Sure.\nThe next action: open the console.').kind, 'none', 'the word and a colon before no catalogue word is prose')
   assert.equal(reason('So, city action = time 20:00 is what I propose.'), NOT_ALONE)
   assert.equal(reason('city action = time 20:00 is what I propose'), HINTS.time, 'a line that opens with the head is the line: its value is read, and refused for what it is')
   const glued = refused('I set the clock for you. ACTION: time 21:00')
@@ -128,6 +128,17 @@ test('a line of its own: a head glued to prose is refused with its reason, a dec
   assert.deepEqual([p.text, p.line], ['First line.\n\nLast line.', 'ACTION: rain on'], 'the line and its break go; the rest stays; trailing white space is trimmed')
   assert.equal(parseAction('Plain answer with no line.\n').text, 'Plain answer with no line.')
   assert.equal(parseAction('An answer with the word action in it: it takes action.').kind, 'none', 'a head is the word followed by a separator')
+  // Prose a model writes round the word, never a line: the glued check needs a catalogue word after the separator.
+  for (const prose of ['The best course of action: wait for dusk and watch the plaza.', 'Any action - even a small one - helps the plaza.', 'Actions speak louder than words.', 'The actions: time HH:MM (or midnight) and rain on or off.'])
+    assert.deepEqual(parseAction(prose), { kind: 'none', text: prose }, prose)
+  // The line as small models dress it: bold round the word, a heading mark, a numbered item, no separator before a
+  // catalogue word, a code span round the body, the head's own colon or equals sign, the city's own `rain mode`.
+  for (const [line, c] of [
+    ['**ACTION**: time 20:00', 'time 20:00'], ['### ACTION: cars drive', 'cars drive'], ['1. action: time 22:00', 'time 22:00'], ['ACTION time 20:00', 'time 20:00'],
+    ['- **Action:** `time 20:00`', 'time 20:00'], ['Action: Time: 20:00', 'time 20:00'], ['ACTION: time=20:00', 'time 20:00'], ['ACTION: `rain` mode on', 'rain on'], ['ACTION: rain mode off', 'rain off'],
+  ] as const) assert.equal(canonical(line), c, line)
+  assert.equal(parseAction('Night suits it.\nACTION time 20:00').text, 'Night suits it.', 'the separator-less line is stripped like any other')
+  assert.deepEqual(parseAction('Action speaks for itself here.'), { kind: 'none', text: 'Action speaks for itself here.' }, 'no separator and no catalogue word: prose')
 })
 
 test('more than one action: two different lines are refused, never the first taken; identical and synonymous lines merge into one', () => {
@@ -141,7 +152,7 @@ test('more than one action: two different lines are refused, never the first tak
   assert.equal(canonical('ACTION: light haze 9\nACTION: haze 4'), 'light haze 4', 'merged after the clamp')
   assert.equal(parseAction('ACTION: none\nACTION: nothing').kind, 'none')
   // A line that cannot be read is refused for its own reason, whichever line it is.
-  assert.equal(reason('ACTION: rain on\nACTION: teleport 1 2'), "no city action called 'teleport' (time, rain, light, quality, cars, crowd, sound)")
+  assert.equal(reason('ACTION: rain on\nACTION: teleport 1 2'), "no city action called 'teleport' (time, rain, light, quality, cars, crowd, sound, or none)")
 })
 
 test('never wrapped: the clock takes 00:00 to 23:59, am and pm, or a named time; 25:00 and 24:00 are refused, not wrapped', () => {
@@ -181,16 +192,24 @@ test('haze 9 clamps to 4, noted: every light dial is clamped into its range at b
   assert.equal(canonical('ACTION: haze 0.333'), 'light haze 0.33', 'two decimals at most')
   assert.equal(canonical('ACTION: light exposure .5'), 'light exposure 0.5')
   assert.equal(proposed('ACTION: light exposure 0.1').note, 'clamped from 0.1')
+  // A value that prints as the bound is not a clamp: the note would name the number it set.
+  for (const [line, c] of [['ACTION: light haze 4.004', 'light haze 4'], ['ACTION: light haze -0.001', 'light haze 0'], ['ACTION: light exposure 0.249', 'light exposure 0.25'], ['ACTION: crowd 100.2', 'crowd 100']] as const) {
+    const p = proposed(line)
+    assert.deepEqual([p.action.canonical, p.note], [c, undefined], line)
+  }
   for (const bad of ['light 2', 'light haze', 'light haze two', 'light glow 1', 'light haze 1 2', 'haze', 'light haze 1e400', 'light haze NaN']) assert.equal(reason(`ACTION: ${bad}`), HINTS.light, bad)
   assert.equal(sentence(four.action), 'set the light haze to 4')
 })
 
 test('no city action called: an unknown verb is refused naming it and the seven verbs; weather is not rain; every synonym names its verb', () => {
-  const hint = (v: string) => `no city action called '${v}' (time, rain, light, quality, cars, crowd, sound)`
+  const hint = (v: string) => `no city action called '${v}' (time, rain, light, quality, cars, crowd, sound, or none)`
   assert.equal(reason('ACTION: teleport 10 20'), hint('teleport'))
   assert.equal(reason('ACTION: weather on'), hint('weather'))
   assert.equal(reason('ACTION: weather rain'), hint('weather'))
-  assert.equal(reason('ACTION:'), hint(''))
+  // The head and nothing after it, or a word for nothing, proposes nothing; a word with no letter in it is not quoted.
+  assert.deepEqual(parseAction('I have nothing to change.\nACTION:'), { kind: 'none', text: 'I have nothing to change.' })
+  for (const none of ['ACTION: no action', 'ACTION: N/A', 'Action: none needed', 'ACTION: na']) assert.equal(parseAction(none).kind, 'none', none)
+  assert.equal(reason('ACTION: --- 10'), 'no city action by that name (time, rain, light, quality, cars, crowd, sound, or none)')
   assert.equal(reason('ACTION: pizza!!! now'), hint('pizza'), 'the word is quoted in plain letters, nothing else')
   assert.equal(reason('ACTION: spawn'), hint('spawn'))
   assert.equal(reason('ACTION: avatar.teleport(1, 2)'), hint('avatar.teleport1'))
@@ -199,7 +218,7 @@ test('no city action called: an unknown verb is refused naming it and the seven 
   // and must not be quoted back: the reason reaches the console, the chain and the proposer's next prompt.
   for (const line of ['ACTION: k!i!l!l 10', 'ACTION: s*h*o*o*t now', 'ACTION: w.e.a.p.o.n']) {
     const r = reason(line)
-    assert.equal(r, 'no city action by that name (time, rain, light, quality, cars, crowd, sound)', line)
+    assert.equal(r, 'no city action by that name (time, rain, light, quality, cars, crowd, sound, or none)', line)
     assert.equal(screen(r).admissible, true, line)
   }
   const synonyms: [string, string][] = [
@@ -279,7 +298,7 @@ function everythingSaid(): { sentences: string[]; done: string[]; other: string[
     for (const opts of [{ cars: 0 }, { cars: 1 }, { cars: 8 }, { cars: 70, driven: 3 }]) done.push(perform(a, fakeSim(opts).sim, fakeCity().city))
   }
   const other = [
-    ...Object.values(HINTS), NOT_ALONE, MORE_THAN_ONE, reason('ACTION: teleport 10 20'), reason('ACTION:'), ...catalogueLines(), ...ACTION_RULES,
+    ...Object.values(HINTS), NOT_ALONE, MORE_THAN_ONE, reason('ACTION: teleport 10 20'), reason('ACTION: --- 10'), ...catalogueLines(), ...ACTION_RULES,
     'clamped from 9', 'rain mode is not reachable from here', 'the sound is not reachable from here',
   ]
   return { sentences, done, other }

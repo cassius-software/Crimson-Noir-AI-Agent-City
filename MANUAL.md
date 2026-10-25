@@ -851,11 +851,14 @@ unlocked:
   One ACTION line at most, and none when nothing needs changing (ACTION: none also means none). The operator sees it and allows or refuses it before anything happens, so never say that it happened.
   ```
 
-  The page reads the line; it never runs it as written. The verb must be one of the seven and the value must fit it (a
-  dial out of its range is clamped, and the console notes `(clamped from 9)`); a line glued to prose, two different
-  lines, an unknown verb or a value of the wrong shape is refused with its reason, nothing is proposed, and the agent
-  is told next time (`act: not run: <reason> (agent 17 is told next time)`); `ACTION: none` proposes nothing. What you
-  are shown is the catalogue's own sentence over the value it read, never the model's words:
+  The page reads the line; it never runs it as written. It takes the line however a small model dresses it (bold or a
+  code span round the word or the body, a heading mark, a list dash or number, `Action: Time: 22:00`, `time=22:00`, a full
+  stop after it, `rain mode on`), but the verb must be one of the seven and the value must fit it (a dial out of its range
+  is clamped, and the console notes `(clamped from 9)`); a line glued to prose, two different lines, an unknown verb or a
+  value of the wrong shape is refused with its reason, nothing is proposed, and the agent is told next time (`act: not
+  run: <reason> (agent 17 is told next time)`); `ACTION: none`, `ACTION: no action` and a bare `ACTION:` propose nothing,
+  and prose that merely uses the word (`the best course of action: wait`) is prose. What you are shown is the
+  catalogue's own sentence over the value it read, never the model's words:
 
   | action (its other names) | values | the sentence shown | once allowed |
   |---|---|---|---|
@@ -894,8 +897,9 @@ unlocked:
   **The trail.** `act log` prints every proposal, decision and end of this visit (its newest 24 rows) as a
   hash-chained record in the swarm audit's form, and `act log verify` checks it from genesis (`chain: 11 entries
   verify from genesis; head …`, or `chain: BROKEN at entry N: <why>`): a proposal is a `step`, an allow an `answer`,
-  a run's end an `end`, a refusal a `refusal` and a withdrawal or a lost tether a `stop`, each with the invariant it
-  upheld (`HumanOverrideSupreme` on your refusals, `ask stop` and the lock; `CapabilityTethered` on the gateway's).
+  a run's end an `end`, a refusal a `refusal` and a withdrawal or a lost tether a `stop`; a refusal, a withdrawal and a lost
+  tether carry, in the swarm audit's invariant column, the one that ended them (`HumanOverrideSupreme` for your refusals,
+  `ask stop` and the lock; `CapabilityTethered` for the gateway's), and a proposal, an allow and a run's end carry none.
   The record lives as long as the page and is stored and sent nowhere. **What they remember.** An allowed action is
   noted in the proposer's ledger as a run (`city action: set the clock to 22:00`, with `ok` or `error`) and teaches
   as a script does; the decision becomes a moment of their short-term memory, in fixed words (`the player allowed your
@@ -905,7 +909,7 @@ unlocked:
   action.** Files, the shell, the network, the player's body (a teleport, a walk), driving a car frame by frame,
   reloading the page (`map`, `boot`) and spawning or altering anyone are not in the catalogue and cannot be proposed;
   a line that asks for them is refused by name (`no city action called 'teleport' (time, rain, light, quality, cars,
-  crowd, sound)`). `help` lists the command as `act [ok|no|log [verify]|list]`; `act list` prints the catalogue, and
+  crowd, sound, or none)`). `help` lists the command as `act [ok|no|log [verify]|list]`; `act list` prints the catalogue, and
   the reads (`act`, `act log`, `act list`) work while locked. The swarm's roles never propose: an `ACTION:` line in a
   role's answer is text.
 - `swarm run [--agents <1-5>] <goal>` splits a goal over up to five roles (the Prime Architect, who needs someone
@@ -983,9 +987,9 @@ operator tier). `boot` asks the host to reload the page on a track, and `r0` tou
 is the one knob that reaches a pedestrian, and it can only ask: to come over, or, an Active recruit, to stand at a
 sidewalk point. The physics worker decides on its own readings whether anyone comes over or goes, and a summoned
 person's safety reflexes still come first. No command can spawn anyone, place or alter an agent or change the
-physics world; the one command that moves a vehicle is an allowed city action (`cars park`, `cars drive`), which
-runs through the operator tier's gate under the proposer's tether, never from the console alone: a ping and a look
-are page-side only, and a rally goes through the same recruitment host and worker checks as asking. A unit test
+physics world; a vehicle changes hands only under the operator tier's gate and a tether, through an operator script's
+`sim.vehicles.setMode` or a city action an agent proposed and you allowed (`cars park`, `cars drive`), never from the
+locked console: a ping and a look are page-side only, and a rally goes through the same recruitment host and worker checks as asking. A unit test
 enforces that `terminal/*` imports only types from the rest of the engine
 (`repl.ts` imports nothing), and the locked-tier sweep pins the knobs to exactly these. The swarm reaches
 the console the other way round too, read-only: the operator tier is handed the task gateway, which only

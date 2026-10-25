@@ -283,11 +283,11 @@ test('a parse refusal: one untagged refusal entry, the agent is told next time (
   assert.deepEqual(double, { text: 'Sure.', act: { kind: 'refused', reason: MORE_THAN_ONE, line: 'ACTION: time 12:00', told: 7 } })
   const verb = await x.propose('ACTION: teleport 10 20')
   assert.equal(verb.act?.kind, 'refused')
-  assert.equal(verb.act?.reason, "no city action called 'teleport' (time, rain, light, quality, cars, crowd, sound)")
+  assert.equal(verb.act?.reason, "no city action called 'teleport' (time, rain, light, quality, cars, crowd, sound, or none)")
   assert.deepEqual(rows(x.acts), [
     `refusal act- [] not run: ${NOT_ALONE}`,
     `refusal act- [] not run: ${MORE_THAN_ONE}`,
-    "refusal act- [] not run: no city action called 'teleport' (time, rain, light, quality, cars, crowd, sound)",
+    "refusal act- [] not run: no city action called 'teleport' (time, rain, light, quality, cars, crowd, sound, or none)",
   ])
   const [a, b, c] = x.acts.log()
   assert.deepEqual([a.inputHash, b.inputHash, c.inputHash], ['', sha256('ACTION: time 12:00'), sha256('ACTION: teleport 10 20')], 'the raw line when there is one')
@@ -297,7 +297,7 @@ test('a parse refusal: one untagged refusal entry, the agent is told next time (
     `9 the city: could not read your action line: ${NOT_ALONE}; nothing was proposed`,
     `7 the city: could not read your action line: ${MORE_THAN_ONE}; nothing was proposed`,
     `9 the city: could not read your action line: ${MORE_THAN_ONE}; nothing was proposed`,
-    "7 the city: could not read your action line: no city action called 'teleport' (time, rain, light, quality, cars, crowd, sound); nothing was proposed",
+    "7 the city: could not read your action line: no city action called 'teleport' (time, rain, light, quality, cars, crowd, sound, or none); nothing was proposed",
   ], 'every person the answer was bound to is told')
   assert.deepEqual([x.acts.pending(), x.events, x.notes, x.gate.requests], [null, [], [], []])
   assert.equal(x.acts.verify().ok, true)

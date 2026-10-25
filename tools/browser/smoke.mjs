@@ -1390,7 +1390,9 @@ const SCENARIOS = {
   async actions(chrome, origin) {
     const p = await open(chrome)
     try {
-      await p.goto(`${origin}/?${LIGHT}`)
+      // The slowest day (one sim minute a real minute at 60 fps, slower on a software GPU, whose frames are clamped to
+      // 50 ms of sim time): the clock an action set is read back minutes later, so the hour is compared, not the minute.
+      await p.goto(`${origin}/?${LIGHT}&day=1440`)
       await p.booted()
       check(await p.openConsole(), 'actions: the tilde key opens the console')
       await p.command('operator unlock', /unlocked/)
@@ -1406,7 +1408,7 @@ const SCENARIOS = {
       const shown = await p.command('ask design: make it night', /act 1: /, 60_000)
       check(/act 1: agent \d+ \(Design(?:, [^)]*)?\) proposes: set the clock to 22:00/.test(shown ?? '') && (await pend()) === 'set the clock to 22:00',
         'actions: the script proposes and the console shows who and what', lastLine(shown))
-      check((await clock()) === before, 'actions: nothing changed before the OK')
+      check((await clock()).slice(0, 2) === before.slice(0, 2), 'actions: nothing changed before the OK', `${before} -> ${await clock()}`)
 
       // The console closes: the card takes focus on Refuse, and the real Y key (the pad and the taps shielded) allows it.
       await p.tap('Escape', 'Escape', 27)
@@ -1424,7 +1426,7 @@ const SCENARIOS = {
       // `n` refuses; `ask stop` withdraws; `operator lock` withdraws, and nothing waits past it.
       await p.command('ask design: make it noon', /act 2: /, 60_000)
       const no = await p.command('n', /act 2: refused/)
-      check(/^act 2: refused: set the clock to 12:00 \(agent \d+ is told next time\)$/.test(lastLine(no)) && (await clock()) === '22:00', 'actions: n refuses it and nothing changes', lastLine(no))
+      check(/^act 2: refused: set the clock to 12:00 \(agent \d+ is told next time\)$/.test(lastLine(no)) && /^22:/.test(await clock()), 'actions: n refuses it and nothing changes', lastLine(no))
       await p.command('ask design: thin the crowd', /act 3: /, 60_000)
       const stop = await p.command('ask stop', /ask: /)
       check(/^ask: withdrawing act 3: set the crowd to 50%$/.test(lastLine(stop)) && (await pend()) === null, 'actions: ask stop withdraws a waiting proposal', lastLine(stop))
@@ -1443,7 +1445,7 @@ const SCENARIOS = {
       await p.command('recruit dismiss', /letting 1 person go/)
       const gone = await p.waitFor('window.__SIM__.engine.bridge.operator.acts.pending() === null', 20_000).then(() => true, () => false)
       const log = await p.command('act log verify', /chain: /)
-      check(gone && /stop {4}act-5 .*CapabilityTethered: Aborted \(Spatial Tether Lost\): agent \d+ \(Design(?:, [^)]*)?\): no longer tethered to the operator/.test(log ?? '') && /chain: 11 entries verify from genesis/.test(log ?? '') && (await clock()) === '22:00',
+      check(gone && /stop {4}act-5 .*CapabilityTethered: Aborted \(Spatial Tether Lost\): agent \d+ \(Design(?:, [^)]*)?\): no longer tethered to the operator/.test(log ?? '') && /chain: 11 entries verify from genesis/.test(log ?? '') && /^22:/.test(await clock()),
         'actions: a lost tether ends the proposal in the gateway\'s words; the trail has every proposal, decision and end, and verifies', lastLine(log))
       await p.shot('actions')
       p.health('actions')

@@ -73,8 +73,10 @@ const SYNONYMS: ReadonlyMap<string, Verb | 'none'> = new Map<string, Verb | 'non
   ['cars', 'cars'], ['car', 'cars'], ['traffic', 'cars'], ['vehicles', 'cars'],
   ['crowd', 'crowd'], ['people', 'crowd'], ['pedestrians', 'crowd'],
   ['sound', 'sound'], ['audio', 'sound'], ['volume', 'sound'],
-  ['none', 'none'], ['nothing', 'none'],
+  ['none', 'none'], ['nothing', 'none'], ['no', 'none'], ['n/a', 'none'], ['na', 'none'],
 ])
+/** Every opening word, for the two regexes that look for a line: the glued check and the separator-less form need one. */
+const WORDS = [...SYNONYMS.keys()].map((w) => w.replace(/[/.]/g, '\\$&')).join('|')
 
 /** The hint the operator sees (and the proposer is told) when a verb's value has the wrong shape. */
 export const HINTS: Readonly<Record<Verb, string>> = Object.freeze({
@@ -92,12 +94,18 @@ export const NOT_ALONE = 'the ACTION line must stand on a line of its own'
 export const MORE_THAN_ONE = 'more than one action in the answer'
 
 /**
- * One physical line that is an ACTION line: markdown decoration, a quote mark or a list dash before it, `city action`
- * or `action`, a separator, the body, then trailing decoration or a full stop. The body is group 1.
+ * One physical line that is an ACTION line: markdown decoration (a heading mark, a list dash or number, a quote mark)
+ * before it, `city action` or `action` (never the plural: the prompt's own `The actions: time HH:MM …` is prose), decoration round the word, a separator (or none, when a catalogue word
+ * follows at once: `ACTION time 22:00`), the body, then trailing decoration or a full stop. The body is group 1. Small
+ * models dress the line in every one of these ways, and a line meant as the line must never pass as prose.
  */
-const CANDIDATE = /^\s*[`*_>"\-\s]*(?:city\s+)?action\s*[:\-–—=]\s*[`*_"]*\s*(.*?)\s*[`*_".]*\s*$/i
-/** The head of an ACTION line anywhere in the text: present with no whole line matching, the line is glued to prose. */
-const HEAD = /\baction\s*[:\-–—=]/i
+const CANDIDATE = new RegExp(String.raw`^\s*(?:\d+[.)]\s+)?[\x60*_>"#\-\s]*(?:city\s+)?action[\x60*_"]*\s*(?:[:\-–—=]\s*|\s+(?=(?:${WORDS})\b))[\x60*_"]*\s*(.*?)\s*[\x60*_".]*\s*$`, 'i')
+/**
+ * The head of an ACTION line in the middle of prose: the word, a separator and one of the catalogue's words (`ACTION:
+ * time 21:00` glued to a sentence). Present with no whole line matching, the line is glued and the answer is refused.
+ * The catalogue word keeps ordinary prose (`the best course of action: wait`) from being read as a line.
+ */
+const HEAD = new RegExp(String.raw`\b(?:city\s+)?action[\x60*_"]*\s*[:\-–—=]\s*[\x60*_"]*\s*(?:${WORDS})\b`, 'i')
 
 /** The typed reading of an action's value, from which the canonical line, the sentence and the facade call all follow. */
 type Decoded =
@@ -116,7 +124,8 @@ const fmt = (n: number): string => String(Math.round(n * 100) / 100)
 const clamp = (n: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, n))
 const DECIMAL = /^[+-]?(?:\d+\.?\d*|\.\d+)$/
 const PERCENT = /^[+-]?(?:\d+\.?\d*|\.\d+)\s*%?$/
-const noteOf = (from: number, to: number): { note?: string } => (from === to ? {} : { note: `clamped from ${fmt(from)}` })
+/** The clamp note, when the number asked for and the one set differ as printed (4.004 reads as 4, and 4 is not a clamp). */
+const noteOf = (from: number, to: number): { note?: string } => (fmt(from) === fmt(to) ? {} : { note: `clamped from ${fmt(from)}` })
 
 /**
  * Hours from a value: `HH[:MM]`, `H[:MM] am|pm` or one of the ten named times; null for anything else. Never wraps.
@@ -169,8 +178,11 @@ function readValue(verb: Verb, value: string): ReadValue {
       const hours = readTime(s)
       return hours === null ? { reason: HINTS.time } : { d: { verb, hours } }
     }
-    case 'rain':
-      return s === 'on' || s === 'off' ? { d: { verb, on: s === 'on' } } : { reason: HINTS.rain }
+    case 'rain': {
+      // The city's own words say `rain mode`, and a model echoing them writes `rain mode on`.
+      const v = s.replace(/^mode /, '')
+      return v === 'on' || v === 'off' ? { d: { verb, on: v === 'on' } } : { reason: HINTS.rain }
+    }
     case 'light': {
       const m = /^(haze|exposure|sun|fill) (\S+)$/.exec(s)
       if (!m || !DECIMAL.test(m[2])) return { reason: HINTS.light }
@@ -244,16 +256,25 @@ const quoteVerb = (head: string): string | null => {
 }
 const unknownVerb = (head: string): string => {
   const q = quoteVerb(head)
-  return `no city action ${q === null ? 'by that name' : `called '${q}'`} (${VERBS.join(', ')})`
+  const named = q !== null && /[\p{L}\p{N}]/u.test(q)
+  return `no city action ${named ? `called '${q}'` : 'by that name'} (${VERBS.join(', ')}, or none)`
 }
 
 type ReadBody = { readonly kind: 'none' } | { readonly kind: 'action'; readonly action: Action; readonly note?: string } | { readonly kind: 'refused'; readonly reason: string }
 
-/** Reads one line's body: the verb (a synonym allowed), then its value. */
+/**
+ * Reads one line's body: the verb (a synonym allowed), then its value. The head may come dressed as a small model writes
+ * it: in a code span or bold (`**time**`), with its own colon or equals sign glued on (`Time: 22:00`, `time=22:00`),
+ * or with a comma or full stop after it; an empty body (`ACTION:` and nothing) proposes nothing.
+ */
 function readBody(body: string): ReadBody {
   const m = /^(\S+)(?:\s+([\s\S]*))?$/.exec(body.trim())
-  const head = (m?.[1] ?? '').toLowerCase()
-  const rest = (m?.[2] ?? '').trim()
+  if (!m) return { kind: 'none' }
+  let head = m[1].toLowerCase().replace(/^[`*_"]+/, '')
+  let rest = (m[2] ?? '').trim()
+  const glued = /^([^=:]+)[=:](.*)$/.exec(head)
+  if (glued) { head = glued[1]; rest = `${glued[2]} ${rest}`.trim() }
+  head = head.replace(/[`*_",.;]+$/, '')
   const verb = SYNONYMS.get(head)
   if (verb === undefined) return { kind: 'refused', reason: unknownVerb(head) }
   if (verb === 'none') return { kind: 'none' }

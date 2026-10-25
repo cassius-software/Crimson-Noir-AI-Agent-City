@@ -2190,9 +2190,9 @@ test('ask: an answer that proposes a city action prints who proposes what after 
   assert.deepEqual((await run('ask rust: night', b, []).pending)?.map((l) => l.text), ['(no answer: the model spent its tokens thinking)', '-- answered in 1.2 s, after 1 tokens of thinking --'], 'as before without a line')
   b.operator.text = 'Grip scales\ntyre friction.'
   // A line the city could not read: the reason, and the agent who is told next time; the gate's refusals name nobody.
-  b.operator.proposal = { kind: 'refused', reason: "no city action called 'teleport' (time, rain, light, quality, cars, crowd, sound)", line: 'ACTION: teleport 10 20', told: 7 }
+  b.operator.proposal = { kind: 'refused', reason: "no city action called 'teleport' (time, rain, light, quality, cars, crowd, sound, or none)", line: 'ACTION: teleport 10 20', told: 7 }
   const refused = await run('ask rust: teleport', b, []).pending
-  assert.deepEqual(refused?.slice(3), [{ kind: 'err', text: "act: not run: no city action called 'teleport' (time, rain, light, quality, cars, crowd, sound) (agent 7 is told next time)" }])
+  assert.deepEqual(refused?.slice(3), [{ kind: 'err', text: "act: not run: no city action called 'teleport' (time, rain, light, quality, cars, crowd, sound, or none) (agent 7 is told next time)" }])
   b.operator.proposal = { kind: 'refused', reason: 'Rejected (Insufficient Capabilities): nobody tethered to the operator has Rust', line: 'ACTION: time 22:00' }
   assert.deepEqual((await run('ask rust: night', b, []).pending)?.at(-1), { kind: 'err', text: 'act: not run: Rejected (Insufficient Capabilities): nobody tethered to the operator has Rust' })
   b.operator.proposal = { kind: 'refused', reason: 'the operator tier is locked', line: 'ACTION: time 22:00' }
