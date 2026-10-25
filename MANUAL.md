@@ -1771,14 +1771,16 @@ are no toasts and no settings menu, and the console's `quality` command is the o
     `nix run … -- peak=1`) adds `?peak=1`. A console-class AMD chip that reports itself as integrated graphics is not
     picked by itself: give it `?peak=1`. In a browser, add `?peak=1` to the address.
   - **Agents and Sloane.** Agents cannot ask for it. Sloane pins it only for a plain ask: you name it ("peak
-    quality", "beyond ultra") between two commas or full stops, with nothing beside it but words like "please", "turn
-    on" or "i want" and the other things you ask for ("peak graphics and no traffic"). "Best" and "max" still mean
-    Ultra. A no, a turn-down, another tier, a complaint about its cost or a question ("i don't want peak graphics",
-    "turn off peak graphics", "ultra instead of peak graphics", "peak graphics is too heavy", "is peak graphics worth
-    it?") lowers the quality to Ultra at most, and a heat or battery complaint ("hot on peak graphics") gets that
-    complaint's own fix. Any other mention ("my pc can handle peak graphics", "sun at its peak, graphics on ultra")
-    reads as it did before Peak: an ask for Ultra. In the card, an answer in words to her detail-or-light question
-    counts the same way.
+    quality", "beyond ultra") with nothing anywhere in the goal but words like "please", "turn on" or "i want" and the
+    other things you ask for ("peak graphics and no traffic", "can you turn on peak graphics?"). "Best" and "max" still
+    mean Ultra. A no, a turn-down, another tier or a complaint about its cost ("i don't want peak graphics", "turn off
+    peak graphics", "ultra instead of peak graphics", "peak graphics is too heavy") lowers the quality to Ultra at
+    most, and a heat or battery complaint ("hot on peak graphics") gets that complaint's own fix. Any other mention, a
+    question, a keep or a remark ("is peak graphics worth it?", "can i run peak graphics", "my pc can handle peak
+    graphics", "don't turn off peak graphics"), sets no tier: in the card Sloane asks "Set Peak, or keep to Ultra at
+    most?", and the console's `goal`, which asks nothing, leaves the quality as it is. "Peak" in another sense ("sun at
+    its peak, graphics on ultra") reads as it did before Peak. In the card, an answer in words to her detail-or-light
+    question can lower the tier the same way, or raise it to Peak with a plain ask.
   - **Tried so far.** Only in headless Chromium on the software adapter: with a faked RTX 5090 (the browser smoke's
     `peak` scenario), and pinned for a few frames in the `ultra` scenario, also in the Nix package's Chromium. Not
     measured on a real big GPU.
