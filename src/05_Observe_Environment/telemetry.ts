@@ -142,6 +142,10 @@ export interface QualityState {
   lite?: boolean
   /** The highest tier the governor may take while the in-page model works (governor.ts hold()); absent when not held. */
   held?: number
+  /** The Peak rule (governor.ts PEAK_GOV), present only on a Peak range: the GPU render time it judges, ms (p90 at Ultra,
+   *  median at Peak, in auto and unheld; null otherwise or without enough readings), its limit, ms, and whether Peak is
+   *  off for this visit. */
+  peak?: { gpuMs: number | null; limitMs: number; off: boolean }
 }
 
 /** The cinema camera as the HUD and the console show it. */

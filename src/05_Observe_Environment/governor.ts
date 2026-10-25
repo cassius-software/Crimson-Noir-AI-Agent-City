@@ -29,9 +29,12 @@ export interface QualityKnobs {
   shadows: boolean
   /** Sun shadow map edge, texels (used while shadows are on). */
   shadowMapSize: number
+  /** Half-width of the sun's shadow box, m (quality.ts applyShadowExtent). Absent: SHADOW_EXTENT (80), the box world.ts
+   *  builds. Only Peak sets it, with the map edge doubled alongside, so the texel and every bias tuned for it stay. */
+  shadowExtent?: number
   /** Bloom, vignette, explicit tone mapping and FXAA. */
   post: boolean
-  /** Golden-hour sun shafts in the post chain (volumetrics.ts); needs `post`. Ultra only. */
+  /** Golden-hour sun shafts in the post chain (volumetrics.ts); needs `post`. Ultra and Peak. */
   volumetrics: boolean
   /** Fraction of pedestrians beyond nearRadius that are drawn (0..1). */
   crowdDensity: number
@@ -69,9 +72,22 @@ export const LITE: QualityKnobs = frozen({ label: 'Lite', renderScale: 0.5, shad
 /** Lite's tier index: the lowest a manual choice may pin, and the automatic floor of a lite profile (tierRange). */
 export const LITE_TIER = -1
 
-/** The knobs of tier `t`, from LITE_TIER (Lite) to TIERS.length - 1 (Ultra). Every read of a tier's knobs goes here. */
+/**
+ * Peak, tier 5: above Ultra for big GPUs. It is not in TIERS (as Lite is not), so TOP, every one-argument tierRange and
+ * every index the tests pin keep their meaning; knobsOf reads it. Ultra drawn at 1.25 times the pixels (quality.ts keeps
+ * the drawing buffer within the device's largest 2D texture), the sun's shadow box doubled to ±160 m at twice the map
+ * edge (the same 3.9 cm texel, so the PCF radius and the biases mean what they mean on Ultra), and detailed bodies out
+ * to 90 m. Draw distance and the always-drawn radius stay: the haze hides the city past 700 m, and at density 1
+ * everyone is drawn anyway. Reached automatically only on a Peak range (tierRange) and on the GPU's own timings
+ * (Governor.gpuSample).
+ */
+export const PEAK: QualityKnobs = frozen({ label: 'Peak', renderScale: 1.25, shadows: true, shadowMapSize: 8192, shadowExtent: 160, post: true, volumetrics: true, crowdDensity: 1, lodDistance: 90, nearRadius: 30, maxDistance: 700, textureSize: 256 })
+/** Peak's tier index: the highest a manual choice may pin, and the automatic ceiling of a Peak range (tierRange). */
+export const PEAK_TIER = TIERS.length
+
+/** The knobs of tier `t`, from LITE_TIER (Lite) to PEAK_TIER (Peak). Every read of a tier's knobs goes here. */
 export function knobsOf(t: number): QualityKnobs {
-  return t < 0 ? LITE : TIERS[t]
+  return t < 0 ? LITE : t >= PEAK_TIER ? PEAK : TIERS[t]
 }
 
 const TOP = TIERS.length - 1
@@ -205,6 +221,21 @@ export function profileDevice(h: DeviceHints, lite?: boolean): DeviceProfile {
 }
 
 /**
+ * Pure. Whether the governor may measure this device for Peak: a desktop-class profile whose GPU can be big (a discrete
+ * card of any make, or an Apple computer's chip), 8 cores or more, and no report of less than 8 GB. The adapter line
+ * cannot say how big a card is (stock Chromium gives vendor and architecture only, a datacenter card no architecture),
+ * so the narrow gate is the evidence: the range reaches Peak only where three writes GPU timestamps (Engine.create), and
+ * the governor climbs only on Ultra's measured GPU time (Governor.peakReady). `peak` is the page's ?peak: true or false
+ * decides on any desktop-class profile, absent leaves it to the hints. Never a phone or a lite profile, whatever ?peak says.
+ */
+export function peakCandidate(h: DeviceHints, p: DeviceProfile, peak?: boolean): boolean {
+  if (p.lite || p.mobile) return false
+  if (peak !== undefined) return peak
+  if (h.cores < 8 || (h.memoryGb !== undefined && h.memoryGb < 8)) return false
+  return p.gpuClass === 'discrete' || (p.gpuClass === 'integrated' && /\bapple\b/.test(h.adapter.toLowerCase()))
+}
+
+/**
  * Pedestrians to simulate when the page does not say (?crowd): the whole crowd wherever the profile starts at Medium
  * or above; fewer where simulating it would itself cost the frame (phones, and the weakest GPUs and software
  * rasterizers, which start at Minimal), and fewest on a lite profile. The simulation size is fixed at boot (the GPU
@@ -241,10 +272,12 @@ export function liteJoinHint(lite: boolean, carsDefaulted: boolean, cars: number
 
 /** The governor's automatic range for a device: phones and tablets stop at Medium (heat and battery
  *  bite long before the frame rate does), and a lite profile at Minimal, below every tier that needs post or shadows
- *  (neither is compiled at its boot); manual `setTier` may still go anywhere. */
-export function tierRange(p: DeviceProfile): { min: number; max: number } {
+ *  (neither is compiled at its boot); manual `setTier` may still go anywhere. A Peak range (`peak`: Engine.create's
+ *  peakCandidate, where three writes GPU timestamps) reaches Peak above Ultra; without the second argument every range
+ *  is what it always was. */
+export function tierRange(p: DeviceProfile, peak = false): { min: number; max: number } {
   if (p.lite) return { min: LITE_TIER, max: 0 }
-  return { min: 0, max: p.mobile ? 2 : TOP }
+  return { min: 0, max: p.mobile ? 2 : peak ? PEAK_TIER : TOP }
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -349,6 +382,33 @@ const GOV = {
   presentUp: 0.97,
 } as const
 
+/**
+ * The Peak rule (Governor.gpuSample, peakReady, peakBusy). Shares are of the frame budget, min(the frame the governor
+ * holds, the 60 FPS floor), so ?fps and a fast display can tighten them and nothing loosens them. Peak is estimated at
+ * 1.7–2.3 times Ultra's GPU time (1.56 times the pixels, four times the shadow raster, detailed bodies to 90 m): a p90
+ * at Ultra of entryShare lands Peak under stayShare with a margin for the scene.
+ */
+export const PEAK_GOV = Object.freeze({
+  /** A probe from Ultra needs Ultra's GPU render time, p90 over the upgrade window, at or under this share (5.0 ms of 16.7). */
+  entryShare: 0.30,
+  /** At Peak, a median over this share (13.3 ms of 16.7) through the step-down window steps down ('gpu busy'): the rest
+   *  of a refresh is the crowd's compute passes and the frame's encoding, which the render reading does not include. */
+  stayShare: 0.80,
+  /** After a failed probe (a step down within probeMs of arriving) the next entry needs a p90 at or under this share of
+   *  the one that let it in. */
+  tighten: 0.75,
+  /** Remembered step downs from Peak in a visit after which Peak stays off until the page reloads. */
+  maxLosses: 3,
+  minEntrySamples: 24,
+  minStaySamples: 12,
+  /** A reading under floorMs is a driver writing no real timestamps; one at or over maxMs is not a frame. */
+  floorMs: 0.5,
+  maxMs: 1000,
+  /** Readings kept: the whole 5 s entry window at one reading per drawn frame on a 360 Hz display without the camera
+   *  (1800), since three hands a resolve back as soon as its map completes. */
+  ring: 2048,
+})
+
 /** A tier's index in the governor's per-tier arrays: Lite (-1) is slot 0. */
 const slot = (t: number) => t - LITE_TIER
 
@@ -447,6 +507,14 @@ export class Governor {
   /** Why the tier last changed: 'frames below 60 FPS' ('frames below target' under ?fps), 'camera behind', 'probe',
    *  'manual', 'held' (a hold lowered it), 'released' (a hold let it back up), or '' (never). */
   get reason(): string { return this.why }
+
+  /** Whether the Peak rule wants GPU timings now (the engine resolves three's timestamps only then, or under ?profile).
+   *  SKELETON: the Peak rule fills this in (contract 3.1); false until then. */
+  get wantsGpu(): boolean { return false }
+
+  /** One drawn frame's GPU render time, ms, at `nowMs` (sample()'s clock).
+   *  SKELETON: the Peak rule fills this in (contract 3.1); dropped until then. */
+  gpuSample(ms: number, nowMs: number): void { void ms; void nowMs }
 
   /** One frame the cinema camera presented, at `nowMs` (the same clock as sample()). Ignored without a camera. */
   present(nowMs: number): void {
