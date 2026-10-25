@@ -16,8 +16,8 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 ### Added
 
 - **Peak, a tier above Ultra for big GPUs.** Tier 5, outside the tier table like Lite, so every existing tier number
-  and automatic range stays as it was. It draws Ultra at 1.25 times the pixels, held within the device's largest
-  texture, which also fixes `?scale=2` on a very wide window at any tier; the sun's shadows out to 160 m at the same
+  and automatic range stays as it was. It draws Ultra at 1.25 times the resolution on each side (about 1.56 times the
+  pixels), held within the device's largest texture, which also fixes `?scale=2` on a very wide window at any tier; the sun's shadows out to 160 m at the same
   sharpness, on an 8192² map of about 512 MB of graphics memory, given back on the way down; and full-detail people
   out to 90 m. Who is measured: a desktop with a discrete GPU or an Apple chip, 8 or more cores and 8 GB or more
   (`?peak=1` or `?peak=0` decides on any desktop). On such a desktop three writes GPU timestamps, and the range
@@ -26,11 +26,14 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   down when the median passes 80 % (`gpu busy`), or when the frame rate or the camera falls behind. A quick failure
   tightens the next entry by a quarter, on top of the usual back-off, and the third loss in a visit keeps Peak off
   until reload. The in-page model's hold brings Peak down to Ultra while the model is on the GPU, and the release does
-  not hand it straight back: a quiet 40 s first, doubling. A model on the processor leaves Peak where it is.
+  not hand it straight back: a quiet 40 s first, doubling. On a discrete card a model on the processor leaves Peak
+  where it is; an Apple chip comes down to Low like any integrated GPU, and Ultra comes back first there too.
   `?quality=5|peak` and `quality peak` pin it by hand. Agents cannot propose it, and Sloane pins it only when it is
-  named. The browser smoke pins Peak in its `ultra` scenario, which the Nix job also runs, and a new `peak` scenario
-  drives the GPU rule on a faked RTX 5090; Peak is not measured on a real big GPU. For three upgrades: the rule reads
-  three's timestamp pool (`resolveTimestampsAsync('render')`, kept only with `timestamp-query`).
+  named, and not when it is named in a complaint ("hot on peak graphics" lowers the quality) or turned down ("turn off
+  peak graphics" means Ultra at most). The browser smoke pins Peak in its `ultra` scenario, which the Nix job also
+  runs, and a new `peak` scenario drives the GPU rule on a faked RTX 5090; Peak is not measured on a real big GPU. For
+  three upgrades: the rule reads three's timestamp pool (`resolveTimestampsAsync('render')`, kept only with
+  `timestamp-query`).
 - **City actions, asked each time (ask, act).** An agent's answer may end with one ACTION line from a fixed catalogue
   (the clock, rain mode, the light dials, the quality tier, the cars, the crowd, the sound); the console and a card show
   who proposes what, in the city's own words, and nothing runs until you allow it (Y or N on the card, act ok or act no,

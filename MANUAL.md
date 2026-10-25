@@ -1417,10 +1417,11 @@ its own licence. The parts: `09_Cognition/inPage.ts` (the provider), `inPagePlan
   (`governor.ts hold`, the last column above): at most Low on a computer whose GPU is integrated, Minimal on a phone
   and Lite on a lite profile, where the city and the model share one chip; a computer with a discrete GPU keeps its
   tier. The one exception is Peak with the model on the GPU: Peak comes down to Ultra, which gives the model the half
-  gigabyte Peak's shadows take. Peak does not come straight back when the model stops (that would take the memory
-  again before the next answer): the governor earns it again after a quiet spell of 40 seconds, longer if the model
-  keeps working, up to 5 minutes. A model on the processor (a card without shader-f16, or `ask gpu off`) uses none of
-  the card's memory, so Peak stays. Under the hold a slow frame is not counted against a tier, and afterwards the tier
+  gigabyte Peak's shadows take. An Apple chip at Peak comes down to Low like any integrated GPU, wherever the model
+  runs. Either way Peak does not come straight back when the model stops (that would take the memory again before the
+  next answer): the release returns Ultra, and the governor earns Peak again after a quiet spell of 40 seconds, longer
+  if the model keeps working, up to 5 minutes. On a discrete card, a model on the processor (a card without
+  shader-f16, or `ask gpu off`) uses none of the card's memory, so Peak stays. Under the hold a slow frame is not counted against a tier, and afterwards the tier
   from before comes back with the usual cooldown. A tier you pinned with `quality` is left as it is. On a slow device,
   `render off` stops drawing the city while the model works (the physics, the audio and the console keep running), and
   `render on` brings it back.
@@ -1742,8 +1743,8 @@ are no toasts and no settings menu, and the console's `quality` command is the o
   architecture but not its name, so an AMD card starts on High there (it cannot be told from an integrated chip of
   its architecture) and the first probe takes it to Ultra about 6 s after boot.
 - **Peak, above Ultra.** Tier 5, outside the tier table like Lite, so every other tier number stays as it was.
-  - **What it adds.** Ultra drawn at 1.25 times the pixels (smoother edges), the sun's shadows reaching 160 m around
-    you instead of 80 m at the same sharpness, and full-detail people out to 90 m instead of 45. The shadow map takes
+  - **What it adds.** Ultra drawn at 1.25 times the resolution on each side, about 1.56 times the pixels (smoother
+    edges), the sun's shadows reaching 160 m around you instead of 80 m at the same sharpness, and full-detail people out to 90 m instead of 45. The shadow map takes
     about 512 MB of graphics memory instead of 128 MB, and the larger picture about 45 MB more at 1080p (about 190 MB
     at 4K). Both are given back when the tier comes down. The picture is never made larger than the graphics card's
     largest texture, which also keeps `?scale=2` working on a very wide window at any tier.
@@ -1766,7 +1767,9 @@ are no toasts and no settings menu, and the console's `quality` command is the o
     `nix run … -- peak=1`) adds `?peak=1`. A console-class AMD chip that reports itself as integrated graphics is not
     picked by itself: give it `?peak=1`. In a browser, add `?peak=1` to the address.
   - **Agents and Sloane.** Agents cannot ask for it. Sloane pins it only when you name it ("peak quality", "beyond
-    ultra"); "best" and "max" still mean Ultra.
+    ultra"); "best" and "max" still mean Ultra. Named beside a complaint ("hot on peak graphics", "it lags on peak
+    settings"), it is the complaint Sloane fixes, never a reason to pin Peak; "turn off peak graphics" or "nothing
+    above ultra" lowers the quality to Ultra at most.
   - **Tried so far.** Only in headless Chromium on the software adapter: with a faked RTX 5090 (the browser smoke's
     `peak` scenario), and pinned for a few frames in the `ultra` scenario, also in the Nix package's Chromium. Not
     measured on a real big GPU.

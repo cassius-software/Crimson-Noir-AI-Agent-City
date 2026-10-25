@@ -8,8 +8,9 @@
  * reaching Peak only where three really writes them; the engine resolving timings only where three writes them, and
  * feeding them to the governor; the drawing buffer fitted to the device's largest 2D texture, and refitted on resize;
  * the sun's shadow box world.ts builds matching the applier's constant; and no model choice reading the tier.
- * What breaks if it is removed? A later edit could write timestamps on every device (three's warning then fails the
- * browser smoke), offer Peak where nothing can judge it, or let the shadow box drift from the applier's, silently.
+ * What breaks if it is removed? A later edit could write timestamps on every device (in the browser only the desktop
+ * scenario's non-candidate check would see it, and only where SwiftShader has timestamp-query), offer Peak where
+ * nothing can judge it, or let the shadow box drift from the applier's, silently.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'

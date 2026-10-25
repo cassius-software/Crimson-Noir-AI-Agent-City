@@ -3,7 +3,7 @@
 The quality governor (`src/05_Observe_Environment/governor.ts`) was driven through two device profiles for the Stable
 Beta: the minimum it must serve (a flagship phone) and the maximum (a console-class desktop). The tests are
 `governorPhone.test.ts` (19 tests) and `governorDesktop.test.ts` (16 tests), next to `governor.test.ts`. Above the
-maximum, `governorPeak.test.ts` (19 tests) drives Peak, the tier above Ultra (section C). They run in `npm test`.
+maximum, `governorPeak.test.ts` (20 tests) drives Peak, the tier above Ultra (section C). They run in `npm test`.
 
 ## How it was measured, and what it cannot show
 
@@ -101,9 +101,9 @@ climbs the same way.
 
 ## C. Above the maximum: Peak
 
-Peak is tier 5, above Ultra and outside the tier table, like Lite below it. It draws Ultra at 1.25 times the pixels,
-the sun's shadows out to 160 m at the same sharpness (an 8192² map, about 512 MB of graphics memory) and full-detail
-people out to 90 m.
+Peak is tier 5, above Ultra and outside the tier table, like Lite below it. It draws Ultra at 1.25 times the
+resolution on each side (about 1.56 times the pixels), the sun's shadows out to 160 m at the same sharpness (an
+8192² map, about 512 MB of graphics memory) and full-detail people out to 90 m.
 
 **The candidate.** The same machine as B, or an RTX 5090 (`nvidia / blackwell / NVIDIA GeForce RTX 5090`, 16 threads).
 The rule (`peakCandidate`): a discrete card of any make or an Apple computer's chip, 8 cores or more, and no report
@@ -128,6 +128,7 @@ The paths the tests pin, by window (seconds from boot unless said):
 | Heat from 100 s to 160 s | down (`gpu busy`) at 100–103 s, back (`probe`) at 160–170 s, 0–10 s after the load ends |
 | Three losses in a visit | Peak off until the page reloads; `setAuto` after a manual Peak lands on Ultra |
 | The in-page model's hold, on the GPU | Peak down to Ultra; the release keeps Ultra, and Peak returns after a quiet 40, 80, 160 and 300 s |
+| The in-page model's hold, on the processor | Peak kept through three answers, none a loss or a quiet time; begun at Ultra, no Peak until 5–7.5 s after the release |
 
 **Section B unaffected.** B's paths are the governor without GPU timings. Peak moves none of them, which
 `governorDesktop.test.ts` checks against `desktop.csv`: every row's scenario, second and tier are what the governor
