@@ -255,6 +255,28 @@ test('every provider answers with the same system prompt, the conduct core first
   assert.equal(r.setServer('https://127.0.0.1:8443/v1'), 'https://127.0.0.1:8443', 'https to this machine too')
 })
 
+test('the scripted provider, chosen on purpose, ends an answer that plainly asks for one city action with the ACTION line on a line of its own; a plain question proposes nothing', async () => {
+  const srv = anyServer()
+  const r = createMindRouter({ fetch: srv.f })
+  r.setProvider('scripted')
+  const pieces: string[] = []
+  const night = await r.answer({ tethers: [TETHER], prompt: 'make it night', signal: new AbortController().signal }, (p) => { pieces.push(p.text) })
+  assert.ok(night.text.endsWith('\nACTION: time 22:00'), night.text)
+  assert.equal(night.text.split('\n').length, 2, 'the script\'s paragraph, then the line alone')
+  assert.ok(night.text.startsWith('You ask about "make it night"'), night.text)
+  assert.equal(pieces.join(''), night.text, 'the stream carries the same text the answer does')
+  assert.deepEqual([night.reason, night.standIn, night.tokens], [SCRIPTED, undefined, 0])
+  assert.equal(night.promptHash, promptHash(systemPrompt([TETHER])))
+  const hi = await r.answer({ tethers: [TETHER], prompt: 'hi', signal: new AbortController().signal }, () => {})
+  assert.ok(hi.text.startsWith('You ask about "hi"'), hi.text)
+  assert.doesNotMatch(hi.text, /ACTION|\n/, 'nothing asked for: no line')
+  for (const [prompt, line] of [['make it noon', 'ACTION: time 12:00'], ['thin the crowd', 'ACTION: crowd 50'], ['lowest quality please', 'ACTION: quality lite'], ['rain on please', 'ACTION: rain on']]) {
+    const a = await r.answer({ tethers: [TETHER], prompt, signal: new AbortController().signal }, () => {})
+    assert.ok(a.text.endsWith(`\n${line}`), `${prompt}: ${a.text}`)
+  }
+  assert.equal(srv.calls.length, 0, 'the scripted provider addresses nothing')
+})
+
 test('installed: each provider\'s own list; the Claude provider asks the gateway with no key in the page, or with one', async () => {
   const srv = anyServer()
   const r = createMindRouter({ fetch: srv.f })

@@ -8,7 +8,7 @@
  * v3 "llama" model of about 157 KB whose greedy decoding writes one letter on every step until max_tokens, so a test
  * knows the exact text before it asks:
  * - vocabulary: SPM ("llama") with byte fallback, 259 tokens: <unk>, <s>, </s>, then <0x00>..<0xFF> typed BYTE;
- * - shape: n_embd 32, 2 layers, 2 heads (head size 16), ffn 64, context_length 4096, every tensor f32;
+ * - shape: n_embd 32, 2 layers, 2 heads (head size 16), ffn 64, context_length 6144 (see HPARAMS), every tensor f32;
  * - weights: every token embedding is all ones; every attention and FFN weight is zero, so no block adds anything to
  *   the residual stream; every norm weight is one; output.weight is zero except the row of the letter's byte token,
  *   which is all ones. The last hidden state is rmsnorm(ones) = ones, so the letter's logit is 32 and every other is 0.
@@ -16,7 +16,7 @@
  *   never writes its end-of-text token: it proves the plumbing and the stream, not a template, attention or stopping;
  * - a minimal tokenizer.chat_template, and an optional split into two gguf-split shards (split.no u16, split.count
  *   u16, split.tensors.count i32) named -00001-of-00002 and -00002-of-00002.
- * The bytes are deterministic: the 'a' model is 156,992 B with sha256 2ff7b0f3…5911f, its shards 107,104 B and
+ * The bytes are deterministic: the 'a' model is 156,992 B with sha256 985fdc04…825fa, its shards 107,104 B and
  * 50,112 B. wllama 3.8.1 (llama.cpp b11364) loads both forms. The writer under it, ggufBytes, also writes any
  * metadata a test needs (every GGUF value type, nested arrays), for src/09_Cognition/gguf.test.ts, and ggufKvs the
  * metadata pairs alone.
@@ -36,8 +36,14 @@ const T = GGUF_TYPE
 const GGML_TYPE_F32 = 0
 const ALIGN = 32
 
+/**
+ * The trained context, 6,144, sits between a phone's plan (4,096) and a computer's (8,192), so the browser smoke proves
+ * the plan is capped at the training (the computer loads 6,144) while the phone's stays its own. It is not 4,096 because
+ * the vocabulary is one token per byte: the city's system prompt is above 2,048 bytes, and a computer's 2,048 tokens of
+ * answer must still fit beside it, or the answer is cut by the context and no test knows its length.
+ */
 export const HPARAMS = Object.freeze({
-  nVocab: 259, nEmbd: 32, nLayer: 2, nHead: 2, nHeadKv: 2, nFf: 64, nCtxTrain: 4096, eps: 1e-5, ropeBase: 10000,
+  nVocab: 259, nEmbd: 32, nLayer: 2, nHead: 2, nHeadKv: 2, nFf: 64, nCtxTrain: 6144, eps: 1e-5, ropeBase: 10000,
 })
 /** The token id of a byte token <0xNN>: three special tokens come first. */
 export const byteToken = (byte) => 3 + byte

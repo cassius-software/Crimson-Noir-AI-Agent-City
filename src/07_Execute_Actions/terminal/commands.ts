@@ -13,7 +13,10 @@
  * local model (`ask rust: …`) goes through the same gateway, and its answer streams in live (`ask file` keeps a model
  * file in this page for it, and `ask gpu` says where that runs: neither sends a prompt, so neither waits for the unlock);
  * so does speech (`say rust: …`), said by the person it is bound to; `swarm run <goal>` splits a goal over up to five roles, each one
- * such prompt through the gateway and the guardrails, with a hash-chained audit trail (`swarm audit`). `memory` reads
+ * such prompt through the gateway and the guardrails, with a hash-chained audit trail (`swarm audit`). An answer may end
+ * with one city action from a fixed catalogue: the console shows who proposes what, and `act ok` / `act no` (or `y` / `n`
+ * while one waits) decide it; nothing runs before that, `act log` prints its own hash-chained trail, and every decision
+ * made off the console (the card, a host, the gateway) is printed by the terminal's follower (actEventLines). `memory` reads
  * what the people recruited remember. The view
  * knobs (`ghost`, `render`, `captions`), the pings (`ping`: a mark where the head looks; `recruit rally` sends an
  * Active recruit to it, through the same worker checks as asking), the player's look (`look`) and the opt-in network
@@ -22,8 +25,8 @@
  * What breaks if it is removed? The terminal cannot interpret a single line.
  */
 import type {
-  AgentBridge, AskResult, ConciergeBridge, ExecResult, GateTether, GoalPlan, HalDevice, HarnessReport, LookBridge, LookChange, MemoryBridge, MindStatus, ModelBridge, NetBridge, NetReport, OperatorBridge,
-  Piece, PingKind, PingPick, RecordBridge, RecruitBridge, Ring0Stats, RunResult, SayResult, TerminalBridge, VoiceStatus,
+  ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, ExecResult, GateTether, GoalPlan, HalDevice, HarnessReport, LookBridge, LookChange, MemoryBridge, MindStatus, ModelBridge,
+  NetBridge, NetReport, OperatorBridge, PendingAct, Piece, PingKind, PingPick, RecordBridge, RecruitBridge, Ring0Stats, RunResult, SayResult, TerminalBridge, VoiceStatus,
 } from './bridge.ts'
 import type { QualityState, RecordingState } from '../../05_Observe_Environment/telemetry.ts'
 import type { SwarmReport, SwarmStatus } from '../../08_Swarm/orchestrator.ts'
@@ -106,6 +109,7 @@ const OPERATOR = [
   { name: 'run', usage: 'run <skill>[,<skill>...]: <js...>', summary: 'run a script against sim.* while someone tethered has the skill (Shift+Enter adds a line)' },
   { name: 'ask', usage: 'ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|file [forget <name>|load|unload|log]|gpu auto|on|off|stop]', summary: 'ask the model, answering as someone tethered with the skill; the answer streams in' },
   { name: 'swarm', usage: 'swarm [run [--agents <1-5>] <goal...>|plan [--agents <1-5>] <goal...>|status|stop|roles|guardrails|audit [verify]]', summary: 'a goal over up to five roles (architect, coder, tester, auditor, verifier), one gated prompt each, guardrails before and after, a hash-chained audit trail' },
+  { name: 'act', usage: 'act [ok|no|log [verify]|list]', summary: 'a city action an agent proposed: allow it, refuse it, read the hash-chained trail, or list the catalogue' },
   { name: 'say', usage: 'say [<skill>[,<skill>...]: <text...>|voice <name>|model <name>|server <url>|provider local|elevenlabs|key <key>|none|auto on|off|stop]', summary: 'said aloud by someone tethered with the skill, from where they stand (a speech server on this machine; or ElevenLabs through a gateway on it)' },
   { name: 'api', usage: 'api [path]', summary: 'the script API, or one branch of it' },
   { name: 'get', usage: 'get [path]', summary: 'read physics.* and shaders.* tuning keys' },
@@ -195,6 +199,8 @@ const ARGS: Record<string, readonly string[]> = {
   'ask connect': PROVIDER_ARGS,
   swarm: ['audit', 'guardrails', 'plan', 'roles', 'run', 'status', 'stop'],
   'swarm audit': ['verify'],
+  act: ['list', 'log', 'no', 'ok'],
+  'act log': ['verify'],
   'ask effort': ['high', 'low', 'max', 'medium', 'none', 'xhigh'],
   say: [...SKILL_ARGS.map((s) => `${s}:`), 'auto', 'key', 'model', 'provider', 'server', 'stop', 'voice'].sort(),
   'say auto': ['off', 'on'],
@@ -408,10 +414,54 @@ function askLines(r: AskResult): Line[] {
   if (r.disengaged) return [sys('-- no reply --')]
   // The script stood in for a model that did not answer: said plainly, so its words are never taken for a model's.
   if (r.standIn !== undefined) return [...answer, err(`ask: no model answered, so the script spoke instead: ${r.standIn}`)]
-  const none = answer.length ? [] : [sys(r.thinking > 0 ? '(no answer: the model spent its tokens thinking)' : '(the model returned no text)')]
+  // An answer that was only its ACTION line (stripped, acts.ts) is not "no text": the act line below says what became of it.
+  const none = answer.length || r.act ? [] : [sys(r.thinking > 0 ? '(no answer: the model spent its tokens thinking)' : '(the model returned no text)')]
   const thought = r.thinking > 0 ? `, after ${r.thinking} tokens of thinking` : ''
   const cut = r.done === 'length' ? ' (cut at the token limit)' : ''
-  return [...answer, ...none, sys(`-- answered in ${(r.ms / 1000).toFixed(1)} s${thought}${cut} --`)]
+  return [...answer, ...none, sys(`-- answered in ${(r.ms / 1000).toFixed(1)} s${thought}${cut} --`), ...actAskLines(r.act)]
+}
+
+/** A proposal's clamp note as the console shows it: ' (clamped from 9)', or nothing. */
+const noteOf = (note: string | undefined): string => (note ? ` (${note})` : '')
+
+/**
+ * After an answer: the city action it proposed, now waiting for the OK (who proposes what, in the city's own words,
+ * and how to decide it), or the line the city could not read and why; the gate's own refusals name nobody to tell.
+ */
+function actAskLines(act: AskResult['act']): Line[] {
+  if (!act) return []
+  if (act.kind === 'refused') return [err(`act: not run: ${act.reason}${act.told === undefined ? '' : ` (agent ${act.told} is told next time)`}`)]
+  return [out(`act ${act.seq}: ${act.who} proposes: ${act.sentence}${noteOf(act.note)}`), sys('-- y allows it, n refuses it (act ok, act no); console closed: Y or N on the card --')]
+}
+
+/**
+ * How a proposed city action ended, as the console prints it: the done line, the failure, the gateway's abort in its
+ * own words (never retyped), the refusal (the proposer is told next time) or the withdrawal and why.
+ */
+function actEndLines(act: PendingAct, end: ActEnd): Line[] {
+  const n = act.seq
+  switch (end.state) {
+    case 'done': return [out(`act ${n}: done: ${end.line}`)]
+    case 'failed': return [err(`act ${n}: failed: ${end.line}`)]
+    case 'aborted': return [err(`act ${n}: ${/^Aborted \(/.test(end.line) ? end.line : `Aborted (Spatial Tether Lost): ${end.line}`}`)]
+    case 'refused': return [sys(`act ${n}: refused: ${act.sentence} (agent ${act.agent} is told next time)`)]
+    case 'withdrawn': return [sys(`act ${n}: withdrawn: ${end.line.replace(/^withdrawn: /, '')}`)]
+  }
+}
+
+/**
+ * A proposal's event as the terminal's follower prints it: nothing for a proposal (the ask that made it prints it) and
+ * nothing the console itself caused (`act ok`, `act no` print their own lines, so every line is printed once); a decision
+ * made on the card or by a host says where, and an end from the gateway (the tether broke, the gateway closed) is its
+ * own wording. Pure: Terminal.tsx appends what this returns, open or hidden, so the scrollback is complete on reopening.
+ */
+export function actEventLines(ev: ActEvent): Line[] {
+  if (ev.kind === 'proposed' || ev.by === 'console') return []
+  const n = ev.act.seq
+  const by = ev.by === 'card' ? 'on the card' : ev.by === 'host' ? 'by the host' : 'by the gateway'
+  if (ev.kind === 'allowed') return [sys(`act ${n}: allowed ${by}: ${ev.act.sentence}`)]
+  if (ev.end.state === 'refused') return [sys(`act ${n}: refused ${by}: ${ev.act.sentence}`)]
+  return actEndLines(ev.act, ev.end)
 }
 
 /** How a say ended: who said it and for how long, or why not (Rejected, Aborted, the server, the sound, a stop). */
@@ -482,8 +532,25 @@ function lookChange(action: string, rest: readonly string[]): LookChange | strin
   return rest.length ? { kind: 'slot', slot, value: rest.join(' ') } : `usage: look ${slot} <n|name>`
 }
 
-/** Audit entries `swarm audit` prints at most (the newest). */
+/** Audit entries `swarm audit` and `act log` print at most (the newest). */
 const AUDIT_SHOWN = 24
+
+type AuditRows = ReturnType<ActsBridge['log']>
+type AuditVerdict = ReturnType<ActsBridge['verify']>
+
+/**
+ * A hash-chained trail as the console prints it (`swarm audit`, `act log`): the newest entries, one row each (number,
+ * kind, step, the start of its hash, the invariants it failed and its note), then the chain's verdict from genesis, or
+ * `empty` alone when nothing has been written yet.
+ */
+function auditLines(entries: AuditRows, v: AuditVerdict, empty: string): Line[] {
+  const shown = entries.slice(-AUDIT_SHOWN)
+  const lines: Line[] = entries.length ? [] : [sys(empty)]
+  if (entries.length > shown.length) lines.push(sys(`… ${entries.length - shown.length} earlier entries`))
+  for (const e of shown) lines.push(out(`${String(e.seq).padStart(4)}  ${e.kind.padEnd(8)}${(e.step || '-').padEnd(10)}${e.hash.slice(0, 12)}  ${e.failed.length ? `${e.failed.join(',')}: ` : ''}${e.note}`))
+  lines.push(v.ok ? sys(`chain: ${v.length} entries verify from genesis; head ${v.head.slice(0, 16)}… (SHA-256 of each entry's canonical body and the hash before it)`) : err(`chain: BROKEN at entry ${v.at}: ${v.why}`))
+  return lines
+}
 
 /** The guardrail invariants, in one line each (commands.test.ts pins them to 02_Define_The_Rules/guardrails.ts, which this file must not import). */
 const INVARIANT_LINES: readonly (readonly [string, string])[] = [
@@ -1046,8 +1113,11 @@ const HANDLERS: Record<Name, Handler> = {
     const a = args[0] ?? 'status'
     if (a === 'status') return { lines: [out(op.unlocked() ? 'operator: unlocked' : "operator: locked (type 'operator unlock')")] }
     if (a === 'lock') {
+      // Read before the lock: the tier withdraws a waiting proposal as it locks (no proposal waits past a lock), so the
+      // console says which one went.
+      const waiting = op.acts.pending()
       op.lock()
-      return { lines: [out('operator: locked')] }
+      return { lines: waiting ? [out('operator: locked'), sys(`act ${waiting.seq}: withdrawn: the operator tier is locked`)] : [out('operator: locked')] }
     }
     if (a !== 'unlock') return fail(`operator: unknown command '${a}'`, usage('operator'))
     if (op.unlocked()) return { lines: [sys('operator: already unlocked')] }
@@ -1173,16 +1243,7 @@ const HANDLERS: Record<Name, Handler> = {
       }
     }
     const audit = /^audit(?:\s+(verify))?$/.exec(rest)
-    if (audit) {
-      const entries = sw.audit()
-      const v = sw.verify()
-      const shown = entries.slice(-AUDIT_SHOWN)
-      const lines: Line[] = entries.length ? [] : [sys('swarm: no audit entries yet (swarm run <goal> writes them)')]
-      if (entries.length > shown.length) lines.push(sys(`… ${entries.length - shown.length} earlier entries`))
-      for (const e of shown) lines.push(out(`${String(e.seq).padStart(4)}  ${e.kind.padEnd(8)}${(e.step || '-').padEnd(10)}${e.hash.slice(0, 12)}  ${e.failed.length ? `${e.failed.join(',')}: ` : ''}${e.note}`))
-      lines.push(v.ok ? sys(`chain: ${v.length} entries verify from genesis; head ${v.head.slice(0, 16)}… (SHA-256 of each entry's canonical body and the hash before it)`) : err(`chain: BROKEN at entry ${v.at}: ${v.why}`))
-      return { lines }
-    }
+    if (audit) return { lines: auditLines(sw.audit(), sw.verify(), 'swarm: no audit entries yet (swarm run <goal> writes them)') }
     const m = /^(run|plan)(?:\s+--agents\s+(\S+))?(?:\s+([\s\S]*))?$/.exec(rest)
     if (!m) return fail(`swarm: unknown command '${rest.split(/\s+/)[0]}'`, usage('swarm'))
     const agents = m[2] === undefined ? undefined : Number(m[2])
@@ -1207,6 +1268,39 @@ const HANDLERS: Record<Name, Handler> = {
     const first = run.plan.steps[0]
     const role = sw.roles.find((r) => r.id === first.role)!
     return { lines: [sys(`swarm: ${run.plan.agents} role${run.plan.agents === 1 ? '' : 's'} for "${run.plan.goal}"; first the ${role.title} (${role.skill})`)], pending, stream }
+  },
+
+  // A city action an agent proposed at the end of an answer (acts.ts, one at a time): alone, what waits for the OK;
+  // `ok` lets the tier run it once under the proposer's lease and prints how it ended, `no` refuses it (the proposer is
+  // told next time); `log [verify]` prints the hash-chained trail of every proposal, decision and end, `list` the
+  // catalogue. The reads work while locked (they change nothing); the two decisions do not. `y` and `n` alone stand for
+  // `ok` and `no` while a proposal waits (run(), below).
+  act(args, b) {
+    if (args.length > 2 || (args.length === 2 && (args[0] !== 'log' || args[1] !== 'verify'))) return fail(usage('act'))
+    const op = operatorOf(b)
+    const acts = op.acts
+    const a = args[0]
+    if (a === undefined) {
+      const p = acts.pending()
+      if (!p) return { lines: [sys('act: nothing is waiting for your OK')] }
+      return { lines: [out(`act ${p.seq}: waiting for your OK: ${p.who} proposes: ${p.sentence}${noteOf(p.note)}`), sys('  y allows it, n refuses it; it runs only while they stay tethered')] }
+    }
+    if (a === 'list') {
+      // The offline bridge lists nothing (bridge.ts): the catalogue lives in the tier, so Track B says what the others say.
+      const rows = acts.list()
+      return rows.length ? { lines: rows.map(out) } : fail('act: engine not running')
+    }
+    if (a === 'log') return { lines: auditLines(acts.log(), acts.verify(), 'act: no entries yet (an ask that proposes an action writes them)') }
+    if (a !== 'ok' && a !== 'no') return fail(`act: unknown command '${a}'`, usage('act'))
+    if (!op.unlocked()) return locked('act')
+    if (a === 'no') {
+      const p = acts.refuse('console')
+      return { lines: [sys(`act ${p.seq}: refused: ${p.sentence} (agent ${p.agent} is told next time)`)] }
+    }
+    // Allowed: the tier nulls the proposal and runs it once under the proposer's lease; the end follows as `pending`.
+    const { act, result } = acts.allow('console')
+    const pending = Promise.resolve(result).then((end) => actEndLines(act, end), (e: unknown): Line[] => [err(`act: ${message(e)}`)])
+    return { lines: [sys(`act ${act.seq}: allowed: ${act.sentence}`)], pending }
   },
 
   api(args, b) {
@@ -1358,6 +1452,15 @@ function dispatch(name: Name, args: string[], bridge: TerminalBridge, history: r
   }
 }
 
+/** Whether a proposed city action waits for the OK; false on a bridge without the tier (so `y` stays an unknown word there). */
+function actWaiting(b: TerminalBridge): boolean {
+  try {
+    return operatorOf(b).acts.pending() !== null
+  } catch {
+    return false
+  }
+}
+
 /**
  * Parses and runs one line (or several, joined by newlines, for a script). Pure apart from what the
  * bridge does; never throws (a failing bridge call becomes an error line). `history` is the lines
@@ -1365,6 +1468,10 @@ function dispatch(name: Name, args: string[], bridge: TerminalBridge, history: r
  * definitions persist); without one, each `r0` line runs on a fresh machine.
  */
 export function run(input: string, bridge: TerminalBridge, history: readonly string[], session: ReplSession | null = null): CommandResult {
+  // `y` and `n` alone are `act ok` and `act no` while a proposal waits; otherwise the console knows no such word (they
+  // are in no table, so help, completion and the locked sweep never see them).
+  const alias = /^\s*([yn])\s*$/i.exec(input)
+  if (alias && actWaiting(bridge)) return dispatch('act', [alias[1].toLowerCase() === 'y' ? 'ok' : 'no'], bridge, history, input.trim(), session)
   const head = /^\s*(\S+)/.exec(input)
   if (head && RAW.has(head[1])) {
     const rest = input.slice(head.index + head[0].length).trim()

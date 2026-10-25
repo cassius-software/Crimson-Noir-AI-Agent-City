@@ -94,10 +94,10 @@ const TOO_LARGE = 'its header is larger than 64 MiB, more than this page reads'
 test('the tiny model: the spike\'s exact bytes, read whole from a File, and the letter is in the weights', async () => {
   const a = tinyGguf()
   assert.equal(a.length, 156_992)
-  assert.equal(sha256(a), '2ff7b0f346b117d23a314f76714461293ac9931e0a737d3b372a57b77ff5911f')
+  assert.equal(sha256(a), '985fdc04bc165a0f649bd303659e1c4cd3746a8b061f446d7bfb7a150d6825fa')
   const file = new File([a as Uint8Array<ArrayBuffer>], 'tiny-a.gguf')
   const h = await readGgufHeader(blobReader(file), file.size)
-  assert.deepEqual(h, { version: 3, arch: 'llama', name: 'tiny-a', fileType: 0, contextLength: 4096, hasTemplate: true } satisfies GgufHeader)
+  assert.deepEqual(h, { version: 3, arch: 'llama', name: 'tiny-a', fileType: 0, contextLength: 6144, hasTemplate: true } satisfies GgufHeader)
   assert.deepEqual(textModel(h, file.name), { ok: true })
   assert.deepEqual(shardOrder([file.name]), { ok: true, order: [0] })
   // One read: the metadata is far less than the first chunk.
@@ -126,7 +126,7 @@ test('the tiny model in two shards: split.no and split.count, the later shard ha
   assert.deepEqual(files.map((f) => [f.name, f.bytes.length]), [['tiny-a-00001-of-00002.gguf', 107_104], ['tiny-a-00002-of-00002.gguf', 50_112]])
   assert.deepEqual(tinyGguf({ split: true }).map((b: Uint8Array) => sha256(b)), files.map((f) => sha256(f.bytes)))
   const [first, second] = await Promise.all(files.map((f) => readGgufHeader(blobReader(new Blob([f.bytes as Uint8Array<ArrayBuffer>])), f.bytes.length)))
-  assert.deepEqual(first, { version: 3, arch: 'llama', name: 'tiny-a', fileType: 0, contextLength: 4096, hasTemplate: true, split: { no: 0, count: 2 } })
+  assert.deepEqual(first, { version: 3, arch: 'llama', name: 'tiny-a', fileType: 0, contextLength: 6144, hasTemplate: true, split: { no: 0, count: 2 } })
   assert.deepEqual(second, { version: 3, arch: '', hasTemplate: false, split: { no: 1, count: 2 } })
   assert.deepEqual(textModel(first, files[0].name), { ok: true })
   assert.deepEqual(textModel(second, files[1].name), { ok: true })

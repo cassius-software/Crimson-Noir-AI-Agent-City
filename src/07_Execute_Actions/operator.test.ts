@@ -499,7 +499,7 @@ test('operatorBridge: locked by default; scripts, tuning keys and harnesses refu
   const gate = new FakeGate()
   const op = operatorBridge(sim, gate, new FakeMind(), async (ms) => { slept.push(ms) })
   assert.ok(Object.isFrozen(op))
-  assert.deepEqual(Object.keys(op).sort(), ['api', 'ask', 'askConnect', 'askSet', 'askStatus', 'askStop', 'exec', 'harness', 'harnesses', 'lock', 'say', 'saySet', 'sayStatus', 'sayStop', 'swarm', 'tune', 'tuning', 'unlock', 'unlocked'])
+  assert.deepEqual(Object.keys(op).sort(), ['acts', 'api', 'ask', 'askConnect', 'askSet', 'askStatus', 'askStop', 'exec', 'harness', 'harnesses', 'lock', 'say', 'saySet', 'sayStatus', 'sayStop', 'swarm', 'tune', 'tuning', 'unlock', 'unlocked'])
   assert.throws(() => op.askConnect('ollama'), /^Error: ask: locked/)
   assert.throws(() => op.swarm.run('x'), /^Error: ask: locked/)
   assert.equal(op.swarm.status().running, false)
@@ -1275,4 +1275,119 @@ test("operatorBridge ask think: on or off only, through the mind's own switch; a
   const plain = operatorBridge(fakeSim(), new FakeGate(), new FakeMind())
   plain.unlock()
   assert.throws(() => plain.askSet('think', 'on'), /this model server has no think switch/)
+})
+
+// ---------------------------------------------------------------- the city actions an answer proposes (acts.ts, through the tier)
+
+test('a console ask that proposes a city action: the note and the moment carry the stripped text and the proposal, say auto speaks the stripped text, the result carries the act; ask and swarm.run wait for the OK; ask stop withdraws it; a cut answer keeps its line', async () => {
+  const gate = new FakeGate()
+  const mind = new FakeMind()
+  const voice = new FakeVoice()
+  voice.auto = true
+  const out = new FakeOut()
+  const notes: string[] = []
+  const diary: Diary = { recall: () => [], note: (_b, kind, _s, text, state, _at, _h, outcome) => notes.push(`${kind} ${text} (${state}) ${outcome ?? '-'}`) }
+  const remembered: string[] = []
+  const awareness: Awareness = { context: () => null, remember: (agent, who, what) => { remembered.push(`${agent} ${who}: ${what}`) } }
+  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary, awareness, nameOf: (agent) => (agent === 7 ? 'Mara' : null) })
+  op.unlock()
+  const a = op.ask(['Rust'], 'hi')
+  mind.say('text', 'ok\nACTION: time 22:00')
+  mind.finish('ok\nACTION: time 22:00')
+  const r = await within(a.result)
+  assert.equal(r.text, 'ok', 'the line is stripped from the answer')
+  assert.deepEqual(r.act, { kind: 'proposed', seq: 1, who: 'Mara (agent 7, Rust)', sentence: 'set the clock to 22:00', line: 'ACTION: time 22:00' })
+  assert.deepEqual(notes, ['ask hi → ok (proposed: set the clock to 22:00) (Authorized) answered'])
+  assert.deepEqual(remembered, ['7 the player: asked "hi" and you answered "ok (proposed: set the clock to 22:00)"'])
+  assert.ok(r.speech)
+  assert.deepEqual(voice.sent.map((x) => x.text), ['ok'], 'the line is not spoken')
+  assert.equal(gate.requests.length, 3, 'the ask, the proposal and the speech, each a task of its own')
+  assert.equal(op.acts.pending()?.sentence, 'set the clock to 22:00')
+  // While it waits, the floor is held: no other ask, no swarm run; say, get and set are not refused.
+  assert.throws(() => op.ask(['Rust'], 'again'), /^Error: a proposal is waiting: act ok or act no first$/)
+  assert.throws(() => op.swarm.run('x'), /^Error: a proposal is waiting: act ok or act no first$/)
+  assert.ok(op.tuning().physics)
+  assert.equal(op.askStop(), 'withdrawing act 1: set the clock to 22:00')
+  assert.equal(op.acts.pending(), null)
+  assert.equal(op.askStop(), 'no answer is being generated')
+  assert.equal(remembered.at(-1), '7 the player: withdrew your proposal: set the clock to 22:00 (ask stop)')
+  assert.deepEqual(notes.length, 1, 'a withdrawal is a moment, not an episode')
+  voice.audio()
+  await ticks()
+  out.finish()
+  await within(r.speech)
+  // A cut answer keeps its line: nothing is read, nothing stripped, nothing proposed.
+  voice.auto = false
+  const cut = op.ask(['Rust'], 'hi')
+  mind.say('text', 'ok\nACTION: time 22:00')
+  mind.finish('ok\nACTION: time 22:00', 'length')
+  const c = await within(cut.result)
+  assert.deepEqual([c.text, c.act, op.acts.pending()], ['ok\nACTION: time 22:00', undefined, null])
+  assert.equal(notes.at(-1), 'ask hi → ok\nACTION: time 22:00 (Authorized) cut')
+  // A line the city cannot read is said so in the note; the agent is told as a moment from the city.
+  const odd = op.ask(['Rust'], 'hi')
+  mind.say('text', 'Done. ACTION: time 22:00')
+  mind.finish('Done. ACTION: time 22:00')
+  const o = await within(odd.result)
+  assert.deepEqual(o.act, { kind: 'refused', reason: 'the ACTION line must stand on a line of its own', told: 7 })
+  assert.equal(notes.at(-1), 'ask hi → Done. ACTION: time 22:00 (proposed a line the city could not read) (Authorized) answered')
+  assert.deepEqual(remembered.slice(-2), [
+    '7 the city: could not read your action line: the ACTION line must stand on a line of its own; nothing was proposed',
+    '7 the player: asked "hi" and you answered "Done. ACTION: time 22:00 (proposed a line the city could not read)"',
+  ], 'the city tells them first, then the moment of the ask itself')
+  assert.equal(op.acts.log().at(-1)?.note, 'not run: the ACTION line must stand on a line of its own')
+})
+
+test('no proposal waits past a lock: lock withdraws it, the chain and the memory say so, the ended event comes by the console, and the OK is refused as locked; unlocked, the next proposal is act 2 and the OK runs it once through the gate', async () => {
+  const gate = new FakeGate()
+  const mind = new FakeMind()
+  const remembered: string[] = []
+  const awareness: Awareness = { context: () => null, remember: (agent, who, what) => { remembered.push(`${agent} ${who}: ${what}`) } }
+  const notes: string[] = []
+  const diary: Diary = { recall: () => [], note: (_b, kind, _s, text, state, _at, _h, outcome) => notes.push(`${kind} ${text} (${state}) ${outcome ?? '-'}`) }
+  const sim = fakeSim()
+  const op = operatorBridge(sim, gate, mind, undefined, { awareness, diary })
+  op.unlock()
+  const events: string[] = []
+  op.acts.follow((ev) => events.push(ev.kind === 'ended' ? `ended ${ev.act.seq} ${ev.end.state} by ${ev.by}: ${ev.end.line}` : `${ev.kind} ${ev.act.seq}`))
+  const a = op.ask(['Rust'], 'hi')
+  mind.say('text', 'ok\nACTION: quality lite')
+  mind.finish('ok\nACTION: quality lite')
+  assert.equal((await within(a.result)).act?.kind, 'proposed')
+  assert.equal(op.acts.pending()?.seq, 1)
+  op.lock()
+  assert.deepEqual([op.unlocked(), op.acts.pending()], [false, null])
+  assert.deepEqual(op.acts.log().map((e) => `${e.kind} ${e.step} [${e.failed.join(',')}] ${e.note}`), [
+    'step act-1 [] proposed: set the quality to Lite',
+    'stop act-1 [HumanOverrideSupreme] withdrawn: the operator tier is locked',
+  ])
+  assert.equal(remembered.at(-1), '7 the player: withdrew your proposal: set the quality to Lite (operator lock)')
+  assert.deepEqual(events, ['proposed 1', 'ended 1 withdrawn by console: the operator tier is locked'])
+  assert.throws(() => op.acts.allow('console'), /^Error: act: locked; type 'operator unlock' first$/)
+  assert.throws(() => op.acts.refuse('card'), /^Error: act: locked; type 'operator unlock' first$/)
+  assert.deepEqual(callsOf(sim).filter((c) => c.startsWith('quality.set')), [], 'nothing ran')
+  assert.deepEqual(notes.filter((n) => n.startsWith('run')), [], 'no episode')
+  // The trail and the catalogue read while locked; a second lock changes nothing.
+  op.lock()
+  assert.equal(op.acts.log().length, 2)
+  assert.equal(op.acts.list().length, 7)
+  assert.equal(op.acts.verify().ok, true)
+  // Unlocked, the floor is free: the next proposal is act 2, and the OK runs it once, under its own task's lease.
+  op.unlock()
+  const b = op.ask(['Rust'], 'hi')
+  mind.say('text', 'ACTION: time 22:00')
+  mind.finish('ACTION: time 22:00')
+  const r = await within(b.result)
+  assert.deepEqual([r.text, r.act?.kind], ['', 'proposed'])
+  const { act, result } = op.acts.allow('console')
+  assert.equal(act.seq, 2)
+  assert.equal(op.acts.pending(), null)
+  assert.deepEqual(await within(result), { state: 'done', line: 'the clock is set to 17:30' })
+  const clock = callsOf(sim).filter((c) => c.startsWith('clock.'))
+  assert.equal(clock.length, 2, 'one set, then the hour read back')
+  assert.match(clock[0], /^clock\.set 22\.0000/)
+  assert.deepEqual(notes.filter((n) => n.startsWith('run')), ['run city action: set the clock to 22:00 (Authorized) ok'])
+  assert.equal(remembered.at(-1), '7 the player: allowed your proposal and the city did it: the clock is set to 17:30')
+  assert.equal(gate.requests.length, 4, 'two asks, two proposals')
+  assert.deepEqual(events.slice(2), ['proposed 2', 'allowed 2', 'ended 2 done by console: the clock is set to 17:30'])
 })

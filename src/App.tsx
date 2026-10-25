@@ -17,7 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Engine, type EngineOptions } from './07_Execute_Actions/engine.ts'
 import { Hud } from './07_Execute_Actions/Hud.tsx'
 import { Terminal, type TerminalHandle } from './07_Execute_Actions/terminal/Terminal.tsx'
-import { offlineBridge, type LookBridge, type ModelBridge, type NetBridge, type TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
+import { offlineBridge, type LookBridge, type ModelBridge, type NetBridge, type PendingAct, type TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
 import { hudLine, recruitBridge, Recruiter } from './08_Swarm/recruitment.ts'
 import { TaskRouter } from './08_Swarm/taskRouter.ts'
 import { deferredLedger, followRecruiter, indexedDbLedger, memoryBridge, SwarmMemory } from './08_Swarm/memory.ts'
@@ -41,6 +41,7 @@ import { isEditableTarget } from './04_Connect_Hardware/input.ts'
 import type { SipocSnapshot } from './05_Observe_Environment/telemetry.ts'
 import { BootVeil } from './07_Execute_Actions/BootVeil.tsx'
 import { LockScreen, RecoveryCard } from './07_Execute_Actions/RecoveryCard.tsx'
+import { ActCard } from './07_Execute_Actions/ActCard.tsx'
 import { usePadNav } from './07_Execute_Actions/padNav.ts'
 import { AUTO_RELOAD_KEY, autoReload, BOOT_STAGE, classify, explainHalt, firstScreen, FRAME_FAULT, haltClass, pageEnv } from './07_Execute_Actions/bootFailure.ts'
 import { probeGpu, WebGPUUnavailableError, type GpuProbe } from './01_Initialize_World/gpuDevice.ts'
@@ -584,6 +585,11 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
     engine?.setIdentities((agent) => { const id = roster.byAgent(agent); return id ? identityLine(id) : null })
     return () => engine?.setIdentities(null)
   }, [engine, roster])
+  // The operator tier names who proposes a city action (`Mara (agent 17, Design)`) by the roster's name for the hire.
+  useEffect(() => {
+    engine?.setNameOf((agent) => roster.byAgent(agent)?.name ?? null)
+    return () => engine?.setNameOf(null)
+  }, [engine, roster])
   // The card re-dresses a hired agent at once; a profile name is the browser tier's, not a provider voice.
   const wearAgentLook = useCallback((name: string, next: Look | null) => {
     const id = roster.set(name, 'look', next)
@@ -595,6 +601,28 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
   const [veilDone, setVeilDone] = useState(false)
   // A Ring-0 kernel panic: the engine is halted and the reason is shown over everything.
   const [locked, setLocked] = useState<string | null>(null)
+  // A city action an agent proposed, waiting for the operator's OK (07_Execute_Actions/acts.ts; the bridge's acts.follow
+  // feeds it): the card, the input shield and the HUD line all derive from this one state, and actRef is the frame
+  // loop's view of it. Every proposal, decision and end: the card and the shield come up on `proposed` and go on
+  // `ended`; with the console closed a toast says what was proposed and how it ended (open, the lines are in the
+  // scrollback). A refusal or a withdrawal toasts nothing (the person did it); an abort is the gate wrapper's `Task aborted`.
+  const [act, setAct] = useState<PendingAct | null>(null)
+  const actRef = useRef<PendingAct | null>(null)
+  useEffect(() => bridge?.operator.acts.follow((ev) => {
+    actRef.current = ev.kind === 'proposed' ? ev.act : null
+    setAct(actRef.current)
+    if (termOpenRef.current) return
+    if (ev.kind === 'proposed') engineRef.current?.toast('City action', `${ev.act.who} proposes: ${ev.act.sentence} (Y allows, N refuses)`)
+    else if (ev.kind === 'ended' && (ev.end.state === 'done' || ev.end.state === 'failed')) engineRef.current?.toast('City action', `${ev.end.state}: ${ev.end.line}`)
+  }), [bridge])
+  // While a proposal waits, the pad's edges and the touch taps are the card's (04_Connect_Hardware/input.ts shield): the
+  // south face button presses the card, never the car door, so the OK cannot break the proposer's tether. Keys, sticks
+  // and the mouse stay the game's.
+  useEffect(() => { engineRef.current?.input.shield(act !== null) }, [act])
+  // The card's two buttons (and its Y and N): through the operator bridge, so the proposal runs under the proposer's
+  // tether like `act ok`; a press after the proposal ended (the console answered first, the tether broke) is nothing.
+  const allowAct = useCallback(() => { try { void bridge?.operator.acts.allow('card').result.catch(noop) } catch { /* already ended */ } }, [bridge])
+  const refuseAct = useCallback(() => { try { bridge?.operator.acts.refuse('card') } catch { /* already ended */ } }, [bridge])
   // Sloane's quiet watch over a first visitor (onboarding/useMentor.ts): its lines reach the Concierge as nudges, and a
   // prompt sent to someone in the city is reported to it from the mind below (noteRef, built once with the engine).
   const { nudge, note: noteMentor } = useMentor({ active: mentored && veilDone, engine, hud, family: hud?.supplier.glyphs ?? 'keyboard', name: profile?.name ?? '', voice })
@@ -690,6 +718,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           lastHud = now
           const s = engine.snapshot()
           if (recruiter) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, activityText(answering, engine.speaking, modelPhase ?? keepLine))
+          // A city action waiting for the operator's OK takes the activity line (the MIC chip reads it, console open or closed).
+          if (recruiter && actRef.current) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, `Waiting for your OK: ${actRef.current.who} proposes: ${actRef.current.sentence}`)
           setHud(s)
           shown = true
         }
@@ -1056,6 +1086,9 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
         />
       )}
       <Terminal ref={termRef} bridge={bridge} onOpenChange={onTermOpen} onBoot={reboot} onMap={remap} />
+      {/* A city action waiting for the operator's OK (ActCard.tsx): over the console, under the recovery card; never
+          while the city is halted, never before the veil lifts. The console beneath stays usable (y, n, act ok, act no). */}
+      {act && veilDone && locked === null && bridge && <ActCard act={act} termOpen={termOpen} onAllow={allowAct} onRefuse={refuseAct} />}
       {/* From the first render: React swaps index.html's identical splash for this, which fades into the city
           once the first snapshot exists (or lifts to show the recovery card or the lock screen). */}
       <BootVeil ready={hud !== null || error !== null || locked !== null} onDone={() => setVeilDone(true)} onConsole={toConsole} stage={stage} />

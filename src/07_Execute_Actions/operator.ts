@@ -22,6 +22,9 @@ import { DISENGAGED, disengaged, screen } from '../02_Define_The_Rules/conduct.t
 import type { CrowdStats } from '../03_Spawn_Agents/crowdCompute.ts'
 import type { KernelStats, QualityState, SipocSnapshot } from '../05_Observe_Environment/telemetry.ts'
 import type { OperatorBridge } from './terminal/bridge.ts'
+import type { CityKnobs } from '../06_Make_Decisions/actions.ts'
+import type { AuditEntry, verifyChain } from '../02_Define_The_Rules/guardrails.ts'
+import { createActs, PROPOSAL_WAITING } from './acts.ts'
 import { harnesses, runHarness, type HarnessReport } from './harness.ts'
 import type { AgentContext } from '../08_Swarm/shortTerm.ts'
 import { createSwarm } from '../08_Swarm/orchestrator.ts'
@@ -296,6 +299,10 @@ export interface Senses {
   readonly awareness?: Awareness
   /** The voice a hired agent speaks in (08_Swarm/roster.ts), or null for the chosen one. */
   readonly voiceOf?: (agent: number) => string | null
+  /** The name a hired agent goes by (08_Swarm/roster.ts), or null when they have none. */
+  readonly nameOf?: (agent: number) => string | null
+  /** The two city knobs an allowed action may turn that are not facade leaves: rain mode and the sound. */
+  readonly city?: CityKnobs
 }
 
 /**
@@ -378,6 +385,55 @@ export interface AskResult {
   /** Authorized and answered by the script in place of a model that did not (Answer.standIn): why the model did not. */
   readonly standIn?: string
   readonly ms: number
+  /** The console's ask only: the city action the answer proposed (now waiting for the operator's OK), or the line refused and why. */
+  readonly act?:
+    | { readonly kind: 'proposed'; readonly seq: number; readonly who: string; readonly sentence: string; readonly note?: string; readonly line: string }
+    | { readonly kind: 'refused'; readonly reason: string; readonly line?: string; readonly told?: number }
+}
+
+/** Who decided a proposed city action: the console line, the card, a host through the bridge, or the gateway itself. */
+export type ActBy = 'console' | 'card' | 'host' | 'gateway'
+
+/** A proposed city action waiting for the operator's OK (acts.ts; one at a time). */
+export interface PendingAct {
+  readonly seq: number
+  /** `Mara (agent 17, Design)` when hired, else `agent 17 (Design)`. */
+  readonly who: string
+  readonly agent: number
+  readonly serial: number
+  readonly skills: readonly string[]
+  readonly verb: string
+  readonly canonical: string
+  /** The city's own words for it: `set the clock to 22:00`. */
+  readonly sentence: string
+  readonly note?: string
+  readonly since: number
+}
+
+/** How a proposed city action ended, and the line that says so. */
+export type ActEnd = { readonly state: 'done' | 'failed' | 'refused' | 'withdrawn' | 'aborted'; readonly line: string }
+
+/** What a follower of the proposals sees: one proposed, one allowed, one ended. */
+export type ActEvent =
+  | { readonly kind: 'proposed'; readonly act: PendingAct }
+  | { readonly kind: 'allowed'; readonly act: PendingAct; readonly by: ActBy }
+  | { readonly kind: 'ended'; readonly act: PendingAct; readonly end: ActEnd; readonly by: ActBy }
+
+/** The proposed city actions as the console, the card and a host see them (terminal/bridge.ts `operator.acts`). */
+export interface ActsBridge {
+  /** The proposal waiting for the operator's OK, or null; readable any time, locked too. */
+  pending(): PendingAct | null
+  /** Calls `fn` on every proposal, decision and end; returns the unsubscribe. Readable any time. */
+  follow(fn: (ev: ActEvent) => void): () => void
+  /** Allows the waiting proposal: it runs once under the proposer's lease. Throws while locked, or when none waits. */
+  allow(by?: ActBy): { act: PendingAct; result: Promise<ActEnd> }
+  /** Refuses the waiting proposal (the proposer is told next time). Throws while locked, or when none waits. */
+  refuse(by?: ActBy): PendingAct
+  /** The hash-chained trail of every proposal, decision and end on this page. */
+  log(): readonly AuditEntry[]
+  verify(): ReturnType<typeof verifyChain>
+  /** The catalogue, one row per verb; documentation, no unlock. */
+  list(): readonly string[]
 }
 
 /** A prompt handed to the gateway: its state now, who it is bound to, the answer as it streams, the outcome later. */
@@ -958,7 +1014,7 @@ const answeringProvider = (mind: Mind): string | undefined => {
  */
 export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sleep: (ms: number) => Promise<void> = wait, senses: Senses = {}): OperatorBridge {
   const api = scriptApi(sim)
-  const { voice, speech, diary, awareness, voiceOf } = senses
+  const { voice, speech, diary, awareness, voiceOf, nameOf, city } = senses
   let unlocked = false
   let running: string | null = null
   let asking: (GatedAsk & { stop(): void }) | null = null
@@ -986,9 +1042,26 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
     })
     return s
   }
-  /** One prompt through the gate, with its stop: `ask` hands it out without the stop, the swarm keeps it. */
-  const askThrough = (skills: readonly string[], prompt: string): GatedAsk & { stop(): void } => {
+  // The proposed city actions (acts.ts): one at a time, through the same gate, run only after the operator's OK, over
+  // the leased facade a script would get and the two city knobs the host handed in as senses.
+  const acts = createActs({
+    gate,
+    facade: (lease) => leasedApi(api, lease),
+    city,
+    note: (bound, skills, text, state, began, outcome) => diary?.note(bound, 'run', asNamed(skills, bound), text, state, began, undefined, outcome),
+    awareness,
+    nameOf,
+    now: () => Date.now(),
+    unlocked: () => unlocked,
+  })
+  /**
+   * One prompt through the gate, with its stop: `ask` hands it out without the stop, the swarm keeps it. `acting`: the
+   * console's ask, whose answer may end with one ACTION line the keeper reads (a swarm step's line is text).
+   */
+  const askThrough = (skills: readonly string[], prompt: string, acting = false): GatedAsk & { stop(): void } => {
     if (!unlocked) throw locked('ask')
+    // A proposal waiting for the operator's OK holds the floor: the console's asks and the swarm's steps alike.
+    if (acts.pending()) throw new Error(PROPOSAL_WAITING)
     if (asking) throw new Error("an answer is still coming: wait for it, or type 'ask stop'")
     // The in-page provider may have files kept with none chosen (the chosen one forgotten): both ways are said.
     if (mind.settings().model === null) throw new Error(answeringProvider(mind) === 'inpage' ? 'choose a model first: Menu › Model file, or ask file (or ask model <name> for a file already kept: type ask to list them)' : 'choose a model first: ask model <name> (type ask to list them)')
@@ -999,21 +1072,39 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
       asking = a
       void a.result.then(() => { if (asking === a) asking = null })
     }
-    const result = a.result.then((r): AskResult => {
+    const result = a.result.then(async (r): Promise<AskResult> => {
+      let answer = r.text
+      let act: AskResult['act'] | undefined
+      // The console's ask only, and only a whole answer a model gave (never cut, stopped or failed, never the script
+      // standing in, never an agent who did not engage): its ACTION line, if any, is read now, inside the ask's own
+      // settlement, so the proposal binds the tethers the answer had; the text goes on without the line. Everything
+      // else keeps its text as it came: a swarm step's line is text.
+      if (acting && r.state === 'Authorized' && taskOutcome(r) === 'answered' && !r.disengaged && r.standIn === undefined) {
+        try {
+          const o = await acts.onAnswer(a, r, skills)
+          answer = o.text
+          act = o.act
+        } catch (e) {
+          // The result never rejects: a keeper that could not read or submit refuses with its reason instead.
+          act = { kind: 'refused', reason: text(e) }
+        }
+      }
+      const proposed = act === undefined ? '' : act.kind === 'proposed' ? ` (proposed: ${act.sentence})` : ' (proposed a line the city could not read)'
       // A prompt the agent did not engage with is not acknowledged: nothing of it is remembered either. Nor are the
       // script's words when it stood in for a model that did not answer: canned lines would come back in the next
       // prompt as if a person had said them.
       if (!disengaged(r.done) && !r.disengaged && r.standIn === undefined) {
-        diary?.note(a.bound, 'ask', asNamed(skills, a.bound), `${words.split('\n')[0]} → ${r.text}`, r.state, began, r.promptHash, taskOutcome(r))
-        // The moment itself, for the next few prompts: what the player asked and what was answered.
-        if (r.state === 'Authorized' && r.text.trim()) for (const t of a.bound) awareness?.remember(t.agent, 'the player', `asked "${words.split('\n')[0]}" and you answered "${r.text}"`)
+        diary?.note(a.bound, 'ask', asNamed(skills, a.bound), `${words.split('\n')[0]} → ${answer}${proposed}`, r.state, began, r.promptHash, taskOutcome(r))
+        // The moment itself, for the next few prompts: what the player asked and what was answered (and proposed).
+        if (r.state === 'Authorized' && (answer.trim() || proposed)) for (const t of a.bound) awareness?.remember(t.agent, 'the player', `asked "${words.split('\n')[0]}" and you answered "${answer}${proposed}"`)
       }
+      const out: AskResult = { ...r, text: answer, ...(act !== undefined && { act }) }
       // Said aloud as well (say auto on): a whole answer, through the gate again, while nothing else is being said. Not
       // the script standing in: said aloud, it would be noted and remembered as the person's own words.
       const v = voice?.settings()
-      if (r.state !== 'Authorized' || r.error !== undefined || r.disengaged || disengaged(r.done) || r.standIn !== undefined || !r.text.trim() || !v?.auto || v.voice === null || !speech || saying) return r
-      const s = say(skills, speakable(r.text))
-      return { ...r, speech: s.result }
+      if (r.state !== 'Authorized' || r.error !== undefined || r.disengaged || disengaged(r.done) || r.standIn !== undefined || !answer.trim() || !v?.auto || v.voice === null || !speech || saying) return out
+      const s = say(skills, speakable(answer))
+      return { ...out, speech: s.result }
     })
     return Object.freeze({ state: a.state, bound: a.bound, follow: a.follow, result, stop: a.stop })
   }
@@ -1021,24 +1112,32 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
   // answering provider's server each step (none for the scripted provider, or for a model running in this page) for
   // the loopback invariant.
   const orchestrator = createSwarm({
-    ask: askThrough,
+    // Never `acting`: a role's ACTION line is text, and the swarm proposes nothing.
+    ask: (skills, prompt) => askThrough(skills, prompt),
     endpoint: () => {
       const p = answeringProvider(mind)
       return p === 'scripted' || p === 'inpage' ? null : mind.settings().server
     },
   })
-  // A run is refused while locked, like a prompt (a host's voice line reaches this surface too, not only the console).
+  // A run is refused while locked, like a prompt (a host's voice line reaches this surface too, not only the console),
+  // and while a proposal waits for the operator's OK.
   const swarm: typeof orchestrator = Object.freeze({
     ...orchestrator,
     run: (goal: string, agents?: number) => {
       if (!unlocked) throw locked('ask')
+      if (acts.pending()) throw new Error(PROPOSAL_WAITING)
       return orchestrator.run(goal, agents)
     },
   })
   return Object.freeze({
     unlock: () => { unlocked = true },
-    lock: () => { unlocked = false },
+    // No proposal waits past a lock: the one waiting is withdrawn, and the console (which caused it) prints the line.
+    lock: () => {
+      unlocked = false
+      acts.withdraw('operator lock')
+    },
     unlocked: () => unlocked,
+    acts,
     exec: (skills: readonly string[], script: string): GatedRun => {
       if (!unlocked) throw locked('run')
       const began = Date.now()
@@ -1063,7 +1162,7 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
       throw new TypeError(`no tuning table '${String(table)}': physics or shaders`)
     },
     ask: (skills: readonly string[], prompt: string): GatedAsk => {
-      const { stop: _stop, ...handle } = askThrough(skills, prompt)
+      const { stop: _stop, ...handle } = askThrough(skills, prompt, true)
       return Object.freeze(handle)
     },
     askConnect: (provider: string, url?: string, key?: string): string => {
@@ -1122,6 +1221,9 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
     },
     askStop: (): string => {
       if (!unlocked) throw locked('ask')
+      // A proposal waiting for the OK is the ask's unfinished business: `ask stop` withdraws it.
+      const withdrawn = acts.withdraw('ask stop')
+      if (withdrawn) return `withdrawing act ${withdrawn.seq}: ${withdrawn.sentence}`
       if (!asking) return 'no answer is being generated'
       asking.stop()
       return 'stopping the answer'

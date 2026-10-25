@@ -29,6 +29,7 @@
  * operator tier (gatedAsk), before a prompt reaches this router.
  * What breaks if it is removed? `ask` has one provider and no way to swap it; an offline environment has no drop-in.
  */
+import { scriptedAction } from '../06_Make_Decisions/actions.ts'
 import type { Answer, AnswerRequest, GateTether, Mind, Piece } from '../07_Execute_Actions/operator.ts'
 import { CLAUDE_GATEWAY, claudeAnswer, claudeModels, claudeServer, DEFAULT_CLAUDE_MODEL, EFFORTS, isEffort, maskKey } from './claudeApi.ts'
 import { ANY_MODEL, BASE_REALITY, CognitionError, createLocalCompute, DEFAULT_MODEL, installedModels, isolatedPage, localText, promptHash, systemPrompt, type FetchLike, type SettingsStore, type Timeouts } from './localCompute.ts'
@@ -192,7 +193,10 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
   // The model file kept in this page: its own settings (the file chosen, think, the GPU) in its own slice.
   const inpage = inPage(slice(kept, 'inpage', keep))
   // No backend: the script answers (scripted.ts), with the same system prompt hashed, so an audit still says what
-  // the people were told. It addresses nothing, so its server and model cannot be set.
+  // the people were told. It addresses nothing, so its server and model cannot be set. Chosen on purpose, it also
+  // proposes the one city action a prompt plainly asks for (06_Make_Decisions/actions.ts scriptedAction), so the
+  // browser smoke drives the whole path with no model; the script standing in for another provider (scripted.ts
+  // withScriptedFallback) never does.
   const scripted: Mind = Object.freeze({
     settings: () => ({ server: SCRIPTED_SERVER, model: SCRIPTED }),
     setServer: (): string => { throw new Error('the scripted provider has no server: it answers on this page (ask provider <name> for one that does)') },
@@ -200,7 +204,8 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
     installed: async (): Promise<string[]> => [SCRIPTED],
     answer: async (req: AnswerRequest, onPiece: (p: Piece) => void): Promise<Answer> => {
       if (req.signal.aborted) throw req.signal.reason instanceof Error ? req.signal.reason : new DOMException('aborted', 'AbortError')
-      const text = scriptedAnswer(req)
+      const line = scriptedAction(req.prompt)
+      const text = scriptedAnswer(req) + (line ? `\n${line}` : '')
       onPiece({ kind: 'text', text })
       return { text, thinking: 0, tokens: 0, reason: SCRIPTED, promptHash: promptHash(systemPrompt(req.tethers, req.memories, req.context)) }
     },

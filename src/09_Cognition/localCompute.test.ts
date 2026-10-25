@@ -130,6 +130,10 @@ test('the system prompt is the bound people\'s skills: who they are, all they kn
     'You may be told what you remember of the operator, oldest first: use it only where it helps with the question.',
     'You may be told where you stand right now and what just happened between you and the player: speak from that place and moment, as someone who was there.',
     'Be brief and practical. Plain text: no headings, no tables.',
+    'City actions: to ask the operator for one change to the city, write your answer, then the action alone on the last line, exactly like this example:',
+    'ACTION: time 20:00',
+    'The actions: time HH:MM (or midnight, dawn, morning, noon, afternoon, golden hour, sunset, dusk, evening, night); rain on or off; light haze, exposure, sun or fill and a number (1 is the city as authored); quality auto, lite, minimal, low, medium, high or ultra; cars park or drive; crowd 0 to 100; sound on, off or 0 to 100.',
+    'One ACTION line at most, and none when nothing needs changing (ACTION: none also means none). The operator sees it and allows or refuses it before anything happens, so never say that it happened.',
     'You are answering for agent 17 (Rust, Python).',
     'Your expertise is exactly: Rust, Python.',
   ].join('\n'))

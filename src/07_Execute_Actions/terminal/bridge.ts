@@ -19,15 +19,16 @@ import type { LawText } from '../../02_Define_The_Rules/laws.ts'
 import type { CameraStats, KernelStats, NetReport, QualityState, RecordingState, SipocSnapshot } from '../../05_Observe_Environment/telemetry.ts'
 import type { RecorderSource } from '../../05_Observe_Environment/recorder.ts'
 import type {
-  AskResult, ExecResult, GatedAsk, GatedRun, GatedSay, GateTether, MindStatus, Piece, RunResult, RunState, SayResult, VoiceStatus, apiDoc,
+  ActBy, ActEnd, ActEvent, ActsBridge, AskResult, ExecResult, GatedAsk, GatedRun, GatedSay, GateTether, MindStatus, PendingAct, Piece, RunResult, RunState,
+  SayResult, VoiceStatus, apiDoc,
 } from '../operator.ts'
 import type { HarnessReport, harnesses } from '../harness.ts'
 import type { LookChange } from '../../03_Spawn_Agents/look.ts'
 import type { Swarm } from '../../08_Swarm/orchestrator.ts'
 
 export type {
-  HalDevice, LawText, AskResult, ExecResult, GatedAsk, GatedRun, GatedSay, GateTether, MindStatus, Piece, RunResult, RunState, SayResult,
-  VoiceStatus, HarnessReport, RecorderSource, RecordingState, NetReport, LookChange,
+  HalDevice, LawText, ActBy, ActEnd, ActEvent, ActsBridge, AskResult, ExecResult, GatedAsk, GatedRun, GatedSay, GateTether, MindStatus, PendingAct, Piece,
+  RunResult, RunState, SayResult, VoiceStatus, HarnessReport, RecorderSource, RecordingState, NetReport, LookChange,
 }
 
 export interface Ring0Stats {
@@ -90,6 +91,12 @@ export interface OperatorBridge {
    * (a voice line, the onboarding) reaches it through this same surface. `run` throws while locked.
    */
   swarm: SwarmBridge
+  /**
+   * The city actions an agent proposes at the end of an answer (acts.ts): the one waiting for the operator's OK, the
+   * follow for the card and a host, allow and refuse (through the gateway, under the proposer's tether; they throw
+   * while locked), the hash-chained trail and the catalogue. Reads work while locked; nothing runs before the OK.
+   */
+  acts: ActsBridge
   /**
    * Text said aloud through the local speech server, through the capability gateway like a prompt: decided at once,
    * said by the first person it is bound to from where they stand (the voice follows them), and cut off the moment the
@@ -263,8 +270,8 @@ export interface TerminalBridge {
   /** Ghost view (view-only: the physics shapes drawn as code over the frame): on, off, or the status line. */
   ghost(arg?: 'on' | 'off'): string
   /**
-   * The rain (01_Initialize_World/matrixMode.ts, the engine's setMatrix): falling code on every surface, and in the
-   * physics realm people and cars passing through each other (the crowd's physics mask): on, off, or the status line.
+   * The rain (01_Initialize_World's rain-mode module, the engine's rain-mode switch): falling code on every surface, and
+   * in the physics realm people and cars passing through each other (the crowd's physics mask): on, off, or the status line.
    */
   rain(arg?: 'on' | 'off'): string
   /**
@@ -378,6 +385,7 @@ export function offlineBridge(brand: TerminalBridge['brand']): TerminalBridge {
       ask: down, askStatus: down, askSet: down, askConnect: down, askStop: down, say: down, sayStatus: down, saySet: down, sayStop: down,
       api: down, harnesses: down, harness: down,
       swarm: { plan: down, run: down, status: down, stop: down, audit: down, verify: down, get roles() { return down() }, get quota() { return down() } },
+      acts: { pending: () => null, follow: () => () => {}, allow: down, refuse: down, log: () => [], verify: down, list: () => [] },
     },
     record: { start: down, stop: down, status: down, supported: down },
     recruit: { ask: down, rally: down, listen: down, stop: down, install: down, dismiss: down, status: down, skills: () => [] },

@@ -16,8 +16,9 @@
 #   installable copy a phone plays (its manifest, its service worker, a start with the host gone, a model file kept on
 #   the second visit answering with the host gone), the model kept in the page (a tiny model picked at the console,
 #   answering, stopped, reloaded, guarded after a crash, in a swarm step, on the GPU or not, every worker it starts
-#   attached and audited for any address off the machine), and the Lakefront Metro map with its workplaces handed to
-#   its crowd; the screenshots and the console transcripts are kept as an artifact;
+#   attached and audited for any address off the machine), the Lakefront Metro map with its workplaces handed to
+#   its crowd, and a city action proposed by the script, allowed from the card's key, refused, withdrawn, locked away
+#   and ended by a lost tether; the screenshots and the console transcripts are kept as an artifact;
 # - sandbox: the self-healing agent's zero-trust container (tools/selfheal/sandbox.mjs) tried from the inside:
 #   the escape probes (tools/sandbox/probe.sh) contained, the same probes in a weakened control, and two checks
 #   run contained (tools/sandbox/verify.mjs); the evidence is kept as an artifact;
@@ -127,7 +128,7 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - name: The build, then the city in Chrome as a desktop, an iPhone, a file, at Ultra, lite, the console alone, the model in the page, and Lakefront Metro
+      - name: The build, then the city in Chrome as a desktop, an iPhone, a file, at Ultra, lite, the console alone, the model in the page, city actions, and Lakefront Metro
         env:
           BROWSER_SHOTS: ${{ runner.temp }}/browser
         run: sh tools/selfheal/checks.sh page-build page-browser

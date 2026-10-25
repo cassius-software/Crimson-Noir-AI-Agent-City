@@ -38,8 +38,9 @@ verified, history) is [MANUAL.md](MANUAL.md). The bare-metal system has its own 
   global object, and a Content-Security-Policy that admits loopback only. The cognitive gateway speaks to Claude
   (default model `claude-opus-5-5`) through a loopback proxy the operator runs, to a local Ollama, llama.cpp or
   other OpenAI-compatible server, to a GGUF model file the operator keeps in the page and runs in it (llama.cpp
-  compiled to WebAssembly, with no request at all), or to a deterministic script with no backend at all; no model,
-  server or key ships with the product. The self-healing agent's checks run in a container
+  compiled to WebAssembly, with no request at all), or to a deterministic script with no backend at all; an agent may
+  propose one city action from a bounded catalogue, shown in plain words and run only after the operator's OK, under
+  the proposer's tether; no model, server or key ships with the product. The self-healing agent's checks run in a container
   that mounts nothing of the host, and 38 adversarial escape probes (egress, daemon sockets, execution,
   privilege, credentials) are denied inside it on every CI run, with a weakened control where the same probes
   must escape. The kernel and Docker are the trusted base: tested and argued, not proved
