@@ -19,7 +19,7 @@ import {
   HIDDEN_UNLOAD_MS, IDLE_UNLOAD_MS, LOAD_MS, START_MS, fits, holdTier, placement,
   type FileSize, type GpuMode, type Placement, type PlanEnv,
 } from './inPagePlan.ts'
-import { Governor, LITE_TIER, TIERS } from '../05_Observe_Environment/governor.ts'
+import { Governor, LITE_TIER, PEAK_TIER, TIERS } from '../05_Observe_Environment/governor.ts'
 import { ANSWER_TOKENS, CONTEXT_TOKENS } from './localCompute.ts'
 
 const GIB = 2 ** 30
@@ -251,7 +251,7 @@ test('every sentence is plain: lower case, sizes in GB with one decimal, no em-d
 
 test('the city is capped while the model works: the top tier on a discrete GPU, Low, Minimal on a phone, Lite on the lite profile', () => {
   for (const gpu of [true, false]) {
-    assert.equal(holdTier(DISCRETE, gpu), TIERS.length - 1)
+    assert.equal(holdTier(DISCRETE, gpu), gpu ? TIERS.length - 1 : PEAK_TIER, 'a model on the processor leaves Peak alone; the governor clamps the cap into the range, so below Peak it is Ultra as before')
     assert.equal(holdTier(INTEGRATED, gpu), 1)
     assert.equal(holdTier(PHONE, gpu), 0)
     assert.equal(holdTier(LITE, gpu), LITE_TIER)
@@ -260,6 +260,9 @@ test('the city is capped while the model works: the top tier on a discrete GPU, 
     assert.equal(holdTier({ mobile: true, lite: false, gpuClass: 'discrete' }, gpu), 0)
   }
   assert.equal(TIERS[holdTier(DISCRETE, true)!].label, 'Ultra')
+  assert.notEqual(holdTier(DISCRETE, true), PEAK_TIER, 'a model on a Peak machine\'s GPU is held at Ultra: it gets the memory Peak takes')
+  const noF16 = env({ f16: false })
+  assert.equal(holdTier(noF16, placement(noF16).gpu), PEAK_TIER, 'a discrete card without shader-f16 runs the model on the processor')
   assert.equal(TIERS[holdTier(INTEGRATED, true)!].label, 'Low')
   assert.equal(TIERS[holdTier(PHONE, false)!].label, 'Minimal')
   assert.equal(LITE_TIER, -1)
