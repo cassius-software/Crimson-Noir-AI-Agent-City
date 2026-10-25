@@ -30,15 +30,15 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   where it is; an Apple chip comes down to Low like any integrated GPU, and Ultra comes back first there too.
   `?quality=5|peak` and `quality peak` pin it by hand. Agents cannot propose it, and Sloane pins it only for a plain
   ask ("peak graphics", "turn on peak graphics and golden hour"): a no, a turn-down, another tier or a complaint ("i
-  don't want peak graphics", "it lags on peak settings", "turn off the music and peak graphics") means Ultra at most, a
-  heat or battery complaint keeps its own fix, and a question or any other mention ("is peak graphics worth it?", "can
-  i run peak graphics") sets nothing until she has asked "Set Peak, or keep to Ultra at most?" (the console's `goal`
-  asks nothing, so it leaves the tier). An answer to any of her questions that names Peak counts as it would in the
-  goal. Her reading of text now takes ʼ and ′ as an apostrophe everywhere, so "I canʼt hear anything" reads like
-  "I can't hear anything". The browser
-  smoke pins Peak in its `ultra` scenario, which the Nix job also runs, and a new `peak` scenario drives the GPU rule
-  on a faked RTX 5090; Peak is not measured on a real big GPU. For three upgrades: the rule reads three's timestamp
-  pool (`resolveTimestampsAsync('render')`, kept only with `timestamp-query`).
+  don't want peak graphics", "it lags on peak settings", "turn off the music and peak graphics", "i prefer the light
+  to peak graphics") means Ultra at most, a heat or battery complaint keeps its own fix, and a question or any other
+  mention ("is peak graphics worth it?", "can i run peak graphics") sets nothing until she has asked "Set Peak, or
+  keep to Ultra at most?" (the console's `goal` asks nothing, so it leaves the tier). An answer to any of her
+  questions that names Peak counts as it would in the goal. Her reading of text now takes ʼ and ′ as an apostrophe
+  everywhere, so "I canʼt hear anything" reads like "I can't hear anything". The browser smoke pins Peak in its
+  `ultra` scenario, which the Nix job also runs, and a new `peak` scenario drives the GPU rule on a faked RTX 5090;
+  Peak is not measured on a real big GPU. For three upgrades: the rule reads three's timestamp pool
+  (`resolveTimestampsAsync('render')`, kept only with `timestamp-query`).
 - **City actions, asked each time (ask, act).** An agent's answer may end with one ACTION line from a fixed catalogue
   (the clock, rain mode, the light dials, the quality tier, the cars, the crowd, the sound); the console and a card show
   who proposes what, in the city's own words, and nothing runs until you allow it (Y or N on the card, act ok or act no,
