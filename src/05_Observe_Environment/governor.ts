@@ -14,7 +14,12 @@
  * target, backed off harder after every failure. It is silent: a tier change raises no toast and needs
  * no settings menu. Below Minimal sits Lite (tier -1, outside the TIERS table so no existing index moves): only a
  * lite device profile (an entry-level phone GPU such as a Mali-G52, or ?lite=1) reaches it automatically, and the
- * same profile makes the boot itself lighter (engine.ts: fewer pedestrians and cars, no post chain compiled). While the
+ * same profile makes the boot itself lighter (engine.ts: fewer pedestrians and cars, no post chain compiled). Above
+ * Ultra sits Peak (tier 5, outside the table like Lite, so TOP and every automatic range stay as they were): only a
+ * Peak candidate whose browser writes GPU timestamps has it in its automatic range (peakCandidate, tierRange), and the
+ * governor climbs into it and keeps it on the GPU's own render time per frame (gpuSample), since under the cinema
+ * camera the animation frames show no spare power. A quick failure tightens the next entry, the third loss in a visit
+ * turns Peak off until the page reloads, and a hold that lowers it does not hand it back at the release. While the
  * in-page model works the city can be held under a lower tier (hold()): the device is busy with the model, so nothing
  * that happens under the hold counts against a tier, and the release returns the tier the city had.
  * What breaks if it is removed? Quality is frozen at one tier: phones stutter at desktop settings,
@@ -465,10 +470,30 @@ export class Governor {
   /** The automatic tier a release returns to: the tier when the hold began, or the one auto would have taken when it
    *  was turned back on under the hold. Null under a manual tier and whenever nothing holds the city. */
   private restore: number | null = null
-  /** Per tier, at index tier - LITE_TIER (Lite has a slot of its own): step downs remembered, when, and the probe wait. */
-  private readonly fails = new Uint32Array(TIERS.length + 1)
-  private readonly failedAt = new Float64Array(TIERS.length + 1).fill(-Infinity)
-  private readonly blockedUntil = new Float64Array(TIERS.length + 1)
+  /** Per tier, at index tier - LITE_TIER (Lite slot 0, Minimal…Ultra 1…5, Peak 6): step downs remembered, when, and
+   *  the probe wait. */
+  private readonly fails = new Uint32Array(TIERS.length + 2)
+  private readonly failedAt = new Float64Array(TIERS.length + 2).fill(-Infinity)
+  private readonly blockedUntil = new Float64Array(TIERS.length + 2)
+  /** GPU render time per drawn frame (gpuSample), ms, and when each reading arrived: the Peak rule's evidence. */
+  private readonly gpuMs = new Float32Array(PEAK_GOV.ring)
+  private readonly gpuAt = new Float64Array(PEAK_GOV.ring)
+  private readonly gpuScratch = new Float32Array(PEAK_GOV.ring)
+  private gpuHead = 0
+  private gpuCount = 0
+  /** The entry limit a failed probe tightened, ms (Infinity: untouched). Kept for the visit. */
+  private peakLimit = Infinity
+  /** The p90 at Ultra that admitted the current stay at Peak, ms. */
+  private peakAdmit = Infinity
+  /** Remembered step downs from Peak this visit; at PEAK_GOV.maxLosses Peak is off. Kept for the visit. */
+  private peakLosses = 0
+  /** Peak is off until the page reloads: the ceiling stops at Ultra. Kept for the visit. */
+  private peakOff = false
+  /** A hold took Peak away: its release starts a quiet time (peakQuiet) instead of returning Peak. */
+  private peakHeld = false
+  /** Releases of holds that took Peak away, for the quiet time's doubling, and when the last one was. */
+  private peakHolds = 0
+  private peakHeldAt = -Infinity
   /** The device profile's lite flag, shown with the tier (state()). */
   private readonly lite: boolean
   /** The cinema camera's frame period, ms (0: no camera, every animation frame is drawn). */
@@ -488,11 +513,11 @@ export class Governor {
     // The automatic range reaches Lite only when the caller asks (tierRange of a lite profile); by default it stops at
     // Minimal, so no other device ever walks down into it.
     this.min = clampTier(Number.isFinite(opts.min) ? opts.min as number : 0, LITE_TIER)
-    this.max = clampTier(Number.isFinite(opts.max) ? opts.max as number : TOP, this.min)
+    this.max = clampTier(Number.isFinite(opts.max) ? opts.max as number : TOP, this.min, PEAK_TIER)
     this.adaptive = opts.auto
     this.lite = opts.lite === true
     const t = Number.isFinite(opts.tier) ? opts.tier : 3
-    this.current = opts.auto ? clampTier(t, this.min, this.max) : clampTier(t, LITE_TIER)
+    this.current = opts.auto ? clampTier(t, this.min, this.max) : clampTier(t, LITE_TIER, PEAK_TIER)
     this.reported = this.current
     // Infinity (1000 / 0 from an unset FPS option) or NaN means "not given", not "never late".
     const target = Number.isFinite(opts.targetMs) && (opts.targetMs as number) > 0 ? opts.targetMs as number : 0
@@ -504,17 +529,27 @@ export class Governor {
   get auto(): boolean { return this.adaptive }
   /** Whether the cinema camera's presented frames are held too. */
   get pacer(): boolean { return this.pacerMs > 0 }
-  /** Why the tier last changed: 'frames below 60 FPS' ('frames below target' under ?fps), 'camera behind', 'probe',
-   *  'manual', 'held' (a hold lowered it), 'released' (a hold let it back up), or '' (never). */
+  /** Why the tier last changed: 'frames below 60 FPS' ('frames below target' under ?fps), 'camera behind', 'gpu busy'
+   *  (Peak's GPU time over its limit), 'probe', 'manual', 'held' (a hold lowered it), 'released' (a hold let it back
+   *  up), or '' (never). */
   get reason(): string { return this.why }
 
-  /** Whether the Peak rule wants GPU timings now (the engine resolves three's timestamps only then, or under ?profile).
-   *  SKELETON: the Peak rule fills this in (contract 3.1); false until then. */
-  get wantsGpu(): boolean { return false }
+  /** Whether the Peak rule wants GPU timings now (the engine resolves three's timestamps only then, or under ?profile):
+   *  a Peak range, Peak not off, in auto and unheld, at Ultra (the entry evidence) or at Peak (the stay rule). */
+  get wantsGpu(): boolean {
+    return this.max === PEAK_TIER && !this.peakOff && this.adaptive && this.cap === null && this.current >= TOP
+  }
 
-  /** One drawn frame's GPU render time, ms, at `nowMs` (sample()'s clock).
-   *  SKELETON: the Peak rule fills this in (contract 3.1); dropped until then. */
-  gpuSample(ms: number, nowMs: number): void { void ms; void nowMs }
+  /** One drawn frame's GPU render time, ms (three's resolveTimestampsAsync('render'): every render pass of the last
+   *  frame), at `nowMs` (sample()'s clock). Dropped unless wantsGpu, and when it is not a frame (under floorMs, at or
+   *  over maxMs). */
+  gpuSample(ms: number, nowMs: number): void {
+    if (!this.wantsGpu || !Number.isFinite(ms) || !Number.isFinite(nowMs) || ms < PEAK_GOV.floorMs || ms >= PEAK_GOV.maxMs) return
+    this.gpuMs[this.gpuHead] = ms
+    this.gpuAt[this.gpuHead] = nowMs
+    this.gpuHead = (this.gpuHead + 1) % PEAK_GOV.ring
+    if (this.gpuCount < PEAK_GOV.ring) this.gpuCount++
+  }
 
   /** One frame the cinema camera presented, at `nowMs` (the same clock as sample()). Ignored without a camera. */
   present(nowMs: number): void {
@@ -562,6 +597,7 @@ export class Governor {
     return {
       tier: this.current, label: k.label, auto: this.adaptive, renderScale: k.renderScale, targetMs: this.holdMs,
       ...(this.lite && { lite: true }), ...(this.cap !== null && { held: this.cap }),
+      ...(this.max >= PEAK_TIER && { peak: this.peakState() }),
     }
   }
 
@@ -575,6 +611,11 @@ export class Governor {
       this.blockedUntil.fill(0)
       this.fails.fill(0)
       this.failedAt.fill(-Infinity)
+      // GPU readings carry the old time origin, and the quiet time's count goes with the back-off's. Peak's limit, its
+      // losses and peakOff stay: a new time origin is not a new visit.
+      this.gpuCount = 0
+      this.peakHolds = 0
+      this.peakHeldAt = -Infinity
       this.refineAfter = 0
       if (this.phase === 'warmup') { this.firstMs = -1; this.seen = 0 }
       this.arrivedAt = nowMs
@@ -636,19 +677,21 @@ export class Governor {
     const free = clampTier(from, this.min, this.max)
     // Under a hold the city waits below the cap, and the tier auto would have taken is the one the release returns to.
     if (this.cap !== null) this.restore = Math.max(this.restore ?? free, free)
+    this.holdBelowPeak()
     this.current = Math.min(free, this.ceiling())
     this.lastChange = 'manual'
     this.arrivedAt = this.lastNow
     this.reset(this.lastNow, this.current === from ? 0 : GOV.cooldownMs)
   }
 
-  /** Manual choice of any tier (-1…4, Lite to Ultra, not limited to the automatic range); turns auto off. */
+  /** Manual choice of any tier (-1…5, Lite to Peak, not limited to the automatic range); turns auto off. */
   setTier(tier: number): void {
     if (!Number.isFinite(tier)) return
     this.adaptive = false
     // The operator's choice replaces the tier a release would have returned to.
     this.restore = null
-    const t = clampTier(tier, LITE_TIER)
+    this.peakHeld = false
+    const t = clampTier(tier, LITE_TIER, PEAK_TIER)
     if (t === this.current) return
     this.current = t
     this.lastChange = 'manual'
@@ -668,6 +711,8 @@ export class Governor {
    * moves the cap the same way: down at once, or up as far as the tier from before the hold. A manual tier wins: the cap
    * is recorded (state() shows it) and the tier left alone; turning auto back on lands under the cap. `nowMs` is the
    * clock sample() is fed. Like setTier, a tier change is reported by the next sample(); the caller applies the knobs.
+   * A hold that lowers Peak returns Ultra at the release, not Peak; Peak is earned again by a probe after a quiet time
+   * (peakQuiet).
    */
   hold(cap: number | null, nowMs: number): void {
     if (cap !== null && !Number.isFinite(cap)) return
@@ -675,6 +720,7 @@ export class Governor {
     const now = Number.isFinite(nowMs) ? nowMs : this.lastNow
     if (this.cap === null) this.restore = this.adaptive ? this.current : null
     this.cap = cap === null ? null : clampTier(cap, this.min, this.max)
+    this.holdBelowPeak()
     const from = this.current
     if (this.adaptive) this.current = Math.min(Math.max(from, this.restore ?? from), this.ceiling())
     if (this.current !== from) {
@@ -683,12 +729,84 @@ export class Governor {
       this.arrivedAt = now
     }
     if (this.current !== from || this.cap === null) this.reset(now, GOV.cooldownMs)
+    if (this.cap === null && this.peakHeld) this.peakQuiet(now)
     if (this.cap === null) this.restore = null
   }
 
-  /** The highest tier the automatic governor may take: its range's max, or the hold's cap while held. */
+  /** The highest tier the automatic governor may take: its range's max (Ultra once Peak is off), or the hold's cap while
+   *  held. */
   private ceiling(): number {
-    return this.cap ?? this.max
+    const top = this.peakOff ? Math.min(this.max, TOP) : this.max
+    return this.cap === null ? top : Math.min(this.cap, top)
+  }
+
+  /** Under a hold below Peak the release returns Ultra, not Peak: freeing the half gigabyte for the model and
+   *  allocating it again at every answer would hitch twice an answer. */
+  private holdBelowPeak(): void {
+    if (this.cap !== null && this.cap < PEAK_TIER && this.restore === PEAK_TIER) {
+      this.restore = TOP
+      this.peakHeld = true
+    }
+  }
+
+  /** The release of a hold that took Peak away: no probe into Peak for backoffMs doubled per such release (40, 80, 160,
+   *  300 s, the back-off's own steps), the count forgotten after forgetMs. Never a loss: Peak was not too heavy. */
+  private peakQuiet(now: number): void {
+    this.peakHeld = false
+    if (now - this.peakHeldAt >= GOV.forgetMs) this.peakHolds = 0
+    this.peakHolds++
+    this.peakHeldAt = now
+    const i = slot(PEAK_TIER)
+    this.blockedUntil[i] = Math.max(this.blockedUntil[i], now + Math.min(GOV.maxBackoffMs, GOV.backoffMs * 2 ** this.peakHolds))
+  }
+
+  /** The readings at or after `from`, sorted ascending (a view of gpuScratch). */
+  private gpuSince(from: number): Float32Array {
+    let n = 0
+    for (let i = 0, j = this.gpuHead; i < this.gpuCount; i++) {
+      j = (j - 1 + PEAK_GOV.ring) % PEAK_GOV.ring
+      if (this.gpuAt[j] < from) break
+      this.gpuScratch[n++] = this.gpuMs[j]
+    }
+    return this.gpuScratch.subarray(0, n).sort()
+  }
+
+  /** The frame budget Peak's shares are of: the frame the governor holds, never longer than the 60 FPS floor. */
+  private frameBudgetMs(): number { return Math.min(this.holdMs, FLOOR_MS) }
+
+  /** The p90 at Ultra a probe into Peak may have, ms: the entry share, or less after a failed probe. */
+  private entryLimitMs(): number { return Math.min(this.frameBudgetMs() * PEAK_GOV.entryShare, this.peakLimit) }
+
+  /** Ultra's GPU time says Peak fits: enough readings since the calm stretch began (at most the upgrade window), their
+   *  p90 at or under the entry limit. Records that p90 (a failed probe tightens from it). No readings, no Peak. */
+  private peakReady(now: number): boolean {
+    const s = this.gpuSince(Math.max(this.calm, now - GOV.upgradeHoldMs))
+    if (s.length < PEAK_GOV.minEntrySamples) return false
+    const p90 = s[Math.floor((s.length - 1) * 0.9)]
+    if (p90 > this.entryLimitMs()) return false
+    this.peakAdmit = p90
+    return true
+  }
+
+  /** Peak's GPU time is over its stay share: enough readings in the step-down window (since the last change or gap),
+   *  their median over the limit. */
+  private peakBusy(now: number): boolean {
+    const s = this.gpuSince(Math.max(this.since, now - WINDOW_MS))
+    return s.length >= PEAK_GOV.minStaySamples && s[Math.floor((s.length - 1) * 0.5)] > this.frameBudgetMs() * PEAK_GOV.stayShare
+  }
+
+  /** The Peak rule as the console shows it: the reading it judges (p90 of the entry window at Ultra, median of the stay
+   *  window at Peak, while wantsGpu; null otherwise or without enough readings), its limit, and whether Peak is off. */
+  private peakState(): { gpuMs: number | null; limitMs: number; off: boolean } {
+    const now = this.lastNow
+    const at = this.current === PEAK_TIER
+    const s = !this.wantsGpu ? null : at ? this.gpuSince(Math.max(this.since, now - WINDOW_MS)) : this.gpuSince(Math.max(this.calm, now - GOV.upgradeHoldMs))
+    const need = at ? PEAK_GOV.minStaySamples : PEAK_GOV.minEntrySamples
+    return {
+      gpuMs: s !== null && s.length >= need ? s[Math.floor((s.length - 1) * (at ? 0.5 : 0.9))] : null,
+      limitMs: at ? this.frameBudgetMs() * PEAK_GOV.stayShare : this.entryLimitMs(),
+      off: this.peakOff,
+    }
   }
 
   private report(): number | null {
@@ -761,6 +879,13 @@ export class Governor {
       this.step(now, -1)
       return
     }
+    // Peak's own rule: its GPU render time over the stay share through the step-down window (the camera hides it from
+    // the animation frames).
+    if (this.current === PEAK_TIER && this.cap === null && span >= GOV.degradeHoldMs && this.peakBusy(now)) {
+      this.why = 'gpu busy'
+      this.step(now, -1)
+      return
+    }
     if (now - this.calm < GOV.upgradeHoldMs || n5 < GOV.minUpgradeFrames) return
     if (this.pacerMs > 0 && this.presentsSince(now - GOV.upgradeHoldMs) < (GOV.upgradeHoldMs / this.pacerMs) * GOV.presentUp) return
     // Frames beating the assumed refresh: the display is faster than the start-up frames suggested.
@@ -772,7 +897,9 @@ export class Governor {
         return
       }
     }
-    if (this.current < this.ceiling() && now >= this.blockedUntil[slot(this.current + 1)] && !above(miss5, n5, 0.97)) {
+    const next = this.current + 1
+    if (this.current < this.ceiling() && now >= this.blockedUntil[slot(next)] && !above(miss5, n5, 0.97) &&
+      (next !== PEAK_TIER || this.peakReady(now))) {
       this.why = 'probe'
       this.step(now, 1)
     }
@@ -794,6 +921,12 @@ export class Governor {
         this.failedAt[i] = now
         const wait = Math.min(GOV.maxBackoffMs, GOV.backoffMs * 2 ** (this.fails[i] - (failed ? 0 : 1)))
         this.blockedUntil[i] = Math.max(this.blockedUntil[i], now + wait)
+        // Peak: a quick failure tightens the next entry from the reading that let it in, and the third remembered loss
+        // in a visit turns Peak off until the page reloads.
+        if (from === PEAK_TIER) {
+          if (failed) this.peakLimit = Math.min(this.peakLimit, PEAK_GOV.tighten * this.peakAdmit)
+          if (++this.peakLosses >= PEAK_GOV.maxLosses) this.peakOff = true
+        }
       }
       this.lastChange = 'down'
     } else this.lastChange = 'up'
