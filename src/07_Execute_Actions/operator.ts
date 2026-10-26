@@ -960,7 +960,7 @@ const SIM_DOCS: readonly ApiEntry[] = [
   { path: 'sim.clock.hours', signature: 'sim.clock.hours(): number', summary: 'Local solar time in hours, 0 to 24, minutes as a fraction.' },
   { path: 'sim.clock.set', signature: 'sim.clock.set(hours: number): void', summary: 'Set the city clock (wraps into 0 to 24).' },
   { path: 'sim.quality.state', signature: 'sim.quality.state(): QualityState', summary: 'Tier, label, auto flag, render scale and frame budget of the quality governor.' },
-  { path: 'sim.quality.set', signature: "sim.quality.set(tier: number | 'auto'): void", summary: 'Pin a tier -1 (Lite) to 4 (Ultra), or hand control back to the governor.' },
+  { path: 'sim.quality.set', signature: "sim.quality.set(tier: number | 'auto'): void", summary: 'Pin a tier -1 (Lite) to 5 (Peak), or hand control back to the governor.' },
   { path: 'sim.avatar.position', signature: 'sim.avatar.position(): { x, z, heading, feetY }', summary: 'Where the avatar stands, the way it faces (forward = sin heading, cos heading) and how high its feet are (0 on the ground).' },
   { path: 'sim.avatar.teleport', signature: 'sim.avatar.teleport(x: number, z: number, yaw?: number): void', summary: 'Move the avatar (it leaves a car first); yaw sets the head.' },
   { path: 'sim.avatar.interact', signature: 'sim.avatar.interact(): void', summary: 'Enter the nearest car, or leave the current one.' },

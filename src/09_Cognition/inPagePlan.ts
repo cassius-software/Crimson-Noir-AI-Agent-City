@@ -14,7 +14,7 @@
  * system would kill the tab, a desktop would never use its GPU or its cores, and the city would keep its full quality
  * while the model takes the same processor and GPU from it.
  */
-import { LITE_TIER, TIERS } from '../05_Observe_Environment/governor.ts'
+import { LITE_TIER, PEAK_TIER, TIERS } from '../05_Observe_Environment/governor.ts'
 import { ANSWER_TOKENS, CONTEXT_TOKENS } from './localCompute.ts'
 
 /** What the operator asked of the GPU (ask gpu): the profile decides, always, or never. */
@@ -83,7 +83,12 @@ const ROWS: Readonly<Record<Profile, Pick<Placement, 'ctx' | 'batch' | 'ubatch' 
  * share one chip and its memory), Minimal on a phone and Lite on the lite profile. A discrete GPU is capped at the top
  * tier, which caps nothing (the governor clamps a cap to the device's range) but still holds the city: the plan's "none
  * (failures not recorded)". A step down while the model has the GPU is then not remembered against the tier, and the
- * release returns the tier from before; a null here would release instead, and every such step would back off.
+ * release returns the tier from before; a null here would release instead, and every such step would back off. On a
+ * discrete Peak machine (governor.ts PEAK_TIER, above the table) the top of the table is Ultra, so a model on the GPU
+ * lowers Peak to Ultra, which hands it the half gigabyte Peak's shadows take; the release does not put Peak straight
+ * back (governor.ts hold: Ultra, then a quiet spell), so a conversation does not allocate it again at every answer. A
+ * model on that machine's processor never touches the card's memory: holdTier caps it at Peak instead. An Apple chip
+ * is integrated, so it is held at Low wherever the model runs, and its release from Peak returns Ultra the same way.
  */
 const HOLD: Readonly<Record<Profile, number>> = Object.freeze({ discrete: TIERS.length - 1, integrated: 1, phone: 0, lite: LITE_TIER })
 
@@ -208,10 +213,13 @@ export function fits(files: readonly FileSize[], env: PlanEnv, place: Placement)
 }
 
 /**
- * The tier cap while the model works (plan 3.4 "City cap while busy"), for governor.hold. Never null today: a discrete
- * GPU gets the top tier, a hold that lowers nothing (HOLD), because hold(null) is the release. `gpu` (where the model
- * runs) does not change the cap yet; it is here for the tuning on real devices (plan step 10).
+ * The tier cap while the model works (plan 3.4 "City cap while busy"), for governor.hold. Never null today, because
+ * hold(null) is the release. A discrete GPU gets the top of the table (Ultra), a hold that lowers nothing below Peak
+ * (HOLD). `gpu` is where the model runs: on a discrete card's processor path (no shader-f16, or `ask gpu off`) the
+ * model takes none of the card's memory, so the cap is Peak (PEAK_TIER), which lowers nothing on a Peak range; the
+ * governor clamps a cap into the device's range, so every other discrete desktop is still capped at Ultra, as before.
  */
-export function holdTier(env: Pick<PlanEnv, 'mobile' | 'lite' | 'gpuClass'>, _gpu: boolean): number | null {
-  return HOLD[profileOf(env)]
+export function holdTier(env: Pick<PlanEnv, 'mobile' | 'lite' | 'gpuClass'>, gpu: boolean): number | null {
+  const profile = profileOf(env)
+  return profile === 'discrete' && !gpu ? PEAK_TIER : HOLD[profile]
 }

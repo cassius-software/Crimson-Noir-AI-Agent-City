@@ -9,7 +9,8 @@
  * - desktop: the procedural city's six indoor workplaces handed to its crowd, keyboard walking, a mouse drag turning
  *   the head, a gamepad (a standard-mapping pad stood in for the real one) walking and turning, the Ring-0 console
  *   opened with the tilde key and answering, typing in it never moving the avatar, ghost view and rain mode toggled from
- *   their keys, and a car entered, driven and left;
+ *   their keys, and a car entered, driven and left; and the software adapter left as every device that is not a Peak
+ *   candidate is: its range stops at Ultra, three writes no GPU timestamps, and there is no Peak rule;
  * - phone: an iPhone's user agent, screen and touch (no mouse, no keyboard): the virtual stick walking, a drag on the
  *   right half turning the head, both thumbs at once, the Run and Ping buttons, and the menu that reaches what a
  *   keyboard reaches (the console, the clock, ghost view, rain mode, hiding the HUD), also with a thumb on the stick;
@@ -24,7 +25,19 @@
  *   isolation (the bridge's private-buffer path); the model in this page cannot run there (Chromium refuses the
  *   runtime's module worker on a page whose origin is opaque), so `ask file` opens no picker and keeps nothing, and
  *   the runtime row says why;
- * - ultra: the top tier pinned, so the shadowed, post and volumetric pipelines are compiled once and must validate;
+ * - ultra: the top tier of the table pinned, so the shadowed, post and volumetric pipelines are compiled once and must
+ *   validate; then Peak pinned above it for a few frames (the 8192 shadow map really allocated, the sun's box at ±160 m,
+ *   1.25 times the pixel ratio, detailed bodies to 90 m, the HUD reading Peak) and Ultra back after, with its map, box
+ *   and pixels; the Nix job runs this one too;
+ * - peak: a big desktop faked in full (16 threads, 8 GB, a WebGPU adapter reading 'nvidia / blackwell / NVIDIA GeForce
+ *   RTX 5090'), at ?fps=1 without the camera so only Peak's GPU rule can move the tier, with three's timing resolve
+ *   replaced, before the page's first frame, by one that counts and gives nothing. It starts on Ultra, never above,
+ *   with no GPU reading. Where SwiftShader's device has timestamp-query (recorded), the range reaches Peak, the engine
+ *   resolves timings for the governor on Ultra, auto keeps a pinned Peak, the in-page model's hold on the GPU brings it
+ *   down to Ultra and the release keeps Ultra, and GPU readings fed over the limit bring it down by itself (gpu busy)
+ *   with its map, box and pixels. Where it has none, the range stops at Ultra, nothing is resolved, and auto from a
+ *   pinned Peak lands on Ultra. SwiftShader still draws it: this proves the path from the profile to the GPU rule and
+ *   back, not a big card's speed;
  * - lite: the weakest phone the city serves, faked in full (an entry-level Android handset in Chrome: its user agent and
  *   client hints, 412 × 915 at a device pixel ratio of 2.625, touch, 4 GB, and a WebGPU adapter reading 'arm / bifrost'
  *   like a Mali-G52), loaded without the light load's crowd, cars and scale, so the device profile decides them: the
@@ -76,7 +89,7 @@
  * screenshot per scenario to --out (default: a temporary directory), and the console's transcript where a scenario
  * types in it, prints one row per check (and an `info` row for what is recorded, not asserted) and exits 1 if any
  * fails.
- * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,lite,tty,pwa,inpage,actions,lakefront,fail].
+ * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,actions,lakefront,fail].
  * Needs `npm run build`.
  * What breaks if it is removed? Nothing at runtime; the page loses its only end-to-end check in a browser, and with it
  * the proof that the city renders and that every control reaches the avatar.
@@ -198,6 +211,50 @@ const MALI_G52 = `(() => {
   }
   Object.defineProperty(Navigator.prototype, 'deviceMemory', { configurable: true, get: () => 4 })
 })()`
+
+/**
+ * The peak scenario's big desktop GPU, set before the page's scripts: WebGPU's adapter info (the adapter's and the
+ * device's copy) reads vendor 'nvidia', architecture 'blackwell' and description 'NVIDIA GeForce RTX 5090', as the
+ * NixOS launcher's Chromium names that card (tools/web/launch.mjs gives the page the adapter's full name), every other
+ * field the real adapter's; and navigator.deviceMemory reads 8. An init script reaches the page, not the physics
+ * worker, which reads no adapter info.
+ */
+const BIG_GPU = `(() => {
+  const fake = (real) => {
+    if (!real) return real
+    const out = {}
+    for (const k of Object.getOwnPropertyNames(Object.getPrototypeOf(real))) if (k !== 'constructor') out[k] = real[k]
+    return Object.assign(out, { vendor: 'nvidia', architecture: 'blackwell', description: 'NVIDIA GeForce RTX 5090' })
+  }
+  const wrap = (proto, key) => {
+    const d = Object.getOwnPropertyDescriptor(proto, key)
+    if (d && d.get) Object.defineProperty(proto, key, { configurable: true, get() { return fake(d.get.call(this)) } })
+  }
+  if (typeof GPUAdapter !== 'undefined') wrap(GPUAdapter.prototype, 'info')
+  if (typeof GPUDevice !== 'undefined') wrap(GPUDevice.prototype, 'adapterInfo')
+  Object.defineProperty(Navigator.prototype, 'deviceMemory', { configurable: true, get: () => 8 })
+})()`
+
+/**
+ * The peak scenario's timing resolve, put in place before the page's first frame: when App.tsx sets the debug handle
+ * (window.__SIM__, assigned before the frame loop starts), three's resolveTimestampsAsync on that renderer becomes one
+ * that counts its calls and gives nothing, so SwiftShader's own timings never reach the governor and every reading it
+ * judges is one the scenario feeds.
+ */
+const STUB_RESOLVE = `(() => { let sim; window.__smokeResolves = 0; window.__smokeStubbed = false
+  Object.defineProperty(window, '__SIM__', { configurable: true, get: () => sim, set(v) { sim = v
+    // A renderer not where it is expected must not break the boot: the scenario's first check reports it.
+    try {
+      v.engine.gpu.renderer.resolveTimestampsAsync = () => { window.__smokeResolves++; return Promise.resolve(undefined) }
+      window.__smokeStubbed = true
+    } catch { /* __smokeStubbed stays false */ } } }) })()`
+
+/** The tier as the governor, the snapshot, the sun's shadow, the canvas and the crowd cull show it (ultra, peak). */
+const PEAK_STATE = `(() => { const S = window.__SIM__, s = S.snapshot(), e = S.engine, g = e.quality.governor, sh = e.world.sun.shadow, c = sh.camera
+  return { tier: g.tier, label: s.quality.label, auto: s.quality.auto, held: s.quality.held ?? null, reason: g.reason, peak: s.quality.peak ?? null,
+    min: g.min, max: g.max, timestamps: e.gpu.timestamps, mapSize: sh.mapSize.x, mapWidth: sh.map ? sh.map.width : 0,
+    box: [c.left, c.right, c.top, c.bottom].join(','), ratio: e.gpu.renderer.getPixelRatio(), lod: e.quality.live.cull.lodDistance,
+    errors: S.errors().slice(0, 5) } })()`
 
 /** The in-page model's runtime, asked for the GPU, saying its worker found no adapter (ggml's WebGPU backend; echoed under ?debug). */
 const RUNTIME_NO_ADAPTER = /^\[\w+\] ggml_webgpu: Failed to get an adapter\b/
@@ -374,6 +431,17 @@ async function androidPhone(chrome) {
   await p.b.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 })
   await p.b.send('Emulation.setHardwareConcurrencyOverride', { hardwareConcurrency: 8 }).catch(() => {})
   await p.b.send('Page.addScriptToEvaluateOnNewDocument', { source: MALI_G52 })
+  return p
+}
+
+/**
+ * A browser faking the peak scenario's big desktop (BIG_GPU, 16 threads) before any page loads. The user agent stays
+ * the browser's own desktop one, with no touch, so the profile reads a desktop by the adapter alone.
+ */
+async function bigDesktop(chrome) {
+  const p = await open(chrome, { width: 640, height: 360 })
+  await p.b.send('Emulation.setHardwareConcurrencyOverride', { hardwareConcurrency: 16 }).catch(() => {})
+  await p.b.send('Page.addScriptToEvaluateOnNewDocument', { source: BIG_GPU })
   return p
 }
 
@@ -636,6 +704,9 @@ const SCENARIOS = {
       // The physics worker reports how many rooms its crowd was handed (SimMeta.rooms).
       const rooms = await p.eval('window.__SIM__.engine.sim.meta.rooms')
       check(rooms === 6, 'desktop: the city\'s six indoor workplaces reached the crowd', `${rooms} rooms`)
+      // Not a Peak candidate (a software adapter): every such device boots as it did before Peak.
+      const nc = await p.eval(PEAK_STATE)
+      check(nc.max === 4 && nc.timestamps === false && nc.peak === null, 'desktop: a device that is not a Peak candidate keeps the range Minimal..Ultra, no GPU timestamps and no Peak rule', `range ${nc.min}..${nc.max}, timestamps ${nc.timestamps}, peak ${JSON.stringify(nc.peak)}`)
 
       // Walk: W held (layout-independent code), the avatar moves.
       await p.mouse('mousePressed', 480, 270, 1)
@@ -1103,7 +1174,104 @@ const SCENARIOS = {
       const s = await p.snap()
       check(s.errors.length === 0, 'ultra: shadows, post and volumetrics compile and validate', s.errors.join(' | ').slice(0, 300))
       await p.shot('ultra')
+      // Peak pinned by hand for a few frames (any device may pin it): the 8192 shadow map really allocated, the sun's box at
+      // ±160 m, 1.25 times the pixel ratio and detailed bodies to 90 m, every pipeline still validating; Ultra back after.
+      // By now the concierge has greeted, its name field holding the keyboard: skipped, so the tilde reaches the page.
+      await p.eval(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Skip')?.click()`)
+      check(await p.openConsole(), 'ultra: the console opens')
+      await p.command('quality 5', /tier 5 Peak \(fixed\)/)
+      const map = await p.waitFor('window.__SIM__.engine.world.sun.shadow.map?.width === 8192', 60_000).then(() => true, () => false)
+      await p.frames(3)
+      const pk = await p.eval(PEAK_STATE)
+      check(map && pk.mapSize === 8192 && pk.box === '-160,160,160,-160' && Math.abs(pk.ratio - 0.625) < 1e-9 && pk.lod === 90 && pk.errors.length === 0,
+        'ultra: Peak pinned allocates the 8192 shadow map, widens the sun\'s box to 160 m, draws at 1.25 times the pixel ratio and validates', JSON.stringify(pk))
+      // The console cleared first (as command() waits for it), so the only Peak left on the page is the HUD's.
+      await p.enter('clear')
+      await p.waitFor(`(${CONSOLE_LOG}?.innerText ?? '').trim() === ''`, 10_000).catch(() => {})
+      check(await p.eval(`document.body.innerText.includes('Peak')`), 'ultra: the HUD shows Peak')
+      await p.shot('ultra-peak')
+      await p.command('quality 4', /tier 4 Ultra \(fixed\)/)
+      await p.frames(3)
+      const back = await p.eval(PEAK_STATE)
+      check(back.mapSize === 4096 && back.box === '-80,80,80,-80' && Math.abs(back.ratio - 0.5) < 1e-9 && back.lod === 45,
+        'ultra: Ultra again gives the map, the box and the pixel ratio back', JSON.stringify(back))
+      p.saveTranscript('ultra')
       p.health('ultra')
+    } finally { await p.b.close() }
+  },
+
+  async peak(chrome, origin) {
+    const p = await bigDesktop(chrome)
+    try {
+      // SwiftShader's own timings never reach the governor: three's resolve is replaced, before the first frame, by one
+      // that counts and gives none (STUB_RESOLVE).
+      await p.b.send('Page.addScriptToEvaluateOnNewDocument', { source: STUB_RESOLVE })
+      // ?fps=1: the governor holds a one-second frame, so SwiftShader's frames (outliers, counted at 250 ms) never read as
+      // slow and no animation-frame rule moves the tier; ?cinema=0 removes the camera's. Only Peak's GPU rule acts here.
+      await p.goto(`${origin}/?debug&onboarding=0&crowd=512&cars=8&scale=0.5&audio=0&cinema=0&fps=1`)
+      await p.booted()
+      const s = await p.eval(`(() => { const e = window.__SIM__.engine
+        return { gpu: window.__SIM__.snapshot().process.gpu, memory: navigator.deviceMemory, cores: navigator.hardwareConcurrency,
+          profile: e.profile, feature: e.gpu.device.features.has('timestamp-query'), stubbed: window.__smokeStubbed, state: ${PEAK_STATE} } })()`)
+      check(s.stubbed === true, 'peak: the timing resolve is replaced before the first frame')
+      check(s.gpu === 'nvidia / blackwell / NVIDIA GeForce RTX 5090' && s.memory === 8 && s.cores === 16, 'peak: the page sees the faked desktop (adapter, memory, threads)', `${s.gpu}, ${s.memory} GB, ${s.cores} threads`)
+      check(JSON.stringify(s.profile) === JSON.stringify({ mobile: false, gpuClass: 'discrete', startTier: 4, lite: false }), 'peak: it profiles as a discrete desktop starting on Ultra, never above', JSON.stringify(s.profile))
+      const st = s.state
+      check(st.tier === 4 && st.label === 'Ultra' && st.auto === true && st.reason === '', 'peak: the governor starts it on Ultra in auto', JSON.stringify(st))
+      check(st.timestamps === s.feature, 'peak: three writes GPU timestamps exactly where the device has timestamp-query', `timestamps ${st.timestamps}, feature ${s.feature}`)
+      info(`peak: SwiftShader's device ${s.feature ? 'has' : 'lacks'} timestamp-query`, s.feature ? 'the GPU rule is driven end to end' : 'the range stops at Ultra; the no-evidence path is checked')
+      // As in ultra: a first visit's concierge may hold the keyboard in its name field; skipped, the tilde reaches the page.
+      await p.eval(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Skip')?.click()`)
+      check(await p.openConsole(), 'peak: the console opens')
+      if (s.feature) {
+        check(st.max === 5 && st.peak !== null && st.peak.off === false && st.peak.gpuMs === null, 'peak: with GPU timings a Peak candidate\'s automatic range reaches Peak, and no reading has reached the governor yet', `range ${st.min}..${st.max}, ${JSON.stringify(st.peak)}`)
+        const read = await p.waitFor('window.__smokeResolves > 0', 30_000).then(() => true, () => false)
+        check(read, 'peak: on Ultra in auto the engine resolves the GPU\'s timings for the governor')
+        await p.command('quality 5', /tier 5 Peak \(fixed\)/)
+        const auto = await p.command('quality auto', /tier 5 Peak \(auto\)/)
+        check(!!auto, 'peak: auto keeps a pinned Peak on a range that reaches it', lastLine(auto))
+        const map = await p.waitFor('window.__SIM__.engine.world.sun.shadow.map?.width === 8192', 60_000).then(() => true, () => false)
+        const at = await p.eval(PEAK_STATE)
+        check(map && at.mapSize === 8192 && at.box === '-160,160,160,-160' && Math.abs(at.ratio - 0.625) < 1e-9 && at.lod === 90, 'peak: Peak allocates the 8192 shadow map, the ±160 m box, 1.25 times the pixel ratio and bodies to 90 m', JSON.stringify(at))
+        const held = await p.eval(`(() => { window.__SIM__.engine.holdQuality(4); return ${PEAK_STATE} })()`)
+        check(held.tier === 4 && held.reason === 'held' && held.held === 4 && held.mapSize === 4096 && held.box === '-80,80,80,-80' && Math.abs(held.ratio - 0.5) < 1e-9,
+          'peak: the in-page model\'s hold on the GPU brings Peak down to Ultra and gives the map, the box and the pixels back', JSON.stringify(held))
+        await p.eval('window.__SIM__.engine.holdQuality(null)')
+        await p.frames(10)
+        const released = await p.eval(PEAK_STATE)
+        check(released.tier === 4 && released.held === null && released.mapSize === 4096, 'peak: the release keeps Ultra: Peak is not allocated again at the end of an answer', JSON.stringify(released))
+        await p.command('quality 5', /tier 5 Peak \(fixed\)/)
+        await p.command('quality auto', /tier 5 Peak \(auto\)/)
+        await p.eval('window.__smokeFeed = setInterval(() => window.__SIM__.engine.quality.governor.gpuSample(15, performance.now()), 50)')
+        const down = await p.waitFor('window.__SIM__.engine.quality.governor.tier === 4', 60_000).then(() => true, () => false)
+        const after = await p.eval(PEAK_STATE)
+        check(down && after.reason === 'gpu busy' && after.mapSize === 4096 && after.box === '-80,80,80,-80' && Math.abs(after.ratio - 0.5) < 1e-9,
+          'peak: GPU readings over the limit bring Peak down to Ultra through the engine (gpu busy), with its map, box and pixels', JSON.stringify(after))
+        // The entry reading needs 24 readings since the calm stretch began, and on SwiftShader every new run of frames over
+        // 250 ms moves that start (governor.ts sample, GOV.outlierMs), so the line may print the fed 15.0 or not yet a
+        // reading. Either way the suffix is there with the untightened entry limit (a pinned-then-auto Peak is no failed
+        // probe).
+        const line = await p.command('quality', /tier 4 Ultra \(auto\) {2}scale 1\.00x {2}budget 1000\.0 ms {2}peak (?:15\.0|-)\/5\.0 ms/)
+        check(!!line, 'peak: the quality line shows the Peak rule against the entry limit', lastLine(line))
+        info('peak: the entry reading on the quality line', line && /peak 15\.0\//.test(line) ? 'the fed 15.0 ms' : 'not yet enough readings since the calm stretch began')
+        await p.eval('clearInterval(window.__smokeFeed)')
+      } else {
+        check(st.max === 4 && st.peak === null, 'peak: without GPU timings the range stops at Ultra and there is no Peak rule', `range ${st.min}..${st.max}`)
+        await p.eval('window.__smokeFeed = setInterval(() => window.__SIM__.engine.quality.governor.gpuSample(2, performance.now()), 50)')
+        await p.frames(30)
+        const still = await p.eval(`(() => ({ resolves: window.__smokeResolves, ...${PEAK_STATE} }))()`)
+        check(still.resolves === 0 && still.tier === 4, 'peak: nothing is resolved, and readings fed by hand move nothing', JSON.stringify(still))
+        await p.eval('clearInterval(window.__smokeFeed)')
+        await p.command('quality 5', /tier 5 Peak \(fixed\)/)
+        const auto = await p.command('quality auto', /tier 4 Ultra \(auto\)/)
+        check(!!auto, 'peak: auto from a pinned Peak lands on Ultra where no GPU timings judge it', lastLine(auto))
+        await p.frames(3)
+        const back = await p.eval(PEAK_STATE)
+        check(back.mapSize === 4096 && back.box === '-80,80,80,-80' && Math.abs(back.ratio - 0.5) < 1e-9, 'peak: Ultra again gives the map, the box and the pixels back', JSON.stringify(back))
+      }
+      await p.shot('peak')
+      p.saveTranscript('peak')
+      p.health('peak')
     } finally { await p.b.close() }
   },
 

@@ -2,8 +2,8 @@
 
 The quality governor (`src/05_Observe_Environment/governor.ts`) was driven through two device profiles for the Stable
 Beta: the minimum it must serve (a flagship phone) and the maximum (a console-class desktop). The tests are
-`governorPhone.test.ts` (19 tests) and `governorDesktop.test.ts` (15 tests), next to `governor.test.ts`. They run in
-`npm test`.
+`governorPhone.test.ts` (19 tests) and `governorDesktop.test.ts` (16 tests), next to `governor.test.ts`. Above the
+maximum, `governorPeak.test.ts` (20 tests) drives Peak, the tier above Ultra (section C). They run in `npm test`.
 
 ## How it was measured, and what it cannot show
 
@@ -16,6 +16,8 @@ boot, so the city (Track A) never draws a frame. The tests prove the governor's 
   target, the cinema camera's period unless `?cinema=0`, and `?quality` pinning a tier.
 - **The frames.** Synthetic animation-frame intervals stand in for the GPU. On the desktop they go through the engine's
   own `FramePacer`, which decides which frames the cinema camera draws and presents.
+- **Above Ultra.** `governorPeak.test.ts` drives the governor above Ultra on the same synthetic loop, with a GPU time
+  per drawn frame, fed back one reading at a time as the engine's single timing resolve does.
 
 Every number below is simulated time on those frames. A real device's frame costs will differ; what is proved is how
 the governor answers a given stream of frames.
@@ -76,10 +78,11 @@ Tauri shell.
 | memory | 8 (Chromium caps the report at 8) |
 | screen | 2560 × 1440 CSS pixels (4K at 150 %, or the 1440p monitor); 3840 × 2160 for 4K at 100 % |
 
-**Profile:** a desktop, starting on Ultra, range Minimal to Ultra, 14,000 pedestrians. The native shell profiles the
-same and reports `process.host: 'native'`. An AMD card the browser does not name starts on High: without the name it
-cannot be told from an integrated chip of the same architecture. The first probe takes it to Ultra 5.8 s after
-boot. 4K at 100 % scaling also starts one tier lower and climbs the same way.
+**Profile:** a desktop, starting on Ultra, range Minimal to Ultra (Peak joins it where the browser gives GPU timings:
+section C), 14,000 pedestrians. The native shell profiles the same and reports `process.host: 'native'`. An AMD card
+the browser does not name starts on High: without the name it cannot be told from an integrated chip of the same
+architecture. The first probe takes it to Ultra 5.8 s after boot. 4K at 100 % scaling also starts one tier lower and
+climbs the same way.
 
 | Scenario | Frames | Path |
 |---|---|---|
@@ -95,6 +98,41 @@ boot. 4K at 100 % scaling also starts one tier lower and climbs the same way.
 | `?fps=90` at 144 Hz | 180 s | Ultra → High 3.1 ("frames below target"); probes back fail at 23.2–27.0 s and 107.0–110.9 s with a growing back-off |
 | `?fps=90` under the camera | 180 s | Ultra holds: an explicit target overrides the camera's 60 FPS floor |
 | `?fps=90` on the 60 Hz panel | 60 s | walks to Minimal at 3.1, 6.8, 10.6, 14.5 s and stays: the target cannot be met and is held as given |
+
+## C. Above the maximum: Peak
+
+Peak is tier 5, above Ultra and outside the tier table, like Lite below it. It draws Ultra at 1.25 times the
+resolution on each side (about 1.56 times the pixels), the sun's shadows out to 160 m at the same sharpness (an
+8192² map, about 512 MB of graphics memory) and full-detail people out to 90 m.
+
+**The candidate.** The same machine as B, or an RTX 5090 (`nvidia / blackwell / NVIDIA GeForce RTX 5090`, 16 threads).
+The rule (`peakCandidate`): a discrete card of any make or an Apple computer's chip, 8 cores or more, and no report
+of less than 8 GB. The automatic range reaches Peak only where three really writes GPU timestamps (WebGPU's
+`timestamp-query`). Without them the range stops at Ultra, as in B.
+
+**Why the animation frames cannot decide.** Under the cinema camera a 3 ms and an 8 ms Ultra give the same animation
+frames, interval for interval (test 4): the camera draws 24 frames a second either way, and both fit. So the
+governor reads the GPU's own render time per drawn frame instead.
+
+**The rules.** A probe from Ultra needs a p90 of at most 5.0 ms over the 5 s window (30 % of a 60 FPS frame). At
+Peak, a median over 13.3 ms (80 %) through the step-down window steps down (`gpu busy`). The frame rate and camera
+rules still apply. Both limits are shares of the frame the governor holds, never longer than the 60 FPS floor, so
+`?fps` and a fast display without the camera tighten them and nothing loosens them.
+
+The paths the tests pin, by window (seconds from boot unless said):
+
+| Scenario | Path |
+|---|---|
+| A fast GPU, calm | Ultra → Peak (`probe`) at 5.5–7.5 s, then held for 10 minutes |
+| A misjudged probe | down (`gpu busy`) within 4 s of arriving; the next entry needs a quarter less, so it never comes back at that load |
+| Heat from 100 s to 160 s | down (`gpu busy`) at 100–103 s, back (`probe`) at 160–170 s, 0–10 s after the load ends |
+| Three losses in a visit | Peak off until the page reloads; `setAuto` after a manual Peak lands on Ultra |
+| The in-page model's hold, on the GPU | Peak down to Ultra; the release keeps Ultra, and Peak returns after a quiet 40, 80, 160 and 300 s |
+| The in-page model's hold, on the processor | Peak kept through three answers, none a loss or a quiet time; begun at Ultra, no Peak until 5–7.5 s after the release |
+
+**Section B unaffected.** B's paths are the governor without GPU timings. Peak moves none of them, which
+`governorDesktop.test.ts` checks against `desktop.csv`: every row's scenario, second and tier are what the governor
+walks today.
 
 ## Defects the profiles found, all fixed in `governor.ts`
 

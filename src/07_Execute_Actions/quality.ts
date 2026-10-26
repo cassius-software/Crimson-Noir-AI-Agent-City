@@ -6,6 +6,10 @@
  * only through mechanisms three r186's WebGPU renderer absorbs without rebuilding pipelines:
  * - Render scale: renderer.setPixelRatio() resizes the canvas drawing buffer only (CSS size untouched);
  *   the post pass, bloom and FXAA follow the drawing-buffer size each frame. Same path as a window resize.
+ * - Render scale above 1 (Peak): the same setPixelRatio, held so the drawing buffer's longer edge stays within the
+ *   device's largest 2D texture (pixelRatioFor); a window resize refits it (refitPixelRatio).
+ * - Sun shadow box (Peak): the shadow camera's left/right/top/bottom and its projection, which three's ShadowNode
+ *   computes only at setup, so applyShadowExtent recomputes it (a uniform; nothing recompiles).
  * - Shadow map size: ShadowNode.renderShadow() calls shadowMap.setSize(mapSize) before every shadow render,
  *   so a new mapSize reallocates the depth target on the next shadow pass; the PCF filter reads mapSize as
  *   a uniform and bind groups are rebuilt when the texture is replaced. No shader changes.
@@ -23,7 +27,7 @@
  *   the layout depends only on format and dimension, so nothing recompiles and nothing uploads (fbmTexture.ts).
  * - Post and crowd culling (the GPU density lottery and draw distance) are delegated to the engine
  *   (render path switch, compute uniform).
- * - Golden-hour volumetrics (Ultra only): a strength uniform the engine writes (volumetrics.ts). The ray
+ * - Golden-hour volumetrics (Ultra and Peak): a strength uniform the engine writes (volumetrics.ts). The ray
  *   loop in the post chain is gated by that uniform, so the shader is compiled once with the pipeline and a
  *   tier change flips one float: no recompile either way.
  * All of it is silent: no toast, no HUD notice; the terminal's `quality` command shows the tier.
@@ -45,10 +49,31 @@ export interface QualityTargets {
   setVolumetrics(on: boolean): void
   /** Procedural (FBM) texture resolution, texels per edge: World.setTextureSize. */
   setTextureSize(size: number): void
+  /** The drawing buffer's limit: its longer edge stays within maxEdge texels (the device's maxTextureDimension2D) for a
+   *  canvas cssEdge() CSS pixels on its longer side. Absent: no limit (the tests' mock). */
+  fit?: { maxEdge: number; cssEdge(): number }
 }
 
 /** Shadow map edge while shadows are parked. */
 export const PARKED_SHADOW_MAP = 16
+
+/** Half-width of the sun's shadow box below Peak, m: the box world.ts builds (peakWiring.test.ts pins the two together). */
+export const SHADOW_EXTENT = 80
+
+/** Pure. The pixel ratio for a render scale, lowered only as far as keeps the drawing buffer's longer edge within maxEdge
+ *  texels (WebGPU's default 8192 here: the device asks no limits). A cssEdge under 1 reads as 1. */
+export function pixelRatioFor(base: number, scale: number, cssEdge: number, maxEdge = Infinity): number {
+  return Math.min(base * scale, maxEdge / Math.max(1, cssEdge))
+}
+const ratioOf = (k: QualityKnobs, t: QualityTargets): number => pixelRatioFor(t.basePixelRatio, k.renderScale, t.fit?.cssEdge() ?? 1, t.fit?.maxEdge)
+const extentOf = (k: QualityKnobs): number => k.shadowExtent ?? SHADOW_EXTENT
+
+/** After a resize (engine.ts resize): the ratio again for the canvas's new size, set only when it moved (the limit
+ *  engaged or let go). */
+export function refitPixelRatio(k: QualityKnobs, t: QualityTargets): void {
+  const r = ratioOf(k, t)
+  if (t.renderer.getPixelRatio() !== r) t.renderer.setPixelRatio(r)
+}
 
 /** Shadow intensity before parking, restored on the way back (1 unless someone tuned it). */
 const parkedIntensity = new WeakMap<object, number>()
@@ -56,9 +81,10 @@ const parkedIntensity = new WeakMap<object, number>()
 /** Call once without `prev` before the scene is first compiled, then with the previously applied knobs
  *  on every change. Only fields that differ from `prev` are applied. */
 export function applyQuality(k: QualityKnobs, t: QualityTargets, prev?: QualityKnobs): void {
-  if (!prev || prev.renderScale !== k.renderScale) t.renderer.setPixelRatio(t.basePixelRatio * k.renderScale)
+  if (!prev || prev.renderScale !== k.renderScale) t.renderer.setPixelRatio(ratioOf(k, t))
   if (!prev) t.renderer.shadowMap.enabled = k.shadows
   if (!prev || prev.shadows !== k.shadows || (k.shadows && prev.shadowMapSize !== k.shadowMapSize)) applyShadows(k, t)
+  if (!prev || extentOf(prev) !== extentOf(k)) applyShadowExtent(t.sun, extentOf(k))
   if (!prev || prev.post !== k.post) t.setPost(k.post)
   // The shafts live in the post chain: a post cap (?post=0) folded into the knobs keeps them off too.
   const rays = k.volumetrics && k.post
@@ -94,4 +120,14 @@ function applyShadows(k: QualityKnobs, t: QualityTargets): void {
     shadow.mapSize.set(PARKED_SHADOW_MAP, PARKED_SHADOW_MAP)
     shadow.needsUpdate = true
   }
+}
+
+/** The sun's shadow box at ±extent m. Nothing when it already is (so a first application below Peak touches nothing).
+ *  three computes a shadow camera's projection at setup only (ShadowNode), so it is recomputed here; the sun follow
+ *  (world.ts) reads the texel from the live box. */
+function applyShadowExtent(sun: DirectionalLight, extent: number): void {
+  const c = sun.shadow.camera
+  if (c.left === -extent && c.right === extent && c.top === extent && c.bottom === -extent) return
+  c.left = -extent; c.right = extent; c.top = extent; c.bottom = -extent
+  c.updateProjectionMatrix()
 }

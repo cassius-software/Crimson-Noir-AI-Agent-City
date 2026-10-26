@@ -596,7 +596,7 @@ test('help lists every command with usage, in two groups; help <cmd> explains on
     assert.match(all, new RegExp(`^  ${name}\\b`, 'm'), `help is missing ${name}`)
   }
   assert.match(all, /stats \[--once\]/)
-  assert.match(all, /quality \[auto\|lite\|-1\|0-4\]/)
+  assert.match(all, /quality \[auto\|lite\|peak\|-1\|0-5\]/)
   assert.match(all, /time \[HH\[:MM\]\]/)
   assert.match(all, /audio \[on\|off\|0-100\]/)
   assert.match(all, /hal \[pair hid\|serial\|ble\]/)
@@ -672,6 +672,38 @@ test('formatStats on a lite profile: tier -1 reads Lite, and the line says the p
   assert.ok(!formatStats(sampleStats()).some((l) => l.includes('lite')))
 })
 
+test('formatQuality: on a Peak range, in auto at Ultra or Peak, the GPU reading against its limit or peak off; nothing on a manual tier; every row 80 columns or less', () => {
+  const base: QualityState = { tier: 4, label: 'Ultra', auto: true, renderScale: 1, targetMs: 16.7 }
+  const reading = { gpuMs: 3.14, limitMs: 5, off: false }
+  const cases: Array<[QualityState, (line: string) => void]> = [
+    [{ ...base, peak: reading }, (l) => assert.equal(l, 'tier 4 Ultra (auto)  scale 1.00x  budget 16.7 ms  peak 3.1/5.0 ms')],
+    [{ ...base, peak: { ...reading, gpuMs: null } }, (l) => assert.equal(l, 'tier 4 Ultra (auto)  scale 1.00x  budget 16.7 ms  peak -/5.0 ms')],
+    [{ ...base, peak: { ...reading, off: true } }, (l) => assert.ok(l.endsWith('  peak off') && !l.includes(' ms  peak 3'), l)],
+    [{ ...base, tier: 5, label: 'Peak', renderScale: 1.25, peak: { gpuMs: 6.8, limitMs: 13.33, off: false } }, (l) => assert.ok(l.startsWith('tier 5 Peak (auto)  scale 1.25x') && l.endsWith('  peak 6.8/13.3 ms'), l)],
+    // A manual tier says nothing of the rule, even on a Peak range: on the widest row there (budget 1000.0 ms) the
+    // widest reading would take the stats row to 82 columns.
+    [{ ...base, tier: 0, label: 'Minimal', auto: false, targetMs: 1000, renderScale: 0.65, peak: { gpuMs: 5000, limitMs: 5, off: false } }, (l) => assert.equal(l, 'tier 0 Minimal (fixed)  scale 0.65x  budget 1000.0 ms')],
+    [{ ...base, auto: false, peak: reading }, (l) => assert.doesNotMatch(l, /peak/)],
+    [{ ...base, tier: 5, label: 'Peak', auto: false, renderScale: 1.25, peak: { ...reading, off: true } }, (l) => assert.doesNotMatch(l, /peak/)],
+    // In auto below Ultra the rule has nothing to judge.
+    [{ ...base, tier: 3, label: 'High', peak: reading }, (l) => assert.doesNotMatch(l, /peak/)],
+    // A reading that is not a frame is capped so the row keeps its width.
+    [{ ...base, targetMs: 1000, peak: { gpuMs: 5000, limitMs: 5, off: false } }, (l) => assert.ok(l.endsWith('  peak 999.9/5.0 ms'), l)],
+    // No Peak range: the line is as it always was.
+    [base, (l) => assert.equal(l, 'tier 4 Ultra (auto)  scale 1.00x  budget 16.7 ms')],
+  ]
+  for (const [quality, check] of cases) {
+    const lines = formatStats({ ...sampleStats(), quality })
+    const row = lines.find((l) => l.startsWith('quality   '))
+    assert.ok(row !== undefined, lines.join('\n'))
+    for (const l of lines) {
+      assert.ok(l.length <= 80, `line too wide (${l.length}): ${l}`)
+      assert.match(l, /^[\x20-\x7e]*$/, `non-ASCII in: ${l}`)
+    }
+    check(row.slice(10))
+  }
+})
+
 test('formatStats and sim add the cinema camera row after the frame row: presented rate, shutter, ND, cuts (none without it)', () => {
   const s = { ...sampleStats(), camera: { fps: 24, shutterS: 1 / 48, ndStops: -Math.log2(0.56), cuts: 3 } }
   const lines = formatStats(s)
@@ -745,9 +777,12 @@ test('quality: show, auto, a fixed tier; invalid tiers never reach the bridge', 
   // Lite, below Minimal: by its number or its name.
   assert.match(only(run('quality -1', b, [])).text, /^tier -1 /)
   assert.match(only(run('quality lite', b, [])).text, /^tier -1 /)
-  assert.deepEqual(b.calls, ['quality undefined', 'quality 2', 'quality auto', 'quality 0', 'quality 4', 'quality -1', 'quality -1'])
+  // Peak, above Ultra: by its number or its name.
+  assert.match(only(run('quality 5', b, [])).text, /^tier 5 /)
+  assert.match(only(run('quality peak', b, [])).text, /^tier 5 /)
+  assert.deepEqual(b.calls, ['quality undefined', 'quality 2', 'quality auto', 'quality 0', 'quality 4', 'quality -1', 'quality -1', 'quality 5', 'quality 5'])
   b.calls.length = 0
-  for (const bad of ['5', '-2', '-0', '1.5', '02', 'max', 'Lite', '3 4', '']) {
+  for (const bad of ['6', '-2', '-0', '1.5', '02', 'max', 'Lite', 'Peak', 'peak 5', '3 4', '']) {
     const r = run(bad ? `quality ${bad}` : 'quality ""', b, [])
     assert.ok(isErr(r), `quality ${bad} should fail`)
   }
@@ -1493,6 +1528,7 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.deepEqual(complete('quality a'), ['quality auto'])
   assert.deepEqual(complete('quality l'), ['quality lite'])
   assert.deepEqual(complete('quality -'), ['quality -1'])
+  assert.deepEqual(complete('quality p'), ['quality peak'])
   assert.deepEqual(complete('audio o'), ['audio off', 'audio on'])
   assert.deepEqual(complete('stats -'), ['stats --once'])
   assert.deepEqual(complete('help hi'), ['help history'])

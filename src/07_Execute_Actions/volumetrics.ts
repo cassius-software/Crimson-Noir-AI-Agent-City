@@ -19,7 +19,7 @@ import {
 } from 'three/tsl'
 
 export interface Volumetrics {
-  /** The quality tier's knob: 1 on Ultra, 0 elsewhere (an operator may scale it). Gates the tap loop. */
+  /** The quality tier's knob: 1 on Ultra and Peak, 0 elsewhere (an operator may scale it). Gates the tap loop. */
   strength: UniformNode<'float', number>
   /** The sun's screen position in three's UV convention (0..1, y up), meaningful only while visibility > 0. */
   sunUv: UniformNode<'vec2', Vector2>

@@ -140,7 +140,8 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 
 | Option | Meaning |
 |---|---|
-| `?quality=auto` (default) | The quality governor picks the tier; `?quality=0`…`4` pins one: Minimal, Low, Medium, High, Ultra; `?quality=-1` or `?quality=lite` pins Lite, below Minimal (see Autoscaling) |
+| `?quality=auto` (default) | The quality governor picks the tier; `?quality=0`…`4` pins one: Minimal, Low, Medium, High, Ultra; `?quality=-1` or `?quality=lite` pins Lite, below Minimal (see Autoscaling); `?quality=5` or `?quality=peak` pins Peak, above Ultra |
+| `?peak=1`, `?peak=0` | `?peak=1` lets the governor try Peak on this computer even when it would not pick it by itself (it still needs the GPU's own timings); `?peak=0` keeps Peak away. Phones and the lite profile never try it (see Autoscaling) |
 | `?fps=60` | Frame-rate target (default: estimated from the display, held within 60–90) |
 | `?crowd=14000` | Pedestrians, from 256 to 60,000 (default: 14,000 on a desktop GPU, 8,000 on a phone, 5,000 on the weakest devices, 2,500 on a lite profile) |
 | `?cars=36` | Cars, at most 48 (default: 36, or 12 on a lite profile) |
@@ -719,7 +720,7 @@ while you type.
   drawn agents (near, far, total); fps, frame time, p95, CPU and GPU time; quality tier; kernel
   counters. `stats --once` prints a single frame.
 - The core commands, as `help` prints them: `help [command]`, `stats [--once]`, `laws`, `kernel`,
-  `quality [auto|lite|-1|0-4]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `render [on|off]`,
+  `quality [auto|lite|peak|-1|0-5]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `render [on|off]`,
   `captions [on|off]`, `ping [go|look|gather|wait|clear]`,
   `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
   `recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]`, `memory [<agent>|forget <agent>|forget all]`,
@@ -869,6 +870,8 @@ unlocked:
   | `cars` (car, traffic, vehicles) | park, drive | `park every car`, `let every car drive` | every car but the one you drive, 64 at most, parked or handed back to its driver; `8 cars parked` |
   | `crowd` (people, pedestrians) | 0 to 100, or none, fewer, half, more, full | `set the crowd to 50%` | the crowd's density, until the quality tier next changes; `the crowd is at 50% until the quality tier next changes` |
   | `sound` (audio, volume) | on, off, 0 to 100 | `turn the sound on`, `set the volume to 40%` | the sound, as `audio` sets it; `the sound is on`, `the volume is 40%` |
+
+  An agent cannot ask for Peak: `quality peak` is refused and `quality 5` becomes Ultra. Only you pin Peak.
 
   The console prints the proposal under the answer, `act 1: agent 17 (Design) proposes: set the clock to 22:00`
   (`Mara (agent 17, Design)` once hired) and `-- y allows it, n refuses it (act ok, act no); console closed: Y or N on
@@ -1350,7 +1353,7 @@ its own licence. The parts: `09_Cognition/inPage.ts` (the provider), `inPagePlan
 
   | Device | Runs on | Threads (on a cross-origin isolated page; else one) | Context | Longest answer | Loads with a warning above | Refused above | The city while it works |
   |---|---|---|---|---|---|---|---|
-  | Computer, discrete GPU | the GPU when the city's GPU device has shader-f16, else the processor | half the cores, at most 8 | 8,192 tokens | 2,048 tokens | 3 GB on the processor, 4 GB on the GPU | 3.75 GB on the processor; no limit on the GPU | its tier kept |
+  | Computer, discrete GPU | the GPU when the city's GPU device has shader-f16, else the processor | half the cores, at most 8 | 8,192 tokens | 2,048 tokens | 3 GB on the processor, 4 GB on the GPU | 3.75 GB on the processor; no limit on the GPU | its tier kept (Peak comes down to Ultra while the model is on the GPU) |
   | Computer, integrated or unknown GPU | the same | the same | 8,192 tokens | 2,048 tokens | the same | the same | Low at most |
   | Phone | the processor (`ask gpu on` for the GPU) | the cores less two, from 1 to 4 | 4,096 tokens | 512 tokens | 1 GB | 2 GB, or 40 % of the memory the browser reports (4 GB when it does not say), whichever is less | Minimal at most |
   | Lite profile (an entry-level phone GPU, or `?lite=1`) | the processor | 2 | 4,096 tokens | 512 tokens | 0.6 GB | 1.5 GB | Lite |
@@ -1413,10 +1416,15 @@ its own licence. The parts: `09_Cognition/inPage.ts` (the provider), `inPagePlan
 - **The city while it works.** While the model loads or answers, the city's automatic quality tier is held down
   (`governor.ts hold`, the last column above): at most Low on a computer whose GPU is integrated, Minimal on a phone
   and Lite on a lite profile, where the city and the model share one chip; a computer with a discrete GPU keeps its
-  tier. Under the hold a slow frame is not counted against a tier, and afterwards the tier from before comes back
-  with the usual cooldown. A tier you pinned with `quality` is left as it is. On a slow device, `render off` stops
-  drawing the city while the model works (the physics, the audio and the console keep running), and `render on`
-  brings it back.
+  tier. The one exception is Peak with the model on the GPU: Peak comes down to Ultra, which gives the model the half
+  gigabyte Peak's shadows take. An Apple chip at Peak comes down to Low like any integrated GPU, wherever the model
+  runs. Either way Peak does not come straight back when the model stops (that would take the memory again before the
+  next answer): the release returns Ultra, and the governor earns Peak again after a quiet spell of 40 seconds, longer
+  if the model keeps working, up to 5 minutes. On a discrete card, a model on the processor (a card without
+  shader-f16, or `ask gpu off`) uses none of the card's memory, so Peak stays. Under the hold a slow frame is not
+  counted against a tier, and afterwards a tier below Peak comes back as it was, with the usual cooldown. A tier you
+  pinned with `quality` is left as it is. On a slow device, `render off` stops drawing the city while the model works
+  (the physics, the audio and the console keep running), and `render on` brings it back.
 - **When it cannot answer**, one sentence says why:
   - this browser cannot run it, the page closed while it was loading a model last time, a load failed this visit, or
     the kept file has gone: the script stands in with the reason, and `auto` moves on;
@@ -1655,7 +1663,7 @@ Measured in headless Brave (AMD GCN-5 integrated GPU, 1280×720) against `?cinem
 
 ## Golden-hour volumetrics
 
-On the Ultra tier only, the post chain adds screen-space sun shafts: the scene's depth marks the sky,
+On the Ultra and Peak tiers, the post chain adds screen-space sun shafts: the scene's depth marks the sky,
 which is blurred radially toward the sun's screen position and added as in-scattered light before tone
 mapping. The effect is strongest with the sun 2–15° up, fades as the sun leaves the frame, and sits
 behind a uniform gate, so lower tiers pay nothing and a tier change never recompiles a pipeline. Stand on
@@ -1699,10 +1707,10 @@ are no toasts and no settings menu, and the console's `quality` command is the o
 - **Starting tier:** a device profile (adapter, touch, cores, memory) picks the starting tier. Phones start on Minimal
   or Low and are capped at Medium in auto mode; a lite profile (an entry-level phone GPU, below) starts on Lite and is
   capped at Minimal.
-- **Tiers:** there are six: Lite (tier -1, reached automatically only on a lite profile, or pinned by hand) and
-  Minimal to Ultra. They scale render resolution, shadows and shadow-map size, post-processing, and the crowd's LOD
-  distance, near radius, draw distance and **density**. Density is a stable per-agent hash, so the same people stay
-  visible.
+- **Tiers:** there are seven: Lite (tier -1, reached automatically only on a lite profile, or pinned by hand), Minimal
+  to Ultra, and Peak (tier 5, reached automatically only on a big GPU that reports its own timings, below, or pinned
+  by hand). They scale render resolution, shadows and shadow-map size, post-processing, and the crowd's LOD distance,
+  near radius, draw distance and **density**. Density is a stable per-agent hash, so the same people stay visible.
 - **Stepping down:** when FPS stays below 60 for more than 2 s (with 5 % vsync tolerance, so a clean
   60 Hz display never trips it), the governor steps down one tier. That thins the crowd's drawn
   InstancedMesh count and lowers the procedural texture resolution (256 → 192 → 128 → 64). Textures are
@@ -1711,15 +1719,20 @@ are no toasts and no settings menu, and the console's `quality` command is the o
   oscillates. Both render paths are compiled during the boot splash, so a later tier change never
   compiles a pipeline mid-game.
 - **Floor and ceiling:** in auto mode phones are capped at Medium and a lite profile at Minimal; the browser exposes
-  no thermal state, so frame time is the proxy. Ultra adds the volumetrics. Sloane's fixes for heat, battery or a slow
-  frame ("my phone is hot", "it's laggy") pin Low at most and never raise the tier: a device already below Low stays
-  where it is.
-- **While the model in this page works** (A model in this page), the governor is held under a cap (`hold()`): Low
-  on a computer whose GPU is integrated, Minimal on a phone, Lite on a lite profile, and nothing lower on a discrete
-  GPU. A tier above the cap drops to it at once, probes stop at it, and a step down under the hold is taken but not
-  remembered against the tier (the device is busy with the model, not too slow for the tier). The release returns
-  the tier from before with the usual cooldown. A manual tier is left alone; the snapshot's quality carries `held`
-  while the cap is on.
+  no thermal state, so frame time is the proxy. Ultra and Peak add the volumetrics. Sloane's fixes for heat, battery or
+  a slow frame ("my phone is hot", "it's laggy") pin Low at most and never raise the tier: a device already below Low
+  stays where it is. A slow frame named on Peak ("it lags on peak settings") pins Ultra at most from the console's
+  `goal`; in the card Sloane first asks whether the lag is steady: hitches hand the tier back to auto, and a steady lag
+  pins Low if you put a steady frame rate first (auto if you keep the detail).
+- **While the model in this page works** (A model in this page), the governor is held under a cap (`hold()`): Low on a
+  computer whose GPU is integrated, Minimal on a phone, Lite on a lite profile, and nothing lower on a discrete GPU,
+  except that Peak comes down to Ultra while the model is on the GPU; with the model on the processor of a discrete
+  card's computer Peak stays. An Apple chip at Peak comes down to Low like any integrated GPU. A tier above the cap
+  drops to it at once, probes stop at it (and never go into Peak under a hold), and a step down under the hold is
+  taken but not remembered against the tier (the device is busy with the model, not too slow for the tier). The
+  release returns the tier from before with the usual cooldown, except where the hold took Peak away: then it returns
+  Ultra, and Peak is earned back after a quiet spell. A manual tier is left alone; the snapshot's quality carries
+  `held` while the cap is on.
 - **Under the cinema camera:** the governor still reads every animation frame, so it keeps input and physics
   at the display's rate. Only 24 of those frames a second are drawn, so each drawn frame gets more GPU time, and
   the governor usually settles a tier or two higher than it does with `?cinema=0`. Two rules are specific to it:
@@ -1733,6 +1746,52 @@ are no toasts and no settings menu, and the console's `quality` command is the o
   a high-end GPU starts on Ultra with the full crowd. Stock Chrome, Edge and WebView2 report a GPU's vendor and
   architecture but not its name, so an AMD card starts on High there (it cannot be told from an integrated chip of
   its architecture) and the first probe takes it to Ultra about 6 s after boot.
+- **Peak, above Ultra.** Tier 5, outside the tier table like Lite, so every other tier number stays as it was.
+  - **What it adds.** Ultra drawn at 1.25 times the resolution on each side, about 1.56 times the pixels (smoother
+    edges), the sun's shadows reaching 160 m around you instead of 80 m at the same sharpness, and full-detail people
+    out to 90 m instead of 45. The shadow map takes about 512 MB of graphics memory instead of 128 MB, and the larger
+    picture about 45 MB more at 1080p (about 190 MB at 4K). Both are given back when the tier comes down. The picture
+    is never made larger than the graphics card's largest texture, which also keeps `?scale=2` working on a very wide
+    window at any tier.
+  - **Which computers try it by themselves.** Desktops and laptops with a separate graphics card of any make, or an
+    Apple computer's chip, with at least 8 cores and, where the browser says, at least 8 GB of memory. Phones and the
+    lite profile never do. It also needs a browser that gives the page the GPU's own timings (WebGPU timestamp
+    queries). Without them the governor stops at Ultra. Safari, for one, gives none.
+  - **How it decides.** Under the cinema camera the frame rate cannot show spare power, so the governor reads how long
+    the GPU spends drawing each frame. It tries Peak only after 5 s on Ultra in which nine frames in ten took at most
+    5 ms of the GPU (30 % of a 60 FPS frame; less when `?fps` or a fast display without the camera asks for more
+    frames). On Peak, half the frames taking more than 13.3 ms (80 %) for 2 s, or the frame rate or the camera falling
+    behind, bring it back to Ultra.
+  - **When it comes down.** After a quick failure, the next try needs a GPU time a quarter lower than the one that let
+    it in, and the usual wait applies (40 s, then longer). After the third time in a visit, Peak stays off until the
+    page is reloaded.
+  - **In the console.** In auto on Ultra or Peak, `quality` ends with the GPU time against the limit
+    (`peak 3.1/5.0 ms`) or `peak off`.
+  - **By hand.** `quality peak` or `quality 5` pins Peak on any computer. On one without a big GPU it can run out of
+    graphics memory, and a reload goes back to auto. With the Linux launcher, `crimson-noir-agent-city peak=1` (or
+    `nix run … -- peak=1`) adds `?peak=1`. A console-class AMD chip that reports itself as integrated graphics is not
+    picked by itself: give it `?peak=1`. In a browser, add `?peak=1` to the address.
+  - **Agents and Sloane.** Agents cannot ask for it, and no goal sets it. When a goal names Peak ("peak quality",
+    "beyond ultra", "can you turn on peak graphics?", "peak graphics and no traffic"), Sloane asks first: "Peak takes
+    a big graphics card and about half a gigabyte more of its memory. Set Peak, or keep to Ultra at most?" The rest of
+    the goal reads as it would without Peak, so "peak graphics and no traffic" still clears the roads. The console's
+    `goal`, which asks nothing, leaves the quality as it is; `quality peak` pins Peak there. "Best" and "max" still
+    mean Ultra. A no, a turn-down, another tier or a complaint about its cost in the goal ("i don't want peak
+    graphics", "turn off peak graphics", "ultra instead of peak graphics", "peak graphics is too heavy", "i prefer the
+    light to peak graphics", "cancel peak graphics") lowers the quality to Ultra at most without asking, and a lower
+    tier or auto named beside it stands ("peak graphics, medium please"). A heat or battery complaint ("hot on peak
+    graphics") gets that complaint's own fix. To her question, the Set Peak chip, or Peak by any of its names typed
+    with words like "please" or "yes" ("peak please", "yes, set peak", "beyond ultra", "peak, not ultra", "higher than
+    ultra"), sets Peak; Ultra at most, a no or a complaint gives Ultra at most; a lower tier or auto you name stands
+    ("medium", "auto"); anything else ("yes", "higher", "peak?", "is it worth it") leaves the quality as it is. "Peak"
+    in another sense ("sun at its peak, graphics on ultra") reads as it did before Peak. In the card, an answer to any
+    of her other questions that names Peak counts as it would in the goal, and with Peak set, a turn-down ("no peak",
+    "cancel peak", "turn down the graphics", "my card only has 4gb", and to a question about the picture "lower
+    please"; "changed my mind" right after Set Peak), a slow frame, heat or another tier named in any answer ("the
+    light, on ultra", or "reduce the quality" for Low) brings it down; "max graphics" keeps it.
+  - **Tried so far.** Only in headless Chromium on the software adapter: with a faked RTX 5090 (the browser smoke's
+    `peak` scenario), and pinned for a few frames in the `ultra` scenario, also in the Nix package's Chromium. Not
+    measured on a real big GPU.
 - **How many pedestrians.** Unless `?crowd` says, the profile decides at boot: 14,000 wherever it starts on
   Medium or above, 8,000 on a phone, 5,000 on the weakest GPUs and software rasterizers, and 2,500 on a lite profile.
   The simulation's size is fixed for the session (the GPU buffers are sized for it). The tiers then scale how many
@@ -2433,7 +2492,8 @@ x86-64 Ubuntu runner: `nix flake check` (the page built in the sandbox, the pack
 minimal NixOS system, its package evaluating once the page is allowed and refused while it is not), the Nix page
 compared byte for byte with `npm run build`, `crimson-noir-agent-city --check` (the packaged command's server serves
 the page and the city boots headless in the package's Chromium on the software adapter, cross-origin isolated, with no
-exception on the page), and the browser smoke's desktop and Ultra scenarios in that Chromium.
+exception on the page), and the browser smoke's desktop and Ultra scenarios in that Chromium (the Ultra one also pins
+Peak for a few frames).
 `src/desktopLauncher.test.ts` holds the address, the headers, the token, the one features list and the flake's shape.
 By hand, in a Linux container (Ubuntu 24.04, not NixOS) running as root, so with `--no-sandbox` and the software
 adapter's switches (`--use-vulkan=swiftshader --use-angle=swiftshader --use-gl=angle --enable-unsafe-swiftshader`)

@@ -146,7 +146,11 @@ function readTime(value: string): number | null {
   return h > 23 ? null : h + minutes
 }
 
-/** The quality tier a value names: `auto`, `lite`, a tier's label, or an integer clamped into Lite…Ultra. */
+/**
+ * The quality tier a value names: `auto`, `lite`, a tier's label, or an integer clamped into Lite…Ultra. Peak
+ * (governor.ts PEAK, above the table) is not an agent's to propose: its name is refused and 5 or more clamps to Ultra,
+ * so a chat line never commits the half gigabyte it takes; only the operator pins it.
+ */
 function readQuality(value: string): { tier: number | 'auto'; note?: string } | null {
   const s = value.toLowerCase().trim()
   if (s === 'auto') return { tier: 'auto' }

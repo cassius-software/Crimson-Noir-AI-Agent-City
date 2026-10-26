@@ -15,10 +15,10 @@ import { test } from 'node:test'
 import { Frustum, Matrix4, PerspectiveCamera, RepeatWrapping, Vector3 } from 'three/webgpu'
 import { vec2 } from 'three/tsl'
 import {
-  CARS_DEFAULT, CROWD_DEFAULT, Governor, LITE, LITE_TIER, TIERS, defaultAgents, defaultCars, knobsOf, degradeBudgetMs, estimateRefreshHz, nativeHost, profileDevice, readDeviceHints, tierRange, type DeviceHints,
+  CARS_DEFAULT, CROWD_DEFAULT, Governor, LITE, LITE_TIER, PEAK, PEAK_TIER, TIERS, defaultAgents, defaultCars, knobsOf, degradeBudgetMs, estimateRefreshHz, nativeHost, profileDevice, readDeviceHints, tierRange, type DeviceHints,
   type QualityKnobs,
 } from './governor.ts'
-import { PARKED_SHADOW_MAP, applyQuality, type QualityTargets } from '../07_Execute_Actions/quality.ts'
+import { PARKED_SHADOW_MAP, SHADOW_EXTENT, applyQuality, pixelRatioFor, refitPixelRatio, type QualityTargets } from '../07_Execute_Actions/quality.ts'
 import { FBM_SIZES, FbmSet, bakeFbm, downsampleRgba } from '../01_Initialize_World/fbmTexture.ts'
 import { CITY } from '../01_Initialize_World/city.ts'
 
@@ -124,6 +124,36 @@ test('tiers: Lite is tier -1, below Minimal and outside the table; knobsOf reads
   const cost = (k: QualityKnobs) => k.renderScale + Number(k.shadows) + Number(k.post) + Number(k.volumetrics) + k.crowdDensity + k.maxDistance / 1000 + k.shadowMapSize / 8192 + k.textureSize / 1024
   assert.ok(cost(LITE) < cost(min), 'Lite is strictly less work than Minimal')
   assert.ok(!new Set(TIERS.map((t) => t.label)).has(LITE.label))
+})
+
+test('tiers: Peak sits above the table like Lite', () => {
+  assert.ok(Object.isFrozen(PEAK))
+  assert.ok(!TIERS.includes(PEAK), 'no index of the table moves: TOP, ?quality=0…4 and every automatic range keep their meaning')
+  assert.ok(PEAK_TIER === TIERS.length && PEAK_TIER === 5)
+  assert.equal(knobsOf(5), PEAK)
+  assert.equal(knobsOf(9), PEAK)
+  assert.equal(knobsOf(4), TIERS[4])
+  assert.deepEqual(PEAK, {
+    label: 'Peak', renderScale: 1.25, shadows: true, shadowMapSize: 8192, shadowExtent: 160, post: true, volumetrics: true,
+    crowdDensity: 1, lodDistance: 90, nearRadius: 30, maxDistance: 700, textureSize: 256,
+  })
+  // The same rules as the table, one step further up.
+  const ultra = TIERS[4]
+  for (const k of ['renderScale', 'crowdDensity', 'lodDistance', 'nearRadius', 'maxDistance', 'textureSize', 'shadowMapSize'] as const) {
+    assert.ok(PEAK[k] >= ultra[k], `Peak.${k} >= Ultra.${k}`)
+  }
+  assert.ok(PEAK.shadows && PEAK.post && PEAK.volumetrics, 'nothing switches off going up')
+  const cost = (k: QualityKnobs) => k.renderScale + Number(k.shadows) + Number(k.post) + Number(k.volumetrics) + k.crowdDensity + k.maxDistance / 1000 + k.shadowMapSize / 8192 + k.textureSize / 1024
+  assert.ok(cost(PEAK) > cost(ultra), `Peak is strictly more work than Ultra (${cost(PEAK)} > ${cost(ultra)})`)
+  // Twice the box at twice the map edge: the same texel, so the PCF radius and the biases tuned on Ultra still hold.
+  assert.equal(PEAK.shadowMapSize / (2 * (PEAK.shadowExtent ?? Number.NaN)), ultra.shadowMapSize / (2 * SHADOW_EXTENT))
+  assert.ok(PEAK.shadowMapSize <= 8192, "within WebGPU's default maxTextureDimension2D: the device asks no limits")
+  assert.ok(FBM_SIZES.includes(PEAK.textureSize), `Peak texture size ${PEAK.textureSize} is baked at startup`)
+  assert.ok(PEAK.label.length <= 6, '"Peak Auto" fits the HUD column')
+  assert.ok(PEAK.nearRadius <= PEAK.lodDistance && PEAK.lodDistance < PEAK.maxDistance, 'Peak radii ordered')
+  // Only Peak sets the box: every other tier draws the one world.ts builds.
+  assert.ok(TIERS.every((t) => t.shadowExtent === undefined) && LITE.shadowExtent === undefined)
+  assert.ok(!new Set([...TIERS, LITE].map((t) => t.label)).has(PEAK.label))
 })
 
 /** Pedestrians drawn per the WGSL `cull` pass (crowd.wgsl): nobody at or beyond maxDistance; everyone
@@ -533,7 +563,8 @@ test('controls: auto off freezes the tier; setTier clamps and ignores NaN; knobs
   const c = new Clock(g).run(10, 60)
   assert.equal(c.changes.length, 0, 'auto off: overload changes nothing')
   g.setTier(9)
-  assert.equal(g.tier, 4)
+  assert.equal(g.tier, 5, 'clamped to Peak, the highest tier a manual choice reaches')
+  assert.equal(g.knobs(), PEAK)
   g.setTier(-2)
   assert.equal(g.tier, -1, 'clamped to Lite, the lowest tier a manual choice reaches')
   assert.equal(g.knobs(), LITE)
@@ -693,6 +724,11 @@ test('profile: tierRange keeps phones at Medium or below', () => {
   assert.deepEqual(tierRange({ mobile: false, gpuClass: 'discrete', startTier: 4, lite: false }), { min: 0, max: 4 })
   // A lite profile's range is Lite..Minimal: no tier that needs post or shadows, neither of which its boot compiles.
   assert.deepEqual(tierRange({ mobile: true, gpuClass: 'mobile', startTier: -1, lite: true }), { min: -1, max: 0 })
+  // A Peak range (a candidate whose three writes GPU timestamps) reaches Peak on a desktop alone: a phone still stops at
+  // Medium and a lite profile at Minimal.
+  assert.deepEqual(tierRange({ mobile: false, gpuClass: 'discrete', startTier: 4, lite: false }, true), { min: 0, max: 5 })
+  assert.deepEqual(tierRange({ mobile: true, gpuClass: 'mobile', startTier: 1, lite: false }, true), { min: 0, max: 2 })
+  assert.deepEqual(tierRange({ mobile: true, gpuClass: 'mobile', startTier: -1, lite: true }, true), { min: -1, max: 0 })
 })
 
 test('profile: readDeviceHints degrades to neutral values outside a browser', () => {
@@ -793,15 +829,18 @@ test('fbm: one bake, every tier size resident, swapped through one base node eve
 // ---------------------------------------------------------------------------------------------------
 // Quality applier (mock renderer: no WebGPU in Node)
 
-function mockTargets() {
+function mockTargets(fit?: { maxEdge: number; cssEdge(): number }) {
   const log: string[] = []
   let enabled = true
   let castShadow = true
   const mapSize = { x: 2048, y: 2048, set(x: number, y: number) { this.x = x; this.y = y; log.push(`mapSize ${x}`) } }
-  const shadow = { mapSize, intensity: 1, autoUpdate: true, needsUpdate: false }
+  // The box world.ts builds; a recomputed projection logs the box's half-width.
+  const camera = { left: -80, right: 80, top: 80, bottom: -80, updateProjectionMatrix() { log.push(`extent ${this.right}`) } }
+  const shadow = { mapSize, intensity: 1, autoUpdate: true, needsUpdate: false, camera }
   const renderer = {
     pixelRatio: 1,
     setPixelRatio(r: number) { this.pixelRatio = r; log.push(`pixelRatio ${r}`) },
+    getPixelRatio() { return this.pixelRatio },
     shadowMap: {
       get enabled() { return enabled },
       set enabled(v: boolean) { if (v !== enabled) log.push(`shadowMap.enabled ${v}`); enabled = v },
@@ -822,6 +861,7 @@ function mockTargets() {
     setPost: (on: boolean) => { post.push(on); log.push(`post ${on}`) },
     setVolumetrics: (on: boolean) => { volumetrics.push(on); log.push(`volumetrics ${on}`) },
     setTextureSize: (size: number) => { texture.push(size); log.push(`texture ${size}`) },
+    ...(fit && { fit }),
   }
   return { t: t as unknown as QualityTargets, renderer, shadow, sun, crowd, post, volumetrics, texture, log }
 }
@@ -919,6 +959,88 @@ test('applyQuality: a renderer that started without shadows compiles them once w
   applyQuality(TIERS[2], m.t, TIERS[1])
   assert.equal(m.log.filter((l) => l.startsWith('shadowMap.enabled')).length, 2, 'off at start, on once, never off again')
   assert.deepEqual(m.post, [false, true])
+})
+
+test('applyQuality: a first application below Peak leaves the sun\'s box alone', () => {
+  // No other applier test sees a first application's whole log (each clears it first, or asserts absences only).
+  const box = (m: ReturnType<typeof mockTargets>) => [m.shadow.camera.left, m.shadow.camera.right, m.shadow.camera.top, m.shadow.camera.bottom]
+  let ultra: ReturnType<typeof mockTargets> | null = null
+  for (const row of [LITE, ...TIERS]) {
+    const m = mockTargets()
+    applyQuality(row, m.t)
+    assert.ok(!m.log.some((l) => l.startsWith('extent')), `${row.label}: ${m.log.join(' | ')}`)
+    assert.deepEqual(box(m), [-SHADOW_EXTENT, SHADOW_EXTENT, SHADOW_EXTENT, -SHADOW_EXTENT], `${row.label}: the box world.ts builds`)
+    if (row === TIERS[4]) ultra = m
+  }
+  assert.ok(ultra)
+  applyQuality(TIERS[3], ultra.t, TIERS[4])
+  assert.ok(!ultra.log.some((l) => l.startsWith('extent')), 'a step below Peak never touches the box')
+})
+
+test('applyQuality: Ultra to Peak supersamples and widens the sun\'s box at the same texel; back puts it back', () => {
+  assert.equal(knobsOf(PEAK_TIER), PEAK, 'the knobs the governor hands the applier at Peak')
+  const m = mockTargets()
+  applyQuality(TIERS[4], m.t)
+  m.log.length = 0
+  applyQuality(PEAK, m.t, TIERS[4])
+  assert.deepEqual(m.log, ['pixelRatio 2.5', 'mapSize 8192', 'extent 160', 'crowd'], 'Peak differs from Ultra in pixels, shadow texels and box, and detailed bodies only')
+  m.log.length = 0
+  applyQuality(PEAK, m.t, PEAK)
+  assert.deepEqual(m.log, [])
+  applyQuality(TIERS[4], m.t, PEAK)
+  assert.deepEqual(m.log, ['pixelRatio 2', 'mapSize 4096', 'extent 80', 'crowd'], 'and back: the box and its projection with it')
+  assert.deepEqual([m.shadow.camera.left, m.shadow.camera.top, m.shadow.camera.bottom], [-80, 80, -80])
+
+  const first = mockTargets()
+  applyQuality(PEAK, first.t)
+  assert.equal(first.shadow.camera.right, 160)
+  assert.ok(first.log.includes('extent 160'), 'a boot pinned at Peak widens the box before the first frame')
+})
+
+test('applyQuality: Peak to Minimal by hand parks the shadows and the box is the knobs\' again', () => {
+  const m = mockTargets()
+  applyQuality(PEAK, m.t)
+  m.log.length = 0
+  applyQuality(TIERS[0], m.t, PEAK)
+  assert.ok(m.log.includes(`mapSize ${PARKED_SHADOW_MAP}`), m.log.join(' | '))
+  assert.ok(m.log.includes('extent 80'), 'a parked map keeps the box below Peak')
+  m.log.length = 0
+  applyQuality(TIERS[2], m.t, TIERS[0])
+  assert.ok(!m.log.some((l) => l.startsWith('extent')), m.log.join(' | '))
+})
+
+test('pixelRatioFor: the drawing buffer stays within the device\'s 2D texture limit', () => {
+  assert.equal(pixelRatioFor(1, 1.25, 2560, 8192), 1.25)
+  assert.equal(pixelRatioFor(2, 1, 5120, 8192), 1.6, '?scale=2 on a 5120-pixel canvas, cut today at any tier')
+  assert.equal(pixelRatioFor(1, 1.25, 7680, 8192), 8192 / 7680)
+  assert.equal(pixelRatioFor(1, 1, 0, 8192), 1, 'a canvas not laid out yet reads as one pixel')
+  assert.equal(pixelRatioFor(2, 1.25, 4000), 2.5, 'no limit')
+})
+
+test('refitPixelRatio: a resize sets the ratio only when the limit engages or lets go', () => {
+  let edge = 1920
+  const m = mockTargets({ maxEdge: 8192, cssEdge: () => edge })
+  applyQuality(TIERS[4], m.t)
+  m.log.length = 0
+  edge = 3000
+  refitPixelRatio(TIERS[4], m.t)
+  assert.deepEqual(m.log, [])
+  edge = 5000
+  refitPixelRatio(TIERS[4], m.t)
+  assert.deepEqual(m.log, ['pixelRatio 1.6384'])
+  m.log.length = 0
+  refitPixelRatio(TIERS[4], m.t)
+  assert.deepEqual(m.log, [])
+  edge = 1920
+  refitPixelRatio(TIERS[4], m.t)
+  assert.deepEqual(m.log, ['pixelRatio 2'])
+})
+
+test('applyQuality: Peak at ?scale=2 on a 3840-pixel canvas is cut to the 8192 limit', () => {
+  const m = mockTargets({ maxEdge: 8192, cssEdge: () => 3840 })
+  applyQuality(PEAK, m.t)
+  assert.ok(m.log.includes(`pixelRatio ${8192 / 3840}`), m.log.join(' | '))
+  assert.equal(m.renderer.pixelRatio, 8192 / 3840)
 })
 
 test('governor + applier: a sustained slowdown walks down tier by tier, culling crowd and textures each time', () => {
