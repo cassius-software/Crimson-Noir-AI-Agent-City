@@ -1748,10 +1748,11 @@ are no toasts and no settings menu, and the console's `quality` command is the o
   its architecture) and the first probe takes it to Ultra about 6 s after boot.
 - **Peak, above Ultra.** Tier 5, outside the tier table like Lite, so every other tier number stays as it was.
   - **What it adds.** Ultra drawn at 1.25 times the resolution on each side, about 1.56 times the pixels (smoother
-    edges), the sun's shadows reaching 160 m around you instead of 80 m at the same sharpness, and full-detail people out to 90 m instead of 45. The shadow map takes
-    about 512 MB of graphics memory instead of 128 MB, and the larger picture about 45 MB more at 1080p (about 190 MB
-    at 4K). Both are given back when the tier comes down. The picture is never made larger than the graphics card's
-    largest texture, which also keeps `?scale=2` working on a very wide window at any tier.
+    edges), the sun's shadows reaching 160 m around you instead of 80 m at the same sharpness, and full-detail people
+    out to 90 m instead of 45. The shadow map takes about 512 MB of graphics memory instead of 128 MB, and the larger
+    picture about 45 MB more at 1080p (about 190 MB at 4K). Both are given back when the tier comes down. The picture
+    is never made larger than the graphics card's largest texture, which also keeps `?scale=2` working on a very wide
+    window at any tier.
   - **Which computers try it by themselves.** Desktops and laptops with a separate graphics card of any make, or an
     Apple computer's chip, with at least 8 cores and, where the browser says, at least 8 GB of memory. Phones and the
     lite profile never do. It also needs a browser that gives the page the GPU's own timings (WebGPU timestamp
@@ -1770,23 +1771,23 @@ are no toasts and no settings menu, and the console's `quality` command is the o
     graphics memory, and a reload goes back to auto. With the Linux launcher, `crimson-noir-agent-city peak=1` (or
     `nix run … -- peak=1`) adds `?peak=1`. A console-class AMD chip that reports itself as integrated graphics is not
     picked by itself: give it `?peak=1`. In a browser, add `?peak=1` to the address.
-  - **Agents and Sloane.** Agents cannot ask for it. Sloane pins it only for a plain ask: you name it ("peak
-    quality", "beyond ultra") with nothing anywhere in the goal but words like "please", "turn on" or "i want" and the
-    other things you ask for ("peak graphics and no traffic", "can you turn on peak graphics?"). "Best" and "max" still
-    mean Ultra. A no, a turn-down, another tier or a complaint about its cost ("i don't want peak graphics", "turn off
-    peak graphics", "ultra instead of peak graphics", "peak graphics is too heavy") lowers the quality to Ultra at
-    most, and so does Peak passed over for something else ("i prefer the light to peak graphics") or a turn-down of
-    something else just before it ("turn off the music and peak graphics") unless Peak gets its own ask ("turn off the
-    music and turn on peak graphics"). A heat or battery complaint ("hot on peak graphics") gets that complaint's own
-    fix. Any other mention, a question with or without its mark, a keep or a remark ("is peak graphics worth it?",
-    "would you use peak graphics", "can i run peak graphics", "my pc can handle peak graphics", "don't turn off peak
-    graphics"), sets no tier: in the card Sloane asks "Set Peak, or keep to Ultra at most?", and the console's `goal`, which asks nothing,
-    leaves the quality as it is. To her question, the Set Peak chip or Peak typed with words like "please" or "yes"
-    ("peak please", "yes, set peak") sets Peak; Ultra at most, a no or a complaint gives Ultra at most; a lower tier or
-    auto you name stands ("medium", "auto"); anything else ("yes", "peak?") leaves the quality as it is. "Peak" in another sense ("sun at
-    its peak, graphics on ultra") reads as it did before Peak. In the card, an answer to any of her questions that
-    names Peak counts as it would in the goal, and with Peak set, a slow frame, heat or another tier named in any answer
-    ("the light, on ultra") brings it down.
+  - **Agents and Sloane.** Agents cannot ask for it, and no goal sets it. When a goal names Peak ("peak quality",
+    "beyond ultra", "can you turn on peak graphics?", "peak graphics and no traffic"), Sloane asks first: "Peak takes
+    a big graphics card and about half a gigabyte more of its memory. Set Peak, or keep to Ultra at most?" The rest of
+    the goal reads as it would without Peak, so "peak graphics and no traffic" still clears the roads. The console's
+    `goal`, which asks nothing, leaves the quality as it is; `quality peak` pins Peak there. "Best" and "max" still
+    mean Ultra. A no, a turn-down, another tier or a complaint about its cost in the goal ("i don't want peak
+    graphics", "turn off peak graphics", "ultra instead of peak graphics", "peak graphics is too heavy", "i prefer the
+    light to peak graphics") lowers the quality to Ultra at most without asking, and a lower tier or auto named beside
+    it stands ("peak graphics, medium please"). A heat or battery complaint ("hot on peak graphics") gets that
+    complaint's own fix. To her question, the Set Peak chip, or Peak by any of its names typed with words like
+    "please" or "yes" ("peak please", "yes, set peak", "beyond ultra"), sets Peak; Ultra at most, a no or a complaint
+    gives Ultra at most; a lower tier or auto you name stands ("medium", "auto"); anything else ("yes", "peak?", "is
+    it worth it") leaves the quality as it is. "Peak" in another sense ("sun at its peak, graphics on ultra") reads as
+    it did before Peak. In the card, an answer to any of her other questions that names Peak counts as it would in the
+    goal, and with Peak set, a turn-down ("no peak", "turn it down", "my card only has 4gb"), a slow frame, heat or
+    another tier named in any answer ("the light, on ultra", or "reduce the quality" for Low) brings it down; "max
+    graphics" keeps it.
   - **Tried so far.** Only in headless Chromium on the software adapter: with a faked RTX 5090 (the browser smoke's
     `peak` scenario), and pinned for a few frames in the `ultra` scenario, also in the Nix package's Chromium. Not
     measured on a real big GPU.
