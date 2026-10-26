@@ -1778,16 +1778,17 @@ are no toasts and no settings menu, and the console's `quality` command is the o
     `goal`, which asks nothing, leaves the quality as it is; `quality peak` pins Peak there. "Best" and "max" still
     mean Ultra. A no, a turn-down, another tier or a complaint about its cost in the goal ("i don't want peak
     graphics", "turn off peak graphics", "ultra instead of peak graphics", "peak graphics is too heavy", "i prefer the
-    light to peak graphics") lowers the quality to Ultra at most without asking, and a lower tier or auto named beside
-    it stands ("peak graphics, medium please"). A heat or battery complaint ("hot on peak graphics") gets that
-    complaint's own fix. To her question, the Set Peak chip, or Peak by any of its names typed with words like
-    "please" or "yes" ("peak please", "yes, set peak", "beyond ultra"), sets Peak; Ultra at most, a no or a complaint
-    gives Ultra at most; a lower tier or auto you name stands ("medium", "auto"); anything else ("yes", "peak?", "is
-    it worth it") leaves the quality as it is. "Peak" in another sense ("sun at its peak, graphics on ultra") reads as
-    it did before Peak. In the card, an answer to any of her other questions that names Peak counts as it would in the
-    goal, and with Peak set, a turn-down ("no peak", "turn it down", "my card only has 4gb"), a slow frame, heat or
-    another tier named in any answer ("the light, on ultra", or "reduce the quality" for Low) brings it down; "max
-    graphics" keeps it.
+    light to peak graphics", "cancel peak graphics") lowers the quality to Ultra at most without asking, and a lower
+    tier or auto named beside it stands ("peak graphics, medium please"). A heat or battery complaint ("hot on peak
+    graphics") gets that complaint's own fix. To her question, the Set Peak chip, or Peak by any of its names typed
+    with words like "please" or "yes" ("peak please", "yes, set peak", "beyond ultra", "peak, not ultra", "higher than
+    ultra"), sets Peak; Ultra at most, a no or a complaint gives Ultra at most; a lower tier or auto you name stands
+    ("medium", "auto"); anything else ("yes", "higher", "peak?", "is it worth it") leaves the quality as it is. "Peak"
+    in another sense ("sun at its peak, graphics on ultra") reads as it did before Peak. In the card, an answer to any
+    of her other questions that names Peak counts as it would in the goal, and with Peak set, a turn-down ("no peak",
+    "cancel peak", "turn down the graphics", "my card only has 4gb", and to a question about the picture "lower
+    please"; "changed my mind" right after Set Peak), a slow frame, heat or another tier named in any answer ("the
+    light, on ultra", or "reduce the quality" for Low) brings it down; "max graphics" keeps it.
   - **Tried so far.** Only in headless Chromium on the software adapter: with a faked RTX 5090 (the browser smoke's
     `peak` scenario), and pinned for a few frames in the `ultra` scenario, also in the Nix package's Chromium. Not
     measured on a real big GPU.

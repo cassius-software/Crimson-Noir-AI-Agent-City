@@ -517,7 +517,11 @@ test('a fix for heat or a slow frame is a ceiling on the tier, never a raise; a 
     'can i run peak graphics', 'you can keep peak graphics', 'mute peak graphics', 'не peak graphics', 'peak graphics 👎', "don't turn off peak graphics",
     "don't forget peak graphics", 'leave it on peak graphics', 'peak graphics makes my laptop loud', 'peak graphics too early', 'peak graphics with nobody around',
     'peak graphics up to you', 'from now on peak graphics', 'too quiet, peak graphics', 'me too peak graphics', 'leave peak graphics on, no matter what',
-    'peak graphics at the highest settings']) {
+    'peak graphics at the highest settings', 'peak graphics without any traffic', 'peak graphics, not too many people',
+    'peak graphics and turn the music down', 'peak graphics, not at night', 'nothing less than peak graphics', 'peak graphics, no compromises',
+    'turn it back up to peak graphics', 'max everything out with peak graphics', "i can't wait to see peak graphics", 'peak graphics instead of ultra',
+    'peak graphics, not ultra', 'i prefer peak graphics to ultra', "don't cancel peak graphics", 'lose the peak hours traffic and peak graphics',
+    'peak graphics, not too many people down there', 'peak graphics, without the traffic down by the water']) {
     assert.deepEqual(plan(goal), [], goal)
     // Her other questions take their first chip until she asks about Peak.
     const before: string[] = []
@@ -550,7 +554,11 @@ test('a fix for heat or a slow frame is a ceiling on the tier, never a raise; a 
     'nobody would use peak graphics', 'no one would use peak graphics', 'forget peak graphics', 'peak graphics is overkill',
     '~~peak graphics~~', '--peak graphics', '—peak graphics', '!=peak graphics', 'night,-peak graphics', '!(peak graphics)', 'golden hour -"peak graphics"',
     '=/= peak graphics', '<> peak graphics', 'i prefer the light to peak graphics', 'i prefer fewer people to peak graphics', 'the light over peak graphics',
-    'i prefer night then peak graphics', 'i prefer the light too peak graphics', 'i prefer the light to just peak graphics', 'no, not peak graphics, ultra']) {
+    'i prefer night then peak graphics', 'i prefer the light too peak graphics', 'i prefer the light to just peak graphics', 'no, not peak graphics, ultra',
+    'cancel peak graphics', 'lose the peak graphics', 'pass on peak graphics', 'peak graphics was a mistake', 'peak graphics is a waste',
+    'calm down the peak graphics', 'chill out with the peak graphics', 'without any traffic or peak graphics', 'get rid of the people or peak graphics',
+    'turn the music down and peak graphics too', 'switch the people off, peak graphics as well', 'peak graphics? no, at night', 'peak quality? no, golden hour',
+    "don't lose the music, no peak graphics", 'never lose the crowd, peak graphics off']) {
     assert.deepEqual(plan(goal), [[4, true]], goal)
     assert.equal(question(goal) === PEAK_QUESTION, false, goal)
   }
@@ -572,30 +580,37 @@ test('a fix for heat or a slow frame is a ceiling on the tier, never a raise; a 
   for (const a of ['peak please', 'Peak, thanks', 'set peak please', 'please set peak', 'yes peak', 'yes, set peak', 'set it to peak', 'turn on peak',
     'go with peak', 'peak mode', 'definitely peak', 'yes go for peak', 'go peak', 'yes!! set peak', 'can you set peak', 'peak graphics please',
     "i don't mind peak", '**peak**', 'peak ...', 'peak “please”', 'peak — please', 'keep peak', 'beyond ultra', 'beyond ultra please', 'set it above ultra',
-    'do it, peak please', 'may i have peak', 'the graphics on peak']) assert.deepEqual(plan('is peak graphics worth it', a), [[5, false]], a)
+    'do it, peak please', 'may i have peak', 'the graphics on peak', 'peak, not ultra', 'i prefer peak to ultra', 'peak instead of ultra', 'peak over ultra',
+    'higher than ultra', 'more than ultra', 'nothing less than peak']) assert.deepEqual(plan('is peak graphics worth it', a), [[5, false]], a)
   for (const a of ['!peak', '-peak', '¬peak', '~peak', 'not peak', 'no peak please', 'peak, no', 'no', 'ultra', 'not medium', 'yes but it lags',
     'loud on peak graphics', 'nobody set peak graphics', 'i prefer the light to peak', 'i prefer the light then peak', 'Ultra at most', 'smoother',
-    'not beyond ultra']) {
+    'not beyond ultra', 'cancel peak', 'pass on peak', 'nothing more than ultra', 'not peak, ultra', 'peak, not ultra, too heavy', 'lower']) {
     assert.deepEqual(plan('is peak graphics worth it', a), [[4, true]], a)
   }
   for (const a of ['peak?', 'set peak?', 'не peak', 'peak 👎', '❌ peak', 'peak is expensive', 'what does peak do', 'would you go with peak',
     'and would you go with peak', 'yes', 'peak -_-', '[ ] peak', 'night > peak', 'set peak to light', 'sharper detail', 'peak -.-', 'can i try peak',
-    'is peak good', 'max', 'highest']) {
+    'is peak good', 'max', 'highest', 'higher', 'the higher one', 'better than ultra?']) {
     assert.deepEqual(plan('is peak graphics worth it', a), [], a)
   }
   for (const [a, t] of [['medium', 2], ['medium please', 2], ['no, medium please', 2], ['medium is fine', 2], ['high, thanks', 3], ['nah, low', 1],
     ['lite', LITE_TIER], ['lite please', LITE_TIER], ['mid', 2], ['auto', 'auto'], ['auto please', 'auto'], ['no, auto', 'auto'], ['let it decide', 'auto'],
-    ['no peak just medium', 2]] as const) {
+    ['no peak just medium', 2], ['your call', 'auto'], ['up to you', 'auto']] as const) {
     assert.deepEqual(plan('is peak graphics worth it', a), [[t, false]], a)
   }
   assert.deepEqual(plan('my pc can handle peak graphics', 'my laptop is hot'), [[1, true]])
+  assert.deepEqual(plan('peak graphics, quiet', 'medium quality'), [[2, false]], 'a tier chosen before her question')
+  assert.notEqual(question('peak graphics, quiet', 'medium quality'), PEAK_QUESTION, 'so she does not offer Peak again')
   assert.equal(ask('my pc can handle peak graphics', 'yes').brief().root, 'You asked about Peak, the tier above Ultra.')
   assert.equal(question('my pc can handle peak graphics', 'yes'), null, 'no question about detail or light while Peak waits')
   // With Peak set, any later answer that turns it down, names another tier or tells of a slow frame or heat lowers it, to
   // the tier named or Ultra at most; anything else keeps it.
   for (const a of ['no peak', 'skip peak', 'forget peak', 'peak off', 'peak? no', 'peak is overkill', "i don't want peak graphics", 'the light, but not peak graphics',
     'my card only has 4gb', "my laptop can't take it", 'turn it down', 'lower it', 'too much', 'it lags', 'it runs badly', 'the light, on ultra', 'ultra is fine',
-    'Ultra at most', '!peak', 'i prefer the light over peak', 'turn the graphics down', 'turn it way down', 'overkill', 'only 4gb', 'not beyond ultra']) {
+    'Ultra at most', '!peak', 'i prefer the light over peak', 'turn the graphics down', 'turn it way down', 'overkill', 'only 4gb', 'not beyond ultra',
+    'turn down the graphics', 'reduce the graphics', 'downgrade the graphics', 'tone down the quality', 'decrease the quality', 'drop it a tier',
+    'lower please', 'go lower', 'lower', 'a notch lower', 'less detail', 'reduce it', 'drop it', 'too high', 'step down', 'use less memory', 'dial back the detail',
+    'changed my mind', 'misclicked', 'cancel peak', 'lose the peak graphics', 'unset peak', 'pass on peak', 'decline peak', 'scale back peak',
+    'second thoughts on peak', 'peak was a mistake', 'peak graphics is unnecessary', 'the light, but lower please', 'dial it back', 'scale the detail back']) {
     assert.deepEqual(plan('peak graphics', 'Set Peak', a), [[4, true]], a)
   }
   for (const [a, t] of [['the light, on high', 3], ['the light, medium', 2], ['medium is enough', 2], ['the light, let it decide', 'auto'],
@@ -605,12 +620,26 @@ test('a fix for heat or a slow frame is a ceiling on the tier, never a raise; a 
   for (const a of ['Sharper detail', 'The light', 'Both', 'whatever', 'the light, not the detail', 'the light, at high noon', 'detail, the old town',
     'detail please', 'the light instead', 'the sky, high up', 'my pc can handle it', 'peak graphics please', 'is peak graphics worth it', 'max', 'max graphics',
     'the light at its peak, no clouds', 'the light, not at peak hours', "the light, i'm not on a phone", 'from now on peak', 'highest',
-    'highest quality']) {
+    'highest quality', 'turn down the music', 'the light, and lower the music', 'no', 'not sure', 'peak, not ultra', 'higher than ultra',
+    "i can't wait for peak", 'bring them back', 'the lower deck', 'take me back to the harbour', 'the light, and step down to the water',
+    'the light, with the sun not too high', 'night, i changed my mind']) {
     assert.deepEqual(plan('peak graphics', 'Set Peak', a), [[5, false]], a)
   }
   assert.equal(ask('peak graphics', 'Set Peak', 'it lags').brief().root, 'You want the city to run smoother.')
+  // A turn-down that names nothing is the picture's only in answer to a question about the picture, and a take-back only
+  // right after Set Peak.
+  for (const [goal, a] of [['peak graphics and traffic', 'less'], ['peak graphics and people', 'less'], ['peak graphics and sound', 'lower'],
+    ['peak graphics and sound', 'on, but lower please'], ['peak graphics and sound', 'turn down that music'], ['peak graphics and traffic', 'reduce that traffic'],
+    ['peak graphics and traffic', 'reduce it'], ['peak graphics and music', 'cut it'], ['peak graphics and sound', 'too high'], ['peak graphics and sound', 'a notch down'],
+    ['peak graphics and traffic', 'less heavy traffic']] as const) assert.deepEqual(plan(goal, 'Set Peak', a), [[5, false]], `${goal} / ${a}`)
+  assert.deepEqual(plan('peak graphics at night', 'Set Peak', 'Fewer people', 'misclicked'), [[5, false]])
+  assert.deepEqual(plan('peak graphics at night', 'Set Peak', 'misclicked'), [[4, true]])
+  assert.deepEqual(plan('peak graphics', 'Set Peak', 'no second thoughts'), [[5, false]])
+  assert.deepEqual(plan('peak graphics', 'Set Peak', 'the light, and reduce that traffic'), [[5, false]])
+  assert.deepEqual(plan('peak graphics', 'Set Peak', 'Sharper detail', 'lower please'), [[4, true]], 'with no question left, the picture is what is left')
   // Whichever question it answers.
   assert.deepEqual(plan('peak graphics at night', 'Set Peak', 'the look, but no peak'), [[4, true]])
+  assert.deepEqual(plan('peak graphics at the harbour', 'Set Peak', 'The light', 'on foot, and turn down the graphics a bit'), [[4, true]])
   assert.deepEqual(plan('peak graphics and golden hour', 'Set Peak', 'the light, on ultra'), [[4, true]])
   assert.deepEqual(plan('peak graphics and golden hour', 'Set Peak', 'the light, at high noon'), [[5, false]], 'a tier word in another sense')
   assert.deepEqual(plan('peak graphics and fewer people', 'Set Peak', 'The light', 'the feel, and put it on ultra'), [[4, true]])
@@ -624,6 +653,12 @@ test('a fix for heat or a slow frame is a ceiling on the tier, never a raise; a 
   assert.deepEqual(plan('make it prettier', 'i prefer the light to peak graphics'), [[4, true]])
   assert.deepEqual(plan('make it prettier but my laptop gets hot', "i don't want peak graphics"), [[1, true]], 'a turn-down of Peak never raises a lower tier')
   assert.deepEqual(plan('my laptop gets hot', "i don't want peak graphics"), [[1, true]])
+  for (const a of ['low instead of peak graphics', 'set peak graphics to low', 'peak graphics? no, lower']) assert.deepEqual(plan('my laptop gets hot', a), [[1, true]], a)
+  assert.deepEqual(plan('quality auto', 'peak graphics? no, lower'), [['auto', false]])
+  assert.deepEqual(plan('quality auto', 'i want high quality, no peak graphics'), [[3, false]])
+  assert.deepEqual(plan('medium quality', 'low quality instead of peak graphics'), [[1, false]])
+  assert.deepEqual(plan('medium quality', 'i want auto quality, not peak graphics'), [['auto', false]])
+  assert.deepEqual(plan('my laptop gets hot', 'medium quality instead of peak graphics'), [[2, true]])
   assert.deepEqual(plan('quality auto', "i don't want peak graphics"), [['auto', false]])
   assert.deepEqual(plan('quality auto', 'ultra graphics, not peak graphics'), [[4, true]])
   assert.deepEqual(plan('my laptop gets hot', 'medium quality, not peak graphics'), [[2, true]])

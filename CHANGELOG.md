@@ -34,11 +34,11 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   console's `goal` asks nothing, so it leaves the tier. A no, a turn-down, another tier or a complaint in the goal ("i
   don't want peak graphics", "it lags on peak settings", "i prefer the light to peak graphics") means Ultra at most
   without asking, and a heat or battery complaint keeps its own fix. With Peak set, an answer to any of her questions
-  that turns it down, names another tier or tells of a slow frame brings it down. Her reading of text now takes ʼ and
-  ′ as an apostrophe everywhere, so "I canʼt hear anything" reads like "I can't hear anything". The browser smoke pins
-  Peak in its `ultra` scenario, which the Nix job also runs, and a new `peak` scenario drives the GPU rule on a faked
-  RTX 5090; Peak is not measured on a real big GPU. For three upgrades: the rule reads three's timestamp pool
-  (`resolveTimestampsAsync('render')`, kept only with `timestamp-query`).
+  that turns it down ("cancel peak", "turn down the graphics"), names another tier or tells of a slow frame brings it
+  down. Her reading of text now takes ʼ and ′ as an apostrophe everywhere, so "I canʼt hear anything" reads like "I
+  can't hear anything". The browser smoke pins Peak in its `ultra` scenario, which the Nix job also runs, and a new
+  `peak` scenario drives the GPU rule on a faked RTX 5090; Peak is not measured on a real big GPU. For three upgrades:
+  the rule reads three's timestamp pool (`resolveTimestampsAsync('render')`, kept only with `timestamp-query`).
 - **City actions, asked each time (ask, act).** An agent's answer may end with one ACTION line from a fixed catalogue
   (the clock, rain mode, the light dials, the quality tier, the cars, the crowd, the sound); the console and a card show
   who proposes what, in the city's own words, and nothing runs until you allow it (Y or N on the card, act ok or act no,
