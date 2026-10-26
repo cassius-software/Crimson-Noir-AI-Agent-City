@@ -247,7 +247,9 @@ async function harness(o: { models?: KeptModel[]; env?: Env; settings?: string |
     onPhase: (text) => phases.push(text),
     setTimer: c.setTimer, clearTimer: c.clearTimer, now: () => 1000,
     ...(o.timeouts && { timeouts: o.timeouts }),
-    ...(o.locks && { locks: o.locks }),
+    // No Web Locks unless the test hands in a fake, never the host's: Node 24 has navigator.locks, and a real lock held
+    // in this very process would put a lock name in every mark and keep the pages that "die" loading below alive.
+    locks: o.locks ?? null,
   })
   // The mind reads the kept files once as it starts.
   await flush()

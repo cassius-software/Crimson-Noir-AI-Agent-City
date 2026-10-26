@@ -28,6 +28,9 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url))
 // The sandbox module is plain JavaScript (tools/ carries no types); a computed specifier keeps the page's typecheck off it.
 const SANDBOX: string = '../tools/selfheal/sandbox.mjs'
 const { AI_TOOLING, EXCLUDE } = (await import(SANDBOX)) as { AI_TOOLING: readonly string[]; EXCLUDE: readonly string[] }
+/** readFileSync that waits out a file a Windows on-access scanner holds (tools/test/held.mjs): the walk below reads hundreds. */
+const HELD: string = '../tools/test/held.mjs'
+const { readHeld } = (await import(HELD)) as { readHeld(path: string, encoding: 'utf8'): string }
 const SKIP = new Set(['.git', 'node_modules', 'target', 'dist', 'dist-ssr', 'dist-pilot', ...AI_TOOLING])
 const CODE = /\.(?:[cm]?[jt]sx?)$/
 
@@ -43,7 +46,7 @@ function walk(dir: string, out: string[] = []): string[] {
 
 const FILES = walk(ROOT)
 // Generated wasm modules are base64 bytes; nothing in them is source.
-const SOURCES = FILES.filter((f) => CODE.test(f) && !f.endsWith('.wasm.ts')).map((f) => ({ f, text: readFileSync(join(ROOT, f), 'utf8') }))
+const SOURCES = FILES.filter((f) => CODE.test(f) && !f.endsWith('.wasm.ts')).map((f) => ({ f, text: readHeld(join(ROOT, f), 'utf8') }))
 /** The patterns below as written in this file; the scan skips it. */
 const SELF = relative(ROOT, fileURLToPath(import.meta.url)).split('\\').join('/')
 

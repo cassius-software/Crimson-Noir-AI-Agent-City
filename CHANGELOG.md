@@ -447,6 +447,19 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   pinned to the far plane under the reversed convention (three's SkyMesh pins itself to what becomes the near plane),
   and the crowd cull's frustum is cut with the camera's own coordinate system and depth convention. Unverified from
   the cloud: the look on a real GPU.
+- **`npm test` on Node 24 failed three tests of the in-page model's crash guard** (every mark carried a `lock` field
+  the tests did not expect): Node 24 ships `navigator.locks`, so the test harness, which named no Web Locks, picked up
+  the host's and held a real lock in the test's own process, where a page that "dies" loading cannot die. The harness
+  now has no Web Locks unless a test hands it a fake (the two-tab test does); the product is unchanged. CI runs Node
+  22, which has none, so it never saw this; a laptop run on Node 24 did.
+- **A Windows run from a fresh ZIP loses fewer tests to the on-access scanner.** The three tests that read the whole
+  tree (compliance, zero trust, air gap) now wait out a file the scanner holds again after the warm-up
+  (tools/test/held.mjs: the warm-up's own pause and retry, at the read, on Windows only), and the wllama pin test
+  copies the installed package into its temporary folder instead of linking it, since a directory symlink on Windows
+  needs a privilege most accounts lack. A test file the runner itself cannot open at import still fails that file
+  (one of a laptop run's seven failures); only a folder the scanner has seen, or one outside Downloads, avoids that.
+- **Two high npm audit findings**, both in build-time tools that never reach the page: vite 8.3.1 → 8.3.5 (with
+  rolldown 1.2.15 and postcss 8.5.31 under it) and source-map-js 1.2.1 → 1.2.2; the lockfile alone changes.
 
 ## [1.0.0-stable-beta] - 2026-10-12
 

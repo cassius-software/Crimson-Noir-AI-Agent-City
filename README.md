@@ -81,7 +81,9 @@ before the first run: a fresh download carries the mark of the web, and a scanne
 open fails `npm test` file by file with `EPERM: operation not permitted, open '…\src\…\x.ts'` while the runner's
 parallel processes import them at once (no test asserts anything in those failures). On Windows `npm test` first opens
 every file of the checkout one at a time, waiting out the scanner (tools/test/warm.mjs), and says when the folder is
-inside `Downloads`; a folder the scanner has already seen, or an exclusion for it, runs clean from the first try.
+inside `Downloads`; the tests that read the whole tree wait out a file held again during the run (tools/test/held.mjs),
+though a test file the runner itself cannot open still fails. A folder the scanner has already seen, or an exclusion
+for it, runs clean from the first try.
 Kani (the `kani` part of the proofs) runs on Linux and macOS only: `npm run verify` leaves it out on Windows and says
 so in its last line; use WSL for that part.
 

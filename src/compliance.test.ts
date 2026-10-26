@@ -21,6 +21,10 @@ import { glyph, type ControlAction, type GlyphFamily } from './07_Execute_Action
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const SELF = fileURLToPath(import.meta.url)
+// The scanner defence is plain JavaScript (tools/ carries no types); a computed specifier keeps the page's typecheck off it.
+const HELD: string = '../tools/test/held.mjs'
+/** readFileSync that waits out a file a Windows on-access scanner holds (tools/test/held.mjs): the walk below reads hundreds. */
+const { readHeld } = (await import(HELD)) as { readHeld(path: string, encoding: 'utf8'): string }
 
 /** What Nix leaves in a checkout, at any depth (tools/license/headers.mjs nixLeftover): `nix build`'s result links
  *  into the store (dangling once it is collected) and direnv's cache of the dev shell, which holds the whole of
@@ -94,7 +98,7 @@ function* files(dir: string): Generator<string> {
 test('no scrubbed brand name in the source, the tests, the build config, the HTML shell, the README or the shipped notice', () => {
   const shipped = readFileSync(join(ROOT, 'NOTICE.md'), 'utf8')
   const texts: [string, string][] = [
-    ...[...files(join(ROOT, 'src'))].filter((f) => f !== SELF).map((f) => [relative(ROOT, f), readFileSync(f, 'utf8')] as [string, string]),
+    ...[...files(join(ROOT, 'src'))].filter((f) => f !== SELF).map((f) => [relative(ROOT, f), readHeld(f, 'utf8')] as [string, string]),
     ['vite.config.ts', readFileSync(join(ROOT, 'vite.config.ts'), 'utf8')],
     ['index.html', readFileSync(join(ROOT, 'index.html'), 'utf8')],
     ['README.md', readFileSync(join(ROOT, 'README.md'), 'utf8')],

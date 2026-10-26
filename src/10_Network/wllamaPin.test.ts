@@ -16,7 +16,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -176,7 +176,9 @@ test('wllama-pack on a damaged gz: --check names it as a problem instead of thro
     mkdirSync(join(root, 'tools/native'), { recursive: true })
     copyFileSync(`${ROOT}tools/native/wllama-pack.mjs`, join(root, 'tools/native/wllama-pack.mjs'))
     mkdirSync(join(root, 'node_modules'))
-    symlinkSync(`${ROOT}node_modules/@wllama`, join(root, 'node_modules/@wllama'))
+    // A copy of the installed package (20 MB), not a link to it: a directory symlink on Windows needs a privilege most
+    // accounts lack, and fails with EPERM (a laptop run).
+    cpSync(`${ROOT}node_modules/@wllama`, join(root, 'node_modules/@wllama'), { recursive: true })
     mkdirSync(join(root, WLLAMA_PIN), { recursive: true })
     for (const f of ['IMPORTS', 'LICENCE', 'NOTICE', 'SHA256SUMS']) copyFileSync(`${ROOT}${WLLAMA_PIN}/${f}`, join(root, WLLAMA_PIN, f))
     const gz = join(root, WLLAMA_PIN, 'wllama.wasm.gz')
