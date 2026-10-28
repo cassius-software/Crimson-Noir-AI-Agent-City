@@ -1646,9 +1646,12 @@ const SCENARIOS = {
       const f0 = (await p.snap()).crowdFrames
       const advanced = await p.waitFor(`window.__SIM__.snapshot().process.crowdFrames > ${f0 + 2}`, 60_000).then(() => true, () => false)
       check(advanced, 'lakefront: the crowd simulation advances', `${f0} -> ${(await p.snap()).crowdFrames}`)
-      const shadow = await p.waitFor('window.__SIM__.engine.world.sun.shadow.map?.width > 0', 60_000).then(() => true, () => false)
+      // Medium's 1024 map, not the parked one a tier without shadows keeps: the sun's shadow pass has drawn the region, so
+      // every shadowed shader was built (health() below fails on any one three could not build).
+      const shadow = await p.waitFor(`(() => { const sh = window.__SIM__.engine.world.sun.shadow
+        return window.__SIM__.engine.world.sun.castShadow && sh.mapSize.x === 1024 && sh.map?.width === 1024 })()`, 60_000).then(() => true, () => false)
       await p.frames(3)
-      check(shadow, 'lakefront: at Medium the sun\'s shadow is drawn over the region (its map allocated)')
+      check(shadow, 'lakefront: at Medium the sun\'s shadow pass draws the region (its 1024 map allocated)')
       check(r.errors.length === 0, 'lakefront: the engine recorded no error', r.errors.join(' | ').slice(0, 300))
       await p.shot('lakefront')
       p.health('lakefront')
