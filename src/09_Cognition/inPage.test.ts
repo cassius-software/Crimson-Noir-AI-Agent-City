@@ -577,6 +577,36 @@ test('two tabs: a load running in one is not a crash to the other, which neither
   assert.equal(guard.getItem(GUARD_KEY), null)
 })
 
+test('a mind given no locks finds the page\'s navigator.locks, as the product does: its mark names a lock that page holds, let go with the mark', async () => {
+  // The harness above always names its locks (null or a fake), so the product's own discovery is pinned here, on a
+  // faked page navigator: the same on Node 22, which has no navigator.locks, and Node 24, which has.
+  const locks = webLocks()
+  const was = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, get: () => ({ locks: locks.tab(1) }) })
+  try {
+    const { r, runtime } = fakeRuntime()
+    const st = fakeStore([kept('tiny')])
+    const guard = memory()
+    const mind = createInPageMind({ runtime: () => runtime, store: st.store, kept: slice(JSON.stringify({ model: 'tiny', think: false, gpu: 'auto' })), env: () => CPU_DESKTOP, guard, now: () => 1000 })
+    await flush()
+    const gate = deferred<{ gpu: boolean; ms: number }>()
+    r.onLoad = () => gate.promise
+    const loading = mind.load()
+    await flush()
+    const mark = JSON.parse(guard.getItem(GUARD_KEY) ?? 'null') as { model: string; lock?: string }
+    assert.equal(mark.model, 'tiny')
+    assert.ok(typeof mark.lock === 'string' && locks.held.some((l) => l.name === mark.lock && l.tab === 1), 'the mark names a lock held through the page\'s navigator.locks')
+    gate.resolve({ gpu: false, ms: 5 })
+    await loading
+    assert.equal(guard.getItem(GUARD_KEY), null)
+    assert.equal(locks.held.length, 0, 'the lock went with the mark')
+    await mind.dispose()
+  } finally {
+    if (was) Object.defineProperty(globalThis, 'navigator', was)
+    else delete (globalThis as { navigator?: unknown }).navigator
+  }
+})
+
 test('a GPU load that fails is tried once on the processor, and the GPU is off for the visit', async () => {
   const h = await harness({ env: GPU_DESKTOP })
   h.r.onLoad = (c) => (c.o.gpu ? Promise.reject(new CognitionError('model', 'the GPU ran out of memory')) : Promise.resolve({ gpu: false, ms: 2000 }))
