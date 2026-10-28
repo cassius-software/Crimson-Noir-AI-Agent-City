@@ -73,7 +73,8 @@
  *   installed, the second load cross-origin isolated by the worker, a model file kept from the Menu on that second
  *   visit, and the city started from the phone's copy with the host gone, the kept model still answering;
  * - lakefront: the generated metropolis (?map=lakefront, built in the page's worker from the seed), whose crowd walks
- *   its street window with the six workplaces the page picked from the pack and the HUD counting who is at work;
+ *   its street window with the six workplaces the page picked from the pack and the HUD counting who is at work, at
+ *   Medium, the first tier with shadows, so the sun's shadow pass draws the region's buildings and its shaders build;
  * - fail: the ways out when the city cannot start or stops, each in its own browser: navigator.gpu taken away (the
  *   card before a first visit's onboarding, at desktop and phone size and in Firefox on Android with Open in Chrome
  *   first, Restart focused and taken by Enter, the pad's
@@ -403,6 +404,10 @@ class Page {
     check(gpuErrors.length === 0, `${name}: no WebGPU error or lost device`, gpuErrors.slice(0, 3).join(' | ').slice(0, 400))
     const cpuFlow = this.console.find((l) => /flow field is solved on the CPU/.test(l))
     check(!cpuFlow, `${name}: the crowd's flow field runs on the GPU`, cpuFlow?.slice(0, 300))
+    // three logs a shader it could not build and draws that object with a blank material instead: no exception, no GPU
+    // error, only this line (a region's facade, whose shadow shader outgrew the longest string a browser holds, did so).
+    const tsl = this.console.filter((l) => /^\[error\] THREE\.TSL:/.test(l))
+    check(tsl.length === 0, `${name}: three built every shader (no TSL error)`, tsl.slice(0, 3).join(' | ').slice(0, 400))
   }
 }
 
@@ -1626,7 +1631,8 @@ const SCENARIOS = {
   async lakefront(chrome, origin) {
     const p = await open(chrome)
     try {
-      await p.goto(`${origin}/?map=lakefront&${LIGHT}`)
+      // Medium pinned: the lowest tier that draws the sun's shadow, so every material of the region is built for that pass.
+      await p.goto(`${origin}/?map=lakefront&${LIGHT}&quality=2`)
       await p.booted()
       // The rooms as the page drew them (the lots it picked from the pack) and as the physics worker's crowd was handed
       // them (SimMeta.rooms: the worker builds them from the lots it was sent).
@@ -1640,6 +1646,12 @@ const SCENARIOS = {
       const f0 = (await p.snap()).crowdFrames
       const advanced = await p.waitFor(`window.__SIM__.snapshot().process.crowdFrames > ${f0 + 2}`, 60_000).then(() => true, () => false)
       check(advanced, 'lakefront: the crowd simulation advances', `${f0} -> ${(await p.snap()).crowdFrames}`)
+      // Medium's 1024 map, not the parked one a tier without shadows keeps: the sun's shadow pass has drawn the region, so
+      // every shadowed shader was built (health() below fails on any one three could not build).
+      const shadow = await p.waitFor(`(() => { const sh = window.__SIM__.engine.world.sun.shadow
+        return window.__SIM__.engine.world.sun.castShadow && sh.mapSize.x === 1024 && sh.map?.width === 1024 })()`, 60_000).then(() => true, () => false)
+      await p.frames(3)
+      check(shadow, 'lakefront: at Medium the sun\'s shadow pass draws the region (its 1024 map allocated)')
       check(r.errors.length === 0, 'lakefront: the engine recorded no error', r.errors.join(' | ').slice(0, 300))
       await p.shot('lakefront')
       p.health('lakefront')

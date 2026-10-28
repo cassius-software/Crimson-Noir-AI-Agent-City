@@ -176,3 +176,27 @@ test('applyMatrixMode: colour dimmed by the surface alpha, the glow added to the
   assert.ok(plain.emissiveNode !== null)
   assert.ok(nodes(plain.emissiveNode as Node).has(m.globalState as unknown as object))
 })
+
+test('applyMatrixMode: once per material however often it is asked; a colour set since, or another uniform, takes it again', () => {
+  const m = createMatrixMode()
+  const calls = (n: unknown): number => [...nodes(n)].filter((x) => x.constructor.name === 'FunctionCallNode').length
+  const material = new MeshStandardNodeMaterial()
+  material.colorNode = vec3(0.2, 0.3, 0.4)
+  applyMatrixMode(material, m.globalState)
+  const once = { colour: material.colorNode, emissive: material.emissiveNode }
+  // A region's tiles share one facade (regionWorld.ts): asked once per tile, the material keeps its one wrap. Each wrap
+  // reads the colour under it twice, so forty would have made the shadow pass's shader 4^40 times longer.
+  for (let tile = 0; tile < 40; tile++) assert.equal(applyMatrixMode(material, m.globalState), material)
+  assert.equal(material.colorNode, once.colour)
+  assert.equal(material.emissiveNode, once.emissive)
+  assert.equal(calls(material.colorNode), 1, 'one call of the surface under the colour')
+  // A colour set over the mode is a colour the mode has not seen: it goes over that one.
+  material.colorNode = vec3(material.colorNode as Node<'vec3'>).mul(0.5)
+  applyMatrixMode(material, m.globalState)
+  assert.equal(calls(material.colorNode), 2)
+  // Another page's uniform is another mode.
+  const other = createMatrixMode()
+  applyMatrixMode(material, other.globalState)
+  assert.equal(calls(material.colorNode), 3)
+  assert.ok(nodes(material.colorNode).has(other.globalState as unknown as object))
+})

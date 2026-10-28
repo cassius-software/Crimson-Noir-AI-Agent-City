@@ -548,9 +548,12 @@ export interface RegionScene {
 export function regionMeshes(pack: RegionPack, l: RegionLayout, fbm: FbmSet, night: UniformNode<'float', number>, matrixMode: UniformNode<'vec4', Vector4> | null = null): RegionScene {
   const meshes: Mesh[] = []
   let vertices = 0
-  // Every surface takes matrix mode (01_Initialize_World/matrixMode.ts), as the city's do.
+  // Every surface takes matrix mode (01_Initialize_World/matrixMode.ts), as the city's do: once per material, where the
+  // material is made, never per mesh. The buildings' one facade is every tile's, and each wrap reads the colour under
+  // it twice, so a wrap per tile doubled the shadow pass's shader with every tile until no browser could build it.
+  const moded = (m: MeshStandardNodeMaterial): MeshStandardNodeMaterial => (matrixMode ? applyMatrixMode(m, matrixMode) : m)
   const add = (g: BufferGeometry, m: MeshStandardNodeMaterial, name: string, shadow: boolean, order = 0) => {
-    const mesh = new Mesh(g, matrixMode ? applyMatrixMode(m, matrixMode) : m)
+    const mesh = new Mesh(g, m)
     mesh.name = name
     mesh.receiveShadow = true
     mesh.castShadow = shadow
@@ -561,8 +564,8 @@ export function regionMeshes(pack: RegionPack, l: RegionLayout, fbm: FbmSet, nig
   // The ground: the region and a margin, under everything.
   const b = l.bounds, margin = 3000
   const w = b.x1 - b.x0 + 2 * margin, d = b.z1 - b.z0 + 2 * margin
-  add(new PlaneGeometry(w, d).rotateX(-Math.PI / 2).translate((b.x0 + b.x1) / 2, 0, (b.z0 + b.z1) / 2), groundMaterial(fbm), 'RegionGround', false, 1)
-  const wm = waterMaterial(fbm)
+  add(new PlaneGeometry(w, d).rotateX(-Math.PI / 2).translate((b.x0 + b.x1) / 2, 0, (b.z0 + b.z1) / 2), moded(groundMaterial(fbm)), 'RegionGround', false, 1)
+  const wm = moded(waterMaterial(fbm))
   wm.polygonOffset = true
   wm.polygonOffsetFactor = -1
   wm.polygonOffsetUnits = -1
@@ -584,10 +587,10 @@ export function regionMeshes(pack: RegionPack, l: RegionLayout, fbm: FbmSet, nig
     const z = (f.z0 + f.z1) / 2
     ribbon(walks, [[f.x0, z], [f.x1, z]], (f.z1 - f.z0) / 2, 0.035, (_s, dist) => ({ dist }))
   }
-  add(geometryOf(walks), sidewalkMaterial(fbm), 'RegionSidewalks', false, 3)
-  add(geometryOf(roads), asphaltMaterial(fbm), 'RegionRoads', false, 4)
-  // Buildings, by tile.
-  const facade = buildingMaterial(fbm, night, attribute('along', 'float') as unknown as F)
+  add(geometryOf(walks), moded(sidewalkMaterial(fbm)), 'RegionSidewalks', false, 3)
+  add(geometryOf(roads), moded(asphaltMaterial(fbm)), 'RegionRoads', false, 4)
+  // Buildings, by tile, every tile in the one facade.
+  const facade = moded(buildingMaterial(fbm, night, attribute('along', 'float') as unknown as F))
   const tiles = buildingGeometries(pack, l, 400)
   for (const [k, g] of tiles) add(g, facade, `RegionBuildings ${k}`, true)
   return {
