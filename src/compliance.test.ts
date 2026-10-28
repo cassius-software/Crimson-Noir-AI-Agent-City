@@ -23,7 +23,7 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const SELF = fileURLToPath(import.meta.url)
 // The scanner defence is plain JavaScript (tools/ carries no types); a computed specifier keeps the page's typecheck off it.
 const HELD: string = '../tools/test/held.mjs'
-/** readFileSync that waits out a file a Windows on-access scanner holds (tools/test/held.mjs): the walk below reads hundreds. */
+/** readFileSync that waits out a file a Windows on-access scanner holds (tools/test/held.mjs): the walks in this file read hundreds. */
 const { readHeld } = (await import(HELD)) as { readHeld(path: string, encoding: 'utf8'): string }
 
 /** What Nix leaves in a checkout, at any depth (tools/license/headers.mjs nixLeftover): `nix build`'s result links
@@ -127,7 +127,7 @@ test('no real place name in anything the product shows: every string in the ship
   const shipped = [...files(join(ROOT, 'src'))].filter((f) => f !== SELF && !/\.test\.tsx?$/.test(f) && !/\.(md|css)$/.test(f))
   assert.ok(shipped.length > 50, `${shipped.length} files read`)
   for (const f of shipped) {
-    const m = code(readFileSync(f, 'utf8')).match(REAL_PLACES)
+    const m = code(readHeld(f, 'utf8')).match(REAL_PLACES)
     assert.equal(m, null, `${relative(ROOT, f)}: "${m?.[0]}"`)
   }
   assert.equal(code('const a = "x" // Toronto\n/* Ontario */ fetch("http://localhost") // Yonge').match(REAL_PLACES), null, 'comments are skipped, URLs kept')
@@ -138,7 +138,7 @@ test('every source file opens with why it exists and what breaks without it (the
   const sources = [...files(join(ROOT, 'src'))].filter((f) => /\.(ts|tsx|css|wgsl)$/.test(f))
   assert.ok(sources.length > 100, `${sources.length} files read`)
   const missing = sources.filter((f) => {
-    const head = readFileSync(f, 'utf8').split('\n').slice(0, 40).join('\n')
+    const head = readHeld(f, 'utf8').split('\n').slice(0, 40).join('\n')
     return !head.includes('Why does this file exist?') || !head.includes('What breaks if it is removed?')
   })
   assert.deepEqual(missing.map((f) => relative(ROOT, f)), [])
@@ -224,8 +224,8 @@ test('no code from a copyleft engine or character tool in any text file of the r
   const audit = join(ROOT, 'docs', 'ip-audit.md')
   for (const f of scanned) {
     if (f === SELF || f === audit) continue
-    const m = readFileSync(f, 'utf8').match(FOREIGN_SOURCES)
+    const m = readHeld(f, 'utf8').match(FOREIGN_SOURCES)
     assert.equal(m, null, `${relative(ROOT, f)}: "${m?.[0]}"`)
   }
-  assert.match(readFileSync(audit, 'utf8'), FOREIGN_SOURCES, 'the audit names them, so a reader knows they were looked for')
+  assert.match(readHeld(audit, 'utf8'), FOREIGN_SOURCES, 'the audit names them, so a reader knows they were looked for')
 })

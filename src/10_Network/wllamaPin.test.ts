@@ -193,6 +193,7 @@ test('wllama-pack on a damaged gz: --check names it as a problem instead of thro
     assert.ok(gunzipSync(readFileSync(gz)).equals(read(PACKAGE_WASM)), 'the gz holds the module again')
     assert.equal(pack('--check').status, 0)
   } finally {
-    rmSync(root, { recursive: true, force: true })
+    // The copy is 90 fresh files: a scanner holding one at the delete is waited out, as held.mjs waits at a read.
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
   }
 })
