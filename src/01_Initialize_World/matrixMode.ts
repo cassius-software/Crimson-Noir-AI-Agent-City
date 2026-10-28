@@ -61,6 +61,9 @@ const [randomSource, surfaceSource] = source.split(/(?=^fn matrixSurface)/m)
 const matrixRandom = wgslFn(randomSource)
 const matrixSurface = wgslFn(surfaceSource, [matrixRandom] as unknown as Parameters<typeof wgslFn>[1])
 
+/** What applyMatrixMode last set on each material: the colour it left and the uniform it read. */
+const applied = new WeakMap<MeshStandardNodeMaterial, { colour: Node; globalState: UniformNode<'vec4', Vector4> }>()
+
 /**
  * Gives `material` matrix mode: with the uniform's y at 1 the fragment is the surface matrixMesh.wgsl computes from
  * its world position and geometric normal (the code's glow and a tenth of the base colour), unlit, so it goes to
@@ -68,8 +71,14 @@ const matrixSurface = wgslFn(surfaceSource, [matrixRandom] as unknown as Paramet
  * window) is dimmed with it. With y at 0 the material is exactly as it was: the surface returns the base colour and
  * an alpha of 0, and every mix below is the identity. Roughness, metalness, normal and position are untouched; the
  * code dissolve (codeDissolve.ts) is applied after this, over it. Returns the same material.
+ * The mode is the material's, however many meshes share it: asked again for a material it already gave the mode
+ * from the same uniform (its colour still the one set here), it changes nothing. Each wrap reads the colour under it
+ * twice (the dimmed colour and the surface's base), so wraps stacked one per mesh made the shadow pass's shader four
+ * times longer per wrap, which no browser can build past about twenty (a region's buildings: one facade, every tile).
  */
 export function applyMatrixMode(material: MeshStandardNodeMaterial, globalState: UniformNode<'vec4', Vector4>): MeshStandardNodeMaterial {
+  const done = applied.get(material)
+  if (done && done.colour === material.colorNode && done.globalState === globalState) return material
   const base = vec3((material.colorNode ?? materialColor) as Node<'vec3'>)
   const surface = matrixSurface(positionWorld, normalWorldGeometry, base, globalState) as unknown as Node<'vec4'>
   const on = surface.a
@@ -78,5 +87,6 @@ export function applyMatrixMode(material: MeshStandardNodeMaterial, globalState:
   const existing = material.emissiveNode as Node<'vec3'> | null
   const glow = surface.rgb.mul(on)
   material.emissiveNode = existing ? vec3(existing).mul(off).add(glow) : glow
+  applied.set(material, { colour: material.colorNode, globalState })
   return material
 }
