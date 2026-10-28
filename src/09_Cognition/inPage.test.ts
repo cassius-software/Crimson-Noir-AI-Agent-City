@@ -247,7 +247,9 @@ async function harness(o: { models?: KeptModel[]; env?: Env; settings?: string |
     onPhase: (text) => phases.push(text),
     setTimer: c.setTimer, clearTimer: c.clearTimer, now: () => 1000,
     ...(o.timeouts && { timeouts: o.timeouts }),
-    ...(o.locks && { locks: o.locks }),
+    // No Web Locks unless the test hands in a fake, never the host's: Node 24 has navigator.locks, and a real lock held
+    // in this very process would put a lock name in every mark and keep the pages that "die" loading below alive.
+    locks: o.locks ?? null,
   })
   // The mind reads the kept files once as it starts.
   await flush()
@@ -573,6 +575,36 @@ test('two tabs: a load running in one is not a crash to the other, which neither
   gate3.resolve({ gpu: false, ms: 5 })
   await loading3
   assert.equal(guard.getItem(GUARD_KEY), null)
+})
+
+test('a mind given no locks finds the page\'s navigator.locks, as the product does: its mark names a lock that page holds, let go with the mark', async () => {
+  // The harness above always names its locks (null or a fake), so the product's own discovery is pinned here, on a
+  // faked page navigator: the same on Node 22, which has no navigator.locks, and Node 24, which has.
+  const locks = webLocks()
+  const was = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, get: () => ({ locks: locks.tab(1) }) })
+  try {
+    const { r, runtime } = fakeRuntime()
+    const st = fakeStore([kept('tiny')])
+    const guard = memory()
+    const mind = createInPageMind({ runtime: () => runtime, store: st.store, kept: slice(JSON.stringify({ model: 'tiny', think: false, gpu: 'auto' })), env: () => CPU_DESKTOP, guard, now: () => 1000 })
+    await flush()
+    const gate = deferred<{ gpu: boolean; ms: number }>()
+    r.onLoad = () => gate.promise
+    const loading = mind.load()
+    await flush()
+    const mark = JSON.parse(guard.getItem(GUARD_KEY) ?? 'null') as { model: string; lock?: string }
+    assert.equal(mark.model, 'tiny')
+    assert.ok(typeof mark.lock === 'string' && locks.held.some((l) => l.name === mark.lock && l.tab === 1), 'the mark names a lock held through the page\'s navigator.locks')
+    gate.resolve({ gpu: false, ms: 5 })
+    await loading
+    assert.equal(guard.getItem(GUARD_KEY), null)
+    assert.equal(locks.held.length, 0, 'the lock went with the mark')
+    await mind.dispose()
+  } finally {
+    if (was) Object.defineProperty(globalThis, 'navigator', was)
+    else delete (globalThis as { navigator?: unknown }).navigator
+  }
 })
 
 test('a GPU load that fails is tried once on the processor, and the GPU is off for the visit', async () => {

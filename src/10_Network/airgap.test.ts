@@ -26,6 +26,10 @@ import { fileURLToPath } from 'node:url'
 const SRC = fileURLToPath(new URL('..', import.meta.url))
 const SELF = fileURLToPath(import.meta.url)
 const GATE = '02_Define_The_Rules/airgap.ts'
+// The scanner defence is plain JavaScript (tools/ carries no types); a computed specifier keeps the page's typecheck off it.
+const HELD: string = '../../tools/test/held.mjs'
+/** readFileSync that waits out a file a Windows on-access scanner holds (tools/test/held.mjs): the walks in this file read hundreds. */
+const { readHeld } = (await import(HELD)) as { readHeld(path: string, encoding: 'utf8'): string }
 
 function* files(dir: string): Generator<string> {
   for (const name of readdirSync(dir)) {
@@ -44,7 +48,7 @@ const code = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').rep
 const runtimeSources = (): [string, string][] =>
   [...files(SRC)]
     .filter((f) => f !== SELF && !/\.test\.tsx?$/.test(f) && !/\.d\.ts$/.test(f))
-    .map((f) => [relative(SRC, f).replaceAll('\\', '/'), readFileSync(f, 'utf8')])
+    .map((f) => [relative(SRC, f).replaceAll('\\', '/'), readHeld(f, 'utf8')])
 
 const specifiers = (text: string): string[] =>
   [...text.matchAll(/\bfrom\s+['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]|\bimport\s+['"]([^'"]+)['"]/g)].map((m) => m[1] ?? m[2] ?? m[3])
@@ -187,7 +191,7 @@ test('the in-page runtime is reached only through its adapter, which switches wl
   // Every source (tests too, but this file) stays off wllama's download paths and its model manager's downloads.
   for (const f of files(SRC)) {
     if (f === SELF) continue
-    const c = code(readFileSync(f, 'utf8'))
+    const c = code(readHeld(f, 'utf8'))
     assert.doesNotMatch(c, DOWNLOADS, `${relative(SRC, f)} names a wllama download path`)
   }
 

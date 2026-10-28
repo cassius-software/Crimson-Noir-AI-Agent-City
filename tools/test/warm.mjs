@@ -12,6 +12,8 @@
  * scanner has seen each file before the tests race for it. It also says so when the checkout sits in `Downloads`,
  * where that scanner is the rule. Anywhere but Windows it exits at once and prints nothing (CI runs `node --test`
  * directly, so it never sees this script); `CRIMSON_WARM=always` runs the walk on any platform, for the test of it.
+ * A file the scanner holds again during the run is waited out the same way at the read, inside the tests that read
+ * the whole tree (held.mjs).
  * What breaks if it is removed? A first `npm test` from a fresh ZIP on Windows fails tens of files with EPERM and
  * nothing explains why.
  */
@@ -19,6 +21,7 @@ import { closeSync, openSync, readSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { HELD, TRIES, WAIT_MS, sleep } from './held.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const WINDOWS = process.platform === 'win32'
@@ -26,14 +29,6 @@ if (!WINDOWS && process.env.CRIMSON_WARM !== 'always') process.exit(0)
 
 /** Directory names not walked: nothing a test imports lives there, and node_modules alone is tens of thousands of files. */
 const SKIP = new Set(['.git', 'node_modules', 'dist', 'target', '.vite'])
-/** The errors a file held by another program comes back with on Windows (EPERM is errno -4048, the one seen). */
-const HELD = new Set(['EPERM', 'EBUSY', 'EACCES'])
-const TRIES = 30
-const WAIT_MS = 100
-
-const cell = new Int32Array(new SharedArrayBuffer(4))
-/** A synchronous pause: the walk is deliberately serial, one open at a time, so nothing races the scanner. */
-const sleep = (ms) => { Atomics.wait(cell, 0, 0, ms) }
 
 function* files(dir) {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
