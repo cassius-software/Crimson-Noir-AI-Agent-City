@@ -397,8 +397,10 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
                       </div>
                     )}
                     {s.supplier.hal && <div className={`truncate ${muted}`}>{s.supplier.hal}</div>}
-                    {/* The unified namespace (namespace.ts): how many topics the bus retains. Not on a short screen (three lines there). */}
-                    {!tight && s.output.topics && (
+                    {/* The unified namespace (namespace.ts): how many topics the bus retains. Not on a phone: upright at the
+                        wheel the readout's foot already meets Sloane's chip where it must end above the touch buttons
+                        (Concierge.tsx CHIP_TOP), and a short screen has three lines; the console's `topic` has the count. */}
+                    {!compact && s.output.topics && (
                       <div className={`truncate tabular-nums ${muted}`} data-hud="topics">
                         namespace {s.output.topics.count.toLocaleString()} topics
                       </div>
