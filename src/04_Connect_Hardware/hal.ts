@@ -3,18 +3,20 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the universal hardware abstraction layer: one bus that discovers, pairs,
- * labels and feeds every optional device the city can talk to — DualSense / DualSense Edge over WebHID
- * (brake-trigger resistance and rumble), HAL/1 line-protocol gadgets over Web Serial or Bluetooth LE
- * (telemetry), and Gamepad API pads (rumble) — behind one transport-neutral API. Every browser API it
- * touches is optional: where WebHID, Web Serial or Web Bluetooth are missing (Safari, Firefox, iOS) it
- * reports them unsupported and does nothing, silently.
+ * labels and feeds every optional device the city can talk to — DualSense / DualSense Edge over WebHID, or
+ * over the desktop shell's own HID commands inside the Windows app (nativeHid.ts): both triggers, rumble,
+ * the lightbar and the player LEDs; HAL/1 line-protocol gadgets over Web Serial or Bluetooth LE (telemetry);
+ * and Gamepad API pads (rumble) — behind one transport-neutral API. Every browser API it touches is
+ * optional: where WebHID, Web Serial or Web Bluetooth are missing (Safari, Firefox, iOS) it reports them
+ * unsupported and does nothing, silently.
  * What breaks if it is removed? Input.hal, the Ring-0 terminal's `hal` command and the HUD device line.
  */
 import { BRAND } from '../brand.ts'
 import { describeResolution, padClues, resolveDevice } from './devices.ts'
-import { DUALSENSE_FILTERS, DualSense, dualSenseName, isDualSense } from './dualsense.ts'
+import { DUALSENSE_FILTERS, DualSense, dualSenseName, isDualSense, lightbarWord, QUIET, type DsOutputs } from './dualsense.ts'
 import { isUsablePad, padName, parsePadId, pressesFaceButton, type GenericLayout } from './gamepad.ts'
 import { LineLink, NUS, openBle, openSerial, type ByteChannel } from './lineLink.ts'
+import { nativeNavigator } from './nativeHid.ts'
 import type { BleDevice, GamepadLike, HardwareNavigator, HidConnectionEvent, HidDevice, SerialConnectionEvent, SerialPort } from './web-hardware.d.ts'
 
 export type Transport = 'hid' | 'serial' | 'bluetooth' | 'gamepad'
@@ -29,12 +31,11 @@ export interface HalDevice {
   profile?: string
 }
 
-export interface HalOutputs {
-  /** 0..1, brake-trigger resistance. */
-  triggerResistance: number
-  /** 0..1 */
-  rumble: number
-}
+/**
+ * What the page asks of its controllers: brake-trigger resistance, rumble, the throttle trigger's hold or snap
+ * and a lightbar colour (dualsense.ts DsOutputs). Pads without a HID driver get the rumble alone.
+ */
+export type HalOutputs = DsOutputs
 
 export interface HalOptions {
   /** Defaults to globalThis.navigator; null disables every transport. */
@@ -95,9 +96,10 @@ const copy = (d: HalDevice): HalDevice => (d.profile === undefined
   ? { id: d.id, transport: d.transport, name: d.name, state: d.state, detail: d.detail }
   : { id: d.id, transport: d.transport, name: d.name, state: d.state, detail: d.detail, profile: d.profile })
 
+/** The browser's navigator; inside the desktop shell, with the shell's own HID in the place of WebView2's. */
 function defaultNavigator(): HardwareNavigator | null {
   const g = globalThis as { navigator?: HardwareNavigator }
-  return g.navigator ?? null
+  return nativeNavigator(g.navigator ?? null)
 }
 
 const guard = (f: () => void) => { try { f() } catch { /* API present but blocked */ } }
@@ -125,7 +127,7 @@ export class HalBus {
   private readonly entries: Entry[] = []
   private readonly slots: PadSlot[] = []
   private readonly padList: GamepadLike[] = []
-  private readonly want: HalOutputs = { triggerResistance: 0, rumble: 0 }
+  private readonly want: HalOutputs = { ...QUIET }
   private readonly unlisten: (() => void)[] = []
   private listening = false
   private disposed = false
@@ -215,13 +217,26 @@ export class HalBus {
   /** Desired outputs. Cheap when nothing changed; drivers quantize, rate-limit and write change-only. */
   output(o: Partial<HalOutputs>): void {
     let changed = false
+    const w = this.want
     if (o.triggerResistance !== undefined) {
       const v = clamp01(o.triggerResistance)
-      if (v !== this.want.triggerResistance) { this.want.triggerResistance = v; changed = true }
+      if (v !== w.triggerResistance) { w.triggerResistance = v; changed = true }
     }
     if (o.rumble !== undefined) {
       const v = clamp01(o.rumble)
-      if (v !== this.want.rumble) { this.want.rumble = v; changed = true }
+      if (v !== w.rumble) { w.rumble = v; changed = true }
+    }
+    if (o.throttleResistance !== undefined) {
+      const v = clamp01(o.throttleResistance)
+      if (v !== w.throttleResistance) { w.throttleResistance = v; changed = true }
+    }
+    if (o.throttleVibration !== undefined) {
+      const v = clamp01(o.throttleVibration)
+      if (v !== w.throttleVibration) { w.throttleVibration = v; changed = true }
+    }
+    if (o.lightbar !== undefined) {
+      const v = lightbarWord(o.lightbar)
+      if (v !== w.lightbar) { w.lightbar = v; changed = true }
     }
     if (changed && !this.hidden && !this.disposed) this.push()
   }
@@ -386,18 +401,30 @@ export class HalBus {
     if (hidden === this.hidden) return
     this.hidden = hidden
     if (hidden) {
-      for (const e of this.entries) e.ds?.set(0, 0)
+      for (const e of this.entries) e.ds?.quiet()
       for (const s of this.slots) this.stopPadRumble(s)
     } else this.push()
   }
 
+  /** The same outputs to every controller; each DualSense also gets its seat (its order among them) for the player LEDs. */
   private push(): void {
-    const t = this.want.triggerResistance, r = this.want.rumble
+    let player = 0
     for (let i = 0; i < this.entries.length; i++) {
       const e = this.entries[i]
-      if (e.ds && e.dev.state !== 'disconnected') e.ds.set(t, r)
+      if (e.ds && e.dev.state !== 'disconnected') e.ds.set(this.want, ++player)
     }
     this.pumpPadRumble(this.now())
+  }
+
+  /** A controller's seat for its player LEDs: its place among the DualSense controllers the bus holds, from 1. */
+  private seatOf(entry: Entry): number {
+    let player = 0
+    for (let i = 0; i < this.entries.length; i++) {
+      const e = this.entries[i]
+      if (e.ds && e.dev.state !== 'disconnected') player++
+      if (e === entry) break
+    }
+    return player
   }
 
   private find(key: unknown): Entry | undefined {
@@ -459,6 +486,8 @@ export class HalBus {
       },
     })
     entry.ds = ds
+    // The open report carries the outputs and the seat already wanted (set() before open() is kept for it).
+    if (!this.hidden) ds.set(this.want, this.seatOf(entry))
     try {
       await ds.open()
       if (this.disposed || entry.ds !== ds) { await ds.close(); return copy(entry.dev) }
@@ -466,7 +495,7 @@ export class HalBus {
       entry.dev.state = 'ready'
       entry.dev.detail = ds.describe()
       entry.dev.profile = describeResolution(resolveDevice({ id: device.productName, vendorId: device.vendorId, productId: device.productId, bus: ds.bus }))
-      if (!this.hidden) ds.set(this.want.triggerResistance, this.want.rumble)
+      if (!this.hidden) this.push()
     } catch (err) {
       if (entry.ds === ds) entry.ds = undefined
       void ds.close()

@@ -56,6 +56,8 @@ class MockHid implements HidDevice {
   /** Left-trigger effect byte of the n-th report (common block at 0 on USB, 2 on Bluetooth). */
   trigger(n: number) { const r = this.sent.at(n)!; return r.data[(r.id === 0x31 ? 2 : 0) + 21] }
   motor(n: number) { const r = this.sent.at(n)!; return r.data[(r.id === 0x31 ? 2 : 0) + 3] }
+  /** The 47-byte common block of the n-th report. */
+  common(n: number) { const r = this.sent.at(n)!; const at = r.id === 0x31 ? 2 : 0; return r.data.slice(at, at + 47) }
 }
 
 type Listener<E> = (e: E) => void
@@ -244,8 +246,9 @@ test('autoconnect re-opens granted DualSense controllers only, without prompting
   assert.equal(hid.requests.length, 0)
   assert.deepEqual(bus.devices().map((d) => [d.transport, d.name, d.state]), [['hid', 'DualSense (USB)', 'ready']])
   assert.equal(bus.summary(), '1 device · DualSense (USB) ready')
-  assert.equal(ds.sent.length, 1, 'neutral report on open')
-  assert.equal(ds.trigger(0), 0x05)
+  assert.equal(ds.sent.length, 2, 'the lightbar setup, then the neutral report on open')
+  assert.equal(ds.sent[0].data[41], 0x02, 'LIGHT_OUT')
+  assert.equal(ds.trigger(1), 0x05)
   await bus.dispose()
 })
 
@@ -288,21 +291,54 @@ test('output(): quantized, change-only writes to the DualSense left trigger and 
   await bus.autoconnect()
   bus.output({ triggerResistance: 0.5 })
   await sleep(2)
-  assert.equal(ds.sent.length, 2)
-  assert.equal(ds.trigger(1), 0x21)
+  assert.equal(ds.sent.length, 3)
+  assert.equal(ds.trigger(2), 0x21)
   for (let i = 0; i < 20; i++) bus.output({ triggerResistance: 0.5 })
   bus.output({ triggerResistance: 0.45 })
   await sleep(2)
-  assert.equal(ds.sent.length, 2, 'same value / same strength: no write')
+  assert.equal(ds.sent.length, 3, 'same value / same strength: no write')
   bus.output({ rumble: 1 })
   await sleep(2)
-  assert.equal(ds.sent.length, 3)
-  assert.equal(ds.motor(2), 255)
-  assert.equal(ds.trigger(2), 0x21, 'every report carries the full state')
+  assert.equal(ds.sent.length, 4)
+  assert.equal(ds.motor(3), 255)
+  assert.equal(ds.trigger(3), 0x21, 'every report carries the full state')
   bus.output({ triggerResistance: -3, rumble: Number.NaN })
   await sleep(2)
-  assert.equal(ds.trigger(3), 0x05)
-  assert.equal(ds.motor(3), 0)
+  assert.equal(ds.trigger(4), 0x05)
+  assert.equal(ds.motor(4), 0)
+  await bus.dispose()
+})
+
+test('output(): the throttle trigger, the lightbar and each controller\'s seat reach the DualSense', async () => {
+  const hid = new MockHidApi()
+  const first = new MockHid(), second = new MockHid(0x0df2, BT)
+  hid.granted = [first, second]
+  const bus = new HalBus({ navigator: nav({ hid }), hidIntervalMs: 0 })
+  await bus.autoconnect()
+  assert.equal(first.common(-1)[43], 0x04, 'seat 1 on the first controller')
+  assert.equal(second.common(-1)[43], 0x0a, 'seat 2 on the second')
+  assert.equal(first.common(-1)[1], 0x10, 'player LEDs only: no colour was asked for')
+  bus.output({ throttleResistance: 0.5, lightbar: 0xe8203a })
+  await sleep(2)
+  for (const d of [first, second]) {
+    const c = d.common(-1)
+    assert.equal(c[10], 0x21, 'the throttle hold on the right trigger')
+    assert.equal(c[1], 0x14)
+    assert.deepEqual(c.slice(44, 47), [0xe8, 0x20, 0x3a])
+  }
+  const n = first.sent.length
+  bus.output({ throttleResistance: 0.5, lightbar: 0xe8203a, throttleVibration: 0 })
+  await sleep(2)
+  assert.equal(first.sent.length, n, 'nothing changed: no write')
+  bus.output({ throttleVibration: 1 })
+  await sleep(2)
+  assert.equal(first.common(-1)[10], 0x26, 'a snap replaces the hold')
+  bus.output({ lightbar: -1 })
+  await sleep(2)
+  assert.equal(first.common(-1)[1], 0x10, 'the lightbar is left alone again')
+  bus.output({ lightbar: 2.5 })
+  await sleep(2)
+  assert.equal(first.common(-1)[1], 0x10, 'not a colour: unchanged')
   await bus.dispose()
 })
 

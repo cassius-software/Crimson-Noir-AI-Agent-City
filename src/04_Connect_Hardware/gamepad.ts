@@ -58,6 +58,14 @@ export const PAD_TUNING = {
 export const PAD_EDGE = { interact: 1, reset: 2, timeForward: 4, timeBack: 8, ping: 16 } as const
 
 /**
+ * Where a pad's `paddles` bits (web-hardware.d.ts GamepadLike; a DualSense Edge's Fn keys and back paddles) sit in
+ * the mapper's button word, above any button index it reads: the left paddle is a second L3 (the run latch), the
+ * right paddle a second R1 (a ping), so the sticks' thumbs never leave them.
+ */
+export const PADDLE_BIT = 24
+const PADDLE_LEFT = 0x04 << PADDLE_BIT, PADDLE_RIGHT = 0x08 << PADDLE_BIT
+
+/**
  * Radial dead zone with rescale; square-gate corners are clamped to magnitude 1. NaN or ±Infinity (a broken
  * driver) reads as centred: the result steers a physics body, so it must always be finite.
  */
@@ -411,8 +419,9 @@ export class PadMapper {
       if (throttle > out.throttle) out.throttle = throttle
       if (brake > out.brake) out.brake = brake
       let bits = 0
-      const nb = Math.min(b.length, SLOTS)
+      const nb = Math.min(b.length, PADDLE_BIT)
       for (let k = 0; k < nb; k++) if (isPressed(b[k])) bits |= 1 << k
+      if (p.paddles) bits |= (p.paddles & 0x0f) << PADDLE_BIT
       bits >>>= 0
       // A pad without the standard mapping arrives with the face button that woke it (hal.ts) held: that press only
       // wakes it, it never enters a car or resets one.
@@ -424,8 +433,8 @@ export class PadMapper {
       if (rising & (1 << PAD.left)) edges |= PAD_EDGE.timeBack
       if (rising & (1 << PAD.right)) edges |= PAD_EDGE.timeForward
       // The right shoulder: a ping, reachable with the thumbs on the sticks, walking or steering.
-      if (rising & (1 << PAD.r1)) edges |= PAD_EDGE.ping
-      if (rising & (1 << PAD.l3)) l3 = true
+      if (rising & ((1 << PAD.r1) | PADDLE_RIGHT)) edges |= PAD_EDGE.ping
+      if (rising & ((1 << PAD.l3) | PADDLE_LEFT)) l3 = true
       if (bits & (1 << PAD.east)) out.handbrake = true
       if (bits !== 0 || move > 0 || look > 0 || throttle > 0 || brake > 0) {
         any = true

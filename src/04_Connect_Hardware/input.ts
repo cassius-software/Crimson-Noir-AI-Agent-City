@@ -549,7 +549,7 @@ export class Input {
 
 /**
  * Adaptive-trigger bridge. `level` is 0..1: 0 = free pull, rising with brake pressure while driving. Changes
- * go to the HAL, which maps them onto the DualSense left-trigger continuous-resistance effect.
+ * go to the HAL, which maps them onto the DualSense left trigger's Feedback effect (a resistance from the top).
  */
 export class TriggerFeedback {
   level = 0

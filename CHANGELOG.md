@@ -15,6 +15,26 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The DualSense's full output report, and the Windows app opening the controller itself.**
+  `04_Connect_Hardware/dualsense.ts` now writes every field of the 47-byte common block the Linux `hid-playstation`
+  driver and open-source tools agree on, over USB (report 0x02) and Bluetooth (report 0x31, sequence, tag and CRC-32):
+  both adaptive triggers with the seven named effects (Off, Feedback, Detent, Vibration, Bow, Galloping, Machine, each
+  a pure writer with its parameters clamped to the controller's ranges), the heavy and light motors in the classic or
+  the 2.21-firmware vibration mode, the lightbar colour, the player LEDs by seat (the five centred patterns, faded,
+  never the instant bit) and the lightbar setup report (the host takes the bar from the pairing animation) once at
+  open. The driver quantises the wanted state and writes only on change, and a new HAL output set drives it: brake
+  pressure is the left trigger's Feedback resistance as before; the throttle trigger stiffens while the kernel holds
+  the car and snaps with a 30 Hz Vibration on a bump; the lightbar is crimson on the road, amber under a hold and
+  white for the bump's instant; each controller's seat lights its player LEDs. The DualSense Edge's paddles arrive in
+  the input report (left runs, right pings) and `hal` names them. The Windows app's WebView2 exposes WebHID but no
+  chooser this project could find, so the shell now opens the controller itself: `src-tauri/src/hid.rs` (hidapi over
+  hid.dll, pure Rust) lists, opens, writes and reads a DualSense or DualSense Edge and nothing else, and
+  `04_Connect_Hardware/nativeHid.ts` presents its five commands in WebHID's own shapes, so the driver and the bus run
+  unchanged inside the app; elsewhere than Windows the commands exist and answer with an empty list. Every report is
+  proved byte for byte in Node (golden CRCs, the kernel's bit values), the page side against a fake shell with the
+  real driver end to end (CI; Node 22), and the Rust for the Windows target by `cargo check`; none of it has been
+  tried on a physical DualSense, a physical Windows machine or HD haptics, which ride USB audio and are not claimed.
+
 - **A scored device resolver, and the touch overlay judged by its own rule book.** `04_Connect_Hardware/devices.ts`
   names the profile of every input device from whatever a browser gives: seventeen profiles (DualSense and DualSense
   Edge over USB and over Bluetooth, the DualShock 4, the letters-layout pads of two console makers, Valve's and
