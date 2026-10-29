@@ -45,8 +45,9 @@ probe's cadence beside the `[longtask]` lines.
 The camera's near plane is 0.1 m and its far plane 2,400 m. With a conventional 24-bit depth buffer the depth
 resolution at a distance d is about d² · 6e-7 m for this camera: 6 mm at 100 m, **4 cm at 260 m, 60 cm at 1,000 m**.
 The Lakefront Metro map lays its sidewalks 3.5 cm and its streets 4.5 cm above the ground plane and the lake 2 cm
-above it (`region/regionWorld.ts`, with a polygon offset of one or two units), so beyond about 250 m the streets and
-the ground resolve to the same depth and the winner changes from frame to frame as the camera moves: the flashing.
+above it (`region/regionWorld.ts`; at the time with a polygon offset of one or two units as well, which §4 removes), so
+beyond about 250 m the streets and the ground resolve to the same depth and the winner changes from frame to frame as
+the camera moves: the flashing.
 The procedural city bakes its markings into one ground material and keeps the lake off the land, so it fights less,
 but its buildings' footings and the furniture at a distance share the same buffer.
 
@@ -82,3 +83,56 @@ a browser with WebGPU, at the default map and `?day=24`:
 
 If a `[longtask]` line still arrives on a 12 s cadence, the probe was not the whole story and a DevTools Performance
 recording of 30 s (Performance tab, record, look at what runs in the long task) is the next step.
+
+## 4. The streets under the lawn: a polygon offset's sign under a reversed buffer
+
+Seen on the Lakefront Metro map in a headless Chrome on the software adapter (and reported from a laptop as "grass
+above the roads"): past a few metres the streets showed as pale pavement with no asphalt and no markings, and farther
+out as lawn; a two-lane causeway across the lake was lawn from end to end.
+
+The cause was the polygon offset §2 mentions. Each of the region's road, sidewalk and water materials asked for a
+negative offset (`polygonOffsetFactor` −1 or −2), the WebGL habit for "draw this a hair nearer than its depth says".
+three r186's WebGPU backend hands a material's offset to the pipeline's `depthBias` and `depthBiasSlopeScale` as it
+is, and a reversed buffer keeps the far plane at 0 and the near plane at 1, so a negative bias moves a fragment
+**away** from the camera. The slope term is the large one: it adds the offset factor times the depth's change per
+pixel, about 7e-5 of the depth range per unit of factor for a flat surface seen from eye height, whatever the
+distance; the 4.5 cm a street stands over the ground is worth more than that only within some 18 m, and the 1 cm it
+stands over its sidewalk only within 8 m. From there to the horizon the sidewalk showed over the street and the ground
+over both. three negates the offset under a reversed buffer upstream, after r186 (its pull request 34606), so the same
+code would be right again on a later three, and wrong on the one in the lock file.
+
+The fix (`region/regionWorld.ts`): no surface asks for a polygon offset at all, and each lies at its own height,
+named in `SURFACE`: water 2 cm, sidewalks 3.5 cm, streets 4.5 cm, strictly over the one below. The reversed
+depth32float buffer resolves about d · 1.2e-7 m at d metres along the view (§2), so the 5 mm between the closest two
+surfaces is thousands of steps anywhere in the 2.4 km view, and nothing else is needed; the result is the same under
+either three. The same change found a second fault in the same place: where two streets cross, their two ribbons lay
+on one plane at 4.5 cm, so the markings of both speckled through each other wherever the two triangles' depths
+rounded apart (2,900 junctions on the metropolis). A junction now gets a patch of plain asphalt (`SURFACE.roadJunction`,
+5 cm) over the overlap of the two carriageways, cut at a ribbon's end for a T or a corner, and where both streets have
+sidewalks a patch of plain pavement (4 cm) over the overlap of the two sidewalks; the patches share the ribbons' own
+materials, so no shader is added.
+
+The same render then showed a third fault, at the map's west edge: the lawn still covered a causeway over the lake,
+and from a little farther in the lake covered the road on it, both from the first metre out, with every offset gone.
+Hiding the meshes one at a time in the live page put it on the ground and the water themselves: the ground was one
+8.5 km plane of two triangles, and a lake strip one 2.5 km rectangle. A rasteriser interpolates a pixel's depth from
+its triangle's three vertices, and when those lie kilometres away (off the screen, or behind the camera and clipped)
+the depth that reaches the pixel has lost more than the surfaces' few centimetres, so which surface wins depends on
+where the camera stands. Replacing the ground with a 64 × 64 grid in the live page brought the causeway back at the
+edge, and the lake strips were the last to go. Every flat surface is now drawn in pieces no longer than
+`SURFACE_PIECE` (128 m): the ground as a grid of cells, each water polygon cut to the cells it covers (`clip.ts`
+clipRing, so two cells' pieces meet on the cell's edge at the same points), each ribbon's segments split to that
+length; about 9,000 triangles for the ground and a few hundred for the lake, nothing a phone notices. The procedural
+city is not affected by any of the three: its ground is one plane whose shader chooses road, curb, sidewalk or park
+per pixel, so nothing there overlaps.
+
+Verified in the cloud: `region/surfaces.test.ts` holds the heights in order, every material without an offset, every
+surface in pieces no longer than `SURFACE_PIECE` with the water's pieces covering exactly the water's area (an island
+left open), and, on the generated metropolis and the north ridge, every point that lies on two crossing ribbons under
+a patch and every patch corner on two ribbons (point by point, a 0.25 m grid over every crossing); and the built page
+rendered in a headless Chrome on the software WebGPU adapter, on foot on the metropolis at Medium: before the change
+the street ahead was pale pavement past a few metres with no markings and the causeway lawn; after it, asphalt with
+the double yellow line to the horizon on both, the junction ahead plain asphalt, the sidewalks beside, the lake either
+side of the causeway. Only a GPU shows the laptop's own picture: open `?map=lakefront`, look down any street.
+Expected: asphalt and markings to the horizon; at a junction, plain asphalt where the two streets cross and the lines
+of each stopping at its edge; on a bridge, the lake beside the road, never over it.

@@ -8,7 +8,10 @@
  *   region, so none of it can meet the region);
  * - the meshes: every building extruded from its surveyed footprint to its surveyed height, walls and roof, merged by
  *   tile and dressed by the city's own facade shader (its windows follow each wall, at any angle); roads and sidewalks
- *   as ribbons at their surveyed widths, with centre lines and lane dashes; water; the ground;
+ *   as ribbons at their surveyed widths, with centre lines and lane dashes, a patch of plain asphalt (and of plain
+ *   pavement) over every junction where two ribbons would otherwise share one plane; water; the ground. Each surface
+ *   lies at its own height (SURFACE), and that height alone keeps it over the one below: see SURFACE for why no
+ *   polygon offset is used;
  * - the physics: every wall as a segment with its height, the lake's shoreline as a low wall, and the region's edge;
  * - places: the fictional name of the street you stand on and the nearest cross street, and a spawn on a sidewalk;
  * - the workplaces' lots hollowed (hollowLots): the buildings on the lots region/workplaces.ts chose are put out of
@@ -26,7 +29,7 @@ import type { FbmSet } from '../fbmTexture.ts'
 import { ROOM, toWorld, workplacesAt, type Workplace, type WorkplaceLot } from '../interiors.ts'
 import { buildingMaterial, waterMaterial } from '../materials.ts'
 import { applyMatrixMode } from '../matrixMode.ts'
-import { type Pt, type Rect } from './clip.ts'
+import { clipRing, type Pt, type Rect } from './clip.ts'
 import { BUILDING_KIND, DM, FLOW, ROAD_CLASS, WATER_KIND, polygonAt, polygonCount, roadAt, type RegionPack } from './pack.ts'
 import { buildingLot, slabPodium, type LotBuilding } from './workplaces.ts'
 
@@ -37,6 +40,36 @@ export const REGION_CORNER = Object.freeze({ x: 2000, z: 2000 })
 /** Lane width, m, and the sidewalk each side of a street that has one. */
 export const LANE_WIDTH = 3.3
 export const SIDEWALK = 2.2
+/**
+ * The height over the ground, m, of each paved or wet surface the region draws, lowest first; each lies strictly over
+ * the one below. The renderer's reversed depth32float buffer (world.ts createRenderer, docs/stutter-and-depth.md)
+ * resolves about d · 1.2e-7 m at d metres along the view, so the 5 mm between the closest two is thousands of steps
+ * anywhere in the 2.4 km view, and the height alone decides what shows. No surface asks for a polygon offset:
+ * three r186's WebGPU backend hands a material's polygonOffset to the pipeline as it is, and under a reversed buffer
+ * (where the far plane is 0) the negative offset that means "toward the camera" under a conventional one pushes the
+ * surface away instead, by the slope term, about 7e-5 of the depth range per unit of factor at eye height; that is
+ * more than 4.5 cm of height past some 18 m, so the streets, the sidewalks and the lake sank under the lawn from there
+ * to the horizon (three fixes the sign upstream, after r186: with the fix the same offset would be right again, so
+ * none is used, and the result is the same under either three).
+ */
+export const SURFACE = Object.freeze({
+  water: 0.02,
+  sidewalk: 0.035,
+  /** A junction's pavement, over the two sidewalks that cross there. */
+  sidewalkJunction: 0.04,
+  road: 0.045,
+  /** A junction's asphalt, over the two carriageways that cross there. */
+  roadJunction: 0.05,
+})
+/**
+ * The longest piece, m, any of those surfaces is drawn in: the ground is a grid of cells this wide, a water polygon
+ * is cut into the cells it covers, a ribbon's segments are split to this length. A rasteriser interpolates a pixel's
+ * depth from its triangle's three vertices, and the farther those lie (an 8.5 km ground plane was two triangles, a
+ * lake strip 2.5 km long) the less of the depth's precision survives: near the metropolis's edge the ground won
+ * against the streets 4.5 cm over it from the first metre out, and a 2.5 km strip of lake against the causeway on it,
+ * on the software adapter. Pieces this short keep every vertex within sight of the pixel, as a building's wall is.
+ */
+export const SURFACE_PIECE = 128
 /** Height of the lake's shoreline wall and of the region's edge wall (physics only), m. */
 export const SHORE_WALL = 1.2
 export const EDGE_WALL = 4
@@ -337,7 +370,11 @@ export class RegionPlaces {
 
 // ---------------------------------------------------------------- meshes
 
-/** A dark, fine-grained asphalt with a yellow centre line on two-way streets and dashed white lines between lanes. */
+/**
+ * A dark, fine-grained asphalt with a yellow centre line on two-way streets and dashed white lines between lanes. A
+ * junction patch (junctions) carries `lanes` 0, which draws no marking at all: the asphalt grain alone, read from the
+ * world position like the carriageways', so the patch is seamless with them.
+ */
 function asphaltMaterial(fbm: FbmSet): MeshStandardNodeMaterial {
   const m = new MeshStandardNodeMaterial()
   const p = positionWorld
@@ -360,13 +397,10 @@ function asphaltMaterial(fbm: FbmSet): MeshStandardNodeMaterial {
   const edge = step(float(1).sub(float(0.15).div(halfW)), abs(across)).mul(step(1.5, lanes))
   m.colorNode = mix(mix(base, vec3(0.78, 0.6, 0.12), centre), vec3(0.78, 0.78, 0.74), dash.add(edge).min(1))
   m.roughnessNode = float(0.88)
-  m.polygonOffset = true
-  m.polygonOffsetFactor = -2
-  m.polygonOffsetUnits = -2
   return m
 }
 
-/** Concrete sidewalk slabs with joints every 1.5 m. */
+/** Concrete sidewalk slabs with joints every 1.5 m along the street (a junction patch, at `dist` 0, has none). */
 function sidewalkMaterial(fbm: FbmSet): MeshStandardNodeMaterial {
   const m = new MeshStandardNodeMaterial()
   const p = positionWorld
@@ -375,9 +409,6 @@ function sidewalkMaterial(fbm: FbmSet): MeshStandardNodeMaterial {
   const joint = smoothstep(0.96, 0.99, fract(dist.div(1.5)))
   m.colorNode = mix(vec3(0.5, 0.49, 0.46), vec3(0.58, 0.57, 0.54), n).mul(float(1).sub(joint.mul(0.3)))
   m.roughnessNode = float(0.9)
-  m.polygonOffset = true
-  m.polygonOffsetFactor = -1
-  m.polygonOffsetUnits = -1
   return m
 }
 
@@ -406,9 +437,25 @@ function geometryOf(b: Buffers): BufferGeometry {
   return g
 }
 
-/** A ribbon `half` wide each side of a polyline, at height y, mitred at its bends. Extra per-vertex values from `v`. */
-function ribbon(b: Buffers, pts: readonly Pt[], half: number, y: number, v: (across: number, dist: number) => Record<string, number>): void {
-  if (pts.length < 2) return
+/** The polyline with a point added along every segment longer than `piece`, so none is (SURFACE_PIECE). */
+function pieces(pts: readonly Pt[], piece: number): Pt[] {
+  const out: Pt[] = [pts[0]]
+  for (let k = 1; k < pts.length; k++) {
+    const a = pts[k - 1], b = pts[k]
+    const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / piece))
+    for (let i = 1; i < n; i++) out.push([a[0] + ((b[0] - a[0]) * i) / n, a[1] + ((b[1] - a[1]) * i) / n])
+    out.push(b)
+  }
+  return out
+}
+
+/**
+ * A ribbon `half` wide each side of a polyline, at height y, mitred at its bends, in pieces no longer than
+ * SURFACE_PIECE. Extra per-vertex values from `v`.
+ */
+function ribbon(b: Buffers, line: readonly Pt[], half: number, y: number, v: (across: number, dist: number) => Record<string, number>): void {
+  if (line.length < 2) return
+  const pts = pieces(line, SURFACE_PIECE)
   let dist = 0
   const base = b.pos.length / 3
   for (let k = 0; k < pts.length; k++) {
@@ -451,6 +498,122 @@ function styleOf(kind: number, height: number, area: number, seed: number): numb
 /** Building i's finish from its outer ring in the engine's frame: styleOf, with the index's own dice. */
 const finishOf = (pack: RegionPack, i: number, outer: readonly Pt[]): number =>
   styleOf(pack.buildings.kind[i], pack.buildings.height[i] / DM, Math.abs(area2(outer)) / 2, ((i * 2654435761) >>> 0) / 2 ** 32)
+
+/** A road as regionMeshes lays it: its points, the carriageway's half-width, and the sidewalks' (0 without them). */
+interface RoadRibbon { pts: readonly Pt[]; half: number; walkHalf: number }
+
+/** A convex polygon cut to the side of a line where `side` is not negative (Sutherland–Hodgman against one edge). */
+function clipHalf(poly: readonly Pt[], side: (p: Pt) => number): Pt[] {
+  const out: Pt[] = []
+  for (let i = 0; i < poly.length; i++) {
+    const cur = poly[i], prev = poly[(i + poly.length - 1) % poly.length]
+    const sc = side(cur), sp = side(prev)
+    if (sc >= 0) {
+      if (sp < 0) out.push(lerp(prev, cur, sp / (sp - sc)))
+      out.push(cur)
+    } else if (sp >= 0) out.push(lerp(prev, cur, sp / (sp - sc)))
+  }
+  return out
+}
+const lerp = (a: Pt, b: Pt, t: number): Pt => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+
+/**
+ * Where two ribbons cross they lie on one plane, and the depth test cannot choose between them: the markings of both
+ * speckle through each other wherever the two triangles' depths round apart. The overlap is the two strips'
+ * intersection, a parallelogram about the crossing, less what lies past a ribbon's end cap (a T junction, or two roads
+ * meeting at a corner); a patch of it is laid a little higher (`y`), drawing no marking, so the junction reads as plain
+ * asphalt (or pavement), as a junction does. The strips are tested with each segment reaching `half` of the other past
+ * its caps, so a road that stops short of the other's centre line, inside its carriageway, is still met. Only the
+ * roads' own crossings count: a ribbon's bends are mitred by ribbon(), and the pieces of one road never overlap.
+ */
+function junctions(roads: readonly RoadRibbon[], out: Buffers, y: number, halfOf: (r: RoadRibbon) => number, extra: Record<string, number>): number {
+  interface Seg { road: number; a: Pt; b: Pt; capA: boolean; capB: boolean; half: number }
+  const segs: Seg[] = []
+  const cell = 64
+  const cells = new Map<string, number[]>()
+  for (let i = 0; i < roads.length; i++) {
+    const r = roads[i], half = halfOf(r)
+    if (!(half > 0)) continue
+    for (let k = 0; k + 1 < r.pts.length; k++) {
+      const a = r.pts[k], b = r.pts[k + 1]
+      if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 1e-6) continue
+      const s = segs.push({ road: i, a, b, capA: k === 0, capB: k + 2 === r.pts.length, half }) - 1
+      const pad = half + 20
+      for (let cx = Math.floor((Math.min(a[0], b[0]) - pad) / cell); cx <= Math.floor((Math.max(a[0], b[0]) + pad) / cell); cx++) {
+        for (let cz = Math.floor((Math.min(a[1], b[1]) - pad) / cell); cz <= Math.floor((Math.max(a[1], b[1]) + pad) / cell); cz++) {
+          const key = `${cx},${cz}`
+          const list = cells.get(key)
+          if (list) list.push(s)
+          else cells.set(key, [s])
+        }
+      }
+    }
+  }
+  const seen = new Set<number>()
+  let patches = 0
+  for (const list of cells.values()) {
+    for (let p = 0; p < list.length; p++) {
+      for (let q = p + 1; q < list.length; q++) {
+        const i = Math.min(list[p], list[q]), j = Math.max(list[p], list[q])
+        const A = segs[i], B = segs[j]
+        if (A.road === B.road || seen.has(i * segs.length + j)) continue
+        seen.add(i * segs.length + j)
+        const poly = junctionPatch(A, B)
+        if (!poly) continue
+        const base = out.pos.length / 3
+        for (const [x, z] of poly) {
+          out.pos.push(x, y, z)
+          out.nor.push(0, 1, 0)
+          for (const key of Object.keys(out.extra)) out.extra[key].push(extra[key] ?? 0)
+        }
+        // A fan from the first vertex, up-facing (the cross product's y positive, as waterGeometry winds its rings).
+        for (let k = 1; k + 1 < poly.length; k++) {
+          const a = poly[0], c = poly[k], d = poly[k + 1]
+          const up = (c[1] - a[1]) * (d[0] - a[0]) - (c[0] - a[0]) * (d[1] - a[1]) > 0
+          out.idx.push(base, up ? base + k : base + k + 1, up ? base + k + 1 : base + k)
+        }
+        patches++
+      }
+    }
+  }
+  return patches
+
+  /** The overlap of the two ribbons' strips, as a convex ring, or null where they do not meet. */
+  function junctionPatch(A: Seg, B: Seg): Pt[] | null {
+    const ax = A.b[0] - A.a[0], az = A.b[1] - A.a[1], la = Math.hypot(ax, az)
+    const bx = B.b[0] - B.a[0], bz = B.b[1] - B.a[1], lb = Math.hypot(bx, bz)
+    const ua: Pt = [ax / la, az / la], ub: Pt = [bx / lb, bz / lb]
+    const na: Pt = [-ua[1], ua[0]], nb: Pt = [-ub[1], ub[0]]
+    const det = na[0] * nb[1] - na[1] * nb[0]
+    // Parallel (or nearly): two roads along one line never overlap but at a shared end, where they abut.
+    if (Math.abs(det) < 1e-3) return null
+    // Each segment reaches the other's half-width past a cap, so a road stopping inside the other's strip is met.
+    const p: Pt = [A.a[0] - (A.capA ? ua[0] * B.half : 0), A.a[1] - (A.capA ? ua[1] * B.half : 0)]
+    const q: Pt = [A.b[0] + (A.capB ? ua[0] * B.half : 0), A.b[1] + (A.capB ? ua[1] * B.half : 0)]
+    const c0: Pt = [B.a[0] - (B.capA ? ub[0] * A.half : 0), B.a[1] - (B.capA ? ub[1] * A.half : 0)]
+    const c1: Pt = [B.b[0] + (B.capB ? ub[0] * A.half : 0), B.b[1] + (B.capB ? ub[1] * A.half : 0)]
+    const dx = q[0] - p[0], dz = q[1] - p[1], ex = c1[0] - c0[0], ez = c1[1] - c0[1]
+    const den = dx * ez - dz * ex
+    const t = ((c0[0] - p[0]) * ez - (c0[1] - p[1]) * ex) / den
+    const u = ((c0[0] - p[0]) * dz - (c0[1] - p[1]) * dx) / den
+    const eps = 1e-9
+    if (t < -eps || t > 1 + eps || u < -eps || u > 1 + eps) return null
+    const c: Pt = [p[0] + dx * t, p[1] + dz * t]
+    // The strips' intersection: the four points at ±half of each centre line (Cramer's rule on the two normals).
+    const corner = (sa: number, sb: number): Pt => {
+      const ha = sa * A.half, hb = sb * B.half
+      return [c[0] + (ha * nb[1] - hb * na[1]) / det, c[1] + (na[0] * hb - nb[0] * ha) / det]
+    }
+    let poly: Pt[] = [corner(1, 1), corner(-1, 1), corner(-1, -1), corner(1, -1)]
+    // Less what lies past a cap: a ribbon ends square at its last point.
+    if (A.capA) poly = clipHalf(poly, (v) => (v[0] - A.a[0]) * ua[0] + (v[1] - A.a[1]) * ua[1])
+    if (A.capB) poly = clipHalf(poly, (v) => (A.b[0] - v[0]) * ua[0] + (A.b[1] - v[1]) * ua[1])
+    if (B.capA) poly = clipHalf(poly, (v) => (v[0] - B.a[0]) * ub[0] + (v[1] - B.a[1]) * ub[1])
+    if (B.capB) poly = clipHalf(poly, (v) => (B.b[0] - v[0]) * ub[0] + (B.b[1] - v[1]) * ub[1])
+    if (poly.length < 3 || Math.abs(area2(poly)) < 1e-3) return null
+    return poly
+  }
+}
 
 /** Building i's finish, as its walls are drawn (a room's ceiling slab and what it carries take their building's). */
 export function buildingStyle(pack: RegionPack, l: RegionLayout, i: number): number {
@@ -518,21 +681,37 @@ function buildingGeometries(pack: RegionPack, l: RegionLayout, tile: number): Ma
   return out
 }
 
-/** Water polygons triangulated, at height y. */
-function waterGeometry(pack: RegionPack, l: RegionLayout, y: number): BufferGeometry {
+/**
+ * Water polygons triangulated, at height y, in pieces: each polygon is cut to the SURFACE_PIECE cells it covers (its
+ * rings clipped to the cell, clip.ts clipRing, so two cells' pieces meet on the cell's edge at the same points) and
+ * each piece triangulated on its own. A cell lying wholly inside a hole (an island) has nothing to draw.
+ */
+function waterGeometry(pack: RegionPack, l: RegionLayout, y: number, piece = SURFACE_PIECE): BufferGeometry {
   const b = buffers()
   for (let i = 0; i < polygonCount(pack.water); i++) {
     const rings = polygonAt(pack.water, i).map((r) => shift(l, r))
-    const contour = rings[0].map(([x, z]) => new Vector2(x, z))
-    const holes = rings.slice(1).map((r) => r.map(([x, z]) => new Vector2(x, z)))
-    const tris = ShapeUtils.triangulateShape(contour, holes)
-    const all = [contour, ...holes].flat()
-    const base = b.pos.length / 3
-    for (const p of all) { b.pos.push(p.x, y, p.y); b.nor.push(0, 1, 0) }
-    for (const [p0, p1, p2] of tris) {
-      const a = all[p0], c = all[p1], d = all[p2]
-      const up = (c.y - a.y) * (d.x - a.x) - (c.x - a.x) * (d.y - a.y) > 0
-      b.idx.push(base + p0, up ? base + p1 : base + p2, up ? base + p2 : base + p1)
+    const xs = rings[0].map((p) => p[0]), zs = rings[0].map((p) => p[1])
+    for (let cx = Math.floor(Math.min(...xs) / piece); cx <= Math.floor(Math.max(...xs) / piece); cx++) {
+      for (let cz = Math.floor(Math.min(...zs) / piece); cz <= Math.floor(Math.max(...zs) / piece); cz++) {
+        const cell: Rect = { x0: cx * piece, z0: cz * piece, x1: (cx + 1) * piece, z1: (cz + 1) * piece }
+        const outer = clipRing(rings[0], cell)
+        if (outer.length < 3) continue
+        const outerArea = Math.abs(area2(outer))
+        if (outerArea < 1e-6) continue
+        const holeRings = rings.slice(1).map((r) => clipRing(r, cell)).filter((r) => r.length >= 3 && Math.abs(area2(r)) >= 1e-6)
+        if (holeRings.some((r) => Math.abs(area2(r)) >= outerArea - 1e-6)) continue
+        const contour = outer.map(([x, z]) => new Vector2(x, z))
+        const holes = holeRings.map((r) => r.map(([x, z]) => new Vector2(x, z)))
+        const tris = ShapeUtils.triangulateShape(contour, holes)
+        const all = [contour, ...holes].flat()
+        const base = b.pos.length / 3
+        for (const p of all) { b.pos.push(p.x, y, p.y); b.nor.push(0, 1, 0) }
+        for (const [p0, p1, p2] of tris) {
+          const a = all[p0], c = all[p1], d = all[p2]
+          const up = (c.y - a.y) * (d.x - a.x) - (c.x - a.x) * (d.y - a.y) > 0
+          b.idx.push(base + p0, up ? base + p1 : base + p2, up ? base + p2 : base + p1)
+        }
+      }
     }
   }
   return geometryOf(b)
@@ -541,7 +720,7 @@ function waterGeometry(pack: RegionPack, l: RegionLayout, y: number): BufferGeom
 export interface RegionScene {
   meshes: Mesh[]
   /** Counts, for the HUD and the probes. */
-  stats: { buildings: number; roads: number; water: number; tiles: number; vertices: number }
+  stats: { buildings: number; roads: number; junctions: number; water: number; tiles: number; vertices: number }
 }
 
 /** Everything the page draws for a region. */
@@ -561,41 +740,47 @@ export function regionMeshes(pack: RegionPack, l: RegionLayout, fbm: FbmSet, nig
     meshes.push(mesh)
     vertices += g.getAttribute('position').count
   }
-  // The ground: the region and a margin, under everything.
+  // The ground: the region and a margin, under everything, as a grid of SURFACE_PIECE cells.
   const b = l.bounds, margin = 3000
   const w = b.x1 - b.x0 + 2 * margin, d = b.z1 - b.z0 + 2 * margin
-  add(new PlaneGeometry(w, d).rotateX(-Math.PI / 2).translate((b.x0 + b.x1) / 2, 0, (b.z0 + b.z1) / 2), moded(groundMaterial(fbm)), 'RegionGround', false, 1)
-  const wm = moded(waterMaterial(fbm))
-  wm.polygonOffset = true
-  wm.polygonOffsetFactor = -1
-  wm.polygonOffsetUnits = -1
-  add(waterGeometry(pack, l, 0.02), wm, 'RegionWater', false, 2)
-  // Roads: sidewalks under the carriageways.
+  const ground = new PlaneGeometry(w, d, Math.ceil(w / SURFACE_PIECE), Math.ceil(d / SURFACE_PIECE))
+  add(ground.rotateX(-Math.PI / 2).translate((b.x0 + b.x1) / 2, 0, (b.z0 + b.z1) / 2), moded(groundMaterial(fbm)), 'RegionGround', false, 1)
+  add(waterGeometry(pack, l, SURFACE.water), moded(waterMaterial(fbm)), 'RegionWater', false, 2)
+  // Roads: sidewalks under the carriageways, each surface at its SURFACE height and nothing else keeping them apart.
   const walks = buffers('dist'), roads = buffers('across', 'dist', 'lanes', 'twoWay', 'halfWidth')
+  const ribbons: RoadRibbon[] = []
   for (let i = 0; i < pack.roads.cls.length; i++) {
     const cls = pack.roads.cls[i]
     if (cls === ROAD_CLASS.ferry) continue
     const pts = shift(l, roadAt(pack, i))
     const { carriage, sidewalk } = roadWidth(cls, pack.roads.lanes[i])
     const half = carriage / 2
-    if (sidewalk) ribbon(walks, pts, half + SIDEWALK, 0.035, (_s, dist) => ({ dist }))
+    if (sidewalk) ribbon(walks, pts, half + SIDEWALK, SURFACE.sidewalk, (_s, dist) => ({ dist }))
     const lanes = pack.roads.lanes[i], twoWay = pack.roads.flow[i] === FLOW.both ? 1 : 0
-    ribbon(roads, pts, half, 0.045, (across, dist) => ({ across, dist, lanes, twoWay, halfWidth: half }))
+    ribbon(roads, pts, half, SURFACE.road, (across, dist) => ({ across, dist, lanes, twoWay, halfWidth: half }))
+    ribbons.push({ pts, half, walkHalf: sidewalk ? half + SIDEWALK : 0 })
   }
   // The paved floors (the workplaces' rooms and forecourts): each a ribbon along x, at the sidewalks' height.
   for (const f of l.floors ?? []) {
     const z = (f.z0 + f.z1) / 2
-    ribbon(walks, [[f.x0, z], [f.x1, z]], (f.z1 - f.z0) / 2, 0.035, (_s, dist) => ({ dist }))
+    ribbon(walks, [[f.x0, z], [f.x1, z]], (f.z1 - f.z0) / 2, SURFACE.sidewalk, (_s, dist) => ({ dist }))
   }
-  add(geometryOf(walks), moded(sidewalkMaterial(fbm)), 'RegionSidewalks', false, 3)
-  add(geometryOf(roads), moded(asphaltMaterial(fbm)), 'RegionRoads', false, 4)
+  // The junctions: plain pavement over the sidewalks' crossings, plain asphalt over the carriageways'.
+  const walkJunctions = buffers('dist'), roadJunctions = buffers('across', 'dist', 'lanes', 'twoWay', 'halfWidth')
+  junctions(ribbons, walkJunctions, SURFACE.sidewalkJunction, (r) => r.walkHalf, { dist: 0 })
+  const junctionCount = junctions(ribbons, roadJunctions, SURFACE.roadJunction, (r) => r.half, { across: 0, dist: 0, lanes: 0, twoWay: 0, halfWidth: 1 })
+  const pavement = moded(sidewalkMaterial(fbm)), asphalt = moded(asphaltMaterial(fbm))
+  add(geometryOf(walks), pavement, 'RegionSidewalks', false, 3)
+  if (walkJunctions.idx.length > 0) add(geometryOf(walkJunctions), pavement, 'RegionSidewalkJunctions', false, 3)
+  add(geometryOf(roads), asphalt, 'RegionRoads', false, 4)
+  if (roadJunctions.idx.length > 0) add(geometryOf(roadJunctions), asphalt, 'RegionRoadJunctions', false, 4)
   // Buildings, by tile, every tile in the one facade.
   const facade = moded(buildingMaterial(fbm, night, attribute('along', 'float') as unknown as F))
   const tiles = buildingGeometries(pack, l, 400)
   for (const [k, g] of tiles) add(g, facade, `RegionBuildings ${k}`, true)
   return {
     meshes,
-    stats: { buildings: polygonCount(pack.buildings), roads: pack.roads.cls.length, water: polygonCount(pack.water), tiles: tiles.size, vertices },
+    stats: { buildings: polygonCount(pack.buildings), roads: pack.roads.cls.length, junctions: junctionCount, water: polygonCount(pack.water), tiles: tiles.size, vertices },
   }
 }
 

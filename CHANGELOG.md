@@ -40,6 +40,13 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   a role declared with movement, is never dropped. They run in CI's `kani (core-fuse)` group; the proof stands only
   once that job is green.
 
+- **Unarmed by construction, pinned.** `conduct.test.ts` now proves the city carries no weapon: the wardrobe's five
+  optional pieces (a tie, a bag, a cup, long hair, glasses), the ragdoll's eleven body segments and ten joints, the
+  crowd's eight activities, the seven action verbs with their rules and hints, the skills and the eight vehicle kinds
+  name none; the agents' mesh descriptors, rigs, shaders and action tables carry no weapon word in code or comment; an
+  `ACTION` line that asks for one is refused before any model is involved; and the asset gate's four forbidden words
+  are all in the conduct lexicon, so an ask about one is not engaged with. A new optional piece or activity has to be
+  added to that test by hand, as a 14A decision.
 - **Peak, a tier above Ultra for big GPUs.** Tier 5, outside the tier table like Lite, so every existing tier number
   and automatic range stays as it was. It draws Ultra at 1.25 times the resolution on each side (about 1.56 times the
   pixels), held within the device's largest texture, which also fixes `?scale=2` on a very wide window at any tier;
@@ -381,6 +388,9 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Fixed
 
+- **The asset gate read "burgundy" as a gun.** The containment rule (`assets/cc0.ts`) purges any name that holds
+  `gun`, and its short list of ordinary words that merely contain it had no colour in it, so an asset or a generated
+  name with burgundy in it would have been purged. It is allowed now; the wardrobe's burgundy pantsuit showed it.
 - **A lost GPU left a city that ran on invisibly.** The page's own device lost after the boot (a driver reset, the GPU
   process gone, a phone taking the memory back) only wrote to the error list while the HUD carried on over a frozen
   frame; it now halts the city and shows the graphics-reset card. Lost while the page was hidden, the page restarts
@@ -485,6 +495,24 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   (one of a laptop run's seven failures); only a folder the scanner has seen, or one outside Downloads, avoids that.
 - **Two high npm audit findings**, both in build-time tools that never reach the page: vite 8.3.1 → 8.3.5 (with
   rolldown 1.2.15 and postcss 8.5.31 under it) and source-map-js 1.2.1 → 1.2.2; the lockfile alone changes.
+
+- **Lakefront streets under the pavement and the lawn ("grass above the roads").** Past a few metres a Lakefront
+  Metro street showed as pale sidewalk with no asphalt or markings, farther out as lawn, and a causeway over the lake
+  as lawn end to end. The region's road, sidewalk and water materials asked for a negative polygon offset, and three
+  r186's WebGPU backend hands it to the pipeline unflipped under the reversed depth buffer the page uses, where a
+  negative bias moves a surface away from the camera: by more than the 4.5 cm a street stands over the ground beyond
+  about 18 m. No surface asks for an offset now; each lies at its own height (`SURFACE` in `region/regionWorld.ts`),
+  which the reversed buffer resolves at any distance in view, and the result is the same under a three that flips
+  the sign. Found with it: where two streets cross, their ribbons lay on one plane and their markings fought, so a
+  junction gets a patch of plain asphalt over the carriageways' overlap and, with sidewalks, of plain pavement over
+  the sidewalks', cut at a ribbon's end for a T or a corner. And with the offsets gone the map's edge still showed
+  lawn over a causeway and lake over its road: the ground was two 8.5 km triangles and a lake strip one 2.5 km
+  rectangle, too far from any pixel for the depth interpolated across them to keep the surfaces' centimetres, so every
+  flat surface is now drawn in pieces of at most 128 m (`SURFACE_PIECE`), the ground as a grid, the water cut to
+  cells, the ribbons split. Verified by `region/surfaces.test.ts` (every crossing of the generated metropolis and the
+  north ridge, point by point; every piece's length; the water's area) and by the built page rendered in a headless
+  Chrome on the software WebGPU adapter: asphalt and the double yellow line to the horizon where pavement and lawn
+  were, the lake beside the causeway. A laptop's own picture is unverified. `docs/stutter-and-depth.md` §4.
 
 ## [1.0.0-stable-beta] - 2026-10-12
 
