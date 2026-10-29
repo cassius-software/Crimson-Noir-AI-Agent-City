@@ -356,6 +356,22 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Fixed
 
+- **A pedestrian pinned on a standing car, and the car held by them.** A pedestrian whose way to their corner ran
+  through a car's contact footprint (a car parked across the sidewalk, or the player's car stopped on one) was pushed
+  out of the footprint every tick while their walk kept pressing in, so they stood at the bumper for good, staggering;
+  from inside the widened footprint they read as 0 m to the car's First-Law corridor, which held the car's reverse, so
+  the car and its pedestrian locked each other (seed 11 of the city: agent 17 on car 0 for 59 s of 60, a push every
+  tick). Now the part of a walk pressing into a car comes out of it, as a wall's does, so the step slides along the
+  body instead of being set back; a pedestrian whose next 6 m run through a standing car (under 1 m/s) steers for the
+  footprint corner with the shortest clear way round, 0.3 m off the body; and a corner or door front a standing car
+  covers counts as reached from anywhere round the car, so the leg ends instead of waiting on it. Traffic on its rings
+  never locked, so nothing changes for a moving car. The crowd shader now runs on the CPU under test: `wgslHost.ts`
+  compiles the WGSL subset it is written in to JavaScript, checked against the GPU's own `Params` layout and against
+  TypeScript copies of its pure functions over 12,000 random cases, and `crowdHost.ts` is the same sensor over it,
+  with the GPU's one-step lag. `crowdSoak.test.ts` soaks the whole realm with the shipped pedestrians on every change:
+  eight cars parked across the sidewalks for 60 s, and 48 cars on their rings with 500 people for 1,800 ticks, no
+  pedestrian pinned on a car for 5 s and no car reading one at 0 m for 10 s. The nightly fuzz workflow runs the
+  traffic soak for 10,000 ticks (`SOAK_TICKS`).
 - **A lost GPU left a city that ran on invisibly.** The page's own device lost after the boot (a driver reset, the GPU
   process gone, a phone taking the memory back) only wrote to the error list while the HUD carried on over a frozen
   frame; it now halts the city and shows the graphics-reset card. Lost while the page was hidden, the page restarts
