@@ -722,7 +722,7 @@ while you type.
 - The core commands, as `help` prints them: `help [command]`, `stats [--once]`, `laws`, `kernel`,
   `topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]`,
   `feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]`,
-  `quality [auto|lite|peak|-1|0-5]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `render [on|off]`,
+  `ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]`, `quality [auto|lite|peak|-1|0-5]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `render [on|off]`,
   `captions [on|off]`, `ping [go|look|gather|wait|clear]`,
   `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
   `recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]`, `memory [<agent>|forget <agent>|forget all]`,
@@ -844,8 +844,8 @@ cinema camera, the HUD. Track B is this console on its own.
 
 ### The operator tier
 
-`operator unlock` opens the elite tier for systems engineers; `operator lock` closes it again. While
-unlocked:
+`operator unlock` opens the operator tier for systems engineers; `operator lock` closes it again (and the
+Ring-0 elite tier above it, below). While unlocked:
 
 - `run <skill>[,<skill>...]: <js>` runs a script (Shift+Enter for more lines) with a frozen `sim`
   object and a capturing `console`; `await` works, and a script that runs past its timeout is
@@ -1095,6 +1095,30 @@ tethered to you, part of your swarm, until the tether breaks.
   say is stored beyond the last transcript shown by `recruit`.
 
 A short two-note cue sounds where the person you asked stands, so you hear who is coming.
+
+
+### The Ring-0 elite tier (`ring0`)
+
+Above the operator tier sits one more, opened by a passphrase rather than a word: `ring0 unlock --elite
+<passphrase>`. It exists for the owner's own hand on the city: it opens NoirScript's write intrinsics (`tune`,
+`intent`, `cull`, `steer`) and raises NoirScript's limits for the console session, so a NoirScript program can
+set a tuning knob, send a car a player-style intent, set the crowd's density or lean a feature of the inspector.
+
+- **Setting the passphrase.** `operator unlock`, then `ring0 elite set <passphrase>` (8 to 256 characters;
+  inner spaces kept). The page keeps a record of it, `v1:<salt>:<SHA-256 of salt:passphrase>`, in this browser's
+  local storage, never the words; the record is checked, never read back. To change it, open the tier with the
+  old one first. In the console alone (`?boot=tty`) nothing can be kept, and the tier cannot open.
+- **Opening and closing.** `ring0 unlock --elite <passphrase>` (operator tier open first) prints the banner:
+  what is open now and what stays in force. `ring0 lock` closes it; `operator lock` closes both. Five wrong
+  passphrases in a row refuse further tries until the operator tier is locked and unlocked again. `ring0` or
+  `ring0 status` prints the state and how many writes the tier has made this session. The passphrase is never
+  echoed, and the history keeps the line as `ring0 unlock --elite ••••`.
+- **What stays out of reach.** Every write goes through the operator's own frozen facade: `tune` is the same path
+  as `set` (validated and clamped by the engine), `intent` is a scripted player-style intent (the same Bouncer,
+  envelope and latch as the wheel, in the physics worker), `cull` is `crowd.cull`, `steer` is the inspector's
+  bias. The three laws, the Sanctuary, the Ring-0 auditor, the kernel's blinding and the 14A screen are not on
+  that facade and cannot be reached or altered from the tier; `eliteWiring.test.ts` pins that the tier's code
+  calls those four things and nothing else.
 
 ### Pings and the rally
 

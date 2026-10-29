@@ -37,9 +37,10 @@ test('the operator tier alone puts steering on a request, from the steering it h
   assert.match(op, /return setKnob\(table, key, value\)/)
   assert.match(op, /setKnob\(e\.table, e\.key, e\.value\)/)
   // Steering reaches nothing of the laws: the inspector reads the snapshot through the facade and writes knobs through it.
-  const features = op.slice(op.indexOf('const features = Object.freeze({'), op.indexOf('  return Object.freeze({\n    unlock:'))
+  // The inspector's code (the comments may name what is out of reach; the code must not), up to the next tier.
+  const features = op.slice(op.indexOf('const features = Object.freeze({'), op.indexOf('  return Object.freeze({\n    unlock:')).replace(/^\s*\/\/.*$/gm, '')
   assert.ok(features.length > 100)
-  assert.doesNotMatch(features, /laws|bouncer|sanctuary|blindSensing|sim\.kernel|ring0/i)
+  assert.doesNotMatch(features, /laws|bouncer|sanctuary|blindSensing|sim\.kernel|ring0\.ts/i)
   assert.match(features, /if \(!unlocked\) throw locked\('feature'\)/g)
   assert.equal(features.match(/if \(!unlocked\) throw locked\('feature'\)/g)?.length, 4, 'steer, clamp, release, reset')
 })

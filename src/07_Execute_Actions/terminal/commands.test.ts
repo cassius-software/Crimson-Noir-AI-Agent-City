@@ -24,7 +24,7 @@ import {
 import {
   offlineBridge, ring0Stats, type ActEnd, type ActEvent, type ActsBridge, type AskResult, type GatedAsk, type GatedRun, type GatedSay, type HalDevice, type LookBridge, type LookChange,
   type MemoryBridge, type ModelBridge, type NetBridge, type NetReport, type OperatorBridge, type PendingAct, type Piece, type PingBridge, type PingPick, type PingPoint, type RecordBridge,
-  type RecruitBridge, type Ring0Stats, type SayResult, type TerminalBridge, type TopicBridge, type AgentBridge, type ConciergeBridge, type FeaturesBridge,
+  type RecruitBridge, type Ring0Stats, type SayResult, type TerminalBridge, type TopicBridge, type AgentBridge, type ConciergeBridge, type FeaturesBridge, type EliteBridge,
 } from './bridge.ts'
 import { SKILLS } from '../../03_Spawn_Agents/skills.ts'
 import { LOOK_BODIES, LOOK_PRESETS, LOOK_SLOTS } from '../../03_Spawn_Agents/look.ts'
@@ -50,7 +50,7 @@ const CORE_NAMES = [
   'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'time', 'audio', 'ghost', 'rain', 'render', 'captions', 'ping', 'look', 'agent', 'sloane', 'goal', 'hal', 'recruit', 'memory', 'clear', 'history', 'echo',
   'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'exit',
 ]
-const OPERATOR_NAMES = ['operator', 'run', 'ask', 'swarm', 'act', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
+const OPERATOR_NAMES = ['operator', 'ring0', 'run', 'ask', 'swarm', 'act', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
 
 const IDLE: RecordingState = { active: false, source: null, seconds: 0, frames: 0, bytes: 0, dropped: 0, codec: '' }
 
@@ -110,6 +110,29 @@ interface FakeOp extends OperatorBridge {
   speakAnswer: SayResult | null
   voice: { server: string; voice: string | null; model: string | null; auto: boolean }
   features: FeaturesBridge
+  elite: FakeElite
+}
+
+interface FakeElite extends EliteBridge { state: { unlocked: boolean; set: boolean } }
+
+/** The elite tier as the tier serves it: one passphrase ('open sesame please') once set; reads log nothing, unlock and set log to opCalls. */
+function fakeElite(opCalls: string[]): FakeElite {
+  const e: FakeElite = {
+    state: { unlocked: false, set: false },
+    status: () => `ring0: elite tier ${e.state.unlocked ? 'unlocked' : 'locked'}${e.state.set ? '' : ' (no passphrase set)'}; 0 writes this session`,
+    unlocked: () => e.state.unlocked,
+    unlock: (p) => {
+      opCalls.push('elite unlock')
+      if (!e.state.set) throw new Error("no elite passphrase is set: 'ring0 elite set <passphrase>' first")
+      if (p !== 'open sesame please') throw new Error('wrong passphrase (4 tries left)')
+      e.state.unlocked = true
+      return ['Ring-0 elite tier unlocked for this console session.', 'Still in force: the three laws.']
+    },
+    lock: () => { e.state.unlocked = false; return 'ring0: elite tier locked' },
+    set: (p) => { opCalls.push(`elite set ${p}`); e.state.set = true; return 'ring0: elite passphrase set' },
+    writes: () => (e.state.unlocked ? { tune: () => 1, intent: () => true, cull: (d) => d, steer: (_f, v) => v } : null),
+  }
+  return e
 }
 
 /** The feature inspector as the tier serves it: fixed rows, logging to the bridge's shared `calls` (as 'features <verb>') so the air-gap sweep sees every use. */
@@ -203,6 +226,7 @@ function fakeOperator(): FakeOp {
     text: 'Grip scales\ntyre friction.',
     acts: undefined as unknown as FakeActs,
     features: undefined as unknown as FeaturesBridge,
+    elite: undefined as unknown as FakeElite,
     unlock: () => { f.opCalls.push('unlock'); f.state.unlocked = true },
     // The tier withdraws a waiting proposal as it locks (no proposal waits past a lock): the console must read it first.
     lock: () => { f.opCalls.push('lock'); f.state.unlocked = false; f.acts.waiting = null },
@@ -584,6 +608,7 @@ function fake(): Fake {
   f.ping = fakePing(f.calls)
   f.topics = fakeTopics(f.calls)
   f.operator.features = fakeFeatures(f.calls)
+  f.operator.elite = fakeElite(f.operator.opCalls)
   f.recruit = fakeRecruit(f.calls)
   f.memory = fakeMemory(f.calls)
   f.look = fakeLook(f.calls)
@@ -2064,6 +2089,44 @@ test('feature: the inspector is read while locked (rows, top k, one card, the pr
   assert.deepEqual(FEATURE_IDS, FEATURES.map((f) => f.id))
   assert.ok(complete('feature ').includes('feature CIVIC_COOPERATION'))
   assert.ok(complete('feature steer ').includes('feature steer TRAFFIC_YIELD'))
+})
+
+test('ring0: the elite tier reads while locked, opens only for the operator with the passphrase set, and never echoes or keeps the passphrase', () => {
+  const b = fake()
+  assert.deepEqual(only(run('ring0', b, [])), { kind: 'out', text: 'ring0: elite tier locked (no passphrase set); 0 writes this session' })
+  assert.deepEqual(texts(run('ring0 status', b, [])), texts(run('ring0', b, [])))
+  assert.deepEqual(only(run('ring0 lock', b, [])), { kind: 'out', text: 'ring0: elite tier locked' })
+  for (const l of ['ring0 unlock --elite open sesame please', 'ring0 elite set open sesame please']) {
+    assert.deepEqual(only(run(l, b, [])), { kind: 'err', text: "ring0: locked; type 'operator unlock' first" }, l)
+  }
+  assert.deepEqual(only(run('ring0 unlock', b, [])), { kind: 'err', text: 'ring0: say what to unlock and with what: ring0 unlock --elite <passphrase>' })
+  assert.deepEqual(only(run('ring0 unlock --elite', b, [])), { kind: 'err', text: 'ring0: say what to unlock and with what: ring0 unlock --elite <passphrase>' })
+  assert.deepEqual(only(run('ring0 elite set', b, [])), { kind: 'err', text: 'usage: ring0 elite set <passphrase>' })
+  assert.deepEqual(only(run('ring0 elite', b, [])), { kind: 'err', text: 'usage: ring0 elite set <passphrase>' })
+  assert.deepEqual(only(run('ring0 open', b, [])), { kind: 'err', text: 'usage: ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]' })
+  assert.deepEqual(b.operator.opCalls, [], 'nothing reached the tier while locked')
+  const u = unlocked()
+  assert.deepEqual(only(run('ring0 unlock --elite open sesame please', u, [])), { kind: 'err', text: "ring0: no elite passphrase is set: 'ring0 elite set <passphrase>' first" })
+  assert.deepEqual(only(run('ring0 elite set open sesame please', u, [])), { kind: 'out', text: 'ring0: elite passphrase set' })
+  assert.deepEqual(only(run('ring0 unlock --elite wrong words here', u, [])), { kind: 'err', text: 'ring0: wrong passphrase (4 tries left)' })
+  const open = run('ring0 unlock --elite open sesame please', u, [])
+  assert.deepEqual(kinds(open), ['out', 'out'])
+  assert.match(texts(open)[0], /^Ring-0 elite tier unlocked/)
+  assert.deepEqual(only(run('ring0', u, [])), { kind: 'out', text: 'ring0: elite tier unlocked; 0 writes this session' })
+  assert.deepEqual(only(run('ring0 lock', u, [])), { kind: 'out', text: 'ring0: elite tier locked' })
+  assert.deepEqual(u.operator.opCalls, ['elite unlock', 'elite set open sesame please', 'elite unlock', 'elite unlock'])
+  // The passphrase keeps its inner spaces and loses its ends; the history never keeps it.
+  assert.deepEqual(kinds(run('ring0 unlock --elite   open sesame please  ', u, [])), ['out', 'out'])
+  assert.equal(redactForHistory('ring0 unlock --elite open sesame please'), 'ring0 unlock --elite ••••')
+  assert.equal(redactForHistory('  ring0 elite set open sesame please'), '  ring0 elite set ••••')
+  assert.equal(redactForHistory('ring0 unlock --elite'), 'ring0 unlock --elite')
+  assert.equal(redactForHistory('ring0 status'), 'ring0 status')
+  // Offline: the tier is down with the engine.
+  assert.match(only(run('ring0', offlineBridge(BRAND), [])).text, /engine not running/)
+  // Completion.
+  assert.deepEqual(complete('ring0 '), ['ring0 elite', 'ring0 lock', 'ring0 status', 'ring0 unlock'])
+  assert.deepEqual(complete('ring0 unlock '), ['ring0 unlock --elite'])
+  assert.deepEqual(complete('ring0 elite '), ['ring0 elite set'])
 })
 
 test('r0: the console\'s own machine runs the rest of the line, keeps definitions for the session, resets and lists words; it touches no bridge', () => {

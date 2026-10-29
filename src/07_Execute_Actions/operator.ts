@@ -21,7 +21,8 @@
 import { DISENGAGED, disengaged, screen } from '../02_Define_The_Rules/conduct.ts'
 import type { CrowdStats } from '../03_Spawn_Agents/crowdCompute.ts'
 import type { KernelStats, QualityState, SipocSnapshot } from '../05_Observe_Environment/telemetry.ts'
-import type { OperatorBridge } from './terminal/bridge.ts'
+import type { EliteWrites, OperatorBridge } from './terminal/bridge.ts'
+import { sha256 } from '../02_Define_The_Rules/integrity.ts'
 import type { CityKnobs } from '../06_Make_Decisions/actions.ts'
 import type { AuditEntry, verifyChain } from '../02_Define_The_Rules/guardrails.ts'
 import { createActs, PROPOSAL_WAITING } from './acts.ts'
@@ -301,7 +302,27 @@ export function taskOutcome(r: AskResult | RunResult | SayResult): Outcome | und
 }
 
 /** What the host hands the operator tier besides the gate and the mind; each is optional (the tier says what is missing). */
+/** Where the host keeps the elite tier's passphrase record (a salted hash, never the words): one string, or none yet. */
+export interface EliteVault {
+  load(): string | null
+  save(value: string): void
+}
+
+/** What `ring0 unlock --elite` prints: what is open now, and what stays in force and out of reach. */
+export const ELITE_BANNER: readonly string[] = Object.freeze([
+  'Ring-0 elite tier unlocked for this console session.',
+  "Open now: NoirScript's writes (tune, intent, cull, steer), each through the operator's own facade, with raised limits.",
+  'Still in force, out of reach: the three laws and the Bouncer in the physics realm (a car intent is vetted as the',
+  "wheel's is), the Sanctuary, the Ring-0 auditor and the 14A screen. No write here can reach or alter any of them.",
+  "Type 'ring0 lock' to close this tier; 'operator lock' closes both.",
+])
+
+/** Wrong passphrases in a row the elite tier takes before it refuses until the operator tier is locked and unlocked again. */
+const ELITE_MAX_WRONG = 5
+
 export interface Senses {
+  /** Where the host keeps the elite tier's passphrase record; absent when the page cannot keep one (the tier then cannot open). */
+  readonly vault?: EliteVault
   readonly voice?: Voice
   readonly speech?: SpeechOut
   readonly diary?: Diary
@@ -1023,7 +1044,7 @@ const answeringProvider = (mind: Mind): string | undefined => {
  */
 export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sleep: (ms: number) => Promise<void> = wait, senses: Senses = {}): OperatorBridge {
   const api = scriptApi(sim)
-  const { voice, speech, diary, awareness, voiceOf, nameOf, city } = senses
+  const { voice, speech, diary, awareness, voiceOf, nameOf, city, vault } = senses
   let unlocked = false
   let running: string | null = null
   let asking: (GatedAsk & { stop(): void }) | null = null
@@ -1208,11 +1229,100 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
       return ['features: nothing steered', ...relean(null)]
     },
   })
+  // The elite tier (bridge.ts EliteBridge): a passphrase record `v1:<salt>:<sha256(salt:passphrase)>` kept by the host's
+  // vault, never the words; open for this console session only. What it opens is the write surface below, every
+  // write through the facade `set`, a scripted intent and `crowd.cull` already go through, and the feature inspector:
+  // nothing of the laws, the Sanctuary, the Ring-0 auditor or the 14A screen is reachable from here.
+  let elite = false
+  let wrongPassphrases = 0
+  let eliteWrites = 0
+  const record = (): { salt: string; hash: string } | null => {
+    const raw = vault?.load() ?? null
+    const m = raw === null ? null : /^v1:([0-9a-f]{32}):([0-9a-f]{64})$/.exec(raw)
+    return m ? { salt: m[1], hash: m[2] } : null
+  }
+  const digest = (salt: string, passphrase: string): string => sha256(`${salt}:${passphrase}`)
+  const saltHex = (): string => {
+    const bytes = new Uint8Array(16)
+    crypto.getRandomValues(bytes)
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+  }
+  const requireElite = (): void => {
+    if (!elite) throw new Error("elite tier locked: 'ring0 unlock --elite <passphrase>' opens it")
+  }
+  const writes: EliteWrites = Object.freeze({
+    tune: (key: string, value: number): number => {
+      requireElite()
+      const m = /^(physics|shaders)\.(.+)$/.exec(key)
+      const table: 'physics' | 'shaders' = m ? (m[1] as 'physics' | 'shaders') : key.startsWith('car.') ? 'physics' : 'shaders'
+      const now = setKnob(table, m ? m[2] : key, value)
+      eliteWrites++
+      return now
+    },
+    intent: (car: number, throttle: number, brake: number, steer: number): boolean => {
+      requireElite()
+      api.vehicles.intent(car, throttle, brake, steer)
+      eliteWrites++
+      return true
+    },
+    cull: (density: number): number => {
+      requireElite()
+      api.crowd.cull({ density })
+      eliteWrites++
+      return density
+    },
+    steer: (feature: string, value: number): number => {
+      requireElite()
+      features.steer(feature, value)
+      eliteWrites++
+      return value
+    },
+  })
+  const eliteTier = Object.freeze({
+    status: (): string => {
+      const kept = record() ? '' : vault ? ' (no passphrase set)' : ' (this page cannot keep a passphrase)'
+      return `ring0: elite tier ${elite ? 'unlocked' : 'locked'}${kept}; ${eliteWrites} write${eliteWrites === 1 ? '' : 's'} this session`
+    },
+    unlocked: (): boolean => elite,
+    unlock: (passphrase: string): string[] => {
+      if (!unlocked) throw locked('ring0')
+      if (!vault) throw new Error('this page cannot keep a passphrase, so the elite tier cannot open here')
+      const r = record()
+      if (!r) throw new Error("no elite passphrase is set: 'ring0 elite set <passphrase>' first")
+      if (wrongPassphrases >= ELITE_MAX_WRONG) throw new Error('too many wrong passphrases: operator lock, then operator unlock, to try again')
+      if (digest(r.salt, String(passphrase)) !== r.hash) {
+        wrongPassphrases++
+        const left = ELITE_MAX_WRONG - wrongPassphrases
+        throw new Error(`wrong passphrase (${left} ${left === 1 ? 'try' : 'tries'} left)`)
+      }
+      elite = true
+      wrongPassphrases = 0
+      return [...ELITE_BANNER]
+    },
+    lock: (): string => {
+      elite = false
+      return 'ring0: elite tier locked'
+    },
+    set: (passphrase: string): string => {
+      if (!unlocked) throw locked('ring0')
+      if (!vault) throw new Error('this page cannot keep a passphrase, so the elite tier cannot open here')
+      const words = String(passphrase)
+      if (words.length < 8 || words.length > 256) throw new RangeError('the passphrase must be 8 to 256 characters')
+      if (record() && !elite) throw new Error("a passphrase is set: 'ring0 unlock --elite <passphrase>' first, then set the new one")
+      const salt = saltHex()
+      vault.save(`v1:${salt}:${digest(salt, words)}`)
+      return "ring0: elite passphrase set (kept as a salted hash, never the words); 'ring0 unlock --elite <passphrase>' opens the tier"
+    },
+    writes: (): EliteWrites | null => (elite ? writes : null),
+  })
   return Object.freeze({
     unlock: () => { unlocked = true },
     // No proposal waits past a lock: the one waiting is withdrawn, and the console (which caused it) prints the line.
     lock: () => {
       unlocked = false
+      // The elite tier closes with this one, and its count of wrong passphrases starts again.
+      elite = false
+      wrongPassphrases = 0
       acts.withdraw('operator lock')
     },
     unlocked: () => unlocked,
@@ -1233,6 +1343,7 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
       return setKnob(table, key, value)
     },
     features,
+    elite: eliteTier,
     ask: (skills: readonly string[], prompt: string): GatedAsk => {
       const { stop: _stop, ...handle } = askThrough(skills, prompt, true)
       return Object.freeze(handle)

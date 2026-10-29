@@ -87,6 +87,8 @@ const SPEECH_KEY = 'civic-simulation:speech:v1'
 const ANSWER_TAIL = 72
 /** Where the network session token (`net join <url> <token>`) is kept between visits, like the cognition key; never in the page source. */
 const NET_TOKEN_KEY = 'civic-simulation:net:v1'
+/** The elite tier's passphrase record (operator.ts EliteVault): a salted hash, never the words. */
+const ELITE_KEY = 'civic-simulation:elite:v1'
 
 /** The page's own fetch, held to this machine (airgap.ts loopbackFetch): the model and speech clients speak through it, and nothing else does. */
 const pageFetch = loopbackFetch((url, init) => window.fetch(url, init))
@@ -952,7 +954,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
         })
         if (termOpenRef.current || lookOpenRef.current) e.input.suspend(true)
         setEngine(e)
-        const engineBridge = e.terminalBridge(gate, mind, voice, memory.diary(), voiceOf)
+        const engineBridge = e.terminalBridge(gate, mind, voice, memory.diary(), voiceOf, pageStore(ELITE_KEY))
         setBridge(Object.freeze({
           ...engineBridge,
           // The map this shell walks, for the console's `map` status line (the choice itself is remap's).
