@@ -4,24 +4,28 @@
 /**
  * Why does this file exist? It is the wardrobe's card (Track A of the character customizer), in two tabs. "You": the
  * player's own look, slot by slot, out of the crowd's closed business-casual catalogue (03_Spawn_Agents/look.ts).
- * Every slot is a row of the options look.ts allows for the body chosen — named options as a segmented control,
- * colours as swatches drawn from the crowd's own palettes — with the eight presets, a "randomise" that asks
- * lookFromSeed for the look the hash would give some other number, a reset to the look the visitor's own seed gives,
- * and the short shareable code (formatLookCode / parseLookCode, checksummed) to write down or paste. Every change is
- * worn at once: the host writes it to the player's body (engine.setLook) and keeps it (lookStore.ts). "Agents": the
- * player's own agents (08_Swarm/roster.ts), one tab each: a name, pronouns, a role in the player's words, a voice (one
- * of the twelve profiles, or a voice the speech provider knows), and the same wardrobe for their look, worn by the
- * pedestrian hired as them the moment it changes; hiring itself is the console's (agent hire <name> <skill>), so the
- * card never reaches the swarm. There is no mirror by design: the first-person eye never sees its own body, so the
- * card previews with swatches alone; the shadow, the body the cull draws and every other viewer see the look. Sloane's
- * chip opens it; Esc, the close button or Done puts it away.
+ * The eight body sliders (height in metres, mass, muscle, shoulders, hips, legs, posture, head) are range inputs
+ * over a silhouette, front and side, drawn from the very rings the GPU lofts the body from (humanoid.ts), with the
+ * look's own colours; every other slot is a row of the options look.ts allows for the body chosen — named options
+ * as a segmented control, colours as swatches drawn from the crowd's own palettes — with the eight presets, a
+ * "randomise" that asks lookFromSeed for the look the hash would give some other number, a reset to the look the
+ * visitor's own seed gives, and the short shareable code (formatLookCode / parseLookCode, checksummed) to write down
+ * or paste. Every change is worn at once: the host writes it to the player's body (engine.setLook) and keeps it
+ * (lookStore.ts). "Agents": the player's own agents (08_Swarm/roster.ts), one tab each: a name, pronouns, a role in
+ * the player's words, a voice (one of the twelve profiles, or a voice the speech provider knows), and the same
+ * wardrobe for their look, worn by the pedestrian hired as them the moment it changes; hiring itself is the
+ * console's (agent hire <name> <skill>), so the card never reaches the swarm. There is no mirror by design: the
+ * first-person eye never sees its own body, so the card previews with the silhouette and swatches alone; the
+ * shadow, the body the cull draws and every other viewer see the look. Sloane's chip opens it; Esc, the close button
+ * or Done puts it away.
  * What breaks if it is removed? The player can only change their look or their agents by typing at the console, and
  * nothing shows them what the wardrobe holds.
  */
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { PIECE, SLOT, silhouetteRings, type SilhouetteRing } from '../03_Spawn_Agents/humanoid.ts'
 import {
-  LOOK_PRESETS, LOOK_SLOTS, formatLookCode, lookFromSeed, lookOptions, lookSwatch, parseLookCode, withLookSlot,
-  type Look, type LookBody, type LookSlot,
+  LOOK_BODY_SLIDERS, LOOK_PRESETS, LOOK_SLOTS, bodyShapeOf, formatLookCode, lookFromSeed, lookOptions, lookSwatch, parseLookCode, withLookSlot,
+  type Look, type LookBody, type LookSlider, type LookSlot,
 } from '../03_Spawn_Agents/look.ts'
 import { seedFromName } from '../05_Observe_Environment/profile.ts'
 import { PRONOUNS, ROSTER_MAX, VOICE_PROFILES, voiceProfile, type AgentIdentity, type Roster } from '../08_Swarm/roster.ts'
@@ -52,7 +56,13 @@ function slotLabel(slot: LookSlot, body: LookBody): string {
   switch (slot) {
     case 'body': return 'Body'
     case 'height': return 'Height'
-    case 'build': return 'Build'
+    case 'mass': return 'Mass'
+    case 'muscle': return 'Muscle'
+    case 'shoulders': return 'Shoulders'
+    case 'hips': return 'Hips'
+    case 'legs': return 'Legs'
+    case 'posture': return 'Posture'
+    case 'head': return 'Head'
     case 'skin': return 'Skin'
     case 'hairStyle': return 'Hair'
     case 'hairColour': return 'Hair colour'
@@ -66,6 +76,8 @@ function slotLabel(slot: LookSlot, body: LookBody): string {
     case 'cup': return 'Cup'
   }
 }
+
+const isSlider = (slot: LookSlot): slot is LookSlider => (LOOK_BODY_SLIDERS as readonly string[]).includes(slot)
 
 /** A number for lookFromSeed that nobody chose: a fresh look out of the same wardrobe on every press. */
 const randomSeed = (): number => {
@@ -93,7 +105,89 @@ function themeOf(dark: boolean): Theme {
   }
 }
 
-/** The wardrobe itself: presets, the slot rows and the code row, over one look; every change goes out through `onChange`. */
+// --- The silhouette ---------------------------------------------------------------------------------------------
+
+/**
+ * What paints each slot of the silhouette: the look's own colour where it holds one; where the shader hashes it (the
+ * tie's cloth, the bag's leather, the hose) a quiet neutral, so the card never claims a colour the street may not show.
+ */
+function silhouettePaint(look: Look): string[] {
+  const own = (slot: LookSlot, fallback: number) => hex6(lookSwatch(look, slot) ?? fallback)
+  const out: string[] = []
+  out[SLOT.TOP] = own('top', 0x33363b)
+  out[SLOT.SHIRT] = own('shirt', 0xf2f2ef)
+  out[SLOT.SKIN] = own('skin', 0xd29f79)
+  out[SLOT.HAIR] = own('hairColour', 0x3b2618)
+  out[SLOT.BOTTOM] = own('bottom', 0x33363b)
+  out[SLOT.SHOES] = own('shoes', 0x141414)
+  out[SLOT.ACCENT] = '#2b2b2e'
+  out[SLOT.PROP] = '#2a2a2a'
+  out[SLOT.LEGWEAR] = look.body === 3 ? '#2a2626' : out[SLOT.BOTTOM]
+  out[SLOT.FRAME] = '#0d0d0e'
+  return out
+}
+
+/** Whether the look wears an optional piece of the body (the always-drawn ones have piece 0). */
+function wears(look: Look, piece: number): boolean {
+  switch (piece) {
+    case PIECE.TIE: return look.tie === 1
+    case PIECE.BAG: return look.bag === 1
+    case PIECE.CUP: return look.cup === 1
+    case PIECE.LONG_HAIR: return look.hairStyle === 1
+    case PIECE.GLASSES: return look.eyewear === 1
+    default: return true
+  }
+}
+
+const m = (v: number): string => (Math.round(v * 1000) / 1000).toString()
+
+/**
+ * One view of the body: every pair of neighbouring rings of a tube as a four-sided band between their edges, in
+ * the lower ring's colour, over a ground line. Metres, y up (the SVG's y is negated), 1.2 m across, 2.2 m tall.
+ */
+function SilhouetteView({ rings, paint, title }: { rings: readonly SilhouetteRing[]; paint: readonly string[]; title: string }) {
+  const bands: { points: string; fill: string }[] = []
+  for (let i = 1; i < rings.length; i++) {
+    const a = rings[i - 1], b = rings[i]
+    if (a.tube !== b.tube) continue
+    const fill = a.piece === PIECE.CUP ? '#ece9e4' : paint[a.slot] ?? '#888'
+    bands.push({ points: `${m(a.left)},${m(-a.y)} ${m(a.right)},${m(-a.y)} ${m(b.right)},${m(-b.y)} ${m(b.left)},${m(-b.y)}`, fill })
+  }
+  return (
+    <svg viewBox="-0.6 -2.12 1.2 2.2" width="78" height="143" role="img" aria-label={title} data-silhouette={title.toLowerCase()}>
+      <line x1="-0.5" y1="0" x2="0.5" y2="0" stroke="currentColor" strokeOpacity="0.25" strokeWidth="0.008" />
+      {bands.map((b, i) => <polygon key={i} points={b.points} fill={b.fill} stroke={b.fill} strokeWidth="0.006" strokeLinejoin="round" />)}
+    </svg>
+  )
+}
+
+/** The look as the city will draw it, standing: from the front and from its left side, in its own colours. */
+function Silhouette({ look, t }: { look: Look; t: Theme }) {
+  const shape = bodyShapeOf(look)
+  const body = look.body as LookBody
+  const paint = silhouettePaint(look)
+  const views = useMemo(() => {
+    const keep = (r: SilhouetteRing) => wears(look, r.piece)
+    return { front: silhouetteRings(body, shape, false).filter(keep), side: silhouetteRings(body, shape, true).filter(keep) }
+  }, [look, body, shape])
+  return (
+    <div className="flex items-end gap-4" data-row="silhouette">
+      <div className="flex flex-col items-center gap-1">
+        <SilhouetteView rings={views.front} paint={paint} title="Front" />
+        <span className={`text-[10px] font-semibold tracking-wider uppercase ${t.muted}`}>Front</span>
+      </div>
+      <div className="flex flex-col items-center gap-1">
+        <SilhouetteView rings={views.side} paint={paint} title="Side" />
+        <span className={`text-[10px] font-semibold tracking-wider uppercase ${t.muted}`}>Side</span>
+      </div>
+      <p className={`max-w-[14rem] pb-4 text-[11px] leading-snug ${t.muted}`}>
+        {`${shape.height.toFixed(2)} m, standing. The same rings the city draws; the tie, bag and hose keep the street's own colours.`}
+      </p>
+    </div>
+  )
+}
+
+/** The wardrobe itself: the silhouette, presets, the slot rows and the code row, over one look; every change goes out through `onChange`. */
 function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onChange(look: Look): void; t: Theme }) {
   const body = worn.body as LookBody
   /** A code being typed to wear, and why the last one was refused. */
@@ -143,9 +237,34 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
       </div>
 
       <div className={`mt-3 border-t pt-3 ${t.rule}`}>
+        <Silhouette look={worn} t={t} />
+      </div>
+
+      <div className={`mt-3 border-t pt-3 ${t.rule}`}>
         {LOOK_SLOTS.map((slot) => {
           const options = lookOptions(body, slot)
           const current = worn[slot]
+          if (isSlider(slot)) {
+            // A body slider: a range over its steps, the height read in metres.
+            const shown = slot === 'height' ? options[current].name : `${current + 1}/${options.length}`
+            return (
+              <div key={slot} className="mb-2 flex items-center gap-3" data-slot={slot}>
+                <div className={`w-20 shrink-0 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>{slotLabel(slot, body)}</div>
+                <input
+                  type="range"
+                  min={0}
+                  max={options.length - 1}
+                  step={1}
+                  value={current}
+                  onChange={(e) => set(slot, Number(e.target.value))}
+                  aria-label={slotLabel(slot, body)}
+                  aria-valuetext={options[current].name}
+                  className="min-w-0 flex-1 accent-current"
+                />
+                <span className={`w-14 shrink-0 text-right font-mono text-[12px] ${t.muted}`} data-slider-value>{shown}</span>
+              </div>
+            )
+          }
           return (
             <div key={slot} className="mb-2 flex items-start gap-3" data-slot={slot}>
               <div className={`w-20 shrink-0 pt-1 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>{slotLabel(slot, body)}</div>
@@ -205,7 +324,7 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
               aria-invalid={refused || undefined}
               spellCheck={false}
               autoComplete="off"
-              className={`w-32 rounded-md border px-2 py-0.5 font-mono text-[12px] outline-none ${t.field}`}
+              className={`w-44 rounded-md border px-2 py-0.5 font-mono text-[12px] outline-none ${t.field}`}
             />
             <button type="submit" className={`rounded-full border px-2.5 py-0.5 text-[12px] ${t.pill}`}>Wear</button>
           </form>

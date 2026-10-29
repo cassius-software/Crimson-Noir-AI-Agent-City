@@ -15,7 +15,7 @@ import { kindOf } from './car.ts'
 /** Input clamps look to it; defined beside the look tuning so the hardware stage imports nothing from here. */
 export { PITCH_LIMIT } from '../04_Connect_Hardware/input.ts'
 
-/** Eye above the feet, standing, m: the eye of the crowd's reference body (03_Spawn_Agents/look.ts heightScale 1). */
+/** Eye above the feet, standing, m: the eye of the crowd's base body (03_Spawn_Agents/humanoid.ts HEIGHT_BASE; look.ts heightScale 1). */
 export const EYE_HEIGHT = 1.7
 /** The eye may be set this far above the feet, m (the wardrobe's shortest and tallest bodies lie well inside). */
 export const EYE_RANGE: readonly [number, number] = Object.freeze([1.2, 2.2] as [number, number])

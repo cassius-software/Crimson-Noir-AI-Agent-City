@@ -2,23 +2,28 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is what a person may look like: a body, an outfit and its colours chosen from the
- * city's own business-casual wardrobe, packed into one word the crowd shader reads. The wardrobe is closed by
- * construction: every slot is an index into the four bodies crowd.ts draws, the optional pieces it carries (a tie,
- * a bag, a cup, long hair, glasses) and the colour palettes it already paints people with, so no stored value, no
- * typed command and no shared code can dress anyone in anything the crowd does not wear today. The same module
- * reproduces the choice the shader's hash makes for an agent (lookFromSeed), so a returning visitor's look and an
- * agent's hashed look are the same kind of record; a short code with a checksum lets a look be written down and
- * shared; describeLook is the console's view of it. Pure: no DOM, no GPU, no clock, no randomness.
+ * Why does this file exist? It is what a person may look like: a body, its figure (the eight body sliders of
+ * humanoid.ts: stature, mass, muscle, shoulders, hips, legs, posture, head), an outfit and its colours chosen from
+ * the city's own business-casual wardrobe, packed into the two words the crowd shader reads (the look word and the
+ * figure word). The wardrobe is closed by construction: every slot is an index into the four bodies crowd.ts draws,
+ * the optional pieces it carries (a tie, a bag, a cup, long hair, glasses), the colour palettes it already paints
+ * people with and the steps of each slider, so no stored value, no typed command and no shared code can dress
+ * anyone in anything the crowd does not wear today. The same module reproduces the choice the shader's hash makes
+ * for an agent (lookFromSeed), so a returning visitor's look and an agent's hashed look are the same kind of record;
+ * a short code with a checksum lets a look be written down and shared; describeLook is the console's view of it. A
+ * look kept before the figure existed (fourteen slots, an eight-symbol code) is upgraded on the way in: its height
+ * and build become a stature and a mass, the rest of the figure the middle step. Pure: no DOM, no GPU, no clock, no
+ * randomness.
  * What breaks if it is removed? The customizer would have no catalogue, nothing could be saved or shared, and the
- * crowd's per-agent attribute would have no agreed bit layout to carry.
+ * crowd's per-agent attributes would have no agreed bit layout to carry.
  */
+import { HEIGHT_BASE, type BodyShape } from './humanoid.ts'
 
 /** The four bodies crowd.ts draws, in draw-list order (an agent's hashed body is its index modulo four). */
 export const LOOK_BODIES = ['suit', 'smart casual', 'pantsuit', 'skirt suit'] as const
 export type LookBody = 0 | 1 | 2 | 3
 
-/** The bit each optional piece has in the crowd's per-person mask (crowd.ts `O`); bit 0 is "no option". */
+/** The bit each optional piece has in the crowd's per-person mask (humanoid.ts PIECE); bit 0 is "no option". */
 export const LOOK_PIECE_BIT = Object.freeze({ tie: 1, bag: 2, cup: 3, longHair: 4, glasses: 5 })
 
 /**
@@ -49,15 +54,25 @@ export type PaletteName = keyof typeof LOOK_PALETTE
 /** The grey the shader mixes hair to for one person in ten (crowd.ts `vec3(0.6, 0.6, 0.58)`), the ninth hair colour. */
 export const GREY_HAIR = 0x999994
 
+/** The figure's slots: the body sliders, in the order the card shows them (humanoid.ts BodyShape's fields). */
+export const LOOK_BODY_SLIDERS = ['height', 'mass', 'muscle', 'shoulders', 'hips', 'legs', 'posture', 'head'] as const
+export type LookSlider = (typeof LOOK_BODY_SLIDERS)[number]
+
 /**
  * The slots of a look, in the order the console lists them. Every slot is an index into a list of options; the
  * list may depend on the body (an outfit's cloths differ per body) and is given by lookOptions().
  */
 export const LOOK_SLOTS = [
-  'body', 'height', 'build', 'skin', 'hairStyle', 'hairColour', 'top', 'bottom', 'shirt', 'shoes', 'tie', 'eyewear', 'bag', 'cup',
+  'body', ...LOOK_BODY_SLIDERS, 'skin', 'hairStyle', 'hairColour', 'top', 'bottom', 'shirt', 'shoes', 'tie', 'eyewear', 'bag', 'cup',
 ] as const
 export type LookSlot = (typeof LOOK_SLOTS)[number]
 export type Look = Readonly<Record<LookSlot, number>>
+
+/** The slots a look had before the figure (height and build were three bits each in the look word). */
+export const LEGACY_LOOK_SLOTS = [
+  'body', 'height', 'build', 'skin', 'hairStyle', 'hairColour', 'top', 'bottom', 'shirt', 'shoes', 'tie', 'eyewear', 'bag', 'cup',
+] as const
+type LegacySlot = (typeof LEGACY_LOOK_SLOTS)[number]
 
 /** One option of a slot: a name for the console and the card, and the swatch when the option is a colour. */
 export interface LookOption {
@@ -75,14 +90,17 @@ export interface Outfit {
 }
 
 /**
- * The catalogue: what each slot may hold. `steps` is the count of height and build steps (3 bits each in the
- * word); `outfits` is per body, mirroring crowd.ts's four fragment branches: the suit's trousers match the jacket
- * (the hashed crowd) or take another suit cloth; the pantsuit's match the blazer or are dark trousers; the skirt
- * suit's skirt and the smart-casual chinos have palettes of their own.
+ * The catalogue: what each slot may hold. `stature` is the height slider (32 steps, 1.50 m to 2.05 m: five bits);
+ * `sliderSteps` the other sliders' (four bits each) but the head's (`headSteps`, three bits); `outfits` is per
+ * body, mirroring crowd.ts's four fragment branches: the suit's trousers match the jacket (the hashed crowd) or take
+ * another suit cloth; the pantsuit's match the blazer or are dark trousers; the skirt suit's skirt and the
+ * smart-casual chinos have palettes of their own.
  */
 export const WARDROBE = Object.freeze({
   bodies: LOOK_BODIES,
-  steps: 8,
+  stature: Object.freeze({ steps: 32, min: 1.5, max: 2.05 }),
+  sliderSteps: 16,
+  headSteps: 8,
   hairStyle: Object.freeze(['short', 'long']),
   tie: Object.freeze(['none', 'tie']),
   eyewear: Object.freeze(['none', 'glasses']),
@@ -96,39 +114,67 @@ export const WARDROBE = Object.freeze({
   ] as readonly Outfit[]),
 })
 
+/** The middle step of a slider (the base person of humanoid.ts, near enough: 8 of 0..15, 4 of 0..7). */
+export const LOOK_SLIDER_MIDDLE = Object.freeze({ slider: 8, head: 4 })
+
 /**
- * Where each slot lives in the packed word: [first bit, width]. Bit 0 says the word is a look at all (LOOK_NONE
+ * Where each slot lives: [word, first bit, width]. Word 0 is the look word: bit 0 says it is a look at all (LOOK_NONE
  * is "as hashed"); the five pieces sit at bit 2 + their crowd bit, so `(word >> 2) & 62` is the mask the crowd's
- * agentXform tests with `(mask >> opt) & 1`. Every width is pinned to hold its slot's largest option count.
+ * vertex stage tests with `(mask >> opt) & 1`; its bits 26 to 31 are spare (the legacy height and build lived
+ * there). Word 1 is the figure word: the eight sliders, 5 + 6 × 4 + 3 = 32 bits. Every width is pinned to hold its
+ * slot's largest option count.
  */
-export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [shift: number, width: number]>> = Object.freeze({
-  body: [1, 2],
-  tie: [2 + LOOK_PIECE_BIT.tie, 1],
-  bag: [2 + LOOK_PIECE_BIT.bag, 1],
-  cup: [2 + LOOK_PIECE_BIT.cup, 1],
-  hairStyle: [2 + LOOK_PIECE_BIT.longHair, 1],
-  eyewear: [2 + LOOK_PIECE_BIT.glasses, 1],
-  skin: [8, 3],
-  hairColour: [11, 4],
-  top: [15, 3],
-  bottom: [18, 3],
-  shirt: [21, 3],
-  shoes: [24, 2],
-  height: [26, 3],
-  build: [29, 3],
+export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [word: 0 | 1, shift: number, width: number]>> = Object.freeze({
+  body: [0, 1, 2],
+  tie: [0, 2 + LOOK_PIECE_BIT.tie, 1],
+  bag: [0, 2 + LOOK_PIECE_BIT.bag, 1],
+  cup: [0, 2 + LOOK_PIECE_BIT.cup, 1],
+  hairStyle: [0, 2 + LOOK_PIECE_BIT.longHair, 1],
+  eyewear: [0, 2 + LOOK_PIECE_BIT.glasses, 1],
+  skin: [0, 8, 3],
+  hairColour: [0, 11, 4],
+  top: [0, 15, 3],
+  bottom: [0, 18, 3],
+  shirt: [0, 21, 3],
+  shoes: [0, 24, 2],
+  height: [1, 0, 5],
+  mass: [1, 5, 4],
+  muscle: [1, 9, 4],
+  shoulders: [1, 13, 4],
+  hips: [1, 17, 4],
+  legs: [1, 21, 4],
+  posture: [1, 25, 4],
+  head: [1, 29, 3],
 })
+
+/** The legacy look word's height and build fields (three bits each), read by the upgrade alone. */
+export const LEGACY_LOOK_FIELD = Object.freeze({ height: [26, 3] as const, build: [29, 3] as const, steps: 8 })
 
 /** The word that means "dressed as the hash dresses everyone": bit 0 clear. */
 export const LOOK_NONE = 0
 
 /**
- * The proportions the crowd shader derives from a height or build step: scale = base + step / (steps - 1) * range,
- * the same span the hash gives (crowd.ts: a woman's height h*0.1+0.92, a man's h*0.14+0.94, width h*0.14+0.94).
+ * The legacy proportions: scale = base + step / 7 × range of the base height (a woman's body spanned a narrower
+ * range), and the width the same. The upgrade maps them onto the stature and the mass.
  */
-export const LOOK_SCALE = Object.freeze({
+const LEGACY_SCALE = Object.freeze({
   heightMan: Object.freeze({ base: 0.94, range: 0.14 }),
   heightWoman: Object.freeze({ base: 0.92, range: 0.1 }),
   build: Object.freeze({ base: 0.94, range: 0.14 }),
+})
+
+/**
+ * The hashed crowd's stature, in steps of the height slider per body (crowd.ts: `from + round(h(6) × span)`): men
+ * 1.64 m to 2.00 m, women 1.55 m to 1.87 m. The other sliders are hashed over their whole range from the vertex
+ * chain's later links (LOOK_HASHED_SLIDER).
+ */
+export const LOOK_STATURE = Object.freeze({
+  man: Object.freeze({ from: 8, span: 20 }),
+  woman: Object.freeze({ from: 3, span: 18 }),
+})
+/** The link of the vertex hash chain (LOOK_HASH.pieces) each hashed slider is rounded from (the height's is 6). */
+export const LOOK_HASHED_SLIDER: Readonly<Record<Exclude<LookSlider, 'height'>, number>> = Object.freeze({
+  mass: 7, muscle: 9, shoulders: 10, hips: 11, legs: 12, posture: 13, head: 14,
 })
 
 const isBody = (v: unknown): v is LookBody => v === 0 || v === 1 || v === 2 || v === 3
@@ -136,14 +182,31 @@ const womanBody = (body: LookBody): boolean => body >= 2
 const hex6 = (n: number) => `#${n.toString(16).padStart(6, '0')}`
 const swatches = (list: readonly number[]): LookOption[] => list.map((hex) => ({ name: hex6(hex), hex }))
 const named = (names: readonly string[]): LookOption[] => names.map((name) => ({ name, hex: null }))
-const steps = (): LookOption[] => Array.from({ length: WARDROBE.steps }, (_, i) => ({ name: `${i + 1}`, hex: null }))
+const steps = (n: number): LookOption[] => Array.from({ length: n }, (_, i) => ({ name: `${i + 1}`, hex: null }))
+const isSlider = (slot: string): slot is LookSlider => (LOOK_BODY_SLIDERS as readonly string[]).includes(slot)
+
+/** The stature a height step names, m (step 0 is 1.50 m, step 31 is 2.05 m). */
+export function statureOf(step: number): number {
+  const s = WARDROBE.stature
+  const i = Number.isFinite(step) ? Math.min(s.steps - 1, Math.max(0, Math.round(step))) : 0
+  return s.min + (i * (s.max - s.min)) / (s.steps - 1)
+}
+/** The height step nearest a stature in metres (clamped to the slider). */
+export function statureStep(metres: number): number {
+  const s = WARDROBE.stature
+  if (!Number.isFinite(metres)) return LOOK_SLIDER_MIDDLE.slider
+  return Math.min(s.steps - 1, Math.max(0, Math.round(((metres - s.min) / (s.max - s.min)) * (s.steps - 1))))
+}
+const stature = (): LookOption[] => Array.from({ length: WARDROBE.stature.steps }, (_, i) => ({ name: `${statureOf(i).toFixed(2)} m`, hex: null }))
 
 /** The options a slot may hold for a body, in index order. */
 export function lookOptions(body: LookBody, slot: LookSlot): readonly LookOption[] {
   const outfit = WARDROBE.outfits[body]
   switch (slot) {
     case 'body': return named(LOOK_BODIES)
-    case 'height': case 'build': return steps()
+    case 'height': return stature()
+    case 'mass': case 'muscle': case 'shoulders': case 'hips': case 'legs': case 'posture': return steps(WARDROBE.sliderSteps)
+    case 'head': return steps(WARDROBE.headSteps)
     case 'skin': return swatches(LOOK_PALETTE.skin)
     case 'hairStyle': return named(WARDROBE.hairStyle)
     case 'hairColour': return [...swatches(LOOK_PALETTE.hair), { name: 'grey', hex: GREY_HAIR }]
@@ -169,27 +232,73 @@ export function lookSwatch(look: Look, slot: LookSlot): number | null {
   return hex
 }
 
-/** The height multiplier the crowd shader applies for a look (a woman's body spans a narrower range). */
-export function heightScale(look: Look): number {
-  const s = womanBody(look.body as LookBody) ? LOOK_SCALE.heightWoman : LOOK_SCALE.heightMan
-  return s.base + (look.height / (WARDROBE.steps - 1)) * s.range
+/** A slider's step as the 0..1 the shader and humanoid.ts take (the height's is its stature, m). */
+export function sliderValue(slot: LookSlider, step: number): number {
+  if (slot === 'height') return statureOf(step)
+  const n = slot === 'head' ? WARDROBE.headSteps : WARDROBE.sliderSteps
+  return Math.min(n - 1, Math.max(0, step)) / (n - 1)
 }
 
-/** The width multiplier the crowd shader applies for a look. */
-export function buildScale(look: Look): number {
-  return LOOK_SCALE.build.base + (look.build / (WARDROBE.steps - 1)) * LOOK_SCALE.build.range
+/** The body shape a look's figure describes (humanoid.ts: the card's silhouette and the eye height are drawn from it). */
+export function bodyShapeOf(look: Look): BodyShape {
+  return Object.freeze({
+    height: statureOf(look.height),
+    mass: sliderValue('mass', look.mass),
+    muscle: sliderValue('muscle', look.muscle),
+    shoulders: sliderValue('shoulders', look.shoulders),
+    hips: sliderValue('hips', look.hips),
+    legs: sliderValue('legs', look.legs),
+    posture: sliderValue('posture', look.posture),
+    head: sliderValue('head', look.head),
+  })
+}
+
+/** The factor the crowd shader scales the base body by for a look: its stature over the base height (humanoid.ts). */
+export function heightScale(look: Look): number {
+  return statureOf(look.height) / HEIGHT_BASE
 }
 
 const hasOwn = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k)
 
+const legacySize = (body: LookBody, slot: LegacySlot): number => (slot === 'height' || slot === 'build' ? LEGACY_LOOK_FIELD.steps : lookSize(body, slot))
+
+/**
+ * A look kept before the figure existed (exactly the fourteen legacy slots, each within its options), upgraded: the
+ * height step becomes the stature it drew (the legacy scale of the base height, to the nearest step), the build step
+ * the mass, the rest of the figure the middle step. Null for anything else. Pure, so two browsers upgrade one old
+ * look to one new look.
+ */
+export function upgradeLegacyLook(raw: unknown): Look | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  const r = raw as Record<string, unknown>
+  if (Object.keys(r).length !== LEGACY_LOOK_SLOTS.length || !isBody(r.body)) return null
+  const body = r.body
+  const old: Record<string, number> = {}
+  for (const slot of LEGACY_LOOK_SLOTS) {
+    if (!hasOwn(r, slot)) return null
+    const v = r[slot]
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v >= legacySize(body, slot)) return null
+    old[slot] = v + 0
+  }
+  const scale = womanBody(body) ? LEGACY_SCALE.heightWoman : LEGACY_SCALE.heightMan
+  const metres = (scale.base + (old.height / (LEGACY_LOOK_FIELD.steps - 1)) * scale.range) * HEIGHT_BASE
+  const out: Record<string, number> = { ...old }
+  delete out.build
+  out.height = statureStep(metres)
+  out.mass = Math.round((old.build / (LEGACY_LOOK_FIELD.steps - 1)) * (WARDROBE.sliderSteps - 1))
+  for (const slot of LOOK_BODY_SLIDERS) if (slot !== 'height' && slot !== 'mass') out[slot] = slot === 'head' ? LOOK_SLIDER_MIDDLE.head : LOOK_SLIDER_MIDDLE.slider
+  return validateLook(out)
+}
+
 /**
  * The look a value is, or null: an object with exactly the slots, every one an integer within its options for
- * the body named. Nothing else is accepted (not a string, an array, a float, a negative, an extra key), so a
- * stored or typed record can only ever name what the crowd wears.
+ * the body named, or a legacy fourteen-slot look (upgradeLegacyLook). Nothing else is accepted (not a string, an
+ * array, a float, a negative, an extra key), so a stored or typed record can only ever name what the crowd wears.
  */
 export function validateLook(raw: unknown): Look | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
   const r = raw as Record<string, unknown>
+  if (Object.keys(r).length === LEGACY_LOOK_SLOTS.length && hasOwn(r, 'build')) return upgradeLegacyLook(r)
   if (Object.keys(r).length !== LOOK_SLOTS.length) return null
   if (!isBody(r.body)) return null
   const body = r.body
@@ -218,26 +327,49 @@ export function withLookSlot(look: Look, slot: LookSlot, value: number): Look | 
   return validateLook({ ...look, [slot]: value })
 }
 
-/** The one u32 the crowd's per-agent attribute carries; bit 0 set. Only a valid look packs (else LOOK_NONE). */
-export function packLook(look: Look): number {
-  if (validateLook(look) === null) return LOOK_NONE
-  let word = 1
+const packWord = (look: Look, word: 0 | 1): number => {
+  let out = word === 0 ? 1 : 0
   for (const slot of LOOK_SLOTS) {
-    const [shift] = LOOK_FIELD[slot]
-    word |= look[slot] << shift
+    const [w, shift] = LOOK_FIELD[slot]
+    if (w === word) out |= look[slot] << shift
   }
-  return word >>> 0
+  return out >>> 0
 }
 
-/** The look a word carries, or null for LOOK_NONE and for any word whose fields are outside the catalogue. */
-export function unpackLook(word: number): Look | null {
-  if (!Number.isInteger(word) || word < 0 || word > 0xffffffff || (word & 1) === 0) return null
+/** The look word (crowd.look): bit 0 set, the body, the pieces and the colours. Only a valid look packs (else LOOK_NONE). */
+export function packLook(look: Look): number {
+  const valid = validateLook(look)
+  return valid === null ? LOOK_NONE : packWord(valid, 0)
+}
+
+/** The figure word (crowd.figure): the eight sliders' steps. 0 for a look outside the wardrobe (with LOOK_NONE beside it, it is nothing). */
+export function packFigure(look: Look): number {
+  const valid = validateLook(look)
+  return valid === null ? 0 : packWord(valid, 1)
+}
+
+const isWord = (word: number): boolean => Number.isInteger(word) && word >= 0 && word <= 0xffffffff
+
+/** The look two words carry, or null for LOOK_NONE and for any pair whose fields are outside the catalogue. */
+export function unpackLook(word: number, figure: number): Look | null {
+  if (!isWord(word) || !isWord(figure) || (word & 1) === 0) return null
   const out: Record<string, number> = {}
   for (const slot of LOOK_SLOTS) {
-    const [shift, width] = LOOK_FIELD[slot]
-    out[slot] = (word >>> shift) & ((1 << width) - 1)
+    const [w, shift, width] = LOOK_FIELD[slot]
+    out[slot] = ((w === 0 ? word : figure) >>> shift) & ((1 << width) - 1)
   }
   return validateLook(out)
+}
+
+/** The look a legacy one-word record carried (height and build in its top bits), upgraded; null for anything else. */
+export function unpackLegacyLook(word: number): Look | null {
+  if (!isWord(word) || (word & 1) === 0) return null
+  const out: Record<string, number> = {}
+  for (const slot of LEGACY_LOOK_SLOTS) {
+    const [shift, width] = slot === 'height' ? LEGACY_LOOK_FIELD.height : slot === 'build' ? LEGACY_LOOK_FIELD.build : [LOOK_FIELD[slot][1], LOOK_FIELD[slot][2]]
+    out[slot] = (word >>> shift) & ((1 << width) - 1)
+  }
+  return upgradeLegacyLook(out)
 }
 
 /** The crowd's per-person piece mask for a packed word (tie at bit 1 … glasses at bit 5), 0 for LOOK_NONE. */
@@ -256,20 +388,21 @@ export function shaderHash(seed: number): number {
   return f32(f32(result) * f32(1 / 2 ** 32))
 }
 
-/** The crowd's two hash chains for an agent: the vertex stage's (pieces, proportions) and the fragment's (colours). */
+/** The crowd's two hash chains for an agent: the vertex stage's (pieces, figure) and the fragment's (colours). */
 export const LOOK_HASH = Object.freeze({ pieces: 13.37, colours: 7.919 })
 /** The thresholds a piece is drawn above (crowd.ts `step(edge, h(k))`); a woman's bag is commoner than a man's. */
 export const LOOK_ODDS = Object.freeze({ tie: 0.3, bagMan: 0.7, bagWoman: 0.62, cup: 0.82, longHair: 0.35, glasses: 0.78, grey: 0.9, darkTrousers: 0.6 })
 
 const pickIndex = (h: number, length: number): number => Math.min(u32(f32(h * f32(length - 0.001))), length - 1)
 const above = (h: number, edge: number): number => (h >= f32(edge) ? 1 : 0)
-const stepOf = (h: number): number => Math.min(WARDROBE.steps - 1, Math.round(h * (WARDROBE.steps - 1)))
+/** A hashed step: round(h × n), as the shader does it (floor(h × n + 0.5)). */
+const stepOf = (h: number, n: number): number => Math.min(n, Math.round(h * n))
 
 /**
  * The look the crowd's hash gives an agent of this index (any non-negative integer; a profile seed does as well):
- * body = index mod 4, pieces from the vertex chain, colours from the fragment chain, exactly as crowd.ts chooses
- * them today, with the continuous height and width rounded to the nearest step. What the word cannot carry (the
- * tie's cloth, the bag's leather, the skirt suit's hose) stays hashed in the shader, so it is not here.
+ * body = index mod 4, pieces and the figure from the vertex chain, colours from the fragment chain, exactly as
+ * crowd.ts chooses them, each slider rounded to its step. What the words cannot carry (the tie's cloth, the bag's
+ * leather, the skirt suit's hose) stays hashed in the shader, so it is not here.
  */
 export function lookFromSeed(seed: number): Look {
   const s = Number.isFinite(seed) ? Math.abs(Math.trunc(seed)) % 4294967296 : 0
@@ -283,10 +416,18 @@ export function lookFromSeed(seed: number): Look {
   if (body === 0) bottom = 0
   else if (body === 2) bottom = above(hc(10), LOOK_ODDS.darkTrousers) ? 1 + pickIndex(hc(4), LOOK_PALETTE.darkTrousers.length) : 0
   else bottom = pickIndex(hc(4), LOOK_PALETTE[outfit.bottom].length)
+  const statureSteps = woman ? LOOK_STATURE.woman : LOOK_STATURE.man
+  const slider = (slot: Exclude<LookSlider, 'height'>) => stepOf(hp(LOOK_HASHED_SLIDER[slot]), (slot === 'head' ? WARDROBE.headSteps : WARDROBE.sliderSteps) - 1)
   const look: Record<LookSlot, number> = {
     body,
-    height: stepOf(hp(6)),
-    build: stepOf(hp(7)),
+    height: statureSteps.from + stepOf(hp(6), statureSteps.span),
+    mass: slider('mass'),
+    muscle: slider('muscle'),
+    shoulders: slider('shoulders'),
+    hips: slider('hips'),
+    legs: slider('legs'),
+    posture: slider('posture'),
+    head: slider('head'),
     skin: pickIndex(hc(1), LOOK_PALETTE.skin.length),
     hairStyle: above(hp(4), LOOK_ODDS.longHair),
     hairColour: grey ? LOOK_PALETTE.hair.length : pickIndex(hc(2), LOOK_PALETTE.hair.length),
@@ -317,14 +458,14 @@ const preset = (name: string, look: Record<LookSlot, number>): LookPreset => {
 
 /** A handful of named outfits per body for the picker; every one validates, and every cloth is the crowd's. */
 export const LOOK_PRESETS: readonly LookPreset[] = Object.freeze([
-  preset('navy suit', { body: 0, height: 4, build: 3, skin: 1, hairStyle: 0, hairColour: 1, top: 0, bottom: 0, shirt: 0, shoes: 0, tie: 1, eyewear: 0, bag: 0, cup: 0 }),
-  preset('charcoal suit', { body: 0, height: 5, build: 4, skin: 4, hairStyle: 0, hairColour: 0, top: 1, bottom: 0, shirt: 1, shoes: 1, tie: 1, eyewear: 1, bag: 1, cup: 0 }),
-  preset('camel blazer', { body: 1, height: 3, build: 3, skin: 2, hairStyle: 0, hairColour: 3, top: 0, bottom: 2, shirt: 0, shoes: 1, tie: 0, eyewear: 0, bag: 0, cup: 1 }),
-  preset('navy blazer', { body: 1, height: 4, build: 5, skin: 6, hairStyle: 0, hairColour: 0, top: 1, bottom: 0, shirt: 2, shoes: 0, tie: 0, eyewear: 1, bag: 0, cup: 0 }),
-  preset('burgundy pantsuit', { body: 2, height: 3, build: 3, skin: 3, hairStyle: 1, hairColour: 2, top: 2, bottom: 0, shirt: 0, shoes: 0, tie: 0, eyewear: 0, bag: 1, cup: 0 }),
-  preset('cream pantsuit', { body: 2, height: 5, build: 2, skin: 5, hairStyle: 0, hairColour: 8, top: 3, bottom: 1, shirt: 2, shoes: 2, tie: 0, eyewear: 1, bag: 0, cup: 1 }),
-  preset('navy skirt suit', { body: 3, height: 4, build: 3, skin: 0, hairStyle: 1, hairColour: 5, top: 1, bottom: 0, shirt: 0, shoes: 0, tie: 0, eyewear: 1, bag: 1, cup: 0 }),
-  preset('camel skirt suit', { body: 3, height: 2, build: 4, skin: 7, hairStyle: 1, hairColour: 6, top: 4, bottom: 2, shirt: 1, shoes: 1, tie: 0, eyewear: 0, bag: 0, cup: 0 }),
+  preset('navy suit', { body: 0, height: 16, mass: 7, muscle: 8, shoulders: 8, hips: 7, legs: 8, posture: 9, head: 4, skin: 1, hairStyle: 0, hairColour: 1, top: 0, bottom: 0, shirt: 0, shoes: 0, tie: 1, eyewear: 0, bag: 0, cup: 0 }),
+  preset('charcoal suit', { body: 0, height: 20, mass: 9, muscle: 7, shoulders: 10, hips: 7, legs: 7, posture: 7, head: 4, skin: 4, hairStyle: 0, hairColour: 0, top: 1, bottom: 0, shirt: 1, shoes: 1, tie: 1, eyewear: 1, bag: 1, cup: 0 }),
+  preset('camel blazer', { body: 1, height: 13, mass: 7, muscle: 6, shoulders: 7, hips: 8, legs: 9, posture: 8, head: 4, skin: 2, hairStyle: 0, hairColour: 3, top: 0, bottom: 2, shirt: 0, shoes: 1, tie: 0, eyewear: 0, bag: 0, cup: 1 }),
+  preset('navy blazer', { body: 1, height: 17, mass: 11, muscle: 10, shoulders: 9, hips: 9, legs: 8, posture: 10, head: 3, skin: 6, hairStyle: 0, hairColour: 0, top: 1, bottom: 0, shirt: 2, shoes: 0, tie: 0, eyewear: 1, bag: 0, cup: 0 }),
+  preset('burgundy pantsuit', { body: 2, height: 11, mass: 7, muscle: 7, shoulders: 6, hips: 9, legs: 8, posture: 9, head: 4, skin: 3, hairStyle: 1, hairColour: 2, top: 2, bottom: 0, shirt: 0, shoes: 0, tie: 0, eyewear: 0, bag: 1, cup: 0 }),
+  preset('cream pantsuit', { body: 2, height: 16, mass: 5, muscle: 8, shoulders: 7, hips: 7, legs: 10, posture: 11, head: 4, skin: 5, hairStyle: 0, hairColour: 8, top: 3, bottom: 1, shirt: 2, shoes: 2, tie: 0, eyewear: 1, bag: 0, cup: 1 }),
+  preset('navy skirt suit', { body: 3, height: 13, mass: 7, muscle: 6, shoulders: 6, hips: 10, legs: 8, posture: 8, head: 4, skin: 0, hairStyle: 1, hairColour: 5, top: 1, bottom: 0, shirt: 0, shoes: 0, tie: 0, eyewear: 1, bag: 1, cup: 0 }),
+  preset('camel skirt suit', { body: 3, height: 9, mass: 9, muscle: 5, shoulders: 7, hips: 11, legs: 7, posture: 6, head: 5, skin: 7, hairStyle: 1, hairColour: 6, top: 4, bottom: 2, shirt: 1, shoes: 1, tie: 0, eyewear: 0, bag: 0, cup: 0 }),
 ])
 
 /** The preset of that name (case and surrounding space ignored), or null. */
@@ -337,49 +478,68 @@ export function lookPreset(name: string): LookPreset | null {
 
 /** 32 symbols without I, L, O and U, so a code read aloud or copied by hand is not mistaken. */
 const CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
-const CODE_CHARS = 8 // 40 bits: the 32-bit word, then an 8-bit check
+/** 75 bits: three zero bits, the look word, the figure word, then an 8-bit check over both words. */
+const CODE_CHARS = 15
+/** The legacy code: 40 bits, the one word then its check. */
+const LEGACY_CODE_CHARS = 8
 
-/** CRC-8 (polynomial 0x07) over the word's four bytes: any single mistyped symbol (a burst of five bits) is caught. */
-function crc8(word: number): number {
+/** CRC-8 (polynomial 0x07) over the words' bytes, high word first: any single mistyped symbol (a burst of five bits) is caught. */
+function crc8(words: readonly number[]): number {
   let crc = 0
-  for (let i = 3; i >= 0; i--) {
-    crc ^= (word >>> (i * 8)) & 0xff
-    for (let b = 0; b < 8; b++) crc = crc & 0x80 ? ((crc << 1) ^ 0x07) & 0xff : (crc << 1) & 0xff
+  for (const word of words) {
+    for (let i = 3; i >= 0; i--) {
+      crc ^= (word >>> (i * 8)) & 0xff
+      for (let b = 0; b < 8; b++) crc = crc & 0x80 ? ((crc << 1) ^ 0x07) & 0xff : (crc << 1) & 0xff
+    }
   }
   return crc
 }
 
-/** The look as a short code, "XXXX-XXXX", that parseLookCode reads back exactly; '' for a look outside the wardrobe. */
-export function formatLookCode(look: Look): string {
-  const word = packLook(look)
-  if (word === LOOK_NONE) return ''
-  let bits = (BigInt(word) << 8n) | BigInt(crc8(word))
+const symbols = (bits: bigint, count: number): string => {
   let out = ''
-  for (let i = 0; i < CODE_CHARS; i++) {
+  for (let i = 0; i < count; i++) {
     out = CODE_ALPHABET[Number(bits & 31n)] + out
     bits >>= 5n
   }
-  return `${out.slice(0, 4)}-${out.slice(4)}`
+  return out
+}
+
+/** The look as a short code, "XXXXX-XXXXX-XXXXX", that parseLookCode reads back exactly; '' for a look outside the wardrobe. */
+export function formatLookCode(look: Look): string {
+  const word = packLook(look)
+  if (word === LOOK_NONE) return ''
+  const figure = packFigure(look)
+  const bits = (BigInt(word) << 40n) | (BigInt(figure) << 8n) | BigInt(crc8([word, figure]))
+  const out = symbols(bits, CODE_CHARS)
+  return `${out.slice(0, 5)}-${out.slice(5, 10)}-${out.slice(10)}`
 }
 
 /**
- * The look a code names, or null: eight symbols of the alphabet (case and a dash or spaces between them ignored),
- * a check that matches, and a word that unpacks to a look within the wardrobe. Anything else is refused.
+ * The look a code names, or null: fifteen symbols of the alphabet (case and dashes or spaces between them ignored),
+ * three leading zero bits, a check that matches, and two words that unpack to a look within the wardrobe; or a
+ * legacy eight-symbol code, checked the same way and upgraded. Anything else is refused.
  */
 export function parseLookCode(text: string): Look | null {
   if (typeof text !== 'string') return null
   const clean = text.toUpperCase().replace(/[\s-]/g, '')
-  if (clean.length !== CODE_CHARS) return null
+  if (clean.length !== CODE_CHARS && clean.length !== LEGACY_CODE_CHARS) return null
   let bits = 0n
   for (const ch of clean) {
     const v = CODE_ALPHABET.indexOf(ch)
     if (v < 0) return null
     bits = (bits << 5n) | BigInt(v)
   }
-  const word = Number(bits >> 8n)
   const check = Number(bits & 0xffn)
-  if (crc8(word) !== check) return null
-  return unpackLook(word)
+  if (clean.length === LEGACY_CODE_CHARS) {
+    const word = Number(bits >> 8n)
+    if (crc8([word]) !== check) return null
+    return unpackLegacyLook(word)
+  }
+  if (bits >> 72n !== 0n) return null
+  const word = Number((bits >> 40n) & 0xffffffffn)
+  const figure = Number((bits >> 8n) & 0xffffffffn)
+  if (crc8([word, figure]) !== check) return null
+  return unpackLook(word, figure)
 }
 
 // --- The console's view -----------------------------------------------------------------------------------------
@@ -423,14 +583,15 @@ const changed = (look: Look | null, error: string): LookChangeResult => (look ==
 /**
  * The look after `change`, or the reason it was refused. `seed` is the look `reset` returns to (lookFromSeed: the
  * visitor's own seed, or an agent's index). A slot's value is its 1-based number or an option's name, case
- * ignored; a body change keeps what still fits (withLookSlot). Pure and deterministic: `random` takes its seed.
+ * ignored (a height may also be metres, "1.80" or "1.80 m"); a body change keeps what still fits (withLookSlot).
+ * Pure and deterministic: `random` takes its seed.
  */
 export function changeLook(look: Look, change: LookChange, seed: number): LookChangeResult {
   if (validateLook(look) === null) return refused('the look worn now is outside the wardrobe')
   switch (change.kind) {
     case 'reset': return changed(lookFromSeed(seed), 'no look for that seed')
     case 'random': return Number.isFinite(change.seed) ? changed(lookFromSeed(change.seed), 'no look for that seed') : refused('the seed must be a number')
-    case 'code': return changed(parseLookCode(change.code), `not a look code: '${change.code}' (eight symbols, XXXX-XXXX)`)
+    case 'code': return changed(parseLookCode(change.code), `not a look code: '${change.code}' (fifteen symbols, XXXXX-XXXXX-XXXXX)`)
     case 'preset': {
       const p = lookPreset(change.name)
       return p ? { look: p.look, error: null } : refused(`no preset named '${change.name}': ${LOOK_PRESETS.map((x) => x.name).join(', ')}`)
@@ -445,9 +606,11 @@ export function changeLook(look: Look, change: LookChange, seed: number): LookCh
       if (/^\d{1,3}$/.test(text)) {
         index = Number(text) - 1
         if (index < 0 || index >= options.length) return refused(`${slot} has ${options.length} options (1-${options.length})`)
+      } else if (slot === 'height' && /^\d\.\d{1,2}\s*m?$/i.test(text)) {
+        index = statureStep(Number(text.replace(/\s*m$/i, '')))
       } else {
         index = options.findIndex((o) => o.name.toLowerCase() === text.toLowerCase())
-        if (index < 0) return refused(`no ${slot} named '${text}': ${options.map((o) => o.name).join(', ')}`)
+        if (index < 0) return refused(`no ${slot} named '${text}': ${isSlider(slot) ? `1-${options.length}` : options.map((o) => o.name).join(', ')}`)
       }
       return changed(withLookSlot(look, slot, index), `${slot} ${index + 1} is outside the wardrobe`)
     }

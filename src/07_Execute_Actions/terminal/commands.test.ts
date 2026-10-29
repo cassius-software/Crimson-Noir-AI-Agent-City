@@ -1549,7 +1549,8 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.deepEqual(complete('ping '), ['ping clear', 'ping gather', 'ping go', 'ping look', 'ping wait'])
   assert.deepEqual(complete('ping g'), ['ping gather', 'ping go'])
   assert.deepEqual(complete('look '), [...['code', 'preset', 'random', 'reset', 'show'], ...LOOK_SLOT_ARGS].sort().map((a) => `look ${a}`))
-  assert.deepEqual(complete('look b'), ['look bag', 'look body', 'look bottom', 'look build'])
+  assert.deepEqual(complete('look b'), ['look bag', 'look body', 'look bottom'])
+  assert.deepEqual(complete('look h'), ['look hairColour', 'look hairStyle', 'look head', 'look height', 'look hips'])
   assert.deepEqual(complete('look body '), LOOK_BODY_ARGS.map((a) => `look body ${a}`))
   assert.deepEqual(complete('look body s'), ['look body skirt suit', 'look body smart casual', 'look body suit'])
   assert.deepEqual(complete('look preset n'), ['look preset navy blazer', 'look preset navy skirt suit', 'look preset navy suit'])
@@ -1851,7 +1852,7 @@ test('look: the look worn (or a pedestrian\'s), a slot by number or name, a pres
   assert.deepEqual(texts(run('look hat 1', b, [])), [`look: no slot named 'hat': ${LOOK_SLOT_ARGS.join(', ')}`])
   assert.deepEqual(texts(run('look top', b, [])), ['usage: look top <n|name>'])
   assert.deepEqual(texts(run('look preset', b, [])), ['usage: look preset <name>'])
-  assert.deepEqual(texts(run('look code', b, [])), ['usage: look code <XXXX-XXXX>'])
+  assert.deepEqual(texts(run('look code', b, [])), ['usage: look code <XXXXX-XXXXX-XXXXX>'])
   for (const l of ['look show 7 8', 'look show seven', 'look reset now', 'look random 1 2', 'look random x', 'look code a b']) {
     const r = run(l, b, [])
     assert.ok(isErr(r), l)

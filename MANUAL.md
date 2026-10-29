@@ -501,33 +501,57 @@ reading order. The rects tile the canvas exactly, in whole pixels.
 Sloane's chip has a **Look** button ("Change my look" in the full list) that opens the wardrobe card
 (`07_Execute_Actions/Customizer.tsx`). The console's `look` edits the same look (see Ring-0 console).
 
-- **The wardrobe** (`03_Spawn_Agents/look.ts`) is the crowd's own, and closed by construction. A look is fourteen
-  slots (body, height, build, skin, hair style, hair colour, top, bottom, shirt, shoes, tie, eyewear, bag, cup),
-  every one an index into the crowd's catalogue: the four bodies `crowd.ts` draws (suit, smart casual, pantsuit,
-  skirt suit), its five optional pieces (tie, bag, cup, long hair, glasses), its seventeen colour palettes verbatim
+- **The body** (`03_Spawn_Agents/humanoid.ts`) is one smooth person, lofted from rings over a skeleton of fifteen
+  bones (trunk, chest, head; thigh, shin and foot; upper arm, forearm and hand; both sides), every vertex tied to
+  two bones with a weight. The four outfits are part of the loft (a jacket hem, a shirt front between the lapels,
+  the skirt, the tie, long hair, glasses, the bag, the cup), and a near and a far version of each body are built
+  at boot (about a thousand and about 360 vertices). Everything is written by hand in that one file: no imported
+  mesh, skeleton or morph target. The crowd's vertex stage (`03_Spawn_Agents/crowdBody.ts`, WGSL built from the
+  same numbers) reshapes each vertex by the sliders, bends each joint from the walk phase (hips, knees and ankles;
+  shoulders and elbows; a counter-twist of the chest; the head), blends its two bones, then applies the
+  spring-damper tilt, the stature, the heading and the place, with the normals carried through the same
+  arithmetic, so a wide shoulder is lit as the round thing it is. The CPU runs the same arithmetic for the card's
+  silhouette and the tests, so the body the card draws is the body the street draws, to the number.
+- **The wardrobe** (`03_Spawn_Agents/look.ts`) is the crowd's own, and closed by construction. A look is twenty
+  slots: the body, eight body sliders (height, mass, muscle, shoulders, hips, legs, posture, head), and the eleven
+  dress slots (skin, hair style, hair colour, top, bottom, shirt, shoes, tie, eyewear, bag, cup), every one an
+  index into the crowd's catalogue: the four bodies `crowd.ts` draws (suit, smart casual, pantsuit, skirt suit),
+  its five optional pieces (tie, bag, cup, long hair, glasses), its seventeen colour palettes verbatim
   (`look.test.ts` reads them out of `crowd.ts`'s source, so they cannot drift), the ninth hair colour the shader
-  mixes in, and eight steps each of height and build spanning exactly the ranges the hash gives. The module ships
-  no colour, piece or body of its own, so nothing stored, typed or shared can dress anyone in anything the crowd
-  does not wear today: `validateLook` accepts nothing but an object with exactly those slots, each within its
-  body's options.
-- **The look word.** `packLook` folds a look into one unsigned 32-bit word, and the crowd carries one word per
-  agent in a page-only storage attribute (`crowd.look`): the body materials read it in place of the hash, and the
-  page's cull reads the body out of it to pick what to draw. No simulation pass binds it, so nothing of a look
-  reaches the pedestrians' motion, the First-Law sensing, the protocol or the physics worker. `lookFromSeed(i)`
-  reproduces, bit for bit, the choice the crowd's hash makes for agent `i`, so an agent's look and a visitor's
-  saved look are the same kind of record. The eye never sees its own body (there is no mirror, by design); its
-  shadow, the body the cull draws and every other viewer do.
-- **Codes and presets.** A look code is eight symbols, `XXXX-XXXX`, from an alphabet without I, L, O and U,
-  carrying the word and a CRC-8: it can be written down and shared, and `parseLookCode` ignores case, the dash and
-  spaces and refuses any single mistyped symbol. Eight named presets, two per body (navy suit, charcoal suit, camel
-  blazer, navy blazer, burgundy pantsuit, cream pantsuit, navy skirt suit, camel skirt suit), dress the picker.
-- **The card.** Every slot is a row of the options the chosen body allows: named options as a segmented control,
-  colours as swatches from the crowd's palettes; the presets; Randomise (the look the hash would give some other
-  number); Reset (the look your own seed gives, the first use of the profile seed); and the code, to copy or to
-  paste. Every change is worn at once. Esc, the close button or Done puts it away.
+  mixes in, and the sliders' steps. The height is 32 steps from 1.50 m to 2.05 m; mass, muscle, shoulders, hips,
+  leg length and posture are sixteen steps each; the head eight. The module ships no colour, piece or body of its
+  own, so nothing stored, typed or shared can dress anyone in anything the crowd does not wear today:
+  `validateLook` accepts nothing but an object with exactly those slots, each within its body's options, and a look
+  kept before the sliders existed (fourteen slots, with `build`) is upgraded on the way in, its height and build
+  carried onto the new sliders and the rest set to the middle (`upgradeLegacyLook`).
+- **The two words.** `packLook` folds the body, the pieces and the colours into one unsigned 32-bit word (its top
+  six bits, where the old height and build sat, are spare) and `packFigure` the eight sliders into a second; the
+  crowd carries both per agent in page-only storage attributes (`crowd.look`, `crowd.figure`): the body materials
+  read them in place of the hash, and the page's cull reads the body out of the first to pick what to draw. No
+  simulation pass binds either, so nothing of a look reaches the pedestrians' motion, the First-Law sensing, the
+  protocol or the physics worker. `lookFromSeed(i)` reproduces, bit for bit, the choice the crowd's hash makes for
+  agent `i`, sliders included (the hashed crowd draws its stature from a per-body range, men 1.64 m to 2.00 m and
+  women 1.55 m to 1.87 m, and every other slider over its whole range), so an agent's look and a visitor's saved
+  look are the same kind of record. The eye never sees its own body (there is no mirror, by design); its shadow,
+  the body the cull draws and every other viewer do. The first-person eye stands at the look's own eye height
+  (`head.ts`), so a tall look sees over a short one.
+- **Codes and presets.** A look code is fifteen symbols, `XXXXX-XXXXX-XXXXX`, from an alphabet without I, L, O and
+  U, carrying both words and a CRC-8 over them: it can be written down and shared, and `parseLookCode` ignores
+  case, the dashes and spaces and refuses any single mistyped symbol. An eight-symbol code from before the sliders
+  still reads, upgraded the same way as a stored look. Eight named presets, two per body (navy suit, charcoal suit,
+  camel blazer, navy blazer, burgundy pantsuit, cream pantsuit, navy skirt suit, camel skirt suit), dress the
+  picker, each with a figure of its own.
+- **The card.** A silhouette of the look, from the front and from the left (the body's own rings after the
+  sliders, in the look's colours; the tie, the bag and the hose keep the street's own colours), above a row per
+  slot: the sliders as sliders (the height read in metres), named options as a segmented control, colours as
+  swatches from the crowd's palettes; the presets; Randomise (the look the hash would give some other number);
+  Reset (the look your own seed gives, the first use of the profile seed); and the code, to copy or to paste. Every
+  change is worn at once, and the silhouette moves before the shadow shows it. Esc, the close button or Done puts
+  it away.
 - **Kept here.** The look is kept in this browser only (`localStorage`, key `civic-simulation:look:v1`,
   `05_Observe_Environment/lookStore.ts`), separate from the profile, so a renamed visitor keeps their outfit;
-  every stored value goes through `validateLook` on the way in.
+  every stored value goes through `validateLook` on the way in. The record's `v` names its layout: 2 is written
+  now; a 1 (the fourteen slots) is read and upgraded.
 - **Your agents** (`08_Swarm/roster.ts`). The card's second row of tabs holds the agents you make your own, at most
   twelve: type a name (one word, screened under 14A like any name the city shows) and press Add. Each tab sets their
   pronouns (they/them, she/her, he/him, any), a role in your words (one line, at most 48 characters, held to the same
@@ -544,8 +568,12 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
 - **Limits.** Recruits who are not on your roster are not dressed automatically, though `look show <agent>`
   reads what any pedestrian wears. A voice profile shapes only the browser's voice (pitch and rate); a provider
   voice is the provider's to sound like. The tie's cloth, the bag's leather and the skirt suit's hose keep their hashed
-  colours (the word is full). Whether agent 0's hashed look and `lookFromSeed(0)` agree on the GPU is a browser
-  check not yet made (see Browser support).
+  colours (the look word has no slot for them). The sliders reshape the walking body and its shadow; a pedestrian the
+  realm has promoted to a physical body (a trip, a shove, the balance machine) is still drawn as the rig's capsules at
+  the rig's one size for as long as the fall lasts, and the network ghosts keep the base body. Feet still slide a
+  little on a kerb (no foot placement yet), and heads do not turn to look. Whether agent 0's hashed look and
+  `lookFromSeed(0)` agree on the GPU is a browser check not yet made (see Browser support); the skinned body has been
+  looked at on a software WebGPU adapter and in CI's screenshots, not yet on a real GPU.
 
 ## The ethical kernel
 
@@ -742,9 +770,11 @@ while you type.
   `ping clear` takes them off the board. A `go` or `gather` ping is offered to the recruiter as a rally the physics
   worker re-checks (see Pings and the rally).
 - `look` shows the look you wear, one line per slot and its code; `look show <agent>` a pedestrian's.
-  `look <slot> <n|name>` sets one slot (`body`, `height`, `build`, `skin`, `hairStyle`, `hairColour`, `top`,
-  `bottom`, `shirt`, `shoes`, `tie`, `eyewear`, `bag`, `cup`), `look preset <name>` one of the eight presets,
-  `look code XXXX-XXXX` a shared look, `look random [<seed>]` the look the hash gives some other number, and
+  `look <slot> <n|name>` sets one slot (`body`, `height`, `mass`, `muscle`, `shoulders`, `hips`, `legs`,
+  `posture`, `head`, `skin`, `hairStyle`, `hairColour`, `top`, `bottom`, `shirt`, `shoes`, `tie`, `eyewear`, `bag`,
+  `cup`; a height takes a step or metres, `look height 1.80`), `look preset <name>` one of the eight presets,
+  `look code XXXXX-XXXXX-XXXXX` a shared look (an old eight-symbol code still reads), `look random [<seed>]` the
+  look the hash gives some other number, and
   `look reset` the look your own seed gives (see The character customizer). Every value is checked against the
   wardrobe.
 - `recruit <skill>` asks someone nearby with that skill over; `recruit rally <agent> [<x> <z>]` asks an Active
@@ -3023,7 +3053,8 @@ behind it, item by item with the tests that prove each, is `docs/agent-city-v1-b
 - **Phase 8.4, pings and captions:** the ping on `Q`, the board, the rally (an Active recruit sent to a sidewalk
   point the worker validates), and closed captions for every sound.
 - **Phase 9.1, the character customizer:** the closed wardrobe, the look word, codes and presets, the card from
-  Wren's chip, `look`.
+  Wren's chip, `look`. Later: the smooth skinned body (`humanoid.ts`, `crowdBody.ts`), the eight body sliders in
+  a second word, fifteen-symbol codes, the card's silhouette.
 - **Phase 9.2, the bootloader:** R0, the console's stack machine; `render off`; `?boot=tty` and `boot`.
 - **Phase 10.1, split screen:** up to four local players, each an avatar under the kernel with a head and a
   soundscape of their own.

@@ -514,6 +514,14 @@ Concierge entry (the Look button on Wren's chip); `intent.ts`'s wardrobe label. 
 the player is dressed; recruits are not dressed automatically. Whether agent 0's hashed look and `lookFromSeed(0)`
 agree on the GPU is a browser check still owed.
 
+**Later (29 October 2026): the smooth body and the figure.** The crowd's bodies became one lofted, skinned humanoid
+(`03_Spawn_Agents/humanoid.ts`, its WGSL in `crowdBody.ts`: fifteen bones, two per vertex, knees and elbows that
+bend), and the look grew eight body sliders (height, mass, muscle, shoulders, hips, legs, posture, head) in a second
+page-only word, `crowd.figure`; `build` is gone. A look is twenty slots, a code fifteen symbols; the fourteen-slot
+records and eight-symbol codes above are read and upgraded, never refused (`upgradeLegacyLook`). The card shows a
+front and side silhouette from the body's own rings. See MANUAL.md, The character customizer, for the current
+description; this section stays as the record of what Phase 9.1 shipped.
+
 ### 9.2 The bootloader: the terminal as a Turing-complete environment
 
 **What the directive asked.** "A bootloader: the console terminal as a Turing-complete environment able to

@@ -12,7 +12,7 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { LOOK_PRESETS, formatLookCode } from '../03_Spawn_Agents/look.ts'
+import { LEGACY_LOOK_SLOTS, LOOK_PRESETS, formatLookCode, upgradeLegacyLook, type LookSlot } from '../03_Spawn_Agents/look.ts'
 import { PRONOUN_WORDS } from '../07_Execute_Actions/terminal/commands.ts'
 import {
   CONCIERGE_PROFILE, PRONOUNS, ROSTER_KEY, ROSTER_MAX, Roster, VOICE_PROFILES, agentBridge, describeIdentity, identityLine, loadRoster,
@@ -125,6 +125,14 @@ test('the roster: add, set, bind, remove; unique names; at most twelve; every ch
   const read = loadRoster(store)
   assert.equal(read.length, ROSTER_MAX)
   assert.deepEqual(read.slice(0, 2).map((a) => a.name), ['A', 'B0'])
+  // A roster kept before the figure: a record's fourteen-slot look is upgraded (look.ts upgradeLegacyLook), not dropped.
+  const legacy: Record<string, number> = {}
+  for (const s of LEGACY_LOOK_SLOTS) legacy[s] = s === 'height' ? 4 : s === 'build' ? 3 : LOOK_PRESETS[0].look[s as LookSlot]
+  store.map.set(ROSTER_KEY, JSON.stringify({ v: 1, agents: [{ name: 'Old', look: legacy }, { name: 'Odd', look: { ...legacy, top: 99 } }] }))
+  const old = loadRoster(store)
+  assert.equal(old.length, 1, 'the old look outside the wardrobe still refuses its record')
+  assert.deepEqual(old[0].look, upgradeLegacyLook(legacy))
+  assert.deepEqual(old[0].look, { ...LOOK_PRESETS[0].look, height: 16, mass: 6, muscle: 8, shoulders: 8, hips: 8, legs: 8, posture: 8, head: 4 })
   store.map.set(ROSTER_KEY, '{not json')
   assert.deepEqual(loadRoster(store), [])
   assert.deepEqual(loadRoster(null), [])

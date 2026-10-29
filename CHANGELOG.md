@@ -15,6 +15,25 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Smooth, customizable bodies for every pedestrian.** The crowd's four bodies are no longer boxes, cylinders and
+  spheres pushed into each other: `src/03_Spawn_Agents/humanoid.ts` lofts one smooth person from rings over a
+  skeleton of fifteen bones, every vertex tied to two of them, with the four outfits (the jacket hem, the shirt
+  front, the skirt, the tie, long hair, glasses, the bag, the cup) part of the loft, in a near and a far version.
+  Written by hand for this product: no imported mesh, skeleton or morph target. The vertex stage
+  (`src/03_Spawn_Agents/crowdBody.ts`, WGSL built from the same numbers) now bends knees, ankles, elbows and the
+  head from the walk phase, counter-twists the chest, blends each vertex's two bones, and carries the normals
+  through the same arithmetic; the spring-damper tilt, the stature, the heading and the place follow as before.
+  Eight body sliders join the look: height (32 steps, 1.50 m to 2.05 m), mass, muscle, shoulders, hips, leg length
+  and posture (sixteen steps each) and head (eight), packed into a second page-only word per agent (`crowd.figure`,
+  written by `setLook` beside `crowd.look`, never bound by the cull or any simulation pass). The wardrobe card draws
+  a silhouette of the look from the front and from the side, from the body's own rings in the look's colours, and
+  its sliders are sliders; the console's `look` takes the new slots (`look height 1.80`). The first-person eye stands
+  at the look's own eye height. Tests: the mesh (valid, bounded, deterministic, the far body a subset), the sliders'
+  arithmetic on the CPU against the shader's text, the walk, the skinning, the silhouette, every body material built
+  under Node in both passes with rain mode (within the shader budget), look v2 round trips, upgrades and codes, the
+  wiring and the air gap. The body's appearance and its cost on a real GPU are not yet confirmed: it has been looked
+  at on a software WebGPU adapter and in CI's browser screenshots only.
+
 - **Peak, a tier above Ultra for big GPUs.** Tier 5, outside the tier table like Lite, so every existing tier number
   and automatic range stays as it was. It draws Ultra at 1.25 times the resolution on each side (about 1.56 times the
   pixels), held within the device's largest texture, which also fixes `?scale=2` on a very wide window at any tier;
@@ -312,6 +331,15 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   about 20 minutes. Unverified from the cloud (no GPU): the rooms on screen and the workday at full speed there.
 
 ### Changed
+
+- **Look v2.** A look is twenty slots: `build` is gone, replaced by the eight sliders. A look kept in this browser
+  before (record `v` 1, fourteen slots, the same key), a roster record's look and an eight-symbol look code are
+  upgraded on the way in (height and build carried onto the new sliders, the rest set to the middle); new records
+  are written as `v` 2 and new codes are fifteen symbols, `XXXXX-XXXXX-XXXXX`, with the checksum over both words.
+  Every pedestrian's proportions change: the hashed crowd now draws a stature from a per-body range (men 1.64 m to
+  2.00 m, women 1.55 m to 1.87 m) and every other slider over its whole range, so the street has short and tall,
+  slight and heavy people where it had two scales; the hashed pieces and colours are as they were. `lookFromSeed`
+  mirrors the new draws bit for bit, so the pinned looks of the first agents changed with them.
 
 - **Canned answers say so, and are not remembered.** When no model answers and the script stands in, the console
   prints `ask: no model answered, so the script spoke instead:` and the reason under its words; neither the swarm's

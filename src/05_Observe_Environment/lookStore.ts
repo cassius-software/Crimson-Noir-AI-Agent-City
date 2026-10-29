@@ -14,9 +14,10 @@
 import { validateLook, type Look } from '../03_Spawn_Agents/look.ts'
 import type { ProfileStore } from './profile.ts'
 
-/** Keyed by the package id like the profile, and versioned with the word's layout (look.ts LOOK_FIELD). */
+/** Keyed by the package id like the profile. The record's `v` is the look's layout: 1 the fourteen slots before the figure (read and upgraded by validateLook), 2 the twenty slots with the eight body sliders (written). */
 export const LOOK_KEY = 'civic-simulation:look:v1'
-/** A stored value longer than this is corrupt, not a look (fourteen small integers are a few hundred bytes). */
+export const LOOK_RECORD_VERSION = 2
+/** A stored value longer than this is corrupt, not a look (twenty small integers are a few hundred bytes). */
 const RAW_MAX = 1024
 
 /** localStorage, or null where the page may not use it (reading the property itself can throw). */
@@ -34,7 +35,7 @@ export function loadLook(store: ProfileStore | null = browserStore()): Look | nu
   try { data = JSON.parse(raw) } catch { return null }
   if (!data || typeof data !== 'object' || Array.isArray(data)) return null
   const { v, look } = data as { v?: unknown; look?: unknown }
-  if (v !== 1) return null
+  if (v !== 1 && v !== LOOK_RECORD_VERSION) return null
   return validateLook(look)
 }
 
@@ -43,7 +44,7 @@ export function loadLook(store: ProfileStore | null = browserStore()): Look | nu
 export function saveLook(look: Look, store: ProfileStore | null = browserStore()): boolean {
   const valid = validateLook(look)
   if (!valid || !store) return false
-  try { store.setItem(LOOK_KEY, JSON.stringify({ v: 1, look: valid })) } catch { return false }
+  try { store.setItem(LOOK_KEY, JSON.stringify({ v: LOOK_RECORD_VERSION, look: valid })) } catch { return false }
   return true
 }
 
