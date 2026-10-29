@@ -9,23 +9,54 @@
  * button beside them opens what a keyboard reaches with one key and a phone has no key for: the Ring-0 console (and
  * through it `ask`, the agents and every setting), the model file kept in this page (the browser's file picker), the
  * clock an hour back or on, ghost view, rain mode, and hiding the HUD. Only its own controls take pointer events, so
- * the rest of the HUD stays click-through.
+ * the rest of the HUD stays click-through. After every layout it measures what it drew and judges it by the rule book
+ * (touchLayout.ts: finger-sized, on the size ladder, clear of each other and of the system's swipe bands), and says
+ * so in its `data-touch-layout` attribute, which the browser smoke test reads at every phone size.
  * What breaks if it is removed? Touch devices can neither move, look nor drive.
  *
  * Every control acts on pointer events, never on `click`: browsers synthesize a click only for a lone tap, so a
- * button pressed while the other thumb holds the stick would never fire.
+ * button pressed while the other thumb holds the stick would never fire. Every held control is owned by the pointer
+ * that pressed it (touchLayout.ts PointerOwner): a second finger neither presses it again nor, lifting, lets it go.
  */
 import { useCallback, useEffect, useReducer, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent } from 'react'
 import type { Input, TouchButton } from './input.ts'
+import { layoutAttribute, PointerOwner, TOUCH, validateTouchLayout, type ControlKind, type ControlRect, type Viewport } from './touchLayout.ts'
 
 const STICK = { zone: 184, base: 116, knob: 52, travel: 42, deadPx: 5 } as const
 
 const GLASS = 'border border-white/30 bg-slate-900/35 text-white shadow-[0_8px_28px_rgba(15,23,42,0.35)] backdrop-blur-xl backdrop-saturate-150'
 const GLASS_ON = 'border border-white/80 bg-white/80 text-slate-900 shadow-[0_8px_28px_rgba(15,23,42,0.35)] backdrop-blur-xl backdrop-saturate-150'
 const CONTROL = 'pointer-events-auto touch-none select-none'
-const INSET = 16
 
-const ROOT_STYLE: CSSProperties = { WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }
+/** The safe-area insets as custom properties, so the layout judge can read them back (env() cannot be read from a script). */
+const ROOT_STYLE: CSSProperties = {
+  WebkitTouchCallout: 'none', WebkitUserSelect: 'none',
+  ['--safe-top' as string]: 'env(safe-area-inset-top, 0px)', ['--safe-right' as string]: 'env(safe-area-inset-right, 0px)',
+  ['--safe-bottom' as string]: 'env(safe-area-inset-bottom, 0px)', ['--safe-left' as string]: 'env(safe-area-inset-left, 0px)',
+}
+
+const KINDS: readonly ControlKind[] = ['tap', 'hold', 'menu', 'stick', 'look']
+const px = (v: string) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0 }
+
+/** The controls the layer drew, as the judge sees them: every element marked data-touch that has a size. */
+function measureControls(layer: HTMLElement): ControlRect[] {
+  const out: ControlRect[] = []
+  for (const el of layer.querySelectorAll<HTMLElement>('[data-touch]')) {
+    const kind = el.dataset.touch as ControlKind
+    if (!KINDS.includes(kind)) continue
+    const r = el.getBoundingClientRect()
+    if (!(r.width > 0 && r.height > 0)) continue
+    out.push({ name: el.getAttribute('aria-label') || el.textContent?.trim() || kind, kind, x: r.left, y: r.top, w: r.width, h: r.height })
+  }
+  return out
+}
+
+/** The viewport and the safe-area insets the layer's custom properties resolved to. */
+function viewportOf(layer: HTMLElement): Viewport {
+  const cs = getComputedStyle(layer)
+  const side = (name: string) => px(cs.getPropertyValue(name))
+  return { width: window.innerWidth, height: window.innerHeight, safe: { top: side('--safe-top'), right: side('--safe-right'), bottom: side('--safe-bottom'), left: side('--safe-left') } }
+}
 
 /** Keeps a drag or a held button tracking the finger after it leaves the element (throws if already lifted). */
 function capture(e: PointerEvent<HTMLElement>): void {
@@ -107,15 +138,19 @@ function TouchLayer({ input, driving, nearVehicle, menu }: Props) {
 
   // Where the buttons stand, for Sloane's card (Concierge.tsx), which keeps clear of them: --touch-top is the height
   // from the screen's foot to the buttons' top edge, --touch-left the width from its right edge to their left edge.
+  // The same pass measures every control and judges the layout (touchLayout.ts), into data-touch-layout on the layer:
+  // on mount, on every resize, whenever the cluster changes size, and when the buttons change with the mode.
   const cluster = useRef<HTMLDivElement>(null)
+  const layer = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    const el = cluster.current
-    if (!el) return
-    const root = document.documentElement.style
+    const el = cluster.current, root = layer.current
+    if (!el || !root) return
+    const page = document.documentElement.style
     const publish = () => {
       const r = el.getBoundingClientRect()
-      root.setProperty('--touch-top', `${Math.round(window.innerHeight - r.top)}px`)
-      root.setProperty('--touch-left', `${Math.round(window.innerWidth - r.left)}px`)
+      page.setProperty('--touch-top', `${Math.round(window.innerHeight - r.top)}px`)
+      page.setProperty('--touch-left', `${Math.round(window.innerWidth - r.left)}px`)
+      root.setAttribute('data-touch-layout', layoutAttribute(validateTouchLayout(measureControls(root), viewportOf(root))))
     }
     publish()
     const watch = typeof ResizeObserver === 'function' ? new ResizeObserver(publish) : null
@@ -124,10 +159,10 @@ function TouchLayer({ input, driving, nearVehicle, menu }: Props) {
     return () => {
       watch?.disconnect()
       window.removeEventListener('resize', publish)
-      root.removeProperty('--touch-top')
-      root.removeProperty('--touch-left')
+      page.removeProperty('--touch-top')
+      page.removeProperty('--touch-left')
     }
-  }, [epoch])
+  }, [epoch, driving, nearVehicle])
 
   const run = input.touchHeld('run')
   const press = (fn: () => void) => () => { input.engageTouch(); fn() }
@@ -140,25 +175,27 @@ function TouchLayer({ input, driving, nearVehicle, menu }: Props) {
 
   return (
     <>
-      <div className="pointer-events-none absolute inset-0 z-10 select-none" style={ROOT_STYLE}>
+      <div ref={layer} className="pointer-events-none absolute inset-0 z-10 select-none" style={ROOT_STYLE}>
         <LookZone key={`look-${epoch}`} input={input} />
         <Stick key={`stick-${epoch}`} input={input} />
         <div
           key={`buttons-${epoch}`}
           ref={cluster}
           className="pointer-events-none absolute flex flex-col items-end gap-3"
-          style={{ right: `calc(env(safe-area-inset-right, 0px) + ${INSET}px)`, bottom: `calc(env(safe-area-inset-bottom, 0px) + ${INSET}px)` }}
+          style={{ right: `calc(env(safe-area-inset-right, 0px) + ${TOUCH.insetX}px)`, bottom: `calc(env(safe-area-inset-bottom, 0px) + ${TOUCH.insetY}px)` }}
         >
           {driving ? (
             <div className="flex flex-col items-end gap-3">
               {/* A column in portrait: as a row, Ping would sit over the stick's zone on a phone held upright. Under
-                  376 px across, Reset and Exit car share a row above the brakes, which stand one over the other. */}
-              <div className="flex gap-3 portrait:flex-col portrait:items-end">
-                <div className="flex items-center gap-3">
+                  376 px across, Reset and Exit car share a row above the brakes, which stand one over the other. In
+                  landscape under 600 px across (a 568 px phone) the row closes up to 8 px gaps, the least two targets may
+                  keep (touchLayout.ts), so it ends clear of the stick's zone with the cluster 24 px in from the edge. */}
+              <div className="flex gap-3 portrait:flex-col portrait:items-end landscape:max-[600px]:gap-2">
+                <div className="flex items-center gap-3 landscape:max-[600px]:gap-2">
                   {menuButton}
                   <TapButton label="Ping" onTap={press(() => input.press('ping'))} />
                 </div>
-                <div className="flex gap-3 portrait:flex-col portrait:items-end portrait:max-[376px]:flex-row">
+                <div className="flex gap-3 portrait:flex-col portrait:items-end portrait:max-[376px]:flex-row landscape:max-[600px]:gap-2">
                   <TapButton label="Reset" onTap={press(() => input.press('reset'))} />
                   <TapButton label="Exit car" onTap={press(() => input.press('interact'))} />
                 </div>
@@ -205,6 +242,7 @@ function LookZone({ input }: { input: Input }) {
   return (
     <div
       aria-hidden
+      data-touch="look"
       className={`${CONTROL} absolute top-0 right-0 bottom-0 w-1/2`}
       onPointerDown={(e) => {
         if ((e.pointerType === 'mouse' && input.mouseHidesTouch) || (look.current && owns(e, look.current.id))) return
@@ -260,10 +298,11 @@ function Stick({ input }: { input: Input }) {
     <div
       ref={zone}
       aria-hidden
+      data-touch="stick"
       className={`${CONTROL} absolute`}
       style={{
-        left: `calc(env(safe-area-inset-left, 0px) + ${INSET - 8}px)`,
-        bottom: `calc(env(safe-area-inset-bottom, 0px) + ${INSET - 8}px)`,
+        left: `calc(env(safe-area-inset-left, 0px) + ${TOUCH.stickInset}px)`,
+        bottom: `calc(env(safe-area-inset-bottom, 0px) + ${TOUCH.stickInset}px)`,
         width: STICK.zone,
         height: STICK.zone,
       }}
@@ -311,6 +350,7 @@ function MenuButton({ open, onToggle }: { open: boolean; onToggle: (at: DOMRect)
       aria-label="Menu"
       aria-expanded={open}
       aria-haspopup="menu"
+      data-touch="menu"
       onPointerDown={(e) => {
         stamp(e)
         if (e.pointerType !== 'mouse' || e.button === 0) onToggle(e.currentTarget.getBoundingClientRect())
@@ -419,6 +459,7 @@ function TapButton({ label, onTap, pressed, round }: { label: string; onTap: () 
     <button
       type="button"
       aria-pressed={pressed}
+      data-touch="tap"
       onPointerDown={(e) => {
         stamp(e)
         if (e.pointerType !== 'mouse' || e.button === 0) onTap()
@@ -444,21 +485,33 @@ const BRAKE_SIZE = {
   brake: 'size-[84px] [@media(max-height:499px)]:size-[72px]',
 } as const
 
-/** Down while a finger is on it; pointer capture keeps it down when the thumb slides off the edge. */
+/**
+ * Down while the finger that pressed it is on it; pointer capture keeps it down when the thumb slides off the edge.
+ * The pressing pointer owns it (PointerOwner): a second finger landing on it is ignored, and its lifting lets nothing
+ * go, so two thumbs never cancel each other's holds; the owner's lift, cancel or lost capture releases it.
+ */
 function HoldButton({ label, size, button, input }: { label: string; size: string; button: TouchButton; input: Input }) {
   const [down, setDown] = useState(false)
+  const owner = useRef<PointerOwner | null>(null)
+  const own = () => (owner.current ??= new PointerOwner())
   const set = (on: boolean) => {
     setDown(on)
     input.setTouchButton(button, on)
   }
+  const release = (e: PointerEvent<HTMLButtonElement>) => { if (own().release(e.pointerId)) set(false) }
   return (
     <button
       type="button"
       aria-pressed={down}
-      onPointerDown={(e) => { capture(e); set(true) }}
-      onPointerUp={() => set(false)}
-      onPointerCancel={() => set(false)}
-      onLostPointerCapture={() => set(false)}
+      data-touch="hold"
+      onPointerDown={(e) => {
+        if (!own().claim(e.pointerId)) return
+        capture(e)
+        set(true)
+      }}
+      onPointerUp={release}
+      onPointerCancel={release}
+      onLostPointerCapture={release}
       onContextMenu={noMenu}
       className={`${CONTROL} ${size} flex items-center justify-center rounded-full font-semibold tracking-tight ${label.length > 6 ? 'text-[11px]' : 'text-[13px]'} ${down ? GLASS_ON : GLASS}`}
     >

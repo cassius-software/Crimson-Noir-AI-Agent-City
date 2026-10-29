@@ -100,7 +100,19 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
   under browser bars, on foot, driving and driving with a paired pad, that every control is on screen and clear of the
   others, the stick, the speedometer, Sloane's chip and her Controls card, that the chip is clear of the stick, the
   minimap and the HUD's panels and as wide as its buttons, that the HUD, with two of its messages raised at each size,
-  stays clear of the buttons and the stick, and that the Menu's sheet stays inside the screen. On a touch laptop the
+  stays clear of the buttons and the stick, and that the Menu's sheet stays inside the screen. The overlay also judges
+  itself (`04_Connect_Hardware/touchLayout.ts`): after every layout it measures each control and checks that it is on
+  screen, finger-sized (at least 48 px on its shorter side, Material's 48 dp and above Apple's 44 pt) and one of the
+  eight sizes on its ladder, that no two controls overlap and targets keep 8 px apart, and that no button, and not the
+  stick's base at rest, reaches into the 24 px band at the left or right edge of the screen where a phone's system
+  takes a swipe inward as "back" (the display's own cut-outs and home indicator come from the browser's safe-area
+  insets on top). The verdict is in the overlay's `data-touch-layout` attribute (`valid`, or `invalid:` and what is
+  wrong), and the browser smoke test reads it at every view. For the band, the button cluster stands 24 px from the
+  right edge, and at the wheel in landscape under 600 px across the tap row closes up to 8 px gaps so it ends clear of
+  the stick's zone; the zone itself may reach to 8 px from the left edge (a thumb may land anywhere in it) while its
+  base never rests nearer the edge than 42 px. A held button belongs to the finger that pressed it: a second finger
+  landing on the Brake neither presses it again nor, lifting, lets it go; only the owner's lift, a system cancel or a
+  lost capture releases it. On a touch laptop the
   overlay goes away as soon as the mouse moves (the Run toggle with it), and comes back with the next touch. On a
   tablet whose main pointer stays the finger with a mouse or trackpad attached (an iPad in Safari 26, going by
   WebKit's source and not yet tried on an iPad; a Windows 2-in-1 in tablet mode) the overlay stays, and a mouse drag
@@ -1692,6 +1704,19 @@ run `hal pair …` in the console.
 - **Gamepad API.** Any standard-mapped controller works, no pairing needed; one without the standard mapping is read
   by position (see Controls), and its line in `hal` names the guess. With `?players`, a second, third and fourth pad
   each drive a player of their own (see Split screen); haptics stay one level for every pad.
+- **Device profiles** (`04_Connect_Hardware/devices.ts`). Every input device resolves to one of seventeen profiles,
+  never to none: DualSense and DualSense Edge over USB and over Bluetooth, the DualShock 4, the letters-layout pads of
+  the two other console makers (A at the south button, or B there), Valve's pads and the Steam Deck, Logitech's F310
+  and F710, any pad with the standard mapping, the three layouts a pad without it is read by (the kernel's order, four
+  axes, stick only), a tracked headset controller, a gaze-and-pinch headset and a tracked hand, and `unknown`. The
+  clues are tried in stages, each scoring its candidate, and the best wins: the USB vendor and product id and the bus
+  (100, plus 5 when a bus-specific profile is matched on its bus; Chromium and Firefox print the ids in a pad's name,
+  WebHID gives them outright), a CRC-16/CCITT-FALSE fingerprint of the pad's name for a browser that prints no ids
+  (80; Safari), a headset source's own words (70; its target-ray mode, its hand, its gamepad's `xr-standard`
+  mapping), the standard mapping (60), the layout the pad shows (40), and the fallback (0). `hal` prints each pad's
+  profile with its score and how it was found, e.g. `[dualsense-bluetooth 105 (by id, bluetooth 054c:0ce6)]`; the
+  glyph family the profile reports is the same `gamepad.ts` reports for the id, so a HUD hint and a `hal` line never
+  disagree. The ids come from the Linux kernel's tables and have not been checked on a physical pad here.
 
 Every API degrades silently where it is missing. Safari and Firefox have no WebHID, Web Serial or
 Web Bluetooth.

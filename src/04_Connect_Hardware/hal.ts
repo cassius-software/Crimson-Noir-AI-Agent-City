@@ -11,6 +11,7 @@
  * What breaks if it is removed? Input.hal, the Ring-0 terminal's `hal` command and the HUD device line.
  */
 import { BRAND } from '../brand.ts'
+import { describeResolution, padClues, resolveDevice } from './devices.ts'
 import { DUALSENSE_FILTERS, DualSense, dualSenseName, isDualSense } from './dualsense.ts'
 import { isUsablePad, padName, parsePadId, pressesFaceButton } from './gamepad.ts'
 import { LineLink, NUS, openBle, openSerial, type ByteChannel } from './lineLink.ts'
@@ -24,6 +25,8 @@ export interface HalDevice {
   name: string
   state: 'handshaking' | 'ready' | 'error' | 'disconnected'
   detail: string
+  /** The device resolver's word (devices.ts describeResolution) for an input device; absent on a HAL/1 link. */
+  profile?: string
 }
 
 export interface HalOutputs {
@@ -86,7 +89,9 @@ function genericDetail(p: GamepadLike, awake: boolean): string {
   if (!isUsablePad(p)) return 'non-standard mapping (ignored: no stick)'
   return awake ? 'non-standard mapping (best guess by position)' : 'non-standard mapping (press a face button on it to use it)'
 }
-const copy = (d: HalDevice): HalDevice => ({ id: d.id, transport: d.transport, name: d.name, state: d.state, detail: d.detail })
+const copy = (d: HalDevice): HalDevice => (d.profile === undefined
+  ? { id: d.id, transport: d.transport, name: d.name, state: d.state, detail: d.detail }
+  : { id: d.id, transport: d.transport, name: d.name, state: d.state, detail: d.detail, profile: d.profile })
 
 function defaultNavigator(): HardwareNavigator | null {
   const g = globalThis as { navigator?: HardwareNavigator }
@@ -446,6 +451,7 @@ export class HalBus {
       entry.dev.name = `${ds.name} (${ds.bus === 'usb' ? 'USB' : 'Bluetooth'})`
       entry.dev.state = 'ready'
       entry.dev.detail = ds.describe()
+      entry.dev.profile = describeResolution(resolveDevice({ id: device.productName, vendorId: device.vendorId, productId: device.productId, bus: ds.bus }))
       if (!this.hidden) ds.set(this.want.triggerResistance, this.want.rumble)
     } catch (err) {
       if (entry.ds === ds) entry.ds = undefined
@@ -540,6 +546,7 @@ export class HalBus {
           dev: {
             id: `gamepad:${p.index}`, transport: 'gamepad', name: padName(p.id), state: 'ready',
             detail: standard ? `standard mapping${p.vibrationActuator?.playEffect ? ' · rumble' : ''}` : genericDetail(p, false),
+            profile: describeResolution(resolveDevice(padClues(p))),
           },
           index: p.index, id: p.id, awake: standard, vendor: ids?.vendor ?? -1, product: ids?.product ?? -1, pad: p, frame, hidden: 0, rumble: 0, rumbleAt: -1e9,
         })
