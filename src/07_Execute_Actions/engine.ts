@@ -48,7 +48,8 @@ import { LANDMARK } from '../01_Initialize_World/lakefront.ts'
 import { METRO } from '../01_Initialize_World/lakefrontPack.ts'
 import { formatClock, sunAt, type SunState } from '../01_Initialize_World/solar.ts'
 import { SIGNAL, signalFor, walkAllowed } from '../02_Define_The_Rules/civic.ts'
-import { THREE_LAWS } from '../02_Define_The_Rules/laws.ts'
+import { LAWS } from '../02_Define_The_Rules/laws.ts'
+import { airgapInstalled } from '../02_Define_The_Rules/airgap.ts'
 import { kernelPanic } from '../02_Define_The_Rules/ring0Panic.ts'
 import { CrowdView } from '../03_Spawn_Agents/crowd.ts'
 import { heightScale, LOOK_NONE, packLook, unpackLook, validateLook, type Look } from '../03_Spawn_Agents/look.ts'
@@ -2201,7 +2202,7 @@ export class Engine {
     this.bridge = Object.freeze({
       brand: Object.freeze({ name: BRAND.name, version: BRAND.version, host: BRAND.host, track: 'gui' as const }),
       stats: () => ring0Stats(this.snapshot(), this.sim.state.physics),
-      laws: () => THREE_LAWS,
+      laws: () => LAWS,
       clock: () => formatClock(this.hours),
       setClock: (h: number) => this.debugSetHour(h),
       quality: (arg?: 'auto' | number) => {
@@ -2233,8 +2234,9 @@ export class Engine {
       }),
       // The operator tier: unlockable, sandboxed, built over simControls() and two host knobs handed in as senses
       // (rain mode and the sound, for the city actions an agent proposes), never over the engine itself; its scripts
-      // and the allowed actions are bound to the swarm through the gate.
-      operator: operatorBridge(this.simControls(), gate, mind, undefined, { voice, speech: this.speechOut(), diary, awareness: this.awareness(), nameOf, city: this.cityKnobs(), voiceOf }),
+      // and the allowed actions are bound to the swarm through the gate. `contained` is what this host vouches to the
+      // Ring-0 action gate: the air gap main.tsx installed on this page's global is still there (airgap.ts).
+      operator: operatorBridge(this.simControls(), gate, mind, undefined, { voice, speech: this.speechOut(), diary, awareness: this.awareness(), nameOf, city: this.cityKnobs(), contained: () => airgapInstalled(globalThis), voiceOf }),
       record: Object.freeze({
         start: (source: RecorderSource) => this.startRecording(source),
         stop: () => this.stopRecording(),

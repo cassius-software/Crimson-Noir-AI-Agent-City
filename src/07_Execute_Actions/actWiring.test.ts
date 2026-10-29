@@ -51,8 +51,9 @@ test('App: the card, the shield and the HUD line derive from one act state fed b
   assert.match(follow, /if \(termOpenRef\.current\) return\n/, 'open, the lines are already in the scrollback')
   before(follow, 'if (termOpenRef.current) return', "toast('City action'", 'the console check comes before every toast')
   assert.match(follow, /if \(ev\.kind === 'proposed'\) engineRef\.current\?\.toast\('City action', `\$\{ev\.act\.who\} proposes: \$\{ev\.act\.sentence\} \(Y allows, N refuses\)`\)/)
-  assert.match(follow, /else if \(ev\.kind === 'ended' && \(ev\.end\.state === 'done' \|\| ev\.end\.state === 'failed'\)\) engineRef\.current\?\.toast\('City action', `\$\{ev\.end\.state\}: \$\{ev\.end\.line\}`\)/)
-  assert.doesNotMatch(follow, /'refused'|'withdrawn'|'aborted'/, 'a refusal and a withdrawal toast nothing (the person did it); an abort is the gate wrapper\'s Task aborted')
+  // The three ends a person did not make themselves are toasted: done, failed, and the action gate's refusal after their OK (as 'refused', with the law).
+  assert.match(follow, /else if \(ev\.kind === 'ended' && \(ev\.end\.state === 'done' \|\| ev\.end\.state === 'failed' \|\| ev\.end\.state === 'denied'\)\) engineRef\.current\?\.toast\('City action', `\$\{ev\.end\.state === 'denied' \? 'refused' : ev\.end\.state\}: \$\{ev\.end\.line\}`\)/)
+  assert.doesNotMatch(follow, /ev\.end\.state === '(?:refused|withdrawn|aborted)'/, 'a refusal and a withdrawal toast nothing (the person did it); an abort is the gate wrapper\'s Task aborted')
   assert.match(APP, /void h\.verdict\.then\(\(v\) => \{ if \(v\.state === 'Aborted'\) e\.toast\('Task aborted', `Spatial tether lost: \$\{v\.message\}`\) \}\)/, 'the gate wrapper\'s toast, unchanged')
   assert.match(APP, /useEffect\(\(\) => \{ engineRef\.current\?\.input\.shield\(act !== null\) \}, \[act\]\)/, 'the shield follows the same state as the card')
   assert.match(APP, /const allowAct = useCallback\(\(\) => \{ try \{ void bridge\?\.operator\.acts\.allow\('card'\)\.result\.catch\(noop\) \} catch \{ \/\* already ended \*\/ \} \}, \[bridge\]\)/)
@@ -172,8 +173,8 @@ test('the input shield: a second flag beside suspend that drops the pad\'s edges
   assert.doesNotMatch(suspend, /shielded/, 'the console opening and closing never touches the shield')
 })
 
-test('the engine: the proposer\'s name and the two city knobs reach the operator tier as senses with voiceOf last; the sound loop lives once', () => {
-  assert.match(ENGINE, /operatorBridge\(this\.simControls\(\), gate, mind, undefined, \{ voice, speech: this\.speechOut\(\), diary, awareness: this\.awareness\(\), nameOf, city: this\.cityKnobs\(\), voiceOf \}\)/)
+test('the engine: the proposer\'s name, the two city knobs and the air-gap vouch reach the operator tier as senses with voiceOf last; the sound loop lives once', () => {
+  assert.match(ENGINE, /operatorBridge\(this\.simControls\(\), gate, mind, undefined, \{ voice, speech: this\.speechOut\(\), diary, awareness: this\.awareness\(\), nameOf, city: this\.cityKnobs\(\), contained: \(\) => airgapInstalled\(globalThis\), voiceOf \}\)/)
   assert.match(ENGINE, /operatorBridge\(this\.simControls\(\), gate, mind, undefined, \{[^}]*voiceOf \}\)/, 'voiceWiring.test.ts\'s pin')
   assert.match(ENGINE, /^import type \{ CityKnobs \} from '\.\.\/06_Make_Decisions\/actions\.ts'$/m, 'a type only: the engine runs no action')
   assert.match(ENGINE, /const nameOf = \(agent: number\): string \| null => this\.nameOfAgent\?\.\(agent\) \?\? null/)

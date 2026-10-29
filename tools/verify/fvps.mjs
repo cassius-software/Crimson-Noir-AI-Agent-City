@@ -37,6 +37,7 @@ const skipped = []
 const CORE_HARNESSES = [
   'masks_mean_what_the_kernels_take_them_to_mean', 'compare_exchange_orders_the_pair', 'bitonic_pass_stays_in_bounds',
   'flush_zeroes_one_row_only', 'agent_tick_is_isolated_to_its_own_row', 'relax_pass_stays_in_bounds',
+  'an_undeclared_privilege_drops_the_pointer_for_every_matrix', 'a_declared_request_never_drops_the_pointer',
 ]
 const ROUTING_HARNESSES = [
   'arena_setter_never_traps', 'no_track_is_refused_not_trapped', 'no_track_is_refused_by_the_projection',

@@ -5,11 +5,14 @@
  * Why does this file exist? It is how the concierge speaks during the onboarding: in its own scripted words always, and,
  * when a model backend is configured and answers in time (the cognition router: Claude through the visitor's loopback
  * gateway, Ollama or llama.cpp on this machine), in that model's rewording of the same line for a brand-new visitor.
- * The script is shown first and stays if the model is slow, silent, errors, or answers with something too long or
- * that drops a choice the line names, so the onboarding never waits on a model and never loses a question.
+ * The script is shown first and stays if the model is slow, silent, errors, or answers with something too long,
+ * that drops a choice the line names, or that fails the 14A screen (02_Define_The_Rules/ring0Gate.ts admitWords: the
+ * one place a model's words are shown as the city's own without the operator tier, so the Zeroth Law's screen is
+ * applied here), so the onboarding never waits on a model, never loses a question and never shows a refused word.
  * What breaks if it is removed? The concierge has only its script (which is fine), and the configured backend is unused
  * until the console asks it something.
  */
+import { admitWords } from '../../02_Define_The_Rules/ring0Gate.ts'
 import type { Mind } from '../operator.ts'
 
 /** Something that says a line: the words to show for it. */
@@ -34,7 +37,8 @@ export function mustKeep(line: string, keep: readonly string[]): boolean {
 
 /**
  * The model's voice over the page's mind: asks for the line in plain words for a five-year-old, keeping every question
- * and choice; falls back to the script on any failure, timeout, or an answer that is too long or drops a kept word.
+ * and choice; falls back to the script on any failure, timeout, or an answer that is too long, drops a kept word or
+ * fails the 14A screen.
  */
 export function modelVoice(mind: Mind, keep: (line: string) => readonly string[] = () => [], timeoutMs = REWORD_MS): Voice {
   return {
@@ -58,7 +62,7 @@ export function modelVoice(mind: Mind, keep: (line: string) => readonly string[]
         signal.removeEventListener('abort', onAbort)
       }
       const said = text.replace(/\s+/g, ' ').trim()
-      if (!said || said.length > REWORD_MAX || !mustKeep(said, keep(line))) return line
+      if (!said || said.length > REWORD_MAX || !mustKeep(said, keep(line)) || !admitWords(said).admitted) return line
       return said
     },
   }

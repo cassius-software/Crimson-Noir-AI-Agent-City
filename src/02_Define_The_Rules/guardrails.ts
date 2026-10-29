@@ -26,6 +26,7 @@
 import { loopbackServer } from './airgap.ts'
 import { screen } from './conduct.ts'
 import { canonical, sha256 } from './integrity.ts'
+import type { GateLaw } from './laws.ts'
 
 export const INVARIANTS = Object.freeze([
   'HumanOverrideSupreme', 'CapabilityTethered', 'ConductScreen14A', 'LoopbackOnly', 'BudgetWithinQuota', 'ProvenanceChained',
@@ -41,6 +42,22 @@ export const INVARIANT_TEXT: Readonly<Record<Invariant, string>> = Object.freeze
   BudgetWithinQuota: 'steps, prompt length, answer length and tokens stay within the quota',
   ProvenanceChained: 'the hash-chained audit trail verifies before every step; a tampered record stops the run',
 })
+
+/**
+ * The law each invariant stands under (laws.ts LAWS; the Ring-0 action gate, ring0Gate.ts, ranks its own checks the
+ * same way): the operator's word is the Second Law, the 14A screen and the loopback bound the Zeroth, the tether, the
+ * quota and the chain the Third (the swarm's own integrity). No invariant rules a vehicle: the First Law is the kernel's.
+ */
+export const INVARIANT_LAW: Readonly<Record<Invariant, GateLaw>> = Object.freeze({
+  HumanOverrideSupreme: 2, CapabilityTethered: 3, ConductScreen14A: 0, LoopbackOnly: 0, BudgetWithinQuota: 3, ProvenanceChained: 3,
+})
+
+/** The highest-ranked law a verdict's failed invariants stand under (the lowest number), or null when it admits. */
+export function lawOf(v: Verdict): GateLaw | null {
+  let law: GateLaw | null = null
+  for (const f of v.failed) if (law === null || INVARIANT_LAW[f] < law) law = INVARIANT_LAW[f]
+  return law
+}
 
 /** The budget one run may spend, frozen. */
 export const QUOTA = Object.freeze({

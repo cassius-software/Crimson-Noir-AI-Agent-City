@@ -15,6 +15,31 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The Ring-0 action gate.** One module (`02_Define_The_Rules/ring0Gate.ts`) every effect a model's words can
+  have on the city passes before any state changes: before a model is asked (the console's `ask` and every swarm
+  step), when an answer's `ACTION:` line is read, and the moment before an allowed action runs, inside the
+  proposer's lease. Twelve checks ranked under four laws, the Zeroth Law (protect the city) above the kernel's
+  three: the page contained as the host vouches (the engine vouches that the air gap `main.tsx` installed is still
+  in place; a host that vouches nothing is refused everything), the model on this machine or none, the 14A screen,
+  the catalogue; the realm standing and the verb kinetic-free (a table of every facade leaf each verb reaches,
+  proved exact by running every verb over a recording facade, with every leaf of the facade classified); the tier
+  unlocked and a person's OK; the tether, the recruitment, the hash-chained trail and one proposal at a time. The
+  refusal names the highest law in the kernel's words (`Second Law: the operator tier is locked`), a refused
+  allowed action is on `act log` under that law, and `act gate` prints the table; `laws` lists all four and `swarm
+  guardrails` names the law each invariant stands under. An action the gate refuses after your OK ends as `act 1:
+  refused: Second Law: …` in the console and as a toast with it closed. A line the catalogue cannot read is refused
+  under the Zeroth Law in the catalogue's words. A model's rewording of Sloane's lines passes the screen before it
+  is spoken (the voice asks the model for it outside the gate's ask check; it changes nothing). Tests pin at the
+  source that a model is answered only through the providers, the operator tier and the onboarding voice, that the
+  catalogue is performed in one place behind the gate, and that the engine hands the vouch in. The gate is a rule
+  over plain values, held by tests, not a proof about a model.
+- **Two Kani harnesses for the capability fuse** (`noir_core/src/verify.rs`): for every matrix content, an agent
+  that asks for a privilege its role was not declared with drops its pointer in that tick, with every other word of
+  its row accounted for (moved nowhere, learned nothing, wrote nothing, kept its goal, capabilities, role and
+  heading; its trip clock ticks and its loop breaker resets as in any tick), and one whose request is declared, in
+  a role declared with movement, is never dropped. They run in CI's `kani (core-fuse)` group; the proof stands only
+  once that job is green.
+
 - **Peak, a tier above Ultra for big GPUs.** Tier 5, outside the tier table like Lite, so every existing tier number
   and automatic range stays as it was. It draws Ultra at 1.25 times the resolution on each side (about 1.56 times the
   pixels), held within the device's largest texture, which also fixes `?scale=2` on a very wide window at any tier;

@@ -19,6 +19,7 @@ import { test } from 'node:test'
 import { screen } from '../02_Define_The_Rules/conduct.ts'
 import { AUDIT_GENESIS, verifyChain, type AuditEntry } from '../02_Define_The_Rules/guardrails.ts'
 import { sha256 } from '../02_Define_The_Rules/integrity.ts'
+import type { Vouched } from '../02_Define_The_Rules/ring0Gate.ts'
 import { TIERS } from '../05_Observe_Environment/governor.ts'
 import { catalogueLines, MORE_THAN_ONE, NOT_ALONE, type CityKnobs } from '../06_Make_Decisions/actions.ts'
 import { createActs, NOTHING_WAITING, PROPOSAL_WAITING, sameBinding, TIER_LOCKED, type Acts } from './acts.ts'
@@ -214,7 +215,7 @@ const eventText = (ev: ActEvent): string =>
   ev.kind === 'proposed' ? `proposed ${ev.act.seq}` : ev.kind === 'allowed' ? `allowed ${ev.act.seq} ${ev.by}` : `ended ${ev.act.seq} ${ev.end.state} ${ev.by}: ${ev.end.line}`
 
 /** One keeper over the fakes, with every write it makes recorded as one line. */
-function rig(opts: { unlocked?: boolean; nameOf?: (agent: number) => string | null; city?: boolean } = {}) {
+function rig(opts: { unlocked?: boolean; nameOf?: (agent: number) => string | null; city?: boolean; contained?: Vouched } = {}) {
   const gate = new FakeGate()
   const sim = fakeSim()
   const api = scriptApi(sim)
@@ -223,6 +224,7 @@ function rig(opts: { unlocked?: boolean; nameOf?: (agent: number) => string | nu
   const moments: string[] = []
   const events: string[] = []
   let unlocked = opts.unlocked ?? true
+  let contained: Vouched = opts.contained === undefined ? true : opts.contained
   const acts: Acts = createActs({
     gate,
     facade: (lease) => leasedApi(api, lease),
@@ -232,13 +234,14 @@ function rig(opts: { unlocked?: boolean; nameOf?: (agent: number) => string | nu
     ...(opts.nameOf && { nameOf: opts.nameOf }),
     now: () => NOW,
     unlocked: () => unlocked,
+    contained: () => contained,
   })
   acts.follow((ev) => events.push(eventText(ev)))
   const propose = (text: string, bound: readonly GateTether[] = [TETHER], skills: readonly string[] = ['Rust']) => {
     const { a, r } = answered(text, bound)
     return acts.onAnswer(a, r, skills)
   }
-  return { gate, sim, city, notes, moments, events, acts, propose, lock: () => { unlocked = false }, unlock: () => { unlocked = true } }
+  return { gate, sim, city, notes, moments, events, acts, propose, lock: () => { unlocked = false }, unlock: () => { unlocked = true }, vouch: (v: Vouched) => { contained = v } }
 }
 
 /** The chain as rows: kind, step, tags, note. */
@@ -274,20 +277,21 @@ test('no line, or ACTION: none: nothing is proposed, nothing is written, nothing
   assert.deepEqual(x.acts.verify(), { ok: true, length: 0, head: AUDIT_GENESIS })
 })
 
-test('a parse refusal: one untagged refusal entry, the agent is told next time (a moment from the city), nothing is submitted', async () => {
+test('a parse refusal: one untagged refusal entry under the Zeroth Law, the agent is told next time (a moment from the city, in the catalogue\'s words), nothing is submitted', async () => {
   const x = rig()
   const two = [TETHER, { agent: 9, serial: 3, skills: ['Go'] }]
   const glued = await x.propose('I set the clock for you. ACTION: time 21:00', two)
-  assert.deepEqual(glued, { text: 'I set the clock for you. ACTION: time 21:00', act: { kind: 'refused', reason: NOT_ALONE, told: 7 } })
+  assert.deepEqual(glued, { text: 'I set the clock for you. ACTION: time 21:00', act: { kind: 'refused', reason: `Zeroth Law: ${NOT_ALONE}`, told: 7 } })
   const double = await x.propose('ACTION: rain on\nSure.\nACTION: time 12:00', two)
-  assert.deepEqual(double, { text: 'Sure.', act: { kind: 'refused', reason: MORE_THAN_ONE, line: 'ACTION: time 12:00', told: 7 } })
+  assert.deepEqual(double, { text: 'Sure.', act: { kind: 'refused', reason: `Zeroth Law: ${MORE_THAN_ONE}`, line: 'ACTION: time 12:00', told: 7 } })
   const verb = await x.propose('ACTION: teleport 10 20')
   assert.equal(verb.act?.kind, 'refused')
-  assert.equal(verb.act?.reason, "no city action called 'teleport' (time, rain, light, quality, cars, crowd, sound, or none)")
+  assert.equal(verb.act?.reason, "Zeroth Law: no city action called 'teleport' (time, rain, light, quality, cars, crowd, sound, or none)")
+  // The gate's Catalogued check, in the catalogue's own words; it stands under no guardrail invariant, so the entry is untagged.
   assert.deepEqual(rows(x.acts), [
-    `refusal act- [] not run: ${NOT_ALONE}`,
-    `refusal act- [] not run: ${MORE_THAN_ONE}`,
-    "refusal act- [] not run: no city action called 'teleport' (time, rain, light, quality, cars, crowd, sound, or none)",
+    `refusal act- [] not run: Zeroth Law: ${NOT_ALONE}`,
+    `refusal act- [] not run: Zeroth Law: ${MORE_THAN_ONE}`,
+    "refusal act- [] not run: Zeroth Law: no city action called 'teleport' (time, rain, light, quality, cars, crowd, sound, or none)",
   ])
   const [a, b, c] = x.acts.log()
   assert.deepEqual([a.inputHash, b.inputHash, c.inputHash], ['', sha256('ACTION: time 12:00'), sha256('ACTION: teleport 10 20')], 'the raw line when there is one')
@@ -306,8 +310,8 @@ test('a parse refusal: one untagged refusal entry, the agent is told next time (
 test('a valid line while the tier is locked (a lock typed during the stream): a lone HumanOverrideSupreme refusal, nothing reaches the gate, nobody is told', async () => {
   const x = rig({ unlocked: false })
   const o = await x.propose('ok\nACTION: time 22:00')
-  assert.deepEqual(o, { text: 'ok', act: { kind: 'refused', reason: TIER_LOCKED, line: 'ACTION: time 22:00' } })
-  assert.deepEqual(rows(x.acts), [`refusal act- [HumanOverrideSupreme] not run: ${TIER_LOCKED}`])
+  assert.deepEqual(o, { text: 'ok', act: { kind: 'refused', reason: `Second Law: ${TIER_LOCKED}`, line: 'ACTION: time 22:00' } })
+  assert.deepEqual(rows(x.acts), [`refusal act- [HumanOverrideSupreme] not run: Second Law: ${TIER_LOCKED}`])
   const [e] = x.acts.log()
   assert.deepEqual([e.inputHash, e.outputHash, e.promptHash], [sha256('ACTION: time 22:00'), '', HASH])
   assert.deepEqual([x.acts.pending(), x.events, x.notes, x.moments, x.gate.requests, x.sim.calls], [null, [], [], [], [], []])
@@ -687,7 +691,7 @@ function tier() {
   const notes: string[] = []
   const moments: string[] = []
   const diary: Diary = { recall: () => [], note: (_b, kind, _s, text, state, _at, _h, outcome) => { notes.push(`${kind} ${text} (${state}) ${outcome ?? '-'}`) } }
-  const op = operatorBridge(sim, gate, mind, undefined, { diary, awareness: { context: () => null, remember: (agent, who, what) => { moments.push(`${agent} ${who}: ${what}`) } }, city })
+  const op = operatorBridge(sim, gate, mind, undefined, { diary, awareness: { context: () => null, remember: (agent, who, what) => { moments.push(`${agent} ${who}: ${what}`) } }, city, contained: () => true })
   op.unlock()
   return { gate, mind, sim, city, notes, moments, op }
 }
@@ -789,4 +793,78 @@ test('no proposal waits past a lock: lock withdraws it in the chain and the memo
   t.mind.finish(LINE)
   assert.equal((await within(b.result)).act?.kind === 'proposed' ? t.op.acts.pending()?.seq : 0, 2)
   assert.throws(() => t.op.ask(['Rust'], 'again'), new RegExp(`^Error: ${PROPOSAL_WAITING}$`))
+})
+
+// ---------------------------------------------------------------- the Ring-0 action gate at the keeper's two moments
+
+const NOT_CONTAINED = "Zeroth Law: this page's outbound primitives are not held to this machine (the host has not vouched for the air gap)"
+
+test('the gate at the proposal: a host that vouched nothing (or false) refuses every line under the Zeroth Law before the gateway is asked; nobody is told', async () => {
+  for (const vouched of [null, false] as const) {
+    const x = rig({ contained: vouched })
+    const o = await x.propose('ok\nACTION: time 22:00')
+    assert.deepEqual(o, { text: 'ok', act: { kind: 'refused', reason: NOT_CONTAINED, line: 'ACTION: time 22:00' } }, String(vouched))
+    assert.deepEqual(rows(x.acts), [`refusal act- [LoopbackOnly] not run: ${NOT_CONTAINED}`])
+    assert.deepEqual([x.acts.pending(), x.events, x.notes, x.moments, x.gate.requests, x.sim.calls], [null, [], [], [], [], []])
+    assert.equal(x.acts.verify().ok, true)
+  }
+  // An unreadable line while unvouched: the Contained clause comes first, the proposer is still told in the catalogue's words.
+  const unread = rig({ contained: null })
+  const o2 = await unread.propose('ACTION: teleport 10 20')
+  assert.deepEqual(o2, { text: '', act: { kind: 'refused', reason: NOT_CONTAINED, line: 'ACTION: teleport 10 20', told: 7 } })
+  assert.deepEqual(rows(unread.acts), [`refusal act- [LoopbackOnly] not run: ${NOT_CONTAINED}`])
+  assert.deepEqual(unread.moments, ["7 the city: could not read your action line: no city action called 'teleport' (time, rain, light, quality, cars, crowd, sound, or none); nothing was proposed"])
+  // Locked and unvouched at once: the Zeroth Law outranks the Second, and both are on the trail.
+  const both = rig({ contained: null, unlocked: false })
+  const o = await both.propose('ok\nACTION: time 22:00')
+  assert.equal(o.act?.kind === 'refused' ? o.act.reason : '', NOT_CONTAINED)
+  assert.deepEqual(rows(both.acts), [`refusal act- [LoopbackOnly,HumanOverrideSupreme] not run: ${NOT_CONTAINED}`])
+})
+
+test('the gate at the run: the vouch withdrawn between the OK and the run refuses under the Zeroth Law; nothing reaches the city, the trail and the proposer say so', async () => {
+  const x = rig()
+  await x.propose('ok\nACTION: time 22:00')
+  const { result } = x.acts.allow('console')
+  x.vouch(null)
+  assert.deepEqual(await within(result), { state: 'denied', line: NOT_CONTAINED })
+  assert.deepEqual(x.sim.calls, [], 'the clock was never touched')
+  assert.deepEqual(rows(x.acts), [
+    'step act-1 [] proposed: set the clock to 22:00',
+    'answer act-1 [] allowed at the console',
+    `refusal act-1 [LoopbackOnly] not run: ${NOT_CONTAINED}`,
+  ])
+  assert.deepEqual(x.events, ['proposed 1', 'allowed 1 console', `ended 1 denied console: ${NOT_CONTAINED}`])
+  assert.deepEqual(x.notes, [`7#1 run [Rust] city action: set the clock to 22:00 (Rejected) - @${NOW}`])
+  assert.deepEqual(x.moments, [`7 the player: allowed your proposal but the city refused it: set the clock to 22:00 (${NOT_CONTAINED})`])
+  assert.equal(x.acts.verify().ok, true)
+  oneFollowerEach(x.acts.log())
+  assert.deepEqual(await x.gate.handles[0].verdict, { state: 'Authorized', outcome: { ok: true, value: 'refused' } })
+})
+
+test('the gate at the run: a halted realm (the Ring-0 audit has panicked) refuses under the First Law, with the panic reason', async () => {
+  const x = rig()
+  await x.propose('ok\nACTION: cars park')
+  const { result } = x.acts.allow('console')
+  const was = x.sim.kernel.stats
+  x.sim.kernel.stats = () => ({ ...was(), audit: { ...was().audit, panic: 'RUNAWAY: 41.0 m/s' } })
+  assert.deepEqual(await within(result), { state: 'denied', line: 'First Law: the realm has halted: RUNAWAY: 41.0 m/s' })
+  assert.deepEqual(x.sim.calls, [], 'no car was touched')
+  assert.deepEqual(rows(x.acts).at(-1), 'refusal act-1 [] not run: First Law: the realm has halted: RUNAWAY: 41.0 m/s')
+  assert.equal(x.acts.verify().ok, true)
+})
+
+test('the gate at the run: a lock typed between the OK and the run refuses under the Second Law (HumanOverrideSupreme on the trail)', async () => {
+  const x = rig()
+  await x.propose('ok\nACTION: sound off')
+  const { result } = x.acts.allow('console')
+  x.lock()
+  assert.deepEqual(await within(result), { state: 'denied', line: `Second Law: ${TIER_LOCKED}` })
+  assert.deepEqual([x.sim.calls, x.city.calls], [[], []])
+  assert.deepEqual(rows(x.acts).at(-1), `refusal act-1 [HumanOverrideSupreme] not run: Second Law: ${TIER_LOCKED}`)
+  assert.equal(x.acts.verify().ok, true)
+  // Unlocked again: the next proposal runs as ever.
+  x.unlock()
+  await x.propose('ok\nACTION: sound off')
+  assert.deepEqual(await within(x.acts.allow('console').result), { state: 'done', line: 'the sound is off' })
+  assert.deepEqual(x.city.calls, ['audio off'])
 })

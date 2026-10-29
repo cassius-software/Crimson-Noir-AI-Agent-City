@@ -497,7 +497,7 @@ test('operatorBridge: locked by default; scripts, tuning keys and harnesses refu
   const sim = fakeSim()
   const slept: number[] = []
   const gate = new FakeGate()
-  const op = operatorBridge(sim, gate, new FakeMind(), async (ms) => { slept.push(ms) })
+  const op = operatorBridge(sim, gate, new FakeMind(), async (ms) => { slept.push(ms) }, { contained: () => true })
   assert.ok(Object.isFrozen(op))
   assert.deepEqual(Object.keys(op).sort(), ['acts', 'api', 'ask', 'askConnect', 'askSet', 'askStatus', 'askStop', 'exec', 'harness', 'harnesses', 'lock', 'say', 'saySet', 'sayStatus', 'sayStop', 'swarm', 'tune', 'tuning', 'unlock', 'unlocked'])
   assert.throws(() => op.askConnect('ollama'), /^Error: ask: locked/)
@@ -597,7 +597,7 @@ test('gatedAsk: Rejected never asks the model; Authorized asks at once for the b
 test('operatorBridge ask: locked, one answer at a time, a model must be chosen; status, settings and stop', async () => {
   const gate = new FakeGate()
   const mind = new FakeMind()
-  const op = operatorBridge(fakeSim(), gate, mind)
+  const op = operatorBridge(fakeSim(), gate, mind, undefined, { contained: () => true })
   assert.throws(() => op.ask(['Rust'], 'hi'), /^Error: ask: locked/)
   assert.throws(() => op.askStatus(), /^Error: ask: locked/)
   assert.throws(() => op.askSet('model', 'x'), /^Error: ask: locked/)
@@ -645,7 +645,7 @@ class PageMind extends FakeMind {
 test('a model running in this page (chosen, or found by auto) has no endpoint, so the swarm runs over it; with no file kept, the refusal says where to choose one', async () => {
   for (const how of [{ provider: 'inpage' }, { provider: 'auto', found: 'inpage' }]) {
     const mind = new PageMind(how)
-    const op = operatorBridge(fakeSim(), new FakeGate(), mind)
+    const op = operatorBridge(fakeSim(), new FakeGate(), mind, undefined, { contained: () => true })
     op.unlock()
     const status = await op.askStatus()
     assert.deepEqual([status.server, status.runtime, status.storage], ['this page', 'this browser runs it (one thread)', 'kept in this page'], 'the runtime and storage rows reach the console')
@@ -662,13 +662,21 @@ test('a model running in this page (chosen, or found by auto) has no endpoint, s
   // The same 'this page' given as a server's address is no address on this machine: the loopback invariant refuses
   // the step, so the run above went ahead only because a model in this page has no endpoint at all.
   const served = new PageMind({ provider: 'ollama' })
-  const op = operatorBridge(fakeSim(), new FakeGate(), served)
+  const op = operatorBridge(fakeSim(), new FakeGate(), served, undefined, { contained: () => true })
   op.unlock()
   const r = await within(op.swarm.run('name the parts', 1).result)
   assert.deepEqual(r.steps.map((st) => [st.state, st.failed]), [['refused', ['LoopbackOnly']]])
   assert.equal(served.asked.length, 0)
+  // The console's own ask is refused by the Ring-0 action gate before a model is even looked for: the Zeroth Law, in the kernel's words.
   served.model = null
-  assert.throws(() => op.ask(['Rust'], 'hi'), /^Error: choose a model first: ask model <name> \(type ask to list them\)$/)
+  assert.throws(() => op.ask(['Rust'], 'hi'), /^Error: ask: Zeroth Law: this page is not on this machine$/)
+  assert.equal(served.asked.length, 0)
+  // A server on this machine and no model chosen: the console's own words, the full form.
+  const local = new FakeMind()
+  local.model = null
+  const lop = operatorBridge(fakeSim(), new FakeGate(), local, undefined, { contained: () => true })
+  lop.unlock()
+  assert.throws(() => lop.ask(['Rust'], 'hi'), /^Error: choose a model first: ask model <name> \(type ask to list them\)$/)
 })
 
 test('leasedApi: the facade\'s shape, no safety member at any depth, frozen, plain arrows; every call goes through the lease, none once it refuses', () => {
@@ -969,10 +977,10 @@ test('operatorBridge say: locked, no speech on the page, no voice, one at a time
   const gate = new FakeGate()
   const voice = new FakeVoice()
   const out = new FakeOut()
-  const none = operatorBridge(fakeSim(), gate, new FakeMind())
+  const none = operatorBridge(fakeSim(), gate, new FakeMind(), undefined, { contained: () => true })
   none.unlock()
   assert.throws(() => none.say(['Rust'], 'hi'), /speech is not available on this page/)
-  const op = operatorBridge(fakeSim(), gate, new FakeMind(), undefined, { voice, speech: out })
+  const op = operatorBridge(fakeSim(), gate, new FakeMind(), undefined, { voice, speech: out, contained: () => true })
   for (const call of [() => op.say(['Rust'], 'hi'), () => op.sayStatus(), () => op.saySet('voice', 'v2'), () => op.sayStop()]) assert.throws(call, /^Error: say: locked/)
   assert.equal(voice.sent.length, 0)
   op.unlock()
@@ -1013,7 +1021,7 @@ test('the diary: every run, ask and say is noted for the people it was bound to,
     recall: (agent) => (agent === 7 ? ['2 h ago: you were asked over for Rust and joined the operator'] : []),
     note: (bound, kind, skills, text, state) => notes.push(`${bound.map((t) => `${t.agent}#${t.serial}`).join('+')} ${kind} [${skills.join(',')}] ${text} (${state})`),
   }
-  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary })
+  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary, contained: () => true })
   op.unlock()
   await op.exec(['rust'], 'sim.clock.hours()\n// second line').result
   const asked = op.ask(['RUST'], 'how does grip work?\nbriefly')
@@ -1046,7 +1054,7 @@ test('the diary is told how each task ended (what the memory learns from), and a
     recall: () => [],
     note: (_bound, kind, _skills, text, state, _at, _hash, outcome) => notes.push(`${kind} ${text} (${state}) ${outcome ?? '-'}`),
   }
-  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary })
+  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary, contained: () => true })
   op.unlock()
   await op.exec(['rust'], '1 + 1').result
   await op.exec(['rust'], 'throw new Error("no")').result
@@ -1089,7 +1097,7 @@ test('say auto on: a whole answer is said aloud by whoever gave it, through the 
   const mind = new FakeMind()
   const voice = new FakeVoice()
   const out = new FakeOut()
-  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out })
+  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, contained: () => true })
   op.unlock()
   const quiet = op.ask(['Rust'], 'q')
   mind.say('text', 'An answer.')
@@ -1136,7 +1144,7 @@ test('the script standing in for a model is shown with its reason, and never sai
   const diary: Diary = { recall: () => [], note: (_b, kind, _s, text) => notes.push(`${kind} ${text}`) }
   const remembered: string[] = []
   const awareness: Awareness = { context: () => null, remember: (_agent, who, what) => { remembered.push(`${who} ${what}`) } }
-  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary, awareness })
+  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary, awareness, contained: () => true })
   op.unlock()
   const a = op.ask(['Rust'], 'where is the lake?')
   mind.say('text', 'You ask about the lake.')
@@ -1163,7 +1171,7 @@ test('14A on the way out: an answer is screened as it streams; a refused word is
   const out = new FakeOut()
   const notes: string[] = []
   const diary: Diary = { recall: () => [], note: (_b, kind, _s, text) => notes.push(`${kind} ${text}`) }
-  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary })
+  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary, contained: () => true })
   op.unlock()
   const seen: string[] = []
   const a = op.ask(['Rust'], 'what now?')
@@ -1264,7 +1272,7 @@ test("operatorBridge ask think: on or off only, through the mind's own switch; a
   const mind = new FakeMind()
   let think = false
   Object.assign(mind, { setThink: (on: boolean) => (think = on) })
-  const op = operatorBridge(fakeSim(), new FakeGate(), mind)
+  const op = operatorBridge(fakeSim(), new FakeGate(), mind, undefined, { contained: () => true })
   assert.throws(() => op.askSet('think', 'on'), /^Error: ask: locked/)
   op.unlock()
   assert.equal(op.askSet('think', 'on'), 'on: the model reasons before it answers (slower; its thinking shows live)')
@@ -1272,7 +1280,7 @@ test("operatorBridge ask think: on or off only, through the mind's own switch; a
   assert.equal(op.askSet('think', 'off'), 'off: the model answers without reasoning first')
   assert.equal(think, false)
   assert.throws(() => op.askSet('think', 'maybe'), /ask think takes on or off/)
-  const plain = operatorBridge(fakeSim(), new FakeGate(), new FakeMind())
+  const plain = operatorBridge(fakeSim(), new FakeGate(), new FakeMind(), undefined, { contained: () => true })
   plain.unlock()
   assert.throws(() => plain.askSet('think', 'on'), /this model server has no think switch/)
 })
@@ -1289,7 +1297,7 @@ test('a console ask that proposes a city action: the note and the moment carry t
   const diary: Diary = { recall: () => [], note: (_b, kind, _s, text, state, _at, _h, outcome) => notes.push(`${kind} ${text} (${state}) ${outcome ?? '-'}`) }
   const remembered: string[] = []
   const awareness: Awareness = { context: () => null, remember: (agent, who, what) => { remembered.push(`${agent} ${who}: ${what}`) } }
-  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary, awareness, nameOf: (agent) => (agent === 7 ? 'Mara' : null) })
+  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary, awareness, nameOf: (agent) => (agent === 7 ? 'Mara' : null), contained: () => true })
   op.unlock()
   const a = op.ask(['Rust'], 'hi')
   mind.say('text', 'ok\nACTION: time 22:00')
@@ -1329,13 +1337,13 @@ test('a console ask that proposes a city action: the note and the moment carry t
   mind.say('text', 'Done. ACTION: time 22:00')
   mind.finish('Done. ACTION: time 22:00')
   const o = await within(odd.result)
-  assert.deepEqual(o.act, { kind: 'refused', reason: 'the ACTION line must stand on a line of its own', told: 7 })
+  assert.deepEqual(o.act, { kind: 'refused', reason: 'Zeroth Law: the ACTION line must stand on a line of its own', told: 7 })
   assert.equal(notes.at(-1), 'ask hi → Done. ACTION: time 22:00 (proposed a line the city could not read) (Authorized) answered')
   assert.deepEqual(remembered.slice(-2), [
     '7 the city: could not read your action line: the ACTION line must stand on a line of its own; nothing was proposed',
     '7 the player: asked "hi" and you answered "Done. ACTION: time 22:00 (proposed a line the city could not read)"',
   ], 'the city tells them first, then the moment of the ask itself')
-  assert.equal(op.acts.log().at(-1)?.note, 'not run: the ACTION line must stand on a line of its own')
+  assert.equal(op.acts.log().at(-1)?.note, 'not run: Zeroth Law: the ACTION line must stand on a line of its own')
 })
 
 test('no proposal waits past a lock: lock withdraws it, the chain and the memory say so, the ended event comes by the console, and the OK is refused as locked; unlocked, the next proposal is act 2 and the OK runs it once through the gate', async () => {
@@ -1346,7 +1354,7 @@ test('no proposal waits past a lock: lock withdraws it, the chain and the memory
   const notes: string[] = []
   const diary: Diary = { recall: () => [], note: (_b, kind, _s, text, state, _at, _h, outcome) => notes.push(`${kind} ${text} (${state}) ${outcome ?? '-'}`) }
   const sim = fakeSim()
-  const op = operatorBridge(sim, gate, mind, undefined, { awareness, diary })
+  const op = operatorBridge(sim, gate, mind, undefined, { awareness, diary, contained: () => true })
   op.unlock()
   const events: string[] = []
   op.acts.follow((ev) => events.push(ev.kind === 'ended' ? `ended ${ev.act.seq} ${ev.end.state} by ${ev.by}: ${ev.end.line}` : `${ev.kind} ${ev.act.seq}`))
@@ -1390,4 +1398,19 @@ test('no proposal waits past a lock: lock withdraws it, the chain and the memory
   assert.equal(remembered.at(-1), '7 the player: allowed your proposal and the city did it: the clock is set to 17:30')
   assert.equal(gate.requests.length, 4, 'two asks, two proposals')
   assert.deepEqual(events.slice(2), ['proposed 2', 'allowed 2', 'ended 2 done by console: the clock is set to 17:30'])
+})
+
+test('operatorBridge ask: a host that vouched nothing for the air gap (no `contained` sense, or one that says false) is refused under the Zeroth Law before the gateway or the model is reached', async () => {
+  for (const senses of [{}, { contained: () => false }]) {
+    const gate = new FakeGate()
+    const mind = new FakeMind()
+    const op = operatorBridge(fakeSim(), gate, mind, undefined, senses)
+    op.unlock()
+    assert.throws(() => op.ask(['Rust'], 'hi'), /^Error: ask: Zeroth Law: this page's outbound primitives are not held to this machine \(the host has not vouched for the air gap\)$/)
+    assert.deepEqual([gate.requests, mind.asked], [[], []], 'nothing reached the gateway or the model')
+    // The swarm asks the same way: its one step fails on the gate's sentence, and the trail says so.
+    const r = await within(op.swarm.run('name the parts', 1).result)
+    assert.deepEqual(r.steps.map((st) => [st.state, st.note]), [['failed', "ask: Zeroth Law: this page's outbound primitives are not held to this machine (the host has not vouched for the air gap)"]])
+    assert.deepEqual([gate.requests, mind.asked], [[], []])
+  }
 })
