@@ -720,13 +720,26 @@ while you type.
   drawn agents (near, far, total); fps, frame time, p95, CPU and GPU time; quality tier; kernel
   counters. `stats --once` prints a single frame.
 - The core commands, as `help` prints them: `help [command]`, `stats [--once]`, `laws`, `kernel`,
-  `quality [auto|lite|peak|-1|0-5]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `render [on|off]`,
+  `topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]`, `quality [auto|lite|peak|-1|0-5]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `render [on|off]`,
   `captions [on|off]`, `ping [go|look|gather|wait|clear]`,
   `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
   `recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]`, `memory [<agent>|forget <agent>|forget all]`,
   `clear`, `history`, `echo [text]`, `uname [-asnrvmi]`, `whoami`, `version`, `boot [gui|tty|status]`,
   `map [city|lakefront|default|status]`, `r0 <words...>|r0 reset|r0 words`, `agent [...]`, `sloane [...]`,
   `goal <words...>`, `exit`.
+- `topic` reads the unified namespace: every reading of the city, published each HUD tick into an in-page topic
+  bus (`05_Observe_Environment/namespace.ts`) in the ISA-95 shape
+  `Enterprise/JCS/Site/AgentCity/Area/{District}/Line/{Subsystem}/Cell/{Entity}/{Tag}`, the Area being the district you
+  stand in. `topic` alone prints the status line (topics retained, publishes, the head digest) and the root's
+  children; `topic list [<filter>]` the retained topics a filter matches, one row each (`+` matches one level, `#` the
+  rest: `topic list ~/Area/+/Line/Kernel/#`); `topic get <topic>` one row; `topic tree [<prefix>]` the next level
+  under a prefix with how many topics each holds; `topic watch [<filter>]` the filtered rows live, redrawn four times
+  a second until `q`, Ctrl+C or Esc. `~` stands for the root in every argument, as the rows print it. The lines are
+  Frame, Physics, Crowd, Traffic (the fleet, the signals, and `Vehicle000`… for each car, 64 at most), Kernel (Laws,
+  Audit), Quality, Clock, Avatar, Hardware, Network, Experience and Namespace. Read-only: the bridge formats every row
+  and the console imports nothing of the bus. Nothing is transmitted: the bus is a model in the page, with retained
+  values, sequence numbers and a deterministic head digest, shaped so a later phase can put the same topics on a
+  broker. The HUD readout shows the topic count.
 - `map` says which map the city shell walks. `map city` reloads into the procedural city (its 14,000 pedestrians and
   its traffic), `map lakefront` into the generated metropolis (no people or traffic of its own yet), and the choice
   is kept between visits until `map default` forgets it; the desktop app has no address bar, so this is its way to

@@ -15,6 +15,18 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The unified namespace (`topic`).** Every reading the city already produces is published, each HUD tick, into an
+  in-page topic bus in the ISA-95 shape `Enterprise/JCS/Site/AgentCity/Area/{District}/Line/{Subsystem}/Cell/{Entity}/
+  {Tag}` (`05_Observe_Environment/namespace.ts`): the frame, the physics realm, the crowd, the fleet and its signals,
+  every vehicle's pose (64 at most), the kernel's laws and the Ring-0 audit, the quality governor, the clock, the
+  player, the hardware bus, the network session and the visit, under the district the player stands in. Topics are
+  retained with a sequence number and a tick, read by filter (`+` one level, `#` the rest, as MQTT spells them), and
+  the bus keeps a deterministic head digest (FNV-1a and the OS kernels' mixer) over everything retained. The console
+  reads it, read-only, through four formatted readers on the bridge: `topic` (the status line and the root's
+  children), `topic list [<filter>]`, `topic get <topic>`, `topic tree [<prefix>]`, and `topic watch [<filter>]`, a
+  live view like `stats`; `~` stands for the root. The HUD readout shows the topic count. Nothing is transmitted: the
+  bus is a model in the page, shaped so a later phase can put the same topics on a broker. The terminal's live view is
+  now drawn by the command's own frame function, so `stats` and `topic watch` share one path.
 - **Peak, a tier above Ultra for big GPUs.** Tier 5, outside the tier table like Lite, so every existing tier number
   and automatic range stays as it was. It draws Ultra at 1.25 times the resolution on each side (about 1.56 times the
   pixels), held within the device's largest texture, which also fixes `?scale=2` on a very wide window at any tier;

@@ -3,7 +3,8 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the air gap between the Ring-0 terminal and the running city: the
- * only surface the console can reach. It carries read-only telemetry plus a few operator knobs (clock,
+ * only surface the console can reach. It carries read-only telemetry (the stats, and the unified namespace of topics
+ * the engine publishes every snapshot into, read by filter) plus a few operator knobs (clock,
  * quality tier, audio, ghost view, drawing, captions, hardware pairing), the view-only pings and the player's look,
  * recruitment (asking someone nearby over by skill, or an Active recruit to a pinged point: the one knob that
  * reaches a pedestrian, and only through the physics worker's own checks), the swarm's memory (read, or erased on
@@ -208,6 +209,20 @@ export interface ModelBridge {
   log(): readonly string[]
 }
 
+/**
+ * The unified namespace (05_Observe_Environment/namespace.ts TopicBus): every reading of the city as a retained topic in
+ * the ISA-95 shape Enterprise/JCS/Site/AgentCity/Area/{District}/Line/{Subsystem}/Cell/{Entity}/{Tag}, read-only. The
+ * engine formats the rows (the console imports nothing of the bus): `list` the retained topics a filter matches ('+'
+ * one level, '#' the rest; none: every topic), one row each; `get` one topic's row, or null; `children` the next level
+ * under a prefix (none: the root) with how many topics each holds; `status` one line (topics, publishes, the head digest).
+ */
+export interface TopicBridge {
+  list(filter?: string): string[]
+  get(topic: string): string | null
+  children(prefix?: string): string[]
+  status(): string
+}
+
 /** A ping's kind (08_Swarm/ping.ts PingKind): what the operator means by the mark. */
 export type PingKind = 'go' | 'look' | 'gather' | 'wait'
 
@@ -281,6 +296,8 @@ export interface TerminalBridge {
   render(arg?: 'on' | 'off'): string
   /** Closed captions for every sound (view-only; the soundscape keeps sounding): on, off, or the status line ('captions: on' | 'captions: off'). */
   captions(arg?: 'on' | 'off'): string
+  /** The unified namespace of topics (read-only); absent on a host that publishes none (the TTY shell, an older host). */
+  topics?: TopicBridge
   ping: PingBridge
   operator: OperatorBridge
   record: RecordBridge
@@ -379,6 +396,7 @@ export function offlineBridge(brand: TerminalBridge['brand']): TerminalBridge {
     rain: down,
     render: down,
     captions: down,
+    topics: { list: down, get: down, children: down, status: down },
     ping: { at: down, list: down, newest: down, clear: down },
     operator: {
       unlock: down, lock: down, unlocked: down, exec: down, tuning: down, tune: down,

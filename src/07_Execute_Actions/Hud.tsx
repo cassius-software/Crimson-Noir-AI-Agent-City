@@ -6,7 +6,7 @@
  * canvas with pointer-events: none (so every click and mouse movement still reaches the head rig) —
  * frosted-glass panels that go dark after sunset, the brand mark and the visitor's name, a rotating radar
  * minimap, a speedometer with the posted limit, live signal state, quality tier and Ring-0 kernel
- * counters, the cinema camera's frame rate, shutter and ND beside the input rate, notifications, a REC chip
+ * counters, the unified namespace's topic count (namespace.ts; the console reads the topics), the cinema camera's frame rate, shutter and ND beside the input rate, notifications, a REC chip
  * while the .agv recorder runs, the operator's pings (a ring on the minimap per ping and, for the newest, a
  * chip over the world with its distance), and glyph-aware control hints (the enter-vehicle prompt and, until
  * the player is under way, a small capture-and-controls chip) that switch silently to a controller's glyphs.
@@ -397,6 +397,12 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
                       </div>
                     )}
                     {s.supplier.hal && <div className={`truncate ${muted}`}>{s.supplier.hal}</div>}
+                    {/* The unified namespace (namespace.ts): how many topics the bus retains. Not on a short screen (three lines there). */}
+                    {!tight && s.output.topics && (
+                      <div className={`truncate tabular-nums ${muted}`} data-hud="topics">
+                        namespace {s.output.topics.count.toLocaleString()} topics
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
