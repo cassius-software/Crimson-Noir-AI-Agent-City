@@ -15,6 +15,13 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Unarmed by construction, pinned.** `conduct.test.ts` now proves the city carries no weapon: the wardrobe's five
+  optional pieces (a tie, a bag, a cup, long hair, glasses), the ragdoll's eleven body segments and ten joints, the
+  crowd's eight activities, the seven action verbs with their rules and hints, the skills and the eight vehicle kinds
+  name none; the agents' mesh descriptors, rigs, shaders and action tables carry no weapon word in code or comment; an
+  `ACTION` line that asks for one is refused before any model is involved; and the asset gate's four forbidden words
+  are all in the conduct lexicon, so an ask about one is not engaged with. A new optional piece or activity has to be
+  added to that test by hand, as a 14A decision.
 - **Peak, a tier above Ultra for big GPUs.** Tier 5, outside the tier table like Lite, so every existing tier number
   and automatic range stays as it was. It draws Ultra at 1.25 times the resolution on each side (about 1.56 times the
   pixels), held within the device's largest texture, which also fixes `?scale=2` on a very wide window at any tier;
@@ -372,6 +379,9 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   eight cars parked across the sidewalks for 60 s, and 48 cars on their rings with 500 people for 1,800 ticks, no
   pedestrian pinned on a car for 5 s and no car reading one at 0 m for 10 s. The nightly fuzz workflow runs the
   traffic soak for 10,000 ticks (`SOAK_TICKS`).
+- **The asset gate read "burgundy" as a gun.** The containment rule (`assets/cc0.ts`) purges any name that holds
+  `gun`, and its short list of ordinary words that merely contain it had no colour in it, so an asset or a generated
+  name with burgundy in it would have been purged. It is allowed now; the wardrobe's burgundy pantsuit showed it.
 - **A lost GPU left a city that ran on invisibly.** The page's own device lost after the boot (a driver reset, the GPU
   process gone, a phone taking the memory back) only wrote to the error list while the HUD carried on over a frozen
   frame; it now halts the city and shows the graphics-reset card. Lost while the page was hidden, the page restarts
