@@ -32,6 +32,14 @@ const C_TILT: f32 = 15.0;
 const SEP_R2: f32 = 0.64;   // 0.8 m personal space
 const NEIGH_R2: f32 = 6.25; // 2.5 m flocking radius
 const BODY_PAD: f32 = 0.35; // a person's reach beyond their centre: contact margin around a car
+// A car this slow (m/s) is standing: someone whose way runs through its contact footprint walks round it (the yield
+// save steps clear of a faster one). The way round is planned DETOUR_LOOK m ahead, by a corner DETOUR_CLEAR m off
+// the footprint.
+const CAR_STANDING: f32 = 1.0;
+const DETOUR_LOOK: f32 = 6.0;
+const DETOUR_CLEAR: f32 = 0.3;
+// A corner or a door front a standing car covers counts as reached from this far (m): anywhere round the car.
+const ARRIVE_BLOCKED: f32 = 4.5;
 
 const CROSS_NONE: f32 = 0.0;
 const CROSS_WAIT: f32 = 1.0;
@@ -898,6 +906,18 @@ fn dirTo(a: vec2f, b: vec2f) -> vec2f {
 // still where they come to instead of stepping back and forth across it (by a room's glass on offLot's spot for them;
 // by a lot held on its face, walking for the spot a quarter metre past it).
 fn arriveAt(a: vec2f, b: vec2f) -> vec2f { return dirTo(a, b) * min(distance(a, b) * 4.0, 1.0); }
+// Whether a standing car's contact footprint (its box grown by BODY_PAD) covers the point p: a corner or a door front
+// nobody can stand on until the car drives off, so a walk there is over on reaching the car.
+fn standingCarAt(p: vec2f) -> bool {
+  for (var j = 0u; j < P.carCount; j++) {
+    let car = P.cars[j];
+    if (abs(car.a.w) > CAR_STANDING) { continue; }
+    let rel = p - car.a.xy;
+    let f = vec2f(sin(car.a.z), cos(car.a.z));
+    if (abs(dot(rel, vec2f(-f.y, f.x))) < car.b.x + BODY_PAD && abs(dot(rel, f)) < car.b.y + BODY_PAD) { return true; }
+  }
+  return false;
+}
 
 // ---------------------------------------------------------------- passes
 
@@ -1038,6 +1058,11 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
       let push = pushed - me;
       me = pushed;
       ps.z = atan2(push.x, push.y);
+      // The part of the walk pressing into the car comes out of the velocity (as a wall's does below), so the step
+      // slides along the body instead of pressing on it, and being set back, every tick.
+      let n = normalize(push);
+      let into = dot(v.xy, n);
+      if (into < 0.0) { v = vec4f(v.xy - n * into, v.zw); }
       b.b.x += 1.2;
       b.b.y += 4.0;
       atomicAdd(&stats[0], 1u);
@@ -1213,7 +1238,10 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
       } else {
         desired = select(vec2f(0.0), to / dist * b.a.z * clamp(dist / 1.5, 0.3, 1.0), dist > 1e-3);
         activity = ACT_COMMUTING;
-        if (dist < arrive) {
+        // The door front is reached at `arrive`; one a standing car covers, from anywhere round the car (the legs
+        // indoors are never covered: no car stands in a room).
+        let street = phase < 2.5 || phase > 8.5;
+        if (dist < arrive || (street && dist < ARRIVE_BLOCKED && standingCarAt(dest))) {
           if (phase > 8.5) {
             // Out on the sidewalk again: back to the day from this block's nearest corner.
             phase = WORK_OFF;
@@ -1244,7 +1272,9 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
       }
     }
     if (crossing != CROSS_WAIT) {
-      if (distance(me, goal) < 1.3) {
+      // The corner is reached at 1.3 m; one a standing car covers (parked on it), from anywhere round the car.
+      let left = distance(me, goal);
+      if (left < 1.3 || (left < ARRIVE_BLOCKED && standingCarAt(goal))) {
         let commuting = phase > 0.5 && phase < 1.5;
         if (commuting && distance(goal, targetCorner(room)) < 0.5) {
           // The workplace's corner: along the lane to the door front from here.
@@ -1268,6 +1298,52 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
     b.d = vec4f(phase, f32(room), row, 0.0);
   }
   b.b.z = crossing;
+
+  // Round a standing car. Where the way ahead (DETOUR_LOOK m of the step wanted) runs through the contact footprint of
+  // a car that is not moving (one parked across the sidewalk, one held on a crosswalk), the step is aimed at the
+  // footprint's corner that makes the shortest way round it: one in sight from here (the line to it crosses no part
+  // of the footprint) and on ground the lots allow. Without this the push above set this person back onto the body
+  // every tick while their own step pressed them back in, for as long as the car stood: pinned at a bumper and, in
+  // the car's corridor, holding the car there by the First Law. A car under way is the yield save's (above).
+  if (vehicles > 0.5 && dot(desired, desired) > 0.01) {
+    let want = length(desired);
+    let way = desired / want;
+    var blockD2 = 1e9;
+    var aim = vec2f(0.0);
+    for (var j = 0u; j < P.carCount; j++) {
+      let car = P.cars[j];
+      if (abs(car.a.w) > CAR_STANDING) { continue; }
+      let rel = me - car.a.xy;
+      let hw = car.b.x + BODY_PAD;
+      let hl = car.b.y + BODY_PAD;
+      let reach = hl + DETOUR_LOOK;
+      let d2 = dot(rel, rel);
+      if (d2 > reach * reach || d2 >= blockD2) { continue; }
+      let f = vec2f(sin(car.a.z), cos(car.a.z));
+      let r = vec2f(-f.y, f.x);
+      let pm = vec2f(dot(rel, r), dot(rel, f));
+      let step = vec2f(dot(way, r), dot(way, f)) * DETOUR_LOOK;
+      let lo = vec2f(-hw, -hl);
+      let hi = vec2f(hw, hl);
+      if (!hitsBox(pm, step, lo, hi)) { continue; }
+      let to = pm + step;
+      // A corner is in sight when the line to it stays out of the footprint less a hair: someone just set back onto
+      // a face stands a rounding error inside it, and the line along that face to its corner is no way through. The
+      // corner they stand at is no way on. A corner the way ahead is clear from is worth any that is not.
+      let hair = vec2f(0.1);
+      var best = 1e9;
+      for (var c = 0u; c < 4u; c++) {
+        let q = vec2f(select(-hw - DETOUR_CLEAR, hw + DETOUR_CLEAR, (c & 1u) != 0u), select(-hl - DETOUR_CLEAR, hl + DETOUR_CLEAR, (c & 2u) != 0u));
+        let w = car.a.xy + r * q.x + f * q.y;
+        let cost = distance(pm, q) + distance(q, to) + select(0.0, 100.0, hitsBox(q, to - q, lo, hi));
+        if (cost >= best || distance(pm, q) < 0.2 || hitsBox(pm, q - pm, lo + hair, hi - hair) || any(pushOut(w, 0.35) != w)) { continue; }
+        best = cost;
+        aim = w;
+      }
+      if (best < 1e9) { blockD2 = d2; }
+    }
+    if (blockD2 < 1e9) { desired = dirTo(me, aim) * want; }
+  }
 
   // Boids steering: separation for everyone, gentle alignment and cohesion for walking flows (not for someone
   // walking over to the operator: a passing stream would carry them off their line).

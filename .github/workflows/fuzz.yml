@@ -59,3 +59,7 @@ jobs:
         run: |
           echo "FUZZ_SCALE=$FUZZ_SCALE FUZZ_SEED=$FUZZ_SEED"
           node --test "src/**/*.fuzz.test.ts"
+      - name: The crowd soak at full length, 10,000 ticks of traffic with 48 cars and 500 people
+        env:
+          SOAK_TICKS: '10000'
+        run: node --test src/07_Execute_Actions/crowdSoak.test.ts
