@@ -277,7 +277,7 @@ test('subscribe: the filter selects, calls arrive inside publish in order, unsub
   // A refused publish reaches nobody.
   seen.length = 0
   assert.equal(bus.publish('a/z', Number.NaN, 3), null)
-  assert.deepEqual(seen, [])
+  assert.equal(seen.length, 0)
   // A subscriber that unsubscribes another inside the call skips nobody in this publish.
   seen.length = 0
   let offLater = (): void => {}
@@ -556,4 +556,13 @@ test('the local mix32 is the one 10_Network/telemetry.ts uses, on 1000 seeded va
     assert.equal(mix32(x), netMix32(x), `mix32(${x})`)
   }
   for (const x of [0, 1, 0xffffffff, 0x80000000, 0x7fffffff, -1, 2 ** 32, 1.5]) assert.equal(mix32(x), netMix32(x), `mix32(${x})`)
+})
+
+test('publish refuses a value outside its types (a caller past the type-check) and counts it; a row never throws', () => {
+  const bus = new TopicBus()
+  for (const bad of [null, undefined, {}, [], Symbol('s'), () => 1, 10n]) assert.equal(bus.publish('h', bad as never, 0), null, String(typeof bad))
+  assert.equal(bus.refused, 7)
+  assert.equal(bus.count, 0)
+  assert.deepEqual(topicLines([{ topic: 'x', value: null as never, seq: 1, tick: 0 }, { topic: 'y', value: {} as never, seq: 2, tick: 0 }]), ['x  -', 'y  -'])
+  assert.equal(bus.head(), new TopicBus().head())
 })

@@ -168,11 +168,14 @@ export class TopicBus {
 
   /**
    * Retains `value` under `topic` at `tick` and tells every matching subscriber, in subscription order, inside this
-   * call. Null (and one more refused) for an invalid topic, a non-finite number, or a new topic once `limit` topics
-   * are held. A subscriber that throws stops neither the others nor the publish.
+   * call. Null (and one more refused) for an invalid topic, a value that is not a finite number, a string or a
+   * boolean (a caller outside the types), or a new topic once `limit` topics are held. A subscriber that throws stops
+   * neither the others nor the publish.
    */
   publish(topic: string, value: TopicValue, tick: number): Retained | null {
-    if (!isTopic(topic) || (typeof value === 'number' && !Number.isFinite(value))) {
+    const kind = typeof value
+    const ok = kind === 'string' || kind === 'boolean' || (kind === 'number' && Number.isFinite(value))
+    if (!isTopic(topic) || !ok) {
       this.declined++
       return null
     }
@@ -406,14 +409,17 @@ function ascii(text: string): string {
   return clean ? text : text.replace(/[^\x20-\x7e]/g, '?')
 }
 
-/** A value as the console shows it: integers plain, other numbers to 3 decimals, booleans on/off, strings as they are. */
+/**
+ * A value as the console shows it: integers plain, other numbers to 3 decimals, booleans on/off, strings as they are;
+ * anything else (a hand-built entry outside the types) as '-', so a row never throws.
+ */
 function show(value: TopicValue): string {
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) return '-'
     return Number.isInteger(value) ? String(value) : value.toFixed(3)
   }
   if (typeof value === 'boolean') return value ? 'on' : 'off'
-  return ascii(value)
+  return typeof value === 'string' ? ascii(value) : '-'
 }
 
 /** The topic with the root replaced by '~' (a topic off the root is shown whole). */
