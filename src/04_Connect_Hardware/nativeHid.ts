@@ -35,9 +35,12 @@ export function shellCore(g: object = globalThis): ShellCore | null {
   const event = (api as { event?: { listen?: unknown } }).event
   if (typeof core !== 'object' || core === null || typeof core.invoke !== 'function') return null
   if (typeof event !== 'object' || event === null || typeof event.listen !== 'function') return null
-  const invoke = core.invoke as ShellCore['invoke']
-  const listen = event.listen as ShellCore['listen']
-  return { invoke: (command, args) => invoke.call(core, command, args), listen: (name, handler) => listen.call(event, name, handler) }
+  const invoke = core.invoke as (command: string, args?: Record<string, unknown>) => Promise<unknown>
+  const listen = event.listen as (name: string, handler: (e: { payload: unknown }) => void) => Promise<() => void>
+  return {
+    invoke: <T>(command: string, args?: Record<string, unknown>) => invoke.call(core, command, args) as Promise<T>,
+    listen: <T>(name: string, handler: (e: { payload: T }) => void) => listen.call(event, name, handler as (e: { payload: unknown }) => void),
+  }
 }
 
 /** One controller as `hid_list` describes it (src-tauri/src/hid.rs HidInfo). */
