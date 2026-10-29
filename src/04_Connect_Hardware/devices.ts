@@ -9,14 +9,17 @@
  * profile a device belongs to from whatever clues a browser gives. The clues are tried in order of how much they
  * say, each stage scoring its candidate, and the highest score wins: the USB vendor and product id plus the bus
  * (100: Chromium and Firefox print the ids in a pad's name, WebHID and Web Serial give them outright), a CRC-16
- * fingerprint of the pad's name (80: Safari prints neither id, only a name), a headset source's own words (70: its
- * target-ray mode, its hand, its gamepad's `xr-standard` mapping), the standard mapping (60), and the layout a pad
- * without it shows (40). Nothing ever resolves to null: a device nobody recognises is the `unknown` profile,
+ * fingerprint of the pad's name (80: for an id that carries no numbers, only a name), the standard mapping (70), a
+ * headset source's own words (60: its target-ray mode, its hand, its gamepad's `xr-standard` mapping; a headset
+ * source never has the standard mapping, so the two stages never meet), and the layout a pad without the mapping
+ * shows (40). Nothing ever resolves to null: a device nobody recognises is the `unknown` profile,
  * named by position, with no feature the city would try to drive. It is pure (no DOM, no clock, no import of a
  * browser API), so every profile and every stage is proved in Node, and the glyph family it reports is the one
  * gamepad.ts reports for the same id, so a HUD hint and a `hal` line never disagree.
  * What breaks if it is removed? The HAL cannot say what a device is beyond its name, a pad with no ids in its name
- * (Safari) is never recognised, and a headset's input has no profile to be read by.
+ * is never recognised, and a headset's input has no profile to be read by.
+ * Which browsers print which id format has not been checked here beyond Chromium's; the fingerprint stage exists
+ * for whatever prints a bare name.
  */
 import { SONY_VENDOR_ID } from './dualsense.ts'
 import { padFamilyOf, padName, parsePadId, type GenericLayout, type PadFamily } from './gamepad.ts'
@@ -110,9 +113,9 @@ export function profileOf(id: ProfileId): DeviceProfile {
 }
 
 /** What each stage is worth; a bus-specific profile matched on its bus earns BUS_BONUS on top. */
-export const STAGE_SCORE: Readonly<Record<Stage, number>> = Object.freeze({ id: 100, fingerprint: 80, xr: 70, standard: 60, layout: 40, fallback: 0 })
+export const STAGE_SCORE: Readonly<Record<Stage, number>> = Object.freeze({ id: 100, fingerprint: 80, standard: 70, xr: 60, layout: 40, fallback: 0 })
 export const BUS_BONUS = 5
-const STAGES: readonly Stage[] = ['id', 'fingerprint', 'xr', 'standard', 'layout', 'fallback']
+const STAGES: readonly Stage[] = ['id', 'fingerprint', 'standard', 'xr', 'layout', 'fallback']
 
 /**
  * USB ids → profile. A row without a product id covers the vendor. Sources: the USB-IF vendor assignments; the
@@ -174,8 +177,8 @@ const encoder = new TextEncoder()
 
 /**
  * A pad's name as the fingerprint sees it: without the browser's decorations (padName), lower case, one space
- * between words. Chromium's "DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)", Firefox's
- * "54c-ce6-DualSense Wireless Controller" and Safari's "DualSense Wireless Controller" all come to the same text.
+ * between words. Chromium's "DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)", the
+ * "54c-ce6-DualSense Wireless Controller" form and a bare "DualSense Wireless Controller" all come to the same text.
  */
 export function normalizeName(id: string): string {
   return padName(id).toLowerCase().replace(/\s+/g, ' ').trim()
@@ -187,9 +190,10 @@ export function fingerprintOf(id: string): number {
 }
 
 /**
- * Names browsers print for pads whose ids they hide (Safari prints the product name alone; so does a Bluetooth pad
- * on some platforms): each one's fingerprint names a profile. Only names that belong to one profile: "Wireless
- * Controller" alone is what several makers' pads call themselves, so it is left to the standard stage.
+ * Product names a pad may be reported by when its ids are not in the id (a browser that prints the bare name, or a
+ * Bluetooth pad on a platform that hides them): each one's fingerprint names a profile. Only names that belong to
+ * one profile: "Wireless Controller" alone is what several makers' pads call themselves, so it is left to the
+ * standard stage. Which browsers print a bare name has not been checked here.
  */
 export const FINGERPRINT_NAMES: readonly { readonly name: string; readonly profile: ProfileId }[] = Object.freeze([
   { name: 'DualSense Wireless Controller', profile: 'dualsense-usb' },
@@ -330,10 +334,11 @@ export function resolveDevice(c: DeviceClues): Resolution {
   add(profileOf('unknown'), 'fallback')
   candidates.sort((a, b) => b.score - a.score || STAGES.indexOf(a.stage) - STAGES.indexOf(b.stage))
   const best = candidates[0]
-  const resolvedBus: Bus = bus !== 'unknown' ? bus : best.profile.bus
+  // The bus is the clue's, never the profile's: the Gamepad API hides it, and the USB profile standing in for an
+  // unknown bus is said so, not passed off as a fact.
   const family: PadFamily = id && best.profile.kind === 'pad' ? padFamilyOf(id) : best.profile.family
   const name = id && best.profile.kind !== 'xr' ? padName(id) : best.profile.name
-  return { profile: best.profile, stage: best.stage, score: best.score, family, bus: resolvedBus, vendorId, productId, fingerprint, name, candidates }
+  return { profile: best.profile, stage: best.stage, score: best.score, family, bus, vendorId, productId, fingerprint, name, candidates }
 }
 
 /**
@@ -347,9 +352,12 @@ export function guessLayout(axes: number, buttons: number): GenericLayout | null
   return null
 }
 
-/** One line for `hal`: the profile, the score and the stage, e.g. "dualsense-bluetooth 105 (by id, usb 054c:0ce6)". */
+/**
+ * One line for `hal`: the profile, the score and the stage, e.g. "dualsense-bluetooth 105 (by id, bluetooth 054c:0ce6)"
+ * or, through the Gamepad API, "dualsense-usb 100 (by id, bus unknown, 054c:0ce6)".
+ */
 export function describeResolution(r: Resolution): string {
-  const by = r.stage === 'id' ? `by id, ${r.bus} ${hex4(r.vendorId)}:${hex4(r.productId)}`
+  const by = r.stage === 'id' ? `by id, ${r.bus === 'unknown' ? 'bus unknown, ' : `${r.bus} `}${hex4(r.vendorId)}:${hex4(r.productId)}`
     : r.stage === 'fingerprint' ? `by name, crc16 ${hex4(r.fingerprint)}`
     : r.stage === 'xr' ? 'by the headset'
     : r.stage === 'standard' ? 'standard mapping'

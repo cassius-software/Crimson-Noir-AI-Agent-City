@@ -13,7 +13,7 @@
 import { BRAND } from '../brand.ts'
 import { describeResolution, padClues, resolveDevice } from './devices.ts'
 import { DUALSENSE_FILTERS, DualSense, dualSenseName, isDualSense } from './dualsense.ts'
-import { isUsablePad, padName, parsePadId, pressesFaceButton } from './gamepad.ts'
+import { isUsablePad, padName, parsePadId, pressesFaceButton, type GenericLayout } from './gamepad.ts'
 import { LineLink, NUS, openBle, openSerial, type ByteChannel } from './lineLink.ts'
 import type { BleDevice, GamepadLike, HardwareNavigator, HidConnectionEvent, HidDevice, SerialConnectionEvent, SerialPort } from './web-hardware.d.ts'
 
@@ -60,6 +60,8 @@ interface PadSlot {
   id: string
   /** A standard pad, or one without the mapping whose face button has been pressed: passed on to the mapper. */
   awake: boolean
+  /** For a pad read by position, the layout GenericPads settled on (padLayout); null until it has. */
+  layout: GenericLayout | null
   vendor: number
   product: number
   pad: GamepadLike
@@ -295,6 +297,18 @@ export class HalBus {
     }
     this.pumpPadRumble(now)
     return list
+  }
+
+  /**
+   * Per frame from Input.poll, for a pad read by position: the layout GenericPads has settled on (gamepad.ts
+   * layoutOf; null while it is still watching). The row's profile follows it, so `hal` names the layout the pad
+   * shows (a 40) instead of the guess from its axis count (35).
+   */
+  padLayout(index: number, layout: GenericLayout | null): void {
+    const s = this.slotOf(index)
+    if (!s || s.layout === layout) return
+    s.layout = layout
+    s.dev.profile = describeResolution(resolveDevice(padClues(s.pad, layout)))
   }
 
   async dispose(): Promise<void> {
@@ -548,7 +562,7 @@ export class HalBus {
             detail: standard ? `standard mapping${p.vibrationActuator?.playEffect ? ' · rumble' : ''}` : genericDetail(p, false),
             profile: describeResolution(resolveDevice(padClues(p))),
           },
-          index: p.index, id: p.id, awake: standard, vendor: ids?.vendor ?? -1, product: ids?.product ?? -1, pad: p, frame, hidden: 0, rumble: 0, rumbleAt: -1e9,
+          index: p.index, id: p.id, awake: standard, layout: null, vendor: ids?.vendor ?? -1, product: ids?.product ?? -1, pad: p, frame, hidden: 0, rumble: 0, rumbleAt: -1e9,
         })
       }
     }

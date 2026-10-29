@@ -11,6 +11,7 @@
  * What breaks if it is removed? A device could resolve to the wrong profile, or to none, unnoticed.
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
   BUS_BONUS, crc16, describeResolution, FINGERPRINT_NAMES, fingerprintOf, guessLayout, normalizeName, padClues, profileForFingerprint,
@@ -82,9 +83,9 @@ test('by id: the vendor and product from a Chromium or Firefox name, the bus fro
   assert.equal(chrome.profile.id, 'dualsense-usb')
   assert.equal(chrome.stage, 'id')
   assert.equal(chrome.score, STAGE_SCORE.id)
-  assert.equal(chrome.bus, 'usb', 'the Gamepad API hides the bus: the USB profile stands in')
+  assert.equal(chrome.bus, 'unknown', 'the Gamepad API hides the bus: the USB profile stands in, the bus stays unknown')
   assert.deepEqual([chrome.vendorId, chrome.productId], [0x054c, 0x0ce6])
-  assert.deepEqual(chrome.candidates.map((c) => [c.stage, c.score]), [['id', 100], ['fingerprint', 80], ['standard', 60], ['fallback', 0]])
+  assert.deepEqual(chrome.candidates.map((c) => [c.stage, c.score]), [['id', 100], ['fingerprint', 80], ['standard', 70], ['fallback', 0]])
   assert.equal(resolveDevice({ id: FIREFOX_DS }).profile.id, 'dualsense-usb')
   const bt = resolveDevice({ id: 'Wireless Controller', vendorId: 0x054c, productId: 0x0ce6, bus: 'bluetooth' })
   assert.equal(bt.profile.id, 'dualsense-bluetooth')
@@ -124,7 +125,7 @@ test('the standard mapping alone: a standard pad of no known make', () => {
   const r = resolveDevice({ id: 'USB Gamepad', mapping: 'standard', axes: 4, buttons: 12 })
   assert.equal(r.profile.id, 'standard-pad')
   assert.equal(r.stage, 'standard')
-  assert.equal(r.score, 60)
+  assert.equal(r.score, 70)
   assert.equal(r.family, 'generic')
   assert.equal(r.name, 'USB Gamepad')
   assert.equal(resolveDevice({ id: 'Controller (XInput STANDARD GAMEPAD)', mapping: 'standard' }).family, 'abxy', 'the family is gamepad.ts\'s word')
@@ -217,12 +218,12 @@ test('random clues never throw, always name one of the seventeen, and score with
 
 test('describeResolution: the profile, the score and how it was found', () => {
   assert.equal(describeResolution(resolveDevice({ id: 'Wireless Controller', vendorId: 0x054c, productId: 0x0ce6, bus: 'bluetooth' })), 'dualsense-bluetooth 105 (by id, bluetooth 054c:0ce6)')
-  assert.equal(describeResolution(resolveDevice({ id: CHROMIUM_DS })), 'dualsense-usb 100 (by id, usb 054c:0ce6)')
+  assert.equal(describeResolution(resolveDevice({ id: CHROMIUM_DS })), 'dualsense-usb 100 (by id, bus unknown, 054c:0ce6)', 'the Gamepad API hides the bus: the USB profile stands in and says so')
   assert.match(describeResolution(resolveDevice({ id: SAFARI_DS })), /^dualsense-usb 80 \(by name, crc16 [0-9a-f]{4}\)$/)
-  assert.equal(describeResolution(resolveDevice({ id: 'USB Gamepad', mapping: 'standard' })), 'standard-pad 60 (standard mapping)')
+  assert.equal(describeResolution(resolveDevice({ id: 'USB Gamepad', mapping: 'standard' })), 'standard-pad 70 (standard mapping)')
   assert.equal(describeResolution(resolveDevice({ id: 'x', mapping: '', axes: 4, buttons: 8, layout: 'four-axis' })), 'generic-four-axis 40 (by position)')
   assert.equal(describeResolution(resolveDevice({})), 'unknown 0 (nothing recognised)')
-  assert.equal(describeResolution(resolveDevice(xrClues({ handedness: 'right', targetRayMode: 'transient-pointer', profiles: [] }))), 'xr-transient-pointer 70 (by the headset)')
+  assert.equal(describeResolution(resolveDevice(xrClues({ handedness: 'right', targetRayMode: 'transient-pointer', profiles: [] }))), 'xr-transient-pointer 60 (by the headset)')
 })
 
 test('padClues reads a pad; the HAL puts the resolver\'s word on every pad row', async () => {
@@ -234,8 +235,25 @@ test('padClues reads a pad; the HAL puts the resolver\'s word on every pad row',
   const bus = new HalBus({ navigator: nav })
   bus.readPads()
   assert.deepEqual(bus.devices().map((d) => [d.name, d.profile]), [
-    ['DualSense Wireless Controller', 'dualsense-usb 100 (by id, usb 054c:0ce6)'],
+    ['DualSense Wireless Controller', 'dualsense-usb 100 (by id, bus unknown, 054c:0ce6)'],
     ['Throttle Quadrant', 'generic-stick-only 35 (by position)'],
   ])
+  // Once the mapper has watched the pad and settled on the kernel's order, the row names that layout at the full 40.
+  bus.padLayout(1, 'evdev')
+  assert.equal(bus.devices()[1].profile, 'generic-evdev 40 (by position)')
+  bus.padLayout(1, 'evdev')
+  bus.padLayout(1, null)
+  assert.equal(bus.devices()[1].profile, 'generic-stick-only 35 (by position)', 'the pad went back to being watched')
+  bus.padLayout(7, 'four-axis')
+  assert.equal(bus.devices().length, 2, 'an index without a pad is ignored')
   await bus.dispose()
+})
+
+test('Input feeds the layout its mappers settle on back to the bus every frame', () => {
+  const src = readFileSync(new URL('./input.ts', import.meta.url), 'utf8')
+  assert.match(src, /this\.hal\.padLayout\(p\.index, this\.layoutOf\(p\.index\)\)/)
+  assert.match(src, /this\.mapper\.generic\.layoutOf\(index\)/)
+  assert.match(src, /this\.padSeats\[s - 1\]\.layoutOf\(index\)/)
+  const seats = readFileSync(new URL('./seats.ts', import.meta.url), 'utf8')
+  assert.match(seats, /layoutOf\(index: number\): GenericLayout \| null \{\s*return this\.mapper\.generic\.layoutOf\(index\)/)
 })

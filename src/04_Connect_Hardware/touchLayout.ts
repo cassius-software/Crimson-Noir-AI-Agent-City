@@ -33,12 +33,17 @@ export const TOUCH = Object.freeze({
 })
 
 /**
- * The eight sizes a control may measure on its shorter side, CSS px: the Menu button and the text pills (48), the
- * handbrake on a short screen (64), the handbrake and the brake on a short screen (72), the round Ping and Run (76),
- * the brake (84), a text pill's least width (88), the stick's base (116) and its zone (184). Every control is one of
- * these, so a size that drifts (a Tailwind class lost, a padding change) is caught, not eyeballed.
+ * The eight sizes the overlay is drawn with, CSS px, each one a rule: a control's shorter side is one of them (the
+ * Menu button and the text pills 48, the handbrake on a short screen 64, the handbrake and the brake on a short
+ * screen 72, the round Ping and Run 76, the brake 84, the stick's zone 184), a text pill is at least 88 wide, and
+ * the stick's base is 116 (STICK_BASE: the zone is at least that, and the base at rest is judged by it). A size
+ * that drifts (a Tailwind class lost, a padding change) is caught, not eyeballed.
  */
 export const SIZE_LADDER: readonly number[] = Object.freeze([48, 64, 72, 76, 84, 88, 116, 184])
+/** The stick's base, a rung of the ladder. */
+export const STICK_BASE = 116
+/** A text pill's least width, a rung of the ladder. */
+export const PILL_MIN_WIDTH = 88
 
 /** What a control is, for the rules that apply to it. */
 export type ControlKind = 'tap' | 'hold' | 'menu' | 'stick' | 'look'
@@ -58,6 +63,11 @@ export interface Viewport {
   readonly height: number
   /** The browser's safe-area insets (env(safe-area-inset-*)), CSS px; 0 where there are none. */
   readonly safe: { readonly top: number; readonly right: number; readonly bottom: number; readonly left: number }
+  /**
+   * The root font size over 16 px: a browser or a phone's accessibility setting that scales text scales the controls
+   * sized in rem with it, and a rung of the ladder scaled by this is still a rung. 1 (or absent) where nothing scales.
+   */
+  readonly fontScale?: number
 }
 
 export interface LayoutVerdict {
@@ -73,6 +83,8 @@ export function viewport(width: number, height: number, safe: Partial<Viewport['
 
 const EPS = 1
 const onLadder = (size: number) => SIZE_LADDER.some((s) => Math.abs(s - size) <= EPS)
+/** A rung in px, or a rung in rem drawn at the viewport's font scale. */
+const onScaledLadder = (size: number, scale: number) => onLadder(size) || (scale > 0 && scale !== 1 && onLadder(size / scale))
 const overlap = (a: ControlRect, b: ControlRect) => a.x < b.x + b.w - EPS && b.x < a.x + a.w - EPS && a.y < b.y + b.h - EPS && b.y < a.y + a.h - EPS
 /** The shortest distance between two rectangles that do not overlap (0 when they touch), CSS px. */
 function distance(a: ControlRect, b: ControlRect): number {
@@ -87,8 +99,20 @@ const finite = (r: ControlRect) => Number.isFinite(r.x) && Number.isFinite(r.y) 
  * thumb may land anywhere in the zone, and the base jumps to it, but never nearer the edge than this.
  */
 export function stickBase(zone: ControlRect): ControlRect {
-  const inset = Math.max(0, (Math.min(zone.w, zone.h) - 116) / 2)
+  const inset = Math.max(0, (Math.min(zone.w, zone.h) - STICK_BASE) / 2)
   return { name: `${zone.name} base`, kind: 'stick', x: zone.x + inset, y: zone.y + inset, w: zone.w - 2 * inset, h: zone.h - 2 * inset }
+}
+
+/**
+ * Where a pressed thumb may put the base's centre inside the zone (the base jumps to the thumb): anywhere in it,
+ * except that the base never reaches into the swipe band at the screen's left edge. The zone stands TOUCH.stickInset
+ * from that edge and the band is TOUCH.gestureInset deep, so the centre keeps the difference, plus the base's
+ * radius, from the zone's left; the zone's other sides bound it by the radius alone. `zone` is the zone's rect in
+ * viewport px (a DOMRect will do).
+ */
+export function stickCentreBounds(zone: { readonly left: number; readonly right: number; readonly top: number; readonly bottom: number }): { minX: number; maxX: number; minY: number; maxY: number } {
+  const r = STICK_BASE / 2
+  return { minX: zone.left + Math.max(0, TOUCH.gestureInset - TOUCH.stickInset) + r, maxX: zone.right - r, minY: zone.top + r, maxY: zone.bottom - r }
 }
 
 /**
@@ -96,7 +120,8 @@ export function stickBase(zone: ControlRect): ControlRect {
  * - every control is on screen (within the viewport);
  * - a tap, hold or menu control measures at least TOUCH.minTarget on its shorter side (the line names the rule it
  *   fails: Apple's 44 pt or Material's 48 dp), and the stick's zone at least its base (116);
- * - every control's shorter side is a rung of SIZE_LADDER;
+ * - every control's shorter side is a rung of SIZE_LADDER (in px, or in rem at the viewport's font scale), and a text
+ *   pill (a tap control wider than tall) is at least PILL_MIN_WIDTH wide;
  * - no two controls overlap (the look zone is the background the buttons stand on, so it is left out), and two
  *   targets keep TOUCH.gap between them;
  * - no tap, hold or menu control, and not the stick's base, reaches into the system's swipe band at the left or
@@ -113,8 +138,10 @@ export function validateTouchLayout(controls: readonly ControlRect[], vp: Viewpo
     if (c.kind === 'tap' || c.kind === 'hold' || c.kind === 'menu') {
       if (short < TOUCH.appleMinTarget - EPS) problems.push(`${c.name}: ${Math.round(short)} px, under the 44 pt a finger needs`)
       else if (short < TOUCH.minTarget - EPS) problems.push(`${c.name}: ${Math.round(short)} px, under the 48 dp a finger needs`)
-    } else if (c.kind === 'stick' && short < 116 - EPS) problems.push(`${c.name}: ${Math.round(short)} px, smaller than the stick's base`)
-    if (c.kind !== 'look' && !onLadder(short)) problems.push(`${c.name}: ${Math.round(short)} px is not a size on the ladder`)
+    } else if (c.kind === 'stick' && short < STICK_BASE - EPS) problems.push(`${c.name}: ${Math.round(short)} px, smaller than the stick's base`)
+    const scale = vp.fontScale ?? 1
+    if (c.kind !== 'look' && !onScaledLadder(short, scale)) problems.push(`${c.name}: ${Math.round(short)} px is not a size on the ladder`)
+    if (c.kind === 'tap' && c.w > c.h + EPS && c.w < PILL_MIN_WIDTH * (scale > 0 ? Math.min(1, scale) : 1) - EPS) problems.push(`${c.name}: ${Math.round(c.w)} px wide, under a text pill's ${PILL_MIN_WIDTH}`)
   }
   for (let i = 0; i < targets.length; i++) {
     for (let j = i + 1; j < targets.length; j++) {

@@ -20,20 +20,22 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   Edge over USB and over Bluetooth, the DualShock 4, the letters-layout pads of two console makers, Valve's and
   Logitech's pads, any standard-mapped pad, the three layouts a pad without the mapping is read by, a tracked
   controller, a gaze-and-pinch headset and a tracked hand, and `unknown`), resolved in stages that each score their
-  candidate: the USB ids and the bus (100, plus 5 on a bus-specific profile), a CRC-16/CCITT-FALSE fingerprint of
-  the pad's name for browsers that print no ids (80), a headset source's own words (70), the standard mapping (60), the
-  layout a pad shows (40), and the never-null fallback (0). The glyph family it reports is `gamepad.ts`'s for the
-  same id, so a HUD hint and a `hal` line never disagree; `hal` prints each pad's profile, score and how it was found,
-  e.g. `[dualsense-bluetooth 105 (by id, bluetooth 054c:0ce6)]`. `touchLayout.ts` is the overlay's rule book: an
-  eight-rung size ladder from the 48 px a finger needs (Material's 48 dp, above Apple's 44 pt) to the stick's zone,
-  8 px between targets, no two over each other, and a 24 px band at the left and right screen edges, where a phone's
-  system takes a swipe inward as "back", that no button and not the stick's base may reach into. After every layout the
+  candidate: the USB ids and the bus (100, plus 5 on a bus-specific profile; through the Gamepad API the bus is
+  unknown and the line says so), a CRC-16/CCITT-FALSE fingerprint of the pad's name for an id without numbers (80),
+  the standard mapping (70), a headset source's own words (60), the layout a pad shows (40; the guess from its axis
+  count, 35, until the mapper has watched it), and the never-null fallback (0). The glyph family it reports is
+  `gamepad.ts`'s for the same id, so a HUD hint and a `hal` line never disagree; `hal` prints each pad's profile,
+  score and how it was found, e.g. `[dualsense-bluetooth 105 (by id, bluetooth 054c:0ce6)]`. `touchLayout.ts` is the
+  overlay's rule book: an eight-rung size ladder from the 48 px a finger needs (Material's 48 dp, above Apple's 44 pt)
+  to the stick's zone, in px or in rem where a phone scales its text, 8 px between buttons, no two over each other,
+  and a 24 px band at the left and right screen edges, where a phone's system takes a swipe inward as "back", that no
+  button and not the stick's base, at rest or under a thumb, may reach into. After every layout the
   overlay measures what it drew and writes the verdict into `data-touch-layout`, which the browser smoke test reads at
   all fourteen phone and tablet views, on foot and at the wheel. To keep out of the band the button cluster now
   stands 24 px from the right edge (16 before), and at the wheel in landscape under 600 px across the tap row closes
   up to 8 px gaps so it ends clear of the stick. Every held button is owned by the finger that pressed it: a second
   finger landing on the brake neither presses it again nor, lifting, lets it go. Resolver and judge are pure and
-  proved in Node (37 tests); the profiles' hardware facts are the Linux kernel's tables and have not been seen on a
+  proved in Node (19 tests); the profiles' hardware facts are the Linux kernel's tables and have not been seen on a
   physical pad in this environment.
 
 - **Peak, a tier above Ultra for big GPUs.** Tier 5, outside the tier table like Lite, so every existing tier number

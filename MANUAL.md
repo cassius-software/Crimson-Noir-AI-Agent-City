@@ -103,13 +103,16 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
   stays clear of the buttons and the stick, and that the Menu's sheet stays inside the screen. The overlay also judges
   itself (`04_Connect_Hardware/touchLayout.ts`): after every layout it measures each control and checks that it is on
   screen, finger-sized (at least 48 px on its shorter side, Material's 48 dp and above Apple's 44 pt) and one of the
-  eight sizes on its ladder, that no two controls overlap and targets keep 8 px apart, and that no button, and not the
-  stick's base at rest, reaches into the 24 px band at the left or right edge of the screen where a phone's system
-  takes a swipe inward as "back" (the display's own cut-outs and home indicator come from the browser's safe-area
-  insets on top). The verdict is in the overlay's `data-touch-layout` attribute (`valid`, or `invalid:` and what is
-  wrong), and the browser smoke test reads it at every view. For the band, the button cluster stands 24 px from the
-  right edge, and at the wheel in landscape under 600 px across the tap row closes up to 8 px gaps so it ends clear of
-  the stick's zone; the zone itself may reach to 8 px from the left edge (a thumb may land anywhere in it) while its
+  eight sizes on its ladder (in px, or in rem when a phone's text scaling enlarges the root font, since the Menu and
+  the text pills are sized in rem; a text pill is also at least 88 wide), that no two controls overlap and buttons
+  keep 8 px apart (the stick's zone may touch a button: a thumb on its edge is still the stick's), and that no
+  button, and not the stick's base, reaches into the 24 px band at the left or right edge of the screen where a
+  phone's system takes a swipe inward as "back" (the display's own cut-outs and home indicator come from the
+  browser's safe-area insets on top; the bottom edge is left to those insets, above which the cluster stands 16 px).
+  The verdict is in the overlay's `data-touch-layout` attribute (`valid`, or `invalid:` and what is wrong), and the
+  browser smoke test reads it at every view. For the band, the button cluster stands 24 px from the right edge, and
+  at the wheel in landscape under 600 px across the tap row closes up to 8 px gaps so it ends clear of the stick's
+  zone; the zone itself may reach to 8 px from the left edge (a thumb may land anywhere in it) while its
   base never rests nearer the edge than 42 px. A held button belongs to the finger that pressed it: a second finger
   landing on the Brake neither presses it again nor, lifting, lets it go; only the owner's lift, a system cancel or a
   lost capture releases it. On a touch laptop the
@@ -1710,13 +1713,18 @@ run `hal pair …` in the console.
   and F710, any pad with the standard mapping, the three layouts a pad without it is read by (the kernel's order, four
   axes, stick only), a tracked headset controller, a gaze-and-pinch headset and a tracked hand, and `unknown`. The
   clues are tried in stages, each scoring its candidate, and the best wins: the USB vendor and product id and the bus
-  (100, plus 5 when a bus-specific profile is matched on its bus; Chromium and Firefox print the ids in a pad's name,
-  WebHID gives them outright), a CRC-16/CCITT-FALSE fingerprint of the pad's name for a browser that prints no ids
-  (80; Safari), a headset source's own words (70; its target-ray mode, its hand, its gamepad's `xr-standard`
-  mapping), the standard mapping (60), the layout the pad shows (40), and the fallback (0). `hal` prints each pad's
-  profile with its score and how it was found, e.g. `[dualsense-bluetooth 105 (by id, bluetooth 054c:0ce6)]`; the
-  glyph family the profile reports is the same `gamepad.ts` reports for the id, so a HUD hint and a `hal` line never
-  disagree. The ids come from the Linux kernel's tables and have not been checked on a physical pad here.
+  (100, plus 5 when a bus-specific profile is matched on its bus; Chromium prints the ids in a pad's name, WebHID
+  gives them outright; through the Gamepad API the bus is unknown, and the USB profile stands in and says so), a
+  CRC-16/CCITT-FALSE fingerprint of the pad's name for an id that carries no numbers (80), the standard mapping (70),
+  a headset source's own words (60; its target-ray mode, its hand, its gamepad's `xr-standard` mapping; no headset
+  source has the standard mapping, so the two never meet), the layout the pad shows (40; the guess from its axis
+  count until the mapper has watched it, at 35), and the fallback (0). `hal` prints each pad's profile with its score
+  and how it was found, e.g. `[dualsense-bluetooth 105 (by id, bluetooth 054c:0ce6)]` or
+  `[dualsense-usb 100 (by id, bus unknown, 054c:0ce6)]`; the glyph family the profile reports is the same
+  `gamepad.ts` reports for the id, so a HUD hint and a `hal` line never disagree. The ids come from the Linux
+  kernel's tables and have not been checked on a physical pad here; which browsers print a bare product name has
+  not been checked either. The three headset profiles are reached once the headset path lands (nothing in the page
+  asks for a WebXR session yet).
 
 Every API degrades silently where it is missing. Safari and Firefox have no WebHID, Web Serial or
 Web Bluetooth.

@@ -20,7 +20,7 @@
  */
 import { useCallback, useEffect, useReducer, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent } from 'react'
 import type { Input, TouchButton } from './input.ts'
-import { layoutAttribute, PointerOwner, TOUCH, validateTouchLayout, type ControlKind, type ControlRect, type Viewport } from './touchLayout.ts'
+import { layoutAttribute, PointerOwner, stickCentreBounds, TOUCH, validateTouchLayout, type ControlKind, type ControlRect, type Viewport } from './touchLayout.ts'
 
 const STICK = { zone: 184, base: 116, knob: 52, travel: 42, deadPx: 5 } as const
 
@@ -46,7 +46,9 @@ function measureControls(layer: HTMLElement): ControlRect[] {
     if (!KINDS.includes(kind)) continue
     const r = el.getBoundingClientRect()
     if (!(r.width > 0 && r.height > 0)) continue
-    out.push({ name: el.getAttribute('aria-label') || el.textContent?.trim() || kind, kind, x: r.left, y: r.top, w: r.width, h: r.height })
+    // The layout size, not the drawn one: a pressed pill is drawn at active:scale-95 and would measure 46 px.
+    const w = el.offsetWidth || r.width, h = el.offsetHeight || r.height
+    out.push({ name: el.getAttribute('aria-label') || el.textContent?.trim() || kind, kind, x: r.left + (r.width - w) / 2, y: r.top + (r.height - h) / 2, w, h })
   }
   return out
 }
@@ -55,7 +57,8 @@ function measureControls(layer: HTMLElement): ControlRect[] {
 function viewportOf(layer: HTMLElement): Viewport {
   const cs = getComputedStyle(layer)
   const side = (name: string) => px(cs.getPropertyValue(name))
-  return { width: window.innerWidth, height: window.innerHeight, safe: { top: side('--safe-top'), right: side('--safe-right'), bottom: side('--safe-bottom'), left: side('--safe-left') } }
+  const fontScale = (px(getComputedStyle(document.documentElement).fontSize) || 16) / 16
+  return { width: window.innerWidth, height: window.innerHeight, safe: { top: side('--safe-top'), right: side('--safe-right'), bottom: side('--safe-bottom'), left: side('--safe-left') }, fontScale }
 }
 
 /** Keeps a drag or a held button tracking the finger after it leaves the element (throws if already lifted). */
@@ -310,8 +313,10 @@ function Stick({ input }: { input: Input }) {
         if ((e.pointerType === 'mouse' && input.mouseHidesTouch) || !zone.current || (drag.current && owns(e, drag.current.id))) return
         capture(e)
         const rect = zone.current.getBoundingClientRect()
-        const cx = Math.max(rect.left + r, Math.min(rect.right - r, e.clientX))
-        const cy = Math.max(rect.top + r, Math.min(rect.bottom - r, e.clientY))
+        // The base jumps to the thumb, but never into the swipe band at the screen's edge (touchLayout.ts).
+        const b = stickCentreBounds(rect)
+        const cx = Math.max(b.minX, Math.min(b.maxX, e.clientX))
+        const cy = Math.max(b.minY, Math.min(b.maxY, e.clientY))
         drag.current = { id: e.pointerId, cx, cy, bx: cx - (rect.left + half), by: cy - (rect.top + half) }
         input.engageTouch()
         move(e.clientX, e.clientY)
@@ -505,7 +510,10 @@ function HoldButton({ label, size, button, input }: { label: string; size: strin
       aria-pressed={down}
       data-touch="hold"
       onPointerDown={(e) => {
-        if (!own().claim(e.pointerId)) return
+        const o = own()
+        // A finger whose capture was never taken or silently lost would hold the button for good: it is taken over.
+        if (o.held && !owns(e, o.id)) { o.clear(); set(false) }
+        if (!o.claim(e.pointerId)) return
         capture(e)
         set(true)
       }}
