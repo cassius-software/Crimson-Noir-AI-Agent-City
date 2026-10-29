@@ -461,6 +461,24 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 - **Two high npm audit findings**, both in build-time tools that never reach the page: vite 8.3.1 → 8.3.5 (with
   rolldown 1.2.15 and postcss 8.5.31 under it) and source-map-js 1.2.1 → 1.2.2; the lockfile alone changes.
 
+- **Lakefront streets under the pavement and the lawn ("grass above the roads").** Past a few metres a Lakefront
+  Metro street showed as pale sidewalk with no asphalt or markings, farther out as lawn, and a causeway over the lake
+  as lawn end to end. The region's road, sidewalk and water materials asked for a negative polygon offset, and three
+  r186's WebGPU backend hands it to the pipeline unflipped under the reversed depth buffer the page uses, where a
+  negative bias moves a surface away from the camera: by more than the 4.5 cm a street stands over the ground beyond
+  about 18 m. No surface asks for an offset now; each lies at its own height (`SURFACE` in `region/regionWorld.ts`),
+  which the reversed buffer resolves at any distance in view, and the result is the same under a three that flips
+  the sign. Found with it: where two streets cross, their ribbons lay on one plane and their markings fought, so a
+  junction gets a patch of plain asphalt over the carriageways' overlap and, with sidewalks, of plain pavement over
+  the sidewalks', cut at a ribbon's end for a T or a corner. And with the offsets gone the map's edge still showed
+  lawn over a causeway and lake over its road: the ground was two 8.5 km triangles and a lake strip one 2.5 km
+  rectangle, too far from any pixel for the depth interpolated across them to keep the surfaces' centimetres, so every
+  flat surface is now drawn in pieces of at most 128 m (`SURFACE_PIECE`), the ground as a grid, the water cut to
+  cells, the ribbons split. Verified by `region/surfaces.test.ts` (every crossing of the generated metropolis and the
+  north ridge, point by point; every piece's length; the water's area) and by the built page rendered in a headless
+  Chrome on the software WebGPU adapter: asphalt and the double yellow line to the horizon where pavement and lawn
+  were, the lake beside the causeway. A laptop's own picture is unverified. `docs/stutter-and-depth.md` §4.
+
 ## [1.0.0-stable-beta] - 2026-10-12
 
 The V2 stable release overhaul (Phase 21, PRs #17, #18 and #19) and Phase 2 (PRs #20, #21 and #22), with everything
