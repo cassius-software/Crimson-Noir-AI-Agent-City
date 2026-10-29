@@ -9,21 +9,22 @@
  * oncoming lane, and no other ring's queue can block a ring's box (a ring's own driver holds at the line
  * without room to clear it: roomToClear). Trains get one elevated loop on a deck 9 m over
  * the median of two arterial streets, drones face-ring corridors at 40 and 46 m, planes one racetrack at
- * 400 m: none of them ever reaches the street or the sidewalk plane, so none needs the kernel. The module
- * also holds the headway slots (where a fleet seats its cars), the ring gaps a track follower reads for the
- * cars of its own ring, the timetable of the scheduled vehicles, and the guideway columns a renderer draws. It is pure:
- * no physics handle, nothing loaded, and the zero-jam invariants (tracks.test.ts INV-1..4) are proved on
- * it in Node.
+ * 400 m, and VTOLs two routes between rooftop pads (roofs of 24 to 60 m, chosen from the city's own boxes so
+ * every leg and every descent is clear of every building): none of them ever reaches the street or the
+ * sidewalk plane, so none needs the kernel. The module also holds the headway slots (where a fleet seats its
+ * cars), the ring gaps a track follower reads for the cars of its own ring, the timetables of the scheduled
+ * vehicles, and the guideway columns a renderer draws. It is pure: no physics handle, nothing loaded, and the
+ * zero-jam invariants (tracks.test.ts INV-1..4) are proved on it in Node.
  * What breaks if it is removed? Cars fall back to the random street-hopping Driver (traffic.ts) and jams
- * become possible again; trains, drones and planes have nowhere to run.
+ * become possible again; trains, drones, planes and VTOLs have nowhere to run.
  */
-import { CITY, CITY_CENTER } from '../01_Initialize_World/city.ts'
+import { CITY, CITY_CENTER, type Box } from '../01_Initialize_World/city.ts'
 import { TRAFFIC, type Axis } from '../02_Define_The_Rules/civic.ts'
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
 
 export type Vec2 = readonly [number, number]
 export type Turn = 'straight' | 'left' | 'right'
-export type TrackKind = 'car' | 'train' | 'drone' | 'plane'
+export type TrackKind = 'car' | 'train' | 'drone' | 'plane' | 'vtol'
 
 /** A straight piece along `dir` (a unit axis vector) from (x0, z0). */
 export interface Line {
@@ -75,15 +76,20 @@ export interface Track {
   readonly pieces: readonly Piece[]
   /** Stop lines in order of s (car tracks only). */
   readonly stops: readonly Stop[]
-  /** Station platforms in order of s (train tracks only): the train's centre stops here. */
+  /** Station platforms in order of s (train tracks only): the train's centre stops here. A VTOL route's pads, likewise. */
   readonly stations: readonly number[]
+  /** Per station of a VTOL route, the roof its pad is set on, m over the street plane (empty for every other kind). */
+  readonly pads: readonly number[]
   readonly speedLimit: number
   readonly cornerSpeed: number
   /** Metres per headway slot. */
   readonly slot: number
-  /** Height of the track (the street plane for cars, the deck or the corridor altitude otherwise). */
+  /** Height of the track (the street plane for cars, the deck or the corridor altitude otherwise; a VTOL route's cruise). */
   readonly y: number
 }
+
+/** A rooftop a VTOL route calls at: the roof's centre and its height, m over the street plane. */
+export interface Pad { readonly x: number; readonly z: number; readonly y: number }
 
 export interface TrackNetwork { readonly seed: number; readonly tracks: readonly Track[] }
 
@@ -172,7 +178,41 @@ export const TRACKS = Object.freeze({
     halfSize: 600,
     fillet: 400,
     halfLength: 20,
-    halfHeight: 3,
+    /** Half the envelope's height: the fin's top over the fuselage's centre. */
+    halfHeight: 6,
+  }),
+  vtol: Object.freeze({
+    /**
+     * Cruise altitude of each route between its pads, m: the inner route under the outer, both well over the drones'
+     * upper band (46 m plus half a metre) and under the planes, so a leg of one may cross a leg of the other.
+     */
+    cruise: [75, 85] as const,
+    /** The lowest roof a pad is set on, m: the kind's Ring-0 floor (ring0.ts CRAFT), under which no VTOL is ever scheduled. */
+    floor: 24,
+    /** The highest roof a pad is set on, m: a craft arriving over one keeps at least `clearance` under its cruise. */
+    ceiling: 60,
+    /** Least height of the envelope's bottom at cruise over any box a leg crosses, m. */
+    clearance: 8,
+    speed: 9,
+    /** Mean vertical speed, m/s, descending onto a pad and climbing off it (eased at both ends: the peak is 1.5 times it). */
+    climb: 4,
+    /** Seconds sat on a pad. */
+    dwell: 10,
+    /** Height of the body's centre over the roof when sat, m: the envelope's bottom rests just over the pad. */
+    hover: 1.7,
+    /** The envelope: half-size across and along, half-height. */
+    halfSize: 3,
+    halfHeight: 1.5,
+    /** Least half-extent of a roof that takes a pad, m: the envelope and a margin lie within it. */
+    padHalf: 4,
+    /** Routes, pads per route and craft per route. */
+    routes: 2,
+    pads: 4,
+    craft: 2,
+    /** Least horizontal distance between a leg and any pad that is not one of its ends, and between two pads, m. */
+    apart: 8,
+    /** Shortest leg, m. */
+    legMin: 40,
   }),
 })
 
@@ -236,7 +276,7 @@ function arcPiece(s0: number, cx: number, cz: number, radius: number, a0: number
   return Object.freeze({ kind: 'arc' as const, s0, length: radius * Math.abs(sweep), cx, cz, radius, a0, sweep })
 }
 
-function makeTrack(id: number, kind: TrackKind, pieces: Piece[], stops: Stop[], stations: number[], y: number): Track {
+function makeTrack(id: number, kind: TrackKind, pieces: Piece[], stops: Stop[], stations: number[], y: number, pads: number[] = []): Track {
   const last = pieces[pieces.length - 1]
   const length = last.s0 + last.length
   const limits = kind === 'car'
@@ -245,8 +285,12 @@ function makeTrack(id: number, kind: TrackKind, pieces: Piece[], stops: Stop[], 
       ? { speedLimit: TRACKS.train.speed, cornerSpeed: TRACKS.train.speed, slot: TRACKS.train.spacing }
       : kind === 'drone'
         ? { speedLimit: TRACKS.drone.speed, cornerSpeed: TRACKS.drone.speed, slot: TRACKS.drone.headway }
-        : { speedLimit: TRACKS.plane.speed, cornerSpeed: TRACKS.plane.speed, slot: TRACKS.plane.headway }
-  return Object.freeze({ id, kind, length, pieces: Object.freeze(pieces), stops: Object.freeze(stops), stations: Object.freeze(stations), y, ...limits })
+        : kind === 'plane'
+          ? { speedLimit: TRACKS.plane.speed, cornerSpeed: TRACKS.plane.speed, slot: TRACKS.plane.headway }
+          : { speedLimit: TRACKS.vtol.speed, cornerSpeed: TRACKS.vtol.speed, slot: TRACKS.vtol.legMin }
+  return Object.freeze({
+    id, kind, length, pieces: Object.freeze(pieces), stops: Object.freeze(stops), stations: Object.freeze(stations), pads: Object.freeze(pads), y, ...limits,
+  })
 }
 
 /** The unit direction and block count of the grid edge from `a` to `b` (axis-aligned, or an Error). */
@@ -400,9 +444,12 @@ export function planeCorridors(): Track[] {
   return [makeTrack(0, 'plane', pieces, [], [], altitude)]
 }
 
-/** The whole network from the seed: car rings, the elevated loop, the drone corridors, the racetrack; ids 0..n−1. */
-export function buildTrackNetwork(seed: number): TrackNetwork {
-  const all = [...carLoops(seed), ...trainLoops(), ...droneCorridors(), ...planeCorridors()]
+/**
+ * The whole network from the seed: car rings, the elevated loop, the drone corridors, the racetrack and, given the
+ * city's building boxes, the VTOL routes between rooftop pads (none without them); ids 0..n−1.
+ */
+export function buildTrackNetwork(seed: number, boxes: readonly Box[] = []): TrackNetwork {
+  const all = [...carLoops(seed), ...trainLoops(), ...droneCorridors(), ...planeCorridors(), ...vtolRoutes(boxes)]
   return Object.freeze({ seed, tracks: Object.freeze(all.map((t, id) => (t.id === id ? t : Object.freeze({ ...t, id })))) })
 }
 
@@ -725,9 +772,10 @@ function legs(track: Track): Leg[] {
   })
 }
 
-/** Seconds one vehicle takes for a lap: the train timetable with its dwells, or length / speed. */
+/** Seconds one vehicle takes for a lap: the train timetable with its dwells, a VTOL route's with its pad calls, or length / speed. */
 export function lapSeconds(track: Track): number {
   if (track.kind === 'train' && track.stations.length > 0) return legs(track).reduce((t, l) => t + l.run + TRACKS.train.dwell, 0)
+  if (track.kind === 'vtol') return legs(track).reduce((t, l, i) => t + l.run + padTime(track, i), 0)
   return track.length / track.speedLimit
 }
 
@@ -763,6 +811,15 @@ export function scheduledPose(track: Track, index: number, count: number, t: num
     const tau = ((((t + (index * T) / count) % T) + T) % T)
     return poseAt(track, timetable(track, tau))
   }
+  if (track.kind === 'vtol') {
+    const v = vtolSchedule(track, index, count, t)
+    const p = poseAt(track, v.s)
+    p.y = v.y
+    p.heading = v.heading
+    p.tangentX = Math.sin(v.heading)
+    p.tangentZ = Math.cos(v.heading)
+    return p
+  }
   return poseAt(track, (index * track.length) / count + track.speedLimit * t)
 }
 
@@ -771,6 +828,7 @@ export function scheduledCount(track: Track): number {
   if (track.kind === 'train') return TRACKS.train.sets
   if (track.kind === 'plane') return TRACKS.plane.count
   if (track.kind === 'drone') return Math.max(1, Math.floor(track.length / TRACKS.drone.headway))
+  if (track.kind === 'vtol') return TRACKS.vtol.craft
   return 0
 }
 
@@ -804,4 +862,350 @@ export function guideway(track: Track): { columns: [number, number][]; beams: [n
     }
   }
   return { columns, beams }
+}
+
+// ---------------------------------------------------------------- VTOL routes
+
+/**
+ * The cells a route's four pads are chosen from, in loop order, as block rectangles [k0, k1) × [m0, m1) of the city
+ * grid (CITY.pitch m a block): the inner route rounds downtown's four quarters, the outer one the four sides around
+ * them. The heritage columns (k < 4), the lakefront and the park (m ≥ 14) have no roof high enough for a pad.
+ */
+const VTOL_CELLS: readonly (readonly (readonly [number, number, number, number])[])[] = Object.freeze([
+  Object.freeze([[5, 8, 4, 8], [8, 12, 4, 8], [8, 12, 8, 12], [5, 8, 8, 12]] as const),
+  Object.freeze([[4, 12, 1, 4], [12, 15, 4, 12], [4, 12, 12, 14], [4, 5, 4, 12]] as const),
+])
+/** Most candidates kept per cell, the tallest first: the search below is at most this to the fourth. */
+const VTOL_CHOICES = 10
+/** Most whole loops a route's search flies before giving the route up. */
+const VTOL_LOOPS = 64
+/** Metres between the samples a leg is checked at. */
+const VTOL_STEP = 1
+/**
+ * Radius of the curve a VTOL flies through a turn, m: at an intersection it cuts 0.35 R toward the inside corner,
+ * which at this radius keeps the envelope over the road and the sidewalk, clear of a tower built to the lot's corner.
+ */
+const VTOL_TURN = 12
+
+/** Horizontal distance from (x, z) to a box, 0 inside its footprint. */
+function boxGap(x: number, z: number, b: Box): number {
+  const dx = Math.max(b[0] - x, 0, x - b[3]), dz = Math.max(b[2] - z, 0, z - b[5])
+  return Math.hypot(dx, dz)
+}
+
+/** The boxes by CITY.pitch cell of their footprint, for the leg checks. */
+function boxCells(boxes: readonly Box[]): Map<number, Box[]> {
+  const cell = CITY.pitch
+  const hash = new Map<number, Box[]>()
+  for (const b of boxes) {
+    for (let i = Math.floor(b[0] / cell); i <= Math.floor(b[3] / cell); i++) for (let j = Math.floor(b[2] / cell); j <= Math.floor(b[5] / cell); j++) {
+      const k = (i + 64) * 4096 + (j + 64)
+      const list = hash.get(k)
+      if (list) list.push(b); else hash.set(k, [b])
+    }
+  }
+  return hash
+}
+
+function boxesNear(hash: Map<number, Box[]>, x: number, z: number, out: Box[]): Box[] {
+  out.length = 0
+  const cx = Math.floor(x / CITY.pitch), cz = Math.floor(z / CITY.pitch)
+  for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+    const list = hash.get((cx + i + 64) * 4096 + (cz + j + 64))
+    if (list) for (const b of list) out.push(b)
+  }
+  return out
+}
+
+/**
+ * The roofs that take a pad: a box whose top lies between the floor and the ceiling, at least `padHalf` each way, with
+ * nothing taller standing within the craft's descent column (its envelope about the roof's centre): the topmost roof
+ * of its lot there, so a craft coming straight down onto it meets nothing. In box order, so the choice is as fixed as
+ * the boxes.
+ */
+export function vtolPads(boxes: readonly Box[]): Pad[] {
+  const { floor, ceiling, padHalf, halfSize } = TRACKS.vtol
+  const hash = boxCells(boxes)
+  const near: Box[] = []
+  const out: Pad[] = []
+  for (const b of boxes) {
+    const top = b[4]
+    if (top < floor || top > ceiling) continue
+    if ((b[3] - b[0]) / 2 < padHalf || (b[5] - b[2]) / 2 < padHalf) continue
+    const cx = (b[0] + b[3]) / 2, cz = (b[2] + b[5]) / 2
+    let topmost = true
+    for (const o of boxesNear(hash, cx, cz, near)) {
+      if (o === b || o[4] <= top) continue
+      if (o[0] < cx + halfSize && o[3] > cx - halfSize && o[2] < cz + halfSize && o[5] > cz - halfSize) { topmost = false; break }
+    }
+    if (topmost) out.push(Object.freeze({ x: cx, z: cz, y: top }))
+  }
+  return out
+}
+
+/**
+ * Where a pad's route meets the street: the middle of the nearest street's block beside the pad (a street's centreline
+ * is the one line over a block that no building stands on, and the block's middle is as far from both intersections
+ * as a point on it gets, so the turn onto the hop and the turn at the intersection both fit). `axis` is the street's.
+ */
+function streetFoot(pad: Pad): { x: number; z: number; axis: Axis } {
+  const pitch = CITY.pitch
+  const kx = Math.round(pad.x / pitch) * pitch, mz = Math.round(pad.z / pitch) * pitch
+  if (Math.abs(pad.x - kx) <= Math.abs(pad.z - mz)) return { x: kx, z: (Math.floor(pad.z / pitch) + 0.5) * pitch, axis: 'ns' }
+  return { x: (Math.floor(pad.x / pitch) + 0.5) * pitch, z: mz, axis: 'ew' }
+}
+
+/** The corners of the street path from one foot to another, along the centrelines: at most two turns. */
+function streetPath(a: ReturnType<typeof streetFoot>, b: ReturnType<typeof streetFoot>): Vec2[] {
+  const pitch = CITY.pitch
+  if (a.axis === 'ns' && b.axis === 'ew') return [[a.x, b.z]]
+  if (a.axis === 'ew' && b.axis === 'ns') return [[b.x, a.z]]
+  if (a.axis === 'ns') {
+    if (a.x === b.x) return []
+    const c = Math.round((a.z + b.z) / 2 / pitch) * pitch
+    return [[a.x, c], [b.x, c]]
+  }
+  if (a.z === b.z) return []
+  const c = Math.round((a.x + b.x) / 2 / pitch) * pitch
+  return [[c, a.z], [c, b.z]]
+}
+
+/**
+ * The way from pad `a` to pad `b`: up the hop to a's street foot, the street path, and down the hop onto b. Consecutive
+ * repeats are dropped (two pads whose feet are one point fly hop to hop).
+ */
+function legWaypoints(a: Pad, b: Pad): Vec2[] {
+  const fa = streetFoot(a), fb = streetFoot(b)
+  const raw: Vec2[] = [[a.x, a.z], [fa.x, fa.z], ...streetPath(fa, fb), [fb.x, fb.z], [b.x, b.z]]
+  const out: Vec2[] = []
+  for (const p of raw) if (out.length === 0 || Math.hypot(p[0] - out[out.length - 1][0], p[1] - out[out.length - 1][1]) > 1e-6) out.push(p)
+  return out
+}
+
+/**
+ * The pieces of a polyline flown from its first point to its last: a straight for each segment and, at each inner
+ * point where the way bends, a curve of radius VTOL_TURN (less where a segment is short: at most half of each of its
+ * two segments, so two curves on one segment never overlap), with the point itself as the control. Arc lengths
+ * start at `s0`.
+ */
+function polylinePieces(points: readonly Vec2[], s0: number): Piece[] {
+  const n = points.length
+  const seg = (i: number): number => Math.hypot(points[i + 1][0] - points[i][0], points[i + 1][1] - points[i][1])
+  const dir = (i: number): Vec2 => { const l = seg(i); return [(points[i + 1][0] - points[i][0]) / l, (points[i + 1][1] - points[i][1]) / l] }
+  // The curve at each inner point: none where the way runs straight on.
+  const cuts: number[] = points.map((_, i) => {
+    if (i === 0 || i === n - 1) return 0
+    const d1 = dir(i - 1), d2 = dir(i)
+    return Math.abs(d1[0] * d2[1] - d1[1] * d2[0]) > 1e-3 ? Math.min(VTOL_TURN, seg(i - 1) / 2, seg(i) / 2) : 0
+  })
+  const pieces: Piece[] = []
+  let s = s0
+  for (let i = 0; i + 1 < n; i++) {
+    const d = dir(i)
+    const length = seg(i) - cuts[i] - cuts[i + 1]
+    if (length > 1e-6) {
+      const x0 = points[i][0] + d[0] * cuts[i], z0 = points[i][1] + d[1] * cuts[i]
+      pieces.push(linePiece(s, x0, z0, d, length))
+      s += length
+    }
+    if (cuts[i + 1] > 0) {
+      const at = points[i + 1], d2 = dir(i + 1), cut = cuts[i + 1]
+      const corner = cornerPiece(s, [at[0] - d[0] * cut, at[1] - d[1] * cut], at, [at[0] + d2[0] * cut, at[1] + d2[1] * cut])
+      pieces.push(corner)
+      s += corner.length
+    }
+  }
+  return pieces
+}
+
+/** The pose along one piece, by its own local arc length. */
+function pieceSample(p: Piece, local: number): TrackPose {
+  const out: TrackPose = { x: 0, y: 0, z: 0, heading: 0, tangentX: 0, tangentZ: 0 }
+  evalPiece(p, local, out)
+  return out
+}
+
+/**
+ * Whether a leg flown at `cruise` is clear: at least `legMin` long, every box within the envelope's half-size of any
+ * point of it topping out `clearance` under the envelope's bottom, and no pad of `others` (any pad that is not one of
+ * its ends) nearer than `apart` to any point of it.
+ */
+function legClear(pieces: readonly Piece[], a: Pad, b: Pad, cruise: number, others: readonly Pad[], hash: Map<number, Box[]>, near: Box[]): boolean {
+  const { halfSize, halfHeight, clearance, apart, legMin } = TRACKS.vtol
+  const last = pieces[pieces.length - 1]
+  if (last.s0 + last.length - pieces[0].s0 < legMin) return false
+  const ceiling = cruise - halfHeight - clearance
+  for (const p of pieces) {
+    const n = Math.ceil(p.length / VTOL_STEP)
+    for (let i = 0; i <= n; i++) {
+      const q = pieceSample(p, (i / n) * p.length)
+      for (const o of boxesNear(hash, q.x, q.z, near)) if (o[4] > ceiling && boxGap(q.x, q.z, o) < halfSize) return false
+      for (const pad of others) if (pad !== a && pad !== b && Math.hypot(pad.x - q.x, pad.z - q.z) < apart) return false
+    }
+  }
+  return true
+}
+
+/**
+ * The VTOL routes of a city: for each route, one pad in each of its four cells (VTOL_CELLS), the tallest roofs first,
+ * such that every leg of the loop is clear (legClear) against every pad of the city's routes, and the loop's pads are
+ * `apart` from each other. A city whose boxes give no such loop for a route has no such route; a city given no boxes
+ * has none at all. Pure in the boxes: the same boxes always give the same routes, in the same order.
+ */
+export function vtolRoutes(boxes: readonly Box[]): Track[] {
+  if (boxes.length === 0) return []
+  const { cruise, apart, routes } = TRACKS.vtol
+  const pads = vtolPads(boxes)
+  const hash = boxCells(boxes)
+  const near: Box[] = []
+  const chosen: Track[] = []
+  const pitch = CITY.pitch
+  for (let r = 0; r < routes; r++) {
+    const y = cruise[r]
+    const taken = chosen.flatMap((t) => t.stations.map((s, i) => ({ ...referencePoseAt(t, s), y: t.pads[i] })))
+    const options = VTOL_CELLS[r].map(([k0, k1, m0, m1]) => pads
+      .filter((p) => p.x >= k0 * pitch && p.x < k1 * pitch && p.z >= m0 * pitch && p.z < m1 * pitch)
+      .filter((p) => taken.every((q) => Math.hypot(q.x - p.x, q.z - p.z) >= apart))
+      .sort((a, b) => b.y - a.y || a.x - b.x || a.z - b.z)
+      .slice(0, VTOL_CHOICES))
+    if (options.some((o) => o.length === 0)) continue
+    const memo = new Map<Pad, Map<Pad, boolean>>()
+    const ok = (a: Pad, b: Pad, loop: readonly Pad[]): boolean => {
+      let row = memo.get(a)
+      if (!row) memo.set(a, (row = new Map()))
+      let v = row.get(b)
+      if (v === undefined) row.set(b, (v = legClear(polylinePieces(legWaypoints(a, b), 0), a, b, y, [...taken, ...options.flat()], hash, near)))
+      return v && loop.every((q) => q === a || q === b || legClear(polylinePieces(legWaypoints(a, b), 0), a, b, y, [q], hash, near))
+    }
+    let found: Track | null = null
+    let tried = 0
+    search: for (const p0 of options[0]) for (const p1 of options[1]) {
+      if (!ok(p0, p1, [])) continue
+      for (const p2 of options[2]) {
+        if (!ok(p1, p2, []) || !ok(p0, p1, [p2])) continue
+        for (const p3 of options[3]) {
+          if (!ok(p2, p3, [p0]) || !ok(p3, p0, [p1, p2]) || !ok(p0, p1, [p3]) || !ok(p1, p2, [p3, p0])) continue
+          // A loop doubles back on itself (every pad's hop, a street flown both ways): its craft, a lap / count apart in
+          // time, must still keep two envelopes and a metre apart everywhere; a loop whose craft would meet is not flown.
+          const track = loopTrack([p0, p1, p2, p3], y)
+          if (++tried > VTOL_LOOPS) break search
+          if (!loopSafe(track)) continue
+          found = track
+          break search
+        }
+      }
+    }
+    if (!found) continue
+    chosen.push(found)
+  }
+  return chosen
+}
+
+/** The track of a loop of pads flown at `cruise`: a station at each pad, a leg (legWaypoints) from each to the next. */
+function loopTrack(loop: readonly Pad[], cruise: number): Track {
+  const pieces: Piece[] = []
+  const stations: number[] = []
+  let s = 0
+  for (let i = 0; i < loop.length; i++) {
+    stations.push(s)
+    const leg = polylinePieces(legWaypoints(loop[i], loop[(i + 1) % loop.length]), s)
+    pieces.push(...leg)
+    const last = leg[leg.length - 1]
+    s = last.s0 + last.length
+  }
+  return makeTrack(0, 'vtol', pieces, [], stations, cruise, loop.map((p) => p.y))
+}
+
+/** Whether the craft of a VTOL route keep two envelopes and a metre apart through a whole lap, sampled every quarter second. */
+function loopSafe(track: Track): boolean {
+  const n = TRACKS.vtol.craft
+  const T = lapSeconds(track)
+  const least = 2 * TRACKS.vtol.halfSize + 1
+  for (let t = 0; t < T; t += 0.25) {
+    for (let i = 0; i < n; i++) {
+      const p = scheduledPose(track, i, n, t)
+      for (let j = i + 1; j < n; j++) {
+        const q = scheduledPose(track, j, n, t)
+        if (Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z) < least) return false
+      }
+    }
+  }
+  return true
+}
+
+/** Seconds a VTOL spends at pad `i` of its route: down from cruise to the roof, the dwell, and up again. */
+function padTime(track: Track, i: number): number {
+  const { climb, dwell, hover } = TRACKS.vtol
+  return (2 * (track.y - (track.pads[i] + hover))) / climb + dwell
+}
+
+const smoothstep = (u: number): number => { const v = Math.min(1, Math.max(0, u)); return v * v * (3 - 2 * v) }
+
+/** The way a VTOL route leaves station `i` (`out`) or arrives at it: the track's heading a hair past or short of it. */
+function stationHeading(track: Track, i: number, out: boolean): number {
+  const s = track.stations[i % track.stations.length]
+  return referencePoseAt(track, s + (out ? 0.01 : -0.01)).heading
+}
+
+/** The angle from a to b, in (−π, π]. */
+function turnOf(a: number, b: number): number {
+  let d = (b - a) % TAU
+  if (d > Math.PI) d -= TAU
+  if (d <= -Math.PI) d += TAU
+  return d
+}
+const TAU = Math.PI * 2
+
+/** Where a VTOL stands in its cycle: arc length along its route, height, heading and speed along the route. */
+export interface VtolState { s: number; y: number; heading: number; speed: number }
+
+/**
+ * Craft `index` of `count` on a VTOL route at realm time `t`: a pure function of t. Its cycle starts over pad 0 at
+ * cruise: it comes straight down at the climb speed (eased at both ends), sits `dwell` seconds turning to face the
+ * next leg, climbs back, then flies the leg at the train's comfortable acceleration to its speed and brakes to a stop
+ * over the next pad. Craft on one route are a lap / count apart in time.
+ */
+export function vtolSchedule(track: Track, index: number, count: number, t: number): VtolState {
+  const { climb, dwell, hover } = TRACKS.vtol
+  const a = TRAFFIC.comfortableDecel
+  const T = lapSeconds(track)
+  let tau = ((((t + (index * T) / count) % T) + T) % T)
+  const n = track.stations.length
+  const ls = legs(track)
+  let s = track.stations[0]
+  for (let i = 0; i < n; i++) {
+    const base = track.pads[i] + hover
+    const drop = track.y - base
+    const down = drop / climb
+    const P = 2 * down + dwell
+    if (tau < P) {
+      const arrive = stationHeading(track, i, false), depart = stationHeading(track, i, true)
+      let y: number, heading: number
+      if (tau < down) {
+        y = track.y - drop * smoothstep(tau / down)
+        heading = arrive
+      } else if (tau < down + dwell) {
+        y = base
+        heading = arrive + turnOf(arrive, depart) * smoothstep((tau - down) / dwell)
+      } else {
+        y = base + drop * smoothstep((tau - down - dwell) / down)
+        heading = depart
+      }
+      return { s, y, heading, speed: 0 }
+    }
+    tau -= P
+    const leg = ls[i]
+    if (tau < leg.run) {
+      const d = tau < leg.accel
+        ? (a * tau * tau) / 2
+        : tau < leg.accel + leg.cruise
+          ? (leg.peak * leg.peak) / (2 * a) + leg.peak * (tau - leg.accel)
+          : leg.distance - (a * (leg.run - tau) * (leg.run - tau)) / 2
+      const speed = tau < leg.accel ? a * tau : tau < leg.accel + leg.cruise ? leg.peak : a * (leg.run - tau)
+      return { s: wrap(track, s + d), y: track.y, heading: referencePoseAt(track, s + d).heading, speed }
+    }
+    tau -= leg.run
+    s = wrap(track, s + leg.distance)
+  }
+  return { s, y: track.y, heading: stationHeading(track, 0, true), speed: 0 }
 }

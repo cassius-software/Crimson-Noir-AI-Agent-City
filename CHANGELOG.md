@@ -15,6 +15,21 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The trains, drones and planes are drawn, and VTOLs fly between rooftop pads.** The scheduled craft the realm has
+  run since Phase 7.3 are on the page (`craftView.ts`): the three train sets as three cars each on the elevated loop,
+  with its deck, guideway columns and beams and the four stations' platforms and canopies; the 960 drones on their
+  corridors; the three planes on the racetrack, banked through its turns by their speed and the turn's radius; and,
+  new, the VTOLs: two routes of four rooftop pads each (roofs of 24 to 60 m, chosen from the city's own boxes), flown
+  along the avenues at 75 and 85 m like the drone corridors, turning off at each pad to come straight down, sit ten
+  seconds and climb back, two craft a route. The routes are part of the track network (`tracks.ts` `vtolRoutes`;
+  `buildTrackNetwork` takes the boxes, and the page builds the same network as the realm), the kind is in the stream
+  and the Ring-0 audit (`vtol`, floor 24 m: a VTOL under the lowest roof a pad is ever set on halts the realm), and the
+  proofs cover them on four seeds: every leg and every descent clears every box by the craft's envelope, the two
+  craft of a route and the craft of the two routes keep two envelopes apart, the drone corridors stay clear of every
+  pad's column, and a loop whose craft would meet is not flown. Every body the page draws is held inside its kind's
+  envelope by test, and every material builds in both passes with rain mode once. The craft still have no body: they
+  touch nothing. Unverified on a device: the look; the browser CI job draws the city with them on the software
+  adapter.
 - **Unarmed by construction, pinned.** `conduct.test.ts` now proves the city carries no weapon: the wardrobe's five
   optional pieces (a tie, a bag, a cup, long hair, glasses), the ragdoll's eleven body segments and ten joints, the
   crowd's eight activities, the seven action verbs with their rules and hints, the skills and the eight vehicle kinds
