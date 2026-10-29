@@ -509,7 +509,7 @@ test('air gap: every animation frame requests its physics step and poses the hea
     return i
   }
   const pacer = at(frame, 'this.pacer.tick(nowMs)')
-  for (const before of ['input.poll(dt)', 'sim.request({ dt: this.pendingDt, foot, drive })', 'this.rumble(rumble)', 'this.rig.inVehicle(', 'this.rig.onFoot(']) {
+  for (const before of ['input.poll(dt)', 'sim.request({ dt: this.pendingDt, foot, drive })', 'this.rumble(rumble, hold, snap, lightbar)', 'this.rig.inVehicle(', 'this.rig.onFoot(']) {
     assert.ok(at(frame, before) < pacer, `${before} waits for the pacer`)
   }
   // The step request is unconditional: every animation frame sends one (the worker keeps its own pace).

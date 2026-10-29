@@ -36,7 +36,7 @@ test('wiring: one ping edge from the key, the middle button, the right shoulder 
   assert.match(input, /if \(edges & PAD_EDGE\.ping\) this\.queued\.add\('ping'\)/)
   const pad = read('../04_Connect_Hardware/gamepad.ts')
   assert.match(pad, /ping: 16/)
-  assert.match(pad, /if \(rising & \(1 << PAD\.r1\)\) edges \|= PAD_EDGE\.ping/)
+  assert.match(pad, /if \(rising & \(\(1 << PAD\.r1\) \| PADDLE_RIGHT\)\) edges \|= PAD_EDGE\.ping/, 'the right shoulder, and the Edge\'s right paddle, ping')
   const touch = read('../04_Connect_Hardware/TouchControls.tsx')
   assert.equal(touch.match(/<TapButton label="Ping"[^\n]*input\.press\('ping'\)/g)?.length, 2, 'on foot and at the wheel')
 })
