@@ -7,7 +7,7 @@
  * screened here before it is used. An asset whose name, path, tag or any metadata text contains `gun`, `rifle`,
  * `pistol` or `weapon`, in any case and anywhere in the word, is purged and the purge is logged with the word that
  * caught it. The match is by containment, as the rule says, so `shotgun`, `handgun` and `Weaponry` are caught; the
- * one exception is a short, fixed list of ordinary words that merely contain `gun` (`gunmetal`, `gunwale`, `begun`,
+ * one exception is a short, fixed list of ordinary words that merely contain `gun` (`gunmetal`, `gunwale`, `begun`, `burgundy`,
  * `gunny`), which pass as whole words. Nothing is fetched here and nothing is decoded: this is a filter over names.
  * What breaks if it is removed? A weapon mesh in a manifest, or a weapon word in a generated name, would reach the page.
  */
@@ -16,7 +16,7 @@
 export const FORBIDDEN_WORDS: readonly string[] = Object.freeze(['gun', 'rifle', 'pistol', 'weapon'])
 
 /** Whole words that contain a forbidden word and are not one: they pass. */
-export const ALLOWED_WORDS: readonly string[] = Object.freeze(['gunmetal', 'gunwale', 'gunwales', 'begun', 'gunny', 'gunnysack'])
+export const ALLOWED_WORDS: readonly string[] = Object.freeze(['gunmetal', 'gunwale', 'gunwales', 'begun', 'gunny', 'gunnysack', 'burgundy'])
 
 /** Matches any forbidden word anywhere in the text, in any case. */
 export const FORBIDDEN_RE = new RegExp(FORBIDDEN_WORDS.join('|'), 'i')
