@@ -32,6 +32,8 @@ test('ordinary words that merely contain gun pass; a forbidden word beside them 
   for (const w of ALLOWED_WORDS) assert.equal(forbiddenWordIn(w), null, w)
   assert.equal(forbiddenWordIn('gunmetal grey sedan'), null)
   assert.equal(forbiddenWordIn('The race has begun'), null)
+  assert.equal(forbiddenWordIn('burgundy pantsuit'), null, 'a colour of the wardrobe (look.ts LOOK_PRESETS)')
+  assert.equal(forbiddenWordIn('burgundy gun'), 'gun')
   assert.equal(forbiddenWordIn('gunmetal gun'), 'gun')
   assert.equal(forbiddenWordIn('lamp post'), null)
   assert.equal(forbiddenWordIn(''), null)

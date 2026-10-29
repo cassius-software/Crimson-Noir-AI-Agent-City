@@ -9,8 +9,12 @@
  * depth convention; and the world bakes its environment probe through EnvProbe into one reused render target, with the
  * scene's environment assigned only when the texture object changes (once). Nothing here needs a GPU; the renderer's
  * part is read from the source as the other wiring tests do.
+ * It also holds that no material of the page asks for a polygon offset: three r186's WebGPU backend hands one to the
+ * pipeline unflipped, and under the reversed buffer a negative offset pushes a surface away from the camera (the
+ * Lakefront streets sank under the lawn that way; region/regionWorld.ts SURFACE says more).
  * What breaks if it is removed? A later edit could drop `reversedDepthBuffer`, pin the sky back to z = w under it
- * (sky painted over the city), cut the frustum with WebGL's planes, or allocate a probe target per bake again.
+ * (sky painted over the city), cut the frustum with WebGL's planes, allocate a probe target per bake again, or bring
+ * a polygon offset back with the wrong sign for the buffer.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -97,4 +101,17 @@ test('the environment probe bakes through EnvProbe into one reused target and po
   // No other path to a fresh target or a per-bake dispose remains.
   assert.equal((world.match(/fromScene\(/g) ?? []).length, 1)
   assert.doesNotMatch(world, /envTarget\?\.dispose\(\)/)
+})
+
+test('no material of the page asks for a polygon offset: under the reversed buffer three r186 applies it the wrong way round', () => {
+  // Every module that makes a node material (grep NodeMaterial\( over src/, tests aside).
+  const makers = [
+    './world.ts', './materials.ts', './region/regionWorld.ts', '../03_Spawn_Agents/crowd.ts',
+    '../07_Execute_Actions/fleetView.ts', '../07_Execute_Actions/ghost.ts', '../07_Execute_Actions/netView.ts', '../07_Execute_Actions/shutter.ts',
+  ]
+  for (const rel of makers) {
+    const src = read(rel)
+    assert.ok(/NodeMaterial\(/.test(src), `${rel} makes a material (the list is current)`)
+    assert.equal(src.match(/polygonOffset\w*\s*=/g), null, `${rel} sets no polygon offset`)
+  }
 })
