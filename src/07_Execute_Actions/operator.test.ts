@@ -19,6 +19,7 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { FEATURES } from '../09_Cognition/features.ts'
 import {
   DEFAULT_TIMEOUT_MS, SAY_CHARS, apiDoc, describe, exec, formatValue, gatedAsk, gatedExec, gatedSay, leasedApi, operatorBridge, scriptApi, speakable,
   type Answer, type Awareness, type Diary, type GateHandle, type GateLease, type GateTether, type GateVerdict, type Memories, type Mind, type Piece, type RunState,
@@ -102,6 +103,8 @@ class FakeMind implements Mind {
   readonly asked: { tethers: readonly GateTether[]; prompt: string }[] = []
   /** What the newest request carried of the bound people's memories. */
   memories: readonly Memories[] | undefined = undefined
+  /** What the newest request carried of the operator's steering lines. */
+  steering: readonly string[] | undefined = undefined
   signal: AbortSignal | null = null
   #piece: ((p: Piece) => void) | null = null
   #finish: ((a: Answer) => void) | null = null
@@ -119,9 +122,10 @@ class FakeMind implements Mind {
   installed(): Promise<string[]> {
     return Promise.resolve(['a-model', 'test-model'])
   }
-  answer(req: { tethers: readonly GateTether[]; prompt: string; signal: AbortSignal; memories?: readonly Memories[] }, onPiece: (p: Piece) => void): Promise<Answer> {
+  answer(req: { tethers: readonly GateTether[]; prompt: string; signal: AbortSignal; memories?: readonly Memories[]; steering?: readonly string[] }, onPiece: (p: Piece) => void): Promise<Answer> {
     this.asked.push({ tethers: req.tethers, prompt: req.prompt })
     this.memories = req.memories
+    this.steering = req.steering
     this.signal = req.signal
     return new Promise<Answer>((resolve, reject) => {
       this.#piece = onPiece
@@ -166,7 +170,7 @@ function fakeSim(): FakeSim {
   const crowdStats = { drawnNear: 1, drawnFar: 2, nudges: 0, waiting: 0, crossing: 0, retreating: 0 }
   // The engine's own copy of where the crowd stands: the facade must hand scripts a copy of it, never this array.
   const crowdXZ = Float32Array.from([0, 0, 12.5, 5.75])
-  const tune: Record<string, number> = { 'car.power': 1, 'car.drag': 1 }
+  const tune: Record<string, number> = { 'car.power': 1, 'car.drag': 1, 'car.brake': 1 }
   const uniforms: Record<string, number> = { 'light.haze': 1, 'volumetrics.strength': 1 }
   const sim: FakeSim = {
     calls, tune, uniforms,
@@ -499,7 +503,7 @@ test('operatorBridge: locked by default; scripts, tuning keys and harnesses refu
   const gate = new FakeGate()
   const op = operatorBridge(sim, gate, new FakeMind(), async (ms) => { slept.push(ms) })
   assert.ok(Object.isFrozen(op))
-  assert.deepEqual(Object.keys(op).sort(), ['acts', 'api', 'ask', 'askConnect', 'askSet', 'askStatus', 'askStop', 'exec', 'harness', 'harnesses', 'lock', 'say', 'saySet', 'sayStatus', 'sayStop', 'swarm', 'tune', 'tuning', 'unlock', 'unlocked'])
+  assert.deepEqual(Object.keys(op).sort(), ['acts', 'api', 'ask', 'askConnect', 'askSet', 'askStatus', 'askStop', 'exec', 'features', 'harness', 'harnesses', 'lock', 'say', 'saySet', 'sayStatus', 'sayStop', 'swarm', 'tune', 'tuning', 'unlock', 'unlocked'])
   assert.throws(() => op.askConnect('ollama'), /^Error: ask: locked/)
   assert.throws(() => op.swarm.run('x'), /^Error: ask: locked/)
   assert.equal(op.swarm.status().running, false)
@@ -525,7 +529,7 @@ test('operatorBridge: locked by default; scripts, tuning keys and harnesses refu
   assert.deepEqual(gate.requests, [['Rust'], ['Rust'], ['Networking']])
   assert.ok(!callsOf(sim).includes('clock.set 1'), 'a rejected script never ran')
   // The tuning keys: read and written through the facade (validated; the engine clamps), no script involved.
-  assert.deepEqual(op.tuning(), { physics: { 'car.power': 1, 'car.drag': 1 }, shaders: { 'light.haze': 1, 'volumetrics.strength': 1 } })
+  assert.deepEqual(op.tuning(), { physics: { 'car.power': 1, 'car.drag': 1, 'car.brake': 1 }, shaders: { 'light.haze': 1, 'volumetrics.strength': 1 } })
   assert.equal(op.tune('physics', 'car.power', 1.5), 1.5)
   assert.equal(op.tune('shaders', 'light.haze', 0.25), 0.25)
   assert.throws(() => op.tune('physics', 'nope', 1), /unknown physics key 'nope'/)
@@ -592,6 +596,65 @@ test('gatedAsk: Rejected never asks the model; Authorized asks at once for the b
   mind.fail(new Error('no local model server is answering at http://localhost:11434'))
   const f = await within(failed.result)
   assert.deepEqual([f.state, f.error], ['Authorized', 'no local model server is answering at http://localhost:11434'])
+})
+
+test('operatorBridge features: read while locked; steered by the operator alone; a bias leans its knobs through the facade and puts fixed lines on every ask; release and reset undo both', () => {
+  const sim = fakeSim()
+  const gate = new FakeGate()
+  const mind = new FakeMind()
+  const op = operatorBridge(sim, gate, mind)
+  assert.ok(Object.isFrozen(op.features))
+  const rows = op.features.lines()
+  assert.equal(rows.length, FEATURES.length)
+  assert.ok(rows.every((r) => /^[A-Z_]+ +\[[#.]{10}\]  \d\.\d\d$/.test(r)), rows.join('\n'))
+  assert.equal(op.features.lines(2).length, 2)
+  assert.deepEqual(op.features.prompt(), [])
+  assert.ok(op.features.explain().some((l) => /not a sparse autoencoder/.test(l)))
+  assert.equal(op.features.about('NOPE'), null)
+  const card = op.features.about('fleet restraint')!
+  assert.equal(card[0], 'FLEET_RESTRAINT  (fleet restraint)')
+  assert.match(card[2], /^threshold 0\.05  now \d\.\d\d$/)
+  assert.equal(card[5], 'knobs: physics.car.power 1.2..1..0.7')
+  for (const f of [() => op.features.steer('FLEET_RESTRAINT', -0.5), () => op.features.clamp('FLEET_RESTRAINT', 1), () => op.features.release('FLEET_RESTRAINT'), () => op.features.reset()]) {
+    assert.throws(f, /^Error: feature: locked; type 'operator unlock' first$/)
+  }
+  assert.equal(sim.tune['car.power'], 1)
+  op.unlock()
+  assert.throws(() => op.features.steer('NOPE', 0.5), /^RangeError: unknown feature 'NOPE'$/)
+  assert.throws(() => op.features.steer('FLEET_RESTRAINT', 2), /^RangeError: bias must be a number in \[-1, 1\]$/)
+  assert.throws(() => op.features.clamp('FLEET_RESTRAINT', -1), /^RangeError: clamp must be a number in \[0, 1\]$/)
+  assert.equal(sim.tune['car.power'], 1, 'a refused change moves nothing')
+  // A bias: the line kept, the knob leaned (linear from the middle toward lo), the prompt line fixed.
+  assert.deepEqual(op.features.steer('FLEET_RESTRAINT', -0.5), ['FLEET_RESTRAINT bias -0.50', 'physics.car.power = 1.1'])
+  assert.equal(sim.tune['car.power'], 1.1)
+  assert.deepEqual(op.features.prompt(), ['Steering: drive with pace where the road is clear.'])
+  assert.match(op.features.about('FLEET_RESTRAINT')![2], /  bias -0\.50$/)
+  // Every ask through the tier carries the lines (the providers put them in the system prompt).
+  op.ask(['Rust'], 'hello')
+  assert.equal(mind.asked.length, 1)
+  assert.deepEqual(mind.steering, ['Steering: drive with pace where the road is clear.'])
+  op.askStop()
+  // A clamp holds a lane; it has no knob and no strength, only its line.
+  assert.equal(op.features.clamp('FRAME_HEALTH', 0.8), 'FRAME_HEALTH clamp 0.80')
+  assert.deepEqual(op.features.prompt(), ['Steering: drive with pace where the road is clear.', 'Steering: hold frame health at 80%.'])
+  // Release: the knob back to its middle; the other steering stands.
+  assert.deepEqual(op.features.release('FLEET_RESTRAINT'), ['FLEET_RESTRAINT released', 'physics.car.power = 1'])
+  assert.equal(sim.tune['car.power'], 1)
+  assert.deepEqual(op.features.prompt(), ['Steering: hold frame health at 80%.'])
+  // A knob two features lean on takes the later feature's lean; releasing the earlier one keeps the later's.
+  assert.deepEqual(op.features.steer('TRAFFIC_YIELD', 1), ['TRAFFIC_YIELD bias +1.00', 'physics.car.brake = 1.5', 'physics.car.power = 0.8'])
+  assert.deepEqual(op.features.steer('FLEET_RESTRAINT', 1), ['FLEET_RESTRAINT bias +1.00', 'physics.car.power = 0.7'])
+  assert.deepEqual(op.features.release('TRAFFIC_YIELD'), ['TRAFFIC_YIELD released', 'physics.car.brake = 1', 'physics.car.power = 0.7'])
+  assert.deepEqual(op.features.steer('FRAME_HEALTH', 1), ['FRAME_HEALTH bias +1.00', 'shaders.volumetrics.strength = 0.5'])
+  assert.equal(sim.uniforms['volumetrics.strength'], 0.5)
+  // Reset: nothing steered, every knob any feature leans on back to its middle.
+  const reset = op.features.reset()
+  assert.equal(reset[0], 'features: nothing steered')
+  assert.deepEqual(reset.slice(1).sort(), ['physics.car.brake = 1', 'physics.car.power = 1', 'shaders.volumetrics.strength = 1'])
+  assert.deepEqual([sim.tune['car.power'], sim.tune['car.brake'], sim.uniforms['volumetrics.strength']], [1, 1, 1])
+  assert.deepEqual(op.features.prompt(), [])
+  // Nothing of the laws was reached: the facade recorded no kernel or vehicle call.
+  assert.ok(sim.calls.every((c) => !/kernel|vehicles|laws|bouncer|sanctuary/.test(c)), sim.calls.join(', '))
 })
 
 test('operatorBridge ask: locked, one answer at a time, a model must be chosen; status, settings and stop', async () => {

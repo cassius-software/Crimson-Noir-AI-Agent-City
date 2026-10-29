@@ -720,7 +720,9 @@ while you type.
   drawn agents (near, far, total); fps, frame time, p95, CPU and GPU time; quality tier; kernel
   counters. `stats --once` prints a single frame.
 - The core commands, as `help` prints them: `help [command]`, `stats [--once]`, `laws`, `kernel`,
-  `topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]`, `quality [auto|lite|peak|-1|0-5]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `render [on|off]`,
+  `topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]`,
+  `feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]`,
+  `quality [auto|lite|peak|-1|0-5]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `render [on|off]`,
   `captions [on|off]`, `ping [go|look|gather|wait|clear]`,
   `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
   `recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]`, `memory [<agent>|forget <agent>|forget all]`,
@@ -740,6 +742,27 @@ while you type.
   and the console imports nothing of the bus. Nothing is transmitted: the bus is a model in the page, with retained
   values, sequence numbers and a deterministic head digest, shaped so a later phase can put the same topics on a
   broker. The HUD readout shows the topic count.
+- `feature` is the feature inspector (`09_Cognition/features.ts`, through the operator tier's surface): twelve
+  named, monosemantic readings of the city's behaviour, each a documented function of the counters the city already
+  produces (the crowd's yielding and waiting, the kernel's law interventions, the Ring-0 audit, the frame), each in
+  [0, 1]: `CIVIC_COOPERATION`, `TRAFFIC_YIELD`, `SANDBOX_COMPLIANCE`, `CROWD_CALM`, `SIGNAL_DISCIPLINE`,
+  `FLEET_RESTRAINT`, `OPERATOR_OBEDIENCE`, `SELF_PRESERVATION`, `FRAME_HEALTH`, `SHIELDING`, `RAIN_MODE`, `WORKDAY`.
+  `feature` (or `feature list`) prints the vector as rows, largest first, after a JumpReLU threshold per feature (a
+  lane at or below its threshold reads 0): the id, a ten-cell bar, the value, and its steering if any; `feature top
+  <k>` the k largest; `feature watch` the rows live; `feature <NAME>` one feature's card (what it measures, its
+  threshold, its value now, the two steering lines, its knobs); `feature prompt` the lines steering has put in the
+  system prompt; `feature about` what this is and is not. Steering is the operator's (`operator unlock` first):
+  `feature steer <NAME> <-1..1>` leans a feature, which adds one fixed line to the system prompt every model provider
+  renders for the people answering (`Steering: …`, with `gently` up to 0.34 and `above all` beyond 0.67) and leans
+  the bounded tuning knobs the feature names through the same facade as `set` (`TRAFFIC_YIELD`: `car.brake` and
+  `car.power`; `FLEET_RESTRAINT`: `car.power`; `FRAME_HEALTH`: `volumetrics.strength`; a knob two features lean on
+  takes the later lean); `feature clamp <NAME> <0..1>` holds a lane and adds `Steering: hold <title> at N%.`;
+  `feature release <NAME>` drops both and returns the knobs to their middle; `feature reset` drops everything.
+  Honestly: this is not a sparse autoencoder over a model's hidden activations. No provider the page talks to (a
+  model file in the page, a server on this machine, the network provider) exposes its residual stream, so there is
+  nothing to train a dictionary on and nothing to clamp inside the model; every feature is hand-written over the
+  city's own counters, and every steering line is fixed text. Steering reaches nothing of the laws, the Sanctuary or
+  the Ring-0 auditor: it reads the snapshot and writes knobs through the operator's facade, and nothing else.
 - `map` says which map the city shell walks. `map city` reloads into the procedural city (its 14,000 pedestrians and
   its traffic), `map lakefront` into the generated metropolis (no people or traffic of its own yet), and the choice
   is kept between visits until `map default` forgets it; the desktop app has no address bar, so this is its way to

@@ -28,6 +28,10 @@ import { createActs, PROPOSAL_WAITING } from './acts.ts'
 import { harnesses, runHarness, type HarnessReport } from './harness.ts'
 import type { AgentContext } from '../08_Swarm/shortTerm.ts'
 import { createSwarm } from '../08_Swarm/orchestrator.ts'
+import {
+  FEATURES, NO_STEERING, about as featuresAbout, activations, clampFeature, featureById, featureLines, knobEffects, readingsOf,
+  release as releaseFeature, steer as steerFeature, steeringLines, type FeatureDef, type Steering,
+} from '../09_Cognition/features.ts'
 export type { AgentContext } from '../08_Swarm/shortTerm.ts'
 
 /** What the ENGINE provides (engine.ts implements it). Rich enough for scripts and harnesses. */
@@ -201,6 +205,11 @@ export interface AnswerRequest {
   signal: AbortSignal
   memories?: readonly Memories[]
   context?: readonly AgentContext[]
+  /**
+   * The operator's steering (09_Cognition/features.ts steeringLines): fixed lines every provider puts in the system
+   * prompt after the expertise; absent when nothing is steered, so the prompt is then as it was.
+   */
+  steering?: readonly string[]
 }
 
 /** What one of the people an answer speaks for remembers of the operator (Diary.recall), oldest first. */
@@ -740,7 +749,7 @@ export function gatedExec(gate: SkillGate, skills: readonly string[], script: st
  * before; a stop or a server failure is Authorized with the reason (the tether held). With a diary, the answer carries
  * what each bound person remembers.
  */
-export function gatedAsk(gate: SkillGate, mind: Mind, skills: readonly string[], prompt: string, diary?: Diary, awareness?: Awareness): GatedAsk & { stop(): void } {
+export function gatedAsk(gate: SkillGate, mind: Mind, skills: readonly string[], prompt: string, diary?: Diary, awareness?: Awareness, steering?: readonly string[]): GatedAsk & { stop(): void } {
   const followers = new Set<(p: Piece) => void>()
   const stopper = new AbortController()
   const t0 = now()
@@ -792,7 +801,7 @@ export function gatedAsk(gate: SkillGate, mind: Mind, skills: readonly string[],
   // 14A: an inadmissible prompt (violence, toxicity, illegality) is not engaged with: it reaches no model, whichever
   // provider answers, nothing streams, and the answer is nothing at once.
   const handle = gate.submit(skills, (lease) => screen(prompt).admissible ? mind.answer(
-    { tethers: lease.bound, prompt, signal: AbortSignal.any([lease.signal, stopper.signal]), memories: remembered(lease.bound), ...(awareness && { context: aware(lease.bound) }) },
+    { tethers: lease.bound, prompt, signal: AbortSignal.any([lease.signal, stopper.signal]), memories: remembered(lease.bound), ...(awareness && { context: aware(lease.bound) }), ...(steering && steering.length > 0 ? { steering } : {}) },
     (p) => lease.use(() => {
       if (p.kind === 'text') pass(p.text, false)
       else if (!refused) {
@@ -1067,7 +1076,7 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
     if (mind.settings().model === null) throw new Error(answeringProvider(mind) === 'inpage' ? 'choose a model first: Menu › Model file, or ask file (or ask model <name> for a file already kept: type ask to list them)' : 'choose a model first: ask model <name> (type ask to list them)')
     const words = String(prompt)
     const began = Date.now()
-    const a = gatedAsk(gate, mind, skills, words, diary, awareness)
+    const a = gatedAsk(gate, mind, skills, words, diary, awareness, steeringLines(steering))
     if (a.state === 'Authorized') {
       asking = a
       void a.result.then(() => { if (asking === a) asking = null })
@@ -1129,6 +1138,76 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
       return orchestrator.run(goal, agents)
     },
   })
+  /** One tuning knob through the facade (validated and clamped by the engine); the value it holds now. */
+  const setKnob = (table: 'physics' | 'shaders', key: string, value: number): number => {
+    if (table === 'physics') {
+      api.physics.set(key, value)
+      return api.physics.tune()[String(key)]
+    }
+    if (table === 'shaders') {
+      api.shaders.set(key, value)
+      return api.shaders.uniforms()[String(key)]
+    }
+    throw new TypeError(`no tuning table '${String(table)}': physics or shaders`)
+  }
+  // The feature inspector (09_Cognition/features.ts): the operator's steering, read into every prompt this tier sends
+  // (askThrough hands gatedAsk its lines) and leaned onto the bounded tuning knobs through the same facade as `set`.
+  let steering: Steering = NO_STEERING
+  const vector = (): Float32Array => activations(readingsOf(api.snapshot()))
+  const signedBias = (b: number): string => `${b < 0 ? '-' : '+'}${Math.abs(b).toFixed(2)}`
+  /**
+   * The knobs of `f` (every feature's, for null) set again: each to its middle, then to the lean of every biased feature
+   * in dictionary order (a knob two features lean on takes the later one's); one line per knob with the value it holds.
+   */
+  const relean = (f: FeatureDef | null): string[] => {
+    const knobs = f ? (f.knobs ?? []) : FEATURES.flatMap((d) => d.knobs ?? [])
+    const want = new Map<string, { table: 'physics' | 'shaders'; key: string; value: number }>()
+    for (const k of knobs) want.set(`${k.table}.${k.key}`, { table: k.table, key: k.key, value: k.mid })
+    for (const e of knobEffects(steering)) if (want.has(`${e.table}.${e.key}`)) want.set(`${e.table}.${e.key}`, e)
+    return [...want.values()].map((e) => `${e.table}.${e.key} = ${setKnob(e.table, e.key, e.value)}`)
+  }
+  const features = Object.freeze({
+    lines: (k?: number): string[] => featureLines(vector(), steering, k),
+    about: (name: string): string[] | null => {
+      const f = featureById(name)
+      if (!f) return null
+      const v = vector()[FEATURES.indexOf(f)]
+      const b: number | undefined = steering.bias[f.id]
+      const c: number | undefined = steering.clamp[f.id]
+      return [
+        `${f.id}  (${f.title})`,
+        f.doc,
+        `threshold ${f.theta}  now ${v.toFixed(2)}${c !== undefined ? `  clamp ${c.toFixed(2)}` : ''}${b !== undefined ? `  bias ${signedBias(b)}` : ''}`,
+        `up:   ${f.up}`,
+        `down: ${f.down}`,
+        f.knobs ? `knobs: ${f.knobs.map((k) => `${k.table}.${k.key} ${k.lo}..${k.mid}..${k.hi}`).join(', ')}` : 'knobs: none (the prompt alone)',
+      ]
+    },
+    prompt: (): string[] => steeringLines(steering),
+    explain: (): string[] => featuresAbout(),
+    steer: (name: string, bias: number): string[] => {
+      if (!unlocked) throw locked('feature')
+      steering = steerFeature(steering, name, bias)
+      const f = featureById(name)!
+      return [`${f.id} bias ${signedBias(bias)}`, ...relean(f)]
+    },
+    clamp: (name: string, value: number): string => {
+      if (!unlocked) throw locked('feature')
+      steering = clampFeature(steering, name, value)
+      return `${featureById(name)!.id} clamp ${value.toFixed(2)}`
+    },
+    release: (name: string): string[] => {
+      if (!unlocked) throw locked('feature')
+      steering = releaseFeature(steering, name)
+      const f = featureById(name)!
+      return [`${f.id} released`, ...relean(f)]
+    },
+    reset: (): string[] => {
+      if (!unlocked) throw locked('feature')
+      steering = NO_STEERING
+      return ['features: nothing steered', ...relean(null)]
+    },
+  })
   return Object.freeze({
     unlock: () => { unlocked = true },
     // No proposal waits past a lock: the one waiting is withdrawn, and the console (which caused it) prints the line.
@@ -1151,16 +1230,9 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
     },
     tune: (table: 'physics' | 'shaders', key: string, value: number): number => {
       if (!unlocked) throw locked('set')
-      if (table === 'physics') {
-        api.physics.set(key, value)
-        return api.physics.tune()[String(key)]
-      }
-      if (table === 'shaders') {
-        api.shaders.set(key, value)
-        return api.shaders.uniforms()[String(key)]
-      }
-      throw new TypeError(`no tuning table '${String(table)}': physics or shaders`)
+      return setKnob(table, key, value)
     },
+    features,
     ask: (skills: readonly string[], prompt: string): GatedAsk => {
       const { stop: _stop, ...handle } = askThrough(skills, prompt, true)
       return Object.freeze(handle)

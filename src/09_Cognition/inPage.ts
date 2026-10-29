@@ -631,7 +631,7 @@ export function createInPageMind(d: InPageDeps): InPageMind {
 
   /** The answer itself, with the model loaded: the system prompt and the prompt, streamed into `onPiece`. */
   async function speak(req: AnswerRequest, onPiece: (p: Piece) => void, place: Placement, stop: AbortSignal, own: AbortController): Promise<Answer> {
-    const system = systemPrompt(req.tethers, req.memories, req.context)
+    const system = systemPrompt(req.tethers, req.memories, req.context, req.steering)
     const messages: ChatMessage[] = [{ role: 'system', content: system }, { role: 'user', content: req.prompt }]
     let text = ''
     let thinking = 0

@@ -24,6 +24,8 @@
  * (the city, or the console alone); `r0` is the console's own stack machine (repl.ts): it touches no bridge at all.
  * `topic` reads the unified namespace (05_Observe_Environment/namespace.ts): every reading of the city as a retained
  * topic, listed by filter, read one at a time, walked as a tree, or watched live like `stats`; read-only, like `stats`.
+ * `feature` is the feature inspector (09_Cognition/features.ts, through the operator tier's surface): the named
+ * readings of the city as one vector, read while locked; `steer`, `clamp`, `release` and `reset` are the operator's.
  * What breaks if it is removed? The terminal cannot interpret a single line.
  */
 import type {
@@ -82,6 +84,7 @@ const CORE = [
   { name: 'laws', usage: 'laws', summary: 'the three laws the kernel enforces, in rank order' },
   { name: 'kernel', usage: 'kernel', summary: 'interventions per law, Solid->Sensor flips' },
   { name: 'topic', usage: 'topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]', summary: 'the unified namespace: every reading as a retained topic under Enterprise/JCS/Site/AgentCity (~); filter with + for one level and # for the rest' },
+  { name: 'feature', usage: 'feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]', summary: "the feature inspector: named readings of the city in [0, 1], sparsified and ranked; steer and clamp lean the agents' prompts and the tuning knobs (operator)" },
   { name: 'quality', usage: 'quality [auto|lite|peak|-1|0-5]', summary: 'show or set the render quality tier' },
   { name: 'time', usage: 'time [HH[:MM]]', summary: 'show or set the city clock' },
   { name: 'audio', usage: 'audio [on|off|0-100]', summary: 'show or set the soundscape' },
@@ -133,6 +136,15 @@ type Name = (typeof COMMANDS)[number]['name']
 const NAMES: readonly string[] = COMMANDS.map((c) => c.name).sort()
 
 /** Commands whose argument is the rest of the line, untokenized (a script, a prompt or an R0 line keeps its quotes and newlines). */
+/**
+ * The feature inspector's dictionary, for completion (09_Cognition/features.ts FEATURES, in lane order; the terminal
+ * imports only types of the rest of the engine, so the ids are spelled here and a test pins them to the dictionary).
+ */
+export const FEATURE_IDS: readonly string[] = Object.freeze([
+  'CIVIC_COOPERATION', 'TRAFFIC_YIELD', 'SANDBOX_COMPLIANCE', 'CROWD_CALM', 'SIGNAL_DISCIPLINE', 'FLEET_RESTRAINT',
+  'OPERATOR_OBEDIENCE', 'SELF_PRESERVATION', 'FRAME_HEALTH', 'SHIELDING', 'RAIN_MODE', 'WORKDAY',
+])
+
 const RAW: ReadonlySet<string> = new Set(['run', 'ask', 'say', 'r0', 'goal', 'agent', 'sloane', 'swarm'])
 
 /** A persistent R0 machine (repl.ts): the terminal keeps one for the life of the console, so definitions outlive a line. */
@@ -191,6 +203,10 @@ const ARGS: Record<string, readonly string[]> = {
   boot: ['gui', 'status', 'tty'],
   map: ['city', 'default', 'lakefront', 'status'],
   r0: ['reset', 'words'],
+  feature: ['about', 'clamp', 'list', 'prompt', 'release', 'reset', 'steer', 'top', 'watch', ...FEATURE_IDS].sort(),
+  'feature steer': FEATURE_IDS,
+  'feature clamp': FEATURE_IDS,
+  'feature release': FEATURE_IDS,
   hal: ['pair'],
   'hal pair': ['ble', 'hid', 'serial'],
   recruit: [...RECRUIT_ACTIONS, ...SKILL_ARGS].sort(),
@@ -994,6 +1010,58 @@ const HANDLERS: Record<Name, Handler> = {
       (e: unknown): Line[] => [err(`hal: pair failed: ${message(e)}`)],
     )
     return { lines: [sys(`hal: waiting for the browser's ${kind} device picker...`)], pending }
+  },
+
+  // The feature inspector, through the operator tier's surface: the rows and one feature's card are read while locked;
+  // steering is the operator's, refused here before the tier is asked. A bad name or value is the tier's RangeError.
+  feature(args, b) {
+    const f = operatorOf(b).features
+    const a = args[0]
+    if (a === undefined || a === 'list') {
+      if (args.length > 1) return fail(usage('feature'))
+      return { lines: f.lines().map(out) }
+    }
+    if (a === 'top') {
+      const k = Number(args[1])
+      if (args.length !== 2 || !Number.isInteger(k) || k < 1) return fail('usage: feature top <k>')
+      return { lines: f.lines(k).map(out) }
+    }
+    if (a === 'watch') {
+      if (args.length > 1) return fail(usage('feature'))
+      const frame: LiveFrame = (bridge) => operatorOf(bridge).features.lines()
+      return { lines: frame(b).map(out), live: frame }
+    }
+    if (a === 'prompt') {
+      if (args.length > 1) return fail(usage('feature'))
+      const lines = f.prompt()
+      return { lines: lines.length ? lines.map(out) : [sys('feature: nothing steered; the prompt carries no steering line')] }
+    }
+    if (a === 'about') {
+      if (args.length > 1) return fail(usage('feature'))
+      return { lines: f.explain().map(sys) }
+    }
+    if (a === 'steer' || a === 'clamp') {
+      if (args.length !== 3) return fail(`usage: feature ${a} <NAME> <value>`)
+      if (!operatorOf(b).unlocked()) return locked('feature')
+      const v = Number(args[2])
+      if (args[2].trim() === '' || !Number.isFinite(v)) return fail(`feature: the value must be a number, not '${args[2]}'`)
+      return { lines: (a === 'steer' ? f.steer(args[1], v) : [f.clamp(args[1], v)]).map(out) }
+    }
+    if (a === 'release') {
+      if (args.length !== 2) return fail('usage: feature release <NAME>')
+      if (!operatorOf(b).unlocked()) return locked('feature')
+      return { lines: f.release(args[1]).map(out) }
+    }
+    if (a === 'reset') {
+      if (args.length !== 1) return fail(usage('feature'))
+      if (!operatorOf(b).unlocked()) return locked('feature')
+      return { lines: f.reset().map(out) }
+    }
+    if (args.length === 1) {
+      const card = f.about(a)
+      return card ? { lines: card.map(out) } : fail(`feature: no feature '${a}'`, usage('feature'))
+    }
+    return fail(usage('feature'))
   },
 
   memory(args, b) {

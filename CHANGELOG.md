@@ -27,6 +27,18 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   live view like `stats`; `~` stands for the root. The HUD readout shows the topic count. Nothing is transmitted: the
   bus is a model in the page, shaped so a later phase can put the same topics on a broker. The terminal's live view is
   now drawn by the command's own frame function, so `stats` and `topic watch` share one path.
+- **The feature inspector and steering (`feature`).** Twelve named, monosemantic readings of the city's behaviour
+  (`09_Cognition/features.ts`: `CIVIC_COOPERATION`, `TRAFFIC_YIELD`, `SANDBOX_COMPLIANCE`, `CROWD_CALM`,
+  `SIGNAL_DISCIPLINE`, `FLEET_RESTRAINT`, `OPERATOR_OBEDIENCE`, `SELF_PRESERVATION`, `FRAME_HEALTH`, `SHIELDING`,
+  `RAIN_MODE`, `WORKDAY`), each a documented deterministic function of the counters the city already produces, each
+  in [0, 1], as one activation vector with a JumpReLU threshold per feature and a Top-K view: `feature`, `feature top
+  <k>`, `feature watch`, `feature <NAME>`, `feature about`. Steering is the operator's: `feature steer <NAME>
+  <-1..1>` adds one fixed `Steering:` line to the system prompt every provider renders (after the expertise, before
+  the memories, so an unsteered prompt is byte for byte as it was) and leans the bounded tuning knobs the feature
+  names through the same facade as `set`; `feature clamp <NAME> <0..1>` holds a lane; `release` and `reset` undo
+  both. Honestly: not a sparse autoencoder over a model's hidden activations, since no provider exposes them; every
+  feature is hand-written and every steering line is fixed text. Steering reaches nothing of the laws, the Sanctuary
+  or the Ring-0 auditor.
 - **Peak, a tier above Ultra for big GPUs.** Tier 5, outside the tier table like Lite, so every existing tier number
   and automatic range stays as it was. It draws Ultra at 1.25 times the resolution on each side (about 1.56 times the
   pixels), held within the device's largest texture, which also fixes `?scale=2` on a very wide window at any tier;

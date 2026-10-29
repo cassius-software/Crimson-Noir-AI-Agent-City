@@ -65,6 +65,8 @@ export interface OperatorBridge {
   tuning(): { physics: Record<string, number>; shaders: Record<string, number> }
   /** `set`: one physics.* or shaders.* key through the facade (validated, clamped by the engine); returns its value now. */
   tune(table: 'physics' | 'shaders', key: string, value: number): number
+  /** The feature inspector and its steering (reads work while locked; steer, clamp, release and reset throw while locked). */
+  features: FeaturesBridge
   /**
    * A prompt for the local model, through the capability gateway like a script: decided at once, answered for the
    * people it is bound to, streamed while they stay tethered, cut off when they do not. One answer at a time. Throws
@@ -114,6 +116,31 @@ export interface OperatorBridge {
   api(): ReturnType<typeof apiDoc>
   harnesses(): ReturnType<typeof harnesses>
   harness(name: string): Promise<HarnessReport>
+}
+
+/**
+ * The feature inspector (09_Cognition/features.ts) over the operator tier: the named features of the city read from
+ * the newest snapshot, the operator's steering (a bias in [-1, 1] or a clamp in [0, 1] per feature) and the fixed lines
+ * it adds to every provider's system prompt. Every row comes formatted. Reads work while locked; steer, clamp,
+ * release and reset throw while locked, and a RangeError names an unknown feature or a value out of range.
+ */
+export interface FeaturesBridge {
+  /** The inspector's rows over the newest snapshot: steered, sparsified, the top k (all by default), largest first. */
+  lines(k?: number): string[]
+  /** One feature: id and title, what it measures, its threshold, its activation now and its steering; null for an unknown name. */
+  about(name: string): string[] | null
+  /** The steering lines in every provider's system prompt now; empty when nothing is steered. */
+  prompt(): string[]
+  /** What the inspector is and is not, plainly. */
+  explain(): string[]
+  /** Leans a feature by a bias in [-1, 1]: the line kept, then each tuning knob it moved, one line each. */
+  steer(name: string, bias: number): string[]
+  /** Holds a feature's lane at a value in [0, 1]; returns the line kept. */
+  clamp(name: string, value: number): string
+  /** Drops a feature's bias and clamp: the line, then each knob returned to its middle. */
+  release(name: string): string[]
+  /** Drops every bias and clamp: the line, then each knob returned to its middle. */
+  reset(): string[]
 }
 
 /** The swarm as the console and the host see it (08_Swarm/orchestrator.ts Swarm): plan, run, status, stop, the audit trail. */
@@ -400,6 +427,7 @@ export function offlineBridge(brand: TerminalBridge['brand']): TerminalBridge {
     ping: { at: down, list: down, newest: down, clear: down },
     operator: {
       unlock: down, lock: down, unlocked: down, exec: down, tuning: down, tune: down,
+      features: { lines: down, about: down, prompt: down, explain: down, steer: down, clamp: down, release: down, reset: down },
       ask: down, askStatus: down, askSet: down, askConnect: down, askStop: down, say: down, sayStatus: down, saySet: down, sayStop: down,
       api: down, harnesses: down, harness: down,
       swarm: { plan: down, run: down, status: down, stop: down, audit: down, verify: down, get roles() { return down() }, get quota() { return down() } },
