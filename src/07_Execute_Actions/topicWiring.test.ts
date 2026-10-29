@@ -69,9 +69,9 @@ test('the bridge expands a leading ~ to the root, as the rows print it', () => {
   assert.equal(expandTopic('~x'), '~x', 'only a ~ alone or before a slash is the root')
 })
 
-test('HUD: the topic count is a readout line (not on a short screen), from the snapshot field alone', () => {
+test('HUD: the topic count is a readout line (not on a phone), from the snapshot field alone', () => {
   const hud = read('./Hud.tsx')
-  assert.match(hud, /\{!tight && s\.output\.topics && \(\n\s*<div className=\{`truncate tabular-nums \$\{muted\}`\} data-hud="topics">\n\s*namespace \{s\.output\.topics\.count\.toLocaleString\(\)\} topics/)
+  assert.match(hud, /\{!compact && s\.output\.topics && \(\n\s*<div className=\{`truncate tabular-nums \$\{muted\}`\} data-hud="topics">\n\s*namespace \{s\.output\.topics\.count\.toLocaleString\(\)\} topics/)
   assert.doesNotMatch(hud, /namespace\.ts'|TopicBus/, 'the HUD reads the snapshot, never the bus')
 })
 
