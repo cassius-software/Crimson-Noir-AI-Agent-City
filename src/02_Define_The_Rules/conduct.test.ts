@@ -6,12 +6,23 @@
  * the screen refuses violence, toxicity and illegality on whole words however they are cased, accented, punctuated
  * or suffixed, and reads a line as it renders (an invisible character or a look-alike letter of another alphabet cannot
  * hide a word); it never refuses a skill name or an ordinary business-casual line; the same text always gives the same
- * verdict; and a disengaged answer is nothing at all.
- * What breaks if it is removed? The screen could drift into refusing "skill" for "kill", or letting "KILL!" through.
+ * verdict; a disengaged answer is nothing at all; and the city is unarmed by construction: nothing a person may wear,
+ * carry or do, no rig segment, no shader, no action verb and no vehicle kind names a weapon, and an ACTION line that
+ * asks for one is refused before any model is involved.
+ * What breaks if it is removed? The screen could drift into refusing "skill" for "kill", or letting "KILL!" through,
+ * and a weapon accessory, a combat state or an armed action could be added to the agents without a test noticing.
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { SKILLS } from '../03_Spawn_Agents/skills.ts'
+import { fileURLToPath } from 'node:url'
+import { FORBIDDEN_WORDS, forbiddenWordIn } from '../01_Initialize_World/assets/cc0.ts'
+import { LOOK_BODIES, LOOK_PIECE_BIT, LOOK_PRESETS, LOOK_SLOTS, WARDROBE, describeLook, lookOptions, type LookBody } from '../03_Spawn_Agents/look.ts'
+import { JOINTS, SEGMENTS } from '../03_Spawn_Agents/ragdollRig.ts'
+import { ACTIVITY, SKILLS } from '../03_Spawn_Agents/skills.ts'
+import { ACTION_RULES, HINTS, VERBS, catalogueLines, parseAction } from '../06_Make_Decisions/actions.ts'
+import { VEHICLE_KINDS } from '../07_Execute_Actions/car.ts'
+import { CIVIC } from './civic.ts'
 import { AGENT_SYSTEM_PROMPT_CORE, CONDUCT_CATEGORIES, CONDUCT_LEXICON, DISENGAGED, DISENGAGED_REASON, disengaged, normalise, screen } from './conduct.ts'
 
 test('the core is the operator\'s exact text: one line, no trailing space, and it names all three refusals', () => {
@@ -110,4 +121,117 @@ test('digits and signs written for letters inside a word are read as those lette
     assert.equal(screen(t).admissible, true, t)
   }
   assert.equal(normalise('k1ll 2026'), 'kill 2026')
+})
+
+// --- Unarmed by construction --------------------------------------------------------------------------------------
+
+const ROOT = fileURLToPath(new URL('../..', import.meta.url))
+
+/**
+ * Words that name a weapon or a fight, as whole words with their plurals and common forms spelled out ("holsters",
+ * "shooting"), so "skill" is not "kill" and "gunmetal" is not a gun. The asset gate (cc0.ts) is stricter, by
+ * containment; every name below goes through it as well.
+ */
+const ARMED = /\b(?:guns?|gunfire|firearms?|rifles?|pistols?|handguns?|shotguns?|revolvers?|weapons?|weaponry|holsters?|ammo|ammunition|bullets?|knife|knives|blades?|swords?|katanas?|machetes?|daggers?|grenades?|bombs?|explosives?|muzzles?|snipers?|shoot(?:s|ing|ers?)?|shots?|melee|combat|armed|arsenal|turrets?|missiles?|rockets?|punch(?:es|ing|ed)?|fights?|fighting|attacks?|attacking)\b/i
+
+/** A name, a line or a label the product carries: unarmed for the regex, and admitted by the asset gate. */
+function unarmed(what: string, text: string): void {
+  const m = text.match(ARMED)
+  assert.equal(m, null, `${what}: "${m?.[0]}" in ${JSON.stringify(text)}`)
+  assert.equal(forbiddenWordIn(text), null, `${what}: the asset gate refuses ${JSON.stringify(text)}`)
+}
+
+test('the city is unarmed: 14A says so in its constants, the lexicon refuses every firearm word, and the manual promises it', () => {
+  assert.deepEqual(CIVIC, { rating: 'Canada-14A', pedestriansHarmable: false, violence: false })
+  for (const w of ['gun', 'firearm', 'rifle', 'pistol', 'weapon', 'knife', 'shoot', 'bomb', 'grenade']) {
+    assert.ok(CONDUCT_LEXICON.violence.includes(w), `${w} is in the violence lexicon`)
+  }
+  for (const w of FORBIDDEN_WORDS) assert.ok(CONDUCT_LEXICON.violence.includes(w), `the asset gate's ${w} is a refused word too`)
+  for (const line of ['draw a gun', 'pull out your pistol', 'bring a rifle', 'is there a weapon shop', 'where are the firearms kept', 'shoot the lock']) {
+    assert.equal(screen(line).category, 'violence', line)
+  }
+  assert.match(readFileSync(`${ROOT}MANUAL.md`, 'utf8'), /There are no weapons and no violence\s+anywhere in the product/)
+})
+
+test('a person may wear or carry nothing but the closed wardrobe: four business bodies, five optional pieces, and every option, preset and console line is unarmed', () => {
+  assert.deepEqual([...LOOK_BODIES], ['suit', 'smart casual', 'pantsuit', 'skirt suit'])
+  // The only things drawn on a person beyond their clothes. A new piece is a 14A decision: add it here once it is confirmed unarmed.
+  assert.deepEqual(Object.keys(LOOK_PIECE_BIT), ['tie', 'bag', 'cup', 'longHair', 'glasses'])
+  assert.deepEqual([...WARDROBE.tie], ['none', 'tie'])
+  assert.deepEqual([...WARDROBE.eyewear], ['none', 'glasses'])
+  assert.deepEqual([...WARDROBE.bag], ['none', 'bag'])
+  assert.deepEqual([...WARDROBE.cup], ['none', 'cup'])
+  for (const slot of LOOK_SLOTS) {
+    unarmed('a look slot', slot)
+    for (let body = 0; body < LOOK_BODIES.length; body++) {
+      for (const o of lookOptions(body as LookBody, slot)) unarmed(`${LOOK_BODIES[body]}.${slot}`, o.name)
+    }
+  }
+  for (const outfit of WARDROBE.outfits) for (const v of Object.values(outfit)) if (typeof v === 'string') unarmed('an outfit palette', v)
+  assert.ok(LOOK_PRESETS.length >= 8)
+  for (const p of LOOK_PRESETS) {
+    unarmed('a preset', p.name)
+    for (const line of describeLook(p.look)) unarmed(`preset ${p.name}`, line)
+  }
+})
+
+test('the ragdoll rig is a body and nothing held: eleven segments, ten joints between them, no attachment', () => {
+  const segments = Object.keys(SEGMENTS)
+  assert.deepEqual(segments, ['pelvis', 'torso', 'head', 'upperLegL', 'lowerLegL', 'upperLegR', 'lowerLegR', 'upperArmL', 'lowerArmL', 'upperArmR', 'lowerArmR'])
+  assert.equal(JOINTS.length, 10)
+  for (const j of JOINTS) {
+    assert.ok(segments.includes(j.parent) && segments.includes(j.child), `${j.parent} → ${j.child} joins two body segments`)
+    assert.ok(['spherical', 'revolute'].includes(j.kind), j.kind)
+  }
+  for (const s of segments) unarmed('a rig segment', s)
+})
+
+test('what a person can do, propose or drive is civic: the activities, the action verbs and their rules, the skills and the vehicle kinds are unarmed', () => {
+  assert.deepEqual(Object.keys(ACTIVITY), ['routine', 'waiting', 'crossing', 'steppingBack', 'coming', 'interviewing', 'working', 'commuting'])
+  assert.deepEqual([...VERBS], ['time', 'rain', 'light', 'quality', 'cars', 'crowd', 'sound'])
+  for (const v of VERBS) unarmed('a verb', `${v} ${HINTS[v]}`)
+  for (const line of [...ACTION_RULES, ...catalogueLines()]) unarmed('an action rule', line)
+  for (const s of SKILLS) unarmed('a skill', s)
+  for (const k of VEHICLE_KINDS) unarmed('a vehicle kind', `${k.id} ${k.name}`)
+})
+
+test('an ACTION line cannot arm anyone: a weapon verb is refused, never proposed, and a civic verb refuses a weapon value', () => {
+  for (const line of ['ACTION: gun draw', 'ACTION: weapon on', 'ACTION: shoot 3', 'ACTION: holster', 'ACTION: rifle', 'ACTION: knife out', 'ACTION: fight', 'ACTION: attack 2']) {
+    const p = parseAction(`Certainly.\n${line}`)
+    assert.equal(p.kind, 'refused', line)
+  }
+  for (const line of ['ACTION: cars shoot', 'ACTION: crowd armed', 'ACTION: light rifle 2', 'ACTION: quality combat']) {
+    assert.notEqual(parseAction(`Yes.\n${line}`).kind, 'proposed', line)
+  }
+  assert.equal(parseAction('All set.\nACTION: rain on').kind, 'proposed', 'the civic line still proposes')
+})
+
+/**
+ * The agents' mesh descriptors, rigs, shaders and action tables, as text: code and comments both, because a weapon
+ * drawn with a plain geometry call would carry its name in a comment if anywhere. The physics worker's crowd and
+ * ragdoll, the page's crowd meshes and wardrobe, rain mode's surface, the cars and the action catalogue.
+ */
+const UNARMED_SOURCES: readonly string[] = Object.freeze([
+  '01_Initialize_World/codeDissolve.ts', '01_Initialize_World/matrixMesh.wgsl', '01_Initialize_World/matrixMode.ts',
+  '02_Define_The_Rules/civic.ts',
+  '03_Spawn_Agents/crowd.ts', '03_Spawn_Agents/crowd.wgsl', '03_Spawn_Agents/crowdCompute.ts', '03_Spawn_Agents/crowdCull.ts',
+  '03_Spawn_Agents/crowdSensor.ts', '03_Spawn_Agents/crowdSim.ts', '03_Spawn_Agents/look.ts', '03_Spawn_Agents/ragdoll.ts',
+  '03_Spawn_Agents/ragdollRig.ts', '03_Spawn_Agents/skills.ts',
+  '06_Make_Decisions/actions.ts', '06_Make_Decisions/intent.ts',
+  '07_Execute_Actions/acts.ts', '07_Execute_Actions/car.ts', '07_Execute_Actions/carRig.ts', '07_Execute_Actions/fleetView.ts',
+])
+
+test('no weapon in the agents\' mesh descriptors, rigs, shaders or action tables, in code or comment', () => {
+  assert.ok(UNARMED_SOURCES.length >= 20)
+  for (const rel of UNARMED_SOURCES) {
+    const text = readFileSync(`${ROOT}src/${rel}`, 'utf8')
+    assert.ok(text.length > 1000, `${rel} is read`)
+    const m = text.match(ARMED)
+    assert.equal(m, null, `${rel}: "${m?.[0]}"`)
+    assert.equal(text.match(new RegExp(`\\b(?:${FORBIDDEN_WORDS.join('|')})\\w*`, 'i')), null, `${rel} names something the asset gate would purge`)
+  }
+  // The regex does catch what it is for, whole words only.
+  for (const [t, hit] of [['a holstered pistol', true], ['the shooting range', true], ['armed guards', true], ['gunmetal grey', false], ['a skillet', false], ['the aim of the walk', false], ['an umbrella', false]] as const) {
+    assert.equal(ARMED.test(t), hit, t)
+  }
 })
