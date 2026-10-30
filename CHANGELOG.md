@@ -38,6 +38,21 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   proved in Node (19 tests); the profiles' hardware facts are the Linux kernel's tables and have not been seen on a
   physical pad in this environment.
 
+- **The trains, drones and planes are drawn, and VTOLs fly between rooftop pads.** The scheduled craft the realm has
+  run since Phase 7.3 are on the page (`craftView.ts`): the three train sets as three cars each on the elevated loop,
+  with its deck, guideway columns and beams and the four stations' platforms and canopies; the 960 drones on their
+  corridors; the three planes on the racetrack, banked through its turns by their speed and the turn's radius; and,
+  new, the VTOLs: two routes of four rooftop pads each (roofs of 24 to 60 m, chosen from the city's own boxes), flown
+  along the avenues at 75 and 85 m like the drone corridors, turning off at each pad to come straight down, sit ten
+  seconds and climb back, two craft a route. The routes are part of the track network (`tracks.ts` `vtolRoutes`;
+  `buildTrackNetwork` takes the boxes, and the page builds the same network as the realm), the kind is in the stream
+  and the Ring-0 audit (`vtol`, floor 24 m: a VTOL under the lowest roof a pad is ever set on halts the realm), and the
+  proofs cover them on four seeds: every leg and every descent clears every box by the craft's envelope, the two
+  craft of a route and the craft of the two routes keep two envelopes apart, the drone corridors stay clear of every
+  pad's column, and a loop whose craft would meet is not flown. Every body the page draws is held inside its kind's
+  envelope by test, and every material builds in both passes with rain mode once. The craft still have no body: they
+  touch nothing. Unverified on a device: the look; the browser CI job draws the city with them on the software
+  adapter.
 - **Unarmed by construction, pinned.** `conduct.test.ts` now proves the city carries no weapon: the wardrobe's five
   optional pieces (a tie, a bag, a cup, long hair, glasses), the ragdoll's eleven body segments and ten joints, the
   crowd's eight activities, the seven action verbs with their rules and hints, the skills and the eight vehicle kinds
@@ -386,6 +401,22 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Fixed
 
+- **A pedestrian pinned on a standing car, and the car held by them.** A pedestrian whose way to their corner ran
+  through a car's contact footprint (a car parked across the sidewalk, or the player's car stopped on one) was pushed
+  out of the footprint every tick while their walk kept pressing in, so they stood at the bumper for good, staggering;
+  from inside the widened footprint they read as 0 m to the car's First-Law corridor, which held the car's reverse, so
+  the car and its pedestrian locked each other (seed 11 of the city: agent 17 on car 0 for 59 s of 60, a push every
+  tick). Now the part of a walk pressing into a car comes out of it, as a wall's does, so the step slides along the
+  body instead of being set back; a pedestrian whose next 6 m run through a standing car (under 1 m/s) steers for the
+  footprint corner with the shortest clear way round, 0.3 m off the body; and a corner or door front a standing car
+  covers counts as reached from anywhere round the car, so the leg ends instead of waiting on it. Traffic on its rings
+  never locked, so nothing changes for a moving car. The crowd shader now runs on the CPU under test: `wgslHost.ts`
+  compiles the WGSL subset it is written in to JavaScript, checked against the GPU's own `Params` layout and against
+  TypeScript copies of its pure functions over 12,000 random cases, and `crowdHost.ts` is the same sensor over it,
+  with the GPU's one-step lag. `crowdSoak.test.ts` soaks the whole realm with the shipped pedestrians on every change:
+  eight cars parked across the sidewalks for 60 s, and 48 cars on their rings with 500 people for 1,800 ticks, no
+  pedestrian pinned on a car for 5 s and no car reading one at 0 m for 10 s. The nightly fuzz workflow runs the
+  traffic soak for 10,000 ticks (`SOAK_TICKS`).
 - **The asset gate read "burgundy" as a gun.** The containment rule (`assets/cc0.ts`) purges any name that holds
   `gun`, and its short list of ordinary words that merely contain it had no colour in it, so an asset or a generated
   name with burgundy in it would have been purged. It is allowed now; the wardrobe's burgundy pantsuit showed it.

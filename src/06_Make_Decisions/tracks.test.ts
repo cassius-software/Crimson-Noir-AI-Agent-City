@@ -19,8 +19,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   TRACKS, assignSlots, buildTrackNetwork, capacity, cornerAhead, guideway, lapSeconds, nextStop, pieceAt, poseAt, projectOnto,
-  ringGaps, roomToClear, scheduledCount, scheduledPose, seatable, seats, slotCount, slotStart, speedLimitAt, tangentAt, turnBezier, wrap,
-  type Track,
+  ringGaps, roomToClear, scheduledCount, scheduledPose, seatable, seats, slotCount, slotStart, speedLimitAt, tangentAt, turnBezier, vtolPads,
+  vtolSchedule, wrap, type Track,
 } from './tracks.ts'
 import { Driver, followSpeed } from './traffic.ts'
 import { CITY, POLES, generateBuildings, streetFurniture, type Box } from '../01_Initialize_World/city.ts'
@@ -701,4 +701,152 @@ test('projectOnto round-trips beside the track with a hint, and a stale hint hal
   const q = poseAt(t, 20)
   const far = projectOnto(t, q.x + 12 * -q.tangentZ, q.z + 12 * q.tangentX, 20)
   assert.ok(Math.abs(around(20, far.s, t.length)) < 1e-3 && Math.abs(far.lateral - 12) < 1e-3)
+})
+
+// ---------------------------------------------------------------- VTOL routes
+
+/** The boxes of a city by CITY.pitch cell of their footprint, and the ones about a point. */
+function boxIndex(boxes: readonly Box[]): (x: number, z: number) => Box[] {
+  const cell = CITY.pitch
+  const hash = new Map<string, Box[]>()
+  for (const b of boxes) {
+    for (let i = Math.floor(b[0] / cell); i <= Math.floor(b[3] / cell); i++) for (let j = Math.floor(b[2] / cell); j <= Math.floor(b[5] / cell); j++) {
+      const k = `${i},${j}`
+      const list = hash.get(k)
+      if (list) list.push(b); else hash.set(k, [b])
+    }
+  }
+  return (x, z) => {
+    const cx = Math.floor(x / cell), cz = Math.floor(z / cell)
+    const out: Box[] = []
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const b of hash.get(`${cx + i},${cz + j}`) ?? []) out.push(b)
+    return out
+  }
+}
+
+test('VTOL routes: pads on roofs between the floor and the ceiling, the same for the same boxes, after the rest of the network', () => {
+  const { floor, ceiling, cruise, padHalf, halfSize, apart, pads: perRoute } = TRACKS.vtol
+  let routes = 0
+  for (const seed of SEEDS) {
+    const boxes = generateBuildings(seed).map((b) => b.box)
+    const city = buildTrackNetwork(seed, boxes)
+    const plain = buildTrackNetwork(seed)
+    const vt = city.tracks.filter((t) => t.kind === 'vtol')
+    assert.ok(vt.length >= 1, `seed ${seed}: no VTOL route`)
+    routes += vt.length
+    // The rest of the network is the one built without boxes, id for id; the routes come after it, and without boxes there are none.
+    assert.equal(city.tracks.length, plain.tracks.length + vt.length)
+    plain.tracks.forEach((t, i) => assert.deepEqual(city.tracks[i], t))
+    assert.equal(plain.tracks.filter((t) => t.kind === 'vtol').length, 0)
+    assert.deepEqual(buildTrackNetwork(seed, boxes).tracks.filter((t) => t.kind === 'vtol'), vt)
+    const candidates = vtolPads(boxes)
+    for (const t of vt) {
+      assert.ok((cruise as readonly number[]).includes(t.y))
+      assert.equal(t.stations.length, perRoute)
+      assert.equal(t.pads.length, perRoute)
+      assert.equal(t.stops.length, 0)
+      assert.ok(t.pieces.every((p) => p.kind === 'line' || p.kind === 'corner'))
+      assert.equal(scheduledCount(t), TRACKS.vtol.craft)
+      const at = t.stations.map((s) => poseAt(t, s))
+      t.stations.forEach((s, i) => {
+        assert.ok(t.pads[i] >= floor && t.pads[i] <= ceiling, `seed ${seed}: a pad roof at ${t.pads[i]} m`)
+        assert.equal(pieceAt(t, s).s0, s, 'a pad begins a piece')
+        const q = at[i]
+        // On a roof: a box with that top, holding the pad's centre with padHalf to spare, and the candidate list has it.
+        const roof = boxes.find((b) => b[4] === t.pads[i] && q.x - b[0] >= padHalf - 1e-6 && b[3] - q.x >= padHalf - 1e-6 && q.z - b[2] >= padHalf - 1e-6 && b[5] - q.z >= padHalf - 1e-6)
+        assert.ok(roof, `seed ${seed}: pad ${i} of route ${t.id} at (${q.x}, ${q.z}) is on no roof`)
+        assert.ok(candidates.some((c) => c.x === q.x && c.z === q.z && c.y === t.pads[i]))
+        // Nothing taller stands in the descent column.
+        for (const b of boxes) {
+          if (b === roof || b[4] <= t.pads[i]) continue
+          assert.ok(!(b[0] < q.x + halfSize && b[3] > q.x - halfSize && b[2] < q.z + halfSize && b[5] > q.z - halfSize), `seed ${seed}: a taller box in pad ${i}'s column`)
+        }
+        for (let j = 0; j < perRoute; j++) if (j !== i) assert.ok(dist(q, at[j]) >= apart, 'pads apart')
+      })
+    }
+    // Every pad of one route is `apart` from every pad of the other.
+    if (vt.length === 2) for (const s of vt[0].stations) for (const u of vt[1].stations) assert.ok(dist(poseAt(vt[0], s), poseAt(vt[1], u)) >= apart)
+  }
+  assert.ok(routes >= SEEDS.length + 2, `${routes} routes over ${SEEDS.length} seeds`)
+})
+
+test('VTOL schedule: periodic, sits the dwell on every pad, climbs and flies no faster than allowed, clears every box by its envelope, and craft keep apart (INV-1 for the VTOLs)', () => {
+  const { halfSize, halfHeight, hover, speed, climb, dwell } = TRACKS.vtol
+  for (const seed of SEEDS) {
+    const boxes = generateBuildings(seed).map((b) => b.box)
+    const city = buildTrackNetwork(seed, boxes)
+    const near = boxIndex(boxes)
+    const vt = city.tracks.filter((t) => t.kind === 'vtol')
+    const drones = city.tracks.filter((t) => t.kind === 'drone')
+    const step = 0.1
+    for (const t of vt) {
+      const n = scheduledCount(t)
+      const T = lapSeconds(t)
+      const pads = t.stations.map((s) => poseAt(t, s))
+      const first = scheduledPose(t, 0, n, 0)
+      const back = scheduledPose(t, 0, n, T)
+      assert.ok(dist(first, back) < 1e-6 && Math.abs(first.y - back.y) < 1e-6 && Math.abs(first.heading - back.heading) < 1e-9, `periodic in ${T} s`)
+      let prev = first
+      const sat = t.stations.map(() => 0)
+      let maxSpeed = 0, maxClimb = 0
+      for (let time = step; time <= T + 1e-9; time += step) {
+        const p = scheduledPose(t, 0, n, time)
+        assert.ok([p.x, p.y, p.z, p.heading].every(Number.isFinite), `seed ${seed}: finite at ${time}`)
+        maxSpeed = Math.max(maxSpeed, dist(p, prev) / step)
+        maxClimb = Math.max(maxClimb, Math.abs(p.y - prev.y) / step)
+        assert.ok(p.y <= t.y + 1e-6, 'never over cruise')
+        if (p.y < t.y - 1e-6) {
+          // Under cruise only on a pad's column, no lower than the hover over its roof.
+          const i = pads.findIndex((q) => dist(p, q) < 1e-6)
+          assert.ok(i >= 0, `seed ${seed}: route ${t.id} at ${time.toFixed(1)} s is at ${p.y.toFixed(1)} m off every pad`)
+          assert.ok(p.y >= t.pads[i] + hover - 1e-6, `seed ${seed}: under the hover over pad ${i}`)
+          if (Math.abs(p.y - (t.pads[i] + hover)) < 1e-6) sat[i] += step
+        }
+        // The stream's own view of it agrees.
+        const v = vtolSchedule(t, 0, n, time)
+        assert.ok(Math.abs(v.y - p.y) < 1e-9 && Math.abs(v.heading - p.heading) < 1e-9 && v.speed >= 0 && v.speed <= speed + 1e-9)
+        const q = poseAt(t, v.s)
+        assert.ok(dist(q, p) < 1e-6, 's places it')
+        prev = p
+      }
+      assert.ok(maxSpeed <= speed + 0.05, `seed ${seed}: ${maxSpeed.toFixed(2)} m/s`)
+      assert.ok(maxClimb <= 1.5 * climb + 0.05, `seed ${seed}: ${maxClimb.toFixed(2)} m/s vertically`)
+      for (const d of sat) assert.ok(Math.abs(d - dwell) <= 2 * step, `sat ${d.toFixed(1)} s`)
+      // Every sample of every craft clears every box by the envelope (the roof it sits on lies under the envelope's
+      // bottom), and the craft of a route keep two envelopes apart.
+      for (let time = 0; time < T; time += 0.5) {
+        const ps = Array.from({ length: n }, (_, i) => scheduledPose(t, i, n, time))
+        for (const p of ps) {
+          const y0 = p.y - halfHeight, y1 = p.y + halfHeight
+          for (const b of near(p.x, p.z)) {
+            if (b[4] <= y0 || b[1] >= y1) continue
+            const d = boxDistance(p.x, p.z, b)
+            assert.ok(d >= halfSize, `seed ${seed}: route ${t.id} at ${time} s (${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}) is ${d.toFixed(2)} m from box ${b.map((v) => v.toFixed(1))}`)
+          }
+        }
+        for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+          const d = Math.hypot(ps[i].x - ps[j].x, ps[i].y - ps[j].y, ps[i].z - ps[j].z)
+          assert.ok(d >= 2 * halfSize, `seed ${seed}: craft ${i} and ${j} of route ${t.id} ${d.toFixed(1)} m apart at ${time} s`)
+        }
+      }
+      // The drone corridors stay clear of every pad's column, by both envelopes and a metre.
+      for (const q of pads) for (const d of drones) for (let s = 0; s < d.length; s += 1) {
+        const r = poseAt(d, s)
+        assert.ok(dist(q, r) >= halfSize + TRACKS.drone.halfSize + 1, `seed ${seed}: drone corridor ${d.id} is ${dist(q, r).toFixed(1)} m from a pad column`)
+      }
+    }
+    // The craft of one route and the other never come within two envelopes of each other.
+    if (vt.length === 2) {
+      const [a, b] = vt
+      const na = scheduledCount(a), nb = scheduledCount(b)
+      const T = Math.max(lapSeconds(a), lapSeconds(b)) * 2
+      for (let time = 0; time < T; time += 0.5) {
+        for (let i = 0; i < na; i++) for (let j = 0; j < nb; j++) {
+          const p = scheduledPose(a, i, na, time), q = scheduledPose(b, j, nb, time)
+          const d = Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z)
+          assert.ok(d >= 2 * halfSize, `seed ${seed}: routes ${a.id} and ${b.id} ${d.toFixed(1)} m apart at ${time} s`)
+        }
+      }
+    }
+  }
 })

@@ -942,7 +942,14 @@ test('the craft buffer: a NaN or a train below its deck halts with a named reaso
   const names = Object.entries(TRACK_POSE).filter(([k]) => k !== 'stride').sort((a, b) => a[1] - b[1]).map(([k]) => k)
   assert.deepEqual([...CRAFT.fields], names)
   assert.deepEqual([...CRAFT.kinds], [...TRACK_KINDS])
-  assert.deepEqual([...CRAFT.floor], [NaN, TRACKS.train.deck, TRACKS.drone.altitude[0], TRACKS.plane.altitude])
+  assert.deepEqual([...CRAFT.floor], [NaN, TRACKS.train.deck, TRACKS.drone.altitude[0], TRACKS.plane.altitude, TRACKS.vtol.floor])
+  // A VTOL under the lowest roof a pad is set on has left its corridor; one sat on that roof (its hover over it) passes.
+  const one = new Float32Array(S)
+  one[TRACK_POSE.kind] = TRACK_KINDS.indexOf('vtol')
+  one[TRACK_POSE.y] = 23.99
+  assert.deepEqual(auditCraft(one), { code: 'OFF_CORRIDOR', subject: 'vtol craft 0', detail: 'y=23.99m below its 24m floor' })
+  one[TRACK_POSE.y] = TRACKS.vtol.floor + TRACKS.vtol.hover
+  assert.equal(auditCraft(one), null)
   // Frozen, like every other export.
   const mutable = (o: unknown) => o as Record<string, unknown>
   assert.throws(() => { mutable(CRAFT).stride = 1 }, TypeError)

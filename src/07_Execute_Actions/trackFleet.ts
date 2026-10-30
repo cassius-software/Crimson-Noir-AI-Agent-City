@@ -3,18 +3,18 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the realm's fleet of scheduled craft: the train sets on the elevated loop, the
- * drones on their corridors and the planes on the racetrack of the fixed track network (06_Make_Decisions/
- * tracks.ts). Each is a pure function of the realm's own clock (scheduledPose), so a step only evaluates the
+ * drones on their corridors, the planes on the racetrack and the VTOLs between their rooftop pads, all of the fixed
+ * track network (06_Make_Decisions/tracks.ts). Each is a pure function of the realm's own clock (scheduledPose), so a step only evaluates the
  * timetable at simTime and packs the result as plain numbers (simProtocol.ts TRACK_POSE) for the page to draw and
  * for the Ring-0 audit to read before it leaves. No craft has a Rapier body, a driver or a Bouncer ruling: INV-1
- * (tracks.test.ts) proves their corridors never meet the street, the sidewalk or a car lane, so none can reach a
- * person, and the audit holds them to that (every value finite, every craft at or above its corridor's floor). The
- * craft never interact: a set's place depends on t alone, never on another set's. Nothing here is loaded, and
- * nothing returned is a reference into it.
- * What breaks if it is removed? The realm has no trains, drones or planes to report, and the sky and the elevated
- * loop stay empty.
+ * (tracks.test.ts) proves their corridors never meet the street, the sidewalk or a car lane (a VTOL's lowest point is
+ * a roof 24 m up), so none can reach a person, and the audit holds them to that (every value finite, every craft at
+ * or above its corridor's floor). The craft never interact: a set's place depends on t alone, never on another
+ * set's. Nothing here is loaded, and nothing returned is a reference into it.
+ * What breaks if it is removed? The realm has no trains, drones, planes or VTOLs to report, and the sky and the
+ * elevated loop stay empty.
  */
-import { lapSeconds, poseAt, projectOnto, scheduledCount, scheduledPose, wrap, type Track, type TrackNetwork } from '../06_Make_Decisions/tracks.ts'
+import { lapSeconds, poseAt, projectOnto, scheduledCount, scheduledPose, vtolSchedule, wrap, type Track, type TrackNetwork } from '../06_Make_Decisions/tracks.ts'
 import { TRACK_KINDS, TRACK_POSE } from './simProtocol.ts'
 
 /**
@@ -84,6 +84,11 @@ export class TrackFleet {
         const a = scheduledPose(track, c.index, c.count, t - SPEED_WINDOW)
         const b = scheduledPose(track, c.index, c.count, t + SPEED_WINDOW)
         speed = Math.hypot(b.x - a.x, b.z - a.z) / (2 * SPEED_WINDOW)
+      } else if (track.kind === 'vtol') {
+        // The VTOL's own schedule says where along its route it is and how fast it flies it (0 on, over and under a pad).
+        const v = vtolSchedule(track, c.index, c.count, t)
+        s = v.s
+        speed = v.speed
       } else {
         // scheduledPose for a drone or a plane is poseAt(track, index · L / count + speed · t): the same arc length.
         s = wrap(track, (c.index * track.length) / c.count + track.speedLimit * t)
