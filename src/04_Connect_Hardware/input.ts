@@ -12,7 +12,7 @@
  * What breaks if it is removed? The player cannot move, look, drive or interact.
  */
 import { HalBus } from './hal.ts'
-import { createAnalog, isUsablePad, PAD_EDGE, PadLook, PadMapper, type Analog, type PadFamily } from './gamepad.ts'
+import { createAnalog, isUsablePad, PAD_EDGE, PadLook, PadMapper, type Analog, type PadFamily, type GenericLayout } from './gamepad.ts'
 import { KEYBOARD_SEAT, PadSeat, SEATS, SeatTable, type PlayerIntent, type Seat } from './seats.ts'
 import type { GamepadLike } from './web-hardware.d.ts'
 
@@ -440,12 +440,28 @@ export class Input {
     return seat > 0 && seat < SEATS ? this.padSeats[seat - 1].padFamily : null
   }
 
+  /** The layout any seat's mapper settled on for the pad at `index` (null while every mapper is still watching). */
+  private layoutOf(index: number): GenericLayout | null {
+    const own = this.mapper.generic.layoutOf(index)
+    if (own) return own
+    for (let s = 1; s < this.seats.players; s++) {
+      const l = this.padSeats[s - 1].layoutOf(index)
+      if (l) return l
+    }
+    return null
+  }
+
   /** Once per frame, before the engine reads input: gamepads → analog and actions, right stick → head yaw/pitch. */
   poll(dt: number): void {
     if (this.pollsSinceMove < 2) this.pollsSinceMove++
     this.lastPollAt = this.now()
     // Read once: readPads pumps the pads' rumble and syncs their slots; the same list is dealt to every seat.
     const pads = this.hal.readPads()
+    // The resolver's word for a pad read by position follows the layout its mapper settled on last frame (`hal` prints it).
+    for (let i = 0; i < pads.length; i++) {
+      const p = pads[i]
+      if (p.mapping !== 'standard') this.hal.padLayout(p.index, this.layoutOf(p.index))
+    }
     let edges: number
     if (this.seats.players > 1) {
       this.seats.assign(pads)
