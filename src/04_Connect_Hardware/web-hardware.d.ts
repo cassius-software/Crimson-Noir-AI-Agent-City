@@ -8,8 +8,9 @@
  * written against the WHATWG/WICG specs: hid.spec.whatwg.org, wicg.github.io/serial,
  * webbluetoothcg.github.io/web-bluetooth, w3c.github.io/gamepad. The last section covers what the
  * .agv recorder needs beyond lib.dom's WebCodecs: MediaStreamTrackProcessor
- * (w3c.github.io/mediacapture-transform) and showSaveFilePicker (wicg.github.io/file-system-access).
- * What breaks if it is removed? hal.ts, dualsense.ts, lineLink.ts, gamepad.ts and recorder.ts stop
+ * (w3c.github.io/mediacapture-transform) and showSaveFilePicker (wicg.github.io/file-system-access), and the
+ * WebXR section the device resolver reads (immersive-web.github.io/webxr, the Gamepads Module and Hand Input).
+ * What breaks if it is removed? hal.ts, dualsense.ts, lineLink.ts, gamepad.ts, devices.ts and recorder.ts stop
  * type-checking.
  */
 
@@ -163,6 +164,27 @@ export interface GamepadLike {
   readonly axes: readonly number[]
   readonly buttons: readonly GamepadButtonLike[]
   readonly vibrationActuator?: GamepadHapticsLike | null
+}
+
+// ── WebXR input (the slice devices.ts reads of an XRInputSource; a DOM one satisfies it structurally) ─────────
+
+/** An XR input source's gamepad: `mapping` is 'xr-standard' for a tracked controller, '' otherwise. */
+export interface XrGamepadLike {
+  readonly mapping: string
+  readonly axes: readonly number[]
+  readonly buttons: readonly GamepadButtonLike[]
+}
+
+export interface XrInputSourceLike {
+  /** 'none', 'left' or 'right'. */
+  readonly handedness: string
+  /** 'gaze', 'tracked-pointer', 'screen' or 'transient-pointer' (a gaze-and-pinch headset). */
+  readonly targetRayMode: string
+  /** Input profile names, most specific first (immersive-web.github.io/webxr-input-profiles). */
+  readonly profiles: readonly string[]
+  readonly gamepad?: XrGamepadLike | null
+  /** WebXR Hand Input: present when the source is an articulated hand. */
+  readonly hand?: unknown
 }
 
 // ── navigator ──────────────────────────────────────────────────────────────────────────────────────

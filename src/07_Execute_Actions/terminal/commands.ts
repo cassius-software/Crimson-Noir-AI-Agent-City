@@ -368,7 +368,7 @@ export function formatStats(s: Ring0Stats): string[] {
 }
 
 function formatDevice(d: HalDevice): string {
-  return `  ${d.transport.padEnd(10)}${d.state.padEnd(13)}${d.name}${d.detail ? `  ${d.detail}` : ''}`
+  return `  ${d.transport.padEnd(10)}${d.state.padEnd(13)}${d.name}${d.detail ? `  ${d.detail}` : ''}${d.profile ? `  [${d.profile}]` : ''}`
 }
 
 /** A script's output: its captured console lines, then its error or its value (no value: nothing is printed). */

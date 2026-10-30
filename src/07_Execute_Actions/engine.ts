@@ -66,6 +66,8 @@ import type { AgentTelemetry } from '../05_Observe_Environment/agv.ts'
 import { Governor, defaultAgents, defaultCars, liteJoinHint, peakCandidate, profileDevice, readDeviceHints, tierRange, type DeviceProfile, type QualityKnobs } from '../05_Observe_Environment/governor.ts'
 import { CAR_TUNE_RANGE, chassisBox, clampTuning, kindOf, type CarTuning } from './car.ts'
 import { FleetView } from './fleetView.ts'
+import { CraftView } from './craftView.ts'
+import { buildTrackNetwork } from '../06_Make_Decisions/tracks.ts'
 import { RigView } from './rigView.ts'
 import { NetView, type RemotePose } from './netView.ts'
 import { HeadRig, aimRay, carriedYaw, eyeHeightFor, yawFacing, type AimRay } from './head.ts'
@@ -405,6 +407,8 @@ export class Engine {
   /** The page's end of the physics realm: numbers in, numbers out. */
   private readonly sim: SimClient
   private readonly view: FleetView
+  /** The scheduled craft of the realm's craft stream and the loop's structure (craftView.ts); null without craft (a lite boot, a region). */
+  private readonly craftView: CraftView | null
   /** The promoted pedestrians' rigs from the realm's rig stream, drawn where their hidden figures stood. */
   private readonly rigView: RigView
   /** The first-person head: the only thing that places the camera (future WebXR reads/overrides its pose). */
@@ -605,7 +609,7 @@ export class Engine {
   readonly gpuF16: boolean
 
   private constructor(p: {
-    canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; rigView: RigView; profile: DeviceProfile
+    canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; craftView: CraftView | null; rigView: RigView; profile: DeviceProfile
     post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; crowdFrameSeconds: UniformNode<'float', number>; ghost: GhostView
     options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]
     crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; netView: NetView
@@ -623,6 +627,7 @@ export class Engine {
     this.crowd = p.crowd
     this.sim = p.sim
     this.view = p.view
+    this.craftView = p.craftView
     this.rigView = p.rigView
     this.post = p.post
     this.volumetrics = p.volumetrics
@@ -813,12 +818,17 @@ export class Engine {
       if (sim.meta.agents !== options.agents) throw new Error(`the physics worker simulates ${sim.meta.agents} pedestrians, the page draws ${options.agents}`)
       const view = new FleetView(sim.meta.kind, sim.meta.paint, world.night, world.matrixMode.globalState)
       view.sync(sim.state.poses)
+      // The scheduled craft (the realm's craft stream; craftView.ts): the page builds the realm's own network again, from
+      // the same seed and boxes, for the loop's deck, the pads and the cars of a set. None on a lite boot or in a region.
+      const craftView = sim.meta.craft > 0 ? new CraftView(buildTrackNetwork(options.seed, world.boxes), sim.meta.craft, world.night, world.matrixMode.globalState) : null
+      if (craftView && sim.state.craft) craftView.sync(sim.state.craft)
       // The rigs of the promoted pedestrians (the realm's rig stream; none with the ragdoll off, in a region or on a lite
       // boot). Without rig slots their thirteen meshes would only ever draw nothing, every frame: they stay out.
       const rigView = new RigView(sim.meta.rigSlots, world.matrixMode.globalState)
       rigView.sync(sim.state.rigs)
       const rigMeshes = sim.meta.rigSlots > 0 ? rigView.meshes : []
       world.scene.add(...view0.meshes, ...view.bodies, view.wheels, ...rigMeshes)
+      if (craftView) world.scene.add(...craftView.meshes)
       // The network ghosts (netView.ts): two hidden instanced meshes until a session's poses arrive, compiled with the rest.
       const netView = new NetView()
       world.scene.add(netView.people, netView.cars)
@@ -874,6 +884,7 @@ export class Engine {
         crowdDissolve: gpuBufferOf(gpu.renderer, view0.dissolve),
         crowdLook,
         netView,
+        craftView,
       })
       if (start) engine.input.yaw = yawFacing(start.heading)
       return engine
@@ -1746,6 +1757,7 @@ export class Engine {
 
     if (this.fresh) {
       this.view.sync(st.poses)
+      if (st.craft) this.craftView?.sync(st.craft)
       this.fresh = false
     }
     // Matrix mode's global state for this frame: the realm's clock (the one its crowd packs), the mode, and the
@@ -2541,6 +2553,7 @@ export class Engine {
     this.audio.dispose()
     for (let k = 1; k < this.views.length; k++) this.views[k].audio.dispose()
     this.netView.dispose()
+    this.craftView?.dispose()
     // Input.dispose() also disposes the hardware bus, which resets trigger effects and closes ports.
     this.input.dispose()
     this.sim.terminate()

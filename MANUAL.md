@@ -12,7 +12,7 @@ A business-casual, non-violent civic simulation that ships as one self-contained
 16 × 16-block city under a moving sun: a downtown of towers, a heritage quarter of stone and brick rows, and a
 lakefront of condominiums along a promenade, a seawall and a pier. It has 14,000 GPU-simulated pedestrians
 who wait for the walk signal, and Rapier3D traffic that obeys the lights and, by default, drives a fixed network
-of right-turn rings that cannot jam (trains, drones and planes keep timetables above it, not yet drawn). Every
+of right-turn rings that cannot jam (trains, drones, planes and VTOLs keep timetables above it). Every
 vehicle command, from the AI or from you, passes a three-law safety kernel before it reaches the wheels. You see
 everything **first person**, at eye level, on foot or from the driver's seat. You can walk the districts (straight
 through people, lamps and trees, which dissolve into falling green binary code as you pass: the collision model is
@@ -100,7 +100,22 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
   under browser bars, on foot, driving and driving with a paired pad, that every control is on screen and clear of the
   others, the stick, the speedometer, Sloane's chip and her Controls card, that the chip is clear of the stick, the
   minimap and the HUD's panels and as wide as its buttons, that the HUD, with two of its messages raised at each size,
-  stays clear of the buttons and the stick, and that the Menu's sheet stays inside the screen. On a touch laptop the
+  stays clear of the buttons and the stick, and that the Menu's sheet stays inside the screen. The overlay also judges
+  itself (`04_Connect_Hardware/touchLayout.ts`): after every layout it measures each control and checks that it is on
+  screen, finger-sized (at least 48 px on its shorter side, Material's 48 dp and above Apple's 44 pt) and one of the
+  eight sizes on its ladder (in px, or in rem when a phone's text scaling enlarges the root font, since the Menu and
+  the text pills are sized in rem; a text pill is also at least 88 wide), that no two controls overlap and buttons
+  keep 8 px apart (the stick's zone may touch a button: a thumb on its edge is still the stick's), and that no
+  button, and not the stick's base, reaches into the 24 px band at the left or right edge of the screen where a
+  phone's system takes a swipe inward as "back" (the display's own cut-outs and home indicator come from the
+  browser's safe-area insets on top; the bottom edge is left to those insets, above which the cluster stands 16 px).
+  The verdict is in the overlay's `data-touch-layout` attribute (`valid`, or `invalid:` and what is wrong), and the
+  browser smoke test reads it at every view. For the band, the button cluster stands 24 px from the right edge, and
+  at the wheel in landscape under 600 px across the tap row closes up to 8 px gaps so it ends clear of the stick's
+  zone; the zone itself may reach to 8 px from the left edge (a thumb may land anywhere in it) while its
+  base never rests nearer the edge than 42 px. A held button belongs to the finger that pressed it: a second finger
+  landing on the Brake neither presses it again nor, lifting, lets it go; only the owner's lift, a system cancel or a
+  lost capture releases it. On a touch laptop the
   overlay goes away as soon as the mouse moves (the Run toggle with it), and comes back with the next touch. On a
   tablet whose main pointer stays the finger with a mouse or trackpad attached (an iPad in Safari 26, going by
   WebKit's source and not yet tried on an iPad; a Windows 2-in-1 in tablet mode) the overlay stays, and a mouse drag
@@ -185,7 +200,8 @@ Streets run the full grid; the crowd walks every sidewalk and stops short of the
 The fixed track network (`06_Make_Decisions/tracks.ts`) is laid over the grid from the same seed: 64 right-turn
 rings for the cars, one round each 2 × 2-block cell; one elevated train loop on a deck 9 m over the median of the
 two arterial streets, with four mid-block stations and guideway columns at the kerb; drone corridors at 40 m and
-46 m over the 4 × 4-block face rings; and one plane racetrack at 400 m. See Vehicles.
+46 m over the 4 × 4-block face rings; one plane racetrack at 400 m; and two VTOL routes along the avenues at 75 and
+85 m, each calling at four rooftop pads. See Vehicles.
 
 ## The surveyed map
 
@@ -272,8 +288,8 @@ npm run build:pilot   # dist-pilot/index.html: the same single offline file, ope
 - **Not there yet** (the surveyed region; Lakefront Metro has its street window, above):
   - traffic and pedestrians (the AI drives and walks the procedural grid, so the surveyed region's fleet is empty and
     the crowd it keeps is hidden, kilometres away);
-  - the craft (the elevated loop and the corridors are laid over the procedural grid, so no region gets trains,
-    drones or planes);
+  - the craft (the elevated loop, the corridors and the VTOL pads are laid over the procedural grid and its roofs, so
+    no region gets trains, drones, planes or VTOLs);
   - room acoustics (a region's walls live in the physics worker, so every voice there is dry);
   - traffic signals, street lamps and trees (the surveyed region has none; a street window has them along its streets);
   - terrain (the region is flat: no ravines, no bluffs);
@@ -642,7 +658,7 @@ anywhere in the product.
     vetted controls, AI drivers, then the fixed substeps (Sanctuary, avatar, wheels). The audit runs right after
     the last substep, in the same realm, and includes the crowd's own non-finite flag. The crowd then steps on
     that outcome. Only then does the state leave: the car poses (`simProtocol.ts` POSE, drawn by `fleetView.ts`),
-    the craft stream (`TRACK_POSE`, not yet drawn), the rig stream (`RIG_POSE`, drawn by `rigView.ts`) and the
+    the craft stream (`TRACK_POSE`, drawn by `craftView.ts`), the rig stream (`RIG_POSE`, drawn by `rigView.ts`) and the
     pedestrians' newest render frame. The page writes that frame into its render buffers and culls it
     for its camera (`crowdCull.ts`); a frame whose flags halted the realm never leaves it, and neither does a rig
     stream.
@@ -1721,6 +1737,24 @@ run `hal pair …` in the console.
 - **Gamepad API.** Any standard-mapped controller works, no pairing needed; one without the standard mapping is read
   by position (see Controls), and its line in `hal` names the guess. With `?players`, a second, third and fourth pad
   each drive a player of their own (see Split screen); haptics stay one level for every pad.
+- **Device profiles** (`04_Connect_Hardware/devices.ts`). Every input device resolves to one of seventeen profiles,
+  never to none: DualSense and DualSense Edge over USB and over Bluetooth, the DualShock 4, the letters-layout pads of
+  the two other console makers (A at the south button, or B there), Valve's pads and the Steam Deck, Logitech's F310
+  and F710, any pad with the standard mapping, the three layouts a pad without it is read by (the kernel's order, four
+  axes, stick only), a tracked headset controller, a gaze-and-pinch headset and a tracked hand, and `unknown`. The
+  clues are tried in stages, each scoring its candidate, and the best wins: the USB vendor and product id and the bus
+  (100, plus 5 when a bus-specific profile is matched on its bus; Chromium prints the ids in a pad's name, WebHID
+  gives them outright; through the Gamepad API the bus is unknown, and the USB profile stands in and says so), a
+  CRC-16/CCITT-FALSE fingerprint of the pad's name for an id that carries no numbers (80), the standard mapping (70),
+  a headset source's own words (60; its target-ray mode, its hand, its gamepad's `xr-standard` mapping; no headset
+  source has the standard mapping, so the two never meet), the layout the pad shows (40; the guess from its axis
+  count until the mapper has watched it, at 35), and the fallback (0). `hal` prints each pad's profile with its score
+  and how it was found, e.g. `[dualsense-bluetooth 105 (by id, bluetooth 054c:0ce6)]` or
+  `[dualsense-usb 100 (by id, bus unknown, 054c:0ce6)]`; the glyph family the profile reports is the same
+  `gamepad.ts` reports for the id, so a HUD hint and a `hal` line never disagree. The ids come from the Linux
+  kernel's tables and have not been checked on a physical pad here; which browsers print a bare product name has
+  not been checked either. The three headset profiles are reached once the headset path lands (nothing in the page
+  asks for a WebXR session yet).
 
 Every API degrades silently where it is missing. Safari and Firefox have no WebHID, Web Serial or
 Web Bluetooth.
@@ -2288,12 +2322,28 @@ releases, byte for byte (the same seats, drivers and paint from the same stream)
   craft: three train sets on the elevated loop (a deck 9 m over the median of the two arterial streets, 15 m
   corners, four mid-block stations, a 15 s dwell, a timetable that keeps the sets at least 74 m apart; guideway
   columns at the kerb 8, 16, 24 and 32 m into each block, clear of every lamp, tree and signal pole), one drone per
-  20 m of every drone corridor at 40 m clockwise and 46 m counter-clockwise (960 on the city's 32 corridors), and
-  three planes on the racetrack at 400 m. None has a Rapier body, a driver or a Bouncer ruling: each is a pure
-  function of the realm's own clock, so a step only evaluates the timetable and packs the result, and the craft
-  never interact. What keeps them away from people is geometry, proved in `tracks.test.ts`: every corridor clears
-  every building box of four seeds and sits at least 6 m over any car roof, and none ever reaches the street or
-  the sidewalk.
+  20 m of every drone corridor at 40 m clockwise and 46 m counter-clockwise (960 on the city's 32 corridors),
+  three planes on the racetrack at 400 m, and two VTOLs on each of two routes between rooftop pads (below). None
+  has a Rapier body, a driver or a Bouncer ruling: each is a pure function of the realm's own clock, so a step only
+  evaluates the timetable and packs the result, and the craft never interact. What keeps them away from people is
+  geometry, proved in `tracks.test.ts`: every corridor clears every building box of four seeds and sits at least
+  6 m over any car roof, and none ever reaches the street or the sidewalk.
+- **The VTOL routes** (`tracks.ts` `vtolRoutes`, given the city's boxes by `buildTrackNetwork`). A pad is the
+  roof of a box between 24 and 60 m up, at least 4 m each way, with nothing taller within the craft's 3 m descent
+  column; the inner route picks one in each of downtown's four quarters, the outer one on each of the four sides
+  around them, the tallest roofs first. A route flies at its cruise, 75 m for the inner and 85 m for the outer
+  (over the drones' upper band, under the planes), along the street centrelines like the drone corridors, with
+  12 m curves at the turns (which keep the envelope over the road, clear of a tower built to a lot's corner), and
+  turns off at the middle of the block beside each pad for the short hop over the lot to it; there it stops, comes
+  straight down at 4 m/s (eased), sits ten seconds turning to face the next leg, climbs back and flies on at up to
+  9 m/s with the train's comfortable acceleration. Every leg is checked against the boxes (8 m of clearance under
+  the envelope at cruise) and every pad against the others (8 m apart from any leg that is not its own), and a
+  loop whose two craft, half a lap apart, would come within two envelopes of each other is not flown; a city whose
+  boxes give no such loop for a route has no such route. The kind has its own Ring-0 floor, 24 m: a VTOL under the
+  lowest roof a pad is ever set on halts the realm like a train under its deck. `tracks.test.ts` proves, on four
+  seeds, that every sample of every craft's cycle clears every box by its envelope (the roof it sits on lies under
+  the envelope's bottom), that craft of one route and the other keep apart, and that the drone corridors stay
+  clear of every pad's column.
 - **The craft stream.** Every step the realm returns a second plain-number buffer beside the car poses:
   `TRACK_POSE` (`simProtocol.ts`), eight floats per craft (position, heading, kind, track, arc length, speed),
   transferred and handed back for reuse like the pose buffer. Before it leaves, the Ring-0 audit reads it
@@ -2301,8 +2351,16 @@ releases, byte for byte (the same seats, drivers and paint from the same stream)
   deck at 9 m, the drones at 40 m, the planes at 400 m); anything else is a kernel panic with a named reason
   (`Corridor Exploit: train craft 0 left its corridor (y=2.00m below its 9m floor).`), the buffer that halted the
   realm never leaves it, and a halted realm ships no craft. The check only halts, never corrects. A surveyed region
-  gets no craft. **The craft renderer is not yet on the page:** the stream, its layout and the audit are ready for
-  it, but no train, drone or plane is drawn, and there is no guideway to see.
+  gets no craft.
+- **The craft on the page** (`craftView.ts`). The page builds the realm's network again from the same seed and boxes
+  (the craft count must agree, or the view refuses) and draws, from the stream, one InstancedMesh a kind: each train
+  set as three cars laid along the loop about the set's head, the drones nosed a little into their way, the planes
+  banked through the racetrack's turns by their own speed and the turn's radius, the VTOLs nosed down with their
+  speed and upright over a pad; and the structure that stands still: the loop's deck under the rail top, the
+  guideway columns and beams, the four stations' platforms at the cars' floor with a canopy each, and a lit pad on
+  every roof a VTOL calls at. Trains, VTOLs, the pads and the structure cast shadows; the drones and the planes do
+  not. Every material takes rain mode once, and `craftView.test.ts` holds every body inside the envelope its kind is
+  proved clear by.
 - **The zero-jam guarantee**, precisely. "Zero jams" is an AI-only, per-ring guarantee with containment, not a
   promise about the player. With the fleet on tracks, every AI car is seated on one of 64 fixed right-turn rings
   that never share a point and follows it without choosing, merging or crossing an oncoming lane. On a ring
@@ -3042,7 +3100,7 @@ behind it, item by item with the tests that prove each, is `docs/agent-city-v1-b
   reinstantiates when you are clear; two cars passing through each other both dissolve.
 - **Phase 7.3, the fixed track network:** 64 right-turn rings, the track follower, the zero-jam invariants, the
   timetabled trains, drones and planes with their pose stream and the Ring-0 craft check. On by default;
-  `?tracks=0`. The craft renderer is not yet on the page.
+  `?tracks=0`. The craft are drawn by `craftView.ts`, and the VTOL routes came after (see Vehicles).
 - **Phase 8.1, room acoustics:** rooms, Sabine reverberation, wall loss, eavesdropping, rendered impulses; peer
   voices placed (the signalling is a stub).
 - **Phase 8.2, the 14A conduct core and screen** (`conduct.ts`), on every prompt, `say` line, player name and
