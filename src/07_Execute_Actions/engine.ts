@@ -61,6 +61,7 @@ import { Input, TriggerFeedback } from '../04_Connect_Hardware/input.ts'
 import { KEYBOARD_SEAT, type Seat } from '../04_Connect_Hardware/seats.ts'
 import { FrameClock, type GlyphFamily, type KernelStats, type NetReport, type NetState, type SeatView, type SipocSnapshot, type Toast } from '../05_Observe_Environment/telemetry.ts'
 import { MemorySink, Recorder, fileSink, markdownFor, type RecorderSink, type RecorderSource } from '../05_Observe_Environment/recorder.ts'
+import { TopicBus, UNS, childLines, publishSnapshot, topicLines } from '../05_Observe_Environment/namespace.ts'
 import type { AgentTelemetry } from '../05_Observe_Environment/agv.ts'
 import { Governor, defaultAgents, defaultCars, liteJoinHint, peakCandidate, profileDevice, readDeviceHints, tierRange, type DeviceProfile, type QualityKnobs } from '../05_Observe_Environment/governor.ts'
 import { CAR_TUNE_RANGE, chassisBox, clampTuning, kindOf, type CarTuning } from './car.ts'
@@ -391,6 +392,9 @@ export function landmarkOf(pack: RegionPack, offset: { x: number; z: number }): 
   return Object.freeze({ name: pack.name === METRO.name ? LANDMARK.spire : 'the tallest tower', x: t.x + offset.x, z: t.z + offset.z, height: t.height })
 }
 
+/** A topic, filter or prefix as the console types it: a leading '~' stands for the namespace's root, as the rows print it. */
+const expandTopic = (t: string): string => (t === '~' ? UNS.root : t.startsWith('~/') ? UNS.root + t.slice(1) : t)
+
 export class Engine {
   readonly errors: string[] = []
   readonly input: Input
@@ -490,6 +494,9 @@ export class Engine {
   private readonly options: EngineConfig
   private readonly quality: QualityRig
   private readonly clock = new FrameClock()
+  /** The unified namespace (namespace.ts): every snapshot is published into it as retained topics, read by the console's `topic`. */
+  private readonly topics = new TopicBus()
+  private topicTick = 0
   /** The rolling frame rate the cloud fallback throttle reads (09_Cognition/cloudFallback.ts): pushed every frame. */
   private readonly frameRate = new FrameRate()
   private readonly trigger: TriggerFeedback
@@ -2132,7 +2139,7 @@ export class Engine {
       const q = i * POSE.stride
       map.push({ x: p[q + POSE.x], z: p[q + POSE.z], heading: p[q + POSE.heading], player: i === st.driving })
     }
-    return {
+    const snap: SipocSnapshot = {
       supplier: {
         device: this.input.device, pointerLocked: this.input.locked, engaged: this.input.engaged, touch: this.input.touch,
         triggerResistance: this.trigger.level, hal: this.input.hal.summary(),
@@ -2184,6 +2191,11 @@ export class Engine {
       map,
       toasts: this.toasts.filter((t) => this.simTime - t.time < 6),
     }
+    // The unified namespace: every reading of this snapshot published as a retained topic (namespace.ts), then the
+    // bus's own size on the snapshot for the HUD. In-page only: nothing is transmitted.
+    publishSnapshot(this.topics, snap, st.physics, this.topicTick++)
+    snap.output.topics = { count: this.topics.count, publishes: this.topics.publishes }
+    return snap
   }
 
   /**
@@ -2236,6 +2248,17 @@ export class Engine {
       rain: (arg?: 'on' | 'off') => (arg === undefined ? (this.matrixOn ? 'on' : 'off') : this.setMatrix(arg === 'on')),
       render: (arg?: 'on' | 'off') => (arg === undefined ? (this.rendering ? 'on' : 'off') : this.setRendering(arg === 'on')),
       captions: (arg?: 'on' | 'off') => (arg === undefined ? (this.captionsOn ? 'captions: on' : 'captions: off') : this.setCaptions(arg === 'on')),
+      // The unified namespace, read-only: the rows are formatted here, so the console imports nothing of the bus. A
+      // leading '~' stands for the root in a filter, a topic or a prefix, as the rows print it.
+      topics: Object.freeze({
+        list: (filter?: string) => topicLines(this.topics.list(filter === undefined ? '#' : expandTopic(filter))),
+        get: (t: string) => {
+          const r = this.topics.get(expandTopic(t))
+          return r ? topicLines([r])[0] : null
+        },
+        children: (prefix?: string) => childLines(this.topics, prefix === undefined ? undefined : expandTopic(prefix)),
+        status: () => `namespace  ${this.topics.count} topics  ${this.topics.publishes} publishes  head ${this.topics.head().toString(16).padStart(8, '0')}`,
+      }),
       // Pings are view-only marks (a walk ping is offered to the host's recruiter through onRally, never sent anywhere).
       ping: Object.freeze({
         at: (kind: PingKind) => this.pingAt(kind),
