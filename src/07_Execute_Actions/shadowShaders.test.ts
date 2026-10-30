@@ -45,6 +45,9 @@ const { regionWorkplaceLots } = await import('../01_Initialize_World/region/work
 const { validatePack } = await import('../01_Initialize_World/region/pack.ts')
 const { CrowdView } = await import('../03_Spawn_Agents/crowd.ts')
 const { FleetView } = await import('./fleetView.ts')
+const { CraftView } = await import('./craftView.ts')
+const { TrackFleet } = await import('./trackFleet.ts')
+const { buildTrackNetwork } = await import('../06_Make_Decisions/tracks.ts')
 const { RigView } = await import('./rigView.ts')
 const { NetView } = await import('./netView.ts')
 const { VEHICLE_KINDS } = await import('./car.ts')
@@ -269,10 +272,16 @@ test('the procedural city, its crowd, fleet, rigs and network ghosts: every mate
   const fleet = new FleetView(kinds, kinds.map(() => 0x808080), world.night, world.matrixMode.globalState)
   const rigs = new RigView(2, world.matrixMode.globalState)
   const net = new NetView()
-  world.scene.add(...crowd.meshes, ...fleet.bodies, fleet.wheels, ...rigs.meshes, net.people, net.cars)
+  // The scheduled craft and the loop's structure, over the realm's own network (the page builds it from the same boxes).
+  const network = buildTrackNetwork(SEED, world.boxes)
+  const craft = new CraftView(network, new TrackFleet(network).count, world.night, world.matrixMode.globalState)
+  world.scene.add(...crowd.meshes, ...fleet.bodies, fleet.wheels, ...rigs.meshes, net.people, net.cars, ...craft.meshes)
   const built = buildScene('city', renderer, world.scene, world.camera)
   const shadowed = new Set(built.filter((b) => b.pass === 'shadow').map((b) => b.name))
-  for (const name of ['Buildings', 'StreetLamps', 'StreetTrees', 'TrafficSignals', 'Wheels']) assert.ok(shadowed.has(name), `city: ${name} was built for the shadow pass`)
+  // The guideway's beams share the columns' material, geometry attributes and instancing: one draw, built once as the columns.
+  for (const name of ['Buildings', 'StreetLamps', 'StreetTrees', 'TrafficSignals', 'Wheels', 'Trains', 'VTOLs', 'VTOLPads', 'Guideway', 'GuidewayColumns']) assert.ok(shadowed.has(name), `city: ${name} was built for the shadow pass`)
+  const mains = new Set(built.filter((b) => b.pass === 'main').map((b) => b.name))
+  for (const name of ['Drones', 'Planes']) assert.ok(mains.has(name) && !shadowed.has(name), `city: ${name} is drawn and casts no shadow`)
   // The crowd: four bodies at two levels of detail, a material each; the rigs' thirteen parts share one.
   assert.equal([...shadowed].filter((n) => n.startsWith('People.')).length, crowd.meshes.length, 'city: every body of the crowd was built for the shadow pass')
   assert.ok([...shadowed].some((n) => n.startsWith('Rig ')), 'city: the rigs were built for the shadow pass')

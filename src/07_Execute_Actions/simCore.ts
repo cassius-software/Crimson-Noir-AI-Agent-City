@@ -237,10 +237,10 @@ export class SimCore {
     // On tracks, the network is built here from the seed: nothing about the routes crosses from the page. In a region
     // with a street window (streets.ts) the rings are the window's, laid over its own car streets.
     const streets = r ? (o.streets ?? null) : null
-    const network = o.tracks === true ? (streets ? streetNetwork(o.seed, streets) : buildTrackNetwork(o.seed)) : null
+    const network = o.tracks === true ? (streets ? streetNetwork(o.seed, streets) : buildTrackNetwork(o.seed, o.boxes)) : null
     this.#fleet = new Fleet(physics, o.cars, o.seed, { exposeRig: this.#debug, network: network ?? undefined })
-    // The corridors are laid over the city's grid: a region has no elevated loop and no racetrack over it. A lite boot
-    // asks for none (SimInit.craft false): nothing on the page draws them yet.
+    // The corridors are laid over the city's grid (the VTOL pads on its own roofs): a region has no elevated loop and
+    // no racetrack over it. A lite boot asks for none (SimInit.craft false); the page draws them (craftView.ts).
     this.#craft = network && !r && o.craft !== false ? new TrackFleet(network) : null
     // Every player's body, in player order: Sanctuary ward k and audit person k are player k.
     const spawns = [o.spawn, ...(o.spawns ?? [])]
