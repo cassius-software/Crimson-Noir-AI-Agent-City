@@ -185,7 +185,8 @@ const m3 = (x: number): string => `${x.toFixed(3)}m`
  * packed by 07_Execute_Actions/trackFleet.ts) as this audit reads it: `stride` floats per craft, named in `fields`
  * (simProtocol.ts TRACK_POSE; ring0.test.ts pins the two equal), the kind codes of `kinds` (simProtocol.ts
  * TRACK_KINDS), and per kind the floor of its corridor, m over the street plane: a train's deck, the lower drone
- * altitude, the planes' altitude (tracks.ts TRACKS, pinned equal by ring0.test.ts). A craft has no body, no driver
+ * altitude, the planes' altitude, the lowest roof a VTOL pad is set on (tracks.ts TRACKS, pinned equal by
+ * ring0.test.ts). A craft has no body, no driver
  * and no Bouncer: what keeps it from ever reaching a person is that its corridor is in the air (tracks.test.ts
  * INV-1), so one below its floor, or of a kind with no corridor (a car: NaN), has left the proof and halts the realm.
  */
@@ -194,8 +195,8 @@ export const CRAFT = Object.freeze({
   fields: Object.freeze(['x', 'y', 'z', 'heading', 'kind', 'track', 's', 'speed'] as const),
   y: 1,
   kind: 4,
-  kinds: Object.freeze(['car', 'train', 'drone', 'plane'] as const),
-  floor: Object.freeze([NaN, 9, 40, 400] as const),
+  kinds: Object.freeze(['car', 'train', 'drone', 'plane', 'vtol'] as const),
+  floor: Object.freeze([NaN, 9, 40, 400, 24] as const),
 } as const)
 
 /**

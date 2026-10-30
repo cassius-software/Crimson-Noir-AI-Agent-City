@@ -216,3 +216,38 @@ test('writePoses refuses a short buffer and leaves the floats past the craft alo
     assert.ok(Math.abs(p.x - field(buf, i, 'x')) < 1e-3 && Math.abs(p.z - field(buf, i, 'z')) < 1e-3 && p.y === field(buf, i, 'y'))
   }
 })
+
+test('VTOLs on the stream: a city given its boxes has them after the rest, clean for the audit over a lap, never under the hover over a roof, s and speed true', () => {
+  const boxes = generateBuildings(1337).map((b) => b.box)
+  const city = buildTrackNetwork(1337, boxes)
+  const cf = new TrackFleet(city)
+  const vt = city.tracks.filter((t) => t.kind === 'vtol')
+  const VTOL = TRACK_KINDS.indexOf('vtol')
+  assert.ok(vt.length >= 1 && VTOL === 4)
+  assert.equal(cf.count, fleet.count + vt.length * TRACKS.vtol.craft)
+  const buf = new Float32Array(cf.length), plain = new Float32Array(fleet.length)
+  const craft = Array.from({ length: cf.count }, (_, i) => i).filter((i) => cf.craftAt(i).kind === VTOL)
+  assert.equal(craft.length, vt.length * TRACKS.vtol.craft)
+  assert.ok(craft.every((i) => i >= fleet.count), 'the VTOLs come after every other craft')
+  const T = Math.max(...vt.map(lapSeconds))
+  for (let t = 0; t <= T + 1; t += 0.5) {
+    cf.writePoses(t, buf)
+    assert.equal(auditCraft(buf), null, `clean at ${t} s`)
+    // The craft before them are the plain network's, number for number.
+    fleet.writePoses(t, plain)
+    assert.deepEqual(Array.from(buf.subarray(0, fleet.length)), Array.from(plain))
+    for (const i of craft) {
+      const tr = city.tracks[field(buf, i, 'track')]
+      assert.equal(tr.kind, 'vtol')
+      assert.equal(field(buf, i, 'kind'), VTOL)
+      const y = field(buf, i, 'y'), s = field(buf, i, 's'), speed = field(buf, i, 'speed')
+      assert.ok(y >= TRACKS.vtol.floor + TRACKS.vtol.hover - 1e-3 && y <= tr.y + 1e-3, `y ${y}`)
+      assert.ok(speed >= 0 && speed <= TRACKS.vtol.speed + 1e-3)
+      const q = poseAt(tr, s)
+      assert.ok(Math.abs(q.x - field(buf, i, 'x')) < 2e-3 && Math.abs(q.z - field(buf, i, 'z')) < 2e-3, 's places it')
+      assert.equal(cf.periodOf(i), lapSeconds(tr))
+      const p = cf.poseOf(i, t)
+      assert.ok(Math.abs(p.y - y) < 1e-3 && Math.abs(p.heading - field(buf, i, 'heading')) < 1e-3)
+    }
+  }
+})
