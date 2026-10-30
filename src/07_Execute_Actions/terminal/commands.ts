@@ -26,6 +26,8 @@
  * topic, listed by filter, read one at a time, walked as a tree, or watched live like `stats`; read-only, like `stats`.
  * `feature` is the feature inspector (09_Cognition/features.ts, through the operator tier's surface): the named
  * readings of the city as one vector, read while locked; `steer`, `clamp`, `release` and `reset` are the operator's.
+ * `ring0` is the elite tier above the operator tier: a passphrase (set once, kept by the host as a salted hash) opens
+ * NoirScript's writes for the session; its status and lock work while locked, unlock and set need the operator tier.
  * What breaks if it is removed? The terminal cannot interpret a single line.
  */
 import type {
@@ -115,6 +117,7 @@ const CORE = [
 /** The operator tier; every one of these that changes anything is refused until `operator unlock`. */
 const OPERATOR = [
   { name: 'operator', usage: 'operator [unlock|lock|status]', summary: 'the operator tier: scripts, tuning keys, harnesses' },
+  { name: 'ring0', usage: 'ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]', summary: "the Ring-0 elite tier above the operator tier: a passphrase opens NoirScript's writes and raised limits for this session; the laws stay out of reach" },
   { name: 'run', usage: 'run <skill>[,<skill>...]: <js...>', summary: 'run a script against sim.* while someone tethered has the skill (Shift+Enter adds a line)' },
   { name: 'ask', usage: 'ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|file [forget <name>|load|unload|log]|gpu auto|on|off|stop]', summary: 'ask the model, answering as someone tethered with the skill; the answer streams in' },
   { name: 'swarm', usage: 'swarm [run [--agents <1-5>] <goal...>|plan [--agents <1-5>] <goal...>|status|stop|roles|guardrails|audit [verify]]', summary: 'a goal over up to five roles (architect, coder, tester, auditor, verifier), one gated prompt each, guardrails before and after, a hash-chained audit trail' },
@@ -145,7 +148,7 @@ export const FEATURE_IDS: readonly string[] = Object.freeze([
   'OPERATOR_OBEDIENCE', 'SELF_PRESERVATION', 'FRAME_HEALTH', 'SHIELDING', 'RAIN_MODE', 'WORKDAY',
 ])
 
-const RAW: ReadonlySet<string> = new Set(['run', 'ask', 'say', 'r0', 'goal', 'agent', 'sloane', 'swarm'])
+const RAW: ReadonlySet<string> = new Set(['run', 'ask', 'say', 'r0', 'ring0', 'goal', 'agent', 'sloane', 'swarm'])
 
 /** A persistent R0 machine (repl.ts): the terminal keeps one for the life of the console, so definitions outlive a line. */
 export interface ReplSession { machine: Machine }
@@ -207,6 +210,9 @@ const ARGS: Record<string, readonly string[]> = {
   'feature steer': FEATURE_IDS,
   'feature clamp': FEATURE_IDS,
   'feature release': FEATURE_IDS,
+  ring0: ['elite', 'lock', 'status', 'unlock'],
+  'ring0 unlock': ['--elite'],
+  'ring0 elite': ['set'],
   hal: ['pair'],
   'hal pair': ['ble', 'hid', 'serial'],
   recruit: [...RECRUIT_ACTIONS, ...SKILL_ARGS].sort(),
@@ -1252,6 +1258,29 @@ const HANDLERS: Record<Name, Handler> = {
     }
   },
 
+  // Raw: the rest of the line keeps a passphrase's inner spaces (its ends are trimmed). Status and lock work while the
+  // operator tier is locked; unlock and set need it open, and the console refuses them before the tier is asked. The
+  // passphrase is never echoed and never kept in the history (redactForHistory).
+  ring0(args, b) {
+    const op = operatorOf(b)
+    const rest = (args[0] ?? '').trim()
+    if (rest === '' || rest === 'status') return { lines: [out(op.elite.status())] }
+    if (rest === 'lock') return { lines: [out(op.elite.lock())] }
+    const unlock = /^unlock(?:\s+(--elite)(?:\s+([\s\S]+))?)?$/.exec(rest)
+    if (unlock) {
+      if (!unlock[1] || !unlock[2]) return fail('ring0: say what to unlock and with what: ring0 unlock --elite <passphrase>')
+      if (!op.unlocked()) return locked('ring0')
+      return { lines: op.elite.unlock(unlock[2].trim()).map(out) }
+    }
+    const set = /^elite(?:\s+set(?:\s+([\s\S]+))?)?$/.exec(rest)
+    if (set) {
+      if (!set[1]) return fail('usage: ring0 elite set <passphrase>')
+      if (!op.unlocked()) return locked('ring0')
+      return { lines: [out(op.elite.set(set[1].trim()))] }
+    }
+    return fail(usage('ring0'))
+  },
+
   // Raw: args[0] is the rest of the line, quotes and newlines intact: the skills the script needs, a colon, the script.
   // The gateway decides at once. Authorized says who the script is bound to now; its output, or the abort that stops
   // it when that tether breaks, follows. Rejected never ran.
@@ -1602,13 +1631,16 @@ export function run(input: string, bridge: TerminalBridge, history: readonly str
 }
 
 /**
- * A line as the console's history keeps it: a key given to `ask key`, `say key` or `ask connect`, and a token given to
- * `net join`, are replaced by dots, so `history` and the Up arrow never show a secret typed earlier. After `ask connect
- * <provider>` only a leading http(s) address is kept; anything else there (a key typed where the url goes) is dotted
- * with everything after it. Every other line is kept as typed.
+ * A line as the console's history keeps it: a key given to `ask key`, `say key` or `ask connect`, a token given to
+ * `net join`, and the elite tier's passphrase given to `ring0 unlock --elite` or `ring0 elite set`, are replaced by
+ * dots, so `history` and the Up arrow never show a secret typed earlier. After `ask connect <provider>` only a leading
+ * http(s) address is kept; anything else there (a key typed where the url goes) is dotted with everything after it.
+ * Every other line is kept as typed.
  */
 export function redactForHistory(line: string): string {
   return line
+    .replace(/^(\s*ring0\s+unlock\s+--elite\s+)\S[\s\S]*$/, '$1••••')
+    .replace(/^(\s*ring0\s+elite\s+set\s+)\S[\s\S]*$/, '$1••••')
     .replace(/^(\s*(?:ask|say)\s+key\s+)\S[\s\S]*$/, '$1••••')
     .replace(/^(\s*ask\s+connect\s+\S+\s+)(?!https?:\/\/[^\s@]*(?:\s|$))\S[\s\S]*$/i, '$1••••')
     .replace(/^(\s*ask\s+connect\s+\S+\s+\S+\s+)\S[\s\S]*$/, '$1••••')

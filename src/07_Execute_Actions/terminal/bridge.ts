@@ -67,6 +67,8 @@ export interface OperatorBridge {
   tune(table: 'physics' | 'shaders', key: string, value: number): number
   /** The feature inspector and its steering (reads work while locked; steer, clamp, release and reset throw while locked). */
   features: FeaturesBridge
+  /** The Ring-0 elite tier above this one (status and lock work while locked; unlock and set need this tier open). */
+  elite: EliteBridge
   /**
    * A prompt for the local model, through the capability gateway like a script: decided at once, answered for the
    * people it is bound to, streamed while they stay tethered, cut off when they do not. One answer at a time. Throws
@@ -141,6 +143,44 @@ export interface FeaturesBridge {
   release(name: string): string[]
   /** Drops every bias and clamp: the line, then each knob returned to its middle. */
   reset(): string[]
+}
+
+/**
+ * The writes the elite tier opens to NoirScript (terminal/noirscript's NoirWrites has this shape), each through the
+ * operator's own facade: the tuning knobs `set` uses, a scripted intent (the same Bouncer, envelope and latch as the
+ * wheel, in the physics worker), the crowd's density, and the feature inspector's bias. Each throws while the tier is
+ * locked. Nothing here reaches the laws, the Sanctuary, the Ring-0 auditor or the 14A screen.
+ */
+export interface EliteWrites {
+  /** `physics.<k>` or `shaders.<k>` (a bare `car.<k>` is physics, anything else bare is shaders); the value the knob holds now. */
+  tune(key: string, value: number): number
+  /** A player-style intent for car `car`; true once sent (the realm vets it as it vets the wheel). */
+  intent(car: number, throttle: number, brake: number, steer: number): boolean
+  /** The crowd's density until the quality tier next changes; returns it. */
+  cull(density: number): number
+  /** A feature bias in [-1, 1] (FeaturesBridge.steer); returns it. */
+  steer(feature: string, value: number): number
+}
+
+/**
+ * The Ring-0 elite tier, above the operator tier: a passphrase the operator sets once (kept by the host as a salted
+ * SHA-256 record, never the words) opens NoirScript's writes and its raised limits for this console session. `unlock`
+ * and `set` throw while the operator tier is locked; `set` also throws while a passphrase is set and this tier closed;
+ * `unlock` throws on a wrong passphrase and refuses after five wrong in a row until the operator tier is locked and
+ * unlocked again. `operator lock` closes this tier too. Nothing it opens reaches the laws, the Sanctuary, the Ring-0
+ * auditor or the 14A screen.
+ */
+export interface EliteBridge {
+  /** One line: locked or unlocked, whether a passphrase is set (or can be kept), writes this session. */
+  status(): string
+  unlocked(): boolean
+  /** Opens the tier; returns the banner (what is open now, what stays in force). */
+  unlock(passphrase: string): string[]
+  lock(): string
+  /** Sets the passphrase (8 to 256 characters); returns the line. */
+  set(passphrase: string): string
+  /** The write surface while the tier is open, else null. */
+  writes(): EliteWrites | null
 }
 
 /** The swarm as the console and the host see it (08_Swarm/orchestrator.ts Swarm): plan, run, status, stop, the audit trail. */
@@ -428,6 +468,7 @@ export function offlineBridge(brand: TerminalBridge['brand']): TerminalBridge {
     operator: {
       unlock: down, lock: down, unlocked: down, exec: down, tuning: down, tune: down,
       features: { lines: down, about: down, prompt: down, explain: down, steer: down, clamp: down, release: down, reset: down },
+      elite: { status: down, unlocked: down, unlock: down, lock: down, set: down, writes: down },
       ask: down, askStatus: down, askSet: down, askConnect: down, askStop: down, say: down, sayStatus: down, saySet: down, sayStop: down,
       api: down, harnesses: down, harness: down,
       swarm: { plan: down, run: down, status: down, stop: down, audit: down, verify: down, get roles() { return down() }, get quota() { return down() } },

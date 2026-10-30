@@ -86,7 +86,7 @@ import { updateVolumetrics, type Volumetrics } from './volumetrics.ts'
 import { FrameRate, withCloudFallback } from '../09_Cognition/cloudFallback.ts'
 import { withScriptedFallback } from '../09_Cognition/scripted.ts'
 import { describeSurroundings, paintWord, ShortTermMemory, type AgentContext } from '../08_Swarm/shortTerm.ts'
-import { operatorBridge, type Awareness, type Diary, type Mind, type SimControls, type SkillGate, type SpeechClip, type SpeechOut, type Utterance, type Voice } from './operator.ts'
+import { operatorBridge, type Awareness, type Diary, type Mind, type SimControls, type SkillGate, type SpeechClip, type SpeechOut, type Utterance, type Voice, type EliteVault } from './operator.ts'
 import type { CityKnobs } from '../06_Make_Decisions/actions.ts'
 import { applyQuality, refitPixelRatio, type QualityTargets } from './quality.ts'
 import { SPEECH, Soundscape, sharedAudioContext, wallsBetween, type AudioFrame, type PeerVoice } from './audio.ts'
@@ -2199,7 +2199,7 @@ export class Engine {
    * never reads. The gate, mind, voice and diary given on the first call are the ones kept. The name a hired agent
    * goes by, for who proposes a city action, is the host's too (setNameOf), read when a proposal is made.
    */
-  terminalBridge(gate: SkillGate, givenMind: Mind, voice?: Voice, diary?: Diary, voiceOf?: (agent: number) => string | null): TerminalBridge {
+  terminalBridge(gate: SkillGate, givenMind: Mind, voice?: Voice, diary?: Diary, voiceOf?: (agent: number) => string | null, vault?: EliteVault): TerminalBridge {
     if (this.bridge) return this.bridge
     // The cloud fallback throttle in front of the mind App built: while this page's frames are slow, a complex prompt
     // bound for a model server on this machine goes to the router's cloud provider instead (nothing when it has none).
@@ -2257,7 +2257,7 @@ export class Engine {
       // The operator tier: unlockable, sandboxed, built over simControls() and two host knobs handed in as senses
       // (rain mode and the sound, for the city actions an agent proposes), never over the engine itself; its scripts
       // and the allowed actions are bound to the swarm through the gate.
-      operator: operatorBridge(this.simControls(), gate, mind, undefined, { voice, speech: this.speechOut(), diary, awareness: this.awareness(), nameOf, city: this.cityKnobs(), voiceOf }),
+      operator: operatorBridge(this.simControls(), gate, mind, undefined, { voice, speech: this.speechOut(), diary, awareness: this.awareness(), nameOf, city: this.cityKnobs(), voiceOf, vault }),
       record: Object.freeze({
         start: (source: RecorderSource) => this.startRecording(source),
         stop: () => this.stopRecording(),

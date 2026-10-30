@@ -20,6 +20,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { FEATURES } from '../09_Cognition/features.ts'
+import { sha256 } from '../02_Define_The_Rules/integrity.ts'
 import {
   DEFAULT_TIMEOUT_MS, SAY_CHARS, apiDoc, describe, exec, formatValue, gatedAsk, gatedExec, gatedSay, leasedApi, operatorBridge, scriptApi, speakable,
   type Answer, type Awareness, type Diary, type GateHandle, type GateLease, type GateTether, type GateVerdict, type Memories, type Mind, type Piece, type RunState,
@@ -503,7 +504,7 @@ test('operatorBridge: locked by default; scripts, tuning keys and harnesses refu
   const gate = new FakeGate()
   const op = operatorBridge(sim, gate, new FakeMind(), async (ms) => { slept.push(ms) })
   assert.ok(Object.isFrozen(op))
-  assert.deepEqual(Object.keys(op).sort(), ['acts', 'api', 'ask', 'askConnect', 'askSet', 'askStatus', 'askStop', 'exec', 'features', 'harness', 'harnesses', 'lock', 'say', 'saySet', 'sayStatus', 'sayStop', 'swarm', 'tune', 'tuning', 'unlock', 'unlocked'])
+  assert.deepEqual(Object.keys(op).sort(), ['acts', 'api', 'ask', 'askConnect', 'askSet', 'askStatus', 'askStop', 'elite', 'exec', 'features', 'harness', 'harnesses', 'lock', 'say', 'saySet', 'sayStatus', 'sayStop', 'swarm', 'tune', 'tuning', 'unlock', 'unlocked'])
   assert.throws(() => op.askConnect('ollama'), /^Error: ask: locked/)
   assert.throws(() => op.swarm.run('x'), /^Error: ask: locked/)
   assert.equal(op.swarm.status().running, false)
@@ -655,6 +656,82 @@ test('operatorBridge features: read while locked; steered by the operator alone;
   assert.deepEqual(op.features.prompt(), [])
   // Nothing of the laws was reached: the facade recorded no kernel or vehicle call.
   assert.ok(sim.calls.every((c) => !/kernel|vehicles|laws|bouncer|sanctuary/.test(c)), sim.calls.join(', '))
+})
+
+test('operatorBridge elite: a passphrase kept as a salted hash opens NoirScript\'s writes, each through the facade; wrong passphrases are counted; operator lock closes it', () => {
+  const sim = fakeSim()
+  const kept: string[] = []
+  const vault = { load: () => kept[kept.length - 1] ?? null, save: (v: string) => { kept.push(v) } }
+  const op = operatorBridge(sim, new FakeGate(), new FakeMind(), undefined, { vault })
+  assert.ok(Object.isFrozen(op.elite))
+  assert.equal(op.elite.status(), 'ring0: elite tier locked (no passphrase set); 0 writes this session')
+  assert.equal(op.elite.unlocked(), false)
+  assert.equal(op.elite.writes(), null)
+  assert.throws(() => op.elite.unlock('open sesame please'), /^Error: ring0: locked; type 'operator unlock' first$/)
+  assert.throws(() => op.elite.set('open sesame please'), /^Error: ring0: locked; type 'operator unlock' first$/)
+  assert.equal(op.elite.lock(), 'ring0: elite tier locked')
+  op.unlock()
+  assert.throws(() => op.elite.unlock('open sesame please'), /^Error: no elite passphrase is set: 'ring0 elite set <passphrase>' first$/)
+  assert.throws(() => op.elite.set('short'), /^RangeError: the passphrase must be 8 to 256 characters$/)
+  assert.throws(() => op.elite.set('x'.repeat(257)), /^RangeError: the passphrase must be 8 to 256 characters$/)
+  assert.equal(kept.length, 0)
+  assert.match(op.elite.set('open sesame please'), /^ring0: elite passphrase set \(kept as a salted hash, never the words\)/)
+  assert.equal(kept.length, 1)
+  assert.match(kept[0], /^v1:[0-9a-f]{32}:[0-9a-f]{64}$/)
+  assert.ok(!kept[0].includes('sesame'))
+  const [, salt, hash] = kept[0].split(':')
+  assert.equal(hash, sha256(`${salt}:open sesame please`), 'the record is the salted SHA-256 of the passphrase')
+  assert.equal(op.elite.status(), 'ring0: elite tier locked; 0 writes this session')
+  assert.throws(() => op.elite.set('another passphrase'), /^Error: a passphrase is set: 'ring0 unlock --elite <passphrase>' first/)
+  assert.throws(() => op.elite.unlock('wrong words here'), /^Error: wrong passphrase \(4 tries left\)$/)
+  assert.throws(() => op.elite.unlock('Open sesame please'), /^Error: wrong passphrase \(3 tries left\)$/, 'case matters')
+  const banner = op.elite.unlock('open sesame please')
+  assert.equal(banner[0], 'Ring-0 elite tier unlocked for this console session.')
+  assert.ok(banner.some((l) => /Still in force/.test(l)) && banner.some((l) => /three laws/.test(l)) && banner.some((l) => /Ring-0 auditor/.test(l)))
+  assert.equal(op.elite.unlocked(), true)
+  assert.equal(op.elite.status(), 'ring0: elite tier unlocked; 0 writes this session')
+  // The writes: every one through the facade `set`, a scripted intent and crowd.cull already use, and the inspector.
+  const w = op.elite.writes()!
+  assert.ok(Object.isFrozen(w))
+  assert.equal(w.tune('physics.car.power', 1.5), 1.5)
+  assert.equal(w.tune('car.drag', 2), 2)
+  assert.equal(w.tune('shaders.volumetrics.strength', 0.5), 0.5)
+  assert.deepEqual([sim.tune['car.power'], sim.tune['car.drag'], sim.uniforms['volumetrics.strength']], [1.5, 2, 0.5])
+  assert.equal(w.intent(1, 0.5, 0, 0.1), true)
+  assert.ok(sim.calls.includes('vehicles.intent 1 0.5 0 0.1'), sim.calls.join(', '))
+  assert.equal(w.cull(0.5), 0.5)
+  assert.ok(sim.calls.includes('crowd.cull {"density":0.5}'), sim.calls.join(', '))
+  assert.equal(w.steer('FLEET_RESTRAINT', 0.5), 0.5)
+  assert.equal(op.features.prompt().length, 1)
+  assert.throws(() => w.tune('physics.nope', 1), /unknown physics key/)
+  assert.throws(() => w.steer('NOPE', 1), /^RangeError: unknown feature 'NOPE'$/)
+  assert.equal(op.elite.status(), 'ring0: elite tier unlocked; 6 writes this session', 'a refused write is not counted')
+  // A new passphrase while open; the old one no longer opens it.
+  assert.match(op.elite.set('a new passphrase'), /^ring0: elite passphrase set/)
+  assert.equal(kept.length, 2)
+  assert.equal(op.elite.lock(), 'ring0: elite tier locked')
+  assert.equal(op.elite.writes(), null)
+  assert.throws(() => w.tune('car.power', 1), /^Error: elite tier locked: 'ring0 unlock --elite <passphrase>' opens it$/, 'a surface handed out earlier dies with the tier')
+  assert.throws(() => op.elite.unlock('open sesame please'), /^Error: wrong passphrase \(4 tries left\)$/)
+  assert.equal(op.elite.unlock('a new passphrase')[0], 'Ring-0 elite tier unlocked for this console session.')
+  // operator lock closes both; five wrong passphrases in a row refuse until the operator tier is locked and unlocked again.
+  op.lock()
+  assert.equal(op.elite.unlocked(), false)
+  op.unlock()
+  for (let i = 5; i >= 1; i--) assert.throws(() => op.elite.unlock('nope nope nope'), new RegExp(`^Error: wrong passphrase \\(${i - 1} ${i - 1 === 1 ? 'try' : 'tries'} left\\)$`))
+  assert.throws(() => op.elite.unlock('a new passphrase'), /^Error: too many wrong passphrases: operator lock, then operator unlock, to try again$/)
+  op.lock()
+  op.unlock()
+  assert.equal(op.elite.unlock('a new passphrase')[0], 'Ring-0 elite tier unlocked for this console session.')
+  // Nothing of the laws was reached.
+  assert.ok(sim.calls.every((c) => !/kernel|laws|bouncer|sanctuary/.test(c)), sim.calls.join(', '))
+  // Without a vault the tier cannot open.
+  const bare = operatorBridge(fakeSim(), new FakeGate(), new FakeMind())
+  bare.unlock()
+  assert.equal(bare.elite.status(), 'ring0: elite tier locked (this page cannot keep a passphrase); 0 writes this session')
+  assert.throws(() => bare.elite.set('open sesame please'), /cannot keep a passphrase/)
+  assert.throws(() => bare.elite.unlock('open sesame please'), /cannot keep a passphrase/)
+  assert.equal(bare.elite.writes(), null)
 })
 
 test('operatorBridge ask: locked, one answer at a time, a model must be chosen; status, settings and stop', async () => {
