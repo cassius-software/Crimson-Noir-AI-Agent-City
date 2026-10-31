@@ -158,7 +158,7 @@ test('a person may wear or carry nothing but the closed wardrobe: four business 
   // The only things drawn on a person beyond their clothes. A new piece is a 14A decision: add it here once it is
   // confirmed unarmed. The hair cap, the bob and the bun are hair; the face is the features (eyes, brows, nose, lips,
   // ears) and nothing held.
-  assert.deepEqual(Object.keys(LOOK_PIECE_BIT), ['tie', 'bag', 'cup', 'longHair', 'glasses', 'hairCap', 'bob', 'bun', 'face'])
+  assert.deepEqual(Object.keys(LOOK_PIECE_BIT), ['tie', 'bag', 'cup', 'longHair', 'glasses', 'hairCap', 'bob', 'bun', 'face', 'coat', 'scarf'])
   assert.deepEqual([...WARDROBE.tie], ['none', 'tie'])
   assert.deepEqual([...WARDROBE.eyewear], ['none', 'glasses'])
   assert.deepEqual([...WARDROBE.bag], ['none', 'bag'])

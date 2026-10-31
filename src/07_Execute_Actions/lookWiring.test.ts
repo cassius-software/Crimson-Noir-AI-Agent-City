@@ -20,7 +20,7 @@ import { registerHooks } from 'node:module'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import type { InstancedMesh, MeshStandardNodeMaterial } from 'three/webgpu'
-import { LEGACY_LOOK_SLOTS, LOOK_NONE, LOOK_PRESETS, LOOK_V2_SLOTS, lookFromSeed, packFace, packFigure, packLook, upgradeFigureLook, upgradeLegacyLook, validateLook, type Look, type LookSlot } from '../03_Spawn_Agents/look.ts'
+import { LEGACY_LOOK_SLOTS, LOOK_NONE, LOOK_PRESETS, LOOK_V2_SLOTS, LOOK_V3_SLOTS, lookFromSeed, packFace, packFigure, packLook, upgradeFaceLook, upgradeFigureLook, upgradeLegacyLook, validateLook, type Look, type LookSlot } from '../03_Spawn_Agents/look.ts'
 import { LOOK_KEY, clearLook, loadLook, saveLook } from '../05_Observe_Environment/lookStore.ts'
 import { PROFILE_KEY, type ProfileStore } from '../05_Observe_Environment/profile.ts'
 
@@ -70,7 +70,7 @@ const mapStore = (): ProfileStore & { map: Map<string, string> } => {
   return { map, getItem: (k) => map.get(k) ?? null, setItem: (k, v) => { map.set(k, v) }, removeItem: (k) => { map.delete(k) } }
 }
 
-test('the crowd: a look word and a pair (the figure word, the face word) per agent in storage attributes named crowd.look and crowd.figure, zero (as hashed) at boot, read by every body material in both passes', () => {
+test('the crowd: a look word and a quad (the figure word, the face word, the wardrobe word, a spare) per agent in storage attributes named crowd.look and crowd.figure, zero (as hashed) at boot, read by every body material in both passes', () => {
   const view = new CrowdView(64)
   assert.equal(view.look.name, 'crowd.look')
   assert.equal(view.look.count, 64)
@@ -79,10 +79,10 @@ test('the crowd: a look word and a pair (the figure word, the face word) per age
   assert.ok([...(view.look.array as Uint32Array)].every((w) => w === LOOK_NONE), 'everyone dressed by the hash at boot')
   assert.equal(view.figure.name, 'crowd.figure')
   assert.equal(view.figure.count, 64)
-  assert.equal(view.figure.itemSize, 2, 'the figure word and the face word, one buffer (the vertex stage binds seven of WebGPU\'s eight)')
+  assert.equal(view.figure.itemSize, 4, 'the figure, face and wardrobe words and a spare, one buffer (the vertex stage binds seven of WebGPU\'s eight)')
   assert.ok(view.figure.array instanceof Uint32Array)
-  assert.equal(view.figure.array.length, 128)
-  assert.ok([...(view.figure.array as Uint32Array)].every((w) => w === 0), 'every figure and face the hash\'s until a look is worn')
+  assert.equal(view.figure.array.length, 256)
+  assert.ok([...(view.figure.array as Uint32Array)].every((w) => w === 0), 'every figure, face and wardrobe the hash\'s until a look is worn')
   assert.equal(view.meshes.length, 8)
   for (const mesh of view.meshes) {
     const m = materialOf(mesh)
@@ -91,18 +91,24 @@ test('the crowd: a look word and a pair (the figure word, the face word) per age
     assert.ok(m.positionNode && m.castShadowPositionNode, `${mesh.name}: posed for the eye and the shadow`)
     const varyings = [...reach(m.colorNode)].filter((n) => n.varying === true).map((n) => n.name)
     assert.ok(varyings.includes('vAgentLookLo') && varyings.includes('vAgentLookHi'), `${mesh.name}: the colour reads the word's halves (${varyings.join(', ')})`)
+    assert.ok(varyings.includes('vAgentWardrobe'), `${mesh.name}: and the wardrobe word the pose resolved`)
+    const slotVarying = [...reach(m.colorNode)].find((n) => (n as { isVaryingNode?: boolean }).isVaryingNode === true && n.name === 'vAgentSlot') as { interpolationType?: string } | undefined
+    assert.ok(slotVarying, `${mesh.name}: the slot rides its own varying`)
+    assert.equal(slotVarying!.interpolationType, 'flat', `${mesh.name}: flat, so a band between two rings is one slot`)
   }
 })
 
-test('crowd.ts: the words override the hashed mask, figure and face in posed(), the look word rides two varyings to the fragment, which picks each colour slot, the age and the undertone from it', () => {
+test('crowd.ts: the words override the hashed mask, figure, face and wardrobe in posed(), the look word rides two varyings and the wardrobe word a third to the fragment, which picks each colour slot, the age, the undertone and the garments\' dyes from them', () => {
   const crowd = read('../03_Spawn_Agents/crowd.ts')
   assert.match(crowd, /look: storage\(view\.look, 'uint', agentCount\)\.toReadOnly\(\)/)
-  assert.match(crowd, /figure: storage\(view\.figure, 'uvec2', agentCount\)\.toReadOnly\(\)/)
+  assert.match(crowd, /figure: storage\(view\.figure, 'uvec4', agentCount\)\.toReadOnly\(\)/)
   const posed = between(crowd, 'const posed = (eye: boolean) =>', 'm.positionNode = posed(true)')
   assert.match(posed, /const word = b\.look\.element\(agentIndex\)/)
-  assert.match(posed, /const pair = b\.figure\.element\(agentIndex\)\n\s*const figure = pair\.x\n\s*const faceWord = pair\.y/)
+  assert.match(posed, /const quad = b\.figure\.element\(agentIndex\)\n\s*const figure = quad\.x\n\s*const faceWord = quad\.y\n\s*const wardrobeWord = quad\.z/)
   assert.match(posed, /const custom = word\.bitAnd\(uint\(1\)\)\.equal\(uint\(1\)\)/)
-  assert.match(posed, /const mask = select\(custom, float\(word\.shiftRight\(uint\(2\)\)\.bitAnd\(uint\(46\)\)\)\.add\(ownGrooms\), hashedMask\.add\(hashedGrooms\)\)\.add\(features\)/, 'the pieces where bodyVertex tests them: the look word\'s four, the hair from the style, the face for the eye')
+  assert.match(posed, /const mask = select\(custom, float\(word\.shiftRight\(uint\(2\)\)\.bitAnd\(uint\(46\)\)\)\.add\(ownGrooms\), hashedMask\.add\(hashedGrooms\)\)\.add\(features\)\.add\(wardrobePieces\)/, 'the pieces where bodyVertex tests them: the look word\'s four, the hair from the style, the face for the eye, the coat and the scarf from the wardrobe word')
+  assert.match(posed, /const wardrobe = select\(custom, wardrobeWord, hashedWardrobe\)/, 'the wardrobe word worn: the look\'s or the hash\'s')
+  assert.match(posed, /vWardrobe\.assign\(float\(wardrobe\.bitAnd\(uint\(0xff\)\)\)\)/, 'to the fragment stage, its low byte')
   assert.match(posed, /const features = eye \? 1 << LOOK_PIECE_BIT\.face : 0/, 'the shadow map does without the features')
   assert.match(posed, /const style = faceWord\.shiftRight\(uint\(LOOK_FIELD\.hairStyle\[1\]\)\)\.bitAnd\(uint\(7\)\)/)
   assert.match(posed, /return float\(\(w === 0 \? word : w === 1 \? figure : faceWord\)\.shiftRight\(uint\(shift\)\)\.bitAnd\(uint\(\(1 << width\) - 1\)\)\)/, 'each slot from the word look.ts names')
@@ -131,7 +137,16 @@ test('crowd.ts: the words override the hashed mask, figure and face in posed(), 
   assert.match(fragment, /pick\(PALETTE\.bags, h\(12\)\)/)
   assert.match(fragment, /const legwear = variant === 3 \? mix\(wornSkin, vec3\(0\.08, 0\.07, 0\.07\), step\(0\.55, h\(11\)\)\) : bottom/)
   assert.match(fragment, /const iris = pick\(PALETTE\.iris, h\(LOOK_HASHED_COLOUR\.iris\)\)/)
-  assert.match(fragment, /const slots: V3\[\] = \[top, shirt, wornSkin, wornHair, bottom, shoes, accent, prop, legwear, frame, white, iris, lip\]/)
+  assert.match(fragment, /const slots: V3\[\] = \[worn, shirt, wornSkin, wornHair, bottom, shoes, accent, prop, legwear, frame, white, iris, lip, scarf\]/)
+  // The garments: the layer owns the top's dye, the trim is matching or a cloth, the jacket's lines are cut from the rest position.
+  assert.match(fragment, /const wardrobe = uint\(vWardrobe\.add\(0\.5\)\)/)
+  assert.match(fragment, /const coat = at\(PALETTE\.coats, select\(custom, field\('top'\), uint\(h\(3\)\.mul\(cloth\(outfit\.top\)\.length - 0\.001\)\)\)\)/, 'the coat\'s cloth from the top\'s index, or the top\'s link over the jacket palette\'s length')
+  assert.match(fragment, /const topCloth = select\(layer\.equal\(uint\(LAYER\.coat\)\), coat, top\)/)
+  assert.match(fragment, /const trimCloth = select\(trimAt\.equal\(uint\(0\)\), topCloth, at\(PALETTE\.trims, trimAt\.sub\(uint\(1\)\)\)\)/)
+  assert.match(fragment, /const scarf = at\(PALETTE\.scarves, select\(scarfAt\.equal\(uint\(0\)\), uint\(0\), scarfAt\.sub\(uint\(1\)\)\)\)/)
+  assert.match(fragment, /const rest = positionGeometry/, 'the garment lines are cut from the rest position')
+  assert.match(fragment, /const jacket = select\(inV\.or\(shirtCollar\), shirt, select\(lapel\.or\(collar\)\.or\(cuff\), trimCloth, topCloth\)\)/)
+  assert.match(fragment, /const worn = select\(layer\.equal\(uint\(LAYER\.shirt\)\), shirt, jacket\)/, 'under shirt sleeves the whole slot is the shirt\'s')
 })
 
 test('the cull reads the body out of the word (binding 13, the page\'s pass alone); no simulation pass binds it', () => {
@@ -160,7 +175,7 @@ test('the cull reads the body out of the word (binding 13, the page\'s pass alon
   for (const file of ['./simProtocol.ts', './simCore.ts', './physics.worker.ts']) assert.doesNotMatch(read(file), /packFigure|packFace|crowd\.figure|figureWords|faceWord/, file)
 })
 
-test('engine: the look buffer is the attribute\'s (gpuBufferOf), shared with the cull, the figure buffer (a pair per agent) beside it; setLook writes the words at the agent\'s slot; lookOf reads the copies', () => {
+test('engine: the look buffer is the attribute\'s (gpuBufferOf), shared with the cull, the figure buffer (a quad per agent) beside it; setLook writes the words at the agent\'s slot; lookOf reads the copies', () => {
   const src = read('./engine.ts')
   assert.match(src, /const crowdLook = gpuBufferOf\(gpu\.renderer, view0\.look\)/)
   assert.match(src, /const crowdFigure = gpuBufferOf\(gpu\.renderer, view0\.figure\)/)
@@ -170,17 +185,18 @@ test('engine: the look buffer is the attribute\'s (gpuBufferOf), shared with the
   assert.match(src, /private readonly crowdLook: GPUBuffer/)
   assert.match(src, /private readonly crowdFigure: GPUBuffer/)
   assert.match(src, /this\.lookWords = new Uint32Array\(p\.options\.agents\)/)
-  assert.match(src, /this\.figureWords = new Uint32Array\(p\.options\.agents \* 2\)/, 'the figure word and the face word per agent')
+  assert.match(src, /this\.figureWords = new Uint32Array\(p\.options\.agents \* 4\)/, 'the figure, face and wardrobe words and a spare per agent')
   assert.doesNotMatch(src, /figure: crowdFigure/, 'the cull is never handed the figure')
   const set = between(src, '  setLook(agent: number, look: Look | null): boolean {', '  lookOf(agent: number): Look | null {')
   assert.match(set, /if \(this\.halted \|\| this\.disposed\) return false/)
   assert.match(set, /if \(!Number\.isInteger\(agent\) \|\| agent < 0 \|\| agent >= this\.lookWords\.length\) return false/)
   assert.match(set, /const word = look === null \? LOOK_NONE : validateLook\(look\) === null \? -1 : packLook\(look\)/, 'null is the hash, an invalid look is refused')
-  assert.match(set, /this\.figureWords\[agent \* 2\] = look === null \? 0 : packFigure\(look\)/, 'the hash\'s figure for null')
-  assert.match(set, /this\.figureWords\[agent \* 2 \+ 1\] = look === null \? 0 : packFace\(look\)/, 'and its face')
+  assert.match(set, /this\.figureWords\[agent \* 4\] = look === null \? 0 : packFigure\(look\)/, 'the hash\'s figure for null')
+  assert.match(set, /this\.figureWords\[agent \* 4 \+ 1\] = look === null \? 0 : packFace\(look\)/, 'and its face')
+  assert.match(set, /this\.figureWords\[agent \* 4 \+ 2\] = look === null \? 0 : packWardrobe\(look\)/, 'and its wardrobe')
   assert.match(set, /this\.gpu\.device\.queue\.writeBuffer\(this\.crowdLook, agent \* 4, this\.lookWords, agent, 1\)/, 'four bytes at the slot, the dissolve\'s path')
-  assert.match(set, /this\.gpu\.device\.queue\.writeBuffer\(this\.crowdFigure, agent \* 8, this\.figureWords, agent \* 2, 2\)/, 'and the pair\'s eight')
-  assert.match(src, /lookOf\(agent: number\): Look \| null \{\n\s*if \(!Number\.isInteger\(agent\) \|\| agent < 0 \|\| agent >= this\.lookWords\.length\) return null\n\s*return unpackLook\(this\.lookWords\[agent\], this\.figureWords\[agent \* 2\], this\.figureWords\[agent \* 2 \+ 1\]\)/)
+  assert.match(set, /this\.gpu\.device\.queue\.writeBuffer\(this\.crowdFigure, agent \* 16, this\.figureWords, agent \* 4, 4\)/, 'and the quad\'s sixteen')
+  assert.match(src, /lookOf\(agent: number\): Look \| null \{\n\s*if \(!Number\.isInteger\(agent\) \|\| agent < 0 \|\| agent >= this\.lookWords\.length\) return null\n\s*return unpackLook\(this\.lookWords\[agent\], this\.figureWords\[agent \* 4\], this\.figureWords\[agent \* 4 \+ 1\], this\.figureWords\[agent \* 4 \+ 2\]\)/)
   assert.doesNotMatch(src, /sim\.send\(\{ c: 'look/, 'nothing of it is a command to the realm')
 })
 
@@ -218,7 +234,7 @@ test('app: the player\'s look is kept under its own key, worn on agent 0 from th
   assert.doesNotMatch(printed, /\btarget\b|ragdoll|matrix/i)
 })
 
-test('lookStore: its own key, a look within the wardrobe round-trips as a v3 record, a v2 record (twenty slots) and a v1 record (fourteen) are upgraded, anything else reads as none, storage trouble is silent', () => {
+test('lookStore: its own key, a look within the wardrobe round-trips as a v4 record, a v3 record (twenty-nine slots), a v2 record (twenty) and a v1 record (fourteen) are upgraded, anything else reads as none, storage trouble is silent', () => {
   assert.equal(LOOK_KEY, 'civic-simulation:look:v1')
   assert.notEqual(LOOK_KEY, PROFILE_KEY)
   const store = mapStore()
@@ -228,17 +244,26 @@ test('lookStore: its own key, a look within the wardrobe round-trips as a v3 rec
   assert.deepEqual(loadLook(store), look)
   assert.ok(Object.isFrozen(loadLook(store)))
   assert.equal(store.map.size, 1, 'nothing under any other key')
-  assert.deepEqual(JSON.parse(store.map.get(LOOK_KEY)!), { v: 3, look })
+  assert.deepEqual(JSON.parse(store.map.get(LOOK_KEY)!), { v: 4, look })
   // Edited by hand to something the crowd does not wear: not a look.
-  store.map.set(LOOK_KEY, JSON.stringify({ v: 3, look: { ...look, top: 99 } }))
+  store.map.set(LOOK_KEY, JSON.stringify({ v: 4, look: { ...look, top: 99 } }))
   assert.equal(loadLook(store), null)
   const baseFace = { brow: 8, jaw: 8, chin: 8, cheek: 8, nose: 8, eyes: 8, lips: 8, age: 3, undertone: 0 }
+  const baseWardrobe = { layer: 0, trim: 0, scarf: 0 }
+  // A look kept before the layers (v 3, twenty-nine slots): worn again in its jacket, a matching trim, no scarf.
+  const v3: Record<string, number> = {}
+  for (const s of LOOK_V3_SLOTS) v3[s] = LOOK_PRESETS[2].look[s]
+  store.map.set(LOOK_KEY, JSON.stringify({ v: 3, look: v3 }))
+  assert.deepEqual(loadLook(store), upgradeFaceLook(v3))
+  assert.deepEqual(loadLook(store), { ...LOOK_PRESETS[2].look, ...baseWardrobe })
+  store.map.set(LOOK_KEY, JSON.stringify({ v: 3, look: { ...v3, layer: 2 } }))
+  assert.equal(loadLook(store), null, 'a v3 record had no layer')
   // A look kept before the face (v 2, twenty slots): worn again with the base face.
   const v2: Record<string, number> = {}
   for (const s of LOOK_V2_SLOTS) v2[s] = s === 'hairStyle' ? 1 : LOOK_PRESETS[0].look[s as LookSlot]
   store.map.set(LOOK_KEY, JSON.stringify({ v: 2, look: v2 }))
   assert.deepEqual(loadLook(store), upgradeFigureLook(v2))
-  assert.deepEqual(loadLook(store), { ...LOOK_PRESETS[0].look, ...baseFace, hairStyle: 1 })
+  assert.deepEqual(loadLook(store), { ...LOOK_PRESETS[0].look, ...baseFace, ...baseWardrobe, hairStyle: 1 })
   store.map.set(LOOK_KEY, JSON.stringify({ v: 2, look: { ...v2, hairStyle: 2 } }))
   assert.equal(loadLook(store), null, 'a v2 record had two hair styles')
   // A look kept before the figure (v 1, fourteen slots): worn again, its height and build carried into the sliders.
@@ -246,12 +271,12 @@ test('lookStore: its own key, a look within the wardrobe round-trips as a v3 rec
   for (const s of LEGACY_LOOK_SLOTS) legacy[s] = s === 'height' ? 4 : s === 'build' ? 3 : LOOK_PRESETS[0].look[s as LookSlot]
   store.map.set(LOOK_KEY, JSON.stringify({ v: 1, look: legacy }))
   assert.deepEqual(loadLook(store), upgradeLegacyLook(legacy))
-  assert.deepEqual(loadLook(store), { ...LOOK_PRESETS[0].look, height: 16, mass: 6, muscle: 8, shoulders: 8, hips: 8, legs: 8, posture: 8, head: 4, ...baseFace })
+  assert.deepEqual(loadLook(store), { ...LOOK_PRESETS[0].look, height: 16, mass: 6, muscle: 8, shoulders: 8, hips: 8, legs: 8, posture: 8, head: 4, ...baseFace, ...baseWardrobe })
   store.map.set(LOOK_KEY, JSON.stringify({ v: 1, look: { ...legacy, top: 99 } }))
   assert.equal(loadLook(store), null, 'an old record outside the wardrobe is still none')
   store.map.set(LOOK_KEY, JSON.stringify({ v: 1, look }))
-  assert.deepEqual(loadLook(store), look, 'a v1 record that already holds twenty-nine slots reads as it is')
-  store.map.set(LOOK_KEY, JSON.stringify({ v: 4, look }))
+  assert.deepEqual(loadLook(store), look, 'a v1 record that already holds thirty-two slots reads as it is')
+  store.map.set(LOOK_KEY, JSON.stringify({ v: 5, look }))
   assert.equal(loadLook(store), null, 'a layout from the future is not read')
   for (const raw of ['', 'not json', '[]', '{}', JSON.stringify({ v: 2 }), 'x'.repeat(2000)]) {
     store.map.set(LOOK_KEY, raw)
