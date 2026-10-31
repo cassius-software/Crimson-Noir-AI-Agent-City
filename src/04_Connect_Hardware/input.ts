@@ -13,6 +13,7 @@
  */
 import { HalBus } from './hal.ts'
 import { createAnalog, isUsablePad, PAD_EDGE, PadLook, PadMapper, type Analog, type PadFamily, type GenericLayout } from './gamepad.ts'
+import type { XrMapper } from './xrInput.ts'
 import { KEYBOARD_SEAT, PadSeat, SEATS, SeatTable, type PlayerIntent, type Seat } from './seats.ts'
 import type { GamepadLike } from './web-hardware.d.ts'
 
@@ -84,6 +85,25 @@ function isPage(t: EventTarget | null): boolean {
 /** The event's time, or now for one that carries none (a synthetic event). */
 const stamp = (e: Event): number => (Number.isFinite(e.timeStamp) && e.timeStamp > 0 ? e.timeStamp : performance.now())
 
+/**
+ * Two analog frames as one, by the pad's own rules: the larger deflection moves and steers, the larger throttle and
+ * brake win, the look is the first's (a headset's controllers never look: the headset does), holds and latches OR.
+ */
+export function mergeAnalog(out: Analog, a: Analog, b: Analog): Analog {
+  if (b.moveX * b.moveX + b.moveY * b.moveY > a.moveX * a.moveX + a.moveY * a.moveY) {
+    out.moveX = b.moveX; out.moveY = b.moveY; out.steer = b.steer
+  } else {
+    out.moveX = a.moveX; out.moveY = a.moveY; out.steer = a.steer
+  }
+  out.throttle = a.throttle > b.throttle ? a.throttle : b.throttle
+  out.brake = a.brake > b.brake ? a.brake : b.brake
+  out.lookX = a.lookX
+  out.lookY = a.lookY
+  out.run = a.run || b.run
+  out.handbrake = a.handbrake || b.handbrake
+  return out
+}
+
 function coarsePointer(): MediaQueryList | null {
   try { return typeof matchMedia === 'function' ? matchMedia('(pointer: coarse)') : null } catch { return null }
 }
@@ -115,6 +135,10 @@ export class Input {
   private readonly padLook = new PadLook()
   private readonly lookStep = { yaw: 0, pitch: 0 }
   private readonly pad: Analog = createAnalog()
+  /** The pad merged with the headset's controllers (xrInput.ts), the frame the touch stick is merged into. */
+  private readonly padXr: Analog = createAnalog()
+  /** The headset mapper while a session may run (setXr); its read is one of this poll's, under the shield like the pad's. */
+  private xr: XrMapper | null = null
   private readonly stick = { x: 0, y: 0 }
   private readonly held: Record<TouchButton, boolean> = { brake: false, handbrake: false, run: false }
   /** The primary mouse button is down on the canvas without pointer lock: moving it turns the head. */
@@ -336,6 +360,7 @@ export class Input {
     this.keys.clear()
     this.endDrag()
     this.padLook.reset()
+    this.xr?.reset()
     for (const seat of this.padSeats) seat.release()
     this.stick.x = 0
     this.stick.y = 0
@@ -352,9 +377,18 @@ export class Input {
     return !this.coarse?.matches
   }
 
-  /** Pointer locked, touch controls engaged, or a gamepad in use. */
+  /** Pointer locked, touch controls engaged, or a gamepad or a headset's controller in use. */
   get engaged(): boolean {
-    return this.locked || this.touchEngaged || this.mapper.used
+    return this.locked || this.touchEngaged || this.mapper.used || (this.xr?.used ?? false)
+  }
+
+  /**
+   * The headset's input (xrInput.ts XrMapper), read every poll beside the pads: its controllers join the analog
+   * merge, its presses queue actions under the same shield as the pad's, and its snap turns turn the body (yaw);
+   * null takes it away again.
+   */
+  setXr(mapper: XrMapper | null): void {
+    this.xr = mapper
   }
 
   /** The input family used most recently, for the HUD. */
@@ -401,6 +435,7 @@ export class Input {
     this.queued.clear()
     this.endDrag()
     this.padLook.reset()
+    this.xr?.reset()
     for (const seat of this.padSeats) seat.release()
     if (document.pointerLockElement === this.canvas) document.exitPointerLock()
   }
@@ -480,6 +515,7 @@ export class Input {
     } else {
       edges = this.mapper.read(pads, this.pad)
     }
+    edges |= this.readXr() // the headset's controllers: their held bits advance here too, their edges ride the pad's word
     if (this.shielded) edges = 0 // a card waits for the operator's OK: its buttons have the pad (the held bits advanced above)
     if (edges & PAD_EDGE.interact) this.queued.add('interact')
     if (edges & PAD_EDGE.reset) this.queued.add('reset')
@@ -488,7 +524,8 @@ export class Input {
     if (edges & PAD_EDGE.ping) this.queued.add('ping')
     if (this.mapper.active) this.lastSource = 'gamepad'
 
-    const a = this.analog, p = this.pad, sx = this.stick.x, sy = this.stick.y
+    const xr = this.xr
+    const a = this.analog, p = xr ? mergeAnalog(this.padXr, this.pad, xr.analog) : this.pad, sx = this.stick.x, sy = this.stick.y
     if (sx * sx + sy * sy > p.moveX * p.moveX + p.moveY * p.moveY) {
       a.moveX = sx; a.moveY = sy; a.steer = -sx
     } else {
@@ -508,6 +545,19 @@ export class Input {
       this.pitch = clampPitch(this.pitch + turn.pitch)
       if (a.lookX !== 0 || a.lookY !== 0) this.lastLook = performance.now()
     }
+  }
+
+  /**
+   * The headset mapper's read, one of this poll's: its edge word (merged into the pad's, so the same shield drops it),
+   * its snap turn taken off the body yaw once, and its activity counted as a pad's for the device line.
+   */
+  private readXr(): number {
+    const xr = this.xr
+    if (!xr) return 0
+    const edges = xr.read()
+    if (xr.turn !== 0) { this.yaw -= xr.turn; xr.turn = 0 }
+    if (xr.active) this.lastSource = 'gamepad'
+    return edges
   }
 
   /** Virtual stick, −1..1 per axis (x right, y forward); the vector is clamped to length 1. */

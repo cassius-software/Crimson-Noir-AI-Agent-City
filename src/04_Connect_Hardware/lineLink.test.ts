@@ -4,8 +4,10 @@
 /**
  * Why does this file exist? It proves the HAL/1 line protocol: HELLO/READY handshake with its 2 s deadline
  * and HELLO repeats, framing (split UTF-8, CRLF, overlong lines), PING → PONG, inbound JSON ignored,
- * newest-wins telemetry with one write in flight, and the Web Serial and Nordic UART Service channels
- * (chunking to 20-byte BLE writes, notifications, disconnects, clean close) against mock devices.
+ * newest-wins telemetry with one write in flight, the joint bridge's door (the page's bounded control queue, the
+ * one setpoint slot, their order on the wire ahead of telemetry, and inbound lines handed on while PING is still
+ * answered here), and the Web Serial and Nordic UART Service channels (chunking to 20-byte BLE writes,
+ * notifications, disconnects, clean close) against mock devices.
  * What breaks if it is removed? A framing or handshake regression would strand DIY devices silently.
  */
 import assert from 'node:assert/strict'
@@ -426,4 +428,101 @@ test('a channel that cannot start (locked stream) fails the handshake instead of
   await sleep(1)
   assert.equal(ch.closed, true)
   assert.deepEqual(ch.written, [], 'no HELLO on a dead channel')
+})
+
+// ── the joint bridge's door: control lines, the setpoint slot, lines handed on ─────────────────────────
+
+/** A ready link whose channel is held, so that what is queued next waits behind one write; release() lets it go. */
+async function heldLink(onLine?: (line: string) => void) {
+  const ch = new MockChannel(readyOnHello('Arm'))
+  const link = new LineLink(ch, { brand: 'CityHost', version: '1.0.0', onLine })
+  assert.equal(await link.start(), 'ready')
+  let release!: () => void
+  ch.gate = new Promise((r) => { release = r })
+  link.telemetry('{"first":1}\n') // in flight: everything queued from here on waits behind it
+  await sleep(1)
+  const before = ch.written.length
+  return { ch, link, before, release: () => { ch.gate = null; release() } }
+}
+
+test('on the wire: control lines first, then the setpoint slot, then telemetry, whatever order they were queued in', async () => {
+  const h = await heldLink()
+  h.link.telemetry('{"t":2}\n')
+  h.link.setpoint('JT {"seq":1}\n')
+  assert.equal(h.link.send('ARM n1\n'), true)
+  h.release()
+  await sleep(5)
+  assert.deepEqual(h.ch.written.slice(h.before), ['ARM n1\n', 'JT {"seq":1}\n', '{"t":2}\n'])
+  assert.equal(h.link.linesOut, h.ch.written.length, 'linesOut counts everything written, HELLO included')
+  await h.link.close()
+})
+
+test('the control queue holds LINE.controlQueue lines; the next is refused rather than lost silently', async () => {
+  assert.equal(LINE.controlQueue, 8)
+  const h = await heldLink()
+  const accepted: boolean[] = []
+  for (let i = 1; i <= LINE.controlQueue + 2; i++) accepted.push(h.link.send(`C${i}`))
+  assert.deepEqual(accepted, [...Array.from({ length: LINE.controlQueue }, () => true), false, false])
+  h.release()
+  await sleep(5)
+  assert.deepEqual(h.ch.written.slice(h.before), Array.from({ length: LINE.controlQueue }, (_, i) => `C${i + 1}\n`), 'in order, a missing newline added')
+  assert.equal(h.link.send('C11'), true, 'room again once drained')
+  await h.link.close()
+})
+
+test('the setpoint slot: the newest unsent line wins; clearSetpoint and close drop it', async () => {
+  const h = await heldLink()
+  h.link.setpoint('JT 1')
+  h.link.setpoint('JT 2')
+  h.link.setpoint('JT 3')
+  h.release()
+  await sleep(5)
+  assert.deepEqual(h.ch.written.slice(h.before), ['JT 3\n'])
+  await h.link.close()
+  const g = await heldLink()
+  g.link.setpoint('JT 4\n')
+  g.link.clearSetpoint()
+  g.release()
+  await sleep(5)
+  assert.deepEqual(g.ch.written.slice(g.before), [])
+  await g.link.close()
+  const k = await heldLink()
+  k.link.setpoint('JT 5\n')
+  const closing = k.link.close()
+  k.release()
+  await closing
+  await sleep(5)
+  assert.deepEqual(k.ch.written.slice(k.before), [], 'nothing after close')
+})
+
+test('send is false, and a setpoint is dropped, before READY and after the link ends', async () => {
+  const ch = new MockChannel()
+  const link = new LineLink(ch, { brand: 'CityHost', version: '1.0.0' })
+  const started = link.start()
+  assert.equal(link.send('ARM x\n'), false)
+  link.setpoint('JT early\n')
+  ch.feed('READY Arm\n')
+  assert.equal(await started, 'ready')
+  await sleep(2)
+  assert.ok(!ch.written.some((l) => l.startsWith('ARM') || l.startsWith('JT')), 'nothing queued before READY went out')
+  await link.close()
+  assert.equal(link.send('DISARM x\n'), false)
+})
+
+test('lines after READY that are not the link\'s own reach onLine without their newline; PING is answered here, not handed on', async () => {
+  const got: string[] = []
+  const ch = new MockChannel()
+  const link = new LineLink(ch, { brand: 'CityHost', version: '1.0.0', onLine: (l) => got.push(l) })
+  const started = link.start()
+  ch.feed('boot v1\nJS {"early":1}\n') // before READY: boot noise, not handed on
+  ch.feed('READY Arm\n')
+  assert.equal(await started, 'ready')
+  const before = ch.written.length
+  ch.feed('CAPS 1 {"class":"actuator"}\r\nJS {"seq":1}\nPING\nPONG\nREADY Arm\n   \nJA 7\n')
+  await sleep(5)
+  assert.deepEqual(got, ['CAPS 1 {"class":"actuator"}', 'JS {"seq":1}', 'JA 7'])
+  assert.deepEqual(ch.written.slice(before), ['PONG\n'])
+  assert.equal(link.state, 'ready', 'a second READY (a board that reset) does not restart the session')
+  assert.equal(link.linesIn, 10)
+  await link.close()
 })

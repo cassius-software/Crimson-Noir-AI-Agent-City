@@ -163,7 +163,7 @@ test('the input shield: a second flag beside suspend that drops the pad\'s edges
   assert.match(INPUT, /^ {2}shielded = false$/m)
   assert.match(INPUT, /shield\(on: boolean\): void \{\n\s+this\.shielded = on\n\s+\}/)
   const poll = between(INPUT, '  poll(dt: number): void {', '  /** Virtual stick')
-  assert.match(poll, /edges = this\.mapper\.read\(pads, this\.pad\)\n\s+\}\n\s+if \(this\.shielded\) edges = 0 \/\/[^\n]*\n\s+if \(edges & PAD_EDGE\.interact\) this\.queued\.add\('interact'\)/, 'after the mapper read (its held bits advance), before any edge is queued')
+  assert.match(poll, /edges = this\.mapper\.read\(pads, this\.pad\)\n\s+\}\n\s+edges \|= this\.readXr\(\) \/\/[^\n]*\n\s+if \(this\.shielded\) edges = 0 \/\/[^\n]*\n\s+if \(edges & PAD_EDGE\.interact\) this\.queued\.add\('interact'\)/, 'after the mapper reads, the pad\'s and the headset\'s (their held bits advance), before any edge is queued')
   assert.equal(poll.match(/this\.shielded/g)?.length, 1)
   assert.match(INPUT, /press\(action: Action\): void \{\n\s+if \(this\.shielded\) return\n\s+this\.queued\.add\(action\)\n\s+\}/)
   const keyboard = between(INPUT, "on(document, 'keydown', (e) => {", "on(document, 'keyup'")

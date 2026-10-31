@@ -41,7 +41,7 @@ const { SimClient } = await import('./simClient.ts')
 const INIT = { seed: 1, cars: 0, agents: 256, boxes: [], furniture: { lamps: [], trees: [], signals: [] }, spawn: { x: 0, z: 0 }, debug: false } as const
 const META = { count: 1, agents: 256, suv: [false], kind: [0], paint: [0], person: { radius: 0.3, halfHeight: 0.6 }, debug: false, craft: 0, players: 1, rigSlots: 0 }
 const state = (id: number) => ({
-  t: 'state', id, simTime: 0, poses: new Float32Array(POSE.stride), avatars: [{ x: 0, y: 0, z: 0, enabled: true, sensor: false }], drivings: [-1], crowdFrame: null, craft: null, rigs: null,
+  t: 'state', id, simTime: 0, poses: new Float32Array(POSE.stride), avatars: [{ x: 0, y: 0, z: 0, enabled: true, sensor: false }], drivings: [-1], crowdFrame: null, craft: null, rigs: null, robots: null,
 }) as unknown as FromWorker
 
 /** Starts a client on a fresh fake worker and answers its init up to the first state. */
