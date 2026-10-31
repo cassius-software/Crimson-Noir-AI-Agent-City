@@ -57,6 +57,7 @@ import { CONCIERGE_NAME as CONCIERGE_LABEL } from './onboarding/script.ts'
 import { packFrustumPlanes, PLAYER_INDEX, type CrowdStats, type CullSettings } from '../03_Spawn_Agents/crowdCompute.ts'
 import { CrowdCull } from '../03_Spawn_Agents/crowdCull.ts'
 import { AGENTS_RANGE } from '../03_Spawn_Agents/crowdSensor.ts'
+import type { HalOutputs } from '../04_Connect_Hardware/hal.ts'
 import { Input, TriggerFeedback } from '../04_Connect_Hardware/input.ts'
 import { KEYBOARD_SEAT, type Seat } from '../04_Connect_Hardware/seats.ts'
 import { FrameClock, type GlyphFamily, type KernelStats, type NetReport, type NetState, type SeatView, type SipocSnapshot, type Toast } from '../05_Observe_Environment/telemetry.ts'
@@ -186,7 +187,12 @@ export type EngineConfig = EngineOptions & {
  * awaits the device): a steady low hum while the L2 limiter withholds throttle, and a short strong thump on
  * the rising edge of a First-Law hold or a full manual brake (both decided in the physics realm).
  */
-const HAPTICS = { limiter: 0.2, pulse: 1, pulseMs: 180 } as const
+const HAPTICS = { limiter: 0.2, pulse: 1, pulseMs: 180, hold: 0.6 } as const
+/**
+ * The lightbar's words (brand/tokens.json): crimson at rest, amber while the limiter leans on the wheels (caution,
+ * the swarm's second role), white for the thump (the First Law taking the car, or a full brake).
+ */
+const LIGHTBAR = { rest: 0xe8203a, limited: 0xd89a2a, thump: 0xffffff } as const
 /** Longest simulated time one step request carries when the worker fell behind, s. */
 const MAX_STEP_DT = 0.1
 /** How often the pedestrians' positions are copied out of the crowd frames for SimControls.crowd.positions, ms. */
@@ -506,7 +512,8 @@ export class Engine {
   private readonly toasts: Toast[] = []
   private readonly sound: AudioFrame
   /** Reused haptics request (the bus copies values and writes only on change). */
-  private readonly haptics = { rumble: 0 }
+  /** Everything but the brake trigger, which TriggerFeedback owns (one output call must not overwrite the other's). */
+  private readonly haptics: Omit<HalOutputs, 'triggerResistance'> = { rumble: 0, throttleResistance: 0, throttleVibration: 0, lightbar: LIGHTBAR.rest }
   /** The pedestrian whose speech is playing (speechOut), or −1: the voice follows them. */
   private speaker = -1
   /** The 2 m cells the listener and the speaker were last found in: their rooms (acoustics.ts) are recomputed on a change. */
@@ -1594,9 +1601,11 @@ export class Engine {
     kernelPanic(reason, () => { void Promise.resolve(this.input.hal.dispose()).catch(() => {}) })
   }
 
-  private rumble(level: number): void {
-    this.haptics.rumble = level
-    this.input.hal.output(this.haptics)
+  /** Rumble, the throttle trigger's hold and snap, and the lightbar's colour, in one output call. */
+  private rumble(level: number, hold = 0, snap = 0, lightbar: number = LIGHTBAR.rest): void {
+    const h = this.haptics
+    h.rumble = level; h.throttleResistance = hold; h.throttleVibration = snap; h.lightbar = lightbar
+    this.input.hal.output(h)
   }
 
   /**
@@ -1664,15 +1673,21 @@ export class Engine {
       const v = this.views[k]
       readControls(input.intent(v.seat), (st.drivings[k] ?? -1) >= 0, v.foot, v.drive)
     }
-    let rumble = 0, trigger = 0
+    let rumble = 0, trigger = 0, hold = 0, snap = 0, lightbar: number = LIGHTBAR.rest
     if (driving < 0) {
       // A script's walk (a harness's, say) overrides the keys while it lasts; the worker still caps it at a run.
       applyWalk(this.scriptedWalk, nowMs, foot)
       this.pulseUntil = 0
     } else {
-      // What the wheels received (vetted, L2-limited) in the audited state: the trigger feels it, the rumble reports it.
+      // What the wheels received (vetted, L2-limited) in the audited state: the brake trigger feels it, the rumble
+      // reports it; the throttle trigger stiffens while the limiter holds the wheels back and snaps for a thump,
+      // and the lightbar says which.
       trigger = st.haptics.trigger
-      rumble = nowMs < this.pulseUntil ? HAPTICS.pulse : st.haptics.limited ? HAPTICS.limiter : 0
+      const thump = nowMs < this.pulseUntil
+      rumble = thump ? HAPTICS.pulse : st.haptics.limited ? HAPTICS.limiter : 0
+      hold = st.haptics.limited ? HAPTICS.hold : 0
+      snap = thump ? HAPTICS.pulse : 0
+      lightbar = thump ? LIGHTBAR.thump : st.haptics.limited ? LIGHTBAR.limited : LIGHTBAR.rest
     }
     this.pendingDt = Math.min(MAX_STEP_DT, this.pendingDt + dt)
     const physicsStart = performance.now()
@@ -1691,7 +1706,7 @@ export class Engine {
     const postMs = performance.now() - physicsStart
     // Hardware hears only audited states: the worker sends a state after its Ring-0 audit, a panic instead of one.
     this.trigger.set(trigger)
-    this.rumble(rumble)
+    this.rumble(rumble, hold, snap, lightbar)
 
     // First person only: the camera is the avatar's head (eye level on foot, the driver's seat in a car). Posed on
     // every animation frame, drawn or not: recruitment reads it, the audio listener is it, and the car carries it.
@@ -2242,7 +2257,7 @@ export class Engine {
         return `audio: ${st.state} · ${st.voices} voices · ${st.hrtf ? 'HRTF' : 'stereo'} · volume ${Math.round(st.volume * 100)}%${split}`
       },
       // pair() must stay synchronous up to requestDevice/requestPort: the Enter keydown is the user gesture.
-      hal: Object.freeze({ summary: () => hal.summary(), devices: () => hal.devices(), pair: (k: 'hid' | 'serial' | 'bluetooth') => hal.pair(k) }),
+      hal: Object.freeze({ summary: () => hal.summary(), devices: () => hal.devices(), pair: (k: 'hid' | 'serial' | 'bluetooth') => hal.pair(k), get shellHid() { return hal.shellHid } }),
       adapter: () => this.adapter,
       ghost: (arg?: 'on' | 'off') => (arg === undefined ? (this.ghost.on ? 'on' : 'off') : this.setGhost(arg === 'on')),
       rain: (arg?: 'on' | 'off') => (arg === undefined ? (this.matrixOn ? 'on' : 'off') : this.setMatrix(arg === 'on')),

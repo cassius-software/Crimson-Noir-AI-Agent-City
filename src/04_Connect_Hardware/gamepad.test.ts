@@ -18,6 +18,7 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { PADDLE } from './dualsense.ts'
 import {
   createAnalog, GENERIC_MS, GenericPads, isUsablePad, PAD, PAD_EDGE, PAD_LOOK, PAD_TUNING, PadLook, PadMapper, padFamilyOf, padName, parsePadId,
   radialDeadzone, triggerValue,
@@ -514,4 +515,27 @@ test('head look is frame-rate independent and survives broken input', () => {
   assert.ok(Number.isFinite(out.yaw) && out.yaw <= PAD_LOOK.yawRate / 60, 'out-of-range axes are clamped')
   const big = spin(new PadLook(), 1, 0, 1, 1)
   assert.ok(big.yaw <= 0.1 * (PAD_LOOK.yawRate + PAD_LOOK.boost) + 1e-9, 'a 1 s hitch turns by at most one 0.1 s step')
+})
+
+test('a DualSense Edge\'s paddles: the left one is a second L3 (run latch), the right a second R1 (ping)', () => {
+  const m = new PadMapper(), a = createAnalog()
+  const edge = (paddles: number, axes = [0, -1, 0, 0]): GamepadLike => ({ ...pad({ axes }), paddles })
+  assert.equal(m.read([edge(PADDLE.right)], a), PAD_EDGE.ping, 'right paddle: a ping')
+  assert.equal(m.read([edge(PADDLE.right)], a), 0, 'held: no repeat')
+  assert.equal(m.read([edge(0)], a), 0)
+  assert.equal(a.run, false)
+  m.read([edge(PADDLE.left)], a)
+  assert.equal(a.run, true, 'left paddle latches the run')
+  m.read([edge(0)], a)
+  assert.equal(a.run, true, 'latched after release')
+  m.read([edge(PADDLE.left)], a)
+  assert.equal(a.run, false, 'a second press clears it')
+  m.read([edge(PADDLE.fn1 | PADDLE.fn2)], a)
+  assert.equal(m.read([edge(PADDLE.fn1 | PADDLE.fn2)], a), 0, 'the Fn keys do nothing')
+  assert.equal(a.run, false)
+  const many = pad({ pressed: [PAD.r1] })
+  const wide: GamepadLike = { ...many, buttons: [...many.buttons, ...Array.from({ length: 12 }, () => ({ pressed: true, value: 1 }))] }
+  assert.equal(m.read([pad()], a), 0)
+  assert.equal(m.read([wide], a), PAD_EDGE.ping, 'buttons past the standard ones on a pad without paddles are not paddles')
+  assert.equal(a.run, false)
 })

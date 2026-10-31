@@ -3,8 +3,9 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It pins the DualSense output report byte for byte against the documented layout
- * (see the sources in dualsense.ts): trigger-effect bit packing, the 47-byte common block, the USB and
- * Bluetooth framings with an independently computed CRC-32 (node:zlib), firmware parsing, input decoding, and
+ * (see the sources in dualsense.ts): every trigger effect's bit packing, the 47-byte common block with both
+ * triggers, the lightbar and the player LEDs, the lightbar setup report, the USB and Bluetooth framings with an
+ * independently computed CRC-32 (node:zlib), firmware parsing, input decoding (the Edge's paddles included), and
  * the driver's change-only, rate-limited, one-in-flight writes and its "off" on close.
  * What breaks if it is removed? A layout slip could send wrong bytes to someone's controller unnoticed.
  */
@@ -12,9 +13,12 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { crc32 as zlibCrc32 } from 'node:zlib'
 import {
-  buildBtReport, buildUsbReport, COMMON, crc32, decodeInput, detectBus, DS, DsPad, DualSense, fillCommon, heavyMotor,
-  isDualSense, lightMotor, outputLength, parseFirmwareInfo, reportCrc, resistanceStrength, wantsVibrationV2,
-  writeTriggerFeedback, writeTriggerOff, type DsState,
+  buildBtReport, buildBtSetup, buildUsbReport, buildUsbSetup, COMMON, crc32, createState, decodeInput, detectBus, DS,
+  DsPad, DualSense, EFFECT, fillCommon, FLAG1, FLAG2, heavyMotor, isDualSense, lightMotor, MAX_PLAYERS, outputLength,
+  PADDLE, parseFirmwareInfo, PLAYER_LEDS, QUIET, reportCrc, resistanceStrength, sameState, SNAP_HZ, stateFor,
+  wantsVibrationV2, writeTriggerBow, writeTriggerDetent, writeTriggerEffect, writeTriggerFeedback,
+  writeTriggerGalloping, writeTriggerMachine, writeTriggerOff, writeTriggerVibration, type DsOutputs, type DsState,
+  type TriggerEffect,
 } from './dualsense.ts'
 import type { HidCollectionInfo, HidDevice, HidInputReportEvent } from './web-hardware.d.ts'
 
@@ -94,21 +98,165 @@ test('HAL levels quantize to trigger strength and motor bytes', () => {
   assert.equal(heavyMotor(Number.NaN), 0)
 })
 
-const S = (trigger: number, heavy: number, light: number): DsState => ({ trigger, heavy, light })
+/** A state: the brake's Feedback strength on the left, motors, and optionally the throttle's strength, lightbar and seat. */
+const S = (trigger: number, heavy: number, light: number, more: { right?: number; lightbar?: number; players?: number } = {}): DsState => {
+  const st = createState()
+  writeTriggerFeedback(st.left, 0, 0, trigger)
+  if (more.right !== undefined) writeTriggerFeedback(st.right, 0, 0, more.right)
+  st.heavy = heavy; st.light = light
+  st.lightbar = more.lightbar ?? -1
+  st.players = more.players ?? -1
+  return st
+}
+/** HAL outputs: brake resistance and rumble, the rest quiet unless given. */
+const O = (triggerResistance: number, rumble: number, more: Partial<DsOutputs> = {}): DsOutputs => ({ ...QUIET, triggerResistance, rumble, ...more })
+const eff = (e: TriggerEffect) => {
+  const out = new Uint8Array(11).fill(0xee)
+  writeTriggerEffect(out, 0, e)
+  return bytes(out)
+}
+const OFF = [0x05, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+/** Golden Bluetooth CRC trailers (little-endian) for the two reports pinned below. */
+const GOLDEN_BT_NEUTRAL = [0x9f, 0xf0, 0xbf, 0x87] // CRC 0x87bff09f
+const GOLDEN_BT_STATE = [0xac, 0xd8, 0x73, 0x7e] // CRC 0x7e73d8ac
+
+test('Detent (0x25), Vibration (0x26), Bow (0x22), Galloping (0x23) and Machine (0x27) pack as the generator does', () => {
+  const o = new Uint8Array(11)
+  writeTriggerDetent(o, 0, 2, 8, 5)
+  assert.deepEqual(bytes(o), [0x25, 0x04, 0x01, 0x04, 0, 0, 0, 0, 0, 0, 0], 'zones 2 and 8, strength 5 → 4')
+  writeTriggerDetent(o, 0, 0, 20, 3)
+  assert.deepEqual(bytes(o), [0x25, 0x04, 0x01, 0x02, 0, 0, 0, 0, 0, 0, 0], 'start clamps to 2, end to 8')
+  writeTriggerDetent(o, 0, 5, 5, 3)
+  assert.deepEqual(bytes(o), [0x25, 0x60, 0x00, 0x02, 0, 0, 0, 0, 0, 0, 0], 'end is at least start + 1')
+  writeTriggerDetent(o, 0, 2, 8, 0)
+  assert.deepEqual(bytes(o), OFF, 'strength 0 is Off')
+
+  writeTriggerVibration(o, 0, 0, 8, 30)
+  assert.deepEqual(bytes(o), [0x26, 0xff, 0x03, 0xff, 0xff, 0xff, 0x3f, 0, 0, 30, 0], 'whole travel, full amplitude, 30 Hz')
+  writeTriggerVibration(o, 0, 9, 1, 255)
+  assert.deepEqual(bytes(o), [0x26, 0x00, 0x02, 0, 0, 0, 0, 0, 0, 255, 0], 'last zone only, amplitude 1 → 0')
+  writeTriggerVibration(o, 0, 3, 4, 0)
+  assert.deepEqual(bytes(o), OFF, 'frequency 0 is Off')
+  writeTriggerVibration(o, 0, 3, 0, 40)
+  assert.deepEqual(bytes(o), OFF, 'amplitude 0 is Off')
+
+  writeTriggerBow(o, 0, 0, 8, 8, 8)
+  assert.deepEqual(bytes(o), [0x22, 0x01, 0x01, 0x3f, 0x00, 0, 0, 0, 0, 0, 0], 'zones 0 and 8, strength 8 | snap 8 << 3')
+  writeTriggerBow(o, 0, 2, 6, 3, 5)
+  assert.deepEqual(bytes(o), [0x22, 0x44, 0x00, 0x22, 0x00, 0, 0, 0, 0, 0, 0])
+  writeTriggerBow(o, 0, 2, 6, 0, 5)
+  assert.deepEqual(bytes(o), OFF)
+
+  writeTriggerGalloping(o, 0, 0, 9, 2, 5, 100)
+  assert.deepEqual(bytes(o), [0x23, 0x01, 0x02, 0x15, 100, 0, 0, 0, 0, 0, 0], 'zones 0 and 9, second foot 5 | first 2 << 3, 100 Hz')
+  writeTriggerGalloping(o, 0, 8, 3, 6, 6, 10)
+  assert.deepEqual(bytes(o), [0x23, 0x00, 0x03, 0x37, 10, 0, 0, 0, 0, 0, 0], 'end past start, second foot past the first')
+  writeTriggerGalloping(o, 0, 0, 9, 2, 5, 0)
+  assert.deepEqual(bytes(o), OFF)
+
+  writeTriggerMachine(o, 0, 1, 9, 7, 3, 20, 5)
+  assert.deepEqual(bytes(o), [0x27, 0x02, 0x02, 0x1f, 20, 5, 0, 0, 0, 0, 0], 'zones 1 and 9, amplitudes 7 | 3 << 3, 20 Hz, period 5')
+  writeTriggerMachine(o, 0, 1, 9, 7, 3, 0, 5)
+  assert.deepEqual(bytes(o), OFF)
+
+  assert.deepEqual(eff({ kind: 'off' }), OFF)
+  assert.deepEqual(eff({ kind: 'feedback', position: 0, strength: 5 }), block(0, 5))
+  assert.deepEqual(eff({ kind: 'detent', start: 2, end: 8, strength: 5 }), [0x25, 0x04, 0x01, 0x04, 0, 0, 0, 0, 0, 0, 0])
+  assert.deepEqual(eff({ kind: 'vibration', position: 0, amplitude: 8, frequency: 30 }), [0x26, 0xff, 0x03, 0xff, 0xff, 0xff, 0x3f, 0, 0, 30, 0])
+  assert.deepEqual(eff({ kind: 'bow', start: 2, end: 6, strength: 3, snap: 5 }), [0x22, 0x44, 0x00, 0x22, 0x00, 0, 0, 0, 0, 0, 0])
+  assert.deepEqual(eff({ kind: 'galloping', start: 0, end: 9, first: 2, second: 5, frequency: 100 }), [0x23, 0x01, 0x02, 0x15, 100, 0, 0, 0, 0, 0, 0])
+  assert.deepEqual(eff({ kind: 'machine', start: 1, end: 9, a: 7, b: 3, frequency: 20, period: 5 }), [0x27, 0x02, 0x02, 0x1f, 20, 5, 0, 0, 0, 0, 0])
+  assert.deepEqual(Object.values(EFFECT).sort((x, y) => x - y), [0x05, 0x21, 0x22, 0x23, 0x25, 0x26, 0x27])
+})
+
+test('stateFor: the brake on the left, the throttle\'s hold or snap on the right, the lightbar word and the seat', () => {
+  const st = createState()
+  stateFor(O(0.5, 1, { throttleResistance: 0.25 }), 3, st)
+  assert.deepEqual(bytes(st.left), block(0, 4))
+  assert.deepEqual(bytes(st.right), block(0, 2))
+  assert.equal(st.heavy, 255)
+  assert.equal(st.light, 132)
+  assert.equal(st.lightbar, -1)
+  assert.equal(st.players, 3)
+  stateFor(O(0, 0, { throttleResistance: 1, throttleVibration: 0.5, lightbar: 0xe8203a }), 9, st)
+  const snap = new Uint8Array(11)
+  writeTriggerVibration(snap, 0, 0, 4, SNAP_HZ)
+  assert.deepEqual(bytes(st.right), bytes(snap), 'a snap replaces the hold while it lasts')
+  assert.deepEqual(bytes(st.left), OFF)
+  assert.equal(st.lightbar, 0xe8203a)
+  assert.equal(st.players, MAX_PLAYERS, 'seats past the five LEDs light all five')
+  stateFor(O(0, 0, { lightbar: 1.5 }), -1, st)
+  assert.equal(st.lightbar, -1, 'a fraction is not a colour')
+  assert.equal(st.players, 0)
+  stateFor(O(0, 0, { lightbar: 0x1000000 }), 0, st)
+  assert.equal(st.lightbar, -1, 'past 24 bits is not a colour')
+  stateFor(O(0, 0, { lightbar: Number.NaN }), 0, st)
+  assert.equal(st.lightbar, -1)
+  const a = stateFor(O(0.3, 0.3, { lightbar: 7 }), 1, createState()), b = stateFor(O(0.3, 0.3, { lightbar: 7 }), 1, createState())
+  assert.ok(sameState(a, b))
+  assert.ok(!sameState(a, stateFor(O(0.3, 0.3, { lightbar: 7 }), 2, createState())), 'the seat is part of the state')
+  assert.ok(!sameState(a, stateFor(O(0.3, 0.3, { lightbar: 8 }), 1, createState())))
+  assert.ok(!sameState(a, stateFor(O(0.3, 0.3, { lightbar: 7, throttleVibration: 1 }), 1, createState())))
+})
+
+test('common block: the lightbar and player LEDs set their valid flags and bytes, or are left alone', () => {
+  const c = new Uint8Array(47)
+  fillCommon(c, 0, S(0, 0, 0, { lightbar: 0x112233, players: 2 }), true)
+  assert.equal(c[COMMON.flag1], FLAG1.lightbar | FLAG1.playerLeds)
+  assert.deepEqual(bytes(c.subarray(COMMON.red, COMMON.blue + 1)), [0x11, 0x22, 0x33])
+  assert.equal(c[COMMON.playerLeds], 0x0a)
+  assert.equal(c[COMMON.lightbarSetup], 0)
+  assert.equal(c[COMMON.ledBrightness], 0)
+  assert.equal(c[COMMON.muteLed], 0, 'the mute LED is never touched')
+  fillCommon(c, 0, S(0, 0, 0, { players: 0 }), true)
+  assert.equal(c[COMMON.flag1], FLAG1.playerLeds)
+  assert.equal(c[COMMON.playerLeds], 0, 'seat 0: the pattern with none lit')
+  assert.deepEqual(bytes(c.subarray(COMMON.red, COMMON.blue + 1)), [0, 0, 0])
+  fillCommon(c, 0, S(0, 0, 0, { players: 9 }), true)
+  assert.equal(c[COMMON.playerLeds], 0x1f)
+  fillCommon(c, 0, S(0, 0, 0), true)
+  assert.equal(c[COMMON.flag1], 0, 'neither: the controller keeps its own')
+  assert.deepEqual(PLAYER_LEDS, [0x00, 0x04, 0x0a, 0x15, 0x1b, 0x1f])
+})
+
+test('lightbar setup report: LIGHT_OUT in the common block and nothing else, on either bus', () => {
+  const usb = new Uint8Array(63).fill(0xaa)
+  buildUsbSetup(usb)
+  const want = new Array(63).fill(0)
+  want[COMMON.flag2] = FLAG2.lightbarSetup
+  want[COMMON.lightbarSetup] = 0x02
+  assert.deepEqual(bytes(usb), want)
+  const bt = new Uint8Array(77)
+  buildBtSetup(bt, 3)
+  assert.equal(bt[0], 0x30)
+  assert.equal(bt[1], 0x10)
+  assert.equal(bt[2 + COMMON.flag2], FLAG2.lightbarSetup)
+  assert.equal(bt[2 + COMMON.lightbarSetup], 0x02)
+  assert.deepEqual(bytes(bt.subarray(2, 2 + COMMON.flag2)), new Array(COMMON.flag2).fill(0))
+  assert.equal(new DataView(bt.buffer).getUint32(73, true), zlibCrc32(Buffer.from([0xa2, 0x31, ...bt.subarray(0, 73)])))
+})
 
 test('USB report 0x02: 47 data bytes, exact layout', () => {
   const out = new Uint8Array(DS.usbOutputLength)
   buildUsbReport(out, S(5, 200, 100), false)
   const want = new Array(47).fill(0)
-  want[0] = 0x0b // left trigger | haptics select | compatible vibration
+  want[0] = 0x0f // left trigger | right trigger | haptics select | compatible vibration
   want[2] = 100 // motor_right (light)
   want[3] = 200 // motor_left (heavy)
+  want[10] = 0x05 // right trigger: Off
   want.splice(21, 11, 0x21, 0xff, 0x03, 0x24, 0x49, 0x92, 0x24, 0, 0, 0, 0)
   assert.deepEqual(bytes(out), want)
 
   buildUsbReport(out, S(5, 200, 100), true)
-  want[0] = 0x0a
+  want[0] = 0x0e
   want[38] = 0x04 // valid_flag2: compatible vibration v2
+  assert.deepEqual(bytes(out), want)
+
+  buildUsbReport(out, S(5, 200, 100, { right: 3, lightbar: 0xe8203a, players: 1 }), true)
+  want[1] = 0x14 // lightbar | player LEDs
+  want.splice(10, 11, 0x21, 0xff, 0x03, 0x92, 0x24, 0x49, 0x12, 0, 0, 0, 0)
+  want[43] = 0x04
+  want[44] = 0xe8; want[45] = 0x20; want[46] = 0x3a
   assert.deepEqual(bytes(out), want)
   assert.equal(COMMON.length + 1, 48, 'with the report ID: the USB descriptor size')
 })
@@ -125,21 +273,23 @@ test('Bluetooth report 0x31: seq/tag header, common block at 2, CRC-32 LE over 0
   buildBtReport(out, S(0, 0, 0), false, 0)
   const want = new Array(77).fill(0)
   want[1] = 0x10
-  want[2] = 0x0b
+  want[2] = 0x0f
+  want[2 + 10] = 0x05
   want[2 + 21] = 0x05
-  want.splice(73, 4, 0x3f, 0xf8, 0x33, 0x08) // golden CRC 0x0833f83f
+  want.splice(73, 4, ...GOLDEN_BT_NEUTRAL)
   assert.deepEqual(bytes(out), want)
 
   buildBtReport(out, S(5, 200, 100), true, 7)
   const want2 = new Array(77).fill(0)
   want2[0] = 0x70
   want2[1] = 0x10
-  want2[2] = 0x0a
+  want2[2] = 0x0e
   want2[4] = 100
   want2[5] = 200
+  want2[2 + 10] = 0x05
   want2.splice(23, 7, 0x21, 0xff, 0x03, 0x24, 0x49, 0x92, 0x24)
   want2[2 + 38] = 0x04
-  want2.splice(73, 4, 0x0c, 0xd0, 0xff, 0xf1) // golden CRC 0xf1ffd00c
+  want2.splice(73, 4, ...GOLDEN_BT_STATE)
   assert.deepEqual(bytes(out), want2)
 
   const crc = zlibCrc32(Buffer.from([0xa2, 0x31, ...out.subarray(0, 73)]))
@@ -192,6 +342,8 @@ test('firmware info parses with or without the report ID byte; vibration v2 rule
     assert.deepEqual(parseFirmwareInfo(firmwareReport(withId, 0x0215)), { hardware: 0x00ab1234, firmware: 0x01020304, update: 0x0215 })
   }
   assert.equal(parseFirmwareInfo(new DataView(new ArrayBuffer(20))), null)
+  assert.deepEqual(parseFirmwareInfo(new DataView(firmwareReport(true, 0x0215).buffer.slice(0, 48))), { hardware: 0x00ab1234, firmware: 0x01020304, update: 0x0215 }, 'a shorter answer with the ID in front (the shell returns what hidapi read)')
+  assert.equal(parseFirmwareInfo(new DataView(firmwareReport(true, 0x0215).buffer.slice(0, 45))), null, 'too short to hold the update version')
   assert.equal(wantsVibrationV2(0x0df2, undefined), true)
   assert.equal(wantsVibrationV2(0x0ce6, 0x0214), false)
   assert.equal(wantsVibrationV2(0x0ce6, 0x0215), true)
@@ -229,6 +381,21 @@ test('input report decodes into the standard mapping', () => {
   assert.deepEqual([0, 1, 2, 3, 4, 5, 6, 7, 8].map(hat), ['1000', '1001', '0001', '0101', '0100', '0110', '0010', '1010', '0000'])
 })
 
+test('input report: the Edge\'s Fn keys and back paddles; a plain DualSense keeps them zero', () => {
+  const edge = new DsPad('e', 16, true)
+  decodeInput(inputData(0, { b2: 0x40 | 0x01 }), 0, edge, 1)
+  assert.equal(edge.paddles, PADDLE.left)
+  assert.equal(edge.buttons[16].pressed, true, 'the PS button beside them still reads')
+  decodeInput(inputData(0, { b2: 0xf0 }), 0, edge, 2)
+  assert.equal(edge.paddles, PADDLE.fn1 | PADDLE.fn2 | PADDLE.left | PADDLE.right)
+  decodeInput(inputData(0, {}), 0, edge, 3)
+  assert.equal(edge.paddles, 0)
+  const plain = new DsPad('p', 16)
+  decodeInput(inputData(0, { b2: 0xf0 }), 0, plain, 1)
+  assert.equal(plain.paddles, 0, 'reserved bits on a plain DualSense are not paddles')
+  assert.equal(plain.buttons.length, 18, 'the standard mapping plus the touchpad click; paddles ride beside it')
+})
+
 // ── driver ───────────────────────────────────────────────────────────────────────────────────────────
 
 class MockHid implements HidDevice {
@@ -263,43 +430,66 @@ class MockHid implements HidDevice {
   emit(reportId: number, data: DataView) { for (const l of this.listeners) l({ reportId, data }) }
 }
 
-test('driver: USB open sends one neutral report sized to the descriptor, then writes change-only', async () => {
+test('driver: USB open sends the lightbar setup, then one neutral report sized to the descriptor, then writes change-only', async () => {
   const dev = new MockHid(USB_COLLECTIONS)
   const ds = new DualSense(dev, { minIntervalMs: 0 })
   await ds.open()
   assert.equal(ds.bus, 'usb')
   assert.equal(ds.vibrationV2, false, 'update 2.00 < 2.21')
-  assert.equal(dev.sent.length, 1)
+  assert.equal(dev.sent.length, 2)
   assert.equal(dev.sent[0].id, 0x02)
   assert.equal(dev.sent[0].data.length, 47)
-  assert.equal(dev.sent[0].data[0], 0x0b)
-  assert.equal(dev.sent[0].data[21], 0x05)
+  assert.equal(dev.sent[0].data[38], 0x02, 'the setup report: lightbar setup flag')
+  assert.equal(dev.sent[0].data[41], 0x02, 'LIGHT_OUT')
+  assert.equal(dev.sent[0].data[0], 0, 'and no trigger or motor flags')
+  assert.equal(dev.sent[1].id, 0x02)
+  assert.equal(dev.sent[1].data.length, 47)
+  assert.equal(dev.sent[1].data[0], 0x0f)
+  assert.equal(dev.sent[1].data[10], 0x05)
+  assert.equal(dev.sent[1].data[21], 0x05)
+  assert.equal(ds.writes, 2)
 
-  assert.equal(ds.set(0.5, 1), true)
+  assert.equal(ds.set(O(0.5, 1)), true)
   await sleep(5)
-  assert.equal(dev.sent.length, 2)
-  assert.deepEqual(dev.sent[1].data.slice(21, 22), [0x21])
-  assert.equal(dev.sent[1].data[3], 255)
-  assert.equal(ds.set(0.45, 1), false, 'same quantized strength (4)')
-  await sleep(5)
-  assert.equal(dev.sent.length, 2)
-  await ds.close()
   assert.equal(dev.sent.length, 3)
-  assert.equal(dev.sent[2].data[21], 0x05, 'off effect on close')
-  assert.equal(dev.sent[2].data[3], 0, 'motors off on close')
+  assert.deepEqual(dev.sent[2].data.slice(21, 22), [0x21])
+  assert.equal(dev.sent[2].data[3], 255)
+  assert.equal(ds.set(O(0.45, 1)), false, 'same quantized strength (4)')
+  await sleep(5)
+  assert.equal(dev.sent.length, 3)
+  assert.equal(ds.set(O(0.45, 1, { throttleResistance: 0.5, lightbar: 0x102030 }), 2), true)
+  await sleep(5)
+  assert.equal(dev.sent.length, 4)
+  assert.deepEqual(dev.sent[3].data.slice(10, 11), [0x21], 'the throttle hold on the right trigger')
+  assert.equal(dev.sent[3].data[1], 0x14)
+  assert.deepEqual(dev.sent[3].data.slice(43, 47), [0x0a, 0x10, 0x20, 0x30])
+  assert.equal(ds.set(O(0.45, 1, { throttleResistance: 0.5, lightbar: 0x102030 }), 2), false, 'every field change-only')
+  ds.quiet()
+  await sleep(5)
+  assert.equal(dev.sent.length, 5)
+  assert.equal(dev.sent[4].data[10], 0x05, 'quiet: throttle released')
+  assert.equal(dev.sent[4].data[21], 0x05, 'quiet: brake released')
+  assert.equal(dev.sent[4].data[3], 0, 'quiet: motors off')
+  assert.deepEqual(dev.sent[4].data.slice(43, 47), [0x0a, 0x10, 0x20, 0x30], 'quiet keeps the lightbar and the seat')
+  await ds.close()
+  assert.equal(dev.sent.length, 6)
+  assert.equal(dev.sent[5].data[21], 0x05, 'off effect on close')
+  assert.equal(dev.sent[5].data[3], 0, 'motors off on close')
+  assert.equal(dev.sent[5].data[1], 0, 'close leaves the lightbar and LEDs as they are')
   assert.equal(dev.opened, false)
+  assert.equal(ds.describe(), 'both triggers + rumble + lightbar · fw 2.00')
 })
 
 test('driver: rate limit coalesces bursts into one trailing write of the newest state', async () => {
   const dev = new MockHid(USB_COLLECTIONS)
   const ds = new DualSense(dev, { minIntervalMs: 40 })
   await ds.open()
-  for (let i = 1; i <= 8; i++) ds.set(i / 8, 0)
-  assert.equal(dev.sent.length, 1)
-  await until(() => dev.sent.length === 2)
+  for (let i = 1; i <= 8; i++) ds.set(O(i / 8, 0))
+  assert.equal(dev.sent.length, 2)
+  await until(() => dev.sent.length === 3)
   await sleep(60)
-  assert.equal(dev.sent.length, 2, 'exactly one trailing write')
-  assert.deepEqual(dev.sent[1].data.slice(21, 32), block(0, 8))
+  assert.equal(dev.sent.length, 3, 'exactly one trailing write')
+  assert.deepEqual(dev.sent[2].data.slice(21, 32), block(0, 8))
   await ds.close()
 })
 
@@ -309,16 +499,16 @@ test('driver: never two writes in flight; the newest state follows when the firs
   await ds.open()
   let release!: () => void
   dev.gate = new Promise((r) => { release = r })
-  ds.set(0.25, 0)
-  ds.set(0.75, 0)
-  ds.set(1, 0)
+  ds.set(O(0.25, 0))
+  ds.set(O(0.75, 0))
+  ds.set(O(1, 0))
   await sleep(5)
-  assert.equal(dev.sent.length, 2, 'second write waits for the first')
+  assert.equal(dev.sent.length, 3, 'second write waits for the first')
   dev.gate = null
   release()
   await sleep(5)
-  assert.equal(dev.sent.length, 3)
-  assert.deepEqual(dev.sent[2].data.slice(21, 32), block(0, 8))
+  assert.equal(dev.sent.length, 4)
+  assert.deepEqual(dev.sent[3].data.slice(21, 32), block(0, 8))
   await ds.close()
 })
 
@@ -328,14 +518,14 @@ test('driver: firmware ≥ 2.21 selects vibration v2; failed writes are reported
   const ds = new DualSense(dev, { minIntervalMs: 0, onStatus: (s) => status.push(s) })
   await ds.open()
   assert.equal(ds.vibrationV2, true)
-  assert.equal(dev.sent[0].data[0], 0x0a)
-  assert.equal(dev.sent[0].data[38], 0x04)
+  assert.equal(dev.sent[1].data[0], 0x0e)
+  assert.equal(dev.sent[1].data[38], 0x04)
   dev.fail = true
-  ds.set(1, 0)
+  ds.set(O(1, 0))
   await sleep(5)
   assert.equal(status.at(-1), 'NetworkError')
   dev.fail = false
-  ds.set(0, 0)
+  ds.set(O(0, 0))
   await sleep(5)
   assert.equal(status.at(-1), '', 'recovery is reported')
   await ds.close()
@@ -351,7 +541,33 @@ test('driver: unreadable firmware still works in classic rumble mode; the Edge a
   await edge.open()
   assert.equal(edge.name, 'DualSense Edge')
   assert.equal(edge.vibrationV2, true)
+  assert.equal(edge.edge, true)
+  assert.equal(edge.pad.edge, true)
+  assert.equal(edge.describe(), 'both triggers + rumble (v2) + lightbar', 'over USB the browser\'s pad carries the Edge: no paddles are promised')
   await edge.close()
+  const btEdge = new DualSense(new MockHid(BT_COLLECTIONS, 0x0df2, null), { minIntervalMs: 0 })
+  await btEdge.open()
+  assert.equal(btEdge.describe(), 'both triggers + rumble (v2) + lightbar + paddles', 'the paddles ride the decoded Bluetooth input report')
+  await btEdge.close()
+})
+
+test('a set() during the setup report waits for it: nothing is sent under the first report, the state goes out right after', async () => {
+  const dev = new MockHid(USB_COLLECTIONS)
+  let release!: () => void
+  dev.gate = new Promise<void>((r) => { release = r })
+  const ds = new DualSense(dev, { minIntervalMs: 0 })
+  const opening = ds.open()
+  await until(() => dev.sent.length === 1)
+  assert.equal(dev.sent[0].data[38] & 0x02, 0x02, 'the setup report (lightbar setup flag) is in flight')
+  ds.set({ ...QUIET, rumble: 1 })
+  await sleep(2)
+  assert.equal(dev.sent.length, 1, 'nothing is written under the setup report (one buffer)')
+  dev.gate = null
+  release()
+  await opening
+  assert.equal(dev.sent.length, 2)
+  assert.equal(dev.sent[1].data[3], 0xff, 'the first state report carries the rumble asked for meanwhile')
+  await ds.close()
 })
 
 function btInput(fields: Parameters<typeof inputData>[1], corrupt = false): DataView {
@@ -369,11 +585,12 @@ test('driver: Bluetooth uses 0x31 with rolling sequence and decodes CRC-valid fu
   const ds = new DualSense(dev, { minIntervalMs: 0, now: () => now })
   await ds.open()
   assert.equal(ds.bus, 'bluetooth')
-  ds.set(1, 0)
+  ds.set(O(1, 0))
   await sleep(5)
-  ds.set(0, 1)
+  ds.set(O(0, 1))
   await sleep(5)
-  assert.deepEqual(dev.sent.map((s) => [s.id, s.data.length, s.data[0], s.data[1]]), [[0x31, 77, 0x00, 0x10], [0x31, 77, 0x10, 0x10], [0x31, 77, 0x20, 0x10]])
+  assert.deepEqual(dev.sent.map((s) => [s.id, s.data.length, s.data[0], s.data[1]]), [[0x31, 77, 0x00, 0x10], [0x31, 77, 0x10, 0x10], [0x31, 77, 0x20, 0x10], [0x31, 77, 0x30, 0x10]])
+  assert.equal(dev.sent[0].data[2 + 41], 0x02, 'the setup report went first')
   for (const s of dev.sent) {
     const d = Uint8Array.from(s.data)
     assert.equal(new DataView(d.buffer).getUint32(73, true), zlibCrc32(Buffer.from([0xa2, 0x31, ...d.subarray(0, 73)])))
@@ -401,9 +618,10 @@ test('driver: panic() sends a neutral report immediately without disturbing the 
   const ds = new DualSense(dev, { minIntervalMs: 1000 })
   await ds.open()
   ds.panic()
-  assert.equal(dev.sent.length, 2)
-  assert.equal(dev.sent[1].data[0], 0x10)
-  assert.equal(dev.sent[1].data[2 + 21], 0x05)
+  assert.equal(dev.sent.length, 3)
+  assert.equal(dev.sent[2].data[0], 0x20)
+  assert.equal(dev.sent[2].data[2 + 21], 0x05)
+  assert.equal(dev.sent[2].data[2 + 10], 0x05)
   await ds.close()
 })
 
@@ -416,14 +634,15 @@ test('driver: set() before open() finishes never writes early or on the wrong bu
   dev.open = async () => { await gate; dev.opened = true }
   const ds = new DualSense(dev, { minIntervalMs: 0 })
   const opening = ds.open()
-  ds.set(1, 0)
+  ds.set(O(1, 0))
   await sleep(5)
   assert.equal(dev.sent.length, 0, 'nothing is written before the bus and report size are known')
   release()
   await opening
-  assert.equal(dev.sent.length, 1)
+  assert.equal(dev.sent.length, 2)
   assert.equal(dev.sent[0].id, 0x31, 'a Bluetooth pad only ever gets report 0x31')
-  assert.equal(dev.sent[0].data[2 + 21], 0x21, 'the open report carries the state requested meanwhile')
+  assert.equal(dev.sent[1].id, 0x31)
+  assert.equal(dev.sent[1].data[2 + 21], 0x21, 'the open report carries the state requested meanwhile')
   await ds.close()
 })
 
@@ -438,9 +657,9 @@ test('driver: close() during open() leaves no listener, no open device and a neu
     const ds = new DualSense(dev, { minIntervalMs: 0 })
     const opening = ds.open()
     await sleep(2)
-    ds.set(1, 1)
+    ds.set(O(1, 1))
     const closing = ds.close()
-    assert.equal(ds.set(1, 1), false, `${stage}: set() after close() is ignored`)
+    assert.equal(ds.set(O(1, 1)), false, `${stage}: set() after close() is ignored`)
     await sleep(5) // let close() get as far as it can while the open is still stuck
     release()
     await assert.rejects(opening, /closed while opening/, stage)
@@ -461,16 +680,16 @@ test('driver: a second driver on the same device takes over only after the first
   dev.close = async () => { log.push('close'); await close() }
   const a = new DualSense(dev, { minIntervalMs: 0 })
   await a.open()
-  a.set(1, 0)
+  a.set(O(1, 0))
   await sleep(5)
   const b = new DualSense(dev, { minIntervalMs: 0 })
   await b.open()
   assert.deepEqual(log, ['open', 'close', 'open'], 'the old driver closed the device before the new one opened it')
   assert.equal(dev.opened, true)
-  a.set(0.5, 1)
+  a.set(O(0.5, 1))
   await sleep(5)
   assert.equal(dev.sent.at(-1)!.data[21], 0x05, 'the retired driver writes nothing more')
-  assert.equal(b.set(1, 0), true)
+  assert.equal(b.set(O(1, 0)), true)
   await sleep(5)
   assert.equal(dev.sent.at(-1)!.data[21], 0x21)
   await b.close()
@@ -482,10 +701,10 @@ test('driver: a failed write is retried, so an Off that failed still lands', asy
   const status: string[] = []
   const ds = new DualSense(dev, { minIntervalMs: 0, onStatus: (s) => status.push(s) })
   await ds.open()
-  ds.set(1, 0)
+  ds.set(O(1, 0))
   await sleep(5)
   dev.fail = true
-  ds.set(0, 0)
+  ds.set(O(0, 0))
   await until(() => status.includes('NetworkError'))
   const failed = dev.sent.length
   dev.fail = false
@@ -503,7 +722,7 @@ test('driver: a synchronous throw from sendReport is reported, never thrown into
   const ds = new DualSense(dev, { minIntervalMs: 0 })
   await ds.open()
   dev.sendReport = () => { throw new Error('InvalidStateError') }
-  assert.doesNotThrow(() => ds.set(1, 0))
+  assert.doesNotThrow(() => ds.set(O(1, 0)))
   assert.doesNotThrow(() => ds.panic())
   await sleep(5)
   assert.ok(ds.failures >= 1)

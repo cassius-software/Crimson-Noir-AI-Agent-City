@@ -164,6 +164,8 @@ export interface GamepadLike {
   readonly axes: readonly number[]
   readonly buttons: readonly GamepadButtonLike[]
   readonly vibrationActuator?: GamepadHapticsLike | null
+  /** A DualSense Edge's Fn keys and back paddles (dualsense.ts PADDLE bits); only the HID driver's pad carries them. */
+  readonly paddles?: number
 }
 
 // ── WebXR input (the slice devices.ts reads of an XRInputSource; a DOM one satisfies it structurally) ─────────
