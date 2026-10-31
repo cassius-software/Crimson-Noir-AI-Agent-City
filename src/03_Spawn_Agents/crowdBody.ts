@@ -4,17 +4,18 @@
 /**
  * Why does this file exist? It is the crowd's skin on the GPU: the WGSL the vertex stage of every body material
  * (crowd.ts) runs once for each vertex, written as TSL functions. It is humanoid.ts's arithmetic, line for line,
- * with humanoid.ts's numbers written into it at load (the landmarks, the slider ranges, the regions, the walk), so
- * the body the card draws and the body the street draws are one: the sliders reshape the rest point (and its
- * normal, by the scales' reciprocals), the walk sets each joint's angle from the phase, the point follows its two
- * bones blended by its weight (linear blend skinning), then the step's rise, the stature's scales, the spring-damper
- * tilt, the heading and the position. One call gives both the position and the normal, as two columns of a 3×3
- * matrix (the third is zero), so every sine is taken once. Pure: builds nodes, needs no renderer; humanoid.test.ts
- * holds its text to humanoid.ts's constants.
+ * with humanoid.ts's numbers written into it at load (the landmarks, the slider ranges, the regions, the face table,
+ * the walk), so the body the card draws and the body the street draws are one: the face sliders reshape a head
+ * vertex by its region, the body sliders reshape the rest point (and its normal, by the scales' reciprocals), the
+ * walk sets each joint's angle from the phase, the point follows its two bones blended by its weight (linear blend
+ * skinning), then the step's rise, the stature's scales, the spring-damper tilt, the heading and the position. One
+ * call gives both the position and the normal, as two columns of a 3×3 matrix (the third is zero), so every sine is
+ * taken once. Pure: builds nodes, needs no renderer; humanoid.test.ts holds its text to humanoid.ts's constants and
+ * its include graph (BODY_INCLUDES) to the calls in the text.
  * What breaks if it is removed? The bodies have no vertex stage: nothing of the crowd is posed or drawn.
  */
 import { wgslFn } from 'three/tsl'
-import { HEIGHT_BASE, LANDMARK, LIMB_GIRTH, MORPH, REGION, WALK } from './humanoid.ts'
+import { FACE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, MORPH, REGION, WALK } from './humanoid.ts'
 
 /** A number as a WGSL f32 literal (an integer gets its point). */
 const f = (n: number): string => (Number.isInteger(n) ? `${n}.0` : `${n}`)
@@ -23,11 +24,12 @@ const f = (n: number): string => (Number.isInteger(n) ? `${n}.0` : `${n}`)
  * The WGSL, one `fn` per wgslFn (the others are its includes). Every constant is humanoid.ts's. A `mat3x3f` passed
  * through the rotations carries the position in its first column and the normal in its second.
  *
- * bodyVertex's arguments: the rest position and normal; the vertex's `rig` (bone, slot, piece) and `skin` (second
- * bone, weight of the first); the agent's position and heading; its motion (vx, vz, walk phase, speed); its
- * spring-damper pose (tilt, bend, push angle, activity); `stance` = (stature as a factor of the base height, piece
- * mask, idle phase 0..1, -); `morphA` = (mass, muscle, shoulders, hips) and `morphB` = (legs, posture, head, -), each
- * a slider's 0..1; and the time.
+ * bodyVertex's arguments: the rest position and normal; the vertex's `rig` (bone, slot, piece), `skin` (second
+ * bone, weight of the first) and `face` (face region, weight); the agent's position and heading; its motion (vx, vz,
+ * walk phase, speed); its spring-damper pose (tilt, bend, push angle, activity); `stance` = (stature as a factor of
+ * the base height, piece mask, idle phase 0..1, -); `morphA` = (mass, muscle, shoulders, hips) and `morphB` = (legs,
+ * posture, head, -), each a slider's 0..1; `faceA` = (brow, jaw, chin, cheek) and `faceB` = (nose, eyes, lips, -),
+ * each −1..1; and the time.
  */
 export const BODY_WGSL = `
 fn bodyRotX(m: mat3x3f, piv: vec3f, a: f32) -> mat3x3f {
@@ -61,6 +63,38 @@ fn bodyHeightMap(y: f32, fLegs: f32, fTrunk: f32) -> f32 {
 }
 fn bodySlope(y: f32, fLegs: f32, fTrunk: f32) -> f32 {
   return select(select(1.0, fTrunk, y <= ${f(LANDMARK.neck)}), fLegs, y <= ${f(LANDMARK.hip)});
+}
+fn bodyFace(p: vec3f, n: vec3f, face: vec2f, fa: vec4f, fb: vec4f) -> mat3x3f {
+  // face = (region, weight): 1 brow, 2 jaw, 3 chin, 4 cheek, 5 nose, 6 eyes, 7 lips (humanoid.ts FACE_REGION, FACE).
+  let region = u32(face.x + 0.5);
+  let w = face.y;
+  var q = p;
+  var m = n;
+  if (region == 1u) {
+    q = vec3f(p.x, p.y + fa.x * ${f(FACE.brow.lift)}, p.z + fa.x * ${f(FACE.brow.push)});
+  } else if (region == 2u) {
+    let s = 1.0 + fa.y * ${f(FACE.jaw.width)} * w;
+    q = vec3f(p.x * s, p.y, p.z);
+    m = vec3f(n.x / s, n.y, n.z);
+  } else if (region == 3u) {
+    let s = 1.0 + fa.y * ${f(FACE.jaw.width)};
+    q = vec3f(p.x * s, p.y, p.z + fa.z * ${f(FACE.chin.push)} * w);
+    m = vec3f(n.x / s, n.y, n.z);
+  } else if (region == 4u) {
+    q = vec3f(p.x + sign(p.x) * fa.w * ${f(FACE.cheek.width)} * w, p.y + fa.w * ${f(FACE.cheek.lift)} * w, p.z);
+  } else if (region == 5u) {
+    let s = 1.0 + fb.x * ${f(FACE.nose.size)};
+    q = vec3f(p.x * s, p.y, ${f(FACE.nose.rootZ)} + (p.z - ${f(FACE.nose.rootZ)}) * s);
+    m = vec3f(n.x / s, n.y, n.z / s);
+  } else if (region == 6u) {
+    let d = fb.y * ${f(FACE.eyes.spread)};
+    q = vec3f(p.x + sign(p.x) * d, p.y, p.z - d * ${f(FACE.eyes.slope)});
+  } else if (region == 7u) {
+    let s = 1.0 + fb.z * ${f(FACE.lips.fullness)};
+    q = vec3f(p.x, ${f(FACE.lips.lineY)} + (p.y - ${f(FACE.lips.lineY)}) * s, p.z);
+    m = vec3f(n.x, n.y / s, n.z);
+  }
+  return mat3x3f(q, normalize(m), vec3f(0.0));
 }
 fn bodyMorph(p: vec3f, n: vec3f, bone: u32, m: vec4f, fD: f32, fLegs: f32, fTrunk: f32) -> mat3x3f {
   // m = (mass factor, muscle factor, shoulders factor, hips factor), each about 1; fD the head's.
@@ -138,15 +172,23 @@ fn bodyBone(bone: u32, m: mat3x3f, legL: vec4f, legR: vec4f, armL: vec4f, armR: 
   }
   return q;
 }
-fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, agent: vec4f, motion: vec4f, pose: vec4f, stance: vec4f, morphA: vec4f, morphB: vec4f, t: f32) -> mat3x3f {
+fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: vec4f, motion: vec4f, pose: vec4f, stance: vec4f, morphA: vec4f, morphB: vec4f, faceA: vec4f, faceB: vec4f, t: f32) -> mat3x3f {
   let bone0 = u32(rig.x + 0.5);
   let opt = u32(rig.z + 0.5);
   let bone1 = u32(skin.x + 0.5);
   let weight = clamp(skin.y, 0.0, 1.0);
   let mask = u32(stance.y + 0.5);
   if (opt != 0u && ((mask >> opt) & 1u) == 0u) {
-    // A piece this person does not wear: every vertex on one point, nothing rasterised.
+    // A piece this person does not wear (the features too, in the shadow pass): every vertex on one point, nothing rasterised.
     return mat3x3f(agent.xyz, vec3f(0.0, 1.0, 0.0), vec3f(0.0));
+  }
+  // The face sliders, on the head's regions alone (the distant body carries no region).
+  var v0 = v;
+  var n0 = n;
+  if (bone0 == 2u && face.x > 0.5) {
+    let shaped = bodyFace(v, n, face, faceA, faceB);
+    v0 = shaped[0];
+    n0 = shaped[1];
   }
   // The sliders' factors.
   let fLegs = ${f(MORPH.legs.base)} + morphB.x * ${f(MORPH.legs.range)};
@@ -189,7 +231,7 @@ fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, agent: vec4f, motion:
   let k = vec3f(cos(fall), 0.0, -sin(fall));
   let trunk = vec4f(sL * ${f(WALK.twist)} * swing * gait, -slouch * ${f(WALK.headCounter)}, slouch, pose.y + idle);
   // The rest point reshaped, then its two bones, blended; the tilt about the feet.
-  let rest = bodyMorph(v, n, bone0, m, fD, fLegs, fTrunk);
+  let rest = bodyMorph(v0, n0, bone0, m, fD, fLegs, fTrunk);
   let b0 = bodyBone(bone0, rest, legL, legR, armL, armR, trunk, pivA, pivB, pivX, k);
   var b = b0;
   if (bone1 != bone0 && weight < 1.0) {
@@ -209,21 +251,33 @@ fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, agent: vec4f, motion:
 }
 `
 
+/**
+ * Which functions each function calls (its wgslFn includes, so three writes each once per shader). A call the table
+ * misses would build in Node and fail only when a GPU compiles the module: humanoid.test.ts checks every `bodyX(` in
+ * the text against this table, transitively.
+ */
+export const BODY_INCLUDES: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  bodyMorph: Object.freeze(['bodyHat', 'bodyHeightMap', 'bodySlope']),
+  bodyBone: Object.freeze(['bodyRotX', 'bodyRotY', 'bodyRotAxis']),
+  bodyVertex: Object.freeze(['bodyFace', 'bodyHeightMap', 'bodyMorph', 'bodyBone', 'bodyRotAxis']),
+})
+
 const parts = BODY_WGSL.split(/(?=^fn )/m).map((s) => s.trim()).filter(Boolean)
 const named = new Map(parts.map((p) => [p.match(/^fn (\w+)/)![1], p]))
 type Includes = Parameters<typeof wgslFn>[1]
-const fn = (name: string, includes: unknown[] = []) => wgslFn(named.get(name)!, includes as Includes)
-const rotX = fn('bodyRotX')
-const rotY = fn('bodyRotY')
-const rotAxis = fn('bodyRotAxis')
-const hatFn = fn('bodyHat')
-const heightMapFn = fn('bodyHeightMap')
-const slopeFn = fn('bodySlope')
-const morphFn = fn('bodyMorph', [hatFn, heightMapFn, slopeFn])
-const boneFn = fn('bodyBone', [rotX, rotY, rotAxis])
+const built = new Map<string, ReturnType<typeof wgslFn>>()
+/** The TSL function of a WGSL `fn`, its includes built first from the table (each once). */
+const fn = (name: string): ReturnType<typeof wgslFn> => {
+  const have = built.get(name)
+  if (have) return have
+  const includes = (BODY_INCLUDES[name] ?? []).map(fn)
+  const made = wgslFn(named.get(name)!, includes as Includes)
+  built.set(name, made)
+  return made
+}
 
-/** The vertex stage's function, with every function it calls as its includes (three writes each once per shader). */
-export const bodyVertex = fn('bodyVertex', [heightMapFn, morphFn, boneFn, rotAxis])
+/** The vertex stage's function, with every function it calls as its includes. */
+export const bodyVertex = fn('bodyVertex')
 
 /** A stature in metres as the factor the shader scales the base body by (stance.x). */
 export const statureFactor = (metres: number): number => metres / HEIGHT_BASE

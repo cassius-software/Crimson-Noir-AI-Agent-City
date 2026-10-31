@@ -165,7 +165,10 @@ const PING_KINDS = ['gather', 'go', 'look', 'wait'] as const
 const PING_WORDS: Record<PingKind, string> = { go: 'go there', look: 'look there', gather: 'gather there', wait: 'wait there' }
 
 /** The look's slots, bodies and presets, as typed after `look` (commands.test.ts pins them to 03_Spawn_Agents/look.ts, not imported here). */
-export const LOOK_SLOT_ARGS = ['body', 'height', 'mass', 'muscle', 'shoulders', 'hips', 'legs', 'posture', 'head', 'skin', 'hairStyle', 'hairColour', 'top', 'bottom', 'shirt', 'shoes', 'tie', 'eyewear', 'bag', 'cup'] as const
+export const LOOK_SLOT_ARGS = [
+  'body', 'height', 'mass', 'muscle', 'shoulders', 'hips', 'legs', 'posture', 'head', 'brow', 'jaw', 'chin', 'cheek', 'nose', 'eyes', 'lips',
+  'skin', 'age', 'undertone', 'hairStyle', 'hairColour', 'top', 'bottom', 'shirt', 'shoes', 'tie', 'eyewear', 'bag', 'cup',
+] as const
 export const LOOK_BODY_ARGS = ['pantsuit', 'skirt suit', 'smart casual', 'suit'] as const
 export const LOOK_PRESET_ARGS = ['burgundy pantsuit', 'camel blazer', 'camel skirt suit', 'charcoal suit', 'cream pantsuit', 'navy blazer', 'navy skirt suit', 'navy suit'] as const
 const LOOK_ACTIONS = ['code', 'preset', 'random', 'reset', 'show'] as const
@@ -186,7 +189,8 @@ const ARGS: Record<string, readonly string[]> = {
   agent: ['dismiss', 'forget', 'hire', 'new', 'voices'],
   sloane: ['off', 'on', 'say', 'voice', 'voices'],
   'look body': LOOK_BODY_ARGS,
-  'look hairStyle': ['long', 'short'],
+  'look hairStyle': ['bald', 'bob', 'bun', 'long', 'short'],
+  'look undertone': ['cool', 'neutral', 'olive', 'warm'],
   'look preset': LOOK_PRESET_ARGS,
   boot: ['gui', 'status', 'tty'],
   map: ['city', 'default', 'lakefront', 'status'],
@@ -543,7 +547,7 @@ function lookChange(action: string, rest: readonly string[]): LookChange | strin
     return { kind: 'random', seed: rest.length ? Number(rest[0]) : Number.NaN }
   }
   if (action === 'preset') return rest.length ? { kind: 'preset', name: rest.join(' ') } : 'usage: look preset <name>'
-  if (action === 'code') return rest.length === 1 ? { kind: 'code', code: rest[0] } : 'usage: look code <XXXXX-XXXXX-XXXXX>'
+  if (action === 'code') return rest.length === 1 ? { kind: 'code', code: rest[0] } : 'usage: look code <XXXXXXX-XXXXXXX-XXXXXXX>'
   const slot = LOOK_SLOT_ARGS.find((x) => x.toLowerCase() === action.toLowerCase())
   if (!slot) return `look: no slot named '${action}': ${LOOK_SLOT_ARGS.join(', ')}`
   return rest.length ? { kind: 'slot', slot, value: rest.join(' ') } : `usage: look ${slot} <n|name>`

@@ -15,6 +15,27 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **A face for every pedestrian, and hair in five styles.** The head of `src/03_Spawn_Agents/humanoid.ts` is now a
+  twelve-sided skull in regions (chin, jaw, cheekbones, brow line) with features lofted onto its front: two eyes
+  (a white and an iris), two brows, a nose rooted on the skull, the lips, two ears; all written by hand, no imported
+  face, no scanned or generated morph target. Seven face sliders of sixteen steps each (brow, jaw, chin, cheekbones,
+  nose, eyes, lips) move their region alone, in the vertex stage (`crowdBody.ts` `bodyFace`, before the body
+  sliders) and in the card's new face view (front and profile, the head's own rings), with step 8 exactly the base
+  face. An age (eight steps) fades the skin toward its own grey and greys the hair from the middle up; an undertone
+  (neutral, warm, cool, olive) tints the skin in linear light. The hair has five styles (short, long, bob, bun, bald)
+  as pieces of the loft. The look grows to twenty-nine slots and a third packed word (`packFace`: the face sliders
+  and the hair style), carried beside the figure word as a pair in one page-only buffer (`crowd.figure`, now two
+  words per agent) because the vertex stage already binds seven of WebGPU's eight storage buffers; the look word
+  takes the age and the undertone in the bits where the legacy height and build sat, and its bit 6 (long hair) is
+  written from the style. The features are drawn by the near body's eye pass alone: the shadow map and the far body
+  leave them out. Look codes are twenty-one symbols (`XXXXXXX-XXXXXXX-XXXXXXX`); the fifteen-symbol and eight-symbol
+  codes, the stored v2 and v1 records and a roster's old looks are read and upgraded with the base face. The
+  hashed crowd draws its face, age, undertone and hair style from the same chains (`lookFromSeed` reproduces them);
+  the iris stays hashed. The console's `look` takes the new slots; the 14A pin gains the four hair pieces and the
+  face (features, nothing held). Tests: the face arithmetic on the CPU against the shader's text, the features
+  clear of the skull and between the glasses' rims, no flat triangle, the far body faceless, every body material
+  built under Node in both passes, look v3 round trips, upgrades and codes, the wiring and the air gap. The face's
+  appearance on a real GPU is not yet confirmed: software WebGPU and CI's screenshots only.
 - **Smooth, customizable bodies for every pedestrian.** The crowd's four bodies are no longer boxes, cylinders and
   spheres pushed into each other: `src/03_Spawn_Agents/humanoid.ts` lofts one smooth person from rings over a
   skeleton of fifteen bones, every vertex tied to two of them, with the four outfits (the jacket hem, the shirt

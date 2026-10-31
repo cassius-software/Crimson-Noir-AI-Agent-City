@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It pins the character customizer's wiring (Phase 9.1): the crowd carries two words per
- * agent in page-only storage attributes (crowd.look: the body, the pieces and the colour slots; crowd.figure: the eight
- * body sliders) that every body material reads in both passes, whose bits stand in for the hashed pieces, figure and
- * colours, and whose body bits the page's cull reads for the mesh to draw; the engine writes both words the way it
- * writes the dissolve amounts and reads them back (setLook, lookOf); the
+ * Why does this file exist? It pins the character customizer's wiring (Phase 9.1): the crowd carries three words per
+ * agent in page-only storage attributes (crowd.look: the body, the pieces, the colour slots, the age and the undertone;
+ * crowd.figure, a pair: the eight body sliders, then the seven face sliders and the hair style) that every body
+ * material reads in both passes, whose bits stand in for the hashed pieces, figure, face and colours, and whose body
+ * bits the page's cull reads for the mesh to draw; the engine writes the words the way it writes the dissolve amounts
+ * and reads them back (setLook, lookOf); the
  * host keeps the player's look under a key of its own, validated on the way in, and wears it on the player's body from
  * the start; the card is reachable from Sloane's chip and touches nothing but the wardrobe model; and nothing of it
  * crosses to the physics realm.
@@ -19,7 +20,7 @@ import { registerHooks } from 'node:module'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import type { InstancedMesh, MeshStandardNodeMaterial } from 'three/webgpu'
-import { LEGACY_LOOK_SLOTS, LOOK_NONE, LOOK_PRESETS, lookFromSeed, packFigure, packLook, upgradeLegacyLook, validateLook, type Look, type LookSlot } from '../03_Spawn_Agents/look.ts'
+import { LEGACY_LOOK_SLOTS, LOOK_NONE, LOOK_PRESETS, LOOK_V2_SLOTS, lookFromSeed, packFace, packFigure, packLook, upgradeFigureLook, upgradeLegacyLook, validateLook, type Look, type LookSlot } from '../03_Spawn_Agents/look.ts'
 import { LOOK_KEY, clearLook, loadLook, saveLook } from '../05_Observe_Environment/lookStore.ts'
 import { PROFILE_KEY, type ProfileStore } from '../05_Observe_Environment/profile.ts'
 
@@ -69,7 +70,7 @@ const mapStore = (): ProfileStore & { map: Map<string, string> } => {
   return { map, getItem: (k) => map.get(k) ?? null, setItem: (k, v) => { map.set(k, v) }, removeItem: (k) => { map.delete(k) } }
 }
 
-test('the crowd: a look word and a figure word per agent in storage attributes named crowd.look and crowd.figure, zero (as hashed) at boot, read by every body material in both passes', () => {
+test('the crowd: a look word and a pair (the figure word, the face word) per agent in storage attributes named crowd.look and crowd.figure, zero (as hashed) at boot, read by every body material in both passes', () => {
   const view = new CrowdView(64)
   assert.equal(view.look.name, 'crowd.look')
   assert.equal(view.look.count, 64)
@@ -78,9 +79,10 @@ test('the crowd: a look word and a figure word per agent in storage attributes n
   assert.ok([...(view.look.array as Uint32Array)].every((w) => w === LOOK_NONE), 'everyone dressed by the hash at boot')
   assert.equal(view.figure.name, 'crowd.figure')
   assert.equal(view.figure.count, 64)
-  assert.equal(view.figure.itemSize, 1)
+  assert.equal(view.figure.itemSize, 2, 'the figure word and the face word, one buffer (the vertex stage binds seven of WebGPU\'s eight)')
   assert.ok(view.figure.array instanceof Uint32Array)
-  assert.ok([...(view.figure.array as Uint32Array)].every((w) => w === 0), 'every figure the hash\'s until a look is worn')
+  assert.equal(view.figure.array.length, 128)
+  assert.ok([...(view.figure.array as Uint32Array)].every((w) => w === 0), 'every figure and face the hash\'s until a look is worn')
   assert.equal(view.meshes.length, 8)
   for (const mesh of view.meshes) {
     const m = materialOf(mesh)
@@ -92,37 +94,44 @@ test('the crowd: a look word and a figure word per agent in storage attributes n
   }
 })
 
-test('crowd.ts: the words override the hashed mask and figure in posed(), the look word rides two varyings to the fragment, which picks each colour slot from it', () => {
+test('crowd.ts: the words override the hashed mask, figure and face in posed(), the look word rides two varyings to the fragment, which picks each colour slot, the age and the undertone from it', () => {
   const crowd = read('../03_Spawn_Agents/crowd.ts')
   assert.match(crowd, /look: storage\(view\.look, 'uint', agentCount\)\.toReadOnly\(\)/)
-  assert.match(crowd, /figure: storage\(view\.figure, 'uint', agentCount\)\.toReadOnly\(\)/)
+  assert.match(crowd, /figure: storage\(view\.figure, 'uvec2', agentCount\)\.toReadOnly\(\)/)
   const posed = between(crowd, 'const posed = (eye: boolean) =>', 'm.positionNode = posed(true)')
   assert.match(posed, /const word = b\.look\.element\(agentIndex\)/)
-  assert.match(posed, /const figure = b\.figure\.element\(agentIndex\)/)
+  assert.match(posed, /const pair = b\.figure\.element\(agentIndex\)\n\s*const figure = pair\.x\n\s*const faceWord = pair\.y/)
   assert.match(posed, /const custom = word\.bitAnd\(uint\(1\)\)\.equal\(uint\(1\)\)/)
-  assert.match(posed, /const mask = select\(custom, float\(word\.shiftRight\(uint\(2\)\)\.bitAnd\(uint\(62\)\)\), hashedMask\)/, 'the pieces where bodyVertex tests them')
-  assert.match(posed, /return float\(\(w === 0 \? word : figure\)\.shiftRight\(uint\(shift\)\)\.bitAnd\(uint\(\(1 << width\) - 1\)\)\)/, 'each slot from the word look.ts names')
+  assert.match(posed, /const mask = select\(custom, float\(word\.shiftRight\(uint\(2\)\)\.bitAnd\(uint\(46\)\)\)\.add\(ownGrooms\), hashedMask\.add\(hashedGrooms\)\)\.add\(features\)/, 'the pieces where bodyVertex tests them: the look word\'s four, the hair from the style, the face for the eye')
+  assert.match(posed, /const features = eye \? 1 << LOOK_PIECE_BIT\.face : 0/, 'the shadow map does without the features')
+  assert.match(posed, /const style = faceWord\.shiftRight\(uint\(LOOK_FIELD\.hairStyle\[1\]\)\)\.bitAnd\(uint\(7\)\)/)
+  assert.match(posed, /return float\(\(w === 0 \? word : w === 1 \? figure : faceWord\)\.shiftRight\(uint\(shift\)\)\.bitAnd\(uint\(\(1 << width\) - 1\)\)\)/, 'each slot from the word look.ts names')
   assert.match(posed, /const height = select\(custom, stepOf\('height'\), hashedHeight\)\.mul\(STATURE_STEP\)\.add\(WARDROBE\.stature\.min\)\.div\(HEIGHT_BASE\)/)
   assert.match(posed, /const stance = vec4\(height, mask, h\(8\), 0\)/)
   assert.match(posed, /const morphA = vec4\(slider\('mass'\), slider\('muscle'\), slider\('shoulders'\), slider\('hips'\)\)/)
   assert.match(posed, /const morphB = vec4\(slider\('legs'\), slider\('posture'\), slider\('head'\), 0\)/)
+  assert.match(posed, /faceA\.assign\(vec4\(faceStep\('brow'\), faceStep\('jaw'\), faceStep\('chin'\), faceStep\('cheek'\)\)\)/)
+  assert.match(posed, /faceB\.assign\(vec4\(faceStep\('nose'\), faceStep\('eyes'\), faceStep\('lips'\), 0\)\)/)
   before(posed, "vLookLo.assign(float(word.bitAnd(uint(0xffff))))", 'if (!eye) return body', 'the shadow pass writes the low half too')
   before(posed, "vLookHi.assign(float(word.shiftRight(uint(16))))", 'if (!eye) return body', 'and the high half')
   const fragment = between(crowd, 'm.castShadowPositionNode = posed(false)', 'applyCodeDissolve(m, vDissolve, feet, PEOPLE_DISSOLVE_INK)')
   assert.match(fragment, /const word = uint\(vLookHi\.add\(0\.5\)\)\.shiftLeft\(uint\(16\)\)\.bitOr\(uint\(vLookLo\.add\(0\.5\)\)\)/, 'the word whole again')
   assert.match(fragment, /const field = \(s: LookSlot\): U1 => word\.shiftRight\(uint\(LOOK_FIELD\[s\]\[1\]\)\)\.bitAnd\(uint\(\(1 << LOOK_FIELD\[s\]\[2\]\) - 1\)\)/, 'each slot from look.ts\'s layout (its shift and width; every colour slot is in the look word)')
-  for (const slot of ['skin', 'hairColour', 'top', 'bottom', 'shirt', 'shoes']) assert.ok(fragment.includes(`field('${slot}')`), `${slot} is read`)
+  for (const slot of ['skin', 'hairColour', 'top', 'bottom', 'shirt', 'shoes', 'age', 'undertone']) assert.ok(fragment.includes(`field('${slot}')`), `${slot} is read`)
   for (const line of [
-    'const wornSkin = select(custom, ownSkin, skin)', 'const wornHair = select(custom, ownHair, hair)',
+    'const pickedSkin = select(custom, ownSkin, skin)', 'const pickedHair = select(custom, ownHair, hair)',
+    'const toned = pickedSkin.mul(tint)', 'const wornHair = mix(pickedHair, grey, smoothstep(0.5, 1, age))',
     'top = select(custom, ownTop, top)', 'bottom = select(custom, ownBottom, bottom)',
     'shirt = select(custom, ownShirt, shirt)', 'shoes = select(custom, ownShoes, shoes)',
   ]) assert.ok(fragment.includes(line), line)
+  assert.match(fragment, /const wornSkin = mix\(toned, vec3\(dot\(toned, vec3\(0\.2126, 0\.7152, 0\.0722\)\)\), age\.mul\(0\.25\)\)/, 'the age fades the skin a quarter of the way to its grey')
   assert.match(fragment, /const outfit = WARDROBE\.outfits\[variant\]/, 'this body\'s cloths, from the same catalogue')
-  // The tie, the bag and the hose stay hashed (the word has no room for them).
+  // The tie, the bag, the hose and the iris stay hashed (the words have no room for them).
   assert.match(fragment, /const accent = variant === 0 \? pick\(PALETTE\.ties, h\(5\)\) : shirt/)
   assert.match(fragment, /pick\(PALETTE\.bags, h\(12\)\)/)
   assert.match(fragment, /const legwear = variant === 3 \? mix\(wornSkin, vec3\(0\.08, 0\.07, 0\.07\), step\(0\.55, h\(11\)\)\) : bottom/)
-  assert.match(fragment, /const slots: V3\[\] = \[top, shirt, wornSkin, wornHair, bottom, shoes, accent, prop, legwear, frame\]/)
+  assert.match(fragment, /const iris = pick\(PALETTE\.iris, h\(LOOK_HASHED_COLOUR\.iris\)\)/)
+  assert.match(fragment, /const slots: V3\[\] = \[top, shirt, wornSkin, wornHair, bottom, shoes, accent, prop, legwear, frame, white, iris, lip\]/)
 })
 
 test('the cull reads the body out of the word (binding 13, the page\'s pass alone); no simulation pass binds it', () => {
@@ -142,15 +151,16 @@ test('the cull reads the body out of the word (binding 13, the page\'s pass alon
   for (const file of ['./simProtocol.ts', './simCore.ts', './physics.worker.ts']) {
     assert.doesNotMatch(read(file), /look\.ts|packLook|unpackLook|setLook|lookOf|crowd\.look|LOOK_/, file)
   }
-  // The figure word is the page's alone too: no pass binds it, the cull never reads it, the worker never hears of it.
-  assert.doesNotMatch(wgsl, /\bfigure\b/)
-  assert.doesNotMatch(read('../03_Spawn_Agents/crowdCompute.ts'), /\bfigure\b/)
-  assert.doesNotMatch(read('../03_Spawn_Agents/crowdCull.ts'), /shared\.figure|\.figure\b|figure:|crowd\.figure/, 'the cull is never handed it (its comments may say "figure" of a hidden pedestrian)')
-  assert.doesNotMatch(read('../03_Spawn_Agents/crowdSim.ts'), /shared\.figure|\.figure\b/)
-  for (const file of ['./simProtocol.ts', './simCore.ts', './physics.worker.ts']) assert.doesNotMatch(read(file), /packFigure|crowd\.figure|figureWords/, file)
+  // The figure and face words are the page's alone too: no pass binds them, the cull never reads them, the worker
+  // never hears of them (crowd.wgsl says "face" of a pedestrian's facing, so the face word's own spellings are tested).
+  assert.doesNotMatch(wgsl, /\bfigure\b|faceWord|packFace/)
+  assert.doesNotMatch(read('../03_Spawn_Agents/crowdCompute.ts'), /\bfigure\b|faceWord|packFace/)
+  assert.doesNotMatch(read('../03_Spawn_Agents/crowdCull.ts'), /shared\.figure|\.figure\b|figure:|crowd\.figure|faceWord|packFace/, 'the cull is never handed it (its comments may say "figure" of a hidden pedestrian)')
+  assert.doesNotMatch(read('../03_Spawn_Agents/crowdSim.ts'), /shared\.figure|\.figure\b|faceWord|packFace/)
+  for (const file of ['./simProtocol.ts', './simCore.ts', './physics.worker.ts']) assert.doesNotMatch(read(file), /packFigure|packFace|crowd\.figure|figureWords|faceWord/, file)
 })
 
-test('engine: the look buffer is the attribute\'s (gpuBufferOf), shared with the cull, the figure buffer beside it; setLook writes a word into each at the agent\'s slot; lookOf reads the copies', () => {
+test('engine: the look buffer is the attribute\'s (gpuBufferOf), shared with the cull, the figure buffer (a pair per agent) beside it; setLook writes the words at the agent\'s slot; lookOf reads the copies', () => {
   const src = read('./engine.ts')
   assert.match(src, /const crowdLook = gpuBufferOf\(gpu\.renderer, view0\.look\)/)
   assert.match(src, /const crowdFigure = gpuBufferOf\(gpu\.renderer, view0\.figure\)/)
@@ -160,16 +170,17 @@ test('engine: the look buffer is the attribute\'s (gpuBufferOf), shared with the
   assert.match(src, /private readonly crowdLook: GPUBuffer/)
   assert.match(src, /private readonly crowdFigure: GPUBuffer/)
   assert.match(src, /this\.lookWords = new Uint32Array\(p\.options\.agents\)/)
-  assert.match(src, /this\.figureWords = new Uint32Array\(p\.options\.agents\)/)
+  assert.match(src, /this\.figureWords = new Uint32Array\(p\.options\.agents \* 2\)/, 'the figure word and the face word per agent')
   assert.doesNotMatch(src, /figure: crowdFigure/, 'the cull is never handed the figure')
   const set = between(src, '  setLook(agent: number, look: Look | null): boolean {', '  lookOf(agent: number): Look | null {')
   assert.match(set, /if \(this\.halted \|\| this\.disposed\) return false/)
   assert.match(set, /if \(!Number\.isInteger\(agent\) \|\| agent < 0 \|\| agent >= this\.lookWords\.length\) return false/)
   assert.match(set, /const word = look === null \? LOOK_NONE : validateLook\(look\) === null \? -1 : packLook\(look\)/, 'null is the hash, an invalid look is refused')
-  assert.match(set, /this\.figureWords\[agent\] = look === null \? 0 : packFigure\(look\)/, 'the hash\'s figure for null')
+  assert.match(set, /this\.figureWords\[agent \* 2\] = look === null \? 0 : packFigure\(look\)/, 'the hash\'s figure for null')
+  assert.match(set, /this\.figureWords\[agent \* 2 \+ 1\] = look === null \? 0 : packFace\(look\)/, 'and its face')
   assert.match(set, /this\.gpu\.device\.queue\.writeBuffer\(this\.crowdLook, agent \* 4, this\.lookWords, agent, 1\)/, 'four bytes at the slot, the dissolve\'s path')
-  assert.match(set, /this\.gpu\.device\.queue\.writeBuffer\(this\.crowdFigure, agent \* 4, this\.figureWords, agent, 1\)/, 'and the figure\'s four')
-  assert.match(src, /lookOf\(agent: number\): Look \| null \{\n\s*if \(!Number\.isInteger\(agent\) \|\| agent < 0 \|\| agent >= this\.lookWords\.length\) return null\n\s*return unpackLook\(this\.lookWords\[agent\], this\.figureWords\[agent\]\)/)
+  assert.match(set, /this\.gpu\.device\.queue\.writeBuffer\(this\.crowdFigure, agent \* 8, this\.figureWords, agent \* 2, 2\)/, 'and the pair\'s eight')
+  assert.match(src, /lookOf\(agent: number\): Look \| null \{\n\s*if \(!Number\.isInteger\(agent\) \|\| agent < 0 \|\| agent >= this\.lookWords\.length\) return null\n\s*return unpackLook\(this\.lookWords\[agent\], this\.figureWords\[agent \* 2\], this\.figureWords\[agent \* 2 \+ 1\]\)/)
   assert.doesNotMatch(src, /sim\.send\(\{ c: 'look/, 'nothing of it is a command to the realm')
 })
 
@@ -191,17 +202,23 @@ test('app: the player\'s look is kept under its own key, worn on agent 0 from th
   assert.match(card, /^(?:\/\/[^\n]*\n)*\/\*\*\n \* Why does this file exist\?[\s\S]*What breaks if it is removed\?/, 'the header (after the licence lines)')
   assert.match(card, /from '\.\.\/03_Spawn_Agents\/look\.ts'/)
   assert.doesNotMatch(card, /engine\.ts|three\/|simProtocol|bridge\.ts/, 'the card knows only the wardrobe model')
-  for (const name of ['LOOK_PRESETS', 'lookOptions', 'lookFromSeed', 'formatLookCode', 'parseLookCode', 'withLookSlot', 'LOOK_BODY_SLIDERS', 'bodyShapeOf', 'silhouetteRings']) assert.ok(card.includes(name), name)
-  assert.match(card, /from '\.\.\/03_Spawn_Agents\/humanoid\.ts'/, 'the silhouette is the body\'s own rings')
+  for (const name of ['LOOK_PRESETS', 'lookOptions', 'lookFromSeed', 'formatLookCode', 'parseLookCode', 'withLookSlot', 'LOOK_BODY_SLIDERS', 'LOOK_FACE_SLIDERS', 'bodyShapeOf', 'faceShapeOf', 'silhouetteRings', 'faceRings']) assert.ok(card.includes(name), name)
+  assert.match(card, /from '\.\.\/03_Spawn_Agents\/humanoid\.ts'/, 'the silhouette and the face view are the body\'s own rings')
   assert.match(card, /type="range"/, 'the sliders are sliders')
   assert.match(card, /data-row="silhouette"/)
+  assert.match(card, /data-row="face"/)
   assert.match(card, /role="dialog"/)
+  // The hair's pieces follow the style on the card as in the shader (look.ts hairBits).
+  assert.match(card, /case PIECE\.HAIR_CAP: return look\.hairStyle !== HAIR\.bald/)
+  assert.match(card, /case PIECE\.LONG_HAIR: return look\.hairStyle === HAIR\.long/)
+  assert.match(card, /case PIECE\.BOB: return look\.hairStyle === HAIR\.bob/)
+  assert.match(card, /case PIECE\.BUN: return look\.hairStyle === HAIR\.bun/)
   // What the card prints (its string literals and JSX text) keeps the house's words.
   const printed = (card.match(/'[^'\n]*'|"[^"\n]*"|>[^<{]*</g) ?? []).join('\n')
   assert.doesNotMatch(printed, /\btarget\b|ragdoll|matrix/i)
 })
 
-test('lookStore: its own key, a look within the wardrobe round-trips as a v2 record, a v1 record (fourteen slots) is upgraded, anything else reads as none, storage trouble is silent', () => {
+test('lookStore: its own key, a look within the wardrobe round-trips as a v3 record, a v2 record (twenty slots) and a v1 record (fourteen) are upgraded, anything else reads as none, storage trouble is silent', () => {
   assert.equal(LOOK_KEY, 'civic-simulation:look:v1')
   assert.notEqual(LOOK_KEY, PROFILE_KEY)
   const store = mapStore()
@@ -211,21 +228,30 @@ test('lookStore: its own key, a look within the wardrobe round-trips as a v2 rec
   assert.deepEqual(loadLook(store), look)
   assert.ok(Object.isFrozen(loadLook(store)))
   assert.equal(store.map.size, 1, 'nothing under any other key')
-  assert.deepEqual(JSON.parse(store.map.get(LOOK_KEY)!), { v: 2, look })
+  assert.deepEqual(JSON.parse(store.map.get(LOOK_KEY)!), { v: 3, look })
   // Edited by hand to something the crowd does not wear: not a look.
-  store.map.set(LOOK_KEY, JSON.stringify({ v: 2, look: { ...look, top: 99 } }))
+  store.map.set(LOOK_KEY, JSON.stringify({ v: 3, look: { ...look, top: 99 } }))
   assert.equal(loadLook(store), null)
+  const baseFace = { brow: 8, jaw: 8, chin: 8, cheek: 8, nose: 8, eyes: 8, lips: 8, age: 3, undertone: 0 }
+  // A look kept before the face (v 2, twenty slots): worn again with the base face.
+  const v2: Record<string, number> = {}
+  for (const s of LOOK_V2_SLOTS) v2[s] = s === 'hairStyle' ? 1 : LOOK_PRESETS[0].look[s as LookSlot]
+  store.map.set(LOOK_KEY, JSON.stringify({ v: 2, look: v2 }))
+  assert.deepEqual(loadLook(store), upgradeFigureLook(v2))
+  assert.deepEqual(loadLook(store), { ...LOOK_PRESETS[0].look, ...baseFace, hairStyle: 1 })
+  store.map.set(LOOK_KEY, JSON.stringify({ v: 2, look: { ...v2, hairStyle: 2 } }))
+  assert.equal(loadLook(store), null, 'a v2 record had two hair styles')
   // A look kept before the figure (v 1, fourteen slots): worn again, its height and build carried into the sliders.
   const legacy: Record<string, number> = {}
   for (const s of LEGACY_LOOK_SLOTS) legacy[s] = s === 'height' ? 4 : s === 'build' ? 3 : LOOK_PRESETS[0].look[s as LookSlot]
   store.map.set(LOOK_KEY, JSON.stringify({ v: 1, look: legacy }))
   assert.deepEqual(loadLook(store), upgradeLegacyLook(legacy))
-  assert.deepEqual(loadLook(store), { ...LOOK_PRESETS[0].look, height: 16, mass: 6, muscle: 8, shoulders: 8, hips: 8, legs: 8, posture: 8, head: 4 })
+  assert.deepEqual(loadLook(store), { ...LOOK_PRESETS[0].look, height: 16, mass: 6, muscle: 8, shoulders: 8, hips: 8, legs: 8, posture: 8, head: 4, ...baseFace })
   store.map.set(LOOK_KEY, JSON.stringify({ v: 1, look: { ...legacy, top: 99 } }))
   assert.equal(loadLook(store), null, 'an old record outside the wardrobe is still none')
   store.map.set(LOOK_KEY, JSON.stringify({ v: 1, look }))
-  assert.deepEqual(loadLook(store), look, 'a v1 record that already holds twenty slots reads as it is')
-  store.map.set(LOOK_KEY, JSON.stringify({ v: 3, look }))
+  assert.deepEqual(loadLook(store), look, 'a v1 record that already holds twenty-nine slots reads as it is')
+  store.map.set(LOOK_KEY, JSON.stringify({ v: 4, look }))
   assert.equal(loadLook(store), null, 'a layout from the future is not read')
   for (const raw of ['', 'not json', '[]', '{}', JSON.stringify({ v: 2 }), 'x'.repeat(2000)]) {
     store.map.set(LOOK_KEY, raw)
@@ -248,4 +274,5 @@ test('lookStore: its own key, a look within the wardrobe round-trips as a v2 rec
   assert.equal(validateLook(lookFromSeed(0)) !== null, true)
   assert.notEqual(packLook(lookFromSeed(0)), LOOK_NONE)
   assert.notEqual(packFigure(lookFromSeed(0)), packFigure(lookFromSeed(1)), 'the seeds differ in figure too')
+  assert.notEqual(packFace(lookFromSeed(0)), packFace(lookFromSeed(1)), 'and in face')
 })
