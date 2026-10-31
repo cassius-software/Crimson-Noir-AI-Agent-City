@@ -141,6 +141,16 @@ const PALETTE = {
   trims: hex([0x141414, 0xe8e2d6, 0x5e2530, 0x1c2c4c, 0xb59a72, 0x6e7278, 0x3f5e5a]),
   scarves: hex([0x6a1e2a, 0x1c2c4c, 0xd9c7a8, 0x2a2a2d, 0x8a6a48, 0x3a5f9a, 0x9c9a96]),
 }
+/**
+ * Every palette end to end, as the material's one uniform array holds them, and where each begins in it. WebGPU
+ * promises a stage twelve uniform buffers (maxUniformBuffersPerShaderStage) and three's own groups take some: a buffer
+ * per palette reached thirteen in the fragment stage with the coats, the trims and the scarves, and no body's pipeline
+ * built (shadowShaders.test.ts counts a stage's bindings against the promise).
+ */
+const PALETTE_TABLE: Color[] = Object.values(PALETTE).flat()
+const PALETTE_OFFSET: ReadonlyMap<Color[], number> = new Map(
+  Object.values(PALETTE).map((list, i, lists) => [list, lists.slice(0, i).reduce((n, l) => n + l.length, 0)]),
+)
 
 function agentBuffers(view: CrowdView, agentCount: number, listLength: number) {
   return {
@@ -380,10 +390,10 @@ export class CrowdView {
     // stripes across the band (a jacket's hem over the trousers showed the shirt, the skin and the hair).
     const slot = varying(rig.y, 'vAgentSlot').setInterpolation('flat')
     const h = (k: number): F1 => hash(vSeed.add(k * 7.919))
-    // Colour lists on the GPU, one uniform array per palette however many slots read it.
-    const arrays = new Map<Color[], ReturnType<typeof uniformArray>>()
-    const colours = (list: Color[]) => arrays.get(list) ?? (arrays.set(list, uniformArray(list, 'color')), arrays.get(list)!)
-    const pick = (list: Color[], hk: F1): V3 => colours(list).element(uint(hk.mul(list.length - 0.001))) as unknown as V3
+    // The colour lists on the GPU: one uniform array of every palette, a palette read at its offset (PALETTE_TABLE).
+    const table = uniformArray(PALETTE_TABLE, 'color')
+    const colour = (list: Color[], i: U1): V3 => table.element(i.add(uint(PALETTE_OFFSET.get(list)!))) as unknown as V3
+    const pick = (list: Color[], hk: F1): V3 => colour(list, uint(hk.mul(list.length - 0.001)))
     const skin = pick(PALETTE.skin, h(1))
     const hair = mix(pick(PALETTE.hair, h(2)), vec3(0.6, 0.6, 0.58), step(0.9, h(9)))
     let top: V3, bottom: V3, shirt: V3, shoes: V3
@@ -405,7 +415,7 @@ export class CrowdView {
     const field = (s: LookSlot): U1 => word.shiftRight(uint(LOOK_FIELD[s][1])).bitAnd(uint((1 << LOOK_FIELD[s][2]) - 1))
     const at = (list: Color[], i: U1): V3 => {
       const last = uint(list.length - 1)
-      return colours(list).element(select(i.lessThan(last), i, last)) as unknown as V3
+      return colour(list, select(i.lessThan(last), i, last))
     }
     const outfit = WARDROBE.outfits[variant]
     const cloth = (name: PaletteName): Color[] => PALETTE[name]

@@ -32,8 +32,11 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   scarf). The card gains Layer, Trim and Scarf rows (the jacket's and the trim's hidden under shirt sleeves) and
   the console's `look` the three slots; the 14A pin gains the coat and the scarf (clothing, nothing held). Tests:
   the garment lines against the loft, the coat outside the trunk, look v4 round trips, upgrades and codes, the
-  wiring and the air gap, every body material built under Node in both passes. The garments' appearance on a real
-  GPU is not yet confirmed: software WebGPU and CI's screenshots only.
+  wiring and the air gap, every body material built under Node in both passes. The crowd's palettes now ride one
+  uniform buffer: a buffer per palette reached thirteen in the fragment stage with the coats, the trims and the
+  scarves, past the twelve WebGPU promises a stage, and no body's pipeline built; `shadowShaders.test.ts` now
+  counts every material's bindings a stage against that promise. The garments' appearance on a real GPU is not yet
+  confirmed: software WebGPU and CI's screenshots only.
 - **A face for every pedestrian, and hair in five styles.** The head of `src/03_Spawn_Agents/humanoid.ts` is now a
   twelve-sided skull in regions (chin, jaw, cheekbones, brow line) with features lofted onto its front: two eyes
   (a white and an iris), two brows, a nose rooted on the skull, the lips, two ears; all written by hand, no imported
