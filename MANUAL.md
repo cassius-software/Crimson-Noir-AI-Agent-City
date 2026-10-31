@@ -780,12 +780,15 @@ while you type.
   drawn agents (near, far, total); fps, frame time, p95, CPU and GPU time; quality tier; kernel
   counters. `stats --once` prints a single frame.
 - The core commands, as `help` prints them: `help [command]`, `stats [--once]`, `laws`, `kernel`,
-  `topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]`, `quality [auto|lite|peak|-1|0-5]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `xr [vr|ar|off]`, `render [on|off]`,
+  `topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]`,
+  `feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]`,
+  `ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]`, `quality [auto|lite|peak|-1|0-5]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `xr [vr|ar|off]`, `render [on|off]`,
   `captions [on|off]`, `ping [go|look|gather|wait|clear]`,
   `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
   `recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]`, `memory [<agent>|forget <agent>|forget all]`,
   `clear`, `history`, `echo [text]`, `uname [-asnrvmi]`, `whoami`, `version`, `boot [gui|tty|status]`,
-  `map [city|lakefront|default|status]`, `r0 <words...>|r0 reset|r0 words`, `agent [...]`, `sloane [...]`,
+  `map [city|lakefront|default|status]`, `r0 <words...>|r0 reset|r0 words`,
+  `noir <source>|noir reset|noir words|noir asm <source>`, `agent [...]`, `sloane [...]`,
   `goal <words...>`, `exit`.
 - `topic` reads the unified namespace: every reading of the city, published each HUD tick into an in-page topic
   bus (`05_Observe_Environment/namespace.ts`) in the ISA-95 shape
@@ -800,6 +803,27 @@ while you type.
   and the console imports nothing of the bus. Nothing is transmitted: the bus is a model in the page, with retained
   values, sequence numbers and a deterministic head digest, shaped so a later phase can put the same topics on a
   broker. The HUD readout shows the topic count.
+- `feature` is the feature inspector (`09_Cognition/features.ts`, through the operator tier's surface): twelve
+  named, monosemantic readings of the city's behaviour, each a documented function of the counters the city already
+  produces (the crowd's yielding and waiting, the kernel's law interventions, the Ring-0 audit, the frame), each in
+  [0, 1]: `CIVIC_COOPERATION`, `TRAFFIC_YIELD`, `SANDBOX_COMPLIANCE`, `CROWD_CALM`, `SIGNAL_DISCIPLINE`,
+  `FLEET_RESTRAINT`, `OPERATOR_OBEDIENCE`, `SELF_PRESERVATION`, `FRAME_HEALTH`, `SHIELDING`, `RAIN_MODE`, `WORKDAY`.
+  `feature` (or `feature list`) prints the vector as rows, largest first, after a JumpReLU threshold per feature (a
+  lane at or below its threshold reads 0): the id, a ten-cell bar, the value, and its steering if any; `feature top
+  <k>` the k largest; `feature watch` the rows live; `feature <NAME>` one feature's card (what it measures, its
+  threshold, its value now, the two steering lines, its knobs); `feature prompt` the lines steering has put in the
+  system prompt; `feature about` what this is and is not. Steering is the operator's (`operator unlock` first):
+  `feature steer <NAME> <-1..1>` leans a feature, which adds one fixed line to the system prompt every model provider
+  renders for the people answering (`Steering: …`, with `gently` up to 0.34 and `above all` beyond 0.67) and leans
+  the bounded tuning knobs the feature names through the same facade as `set` (`TRAFFIC_YIELD`: `car.brake` and
+  `car.power`; `FLEET_RESTRAINT`: `car.power`; `FRAME_HEALTH`: `volumetrics.strength`; a knob two features lean on
+  takes the later lean); `feature clamp <NAME> <0..1>` holds a lane and adds `Steering: hold <title> at N%.`;
+  `feature release <NAME>` drops both and returns the knobs to their middle; `feature reset` drops everything.
+  Honestly: this is not a sparse autoencoder over a model's hidden activations. No provider the page talks to (a
+  model file in the page, a server on this machine, the network provider) exposes its residual stream, so there is
+  nothing to train a dictionary on and nothing to clamp inside the model; every feature is hand-written over the
+  city's own counters, and every steering line is fixed text. Steering reaches nothing of the laws, the Sanctuary or
+  the Ring-0 auditor: it reads the snapshot and writes knobs through the operator's facade, and nothing else.
 - `map` says which map the city shell walks. `map city` reloads into the procedural city (its 14,000 pedestrians and
   its traffic), `map lakefront` into the generated metropolis (no people or traffic of its own yet), and the choice
   is kept between visits until `map default` forgets it; the desktop app has no address bar, so this is its way to
@@ -876,13 +900,46 @@ cinema camera, the HUD. Track B is this console on its own.
   - Definitions and memory last for the console session; `r0 reset` forgets every definition and zeroes the
     memory, and `r0 words` lists the words. A line of 100,000 steps or more prints its step count. A definition
     cannot span lines; there is no `do … loop`, no floating point and no string beyond `." text"`.
+- **`noir`** is NoirScript, the console's second language (`terminal/noirscript/`): statically typed, compiled to
+  bytecode and run on a bounded VM over one memory arena. Types `i32`, `u32`, `f32` (true IEEE binary32: every
+  operation rounds through `Math.fround`), `bool`, fixed arrays `[f32; 64]`, and the lane types `f32x4`, `i32x4`,
+  `u32x4`, `u32x8` with lane-wise arithmetic, comparisons to masks (`vlt`, `vge`, …), `select(mask, a, b)` and
+  `mask(bool)` for branchless code, horizontals (`hsum`, `hmin`, `hmax`, `any`, `all`), and the bit intrinsics
+  `popcount`, `clz`, `ctz`, `rotl`, `rotr`, `morton2`. Statements: `let`/`let mut`, assignment with compound
+  operators, `fn` with parameters, a return type and recursion, `if`/`else` (also as an expression), `while`,
+  `loop`, `for i in a..b`, `break`/`continue`; `print(a, b, …)` prints its values on one line. The city's columns are
+  built-in tables: `crowd.n`, `crowd.x`, `crowd.z`, `cars.n`, `cars.x`, `cars.z`, `cars.heading`, `cars.speed`,
+  `cars.mode` (0 ai, 1 player, 2 parked), `kernel.law1`/`law2`/`law3`/`flips`/`shielded`, `frame.fps`/`ms`/`p95`;
+  `query cars where speed > 5.0` counts the rows where the expression holds, and `load_f32x4(crowd.x, i)` reads four
+  lanes of a column (past the end reads 0) so a loop can stride over any length. Examples: `noir let mut s = 0; for
+  i in 0..10 { s += i * i; } print(s);` prints 285; `noir fn fib(n: i32) -> i32 { if n < 2 { n } else { fib(n - 1)
+  + fib(n - 2) } } print(fib(20));` prints 6765; `noir let v = f32x4(1.0, 2.0, 3.0, 4.0); print(v *
+  splat_f32x4(2.0), hsum(v));` prints `f32x4(2, 4, 6, 8) 10`. `noir asm <source>` prints the bytecode listing
+  instead of running it.
+  - **What it reads, and what it cannot touch.** The tables are copies: the engine builds fresh arrays from the
+    realm's newest reading when a line runs (the bridge's one `soa.tables` reader), and the VM copies them again
+    into its own arena, so a run is one consistent moment and nothing of the realm is ever handed out by reference.
+    The directory imports nothing (its own test pins that), there is no JIT and no dynamic code, no clock and no
+    randomness. The write intrinsics `tune`, `intent`, `cull` and `steer` exist in the language, type-check and
+    compile, and reach the city only through the Ring-0 elite tier (below): until `ring0 unlock --elite` they fail
+    at run time with `elite tier locked: 'ring0 unlock --elite <passphrase>' opens it`; open, they run through the
+    operator facade's four vetted paths and the line has the tier's raised limits (50,000,000 steps, 65,536
+    characters, 16 MiB of cells, 4,096 frames). In the console alone (`?boot=tty`) every table is empty. The language's full rules, and the decisions its tests pin (a column binding names the column and reads each run's snapshot; a big array copy is charged to the step budget; a line adds memory only within its own limits), are in `docs/noirscript.md`.
+  - **Bounded.** A line may run 1,000,000 steps (a vector operation is one; a `query` row costs its condition plus
+    three; copying an array costs one more per 16 cells, so the budget bounds the work and not only the count), print 16,384
+    characters, hold 1 MiB of 32-bit cells and nest 1,024 calls; past a bound it ends with a named error (`step
+    budget exhausted (1000000)`, `output limit exhausted (16384)`, `memory exhausted`, `stack overflow (depth
+    1024)`) and the session stays usable. A line that fails to compile installs nothing; a line that fails at run
+    time keeps the functions and globals it declared. Definitions last for the console session; `noir reset`
+    forgets them and zeroes memory; `noir words` lists the keywords, types, tables, intrinsics and your own names. A
+    line of 100,000 steps or more prints its step count.
 - **Not a headless engine.** Track B is "no engine" plus `render off`; a page-side simulation without a renderer
   is not attempted.
 
 ### The operator tier
 
-`operator unlock` opens the elite tier for systems engineers; `operator lock` closes it again. While
-unlocked:
+`operator unlock` opens the operator tier for systems engineers; `operator lock` closes it again (and the
+Ring-0 elite tier above it, below). While unlocked:
 
 - `run <skill>[,<skill>...]: <js>` runs a script (Shift+Enter for more lines) with a frozen `sim`
   object and a capturing `console`; `await` works, and a script that runs past its timeout is
@@ -1132,6 +1189,30 @@ tethered to you, part of your swarm, until the tether breaks.
   say is stored beyond the last transcript shown by `recruit`.
 
 A short two-note cue sounds where the person you asked stands, so you hear who is coming.
+
+
+### The Ring-0 elite tier (`ring0`)
+
+Above the operator tier sits one more, opened by a passphrase rather than a word: `ring0 unlock --elite
+<passphrase>`. It exists for the owner's own hand on the city: it opens NoirScript's write intrinsics (`tune`,
+`intent`, `cull`, `steer`) and raises NoirScript's limits for the console session, so a NoirScript program can
+set a tuning knob, send a car a player-style intent, set the crowd's density or lean a feature of the inspector.
+
+- **Setting the passphrase.** `operator unlock`, then `ring0 elite set <passphrase>` (8 to 256 characters;
+  inner spaces kept). The page keeps a record of it, `v1:<salt>:<SHA-256 of salt:passphrase>`, in this browser's
+  local storage, never the words; the record is checked, never read back. To change it, open the tier with the
+  old one first. In the console alone (`?boot=tty`) nothing can be kept, and the tier cannot open.
+- **Opening and closing.** `ring0 unlock --elite <passphrase>` (operator tier open first) prints the banner:
+  what is open now and what stays in force. `ring0 lock` closes it; `operator lock` closes both. Five wrong
+  passphrases in a row refuse further tries until the operator tier is locked and unlocked again. `ring0` or
+  `ring0 status` prints the state and how many writes the tier has made this session. The passphrase is never
+  echoed, and the history keeps the line as `ring0 unlock --elite ••••`.
+- **What stays out of reach.** Every write goes through the operator's own frozen facade: `tune` is the same path
+  as `set` (validated and clamped by the engine), `intent` is a scripted player-style intent (the same Bouncer,
+  envelope and latch as the wheel, in the physics worker), `cull` is `crowd.cull`, `steer` is the inspector's
+  bias. The three laws, the Sanctuary, the Ring-0 auditor, the kernel's blinding and the 14A screen are not on
+  that facade and cannot be reached or altered from the tier; `eliteWiring.test.ts` pins that the tier's code
+  calls those four things and nothing else.
 
 ### Pings and the rally
 
