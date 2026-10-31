@@ -86,10 +86,21 @@ test('engine: the lite boot builds the lighter world and hands the realm no furn
   // The page keeps its own furniture for drawing, the pole index, the contact pulse, the dissolve and the ghost view.
   assert.match(CREATE, /createGhost\(\{ boxes: world\.boxes, furniture: world\.furniture,/)
   assert.match(ENGINE, /new DissolveSet\(\{ lamps: f\.lamps\.length, trees: f\.trees\.length, signals: f\.signals\.length,/)
-  // Without rig slots the rig meshes stay out of the scene and the ghost view.
-  assert.match(CREATE, /const rigMeshes = sim\.meta\.rigSlots > 0 \? rigView\.meshes : \[\]/)
+  // Without rig slots the rig meshes stay out of the scene and the ghost view; with them, the lit scene gets the
+  // capsules only on ?rigs=capsules (the figures wear the rigs) and the ghost view gets the shapes either way.
+  assert.match(CREATE, /const rigShapes = sim\.meta\.rigSlots > 0 \? rigView\.meshes : \[\]/)
+  assert.match(CREATE, /const rigMeshes = options\.rigCapsules \? rigShapes : \[\]/, 'the capsules only on ?rigs=capsules: the figures wear the rigs')
+  assert.match(CREATE, /view0\.rigs\(sim\.state\.rigs\)/, 'the first stream into the crowd\'s rig poses')
   assert.match(CREATE, /world\.scene\.add\(\.\.\.view0\.meshes, \.\.\.view\.bodies, view\.wheels, \.\.\.rigMeshes\)/)
-  assert.match(CREATE, /rigs: rigMeshes \}\)/)
+  assert.match(CREATE, /rigs: rigShapes \}\)/, 'the ghost view keeps the rig\'s shapes')
+  // Every step: the slot words and the pins (the worn figure's row at the rig's pelvis) before the contact scan reads
+  // the frame, the scan reading a worn figure at the rig and putting the row back, then the upload.
+  const step = between(ENGINE, 'this.rigView.sync(s.rigs)', 'this.crowdFrames++')
+  assert.match(step, /this\.wearRigs\(s\.crowdFrame\)[\s\S]*this\.contactScan\(s\)[\s\S]*this\.crowd\.upload\(s\.crowdFrame\)/)
+  assert.match(between(ENGINE, 'private wearRigs(frame: Float32Array | null): void {', '\n  }\n'), /this\.crowd\.pin\(this\.options\.rigCapsules \? \[\] : next, rows\)/)
+  const scan = between(ENGINE, 'private contactScan(s: StepState): void {', '\n  }\n')
+  assert.match(scan, /frame!\[o\] = at\[2 \* slot\]/)
+  assert.match(scan, /finally \{[\s\S]*frame!\[o\] = saved\[2 \* k\]/)
   // The realm's host passes the craft flag on, defaulting to on.
   assert.match(read('./simHost.ts'), /craft: init\.craft !== false,/)
 })
@@ -132,10 +143,31 @@ test('rigs: without rig slots a sync writes and uploads nothing, and lists nobod
   view.sync(new Float32Array(RIG_POSE.stride).fill(3))
   view.sync(null)
   assert.deepEqual(view.hidden, [])
+  assert.deepEqual([...view.bySlot], [-1])
+  assert.deepEqual([...view.pelvisXZ], [0, 0])
   assert.deepEqual(versions(), before)
   // With slots, a sync still uploads (the stream's poses move every state).
   const live = new RigView(2)
   const was = live.meshes[0].instanceMatrix.version
   live.sync(null)
   assert.ok(live.meshes[0].instanceMatrix.version > was)
+  assert.deepEqual([...live.bySlot], [-1, -1])
+})
+
+test('rigs: a sync keeps per slot who wears it and where its pelvis is, from the stream\'s first shape; an empty slot reads −1 and 0', () => {
+  const view = new RigView(2)
+  const stream = new Float32Array(2 * RIG_POSE.stride).fill(-1)
+  const o = RIG_POSE.stride
+  stream[o + RIG_POSE.agent] = 7
+  stream[o + RIG_POSE.state] = 3
+  stream[o + RIG_POSE.segments] = 12.5
+  stream[o + RIG_POSE.segments + 1] = 0.4
+  stream[o + RIG_POSE.segments + 2] = -3.25
+  view.sync(stream)
+  assert.deepEqual(view.hidden, [7])
+  assert.deepEqual([...view.bySlot], [-1, 7])
+  assert.deepEqual([...view.pelvisXZ], [0, 0, 12.5, -3.25])
+  view.sync(null)
+  assert.deepEqual([...view.bySlot], [-1, -1])
+  assert.deepEqual([...view.pelvisXZ], [0, 0, 0, 0])
 })

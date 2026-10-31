@@ -2,13 +2,17 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It draws the promoted pedestrians' rigs on the page: the realm's rig stream
- * (simProtocol.ts RIG_POSE, one slice per slot) gives each rig's thirteen shape poses, and this view poses one
- * instanced capsule per shape (simProtocol.ts RIG_SEGMENTS, the page's copy of the rig's own shapes) in the colour
- * the crowd gives that person's own figure (03_Spawn_Agents/crowd.ts attireColour), where the hidden figure stood.
- * It holds no physics and loads no Rapier: numbers in, matrices out, exactly as fleetView.ts does for the cars. Who
- * is promoted, and where their rig stands, is the realm's alone.
- * What breaks if it is removed? A promoted person's figure is hidden and nothing stands in their place.
+ * Why does this file exist? It reads the promoted pedestrians' rigs on the page: the realm's rig stream
+ * (simProtocol.ts RIG_POSE, one slice per slot) gives each rig's thirteen shape poses, and this view keeps per slot
+ * who wears it (bySlot, the slot word the engine writes into crowd.figure so the figure itself hangs from the rig,
+ * 03_Spawn_Agents/crowdBody.ts bodyRig) and where its pelvis is (pelvisXZ, the figure's pin in the render copy), and
+ * poses one instanced capsule per shape (simProtocol.ts RIG_SEGMENTS, the page's copy of the rig's own shapes) in
+ * the colour the crowd gives that person's own figure (03_Spawn_Agents/crowd.ts attireColour): drawn in the hidden
+ * figure's place on ?rigs=capsules, and as the ghost view's proxies always. It holds no physics and loads no Rapier:
+ * numbers in, matrices out, exactly as fleetView.ts does for the cars. Who is promoted, and where their rig stands,
+ * is the realm's alone.
+ * What breaks if it is removed? No figure wears its rig (the engine has no slot to write), the ghost view loses the
+ * rig's shapes and ?rigs=capsules shows nothing.
  */
 import { CapsuleGeometry, Color, InstancedMesh, Matrix4, MeshStandardNodeMaterial, Quaternion, Vector3, type UniformNode, type Vector4 } from 'three/webgpu'
 import { applyMatrixMode } from '../01_Initialize_World/matrixMode.ts'
@@ -23,8 +27,12 @@ export class RigView {
   /** One instanced mesh per shape (RIG_SEGMENTS order), `slots` instances each. */
   readonly meshes: readonly InstancedMesh[]
   readonly slots: number
-  /** The agents promoted in the newest stream, in slot order: the crowd hides their figures (CrowdCull.hide). */
+  /** The agents promoted in the newest stream, in slot order (empty slots left out): the crowd's figures wearing a rig. */
   readonly hidden: number[] = []
+  /** Per slot: the agent promoted into it in the newest stream, or −1 (the slot word the engine writes is the index + 1). */
+  readonly bySlot: Int32Array
+  /** Per slot: the rig's pelvis x and z in the newest stream (two floats per slot; 0 while the slot is empty). */
+  readonly pelvisXZ: Float32Array
   /** Per slot: the agent coloured into it (−1: none yet). */
   private readonly coloured: Int32Array
   private readonly m = new Matrix4()
@@ -38,6 +46,8 @@ export class RigView {
     // WebGPU refuses a zero-sized binding: a realm without rigs still gets one (never drawn) instance.
     const count = Math.max(1, this.slots)
     this.coloured = new Int32Array(count).fill(-1)
+    this.bySlot = new Int32Array(count).fill(-1)
+    this.pelvisXZ = new Float32Array(count * 2)
     const material = new MeshStandardNodeMaterial({ roughness: 0.85, metalness: 0 })
     if (matrixMode) applyMatrixMode(material, matrixMode)
     this.meshes = RIG_SEGMENTS.map(([name, halfHeight, radius]) => {
@@ -67,12 +77,15 @@ export class RigView {
     list.length = 0
     // No rig slots (the ragdoll off, a region, a lite boot): the one instance stays scaled to nothing, so there is
     // nothing to write or upload (the engine leaves these meshes out of the scene then).
-    if (this.slots === 0) return
+    if (this.slots === 0) { this.bySlot.fill(-1); this.pelvisXZ.fill(0); return }
     const valid = rigs instanceof Float32Array && rigs.length >= this.slots * RIG_POSE.stride
     for (let s = 0; s < Math.max(1, this.slots); s++) {
       const o = s * RIG_POSE.stride
       const agent = valid && s < this.slots ? rigs[o + RIG_POSE.agent] : -1
       const live = Number.isInteger(agent) && agent >= 0
+      this.bySlot[s] = live ? agent : -1
+      this.pelvisXZ[2 * s] = live ? rigs![o + RIG_POSE.segments] : 0
+      this.pelvisXZ[2 * s + 1] = live ? rigs![o + RIG_POSE.segments + 2] : 0
       if (live) {
         list.push(agent)
         if (this.coloured[s] !== agent) {

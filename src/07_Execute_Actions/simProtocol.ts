@@ -83,8 +83,10 @@ export const TRACK_KINDS: readonly TrackKind[] = ['car', 'train', 'drone', 'plan
  * for the pedestrians near the operator the realm has promoted to a physical body (ragdollRealm.ts over
  * 03_Spawn_Agents/ragdoll.ts): `agent` is the pedestrian's index in the crowd (−1: an empty slot, nothing follows),
  * `state` the balance machine's state as RIG_STATES codes it, then `segments` poses of `segmentStride` floats each
- * (x, y, z, qx, qy, qz, qw), one per RIG_SEGMENTS entry. The page hides the crowd's figure of a listed agent and draws
- * the rig in its place (rigView.ts); the Ring-0 audit has already checked every segment as a person before it leaves.
+ * (x, y, z, qx, qy, qz, qw), one per RIG_SEGMENTS entry. The crowd's figure of a listed agent wears these poses
+ * (03_Spawn_Agents/crowd.ts rigPoses, crowdBody.ts bodyRig); on ?rigs=capsules the page hides the figure and draws the
+ * rig as capsules in its place (rigView.ts). The Ring-0 audit has already checked every segment as a person before it
+ * leaves.
  */
 export const RIG_POSE = { agent: 0, state: 1, segments: 2, segmentStride: 7, segmentCount: 13, stride: 2 + 13 * 7 } as const
 

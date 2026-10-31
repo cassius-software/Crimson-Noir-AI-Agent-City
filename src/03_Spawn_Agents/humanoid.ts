@@ -4,12 +4,16 @@
 /**
  * Why does this file exist? It is the person the crowd is made of: one smooth humanoid, lofted from rings (the
  * trunk, the neck and head with its face, each arm with its hand, each leg with its shoe, and the four outfits'
- * garments, a hem, a shirt front, a skirt, a tie, the hair in its styles, glasses, a bag, a cup) over a skeleton of
+ * garments, a hem, a skirt, a coat, a tie, a scarf, the hair in its styles, glasses, a bag, a cup; the shirt's V,
+ * the lapels, the collar and the cuffs are lines the fragment stage draws on the cloth, GARMENT) over a skeleton of
  * fifteen bones, every vertex tied to two of them, the body sliders that reshape it (height, mass, muscle, shoulders,
  * hips, leg length, posture, head) and the face sliders that reshape the head's features (brow, jaw, chin, cheek,
- * nose, eyes, lips), as arithmetic the crowd's vertex stage (crowd.ts) runs on the GPU and this module runs on the
+ * nose, eyes, lips), the walk (each leg solved from where its foot is, so a planted foot keeps its spot of ground;
+ * the arms swinging against them) and the gaze (the head and the chest turned toward the operator near by, or the
+ * way the person goes), as arithmetic the crowd's vertex stage (crowd.ts) runs on the GPU and this module runs on the
  * CPU, so the card's silhouette, the tests and the shader agree to the number. Everything here is written by hand for
- * this product: no imported mesh, skeleton or morph target. Pure: no three, no DOM, no GPU, no clock, no randomness.
+ * this product: no imported mesh, skeleton, morph target or motion capture. Pure: no three, no DOM, no GPU, no clock,
+ * no randomness.
  * What breaks if it is removed? The crowd has no body to draw, and the sliders have nothing to move.
  *
  * Frame: metres, feet on y = 0, the person faces +z, their left side at −x. The base person is HEIGHT_BASE tall;
@@ -33,14 +37,33 @@ export const BONE = Object.freeze({
 export const BONES = 15
 
 /** The colour slots the fragment stage paints (crowd.ts: the top, the shirt, the skin, ..., the eye's white, the iris, the lips). */
-export const SLOT = Object.freeze({ TOP: 0, SHIRT: 1, SKIN: 2, HAIR: 3, BOTTOM: 4, SHOES: 5, ACCENT: 6, PROP: 7, LEGWEAR: 8, FRAME: 9, EYE: 10, IRIS: 11, LIP: 12 })
-export const SLOTS = 13
+export const SLOT = Object.freeze({ TOP: 0, SHIRT: 1, SKIN: 2, HAIR: 3, BOTTOM: 4, SHOES: 5, ACCENT: 6, PROP: 7, LEGWEAR: 8, FRAME: 9, EYE: 10, IRIS: 11, LIP: 12, SCARF: 13 })
+export const SLOTS = 14
 /**
  * The optional pieces, one bit each in a person's piece mask (look.ts LOOK_PIECE_BIT; 0 is "always drawn"). The hair
  * is pieces too: the cap (every style but bald), long hair, a bob, a bun. FACE is the features (eyes, brows, nose,
- * lips, ears): the eye pass sets its bit, the shadow pass leaves it clear.
+ * lips, ears): the eye pass sets its bit, the shadow pass leaves it clear. COAT is the outer layer over the jacket
+ * (look.ts LAYER.coat), SCARF the wrap and tail round the neck.
  */
-export const PIECE = Object.freeze({ NONE: 0, TIE: 1, BAG: 2, CUP: 3, LONG_HAIR: 4, GLASSES: 5, HAIR_CAP: 6, BOB: 7, BUN: 8, FACE: 9 })
+export const PIECE = Object.freeze({ NONE: 0, TIE: 1, BAG: 2, CUP: 3, LONG_HAIR: 4, GLASSES: 5, HAIR_CAP: 6, BOB: 7, BUN: 8, FACE: 9, COAT: 10, SCARF: 11 })
+
+/**
+ * The parts of a garment the fragment stage paints on the cloth (slot TOP) from a vertex's rest position and bone
+ * (crowd.ts), so their lines are exact however coarse the loft and the far body gets them for free: the collar band
+ * above `collar`; the shirt's V on the front within a lateral half-width that grows from nothing where the jacket
+ * closes (`closes`, per body) to `halfAtCollar` at `opens`; the lapels within `lapel` beside the V; the cuffs on the
+ * arms (bones ARM_L and up) below `cuff`. A coat shell (piece COAT) carries the same cloth and the same parts. The
+ * card's silhouette paints by ring and shows none of them.
+ */
+export const GARMENT = Object.freeze({
+  collar: 1.475,
+  opens: 1.5,
+  closes: Object.freeze([1.2, 1.28, 1.24, 1.24]),
+  coatCloses: 1.38,
+  halfAtCollar: Object.freeze([0.065, 0.075, 0.065, 0.07]),
+  lapel: 0.03,
+  cuff: 0.965,
+})
 
 /**
  * Where the base person's joints are, m (y up the body, x out to the side). The vertex stage takes them as
@@ -107,17 +130,45 @@ export const LIMB_GIRTH = Object.freeze({
 
 /** The walk: the amplitudes the phase drives (crowd.wgsl's vel.z is the phase, vel.w the speed). */
 export const WALK = Object.freeze({
-  /** m/s at which the swing reaches its full amplitude, and the most it may exceed it. */
+  /** m/s at which the arms' swing reaches its full amplitude, and the most it may exceed it. */
   fullSpeed: 1.4, maxSwing: 1.3,
-  hip: 0.46, knee: 1.0, kneeRest: 0.06, ankle: 0.6,
-  shoulder: 0.38, elbow: 0.3, elbowRest: 0.25, twist: 0.06, bob: 0.03,
+  /**
+   * The legs are solved from the feet (footAt, legSolve). Metres one cycle of the walk covers: crowd.wgsl advances
+   * the phase by a turn per this distance, so a planted foot's spot of ground is a function of the phase alone. The
+   * speed under which the stride, the lift and the roll shrink toward standing. The swing foot's rise, m. The
+   * ankle's rise at either end of the stance as the foot rolls onto its heel or its toes, m. The knee's bend
+   * standing, rad: the leg never locks.
+   */
+  cycle: 1.45, strideSpeed: 0.5, lift: 0.07, roll: 0.03, kneeRest: 0.06,
+  shoulder: 0.38, elbow: 0.3, elbowRest: 0.25, twist: 0.06,
   /** Holding a cup: the left arm raised with the forearm up; carrying a bag: the right arm swings little. */
   cupShoulder: -0.35, cupElbow: -1.6, cupSwing: 0.2, bagSwing: 0.35,
   /** The head counters the trunk's lean, in part. */
   headCounter: 0.7,
 })
 
+/** The shoe's sole about the ankle, m: the heel this far behind it, the toes this far ahead (legTubes' lowest ring). */
+export const SOLE = Object.freeze({ heel: 0.085, toe: 0.145 })
+
+/**
+ * Where the head turns (gazeAt). Metres from the neck: the operator's eye holds the gaze whole within `near`, not
+ * at all past `reach`, never within `own` (a person's own eye stands at their own neck). Radians: the cone off the
+ * body's front past which the operator is behind; the head's yaw and pitch at most; the chest's share of the yaw and
+ * its most; the yaw toward the way they go at most (the head leads a turn), whole from `travelSpeed` m/s.
+ */
+export const GAZE = Object.freeze({
+  near: 2.5, reach: 4.5, own: 0.5,
+  cone: 1.75, headYaw: 1.1, headPitch: 0.5, chestShare: 0.3, chestYaw: 0.45,
+  travelYaw: 0.6, travelSpeed: 0.3,
+})
+
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x)
+const clampTo = (x: number, lo: number, hi: number): number => (x < lo ? lo : x > hi ? hi : x)
+const TAU = Math.PI * 2
+/** An angle brought within half a turn of zero. */
+const wrapAngle = (a: number): number => a - TAU * Math.round(a / TAU)
+/** 0 at or under `lo`, 1 at or over `hi`, a smooth step between (WGSL smoothstep). */
+const smoothTo = (lo: number, hi: number, x: number): number => { const t = clamp01((x - lo) / (hi - lo)); return t * t * (3 - 2 * t) }
 const hat = (y: number, at: number, half: number): number => clamp01(1 - Math.abs(y - at) / half)
 const factor = (t: number, f: { readonly base: number; readonly range: number }): number => f.base + clamp01(t) * f.range
 
@@ -295,50 +346,143 @@ export interface WalkAngles {
   readonly hipR: number; readonly kneeR: number; readonly ankleR: number
   readonly shoulderL: number; readonly elbowL: number
   readonly shoulderR: number; readonly elbowR: number
-  /** The chest's yaw about the spine (counter to the swing), and the head's nod. */
+  /** The chest's yaw about the spine (counter to the swing, with the chest's share of the gaze), and the head's nod. */
   readonly twist: number
   readonly head: number
+  /** The head's own yaw about the neck, toward the gaze (to the right positive). */
+  readonly headYaw: number
   /** The trunk's lean from the posture (about the hip, forward positive). */
   readonly slouch: number
-  /** The step's rise, m. */
-  readonly bob: number
+  /** The pelvis' rise, m (world): at or below zero, what the planted leg cannot span at the ends of the stance. */
+  readonly rise: number
 }
 
 /** The swing's amplitude for a walking speed, m/s: full at WALK.fullSpeed, at most WALK.maxSwing. */
 export const swingOf = (speed: number): number => Math.min(WALK.maxSwing, Math.max(0, speed / WALK.fullSpeed))
 
+/** One foot at a moment of the walk, in the base body's metres: ahead of the hip's drop line, above the ankle's rest, its sole's angle (toes down positive), planted or swinging. */
+export interface FootAt { readonly z: number; readonly y: number; readonly sole: number; readonly planted: boolean }
+
 /**
- * The walk at `phase` (rad; the left leg's cycle, the right half a turn behind) with `swing` (swingOf), for a
- * posture's factors, holding a cup (the left arm up) or carrying a bag (the right arm still). Exactly what the vertex
- * stage computes, in the same order.
+ * Where a foot is at `phase` (rad; this leg's cycle), with the stride, the swing's lift and the roll's rise in the
+ * base body's metres. The stance runs from a quarter turn before the phase's zero to a quarter after (the leg
+ * vertical at zero): the foot is planted, carried from half a stride ahead to half a stride behind linearly in the
+ * phase, so where the phase grows with the distance walked (crowd.wgsl: a turn per WALK.cycle metres) the foot's spot
+ * of ground never moves; it rolls onto its heel ahead of the hip and onto its toes behind, the ankle up by the roll's
+ * rise at either end. The swing brings it forward along a smooth step, the lift's arc over the roll's rise, the sole
+ * turning from the toe-off's toes-down to the strike's toes-up.
  */
-export function walkAngles(phase: number, swing: number, f: ShapeFactors, cup = false, bag = false): WalkAngles {
-  const leg = (p: number) => {
-    const s = Math.sin(p), c = Math.cos(p)
-    const hip = s * WALK.hip * swing
-    const lift = Math.max(0, -c)
-    const knee = WALK.kneeRest + WALK.knee * swing * lift * lift
-    const ankle = -(hip + knee) * WALK.ankle
-    return [hip, knee, ankle] as const
+export function footAt(phase: number, stride: number, lift: number, roll: number): FootAt {
+  const half = stride / 2
+  const s = ((phase + Math.PI / 2) / TAU - Math.floor((phase + Math.PI / 2) / TAU)) * 2
+  if (s < 1) {
+    const u = 1 - 2 * s
+    const y = roll * u * u
+    return { z: half * u, y, sole: u < 0 ? Math.asin(Math.min(y / SOLE.toe, 1)) : -Math.asin(Math.min(y / SOLE.heel, 1)), planted: true }
   }
+  const w = s - 1
+  const ease = w * w * (3 - 2 * w)
+  return { z: half * (2 * ease - 1), y: roll + lift * Math.sin(Math.PI * w), sole: Math.asin(Math.min(roll / SOLE.toe, 1)) * (1 - w) - Math.asin(Math.min(roll / SOLE.heel, 1)) * w, planted: false }
+}
+
+/** A leg's angles (rad, as WalkAngles holds them: a positive hip or knee swings the part back). */
+export interface LegAngles { readonly hip: number; readonly knee: number; readonly ankle: number }
+
+/** How far a thigh and a shin reach with the knee at its standing bend, m. */
+export const legReach = (thigh: number, shin: number): number => Math.sqrt(thigh * thigh + shin * shin + 2 * thigh * shin * Math.cos(WALK.kneeRest))
+
+/**
+ * The leg solved from its foot: the hip and knee angles that put the ankle `dy` from the hip (below: negative) and
+ * `dz` ahead of it, the knee forward of the line between them (the two-bone solve, the distance held to legReach so
+ * the knee never locks), and the ankle that turns the sole to `sole` (toes down positive) whatever the leg does.
+ */
+export function legSolve(dy: number, dz: number, thigh: number, shin: number, sole: number): LegAngles {
+  const r = Math.max(Math.min(Math.hypot(dy, dz), legReach(thigh, shin)), 1e-3)
+  const line = Math.atan2(-dz, -dy)
+  const open = Math.acos(clampTo((thigh * thigh + r * r - shin * shin) / (2 * thigh * r), -1, 1))
+  const hip = line - open
+  const knee = Math.PI - Math.acos(clampTo((thigh * thigh + shin * shin - r * r) / (2 * thigh * shin), -1, 1))
+  return { hip, knee, ankle: sole - hip - knee }
+}
+
+/**
+ * How far the pelvis sits below standing, m (base body), with the planted foot `dz` from under the hip and its ankle
+ * `rise` above its rest: what the leg's reach cannot span; nothing at mid-stance, the most at either end.
+ */
+export function pelvisDrop(dz: number, rise: number, piv: Pivots): number {
+  const reach = legReach(piv.hip - piv.knee, piv.knee - piv.ankle)
+  return Math.max(0, piv.hip - piv.ankle - rise - Math.sqrt(Math.max(reach * reach - dz * dz, 0)))
+}
+
+/** Where the head turns: the chest's yaw, the head's own yaw and its pitch (rad; to the right and up positive). */
+export interface Gaze { readonly chest: number; readonly head: number; readonly pitch: number }
+export const GAZE_AHEAD: Gaze = Object.freeze({ chest: 0, head: 0, pitch: 0 })
+
+/**
+ * The gaze of a person whose neck is at `neck` (world), facing `heading` (forward (sin, cos)), moving at (vx, vz),
+ * with the operator's eye at `target` (world; null: nobody afoot). The way they go first: the velocity's bearing off
+ * the heading, held to GAZE.travelYaw, whole from GAZE.travelSpeed, so the head leads a turn. Then the eye, in front
+ * and within reach: its bearing and its elevation, held to the head's limits with the chest's, fading out from
+ * GAZE.near to GAZE.reach; the chest takes its share of the yaw and the head the rest. Exactly what the vertex stage
+ * computes (crowdBody.ts bodyGaze).
+ */
+export function gazeAt(neck: readonly [number, number, number], heading: number, vx: number, vz: number, target: readonly [number, number, number] | null): Gaze {
+  const speed = Math.hypot(vx, vz)
+  let yaw = speed > 1e-4 ? clampTo(wrapAngle(Math.atan2(vx, vz) - heading), -GAZE.travelYaw, GAZE.travelYaw) * Math.min(1, speed / GAZE.travelSpeed) : 0
+  let pitch = 0
+  if (target) {
+    const sh = Math.sin(heading), ch = Math.cos(heading)
+    const dx = target[0] - neck[0], dy = target[1] - neck[1], dz = target[2] - neck[2]
+    const flat = Math.hypot(dx, dz)
+    const bearing = Math.atan2(dx * ch - dz * sh, dx * sh + dz * ch)
+    const hold = flat < GAZE.own || Math.abs(bearing) > GAZE.cone ? 0 : 1 - smoothTo(GAZE.near, GAZE.reach, flat)
+    yaw += (clampTo(bearing, -(GAZE.headYaw + GAZE.chestYaw), GAZE.headYaw + GAZE.chestYaw) - yaw) * hold
+    pitch = clampTo(Math.atan2(dy, flat), -GAZE.headPitch, GAZE.headPitch) * hold
+  }
+  const chest = clampTo(yaw * GAZE.chestShare, -GAZE.chestYaw, GAZE.chestYaw)
+  return { chest, head: clampTo(yaw - chest, -GAZE.headYaw, GAZE.headYaw), pitch }
+}
+
+/**
+ * The walk at `phase` (rad; the left leg's cycle, the right half a turn behind) at `speed` (m/s), for a shape's
+ * factors, holding a cup (the left arm up) or carrying a bag (the right arm still), looking `gaze`'s way. Each leg
+ * is solved from its foot (footAt, legSolve) in the base body's metres, the stride, the lift and the roll shrinking
+ * to standing under WALK.strideSpeed; the pelvis drops what the planted leg cannot span; the arms swing with the
+ * speed against the legs. Exactly what the vertex stage computes, in the same order.
+ */
+export function walkAngles(phase: number, speed: number, f: ShapeFactors, cup = false, bag = false, gaze: Gaze = GAZE_AHEAD): WalkAngles {
+  const swing = swingOf(speed)
+  const scale = scaleOf(f)
+  const piv = pivotsOf(f)
+  const on = clamp01(speed / WALK.strideSpeed)
+  const stride = WALK.cycle * 0.5 * on / scale.xz
+  const lift = WALK.lift * on / scale.y
+  const roll = WALK.roll * on / scale.y
+  const footL = footAt(phase, stride, lift, roll)
+  const footR = footAt(phase + Math.PI, stride, lift, roll)
+  const planted = footL.planted ? footL : footR
+  const drop = pelvisDrop(planted.z, planted.y, piv)
+  const thigh = piv.hip - piv.knee, shin = piv.knee - piv.ankle
+  const legL = legSolve(piv.ankle + footL.y + drop - piv.hip, footL.z, thigh, shin, footL.sole)
+  const legR = legSolve(piv.ankle + footR.y + drop - piv.hip, footR.z, thigh, shin, footR.sole)
   const arm = (p: number) => {
     const s = Math.sin(p)
     const shoulder = -s * WALK.shoulder * swing * f.gait
     const elbow = -(WALK.elbowRest + WALK.elbow * swing * Math.max(0, s))
     return [shoulder, elbow] as const
   }
-  const [hipL, kneeL, ankleL] = leg(phase)
-  const [hipR, kneeR, ankleR] = leg(phase + Math.PI)
   let [shoulderL, elbowL] = arm(phase)
   let [shoulderR, elbowR] = arm(phase + Math.PI)
   if (cup) { shoulderL = WALK.cupShoulder + shoulderL * WALK.cupSwing; elbowL = WALK.cupElbow }
   if (bag) { shoulderR *= WALK.bagSwing; elbowR = -WALK.elbowRest }
   return {
-    hipL, kneeL, ankleL, hipR, kneeR, ankleR, shoulderL, elbowL, shoulderR, elbowR,
-    twist: Math.sin(phase) * WALK.twist * swing * f.gait,
-    head: -f.slouch * WALK.headCounter,
+    hipL: legL.hip, kneeL: legL.knee, ankleL: legL.ankle, hipR: legR.hip, kneeR: legR.knee, ankleR: legR.ankle,
+    shoulderL, elbowL, shoulderR, elbowR,
+    twist: Math.sin(phase) * WALK.twist * swing * f.gait + gaze.chest,
+    head: -f.slouch * WALK.headCounter - gaze.pitch,
+    headYaw: gaze.head,
     slouch: f.slouch,
-    bob: Math.abs(Math.sin(phase)) * WALK.bob * swing,
+    rise: -drop * scale.y,
   }
 }
 
@@ -400,7 +544,7 @@ export function boneTransform(bone: number, p: number[], w: number, a: WalkAngle
       rotXAbout(p, x, piv.shoulder, 0, left ? a.shoulderL : a.shoulderR, w)
       rotYAbout(p, piv.chest, a.twist, w)
     } else {
-      if (bone === BONE.HEAD) rotXAbout(p, 0, piv.neck, 0, a.head, w)
+      if (bone === BONE.HEAD) { rotXAbout(p, 0, piv.neck, 0, a.head, w); rotYAbout(p, piv.neck, a.headYaw, w) }
       if (bone >= BONE.CHEST) rotYAbout(p, piv.chest, a.twist, w)
     }
     // The trunk, and everything hanging from it, leans with the posture and bends with the push.
@@ -412,8 +556,69 @@ export function boneTransform(bone: number, p: number[], w: number, a: WalkAngle
 }
 
 /**
- * A vertex posed: its two bones' transforms blended by the weight (linear blend skinning), then the step's rise,
- * the stature's scales, the heading and the position, exactly the shader's order. `w` 1 for a position (the
+ * The rig a fallen pedestrian wears. The realm promotes a pedestrian who is shoved, trips or slips to a physical body
+ * of thirteen capsule shapes (ragdollRig.ts; the eleven segments and two flat feet) and streams each shape's pose to
+ * the page in that order (simProtocol.ts RIG_POSE, RIG_SEGMENTS; `slots` rigs at most, pinned equal to the realm's
+ * by test). The body wears it: each of the fifteen bones hangs from one shape, by the shape's index in the stream and
+ * its centre standing, in the base body's metres (ragdollRig.ts SEGMENTS and FOOT: a 1.75 m adult facing +z, feet on
+ * the ground). The rig names its sides from the person's own view (its left at +x) and this body names them from
+ * the viewer's (its left at −x), so a bone takes the shape on its own side of the body, by x.
+ */
+export const RIG_WEAR = Object.freeze({ slots: 8, shapes: 13 })
+export const RIG_REST: readonly (readonly [shape: number, x: number, y: number, z: number])[] = Object.freeze([
+  [0, 0, 0.97, 0], [1, 0, 1.3, 0], [2, 0, 1.66, 0],
+  [5, -0.1, 0.7, 0], [6, -0.1, 0.28, 0], [12, -0.1, 0.03, 0.05],
+  [3, 0.1, 0.7, 0], [4, 0.1, 0.28, 0], [11, 0.1, 0.03, 0.05],
+  [9, -0.24, 1.38, 0], [10, -0.24, 1.1, 0], [10, -0.24, 1.1, 0],
+  [7, 0.24, 1.38, 0], [8, 0.24, 1.1, 0], [8, 0.24, 1.1, 0],
+])
+
+/** One rig shape's pose: its centre in the world and its rotation as a quaternion (x, y, z, w). */
+export interface RigPose { readonly at: readonly [number, number, number]; readonly q: readonly [number, number, number, number] }
+
+/** `v` turned by the unit quaternion `q`, in place (v + 2 q.xyz × (q.xyz × v + q.w v)). */
+export function rotateByQuat(v: number[], q: readonly [number, number, number, number]): number[] {
+  const [qx, qy, qz, qw] = q
+  const [x, y, z] = v
+  // t = q.xyz × v + q.w v
+  const tx = qy * z - qz * y + qw * x, ty = qz * x - qx * z + qw * y, tz = qx * y - qy * x + qw * z
+  v[0] = x + 2 * (qy * tz - qz * ty)
+  v[1] = y + 2 * (qz * tx - qx * tz)
+  v[2] = z + 2 * (qx * ty - qy * tx)
+  return v
+}
+
+/**
+ * A vertex of a body wearing the rig: the point (after the sliders, in the base body's metres) scaled by the stature,
+ * then hung from its two bones' shapes (RIG_REST: the offset from the shape's standing centre, turned by the shape's
+ * rotation, at the shape's centre in the world) and blended by the weight, exactly the shader's order (crowdBody.ts
+ * bodyRig). `poses` are the thirteen shapes of the rig worn, in stream order. `w` 1 for a position, 0 for a normal
+ * (turned, never moved, the scales' reciprocals; the caller normalises). No heading and no place of the agent's own:
+ * the rig's poses are the world's.
+ */
+export function rigPoint(
+  x: number, y: number, z: number, bone0: number, bone1: number, weight: number, w: number,
+  poses: readonly RigPose[], scale: { readonly y: number; readonly xz: number }, out: number[] = [0, 0, 0],
+): number[] {
+  const one = (bone: number, o: number[]): number[] => {
+    const [shape, cx, cy, cz] = RIG_REST[bone] ?? RIG_REST[0]
+    const pose = poses[shape]
+    if (w > 0.5) { o[0] = (x - cx) * scale.xz; o[1] = (y - cy) * scale.y; o[2] = (z - cz) * scale.xz } else { o[0] = x / scale.xz; o[1] = y / scale.y; o[2] = z / scale.xz }
+    rotateByQuat(o, pose.q)
+    if (w > 0.5) { o[0] += pose.at[0]; o[1] += pose.at[1]; o[2] += pose.at[2] }
+    return o
+  }
+  const a = one(bone0, [0, 0, 0])
+  const b = bone1 === bone0 || weight >= 1 ? a : one(bone1, [0, 0, 0])
+  out[0] = a[0] * weight + b[0] * (1 - weight)
+  out[1] = a[1] * weight + b[1] * (1 - weight)
+  out[2] = a[2] * weight + b[2] * (1 - weight)
+  return out
+}
+
+/**
+ * A vertex posed: its two bones' transforms blended by the weight (linear blend skinning), then the stature's
+ * scales and the pelvis' rise, the heading and the position, exactly the shader's order. `w` 1 for a position (the
  * answer is in world metres), 0 for a normal (the answer wants normalising).
  */
 export function skinPoint(
@@ -427,7 +632,7 @@ export function skinPoint(
   let qy = p0[1] * weight + p1[1] * (1 - weight)
   let qz = p0[2] * weight + p1[2] * (1 - weight)
   if (w > 0.5) {
-    qx *= scale.xz; qy = qy * scale.y + a.bob; qz *= scale.xz
+    qx *= scale.xz; qy = qy * scale.y + a.rise; qz *= scale.xz
   } else {
     // A normal takes the scales' reciprocals (the caller normalises).
     qx /= scale.xz; qy /= scale.y; qz /= scale.xz
@@ -473,8 +678,6 @@ interface Tube {
   readonly capTop?: number
   readonly capBottom?: number
   readonly piece?: number
-  /** The slot of the front vertices within a V of this half-angle (rad) at the top ring, closing at the bottom ring named. */
-  readonly front?: { readonly slot: number; readonly top: number; readonly closesAt: number; readonly opens: number }
   /** Left out of the distant body altogether. */
   readonly nearOnly?: boolean
   /** One of the head's tubes (the card's face view draws these alone). */
@@ -804,6 +1007,50 @@ function tieTube(profile: Profile): Tube {
   return { rings, segments: 6, farSegments: 4, capBottom: 1.1, piece: PIECE.TIE, nearOnly: true }
 }
 
+/**
+ * The coat (piece COAT, slot TOP: the fragment stage paints it in the coat's cloth with the same collar, lapels and V
+ * as a jacket): a shell from the collar to above the knee, clear of the trunk, the bust and the skirt by a centimetre
+ * or two, turned with the chest above the waist and the trunk below, open at the bottom like the skirt.
+ */
+function coatTube(woman: boolean): Tube {
+  const r = woman ? 0.96 : 1
+  const rings: Ring[] = [
+    { y: 0.56, rx: 0.24, rz: 0.185, back: 0.175, slot: T, bone: BONE.TRUNK, far: true },
+    { y: 0.7, rx: 0.225, rz: 0.17, back: 0.16, slot: T, bone: BONE.TRUNK },
+    { y: 0.86, rx: 0.2, rz: 0.15, back: 0.14, slot: T, bone: BONE.TRUNK, far: true },
+    { y: 1.0, rx: 0.19 * r, rz: 0.14, back: 0.13, slot: T, bone: BONE.TRUNK },
+    { y: 1.12, rx: 0.19 * r, rz: 0.14, back: 0.13, slot: T, bone: BONE.TRUNK, bone1: BONE.CHEST, w: 0.6, far: true },
+    { y: 1.26, rx: 0.2 * r, rz: 0.16, back: 0.135, slot: T, bone: BONE.CHEST, bone1: BONE.TRUNK, w: 0.7 },
+    { y: 1.4, rx: 0.23 * r, rz: 0.15, back: 0.14, slot: T, bone: BONE.CHEST, far: true },
+    { y: 1.46, rx: 0.215 * r, rz: 0.13, back: 0.12, slot: T, bone: BONE.CHEST },
+    { y: 1.5, rx: 0.135 * r, rz: 0.105, back: 0.1, slot: T, bone: BONE.CHEST, far: true },
+  ]
+  return { rings, segments: 16, farSegments: 8, piece: PIECE.COAT }
+}
+
+/**
+ * The scarf (piece SCARF, slot SCARF): a wrap round the neck sitting on the shoulders, closed on top under the chin,
+ * turned with the chest and a little with the head; and a tail down the right of the chest, hanging just outside
+ * the jacket (inside a coat's shell, which hides it). The tail is the near body's alone.
+ */
+function scarfTubes(profile: Profile): Tube[] {
+  const wrap: Ring[] = [
+    { y: 1.49, rx: 0.1, rz: 0.09, back: 0.085, slot: SLOT.SCARF, bone: BONE.CHEST, far: true },
+    { y: 1.53, rx: 0.088, rz: 0.08, back: 0.075, slot: SLOT.SCARF, bone: BONE.CHEST, bone1: BONE.HEAD, w: 0.7 },
+    { y: 1.555, rx: 0.078, rz: 0.072, back: 0.068, slot: SLOT.SCARF, bone: BONE.HEAD, bone1: BONE.CHEST, w: 0.6, far: true },
+  ]
+  const z = (y: number) => frontOf(profile, y) + 0.014
+  const tail: Ring[] = [
+    { y: 1.15, x: 0.03, rx: 0.04, rz: 0.008, z: z(1.15), slot: SLOT.SCARF, bone: BONE.TRUNK, far: true },
+    { y: 1.3, x: 0.035, rx: 0.04, rz: 0.008, z: z(1.3), slot: SLOT.SCARF, bone: BONE.CHEST, bone1: BONE.TRUNK, w: 0.6 },
+    { y: 1.48, x: 0.04, rx: 0.045, rz: 0.01, z: z(1.48), slot: SLOT.SCARF, bone: BONE.CHEST, far: true },
+  ]
+  return [
+    { rings: wrap, segments: 12, farSegments: 8, capTop: 1.565, piece: PIECE.SCARF },
+    { rings: tail, segments: 6, farSegments: 4, capBottom: 1.13, piece: PIECE.SCARF, nearOnly: true },
+  ]
+}
+
 /** A cup in the left hand (the pose brings it up to the chest). */
 function cupTube(): Tube {
   const x = -LANDMARK.shoulderX * 1.06
@@ -849,10 +1096,9 @@ export function bodyTubes(variant: number): Tube[] {
   const skirt = v === 3
   const hem = v === 0 ? 0.9 : v === 1 ? 0.94 : v === 2 ? 0.92 : 0.98
   const profile = woman ? womanTrunk(hem) : manTrunk(hem)
-  // The shirt shows in a V between the lapels: from the collar down to the top button.
-  const front = { slot: SLOT.SHIRT, top: v === 1 ? 0.6 : 0.5, opens: 1.5, closesAt: v === 0 ? 1.2 : v === 1 ? 1.28 : 1.24 }
+  // The shirt's V, the lapels, the collar and the cuffs are painted on the cloth by the fragment stage (GARMENT).
   const tubes: Tube[] = [
-    { rings: trunkRings(profile, 1.12), segments: 16, farSegments: 8, capBottom: 0.78, front },
+    { rings: trunkRings(profile, 1.12), segments: 16, farSegments: 8, capBottom: 0.78 },
     ...headTubes(),
     ...armTubes(-1, woman), ...armTubes(1, woman),
     ...legTubes(-1, skirt ? SLOT.LEGWEAR : B, woman), ...legTubes(1, skirt ? SLOT.LEGWEAR : B, woman),
@@ -860,6 +1106,7 @@ export function bodyTubes(variant: number): Tube[] {
   ]
   if (skirt) tubes.push(skirtTube())
   if (v === 0) tubes.push(tieTube(profile))
+  tubes.push(coatTube(woman), ...scarfTubes(profile))
   return tubes
 }
 
@@ -925,14 +1172,7 @@ class Loft {
         const s = Math.sin(th)
         const x = cx + r.rx * Math.cos(th)
         const z = cz + (s >= 0 ? rz : back) * s + laid(r, r.y, x)
-        let slot = r.slot
-        if (t.front && r.y >= t.front.closesAt && r.y <= t.front.opens && slot === T) {
-          // The V's half-angle narrows from the collar to where it closes.
-          const span = t.front.opens - t.front.closesAt
-          const half = span > 0 ? t.front.top * (r.y - t.front.closesAt) / span : 0
-          if (Math.abs(th - Math.PI / 2) <= half + 1e-9) slot = t.front.slot
-        }
-        this.vertex(x, r.y, z, r.bone, slot, piece, bone1, w, region(r), far ? 0 : faceWeight(r, th))
+        this.vertex(x, r.y, z, r.bone, r.slot, piece, bone1, w, region(r), far ? 0 : faceWeight(r, th))
       }
     }
     for (let k = 1; k < rings.length; k++) {

@@ -7,10 +7,12 @@
  * is written into three's storage buffers (pos, vel, pose). Every page frame the cull pass then picks who is
  * drawn for the current camera — the frustum, a near radius, a stable density lottery, the draw distance and
  * the level of detail — compacting them into the indirect draws, and a small readback reports what was drawn.
- * A few figures can be hidden (hide): the pedestrians the realm has promoted to a physical body, whose rig the
- * page draws in their place (07_Execute_Actions/rigView.ts); the mask only sinks their position in the render
- * copy below the cull's floor. Whatever happens here changes only what the page shows: the Bouncer reads the
- * worker's own buffers.
+ * A few figures can be pinned (pin): the pedestrians the realm has promoted to a physical body, whose own figure
+ * wears the rig where it lies (crowd.ts rigPoses) while the worker's crowd walks their twin on; the pin puts the
+ * rig's pelvis in their row of the render copy, so the cull judges the body where it is drawn. A few can be hidden
+ * (hide) instead: on ?rigs=capsules the page draws the rig as capsules in the figure's place
+ * (07_Execute_Actions/rigView.ts), and the mask sinks the figure's position in the render copy below the cull's
+ * floor. Whatever happens here changes only what the page shows: the Bouncer reads the worker's own buffers.
  * What breaks if it is removed? The pedestrians are simulated but never drawn.
  */
 import {
@@ -20,7 +22,7 @@ import {
 
 interface Staging { buffer: GPUBuffer; busy: boolean; frame: number }
 
-/** Figures the page may hide at once (the realm's rig slots, simProtocol.ts RIG_SLOTS). */
+/** Figures the page may hide, or pin, at once (the realm's rig slots, simProtocol.ts RIG_SLOTS). */
 export const MAX_HIDDEN = 8
 /** A hidden figure's height in the render copy: below the floor the cull pass skips (crowd.wgsl cull: p.y < -50). */
 const HIDDEN_Y = -100
@@ -53,6 +55,9 @@ export class CrowdCull {
   /** The hide mask: agents whose figure is not drawn (a rig stands in their place), at most MAX_HIDDEN. */
   private readonly hiddenAgents: number[] = []
   private readonly sunk = new Float32Array([0, HIDDEN_Y, 0, 0])
+  /** The pins: agents whose row in the render copy is the rig's pelvis (x, y, z, heading), at most MAX_HIDDEN. */
+  private readonly pinnedAgents: number[] = []
+  private readonly pinnedRows = new Float32Array(MAX_HIDDEN * 4)
   private timing: { set: GPUQuerySet; resolve: GPUBuffer; read: GPUBuffer; busy: boolean } | null = null
 
   private constructor(device: GPUDevice, shared: SharedBuffers, drawTemplate: Uint32Array<ArrayBuffer>, agentCount: number, settings: CullSettings) {
@@ -138,6 +143,7 @@ export class CrowdCull {
     q.writeBuffer(this.shared.vel, 0, frame, n, n)
     q.writeBuffer(this.shared.pose, 0, frame, 2 * n, n)
     this.uploaded = true
+    for (let i = 0; i < this.pinnedAgents.length; i++) this.place(i)
     for (const agent of this.hiddenAgents) this.sink(agent)
     return true
   }
@@ -166,6 +172,43 @@ export class CrowdCull {
 
   private sink(agent: number): void {
     this.device.queue.writeBuffer(this.shared.pos, agent * 16, this.sunk)
+  }
+
+  /**
+   * Pins these agents' rows in the render copy to `rows` (x, y, z, heading, four floats per agent in the order given):
+   * the rig's pelvis under a figure wearing a rig, so the cull's distance, lottery, frustum and level of detail judge
+   * the body where it is drawn rather than where the worker's crowd walks its twin. Written now and after every
+   * upload until the next call; a hidden agent stays hidden (the sink is applied last). View-only, like hide: the
+   * worker's crowd never sees it. More than MAX_HIDDEN, a non-index, the player's own figure, a duplicate or a row
+   * with a non-finite number are ignored.
+   */
+  pin(agents: readonly number[], rows: ArrayLike<number>): void {
+    const list = this.pinnedAgents
+    list.length = 0
+    for (let i = 0; i < agents.length && list.length < MAX_HIDDEN; i++) {
+      const a = agents[i]
+      if (!Number.isInteger(a) || a <= 0 || a >= this.agentCount || list.includes(a)) continue
+      const x = rows[4 * i], y = rows[4 * i + 1], z = rows[4 * i + 2], h = rows[4 * i + 3]
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !Number.isFinite(h)) continue
+      const k = list.length
+      this.pinnedRows[4 * k] = x
+      this.pinnedRows[4 * k + 1] = y
+      this.pinnedRows[4 * k + 2] = z
+      this.pinnedRows[4 * k + 3] = h
+      list.push(a)
+    }
+    if (!this.uploaded) return
+    for (let i = 0; i < list.length; i++) this.place(i)
+    for (const agent of this.hiddenAgents) if (list.includes(agent)) this.sink(agent)
+  }
+
+  /** The agents pinned now. */
+  get pinned(): readonly number[] {
+    return this.pinnedAgents
+  }
+
+  private place(i: number): void {
+    this.device.queue.writeBuffer(this.shared.pos, this.pinnedAgents[i] * 16, this.pinnedRows, i * 4, 4)
   }
 
   /** Culls for this camera: resets the indirect draws, compacts who is drawn, and reads the counts back. */

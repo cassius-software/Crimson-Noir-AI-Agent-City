@@ -5,16 +5,18 @@
  * Why does this file exist? It is what a person may look like: a body, its figure (the eight body sliders of
  * humanoid.ts: stature, mass, muscle, shoulders, hips, legs, posture, head), its face (the seven face sliders: brow,
  * jaw, chin, cheek, nose, eyes, lips; an age; a skin undertone; a hair style), an outfit and its colours chosen from
- * the city's own business-casual wardrobe, packed into the three words the crowd shader reads (the look word, the
- * figure word and the face word). The wardrobe is closed by construction: every slot is an index into the four bodies
- * crowd.ts draws, the optional pieces it carries (a tie, a bag, a cup, the hair in its styles, glasses, the face
- * itself), the colour palettes it already paints people with and the steps of each slider, so no stored value, no
+ * the city's own business-casual wardrobe (its outer layer a jacket, shirt sleeves or a coat; a trim on the lapels,
+ * the collar and the cuffs; a scarf), packed into the four words the crowd shader reads (the look word, the figure
+ * word, the face word and the wardrobe word). The wardrobe is closed by construction: every slot is an index into the
+ * four bodies crowd.ts draws, the optional pieces it carries (a tie, a bag, a cup, the hair in its styles, glasses,
+ * the face itself, a coat, a scarf), the colour palettes it already paints people with and the steps of each slider, so no stored value, no
  * typed command and no shared code can dress anyone in anything the crowd does not wear today. The same module
  * reproduces the choice the shader's hash makes for an agent (lookFromSeed), so a returning visitor's look and an
  * agent's hashed look are the same kind of record; a short code with a checksum lets a look be written down and
- * shared; describeLook is the console's view of it. A look kept before the face existed (twenty slots, a
- * fifteen-symbol code) or before the figure (fourteen slots, an eight-symbol code) is upgraded on the way in: the
- * face to the base face, a height and build to a stature and a mass. Pure: no DOM, no GPU, no clock, no randomness.
+ * shared; describeLook is the console's view of it. A look kept before the layers existed (twenty-nine slots, a
+ * twenty-one-symbol code), before the face (twenty slots, a fifteen-symbol code) or before the figure (fourteen
+ * slots, an eight-symbol code) is upgraded on the way in: the wardrobe to the jacket, a matching trim and no scarf,
+ * the face to the base face, a height and build to a stature and a mass. Pure: no DOM, no GPU, no clock, no randomness.
  * What breaks if it is removed? The customizer would have no catalogue, nothing could be saved or shared, and the
  * crowd's per-agent attributes would have no agreed bit layout to carry.
  */
@@ -29,7 +31,7 @@ export type LookBody = 0 | 1 | 2 | 3
  * is pieces (the cap, long hair, a bob, a bun) chosen by the hair style; `face` is the features, which the eye pass
  * draws and the shadow pass leaves out.
  */
-export const LOOK_PIECE_BIT = Object.freeze({ tie: 1, bag: 2, cup: 3, longHair: 4, glasses: 5, hairCap: 6, bob: 7, bun: 8, face: 9 })
+export const LOOK_PIECE_BIT = Object.freeze({ tie: 1, bag: 2, cup: 3, longHair: 4, glasses: 5, hairCap: 6, bob: 7, bun: 8, face: 9, coat: 10, scarf: 11 })
 
 /**
  * The crowd's colour palettes, verbatim (crowd.ts `PALETTE`, pinned by look.test.ts against the source). Every
@@ -54,6 +56,9 @@ export const LOOK_PALETTE = Object.freeze({
   casualShoes: Object.freeze([0x3a2618, 0x7a5230, 0x5a4636, 0x1c1c1c]),
   womenShoes: Object.freeze([0x141414, 0x3e1a1c, 0x7a5230, 0x2a2a3a]),
   bags: Object.freeze([0x1c1712, 0x4a2e1c, 0x2a2a2a, 0x6a4a30]),
+  coats: Object.freeze([0x2b2b2e, 0x1f2a44, 0x4a3b2e, 0xb59a72, 0x5a5e5c, 0x3a2a24, 0x8a6a48]),
+  trims: Object.freeze([0x141414, 0xe8e2d6, 0x5e2530, 0x1c2c4c, 0xb59a72, 0x6e7278, 0x3f5e5a]),
+  scarves: Object.freeze([0x6a1e2a, 0x1c2c4c, 0xd9c7a8, 0x2a2a2d, 0x8a6a48, 0x3a5f9a, 0x9c9a96]),
 })
 export type PaletteName = keyof typeof LOOK_PALETTE
 
@@ -74,10 +79,16 @@ export type LookFaceSlider = (typeof LOOK_FACE_SLIDERS)[number]
  */
 export const LOOK_SLOTS = [
   'body', ...LOOK_BODY_SLIDERS, ...LOOK_FACE_SLIDERS,
-  'skin', 'age', 'undertone', 'hairStyle', 'hairColour', 'top', 'bottom', 'shirt', 'shoes', 'tie', 'eyewear', 'bag', 'cup',
+  'skin', 'age', 'undertone', 'hairStyle', 'hairColour', 'layer', 'top', 'trim', 'bottom', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
 ] as const
 export type LookSlot = (typeof LOOK_SLOTS)[number]
 export type Look = Readonly<Record<LookSlot, number>>
+
+/** The slots a look had before the wardrobe's layers (one layer, the jacket; no trim; no scarf). */
+export const LOOK_V3_SLOTS = [
+  'body', ...LOOK_BODY_SLIDERS, ...LOOK_FACE_SLIDERS,
+  'skin', 'age', 'undertone', 'hairStyle', 'hairColour', 'top', 'bottom', 'shirt', 'shoes', 'tie', 'eyewear', 'bag', 'cup',
+] as const
 
 /** The slots a look had before the face (the body sliders, two hair styles, no age or undertone). */
 export const LOOK_V2_SLOTS = [
@@ -110,6 +121,14 @@ export interface Outfit {
 export const HAIR = Object.freeze({ short: 0, long: 1, bob: 2, bun: 3, bald: 4 })
 
 /**
+ * The outer layer's indices (WARDROBE.layer): the jacket every body wore before the layers (0, so an old record is
+ * one), shirt sleeves (the same cloth in the shirt's colour: the jacket taken off) and a coat (the COAT piece over
+ * everything, in a coat's cloth). The layer owns the `top` dye: a jacket draws from the body's palette, a coat from
+ * the coats; under shirt sleeves it is not seen.
+ */
+export const LAYER = Object.freeze({ jacket: 0, shirt: 1, coat: 2 })
+
+/**
  * The catalogue: what each slot may hold. `stature` is the height slider (32 steps, 1.50 m to 2.05 m: five bits);
  * `sliderSteps` the other body sliders' and the face sliders' (four bits each) but the head's (`headSteps`, three
  * bits); `ageSteps` the age's (three bits); `undertone` the skin's cast; `outfits` is per body, mirroring crowd.ts's
@@ -125,6 +144,7 @@ export const WARDROBE = Object.freeze({
   ageSteps: 8,
   undertone: Object.freeze(['neutral', 'warm', 'cool', 'olive']),
   hairStyle: Object.freeze(['short', 'long', 'bob', 'bun', 'bald']),
+  layer: Object.freeze(['jacket', 'shirt sleeves', 'coat']),
   tie: Object.freeze(['none', 'tie']),
   eyewear: Object.freeze(['none', 'glasses']),
   bag: Object.freeze(['none', 'bag']),
@@ -153,9 +173,10 @@ export const LONG_HAIR_BIT = 2 + LOOK_PIECE_BIT.longHair
  * hair style and read back for agreement only); the colours follow; the age and the undertone take bits 26 to 30,
  * where the legacy height and build lived; bit 31 is spare. Word 1 is the figure word: the eight body sliders,
  * 5 + 6 × 4 + 3 = 32 bits. Word 2 is the face word: the seven face sliders at four bits each and the hair style at
- * three; bit 31 is spare. Every width is pinned to hold its slot's largest option count.
+ * three; bit 31 is spare. Word 3 is the wardrobe word: the layer at two bits, the trim and the scarf at three each
+ * (0 is matching, or none); bits 8 to 31 are spare. Every width is pinned to hold its slot's largest option count.
  */
-export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [word: 0 | 1 | 2, shift: number, width: number]>> = Object.freeze({
+export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [word: 0 | 1 | 2 | 3, shift: number, width: number]>> = Object.freeze({
   body: [0, 1, 2],
   tie: [0, 2 + LOOK_PIECE_BIT.tie, 1],
   bag: [0, 2 + LOOK_PIECE_BIT.bag, 1],
@@ -185,6 +206,9 @@ export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [word: 0 | 1 | 2, sh
   eyes: [2, 20, 4],
   lips: [2, 24, 4],
   hairStyle: [2, 28, 3],
+  layer: [3, 0, 2],
+  trim: [3, 2, 3],
+  scarf: [3, 5, 3],
 })
 
 /** The legacy look word's height and build fields (three bits each), read by the upgrade alone. */
@@ -222,8 +246,14 @@ export const LOOK_HASHED_FACE: Readonly<Record<LookFaceSlider, number>> = Object
 })
 /** The link of the vertex chain that splits the hair that is not short into long, a bob or a bun (women), or bald (a few men). */
 export const LOOK_HASHED_HAIR_SPLIT = 22
-/** The links of the fragment chain (LOOK_HASH.colours) the age, the undertone and the iris colour are drawn from. */
-export const LOOK_HASHED_COLOUR = Object.freeze({ age: 7, undertone: 8, iris: 13 })
+/** The link of the vertex chain the outer layer is drawn from (under LOOK_ODDS.shirtSleeves shirt sleeves, from LOOK_ODDS.coat a coat, else the jacket) and the one a scarf is worn above LOOK_ODDS.scarf on. */
+export const LOOK_HASHED_LAYER = 23
+export const LOOK_HASHED_SCARF = 24
+/**
+ * The links of the fragment chain (LOOK_HASH.colours) the age, the undertone and the iris colour are drawn from; the
+ * trim's contrast (above LOOK_ODDS.trim it is a trim cloth, else matching) and that cloth; the scarf's cloth.
+ */
+export const LOOK_HASHED_COLOUR = Object.freeze({ age: 7, undertone: 8, iris: 13, trim: 14, scarfCloth: 15, trimCloth: 16 })
 
 const isBody = (v: unknown): v is LookBody => v === 0 || v === 1 || v === 2 || v === 3
 const womanBody = (body: LookBody): boolean => body >= 2
@@ -249,7 +279,7 @@ export function statureStep(metres: number): number {
 const stature = (): LookOption[] => Array.from({ length: WARDROBE.stature.steps }, (_, i) => ({ name: `${statureOf(i).toFixed(2)} m`, hex: null }))
 
 /** The options a slot may hold for a body, in index order. */
-export function lookOptions(body: LookBody, slot: LookSlot): readonly LookOption[] {
+export function lookOptions(body: LookBody, slot: LookSlot, layer: number = LAYER.jacket): readonly LookOption[] {
   const outfit = WARDROBE.outfits[body]
   switch (slot) {
     case 'body': return named(LOOK_BODIES)
@@ -262,7 +292,11 @@ export function lookOptions(body: LookBody, slot: LookSlot): readonly LookOption
     case 'undertone': return named(WARDROBE.undertone)
     case 'hairStyle': return named(WARDROBE.hairStyle)
     case 'hairColour': return [...swatches(LOOK_PALETTE.hair), { name: 'grey', hex: GREY_HAIR }]
-    case 'top': return swatches(LOOK_PALETTE[outfit.top])
+    case 'layer': return named(WARDROBE.layer)
+    // The layer owns the top's dye: a coat draws from the coats, as many as the body's own jacket palette holds (the slot's width is the jacket's).
+    case 'top': return layer === LAYER.coat ? swatches(LOOK_PALETTE.coats).slice(0, LOOK_PALETTE[outfit.top].length) : swatches(LOOK_PALETTE[outfit.top])
+    case 'trim': return [{ name: 'matching', hex: null }, ...swatches(LOOK_PALETTE.trims)]
+    case 'scarf': return [{ name: 'none', hex: null }, ...swatches(LOOK_PALETTE.scarves)]
     case 'bottom': return [...(outfit.matching ? [{ name: 'matching', hex: null }] : []), ...swatches(LOOK_PALETTE[outfit.bottom])]
     case 'shirt': return swatches(LOOK_PALETTE[outfit.shirt])
     case 'shoes': return swatches(LOOK_PALETTE[outfit.shoes])
@@ -276,11 +310,25 @@ export function lookOptions(body: LookBody, slot: LookSlot): readonly LookOption
 /** How many options a slot has for a body. */
 export const lookSize = (body: LookBody, slot: LookSlot): number => lookOptions(body, slot).length
 
-/** The swatch a colour slot shows (the top's cloth when the trousers match it), or null for a slot without one. */
+/**
+ * The cloth a matching option wears: matching trousers the jacket's, whatever layer is over it (the shader reads the
+ * jacket's palette for them, a coat hides the jacket, not the trousers); a matching trim the outer layer's (the top's
+ * swatch: the coat's under a coat). Null for a body whose trousers never match.
+ */
+export function matchingSwatch(look: Look, slot: 'bottom' | 'trim'): number | null {
+  const body = look.body as LookBody
+  if (slot === 'trim') return lookSwatch(look, 'top')
+  return WARDROBE.outfits[body].matching ? lookOptions(body, 'top', LAYER.jacket)[look.top]?.hex ?? null : null
+}
+
+/**
+ * The swatch a colour slot shows (the top's: the coat's cloth under a coat; matching trousers and a matching trim as
+ * matchingSwatch gives them), or null for a slot without one (a scarf not worn).
+ */
 export function lookSwatch(look: Look, slot: LookSlot): number | null {
   const body = look.body as LookBody
-  const hex = lookOptions(body, slot)[look[slot]]?.hex ?? null
-  if (hex === null && slot === 'bottom' && look.bottom === 0 && WARDROBE.outfits[body].matching) return lookSwatch(look, 'top')
+  const hex = lookOptions(body, slot, look.layer)[look[slot]]?.hex ?? null
+  if (hex === null && ((slot === 'bottom' && look.bottom === 0) || (slot === 'trim' && look.trim === 0))) return matchingSwatch(look, slot)
   return hex
 }
 
@@ -328,6 +376,29 @@ const hasOwn = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o,
 
 /** A v2 slot's option count: the hair had two styles then; the rest as today. */
 const v2Size = (body: LookBody, slot: V2Slot): number => (slot === 'hairStyle' ? 2 : lookSize(body, slot))
+
+/**
+ * A look kept before the wardrobe's layers (exactly the twenty-nine v3 slots, each within its options), upgraded: the
+ * jacket layer, a matching trim, no scarf. Null for anything else. Pure, so two browsers upgrade one old look to one
+ * new look.
+ */
+export function upgradeFaceLook(raw: unknown): Look | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  const r = raw as Record<string, unknown>
+  if (Object.keys(r).length !== LOOK_V3_SLOTS.length || !isBody(r.body)) return null
+  const body = r.body
+  const out: Record<string, number> = {}
+  for (const slot of LOOK_V3_SLOTS) {
+    if (!hasOwn(r, slot)) return null
+    const v = r[slot]
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v >= lookSize(body, slot)) return null
+    out[slot] = v + 0
+  }
+  out.layer = LAYER.jacket
+  out.trim = 0
+  out.scarf = 0
+  return validateLook(out)
+}
 const legacySize = (body: LookBody, slot: LegacySlot): number => (slot === 'height' || slot === 'build' ? LEGACY_LOOK_FIELD.steps : v2Size(body, slot))
 
 /**
@@ -351,7 +422,7 @@ export function upgradeFigureLook(raw: unknown): Look | null {
   for (const slot of LOOK_FACE_SLIDERS) out[slot] = LOOK_SLIDER_MIDDLE.slider
   out.age = LOOK_SLIDER_MIDDLE.age
   out.undertone = 0
-  return validateLook(out)
+  return upgradeFaceLook(out)
 }
 
 /**
@@ -394,6 +465,7 @@ export function validateLook(raw: unknown): Look | null {
   const keys = Object.keys(r).length
   if (keys === LEGACY_LOOK_SLOTS.length && hasOwn(r, 'build')) return upgradeLegacyLook(r)
   if (keys === LOOK_V2_SLOTS.length && !hasOwn(r, 'brow')) return upgradeFigureLook(r)
+  if (keys === LOOK_V3_SLOTS.length && !hasOwn(r, 'layer')) return upgradeFaceLook(r)
   if (keys !== LOOK_SLOTS.length) return null
   if (!isBody(r.body)) return null
   const body = r.body
@@ -422,7 +494,7 @@ export function withLookSlot(look: Look, slot: LookSlot, value: number): Look | 
   return validateLook({ ...look, [slot]: value })
 }
 
-const packWord = (look: Look, word: 0 | 1 | 2): number => {
+const packWord = (look: Look, word: 0 | 1 | 2 | 3): number => {
   let out = word === 0 ? 1 : 0
   for (const slot of LOOK_SLOTS) {
     const [w, shift] = LOOK_FIELD[slot]
@@ -451,21 +523,43 @@ export function packFace(look: Look): number {
   return valid === null ? 0 : packWord(valid, 2)
 }
 
+/** The wardrobe word (crowd.figure's third): the layer, the trim and the scarf. 0 for a look outside the wardrobe. */
+export function packWardrobe(look: Look): number {
+  const valid = validateLook(look)
+  return valid === null ? 0 : packWord(valid, 3)
+}
+
 const isWord = (word: number): boolean => Number.isInteger(word) && word >= 0 && word <= 0xffffffff
 
 /**
- * The look three words carry, or null for LOOK_NONE, for any triple whose fields are outside the catalogue, and for a
+ * The look four words carry, or null for LOOK_NONE, for any set whose fields are outside the catalogue, and for a
  * look word whose long-hair bit disagrees with the face word's style (a forged pair: the shader would draw one and
  * the console report the other).
  */
-export function unpackLook(word: number, figure: number, face: number): Look | null {
-  if (!isWord(word) || !isWord(figure) || !isWord(face) || (word & 1) === 0) return null
+export function unpackLook(word: number, figure: number, face: number, wardrobe: number): Look | null {
+  if (!isWord(word) || !isWord(figure) || !isWord(face) || !isWord(wardrobe) || (word & 1) === 0) return null
+  const words = [word, figure, face, wardrobe] as const
   const out: Record<string, number> = {}
   for (const slot of LOOK_SLOTS) {
     const [w, shift, width] = LOOK_FIELD[slot]
-    out[slot] = ((w === 0 ? word : w === 1 ? figure : face) >>> shift) & ((1 << width) - 1)
+    out[slot] = (words[w] >>> shift) & ((1 << width) - 1)
   }
   const look = validateLook(out)
+  if (look === null) return null
+  if (((word >>> LONG_HAIR_BIT) & 1) !== (look.hairStyle === HAIR.long ? 1 : 0)) return null
+  return look
+}
+
+/** The look a three-word record from before the layers carried (a twenty-one-symbol code), upgraded; null for anything else. */
+export function unpackFaceLook(word: number, figure: number, face: number): Look | null {
+  if (!isWord(word) || !isWord(figure) || !isWord(face) || (word & 1) === 0) return null
+  const words = [word, figure, face] as const
+  const out: Record<string, number> = {}
+  for (const slot of LOOK_V3_SLOTS) {
+    const [w, shift, width] = LOOK_FIELD[slot]
+    out[slot] = (words[w as 0 | 1 | 2] >>> shift) & ((1 << width) - 1)
+  }
+  const look = upgradeFaceLook(out)
   if (look === null) return null
   if (((word >>> LONG_HAIR_BIT) & 1) !== (look.hairStyle === HAIR.long ? 1 : 0)) return null
   return look
@@ -503,13 +597,17 @@ export const hairBits = (style: number): number =>
   (style === HAIR.long ? 1 << LOOK_PIECE_BIT.longHair : 0) | (style === HAIR.bald ? 0 : 1 << LOOK_PIECE_BIT.hairCap) |
   (style === HAIR.bob ? 1 << LOOK_PIECE_BIT.bob : 0) | (style === HAIR.bun ? 1 << LOOK_PIECE_BIT.bun : 0)
 
+/** The wardrobe's pieces, as mask bits: the coat 1024 when the layer is a coat, the scarf 2048 when one is worn. */
+export const wardrobeBits = (wardrobe: number): number =>
+  ((((wardrobe >>> LOOK_FIELD.layer[1]) & 3) === LAYER.coat ? 1 << LOOK_PIECE_BIT.coat : 0) | (((wardrobe >>> LOOK_FIELD.scarf[1]) & 7) !== 0 ? 1 << LOOK_PIECE_BIT.scarf : 0)) >>> 0
+
 /**
- * The crowd's per-person piece mask for a packed look word and face word, as the eye pass tests it (tie at bit 1 …
- * glasses at bit 5 from the look word; the hair bits from the face word's style; the face bit 9 always), 0 for
- * LOOK_NONE. The shadow pass's mask is this without bit 9.
+ * The crowd's per-person piece mask for a packed look word, face word and wardrobe word, as the eye pass tests it
+ * (tie at bit 1 … glasses at bit 5 from the look word; the hair bits from the face word's style; the coat and the
+ * scarf from the wardrobe word; the face bit 9 always), 0 for LOOK_NONE. The shadow pass's mask is this without bit 9.
  */
-export const lookMask = (word: number, face: number): number =>
-  (word & 1) === 0 ? 0 : (((word >>> 2) & 46) | hairBits((face >>> LOOK_FIELD.hairStyle[1]) & 7) | (1 << LOOK_PIECE_BIT.face)) >>> 0
+export const lookMask = (word: number, face: number, wardrobe: number): number =>
+  (word & 1) === 0 ? 0 : (((word >>> 2) & 46) | hairBits((face >>> LOOK_FIELD.hairStyle[1]) & 7) | wardrobeBits(wardrobe) | (1 << LOOK_PIECE_BIT.face)) >>> 0
 
 // --- The hash path, reproduced ---------------------------------------------------------------------------------
 
@@ -531,7 +629,7 @@ export const LOOK_HASH = Object.freeze({ pieces: 13.37, colours: 7.919 })
  * hair: below `longHair` on link 4 is short; otherwise a woman's split link (LOOK_HASHED_HAIR_SPLIT) under `bob` is
  * long, under `bun` a bob, else a bun; a man's split link at or above `bald` is bald, else long.
  */
-export const LOOK_ODDS = Object.freeze({ tie: 0.3, bagMan: 0.7, bagWoman: 0.62, cup: 0.82, longHair: 0.35, glasses: 0.78, grey: 0.9, darkTrousers: 0.6, bob: 0.34, bun: 0.67, bald: 0.96 })
+export const LOOK_ODDS = Object.freeze({ tie: 0.3, bagMan: 0.7, bagWoman: 0.62, cup: 0.82, longHair: 0.35, glasses: 0.78, grey: 0.9, darkTrousers: 0.6, bob: 0.34, bun: 0.67, bald: 0.96, shirtSleeves: 0.2, coat: 0.85, scarf: 0.88, trim: 0.8 })
 
 const pickIndex = (h: number, length: number): number => Math.min(u32(f32(h * f32(length - 0.001))), length - 1)
 const above = (h: number, edge: number): number => (h >= f32(edge) ? 1 : 0)
@@ -564,6 +662,10 @@ export function lookFromSeed(seed: number): Look {
   let hairStyle: number
   if (woman) hairStyle = !notShort ? HAIR.short : split < f32(LOOK_ODDS.bob) ? HAIR.long : split < f32(LOOK_ODDS.bun) ? HAIR.bob : HAIR.bun
   else hairStyle = above(split, LOOK_ODDS.bald) ? HAIR.bald : notShort ? HAIR.long : HAIR.short
+  const layerLink = hp(LOOK_HASHED_LAYER)
+  const layer = layerLink < f32(LOOK_ODDS.shirtSleeves) ? LAYER.shirt : above(layerLink, LOOK_ODDS.coat) ? LAYER.coat : LAYER.jacket
+  // The top's dye is one link whichever palette the layer reads it from (both hold as many as the body's jacket palette, or more).
+  const topSize = LOOK_PALETTE[outfit.top].length
   const look: Record<LookSlot, number> = {
     body,
     height: statureSteps.from + stepOf(hp(6), statureSteps.span),
@@ -586,11 +688,14 @@ export function lookFromSeed(seed: number): Look {
     undertone: pickIndex(hc(LOOK_HASHED_COLOUR.undertone), WARDROBE.undertone.length),
     hairStyle,
     hairColour: grey ? LOOK_PALETTE.hair.length : pickIndex(hc(2), LOOK_PALETTE.hair.length),
-    top: pickIndex(hc(3), LOOK_PALETTE[outfit.top].length),
+    layer,
+    top: pickIndex(hc(3), topSize),
+    trim: above(hc(LOOK_HASHED_COLOUR.trim), LOOK_ODDS.trim) ? 1 + pickIndex(hc(LOOK_HASHED_COLOUR.trimCloth), LOOK_PALETTE.trims.length) : 0,
     bottom,
     shirt: pickIndex(hc(5), LOOK_PALETTE[outfit.shirt].length),
     shoes: pickIndex(hc(6), LOOK_PALETTE[outfit.shoes].length),
     tie: above(hp(1), LOOK_ODDS.tie),
+    scarf: above(hp(LOOK_HASHED_SCARF), LOOK_ODDS.scarf) ? 1 + pickIndex(hc(LOOK_HASHED_COLOUR.scarfCloth), LOOK_PALETTE.scarves.length) : 0,
     eyewear: above(hp(5), LOOK_ODDS.glasses),
     bag: above(hp(2), woman ? LOOK_ODDS.bagWoman : LOOK_ODDS.bagMan),
     cup: above(hp(3), LOOK_ODDS.cup),
@@ -613,14 +718,14 @@ const preset = (name: string, look: Record<LookSlot, number>): LookPreset => {
 
 /** A handful of named outfits per body for the picker; every one validates, and every cloth is the crowd's. */
 export const LOOK_PRESETS: readonly LookPreset[] = Object.freeze([
-  preset('navy suit', { body: 0, height: 16, mass: 7, muscle: 8, shoulders: 8, hips: 7, legs: 8, posture: 9, head: 4, brow: 8, jaw: 9, chin: 8, cheek: 7, nose: 8, eyes: 8, lips: 7, skin: 1, age: 3, undertone: 1, hairStyle: 0, hairColour: 1, top: 0, bottom: 0, shirt: 0, shoes: 0, tie: 1, eyewear: 0, bag: 0, cup: 0 }),
-  preset('charcoal suit', { body: 0, height: 20, mass: 9, muscle: 7, shoulders: 10, hips: 7, legs: 7, posture: 7, head: 4, brow: 9, jaw: 11, chin: 10, cheek: 8, nose: 9, eyes: 7, lips: 6, skin: 4, age: 5, undertone: 0, hairStyle: 0, hairColour: 0, top: 1, bottom: 0, shirt: 1, shoes: 1, tie: 1, eyewear: 1, bag: 1, cup: 0 }),
-  preset('camel blazer', { body: 1, height: 13, mass: 7, muscle: 6, shoulders: 7, hips: 8, legs: 9, posture: 8, head: 4, brow: 7, jaw: 7, chin: 7, cheek: 9, nose: 7, eyes: 9, lips: 9, skin: 2, age: 2, undertone: 3, hairStyle: 0, hairColour: 3, top: 0, bottom: 2, shirt: 0, shoes: 1, tie: 0, eyewear: 0, bag: 0, cup: 1 }),
-  preset('navy blazer', { body: 1, height: 17, mass: 11, muscle: 10, shoulders: 9, hips: 9, legs: 8, posture: 10, head: 3, brow: 8, jaw: 10, chin: 9, cheek: 8, nose: 10, eyes: 8, lips: 8, skin: 6, age: 4, undertone: 1, hairStyle: 4, hairColour: 0, top: 1, bottom: 0, shirt: 2, shoes: 0, tie: 0, eyewear: 1, bag: 0, cup: 0 }),
-  preset('burgundy pantsuit', { body: 2, height: 11, mass: 7, muscle: 7, shoulders: 6, hips: 9, legs: 8, posture: 9, head: 4, brow: 7, jaw: 6, chin: 7, cheek: 10, nose: 7, eyes: 9, lips: 10, skin: 3, age: 2, undertone: 2, hairStyle: 1, hairColour: 2, top: 2, bottom: 0, shirt: 0, shoes: 0, tie: 0, eyewear: 0, bag: 1, cup: 0 }),
-  preset('cream pantsuit', { body: 2, height: 16, mass: 5, muscle: 8, shoulders: 7, hips: 7, legs: 10, posture: 11, head: 4, brow: 8, jaw: 7, chin: 8, cheek: 9, nose: 8, eyes: 8, lips: 9, skin: 5, age: 6, undertone: 0, hairStyle: 3, hairColour: 8, top: 3, bottom: 1, shirt: 2, shoes: 2, tie: 0, eyewear: 1, bag: 0, cup: 1 }),
-  preset('navy skirt suit', { body: 3, height: 13, mass: 7, muscle: 6, shoulders: 6, hips: 10, legs: 8, posture: 8, head: 4, brow: 6, jaw: 7, chin: 6, cheek: 8, nose: 6, eyes: 10, lips: 9, skin: 0, age: 3, undertone: 2, hairStyle: 2, hairColour: 5, top: 1, bottom: 0, shirt: 0, shoes: 0, tie: 0, eyewear: 1, bag: 1, cup: 0 }),
-  preset('camel skirt suit', { body: 3, height: 9, mass: 9, muscle: 5, shoulders: 7, hips: 11, legs: 7, posture: 6, head: 5, brow: 9, jaw: 8, chin: 9, cheek: 11, nose: 9, eyes: 7, lips: 11, skin: 7, age: 4, undertone: 3, hairStyle: 1, hairColour: 6, top: 4, bottom: 2, shirt: 1, shoes: 1, tie: 0, eyewear: 0, bag: 0, cup: 0 }),
+  preset('navy suit', { body: 0, height: 16, mass: 7, muscle: 8, shoulders: 8, hips: 7, legs: 8, posture: 9, head: 4, brow: 8, jaw: 9, chin: 8, cheek: 7, nose: 8, eyes: 8, lips: 7, skin: 1, age: 3, undertone: 1, hairStyle: 0, hairColour: 1, layer: 0, top: 0, trim: 0, bottom: 0, shirt: 0, shoes: 0, tie: 1, scarf: 0, eyewear: 0, bag: 0, cup: 0 }),
+  preset('charcoal suit', { body: 0, height: 20, mass: 9, muscle: 7, shoulders: 10, hips: 7, legs: 7, posture: 7, head: 4, brow: 9, jaw: 11, chin: 10, cheek: 8, nose: 9, eyes: 7, lips: 6, skin: 4, age: 5, undertone: 0, hairStyle: 0, hairColour: 0, layer: 2, top: 1, trim: 0, bottom: 0, shirt: 1, shoes: 1, tie: 1, scarf: 2, eyewear: 1, bag: 1, cup: 0 }),
+  preset('camel blazer', { body: 1, height: 13, mass: 7, muscle: 6, shoulders: 7, hips: 8, legs: 9, posture: 8, head: 4, brow: 7, jaw: 7, chin: 7, cheek: 9, nose: 7, eyes: 9, lips: 9, skin: 2, age: 2, undertone: 3, hairStyle: 0, hairColour: 3, layer: 0, top: 0, trim: 2, bottom: 2, shirt: 0, shoes: 1, tie: 0, scarf: 3, eyewear: 0, bag: 0, cup: 1 }),
+  preset('navy blazer', { body: 1, height: 17, mass: 11, muscle: 10, shoulders: 9, hips: 9, legs: 8, posture: 10, head: 3, brow: 8, jaw: 10, chin: 9, cheek: 8, nose: 10, eyes: 8, lips: 8, skin: 6, age: 4, undertone: 1, hairStyle: 4, hairColour: 0, layer: 0, top: 1, trim: 0, bottom: 0, shirt: 2, shoes: 0, tie: 0, scarf: 0, eyewear: 1, bag: 0, cup: 0 }),
+  preset('burgundy pantsuit', { body: 2, height: 11, mass: 7, muscle: 7, shoulders: 6, hips: 9, legs: 8, posture: 9, head: 4, brow: 7, jaw: 6, chin: 7, cheek: 10, nose: 7, eyes: 9, lips: 10, skin: 3, age: 2, undertone: 2, hairStyle: 1, hairColour: 2, layer: 0, top: 2, trim: 2, bottom: 0, shirt: 0, shoes: 0, tie: 0, scarf: 0, eyewear: 0, bag: 1, cup: 0 }),
+  preset('cream pantsuit', { body: 2, height: 16, mass: 5, muscle: 8, shoulders: 7, hips: 7, legs: 10, posture: 11, head: 4, brow: 8, jaw: 7, chin: 8, cheek: 9, nose: 8, eyes: 8, lips: 9, skin: 5, age: 6, undertone: 0, hairStyle: 3, hairColour: 8, layer: 0, top: 3, trim: 0, bottom: 1, shirt: 2, shoes: 2, tie: 0, scarf: 4, eyewear: 1, bag: 0, cup: 1 }),
+  preset('navy skirt suit', { body: 3, height: 13, mass: 7, muscle: 6, shoulders: 6, hips: 10, legs: 8, posture: 8, head: 4, brow: 6, jaw: 7, chin: 6, cheek: 8, nose: 6, eyes: 10, lips: 9, skin: 0, age: 3, undertone: 2, hairStyle: 2, hairColour: 5, layer: 0, top: 1, trim: 0, bottom: 0, shirt: 0, shoes: 0, tie: 0, scarf: 1, eyewear: 1, bag: 1, cup: 0 }),
+  preset('camel skirt suit', { body: 3, height: 9, mass: 9, muscle: 5, shoulders: 7, hips: 11, legs: 7, posture: 6, head: 5, brow: 9, jaw: 8, chin: 9, cheek: 11, nose: 9, eyes: 7, lips: 11, skin: 7, age: 4, undertone: 3, hairStyle: 1, hairColour: 6, layer: 0, top: 4, trim: 7, bottom: 2, shirt: 1, shoes: 1, tie: 0, scarf: 0, eyewear: 0, bag: 0, cup: 0 }),
 ])
 
 /** The preset of that name (case and surrounding space ignored), or null. */
@@ -633,8 +738,10 @@ export function lookPreset(name: string): LookPreset | null {
 
 /** 32 symbols without I, L, O and U, so a code read aloud or copied by hand is not mistaken. */
 const CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
-/** 105 bits: one zero bit, the look word, the figure word, the face word, then an 8-bit check over the three. */
-const CODE_CHARS = 21
+/** 140 bits: four zero bits, the look word, the figure word, the face word, the wardrobe word, then an 8-bit check over the four. */
+const CODE_CHARS = 28
+/** The code before the layers: 105 bits, one zero bit, the look, figure and face words, the check over the three. */
+const V3_CODE_CHARS = 21
 /** The code before the face: 75 bits, three zero bits, the look and figure words, the check over both. */
 const V2_CODE_CHARS = 15
 /** The legacy code: 40 bits, the one word then its check. */
@@ -661,27 +768,28 @@ const symbols = (bits: bigint, count: number): string => {
   return out
 }
 
-/** The look as a short code, "XXXXXXX-XXXXXXX-XXXXXXX", that parseLookCode reads back exactly; '' for a look outside the wardrobe. */
+/** The look as a short code, "XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX", that parseLookCode reads back exactly; '' for a look outside the wardrobe. */
 export function formatLookCode(look: Look): string {
   const word = packLook(look)
   if (word === LOOK_NONE) return ''
   const figure = packFigure(look)
   const face = packFace(look)
-  const bits = (BigInt(word) << 72n) | (BigInt(figure) << 40n) | (BigInt(face) << 8n) | BigInt(crc8([word, figure, face]))
+  const wardrobe = packWardrobe(look)
+  const bits = (BigInt(word) << 104n) | (BigInt(figure) << 72n) | (BigInt(face) << 40n) | (BigInt(wardrobe) << 8n) | BigInt(crc8([word, figure, face, wardrobe]))
   const out = symbols(bits, CODE_CHARS)
-  return `${out.slice(0, 7)}-${out.slice(7, 14)}-${out.slice(14)}`
+  return `${out.slice(0, 7)}-${out.slice(7, 14)}-${out.slice(14, 21)}-${out.slice(21)}`
 }
 
 /**
- * The look a code names, or null: twenty-one symbols of the alphabet (case and dashes or spaces between them
- * ignored), one leading zero bit, a check that matches, and three words that unpack to a look within the wardrobe;
- * or a fifteen-symbol code from before the face, or a legacy eight-symbol one, each checked the same way and
- * upgraded. Anything else is refused.
+ * The look a code names, or null: twenty-eight symbols of the alphabet (case and dashes or spaces between them
+ * ignored), four leading zero bits, a check that matches, and four words that unpack to a look within the wardrobe;
+ * or a twenty-one-symbol code from before the layers, a fifteen-symbol one from before the face, or a legacy
+ * eight-symbol one, each checked the same way and upgraded. Anything else is refused.
  */
 export function parseLookCode(text: string): Look | null {
   if (typeof text !== 'string') return null
   const clean = text.toUpperCase().replace(/[\s-]/g, '')
-  if (clean.length !== CODE_CHARS && clean.length !== V2_CODE_CHARS && clean.length !== LEGACY_CODE_CHARS) return null
+  if (clean.length !== CODE_CHARS && clean.length !== V3_CODE_CHARS && clean.length !== V2_CODE_CHARS && clean.length !== LEGACY_CODE_CHARS) return null
   let bits = 0n
   for (const ch of clean) {
     const v = CODE_ALPHABET.indexOf(ch)
@@ -701,12 +809,21 @@ export function parseLookCode(text: string): Look | null {
     if (crc8([word, figure]) !== check) return null
     return unpackFigureLook(word, figure)
   }
-  if (bits >> 104n !== 0n) return null
-  const word = Number((bits >> 72n) & 0xffffffffn)
-  const figure = Number((bits >> 40n) & 0xffffffffn)
-  const face = Number((bits >> 8n) & 0xffffffffn)
-  if (crc8([word, figure, face]) !== check) return null
-  return unpackLook(word, figure, face)
+  if (clean.length === V3_CODE_CHARS) {
+    if (bits >> 104n !== 0n) return null
+    const word = Number((bits >> 72n) & 0xffffffffn)
+    const figure = Number((bits >> 40n) & 0xffffffffn)
+    const face = Number((bits >> 8n) & 0xffffffffn)
+    if (crc8([word, figure, face]) !== check) return null
+    return unpackFaceLook(word, figure, face)
+  }
+  if (bits >> 136n !== 0n) return null
+  const word = Number((bits >> 104n) & 0xffffffffn)
+  const figure = Number((bits >> 72n) & 0xffffffffn)
+  const face = Number((bits >> 40n) & 0xffffffffn)
+  const wardrobe = Number((bits >> 8n) & 0xffffffffn)
+  if (crc8([word, figure, face, wardrobe]) !== check) return null
+  return unpackLook(word, figure, face, wardrobe)
 }
 
 // --- The console's view -----------------------------------------------------------------------------------------
@@ -717,10 +834,10 @@ export function describeLook(look: Look): string[] {
   const body = look.body as LookBody
   const lines: string[] = []
   for (const slot of LOOK_SLOTS) {
-    const options = lookOptions(body, slot)
+    const options = lookOptions(body, slot, look.layer)
     const i = look[slot]
     let name = options[i].name
-    if (slot === 'bottom' && i === 0 && WARDROBE.outfits[body].matching) name = `matching (${hex6(lookSwatch(look, 'top') ?? 0)})`
+    if ((slot === 'bottom' && i === 0 && WARDROBE.outfits[body].matching) || (slot === 'trim' && i === 0)) name = `matching (${hex6(matchingSwatch(look, slot) ?? 0)})`
     lines.push(`${slot.padEnd(11)}${name}  [${i + 1}/${options.length}]`)
   }
   lines.push(`${'code'.padEnd(11)}${formatLookCode(look)}`)
@@ -758,7 +875,7 @@ export function changeLook(look: Look, change: LookChange, seed: number): LookCh
   switch (change.kind) {
     case 'reset': return changed(lookFromSeed(seed), 'no look for that seed')
     case 'random': return Number.isFinite(change.seed) ? changed(lookFromSeed(change.seed), 'no look for that seed') : refused('the seed must be a number')
-    case 'code': return changed(parseLookCode(change.code), `not a look code: '${change.code}' (twenty-one symbols, XXXXXXX-XXXXXXX-XXXXXXX)`)
+    case 'code': return changed(parseLookCode(change.code), `not a look code: '${change.code}' (twenty-eight symbols, XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX)`)
     case 'preset': {
       const p = lookPreset(change.name)
       return p ? { look: p.look, error: null } : refused(`no preset named '${change.name}': ${LOOK_PRESETS.map((x) => x.name).join(', ')}`)
@@ -767,7 +884,7 @@ export function changeLook(look: Look, change: LookChange, seed: number): LookCh
       const want = change.slot.toLowerCase()
       const slot = LOOK_SLOTS.find((s) => s.toLowerCase() === want)
       if (!slot) return refused(`no slot named '${change.slot}': ${LOOK_SLOTS.join(', ')}`)
-      const options = lookOptions(look.body as LookBody, slot)
+      const options = lookOptions(look.body as LookBody, slot, look.layer)
       const text = change.value.trim()
       let index: number
       if (/^\d{1,3}$/.test(text)) {
