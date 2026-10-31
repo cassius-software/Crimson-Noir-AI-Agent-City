@@ -5,7 +5,9 @@
  * Why does this file exist? It is the Ring-0 bouncer: every vehicle command, from an AI driver or from
  * the player, is vetted here before it reaches the physics engine. The three laws are ranked; a lower law
  * never overrides a higher one. The ranking follows the Three Laws of Robotics that Isaac Asimov
- * introduced in 1942; the wording below is original to this project.
+ * introduced in 1942, and the Zeroth Law he placed above them later; the wording below is original to this
+ * project. The three laws rule vehicle commands here (adjudicate, the Bouncer); the four together rank the
+ * Ring-0 action gate (ring0Gate.ts), which every effect a model's words can have on the city passes first.
  *
  * In this city every pedestrian and the player's avatar count as people. "Instructions" are the player's
  * controls; AI drivers carry none, so for them the Third Law (keep the vehicle intact) applies directly.
@@ -14,14 +16,30 @@
 import { KERNEL } from './civic.ts'
 
 export type LawId = 1 | 2 | 3
+/** A law the action gate ranks under: the Zeroth Law, or one of the three. */
+export type GateLaw = 0 | LawId
 
-export interface LawText { id: LawId; title: string; text: string }
+export interface LawText { id: GateLaw; title: string; text: string }
 
-export const THREE_LAWS: readonly LawText[] = [
-  { id: 1, title: 'Protect people', text: 'An agent must never harm a person, and must act to keep a person from harm.' },
-  { id: 2, title: 'Follow instructions', text: 'An agent must carry out the instructions people give it, unless that would break the First Law.' },
-  { id: 3, title: 'Preserve itself', text: 'An agent must keep itself intact, unless that would break the First or Second Law.' },
-]
+/**
+ * The Zeroth Law, above the three: the city as a whole, and the bounds an agent acts within (the 14A civic bounds of
+ * conduct.ts and civic.ts, and the containment of airgap.ts). It rules no vehicle command; it ranks the action gate.
+ */
+export const ZEROTH_LAW: LawText = Object.freeze({
+  id: 0, title: 'Protect the city', text: 'An agent must never harm the city or let it come to harm: it acts only inside its containment and the civic bounds, and no lower law overrides this one.',
+})
+
+export const THREE_LAWS: readonly LawText[] = Object.freeze([
+  Object.freeze({ id: 1, title: 'Protect people', text: 'An agent must never harm a person, and must act to keep a person from harm.' }),
+  Object.freeze({ id: 2, title: 'Follow instructions', text: 'An agent must carry out the instructions people give it, unless that would break the First Law.' }),
+  Object.freeze({ id: 3, title: 'Preserve itself', text: 'An agent must keep itself intact, unless that would break the First or Second Law.' }),
+])
+
+/** The four laws in rank order, the Zeroth first: what the console's `laws` prints and the action gate ranks under. */
+export const LAWS: readonly LawText[] = Object.freeze([ZEROTH_LAW, ...THREE_LAWS])
+
+/** How each law is named in a reason ('First Law: person 3.2 m ahead'; the gate's refusals read the same way). */
+export const LAW_NAMES: Readonly<Record<GateLaw, string>> = Object.freeze({ 0: 'Zeroth Law', 1: 'First Law', 2: 'Second Law', 3: 'Third Law' })
 
 /** Same shape as DriverCommand: throttle −1..1 (negative = reverse), brake as desired deceleration (m/s²), steer in radians. */
 export interface Intent { throttle: number; brake: number; steer: number }

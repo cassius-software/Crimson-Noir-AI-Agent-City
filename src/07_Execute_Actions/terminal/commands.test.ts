@@ -31,7 +31,9 @@ import { LOOK_BODIES, LOOK_PRESETS, LOOK_SLOTS } from '../../03_Spawn_Agents/loo
 import { PING_KINDS, PING_WORDS } from '../../08_Swarm/ping.ts'
 import { apiDoc, exec, scriptApi, type SimControls } from '../operator.ts'
 import { createSwarm } from '../../08_Swarm/orchestrator.ts'
-import { AuditChain, INVARIANTS, INVARIANT_TEXT, verifyChain, type AuditBody } from '../../02_Define_The_Rules/guardrails.ts'
+import { AuditChain, INVARIANT_LAW, INVARIANTS, INVARIANT_TEXT, verifyChain, type AuditBody } from '../../02_Define_The_Rules/guardrails.ts'
+import { LAW_NAMES } from '../../02_Define_The_Rules/laws.ts'
+import { CHECKS } from '../../02_Define_The_Rules/ring0Gate.ts'
 import { sha256 } from '../../02_Define_The_Rules/integrity.ts'
 import { PROVIDERS } from '../../09_Cognition/router.ts'
 import { harnesses } from '../harness.ts'
@@ -42,6 +44,7 @@ import type { QualityState, RecordingState, SipocSnapshot } from '../../05_Obser
 const BRAND = { name: 'TESTBRAND', version: '9.8.7', host: 'testhost' }
 
 const LAWS = [
+  { id: 0, title: 'Protect the city', text: 'Law zero text.' },
   { id: 1, title: 'Protect people', text: 'Law one text.' },
   { id: 2, title: 'Follow instructions', text: 'Law two text.' },
   { id: 3, title: 'Preserve itself', text: 'Law three text.' },
@@ -175,7 +178,7 @@ interface FakeActs extends ActsBridge {
   /** The proposal waiting for the OK; a test sets it (null: nothing waits). */
   waiting: PendingAct | null
   /** How an allowed action ends: the done line, a failure in the facade, or the lease gone at `use`. */
-  outcome: 'done' | 'failed' | 'aborted'
+  outcome: 'done' | 'failed' | 'denied' | 'aborted'
   /** The hash-chained trail a test fills (the real chain, so `act log` prints real hashes and verifies them). */
   chain: AuditChain
   followers: Set<(ev: ActEvent) => void>
@@ -188,7 +191,8 @@ interface FakeActs extends ActsBridge {
 function fakeActs(f: FakeOp): FakeActs {
   const ending = (): ActEnd => (a.outcome === 'done' ? { state: 'done', line: 'the clock is set to 22:00' }
     : a.outcome === 'failed' ? { state: 'failed', line: 'the clock did not take the hour' }
-      : { state: 'aborted', line: TETHER_LOST })
+      : a.outcome === 'denied' ? { state: 'denied', line: 'Second Law: the operator tier is locked' }
+        : { state: 'aborted', line: TETHER_LOST })
   const a: FakeActs = {
     waiting: null,
     outcome: 'done',
@@ -688,7 +692,7 @@ test('help lists every command with usage, in two groups; help <cmd> explains on
   assert.match(all, /run <skill>\[,<skill>\.\.\.\]: <js\.\.\.>/)
   assert.match(all, /ask \[<skill>\[,<skill>\.\.\.\]: <prompt\.\.\.>\|provider <name>\|connect <provider> \[<url>\] \[<key>\]\|model <name>\|server <url>\|key <key>\|effort <level>\|think on\|off\|api <format>\|file \[forget <name>\|load\|unload\|log\]\|gpu auto\|on\|off\|stop\]/)
   assert.match(all, /harness \[list\|run <name>\]/)
-  assert.match(all, /act \[ok\|no\|log \[verify\]\|list\]/)
+  assert.match(all, /act \[ok\|no\|log \[verify\]\|list\|gate\]/)
   assert.match(all, /record \[start \[canvas\|camera\]\|stop\|status\]/)
   assert.match(all, /recruit \[<skill>\|rally <agent> \[<x> <z>\]\|listen\|stop\|install\|dismiss\]/)
   assert.match(all, /render \[on\|off\]/)
@@ -865,8 +869,9 @@ test('formatStats survives an empty city and non-finite numbers', () => {
 test('laws prints the bridge laws in rank order', () => {
   const b = fake()
   const r = run('laws', b, [])
-  assert.deepEqual(texts(r).slice(0, 6), ['1. Protect people', '   Law one text.', '2. Follow instructions', '   Law two text.', '3. Preserve itself', '   Law three text.'])
-  assert.equal(r.lines[6].kind, 'sys')
+  assert.deepEqual(texts(r).slice(0, 8), ['0. Protect the city', '   Law zero text.', '1. Protect people', '   Law one text.', '2. Follow instructions', '   Law two text.', '3. Preserve itself', '   Law three text.'])
+  assert.equal(r.lines[8].kind, 'sys')
+  assert.match(r.lines[8].text, /act gate/)
   assert.ok(isErr(run('laws extra', b, [])))
 })
 
@@ -874,6 +879,7 @@ test('kernel prints interventions per law, sensor flips, shield state and the la
   const b = fake()
   const t = texts(run('kernel', b, []))
   assert.match(t[0], /^LAW {2}TITLE +INTERVENTIONS$/)
+  assert.ok(!t.some((l) => /Protect the city/.test(l)), 'the Zeroth Law is the action gate\'s (act gate), not the vehicle kernel\'s')
   assert.match(t[1], /^1 {4}Protect people +5$/)
   assert.match(t[2], /^2 {4}Follow instructions +1$/)
   assert.match(t[3], /^3 {4}Preserve itself +2$/)
@@ -1646,7 +1652,7 @@ test('sim prints a one-screen summary from stats, the clock and the lock state',
 
 test('content rules: no combat vocabulary in anything the console prints', () => {
   const b = unlocked()
-  const printed = [...complete('').map((c) => c), 'help', 'help stats', 'help record', 'laws', 'kernel', 'stats', 'api', 'api vehicles', 'harness', 'record', 'record status', 'sim', 'operator lock', 'operator unlock', 'act', 'act list', 'act log']
+  const printed = [...complete('').map((c) => c), 'help', 'help stats', 'help record', 'laws', 'kernel', 'stats', 'api', 'api vehicles', 'harness', 'record', 'record status', 'sim', 'operator lock', 'operator unlock', 'act', 'act list', 'act log', 'act gate']
     .flatMap((c) => texts(run(c, b, [])))
     .concat(motd(BRAND).map((l) => l.text))
     .join('\n')
@@ -2396,7 +2402,7 @@ test('swarm: locked until operator unlock; alone it is idle; roles and guardrail
   for (const r of b.operator.swarm.roles) assert.ok(roles.some((l) => l.includes(r.title) && l.includes(r.skill)), r.title)
   // The guardrail lines are pinned to guardrails.ts (the console must not import it); every invariant is named with its text.
   const guard = texts(run('swarm guardrails', b, []))
-  for (const name of INVARIANTS) assert.ok(guard.some((l) => l.includes(name) && l.includes(INVARIANT_TEXT[name])), name)
+  for (const name of INVARIANTS) assert.ok(guard.some((l) => l.includes(name) && l.includes(LAW_NAMES[INVARIANT_LAW[name]]) && l.includes(INVARIANT_TEXT[name])), name)
   assert.ok(guard.some((l) => /not a proof about a model/.test(l)))
   const plan = texts(run('swarm plan --agents 3 audit the braking envelope', b, []))
   assert.equal(plan[0], 'swarm plan: 3 roles for "audit the braking envelope"')
@@ -2550,6 +2556,11 @@ test('act: alone it says what waits for the OK, or that nothing does; act ok all
   b.operator.acts.waiting = { ...PROPOSAL, seq: 3 }
   b.operator.acts.outcome = 'aborted'
   assert.deepEqual(await run('y', b, []).pending, [{ kind: 'err', text: `act 3: ${TETHER_LOST}` }], "the gateway's words, never retyped")
+  // Allowed, then refused by the Ring-0 action gate the moment before it ran: the law, in the gate's words (MANUAL: The operator tier).
+  b.operator.acts.waiting = { ...PROPOSAL, seq: 5 }
+  b.operator.acts.outcome = 'denied'
+  assert.deepEqual(await run('act ok', b, []).pending, [{ kind: 'err', text: 'act 5: refused: Second Law: the operator tier is locked' }])
+  b.operator.acts.outcome = 'done'
   b.operator.acts.waiting = { ...PROPOSAL, seq: 4 }
   const no = run('act no', b, [])
   assert.deepEqual(no.lines, [{ kind: 'sys', text: 'act 4: refused: set the clock to 22:00 (agent 7 is told next time)' }])
@@ -2564,8 +2575,18 @@ test('act: alone it says what waits for the OK, or that nothing does; act ok all
   }
   // Malformed lines are refused before the tier.
   const calls = b.operator.opCalls.length
-  assert.deepEqual(texts(run('act dance', b, [])), ["act: unknown command 'dance'", 'usage: act [ok|no|log [verify]|list]'])
-  for (const l of ['act ok now', 'act no 1', 'act log now', 'act list verify', 'act log verify twice']) assert.deepEqual(texts(run(l, b, [])), ['usage: act [ok|no|log [verify]|list]'], l)
+  // `act gate` is the Ring-0 action gate's own table (pinned to ring0Gate.ts CHECKS, which the console must not import): every check, its law and its text, locked or not.
+  const gate = texts(run('act gate', b, []))
+  assert.match(gate[0], /^Every ask, every proposal and every run passes these before any state changes/)
+  assert.equal(gate.length, CHECKS.length + 2)
+  CHECKS.forEach((c, i) => {
+    const row = gate[i + 1]
+    assert.ok(row.startsWith(`  ${c.name} `) && row.includes(` ${LAW_NAMES[c.law]} `) && row.endsWith(c.text), `${c.name}: ${row}`)
+  })
+  assert.match(gate.at(-1) ?? '', /not a proof about a model/)
+  assert.deepEqual(texts(run('act gate', fake(), [])), gate, 'the same while locked: it changes nothing')
+  assert.deepEqual(texts(run('act dance', b, [])), ["act: unknown command 'dance'", 'usage: act [ok|no|log [verify]|list|gate]'])
+  for (const l of ['act ok now', 'act no 1', 'act log now', 'act list verify', 'act log verify twice']) assert.deepEqual(texts(run(l, b, [])), ['usage: act [ok|no|log [verify]|list|gate]'], l)
   assert.equal(b.operator.opCalls.length, calls)
   assert.deepEqual(b.calls, [], 'no engine knob was touched')
   // Track B (the offline bridge): nothing waits, and the catalogue, a decision or the trail say the engine is not running.
@@ -2672,7 +2693,7 @@ test('act list: one row per verb, the tier\'s own rows, readable while locked', 
   assert.deepEqual(texts(r), [...b.operator.acts.list()])
   assert.ok(kinds(r).every((k) => k === 'out'))
   assert.equal(r.lines.length, 7)
-  assert.deepEqual(complete('act '), ['act list', 'act log', 'act no', 'act ok'])
+  assert.deepEqual(complete('act '), ['act gate', 'act list', 'act log', 'act no', 'act ok'])
   assert.deepEqual(complete('act log '), ['act log verify'])
   assert.deepEqual(complete('act l'), ['act list', 'act log'])
   assert.deepEqual(b.operator.opCalls, [])
@@ -2694,6 +2715,8 @@ test('actEventLines: printed once; nothing for a proposal or for what the consol
   assert.deepEqual(actEventLines({ kind: 'ended', act, end: { state: 'refused', line: 'refused by the host' }, by: 'host' }), [{ kind: 'sys', text: 'act 1: refused by the host: set the clock to 22:00' }])
   assert.deepEqual(actEventLines({ kind: 'ended', act, end: done, by: 'card' }), [{ kind: 'out', text: 'act 1: done: the clock is set to 22:00' }])
   assert.deepEqual(actEventLines({ kind: 'ended', act, end: { state: 'failed', line: 'the clock did not take the hour' }, by: 'host' }), [{ kind: 'err', text: 'act 1: failed: the clock did not take the hour' }])
+  // Allowed on the card or by a host, then refused by the Ring-0 action gate: the law, never "refused on the card".
+  for (const by of ['card', 'host'] as const) assert.deepEqual(actEventLines({ kind: 'ended', act, end: { state: 'denied', line: 'Second Law: the operator tier is locked' }, by }), [{ kind: 'err', text: 'act 1: refused: Second Law: the operator tier is locked' }], by)
   assert.deepEqual(actEventLines({ kind: 'ended', act: { ...act, seq: 5 }, end: { state: 'aborted', line: TETHER_LOST }, by: 'gateway' }), [{ kind: 'err', text: `act 5: ${TETHER_LOST}` }])
   // The gateway's message alone as the end line prints the same line: the wording is never retyped, never doubled.
   assert.deepEqual(actEventLines({ kind: 'ended', act, end: { state: 'aborted', line: 'agent 7 (Rust, Python): no longer tethered to the operator' }, by: 'gateway' }), [{ kind: 'err', text: `act 1: ${TETHER_LOST}` }])

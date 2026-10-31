@@ -10,7 +10,7 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { adjudicate, Bouncer, stoppingDistance, THREE_LAWS, type Intent, type Situation } from './laws.ts'
+import { adjudicate, Bouncer, LAW_NAMES, LAWS, stoppingDistance, THREE_LAWS, ZEROTH_LAW, type Intent, type Situation } from './laws.ts'
 import { KERNEL } from './civic.ts'
 
 const CLEAR: Situation = { source: 'ai', speed: 0, personAhead: Infinity, personBehind: Infinity, obstacleAhead: Infinity }
@@ -21,6 +21,16 @@ const envelope = (speed: number) => stoppingDistance(speed) + KERNEL.standoff
 test('the three laws are ranked 1, 2, 3 with original wording', () => {
   assert.deepEqual(THREE_LAWS.map((l) => l.id), [1, 2, 3])
   for (const l of THREE_LAWS) assert.ok(l.title.length > 0 && l.text.length > 0)
+})
+
+test('the Zeroth Law stands above the three: LAWS is ranked 0 to 3, each named the way the kernel names it, and every entry is frozen', () => {
+  assert.deepEqual(LAWS.map((l) => l.id), [0, 1, 2, 3])
+  assert.equal(LAWS[0], ZEROTH_LAW)
+  assert.deepEqual(LAWS.slice(1), [...THREE_LAWS], 'the three keep their wording and their places')
+  assert.match(ZEROTH_LAW.text, /never harm the city/)
+  assert.match(ZEROTH_LAW.text, /no lower law overrides this one/)
+  assert.deepEqual(LAW_NAMES, { 0: 'Zeroth Law', 1: 'First Law', 2: 'Second Law', 3: 'Third Law' })
+  for (const o of [LAWS, THREE_LAWS, ZEROTH_LAW, LAW_NAMES, ...LAWS]) assert.ok(Object.isFrozen(o))
 })
 
 test('stopping distance: sensing latency plus v²/2d, never negative', () => {

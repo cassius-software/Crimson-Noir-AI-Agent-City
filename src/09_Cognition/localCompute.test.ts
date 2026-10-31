@@ -537,7 +537,7 @@ const CITY: SimControls = {
 /** The console, unlocked, over the real operator tier, gateway and client, pointed at `server` with model 'mock'. */
 function operatorConsole(src: Mirror, server: string) {
   const router = new TaskRouter(src)
-  const term = { operator: operatorBridge(CITY, router, createLocalCompute({ fetch: netFetch })) } as unknown as TerminalBridge
+  const term = { operator: operatorBridge(CITY, router, createLocalCompute({ fetch: netFetch }), undefined, { contained: () => true }) } as unknown as TerminalBridge
   shell('operator unlock', term, [])
   shell(`ask server ${server}`, term, [])
   shell('ask model mock', term, [])

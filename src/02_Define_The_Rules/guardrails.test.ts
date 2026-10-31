@@ -11,7 +11,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { sha256 } from './integrity.ts'
 import {
-  admitAnswer, admitStep, AUDIT_GENESIS, AuditChain, entryHash, INVARIANT_TEXT, INVARIANTS, QUOTA, tetherVerdict, verifyChain, type AuditEntry, type StepIntent,
+  admitAnswer, admitStep, AUDIT_GENESIS, AuditChain, entryHash, INVARIANT_LAW, INVARIANT_TEXT, INVARIANTS, lawOf, QUOTA, tetherVerdict, verifyChain, type AuditEntry, type StepIntent,
 } from './guardrails.ts'
 
 const intent = (over: Partial<StepIntent> = {}): StepIntent => ({
@@ -25,6 +25,19 @@ test('every invariant is named once, with a sentence; a sound step is admitted w
   assert.deepEqual(admitStep(intent()), { admitted: true, failed: [], reasons: [] })
   assert.deepEqual(admitStep(intent({ endpoint: null })), { admitted: true, failed: [], reasons: [] }, 'no endpoint at all (the scripted provider) is admitted')
   assert.deepEqual(admitStep(intent({ endpoint: 'https://127.0.0.1:8443/v1' })).failed, [], 'https to this machine')
+})
+
+test('every invariant stands under one of the four laws; lawOf names the highest-ranked law a verdict failed, or null when admitted', () => {
+  assert.deepEqual(Object.keys(INVARIANT_LAW).sort(), [...INVARIANTS].sort())
+  assert.deepEqual(INVARIANT_LAW, { HumanOverrideSupreme: 2, CapabilityTethered: 3, ConductScreen14A: 0, LoopbackOnly: 0, BudgetWithinQuota: 3, ProvenanceChained: 3 })
+  assert.ok(Object.isFrozen(INVARIANT_LAW))
+  assert.equal(lawOf(admitStep(intent())), null)
+  assert.equal(lawOf(admitStep(intent({ stopped: true }))), 2)
+  assert.equal(lawOf(admitStep(intent({ chainOk: false }))), 3)
+  assert.equal(lawOf(admitStep(intent({ endpoint: 'https://api.example.com' }))), 0)
+  // Several at once: the highest-ranked law, whatever order the invariants failed in.
+  assert.equal(lawOf(admitStep(intent({ stopped: true, chainOk: false, endpoint: 'https://api.example.com' }))), 0)
+  assert.equal(lawOf(admitStep(intent({ stopped: true, chainOk: false }))), 2)
 })
 
 test('each pre-condition refuses what it names, in INVARIANTS order, and only that', () => {

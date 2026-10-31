@@ -618,7 +618,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
     setAct(actRef.current)
     if (termOpenRef.current) return
     if (ev.kind === 'proposed') engineRef.current?.toast('City action', `${ev.act.who} proposes: ${ev.act.sentence} (Y allows, N refuses)`)
-    else if (ev.kind === 'ended' && (ev.end.state === 'done' || ev.end.state === 'failed')) engineRef.current?.toast('City action', `${ev.end.state}: ${ev.end.line}`)
+    else if (ev.kind === 'ended' && (ev.end.state === 'done' || ev.end.state === 'failed' || ev.end.state === 'denied')) engineRef.current?.toast('City action', `${ev.end.state === 'denied' ? 'refused' : ev.end.state}: ${ev.end.line}`)
   }), [bridge])
   // While a proposal waits, the pad's edges and the touch taps are the card's (04_Connect_Hardware/input.ts shield): the
   // south face button presses the card, never the car door, so the OK cannot break the proposer's tether. Keys, sticks

@@ -621,6 +621,27 @@ anywhere in the product.
   (`kernel`, `stats`) and in `sim.kernel.stats().audit`; the auditor and its panic helper are frozen. For the
   scheduled craft (trains, drones, planes) the audit also halts on any non-finite value or any craft below its
   corridor's floor (`Corridor Exploit`; see Vehicles). It only halts, never corrects.
+- **Ring-0 action gate** (`02_Define_The_Rules/ring0Gate.ts`). A model's words can change the city by one road only: a
+  model is asked through the operator tier (whichever provider answers: the Claude gateway, a model server on this
+  machine, the model file kept in this page, or the script; the swarm asks the same way, one step at a time), its
+  answer may end with one `ACTION:` line from the fixed catalogue, the line is proposed to you, and once you allow it
+  it runs once under the proposer's tether. The gate stands at the three moments on that road, and its twelve checks
+  are ranked under four laws, the Zeroth Law above the kernel's three: **Zeroth, protect the city.** The page's
+  outbound primitives are held to this machine, as the host vouches (the air gap `main.tsx` installed is still in
+  place); the model is on this machine or there is none; the words pass the 14A screen; the effect is a line of the
+  catalogue. **First.** The Ring-0 audit has not panicked (a halted realm takes no action); the verb reaches no
+  facade leaf that moves a body, drives a car or weakens the kernel (a table of what every verb reaches, proved
+  exact by running every verb over a recording facade). **Second.** The operator tier is unlocked; a person allowed
+  it, at the console, on the card or through a host (the gateway never allows). **Third.** The proposer is still
+  tethered, under the same recruitment; the hash-chained trail verifies; no other proposal waits. Every check is a
+  rule over plain values, applied the same way every time, with no clock, no randomness and no I/O; the refusal
+  names the highest law that refused in the kernel's words (`Second Law: the operator tier is locked`), and a
+  refusal of an allowed action is written to `act log` under that law and printed as `act 1: refused: Second Law:
+  …`. `act gate` prints the table. It is not a proof about a model and looks inside none; it stands between an
+  answer and the kernel. A host that vouches nothing (a page without the air gap) is refused every ask of the
+  operator tier and every action: the gate fails closed. A model's rewording of Sloane's lines passes the same screen
+  before it is spoken as the city's own (the onboarding voice asks the model for it outside the gate's ask check; a
+  rewording changes nothing, and the provider's own loopback gate holds its address).
 - **The physics realm** (`physics.worker.ts`, `simHost.ts`, `simCore.ts`). The Rapier world runs in a dedicated
   Web Worker, inlined into the single HTML file, together with everything that touches it: the fleet and its
   Bouncer, the avatar, the Sanctuary, the Ring-0 audit, the promoted pedestrians' rigs and their balance machine,
@@ -997,10 +1018,18 @@ Ring-0 elite tier above it, below). While unlocked:
   knows; one that ended with the tether leaves no moment and teaches nothing, like any Aborted task. **What is not an
   action.** Files, the shell, the network, the player's body (a teleport, a walk), driving a car frame by frame,
   reloading the page (`map`, `boot`) and spawning or altering anyone are not in the catalogue and cannot be proposed;
-  a line that asks for them is refused by name (`no city action called 'teleport' (time, rain, light, quality, cars,
-  crowd, sound, or none)`). `help` lists the command as `act [ok|no|log [verify]|list]`; `act list` prints the catalogue, and
-  the reads (`act`, `act log`, `act list`) work while locked. The swarm's roles never propose: an `ACTION:` line in a
-  role's answer is text.
+  a line that asks for them is refused by name, under the gate's Zeroth Law (`Zeroth Law: no city action called
+  'teleport' (time, rain, light, quality, cars, crowd, sound, or none)`). `help` lists the command as `act [ok|no|log [verify]|list|gate]`; `act list` prints the catalogue,
+  `act gate` the Ring-0 action gate's twelve checks with their laws (see The ethical kernel), and the reads (`act`,
+  `act log`, `act list`, `act gate`) work while locked. **The gate.** Before any of this, every ask passes the gate
+  (the page contained as the host vouches and the model on this machine or none: `ask: Zeroth Law: …` otherwise;
+  the lock, which `ask: locked` has refused already, is held again), every `ACTION:` line passes it as it is read,
+  readable or not, and an allowed action passes it once more the moment before it runs, inside the lease: the realm
+  standing, the verb kinetic-free, the tier still unlocked, a person's OK, the proposer still tethered (the lease
+  holds this already; the gate holds it again), the trail whole. A refusal there ends the action as `act 1: refused:
+  Second Law: the operator tier is locked` (a toast says the same with the console closed), goes on the trail as a
+  `refusal` under its law, and the proposer is told. The swarm's roles never
+  propose: an `ACTION:` line in a role's answer is text.
 - `swarm run [--agents <1-5>] <goal>` splits a goal over up to five roles (the Prime Architect, who needs someone
   tethered with Design; the Systems Coder, TypeScript; the Sim-to-Real Tester, Testing; the Mechanistic Auditor,
   Security; the Legal/IP Verifier, Writing) and asks them one after another, each one prompt through the same gate
@@ -2328,7 +2357,7 @@ Every source file opens with "Why does this file exist? / What breaks if it is r
 |---|---|---|
 | — | `brand.ts`, `MonolithLogo.tsx`, `App.tsx` | Product name and mark; the React shell (`App` → `GuiShell`, the city, or `TtyShell`, the console alone under `?boot=tty`): boot veil, HUD, concierge, the wardrobe card, touch and console overlays; it builds the cognition router (with the model kept in this page, its file picker and its drop) and the network client and keeps the look and the token |
 | 01_Initialize_World | `world.ts`, `city.ts`, `materials.ts`, `fbmTexture.ts`, `solar.ts`, `codeDissolve.ts`, `region/` (`projection.ts`, `grid.ts`, `names.ts`, `clip.ts`, `pack.ts`, `compile.ts`, `regionWorld.ts`) | WebGPU device, city grid, districts, shoreline and furniture, procedural materials (filtered against moiré), sky, sun, haze, the lake; the code dissolve's material helper (any node material into falling green binary code, by a per-instance amount, shadow included); the surveyed region: its projection, fictional names, the compiler's core, the pack format, and its meshes, walls and places |
-| 02_Define_The_Rules | `laws.ts`, `ring0.ts`, `ring0Panic.ts`, `civic.ts`, `collision.ts`, `conduct.ts`, `degrees.ts`, `airgap.ts`, `integrity.ts`, `property.ts` | The seeded, replayable property harness every fuzz suite shares; SHA-256, HMAC and canonical encoding for every hash and seal; the air gap (the one definition of "this machine", and the guard installed on the page's and the worker's globals); Ring-0 bouncer and audit (both run in the physics worker; the audit's craft check), the page's panic lock; kernel limits, signal cycle, speed limit, checks; the contact policy (cars pass through cars, the ragdoll balance machine wired with no vehicle a cause, no combat) and the collision groups (the chassis, the wheel rays, the avatar through a rig); the 14A conduct core and screen; degrees of success |
+| 02_Define_The_Rules | `laws.ts`, `ring0.ts`, `ring0Gate.ts`, `ring0Panic.ts`, `guardrails.ts`, `civic.ts`, `collision.ts`, `conduct.ts`, `degrees.ts`, `airgap.ts`, `integrity.ts`, `property.ts` | The seeded, replayable property harness every fuzz suite shares; SHA-256, HMAC and canonical encoding for every hash and seal; the air gap (the one definition of "this machine", and the guard installed on the page's and the worker's globals); Ring-0 bouncer and audit (both run in the physics worker; the audit's craft check), the page's panic lock; kernel limits, signal cycle, speed limit, checks; the contact policy (cars pass through cars, the ragdoll balance machine wired with no vehicle a cause, no combat) and the collision groups (the chassis, the wheel rays, the avatar through a rig); the 14A conduct core and screen; degrees of success |
 | 03_Spawn_Agents | `crowd.wgsl`, `crowdCompute.ts`, `crowdSensor.ts`, `crowdSim.ts`, `crowdCull.ts`, `crowd.ts`, `skills.ts`, `look.ts`, `ragdoll.ts`, `ragdollRig.ts` | GPU pedestrians, their hazard sensing and their summons (in the physics worker), the contract and layouts both sides share, culling/LOD/density and indirect InstancedMesh rendering, the dissolve amounts and the look words (on the page); every pedestrian's skills, the recruitment rules and the rally rule both realms run; the closed wardrobe and the packed look word; the active ragdoll's balance machine, pool and Rapier body (wired by `07_Execute_Actions/ragdollRealm.ts`; `COLLISION.ragdoll: true`, and `collision.test.ts` keeps that the one road to it) |
 | 04_Connect_Hardware | `input.ts`, `hal.ts`, `dualsense.ts`, `lineLink.ts`, `gamepad.ts`, `seats.ts`, `peripheralPolicy.ts`, `TouchControls.tsx` | Keyboard/mouse/touch/gamepad (the ping among the actions), the hardware bus and its drivers; the seating plan for four local players and the per-seat pad intent; the draft default-deny gate for actuating peripherals (microcontrollers, drones; `docs/hal-peripherals-spec.md`), not yet wired |
 | 05_Observe_Environment | `telemetry.ts`, `governor.ts`, `profile.ts`, `lookStore.ts` | SIPOC X snapshot (the dissolve, the pings, the drawing switch, the players, the session and the captions among its optional fields), frame statistics, quality governor (and its hold while the model in this page works), the visitor's name and look |
@@ -3047,7 +3076,7 @@ devices.
 shell: tools/verify/fvps.mjs runs the same four parts, leaving Kani out on Windows and saying so) runs before every release bake
 (`build-release.yml` refuses to bake a commit whose proofs fail) and in `ci.yml` on every pull request and push to
 `main`: the `fvps` job runs the theorems, the IR scan and the air gap in minutes, and the `kani` matrix runs the
-proof harnesses in six groups on parallel runners (the longest harness takes about ten minutes; the `rust` and
+proof harnesses in seven groups on parallel runners (the longest harness takes about ten minutes; the `rust` and
 `page` jobs run the tests, clippy, tsc, oxlint, the build and the air-gap check alongside). It has four parts, each
 honest about what it proves:
 - **Kani (CBMC, bit-precise model checking)** over harnesses compiled only under `cfg(kani)`:
