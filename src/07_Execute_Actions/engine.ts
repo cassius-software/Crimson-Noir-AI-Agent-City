@@ -64,6 +64,7 @@ import { KEYBOARD_SEAT, type Seat } from '../04_Connect_Hardware/seats.ts'
 import { FrameClock, type GlyphFamily, type KernelStats, type NetReport, type NetState, type SeatView, type SipocSnapshot, type Toast } from '../05_Observe_Environment/telemetry.ts'
 import { MemorySink, Recorder, fileSink, markdownFor, type RecorderSink, type RecorderSource } from '../05_Observe_Environment/recorder.ts'
 import { TopicBus, UNS, childLines, publishSnapshot, topicLines } from '../05_Observe_Environment/namespace.ts'
+import type { NoirTables } from './terminal/noirscript/index.ts'
 import type { AgentTelemetry } from '../05_Observe_Environment/agv.ts'
 import { Governor, defaultAgents, defaultCars, liteJoinHint, peakCandidate, profileDevice, readDeviceHints, tierRange, type DeviceProfile, type QualityKnobs } from '../05_Observe_Environment/governor.ts'
 import { CAR_TUNE_RANGE, chassisBox, clampTuning, kindOf, type CarTuning } from './car.ts'
@@ -90,7 +91,7 @@ import { updateVolumetrics, type Volumetrics } from './volumetrics.ts'
 import { FrameRate, withCloudFallback } from '../09_Cognition/cloudFallback.ts'
 import { withScriptedFallback } from '../09_Cognition/scripted.ts'
 import { describeSurroundings, paintWord, ShortTermMemory, type AgentContext } from '../08_Swarm/shortTerm.ts'
-import { operatorBridge, type Awareness, type Diary, type Mind, type SimControls, type SkillGate, type SpeechClip, type SpeechOut, type Utterance, type Voice } from './operator.ts'
+import { operatorBridge, type Awareness, type Diary, type Mind, type SimControls, type SkillGate, type SpeechClip, type SpeechOut, type Utterance, type Voice, type EliteVault } from './operator.ts'
 import type { CityKnobs } from '../06_Make_Decisions/actions.ts'
 import { applyQuality, refitPixelRatio, type QualityTargets } from './quality.ts'
 import { SPEECH, Soundscape, sharedAudioContext, wallsBetween, type AudioFrame, type PeerVoice } from './audio.ts'
@@ -2119,6 +2120,41 @@ export class Engine {
     return best
   }
 
+  /**
+   * The city's structure-of-arrays columns for NoirScript (terminal/noirscript): every array a copy taken now, so a run
+   * reads one consistent moment and nothing of the realm is handed out by reference. The crowd straight off the
+   * zero-copy bridge (as crowd.positions above), split into x and z; the cars from the newest poses (mode 0 ai,
+   * 1 player, 2 parked, as simProtocol.ts MODES orders them); the kernel's counters; the frame clock.
+   */
+  private soaTables(): NoirTables {
+    const b = this.sim.bridge
+    let crowdX = new Float32Array(0), crowdZ = new Float32Array(0)
+    if (b.counts.agents > 0 && b.seq > 0) {
+      const n = b.counts.agents
+      if (this.crowdXZ.length !== 2 * n) this.crowdXZ = new Float32Array(2 * n)
+      b.agentXZ(this.crowdXZ)
+      crowdX = new Float32Array(n)
+      crowdZ = new Float32Array(n)
+      for (let i = 0; i < n; i++) { crowdX[i] = this.crowdXZ[2 * i]; crowdZ[i] = this.crowdXZ[2 * i + 1] }
+    }
+    const p = this.sim.state.poses, cars = this.sim.meta.count
+    const x = new Float32Array(cars), z = new Float32Array(cars), heading = new Float32Array(cars), speed = new Float32Array(cars), mode = new Int32Array(cars)
+    for (let i = 0; i < cars; i++) {
+      const o = i * POSE.stride
+      x[i] = p[o + POSE.x]; z[i] = p[o + POSE.z]; heading[i] = p[o + POSE.heading]; speed[i] = p[o + POSE.speed]
+      const m = p[o + POSE.mode] | 0
+      mode[i] = m >= 0 && m <= 2 ? m : 0
+    }
+    const k = this.kernelStats()
+    const [mean, , p95] = this.clock.stats()
+    return {
+      crowd: { n: crowdX.length, x: crowdX, z: crowdZ },
+      cars: { n: cars, x, z, heading, speed, mode },
+      kernel: { law1: k.law1, law2: k.law2, law3: k.law3, flips: k.sensorFlips, shielded: k.shielded },
+      frame: { fps: mean > 0 ? 1000 / mean : 0, ms: mean, p95 },
+    }
+  }
+
   /** The crowd's figures: what the page drew, and what the worker's crowd did. */
   private crowdStats(): CrowdStats {
     const w = this.sim.state.crowd.stats
@@ -2227,7 +2263,7 @@ export class Engine {
    * never reads. The gate, mind, voice and diary given on the first call are the ones kept. The name a hired agent
    * goes by, for who proposes a city action, is the host's too (setNameOf), read when a proposal is made.
    */
-  terminalBridge(gate: SkillGate, givenMind: Mind, voice?: Voice, diary?: Diary, voiceOf?: (agent: number) => string | null): TerminalBridge {
+  terminalBridge(gate: SkillGate, givenMind: Mind, voice?: Voice, diary?: Diary, voiceOf?: (agent: number) => string | null, vault?: EliteVault): TerminalBridge {
     if (this.bridge) return this.bridge
     // The cloud fallback throttle in front of the mind App built: while this page's frames are slow, a complex prompt
     // bound for a model server on this machine goes to the router's cloud provider instead (nothing when it has none).
@@ -2275,6 +2311,7 @@ export class Engine {
         children: (prefix?: string) => childLines(this.topics, prefix === undefined ? undefined : expandTopic(prefix)),
         status: () => `namespace  ${this.topics.count} topics  ${this.topics.publishes} publishes  head ${this.topics.head().toString(16).padStart(8, '0')}`,
       }),
+      soa: Object.freeze({ tables: () => this.soaTables() }),
       // Pings are view-only marks (a walk ping is offered to the host's recruiter through onRally, never sent anywhere).
       ping: Object.freeze({
         at: (kind: PingKind) => this.pingAt(kind),
@@ -2286,7 +2323,7 @@ export class Engine {
       // (rain mode and the sound, for the city actions an agent proposes), never over the engine itself; its scripts
       // and the allowed actions are bound to the swarm through the gate. `contained` is what this host vouches to the
       // Ring-0 action gate: the air gap main.tsx installed on this page's global is still there (airgap.ts).
-      operator: operatorBridge(this.simControls(), gate, mind, undefined, { voice, speech: this.speechOut(), diary, awareness: this.awareness(), nameOf, city: this.cityKnobs(), contained: () => airgapInstalled(globalThis), voiceOf }),
+      operator: operatorBridge(this.simControls(), gate, mind, undefined, { voice, speech: this.speechOut(), diary, awareness: this.awareness(), nameOf, city: this.cityKnobs(), contained: () => airgapInstalled(globalThis), voiceOf, vault }),
       record: Object.freeze({
         start: (source: RecorderSource) => this.startRecording(source),
         stop: () => this.stopRecording(),

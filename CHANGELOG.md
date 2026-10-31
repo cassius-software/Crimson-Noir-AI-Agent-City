@@ -121,6 +121,40 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   live view like `stats`; `~` stands for the root. The HUD readout shows the topic count. Nothing is transmitted: the
   bus is a model in the page, shaped so a later phase can put the same topics on a broker. The terminal's live view is
   now drawn by the command's own frame function, so `stats` and `topic watch` share one path.
+- **The feature inspector and steering (`feature`).** Twelve named, monosemantic readings of the city's behaviour
+  (`09_Cognition/features.ts`: `CIVIC_COOPERATION`, `TRAFFIC_YIELD`, `SANDBOX_COMPLIANCE`, `CROWD_CALM`,
+  `SIGNAL_DISCIPLINE`, `FLEET_RESTRAINT`, `OPERATOR_OBEDIENCE`, `SELF_PRESERVATION`, `FRAME_HEALTH`, `SHIELDING`,
+  `RAIN_MODE`, `WORKDAY`), each a documented deterministic function of the counters the city already produces, each
+  in [0, 1], as one activation vector with a JumpReLU threshold per feature and a Top-K view: `feature`, `feature top
+  <k>`, `feature watch`, `feature <NAME>`, `feature about`. Steering is the operator's: `feature steer <NAME>
+  <-1..1>` adds one fixed `Steering:` line to the system prompt every provider renders (after the expertise, before
+  the memories, so an unsteered prompt is byte for byte as it was) and leans the bounded tuning knobs the feature
+  names through the same facade as `set`; `feature clamp <NAME> <0..1>` holds a lane; `release` and `reset` undo
+  both. Honestly: not a sparse autoencoder over a model's hidden activations, since no provider exposes them; every
+  feature is hand-written and every steering line is fixed text. Steering reaches nothing of the laws, the Sanctuary
+  or the Ring-0 auditor.
+- **The Ring-0 elite tier (`ring0`).** Above the operator tier, opened by a passphrase: `ring0 elite set <passphrase>`
+  keeps a salted SHA-256 record in the page (never the words); `ring0 unlock --elite <passphrase>` opens, for the
+  console session, NoirScript's write intrinsics (`tune`, `intent`, `cull`, `steer`) and its raised limits, each write
+  through the operator's own frozen facade (the same paths as `set`, a scripted intent, `crowd.cull` and the feature
+  inspector); `ring0 lock` closes it, `operator lock` closes both, five wrong passphrases in a row refuse until the
+  operator tier is locked and unlocked again, and the history keeps the passphrase as dots. The three laws, the
+  Sanctuary, the Ring-0 auditor and the 14A screen are not on that facade and stay out of reach; a test pins that the
+  tier calls those four things and nothing else.
+- **NoirScript (`noir`), the console's second language.** Beside R0 (the Forth), a statically typed language compiled
+  to bytecode and run on a bounded VM (`terminal/noirscript/`): `i32`, `u32`, `f32` (true binary32), `bool`, fixed
+  arrays, the lane types `f32x4`, `i32x4`, `u32x4` and `u32x8` with lane-wise arithmetic, comparisons to masks,
+  `select` and `mask` for branchless code, horizontals, `popcount`/`clz`/`ctz`/`rotl`/`rotr`/`morton2`; `let`,
+  `fn` with recursion, `if`/`else`, `while`, `loop`, `for … in a..b`, `break`/`continue`; a Pratt parser, a static
+  checker with overloads, and a disassembler (`noir asm <source>`). The city's columns are tables (`crowd.x`,
+  `cars.speed`, `kernel.law1`, `frame.fps`, …), read once per run as copies through the bridge's `soa` surface, and
+  `query cars where speed > 5.0` counts rows; `load_f32x4(crowd.x, i)` strides a column four lanes at a time. Turing
+  complete, deterministic (no clock, no randomness), bounded (1,000,000 steps, 16,384 characters of output, 1 MiB of
+  cells, 1,024 frames) and blind: the directory imports nothing, there is no JIT and no dynamic code, and its write
+  intrinsics `tune`, `intent`, `cull` and `steer` reach the city only through the Ring-0 elite tier's surface: they
+  fail at run time with `elite tier locked` until `ring0 unlock --elite`, and run then with the tier's raised limits.
+  Definitions persist for the console session (`noir reset` forgets them; `noir words` lists
+  the language and them).
 - **Peak, a tier above Ultra for big GPUs.** Tier 5, outside the tier table like Lite, so every existing tier number
   and automatic range stays as it was. It draws Ultra at 1.25 times the resolution on each side (about 1.56 times the
   pixels), held within the device's largest texture, which also fixes `?scale=2` on a very wide window at any tier;

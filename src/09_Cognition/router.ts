@@ -207,7 +207,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
       const line = scriptedAction(req.prompt)
       const text = scriptedAnswer(req) + (line ? `\n${line}` : '')
       onPiece({ kind: 'text', text })
-      return { text, thinking: 0, tokens: 0, reason: SCRIPTED, promptHash: promptHash(systemPrompt(req.tethers, req.memories, req.context)) }
+      return { text, thinking: 0, tokens: 0, reason: SCRIPTED, promptHash: promptHash(systemPrompt(req.tethers, req.memories, req.context, req.steering)) }
     },
   })
   const byName = (p: Found): Mind => (p === 'claude' ? claude : p === 'ollama' ? ollama : p === 'openai' ? openai : p === 'inpage' ? inpage : llamacpp)
@@ -218,7 +218,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
   // The Claude provider answers with the hash of the exact system prompt it sent, as the local providers do (the
   // swarm's memory records it, so an audit can prove what the model was given).
   const claudeAnswerHashed = async (req: AnswerRequest, onPiece: (p: Piece) => void): Promise<Answer> => {
-    const system = systemPrompt(req.tethers, req.memories, req.context)
+    const system = systemPrompt(req.tethers, req.memories, req.context, req.steering)
     const answer = await claudeAnswer(fetchFn, {
       server: kept.claude.server, key: kept.claude.key ?? '', model: kept.claude.model, system, prompt: req.prompt, signal: req.signal,
       ...(kept.claude.effort && { effort: kept.claude.effort }),
@@ -451,7 +451,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
     // `ask` alone under auto looks again (a server started since the last look is found) and lists what that one has.
     installed: async (signal?: AbortSignal) => (kept.provider === 'auto' ? (await look(signal)).installed(signal) : active().installed(signal)),
     answer: async (req, onPiece) => {
-      await cache.page(agentKey(req.tethers), systemPrompt(req.tethers, req.memories, req.context))
+      await cache.page(agentKey(req.tethers), systemPrompt(req.tethers, req.memories, req.context, req.steering))
       return kept.provider === 'auto' ? autoAnswer(req, onPiece) : active().answer(req, onPiece)
     },
   }

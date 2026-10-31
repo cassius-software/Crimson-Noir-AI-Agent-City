@@ -149,10 +149,12 @@ export const NO_ONE_BOUND = "No one is tethered for this request: you speak as t
 
 /**
  * The system prompt for an answer given for the people a task is bound to: the base reality, then who they are, the
- * skills they bring as the whole of the expertise, and what each remembers of the operator (oldest first; only the
- * people bound, only what the memory gave). The same people with the same memories always give the same prompt.
+ * skills they bring as the whole of the expertise, the operator's steering lines (09_Cognition/features.ts
+ * steeringLines: fixed text, rarely changed, so it sits before the memories and the moment), and what each remembers
+ * of the operator (oldest first; only the people bound, only what the memory gave). The same people with the same
+ * memories and the same steering always give the same prompt; no steering gives the prompt as it was.
  */
-export function systemPrompt(tethers: readonly GateTether[], memories: readonly Memories[] = [], context: readonly AgentContext[] = []): string {
+export function systemPrompt(tethers: readonly GateTether[], memories: readonly Memories[] = [], context: readonly AgentContext[] = [], steering: readonly string[] = []): string {
   // Nobody bound (the onboarding's guide rewording a line): no person and no expertise to name, so none is invented.
   if (!tethers.length) return [BASE_REALITY, NO_ONE_BOUND].join('\n')
   const skills = [...new Set(tethers.flatMap((t) => t.skills))]
@@ -166,6 +168,7 @@ export function systemPrompt(tethers: readonly GateTether[], memories: readonly 
     BASE_REALITY,
     `You are answering for ${who}.`,
     `Your expertise is exactly: ${skills.join(', ')}.`,
+    ...steering,
     ...history,
     ...now,
   ].join('\n')
@@ -598,7 +601,7 @@ export function createLocalCompute({ fetch: fetchFn, store, defaults = {}, timeo
       return names
     },
     answer: async (req: MindRequest, onPiece: (p: Piece) => void): Promise<Answer> => {
-      const system = systemPrompt(req.tethers, req.memories, req.context)
+      const system = systemPrompt(req.tethers, req.memories, req.context, req.steering)
       const r = { server, model: await modelFor(req.signal), system, prompt: req.prompt, signal: req.signal, think, timeouts }
       try {
         // The hash of the exact string sent, for the audit: computed here, over `system` as it goes into the request.

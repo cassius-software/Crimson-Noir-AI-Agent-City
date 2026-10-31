@@ -280,7 +280,7 @@ const crash = (model: string, gpu: boolean): string => JSON.stringify({ model, g
 test('the source: one system prompt, built as every provider builds it, and no wllama here', () => {
   const src = readFileSync(new URL('./inPage.ts', import.meta.url), 'utf8')
   assert.equal((src.match(/systemPrompt\(/g) ?? []).length, 1, 'one call, and no mention of it as a call anywhere else')
-  assert.equal((src.match(/systemPrompt\(req\.tethers, req\.memories, req\.context\)/g) ?? []).length, 1)
+  assert.equal((src.match(/systemPrompt\(req\.tethers, req\.memories, req\.context, req\.steering\)/g) ?? []).length, 1)
   assert.doesNotMatch(src, /@wllama|wllama-runtime|wllamaRuntime\.ts'/, 'the runtime is handed in; this file never imports it')
   assert.equal(GUARD_KEY, 'civic-simulation:inpage:loading:v1')
 })
