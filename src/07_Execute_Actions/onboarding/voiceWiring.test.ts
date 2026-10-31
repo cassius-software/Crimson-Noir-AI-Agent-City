@@ -32,7 +32,7 @@ test('App: the console\'s agent, sloane and goal each reach their own bridge; a 
   assert.match(src, /agent: agentBridge\(roster, \{/)
   assert.match(src, /concierge: conciergeBridge\(speaker\)/)
   assert.match(src, /goal: \(text: string\) => goalPlan\(text, engineBridge\)/)
-  assert.match(src, /e\.terminalBridge\(gate, mind, voice, memory\.diary\(\), voiceOf\)/)
+  assert.match(src, /e\.terminalBridge\(gate, mind, voice, memory\.diary\(\), voiceOf, pageStore\(ELITE_KEY\)\)/)
   assert.match(src, /engine\?\.setIdentities\(/)
   assert.match(src, /r\.onMirror\(\(list\) => \{ for \(const agent of roster\.keepOnly\(list\.map\(\(v\) => v\.agent\)\)\) e\.setLook\(agent, null\) \}\)/, 'a hire ends when they leave')
   assert.match(src, /unfollow = \(\) => \{ unfollowMemory\(\); unmirror\(\); roster\.keepOnly\(\[\]\) \}/, 'and with the city')
@@ -65,7 +65,7 @@ test('the engine: the player\'s look sets the eye, Sloane is heard at the player
   const out = src.slice(src.indexOf('  conciergeOut(): ConciergeOut {'), src.indexOf('  speechOut(): SpeechOut {'))
   assert.doesNotMatch(out, /this\.speaker = /, 'Sloane leaves the pedestrian speaker as it was')
   assert.match(src, /identity: this\.identityOf\?\.\(agent\) \?\? null/)
-  assert.match(src, /operatorBridge\(this\.simControls\(\), gate, mind, undefined, \{[^}]*voiceOf \}\)/)
+  assert.match(src, /operatorBridge\(this\.simControls\(\), gate, mind, undefined, \{[^}]*voiceOf, vault \}\)/)
 })
 
 test('the Customizer edits the roster and the look only: it reaches no engine, bridge or renderer of its own', () => {

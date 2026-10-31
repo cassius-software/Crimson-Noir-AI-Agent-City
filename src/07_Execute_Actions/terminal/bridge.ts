@@ -26,6 +26,7 @@ import type {
 import type { HarnessReport, harnesses } from '../harness.ts'
 import type { LookChange } from '../../03_Spawn_Agents/look.ts'
 import type { Swarm } from '../../08_Swarm/orchestrator.ts'
+import type { NoirTables } from './noirscript/index.ts'
 
 export type {
   HalDevice, LawText, ActBy, ActEnd, ActEvent, ActsBridge, AskResult, ExecResult, GatedAsk, GatedRun, GatedSay, GateTether, MindStatus, PendingAct, Piece,
@@ -65,6 +66,10 @@ export interface OperatorBridge {
   tuning(): { physics: Record<string, number>; shaders: Record<string, number> }
   /** `set`: one physics.* or shaders.* key through the facade (validated, clamped by the engine); returns its value now. */
   tune(table: 'physics' | 'shaders', key: string, value: number): number
+  /** The feature inspector and its steering (reads work while locked; steer, clamp, release and reset throw while locked). */
+  features: FeaturesBridge
+  /** The Ring-0 elite tier above this one (status and lock work while locked; unlock and set need this tier open). */
+  elite: EliteBridge
   /**
    * A prompt for the local model, through the capability gateway like a script: decided at once, answered for the
    * people it is bound to, streamed while they stay tethered, cut off when they do not. One answer at a time. Throws
@@ -114,6 +119,69 @@ export interface OperatorBridge {
   api(): ReturnType<typeof apiDoc>
   harnesses(): ReturnType<typeof harnesses>
   harness(name: string): Promise<HarnessReport>
+}
+
+/**
+ * The feature inspector (09_Cognition/features.ts) over the operator tier: the named features of the city read from
+ * the newest snapshot, the operator's steering (a bias in [-1, 1] or a clamp in [0, 1] per feature) and the fixed lines
+ * it adds to every provider's system prompt. Every row comes formatted. Reads work while locked; steer, clamp,
+ * release and reset throw while locked, and a RangeError names an unknown feature or a value out of range.
+ */
+export interface FeaturesBridge {
+  /** The inspector's rows over the newest snapshot: steered, sparsified, the top k (all by default), largest first. */
+  lines(k?: number): string[]
+  /** One feature: id and title, what it measures, its threshold, its activation now and its steering; null for an unknown name. */
+  about(name: string): string[] | null
+  /** The steering lines in every provider's system prompt now; empty when nothing is steered. */
+  prompt(): string[]
+  /** What the inspector is and is not, plainly. */
+  explain(): string[]
+  /** Leans a feature by a bias in [-1, 1]: the line kept, then each tuning knob it moved, one line each. */
+  steer(name: string, bias: number): string[]
+  /** Holds a feature's lane at a value in [0, 1]; returns the line kept. */
+  clamp(name: string, value: number): string
+  /** Drops a feature's bias and clamp: the line, then each knob returned to its middle. */
+  release(name: string): string[]
+  /** Drops every bias and clamp: the line, then each knob returned to its middle. */
+  reset(): string[]
+}
+
+/**
+ * The writes the elite tier opens to NoirScript (terminal/noirscript's NoirWrites has this shape), each through the
+ * operator's own facade: the tuning knobs `set` uses, a scripted intent (the same Bouncer, envelope and latch as the
+ * wheel, in the physics worker), the crowd's density, and the feature inspector's bias. Each throws while the tier is
+ * locked. Nothing here reaches the laws, the Sanctuary, the Ring-0 auditor or the 14A screen.
+ */
+export interface EliteWrites {
+  /** `physics.<k>` or `shaders.<k>` (a bare `car.<k>` is physics, anything else bare is shaders); the value the knob holds now. */
+  tune(key: string, value: number): number
+  /** A player-style intent for car `car`; true once sent (the realm vets it as it vets the wheel). */
+  intent(car: number, throttle: number, brake: number, steer: number): boolean
+  /** The crowd's density until the quality tier next changes; returns it. */
+  cull(density: number): number
+  /** A feature bias in [-1, 1] (FeaturesBridge.steer); returns it. */
+  steer(feature: string, value: number): number
+}
+
+/**
+ * The Ring-0 elite tier, above the operator tier: a passphrase the operator sets once (kept by the host as a salted
+ * SHA-256 record, never the words) opens NoirScript's writes and its raised limits for this console session. `unlock`
+ * and `set` throw while the operator tier is locked; `set` also throws while a passphrase is set and this tier closed;
+ * `unlock` throws on a wrong passphrase and refuses after five wrong in a row until the operator tier is locked and
+ * unlocked again. `operator lock` closes this tier too. Nothing it opens reaches the laws, the Sanctuary, the Ring-0
+ * auditor or the 14A screen.
+ */
+export interface EliteBridge {
+  /** One line: locked or unlocked, whether a passphrase is set (or can be kept), writes this session. */
+  status(): string
+  unlocked(): boolean
+  /** Opens the tier; returns the banner (what is open now, what stays in force). */
+  unlock(passphrase: string): string[]
+  lock(): string
+  /** Sets the passphrase (8 to 256 characters); returns the line. */
+  set(passphrase: string): string
+  /** The write surface while the tier is open, else null. */
+  writes(): EliteWrites | null
 }
 
 /** The swarm as the console and the host see it (08_Swarm/orchestrator.ts Swarm): plan, run, status, stop, the audit trail. */
@@ -223,6 +291,15 @@ export interface TopicBridge {
   status(): string
 }
 
+/**
+ * The city's structure-of-arrays columns for NoirScript (noirscript/index.ts NoirTables): the crowd's x and z, the
+ * cars' x, z, heading, speed and mode, the kernel's counters and the frame clock, every array a copy taken at the
+ * call. Read-only: the VM copies them again into its own arena, and the host hands it no write surface.
+ */
+export interface SoaBridge {
+  tables(): NoirTables
+}
+
 /** A ping's kind (08_Swarm/ping.ts PingKind): what the operator means by the mark. */
 export type PingKind = 'go' | 'look' | 'gather' | 'wait'
 
@@ -298,6 +375,8 @@ export interface TerminalBridge {
   captions(arg?: 'on' | 'off'): string
   /** The unified namespace of topics (read-only); absent on a host that publishes none (the TTY shell, an older host). */
   topics?: TopicBridge
+  /** The city's columns for NoirScript (read-only copies); absent on a host without a running city (the TTY shell). */
+  soa?: SoaBridge
   ping: PingBridge
   operator: OperatorBridge
   record: RecordBridge
@@ -400,6 +479,8 @@ export function offlineBridge(brand: TerminalBridge['brand']): TerminalBridge {
     ping: { at: down, list: down, newest: down, clear: down },
     operator: {
       unlock: down, lock: down, unlocked: down, exec: down, tuning: down, tune: down,
+      features: { lines: down, about: down, prompt: down, explain: down, steer: down, clamp: down, release: down, reset: down },
+      elite: { status: down, unlocked: down, unlock: down, lock: down, set: down, writes: down },
       ask: down, askStatus: down, askSet: down, askConnect: down, askStop: down, say: down, sayStatus: down, saySet: down, sayStop: down,
       api: down, harnesses: down, harness: down,
       swarm: { plan: down, run: down, status: down, stop: down, audit: down, verify: down, get roles() { return down() }, get quota() { return down() } },

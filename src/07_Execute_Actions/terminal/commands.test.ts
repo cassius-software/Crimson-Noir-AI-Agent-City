@@ -18,13 +18,13 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
-  HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatRecording, formatStats,
+  FEATURE_IDS, HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatRecording, formatStats,
   isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type CommandResult, type Line,
 } from './commands.ts'
 import {
   offlineBridge, ring0Stats, type ActEnd, type ActEvent, type ActsBridge, type AskResult, type GatedAsk, type GatedRun, type GatedSay, type HalDevice, type LookBridge, type LookChange,
   type MemoryBridge, type ModelBridge, type NetBridge, type NetReport, type OperatorBridge, type PendingAct, type Piece, type PingBridge, type PingPick, type PingPoint, type RecordBridge,
-  type RecruitBridge, type Ring0Stats, type SayResult, type TerminalBridge, type TopicBridge, type AgentBridge, type ConciergeBridge,
+  type RecruitBridge, type Ring0Stats, type SayResult, type TerminalBridge, type TopicBridge, type AgentBridge, type ConciergeBridge, type FeaturesBridge, type EliteBridge,
 } from './bridge.ts'
 import { SKILLS } from '../../03_Spawn_Agents/skills.ts'
 import { LOOK_BODIES, LOOK_PRESETS, LOOK_SLOTS } from '../../03_Spawn_Agents/look.ts'
@@ -35,6 +35,8 @@ import { AuditChain, INVARIANTS, INVARIANT_TEXT, verifyChain, type AuditBody } f
 import { sha256 } from '../../02_Define_The_Rules/integrity.ts'
 import { PROVIDERS } from '../../09_Cognition/router.ts'
 import { harnesses } from '../harness.ts'
+import { FEATURES } from '../../09_Cognition/features.ts'
+import type { NoirTables } from './noirscript/index.ts'
 import type { QualityState, RecordingState, SipocSnapshot } from '../../05_Observe_Environment/telemetry.ts'
 
 const BRAND = { name: 'TESTBRAND', version: '9.8.7', host: 'testhost' }
@@ -46,10 +48,10 @@ const LAWS = [
 ] as const
 
 const CORE_NAMES = [
-  'help', 'stats', 'laws', 'kernel', 'topic', 'quality', 'time', 'audio', 'ghost', 'rain', 'render', 'captions', 'ping', 'look', 'agent', 'sloane', 'goal', 'hal', 'recruit', 'memory', 'clear', 'history', 'echo',
-  'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'exit',
+  'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'time', 'audio', 'ghost', 'rain', 'render', 'captions', 'ping', 'look', 'agent', 'sloane', 'goal', 'hal', 'recruit', 'memory', 'clear', 'history', 'echo',
+  'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'noir', 'exit',
 ]
-const OPERATOR_NAMES = ['operator', 'run', 'ask', 'swarm', 'act', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
+const OPERATOR_NAMES = ['operator', 'ring0', 'run', 'ask', 'swarm', 'act', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
 
 const IDLE: RecordingState = { active: false, source: null, seconds: 0, frames: 0, bytes: 0, dropped: 0, codec: '' }
 
@@ -108,6 +110,45 @@ interface FakeOp extends OperatorBridge {
   /** The ask's answer is said aloud as well (say auto on): how that ends. */
   speakAnswer: SayResult | null
   voice: { server: string; voice: string | null; model: string | null; auto: boolean }
+  features: FeaturesBridge
+  elite: FakeElite
+}
+
+interface FakeElite extends EliteBridge { state: { unlocked: boolean; set: boolean } }
+
+/** The elite tier as the tier serves it: one passphrase ('open sesame please') once set; reads log nothing, unlock and set log to opCalls. */
+function fakeElite(opCalls: string[]): FakeElite {
+  const e: FakeElite = {
+    state: { unlocked: false, set: false },
+    status: () => `ring0: elite tier ${e.state.unlocked ? 'unlocked' : 'locked'}${e.state.set ? '' : ' (no passphrase set)'}; 0 writes this session`,
+    unlocked: () => e.state.unlocked,
+    unlock: (p) => {
+      opCalls.push('elite unlock')
+      if (!e.state.set) throw new Error("no elite passphrase is set: 'ring0 elite set <passphrase>' first")
+      if (p !== 'open sesame please') throw new Error('wrong passphrase (4 tries left)')
+      e.state.unlocked = true
+      return ['Ring-0 elite tier unlocked for this console session.', 'Still in force: the three laws.']
+    },
+    lock: () => { e.state.unlocked = false; return 'ring0: elite tier locked' },
+    set: (p) => { opCalls.push(`elite set ${p}`); e.state.set = true; return 'ring0: elite passphrase set' },
+    writes: () => (e.state.unlocked ? { tune: () => 1, intent: () => true, cull: (d) => d, steer: (_f, v) => v } : null),
+  }
+  return e
+}
+
+/** The feature inspector as the tier serves it: fixed rows, logging to the bridge's shared `calls` (as 'features <verb>') so the air-gap sweep sees every use. */
+function fakeFeatures(calls: string[]): FeaturesBridge {
+  const rows = ['SANDBOX_COMPLIANCE    [##########]  1.00', 'CROWD_CALM            [##########]  1.00', 'CIVIC_COOPERATION     [####......]  0.40']
+  return {
+    lines: (k) => { calls.push(`features lines ${k ?? '-'}`); return rows.slice(0, k ?? rows.length) },
+    about: (name) => { calls.push(`features about ${name}`); return /^civic/i.test(name) ? ['CIVIC_COOPERATION  (civic cooperation)', 'People letting others through.', 'threshold 0.05  now 0.40'] : null },
+    prompt: () => { calls.push('features prompt'); return [] },
+    explain: () => { calls.push('features explain'); return ['features: 12 named readings', 'not a sparse autoencoder'] },
+    steer: (name, bias) => { calls.push(`features steer ${name} ${bias}`); return [`${name} bias +${bias.toFixed(2)}`, 'physics.car.power = 0.85'] },
+    clamp: (name, value) => { calls.push(`features clamp ${name} ${value}`); return `${name} clamp ${value.toFixed(2)}` },
+    release: (name) => { calls.push(`features release ${name}`); return [`${name} released`] },
+    reset: () => { calls.push('features reset'); return ['features: nothing steered'] },
+  }
 }
 
 /** The tether the fake gateway binds a script to. */
@@ -185,6 +226,8 @@ function fakeOperator(): FakeOp {
     proposal: undefined,
     text: 'Grip scales\ntyre friction.',
     acts: undefined as unknown as FakeActs,
+    features: undefined as unknown as FeaturesBridge,
+    elite: undefined as unknown as FakeElite,
     unlock: () => { f.opCalls.push('unlock'); f.state.unlocked = true },
     // The tier withdraws a waiting proposal as it locks (no proposal waits past a lock): the console must read it first.
     lock: () => { f.opCalls.push('lock'); f.state.unlocked = false; f.acts.waiting = null },
@@ -374,6 +417,16 @@ function fakeTopics(calls: string[]): FakeTopics {
   return t
 }
 
+/** The city's columns as NoirScript reads them: four people, two cars (the second driven, fast), a quiet kernel, a 60 Hz frame. */
+function fakeTables(): NoirTables {
+  return {
+    crowd: { n: 4, x: Float32Array.of(1, -2, 3, -4), z: Float32Array.of(1, 2, -3, 4) },
+    cars: { n: 2, x: Float32Array.of(0, 8), z: Float32Array.of(0, -8), heading: Float32Array.of(0, 1.5), speed: Float32Array.of(0, 12), mode: Int32Array.of(0, 1) },
+    kernel: { law1: 3, law2: 0, law3: 1, flips: 2, shielded: false },
+    frame: { fps: 60, ms: 16.6, p95: 18 },
+  }
+}
+
 /** Logs to the bridge's shared `calls` (as 'memory <verb>'), so the air-gap sweep sees every use. */
 function fakeMemory(calls: string[]): MemoryBridge {
   return {
@@ -544,6 +597,7 @@ function fake(): Fake {
     rain: (arg) => { f.calls.push(`rain ${arg}`); return arg ?? 'off' },
     render: (arg) => { f.calls.push(`render ${arg}`); return arg ?? 'on' },
     captions: (arg) => { f.calls.push(`captions ${arg}`); return `captions: ${arg ?? 'on'}` },
+    soa: { tables: () => { f.calls.push('soa tables'); return fakeTables() } },
     ping: undefined as unknown as FakePing,
     topics: undefined as unknown as FakeTopics,
     hal: {
@@ -565,6 +619,8 @@ function fake(): Fake {
   }
   f.ping = fakePing(f.calls)
   f.topics = fakeTopics(f.calls)
+  f.operator.features = fakeFeatures(f.calls)
+  f.operator.elite = fakeElite(f.operator.opCalls)
   f.recruit = fakeRecruit(f.calls)
   f.memory = fakeMemory(f.calls)
   f.look = fakeLook(f.calls)
@@ -973,7 +1029,7 @@ test('clear, history, whoami, version, uname and exit', () => {
 test('the brand always comes from the bridge', () => {
   const b = unlocked()
   const everything = ['help', 'stats', 'laws', 'kernel', 'quality', 'time', 'audio', 'hal', 'version', 'uname -a', 'api', 'harness', 'record', 'sim', 'operator',
-    'render', 'captions', 'ping', 'look', 'boot', 'map', 'r0', 'net', 'recruit']
+    'render', 'captions', 'ping', 'look', 'boot', 'map', 'r0', 'noir', 'net', 'recruit']
     .flatMap((c) => texts(run(c, b, [])))
     .concat(motd(BRAND).map((l) => l.text))
     .join('\n')
@@ -1046,10 +1102,16 @@ test('air gap: while locked, across every command and completion, the only knobs
   // `operator unlock` is the one line that changes the lock state; every other line runs against the locked tier.
   assert.ok(lines.includes('operator unlock'))
   const sweep = [...lines.filter((l) => l !== 'operator unlock'), 'time 8', 'time 08:15', 'run 1 + 1', 'run rust: 1 + 1', 'get physics', 'set physics.car.power 2', 'harness run kernel-stop',
-    'recruit rally 7', 'recruit rally 7 1 2', 'look show 7', 'look top 2', 'look code ABCD-EFGH', 'net join ws://127.0.0.1:8787 tok', 'topic get ~/x', 'topic list ~/#', 'topic tree ~/Area']
+    'recruit rally 7', 'recruit rally 7 1 2', 'look show 7', 'look top 2', 'look code ABCD-EFGH', 'net join ws://127.0.0.1:8787 tok', 'topic get ~/x', 'topic list ~/#', 'topic tree ~/Area',
+    'noir print(crowd.n);', 'noir print(tune("car.power", 2.0));']
   for (const l of sweep) void run(l, b, ['help'])
   const touched = new Set(b.calls.map((c) => c.split(' ')[0]))
-  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'ghost', 'look', 'memory', 'model', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'setClock', 'stats', 'topics'])
+  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'features', 'ghost', 'look', 'memory', 'model', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'setClock', 'soa', 'stats', 'topics'])
+  // The feature inspector is only ever read while locked: no bias, clamp, release or reset reaches the tier.
+  const featureVerbs = new Set(b.calls.filter((c) => c.startsWith('features ')).map((c) => c.split(' ')[1]))
+  assert.deepEqual([...featureVerbs].sort(), ['about', 'explain', 'lines', 'prompt'])
+  // NoirScript reads the city's columns as copies, through the one reader, and nothing else: a write intrinsic fails in the VM.
+  assert.deepEqual([...new Set(b.calls.filter((c) => c.startsWith('soa ')))], ['soa tables'])
   // The namespace is only ever read while locked (it has no write), and only through its four readers.
   const topicVerbs = new Set(b.calls.filter((c) => c.startsWith('topics ')).map((c) => c.split(' ')[1]))
   assert.deepEqual([...topicVerbs].sort(), ['children', 'get', 'list', 'status'])
@@ -1074,7 +1136,8 @@ test('air gap: while locked, across every command and completion, the only knobs
   for (const l of ['run 1 + 1', 'run sim.clock.set(3)', 'run rust: sim.clock.set(3)', 'run rust, go: 1', 'ask', 'ask rust: hi', 'ask model m', 'ask server http://localhost:1', 'ask stop',
     'say', 'say rust: over here', 'say voice v', 'say model m', 'say server http://localhost:1', 'say auto on', 'say stop', 'memory forget 7', 'memory forget all',
     'get', 'get physics', 'set physics.car.power 2', 'harness run kernel-stop', 'harness run sanctuary', 'record start', 'record start camera', 'record stop',
-    'net join ws://127.0.0.1:8787 tok', 'net join wss://localhost:8788', 'net leave', 'net forget', 'act ok', 'act no']) {
+    'net join ws://127.0.0.1:8787 tok', 'net join wss://localhost:8788', 'net leave', 'net forget', 'act ok', 'act no',
+    'feature steer CIVIC_COOPERATION 0.5', 'feature clamp CIVIC_COOPERATION 1', 'feature release CIVIC_COOPERATION', 'feature reset']) {
     const r = run(l, b, [])
     assert.ok(isErr(r), `${l} should be refused while locked`)
     assert.match(texts(r)[0], /^\w+: locked; type 'operator unlock' first$/)
@@ -1105,7 +1168,8 @@ test('air gap: the terminal files reach nothing at runtime beyond React, the bra
   ]
   // repl.ts is the console's own machine: a runtime import, and the one terminal module that imports nothing itself.
   // react-dom is React's own renderer: Terminal.tsx takes flushSync from it, so a tap can open the console and focus it at once.
-  const allowedRuntime = ['react', 'react-dom', '../../brand.ts', './bridge.ts', './commands.ts', './repl.ts']
+  // noirscript/index.ts is the console's second language: a runtime import of commands.ts, and a directory that imports nothing itself (its airgap.test.ts pins that).
+  const allowedRuntime = ['react', 'react-dom', '../../brand.ts', './bridge.ts', './commands.ts', './repl.ts', './noirscript/index.ts']
   for (const file of ['bridge.ts', 'commands.ts', 'Terminal.tsx', 'repl.ts']) {
     const src = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8')
     assert.doesNotMatch(src, /\bimport\s*\(|\brequire\s*\(|__AC__|__SIM__/, `${file}: dynamic import or debug handle`)
@@ -1996,6 +2060,91 @@ test('boot: the track the console was mounted on; boot gui|tty hands the host a 
   assert.doesNotMatch(motd({ ...BRAND, track: 'gui' }).map((l) => l.text).join('\n'), /Track B/)
 })
 
+test('feature: the inspector is read while locked (rows, top k, one card, the prompt lines, what it is), watched live, and steered by the operator alone; every row from the tier', () => {
+  const b = fake()
+  assert.deepEqual(texts(run('feature', b, [])), ['SANDBOX_COMPLIANCE    [##########]  1.00', 'CROWD_CALM            [##########]  1.00', 'CIVIC_COOPERATION     [####......]  0.40'])
+  assert.deepEqual(texts(run('feature list', b, [])), texts(run('feature', b, [])))
+  assert.deepEqual(texts(run('feature top 2', b, [])), ['SANDBOX_COMPLIANCE    [##########]  1.00', 'CROWD_CALM            [##########]  1.00'])
+  assert.deepEqual(only(run('feature top 0', b, [])), { kind: 'err', text: 'usage: feature top <k>' })
+  assert.deepEqual(only(run('feature top x', b, [])), { kind: 'err', text: 'usage: feature top <k>' })
+  assert.deepEqual(texts(run('feature CIVIC_COOPERATION', b, [])), ['CIVIC_COOPERATION  (civic cooperation)', 'People letting others through.', 'threshold 0.05  now 0.40'])
+  assert.deepEqual(texts(run('feature civic_cooperation', b, [])).length, 3, 'any case')
+  assert.deepEqual(kinds(run('feature NOPE', b, [])), ['err', 'err'])
+  assert.match(texts(run('feature NOPE', b, []))[0], /^feature: no feature 'NOPE'$/)
+  assert.deepEqual(only(run('feature prompt', b, [])), { kind: 'sys', text: 'feature: nothing steered; the prompt carries no steering line' })
+  assert.deepEqual(kinds(run('feature about', b, [])), ['sys', 'sys'])
+  const live = run('feature watch', b, [])
+  assert.equal(live.lines.length, 3)
+  assert.equal(typeof live.live, 'function')
+  assert.deepEqual(live.live!(b), ['SANDBOX_COMPLIANCE    [##########]  1.00', 'CROWD_CALM            [##########]  1.00', 'CIVIC_COOPERATION     [####......]  0.40'])
+  // Steering is the operator's: refused before the tier is asked.
+  for (const l of ['feature steer CIVIC_COOPERATION 0.5', 'feature clamp CIVIC_COOPERATION 0.8', 'feature release CIVIC_COOPERATION', 'feature reset']) {
+    assert.deepEqual(only(run(l, b, [])), { kind: 'err', text: "feature: locked; type 'operator unlock' first" }, l)
+  }
+  assert.ok(b.calls.every((c) => /^features (lines|about|prompt|explain)\b/.test(c)), b.calls.join(', '))
+  const u = unlocked()
+  assert.deepEqual(texts(run('feature steer CIVIC_COOPERATION 0.5', u, [])), ['CIVIC_COOPERATION bias +0.50', 'physics.car.power = 0.85'])
+  assert.deepEqual(only(run('feature clamp CIVIC_COOPERATION 0.8', u, [])), { kind: 'out', text: 'CIVIC_COOPERATION clamp 0.80' })
+  assert.deepEqual(texts(run('feature release CIVIC_COOPERATION', u, [])), ['CIVIC_COOPERATION released'])
+  assert.deepEqual(texts(run('feature reset', u, [])), ['features: nothing steered'])
+  assert.deepEqual(u.calls.filter((c) => c.startsWith('features ')), ['features steer CIVIC_COOPERATION 0.5', 'features clamp CIVIC_COOPERATION 0.8', 'features release CIVIC_COOPERATION', 'features reset'])
+  // Argument validation, before the tier is touched.
+  u.calls.length = 0
+  assert.deepEqual(only(run('feature steer CIVIC_COOPERATION x', u, [])), { kind: 'err', text: "feature: the value must be a number, not 'x'" })
+  assert.deepEqual(only(run('feature steer CIVIC_COOPERATION', u, [])), { kind: 'err', text: 'usage: feature steer <NAME> <value>' })
+  assert.deepEqual(only(run('feature clamp', u, [])), { kind: 'err', text: 'usage: feature clamp <NAME> <value>' })
+  assert.deepEqual(only(run('feature release', u, [])), { kind: 'err', text: 'usage: feature release <NAME>' })
+  assert.deepEqual(only(run('feature reset now', u, [])), { kind: 'err', text: 'usage: feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]' })
+  assert.deepEqual(u.calls, [])
+  // The tier's own refusal (a RangeError for an unknown name or a value out of range) is an error line.
+  u.operator.features.steer = () => { throw new RangeError("unknown feature 'NOPE'") }
+  assert.deepEqual(only(run('feature steer NOPE 1', u, [])), { kind: 'err', text: "feature: unknown feature 'NOPE'" })
+  // Offline: every read reports the engine down.
+  assert.match(only(run('feature', offlineBridge(BRAND), [])).text, /engine not running/)
+  // Completion knows the dictionary, which is the inspector's, in its order.
+  assert.deepEqual(FEATURE_IDS, FEATURES.map((f) => f.id))
+  assert.ok(complete('feature ').includes('feature CIVIC_COOPERATION'))
+  assert.ok(complete('feature steer ').includes('feature steer TRAFFIC_YIELD'))
+})
+
+test('ring0: the elite tier reads while locked, opens only for the operator with the passphrase set, and never echoes or keeps the passphrase', () => {
+  const b = fake()
+  assert.deepEqual(only(run('ring0', b, [])), { kind: 'out', text: 'ring0: elite tier locked (no passphrase set); 0 writes this session' })
+  assert.deepEqual(texts(run('ring0 status', b, [])), texts(run('ring0', b, [])))
+  assert.deepEqual(only(run('ring0 lock', b, [])), { kind: 'out', text: 'ring0: elite tier locked' })
+  for (const l of ['ring0 unlock --elite open sesame please', 'ring0 elite set open sesame please']) {
+    assert.deepEqual(only(run(l, b, [])), { kind: 'err', text: "ring0: locked; type 'operator unlock' first" }, l)
+  }
+  assert.deepEqual(only(run('ring0 unlock', b, [])), { kind: 'err', text: 'ring0: say what to unlock and with what: ring0 unlock --elite <passphrase>' })
+  assert.deepEqual(only(run('ring0 unlock --elite', b, [])), { kind: 'err', text: 'ring0: say what to unlock and with what: ring0 unlock --elite <passphrase>' })
+  assert.deepEqual(only(run('ring0 elite set', b, [])), { kind: 'err', text: 'usage: ring0 elite set <passphrase>' })
+  assert.deepEqual(only(run('ring0 elite', b, [])), { kind: 'err', text: 'usage: ring0 elite set <passphrase>' })
+  assert.deepEqual(only(run('ring0 open', b, [])), { kind: 'err', text: 'usage: ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]' })
+  assert.deepEqual(b.operator.opCalls, [], 'nothing reached the tier while locked')
+  const u = unlocked()
+  assert.deepEqual(only(run('ring0 unlock --elite open sesame please', u, [])), { kind: 'err', text: "ring0: no elite passphrase is set: 'ring0 elite set <passphrase>' first" })
+  assert.deepEqual(only(run('ring0 elite set open sesame please', u, [])), { kind: 'out', text: 'ring0: elite passphrase set' })
+  assert.deepEqual(only(run('ring0 unlock --elite wrong words here', u, [])), { kind: 'err', text: 'ring0: wrong passphrase (4 tries left)' })
+  const open = run('ring0 unlock --elite open sesame please', u, [])
+  assert.deepEqual(kinds(open), ['out', 'out'])
+  assert.match(texts(open)[0], /^Ring-0 elite tier unlocked/)
+  assert.deepEqual(only(run('ring0', u, [])), { kind: 'out', text: 'ring0: elite tier unlocked; 0 writes this session' })
+  assert.deepEqual(only(run('ring0 lock', u, [])), { kind: 'out', text: 'ring0: elite tier locked' })
+  assert.deepEqual(u.operator.opCalls, ['elite unlock', 'elite set open sesame please', 'elite unlock', 'elite unlock'])
+  // The passphrase keeps its inner spaces and loses its ends; the history never keeps it.
+  assert.deepEqual(kinds(run('ring0 unlock --elite   open sesame please  ', u, [])), ['out', 'out'])
+  assert.equal(redactForHistory('ring0 unlock --elite open sesame please'), 'ring0 unlock --elite ••••')
+  assert.equal(redactForHistory('  ring0 elite set open sesame please'), '  ring0 elite set ••••')
+  assert.equal(redactForHistory('ring0 unlock --elite'), 'ring0 unlock --elite')
+  assert.equal(redactForHistory('ring0 status'), 'ring0 status')
+  // Offline: the tier is down with the engine.
+  assert.match(only(run('ring0', offlineBridge(BRAND), [])).text, /engine not running/)
+  // Completion.
+  assert.deepEqual(complete('ring0 '), ['ring0 elite', 'ring0 lock', 'ring0 status', 'ring0 unlock'])
+  assert.deepEqual(complete('ring0 unlock '), ['ring0 unlock --elite'])
+  assert.deepEqual(complete('ring0 elite '), ['ring0 elite set'])
+})
+
 test('r0: the console\'s own machine runs the rest of the line, keeps definitions for the session, resets and lists words; it touches no bridge', () => {
   const b = fake()
   const session = replSession()
@@ -2026,6 +2175,69 @@ test('r0: the console\'s own machine runs the rest of the line, keeps definition
   assert.deepEqual(b.record.recCalls, [])
   // The offline bridge is as good as any: the machine needs no engine.
   assert.deepEqual(run('r0 10 3 mod .', offlineBridge(BRAND), []).lines, [{ kind: 'out', text: '1' }])
+})
+
+test('noir: NoirScript runs the rest of the line on the session, keeps definitions, resets, lists words and disassembles; the city\'s columns are copies and nothing is written', () => {
+  const b = fake()
+  const session = replSession()
+  assert.deepEqual(run('noir let mut s = 0; for i in 0..10 { s += i * i; } print(s);', b, [], session).lines, [{ kind: 'out', text: '285' }])
+  assert.deepEqual(run('noir fn sq(x: i32) -> i32 { x * x }', b, [], session).lines, [])
+  assert.deepEqual(run('noir print(sq(7));', b, [], session).lines, [{ kind: 'out', text: '49' }])
+  assert.deepEqual(run('noir let v = f32x4(1.0, 2.0, 3.0, 4.0); print(v * splat_f32x4(2.0), hsum(v));', b, [], session).lines, [{ kind: 'out', text: 'f32x4(2, 4, 6, 8) 10' }])
+  // Without a session each line runs on a fresh VM: the definition is not there.
+  const fresh = run('noir print(sq(7));', b, [])
+  assert.deepEqual(fresh.lines.map((l) => l.kind), ['err'])
+  assert.match(fresh.lines[0].text, /^noir: .*sq/)
+  assert.deepEqual(run('noir print(1 / 0);', b, [], session).lines, [{ kind: 'err', text: 'noir: division by zero' }])
+  assert.ok(run('noir words', b, [], session).lines[0].text.split(' ').includes('sq'))
+  // The city's columns: read as copies through the bridge's one reader, before the run.
+  assert.deepEqual(run('noir print(crowd.n, cars.n, kernel.law1);', b, [], session).lines, [{ kind: 'out', text: '4 2 3' }])
+  assert.deepEqual(run('noir print(query cars where speed > 5.0, query crowd where x > 0.0 && z > 0.0);', b, [], session).lines, [{ kind: 'out', text: '1 1' }])
+  assert.ok(b.calls.length > 0 && b.calls.every((c) => c === 'soa tables'), b.calls.join(', '))
+  // A write intrinsic type-checks and compiles, and fails at run time while the elite tier is locked, with the tier's own words.
+  const locked = run('noir print(tune("car.power", 2.0));', b, [], session)
+  assert.deepEqual(locked.lines, [{ kind: 'err', text: "noir: elite tier locked: 'ring0 unlock --elite <passphrase>' opens it" }])
+  assert.deepEqual(b.operator.opCalls, [])
+  assert.deepEqual(b.record.recCalls, [])
+  // Open, the elite tier's surface is the writes' only path (the fake's tune answers 1, cull and steer echo, intent is
+  // sent), the run has the tier's raised limits, and the city's columns are still the one reader's.
+  const u = unlocked()
+  const us = replSession()
+  assert.deepEqual(only(run('noir print(tune("car.power", 2.0));', u, [], us)), { kind: 'err', text: "noir: elite tier locked: 'ring0 unlock --elite <passphrase>' opens it" }, 'the operator tier alone opens nothing')
+  run('ring0 elite set open sesame please', u, [])
+  run('ring0 unlock --elite open sesame please', u, [])
+  assert.deepEqual(run('noir print(tune("car.power", 2.0), cull(0.5), steer("CIVIC_COOPERATION", 0.25));', u, [], us).lines, [{ kind: 'out', text: '1 0.5 0.25' }])
+  assert.deepEqual(run('noir print(intent(1, 1.0, 0.0, 0.0));', u, [], us).lines, [{ kind: 'out', text: 'true' }])
+  assert.ok(u.calls.every((c) => c === 'soa tables'), u.calls.join(', '))
+  const long = run('noir let mut s = 0; for i in 0..1200000 { s += 1; } print(s);', u, [], us)
+  assert.deepEqual(long.lines[0], { kind: 'out', text: '1200000' }, 'past the standard step budget, within the tier\'s')
+  run('ring0 lock', u, [])
+  assert.deepEqual(only(run('noir print(cull(0.5));', u, [], us)), { kind: 'err', text: "noir: elite tier locked: 'ring0 unlock --elite <passphrase>' opens it" })
+  // The listing: bytecode, one line per instruction; a bad line is its compile error.
+  const asm = run('noir asm print(1 + 2);', b, [], session)
+  assert.ok(asm.lines.length > 0 && asm.lines.every((l) => l.kind === 'out'))
+  assert.match(texts(asm).join('\n'), /ADD_I32/)
+  assert.deepEqual(run('noir asm', b, [], session).lines, [{ kind: 'err', text: 'usage: noir asm <source>' }])
+  assert.deepEqual(run('noir asm let x: i32 = true;', b, [], session).lines.map((l) => l.kind), ['err'])
+  // A runaway line ends with the budget's error, its step count noted, and the session still answers.
+  const runaway = run('noir loop { }', b, [], session)
+  assert.deepEqual(runaway.lines.map((l) => l.kind), ['err', 'sys'])
+  assert.match(runaway.lines[0].text, /^noir: step budget exhausted/)
+  assert.match(runaway.lines[1].text, /^-- \d+ steps --$/)
+  assert.deepEqual(run('noir print(sq(3));', b, [], session).lines, [{ kind: 'out', text: '9' }])
+  assert.deepEqual(run('noir reset', b, [], session).lines, [{ kind: 'out', text: 'noir: reset (every definition forgotten, memory zeroed)' }])
+  assert.ok(!run('noir words', b, [], session).lines[0].text.split(' ').includes('sq'))
+  // Alone: the usage and a hint.
+  const alone = run('noir', b, [])
+  assert.equal(alone.lines[0].text, 'usage: noir <source>|noir reset|noir words|noir asm <source>')
+  assert.equal(alone.lines[1].kind, 'sys')
+  // Deterministic: the same line on two sessions gives the same result.
+  assert.deepEqual(run('noir print(7 % 3, 2.5 * 2.0);', b, [], replSession()), run('noir print(7 % 3, 2.5 * 2.0);', b, [], replSession()))
+  // A failing reader is an error line, never an exception; a host without columns (the console alone) reads empty tables.
+  const bad = fake()
+  bad.soa = { tables: () => { throw new Error('columns unavailable') } }
+  assert.deepEqual(run('noir print(1);', bad, []).lines, [{ kind: 'err', text: 'noir: columns unavailable' }])
+  assert.deepEqual(run('noir print(crowd.n, cars.n);', offlineBridge(BRAND), []).lines, [{ kind: 'out', text: '0 0' }])
 })
 
 test('net: status reads at any time as rows; join, leave and forget are the operator\'s; a join resolves with the room\'s line or its refusal', async () => {
