@@ -1063,9 +1063,12 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           }}
         />
       )}
+      {/* Never over a halted city: the way-out card (RecoveryCard.tsx) holds focus on Restart, and Sloane's name field,
+          shown as the veil finishes fading, would take it (a halt in the veil's last second, as the browser smoke's
+          thrown frame is). The look card and the action card step aside the same way below. */}
       {hud && (
         <Concierge
-          visible={veilDone && hudVisible && !termOpen && !lookOpen}
+          visible={veilDone && hudVisible && !termOpen && !lookOpen && locked === null}
           profile={profile}
           onProfile={setProfile}
           family={hud.supplier.glyphs}

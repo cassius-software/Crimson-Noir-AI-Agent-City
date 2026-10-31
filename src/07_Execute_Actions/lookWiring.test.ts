@@ -160,7 +160,7 @@ test('app: the player\'s look is kept under its own key, worn on agent 0 from th
   assert.match(app, /onLook=\{openLook\}/)
   assert.match(app, /<Customizer\n\s*visible=\{lookOpen && veilDone && !termOpen && locked === null\}/)
   assert.match(app, /engineRef\.current\?\.input\.suspend\(lookOpen \|\| termOpenRef\.current\)/, 'game input rests while the card has the pointer')
-  assert.match(app, /visible=\{veilDone && hudVisible && !termOpen && !lookOpen\}/, 'Sloane steps aside for the card')
+  assert.match(app, /visible=\{veilDone && hudVisible && !termOpen && !lookOpen && locked === null\}/, 'Sloane steps aside for the card')
   const concierge = read('./Concierge.tsx')
   assert.match(concierge, /onLook\?\(\): void/)
   assert.match(concierge, /data-concierge="chip-look"/)

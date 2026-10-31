@@ -178,3 +178,11 @@ test('engine: a lost page device halts as a graphics reset; the first frame draw
   assert.ok(create.indexOf('try {') < create.indexOf('buildWorld('), 'everything after the device is inside the try')
   assert.match(ENGINE, /releaseGpu\(this\.gpu\)/, 'dispose lets go the same way')
 })
+
+test('App: Sloane never greets over a halted city, so the card keeps focus on Restart', () => {
+  // The veil's onDone fires up to fadeMs + graceMs after the fade starts; a halt inside that window (the browser smoke's
+  // thrown frame right after the veil lifts) shows the card first and Sloane's name field second, which would take the
+  // focus from Restart (Concierge.tsx focusField takes it from anything but another text field). The Customizer and the
+  // ActCard are gated on the same lock (lookWiring.test.ts, actWiring.test.ts).
+  assert.match(APP, /<Concierge\n\s*visible=\{veilDone && hudVisible && !termOpen && !lookOpen && locked === null\}/)
+})
