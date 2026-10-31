@@ -15,6 +15,95 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The fallen wear their own bodies.** A pedestrian the realm promotes to a physical body (a shove, a kerb trip, a
+  slip near the operator) is no longer hidden and replaced by grey capsules: the crowd's vertex stage hangs each of
+  the body's fifteen bones from the rig shape it belongs to (`src/03_Spawn_Agents/humanoid.ts` `RIG_REST`,
+  `rigPoint`; `crowdBody.ts` `bodyRig`), from the thirteen shape poses the realm already streams, so the suit, the
+  face, the hair and the wardrobe fall with the person and stand up again, in the eye pass and the shadow pass
+  alike. The rig slot rides the spare fourth figure word and the poses one uniform array (`crowd.ts` `rigPoses`),
+  both written by the engine every frame; a test pins every bone's shape and standing centre to the realm's own rig
+  tables. The fallen figure's row in the crowd's render copy is pinned to the rig's pelvis (`crowdCull.ts` `pin`),
+  so the cull, the passage pulse and the code dissolve find the body where it lies and not where the crowd walks
+  its twin, and a fallen body writes no motion of its own into the cinema camera's blur. `?rigs=capsules` brings
+  the bare capsules back as a debug view; ghost view shows the rig's shapes either way. The rig is still the rig's
+  one size (a 1.75 m adult), so a tall or short body's joints sit a few centimetres off its shapes while promoted.
+  How it looks on a real GPU is unverified.
+- **Feet that stay planted, heads that look.** Each leg of the crowd's body is solved from where its foot is
+  (`src/03_Spawn_Agents/humanoid.ts` `footAt`, `legSolve`; `crowdBody.ts` `bodyFoot`, `bodyLeg`). The worker
+  advances the walk phase with the distance walked, so a foot carried back linearly in the phase through its stance
+  keeps its spot of ground (a test walks seven speeds, statures and headings and pins the planted ankle to a
+  micrometre), rolls onto its heel at the strike and its toes at the push-off, and the pelvis drops what the planted
+  leg cannot span at the ends of a stride, so the body rises and falls with the step instead of bobbing on a sine.
+  Under half a metre a second the stride shrinks toward standing, so a person who stops stands with their feet
+  together whatever the phase (and shuffles a little while slowing). The head and the chest turn toward the
+  operator's eye when it is in front of them, within reach (whole to 2.5 m, gone by 4.5 m) and not their own
+  (`gazeAt`, `bodyGaze`: one `gazeTarget` uniform the engine writes every frame, so the shadow looks where the body
+  does; from a car nobody is looked at), and toward the way they go otherwise, the head leading a turn, the chest
+  taking three tenths of the yaw. The card's silhouette runs the same arithmetic. The ground under the crowd is
+  flat (kerbs are painted bands), so there is no height for the feet to follow. The walk and the gaze are
+  hand-written arithmetic: no motion capture or animation clip. How the gait and the gaze look on a real GPU is
+  unverified.
+- **A layered wardrobe with dye channels.** Every look has a **layer** (the jacket, shirt sleeves or a coat), a
+  **trim** (matching, or one of seven cloths on the lapels, the collar band and the cuffs) and a **scarf** (none or
+  one of seven cloths). The coat is a shell of `src/03_Spawn_Agents/humanoid.ts`'s loft over the trunk, worn by
+  the near and the far body, and owns the top's dye (seven coat cloths in the jacket's bits); the scarf wraps the
+  neck on both bodies with a tail down the chest on the near one. The jacket's lines (the shirt's V, the lapels,
+  the shirt's collar, the collar band, the cuffs) are no longer vertices: the fragment stage of `crowd.ts` cuts
+  them from the rest position (`GARMENT`), so the shirt's slot leaves the loft and a trim costs the shadow pass
+  nothing. The slot a band of the body paints is now a flat varying (each triangle its lower ring's), which ends
+  the stripes a jacket's hem showed over the trousers. The look grows to thirty-two slots and a fourth packed word
+  (`packWardrobe`), carried as the third of four words per agent in `crowd.figure`; look codes are twenty-eight
+  symbols (`XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX`), and the twenty-one-, fifteen- and eight-symbol codes, the stored v3,
+  v2 and v1 records and a roster's old looks are read and upgraded with the jacket, a matching trim and no scarf.
+  The hashed crowd draws the layer, the trim and the scarf from the same chains (`lookFromSeed` reproduces them:
+  one in five in shirt sleeves, three in twenty in a coat, one in five with a trim, three in twenty-five with a
+  scarf). The card gains Layer, Trim and Scarf rows (the jacket's and the trim's hidden under shirt sleeves) and
+  the console's `look` the three slots; the 14A pin gains the coat and the scarf (clothing, nothing held). Tests:
+  the garment lines against the loft, the coat outside the trunk, look v4 round trips, upgrades and codes, the
+  wiring and the air gap, every body material built under Node in both passes. The crowd's palettes now ride one
+  uniform buffer: a buffer per palette reached thirteen in the fragment stage with the coats, the trims and the
+  scarves, past the twelve WebGPU promises a stage, and no body's pipeline built; `shadowShaders.test.ts` now
+  counts every material's bindings a stage against that promise. The garments' appearance on a real GPU is not yet
+  confirmed: software WebGPU and CI's screenshots only.
+- **A face for every pedestrian, and hair in five styles.** The head of `src/03_Spawn_Agents/humanoid.ts` is now a
+  twelve-sided skull in regions (chin, jaw, cheekbones, brow line) with features lofted onto its front: two eyes
+  (a white and an iris), two brows, a nose rooted on the skull, the lips, two ears; all written by hand, no imported
+  face, no scanned or generated morph target. Seven face sliders of sixteen steps each (brow, jaw, chin, cheekbones,
+  nose, eyes, lips) move their region alone, in the vertex stage (`crowdBody.ts` `bodyFace`, before the body
+  sliders) and in the card's new face view (front and profile, the head's own rings), with step 8 exactly the base
+  face. An age (eight steps) fades the skin toward its own grey and greys the hair from the middle up; an undertone
+  (neutral, warm, cool, olive) tints the skin in linear light. The hair has five styles (short, long, bob, bun, bald)
+  as pieces of the loft. The look grows to twenty-nine slots and a third packed word (`packFace`: the face sliders
+  and the hair style), carried beside the figure word as a pair in one page-only buffer (`crowd.figure`, now two
+  words per agent) because the vertex stage already binds seven of WebGPU's eight storage buffers; the look word
+  takes the age and the undertone in the bits where the legacy height and build sat, and its bit 6 (long hair) is
+  written from the style. The features are drawn by the near body's eye pass alone: the shadow map and the far body
+  leave them out. Look codes are twenty-one symbols (`XXXXXXX-XXXXXXX-XXXXXXX`); the fifteen-symbol and eight-symbol
+  codes, the stored v2 and v1 records and a roster's old looks are read and upgraded with the base face. The
+  hashed crowd draws its face, age, undertone and hair style from the same chains (`lookFromSeed` reproduces them);
+  the iris stays hashed. The console's `look` takes the new slots; the 14A pin gains the four hair pieces and the
+  face (features, nothing held). Tests: the face arithmetic on the CPU against the shader's text, the features
+  clear of the skull and between the glasses' rims, no flat triangle, the far body faceless, every body material
+  built under Node in both passes, look v3 round trips, upgrades and codes, the wiring and the air gap. The face's
+  appearance on a real GPU is not yet confirmed: software WebGPU and CI's screenshots only.
+- **Smooth, customizable bodies for every pedestrian.** The crowd's four bodies are no longer boxes, cylinders and
+  spheres pushed into each other: `src/03_Spawn_Agents/humanoid.ts` lofts one smooth person from rings over a
+  skeleton of fifteen bones, every vertex tied to two of them, with the four outfits (the jacket hem, the shirt
+  front, the skirt, the tie, long hair, glasses, the bag, the cup) part of the loft, in a near and a far version.
+  Written by hand for this product: no imported mesh, skeleton or morph target. The vertex stage
+  (`src/03_Spawn_Agents/crowdBody.ts`, WGSL built from the same numbers) now bends knees, ankles, elbows and the
+  head from the walk phase, counter-twists the chest, blends each vertex's two bones, and carries the normals
+  through the same arithmetic; the spring-damper tilt, the stature, the heading and the place follow as before.
+  Eight body sliders join the look: height (32 steps, 1.50 m to 2.05 m), mass, muscle, shoulders, hips, leg length
+  and posture (sixteen steps each) and head (eight), packed into a second page-only word per agent (`crowd.figure`,
+  written by `setLook` beside `crowd.look`, never bound by the cull or any simulation pass). The wardrobe card draws
+  a silhouette of the look from the front and from the side, from the body's own rings in the look's colours, and
+  its sliders are sliders; the console's `look` takes the new slots (`look height 1.80`). The first-person eye stands
+  at the look's own eye height. Tests: the mesh (valid, bounded, deterministic, the far body a subset), the sliders'
+  arithmetic on the CPU against the shader's text, the walk, the skinning, the silhouette, every body material built
+  under Node in both passes with rain mode (within the shader budget), look v2 round trips, upgrades and codes, the
+  wiring and the air gap. The body's appearance and its cost on a real GPU are not yet confirmed: it has been looked
+  at on a software WebGPU adapter and in CI's browser screenshots only.
 - **Robots: a joint-state bridge between a robot and the physics realm.** `04_Connect_Hardware/robotLink.ts` is the
   page's robot bridge: a robot announces a manifest (`04_Connect_Hardware/jointState.ts`, the URDF's own words, read
   from a file by `urdf.ts`) and sends frames of q, q̇ and τ; the realm builds it a body (`07_Execute_Actions/
@@ -495,6 +584,15 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   about 20 minutes. Unverified from the cloud (no GPU): the rooms on screen and the workday at full speed there.
 
 ### Changed
+
+- **Look v2.** A look is twenty slots: `build` is gone, replaced by the eight sliders. A look kept in this browser
+  before (record `v` 1, fourteen slots, the same key), a roster record's look and an eight-symbol look code are
+  upgraded on the way in (height and build carried onto the new sliders, the rest set to the middle); new records
+  are written as `v` 2 and new codes are fifteen symbols, `XXXXX-XXXXX-XXXXX`, with the checksum over both words.
+  Every pedestrian's proportions change: the hashed crowd now draws a stature from a per-body range (men 1.64 m to
+  2.00 m, women 1.55 m to 1.87 m) and every other slider over its whole range, so the street has short and tall,
+  slight and heavy people where it had two scales; the hashed pieces and colours are as they were. `lookFromSeed`
+  mirrors the new draws bit for bit, so the pinned looks of the first agents changed with them.
 
 - **Canned answers say so, and are not remembered.** When no model answers and the script stands in, the console
   prints `ask: no model answered, so the script spoke instead:` and the reason under its words; neither the swarm's

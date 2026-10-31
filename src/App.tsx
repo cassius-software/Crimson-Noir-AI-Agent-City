@@ -413,6 +413,7 @@ function readOptions(): Options {
     dayMinutes: num('day', 24, 1, 1440),
     shadows: q.get('shadows') !== '0',
     post: q.get('post') !== '0',
+    rigCapsules: q.get('rigs') === 'capsules',
     profile: q.has('profile'),
     // -1 (or the word 'lite') is Lite, below Minimal; 0…4 are Minimal…Ultra; 5 (or the word 'peak') is Peak, above Ultra.
     quality: quality === null || quality === 'auto' ? 'auto' : quality === 'lite' ? -1 : quality === 'peak' ? 5 : Math.round(num('quality', 3, -1, 5)),

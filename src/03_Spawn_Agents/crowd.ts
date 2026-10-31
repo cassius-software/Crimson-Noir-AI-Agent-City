@@ -2,31 +2,42 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is the crowd's render side: four business-casual body variants
- * (suit, smart casual, pantsuit, skirt suit) at two levels of detail, eight InstancedMesh arrays fed by
- * GPU-compacted indirect draws, per-person attire and accessories chosen from hashed palettes, and
- * the WGSL vertex kinematics that pose each body from GPU state — including the player's own body, which
- * the first-person eye never sees from inside but whose shadow still walks beside them. The state it poses
- * them from arrives from the physics worker, which alone simulates the pedestrians (crowdSim.ts); the page
- * writes each frame into these buffers and culls it (crowdCull.ts). A person's look is hashed from their
- * index unless the page's per-agent look word (look.ts, one u32 in `crowd.look`) names one: then its bits
- * choose the pieces, the proportions and every colour slot in place of the hash (the body itself is chosen
- * from the same word in the cull, crowd.wgsl), so the player and a recruit can wear what they chose.
+ * Why does this file exist? It is the crowd's render side: four business-casual bodies (suit, smart casual,
+ * pantsuit, skirt suit), each one smooth humanoid lofted by humanoid.ts over fifteen bones at two levels of detail,
+ * eight InstancedMesh arrays fed by GPU-compacted indirect draws, per-person attire and accessories chosen from
+ * hashed palettes, and the vertex stage (crowdBody.ts: the sliders' reshaping, the walk's joints, two-bone skinning)
+ * that poses each body from GPU state — including the player's own body, which the first-person eye never sees from
+ * inside but whose shadow still walks beside them. The state it poses them from arrives from the physics worker,
+ * which alone simulates the pedestrians (crowdSim.ts); the page writes each frame into these buffers and culls it
+ * (crowdCull.ts). A person's look is hashed from their index unless the page's per-agent look word (look.ts, one
+ * u32 in `crowd.look`) names one: then its bits choose the pieces, every colour slot, the age and the skin's
+ * undertone, and the words beside it (`crowd.figure`: the figure word, the face word and the wardrobe word) the eight
+ * body sliders, the seven face sliders and the hair style, and the wardrobe's outer layer (a jacket, shirt sleeves or
+ * a coat), its trim and its scarf, in place of the hash (the body itself is chosen from the look word in the cull,
+ * crowd.wgsl), so the player and a recruit can wear what they chose. The jacket's lines are the fragment stage's: the
+ * shirt's V, the lapels beside it, the collar band and the cuffs are cut from the rest position (humanoid.ts GARMENT),
+ * so the trim's dye needs no vertices of its own. The face (the brow, the nose, the eyes, the lips, the ears) is drawn
+ * by the eye pass of the near body alone: the shadow pass and the far body leave it out.
  * What breaks if it is removed? No pedestrian is drawn, and the worker's frames have nowhere to land.
  */
 import {
-  BoxGeometry, BufferGeometry, CapsuleGeometry, Color, CylinderGeometry, Float32BufferAttribute,
-  IndirectStorageBufferAttribute, InstancedMesh, LatheGeometry, MeshStandardNodeMaterial, SphereGeometry,
-  StorageBufferAttribute, Vector2, type Node, type NodeBuilder, type UniformNode, type Vector4,
+  BufferGeometry, Color, Float32BufferAttribute, IndirectStorageBufferAttribute, InstancedMesh, MeshStandardNodeMaterial,
+  StorageBufferAttribute, Uint32BufferAttribute, Vector4, type Node, type NodeBuilder, type UniformNode,
 } from 'three/webgpu'
 import {
-  Fn, attribute, cameraPosition, float, hash, instanceIndex, mix, normalLocal, positionLocal, positionPrevious, select, step,
-  storage, time, uint, uniform, uniformArray, varyingProperty, vec3, vec4, wgslFn,
+  Fn, If, attribute, cameraPosition, dot, float, hash, instanceIndex, mix, normalLocal, positionGeometry, positionLocal, positionPrevious,
+  select, smoothstep, step, storage, time, uint, uniform, uniformArray, varying, varyingProperty, vec3, vec4,
 } from 'three/tsl'
 import { CODE_DISSOLVE, applyCodeDissolve } from '../01_Initialize_World/codeDissolve.ts'
 import { applyMatrixMode } from '../01_Initialize_World/matrixMode.ts'
+import { bodyVertex } from './crowdBody.ts'
 import { PLAYER_INDEX, VARIANTS, agentQuota } from './crowdCompute.ts'
-import { LOOK_FIELD, LOOK_SCALE, WARDROBE, type LookSlot, type PaletteName } from './look.ts'
+import { BODY_NAMES, BONE, GARMENT, HEIGHT_BASE, PIECE, RIG_REST, RIG_WEAR, humanoidMesh, type HumanoidMesh } from './humanoid.ts'
+import {
+  HAIR, LAYER, LOOK_FIELD, LOOK_HASHED_COLOUR, LOOK_HASHED_FACE, LOOK_HASHED_HAIR_SPLIT, LOOK_HASHED_LAYER, LOOK_HASHED_SCARF,
+  LOOK_HASHED_SLIDER, LOOK_ODDS, LOOK_PIECE_BIT, LOOK_SLIDER_MIDDLE, LOOK_STATURE, WARDROBE,
+  type LookFaceSlider, type LookSlider, type LookSlot, type PaletteName,
+} from './look.ts'
 
 /**
  * The player's own body (agent PLAYER_INDEX) seen from inside its head would fill the view: it is folded to
@@ -45,177 +56,43 @@ export const PEOPLE_DISSOLVE_INK: readonly [number, number, number] = Object.fre
 type V3 = Node<'vec3'>
 type F1 = Node<'float'>
 type U1 = Node<'uint'>
+/** A 3×3 matrix node as crowdBody.ts returns one (a column per element), held in a variable so the call runs once. */
+type Mat3 = { toVar(): Mat3; element(column: U1): V3 }
 
 /** Whether the pass being built writes motion vectors (three's builder knows; its typings leave the method out). */
 const needsPrevious = (b: NodeBuilder): boolean => (b as NodeBuilder & { needsPreviousData(): boolean }).needsPreviousData()
 
-// Rig parts: 0/1 legs, 2 torso (+ skirt), 3 head, 4/5 arms (+ held props).
-const PART = { L_LEG: 0, R_LEG: 1, TORSO: 2, HEAD: 3, L_ARM: 4, R_ARM: 5 } as const
-// Material slots.
-const S = { TOP: 0, SHIRT: 1, SKIN: 2, HAIR: 3, BOTTOM: 4, SHOES: 5, ACCENT: 6, PROP: 7, LEGWEAR: 8, FRAME: 9 } as const
-// Optional pieces, one bit each in the per-person mask.
-const O = { NONE: 0, TIE: 1, BAG: 2, CUP: 3, LONG_HAIR: 4, GLASSES: 5 } as const
+export const VARIANT_NAMES = BODY_NAMES
 
-export const VARIANT_NAMES = ['suit', 'smart casual', 'pantsuit', 'skirt suit'] as const
-
-type Piece = [geo: BufferGeometry, part: number, slot: number, opt?: number]
-
-function build(pieces: Piece[]): BufferGeometry {
-  const pos: number[] = [], nor: number[] = [], rig: number[] = [], idx: number[] = []
-  for (const [g, part, slot, opt = O.NONE] of pieces) {
-    const base = pos.length / 3
-    const count = g.getAttribute('position').count
-    pos.push(...(g.getAttribute('position').array as Float32Array))
-    nor.push(...(g.getAttribute('normal').array as Float32Array))
-    for (let i = 0; i < count; i++) rig.push(part, slot, opt)
-    if (g.index) for (const i of g.index.array) idx.push(base + i)
-    else for (let i = 0; i < count; i++) idx.push(base + i)
-    g.dispose()
-  }
-  const out = new BufferGeometry()
-  out.setAttribute('position', new Float32BufferAttribute(pos, 3))
-  out.setAttribute('normal', new Float32BufferAttribute(nor, 3))
-  out.setAttribute('rig', new Float32BufferAttribute(rig, 3))
-  out.setIndex(idx)
-  return out
-}
-
-const box = (w: number, h: number, d: number, x: number, y: number, z: number) => new BoxGeometry(w, h, d).translate(x, y, z)
-const cyl = (rt: number, rb: number, h: number, seg: number, x: number, y: number, z: number, open = false) =>
-  new CylinderGeometry(rt, rb, h, seg, 1, open).translate(x, y, z)
-const ball = (r: number, ws: number, hs: number, x: number, y: number, z: number, sx = 1, sy = 1, sz = 1) =>
-  new SphereGeometry(r, ws, hs).scale(sx, sy, sz).translate(x, y, z)
-const capsule = (r: number, len: number, x: number, y: number, z: number) => new CapsuleGeometry(r, len, 3, 8).translate(x, y, z)
-const lathe = (profile: [number, number][], depth: number) => new LatheGeometry(profile.map(([r, y]) => new Vector2(r, y)), 14).scale(1, 1, depth)
-const hairCap = (r: number, y: number) => new SphereGeometry(r, 12, 6, 0, Math.PI * 2, 0, 1.3).scale(0.94, 1.1, 1.04).translate(0, y, -0.008)
-
-// Torso silhouettes (radius, height), lathed then flattened front-to-back.
-const MAN_TORSO: [number, number][] = [[0.001, 0.86], [0.16, 0.88], [0.165, 1.0], [0.158, 1.12], [0.172, 1.28], [0.205, 1.4], [0.19, 1.46], [0.1, 1.5], [0.06, 1.52], [0.001, 1.52]]
-const WOMAN_TORSO: [number, number][] = [[0.001, 0.88], [0.158, 0.9], [0.145, 1.02], [0.128, 1.1], [0.152, 1.26], [0.175, 1.37], [0.165, 1.43], [0.09, 1.47], [0.052, 1.49], [0.001, 1.49]]
-
-function detailedBody(variant: number): BufferGeometry {
-  const woman = variant >= 2
-  const skirt = variant === 3
-  const p: Piece[] = []
-  const legR = woman ? (skirt ? 0.06 : 0.068) : 0.074
-  const legX = woman ? 0.088 : 0.095
-  for (const [part, s] of [[PART.L_LEG, -1], [PART.R_LEG, 1]] as const) {
-    p.push([cyl(legR, legR * 0.76, 0.84, 10, s * legX, 0.5, 0), part, skirt ? S.LEGWEAR : S.BOTTOM])
-    p.push([woman ? box(0.085, 0.075, 0.23, s * legX, 0.038, 0.03) : box(0.105, 0.085, 0.27, s * legX, 0.043, 0.035), part, S.SHOES])
-  }
-  if (skirt) p.push([cyl(0.165, 0.228, 0.5, 16, 0, 0.66, 0, true), PART.TORSO, S.BOTTOM])
-  p.push([lathe(woman ? WOMAN_TORSO : MAN_TORSO, woman ? 0.64 : 0.62), PART.TORSO, S.TOP])
-  p.push([box(woman ? 0.11 : 0.12, woman ? 0.2 : 0.24, 0.012, 0, woman ? 1.36 : 1.37, woman ? 0.114 : 0.121), PART.TORSO, S.SHIRT])
-  if (variant === 0) p.push([box(0.042, 0.3, 0.012, 0, 1.27, 0.128), PART.TORSO, S.ACCENT, O.TIE])
-
-  const headY = woman ? 1.655 : 1.685
-  p.push([cyl(woman ? 0.045 : 0.05, woman ? 0.05 : 0.056, 0.12, 8, 0, woman ? 1.53 : 1.55, 0), PART.HEAD, S.SKIN])
-  p.push([ball(woman ? 0.095 : 0.1, 12, 9, 0, headY, 0.005, 0.92, 1.12, 1.0), PART.HEAD, S.SKIN])
-  p.push([hairCap(woman ? 0.103 : 0.107, headY + 0.01), PART.HEAD, S.HAIR])
-  if (woman) p.push([new CapsuleGeometry(0.085, 0.22, 3, 8).scale(1.15, 1, 0.55).translate(0, headY - 0.14, -0.055), PART.HEAD, S.HAIR, O.LONG_HAIR])
-  p.push([box(0.17, 0.032, 0.012, 0, headY + 0.012, woman ? 0.094 : 0.1), PART.HEAD, S.FRAME, O.GLASSES])
-
-  const armR = woman ? 0.041 : 0.047
-  const armX = woman ? 0.212 : 0.228
-  for (const [part, s] of [[PART.L_ARM, -1], [PART.R_ARM, 1]] as const) {
-    p.push([capsule(armR, woman ? 0.44 : 0.46, s * armX, woman ? 1.18 : 1.19, 0), part, S.TOP])
-    p.push([ball(woman ? 0.039 : 0.043, 8, 6, s * armX, woman ? 0.89 : 0.89, 0.01), part, S.SKIN])
-  }
-  p.push([woman ? box(0.1, 0.3, 0.34, 0.25, 0.8, 0) : box(0.085, 0.27, 0.38, 0.27, 0.73, 0), PART.R_ARM, S.PROP, O.BAG])
-  p.push([cyl(0.034, 0.029, 0.11, 10, -armX, 0.85, 0.05), PART.L_ARM, S.PROP, O.CUP])
-  return build(p)
-}
-
-function distantBody(variant: number): BufferGeometry {
-  const woman = variant >= 2
-  const skirt = variant === 3
-  const p: Piece[] = []
-  for (const [part, s] of [[PART.L_LEG, -1], [PART.R_LEG, 1]] as const) {
-    p.push([box(0.13, 0.84, 0.16, s * 0.09, 0.5, 0), part, skirt ? S.LEGWEAR : S.BOTTOM])
-    p.push([box(0.1, 0.08, 0.25, s * 0.09, 0.04, 0.03), part, S.SHOES])
-  }
-  if (skirt) p.push([box(0.36, 0.48, 0.28, 0, 0.66, 0), PART.TORSO, S.BOTTOM])
-  p.push([box(woman ? 0.36 : 0.42, 0.62, 0.24, 0, 1.2, 0), PART.TORSO, S.TOP])
-  p.push([box(0.12, 0.22, 0.01, 0, 1.37, 0.121), PART.TORSO, S.SHIRT])
-  const headY = woman ? 1.655 : 1.685
-  p.push([box(0.17, 0.23, 0.2, 0, headY, 0), PART.HEAD, S.SKIN])
-  p.push([box(0.19, 0.07, 0.22, 0, headY + 0.12, -0.01), PART.HEAD, S.HAIR])
-  if (woman) p.push([box(0.2, 0.3, 0.08, 0, headY - 0.1, -0.08), PART.HEAD, S.HAIR, O.LONG_HAIR])
-  for (const [part, s] of [[PART.L_ARM, -1], [PART.R_ARM, 1]] as const) {
-    p.push([box(0.09, 0.56, 0.1, s * (woman ? 0.21 : 0.23), 1.19, 0), part, S.TOP])
-  }
-  return build(p)
+/**
+ * The arrays of one humanoid (humanoid.ts) as the geometry the crowd draws: position, normal, `rig`, `skin`, `face`,
+ * indexed. Every body carries `face` (zero off the head, and everywhere on the far body): a material that reads an
+ * attribute a geometry lacks cannot build its pipeline.
+ */
+function geometryOf(mesh: HumanoidMesh): BufferGeometry {
+  const g = new BufferGeometry()
+  g.setAttribute('position', new Float32BufferAttribute(mesh.position, 3))
+  g.setAttribute('normal', new Float32BufferAttribute(mesh.normal, 3))
+  g.setAttribute('rig', new Float32BufferAttribute(mesh.rig, 3))
+  g.setAttribute('skin', new Float32BufferAttribute(mesh.skin, 2))
+  g.setAttribute('face', new Float32BufferAttribute(mesh.face, 2))
+  g.setIndex(new Uint32BufferAttribute(mesh.index, 1))
+  return g
 }
 
 /**
- * One business-casual body of the same closed wardrobe as a plain geometry (its rig attribute rides along, unread by a
- * plain material): the detailed body of `variant` (VARIANT_NAMES order, clamped), or the distant one. For the page's
- * own ghosts of a network session's other players (07_Execute_Actions/netView.ts), which are poses drawn here and
- * never bodies in the physics realm.
+ * One business-casual body of the same closed wardrobe as a plain geometry (its rig and skin attributes ride along,
+ * unread by a plain material, so it stands in its rest pose: arms at its sides): the detailed body of `variant`
+ * (VARIANT_NAMES order, clamped), or the distant one. For the page's own ghosts of a network session's other players
+ * (07_Execute_Actions/netView.ts), which are poses drawn here and never bodies in the physics realm.
  */
 export function bodyGeometry(variant: number, detailed = true): BufferGeometry {
   const v = Number.isFinite(variant) ? Math.min(VARIANTS - 1, Math.max(0, Math.floor(variant))) : 0
-  return detailed ? detailedBody(v) : distantBody(v)
+  return geometryOf(humanoidMesh(v, detailed))
 }
 
-// Shared by position (w = 1) and normal (w = 0) so both follow the same skeleton.
-const rotX = wgslFn(`
-fn agentRotX(v: vec3f, a: f32) -> vec3f {
-  let c = cos(a);
-  let s = sin(a);
-  return vec3f(v.x, v.y * c - v.z * s, v.y * s + v.z * c);
-}`)
-const rotAxis = wgslFn(`
-fn agentRotAxis(v: vec3f, k: vec3f, a: f32) -> vec3f {
-  let c = cos(a);
-  let s = sin(a);
-  return v * c + cross(k, v) * s + k * dot(k, v) * (1.0 - c);
-}`)
-const agentXform = wgslFn(`
-fn agentXform(v: vec3f, w: f32, rig: vec3f, agent: vec4f, motion: vec4f, pose: vec4f, shape: vec4f, t: f32) -> vec3f {
-  let part = i32(rig.x + 0.5);
-  let opt = u32(rig.z + 0.5);
-  let mask = u32(shape.z + 0.5);
-  if (opt != 0u && ((mask >> opt) & 1u) == 0u) {
-    return select(vec3f(0.0, 1.0, 0.0), agent.xyz, w > 0.5);
-  }
-  let swing = clamp(motion.w / 1.4, 0.0, 1.3);
-  let phase = motion.z;
-  let holdingCup = ((mask >> 3u) & 1u) == 1u;
-  let carryingBag = ((mask >> 2u) & 1u) == 1u;
-  var q = v;
-  if (part == 0 || part == 1) {
-    let side = select(-1.0, 1.0, part == 1);
-    let piv = vec3f(side * 0.09, 0.92, 0.0) * w;
-    q = agentRotX(q - piv, sin(phase + select(0.0, 3.14159, part == 1)) * 0.46 * swing) + piv;
-  } else if (part == 4 || part == 5) {
-    let side = select(-1.0, 1.0, part == 5);
-    let piv = vec3f(side * 0.22, 1.44, 0.0) * w;
-    var a = -sin(phase + select(0.0, 3.14159, part == 5)) * 0.38 * swing;
-    if (part == 4 && holdingCup) { a = -0.95 + a * 0.2; }
-    if (part == 5 && carryingBag) { a = a * 0.35; }
-    q = agentRotX(q - piv, a) + piv;
-  }
-  // Idle weight shift while standing; staggers from the spring-damper pose on top.
-  let idle = (1.0 - clamp(motion.w * 4.0, 0.0, 1.0)) * sin(t * 1.3 + shape.w * 6.28) * 0.03;
-  let fall = pose.z - agent.w;
-  let k = vec3f(cos(fall), 0.0, -sin(fall));
-  if (part >= 2) {
-    let hip = vec3f(0.0, 0.95, 0.0) * w;
-    q = agentRotAxis(q - hip, k, pose.y + idle) + hip;
-  }
-  q = agentRotAxis(q, k, pose.x);
-  if (w > 0.5) {
-    q = vec3f(q.x * shape.y, q.y * shape.x, q.z * shape.y);
-    q.y += abs(sin(phase)) * 0.03 * swing;
-  }
-  let ch = cos(agent.w);
-  let sh = sin(agent.w);
-  q = vec3f(q.x * ch + q.z * sh, q.y, -q.x * sh + q.z * ch);
-  if (w < 0.5) { return q; }
-  return q + agent.xyz;
-}`, [rotX, rotAxis] as unknown as Parameters<typeof wgslFn>[1])
-const xform = (...args: (Node | number)[]) => agentXform(...args) as unknown as V3
+/** Metres per step of the height slider (look.ts WARDROBE.stature). */
+const STATURE_STEP = (WARDROBE.stature.max - WARDROBE.stature.min) / (WARDROBE.stature.steps - 1)
 
 const hex = (list: number[]) => list.map((c) => new Color(c))
 /**
@@ -244,6 +121,7 @@ export function attireColour(agent: number): [number, number, number] {
 const PALETTE = {
   skin: hex([0xf3d2b8, 0xe8b894, 0xd29f79, 0xb97f5a, 0x9a6444, 0x7a4a31, 0x5c3522, 0xe5c0a0]),
   hair: hex([0x1b1512, 0x2a1d14, 0x3b2618, 0x5e3c24, 0x7a3a1f, 0xb8935a, 0x8a6a48, 0x9c9a96]),
+  iris: hex([0x3b2314, 0x5a3a22, 0x2a1a12, 0x4a6a4a, 0x5a7a9a, 0x7a5a3a]),
   suits: hex([0x1f2a44, 0x33363b, 0x5b6068, 0x1a1a1c, 0x4a3b2e, 0x2d4a73, 0x3d4550]),
   blazers: hex([0x9c7a54, 0x243352, 0x6e7278, 0x5a5e3f, 0x5e2530, 0xd8cfbf, 0x44464a]),
   chinos: hex([0xb09a74, 0x6a6d70, 0x2a3448, 0x222222, 0xcfc6b2, 0x6b5a45]),
@@ -259,7 +137,20 @@ const PALETTE = {
   casualShoes: hex([0x3a2618, 0x7a5230, 0x5a4636, 0x1c1c1c]),
   womenShoes: hex([0x141414, 0x3e1a1c, 0x7a5230, 0x2a2a3a]),
   bags: hex([0x1c1712, 0x4a2e1c, 0x2a2a2a, 0x6a4a30]),
+  coats: hex([0x2b2b2e, 0x1f2a44, 0x4a3b2e, 0xb59a72, 0x5a5e5c, 0x3a2a24, 0x8a6a48]),
+  trims: hex([0x141414, 0xe8e2d6, 0x5e2530, 0x1c2c4c, 0xb59a72, 0x6e7278, 0x3f5e5a]),
+  scarves: hex([0x6a1e2a, 0x1c2c4c, 0xd9c7a8, 0x2a2a2d, 0x8a6a48, 0x3a5f9a, 0x9c9a96]),
 }
+/**
+ * Every palette end to end, as the material's one uniform array holds them, and where each begins in it. WebGPU
+ * promises a stage twelve uniform buffers (maxUniformBuffersPerShaderStage) and three's own groups take some: a buffer
+ * per palette reached thirteen in the fragment stage with the coats, the trims and the scarves, and no body's pipeline
+ * built (shadowShaders.test.ts counts a stage's bindings against the promise).
+ */
+const PALETTE_TABLE: Color[] = Object.values(PALETTE).flat()
+const PALETTE_OFFSET: ReadonlyMap<Color[], number> = new Map(
+  Object.values(PALETTE).map((list, i, lists) => [list, lists.slice(0, i).reduce((n, l) => n + l.length, 0)]),
+)
 
 function agentBuffers(view: CrowdView, agentCount: number, listLength: number) {
   return {
@@ -268,6 +159,7 @@ function agentBuffers(view: CrowdView, agentCount: number, listLength: number) {
     pose: storage(view.pose, 'vec4', agentCount).toReadOnly(),
     dissolve: storage(view.dissolve, 'float', agentCount).toReadOnly(),
     look: storage(view.look, 'uint', agentCount).toReadOnly(),
+    figure: storage(view.figure, 'uvec4', agentCount).toReadOnly(),
     lists: storage(view.drawLists, 'uint', listLength).toReadOnly(),
   }
 }
@@ -290,6 +182,15 @@ export class CrowdView {
    * passes never bind it, no pedestrian moves for it; the page's cull reads it for the body to draw.
    */
   readonly look: StorageBufferAttribute
+  /**
+   * The figure word, the face word and the wardrobe word per agent (look.ts packFigure: the eight body sliders' steps;
+   * packFace: the seven face sliders' steps and the hair style; packWardrobe: the layer, the trim and the scarf; read
+   * only where the look word says a look is worn), four u32 per agent (the fourth spare), written beside the look
+   * word. Page-only like it: the worker's passes never bind it, the cull never reads it, no pedestrian moves for it.
+   * One buffer for the four: the vertex stage binds seven storage buffers already, of the eight WebGPU promises every
+   * device.
+   */
+  readonly figure: StorageBufferAttribute
   readonly drawArgs: IndirectStorageBufferAttribute
   /** Initial indirect args (index counts, zero instances); reset into the GPU buffer every frame. */
   readonly drawTemplate: Uint32Array<ArrayBuffer>
@@ -300,6 +201,43 @@ export class CrowdView {
    * matrices are identity, so three's matrix history would put everyone's previous position at the origin.
    */
   readonly frameSeconds: UniformNode<'float', number> = uniform(0)
+  /**
+   * The operator's eye in the world (x, y, z) and 1 in w while someone is afoot to look at (0 from a car): the vertex
+   * stage turns the heads and chests near it (crowdBody.ts bodyGaze), one uniform for both passes so the shadow
+   * looks where the body does. The engine writes it every frame.
+   */
+  readonly gazeTarget: UniformNode<'vec4', Vector4> = uniform(new Vector4(0, 0, 0, 0))
+  /**
+   * The rigs of the fallen pedestrians (humanoid.ts RIG_WEAR): per rig slot, per shape in stream order, the shape's
+   * world centre (x, y, z, 1) then its rotation (a quaternion), as `rigs` writes them from the realm's stream; an
+   * empty slot's shapes sit at the origin, unturned. A body whose rig slot word (crowd.figure's fourth word, slot + 1)
+   * is set hangs from these in the vertex stage (crowdBody.ts bodyRig) instead of walking; both passes read them.
+   */
+  readonly rigPoses = uniformArray(Array.from({ length: RIG_WEAR.slots * RIG_WEAR.shapes * 2 }, (_, i) => new Vector4(0, 0, 0, i % 2)), 'vec4')
+  /** The rig shape each bone hangs from (humanoid.ts RIG_REST), by bone, as the vertex stage reads it. */
+  readonly rigShape = uniformArray(RIG_REST.map(([shape]) => shape), 'float')
+
+  /**
+   * Writes one step's rig stream (simProtocol.ts RIG_POSE: a slice per slot of agent, state, then thirteen poses of
+   * x, y, z, qx, qy, qz, qw; null, or a buffer of the wrong length, empties every slot) into `rigPoses`. Which agents
+   * wear which slot is the engine's to write into crowd.figure's fourth word.
+   */
+  rigs(stream: Float32Array | null): void {
+    const { slots, shapes } = RIG_WEAR
+    const stride = 2 + shapes * 7
+    const valid = stream instanceof Float32Array && stream.length >= slots * stride
+    const arr = this.rigPoses.array as Vector4[]
+    for (let s = 0; s < slots; s++) {
+      const o = s * stride
+      const live = valid && stream[o] >= 0
+      for (let j = 0; j < shapes; j++) {
+        const k = (s * shapes + j) * 2
+        const b = o + 2 + j * 7
+        if (live) { arr[k].set(stream[b], stream[b + 1], stream[b + 2], 1); arr[k + 1].set(stream[b + 3], stream[b + 4], stream[b + 5], stream[b + 6]) }
+        else { arr[k].set(0, 0, 0, 0); arr[k + 1].set(0, 0, 0, 1) }
+      }
+    }
+  }
 
   /** The page's global-state uniform (01_Initialize_World/matrixMode.ts); null, the bodies have no matrix mode. */
   private readonly matrixMode: UniformNode<'vec4', Vector4> | null
@@ -313,6 +251,7 @@ export class CrowdView {
     this.drawLists = new StorageBufferAttribute(new Uint32Array(quota * VARIANTS * 2), 1)
     this.dissolve = new StorageBufferAttribute(new Float32Array(agentCount), 1)
     this.look = new StorageBufferAttribute(new Uint32Array(agentCount), 1)
+    this.figure = new StorageBufferAttribute(new Uint32Array(agentCount * 4), 4)
     this.drawTemplate = new Uint32Array(VARIANTS * 2 * 5)
     this.pos.name = 'crowd.pos'
     this.vel.name = 'crowd.vel'
@@ -320,11 +259,12 @@ export class CrowdView {
     this.drawLists.name = 'crowd.drawLists'
     this.dissolve.name = 'crowd.dissolve'
     this.look.name = 'crowd.look'
+    this.figure.name = 'crowd.figure'
 
     const geometries: BufferGeometry[] = []
     for (let lod = 0; lod < 2; lod++) {
       for (let v = 0; v < VARIANTS; v++) {
-        const g = lod === 0 ? detailedBody(v) : distantBody(v)
+        const g = bodyGeometry(v, lod === 0)
         this.drawTemplate[(lod * VARIANTS + v) * 5] = g.index!.count
         geometries.push(g)
       }
@@ -337,7 +277,7 @@ export class CrowdView {
       const lod = Math.floor(d / VARIANTS)
       const v = d % VARIANTS
       g.setIndirect(this.drawArgs, d * 20)
-      const mesh = new InstancedMesh(g, this.material(buffers, lod * quota * VARIANTS + v * quota, v), quota)
+      const mesh = new InstancedMesh(g, this.material(buffers, lod * quota * VARIANTS + v * quota, v, lod === 0), quota)
       // Instance matrices stay identity: placement comes from the storage buffers and culling is
       // done on the GPU, so the CPU-side bounds must be ignored. Every body can hold the whole crowd (agentQuota),
       // so the eight meshes share one identity matrix buffer rather than eight.
@@ -350,15 +290,18 @@ export class CrowdView {
     })
   }
 
-  private material(b: AgentBuffers, listBase: number, variant: number): MeshStandardNodeMaterial {
+  /** The material of one body: `near` is the detailed body, the only one with a face to shape and to draw. */
+  private material(b: AgentBuffers, listBase: number, variant: number, near: boolean): MeshStandardNodeMaterial {
     const vSeed = varyingProperty('float', 'vAgentSeed')
     const vDissolve = varyingProperty('float', 'vAgentDissolve')
     // The look word, to the fragment stage as two float varyings (its low and high 16 bits: an integer varying would
     // need flat interpolation, and 32 bits exceed a float's mantissa); every vertex of a body carries the same value.
     const vLookLo = varyingProperty('float', 'vAgentLookLo')
     const vLookHi = varyingProperty('float', 'vAgentLookHi')
+    // The wardrobe word worn (the look's or the hash's, resolved once here so the pieces and their dyes agree), eight
+    // bits in a float.
+    const vWardrobe = varyingProperty('float', 'vAgentWardrobe')
     const woman = variant >= 2
-    const heightScale = woman ? LOOK_SCALE.heightWoman : LOOK_SCALE.heightMan
     const m = new MeshStandardNodeMaterial()
     // One pose, built twice: for the eye (which folds away the body it looks out of) and for the shadow map.
     const posed = (eye: boolean) => Fn((builder: NodeBuilder) => {
@@ -368,34 +311,105 @@ export class CrowdView {
       const pose = b.pose.element(agentIndex)
       const dissolve = b.dissolve.element(agentIndex)
       const word = b.look.element(agentIndex)
+      const quad = b.figure.element(agentIndex)
+      const figure = quad.x
+      const faceWord = quad.y
+      const wardrobeWord = quad.z
       const seed = float(agentIndex)
       const h = (k: number) => hash(seed.add(k * 13.37))
-      // Per-person accessories (bit per optional piece) and proportions, as the hash gives them.
+      // Per-person accessories (bit per optional piece), as the hash gives them.
       const tie = step(0.3, h(1)).mul(2)
       const bag = step(woman ? 0.62 : 0.7, h(2)).mul(4)
       const cup = step(0.82, h(3)).mul(8)
-      const longHair = step(0.35, h(4)).mul(16)
       const glasses = step(0.78, h(5)).mul(32)
-      const hashedMask = tie.add(bag).add(cup).add(longHair).add(glasses)
-      const hashedHeight = woman ? h(6).mul(0.1).add(0.92) : h(6).mul(0.14).add(0.94)
-      const hashedWidth = h(7).mul(0.14).add(0.94)
-      // A chosen look (look.ts: bit 0 set) overrides them: its pieces sit where agentXform tests them ((word >> 2) & 62 is
-      // the mask), its height and build steps span the same range the hash does for this body.
+      const hashedMask = tie.add(bag).add(cup).add(glasses)
+      // The hair the hash gives (look.ts lookFromSeed splits it the same way): short under the long-hair odds on link
+      // 4, under the cap every style wears; otherwise a woman's split link makes it long, a bob or a bun, and a man's
+      // makes a few bald (no cap, no length), the rest long.
+      const notShort = step(LOOK_ODDS.longHair, h(4))
+      const split = h(LOOK_HASHED_HAIR_SPLIT)
+      const past = (edge: number) => step(edge, split)
+      const hashedGrooms = woman
+        ? float(64).add(notShort.mul(past(LOOK_ODDS.bob).oneMinus()).mul(16)).add(notShort.mul(past(LOOK_ODDS.bob)).mul(past(LOOK_ODDS.bun).oneMinus()).mul(128)).add(notShort.mul(past(LOOK_ODDS.bun)).mul(256))
+        : past(LOOK_ODDS.bald).oneMinus().mul(float(64).add(notShort.mul(16)))
+      // The figure the hash gives, in the sliders' own steps (look.ts lookFromSeed rounds the same links the same way):
+      // the stature from this body's range of the height slider, every other slider over its whole range.
+      const stature = woman ? LOOK_STATURE.woman : LOOK_STATURE.man
+      const hashedStep = (k: number, n: number) => h(k).mul(n).add(0.5).floor()
+      const hashedHeight = hashedStep(6, stature.span).add(stature.from)
+      // A chosen look (look.ts: bit 0 set) overrides them: its tie, bag, cup and glasses sit where bodyVertex tests them
+      // ((word >> 2) & 46 is their part of the mask), its hair style (the face word's) gives the hair's pieces as
+      // look.ts hairBits gives them, its figure word holds the eight body sliders' steps and its face word the seven
+      // face sliders' (look.ts LOOK_FIELD names each one's word and bits).
       const custom = word.bitAnd(uint(1)).equal(uint(1))
-      const stepOf = (slot: LookSlot) => float(word.shiftRight(uint(LOOK_FIELD[slot][0])).bitAnd(uint((1 << LOOK_FIELD[slot][1]) - 1))).div(WARDROBE.steps - 1)
-      const mask = select(custom, float(word.shiftRight(uint(2)).bitAnd(uint(62))), hashedMask)
-      const height = select(custom, stepOf('height').mul(heightScale.range).add(heightScale.base), hashedHeight)
-      const width = select(custom, stepOf('build').mul(LOOK_SCALE.build.range).add(LOOK_SCALE.build.base), hashedWidth)
-      const shape = vec4(height, width, mask, h(8))
+      const stepOf = (slot: LookSlot) => {
+        const [w, shift, width] = LOOK_FIELD[slot]
+        return float((w === 0 ? word : w === 1 ? figure : faceWord).shiftRight(uint(shift)).bitAnd(uint((1 << width) - 1)))
+      }
+      const style = faceWord.shiftRight(uint(LOOK_FIELD.hairStyle[1])).bitAnd(uint(7))
+      const styled = (s: number, bit: number) => select(style.equal(uint(s)), float(1 << bit), float(0))
+      const ownGrooms = styled(HAIR.long, LOOK_PIECE_BIT.longHair)
+        .add(select(style.equal(uint(HAIR.bald)), float(0), float(1 << LOOK_PIECE_BIT.hairCap)))
+        .add(styled(HAIR.bob, LOOK_PIECE_BIT.bob))
+        .add(styled(HAIR.bun, LOOK_PIECE_BIT.bun))
+      // The eye pass alone draws the face's features (their piece bit): the shadow map does without them.
+      const features = eye ? 1 << LOOK_PIECE_BIT.face : 0
+      // The wardrobe the hash gives (look.ts lookFromSeed draws it from the same links the same way), as a wardrobe
+      // word: the layer from its link of this chain (shirt sleeves under one odds, a coat from another, else the
+      // jacket), a scarf on another link with its cloth from the colours' chain, the trim's contrast and its cloth from
+      // the colours' chain too. A chosen look's wardrobe word replaces it whole; the fragment stage reads the result.
+      const hc = (k: number) => hash(seed.add(k * 7.919))
+      const layerLink = h(LOOK_HASHED_LAYER)
+      const hashedLayer = select(layerLink.lessThan(LOOK_ODDS.shirtSleeves), uint(LAYER.shirt), select(layerLink.greaterThanEqual(LOOK_ODDS.coat), uint(LAYER.coat), uint(LAYER.jacket)))
+      const clothAt = (link: F1, n: number) => uint(link.mul(n - 0.001)).add(uint(1))
+      const hashedTrim = select(hc(LOOK_HASHED_COLOUR.trim).greaterThanEqual(LOOK_ODDS.trim), clothAt(hc(LOOK_HASHED_COLOUR.trimCloth), PALETTE.trims.length), uint(0))
+      const hashedScarf = select(h(LOOK_HASHED_SCARF).greaterThanEqual(LOOK_ODDS.scarf), clothAt(hc(LOOK_HASHED_COLOUR.scarfCloth), PALETTE.scarves.length), uint(0))
+      const hashedWardrobe = hashedLayer.bitOr(hashedTrim.shiftLeft(uint(LOOK_FIELD.trim[1]))).bitOr(hashedScarf.shiftLeft(uint(LOOK_FIELD.scarf[1])))
+      const wardrobe = select(custom, wardrobeWord, hashedWardrobe)
+      const layer = wardrobe.shiftRight(uint(LOOK_FIELD.layer[1])).bitAnd(uint((1 << LOOK_FIELD.layer[2]) - 1))
+      const scarfAt = wardrobe.shiftRight(uint(LOOK_FIELD.scarf[1])).bitAnd(uint((1 << LOOK_FIELD.scarf[2]) - 1))
+      // The wardrobe's pieces (look.ts wardrobeBits): the coat under a coat layer, the scarf when one is worn.
+      const wardrobePieces = select(layer.equal(uint(LAYER.coat)), float(1 << LOOK_PIECE_BIT.coat), float(0))
+        .add(select(scarfAt.equal(uint(0)), float(0), float(1 << LOOK_PIECE_BIT.scarf)))
+      const mask = select(custom, float(word.shiftRight(uint(2)).bitAnd(uint(46))).add(ownGrooms), hashedMask.add(hashedGrooms)).add(features).add(wardrobePieces)
+      const slider = (slot: Exclude<LookSlider, 'height'>) => {
+        const n = (slot === 'head' ? WARDROBE.headSteps : WARDROBE.sliderSteps) - 1
+        return select(custom, stepOf(slot), hashedStep(LOOK_HASHED_SLIDER[slot], n)).div(n)
+      }
+      const height = select(custom, stepOf('height'), hashedHeight).mul(STATURE_STEP).add(WARDROBE.stature.min).div(HEIGHT_BASE)
+      const stance = vec4(height, mask, h(8), float(quad.w))
+      const morphA = vec4(slider('mass'), slider('muscle'), slider('shoulders'), slider('hips'))
+      const morphB = vec4(slider('legs'), slider('posture'), slider('head'), 0)
       const rig = attribute('rig', 'vec3')
-      normalLocal.assign(xform(normalLocal, float(0), rig, agent, motion, pose, shape, time).normalize())
+      const skin = attribute('skin', 'vec2')
+      const face = attribute('face', 'vec2')
+      // The face sliders, -1..1 about the base face (step 8 of 16: look.ts faceValue), for the near body's head alone
+      // (rig.x is the bone): the far body has no features to shape, and no other bone reads them.
+      const faceStep = (slot: LookFaceSlider) =>
+        select(custom, stepOf(slot), hashedStep(LOOK_HASHED_FACE[slot], WARDROBE.sliderSteps - 1)).sub(LOOK_SLIDER_MIDDLE.slider).div(LOOK_SLIDER_MIDDLE.slider)
+      const faceA = vec4(0).toVar()
+      const faceB = vec4(0).toVar()
+      if (near) {
+        If(rig.x.greaterThan(BONE.HEAD - 0.5).and(rig.x.lessThan(BONE.HEAD + 0.5)), () => {
+          faceA.assign(vec4(faceStep('brow'), faceStep('jaw'), faceStep('chin'), faceStep('cheek')))
+          faceB.assign(vec4(faceStep('nose'), faceStep('eyes'), faceStep('lips'), 0))
+        })
+      }
+      // The skin (crowdBody.ts): one call gives the posed position (column 0) and its normal (column 1).
+      // The rig shapes the vertex's two bones hang from, should this person be wearing a rig (the slot word in quad.w).
+      const rigBase = select(quad.w.greaterThan(uint(0)), quad.w.sub(uint(1)), uint(0)).mul(uint(RIG_WEAR.shapes * 2))
+      const rigAt = (bone: typeof rig.x) => uint((this.rigShape.element(uint(bone.add(0.5))) as unknown as typeof rig.x).add(0.5)).mul(uint(2)).add(rigBase)
+      const rigA = rigAt(rig.x), rigB = rigAt(skin.x)
+      const skinned = (bodyVertex(positionLocal, normalLocal, rig, skin, face, agent, motion, pose, stance, morphA, morphB, faceA, faceB, time, this.gazeTarget, this.rigPoses.element(rigA), this.rigPoses.element(rigA.add(uint(1))), this.rigPoses.element(rigB), this.rigPoses.element(rigB.add(uint(1)))) as unknown as Mat3).toVar()
+      normalLocal.assign(skinned.element(uint(1)))
       vSeed.assign(seed)
       vLookLo.assign(float(word.bitAnd(uint(0xffff))))
       vLookHi.assign(float(word.shiftRight(uint(16))))
+      vWardrobe.assign(float(wardrobe.bitAnd(uint(0xff))))
       // The fragment stage reads the code dissolve's amount from this varying (both passes: the shadow map drops the
       // same cells).
       vDissolve.assign(dissolve)
-      const body = xform(positionLocal, float(1), rig, agent, motion, pose, shape, time)
+      const body = skinned.element(uint(0))
       if (!eye) return body
       // Every vertex on one point: zero-area triangles, nothing rasterised. A body gone to code folds the same way,
       // here where its amount is read (the fold applyCodeDissolve wraps over this reads the varying, which this stage
@@ -404,20 +418,25 @@ export class CrowdView {
       const inside = agentIndex.equal(uint(PLAYER_INDEX)).and(cameraPosition.distance(head).lessThan(OWN_BODY.radius))
       const gone = dissolve.greaterThanEqual(CODE_DISSOLVE.fold)
       const placed = select(inside.or(gone), agent.xyz, body)
-      // Only a pass with a velocity target asks for the previous frame (the shadow map and ?cinema=0 never do).
-      if (needsPrevious(builder)) positionPrevious.assign(placed.sub(vec3(motion.x, 0, motion.y).mul(this.frameSeconds)))
+      // Only a pass with a velocity target asks for the previous frame (the shadow map and ?cinema=0 never do). A body
+      // wearing a rig is where the rig's shapes are, not where its walking twin's velocity would carry it: it writes
+      // no motion of its own (sharp, like a still surface) rather than the twin's smear.
+      if (needsPrevious(builder)) positionPrevious.assign(select(quad.w.greaterThan(uint(0)), placed, placed.sub(vec3(motion.x, 0, motion.y).mul(this.frameSeconds))))
       return placed
     })()
     m.positionNode = posed(true)
     m.castShadowPositionNode = posed(false)
 
     const rig = attribute('rig', 'vec3')
-    const slot = rig.y
+    // The slot, flat: each triangle takes its first vertex's, which the loft (humanoid.ts) makes the lower ring's, so a
+    // band between two rings is one slot. Interpolated, rig.y would paint the slots numbered between the two as
+    // stripes across the band (a jacket's hem over the trousers showed the shirt, the skin and the hair).
+    const slot = varying(rig.y, 'vAgentSlot').setInterpolation('flat')
     const h = (k: number): F1 => hash(vSeed.add(k * 7.919))
-    // Colour lists on the GPU, one uniform array per palette however many slots read it.
-    const arrays = new Map<Color[], ReturnType<typeof uniformArray>>()
-    const colours = (list: Color[]) => arrays.get(list) ?? (arrays.set(list, uniformArray(list, 'color')), arrays.get(list)!)
-    const pick = (list: Color[], hk: F1): V3 => colours(list).element(uint(hk.mul(list.length - 0.001))) as unknown as V3
+    // The colour lists on the GPU: one uniform array of every palette, a palette read at its offset (PALETTE_TABLE).
+    const table = uniformArray(PALETTE_TABLE, 'color')
+    const colour = (list: Color[], i: U1): V3 => table.element(i.add(uint(PALETTE_OFFSET.get(list)!))) as unknown as V3
+    const pick = (list: Color[], hk: F1): V3 => colour(list, uint(hk.mul(list.length - 0.001)))
     const skin = pick(PALETTE.skin, h(1))
     const hair = mix(pick(PALETTE.hair, h(2)), vec3(0.6, 0.6, 0.58), step(0.9, h(9)))
     let top: V3, bottom: V3, shirt: V3, shoes: V3
@@ -436,10 +455,10 @@ export class CrowdView {
     // The tie's cloth, the bag's leather and the skirt suit's hose stay the hash's: the word has no room for them.
     const word = uint(vLookHi.add(0.5)).shiftLeft(uint(16)).bitOr(uint(vLookLo.add(0.5)))
     const custom = word.bitAnd(uint(1)).equal(uint(1))
-    const field = (s: LookSlot): U1 => word.shiftRight(uint(LOOK_FIELD[s][0])).bitAnd(uint((1 << LOOK_FIELD[s][1]) - 1))
+    const field = (s: LookSlot): U1 => word.shiftRight(uint(LOOK_FIELD[s][1])).bitAnd(uint((1 << LOOK_FIELD[s][2]) - 1))
     const at = (list: Color[], i: U1): V3 => {
       const last = uint(list.length - 1)
-      return colours(list).element(select(i.lessThan(last), i, last)) as unknown as V3
+      return colour(list, select(i.lessThan(last), i, last))
     }
     const outfit = WARDROBE.outfits[variant]
     const cloth = (name: PaletteName): Color[] => PALETTE[name]
@@ -455,19 +474,64 @@ export class CrowdView {
       : at(cloth(outfit.bottom), bottomAt)
     const ownShirt = at(cloth(outfit.shirt), field('shirt'))
     const ownShoes = at(cloth(outfit.shoes), field('shoes'))
-    const wornSkin = select(custom, ownSkin, skin)
-    const wornHair = select(custom, ownHair, hair)
+    const pickedSkin = select(custom, ownSkin, skin)
+    const pickedHair = select(custom, ownHair, hair)
+    // The age (eight steps) and the skin's undertone (look.ts WARDROBE.undertone: neutral, warm, cool, olive), the look
+    // word's or the fragment chain's (lookFromSeed draws them from the same links the same way): the undertone tints
+    // the skin in linear RGB, the age fades it a little toward its own grey and greys the hair past the slider's middle.
+    const age = select(custom, float(field('age')), h(LOOK_HASHED_COLOUR.age).mul(WARDROBE.ageSteps - 1).add(0.5).floor()).div(WARDROBE.ageSteps - 1)
+    const tone = select(custom, field('undertone'), uint(h(LOOK_HASHED_COLOUR.undertone).mul(WARDROBE.undertone.length - 0.001)))
+    const tint = select(tone.equal(uint(1)), vec3(1.04, 1.0, 0.94), select(tone.equal(uint(2)), vec3(0.97, 0.99, 1.05), select(tone.equal(uint(3)), vec3(0.98, 1.02, 0.92), vec3(1, 1, 1))))
+    const toned = pickedSkin.mul(tint)
+    const wornSkin = mix(toned, vec3(dot(toned, vec3(0.2126, 0.7152, 0.0722))), age.mul(0.25))
+    const wornHair = mix(pickedHair, grey, smoothstep(0.5, 1, age))
     top = select(custom, ownTop, top)
     bottom = select(custom, ownBottom, bottom)
     shirt = select(custom, ownShirt, shirt)
     shoes = select(custom, ownShoes, shoes)
+    // The wardrobe word the vertex stage resolved (look.ts LOOK_FIELD's word 3): the layer owns the top's dye (the
+    // look's top index, or the hash's top link over this body's palette length, read from the coats under a coat: as
+    // look.ts lookOptions offers them), the trim is matching (the top's cloth) or one of the trim cloths, the scarf one
+    // of the scarf cloths (0 is none, and the piece is not drawn).
+    const wardrobe = uint(vWardrobe.add(0.5))
+    const wfield = (s: 'layer' | 'trim' | 'scarf'): U1 => wardrobe.shiftRight(uint(LOOK_FIELD[s][1])).bitAnd(uint((1 << LOOK_FIELD[s][2]) - 1))
+    const layer = wfield('layer')
+    const trimAt = wfield('trim')
+    const scarfAt = wfield('scarf')
+    const coat = at(PALETTE.coats, select(custom, field('top'), uint(h(3).mul(cloth(outfit.top).length - 0.001))))
+    const topCloth = select(layer.equal(uint(LAYER.coat)), coat, top)
+    const trimCloth = select(trimAt.equal(uint(0)), topCloth, at(PALETTE.trims, trimAt.sub(uint(1))))
+    const scarf = at(PALETTE.scarves, select(scarfAt.equal(uint(0)), uint(0), scarfAt.sub(uint(1))))
+    // The jacket's lines, cut from the rest position (humanoid.ts GARMENT) over the top's slot: on the trunk's front the
+    // shirt's V widens from where it closes to where the jacket opens, the lapels run beside it, above the opening the
+    // shirt's collar stands, the collar band is the trunk's cloth above the collar line, the cuffs the arms' below the
+    // cuff line; the coat's V closes higher. Under shirt sleeves the whole slot is the shirt's cloth: the jacket is off.
+    const rest = positionGeometry
+    const onArm = rig.x.greaterThan(BONE.ARM_L - 0.5)
+    const onTrunk = rig.x.lessThan(BONE.HEAD - 0.5)
+    const isCoat = rig.z.greaterThan(PIECE.COAT - 0.5).and(rig.z.lessThan(PIECE.COAT + 0.5))
+    const closes = select(isCoat, float(GARMENT.coatCloses), float(GARMENT.closes[variant]))
+    const half = float(GARMENT.halfAtCollar[variant]).mul(rest.y.sub(closes)).div(float(GARMENT.opens).sub(closes))
+    const side = rest.x.abs()
+    const front = onTrunk.and(rest.z.greaterThan(float(0))).and(rest.y.lessThan(float(GARMENT.opens)))
+    const inV = front.and(rest.y.greaterThan(closes)).and(side.lessThan(half))
+    const shirtCollar = onTrunk.and(rest.y.greaterThan(float(GARMENT.opens)))
+    const lapel = front.and(side.lessThan(half.add(float(GARMENT.lapel))))
+    const collar = onTrunk.and(rest.y.greaterThan(float(GARMENT.collar)))
+    const cuff = onArm.and(rest.y.lessThan(float(GARMENT.cuff)))
+    const jacket = select(inV.or(shirtCollar), shirt, select(lapel.or(collar).or(cuff), trimCloth, topCloth))
+    const worn = select(layer.equal(uint(LAYER.shirt)), shirt, jacket)
     // The suit's tie keeps the hash's cloth; the other bodies' accent is the shirt. The skirt suit's hose is the hash's.
     const accent = variant === 0 ? pick(PALETTE.ties, h(5)) : shirt
     const legwear = variant === 3 ? mix(wornSkin, vec3(0.08, 0.07, 0.07), step(0.55, h(11))) : bottom
-    const prop = select(rig.z.greaterThan(2.5), vec3(0.93, 0.92, 0.9), pick(PALETTE.bags, h(12)))
+    const prop = select(rig.z.greaterThan(PIECE.CUP - 0.5), vec3(0.93, 0.92, 0.9), pick(PALETTE.bags, h(12)))
     const frame = vec3(0.05, 0.05, 0.055)
-    const slots: V3[] = [top, shirt, wornSkin, wornHair, bottom, shoes, accent, prop, legwear, frame]
-    const rough = [0.82, 0.7, 0.55, 0.6, 0.8, 0.35, 0.6, 0.45, 0.6, 0.3]
+    // The eyes: their whites, an iris the hash picks (the words have no room for it), and the lips a shade of the skin.
+    const white = vec3(0.88, 0.86, 0.84)
+    const iris = pick(PALETTE.iris, h(LOOK_HASHED_COLOUR.iris))
+    const lip = wornSkin.mul(vec3(0.82, 0.55, 0.55))
+    const slots: V3[] = [worn, shirt, wornSkin, wornHair, bottom, shoes, accent, prop, legwear, frame, white, iris, lip, scarf]
+    const rough = [0.82, 0.7, 0.55, 0.6, 0.8, 0.35, 0.6, 0.45, 0.6, 0.3, 0.25, 0.3, 0.5, 0.78]
     let color: V3 = slots[slots.length - 1]
     let roughness: F1 = float(rough[rough.length - 1])
     for (let s = slots.length - 2; s >= 0; s--) {

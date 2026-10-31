@@ -14,9 +14,16 @@
 import { validateLook, type Look } from '../03_Spawn_Agents/look.ts'
 import type { ProfileStore } from './profile.ts'
 
-/** Keyed by the package id like the profile, and versioned with the word's layout (look.ts LOOK_FIELD). */
+/**
+ * Keyed by the package id like the profile. The record's `v` is the look's layout: 1 the fourteen slots before the
+ * figure, 2 the twenty slots with the eight body sliders, 3 the twenty-nine slots with the face (all three read and
+ * upgraded by validateLook), 4 the thirty-two slots with the wardrobe's layer, trim and scarf (written).
+ */
 export const LOOK_KEY = 'civic-simulation:look:v1'
-/** A stored value longer than this is corrupt, not a look (fourteen small integers are a few hundred bytes). */
+export const LOOK_RECORD_VERSION = 4
+/** The layouts loadLook reads: every one validateLook upgrades or accepts. */
+const LOOK_RECORD_VERSIONS: readonly unknown[] = Object.freeze([1, 2, 3, LOOK_RECORD_VERSION])
+/** A stored value longer than this is corrupt, not a look (thirty-two small integers are a few hundred bytes). */
 const RAW_MAX = 1024
 
 /** localStorage, or null where the page may not use it (reading the property itself can throw). */
@@ -34,7 +41,7 @@ export function loadLook(store: ProfileStore | null = browserStore()): Look | nu
   try { data = JSON.parse(raw) } catch { return null }
   if (!data || typeof data !== 'object' || Array.isArray(data)) return null
   const { v, look } = data as { v?: unknown; look?: unknown }
-  if (v !== 1) return null
+  if (!LOOK_RECORD_VERSIONS.includes(v)) return null
   return validateLook(look)
 }
 
@@ -43,7 +50,7 @@ export function loadLook(store: ProfileStore | null = browserStore()): Look | nu
 export function saveLook(look: Look, store: ProfileStore | null = browserStore()): boolean {
   const valid = validateLook(look)
   if (!valid || !store) return false
-  try { store.setItem(LOOK_KEY, JSON.stringify({ v: 1, look: valid })) } catch { return false }
+  try { store.setItem(LOOK_KEY, JSON.stringify({ v: LOOK_RECORD_VERSION, look: valid })) } catch { return false }
   return true
 }
 

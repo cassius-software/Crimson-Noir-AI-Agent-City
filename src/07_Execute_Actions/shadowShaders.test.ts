@@ -13,8 +13,11 @@
  * times longer per tile, until neither Firefox ("allocation size overflow") nor Chrome ("Invalid string length") could
  * build it: the first shadowed frame of the lakefront metropolis froze for seconds and logged a TSL error twice. The
  * browser job never drew a region with shadows, and no device is needed to see it: the builder only writes text.
+ * Each stage's bindings are counted against what WebGPU promises every adapter (twelve uniform buffers a stage, eight
+ * storage buffers, sixteen textures and samplers): the crowd's fragment stage reached thirteen uniform buffers, one
+ * per palette, when the wardrobe's coats, trims and scarves were added, and no body's pipeline built on any device.
  * What breaks if it is removed? A material whose shader grows without bound in either pass, or that takes rain mode
- * twice, would only show on a device drawing that map with shadows on.
+ * twice, or that binds more than a stage is promised, would only show on a device drawing that map with shadows on.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -62,6 +65,25 @@ const SEED = 1337
  * 500 million characters in Chrome, a billion in Firefox) when it failed.
  */
 const STAGE_BUDGET = 256 * 1024
+
+/**
+ * The bindings WebGPU promises a stage on every adapter (maxUniformBuffersPerShaderStage, maxStorageBuffersPerShaderStage,
+ * maxSampledTexturesPerShaderStage, maxSamplersPerShaderStage): three lays the pipeline out from the bindings a stage
+ * declares, and a layout past one of them never builds, whatever the device.
+ */
+const BINDING_LIMIT = { 'uniform buffers': 12, 'storage buffers': 8, 'sampled textures': 16, samplers: 16 } as const
+type BindingKind = keyof typeof BINDING_LIMIT
+
+/** How many bindings of each kind a stage's WGSL declares (three's WGSLNodeBuilder getUniforms writes one line each). */
+function bindings(wgsl: string): Record<BindingKind, number> {
+  const count = (re: RegExp): number => (wgsl.match(re) ?? []).length
+  return {
+    'uniform buffers': count(/\bvar<uniform>/g),
+    'storage buffers': count(/\bvar<storage/g),
+    'sampled textures': count(/@group\(\s*\d+\s*\)\s*var\s+\w+\s*:\s*texture_/g),
+    samplers: count(/@group\(\s*\d+\s*\)\s*var\s+\w+\s*:\s*sampler(?:_comparison)?\s*;/g),
+  }
+}
 
 /**
  * A WebGPURenderer never initialised: enough for three's WGSL builder, which only writes text. The canvas is a stand-in
@@ -200,7 +222,7 @@ const drawKey = (m: Mesh): string =>
  */
 const NO_RAIN_MODE = (name: string): boolean => name === 'Mesh' || name === 'NetPeople' || name === 'NetCars'
 
-interface Report { name: string; pass: 'main' | 'shadow'; vertex: number; fragment: number; surface: number }
+interface Report { name: string; pass: 'main' | 'shadow'; vertex: number; fragment: number; surface: number; uniforms: number; storage: number }
 
 /**
  * Builds every distinct draw in `scene`: the main pass for every mesh, the shadow pass for every mesh that casts one
@@ -229,7 +251,16 @@ function buildScene(label: string, renderer: WebGPURenderer, scene: Scene, camer
       const surface = surfaceCalls(s.fragment)
       assert.ok(surface <= 1, `${name}: the rain-mode surface is called ${surface} times; a material takes rain mode once`)
       if (pass === 'main' && !NO_RAIN_MODE(draw)) assert.equal(surface, 1, `${name}: the material takes rain mode`)
-      out.push({ name: draw, pass, vertex: s.vertex.length, fragment: s.fragment.length, surface })
+      const bound = { vertex: bindings(s.vertex), fragment: bindings(s.fragment) }
+      for (const stage of ['vertex', 'fragment'] as const) {
+        for (const kind of Object.keys(BINDING_LIMIT) as BindingKind[]) {
+          assert.ok(bound[stage][kind] <= BINDING_LIMIT[kind], `${name}: the ${stage} stage declares ${bound[stage][kind]} ${kind}; WebGPU promises ${BINDING_LIMIT[kind]}`)
+        }
+      }
+      out.push({
+        name: draw, pass, vertex: s.vertex.length, fragment: s.fragment.length, surface,
+        uniforms: Math.max(bound.vertex['uniform buffers'], bound.fragment['uniform buffers']), storage: Math.max(bound.vertex['storage buffers'], bound.fragment['storage buffers']),
+      })
     }
   }
   for (const mesh of draws.values()) {

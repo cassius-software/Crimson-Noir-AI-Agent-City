@@ -33,7 +33,7 @@
  * with the heap and the live worker count, so a micro-stutter leaves evidence; where the API is missing it is a no-op.
  * What breaks if it is removed? Nothing runs; every module is inert without this orchestration.
  */
-import { Frustum, Matrix4, Vector3, type PerspectiveCamera, type RenderPipeline, type UniformNode } from 'three/webgpu'
+import { Frustum, Matrix4, Vector3, type PerspectiveCamera, type RenderPipeline, type UniformNode, type Vector4 } from 'three/webgpu'
 import { BRAND } from '../brand.ts'
 import { GRAPHICS_RESET } from './bootFailure.ts'
 import { watchLongTasks } from './longTasks.ts'
@@ -52,7 +52,7 @@ import { LAWS } from '../02_Define_The_Rules/laws.ts'
 import { airgapInstalled } from '../02_Define_The_Rules/airgap.ts'
 import { kernelPanic } from '../02_Define_The_Rules/ring0Panic.ts'
 import { CrowdView } from '../03_Spawn_Agents/crowd.ts'
-import { heightScale, LOOK_NONE, packLook, unpackLook, validateLook, type Look } from '../03_Spawn_Agents/look.ts'
+import { heightScale, LOOK_NONE, packFace, packFigure, packLook, packWardrobe, unpackLook, validateLook, type Look } from '../03_Spawn_Agents/look.ts'
 import type { ConciergeOut } from './onboarding/speaker.ts'
 import { CONCIERGE_NAME as CONCIERGE_LABEL } from './onboarding/script.ts'
 import { packFrustumPlanes, PLAYER_INDEX, type CrowdStats, type CullSettings } from '../03_Spawn_Agents/crowdCompute.ts'
@@ -81,7 +81,7 @@ import { SimClient } from './simClient.ts'
 import { RobotBridge, type BridgeMode } from '../04_Connect_Hardware/robotLink.ts'
 import { applyWalk, requestWalk, type ScriptedWalk } from './scriptedWalk.ts'
 import {
-  doorOf, ENTER_RANGE, footWish, MODES, PERSON, POSE, RUN, type CarBodyState, type DriveControls, type Door, type FootControls, type PlayerControls,
+  doorOf, ENTER_RANGE, footWish, MODES, PERSON, POSE, RIG_SLOTS, RUN, type CarBodyState, type DriveControls, type Door, type FootControls, type PlayerControls,
   type SimCommand, type StepState,
 } from './simProtocol.ts'
 import { readControls } from './controls.ts'
@@ -125,6 +125,11 @@ export interface EngineOptions {
   /** Caps: `false` keeps shadows / post-processing off at every quality tier. */
   shadows: boolean
   post: boolean
+  /**
+   * ?rigs=capsules: a fallen pedestrian's figure is hidden and the realm's rig drawn as grey capsules in its place
+   * (rigView.ts), the physics bare; absent, the figure itself wears the rig (crowd.ts rigPoses).
+   */
+  rigCapsules?: boolean
   profile: boolean
   /** A fixed quality tier (-1 Lite … 4 Ultra, 5 Peak), or 'auto' for the governor. */
   quality: number | 'auto'
@@ -151,8 +156,9 @@ export interface EngineOptions {
   cinema?: boolean
   /**
    * The ragdoll balance machine (default on; ?ragdoll=0 turns it off): pedestrians within 25 m of the operator may be
-   * promoted to a physical body in the realm by a shove, a kerb trip or a slip, drawn here as a rig in their figure's
-   * place (rigView.ts). Never a vehicle's doing. Never in a region.
+   * promoted to a physical body in the realm by a shove, a kerb trip or a slip; their own figure wears the rig here
+   * (crowd.ts rigPoses; on ?rigs=capsules the rig is drawn bare in the figure's place, rigView.ts). Never a vehicle's
+   * doing. Never in a region.
    */
   ragdoll?: boolean
   /**
@@ -424,7 +430,7 @@ export class Engine {
   private readonly view: FleetView
   /** The scheduled craft of the realm's craft stream and the loop's structure (craftView.ts); null without craft (a lite boot, a region). */
   private readonly craftView: CraftView | null
-  /** The promoted pedestrians' rigs from the realm's rig stream, drawn where their hidden figures stood. */
+  /** The promoted pedestrians' rigs from the realm's rig stream: who wears which slot, and the capsules on ?rigs=capsules. */
   private readonly rigView: RigView
   /** The first-person head: the only thing that places the camera (future WebXR reads/overrides its pose). */
   private readonly rig = new HeadRig()
@@ -447,6 +453,17 @@ export class Engine {
   private readonly cinema: CinemaPost | null
   /** The span the pedestrians' motion vectors cover (crowd.ts CrowdView.frameSeconds). */
   private readonly crowdFrameSeconds: UniformNode<'float', number>
+  /** Where the pedestrians look (crowd.ts CrowdView.gazeTarget): the operator's eye afoot, nobody from a car. */
+  private readonly crowdGaze: UniformNode<'vec4', Vector4>
+  /** The realm's rig stream into the crowd's rig poses (crowd.ts CrowdView.rigs): the fallen wear their rigs. */
+  private readonly crowdRigs: (stream: Float32Array | null) => void
+  /** The agents whose figure wears a rig slot now (crowd.figure's fourth word, slot + 1), for the release when they are handed back. */
+  private readonly wornAgents: number[] = []
+  /** Their slots, in the same order; and the pins for the cull: each worn figure's row set to its rig's pelvis (x, y, z, heading). */
+  private readonly wornSlots: number[] = []
+  private readonly wornRows = new Float32Array(RIG_SLOTS * 4)
+  /** The worn figures' own x and z in the crowd frame, kept while the contact scan reads them at the rig instead. */
+  private readonly wornSaved = new Float32Array(RIG_SLOTS * 2)
   /** Ghost view: the physics shapes as code over the finished frame (G, or the console's ghost). */
   private readonly ghost: GhostView
   /** Matrix mode (01_Initialize_World/matrixMode.ts): on or off as last asked (M, or the console's matrix). */
@@ -481,6 +498,9 @@ export class Engine {
   /** The crowd's look words on the GPU (three's buffer for CrowdView.look) and the page's copy of them (setLook, lookOf). */
   private readonly crowdLook: GPUBuffer
   private readonly lookWords: Uint32Array
+  /** The figure, face and wardrobe words beside them (CrowdView.figure, four per agent with a spare: the body sliders, the face and the wardrobe of a worn look), written the same way. */
+  private readonly crowdFigure: GPUBuffer
+  private readonly figureWords: Uint32Array
   private readonly poleOut = new Int32Array(DISSOLVE.maxPoles)
   private readonly carOut = new Int32Array(DISSOLVE.maxCars)
   private readonly overlapOut: Int32Array
@@ -637,9 +657,9 @@ export class Engine {
 
   private constructor(p: {
     canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; craftView: CraftView | null; rigView: RigView; profile: DeviceProfile
-    post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; crowdFrameSeconds: UniformNode<'float', number>; ghost: GhostView
+    post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
     options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]
-    crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; netView: NetView
+    crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; crowdFigure: GPUBuffer; netView: NetView
   }) {
     this.places = p.places
     this.rooms = p.rooms
@@ -661,6 +681,8 @@ export class Engine {
     this.cinema = p.cinema
     this.pacer = p.cinema ? new FramePacer(CINEMA.fps) : null
     this.crowdFrameSeconds = p.crowdFrameSeconds
+    this.crowdGaze = p.crowdGaze
+    this.crowdRigs = p.crowdRigs
     this.ghost = p.ghost
     this.netView = p.netView
     this.poles = new PoleIndex(p.world.furniture)
@@ -669,6 +691,8 @@ export class Engine {
     this.crowdDissolve = p.crowdDissolve
     this.crowdLook = p.crowdLook
     this.lookWords = new Uint32Array(p.options.agents)
+    this.crowdFigure = p.crowdFigure
+    this.figureWords = new Uint32Array(p.options.agents * 4)
     this.overlapOut = new Int32Array(p.sim.meta.suv.length)
     this.options = p.options
     this.quality = p.quality
@@ -867,16 +891,21 @@ export class Engine {
       const craftView = sim.meta.craft > 0 ? new CraftView(buildTrackNetwork(options.seed, world.boxes), sim.meta.craft, world.night, world.matrixMode.globalState) : null
       if (craftView && sim.state.craft) craftView.sync(sim.state.craft)
       // The rigs of the promoted pedestrians (the realm's rig stream; none with the ragdoll off, in a region or on a lite
-      // boot). Without rig slots their thirteen meshes would only ever draw nothing, every frame: they stay out.
+      // boot). The figures wear them (crowd.ts rigPoses); the capsules are drawn in the figures' place only on
+      // ?rigs=capsules, and otherwise stay out of the lit scene (their thirteen meshes would draw nothing, every frame).
+      // The ghost view keeps their shapes as proxies either way: it shows the physics, and a fallen person's rig is
+      // physics. Without rig slots there is nothing for either.
       const rigView = new RigView(sim.meta.rigSlots, world.matrixMode.globalState)
       rigView.sync(sim.state.rigs)
-      const rigMeshes = sim.meta.rigSlots > 0 ? rigView.meshes : []
+      view0.rigs(sim.state.rigs)
+      const rigShapes = sim.meta.rigSlots > 0 ? rigView.meshes : []
+      const rigMeshes = options.rigCapsules ? rigShapes : []
       world.scene.add(...view0.meshes, ...view.bodies, view.wheels, ...rigMeshes)
       if (craftView) world.scene.add(...craftView.meshes)
       // The network ghosts (netView.ts): two hidden instanced meshes until a session's poses arrive, compiled with the rest.
       const netView = new NetView()
       world.scene.add(netView.people, netView.cars)
-      const ghost = createGhost({ boxes: world.boxes, furniture: world.furniture, suv: sim.meta.suv, crowdPos: view0.pos, agents: options.agents, rigs: rigMeshes })
+      const ghost = createGhost({ boxes: world.boxes, furniture: world.furniture, suv: sim.meta.suv, crowdPos: view0.pos, agents: options.agents, rigs: rigShapes })
       const { pipeline: post, volumetrics, cinema } = buildPost(gpu.renderer, world.scene, world.camera, options.cinema === false ? null : { resorted: world.resorted }, ghost)
 
       const w = Math.max(1, canvas.clientWidth), h = Math.max(1, canvas.clientHeight)
@@ -905,6 +934,7 @@ export class Engine {
       // looks (03_Spawn_Agents/look.ts): every body material reads the attribute, so the draws allocated it as well;
       // the cull reads each agent's body from it, setLook writes it.
       const crowdLook = gpuBufferOf(gpu.renderer, view0.look)
+      const crowdFigure = gpuBufferOf(gpu.renderer, view0.figure)
       const crowd = await CrowdCull.create(gpu.device, {
         pos: gpuBufferOf(gpu.renderer, view0.pos),
         vel: gpuBufferOf(gpu.renderer, view0.vel),
@@ -921,12 +951,13 @@ export class Engine {
       if (sim.fault !== null) throw new Error(sim.fault)
       stillThere()
       const engine = new Engine({
-        canvas, gpu, world, crowd, sim, view, rigView, profile, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, ghost, options,
+        canvas, gpu, world, crowd, sim, view, rigView, profile, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options,
         quality: { governor, targets, applied, mask, live }, places, landmark, streets,
         rooms: hollow ? hollow.rooms : workplaces(options.seed),
         // The code dissolve's crowd amounts: allocated by the draws above like the frame's buffers, written the same way.
         crowdDissolve: gpuBufferOf(gpu.renderer, view0.dissolve),
         crowdLook,
+        crowdFigure,
         netView,
         craftView,
       })
@@ -1074,12 +1105,47 @@ export class Engine {
   }
 
   /**
+   * Writes the rig slot word (slot + 1, or 0) of every agent the newest rig stream lists into crowd.figure's fourth
+   * word, clears the word of those handed back since, and pins each worn figure's row in the render copy to its rig's
+   * pelvis (the twin's heading kept) so the cull judges the body where it lies; on ?rigs=capsules nobody is pinned
+   * (the hide mask covers them). The player's own figure (0) is never promoted.
+   */
+  private wearRigs(frame: Float32Array | null): void {
+    const by = this.rigView.bySlot, at = this.rigView.pelvisXZ, rows = this.wornRows
+    const next: number[] = [], slots: number[] = []
+    for (let slot = 0; slot < this.rigView.slots; slot++) {
+      const agent = by[slot]
+      if (!(agent > 0 && agent < this.lookWords.length)) continue
+      const k = next.length
+      rows[4 * k] = at[2 * slot]
+      rows[4 * k + 1] = 0
+      rows[4 * k + 2] = at[2 * slot + 1]
+      rows[4 * k + 3] = frame && frame.length >= 4 * (agent + 1) ? frame[4 * agent + 3] : 0
+      next.push(agent)
+      slots.push(slot)
+      this.wearSlot(agent, slot + 1)
+    }
+    for (const agent of this.wornAgents) if (!next.includes(agent)) this.wearSlot(agent, 0)
+    this.wornAgents.length = 0
+    this.wornAgents.push(...next)
+    this.wornSlots.length = 0
+    this.wornSlots.push(...slots)
+    this.crowd.pin(this.options.rigCapsules ? [] : next, rows)
+  }
+
+  private wearSlot(agent: number, word: number): void {
+    if (this.figureWords[agent * 4 + 3] === word) return
+    this.figureWords[agent * 4 + 3] = word
+    this.gpu.device.queue.writeBuffer(this.crowdFigure, agent * 16 + 12, this.figureWords, agent * 4 + 3, 1)
+  }
+
+  /**
    * Dresses an agent (0 is the player's own body; a recruit by their pedestrian number) in a look out of the crowd's
-   * closed wardrobe (03_Spawn_Agents/look.ts), or null to dress them as the hash does again. The word goes to the
-   * crowd's page-only storage attribute the way the dissolve amounts do (queue.writeBuffer; view-only: nothing
-   * reaches the physics realm, nobody moves for it). Refused (false) for an agent outside the crowd, a look outside
-   * the wardrobe, or once the city has stopped; the eye never sees its own body, but its shadow, the cull's body
-   * choice and every other viewer do.
+   * closed wardrobe (03_Spawn_Agents/look.ts), or null to dress them as the hash does again. The look word, and the
+   * figure word with the face word beside it, go to the crowd's page-only storage attributes the way the dissolve
+   * amounts do (queue.writeBuffer; view-only: nothing reaches the physics realm, nobody moves for it). Refused (false)
+   * for an agent outside the crowd, a look outside the wardrobe, or once the city has stopped; the eye never sees its
+   * own body, but its shadow, the cull's body choice and every other viewer do.
    */
   setLook(agent: number, look: Look | null): boolean {
     if (this.halted || this.disposed) return false
@@ -1087,7 +1153,11 @@ export class Engine {
     const word = look === null ? LOOK_NONE : validateLook(look) === null ? -1 : packLook(look)
     if (word < 0) return false
     this.lookWords[agent] = word
+    this.figureWords[agent * 4] = look === null ? 0 : packFigure(look)
+    this.figureWords[agent * 4 + 1] = look === null ? 0 : packFace(look)
+    this.figureWords[agent * 4 + 2] = look === null ? 0 : packWardrobe(look)
     this.gpu.device.queue.writeBuffer(this.crowdLook, agent * 4, this.lookWords, agent, 1)
+    this.gpu.device.queue.writeBuffer(this.crowdFigure, agent * 16, this.figureWords, agent * 4, 4)
     // The player's own body sets the first-person eye: a taller look sees over the crowd, a shorter one looks up at
     // it (head.ts eyeHeightFor; the hash's body keeps the reference eye).
     if (agent === PLAYER_INDEX) this.rig.setEyeHeight(eyeHeightFor(look === null ? 1 : heightScale(look)))
@@ -1097,7 +1167,7 @@ export class Engine {
   /** The look an agent was dressed in (setLook), or null while the hash dresses them (or for no such agent). */
   lookOf(agent: number): Look | null {
     if (!Number.isInteger(agent) || agent < 0 || agent >= this.lookWords.length) return null
-    return unpackLook(this.lookWords[agent])
+    return unpackLook(this.lookWords[agent], this.figureWords[agent * 4], this.figureWords[agent * 4 + 1], this.figureWords[agent * 4 + 2])
   }
 
   /**
@@ -1481,13 +1551,17 @@ export class Engine {
         this.crowdCopiedAt = now
       }
     }
-    // The passage pulse's view of the crowd: who is nearest the user's body in this frame (and, for the code dissolve,
-    // whose bodies it is inside).
-    if (s.crowdFrame) this.contactScan(s)
-    // The promoted pedestrians' rigs: their figures are hidden in the render copy (before the upload re-applies the
-    // mask) and the rigs posed where they stand. View-only: the realm decided who is promoted.
+    // The promoted pedestrians' rigs: their figures wear the rig's poses (the slot word in crowd.figure, the poses in
+    // the crowd's uniform array, their rows in the render copy pinned to the rig's pelvis for the cull), or, on
+    // ?rigs=capsules, are hidden in the render copy (before the upload re-applies the mask) with the capsules posed
+    // where they stand. View-only: the realm decided who is promoted.
     this.rigView.sync(s.rigs)
-    this.crowd.hide(this.rigView.hidden)
+    this.crowdRigs(s.rigs)
+    this.wearRigs(s.crowdFrame)
+    this.crowd.hide(this.options.rigCapsules ? this.rigView.hidden : [])
+    // The passage pulse's view of the crowd: who is nearest the user's body in this frame (and, for the code dissolve,
+    // whose bodies it is inside), a fallen person read at their rig.
+    if (s.crowdFrame) this.contactScan(s)
     // The robots: the bodies' joints out of the joint buffer, the newest frames in, the setpoints out through the gate.
     this.robots.tick()
     // The pedestrians the worker simulated: straight into the render buffers (the copy is only ever drawn).
@@ -1772,6 +1846,8 @@ export class Engine {
       this.avatarHeading = input.yaw + Math.PI
       this.rig.onFoot(cam, av.x, av.feetY, av.z, input.yaw, input.pitch, dt)
     }
+    // The pedestrians near the operator look them in the eye (crowd.ts gazeTarget); from a car, nobody is looked at.
+    this.crowdGaze.value.set(this.rig.pose.x, this.rig.pose.y, this.rig.pose.z, driving >= 0 ? 0 : 1)
     // The other local players' heads, each on its own camera from its own avatar (or the car it drives) and its seat's
     // yaw and pitch; posed every animation frame like player 1's (their listeners read it; the car carries it).
     for (let k = 1; k < this.views.length; k++) this.poseView(this.views[k], k, st, dt)
@@ -1919,16 +1995,37 @@ export class Engine {
    */
   private contactScan(s: StepState): void {
     const frame = s.crowdFrame, n = this.options.agents
-    this.personGapFoot = personGap(frame, n, s.avatar.x, s.avatar.z, PERSON.radius)
-    const d = s.driving
-    if (d >= 0) {
-      const o = d * POSE.stride, c = chassisBox(this.sim.meta.suv[d])
-      this.personGapCar = personGapToBox(frame, n, s.poses[o + POSE.x], s.poses[o + POSE.z], s.poses[o + POSE.heading], c.hx, c.hz)
-      // The code dissolve: the people the chassis (grown by the reach) stands in, by row.
-      this.peopleCount = peopleWithinBox(frame, n, s.poses[o + POSE.x], s.poses[o + POSE.z], s.poses[o + POSE.heading], c.hx + DISSOLVE.reach, c.hz + DISSOLVE.reach, this.peopleOut)
-    } else {
-      this.personGapCar = CONTACT.far
-      this.peopleCount = peopleWithin(frame, n, s.avatar.x, s.avatar.z, PERSON.radius + DISSOLVE.reach, this.peopleOut)
+    // A person wearing a rig is where the rig lies, not where the worker's crowd walks their twin: their row reads as
+    // the rig's pelvis for the scan and is put back before the frame goes on (to the render copy, then the worker).
+    const worn = frame ? this.wornAgents.length : 0
+    const saved = this.wornSaved, at = this.rigView.pelvisXZ
+    for (let k = 0; k < worn; k++) {
+      const o = 4 * this.wornAgents[k], slot = this.wornSlots[k]
+      if (o + 3 >= frame!.length) continue
+      saved[2 * k] = frame![o]
+      saved[2 * k + 1] = frame![o + 2]
+      frame![o] = at[2 * slot]
+      frame![o + 2] = at[2 * slot + 1]
+    }
+    try {
+      this.personGapFoot = personGap(frame, n, s.avatar.x, s.avatar.z, PERSON.radius)
+      const d = s.driving
+      if (d >= 0) {
+        const o = d * POSE.stride, c = chassisBox(this.sim.meta.suv[d])
+        this.personGapCar = personGapToBox(frame, n, s.poses[o + POSE.x], s.poses[o + POSE.z], s.poses[o + POSE.heading], c.hx, c.hz)
+        // The code dissolve: the people the chassis (grown by the reach) stands in, by row.
+        this.peopleCount = peopleWithinBox(frame, n, s.poses[o + POSE.x], s.poses[o + POSE.z], s.poses[o + POSE.heading], c.hx + DISSOLVE.reach, c.hz + DISSOLVE.reach, this.peopleOut)
+      } else {
+        this.personGapCar = CONTACT.far
+        this.peopleCount = peopleWithin(frame, n, s.avatar.x, s.avatar.z, PERSON.radius + DISSOLVE.reach, this.peopleOut)
+      }
+    } finally {
+      for (let k = 0; k < worn; k++) {
+        const o = 4 * this.wornAgents[k]
+        if (o + 3 >= frame!.length) continue
+        frame![o] = saved[2 * k]
+        frame![o + 2] = saved[2 * k + 1]
+      }
     }
   }
 
