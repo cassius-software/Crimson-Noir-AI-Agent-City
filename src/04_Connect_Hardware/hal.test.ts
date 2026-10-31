@@ -6,15 +6,20 @@
  * when WebHID / Web Serial / Web Bluetooth / Gamepad are missing, autoconnect of granted devices only,
  * choosers requested synchronously (user-gesture rule), change-only outputs to the DualSense and to pad
  * rumble without double-driving one controller, 10 Hz telemetry to HAL/1 devices, hot-plug, the HUD
- * summary, visibility/pagehide safety, and dispose sending the "off" effect.
+ * summary, visibility/pagehide safety, dispose sending the "off" effect, and the robot side of a HAL/1 device
+ * (docs/joint-bridge-spec.md §3.1): CAPS kept or refused, a manifest in one line or in parts, frames judged
+ * against it, acks and the gate's words as events, the page's lines in their order on the wire, the joint bound,
+ * the manifest replacement rule and 'gone' when the device drops.
  * What breaks if it is removed? A regression could leave a trigger stiff or prompt at the wrong time.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { crc32 as zlibCrc32 } from 'node:zlib'
 import { BRAND } from '../brand.ts'
-import { HalBus } from './hal.ts'
-import { NUS } from './lineLink.ts'
+import { HalBus, type HalRobotEvent } from './hal.ts'
+import { buildManifest, JOINT_LINE, manifestJson, manifestLines, type Manifest } from './jointState.ts'
+import { LINE, NUS } from './lineLink.ts'
+import { LEGACY_CAPABILITIES } from './peripheralPolicy.ts'
 import type {
   BleCharacteristic, BleDevice, BleRequestOptions, BleServer, BleValueEvent, ByteReadResult, GamepadLike, HardwareNavigator, Hid,
   HidCollectionInfo, HidConnectionEvent, HidDevice, HidDeviceFilter, HidInputReportEvent, Serial, SerialConnectionEvent, SerialPort,
@@ -80,11 +85,13 @@ class MockHidApi implements Hid {
   removeEventListener(t: 'connect' | 'disconnect', l: Listener<HidConnectionEvent>) { this.events.remove(t, l) }
 }
 
-/** A HAL/1 device on a serial port: answers HELLO with READY <name>, PING with nothing. */
+/** A HAL/1 device on a serial port: answers HELLO with READY <name>, PING with nothing; say() speaks, gate holds writes. */
 class MockPort implements SerialPort {
   readable: SerialPort['readable'] = null
   writable: SerialPort['writable'] = null
   closed = false
+  /** While set, every write waits on it after being recorded: what is queued behind piles up in the link. */
+  gate: Promise<void> | null = null
   readonly written: string[] = []
   readonly name: string | null
   private waiting: ((r: ByteReadResult) => void) | null = null
@@ -107,6 +114,7 @@ class MockPort implements SerialPort {
           const s = dec.decode(b)
           this.written.push(s)
           if (s.startsWith('HELLO ') && this.name) setTimeout(() => this.deliver({ value: enc.encode(`READY ${this.name}\n`), done: false }), 1)
+          if (this.gate) await this.gate
         },
         close: async () => {},
         releaseLock: () => {},
@@ -121,6 +129,7 @@ class MockPort implements SerialPort {
     if (w) w(r)
     else this.queue.push(r)
   }
+  say(text: string) { this.deliver({ value: enc.encode(text), done: false }) }
 }
 
 class MockSerialApi implements Serial {
@@ -753,4 +762,223 @@ test('player LEDs over USB: a controller\'s seat is its browser pad\'s, two of a
   assert.equal(b.common(-1)[43], 0x00, 'a pad beyond the free seats lights nothing')
   assert.equal(a.common(-1)[43], 0x0a)
   await bus.dispose()
+})
+
+test('a headset session\'s input sources are rows of the xr transport: named by the resolver, ready, with their hand and target-ray mode; never pairable; gone with the session', () => {
+  const bus = new HalBus({ navigator: {} })
+  assert.equal('xr' in bus.support(), false, 'a headset is not paired: the session brings it')
+  const left = { handedness: 'left', targetRayMode: 'tracked-pointer', profiles: ['meta-quest-touch-plus', 'generic-trigger-squeeze-thumbstick'], gamepad: { mapping: 'xr-standard', axes: [0, 0, 0, 0], buttons: Array.from({ length: 7 }, () => ({ pressed: false, value: 0 })) } }
+  const pinch = { handedness: 'none', targetRayMode: 'transient-pointer', profiles: [], gamepad: null }
+  const hand = { handedness: 'right', targetRayMode: 'tracked-pointer', profiles: ['generic-hand-select'], gamepad: null, hand: {} }
+  bus.setHeadset([left, pinch, hand])
+  assert.deepEqual(bus.devices().map((d) => [d.id, d.transport, d.name, d.state, d.detail]), [
+    ['xr:0', 'xr', 'Tracked controller (left)', 'ready', 'tracked-pointer, meta-quest-touch-plus'],
+    ['xr:1', 'xr', 'Gaze and pinch', 'ready', 'transient-pointer'],
+    ['xr:2', 'xr', 'Tracked hand (right)', 'ready', 'tracked-pointer, generic-hand-select'],
+  ])
+  for (const d of bus.devices()) assert.match(d.profile ?? '', /by the headset/, d.profile)
+  assert.equal(bus.summary(), '3 devices · Tracked controller (left) ready +2')
+  bus.setHeadset([pinch])
+  assert.deepEqual(bus.devices().map((d) => d.id), ['xr:0'], 'the live list, re-numbered')
+  bus.setHeadset(null)
+  assert.deepEqual(bus.devices(), [])
+  assert.equal(bus.summary(), '')
+})
+
+// ── the robot side of a HAL/1 device (docs/joint-bridge-spec.md §3.1) ─────────────────────────────────
+
+const aLink = (name: string, mass = 1) => ({ name, mass, shape: { kind: 'sphere', radius: 0.05 } })
+const aJoint = (name: string, parent: string, child: string) => ({ name, kind: 'revolute', parent, child, axis: [0, 0, 1], lower: -1, upper: 1, effort: 10, velocity: 2 })
+/** A chain of n revolute joints from a fixed base, as jointState.test.ts builds it. */
+function armManifest(n: number): Manifest {
+  const links = [aLink('base', 0)]
+  const joints = []
+  for (let i = 0; i < n; i++) {
+    links.push(aLink(`l${i}`))
+    joints.push(aJoint(`j${i}`, i === 0 ? 'base' : `l${i - 1}`, `l${i}`))
+  }
+  const r = buildManifest('arm', links, joints)
+  assert.ok(r.ok, r.ok ? '' : r.reason)
+  return r.value
+}
+
+/** A bus on a fake clock with one granted serial device already through its handshake, and every robot event kept. */
+async function robotBus(name = 'Arm') {
+  const serial = new MockSerialApi()
+  const port = new MockPort(name)
+  serial.granted = [port]
+  const clock = { now: 0 }
+  const bus = new HalBus({ navigator: nav({ serial }), now: () => clock.now })
+  const events: HalRobotEvent[] = []
+  bus.onRobot((e) => events.push(e))
+  await bus.autoconnect()
+  assert.equal(bus.devices()[0].state, 'ready')
+  return { serial, port, bus, clock, events, id: `hal:${bus.devices()[0].id}` }
+}
+
+test('a HAL/1 robot: READY, CAPS, JOINTS, frames good and bad, JA, ARMED, BEAT, DISARM; the row and robots() show it', async () => {
+  const r = await robotBus()
+  assert.deepEqual(r.bus.robots(), [], 'a device without a manifest is not a robot')
+  r.port.say('CAPS 1 {"class":"actuator","telemetry":["angle"],"actuation":["servo"]}\n')
+  r.port.say('BEAT 1\n') // the gate's words before a manifest are not a robot's: no event
+  const m = armManifest(2)
+  r.port.say(`JOINTS 1 ${manifestJson(m)}\n`)
+  await until(() => r.bus.robots().length === 1)
+  const robot = r.bus.robots()[0]
+  assert.equal(robot.id, r.id)
+  assert.match(robot.id, /^hal:serial:2341:0043#\d+$/)
+  assert.deepEqual([robot.name, robot.transport, robot.frame, robot.frameAt, robot.frames, robot.badFrames, robot.ack, robot.armed], ['arm', 'serial', null, 0, 0, 0, -1, false])
+  assert.deepEqual(robot.manifest, m)
+  assert.deepEqual(robot.caps.actuation, ['servo'])
+  assert.deepEqual(r.bus.devices()[0].robot, { joints: 2, name: 'arm', armed: false })
+  assert.deepEqual(r.events, [{ kind: 'manifest', id: r.id, manifest: m }])
+  const off = r.bus.onRobot(() => { throw new Error('a page bug') }) // must not end the read loop or starve the other listener
+  r.clock.now = 250
+  r.port.say('JS {"stamp":10,"seq":1,"q":[0.1,0.2],"qd":[],"tau":[1,2],"ack":3}\n')
+  r.port.say('JS {"stamp":11,"seq":2,"q":[0.1]}\n') // one entry for two joints
+  r.port.say('JS not json\n')
+  r.port.say('JS {"stamp":12,"seq":3,"q":[0.3,null]}\n') // not a number
+  await until(() => r.bus.robots()[0].badFrames === 3)
+  off()
+  const after = r.bus.robots()[0]
+  assert.equal(after.frames, 1)
+  assert.deepEqual(after.frame, { stamp: 10, seq: 1, q: [0.1, 0.2], qd: [], tau: [1, 2], ack: 3 })
+  assert.equal(after.frameAt, 250, 'the bus clock')
+  assert.equal(after.ack, 3, 'a frame\'s ack says what JA says')
+  r.port.say('JA 4\nARMED n-1\nBEAT 7\nBEAT\nDISARM heartbeat-lost\nJT {"seq":1}\n{"trigger":0.4}\n')
+  await until(() => r.events.length === 7)
+  assert.deepEqual(r.events.slice(1), [
+    { kind: 'frame', id: r.id, frame: after.frame, at: 250 },
+    { kind: 'ack', id: r.id, seq: 4 },
+    { kind: 'armed', id: r.id, nonce: 'n-1' },
+    { kind: 'beat', id: r.id, n: 7 },
+    { kind: 'beat', id: r.id, n: 0 },
+    { kind: 'disarm', id: r.id, cause: 'heartbeat-lost' },
+  ])
+  assert.equal(r.bus.robots()[0].ack, 4)
+  r.bus.markArmed(r.id, true)
+  assert.equal(r.bus.robots()[0].armed, true)
+  assert.equal(r.bus.devices()[0].robot?.armed, true)
+  r.bus.markArmed('hal:nope', true)
+  await r.bus.dispose()
+  assert.deepEqual(r.events.at(-1), { kind: 'gone', id: r.id }, 'dispose says gone')
+  assert.deepEqual(r.bus.robots(), [])
+})
+
+test('the page\'s lines to a robot: a control line first, the newest setpoint next, telemetry last; nothing to an unknown id', async () => {
+  const r = await robotBus()
+  r.port.say(`JOINTS 1 ${manifestJson(armManifest(1))}\n`)
+  await until(() => r.bus.robots().length === 1)
+  let release!: () => void
+  r.port.gate = new Promise<void>((res) => { release = res })
+  r.bus.sendSetpoint(r.id, 'JT {"seq":1,"q":[0]}\n') // in flight: holds the channel
+  await sleep(1)
+  const before = r.port.written.length
+  r.bus.sendSetpoint(r.id, 'JT {"seq":2,"q":[0]}\n')
+  r.bus.sendSetpoint(r.id, 'JT {"seq":3,"q":[0]}\n')
+  r.bus.telemetry({ speedKmh: 1 })
+  assert.equal(r.bus.sendLine(r.id, 'ARM n1\n'), true)
+  assert.equal(r.bus.sendLine('hal:nope', 'ARM n1\n'), false)
+  r.bus.sendSetpoint('hal:nope', 'JT {}\n')
+  r.bus.clearSetpoint('hal:nope')
+  r.port.gate = null
+  release()
+  await sleep(5)
+  assert.deepEqual(r.port.written.slice(before), ['ARM n1\n', 'JT {"seq":3,"q":[0]}\n', '{"speedKmh":1}\n'])
+  // clearSetpoint drops a waiting setpoint: a DISARM is not followed by a stale JT.
+  r.port.gate = new Promise<void>((res) => { release = res })
+  assert.equal(r.bus.sendLine(r.id, 'DISARM operator\n'), true)
+  await sleep(1)
+  const b2 = r.port.written.length
+  r.bus.sendSetpoint(r.id, 'JT {"seq":4,"q":[0]}\n')
+  r.bus.clearSetpoint(r.id)
+  r.port.gate = null
+  release()
+  await sleep(5)
+  assert.deepEqual(r.port.written.slice(b2), [])
+  await r.bus.dispose()
+})
+
+test('JOINTS in three parts within the window; over halJoints refused and logged; a second manifest replaces the first only while disarmed', async () => {
+  const r = await robotBus()
+  const three = armManifest(3)
+  const json = manifestJson(three)
+  const cut = Math.ceil(json.length / 3)
+  const parts = [json.slice(0, cut), json.slice(cut, 2 * cut), json.slice(2 * cut)]
+  r.port.say(`JOINTS 1 1/3 ${parts[0]}\n`)
+  r.port.say(`JOINTS 1 2/3 ${parts[1]}\n`)
+  await sleep(5)
+  assert.deepEqual(r.bus.robots(), [], 'not before the last part')
+  r.port.say(`JOINTS 1 3/3 ${parts[2]}\n`)
+  await until(() => r.bus.robots().length === 1)
+  assert.deepEqual(r.bus.robots()[0].manifest, three)
+  assert.equal(r.bus.devices()[0].detail, 'HAL/1 · serial')
+  // Too many joints for a line: refused, the row says so, the robot keeps its manifest.
+  const big = manifestLines(armManifest(JOINT_LINE.halJoints + 1), LINE.maxLine)
+  assert.ok(big && big.length > 1)
+  for (const l of big!) r.port.say(l)
+  await until(() => /JOINTS refused/.test(r.bus.devices()[0].detail))
+  assert.match(r.bus.devices()[0].detail, /25 movable joints; a HAL\/1 robot has at most 24/)
+  assert.equal(r.bus.robots()[0].manifest.movable.length, 3)
+  // A manifest the judge refuses is logged too.
+  r.port.say('JOINTS 1 {"robot":"x","links":[],"joints":[]}\n')
+  await until(() => /at least one link/.test(r.bus.devices()[0].detail))
+  // A second manifest replaces the first while disarmed...
+  r.port.say(`JOINTS 1 ${manifestJson(armManifest(2))}\n`)
+  await until(() => r.bus.robots()[0].manifest.movable.length === 2)
+  assert.deepEqual(r.bus.devices()[0].robot, { joints: 2, name: 'arm', armed: false })
+  assert.equal(r.bus.devices()[0].detail, 'HAL/1 · serial', 'an accepted manifest clears the refusal from the row')
+  // ...and not while armed.
+  r.bus.markArmed(r.id, true)
+  r.port.say(`JOINTS 1 ${manifestJson(armManifest(1))}\n`)
+  await until(() => /armed/.test(r.bus.devices()[0].detail))
+  assert.equal(r.bus.robots()[0].manifest.movable.length, 2)
+  r.bus.markArmed(r.id, false)
+  r.port.say(`JOINTS 1 ${manifestJson(armManifest(1))}\n`)
+  await until(() => r.bus.robots()[0].manifest.movable.length === 1)
+  assert.deepEqual(r.events.filter((e) => e.kind === 'manifest').map((e) => (e as { manifest: Manifest }).manifest.movable.length), [3, 2, 1])
+  // A part past the window starts over. Lines are read in order, so once the marker frame is counted part 1 was read at 20 s.
+  r.clock.now = 20_000
+  r.port.say(`JOINTS 1 1/3 ${parts[0]}\n`)
+  const bad = r.bus.robots()[0].badFrames
+  r.port.say('JS x\n')
+  await until(() => r.bus.robots()[0].badFrames === bad + 1)
+  r.clock.now = 20_000 + JOINT_LINE.windowMs + 1
+  r.port.say(`JOINTS 1 2/3 ${parts[1]}\n`)
+  await until(() => /more than 10 s/.test(r.bus.devices()[0].detail))
+  assert.equal(r.bus.robots()[0].manifest.movable.length, 1)
+  await r.bus.dispose()
+})
+
+test('a CAPS the host cannot read is logged and the device stays a legacy sensor; a device dropping says gone and clears its robot', async () => {
+  const r = await robotBus()
+  r.port.say('CAPS 2 {"class":"actuator","actuation":["servo"]}\n')
+  await until(() => /CAPS refused/.test(r.bus.devices()[0].detail))
+  assert.match(r.bus.devices()[0].detail, /version 2 is not supported/)
+  r.port.say(`JOINTS 1 ${manifestJson(armManifest(1))}\n`)
+  await until(() => r.bus.robots().length === 1)
+  assert.equal(r.bus.robots()[0].caps, LEGACY_CAPABILITIES)
+  r.serial.events.dispatch('disconnect', { target: r.port })
+  await until(() => r.bus.devices()[0].state === 'disconnected')
+  assert.deepEqual(r.events.at(-1), { kind: 'gone', id: r.id })
+  assert.deepEqual(r.bus.robots(), [])
+  assert.equal(r.bus.devices()[0].robot, undefined)
+  assert.equal(r.bus.sendLine(r.id, 'ARM x\n'), false)
+  const gone = r.events.filter((e) => e.kind === 'gone').length
+  // A device whose stream ends (the board went away) says gone once too; one that never announced a manifest says nothing.
+  const quiet = new MockPort('Light'), arm2 = new MockPort('Arm2')
+  r.serial.events.dispatch('connect', { target: quiet })
+  r.serial.events.dispatch('connect', { target: arm2 })
+  await until(() => r.bus.devices().filter((d) => d.state === 'ready').length === 2)
+  const id2 = `hal:${r.bus.devices().find((d) => d.name === 'Arm2')!.id}`
+  arm2.say(`JOINTS 1 ${manifestJson(armManifest(1))}\n`)
+  await until(() => r.bus.robots().length === 1)
+  assert.equal(r.bus.robots()[0].id, id2)
+  quiet.deliver({ done: true })
+  arm2.deliver({ done: true })
+  await until(() => r.bus.devices().every((d) => d.state === 'disconnected'))
+  assert.equal(r.events.filter((e) => e.kind === 'gone').length, gone + 1)
+  assert.deepEqual(r.events.at(-1), { kind: 'gone', id: id2 })
+  await r.bus.dispose()
+  assert.equal(r.events.filter((e) => e.kind === 'gone').length, gone + 1, 'dispose has nothing left to say gone about')
 })

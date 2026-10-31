@@ -289,3 +289,51 @@ test('real Rapier: the avatar stands, lands and walks on its skin above the road
   assert.ok(Math.max(...path) > 0.3, 'climbed the platform')
   assert.ok(climber.x > 311 && feetOf(climber) > 0.015 && feetOf(climber) < 0.04, `stepped down to the road: x ${climber.x.toFixed(1)}, feet ${feetOf(climber).toFixed(3)}`)
 })
+
+test('under a headset: the rig stands at the feet turned the body\'s way, the headset\'s pose is composed onto it, the pose read back is the headset\'s (pitch unclamped, roll on the camera); the eye point stays the driver\'s in a car; given back, the rig is its own', () => {
+  const rig = new HeadRig(), cam = new PerspectiveCamera()
+  let roll = 0
+  // A stand-in for three's renderer.xr.updateCamera: the headset's pose relative to the rig the camera is parented to.
+  const compose = (camera: PerspectiveCamera) => {
+    assert.ok(camera.parent, 'composed under the rig')
+    camera.position.set(0.1, 1.6, 0)
+    camera.rotation.set(-1.55, 0.52, roll, 'YXZ')
+    camera.updateMatrixWorld(true)
+  }
+  assert.equal(rig.headset, false)
+  rig.setHeadset(compose)
+  assert.equal(rig.headset, true)
+  rig.onFoot(cam, 10, 0.5, -4, Math.PI / 2, 0.3, 1 / 60)
+  assert.equal(cam.parent, null, 'detached with its world transform as its own')
+  assert.ok(close(cam.position.x, 10) && close(cam.position.y, 2.1) && close(cam.position.z, -4.1), `the headset's offset turned the body's way: ${cam.position.toArray()}`)
+  assert.ok(close(rig.pose.x, 10) && close(rig.pose.y, 2.1) && close(rig.pose.z, -4.1))
+  assert.ok(close(rig.pose.yaw, Math.PI / 2 + 0.52), 'the body yaw plus the headset\'s')
+  assert.ok(close(rig.pose.pitch, -1.55), 'the headset\'s pitch, past the mouse\'s clamp, never clamped')
+  assert.ok(Math.abs(rig.pose.pitch) > PITCH_LIMIT)
+  assert.equal(cam.rotation.order, 'YXZ')
+  assert.ok(close(cam.rotation.z, 0), 'no roll composed, none read')
+  roll = 0.2
+  rig.onFoot(cam, 10, 0.5, -4, Math.PI / 2, 0, 1 / 60)
+  assert.ok(close(cam.rotation.z, 0.2), 'a rolled headset rolls the camera, not the pose')
+  assert.ok(close(rig.pose.yaw, Math.PI / 2 + 0.52) && close(rig.pose.pitch, -1.55))
+  roll = 0
+  // Nothing of the stick's pitch, and no smoothing: a step up is the headset's to show.
+  rig.onFoot(cam, 10, 1.5, -4, Math.PI / 2, 0, 1 / 60)
+  assert.ok(close(cam.position.y, 3.1), 'the floor moved a metre, so did the eye, at once')
+  // A broken yaw holds the last; broken feet hold the last.
+  rig.onFoot(cam, 10, 1.5, -4, Number.NaN, 0, 1 / 60)
+  assert.ok(close(rig.pose.yaw, Math.PI / 2 + 0.52))
+  rig.onFoot(cam, Number.NaN, 1.5, -4, Math.PI / 2, 0, 1 / 60)
+  assert.ok(close(cam.position.x, 10))
+  // In a car the rig's floor sits the composed height under the driver's eye point, so the eyes land at the eye point.
+  rig.inVehicle(cam, { x: 5, y: 0.56, z: 7 }, { x: 0, y: 0, z: 0, w: 1 }, KIND.sedan, 0, 0)
+  assert.ok(close(cam.position.y, 0.56 + DRIVER_EYE.y), `seated or standing, the eyes are at the driver's eye height: ${cam.position.y}`)
+  assert.ok(close(cam.position.x, 5 + DRIVER_EYE.x + 0.1) && close(cam.position.z, 7 + DRIVER_EYE.z), 'the headset\'s own sideways offset stays')
+  assert.ok(close(rig.pose.yaw, 0.52), 'the car\'s heading plus the headset\'s yaw')
+  // Given back: the next pose is the mouse's again, snapped, the eye at its own height.
+  rig.setHeadset(null)
+  assert.equal(rig.headset, false)
+  rig.onFoot(cam, 0, 0, 0, 0, 0.3, 1 / 60)
+  assert.ok(close(cam.position.y, EYE_HEIGHT), `${cam.position.y}`)
+  assert.deepEqual(rig.pose, { x: 0, y: EYE_HEIGHT, z: 0, yaw: 0, pitch: 0.3 })
+})

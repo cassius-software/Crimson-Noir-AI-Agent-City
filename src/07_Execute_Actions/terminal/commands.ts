@@ -24,15 +24,23 @@
  * (the city, or the console alone); `r0` is the console's own stack machine (repl.ts): it touches no bridge at all.
  * `topic` reads the unified namespace (05_Observe_Environment/namespace.ts): every reading of the city as a retained
  * topic, listed by filter, read one at a time, walked as a tree, or watched live like `stats`; read-only, like `stats`.
+ * `feature` is the feature inspector (09_Cognition/features.ts, through the operator tier's surface): the named
+ * readings of the city as one vector, read while locked; `steer`, `clamp`, `release` and `reset` are the operator's.
+ * `ring0` is the elite tier above the operator tier: a passphrase (set once, kept by the host as a salted hash) opens
+ * NoirScript's writes for the session; its status and lock work while locked, unlock and set need the operator tier.
+ * `noir` is the console's second language (noirscript/): statically typed, compiled to bytecode and run on a bounded
+ * VM; it reads the city's columns as copies through the bridge's `soa` surface, and its write intrinsics reach the
+ * city only through the elite tier's surface (`ring0`), failing while that tier is locked.
  * What breaks if it is removed? The terminal cannot interpret a single line.
  */
 import type {
-  ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, ExecResult, GateTether, GoalPlan, HalDevice, HarnessReport, LookBridge, LookChange, MemoryBridge, MindStatus, ModelBridge,
-  NetBridge, NetReport, OperatorBridge, PendingAct, Piece, PingKind, PingPick, RecordBridge, RecruitBridge, Ring0Stats, RunResult, SayResult, TerminalBridge, TopicBridge, VoiceStatus,
+  ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, EliteWrites, ExecResult, GateTether, GoalPlan, HalDevice, HarnessReport, LookBridge, LookChange, MemoryBridge, MindStatus, ModelBridge,
+  NetBridge, NetReport, OperatorBridge, PendingAct, Piece, PingKind, PingPick, RecordBridge, RecruitBridge, Ring0Stats, RobotConsole, RobotRow, RunResult, SayResult, TerminalBridge, TopicBridge, VoiceStatus,
 } from './bridge.ts'
 import type { QualityState, RecordingState } from '../../05_Observe_Environment/telemetry.ts'
 import type { SwarmReport, SwarmStatus } from '../../08_Swarm/orchestrator.ts'
 import { Machine } from './repl.ts'
+import { ELITE_LIMITS, EMPTY_TABLES, NoirSession, type NoirHost, type NoirTables } from './noirscript/index.ts'
 
 /** The roster's pronoun choices, as its usage line names them (08_Swarm/roster.ts PRONOUNS; roster.test.ts pins the two). */
 export const PRONOUN_WORDS = 'they/them|she/her|he/him|any'
@@ -72,6 +80,9 @@ const MAX_TIER = 5
 const SLOW_MS = 500
 /** An R0 line that took this many steps or more gets its count printed after its output. */
 const R0_NOTE_STEPS = 100_000
+const NOIR_NOTE_STEPS = 100_000
+/** What a NoirScript write intrinsic fails with while the elite tier is locked (operator.ts's requireElite says the same). */
+const NOIR_LOCKED = "elite tier locked: 'ring0 unlock --elite <passphrase>' opens it"
 /** A number as typed for a point: -12, 3.5. */
 const NUMBER = /^-?\d+(?:\.\d+)?$/
 
@@ -79,14 +90,16 @@ const NUMBER = /^-?\d+(?:\.\d+)?$/
 const CORE = [
   { name: 'help', usage: 'help [command]', summary: 'list commands, or explain one' },
   { name: 'stats', usage: 'stats [--once]', summary: 'live Rapier3D, frame, crowd and kernel readout' },
-  { name: 'laws', usage: 'laws', summary: 'the three laws the kernel enforces, in rank order' },
+  { name: 'laws', usage: 'laws', summary: 'the four laws the kernel and the action gate enforce, in rank order' },
   { name: 'kernel', usage: 'kernel', summary: 'interventions per law, Solid->Sensor flips' },
   { name: 'topic', usage: 'topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]', summary: 'the unified namespace: every reading as a retained topic under Enterprise/JCS/Site/AgentCity (~); filter with + for one level and # for the rest' },
+  { name: 'feature', usage: 'feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]', summary: "the feature inspector: named readings of the city in [0, 1], sparsified and ranked; steer and clamp lean the agents' prompts and the tuning knobs (operator)" },
   { name: 'quality', usage: 'quality [auto|lite|peak|-1|0-5]', summary: 'show or set the render quality tier' },
   { name: 'time', usage: 'time [HH[:MM]]', summary: 'show or set the city clock' },
   { name: 'audio', usage: 'audio [on|off|0-100]', summary: 'show or set the soundscape' },
   { name: 'ghost', usage: 'ghost [on|off]', summary: 'ghost view: the physics shapes as code over the frame (view-only; G)' },
   { name: 'rain', usage: 'rain [on|off]', summary: 'falling code on every surface, in world space; people and cars pass through each other (M)' },
+  { name: 'xr', usage: 'xr [vr|ar|off]', summary: 'the headset (WebXR over WebGPU): the status, enter VR or AR, or leave' },
   { name: 'render', usage: 'render [on|off]', summary: 'draw the city, or stop drawing it (physics, audio and this console keep running)' },
   { name: 'captions', usage: 'captions [on|off]', summary: 'closed captions for every sound: engines, signals, speech, pings (view-only)' },
   { name: 'ping', usage: 'ping [go|look|gather|wait|clear]', summary: 'mark where you look for your swarm (view-only; shown on the minimap and captioned; Q); alone, the marks standing' },
@@ -95,6 +108,7 @@ const CORE = [
   { name: 'sloane', usage: 'sloane [on|off|voice <name>|voices|say <text...>]', summary: "the concierge's spoken voice: the speech provider's voice at your own head when say has one, else the browser's offline voice" },
   { name: 'goal', usage: 'goal <words...>', summary: 'tell the city a goal in plain words, as you would tell Sloane: what can be done now is done, the rest is explained' },
   { name: 'hal', usage: 'hal [pair hid|serial|ble]', summary: 'hardware bus devices; pair a controller' },
+  { name: 'robot', usage: 'robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|remove <id>]', summary: 'the robots: physical ones over HAL/1 or the loopback relay, simulated ones from a URDF file; their bodies in the physics realm as twins or leaders, every setpoint through the gate (relay, spawn, urdf, arm and calibrate are the operator\'s)' },
   { name: 'recruit', usage: 'recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]', summary: 'ask someone nearby with a skill over, or an Active recruit to the pinged point; listen by voice (on-device)' },
   { name: 'memory', usage: 'memory [<agent>|forget <agent>|forget all]', summary: 'what the people you recruit remember in this city; forget erases it (operator)' },
   { name: 'clear', usage: 'clear', summary: 'clear the screen (Ctrl+L)' },
@@ -106,16 +120,18 @@ const CORE = [
   { name: 'boot', usage: 'boot [gui|tty|status]', summary: 'which shell is up; boot gui reloads as the city, boot tty as this console alone (?boot=tty, no 3D engine)' },
   { name: 'map', usage: 'map [city|lakefront|default|status]', summary: 'which map is walked; map city reloads into the procedural city (people and traffic), map lakefront into the metropolis; the choice is kept until map default' },
   { name: 'r0', usage: 'r0 <words...>|r0 reset|r0 words', summary: "the console's own stack machine (Turing-complete, sandboxed: it reaches nothing of the city)" },
+  { name: 'noir', usage: 'noir <source>|noir reset|noir words|noir asm <source>', summary: "NoirScript, the console's typed, compiled language (a bounded bytecode VM with lane types; reads the city's columns as copies; its writes need the elite tier)" },
   { name: 'exit', usage: 'exit', summary: 'close the console (also ` or Esc)' },
 ] as const
 
 /** The operator tier; every one of these that changes anything is refused until `operator unlock`. */
 const OPERATOR = [
   { name: 'operator', usage: 'operator [unlock|lock|status]', summary: 'the operator tier: scripts, tuning keys, harnesses' },
+  { name: 'ring0', usage: 'ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]', summary: "the Ring-0 elite tier above the operator tier: a passphrase opens NoirScript's writes and raised limits for this session; the laws stay out of reach" },
   { name: 'run', usage: 'run <skill>[,<skill>...]: <js...>', summary: 'run a script against sim.* while someone tethered has the skill (Shift+Enter adds a line)' },
   { name: 'ask', usage: 'ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|file [forget <name>|load|unload|log]|gpu auto|on|off|stop]', summary: 'ask the model, answering as someone tethered with the skill; the answer streams in' },
   { name: 'swarm', usage: 'swarm [run [--agents <1-5>] <goal...>|plan [--agents <1-5>] <goal...>|status|stop|roles|guardrails|audit [verify]]', summary: 'a goal over up to five roles (architect, coder, tester, auditor, verifier), one gated prompt each, guardrails before and after, a hash-chained audit trail' },
-  { name: 'act', usage: 'act [ok|no|log [verify]|list]', summary: 'a city action an agent proposed: allow it, refuse it, read the hash-chained trail, or list the catalogue' },
+  { name: 'act', usage: 'act [ok|no|log [verify]|list|gate]', summary: 'a city action an agent proposed: allow it, refuse it, read the hash-chained trail, list the catalogue, or read the gate it passes' },
   { name: 'say', usage: 'say [<skill>[,<skill>...]: <text...>|voice <name>|model <name>|server <url>|provider local|elevenlabs|key <key>|none|auto on|off|stop]', summary: 'said aloud by someone tethered with the skill, from where they stand (a speech server on this machine; or ElevenLabs through a gateway on it)' },
   { name: 'api', usage: 'api [path]', summary: 'the script API, or one branch of it' },
   { name: 'get', usage: 'get [path]', summary: 'read physics.* and shaders.* tuning keys' },
@@ -133,11 +149,23 @@ type Name = (typeof COMMANDS)[number]['name']
 const NAMES: readonly string[] = COMMANDS.map((c) => c.name).sort()
 
 /** Commands whose argument is the rest of the line, untokenized (a script, a prompt or an R0 line keeps its quotes and newlines). */
-const RAW: ReadonlySet<string> = new Set(['run', 'ask', 'say', 'r0', 'goal', 'agent', 'sloane', 'swarm'])
+/**
+ * The feature inspector's dictionary, for completion (09_Cognition/features.ts FEATURES, in lane order; the terminal
+ * imports only types of the rest of the engine, so the ids are spelled here and a test pins them to the dictionary).
+ */
+export const FEATURE_IDS: readonly string[] = Object.freeze([
+  'CIVIC_COOPERATION', 'TRAFFIC_YIELD', 'SANDBOX_COMPLIANCE', 'CROWD_CALM', 'SIGNAL_DISCIPLINE', 'FLEET_RESTRAINT',
+  'OPERATOR_OBEDIENCE', 'SELF_PRESERVATION', 'FRAME_HEALTH', 'SHIELDING', 'RAIN_MODE', 'WORKDAY',
+])
 
-/** A persistent R0 machine (repl.ts): the terminal keeps one for the life of the console, so definitions outlive a line. */
-export interface ReplSession { machine: Machine }
-export const replSession = (): ReplSession => ({ machine: new Machine() })
+const RAW: ReadonlySet<string> = new Set(['run', 'ask', 'say', 'r0', 'ring0', 'noir', 'goal', 'agent', 'sloane', 'swarm'])
+
+/**
+ * The console's languages, kept for the life of the console so definitions outlive a line: the R0 machine (repl.ts)
+ * and the NoirScript session (noirscript/index.ts).
+ */
+export interface ReplSession { machine: Machine; noir: NoirSession }
+export const replSession = (): ReplSession => ({ machine: new Machine(), noir: new NoirSession() })
 
 /** The model providers, as typed after `ask provider` (commands.test.ts pins them to 09_Cognition/router.ts, which this file must not import). */
 export const PROVIDER_ARGS = ['auto', 'claude', 'inpage', 'llamacpp', 'ollama', 'openai', 'scripted'] as const
@@ -182,6 +210,7 @@ const ARGS: Record<string, readonly string[]> = {
   audio: ['off', 'on'],
   ghost: ['off', 'on'],
   rain: ['off', 'on'],
+  xr: ['ar', 'off', 'vr'],
   render: ['off', 'on'],
   captions: ['off', 'on'],
   ping: ['clear', ...PING_KINDS],
@@ -195,8 +224,18 @@ const ARGS: Record<string, readonly string[]> = {
   boot: ['gui', 'status', 'tty'],
   map: ['city', 'default', 'lakefront', 'status'],
   r0: ['reset', 'words'],
+  feature: ['about', 'clamp', 'list', 'prompt', 'release', 'reset', 'steer', 'top', 'watch', ...FEATURE_IDS].sort(),
+  'feature steer': FEATURE_IDS,
+  'feature clamp': FEATURE_IDS,
+  'feature release': FEATURE_IDS,
+  ring0: ['elite', 'lock', 'status', 'unlock'],
+  'ring0 unlock': ['--elite'],
+  'ring0 elite': ['set'],
+  noir: ['asm', 'reset', 'words'],
   hal: ['pair'],
   'hal pair': ['ble', 'hid', 'serial'],
+  robot: ['arm', 'calibrate', 'demo', 'disarm', 'mode', 'relay', 'remove', 'set', 'spawn', 'urdf'],
+  'robot relay': ['off'],
   recruit: [...RECRUIT_ACTIONS, ...SKILL_ARGS].sort(),
   uname: ['-a'],
   operator: ['lock', 'status', 'unlock'],
@@ -210,7 +249,7 @@ const ARGS: Record<string, readonly string[]> = {
   'ask connect': PROVIDER_ARGS,
   swarm: ['audit', 'guardrails', 'plan', 'roles', 'run', 'status', 'stop'],
   'swarm audit': ['verify'],
-  act: ['list', 'log', 'no', 'ok'],
+  act: ['gate', 'list', 'log', 'no', 'ok'],
   'act log': ['verify'],
   'ask effort': ['high', 'low', 'max', 'medium', 'none', 'xhigh'],
   say: [...SKILL_ARGS.map((s) => `${s}:`), 'auto', 'key', 'model', 'provider', 'server', 'stop', 'voice'].sort(),
@@ -248,6 +287,11 @@ function operatorOf(b: TerminalBridge): OperatorBridge {
   return op
 }
 
+/** The elite tier's write surface for a NoirScript run: null while it (or the operator tier) is locked, and on a bridge without one. */
+function eliteWritesOf(b: TerminalBridge): EliteWrites | null {
+  try { return b.operator?.elite.writes() ?? null } catch { return null }
+}
+
 /** Likewise for a host that publishes no topics (the TTY shell, an older host). */
 function topicsOf(b: TerminalBridge): TopicBridge {
   const t = b.topics
@@ -281,6 +325,13 @@ function netOf(b: TerminalBridge): NetBridge {
   const n = b.net
   if (!n) throw new Error('network not available on this bridge')
   return n
+}
+
+/** Likewise for a host with no physics realm to hold a robot's body (the TTY shell). */
+function robotOf(b: TerminalBridge): RobotConsole {
+  const r = b.robot
+  if (!r) throw new Error('robots are not available on this bridge')
+  return r
 }
 
 /** A page whose host keeps no model file (the onboarding page, the TTY shell, an older host) says so in plain words. */
@@ -385,6 +436,18 @@ export function formatStats(s: Ring0Stats): string[] {
   ]
 }
 
+/** One robot's row: its id, door, mode, joint count, name and state words. */
+function formatRobot(r: RobotRow): string {
+  const state = [
+    r.armed ? 'armed' : '',
+    r.body === null ? 'no body' : `body ${r.body}`,
+    r.frameAgeMs === null ? '' : r.stale ? 'frames stale' : `frame ${Math.round(r.frameAgeMs)} ms ago`,
+    r.calibrated ? 'calibrated' : '',
+    r.refusals ? `${r.refusals} refused` : '',
+  ].filter(Boolean).join(', ')
+  return `  ${r.id.padEnd(24)}${r.door.padEnd(7)}${r.mode.padEnd(8)}${String(r.joints).padEnd(8)}${r.name}  ${state}`
+}
+
 function formatDevice(d: HalDevice): string {
   return `  ${d.transport.padEnd(10)}${d.state.padEnd(13)}${d.name}${d.detail ? `  ${d.detail}` : ''}${d.profile ? `  [${d.profile}]` : ''}`
 }
@@ -457,7 +520,8 @@ function actAskLines(act: AskResult['act']): Line[] {
 
 /**
  * How a proposed city action ended, as the console prints it: the done line, the failure, the gateway's abort in its
- * own words (never retyped), the refusal (the proposer is told next time) or the withdrawal and why.
+ * own words (never retyped), the refusal (the proposer is told next time), the action gate's refusal of an allowed
+ * action (the law named) or the withdrawal and why.
  */
 function actEndLines(act: PendingAct, end: ActEnd): Line[] {
   const n = act.seq
@@ -466,6 +530,8 @@ function actEndLines(act: PendingAct, end: ActEnd): Line[] {
     case 'failed': return [err(`act ${n}: failed: ${end.line}`)]
     case 'aborted': return [err(`act ${n}: ${/^Aborted \(/.test(end.line) ? end.line : `Aborted (Spatial Tether Lost): ${end.line}`}`)]
     case 'refused': return [sys(`act ${n}: refused: ${act.sentence} (agent ${act.agent} is told next time)`)]
+    // Allowed, then refused by the Ring-0 action gate the moment before it ran: the law, in the gate's words.
+    case 'denied': return [err(`act ${n}: refused: ${end.line}`)]
     case 'withdrawn': return [sys(`act ${n}: withdrawn: ${end.line.replace(/^withdrawn: /, '')}`)]
   }
 }
@@ -573,14 +639,37 @@ function auditLines(entries: AuditRows, v: AuditVerdict, empty: string): Line[] 
   return lines
 }
 
-/** The guardrail invariants, in one line each (commands.test.ts pins them to 02_Define_The_Rules/guardrails.ts, which this file must not import). */
-const INVARIANT_LINES: readonly (readonly [string, string])[] = [
-  ['HumanOverrideSupreme', 'a run the operator has stopped admits no further step, whatever else holds'],
-  ['CapabilityTethered', "a step runs only while someone tethered to the operator has its role's skill (the capability gateway decides)"],
-  ['ConductScreen14A', 'the prompt a role is given and the answer it gives both pass the 14A screen (a lexicon; the model under the conduct core is the second layer)'],
-  ['LoopbackOnly', 'the model endpoint a step reaches is on this machine, or there is none (the scripted provider, or a model running in this page)'],
-  ['BudgetWithinQuota', 'steps, prompt length, answer length and tokens stay within the quota'],
-  ['ProvenanceChained', 'the hash-chained audit trail verifies before every step; a tampered record stops the run'],
+/**
+ * The guardrail invariants, in one line each, with the law each stands under (commands.test.ts pins them to
+ * 02_Define_The_Rules/guardrails.ts INVARIANT_TEXT and INVARIANT_LAW, which this file must not import).
+ */
+const INVARIANT_LINES: readonly (readonly [string, string, string])[] = [
+  ['HumanOverrideSupreme', 'Second Law', 'a run the operator has stopped admits no further step, whatever else holds'],
+  ['CapabilityTethered', 'Third Law', "a step runs only while someone tethered to the operator has its role's skill (the capability gateway decides)"],
+  ['ConductScreen14A', 'Zeroth Law', 'the prompt a role is given and the answer it gives both pass the 14A screen (a lexicon; the model under the conduct core is the second layer)'],
+  ['LoopbackOnly', 'Zeroth Law', 'the model endpoint a step reaches is on this machine, or there is none (the scripted provider, or a model running in this page)'],
+  ['BudgetWithinQuota', 'Third Law', 'steps, prompt length, answer length and tokens stay within the quota'],
+  ['ProvenanceChained', 'Third Law', 'the hash-chained audit trail verifies before every step; a tampered record stops the run'],
+]
+
+/**
+ * The Ring-0 action gate's checks, in rank order, with the law each stands under (commands.test.ts pins them to
+ * 02_Define_The_Rules/ring0Gate.ts CHECKS, which this file must not import). Every ask, every proposal and every run
+ * passes them before any state changes; the first failed check names the law in the refusal.
+ */
+const GATE_LINES: readonly (readonly [string, string, string])[] = [
+  ['Contained', 'Zeroth Law', "the page's outbound primitives are held to this machine (airgap.ts), as the host vouches"],
+  ['LoopbackOnly', 'Zeroth Law', 'the model the words come from is on this machine, or there is none (the script, a model in this page)'],
+  ['Conduct14A', 'Zeroth Law', 'the words pass the 14A screen (conduct.ts); a prompt that fails it is not engaged with at all'],
+  ['Catalogued', 'Zeroth Law', 'the effect is one line of the fixed catalogue (actions.ts): nothing else an answer says can change the city'],
+  ['RealmStanding', 'First Law', 'the Ring-0 audit (ring0.ts) has not panicked: a halted realm takes no action'],
+  ['KineticFree', 'First Law', 'the verb reaches no leaf that moves a body, drives a car or weakens the kernel: a car is only parked, or handed back to a driver the Bouncer vets'],
+  ['OperatorUnlocked', 'Second Law', 'the operator tier is unlocked'],
+  ['PersonAllowed', 'Second Law', 'a person allowed it, at the console, on the card or through the host; the gateway never allows'],
+  ['LeaseHeld', 'Third Law', "the proposer is still tethered to the operator (the capability gateway's lease holds)"],
+  ['ProposerBound', 'Third Law', 'the gate binds the proposer, under the same recruitment, and nobody else'],
+  ['ChainVerified', 'Third Law', 'the hash-chained trail verifies before anything runs'],
+  ['OneAtATime', 'Third Law', 'no other proposal waits: one effect at a time'],
 ]
 
 /** `swarm` alone: whether a run is on, where it is, what it has spent, and the audit trail's size and head. */
@@ -810,7 +899,7 @@ const HANDLERS: Record<Name, Handler> = {
   laws: bare('laws', (b) => {
     const lines: Line[] = []
     for (const l of b.laws()) lines.push(out(`${l.id}. ${l.title}`), out(`   ${l.text}`))
-    lines.push(sys('Ranked: a lower law never overrides a higher one.'))
+    lines.push(sys('Ranked: a lower law never overrides a higher one. The kernel vets every vehicle intent by the three; the action gate (act gate) holds every ask, proposal and run to all four.'))
     return { lines }
   }),
 
@@ -818,7 +907,8 @@ const HANDLERS: Record<Name, Handler> = {
     const st = b.stats()
     const k = st.kernel
     const counts = [0, k.law1, k.law2, k.law3]
-    const laws = b.laws()
+    // The vehicle kernel enforces the three; the Zeroth Law is the action gate's (act gate).
+    const laws = b.laws().filter((l) => l.id !== 0)
     const width = Math.max(0, ...laws.map((l) => l.title.length)) + 2
     return {
       lines: [
@@ -869,6 +959,19 @@ const HANDLERS: Record<Name, Handler> = {
   ghost: knob('ghost', (b, arg) => `ghost view ${b.ghost(arg)}`),
 
   rain: knob('rain', (b, arg) => `rain ${b.rain(arg)}`),
+
+  xr(args, b) {
+    if (args.length > 1) return fail(usage('xr'))
+    const a = args[0]
+    if (a !== undefined && a !== 'vr' && a !== 'ar' && a !== 'off') return fail(`xr: invalid argument '${a}'`, usage('xr'))
+    // Called synchronously: a browser grants an immersive session only inside the Enter keydown's user activation.
+    const r = b.xr(a)
+    if (typeof r === 'string') return { lines: [out(`headset ${r}`)] }
+    return {
+      lines: [sys(a === 'off' ? 'headset: leaving...' : 'headset: asking the browser...')],
+      pending: r.then((s): Line[] => [out(`headset ${s}`)], (e: unknown): Line[] => [err(`headset: ${message(e)}`)]),
+    }
+  },
 
   render: knob('render', (b, arg) => `render ${b.render(arg)}`),
 
@@ -1000,6 +1103,58 @@ const HANDLERS: Record<Name, Handler> = {
       (e: unknown): Line[] => [err(`hal: pair failed: ${message(e)}`)],
     )
     return { lines: [sys(shell ? 'hal: asking the app for its controllers...' : `hal: waiting for the browser's ${kind} device picker...`)], pending }
+  },
+
+  // The feature inspector, through the operator tier's surface: the rows and one feature's card are read while locked;
+  // steering is the operator's, refused here before the tier is asked. A bad name or value is the tier's RangeError.
+  feature(args, b) {
+    const f = operatorOf(b).features
+    const a = args[0]
+    if (a === undefined || a === 'list') {
+      if (args.length > 1) return fail(usage('feature'))
+      return { lines: f.lines().map(out) }
+    }
+    if (a === 'top') {
+      const k = Number(args[1])
+      if (args.length !== 2 || !Number.isInteger(k) || k < 1) return fail('usage: feature top <k>')
+      return { lines: f.lines(k).map(out) }
+    }
+    if (a === 'watch') {
+      if (args.length > 1) return fail(usage('feature'))
+      const frame: LiveFrame = (bridge) => operatorOf(bridge).features.lines()
+      return { lines: frame(b).map(out), live: frame }
+    }
+    if (a === 'prompt') {
+      if (args.length > 1) return fail(usage('feature'))
+      const lines = f.prompt()
+      return { lines: lines.length ? lines.map(out) : [sys('feature: nothing steered; the prompt carries no steering line')] }
+    }
+    if (a === 'about') {
+      if (args.length > 1) return fail(usage('feature'))
+      return { lines: f.explain().map(sys) }
+    }
+    if (a === 'steer' || a === 'clamp') {
+      if (args.length !== 3) return fail(`usage: feature ${a} <NAME> <value>`)
+      if (!operatorOf(b).unlocked()) return locked('feature')
+      const v = Number(args[2])
+      if (args[2].trim() === '' || !Number.isFinite(v)) return fail(`feature: the value must be a number, not '${args[2]}'`)
+      return { lines: (a === 'steer' ? f.steer(args[1], v) : [f.clamp(args[1], v)]).map(out) }
+    }
+    if (a === 'release') {
+      if (args.length !== 2) return fail('usage: feature release <NAME>')
+      if (!operatorOf(b).unlocked()) return locked('feature')
+      return { lines: f.release(args[1]).map(out) }
+    }
+    if (a === 'reset') {
+      if (args.length !== 1) return fail(usage('feature'))
+      if (!operatorOf(b).unlocked()) return locked('feature')
+      return { lines: f.reset().map(out) }
+    }
+    if (args.length === 1) {
+      const card = f.about(a)
+      return card ? { lines: card.map(out) } : fail(`feature: no feature '${a}'`, usage('feature'))
+    }
+    return fail(usage('feature'))
   },
 
   memory(args, b) {
@@ -1159,6 +1314,44 @@ const HANDLERS: Record<Name, Handler> = {
     return { lines }
   },
 
+  // Raw: the rest of the line is NoirScript for the session's VM. The city's columns (the bridge's `soa`) are read
+  // once, as copies, before the run. The write intrinsics reach the city only through the elite tier's surface
+  // (`ring0 unlock --elite`): locked, the host hands the VM no writes and each fails with the tier's message; open,
+  // the run has the tier's four writes and its raised limits.
+  noir(args, b, _history, _line, session) {
+    const rest = (args[0] ?? '').trim()
+    if (!rest) return { lines: [out(usage('noir')), sys("NoirScript, the console's typed language: 'noir print(1 + 2);' prints 3; 'noir fn sq(x: i32) -> i32 { x * x }' defines sq for this console session; 'noir print(query cars where speed > 5.0);' counts the cars moving faster than 5 m/s")] }
+    const n = (session ?? replSession()).noir
+    if (rest === 'reset') {
+      n.reset()
+      return { lines: [out('noir: reset (every definition forgotten, memory zeroed)')] }
+    }
+    if (rest === 'words') return { lines: [out(n.words().join(' '))] }
+    if (rest === 'asm' || rest.startsWith('asm ')) {
+      const source = rest.slice(3).trim()
+      if (!source) return fail('usage: noir asm <source>')
+      const r = n.asm(source)
+      const lines = r.out.map(out)
+      if (r.error !== undefined) lines.push(err(`noir: ${r.error}`))
+      return { lines }
+    }
+    let tables: NoirTables = EMPTY_TABLES
+    if (b.soa !== undefined) {
+      try {
+        tables = b.soa.tables()
+      } catch (e) {
+        return fail(`noir: ${message(e)}`)
+      }
+    }
+    const writes = eliteWritesOf(b)
+    const host: NoirHost = writes === null ? { tables: () => tables, locked: NOIR_LOCKED } : { tables: () => tables, write: writes, locked: NOIR_LOCKED }
+    const r = n.run(rest, host, writes === null ? undefined : ELITE_LIMITS)
+    const lines = r.out.map(out)
+    if (r.error !== undefined) lines.push(err(`noir: ${r.error}`))
+    if (r.steps >= NOIR_NOTE_STEPS) lines.push(sys(`-- ${r.steps} steps --`))
+    return { lines }
+  },
+
   // ---- the operator tier ----
 
   operator(args, b) {
@@ -1188,6 +1381,29 @@ const HANDLERS: Record<Name, Handler> = {
         sys("Type 'api' for the script API, 'harness list' for the harnesses, 'operator lock' to close the tier."),
       ],
     }
+  },
+
+  // Raw: the rest of the line keeps a passphrase's inner spaces (its ends are trimmed). Status and lock work while the
+  // operator tier is locked; unlock and set need it open, and the console refuses them before the tier is asked. The
+  // passphrase is never echoed and never kept in the history (redactForHistory).
+  ring0(args, b) {
+    const op = operatorOf(b)
+    const rest = (args[0] ?? '').trim()
+    if (rest === '' || rest === 'status') return { lines: [out(op.elite.status())] }
+    if (rest === 'lock') return { lines: [out(op.elite.lock())] }
+    const unlock = /^unlock(?:\s+(--elite)(?:\s+([\s\S]+))?)?$/.exec(rest)
+    if (unlock) {
+      if (!unlock[1] || !unlock[2]) return fail('ring0: say what to unlock and with what: ring0 unlock --elite <passphrase>')
+      if (!op.unlocked()) return locked('ring0')
+      return { lines: op.elite.unlock(unlock[2].trim()).map(out) }
+    }
+    const set = /^elite(?:\s+set(?:\s+([\s\S]+))?)?$/.exec(rest)
+    if (set) {
+      if (!set[1]) return fail('usage: ring0 elite set <passphrase>')
+      if (!op.unlocked()) return locked('ring0')
+      return { lines: [out(op.elite.set(set[1].trim()))] }
+    }
+    return fail(usage('ring0'))
   },
 
   // Raw: args[0] is the rest of the line, quotes and newlines intact: the skills the script needs, a colon, the script.
@@ -1290,7 +1506,7 @@ const HANDLERS: Record<Name, Handler> = {
       return {
         lines: [
           sys('Every step passes these before a model is asked and after it answers; a failure ends the run and is written to the audit trail:'),
-          ...INVARIANT_LINES.map(([name, text]) => out(`  ${name.padEnd(22)}${text}`)),
+          ...INVARIANT_LINES.map(([name, law, text]) => out(`  ${name.padEnd(22)}${law.padEnd(12)}${text}`)),
           sys(`quota: ${q.agents} roles, ${q.steps} steps, a goal of ${q.goalChars} characters, a prompt of ${q.promptChars}, an answer of ${q.answerChars}, ${q.tokens} tokens a run`),
           sys('These are rules over text, settings and counts, applied the same way every time; they are not a proof about a model, and no model ships to inspect.'),
         ],
@@ -1345,6 +1561,15 @@ const HANDLERS: Record<Name, Handler> = {
       return rows.length ? { lines: rows.map(out) } : fail('act: engine not running')
     }
     if (a === 'log') return { lines: auditLines(acts.log(), acts.verify(), 'act: no entries yet (an ask that proposes an action writes them)') }
+    if (a === 'gate') {
+      return {
+        lines: [
+          sys('Every ask, every proposal and every run passes these before any state changes; the first failed check names its law in the refusal:'),
+          ...GATE_LINES.map(([name, law, text]) => out(`  ${name.padEnd(18)}${law.padEnd(12)}${text}`)),
+          sys('These are rules over what the host vouches, the endpoint, the words, the catalogue, the lock, the lease and the chain, applied the same way every time; they are not a proof about a model.'),
+        ],
+      }
+    }
     if (a !== 'ok' && a !== 'no') return fail(`act: unknown command '${a}'`, usage('act'))
     if (!op.unlocked()) return locked('act')
     if (a === 'no') {
@@ -1479,6 +1704,69 @@ const HANDLERS: Record<Name, Handler> = {
     return { lines: [sys(`net: joining ${url}...`)], pending }
   },
 
+  // The robots (04_Connect_Hardware/robotLink.ts). The list, the demo, a mode, a setpoint, a disarm, a remove and the
+  // relay's status or its off run at any time (the last three only ever stop something); the relay, a body into the
+  // realm, a URDF read, arming and calibrating are the operator's. The async ones report later, as `xr` does.
+  robot(args, b) {
+    const r = robotOf(b)
+    const a = args[0]
+    if (a === undefined) {
+      const rows = r.list()
+      if (!rows.length) return { lines: [sys('robot: none (robot demo; robot urdf <url>; a HAL/1 robot on the bus; robot relay <ws url> <token>)')] }
+      return { lines: [out(`  ${'ID'.padEnd(24)}${'DOOR'.padEnd(7)}${'MODE'.padEnd(8)}${'JOINTS'.padEnd(8)}NAME  STATE`), ...rows.map((x) => out(formatRobot(x)))] }
+    }
+    const n = args.length
+    const later = (first: string, p: Promise<string>): CommandResult => ({
+      lines: [sys(first)],
+      pending: p.then((t): Line[] => [out(`robot: ${t}`)], (e: unknown): Line[] => [err(`robot: ${message(e)}`)]),
+    })
+    switch (a) {
+      case 'relay': {
+        if (n === 1) return { lines: [out(r.relayStatus())] }
+        if (args[1] === 'off') return n === 2 ? { lines: [out(r.relayOff())] } : fail(usage('robot'))
+        if (n !== 3) return fail(usage('robot'))
+        const url = args[1]
+        if (!/^wss?:\/\/\S+$/.test(url)) return fail(`robot: not a relay address: '${url}' (ws or wss, on this machine only)`, usage('robot'))
+        if (!operatorOf(b).unlocked()) return locked('robot')
+        return later(`robot: joining ${url}...`, r.relay(url, args[2]))
+      }
+      case 'spawn': {
+        if (n !== 2 && n !== 4) return fail(usage('robot'))
+        const x = n === 4 ? Number(args[2]) : undefined, z = n === 4 ? Number(args[3]) : undefined
+        if (n === 4 && (!Number.isFinite(x) || !Number.isFinite(z))) return fail('robot: x and z must be numbers', usage('robot'))
+        if (!operatorOf(b).unlocked()) return locked('robot')
+        return { lines: [out(r.spawn(args[1], x, z))] }
+      }
+      case 'urdf': {
+        if (n !== 2 && n !== 3) return fail(usage('robot'))
+        if (!/^https?:\/\/\S+$/.test(args[1])) return fail(`robot: not a URL: '${args[1]}' (http or https, on this machine only)`, usage('robot'))
+        if (!operatorOf(b).unlocked()) return locked('robot')
+        return later(`robot: reading ${args[1]}...`, r.urdf(args[1], args[2]))
+      }
+      case 'demo': return n <= 2 ? { lines: [out(r.demo(args[1]))] } : fail(usage('robot'))
+      case 'mode': return n === 3 ? { lines: [out(r.mode(args[1], args[2]))] } : fail(usage('robot'))
+      case 'set': {
+        if (n !== 4) return fail(usage('robot'))
+        const q = Number(args[3])
+        if (!Number.isFinite(q)) return fail(`robot: not a number: '${args[3]}'`, usage('robot'))
+        return { lines: [out(r.set(args[1], args[2], q))] }
+      }
+      case 'arm': {
+        if (n !== 2) return fail(usage('robot'))
+        if (!operatorOf(b).unlocked()) return locked('robot')
+        return later(`robot: arming ${args[1]}...`, r.arm(args[1]))
+      }
+      case 'disarm': return n === 2 ? { lines: [out(r.disarm(args[1]))] } : fail(usage('robot'))
+      case 'calibrate': {
+        if (n !== 3) return fail(usage('robot'))
+        if (!operatorOf(b).unlocked()) return locked('robot')
+        return later(`robot: calibrating ${args[2]} of ${args[1]} (a hold, then one small step)...`, r.calibrate(args[1], args[2]))
+      }
+      case 'remove': return n === 2 ? { lines: [out(r.remove(args[1]))] } : fail(usage('robot'))
+      default: return fail(`robot: unknown command '${a}'`, usage('robot'))
+    }
+  },
+
   sim: bare('sim', (b) => {
     const s = b.stats(), r = s.rapier, a = s.agents, k = s.kernel
     const op = b.operator
@@ -1540,13 +1828,16 @@ export function run(input: string, bridge: TerminalBridge, history: readonly str
 }
 
 /**
- * A line as the console's history keeps it: a key given to `ask key`, `say key` or `ask connect`, and a token given to
- * `net join`, are replaced by dots, so `history` and the Up arrow never show a secret typed earlier. After `ask connect
- * <provider>` only a leading http(s) address is kept; anything else there (a key typed where the url goes) is dotted
- * with everything after it. Every other line is kept as typed.
+ * A line as the console's history keeps it: a key given to `ask key`, `say key` or `ask connect`, a token given to
+ * `net join`, and the elite tier's passphrase given to `ring0 unlock --elite` or `ring0 elite set`, are replaced by
+ * dots, so `history` and the Up arrow never show a secret typed earlier. After `ask connect <provider>` only a leading
+ * http(s) address is kept; anything else there (a key typed where the url goes) is dotted with everything after it.
+ * Every other line is kept as typed.
  */
 export function redactForHistory(line: string): string {
   return line
+    .replace(/^(\s*ring0\s+unlock\s+--elite\s+)\S[\s\S]*$/, '$1••••')
+    .replace(/^(\s*ring0\s+elite\s+set\s+)\S[\s\S]*$/, '$1••••')
     .replace(/^(\s*(?:ask|say)\s+key\s+)\S[\s\S]*$/, '$1••••')
     .replace(/^(\s*ask\s+connect\s+\S+\s+)(?!https?:\/\/[^\s@]*(?:\s|$))\S[\s\S]*$/i, '$1••••')
     .replace(/^(\s*ask\s+connect\s+\S+\s+\S+\s+)\S[\s\S]*$/, '$1••••')

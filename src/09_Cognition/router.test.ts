@@ -310,7 +310,7 @@ function gate(): SkillGate {
 
 function bridgeOver(fetchFn: FetchLike, diary?: Diary, inPage?: (store: SettingsStore) => Mind): TerminalBridge {
   const sim = {} as SimControls
-  const op = operatorBridge(sim, gate(), createMindRouter({ fetch: fetchFn, ...(inPage && { inPage }) }), undefined, { diary })
+  const op = operatorBridge(sim, gate(), createMindRouter({ fetch: fetchFn, ...(inPage && { inPage }) }), undefined, { diary, contained: () => true })
   return { operator: op } as unknown as TerminalBridge
 }
 

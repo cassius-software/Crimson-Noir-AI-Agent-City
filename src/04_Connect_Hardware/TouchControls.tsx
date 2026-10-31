@@ -91,6 +91,9 @@ export interface TouchMenuHost {
   /** Ghost view and rain mode as the last snapshot reported them, so their items read On or Off. */
   ghost: boolean
   rain: boolean
+  /** Enters or leaves the headset (WebXR), inside the tap; absent where no immersive session can be asked for. */
+  onHeadset?: () => void
+  headset?: boolean
 }
 
 interface Props { input: Input; driving: boolean; nearVehicle: boolean; menu?: TouchMenuHost }
@@ -405,6 +408,7 @@ function MenuSheet({ input, host, at, onClose }: { input: Input; host: TouchMenu
     { label: 'Clock +1 h', run: () => input.press('timeForward'), keep: true },
     { label: 'Ghost view', on: host.ghost, run: () => input.press('ghost') },
     { label: 'Rain mode', on: host.rain, run: () => input.press('matrix') },
+    ...(host.onHeadset ? [{ label: 'Headset', on: host.headset === true, run: host.onHeadset }] : []),
     { label: host.hudVisible ? 'Hide HUD' : 'Show HUD', run: host.onHud },
   ]
   const beside = at.left - 12 - SHEET_W >= 8

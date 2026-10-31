@@ -25,6 +25,7 @@ import { HalBus } from './hal.ts'
 import { Input, isEditableTarget, LOOK, PITCH_LIMIT } from './input.ts'
 import { PAD } from './gamepad.ts'
 import { KEYBOARD_SEAT } from './seats.ts'
+import { XR_TURN, XrMapper } from './xrInput.ts'
 import type { GamepadLike } from './web-hardware.d.ts'
 
 class FakeDocument extends EventTarget {
@@ -744,4 +745,61 @@ test('the seating plan reaches the HAL: a seat changing hands and setPlayers tel
   assert.equal(told, 4)
   input.poll(1 / 60)
   assert.equal(told, 4, 'one seat: the table is not dealt')
+})
+
+/** A headset's tracked controller with the xr-standard mapping (live arrays). */
+function xrPad(handedness: 'left' | 'right', axes = [0, 0, 0, 0]) {
+  const buttons = Array.from({ length: 7 }, () => ({ pressed: false, value: 0 }))
+  return { handedness, targetRayMode: 'tracked-pointer', profiles: ['meta-quest-touch-plus'], gamepad: { mapping: 'xr-standard', axes, buttons }, axes, buttons }
+}
+
+test('a headset mapper under the pad: its stick walks and engages, its snap turn moves the body yaw once, its edges queue under the pad\'s shield, suspend resets it, and no sources is stillness', () => {
+  const m = new XrMapper()
+  input.setXr(m)
+  const left = xrPad('left', [0, 0, 0, -1]), right = xrPad('right')
+  m.sources = [left, right]
+  input.poll(1 / 60)
+  assert.ok(input.analog.moveY > 0.99, 'the left stick forward walks forward')
+  assert.equal(input.engaged, true)
+  assert.equal(input.device, 'gamepad')
+  const yaw = input.yaw
+  right.axes[2] = 1
+  input.poll(1 / 60)
+  assert.ok(close(input.yaw, yaw - XR_TURN.step), 'a flick right turns the body right (yaw down) by one step')
+  input.poll(1 / 60)
+  assert.ok(close(input.yaw, yaw - XR_TURN.step), 'held: one step only')
+  right.axes[2] = 0
+  right.buttons[4].pressed = true
+  right.buttons[4].value = 1
+  input.poll(1 / 60)
+  assert.equal(input.take('ping'), true, 'A pings')
+  assert.equal(input.take('ping'), false)
+  right.buttons[4].pressed = false
+  right.buttons[4].value = 0
+  input.poll(1 / 60)
+  input.shield(true)
+  right.buttons[4].pressed = true
+  right.buttons[4].value = 1
+  input.poll(1 / 60)
+  assert.equal(input.take('ping'), false, 'shielded: the headset\'s edge is dropped like the pad\'s')
+  input.shield(false)
+  right.buttons[4].pressed = false
+  right.buttons[4].value = 0
+  left.buttons[3].pressed = true
+  left.buttons[3].value = 1
+  input.poll(1 / 60)
+  assert.equal(input.analog.run, true, 'the left thumbstick press latches a run')
+  input.suspend(true)
+  assert.equal(m.analog.run, false, 'the console opening resets the mapper')
+  input.suspend(false)
+  left.buttons[3].pressed = false
+  left.buttons[3].value = 0
+  m.sources = null
+  input.poll(1 / 60)
+  assert.equal(input.analog.moveY, 0)
+  assert.equal(input.analog.run, false)
+  input.setXr(null)
+  m.sources = [left]
+  input.poll(1 / 60)
+  assert.equal(input.analog.moveY, 0, 'unset: the mapper is no longer read')
 })

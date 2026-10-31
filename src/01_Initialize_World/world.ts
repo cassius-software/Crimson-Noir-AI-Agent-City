@@ -32,6 +32,7 @@ import { applyCodeDissolve } from './codeDissolve.ts'
 import { applyMatrixMode, createMatrixMode, type MatrixMode } from './matrixMode.ts'
 import { ENV_PROBE_STEP_HOURS, EnvProbe } from './envProbe.ts'
 import { acquireDevice, adapterLine, WebGPUUnavailableError } from './gpuDevice.ts'
+import { headsetPossible } from '../04_Connect_Hardware/xrSystem.ts'
 
 export { WebGPUUnavailableError } from './gpuDevice.ts'
 
@@ -103,7 +104,9 @@ export async function createRenderer(canvas: HTMLCanvasElement, pixelRatio: numb
   // The device is asked for here, not by three (gpuDevice.ts): a core adapter as the physics worker asks, three's own
   // features, and a coded error naming the real cause when there is none. Handed a device, three makes no request of
   // its own and so never falls back to WebGL2, which would also claim the canvas for good.
-  const { adapter, device } = await acquireDevice(navigator.gpu, window.isSecureContext !== false, window.location.origin)
+  // Where a headset session is possible, the adapter is asked for as xrCompatible (the WebXR/WebGPU binding wants it).
+  const headset = await headsetPossible(navigator)
+  const { adapter, device } = await acquireDevice(navigator.gpu, window.isSecureContext !== false, window.location.origin, headset)
   tolerateIdentitySwizzle()
   // The device's own copy first (what the profile always read), the adapter's where a browser has no device copy. Read
   // before three is made: a Peak candidate's three writes GPU timestamps (engine.ts peakOf, governor.ts peakCandidate).

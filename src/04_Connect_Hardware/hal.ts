@@ -5,21 +5,27 @@
  * Why does this file exist? It is the universal hardware abstraction layer: one bus that discovers, pairs,
  * labels and feeds every optional device the city can talk to — DualSense / DualSense Edge over WebHID, or
  * over the desktop shell's own HID commands inside the Windows app (nativeHid.ts): both triggers, rumble,
- * the lightbar and the player LEDs; HAL/1 line-protocol gadgets over Web Serial or Bluetooth LE (telemetry);
- * and Gamepad API pads (rumble) — behind one transport-neutral API. Every browser API it touches is
- * optional: where WebHID, Web Serial or Web Bluetooth are missing (Safari, Firefox, iOS) it reports them
- * unsupported and does nothing, silently.
- * What breaks if it is removed? Input.hal, the Ring-0 terminal's `hal` command and the HUD device line.
+ * the lightbar and the player LEDs; HAL/1 line-protocol gadgets over Web Serial or Bluetooth LE (telemetry, and
+ * the robot side of the joint bridge, docs/joint-bridge-spec.md §3.1: the device's CAPS, its JOINTS manifest, JS
+ * frames judged against it, JA acks and the gate's ARMED / BEAT / DISARM in, the page's control lines and JT
+ * setpoints out; the gate itself is the page's, robotLink.ts, this bus keeps no policy state); and Gamepad API pads
+ * (rumble) — behind one transport-neutral API. Every browser API it touches is optional: where WebHID, Web Serial or
+ * Web Bluetooth are missing (Safari, Firefox, iOS) it reports them unsupported and does nothing, silently.
+ * What breaks if it is removed? Input.hal, the Ring-0 terminal's `hal` command, the HUD device line and the serial
+ * door of the joint bridge.
  */
 import { BRAND } from '../brand.ts'
-import { describeResolution, padClues, resolveDevice } from './devices.ts'
+import { describeResolution, padClues, resolveDevice, xrClues } from './devices.ts'
 import { DUALSENSE_FILTERS, DualSense, dualSenseName, isDualSense, lightbarWord, QUIET, type DsOutputs } from './dualsense.ts'
 import { isUsablePad, padName, parsePadId, pressesFaceButton, type GenericLayout } from './gamepad.ts'
+import { checkFrame, JOINT_LINE, ManifestAssembler, parseJointLine, type JointFrame, type JointLine, type Manifest } from './jointState.ts'
 import { LineLink, NUS, openBle, openSerial, type ByteChannel } from './lineLink.ts'
 import { nativeNavigator } from './nativeHid.ts'
-import type { BleDevice, GamepadLike, HardwareNavigator, HidConnectionEvent, HidDevice, SerialConnectionEvent, SerialPort } from './web-hardware.d.ts'
+import { LEGACY_CAPABILITIES, parseCapabilities, type Capabilities } from './peripheralPolicy.ts'
+import type { BleDevice, GamepadLike, HardwareNavigator, HidConnectionEvent, HidDevice, SerialConnectionEvent, SerialPort, XrInputSourceLike } from './web-hardware.d.ts'
 
-export type Transport = 'hid' | 'serial' | 'bluetooth' | 'gamepad'
+/** 'xr' is a headset session's input source (xrInput.ts), listed here and never paired: the session brings it. */
+export type Transport = 'hid' | 'serial' | 'bluetooth' | 'gamepad' | 'xr'
 
 export interface HalDevice {
   id: string
@@ -29,7 +35,44 @@ export interface HalDevice {
   detail: string
   /** The device resolver's word (devices.ts describeResolution) for an input device; absent on a HAL/1 link. */
   profile?: string
+  /** A HAL/1 device that announced a manifest: its movable joint count, the manifest's robot name, and whether the page armed it. */
+  robot?: { joints: number; name: string; armed: boolean }
 }
+
+/**
+ * The robot side of a HAL/1 device (docs/joint-bridge-spec.md §3.1): listed from the moment its manifest is in until
+ * the device drops. A snapshot: robots() builds it fresh each call.
+ */
+export interface HalRobot {
+  /** `hal:<device id>` (spec §2): the one id robots(), every HalRobotEvent and every robot method of this bus share. */
+  id: string
+  /** The manifest's robot name. */
+  name: string
+  transport: Transport
+  manifest: Manifest
+  /** From the CAPS line; LEGACY_CAPABILITIES when none (or a refused one) came: a sensor, which the gate never arms. */
+  caps: Capabilities
+  /** The newest frame that passed checkFrame, and the bus clock when it came (0 while frame is null). */
+  frame: JointFrame | null
+  frameAt: number
+  /** Frames accepted, and frames refused (not JSON, wrong length, non-finite, or before any manifest). */
+  frames: number
+  badFrames: number
+  /** The newest seq the device said it applied (JA, or a frame's ack); −1 until it said one. */
+  ack: number
+  /** Set by the page (markArmed) when its gate armed the robot; while set, a new JOINTS does not replace the manifest. */
+  armed: boolean
+}
+
+/** What a robot's device said, in the order it said it; 'gone' is the last word about an id (the device dropped). */
+export type HalRobotEvent =
+  | { kind: 'manifest'; id: string; manifest: Manifest }
+  | { kind: 'frame'; id: string; frame: JointFrame; at: number }
+  | { kind: 'ack'; id: string; seq: number }
+  | { kind: 'armed'; id: string; nonce: string }
+  | { kind: 'beat'; id: string; n: number }
+  | { kind: 'disarm'; id: string; cause: string }
+  | { kind: 'gone'; id: string }
 
 /**
  * What the page asks of its controllers: brake-trigger resistance, rumble, the throttle trigger's hold or snap
@@ -62,7 +105,25 @@ interface Entry {
   key: unknown
   ds?: DualSense
   link?: LineLink
+  /** The robot side of a line link's session: made with the link, cleared (with 'gone') when the session ends. */
+  robot?: RobotState
 }
+
+interface RobotState {
+  id: string
+  caps: Capabilities
+  assembler: ManifestAssembler
+  manifest: Manifest | null
+  frame: JointFrame | null
+  frameAt: number
+  frames: number
+  badFrames: number
+  ack: number
+  armed: boolean
+}
+
+/** The gate's lines a device says (docs/hal-peripherals-spec.md §3); the page's policy reads them through HalRobotEvent. */
+const GATE_WORD = /^(ARMED|BEAT|DISARM)(?:[ \t]+(.*))?$/
 
 interface PadSlot {
   dev: HalDevice
@@ -101,9 +162,13 @@ function genericDetail(p: GamepadLike, awake: boolean): string {
   if (!isUsablePad(p)) return 'non-standard mapping (ignored: no stick)'
   return awake ? 'non-standard mapping (best guess by position)' : 'non-standard mapping (press a face button on it to use it)'
 }
-const copy = (d: HalDevice): HalDevice => (d.profile === undefined
-  ? { id: d.id, transport: d.transport, name: d.name, state: d.state, detail: d.detail }
-  : { id: d.id, transport: d.transport, name: d.name, state: d.state, detail: d.detail, profile: d.profile })
+/** A row as handed out: its own object, with the optional fields present only when set (callers compare rows whole). */
+function copy(d: HalDevice): HalDevice {
+  const c: HalDevice = { id: d.id, transport: d.transport, name: d.name, state: d.state, detail: d.detail }
+  if (d.profile !== undefined) c.profile = d.profile
+  if (d.robot) c.robot = { joints: d.robot.joints, name: d.robot.name, armed: d.robot.armed }
+  return c
+}
 
 /** The browser's navigator; inside the desktop shell, with the shell's own HID in the place of WebView2's. */
 function defaultNavigator(): HardwareNavigator | null {
@@ -135,9 +200,12 @@ export class HalBus {
   private readonly bleConnectMs: number
   private readonly entries: Entry[] = []
   private readonly slots: PadSlot[] = []
+  /** The headset session's input sources as rows (setHeadset); empty outside a session. */
+  private readonly headset: HalDevice[] = []
   private readonly padList: GamepadLike[] = []
   private readonly want: HalOutputs = { ...QUIET }
   private readonly unlisten: (() => void)[] = []
+  private readonly robotListeners = new Set<(e: HalRobotEvent) => void>()
   private listening = false
   private disposed = false
   private hidden = false
@@ -161,13 +229,37 @@ export class HalBus {
     this.bleConnectMs = opts.bleConnectMs ?? 10000
   }
 
-  support(): Record<Transport, boolean> {
+  /** The four pairable or pollable APIs; a headset is not among them (the session is asked for elsewhere, xrSession.ts). */
+  support(): Record<Exclude<Transport, 'xr'>, boolean> {
     const n = this.nav
     return {
       hid: !!n?.hid,
       serial: !!n?.serial,
       bluetooth: !!n?.bluetooth,
       gamepad: typeof n?.getGamepads === 'function',
+    }
+  }
+
+  /**
+   * The headset session's input sources (its live list, or null when it ends), as rows: a tracked controller, a
+   * pinch or a hand each with the resolver's profile, named by its hand and its most specific input profile.
+   */
+  setHeadset(list: ArrayLike<XrInputSourceLike> | null): void {
+    const rows = this.headset
+    rows.length = 0
+    if (!list) return
+    for (let i = 0; i < list.length; i++) {
+      const s = list[i]
+      const r = resolveDevice(xrClues(s))
+      const hand = s.handedness === 'left' || s.handedness === 'right' ? ` (${s.handedness})` : ''
+      rows.push({
+        id: `xr:${i}`,
+        transport: 'xr',
+        name: `${r.profile.name}${hand}`,
+        state: 'ready',
+        detail: `${typeof s.targetRayMode === 'string' && s.targetRayMode ? s.targetRayMode : 'no target ray'}${s.profiles?.[0] ? `, ${s.profiles[0]}` : ''}`,
+        profile: describeResolution(r),
+      })
     }
   }
 
@@ -228,6 +320,7 @@ export class HalBus {
     const out: HalDevice[] = []
     for (const e of this.entries) out.push(copy(e.dev))
     for (const s of this.slots) out.push(copy(s.dev))
+    for (const h of this.headset) out.push(copy(h))
     return out
   }
 
@@ -274,6 +367,53 @@ export class HalBus {
     if (line !== null) this.lastTelemetry = now
   }
 
+  /** The HAL/1 devices that announced a manifest, as the page's bridge (robotLink.ts) reads them. */
+  robots(): HalRobot[] {
+    const out: HalRobot[] = []
+    for (const e of this.entries) {
+      const r = e.robot
+      if (!r || !r.manifest) continue
+      out.push({
+        id: r.id, name: r.manifest.robot, transport: e.dev.transport, manifest: r.manifest, caps: r.caps,
+        frame: r.frame, frameAt: r.frameAt, frames: r.frames, badFrames: r.badFrames, ack: r.ack, armed: r.armed,
+      })
+    }
+    return out
+  }
+
+  /** Robot events as they arrive, in order; every id is one robots() lists (or listed, for 'gone'). Returns the unsubscribe. */
+  onRobot(listener: (e: HalRobotEvent) => void): () => void {
+    this.robotListeners.add(listener)
+    return () => { this.robotListeners.delete(listener) }
+  }
+
+  /**
+   * One control line to a robot (ARM, DISARM, anything the page composes), ahead of setpoints and telemetry. False
+   * when the robot is not listed, its link is not ready or LINE.controlQueue lines already wait (lineLink.ts send).
+   */
+  sendLine(id: string, line: string): boolean {
+    const e = this.robotEntry(id)
+    return e?.link ? e.link.send(line) : false
+  }
+
+  /** The setpoint slot of a robot's link (a JT line the gate admitted): the newest unsent one wins. */
+  sendSetpoint(id: string, line: string): void {
+    this.robotEntry(id)?.link?.setpoint(line)
+  }
+
+  /** Drops a robot's unsent setpoint (on disarm, so no stale JT follows the DISARM). */
+  clearSetpoint(id: string): void {
+    this.robotEntry(id)?.link?.clearSetpoint()
+  }
+
+  /** The page's gate armed (or disarmed) the robot: while armed, a new JOINTS from the device does not replace its manifest. */
+  markArmed(id: string, armed: boolean): void {
+    const e = this.robotEntry(id)
+    if (!e) return
+    e.robot.armed = armed
+    if (e.dev.robot) e.dev.robot.armed = armed
+  }
+
   /** One line for the HUD, e.g. "1 device · DualSense (USB) ready" ('' when nothing is attached). */
   summary(): string {
     let n = 0, head: HalDevice | null = null, rank = -1
@@ -285,6 +425,7 @@ export class HalBus {
     }
     for (const e of this.entries) consider(e.dev)
     for (const s of this.slots) consider(s.dev)
+    for (const h of this.headset) consider(h)
     if (!head) return ''
     const h: HalDevice = head
     return `${n} device${n === 1 ? '' : 's'} · ${h.name} ${h.state}${n > 1 ? ` +${n - 1}` : ''}`
@@ -375,11 +516,13 @@ export class HalBus {
     for (const s of this.slots) this.stopPadRumble(s)
     const jobs: Promise<unknown>[] = []
     for (const e of this.entries) {
+      this.robotGone(e)
       if (e.ds) jobs.push(e.ds.close())
       if (e.link) jobs.push(e.link.close())
       e.dev.state = 'disconnected'
       e.dev.detail = 'closed'
     }
+    this.robotListeners.clear()
     await Promise.allSettled(jobs)
   }
 
@@ -522,6 +665,7 @@ export class HalBus {
   private async drop(e: Entry, reason: string): Promise<void> {
     e.dev.state = 'disconnected'
     e.dev.detail = reason
+    this.robotGone(e)
     const ds = e.ds, link = e.link
     e.ds = undefined
     e.link = undefined
@@ -631,14 +775,111 @@ export class HalBus {
       e.dev.state = l.state
       e.dev.detail = l.detail
       if (l.name) e.dev.name = l.name
+      if (l.state === 'disconnected' || l.state === 'error') this.robotGone(e)
     }
-    const link = new LineLink(channel, { brand: this.brand.name, version: this.brand.version, onChange: sync })
+    // A fresh robot side per session: a re-plugged board announces itself again (same device id, spec §3.1).
+    this.robotGone(e)
+    e.robot = { id: `hal:${e.dev.id}`, caps: LEGACY_CAPABILITIES, assembler: new ManifestAssembler(), manifest: null, frame: null, frameAt: 0, frames: 0, badFrames: 0, ack: -1, armed: false }
+    const link = new LineLink(channel, {
+      brand: this.brand.name,
+      version: this.brand.version,
+      onChange: sync,
+      // A retired link's late lines (one that failed while a new session opened) must not reach the new session's robot.
+      onLine: (line) => { if (e.link === link) this.robotLine(e, line) },
+    })
     e.link = link
     sync()
     if (this.disposed) { await link.close(); return copy(e.dev) }
     await link.start()
     sync()
     return copy(e.dev)
+  }
+
+  // ── the robot side of a line link ────────────────────────────────────────────────────────────────
+
+  private robotEntry(id: string): (Entry & { robot: RobotState }) | undefined {
+    for (const e of this.entries) if (e.robot && e.robot.id === id) return e as Entry & { robot: RobotState }
+    return undefined
+  }
+
+  /** Ends an entry's robot side: 'gone' for a robot that was listed, nothing for a device that never announced a manifest. */
+  private robotGone(e: Entry): void {
+    const r = e.robot
+    if (!r) return
+    e.robot = undefined
+    e.dev.robot = undefined
+    if (r.manifest) this.emit({ kind: 'gone', id: r.id })
+  }
+
+  /** A page listener's fault is not the link's: a throw must not end the serial read loop that called this. */
+  private emit(ev: HalRobotEvent): void {
+    for (const l of this.robotListeners) {
+      try { l(ev) } catch { /* the listener's own problem */ }
+    }
+  }
+
+  /** Every inbound line after READY that is not the link's own (lineLink.ts onLine). Unknown lines are read and dropped. */
+  private robotLine(e: Entry, line: string): void {
+    const r = e.robot
+    if (!r) return
+    const caps = parseCapabilities(line)
+    if (caps !== null) {
+      // A CAPS this host cannot read leaves the device a legacy sensor (hal-peripherals-spec.md §3); the row says why.
+      if ('error' in caps) e.dev.detail = `CAPS refused: ${caps.error}`
+      else r.caps = caps
+      return
+    }
+    const j = parseJointLine(line)
+    if (j) {
+      if (j.kind === 'manifest') this.robotManifest(e, r, j)
+      else if (j.kind === 'state') this.robotFrame(r, j.body)
+      else if (j.kind === 'ack' && r.manifest) { r.ack = j.seq; this.emit({ kind: 'ack', id: r.id, seq: j.seq }) }
+      // 'targets' (JT) is the host's direction: a device saying it is ignored.
+      return
+    }
+    // The gate's words mean something only for a robot the page can have armed: one with a manifest.
+    const m = GATE_WORD.exec(line.trim())
+    if (!m || !r.manifest) return
+    const arg = (m[2] ?? '').trim()
+    if (m[1] === 'ARMED') { if (arg) this.emit({ kind: 'armed', id: r.id, nonce: arg }) }
+    else if (m[1] === 'BEAT') this.emit({ kind: 'beat', id: r.id, n: /^\d{1,15}$/.test(arg) ? Number(arg) : 0 })
+    else this.emit({ kind: 'disarm', id: r.id, cause: arg || 'device' })
+  }
+
+  private robotManifest(e: Entry, r: RobotState, l: Extract<JointLine, { kind: 'manifest' }>): void {
+    const got = r.assembler.feed(l, this.now())
+    if (got === null) return
+    if (!got.ok) { e.dev.detail = `JOINTS refused: ${got.reason}`; return }
+    const m = got.value
+    if (m.movable.length > JOINT_LINE.halJoints) {
+      e.dev.detail = `JOINTS refused: ${m.movable.length} movable joints; a HAL/1 robot has at most ${JOINT_LINE.halJoints} (a bigger robot speaks to the relay)`
+      return
+    }
+    // The page's gate judges setpoints by the manifest's joint count: it cannot change under an armed robot.
+    if (r.manifest && r.armed) { e.dev.detail = 'JOINTS ignored: the robot is armed (disarm before a new manifest)'; return }
+    r.manifest = m
+    r.frame = null
+    e.dev.robot = { joints: m.movable.length, name: m.robot, armed: r.armed }
+    if (e.link) e.dev.detail = e.link.detail
+    this.emit({ kind: 'manifest', id: r.id, manifest: m })
+  }
+
+  /** A JS line: kept and announced only when it passes checkFrame against the manifest; otherwise counted. */
+  private robotFrame(r: RobotState, body: string): void {
+    if (r.manifest) {
+      let o: unknown = null
+      try { o = JSON.parse(body) } catch { /* not JSON: a bad frame */ }
+      const c = checkFrame(r.manifest.movable.length, o)
+      if (c.ok) {
+        r.frame = c.value
+        r.frameAt = this.now()
+        r.frames++
+        if (c.value.ack !== undefined) r.ack = c.value.ack
+        this.emit({ kind: 'frame', id: r.id, frame: c.value, at: r.frameAt })
+        return
+      }
+    }
+    r.badFrames++
   }
 
   private slotOf(index: number): PadSlot | undefined {

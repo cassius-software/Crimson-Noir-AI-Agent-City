@@ -156,6 +156,9 @@ test('the voice: the script word for word; the model\'s rewording only when it i
   assert.equal(await fails.say(line, never), line)
   const slow = modelVoice(mindThat((_p, _on, signal) => new Promise((_, reject) => { signal.addEventListener('abort', () => reject(signal.reason)) })), keep, 20)
   assert.equal(await slow.say(line, never), line)
+  // A rewording that keeps the choices but fails the 14A screen (the Ring-0 gate's admitWords) is never the city's own words.
+  const foul = modelVoice(mindThat(async (_p, on) => { on({ kind: 'text', text: 'Morning, sunset or night, you idiot?' }) }), keep)
+  assert.equal(await foul.say(line, never), line)
   assert.ok(mustKeep('Morning, Sunset or Night?', ['morning', 'night']))
   assert.ok(!mustKeep('Morning or evening?', ['morning', 'night']))
 })

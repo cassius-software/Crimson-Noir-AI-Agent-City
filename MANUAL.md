@@ -406,7 +406,7 @@ shoved, no pole stops you, and the people keep their line.
   envelope (0..1, up over 0.12 s while your body is inside a lamp, a car or a person, held 0.2 s, down over 0.55 s),
   the kind met, and how many passages since boot.
 
-## First person, WebXR-ready
+## First person
 
 The camera is only ever the avatar's head (`07_Execute_Actions/head.ts`, `HeadRig`; `player.ts` is the physics
 worker's character controller, not a camera). There is no orbit, chase or detached camera and no zoom.
@@ -422,11 +422,55 @@ worker's character controller, not a camera). There is no orbit, chase or detach
   lining) with clear glass, and the exterior sound is muffled in the cabin.
 - **VR comfort:** there is no head bob. Only vertical steps such as curbs are smoothed, never
   horizontal motion.
-- **WebXR seam:** `HeadRig.pose` (eye position, yaw, pitch) is the one place the camera is set. A
-  future WebXR session would drive or offset that pose from the headset. WebXR itself is not implemented
-  yet.
+- **Headsets:** `HeadRig.pose` (eye position, yaw, pitch) is the one place the camera is set, and a WebXR
+  headset takes it over (the next section): the rig stands where the body is, turned the body's way, the headset's
+  own pose is composed onto it, and the pose read back is the headset's (pitch unclamped) while the mouse and the
+  sticks keep the body.
 - **Split screen:** with `?players`, each viewport is its own player's head, posed from that player's own avatar
   in the physics realm, or the car they drive (below).
+
+## Headsets (WebXR)
+
+The city runs on a WebXR headset through the page's own WebGPU device (`07_Execute_Actions/xrSession.ts`, three's
+`renderer.xr` and its `XRGPUBinding`), where a browser binds WebXR to WebGPU: Chromium on a headset's Android and
+visionOS Safari are the candidates. **None of it has been run on a physical headset**: it is written against three
+0.186 and the WebXR specifications and proved against fakes in Node, and the depth convention a browser gives a
+WebGPU session's projection matrices, the pinch timing of a gaze-and-pinch headset and the passthrough blend have
+not been seen. Where the browser offers no immersive session the whole path is inert: the console's `xr` says so
+(`unsupported`), and the touch menu shows no Headset item.
+
+- **Entering and leaving.** `xr` in the console prints the status: what the browser offers (`off: vr available
+  (xr vr)`), or the session's mode and what it holds (`vr: 2 controllers`); `xr vr` or `xr ar` asks for the session
+  and `xr off` leaves it; on a touch screen the menu's **Headset** item does the same, VR where it is offered, else
+  AR. A browser grants a session only inside the tap or the key press, so both ask synchronously; the page asks for
+  the `webgpu` feature and, optionally, a floor-level reference space and hand tracking. Split screen and a headset
+  do not mix (`no headset while the screen is split`). A passthrough or see-through session shows `(passthrough)`.
+- **The picture.** While presenting, the headset's own loop drives the frame (the page's animation frames are let
+  go), every frame is shown (the cinema pacer's 24 a second is suspended), the post-processing chain and the ghost
+  view are off (they present one image; a headset wants two eyes), and the canvas is not resized. Each eye's
+  projection is rewritten as the page's own, the browser's frustum in WebGPU clip space with reversed depth between
+  the camera's near and far, since three copies the browser's matrices raw under a headset and skips its
+  reversed-depth fix-up; the union of the eyes, four degrees wider on every side, is what the engine and three's own
+  XR camera cull with.
+- **The head.** The rig stands at the feet (on foot) or the composed height under the driver's eye point (in a car),
+  turned the body's way; the headset's pose is composed onto it, so a seated or a standing player's eyes land where
+  the mouse's would. The pose read back is the headset's: yaw, pitch unclamped, roll on the camera. The stick's
+  forward is where the headset looks, not where the body stands.
+- **Controllers** (`04_Connect_Hardware/xrInput.ts`, the `xr-standard` mapping): the left thumbstick walks and
+  steers, its press latches a run, the left squeeze is the handbrake; the right thumbstick snap-turns the body by
+  30° per flick (re-armed when it comes back), the right trigger accelerates, the right squeeze brakes, A (button 4)
+  pings and B (button 5) enters or leaves a car. A controller of no hand takes both duties. Their edges join the
+  pad's, under the same shield (a card waiting for your OK keeps the buttons), and no stick turns the head: the
+  headset does.
+- **Gaze and pinch, hands.** A source with no usable gamepad (a transient pointer, an articulated hand) is read by
+  the session's select events: a pinch enters or leaves a car when one is at hand, otherwise it pings where the head
+  looks. A gaze-and-pinch headset's pointers exist only during the pinch and may report no hand.
+- **`hal` lists them** as rows of the `xr` transport while the session runs (`Tracked controller (left)`, `Gaze and
+  pinch`, `Tracked hand (right)`), each resolved by the device resolver's headset stage; they cannot be paired, the
+  session brings them. The HUD's hardware lines and the namespace's `Hardware/Cell/Bus/xr` topic carry the state
+  (`unsupported`, `off`, `entering`, `vr`, `ar`).
+- **The adapter.** Where a headset session is possible the page asks for its WebGPU adapter as `xrCompatible` first
+  (the binding wants one) and plainly if that is refused; elsewhere nothing changes.
 
 ## Split screen
 
@@ -675,6 +719,27 @@ anywhere in the product.
   (`kernel`, `stats`) and in `sim.kernel.stats().audit`; the auditor and its panic helper are frozen. For the
   scheduled craft (trains, drones, planes) the audit also halts on any non-finite value or any craft below its
   corridor's floor (`Corridor Exploit`; see Vehicles). It only halts, never corrects.
+- **Ring-0 action gate** (`02_Define_The_Rules/ring0Gate.ts`). A model's words can change the city by one road only: a
+  model is asked through the operator tier (whichever provider answers: the Claude gateway, a model server on this
+  machine, the model file kept in this page, or the script; the swarm asks the same way, one step at a time), its
+  answer may end with one `ACTION:` line from the fixed catalogue, the line is proposed to you, and once you allow it
+  it runs once under the proposer's tether. The gate stands at the three moments on that road, and its twelve checks
+  are ranked under four laws, the Zeroth Law above the kernel's three: **Zeroth, protect the city.** The page's
+  outbound primitives are held to this machine, as the host vouches (the air gap `main.tsx` installed is still in
+  place); the model is on this machine or there is none; the words pass the 14A screen; the effect is a line of the
+  catalogue. **First.** The Ring-0 audit has not panicked (a halted realm takes no action); the verb reaches no
+  facade leaf that moves a body, drives a car or weakens the kernel (a table of what every verb reaches, proved
+  exact by running every verb over a recording facade). **Second.** The operator tier is unlocked; a person allowed
+  it, at the console, on the card or through a host (the gateway never allows). **Third.** The proposer is still
+  tethered, under the same recruitment; the hash-chained trail verifies; no other proposal waits. Every check is a
+  rule over plain values, applied the same way every time, with no clock, no randomness and no I/O; the refusal
+  names the highest law that refused in the kernel's words (`Second Law: the operator tier is locked`), and a
+  refusal of an allowed action is written to `act log` under that law and printed as `act 1: refused: Second Law:
+  …`. `act gate` prints the table. It is not a proof about a model and looks inside none; it stands between an
+  answer and the kernel. A host that vouches nothing (a page without the air gap) is refused every ask of the
+  operator tier and every action: the gate fails closed. A model's rewording of Sloane's lines passes the same screen
+  before it is spoken as the city's own (the onboarding voice asks the model for it outside the gate's ask check; a
+  rewording changes nothing, and the provider's own loopback gate holds its address).
 - **The physics realm** (`physics.worker.ts`, `simHost.ts`, `simCore.ts`). The Rapier world runs in a dedicated
   Web Worker, inlined into the single HTML file, together with everything that touches it: the fleet and its
   Bouncer, the avatar, the Sanctuary, the Ring-0 audit, the promoted pedestrians' rigs and their balance machine,
@@ -790,12 +855,16 @@ while you type.
   drawn agents (near, far, total); fps, frame time, p95, CPU and GPU time; quality tier; kernel
   counters. `stats --once` prints a single frame.
 - The core commands, as `help` prints them: `help [command]`, `stats [--once]`, `laws`, `kernel`,
-  `topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]`, `quality [auto|lite|peak|-1|0-5]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `render [on|off]`,
+  `topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]`,
+  `feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]`,
+  `ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]`, `quality [auto|lite|peak|-1|0-5]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `xr [vr|ar|off]`, `render [on|off]`,
   `captions [on|off]`, `ping [go|look|gather|wait|clear]`,
   `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
+  `robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|remove <id>]`,
   `recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]`, `memory [<agent>|forget <agent>|forget all]`,
   `clear`, `history`, `echo [text]`, `uname [-asnrvmi]`, `whoami`, `version`, `boot [gui|tty|status]`,
-  `map [city|lakefront|default|status]`, `r0 <words...>|r0 reset|r0 words`, `agent [...]`, `sloane [...]`,
+  `map [city|lakefront|default|status]`, `r0 <words...>|r0 reset|r0 words`,
+  `noir <source>|noir reset|noir words|noir asm <source>`, `agent [...]`, `sloane [...]`,
   `goal <words...>`, `exit`.
 - `topic` reads the unified namespace: every reading of the city, published each HUD tick into an in-page topic
   bus (`05_Observe_Environment/namespace.ts`) in the ISA-95 shape
@@ -810,6 +879,27 @@ while you type.
   and the console imports nothing of the bus. Nothing is transmitted: the bus is a model in the page, with retained
   values, sequence numbers and a deterministic head digest, shaped so a later phase can put the same topics on a
   broker. The HUD readout shows the topic count.
+- `feature` is the feature inspector (`09_Cognition/features.ts`, through the operator tier's surface): twelve
+  named, monosemantic readings of the city's behaviour, each a documented function of the counters the city already
+  produces (the crowd's yielding and waiting, the kernel's law interventions, the Ring-0 audit, the frame), each in
+  [0, 1]: `CIVIC_COOPERATION`, `TRAFFIC_YIELD`, `SANDBOX_COMPLIANCE`, `CROWD_CALM`, `SIGNAL_DISCIPLINE`,
+  `FLEET_RESTRAINT`, `OPERATOR_OBEDIENCE`, `SELF_PRESERVATION`, `FRAME_HEALTH`, `SHIELDING`, `RAIN_MODE`, `WORKDAY`.
+  `feature` (or `feature list`) prints the vector as rows, largest first, after a JumpReLU threshold per feature (a
+  lane at or below its threshold reads 0): the id, a ten-cell bar, the value, and its steering if any; `feature top
+  <k>` the k largest; `feature watch` the rows live; `feature <NAME>` one feature's card (what it measures, its
+  threshold, its value now, the two steering lines, its knobs); `feature prompt` the lines steering has put in the
+  system prompt; `feature about` what this is and is not. Steering is the operator's (`operator unlock` first):
+  `feature steer <NAME> <-1..1>` leans a feature, which adds one fixed line to the system prompt every model provider
+  renders for the people answering (`Steering: …`, with `gently` up to 0.34 and `above all` beyond 0.67) and leans
+  the bounded tuning knobs the feature names through the same facade as `set` (`TRAFFIC_YIELD`: `car.brake` and
+  `car.power`; `FLEET_RESTRAINT`: `car.power`; `FRAME_HEALTH`: `volumetrics.strength`; a knob two features lean on
+  takes the later lean); `feature clamp <NAME> <0..1>` holds a lane and adds `Steering: hold <title> at N%.`;
+  `feature release <NAME>` drops both and returns the knobs to their middle; `feature reset` drops everything.
+  Honestly: this is not a sparse autoencoder over a model's hidden activations. No provider the page talks to (a
+  model file in the page, a server on this machine, the network provider) exposes its residual stream, so there is
+  nothing to train a dictionary on and nothing to clamp inside the model; every feature is hand-written over the
+  city's own counters, and every steering line is fixed text. Steering reaches nothing of the laws, the Sanctuary or
+  the Ring-0 auditor: it reads the snapshot and writes knobs through the operator's facade, and nothing else.
 - `map` says which map the city shell walks. `map city` reloads into the procedural city (its 14,000 pedestrians and
   its traffic), `map lakefront` into the generated metropolis (no people or traffic of its own yet), and the choice
   is kept between visits until `map default` forgets it; the desktop app has no address bar, so this is its way to
@@ -888,13 +978,46 @@ cinema camera, the HUD. Track B is this console on its own.
   - Definitions and memory last for the console session; `r0 reset` forgets every definition and zeroes the
     memory, and `r0 words` lists the words. A line of 100,000 steps or more prints its step count. A definition
     cannot span lines; there is no `do … loop`, no floating point and no string beyond `." text"`.
+- **`noir`** is NoirScript, the console's second language (`terminal/noirscript/`): statically typed, compiled to
+  bytecode and run on a bounded VM over one memory arena. Types `i32`, `u32`, `f32` (true IEEE binary32: every
+  operation rounds through `Math.fround`), `bool`, fixed arrays `[f32; 64]`, and the lane types `f32x4`, `i32x4`,
+  `u32x4`, `u32x8` with lane-wise arithmetic, comparisons to masks (`vlt`, `vge`, …), `select(mask, a, b)` and
+  `mask(bool)` for branchless code, horizontals (`hsum`, `hmin`, `hmax`, `any`, `all`), and the bit intrinsics
+  `popcount`, `clz`, `ctz`, `rotl`, `rotr`, `morton2`. Statements: `let`/`let mut`, assignment with compound
+  operators, `fn` with parameters, a return type and recursion, `if`/`else` (also as an expression), `while`,
+  `loop`, `for i in a..b`, `break`/`continue`; `print(a, b, …)` prints its values on one line. The city's columns are
+  built-in tables: `crowd.n`, `crowd.x`, `crowd.z`, `cars.n`, `cars.x`, `cars.z`, `cars.heading`, `cars.speed`,
+  `cars.mode` (0 ai, 1 player, 2 parked), `kernel.law1`/`law2`/`law3`/`flips`/`shielded`, `frame.fps`/`ms`/`p95`;
+  `query cars where speed > 5.0` counts the rows where the expression holds, and `load_f32x4(crowd.x, i)` reads four
+  lanes of a column (past the end reads 0) so a loop can stride over any length. Examples: `noir let mut s = 0; for
+  i in 0..10 { s += i * i; } print(s);` prints 285; `noir fn fib(n: i32) -> i32 { if n < 2 { n } else { fib(n - 1)
+  + fib(n - 2) } } print(fib(20));` prints 6765; `noir let v = f32x4(1.0, 2.0, 3.0, 4.0); print(v *
+  splat_f32x4(2.0), hsum(v));` prints `f32x4(2, 4, 6, 8) 10`. `noir asm <source>` prints the bytecode listing
+  instead of running it.
+  - **What it reads, and what it cannot touch.** The tables are copies: the engine builds fresh arrays from the
+    realm's newest reading when a line runs (the bridge's one `soa.tables` reader), and the VM copies them again
+    into its own arena, so a run is one consistent moment and nothing of the realm is ever handed out by reference.
+    The directory imports nothing (its own test pins that), there is no JIT and no dynamic code, no clock and no
+    randomness. The write intrinsics `tune`, `intent`, `cull` and `steer` exist in the language, type-check and
+    compile, and reach the city only through the Ring-0 elite tier (below): until `ring0 unlock --elite` they fail
+    at run time with `elite tier locked: 'ring0 unlock --elite <passphrase>' opens it`; open, they run through the
+    operator facade's four vetted paths and the line has the tier's raised limits (50,000,000 steps, 65,536
+    characters, 16 MiB of cells, 4,096 frames). In the console alone (`?boot=tty`) every table is empty. The language's full rules, and the decisions its tests pin (a column binding names the column and reads each run's snapshot; a big array copy is charged to the step budget; a line adds memory only within its own limits), are in `docs/noirscript.md`.
+  - **Bounded.** A line may run 1,000,000 steps (a vector operation is one; a `query` row costs its condition plus
+    three; copying an array costs one more per 16 cells, so the budget bounds the work and not only the count), print 16,384
+    characters, hold 1 MiB of 32-bit cells and nest 1,024 calls; past a bound it ends with a named error (`step
+    budget exhausted (1000000)`, `output limit exhausted (16384)`, `memory exhausted`, `stack overflow (depth
+    1024)`) and the session stays usable. A line that fails to compile installs nothing; a line that fails at run
+    time keeps the functions and globals it declared. Definitions last for the console session; `noir reset`
+    forgets them and zeroes memory; `noir words` lists the keywords, types, tables, intrinsics and your own names. A
+    line of 100,000 steps or more prints its step count.
 - **Not a headless engine.** Track B is "no engine" plus `render off`; a page-side simulation without a renderer
   is not attempted.
 
 ### The operator tier
 
-`operator unlock` opens the elite tier for systems engineers; `operator lock` closes it again. While
-unlocked:
+`operator unlock` opens the operator tier for systems engineers; `operator lock` closes it again (and the
+Ring-0 elite tier above it, below). While unlocked:
 
 - `run <skill>[,<skill>...]: <js>` runs a script (Shift+Enter for more lines) with a frozen `sim`
   object and a capturing `console`; `await` works, and a script that runs past its timeout is
@@ -996,10 +1119,18 @@ unlocked:
   knows; one that ended with the tether leaves no moment and teaches nothing, like any Aborted task. **What is not an
   action.** Files, the shell, the network, the player's body (a teleport, a walk), driving a car frame by frame,
   reloading the page (`map`, `boot`) and spawning or altering anyone are not in the catalogue and cannot be proposed;
-  a line that asks for them is refused by name (`no city action called 'teleport' (time, rain, light, quality, cars,
-  crowd, sound, or none)`). `help` lists the command as `act [ok|no|log [verify]|list]`; `act list` prints the catalogue, and
-  the reads (`act`, `act log`, `act list`) work while locked. The swarm's roles never propose: an `ACTION:` line in a
-  role's answer is text.
+  a line that asks for them is refused by name, under the gate's Zeroth Law (`Zeroth Law: no city action called
+  'teleport' (time, rain, light, quality, cars, crowd, sound, or none)`). `help` lists the command as `act [ok|no|log [verify]|list|gate]`; `act list` prints the catalogue,
+  `act gate` the Ring-0 action gate's twelve checks with their laws (see The ethical kernel), and the reads (`act`,
+  `act log`, `act list`, `act gate`) work while locked. **The gate.** Before any of this, every ask passes the gate
+  (the page contained as the host vouches and the model on this machine or none: `ask: Zeroth Law: …` otherwise;
+  the lock, which `ask: locked` has refused already, is held again), every `ACTION:` line passes it as it is read,
+  readable or not, and an allowed action passes it once more the moment before it runs, inside the lease: the realm
+  standing, the verb kinetic-free, the tier still unlocked, a person's OK, the proposer still tethered (the lease
+  holds this already; the gate holds it again), the trail whole. A refusal there ends the action as `act 1: refused:
+  Second Law: the operator tier is locked` (a toast says the same with the console closed), goes on the trail as a
+  `refusal` under its law, and the proposer is told. The swarm's roles never
+  propose: an `ACTION:` line in a role's answer is text.
 - `swarm run [--agents <1-5>] <goal>` splits a goal over up to five roles (the Prime Architect, who needs someone
   tethered with Design; the Systems Coder, TypeScript; the Sim-to-Real Tester, Testing; the Mechanistic Auditor,
   Security; the Legal/IP Verifier, Writing) and asks them one after another, each one prompt through the same gate
@@ -1144,6 +1275,30 @@ tethered to you, part of your swarm, until the tether breaks.
   say is stored beyond the last transcript shown by `recruit`.
 
 A short two-note cue sounds where the person you asked stands, so you hear who is coming.
+
+
+### The Ring-0 elite tier (`ring0`)
+
+Above the operator tier sits one more, opened by a passphrase rather than a word: `ring0 unlock --elite
+<passphrase>`. It exists for the owner's own hand on the city: it opens NoirScript's write intrinsics (`tune`,
+`intent`, `cull`, `steer`) and raises NoirScript's limits for the console session, so a NoirScript program can
+set a tuning knob, send a car a player-style intent, set the crowd's density or lean a feature of the inspector.
+
+- **Setting the passphrase.** `operator unlock`, then `ring0 elite set <passphrase>` (8 to 256 characters;
+  inner spaces kept). The page keeps a record of it, `v1:<salt>:<SHA-256 of salt:passphrase>`, in this browser's
+  local storage, never the words; the record is checked, never read back. To change it, open the tier with the
+  old one first. In the console alone (`?boot=tty`) nothing can be kept, and the tier cannot open.
+- **Opening and closing.** `ring0 unlock --elite <passphrase>` (operator tier open first) prints the banner:
+  what is open now and what stays in force. `ring0 lock` closes it; `operator lock` closes both. Five wrong
+  passphrases in a row refuse further tries until the operator tier is locked and unlocked again. `ring0` or
+  `ring0 status` prints the state and how many writes the tier has made this session. The passphrase is never
+  echoed, and the history keeps the line as `ring0 unlock --elite ••••`.
+- **What stays out of reach.** Every write goes through the operator's own frozen facade: `tune` is the same path
+  as `set` (validated and clamped by the engine), `intent` is a scripted player-style intent (the same Bouncer,
+  envelope and latch as the wheel, in the physics worker), `cull` is `crowd.cull`, `steer` is the inspector's
+  bias. The three laws, the Sanctuary, the Ring-0 auditor, the kernel's blinding and the 14A screen are not on
+  that facade and cannot be reached or altered from the tier; `eliteWiring.test.ts` pins that the tier's code
+  calls those four things and nothing else.
 
 ### Pings and the rally
 
@@ -1756,7 +1911,8 @@ a street looking west at 17:20 and the building rows cut the sun into shafts.
 
 ## Hardware (Universal HAL)
 
-`04_Connect_Hardware/hal.ts` is one bus for four transports. On start it silently re-opens every
+`04_Connect_Hardware/hal.ts` is one bus for four transports, and the rows of a headset session's input (see
+Headsets). On start it silently re-opens every
 device the browser granted before. Pairing a new device needs a user gesture, as browsers require:
 run `hal pair …` in the console.
 
@@ -1811,11 +1967,63 @@ run `hal pair …` in the console.
   `[dualsense-usb 100 (by id, bus unknown, 054c:0ce6)]`; the glyph family the profile reports is the same
   `gamepad.ts` reports for the id, so a HUD hint and a `hal` line never disagree. The ids come from the Linux
   kernel's tables and have not been checked on a physical pad here; which browsers print a bare product name has
-  not been checked either. The three headset profiles are reached once the headset path lands (nothing in the page
-  asks for a WebXR session yet).
+  not been checked either. The three headset profiles name a WebXR session's input sources (see Headsets).
 
 Every API degrades silently where it is missing. Safari and Firefox have no WebHID, Web Serial or
 Web Bluetooth.
+
+## Robots (the joint bridge)
+
+A robot's joints and the city's physics realm share one state, both ways (`docs/joint-bridge-spec.md`). A robot
+announces a manifest (its links and joints, the URDF's own words) and sends frames of `q`, `q̇` and `τ`; the city
+builds it a body in the physics realm (`07_Execute_Actions/articulated.ts`, a Rapier chain with a torque-impulse
+servo at every movable joint, sized from the live subtree inertia) and shows it standing before you. In **twin**
+mode the body follows the robot's frames, through a setpoint filter whose time constant and delay a calibration
+measured. In **leader** mode the body is the setpoint: `robot set` moves a joint, the physics realm settles it, and
+the body's own joints go out to the robot as setpoints, through the peripheral gate (`04_Connect_Hardware/
+peripheralPolicy.ts`, now wired: an `ARM` / `ARMED` handshake the operator starts, a lease that breaks on the
+operator lock, a 12 m tether, a hidden page or a Ring-0 panic, a 500 ms heartbeat watchdog, 20 setpoints a second at
+most, each with a 200 ms time to live and the device's own rule to hold still when they stop). The robot's answers
+(frames, acks, beats) come back the same way and stamp a round trip. **None of it has been run against a physical
+robot or a real broker**: it is proved against fakes in Node, against a simulated arm the repository ships, and
+against an MQTT broker the tests play; the serial, Bluetooth, relay and Sparkplug doors are written to their
+specifications and unverified on hardware. Nothing opens at boot: a robot arrives only through a door you open.
+
+- **Three doors.** A HAL/1 device over Web Serial or Bluetooth LE (`hal pair serial|ble`) adds `CAPS`, `JOINTS`,
+  `JS`, `JA`, `ARMED`, `BEAT` and `DISARM` lines to the line protocol and takes `ARM`, `DISARM` and `JT` back (24 joints
+  at most on a line, 10 setpoints a second over Bluetooth); a loopback relay on this machine
+  (`src/10_Network/robotRelay.node.ts`, `npm run serve:robots`) takes the page on one WebSocket and robots as peers
+  on another, judges every setpoint a second time (a rising sequence, finite numbers, the manifest's lengths, `issuedAt`
+  within its time to live by the relay's wall clock, 25 a second), arms a robot for one page connection at a time and
+  disarms it when that page goes; and, with `ROBOT_MQTT=mqtt://127.0.0.1:1883`, the same relay is a Sparkplug B host
+  application (`sparkplugHost.node.ts`: a clean session with a retained `STATE` will, `NBIRTH` / `DBIRTH` / `DDATA`
+  read by alias with a rebirth asked on a sequence gap, `DCMD` for the setpoints and the arm, `NDEATH` taking the
+  node's robots). Robot ids say the door: `hal:<device>`, `ws:<n>`, `<group>/<node>/<device>`, `sim:<name>`.
+- **The console.** `robot` lists every robot (door, mode, joints, state); `robot demo` keeps the built-in three-joint
+  arm as `sim:demo`, `robot urdf <url> [name]` reads a URDF file served on this machine as `sim:<name>`; `robot spawn
+  <id> [x z]` puts the body in the realm (two metres before you when no place is given), `robot mode <id>
+  twin|leader|watch|sim`, `robot set <id> <joint> <q>`, `robot arm <id>` / `robot disarm <id>`, `robot calibrate <id>
+  <joint>` (a hold, then one small step toward the farther limit; the fitted dead time less the measured return trip
+  and the fitted time constant become the twin's delay and filter), `robot remove <id>`, `robot relay <ws url>
+  <token>` / `robot relay off`. The relay, a spawn, a URDF read, arming and calibrating are the operator's
+  (`operator unlock`); the list, the demo, a mode, a setpoint, a disarm, a remove and the relay's status or its off
+  run at any time, so a stop is never locked. The HUD shows `Robots · n` with the armed count while any robot is
+  known, and the namespace carries the count under `Hardware/Bus/robots`.
+- **Trying it with nothing attached.** In the console: `robot demo`, `robot spawn sim:demo`, `robot set sim:demo elbow
+  1`, then `operator unlock`, `robot arm sim:demo`, `robot calibrate sim:demo elbow`: the realm is the robot, so the
+  calibration measures the servo itself. With the relay: `ROBOT_PRINT_TOKEN=1 npm run serve:robots` prints the port and
+  the two tokens (a token in a log is a credential, so nothing is printed without that flag; set `ROBOT_SECRET`, 16
+  characters or more, to keep tokens across restarts); `node tools/robot/sim-arm.mjs ws://127.0.0.1:8790/robot <robot
+  token> [--tau-ms 120] [--delay-ms 0] [--hz 50]` is a robot peer that follows setpoints as a first-order lag and
+  keeps the device rule (it holds still 500 ms after the last admitted setpoint, and on a `DISARM`); in the page,
+  `robot relay ws://127.0.0.1:8790/ <page token>` lists it as `ws:1`, and `robot spawn ws:1`, `robot mode ws:1
+  leader`, `robot arm ws:1`, `robot calibrate ws:1 elbow` run the whole gate against it. `tools/robot/ros2_bridge.py`
+  is an example of a ROS 2 peer (`JointState` in, a forward position command out); it has not been run here.
+- **What it is not.** The bodies are a chain of capsules, boxes and cylinders from the manifest's shapes, not meshes;
+  a mimic joint, a floating or planar joint and a robot of more than 64 joints or 32 links are refused; the page
+  never opens a socket off this machine, so a remote robot or a remote broker reaches the city only through the
+  relay running on it; the realm's 60 Hz loop stays the realm's: a robot is placed into it and never changes its step.
+  The limits and the open points are listed in the specification's §8.
 
 ## Autoscaling
 
@@ -2303,15 +2511,15 @@ Every source file opens with "Why does this file exist? / What breaks if it is r
 |---|---|---|
 | — | `brand.ts`, `MonolithLogo.tsx`, `App.tsx` | Product name and mark; the React shell (`App` → `GuiShell`, the city, or `TtyShell`, the console alone under `?boot=tty`): boot veil, HUD, concierge, the wardrobe card, touch and console overlays; it builds the cognition router (with the model kept in this page, its file picker and its drop) and the network client and keeps the look and the token |
 | 01_Initialize_World | `world.ts`, `city.ts`, `materials.ts`, `fbmTexture.ts`, `solar.ts`, `codeDissolve.ts`, `region/` (`projection.ts`, `grid.ts`, `names.ts`, `clip.ts`, `pack.ts`, `compile.ts`, `regionWorld.ts`) | WebGPU device, city grid, districts, shoreline and furniture, procedural materials (filtered against moiré), sky, sun, haze, the lake; the code dissolve's material helper (any node material into falling green binary code, by a per-instance amount, shadow included); the surveyed region: its projection, fictional names, the compiler's core, the pack format, and its meshes, walls and places |
-| 02_Define_The_Rules | `laws.ts`, `ring0.ts`, `ring0Panic.ts`, `civic.ts`, `collision.ts`, `conduct.ts`, `degrees.ts`, `airgap.ts`, `integrity.ts`, `property.ts` | The seeded, replayable property harness every fuzz suite shares; SHA-256, HMAC and canonical encoding for every hash and seal; the air gap (the one definition of "this machine", and the guard installed on the page's and the worker's globals); Ring-0 bouncer and audit (both run in the physics worker; the audit's craft check), the page's panic lock; kernel limits, signal cycle, speed limit, checks; the contact policy (cars pass through cars, the ragdoll balance machine wired with no vehicle a cause, no combat) and the collision groups (the chassis, the wheel rays, the avatar through a rig); the 14A conduct core and screen; degrees of success |
+| 02_Define_The_Rules | `laws.ts`, `ring0.ts`, `ring0Gate.ts`, `ring0Panic.ts`, `guardrails.ts`, `civic.ts`, `collision.ts`, `conduct.ts`, `degrees.ts`, `airgap.ts`, `integrity.ts`, `property.ts` | The seeded, replayable property harness every fuzz suite shares; SHA-256, HMAC and canonical encoding for every hash and seal; the air gap (the one definition of "this machine", and the guard installed on the page's and the worker's globals); Ring-0 bouncer and audit (both run in the physics worker; the audit's craft check), the page's panic lock; kernel limits, signal cycle, speed limit, checks; the contact policy (cars pass through cars, the ragdoll balance machine wired with no vehicle a cause, no combat) and the collision groups (the chassis, the wheel rays, the avatar through a rig); the 14A conduct core and screen; degrees of success |
 | 03_Spawn_Agents | `crowd.wgsl`, `crowdCompute.ts`, `crowdSensor.ts`, `crowdSim.ts`, `crowdCull.ts`, `crowd.ts`, `skills.ts`, `look.ts`, `ragdoll.ts`, `ragdollRig.ts` | GPU pedestrians, their hazard sensing and their summons (in the physics worker), the contract and layouts both sides share, culling/LOD/density and indirect InstancedMesh rendering, the dissolve amounts and the look words (on the page); every pedestrian's skills, the recruitment rules and the rally rule both realms run; the closed wardrobe and the packed look word; the active ragdoll's balance machine, pool and Rapier body (wired by `07_Execute_Actions/ragdollRealm.ts`; `COLLISION.ragdoll: true`, and `collision.test.ts` keeps that the one road to it) |
-| 04_Connect_Hardware | `input.ts`, `hal.ts`, `dualsense.ts`, `lineLink.ts`, `gamepad.ts`, `seats.ts`, `peripheralPolicy.ts`, `TouchControls.tsx` | Keyboard/mouse/touch/gamepad (the ping among the actions), the hardware bus and its drivers; the seating plan for four local players and the per-seat pad intent; the draft default-deny gate for actuating peripherals (microcontrollers, drones; `docs/hal-peripherals-spec.md`), not yet wired |
+| 04_Connect_Hardware | `input.ts`, `hal.ts`, `dualsense.ts`, `lineLink.ts`, `gamepad.ts`, `seats.ts`, `peripheralPolicy.ts`, `jointState.ts`, `urdf.ts`, `actuatorFit.ts`, `robotLink.ts`, `TouchControls.tsx` | Keyboard/mouse/touch/gamepad (the ping among the actions), the hardware bus and its drivers (the HAL/1 door of the joint bridge among them); the seating plan for four local players and the per-seat pad intent; the default-deny gate for actuating peripherals (`docs/hal-peripherals-spec.md`), wired through the joint bridge: the joint vocabulary and its judges, the URDF reader, the step-response fit and round-trip meter, and the page's robot bridge (three doors, the gate, the lease, the calibration; `docs/joint-bridge-spec.md`) |
 | 05_Observe_Environment | `telemetry.ts`, `governor.ts`, `profile.ts`, `lookStore.ts` | SIPOC X snapshot (the dissolve, the pings, the drawing switch, the players, the session and the captions among its optional fields), frame statistics, quality governor (and its hold while the model in this page works), the visitor's name and look |
 | 06_Make_Decisions | `traffic.ts`, `tracks.ts`, `trackDriver.ts`, `routingWasm.ts`, `routing.wasm.ts` (generated from `native/routing`), `intent.ts` | The track arithmetic as WebAssembly, with `tracks.ts` its reference; AI drivers: the street-hopping driver and the track follower, sharing one reaction check and hazard episode; the fixed track network (the car rings, the train loop, the drone corridors, the plane racetrack, the headway seats, the box hold); the 5-Whys intent engine |
-| 07_Execute_Actions | `engine.ts`, `simClient.ts`, `simProtocol.ts`, `physics.worker.ts`, `simHost.ts`, `simCore.ts`, `physics.ts`, `vehicles.ts`, `car.ts`, `carRig.ts`, `fleetView.ts`, `trackFleet.ts`, `ragdollRealm.ts`, `rigView.ts`, `sanctuary.ts`, `player.ts`, `head.ts`, `controls.ts`, `viewports.ts`, `quality.ts`, `audio.ts`, `acoustics.ts`, `captions.ts`, `postfx.ts`, `cinema.ts`, `shutter.ts`, `volumetrics.ts`, `ghost.ts`, `contact.ts`, `dissolve.ts`, `netView.ts`, `operator.ts`, `harness.ts`, `spatial.ts`, `Hud.tsx`, `BootVeil.tsx`, `Concierge.tsx`, `Customizer.tsx`, `glyphs.ts`, `terminal/` (`Terminal.tsx`, `bridge.ts`, `commands.ts`, `repl.ts`) | Frame loop; the physics realm (worker entry, its message door, the simulation core, Rapier world, fleet on its tracks, the car rules the page and the room share (the rig, the substep, the exit point, the fleet's plan), the scheduled craft and their pose stream, the balance machine over the pedestrians near the operator and its rig stream, sanctuary, up to four avatars) and the page's end of it (client, protocol, fleet drawing, rig drawing, first-person heads, per-seat controls, the split-screen arithmetic); quality applier, soundscape (with its speech voice, rooms, peer voices and the sound-event stream), room acoustics, the caption track, post chain, the cinema camera (24 fps pacer, 180° shutter, ND and film response), sun shafts, ghost view, the passage envelope and the code dissolve's envelope, the network ghosts, operator facade and physics harnesses (the spatial sweep's plan among them), HUD, boot veil, concierge, the wardrobe card, control glyphs, console (with R0, its stack machine) |
+| 07_Execute_Actions | `engine.ts`, `simClient.ts`, `simProtocol.ts`, `physics.worker.ts`, `simHost.ts`, `simCore.ts`, `physics.ts`, `vehicles.ts`, `car.ts`, `carRig.ts`, `fleetView.ts`, `trackFleet.ts`, `ragdollRealm.ts`, `articulated.ts`, `jointRealm.ts`, `jointBridge.ts`, `rigView.ts`, `sanctuary.ts`, `player.ts`, `head.ts`, `controls.ts`, `viewports.ts`, `quality.ts`, `audio.ts`, `acoustics.ts`, `captions.ts`, `postfx.ts`, `cinema.ts`, `shutter.ts`, `volumetrics.ts`, `ghost.ts`, `contact.ts`, `dissolve.ts`, `netView.ts`, `operator.ts`, `harness.ts`, `spatial.ts`, `Hud.tsx`, `BootVeil.tsx`, `Concierge.tsx`, `Customizer.tsx`, `glyphs.ts`, `terminal/` (`Terminal.tsx`, `bridge.ts`, `commands.ts`, `repl.ts`) | Frame loop; the physics realm (worker entry, its message door, the simulation core, Rapier world, fleet on its tracks, the car rules the page and the room share (the rig, the substep, the exit point, the fleet's plan), the scheduled craft and their pose stream, the balance machine over the pedestrians near the operator and its rig stream, the robots' bodies (a servo chain built from a manifest, the pool of them with their twin filter and modes, the shared joint buffer the page reads them from), sanctuary, up to four avatars) and the page's end of it (client, protocol, fleet drawing, rig drawing, first-person heads, per-seat controls, the split-screen arithmetic); quality applier, soundscape (with its speech voice, rooms, peer voices and the sound-event stream), room acoustics, the caption track, post chain, the cinema camera (24 fps pacer, 180° shutter, ND and film response), sun shafts, ghost view, the passage envelope and the code dissolve's envelope, the network ghosts, operator facade and physics harnesses (the spatial sweep's plan among them), HUD, boot veil, concierge, the wardrobe card, control glyphs, console (with R0, its stack machine) |
 | 08_Swarm | `recruitment.ts`, `taskRouter.ts`, `memory.ts`, `ping.ts` | The swarm's hash-chained memory and weight ledger; the operator's voice: on-device continuous speech recognition, the request parser, the main-thread proximity match, the request to the physics worker, the rally request, and the console and `recruit()` fallback; the task gateway that binds skill-bound work to the tethered swarm; the swarm's episodic memory (IndexedDB, by world seed and pedestrian); the ping's pick, board and rally plan |
 | 09_Cognition | `localCompute.ts`, `claudeApi.ts`, `router.ts`, `prefixCache.ts`, `kvPager.wasm.ts` (generated from `native/kv-pager-wasm`), `localSpeech.ts`, `inPage.ts`, `inPagePlan.ts`, `inPageCaps.ts`, `gguf.ts`, `modelStore.ts`, `modelStore.worker.ts`, `wllamaRuntime.ts` | The prompt-prefix page table over kv-pager as WebAssembly; the operator's model providers and voice: the router (`claude` through a gateway on this machine with the operator's key; `ollama` and `llamacpp` on this machine), the local client in both wire formats and the Claude client, the system prompt opening with the 14A core and then the tethered people's skills and memories, the streamed answer, the speech client for a speech server on this machine, the audio for the soundscape, the cut when the tether breaks, and every failure as one sentence; the model in this page (`inpage`): its device policy, what the browser offers, the GGUF header check, the file kept in the page's storage (copied by a worker of its own), and the one adapter over wllama |
-| 10_Network | `replication.ts`, `replication.node.ts`, `mirror.node.ts`, `garage.node.ts`, `plane.node.ts`, `netClient.ts`, `telemetry.ts` | The network room: the plain-data protocol core and authoritative room both sides share (validated both ways, rate-limited, screened under 14A, every input judged by an authority and refused ones corrected), the Node-only WebSocket host (HMAC session tokens checked at the upgrade, one connection per player, never bundled), the headless Ring-0 mirror it judges with (the city of the seed in Rapier, the realm's own character controller, the Ring-0 audit) and its garage (every player's car replayed with the page's own car physics, every door checked), an open-plane authority for the protocol's tests, and the opt-in page client that speaks ws or wss only to `localhost` or `127.0.0.1` (the host on this machine, or the local end of a tunnel or proxy), reports the realm's steps and doors, snaps to corrections, and reconciles the room's snapshots into the poses `netView.ts` draws |
+| 10_Network | `replication.ts`, `replication.node.ts`, `mirror.node.ts`, `garage.node.ts`, `plane.node.ts`, `netClient.ts`, `telemetry.ts`, `robotRelay.node.ts`, `sparkplugHost.node.ts`, `sparkplug.ts`, `mqttCodec.ts` | The network room: the plain-data protocol core and authoritative room both sides share (validated both ways, rate-limited, screened under 14A, every input judged by an authority and refused ones corrected), the Node-only WebSocket host (HMAC session tokens checked at the upgrade, one connection per player, never bundled), the headless Ring-0 mirror it judges with (the city of the seed in Rapier, the realm's own character controller, the Ring-0 audit) and its garage (every player's car replayed with the page's own car physics, every door checked), an open-plane authority for the protocol's tests, and the opt-in page client that speaks ws or wss only to `localhost` or `127.0.0.1` (the host on this machine, or the local end of a tunnel or proxy), reports the realm's steps and doors, snaps to corrections, and reconciles the room's snapshots into the poses `netView.ts` draws; the robots' loopback relay (`npm run serve:robots`: the page's one socket and the robots' peers, a second gate on every setpoint, a Sparkplug B host application over MQTT when a broker is named) and the Sparkplug B and MQTT codecs both ends share |
 | native/kv-pager | `01_geometry.rs`, `02_page_table.rs`, `03_gpu/`, `bin/stress.rs`, `bin/chaos/` | A paged KV cache (its page table also runs on the page, through `native/kv-pager-wasm`) (prefix caching, copy-on-write, the WGSL decode kernel, the stress and chaos runs); `CAUSAL.md` traces the copy-on-write chain |
 | native/kv-pager-wasm | `lib.rs` | kv-pager's page table (no GPU) behind a C ABI, built to WebAssembly as `09_Cognition/kvPager.wasm.ts` (`npm run native:wasm`) |
 | native/routing | `lib.rs`, `layout.rs`, `math.rs`, `tests.rs`, `verify.rs` (Kani proof harnesses, `cfg(kani)` only) | The track arithmetic in dependency-free Rust, built to WebAssembly as `06_Make_Decisions/routing.wasm.ts`; its layout is defined once in each language and the two are proved equal |
@@ -2749,7 +2957,8 @@ reset and a real pad.
   is closed by the Content-Security-Policy `index.html` now carries: nothing loads from or connects to any host but
   this machine, for the page and for the iframes and blob workers it could create (`connect-src` names only loopback;
   `frame-src`, `object-src`, `form-action` and `base-uri` are `'none'`). Navigation and the browser's own speech
-  recognition stay open, and the audit says so. Nothing of the network reaches the physics realm. The in-page model
+  recognition stay open, and the audit says so. Nothing of the network reaches the physics realm but a robot's
+joint frames and the setpoints the page admitted through the peripheral gate (see Robots). The in-page model
   asks the gate nothing, because it addresses nothing: its runtime runs in workers wllama makes from `blob:` URLs,
   where the guard is not installed, so the policy those workers inherit is what holds them, and the adapter never
   calls wllama's download paths (`airgap.test.ts` pins it; the audit has the row).
@@ -3022,7 +3231,7 @@ devices.
 shell: tools/verify/fvps.mjs runs the same four parts, leaving Kani out on Windows and saying so) runs before every release bake
 (`build-release.yml` refuses to bake a commit whose proofs fail) and in `ci.yml` on every pull request and push to
 `main`: the `fvps` job runs the theorems, the IR scan and the air gap in minutes, and the `kani` matrix runs the
-proof harnesses in six groups on parallel runners (the longest harness takes about ten minutes; the `rust` and
+proof harnesses in seven groups on parallel runners (the longest harness takes about ten minutes; the `rust` and
 `page` jobs run the tests, clippy, tsc, oxlint, the build and the air-gap check alongside). It has four parts, each
 honest about what it proves:
 - **Kani (CBMC, bit-precise model checking)** over harnesses compiled only under `cfg(kani)`:

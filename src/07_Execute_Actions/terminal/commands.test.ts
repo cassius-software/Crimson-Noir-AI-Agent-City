@@ -18,38 +18,43 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
-  HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatRecording, formatStats,
+  FEATURE_IDS, HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatRecording, formatStats,
   isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type CommandResult, type Line,
 } from './commands.ts'
 import {
   offlineBridge, ring0Stats, type ActEnd, type ActEvent, type ActsBridge, type AskResult, type GatedAsk, type GatedRun, type GatedSay, type HalDevice, type LookBridge, type LookChange,
   type MemoryBridge, type ModelBridge, type NetBridge, type NetReport, type OperatorBridge, type PendingAct, type Piece, type PingBridge, type PingPick, type PingPoint, type RecordBridge,
-  type RecruitBridge, type Ring0Stats, type SayResult, type TerminalBridge, type TopicBridge, type AgentBridge, type ConciergeBridge,
+  type RecruitBridge, type Ring0Stats, type RobotConsole, type RobotRow, type SayResult, type TerminalBridge, type TopicBridge, type AgentBridge, type ConciergeBridge, type FeaturesBridge, type EliteBridge,
 } from './bridge.ts'
 import { SKILLS } from '../../03_Spawn_Agents/skills.ts'
 import { LOOK_BODIES, LOOK_PRESETS, LOOK_SLOTS } from '../../03_Spawn_Agents/look.ts'
 import { PING_KINDS, PING_WORDS } from '../../08_Swarm/ping.ts'
 import { apiDoc, exec, scriptApi, type SimControls } from '../operator.ts'
 import { createSwarm } from '../../08_Swarm/orchestrator.ts'
-import { AuditChain, INVARIANTS, INVARIANT_TEXT, verifyChain, type AuditBody } from '../../02_Define_The_Rules/guardrails.ts'
+import { AuditChain, INVARIANT_LAW, INVARIANTS, INVARIANT_TEXT, verifyChain, type AuditBody } from '../../02_Define_The_Rules/guardrails.ts'
+import { LAW_NAMES } from '../../02_Define_The_Rules/laws.ts'
+import { CHECKS } from '../../02_Define_The_Rules/ring0Gate.ts'
 import { sha256 } from '../../02_Define_The_Rules/integrity.ts'
 import { PROVIDERS } from '../../09_Cognition/router.ts'
 import { harnesses } from '../harness.ts'
+import { FEATURES } from '../../09_Cognition/features.ts'
+import type { NoirTables } from './noirscript/index.ts'
 import type { QualityState, RecordingState, SipocSnapshot } from '../../05_Observe_Environment/telemetry.ts'
 
 const BRAND = { name: 'TESTBRAND', version: '9.8.7', host: 'testhost' }
 
 const LAWS = [
+  { id: 0, title: 'Protect the city', text: 'Law zero text.' },
   { id: 1, title: 'Protect people', text: 'Law one text.' },
   { id: 2, title: 'Follow instructions', text: 'Law two text.' },
   { id: 3, title: 'Preserve itself', text: 'Law three text.' },
 ] as const
 
 const CORE_NAMES = [
-  'help', 'stats', 'laws', 'kernel', 'topic', 'quality', 'time', 'audio', 'ghost', 'rain', 'render', 'captions', 'ping', 'look', 'agent', 'sloane', 'goal', 'hal', 'recruit', 'memory', 'clear', 'history', 'echo',
-  'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'exit',
+  'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'time', 'audio', 'ghost', 'rain', 'xr', 'render', 'captions', 'ping', 'look', 'agent', 'sloane', 'goal', 'hal', 'robot', 'recruit', 'memory', 'clear', 'history', 'echo',
+  'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'noir', 'exit',
 ]
-const OPERATOR_NAMES = ['operator', 'run', 'ask', 'swarm', 'act', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
+const OPERATOR_NAMES = ['operator', 'ring0', 'run', 'ask', 'swarm', 'act', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
 
 const IDLE: RecordingState = { active: false, source: null, seconds: 0, frames: 0, bytes: 0, dropped: 0, codec: '' }
 
@@ -108,6 +113,45 @@ interface FakeOp extends OperatorBridge {
   /** The ask's answer is said aloud as well (say auto on): how that ends. */
   speakAnswer: SayResult | null
   voice: { server: string; voice: string | null; model: string | null; auto: boolean }
+  features: FeaturesBridge
+  elite: FakeElite
+}
+
+interface FakeElite extends EliteBridge { state: { unlocked: boolean; set: boolean } }
+
+/** The elite tier as the tier serves it: one passphrase ('open sesame please') once set; reads log nothing, unlock and set log to opCalls. */
+function fakeElite(opCalls: string[]): FakeElite {
+  const e: FakeElite = {
+    state: { unlocked: false, set: false },
+    status: () => `ring0: elite tier ${e.state.unlocked ? 'unlocked' : 'locked'}${e.state.set ? '' : ' (no passphrase set)'}; 0 writes this session`,
+    unlocked: () => e.state.unlocked,
+    unlock: (p) => {
+      opCalls.push('elite unlock')
+      if (!e.state.set) throw new Error("no elite passphrase is set: 'ring0 elite set <passphrase>' first")
+      if (p !== 'open sesame please') throw new Error('wrong passphrase (4 tries left)')
+      e.state.unlocked = true
+      return ['Ring-0 elite tier unlocked for this console session.', 'Still in force: the three laws.']
+    },
+    lock: () => { e.state.unlocked = false; return 'ring0: elite tier locked' },
+    set: (p) => { opCalls.push(`elite set ${p}`); e.state.set = true; return 'ring0: elite passphrase set' },
+    writes: () => (e.state.unlocked ? { tune: () => 1, intent: () => true, cull: (d) => d, steer: (_f, v) => v } : null),
+  }
+  return e
+}
+
+/** The feature inspector as the tier serves it: fixed rows, logging to the bridge's shared `calls` (as 'features <verb>') so the air-gap sweep sees every use. */
+function fakeFeatures(calls: string[]): FeaturesBridge {
+  const rows = ['SANDBOX_COMPLIANCE    [##########]  1.00', 'CROWD_CALM            [##########]  1.00', 'CIVIC_COOPERATION     [####......]  0.40']
+  return {
+    lines: (k) => { calls.push(`features lines ${k ?? '-'}`); return rows.slice(0, k ?? rows.length) },
+    about: (name) => { calls.push(`features about ${name}`); return /^civic/i.test(name) ? ['CIVIC_COOPERATION  (civic cooperation)', 'People letting others through.', 'threshold 0.05  now 0.40'] : null },
+    prompt: () => { calls.push('features prompt'); return [] },
+    explain: () => { calls.push('features explain'); return ['features: 12 named readings', 'not a sparse autoencoder'] },
+    steer: (name, bias) => { calls.push(`features steer ${name} ${bias}`); return [`${name} bias +${bias.toFixed(2)}`, 'physics.car.power = 0.85'] },
+    clamp: (name, value) => { calls.push(`features clamp ${name} ${value}`); return `${name} clamp ${value.toFixed(2)}` },
+    release: (name) => { calls.push(`features release ${name}`); return [`${name} released`] },
+    reset: () => { calls.push('features reset'); return ['features: nothing steered'] },
+  }
 }
 
 /** The tether the fake gateway binds a script to. */
@@ -134,7 +178,7 @@ interface FakeActs extends ActsBridge {
   /** The proposal waiting for the OK; a test sets it (null: nothing waits). */
   waiting: PendingAct | null
   /** How an allowed action ends: the done line, a failure in the facade, or the lease gone at `use`. */
-  outcome: 'done' | 'failed' | 'aborted'
+  outcome: 'done' | 'failed' | 'denied' | 'aborted'
   /** The hash-chained trail a test fills (the real chain, so `act log` prints real hashes and verifies them). */
   chain: AuditChain
   followers: Set<(ev: ActEvent) => void>
@@ -147,7 +191,8 @@ interface FakeActs extends ActsBridge {
 function fakeActs(f: FakeOp): FakeActs {
   const ending = (): ActEnd => (a.outcome === 'done' ? { state: 'done', line: 'the clock is set to 22:00' }
     : a.outcome === 'failed' ? { state: 'failed', line: 'the clock did not take the hour' }
-      : { state: 'aborted', line: TETHER_LOST })
+      : a.outcome === 'denied' ? { state: 'denied', line: 'Second Law: the operator tier is locked' }
+        : { state: 'aborted', line: TETHER_LOST })
   const a: FakeActs = {
     waiting: null,
     outcome: 'done',
@@ -185,6 +230,8 @@ function fakeOperator(): FakeOp {
     proposal: undefined,
     text: 'Grip scales\ntyre friction.',
     acts: undefined as unknown as FakeActs,
+    features: undefined as unknown as FeaturesBridge,
+    elite: undefined as unknown as FakeElite,
     unlock: () => { f.opCalls.push('unlock'); f.state.unlocked = true },
     // The tier withdraws a waiting proposal as it locks (no proposal waits past a lock): the console must read it first.
     lock: () => { f.opCalls.push('lock'); f.state.unlocked = false; f.acts.waiting = null },
@@ -374,6 +421,16 @@ function fakeTopics(calls: string[]): FakeTopics {
   return t
 }
 
+/** The city's columns as NoirScript reads them: four people, two cars (the second driven, fast), a quiet kernel, a 60 Hz frame. */
+function fakeTables(): NoirTables {
+  return {
+    crowd: { n: 4, x: Float32Array.of(1, -2, 3, -4), z: Float32Array.of(1, 2, -3, 4) },
+    cars: { n: 2, x: Float32Array.of(0, 8), z: Float32Array.of(0, -8), heading: Float32Array.of(0, 1.5), speed: Float32Array.of(0, 12), mode: Int32Array.of(0, 1) },
+    kernel: { law1: 3, law2: 0, law3: 1, flips: 2, shielded: false },
+    frame: { fps: 60, ms: 16.6, p95: 18 },
+  }
+}
+
 /** Logs to the bridge's shared `calls` (as 'memory <verb>'), so the air-gap sweep sees every use. */
 function fakeMemory(calls: string[]): MemoryBridge {
   return {
@@ -465,6 +522,33 @@ interface FakeNet extends NetBridge {
   joinResult: Promise<string> | (() => never)
 }
 
+interface FakeRobot extends RobotConsole {
+  rows: RobotRow[]
+  armResult: Promise<string> | (() => never)
+}
+
+/** Logs to the bridge's shared `calls` (as 'robot <verb>'): the list, the demo, the relay's status and its off may run while locked. */
+function fakeRobot(calls: string[]): FakeRobot {
+  const r: FakeRobot = {
+    rows: [],
+    armResult: Promise.resolve('sim:demo: armed (sim)'),
+    list: () => { calls.push('robot list'); return r.rows },
+    relay: (url, token) => { calls.push(`robot relay ${url} ${token}`); return Promise.resolve(`joined ${url}: 1 robot(s)`) },
+    relayOff: () => { calls.push('robot relayOff'); return 'relay: left ws://127.0.0.1:8790/' },
+    relayStatus: () => { calls.push('robot relayStatus'); return 'relay: off (robot relay <ws url> <token>)' },
+    spawn: (id, x, z) => { calls.push(`robot spawn ${id} ${x ?? '-'} ${z ?? '-'}`); return `${id}: body 1 at 10, 22 (3 joints, mode sim)` },
+    urdf: (url, name) => { calls.push(`robot urdf ${url} ${name ?? '-'}`); return Promise.resolve(`sim:${name ?? 'arm'}: 4 links, 3 movable joints`) },
+    demo: (name) => { calls.push(`robot demo ${name ?? '-'}`); return `sim:${name ?? 'demo'}: 4 links, 3 movable joints` },
+    mode: (id, mode) => { calls.push(`robot mode ${id} ${mode}`); return `${id}: mode ${mode}` },
+    set: (id, joint, q) => { calls.push(`robot set ${id} ${joint} ${q}`); return `${id}: ${joint} → ${q}` },
+    arm: (id) => { calls.push(`robot arm ${id}`); return typeof r.armResult === 'function' ? r.armResult() : r.armResult },
+    disarm: (id) => { calls.push(`robot disarm ${id}`); return `${id}: disarmed` },
+    calibrate: (id, joint) => { calls.push(`robot calibrate ${id} ${joint}`); return Promise.resolve(`${id}: ${joint}: delay 17 ms (return trip 0 ms), τ 120 ms, gain 1, rmse 0.0001 · twin: 1 step(s) back, τ 120 ms`) },
+    remove: (id) => { calls.push(`robot remove ${id}`); return `${id}: removed` },
+  }
+  return r
+}
+
 /** Logs to the bridge's shared `calls` (as 'net <verb>'): only `status` may be read while locked. */
 function fakeNet(calls: string[]): FakeNet {
   const n: FakeNet = {
@@ -512,11 +596,13 @@ interface Fake extends TerminalBridge {
   ping: FakePing
   look: FakeLook
   net: FakeNet
+  robot: FakeRobot
   model: FakeModel
   hours: number
   q: QualityState
   devs: HalDevice[]
   pairResult: Promise<HalDevice | null> | (() => never)
+  xrResult: string | Promise<string>
   operator: FakeOp
   record: FakeRec
 }
@@ -528,6 +614,7 @@ function fake(): Fake {
     q: { tier: 3, label: 'High', auto: true, renderScale: 1, targetMs: 16.7 },
     devs: [],
     pairResult: Promise.resolve(null),
+    xrResult: 'off: vr available (xr vr)',
     brand: BRAND,
     stats: () => { f.calls.push('stats'); return sampleStats() },
     laws: () => LAWS,
@@ -542,8 +629,10 @@ function fake(): Fake {
     audio: (arg) => { f.calls.push(`audio ${arg}`); return `audio status ${arg ?? '-'}` },
     ghost: (arg) => { f.calls.push(`ghost ${arg}`); return arg ?? 'off' },
     rain: (arg) => { f.calls.push(`rain ${arg}`); return arg ?? 'off' },
+    xr: (arg) => { f.calls.push(`xr ${arg ?? '-'}`); return f.xrResult },
     render: (arg) => { f.calls.push(`render ${arg}`); return arg ?? 'on' },
     captions: (arg) => { f.calls.push(`captions ${arg}`); return `captions: ${arg ?? 'on'}` },
+    soa: { tables: () => { f.calls.push('soa tables'); return fakeTables() } },
     ping: undefined as unknown as FakePing,
     topics: undefined as unknown as FakeTopics,
     hal: {
@@ -561,14 +650,18 @@ function fake(): Fake {
     recruit: undefined as unknown as FakeRecruit,
     look: undefined as unknown as FakeLook,
     net: undefined as unknown as FakeNet,
+    robot: undefined as unknown as FakeRobot,
     model: undefined as unknown as FakeModel,
   }
   f.ping = fakePing(f.calls)
   f.topics = fakeTopics(f.calls)
+  f.operator.features = fakeFeatures(f.calls)
+  f.operator.elite = fakeElite(f.operator.opCalls)
   f.recruit = fakeRecruit(f.calls)
   f.memory = fakeMemory(f.calls)
   f.look = fakeLook(f.calls)
   f.net = fakeNet(f.calls)
+  f.robot = fakeRobot(f.calls)
   f.model = fakeModel(f.calls)
   return f
 }
@@ -632,7 +725,7 @@ test('help lists every command with usage, in two groups; help <cmd> explains on
   assert.match(all, /run <skill>\[,<skill>\.\.\.\]: <js\.\.\.>/)
   assert.match(all, /ask \[<skill>\[,<skill>\.\.\.\]: <prompt\.\.\.>\|provider <name>\|connect <provider> \[<url>\] \[<key>\]\|model <name>\|server <url>\|key <key>\|effort <level>\|think on\|off\|api <format>\|file \[forget <name>\|load\|unload\|log\]\|gpu auto\|on\|off\|stop\]/)
   assert.match(all, /harness \[list\|run <name>\]/)
-  assert.match(all, /act \[ok\|no\|log \[verify\]\|list\]/)
+  assert.match(all, /act \[ok\|no\|log \[verify\]\|list\|gate\]/)
   assert.match(all, /record \[start \[canvas\|camera\]\|stop\|status\]/)
   assert.match(all, /recruit \[<skill>\|rally <agent> \[<x> <z>\]\|listen\|stop\|install\|dismiss\]/)
   assert.match(all, /render \[on\|off\]/)
@@ -809,8 +902,9 @@ test('formatStats survives an empty city and non-finite numbers', () => {
 test('laws prints the bridge laws in rank order', () => {
   const b = fake()
   const r = run('laws', b, [])
-  assert.deepEqual(texts(r).slice(0, 6), ['1. Protect people', '   Law one text.', '2. Follow instructions', '   Law two text.', '3. Preserve itself', '   Law three text.'])
-  assert.equal(r.lines[6].kind, 'sys')
+  assert.deepEqual(texts(r).slice(0, 8), ['0. Protect the city', '   Law zero text.', '1. Protect people', '   Law one text.', '2. Follow instructions', '   Law two text.', '3. Preserve itself', '   Law three text.'])
+  assert.equal(r.lines[8].kind, 'sys')
+  assert.match(r.lines[8].text, /act gate/)
   assert.ok(isErr(run('laws extra', b, [])))
 })
 
@@ -818,6 +912,7 @@ test('kernel prints interventions per law, sensor flips, shield state and the la
   const b = fake()
   const t = texts(run('kernel', b, []))
   assert.match(t[0], /^LAW {2}TITLE +INTERVENTIONS$/)
+  assert.ok(!t.some((l) => /Protect the city/.test(l)), 'the Zeroth Law is the action gate\'s (act gate), not the vehicle kernel\'s')
   assert.match(t[1], /^1 {4}Protect people +5$/)
   assert.match(t[2], /^2 {4}Follow instructions +1$/)
   assert.match(t[3], /^3 {4}Preserve itself +2$/)
@@ -973,7 +1068,7 @@ test('clear, history, whoami, version, uname and exit', () => {
 test('the brand always comes from the bridge', () => {
   const b = unlocked()
   const everything = ['help', 'stats', 'laws', 'kernel', 'quality', 'time', 'audio', 'hal', 'version', 'uname -a', 'api', 'harness', 'record', 'sim', 'operator',
-    'render', 'captions', 'ping', 'look', 'boot', 'map', 'r0', 'net', 'recruit']
+    'render', 'captions', 'ping', 'look', 'boot', 'map', 'r0', 'noir', 'net', 'recruit', 'robot', 'robot demo', 'robot relay']
     .flatMap((c) => texts(run(c, b, [])))
     .concat(motd(BRAND).map((l) => l.text))
     .join('\n')
@@ -990,7 +1085,8 @@ test('air gap: a failing or offline bridge becomes error lines, never an excepti
     'swarm', 'swarm status', 'swarm roles', 'swarm guardrails', 'swarm audit', 'swarm plan x', 'swarm run x', 'swarm stop',
     'say voice v', 'say stop', 'memory', 'memory 7', 'memory forget 7', 'api', 'api clock', 'get', 'set physics.car.power 1', 'harness', 'harness list', 'harness run sanctuary', 'sim',
     'record', 'record status', 'record start', 'record start camera', 'record stop', 'render', 'render off', 'captions', 'captions on', 'ping', 'ping go', 'ping clear',
-    'look', 'look show 7', 'look reset', 'look top 2', 'recruit', 'recruit rally 7', 'recruit rally 7 1 2', 'topic', 'topic list', 'topic list ~/#', 'topic get ~/x', 'topic tree', 'topic watch']) {
+    'look', 'look show 7', 'look reset', 'look top 2', 'recruit', 'recruit rally 7', 'recruit rally 7 1 2', 'topic', 'topic list', 'topic list ~/#', 'topic get ~/x', 'topic tree', 'topic watch',
+    'robot', 'robot demo', 'robot relay', 'robot relay off', 'robot mode sim:demo sim', 'robot set sim:demo elbow 1', 'robot disarm sim:demo', 'robot remove sim:demo']) {
     const r = run(c, off, [])
     assert.ok(isErr(r), `${c} should report an error offline`)
     assert.match(texts(r)[0], /engine not running$/)
@@ -1046,10 +1142,20 @@ test('air gap: while locked, across every command and completion, the only knobs
   // `operator unlock` is the one line that changes the lock state; every other line runs against the locked tier.
   assert.ok(lines.includes('operator unlock'))
   const sweep = [...lines.filter((l) => l !== 'operator unlock'), 'time 8', 'time 08:15', 'run 1 + 1', 'run rust: 1 + 1', 'get physics', 'set physics.car.power 2', 'harness run kernel-stop',
-    'recruit rally 7', 'recruit rally 7 1 2', 'look show 7', 'look top 2', 'look code ABCD-EFGH', 'net join ws://127.0.0.1:8787 tok', 'topic get ~/x', 'topic list ~/#', 'topic tree ~/Area']
+    'recruit rally 7', 'recruit rally 7 1 2', 'look show 7', 'look top 2', 'look code ABCD-EFGH', 'net join ws://127.0.0.1:8787 tok', 'topic get ~/x', 'topic list ~/#', 'topic tree ~/Area',
+    'noir print(crowd.n);', 'noir print(tune("car.power", 2.0));']
   for (const l of sweep) void run(l, b, ['help'])
   const touched = new Set(b.calls.map((c) => c.split(' ')[0]))
-  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'ghost', 'look', 'memory', 'model', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'setClock', 'stats', 'topics'])
+  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'features', 'ghost', 'look', 'memory', 'model', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'robot', 'setClock', 'soa', 'stats', 'topics', 'xr'])
+  // The feature inspector is only ever read while locked: no bias, clamp, release or reset reaches the tier.
+  const featureVerbs = new Set(b.calls.filter((c) => c.startsWith('features ')).map((c) => c.split(' ')[1]))
+  assert.deepEqual([...featureVerbs].sort(), ['about', 'explain', 'lines', 'prompt'])
+  // NoirScript reads the city's columns as copies, through the one reader, and nothing else: a write intrinsic fails in the VM.
+  assert.deepEqual([...new Set(b.calls.filter((c) => c.startsWith('soa ')))], ['soa tables'])
+  // The robots while locked: the list, the demo (a manifest kept in this page, no body), the relay's status and its off
+  // (a leave); no body enters the realm, nothing is armed, no socket opens, no URDF is read.
+  const robotVerbs = new Set(b.calls.filter((c) => c.startsWith('robot ')).map((c) => c.split(' ')[1]))
+  assert.deepEqual([...robotVerbs].sort(), ['demo', 'list', 'relayOff', 'relayStatus'])
   // The namespace is only ever read while locked (it has no write), and only through its four readers.
   const topicVerbs = new Set(b.calls.filter((c) => c.startsWith('topics ')).map((c) => c.split(' ')[1]))
   assert.deepEqual([...topicVerbs].sort(), ['children', 'get', 'list', 'status'])
@@ -1074,7 +1180,8 @@ test('air gap: while locked, across every command and completion, the only knobs
   for (const l of ['run 1 + 1', 'run sim.clock.set(3)', 'run rust: sim.clock.set(3)', 'run rust, go: 1', 'ask', 'ask rust: hi', 'ask model m', 'ask server http://localhost:1', 'ask stop',
     'say', 'say rust: over here', 'say voice v', 'say model m', 'say server http://localhost:1', 'say auto on', 'say stop', 'memory forget 7', 'memory forget all',
     'get', 'get physics', 'set physics.car.power 2', 'harness run kernel-stop', 'harness run sanctuary', 'record start', 'record start camera', 'record stop',
-    'net join ws://127.0.0.1:8787 tok', 'net join wss://localhost:8788', 'net leave', 'net forget', 'act ok', 'act no']) {
+    'net join ws://127.0.0.1:8787 tok', 'net join wss://localhost:8788', 'net leave', 'net forget', 'act ok', 'act no',
+    'feature steer CIVIC_COOPERATION 0.5', 'feature clamp CIVIC_COOPERATION 1', 'feature release CIVIC_COOPERATION', 'feature reset']) {
     const r = run(l, b, [])
     assert.ok(isErr(r), `${l} should be refused while locked`)
     assert.match(texts(r)[0], /^\w+: locked; type 'operator unlock' first$/)
@@ -1100,12 +1207,13 @@ test('air gap: while locked, across every command and completion, the only knobs
 
 test('air gap: the terminal files reach nothing at runtime beyond React, the brand and each other', () => {
   const allowedTypes = [
-    '../../02_Define_The_Rules/laws.ts', '../../03_Spawn_Agents/look.ts', '../../04_Connect_Hardware/hal.ts', '../../05_Observe_Environment/telemetry.ts',
+    '../../02_Define_The_Rules/laws.ts', '../../03_Spawn_Agents/look.ts', '../../04_Connect_Hardware/hal.ts', '../../04_Connect_Hardware/robotLink.ts', '../../05_Observe_Environment/telemetry.ts',
     '../../05_Observe_Environment/recorder.ts', '../operator.ts', '../harness.ts', '../../08_Swarm/orchestrator.ts',
   ]
   // repl.ts is the console's own machine: a runtime import, and the one terminal module that imports nothing itself.
   // react-dom is React's own renderer: Terminal.tsx takes flushSync from it, so a tap can open the console and focus it at once.
-  const allowedRuntime = ['react', 'react-dom', '../../brand.ts', './bridge.ts', './commands.ts', './repl.ts']
+  // noirscript/index.ts is the console's second language: a runtime import of commands.ts, and a directory that imports nothing itself (its airgap.test.ts pins that).
+  const allowedRuntime = ['react', 'react-dom', '../../brand.ts', './bridge.ts', './commands.ts', './repl.ts', './noirscript/index.ts']
   for (const file of ['bridge.ts', 'commands.ts', 'Terminal.tsx', 'repl.ts']) {
     const src = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8')
     assert.doesNotMatch(src, /\bimport\s*\(|\brequire\s*\(|__AC__|__SIM__/, `${file}: dynamic import or debug handle`)
@@ -1582,7 +1690,7 @@ test('sim prints a one-screen summary from stats, the clock and the lock state',
 
 test('content rules: no combat vocabulary in anything the console prints', () => {
   const b = unlocked()
-  const printed = [...complete('').map((c) => c), 'help', 'help stats', 'help record', 'laws', 'kernel', 'stats', 'api', 'api vehicles', 'harness', 'record', 'record status', 'sim', 'operator lock', 'operator unlock', 'act', 'act list', 'act log']
+  const printed = [...complete('').map((c) => c), 'help', 'help stats', 'help record', 'laws', 'kernel', 'stats', 'api', 'api vehicles', 'harness', 'record', 'record status', 'sim', 'operator lock', 'operator unlock', 'act', 'act list', 'act log', 'act gate']
     .flatMap((c) => texts(run(c, b, [])))
     .concat(motd(BRAND).map((l) => l.text))
     .join('\n')
@@ -1999,6 +2107,91 @@ test('boot: the track the console was mounted on; boot gui|tty hands the host a 
   assert.doesNotMatch(motd({ ...BRAND, track: 'gui' }).map((l) => l.text).join('\n'), /Track B/)
 })
 
+test('feature: the inspector is read while locked (rows, top k, one card, the prompt lines, what it is), watched live, and steered by the operator alone; every row from the tier', () => {
+  const b = fake()
+  assert.deepEqual(texts(run('feature', b, [])), ['SANDBOX_COMPLIANCE    [##########]  1.00', 'CROWD_CALM            [##########]  1.00', 'CIVIC_COOPERATION     [####......]  0.40'])
+  assert.deepEqual(texts(run('feature list', b, [])), texts(run('feature', b, [])))
+  assert.deepEqual(texts(run('feature top 2', b, [])), ['SANDBOX_COMPLIANCE    [##########]  1.00', 'CROWD_CALM            [##########]  1.00'])
+  assert.deepEqual(only(run('feature top 0', b, [])), { kind: 'err', text: 'usage: feature top <k>' })
+  assert.deepEqual(only(run('feature top x', b, [])), { kind: 'err', text: 'usage: feature top <k>' })
+  assert.deepEqual(texts(run('feature CIVIC_COOPERATION', b, [])), ['CIVIC_COOPERATION  (civic cooperation)', 'People letting others through.', 'threshold 0.05  now 0.40'])
+  assert.deepEqual(texts(run('feature civic_cooperation', b, [])).length, 3, 'any case')
+  assert.deepEqual(kinds(run('feature NOPE', b, [])), ['err', 'err'])
+  assert.match(texts(run('feature NOPE', b, []))[0], /^feature: no feature 'NOPE'$/)
+  assert.deepEqual(only(run('feature prompt', b, [])), { kind: 'sys', text: 'feature: nothing steered; the prompt carries no steering line' })
+  assert.deepEqual(kinds(run('feature about', b, [])), ['sys', 'sys'])
+  const live = run('feature watch', b, [])
+  assert.equal(live.lines.length, 3)
+  assert.equal(typeof live.live, 'function')
+  assert.deepEqual(live.live!(b), ['SANDBOX_COMPLIANCE    [##########]  1.00', 'CROWD_CALM            [##########]  1.00', 'CIVIC_COOPERATION     [####......]  0.40'])
+  // Steering is the operator's: refused before the tier is asked.
+  for (const l of ['feature steer CIVIC_COOPERATION 0.5', 'feature clamp CIVIC_COOPERATION 0.8', 'feature release CIVIC_COOPERATION', 'feature reset']) {
+    assert.deepEqual(only(run(l, b, [])), { kind: 'err', text: "feature: locked; type 'operator unlock' first" }, l)
+  }
+  assert.ok(b.calls.every((c) => /^features (lines|about|prompt|explain)\b/.test(c)), b.calls.join(', '))
+  const u = unlocked()
+  assert.deepEqual(texts(run('feature steer CIVIC_COOPERATION 0.5', u, [])), ['CIVIC_COOPERATION bias +0.50', 'physics.car.power = 0.85'])
+  assert.deepEqual(only(run('feature clamp CIVIC_COOPERATION 0.8', u, [])), { kind: 'out', text: 'CIVIC_COOPERATION clamp 0.80' })
+  assert.deepEqual(texts(run('feature release CIVIC_COOPERATION', u, [])), ['CIVIC_COOPERATION released'])
+  assert.deepEqual(texts(run('feature reset', u, [])), ['features: nothing steered'])
+  assert.deepEqual(u.calls.filter((c) => c.startsWith('features ')), ['features steer CIVIC_COOPERATION 0.5', 'features clamp CIVIC_COOPERATION 0.8', 'features release CIVIC_COOPERATION', 'features reset'])
+  // Argument validation, before the tier is touched.
+  u.calls.length = 0
+  assert.deepEqual(only(run('feature steer CIVIC_COOPERATION x', u, [])), { kind: 'err', text: "feature: the value must be a number, not 'x'" })
+  assert.deepEqual(only(run('feature steer CIVIC_COOPERATION', u, [])), { kind: 'err', text: 'usage: feature steer <NAME> <value>' })
+  assert.deepEqual(only(run('feature clamp', u, [])), { kind: 'err', text: 'usage: feature clamp <NAME> <value>' })
+  assert.deepEqual(only(run('feature release', u, [])), { kind: 'err', text: 'usage: feature release <NAME>' })
+  assert.deepEqual(only(run('feature reset now', u, [])), { kind: 'err', text: 'usage: feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]' })
+  assert.deepEqual(u.calls, [])
+  // The tier's own refusal (a RangeError for an unknown name or a value out of range) is an error line.
+  u.operator.features.steer = () => { throw new RangeError("unknown feature 'NOPE'") }
+  assert.deepEqual(only(run('feature steer NOPE 1', u, [])), { kind: 'err', text: "feature: unknown feature 'NOPE'" })
+  // Offline: every read reports the engine down.
+  assert.match(only(run('feature', offlineBridge(BRAND), [])).text, /engine not running/)
+  // Completion knows the dictionary, which is the inspector's, in its order.
+  assert.deepEqual(FEATURE_IDS, FEATURES.map((f) => f.id))
+  assert.ok(complete('feature ').includes('feature CIVIC_COOPERATION'))
+  assert.ok(complete('feature steer ').includes('feature steer TRAFFIC_YIELD'))
+})
+
+test('ring0: the elite tier reads while locked, opens only for the operator with the passphrase set, and never echoes or keeps the passphrase', () => {
+  const b = fake()
+  assert.deepEqual(only(run('ring0', b, [])), { kind: 'out', text: 'ring0: elite tier locked (no passphrase set); 0 writes this session' })
+  assert.deepEqual(texts(run('ring0 status', b, [])), texts(run('ring0', b, [])))
+  assert.deepEqual(only(run('ring0 lock', b, [])), { kind: 'out', text: 'ring0: elite tier locked' })
+  for (const l of ['ring0 unlock --elite open sesame please', 'ring0 elite set open sesame please']) {
+    assert.deepEqual(only(run(l, b, [])), { kind: 'err', text: "ring0: locked; type 'operator unlock' first" }, l)
+  }
+  assert.deepEqual(only(run('ring0 unlock', b, [])), { kind: 'err', text: 'ring0: say what to unlock and with what: ring0 unlock --elite <passphrase>' })
+  assert.deepEqual(only(run('ring0 unlock --elite', b, [])), { kind: 'err', text: 'ring0: say what to unlock and with what: ring0 unlock --elite <passphrase>' })
+  assert.deepEqual(only(run('ring0 elite set', b, [])), { kind: 'err', text: 'usage: ring0 elite set <passphrase>' })
+  assert.deepEqual(only(run('ring0 elite', b, [])), { kind: 'err', text: 'usage: ring0 elite set <passphrase>' })
+  assert.deepEqual(only(run('ring0 open', b, [])), { kind: 'err', text: 'usage: ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]' })
+  assert.deepEqual(b.operator.opCalls, [], 'nothing reached the tier while locked')
+  const u = unlocked()
+  assert.deepEqual(only(run('ring0 unlock --elite open sesame please', u, [])), { kind: 'err', text: "ring0: no elite passphrase is set: 'ring0 elite set <passphrase>' first" })
+  assert.deepEqual(only(run('ring0 elite set open sesame please', u, [])), { kind: 'out', text: 'ring0: elite passphrase set' })
+  assert.deepEqual(only(run('ring0 unlock --elite wrong words here', u, [])), { kind: 'err', text: 'ring0: wrong passphrase (4 tries left)' })
+  const open = run('ring0 unlock --elite open sesame please', u, [])
+  assert.deepEqual(kinds(open), ['out', 'out'])
+  assert.match(texts(open)[0], /^Ring-0 elite tier unlocked/)
+  assert.deepEqual(only(run('ring0', u, [])), { kind: 'out', text: 'ring0: elite tier unlocked; 0 writes this session' })
+  assert.deepEqual(only(run('ring0 lock', u, [])), { kind: 'out', text: 'ring0: elite tier locked' })
+  assert.deepEqual(u.operator.opCalls, ['elite unlock', 'elite set open sesame please', 'elite unlock', 'elite unlock'])
+  // The passphrase keeps its inner spaces and loses its ends; the history never keeps it.
+  assert.deepEqual(kinds(run('ring0 unlock --elite   open sesame please  ', u, [])), ['out', 'out'])
+  assert.equal(redactForHistory('ring0 unlock --elite open sesame please'), 'ring0 unlock --elite ••••')
+  assert.equal(redactForHistory('  ring0 elite set open sesame please'), '  ring0 elite set ••••')
+  assert.equal(redactForHistory('ring0 unlock --elite'), 'ring0 unlock --elite')
+  assert.equal(redactForHistory('ring0 status'), 'ring0 status')
+  // Offline: the tier is down with the engine.
+  assert.match(only(run('ring0', offlineBridge(BRAND), [])).text, /engine not running/)
+  // Completion.
+  assert.deepEqual(complete('ring0 '), ['ring0 elite', 'ring0 lock', 'ring0 status', 'ring0 unlock'])
+  assert.deepEqual(complete('ring0 unlock '), ['ring0 unlock --elite'])
+  assert.deepEqual(complete('ring0 elite '), ['ring0 elite set'])
+})
+
 test('r0: the console\'s own machine runs the rest of the line, keeps definitions for the session, resets and lists words; it touches no bridge', () => {
   const b = fake()
   const session = replSession()
@@ -2029,6 +2222,69 @@ test('r0: the console\'s own machine runs the rest of the line, keeps definition
   assert.deepEqual(b.record.recCalls, [])
   // The offline bridge is as good as any: the machine needs no engine.
   assert.deepEqual(run('r0 10 3 mod .', offlineBridge(BRAND), []).lines, [{ kind: 'out', text: '1' }])
+})
+
+test('noir: NoirScript runs the rest of the line on the session, keeps definitions, resets, lists words and disassembles; the city\'s columns are copies and nothing is written', () => {
+  const b = fake()
+  const session = replSession()
+  assert.deepEqual(run('noir let mut s = 0; for i in 0..10 { s += i * i; } print(s);', b, [], session).lines, [{ kind: 'out', text: '285' }])
+  assert.deepEqual(run('noir fn sq(x: i32) -> i32 { x * x }', b, [], session).lines, [])
+  assert.deepEqual(run('noir print(sq(7));', b, [], session).lines, [{ kind: 'out', text: '49' }])
+  assert.deepEqual(run('noir let v = f32x4(1.0, 2.0, 3.0, 4.0); print(v * splat_f32x4(2.0), hsum(v));', b, [], session).lines, [{ kind: 'out', text: 'f32x4(2, 4, 6, 8) 10' }])
+  // Without a session each line runs on a fresh VM: the definition is not there.
+  const fresh = run('noir print(sq(7));', b, [])
+  assert.deepEqual(fresh.lines.map((l) => l.kind), ['err'])
+  assert.match(fresh.lines[0].text, /^noir: .*sq/)
+  assert.deepEqual(run('noir print(1 / 0);', b, [], session).lines, [{ kind: 'err', text: 'noir: division by zero' }])
+  assert.ok(run('noir words', b, [], session).lines[0].text.split(' ').includes('sq'))
+  // The city's columns: read as copies through the bridge's one reader, before the run.
+  assert.deepEqual(run('noir print(crowd.n, cars.n, kernel.law1);', b, [], session).lines, [{ kind: 'out', text: '4 2 3' }])
+  assert.deepEqual(run('noir print(query cars where speed > 5.0, query crowd where x > 0.0 && z > 0.0);', b, [], session).lines, [{ kind: 'out', text: '1 1' }])
+  assert.ok(b.calls.length > 0 && b.calls.every((c) => c === 'soa tables'), b.calls.join(', '))
+  // A write intrinsic type-checks and compiles, and fails at run time while the elite tier is locked, with the tier's own words.
+  const locked = run('noir print(tune("car.power", 2.0));', b, [], session)
+  assert.deepEqual(locked.lines, [{ kind: 'err', text: "noir: elite tier locked: 'ring0 unlock --elite <passphrase>' opens it" }])
+  assert.deepEqual(b.operator.opCalls, [])
+  assert.deepEqual(b.record.recCalls, [])
+  // Open, the elite tier's surface is the writes' only path (the fake's tune answers 1, cull and steer echo, intent is
+  // sent), the run has the tier's raised limits, and the city's columns are still the one reader's.
+  const u = unlocked()
+  const us = replSession()
+  assert.deepEqual(only(run('noir print(tune("car.power", 2.0));', u, [], us)), { kind: 'err', text: "noir: elite tier locked: 'ring0 unlock --elite <passphrase>' opens it" }, 'the operator tier alone opens nothing')
+  run('ring0 elite set open sesame please', u, [])
+  run('ring0 unlock --elite open sesame please', u, [])
+  assert.deepEqual(run('noir print(tune("car.power", 2.0), cull(0.5), steer("CIVIC_COOPERATION", 0.25));', u, [], us).lines, [{ kind: 'out', text: '1 0.5 0.25' }])
+  assert.deepEqual(run('noir print(intent(1, 1.0, 0.0, 0.0));', u, [], us).lines, [{ kind: 'out', text: 'true' }])
+  assert.ok(u.calls.every((c) => c === 'soa tables'), u.calls.join(', '))
+  const long = run('noir let mut s = 0; for i in 0..1200000 { s += 1; } print(s);', u, [], us)
+  assert.deepEqual(long.lines[0], { kind: 'out', text: '1200000' }, 'past the standard step budget, within the tier\'s')
+  run('ring0 lock', u, [])
+  assert.deepEqual(only(run('noir print(cull(0.5));', u, [], us)), { kind: 'err', text: "noir: elite tier locked: 'ring0 unlock --elite <passphrase>' opens it" })
+  // The listing: bytecode, one line per instruction; a bad line is its compile error.
+  const asm = run('noir asm print(1 + 2);', b, [], session)
+  assert.ok(asm.lines.length > 0 && asm.lines.every((l) => l.kind === 'out'))
+  assert.match(texts(asm).join('\n'), /ADD_I32/)
+  assert.deepEqual(run('noir asm', b, [], session).lines, [{ kind: 'err', text: 'usage: noir asm <source>' }])
+  assert.deepEqual(run('noir asm let x: i32 = true;', b, [], session).lines.map((l) => l.kind), ['err'])
+  // A runaway line ends with the budget's error, its step count noted, and the session still answers.
+  const runaway = run('noir loop { }', b, [], session)
+  assert.deepEqual(runaway.lines.map((l) => l.kind), ['err', 'sys'])
+  assert.match(runaway.lines[0].text, /^noir: step budget exhausted/)
+  assert.match(runaway.lines[1].text, /^-- \d+ steps --$/)
+  assert.deepEqual(run('noir print(sq(3));', b, [], session).lines, [{ kind: 'out', text: '9' }])
+  assert.deepEqual(run('noir reset', b, [], session).lines, [{ kind: 'out', text: 'noir: reset (every definition forgotten, memory zeroed)' }])
+  assert.ok(!run('noir words', b, [], session).lines[0].text.split(' ').includes('sq'))
+  // Alone: the usage and a hint.
+  const alone = run('noir', b, [])
+  assert.equal(alone.lines[0].text, 'usage: noir <source>|noir reset|noir words|noir asm <source>')
+  assert.equal(alone.lines[1].kind, 'sys')
+  // Deterministic: the same line on two sessions gives the same result.
+  assert.deepEqual(run('noir print(7 % 3, 2.5 * 2.0);', b, [], replSession()), run('noir print(7 % 3, 2.5 * 2.0);', b, [], replSession()))
+  // A failing reader is an error line, never an exception; a host without columns (the console alone) reads empty tables.
+  const bad = fake()
+  bad.soa = { tables: () => { throw new Error('columns unavailable') } }
+  assert.deepEqual(run('noir print(1);', bad, []).lines, [{ kind: 'err', text: 'noir: columns unavailable' }])
+  assert.deepEqual(run('noir print(crowd.n, cars.n);', offlineBridge(BRAND), []).lines, [{ kind: 'out', text: '0 0' }])
 })
 
 test('net: status reads at any time as rows; join, leave and forget are the operator\'s; a join resolves with the room\'s line or its refusal', async () => {
@@ -2187,7 +2443,7 @@ test('swarm: locked until operator unlock; alone it is idle; roles and guardrail
   for (const r of b.operator.swarm.roles) assert.ok(roles.some((l) => l.includes(r.title) && l.includes(r.skill)), r.title)
   // The guardrail lines are pinned to guardrails.ts (the console must not import it); every invariant is named with its text.
   const guard = texts(run('swarm guardrails', b, []))
-  for (const name of INVARIANTS) assert.ok(guard.some((l) => l.includes(name) && l.includes(INVARIANT_TEXT[name])), name)
+  for (const name of INVARIANTS) assert.ok(guard.some((l) => l.includes(name) && l.includes(LAW_NAMES[INVARIANT_LAW[name]]) && l.includes(INVARIANT_TEXT[name])), name)
   assert.ok(guard.some((l) => /not a proof about a model/.test(l)))
   const plan = texts(run('swarm plan --agents 3 audit the braking envelope', b, []))
   assert.equal(plan[0], 'swarm plan: 3 roles for "audit the braking envelope"')
@@ -2341,6 +2597,11 @@ test('act: alone it says what waits for the OK, or that nothing does; act ok all
   b.operator.acts.waiting = { ...PROPOSAL, seq: 3 }
   b.operator.acts.outcome = 'aborted'
   assert.deepEqual(await run('y', b, []).pending, [{ kind: 'err', text: `act 3: ${TETHER_LOST}` }], "the gateway's words, never retyped")
+  // Allowed, then refused by the Ring-0 action gate the moment before it ran: the law, in the gate's words (MANUAL: The operator tier).
+  b.operator.acts.waiting = { ...PROPOSAL, seq: 5 }
+  b.operator.acts.outcome = 'denied'
+  assert.deepEqual(await run('act ok', b, []).pending, [{ kind: 'err', text: 'act 5: refused: Second Law: the operator tier is locked' }])
+  b.operator.acts.outcome = 'done'
   b.operator.acts.waiting = { ...PROPOSAL, seq: 4 }
   const no = run('act no', b, [])
   assert.deepEqual(no.lines, [{ kind: 'sys', text: 'act 4: refused: set the clock to 22:00 (agent 7 is told next time)' }])
@@ -2355,8 +2616,18 @@ test('act: alone it says what waits for the OK, or that nothing does; act ok all
   }
   // Malformed lines are refused before the tier.
   const calls = b.operator.opCalls.length
-  assert.deepEqual(texts(run('act dance', b, [])), ["act: unknown command 'dance'", 'usage: act [ok|no|log [verify]|list]'])
-  for (const l of ['act ok now', 'act no 1', 'act log now', 'act list verify', 'act log verify twice']) assert.deepEqual(texts(run(l, b, [])), ['usage: act [ok|no|log [verify]|list]'], l)
+  // `act gate` is the Ring-0 action gate's own table (pinned to ring0Gate.ts CHECKS, which the console must not import): every check, its law and its text, locked or not.
+  const gate = texts(run('act gate', b, []))
+  assert.match(gate[0], /^Every ask, every proposal and every run passes these before any state changes/)
+  assert.equal(gate.length, CHECKS.length + 2)
+  CHECKS.forEach((c, i) => {
+    const row = gate[i + 1]
+    assert.ok(row.startsWith(`  ${c.name} `) && row.includes(` ${LAW_NAMES[c.law]} `) && row.endsWith(c.text), `${c.name}: ${row}`)
+  })
+  assert.match(gate.at(-1) ?? '', /not a proof about a model/)
+  assert.deepEqual(texts(run('act gate', fake(), [])), gate, 'the same while locked: it changes nothing')
+  assert.deepEqual(texts(run('act dance', b, [])), ["act: unknown command 'dance'", 'usage: act [ok|no|log [verify]|list|gate]'])
+  for (const l of ['act ok now', 'act no 1', 'act log now', 'act list verify', 'act log verify twice']) assert.deepEqual(texts(run(l, b, [])), ['usage: act [ok|no|log [verify]|list|gate]'], l)
   assert.equal(b.operator.opCalls.length, calls)
   assert.deepEqual(b.calls, [], 'no engine knob was touched')
   // Track B (the offline bridge): nothing waits, and the catalogue, a decision or the trail say the engine is not running.
@@ -2463,7 +2734,7 @@ test('act list: one row per verb, the tier\'s own rows, readable while locked', 
   assert.deepEqual(texts(r), [...b.operator.acts.list()])
   assert.ok(kinds(r).every((k) => k === 'out'))
   assert.equal(r.lines.length, 7)
-  assert.deepEqual(complete('act '), ['act list', 'act log', 'act no', 'act ok'])
+  assert.deepEqual(complete('act '), ['act gate', 'act list', 'act log', 'act no', 'act ok'])
   assert.deepEqual(complete('act log '), ['act log verify'])
   assert.deepEqual(complete('act l'), ['act list', 'act log'])
   assert.deepEqual(b.operator.opCalls, [])
@@ -2485,6 +2756,8 @@ test('actEventLines: printed once; nothing for a proposal or for what the consol
   assert.deepEqual(actEventLines({ kind: 'ended', act, end: { state: 'refused', line: 'refused by the host' }, by: 'host' }), [{ kind: 'sys', text: 'act 1: refused by the host: set the clock to 22:00' }])
   assert.deepEqual(actEventLines({ kind: 'ended', act, end: done, by: 'card' }), [{ kind: 'out', text: 'act 1: done: the clock is set to 22:00' }])
   assert.deepEqual(actEventLines({ kind: 'ended', act, end: { state: 'failed', line: 'the clock did not take the hour' }, by: 'host' }), [{ kind: 'err', text: 'act 1: failed: the clock did not take the hour' }])
+  // Allowed on the card or by a host, then refused by the Ring-0 action gate: the law, never "refused on the card".
+  for (const by of ['card', 'host'] as const) assert.deepEqual(actEventLines({ kind: 'ended', act, end: { state: 'denied', line: 'Second Law: the operator tier is locked' }, by }), [{ kind: 'err', text: 'act 1: refused: Second Law: the operator tier is locked' }], by)
   assert.deepEqual(actEventLines({ kind: 'ended', act: { ...act, seq: 5 }, end: { state: 'aborted', line: TETHER_LOST }, by: 'gateway' }), [{ kind: 'err', text: `act 5: ${TETHER_LOST}` }])
   // The gateway's message alone as the end line prints the same line: the wording is never retyped, never doubled.
   assert.deepEqual(actEventLines({ kind: 'ended', act, end: { state: 'aborted', line: 'agent 7 (Rust, Python): no longer tethered to the operator' }, by: 'gateway' }), [{ kind: 'err', text: `act 1: ${TETHER_LOST}` }])
@@ -2613,4 +2886,103 @@ test('hal pair hid inside the Windows app: no picker is promised, and an empty l
   assert.equal(only(r).text, 'hal: asking the app for its controllers...')
   assert.deepEqual(await r.pending, [{ kind: 'sys', text: 'hal: no controller plugged in or paired' }])
   assert.deepEqual(await run('hal pair ble', b, []).pending, [{ kind: 'sys', text: 'hal: no device selected' }], 'the other buses keep the browser\'s picker')
+})
+
+test('robot: the list, demo, mode, set, disarm, remove and the relay status at any time; relay, spawn, urdf, arm and calibrate are the operator\'s; the async ones report later; a malformed line touches nothing', async () => {
+  const b = fake()
+  assert.deepEqual(kinds(run('robot', b, [])), ['sys'])
+  assert.match(texts(run('robot', b, []))[0], /^robot: none \(robot demo; robot urdf <url>; a HAL\/1 robot on the bus; robot relay <ws url> <token>\)$/)
+  b.robot.rows = [
+    { id: 'sim:demo', door: 'sim', name: 'demo', mode: 'sim', joints: 3, armed: true, body: 1, frameAgeMs: null, stale: false, calibrated: true, refusals: 0 },
+    { id: 'hal:7', door: 'hal', name: 'arm', mode: 'twin', joints: 6, armed: false, body: null, frameAgeMs: 812, stale: true, calibrated: false, refusals: 2 },
+  ]
+  const rows = texts(run('robot', b, []))
+  assert.equal(rows.length, 3)
+  assert.match(rows[0], /^\s+ID\s+DOOR\s+MODE\s+JOINTS\s+NAME\s+STATE$/)
+  assert.match(rows[1], /^\s+sim:demo\s+sim\s+sim\s+3\s+demo\s+armed, body 1, calibrated$/)
+  assert.match(rows[2], /^\s+hal:7\s+hal\s+twin\s+6\s+arm\s+no body, frames stale, 2 refused$/)
+  assert.deepEqual(texts(run('robot demo', b, [])), ['sim:demo: 4 links, 3 movable joints'])
+  assert.deepEqual(texts(run('robot demo arm2', b, [])), ['sim:arm2: 4 links, 3 movable joints'])
+  assert.deepEqual(texts(run('robot mode sim:demo sim', b, [])), ['sim:demo: mode sim'])
+  assert.deepEqual(texts(run('robot set sim:demo elbow 1.25', b, [])), ['sim:demo: elbow → 1.25'])
+  assert.deepEqual(texts(run('robot disarm sim:demo', b, [])), ['sim:demo: disarmed'])
+  assert.deepEqual(texts(run('robot remove sim:demo', b, [])), ['sim:demo: removed'])
+  assert.deepEqual(texts(run('robot relay', b, [])), ['relay: off (robot relay <ws url> <token>)'])
+  assert.deepEqual(texts(run('robot relay off', b, [])), ['relay: left ws://127.0.0.1:8790/'])
+  // Locked: the five that reach the realm, a socket, a file or a device are refused before the bridge is touched.
+  const before = b.calls.length
+  for (const l of ['robot spawn sim:demo', 'robot spawn sim:demo 1 2', 'robot urdf http://127.0.0.1:8790/arm.urdf', 'robot arm sim:demo', 'robot calibrate sim:demo elbow', 'robot relay ws://127.0.0.1:8790/ tok']) {
+    const r = run(l, b, [])
+    assert.ok(isErr(r), l)
+    assert.match(texts(r)[0], /^robot: locked/)
+    assert.equal(r.pending, undefined)
+  }
+  assert.equal(b.calls.length, before, 'locked: the bridge is not touched')
+  b.operator.unlock()
+  assert.deepEqual(texts(run('robot spawn sim:demo', b, [])), ['sim:demo: body 1 at 10, 22 (3 joints, mode sim)'])
+  assert.deepEqual(texts(run('robot spawn sim:demo 1 -2.5', b, [])), ['sim:demo: body 1 at 10, 22 (3 joints, mode sim)'])
+  assert.deepEqual(b.calls.slice(before), ['robot spawn sim:demo - -', 'robot spawn sim:demo 1 -2.5'])
+  const arm = run('robot arm sim:demo', b, [])
+  assert.deepEqual(arm.lines, [{ kind: 'sys', text: 'robot: arming sim:demo...' }])
+  assert.deepEqual(await arm.pending, [{ kind: 'out', text: 'robot: sim:demo: armed (sim)' }])
+  const cal = run('robot calibrate sim:demo elbow', b, [])
+  assert.deepEqual(cal.lines, [{ kind: 'sys', text: 'robot: calibrating elbow of sim:demo (a hold, then one small step)...' }])
+  assert.match((await cal.pending)![0].text, /^robot: sim:demo: elbow: delay 17 ms/)
+  const urdf = run('robot urdf http://127.0.0.1:8790/arm.urdf arm', b, [])
+  assert.deepEqual(urdf.lines, [{ kind: 'sys', text: 'robot: reading http://127.0.0.1:8790/arm.urdf...' }])
+  assert.deepEqual(await urdf.pending, [{ kind: 'out', text: 'robot: sim:arm: 4 links, 3 movable joints' }])
+  const relay = run('robot relay ws://127.0.0.1:8790/ tok', b, [])
+  assert.deepEqual(relay.lines, [{ kind: 'sys', text: 'robot: joining ws://127.0.0.1:8790/...' }])
+  assert.deepEqual(await relay.pending, [{ kind: 'out', text: 'robot: joined ws://127.0.0.1:8790/: 1 robot(s)' }])
+  // A refusal the bridge rejects with becomes an error line.
+  b.robot.armResult = Promise.reject(new Error('arm refused: no-operator-tier (operator unlock)'))
+  assert.deepEqual(await run('robot arm sim:demo', b, []).pending, [{ kind: 'err', text: 'robot: arm refused: no-operator-tier (operator unlock)' }])
+  // Malformed lines: the usage, and nothing touched.
+  const n = b.calls.length
+  for (const l of ['robot nothing', 'robot spawn', 'robot spawn sim:demo 1', 'robot spawn sim:demo x y', 'robot set sim:demo elbow', 'robot set sim:demo elbow many', 'robot mode sim:demo',
+    'robot arm', 'robot arm a b', 'robot disarm', 'robot calibrate sim:demo', 'robot remove', 'robot urdf', 'robot urdf file:///arm.urdf', 'robot relay ws://127.0.0.1:8790/', 'robot relay http://127.0.0.1:8790/ tok',
+    'robot relay off now', 'robot demo a b']) {
+    const bad = run(l, b, [])
+    assert.ok(isErr(bad), l)
+    assert.match(texts(bad).join('\n'), /usage: robot \[relay/, l)
+  }
+  assert.equal(b.calls.length, n, 'a refused line touches nothing')
+  // A bridge without robots (the console shell) says so.
+  const bare = { ...fake(), robot: undefined }
+  assert.match(texts(run('robot', bare, []))[0], /robots are not available/)
+})
+
+test('xr: the status line at once; vr, ar and off reach the bridge inside the keypress and report later; a bridge throw is an error line; anything else is refused', async () => {
+  const b = fake()
+  assert.deepEqual(texts(run('xr', b, [])), ['headset off: vr available (xr vr)'])
+  assert.deepEqual(kinds(run('xr', b, [])), ['out'])
+  assert.deepEqual(b.calls, ['xr -', 'xr -'])
+  b.calls.length = 0
+  b.xrResult = Promise.resolve('vr: on')
+  const r = run('xr vr', b, [])
+  assert.deepEqual(b.calls, ['xr vr'], 'asked before run() returns: the user activation')
+  assert.deepEqual(r.lines, [{ kind: 'sys', text: 'headset: asking the browser...' }])
+  assert.deepEqual(await r.pending, [{ kind: 'out', text: 'headset vr: on' }])
+  b.xrResult = Promise.resolve('off')
+  const off = run('xr off', b, [])
+  assert.deepEqual(off.lines, [{ kind: 'sys', text: 'headset: leaving...' }])
+  assert.deepEqual(await off.pending, [{ kind: 'out', text: 'headset off' }])
+  b.xrResult = 'off: no session'
+  const none = run('xr off', b, [])
+  assert.deepEqual(texts(none), ['headset off: no session'])
+  assert.equal(none.pending, undefined)
+  b.xrResult = Promise.reject(new Error('NotSupportedError: no device'))
+  const refused = await run('xr ar', b, []).pending
+  assert.equal(refused?.length, 1)
+  assert.equal(refused?.[0].kind, 'err')
+  assert.match(refused?.[0].text ?? '', /^headset: .*no device/)
+  assert.deepEqual(b.calls, ['xr vr', 'xr off', 'xr off', 'xr ar'])
+  for (const l of ['xr maybe', 'xr vr now', 'xr on']) {
+    const bad = run(l, b, [])
+    assert.ok(isErr(bad), l)
+    assert.match(texts(bad).join('\n'), /usage: xr \[vr\|ar\|off\]/)
+  }
+  assert.equal(b.calls.length, 4, 'a refused line touches nothing')
+  assert.deepEqual(complete('xr '), ['xr ar', 'xr off', 'xr vr'])
+  assert.ok(isErr(run('xr', offlineBridge(BRAND), [])), 'the offline bridge: an error line, no exception')
 })

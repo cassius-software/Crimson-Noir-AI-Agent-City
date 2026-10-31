@@ -87,6 +87,8 @@ const SPEECH_KEY = 'civic-simulation:speech:v1'
 const ANSWER_TAIL = 72
 /** Where the network session token (`net join <url> <token>`) is kept between visits, like the cognition key; never in the page source. */
 const NET_TOKEN_KEY = 'civic-simulation:net:v1'
+/** The elite tier's passphrase record (operator.ts EliteVault): a salted hash, never the words. */
+const ELITE_KEY = 'civic-simulation:elite:v1'
 
 /** The page's own fetch, held to this machine (airgap.ts loopbackFetch): the model and speech clients speak through it, and nothing else does. */
 const pageFetch = loopbackFetch((url, init) => window.fetch(url, init))
@@ -616,7 +618,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
     setAct(actRef.current)
     if (termOpenRef.current) return
     if (ev.kind === 'proposed') engineRef.current?.toast('City action', `${ev.act.who} proposes: ${ev.act.sentence} (Y allows, N refuses)`)
-    else if (ev.kind === 'ended' && (ev.end.state === 'done' || ev.end.state === 'failed')) engineRef.current?.toast('City action', `${ev.end.state}: ${ev.end.line}`)
+    else if (ev.kind === 'ended' && (ev.end.state === 'done' || ev.end.state === 'failed' || ev.end.state === 'denied')) engineRef.current?.toast('City action', `${ev.end.state === 'denied' ? 'refused' : ev.end.state}: ${ev.end.line}`)
   }), [bridge])
   // While a proposal waits, the pad's edges and the touch taps are the card's (04_Connect_Hardware/input.ts shield): the
   // south face button presses the card, never the car door, so the OK cannot break the proposer's tether. Keys, sticks
@@ -952,7 +954,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
         })
         if (termOpenRef.current || lookOpenRef.current) e.input.suspend(true)
         setEngine(e)
-        const engineBridge = e.terminalBridge(gate, mind, voice, memory.diary(), voiceOf)
+        const engineBridge = e.terminalBridge(gate, mind, voice, memory.diary(), voiceOf, pageStore(ELITE_KEY))
         setBridge(Object.freeze({
           ...engineBridge,
           // The map this shell walks, for the console's `map` status line (the choice itself is remap's).
@@ -1055,6 +1057,9 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
             hudVisible,
             ghost: hud.output.ghost === true,
             rain: hud.output.matrix === true,
+            // The headset item only where a session can be asked for; the tap itself is the user activation.
+            onHeadset: hud.supplier.xr.state === 'unsupported' ? undefined : () => engine.toggleXr(),
+            headset: hud.supplier.xr.state === 'vr' || hud.supplier.xr.state === 'ar',
           }}
         />
       )}

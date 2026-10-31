@@ -87,7 +87,7 @@ test("the live view: the terminal redraws by the result's own function, so stats
 test("the real bus over a snapshot shaped as the engine builds one: topics land under the player's district and the status reads", () => {
   const bus = new TopicBus()
   const snapshot = {
-    supplier: { device: 'Keyboard', pointerLocked: false, engaged: true, touch: false, triggerResistance: 0, hal: '', glyphs: 'keyboard', recording: { active: false, source: null, seconds: 0, frames: 0, bytes: 0, dropped: 0, codec: '' } },
+    supplier: { device: 'Keyboard', pointerLocked: false, engaged: true, touch: false, triggerResistance: 0, hal: '', glyphs: 'keyboard', recording: { active: false, source: null, seconds: 0, frames: 0, bytes: 0, dropped: 0, codec: '' }, xr: { state: 'unsupported', detail: '' } },
     input: { mode: 'foot', nearVehicle: false },
     process: { pedestrians: 100, vehicles: 4, drawnNear: 10, drawnFar: 20, waiting: 3, crossing: 2, yielding: 1, safetyNudges: 0, gpu: 'test' },
     output: { fps: 60, frameMs: 16.6, p50Ms: 16, p95Ms: 18, cpuMs: 4, gpuRenderMs: 3, gpuComputeMs: 0, physicsMs: 1, rapierMs: 0.4 },

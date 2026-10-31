@@ -824,7 +824,7 @@ const consoleOver = (operator: OperatorBridge): TerminalBridge => ({ operator })
 function operatorConsole(src: Mirror, onSet?: (hours: number) => void) {
   const router = new TaskRouter(src)
   const city = citySim(onSet)
-  const term = consoleOver(operatorBridge(city, router, NO_MIND))
+  const term = consoleOver(operatorBridge(city, router, NO_MIND, undefined, { contained: () => true }))
   shell('operator unlock', term, [])
   return { router, city, term }
 }
@@ -1044,7 +1044,7 @@ test('end to end: the physics realm breaks the tether when the operator walks aw
 test('end to end through the console: Rejected with nobody tethered, Authorized once the person has arrived (the HUD counts it), Aborted in the very state the worker lets them go', async () => {
   const { r, router, person, hire, releaseBy, dispose } = await realm()
   const city = citySim()
-  const term = consoleOver(operatorBridge(city, router, NO_MIND))
+  const term = consoleOver(operatorBridge(city, router, NO_MIND, undefined, { contained: () => true }))
   shell('operator unlock', term, [])
   assert.deepEqual(await shell('run rust: sim.clock.set(1)', term, []).pending, [
     { kind: 'err', text: 'run: Rejected (Insufficient Capabilities): nobody tethered to the operator has Rust' },

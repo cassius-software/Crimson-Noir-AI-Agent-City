@@ -66,6 +66,11 @@ export class FramePacer {
   readonly periodMs: number
   /** Frames presented since construction. */
   frames = 0
+  /**
+   * Every tick presents (a headset drives the frames at its own refresh and shows each one): the grid is left where
+   * it was and re-anchors on the first paced tick after.
+   */
+  passthrough = false
   /** The next frame's due time on the exact grid, before the phase offset (NaN: anchor on the next tick). */
   private base = Number.NaN
   /** The grid's offset against the display's ticks, ms, within ±half a refresh. */
@@ -101,6 +106,7 @@ export class FramePacer {
   /** One animation frame at `nowMs` (a monotonic clock): true when it is to be presented. */
   tick(nowMs: number): boolean {
     if (!Number.isFinite(nowMs)) return false
+    if (this.passthrough) return this.present(nowMs)
     const gap = nowMs - this.last
     this.last = nowMs
     if (gap > 0 && gap < STALL_MS) this.learn(gap)

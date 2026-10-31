@@ -49,7 +49,7 @@ export const THREE_FEATURES: readonly string[] = Object.freeze([
 
 /** The part of navigator.gpu used here (the tests hand in fakes). */
 export interface GpuEntry {
-  requestAdapter(options?: GPURequestAdapterOptions & { featureLevel?: 'core' | 'compatibility' }): Promise<GPUAdapter | null>
+  requestAdapter(options?: GPURequestAdapterOptions & { featureLevel?: 'core' | 'compatibility'; xrCompatible?: boolean }): Promise<GPUAdapter | null>
 }
 
 /** The power preference three is given too (world.ts) and the worker asks with. */
@@ -60,10 +60,22 @@ const POWER: GPUPowerPreference = 'high-performance'
  * in every browser), no navigator.gpu, no adapter at all, or only a compatibility one (asked for only to tell those
  * two apart: its reduced limits cannot run the crowd). `origin` names the page in the insecure message.
  */
-export async function coreAdapter(gpu: GpuEntry | null | undefined, secure: boolean, origin = ''): Promise<GPUAdapter> {
+/** The xrCompatible request: null where the browser answers none, rejects or throws on the option. */
+async function xrAdapter(gpu: GpuEntry): Promise<GPUAdapter | null> {
+  try {
+    return await gpu.requestAdapter({ powerPreference: POWER, xrCompatible: true })
+  } catch {
+    return null
+  }
+}
+
+export async function coreAdapter(gpu: GpuEntry | null | undefined, secure: boolean, origin = '', headset = false): Promise<GPUAdapter> {
   if (!secure) throw new WebGPUUnavailableError('insecure', `This page is not a secure context${origin ? ` (${origin})` : ''}: browsers turn WebGPU on only for https:// pages and localhost.`)
   if (!gpu) throw new WebGPUUnavailableError('no-api', 'This browser does not expose WebGPU (navigator.gpu).')
-  const adapter = await gpu.requestAdapter({ powerPreference: POWER })
+  // A headset's session binds to the page's device, and the WebXR/WebGPU binding wants an adapter asked for as
+  // xrCompatible: asked that way only where a headset session is possible (xrSession.ts headsetPossible), and asked
+  // again plainly should the browser answer the compatible request with none.
+  const adapter = (headset ? await xrAdapter(gpu) : null) ?? (await gpu.requestAdapter({ powerPreference: POWER }))
   if (adapter) return adapter
   const compat = await gpu.requestAdapter({ powerPreference: POWER, featureLevel: 'compatibility' }).catch(() => null)
   if (compat) throw new WebGPUUnavailableError('compat-only', 'The browser offers only a WebGPU compatibility adapter; the crowd needs a core one.')
@@ -80,8 +92,8 @@ export function deviceFeatures(adapter: Pick<GPUAdapter, 'features'>): GPUFeatur
  * rejects ('device', with the browser's own words), or a device already lost when it arrives ('gpu-reset').
  * No limits are asked for, as three asked for none: the device gets the spec's defaults, which the crowd fits.
  */
-export async function acquireDevice(gpu: GpuEntry | null | undefined, secure: boolean, origin = ''): Promise<{ adapter: GPUAdapter; device: GPUDevice }> {
-  const adapter = await coreAdapter(gpu, secure, origin)
+export async function acquireDevice(gpu: GpuEntry | null | undefined, secure: boolean, origin = '', headset = false): Promise<{ adapter: GPUAdapter; device: GPUDevice }> {
+  const adapter = await coreAdapter(gpu, secure, origin, headset)
   let device: GPUDevice
   try {
     device = await adapter.requestDevice({ requiredFeatures: deviceFeatures(adapter), label: 'page' })

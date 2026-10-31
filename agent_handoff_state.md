@@ -5,6 +5,12 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
 
 ## Where things stand (updated as work lands)
 
+- The Ring-0 action gate (`02_Define_The_Rules/ring0Gate.ts`, 2026-10-29): every ask, every `ACTION:` line and every
+  allowed action passes one deterministic gate ranked under the Zeroth Law and the kernel's three; the engine vouches
+  for the air gap, the keeper and the operator tier call it, the onboarding voice screens a rewording with it, and
+  `act gate` prints its table. Two Kani harnesses for the kernel's capability fuse (CI group `core-fuse`; a proof once
+  that job is green, which no cloud session can run). See
+  CHANGELOG [Unreleased].
 - Phase 2 of the V2 stable release (the one-click Windows app, Wren's quiet first minutes and the swarm's short-term
   memory, long-task telemetry, the version and the changelog; PRs #20 to #23) is merged into main and released as
   `v1.0.0-stable-beta` on 2026-10-12 from 6a6b3ff (run 38195437087: proofs, two identical bakes, both QEMU boots, the

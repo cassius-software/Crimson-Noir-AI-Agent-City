@@ -10,7 +10,11 @@
 //! fixes, not a test: no input of those dimensions reaches a trap or breaks the stated bound.
 //! What the harnesses prove: an agent's tick reads and writes only its own row, its own weights and its own memory
 //! block (memory isolation), keeps the agent on the floor, leaves 1/0 masks as 1/0, and never traps, for every
-//! matrix content and every validated kernel knob; the routing relaxation and the sorting network never index out of
+//! matrix content and every validated kernel knob; the capability fuse drops the pointer of an agent that asks for
+//! a privilege its role was not declared with, in that tick, every other word of its row accounted for (moved
+//! nowhere, learned nothing, wrote nothing, kept its goal, its capabilities, its role and its heading; its trip clock
+//! ticks and its loop breaker resets as in any tick), and never drops one whose request is declared, in a role
+//! declared with movement; the routing relaxation and the sorting network never index out of
 //! their arrays; the mask arithmetic (`nz`, `sel`) means what the hot path takes it to mean, for all 2^32 words.
 //! The dimensions are the smallest the configuration validator admits (capacity 64, 8-word blocks, 2 stations, a
 //! 32x32 floor), except the floor of the agent tick and the relaxation, 8x8 (see `SMALL`); tools/verify/fvps_smt.py
@@ -18,8 +22,8 @@
 //! have to be built.
 //! What breaks if it is removed? `cargo kani` has nothing to prove and the verification step of the pipeline is empty.
 
-use crate::config::Dims;
-use crate::kernels::{INF, agent_tick, bitonic_pass, compare_exchange, flush, nz, relax_pass, sel, step_of};
+use crate::config::{CAP_MOVE, Dims};
+use crate::kernels::{FATE_DROPPED, FATE_FLUSHED, INF, agent_tick, bitonic_pass, compare_exchange, flush, nz, relax_pass, sel, step_of};
 use crate::matrix::{self, Matrix};
 
 const CAP: usize = 64;
@@ -157,6 +161,73 @@ fn agent_tick_is_isolated_to_its_own_row() {
     assert!(m.caps[rw] == caps && m.goal[rw] == goal, "another row changed");
     // The world is read-only to a tick.
     assert!(m.field[fw] == field && m.walls[lw] == wall, "the world changed");
+}
+
+/// The capability fuse, for every matrix content, every validated knob, every slot and every tick: an alive agent
+/// whose request holds a privilege its role was not declared with (`req` has a bit outside `caps`) drops its pointer
+/// in that tick: its fate is FATE_DROPPED alone, it is no longer alive and is doomed (its row is zeroed in the next
+/// tick), and every other word of its row is accounted for: it moved nowhere, learned nothing, wrote nothing to its
+/// memory, kept its goal, its capabilities, its role and its heading, its trip count stands, and its trip clock ticks
+/// and its loop breaker resets as they do for any alive agent that did not move. (The page's Ring-0 action gate,
+/// 02_Define_The_Rules/ring0Gate.ts, is a rule in TypeScript held by tests, not a proof; this is the kernel's own law
+/// of that kind, and the one that is proved.)
+#[kani::proof]
+#[kani::unwind(9)]
+fn an_undeclared_privilege_drops_the_pointer_for_every_matrix() {
+    let d = dims_on(SMALL, SMALL);
+    let mut m = any_matrix::<SMALL_CELLS, { STATIONS * SMALL_CELLS }>(&d);
+    let i = index(d.capacity);
+    let t: u32 = kani::any();
+    kani::assume(m.alive[i] & 1 == 1 && m.doomed[i] & 1 == 0);
+    kani::assume(m.req[i] & !m.caps[i] != 0);
+    // On the floor, so the tick's hold to the floor is the identity and a position left alone is a position unchanged.
+    kani::assume(m.px[i] >= 0.0 && m.px[i] <= SMALL as f32 - 0.125);
+    kani::assume(m.pz[i] >= 0.0 && m.pz[i] <= SMALL as f32 - 0.125);
+    let (px, pz) = (m.px[i], m.pz[i]);
+    let goal = m.goal[i] & (d.stations as u32 - 1);
+    let heading = m.heading[i] & 3;
+    let (caps, role, trips, clock) = (m.caps[i], m.role[i], m.trips[i], m.clock[i]);
+    // One symbolic witness in its memory block and one in its weights: every word of each is covered.
+    let mw = i * d.block_words + index(d.block_words);
+    let ww = i * d.stations + index(d.stations);
+    let (memory, weight) = (m.memory[mw], m.weights[ww]);
+
+    let fate = agent_tick(&d, &mut m, i, t, step_of(&d));
+
+    assert!(fate == FATE_DROPPED, "dropped, and only dropped");
+    assert!(m.fate[i] == FATE_DROPPED);
+    assert!(m.alive[i] == 0 && m.doomed[i] == 1, "it can act no more, and is zeroed next tick");
+    assert!(m.px[i] == px && m.pz[i] == pz, "it moved nowhere");
+    assert!(m.memory[mw] == memory, "it wrote nothing to its memory");
+    assert!(m.weights[ww] == weight, "it learned nothing");
+    assert!(m.goal[i] == goal, "it kept its goal");
+    assert!(m.caps[i] == caps && m.role[i] == role, "it kept its capabilities and its role");
+    assert!(m.heading[i] == heading && m.trips[i] == trips, "its heading and its trip count stand");
+    assert!(m.clock[i] == clock.wrapping_add(1), "its trip clock ticks, as for any alive agent");
+    assert!(m.run[i] == 0 && m.last[i] == 0, "its loop breaker resets, as for any agent that did not move");
+    assert!(m.req[i] == 0, "a request lasts one tick");
+}
+
+/// The converse, for every matrix: an alive agent whose request holds nothing outside its declared capabilities,
+/// and whose role was declared with movement (the one privilege a tick asks for of itself), is never dropped: its
+/// fate has no FATE_DROPPED bit, it is not doomed, and it goes on acting unless the loop breaker flushed it in that
+/// same tick.
+#[kani::proof]
+#[kani::unwind(9)]
+fn a_declared_request_never_drops_the_pointer() {
+    let d = dims_on(SMALL, SMALL);
+    let mut m = any_matrix::<SMALL_CELLS, { STATIONS * SMALL_CELLS }>(&d);
+    let i = index(d.capacity);
+    let t: u32 = kani::any();
+    kani::assume(m.alive[i] & 1 == 1 && m.doomed[i] & 1 == 0);
+    kani::assume(m.req[i] & !m.caps[i] == 0);
+    kani::assume(m.caps[i] & CAP_MOVE != 0);
+
+    let fate = agent_tick(&d, &mut m, i, t, step_of(&d));
+
+    assert!(fate & FATE_DROPPED == 0, "a declared request is never a violation");
+    assert!(m.doomed[i] == 0);
+    assert!(fate & FATE_FLUSHED != 0 || m.alive[i] == 1, "it goes on acting, unless the loop breaker flushed it");
 }
 
 /// A flush zeroes exactly one row, its weights and its block, for every slot.
