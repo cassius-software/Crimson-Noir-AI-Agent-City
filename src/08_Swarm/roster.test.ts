@@ -132,7 +132,7 @@ test('the roster: add, set, bind, remove; unique names; at most twelve; every ch
   const old = loadRoster(store)
   assert.equal(old.length, 1, 'the old look outside the wardrobe still refuses its record')
   assert.deepEqual(old[0].look, upgradeLegacyLook(legacy))
-  assert.deepEqual(old[0].look, { ...LOOK_PRESETS[0].look, height: 16, mass: 6, muscle: 8, shoulders: 8, hips: 8, legs: 8, posture: 8, head: 4 })
+  assert.deepEqual(old[0].look, { ...LOOK_PRESETS[0].look, height: 16, mass: 6, muscle: 8, shoulders: 8, hips: 8, legs: 8, posture: 8, head: 4, brow: 8, jaw: 8, chin: 8, cheek: 8, nose: 8, eyes: 8, lips: 8, age: 3, undertone: 0 })
   store.map.set(ROSTER_KEY, '{not json')
   assert.deepEqual(loadRoster(store), [])
   assert.deepEqual(loadRoster(null), [])

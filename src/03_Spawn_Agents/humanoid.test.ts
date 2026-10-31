@@ -15,18 +15,19 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { BODY_WGSL, statureFactor } from './crowdBody.ts'
+import { BODY_INCLUDES, BODY_WGSL, statureFactor } from './crowdBody.ts'
 import {
-  BODY_NAMES, BONE, BONES, EYE_LEVEL, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, MORPH, PIECE, REGION, SHAPE_NEUTRAL, SLOT, WALK,
-  bodyTubes, boneGroup, boneSide, boneTransform, eyeHeightOf, heightMap, humanoidMesh, morphNormal, morphPoint, pivotsOf, scaleOf,
-  shapeFactors, silhouetteRings, skinPoint, swingOf, walkAngles,
-  type BodyPose, type BodyShape,
+  BODY_NAMES, BONE, BONES, EYE_LEVEL, FACE, FACE_NEUTRAL, FACE_REGION, HAIRLINE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, MORPH, PIECE, REGION, SHAPE_NEUTRAL, SLOT, WALK,
+  bodyTubes, boneGroup, boneSide, boneTransform, eyeHeightOf, faceNormal, facePoint, faceRings, heightMap, humanoidMesh, morphNormal, morphPoint,
+  pivotsOf, scaleOf, shapeFactors, silhouetteRings, skinPoint, skullFront, swingOf, walkAngles,
+  type BodyPose, type BodyShape, type FaceShape,
 } from './humanoid.ts'
 import { LOOK_BODIES, LOOK_PIECE_BIT } from './look.ts'
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8')
 const near = (got: number, want: number, tol: number, what: string) => assert.ok(Math.abs(got - want) <= tol, `${what}: ${got} vs ${want}`)
 const shape = (over: Partial<BodyShape>): BodyShape => ({ ...SHAPE_NEUTRAL, ...over })
+const face = (over: Partial<FaceShape>): FaceShape => ({ ...FACE_NEUTRAL, ...over })
 const STILL: BodyPose = { tilt: 0, bend: 0, fall: 0 }
 const UNIT = { y: 1, xz: 1 }
 const ORIGIN = [0, 0, 0] as const
@@ -35,16 +36,20 @@ const VARIANTS = [0, 1, 2, 3]
 
 // --- The tables ------------------------------------------------------------------------------------------------
 
-test('the tables: four bodies named as the wardrobe names them, the pieces where the look\'s bits are, fifteen bones in three groups on two sides', () => {
+test('the tables: four bodies named as the wardrobe names them, the pieces where the look\'s bits are, thirteen colour slots, eight face regions, fifteen bones in three groups on two sides', () => {
   assert.deepEqual([...BODY_NAMES], [...LOOK_BODIES])
-  assert.deepEqual(LOOK_PIECE_BIT, { tie: PIECE.TIE, bag: PIECE.BAG, cup: PIECE.CUP, longHair: PIECE.LONG_HAIR, glasses: PIECE.GLASSES })
+  assert.deepEqual(LOOK_PIECE_BIT, { tie: PIECE.TIE, bag: PIECE.BAG, cup: PIECE.CUP, longHair: PIECE.LONG_HAIR, glasses: PIECE.GLASSES, hairCap: PIECE.HAIR_CAP, bob: PIECE.BOB, bun: PIECE.BUN, face: PIECE.FACE })
   assert.equal(PIECE.NONE, 0)
+  assert.deepEqual([...Object.values(PIECE)].sort((a, b) => a - b), Array.from({ length: 10 }, (_, i) => i))
+  assert.deepEqual([...Object.values(FACE_REGION)].sort((a, b) => a - b), Array.from({ length: 8 }, (_, i) => i))
+  assert.equal(FACE_REGION.NONE, 0)
   assert.equal(BONES, 15)
   assert.deepEqual([...Object.values(BONE)].sort((a, b) => a - b), Array.from({ length: 15 }, (_, i) => i))
   assert.deepEqual(Array.from({ length: 15 }, (_, b) => boneGroup(b)), [0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2])
   assert.deepEqual(Array.from({ length: 15 }, (_, b) => boneSide(b)), [0, 0, 0, -1, -1, -1, 1, 1, 1, -1, -1, -1, 1, 1, 1])
-  assert.deepEqual([...Object.values(SLOT)].sort((a, b) => a - b), Array.from({ length: 10 }, (_, i) => i))
-  for (const table of [BONE, SLOT, PIECE, LANDMARK, MORPH, REGION, LIMB_GIRTH, WALK, SHAPE_NEUTRAL]) assert.ok(Object.isFrozen(table))
+  assert.deepEqual([...Object.values(SLOT)].sort((a, b) => a - b), Array.from({ length: 13 }, (_, i) => i))
+  assert.deepEqual([SLOT.EYE, SLOT.IRIS, SLOT.LIP], [10, 11, 12])
+  for (const table of [BONE, SLOT, PIECE, LANDMARK, MORPH, REGION, LIMB_GIRTH, WALK, SHAPE_NEUTRAL, FACE, FACE_REGION, FACE_NEUTRAL]) assert.ok(Object.isFrozen(table))
   // The landmarks climb the body.
   assert.ok(LANDMARK.ankle < LANDMARK.knee && LANDMARK.knee < LANDMARK.hip && LANDMARK.hip < LANDMARK.chestPivot)
   assert.ok(LANDMARK.chestPivot < LANDMARK.shoulder && LANDMARK.shoulder < LANDMARK.neck && LANDMARK.neck < EYE_LEVEL && EYE_LEVEL < HEIGHT_BASE)
@@ -55,7 +60,7 @@ test('the tables: four bodies named as the wardrobe names them, the pieces where
 
 // --- The mesh --------------------------------------------------------------------------------------------------
 
-test('every body, near and far: finite, indexed within range, every vertex on a bone with a slot and a piece, weights 0..1, unit normals, within budget, deterministic', () => {
+test('every body, near and far: finite, indexed within range, every vertex on a bone with a slot, a piece and a face region (on the head alone), weights 0..1, unit normals, no flat triangle, within budget, deterministic', () => {
   const counts: Record<string, [number, number]> = {}
   for (const v of VARIANTS) for (const detailed of [true, false]) {
     const m = humanoidMesh(v, detailed)
@@ -64,31 +69,50 @@ test('every body, near and far: finite, indexed within range, every vertex on a 
     assert.equal(m.normal.length, m.vertexCount * 3)
     assert.equal(m.rig.length, m.vertexCount * 3)
     assert.equal(m.skin.length, m.vertexCount * 2)
+    assert.equal(m.face.length, m.vertexCount * 2)
     assert.equal(m.index.length % 3, 0)
     assert.ok(m.index instanceof Uint32Array)
     for (const x of m.position) assert.ok(Number.isFinite(x))
     for (const i of m.index) assert.ok(i < m.vertexCount, `${name}: index ${i}`)
     const bones = new Set<number>()
+    const regions = new Set<number>()
     for (let i = 0; i < m.vertexCount; i++) {
       const bone = m.rig[i * 3], slot = m.rig[i * 3 + 1], piece = m.rig[i * 3 + 2], bone1 = m.skin[i * 2], w = m.skin[i * 2 + 1]
+      const region = m.face[i * 2], rw = m.face[i * 2 + 1]
       assert.ok(Number.isInteger(bone) && bone >= 0 && bone < BONES, `${name}: bone ${bone}`)
       assert.ok(Number.isInteger(bone1) && bone1 >= 0 && bone1 < BONES, `${name}: second bone ${bone1}`)
-      assert.ok(Number.isInteger(slot) && slot >= 0 && slot < 10, `${name}: slot ${slot}`)
-      assert.ok(Number.isInteger(piece) && piece >= 0 && piece <= PIECE.GLASSES, `${name}: piece ${piece}`)
+      assert.ok(Number.isInteger(slot) && slot >= 0 && slot < 13, `${name}: slot ${slot}`)
+      assert.ok(Number.isInteger(piece) && piece >= 0 && piece <= PIECE.FACE, `${name}: piece ${piece}`)
       assert.ok(w >= 0 && w <= 1, `${name}: weight ${w}`)
+      assert.ok(Number.isInteger(region) && region >= 0 && region <= FACE_REGION.LIPS, `${name}: face region ${region}`)
+      assert.ok(rw >= 0 && rw <= 1, `${name}: face weight ${rw}`)
+      if (region !== FACE_REGION.NONE) assert.equal(bone, BONE.HEAD, `${name}: a face region on the head alone (vertex ${i})`)
+      if (!detailed) assert.equal(region, FACE_REGION.NONE, `${name}: the far body has no face to shape`)
       near(Math.hypot(m.normal[i * 3], m.normal[i * 3 + 1], m.normal[i * 3 + 2]), 1, 1e-3, `${name}: normal ${i}`)
       assert.ok(m.position[i * 3 + 1] >= -1e-6 && m.position[i * 3 + 1] <= HEIGHT_BASE + 0.05, `${name}: y ${m.position[i * 3 + 1]}`)
       bones.add(bone)
+      regions.add(region)
     }
     assert.equal(bones.size, BONES, `${name}: every bone carries skin`)
-    assert.ok(m.vertexCount <= (detailed ? 1200 : 400), `${name}: ${m.vertexCount} vertices`)
-    assert.ok(m.index.length / 3 <= (detailed ? 2000 : 700), `${name}: ${m.index.length / 3} triangles`)
+    assert.equal(regions.size, detailed ? 8 : 1, `${name}: every face region is used by the near body`)
+    // No triangle is flat: every feature pillow's cap and every ring pair has area.
+    for (let t = 0; t < m.index.length; t += 3) {
+      const [a, b, c] = [m.index[t], m.index[t + 1], m.index[t + 2]]
+      const p = (k: number, j: number) => m.position[k * 3 + j]
+      const ux = p(b, 0) - p(a, 0), uy = p(b, 1) - p(a, 1), uz = p(b, 2) - p(a, 2)
+      const vx = p(c, 0) - p(a, 0), vy = p(c, 1) - p(a, 1), vz = p(c, 2) - p(a, 2)
+      const area = Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) / 2
+      assert.ok(area > 1e-9, `${name}: triangle ${t / 3} is flat (${area})`)
+    }
+    assert.ok(m.vertexCount <= (detailed ? 1400 : 450), `${name}: ${m.vertexCount} vertices`)
+    assert.ok(m.index.length / 3 <= (detailed ? 2400 : 800), `${name}: ${m.index.length / 3} triangles`)
     counts[name] = [m.vertexCount, m.index.length / 3]
     const again = humanoidMesh(v, detailed)
     assert.deepEqual(again.position, m.position)
     assert.deepEqual(again.index, m.index)
     assert.deepEqual(again.rig, m.rig)
     assert.deepEqual(again.skin, m.skin)
+    assert.deepEqual(again.face, m.face)
   }
   // The far body is the smaller by far; the outfits differ in their rings, not only their colours.
   for (const v of VARIANTS) assert.ok(counts[`${BODY_NAMES[v]} far`][0] * 2 < counts[`${BODY_NAMES[v]} near`][0])
@@ -98,18 +122,22 @@ test('every body, near and far: finite, indexed within range, every vertex on a 
   assert.deepEqual(humanoidMesh(Number.NaN).position, humanoidMesh(0).position)
 })
 
-test('the pieces: the suit alone has a tie; the cup, the glasses and the tie are near-only; the bag and long hair reach the far body; the arms hang at rest', () => {
+test('the pieces: the suit alone has a tie; the cup, the glasses, the tie and the face are near-only; the bag and the hair reach the far body; the arms hang at rest', () => {
   const pieces = (v: number, detailed: boolean) => { const m = humanoidMesh(v, detailed); return new Set(Array.from({ length: m.vertexCount }, (_, i) => m.rig[i * 3 + 2])) }
-  assert.deepEqual([...pieces(0, true)].sort(), [0, 1, 2, 3, 4, 5])
-  for (const v of [1, 2, 3]) assert.deepEqual([...pieces(v, true)].sort(), [0, 2, 3, 4, 5], BODY_NAMES[v])
+  const sorted = (s: Set<number>) => [...s].sort((a, b) => a - b)
+  assert.deepEqual(sorted(pieces(0, true)), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+  for (const v of [1, 2, 3]) assert.deepEqual(sorted(pieces(v, true)), [0, 2, 3, 4, 5, 6, 7, 8, 9], BODY_NAMES[v])
   for (const v of VARIANTS) {
-    assert.deepEqual([...pieces(v, false)].sort(), [PIECE.NONE, PIECE.BAG, PIECE.LONG_HAIR], `${BODY_NAMES[v]} far`)
+    assert.deepEqual(sorted(pieces(v, false)), [PIECE.NONE, PIECE.BAG, PIECE.LONG_HAIR, PIECE.HAIR_CAP, PIECE.BOB, PIECE.BUN], `${BODY_NAMES[v]} far`)
     for (const p of pieces(v, false)) assert.ok(pieces(v, true).has(p), 'the far body wears nothing the near one lacks')
   }
-  const slots = (v: number) => { const m = humanoidMesh(v); return new Set(Array.from({ length: m.vertexCount }, (_, i) => m.rig[i * 3 + 1])) }
+  const slots = (v: number, detailed = true) => { const m = humanoidMesh(v, detailed); return new Set(Array.from({ length: m.vertexCount }, (_, i) => m.rig[i * 3 + 1])) }
   assert.ok(slots(0).has(SLOT.ACCENT), 'the tie\'s cloth')
   assert.ok(slots(3).has(SLOT.LEGWEAR) && !slots(2).has(SLOT.LEGWEAR), 'hose under the skirt alone')
-  for (const v of VARIANTS) for (const s of [SLOT.TOP, SLOT.SHIRT, SLOT.SKIN, SLOT.HAIR, SLOT.BOTTOM, SLOT.SHOES, SLOT.PROP, SLOT.FRAME]) assert.ok(slots(v).has(s), `${BODY_NAMES[v]} slot ${s}`)
+  for (const v of VARIANTS) {
+    for (const s of [SLOT.TOP, SLOT.SHIRT, SLOT.SKIN, SLOT.HAIR, SLOT.BOTTOM, SLOT.SHOES, SLOT.PROP, SLOT.FRAME, SLOT.EYE, SLOT.IRIS, SLOT.LIP]) assert.ok(slots(v).has(s), `${BODY_NAMES[v]} slot ${s}`)
+    for (const s of [SLOT.EYE, SLOT.IRIS, SLOT.LIP, SLOT.FRAME]) assert.ok(!slots(v, false).has(s), `${BODY_NAMES[v]} far: no slot ${s}`)
+  }
   // Rest pose: the hands below the elbows, nothing below the feet, the top of the head near the base height.
   const m = humanoidMesh(0)
   let hand = -1, top = -1
@@ -345,7 +373,7 @@ test('silhouetteRings: one ring per ring of every tube, from the front and from 
     }
     const pieces = new Set(front.map((r) => r.piece))
     assert.equal(pieces.has(PIECE.TIE), v === 0)
-    for (const p of [PIECE.BAG, PIECE.CUP, PIECE.LONG_HAIR, PIECE.GLASSES]) assert.ok(pieces.has(p), `piece ${p}`)
+    for (const p of [PIECE.BAG, PIECE.CUP, PIECE.LONG_HAIR, PIECE.GLASSES, PIECE.HAIR_CAP, PIECE.BOB, PIECE.BUN, PIECE.FACE]) assert.ok(pieces.has(p), `piece ${p}`)
   }
   const top = (rings: ReturnType<typeof silhouetteRings>) => Math.max(...rings.map((r) => r.y))
   const tall = silhouetteRings(0, shape({ height: 2.05 })), short = silhouetteRings(0, shape({ height: 1.5 }))
@@ -362,46 +390,239 @@ test('silhouetteRings: one ring per ring of every tube, from the front and from 
   near(still.reduce((s, r) => s + (r.left + r.right) / 2, 0) / still.length, 0, 0.03, 'the base head over the feet')
 })
 
+// --- The face --------------------------------------------------------------------------------------------------
+
+test('facePoint and faceNormal: the base face moves nothing; each slider moves its own region along its own axes, the normals take the scales\' reciprocals and stay unit', () => {
+  const regions = Object.values(FACE_REGION)
+  const points: [number, number, number][] = [[0.03, 1.68, 0.09], [-0.05, 1.6, 0.07], [0, 1.66, 0.11], [0.08, 1.64, 0.02]]
+  for (const r of regions) for (const w of [0, 0.5, 1]) for (const [x, y, z] of points) {
+    const p = facePoint(x, y, z, r, w, FACE_NEUTRAL)
+    near(p[0], x, 1e-15, `region ${r} at rest, x`); near(p[1], y, 1e-15, `region ${r} at rest, y`); near(p[2], z, 1e-15, `region ${r} at rest, z`)
+    const n = faceNormal(0.6, 0, 0.8, r, w, FACE_NEUTRAL)
+    near(n[0], 0.6, 1e-12, 'nx'); near(n[2], 0.8, 1e-12, 'nz')
+  }
+  const extreme = face({ brow: 1, jaw: 1, chin: 1, cheek: 1, nose: 1, eyes: 1, lips: 1 })
+  // Off the head, or in no region: unmoved however the sliders stand.
+  assert.deepEqual(facePoint(0.03, 1.68, 0.09, FACE_REGION.NONE, 1, extreme), [0.03, 1.68, 0.09])
+  // The brow: up and forward, the weight unused (a brow moves whole).
+  assert.deepEqual(facePoint(0.03, 1.7, 0.09, FACE_REGION.BROW, 0.3, face({ brow: 1 })), [0.03, 1.7 + FACE.brow.lift, 0.09 + FACE.brow.push])
+  assert.deepEqual(facePoint(0.03, 1.7, 0.09, FACE_REGION.BROW, 1, face({ brow: -1 })), [0.03, 1.7 - FACE.brow.lift, 0.09 - FACE.brow.push])
+  // The jaw: x alone, by the weight.
+  near(facePoint(0.05, 1.6, 0.07, FACE_REGION.JAW, 1, face({ jaw: 1 }))[0], 0.05 * (1 + FACE.jaw.width), 1e-12, 'jaw x')
+  near(facePoint(0.05, 1.6, 0.07, FACE_REGION.JAW, 0.5, face({ jaw: 1 }))[0], 0.05 * (1 + FACE.jaw.width * 0.5), 1e-12, 'jaw x, half weight')
+  assert.deepEqual(facePoint(0.05, 1.6, 0.07, FACE_REGION.JAW, 1, face({ jaw: 1 })).slice(1), [1.6, 0.07])
+  // The chin: the jaw's width whole, and forward by the chin slider and the weight.
+  const chin = facePoint(0.02, 1.575, 0.08, FACE_REGION.CHIN, 0.5, face({ jaw: 1, chin: 1 }))
+  near(chin[0], 0.02 * (1 + FACE.jaw.width), 1e-12, 'chin x'); near(chin[2], 0.08 + FACE.chin.push * 0.5, 1e-12, 'chin z'); assert.equal(chin[1], 1.575)
+  // The cheekbones: out (away from the centre) and up, by the weight.
+  const cheek = facePoint(-0.08, 1.64, 0.02, FACE_REGION.CHEEK, 1, face({ cheek: 1 }))
+  near(cheek[0], -0.08 - FACE.cheek.width, 1e-12, 'cheek x'); near(cheek[1], 1.64 + FACE.cheek.lift, 1e-12, 'cheek y'); assert.equal(cheek[2], 0.02)
+  // The nose: scaled about its root in x and z, y kept.
+  const nose = facePoint(0.01, 1.66, FACE.nose.rootZ + 0.02, FACE_REGION.NOSE, 1, face({ nose: 1 }))
+  near(nose[0], 0.01 * (1 + FACE.nose.size), 1e-12, 'nose x'); near(nose[2], FACE.nose.rootZ + 0.02 * (1 + FACE.nose.size), 1e-12, 'nose z'); assert.equal(nose[1], 1.66)
+  assert.deepEqual(facePoint(0, 1.66, FACE.nose.rootZ, FACE_REGION.NOSE, 1, face({ nose: 1 })), [0, 1.66, FACE.nose.rootZ], 'the root stays')
+  // The eyes: apart along the skull, back as they go out.
+  const eye = facePoint(-0.03, 1.68, 0.1, FACE_REGION.EYES, 1, face({ eyes: 1 }))
+  near(eye[0], -0.03 - FACE.eyes.spread, 1e-12, 'eye x'); near(eye[2], 0.1 - FACE.eyes.spread * FACE.eyes.slope, 1e-12, 'eye z')
+  near(facePoint(0.03, 1.68, 0.1, FACE_REGION.EYES, 1, face({ eyes: -1 }))[0], 0.03 - FACE.eyes.spread, 1e-12, 'closer')
+  // The lips: fuller about the lip line.
+  near(facePoint(0, 1.612, 0.1, FACE_REGION.LIPS, 1, face({ lips: 1 }))[1], FACE.lips.lineY + (1.612 - FACE.lips.lineY) * (1 + FACE.lips.fullness), 1e-12, 'upper lip')
+  assert.equal(facePoint(0, FACE.lips.lineY, 0.1, FACE_REGION.LIPS, 1, face({ lips: 1 }))[1], FACE.lips.lineY, 'the line stays')
+  // Values past the sliders' range are clamped.
+  assert.deepEqual(facePoint(0.03, 1.7, 0.09, FACE_REGION.BROW, 1, face({ brow: 5 })), facePoint(0.03, 1.7, 0.09, FACE_REGION.BROW, 1, face({ brow: 1 })))
+  // The normals: unit, and the reciprocal of each scale (a wider jaw's normal leans toward the axis).
+  for (const r of regions) {
+    const n = faceNormal(0.6, 0.3, 0.74, r, 1, extreme)
+    near(length(n), 1, 1e-12, `region ${r} unit`)
+  }
+  const jawN = faceNormal(1, 0, 1, FACE_REGION.JAW, 1, face({ jaw: 1 }))
+  near(jawN[0] / jawN[2], 1 / (1 + FACE.jaw.width), 1e-12, 'the jaw\'s normal')
+  const lipN = faceNormal(0, 1, 1, FACE_REGION.LIPS, 1, face({ lips: 1 }))
+  near(lipN[1] / lipN[2], 1 / (1 + FACE.lips.fullness), 1e-12, 'the lips\' normal')
+  assert.deepEqual(faceNormal(0.6, 0, 0.8, FACE_REGION.EYES, 1, extreme), [0.6, 0, 0.8], 'a shift leaves the normal')
+  // The skull's chord: on the axis it is the front; it falls off toward the sides; outside the skull's rings it is finite.
+  assert.ok(skullFront(1.68, 0) > 0.09 && skullFront(1.68, 0) < 0.12, `${skullFront(1.68, 0)}`)
+  assert.ok(skullFront(1.68, 0.05) < skullFront(1.68, 0))
+  near(skullFront(1.68, 0.05), skullFront(1.68, -0.05), 1e-12, 'symmetric')
+  assert.ok(Number.isFinite(skullFront(1.9, 0)) && Number.isFinite(skullFront(1.4, 0.5)))
+  near(FACE.nose.rootZ, skullFront(FACE.nose.rootY, 0), 1e-12, 'the nose roots on the skull')
+})
+
+test('the features sit on the skull: every eye, brow and lip vertex is clear of the skull\'s chord, the eyes sit between the glasses\' rims, and the face column is the regions with their weights', () => {
+  for (const v of VARIANTS) {
+    const m = humanoidMesh(v)
+    let features = 0
+    for (let i = 0; i < m.vertexCount; i++) {
+      const region = m.face[i * 2], piece = m.rig[i * 3 + 2], slot = m.rig[i * 3 + 1]
+      const x = m.position[i * 3], y = m.position[i * 3 + 1], z = m.position[i * 3 + 2]
+      if (region === FACE_REGION.EYES || region === FACE_REGION.LIPS || region === FACE_REGION.BROW) {
+        assert.ok(z - skullFront(y, x) >= 0.001, `${BODY_NAMES[v]}: vertex ${i} (region ${region}) is ${z - skullFront(y, x)} m off the skull`)
+        assert.equal(piece, PIECE.FACE)
+        features++
+      }
+      if (slot === SLOT.EYE || slot === SLOT.IRIS) assert.ok(y > 1.6735 && y < 1.6885, `${BODY_NAMES[v]}: an eye vertex at ${y} m is under a rim`)
+      if (slot === SLOT.FRAME) assert.ok(Math.abs(y - 1.672) < 0.002 || Math.abs(y - 1.69) < 0.002, `${BODY_NAMES[v]}: a rim at ${y} m`)
+      if (piece === PIECE.FACE) assert.equal(m.rig[i * 3], BONE.HEAD)
+      // A region's weight: the chin's front carries its push, its back none (the jaw's width still acts on it).
+      if (region === FACE_REGION.CHIN && z < 0) assert.equal(m.face[i * 2 + 1], 0)
+      if (region === FACE_REGION.JAW) assert.ok(m.face[i * 2 + 1] > 0)
+    }
+    assert.ok(features > 100, `${BODY_NAMES[v]}: ${features} feature vertices`)
+  }
+})
+
+test('faceRings: the head\'s rings alone, the same rings the silhouette holds at the base face, in the same shape across the bodies; the sliders move the view as they move the mesh', () => {
+  const key = (r: { y: number; left: number; right: number; slot: number; piece: number }) => [r.y, r.left, r.right, r.slot, r.piece].map((n) => Math.round(n * 1e6)).join(':')
+  for (const v of VARIANTS) for (const side of [false, true]) {
+    const head = faceRings(v, SHAPE_NEUTRAL, FACE_NEUTRAL, side)
+    assert.ok(head.length >= 50, `${head.length} rings`)
+    assert.equal(head.length, faceRings(0, SHAPE_NEUTRAL, FACE_NEUTRAL, side).length, 'one head for every body')
+    const whole = new Set(silhouetteRings(v, SHAPE_NEUTRAL, side).map(key))
+    for (const r of head) assert.ok(whole.has(key(r)), `${BODY_NAMES[v]}: a head ring the silhouette lacks (${key(r)})`)
+    assert.ok(head.every((r) => r.y > 1.3), 'the head and its hair')
+    assert.ok(head.some((r) => r.slot === SLOT.EYE) && head.some((r) => r.slot === SLOT.IRIS) && head.some((r) => r.slot === SLOT.LIP), 'the features')
+    assert.equal(head[0].tube, 0)
+  }
+  const front = (f: FaceShape) => faceRings(0, SHAPE_NEUTRAL, f, false)
+  const profile = (f: FaceShape) => faceRings(0, SHAPE_NEUTRAL, f, true)
+  const widest = (rings: ReturnType<typeof faceRings>, pick: (r: ReturnType<typeof faceRings>[number]) => boolean) => Math.max(...rings.filter(pick).map((r) => r.right - r.left))
+  // A wider jaw widens the skull about the chin, not the crown.
+  const jawLine = (r: ReturnType<typeof faceRings>[number]) => r.tube === 0 && r.y > 1.59 && r.y < 1.61
+  const crown = (r: ReturnType<typeof faceRings>[number]) => r.tube === 0 && r.y > 1.74
+  assert.ok(widest(front(face({ jaw: 1 })), jawLine) > widest(front(face({ jaw: -1 })), jawLine) * 1.1, 'the jaw')
+  near(widest(front(face({ jaw: 1 })), crown), widest(front(face({ jaw: -1 })), crown), 1e-9, 'the crown is left alone')
+  // Eyes apart: the whites' centres move outward.
+  const eyeCentre = (f: FaceShape) => Math.max(...front(f).filter((r) => r.slot === SLOT.EYE).map((r) => Math.abs((r.left + r.right) / 2)))
+  assert.ok(eyeCentre(face({ eyes: 1 })) > eyeCentre(face({ eyes: -1 })) + 0.01, 'the eyes')
+  // A bigger nose stands further out in profile (the ears, the other skin-coloured features, sit far behind it).
+  const noseTip = (f: FaceShape) => Math.max(...profile(f).filter((r) => r.piece === PIECE.FACE && r.slot === SLOT.SKIN).map((r) => r.right))
+  assert.ok(noseTip(face({ nose: 1 })) > noseTip(face({ nose: -1 })) + 0.003, 'the nose')
+  // Fuller lips span more.
+  const lipSpan = (f: FaceShape) => { const ys = front(f).filter((r) => r.slot === SLOT.LIP).map((r) => r.y); return Math.max(...ys) - Math.min(...ys) }
+  assert.ok(lipSpan(face({ lips: 1 })) > lipSpan(face({ lips: -1 })) * 1.3, 'the lips')
+  // The brow rides up.
+  const browY = (f: FaceShape) => Math.max(...front(f).filter((r) => r.piece === PIECE.FACE && r.slot === SLOT.HAIR).map((r) => r.y))
+  near(browY(face({ brow: 1 })) - browY(face({ brow: -1 })), 2 * FACE.brow.lift, 1e-9, 'the brow')
+  // The body sliders still act: a taller stature lifts the whole head.
+  assert.ok(Math.max(...faceRings(0, shape({ height: 2.0 }), FACE_NEUTRAL).map((r) => r.y)) > Math.max(...front(FACE_NEUTRAL).map((r) => r.y)) + 0.1)
+})
+
+test('HAIRLINE: the cap\'s front leaves the skull\'s front at the hairline and its shell leaves the skull\'s side at the temple; under the hairline the cap and the bob paint behind the face from the front and over the side of the head, back from the temple, from the side', () => {
+  const tubes = bodyTubes(0).filter((t) => t.head)
+  const skull = tubes[0], cap = tubes.find((t) => t.piece === PIECE.HAIR_CAP)!, bob = tubes.find((t) => t.piece === PIECE.BOB)!
+  assert.equal(skull.piece, undefined)
+  type R = (typeof cap.rings)[number]
+  const frontOf = (r: R) => (r.z ?? 0) + (r.rz ?? r.rx)
+  const gap = (r: R) => frontOf(r) - skullFront(r.y, 0)
+  const below = cap.rings.filter((r) => r.y < HAIRLINE.y), above = cap.rings.filter((r) => r.y >= HAIRLINE.y)
+  assert.equal(below.length, 3); assert.equal(above.length, 2)
+  for (const r of below) assert.ok(gap(r) < -0.002, `the cap at ${r.y} is inside the face (${gap(r)})`)
+  for (const r of above.filter((r) => r.y <= skull.capTop!)) assert.ok(gap(r) > 0.002, `the cap at ${r.y} is outside the skull (${gap(r)})`)
+  assert.ok(above[above.length - 1].y > skull.capTop!, 'the last ring is over the crown')
+  const a = below[below.length - 1], b = above[0]
+  // The loft runs straight between the two rings; the skull's front is piecewise straight too, with a knee between them, so scan.
+  let cross = a.y
+  while (cross < b.y && frontOf(a) + (frontOf(b) - frontOf(a)) * ((cross - a.y) / (b.y - a.y)) < skullFront(cross, 0)) cross += 0.0001
+  near(cross, HAIRLINE.y, 0.0005, 'the hairline is where the cap\'s front crosses the skull\'s')
+  // The temple: at the eyes' height the cap's and the skull's rings are equally wide at z = temple; the cap is wider behind it, the skull ahead.
+  const eyeY = 1.68
+  const capEye = cap.rings.find((r) => r.y === eyeY)!, skullEye = skull.rings.find((r) => r.y === eyeY)!
+  const halfWidth = (r: R, z: number) => r.rx * Math.sqrt(Math.max(0, 1 - ((z - (r.z ?? 0)) / (r.rz ?? r.rx)) ** 2))
+  near(halfWidth(capEye, HAIRLINE.temple), halfWidth(skullEye, HAIRLINE.temple), 0.001, 'the temple')
+  assert.ok(halfWidth(capEye, HAIRLINE.temple - 0.03) > halfWidth(skullEye, HAIRLINE.temple - 0.03) + 0.002, 'hair behind the temple')
+  assert.ok(halfWidth(capEye, HAIRLINE.temple + 0.03) < halfWidth(skullEye, HAIRLINE.temple + 0.03) - 0.002, 'face ahead of it')
+  assert.ok(bob.rings.every((r) => r.y < HAIRLINE.y), 'the whole bob is under the hairline')
+  assert.ok(bob.rings.every((r) => r.y > 1.575), 'and hemmed above the chin')
+  // The card's rings carry the depth: hair under the hairline is 0 from the front and 3 from the side, where its front edge stops at the temple.
+  for (const side of [false, true]) {
+    const rings = faceRings(0, SHAPE_NEUTRAL, FACE_NEUTRAL, side)
+    const under = rings.filter((r) => (r.piece === PIECE.HAIR_CAP || r.piece === PIECE.BOB) && r.y < HAIRLINE.y)
+    assert.equal(under.length, 3 + bob.rings.length)
+    for (const r of under) assert.equal(r.depth, side ? 3 : 0, `${side ? 'side' : 'front'} ${r.y}`)
+    for (const r of rings.filter((r) => r.piece === PIECE.HAIR_CAP && r.y >= HAIRLINE.y)) assert.equal(r.depth, 3)
+    for (const r of rings.filter((r) => r.piece === PIECE.LONG_HAIR || r.piece === PIECE.BUN)) assert.equal(r.depth, 0)
+    for (const r of rings.filter((r) => r.piece === PIECE.FACE || r.piece === PIECE.GLASSES)) assert.ok(r.depth === 4 || (r.depth === 2 && r.slot === SLOT.SKIN && r.piece === PIECE.FACE), `a feature at depth ${r.depth}`)
+    assert.ok(rings.some((r) => r.depth === 2), 'the ears')
+    for (const r of rings.filter((r) => r.tube === 0)) assert.equal(r.depth, 1, 'the skull')
+    if (side) {
+      for (const r of under) assert.ok(r.right <= HAIRLINE.temple + 1e-9, `the hair stops at the temple at ${r.y} (${r.right})`)
+      for (const r of under.filter((r) => r.piece === PIECE.HAIR_CAP)) near(r.right, HAIRLINE.temple, 1e-9, `the cap reaches the temple at ${r.y}`)
+      const crown = rings.find((r) => r.piece === PIECE.HAIR_CAP && r.y >= HAIRLINE.y)!
+      assert.ok(crown.right > HAIRLINE.temple + 0.03, 'above the hairline the cap reaches the forehead')
+    } else {
+      const skullAt = (y: number) => rings.find((r) => r.tube === 0 && Math.abs(r.y - y) < 1e-9)!
+      assert.ok(under.every((r) => r.right > 0.085), 'the cap and the bob show beside the head')
+      assert.ok(under.filter((r) => r.piece === PIECE.HAIR_CAP).every((r) => r.right < skullAt(1.68).right + 0.02), 'by a little')
+    }
+  }
+  // The body's silhouette carries the same depths (one ringEdges).
+  const body = silhouetteRings(0, SHAPE_NEUTRAL, false)
+  assert.ok(body.some((r) => r.piece === PIECE.HAIR_CAP && r.depth === 0) && body.some((r) => r.piece === PIECE.HAIR_CAP && r.depth === 3))
+  assert.ok(body.filter((r) => r.piece === PIECE.NONE && r.tube > 0).every((r) => r.depth === 1), 'the body at 1')
+})
+
 // --- The WGSL --------------------------------------------------------------------------------------------------
 
-test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow and wrist as their drop from the shoulder), nine functions, one call for the position and the normal', () => {
+test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow and wrist as their drop from the shoulder), ten functions, one call for the position and the normal, the face shaped on the head alone', () => {
   const lit = (n: number): string => (Number.isInteger(n) ? `${n}.0` : `${n}`)
   const flat = (name: string, o: unknown, out: [string, number][] = []): [string, number][] => {
     if (typeof o === 'number') out.push([name, o])
     else for (const [k, v] of Object.entries(o as object)) flat(`${name}.${k}`, v, out)
     return out
   }
-  const carried = [...flat('LANDMARK', LANDMARK), ...flat('MORPH', MORPH), ...flat('REGION', REGION), ...flat('LIMB_GIRTH', LIMB_GIRTH), ...flat('WALK', WALK)]
-    .filter(([name]) => name !== 'LANDMARK.elbow' && name !== 'LANDMARK.wrist')
+  const carried = [...flat('LANDMARK', LANDMARK), ...flat('MORPH', MORPH), ...flat('REGION', REGION), ...flat('LIMB_GIRTH', LIMB_GIRTH), ...flat('WALK', WALK), ...flat('FACE', FACE)]
+    .filter(([name]) => name !== 'LANDMARK.elbow' && name !== 'LANDMARK.wrist' && name !== 'FACE.nose.rootY' && name !== 'FACE.clear')
   for (const [name, v] of carried) assert.ok(BODY_WGSL.includes(lit(v)), `${name} = ${lit(v)} in the WGSL`)
   assert.ok(BODY_WGSL.includes(`shoulderY - ${lit(LANDMARK.shoulder - LANDMARK.elbow)}`), 'the elbow hangs its drop under the shoulder')
   assert.ok(BODY_WGSL.includes(`shoulderY - ${lit(LANDMARK.shoulder - LANDMARK.wrist)}`), 'the wrist too')
   assert.doesNotMatch(BODY_WGSL, /undefined|NaN|\[object/, 'every interpolation is a number')
-  assert.deepEqual([...BODY_WGSL.matchAll(/^fn (\w+)\(/gm)].map((m) => m[1]), ['bodyRotX', 'bodyRotY', 'bodyRotAxis', 'bodyHat', 'bodyHeightMap', 'bodySlope', 'bodyMorph', 'bodyBone', 'bodyVertex'])
-  assert.ok(BODY_WGSL.includes('fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, agent: vec4f, motion: vec4f, pose: vec4f, stance: vec4f, morphA: vec4f, morphB: vec4f, t: f32) -> mat3x3f'))
+  assert.deepEqual([...BODY_WGSL.matchAll(/^fn (\w+)\(/gm)].map((m) => m[1]), ['bodyRotX', 'bodyRotY', 'bodyRotAxis', 'bodyHat', 'bodyHeightMap', 'bodySlope', 'bodyFace', 'bodyMorph', 'bodyBone', 'bodyVertex'])
+  assert.ok(BODY_WGSL.includes('fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: vec4f, motion: vec4f, pose: vec4f, stance: vec4f, morphA: vec4f, morphB: vec4f, faceA: vec4f, faceB: vec4f, t: f32) -> mat3x3f'))
   assert.ok(BODY_WGSL.includes('fn bodyMorph(p: vec3f, n: vec3f, bone: u32, m: vec4f, fD: f32, fLegs: f32, fTrunk: f32) -> mat3x3f'))
-  assert.equal((BODY_WGSL.match(/-> mat3x3f/g) ?? []).length, 6, 'the rotations, the morph, the bone chain and the vertex each carry a position and a normal')
+  assert.ok(BODY_WGSL.includes('fn bodyFace(p: vec3f, n: vec3f, face: vec2f, fa: vec4f, fb: vec4f) -> mat3x3f'))
+  assert.equal((BODY_WGSL.match(/-> mat3x3f/g) ?? []).length, 7, 'the rotations, the face, the morph, the bone chain and the vertex each carry a position and a normal')
   assert.ok(BODY_WGSL.includes('return mat3x3f(world, normalize('), 'the world position and a unit normal')
   for (const piece of ['mask', 'holdingCup', 'carryingBag']) assert.ok(BODY_WGSL.includes(piece), piece)
+  // The face is shaped before the body sliders, on the head bone, where the vertex names a region; the regions in
+  // humanoid.ts's order.
+  assert.match(BODY_WGSL, /if \(bone0 == 2u && face\.x > 0\.5\) \{\n\s*let shaped = bodyFace\(v, n, face, faceA, faceB\);/)
+  assert.equal(BONE.HEAD, 2)
+  for (const [name, r] of Object.entries(FACE_REGION)) if (r > 0) assert.ok(BODY_WGSL.includes(`region == ${r}u`), `${name} is region ${r} in the WGSL`)
+  assert.ok(BODY_WGSL.includes('let rest = bodyMorph(v0, n0, bone0, m, fD, fLegs, fTrunk);'), 'the morph takes the shaped point')
+  // Every call in the text is an include of its caller (transitively), so three writes each function once per shader.
+  const parts = new Map([...BODY_WGSL.split(/(?=^fn )/m)].filter((p) => p.startsWith('fn ')).map((p) => [p.match(/^fn (\w+)/)![1], p]))
+  const reach = (name: string, seen = new Set<string>()): Set<string> => {
+    for (const inc of BODY_INCLUDES[name] ?? []) if (!seen.has(inc)) { seen.add(inc); reach(inc, seen) }
+    return seen
+  }
+  for (const [name, body] of parts) {
+    const calls = new Set([...body.replace(/^fn \w+\([^)]*\)[^{]*\{/, '').matchAll(/\b(body\w+)\(/g)].map((m) => m[1]).filter((c) => c !== name))
+    const included = reach(name)
+    for (const c of calls) assert.ok(included.has(c), `${name} calls ${c}, which BODY_INCLUDES does not reach from it`)
+    for (const inc of BODY_INCLUDES[name] ?? []) assert.ok(parts.has(inc), `${name} includes ${inc}, which is no function`)
+  }
   const src = read('./crowdBody.ts')
   assert.match(src, /^(?:\/\/[^\n]*\n)*\/\*\*\n \* Why does this file exist\?[\s\S]*What breaks if it is removed\?/, 'the header')
-  assert.match(src, /import \{ HEIGHT_BASE, LANDMARK, LIMB_GIRTH, MORPH, REGION, WALK \} from '\.\/humanoid\.ts'/)
-  assert.match(src, /export const bodyVertex = fn\('bodyVertex', \[heightMapFn, morphFn, boneFn, rotAxis\]\)/)
+  assert.match(src, /import \{ FACE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, MORPH, REGION, WALK \} from '\.\/humanoid\.ts'/)
+  assert.match(src, /export const bodyVertex = fn\('bodyVertex'\)/)
   assert.doesNotMatch(src, /from 'three\/webgpu'|three\/src/, 'nodes only: no renderer')
   assert.equal(statureFactor(HEIGHT_BASE), 1)
   assert.equal(statureFactor(HEIGHT_BASE * 2), 2)
 })
 
-test('crowd.ts: the geometry is humanoid.ts\'s mesh with its rig and skin attributes, and the vertex stage is one bodyVertex call whose columns are the position and the normal', () => {
+test('crowd.ts: the geometry is humanoid.ts\'s mesh with its rig, skin and face attributes, and the vertex stage is one bodyVertex call whose columns are the position and the normal', () => {
   const crowd = read('./crowd.ts')
   assert.match(crowd, /import \{ bodyVertex \} from '\.\/crowdBody\.ts'/)
   assert.match(crowd, /return geometryOf\(humanoidMesh\(v, detailed\)\)/)
   assert.match(crowd, /g\.setAttribute\('rig', new Float32BufferAttribute\(mesh\.rig, 3\)\)/)
   assert.match(crowd, /g\.setAttribute\('skin', new Float32BufferAttribute\(mesh\.skin, 2\)\)/)
+  assert.match(crowd, /g\.setAttribute\('face', new Float32BufferAttribute\(mesh\.face, 2\)\)/, 'every body carries the face column (zero off the head)')
   assert.match(crowd, /g\.setIndex\(new Uint32BufferAttribute\(mesh\.index, 1\)\)/)
   assert.match(crowd, /const g = bodyGeometry\(v, lod === 0\)/, 'the far body past the lod cut')
-  assert.match(crowd, /const rig = attribute\('rig', 'vec3'\)\n\s*const skin = attribute\('skin', 'vec2'\)/)
-  assert.match(crowd, /const skinned = \(bodyVertex\(positionLocal, normalLocal, rig, skin, agent, motion, pose, stance, morphA, morphB, time\) as unknown as Mat3\)\.toVar\(\)/)
+  assert.match(crowd, /this\.material\(buffers, lod \* quota \* VARIANTS \+ v \* quota, v, lod === 0\)/, 'the near material alone shapes a face')
+  assert.match(crowd, /const rig = attribute\('rig', 'vec3'\)\n\s*const skin = attribute\('skin', 'vec2'\)\n\s*const face = attribute\('face', 'vec2'\)/)
+  assert.match(crowd, /if \(near\) \{\n\s*If\(rig\.x\.greaterThan\(BONE\.HEAD - 0\.5\)\.and\(rig\.x\.lessThan\(BONE\.HEAD \+ 0\.5\)\), \(\) => \{/, 'the face hashes run for the head alone')
+  assert.match(crowd, /const skinned = \(bodyVertex\(positionLocal, normalLocal, rig, skin, face, agent, motion, pose, stance, morphA, morphB, faceA, faceB, time\) as unknown as Mat3\)\.toVar\(\)/)
   assert.match(crowd, /normalLocal\.assign\(skinned\.element\(uint\(1\)\)\)/)
   assert.match(crowd, /const body = skinned\.element\(uint\(0\)\)/)
   assert.match(crowd, /export const VARIANT_NAMES = BODY_NAMES/)
