@@ -25,7 +25,7 @@ import { memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, use
 import { flushSync } from 'react-dom'
 import { BRAND } from '../../brand.ts'
 import { offlineBridge, type TerminalBridge } from './bridge.ts'
-import { actEventLines, commonPrefix, complete, continuationPrompt, formatStats, isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type Line, type ReplSession } from './commands.ts'
+import { actEventLines, commonPrefix, complete, continuationPrompt, isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type Line, type LiveFrame, type ReplSession } from './commands.ts'
 
 const MAX_ROWS = 600
 const MAX_HISTORY = 200
@@ -131,7 +131,7 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
   const [value, setValue] = useState('')
   const [sel, setSel] = useState<readonly [number, number]>([0, 0])
   const [focused, setFocused] = useState(false)
-  /** The current `stats` frame while a live view runs, else null. */
+  /** The current frame of a live view (`stats`, `topic watch`) while one runs, else null. */
   const [live, setLive] = useState<readonly string[] | null>(null)
   /** Answers streaming in (`ask`), shown live under the scrollback until their final lines replace them. */
   const [streams, setStreams] = useState<readonly Streaming[]>([])
@@ -146,6 +146,8 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
   const stick = useRef(true)
   const caretTo = useRef<number | null>(null)
   const liveFrame = useRef<readonly string[] | null>(null)
+  /** How the running live view draws its next frame from the bridge (commands.ts LiveFrame), while one runs. */
+  const liveDraw = useRef<LiveFrame | null>(null)
   const openRef = useRef(false)
   const reported = useRef(false)
   const mounted = useRef(true)
@@ -200,6 +202,7 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
     const frame = liveFrame.current
     if (!frame) return
     liveFrame.current = null
+    liveDraw.current = null
     setLive(null)
     append(frame.map((text) => ({ kind: 'out', text })))
   }, [append])
@@ -259,18 +262,21 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
     return () => window.removeEventListener('keydown', onKey, true)
   }, [stopLive])
 
-  // Live `stats`: redraw in place ~4×/s while open. Paused (not ended) while the console is hidden.
+  // A live view (`stats`, `topic watch`): redrawn in place ~4×/s while open, by the command's own frame function over
+  // the bridge. Paused (not ended) while the console is hidden.
   const isLive = live !== null
   useEffect(() => {
     if (!open || !isLive) return
     const id = window.setInterval(() => {
+      const draw = liveDraw.current
+      if (!draw) return
       try {
-        const frame = formatStats((bridgeRef.current ?? OFFLINE).stats())
+        const frame = draw(bridgeRef.current ?? OFFLINE)
         liveFrame.current = frame
         setLive(frame)
       } catch (e) {
         stopLive()
-        append([{ kind: 'err', text: `stats: ${message(e)}` }])
+        append([{ kind: 'err', text: `live: ${message(e)}` }])
       }
     }, LIVE_MS)
     return () => window.clearInterval(id)
@@ -331,6 +337,7 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
     else append([{ kind: 'cmd', text: line }, ...(r.live ? [] : r.lines)])
     if (r.live) {
       liveFrame.current = r.lines.map((l) => l.text)
+      liveDraw.current = r.live
       setLive(liveFrame.current)
     }
     if (r.stream && r.pending) {

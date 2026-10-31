@@ -938,7 +938,7 @@ const SCENARIOS = {
         const hud = (name) => { const e = document.querySelector(\`[data-hud="\${name}"]\`); return e && shown(e) ? box(e) : null }
         const panels = [...document.querySelectorAll('[data-hud="panel"]')].filter(shown).map((e) => ({ text: e.textContent.trim().slice(0, 24), ...box(e) }))
         const parts = pill ? [...pill.querySelectorAll('button')].filter(shown).map(box) : []
-        return { w: innerWidth, h: innerHeight, zone: zone ? box(zone) : null, buttons, chip: pill && shown(pill) ? box(pill) : null, parts, minimap: hud('minimap'), speed: hud('speed'), panels }
+        return { w: innerWidth, h: innerHeight, zone: zone ? box(zone) : null, buttons, chip: pill && shown(pill) ? box(pill) : null, parts, minimap: hud('minimap'), speed: hud('speed'), panels, verdict: layer ? layer.getAttribute('data-touch-layout') : null }
       })()`
       const meets = (a, b) => a.l < b.r - 1 && b.l < a.r - 1 && a.t < b.b - 1 && b.t < a.b - 1
       const inside = (a, w, h) => a.l >= -1 && a.t >= -1 && a.r <= w + 1 && a.b <= h + 1
@@ -955,6 +955,9 @@ const SCENARIOS = {
             const L = await p.eval(LAYOUT)
             const at = `${width}x${height}`
             if (!L.zone || L.w !== width) { bad.push(`${at}: no stick zone or the size did not take`); continue }
+            // The overlay's own judge (src/04_Connect_Hardware/touchLayout.ts): finger-sized, on the size ladder, clear of each
+            // other and of the system's swipe bands at the sides.
+            if (L.verdict !== 'valid') bad.push(`${at}: the overlay judges its layout ${L.verdict ?? 'not at all'}`)
             for (const b of L.buttons) {
               if (!inside(b, L.w, L.h)) bad.push(`${at}: ${b.name} off screen`)
               if (meets(b, L.zone)) bad.push(`${at}: ${b.name} over the stick`)
@@ -1002,7 +1005,7 @@ const SCENARIOS = {
         }
         await p.b.send('Emulation.setDeviceMetricsOverride', { width: IPHONE.width, height: IPHONE.height, deviceScaleFactor: 1, mobile: true, screenOrientation: { type: 'landscapePrimary', angle: 90 } })
         await p.frames(3)
-        check(bad.length === 0, `phone: ${mode}, at ${views.length} phone and tablet views, every control is on screen and clear of the others, the stick, the speedometer, Sloane's chip and her card, the chip clear of the HUD, and the Menu opens inside the screen`, bad.slice(0, 24).join('; '))
+        check(bad.length === 0, `phone: ${mode}, at ${views.length} phone and tablet views, every control is on screen and clear of the others, the stick, the speedometer, Sloane's chip and her card, the chip clear of the HUD, the overlay's own judge says valid, and the Menu opens inside the screen`, bad.slice(0, 24).join('; '))
       }
       await layouts('on foot')
       // The Menu opens with the other thumb on the stick, as Ping and Run do (a browser makes no click of a tap then).

@@ -33,6 +33,28 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   under Node in both passes with rain mode (within the shader budget), look v2 round trips, upgrades and codes, the
   wiring and the air gap. The body's appearance and its cost on a real GPU are not yet confirmed: it has been looked
   at on a software WebGPU adapter and in CI's browser screenshots only.
+- **A scored device resolver, and the touch overlay judged by its own rule book.** `04_Connect_Hardware/devices.ts`
+  names the profile of every input device from whatever a browser gives: seventeen profiles (DualSense and DualSense
+  Edge over USB and over Bluetooth, the DualShock 4, the letters-layout pads of two console makers, Valve's and
+  Logitech's pads, any standard-mapped pad, the three layouts a pad without the mapping is read by, a tracked
+  controller, a gaze-and-pinch headset and a tracked hand, and `unknown`), resolved in stages that each score their
+  candidate: the USB ids and the bus (100, plus 5 on a bus-specific profile; through the Gamepad API the bus is
+  unknown and the line says so), a CRC-16/CCITT-FALSE fingerprint of the pad's name for an id without numbers (80),
+  the standard mapping (70), a headset source's own words (60), the layout a pad shows (40; the guess from its axis
+  count, 35, until the mapper has watched it), and the never-null fallback (0). The glyph family it reports is
+  `gamepad.ts`'s for the same id, so a HUD hint and a `hal` line never disagree; `hal` prints each pad's profile,
+  score and how it was found, e.g. `[dualsense-bluetooth 105 (by id, bluetooth 054c:0ce6)]`. `touchLayout.ts` is the
+  overlay's rule book: an eight-rung size ladder from the 48 px a finger needs (Material's 48 dp, above Apple's 44 pt)
+  to the stick's zone, in px or in rem where a phone scales its text, 8 px between buttons, no two over each other,
+  and a 24 px band at the left and right screen edges, where a phone's system takes a swipe inward as "back", that no
+  button and not the stick's base, at rest or under a thumb, may reach into. After every layout the
+  overlay measures what it drew and writes the verdict into `data-touch-layout`, which the browser smoke test reads at
+  all fourteen phone and tablet views, on foot and at the wheel. To keep out of the band the button cluster now
+  stands 24 px from the right edge (16 before), and at the wheel in landscape under 600 px across the tap row closes
+  up to 8 px gaps so it ends clear of the stick. Every held button is owned by the finger that pressed it: a second
+  finger landing on the brake neither presses it again nor, lifting, lets it go. Resolver and judge are pure and
+  proved in Node (19 tests); the profiles' hardware facts are the Linux kernel's tables and have not been seen on a
+  physical pad in this environment.
 
 - **The trains, drones and planes are drawn, and VTOLs fly between rooftop pads.** The scheduled craft the realm has
   run since Phase 7.3 are on the page (`craftView.ts`): the three train sets as three cars each on the elevated loop,
@@ -56,6 +78,18 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `ACTION` line that asks for one is refused before any model is involved; and the asset gate's four forbidden words
   are all in the conduct lexicon, so an ask about one is not engaged with. A new optional piece or activity has to be
   added to that test by hand, as a 14A decision.
+- **The unified namespace (`topic`).** Every reading the city already produces is published, each HUD tick, into an
+  in-page topic bus in the ISA-95 shape `Enterprise/JCS/Site/AgentCity/Area/{District}/Line/{Subsystem}/Cell/{Entity}/
+  {Tag}` (`05_Observe_Environment/namespace.ts`): the frame, the physics realm, the crowd, the fleet and its signals,
+  every vehicle's pose (64 at most), the kernel's laws and the Ring-0 audit, the quality governor, the clock, the
+  player, the hardware bus, the network session and the visit, under the district the player stands in. Topics are
+  retained with a sequence number and a tick, read by filter (`+` one level, `#` the rest, as MQTT spells them), and
+  the bus keeps a deterministic head digest (FNV-1a and the OS kernels' mixer) over everything retained. The console
+  reads it, read-only, through four formatted readers on the bridge: `topic` (the status line and the root's
+  children), `topic list [<filter>]`, `topic get <topic>`, `topic tree [<prefix>]`, and `topic watch [<filter>]`, a
+  live view like `stats`; `~` stands for the root. The HUD readout shows the topic count. Nothing is transmitted: the
+  bus is a model in the page, shaped so a later phase can put the same topics on a broker. The terminal's live view is
+  now drawn by the command's own frame function, so `stats` and `topic watch` share one path.
 - **Peak, a tier above Ultra for big GPUs.** Tier 5, outside the tier table like Lite, so every existing tier number
   and automatic range stays as it was. It draws Ultra at 1.25 times the resolution on each side (about 1.56 times the
   pixels), held within the device's largest texture, which also fixes `?scale=2` on a very wide window at any tier;

@@ -15,7 +15,7 @@
  * every pad would merge into one body again.
  */
 import { clampPitch, type Action } from './input.ts'
-import { createAnalog, isUsablePad, PAD_EDGE, PadLook, PadMapper, type Analog, type PadFamily } from './gamepad.ts'
+import { createAnalog, isUsablePad, PAD_EDGE, PadLook, PadMapper, type Analog, type PadFamily, type GenericLayout } from './gamepad.ts'
 import type { GamepadLike } from './web-hardware.d.ts'
 
 /** Seats at the table: player 1 at seat 0. */
@@ -179,6 +179,11 @@ export class PadSeat implements PlayerIntent {
   lastLook = -1e9
   readonly analog: Analog = createAnalog()
   private readonly mapper = new PadMapper()
+
+  /** The layout this seat's mapper settled on for a pad read by position (gamepad.ts GenericPads.layoutOf). */
+  layoutOf(index: number): GenericLayout | null {
+    return this.mapper.generic.layoutOf(index)
+  }
   private readonly padLook = new PadLook()
   private readonly lookStep = { yaw: 0, pitch: 0 }
   private readonly queued = new Set<Action>()
