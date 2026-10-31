@@ -35,6 +35,9 @@ import { Fleet, type Person, type Vehicle } from './vehicles.ts'
 import { exitPoint, HELD_CARS } from './carRig.ts'
 import { TrackFleet } from './trackFleet.ts'
 import { RagdollRealm } from './ragdollRealm.ts'
+import { JointRealm } from './jointRealm.ts'
+import { JOINT_SLOT } from './jointBridge.ts'
+import { MAX_ROBOTS } from '../04_Connect_Hardware/jointState.ts'
 import { buildTrackNetwork } from '../06_Make_Decisions/tracks.ts'
 import { streetCapacity, streetNetwork, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { AGENTS_RANGE, MAX_CARS, PEDESTRIAN_MAX_SPEED, type CrowdSensor, type Summon } from '../03_Spawn_Agents/crowdSensor.ts'
@@ -163,6 +166,10 @@ export class SimCore {
   readonly #sanctuary: Sanctuary
   /** The ragdoll balance machine over the pedestrians near the operator (ragdoll on, in the city, with a crowd), or null. */
   readonly #realm: RagdollRealm | null
+  /** The robot bodies of the joint bridge (jointRealm.ts): built, driven and read back here, outside the Ring-0 audit by construction. */
+  readonly #robots: JointRealm
+  /** The robot bodies' slots as this step left them (jointBridge.ts JOINT_SLOT), copied into the state or the joint buffer. */
+  readonly #robotSlots = new Float32Array(MAX_ROBOTS * JOINT_SLOT.words)
   /** Centred on the city, or on a region with a slab that holds it (and a margin). */
   readonly #auditor: Ring0Auditor
   readonly #debug: boolean
@@ -249,6 +256,7 @@ export class SimCore {
     for (const a of this.#avatars) this.#sanctuary.register(a.person)
     // The ragdoll realm registers its wards after the avatars (ward k is player k; a rig's come later, by index).
     this.#realm = o.ragdoll === true && !r && crowd ? new RagdollRealm(physics, this.#sanctuary, o.seed, crowd.agentCount) : null
+    this.#robots = new JointRealm(physics.world)
     const players = this.#avatars.length
     this.#driving = this.#avatars.map(() => null)
     this.#wish = this.#avatars.map(() => ({ x: 0, z: 0 }))
@@ -378,6 +386,7 @@ export class SimCore {
     let haptics: Haptics = { trigger: 0, limited: false, thump: false }
     let craftOut: Float32Array | null = null
     let rigsOut: Float32Array | null = null
+    let robotsOut: Float32Array | null = null
     let wheels: WheelsState | null = null
     // A crowd that can no longer see anyone leaves the Bouncer blind to pedestrians: that is a broken kernel.
     if (this.#panic === null && this.#crowd?.lost) this.halt(`Sensing Failure: pedestrian sensing stopped (${this.#crowd.lost}).`)
@@ -396,6 +405,8 @@ export class SimCore {
           this.noteRejected(message(e))
         }
       }
+      // The robot bodies take this step's setpoints (or go on holding) before the substeps drive them.
+      this.#robots.tend(this.#simTime)
       const fleet = this.#fleet, avatars = this.#avatars, driving = this.#driving
 
       // Everyone the First Law protects, as the fleet will see them this step: every avatar on foot, exactly.
@@ -467,6 +478,8 @@ export class SimCore {
         // The rigs' gains, shields and nudges, then their powered joints.
         this.#realm?.drive(h, nudges)
         fleet.updateControllers(h)
+        // The robot bodies' servos (never a throw: a body gone wrong leaves the pool and is counted below).
+        this.#robots.drive(h, this.#simTime)
         // The odometer: how far each car can have driven since any crowd reading (the speed at the substep's
         // start never undercounts a braking car).
         for (let i = 0; i < this.#odo.length; i++) this.#odo[i] += Math.abs(fleet.speed(fleet.vehicles[i])) * h
@@ -481,6 +494,9 @@ export class SimCore {
         this.#stepCrowd(dt)
         // The rigs as the audit checked them: packed only now, from a realm still running.
         if (this.#realm && rigs) rigsOut = this.#realm.write(rigs)
+        // The robot bodies' joints and poses, in their slots; a body that left the pool on its own is a counted rejection.
+        for (const why of this.#robots.takeLost()) this.noteRejected(why)
+        if (this.#robots.count > 0) robotsOut = this.#robotSlots.subarray(0, this.#robots.write(this.#robotSlots) * JOINT_SLOT.words)
       }
     }
     this.#fleet.writePoses(poses)
@@ -513,6 +529,7 @@ export class SimCore {
       crowdFrame: this.#crowd && this.#panic === null ? this.#crowd.takeFrame() : null,
       craft: this.#panic === null ? craftOut : null,
       rigs: this.#panic === null ? rigsOut : null,
+      robots: this.#panic === null ? robotsOut : null,
       recruits: this.#recruits.map((r): RecruitView => ({
         agent: r.agent, serial: r.serial, skill: r.skill, state: r.arrivedAt >= 0 ? 'Active' : 'Interviewing', arrived: r.arrivedAt >= 0,
         skills: [...r.skills], distance: r.distance, x: r.x, z: r.z,
@@ -701,6 +718,22 @@ export class SimCore {
         // Out of another car first (stopped where it is), then into this one, in the room's state.
         if (cur) this.#interact(0, true)
         this.#seat(0, v, true, cmd.state)
+        return
+      }
+      case 'robotSpawn': {
+        this.#robots.spawn(cmd.id, cmd.manifest, finite(cmd.x, NaN), finite(cmd.y, NaN), finite(cmd.z, NaN), finite(cmd.heading, NaN))
+        return
+      }
+      case 'robotRemove': {
+        this.#robots.remove(cmd.id)
+        return
+      }
+      case 'robotTargets': {
+        this.#robots.targets(cmd.id, cmd.seq, cmd.q, cmd.qd, cmd.tau, this.#simTime)
+        return
+      }
+      case 'robotMode': {
+        this.#robots.mode(cmd.id, cmd.mode, cmd.tauMs, cmd.delaySteps)
         return
       }
       case 'reset': {

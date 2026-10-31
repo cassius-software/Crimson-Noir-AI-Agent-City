@@ -70,6 +70,12 @@ const ALLOWED: Record<string, { line: RegExp; guard: RegExp | null }[]> = {
     { line: /new WebSocket\(url, protocols\)/, guard: /\bnetServer\(url\)/ },
     { line: /typeof RTCPeerConnection === 'undefined'/, guard: null },
   ],
+  // The robot bridge's one socket (to the loopback relay, a URL netServer admits) and its one fetch (a URDF served on
+  // this machine, under the gate's wrapper).
+  '04_Connect_Hardware/robotLink.ts': [
+    { line: /new WebSocket\(url, protocols\)/, guard: /\bnetServer\(url\)/ },
+    { line: /fetch\(u, init\)/, guard: /\bloopbackFetch\(/ },
+  ],
 }
 
 /** The text of the function enclosing line `i`: from the nearest line above that opens one (an arrow, `function`, or a method) down to `i`. */
@@ -258,6 +264,18 @@ test('the replication core takes its 14A verdicts from conduct.ts screen, and th
       '../07_Execute_Actions/physics.ts', '../07_Execute_Actions/simProtocol.ts',
     ],
     'plane.node.ts': ['../07_Execute_Actions/simProtocol.ts', './replication.ts'],
+    // The joint bridge's codecs are pure: Sparkplug B over the bridge's own vocabulary, and MQTT 3.1.1 bytes with no
+    // import at all. Only the relay speaks them; the page never opens a broker.
+    'sparkplug.ts': ['../04_Connect_Hardware/jointState.ts'],
+    'mqttCodec.ts': [],
+    // The robot relay (Phase 20): the second module that serves, reusing the room host's frames and tokens, judging
+    // every manifest, frame and setpoint with the hardware stage's own judges, never the realm.
+    'robotRelay.node.ts': [
+      'node:crypto', 'node:http', 'node:net', 'node:url', '../04_Connect_Hardware/jointState.ts', '../04_Connect_Hardware/urdf.ts',
+      '../04_Connect_Hardware/peripheralPolicy.ts', './replication.node.ts', './sparkplug.ts', './sparkplugHost.node.ts',
+    ],
+    // Its Sparkplug B host application: one node:net socket to the broker the operator named, the two codecs, nothing else.
+    'sparkplugHost.node.ts': ['node:crypto', 'node:net', './mqttCodec.ts', './sparkplug.ts'],
     // The telemetry pipeline (Phase 18) is pure: frames, digests and the per-node hash chain; it opens nothing and
     // reaches no realm. Its links are whatever carries a frame (the fuzz drives it through a chaotic one in memory).
     'telemetry.ts': ['../02_Define_The_Rules/integrity.ts'],
@@ -266,13 +284,20 @@ test('the replication core takes its 14A verdicts from conduct.ts screen, and th
     const text = readFileSync(join(SRC, '10_Network', file), 'utf8')
     assert.doesNotMatch(text, /\bimport\s*\(|\brequire\s*\(/, `${file}: dynamic import`)
     const specs = specifiers(text)
-    assert.ok(specs.length > 0, `${file}: imports parsed`)
+    // A file allowed no import at all (the MQTT codec) is checked to import nothing; every other file must parse to some.
+    if (list.length === 0) assert.deepEqual(specs, [], `${file} imports nothing`)
+    else assert.ok(specs.length > 0, `${file}: imports parsed`)
     for (const spec of specs) assert.ok(list.includes(spec), `${file} imports '${spec}'`)
     const realms = file === 'mirror.node.ts' || file === 'garage.node.ts' ? ['simCore', 'vehicles', 'laws'] : ['simCore', 'vehicles', 'laws', 'ring0', 'physics']
     for (const realm of realms) assert.ok(!specs.some((s) => s.includes(realm)), `${file} reaches the realm (${realm})`)
   }
   // Every source of the stage is in the list above (or is a test).
   for (const f of readdirSync(join(SRC, '10_Network'))) if (!f.endsWith('.test.ts')) assert.ok(f in allowed, `10_Network/${f} has no import allowlist`)
+  // The relay and its broker door open no socket of their own but the broker's: never a WebSocket or a fetch.
+  for (const f of ['robotRelay.node.ts', 'sparkplugHost.node.ts']) {
+    const text = code(readFileSync(join(SRC, '10_Network', f), 'utf8'))
+    assert.doesNotMatch(text, /\bnew WebSocket\b|\bfetch\(/, `${f} opens a connection of its own`)
+  }
   // The ledger door only answers: neither of its files can open a connection of its own.
   for (const f of ['ledger.ts', 'ledger.node.ts']) {
     const text = code(readFileSync(join(SRC, '10_Network', f), 'utf8'))

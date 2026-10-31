@@ -16,6 +16,7 @@
  * What breaks if it is removed? The terminal has nothing to observe or tune and does not compile.
  */
 import type { HalDevice } from '../../04_Connect_Hardware/hal.ts'
+import type { RobotRow } from '../../04_Connect_Hardware/robotLink.ts'
 import type { LawText } from '../../02_Define_The_Rules/laws.ts'
 import type { CameraStats, KernelStats, NetReport, QualityState, RecordingState, SipocSnapshot } from '../../05_Observe_Environment/telemetry.ts'
 import type { RecorderSource } from '../../05_Observe_Environment/recorder.ts'
@@ -29,7 +30,7 @@ import type { Swarm } from '../../08_Swarm/orchestrator.ts'
 import type { NoirTables } from './noirscript/index.ts'
 
 export type {
-  HalDevice, LawText, ActBy, ActEnd, ActEvent, ActsBridge, AskResult, ExecResult, GatedAsk, GatedRun, GatedSay, GateTether, MindStatus, PendingAct, Piece,
+  HalDevice, RobotRow, LawText, ActBy, ActEnd, ActEvent, ActsBridge, AskResult, ExecResult, GatedAsk, GatedRun, GatedSay, GateTether, MindStatus, PendingAct, Piece,
   RunResult, RunState, SayResult, VoiceStatus, HarnessReport, RecorderSource, RecordingState, NetReport, LookChange,
 }
 
@@ -391,6 +392,8 @@ export interface TerminalBridge {
   memory?: MemoryBridge
   /** Absent until the host has attached its network client (the terminal then says so). */
   net?: NetBridge
+  /** Absent in the console shell (no physics realm to hold a robot's body). */
+  robot?: RobotConsole
   /** Absent until the host keeps a look for the player (the terminal then says so). */
   look?: LookBridge
   /** Absent when the host cannot keep a model file in this page (the terminal then says so). */
@@ -401,6 +404,33 @@ export interface TerminalBridge {
   concierge?: ConciergeBridge
   /** A goal in plain words, planned as Sloane plans one (06_Make_Decisions/intent.ts) with what can be done now done; absent in the console shell. */
   goal?(text: string): GoalPlan
+}
+
+/**
+ * The robots (04_Connect_Hardware/robotLink.ts): physical ones over HAL/1 or the loopback relay, simulated ones from a
+ * URDF file or the built-in demo arm; each may have a body in the physics realm, a twin that follows the robot's
+ * frames or a leader the robot follows, every setpoint out through the peripheral gate (docs/joint-bridge-spec.md).
+ * Every line is for the console; a refusal is a line too (only a broken bridge throws).
+ */
+export interface RobotConsole {
+  list(): RobotRow[]
+  /** Opens the relay's page socket (a ws URL on this machine, the token the relay printed); resolves with the hello's count. */
+  relay(url: string, token: string): Promise<string>
+  relayOff(): string
+  relayStatus(): string
+  /** The body into the realm, at (x, z) or two metres before the operator. */
+  spawn(id: string, x?: number, z?: number): string
+  /** A sim robot from a URDF file served on this machine; resolves with its link and joint count. */
+  urdf(url: string, name?: string): Promise<string>
+  demo(name?: string): string
+  mode(id: string, mode: string): string
+  set(id: string, joint: string, q: number): string
+  /** The handshake against the gate (ARM out, ARMED back); resolves with the outcome. */
+  arm(id: string): Promise<string>
+  disarm(id: string): string
+  /** One joint's step response, armed; resolves with the fit and the twin's new lag. */
+  calibrate(id: string, joint: string): Promise<string>
+  remove(id: string): string
 }
 
 /** What came of a goal: the root the plan answers, each step and its state, and notes for what nothing maps to. */
@@ -497,5 +527,6 @@ export function offlineBridge(brand: TerminalBridge['brand']): TerminalBridge {
     memory: { status: down, ledger: down, forget: down },
     look: { show: down, set: down },
     model: { pick: down, forget: down, load: down, unload: down, gpu: down, log: down },
+    robot: { list: down, relay: down, relayOff: down, relayStatus: down, spawn: down, urdf: down, demo: down, mode: down, set: down, arm: down, disarm: down, calibrate: down, remove: down },
   }
 }

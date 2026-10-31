@@ -125,13 +125,15 @@ Every admission, refusal, arming, disarm and lock is appended to the device's au
 The newest 256 entries are kept per device. A future `hal audit` console command prints it; the `.agv` recorder can
 carry it per frame.
 
-## 8. Where it plugs in (future work)
+## 8. Where it plugs in
 
-1. `lineLink.ts`: parse `CAPS`, `ARMED` and `BEAT` after `READY`, and add `sendLine` for `ARM`, `CMD` and `DISARM`.
-   The gate stays out of the link.
-2. `hal.ts`: keep one `PolicyState` per device, and run `watchdog()` on the HAL tick. Subscribe to the engine's
-   Ring-0 panic and to the lease's `abort` event.
-3. The operator bridge: expose `sim.peripherals.command(id, …)`, routed through `admit()` only, with no engine
-   reference, as with `operatorBridge`.
-4. Tests against a mock serial port (as `hal.test.ts` does): a legacy gadget is unchanged, and the full `CAPS`,
-   `ARM`, `CMD` and `DISARM` exchange works.
+The joint bridge (`docs/joint-bridge-spec.md`) is the first user of this gate, for the `joints` command kind:
+
+1. `lineLink.ts` hands every line after `READY` to the bus and sends control lines (`ARM`, `DISARM`) ahead of the one
+   setpoint slot (`JT`, newest wins); the gate stays out of the link.
+2. `hal.ts` parses `CAPS`, `JOINTS`, `JS`, `JA`, `ARMED`, `BEAT` and `DISARM` and keeps no policy state: it is a pipe.
+3. `robotLink.ts` keeps one `PolicyState` per robot, runs `watchdog()` on every realm step, breaks the lease on the
+   operator lock, the tether, a hidden page and the engine's Ring-0 panic, and routes every setpoint through
+   `admit()`; the engine has no other path to a robot.
+4. `hal.test.ts` proves the exchange against a mock serial port (a legacy gadget is unchanged); `robotLink.test.ts`
+   proves the gate around a leader. The `command` kind of §4 has no user yet.

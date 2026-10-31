@@ -15,6 +15,28 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Robots: a joint-state bridge between a robot and the physics realm.** `04_Connect_Hardware/robotLink.ts` is the
+  page's robot bridge: a robot announces a manifest (`04_Connect_Hardware/jointState.ts`, the URDF's own words, read
+  from a file by `urdf.ts`) and sends frames of q, q̇ and τ; the realm builds it a body (`07_Execute_Actions/
+  articulated.ts`: a Rapier chain with a torque-impulse servo at every movable joint, sized from the live subtree
+  inertia, because Rapier's velocity motors leave a steady load uncorrected; `jointRealm.ts` holds up to four with a
+  twin filter whose time constant and delay a calibration measured, or a hold) and publishes every body's joints and
+  link poses into one shared joint buffer (`jointBridge.ts`, a lock-free seqlock the page reads without a copy; a
+  cloned array where SharedArrayBuffer is missing). Three doors: HAL/1 over Web Serial or Bluetooth LE (`lineLink.ts`
+  and `hal.ts` gain `CAPS`, `JOINTS`, `JS`, `JA`, `ARMED`, `BEAT`, `DISARM` in and `ARM`, `DISARM`, `JT` out), a loopback
+  relay (`10_Network/robotRelay.node.ts`, `npm run serve:robots`: the page on one WebSocket with a page token and a
+  loopback Origin, robots as peers on another, every setpoint judged a second time, one arming page at a time) that
+  is also a Sparkplug B host application over MQTT when a broker is named (`sparkplugHost.node.ts`, over the codecs
+  `sparkplug.ts` and `mqttCodec.ts`, no MQTT package), and `tools/robot/sim-arm.mjs`, a simulated robot peer that
+  keeps the device hold rule. Every setpoint leaves the page through the peripheral gate (`peripheralPolicy.ts`'s
+  new `joints` command kind: the `ARM` / `ARMED` handshake, the lease broken by the operator lock, a 12 m tether, a
+  hidden page or a Ring-0 panic, the heartbeat watchdog, 20 a second, a 200 ms time to live). The console's new
+  `robot` command (list, demo, urdf, spawn, mode, set, arm, disarm, calibrate, remove, relay), a `Robots` HUD line and
+  the `Hardware/Bus/robots` topic; the manual's **Robots (the joint bridge)** and `docs/joint-bridge-spec.md`. Proved
+  in Node against fakes, the shipped simulated arm end to end through the real relay, and an MQTT broker the tests
+  play; **never run against a physical robot, a real broker or a browser's serial port** (said in the manual and the
+  specification). The realm's step order, the Ring-0 audit and the network room are unchanged; the bodies carry the
+  rigs' collision groups (`ROBOT_GROUPS`, the same bits), so no robot is a vehicle or a pedestrian to the audit.
 - **Headsets: the city on WebXR over WebGPU.** `07_Execute_Actions/xrSession.ts` asks the browser for an
   `immersive-vr` or `immersive-ar` session with the `webgpu` feature through three's `renderer.xr` and its
   `XRGPUBinding`, synchronously inside the console's new `xr [vr|ar|off]` or the touch menu's new **Headset** item (a

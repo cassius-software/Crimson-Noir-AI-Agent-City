@@ -24,7 +24,7 @@ import {
 import {
   offlineBridge, ring0Stats, type ActEnd, type ActEvent, type ActsBridge, type AskResult, type GatedAsk, type GatedRun, type GatedSay, type HalDevice, type LookBridge, type LookChange,
   type MemoryBridge, type ModelBridge, type NetBridge, type NetReport, type OperatorBridge, type PendingAct, type Piece, type PingBridge, type PingPick, type PingPoint, type RecordBridge,
-  type RecruitBridge, type Ring0Stats, type SayResult, type TerminalBridge, type TopicBridge, type AgentBridge, type ConciergeBridge, type FeaturesBridge, type EliteBridge,
+  type RecruitBridge, type Ring0Stats, type RobotConsole, type RobotRow, type SayResult, type TerminalBridge, type TopicBridge, type AgentBridge, type ConciergeBridge, type FeaturesBridge, type EliteBridge,
 } from './bridge.ts'
 import { SKILLS } from '../../03_Spawn_Agents/skills.ts'
 import { LOOK_BODIES, LOOK_PRESETS, LOOK_SLOTS } from '../../03_Spawn_Agents/look.ts'
@@ -48,7 +48,7 @@ const LAWS = [
 ] as const
 
 const CORE_NAMES = [
-  'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'time', 'audio', 'ghost', 'rain', 'xr', 'render', 'captions', 'ping', 'look', 'agent', 'sloane', 'goal', 'hal', 'recruit', 'memory', 'clear', 'history', 'echo',
+  'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'time', 'audio', 'ghost', 'rain', 'xr', 'render', 'captions', 'ping', 'look', 'agent', 'sloane', 'goal', 'hal', 'robot', 'recruit', 'memory', 'clear', 'history', 'echo',
   'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'noir', 'exit',
 ]
 const OPERATOR_NAMES = ['operator', 'ring0', 'run', 'ask', 'swarm', 'act', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
@@ -518,6 +518,33 @@ interface FakeNet extends NetBridge {
   joinResult: Promise<string> | (() => never)
 }
 
+interface FakeRobot extends RobotConsole {
+  rows: RobotRow[]
+  armResult: Promise<string> | (() => never)
+}
+
+/** Logs to the bridge's shared `calls` (as 'robot <verb>'): the list, the demo, the relay's status and its off may run while locked. */
+function fakeRobot(calls: string[]): FakeRobot {
+  const r: FakeRobot = {
+    rows: [],
+    armResult: Promise.resolve('sim:demo: armed (sim)'),
+    list: () => { calls.push('robot list'); return r.rows },
+    relay: (url, token) => { calls.push(`robot relay ${url} ${token}`); return Promise.resolve(`joined ${url}: 1 robot(s)`) },
+    relayOff: () => { calls.push('robot relayOff'); return 'relay: left ws://127.0.0.1:8790/' },
+    relayStatus: () => { calls.push('robot relayStatus'); return 'relay: off (robot relay <ws url> <token>)' },
+    spawn: (id, x, z) => { calls.push(`robot spawn ${id} ${x ?? '-'} ${z ?? '-'}`); return `${id}: body 1 at 10, 22 (3 joints, mode sim)` },
+    urdf: (url, name) => { calls.push(`robot urdf ${url} ${name ?? '-'}`); return Promise.resolve(`sim:${name ?? 'arm'}: 4 links, 3 movable joints`) },
+    demo: (name) => { calls.push(`robot demo ${name ?? '-'}`); return `sim:${name ?? 'demo'}: 4 links, 3 movable joints` },
+    mode: (id, mode) => { calls.push(`robot mode ${id} ${mode}`); return `${id}: mode ${mode}` },
+    set: (id, joint, q) => { calls.push(`robot set ${id} ${joint} ${q}`); return `${id}: ${joint} → ${q}` },
+    arm: (id) => { calls.push(`robot arm ${id}`); return typeof r.armResult === 'function' ? r.armResult() : r.armResult },
+    disarm: (id) => { calls.push(`robot disarm ${id}`); return `${id}: disarmed` },
+    calibrate: (id, joint) => { calls.push(`robot calibrate ${id} ${joint}`); return Promise.resolve(`${id}: ${joint}: delay 17 ms (return trip 0 ms), τ 120 ms, gain 1, rmse 0.0001 · twin: 1 step(s) back, τ 120 ms`) },
+    remove: (id) => { calls.push(`robot remove ${id}`); return `${id}: removed` },
+  }
+  return r
+}
+
 /** Logs to the bridge's shared `calls` (as 'net <verb>'): only `status` may be read while locked. */
 function fakeNet(calls: string[]): FakeNet {
   const n: FakeNet = {
@@ -565,6 +592,7 @@ interface Fake extends TerminalBridge {
   ping: FakePing
   look: FakeLook
   net: FakeNet
+  robot: FakeRobot
   model: FakeModel
   hours: number
   q: QualityState
@@ -618,6 +646,7 @@ function fake(): Fake {
     recruit: undefined as unknown as FakeRecruit,
     look: undefined as unknown as FakeLook,
     net: undefined as unknown as FakeNet,
+    robot: undefined as unknown as FakeRobot,
     model: undefined as unknown as FakeModel,
   }
   f.ping = fakePing(f.calls)
@@ -628,6 +657,7 @@ function fake(): Fake {
   f.memory = fakeMemory(f.calls)
   f.look = fakeLook(f.calls)
   f.net = fakeNet(f.calls)
+  f.robot = fakeRobot(f.calls)
   f.model = fakeModel(f.calls)
   return f
 }
@@ -1032,7 +1062,7 @@ test('clear, history, whoami, version, uname and exit', () => {
 test('the brand always comes from the bridge', () => {
   const b = unlocked()
   const everything = ['help', 'stats', 'laws', 'kernel', 'quality', 'time', 'audio', 'hal', 'version', 'uname -a', 'api', 'harness', 'record', 'sim', 'operator',
-    'render', 'captions', 'ping', 'look', 'boot', 'map', 'r0', 'noir', 'net', 'recruit']
+    'render', 'captions', 'ping', 'look', 'boot', 'map', 'r0', 'noir', 'net', 'recruit', 'robot', 'robot demo', 'robot relay']
     .flatMap((c) => texts(run(c, b, [])))
     .concat(motd(BRAND).map((l) => l.text))
     .join('\n')
@@ -1049,7 +1079,8 @@ test('air gap: a failing or offline bridge becomes error lines, never an excepti
     'swarm', 'swarm status', 'swarm roles', 'swarm guardrails', 'swarm audit', 'swarm plan x', 'swarm run x', 'swarm stop',
     'say voice v', 'say stop', 'memory', 'memory 7', 'memory forget 7', 'api', 'api clock', 'get', 'set physics.car.power 1', 'harness', 'harness list', 'harness run sanctuary', 'sim',
     'record', 'record status', 'record start', 'record start camera', 'record stop', 'render', 'render off', 'captions', 'captions on', 'ping', 'ping go', 'ping clear',
-    'look', 'look show 7', 'look reset', 'look top 2', 'recruit', 'recruit rally 7', 'recruit rally 7 1 2', 'topic', 'topic list', 'topic list ~/#', 'topic get ~/x', 'topic tree', 'topic watch']) {
+    'look', 'look show 7', 'look reset', 'look top 2', 'recruit', 'recruit rally 7', 'recruit rally 7 1 2', 'topic', 'topic list', 'topic list ~/#', 'topic get ~/x', 'topic tree', 'topic watch',
+    'robot', 'robot demo', 'robot relay', 'robot relay off', 'robot mode sim:demo sim', 'robot set sim:demo elbow 1', 'robot disarm sim:demo', 'robot remove sim:demo']) {
     const r = run(c, off, [])
     assert.ok(isErr(r), `${c} should report an error offline`)
     assert.match(texts(r)[0], /engine not running$/)
@@ -1109,12 +1140,16 @@ test('air gap: while locked, across every command and completion, the only knobs
     'noir print(crowd.n);', 'noir print(tune("car.power", 2.0));']
   for (const l of sweep) void run(l, b, ['help'])
   const touched = new Set(b.calls.map((c) => c.split(' ')[0]))
-  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'features', 'ghost', 'look', 'memory', 'model', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'setClock', 'soa', 'stats', 'topics', 'xr'])
+  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'features', 'ghost', 'look', 'memory', 'model', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'robot', 'setClock', 'soa', 'stats', 'topics', 'xr'])
   // The feature inspector is only ever read while locked: no bias, clamp, release or reset reaches the tier.
   const featureVerbs = new Set(b.calls.filter((c) => c.startsWith('features ')).map((c) => c.split(' ')[1]))
   assert.deepEqual([...featureVerbs].sort(), ['about', 'explain', 'lines', 'prompt'])
   // NoirScript reads the city's columns as copies, through the one reader, and nothing else: a write intrinsic fails in the VM.
   assert.deepEqual([...new Set(b.calls.filter((c) => c.startsWith('soa ')))], ['soa tables'])
+  // The robots while locked: the list, the demo (a manifest kept in this page, no body), the relay's status and its off
+  // (a leave); no body enters the realm, nothing is armed, no socket opens, no URDF is read.
+  const robotVerbs = new Set(b.calls.filter((c) => c.startsWith('robot ')).map((c) => c.split(' ')[1]))
+  assert.deepEqual([...robotVerbs].sort(), ['demo', 'list', 'relayOff', 'relayStatus'])
   // The namespace is only ever read while locked (it has no write), and only through its four readers.
   const topicVerbs = new Set(b.calls.filter((c) => c.startsWith('topics ')).map((c) => c.split(' ')[1]))
   assert.deepEqual([...topicVerbs].sort(), ['children', 'get', 'list', 'status'])
@@ -1166,7 +1201,7 @@ test('air gap: while locked, across every command and completion, the only knobs
 
 test('air gap: the terminal files reach nothing at runtime beyond React, the brand and each other', () => {
   const allowedTypes = [
-    '../../02_Define_The_Rules/laws.ts', '../../03_Spawn_Agents/look.ts', '../../04_Connect_Hardware/hal.ts', '../../05_Observe_Environment/telemetry.ts',
+    '../../02_Define_The_Rules/laws.ts', '../../03_Spawn_Agents/look.ts', '../../04_Connect_Hardware/hal.ts', '../../04_Connect_Hardware/robotLink.ts', '../../05_Observe_Environment/telemetry.ts',
     '../../05_Observe_Environment/recorder.ts', '../operator.ts', '../harness.ts', '../../08_Swarm/orchestrator.ts',
   ]
   // repl.ts is the console's own machine: a runtime import, and the one terminal module that imports nothing itself.
@@ -2825,6 +2860,70 @@ test('hal pair hid inside the Windows app: no picker is promised, and an empty l
   assert.equal(only(r).text, 'hal: asking the app for its controllers...')
   assert.deepEqual(await r.pending, [{ kind: 'sys', text: 'hal: no controller plugged in or paired' }])
   assert.deepEqual(await run('hal pair ble', b, []).pending, [{ kind: 'sys', text: 'hal: no device selected' }], 'the other buses keep the browser\'s picker')
+})
+
+test('robot: the list, demo, mode, set, disarm, remove and the relay status at any time; relay, spawn, urdf, arm and calibrate are the operator\'s; the async ones report later; a malformed line touches nothing', async () => {
+  const b = fake()
+  assert.deepEqual(kinds(run('robot', b, [])), ['sys'])
+  assert.match(texts(run('robot', b, []))[0], /^robot: none \(robot demo; robot urdf <url>; a HAL\/1 robot on the bus; robot relay <ws url> <token>\)$/)
+  b.robot.rows = [
+    { id: 'sim:demo', door: 'sim', name: 'demo', mode: 'sim', joints: 3, armed: true, body: 1, frameAgeMs: null, stale: false, calibrated: true, refusals: 0 },
+    { id: 'hal:7', door: 'hal', name: 'arm', mode: 'twin', joints: 6, armed: false, body: null, frameAgeMs: 812, stale: true, calibrated: false, refusals: 2 },
+  ]
+  const rows = texts(run('robot', b, []))
+  assert.equal(rows.length, 3)
+  assert.match(rows[0], /^\s+ID\s+DOOR\s+MODE\s+JOINTS\s+NAME\s+STATE$/)
+  assert.match(rows[1], /^\s+sim:demo\s+sim\s+sim\s+3\s+demo\s+armed, body 1, calibrated$/)
+  assert.match(rows[2], /^\s+hal:7\s+hal\s+twin\s+6\s+arm\s+no body, frames stale, 2 refused$/)
+  assert.deepEqual(texts(run('robot demo', b, [])), ['sim:demo: 4 links, 3 movable joints'])
+  assert.deepEqual(texts(run('robot demo arm2', b, [])), ['sim:arm2: 4 links, 3 movable joints'])
+  assert.deepEqual(texts(run('robot mode sim:demo sim', b, [])), ['sim:demo: mode sim'])
+  assert.deepEqual(texts(run('robot set sim:demo elbow 1.25', b, [])), ['sim:demo: elbow → 1.25'])
+  assert.deepEqual(texts(run('robot disarm sim:demo', b, [])), ['sim:demo: disarmed'])
+  assert.deepEqual(texts(run('robot remove sim:demo', b, [])), ['sim:demo: removed'])
+  assert.deepEqual(texts(run('robot relay', b, [])), ['relay: off (robot relay <ws url> <token>)'])
+  assert.deepEqual(texts(run('robot relay off', b, [])), ['relay: left ws://127.0.0.1:8790/'])
+  // Locked: the five that reach the realm, a socket, a file or a device are refused before the bridge is touched.
+  const before = b.calls.length
+  for (const l of ['robot spawn sim:demo', 'robot spawn sim:demo 1 2', 'robot urdf http://127.0.0.1:8790/arm.urdf', 'robot arm sim:demo', 'robot calibrate sim:demo elbow', 'robot relay ws://127.0.0.1:8790/ tok']) {
+    const r = run(l, b, [])
+    assert.ok(isErr(r), l)
+    assert.match(texts(r)[0], /^robot: locked/)
+    assert.equal(r.pending, undefined)
+  }
+  assert.equal(b.calls.length, before, 'locked: the bridge is not touched')
+  b.operator.unlock()
+  assert.deepEqual(texts(run('robot spawn sim:demo', b, [])), ['sim:demo: body 1 at 10, 22 (3 joints, mode sim)'])
+  assert.deepEqual(texts(run('robot spawn sim:demo 1 -2.5', b, [])), ['sim:demo: body 1 at 10, 22 (3 joints, mode sim)'])
+  assert.deepEqual(b.calls.slice(before), ['robot spawn sim:demo - -', 'robot spawn sim:demo 1 -2.5'])
+  const arm = run('robot arm sim:demo', b, [])
+  assert.deepEqual(arm.lines, [{ kind: 'sys', text: 'robot: arming sim:demo...' }])
+  assert.deepEqual(await arm.pending, [{ kind: 'out', text: 'robot: sim:demo: armed (sim)' }])
+  const cal = run('robot calibrate sim:demo elbow', b, [])
+  assert.deepEqual(cal.lines, [{ kind: 'sys', text: 'robot: calibrating elbow of sim:demo (a hold, then one small step)...' }])
+  assert.match((await cal.pending)![0].text, /^robot: sim:demo: elbow: delay 17 ms/)
+  const urdf = run('robot urdf http://127.0.0.1:8790/arm.urdf arm', b, [])
+  assert.deepEqual(urdf.lines, [{ kind: 'sys', text: 'robot: reading http://127.0.0.1:8790/arm.urdf...' }])
+  assert.deepEqual(await urdf.pending, [{ kind: 'out', text: 'robot: sim:arm: 4 links, 3 movable joints' }])
+  const relay = run('robot relay ws://127.0.0.1:8790/ tok', b, [])
+  assert.deepEqual(relay.lines, [{ kind: 'sys', text: 'robot: joining ws://127.0.0.1:8790/...' }])
+  assert.deepEqual(await relay.pending, [{ kind: 'out', text: 'robot: joined ws://127.0.0.1:8790/: 1 robot(s)' }])
+  // A refusal the bridge rejects with becomes an error line.
+  b.robot.armResult = Promise.reject(new Error('arm refused: no-operator-tier (operator unlock)'))
+  assert.deepEqual(await run('robot arm sim:demo', b, []).pending, [{ kind: 'err', text: 'robot: arm refused: no-operator-tier (operator unlock)' }])
+  // Malformed lines: the usage, and nothing touched.
+  const n = b.calls.length
+  for (const l of ['robot nothing', 'robot spawn', 'robot spawn sim:demo 1', 'robot spawn sim:demo x y', 'robot set sim:demo elbow', 'robot set sim:demo elbow many', 'robot mode sim:demo',
+    'robot arm', 'robot arm a b', 'robot disarm', 'robot calibrate sim:demo', 'robot remove', 'robot urdf', 'robot urdf file:///arm.urdf', 'robot relay ws://127.0.0.1:8790/', 'robot relay http://127.0.0.1:8790/ tok',
+    'robot relay off now', 'robot demo a b']) {
+    const bad = run(l, b, [])
+    assert.ok(isErr(bad), l)
+    assert.match(texts(bad).join('\n'), /usage: robot \[relay/, l)
+  }
+  assert.equal(b.calls.length, n, 'a refused line touches nothing')
+  // A bridge without robots (the console shell) says so.
+  const bare = { ...fake(), robot: undefined }
+  assert.match(texts(run('robot', bare, []))[0], /robots are not available/)
 })
 
 test('xr: the status line at once; vr, ar and off reach the bridge inside the keypress and report later; a bridge throw is an error line; anything else is refused', async () => {
