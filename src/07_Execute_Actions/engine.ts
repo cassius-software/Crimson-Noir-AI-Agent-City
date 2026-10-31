@@ -51,7 +51,7 @@ import { SIGNAL, signalFor, walkAllowed } from '../02_Define_The_Rules/civic.ts'
 import { THREE_LAWS } from '../02_Define_The_Rules/laws.ts'
 import { kernelPanic } from '../02_Define_The_Rules/ring0Panic.ts'
 import { CrowdView } from '../03_Spawn_Agents/crowd.ts'
-import { heightScale, LOOK_NONE, packLook, unpackLook, validateLook, type Look } from '../03_Spawn_Agents/look.ts'
+import { heightScale, LOOK_NONE, packFace, packFigure, packLook, unpackLook, validateLook, type Look } from '../03_Spawn_Agents/look.ts'
 import type { ConciergeOut } from './onboarding/speaker.ts'
 import { CONCIERGE_NAME as CONCIERGE_LABEL } from './onboarding/script.ts'
 import { packFrustumPlanes, PLAYER_INDEX, type CrowdStats, type CullSettings } from '../03_Spawn_Agents/crowdCompute.ts'
@@ -468,6 +468,9 @@ export class Engine {
   /** The crowd's look words on the GPU (three's buffer for CrowdView.look) and the page's copy of them (setLook, lookOf). */
   private readonly crowdLook: GPUBuffer
   private readonly lookWords: Uint32Array
+  /** The figure and face words beside them (CrowdView.figure, a pair per agent: the body sliders and the face of a worn look), written the same way. */
+  private readonly crowdFigure: GPUBuffer
+  private readonly figureWords: Uint32Array
   private readonly poleOut = new Int32Array(DISSOLVE.maxPoles)
   private readonly carOut = new Int32Array(DISSOLVE.maxCars)
   private readonly overlapOut: Int32Array
@@ -626,7 +629,7 @@ export class Engine {
     canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; craftView: CraftView | null; rigView: RigView; profile: DeviceProfile
     post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; crowdFrameSeconds: UniformNode<'float', number>; ghost: GhostView
     options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]
-    crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; netView: NetView
+    crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; crowdFigure: GPUBuffer; netView: NetView
   }) {
     this.places = p.places
     this.rooms = p.rooms
@@ -656,6 +659,8 @@ export class Engine {
     this.crowdDissolve = p.crowdDissolve
     this.crowdLook = p.crowdLook
     this.lookWords = new Uint32Array(p.options.agents)
+    this.crowdFigure = p.crowdFigure
+    this.figureWords = new Uint32Array(p.options.agents * 2)
     this.overlapOut = new Int32Array(p.sim.meta.suv.length)
     this.options = p.options
     this.quality = p.quality
@@ -875,6 +880,7 @@ export class Engine {
       // looks (03_Spawn_Agents/look.ts): every body material reads the attribute, so the draws allocated it as well;
       // the cull reads each agent's body from it, setLook writes it.
       const crowdLook = gpuBufferOf(gpu.renderer, view0.look)
+      const crowdFigure = gpuBufferOf(gpu.renderer, view0.figure)
       const crowd = await CrowdCull.create(gpu.device, {
         pos: gpuBufferOf(gpu.renderer, view0.pos),
         vel: gpuBufferOf(gpu.renderer, view0.vel),
@@ -897,6 +903,7 @@ export class Engine {
         // The code dissolve's crowd amounts: allocated by the draws above like the frame's buffers, written the same way.
         crowdDissolve: gpuBufferOf(gpu.renderer, view0.dissolve),
         crowdLook,
+        crowdFigure,
         netView,
         craftView,
       })
@@ -1042,11 +1049,11 @@ export class Engine {
 
   /**
    * Dresses an agent (0 is the player's own body; a recruit by their pedestrian number) in a look out of the crowd's
-   * closed wardrobe (03_Spawn_Agents/look.ts), or null to dress them as the hash does again. The word goes to the
-   * crowd's page-only storage attribute the way the dissolve amounts do (queue.writeBuffer; view-only: nothing
-   * reaches the physics realm, nobody moves for it). Refused (false) for an agent outside the crowd, a look outside
-   * the wardrobe, or once the city has stopped; the eye never sees its own body, but its shadow, the cull's body
-   * choice and every other viewer do.
+   * closed wardrobe (03_Spawn_Agents/look.ts), or null to dress them as the hash does again. The look word, and the
+   * figure word with the face word beside it, go to the crowd's page-only storage attributes the way the dissolve
+   * amounts do (queue.writeBuffer; view-only: nothing reaches the physics realm, nobody moves for it). Refused (false)
+   * for an agent outside the crowd, a look outside the wardrobe, or once the city has stopped; the eye never sees its
+   * own body, but its shadow, the cull's body choice and every other viewer do.
    */
   setLook(agent: number, look: Look | null): boolean {
     if (this.halted || this.disposed) return false
@@ -1054,7 +1061,10 @@ export class Engine {
     const word = look === null ? LOOK_NONE : validateLook(look) === null ? -1 : packLook(look)
     if (word < 0) return false
     this.lookWords[agent] = word
+    this.figureWords[agent * 2] = look === null ? 0 : packFigure(look)
+    this.figureWords[agent * 2 + 1] = look === null ? 0 : packFace(look)
     this.gpu.device.queue.writeBuffer(this.crowdLook, agent * 4, this.lookWords, agent, 1)
+    this.gpu.device.queue.writeBuffer(this.crowdFigure, agent * 8, this.figureWords, agent * 2, 2)
     // The player's own body sets the first-person eye: a taller look sees over the crowd, a shorter one looks up at
     // it (head.ts eyeHeightFor; the hash's body keeps the reference eye).
     if (agent === PLAYER_INDEX) this.rig.setEyeHeight(eyeHeightFor(look === null ? 1 : heightScale(look)))
@@ -1064,7 +1074,7 @@ export class Engine {
   /** The look an agent was dressed in (setLook), or null while the hash dresses them (or for no such agent). */
   lookOf(agent: number): Look | null {
     if (!Number.isInteger(agent) || agent < 0 || agent >= this.lookWords.length) return null
-    return unpackLook(this.lookWords[agent])
+    return unpackLook(this.lookWords[agent], this.figureWords[agent * 2], this.figureWords[agent * 2 + 1])
   }
 
   /**

@@ -15,6 +15,45 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **A face for every pedestrian, and hair in five styles.** The head of `src/03_Spawn_Agents/humanoid.ts` is now a
+  twelve-sided skull in regions (chin, jaw, cheekbones, brow line) with features lofted onto its front: two eyes
+  (a white and an iris), two brows, a nose rooted on the skull, the lips, two ears; all written by hand, no imported
+  face, no scanned or generated morph target. Seven face sliders of sixteen steps each (brow, jaw, chin, cheekbones,
+  nose, eyes, lips) move their region alone, in the vertex stage (`crowdBody.ts` `bodyFace`, before the body
+  sliders) and in the card's new face view (front and profile, the head's own rings), with step 8 exactly the base
+  face. An age (eight steps) fades the skin toward its own grey and greys the hair from the middle up; an undertone
+  (neutral, warm, cool, olive) tints the skin in linear light. The hair has five styles (short, long, bob, bun, bald)
+  as pieces of the loft. The look grows to twenty-nine slots and a third packed word (`packFace`: the face sliders
+  and the hair style), carried beside the figure word as a pair in one page-only buffer (`crowd.figure`, now two
+  words per agent) because the vertex stage already binds seven of WebGPU's eight storage buffers; the look word
+  takes the age and the undertone in the bits where the legacy height and build sat, and its bit 6 (long hair) is
+  written from the style. The features are drawn by the near body's eye pass alone: the shadow map and the far body
+  leave them out. Look codes are twenty-one symbols (`XXXXXXX-XXXXXXX-XXXXXXX`); the fifteen-symbol and eight-symbol
+  codes, the stored v2 and v1 records and a roster's old looks are read and upgraded with the base face. The
+  hashed crowd draws its face, age, undertone and hair style from the same chains (`lookFromSeed` reproduces them);
+  the iris stays hashed. The console's `look` takes the new slots; the 14A pin gains the four hair pieces and the
+  face (features, nothing held). Tests: the face arithmetic on the CPU against the shader's text, the features
+  clear of the skull and between the glasses' rims, no flat triangle, the far body faceless, every body material
+  built under Node in both passes, look v3 round trips, upgrades and codes, the wiring and the air gap. The face's
+  appearance on a real GPU is not yet confirmed: software WebGPU and CI's screenshots only.
+- **Smooth, customizable bodies for every pedestrian.** The crowd's four bodies are no longer boxes, cylinders and
+  spheres pushed into each other: `src/03_Spawn_Agents/humanoid.ts` lofts one smooth person from rings over a
+  skeleton of fifteen bones, every vertex tied to two of them, with the four outfits (the jacket hem, the shirt
+  front, the skirt, the tie, long hair, glasses, the bag, the cup) part of the loft, in a near and a far version.
+  Written by hand for this product: no imported mesh, skeleton or morph target. The vertex stage
+  (`src/03_Spawn_Agents/crowdBody.ts`, WGSL built from the same numbers) now bends knees, ankles, elbows and the
+  head from the walk phase, counter-twists the chest, blends each vertex's two bones, and carries the normals
+  through the same arithmetic; the spring-damper tilt, the stature, the heading and the place follow as before.
+  Eight body sliders join the look: height (32 steps, 1.50 m to 2.05 m), mass, muscle, shoulders, hips, leg length
+  and posture (sixteen steps each) and head (eight), packed into a second page-only word per agent (`crowd.figure`,
+  written by `setLook` beside `crowd.look`, never bound by the cull or any simulation pass). The wardrobe card draws
+  a silhouette of the look from the front and from the side, from the body's own rings in the look's colours, and
+  its sliders are sliders; the console's `look` takes the new slots (`look height 1.80`). The first-person eye stands
+  at the look's own eye height. Tests: the mesh (valid, bounded, deterministic, the far body a subset), the sliders'
+  arithmetic on the CPU against the shader's text, the walk, the skinning, the silhouette, every body material built
+  under Node in both passes with rain mode (within the shader budget), look v2 round trips, upgrades and codes, the
+  wiring and the air gap. The body's appearance and its cost on a real GPU are not yet confirmed: it has been looked
+  at on a software WebGPU adapter and in CI's browser screenshots only.
 - **The DualSense's full output report, and the Windows app opening the controller itself.**
   `04_Connect_Hardware/dualsense.ts` now writes the trigger, motor, lightbar and player-LED fields of the 47-byte
   common block as the Linux `hid-playstation` driver and open-source tools lay them out, over USB (report 0x02) and
@@ -428,6 +467,15 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   about 20 minutes. Unverified from the cloud (no GPU): the rooms on screen and the workday at full speed there.
 
 ### Changed
+
+- **Look v2.** A look is twenty slots: `build` is gone, replaced by the eight sliders. A look kept in this browser
+  before (record `v` 1, fourteen slots, the same key), a roster record's look and an eight-symbol look code are
+  upgraded on the way in (height and build carried onto the new sliders, the rest set to the middle); new records
+  are written as `v` 2 and new codes are fifteen symbols, `XXXXX-XXXXX-XXXXX`, with the checksum over both words.
+  Every pedestrian's proportions change: the hashed crowd now draws a stature from a per-body range (men 1.64 m to
+  2.00 m, women 1.55 m to 1.87 m) and every other slider over its whole range, so the street has short and tall,
+  slight and heavy people where it had two scales; the hashed pieces and colours are as they were. `lookFromSeed`
+  mirrors the new draws bit for bit, so the pinned looks of the first agents changed with them.
 
 - **Canned answers say so, and are not remembered.** When no model answers and the script stands in, the console
   prints `ask: no model answered, so the script spoke instead:` and the reason under its words; neither the swarm's

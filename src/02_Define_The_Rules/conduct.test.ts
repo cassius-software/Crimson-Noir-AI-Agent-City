@@ -153,14 +153,18 @@ test('the city is unarmed: 14A says so in its constants, the lexicon refuses eve
   assert.match(readFileSync(`${ROOT}MANUAL.md`, 'utf8'), /There are no weapons and no violence\s+anywhere in the product/)
 })
 
-test('a person may wear or carry nothing but the closed wardrobe: four business bodies, five optional pieces, and every option, preset and console line is unarmed', () => {
+test('a person may wear or carry nothing but the closed wardrobe: four business bodies, nine optional pieces (four of them hair, one the face itself), and every option, preset and console line is unarmed', () => {
   assert.deepEqual([...LOOK_BODIES], ['suit', 'smart casual', 'pantsuit', 'skirt suit'])
-  // The only things drawn on a person beyond their clothes. A new piece is a 14A decision: add it here once it is confirmed unarmed.
-  assert.deepEqual(Object.keys(LOOK_PIECE_BIT), ['tie', 'bag', 'cup', 'longHair', 'glasses'])
+  // The only things drawn on a person beyond their clothes. A new piece is a 14A decision: add it here once it is
+  // confirmed unarmed. The hair cap, the bob and the bun are hair; the face is the features (eyes, brows, nose, lips,
+  // ears) and nothing held.
+  assert.deepEqual(Object.keys(LOOK_PIECE_BIT), ['tie', 'bag', 'cup', 'longHair', 'glasses', 'hairCap', 'bob', 'bun', 'face'])
   assert.deepEqual([...WARDROBE.tie], ['none', 'tie'])
   assert.deepEqual([...WARDROBE.eyewear], ['none', 'glasses'])
   assert.deepEqual([...WARDROBE.bag], ['none', 'bag'])
   assert.deepEqual([...WARDROBE.cup], ['none', 'cup'])
+  assert.deepEqual([...WARDROBE.hairStyle], ['short', 'long', 'bob', 'bun', 'bald'])
+  assert.deepEqual([...WARDROBE.undertone], ['neutral', 'warm', 'cool', 'olive'])
   for (const slot of LOOK_SLOTS) {
     unarmed('a look slot', slot)
     for (let body = 0; body < LOOK_BODIES.length; body++) {
@@ -214,15 +218,15 @@ test('an ACTION line cannot arm anyone: a weapon verb is refused, never proposed
 const UNARMED_SOURCES: readonly string[] = Object.freeze([
   '01_Initialize_World/codeDissolve.ts', '01_Initialize_World/matrixMesh.wgsl', '01_Initialize_World/matrixMode.ts',
   '02_Define_The_Rules/civic.ts',
-  '03_Spawn_Agents/crowd.ts', '03_Spawn_Agents/crowd.wgsl', '03_Spawn_Agents/crowdCompute.ts', '03_Spawn_Agents/crowdCull.ts',
-  '03_Spawn_Agents/crowdSensor.ts', '03_Spawn_Agents/crowdSim.ts', '03_Spawn_Agents/look.ts', '03_Spawn_Agents/ragdoll.ts',
-  '03_Spawn_Agents/ragdollRig.ts', '03_Spawn_Agents/skills.ts',
+  '03_Spawn_Agents/crowd.ts', '03_Spawn_Agents/crowd.wgsl', '03_Spawn_Agents/crowdBody.ts', '03_Spawn_Agents/crowdCompute.ts',
+  '03_Spawn_Agents/crowdCull.ts', '03_Spawn_Agents/crowdSensor.ts', '03_Spawn_Agents/crowdSim.ts', '03_Spawn_Agents/humanoid.ts',
+  '03_Spawn_Agents/look.ts', '03_Spawn_Agents/ragdoll.ts', '03_Spawn_Agents/ragdollRig.ts', '03_Spawn_Agents/skills.ts',
   '06_Make_Decisions/actions.ts', '06_Make_Decisions/intent.ts',
   '07_Execute_Actions/acts.ts', '07_Execute_Actions/car.ts', '07_Execute_Actions/carRig.ts', '07_Execute_Actions/fleetView.ts',
 ])
 
 test('no weapon in the agents\' mesh descriptors, rigs, shaders or action tables, in code or comment', () => {
-  assert.ok(UNARMED_SOURCES.length >= 20)
+  assert.ok(UNARMED_SOURCES.length >= 22)
   for (const rel of UNARMED_SOURCES) {
     const text = readFileSync(`${ROOT}src/${rel}`, 'utf8')
     assert.ok(text.length > 1000, `${rel} is read`)
