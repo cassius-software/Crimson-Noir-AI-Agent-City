@@ -7,7 +7,10 @@
 //! capabilities file admits command by command. On Windows 11 the window asks for Mica behind it, so the frosted
 //! glass bar frosts the desktop where the page is transparent; a Windows that cannot (10, or a build older than
 //! 22000) gets the page's own black and nothing else changes.
+//! On Windows the shell also opens a DualSense for the page (hid.rs), since its web view has no WebHID chooser.
 //! What breaks if it is removed? There is no desktop app; the page is only a file for a browser.
+
+mod hid;
 
 use tauri::Manager;
 
@@ -15,6 +18,8 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(hid::HidState::default())
+        .invoke_handler(tauri::generate_handler![hid::hid_list, hid::hid_open, hid::hid_write, hid::hid_feature, hid::hid_close])
         .setup(|app| {
             let window = app
                 .get_webview_window("main")

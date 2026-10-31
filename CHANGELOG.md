@@ -39,6 +39,30 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   heading; its trip clock ticks and its loop breaker resets as in any tick), and one whose request is declared, in
   a role declared with movement, is never dropped. They run in CI's `kani (core-fuse)` group; the proof stands only
   once that job is green.
+- **The DualSense's full output report, and the Windows app opening the controller itself.**
+  `04_Connect_Hardware/dualsense.ts` now writes the trigger, motor, lightbar and player-LED fields of the 47-byte
+  common block as the Linux `hid-playstation` driver and open-source tools lay them out, over USB (report 0x02) and
+  Bluetooth (report 0x31, sequence, tag and CRC-32): both adaptive triggers with the seven named effects (Off,
+  Feedback, Detent, Vibration, Bow, Galloping, Machine, each a pure writer with its parameters clamped to the
+  controller's ranges), the heavy and light motors in the classic or the 2.21-firmware vibration mode, the lightbar
+  colour, the player LEDs (the five centred patterns, faded, never the instant bit) and the lightbar setup report
+  (the host takes the bar from the pairing animation) once at open, in flight like any report. The driver quantises
+  the wanted state and writes only on change, and a new HAL output set drives it: brake pressure is the left
+  trigger's Feedback resistance as before; the throttle trigger stiffens while the kernel holds the car and snaps
+  with a 30 Hz Vibration at a thump (the First Law taking the car, or a full brake); the lightbar is crimson on the
+  road, amber under a hold and white for the thump's instant; the player LEDs show the split-screen seat the
+  controller drives (seats.ts, handed to the bus by Input), kept when another controller unplugs, every controller
+  player 1 while one seat is in play. Over Bluetooth the DualSense Edge's paddles arrive in the decoded input report
+  (left runs, right pings) and `hal` names them; over USB the browser's pad carries the Edge without them. The
+  Windows app's WebView2 exposes WebHID but no chooser this project could find, so the shell now opens the
+  controller itself: `src-tauri/src/hid.rs` (hidapi over hid.dll, pure Rust) lists, opens, writes and reads a
+  DualSense or DualSense Edge and nothing else, forgets one whose reader ends so a re-plug opens afresh, and
+  `04_Connect_Hardware/nativeHid.ts` presents its five commands in WebHID's own shapes, so the driver and the bus
+  run unchanged inside the app (`hal pair hid` says there that no picker is coming); elsewhere than Windows
+  `hid_list` answers an empty list and the rest an error. Every report is proved byte for byte in Node (golden CRCs,
+  the kernel's bit values), the page side against a fake shell with the real driver end to end (CI; Node 22), and
+  the Rust for the Windows target by `cargo check`; none of it has been tried on a physical DualSense, a physical
+  Windows machine or HD haptics, which ride USB audio and are not claimed.
 
 - **A scored device resolver, and the touch overlay judged by its own rule book.** `04_Connect_Hardware/devices.ts`
   names the profile of every input device from whatever a browser gives: seventeen profiles (DualSense and DualSense
