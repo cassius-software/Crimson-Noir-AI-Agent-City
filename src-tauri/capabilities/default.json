@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "What the page may ask of its own window: the title bar's drag, minimise, maximise and close, and the maximised state it reflects. Nothing else of the host is reachable.",
+  "description": "What the page may ask of its own window: the title bar's drag, minimise, maximise and close, and the maximised state it reflects, plus the events the shell's own commands answer on (core:default). The app's own commands (src/hid.rs, a DualSense and nothing else) are allowed to its one window by Tauri's default for an app that declares no permissions of its own. Nothing else of the host is reachable.",
   "windows": ["main"],
   "permissions": [
     "core:default",

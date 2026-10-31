@@ -22,10 +22,13 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
 
 # Mica behind the frosted glass title bar, Windows 11 only; the call is best effort (src/lib.rs).
 [target.'cfg(windows)'.dependencies]
 window-vibrancy = "0.8"
+# The DualSense over the shell's own HID handle (src/hid.rs): pure Rust over hid.dll, nothing to compile or ship.
+hidapi = { version = "2.6", default-features = false, features = ["windows-native"] }
 
 [profile.release]
 codegen-units = 1

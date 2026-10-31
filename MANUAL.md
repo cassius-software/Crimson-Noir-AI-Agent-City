@@ -1735,12 +1735,30 @@ device the browser granted before. Pairing a new device needs a user gesture, as
 run `hal pair …` in the console.
 
 - **WebHID, DualSense and DualSense Edge.**
-  - Brake pressure, including a First-Law stop, becomes left-trigger resistance.
-  - Rumble pulses while the kernel holds your car.
-  - Supported over USB (report 0x02) and Bluetooth (report 0x31 with CRC-32). The layouts are
-    cross-checked against the Linux `hid-playstation` driver and open-source tools, **not yet
-    verified on physical hardware**.
-  - Trigger effects are reset on exit.
+  - Brake pressure, including a First-Law stop, becomes the left trigger's resistance (the Feedback effect, from
+    the top of the pull).
+  - The throttle trigger stiffens while the kernel holds your car and snaps (a 30 Hz Vibration effect) at a thump,
+    the instant the First Law takes the car or you stand on the brake; the motors rumble at the same moments, in the
+    2.21-firmware vibration mode where the controller has it.
+  - The lightbar is crimson on the road, amber while the kernel holds the car and white for the thump's instant; the
+    player LEDs show the seat the controller drives (see Split screen; player 1 is the middle light), faded in as the
+    console does it. A seat is kept when another controller unplugs; with one seat in play every controller is
+    player 1; a controller whose pad the table has not seated shows no light. Over Bluetooth the seat is the
+    controller's own decoded pad's; over USB it is the browser's pad of the same model, and two identical USB
+    controllers, which no browser id tells apart, pair with their pads in order.
+  - Over Bluetooth, where the driver decodes the input report itself, the DualSense Edge's back paddles reach the
+    game: the left one latches a run, the right one pings. Over USB the browser's own pad carries the Edge, and it
+    has no paddles.
+  - Supported over USB (report 0x02, 47 bytes) and Bluetooth (report 0x31, 77 bytes with a sequence, a tag and
+    CRC-32). The driver writes the trigger, motor, lightbar and player-LED fields of the common block as the Linux
+    `hid-playstation` driver and open-source tools lay them out (the mute LED, LED brightness and power-save fields
+    stay zero), and the seven named trigger effects (Off, Feedback, Detent, Vibration, Bow, Galloping, Machine) are
+    pure writers any future control can use; HD haptics ride the controller's USB audio, not HID, and are not
+    driven. Every byte is cross-checked in Node against those sources, **not yet verified on a physical controller**.
+  - At open the host takes the lightbar from the pairing animation; trigger effects and motors are reset on exit,
+    and stilled while the page is hidden.
+  - In the Windows app the shell opens the controller itself (see The Windows app); the page's code is one and the
+    same.
 - **Web Serial and Web Bluetooth (Nordic UART Service).** These carry `HAL/1`, a line protocol for DIY
   dashboards:
   - The host sends `HELLO <name>/<version>` every 500 ms. The device answers `READY <device-name>`
@@ -2417,7 +2435,8 @@ when a `v*` tag is pushed, puts both on the tag's release beside the OS media.
 - **The window.** It has no system decorations: the page draws the title bar (`src/07_Execute_Actions/TitleBar.tsx`),
   a frosted glass strip in the brand's tokens over a backdrop blur, draggable, with minimise, maximise and close
   through Tauri's window API; the capabilities file (`src-tauri/capabilities/default.json`) admits exactly those
-  commands and nothing else of the host. On Windows 11 the window asks for Mica behind the strip; a Windows that
+  window commands, and the shell's own five controller commands below, and nothing else of the host. On Windows 11
+  the window asks for Mica behind the strip; a Windows that
   cannot keeps the page's own black. The bar mounts only inside the Tauri window (`desktopShell.ts` reads what Tauri
   injects at `window.__TAURI__`); a browser tab renders nothing and lays out as before, and the page bundles no Tauri
   package.
@@ -2425,9 +2444,20 @@ when a `v*` tag is pushed, puts both on the tag's release beside the OS media.
   headers (`app.security.headers` in `tauri.conf.json`), so `crossOriginIsolated` is true and the physics realm and
   the page share one `SharedArrayBuffer` (docs/zero-copy-bridge.md), the same path as `npm run dev`. Should a
   WebView2 ever not isolate, the bridge falls back to its private buffer and nothing else changes.
+- **The controller.** WebView2 exposes WebHID but shows no device chooser this project could find, so a DualSense
+  could never be granted to the page inside the app. The shell opens it instead: `src-tauri/src/hid.rs` (hidapi's
+  pure-Rust Windows backend over `hid.dll`, nothing to install) lists, opens, writes to and reads from a DualSense or
+  DualSense Edge over USB or Bluetooth, and nothing else on the machine; the page (`04_Connect_Hardware/nativeHid.ts`)
+  sees those five commands in WebHID's own shapes, so the driver, the HAL bus and `hal` run exactly as in a browser,
+  with no pairing gesture: a controller plugged in is found at start and every two seconds after, and an unplug is
+  a row; a controller whose reader ends (unplugged, powered off) leaves the shell's table, so plugging it back in
+  opens it afresh. In the app `hal pair hid` shows no picker: it lists what the shell found. Elsewhere than Windows
+  `hid_list` answers an empty list and the other four an error, so the page's code is one and the same. **Not yet
+  tried on a physical Windows machine with a controller**: the Rust is type-checked for the Windows target (the
+  Windows app workflow builds it), the page side is proved against a fake shell with the real driver end to end.
 - **The air gap holds.** The page's policy and its loopback gate are unchanged in the app: Tauri's own IPC fetch is
   refused by the gate like any other host and Tauri falls back to its message channel, which is how the title bar's
-  commands travel. Nothing in the app reaches a host but this machine.
+  and the controller's commands travel. Nothing in the app reaches a host but this machine.
 - **Development.** `npm run app:dev` opens the window over the Vite dev server (`npm run dev` is its
   `beforeDevCommand`). Building needs Rust (1.85 or newer) and, on Windows, the Visual Studio C++ build tools; on
   Linux, `libwebkit2gtk-4.1-dev` and friends. The icon set (`src-tauri/icons/`) is generated from
