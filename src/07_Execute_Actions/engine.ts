@@ -51,7 +51,7 @@ import { SIGNAL, signalFor, walkAllowed } from '../02_Define_The_Rules/civic.ts'
 import { THREE_LAWS } from '../02_Define_The_Rules/laws.ts'
 import { kernelPanic } from '../02_Define_The_Rules/ring0Panic.ts'
 import { CrowdView } from '../03_Spawn_Agents/crowd.ts'
-import { heightScale, LOOK_NONE, packFace, packFigure, packLook, unpackLook, validateLook, type Look } from '../03_Spawn_Agents/look.ts'
+import { heightScale, LOOK_NONE, packFace, packFigure, packLook, packWardrobe, unpackLook, validateLook, type Look } from '../03_Spawn_Agents/look.ts'
 import type { ConciergeOut } from './onboarding/speaker.ts'
 import { CONCIERGE_NAME as CONCIERGE_LABEL } from './onboarding/script.ts'
 import { packFrustumPlanes, PLAYER_INDEX, type CrowdStats, type CullSettings } from '../03_Spawn_Agents/crowdCompute.ts'
@@ -467,7 +467,7 @@ export class Engine {
   /** The crowd's look words on the GPU (three's buffer for CrowdView.look) and the page's copy of them (setLook, lookOf). */
   private readonly crowdLook: GPUBuffer
   private readonly lookWords: Uint32Array
-  /** The figure and face words beside them (CrowdView.figure, a pair per agent: the body sliders and the face of a worn look), written the same way. */
+  /** The figure, face and wardrobe words beside them (CrowdView.figure, four per agent with a spare: the body sliders, the face and the wardrobe of a worn look), written the same way. */
   private readonly crowdFigure: GPUBuffer
   private readonly figureWords: Uint32Array
   private readonly poleOut = new Int32Array(DISSOLVE.maxPoles)
@@ -659,7 +659,7 @@ export class Engine {
     this.crowdLook = p.crowdLook
     this.lookWords = new Uint32Array(p.options.agents)
     this.crowdFigure = p.crowdFigure
-    this.figureWords = new Uint32Array(p.options.agents * 2)
+    this.figureWords = new Uint32Array(p.options.agents * 4)
     this.overlapOut = new Int32Array(p.sim.meta.suv.length)
     this.options = p.options
     this.quality = p.quality
@@ -1060,10 +1060,11 @@ export class Engine {
     const word = look === null ? LOOK_NONE : validateLook(look) === null ? -1 : packLook(look)
     if (word < 0) return false
     this.lookWords[agent] = word
-    this.figureWords[agent * 2] = look === null ? 0 : packFigure(look)
-    this.figureWords[agent * 2 + 1] = look === null ? 0 : packFace(look)
+    this.figureWords[agent * 4] = look === null ? 0 : packFigure(look)
+    this.figureWords[agent * 4 + 1] = look === null ? 0 : packFace(look)
+    this.figureWords[agent * 4 + 2] = look === null ? 0 : packWardrobe(look)
     this.gpu.device.queue.writeBuffer(this.crowdLook, agent * 4, this.lookWords, agent, 1)
-    this.gpu.device.queue.writeBuffer(this.crowdFigure, agent * 8, this.figureWords, agent * 2, 2)
+    this.gpu.device.queue.writeBuffer(this.crowdFigure, agent * 16, this.figureWords, agent * 4, 4)
     // The player's own body sets the first-person eye: a taller look sees over the crowd, a shorter one looks up at
     // it (head.ts eyeHeightFor; the hash's body keeps the reference eye).
     if (agent === PLAYER_INDEX) this.rig.setEyeHeight(eyeHeightFor(look === null ? 1 : heightScale(look)))
@@ -1073,7 +1074,7 @@ export class Engine {
   /** The look an agent was dressed in (setLook), or null while the hash dresses them (or for no such agent). */
   lookOf(agent: number): Look | null {
     if (!Number.isInteger(agent) || agent < 0 || agent >= this.lookWords.length) return null
-    return unpackLook(this.lookWords[agent], this.figureWords[agent * 2], this.figureWords[agent * 2 + 1])
+    return unpackLook(this.lookWords[agent], this.figureWords[agent * 4], this.figureWords[agent * 4 + 1], this.figureWords[agent * 4 + 2])
   }
 
   /**

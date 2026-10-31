@@ -20,12 +20,12 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BODY_NAMES, FACE_NEUTRAL, HEIGHT_BASE, PIECE, SHAPE_NEUTRAL } from './humanoid.ts'
 import {
-  bodyShapeOf, changeLook, describeLook, faceShapeOf, faceValue, formatLookCode, GREY_HAIR, HAIR, hairBits, heightScale, LEGACY_LOOK_FIELD,
+  bodyShapeOf, changeLook, describeLook, faceShapeOf, faceValue, formatLookCode, GREY_HAIR, HAIR, hairBits, heightScale, LAYER, LEGACY_LOOK_FIELD,
   LEGACY_LOOK_SLOTS, LONG_HAIR_BIT, LOOK_BODIES, LOOK_BODY_SLIDERS, LOOK_FACE_SLIDERS, LOOK_FIELD, LOOK_HASH, LOOK_HASHED_COLOUR,
-  LOOK_HASHED_FACE, LOOK_HASHED_HAIR_SPLIT, LOOK_HASHED_SLIDER, LOOK_NONE, LOOK_ODDS, LOOK_PALETTE, LOOK_PIECE_BIT, LOOK_PRESETS,
-  LOOK_SLIDER_MIDDLE, LOOK_SLOTS, LOOK_STATURE, LOOK_V2_SLOTS, lookFromSeed, lookMask, lookOptions, lookPreset, lookSize, lookSwatch,
-  packFace, packFigure, packLook, parseLookCode, shaderHash, sliderValue, statureOf, statureStep, unpackFigureLook, unpackLegacyLook,
-  unpackLook, upgradeFigureLook, upgradeLegacyLook, validateLook, WARDROBE, withLookSlot,
+  LOOK_HASHED_FACE, LOOK_HASHED_HAIR_SPLIT, LOOK_HASHED_LAYER, LOOK_HASHED_SCARF, LOOK_HASHED_SLIDER, LOOK_NONE, LOOK_ODDS, LOOK_PALETTE, LOOK_PIECE_BIT, LOOK_PRESETS,
+  LOOK_SLIDER_MIDDLE, LOOK_SLOTS, LOOK_STATURE, LOOK_V2_SLOTS, LOOK_V3_SLOTS, lookFromSeed, lookMask, lookOptions, lookPreset, lookSize, lookSwatch, matchingSwatch,
+  packFace, packFigure, packLook, packWardrobe, parseLookCode, shaderHash, sliderValue, statureOf, statureStep, unpackFaceLook, unpackFigureLook, unpackLegacyLook,
+  unpackLook, upgradeFaceLook, upgradeFigureLook, upgradeLegacyLook, validateLook, WARDROBE, wardrobeBits, withLookSlot,
   type Look, type LookBody, type LookSlot,
 } from './look.ts'
 
@@ -40,8 +40,8 @@ const zero = (body: LookBody): Look => {
   return out as Look
 }
 const withSlot = (look: Look, slot: LookSlot, v: number): Look => ({ ...look, [slot]: v })
-/** A look's three words. */
-const words = (look: Look): [number, number, number] => [packLook(look), packFigure(look), packFace(look)]
+/** A look's four words. */
+const words = (look: Look): [number, number, number, number] => [packLook(look), packFigure(look), packFace(look), packWardrobe(look)]
 /** A look as it was kept before the figure: the fourteen legacy slots, with the height and build given. */
 const legacyOf = (look: Look, height: number, build: number): Record<string, number> => {
   const out: Record<string, number> = {}
@@ -52,6 +52,12 @@ const legacyOf = (look: Look, height: number, build: number): Record<string, num
 const v2Of = (look: Look): Record<string, number> => {
   const out: Record<string, number> = {}
   for (const s of LOOK_V2_SLOTS) out[s] = s === 'hairStyle' ? Math.min(1, look[s]) : look[s as LookSlot]
+  return out
+}
+/** A look as it was kept before the layers: the twenty-nine slots of v3. */
+const v3Of = (look: Look): Record<string, number> => {
+  const out: Record<string, number> = {}
+  for (const s of LOOK_V3_SLOTS) out[s] = look[s]
   return out
 }
 /** The look word of the layouts before the face: the hair style was bit 6, the legacy height and build the top bits. */
@@ -67,6 +73,8 @@ const oldWordOf = (look: Record<string, number>, slots: readonly string[]): numb
 }
 /** The face slots of an upgraded look: the base face, the middle age, a neutral undertone. */
 const BASE_FACE = Object.freeze({ brow: 8, jaw: 8, chin: 8, cheek: 8, nose: 8, eyes: 8, lips: 8, age: 3, undertone: 0 })
+/** The wardrobe slots of an upgraded look: the jacket, a matching trim, no scarf. */
+const BASE_WARDROBE = Object.freeze({ layer: 0, trim: 0, scarf: 0 })
 
 // --- The catalogue is the crowd's ------------------------------------------------------------------------------
 
@@ -89,7 +97,7 @@ test('the bodies, the piece bits, the grey, the hash chains, the odds, the hashe
   assert.ok(CROWD.includes('export const VARIANT_NAMES = BODY_NAMES'), 'one list of body names')
   assert.deepEqual([...LOOK_BODIES], [...BODY_NAMES])
   assert.deepEqual(WARDROBE.bodies, LOOK_BODIES)
-  assert.deepEqual(LOOK_PIECE_BIT, { tie: PIECE.TIE, bag: PIECE.BAG, cup: PIECE.CUP, longHair: PIECE.LONG_HAIR, glasses: PIECE.GLASSES, hairCap: PIECE.HAIR_CAP, bob: PIECE.BOB, bun: PIECE.BUN, face: PIECE.FACE })
+  assert.deepEqual(LOOK_PIECE_BIT, { tie: PIECE.TIE, bag: PIECE.BAG, cup: PIECE.CUP, longHair: PIECE.LONG_HAIR, glasses: PIECE.GLASSES, hairCap: PIECE.HAIR_CAP, bob: PIECE.BOB, bun: PIECE.BUN, face: PIECE.FACE, coat: PIECE.COAT, scarf: PIECE.SCARF })
   assert.equal(PIECE.NONE, 0)
   assert.ok(CROWD.includes('vec3(0.6, 0.6, 0.58), step(0.9, h(9))'), 'grey hair mix')
   assert.equal(GREY_HAIR, (Math.round(0.6 * 255) << 16) | (Math.round(0.6 * 255) << 8) | Math.round(0.58 * 255))
@@ -109,6 +117,15 @@ test('the bodies, the piece bits, the grey, the hash chains, the odds, the hashe
   assert.ok(CROWD.includes(': past(LOOK_ODDS.bald).oneMinus().mul(float(64).add(notShort.mul(16)))'), 'a man\'s')
   assert.deepEqual([LOOK_ODDS.longHair, LOOK_ODDS.bob, LOOK_ODDS.bun, LOOK_ODDS.bald], [0.35, 0.34, 0.67, 0.96])
   assert.equal(LOOK_HASHED_HAIR_SPLIT, 22)
+  // The wardrobe: the layer and the scarf on the vertex chain's next links, the trim's contrast and the cloths on the fragment chain's.
+  assert.deepEqual([LOOK_HASHED_LAYER, LOOK_HASHED_SCARF], [23, 24])
+  assert.deepEqual([LOOK_ODDS.shirtSleeves, LOOK_ODDS.coat, LOOK_ODDS.scarf, LOOK_ODDS.trim], [0.2, 0.85, 0.88, 0.8])
+  assert.ok(CROWD.includes('const layerLink = h(LOOK_HASHED_LAYER)'))
+  assert.ok(CROWD.includes('select(layerLink.lessThan(LOOK_ODDS.shirtSleeves), uint(LAYER.shirt), select(layerLink.greaterThanEqual(LOOK_ODDS.coat), uint(LAYER.coat), uint(LAYER.jacket)))'))
+  assert.ok(CROWD.includes('const clothAt = (link: F1, n: number) => uint(link.mul(n - 0.001)).add(uint(1))'))
+  assert.ok(CROWD.includes('select(hc(LOOK_HASHED_COLOUR.trim).greaterThanEqual(LOOK_ODDS.trim), clothAt(hc(LOOK_HASHED_COLOUR.trimCloth), PALETTE.trims.length), uint(0))'))
+  assert.ok(CROWD.includes('select(h(LOOK_HASHED_SCARF).greaterThanEqual(LOOK_ODDS.scarf), clothAt(hc(LOOK_HASHED_COLOUR.scarfCloth), PALETTE.scarves.length), uint(0))'))
+  assert.ok(CROWD.includes('const hc = (k: number) => hash(seed.add(k * 7.919))'), 'the colours\' chain in the vertex stage, for the cloths')
   // The hashed figure: the same links of the chain, rounded to the same steps, the stature from this body's range.
   assert.ok(CROWD.includes('const stature = woman ? LOOK_STATURE.woman : LOOK_STATURE.man'))
   assert.ok(CROWD.includes('const hashedStep = (k: number, n: number) => h(k).mul(n).add(0.5).floor()'), 'round(h * n)')
@@ -122,11 +139,13 @@ test('the bodies, the piece bits, the grey, the hash chains, the odds, the hashe
   assert.ok(CROWD.includes('select(custom, stepOf(slot), hashedStep(LOOK_HASHED_FACE[slot], WARDROBE.sliderSteps - 1)).sub(LOOK_SLIDER_MIDDLE.slider).div(LOOK_SLIDER_MIDDLE.slider)'))
   assert.deepEqual(Object.keys(LOOK_HASHED_FACE), [...LOOK_FACE_SLIDERS])
   assert.deepEqual(Object.values(LOOK_HASHED_FACE), [15, 16, 17, 18, 19, 20, 21])
-  const links = [...Object.values(LOOK_HASHED_SLIDER), ...Object.values(LOOK_HASHED_FACE), LOOK_HASHED_HAIR_SPLIT]
+  const links = [...Object.values(LOOK_HASHED_SLIDER), ...Object.values(LOOK_HASHED_FACE), LOOK_HASHED_HAIR_SPLIT, LOOK_HASHED_LAYER, LOOK_HASHED_SCARF]
   assert.equal(new Set(links).size, links.length, 'a link each')
   for (const k of links) assert.ok(k === 7 || k >= 9, `link ${k} is free of the pieces (1-5), the height (6) and the idle phase (8)`)
   // The hashed age, undertone and iris: the fragment chain's free links (1-6 and 9-12 are the colours).
-  assert.deepEqual(LOOK_HASHED_COLOUR, { age: 7, undertone: 8, iris: 13 })
+  assert.deepEqual(LOOK_HASHED_COLOUR, { age: 7, undertone: 8, iris: 13, trim: 14, scarfCloth: 15, trimCloth: 16 })
+  for (const k of Object.values(LOOK_HASHED_COLOUR)) assert.ok(k === 7 || k === 8 || k >= 13, `colour link ${k} is free of the colours (1-6, 9-12)`)
+  assert.equal(new Set(Object.values(LOOK_HASHED_COLOUR)).size, 6)
   assert.ok(CROWD.includes('h(LOOK_HASHED_COLOUR.age).mul(WARDROBE.ageSteps - 1).add(0.5).floor()).div(WARDROBE.ageSteps - 1)'))
   assert.ok(CROWD.includes('uint(h(LOOK_HASHED_COLOUR.undertone).mul(WARDROBE.undertone.length - 0.001))'))
   assert.ok(CROWD.includes('pick(PALETTE.iris, h(LOOK_HASHED_COLOUR.iris))'))
@@ -156,7 +175,7 @@ test('slot sizes: the pinned counts, every colour option a palette swatch, the p
   const common = {
     body: 4, height: 32, mass: 16, muscle: 16, shoulders: 16, hips: 16, legs: 16, posture: 16, head: 8,
     brow: 16, jaw: 16, chin: 16, cheek: 16, nose: 16, eyes: 16, lips: 16,
-    skin: 8, age: 8, undertone: 4, hairStyle: 5, hairColour: 9, tie: 2, eyewear: 2, bag: 2, cup: 2,
+    skin: 8, age: 8, undertone: 4, hairStyle: 5, hairColour: 9, tie: 2, eyewear: 2, bag: 2, cup: 2, layer: 3, trim: 8, scarf: 8,
   }
   assert.deepEqual(sizes(0), { ...common, top: 7, bottom: 8, shirt: 6, shoes: 3 })
   assert.deepEqual(sizes(1), { ...common, top: 7, bottom: 6, shirt: 6, shoes: 4 })
@@ -167,11 +186,19 @@ test('slot sizes: the pinned counts, every colour option a palette swatch, the p
     assert.deepEqual(lookOptions(b, 'skin').map((o) => o.hex), [...LOOK_PALETTE.skin])
     const o = WARDROBE.outfits[b]
     assert.deepEqual(lookOptions(b, 'top').map((x) => x.hex), [...LOOK_PALETTE[o.top]])
+    assert.deepEqual(lookOptions(b, 'top', LAYER.jacket), lookOptions(b, 'top'))
+    assert.deepEqual(lookOptions(b, 'top', LAYER.shirt), lookOptions(b, 'top'), 'under shirt sleeves the jacket keeps its cloths, unseen')
+    assert.deepEqual(lookOptions(b, 'top', LAYER.coat).map((x) => x.hex), LOOK_PALETTE.coats.slice(0, LOOK_PALETTE[o.top].length), 'a coat\'s cloths, as many as the jacket\'s')
+    assert.deepEqual(lookOptions(b, 'layer').map((x) => x.name), ['jacket', 'shirt sleeves', 'coat'])
+    assert.deepEqual(lookOptions(b, 'trim').map((x) => x.hex), [null, ...LOOK_PALETTE.trims])
+    assert.equal(lookOptions(b, 'trim')[0].name, 'matching')
+    assert.deepEqual(lookOptions(b, 'scarf').map((x) => x.hex), [null, ...LOOK_PALETTE.scarves])
+    assert.equal(lookOptions(b, 'scarf')[0].name, 'none')
     assert.deepEqual(lookOptions(b, 'bottom').map((x) => x.hex), [...(o.matching ? [null] : []), ...LOOK_PALETTE[o.bottom]])
     assert.deepEqual(lookOptions(b, 'shirt').map((x) => x.hex), [...LOOK_PALETTE[o.shirt]])
     assert.deepEqual(lookOptions(b, 'shoes').map((x) => x.hex), [...LOOK_PALETTE[o.shoes]])
-    for (const s of ['tie', 'eyewear', 'bag', 'cup', 'hairStyle', 'undertone'] as const) {
-      assert.equal(lookOptions(b, s)[0].name, s === 'hairStyle' ? 'short' : s === 'undertone' ? 'neutral' : 'none')
+    for (const s of ['tie', 'eyewear', 'bag', 'cup', 'hairStyle', 'undertone', 'layer'] as const) {
+      assert.equal(lookOptions(b, s)[0].name, s === 'hairStyle' ? 'short' : s === 'undertone' ? 'neutral' : s === 'layer' ? 'jacket' : 'none')
       assert.ok(lookOptions(b, s).every((x) => x.hex === null))
     }
     assert.deepEqual(lookOptions(b, 'hairStyle').map((x) => x.name), ['short', 'long', 'bob', 'bun', 'bald'])
@@ -181,10 +208,15 @@ test('slot sizes: the pinned counts, every colour option a palette swatch, the p
     assert.deepEqual([lookOptions(b, 'height')[0].name, lookOptions(b, 'height')[31].name], ['1.50 m', '2.05 m'])
     assert.deepEqual([lookOptions(b, 'mass')[0].name, lookOptions(b, 'mass')[15].name, lookOptions(b, 'head')[7].name, lookOptions(b, 'nose')[15].name, lookOptions(b, 'age')[7].name], ['1', '16', '8', '16', '8'])
   }
-  assert.equal(LOOK_SLOTS.length, 29)
+  assert.equal(LOOK_SLOTS.length, 32)
   assert.deepEqual(LOOK_SLOTS.slice(0, 9), ['body', ...LOOK_BODY_SLIDERS])
   assert.deepEqual(LOOK_SLOTS.slice(9, 16), [...LOOK_FACE_SLIDERS])
-  assert.deepEqual([...LOOK_V2_SLOTS], LOOK_SLOTS.filter((s) => !(LOOK_FACE_SLIDERS as readonly string[]).includes(s) && s !== 'age' && s !== 'undertone'))
+  assert.deepEqual(LOOK_SLOTS.slice(19, 29), ['hairStyle', 'hairColour', 'layer', 'top', 'trim', 'bottom', 'shirt', 'shoes', 'tie', 'scarf'], 'the layer before the top it dyes, the trim after it')
+  assert.deepEqual([...LOOK_V3_SLOTS], LOOK_SLOTS.filter((s) => s !== 'layer' && s !== 'trim' && s !== 'scarf'))
+  assert.equal(LOOK_V3_SLOTS.length, 29)
+  assert.deepEqual(LAYER, { jacket: 0, shirt: 1, coat: 2 })
+  assert.deepEqual([...WARDROBE.layer], ['jacket', 'shirt sleeves', 'coat'])
+  assert.deepEqual([...LOOK_V2_SLOTS], LOOK_V3_SLOTS.filter((s) => !(LOOK_FACE_SLIDERS as readonly string[]).includes(s) && s !== 'age' && s !== 'undertone'))
   assert.equal(LOOK_V2_SLOTS.length, 20)
   assert.equal(LEGACY_LOOK_SLOTS.length, 14)
   assert.deepEqual(HAIR, { short: 0, long: 1, bob: 2, bun: 3, bald: 4 })
@@ -193,12 +225,26 @@ test('slot sizes: the pinned counts, every colour option a palette swatch, the p
   assert.ok(Object.isFrozen(WARDROBE) && Object.isFrozen(WARDROBE.outfits) && Object.isFrozen(LOOK_FIELD) && Object.isFrozen(HAIR))
 })
 
-test('lookSwatch: colours for colour slots, the top\'s cloth for matching trousers, null for pieces and sliders', () => {
+test('lookSwatch: colours for colour slots, the jacket\'s cloth for matching trousers, the outer layer\'s for a matching trim, the coat\'s for the top under a coat, null for pieces and sliders', () => {
   const suit = zero(0)
   assert.equal(lookSwatch(suit, 'top'), LOOK_PALETTE.suits[0])
   assert.equal(lookSwatch(suit, 'bottom'), LOOK_PALETTE.suits[0], 'matching')
   assert.equal(lookSwatch(withSlot(suit, 'bottom', 3), 'bottom'), LOOK_PALETTE.suits[2])
   assert.equal(lookSwatch(withSlot(zero(2), 'bottom', 1), 'bottom'), LOOK_PALETTE.darkTrousers[0])
+  // The layer: a coat's cloth on the top; matching trousers keep the jacket's cloth under it; a matching trim wears the outer layer's.
+  const coated = withSlot(withSlot(suit, 'layer', LAYER.coat), 'top', 2)
+  assert.equal(lookSwatch(coated, 'top'), LOOK_PALETTE.coats[2])
+  assert.equal(lookSwatch(coated, 'bottom'), LOOK_PALETTE.suits[2], 'the trousers match the jacket, not the coat')
+  assert.equal(matchingSwatch(coated, 'bottom'), LOOK_PALETTE.suits[2])
+  assert.equal(lookSwatch(coated, 'trim'), LOOK_PALETTE.coats[2], 'the trim matches the coat')
+  assert.equal(matchingSwatch(coated, 'trim'), LOOK_PALETTE.coats[2])
+  assert.equal(lookSwatch(suit, 'trim'), LOOK_PALETTE.suits[0])
+  assert.equal(lookSwatch(withSlot(suit, 'trim', 3), 'trim'), LOOK_PALETTE.trims[2])
+  assert.equal(lookSwatch(withSlot(suit, 'layer', LAYER.shirt), 'top'), LOOK_PALETTE.suits[0], 'the jacket\'s cloth, kept while it is off')
+  assert.equal(lookSwatch(suit, 'scarf'), null, 'no scarf')
+  assert.equal(lookSwatch(withSlot(suit, 'scarf', 1), 'scarf'), LOOK_PALETTE.scarves[0])
+  assert.equal(lookSwatch(suit, 'layer'), null)
+  assert.equal(matchingSwatch(zero(1), 'bottom'), null, 'chinos never match')
   assert.equal(lookSwatch(withSlot(suit, 'hairColour', 8), 'hairColour'), GREY_HAIR)
   assert.equal(lookSwatch(suit, 'tie'), null)
   assert.equal(lookSwatch(suit, 'height'), null)
@@ -209,8 +255,8 @@ test('lookSwatch: colours for colour slots, the top\'s cloth for matching trouse
 
 // --- The packed words ------------------------------------------------------------------------------------------
 
-test('LOOK_FIELD: three words; the look word\'s bit 0 is the valid flag and bit 6 the long-hair bit, its fields tile the rest to bit 30; the figure word is full; the face word tiles bits 0 to 30; each field wide enough for its slot', () => {
-  const used = [new Set([0, LONG_HAIR_BIT]), new Set<number>(), new Set<number>()]
+test('LOOK_FIELD: four words; the look word\'s bit 0 is the valid flag and bit 6 the long-hair bit, its fields tile the rest to bit 30; the figure word is full; the face word tiles bits 0 to 30; the wardrobe word its low byte; each field wide enough for its slot', () => {
+  const used = [new Set([0, LONG_HAIR_BIT]), new Set<number>(), new Set<number>(), new Set<number>()]
   for (const slot of LOOK_SLOTS) {
     const [word, shift, width] = LOOK_FIELD[slot]
     const largest = Math.max(...BODIES.map((b) => lookSize(b, slot)))
@@ -220,7 +266,7 @@ test('LOOK_FIELD: three words; the look word\'s bit 0 is the valid flag and bit 
       assert.ok(!used[word].has(b), `${slot} overlaps bit ${b} of word ${word}`)
       used[word].add(b)
     }
-    const expected = (LOOK_BODY_SLIDERS as readonly string[]).includes(slot) ? 1 : (LOOK_FACE_SLIDERS as readonly string[]).includes(slot) || slot === 'hairStyle' ? 2 : 0
+    const expected = (LOOK_BODY_SLIDERS as readonly string[]).includes(slot) ? 1 : (LOOK_FACE_SLIDERS as readonly string[]).includes(slot) || slot === 'hairStyle' ? 2 : slot === 'layer' || slot === 'trim' || slot === 'scarf' ? 3 : 0
     assert.equal(word, expected, `${slot} is in word ${expected}`)
   }
   assert.equal(used[0].size, 31)
@@ -228,6 +274,7 @@ test('LOOK_FIELD: three words; the look word\'s bit 0 is the valid flag and bit 
   assert.equal(used[1].size, 32)
   assert.equal(used[2].size, 31)
   assert.ok(!used[2].has(31), 'the face word\'s top bit is spare')
+  assert.deepEqual([...used[3]].sort((a, b) => a - b), [0, 1, 2, 3, 4, 5, 6, 7], 'the wardrobe word\'s low byte; the rest spare')
   for (const piece of ['tie', 'bag', 'cup', 'glasses'] as const) {
     const slot = piece === 'glasses' ? 'eyewear' : piece
     assert.deepEqual(LOOK_FIELD[slot], [0, 2 + LOOK_PIECE_BIT[piece], 1])
@@ -239,20 +286,21 @@ test('LOOK_FIELD: three words; the look word\'s bit 0 is the valid flag and bit 
   assert.deepEqual([LOOK_FIELD.age, LOOK_FIELD.undertone], [[0, 26, 3], [0, 29, 2]], 'where the legacy height and build sat')
   assert.deepEqual([LOOK_FIELD.height, LOOK_FIELD.mass, LOOK_FIELD.head], [[1, 0, 5], [1, 5, 4], [1, 29, 3]])
   assert.deepEqual([LOOK_FIELD.brow, LOOK_FIELD.jaw, LOOK_FIELD.lips], [[2, 0, 4], [2, 4, 4], [2, 24, 4]])
+  assert.deepEqual([LOOK_FIELD.layer, LOOK_FIELD.trim, LOOK_FIELD.scarf], [[3, 0, 2], [3, 2, 3], [3, 5, 3]])
   assert.deepEqual([LEGACY_LOOK_FIELD.height, LEGACY_LOOK_FIELD.build, LEGACY_LOOK_FIELD.steps], [[26, 3], [29, 3], 8])
 })
 
-test('packLook/packFigure/packFace/unpackLook round-trip every slot value of every body; a packed look word always has bit 0 set; each slot lives in one word', () => {
+test('packLook/packFigure/packFace/packWardrobe/unpackLook round-trip every slot value of every body; a packed look word always has bit 0 set; each slot lives in one word', () => {
   let count = 0
   for (const b of BODIES) {
     for (const slot of LOOK_SLOTS) {
       if (slot === 'body') continue
       for (let v = 0; v < lookSize(b, slot); v++) {
         const look = withSlot(zero(b), slot, v)
-        const [word, figure, face] = words(look)
+        const [word, figure, face, wardrobe] = words(look)
         assert.equal(word & 1, 1)
-        for (const w of [word, figure, face]) assert.ok(w >= 0 && w <= 0xffffffff && Number.isInteger(w))
-        assert.deepEqual(unpackLook(word, figure, face), look, `${LOOK_BODIES[b]} ${slot}=${v}`)
+        for (const w of [word, figure, face, wardrobe]) assert.ok(w >= 0 && w <= 0xffffffff && Number.isInteger(w))
+        assert.deepEqual(unpackLook(word, figure, face, wardrobe), look, `${LOOK_BODIES[b]} ${slot}=${v}`)
         count++
       }
     }
@@ -271,50 +319,65 @@ test('packLook/packFigure/packFace/unpackLook round-trip every slot value of eve
   assert.equal(packFace(withSlot(zero(0), 'lips', 15)) >>> 31, 0)
   assert.equal(packLook(tall), packLook(zero(0)))
   assert.equal(packFace(tall), packFace(zero(0)))
+  assert.equal(packWardrobe(tall), packWardrobe(zero(0)))
   assert.equal(packFigure(withSlot(zero(0), 'shoes', 2)), packFigure(zero(0)))
   const nosed = withSlot(zero(0), 'nose', 3)
   assert.equal(packLook(nosed), packLook(zero(0)))
   assert.equal(packFigure(nosed), packFigure(zero(0)))
   assert.notEqual(packFace(nosed), packFace(zero(0)))
+  const scarfed = withSlot(withSlot(withSlot(zero(0), 'layer', LAYER.coat), 'trim', 5), 'scarf', 7)
+  assert.equal(packLook(scarfed), packLook(zero(0)), 'the wardrobe lives in its own word')
+  assert.equal(packFigure(scarfed), packFigure(zero(0)))
+  assert.equal(packFace(scarfed), packFace(zero(0)))
+  assert.equal(packWardrobe(scarfed), LAYER.coat | (5 << 2) | (7 << 5))
+  assert.equal(packWardrobe(scarfed) >>> 8, 0, 'its top three bytes are spare')
+  assert.equal(packWardrobe(zero(0)), 0, 'the jacket, a matching trim and no scarf pack to zero: an old record\'s word')
   // The long-hair bit of the look word follows the style: set for long hair alone.
   for (const style of [0, 1, 2, 3, 4]) assert.equal((packLook(withSlot(zero(2), 'hairStyle', style)) >>> LONG_HAIR_BIT) & 1, style === HAIR.long ? 1 : 0, `style ${style}`)
   assert.equal(packLook(withSlot(zero(2), 'hairStyle', 2)), packLook(zero(2)), 'a bob changes the face word alone')
 })
 
-test('unpackLook refuses LOOK_NONE, words outside u32, fields outside the body\'s options, and a long-hair bit that disagrees with the style', () => {
-  assert.equal(unpackLook(LOOK_NONE, 0, 0), null)
-  assert.equal(unpackLook(LOOK_NONE, packFigure(zero(0)), packFace(zero(0))), null)
-  for (const bad of [-1, 1.5, NaN, Infinity, 2 ** 32 + 1, 2]) assert.equal(unpackLook(bad, 0, 0), null)
+test('unpackLook refuses LOOK_NONE, words outside u32, fields outside the body\'s options, a long-hair bit that disagrees with the style, and a fourth layer', () => {
+  assert.equal(unpackLook(LOOK_NONE, 0, 0, 0), null)
+  assert.equal(unpackLook(LOOK_NONE, packFigure(zero(0)), packFace(zero(0)), 0), null)
+  for (const bad of [-1, 1.5, NaN, Infinity, 2 ** 32 + 1, 2]) assert.equal(unpackLook(bad, 0, 0, 0), null)
   for (const bad of [-1, 1.5, NaN, Infinity, 2 ** 32 + 1]) {
-    assert.equal(unpackLook(packLook(zero(0)), bad, 0), null)
-    assert.equal(unpackLook(packLook(zero(0)), 0, bad), null)
+    assert.equal(unpackLook(packLook(zero(0)), bad, 0, 0), null)
+    assert.equal(unpackLook(packLook(zero(0)), 0, bad, 0), null)
+    assert.equal(unpackLook(packLook(zero(0)), 0, 0, bad), null)
   }
-  const [suit, figure, face] = words(zero(0))
-  assert.equal(unpackLook(suit | (3 << LOOK_FIELD.shoes[1]), figure, face), null, 'the suit has three shoes')
-  assert.equal(unpackLook(suit | (9 << LOOK_FIELD.hairColour[1]), figure, face), null, 'nine hair colours')
-  assert.equal(unpackLook(suit | (7 << LOOK_FIELD.top[1]), figure, face), null, 'seven suit cloths')
-  assert.equal(unpackLook(packLook(zero(2)) | (4 << LOOK_FIELD.bottom[1]), figure, face), null, 'matching plus three dark trousers')
-  assert.equal(unpackLook(suit, figure, 5 << LOOK_FIELD.hairStyle[1]), null, 'five hair styles')
-  assert.equal(unpackLook(suit, figure, 7 << LOOK_FIELD.hairStyle[1]), null)
+  const [suit, figure, face, wardrobe] = words(zero(0))
+  assert.equal(unpackLook(suit | (3 << LOOK_FIELD.shoes[1]), figure, face, wardrobe), null, 'the suit has three shoes')
+  assert.equal(unpackLook(suit | (9 << LOOK_FIELD.hairColour[1]), figure, face, wardrobe), null, 'nine hair colours')
+  assert.equal(unpackLook(suit | (7 << LOOK_FIELD.top[1]), figure, face, wardrobe), null, 'seven suit cloths')
+  assert.equal(unpackLook(packLook(zero(2)) | (4 << LOOK_FIELD.bottom[1]), figure, face, wardrobe), null, 'matching plus three dark trousers')
+  assert.equal(unpackLook(suit, figure, 5 << LOOK_FIELD.hairStyle[1], wardrobe), null, 'five hair styles')
+  assert.equal(unpackLook(suit, figure, 7 << LOOK_FIELD.hairStyle[1], wardrobe), null)
   assert.equal(packLook(withSlot(zero(0), 'shoes', 3)), LOOK_NONE, 'nothing outside the wardrobe packs')
   assert.equal(packFigure(withSlot(zero(0), 'shoes', 3)), 0)
   assert.equal(packFace(withSlot(zero(0), 'shoes', 3)), 0)
   // Every value of the figure word is a figure: its fields are exactly as wide as their sliders. The face word's
   // sliders likewise; its style alone can overflow.
-  for (const f of [0, 0xffffffff, 0x12345678, 0x80000001]) assert.notEqual(unpackLook(suit, f, face), null)
-  assert.equal(unpackLook(suit, 0xffffffff, face)!.height, 31)
-  assert.equal(unpackLook(suit, 0xffffffff, face)!.head, 7)
-  assert.deepEqual(unpackLook(suit, figure, 0x0fffffff), { ...zero(0), brow: 15, jaw: 15, chin: 15, cheek: 15, nose: 15, eyes: 15, lips: 15 })
+  for (const f of [0, 0xffffffff, 0x12345678, 0x80000001]) assert.notEqual(unpackLook(suit, f, face, wardrobe), null)
+  assert.equal(unpackLook(suit, 0xffffffff, face, wardrobe)!.height, 31)
+  assert.equal(unpackLook(suit, 0xffffffff, face, wardrobe)!.head, 7)
+  assert.deepEqual(unpackLook(suit, figure, 0x0fffffff, wardrobe), { ...zero(0), brow: 15, jaw: 15, chin: 15, cheek: 15, nose: 15, eyes: 15, lips: 15 })
   // The look word's bit 6 must say what the face word's style says: a forged pair is no look.
-  assert.equal(unpackLook(suit | (1 << LONG_HAIR_BIT), figure, face), null, 'long-hair bit, short style')
-  assert.equal(unpackLook(suit, figure, face | (HAIR.long << LOOK_FIELD.hairStyle[1])), null, 'long style, no bit')
-  assert.deepEqual(unpackLook(suit | (1 << LONG_HAIR_BIT), figure, face | (HAIR.long << LOOK_FIELD.hairStyle[1])), withSlot(zero(0), 'hairStyle', HAIR.long))
-  assert.deepEqual(unpackLook(suit, figure, face | (HAIR.bun << LOOK_FIELD.hairStyle[1])), withSlot(zero(0), 'hairStyle', HAIR.bun))
+  assert.equal(unpackLook(suit | (1 << LONG_HAIR_BIT), figure, face, wardrobe), null, 'long-hair bit, short style')
+  assert.equal(unpackLook(suit, figure, face | (HAIR.long << LOOK_FIELD.hairStyle[1]), wardrobe), null, 'long style, no bit')
+  assert.deepEqual(unpackLook(suit | (1 << LONG_HAIR_BIT), figure, face | (HAIR.long << LOOK_FIELD.hairStyle[1]), wardrobe), withSlot(zero(0), 'hairStyle', HAIR.long))
+  assert.deepEqual(unpackLook(suit, figure, face | (HAIR.bun << LOOK_FIELD.hairStyle[1]), wardrobe), withSlot(zero(0), 'hairStyle', HAIR.bun))
+  // The wardrobe word: a fourth layer is no layer; the trim and the scarf fill their three bits; the spare bits are ignored.
+  assert.equal(unpackLook(suit, figure, face, 3), null, 'three layers')
+  assert.deepEqual(unpackLook(suit, figure, face, 2), withSlot(zero(0), 'layer', LAYER.coat))
+  assert.deepEqual(unpackLook(suit, figure, face, (7 << LOOK_FIELD.trim[1]) | (7 << LOOK_FIELD.scarf[1])), { ...zero(0), trim: 7, scarf: 7 })
+  assert.deepEqual(unpackLook(suit, figure, face, 0xffffff00), zero(0), 'the spare bits')
+  assert.equal(unpackLook(suit, figure, face, 0xffffffff), null, 'a full word: the layer 3')
 })
 
-test('lookMask: the pieces land where the crowd\'s vertex stage (crowdBody.ts) tests them (tie 2, bag 4, cup 8, long hair 16, glasses 32, the cap 64, a bob 128, a bun 256, the face 512)', () => {
-  assert.equal(lookMask(LOOK_NONE, 0), 0)
-  assert.equal(lookMask(LOOK_NONE, packFace(withSlot(zero(0), 'hairStyle', 1))), 0)
+test('lookMask: the pieces land where the crowd\'s vertex stage (crowdBody.ts) tests them (tie 2, bag 4, cup 8, long hair 16, glasses 32, the cap 64, a bob 128, a bun 256, the face 512, the coat 1024, the scarf 2048)', () => {
+  assert.equal(lookMask(LOOK_NONE, 0, 0), 0)
+  assert.equal(lookMask(LOOK_NONE, packFace(withSlot(zero(0), 'hairStyle', 1)), 0xff), 0)
   const cap = 1 << LOOK_PIECE_BIT.hairCap, face = 1 << LOOK_PIECE_BIT.face
   assert.equal(lookMask(...pair(zero(0))), cap | face, 'short hair: the cap and the features')
   const pieces: [LookSlot, number][] = [['tie', 2], ['bag', 4], ['cup', 8], ['eyewear', 32]]
@@ -323,15 +386,26 @@ test('lookMask: the pieces land where the crowd\'s vertex stage (crowdBody.ts) t
     assert.equal(lookMask(...pair(withSlot(zero(1), slot, 1))), bit | cap | face)
     all = withSlot(all, slot, 1)
   }
-  const [word, faceWord] = pair(all)
-  assert.equal(lookMask(word, faceWord), 46 | cap | face)
+  const [word, faceWord, wardrobeWord] = pair(all)
+  assert.equal(lookMask(word, faceWord, wardrobeWord), 46 | cap | face)
   assert.equal((word >>> 2) & 46, 46, 'the wiring stage\'s expression')
-  for (const [, bit] of pieces) assert.equal((lookMask(word, faceWord) >> Math.log2(bit)) & 1, 1)
+  for (const [, bit] of pieces) assert.equal((lookMask(word, faceWord, wardrobeWord) >> Math.log2(bit)) & 1, 1)
   // The hair's pieces follow the style (hairBits): long hair with the cap, a bob with the cap, a bun with the cap, bald nothing.
   assert.deepEqual([0, 1, 2, 3, 4].map(hairBits), [cap, 16 | cap, 128 | cap, 256 | cap, 0])
   for (const style of [0, 1, 2, 3, 4]) assert.equal(lookMask(...pair(withSlot(zero(2), 'hairStyle', style))), hairBits(style) | face, `style ${style}`)
   assert.equal(lookMask(...pair(withSlot(all, 'hairStyle', HAIR.long))), 62 | cap | face)
-  function pair(look: Look): [number, number] { return [packLook(look), packFace(look)] }
+  // The wardrobe's pieces: the coat with a coat layer, the scarf when one is worn (wardrobeBits, from the wardrobe word alone).
+  const coat = 1 << LOOK_PIECE_BIT.coat, scarf = 1 << LOOK_PIECE_BIT.scarf
+  assert.deepEqual([coat, scarf], [1024, 2048])
+  assert.equal(lookMask(...pair(withSlot(zero(0), 'layer', LAYER.coat))), cap | face | coat)
+  assert.equal(lookMask(...pair(withSlot(zero(0), 'layer', LAYER.shirt))), cap | face, 'shirt sleeves add no piece')
+  for (const s of [1, 4, 7]) assert.equal(lookMask(...pair(withSlot(zero(0), 'scarf', s))), cap | face | scarf, `scarf ${s}`)
+  assert.equal(lookMask(...pair(withSlot(zero(0), 'trim', 3))), cap | face, 'the trim is paint, not a piece')
+  assert.equal(lookMask(...pair(withSlot(withSlot(all, 'layer', LAYER.coat), 'scarf', 2))), 46 | cap | face | coat | scarf)
+  assert.deepEqual([0, 1, 2, 3].map((l) => wardrobeBits(l)), [0, 0, coat, 0])
+  assert.equal(wardrobeBits(1 << LOOK_FIELD.scarf[1]), scarf)
+  assert.equal(wardrobeBits((2 | (5 << LOOK_FIELD.trim[1]) | (7 << LOOK_FIELD.scarf[1])) >>> 0), coat | scarf)
+  function pair(look: Look): [number, number, number] { return [packLook(look), packFace(look), packWardrobe(look)] }
 })
 
 // --- validateLook ----------------------------------------------------------------------------------------------
@@ -368,7 +442,7 @@ test('validateLook refuses NaN, negatives, non-integers, strings, out-of-range i
 
 test('a look kept before the figure (fourteen slots) is upgraded, not refused: its height to a stature, its build to a mass, the rest the middle step, the base face', () => {
   const navy = legacyOf(LOOK_PRESETS[0].look, 4, 3)
-  const up = { ...LOOK_PRESETS[0].look, height: 16, mass: 6, muscle: 8, shoulders: 8, hips: 8, legs: 8, posture: 8, head: 4, ...BASE_FACE }
+  const up = { ...LOOK_PRESETS[0].look, height: 16, mass: 6, muscle: 8, shoulders: 8, hips: 8, legs: 8, posture: 8, head: 4, ...BASE_FACE, ...BASE_WARDROBE }
   assert.deepEqual(upgradeLegacyLook(navy), up)
   assert.deepEqual(validateLook(navy), up, 'validateLook takes the legacy shape')
   assert.ok(Object.isFrozen(validateLook(navy)))
@@ -406,7 +480,7 @@ test('a look kept before the figure (fourteen slots) is upgraded, not refused: i
 test('a look kept before the face (twenty slots) is upgraded, not refused: the base face, the middle age, a neutral undertone, the hair style carried', () => {
   const navy = v2Of(LOOK_PRESETS[0].look)
   assert.equal(Object.keys(navy).length, 20)
-  const up = { ...LOOK_PRESETS[0].look, ...BASE_FACE }
+  const up = { ...LOOK_PRESETS[0].look, ...BASE_FACE, ...BASE_WARDROBE }
   assert.deepEqual(upgradeFigureLook(navy), up)
   assert.deepEqual(validateLook(navy), up, 'validateLook takes the v2 shape')
   assert.ok(Object.isFrozen(validateLook(navy)))
@@ -415,7 +489,7 @@ test('a look kept before the face (twenty slots) is upgraded, not refused: the b
   for (let s = 0; s < 200; s++) {
     const look = lookFromSeed(s)
     const old = v2Of(look)
-    assert.deepEqual(upgradeFigureLook(old), { ...look, ...BASE_FACE, hairStyle: old.hairStyle })
+    assert.deepEqual(upgradeFigureLook(old), { ...look, ...BASE_FACE, ...BASE_WARDROBE, hairStyle: old.hairStyle })
   }
   // Outside the v2 catalogue: refused.
   assert.equal(upgradeFigureLook({ ...navy, hairStyle: 2 }), null, 'two hair styles then')
@@ -437,6 +511,40 @@ test('a look kept before the face (twenty slots) is upgraded, not refused: the b
   assert.equal(unpackFigureLook(word, -1), null)
 })
 
+test('a look kept before the layers (twenty-nine slots) is upgraded, not refused: the jacket, a matching trim, no scarf, everything else carried', () => {
+  const camel = v3Of(LOOK_PRESETS[2].look)
+  assert.equal(Object.keys(camel).length, 29)
+  const up = { ...LOOK_PRESETS[2].look, ...BASE_WARDROBE }
+  assert.notDeepEqual(up, LOOK_PRESETS[2].look, 'the preset wears a trim and a scarf the old record could not')
+  assert.deepEqual(upgradeFaceLook(camel), up)
+  assert.deepEqual(validateLook(camel), up, 'validateLook takes the v3 shape')
+  assert.ok(Object.isFrozen(validateLook(camel)))
+  for (const b of BODIES) assert.deepEqual(upgradeFaceLook(v3Of(zero(b))), zero(b), LOOK_BODIES[b])
+  for (let s = 0; s < 200; s++) {
+    const look = lookFromSeed(s)
+    assert.deepEqual(upgradeFaceLook(v3Of(look)), { ...look, ...BASE_WARDROBE })
+  }
+  // Outside the v3 catalogue: refused.
+  assert.equal(upgradeFaceLook({ ...camel, hairStyle: 5 }), null)
+  assert.equal(upgradeFaceLook({ ...camel, shoes: 4 }), null)
+  assert.equal(upgradeFaceLook({ ...camel, extra: 1 }), null)
+  const { tie: _tie, ...fewer } = camel
+  assert.equal(upgradeFaceLook({ ...fewer, hat: 0 }), null, 'twenty-nine keys, the wrong ones')
+  assert.equal(validateLook({ ...fewer, hat: 0 }), null)
+  assert.equal(upgradeFaceLook({ ...fewer, layer: 0 }), null, 'a layer makes it no v3 look')
+  assert.equal(validateLook({ ...fewer, layer: 0 }), null)
+  assert.equal(upgradeFaceLook(LOOK_PRESETS[2].look), null, 'a new look is not a v3 one')
+  assert.equal(upgradeFaceLook(v2Of(LOOK_PRESETS[2].look)), null, 'nor a v2 one')
+  // The three-word record upgrades the same way: the wardrobe word it never had is zero.
+  const [word, figure, face] = words(up)
+  assert.deepEqual(unpackFaceLook(word, figure, face), up)
+  assert.deepEqual(unpackFaceLook(word, figure, face), unpackLook(word, figure, face, 0))
+  assert.equal(unpackFaceLook(LOOK_NONE, figure, face), null)
+  assert.equal(unpackFaceLook(((word & ~(15 << LOOK_FIELD.hairColour[1])) | (9 << LOOK_FIELD.hairColour[1])) >>> 0, figure, face), null, 'nine hair colours')
+  assert.equal(unpackFaceLook(word | (1 << LONG_HAIR_BIT), figure, face), null, 'a forged long-hair bit')
+  assert.equal(unpackFaceLook(word, figure, -1), null)
+})
+
 test('withLookSlot changes one slot within the catalogue; a body change keeps what fits and clamps the rest', () => {
   const suit = withSlot(withSlot(zero(0), 'bottom', 7), 'shoes', 2)
   assert.deepEqual(withLookSlot(suit, 'tie', 1), { ...suit, tie: 1 })
@@ -452,6 +560,12 @@ test('withLookSlot changes one slot within the catalogue; a body change keeps wh
   assert.equal(withLookSlot(suit, 'nose', 15)!.nose, 15)
   assert.equal(withLookSlot(suit, 'nose', 16), null)
   assert.equal(withLookSlot(suit, 'undertone', 4), null)
+  assert.equal(withLookSlot(suit, 'layer', 2)!.layer, 2)
+  assert.equal(withLookSlot(suit, 'layer', 3), null)
+  assert.equal(withLookSlot(suit, 'trim', 7)!.trim, 7)
+  assert.equal(withLookSlot(suit, 'trim', 8), null)
+  assert.equal(withLookSlot(suit, 'scarf', 7)!.scarf, 7)
+  assert.equal(withLookSlot(suit, 'scarf', 8), null)
   const pantsuit = withLookSlot(suit, 'body', 2)!
   assert.equal(pantsuit.body, 2)
   assert.equal(pantsuit.bottom, 3, 'clamped to the last dark trouser')
@@ -575,6 +689,11 @@ test('lookFromSeed is deterministic, always wearable, body = seed mod 4, and the
     if (look.body === 0) assert.equal(look.bottom, 0, 'the suit\'s trousers match')
     else if (look.body === 2) assert.equal(look.bottom, hc(10) >= Math.fround(0.6) ? 1 + idx(hc(4), 3) : 0)
     else assert.equal(look.bottom, idx(hc(4), LOOK_PALETTE[o.bottom].length))
+    // The wardrobe: the layer on link 23 of the pieces' chain, the scarf on 24 with its cloth from the colours' 15, the trim's contrast on the colours' 14 with its cloth from 16.
+    const layerLink = hp(LOOK_HASHED_LAYER)
+    assert.equal(look.layer, layerLink < Math.fround(0.2) ? LAYER.shirt : layerLink >= Math.fround(0.85) ? LAYER.coat : LAYER.jacket)
+    assert.equal(look.trim, hc(14) >= Math.fround(0.8) ? 1 + idx(hc(16), 7) : 0)
+    assert.equal(look.scarf, hp(LOOK_HASHED_SCARF) >= Math.fround(0.88) ? 1 + idx(hc(15), 7) : 0)
   }
   // Odd seeds still give a look: the city must always dress someone.
   for (const s of [NaN, -5, Infinity, 1.7, 2 ** 40, 0xffffffff]) assert.deepEqual(validateLook(lookFromSeed(s)), lookFromSeed(s))
@@ -583,10 +702,10 @@ test('lookFromSeed is deterministic, always wearable, body = seed mod 4, and the
 })
 
 test('lookFromSeed is pinned for the player\'s slot and the first agents, and its odds match the crowd\'s', () => {
-  assert.deepEqual(lookFromSeed(0), { body: 0, height: 26, mass: 11, muscle: 4, shoulders: 0, hips: 8, legs: 8, posture: 8, head: 4, brow: 4, jaw: 4, chin: 5, cheek: 13, nose: 14, eyes: 14, lips: 2, skin: 3, age: 6, undertone: 2, hairStyle: 1, hairColour: 1, top: 1, bottom: 0, shirt: 2, shoes: 0, tie: 0, eyewear: 0, bag: 1, cup: 0 })
-  assert.deepEqual(lookFromSeed(1), { body: 1, height: 28, mass: 8, muscle: 14, shoulders: 4, hips: 15, legs: 12, posture: 5, head: 1, brow: 7, jaw: 11, chin: 15, cheek: 15, nose: 9, eyes: 4, lips: 4, skin: 0, age: 3, undertone: 2, hairStyle: 0, hairColour: 1, top: 4, bottom: 0, shirt: 3, shoes: 0, tie: 0, eyewear: 0, bag: 1, cup: 0 })
-  assert.deepEqual(lookFromSeed(2), { body: 2, height: 11, mass: 15, muscle: 12, shoulders: 4, hips: 4, legs: 3, posture: 2, head: 7, brow: 15, jaw: 2, chin: 2, cheek: 11, nose: 12, eyes: 1, lips: 6, skin: 2, age: 4, undertone: 2, hairStyle: 1, hairColour: 6, top: 5, bottom: 3, shirt: 4, shoes: 3, tie: 0, eyewear: 0, bag: 0, cup: 0 })
-  assert.deepEqual(lookFromSeed(3), { body: 3, height: 18, mass: 1, muscle: 4, shoulders: 10, hips: 2, legs: 1, posture: 10, head: 3, brow: 12, jaw: 9, chin: 8, cheek: 9, nose: 14, eyes: 7, lips: 6, skin: 3, age: 2, undertone: 0, hairStyle: 2, hairColour: 6, top: 4, bottom: 2, shirt: 1, shoes: 0, tie: 0, eyewear: 1, bag: 0, cup: 0 })
+  assert.deepEqual(lookFromSeed(0), { body: 0, height: 26, mass: 11, muscle: 4, shoulders: 0, hips: 8, legs: 8, posture: 8, head: 4, brow: 4, jaw: 4, chin: 5, cheek: 13, nose: 14, eyes: 14, lips: 2, skin: 3, age: 6, undertone: 2, hairStyle: 1, hairColour: 1, layer: 0, top: 1, trim: 2, bottom: 0, shirt: 2, shoes: 0, tie: 0, scarf: 0, eyewear: 0, bag: 1, cup: 0 })
+  assert.deepEqual(lookFromSeed(1), { body: 1, height: 28, mass: 8, muscle: 14, shoulders: 4, hips: 15, legs: 12, posture: 5, head: 1, brow: 7, jaw: 11, chin: 15, cheek: 15, nose: 9, eyes: 4, lips: 4, skin: 0, age: 3, undertone: 2, hairStyle: 0, hairColour: 1, layer: 0, top: 4, trim: 0, bottom: 0, shirt: 3, shoes: 0, tie: 0, scarf: 2, eyewear: 0, bag: 1, cup: 0 })
+  assert.deepEqual(lookFromSeed(2), { body: 2, height: 11, mass: 15, muscle: 12, shoulders: 4, hips: 4, legs: 3, posture: 2, head: 7, brow: 15, jaw: 2, chin: 2, cheek: 11, nose: 12, eyes: 1, lips: 6, skin: 2, age: 4, undertone: 2, hairStyle: 1, hairColour: 6, layer: 0, top: 5, trim: 0, bottom: 3, shirt: 4, shoes: 3, tie: 0, scarf: 0, eyewear: 0, bag: 0, cup: 0 })
+  assert.deepEqual(lookFromSeed(3), { body: 3, height: 18, mass: 1, muscle: 4, shoulders: 10, hips: 2, legs: 1, posture: 10, head: 3, brow: 12, jaw: 9, chin: 8, cheek: 9, nose: 14, eyes: 7, lips: 6, skin: 3, age: 2, undertone: 0, hairStyle: 2, hairColour: 6, layer: 0, top: 4, trim: 0, bottom: 2, shirt: 1, shoes: 0, tie: 0, scarf: 7, eyewear: 1, bag: 0, cup: 0 })
   const n = 20000
   const rate = (pick: (l: Look) => number, from = 0, step = 1) => {
     let sum = 0, count = 0
@@ -601,6 +720,15 @@ test('lookFromSeed is pinned for the player\'s slot and the first agents, and it
   near(rate((l) => l.bag, 2, 4), 1 - LOOK_ODDS.bagWoman, 'a woman\'s bag')
   near(rate((l) => (l.hairColour === 8 ? 1 : 0)), 1 - LOOK_ODDS.grey, 'grey')
   near(rate((l) => (l.bottom > 0 ? 1 : 0), 2, 4), 1 - LOOK_ODDS.darkTrousers, 'dark trousers')
+  // The wardrobe: shirt sleeves on one in five, a coat on three in twenty, a trim on one in five, a scarf on three in twenty-five; the cloths spread.
+  near(rate((l) => (l.layer === LAYER.shirt ? 1 : 0)), LOOK_ODDS.shirtSleeves, 'shirt sleeves')
+  near(rate((l) => (l.layer === LAYER.coat ? 1 : 0)), 1 - LOOK_ODDS.coat, 'a coat')
+  near(rate((l) => (l.trim > 0 ? 1 : 0)), 1 - LOOK_ODDS.trim, 'a trim')
+  near(rate((l) => (l.scarf > 0 ? 1 : 0)), 1 - LOOK_ODDS.scarf, 'a scarf')
+  for (let c = 1; c <= 7; c++) {
+    near(rate((l) => (l.trim === c ? 1 : 0)), (1 - LOOK_ODDS.trim) / 7, `trim cloth ${c}`, 0.01)
+    near(rate((l) => (l.scarf === c ? 1 : 0)), (1 - LOOK_ODDS.scarf) / 7, `scarf cloth ${c}`, 0.01)
+  }
   // The hair: a man is short, long or (one in twenty-five) bald; a woman short, or long, bob and bun in thirds of the rest.
   const style = (want: number, from: number) => rate((l) => (l.hairStyle === want ? 1 : 0), from, 4)
   near(style(HAIR.short, 0), LOOK_ODDS.longHair * LOOK_ODDS.bald, 'a man\'s short hair')
@@ -636,6 +764,7 @@ test('every preset validates, names are unique ASCII words, every body is dresse
   const names = new Set<string>()
   const bodies = new Set<number>()
   const styles = new Set<number>()
+  const layers = new Set<number>()
   for (const p of LOOK_PRESETS) {
     assert.match(p.name, /^[a-z][a-z ]*[a-z]$/)
     assert.ok(!names.has(p.name), p.name)
@@ -644,6 +773,7 @@ test('every preset validates, names are unique ASCII words, every body is dresse
     assert.ok(Object.isFrozen(p) && Object.isFrozen(p.look))
     bodies.add(p.look.body)
     styles.add(p.look.hairStyle)
+    layers.add(p.look.layer)
     assert.deepEqual(unpackLook(...words(p.look)), p.look)
     assert.deepEqual(lookPreset(p.name), p)
     assert.deepEqual(lookPreset(` ${p.name.toUpperCase()} `), p)
@@ -652,6 +782,10 @@ test('every preset validates, names are unique ASCII words, every body is dresse
   }
   assert.equal(bodies.size, 4)
   assert.equal(styles.size, 5, 'every hair style is shown by a preset')
+  assert.ok(layers.has(LAYER.jacket) && layers.has(LAYER.coat), 'a jacket and a coat are shown by presets')
+  assert.ok(!layers.has(LAYER.shirt), 'no preset named for its jacket takes it off')
+  assert.ok(LOOK_PRESETS.some((p) => p.look.trim > 0) && LOOK_PRESETS.some((p) => p.look.scarf > 0), 'a trim and a scarf are shown')
+  assert.ok(LOOK_PRESETS.filter((p) => p.look.layer === LAYER.jacket && p.look.trim === 0 && p.look.scarf === 0).length >= 2, 'and plain looks too')
   assert.equal(lookPreset('tuxedo'), null)
   assert.equal(lookPreset(''), null)
 })
@@ -674,13 +808,13 @@ const symbolsOf = (bits: bigint, n: number): string => {
 }
 const SYMBOL = '[0-9A-HJKMNP-TV-Z]'
 
-test('a look code is twenty-one symbols "XXXXXXX-XXXXXXX-XXXXXXX" that read back the same look, whatever the case or spacing', () => {
+test('a look code is twenty-eight symbols "XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX" that read back the same look, whatever the case or spacing', () => {
   const looks: Look[] = [...LOOK_PRESETS.map((p) => p.look), ...BODIES.map(zero)]
   for (let s = 0; s < 500; s++) looks.push(lookFromSeed(s))
   const codes = new Set<string>()
   for (const look of looks) {
     const code = formatLookCode(look)
-    assert.match(code, new RegExp(`^${SYMBOL}{7}-${SYMBOL}{7}-${SYMBOL}{7}$`), code)
+    assert.match(code, new RegExp(`^${SYMBOL}{7}-${SYMBOL}{7}-${SYMBOL}{7}-${SYMBOL}{7}$`), code)
     assert.deepEqual(parseLookCode(code), look)
     assert.deepEqual(parseLookCode(code.toLowerCase()), look)
     assert.deepEqual(parseLookCode(` ${code.replaceAll('-', '')} `), look)
@@ -689,10 +823,25 @@ test('a look code is twenty-one symbols "XXXXXXX-XXXXXXX-XXXXXXX" that read back
   }
   assert.equal(codes.size, new Set(looks.map((l) => words(l).join(':'))).size, 'distinct looks give distinct codes')
   assert.equal(formatLookCode(withSlot(zero(0), 'shoes', 3)), '', 'nothing outside the wardrobe has a code')
-  assert.equal(formatLookCode(LOOK_PRESETS[0].look), '2R00916-9GY47G0-Y47H65X')
+  assert.equal(formatLookCode(LOOK_PRESETS[0].look), '0B00144-S63RGY0-3RGY4R0-0000036')
 })
 
-test('a fifteen-symbol code from before the face, and a legacy eight-symbol one, still read, upgraded; the same old code gives the same new look everywhere', () => {
+test('a twenty-one-symbol code from before the layers, a fifteen-symbol one from before the face, and a legacy eight-symbol one, still read, upgraded; the same old code gives the same new look everywhere', () => {
+  // Before the layers: three words, one zero lead bit, the check over the three; the wardrobe word it never had is zero.
+  const navyV3 = LOOK_PRESETS[0].look
+  const [w3, f3, c3] = words(navyV3)
+  const v3 = symbolsOf((BigInt(w3) << 72n) | (BigInt(f3) << 40n) | (BigInt(c3) << 8n) | BigInt(crc8([w3, f3, c3])), 21)
+  const codeV3 = `${v3.slice(0, 7)}-${v3.slice(7, 14)}-${v3.slice(14)}`
+  assert.equal(codeV3, '2R00916-9GY47G0-Y47H65X', 'the code the preset had before the layers')
+  assert.deepEqual(parseLookCode(codeV3), navyV3)
+  assert.deepEqual(parseLookCode(codeV3.toLowerCase()), navyV3)
+  assert.deepEqual(parseLookCode(formatLookCode(parseLookCode(codeV3)!)), navyV3, 'worn and written down again, it is a twenty-eight-symbol code that reads the same')
+  assert.notEqual(formatLookCode(navyV3), codeV3)
+  for (let i = 0; i < 21; i++) for (const ch of ALPHABET) if (ch !== v3[i]) assert.equal(parseLookCode(v3.slice(0, i) + ch + v3.slice(i + 1)), null)
+  const goodV3 = (BigInt(w3) << 72n) | (BigInt(f3) << 40n) | (BigInt(c3) << 8n) | BigInt(crc8([w3, f3, c3]))
+  assert.equal(parseLookCode(symbolsOf(goodV3 | (1n << 104n), 21)), null, 'the lead bit must be zero')
+  const badV3 = w3 | (3 << LOOK_FIELD.shoes[1])
+  assert.equal(parseLookCode(symbolsOf((BigInt(badV3) << 72n) | (BigInt(f3) << 40n) | (BigInt(c3) << 8n) | BigInt(crc8([badV3, f3, c3])), 21)), null, 'a checksum that is right over words that are no look')
   // Before the face: two words, the hair style at bit 6 of the look word, three zero lead bits.
   const navyV2 = v2Of(LOOK_PRESETS[0].look)
   const up = { ...LOOK_PRESETS[0].look, ...BASE_FACE }
@@ -702,7 +851,7 @@ test('a fifteen-symbol code from before the face, and a legacy eight-symbol one,
   const codeV2 = `${v2.slice(0, 5)}-${v2.slice(5, 10)}-${v2.slice(10)}`
   assert.deepEqual(parseLookCode(codeV2), up)
   assert.deepEqual(parseLookCode(codeV2.toLowerCase()), up)
-  assert.deepEqual(parseLookCode(formatLookCode(parseLookCode(codeV2)!)), up, 'worn and written down again, it is a twenty-one-symbol code that reads the same')
+  assert.deepEqual(parseLookCode(formatLookCode(parseLookCode(codeV2)!)), up, 'worn and written down again, it is a twenty-eight-symbol code that reads the same')
   const longV2 = (wordV2 | (1 << LONG_HAIR_BIT)) >>> 0
   assert.deepEqual(parseLookCode(symbolsOf((BigInt(longV2) << 40n) | (BigInt(figure) << 8n) | BigInt(crc8([longV2, figure])), 15)), { ...up, hairStyle: 1 })
   for (let i = 0; i < 15; i++) for (const ch of ALPHABET) if (ch !== v2[i]) assert.equal(parseLookCode(v2.slice(0, i) + ch + v2.slice(i + 1)), null)
@@ -742,22 +891,25 @@ test('parseLookCode refuses corruption: any one symbol changed, junk, the wrong 
     const swapped = code.slice(0, 2) + code[3] + code[2] + code.slice(4)
     if (swapped !== code) assert.equal(parseLookCode(swapped), null)
   }
-  assert.equal(tried, LOOK_PRESETS.length * 21 * 31)
-  for (const junk of ['', ' ', 'hello', 'ABCD-EFG', 'ABCD-EFGHI', 'ABCDE-FGHJK-MNPQ', 'ABCDE-FGHJK-MNPQRS', 'ABCDEFG-HJKMNPQ-RSTVWX', 'ABCDEFG-HJKMNPQ-RSTVWXYZ', 'ABCI-0000', 'ABCL-0000', 'ABCO-0000', 'ABCU-0000', 'ABCD_EFGH', '!!!!-!!!!', '12345678x', '2R00916-9GY47G0-Y47H65I', '00002-89JC7-H1W5I'])
+  assert.equal(tried, LOOK_PRESETS.length * 28 * 31)
+  for (const junk of ['', ' ', 'hello', 'ABCD-EFG', 'ABCD-EFGHI', 'ABCDE-FGHJK-MNPQ', 'ABCDE-FGHJK-MNPQRS', 'ABCDEFG-HJKMNPQ-RSTVWX', 'ABCDEFG-HJKMNPQ-RSTVWXYZ', 'ABCI-0000', 'ABCL-0000', 'ABCO-0000', 'ABCU-0000', 'ABCD_EFGH', '!!!!-!!!!', '12345678x', '2R00916-9GY47G0-Y47H65I', '00002-89JC7-H1W5I', 'ABCDEFG-HJKMNPQ-RSTVWXY-Z012345', '0B00144-S63RGY0-3RGY4R0-000003I', '0B00144-S63RGY0-3RGY4R0-00000360'])
     assert.equal(parseLookCode(junk), null, junk)
   assert.equal(parseLookCode(undefined as unknown as string), null)
   assert.equal(parseLookCode(12345678 as unknown as string), null)
   // A code whose checksum is right but whose words are not a look (the suit with shoes 3; a forged long-hair bit) is still refused.
-  const [word, figure, face] = words(zero(0))
-  const pack = (w: number, f: number, c: number) => symbolsOf((BigInt(w) << 72n) | (BigInt(f) << 40n) | (BigInt(c) << 8n) | BigInt(crc8([w, f, c])), 21)
-  assert.equal(parseLookCode(pack(word | (3 << LOOK_FIELD.shoes[1]), figure, face)), null)
-  assert.equal(parseLookCode(pack(word | (1 << LONG_HAIR_BIT), figure, face)), null)
-  assert.equal(parseLookCode(pack(word, figure, 5 << LOOK_FIELD.hairStyle[1])), null)
-  assert.deepEqual(parseLookCode(pack(word, figure, face)), zero(0))
-  // The lead bit must be zero even when the checksum (which it is outside) is right.
-  const good = (BigInt(word) << 72n) | (BigInt(figure) << 40n) | (BigInt(face) << 8n) | BigInt(crc8([word, figure, face]))
-  assert.deepEqual(parseLookCode(symbolsOf(good, 21)), zero(0))
-  assert.equal(parseLookCode(symbolsOf(good | (1n << 104n), 21)), null)
+  const [word, figure, face, wardrobe] = words(zero(0))
+  const pack = (w: number, f: number, c: number, r: number) => symbolsOf((BigInt(w) << 104n) | (BigInt(f) << 72n) | (BigInt(c) << 40n) | (BigInt(r) << 8n) | BigInt(crc8([w, f, c, r])), 28)
+  assert.equal(parseLookCode(pack(word | (3 << LOOK_FIELD.shoes[1]), figure, face, wardrobe)), null)
+  assert.equal(parseLookCode(pack(word | (1 << LONG_HAIR_BIT), figure, face, wardrobe)), null)
+  assert.equal(parseLookCode(pack(word, figure, 5 << LOOK_FIELD.hairStyle[1], wardrobe)), null)
+  assert.equal(parseLookCode(pack(word, figure, face, 3)), null, 'a fourth layer')
+  assert.deepEqual(parseLookCode(pack(word, figure, face, wardrobe)), zero(0))
+  assert.deepEqual(parseLookCode(pack(word, figure, face, 2 | (7 << LOOK_FIELD.scarf[1]))), { ...zero(0), layer: 2, scarf: 7 })
+  // The lead bits must be zero even when the checksum (which they are outside) is right.
+  const good = (BigInt(word) << 104n) | (BigInt(figure) << 72n) | (BigInt(face) << 40n) | (BigInt(wardrobe) << 8n) | BigInt(crc8([word, figure, face, wardrobe]))
+  assert.deepEqual(parseLookCode(symbolsOf(good, 28)), zero(0))
+  assert.equal(parseLookCode(symbolsOf(good | (1n << 136n), 28)), null)
+  assert.equal(parseLookCode(symbolsOf(good | (8n << 136n), 28)), null)
 })
 
 // --- The console's view ----------------------------------------------------------------------------------------
@@ -781,6 +933,9 @@ test('describeLook: one ASCII line per slot and the code, with the height in met
   assert.equal(at('undertone'), 'undertone  warm  [2/4]')
   assert.equal(at('hairStyle'), 'hairStyle  short  [1/5]')
   assert.equal(at('top'), 'top        #1f2a44  [1/7]')
+  assert.equal(at('layer'), 'layer      jacket  [1/3]')
+  assert.equal(at('trim'), 'trim       matching (#1f2a44)  [1/8]')
+  assert.equal(at('scarf'), 'scarf      none  [1/8]')
   assert.equal(at('bottom'), 'bottom     matching (#1f2a44)  [1/8]')
   assert.equal(at('tie'), 'tie        tie  [2/2]')
   assert.equal(at('eyewear'), 'eyewear    none  [1/2]')
@@ -789,6 +944,14 @@ test('describeLook: one ASCII line per slot and the code, with the height in met
   assert.equal(grey[LOOK_SLOTS.indexOf('hairColour')], 'hairColour grey  [9/9]')
   assert.equal(grey[LOOK_SLOTS.indexOf('hairStyle')], 'hairStyle  bun  [4/5]')
   assert.equal(grey[LOOK_SLOTS.indexOf('bottom')], 'bottom     matching (#1f2a44)  [1/4]')
+  // Under a coat the top is the coat's cloth, the trousers still match the jacket, the trim the coat.
+  const coated = describeLook(LOOK_PRESETS[1].look)
+  assert.equal(LOOK_PRESETS[1].name, 'charcoal suit')
+  assert.equal(coated[LOOK_SLOTS.indexOf('layer')], 'layer      coat  [3/3]')
+  assert.equal(coated[LOOK_SLOTS.indexOf('top')], 'top        #1f2a44  [2/7]')
+  assert.equal(coated[LOOK_SLOTS.indexOf('trim')], 'trim       matching (#1f2a44)  [1/8]')
+  assert.equal(coated[LOOK_SLOTS.indexOf('bottom')], 'bottom     matching (#33363b)  [1/8]')
+  assert.equal(coated[LOOK_SLOTS.indexOf('scarf')], 'scarf      #1c2c4c  [3/8]')
   assert.deepEqual(describeLook(withSlot(zero(0), 'shoes', 3)), ['look: outside the wardrobe'])
 })
 
@@ -800,6 +963,12 @@ test('changeLook: a slot by number or name (a height in metres too), a preset, a
   assert.equal(ok(changeLook(suit, { kind: 'slot', slot: 'hairStyle', value: 'bun' }, 0)).hairStyle, 3)
   assert.equal(ok(changeLook(suit, { kind: 'slot', slot: 'hairStyle', value: 'Bald' }, 0)).hairStyle, 4)
   assert.equal(ok(changeLook(suit, { kind: 'slot', slot: 'undertone', value: 'olive' }, 0)).undertone, 3)
+  assert.equal(ok(changeLook(suit, { kind: 'slot', slot: 'layer', value: 'shirt sleeves' }, 0)).layer, 1)
+  assert.equal(ok(changeLook(suit, { kind: 'slot', slot: 'layer', value: 'Coat' }, 0)).layer, 2)
+  assert.equal(ok(changeLook(suit, { kind: 'slot', slot: 'trim', value: 'matching' }, 0)).trim, 0)
+  assert.equal(ok(changeLook(suit, { kind: 'slot', slot: 'trim', value: '4' }, 0)).trim, 3)
+  assert.equal(ok(changeLook(suit, { kind: 'slot', slot: 'scarf', value: 'none' }, 0)).scarf, 0)
+  assert.equal(ok(changeLook(suit, { kind: 'slot', slot: 'scarf', value: lookOptions(0, 'scarf')[5].name }, 0)).scarf, 5)
   assert.equal(ok(changeLook(suit, { kind: 'slot', slot: 'tie', value: 'NONE' }, 0)).tie, 0)
   assert.equal(ok(changeLook(suit, { kind: 'slot', slot: 'body', value: 'skirt suit' }, 0)).body, 3)
   assert.equal(ok(changeLook(suit, { kind: 'slot', slot: 'skin', value: lookOptions(0, 'skin')[2].name }, 0)).skin, 2)
@@ -827,8 +996,10 @@ test('changeLook: a slot by number or name (a height in metres too), a preset, a
     [{ kind: 'slot', slot: 'tie', value: 'bow' }, /no tie named 'bow': none, tie/],
     [{ kind: 'slot', slot: 'hairStyle', value: 'mohawk' }, /no hairStyle named 'mohawk': short, long, bob, bun, bald/],
     [{ kind: 'slot', slot: 'undertone', value: 'pink' }, /no undertone named 'pink': neutral, warm, cool, olive/],
+    [{ kind: 'slot', slot: 'layer', value: 'vest' }, /no layer named 'vest': jacket, shirt sleeves, coat/],
+    [{ kind: 'slot', slot: 'scarf', value: '9' }, /scarf has 8 options \(1-8\)/],
     [{ kind: 'preset', name: 'tuxedo' }, /no preset named 'tuxedo': navy suit, /],
-    [{ kind: 'code', code: 'ZZZZ-ZZZZ' }, /not a look code: 'ZZZZ-ZZZZ' \(twenty-one symbols, XXXXXXX-XXXXXXX-XXXXXXX\)/],
+    [{ kind: 'code', code: 'ZZZZ-ZZZZ' }, /not a look code: 'ZZZZ-ZZZZ' \(twenty-eight symbols, XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX\)/],
     [{ kind: 'random', seed: Number.NaN }, /seed must be a number/],
   ] as const) {
     const r = changeLook(suit, change, 0)

@@ -4,7 +4,8 @@
 /**
  * Why does this file exist? It is the person the crowd is made of: one smooth humanoid, lofted from rings (the
  * trunk, the neck and head with its face, each arm with its hand, each leg with its shoe, and the four outfits'
- * garments, a hem, a shirt front, a skirt, a tie, the hair in its styles, glasses, a bag, a cup) over a skeleton of
+ * garments, a hem, a skirt, a coat, a tie, a scarf, the hair in its styles, glasses, a bag, a cup; the shirt's V,
+ * the lapels, the collar and the cuffs are lines the fragment stage draws on the cloth, GARMENT) over a skeleton of
  * fifteen bones, every vertex tied to two of them, the body sliders that reshape it (height, mass, muscle, shoulders,
  * hips, leg length, posture, head) and the face sliders that reshape the head's features (brow, jaw, chin, cheek,
  * nose, eyes, lips), as arithmetic the crowd's vertex stage (crowd.ts) runs on the GPU and this module runs on the
@@ -33,14 +34,33 @@ export const BONE = Object.freeze({
 export const BONES = 15
 
 /** The colour slots the fragment stage paints (crowd.ts: the top, the shirt, the skin, ..., the eye's white, the iris, the lips). */
-export const SLOT = Object.freeze({ TOP: 0, SHIRT: 1, SKIN: 2, HAIR: 3, BOTTOM: 4, SHOES: 5, ACCENT: 6, PROP: 7, LEGWEAR: 8, FRAME: 9, EYE: 10, IRIS: 11, LIP: 12 })
-export const SLOTS = 13
+export const SLOT = Object.freeze({ TOP: 0, SHIRT: 1, SKIN: 2, HAIR: 3, BOTTOM: 4, SHOES: 5, ACCENT: 6, PROP: 7, LEGWEAR: 8, FRAME: 9, EYE: 10, IRIS: 11, LIP: 12, SCARF: 13 })
+export const SLOTS = 14
 /**
  * The optional pieces, one bit each in a person's piece mask (look.ts LOOK_PIECE_BIT; 0 is "always drawn"). The hair
  * is pieces too: the cap (every style but bald), long hair, a bob, a bun. FACE is the features (eyes, brows, nose,
- * lips, ears): the eye pass sets its bit, the shadow pass leaves it clear.
+ * lips, ears): the eye pass sets its bit, the shadow pass leaves it clear. COAT is the outer layer over the jacket
+ * (look.ts LAYER.coat), SCARF the wrap and tail round the neck.
  */
-export const PIECE = Object.freeze({ NONE: 0, TIE: 1, BAG: 2, CUP: 3, LONG_HAIR: 4, GLASSES: 5, HAIR_CAP: 6, BOB: 7, BUN: 8, FACE: 9 })
+export const PIECE = Object.freeze({ NONE: 0, TIE: 1, BAG: 2, CUP: 3, LONG_HAIR: 4, GLASSES: 5, HAIR_CAP: 6, BOB: 7, BUN: 8, FACE: 9, COAT: 10, SCARF: 11 })
+
+/**
+ * The parts of a garment the fragment stage paints on the cloth (slot TOP) from a vertex's rest position and bone
+ * (crowd.ts), so their lines are exact however coarse the loft and the far body gets them for free: the collar band
+ * above `collar`; the shirt's V on the front within a lateral half-width that grows from nothing where the jacket
+ * closes (`closes`, per body) to `halfAtCollar` at `opens`; the lapels within `lapel` beside the V; the cuffs on the
+ * arms (bones ARM_L and up) below `cuff`. A coat shell (piece COAT) carries the same cloth and the same parts. The
+ * card's silhouette paints by ring and shows none of them.
+ */
+export const GARMENT = Object.freeze({
+  collar: 1.475,
+  opens: 1.5,
+  closes: Object.freeze([1.2, 1.28, 1.24, 1.24]),
+  coatCloses: 1.38,
+  halfAtCollar: Object.freeze([0.065, 0.075, 0.065, 0.07]),
+  lapel: 0.03,
+  cuff: 0.965,
+})
 
 /**
  * Where the base person's joints are, m (y up the body, x out to the side). The vertex stage takes them as
@@ -473,8 +493,6 @@ interface Tube {
   readonly capTop?: number
   readonly capBottom?: number
   readonly piece?: number
-  /** The slot of the front vertices within a V of this half-angle (rad) at the top ring, closing at the bottom ring named. */
-  readonly front?: { readonly slot: number; readonly top: number; readonly closesAt: number; readonly opens: number }
   /** Left out of the distant body altogether. */
   readonly nearOnly?: boolean
   /** One of the head's tubes (the card's face view draws these alone). */
@@ -804,6 +822,50 @@ function tieTube(profile: Profile): Tube {
   return { rings, segments: 6, farSegments: 4, capBottom: 1.1, piece: PIECE.TIE, nearOnly: true }
 }
 
+/**
+ * The coat (piece COAT, slot TOP: the fragment stage paints it in the coat's cloth with the same collar, lapels and V
+ * as a jacket): a shell from the collar to above the knee, clear of the trunk, the bust and the skirt by a centimetre
+ * or two, turned with the chest above the waist and the trunk below, open at the bottom like the skirt.
+ */
+function coatTube(woman: boolean): Tube {
+  const r = woman ? 0.96 : 1
+  const rings: Ring[] = [
+    { y: 0.56, rx: 0.24, rz: 0.185, back: 0.175, slot: T, bone: BONE.TRUNK, far: true },
+    { y: 0.7, rx: 0.225, rz: 0.17, back: 0.16, slot: T, bone: BONE.TRUNK },
+    { y: 0.86, rx: 0.2, rz: 0.15, back: 0.14, slot: T, bone: BONE.TRUNK, far: true },
+    { y: 1.0, rx: 0.19 * r, rz: 0.14, back: 0.13, slot: T, bone: BONE.TRUNK },
+    { y: 1.12, rx: 0.19 * r, rz: 0.14, back: 0.13, slot: T, bone: BONE.TRUNK, bone1: BONE.CHEST, w: 0.6, far: true },
+    { y: 1.26, rx: 0.2 * r, rz: 0.16, back: 0.135, slot: T, bone: BONE.CHEST, bone1: BONE.TRUNK, w: 0.7 },
+    { y: 1.4, rx: 0.23 * r, rz: 0.15, back: 0.14, slot: T, bone: BONE.CHEST, far: true },
+    { y: 1.46, rx: 0.215 * r, rz: 0.13, back: 0.12, slot: T, bone: BONE.CHEST },
+    { y: 1.5, rx: 0.135 * r, rz: 0.105, back: 0.1, slot: T, bone: BONE.CHEST, far: true },
+  ]
+  return { rings, segments: 16, farSegments: 8, piece: PIECE.COAT }
+}
+
+/**
+ * The scarf (piece SCARF, slot SCARF): a wrap round the neck sitting on the shoulders, closed on top under the chin,
+ * turned with the chest and a little with the head; and a tail down the right of the chest, hanging just outside
+ * the jacket (inside a coat's shell, which hides it). The tail is the near body's alone.
+ */
+function scarfTubes(profile: Profile): Tube[] {
+  const wrap: Ring[] = [
+    { y: 1.49, rx: 0.1, rz: 0.09, back: 0.085, slot: SLOT.SCARF, bone: BONE.CHEST, far: true },
+    { y: 1.53, rx: 0.088, rz: 0.08, back: 0.075, slot: SLOT.SCARF, bone: BONE.CHEST, bone1: BONE.HEAD, w: 0.7 },
+    { y: 1.555, rx: 0.078, rz: 0.072, back: 0.068, slot: SLOT.SCARF, bone: BONE.HEAD, bone1: BONE.CHEST, w: 0.6, far: true },
+  ]
+  const z = (y: number) => frontOf(profile, y) + 0.014
+  const tail: Ring[] = [
+    { y: 1.15, x: 0.03, rx: 0.04, rz: 0.008, z: z(1.15), slot: SLOT.SCARF, bone: BONE.TRUNK, far: true },
+    { y: 1.3, x: 0.035, rx: 0.04, rz: 0.008, z: z(1.3), slot: SLOT.SCARF, bone: BONE.CHEST, bone1: BONE.TRUNK, w: 0.6 },
+    { y: 1.48, x: 0.04, rx: 0.045, rz: 0.01, z: z(1.48), slot: SLOT.SCARF, bone: BONE.CHEST, far: true },
+  ]
+  return [
+    { rings: wrap, segments: 12, farSegments: 8, capTop: 1.565, piece: PIECE.SCARF },
+    { rings: tail, segments: 6, farSegments: 4, capBottom: 1.13, piece: PIECE.SCARF, nearOnly: true },
+  ]
+}
+
 /** A cup in the left hand (the pose brings it up to the chest). */
 function cupTube(): Tube {
   const x = -LANDMARK.shoulderX * 1.06
@@ -849,10 +911,9 @@ export function bodyTubes(variant: number): Tube[] {
   const skirt = v === 3
   const hem = v === 0 ? 0.9 : v === 1 ? 0.94 : v === 2 ? 0.92 : 0.98
   const profile = woman ? womanTrunk(hem) : manTrunk(hem)
-  // The shirt shows in a V between the lapels: from the collar down to the top button.
-  const front = { slot: SLOT.SHIRT, top: v === 1 ? 0.6 : 0.5, opens: 1.5, closesAt: v === 0 ? 1.2 : v === 1 ? 1.28 : 1.24 }
+  // The shirt's V, the lapels, the collar and the cuffs are painted on the cloth by the fragment stage (GARMENT).
   const tubes: Tube[] = [
-    { rings: trunkRings(profile, 1.12), segments: 16, farSegments: 8, capBottom: 0.78, front },
+    { rings: trunkRings(profile, 1.12), segments: 16, farSegments: 8, capBottom: 0.78 },
     ...headTubes(),
     ...armTubes(-1, woman), ...armTubes(1, woman),
     ...legTubes(-1, skirt ? SLOT.LEGWEAR : B, woman), ...legTubes(1, skirt ? SLOT.LEGWEAR : B, woman),
@@ -860,6 +921,7 @@ export function bodyTubes(variant: number): Tube[] {
   ]
   if (skirt) tubes.push(skirtTube())
   if (v === 0) tubes.push(tieTube(profile))
+  tubes.push(coatTube(woman), ...scarfTubes(profile))
   return tubes
 }
 
@@ -925,14 +987,7 @@ class Loft {
         const s = Math.sin(th)
         const x = cx + r.rx * Math.cos(th)
         const z = cz + (s >= 0 ? rz : back) * s + laid(r, r.y, x)
-        let slot = r.slot
-        if (t.front && r.y >= t.front.closesAt && r.y <= t.front.opens && slot === T) {
-          // The V's half-angle narrows from the collar to where it closes.
-          const span = t.front.opens - t.front.closesAt
-          const half = span > 0 ? t.front.top * (r.y - t.front.closesAt) / span : 0
-          if (Math.abs(th - Math.PI / 2) <= half + 1e-9) slot = t.front.slot
-        }
-        this.vertex(x, r.y, z, r.bone, slot, piece, bone1, w, region(r), far ? 0 : faceWeight(r, th))
+        this.vertex(x, r.y, z, r.bone, r.slot, piece, bone1, w, region(r), far ? 0 : faceWeight(r, th))
       }
     }
     for (let k = 1; k < rings.length; k++) {

@@ -15,6 +15,25 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **A layered wardrobe with dye channels.** Every look has a **layer** (the jacket, shirt sleeves or a coat), a
+  **trim** (matching, or one of seven cloths on the lapels, the collar band and the cuffs) and a **scarf** (none or
+  one of seven cloths). The coat is a shell of `src/03_Spawn_Agents/humanoid.ts`'s loft over the trunk, worn by
+  the near and the far body, and owns the top's dye (seven coat cloths in the jacket's bits); the scarf wraps the
+  neck on both bodies with a tail down the chest on the near one. The jacket's lines (the shirt's V, the lapels,
+  the shirt's collar, the collar band, the cuffs) are no longer vertices: the fragment stage of `crowd.ts` cuts
+  them from the rest position (`GARMENT`), so the shirt's slot leaves the loft and a trim costs the shadow pass
+  nothing. The slot a band of the body paints is now a flat varying (each triangle its lower ring's), which ends
+  the stripes a jacket's hem showed over the trousers. The look grows to thirty-two slots and a fourth packed word
+  (`packWardrobe`), carried as the third of four words per agent in `crowd.figure`; look codes are twenty-eight
+  symbols (`XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX`), and the twenty-one-, fifteen- and eight-symbol codes, the stored v3,
+  v2 and v1 records and a roster's old looks are read and upgraded with the jacket, a matching trim and no scarf.
+  The hashed crowd draws the layer, the trim and the scarf from the same chains (`lookFromSeed` reproduces them:
+  one in five in shirt sleeves, three in twenty in a coat, one in five with a trim, three in twenty-five with a
+  scarf). The card gains Layer, Trim and Scarf rows (the jacket's and the trim's hidden under shirt sleeves) and
+  the console's `look` the three slots; the 14A pin gains the coat and the scarf (clothing, nothing held). Tests:
+  the garment lines against the loft, the coat outside the trunk, look v4 round trips, upgrades and codes, the
+  wiring and the air gap, every body material built under Node in both passes. The garments' appearance on a real
+  GPU is not yet confirmed: software WebGPU and CI's screenshots only.
 - **A face for every pedestrian, and hair in five styles.** The head of `src/03_Spawn_Agents/humanoid.ts` is now a
   twelve-sided skull in regions (chin, jaw, cheekbones, brow line) with features lofted onto its front: two eyes
   (a white and an iris), two brows, a nose rooted on the skull, the lips, two ears; all written by hand, no imported

@@ -26,7 +26,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { PIECE, SLOT, faceRings, silhouetteRings, type SilhouetteRing } from '../03_Spawn_Agents/humanoid.ts'
 import {
-  HAIR, LOOK_BODY_SLIDERS, LOOK_FACE_SLIDERS, LOOK_PRESETS, LOOK_SLOTS, bodyShapeOf, faceShapeOf, formatLookCode, lookFromSeed, lookOptions, lookSwatch,
+  HAIR, LAYER, LOOK_BODY_SLIDERS, LOOK_FACE_SLIDERS, LOOK_PRESETS, LOOK_SLOTS, bodyShapeOf, faceShapeOf, formatLookCode, lookFromSeed, lookOptions, lookSwatch, matchingSwatch,
   parseLookCode, withLookSlot,
   type Look, type LookBody, type LookFaceSlider, type LookSlider, type LookSlot,
 } from '../03_Spawn_Agents/look.ts'
@@ -54,8 +54,8 @@ export interface CustomizerProps {
   onHear?(voice: string, line: string): void
 }
 
-/** What each slot is called on the card, by body where the cloth differs. */
-function slotLabel(slot: LookSlot, body: LookBody): string {
+/** What each slot is called on the card, by body where the cloth differs (and the top by its layer: a coat's dye is the coat). */
+function slotLabel(slot: LookSlot, body: LookBody, layer: number = LAYER.jacket): string {
   switch (slot) {
     case 'body': return 'Body'
     case 'height': return 'Height'
@@ -78,11 +78,14 @@ function slotLabel(slot: LookSlot, body: LookBody): string {
     case 'undertone': return 'Undertone'
     case 'hairStyle': return 'Hair'
     case 'hairColour': return 'Hair colour'
-    case 'top': return body === 1 ? 'Blazer' : body === 3 ? 'Top' : 'Jacket'
+    case 'layer': return 'Layer'
+    case 'top': return layer === LAYER.coat ? 'Coat' : body === 1 ? 'Blazer' : body === 3 ? 'Top' : 'Jacket'
+    case 'trim': return 'Trim'
     case 'bottom': return body === 3 ? 'Skirt' : body === 1 ? 'Chinos' : 'Trousers'
     case 'shirt': return body >= 2 ? 'Blouse' : 'Shirt'
     case 'shoes': return 'Shoes'
     case 'tie': return 'Tie'
+    case 'scarf': return 'Scarf'
     case 'eyewear': return 'Glasses'
     case 'bag': return 'Bag'
     case 'cup': return 'Cup'
@@ -129,8 +132,9 @@ function themeOf(dark: boolean): Theme {
 function silhouettePaint(look: Look): string[] {
   const own = (slot: LookSlot, fallback: number) => hex6(lookSwatch(look, slot) ?? fallback)
   const out: string[] = []
-  out[SLOT.TOP] = own('top', 0x33363b)
+  // The top's slot wears the layer's cloth: the shirt's under shirt sleeves, the coat's under a coat (lookSwatch reads the layer).
   out[SLOT.SHIRT] = own('shirt', 0xf2f2ef)
+  out[SLOT.TOP] = look.layer === LAYER.shirt ? out[SLOT.SHIRT] : own('top', 0x33363b)
   out[SLOT.SKIN] = own('skin', 0xd29f79)
   out[SLOT.HAIR] = own('hairColour', 0x3b2618)
   out[SLOT.BOTTOM] = own('bottom', 0x33363b)
@@ -142,6 +146,7 @@ function silhouettePaint(look: Look): string[] {
   out[SLOT.EYE] = '#e8e2dc'
   out[SLOT.IRIS] = '#4a3a2a'
   out[SLOT.LIP] = lipOf(lookSwatch(look, 'skin') ?? 0xd29f79)
+  out[SLOT.SCARF] = own('scarf', 0x6a1e2a)
   return out
 }
 
@@ -169,6 +174,8 @@ function wears(look: Look, piece: number): boolean {
     case PIECE.LONG_HAIR: return look.hairStyle === HAIR.long
     case PIECE.BOB: return look.hairStyle === HAIR.bob
     case PIECE.BUN: return look.hairStyle === HAIR.bun
+    case PIECE.COAT: return look.layer === LAYER.coat
+    case PIECE.SCARF: return look.scarf !== 0
     default: return true
   }
 }
@@ -339,14 +346,16 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
 
       <div className={`mt-3 border-t pt-3 ${t.rule}`}>
         {LOOK_SLOTS.map((slot) => {
-          const options = lookOptions(body, slot)
+          // Under shirt sleeves the jacket is off: its cloth and its trim are not seen, so their rows are not shown.
+          if (worn.layer === LAYER.shirt && (slot === 'top' || slot === 'trim')) return null
+          const options = lookOptions(body, slot, worn.layer)
           const current = worn[slot]
           if (isSlider(slot)) {
             // A body or face slider, or the age: a range over its steps, the height read in metres.
             const shown = slot === 'height' ? options[current].name : `${current + 1}/${options.length}`
             const row = (
               <div className="mb-2 flex items-center gap-3" data-slot={slot}>
-                <div className={`w-20 shrink-0 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>{slotLabel(slot, body)}</div>
+                <div className={`w-20 shrink-0 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>{slotLabel(slot, body, worn.layer)}</div>
                 <input
                   type="range"
                   min={0}
@@ -354,7 +363,7 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
                   step={1}
                   value={current}
                   onChange={(e) => set(slot, Number(e.target.value))}
-                  aria-label={slotLabel(slot, body)}
+                  aria-label={slotLabel(slot, body, worn.layer)}
                   aria-valuetext={options[current].name}
                   className="min-w-0 flex-1 accent-current"
                 />
@@ -374,12 +383,12 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
           }
           return (
             <div key={slot} className="mb-2 flex items-start gap-3" data-slot={slot}>
-              <div className={`w-20 shrink-0 pt-1 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>{slotLabel(slot, body)}</div>
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="radiogroup" aria-label={slotLabel(slot, body)}>
+              <div className={`w-20 shrink-0 pt-1 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>{slotLabel(slot, body, worn.layer)}</div>
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="radiogroup" aria-label={slotLabel(slot, body, worn.layer)}>
                 {options.map((o, i) => {
                   const on = i === current
-                  // A colour is a swatch; a named option is a pill (the matching trousers' carries the jacket's cloth).
-                  const hex = o.hex ?? (slot === 'bottom' && i === 0 && o.name === 'matching' ? lookSwatch(worn, 'top') : null)
+                  // A colour is a swatch; a named option is a pill (the matching trousers' carries the jacket's cloth, the matching trim's the outer layer's).
+                  const hex = o.hex ?? ((slot === 'bottom' || slot === 'trim') && o.name === 'matching' ? matchingSwatch(worn, slot) : null)
                   if (o.hex !== null) {
                     return (
                       <button

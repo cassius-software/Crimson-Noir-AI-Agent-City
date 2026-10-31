@@ -542,46 +542,66 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   body (past the level-of-detail cut) leave them out, so the shadow shader and the distant crowd cost what they
   did. The iris keeps the colour the street's hash gives it (the words have no room for it).
 - **The wardrobe** (`03_Spawn_Agents/look.ts`) is the crowd's own, and closed by construction. A look is
-  twenty-nine slots: the body, eight body sliders (height, mass, muscle, shoulders, hips, legs, posture, head),
-  seven face sliders (brow, jaw, chin, cheek, nose, eyes, lips), and the thirteen dress slots (skin, age,
-  undertone, hair style, hair colour, top, bottom, shirt, shoes, tie, eyewear, bag, cup), every one an index into
-  the crowd's catalogue: the four bodies `crowd.ts` draws (suit, smart casual, pantsuit, skirt suit), its nine
-  optional pieces (tie, bag, cup, long hair, glasses, the hair cap, a bob, a bun, the face), its eighteen colour
-  palettes verbatim (`look.test.ts` reads them out of `crowd.ts`'s source, so they cannot drift), the ninth hair
-  colour the shader mixes in, and the sliders' steps. The height is 32 steps from 1.50 m to 2.05 m; mass, muscle,
+  thirty-two slots: the body, eight body sliders (height, mass, muscle, shoulders, hips, legs, posture, head),
+  seven face sliders (brow, jaw, chin, cheek, nose, eyes, lips), and the sixteen dress slots (skin, age,
+  undertone, hair style, hair colour, layer, top, trim, bottom, shirt, shoes, tie, scarf, eyewear, bag, cup), every
+  one an index into the crowd's catalogue: the four bodies `crowd.ts` draws (suit, smart casual, pantsuit, skirt
+  suit), its eleven optional pieces (tie, bag, cup, long hair, glasses, the hair cap, a bob, a bun, the face, a
+  coat, a scarf), its twenty-one colour palettes verbatim (`look.test.ts` reads them out of `crowd.ts`'s source, so
+  they cannot drift), the ninth hair colour the shader mixes in, and the sliders' steps. The height is 32 steps from 1.50 m to 2.05 m; mass, muscle,
   shoulders, hips, leg length, posture and the seven face sliders are sixteen steps each; the head and the age
   eight. The module ships no colour, piece or body of its own, so nothing stored, typed or shared can dress anyone
   in anything the crowd does not wear today: `validateLook` accepts nothing but an object with exactly those slots,
-  each within its body's options. A look kept before the face existed (twenty slots) is upgraded on the way in with
-  the base face, the middle age and a neutral undertone, its hair style carried (`upgradeFigureLook`); one kept
-  before the sliders existed (fourteen slots, with `build`) has its height and build carried onto the new sliders
-  and the rest set to the middle (`upgradeLegacyLook`).
-- **The three words.** `packLook` folds the body, the pieces, the colours, the age and the undertone into one
+  each within its body's options. A look kept before the layers existed (twenty-nine slots) is upgraded on the way
+  in with the jacket, a matching trim and no scarf (`upgradeFaceLook`); one kept before the face existed (twenty
+  slots) with the base face, the middle age and a neutral undertone, its hair style carried (`upgradeFigureLook`);
+  one kept before the sliders existed (fourteen slots, with `build`) has its height and build carried onto the new
+  sliders and the rest set to the middle (`upgradeLegacyLook`).
+- **The layers and the dyes.** The **Layer** is the outer garment: the jacket (the body's own, as before), shirt
+  sleeves (the jacket off: its slot wears the shirt's cloth, and the jacket's and the trim's rows leave the card),
+  or a coat (a shell of the loft over the trunk from the hips to the collar, worn by the near and the far body,
+  with the jacket's sleeves in its cloth). The layer owns the top's dye: under a coat the **Top** row offers the
+  seven coat cloths (as many as the body's jacket palette holds, so the same bits carry it), and matching trousers
+  keep the jacket's cloth, not the coat's. The **Trim** is matching (no line shows) or one of seven cloths on the
+  lapels, the collar band and the cuffs. Those lines, and the shirt's V between the lapels, are no vertices: the
+  fragment stage cuts them from the body's rest position (`humanoid.ts` `GARMENT`: the V closes on the chest and
+  widens to where the jacket opens at the collar ring, the lapels run three centimetres beside it, the shirt's
+  collar stands above the opening, the collar band is the trunk's cloth above the collar line, the cuffs the
+  sleeves' below the cuff line; a coat's V closes higher), so a trim costs the shadow pass nothing. The **Scarf**
+  is none or one of seven cloths: a wrap at the neck on both bodies and a tail down the chest on the near one. The
+  street's hash dresses one pedestrian in five in shirt sleeves, three in twenty in a coat, one in five with a
+  contrast trim and three in twenty-five with a scarf. The slot a band of the body paints is now one slot per band
+  (the lower ring's, flat): a jacket's hem over the trousers no longer shows the slots numbered between them.
+- **The four words.** `packLook` folds the body, the pieces, the colours, the age and the undertone into one
   unsigned 32-bit word (bit 6 says the hair is long, written from the style; the top bit is spare), `packFigure`
-  the eight body sliders into a second and `packFace` the seven face sliders and the hair style into a third; the
-  crowd carries them per agent in page-only storage attributes (`crowd.look`, and `crowd.figure` holding the figure
-  word and the face word as a pair, one buffer, because the vertex stage already binds seven of the eight storage
-  buffers WebGPU promises every device): the body materials read them in place of the hash, and the page's cull
-  reads the body out of the first to pick what to draw. No simulation pass binds any of them, so nothing of a look
-  reaches the pedestrians' motion, the First-Law sensing, the protocol or the physics worker. `lookFromSeed(i)`
-  reproduces, bit for bit, the choice the crowd's hash makes for agent `i`, sliders, face, hair style, age and
-  undertone included (the hashed crowd draws its stature from a per-body range, men 1.64 m to 2.00 m and women
-  1.55 m to 1.87 m, and every other slider over its whole range; a woman's hair that is not short is long, a bob or
-  a bun in thirds, one man in twenty-five is bald), so an agent's look and a visitor's saved look are the same kind
-  of record. The eye never sees its own body (there is no mirror, by design); its shadow, the body the cull draws
+  the eight body sliders into a second, `packFace` the seven face sliders and the hair style into a third and
+  `packWardrobe` the layer (two bits), the trim and the scarf (three each) into a fourth whose other bits are
+  spare; the crowd carries them per agent in page-only storage attributes (`crowd.look`, and `crowd.figure`
+  holding the figure, face and wardrobe words and a spare as four words in one buffer, because the vertex stage
+  already binds seven of the eight storage buffers WebGPU promises every device): the body materials read them in
+  place of the hash, and the page's cull reads the body out of the first to pick what to draw. No simulation pass
+  binds any of them, so nothing of a look reaches the pedestrians' motion, the First-Law sensing, the protocol or
+  the physics worker. `lookFromSeed(i)` reproduces, bit for bit, the choice the crowd's hash makes for agent `i`,
+  sliders, face, hair style, age, undertone, layer, trim and scarf included (the hashed crowd draws its stature
+  from a per-body range, men 1.64 m to 2.00 m and women 1.55 m to 1.87 m, and every other slider over its whole
+  range; a woman's hair that is not short is long, a bob or a bun in thirds, one man in twenty-five is bald), so an
+  agent's look and a visitor's saved look are the same kind of record. The eye never sees its own body (there is no mirror, by design); its shadow, the body the cull draws
   and every other viewer do. The first-person eye stands at the look's own eye height (`head.ts`), so a tall look
   sees over a short one.
-- **Codes and presets.** A look code is twenty-one symbols, `XXXXXXX-XXXXXXX-XXXXXXX`, from an alphabet without I,
-  L, O and U, carrying the three words and a CRC-8 over them: it can be written down and shared, and
-  `parseLookCode` ignores case, the dashes and spaces and refuses any single mistyped symbol. A fifteen-symbol code
-  from before the face, and an eight-symbol code from before the sliders, still read, upgraded the same way as a
-  stored look. Eight named presets, two per body (navy suit, charcoal suit, camel blazer, navy blazer, burgundy
-  pantsuit, cream pantsuit, navy skirt suit, camel skirt suit), dress the picker, each with a figure, a face and a
-  hair style of its own (the five styles among them).
+- **Codes and presets.** A look code is twenty-eight symbols, `XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX`, from an alphabet
+  without I, L, O and U, carrying the four words and a CRC-8 over them: it can be written down and shared, and
+  `parseLookCode` ignores case, the dashes and spaces and refuses any single mistyped symbol. A twenty-one-symbol
+  code from before the layers, a fifteen-symbol code from before the face, and an eight-symbol code from before the
+  sliders, still read, upgraded the same way as a stored look. Eight named presets, two per body (navy suit,
+  charcoal suit, camel blazer, navy blazer, burgundy pantsuit, cream pantsuit, navy skirt suit, camel skirt suit),
+  dress the picker, each with a figure, a face and a hair style of its own (the five styles among them; the
+  charcoal suit under a navy coat, trims and scarves on others).
 - **The card.** A silhouette of the look, from the front and from the left (the body's own rings after the
-  sliders, in the look's colours; the tie, the bag and the hose keep the street's own colours), above a row per
+  sliders, in the look's colours, the coat and the scarf among them; the tie, the bag and the hose keep the
+  street's own colours, and the trim's lines are the street's alone, its row shows the cloth), above a row per
   slot: the sliders as sliders (the height read in metres), named options as a segmented control, colours as
-  swatches from the crowd's palettes; the presets; Randomise (the look the hash would give some other number);
+  swatches from the crowd's palettes (under shirt sleeves the jacket's and the trim's rows are not shown); the
+  presets; Randomise (the look the hash would give some other number);
   Reset (the look your own seed gives, the first use of the profile seed); and the code, to copy or to paste. The
   face sliders sit under a face view of their own, the head's rings six times the silhouette's scale, from the
   front and in profile, with the hair style, the features and the glasses drawn as the street draws them: under
@@ -826,7 +846,7 @@ while you type.
   worker re-checks (see Pings and the rally).
 - `look` shows the look you wear, one line per slot and its code; `look show <agent>` a pedestrian's.
   `look <slot> <n|name>` sets one slot (`body`, `height`, `mass`, `muscle`, `shoulders`, `hips`, `legs`,
-  `posture`, `head`, `skin`, `hairStyle`, `hairColour`, `top`, `bottom`, `shirt`, `shoes`, `tie`, `eyewear`, `bag`,
+  `posture`, `head`, `skin`, `hairStyle`, `hairColour`, `layer`, `top`, `trim`, `bottom`, `shirt`, `shoes`, `tie`, `scarf`, `eyewear`, `bag`,
   `cup`; a height takes a step or metres, `look height 1.80`), `look preset <name>` one of the eight presets,
   `look code XXXXX-XXXXX-XXXXX` a shared look (an old eight-symbol code still reads), `look random [<seed>]` the
   look the hash gives some other number, and
