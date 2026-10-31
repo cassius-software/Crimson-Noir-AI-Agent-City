@@ -117,10 +117,39 @@ test('adapterLine: the profile\'s string, as createRenderer always built it', ()
 test('createRenderer hands three the page\'s device, checks the backend, and releases the device itself', () => {
   const world = readFileSync(new URL('./world.ts', import.meta.url), 'utf8')
   const body = world.slice(world.indexOf('export async function createRenderer'), world.indexOf('/** The GPUBuffer three created'))
-  assert.match(body, /const \{ adapter, device \} = await acquireDevice\(navigator\.gpu, window\.isSecureContext !== false, window\.location\.origin\)/)
+  assert.match(body, /const headset = await headsetPossible\(navigator\)/, 'the headset probe runs first (xrSystem.ts), never throwing')
+  assert.match(body, /const \{ adapter, device \} = await acquireDevice\(navigator\.gpu, window\.isSecureContext !== false, window\.location\.origin, headset\)/)
   assert.ok(body.indexOf('acquireDevice(') < body.indexOf('new WebGPURenderer('), 'the device exists before three')
   assert.match(body, /new WebGPURenderer\(\{[^}]*reversedDepthBuffer: true, device \}\)/)
   assert.match(body, /if \(!backend\.isWebGPUBackend \|\| !backend\.device\)/, 'the WebGL2 guard stays')
   assert.match(body, /export function releaseGpu[\s\S]*gpu\.device\.destroy\(\)/, 'three destroys only a device it made: the page destroys its own')
   assert.doesNotMatch(readFileSync(new URL('./gpuDevice.ts', import.meta.url), 'utf8'), /from 'three/, 'gpuDevice.ts imports nothing of three')
+})
+
+test('a headset possible: the adapter is asked for as xrCompatible first, and plainly when that request answers none or throws; without a headset nothing xr is asked', async () => {
+  const a = fakeGpu({ core: true })
+  await acquireDevice(a.gpu, true, '', true)
+  assert.deepEqual(a.asked.adapter, [{ powerPreference: 'high-performance', xrCompatible: true }])
+  const b = fakeGpu({ core: true })
+  await acquireDevice(b.gpu, true, '', false)
+  assert.deepEqual(b.asked.adapter, [{ powerPreference: 'high-performance' }])
+  const c = fakeGpu({ core: true })
+  await acquireDevice(c.gpu, true)
+  assert.deepEqual(c.asked.adapter, [{ powerPreference: 'high-performance' }], 'the default is no headset')
+  // The compatible request refused (null): the plain one follows and the device is made.
+  const d = fakeGpu({ core: true })
+  const asked: unknown[] = []
+  const refusing: GpuEntry = { requestAdapter: async (opts) => { asked.push(opts); return (opts as { xrCompatible?: boolean } | undefined)?.xrCompatible ? null : d.gpu.requestAdapter(opts) } }
+  const got = await acquireDevice(refusing, true, '', true)
+  assert.ok(got.device)
+  assert.deepEqual(asked, [{ powerPreference: 'high-performance', xrCompatible: true }, { powerPreference: 'high-performance' }])
+  // A browser that throws on the option: the same.
+  const thrown: unknown[] = []
+  const throwing: GpuEntry = { requestAdapter: (opts) => { thrown.push(opts); if ((opts as { xrCompatible?: boolean } | undefined)?.xrCompatible) throw new TypeError('unknown option'); return d.gpu.requestAdapter(opts) } }
+  assert.ok((await acquireDevice(throwing, true, '', true)).device)
+  assert.deepEqual(thrown, [{ powerPreference: 'high-performance', xrCompatible: true }, { powerPreference: 'high-performance' }])
+  // No adapter either way is still 'no-adapter' (the compatibility probe after).
+  const none = fakeGpu({ core: false })
+  assert.equal(await codeOf(acquireDevice(none.gpu, true, '', true)), 'no-adapter')
+  assert.deepEqual(none.asked.adapter.map((o) => (o as { xrCompatible?: boolean; featureLevel?: string }).xrCompatible ?? (o as { featureLevel?: string }).featureLevel ?? 'plain'), [true, 'plain', 'compatibility'])
 })

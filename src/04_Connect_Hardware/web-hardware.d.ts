@@ -6,12 +6,14 @@
  * and the unit tests type-check without the DOM lib at all. These are the minimal structural shapes
  * the HAL touches (module-scoped, so nothing leaks into globals or collides with @types packages),
  * written against the WHATWG/WICG specs: hid.spec.whatwg.org, wicg.github.io/serial,
- * webbluetoothcg.github.io/web-bluetooth, w3c.github.io/gamepad. The last section covers what the
+ * webbluetoothcg.github.io/web-bluetooth, w3c.github.io/gamepad. The last sections cover what the
  * .agv recorder needs beyond lib.dom's WebCodecs: MediaStreamTrackProcessor
  * (w3c.github.io/mediacapture-transform) and showSaveFilePicker (wicg.github.io/file-system-access), and the
- * WebXR section the device resolver reads (immersive-web.github.io/webxr, the Gamepads Module and Hand Input).
- * What breaks if it is removed? hal.ts, dualsense.ts, lineLink.ts, gamepad.ts, devices.ts and recorder.ts stop
- * type-checking.
+ * WebXR slice the device resolver, the headset mapper (xrInput.ts) and the session (07_Execute_Actions/xrSession.ts)
+ * read (immersive-web.github.io/webxr, the Gamepads Module and Hand Input): the DOM's own objects satisfy these
+ * shapes structurally, and the Node tests hand in fakes, so no WebXR typings are needed to type-check them.
+ * What breaks if it is removed? hal.ts, dualsense.ts, lineLink.ts, gamepad.ts, devices.ts, xrInput.ts, xrSession.ts
+ * and recorder.ts stop type-checking.
  */
 
 // ── WebHID ─────────────────────────────────────────────────────────────────────────────────────────
@@ -189,6 +191,45 @@ export interface XrInputSourceLike {
   readonly hand?: unknown
 }
 
+// ── WebXR session (the slice xrSession.ts drives and xrInput.ts reads; a DOM XRSession satisfies it structurally) ─
+
+/** A select or squeeze event: the source that pinched or pulled. */
+export interface XrInputSourceEventLike { readonly inputSource: XrInputSourceLike }
+
+/** The `inputsourceschange` event: what arrived and what left. */
+export interface XrInputSourcesChangeEventLike { readonly added: readonly XrInputSourceLike[]; readonly removed: readonly XrInputSourceLike[] }
+
+export type XrSelectEvent = 'select' | 'selectstart' | 'selectend' | 'squeeze' | 'squeezestart' | 'squeezeend'
+
+export interface XrSessionLike {
+  /** Live: the array the session keeps up to date as sources come and go. */
+  readonly inputSources: ArrayLike<XrInputSourceLike>
+  /** The features granted (WebXR Level 2+); the WebGPU binding needs 'webgpu' among them. */
+  readonly enabledFeatures?: readonly string[]
+  /** 'visible', 'visible-blurred' or 'hidden'. */
+  readonly visibilityState?: string
+  /** 'opaque' (a VR headset), 'alpha-blend' or 'additive' (passthrough or see-through). */
+  readonly environmentBlendMode?: string
+  addEventListener(type: 'inputsourceschange', listener: (e: XrInputSourcesChangeEventLike) => void): void
+  addEventListener(type: XrSelectEvent, listener: (e: XrInputSourceEventLike) => void): void
+  addEventListener(type: 'end' | 'visibilitychange', listener: () => void): void
+  removeEventListener(type: 'inputsourceschange', listener: (e: XrInputSourcesChangeEventLike) => void): void
+  removeEventListener(type: XrSelectEvent, listener: (e: XrInputSourceEventLike) => void): void
+  removeEventListener(type: 'end' | 'visibilitychange', listener: () => void): void
+  end(): Promise<void>
+}
+
+export type XrSessionMode = 'immersive-vr' | 'immersive-ar'
+
+export interface XrSessionInit { requiredFeatures?: string[]; optionalFeatures?: string[] }
+
+/** navigator.xr, as far as the page asks of it. */
+export interface XrSystemLike {
+  isSessionSupported(mode: XrSessionMode): Promise<boolean>
+  /** Needs a user gesture: the page calls it synchronously inside a tap or a key press. */
+  requestSession(mode: XrSessionMode, init?: XrSessionInit): Promise<XrSessionLike>
+}
+
 // ── navigator ──────────────────────────────────────────────────────────────────────────────────────
 
 /** The slice of `navigator` the HAL reads. Every member is optional: Safari, Firefox and iOS lack most. */
@@ -197,6 +238,8 @@ export interface HardwareNavigator {
   readonly serial?: Serial
   readonly bluetooth?: Bluetooth
   getGamepads?(): ArrayLike<GamepadLike | null>
+  /** WebXR (Chromium on a headset's Android, visionOS Safari); absent nearly everywhere else. */
+  readonly xr?: XrSystemLike
 }
 
 // ── WebCodecs capture and the save-file picker (lib.dom has VideoEncoder, VideoFrame, EncodedVideoChunk,

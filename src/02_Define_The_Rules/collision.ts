@@ -111,3 +111,11 @@ export const AVATAR_GROUPS = interactionGroups(ALL_GROUPS, ALL_GROUPS & ~(GROUP.
  * (AVATAR_GROUPS filters `ragdoll` out). ragdollRig.ts gives every segment and foot these groups.
  */
 export const RAGDOLL_GROUPS = interactionGroups(GROUP.ragdoll, ALL_GROUPS & ~(GROUP.ragdoll | GROUP.vehicle | GROUP.query))
+
+/**
+ * A robot's links (07_Execute_Actions/articulated.ts, the joint bridge): the same bits as a promoted pedestrian's rig,
+ * on purpose. The avatar passes through a robot as through a rig (a servo arm is never a wall the operator is pushed
+ * by), no car and no wheel ray meets one, the Ring-0 audit sees neither a vehicle nor a pedestrian in it, and the
+ * ground and the furniture hold it up. Two robots pass through each other, as two rigs do.
+ */
+export const ROBOT_GROUPS = RAGDOLL_GROUPS

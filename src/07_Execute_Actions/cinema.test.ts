@@ -523,3 +523,16 @@ test('air gap: every animation frame requests its physics step and poses the hea
   assert.ok(!frame.includes('.render('), 'frame() itself draws nothing')
   assert.ok(present.includes('this.post.render()') && present.includes('this.gpu.renderer.render(this.world.scene, cam)'))
 })
+
+test('pacer passthrough: every tick is presented (a headset shows each of its frames); off again, the grid re-anchors and 24 a second resumes', () => {
+  const p = new FramePacer()
+  p.passthrough = true
+  const shown = run(p, 90, 1)
+  assert.equal(shown.length, 91, 'all 91 ticks')
+  assert.equal(p.frames, 91)
+  assert.ok(p.fps(2000) > 80, `${p.fps(2000)} fps`)
+  p.passthrough = false
+  const paced = run(p, 90, 2, 3000)
+  assert.ok(paced.length >= 46 && paced.length <= 50, `${paced.length} frames in two seconds at 24`)
+  assert.deepEqual([...new Set(gaps(paced).map((g) => Math.round(g / (1000 / 90))))].sort(), [3, 4], 'back on the 24 fps grid at 90 Hz')
+})

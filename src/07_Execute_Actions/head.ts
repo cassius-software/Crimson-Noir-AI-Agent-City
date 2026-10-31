@@ -4,11 +4,13 @@
 /**
  * Why does this file exist? It is the head the camera is locked to — first person only: at eye level on
  * foot, in the driver's seat in a car — posed like a physical head (yaw and pitch, never roll, no bob) so a
- * WebXR headset can take over. It runs on the page and reads only plain numbers (the avatar's feet, a car's
- * pose) from the physics worker's state.
+ * WebXR headset can take over, and under one (setHeadset) it does: the rig stands where the body is, turned the
+ * body's way, and the headset's own pose is composed onto it (xrSession.ts hands the composition in), so the pose
+ * read back is the headset's, pitch unclamped, roll kept on the camera. It runs on the page and reads only plain
+ * numbers (the avatar's feet, a car's pose) from the physics worker's state.
  * What breaks if it is removed? The camera has nowhere to be.
  */
-import type { PerspectiveCamera } from 'three/webgpu'
+import { Object3D, type PerspectiveCamera } from 'three/webgpu'
 import { clampPitch } from '../04_Connect_Hardware/input.ts'
 import { kindOf } from './car.ts'
 
@@ -51,6 +53,13 @@ const wrap = (a: number) => a - TAU * Math.floor((a + Math.PI) / TAU)
 
 export interface HeadPose { x: number; y: number; z: number; yaw: number; pitch: number }
 
+/**
+ * A headset's composition: given the camera parented to the rig (the floor under the body, turned the body's way),
+ * writes the headset's view into the camera (three's renderer.xr.updateCamera: position and rotation relative to
+ * the rig, matrixWorld through it, the eyes' union as the projection).
+ */
+export type HeadCompose = (camera: PerspectiveCamera) => void
+
 /** A ray from the eye along the head forward: origin (ox, oy, oz) and unit direction (dx, dy, dz), world space. */
 export interface AimRay { ox: number; oy: number; oz: number; dx: number; dy: number; dz: number }
 
@@ -87,6 +96,27 @@ export class HeadRig {
   private snap = true
   /** How far above the feet this head's eye sits, m (setEyeHeight: the body's own height from the wardrobe). */
   private eye = EYE_HEIGHT
+  /** The headset's composition while one shows the city; null otherwise. */
+  private compose: HeadCompose | null = null
+  /** The rig the camera is composed under: the floor under the body (on foot: the feet), turned the body's way. */
+  private readonly rig = new Object3D()
+  /** The headset's height above the rig's floor as last composed, m: seated, the eye point is lowered by it. */
+  private headHeight = 0
+
+  /**
+   * A headset takes the head (or gives it back with null): from then on the pose is the headset's, composed onto the
+   * rig by `compose`. The next pose snaps.
+   */
+  setHeadset(compose: HeadCompose | null): void {
+    this.compose = compose
+    this.snap = true
+    if (!compose) this.headHeight = 0
+  }
+
+  /** A headset composes this head. */
+  get headset(): boolean {
+    return this.compose !== null
+  }
 
   /**
    * Sets the eye's height above the feet, m, held within EYE_RANGE (a non-finite value leaves it). The change is
@@ -104,6 +134,8 @@ export class HeadRig {
 
   /** Eye `eyeHeight` above the avatar's feet. Vertical steps (curbs) are smoothed; horizontal motion never is. */
   onFoot(camera: PerspectiveCamera, feetX: number, feetY: number, feetZ: number, yaw: number, pitch: number, dt: number): void {
+    // Under a headset the rig's floor is the feet: the headset supplies the eye's height and every step of it.
+    if (this.compose) { this.applyHeadset(camera, feetX, feetY, feetZ, yaw); return }
     const target = feetY + this.eye
     if (Number.isFinite(target)) {
       if (this.snap || !(Math.abs(target - this.eyeY) < SNAP)) {
@@ -131,13 +163,37 @@ export class HeadRig {
     const qx = rot.x, qy = rot.y, qz = rot.z, qw = rot.w
     const tx = 2 * (qy * ez - qz * ey), ty = 2 * (qz * ex - qx * ez), tz = 2 * (qx * ey - qy * ex)
     this.snap = true
-    this.apply(
-      camera,
-      pos.x + ex + qw * tx + (qy * tz - qz * ty),
-      pos.y + ey + qw * ty + (qz * tx - qx * tz),
-      pos.z + ez + qw * tz + (qx * ty - qy * tx),
-      yaw, pitch,
-    )
+    const x = pos.x + ex + qw * tx + (qy * tz - qz * ty)
+    const y = pos.y + ey + qw * ty + (qz * tx - qx * tz)
+    const z = pos.z + ez + qw * tz + (qx * ty - qy * tx)
+    // Under a headset the rig's floor sits the headset's own height under the driver's eye point, so a seated or a
+    // standing player's eyes land at the eye point (the height is the last composed frame's: one frame behind).
+    if (this.compose) { this.applyHeadset(camera, x, y - this.headHeight, z, yaw); return }
+    this.apply(camera, x, y, z, yaw, pitch)
+  }
+
+  /**
+   * The headset's frame: the rig at (x, y, z) turned `yaw` (a non-finite value holds the last), the camera composed
+   * under it, then detached with its world transform as its own, so every reader of camera.position and the pose
+   * sees world space as ever. The pose read back is the headset's yaw and pitch (unclamped); roll stays on the camera.
+   */
+  private applyHeadset(camera: PerspectiveCamera, x: number, y: number, z: number, yaw: number): void {
+    const rig = this.rig, pose = this.pose
+    if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) rig.position.set(x, y, z)
+    if (Number.isFinite(yaw)) rig.rotation.set(0, yaw, 0, 'YXZ')
+    rig.updateMatrixWorld(true)
+    camera.parent = rig
+    this.compose!(camera)
+    camera.parent = null
+    camera.rotation.order = 'YXZ'
+    camera.matrix.copy(camera.matrixWorld)
+    camera.matrix.decompose(camera.position, camera.quaternion, camera.scale)
+    camera.updateMatrixWorld()
+    this.headHeight = camera.position.y - rig.position.y
+    pose.x = camera.position.x; pose.y = camera.position.y; pose.z = camera.position.z
+    pose.yaw = camera.rotation.y
+    pose.pitch = camera.rotation.x
+    this.snap = true
   }
 
   private apply(camera: PerspectiveCamera, x: number, y: number, z: number, yaw: number, pitch: number): void {

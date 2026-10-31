@@ -1057,6 +1057,9 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
             hudVisible,
             ghost: hud.output.ghost === true,
             rain: hud.output.matrix === true,
+            // The headset item only where a session can be asked for; the tap itself is the user activation.
+            onHeadset: hud.supplier.xr.state === 'unsupported' ? undefined : () => engine.toggleXr(),
+            headset: hud.supplier.xr.state === 'vr' || hud.supplier.xr.state === 'ar',
           }}
         />
       )}

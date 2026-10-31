@@ -35,7 +35,7 @@
  */
 import type {
   ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, EliteWrites, ExecResult, GateTether, GoalPlan, HalDevice, HarnessReport, LookBridge, LookChange, MemoryBridge, MindStatus, ModelBridge,
-  NetBridge, NetReport, OperatorBridge, PendingAct, Piece, PingKind, PingPick, RecordBridge, RecruitBridge, Ring0Stats, RunResult, SayResult, TerminalBridge, TopicBridge, VoiceStatus,
+  NetBridge, NetReport, OperatorBridge, PendingAct, Piece, PingKind, PingPick, RecordBridge, RecruitBridge, Ring0Stats, RobotConsole, RobotRow, RunResult, SayResult, TerminalBridge, TopicBridge, VoiceStatus,
 } from './bridge.ts'
 import type { QualityState, RecordingState } from '../../05_Observe_Environment/telemetry.ts'
 import type { SwarmReport, SwarmStatus } from '../../08_Swarm/orchestrator.ts'
@@ -99,6 +99,7 @@ const CORE = [
   { name: 'audio', usage: 'audio [on|off|0-100]', summary: 'show or set the soundscape' },
   { name: 'ghost', usage: 'ghost [on|off]', summary: 'ghost view: the physics shapes as code over the frame (view-only; G)' },
   { name: 'rain', usage: 'rain [on|off]', summary: 'falling code on every surface, in world space; people and cars pass through each other (M)' },
+  { name: 'xr', usage: 'xr [vr|ar|off]', summary: 'the headset (WebXR over WebGPU): the status, enter VR or AR, or leave' },
   { name: 'render', usage: 'render [on|off]', summary: 'draw the city, or stop drawing it (physics, audio and this console keep running)' },
   { name: 'captions', usage: 'captions [on|off]', summary: 'closed captions for every sound: engines, signals, speech, pings (view-only)' },
   { name: 'ping', usage: 'ping [go|look|gather|wait|clear]', summary: 'mark where you look for your swarm (view-only; shown on the minimap and captioned; Q); alone, the marks standing' },
@@ -107,6 +108,7 @@ const CORE = [
   { name: 'sloane', usage: 'sloane [on|off|voice <name>|voices|say <text...>]', summary: "the concierge's spoken voice: the speech provider's voice at your own head when say has one, else the browser's offline voice" },
   { name: 'goal', usage: 'goal <words...>', summary: 'tell the city a goal in plain words, as you would tell Sloane: what can be done now is done, the rest is explained' },
   { name: 'hal', usage: 'hal [pair hid|serial|ble]', summary: 'hardware bus devices; pair a controller' },
+  { name: 'robot', usage: 'robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|remove <id>]', summary: 'the robots: physical ones over HAL/1 or the loopback relay, simulated ones from a URDF file; their bodies in the physics realm as twins or leaders, every setpoint through the gate (relay, spawn, urdf, arm and calibrate are the operator\'s)' },
   { name: 'recruit', usage: 'recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]', summary: 'ask someone nearby with a skill over, or an Active recruit to the pinged point; listen by voice (on-device)' },
   { name: 'memory', usage: 'memory [<agent>|forget <agent>|forget all]', summary: 'what the people you recruit remember in this city; forget erases it (operator)' },
   { name: 'clear', usage: 'clear', summary: 'clear the screen (Ctrl+L)' },
@@ -205,6 +207,7 @@ const ARGS: Record<string, readonly string[]> = {
   audio: ['off', 'on'],
   ghost: ['off', 'on'],
   rain: ['off', 'on'],
+  xr: ['ar', 'off', 'vr'],
   render: ['off', 'on'],
   captions: ['off', 'on'],
   ping: ['clear', ...PING_KINDS],
@@ -227,6 +230,8 @@ const ARGS: Record<string, readonly string[]> = {
   noir: ['asm', 'reset', 'words'],
   hal: ['pair'],
   'hal pair': ['ble', 'hid', 'serial'],
+  robot: ['arm', 'calibrate', 'demo', 'disarm', 'mode', 'relay', 'remove', 'set', 'spawn', 'urdf'],
+  'robot relay': ['off'],
   recruit: [...RECRUIT_ACTIONS, ...SKILL_ARGS].sort(),
   uname: ['-a'],
   operator: ['lock', 'status', 'unlock'],
@@ -316,6 +321,13 @@ function netOf(b: TerminalBridge): NetBridge {
   const n = b.net
   if (!n) throw new Error('network not available on this bridge')
   return n
+}
+
+/** Likewise for a host with no physics realm to hold a robot's body (the TTY shell). */
+function robotOf(b: TerminalBridge): RobotConsole {
+  const r = b.robot
+  if (!r) throw new Error('robots are not available on this bridge')
+  return r
 }
 
 /** A page whose host keeps no model file (the onboarding page, the TTY shell, an older host) says so in plain words. */
@@ -418,6 +430,18 @@ export function formatStats(s: Ring0Stats): string[] {
     row('', `last ${k.last || '-'}`),
     row('audit', auditLine(k.audit)),
   ]
+}
+
+/** One robot's row: its id, door, mode, joint count, name and state words. */
+function formatRobot(r: RobotRow): string {
+  const state = [
+    r.armed ? 'armed' : '',
+    r.body === null ? 'no body' : `body ${r.body}`,
+    r.frameAgeMs === null ? '' : r.stale ? 'frames stale' : `frame ${Math.round(r.frameAgeMs)} ms ago`,
+    r.calibrated ? 'calibrated' : '',
+    r.refusals ? `${r.refusals} refused` : '',
+  ].filter(Boolean).join(', ')
+  return `  ${r.id.padEnd(24)}${r.door.padEnd(7)}${r.mode.padEnd(8)}${String(r.joints).padEnd(8)}${r.name}  ${state}`
 }
 
 function formatDevice(d: HalDevice): string {
@@ -931,6 +955,19 @@ const HANDLERS: Record<Name, Handler> = {
   ghost: knob('ghost', (b, arg) => `ghost view ${b.ghost(arg)}`),
 
   rain: knob('rain', (b, arg) => `rain ${b.rain(arg)}`),
+
+  xr(args, b) {
+    if (args.length > 1) return fail(usage('xr'))
+    const a = args[0]
+    if (a !== undefined && a !== 'vr' && a !== 'ar' && a !== 'off') return fail(`xr: invalid argument '${a}'`, usage('xr'))
+    // Called synchronously: a browser grants an immersive session only inside the Enter keydown's user activation.
+    const r = b.xr(a)
+    if (typeof r === 'string') return { lines: [out(`headset ${r}`)] }
+    return {
+      lines: [sys(a === 'off' ? 'headset: leaving...' : 'headset: asking the browser...')],
+      pending: r.then((s): Line[] => [out(`headset ${s}`)], (e: unknown): Line[] => [err(`headset: ${message(e)}`)]),
+    }
+  },
 
   render: knob('render', (b, arg) => `render ${b.render(arg)}`),
 
@@ -1661,6 +1698,69 @@ const HANDLERS: Record<Name, Handler> = {
     if (!operatorOf(b).unlocked()) return locked('net')
     const pending = n.join(url, args[2]).then((t): Line[] => [out(`net: ${t}`)], (e: unknown): Line[] => [err(`net: ${message(e)}`)])
     return { lines: [sys(`net: joining ${url}...`)], pending }
+  },
+
+  // The robots (04_Connect_Hardware/robotLink.ts). The list, the demo, a mode, a setpoint, a disarm, a remove and the
+  // relay's status or its off run at any time (the last three only ever stop something); the relay, a body into the
+  // realm, a URDF read, arming and calibrating are the operator's. The async ones report later, as `xr` does.
+  robot(args, b) {
+    const r = robotOf(b)
+    const a = args[0]
+    if (a === undefined) {
+      const rows = r.list()
+      if (!rows.length) return { lines: [sys('robot: none (robot demo; robot urdf <url>; a HAL/1 robot on the bus; robot relay <ws url> <token>)')] }
+      return { lines: [out(`  ${'ID'.padEnd(24)}${'DOOR'.padEnd(7)}${'MODE'.padEnd(8)}${'JOINTS'.padEnd(8)}NAME  STATE`), ...rows.map((x) => out(formatRobot(x)))] }
+    }
+    const n = args.length
+    const later = (first: string, p: Promise<string>): CommandResult => ({
+      lines: [sys(first)],
+      pending: p.then((t): Line[] => [out(`robot: ${t}`)], (e: unknown): Line[] => [err(`robot: ${message(e)}`)]),
+    })
+    switch (a) {
+      case 'relay': {
+        if (n === 1) return { lines: [out(r.relayStatus())] }
+        if (args[1] === 'off') return n === 2 ? { lines: [out(r.relayOff())] } : fail(usage('robot'))
+        if (n !== 3) return fail(usage('robot'))
+        const url = args[1]
+        if (!/^wss?:\/\/\S+$/.test(url)) return fail(`robot: not a relay address: '${url}' (ws or wss, on this machine only)`, usage('robot'))
+        if (!operatorOf(b).unlocked()) return locked('robot')
+        return later(`robot: joining ${url}...`, r.relay(url, args[2]))
+      }
+      case 'spawn': {
+        if (n !== 2 && n !== 4) return fail(usage('robot'))
+        const x = n === 4 ? Number(args[2]) : undefined, z = n === 4 ? Number(args[3]) : undefined
+        if (n === 4 && (!Number.isFinite(x) || !Number.isFinite(z))) return fail('robot: x and z must be numbers', usage('robot'))
+        if (!operatorOf(b).unlocked()) return locked('robot')
+        return { lines: [out(r.spawn(args[1], x, z))] }
+      }
+      case 'urdf': {
+        if (n !== 2 && n !== 3) return fail(usage('robot'))
+        if (!/^https?:\/\/\S+$/.test(args[1])) return fail(`robot: not a URL: '${args[1]}' (http or https, on this machine only)`, usage('robot'))
+        if (!operatorOf(b).unlocked()) return locked('robot')
+        return later(`robot: reading ${args[1]}...`, r.urdf(args[1], args[2]))
+      }
+      case 'demo': return n <= 2 ? { lines: [out(r.demo(args[1]))] } : fail(usage('robot'))
+      case 'mode': return n === 3 ? { lines: [out(r.mode(args[1], args[2]))] } : fail(usage('robot'))
+      case 'set': {
+        if (n !== 4) return fail(usage('robot'))
+        const q = Number(args[3])
+        if (!Number.isFinite(q)) return fail(`robot: not a number: '${args[3]}'`, usage('robot'))
+        return { lines: [out(r.set(args[1], args[2], q))] }
+      }
+      case 'arm': {
+        if (n !== 2) return fail(usage('robot'))
+        if (!operatorOf(b).unlocked()) return locked('robot')
+        return later(`robot: arming ${args[1]}...`, r.arm(args[1]))
+      }
+      case 'disarm': return n === 2 ? { lines: [out(r.disarm(args[1]))] } : fail(usage('robot'))
+      case 'calibrate': {
+        if (n !== 3) return fail(usage('robot'))
+        if (!operatorOf(b).unlocked()) return locked('robot')
+        return later(`robot: calibrating ${args[2]} of ${args[1]} (a hold, then one small step)...`, r.calibrate(args[1], args[2]))
+      }
+      case 'remove': return n === 2 ? { lines: [out(r.remove(args[1]))] } : fail(usage('robot'))
+      default: return fail(`robot: unknown command '${a}'`, usage('robot'))
+    }
   },
 
   sim: bare('sim', (b) => {
