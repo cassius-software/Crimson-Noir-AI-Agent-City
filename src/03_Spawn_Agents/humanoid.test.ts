@@ -17,12 +17,14 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { BODY_INCLUDES, BODY_WGSL, statureFactor } from './crowdBody.ts'
 import {
-  BODY_NAMES, BONE, BONES, EYE_LEVEL, FACE, FACE_NEUTRAL, FACE_REGION, GARMENT, GAZE, GAZE_AHEAD, HAIRLINE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, MORPH, PIECE, REGION, SHAPE_NEUTRAL, SLOT, SLOTS, SOLE, WALK,
+  BODY_NAMES, BONE, BONES, EYE_LEVEL, FACE, FACE_NEUTRAL, FACE_REGION, GARMENT, GAZE, GAZE_AHEAD, HAIRLINE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, MORPH, PIECE, REGION, RIG_REST, RIG_WEAR, SHAPE_NEUTRAL, SLOT, SLOTS, SOLE, WALK,
   bodyTubes, boneGroup, boneSide, boneTransform, eyeHeightOf, faceNormal, facePoint, faceRings, footAt, gazeAt, heightMap, humanoidMesh, legReach, legSolve, morphNormal, morphPoint,
-  pelvisDrop, pivotsOf, scaleOf, shapeFactors, silhouetteRings, skinPoint, skullFront, swingOf, walkAngles,
-  type BodyPose, type BodyShape, type FaceShape, type LegAngles,
+  pelvisDrop, pivotsOf, rigPoint, rotateByQuat, scaleOf, shapeFactors, silhouetteRings, skinPoint, skullFront, swingOf, walkAngles,
+  type BodyPose, type BodyShape, type FaceShape, type LegAngles, type RigPose,
 } from './humanoid.ts'
 import { LOOK_BODIES, LOOK_PIECE_BIT } from './look.ts'
+import { FOOT, SEGMENTS } from './ragdollRig.ts'
+import { RIG_POSE, RIG_SEGMENTS, RIG_SLOTS } from '../07_Execute_Actions/simProtocol.ts'
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8')
 const near = (got: number, want: number, tol: number, what: string) => assert.ok(Math.abs(got - want) <= tol, `${what}: ${got} vs ${want}`)
@@ -440,6 +442,78 @@ test('gazeAt: the eye ahead holds the head straight; to the side it turns the ch
   assert.ok(farBoth.head + farBoth.chest > 0 && farBoth.head + farBoth.chest < GAZE.travelYaw, 'a fading eye blends with it')
 })
 
+test('RIG_REST: every bone hangs from the rig shape on its own side of the body, at that shape\'s standing centre (ragdollRig.ts SEGMENTS and FOOT, by the stream\'s order); the hands from the lower arms; RIG_WEAR is the realm\'s slots and shapes', () => {
+  assert.equal(RIG_REST.length, BONES)
+  assert.deepEqual(RIG_WEAR, { slots: RIG_SLOTS, shapes: RIG_POSE.segmentCount })
+  assert.equal(RIG_SEGMENTS.length, RIG_WEAR.shapes)
+  const part = (bone: number): string => {
+    if (bone === BONE.TRUNK) return 'pelvis'
+    if (bone === BONE.CHEST) return 'torso'
+    if (bone === BONE.HEAD) return 'head'
+    const group = (bone - BONE.THIGH_L) % 3
+    if (bone < BONE.ARM_L) return ['upperLeg', 'lowerLeg', 'foot'][group]
+    return ['upperArm', 'lowerArm', 'lowerArm'][group]
+  }
+  for (let bone = 0; bone < BONES; bone++) {
+    const [shape, x, y, z] = RIG_REST[bone]
+    const name = RIG_SEGMENTS[shape][0]
+    const side = boneSide(bone)
+    assert.equal(name.replace(/[LR]$/, ''), part(bone), `bone ${bone} hangs from a ${part(bone)}`)
+    if (side === 0) { assert.ok(!/[LR]$/.test(name)); assert.equal(x, 0) }
+    else {
+      // The rig's left is +x (its own view), this body's left is −x (the viewer's): a left bone takes the rig's R shape.
+      assert.equal(name.endsWith('R'), side < 0, `bone ${bone} takes the shape on its side`)
+      assert.equal(Math.sign(x), side, 'the centre on the same side')
+    }
+    if (name.startsWith('foot')) {
+      const leg = SEGMENTS[(name === 'footL' ? 'lowerLegL' : 'lowerLegR') as keyof typeof SEGMENTS]
+      near(x, leg.at[0] + FOOT.offset[0], 1e-12, 'the foot under its lower leg'); near(y, leg.at[1] + FOOT.offset[1], 1e-12, 'at the offset'); near(z, FOOT.offset[2], 1e-12, 'ahead')
+    } else {
+      const seg = SEGMENTS[name as keyof typeof SEGMENTS]
+      assert.deepEqual([x, y, z], [seg.at[0], seg.at[1], 0], `${name}'s centre`)
+    }
+  }
+  assert.equal(RIG_REST[BONE.HAND_L][0], RIG_REST[BONE.FOREARM_L][0]); assert.equal(RIG_REST[BONE.HAND_R][0], RIG_REST[BONE.FOREARM_R][0])
+})
+
+test('rigPoint: on a rig standing at rest the body stands as it was; a shape moved carries its bone\'s points, turned turns them about its centre; two bones blend; a normal turns and never moves; the stature scales the offsets', () => {
+  const rest: RigPose[] = RIG_SEGMENTS.map((_, shape) => {
+    const bone = RIG_REST.findIndex(([s]) => s === shape)
+    const [, x, y, z] = RIG_REST[bone]
+    return { at: [x, y, z], q: [0, 0, 0, 1] }
+  })
+  const f0 = shapeFactors(SHAPE_NEUTRAL), piv = pivotsOf(f0)
+  for (const [x, y, z, bone] of [[0, piv.neck, 0.1, BONE.HEAD], [-piv.hipX, 0.3, 0.02, BONE.SHIN_L], [piv.shoulderX, 1.0, 0, BONE.FOREARM_R], [0.1, 1.2, 0.08, BONE.CHEST]]) {
+    const p = rigPoint(x, y, z, bone, bone, 1, 1, rest, UNIT)
+    near(p[0], x, 1e-12, 'x at rest'); near(p[1], y, 1e-12, 'y at rest'); near(p[2], z, 1e-12, 'z at rest')
+  }
+  // The head turned a right angle about y: the nose, ahead of the neck, comes round to +x about the head's centre.
+  const s = Math.SQRT1_2
+  const turned = rest.map((pose, shape) => (shape === RIG_REST[BONE.HEAD][0] ? { at: pose.at, q: [0, s, 0, s] as const } : pose))
+  const nose = rigPoint(0, piv.neck, 0.1, BONE.HEAD, BONE.HEAD, 1, 1, turned, UNIT)
+  near(nose[0], 0.1, 1e-12, 'the nose to +x'); near(nose[1], piv.neck, 1e-12, 'level'); near(nose[2], 0, 1e-12, 'no longer ahead')
+  const noseN = rigPoint(0, 0, 1, BONE.HEAD, BONE.HEAD, 1, 0, turned, UNIT)
+  near(noseN[0], 1, 1e-12, 'a normal turned'); near(noseN[2], 0, 1e-12, 'and not moved'); near(length(noseN), 1, 1e-12, 'unit')
+  // The pelvis carried two metres along +x and lowered: the trunk's points go with it, the head's stay.
+  const pelvis = RIG_REST[BONE.TRUNK][0]
+  const carried = rest.map((pose, shape) => (shape === pelvis ? { at: [2, 0.5, 0] as const, q: pose.q } : pose))
+  const hip = rigPoint(0.05, 0.95, 0.02, BONE.TRUNK, BONE.TRUNK, 1, 1, carried, UNIT)
+  near(hip[0], 2.05, 1e-12, 'carried'); near(hip[1], 0.5 + (0.95 - 0.97), 1e-12, 'lowered'); near(hip[2], 0.02, 1e-12, 'z')
+  const crown = rigPoint(0, 1.75, 0, BONE.HEAD, BONE.HEAD, 1, 1, carried, UNIT)
+  near(crown[1], 1.75, 1e-12, 'the head stays')
+  const half = rigPoint(0, 1.0, 0, BONE.TRUNK, BONE.HEAD, 0.5, 1, carried, UNIT)
+  near(half[0], 1.0, 1e-12, 'blended half way'); near(half[1], (0.5 + (1.0 - 0.97) + 1.0) / 2, 1e-12, 'in y too')
+  assert.deepEqual(rigPoint(0, 1.0, 0, BONE.TRUNK, BONE.HEAD, 1, 1, carried, UNIT), rigPoint(0, 1.0, 0, BONE.TRUNK, BONE.TRUNK, 1, 1, carried, UNIT), 'weight 1 is the first bone alone')
+  // A taller person: the offset from the shape's centre scales with the stature, the shape's centre does not.
+  const tall = rigPoint(0, 1.75, 0.1, BONE.HEAD, BONE.HEAD, 1, 1, rest, { y: 1.2, xz: Math.sqrt(1.2) })
+  near(tall[1], 1.66 + (1.75 - 1.66) * 1.2, 1e-12, 'y by the stature from the head\'s centre'); near(tall[2], 0.1 * Math.sqrt(1.2), 1e-12, 'z by its root')
+  const tallN = rigPoint(0, 1, 0, BONE.HEAD, BONE.HEAD, 1, 0, rest, { y: 4, xz: 2 })
+  near(tallN[1], 0.25, 1e-12, 'a normal takes the reciprocal')
+  // rotateByQuat: a half turn about z flips x and y.
+  assert.deepEqual(rotateByQuat([1, 2, 3], [0, 0, 1, 0]).map((v) => Math.round(v * 1e12) / 1e12), [-1, -2, 3])
+  assert.deepEqual(rotateByQuat([1, 2, 3], [0, 0, 0, 1]), [1, 2, 3])
+})
+
 test('SOLE: the shoe\'s lowest ring reaches SOLE.heel behind the ankle and SOLE.toe ahead of it, on every body', () => {
   for (const v of VARIANTS) {
     const soles = bodyTubes(v).flatMap((t) => t.rings).filter((r) => r.slot === SLOT.SHOES && r.y === 0)
@@ -726,7 +800,7 @@ test('HAIRLINE: the cap\'s front leaves the skull\'s front at the hairline and i
 
 // --- The WGSL --------------------------------------------------------------------------------------------------
 
-test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow and wrist as their drop from the shoulder), fourteen functions, one call for the position and the normal, the face shaped on the head alone, the legs solved from the feet and the gaze from the operator\'s eye', () => {
+test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow and wrist as their drop from the shoulder), seventeen functions, one call for the position and the normal, the face shaped on the head alone, the legs solved from the feet, the gaze from the operator\'s eye, a fallen body hung from its rig', () => {
   const lit = (n: number): string => (Number.isInteger(n) ? `${n}.0` : `${n}`)
   const flat = (name: string, o: unknown, out: [string, number][] = []): [string, number][] => {
     if (typeof o === 'number') out.push([name, o])
@@ -741,8 +815,13 @@ test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow a
   assert.doesNotMatch(BODY_WGSL, /undefined|NaN|\[object/, 'every interpolation is a number')
   // Tint refuses WGSL's reserved words as names (it refused `target`); the ones a hand reaches for, as a declared name.
   assert.doesNotMatch(BODY_WGSL, /\b(?:target|flat|smooth|filter|get|set|type|mod|of|from|new|ref|self|this|with|where|use|pass|premerge|precise|common|shared|static|sizeof|null|nil|do|match|move|mut|pub|priv|super|try|catch|throw|final|package|module|import|export|layout|resource|register|precision|patch|partition|require|regardless|unless|operator|namespace|template|typedef|union|enum|class|interface|extends|implements|instanceof|delete|yield|await|become|crate|impl|trait|unsafe|unsized|external|demote|coherent|readonly|writeonly|varying|attribute|active|cast|highp|mediump|lowp|snorm|unorm|std|meta|macro|auto|goto|inline|noexcept|volatile|virtual|friend|explicit|mutable|restrict|protected|public|using|typename|typeof|typeid|decltype|concept|debugger|fallthrough|finally|subroutine|groupshared|nointerpolation|noperspective|packoffset|pixelfragment|thread_local|column_major)\s*[:=]/, 'no name WGSL reserves')
-  assert.deepEqual([...BODY_WGSL.matchAll(/^fn (\w+)\(/gm)].map((m) => m[1]), ['bodyRotX', 'bodyRotY', 'bodyRotAxis', 'bodyHat', 'bodyHeightMap', 'bodySlope', 'bodyFace', 'bodyMorph', 'bodyFoot', 'bodyReach', 'bodyLeg', 'bodyGaze', 'bodyBone', 'bodyVertex'])
-  assert.ok(BODY_WGSL.includes('fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: vec4f, motion: vec4f, pose: vec4f, stance: vec4f, morphA: vec4f, morphB: vec4f, faceA: vec4f, faceB: vec4f, t: f32, gaze: vec4f) -> mat3x3f'))
+  assert.deepEqual([...BODY_WGSL.matchAll(/^fn (\w+)\(/gm)].map((m) => m[1]), ['bodyRotX', 'bodyRotY', 'bodyRotAxis', 'bodyHat', 'bodyHeightMap', 'bodySlope', 'bodyFace', 'bodyMorph', 'bodyFoot', 'bodyReach', 'bodyLeg', 'bodyGaze', 'bodyRigCentre', 'bodyRotQ', 'bodyRig', 'bodyBone', 'bodyVertex'])
+  assert.ok(BODY_WGSL.includes('fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: vec4f, motion: vec4f, pose: vec4f, stance: vec4f, morphA: vec4f, morphB: vec4f, faceA: vec4f, faceB: vec4f, t: f32, gaze: vec4f, rigA: vec4f, rigAq: vec4f, rigB: vec4f, rigBq: vec4f) -> mat3x3f'))
+  assert.ok(BODY_WGSL.includes('fn bodyRig(m: mat3x3f, bone0: u32, bone1: u32, weight: f32, stature: f32, pA: vec4f, qA: vec4f, pB: vec4f, qB: vec4f) -> mat3x3f'))
+  // The fallen body: after the sliders and before the walk, hung from its rig; every shape's standing centre in the text.
+  assert.match(BODY_WGSL, /let rest = bodyMorph\(v0, n0, bone0, m, fD, fLegs, fTrunk\);\n\s*if \(stance\.w > 0\.5\) \{\n(?:\s*\/\/[^\n]*\n)*\s*return bodyRig\(rest, bone0, bone1, weight, stance\.x, rigA, rigAq, rigB, rigBq\);/)
+  assert.ok(BODY_WGSL.includes(`var c = array<vec3f, 15>(${RIG_REST.map(([, x, y, z]) => `vec3f(${lit(x)}, ${lit(y)}, ${lit(z)})`).join(', ')});`), 'RIG_REST in the WGSL')
+  assert.ok(BODY_WGSL.includes('return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);'), 'the quaternion turn as rotateByQuat')
   assert.ok(BODY_WGSL.includes('fn bodyFoot(phase: f32, stride: f32, lift: f32, roll: f32) -> vec4f'))
   assert.ok(BODY_WGSL.includes('fn bodyLeg(dy: f32, dz: f32, thigh: f32, shin: f32, sole: f32) -> vec4f'))
   assert.ok(BODY_WGSL.includes('fn bodyGaze(neck: vec3f, heading: f32, vel: vec2f, eye: vec4f) -> vec3f'))
@@ -756,7 +835,7 @@ test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow a
   assert.match(BODY_WGSL, /if \(bone == 2u\) \{ q = bodyRotX\(q, vec3f\(0\.0, pivB\.w, 0\.0\), trunk\.y\); q = bodyRotY\(q, vec3f\(0\.0, pivB\.w, 0\.0\), headYaw\); \}/, 'the head nods, then turns, about the neck')
   assert.ok(BODY_WGSL.includes('fn bodyMorph(p: vec3f, n: vec3f, bone: u32, m: vec4f, fD: f32, fLegs: f32, fTrunk: f32) -> mat3x3f'))
   assert.ok(BODY_WGSL.includes('fn bodyFace(p: vec3f, n: vec3f, face: vec2f, fa: vec4f, fb: vec4f) -> mat3x3f'))
-  assert.equal((BODY_WGSL.match(/-> mat3x3f/g) ?? []).length, 7, 'the rotations, the face, the morph, the bone chain and the vertex each carry a position and a normal')
+  assert.equal((BODY_WGSL.match(/-> mat3x3f/g) ?? []).length, 8, 'the rotations, the face, the morph, the rig, the bone chain and the vertex each carry a position and a normal')
   assert.ok(BODY_WGSL.includes('return mat3x3f(world, normalize('), 'the world position and a unit normal')
   for (const piece of ['mask', 'holdingCup', 'carryingBag']) assert.ok(BODY_WGSL.includes(piece), piece)
   // The face is shaped before the body sliders, on the head bone, where the vertex names a region; the regions in
@@ -779,7 +858,7 @@ test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow a
   }
   const src = read('./crowdBody.ts')
   assert.match(src, /^(?:\/\/[^\n]*\n)*\/\*\*\n \* Why does this file exist\?[\s\S]*What breaks if it is removed\?/, 'the header')
-  assert.match(src, /import \{ FACE, GAZE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, MORPH, REGION, SOLE, WALK \} from '\.\/humanoid\.ts'/)
+  assert.match(src, /import \{ FACE, GAZE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, MORPH, REGION, RIG_REST, SOLE, WALK \} from '\.\/humanoid\.ts'/)
   assert.match(src, /export const bodyVertex = fn\('bodyVertex'\)/)
   assert.doesNotMatch(src, /from 'three\/webgpu'|three\/src/, 'nodes only: no renderer')
   assert.equal(statureFactor(HEIGHT_BASE), 1)
@@ -798,7 +877,9 @@ test('crowd.ts: the geometry is humanoid.ts\'s mesh with its rig, skin and face 
   assert.match(crowd, /this\.material\(buffers, lod \* quota \* VARIANTS \+ v \* quota, v, lod === 0\)/, 'the near material alone shapes a face')
   assert.match(crowd, /const rig = attribute\('rig', 'vec3'\)\n\s*const skin = attribute\('skin', 'vec2'\)\n\s*const face = attribute\('face', 'vec2'\)/)
   assert.match(crowd, /if \(near\) \{\n\s*If\(rig\.x\.greaterThan\(BONE\.HEAD - 0\.5\)\.and\(rig\.x\.lessThan\(BONE\.HEAD \+ 0\.5\)\), \(\) => \{/, 'the face hashes run for the head alone')
-  assert.match(crowd, /const skinned = \(bodyVertex\(positionLocal, normalLocal, rig, skin, face, agent, motion, pose, stance, morphA, morphB, faceA, faceB, time, this\.gazeTarget\) as unknown as Mat3\)\.toVar\(\)/)
+  assert.match(crowd, /const skinned = \(bodyVertex\(positionLocal, normalLocal, rig, skin, face, agent, motion, pose, stance, morphA, morphB, faceA, faceB, time, this\.gazeTarget, this\.rigPoses\.element\(rigA\), this\.rigPoses\.element\(rigA\.add\(uint\(1\)\)\), this\.rigPoses\.element\(rigB\), this\.rigPoses\.element\(rigB\.add\(uint\(1\)\)\)\) as unknown as Mat3\)\.toVar\(\)/)
+  assert.match(crowd, /readonly rigPoses = uniformArray\(Array\.from\(\{ length: RIG_WEAR\.slots \* RIG_WEAR\.shapes \* 2 \}, \(_, i\) => new Vector4\(0, 0, 0, i % 2\)\), 'vec4'\)/, 'the rig poses: a centre then a quaternion per shape, identity when empty')
+  assert.match(crowd, /readonly rigShape = uniformArray\(RIG_REST\.map\(\(\[shape\]\) => shape\), 'float'\)/, 'the shape per bone')
   assert.match(crowd, /readonly gazeTarget: UniformNode<'vec4', Vector4> = uniform\(new Vector4\(0, 0, 0, 0\)\)/, 'the operator\'s eye, one uniform for both passes')
   assert.match(crowd, /normalLocal\.assign\(skinned\.element\(uint\(1\)\)\)/)
   assert.match(crowd, /const body = skinned\.element\(uint\(0\)\)/)

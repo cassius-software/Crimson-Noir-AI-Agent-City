@@ -32,7 +32,7 @@ import { CODE_DISSOLVE, applyCodeDissolve } from '../01_Initialize_World/codeDis
 import { applyMatrixMode } from '../01_Initialize_World/matrixMode.ts'
 import { bodyVertex } from './crowdBody.ts'
 import { PLAYER_INDEX, VARIANTS, agentQuota } from './crowdCompute.ts'
-import { BODY_NAMES, BONE, GARMENT, HEIGHT_BASE, PIECE, humanoidMesh, type HumanoidMesh } from './humanoid.ts'
+import { BODY_NAMES, BONE, GARMENT, HEIGHT_BASE, PIECE, RIG_REST, RIG_WEAR, humanoidMesh, type HumanoidMesh } from './humanoid.ts'
 import {
   HAIR, LAYER, LOOK_FIELD, LOOK_HASHED_COLOUR, LOOK_HASHED_FACE, LOOK_HASHED_HAIR_SPLIT, LOOK_HASHED_LAYER, LOOK_HASHED_SCARF,
   LOOK_HASHED_SLIDER, LOOK_ODDS, LOOK_PIECE_BIT, LOOK_SLIDER_MIDDLE, LOOK_STATURE, WARDROBE,
@@ -207,6 +207,37 @@ export class CrowdView {
    * looks where the body does. The engine writes it every frame.
    */
   readonly gazeTarget: UniformNode<'vec4', Vector4> = uniform(new Vector4(0, 0, 0, 0))
+  /**
+   * The rigs of the fallen pedestrians (humanoid.ts RIG_WEAR): per rig slot, per shape in stream order, the shape's
+   * world centre (x, y, z, 1) then its rotation (a quaternion), as `rigs` writes them from the realm's stream; an
+   * empty slot's shapes sit at the origin, unturned. A body whose rig slot word (crowd.figure's fourth word, slot + 1)
+   * is set hangs from these in the vertex stage (crowdBody.ts bodyRig) instead of walking; both passes read them.
+   */
+  readonly rigPoses = uniformArray(Array.from({ length: RIG_WEAR.slots * RIG_WEAR.shapes * 2 }, (_, i) => new Vector4(0, 0, 0, i % 2)), 'vec4')
+  /** The rig shape each bone hangs from (humanoid.ts RIG_REST), by bone, as the vertex stage reads it. */
+  readonly rigShape = uniformArray(RIG_REST.map(([shape]) => shape), 'float')
+
+  /**
+   * Writes one step's rig stream (simProtocol.ts RIG_POSE: a slice per slot of agent, state, then thirteen poses of
+   * x, y, z, qx, qy, qz, qw; null, or a buffer of the wrong length, empties every slot) into `rigPoses`. Which agents
+   * wear which slot is the engine's to write into crowd.figure's fourth word.
+   */
+  rigs(stream: Float32Array | null): void {
+    const { slots, shapes } = RIG_WEAR
+    const stride = 2 + shapes * 7
+    const valid = stream instanceof Float32Array && stream.length >= slots * stride
+    const arr = this.rigPoses.array as Vector4[]
+    for (let s = 0; s < slots; s++) {
+      const o = s * stride
+      const live = valid && stream[o] >= 0
+      for (let j = 0; j < shapes; j++) {
+        const k = (s * shapes + j) * 2
+        const b = o + 2 + j * 7
+        if (live) { arr[k].set(stream[b], stream[b + 1], stream[b + 2], 1); arr[k + 1].set(stream[b + 3], stream[b + 4], stream[b + 5], stream[b + 6]) }
+        else { arr[k].set(0, 0, 0, 0); arr[k + 1].set(0, 0, 0, 1) }
+      }
+    }
+  }
 
   /** The page's global-state uniform (01_Initialize_World/matrixMode.ts); null, the bodies have no matrix mode. */
   private readonly matrixMode: UniformNode<'vec4', Vector4> | null
@@ -346,7 +377,7 @@ export class CrowdView {
         return select(custom, stepOf(slot), hashedStep(LOOK_HASHED_SLIDER[slot], n)).div(n)
       }
       const height = select(custom, stepOf('height'), hashedHeight).mul(STATURE_STEP).add(WARDROBE.stature.min).div(HEIGHT_BASE)
-      const stance = vec4(height, mask, h(8), 0)
+      const stance = vec4(height, mask, h(8), float(quad.w))
       const morphA = vec4(slider('mass'), slider('muscle'), slider('shoulders'), slider('hips'))
       const morphB = vec4(slider('legs'), slider('posture'), slider('head'), 0)
       const rig = attribute('rig', 'vec3')
@@ -365,7 +396,11 @@ export class CrowdView {
         })
       }
       // The skin (crowdBody.ts): one call gives the posed position (column 0) and its normal (column 1).
-      const skinned = (bodyVertex(positionLocal, normalLocal, rig, skin, face, agent, motion, pose, stance, morphA, morphB, faceA, faceB, time, this.gazeTarget) as unknown as Mat3).toVar()
+      // The rig shapes the vertex's two bones hang from, should this person be wearing a rig (the slot word in quad.w).
+      const rigBase = select(quad.w.greaterThan(uint(0)), quad.w.sub(uint(1)), uint(0)).mul(uint(RIG_WEAR.shapes * 2))
+      const rigAt = (bone: typeof rig.x) => uint((this.rigShape.element(uint(bone.add(0.5))) as unknown as typeof rig.x).add(0.5)).mul(uint(2)).add(rigBase)
+      const rigA = rigAt(rig.x), rigB = rigAt(skin.x)
+      const skinned = (bodyVertex(positionLocal, normalLocal, rig, skin, face, agent, motion, pose, stance, morphA, morphB, faceA, faceB, time, this.gazeTarget, this.rigPoses.element(rigA), this.rigPoses.element(rigA.add(uint(1))), this.rigPoses.element(rigB), this.rigPoses.element(rigB.add(uint(1)))) as unknown as Mat3).toVar()
       normalLocal.assign(skinned.element(uint(1)))
       vSeed.assign(seed)
       vLookLo.assign(float(word.bitAnd(uint(0xffff))))
@@ -383,8 +418,10 @@ export class CrowdView {
       const inside = agentIndex.equal(uint(PLAYER_INDEX)).and(cameraPosition.distance(head).lessThan(OWN_BODY.radius))
       const gone = dissolve.greaterThanEqual(CODE_DISSOLVE.fold)
       const placed = select(inside.or(gone), agent.xyz, body)
-      // Only a pass with a velocity target asks for the previous frame (the shadow map and ?cinema=0 never do).
-      if (needsPrevious(builder)) positionPrevious.assign(placed.sub(vec3(motion.x, 0, motion.y).mul(this.frameSeconds)))
+      // Only a pass with a velocity target asks for the previous frame (the shadow map and ?cinema=0 never do). A body
+      // wearing a rig is where the rig's shapes are, not where its walking twin's velocity would carry it: it writes
+      // no motion of its own (sharp, like a still surface) rather than the twin's smear.
+      if (needsPrevious(builder)) positionPrevious.assign(select(quad.w.greaterThan(uint(0)), placed, placed.sub(vec3(motion.x, 0, motion.y).mul(this.frameSeconds))))
       return placed
     })()
     m.positionNode = posed(true)

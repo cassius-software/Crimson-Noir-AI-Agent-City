@@ -15,6 +15,19 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The fallen wear their own bodies.** A pedestrian the realm promotes to a physical body (a shove, a kerb trip, a
+  slip near the operator) is no longer hidden and replaced by grey capsules: the crowd's vertex stage hangs each of
+  the body's fifteen bones from the rig shape it belongs to (`src/03_Spawn_Agents/humanoid.ts` `RIG_REST`,
+  `rigPoint`; `crowdBody.ts` `bodyRig`), from the thirteen shape poses the realm already streams, so the suit, the
+  face, the hair and the wardrobe fall with the person and stand up again, in the eye pass and the shadow pass
+  alike. The rig slot rides the spare fourth figure word and the poses one uniform array (`crowd.ts` `rigPoses`),
+  both written by the engine every frame; a test pins every bone's shape and standing centre to the realm's own rig
+  tables. The fallen figure's row in the crowd's render copy is pinned to the rig's pelvis (`crowdCull.ts` `pin`),
+  so the cull, the passage pulse and the code dissolve find the body where it lies and not where the crowd walks
+  its twin, and a fallen body writes no motion of its own into the cinema camera's blur. `?rigs=capsules` brings
+  the bare capsules back as a debug view; ghost view shows the rig's shapes either way. The rig is still the rig's
+  one size (a 1.75 m adult), so a tall or short body's joints sit a few centimetres off its shapes while promoted.
+  How it looks on a real GPU is unverified.
 - **Feet that stay planted, heads that look.** Each leg of the crowd's body is solved from where its foot is
   (`src/03_Spawn_Agents/humanoid.ts` `footAt`, `legSolve`; `crowdBody.ts` `bodyFoot`, `bodyLeg`). The worker
   advances the walk phase with the distance walked, so a foot carried back linearly in the phase through its stance

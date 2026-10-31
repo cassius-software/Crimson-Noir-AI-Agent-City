@@ -16,7 +16,7 @@
  * What breaks if it is removed? The bodies have no vertex stage: nothing of the crowd is posed or drawn.
  */
 import { wgslFn } from 'three/tsl'
-import { FACE, GAZE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, MORPH, REGION, SOLE, WALK } from './humanoid.ts'
+import { FACE, GAZE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, MORPH, REGION, RIG_REST, SOLE, WALK } from './humanoid.ts'
 
 const TAU = Math.PI * 2
 
@@ -33,7 +33,10 @@ const f = (n: number): string => (Number.isInteger(n) ? `${n}.0` : `${n}`)
  * the base height, piece mask, idle phase 0..1, -); `morphA` = (mass, muscle, shoulders, hips) and `morphB` = (legs,
  * posture, head, -), each a slider's 0..1; `faceA` = (brow, jaw, chin, cheek) and `faceB` = (nose, eyes, lips, -),
  * each −1..1; the time; and `gaze` = the operator's eye in the world (x, y, z) with 1 in w when someone is afoot to
- * look at (0: nobody). WGSL reserves `target`, so the eye is `eye` inside.
+ * look at (0: nobody). WGSL reserves `target`, so the eye is `eye` inside. `rigA`/`rigAq` and `rigB`/`rigBq` are the
+ * world centre (x, y, z) and rotation (a quaternion) of the rig shapes the vertex's two bones hang from, read when
+ * `stance.w` (the rig slot word, slot + 1) is set: a fallen pedestrian's body wears the realm's rig (bodyRig) and
+ * skips the walk, the heading and the place.
  */
 export const BODY_WGSL = `
 fn bodyRotX(m: mat3x3f, piv: vec3f, a: f32) -> mat3x3f {
@@ -201,6 +204,29 @@ fn bodyGaze(neck: vec3f, heading: f32, vel: vec2f, eye: vec4f) -> vec3f {
   let chest = clamp(yaw * ${f(GAZE.chestShare)}, -${f(GAZE.chestYaw)}, ${f(GAZE.chestYaw)});
   return vec3f(chest, clamp(yaw - chest, -${f(GAZE.headYaw)}, ${f(GAZE.headYaw)}), pitch);
 }
+fn bodyRigCentre(bone: u32) -> vec3f {
+  // The standing centre of the rig shape each bone hangs from (humanoid.ts RIG_REST), base body's metres.
+  var c = array<vec3f, 15>(${RIG_REST.map(([, x, y, z]) => `vec3f(${f(x)}, ${f(y)}, ${f(z)})`).join(', ')});
+  return c[min(bone, 14u)];
+}
+fn bodyRotQ(q: vec4f, v: vec3f) -> vec3f {
+  // v turned by the unit quaternion q.
+  return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
+}
+fn bodyRig(m: mat3x3f, bone0: u32, bone1: u32, weight: f32, stature: f32, pA: vec4f, qA: vec4f, pB: vec4f, qB: vec4f) -> mat3x3f {
+  // A body wearing the rig (humanoid.ts rigPoint): the point scaled by the stature, hung from each bone's shape (its
+  // offset from the shape's standing centre, turned by the shape's rotation, at the shape's world centre), the two
+  // blended by the weight; the normal turned alike with the scales' reciprocals.
+  let across = sqrt(stature);
+  let s = vec3f(across, stature, across);
+  let p = m[0] * s;
+  let n = m[1] / s;
+  let wA = pA.xyz + bodyRotQ(qA, p - bodyRigCentre(bone0) * s);
+  let wB = pB.xyz + bodyRotQ(qB, p - bodyRigCentre(bone1) * s);
+  let nA = bodyRotQ(qA, n);
+  let nB = bodyRotQ(qB, n);
+  return mat3x3f(wA * weight + wB * (1.0 - weight), normalize(nA * weight + nB * (1.0 - weight)), vec3f(0.0));
+}
 fn bodyBone(bone: u32, m: mat3x3f, legL: vec4f, legR: vec4f, armL: vec4f, armR: vec4f, trunk: vec4f, pivA: vec4f, pivB: vec4f, pivX: vec2f, k: vec3f, headYaw: f32) -> mat3x3f {
   // legL/legR = (hip, knee, ankle, -), armL/armR = (shoulder, elbow, -, -), trunk = (twist, head's nod, slouch, bend),
   // headYaw the head's own yaw about the neck; pivA = (hip, knee, ankle, shoulder), pivB = (elbow, wrist, chest, neck)
@@ -235,7 +261,7 @@ fn bodyBone(bone: u32, m: mat3x3f, legL: vec4f, legR: vec4f, armL: vec4f, armR: 
   }
   return q;
 }
-fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: vec4f, motion: vec4f, pose: vec4f, stance: vec4f, morphA: vec4f, morphB: vec4f, faceA: vec4f, faceB: vec4f, t: f32, gaze: vec4f) -> mat3x3f {
+fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: vec4f, motion: vec4f, pose: vec4f, stance: vec4f, morphA: vec4f, morphB: vec4f, faceA: vec4f, faceB: vec4f, t: f32, gaze: vec4f, rigA: vec4f, rigAq: vec4f, rigB: vec4f, rigBq: vec4f) -> mat3x3f {
   let bone0 = u32(rig.x + 0.5);
   let opt = u32(rig.z + 0.5);
   let bone1 = u32(skin.x + 0.5);
@@ -306,6 +332,11 @@ fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: v
   let trunk = vec4f(sL * ${f(WALK.twist)} * swing * gait + look.x, -slouch * ${f(WALK.headCounter)} - look.z, slouch, pose.y + idle);
   // The rest point reshaped, then its two bones, blended; the tilt about the feet.
   let rest = bodyMorph(v0, n0, bone0, m, fD, fLegs, fTrunk);
+  if (stance.w > 0.5) {
+    // A fallen pedestrian: the body hangs from the realm's rig where its shapes are (bodyRig); no walk, no heading,
+    // no place of the agent's own.
+    return bodyRig(rest, bone0, bone1, weight, stance.x, rigA, rigAq, rigB, rigBq);
+  }
   let b0 = bodyBone(bone0, rest, legL, legR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);
   var b = b0;
   if (bone1 != bone0 && weight < 1.0) {
@@ -332,8 +363,9 @@ fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: v
 export const BODY_INCLUDES: Readonly<Record<string, readonly string[]>> = Object.freeze({
   bodyMorph: Object.freeze(['bodyHat', 'bodyHeightMap', 'bodySlope']),
   bodyLeg: Object.freeze(['bodyReach']),
+  bodyRig: Object.freeze(['bodyRigCentre', 'bodyRotQ']),
   bodyBone: Object.freeze(['bodyRotX', 'bodyRotY', 'bodyRotAxis']),
-  bodyVertex: Object.freeze(['bodyFace', 'bodyHeightMap', 'bodyMorph', 'bodyFoot', 'bodyReach', 'bodyLeg', 'bodyGaze', 'bodyBone', 'bodyRotAxis']),
+  bodyVertex: Object.freeze(['bodyFace', 'bodyHeightMap', 'bodyMorph', 'bodyRig', 'bodyFoot', 'bodyReach', 'bodyLeg', 'bodyGaze', 'bodyBone', 'bodyRotAxis']),
 })
 
 const parts = BODY_WGSL.split(/(?=^fn )/m).map((s) => s.trim()).filter(Boolean)
