@@ -17,10 +17,10 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { BODY_INCLUDES, BODY_WGSL, statureFactor } from './crowdBody.ts'
 import {
-  BODY_NAMES, BONE, BONES, EYE_LEVEL, FACE, FACE_NEUTRAL, FACE_REGION, GARMENT, HAIRLINE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, MORPH, PIECE, REGION, SHAPE_NEUTRAL, SLOT, SLOTS, WALK,
-  bodyTubes, boneGroup, boneSide, boneTransform, eyeHeightOf, faceNormal, facePoint, faceRings, heightMap, humanoidMesh, morphNormal, morphPoint,
-  pivotsOf, scaleOf, shapeFactors, silhouetteRings, skinPoint, skullFront, swingOf, walkAngles,
-  type BodyPose, type BodyShape, type FaceShape,
+  BODY_NAMES, BONE, BONES, EYE_LEVEL, FACE, FACE_NEUTRAL, FACE_REGION, GARMENT, GAZE, GAZE_AHEAD, HAIRLINE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, MORPH, PIECE, REGION, SHAPE_NEUTRAL, SLOT, SLOTS, SOLE, WALK,
+  bodyTubes, boneGroup, boneSide, boneTransform, eyeHeightOf, faceNormal, facePoint, faceRings, footAt, gazeAt, heightMap, humanoidMesh, legReach, legSolve, morphNormal, morphPoint,
+  pelvisDrop, pivotsOf, scaleOf, shapeFactors, silhouetteRings, skinPoint, skullFront, swingOf, walkAngles,
+  type BodyPose, type BodyShape, type FaceShape, type LegAngles,
 } from './humanoid.ts'
 import { LOOK_BODIES, LOOK_PIECE_BIT } from './look.ts'
 
@@ -266,24 +266,86 @@ test('morphNormal: unit, the base person\'s unchanged, and still perpendicular t
 
 // --- The walk and the skin -------------------------------------------------------------------------------------
 
-test('walkAngles: at rest the knees and elbows keep their small bend; the right leg is the left half a cycle on; the swing scales with speed to a cap; a cup raises the left arm, a bag stills the right', () => {
+test('footAt: a foot at mid-stance stands under the hip, flat; through the stance it is carried back linearly in the phase, rolling onto its heel ahead and its toes behind; the swing lifts it and brings it forward; both handovers are continuous', () => {
+  const stride = 0.7, lift = 0.07, roll = 0.03
+  const flat = (f: ReturnType<typeof footAt>) => ({ z: f.z + 0, y: f.y + 0, sole: f.sole + 0, planted: f.planted })
+  assert.deepEqual(flat(footAt(0, stride, lift, roll)), { z: 0, y: 0, sole: 0, planted: true })
+  near(footAt(0.3, stride, 0, 0).z, -stride * 0.3 / Math.PI, 1e-12, 'linear in the phase through the stance')
+  near(footAt(-0.3, stride, 0, 0).z, stride * 0.3 / Math.PI, 1e-12, 'ahead before the zero')
+  const eps = 1e-9
+  const off = footAt(Math.PI / 2 - eps, stride, lift, roll), swung = footAt(Math.PI / 2 + eps, stride, lift, roll)
+  assert.ok(off.planted && !swung.planted, 'the toe-off at a quarter turn')
+  near(off.z, -stride / 2, 1e-6, 'half a stride behind'); near(off.y, roll, 1e-6, 'up on the toes'); near(off.sole, Math.asin(roll / SOLE.toe), 1e-6, 'toes down')
+  near(swung.z, off.z, 1e-6, 'z continuous'); near(swung.y, off.y, 1e-6, 'y continuous'); near(swung.sole, off.sole, 1e-6, 'the sole continuous')
+  const top = footAt(Math.PI, stride, lift, roll)
+  assert.ok(!top.planted); near(top.z, 0, 1e-12, 'mid-swing under the hip'); near(top.y, roll + lift, 1e-12, 'at the lift')
+  const strike = footAt(3 * Math.PI / 2 - eps, stride, lift, roll), struck = footAt(3 * Math.PI / 2 + eps, stride, lift, roll)
+  assert.ok(!strike.planted && struck.planted, 'the strike at three quarters')
+  near(strike.z, stride / 2, 1e-6, 'half a stride ahead'); near(strike.y, roll, 1e-6, 'on the heel'); near(strike.sole, -Math.asin(roll / SOLE.heel), 1e-6, 'toes up')
+  near(struck.z, strike.z, 1e-6, 'z continuous'); near(struck.y, strike.y, 1e-6, 'y continuous'); near(struck.sole, strike.sole, 1e-6, 'the sole continuous')
+  assert.deepEqual(footAt(7 * Math.PI / 4, stride, lift, roll), footAt(-Math.PI / 4, stride, lift, roll), 'periodic')
+  for (let p = 0; p < 2 * Math.PI; p += 0.05) { const a = footAt(p, stride, lift, roll); assert.ok(a.y >= -1e-12 && a.y <= roll + lift + 1e-12 && Math.abs(a.z) <= stride / 2 + 1e-12) }
+  assert.deepEqual(flat(footAt(1.3, 0, 0, 0)), { z: 0, y: 0, sole: 0, planted: true }, 'standing: under the hip whatever the phase')
+})
+
+test('legSolve: the hip and knee put the ankle where the foot is, the knee forward and never locked, the distance held to the reach; the ankle turns the sole to its angle', () => {
+  const t = 0.42, s = 0.42
+  const place = (leg: LegAngles): [number, number] => [-t * Math.cos(leg.hip) - s * Math.cos(leg.hip + leg.knee), -t * Math.sin(leg.hip) - s * Math.sin(leg.hip + leg.knee)]
+  near(legReach(t, s), Math.sqrt(t * t + s * s + 2 * t * s * Math.cos(WALK.kneeRest)), 1e-12, 'the reach')
+  for (const [dy, dz] of [[-0.7, 0.3], [-0.6, -0.35], [-0.8, 0.1], [-0.5, 0], [-0.75, -0.2]]) {
+    const leg = legSolve(dy, dz, t, s, 0)
+    const [y, z] = place(leg)
+    near(y, dy, 1e-9, `ankle y for ${dy}, ${dz}`); near(z, dz, 1e-9, `ankle z for ${dy}, ${dz}`)
+    assert.ok(leg.knee > WALK.kneeRest, 'bent')
+    assert.ok(-t * Math.sin(leg.hip) > dz * (t / Math.hypot(dy, dz)) - 1e-9, 'the knee ahead of the line from the hip to the ankle')
+    near(leg.ankle, -leg.hip - leg.knee, 1e-12, 'the sole flat')
+  }
+  const straight = legSolve(-legReach(t, s), 0, t, s, 0)
+  near(straight.hip, -WALK.kneeRest / 2, 1e-9, 'the thigh leans forward by half the standing bend'); near(straight.knee, WALK.kneeRest, 1e-9, 'the standing bend')
+  const beyond = legSolve(-2, 0.5, t, s, 0)
+  near(beyond.knee, WALK.kneeRest, 1e-9, 'out of reach: the knee at its standing bend, no further')
+  near(beyond.hip, Math.atan2(-0.5, 2) - WALK.kneeRest / 2, 1e-9, 'along the line')
+  const soled = legSolve(-0.7, 0.3, t, s, 0.25)
+  near(soled.ankle, 0.25 - soled.hip - soled.knee, 1e-12, 'the sole turned toes down')
+  assert.equal(soled.hip, legSolve(-0.7, 0.3, t, s, 0).hip)
+})
+
+test('pelvisDrop: nothing with the foot under the hip, more the further the planted foot is from under it, nothing with the foot raised', () => {
+  const piv = pivotsOf(shapeFactors(SHAPE_NEUTRAL))
+  const leg = piv.hip - piv.ankle
+  near(pelvisDrop(0, 0, piv), leg - legReach(piv.hip - piv.knee, piv.knee - piv.ankle), 1e-12, 'the standing bend alone')
+  assert.ok(pelvisDrop(0, 0, piv) < 0.001)
+  let last = 0
+  for (const dz of [0.1, 0.2, 0.3, 0.36]) { const d = pelvisDrop(dz, 0, piv); assert.ok(d > last, `more at ${dz}`); last = d }
+  assert.ok(pelvisDrop(0.36, 0, piv) > 0.04 && pelvisDrop(0.36, 0, piv) < 0.1, 'a few centimetres at the end of a stride')
+  assert.ok(pelvisDrop(0.36, 0.03, piv) < pelvisDrop(0.36, 0, piv), 'the roll lifts the ankle and spares some')
+  assert.equal(pelvisDrop(0, 0.5, piv), 0)
+})
+
+test('walkAngles: standing, the feet are together under the hips with the knees and elbows at their small bend; the right leg is the left half a cycle on; the leg is forward where the foot is ahead; the arms swing with the speed to a cap, against the legs, with the gait; a cup raises the left arm, a bag stills the right; the gaze turns the chest and the head', () => {
   const f0 = shapeFactors(SHAPE_NEUTRAL)
   const rest = walkAngles(0, 0, f0)
-  assert.deepEqual(rest, { hipL: 0, kneeL: WALK.kneeRest, ankleL: -WALK.kneeRest * WALK.ankle, hipR: 0, kneeR: WALK.kneeRest, ankleR: -WALK.kneeRest * WALK.ankle, shoulderL: -0, elbowL: -WALK.elbowRest, shoulderR: -0, elbowR: -WALK.elbowRest, twist: 0, head: -0, slouch: 0, bob: 0 })
+  assert.deepEqual(Object.keys(rest).sort(), ['ankleL', 'ankleR', 'elbowL', 'elbowR', 'head', 'headYaw', 'hipL', 'hipR', 'kneeL', 'kneeR', 'rise', 'shoulderL', 'shoulderR', 'slouch', 'twist'])
+  near(rest.kneeL, WALK.kneeRest, 1e-9, 'the knee\'s small bend standing'); near(rest.hipL, -WALK.kneeRest / 2, 1e-9, 'the thigh leans forward by half of it, the ankle under the hip')
+  near(rest.ankleL, -rest.hipL - rest.kneeL, 1e-12, 'the sole flat')
+  assert.deepEqual([rest.hipR, rest.kneeR, rest.ankleR], [rest.hipL, rest.kneeL, rest.ankleL], 'both legs alike')
+  assert.deepEqual([rest.shoulderL, rest.elbowL, rest.shoulderR, rest.elbowR, rest.twist, rest.head, rest.headYaw, rest.slouch], [-0, -WALK.elbowRest, -0, -WALK.elbowRest, 0, -0, 0, 0])
+  assert.ok(rest.rise <= 0 && rest.rise > -0.001, 'the pelvis all but at standing')
+  for (const [k, v] of Object.entries(walkAngles(2.2, 0, f0))) near(v, rest[k as keyof typeof rest], 1e-12, `standing, the phase does not matter: ${k}`)
   for (const phase of [0.3, 1.1, 2.9, 4.4]) {
     const a = walkAngles(phase, 1, f0), b = walkAngles(phase + Math.PI, 1, f0)
     near(a.hipL, b.hipR, 1e-12, 'hip'); near(a.kneeL, b.kneeR, 1e-12, 'knee'); near(a.ankleL, b.ankleR, 1e-12, 'ankle')
-    near(a.shoulderL, b.shoulderR, 1e-12, 'shoulder'); near(a.elbowL, b.elbowR, 1e-12, 'elbow')
-    near(a.hipL, Math.sin(phase) * WALK.hip, 1e-12, 'the hip swings with the phase')
-    assert.ok(a.kneeL >= WALK.kneeRest && a.kneeL <= WALK.kneeRest + WALK.knee)
-    assert.ok(a.bob >= 0 && a.bob <= WALK.bob)
-    near(a.shoulderL, -a.hipL / WALK.hip * WALK.shoulder, 1e-12, 'the arm counters the leg')
+    near(a.shoulderL, b.shoulderR, 1e-12, 'shoulder'); near(a.elbowL, b.elbowR, 1e-12, 'elbow'); near(a.rise, b.rise, 1e-12, 'the rise')
+    assert.ok(a.kneeL >= WALK.kneeRest - 1e-9 && a.kneeR >= WALK.kneeRest - 1e-9, 'never locked')
+    near(a.shoulderL, -Math.sin(phase) * WALK.shoulder * swingOf(1) * f0.gait, 1e-12, 'the arm swings with the phase, against the leg')
   }
+  assert.ok(walkAngles(-Math.PI / 4, 1, f0).hipL < -0.1, 'the left foot ahead: the thigh forward')
+  assert.ok(walkAngles(Math.PI / 4, 1, f0).hipL > 0.1, 'the left foot behind: the thigh back')
   assert.equal(swingOf(0), 0)
   assert.equal(swingOf(WALK.fullSpeed), 1)
   assert.equal(swingOf(WALK.fullSpeed * 10), WALK.maxSwing)
   assert.equal(swingOf(-1), 0)
-  near(walkAngles(1, 0.5, f0).hipL, Math.sin(1) * WALK.hip * 0.5, 1e-12, 'half the swing')
+  near(walkAngles(1, WALK.fullSpeed / 2, f0).shoulderL, -Math.sin(1) * WALK.shoulder * 0.5 * f0.gait, 1e-12, 'half the swing')
   const brisk = shapeFactors(shape({ posture: 1 })), slumped = shapeFactors(shape({ posture: 0 }))
   near(walkAngles(1, 1, brisk).twist / walkAngles(1, 1, slumped).twist, brisk.gait / slumped.gait, 1e-9, 'the twist and the arm swing follow the gait')
   near(walkAngles(1, 1, brisk).shoulderL / walkAngles(1, 1, slumped).shoulderL, brisk.gait / slumped.gait, 1e-9, 'the arm swing too')
@@ -297,6 +359,93 @@ test('walkAngles: at rest the knees and elbows keep their small bend; the right 
   near(bag.shoulderR, plain.shoulderR * WALK.bagSwing, 1e-12, 'the bag arm')
   assert.equal(bag.elbowR, -WALK.elbowRest)
   assert.equal(bag.shoulderL, plain.shoulderL)
+  const looking = walkAngles(1, 1, f0, false, false, { chest: 0.2, head: 0.4, pitch: -0.3 })
+  near(looking.twist, plain.twist + 0.2, 1e-12, 'the chest takes its share of the gaze'); assert.equal(looking.headYaw, 0.4); near(looking.head, plain.head + 0.3, 1e-12, 'looking down nods the head')
+  assert.deepEqual(walkAngles(1, 1, f0, false, false, GAZE_AHEAD), plain)
+})
+
+test('the feet stay planted: walking at any speed from WALK.strideSpeed up, at any stature or heading, a foot keeps its spot of ground through its stance to a micrometre while the body passes over it, its ankle rising as it rolls heel to toe; the swing foot is up; the pelvis rides continuously through the handover; under strideSpeed the stride shrinks toward standing and the foot shuffles by the difference', () => {
+  const TAU = 2 * Math.PI
+  for (const [speed, height, heading] of [[0.5, 1.75, 0], [1.0, 1.75, 0], [1.4, 1.75, 2.1], [2.0, 1.75, -0.7], [1.2, 1.5, 0], [1.2, 2.05, Math.PI / 2], [0.9, 1.75, 0]] as const) {
+    const f = shapeFactors(shape({ height, legs: speed === 0.9 ? 1 : 0.5 }))
+    const piv = pivotsOf(f), scale = scaleOf(f)
+    let spot: [number, number] | null = null
+    let lastRise = 0, lastDist = 0
+    for (let dist = 0; dist < WALK.cycle * 2; dist += WALK.cycle / 500) {
+      const phase = dist * TAU / WALK.cycle
+      const a = walkAngles(phase, speed, f)
+      const at = [dist * Math.sin(heading), 0, dist * Math.cos(heading)] as const
+      const ankle = skinPoint(-piv.hipX, piv.ankle, 0, BONE.FOOT_L, BONE.FOOT_L, 1, 1, a, STILL, piv, scale, heading, at)
+      const s = (((phase + Math.PI / 2) / TAU) % 1) * 2
+      if (s < 1) {
+        if (spot) { near(ankle[0], spot[0], 1e-6, `${speed} m/s, ${height} m, heading ${heading}: the planted ankle's x at ${dist.toFixed(3)} m`); near(ankle[2], spot[1], 1e-6, `${speed} m/s, ${height} m, heading ${heading}: the planted ankle's z at ${dist.toFixed(3)} m`) }
+        else spot = [ankle[0], ankle[2]]
+        near(ankle[1], piv.ankle * scale.y + WALK.roll * (1 - 2 * s) ** 2, 1e-6, 'the ankle rises as the foot rolls onto its heel or its toes')
+      } else {
+        spot = null
+        assert.ok(ankle[1] >= piv.ankle * scale.y + WALK.roll - 1e-6, 'the swing foot is up')
+      }
+      assert.ok(a.kneeL >= WALK.kneeRest - 1e-9 && a.kneeR >= WALK.kneeRest - 1e-9, 'the knee never locks')
+      assert.ok(a.rise <= 1e-12 && a.rise > -0.12, 'the pelvis at or below standing, by centimetres')
+      if (dist > 0) assert.ok(Math.abs(a.rise - lastRise) < 0.004 * (dist - lastDist) / (WALK.cycle / 500) + 1e-9, `the rise rides continuously (${a.rise} after ${lastRise} at ${dist.toFixed(3)} m)`)
+      lastRise = a.rise; lastDist = dist
+    }
+  }
+  // Under strideSpeed the stride is a fraction of the cycle, so the planted foot slides by the rest of the travel.
+  const f0 = shapeFactors(SHAPE_NEUTRAL), piv = pivotsOf(f0), scale = scaleOf(f0)
+  const slow = WALK.strideSpeed / 2
+  const foot = (dist: number) => skinPoint(-piv.hipX, piv.ankle, 0, BONE.FOOT_L, BONE.FOOT_L, 1, 1, walkAngles(dist * TAU / WALK.cycle, slow, f0), STILL, piv, scale, 0, [0, 0, dist])
+  near(foot(0.1)[2] - foot(0.05)[2], 0.05 * 0.5, 1e-6, 'a shuffle of half the travel at half the stride speed')
+  const standing = skinPoint(-piv.hipX, piv.ankle, 0, BONE.FOOT_L, BONE.FOOT_L, 1, 1, walkAngles(1.7, 0, f0), STILL, piv, scale, 0, ORIGIN)
+  near(standing[0], -piv.hipX, 1e-9, 'standing: the ankle under the hip'); near(standing[1], piv.ankle, 1e-9, 'at its rest'); near(standing[2], 0, 1e-9, 'neither ahead nor behind')
+})
+
+test('gazeAt: the eye ahead holds the head straight; to the side it turns the chest by its share and the head by the rest, to their limits; behind, beyond reach or at the person\'s own neck it is let go; it fades from near to reach; the way they go turns the head within its small limit, whole from a slow walk; a heading wraps', () => {
+  const neck = [0, 1.5, 0] as const
+  const sum = GAZE.headYaw + GAZE.chestYaw
+  const same = (got: ReturnType<typeof gazeAt>, want: ReturnType<typeof gazeAt>, what: string) => { near(got.chest, want.chest, 1e-12, `${what}: chest`); near(got.head, want.head, 1e-12, `${what}: head`); near(got.pitch, want.pitch, 1e-12, `${what}: pitch`) }
+  same(gazeAt(neck, 0, 0, 1, [0, 1.5, 2]), GAZE_AHEAD, 'ahead')
+  same(gazeAt(neck, 0, 0, 1, null), GAZE_AHEAD, 'nobody')
+  const aside = gazeAt(neck, 0, 0, 0, [1, 1.5, 1.5])
+  const bearing = Math.atan2(1, 1.5)
+  near(aside.chest, bearing * GAZE.chestShare, 1e-12, 'the chest\'s share'); near(aside.head, bearing * (1 - GAZE.chestShare), 1e-12, 'the head the rest'); assert.equal(aside.pitch, 0)
+  const right = gazeAt(neck, 0, 0, 0, [2, 1.5, 0])
+  same(right, { chest: GAZE.chestYaw, head: GAZE.headYaw, pitch: 0 }, 'square to the right: both at their limits')
+  assert.ok(Math.PI / 2 > sum, 'which a right angle exceeds')
+  const left = gazeAt(neck, 0, 0, 0, [-1, 1.5, 1.5])
+  near(left.chest, -aside.chest, 1e-12, 'mirrored'); near(left.head, -aside.head, 1e-12, 'mirrored')
+  same(gazeAt(neck, 0, 0, 0, [0, 1.5, -3]), GAZE_AHEAD, 'behind')
+  same(gazeAt(neck, 0, 0, 0, [3, 1.5, 5]), GAZE_AHEAD, 'beyond reach')
+  same(gazeAt(neck, 0, 0, 0, [0.2, 1.5, 0.3]), GAZE_AHEAD, 'their own neck')
+  const far = gazeAt(neck, 0, 0, 0, [1, 1.5, 3.3]), nearer = gazeAt(neck, 0, 0, 0, [1, 1.5, 2.2])
+  assert.ok(far.head > 0 && far.head < Math.atan2(1, 3.3) * (1 - GAZE.chestShare) - 1e-6, 'fading between near and reach')
+  near(nearer.head + nearer.chest, Math.atan2(1, 2.2), 1e-12, 'whole within near')
+  near(gazeAt(neck, 0, 0, 0, [0, 2.5, 2]).pitch, Math.atan2(1, 2), 1e-12, 'looking up at an eye above')
+  assert.equal(gazeAt(neck, 0, 0, 0, [0, 4, 1]).pitch, GAZE.headPitch, 'to the limit')
+  near(gazeAt(neck, 0, 0, 0, [0, 1.0, 2]).pitch, -Math.atan2(0.5, 2), 1e-12, 'down at one below')
+  // The heading turns the frame: facing +x, an eye at +x is ahead and one at +z is to the left.
+  same(gazeAt(neck, Math.PI / 2, 0, 0, [2, 1.5, 0]), GAZE_AHEAD, 'facing +x, an eye at +x')
+  assert.ok(gazeAt(neck, Math.PI / 2, 0, 0, [0, 1.5, 2]).head < 0)
+  // The way they go.
+  const travel = gazeAt(neck, 0, 1, 0, null)
+  near(travel.chest + travel.head, GAZE.travelYaw, 1e-12, 'walking to the right of the heading, the head leads, to its small limit')
+  near(travel.chest, GAZE.travelYaw * GAZE.chestShare, 1e-12, 'the chest\'s share')
+  near(gazeAt(neck, 0, -1, 0, null).head, -travel.head, 1e-12, 'to the left')
+  near(gazeAt(neck, 0, GAZE.travelSpeed / 2, 0, null).head + gazeAt(neck, 0, GAZE.travelSpeed / 2, 0, null).chest, GAZE.travelYaw / 2, 1e-12, 'half at half the speed')
+  near(gazeAt(neck, 0, 0.1, 1, null).head + gazeAt(neck, 0, 0.1, 1, null).chest, Math.atan2(0.1, 1), 1e-12, 'a slight bearing, whole')
+  near(gazeAt(neck, 3, Math.sin(-3), Math.cos(-3), null).head + gazeAt(neck, 3, Math.sin(-3), Math.cos(-3), null).chest, 2 * Math.PI - 6, 1e-9, 'the bearing off the heading wraps')
+  const both = gazeAt(neck, 0, 1, 0, [0, 1.5, 2])
+  same(both, GAZE_AHEAD, 'an eye ahead overrides the way they go')
+  const farBoth = gazeAt(neck, 0, 1, 0, [0, 1.5, 3.5])
+  assert.ok(farBoth.head + farBoth.chest > 0 && farBoth.head + farBoth.chest < GAZE.travelYaw, 'a fading eye blends with it')
+})
+
+test('SOLE: the shoe\'s lowest ring reaches SOLE.heel behind the ankle and SOLE.toe ahead of it, on every body', () => {
+  for (const v of VARIANTS) {
+    const soles = bodyTubes(v).flatMap((t) => t.rings).filter((r) => r.slot === SLOT.SHOES && r.y === 0)
+    assert.equal(soles.length, 2, `two soles on body ${v}`)
+    for (const r of soles) { near((r.z ?? 0) - (r.rz ?? r.rx), -SOLE.heel, 1e-12, 'the heel'); near((r.z ?? 0) + (r.rz ?? r.rx), SOLE.toe, 1e-12, 'the toes') }
+  }
 })
 
 test('skinPoint: a pivot stays put under its own bone; the trunk rides the heading and the place; the scales act after the pose; a normal takes their reciprocals; two bones blend by the weight', () => {
@@ -305,27 +454,39 @@ test('skinPoint: a pivot stays put under its own bone; the trunk rides the headi
   for (const phase of [0, 0.7, 2.5]) {
     const a = walkAngles(phase, 1, f0)
     const hip = skinPoint(piv.hipX, piv.hip, 0, BONE.THIGH_R, BONE.THIGH_R, 1, 1, a, STILL, piv, UNIT, 0, ORIGIN)
-    near(hip[0], piv.hipX, 1e-12, 'hip x'); near(hip[1], piv.hip + a.bob, 1e-12, 'hip y (the step\'s rise)'); near(hip[2], 0, 1e-12, 'hip z')
+    near(hip[0], piv.hipX, 1e-12, 'hip x'); near(hip[1], piv.hip + a.rise, 1e-12, 'hip y (the pelvis\' rise)'); near(hip[2], 0, 1e-12, 'hip z')
     const shoulder = skinPoint(-piv.shoulderX, piv.shoulder, 0, BONE.ARM_L, BONE.ARM_L, 1, 1, a, STILL, piv, UNIT, 0, ORIGIN)
     // The shoulder turns with the chest's twist about the spine, nothing else.
-    near(Math.hypot(shoulder[0], shoulder[2]), piv.shoulderX, 1e-12, 'shoulder radius'); near(shoulder[1], piv.shoulder + a.bob, 1e-12, 'shoulder y')
+    near(Math.hypot(shoulder[0], shoulder[2]), piv.shoulderX, 1e-12, 'shoulder radius'); near(shoulder[1], piv.shoulder + a.rise, 1e-12, 'shoulder y')
     const toe = skinPoint(piv.hipX, 0, 0.1, BONE.FOOT_R, BONE.FOOT_R, 1, 1, a, STILL, piv, UNIT, 0, ORIGIN)
     if (phase !== 0) assert.ok(Math.abs(toe[2] - 0.1) > 1e-3 || Math.abs(toe[1]) > 1e-3, 'the toe moves with the stride')
   }
   const a0 = walkAngles(0, 0, f0)
   const knee = skinPoint(piv.hipX, piv.knee, 0, BONE.SHIN_R, BONE.SHIN_R, 1, 1, a0, STILL, piv, UNIT, 0, ORIGIN)
-  near(knee[1], piv.knee, 1e-12, 'the knee pivot, the hip straight')
+  near(knee[1], piv.knee, 1e-3, 'the knee pivot, the leg all but straight'); near(knee[2], (piv.hip - piv.knee) * Math.sin(WALK.kneeRest / 2), 1e-9, 'the knee a shade forward: half the standing bend')
+  // The gaze: the head's own yaw turns the nose to the right about the neck; the chest's share turns the shoulders.
+  const looking = walkAngles(0, 0, f0, false, false, { chest: 0, head: 0.5, pitch: 0 })
+  const nose = skinPoint(0, piv.neck, 0.1, BONE.HEAD, BONE.HEAD, 1, 1, looking, STILL, piv, UNIT, 0, ORIGIN)
+  near(nose[0], 0.1 * Math.sin(0.5), 1e-12, 'the nose to the right'); near(nose[1], piv.neck + looking.rise, 1e-12, 'level'); near(nose[2], 0.1 * Math.cos(0.5), 1e-12, 'and less ahead')
+  const chested = walkAngles(0, 0, f0, false, false, { chest: 0.3, head: 0, pitch: 0 })
+  const shoulderL = skinPoint(-piv.shoulderX, piv.shoulder, 0, BONE.ARM_L, BONE.ARM_L, 1, 1, chested, STILL, piv, UNIT, 0, ORIGIN)
+  near(shoulderL[2], piv.shoulderX * Math.sin(0.3), 1e-12, 'the chest turned right brings the left shoulder forward')
+  const noseChested = skinPoint(0, piv.neck, 0.1, BONE.HEAD, BONE.HEAD, 1, 1, chested, STILL, piv, UNIT, 0, ORIGIN)
+  near(noseChested[0], 0.1 * Math.sin(0.3), 1e-12, 'and the head with it')
+  const pitched = walkAngles(0, 0, f0, false, false, { chest: 0, head: 0, pitch: 0.4 })
+  const noseUp = skinPoint(0, piv.neck, 0.1, BONE.HEAD, BONE.HEAD, 1, 1, pitched, STILL, piv, UNIT, 0, ORIGIN)
+  near(noseUp[1], piv.neck + pitched.rise + 0.1 * Math.sin(0.4), 1e-12, 'looking up lifts the nose')
   const turned = skinPoint(0.1, 1.0, 0.05, BONE.TRUNK, BONE.TRUNK, 1, 1, a0, STILL, piv, UNIT, Math.PI / 2, [1, 2, 3])
-  near(turned[0], 1 + 0.05, 1e-12, 'heading x'); near(turned[1], 2 + 1.0, 1e-12, 'heading y'); near(turned[2], 3 - 0.1, 1e-12, 'heading z')
+  near(turned[0], 1 + 0.05, 1e-12, 'heading x'); near(turned[1], 2 + 1.0 + a0.rise, 1e-12, 'heading y (with the standing bend\'s small drop)'); near(turned[2], 3 - 0.1, 1e-12, 'heading z')
   const scaled = skinPoint(0.1, 1.0, 0.05, BONE.TRUNK, BONE.TRUNK, 1, 1, a0, STILL, piv, { y: 4, xz: 2 }, 0, ORIGIN)
-  near(scaled[0], 0.2, 1e-12, 'x by the square root'); near(scaled[1], 4, 1e-12, 'y by the stature'); near(scaled[2], 0.1, 1e-12, 'z by the square root')
+  near(scaled[0], 0.2, 1e-12, 'x by the square root'); near(scaled[1], 4 + a0.rise, 1e-12, 'y by the stature, then the rise'); near(scaled[2], 0.1, 1e-12, 'z by the square root')
   const n = skinPoint(Math.SQRT1_2, Math.SQRT1_2, 0, BONE.TRUNK, BONE.TRUNK, 1, 0, a0, STILL, piv, { y: 4, xz: 2 }, 0, [5, 5, 5])
   near(n[0] / n[1], (Math.SQRT1_2 / 2) / (Math.SQRT1_2 / 4), 1e-12, 'the normal leans the other way')
   assert.ok(length(n) < 1, 'the caller normalises')
   const nt = skinPoint(0, 1, 0, BONE.TRUNK, BONE.TRUNK, 1, 0, a0, { tilt: 0.5, bend: 0, fall: 0 }, piv, UNIT, 0, ORIGIN)
   near(length(nt), 1, 1e-12, 'a rotation keeps the length'); near(nt[2], Math.sin(0.5), 1e-12, 'tilted forward'); near(nt[1], Math.cos(0.5), 1e-12, 'tilted')
   const bent = skinPoint(0, 1.5, 0, BONE.CHEST, BONE.CHEST, 1, 1, a0, { tilt: 0, bend: 0.4, fall: 0 }, piv, UNIT, 0, ORIGIN)
-  near(bent[2], (1.5 - piv.hip) * Math.sin(0.4), 1e-12, 'the trunk bends about the hip'); near(bent[1], piv.hip + (1.5 - piv.hip) * Math.cos(0.4), 1e-12, 'and down')
+  near(bent[2], (1.5 - piv.hip) * Math.sin(0.4), 1e-12, 'the trunk bends about the hip'); near(bent[1], piv.hip + (1.5 - piv.hip) * Math.cos(0.4) + a0.rise, 1e-12, 'and down')
   const a1 = walkAngles(Math.PI / 2, 1, f0)
   const thigh = skinPoint(piv.hipX, 0.7, 0, BONE.THIGH_R, BONE.THIGH_R, 1, 1, a1, STILL, piv, UNIT, 0, ORIGIN)
   const trunk = skinPoint(piv.hipX, 0.7, 0, BONE.TRUNK, BONE.TRUNK, 1, 1, a1, STILL, piv, UNIT, 0, ORIGIN)
@@ -565,21 +726,34 @@ test('HAIRLINE: the cap\'s front leaves the skull\'s front at the hairline and i
 
 // --- The WGSL --------------------------------------------------------------------------------------------------
 
-test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow and wrist as their drop from the shoulder), ten functions, one call for the position and the normal, the face shaped on the head alone', () => {
+test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow and wrist as their drop from the shoulder), fourteen functions, one call for the position and the normal, the face shaped on the head alone, the legs solved from the feet and the gaze from the operator\'s eye', () => {
   const lit = (n: number): string => (Number.isInteger(n) ? `${n}.0` : `${n}`)
   const flat = (name: string, o: unknown, out: [string, number][] = []): [string, number][] => {
     if (typeof o === 'number') out.push([name, o])
     else for (const [k, v] of Object.entries(o as object)) flat(`${name}.${k}`, v, out)
     return out
   }
-  const carried = [...flat('LANDMARK', LANDMARK), ...flat('MORPH', MORPH), ...flat('REGION', REGION), ...flat('LIMB_GIRTH', LIMB_GIRTH), ...flat('WALK', WALK), ...flat('FACE', FACE)]
+  const carried = [...flat('LANDMARK', LANDMARK), ...flat('MORPH', MORPH), ...flat('REGION', REGION), ...flat('LIMB_GIRTH', LIMB_GIRTH), ...flat('WALK', WALK), ...flat('SOLE', SOLE), ...flat('GAZE', GAZE), ...flat('FACE', FACE)]
     .filter(([name]) => name !== 'LANDMARK.elbow' && name !== 'LANDMARK.wrist' && name !== 'FACE.nose.rootY' && name !== 'FACE.clear')
   for (const [name, v] of carried) assert.ok(BODY_WGSL.includes(lit(v)), `${name} = ${lit(v)} in the WGSL`)
   assert.ok(BODY_WGSL.includes(`shoulderY - ${lit(LANDMARK.shoulder - LANDMARK.elbow)}`), 'the elbow hangs its drop under the shoulder')
   assert.ok(BODY_WGSL.includes(`shoulderY - ${lit(LANDMARK.shoulder - LANDMARK.wrist)}`), 'the wrist too')
   assert.doesNotMatch(BODY_WGSL, /undefined|NaN|\[object/, 'every interpolation is a number')
-  assert.deepEqual([...BODY_WGSL.matchAll(/^fn (\w+)\(/gm)].map((m) => m[1]), ['bodyRotX', 'bodyRotY', 'bodyRotAxis', 'bodyHat', 'bodyHeightMap', 'bodySlope', 'bodyFace', 'bodyMorph', 'bodyBone', 'bodyVertex'])
-  assert.ok(BODY_WGSL.includes('fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: vec4f, motion: vec4f, pose: vec4f, stance: vec4f, morphA: vec4f, morphB: vec4f, faceA: vec4f, faceB: vec4f, t: f32) -> mat3x3f'))
+  // Tint refuses WGSL's reserved words as names (it refused `target`); the ones a hand reaches for, as a declared name.
+  assert.doesNotMatch(BODY_WGSL, /\b(?:target|flat|smooth|filter|get|set|type|mod|of|from|new|ref|self|this|with|where|use|pass|premerge|precise|common|shared|static|sizeof|null|nil|do|match|move|mut|pub|priv|super|try|catch|throw|final|package|module|import|export|layout|resource|register|precision|patch|partition|require|regardless|unless|operator|namespace|template|typedef|union|enum|class|interface|extends|implements|instanceof|delete|yield|await|become|crate|impl|trait|unsafe|unsized|external|demote|coherent|readonly|writeonly|varying|attribute|active|cast|highp|mediump|lowp|snorm|unorm|std|meta|macro|auto|goto|inline|noexcept|volatile|virtual|friend|explicit|mutable|restrict|protected|public|using|typename|typeof|typeid|decltype|concept|debugger|fallthrough|finally|subroutine|groupshared|nointerpolation|noperspective|packoffset|pixelfragment|thread_local|column_major)\s*[:=]/, 'no name WGSL reserves')
+  assert.deepEqual([...BODY_WGSL.matchAll(/^fn (\w+)\(/gm)].map((m) => m[1]), ['bodyRotX', 'bodyRotY', 'bodyRotAxis', 'bodyHat', 'bodyHeightMap', 'bodySlope', 'bodyFace', 'bodyMorph', 'bodyFoot', 'bodyReach', 'bodyLeg', 'bodyGaze', 'bodyBone', 'bodyVertex'])
+  assert.ok(BODY_WGSL.includes('fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: vec4f, motion: vec4f, pose: vec4f, stance: vec4f, morphA: vec4f, morphB: vec4f, faceA: vec4f, faceB: vec4f, t: f32, gaze: vec4f) -> mat3x3f'))
+  assert.ok(BODY_WGSL.includes('fn bodyFoot(phase: f32, stride: f32, lift: f32, roll: f32) -> vec4f'))
+  assert.ok(BODY_WGSL.includes('fn bodyLeg(dy: f32, dz: f32, thigh: f32, shin: f32, sole: f32) -> vec4f'))
+  assert.ok(BODY_WGSL.includes('fn bodyGaze(neck: vec3f, heading: f32, vel: vec2f, eye: vec4f) -> vec3f'))
+  assert.ok(BODY_WGSL.includes('fn bodyBone(bone: u32, m: mat3x3f, legL: vec4f, legR: vec4f, armL: vec4f, armR: vec4f, trunk: vec4f, pivA: vec4f, pivB: vec4f, pivX: vec2f, k: vec3f, headYaw: f32) -> mat3x3f'))
+  // The legs from the feet, the pelvis' drop from the planted one, the gaze from the neck's place in the world, in humanoid.ts's order.
+  assert.match(BODY_WGSL, /let footL = bodyFoot\(phase, stride, lift, roll\);\n\s*let footR = bodyFoot\(phase \+ 3\.14159\d+, stride, lift, roll\);/)
+  assert.match(BODY_WGSL, /let planted = select\(footR, footL, footL\.w > 0\.5\);\n\s*let drop = max\(0\.0, pivA\.x - pivA\.z - planted\.y - sqrt\(max\(reach \* reach - planted\.x \* planted\.x, 0\.0\)\)\);/)
+  assert.match(BODY_WGSL, /let legL = bodyLeg\(pivA\.z \+ footL\.y \+ drop - pivA\.x, footL\.x, thigh, shin, footL\.z\);/)
+  assert.match(BODY_WGSL, /let look = bodyGaze\(agent\.xyz \+ vec3f\(0\.0, pivB\.w \* stance\.x, 0\.0\), agent\.w, motion\.xy, gaze\);/)
+  assert.match(BODY_WGSL, /p\.y \* stance\.x - drop \* stance\.x/, 'the pelvis\' drop after the stature\'s scale, as humanoid.ts rise')
+  assert.match(BODY_WGSL, /if \(bone == 2u\) \{ q = bodyRotX\(q, vec3f\(0\.0, pivB\.w, 0\.0\), trunk\.y\); q = bodyRotY\(q, vec3f\(0\.0, pivB\.w, 0\.0\), headYaw\); \}/, 'the head nods, then turns, about the neck')
   assert.ok(BODY_WGSL.includes('fn bodyMorph(p: vec3f, n: vec3f, bone: u32, m: vec4f, fD: f32, fLegs: f32, fTrunk: f32) -> mat3x3f'))
   assert.ok(BODY_WGSL.includes('fn bodyFace(p: vec3f, n: vec3f, face: vec2f, fa: vec4f, fb: vec4f) -> mat3x3f'))
   assert.equal((BODY_WGSL.match(/-> mat3x3f/g) ?? []).length, 7, 'the rotations, the face, the morph, the bone chain and the vertex each carry a position and a normal')
@@ -605,7 +779,7 @@ test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow a
   }
   const src = read('./crowdBody.ts')
   assert.match(src, /^(?:\/\/[^\n]*\n)*\/\*\*\n \* Why does this file exist\?[\s\S]*What breaks if it is removed\?/, 'the header')
-  assert.match(src, /import \{ FACE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, MORPH, REGION, WALK \} from '\.\/humanoid\.ts'/)
+  assert.match(src, /import \{ FACE, GAZE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, MORPH, REGION, SOLE, WALK \} from '\.\/humanoid\.ts'/)
   assert.match(src, /export const bodyVertex = fn\('bodyVertex'\)/)
   assert.doesNotMatch(src, /from 'three\/webgpu'|three\/src/, 'nodes only: no renderer')
   assert.equal(statureFactor(HEIGHT_BASE), 1)
@@ -624,7 +798,8 @@ test('crowd.ts: the geometry is humanoid.ts\'s mesh with its rig, skin and face 
   assert.match(crowd, /this\.material\(buffers, lod \* quota \* VARIANTS \+ v \* quota, v, lod === 0\)/, 'the near material alone shapes a face')
   assert.match(crowd, /const rig = attribute\('rig', 'vec3'\)\n\s*const skin = attribute\('skin', 'vec2'\)\n\s*const face = attribute\('face', 'vec2'\)/)
   assert.match(crowd, /if \(near\) \{\n\s*If\(rig\.x\.greaterThan\(BONE\.HEAD - 0\.5\)\.and\(rig\.x\.lessThan\(BONE\.HEAD \+ 0\.5\)\), \(\) => \{/, 'the face hashes run for the head alone')
-  assert.match(crowd, /const skinned = \(bodyVertex\(positionLocal, normalLocal, rig, skin, face, agent, motion, pose, stance, morphA, morphB, faceA, faceB, time\) as unknown as Mat3\)\.toVar\(\)/)
+  assert.match(crowd, /const skinned = \(bodyVertex\(positionLocal, normalLocal, rig, skin, face, agent, motion, pose, stance, morphA, morphB, faceA, faceB, time, this\.gazeTarget\) as unknown as Mat3\)\.toVar\(\)/)
+  assert.match(crowd, /readonly gazeTarget: UniformNode<'vec4', Vector4> = uniform\(new Vector4\(0, 0, 0, 0\)\)/, 'the operator\'s eye, one uniform for both passes')
   assert.match(crowd, /normalLocal\.assign\(skinned\.element\(uint\(1\)\)\)/)
   assert.match(crowd, /const body = skinned\.element\(uint\(0\)\)/)
   assert.match(crowd, /export const VARIANT_NAMES = BODY_NAMES/)

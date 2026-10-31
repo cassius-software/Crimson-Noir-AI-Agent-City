@@ -523,12 +523,16 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   the skirt, the tie, the hair in its styles, glasses, the bag, the cup), and a near and a far version of each body
   are built at boot (about 1,300 and about 400 vertices). Everything is written by hand in that one file: no
   imported mesh, skeleton or morph target. The crowd's vertex stage (`03_Spawn_Agents/crowdBody.ts`, WGSL built
-  from the same numbers) shapes the face, reshapes each vertex by the body sliders, bends each joint from the walk
-  phase (hips, knees and ankles; shoulders and elbows; a counter-twist of the chest; the head), blends its two
-  bones, then applies the spring-damper tilt, the stature, the heading and the place, with the normals carried
-  through the same arithmetic, so a wide shoulder is lit as the round thing it is. The CPU runs the same arithmetic
-  for the card's silhouette, its face view and the tests, so the body the card draws is the body the street draws,
-  to the number.
+  from the same numbers) shapes the face, reshapes each vertex by the body sliders, solves each leg from where its
+  foot is (a planted foot keeps its spot of ground through its stance and rolls from heel to toe; the pelvis drops
+  what the planted leg cannot span at the ends of a stride; a person who stops stands with their feet together),
+  swings the arms with the speed against the legs, turns the chest and the head, blends its two bones, then applies
+  the spring-damper tilt, the stature, the heading and the place, with the normals carried through the same
+  arithmetic, so a wide shoulder is lit as the round thing it is. Pedestrians look you in the eye when you stand in
+  front of them on foot within about two and a half metres (the look fades out by four and a half; from a car
+  nobody is looked at), and look the way they are going otherwise, the head leading a turn. The CPU runs the same
+  arithmetic for the card's silhouette, its face view and the tests, so the body the card draws is the body the
+  street draws, to the number.
 - **The face.** The skull is twelve-sided rings from the chin to the crown, each ring in a region (the chin, the
   jaw, the cheekbones, the brow line), and the features are small lofted pillows laid on the skull's own front: two
   eyes (a white with an iris in front), two brows, a nose rooted on the skull, the lips, two ears. Seven face
@@ -632,8 +636,9 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   pedestrian the realm has promoted to a physical body (a trip, a shove, the balance machine) is still drawn as the
   rig's capsules at the rig's one size for as long as the fall lasts, and the network ghosts keep the base body. The
   face is still: no expression, no blink, no lip movement when someone speaks, and the eyes look where the head
-  looks. There is no facial hair, and the hair is a shape, not strands. Feet still slide a little on a kerb (no foot
-  placement yet), and heads do not turn to look. Whether agent 0's hashed look and `lookFromSeed(0)` agree on the GPU
+  looks. There is no facial hair, and the hair is a shape, not strands. Heads turn to you and to the way their owner
+  goes, not to other pedestrians or cars; the feet stay planted from half a metre a second up and shuffle a little
+  under it while a stride shrinks to standing. Whether agent 0's hashed look and `lookFromSeed(0)` agree on the GPU
   is a browser check not yet made (see Browser support); the skinned body and its face have been looked at on a
   software WebGPU adapter and in CI's screenshots, not yet on a real GPU.
 

@@ -7,15 +7,18 @@
  * with humanoid.ts's numbers written into it at load (the landmarks, the slider ranges, the regions, the face table,
  * the walk), so the body the card draws and the body the street draws are one: the face sliders reshape a head
  * vertex by its region, the body sliders reshape the rest point (and its normal, by the scales' reciprocals), the
- * walk sets each joint's angle from the phase, the point follows its two bones blended by its weight (linear blend
- * skinning), then the step's rise, the stature's scales, the spring-damper tilt, the heading and the position. One
+ * walk solves each leg from where its foot is (a planted foot keeps its spot of ground) and swings the arms, the
+ * gaze turns the head and the chest, the point follows its two bones blended by its weight (linear blend skinning),
+ * then the stature's scales and the pelvis' rise, the spring-damper tilt, the heading and the position. One
  * call gives both the position and the normal, as two columns of a 3×3 matrix (the third is zero), so every sine is
  * taken once. Pure: builds nodes, needs no renderer; humanoid.test.ts holds its text to humanoid.ts's constants and
  * its include graph (BODY_INCLUDES) to the calls in the text.
  * What breaks if it is removed? The bodies have no vertex stage: nothing of the crowd is posed or drawn.
  */
 import { wgslFn } from 'three/tsl'
-import { FACE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, MORPH, REGION, WALK } from './humanoid.ts'
+import { FACE, GAZE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, MORPH, REGION, SOLE, WALK } from './humanoid.ts'
+
+const TAU = Math.PI * 2
 
 /** A number as a WGSL f32 literal (an integer gets its point). */
 const f = (n: number): string => (Number.isInteger(n) ? `${n}.0` : `${n}`)
@@ -29,7 +32,8 @@ const f = (n: number): string => (Number.isInteger(n) ? `${n}.0` : `${n}`)
  * walk phase, speed); its spring-damper pose (tilt, bend, push angle, activity); `stance` = (stature as a factor of
  * the base height, piece mask, idle phase 0..1, -); `morphA` = (mass, muscle, shoulders, hips) and `morphB` = (legs,
  * posture, head, -), each a slider's 0..1; `faceA` = (brow, jaw, chin, cheek) and `faceB` = (nose, eyes, lips, -),
- * each −1..1; and the time.
+ * each −1..1; the time; and `gaze` = the operator's eye in the world (x, y, z) with 1 in w when someone is afoot to
+ * look at (0: nobody). WGSL reserves `target`, so the eye is `eye` inside.
  */
 export const BODY_WGSL = `
 fn bodyRotX(m: mat3x3f, piv: vec3f, a: f32) -> mat3x3f {
@@ -139,9 +143,68 @@ fn bodyMorph(p: vec3f, n: vec3f, bone: u32, m: vec4f, fD: f32, fLegs: f32, fTrun
   }
   return mat3x3f(vec3f(ax + (p.x - ax) * g.x + shiftX, y, p.z * g.z + shiftZ), normalize(n / g), vec3f(0.0));
 }
-fn bodyBone(bone: u32, m: mat3x3f, legL: vec4f, legR: vec4f, armL: vec4f, armR: vec4f, trunk: vec4f, pivA: vec4f, pivB: vec4f, pivX: vec2f, k: vec3f) -> mat3x3f {
-  // legL/legR = (hip, knee, ankle, -), armL/armR = (shoulder, elbow, -, -), trunk = (twist, head, slouch, bend);
-  // pivA = (hip, knee, ankle, shoulder), pivB = (elbow, wrist, chest, neck) heights, pivX = (hipX, shoulderX).
+fn bodyFoot(phase: f32, stride: f32, lift: f32, roll: f32) -> vec4f {
+  // Where a foot is (humanoid.ts footAt): (ahead of the hip's drop line, above the ankle's rest, the sole's angle
+  // toes-down positive, planted 1 or swinging 0). The stance half carries the planted foot from half a stride ahead
+  // to half behind linearly in the phase, rolling onto the heel ahead and the toes behind; the swing half brings it
+  // forward along a smooth step, lifted, the sole turning from toes-down to toes-up.
+  let half = stride * 0.5;
+  let s = fract((phase + ${f(Math.PI / 2)}) / ${f(TAU)}) * 2.0;
+  if (s < 1.0) {
+    let u = 1.0 - 2.0 * s;
+    let y = roll * u * u;
+    let sole = select(-asin(min(y / ${f(SOLE.heel)}, 1.0)), asin(min(y / ${f(SOLE.toe)}, 1.0)), u < 0.0);
+    return vec4f(half * u, y, sole, 1.0);
+  }
+  let w = s - 1.0;
+  let ease = w * w * (3.0 - 2.0 * w);
+  let sole = asin(min(roll / ${f(SOLE.toe)}, 1.0)) * (1.0 - w) - asin(min(roll / ${f(SOLE.heel)}, 1.0)) * w;
+  return vec4f(half * (2.0 * ease - 1.0), roll + lift * sin(${f(Math.PI)} * w), sole, 0.0);
+}
+fn bodyReach(thigh: f32, shin: f32) -> f32 {
+  // How far the leg reaches with the knee at its standing bend (humanoid.ts legReach).
+  return sqrt(thigh * thigh + shin * shin + 2.0 * thigh * shin * cos(${f(WALK.kneeRest)}));
+}
+fn bodyLeg(dy: f32, dz: f32, thigh: f32, shin: f32, sole: f32) -> vec4f {
+  // The leg solved from its foot (humanoid.ts legSolve): (hip, knee, ankle, -) that put the ankle dy from the hip
+  // and dz ahead of it, the knee forward of the line between them, the distance held to the reach; the ankle turns
+  // the sole to its angle whatever the leg does.
+  let r = max(min(length(vec2f(dy, dz)), bodyReach(thigh, shin)), 0.001);
+  let line = atan2(-dz, -dy);
+  let open = acos(clamp((thigh * thigh + r * r - shin * shin) / (2.0 * thigh * r), -1.0, 1.0));
+  let hip = line - open;
+  let knee = ${f(Math.PI)} - acos(clamp((thigh * thigh + shin * shin - r * r) / (2.0 * thigh * shin), -1.0, 1.0));
+  return vec4f(hip, knee, sole - hip - knee, 0.0);
+}
+fn bodyGaze(neck: vec3f, heading: f32, vel: vec2f, eye: vec4f) -> vec3f {
+  // Where the head turns (humanoid.ts gazeAt): (the chest's yaw, the head's own yaw, the head's pitch). The way
+  // they go first, the head leading a turn; then the operator's eye when it is in front, within reach and not their
+  // own, the chest taking its share.
+  let speed = length(vel);
+  var yaw = 0.0;
+  if (speed > 0.0001) {
+    let off = atan2(vel.x, vel.y) - heading;
+    let wrapped = off - ${f(TAU)} * round(off / ${f(TAU)});
+    yaw = clamp(wrapped, -${f(GAZE.travelYaw)}, ${f(GAZE.travelYaw)}) * min(1.0, speed / ${f(GAZE.travelSpeed)});
+  }
+  var pitch = 0.0;
+  if (eye.w > 0.5) {
+    let sh = sin(heading);
+    let ch = cos(heading);
+    let d = eye.xyz - neck;
+    let along = length(d.xz);
+    let bearing = atan2(d.x * ch - d.z * sh, d.x * sh + d.z * ch);
+    let hold = select(1.0 - smoothstep(${f(GAZE.near)}, ${f(GAZE.reach)}, along), 0.0, along < ${f(GAZE.own)} || abs(bearing) > ${f(GAZE.cone)});
+    yaw += (clamp(bearing, -(${f(GAZE.headYaw)} + ${f(GAZE.chestYaw)}), ${f(GAZE.headYaw)} + ${f(GAZE.chestYaw)}) - yaw) * hold;
+    pitch = clamp(atan2(d.y, along), -${f(GAZE.headPitch)}, ${f(GAZE.headPitch)}) * hold;
+  }
+  let chest = clamp(yaw * ${f(GAZE.chestShare)}, -${f(GAZE.chestYaw)}, ${f(GAZE.chestYaw)});
+  return vec3f(chest, clamp(yaw - chest, -${f(GAZE.headYaw)}, ${f(GAZE.headYaw)}), pitch);
+}
+fn bodyBone(bone: u32, m: mat3x3f, legL: vec4f, legR: vec4f, armL: vec4f, armR: vec4f, trunk: vec4f, pivA: vec4f, pivB: vec4f, pivX: vec2f, k: vec3f, headYaw: f32) -> mat3x3f {
+  // legL/legR = (hip, knee, ankle, -), armL/armR = (shoulder, elbow, -, -), trunk = (twist, head's nod, slouch, bend),
+  // headYaw the head's own yaw about the neck; pivA = (hip, knee, ankle, shoulder), pivB = (elbow, wrist, chest, neck)
+  // heights, pivX = (hipX, shoulderX).
   var q = m;
   if (bone >= 3u && bone <= 8u) {
     let left = bone <= 5u;
@@ -163,7 +226,7 @@ fn bodyBone(bone: u32, m: mat3x3f, legL: vec4f, legR: vec4f, armL: vec4f, armR: 
       q = bodyRotX(q, vec3f(x, pivA.w, 0.0), a.x);
       q = bodyRotY(q, vec3f(0.0, pivB.z, 0.0), trunk.x);
     } else {
-      if (bone == 2u) { q = bodyRotX(q, vec3f(0.0, pivB.w, 0.0), trunk.y); }
+      if (bone == 2u) { q = bodyRotX(q, vec3f(0.0, pivB.w, 0.0), trunk.y); q = bodyRotY(q, vec3f(0.0, pivB.w, 0.0), headYaw); }
       if (bone >= 1u) { q = bodyRotY(q, vec3f(0.0, pivB.z, 0.0), trunk.x); }
     }
     let hip = vec3f(0.0, pivA.x, 0.0);
@@ -172,7 +235,7 @@ fn bodyBone(bone: u32, m: mat3x3f, legL: vec4f, legR: vec4f, armL: vec4f, armR: 
   }
   return q;
 }
-fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: vec4f, motion: vec4f, pose: vec4f, stance: vec4f, morphA: vec4f, morphB: vec4f, faceA: vec4f, faceB: vec4f, t: f32) -> mat3x3f {
+fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: vec4f, motion: vec4f, pose: vec4f, stance: vec4f, morphA: vec4f, morphB: vec4f, faceA: vec4f, faceB: vec4f, t: f32, gaze: vec4f) -> mat3x3f {
   let bone0 = u32(rig.x + 0.5);
   let opt = u32(rig.z + 0.5);
   let bone1 = u32(skin.x + 0.5);
@@ -202,19 +265,28 @@ fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: v
   let pivA = vec4f(${f(LANDMARK.hip)} * fLegs, ${f(LANDMARK.knee)} * fLegs, ${f(LANDMARK.ankle)} * fLegs, shoulderY);
   let pivB = vec4f(shoulderY - ${f(LANDMARK.shoulder - LANDMARK.elbow)}, shoulderY - ${f(LANDMARK.shoulder - LANDMARK.wrist)}, bodyHeightMap(${f(LANDMARK.chestPivot)}, fLegs, fTrunk), ${f(LANDMARK.neck)});
   let pivX = vec2f(${f(LANDMARK.hipX)} * m.w, ${f(LANDMARK.shoulderX)} * m.z);
-  // The walk: the left leg's cycle at the phase, the right half a turn behind, the arms against them.
+  // The walk. The worker advances the phase with the distance walked (a turn per WALK.cycle metres), so a foot
+  // planted through the stance half, carried from half a stride ahead to half behind linearly in the phase, keeps its
+  // spot of ground: each leg is solved from its foot (bodyFoot, bodyLeg) in the base body's metres (the stature's
+  // scales come after the pose), the stride, the lift and the roll shrinking to standing under WALK.strideSpeed; the
+  // pelvis drops what the planted leg cannot span. The arms swing with the speed, the left against the left leg.
   let swing = clamp(motion.w / ${f(WALK.fullSpeed)}, 0.0, ${f(WALK.maxSwing)});
   let phase = motion.z;
   let sL = sin(phase);
-  let cL = cos(phase);
-  let liftL = max(0.0, -cL);
-  let liftR = max(0.0, cL);
-  let hipL = sL * ${f(WALK.hip)} * swing;
-  let hipR = -sL * ${f(WALK.hip)} * swing;
-  let kneeL = ${f(WALK.kneeRest)} + ${f(WALK.knee)} * swing * liftL * liftL;
-  let kneeR = ${f(WALK.kneeRest)} + ${f(WALK.knee)} * swing * liftR * liftR;
-  let legL = vec4f(hipL, kneeL, -(hipL + kneeL) * ${f(WALK.ankle)}, 0.0);
-  let legR = vec4f(hipR, kneeR, -(hipR + kneeR) * ${f(WALK.ankle)}, 0.0);
+  let across = sqrt(stance.x);
+  let on = clamp(motion.w / ${f(WALK.strideSpeed)}, 0.0, 1.0);
+  let stride = ${f(WALK.cycle)} * 0.5 * on / across;
+  let lift = ${f(WALK.lift)} * on / stance.x;
+  let roll = ${f(WALK.roll)} * on / stance.x;
+  let footL = bodyFoot(phase, stride, lift, roll);
+  let footR = bodyFoot(phase + ${f(Math.PI)}, stride, lift, roll);
+  let thigh = pivA.x - pivA.y;
+  let shin = pivA.y - pivA.z;
+  let reach = bodyReach(thigh, shin);
+  let planted = select(footR, footL, footL.w > 0.5);
+  let drop = max(0.0, pivA.x - pivA.z - planted.y - sqrt(max(reach * reach - planted.x * planted.x, 0.0)));
+  let legL = bodyLeg(pivA.z + footL.y + drop - pivA.x, footL.x, thigh, shin, footL.z);
+  let legR = bodyLeg(pivA.z + footR.y + drop - pivA.x, footR.x, thigh, shin, footR.z);
   let holdingCup = ((mask >> 3u) & 1u) == 1u;
   let carryingBag = ((mask >> 2u) & 1u) == 1u;
   var shoulderL = -sL * ${f(WALK.shoulder)} * swing * gait;
@@ -229,20 +301,21 @@ fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: v
   let idle = (1.0 - clamp(motion.w * 4.0, 0.0, 1.0)) * sin(t * 1.3 + stance.z * 6.28) * 0.03;
   let fall = pose.z - agent.w;
   let k = vec3f(cos(fall), 0.0, -sin(fall));
-  let trunk = vec4f(sL * ${f(WALK.twist)} * swing * gait, -slouch * ${f(WALK.headCounter)}, slouch, pose.y + idle);
+  // The gaze: the operator's eye, or the way they go, from the neck's place in the world.
+  let look = bodyGaze(agent.xyz + vec3f(0.0, pivB.w * stance.x, 0.0), agent.w, motion.xy, gaze);
+  let trunk = vec4f(sL * ${f(WALK.twist)} * swing * gait + look.x, -slouch * ${f(WALK.headCounter)} - look.z, slouch, pose.y + idle);
   // The rest point reshaped, then its two bones, blended; the tilt about the feet.
   let rest = bodyMorph(v0, n0, bone0, m, fD, fLegs, fTrunk);
-  let b0 = bodyBone(bone0, rest, legL, legR, armL, armR, trunk, pivA, pivB, pivX, k);
+  let b0 = bodyBone(bone0, rest, legL, legR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);
   var b = b0;
   if (bone1 != bone0 && weight < 1.0) {
-    let b1 = bodyBone(bone1, rest, legL, legR, armL, armR, trunk, pivA, pivB, pivX, k);
+    let b1 = bodyBone(bone1, rest, legL, legR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);
     b = b0 * weight + b1 * (1.0 - weight);
   }
   b = bodyRotAxis(b, vec3f(0.0), k, pose.x);
-  // The stature's scales (the normal takes their reciprocals), the step's rise, the heading, the place.
-  let across = sqrt(stance.x);
+  // The stature's scales (the normal takes their reciprocals), the pelvis' rise, the heading, the place.
   let p = b[0];
-  let q = vec3f(p.x * across, p.y * stance.x + abs(sL) * ${f(WALK.bob)} * swing, p.z * across);
+  let q = vec3f(p.x * across, p.y * stance.x - drop * stance.x, p.z * across);
   let nn = vec3f(b[1].x / across, b[1].y / stance.x, b[1].z / across);
   let ch = cos(agent.w);
   let sh = sin(agent.w);
@@ -258,8 +331,9 @@ fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: v
  */
 export const BODY_INCLUDES: Readonly<Record<string, readonly string[]>> = Object.freeze({
   bodyMorph: Object.freeze(['bodyHat', 'bodyHeightMap', 'bodySlope']),
+  bodyLeg: Object.freeze(['bodyReach']),
   bodyBone: Object.freeze(['bodyRotX', 'bodyRotY', 'bodyRotAxis']),
-  bodyVertex: Object.freeze(['bodyFace', 'bodyHeightMap', 'bodyMorph', 'bodyBone', 'bodyRotAxis']),
+  bodyVertex: Object.freeze(['bodyFace', 'bodyHeightMap', 'bodyMorph', 'bodyFoot', 'bodyReach', 'bodyLeg', 'bodyGaze', 'bodyBone', 'bodyRotAxis']),
 })
 
 const parts = BODY_WGSL.split(/(?=^fn )/m).map((s) => s.trim()).filter(Boolean)
