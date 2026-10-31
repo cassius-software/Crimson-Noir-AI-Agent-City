@@ -12,14 +12,15 @@
  * What breaks if it is removed? Input.hal, the Ring-0 terminal's `hal` command and the HUD device line.
  */
 import { BRAND } from '../brand.ts'
-import { describeResolution, padClues, resolveDevice } from './devices.ts'
+import { describeResolution, padClues, resolveDevice, xrClues } from './devices.ts'
 import { DUALSENSE_FILTERS, DualSense, dualSenseName, isDualSense, lightbarWord, QUIET, type DsOutputs } from './dualsense.ts'
 import { isUsablePad, padName, parsePadId, pressesFaceButton, type GenericLayout } from './gamepad.ts'
 import { LineLink, NUS, openBle, openSerial, type ByteChannel } from './lineLink.ts'
 import { nativeNavigator } from './nativeHid.ts'
-import type { BleDevice, GamepadLike, HardwareNavigator, HidConnectionEvent, HidDevice, SerialConnectionEvent, SerialPort } from './web-hardware.d.ts'
+import type { BleDevice, GamepadLike, HardwareNavigator, HidConnectionEvent, HidDevice, SerialConnectionEvent, SerialPort, XrInputSourceLike } from './web-hardware.d.ts'
 
-export type Transport = 'hid' | 'serial' | 'bluetooth' | 'gamepad'
+/** 'xr' is a headset session's input source (xrInput.ts), listed here and never paired: the session brings it. */
+export type Transport = 'hid' | 'serial' | 'bluetooth' | 'gamepad' | 'xr'
 
 export interface HalDevice {
   id: string
@@ -135,6 +136,8 @@ export class HalBus {
   private readonly bleConnectMs: number
   private readonly entries: Entry[] = []
   private readonly slots: PadSlot[] = []
+  /** The headset session's input sources as rows (setHeadset); empty outside a session. */
+  private readonly headset: HalDevice[] = []
   private readonly padList: GamepadLike[] = []
   private readonly want: HalOutputs = { ...QUIET }
   private readonly unlisten: (() => void)[] = []
@@ -161,13 +164,37 @@ export class HalBus {
     this.bleConnectMs = opts.bleConnectMs ?? 10000
   }
 
-  support(): Record<Transport, boolean> {
+  /** The four pairable or pollable APIs; a headset is not among them (the session is asked for elsewhere, xrSession.ts). */
+  support(): Record<Exclude<Transport, 'xr'>, boolean> {
     const n = this.nav
     return {
       hid: !!n?.hid,
       serial: !!n?.serial,
       bluetooth: !!n?.bluetooth,
       gamepad: typeof n?.getGamepads === 'function',
+    }
+  }
+
+  /**
+   * The headset session's input sources (its live list, or null when it ends), as rows: a tracked controller, a
+   * pinch or a hand each with the resolver's profile, named by its hand and its most specific input profile.
+   */
+  setHeadset(list: ArrayLike<XrInputSourceLike> | null): void {
+    const rows = this.headset
+    rows.length = 0
+    if (!list) return
+    for (let i = 0; i < list.length; i++) {
+      const s = list[i]
+      const r = resolveDevice(xrClues(s))
+      const hand = s.handedness === 'left' || s.handedness === 'right' ? ` (${s.handedness})` : ''
+      rows.push({
+        id: `xr:${i}`,
+        transport: 'xr',
+        name: `${r.profile.name}${hand}`,
+        state: 'ready',
+        detail: `${typeof s.targetRayMode === 'string' && s.targetRayMode ? s.targetRayMode : 'no target ray'}${s.profiles?.[0] ? `, ${s.profiles[0]}` : ''}`,
+        profile: describeResolution(r),
+      })
     }
   }
 
@@ -228,6 +255,7 @@ export class HalBus {
     const out: HalDevice[] = []
     for (const e of this.entries) out.push(copy(e.dev))
     for (const s of this.slots) out.push(copy(s.dev))
+    for (const h of this.headset) out.push(copy(h))
     return out
   }
 
@@ -285,6 +313,7 @@ export class HalBus {
     }
     for (const e of this.entries) consider(e.dev)
     for (const s of this.slots) consider(s.dev)
+    for (const h of this.headset) consider(h)
     if (!head) return ''
     const h: HalDevice = head
     return `${n} device${n === 1 ? '' : 's'} · ${h.name} ${h.state}${n > 1 ? ` +${n - 1}` : ''}`

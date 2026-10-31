@@ -30,7 +30,7 @@ function sample(): SipocSnapshot {
   const s: SipocSnapshot = {
     supplier: {
       device: 'desktop', pointerLocked: true, engaged: true, touch: false, triggerResistance: 0.5,
-      hal: '1 device ready', glyphs: 'keyboard',
+      hal: '1 device ready', glyphs: 'keyboard', xr: { state: 'vr', detail: 'vr: 2 controllers' },
       recording: { active: true, source: 'canvas', seconds: 3, frames: 72, bytes: 1024, dropped: 0, codec: 'vp9' },
       recruiting: { listening: false, line: '' },
     },
@@ -67,6 +67,7 @@ function bare(): SipocSnapshot {
   return {
     supplier: {
       device: 'phone', pointerLocked: false, engaged: false, touch: true, triggerResistance: 0, hal: '', glyphs: 'touch',
+      xr: { state: 'unsupported', detail: '' },
       recording: { active: false, source: null, seconds: 0, frames: 0, bytes: 0, dropped: 0, codec: '' },
     },
     input: { mode: 'foot', nearVehicle: false },
@@ -102,7 +103,7 @@ const SAMPLE_TOPICS: readonly string[] = [
   ...['distanceDriven', 'distanceWalked', 'longFrames', 'sessionSeconds'].map((t) => `${P}Experience/Cell/Session/${t}`),
   ...['cpuMs', 'fps', 'frameMs', 'ghost', 'gpuComputeMs', 'gpuRenderMs', 'p50Ms', 'p95Ms', 'physicsMs', 'rain', 'rapierMs', 'rendering']
     .map((t) => `${P}Frame/Cell/Page/${t}`),
-  ...['device', 'glyphs', 'hal', 'pointerLocked', 'recording', 'touch'].map((t) => `${P}Hardware/Cell/Bus/${t}`),
+  ...['device', 'glyphs', 'hal', 'pointerLocked', 'recording', 'touch', 'xr'].map((t) => `${P}Hardware/Cell/Bus/${t}`),
   ...['closest', 'panic', 'perimeterBreaches', 'ticks', 'velocityCaps'].map((t) => `${P}Kernel/Cell/Audit/${t}`),
   ...['last', 'law1', 'law2', 'law3', 'sensorFlips', 'shielded'].map((t) => `${P}Kernel/Cell/Laws/${t}`),
   ...['publishes', 'topics'].map((t) => `${P}Namespace/Cell/Bus/${t}`),
@@ -294,11 +295,11 @@ test('subscribe: the filter selects, calls arrive inside publish in order, unsub
 test('children: the next-level names below a prefix with their topic counts, sorted; the root by default', () => {
   const bus = new TopicBus()
   publishSnapshot(bus, sample(), PHYSICS, 1)
-  assert.deepEqual(bus.children(), [{ name: 'Area', topics: 82 }])
-  assert.deepEqual(bus.children(''), [{ name: 'Enterprise', topics: 82 }])
+  assert.deepEqual(bus.children(), [{ name: 'Area', topics: 83 }])
+  assert.deepEqual(bus.children(''), [{ name: 'Enterprise', topics: 83 }])
   assert.deepEqual(bus.children(`${ROOT}/Area/FinancialDistrict/Line`), [
     { name: 'Avatar', topics: 8 }, { name: 'Clock', topics: 2 }, { name: 'Crowd', topics: 10 }, { name: 'Experience', topics: 4 },
-    { name: 'Frame', topics: 12 }, { name: 'Hardware', topics: 6 }, { name: 'Kernel', topics: 11 }, { name: 'Namespace', topics: 2 },
+    { name: 'Frame', topics: 12 }, { name: 'Hardware', topics: 7 }, { name: 'Kernel', topics: 11 }, { name: 'Namespace', topics: 2 },
     { name: 'Network', topics: 3 }, { name: 'Physics', topics: 5 }, { name: 'Quality', topics: 7 }, { name: 'Traffic', topics: 12 },
   ])
   assert.deepEqual(bus.children(`${ROOT}/Area/FinancialDistrict/Line/Traffic/Cell/`), [
@@ -308,7 +309,7 @@ test('children: the next-level names below a prefix with their topic counts, sor
   assert.deepEqual(bus.children(`${ROOT}/Area/FinancialDistrict/Line/Clock/Cell/Sun/clock`), [])
   assert.deepEqual(bus.children(`${ROOT}/Area/Financial`), [], 'a prefix is whole levels, not a prefix of a level')
   assert.deepEqual(bus.children('nowhere'), [])
-  assert.deepEqual(childLines(bus), ['Area/              82 topics'])
+  assert.deepEqual(childLines(bus), ['Area/              83 topics'])
   assert.deepEqual(childLines(bus, `${ROOT}/Area/FinancialDistrict/Line/Traffic/Cell`), [
     'Fleet/              1 topics',
     'Signals/            3 topics',
@@ -373,12 +374,12 @@ test('clear drops every topic, keeps the counters and the subscribers', () => {
 test('publishSnapshot: the exact sorted topic list of a complete snapshot, the Area from the district line', () => {
   const bus = new TopicBus()
   const s = sample()
-  assert.equal(publishSnapshot(bus, s, PHYSICS, 7), 82)
+  assert.equal(publishSnapshot(bus, s, PHYSICS, 7), 83)
   assert.equal(bus.refused, 0)
-  assert.equal(bus.count, 82)
-  assert.equal(bus.publishes, 82)
+  assert.equal(bus.count, 83)
+  assert.equal(bus.publishes, 83)
   assert.deepEqual(bus.topics(), SAMPLE_TOPICS)
-  assert.equal(SAMPLE_TOPICS.length, 82)
+  assert.equal(SAMPLE_TOPICS.length, 83)
   for (const t of bus.topics()) {
     assert.ok(isTopic(t), t)
     assert.ok(t.startsWith(`${ROOT}/Area/FinancialDistrict/Line/`), t)
@@ -429,17 +430,18 @@ test('publishSnapshot: the values land under their tags, with the named empty ca
   assert.equal(value(bus, `${P}Hardware/Cell/Bus/hal`), '1 device ready')
   assert.equal(value(bus, `${P}Hardware/Cell/Bus/glyphs`), 'keyboard')
   assert.equal(value(bus, `${P}Hardware/Cell/Bus/recording`), true)
+  assert.equal(value(bus, `${P}Hardware/Cell/Bus/xr`), 'vr')
   assert.equal(value(bus, `${P}Network/Cell/Session/state`), 'joined')
   assert.equal(value(bus, `${P}Network/Cell/Session/peers`), 3)
   assert.equal(value(bus, `${P}Experience/Cell/Session/distanceWalked`), 1500.5)
   // The bus's own readings are published last, with the counts at that moment.
-  assert.equal(value(bus, `${P}Namespace/Cell/Bus/topics`), 80)
-  assert.equal(value(bus, `${P}Namespace/Cell/Bus/publishes`), 81)
-  assert.equal(bus.get(`${P}Namespace/Cell/Bus/publishes`)?.seq, 82)
+  assert.equal(value(bus, `${P}Namespace/Cell/Bus/topics`), 81)
+  assert.equal(value(bus, `${P}Namespace/Cell/Bus/publishes`), 82)
+  assert.equal(bus.get(`${P}Namespace/Cell/Bus/publishes`)?.seq, 83)
   // The empty cases, the infinite closest, the other dash, and the defaults of the absent flags.
   const b = new TopicBus()
-  assert.equal(publishSnapshot(b, bare(), null, 2), 61)
-  assert.equal(b.count, 61)
+  assert.equal(publishSnapshot(b, bare(), null, 2), 62)
+  assert.equal(b.count, 62)
   assert.equal(b.refused, 0)
   const Q = `${ROOT}/Area/HarbourQuarter/Line/`
   assert.ok(b.topics().every((t) => t.startsWith(Q)))
@@ -450,8 +452,8 @@ test('publishSnapshot: the values land under their tags, with the named empty ca
   assert.equal(value(b, `${Q}Frame/Cell/Page/rendering`), true)
   assert.equal(value(b, `${Q}Frame/Cell/Page/ghost`), false)
   assert.equal(value(b, `${Q}Frame/Cell/Page/rain`), false)
-  assert.equal(value(b, `${Q}Namespace/Cell/Bus/topics`), 59)
-  assert.equal(value(b, `${Q}Namespace/Cell/Bus/publishes`), 60)
+  assert.equal(value(b, `${Q}Namespace/Cell/Bus/topics`), 60)
+  assert.equal(value(b, `${Q}Namespace/Cell/Bus/publishes`), 61)
   assert.equal(b.get(`${Q}Physics/Cell/Realm/steps`), null)
   assert.equal(b.get(`${Q}Network/Cell/Session/state`), null)
   assert.equal(b.get(`${Q}Crowd/Cell/Population/sensingAgeMs`), null)
@@ -466,19 +468,19 @@ test('publishSnapshot: a non-finite reading is skipped and counted refused; the 
   s.output.fps = Number.NaN
   s.customer.daylight = Infinity
   s.customer.district = ''
-  assert.equal(publishSnapshot(bus, s, PHYSICS, 1), 80)
+  assert.equal(publishSnapshot(bus, s, PHYSICS, 1), 81)
   assert.equal(bus.refused, 2)
-  assert.equal(bus.count, 80)
+  assert.equal(bus.count, 81)
   assert.equal(bus.get(`${ROOT}/Area/Unknown/Line/Frame/Cell/Page/fps`), null)
   assert.equal(value(bus, `${ROOT}/Area/Unknown/Line/Frame/Cell/Page/frameMs`), 16.6667)
-  assert.equal(value(bus, `${ROOT}/Area/Unknown/Line/Namespace/Cell/Bus/topics`), 78)
+  assert.equal(value(bus, `${ROOT}/Area/Unknown/Line/Namespace/Cell/Bus/topics`), 79)
 })
 
 test('publishSnapshot: at most 64 vehicles, zero-padded to three digits', () => {
   const bus = new TopicBus()
   const s = sample()
   s.map = Array.from({ length: 70 }, (_, i) => ({ x: i, z: -i, heading: 0, player: i === 0 }))
-  assert.equal(publishSnapshot(bus, s, PHYSICS, 1), 82 - 8 + 64 * 4)
+  assert.equal(publishSnapshot(bus, s, PHYSICS, 1), 83 - 8 + 64 * 4)
   assert.equal(bus.topics(`${P}Traffic/Cell/+/x`).length, 64)
   assert.equal(value(bus, `${P}Traffic/Cell/Vehicle063/x`), 63)
   assert.equal(bus.get(`${P}Traffic/Cell/Vehicle064/x`), null)
@@ -491,9 +493,9 @@ test('publishSnapshot twice: the same topics, new values and sequence numbers, t
   const s = sample()
   publishSnapshot(bus, s, PHYSICS, 1)
   const h1 = bus.head()
-  assert.equal(publishSnapshot(bus, s, PHYSICS, 2), 82)
-  assert.equal(bus.count, 82)
-  assert.equal(bus.publishes, 164)
+  assert.equal(publishSnapshot(bus, s, PHYSICS, 2), 83)
+  assert.equal(bus.count, 83)
+  assert.equal(bus.publishes, 166)
   assert.deepEqual(bus.topics(), SAMPLE_TOPICS)
   assert.notEqual(bus.head(), h1)
   // Two buses fed the same snapshots in the same order agree on the head.
@@ -511,7 +513,7 @@ test('topicLines: the root as ~, two spaces, the value as the console shows it; 
   const bus = new TopicBus()
   publishSnapshot(bus, sample(), PHYSICS, 1)
   const lines = topicLines(bus.list())
-  assert.equal(lines.length, 82)
+  assert.equal(lines.length, 83)
   for (const line of lines) {
     assert.match(line, /^[\x20-\x7e]+$/, line)
     assert.ok(line.length <= 100, line)

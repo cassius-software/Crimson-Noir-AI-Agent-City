@@ -754,3 +754,24 @@ test('player LEDs over USB: a controller\'s seat is its browser pad\'s, two of a
   assert.equal(a.common(-1)[43], 0x0a)
   await bus.dispose()
 })
+
+test('a headset session\'s input sources are rows of the xr transport: named by the resolver, ready, with their hand and target-ray mode; never pairable; gone with the session', () => {
+  const bus = new HalBus({ navigator: {} })
+  assert.equal('xr' in bus.support(), false, 'a headset is not paired: the session brings it')
+  const left = { handedness: 'left', targetRayMode: 'tracked-pointer', profiles: ['meta-quest-touch-plus', 'generic-trigger-squeeze-thumbstick'], gamepad: { mapping: 'xr-standard', axes: [0, 0, 0, 0], buttons: Array.from({ length: 7 }, () => ({ pressed: false, value: 0 })) } }
+  const pinch = { handedness: 'none', targetRayMode: 'transient-pointer', profiles: [], gamepad: null }
+  const hand = { handedness: 'right', targetRayMode: 'tracked-pointer', profiles: ['generic-hand-select'], gamepad: null, hand: {} }
+  bus.setHeadset([left, pinch, hand])
+  assert.deepEqual(bus.devices().map((d) => [d.id, d.transport, d.name, d.state, d.detail]), [
+    ['xr:0', 'xr', 'Tracked controller (left)', 'ready', 'tracked-pointer, meta-quest-touch-plus'],
+    ['xr:1', 'xr', 'Gaze and pinch', 'ready', 'transient-pointer'],
+    ['xr:2', 'xr', 'Tracked hand (right)', 'ready', 'tracked-pointer, generic-hand-select'],
+  ])
+  for (const d of bus.devices()) assert.match(d.profile ?? '', /by the headset/, d.profile)
+  assert.equal(bus.summary(), '3 devices · Tracked controller (left) ready +2')
+  bus.setHeadset([pinch])
+  assert.deepEqual(bus.devices().map((d) => d.id), ['xr:0'], 'the live list, re-numbered')
+  bus.setHeadset(null)
+  assert.deepEqual(bus.devices(), [])
+  assert.equal(bus.summary(), '')
+})

@@ -290,6 +290,11 @@ export interface TerminalBridge {
    */
   rain(arg?: 'on' | 'off'): string
   /**
+   * The headset (xrSession.ts): the status line; or 'vr' | 'ar' asks the browser for an immersive session (called
+   * synchronously inside the Enter keydown, the user activation) and resolves to the outcome; 'off' ends it.
+   */
+  xr(arg?: 'vr' | 'ar' | 'off'): string | Promise<string>
+  /**
    * Drawing the city (view-only: physics, audio and this console keep running while it is off and the canvas stays
    * black): on, off, or the status line ('on' | 'off').
    */
@@ -394,6 +399,7 @@ export function offlineBridge(brand: TerminalBridge['brand']): TerminalBridge {
     adapter: () => '',
     ghost: down,
     rain: down,
+    xr: down,
     render: down,
     captions: down,
     topics: { list: down, get: down, children: down, status: down },

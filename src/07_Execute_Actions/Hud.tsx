@@ -327,6 +327,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
             </div>
             <div className={`mt-0.5 truncate text-[10px] ${muted}`}>{adapter}</div>
             {s.supplier.hal && <div className={`mt-0.5 truncate text-[10px] ${muted}`}>HAL · {s.supplier.hal}</div>}
+            {s.supplier.xr.state !== 'unsupported' && s.supplier.xr.state !== 'off' && <div className={`mt-0.5 truncate text-[10px] ${muted}`}>Headset · {s.supplier.xr.detail}</div>}
           </div>
 
           <div className="absolute top-0 left-1/2 flex w-96 -translate-x-1/2 flex-col gap-2">{toasts}</div>

@@ -46,7 +46,7 @@ const LAWS = [
 ] as const
 
 const CORE_NAMES = [
-  'help', 'stats', 'laws', 'kernel', 'topic', 'quality', 'time', 'audio', 'ghost', 'rain', 'render', 'captions', 'ping', 'look', 'agent', 'sloane', 'goal', 'hal', 'recruit', 'memory', 'clear', 'history', 'echo',
+  'help', 'stats', 'laws', 'kernel', 'topic', 'quality', 'time', 'audio', 'ghost', 'rain', 'xr', 'render', 'captions', 'ping', 'look', 'agent', 'sloane', 'goal', 'hal', 'recruit', 'memory', 'clear', 'history', 'echo',
   'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'exit',
 ]
 const OPERATOR_NAMES = ['operator', 'run', 'ask', 'swarm', 'act', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
@@ -517,6 +517,7 @@ interface Fake extends TerminalBridge {
   q: QualityState
   devs: HalDevice[]
   pairResult: Promise<HalDevice | null> | (() => never)
+  xrResult: string | Promise<string>
   operator: FakeOp
   record: FakeRec
 }
@@ -528,6 +529,7 @@ function fake(): Fake {
     q: { tier: 3, label: 'High', auto: true, renderScale: 1, targetMs: 16.7 },
     devs: [],
     pairResult: Promise.resolve(null),
+    xrResult: 'off: vr available (xr vr)',
     brand: BRAND,
     stats: () => { f.calls.push('stats'); return sampleStats() },
     laws: () => LAWS,
@@ -542,6 +544,7 @@ function fake(): Fake {
     audio: (arg) => { f.calls.push(`audio ${arg}`); return `audio status ${arg ?? '-'}` },
     ghost: (arg) => { f.calls.push(`ghost ${arg}`); return arg ?? 'off' },
     rain: (arg) => { f.calls.push(`rain ${arg}`); return arg ?? 'off' },
+    xr: (arg) => { f.calls.push(`xr ${arg ?? '-'}`); return f.xrResult },
     render: (arg) => { f.calls.push(`render ${arg}`); return arg ?? 'on' },
     captions: (arg) => { f.calls.push(`captions ${arg}`); return `captions: ${arg ?? 'on'}` },
     ping: undefined as unknown as FakePing,
@@ -1049,7 +1052,7 @@ test('air gap: while locked, across every command and completion, the only knobs
     'recruit rally 7', 'recruit rally 7 1 2', 'look show 7', 'look top 2', 'look code ABCD-EFGH', 'net join ws://127.0.0.1:8787 tok', 'topic get ~/x', 'topic list ~/#', 'topic tree ~/Area']
   for (const l of sweep) void run(l, b, ['help'])
   const touched = new Set(b.calls.map((c) => c.split(' ')[0]))
-  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'ghost', 'look', 'memory', 'model', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'setClock', 'stats', 'topics'])
+  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'ghost', 'look', 'memory', 'model', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'setClock', 'stats', 'topics', 'xr'])
   // The namespace is only ever read while locked (it has no write), and only through its four readers.
   const topicVerbs = new Set(b.calls.filter((c) => c.startsWith('topics ')).map((c) => c.split(' ')[1]))
   assert.deepEqual([...topicVerbs].sort(), ['children', 'get', 'list', 'status'])
@@ -2610,4 +2613,39 @@ test('hal pair hid inside the Windows app: no picker is promised, and an empty l
   assert.equal(only(r).text, 'hal: asking the app for its controllers...')
   assert.deepEqual(await r.pending, [{ kind: 'sys', text: 'hal: no controller plugged in or paired' }])
   assert.deepEqual(await run('hal pair ble', b, []).pending, [{ kind: 'sys', text: 'hal: no device selected' }], 'the other buses keep the browser\'s picker')
+})
+
+test('xr: the status line at once; vr, ar and off reach the bridge inside the keypress and report later; a bridge throw is an error line; anything else is refused', async () => {
+  const b = fake()
+  assert.deepEqual(texts(run('xr', b, [])), ['headset off: vr available (xr vr)'])
+  assert.deepEqual(kinds(run('xr', b, [])), ['out'])
+  assert.deepEqual(b.calls, ['xr -', 'xr -'])
+  b.calls.length = 0
+  b.xrResult = Promise.resolve('vr: on')
+  const r = run('xr vr', b, [])
+  assert.deepEqual(b.calls, ['xr vr'], 'asked before run() returns: the user activation')
+  assert.deepEqual(r.lines, [{ kind: 'sys', text: 'headset: asking the browser...' }])
+  assert.deepEqual(await r.pending, [{ kind: 'out', text: 'headset vr: on' }])
+  b.xrResult = Promise.resolve('off')
+  const off = run('xr off', b, [])
+  assert.deepEqual(off.lines, [{ kind: 'sys', text: 'headset: leaving...' }])
+  assert.deepEqual(await off.pending, [{ kind: 'out', text: 'headset off' }])
+  b.xrResult = 'off: no session'
+  const none = run('xr off', b, [])
+  assert.deepEqual(texts(none), ['headset off: no session'])
+  assert.equal(none.pending, undefined)
+  b.xrResult = Promise.reject(new Error('NotSupportedError: no device'))
+  const refused = await run('xr ar', b, []).pending
+  assert.equal(refused?.length, 1)
+  assert.equal(refused?.[0].kind, 'err')
+  assert.match(refused?.[0].text ?? '', /^headset: .*no device/)
+  assert.deepEqual(b.calls, ['xr vr', 'xr off', 'xr off', 'xr ar'])
+  for (const l of ['xr maybe', 'xr vr now', 'xr on']) {
+    const bad = run(l, b, [])
+    assert.ok(isErr(bad), l)
+    assert.match(texts(bad).join('\n'), /usage: xr \[vr\|ar\|off\]/)
+  }
+  assert.equal(b.calls.length, 4, 'a refused line touches nothing')
+  assert.deepEqual(complete('xr '), ['xr ar', 'xr off', 'xr vr'])
+  assert.ok(isErr(run('xr', offlineBridge(BRAND), [])), 'the offline bridge: an error line, no exception')
 })

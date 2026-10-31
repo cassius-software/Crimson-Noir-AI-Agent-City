@@ -87,6 +87,7 @@ const CORE = [
   { name: 'audio', usage: 'audio [on|off|0-100]', summary: 'show or set the soundscape' },
   { name: 'ghost', usage: 'ghost [on|off]', summary: 'ghost view: the physics shapes as code over the frame (view-only; G)' },
   { name: 'rain', usage: 'rain [on|off]', summary: 'falling code on every surface, in world space; people and cars pass through each other (M)' },
+  { name: 'xr', usage: 'xr [vr|ar|off]', summary: 'the headset (WebXR over WebGPU): the status, enter VR or AR, or leave' },
   { name: 'render', usage: 'render [on|off]', summary: 'draw the city, or stop drawing it (physics, audio and this console keep running)' },
   { name: 'captions', usage: 'captions [on|off]', summary: 'closed captions for every sound: engines, signals, speech, pings (view-only)' },
   { name: 'ping', usage: 'ping [go|look|gather|wait|clear]', summary: 'mark where you look for your swarm (view-only; shown on the minimap and captioned; Q); alone, the marks standing' },
@@ -179,6 +180,7 @@ const ARGS: Record<string, readonly string[]> = {
   audio: ['off', 'on'],
   ghost: ['off', 'on'],
   rain: ['off', 'on'],
+  xr: ['ar', 'off', 'vr'],
   render: ['off', 'on'],
   captions: ['off', 'on'],
   ping: ['clear', ...PING_KINDS],
@@ -865,6 +867,19 @@ const HANDLERS: Record<Name, Handler> = {
   ghost: knob('ghost', (b, arg) => `ghost view ${b.ghost(arg)}`),
 
   rain: knob('rain', (b, arg) => `rain ${b.rain(arg)}`),
+
+  xr(args, b) {
+    if (args.length > 1) return fail(usage('xr'))
+    const a = args[0]
+    if (a !== undefined && a !== 'vr' && a !== 'ar' && a !== 'off') return fail(`xr: invalid argument '${a}'`, usage('xr'))
+    // Called synchronously: a browser grants an immersive session only inside the Enter keydown's user activation.
+    const r = b.xr(a)
+    if (typeof r === 'string') return { lines: [out(`headset ${r}`)] }
+    return {
+      lines: [sys(a === 'off' ? 'headset: leaving...' : 'headset: asking the browser...')],
+      pending: r.then((s): Line[] => [out(`headset ${s}`)], (e: unknown): Line[] => [err(`headset: ${message(e)}`)]),
+    }
+  },
 
   render: knob('render', (b, arg) => `render ${b.render(arg)}`),
 

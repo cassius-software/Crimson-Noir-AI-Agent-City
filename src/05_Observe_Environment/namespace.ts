@@ -381,6 +381,7 @@ export function publishSnapshot(bus: TopicBus, s: SipocSnapshot, physics: Physic
   put('Hardware', 'Bus', 'pointerLocked', sup.pointerLocked)
   put('Hardware', 'Bus', 'touch', sup.touch)
   put('Hardware', 'Bus', 'recording', sup.recording.active)
+  put('Hardware', 'Bus', 'xr', sup.xr.state)
 
   if (o.net !== undefined) {
     put('Network', 'Session', 'state', o.net.state)

@@ -15,6 +15,27 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Headsets: the city on WebXR over WebGPU.** `07_Execute_Actions/xrSession.ts` asks the browser for an
+  `immersive-vr` or `immersive-ar` session with the `webgpu` feature through three's `renderer.xr` and its
+  `XRGPUBinding`, synchronously inside the console's new `xr [vr|ar|off]` or the touch menu's new **Headset** item (a
+  browser grants it only inside the gesture), hands the engine's frame to the headset's loop (the page's own frames
+  are let go while presenting), composes the headset's pose onto the head rig (`head.ts` `setHeadset`: the rig at
+  the feet, or the composed height under the driver's eye point in a car, turned the body's way; the pose read back
+  is the headset's, pitch unclamped) and gives everything back when the session ends. Every eye's projection is
+  rewritten as the page's own (the browser's frustum in WebGPU clip space with reversed depth between the camera's
+  near and far: three copies the browser's matrices raw under a headset and skips its reversed-depth fix-up), and
+  the eyes' union, four degrees wider on every side, is what the engine and three's own XR camera cull with (three's
+  union reads the eyes' depth rows as WebGL's). Under a headset the post chain and the ghost view are off, the canvas
+  is not resized, and the cinema pacer passes every frame through. `04_Connect_Hardware/xrInput.ts` maps
+  `xr-standard` controllers (the left stick walks in the head's frame and steers, its press latches a run, the left
+  squeeze is the handbrake; the right stick snap-turns the body 30° per flick, the right trigger accelerates, the
+  right squeeze brakes, A pings, B interacts), merged by Input under the pad's shield; a source with no gamepad (a
+  pinch, a hand) selects through the session's events (the interaction at hand, else a ping). `hal` lists the
+  session's sources as `xr` rows, the HUD and the namespace carry the state, and where a headset is possible the
+  page asks for its adapter as `xrCompatible` first (`gpuDevice.ts`). Proved in Node against fakes of three's XR
+  manager, a session and a browser's XR system (CI); **not run on any physical headset**: the depth convention of a
+  WebGPU session's projection matrices, the pinch timing of a gaze-and-pinch headset and the passthrough blend are
+  unverified.
 - **The DualSense's full output report, and the Windows app opening the controller itself.**
   `04_Connect_Hardware/dualsense.ts` now writes the trigger, motor, lightbar and player-LED fields of the 47-byte
   common block as the Linux `hid-playstation` driver and open-source tools lay them out, over USB (report 0x02) and

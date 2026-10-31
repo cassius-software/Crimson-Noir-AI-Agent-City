@@ -406,7 +406,7 @@ shoved, no pole stops you, and the people keep their line.
   envelope (0..1, up over 0.12 s while your body is inside a lamp, a car or a person, held 0.2 s, down over 0.55 s),
   the kind met, and how many passages since boot.
 
-## First person, WebXR-ready
+## First person
 
 The camera is only ever the avatar's head (`07_Execute_Actions/head.ts`, `HeadRig`; `player.ts` is the physics
 worker's character controller, not a camera). There is no orbit, chase or detached camera and no zoom.
@@ -422,11 +422,55 @@ worker's character controller, not a camera). There is no orbit, chase or detach
   lining) with clear glass, and the exterior sound is muffled in the cabin.
 - **VR comfort:** there is no head bob. Only vertical steps such as curbs are smoothed, never
   horizontal motion.
-- **WebXR seam:** `HeadRig.pose` (eye position, yaw, pitch) is the one place the camera is set. A
-  future WebXR session would drive or offset that pose from the headset. WebXR itself is not implemented
-  yet.
+- **Headsets:** `HeadRig.pose` (eye position, yaw, pitch) is the one place the camera is set, and a WebXR
+  headset takes it over (the next section): the rig stands where the body is, turned the body's way, the headset's
+  own pose is composed onto it, and the pose read back is the headset's (pitch unclamped) while the mouse and the
+  sticks keep the body.
 - **Split screen:** with `?players`, each viewport is its own player's head, posed from that player's own avatar
   in the physics realm, or the car they drive (below).
+
+## Headsets (WebXR)
+
+The city runs on a WebXR headset through the page's own WebGPU device (`07_Execute_Actions/xrSession.ts`, three's
+`renderer.xr` and its `XRGPUBinding`), where a browser binds WebXR to WebGPU: Chromium on a headset's Android and
+visionOS Safari are the candidates. **None of it has been run on a physical headset**: it is written against three
+0.186 and the WebXR specifications and proved against fakes in Node, and the depth convention a browser gives a
+WebGPU session's projection matrices, the pinch timing of a gaze-and-pinch headset and the passthrough blend have
+not been seen. Where the browser offers no immersive session the whole path is inert: the console's `xr` says so
+(`unsupported`), and the touch menu shows no Headset item.
+
+- **Entering and leaving.** `xr` in the console prints the status: what the browser offers (`off: vr available
+  (xr vr)`), or the session's mode and what it holds (`vr: 2 controllers`); `xr vr` or `xr ar` asks for the session
+  and `xr off` leaves it; on a touch screen the menu's **Headset** item does the same, VR where it is offered, else
+  AR. A browser grants a session only inside the tap or the key press, so both ask synchronously; the page asks for
+  the `webgpu` feature and, optionally, a floor-level reference space and hand tracking. Split screen and a headset
+  do not mix (`no headset while the screen is split`). A passthrough or see-through session shows `(passthrough)`.
+- **The picture.** While presenting, the headset's own loop drives the frame (the page's animation frames are let
+  go), every frame is shown (the cinema pacer's 24 a second is suspended), the post-processing chain and the ghost
+  view are off (they present one image; a headset wants two eyes), and the canvas is not resized. Each eye's
+  projection is rewritten as the page's own, the browser's frustum in WebGPU clip space with reversed depth between
+  the camera's near and far, since three copies the browser's matrices raw under a headset and skips its
+  reversed-depth fix-up; the union of the eyes, four degrees wider on every side, is what the engine and three's own
+  XR camera cull with.
+- **The head.** The rig stands at the feet (on foot) or the composed height under the driver's eye point (in a car),
+  turned the body's way; the headset's pose is composed onto it, so a seated or a standing player's eyes land where
+  the mouse's would. The pose read back is the headset's: yaw, pitch unclamped, roll on the camera. The stick's
+  forward is where the headset looks, not where the body stands.
+- **Controllers** (`04_Connect_Hardware/xrInput.ts`, the `xr-standard` mapping): the left thumbstick walks and
+  steers, its press latches a run, the left squeeze is the handbrake; the right thumbstick snap-turns the body by
+  30° per flick (re-armed when it comes back), the right trigger accelerates, the right squeeze brakes, A (button 4)
+  pings and B (button 5) enters or leaves a car. A controller of no hand takes both duties. Their edges join the
+  pad's, under the same shield (a card waiting for your OK keeps the buttons), and no stick turns the head: the
+  headset does.
+- **Gaze and pinch, hands.** A source with no usable gamepad (a transient pointer, an articulated hand) is read by
+  the session's select events: a pinch enters or leaves a car when one is at hand, otherwise it pings where the head
+  looks. A gaze-and-pinch headset's pointers exist only during the pinch and may report no hand.
+- **`hal` lists them** as rows of the `xr` transport while the session runs (`Tracked controller (left)`, `Gaze and
+  pinch`, `Tracked hand (right)`), each resolved by the device resolver's headset stage; they cannot be paired, the
+  session brings them. The HUD's hardware lines and the namespace's `Hardware/Cell/Bus/xr` topic carry the state
+  (`unsupported`, `off`, `entering`, `vr`, `ar`).
+- **The adapter.** Where a headset session is possible the page asks for its WebGPU adapter as `xrCompatible` first
+  (the binding wants one) and plainly if that is refused; elsewhere nothing changes.
 
 ## Split screen
 
@@ -736,7 +780,7 @@ while you type.
   drawn agents (near, far, total); fps, frame time, p95, CPU and GPU time; quality tier; kernel
   counters. `stats --once` prints a single frame.
 - The core commands, as `help` prints them: `help [command]`, `stats [--once]`, `laws`, `kernel`,
-  `topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]`, `quality [auto|lite|peak|-1|0-5]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `render [on|off]`,
+  `topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]`, `quality [auto|lite|peak|-1|0-5]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `xr [vr|ar|off]`, `render [on|off]`,
   `captions [on|off]`, `ping [go|look|gather|wait|clear]`,
   `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
   `recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]`, `memory [<agent>|forget <agent>|forget all]`,
@@ -1700,7 +1744,8 @@ a street looking west at 17:20 and the building rows cut the sun into shafts.
 
 ## Hardware (Universal HAL)
 
-`04_Connect_Hardware/hal.ts` is one bus for four transports. On start it silently re-opens every
+`04_Connect_Hardware/hal.ts` is one bus for four transports, and the rows of a headset session's input (see
+Headsets). On start it silently re-opens every
 device the browser granted before. Pairing a new device needs a user gesture, as browsers require:
 run `hal pair …` in the console.
 
@@ -1755,8 +1800,7 @@ run `hal pair …` in the console.
   `[dualsense-usb 100 (by id, bus unknown, 054c:0ce6)]`; the glyph family the profile reports is the same
   `gamepad.ts` reports for the id, so a HUD hint and a `hal` line never disagree. The ids come from the Linux
   kernel's tables and have not been checked on a physical pad here; which browsers print a bare product name has
-  not been checked either. The three headset profiles are reached once the headset path lands (nothing in the page
-  asks for a WebXR session yet).
+  not been checked either. The three headset profiles name a WebXR session's input sources (see Headsets).
 
 Every API degrades silently where it is missing. Safari and Firefox have no WebHID, Web Serial or
 Web Bluetooth.
