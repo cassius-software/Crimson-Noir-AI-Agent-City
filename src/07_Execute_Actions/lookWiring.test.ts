@@ -113,7 +113,11 @@ test('crowd.ts: the words override the hashed mask, figure, face and wardrobe in
   assert.match(posed, /const style = faceWord\.shiftRight\(uint\(LOOK_FIELD\.hairStyle\[1\]\)\)\.bitAnd\(uint\(7\)\)/)
   assert.match(posed, /return float\(\(w === 0 \? word : w === 1 \? figure : faceWord\)\.shiftRight\(uint\(shift\)\)\.bitAnd\(uint\(\(1 << width\) - 1\)\)\)/, 'each slot from the word look.ts names')
   assert.match(posed, /const height = select\(custom, stepOf\('height'\), hashedHeight\)\.mul\(STATURE_STEP\)\.add\(WARDROBE\.stature\.min\)\.div\(HEIGHT_BASE\)/)
-  assert.match(posed, /const stance = vec4\(height, mask, h\(8\), 0\)/)
+  assert.match(posed, /const stance = vec4\(height, mask, h\(8\), float\(quad\.w\)\)/, 'the fourth figure word is the rig slot word, in stance.w')
+  assert.match(posed, /const rigBase = select\(quad\.w\.greaterThan\(uint\(0\)\), quad\.w\.sub\(uint\(1\)\), uint\(0\)\)\.mul\(uint\(RIG_WEAR\.shapes \* 2\)\)/, 'slot + 1 to the slot\'s first pose')
+  assert.match(posed, /const rigA = rigAt\(rig\.x\), rigB = rigAt\(skin\.x\)/, 'each bone\'s shape')
+  // A worn body writes no motion of its own: its previous position is its position, not the twin's walk.
+  assert.match(posed, /positionPrevious\.assign\(select\(quad\.w\.greaterThan\(uint\(0\)\), placed, placed\.sub\(vec3\(motion\.x, 0, motion\.y\)\.mul\(this\.frameSeconds\)\)\)\)/, 'a rig wearer is sharp')
   assert.match(posed, /const morphA = vec4\(slider\('mass'\), slider\('muscle'\), slider\('shoulders'\), slider\('hips'\)\)/)
   assert.match(posed, /const morphB = vec4\(slider\('legs'\), slider\('posture'\), slider\('head'\), 0\)/)
   assert.match(posed, /faceA\.assign\(vec4\(faceStep\('brow'\), faceStep\('jaw'\), faceStep\('chin'\), faceStep\('cheek'\)\)\)/)

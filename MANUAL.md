@@ -171,6 +171,7 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 | `?players=1`…`4` | Local split screen: one viewport per player (default 1; see Split screen) |
 | `?cinema=0` | Turns the cinema camera off: every frame is drawn, no motion blur, ACES tone mapping (see The cinema camera) |
 | `?ragdoll=0` | Turns the balance machine off: no pedestrian is ever promoted to a physical body (default: on; see The balance machine under The ethical kernel) |
+| `?rigs=capsules` | Draws a fallen pedestrian's physical rig as grey capsules in place of their figure (default: their own body wears the rig) |
 | `?audio=0` | Start with the soundscape muted |
 | `?captions=0` | Start with the closed captions off (`captions on` turns them on; see Spatial audio) |
 | `?boot=tty` | Track B: the Ring-0 console alone, full screen, with no canvas, no engine, no WebGPU, no physics worker and no audio; `boot gui` reloads the city (see Ring-0 console) |
@@ -633,8 +634,10 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   reads what any pedestrian wears. A voice profile shapes only the browser's voice (pitch and rate); a provider
   voice is the provider's to sound like. The tie's cloth, the bag's leather, the skirt suit's hose and the iris keep
   their hashed colours (the words have no slot for them). The sliders reshape the walking body and its shadow; a
-  pedestrian the realm has promoted to a physical body (a trip, a shove, the balance machine) is still drawn as the
-  rig's capsules at the rig's one size for as long as the fall lasts, and the network ghosts keep the base body. The
+  pedestrian the realm has promoted to a physical body (a trip, a shove, the balance machine) wears the rig with
+  their own body, suit, face and hair, but the rig is the rig's one size (a 1.75 m adult), so a tall or short
+  person's joints sit a few centimetres off its shapes for as long as the fall lasts (`?rigs=capsules` shows the rig
+  bare), and the network ghosts keep the base body. The
   face is still: no expression, no blink, no lip movement when someone speaks, and the eyes look where the head
   looks. There is no facial hair, and the hair is a shape, not strands. Heads turn to you and to the way their owner
   goes, not to other pedestrians or cars; the feet stay planted from half a metre a second up and shuffle a little
@@ -716,7 +719,8 @@ anywhere in the product.
     vetted controls, AI drivers, then the fixed substeps (Sanctuary, avatar, wheels). The audit runs right after
     the last substep, in the same realm, and includes the crowd's own non-finite flag. The crowd then steps on
     that outcome. Only then does the state leave: the car poses (`simProtocol.ts` POSE, drawn by `fleetView.ts`),
-    the craft stream (`TRACK_POSE`, drawn by `craftView.ts`), the rig stream (`RIG_POSE`, drawn by `rigView.ts`) and the
+    the craft stream (`TRACK_POSE`, drawn by `craftView.ts`), the rig stream (`RIG_POSE`, worn by the crowd's own figures
+    through `crowd.ts rigPoses`, or drawn bare by `rigView.ts` on `?rigs=capsules`) and the
     pedestrians' newest render frame. The page writes that frame into its render buffers and culls it
     for its camera (`crowdCull.ts`); a frame whose flags halted the realm never leaves it, and neither does a rig
     stream.
@@ -770,10 +774,16 @@ anywhere in the product.
   clear) and a person to the Ring-0 audit (id 1000 + 13 × slot + shape, solid while not a sensor): the IMPACT and
   UNGUARDED rules protect a fallen person exactly as they protect the avatar, and the Bouncer measures each rig's
   pelvis exactly beside the avatars. The crowd keeps simulating a promoted person meanwhile (no override of the GPU
-  crowd exists), so the page hides their figure (`crowdCull.ts hide`: its position in the render copy only, sunk
+  crowd exists), so the page writes the rig's slot into that person's fourth figure word and the thirteen shape
+  poses into the crowd's uniform array (`crowd.ts rigPoses`, `crowdBody.ts bodyRig`, `humanoid.ts RIG_REST`): their
+  own body, suit, face and hair hang from the rig's shapes at the rig's one size (a 1.75 m adult), in the eye pass
+  and the shadow pass, and their row in the render copy is pinned to the rig's pelvis (`crowdCull.ts pin`) so the
+  cull, the contact pulse and the code dissolve find the body where it lies rather than where the crowd walks its
+  twin. `?rigs=capsules` instead hides the figure (`crowdCull.ts hide`: its position in the render copy only, sunk
   below the cull's floor) and draws the rig in its place (`rigView.ts`, instanced capsules in the colour the crowd
-  gives that person's top; ghost view draws them as person proxies from the same matrices); on the handback the
-  figure reappears where the crowd has it. The rig stream (`RIG_POSE`: per slot the pedestrian, the state and the
+  gives that person's top); ghost view draws the rig's shapes as person proxies from the same matrices either way.
+  On the handback the slot word is cleared and the figure walks on where the crowd has it. The rig stream
+  (`RIG_POSE`: per slot the pedestrian, the state and the
   thirteen poses, 8 slots) leaves the realm after the audit, like the poses, and is transferred and taken back like
   the craft. `?ragdoll=0` turns it off; a region never has it; the door takes only `true`. Measured in Node (real
   Rapier, the stand-in crowd, 4 cars, 256 pedestrians): a shove at 2.6 m/s promotes one person, who is handed back
