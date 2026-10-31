@@ -190,7 +190,7 @@ export type EngineConfig = EngineOptions & {
 const HAPTICS = { limiter: 0.2, pulse: 1, pulseMs: 180, hold: 0.6 } as const
 /**
  * The lightbar's words (brand/tokens.json): crimson at rest, amber while the limiter leans on the wheels (caution,
- * the swarm's second role), white for the thump of a hit.
+ * the swarm's second role), white for the thump (the First Law taking the car, or a full brake).
  */
 const LIGHTBAR = { rest: 0xe8203a, limited: 0xd89a2a, thump: 0xffffff } as const
 /** Longest simulated time one step request carries when the worker fell behind, s. */
@@ -2257,7 +2257,7 @@ export class Engine {
         return `audio: ${st.state} · ${st.voices} voices · ${st.hrtf ? 'HRTF' : 'stereo'} · volume ${Math.round(st.volume * 100)}%${split}`
       },
       // pair() must stay synchronous up to requestDevice/requestPort: the Enter keydown is the user gesture.
-      hal: Object.freeze({ summary: () => hal.summary(), devices: () => hal.devices(), pair: (k: 'hid' | 'serial' | 'bluetooth') => hal.pair(k) }),
+      hal: Object.freeze({ summary: () => hal.summary(), devices: () => hal.devices(), pair: (k: 'hid' | 'serial' | 'bluetooth') => hal.pair(k), get shellHid() { return hal.shellHid } }),
       adapter: () => this.adapter,
       ghost: (arg?: 'on' | 'off') => (arg === undefined ? (this.ghost.on ? 'on' : 'off') : this.setGhost(arg === 'on')),
       rain: (arg?: 'on' | 'off') => (arg === undefined ? (this.matrixOn ? 'on' : 'off') : this.setMatrix(arg === 'on')),

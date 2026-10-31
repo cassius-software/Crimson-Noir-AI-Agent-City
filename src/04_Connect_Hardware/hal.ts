@@ -48,6 +48,15 @@ export interface HalOptions {
   bleConnectMs?: number
 }
 
+/**
+ * The seating plan the player LEDs follow (seats.ts SeatTable satisfies it): how many seats are in play, and the
+ * seat the pad at an index holds (−1 none). Input hands the bus its table once; the bus reads it at every push.
+ */
+export interface SeatSource {
+  readonly players: number
+  seatOf(padIndex: number): number
+}
+
 interface Entry {
   dev: HalDevice
   key: unknown
@@ -136,8 +145,16 @@ export class HalBus {
   private serialNo = 0
   private lastTelemetry = -1e9
 
+  /** The seating plan the player LEDs follow (seatPads); null = one seat, every controller player 1. */
+  private seats: SeatSource | null = null
+  /** The pad frame readPads synced last (syncPads); a slot hidden in it mirrors a decoded controller. */
+  private padFrame = 0
+  /** The navigator was this bus's own (defaultNavigator): its shell HID, if any, is disposed with the bus. */
+  private readonly ownsNav: boolean
+
   constructor(opts: HalOptions = {}) {
-    this.nav = opts.navigator === undefined ? defaultNavigator() : opts.navigator
+    this.ownsNav = opts.navigator === undefined
+    this.nav = this.ownsNav ? defaultNavigator() : (opts.navigator ?? null)
     this.brand = opts.brand ?? { name: BRAND.short, version: BRAND.version }
     this.now = opts.now ?? (() => performance.now())
     this.hidInterval = opts.hidIntervalMs ?? 25
@@ -287,6 +304,7 @@ export class HalBus {
       try { pads = n.getGamepads() } catch { pads = null }
     }
     const frame = this.syncPads(pads)
+    this.padFrame = frame
     const now = this.now()
     for (let i = 0; i < this.entries.length; i++) {
       const ds = this.entries[i].ds
@@ -326,10 +344,33 @@ export class HalBus {
     s.dev.profile = describeResolution(resolveDevice(padClues(s.pad, layout)))
   }
 
+  /**
+   * The seating plan the player LEDs follow (seats.ts): a controller's LEDs show the seat its pad holds, plus one,
+   * so player 2's controller lights the second pattern whatever order the controllers were opened in, and keeps it
+   * when another controller unplugs. With one seat in play every controller merges into player 1 and is lit so; a
+   * pad the table has not seated (beyond the free seats) shows no light. Input hands its table over once.
+   */
+  seatPads(seats: SeatSource | null): void {
+    this.seats = seats
+    this.seatsChanged()
+  }
+
+  /** A seat changed hands (Input, after SeatTable.assign or setPlayers): the player LEDs follow at once. */
+  seatsChanged(): void {
+    if (!this.hidden && !this.disposed) this.push()
+  }
+
+  /** True inside the Windows app, where the shell lists the controllers itself and `pair` shows no chooser (nativeHid.ts). */
+  get shellHid(): boolean {
+    return (this.nav?.hid as { shell?: boolean } | undefined)?.shell === true
+  }
+
   async dispose(): Promise<void> {
     if (this.disposed) return
     this.disposed = true
     for (const u of this.unlisten) guard(u)
+    // A shell HID this bus made for itself (defaultNavigator) stops its poll and its input listener with the bus.
+    if (this.ownsNav) guard(() => (this.nav?.hid as { dispose?: () => void } | undefined)?.dispose?.())
     this.unlisten.length = 0
     for (const s of this.slots) this.stopPadRumble(s)
     const jobs: Promise<unknown>[] = []
@@ -406,25 +447,59 @@ export class HalBus {
     } else this.push()
   }
 
-  /** The same outputs to every controller; each DualSense also gets its seat (its order among them) for the player LEDs. */
+  /** The same outputs to every controller; each DualSense also gets the player number its LEDs show (playerOf). */
   private push(): void {
-    let player = 0
+    const now = this.now()
     for (let i = 0; i < this.entries.length; i++) {
       const e = this.entries[i]
-      if (e.ds && e.dev.state !== 'disconnected') e.ds.set(this.want, ++player)
+      if (e.ds && e.dev.state !== 'disconnected') e.ds.set(this.want, this.playerOf(e, now))
     }
-    this.pumpPadRumble(this.now())
+    this.pumpPadRumble(now)
   }
 
-  /** A controller's seat for its player LEDs: its place among the DualSense controllers the bus holds, from 1. */
-  private seatOf(entry: Entry): number {
-    let player = 0
+  /**
+   * The player number a DualSense's LEDs show: the seat of the pad its input reaches the table as, plus one (1..4),
+   * 0 for a pad the table has not seated. One seat in play, or no plan: player 1 for every controller.
+   */
+  private playerOf(entry: Entry, now: number): number {
+    const seats = this.seats
+    if (!seats || seats.players <= 1) return 1
+    const index = this.padIndexOf(entry, now)
+    if (index < 0) return 0
+    const seat = seats.seatOf(index)
+    return seat < 0 ? 0 : seat + 1
+  }
+
+  /**
+   * The pad index a controller's input reaches the table as: the driver's own pad (16+) while its decoded Bluetooth
+   * input is live; otherwise the browser's pad of the same model, the k-th such pad (by index) for the k-th such
+   * controller, since no id a browser gives tells two identical USB controllers apart (they pair by order; a mirror
+   * hidden this frame is a decoded controller's and is skipped). −1 when no pad of the model is listed.
+   */
+  private padIndexOf(entry: Entry, now: number): number {
+    const ds = entry.ds
+    if (!ds) return -1
+    if (ds.inputLive(now)) return ds.pad.index
+    const vendor = ds.device.vendorId, product = ds.device.productId
+    let k = 0
     for (let i = 0; i < this.entries.length; i++) {
       const e = this.entries[i]
-      if (e.ds && e.dev.state !== 'disconnected') player++
       if (e === entry) break
+      const o = e.ds
+      if (o && e.dev.state !== 'disconnected' && !o.inputLive(now) && o.device.vendorId === vendor && o.device.productId === product) k++
     }
-    return player
+    let after = -1
+    for (;;) {
+      let best = -1
+      for (let i = 0; i < this.slots.length; i++) {
+        const s = this.slots[i]
+        if (s.hidden === this.padFrame || s.vendor !== vendor || s.product !== product || s.index <= after) continue
+        if (best < 0 || s.index < best) best = s.index
+      }
+      if (best < 0 || k === 0) return best
+      after = best
+      k--
+    }
   }
 
   private find(key: unknown): Entry | undefined {
@@ -487,7 +562,7 @@ export class HalBus {
     })
     entry.ds = ds
     // The open report carries the outputs and the seat already wanted (set() before open() is kept for it).
-    if (!this.hidden) ds.set(this.want, this.seatOf(entry))
+    if (!this.hidden) ds.set(this.want, this.playerOf(entry, this.now()))
     try {
       await ds.open()
       if (this.disposed || entry.ds !== ds) { await ds.close(); return copy(entry.dev) }

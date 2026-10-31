@@ -174,6 +174,8 @@ export interface NativeHidOptions {
  * so the HAL's identity map (WeakMap by device) and the driver's owner map hold across calls.
  */
 export class NativeHid implements Hid {
+  /** Marks the shell's HID for the HAL (HalBus.shellHid): no chooser, the shell's list is the grant. */
+  readonly shell = true
   private readonly devices = new Map<string, NativeHidDevice>()
   private readonly onConnect = new Set<(e: HidConnectionEvent) => void>()
   private readonly onDisconnect = new Set<(e: HidConnectionEvent) => void>()

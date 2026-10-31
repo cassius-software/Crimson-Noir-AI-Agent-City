@@ -457,8 +457,10 @@ export interface DsFirmware { hardware: number; firmware: number; update: number
  * a leading 0x20 means the ID is present.
  */
 export function parseFirmwareInfo(view: DataView): DsFirmware | null {
-  const shift = view.byteLength >= 64 && view.getUint8(0) === DS.firmwareInfoId ? 0 : -1
-  if (view.byteLength + shift < 46) return null
+  // With the report ID in front (hidapi's form, at whatever length the shell read) the fields sit one byte later than
+  // in WebHID's, which strips it; byte 0 of the stripped form is the build month's first letter, never 0x20.
+  const shift = view.byteLength > 0 && view.getUint8(0) === DS.firmwareInfoId ? 0 : -1
+  if (view.byteLength < 46 + shift) return null
   return {
     hardware: view.getUint32(24 + shift, true),
     firmware: view.getUint32(28 + shift, true),
@@ -675,7 +677,8 @@ export class DualSense {
 
   describe(): string {
     const fw = this.firmware ? ` · fw ${formatUpdateVersion(this.firmware.update)}` : ''
-    return `both triggers + rumble${this.vibrationV2 ? ' (v2)' : ''} + lightbar${this.edge ? ' + paddles' : ''}${fw}`
+    // Paddles ride the decoded input report, which the driver reads over Bluetooth only (the browser's pad over USB).
+    return `both triggers + rumble${this.vibrationV2 ? ' (v2)' : ''} + lightbar${this.edge && this.bus === 'bluetooth' ? ' + paddles' : ''}${fw}`
   }
 
   /** Decoded Bluetooth input is arriving with valid CRCs, so the browser's own pad for it is redundant. */
@@ -792,13 +795,20 @@ export class DualSense {
       this.seq = (this.seq + 1) & 0x0f
     } else buildUsbSetup(this.buf)
     this.lastWrite = this.now()
+    // In flight like any report: a set() meanwhile waits for it (one buffer, never written under a send) and goes
+    // out in the first state report, which open() sends right after.
+    let sending: Promise<void>
+    try { sending = this.device.sendReport(this.reportId, this.buf) } catch (e) { sending = Promise.reject(e) }
+    this.inFlight = sending
     try {
-      await this.device.sendReport(this.reportId, this.buf)
+      await sending
       this.writes++
     } catch (e) {
       this.failures++
       this.onStatus(errorText(e))
       throw e
+    } finally {
+      if (this.inFlight === sending) this.inFlight = null
     }
   }
 

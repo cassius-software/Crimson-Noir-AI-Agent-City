@@ -315,8 +315,8 @@ test('output(): the throttle trigger, the lightbar and each controller\'s seat r
   hid.granted = [first, second]
   const bus = new HalBus({ navigator: nav({ hid }), hidIntervalMs: 0 })
   await bus.autoconnect()
-  assert.equal(first.common(-1)[43], 0x04, 'seat 1 on the first controller')
-  assert.equal(second.common(-1)[43], 0x0a, 'seat 2 on the second')
+  assert.equal(first.common(-1)[43], 0x04, 'player 1 on the first controller')
+  assert.equal(second.common(-1)[43], 0x04, 'no seating plan (one seat in play): the second controller is player 1 too')
   assert.equal(first.common(-1)[1], 0x10, 'player LEDs only: no colour was asked for')
   bus.output({ throttleResistance: 0.5, lightbar: 0xe8203a })
   await sleep(2)
@@ -690,4 +690,67 @@ test('re-opening a controller whose writes failed retires the old driver first',
   await bus.dispose()
   assert.equal(ds.listeners.size, 0)
   assert.equal(ds.trigger(-1), 0x05)
+})
+
+test('player LEDs follow the seating plan: the seat, kept through another controller\'s unplug; none for an unseated pad', async () => {
+  const now = 0
+  const hid = new MockHidApi()
+  const a = new MockHid(0x0ce6, BT), b = new MockHid(0x0ce6, BT)
+  hid.granted = [a, b]
+  const bus = new HalBus({ navigator: nav({ hid }), now: () => now, hidIntervalMs: 0 })
+  await bus.autoconnect()
+  // Both decode their own input: their pads are 17 and 18 (16 + the bus's serial).
+  a.emit(0x31, fullReport()); b.emit(0x31, fullReport())
+  assert.deepEqual(bus.readPads().map((p) => p.index), [17, 18])
+  const seat = new Map<number, number>([[17, 1], [18, 0]]) // the table seats the first pad as player 2, the second as player 1
+  const plan = { players: 3, seatOf: (i: number) => seat.get(i) ?? -1 }
+  bus.seatPads(plan)
+  await sleep(2)
+  assert.equal(a.common(-1)[43], 0x0a, 'the first controller lights player 2: its seat, not its order')
+  assert.equal(b.common(-1)[43], 0x04)
+  const sentB = b.sent.length
+  hid.events.dispatch('disconnect', { device: a })
+  await sleep(2)
+  seat.delete(17) // the table frees the seat of the pad that left; the other keeps its own
+  bus.seatsChanged()
+  bus.output({ rumble: 0.5 })
+  await sleep(2)
+  assert.equal(b.common(-1)[43], 0x04, 'the survivor keeps its number')
+  assert.equal(b.sent.length, sentB + 1, 'one report for the rumble, none for a renumbering')
+  const c = new MockHid(0x0ce6, BT)
+  hid.events.dispatch('connect', { device: c })
+  await until(() => c.sent.length >= 2)
+  assert.equal(c.common(-1)[43], 0x00, 'a controller whose pad the table has not seated lights nothing')
+  c.emit(0x31, fullReport())
+  seat.set(19, 2)
+  bus.seatsChanged()
+  await sleep(2)
+  assert.equal(c.common(-1)[43], 0x15, 'seated as player 3')
+  assert.equal(b.common(-1)[43], 0x04)
+  bus.seatPads(null)
+  await sleep(2)
+  assert.equal(c.common(-1)[43], 0x04, 'one seat in play: every controller is player 1')
+  await bus.dispose()
+})
+
+test('player LEDs over USB: a controller\'s seat is its browser pad\'s, two of a model pairing in order', async () => {
+  const hid = new MockHidApi()
+  const a = new MockHid(), b = new MockHid()
+  hid.granted = [a, b]
+  const padA = pad(0, 'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)')
+  const padB = pad(1, 'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)')
+  const bus = new HalBus({ navigator: nav({ hid, pads: [padA, padB] }), hidIntervalMs: 0 })
+  await bus.autoconnect()
+  bus.readPads()
+  const seat = new Map<number, number>([[0, 1], [1, 0]])
+  bus.seatPads({ players: 2, seatOf: (i) => seat.get(i) ?? -1 })
+  await sleep(2)
+  assert.equal(a.common(-1)[43], 0x0a, 'the first controller is pad 0, seated as player 2')
+  assert.equal(b.common(-1)[43], 0x04, 'the second is pad 1, player 1')
+  seat.delete(1)
+  bus.seatsChanged()
+  await sleep(2)
+  assert.equal(b.common(-1)[43], 0x00, 'a pad beyond the free seats lights nothing')
+  assert.equal(a.common(-1)[43], 0x0a)
+  await bus.dispose()
 })

@@ -414,3 +414,27 @@ test('wiring: the HAL defaults through nativeNavigator, the shell registers the 
   const lock = readFileSync(new URL('../../src-tauri/Cargo.lock', import.meta.url), 'utf8')
   assert.match(lock, /name = "hidapi"/, 'the lockfile carries it (the app builds --locked)')
 })
+
+test('a bus that found the shell by itself owns its HID: shellHid is true, and dispose stops the input listener', async () => {
+  const shell = new FakeShell()
+  shell.list = [USB_INFO]
+  const g = globalThis as Record<string, unknown>
+  const had = Object.hasOwn(g, SHELL_GLOBAL), before = g[SHELL_GLOBAL]
+  g[SHELL_GLOBAL] = shell.global()[SHELL_GLOBAL]
+  try {
+    const bus = new HalBus({ hidIntervalMs: 0 })
+    assert.equal(bus.shellHid, true)
+    await bus.autoconnect()
+    assert.equal(shell.open.has(USB_INFO.path), true)
+    assert.equal(shell.listeners.get(INPUT_EVENT)?.size, 1, 'the input listener was taken out at open')
+    await bus.dispose()
+    await sleep(2)
+    assert.equal(shell.listeners.get(INPUT_EVENT)?.size ?? 0, 0, 'disposed with the bus')
+  } finally {
+    if (had) g[SHELL_GLOBAL] = before
+    else delete g[SHELL_GLOBAL]
+  }
+  const browser = new HalBus({ navigator: { getGamepads: () => [] } })
+  assert.equal(browser.shellHid, false)
+  await browser.dispose()
+})

@@ -279,7 +279,7 @@ export interface TerminalBridge {
   /** Returns a one-line status, e.g. "on · 70 % · HRTF · 12 voices". */
   audio(arg?: 'on' | 'off' | number): string
   /** pair() prompts: the terminal calls it synchronously inside the Enter keydown (user activation). */
-  hal: { summary(): string; devices(): HalDevice[]; pair(kind: 'hid' | 'serial' | 'bluetooth'): Promise<HalDevice | null> }
+  hal: { summary(): string; devices(): HalDevice[]; pair(kind: 'hid' | 'serial' | 'bluetooth'): Promise<HalDevice | null>; readonly shellHid?: boolean }
   /** GPU adapter description. */
   adapter(): string
   /** Ghost view (view-only: the physics shapes drawn as code over the frame): on, off, or the status line. */

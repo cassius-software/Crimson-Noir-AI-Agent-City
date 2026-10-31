@@ -1707,16 +1707,24 @@ run `hal pair …` in the console.
 - **WebHID, DualSense and DualSense Edge.**
   - Brake pressure, including a First-Law stop, becomes the left trigger's resistance (the Feedback effect, from
     the top of the pull).
-  - The throttle trigger stiffens while the kernel holds your car and snaps (a 30 Hz Vibration effect) at a bump;
-    the motors rumble at the same moments, in the 2.21-firmware vibration mode where the controller has it.
-  - The lightbar is crimson on the road, amber while the kernel holds the car and white for the instant of a bump;
-    the player LEDs show the controller's seat (player 1 is the middle light), faded in as the console does it.
-  - The DualSense Edge's back paddles reach the game: the left one latches a run, the right one pings.
+  - The throttle trigger stiffens while the kernel holds your car and snaps (a 30 Hz Vibration effect) at a thump,
+    the instant the First Law takes the car or you stand on the brake; the motors rumble at the same moments, in the
+    2.21-firmware vibration mode where the controller has it.
+  - The lightbar is crimson on the road, amber while the kernel holds the car and white for the thump's instant; the
+    player LEDs show the seat the controller drives (see Split screen; player 1 is the middle light), faded in as the
+    console does it. A seat is kept when another controller unplugs; with one seat in play every controller is
+    player 1; a controller whose pad the table has not seated shows no light. Over Bluetooth the seat is the
+    controller's own decoded pad's; over USB it is the browser's pad of the same model, and two identical USB
+    controllers, which no browser id tells apart, pair with their pads in order.
+  - Over Bluetooth, where the driver decodes the input report itself, the DualSense Edge's back paddles reach the
+    game: the left one latches a run, the right one pings. Over USB the browser's own pad carries the Edge, and it
+    has no paddles.
   - Supported over USB (report 0x02, 47 bytes) and Bluetooth (report 0x31, 77 bytes with a sequence, a tag and
-    CRC-32). The driver writes every field the Linux `hid-playstation` driver and open-source tools agree on, and
-    the seven named trigger effects (Off, Feedback, Detent, Vibration, Bow, Galloping, Machine) are pure writers any
-    future control can use; HD haptics ride the controller's USB audio, not HID, and are not driven. Every byte is
-    cross-checked in Node against those sources, **not yet verified on a physical controller**.
+    CRC-32). The driver writes the trigger, motor, lightbar and player-LED fields of the common block as the Linux
+    `hid-playstation` driver and open-source tools lay them out (the mute LED, LED brightness and power-save fields
+    stay zero), and the seven named trigger effects (Off, Feedback, Detent, Vibration, Bow, Galloping, Machine) are
+    pure writers any future control can use; HD haptics ride the controller's USB audio, not HID, and are not
+    driven. Every byte is cross-checked in Node against those sources, **not yet verified on a physical controller**.
   - At open the host takes the lightbar from the pairing animation; trigger effects and motors are reset on exit,
     and stilled while the page is hidden.
   - In the Windows app the shell opens the controller itself (see The Windows app); the page's code is one and the
@@ -2412,9 +2420,11 @@ when a `v*` tag is pushed, puts both on the tag's release beside the OS media.
   DualSense Edge over USB or Bluetooth, and nothing else on the machine; the page (`04_Connect_Hardware/nativeHid.ts`)
   sees those five commands in WebHID's own shapes, so the driver, the HAL bus and `hal` run exactly as in a browser,
   with no pairing gesture: a controller plugged in is found at start and every two seconds after, and an unplug is
-  a row. Elsewhere than Windows the commands exist and answer with an empty list. **Not yet tried on a physical
-  Windows machine with a controller**: the Rust is type-checked for the Windows target, the page side is proved
-  against a fake shell with the real driver end to end.
+  a row; a controller whose reader ends (unplugged, powered off) leaves the shell's table, so plugging it back in
+  opens it afresh. In the app `hal pair hid` shows no picker: it lists what the shell found. Elsewhere than Windows
+  `hid_list` answers an empty list and the other four an error, so the page's code is one and the same. **Not yet
+  tried on a physical Windows machine with a controller**: the Rust is type-checked for the Windows target (the
+  Windows app workflow builds it), the page side is proved against a fake shell with the real driver end to end.
 - **The air gap holds.** The page's policy and its loopback gate are unchanged in the app: Tauri's own IPC fetch is
   refused by the gate like any other host and Tauri falls back to its message channel, which is how the title bar's
   and the controller's commands travel. Nothing in the app reaches a host but this machine.

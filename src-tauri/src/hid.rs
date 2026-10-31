@@ -61,10 +61,11 @@ mod native {
         stop: Arc<AtomicBool>,
     }
 
-    /// The open controllers by path, kept in Tauri's managed state.
+    /// The open controllers by path, kept in Tauri's managed state. Each reader thread holds the table too, to take
+    /// its own entry out when the controller goes away, so a re-plug opens afresh instead of finding a dead handle.
     #[derive(Default)]
     pub struct HidState {
-        open: Mutex<HashMap<String, Arc<Open>>>,
+        open: Arc<Mutex<HashMap<String, Arc<Open>>>>,
     }
 
     fn api() -> Result<HidApi, String> {
@@ -130,16 +131,33 @@ mod native {
         let writer = api.open_path(d.path()).map_err(|e| e.to_string())?;
         let reader = api.open_path(d.path()).map_err(|e| e.to_string())?;
         let stop = Arc::new(AtomicBool::new(false));
-        open.insert(path.clone(), Arc::new(Open { writer: Mutex::new(writer), stop: stop.clone() }));
-        std::thread::Builder::new()
-            .name("hid-reader".into())
-            .spawn(move || pump(app, path, reader, stop))
-            .map_err(|e| e.to_string())?;
+        let entry = Arc::new(Open { writer: Mutex::new(writer), stop: stop.clone() });
+        open.insert(path.clone(), entry.clone());
+        drop(open);
+        let table = state.open.clone();
+        let key = path.clone();
+        let spawned = std::thread::Builder::new().name("hid-reader".into()).spawn(move || {
+            pump(app, path.clone(), reader, stop);
+            // The controller went away (or close() asked): the entry leaves the table if it is still this one, so the
+            // stale handles are dropped and the next hid_open for the path opens the controller afresh.
+            if let Ok(mut open) = table.lock() {
+                if open.get(&path).is_some_and(|o| Arc::ptr_eq(o, &entry)) {
+                    open.remove(&path);
+                }
+            }
+        });
+        if let Err(e) = spawned {
+            if let Ok(mut open) = state.open.lock() {
+                open.remove(&key);
+            }
+            return Err(e.to_string());
+        }
         Ok(found)
     }
 
     /// Reads input reports and sends the newest to the page at most every INPUT_EVERY_MS, until told to stop or the
-    /// controller goes away (a read error ends the thread; the page learns of it when its next write fails).
+    /// controller goes away (a read error ends the thread, and the thread then forgets the controller: the page sees
+    /// it leave `hid_list`, and plugging it back in opens it anew).
     fn pump(app: AppHandle, path: String, dev: HidDevice, stop: Arc<AtomicBool>) {
         let every = Duration::from_millis(INPUT_EVERY_MS);
         let mut buf = [0u8; 256];

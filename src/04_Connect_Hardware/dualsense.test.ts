@@ -342,6 +342,8 @@ test('firmware info parses with or without the report ID byte; vibration v2 rule
     assert.deepEqual(parseFirmwareInfo(firmwareReport(withId, 0x0215)), { hardware: 0x00ab1234, firmware: 0x01020304, update: 0x0215 })
   }
   assert.equal(parseFirmwareInfo(new DataView(new ArrayBuffer(20))), null)
+  assert.deepEqual(parseFirmwareInfo(new DataView(firmwareReport(true, 0x0215).buffer.slice(0, 48))), { hardware: 0x00ab1234, firmware: 0x01020304, update: 0x0215 }, 'a shorter answer with the ID in front (the shell returns what hidapi read)')
+  assert.equal(parseFirmwareInfo(new DataView(firmwareReport(true, 0x0215).buffer.slice(0, 45))), null, 'too short to hold the update version')
   assert.equal(wantsVibrationV2(0x0df2, undefined), true)
   assert.equal(wantsVibrationV2(0x0ce6, 0x0214), false)
   assert.equal(wantsVibrationV2(0x0ce6, 0x0215), true)
@@ -541,8 +543,31 @@ test('driver: unreadable firmware still works in classic rumble mode; the Edge a
   assert.equal(edge.vibrationV2, true)
   assert.equal(edge.edge, true)
   assert.equal(edge.pad.edge, true)
-  assert.equal(edge.describe(), 'both triggers + rumble (v2) + lightbar + paddles')
+  assert.equal(edge.describe(), 'both triggers + rumble (v2) + lightbar', 'over USB the browser\'s pad carries the Edge: no paddles are promised')
   await edge.close()
+  const btEdge = new DualSense(new MockHid(BT_COLLECTIONS, 0x0df2, null), { minIntervalMs: 0 })
+  await btEdge.open()
+  assert.equal(btEdge.describe(), 'both triggers + rumble (v2) + lightbar + paddles', 'the paddles ride the decoded Bluetooth input report')
+  await btEdge.close()
+})
+
+test('a set() during the setup report waits for it: nothing is sent under the first report, the state goes out right after', async () => {
+  const dev = new MockHid(USB_COLLECTIONS)
+  let release!: () => void
+  dev.gate = new Promise<void>((r) => { release = r })
+  const ds = new DualSense(dev, { minIntervalMs: 0 })
+  const opening = ds.open()
+  await until(() => dev.sent.length === 1)
+  assert.equal(dev.sent[0].data[38] & 0x02, 0x02, 'the setup report (lightbar setup flag) is in flight')
+  ds.set({ ...QUIET, rumble: 1 })
+  await sleep(2)
+  assert.equal(dev.sent.length, 1, 'nothing is written under the setup report (one buffer)')
+  dev.gate = null
+  release()
+  await opening
+  assert.equal(dev.sent.length, 2)
+  assert.equal(dev.sent[1].data[3], 0xff, 'the first state report carries the rumble asked for meanwhile')
+  await ds.close()
 })
 
 function btInput(fields: Parameters<typeof inputData>[1], corrupt = false): DataView {
