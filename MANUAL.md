@@ -727,7 +727,8 @@ while you type.
   `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
   `recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]`, `memory [<agent>|forget <agent>|forget all]`,
   `clear`, `history`, `echo [text]`, `uname [-asnrvmi]`, `whoami`, `version`, `boot [gui|tty|status]`,
-  `map [city|lakefront|default|status]`, `r0 <words...>|r0 reset|r0 words`, `agent [...]`, `sloane [...]`,
+  `map [city|lakefront|default|status]`, `r0 <words...>|r0 reset|r0 words`,
+  `noir <source>|noir reset|noir words|noir asm <source>`, `agent [...]`, `sloane [...]`,
   `goal <words...>`, `exit`.
 - `topic` reads the unified namespace: every reading of the city, published each HUD tick into an in-page topic
   bus (`05_Observe_Environment/namespace.ts`) in the ISA-95 shape
@@ -839,6 +840,39 @@ cinema camera, the HUD. Track B is this console on its own.
   - Definitions and memory last for the console session; `r0 reset` forgets every definition and zeroes the
     memory, and `r0 words` lists the words. A line of 100,000 steps or more prints its step count. A definition
     cannot span lines; there is no `do … loop`, no floating point and no string beyond `." text"`.
+- **`noir`** is NoirScript, the console's second language (`terminal/noirscript/`): statically typed, compiled to
+  bytecode and run on a bounded VM over one memory arena. Types `i32`, `u32`, `f32` (true IEEE binary32: every
+  operation rounds through `Math.fround`), `bool`, fixed arrays `[f32; 64]`, and the lane types `f32x4`, `i32x4`,
+  `u32x4`, `u32x8` with lane-wise arithmetic, comparisons to masks (`vlt`, `vge`, …), `select(mask, a, b)` and
+  `mask(bool)` for branchless code, horizontals (`hsum`, `hmin`, `hmax`, `any`, `all`), and the bit intrinsics
+  `popcount`, `clz`, `ctz`, `rotl`, `rotr`, `morton2`. Statements: `let`/`let mut`, assignment with compound
+  operators, `fn` with parameters, a return type and recursion, `if`/`else` (also as an expression), `while`,
+  `loop`, `for i in a..b`, `break`/`continue`; `print(a, b, …)` prints its values on one line. The city's columns are
+  built-in tables: `crowd.n`, `crowd.x`, `crowd.z`, `cars.n`, `cars.x`, `cars.z`, `cars.heading`, `cars.speed`,
+  `cars.mode` (0 ai, 1 player, 2 parked), `kernel.law1`/`law2`/`law3`/`flips`/`shielded`, `frame.fps`/`ms`/`p95`;
+  `query cars where speed > 5.0` counts the rows where the expression holds, and `load_f32x4(crowd.x, i)` reads four
+  lanes of a column (past the end reads 0) so a loop can stride over any length. Examples: `noir let mut s = 0; for
+  i in 0..10 { s += i * i; } print(s);` prints 285; `noir fn fib(n: i32) -> i32 { if n < 2 { n } else { fib(n - 1)
+  + fib(n - 2) } } print(fib(20));` prints 6765; `noir let v = f32x4(1.0, 2.0, 3.0, 4.0); print(v *
+  splat_f32x4(2.0), hsum(v));` prints `f32x4(2, 4, 6, 8) 10`. `noir asm <source>` prints the bytecode listing
+  instead of running it.
+  - **What it reads, and what it cannot touch.** The tables are copies: the engine builds fresh arrays from the
+    realm's newest reading when a line runs (the bridge's one `soa.tables` reader), and the VM copies them again
+    into its own arena, so a run is one consistent moment and nothing of the realm is ever handed out by reference.
+    The directory imports nothing (its own test pins that), there is no JIT and no dynamic code, no clock and no
+    randomness. The write intrinsics `tune`, `intent`, `cull` and `steer` exist in the language, type-check and
+    compile, and reach the city only through the Ring-0 elite tier (below): until `ring0 unlock --elite` they fail
+    at run time with `elite tier locked: 'ring0 unlock --elite <passphrase>' opens it`; open, they run through the
+    operator facade's four vetted paths and the line has the tier's raised limits (50,000,000 steps, 65,536
+    characters, 16 MiB of cells, 4,096 frames). In the console alone (`?boot=tty`) every table is empty. The language's full rules, and the decisions its tests pin (a column binding names the column and reads each run's snapshot; a big array copy is charged to the step budget; a line adds memory only within its own limits), are in `docs/noirscript.md`.
+  - **Bounded.** A line may run 1,000,000 steps (a vector operation is one; a `query` row costs its condition plus
+    three; copying an array costs one more per 16 cells, so the budget bounds the work and not only the count), print 16,384
+    characters, hold 1 MiB of 32-bit cells and nest 1,024 calls; past a bound it ends with a named error (`step
+    budget exhausted (1000000)`, `output limit exhausted (16384)`, `memory exhausted`, `stack overflow (depth
+    1024)`) and the session stays usable. A line that fails to compile installs nothing; a line that fails at run
+    time keeps the functions and globals it declared. Definitions last for the console session; `noir reset`
+    forgets them and zeroes memory; `noir words` lists the keywords, types, tables, intrinsics and your own names. A
+    line of 100,000 steps or more prints its step count.
 - **Not a headless engine.** Track B is "no engine" plus `render off`; a page-side simulation without a renderer
   is not attempted.
 

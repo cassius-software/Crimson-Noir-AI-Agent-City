@@ -28,15 +28,19 @@
  * readings of the city as one vector, read while locked; `steer`, `clamp`, `release` and `reset` are the operator's.
  * `ring0` is the elite tier above the operator tier: a passphrase (set once, kept by the host as a salted hash) opens
  * NoirScript's writes for the session; its status and lock work while locked, unlock and set need the operator tier.
+ * `noir` is the console's second language (noirscript/): statically typed, compiled to bytecode and run on a bounded
+ * VM; it reads the city's columns as copies through the bridge's `soa` surface, and its write intrinsics reach the
+ * city only through the elite tier's surface (`ring0`), failing while that tier is locked.
  * What breaks if it is removed? The terminal cannot interpret a single line.
  */
 import type {
-  ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, ExecResult, GateTether, GoalPlan, HalDevice, HarnessReport, LookBridge, LookChange, MemoryBridge, MindStatus, ModelBridge,
+  ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, EliteWrites, ExecResult, GateTether, GoalPlan, HalDevice, HarnessReport, LookBridge, LookChange, MemoryBridge, MindStatus, ModelBridge,
   NetBridge, NetReport, OperatorBridge, PendingAct, Piece, PingKind, PingPick, RecordBridge, RecruitBridge, Ring0Stats, RunResult, SayResult, TerminalBridge, TopicBridge, VoiceStatus,
 } from './bridge.ts'
 import type { QualityState, RecordingState } from '../../05_Observe_Environment/telemetry.ts'
 import type { SwarmReport, SwarmStatus } from '../../08_Swarm/orchestrator.ts'
 import { Machine } from './repl.ts'
+import { ELITE_LIMITS, EMPTY_TABLES, NoirSession, type NoirHost, type NoirTables } from './noirscript/index.ts'
 
 /** The roster's pronoun choices, as its usage line names them (08_Swarm/roster.ts PRONOUNS; roster.test.ts pins the two). */
 export const PRONOUN_WORDS = 'they/them|she/her|he/him|any'
@@ -76,6 +80,9 @@ const MAX_TIER = 5
 const SLOW_MS = 500
 /** An R0 line that took this many steps or more gets its count printed after its output. */
 const R0_NOTE_STEPS = 100_000
+const NOIR_NOTE_STEPS = 100_000
+/** What a NoirScript write intrinsic fails with while the elite tier is locked (operator.ts's requireElite says the same). */
+const NOIR_LOCKED = "elite tier locked: 'ring0 unlock --elite <passphrase>' opens it"
 /** A number as typed for a point: -12, 3.5. */
 const NUMBER = /^-?\d+(?:\.\d+)?$/
 
@@ -111,6 +118,7 @@ const CORE = [
   { name: 'boot', usage: 'boot [gui|tty|status]', summary: 'which shell is up; boot gui reloads as the city, boot tty as this console alone (?boot=tty, no 3D engine)' },
   { name: 'map', usage: 'map [city|lakefront|default|status]', summary: 'which map is walked; map city reloads into the procedural city (people and traffic), map lakefront into the metropolis; the choice is kept until map default' },
   { name: 'r0', usage: 'r0 <words...>|r0 reset|r0 words', summary: "the console's own stack machine (Turing-complete, sandboxed: it reaches nothing of the city)" },
+  { name: 'noir', usage: 'noir <source>|noir reset|noir words|noir asm <source>', summary: "NoirScript, the console's typed, compiled language (a bounded bytecode VM with lane types; reads the city's columns as copies; its writes need the elite tier)" },
   { name: 'exit', usage: 'exit', summary: 'close the console (also ` or Esc)' },
 ] as const
 
@@ -148,11 +156,14 @@ export const FEATURE_IDS: readonly string[] = Object.freeze([
   'OPERATOR_OBEDIENCE', 'SELF_PRESERVATION', 'FRAME_HEALTH', 'SHIELDING', 'RAIN_MODE', 'WORKDAY',
 ])
 
-const RAW: ReadonlySet<string> = new Set(['run', 'ask', 'say', 'r0', 'ring0', 'goal', 'agent', 'sloane', 'swarm'])
+const RAW: ReadonlySet<string> = new Set(['run', 'ask', 'say', 'r0', 'ring0', 'noir', 'goal', 'agent', 'sloane', 'swarm'])
 
-/** A persistent R0 machine (repl.ts): the terminal keeps one for the life of the console, so definitions outlive a line. */
-export interface ReplSession { machine: Machine }
-export const replSession = (): ReplSession => ({ machine: new Machine() })
+/**
+ * The console's languages, kept for the life of the console so definitions outlive a line: the R0 machine (repl.ts)
+ * and the NoirScript session (noirscript/index.ts).
+ */
+export interface ReplSession { machine: Machine; noir: NoirSession }
+export const replSession = (): ReplSession => ({ machine: new Machine(), noir: new NoirSession() })
 
 /** The model providers, as typed after `ask provider` (commands.test.ts pins them to 09_Cognition/router.ts, which this file must not import). */
 export const PROVIDER_ARGS = ['auto', 'claude', 'inpage', 'llamacpp', 'ollama', 'openai', 'scripted'] as const
@@ -213,6 +224,7 @@ const ARGS: Record<string, readonly string[]> = {
   ring0: ['elite', 'lock', 'status', 'unlock'],
   'ring0 unlock': ['--elite'],
   'ring0 elite': ['set'],
+  noir: ['asm', 'reset', 'words'],
   hal: ['pair'],
   'hal pair': ['ble', 'hid', 'serial'],
   recruit: [...RECRUIT_ACTIONS, ...SKILL_ARGS].sort(),
@@ -264,6 +276,11 @@ function operatorOf(b: TerminalBridge): OperatorBridge {
   const op = b.operator
   if (!op) throw new Error('operator tier not available on this bridge')
   return op
+}
+
+/** The elite tier's write surface for a NoirScript run: null while it (or the operator tier) is locked, and on a bridge without one. */
+function eliteWritesOf(b: TerminalBridge): EliteWrites | null {
+  try { return b.operator?.elite.writes() ?? null } catch { return null }
 }
 
 /** Likewise for a host that publishes no topics (the TTY shell, an older host). */
@@ -1224,6 +1241,44 @@ const HANDLERS: Record<Name, Handler> = {
     const lines = r.out.map((t) => out(t.replace(/ +$/, '')))
     if (r.error !== undefined) lines.push(err(`r0: ${r.error}`))
     if (r.steps >= R0_NOTE_STEPS) lines.push(sys(`-- ${r.steps} steps --`))
+    return { lines }
+  },
+
+  // Raw: the rest of the line is NoirScript for the session's VM. The city's columns (the bridge's `soa`) are read
+  // once, as copies, before the run. The write intrinsics reach the city only through the elite tier's surface
+  // (`ring0 unlock --elite`): locked, the host hands the VM no writes and each fails with the tier's message; open,
+  // the run has the tier's four writes and its raised limits.
+  noir(args, b, _history, _line, session) {
+    const rest = (args[0] ?? '').trim()
+    if (!rest) return { lines: [out(usage('noir')), sys("NoirScript, the console's typed language: 'noir print(1 + 2);' prints 3; 'noir fn sq(x: i32) -> i32 { x * x }' defines sq for this console session; 'noir print(query cars where speed > 5.0);' counts the cars moving faster than 5 m/s")] }
+    const n = (session ?? replSession()).noir
+    if (rest === 'reset') {
+      n.reset()
+      return { lines: [out('noir: reset (every definition forgotten, memory zeroed)')] }
+    }
+    if (rest === 'words') return { lines: [out(n.words().join(' '))] }
+    if (rest === 'asm' || rest.startsWith('asm ')) {
+      const source = rest.slice(3).trim()
+      if (!source) return fail('usage: noir asm <source>')
+      const r = n.asm(source)
+      const lines = r.out.map(out)
+      if (r.error !== undefined) lines.push(err(`noir: ${r.error}`))
+      return { lines }
+    }
+    let tables: NoirTables = EMPTY_TABLES
+    if (b.soa !== undefined) {
+      try {
+        tables = b.soa.tables()
+      } catch (e) {
+        return fail(`noir: ${message(e)}`)
+      }
+    }
+    const writes = eliteWritesOf(b)
+    const host: NoirHost = writes === null ? { tables: () => tables, locked: NOIR_LOCKED } : { tables: () => tables, write: writes, locked: NOIR_LOCKED }
+    const r = n.run(rest, host, writes === null ? undefined : ELITE_LIMITS)
+    const lines = r.out.map(out)
+    if (r.error !== undefined) lines.push(err(`noir: ${r.error}`))
+    if (r.steps >= NOIR_NOTE_STEPS) lines.push(sys(`-- ${r.steps} steps --`))
     return { lines }
   },
 

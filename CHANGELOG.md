@@ -54,6 +54,20 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   operator tier is locked and unlocked again, and the history keeps the passphrase as dots. The three laws, the
   Sanctuary, the Ring-0 auditor and the 14A screen are not on that facade and stay out of reach; a test pins that the
   tier calls those four things and nothing else.
+- **NoirScript (`noir`), the console's second language.** Beside R0 (the Forth), a statically typed language compiled
+  to bytecode and run on a bounded VM (`terminal/noirscript/`): `i32`, `u32`, `f32` (true binary32), `bool`, fixed
+  arrays, the lane types `f32x4`, `i32x4`, `u32x4` and `u32x8` with lane-wise arithmetic, comparisons to masks,
+  `select` and `mask` for branchless code, horizontals, `popcount`/`clz`/`ctz`/`rotl`/`rotr`/`morton2`; `let`,
+  `fn` with recursion, `if`/`else`, `while`, `loop`, `for … in a..b`, `break`/`continue`; a Pratt parser, a static
+  checker with overloads, and a disassembler (`noir asm <source>`). The city's columns are tables (`crowd.x`,
+  `cars.speed`, `kernel.law1`, `frame.fps`, …), read once per run as copies through the bridge's `soa` surface, and
+  `query cars where speed > 5.0` counts rows; `load_f32x4(crowd.x, i)` strides a column four lanes at a time. Turing
+  complete, deterministic (no clock, no randomness), bounded (1,000,000 steps, 16,384 characters of output, 1 MiB of
+  cells, 1,024 frames) and blind: the directory imports nothing, there is no JIT and no dynamic code, and its write
+  intrinsics `tune`, `intent`, `cull` and `steer` reach the city only through the Ring-0 elite tier's surface: they
+  fail at run time with `elite tier locked` until `ring0 unlock --elite`, and run then with the tier's raised limits.
+  Definitions persist for the console session (`noir reset` forgets them; `noir words` lists
+  the language and them).
 - **Peak, a tier above Ultra for big GPUs.** Tier 5, outside the tier table like Lite, so every existing tier number
   and automatic range stays as it was. It draws Ultra at 1.25 times the resolution on each side (about 1.56 times the
   pixels), held within the device's largest texture, which also fixes `?scale=2` on a very wide window at any tier;
