@@ -523,12 +523,16 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   the skirt, the tie, the hair in its styles, glasses, the bag, the cup), and a near and a far version of each body
   are built at boot (about 1,300 and about 400 vertices). Everything is written by hand in that one file: no
   imported mesh, skeleton or morph target. The crowd's vertex stage (`03_Spawn_Agents/crowdBody.ts`, WGSL built
-  from the same numbers) shapes the face, reshapes each vertex by the body sliders, bends each joint from the walk
-  phase (hips, knees and ankles; shoulders and elbows; a counter-twist of the chest; the head), blends its two
-  bones, then applies the spring-damper tilt, the stature, the heading and the place, with the normals carried
-  through the same arithmetic, so a wide shoulder is lit as the round thing it is. The CPU runs the same arithmetic
-  for the card's silhouette, its face view and the tests, so the body the card draws is the body the street draws,
-  to the number.
+  from the same numbers) shapes the face, reshapes each vertex by the body sliders, solves each leg from where its
+  foot is (a planted foot keeps its spot of ground through its stance and rolls from heel to toe; the pelvis drops
+  what the planted leg cannot span at the ends of a stride; a person who stops stands with their feet together),
+  swings the arms with the speed against the legs, turns the chest and the head, blends its two bones, then applies
+  the spring-damper tilt, the stature, the heading and the place, with the normals carried through the same
+  arithmetic, so a wide shoulder is lit as the round thing it is. Pedestrians look you in the eye when you stand in
+  front of them on foot within about two and a half metres (the look fades out by four and a half; from a car
+  nobody is looked at), and look the way they are going otherwise, the head leading a turn. The CPU runs the same
+  arithmetic for the card's silhouette, its face view and the tests, so the body the card draws is the body the
+  street draws, to the number.
 - **The face.** The skull is twelve-sided rings from the chin to the crown, each ring in a region (the chin, the
   jaw, the cheekbones, the brow line), and the features are small lofted pillows laid on the skull's own front: two
   eyes (a white with an iris in front), two brows, a nose rooted on the skull, the lips, two ears. Seven face

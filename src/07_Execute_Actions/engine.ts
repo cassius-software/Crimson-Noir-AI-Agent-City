@@ -33,7 +33,7 @@
  * with the heap and the live worker count, so a micro-stutter leaves evidence; where the API is missing it is a no-op.
  * What breaks if it is removed? Nothing runs; every module is inert without this orchestration.
  */
-import { Frustum, Matrix4, Vector3, type PerspectiveCamera, type RenderPipeline, type UniformNode } from 'three/webgpu'
+import { Frustum, Matrix4, Vector3, type PerspectiveCamera, type RenderPipeline, type UniformNode, type Vector4 } from 'three/webgpu'
 import { BRAND } from '../brand.ts'
 import { GRAPHICS_RESET } from './bootFailure.ts'
 import { watchLongTasks } from './longTasks.ts'
@@ -433,6 +433,8 @@ export class Engine {
   private readonly cinema: CinemaPost | null
   /** The span the pedestrians' motion vectors cover (crowd.ts CrowdView.frameSeconds). */
   private readonly crowdFrameSeconds: UniformNode<'float', number>
+  /** Where the pedestrians look (crowd.ts CrowdView.gazeTarget): the operator's eye afoot, nobody from a car. */
+  private readonly crowdGaze: UniformNode<'vec4', Vector4>
   /** Ghost view: the physics shapes as code over the finished frame (G, or the console's ghost). */
   private readonly ghost: GhostView
   /** Matrix mode (01_Initialize_World/matrixMode.ts): on or off as last asked (M, or the console's matrix). */
@@ -626,7 +628,7 @@ export class Engine {
 
   private constructor(p: {
     canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; craftView: CraftView | null; rigView: RigView; profile: DeviceProfile
-    post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; crowdFrameSeconds: UniformNode<'float', number>; ghost: GhostView
+    post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; ghost: GhostView
     options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]
     crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; crowdFigure: GPUBuffer; netView: NetView
   }) {
@@ -650,6 +652,7 @@ export class Engine {
     this.cinema = p.cinema
     this.pacer = p.cinema ? new FramePacer(CINEMA.fps) : null
     this.crowdFrameSeconds = p.crowdFrameSeconds
+    this.crowdGaze = p.crowdGaze
     this.ghost = p.ghost
     this.netView = p.netView
     this.poles = new PoleIndex(p.world.furniture)
@@ -896,7 +899,7 @@ export class Engine {
       if (sim.fault !== null) throw new Error(sim.fault)
       stillThere()
       const engine = new Engine({
-        canvas, gpu, world, crowd, sim, view, rigView, profile, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, ghost, options,
+        canvas, gpu, world, crowd, sim, view, rigView, profile, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, ghost, options,
         quality: { governor, targets, applied, mask, live }, places, landmark, streets,
         rooms: hollow ? hollow.rooms : workplaces(options.seed),
         // The code dissolve's crowd amounts: allocated by the draws above like the frame's buffers, written the same way.
@@ -1739,6 +1742,8 @@ export class Engine {
       this.avatarHeading = input.yaw + Math.PI
       this.rig.onFoot(cam, av.x, av.feetY, av.z, input.yaw, input.pitch, dt)
     }
+    // The pedestrians near the operator look them in the eye (crowd.ts gazeTarget); from a car, nobody is looked at.
+    this.crowdGaze.value.set(this.rig.pose.x, this.rig.pose.y, this.rig.pose.z, driving >= 0 ? 0 : 1)
     // The other local players' heads, each on its own camera from its own avatar (or the car it drives) and its seat's
     // yaw and pitch; posed every animation frame like player 1's (their listeners read it; the car carries it).
     for (let k = 1; k < this.views.length; k++) this.poseView(this.views[k], k, st, dt)

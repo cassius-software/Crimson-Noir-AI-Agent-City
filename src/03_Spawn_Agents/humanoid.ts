@@ -8,9 +8,12 @@
  * the lapels, the collar and the cuffs are lines the fragment stage draws on the cloth, GARMENT) over a skeleton of
  * fifteen bones, every vertex tied to two of them, the body sliders that reshape it (height, mass, muscle, shoulders,
  * hips, leg length, posture, head) and the face sliders that reshape the head's features (brow, jaw, chin, cheek,
- * nose, eyes, lips), as arithmetic the crowd's vertex stage (crowd.ts) runs on the GPU and this module runs on the
+ * nose, eyes, lips), the walk (each leg solved from where its foot is, so a planted foot keeps its spot of ground;
+ * the arms swinging against them) and the gaze (the head and the chest turned toward the operator near by, or the
+ * way the person goes), as arithmetic the crowd's vertex stage (crowd.ts) runs on the GPU and this module runs on the
  * CPU, so the card's silhouette, the tests and the shader agree to the number. Everything here is written by hand for
- * this product: no imported mesh, skeleton or morph target. Pure: no three, no DOM, no GPU, no clock, no randomness.
+ * this product: no imported mesh, skeleton, morph target or motion capture. Pure: no three, no DOM, no GPU, no clock,
+ * no randomness.
  * What breaks if it is removed? The crowd has no body to draw, and the sliders have nothing to move.
  *
  * Frame: metres, feet on y = 0, the person faces +z, their left side at −x. The base person is HEIGHT_BASE tall;
@@ -127,17 +130,45 @@ export const LIMB_GIRTH = Object.freeze({
 
 /** The walk: the amplitudes the phase drives (crowd.wgsl's vel.z is the phase, vel.w the speed). */
 export const WALK = Object.freeze({
-  /** m/s at which the swing reaches its full amplitude, and the most it may exceed it. */
+  /** m/s at which the arms' swing reaches its full amplitude, and the most it may exceed it. */
   fullSpeed: 1.4, maxSwing: 1.3,
-  hip: 0.46, knee: 1.0, kneeRest: 0.06, ankle: 0.6,
-  shoulder: 0.38, elbow: 0.3, elbowRest: 0.25, twist: 0.06, bob: 0.03,
+  /**
+   * The legs are solved from the feet (footAt, legSolve). Metres one cycle of the walk covers: crowd.wgsl advances
+   * the phase by a turn per this distance, so a planted foot's spot of ground is a function of the phase alone. The
+   * speed under which the stride, the lift and the roll shrink toward standing. The swing foot's rise, m. The
+   * ankle's rise at either end of the stance as the foot rolls onto its heel or its toes, m. The knee's bend
+   * standing, rad: the leg never locks.
+   */
+  cycle: 1.45, strideSpeed: 0.5, lift: 0.07, roll: 0.03, kneeRest: 0.06,
+  shoulder: 0.38, elbow: 0.3, elbowRest: 0.25, twist: 0.06,
   /** Holding a cup: the left arm raised with the forearm up; carrying a bag: the right arm swings little. */
   cupShoulder: -0.35, cupElbow: -1.6, cupSwing: 0.2, bagSwing: 0.35,
   /** The head counters the trunk's lean, in part. */
   headCounter: 0.7,
 })
 
+/** The shoe's sole about the ankle, m: the heel this far behind it, the toes this far ahead (legTubes' lowest ring). */
+export const SOLE = Object.freeze({ heel: 0.085, toe: 0.145 })
+
+/**
+ * Where the head turns (gazeAt). Metres from the neck: the operator's eye holds the gaze whole within `near`, not
+ * at all past `reach`, never within `own` (a person's own eye stands at their own neck). Radians: the cone off the
+ * body's front past which the operator is behind; the head's yaw and pitch at most; the chest's share of the yaw and
+ * its most; the yaw toward the way they go at most (the head leads a turn), whole from `travelSpeed` m/s.
+ */
+export const GAZE = Object.freeze({
+  near: 2.5, reach: 4.5, own: 0.5,
+  cone: 1.75, headYaw: 1.1, headPitch: 0.5, chestShare: 0.3, chestYaw: 0.45,
+  travelYaw: 0.6, travelSpeed: 0.3,
+})
+
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x)
+const clampTo = (x: number, lo: number, hi: number): number => (x < lo ? lo : x > hi ? hi : x)
+const TAU = Math.PI * 2
+/** An angle brought within half a turn of zero. */
+const wrapAngle = (a: number): number => a - TAU * Math.round(a / TAU)
+/** 0 at or under `lo`, 1 at or over `hi`, a smooth step between (WGSL smoothstep). */
+const smoothTo = (lo: number, hi: number, x: number): number => { const t = clamp01((x - lo) / (hi - lo)); return t * t * (3 - 2 * t) }
 const hat = (y: number, at: number, half: number): number => clamp01(1 - Math.abs(y - at) / half)
 const factor = (t: number, f: { readonly base: number; readonly range: number }): number => f.base + clamp01(t) * f.range
 
@@ -315,50 +346,143 @@ export interface WalkAngles {
   readonly hipR: number; readonly kneeR: number; readonly ankleR: number
   readonly shoulderL: number; readonly elbowL: number
   readonly shoulderR: number; readonly elbowR: number
-  /** The chest's yaw about the spine (counter to the swing), and the head's nod. */
+  /** The chest's yaw about the spine (counter to the swing, with the chest's share of the gaze), and the head's nod. */
   readonly twist: number
   readonly head: number
+  /** The head's own yaw about the neck, toward the gaze (to the right positive). */
+  readonly headYaw: number
   /** The trunk's lean from the posture (about the hip, forward positive). */
   readonly slouch: number
-  /** The step's rise, m. */
-  readonly bob: number
+  /** The pelvis' rise, m (world): at or below zero, what the planted leg cannot span at the ends of the stance. */
+  readonly rise: number
 }
 
 /** The swing's amplitude for a walking speed, m/s: full at WALK.fullSpeed, at most WALK.maxSwing. */
 export const swingOf = (speed: number): number => Math.min(WALK.maxSwing, Math.max(0, speed / WALK.fullSpeed))
 
+/** One foot at a moment of the walk, in the base body's metres: ahead of the hip's drop line, above the ankle's rest, its sole's angle (toes down positive), planted or swinging. */
+export interface FootAt { readonly z: number; readonly y: number; readonly sole: number; readonly planted: boolean }
+
 /**
- * The walk at `phase` (rad; the left leg's cycle, the right half a turn behind) with `swing` (swingOf), for a
- * posture's factors, holding a cup (the left arm up) or carrying a bag (the right arm still). Exactly what the vertex
- * stage computes, in the same order.
+ * Where a foot is at `phase` (rad; this leg's cycle), with the stride, the swing's lift and the roll's rise in the
+ * base body's metres. The stance runs from a quarter turn before the phase's zero to a quarter after (the leg
+ * vertical at zero): the foot is planted, carried from half a stride ahead to half a stride behind linearly in the
+ * phase, so where the phase grows with the distance walked (crowd.wgsl: a turn per WALK.cycle metres) the foot's spot
+ * of ground never moves; it rolls onto its heel ahead of the hip and onto its toes behind, the ankle up by the roll's
+ * rise at either end. The swing brings it forward along a smooth step, the lift's arc over the roll's rise, the sole
+ * turning from the toe-off's toes-down to the strike's toes-up.
  */
-export function walkAngles(phase: number, swing: number, f: ShapeFactors, cup = false, bag = false): WalkAngles {
-  const leg = (p: number) => {
-    const s = Math.sin(p), c = Math.cos(p)
-    const hip = s * WALK.hip * swing
-    const lift = Math.max(0, -c)
-    const knee = WALK.kneeRest + WALK.knee * swing * lift * lift
-    const ankle = -(hip + knee) * WALK.ankle
-    return [hip, knee, ankle] as const
+export function footAt(phase: number, stride: number, lift: number, roll: number): FootAt {
+  const half = stride / 2
+  const s = ((phase + Math.PI / 2) / TAU - Math.floor((phase + Math.PI / 2) / TAU)) * 2
+  if (s < 1) {
+    const u = 1 - 2 * s
+    const y = roll * u * u
+    return { z: half * u, y, sole: u < 0 ? Math.asin(Math.min(y / SOLE.toe, 1)) : -Math.asin(Math.min(y / SOLE.heel, 1)), planted: true }
   }
+  const w = s - 1
+  const ease = w * w * (3 - 2 * w)
+  return { z: half * (2 * ease - 1), y: roll + lift * Math.sin(Math.PI * w), sole: Math.asin(Math.min(roll / SOLE.toe, 1)) * (1 - w) - Math.asin(Math.min(roll / SOLE.heel, 1)) * w, planted: false }
+}
+
+/** A leg's angles (rad, as WalkAngles holds them: a positive hip or knee swings the part back). */
+export interface LegAngles { readonly hip: number; readonly knee: number; readonly ankle: number }
+
+/** How far a thigh and a shin reach with the knee at its standing bend, m. */
+export const legReach = (thigh: number, shin: number): number => Math.sqrt(thigh * thigh + shin * shin + 2 * thigh * shin * Math.cos(WALK.kneeRest))
+
+/**
+ * The leg solved from its foot: the hip and knee angles that put the ankle `dy` from the hip (below: negative) and
+ * `dz` ahead of it, the knee forward of the line between them (the two-bone solve, the distance held to legReach so
+ * the knee never locks), and the ankle that turns the sole to `sole` (toes down positive) whatever the leg does.
+ */
+export function legSolve(dy: number, dz: number, thigh: number, shin: number, sole: number): LegAngles {
+  const r = Math.max(Math.min(Math.hypot(dy, dz), legReach(thigh, shin)), 1e-3)
+  const line = Math.atan2(-dz, -dy)
+  const open = Math.acos(clampTo((thigh * thigh + r * r - shin * shin) / (2 * thigh * r), -1, 1))
+  const hip = line - open
+  const knee = Math.PI - Math.acos(clampTo((thigh * thigh + shin * shin - r * r) / (2 * thigh * shin), -1, 1))
+  return { hip, knee, ankle: sole - hip - knee }
+}
+
+/**
+ * How far the pelvis sits below standing, m (base body), with the planted foot `dz` from under the hip and its ankle
+ * `rise` above its rest: what the leg's reach cannot span; nothing at mid-stance, the most at either end.
+ */
+export function pelvisDrop(dz: number, rise: number, piv: Pivots): number {
+  const reach = legReach(piv.hip - piv.knee, piv.knee - piv.ankle)
+  return Math.max(0, piv.hip - piv.ankle - rise - Math.sqrt(Math.max(reach * reach - dz * dz, 0)))
+}
+
+/** Where the head turns: the chest's yaw, the head's own yaw and its pitch (rad; to the right and up positive). */
+export interface Gaze { readonly chest: number; readonly head: number; readonly pitch: number }
+export const GAZE_AHEAD: Gaze = Object.freeze({ chest: 0, head: 0, pitch: 0 })
+
+/**
+ * The gaze of a person whose neck is at `neck` (world), facing `heading` (forward (sin, cos)), moving at (vx, vz),
+ * with the operator's eye at `target` (world; null: nobody afoot). The way they go first: the velocity's bearing off
+ * the heading, held to GAZE.travelYaw, whole from GAZE.travelSpeed, so the head leads a turn. Then the eye, in front
+ * and within reach: its bearing and its elevation, held to the head's limits with the chest's, fading out from
+ * GAZE.near to GAZE.reach; the chest takes its share of the yaw and the head the rest. Exactly what the vertex stage
+ * computes (crowdBody.ts bodyGaze).
+ */
+export function gazeAt(neck: readonly [number, number, number], heading: number, vx: number, vz: number, target: readonly [number, number, number] | null): Gaze {
+  const speed = Math.hypot(vx, vz)
+  let yaw = speed > 1e-4 ? clampTo(wrapAngle(Math.atan2(vx, vz) - heading), -GAZE.travelYaw, GAZE.travelYaw) * Math.min(1, speed / GAZE.travelSpeed) : 0
+  let pitch = 0
+  if (target) {
+    const sh = Math.sin(heading), ch = Math.cos(heading)
+    const dx = target[0] - neck[0], dy = target[1] - neck[1], dz = target[2] - neck[2]
+    const flat = Math.hypot(dx, dz)
+    const bearing = Math.atan2(dx * ch - dz * sh, dx * sh + dz * ch)
+    const hold = flat < GAZE.own || Math.abs(bearing) > GAZE.cone ? 0 : 1 - smoothTo(GAZE.near, GAZE.reach, flat)
+    yaw += (clampTo(bearing, -(GAZE.headYaw + GAZE.chestYaw), GAZE.headYaw + GAZE.chestYaw) - yaw) * hold
+    pitch = clampTo(Math.atan2(dy, flat), -GAZE.headPitch, GAZE.headPitch) * hold
+  }
+  const chest = clampTo(yaw * GAZE.chestShare, -GAZE.chestYaw, GAZE.chestYaw)
+  return { chest, head: clampTo(yaw - chest, -GAZE.headYaw, GAZE.headYaw), pitch }
+}
+
+/**
+ * The walk at `phase` (rad; the left leg's cycle, the right half a turn behind) at `speed` (m/s), for a shape's
+ * factors, holding a cup (the left arm up) or carrying a bag (the right arm still), looking `gaze`'s way. Each leg
+ * is solved from its foot (footAt, legSolve) in the base body's metres, the stride, the lift and the roll shrinking
+ * to standing under WALK.strideSpeed; the pelvis drops what the planted leg cannot span; the arms swing with the
+ * speed against the legs. Exactly what the vertex stage computes, in the same order.
+ */
+export function walkAngles(phase: number, speed: number, f: ShapeFactors, cup = false, bag = false, gaze: Gaze = GAZE_AHEAD): WalkAngles {
+  const swing = swingOf(speed)
+  const scale = scaleOf(f)
+  const piv = pivotsOf(f)
+  const on = clamp01(speed / WALK.strideSpeed)
+  const stride = WALK.cycle * 0.5 * on / scale.xz
+  const lift = WALK.lift * on / scale.y
+  const roll = WALK.roll * on / scale.y
+  const footL = footAt(phase, stride, lift, roll)
+  const footR = footAt(phase + Math.PI, stride, lift, roll)
+  const planted = footL.planted ? footL : footR
+  const drop = pelvisDrop(planted.z, planted.y, piv)
+  const thigh = piv.hip - piv.knee, shin = piv.knee - piv.ankle
+  const legL = legSolve(piv.ankle + footL.y + drop - piv.hip, footL.z, thigh, shin, footL.sole)
+  const legR = legSolve(piv.ankle + footR.y + drop - piv.hip, footR.z, thigh, shin, footR.sole)
   const arm = (p: number) => {
     const s = Math.sin(p)
     const shoulder = -s * WALK.shoulder * swing * f.gait
     const elbow = -(WALK.elbowRest + WALK.elbow * swing * Math.max(0, s))
     return [shoulder, elbow] as const
   }
-  const [hipL, kneeL, ankleL] = leg(phase)
-  const [hipR, kneeR, ankleR] = leg(phase + Math.PI)
   let [shoulderL, elbowL] = arm(phase)
   let [shoulderR, elbowR] = arm(phase + Math.PI)
   if (cup) { shoulderL = WALK.cupShoulder + shoulderL * WALK.cupSwing; elbowL = WALK.cupElbow }
   if (bag) { shoulderR *= WALK.bagSwing; elbowR = -WALK.elbowRest }
   return {
-    hipL, kneeL, ankleL, hipR, kneeR, ankleR, shoulderL, elbowL, shoulderR, elbowR,
-    twist: Math.sin(phase) * WALK.twist * swing * f.gait,
-    head: -f.slouch * WALK.headCounter,
+    hipL: legL.hip, kneeL: legL.knee, ankleL: legL.ankle, hipR: legR.hip, kneeR: legR.knee, ankleR: legR.ankle,
+    shoulderL, elbowL, shoulderR, elbowR,
+    twist: Math.sin(phase) * WALK.twist * swing * f.gait + gaze.chest,
+    head: -f.slouch * WALK.headCounter - gaze.pitch,
+    headYaw: gaze.head,
     slouch: f.slouch,
-    bob: Math.abs(Math.sin(phase)) * WALK.bob * swing,
+    rise: -drop * scale.y,
   }
 }
 
@@ -420,7 +544,7 @@ export function boneTransform(bone: number, p: number[], w: number, a: WalkAngle
       rotXAbout(p, x, piv.shoulder, 0, left ? a.shoulderL : a.shoulderR, w)
       rotYAbout(p, piv.chest, a.twist, w)
     } else {
-      if (bone === BONE.HEAD) rotXAbout(p, 0, piv.neck, 0, a.head, w)
+      if (bone === BONE.HEAD) { rotXAbout(p, 0, piv.neck, 0, a.head, w); rotYAbout(p, piv.neck, a.headYaw, w) }
       if (bone >= BONE.CHEST) rotYAbout(p, piv.chest, a.twist, w)
     }
     // The trunk, and everything hanging from it, leans with the posture and bends with the push.
@@ -432,8 +556,8 @@ export function boneTransform(bone: number, p: number[], w: number, a: WalkAngle
 }
 
 /**
- * A vertex posed: its two bones' transforms blended by the weight (linear blend skinning), then the step's rise,
- * the stature's scales, the heading and the position, exactly the shader's order. `w` 1 for a position (the
+ * A vertex posed: its two bones' transforms blended by the weight (linear blend skinning), then the stature's
+ * scales and the pelvis' rise, the heading and the position, exactly the shader's order. `w` 1 for a position (the
  * answer is in world metres), 0 for a normal (the answer wants normalising).
  */
 export function skinPoint(
@@ -447,7 +571,7 @@ export function skinPoint(
   let qy = p0[1] * weight + p1[1] * (1 - weight)
   let qz = p0[2] * weight + p1[2] * (1 - weight)
   if (w > 0.5) {
-    qx *= scale.xz; qy = qy * scale.y + a.bob; qz *= scale.xz
+    qx *= scale.xz; qy = qy * scale.y + a.rise; qz *= scale.xz
   } else {
     // A normal takes the scales' reciprocals (the caller normalises).
     qx /= scale.xz; qy /= scale.y; qz /= scale.xz

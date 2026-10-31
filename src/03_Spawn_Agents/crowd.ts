@@ -22,7 +22,7 @@
  */
 import {
   BufferGeometry, Color, Float32BufferAttribute, IndirectStorageBufferAttribute, InstancedMesh, MeshStandardNodeMaterial,
-  StorageBufferAttribute, Uint32BufferAttribute, type Node, type NodeBuilder, type UniformNode, type Vector4,
+  StorageBufferAttribute, Uint32BufferAttribute, Vector4, type Node, type NodeBuilder, type UniformNode,
 } from 'three/webgpu'
 import {
   Fn, If, attribute, cameraPosition, dot, float, hash, instanceIndex, mix, normalLocal, positionGeometry, positionLocal, positionPrevious,
@@ -201,6 +201,12 @@ export class CrowdView {
    * matrices are identity, so three's matrix history would put everyone's previous position at the origin.
    */
   readonly frameSeconds: UniformNode<'float', number> = uniform(0)
+  /**
+   * The operator's eye in the world (x, y, z) and 1 in w while someone is afoot to look at (0 from a car): the vertex
+   * stage turns the heads and chests near it (crowdBody.ts bodyGaze), one uniform for both passes so the shadow
+   * looks where the body does. The engine writes it every frame.
+   */
+  readonly gazeTarget: UniformNode<'vec4', Vector4> = uniform(new Vector4(0, 0, 0, 0))
 
   /** The page's global-state uniform (01_Initialize_World/matrixMode.ts); null, the bodies have no matrix mode. */
   private readonly matrixMode: UniformNode<'vec4', Vector4> | null
@@ -359,7 +365,7 @@ export class CrowdView {
         })
       }
       // The skin (crowdBody.ts): one call gives the posed position (column 0) and its normal (column 1).
-      const skinned = (bodyVertex(positionLocal, normalLocal, rig, skin, face, agent, motion, pose, stance, morphA, morphB, faceA, faceB, time) as unknown as Mat3).toVar()
+      const skinned = (bodyVertex(positionLocal, normalLocal, rig, skin, face, agent, motion, pose, stance, morphA, morphB, faceA, faceB, time, this.gazeTarget) as unknown as Mat3).toVar()
       normalLocal.assign(skinned.element(uint(1)))
       vSeed.assign(seed)
       vLookLo.assign(float(word.bitAnd(uint(0xffff))))

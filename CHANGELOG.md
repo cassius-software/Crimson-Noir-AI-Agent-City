@@ -15,6 +15,21 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Feet that stay planted, heads that look.** Each leg of the crowd's body is solved from where its foot is
+  (`src/03_Spawn_Agents/humanoid.ts` `footAt`, `legSolve`; `crowdBody.ts` `bodyFoot`, `bodyLeg`). The worker
+  advances the walk phase with the distance walked, so a foot carried back linearly in the phase through its stance
+  keeps its spot of ground (a test walks seven speeds, statures and headings and pins the planted ankle to a
+  micrometre), rolls onto its heel at the strike and its toes at the push-off, and the pelvis drops what the planted
+  leg cannot span at the ends of a stride, so the body rises and falls with the step instead of bobbing on a sine.
+  Under half a metre a second the stride shrinks toward standing, so a person who stops stands with their feet
+  together whatever the phase (and shuffles a little while slowing). The head and the chest turn toward the
+  operator's eye when it is in front of them, within reach (whole to 2.5 m, gone by 4.5 m) and not their own
+  (`gazeAt`, `bodyGaze`: one `gazeTarget` uniform the engine writes every frame, so the shadow looks where the body
+  does; from a car nobody is looked at), and toward the way they go otherwise, the head leading a turn, the chest
+  taking three tenths of the yaw. The card's silhouette runs the same arithmetic. The ground under the crowd is
+  flat (kerbs are painted bands), so there is no height for the feet to follow. The walk and the gaze are
+  hand-written arithmetic: no motion capture or animation clip. How the gait and the gaze look on a real GPU is
+  unverified.
 - **A layered wardrobe with dye channels.** Every look has a **layer** (the jacket, shirt sleeves or a coat), a
   **trim** (matching, or one of seven cloths on the lapels, the collar band and the cuffs) and a **scarf** (none or
   one of seven cloths). The coat is a shell of `src/03_Spawn_Agents/humanoid.ts`'s loft over the trunk, worn by
