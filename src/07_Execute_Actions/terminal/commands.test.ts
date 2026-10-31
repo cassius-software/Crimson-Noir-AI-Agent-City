@@ -36,6 +36,7 @@ import { sha256 } from '../../02_Define_The_Rules/integrity.ts'
 import { PROVIDERS } from '../../09_Cognition/router.ts'
 import { harnesses } from '../harness.ts'
 import { FEATURES } from '../../09_Cognition/features.ts'
+import type { NoirTables } from './noirscript/index.ts'
 import type { QualityState, RecordingState, SipocSnapshot } from '../../05_Observe_Environment/telemetry.ts'
 
 const BRAND = { name: 'TESTBRAND', version: '9.8.7', host: 'testhost' }
@@ -48,7 +49,7 @@ const LAWS = [
 
 const CORE_NAMES = [
   'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'time', 'audio', 'ghost', 'rain', 'render', 'captions', 'ping', 'look', 'agent', 'sloane', 'goal', 'hal', 'recruit', 'memory', 'clear', 'history', 'echo',
-  'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'exit',
+  'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'noir', 'exit',
 ]
 const OPERATOR_NAMES = ['operator', 'ring0', 'run', 'ask', 'swarm', 'act', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
 
@@ -416,6 +417,16 @@ function fakeTopics(calls: string[]): FakeTopics {
   return t
 }
 
+/** The city's columns as NoirScript reads them: four people, two cars (the second driven, fast), a quiet kernel, a 60 Hz frame. */
+function fakeTables(): NoirTables {
+  return {
+    crowd: { n: 4, x: Float32Array.of(1, -2, 3, -4), z: Float32Array.of(1, 2, -3, 4) },
+    cars: { n: 2, x: Float32Array.of(0, 8), z: Float32Array.of(0, -8), heading: Float32Array.of(0, 1.5), speed: Float32Array.of(0, 12), mode: Int32Array.of(0, 1) },
+    kernel: { law1: 3, law2: 0, law3: 1, flips: 2, shielded: false },
+    frame: { fps: 60, ms: 16.6, p95: 18 },
+  }
+}
+
 /** Logs to the bridge's shared `calls` (as 'memory <verb>'), so the air-gap sweep sees every use. */
 function fakeMemory(calls: string[]): MemoryBridge {
   return {
@@ -586,6 +597,7 @@ function fake(): Fake {
     rain: (arg) => { f.calls.push(`rain ${arg}`); return arg ?? 'off' },
     render: (arg) => { f.calls.push(`render ${arg}`); return arg ?? 'on' },
     captions: (arg) => { f.calls.push(`captions ${arg}`); return `captions: ${arg ?? 'on'}` },
+    soa: { tables: () => { f.calls.push('soa tables'); return fakeTables() } },
     ping: undefined as unknown as FakePing,
     topics: undefined as unknown as FakeTopics,
     hal: {
@@ -1017,7 +1029,7 @@ test('clear, history, whoami, version, uname and exit', () => {
 test('the brand always comes from the bridge', () => {
   const b = unlocked()
   const everything = ['help', 'stats', 'laws', 'kernel', 'quality', 'time', 'audio', 'hal', 'version', 'uname -a', 'api', 'harness', 'record', 'sim', 'operator',
-    'render', 'captions', 'ping', 'look', 'boot', 'map', 'r0', 'net', 'recruit']
+    'render', 'captions', 'ping', 'look', 'boot', 'map', 'r0', 'noir', 'net', 'recruit']
     .flatMap((c) => texts(run(c, b, [])))
     .concat(motd(BRAND).map((l) => l.text))
     .join('\n')
@@ -1090,13 +1102,16 @@ test('air gap: while locked, across every command and completion, the only knobs
   // `operator unlock` is the one line that changes the lock state; every other line runs against the locked tier.
   assert.ok(lines.includes('operator unlock'))
   const sweep = [...lines.filter((l) => l !== 'operator unlock'), 'time 8', 'time 08:15', 'run 1 + 1', 'run rust: 1 + 1', 'get physics', 'set physics.car.power 2', 'harness run kernel-stop',
-    'recruit rally 7', 'recruit rally 7 1 2', 'look show 7', 'look top 2', 'look code ABCD-EFGH', 'net join ws://127.0.0.1:8787 tok', 'topic get ~/x', 'topic list ~/#', 'topic tree ~/Area']
+    'recruit rally 7', 'recruit rally 7 1 2', 'look show 7', 'look top 2', 'look code ABCD-EFGH', 'net join ws://127.0.0.1:8787 tok', 'topic get ~/x', 'topic list ~/#', 'topic tree ~/Area',
+    'noir print(crowd.n);', 'noir print(tune("car.power", 2.0));']
   for (const l of sweep) void run(l, b, ['help'])
   const touched = new Set(b.calls.map((c) => c.split(' ')[0]))
-  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'features', 'ghost', 'look', 'memory', 'model', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'setClock', 'stats', 'topics'])
+  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'features', 'ghost', 'look', 'memory', 'model', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'setClock', 'soa', 'stats', 'topics'])
   // The feature inspector is only ever read while locked: no bias, clamp, release or reset reaches the tier.
   const featureVerbs = new Set(b.calls.filter((c) => c.startsWith('features ')).map((c) => c.split(' ')[1]))
   assert.deepEqual([...featureVerbs].sort(), ['about', 'explain', 'lines', 'prompt'])
+  // NoirScript reads the city's columns as copies, through the one reader, and nothing else: a write intrinsic fails in the VM.
+  assert.deepEqual([...new Set(b.calls.filter((c) => c.startsWith('soa ')))], ['soa tables'])
   // The namespace is only ever read while locked (it has no write), and only through its four readers.
   const topicVerbs = new Set(b.calls.filter((c) => c.startsWith('topics ')).map((c) => c.split(' ')[1]))
   assert.deepEqual([...topicVerbs].sort(), ['children', 'get', 'list', 'status'])
@@ -1153,7 +1168,8 @@ test('air gap: the terminal files reach nothing at runtime beyond React, the bra
   ]
   // repl.ts is the console's own machine: a runtime import, and the one terminal module that imports nothing itself.
   // react-dom is React's own renderer: Terminal.tsx takes flushSync from it, so a tap can open the console and focus it at once.
-  const allowedRuntime = ['react', 'react-dom', '../../brand.ts', './bridge.ts', './commands.ts', './repl.ts']
+  // noirscript/index.ts is the console's second language: a runtime import of commands.ts, and a directory that imports nothing itself (its airgap.test.ts pins that).
+  const allowedRuntime = ['react', 'react-dom', '../../brand.ts', './bridge.ts', './commands.ts', './repl.ts', './noirscript/index.ts']
   for (const file of ['bridge.ts', 'commands.ts', 'Terminal.tsx', 'repl.ts']) {
     const src = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8')
     assert.doesNotMatch(src, /\bimport\s*\(|\brequire\s*\(|__AC__|__SIM__/, `${file}: dynamic import or debug handle`)
@@ -2159,6 +2175,69 @@ test('r0: the console\'s own machine runs the rest of the line, keeps definition
   assert.deepEqual(b.record.recCalls, [])
   // The offline bridge is as good as any: the machine needs no engine.
   assert.deepEqual(run('r0 10 3 mod .', offlineBridge(BRAND), []).lines, [{ kind: 'out', text: '1' }])
+})
+
+test('noir: NoirScript runs the rest of the line on the session, keeps definitions, resets, lists words and disassembles; the city\'s columns are copies and nothing is written', () => {
+  const b = fake()
+  const session = replSession()
+  assert.deepEqual(run('noir let mut s = 0; for i in 0..10 { s += i * i; } print(s);', b, [], session).lines, [{ kind: 'out', text: '285' }])
+  assert.deepEqual(run('noir fn sq(x: i32) -> i32 { x * x }', b, [], session).lines, [])
+  assert.deepEqual(run('noir print(sq(7));', b, [], session).lines, [{ kind: 'out', text: '49' }])
+  assert.deepEqual(run('noir let v = f32x4(1.0, 2.0, 3.0, 4.0); print(v * splat_f32x4(2.0), hsum(v));', b, [], session).lines, [{ kind: 'out', text: 'f32x4(2, 4, 6, 8) 10' }])
+  // Without a session each line runs on a fresh VM: the definition is not there.
+  const fresh = run('noir print(sq(7));', b, [])
+  assert.deepEqual(fresh.lines.map((l) => l.kind), ['err'])
+  assert.match(fresh.lines[0].text, /^noir: .*sq/)
+  assert.deepEqual(run('noir print(1 / 0);', b, [], session).lines, [{ kind: 'err', text: 'noir: division by zero' }])
+  assert.ok(run('noir words', b, [], session).lines[0].text.split(' ').includes('sq'))
+  // The city's columns: read as copies through the bridge's one reader, before the run.
+  assert.deepEqual(run('noir print(crowd.n, cars.n, kernel.law1);', b, [], session).lines, [{ kind: 'out', text: '4 2 3' }])
+  assert.deepEqual(run('noir print(query cars where speed > 5.0, query crowd where x > 0.0 && z > 0.0);', b, [], session).lines, [{ kind: 'out', text: '1 1' }])
+  assert.ok(b.calls.length > 0 && b.calls.every((c) => c === 'soa tables'), b.calls.join(', '))
+  // A write intrinsic type-checks and compiles, and fails at run time while the elite tier is locked, with the tier's own words.
+  const locked = run('noir print(tune("car.power", 2.0));', b, [], session)
+  assert.deepEqual(locked.lines, [{ kind: 'err', text: "noir: elite tier locked: 'ring0 unlock --elite <passphrase>' opens it" }])
+  assert.deepEqual(b.operator.opCalls, [])
+  assert.deepEqual(b.record.recCalls, [])
+  // Open, the elite tier's surface is the writes' only path (the fake's tune answers 1, cull and steer echo, intent is
+  // sent), the run has the tier's raised limits, and the city's columns are still the one reader's.
+  const u = unlocked()
+  const us = replSession()
+  assert.deepEqual(only(run('noir print(tune("car.power", 2.0));', u, [], us)), { kind: 'err', text: "noir: elite tier locked: 'ring0 unlock --elite <passphrase>' opens it" }, 'the operator tier alone opens nothing')
+  run('ring0 elite set open sesame please', u, [])
+  run('ring0 unlock --elite open sesame please', u, [])
+  assert.deepEqual(run('noir print(tune("car.power", 2.0), cull(0.5), steer("CIVIC_COOPERATION", 0.25));', u, [], us).lines, [{ kind: 'out', text: '1 0.5 0.25' }])
+  assert.deepEqual(run('noir print(intent(1, 1.0, 0.0, 0.0));', u, [], us).lines, [{ kind: 'out', text: 'true' }])
+  assert.ok(u.calls.every((c) => c === 'soa tables'), u.calls.join(', '))
+  const long = run('noir let mut s = 0; for i in 0..1200000 { s += 1; } print(s);', u, [], us)
+  assert.deepEqual(long.lines[0], { kind: 'out', text: '1200000' }, 'past the standard step budget, within the tier\'s')
+  run('ring0 lock', u, [])
+  assert.deepEqual(only(run('noir print(cull(0.5));', u, [], us)), { kind: 'err', text: "noir: elite tier locked: 'ring0 unlock --elite <passphrase>' opens it" })
+  // The listing: bytecode, one line per instruction; a bad line is its compile error.
+  const asm = run('noir asm print(1 + 2);', b, [], session)
+  assert.ok(asm.lines.length > 0 && asm.lines.every((l) => l.kind === 'out'))
+  assert.match(texts(asm).join('\n'), /ADD_I32/)
+  assert.deepEqual(run('noir asm', b, [], session).lines, [{ kind: 'err', text: 'usage: noir asm <source>' }])
+  assert.deepEqual(run('noir asm let x: i32 = true;', b, [], session).lines.map((l) => l.kind), ['err'])
+  // A runaway line ends with the budget's error, its step count noted, and the session still answers.
+  const runaway = run('noir loop { }', b, [], session)
+  assert.deepEqual(runaway.lines.map((l) => l.kind), ['err', 'sys'])
+  assert.match(runaway.lines[0].text, /^noir: step budget exhausted/)
+  assert.match(runaway.lines[1].text, /^-- \d+ steps --$/)
+  assert.deepEqual(run('noir print(sq(3));', b, [], session).lines, [{ kind: 'out', text: '9' }])
+  assert.deepEqual(run('noir reset', b, [], session).lines, [{ kind: 'out', text: 'noir: reset (every definition forgotten, memory zeroed)' }])
+  assert.ok(!run('noir words', b, [], session).lines[0].text.split(' ').includes('sq'))
+  // Alone: the usage and a hint.
+  const alone = run('noir', b, [])
+  assert.equal(alone.lines[0].text, 'usage: noir <source>|noir reset|noir words|noir asm <source>')
+  assert.equal(alone.lines[1].kind, 'sys')
+  // Deterministic: the same line on two sessions gives the same result.
+  assert.deepEqual(run('noir print(7 % 3, 2.5 * 2.0);', b, [], replSession()), run('noir print(7 % 3, 2.5 * 2.0);', b, [], replSession()))
+  // A failing reader is an error line, never an exception; a host without columns (the console alone) reads empty tables.
+  const bad = fake()
+  bad.soa = { tables: () => { throw new Error('columns unavailable') } }
+  assert.deepEqual(run('noir print(1);', bad, []).lines, [{ kind: 'err', text: 'noir: columns unavailable' }])
+  assert.deepEqual(run('noir print(crowd.n, cars.n);', offlineBridge(BRAND), []).lines, [{ kind: 'out', text: '0 0' }])
 })
 
 test('net: status reads at any time as rows; join, leave and forget are the operator\'s; a join resolves with the room\'s line or its refusal', async () => {

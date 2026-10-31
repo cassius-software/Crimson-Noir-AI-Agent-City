@@ -26,6 +26,7 @@ import type {
 import type { HarnessReport, harnesses } from '../harness.ts'
 import type { LookChange } from '../../03_Spawn_Agents/look.ts'
 import type { Swarm } from '../../08_Swarm/orchestrator.ts'
+import type { NoirTables } from './noirscript/index.ts'
 
 export type {
   HalDevice, LawText, ActBy, ActEnd, ActEvent, ActsBridge, AskResult, ExecResult, GatedAsk, GatedRun, GatedSay, GateTether, MindStatus, PendingAct, Piece,
@@ -290,6 +291,15 @@ export interface TopicBridge {
   status(): string
 }
 
+/**
+ * The city's structure-of-arrays columns for NoirScript (noirscript/index.ts NoirTables): the crowd's x and z, the
+ * cars' x, z, heading, speed and mode, the kernel's counters and the frame clock, every array a copy taken at the
+ * call. Read-only: the VM copies them again into its own arena, and the host hands it no write surface.
+ */
+export interface SoaBridge {
+  tables(): NoirTables
+}
+
 /** A ping's kind (08_Swarm/ping.ts PingKind): what the operator means by the mark. */
 export type PingKind = 'go' | 'look' | 'gather' | 'wait'
 
@@ -365,6 +375,8 @@ export interface TerminalBridge {
   captions(arg?: 'on' | 'off'): string
   /** The unified namespace of topics (read-only); absent on a host that publishes none (the TTY shell, an older host). */
   topics?: TopicBridge
+  /** The city's columns for NoirScript (read-only copies); absent on a host without a running city (the TTY shell). */
+  soa?: SoaBridge
   ping: PingBridge
   operator: OperatorBridge
   record: RecordBridge
