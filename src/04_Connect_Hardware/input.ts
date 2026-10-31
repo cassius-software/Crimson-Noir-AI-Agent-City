@@ -154,6 +154,8 @@ export class Input {
     this.canvas = canvas
     this.hal = hal
     this.now = now
+    // The player LEDs follow this table (hal.ts seatPads): told again whenever a seat changes hands.
+    hal.seatPads(this.seats)
     const on = <K extends keyof DocumentEventMap>(target: Document | HTMLElement, type: K, fn: (e: DocumentEventMap[K]) => void, opts?: AddEventListenerOptions) => {
       target.addEventListener(type, fn as EventListener, opts)
       this.disposers.push(() => target.removeEventListener(type, fn as EventListener, opts))
@@ -422,6 +424,7 @@ export class Input {
     this.seats.setPlayers(n)
     if (this.seats.players <= 1) this.seats.clear()
     for (const seat of this.padSeats) seat.release()
+    this.hal.seatsChanged()
   }
 
   /** True while the pads are dealt to seats (more than one player). */
@@ -464,7 +467,7 @@ export class Input {
     }
     let edges: number
     if (this.seats.players > 1) {
-      this.seats.assign(pads)
+      if (this.seats.assign(pads)) this.hal.seatsChanged()
       const mine = this.mine
       mine.length = 0
       for (let i = 0; i < pads.length; i++) {
@@ -549,7 +552,7 @@ export class Input {
 
 /**
  * Adaptive-trigger bridge. `level` is 0..1: 0 = free pull, rising with brake pressure while driving. Changes
- * go to the HAL, which maps them onto the DualSense left-trigger continuous-resistance effect.
+ * go to the HAL, which maps them onto the DualSense left trigger's Feedback effect (a resistance from the top).
  */
 export class TriggerFeedback {
   level = 0

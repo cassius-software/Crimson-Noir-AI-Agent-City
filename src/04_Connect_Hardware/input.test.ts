@@ -726,3 +726,22 @@ test('the shield is not the console\'s suspend: it leaves the keyboard alone, an
   input.poll(1 / 60)
   assert.equal(input.take('ping'), false, 'the right shoulder\'s ping is dropped like the rest of the pad\'s edges')
 })
+
+test('the seating plan reaches the HAL: a seat changing hands and setPlayers tell the bus (its player LEDs), a quiet frame does not', () => {
+  let told = 0
+  input.hal.seatsChanged = () => { told++ }
+  input.setPlayers(2)
+  assert.equal(told, 1, 'setPlayers')
+  pads.push(pad({ index: 0 }))
+  input.poll(1 / 60)
+  assert.equal(told, 2, 'the pad took seat 1')
+  input.poll(1 / 60)
+  assert.equal(told, 2, 'nothing changed hands')
+  pads.length = 0
+  input.poll(1 / 60)
+  assert.equal(told, 3, 'the pad left its seat')
+  input.setPlayers(1)
+  assert.equal(told, 4)
+  input.poll(1 / 60)
+  assert.equal(told, 4, 'one seat: the table is not dealt')
+})

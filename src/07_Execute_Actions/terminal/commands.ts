@@ -990,14 +990,16 @@ const HANDLERS: Record<Name, Handler> = {
     const kind = Object.hasOwn(PAIR_KINDS, args[1]) ? PAIR_KINDS[args[1]] : undefined
     if (!kind) return fail(`hal: unknown bus '${args[1]}'`, usage('hal'))
     // Called synchronously: the browser only shows its device picker inside the Enter keydown's user activation.
-    // The bus resolves a device in state 'error' (API missing, request refused) rather than rejecting.
+    // The bus resolves a device in state 'error' (API missing, request refused) rather than rejecting. Inside the
+    // Windows app the shell lists the controllers itself and shows no picker (nativeHid.ts): said so.
+    const shell = kind === 'hid' && b.hal.shellHid === true
     const pending = Promise.resolve(b.hal.pair(kind)).then(
-      (d): Line[] => (!d ? [sys('hal: no device selected')]
+      (d): Line[] => (!d ? [sys(shell ? 'hal: no controller plugged in or paired' : 'hal: no device selected')]
         : d.state === 'error' ? [err(`hal: pair failed: ${d.detail || d.name}`)]
         : [out(`hal: ${d.name} ${d.state} (${d.transport}${d.detail ? `, ${d.detail}` : ''})`)]),
       (e: unknown): Line[] => [err(`hal: pair failed: ${message(e)}`)],
     )
-    return { lines: [sys(`hal: waiting for the browser's ${kind} device picker...`)], pending }
+    return { lines: [sys(shell ? 'hal: asking the app for its controllers...' : `hal: waiting for the browser's ${kind} device picker...`)], pending }
   },
 
   memory(args, b) {

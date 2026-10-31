@@ -2603,3 +2603,14 @@ test('agent, sloane and goal: the roster, the concierge\'s voice and a goal in p
   assert.deepEqual(complete('sloane v'), ['sloane voice', 'sloane voices'])
   assert.deepEqual(complete('agent hire '), [], 'the name comes first: no skill is offered in its place')
 })
+
+test('hal pair hid inside the Windows app: no picker is promised, and an empty list is "none plugged in"', async () => {
+  const b = fake()
+  ;(b.hal as { shellHid?: boolean }).shellHid = true
+  b.pairResult = Promise.resolve(null)
+  const r = run('hal pair hid', b, [])
+  assert.equal(only(r).kind, 'sys')
+  assert.equal(only(r).text, 'hal: asking the app for its controllers...')
+  assert.deepEqual(await r.pending, [{ kind: 'sys', text: 'hal: no controller plugged in or paired' }])
+  assert.deepEqual(await run('hal pair ble', b, []).pending, [{ kind: 'sys', text: 'hal: no device selected' }], 'the other buses keep the browser\'s picker')
+})
