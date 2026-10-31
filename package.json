@@ -18,6 +18,7 @@
     "native:wllama": "node tools/native/wllama-pack.mjs",
     "preview": "vite preview",
     "serve:net": "node src/10_Network/replication.node.ts",
+    "serve:robots": "node src/10_Network/robotRelay.node.ts",
     "smoke:bridge": "node tools/net/bridge-smoke.mjs",
     "smoke:browser": "node tools/browser/smoke.mjs",
     "smoke:net": "node tools/net/smoke.mjs",

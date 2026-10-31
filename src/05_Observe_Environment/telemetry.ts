@@ -175,6 +175,8 @@ export interface SipocSnapshot {
     glyphs: GlyphFamily
     /** The headset (xrSession.ts): its state and one line (what the session holds, or the last answer to an ask). */
     xr: { state: XrState; detail: string }
+    /** The robots' bridge (04_Connect_Hardware/robotLink.ts), added by the host: how many robots, how many armed, one line. */
+    robots?: { count: number; armed: number; detail: string }
     /** The .agv recorder (recorder.ts): local-only capture of the canvas or the camera with per-frame telemetry. */
     recording: RecordingState
     /**

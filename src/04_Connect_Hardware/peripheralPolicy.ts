@@ -6,7 +6,8 @@
  * microcontroller driving a light, a servo or a motor, and an aerial drone. HAL/1 today only feeds devices telemetry
  * ("a device cannot steer the city"); this is the policy that has to say yes before the city may send anything that
  * actuates. It is pure and deterministic (the clock is an argument, nothing is imported), so every refusal can be
- * proved in Node, and it is not wired into the HAL bus yet: docs/hal-peripherals-spec.md is the specification.
+ * proved in Node. The HAL bus itself keeps no policy state: the page's robot bridge (robotLink.ts) runs this gate for
+ * the joint bridge's setpoints (docs/joint-bridge-spec.md §4); docs/hal-peripherals-spec.md is the specification.
  *
  * Default deny. Telemetry in is always allowed. Anything out needs, in order: no Ring-0 lock, a capability the device
  * declared and the handshake accepted, the operator tier, a live Spatial Lease, an explicit arming handshake, a fresh
@@ -15,7 +16,8 @@
  * the operator. Payload release, projectile and aiming capabilities are refused at the handshake, for the session:
  * no later state can admit them. A Ring-0 panic latches the lock; a panic, a broken tether or a lost heartbeat
  * disarms at once and broadcasts DISARM (a drone's failsafe is to hold and land where it is, never to fly back).
- * What breaks if it is removed? Nothing today (no actuating device is supported); a future driver would have no gate.
+ * What breaks if it is removed? The joint bridge has no gate: robotLink.ts could not arm a robot or admit a setpoint
+ * with every refusal proved, and a future driver for any other actuating device would have none either.
  */
 
 /** The HAL/1 extension this policy reads: `CAPS <version> <json>` after READY. */
@@ -125,22 +127,26 @@ export interface PolicyState {
   readonly geofence: Geofence | null
   /** The operator's position (x, z), m. */
   readonly operatorAt: { x: number; z: number } | null
+  /** The robot's movable joint count, the length of a 'joints' command's arrays (0: no manifest, so no joint positions). */
+  readonly joints: number
   readonly audit: readonly AuditEntry[]
 }
 
-export function initialState(caps: Capabilities, now: number): PolicyState {
-  return { caps, operator: false, lease: null, armNonce: null, armed: false, locked: false, lastSeq: 0, lastBeat: now, recent: [], geofence: null, operatorAt: null, audit: [] }
+export function initialState(caps: Capabilities, now: number, joints = 0): PolicyState {
+  return { caps, operator: false, lease: null, armNonce: null, armed: false, locked: false, lastSeq: 0, lastBeat: now, recent: [], geofence: null, operatorAt: null, joints, audit: [] }
 }
 
 export type Command =
   | { kind: 'telemetry-in' }
   | { kind: 'actuate'; capability: string; seq: number; issuedAt: number; ttlMs: number; value: number }
   | { kind: 'flight'; seq: number; issuedAt: number; ttlMs: number; setpoint: { x: number; z: number; altitudeM: number; speedMs: number } }
+  /** Joint setpoints (jointState.ts JointTargets, for a servo): each array empty or `joints` long, every number finite. */
+  | { kind: 'joints'; capability: 'servo'; seq: number; issuedAt: number; ttlMs: number; q: readonly number[]; qd: readonly number[]; tau: readonly number[] }
 
 export type RefusalReason =
   | 'locked' | 'refused-at-handshake' | 'not-declared' | 'no-operator-tier' | 'no-lease' | 'not-armed' | 'heartbeat-lost'
-  | 'stale-sequence' | 'expired' | 'rate-limited' | 'non-finite' | 'no-geofence' | 'outside-geofence' | 'above-ceiling'
-  | 'over-speed' | 'beyond-range'
+  | 'stale-sequence' | 'expired' | 'rate-limited' | 'non-finite' | 'wrong-length' | 'no-geofence' | 'outside-geofence'
+  | 'above-ceiling' | 'over-speed' | 'beyond-range'
 
 export type Admission =
   | { ok: true; state: PolicyState }
@@ -207,7 +213,8 @@ export function admit(s: PolicyState, c: Command, now: number): Admission {
   if (s.locked) return refuse('locked')
   const capability = c.kind === 'flight' ? 'flight' : c.capability.toLowerCase()
   if (s.caps.refused.some((r) => r.name === capability) || NEVER.test(capability)) return refuse('refused-at-handshake')
-  if (!s.caps.actuation.includes(capability)) return refuse('not-declared')
+  // Joint setpoints drive a servo and nothing else: another capability on a 'joints' command is not declared for it.
+  if (!s.caps.actuation.includes(capability) || (c.kind === 'joints' && capability !== 'servo')) return refuse('not-declared')
   if (!s.operator) return refuse('no-operator-tier')
   if (!s.lease || s.lease.signal.aborted) {
     const d = s.armed ? tetherBroken(s, now) : { state: s, broadcast: [] }
@@ -224,6 +231,12 @@ export function admit(s: PolicyState, c: Command, now: number): Admission {
   if (recent.length >= POLICY.maxRatePerSecond) return refuse('rate-limited')
   if (c.kind === 'actuate') {
     if (!finite(c.value)) return refuse('non-finite')
+  } else if (c.kind === 'joints') {
+    // Each array speaks for every movable joint, or for none: a shorter or longer one would move the wrong joints.
+    for (const a of [c.q, c.qd, c.tau]) {
+      if (!Array.isArray(a) || (a.length !== 0 && a.length !== s.joints)) return refuse('wrong-length')
+    }
+    if (!finite(...c.q, ...c.qd, ...c.tau)) return refuse('non-finite')
   } else {
     const p = c.setpoint
     if (!finite(p.x, p.z, p.altitudeM, p.speedMs)) return refuse('non-finite')

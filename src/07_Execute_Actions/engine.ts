@@ -77,6 +77,7 @@ import { XrMapper } from '../04_Connect_Hardware/xrInput.ts'
 import { xrSystemOf } from '../04_Connect_Hardware/xrSystem.ts'
 import { composerFor, XrPresence, type XrHost, type XrRendererLike } from './xrSession.ts'
 import { SimClient } from './simClient.ts'
+import { RobotBridge, type BridgeMode } from '../04_Connect_Hardware/robotLink.ts'
 import { applyWalk, requestWalk, type ScriptedWalk } from './scriptedWalk.ts'
 import {
   doorOf, ENTER_RANGE, footWish, MODES, PERSON, POSE, RUN, type CarBodyState, type DriveControls, type Door, type FootControls, type PlayerControls,
@@ -432,6 +433,8 @@ export class Engine {
   private readonly xr: XrPresence
   /** Which immersive modes the browser offers, asked once at start (false for both until it answers). */
   private xrModes: { vr: boolean; ar: boolean } = { vr: false, ar: false }
+  /** The robots' bridge (robotLink.ts): their frames into the realm's bodies, the bodies' joints out through the gate. */
+  private readonly robots: RobotBridge
   /** The driven car's heading last frame, so the head turns with the car. */
   private carHeading = 0
   /** On foot the body faces where the head looks. */
@@ -677,6 +680,19 @@ export class Engine {
     this.input.setXr(this.xrInput)
     this.xr = new XrPresence(xrSystemOf((globalThis as { navigator?: object }).navigator), p.gpu.renderer as unknown as XrRendererLike, this.xrHost(), this.xrInput)
     void this.xr.supported().then((m) => { this.xrModes = m })
+    // The robots: the HAL bus's and the loopback relay's into the realm's joint buffer and back, every setpoint out
+    // through the peripheral gate. The operator tier is the console's (the bridge below, none until it is built),
+    // the operator stands where the avatar does, and the clock is the wall clock: a setpoint's issuedAt crosses the
+    // wire, and the relay and a device judge its age on theirs.
+    this.robots = new RobotBridge({
+      hal: this.input.hal,
+      joints: this.sim.joints,
+      send: (c) => this.sim.send(c),
+      operatorUnlocked: () => this.bridge?.operator.unlocked() ?? false,
+      operatorAt: () => ({ x: this.sim.state.avatar.x, y: this.sim.state.avatar.feetY, z: this.sim.state.avatar.z, heading: this.avatarHeading }),
+      now: () => Date.now(),
+      log: (line) => this.toast('Robots', line),
+    })
     // Split screen: every player's soundscape over one shared context, each in head space (Web Audio has one listener
     // per context); alone, player 1's soundscape owns its context and its listener is the head, as ever.
     const players = p.options.players
@@ -1471,6 +1487,8 @@ export class Engine {
     // mask) and the rigs posed where they stand. View-only: the realm decided who is promoted.
     this.rigView.sync(s.rigs)
     this.crowd.hide(this.rigView.hidden)
+    // The robots: the bodies' joints out of the joint buffer, the newest frames in, the setpoints out through the gate.
+    this.robots.tick()
     // The pedestrians the worker simulated: straight into the render buffers (the copy is only ever drawn).
     if (s.crowdFrame && this.crowd.upload(s.crowdFrame)) this.crowdFrames++
     for (const ev of s.events) {
@@ -2221,6 +2239,7 @@ export class Engine {
         glyphs: this.glyphs,
         recording: this.recorder.state,
         xr: { state: this.xr.state, detail: this.xrLine() },
+        robots: this.robots.summary(),
       },
       input: { mode: driving ? 'vehicle' : 'foot', nearVehicle: !driving && this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE) >= 0 },
       process: {
@@ -2323,6 +2342,22 @@ export class Engine {
       ghost: (arg?: 'on' | 'off') => (arg === undefined ? (this.ghost.on ? 'on' : 'off') : this.setGhost(arg === 'on')),
       rain: (arg?: 'on' | 'off') => (arg === undefined ? (this.matrixOn ? 'on' : 'off') : this.setMatrix(arg === 'on')),
       xr: (arg?: 'vr' | 'ar' | 'off') => this.xrCommand(arg),
+      // The robots (robotLink.ts): every line comes from the bridge; the operator tier is read from this same bridge.
+      robot: Object.freeze({
+        list: () => this.robots.list(),
+        relay: (url: string, token: string) => this.robots.relay(url, token),
+        relayOff: () => this.robots.relayOff(),
+        relayStatus: () => this.robots.relayStatus(),
+        spawn: (id: string, x?: number, z?: number) => this.robots.spawn(id, x, z),
+        urdf: (url: string, name?: string) => this.robots.urdf(url, name),
+        demo: (name?: string) => this.robots.demo(name),
+        mode: (id: string, m: string) => this.robots.mode(id, m as BridgeMode),
+        set: (id: string, joint: string, q: number) => this.robots.set(id, joint, q),
+        arm: (id: string) => this.robots.arm(id),
+        disarm: (id: string) => this.robots.disarm(id),
+        calibrate: (id: string, joint: string) => this.robots.calibrate(id, joint),
+        remove: (id: string) => this.robots.remove(id),
+      }),
       render: (arg?: 'on' | 'off') => (arg === undefined ? (this.rendering ? 'on' : 'off') : this.setRendering(arg === 'on')),
       captions: (arg?: 'on' | 'off') => (arg === undefined ? (this.captionsOn ? 'captions: on' : 'captions: off') : this.setCaptions(arg === 'on')),
       // The unified namespace, read-only: the rows are formatted here, so the console imports nothing of the bus. A
@@ -2637,6 +2672,8 @@ export class Engine {
     this.netLetGo('the city has stopped')
     try { this.audio.dispose() } catch { /* the halt must complete whatever the audio stack does */ }
     for (let k = 1; k < this.views.length; k++) try { this.views[k].audio.dispose() } catch { /* likewise */ }
+    // DISARM on every robot's door and the relay closed, before the bus closes its ports.
+    try { this.robots.panic() } catch { /* likewise */ }
     void Promise.resolve(this.input.hal.dispose()).catch(() => {})
     try { this.onHalt?.(reason) } catch { /* likewise */ }
   }
