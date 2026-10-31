@@ -15,10 +15,14 @@
  * with them. Speech (`say <skill>: …`, Voice: 09_Cognition/localSpeech.ts; SpeechOut: the engine's soundscape) is
  * said by the person it is bound to, from where they stand, and cut mid-word when they are left behind. Every vehicle
  * command a script issues still goes through Fleet's vetting; the facade only forwards plain numbers and strings.
+ * Before any model is asked, the Ring-0 action gate (02_Define_The_Rules/ring0Gate.ts admitAsk) holds the ask to the
+ * Zeroth Law: the page contained (what the host vouches through `contained`), the model on this machine or none, the
+ * tier unlocked; the keeper of city actions (acts.ts) asks the same gate before a proposal is shown and before it runs.
  * What breaks if it is removed? `operator`, `run`, `ask`, `say`, `api`, `get`, `set` and `harness` have nothing
  * behind them, and the engine has no contract to implement.
  */
 import { DISENGAGED, disengaged, screen } from '../02_Define_The_Rules/conduct.ts'
+import { admitAsk, sentence as lawSentence, type Vouched } from '../02_Define_The_Rules/ring0Gate.ts'
 import type { CrowdStats } from '../03_Spawn_Agents/crowdCompute.ts'
 import type { KernelStats, QualityState, SipocSnapshot } from '../05_Observe_Environment/telemetry.ts'
 import type { EliteWrites, OperatorBridge } from './terminal/bridge.ts'
@@ -333,6 +337,12 @@ export interface Senses {
   readonly nameOf?: (agent: number) => string | null
   /** The two city knobs an allowed action may turn that are not facade leaves: rain mode and the sound. */
   readonly city?: CityKnobs
+  /**
+   * What the host vouches to the Ring-0 action gate: the page's outbound primitives are held to this machine
+   * (02_Define_The_Rules/airgap.ts airgapInstalled on the page's global). Left out, the host has vouched nothing, and the
+   * gate admits no ask and no action: it fails closed.
+   */
+  readonly contained?: () => boolean
 }
 
 /**
@@ -441,7 +451,8 @@ export interface PendingAct {
 }
 
 /** How a proposed city action ended, and the line that says so. */
-export type ActEnd = { readonly state: 'done' | 'failed' | 'refused' | 'withdrawn' | 'aborted'; readonly line: string }
+/** How a proposal ended: done, failed, refused by a person, denied by the Ring-0 action gate after a person allowed it (`line` names the law), withdrawn, or aborted with its tether. */
+export type ActEnd = { readonly state: 'done' | 'failed' | 'refused' | 'denied' | 'withdrawn' | 'aborted'; readonly line: string }
 
 /** What a follower of the proposals sees: one proposed, one allowed, one ended. */
 export type ActEvent =
@@ -1045,6 +1056,16 @@ const answeringProvider = (mind: Mind): string | undefined => {
 export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sleep: (ms: number) => Promise<void> = wait, senses: Senses = {}): OperatorBridge {
   const api = scriptApi(sim)
   const { voice, speech, diary, awareness, voiceOf, nameOf, city, vault } = senses
+  /** What the host vouches to the gate (null: nothing, which admits nothing). */
+  const contained = (): Vouched => (senses.contained ? senses.contained() === true : null)
+  /**
+   * The answering provider's server, for the gate's loopback bound: none for the scripted provider or a model running
+   * in this page (neither addresses a server).
+   */
+  const endpoint = (): string | null => {
+    const p = answeringProvider(mind)
+    return p === 'scripted' || p === 'inpage' ? null : mind.settings().server
+  }
   let unlocked = false
   let running: string | null = null
   let asking: (GatedAsk & { stop(): void }) | null = null
@@ -1083,6 +1104,7 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
     nameOf,
     now: () => Date.now(),
     unlocked: () => unlocked,
+    contained,
   })
   /**
    * One prompt through the gate, with its stop: `ask` hands it out without the stop, the swarm keeps it. `acting`: the
@@ -1090,6 +1112,9 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
    */
   const askThrough = (skills: readonly string[], prompt: string, acting = false): GatedAsk & { stop(): void } => {
     if (!unlocked) throw locked('ask')
+    // The gate, before any model is asked: the page contained and the model on this machine or none (the Zeroth Law).
+    const admitted = admitAsk({ contained: contained(), endpoint: endpoint(), unlocked })
+    if (!admitted.admitted) throw new Error(`ask: ${lawSentence(admitted)}`)
     // A proposal waiting for the operator's OK holds the floor: the console's asks and the swarm's steps alike.
     if (acts.pending()) throw new Error(PROPOSAL_WAITING)
     if (asking) throw new Error("an answer is still coming: wait for it, or type 'ask stop'")
@@ -1144,10 +1169,7 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
   const orchestrator = createSwarm({
     // Never `acting`: a role's ACTION line is text, and the swarm proposes nothing.
     ask: (skills, prompt) => askThrough(skills, prompt),
-    endpoint: () => {
-      const p = answeringProvider(mind)
-      return p === 'scripted' || p === 'inpage' ? null : mind.settings().server
-    },
+    endpoint,
   })
   // A run is refused while locked, like a prompt (a host's voice line reaches this surface too, not only the console),
   // and while a proposal waits for the operator's OK.

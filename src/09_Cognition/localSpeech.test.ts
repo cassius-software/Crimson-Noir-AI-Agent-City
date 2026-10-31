@@ -377,7 +377,7 @@ function operatorConsole(src: Mirror, server: string) {
   const router = new TaskRouter(src)
   const out = new Soundscape()
   const voice = createLocalSpeech({ fetch: netFetch })
-  const term = { operator: operatorBridge(CITY, router, createLocalCompute({ fetch: netFetch }), undefined, { voice, speech: out }) } as unknown as TerminalBridge
+  const term = { operator: operatorBridge(CITY, router, createLocalCompute({ fetch: netFetch }), undefined, { voice, speech: out, contained: () => true }) } as unknown as TerminalBridge
   shell('operator unlock', term, [])
   shell(`say server ${server}`, term, [])
   shell('say voice v1', term, [])

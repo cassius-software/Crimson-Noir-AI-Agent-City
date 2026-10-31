@@ -90,7 +90,7 @@ const NUMBER = /^-?\d+(?:\.\d+)?$/
 const CORE = [
   { name: 'help', usage: 'help [command]', summary: 'list commands, or explain one' },
   { name: 'stats', usage: 'stats [--once]', summary: 'live Rapier3D, frame, crowd and kernel readout' },
-  { name: 'laws', usage: 'laws', summary: 'the three laws the kernel enforces, in rank order' },
+  { name: 'laws', usage: 'laws', summary: 'the four laws the kernel and the action gate enforce, in rank order' },
   { name: 'kernel', usage: 'kernel', summary: 'interventions per law, Solid->Sensor flips' },
   { name: 'topic', usage: 'topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]', summary: 'the unified namespace: every reading as a retained topic under Enterprise/JCS/Site/AgentCity (~); filter with + for one level and # for the rest' },
   { name: 'feature', usage: 'feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]', summary: "the feature inspector: named readings of the city in [0, 1], sparsified and ranked; steer and clamp lean the agents' prompts and the tuning knobs (operator)" },
@@ -131,7 +131,7 @@ const OPERATOR = [
   { name: 'run', usage: 'run <skill>[,<skill>...]: <js...>', summary: 'run a script against sim.* while someone tethered has the skill (Shift+Enter adds a line)' },
   { name: 'ask', usage: 'ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|file [forget <name>|load|unload|log]|gpu auto|on|off|stop]', summary: 'ask the model, answering as someone tethered with the skill; the answer streams in' },
   { name: 'swarm', usage: 'swarm [run [--agents <1-5>] <goal...>|plan [--agents <1-5>] <goal...>|status|stop|roles|guardrails|audit [verify]]', summary: 'a goal over up to five roles (architect, coder, tester, auditor, verifier), one gated prompt each, guardrails before and after, a hash-chained audit trail' },
-  { name: 'act', usage: 'act [ok|no|log [verify]|list]', summary: 'a city action an agent proposed: allow it, refuse it, read the hash-chained trail, or list the catalogue' },
+  { name: 'act', usage: 'act [ok|no|log [verify]|list|gate]', summary: 'a city action an agent proposed: allow it, refuse it, read the hash-chained trail, list the catalogue, or read the gate it passes' },
   { name: 'say', usage: 'say [<skill>[,<skill>...]: <text...>|voice <name>|model <name>|server <url>|provider local|elevenlabs|key <key>|none|auto on|off|stop]', summary: 'said aloud by someone tethered with the skill, from where they stand (a speech server on this machine; or ElevenLabs through a gateway on it)' },
   { name: 'api', usage: 'api [path]', summary: 'the script API, or one branch of it' },
   { name: 'get', usage: 'get [path]', summary: 'read physics.* and shaders.* tuning keys' },
@@ -245,7 +245,7 @@ const ARGS: Record<string, readonly string[]> = {
   'ask connect': PROVIDER_ARGS,
   swarm: ['audit', 'guardrails', 'plan', 'roles', 'run', 'status', 'stop'],
   'swarm audit': ['verify'],
-  act: ['list', 'log', 'no', 'ok'],
+  act: ['gate', 'list', 'log', 'no', 'ok'],
   'act log': ['verify'],
   'ask effort': ['high', 'low', 'max', 'medium', 'none', 'xhigh'],
   say: [...SKILL_ARGS.map((s) => `${s}:`), 'auto', 'key', 'model', 'provider', 'server', 'stop', 'voice'].sort(),
@@ -516,7 +516,8 @@ function actAskLines(act: AskResult['act']): Line[] {
 
 /**
  * How a proposed city action ended, as the console prints it: the done line, the failure, the gateway's abort in its
- * own words (never retyped), the refusal (the proposer is told next time) or the withdrawal and why.
+ * own words (never retyped), the refusal (the proposer is told next time), the action gate's refusal of an allowed
+ * action (the law named) or the withdrawal and why.
  */
 function actEndLines(act: PendingAct, end: ActEnd): Line[] {
   const n = act.seq
@@ -525,6 +526,8 @@ function actEndLines(act: PendingAct, end: ActEnd): Line[] {
     case 'failed': return [err(`act ${n}: failed: ${end.line}`)]
     case 'aborted': return [err(`act ${n}: ${/^Aborted \(/.test(end.line) ? end.line : `Aborted (Spatial Tether Lost): ${end.line}`}`)]
     case 'refused': return [sys(`act ${n}: refused: ${act.sentence} (agent ${act.agent} is told next time)`)]
+    // Allowed, then refused by the Ring-0 action gate the moment before it ran: the law, in the gate's words.
+    case 'denied': return [err(`act ${n}: refused: ${end.line}`)]
     case 'withdrawn': return [sys(`act ${n}: withdrawn: ${end.line.replace(/^withdrawn: /, '')}`)]
   }
 }
@@ -632,14 +635,37 @@ function auditLines(entries: AuditRows, v: AuditVerdict, empty: string): Line[] 
   return lines
 }
 
-/** The guardrail invariants, in one line each (commands.test.ts pins them to 02_Define_The_Rules/guardrails.ts, which this file must not import). */
-const INVARIANT_LINES: readonly (readonly [string, string])[] = [
-  ['HumanOverrideSupreme', 'a run the operator has stopped admits no further step, whatever else holds'],
-  ['CapabilityTethered', "a step runs only while someone tethered to the operator has its role's skill (the capability gateway decides)"],
-  ['ConductScreen14A', 'the prompt a role is given and the answer it gives both pass the 14A screen (a lexicon; the model under the conduct core is the second layer)'],
-  ['LoopbackOnly', 'the model endpoint a step reaches is on this machine, or there is none (the scripted provider, or a model running in this page)'],
-  ['BudgetWithinQuota', 'steps, prompt length, answer length and tokens stay within the quota'],
-  ['ProvenanceChained', 'the hash-chained audit trail verifies before every step; a tampered record stops the run'],
+/**
+ * The guardrail invariants, in one line each, with the law each stands under (commands.test.ts pins them to
+ * 02_Define_The_Rules/guardrails.ts INVARIANT_TEXT and INVARIANT_LAW, which this file must not import).
+ */
+const INVARIANT_LINES: readonly (readonly [string, string, string])[] = [
+  ['HumanOverrideSupreme', 'Second Law', 'a run the operator has stopped admits no further step, whatever else holds'],
+  ['CapabilityTethered', 'Third Law', "a step runs only while someone tethered to the operator has its role's skill (the capability gateway decides)"],
+  ['ConductScreen14A', 'Zeroth Law', 'the prompt a role is given and the answer it gives both pass the 14A screen (a lexicon; the model under the conduct core is the second layer)'],
+  ['LoopbackOnly', 'Zeroth Law', 'the model endpoint a step reaches is on this machine, or there is none (the scripted provider, or a model running in this page)'],
+  ['BudgetWithinQuota', 'Third Law', 'steps, prompt length, answer length and tokens stay within the quota'],
+  ['ProvenanceChained', 'Third Law', 'the hash-chained audit trail verifies before every step; a tampered record stops the run'],
+]
+
+/**
+ * The Ring-0 action gate's checks, in rank order, with the law each stands under (commands.test.ts pins them to
+ * 02_Define_The_Rules/ring0Gate.ts CHECKS, which this file must not import). Every ask, every proposal and every run
+ * passes them before any state changes; the first failed check names the law in the refusal.
+ */
+const GATE_LINES: readonly (readonly [string, string, string])[] = [
+  ['Contained', 'Zeroth Law', "the page's outbound primitives are held to this machine (airgap.ts), as the host vouches"],
+  ['LoopbackOnly', 'Zeroth Law', 'the model the words come from is on this machine, or there is none (the script, a model in this page)'],
+  ['Conduct14A', 'Zeroth Law', 'the words pass the 14A screen (conduct.ts); a prompt that fails it is not engaged with at all'],
+  ['Catalogued', 'Zeroth Law', 'the effect is one line of the fixed catalogue (actions.ts): nothing else an answer says can change the city'],
+  ['RealmStanding', 'First Law', 'the Ring-0 audit (ring0.ts) has not panicked: a halted realm takes no action'],
+  ['KineticFree', 'First Law', 'the verb reaches no leaf that moves a body, drives a car or weakens the kernel: a car is only parked, or handed back to a driver the Bouncer vets'],
+  ['OperatorUnlocked', 'Second Law', 'the operator tier is unlocked'],
+  ['PersonAllowed', 'Second Law', 'a person allowed it, at the console, on the card or through the host; the gateway never allows'],
+  ['LeaseHeld', 'Third Law', "the proposer is still tethered to the operator (the capability gateway's lease holds)"],
+  ['ProposerBound', 'Third Law', 'the gate binds the proposer, under the same recruitment, and nobody else'],
+  ['ChainVerified', 'Third Law', 'the hash-chained trail verifies before anything runs'],
+  ['OneAtATime', 'Third Law', 'no other proposal waits: one effect at a time'],
 ]
 
 /** `swarm` alone: whether a run is on, where it is, what it has spent, and the audit trail's size and head. */
@@ -869,7 +895,7 @@ const HANDLERS: Record<Name, Handler> = {
   laws: bare('laws', (b) => {
     const lines: Line[] = []
     for (const l of b.laws()) lines.push(out(`${l.id}. ${l.title}`), out(`   ${l.text}`))
-    lines.push(sys('Ranked: a lower law never overrides a higher one.'))
+    lines.push(sys('Ranked: a lower law never overrides a higher one. The kernel vets every vehicle intent by the three; the action gate (act gate) holds every ask, proposal and run to all four.'))
     return { lines }
   }),
 
@@ -877,7 +903,8 @@ const HANDLERS: Record<Name, Handler> = {
     const st = b.stats()
     const k = st.kernel
     const counts = [0, k.law1, k.law2, k.law3]
-    const laws = b.laws()
+    // The vehicle kernel enforces the three; the Zeroth Law is the action gate's (act gate).
+    const laws = b.laws().filter((l) => l.id !== 0)
     const width = Math.max(0, ...laws.map((l) => l.title.length)) + 2
     return {
       lines: [
@@ -1475,7 +1502,7 @@ const HANDLERS: Record<Name, Handler> = {
       return {
         lines: [
           sys('Every step passes these before a model is asked and after it answers; a failure ends the run and is written to the audit trail:'),
-          ...INVARIANT_LINES.map(([name, text]) => out(`  ${name.padEnd(22)}${text}`)),
+          ...INVARIANT_LINES.map(([name, law, text]) => out(`  ${name.padEnd(22)}${law.padEnd(12)}${text}`)),
           sys(`quota: ${q.agents} roles, ${q.steps} steps, a goal of ${q.goalChars} characters, a prompt of ${q.promptChars}, an answer of ${q.answerChars}, ${q.tokens} tokens a run`),
           sys('These are rules over text, settings and counts, applied the same way every time; they are not a proof about a model, and no model ships to inspect.'),
         ],
@@ -1530,6 +1557,15 @@ const HANDLERS: Record<Name, Handler> = {
       return rows.length ? { lines: rows.map(out) } : fail('act: engine not running')
     }
     if (a === 'log') return { lines: auditLines(acts.log(), acts.verify(), 'act: no entries yet (an ask that proposes an action writes them)') }
+    if (a === 'gate') {
+      return {
+        lines: [
+          sys('Every ask, every proposal and every run passes these before any state changes; the first failed check names its law in the refusal:'),
+          ...GATE_LINES.map(([name, law, text]) => out(`  ${name.padEnd(18)}${law.padEnd(12)}${text}`)),
+          sys('These are rules over what the host vouches, the endpoint, the words, the catalogue, the lock, the lease and the chain, applied the same way every time; they are not a proof about a model.'),
+        ],
+      }
+    }
     if (a !== 'ok' && a !== 'no') return fail(`act: unknown command '${a}'`, usage('act'))
     if (!op.unlocked()) return locked('act')
     if (a === 'no') {

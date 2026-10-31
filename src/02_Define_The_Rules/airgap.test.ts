@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFileSync } from 'node:fs'
-import { installAirgap, isLoopbackHost, loopbackFetch, loopbackOnly, loopbackServer, loopbackUrl, netServer, refusal, ROOM_HOSTS } from './airgap.ts'
+import { airgapInstalled, installAirgap, isLoopbackHost, loopbackFetch, loopbackOnly, loopbackServer, loopbackUrl, netServer, refusal, ROOM_HOSTS } from './airgap.ts'
 
 test('loopbackOnly: http(s) and ws(s) to localhost, 127.0.0.0/8 or [::1], without credentials, give the origin; nothing else does', () => {
   const ok: [string, string][] = [
@@ -165,8 +165,11 @@ test('installAirgap: RTCPeerConnection, WebTransport and sendBeacon are gone, on
 test('installAirgap: a later script cannot restore a primitive, reach the original through a prototype, or install again', async () => {
   const { g, sent, WebSocket: RealSocket, EventSource: RealSource } = fakeGlobal()
   const realFetch = g.fetch
+  assert.equal(airgapInstalled(g), false, 'nothing vouched before it is installed')
   const first = installAirgap(g)
   assert.equal(installAirgap(g), first, 'installed once: the same report again')
+  assert.equal(airgapInstalled(g), true, 'what the host vouches to the Ring-0 action gate')
+  assert.equal(airgapInstalled({}), false, 'another global is not vouched for by this one')
   const strict = (f: () => void): void => { assert.throws(f, TypeError) }
   for (const name of ['fetch', 'WebSocket', 'EventSource', 'XMLHttpRequest', 'importScripts', 'RTCPeerConnection', 'WebTransport'] as const) {
     const d = Object.getOwnPropertyDescriptor(g, name)
