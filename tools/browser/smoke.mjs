@@ -1716,7 +1716,10 @@ const LOSABLE = `(() => {
 const CARD = `(() => {
   const c = document.querySelector('[role="alertdialog"][data-failure]')
   if (!c) return null
-  return { kind: c.dataset.failure, headline: (c.querySelector('h1') || {}).textContent || '', focused: document.activeElement ? document.activeElement.textContent : '',
+  const a = document.activeElement
+  // What holds focus, for the log when it is not Restart: the tag, its label and whether it is inside the card.
+  const active = a ? a.tagName.toLowerCase() + (a.getAttribute('aria-label') ? '[' + a.getAttribute('aria-label') + ']' : '') + (c.contains(a) ? ' in the card' : ' outside the card') : 'none'
+  return { kind: c.dataset.failure, headline: (c.querySelector('h1') || {}).textContent || '', focused: a ? a.textContent : '', active,
     buttons: [...c.querySelectorAll('button')].map((b) => b.textContent), text: c.textContent }
 })()`
 
@@ -1725,7 +1728,7 @@ async function expectCard(p, what, kind, headline, buttons = ['Restart', 'Open t
   const card = await p.waitFor(`(() => { const c = ${CARD}; return c && c.kind === ${JSON.stringify(kind)} && c })()`, BOOT_MS).catch(() => null)
   const seen = card ?? (await p.eval(CARD).catch(() => null))
   check(!!card && card.headline === headline, `${what}: the ${kind} card says “${headline}”`, seen ? `${seen.kind}: ${seen.headline}` : 'no card')
-  check(!!card && JSON.stringify(card.buttons) === JSON.stringify(buttons) && card.focused === 'Restart', `${what}: ${buttons.join(' and ')}, Restart focused`, card ? `${card.buttons} / focus ${card.focused}` : '')
+  check(!!card && JSON.stringify(card.buttons) === JSON.stringify(buttons) && card.focused === 'Restart', `${what}: ${buttons.join(' and ')}, Restart focused`, card ? `${card.buttons} / focus ${card.focused || '(nothing)'}: ${card.active}` : '')
   return card
 }
 

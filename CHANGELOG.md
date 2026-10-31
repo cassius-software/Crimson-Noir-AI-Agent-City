@@ -539,6 +539,14 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Fixed
 
+- **Sloane no longer takes the focus from a halted city's way-out card.** The Concierge became visible when the boot
+  veil finished fading, whatever the city's state, and its name field took the keyboard focus from anything but
+  another text field, so a halt inside the veil's last second (the browser smoke's thrown frame right after the veil
+  lifts, or a graphics reset then) showed the recovery card with Restart focused and, a moment later, Sloane's
+  question with the focus: Enter typed a name instead of restarting. `App.tsx` now hides the Concierge while the city
+  is halted, as the look card and the action card already were (`recoveryWiring.test.ts` and `lookWiring.test.ts` pin
+  the line), and the browser smoke's card check names what holds the focus when it is not Restart. Seen once on
+  `main`'s CI after #65 merged; the same tree had passed the job forty minutes earlier.
 - **A pedestrian pinned on a standing car, and the car held by them.** A pedestrian whose way to their corner ran
   through a car's contact footprint (a car parked across the sidewalk, or the player's car stopped on one) was pushed
   out of the footprint every tick while their walk kept pressing in, so they stood at the bumper for good, staggering;
