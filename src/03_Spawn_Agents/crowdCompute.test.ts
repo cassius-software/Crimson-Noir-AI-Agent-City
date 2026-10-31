@@ -1125,6 +1125,52 @@ test('the page: the hide mask sinks the listed figures below the cull\'s floor i
   assert.equal(crowd.hidden.length, 0)
 })
 
+test('the page: a pin puts the rig\'s pelvis in a worn figure\'s row of the render copy, now and after every upload; a hidden figure stays sunk; bad rows and indices are ignored', async () => {
+  const { device, crowd } = await cullRig()
+  const row = (agent: number) => [...device.buffer('pos').f32().subarray(agent * 4, agent * 4 + 4)]
+  // Before the first upload nothing is written, but the pins are kept for it.
+  device.log.length = 0
+  crowd.pin([3, 5], [10, 0, 20, 1.5, 30, 0, 40, -0.5])
+  assert.deepEqual(device.log, [])
+  assert.deepEqual([...crowd.pinned], [3, 5])
+  const frame = new Float32Array(AGENTS * 12).map((_, i) => i)
+  crowd.upload(frame)
+  assert.deepEqual(device.log.slice(-2), ['write pos @48+16', 'write pos @80+16'], 'the upload re-applies the pins')
+  assert.deepEqual(row(3), [10, 0, 20, 1.5])
+  assert.deepEqual(row(5), [30, 0, 40, -0.5])
+  assert.deepEqual(row(2), [8, 9, 10, 11], 'nobody else is touched')
+  // Once uploaded a pin is written at once (the pelvis moves every step).
+  device.log.length = 0
+  crowd.pin([3], [11, 0, 21, 1.75])
+  assert.deepEqual(device.log, ['write pos @48+16'])
+  assert.deepEqual(row(3), [11, 0, 21, 1.75])
+  assert.deepEqual([...crowd.pinned], [3])
+  // The player's own figure (0), a duplicate, an index past the crowd, a non-index and a row with a non-finite number
+  // are ignored; the rest keep their order.
+  device.log.length = 0
+  crowd.pin([0, 4, 4, AGENTS, 1.5, -1, 6, 7], [1, 0, 1, 0, 2, 0, 2, 0, 3, 0, 3, 0, 4, 0, 4, 0, 5, 0, 5, 0, 6, 0, 6, 0, NaN, 0, 7, 0, 8, 0, 8, 0])
+  assert.deepEqual([...crowd.pinned], [4, 7])
+  assert.deepEqual(device.log, ['write pos @64+16', 'write pos @112+16'])
+  assert.deepEqual(row(4), [2, 0, 2, 0])
+  assert.deepEqual(row(7), [8, 0, 8, 0])
+  assert.deepEqual(row(0), [0, 1, 2, 3])
+  // A hidden figure pinned stays sunk: the sink is applied last, now and at the upload.
+  crowd.hide([4])
+  device.log.length = 0
+  crowd.pin([4], [9, 0, 9, 0])
+  assert.deepEqual(device.log, ['write pos @64+16', 'write pos @64+16'])
+  assert.equal(row(4)[1], -100)
+  crowd.upload(frame)
+  assert.equal(row(4)[1], -100)
+  assert.deepEqual(row(7), [7 * 4, 7 * 4 + 1, 7 * 4 + 2, 7 * 4 + 3], 'a pin dropped is gone at the next upload')
+  // At most MAX_HIDDEN, in the order given; an empty call clears them.
+  crowd.hide([])
+  crowd.pin([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], new Float32Array(40))
+  assert.deepEqual([...crowd.pinned], [1, 2, 3, 4, 5, 6, 7, 8])
+  crowd.pin([], [])
+  assert.equal(crowd.pinned.length, 0)
+})
+
 test('setCull: the first setting is drawn from the next step; a later one glides there over CULL_EASE.glide steps; copied and sanitised', async () => {
   const settings = { lodDistance: 30, nearRadius: 22, density: 0.6, maxDistance: 180 }
   const { device, crowd } = await cullRig(settings)

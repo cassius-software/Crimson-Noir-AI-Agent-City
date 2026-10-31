@@ -556,6 +556,67 @@ export function boneTransform(bone: number, p: number[], w: number, a: WalkAngle
 }
 
 /**
+ * The rig a fallen pedestrian wears. The realm promotes a pedestrian who is shoved, trips or slips to a physical body
+ * of thirteen capsule shapes (ragdollRig.ts; the eleven segments and two flat feet) and streams each shape's pose to
+ * the page in that order (simProtocol.ts RIG_POSE, RIG_SEGMENTS; `slots` rigs at most, pinned equal to the realm's
+ * by test). The body wears it: each of the fifteen bones hangs from one shape, by the shape's index in the stream and
+ * its centre standing, in the base body's metres (ragdollRig.ts SEGMENTS and FOOT: a 1.75 m adult facing +z, feet on
+ * the ground). The rig names its sides from the person's own view (its left at +x) and this body names them from
+ * the viewer's (its left at −x), so a bone takes the shape on its own side of the body, by x.
+ */
+export const RIG_WEAR = Object.freeze({ slots: 8, shapes: 13 })
+export const RIG_REST: readonly (readonly [shape: number, x: number, y: number, z: number])[] = Object.freeze([
+  [0, 0, 0.97, 0], [1, 0, 1.3, 0], [2, 0, 1.66, 0],
+  [5, -0.1, 0.7, 0], [6, -0.1, 0.28, 0], [12, -0.1, 0.03, 0.05],
+  [3, 0.1, 0.7, 0], [4, 0.1, 0.28, 0], [11, 0.1, 0.03, 0.05],
+  [9, -0.24, 1.38, 0], [10, -0.24, 1.1, 0], [10, -0.24, 1.1, 0],
+  [7, 0.24, 1.38, 0], [8, 0.24, 1.1, 0], [8, 0.24, 1.1, 0],
+])
+
+/** One rig shape's pose: its centre in the world and its rotation as a quaternion (x, y, z, w). */
+export interface RigPose { readonly at: readonly [number, number, number]; readonly q: readonly [number, number, number, number] }
+
+/** `v` turned by the unit quaternion `q`, in place (v + 2 q.xyz × (q.xyz × v + q.w v)). */
+export function rotateByQuat(v: number[], q: readonly [number, number, number, number]): number[] {
+  const [qx, qy, qz, qw] = q
+  const [x, y, z] = v
+  // t = q.xyz × v + q.w v
+  const tx = qy * z - qz * y + qw * x, ty = qz * x - qx * z + qw * y, tz = qx * y - qy * x + qw * z
+  v[0] = x + 2 * (qy * tz - qz * ty)
+  v[1] = y + 2 * (qz * tx - qx * tz)
+  v[2] = z + 2 * (qx * ty - qy * tx)
+  return v
+}
+
+/**
+ * A vertex of a body wearing the rig: the point (after the sliders, in the base body's metres) scaled by the stature,
+ * then hung from its two bones' shapes (RIG_REST: the offset from the shape's standing centre, turned by the shape's
+ * rotation, at the shape's centre in the world) and blended by the weight, exactly the shader's order (crowdBody.ts
+ * bodyRig). `poses` are the thirteen shapes of the rig worn, in stream order. `w` 1 for a position, 0 for a normal
+ * (turned, never moved, the scales' reciprocals; the caller normalises). No heading and no place of the agent's own:
+ * the rig's poses are the world's.
+ */
+export function rigPoint(
+  x: number, y: number, z: number, bone0: number, bone1: number, weight: number, w: number,
+  poses: readonly RigPose[], scale: { readonly y: number; readonly xz: number }, out: number[] = [0, 0, 0],
+): number[] {
+  const one = (bone: number, o: number[]): number[] => {
+    const [shape, cx, cy, cz] = RIG_REST[bone] ?? RIG_REST[0]
+    const pose = poses[shape]
+    if (w > 0.5) { o[0] = (x - cx) * scale.xz; o[1] = (y - cy) * scale.y; o[2] = (z - cz) * scale.xz } else { o[0] = x / scale.xz; o[1] = y / scale.y; o[2] = z / scale.xz }
+    rotateByQuat(o, pose.q)
+    if (w > 0.5) { o[0] += pose.at[0]; o[1] += pose.at[1]; o[2] += pose.at[2] }
+    return o
+  }
+  const a = one(bone0, [0, 0, 0])
+  const b = bone1 === bone0 || weight >= 1 ? a : one(bone1, [0, 0, 0])
+  out[0] = a[0] * weight + b[0] * (1 - weight)
+  out[1] = a[1] * weight + b[1] * (1 - weight)
+  out[2] = a[2] * weight + b[2] * (1 - weight)
+  return out
+}
+
+/**
  * A vertex posed: its two bones' transforms blended by the weight (linear blend skinning), then the stature's
  * scales and the pelvis' rise, the heading and the position, exactly the shader's order. `w` 1 for a position (the
  * answer is in world metres), 0 for a normal (the answer wants normalising).
