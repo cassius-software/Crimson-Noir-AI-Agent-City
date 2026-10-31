@@ -636,8 +636,9 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   pedestrian the realm has promoted to a physical body (a trip, a shove, the balance machine) is still drawn as the
   rig's capsules at the rig's one size for as long as the fall lasts, and the network ghosts keep the base body. The
   face is still: no expression, no blink, no lip movement when someone speaks, and the eyes look where the head
-  looks. There is no facial hair, and the hair is a shape, not strands. Feet still slide a little on a kerb (no foot
-  placement yet), and heads do not turn to look. Whether agent 0's hashed look and `lookFromSeed(0)` agree on the GPU
+  looks. There is no facial hair, and the hair is a shape, not strands. Heads turn to you and to the way their owner
+  goes, not to other pedestrians or cars; the feet stay planted from half a metre a second up and shuffle a little
+  under it while a stride shrinks to standing. Whether agent 0's hashed look and `lookFromSeed(0)` agree on the GPU
   is a browser check not yet made (see Browser support); the skinned body and its face have been looked at on a
   software WebGPU adapter and in CI's screenshots, not yet on a real GPU.
 
