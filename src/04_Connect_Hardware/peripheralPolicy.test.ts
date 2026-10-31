@@ -4,8 +4,10 @@
 /**
  * Why does this file exist? It proves the draft peripheral gate: legacy HAL/1 gadgets stay telemetry-only, the CAPS
  * handshake refuses payload release, projectile and aiming capabilities for good, every refusal reason fires on the
- * state that should cause it (and only after the checks above it pass), and a Ring-0 panic, a broken tether or a lost
- * heartbeat disarms at once with the right broadcast.
+ * state that should cause it (and only after the checks above it pass), a Ring-0 panic, a broken tether or a lost
+ * heartbeat disarms at once with the right broadcast, and the joint bridge's 'joints' command (docs/joint-bridge-spec.md
+ * §4) is admitted for a declared servo alone, with every array empty or the joint count long and every number finite,
+ * after the common checks in their order.
  * What breaks if it is removed? A later change to the gate could admit an actuation it should refuse, unnoticed.
  */
 import assert from 'node:assert/strict'
@@ -27,8 +29,8 @@ function caps(line: string): Capabilities {
 }
 
 /** A device armed and ready: every check before the command's own passes. */
-function armed(line: string): PolicyState {
-  let s: PolicyState = { ...initialState(caps(line), T0), operator: true, lease: liveLease, geofence: fence, operatorAt: { x: 0, z: 0 } }
+function armed(line: string, joints = 0): PolicyState {
+  let s: PolicyState = { ...initialState(caps(line), T0, joints), operator: true, lease: liveLease, geofence: fence, operatorAt: { x: 0, z: 0 } }
   const r = requestArm(s, 'n1', T0)
   assert.ok('state' in r, JSON.stringify(r))
   assert.equal(r.line, 'ARM n1\n')
@@ -42,6 +44,9 @@ const SERVO = 'CAPS 1 {"class":"actuator","telemetry":["angle"],"actuation":["se
 const servo = (seq: number, issuedAt = T0): Command => ({ kind: 'actuate', capability: 'servo', seq, issuedAt, ttlMs: 100, value: 0.5 })
 const fly = (seq: number, p: Partial<{ x: number; z: number; altitudeM: number; speedMs: number }> = {}): Command =>
   ({ kind: 'flight', seq, issuedAt: T0, ttlMs: 100, setpoint: { x: 5, z: 5, altitudeM: 10, speedMs: 2, ...p } })
+/** Joint setpoints for a two-joint arm; `capability` is a string here so a wrong one can be tried at runtime. */
+const joints = (seq: number, p: Partial<{ q: readonly number[]; qd: readonly number[]; tau: readonly number[]; issuedAt: number; capability: string }> = {}): Command =>
+  ({ kind: 'joints', capability: 'servo', seq, issuedAt: T0, ttlMs: 100, q: [0.1, -0.2], qd: [], tau: [], ...p } as Command)
 
 function refusal(s: PolicyState, c: Command, now = T0): string {
   const a = admit(s, c, now)
@@ -188,9 +193,65 @@ test('the audit log records admissions and refusals and keeps the newest auditLe
   assert.equal(s.audit.length, POLICY.auditLength)
 })
 
-test('pacifist wording in the gate, its tests and its specification', () => {
+test('joint setpoints: admitted for a declared servo when every array is empty or the joint count long and finite', () => {
+  let s = armed(SERVO, 2)
+  assert.equal(s.joints, 2)
+  const a = admit(s, joints(1, { qd: [0, 0], tau: [1, 2] }), T0)
+  assert.ok(a.ok)
+  s = a.state
+  assert.deepEqual(s.audit.at(-1), { at: T0, event: 'admitted', detail: 'servo #1' })
+  assert.equal(s.lastSeq, 1)
+  assert.equal(admit(s, joints(2, { q: [] }), T0).ok, true, 'an empty q is allowed: the device holds where it is')
+  assert.equal(initialState(caps(SERVO), T0).joints, 0, 'a state made the old way carries no count')
+  assert.deepEqual(admit(armed(SERVO), { kind: 'telemetry-in' }, T0).ok, true)
+})
+
+test('joint setpoints: each array empty or `joints` long, every number finite, and a servo alone', () => {
+  const s = armed(SERVO, 2)
+  assert.equal(refusal(s, joints(1, { q: [0.1] })), 'wrong-length')
+  assert.equal(refusal(s, joints(1, { qd: [1, 2, 3] })), 'wrong-length')
+  assert.equal(refusal(s, joints(1, { tau: [1] })), 'wrong-length')
+  assert.equal(refusal(s, { ...joints(1), q: 'x' } as unknown as Command), 'wrong-length', 'not an array')
+  assert.equal(refusal(armed(SERVO), joints(1)), 'wrong-length', 'a state made without the count admits no joint positions')
+  assert.equal(refusal(armed(SERVO), joints(1, { q: [] })), 'admitted', 'only an empty command')
+  assert.equal(refusal(s, joints(1, { q: [Number.NaN, 0] })), 'non-finite')
+  assert.equal(refusal(s, joints(1, { tau: [1, Number.POSITIVE_INFINITY] })), 'non-finite')
+  assert.equal(refusal(s, joints(1, { q: [0, 1], qd: [0, 1], tau: [Number.NEGATIVE_INFINITY, 0] })), 'non-finite')
+  assert.equal(refusal(s, joints(1, { q: [0.1], qd: [Number.NaN, 0] })), 'wrong-length', 'the length before the numbers')
+  assert.equal(refusal(s, joints(1, { capability: 'light' })), 'not-declared')
+  assert.equal(refusal(armed('CAPS 1 {"class":"actuator","actuation":["servo","light"]}', 2), joints(1, { capability: 'light' })), 'not-declared', 'declared, but joint setpoints drive a servo alone')
+  assert.equal(refusal(armed('CAPS 1 {"class":"actuator","actuation":["light"]}', 2), joints(1)), 'not-declared')
+  assert.equal(refusal(armed('CAPS 1 {"class":"actuator","actuation":["servo","payload_release"]}', 2), joints(1, { capability: 'payload_release' })), 'refused-at-handshake')
+})
+
+test('joint setpoints pass the common checks, in the gate\'s order, before their own', () => {
+  const base = initialState(caps(SERVO), T0, 2)
+  assert.equal(refusal({ ...base, locked: true }, joints(1)), 'locked')
+  assert.equal(refusal(base, joints(1)), 'no-operator-tier')
+  assert.equal(refusal({ ...base, operator: true }, joints(1)), 'no-lease')
+  assert.equal(refusal({ ...base, operator: true, lease: liveLease }, joints(1)), 'not-armed')
+  let s = armed(SERVO, 2)
+  const late = admit(s, joints(1, { q: [0.1], issuedAt: T0 + POLICY.watchdogMs + 1 }), T0 + POLICY.watchdogMs + 1)
+  assert.ok(!late.ok && late.refused === 'heartbeat-lost' && late.broadcast[0] === 'DISARM heartbeat-lost\n', 'the heartbeat before the length')
+  s = admit(s, joints(3), T0).state
+  assert.equal(refusal(s, joints(3, { q: [0.1] })), 'stale-sequence', 'the sequence before the length')
+  assert.equal(refusal(s, joints(4, { q: [0.1], issuedAt: T0 - 101 })), 'expired')
+  assert.equal(refusal(s, { ...joints(4), ttlMs: POLICY.maxTtlMs + 1 } as Command), 'expired')
+  for (let i = 4; i < 3 + POLICY.maxRatePerSecond; i++) {
+    const a = admit(s, joints(i), T0)
+    assert.ok(a.ok, `command ${i}`)
+    s = a.state
+  }
+  assert.equal(s.recent.length, POLICY.maxRatePerSecond)
+  assert.equal(refusal(s, joints(99, { q: [0.1] })), 'rate-limited', 'the rate before the length')
+  const later = admit(heartbeat(s, T0 + 1000), joints(99, { issuedAt: T0 + 1000 }), T0 + 1000)
+  assert.ok(later.ok, 'the window has passed and the heartbeat is fresh')
+  assert.equal(refusal(later.state, joints(99, { issuedAt: T0 + 1000 }), T0 + 1000), 'stale-sequence')
+})
+
+test('pacifist wording in the gate, its tests and its specifications', () => {
   const words = /\b(attack|damage|weapon|kill|combat|target|shoot|gun|injur\w*|violen\w*|hit|crash\w*|collid\w*|collision|dead|death|die|blood|maim|wound|smash)\b/i
-  for (const f of ['./peripheralPolicy.ts', './peripheralPolicy.test.ts', '../../docs/hal-peripherals-spec.md']) {
+  for (const f of ['./peripheralPolicy.ts', './peripheralPolicy.test.ts', '../../docs/hal-peripherals-spec.md', '../../docs/joint-bridge-spec.md']) {
     const text = readFileSync(new URL(f, import.meta.url), 'utf8').replace(/const words = .*\n/, '')
     assert.doesNotMatch(text, words, f)
   }

@@ -8,7 +8,7 @@
  * the bridge's acts.follow, mounts the card over the console and under the recovery card, keeps the console's suspend
  * expression byte-identical, and toasts only while the console is closed; the card is an alertdialog with Refuse before
  * Allow, Y and N only with the console closed, and no Escape; the engine hands the operator tier rain mode and the
- * sound as senses with the pinned voiceOf last, and lifts the sound loop into one place; the console follows every act
+ * sound as senses with the pinned voiceOf before the elite vault, and lifts the sound loop into one place; the console follows every act
  * event; the base reality carries the four prompt lines; the scripted provider proposes; the swarm never imports the
  * catalogue; and everything the card, the HUD line and the toasts show passes 14A with no exclamation mark and no syntax.
  * What breaks if it is removed? A later edit could mount the card without the shield (a pad's OK would open a car door
@@ -51,8 +51,9 @@ test('App: the card, the shield and the HUD line derive from one act state fed b
   assert.match(follow, /if \(termOpenRef\.current\) return\n/, 'open, the lines are already in the scrollback')
   before(follow, 'if (termOpenRef.current) return', "toast('City action'", 'the console check comes before every toast')
   assert.match(follow, /if \(ev\.kind === 'proposed'\) engineRef\.current\?\.toast\('City action', `\$\{ev\.act\.who\} proposes: \$\{ev\.act\.sentence\} \(Y allows, N refuses\)`\)/)
-  assert.match(follow, /else if \(ev\.kind === 'ended' && \(ev\.end\.state === 'done' \|\| ev\.end\.state === 'failed'\)\) engineRef\.current\?\.toast\('City action', `\$\{ev\.end\.state\}: \$\{ev\.end\.line\}`\)/)
-  assert.doesNotMatch(follow, /'refused'|'withdrawn'|'aborted'/, 'a refusal and a withdrawal toast nothing (the person did it); an abort is the gate wrapper\'s Task aborted')
+  // The three ends a person did not make themselves are toasted: done, failed, and the action gate's refusal after their OK (as 'refused', with the law).
+  assert.match(follow, /else if \(ev\.kind === 'ended' && \(ev\.end\.state === 'done' \|\| ev\.end\.state === 'failed' \|\| ev\.end\.state === 'denied'\)\) engineRef\.current\?\.toast\('City action', `\$\{ev\.end\.state === 'denied' \? 'refused' : ev\.end\.state\}: \$\{ev\.end\.line\}`\)/)
+  assert.doesNotMatch(follow, /ev\.end\.state === '(?:refused|withdrawn|aborted)'/, 'a refusal and a withdrawal toast nothing (the person did it); an abort is the gate wrapper\'s Task aborted')
   assert.match(APP, /void h\.verdict\.then\(\(v\) => \{ if \(v\.state === 'Aborted'\) e\.toast\('Task aborted', `Spatial tether lost: \$\{v\.message\}`\) \}\)/, 'the gate wrapper\'s toast, unchanged')
   assert.match(APP, /useEffect\(\(\) => \{ engineRef\.current\?\.input\.shield\(act !== null\) \}, \[act\]\)/, 'the shield follows the same state as the card')
   assert.match(APP, /const allowAct = useCallback\(\(\) => \{ try \{ void bridge\?\.operator\.acts\.allow\('card'\)\.result\.catch\(noop\) \} catch \{ \/\* already ended \*\/ \} \}, \[bridge\]\)/)
@@ -69,9 +70,9 @@ test('App: the card, the shield and the HUD line derive from one act state fed b
   assert.match(APP, /engineRef\.current\?\.input\.suspend\(open \|\| lookOpenRef\.current\)/)
   assert.match(APP, /engineRef\.current\?\.input\.suspend\(lookOpen \|\| termOpenRef\.current\)/)
   assert.doesNotMatch(APP, /suspend\([^)]*act\b/, 'the card never suspends game input: E and a walk-off still end the proposal')
-  // The proposer's name reaches the engine beside the identity line, and the pinned bridge call keeps voiceOf last.
+  // The proposer's name reaches the engine beside the identity line, and the pinned bridge call keeps voiceOf before the elite vault (eliteWiring.test.ts).
   assert.match(APP, /useEffect\(\(\) => \{\n\s+engine\?\.setNameOf\(\(agent\) => roster\.byAgent\(agent\)\?\.name \?\? null\)\n\s+return \(\) => engine\?\.setNameOf\(null\)\n\s+\}, \[engine, roster\]\)/)
-  assert.match(APP, /e\.terminalBridge\(gate, mind, voice, memory\.diary\(\), voiceOf\)/)
+  assert.match(APP, /e\.terminalBridge\(gate, mind, voice, memory\.diary\(\), voiceOf, pageStore\(ELITE_KEY\)\)/)
   assert.match(APP, /^import \{ ActCard \} from '\.\/07_Execute_Actions\/ActCard\.tsx'$/m)
 })
 
@@ -162,7 +163,7 @@ test('the input shield: a second flag beside suspend that drops the pad\'s edges
   assert.match(INPUT, /^ {2}shielded = false$/m)
   assert.match(INPUT, /shield\(on: boolean\): void \{\n\s+this\.shielded = on\n\s+\}/)
   const poll = between(INPUT, '  poll(dt: number): void {', '  /** Virtual stick')
-  assert.match(poll, /edges = this\.mapper\.read\(pads, this\.pad\)\n\s+\}\n\s+if \(this\.shielded\) edges = 0 \/\/[^\n]*\n\s+if \(edges & PAD_EDGE\.interact\) this\.queued\.add\('interact'\)/, 'after the mapper read (its held bits advance), before any edge is queued')
+  assert.match(poll, /edges = this\.mapper\.read\(pads, this\.pad\)\n\s+\}\n\s+edges \|= this\.readXr\(\) \/\/[^\n]*\n\s+if \(this\.shielded\) edges = 0 \/\/[^\n]*\n\s+if \(edges & PAD_EDGE\.interact\) this\.queued\.add\('interact'\)/, 'after the mapper reads, the pad\'s and the headset\'s (their held bits advance), before any edge is queued')
   assert.equal(poll.match(/this\.shielded/g)?.length, 1)
   assert.match(INPUT, /press\(action: Action\): void \{\n\s+if \(this\.shielded\) return\n\s+this\.queued\.add\(action\)\n\s+\}/)
   const keyboard = between(INPUT, "on(document, 'keydown', (e) => {", "on(document, 'keyup'")
@@ -172,9 +173,9 @@ test('the input shield: a second flag beside suspend that drops the pad\'s edges
   assert.doesNotMatch(suspend, /shielded/, 'the console opening and closing never touches the shield')
 })
 
-test('the engine: the proposer\'s name and the two city knobs reach the operator tier as senses with voiceOf last; the sound loop lives once', () => {
-  assert.match(ENGINE, /operatorBridge\(this\.simControls\(\), gate, mind, undefined, \{ voice, speech: this\.speechOut\(\), diary, awareness: this\.awareness\(\), nameOf, city: this\.cityKnobs\(\), voiceOf \}\)/)
-  assert.match(ENGINE, /operatorBridge\(this\.simControls\(\), gate, mind, undefined, \{[^}]*voiceOf \}\)/, 'voiceWiring.test.ts\'s pin')
+test('the engine: the proposer\'s name, the two city knobs and the air-gap vouch reach the operator tier as senses with voiceOf before the elite vault; the sound loop lives once', () => {
+  assert.match(ENGINE, /operatorBridge\(this\.simControls\(\), gate, mind, undefined, \{ voice, speech: this\.speechOut\(\), diary, awareness: this\.awareness\(\), nameOf, city: this\.cityKnobs\(\), contained: \(\) => airgapInstalled\(globalThis\), voiceOf, vault \}\)/)
+  assert.match(ENGINE, /operatorBridge\(this\.simControls\(\), gate, mind, undefined, \{[^}]*voiceOf, vault \}\)/, 'voiceWiring.test.ts\'s pin')
   assert.match(ENGINE, /^import type \{ CityKnobs \} from '\.\.\/06_Make_Decisions\/actions\.ts'$/m, 'a type only: the engine runs no action')
   assert.match(ENGINE, /const nameOf = \(agent: number\): string \| null => this\.nameOfAgent\?\.\(agent\) \?\? null/)
   assert.match(ENGINE, /^ {2}setNameOf\(fn: \(\(agent: number\) => string \| null\) \| null\): void \{\n\s+this\.nameOfAgent = fn\n\s+\}/m)
@@ -194,7 +195,7 @@ test('the engine: the proposer\'s name and the two city knobs reach the operator
   assert.match(bridge, /built over simControls\(\) and two host knobs handed in as senses/)
   assert.match(bridge, /never over the engine itself/)
   assert.ok(bridge.includes('setAudio(arg:') && bridge.includes('cityKnobs(): CityKnobs {'), 'both live in the bridge region')
-  assert.match(ENGINE, /^ {2}terminalBridge\(gate: SkillGate, givenMind: Mind, voice\?: Voice, diary\?: Diary, voiceOf\?: \(agent: number\) => string \| null\): TerminalBridge \{$/m, 'the signature App.tsx\'s pinned call matches')
+  assert.match(ENGINE, /^ {2}terminalBridge\(gate: SkillGate, givenMind: Mind, voice\?: Voice, diary\?: Diary, voiceOf\?: \(agent: number\) => string \| null, vault\?: EliteVault\): TerminalBridge \{$/m, 'the signature App.tsx\'s pinned call matches')
   // The facade the operator tier scripts see is untouched: the two knobs are senses, not leaves.
   const controls = between(ENGINE, '  simControls(): SimControls {', '  /** ?debug harness hooks. */')
   assert.doesNotMatch(controls, /setAudio|cityKnobs|rain/)

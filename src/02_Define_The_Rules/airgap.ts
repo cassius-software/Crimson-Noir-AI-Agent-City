@@ -119,6 +119,14 @@ export interface AirgapReport {
 
 const installed = new WeakMap<object, AirgapReport>()
 
+/**
+ * Whether `installAirgap` has been installed on `g`: what a host vouches to the Ring-0 action gate (ring0Gate.ts
+ * Contained) before a model is asked or a model's proposal runs on this global. A plain query: it installs nothing.
+ */
+export function airgapInstalled(g: object): boolean {
+  return installed.has(g)
+}
+
 /** Defines `name` on `o` as a value that cannot be written, deleted or redefined, keeping its enumerability. */
 function fix(o: object, name: string, value: unknown): void {
   const was = Object.getOwnPropertyDescriptor(o, name)

@@ -3,17 +3,22 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the operator tier's keeper of one proposed city action at a time: after a console
- * ask settles, it reads the answer's ACTION line (06_Make_Decisions/actions.ts), submits the proposal to the capability
- * gateway as a task of its own bound to the people who answered, shows it to the operator and waits for their OK; on
- * allow it runs the action once under that lease, on refuse, `ask stop`, `operator lock`, a lost tether or a closed
- * gateway it ends it, and every proposal, decision and end goes into a hash-chained trail (`act log verify`) and into
- * what the proposer remembers. Nothing runs before the OK, nothing runs twice, and nothing waits past a lock.
+ * ask settles, it reads the answer's ACTION line (06_Make_Decisions/actions.ts), asks the Ring-0 action gate
+ * (02_Define_The_Rules/ring0Gate.ts admitProposal) whether the line may be proposed at all, submits the proposal to the
+ * capability gateway as a task of its own bound to the people who answered, shows it to the operator and waits for
+ * their OK; on allow it asks the gate again (admitRun: the page contained, the realm standing, the verb kinetic-free,
+ * the tier unlocked, a person's OK, the lease held by the proposer, the trail whole) and runs the action once under
+ * that lease in the same step; on refuse, `ask stop`, `operator lock`, a lost tether, a closed gateway or the gate's
+ * own refusal it ends it, and every proposal, decision and end goes into a hash-chained trail (`act log verify`) and
+ * into what the proposer remembers. Nothing runs before the OK, nothing runs twice, nothing waits past a lock, and
+ * nothing runs past one either: a lock typed between the OK and the run is found by the gate.
  * What breaks if it is removed? The console and the card have nothing to allow or refuse, and an agent's line is text.
  */
 import type { ActBy, ActEnd, ActEvent, ActsBridge, AskResult, Awareness, GatedAsk, GateLease, GateTether, PendingAct, RunState, ScriptApi, SkillGate } from './operator.ts'
 import { catalogueLines, parseAction, perform, sentence, type Action, type CityKnobs } from '../06_Make_Decisions/actions.ts'
 import { AuditChain, tetherVerdict, type AuditKind, type Invariant } from '../02_Define_The_Rules/guardrails.ts'
 import { sha256 } from '../02_Define_The_Rules/integrity.ts'
+import { admitProposal, admitRun, invariantsOf, REASONS, sentence as lawSentence, type GateVerdict, type Vouched } from '../02_Define_The_Rules/ring0Gate.ts'
 
 /** What the tier hands the keeper: values only, so this module imports nothing but types from operator.ts. */
 export interface ActsDeps {
@@ -27,6 +32,8 @@ export interface ActsDeps {
   readonly nameOf?: (agent: number) => string | null
   readonly now: () => number
   readonly unlocked: () => boolean
+  /** What the host vouches to the gate: the page's outbound primitives are held to this machine (null: it has not said). */
+  readonly contained: () => Vouched
 }
 
 /** The keeper as the tier uses it: the bridge surface plus the two calls only operator.ts makes. */
@@ -39,10 +46,10 @@ export interface Acts extends ActsBridge {
 
 /** Thrown by `allow` and `refuse` when no proposal waits. */
 export const NOTHING_WAITING = 'nothing is waiting for your OK'
-/** Thrown by `ask` and `swarm run` while a proposal waits (operator.ts). */
-export const PROPOSAL_WAITING = 'a proposal is waiting: act ok or act no first'
-/** The refusal of a line that arrived after `operator lock` was typed during the stream, and the withdrawal `lock()` makes. */
-export const TIER_LOCKED = 'the operator tier is locked'
+/** Thrown by `ask` and `swarm run` while a proposal waits (operator.ts): the gate's own clause (OneAtATime). */
+export const PROPOSAL_WAITING: string = REASONS.OneAtATime
+/** The withdrawal `lock()` makes, and the gate's clause for a line that arrived after `operator lock` was typed (OperatorUnlocked). */
+export const TIER_LOCKED: string = REASONS.OperatorUnlocked
 const LOCKED = "act: locked; type 'operator unlock' first"
 
 /** Who may decide a proposal: the gateway never allows or refuses, so a `by` it did not make is the host's. */
@@ -85,6 +92,15 @@ const gatewayName = (t: GateTether): string => `agent ${t.agent} (${t.skills.joi
 
 /** An error's own message (no "Name:" prefix): what the facade or the engine said. */
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
+/** The Ring-0 audit's panic reason as the facade reports it (null while the realm stands); a facade that cannot say is a halted realm. */
+const panicOf = (facade: ScriptApi): string | null => {
+  try {
+    return facade.kernel.stats().audit.panic ?? null
+  } catch (e) {
+    return messageOf(e)
+  }
+}
 
 /**
  * The keeper of proposals (section 3 of the design): one waiting at a time, submitted to the gateway the moment the
@@ -140,9 +156,26 @@ export function createActs(deps: ActsDeps): Acts {
       if (d.kind !== 'allow') return d.kind
       const text = `city action: ${w.act.sentence}`
       try {
-        // P5: the tether is checked against the newest copy of the swarm and the action made in that one step, over the
-        // leased facade (each of its calls checked again) and the two city knobs.
-        const line = lease.use(() => perform(w.action, deps.facade(lease), deps.city))
+        // P5: the tether is checked against the newest copy of the swarm, the gate asked, and the action made in that
+        // one step, over the leased facade (each of its calls checked again) and the two city knobs.
+        const ran = lease.use((): { readonly ok: true; readonly line: string } | { readonly ok: false; readonly verdict: GateVerdict } => {
+          const facade = deps.facade(lease)
+          const verdict = admitRun({
+            contained: deps.contained(), verb: w.action.verb, panic: panicOf(facade), unlocked: deps.unlocked(), allowedBy: d.by,
+            held: lease.held, proposer: sameBinding(w.bound, lease.bound), chainOk: chain.verify().ok,
+          })
+          return verdict.admitted ? { ok: true, line: perform(w.action, facade, deps.city) } : { ok: false, verdict }
+        })
+        if (!ran.ok) {
+          // The gate refused an allowed action: nothing of it reached the city, and the law that refused is on the trail.
+          const reason = lawSentence(ran.verdict)
+          record('refusal', stepOf(w), w.role, w.action.canonical, '', null, invariantsOf(ran.verdict), `not run: ${reason}`)
+          remember(w.bound, 'the player', `allowed your proposal but the city refused it: ${w.act.sentence} (${reason})`)
+          deps.note?.(w.bound, w.skills, text, 'Rejected', w.act.since, undefined)
+          finish(w, { state: 'denied', line: reason }, d.by)
+          return 'refused'
+        }
+        const line = ran.line
         record('end', stepOf(w), w.role, w.action.canonical, line, null, [], `done: ${line}`)
         remember(w.bound, 'the player', `allowed your proposal and the city did it: ${line}`)
         deps.note?.(w.bound, w.skills, text, 'Authorized', w.act.since, 'ok')
@@ -183,23 +216,24 @@ export function createActs(deps: ActsDeps): Acts {
     if (!first) return { text: p.text }
     const role = gatewayName(first)
     const promptHash = r.promptHash ?? null
-    if (p.kind === 'refused') {
-      record('refusal', 'act-', role, p.line ?? '', '', promptHash, [], `not run: ${p.reason}`)
-      remember(a.bound, 'the city', `could not read your action line: ${p.reason}; nothing was proposed`)
-      return { text: p.text, act: { kind: 'refused', reason: p.reason, ...(p.line !== undefined && { line: p.line }), told: first.agent } }
+    // The gate, before anything is shown: the page contained, the line screened, the line one of the catalogue (a line
+    // the catalogue could not read fails Catalogued in the catalogue's own words), the tier unlocked (a lock typed
+    // during the stream: no proposal past a lock), one at a time (an ask cannot settle while a proposal waits,
+    // operator.ts refuses it, so that one never fires; it holds anyway). The law that refused is on the trail and in
+    // the reason; the proposer of an unreadable line is told next time, in the catalogue's words.
+    const line = p.kind === 'refused' ? p.line ?? '' : p.line
+    const pre = admitProposal({ contained: deps.contained(), line, catalogued: p.kind === 'refused' ? { reason: p.reason } : true, unlocked: deps.unlocked(), vacant: pending === null })
+    if (p.kind === 'refused' || !pre.admitted) {
+      const reason = lawSentence(pre)
+      record('refusal', 'act-', role, line, '', promptHash, invariantsOf(pre), `not run: ${reason}`)
+      if (p.kind === 'refused') {
+        remember(a.bound, 'the city', `could not read your action line: ${p.reason}; nothing was proposed`)
+        return { text: p.text, act: { kind: 'refused', reason, ...(p.line !== undefined && { line: p.line }), told: first.agent } }
+      }
+      return { text: p.text, act: { kind: 'refused', reason, line } }
     }
-    const { action, line } = p
+    const { action } = p
     const words = sentence(action)
-    // A lock typed during the stream: no proposal past a lock.
-    if (!deps.unlocked()) {
-      record('refusal', 'act-', role, line, '', promptHash, ['HumanOverrideSupreme'], `not run: ${TIER_LOCKED}`)
-      return { text: p.text, act: { kind: 'refused', reason: TIER_LOCKED, line } }
-    }
-    // One at a time: an ask cannot settle while a proposal waits (operator.ts refuses it), so this never fires; it holds anyway.
-    if (pending) {
-      record('refusal', 'act-', role, line, '', promptHash, ['HumanOverrideSupreme'], `not run: ${PROPOSAL_WAITING}`)
-      return { text: p.text, act: { kind: 'refused', reason: PROPOSAL_WAITING, line } }
-    }
     const since = deps.now()
     const act: PendingAct = Object.freeze({
       seq: seq + 1, who: whoOf(first), agent: first.agent, serial: first.serial, skills: Object.freeze([...first.skills]),

@@ -14,6 +14,7 @@
 import { SimCore, type SimCoreOptions } from './simCore.ts'
 import { failureCode, MAX_PLAYERS, POSE, RIG_POSE, TRACK_POSE, type FromWorker, type SimInit } from './simProtocol.ts'
 import { packAgents, packAvatars, packVehicles, PhysicsBridge } from './sharedBridge.ts'
+import { JointBuffer } from './jointBridge.ts'
 import type { RegionGround } from './physics.ts'
 import { CITY } from '../01_Initialize_World/city.ts'
 import { WINDOW_BLOCKS, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
@@ -130,6 +131,8 @@ export function createSimHost(post: Post, create: (o: SimCoreOptions) => Promise
   const rigPool: ArrayBuffer[] = []
   /** The page's zero-copy bridge once it has sent one that fits (sharedBridge.ts); written after every step. */
   let bridge: PhysicsBridge | null = null
+  /** The page's joint buffer once it has sent one (jointBridge.ts); the robot bodies' slots go into it after every step. */
+  let joints: JointBuffer | null = null
   /** Simulated seconds the page may still spend, refilled at TIME_RATE × wall time. */
   let bank = TIME_BANK
   let lastWall = now()
@@ -198,6 +201,14 @@ export function createSimHost(post: Post, create: (o: SimCoreOptions) => Promise
       bridge = opened
       return
     }
+    if (data.t === 'joints') {
+      if (!core) return refuse('joints before init')
+      if (joints) return refuse('joints: already sent')
+      const opened = JointBuffer.open(data.buffer)
+      if (!opened) return refuse('joints: not a SharedArrayBuffer of the joint buffer\'s size')
+      joints = opened
+      return
+    }
     if (data.t !== 'step') return refuse(`unknown message '${String(data.t)}'`)
     if (!core) return refuse('step before init')
     const id = typeof data.id === 'number' && Number.isFinite(data.id) ? data.id : 0
@@ -243,6 +254,8 @@ export function createSimHost(post: Post, create: (o: SimCoreOptions) => Promise
           if (frame) packAgents(f32, i32, b.agents, frame, b.counts.agents, activity)
         })
       }
+      // The robot bodies' slots the same way: into the joint buffer under its lock, and then not in the message.
+      if (joints && !core.halted) joints.publish(id, state.simTime, state.robots)
       // Anything else the page put in the message (a hazard array, GPU flags, a clock) is never read.
       const transfer: Transferable[] = [buffer]
       if (state.crowdFrame) transfer.push(state.crowdFrame.buffer as ArrayBuffer)
@@ -250,7 +263,7 @@ export function createSimHost(post: Post, create: (o: SimCoreOptions) => Promise
       else if (craft) craftPool.push(craft)
       if (state.rigs) transfer.push(state.rigs.buffer as ArrayBuffer)
       else if (rigs) rigPool.push(rigs)
-      post({ t: 'state', id, ...state }, transfer)
+      post({ t: 'state', id, ...state, robots: joints ? null : state.robots }, transfer)
     } catch (e) {
       // A fault inside this realm leaves the simulation in an unknown state: it is halted like a panic.
       core.halt(`Physics realm fault: ${message(e)}`)

@@ -143,6 +143,25 @@ test('the system prompt is the bound people\'s skills: who they are, all they kn
   assert.match(two, /\nYour expertise is exactly: Rust, Python, Go\.$/, 'each skill once')
 })
 
+test('the operator\'s steering lines sit after the expertise and before the memories; none given, the prompt is as it was', () => {
+  const bound = [{ agent: 17, serial: 1, skills: ['Rust', 'Python'] }]
+  const plain = systemPrompt(bound)
+  assert.equal(systemPrompt(bound, [], [], []), plain)
+  const steered = systemPrompt(bound, [{ agent: 17, lines: ['just now: you were asked over for Rust'] }], [], ['Steering: gently drive slowly and smoothly; speed is never the point.', 'Steering: hold frame health at 80%.'])
+  assert.equal(steered, [
+    BASE_REALITY,
+    'You are answering for agent 17 (Rust, Python).',
+    'Your expertise is exactly: Rust, Python.',
+    'Steering: gently drive slowly and smoothly; speed is never the point.',
+    'Steering: hold frame health at 80%.',
+    'Agent 17 remembers, oldest first:',
+    '- just now: you were asked over for Rust',
+  ].join('\n'))
+  assert.notEqual(steered, plain, 'the prompt, and so its hash, carries the steering')
+  // Nobody bound: the guide's prompt, steering or not.
+  assert.equal(systemPrompt([], [], [], ['Steering: anything.']), systemPrompt([]))
+})
+
 test('every agent\'s prompt starts with the same base reality, so a server that caches prompts computes it once for all of them', () => {
   const prompts = [
     systemPrompt([{ agent: 3, serial: 1, skills: ['Go'] }]),
@@ -518,7 +537,7 @@ const CITY: SimControls = {
 /** The console, unlocked, over the real operator tier, gateway and client, pointed at `server` with model 'mock'. */
 function operatorConsole(src: Mirror, server: string) {
   const router = new TaskRouter(src)
-  const term = { operator: operatorBridge(CITY, router, createLocalCompute({ fetch: netFetch })) } as unknown as TerminalBridge
+  const term = { operator: operatorBridge(CITY, router, createLocalCompute({ fetch: netFetch }), undefined, { contained: () => true }) } as unknown as TerminalBridge
   shell('operator unlock', term, [])
   shell(`ask server ${server}`, term, [])
   shell('ask model mock', term, [])

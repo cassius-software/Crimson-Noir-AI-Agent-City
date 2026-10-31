@@ -48,7 +48,8 @@ import { LANDMARK } from '../01_Initialize_World/lakefront.ts'
 import { METRO } from '../01_Initialize_World/lakefrontPack.ts'
 import { formatClock, sunAt, type SunState } from '../01_Initialize_World/solar.ts'
 import { SIGNAL, signalFor, walkAllowed } from '../02_Define_The_Rules/civic.ts'
-import { THREE_LAWS } from '../02_Define_The_Rules/laws.ts'
+import { LAWS } from '../02_Define_The_Rules/laws.ts'
+import { airgapInstalled } from '../02_Define_The_Rules/airgap.ts'
 import { kernelPanic } from '../02_Define_The_Rules/ring0Panic.ts'
 import { CrowdView } from '../03_Spawn_Agents/crowd.ts'
 import { heightScale, LOOK_NONE, packFace, packFigure, packLook, packWardrobe, unpackLook, validateLook, type Look } from '../03_Spawn_Agents/look.ts'
@@ -63,6 +64,7 @@ import { KEYBOARD_SEAT, type Seat } from '../04_Connect_Hardware/seats.ts'
 import { FrameClock, type GlyphFamily, type KernelStats, type NetReport, type NetState, type SeatView, type SipocSnapshot, type Toast } from '../05_Observe_Environment/telemetry.ts'
 import { MemorySink, Recorder, fileSink, markdownFor, type RecorderSink, type RecorderSource } from '../05_Observe_Environment/recorder.ts'
 import { TopicBus, UNS, childLines, publishSnapshot, topicLines } from '../05_Observe_Environment/namespace.ts'
+import type { NoirTables } from './terminal/noirscript/index.ts'
 import type { AgentTelemetry } from '../05_Observe_Environment/agv.ts'
 import { Governor, defaultAgents, defaultCars, liteJoinHint, peakCandidate, profileDevice, readDeviceHints, tierRange, type DeviceProfile, type QualityKnobs } from '../05_Observe_Environment/governor.ts'
 import { CAR_TUNE_RANGE, chassisBox, clampTuning, kindOf, type CarTuning } from './car.ts'
@@ -72,7 +74,11 @@ import { buildTrackNetwork } from '../06_Make_Decisions/tracks.ts'
 import { RigView } from './rigView.ts'
 import { NetView, type RemotePose } from './netView.ts'
 import { HeadRig, aimRay, carriedYaw, eyeHeightFor, yawFacing, type AimRay } from './head.ts'
+import { XrMapper } from '../04_Connect_Hardware/xrInput.ts'
+import { xrSystemOf } from '../04_Connect_Hardware/xrSystem.ts'
+import { composerFor, XrPresence, type XrHost, type XrRendererLike } from './xrSession.ts'
 import { SimClient } from './simClient.ts'
+import { RobotBridge, type BridgeMode } from '../04_Connect_Hardware/robotLink.ts'
 import { applyWalk, requestWalk, type ScriptedWalk } from './scriptedWalk.ts'
 import {
   doorOf, ENTER_RANGE, footWish, MODES, PERSON, POSE, RIG_SLOTS, RUN, type CarBodyState, type DriveControls, type Door, type FootControls, type PlayerControls,
@@ -89,7 +95,7 @@ import { updateVolumetrics, type Volumetrics } from './volumetrics.ts'
 import { FrameRate, withCloudFallback } from '../09_Cognition/cloudFallback.ts'
 import { withScriptedFallback } from '../09_Cognition/scripted.ts'
 import { describeSurroundings, paintWord, ShortTermMemory, type AgentContext } from '../08_Swarm/shortTerm.ts'
-import { operatorBridge, type Awareness, type Diary, type Mind, type SimControls, type SkillGate, type SpeechClip, type SpeechOut, type Utterance, type Voice } from './operator.ts'
+import { operatorBridge, type Awareness, type Diary, type Mind, type SimControls, type SkillGate, type SpeechClip, type SpeechOut, type Utterance, type Voice, type EliteVault } from './operator.ts'
 import type { CityKnobs } from '../06_Make_Decisions/actions.ts'
 import { applyQuality, refitPixelRatio, type QualityTargets } from './quality.ts'
 import { SPEECH, Soundscape, sharedAudioContext, wallsBetween, type AudioFrame, type PeerVoice } from './audio.ts'
@@ -428,6 +434,14 @@ export class Engine {
   private readonly rigView: RigView
   /** The first-person head: the only thing that places the camera (future WebXR reads/overrides its pose). */
   private readonly rig = new HeadRig()
+  /** The headset's controllers and pinches as pad input (xrInput.ts), merged by Input under the shield. */
+  private readonly xrInput = new XrMapper()
+  /** The WebXR session (xrSession.ts): off until the player asks, through the console's `xr` or the touch menu. */
+  private readonly xr: XrPresence
+  /** Which immersive modes the browser offers, asked once at start (false for both until it answers). */
+  private xrModes: { vr: boolean; ar: boolean } = { vr: false, ar: false }
+  /** The robots' bridge (robotLink.ts): their frames into the realm's bodies, the bodies' joints out through the gate. */
+  private readonly robots: RobotBridge
   /** The driven car's heading last frame, so the head turns with the car. */
   private carHeading = 0
   /** On foot the body faces where the head looks. */
@@ -687,6 +701,23 @@ export class Engine {
     // Input opens the hardware bus and re-attaches previously granted peripherals (never prompts).
     this.input = new Input(p.canvas)
     this.trigger = new TriggerFeedback(this.input.hal)
+    // A headset, when the player asks for one: its controllers reach Input like a pad, its session drives the frame.
+    this.input.setXr(this.xrInput)
+    this.xr = new XrPresence(xrSystemOf((globalThis as { navigator?: object }).navigator), p.gpu.renderer as unknown as XrRendererLike, this.xrHost(), this.xrInput)
+    void this.xr.supported().then((m) => { this.xrModes = m })
+    // The robots: the HAL bus's and the loopback relay's into the realm's joint buffer and back, every setpoint out
+    // through the peripheral gate. The operator tier is the console's (the bridge below, none until it is built),
+    // the operator stands where the avatar does, and the clock is the wall clock: a setpoint's issuedAt crosses the
+    // wire, and the relay and a device judge its age on theirs.
+    this.robots = new RobotBridge({
+      hal: this.input.hal,
+      joints: this.sim.joints,
+      send: (c) => this.sim.send(c),
+      operatorUnlocked: () => this.bridge?.operator.unlocked() ?? false,
+      operatorAt: () => ({ x: this.sim.state.avatar.x, y: this.sim.state.avatar.feetY, z: this.sim.state.avatar.z, heading: this.avatarHeading }),
+      now: () => Date.now(),
+      log: (line) => this.toast('Robots', line),
+    })
     // Split screen: every player's soundscape over one shared context, each in head space (Web Audio has one listener
     // per context); alone, player 1's soundscape owns its context and its listener is the head, as ever.
     const players = p.options.players
@@ -953,6 +984,8 @@ export class Engine {
   }
 
   resize(): void {
+    // Under a headset the eye buffers are the session's (three refuses setSize while presenting); the canvas waits.
+    if (this.rig.headset) return
     const w = Math.max(1, this.canvas.clientWidth), h = Math.max(1, this.canvas.clientHeight)
     this.gpu.renderer.setSize(w, h, false)
     // A canvas grown past the device's 2D texture limit draws at a lower ratio, and one shrunk back gets its ratio back.
@@ -1049,6 +1082,7 @@ export class Engine {
    * status line the toast and the console print.
    */
   setGhost(on: boolean): string {
+    if (on && this.rig.headset) return 'needs the post-processing chain, which is off under a headset'
     this.ghost.setOn(on)
     this.applyTier()
     if (on && this.views.length > 1) return 'needs the post-processing chain, which is off while the screen is split'
@@ -1528,6 +1562,8 @@ export class Engine {
     // The passage pulse's view of the crowd: who is nearest the user's body in this frame (and, for the code dissolve,
     // whose bodies it is inside), a fallen person read at their rig.
     if (s.crowdFrame) this.contactScan(s)
+    // The robots: the bodies' joints out of the joint buffer, the newest frames in, the setpoints out through the gate.
+    this.robots.tick()
     // The pedestrians the worker simulated: straight into the render buffers (the copy is only ever drawn).
     if (s.crowdFrame && this.crowd.upload(s.crowdFrame)) this.crowdFrames++
     for (const ev of s.events) {
@@ -1699,12 +1735,17 @@ export class Engine {
     const k = q.mask(q.governor.knobs())
     // Ghost view lives in the post chain: while it is on, the chain runs at every tier (unless ?post=0 forbids it).
     if (this.ghost.on && this.options.post) k.post = true
+    // The post chain presents one image; a headset wants two eyes, so it is off while presenting (xrSession.ts).
+    if (this.rig.headset) k.post = false
     applyQuality(k, q.targets, q.applied)
     q.applied = k
   }
 
   frame(nowMs: number): void {
     if (this.disposed || this.halted) return
+    // Presenting to a headset: the session's loop drives the frame (xrSession.ts); the page's own animation frames,
+    // which carry no headset frame, are let go.
+    if (this.xr.presenting && (this.gpu.renderer as unknown as XrRendererLike).xr.getFrame() === null) return
     const cpuStart = performance.now()
     const realDt = this.lastMs < 0 ? 16.7 : nowMs - this.lastMs
     this.lastMs = nowMs
@@ -1721,7 +1762,9 @@ export class Engine {
     // The newest audited state: this frame renders it and reads the player's situation from it.
     const st = sim.state
     const driving = st.driving
-    // Gamepads and touch first, so their presses are seen by take() this same frame.
+    // Gamepads and touch first, so their presses are seen by take() this same frame. Under a headset the sticks are
+    // read against the head's own yaw (the pose is the headset's), not the body yaw Input keeps.
+    this.xrInput.headOffset = this.rig.headset ? this.rig.pose.yaw - input.yaw : 0
     input.poll(dt)
 
     if (input.take('interact')) this.interact()
@@ -1794,7 +1837,8 @@ export class Engine {
       r.x = p[o + POSE.qx]; r.y = p[o + POSE.qy]; r.z = p[o + POSE.qz]; r.w = p[o + POSE.qw]
       focusX = t.x; focusZ = t.z
       const h = p[o + POSE.heading]
-      input.yaw = carriedYaw(input.yaw, this.carHeading, h)
+      // Under a headset the body faces the car's way and the head turns on its own; otherwise the look is carried.
+      input.yaw = this.rig.headset ? yawFacing(h) : carriedYaw(input.yaw, this.carHeading, h)
       this.carHeading = h
       this.rig.inVehicle(cam, t, r, this.sim.meta.kind[driving], input.yaw, input.pitch)
     } else {
@@ -2215,6 +2259,41 @@ export class Engine {
     return best
   }
 
+  /**
+   * The city's structure-of-arrays columns for NoirScript (terminal/noirscript): every array a copy taken now, so a run
+   * reads one consistent moment and nothing of the realm is handed out by reference. The crowd straight off the
+   * zero-copy bridge (as crowd.positions above), split into x and z; the cars from the newest poses (mode 0 ai,
+   * 1 player, 2 parked, as simProtocol.ts MODES orders them); the kernel's counters; the frame clock.
+   */
+  private soaTables(): NoirTables {
+    const b = this.sim.bridge
+    let crowdX = new Float32Array(0), crowdZ = new Float32Array(0)
+    if (b.counts.agents > 0 && b.seq > 0) {
+      const n = b.counts.agents
+      if (this.crowdXZ.length !== 2 * n) this.crowdXZ = new Float32Array(2 * n)
+      b.agentXZ(this.crowdXZ)
+      crowdX = new Float32Array(n)
+      crowdZ = new Float32Array(n)
+      for (let i = 0; i < n; i++) { crowdX[i] = this.crowdXZ[2 * i]; crowdZ[i] = this.crowdXZ[2 * i + 1] }
+    }
+    const p = this.sim.state.poses, cars = this.sim.meta.count
+    const x = new Float32Array(cars), z = new Float32Array(cars), heading = new Float32Array(cars), speed = new Float32Array(cars), mode = new Int32Array(cars)
+    for (let i = 0; i < cars; i++) {
+      const o = i * POSE.stride
+      x[i] = p[o + POSE.x]; z[i] = p[o + POSE.z]; heading[i] = p[o + POSE.heading]; speed[i] = p[o + POSE.speed]
+      const m = p[o + POSE.mode] | 0
+      mode[i] = m >= 0 && m <= 2 ? m : 0
+    }
+    const k = this.kernelStats()
+    const [mean, , p95] = this.clock.stats()
+    return {
+      crowd: { n: crowdX.length, x: crowdX, z: crowdZ },
+      cars: { n: cars, x, z, heading, speed, mode },
+      kernel: { law1: k.law1, law2: k.law2, law3: k.law3, flips: k.sensorFlips, shielded: k.shielded },
+      frame: { fps: mean > 0 ? 1000 / mean : 0, ms: mean, p95 },
+    }
+  }
+
   /** The crowd's figures: what the page drew, and what the worker's crowd did. */
   private crowdStats(): CrowdStats {
     const w = this.sim.state.crowd.stats
@@ -2257,6 +2336,8 @@ export class Engine {
         triggerResistance: this.trigger.level, hal: this.input.hal.summary(),
         glyphs: this.glyphs,
         recording: this.recorder.state,
+        xr: { state: this.xr.state, detail: this.xrLine() },
+        robots: this.robots.summary(),
       },
       input: { mode: driving ? 'vehicle' : 'foot', nearVehicle: !driving && this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE) >= 0 },
       process: {
@@ -2323,7 +2404,7 @@ export class Engine {
    * never reads. The gate, mind, voice and diary given on the first call are the ones kept. The name a hired agent
    * goes by, for who proposes a city action, is the host's too (setNameOf), read when a proposal is made.
    */
-  terminalBridge(gate: SkillGate, givenMind: Mind, voice?: Voice, diary?: Diary, voiceOf?: (agent: number) => string | null): TerminalBridge {
+  terminalBridge(gate: SkillGate, givenMind: Mind, voice?: Voice, diary?: Diary, voiceOf?: (agent: number) => string | null, vault?: EliteVault): TerminalBridge {
     if (this.bridge) return this.bridge
     // The cloud fallback throttle in front of the mind App built: while this page's frames are slow, a complex prompt
     // bound for a model server on this machine goes to the router's cloud provider instead (nothing when it has none).
@@ -2337,7 +2418,7 @@ export class Engine {
     this.bridge = Object.freeze({
       brand: Object.freeze({ name: BRAND.name, version: BRAND.version, host: BRAND.host, track: 'gui' as const }),
       stats: () => ring0Stats(this.snapshot(), this.sim.state.physics),
-      laws: () => THREE_LAWS,
+      laws: () => LAWS,
       clock: () => formatClock(this.hours),
       setClock: (h: number) => this.debugSetHour(h),
       quality: (arg?: 'auto' | number) => {
@@ -2358,6 +2439,23 @@ export class Engine {
       adapter: () => this.adapter,
       ghost: (arg?: 'on' | 'off') => (arg === undefined ? (this.ghost.on ? 'on' : 'off') : this.setGhost(arg === 'on')),
       rain: (arg?: 'on' | 'off') => (arg === undefined ? (this.matrixOn ? 'on' : 'off') : this.setMatrix(arg === 'on')),
+      xr: (arg?: 'vr' | 'ar' | 'off') => this.xrCommand(arg),
+      // The robots (robotLink.ts): every line comes from the bridge; the operator tier is read from this same bridge.
+      robot: Object.freeze({
+        list: () => this.robots.list(),
+        relay: (url: string, token: string) => this.robots.relay(url, token),
+        relayOff: () => this.robots.relayOff(),
+        relayStatus: () => this.robots.relayStatus(),
+        spawn: (id: string, x?: number, z?: number) => this.robots.spawn(id, x, z),
+        urdf: (url: string, name?: string) => this.robots.urdf(url, name),
+        demo: (name?: string) => this.robots.demo(name),
+        mode: (id: string, m: string) => this.robots.mode(id, m as BridgeMode),
+        set: (id: string, joint: string, q: number) => this.robots.set(id, joint, q),
+        arm: (id: string) => this.robots.arm(id),
+        disarm: (id: string) => this.robots.disarm(id),
+        calibrate: (id: string, joint: string) => this.robots.calibrate(id, joint),
+        remove: (id: string) => this.robots.remove(id),
+      }),
       render: (arg?: 'on' | 'off') => (arg === undefined ? (this.rendering ? 'on' : 'off') : this.setRendering(arg === 'on')),
       captions: (arg?: 'on' | 'off') => (arg === undefined ? (this.captionsOn ? 'captions: on' : 'captions: off') : this.setCaptions(arg === 'on')),
       // The unified namespace, read-only: the rows are formatted here, so the console imports nothing of the bus. A
@@ -2371,6 +2469,7 @@ export class Engine {
         children: (prefix?: string) => childLines(this.topics, prefix === undefined ? undefined : expandTopic(prefix)),
         status: () => `namespace  ${this.topics.count} topics  ${this.topics.publishes} publishes  head ${this.topics.head().toString(16).padStart(8, '0')}`,
       }),
+      soa: Object.freeze({ tables: () => this.soaTables() }),
       // Pings are view-only marks (a walk ping is offered to the host's recruiter through onRally, never sent anywhere).
       ping: Object.freeze({
         at: (kind: PingKind) => this.pingAt(kind),
@@ -2380,8 +2479,9 @@ export class Engine {
       }),
       // The operator tier: unlockable, sandboxed, built over simControls() and two host knobs handed in as senses
       // (rain mode and the sound, for the city actions an agent proposes), never over the engine itself; its scripts
-      // and the allowed actions are bound to the swarm through the gate.
-      operator: operatorBridge(this.simControls(), gate, mind, undefined, { voice, speech: this.speechOut(), diary, awareness: this.awareness(), nameOf, city: this.cityKnobs(), voiceOf }),
+      // and the allowed actions are bound to the swarm through the gate. `contained` is what this host vouches to the
+      // Ring-0 action gate: the air gap main.tsx installed on this page's global is still there (airgap.ts).
+      operator: operatorBridge(this.simControls(), gate, mind, undefined, { voice, speech: this.speechOut(), diary, awareness: this.awareness(), nameOf, city: this.cityKnobs(), contained: () => airgapInstalled(globalThis), voiceOf, vault }),
       record: Object.freeze({
         start: (source: RecorderSource) => this.startRecording(source),
         stop: () => this.stopRecording(),
@@ -2671,13 +2771,74 @@ export class Engine {
     this.netLetGo('the city has stopped')
     try { this.audio.dispose() } catch { /* the halt must complete whatever the audio stack does */ }
     for (let k = 1; k < this.views.length; k++) try { this.views[k].audio.dispose() } catch { /* likewise */ }
+    // DISARM on every robot's door and the relay closed, before the bus closes its ports.
+    try { this.robots.panic() } catch { /* likewise */ }
     void Promise.resolve(this.input.hal.dispose()).catch(() => {})
     try { this.onHalt?.(reason) } catch { /* likewise */ }
+  }
+
+  /** The headset's side of the engine (xrSession.ts XrHost). */
+  private xrHost(): XrHost {
+    return {
+      frame: (nowMs) => this.frame(nowMs),
+      sources: (list) => this.input.hal.setHeadset(list),
+      select: () => {
+        // A pinch (or a hand's select) with no controller: the interaction at hand, else a ping where the head looks.
+        const st = this.sim.state
+        const near = st.driving >= 0 || this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE) >= 0
+        this.input.press(near ? 'interact' : 'ping')
+      },
+      started: (mode, blend) => {
+        this.rig.setHeadset(composerFor(this.gpu.renderer as unknown as XrRendererLike))
+        if (this.pacer) this.pacer.passthrough = true
+        this.applyTier()
+        this.marked = false
+        this.toast('Headset', `${mode === 'immersive-ar' ? 'AR' : 'VR'} on${blend !== 'opaque' ? ', passthrough' : ''}`)
+      },
+      ended: () => {
+        this.rig.setHeadset(null)
+        if (this.pacer) this.pacer.passthrough = false
+        this.applyTier()
+        if (!this.disposed) { this.resize(); this.toast('Headset', 'off') }
+      },
+    }
+  }
+
+  /** The touch menu's Headset item, inside the tap: leaves the headset, or enters VR (AR where VR is not offered). */
+  toggleXr(): void {
+    if (this.xr.presenting) { void this.xr.exit(); return }
+    void this.enterXr(this.xrModes.vr || !this.xrModes.ar ? 'immersive-vr' : 'immersive-ar').then((line) => {
+      if (!this.xr.presenting) this.toast('Headset', line)
+    })
+  }
+
+  /** Asks for an immersive session; synchronous up to the browser's request, so call it inside the user's gesture. */
+  enterXr(mode: 'immersive-vr' | 'immersive-ar'): Promise<string> {
+    if (this.disposed) return Promise.resolve('the city has stopped')
+    if (this.views.length > 1) return Promise.resolve('no headset while the screen is split')
+    return this.xr.enter(mode)
+  }
+
+  /** The console's `xr [vr|ar|off]`: the status line, or the session asked for or ended. */
+  xrCommand(arg?: 'vr' | 'ar' | 'off'): string | Promise<string> {
+    if (arg === undefined) return this.xrLine()
+    if (arg === 'off') return this.xr.presenting ? this.xr.exit().then(() => 'off') : 'off: no session'
+    return this.enterXr(arg === 'ar' ? 'immersive-ar' : 'immersive-vr')
+  }
+
+  /** One line for the HUD and the console: the session's state, or what the browser offers. */
+  private xrLine(): string {
+    if (!this.xr.possible) return 'unsupported: no WebXR bound to WebGPU in this browser'
+    if (this.xr.presenting || this.xr.state === 'entering') return this.xr.describe()
+    const m = this.xrModes
+    const modes = [m.vr ? 'vr' : '', m.ar ? 'ar' : ''].filter(Boolean)
+    return `off: ${modes.length ? `${modes.join(' and ')} available (xr ${modes[0]})` : 'no immersive session offered'}`
   }
 
   dispose(): void {
     this.disposed = true
     this.stopLongTasks()
+    this.xr.dispose()
     if (this.recorder.state.active) void this.recorder.stop().catch(() => {})
     this.cameraTrack?.stop()
     this.netUnvoice?.()

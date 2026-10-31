@@ -15,19 +15,28 @@
  * with them. Speech (`say <skill>: …`, Voice: 09_Cognition/localSpeech.ts; SpeechOut: the engine's soundscape) is
  * said by the person it is bound to, from where they stand, and cut mid-word when they are left behind. Every vehicle
  * command a script issues still goes through Fleet's vetting; the facade only forwards plain numbers and strings.
+ * Before any model is asked, the Ring-0 action gate (02_Define_The_Rules/ring0Gate.ts admitAsk) holds the ask to the
+ * Zeroth Law: the page contained (what the host vouches through `contained`), the model on this machine or none, the
+ * tier unlocked; the keeper of city actions (acts.ts) asks the same gate before a proposal is shown and before it runs.
  * What breaks if it is removed? `operator`, `run`, `ask`, `say`, `api`, `get`, `set` and `harness` have nothing
  * behind them, and the engine has no contract to implement.
  */
 import { DISENGAGED, disengaged, screen } from '../02_Define_The_Rules/conduct.ts'
+import { admitAsk, sentence as lawSentence, type Vouched } from '../02_Define_The_Rules/ring0Gate.ts'
 import type { CrowdStats } from '../03_Spawn_Agents/crowdCompute.ts'
 import type { KernelStats, QualityState, SipocSnapshot } from '../05_Observe_Environment/telemetry.ts'
-import type { OperatorBridge } from './terminal/bridge.ts'
+import type { EliteWrites, OperatorBridge } from './terminal/bridge.ts'
+import { sha256 } from '../02_Define_The_Rules/integrity.ts'
 import type { CityKnobs } from '../06_Make_Decisions/actions.ts'
 import type { AuditEntry, verifyChain } from '../02_Define_The_Rules/guardrails.ts'
 import { createActs, PROPOSAL_WAITING } from './acts.ts'
 import { harnesses, runHarness, type HarnessReport } from './harness.ts'
 import type { AgentContext } from '../08_Swarm/shortTerm.ts'
 import { createSwarm } from '../08_Swarm/orchestrator.ts'
+import {
+  FEATURES, NO_STEERING, about as featuresAbout, activations, clampFeature, featureById, featureLines, knobEffects, readingsOf,
+  release as releaseFeature, steer as steerFeature, steeringLines, type FeatureDef, type Steering,
+} from '../09_Cognition/features.ts'
 export type { AgentContext } from '../08_Swarm/shortTerm.ts'
 
 /** What the ENGINE provides (engine.ts implements it). Rich enough for scripts and harnesses. */
@@ -201,6 +210,11 @@ export interface AnswerRequest {
   signal: AbortSignal
   memories?: readonly Memories[]
   context?: readonly AgentContext[]
+  /**
+   * The operator's steering (09_Cognition/features.ts steeringLines): fixed lines every provider puts in the system
+   * prompt after the expertise; absent when nothing is steered, so the prompt is then as it was.
+   */
+  steering?: readonly string[]
 }
 
 /** What one of the people an answer speaks for remembers of the operator (Diary.recall), oldest first. */
@@ -292,7 +306,27 @@ export function taskOutcome(r: AskResult | RunResult | SayResult): Outcome | und
 }
 
 /** What the host hands the operator tier besides the gate and the mind; each is optional (the tier says what is missing). */
+/** Where the host keeps the elite tier's passphrase record (a salted hash, never the words): one string, or none yet. */
+export interface EliteVault {
+  load(): string | null
+  save(value: string): void
+}
+
+/** What `ring0 unlock --elite` prints: what is open now, and what stays in force and out of reach. */
+export const ELITE_BANNER: readonly string[] = Object.freeze([
+  'Ring-0 elite tier unlocked for this console session.',
+  "Open now: NoirScript's writes (tune, intent, cull, steer), each through the operator's own facade, with raised limits.",
+  'Still in force, out of reach: the three laws and the Bouncer in the physics realm (a car intent is vetted as the',
+  "wheel's is), the Sanctuary, the Ring-0 auditor and the 14A screen. No write here can reach or alter any of them.",
+  "Type 'ring0 lock' to close this tier; 'operator lock' closes both.",
+])
+
+/** Wrong passphrases in a row the elite tier takes before it refuses until the operator tier is locked and unlocked again. */
+const ELITE_MAX_WRONG = 5
+
 export interface Senses {
+  /** Where the host keeps the elite tier's passphrase record; absent when the page cannot keep one (the tier then cannot open). */
+  readonly vault?: EliteVault
   readonly voice?: Voice
   readonly speech?: SpeechOut
   readonly diary?: Diary
@@ -303,6 +337,12 @@ export interface Senses {
   readonly nameOf?: (agent: number) => string | null
   /** The two city knobs an allowed action may turn that are not facade leaves: rain mode and the sound. */
   readonly city?: CityKnobs
+  /**
+   * What the host vouches to the Ring-0 action gate: the page's outbound primitives are held to this machine
+   * (02_Define_The_Rules/airgap.ts airgapInstalled on the page's global). Left out, the host has vouched nothing, and the
+   * gate admits no ask and no action: it fails closed.
+   */
+  readonly contained?: () => boolean
 }
 
 /**
@@ -411,7 +451,8 @@ export interface PendingAct {
 }
 
 /** How a proposed city action ended, and the line that says so. */
-export type ActEnd = { readonly state: 'done' | 'failed' | 'refused' | 'withdrawn' | 'aborted'; readonly line: string }
+/** How a proposal ended: done, failed, refused by a person, denied by the Ring-0 action gate after a person allowed it (`line` names the law), withdrawn, or aborted with its tether. */
+export type ActEnd = { readonly state: 'done' | 'failed' | 'refused' | 'denied' | 'withdrawn' | 'aborted'; readonly line: string }
 
 /** What a follower of the proposals sees: one proposed, one allowed, one ended. */
 export type ActEvent =
@@ -740,7 +781,7 @@ export function gatedExec(gate: SkillGate, skills: readonly string[], script: st
  * before; a stop or a server failure is Authorized with the reason (the tether held). With a diary, the answer carries
  * what each bound person remembers.
  */
-export function gatedAsk(gate: SkillGate, mind: Mind, skills: readonly string[], prompt: string, diary?: Diary, awareness?: Awareness): GatedAsk & { stop(): void } {
+export function gatedAsk(gate: SkillGate, mind: Mind, skills: readonly string[], prompt: string, diary?: Diary, awareness?: Awareness, steering?: readonly string[]): GatedAsk & { stop(): void } {
   const followers = new Set<(p: Piece) => void>()
   const stopper = new AbortController()
   const t0 = now()
@@ -792,7 +833,7 @@ export function gatedAsk(gate: SkillGate, mind: Mind, skills: readonly string[],
   // 14A: an inadmissible prompt (violence, toxicity, illegality) is not engaged with: it reaches no model, whichever
   // provider answers, nothing streams, and the answer is nothing at once.
   const handle = gate.submit(skills, (lease) => screen(prompt).admissible ? mind.answer(
-    { tethers: lease.bound, prompt, signal: AbortSignal.any([lease.signal, stopper.signal]), memories: remembered(lease.bound), ...(awareness && { context: aware(lease.bound) }) },
+    { tethers: lease.bound, prompt, signal: AbortSignal.any([lease.signal, stopper.signal]), memories: remembered(lease.bound), ...(awareness && { context: aware(lease.bound) }), ...(steering && steering.length > 0 ? { steering } : {}) },
     (p) => lease.use(() => {
       if (p.kind === 'text') pass(p.text, false)
       else if (!refused) {
@@ -1014,7 +1055,17 @@ const answeringProvider = (mind: Mind): string | undefined => {
  */
 export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sleep: (ms: number) => Promise<void> = wait, senses: Senses = {}): OperatorBridge {
   const api = scriptApi(sim)
-  const { voice, speech, diary, awareness, voiceOf, nameOf, city } = senses
+  const { voice, speech, diary, awareness, voiceOf, nameOf, city, vault } = senses
+  /** What the host vouches to the gate (null: nothing, which admits nothing). */
+  const contained = (): Vouched => (senses.contained ? senses.contained() === true : null)
+  /**
+   * The answering provider's server, for the gate's loopback bound: none for the scripted provider or a model running
+   * in this page (neither addresses a server).
+   */
+  const endpoint = (): string | null => {
+    const p = answeringProvider(mind)
+    return p === 'scripted' || p === 'inpage' ? null : mind.settings().server
+  }
   let unlocked = false
   let running: string | null = null
   let asking: (GatedAsk & { stop(): void }) | null = null
@@ -1053,6 +1104,7 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
     nameOf,
     now: () => Date.now(),
     unlocked: () => unlocked,
+    contained,
   })
   /**
    * One prompt through the gate, with its stop: `ask` hands it out without the stop, the swarm keeps it. `acting`: the
@@ -1060,6 +1112,9 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
    */
   const askThrough = (skills: readonly string[], prompt: string, acting = false): GatedAsk & { stop(): void } => {
     if (!unlocked) throw locked('ask')
+    // The gate, before any model is asked: the page contained and the model on this machine or none (the Zeroth Law).
+    const admitted = admitAsk({ contained: contained(), endpoint: endpoint(), unlocked })
+    if (!admitted.admitted) throw new Error(`ask: ${lawSentence(admitted)}`)
     // A proposal waiting for the operator's OK holds the floor: the console's asks and the swarm's steps alike.
     if (acts.pending()) throw new Error(PROPOSAL_WAITING)
     if (asking) throw new Error("an answer is still coming: wait for it, or type 'ask stop'")
@@ -1067,7 +1122,7 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
     if (mind.settings().model === null) throw new Error(answeringProvider(mind) === 'inpage' ? 'choose a model first: Menu › Model file, or ask file (or ask model <name> for a file already kept: type ask to list them)' : 'choose a model first: ask model <name> (type ask to list them)')
     const words = String(prompt)
     const began = Date.now()
-    const a = gatedAsk(gate, mind, skills, words, diary, awareness)
+    const a = gatedAsk(gate, mind, skills, words, diary, awareness, steeringLines(steering))
     if (a.state === 'Authorized') {
       asking = a
       void a.result.then(() => { if (asking === a) asking = null })
@@ -1114,10 +1169,7 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
   const orchestrator = createSwarm({
     // Never `acting`: a role's ACTION line is text, and the swarm proposes nothing.
     ask: (skills, prompt) => askThrough(skills, prompt),
-    endpoint: () => {
-      const p = answeringProvider(mind)
-      return p === 'scripted' || p === 'inpage' ? null : mind.settings().server
-    },
+    endpoint,
   })
   // A run is refused while locked, like a prompt (a host's voice line reaches this surface too, not only the console),
   // and while a proposal waits for the operator's OK.
@@ -1129,11 +1181,170 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
       return orchestrator.run(goal, agents)
     },
   })
+  /** One tuning knob through the facade (validated and clamped by the engine); the value it holds now. */
+  const setKnob = (table: 'physics' | 'shaders', key: string, value: number): number => {
+    if (table === 'physics') {
+      api.physics.set(key, value)
+      return api.physics.tune()[String(key)]
+    }
+    if (table === 'shaders') {
+      api.shaders.set(key, value)
+      return api.shaders.uniforms()[String(key)]
+    }
+    throw new TypeError(`no tuning table '${String(table)}': physics or shaders`)
+  }
+  // The feature inspector (09_Cognition/features.ts): the operator's steering, read into every prompt this tier sends
+  // (askThrough hands gatedAsk its lines) and leaned onto the bounded tuning knobs through the same facade as `set`.
+  let steering: Steering = NO_STEERING
+  const vector = (): Float32Array => activations(readingsOf(api.snapshot()))
+  const signedBias = (b: number): string => `${b < 0 ? '-' : '+'}${Math.abs(b).toFixed(2)}`
+  /**
+   * The knobs of `f` (every feature's, for null) set again: each to its middle, then to the lean of every biased feature
+   * in dictionary order (a knob two features lean on takes the later one's); one line per knob with the value it holds.
+   */
+  const relean = (f: FeatureDef | null): string[] => {
+    const knobs = f ? (f.knobs ?? []) : FEATURES.flatMap((d) => d.knobs ?? [])
+    const want = new Map<string, { table: 'physics' | 'shaders'; key: string; value: number }>()
+    for (const k of knobs) want.set(`${k.table}.${k.key}`, { table: k.table, key: k.key, value: k.mid })
+    for (const e of knobEffects(steering)) if (want.has(`${e.table}.${e.key}`)) want.set(`${e.table}.${e.key}`, e)
+    return [...want.values()].map((e) => `${e.table}.${e.key} = ${setKnob(e.table, e.key, e.value)}`)
+  }
+  const features = Object.freeze({
+    lines: (k?: number): string[] => featureLines(vector(), steering, k),
+    about: (name: string): string[] | null => {
+      const f = featureById(name)
+      if (!f) return null
+      const v = vector()[FEATURES.indexOf(f)]
+      const b: number | undefined = steering.bias[f.id]
+      const c: number | undefined = steering.clamp[f.id]
+      return [
+        `${f.id}  (${f.title})`,
+        f.doc,
+        `threshold ${f.theta}  now ${v.toFixed(2)}${c !== undefined ? `  clamp ${c.toFixed(2)}` : ''}${b !== undefined ? `  bias ${signedBias(b)}` : ''}`,
+        `up:   ${f.up}`,
+        `down: ${f.down}`,
+        f.knobs ? `knobs: ${f.knobs.map((k) => `${k.table}.${k.key} ${k.lo}..${k.mid}..${k.hi}`).join(', ')}` : 'knobs: none (the prompt alone)',
+      ]
+    },
+    prompt: (): string[] => steeringLines(steering),
+    explain: (): string[] => featuresAbout(),
+    steer: (name: string, bias: number): string[] => {
+      if (!unlocked) throw locked('feature')
+      steering = steerFeature(steering, name, bias)
+      const f = featureById(name)!
+      return [`${f.id} bias ${signedBias(bias)}`, ...relean(f)]
+    },
+    clamp: (name: string, value: number): string => {
+      if (!unlocked) throw locked('feature')
+      steering = clampFeature(steering, name, value)
+      return `${featureById(name)!.id} clamp ${value.toFixed(2)}`
+    },
+    release: (name: string): string[] => {
+      if (!unlocked) throw locked('feature')
+      steering = releaseFeature(steering, name)
+      const f = featureById(name)!
+      return [`${f.id} released`, ...relean(f)]
+    },
+    reset: (): string[] => {
+      if (!unlocked) throw locked('feature')
+      steering = NO_STEERING
+      return ['features: nothing steered', ...relean(null)]
+    },
+  })
+  // The elite tier (bridge.ts EliteBridge): a passphrase record `v1:<salt>:<sha256(salt:passphrase)>` kept by the host's
+  // vault, never the words; open for this console session only. What it opens is the write surface below, every
+  // write through the facade `set`, a scripted intent and `crowd.cull` already go through, and the feature inspector:
+  // nothing of the laws, the Sanctuary, the Ring-0 auditor or the 14A screen is reachable from here.
+  let elite = false
+  let wrongPassphrases = 0
+  let eliteWrites = 0
+  const record = (): { salt: string; hash: string } | null => {
+    const raw = vault?.load() ?? null
+    const m = raw === null ? null : /^v1:([0-9a-f]{32}):([0-9a-f]{64})$/.exec(raw)
+    return m ? { salt: m[1], hash: m[2] } : null
+  }
+  const digest = (salt: string, passphrase: string): string => sha256(`${salt}:${passphrase}`)
+  const saltHex = (): string => {
+    const bytes = new Uint8Array(16)
+    crypto.getRandomValues(bytes)
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+  }
+  const requireElite = (): void => {
+    if (!elite) throw new Error("elite tier locked: 'ring0 unlock --elite <passphrase>' opens it")
+  }
+  const writes: EliteWrites = Object.freeze({
+    tune: (key: string, value: number): number => {
+      requireElite()
+      const m = /^(physics|shaders)\.(.+)$/.exec(key)
+      const table: 'physics' | 'shaders' = m ? (m[1] as 'physics' | 'shaders') : key.startsWith('car.') ? 'physics' : 'shaders'
+      const now = setKnob(table, m ? m[2] : key, value)
+      eliteWrites++
+      return now
+    },
+    intent: (car: number, throttle: number, brake: number, steer: number): boolean => {
+      requireElite()
+      api.vehicles.intent(car, throttle, brake, steer)
+      eliteWrites++
+      return true
+    },
+    cull: (density: number): number => {
+      requireElite()
+      api.crowd.cull({ density })
+      eliteWrites++
+      return density
+    },
+    steer: (feature: string, value: number): number => {
+      requireElite()
+      features.steer(feature, value)
+      eliteWrites++
+      return value
+    },
+  })
+  const eliteTier = Object.freeze({
+    status: (): string => {
+      const kept = record() ? '' : vault ? ' (no passphrase set)' : ' (this page cannot keep a passphrase)'
+      return `ring0: elite tier ${elite ? 'unlocked' : 'locked'}${kept}; ${eliteWrites} write${eliteWrites === 1 ? '' : 's'} this session`
+    },
+    unlocked: (): boolean => elite,
+    unlock: (passphrase: string): string[] => {
+      if (!unlocked) throw locked('ring0')
+      if (!vault) throw new Error('this page cannot keep a passphrase, so the elite tier cannot open here')
+      const r = record()
+      if (!r) throw new Error("no elite passphrase is set: 'ring0 elite set <passphrase>' first")
+      if (wrongPassphrases >= ELITE_MAX_WRONG) throw new Error('too many wrong passphrases: operator lock, then operator unlock, to try again')
+      if (digest(r.salt, String(passphrase)) !== r.hash) {
+        wrongPassphrases++
+        const left = ELITE_MAX_WRONG - wrongPassphrases
+        throw new Error(`wrong passphrase (${left} ${left === 1 ? 'try' : 'tries'} left)`)
+      }
+      elite = true
+      wrongPassphrases = 0
+      return [...ELITE_BANNER]
+    },
+    lock: (): string => {
+      elite = false
+      return 'ring0: elite tier locked'
+    },
+    set: (passphrase: string): string => {
+      if (!unlocked) throw locked('ring0')
+      if (!vault) throw new Error('this page cannot keep a passphrase, so the elite tier cannot open here')
+      const words = String(passphrase)
+      if (words.length < 8 || words.length > 256) throw new RangeError('the passphrase must be 8 to 256 characters')
+      if (record() && !elite) throw new Error("a passphrase is set: 'ring0 unlock --elite <passphrase>' first, then set the new one")
+      const salt = saltHex()
+      vault.save(`v1:${salt}:${digest(salt, words)}`)
+      return "ring0: elite passphrase set (kept as a salted hash, never the words); 'ring0 unlock --elite <passphrase>' opens the tier"
+    },
+    writes: (): EliteWrites | null => (elite ? writes : null),
+  })
   return Object.freeze({
     unlock: () => { unlocked = true },
     // No proposal waits past a lock: the one waiting is withdrawn, and the console (which caused it) prints the line.
     lock: () => {
       unlocked = false
+      // The elite tier closes with this one, and its count of wrong passphrases starts again.
+      elite = false
+      wrongPassphrases = 0
       acts.withdraw('operator lock')
     },
     unlocked: () => unlocked,
@@ -1151,16 +1362,10 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
     },
     tune: (table: 'physics' | 'shaders', key: string, value: number): number => {
       if (!unlocked) throw locked('set')
-      if (table === 'physics') {
-        api.physics.set(key, value)
-        return api.physics.tune()[String(key)]
-      }
-      if (table === 'shaders') {
-        api.shaders.set(key, value)
-        return api.shaders.uniforms()[String(key)]
-      }
-      throw new TypeError(`no tuning table '${String(table)}': physics or shaders`)
+      return setKnob(table, key, value)
     },
+    features,
+    elite: eliteTier,
     ask: (skills: readonly string[], prompt: string): GatedAsk => {
       const { stop: _stop, ...handle } = askThrough(skills, prompt, true)
       return Object.freeze(handle)

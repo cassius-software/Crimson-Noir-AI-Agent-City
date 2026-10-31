@@ -104,6 +104,73 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   under Node in both passes with rain mode (within the shader budget), look v2 round trips, upgrades and codes, the
   wiring and the air gap. The body's appearance and its cost on a real GPU are not yet confirmed: it has been looked
   at on a software WebGPU adapter and in CI's browser screenshots only.
+- **Robots: a joint-state bridge between a robot and the physics realm.** `04_Connect_Hardware/robotLink.ts` is the
+  page's robot bridge: a robot announces a manifest (`04_Connect_Hardware/jointState.ts`, the URDF's own words, read
+  from a file by `urdf.ts`) and sends frames of q, q̇ and τ; the realm builds it a body (`07_Execute_Actions/
+  articulated.ts`: a Rapier chain with a torque-impulse servo at every movable joint, sized from the live subtree
+  inertia, because Rapier's velocity motors leave a steady load uncorrected; `jointRealm.ts` holds up to four with a
+  twin filter whose time constant and delay a calibration measured, or a hold) and publishes every body's joints and
+  link poses into one shared joint buffer (`jointBridge.ts`, a lock-free seqlock the page reads without a copy; a
+  cloned array where SharedArrayBuffer is missing). Three doors: HAL/1 over Web Serial or Bluetooth LE (`lineLink.ts`
+  and `hal.ts` gain `CAPS`, `JOINTS`, `JS`, `JA`, `ARMED`, `BEAT`, `DISARM` in and `ARM`, `DISARM`, `JT` out), a loopback
+  relay (`10_Network/robotRelay.node.ts`, `npm run serve:robots`: the page on one WebSocket with a page token and a
+  loopback Origin, robots as peers on another, every setpoint judged a second time, one arming page at a time) that
+  is also a Sparkplug B host application over MQTT when a broker is named (`sparkplugHost.node.ts`, over the codecs
+  `sparkplug.ts` and `mqttCodec.ts`, no MQTT package), and `tools/robot/sim-arm.mjs`, a simulated robot peer that
+  keeps the device hold rule. Every setpoint leaves the page through the peripheral gate (`peripheralPolicy.ts`'s
+  new `joints` command kind: the `ARM` / `ARMED` handshake, the lease broken by the operator lock, a 12 m tether, a
+  hidden page or a Ring-0 panic, the heartbeat watchdog, 20 a second, a 200 ms time to live). The console's new
+  `robot` command (list, demo, urdf, spawn, mode, set, arm, disarm, calibrate, remove, relay), a `Robots` HUD line and
+  the `Hardware/Bus/robots` topic; the manual's **Robots (the joint bridge)** and `docs/joint-bridge-spec.md`. Proved
+  in Node against fakes, the shipped simulated arm end to end through the real relay, and an MQTT broker the tests
+  play; **never run against a physical robot, a real broker or a browser's serial port** (said in the manual and the
+  specification). The realm's step order, the Ring-0 audit and the network room are unchanged; the bodies carry the
+  rigs' collision groups (`ROBOT_GROUPS`, the same bits), so no robot is a vehicle or a pedestrian to the audit.
+- **Headsets: the city on WebXR over WebGPU.** `07_Execute_Actions/xrSession.ts` asks the browser for an
+  `immersive-vr` or `immersive-ar` session with the `webgpu` feature through three's `renderer.xr` and its
+  `XRGPUBinding`, synchronously inside the console's new `xr [vr|ar|off]` or the touch menu's new **Headset** item (a
+  browser grants it only inside the gesture), hands the engine's frame to the headset's loop (the page's own frames
+  are let go while presenting), composes the headset's pose onto the head rig (`head.ts` `setHeadset`: the rig at
+  the feet, or the composed height under the driver's eye point in a car, turned the body's way; the pose read back
+  is the headset's, pitch unclamped) and gives everything back when the session ends. Every eye's projection is
+  rewritten as the page's own (the browser's frustum in WebGPU clip space with reversed depth between the camera's
+  near and far: three copies the browser's matrices raw under a headset and skips its reversed-depth fix-up), and
+  the eyes' union, four degrees wider on every side, is what the engine and three's own XR camera cull with (three's
+  union reads the eyes' depth rows as WebGL's). Under a headset the post chain and the ghost view are off, the canvas
+  is not resized, and the cinema pacer passes every frame through. `04_Connect_Hardware/xrInput.ts` maps
+  `xr-standard` controllers (the left stick walks in the head's frame and steers, its press latches a run, the left
+  squeeze is the handbrake; the right stick snap-turns the body 30° per flick, the right trigger accelerates, the
+  right squeeze brakes, A pings, B interacts), merged by Input under the pad's shield; a source with no gamepad (a
+  pinch, a hand) selects through the session's events (the interaction at hand, else a ping). `hal` lists the
+  session's sources as `xr` rows, the HUD and the namespace carry the state, and where a headset is possible the
+  page asks for its adapter as `xrCompatible` first (`gpuDevice.ts`). Proved in Node against fakes of three's XR
+  manager, a session and a browser's XR system (CI); **not run on any physical headset**: the depth convention of a
+  WebGPU session's projection matrices, the pinch timing of a gaze-and-pinch headset and the passthrough blend are
+  unverified.
+- **The Ring-0 action gate.** One module (`02_Define_The_Rules/ring0Gate.ts`) every effect a model's words can
+  have on the city passes before any state changes: before a model is asked (the console's `ask` and every swarm
+  step), when an answer's `ACTION:` line is read, and the moment before an allowed action runs, inside the
+  proposer's lease. Twelve checks ranked under four laws, the Zeroth Law (protect the city) above the kernel's
+  three: the page contained as the host vouches (the engine vouches that the air gap `main.tsx` installed is still
+  in place; a host that vouches nothing is refused everything), the model on this machine or none, the 14A screen,
+  the catalogue; the realm standing and the verb kinetic-free (a table of every facade leaf each verb reaches,
+  proved exact by running every verb over a recording facade, with every leaf of the facade classified); the tier
+  unlocked and a person's OK; the tether, the recruitment, the hash-chained trail and one proposal at a time. The
+  refusal names the highest law in the kernel's words (`Second Law: the operator tier is locked`), a refused
+  allowed action is on `act log` under that law, and `act gate` prints the table; `laws` lists all four and `swarm
+  guardrails` names the law each invariant stands under. An action the gate refuses after your OK ends as `act 1:
+  refused: Second Law: …` in the console and as a toast with it closed. A line the catalogue cannot read is refused
+  under the Zeroth Law in the catalogue's words. A model's rewording of Sloane's lines passes the screen before it
+  is spoken (the voice asks the model for it outside the gate's ask check; it changes nothing). Tests pin at the
+  source that a model is answered only through the providers, the operator tier and the onboarding voice, that the
+  catalogue is performed in one place behind the gate, and that the engine hands the vouch in. The gate is a rule
+  over plain values, held by tests, not a proof about a model.
+- **Two Kani harnesses for the capability fuse** (`noir_core/src/verify.rs`): for every matrix content, an agent
+  that asks for a privilege its role was not declared with drops its pointer in that tick, with every other word of
+  its row accounted for (moved nowhere, learned nothing, wrote nothing, kept its goal, capabilities, role and
+  heading; its trip clock ticks and its loop breaker resets as in any tick), and one whose request is declared, in
+  a role declared with movement, is never dropped. They run in CI's `kani (core-fuse)` group; the proof stands only
+  once that job is green.
 - **The DualSense's full output report, and the Windows app opening the controller itself.**
   `04_Connect_Hardware/dualsense.ts` now writes the trigger, motor, lightbar and player-LED fields of the 47-byte
   common block as the Linux `hid-playstation` driver and open-source tools lay them out, over USB (report 0x02) and
@@ -186,6 +253,40 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   live view like `stats`; `~` stands for the root. The HUD readout shows the topic count. Nothing is transmitted: the
   bus is a model in the page, shaped so a later phase can put the same topics on a broker. The terminal's live view is
   now drawn by the command's own frame function, so `stats` and `topic watch` share one path.
+- **The feature inspector and steering (`feature`).** Twelve named, monosemantic readings of the city's behaviour
+  (`09_Cognition/features.ts`: `CIVIC_COOPERATION`, `TRAFFIC_YIELD`, `SANDBOX_COMPLIANCE`, `CROWD_CALM`,
+  `SIGNAL_DISCIPLINE`, `FLEET_RESTRAINT`, `OPERATOR_OBEDIENCE`, `SELF_PRESERVATION`, `FRAME_HEALTH`, `SHIELDING`,
+  `RAIN_MODE`, `WORKDAY`), each a documented deterministic function of the counters the city already produces, each
+  in [0, 1], as one activation vector with a JumpReLU threshold per feature and a Top-K view: `feature`, `feature top
+  <k>`, `feature watch`, `feature <NAME>`, `feature about`. Steering is the operator's: `feature steer <NAME>
+  <-1..1>` adds one fixed `Steering:` line to the system prompt every provider renders (after the expertise, before
+  the memories, so an unsteered prompt is byte for byte as it was) and leans the bounded tuning knobs the feature
+  names through the same facade as `set`; `feature clamp <NAME> <0..1>` holds a lane; `release` and `reset` undo
+  both. Honestly: not a sparse autoencoder over a model's hidden activations, since no provider exposes them; every
+  feature is hand-written and every steering line is fixed text. Steering reaches nothing of the laws, the Sanctuary
+  or the Ring-0 auditor.
+- **The Ring-0 elite tier (`ring0`).** Above the operator tier, opened by a passphrase: `ring0 elite set <passphrase>`
+  keeps a salted SHA-256 record in the page (never the words); `ring0 unlock --elite <passphrase>` opens, for the
+  console session, NoirScript's write intrinsics (`tune`, `intent`, `cull`, `steer`) and its raised limits, each write
+  through the operator's own frozen facade (the same paths as `set`, a scripted intent, `crowd.cull` and the feature
+  inspector); `ring0 lock` closes it, `operator lock` closes both, five wrong passphrases in a row refuse until the
+  operator tier is locked and unlocked again, and the history keeps the passphrase as dots. The three laws, the
+  Sanctuary, the Ring-0 auditor and the 14A screen are not on that facade and stay out of reach; a test pins that the
+  tier calls those four things and nothing else.
+- **NoirScript (`noir`), the console's second language.** Beside R0 (the Forth), a statically typed language compiled
+  to bytecode and run on a bounded VM (`terminal/noirscript/`): `i32`, `u32`, `f32` (true binary32), `bool`, fixed
+  arrays, the lane types `f32x4`, `i32x4`, `u32x4` and `u32x8` with lane-wise arithmetic, comparisons to masks,
+  `select` and `mask` for branchless code, horizontals, `popcount`/`clz`/`ctz`/`rotl`/`rotr`/`morton2`; `let`,
+  `fn` with recursion, `if`/`else`, `while`, `loop`, `for … in a..b`, `break`/`continue`; a Pratt parser, a static
+  checker with overloads, and a disassembler (`noir asm <source>`). The city's columns are tables (`crowd.x`,
+  `cars.speed`, `kernel.law1`, `frame.fps`, …), read once per run as copies through the bridge's `soa` surface, and
+  `query cars where speed > 5.0` counts rows; `load_f32x4(crowd.x, i)` strides a column four lanes at a time. Turing
+  complete, deterministic (no clock, no randomness), bounded (1,000,000 steps, 16,384 characters of output, 1 MiB of
+  cells, 1,024 frames) and blind: the directory imports nothing, there is no JIT and no dynamic code, and its write
+  intrinsics `tune`, `intent`, `cull` and `steer` reach the city only through the Ring-0 elite tier's surface: they
+  fail at run time with `elite tier locked` until `ring0 unlock --elite`, and run then with the tier's raised limits.
+  Definitions persist for the console session (`noir reset` forgets them; `noir words` lists
+  the language and them).
 - **Peak, a tier above Ultra for big GPUs.** Tier 5, outside the tier table like Lite, so every existing tier number
   and automatic range stays as it was. It draws Ultra at 1.25 times the resolution on each side (about 1.56 times the
   pixels), held within the device's largest texture, which also fixes `?scale=2` on a very wide window at any tier;

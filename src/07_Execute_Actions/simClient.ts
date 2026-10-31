@@ -18,6 +18,7 @@ import PhysicsWorker from './physics.worker.ts?worker&inline'
 import { trackWorker } from './longTasks.ts'
 import { coded, MAX_PLAYERS, POSE, type DriveControls, type FootControls, type FromWorker, type PlayerControls, type SimCommand, type SimFailureCode, type SimInit, type SimMeta, type StepState } from './simProtocol.ts'
 import { canShareMemory, packAgents, packAvatars, packVehicles, PhysicsBridge } from './sharedBridge.ts'
+import { JointBuffer } from './jointBridge.ts'
 
 /** Commands waiting for the next step request; a flood beyond this is dropped here (the worker caps them too). */
 const MAX_QUEUE = 256
@@ -34,6 +35,8 @@ export class SimClient {
   readonly meta: SimMeta
   /** The zero-copy bridge: shared with the worker when the page is cross-origin isolated, else filled here per state. */
   readonly bridge: PhysicsBridge
+  /** The joint buffer (jointBridge.ts): the robot bodies' joints and link poses, shared or filled here like the bridge. */
+  readonly joints: JointBuffer
   readonly #worker: Worker
   /** Takes the worker off the live-thread count (longTasks.ts) once it is terminated. */
   readonly #untrack: () => void
@@ -59,11 +62,12 @@ export class SimClient {
   /** Players 1..3's controls, sent with every step request (setPlayers); null for one player. */
   #players: PlayerControls[] | null = null
 
-  private constructor(worker: Worker, untrack: () => void, meta: SimMeta, first: StepState, bridge: PhysicsBridge) {
+  private constructor(worker: Worker, untrack: () => void, meta: SimMeta, first: StepState, bridge: PhysicsBridge, joints: JointBuffer) {
     this.#worker = worker
     this.#untrack = untrack
     this.meta = meta
     this.bridge = bridge
+    this.joints = joints
     this.#state = first
     if (!bridge.shared) this.#fill(first)
     worker.onmessage = (e: MessageEvent<FromWorker>) => this.#receive(e.data)
@@ -81,6 +85,7 @@ export class SimClient {
     return new Promise((resolve, reject) => {
       let meta: SimMeta | null = null
       let bridge: PhysicsBridge | null = null
+      let joints: JointBuffer | null = null
       // The worker's class of the failure (no WebGPU in the worker, no WebAssembly) stays on the error for the card.
       const fail = (why: string, code?: SimFailureCode) => { worker.terminate(); untrack(); reject(code ? coded(code, why) : new Error(why)) }
       worker.onerror = (e) => { e.preventDefault(); fail(`physics worker failed to start: ${e.message || 'unknown error'}`) }
@@ -93,11 +98,13 @@ export class SimClient {
           // The bridge is laid out from the world the worker built; shared memory goes over once, before the first step.
           bridge = PhysicsBridge.create({ vehicles: meta.count, avatars: meta.players, agents: meta.agents }, share)
           if (bridge.shared) worker.postMessage({ t: 'bridge', buffer: bridge.buffer })
+          joints = JointBuffer.create(share)
+          if (joints.shared) worker.postMessage({ t: 'joints', buffer: joints.buffer })
           const idle = { steer: 0, fwd: 0, back: 0, handbrake: false }
           worker.postMessage({ t: 'step', id: 0, dt: 0, foot: { x: 0, z: 0, heading: 0 }, drive: idle, cmds: [] })
           return
         }
-        if (m.t === 'state' && meta && bridge) resolve(new SimClient(worker, untrack, meta, m, bridge))
+        if (m.t === 'state' && meta && bridge && joints) resolve(new SimClient(worker, untrack, meta, m, bridge, joints))
       }
       worker.postMessage({ t: 'init', ...init } satisfies SimInit)
     })
@@ -219,6 +226,7 @@ export class SimClient {
       packAvatars(f32, i32, b.avatars, s.avatars, b.counts.avatars)
       if (s.crowdFrame) packAgents(f32, i32, b.agents, s.crowdFrame, b.counts.agents, null)
     })
+    this.joints.publish(s.id, s.simTime, s.robots)
   }
 
   #fault(reason: string): void {

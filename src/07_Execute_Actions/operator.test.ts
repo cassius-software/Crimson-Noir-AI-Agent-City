@@ -19,6 +19,8 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { FEATURES } from '../09_Cognition/features.ts'
+import { sha256 } from '../02_Define_The_Rules/integrity.ts'
 import {
   DEFAULT_TIMEOUT_MS, SAY_CHARS, apiDoc, describe, exec, formatValue, gatedAsk, gatedExec, gatedSay, leasedApi, operatorBridge, scriptApi, speakable,
   type Answer, type Awareness, type Diary, type GateHandle, type GateLease, type GateTether, type GateVerdict, type Memories, type Mind, type Piece, type RunState,
@@ -102,6 +104,8 @@ class FakeMind implements Mind {
   readonly asked: { tethers: readonly GateTether[]; prompt: string }[] = []
   /** What the newest request carried of the bound people's memories. */
   memories: readonly Memories[] | undefined = undefined
+  /** What the newest request carried of the operator's steering lines. */
+  steering: readonly string[] | undefined = undefined
   signal: AbortSignal | null = null
   #piece: ((p: Piece) => void) | null = null
   #finish: ((a: Answer) => void) | null = null
@@ -119,9 +123,10 @@ class FakeMind implements Mind {
   installed(): Promise<string[]> {
     return Promise.resolve(['a-model', 'test-model'])
   }
-  answer(req: { tethers: readonly GateTether[]; prompt: string; signal: AbortSignal; memories?: readonly Memories[] }, onPiece: (p: Piece) => void): Promise<Answer> {
+  answer(req: { tethers: readonly GateTether[]; prompt: string; signal: AbortSignal; memories?: readonly Memories[]; steering?: readonly string[] }, onPiece: (p: Piece) => void): Promise<Answer> {
     this.asked.push({ tethers: req.tethers, prompt: req.prompt })
     this.memories = req.memories
+    this.steering = req.steering
     this.signal = req.signal
     return new Promise<Answer>((resolve, reject) => {
       this.#piece = onPiece
@@ -166,7 +171,7 @@ function fakeSim(): FakeSim {
   const crowdStats = { drawnNear: 1, drawnFar: 2, nudges: 0, waiting: 0, crossing: 0, retreating: 0 }
   // The engine's own copy of where the crowd stands: the facade must hand scripts a copy of it, never this array.
   const crowdXZ = Float32Array.from([0, 0, 12.5, 5.75])
-  const tune: Record<string, number> = { 'car.power': 1, 'car.drag': 1 }
+  const tune: Record<string, number> = { 'car.power': 1, 'car.drag': 1, 'car.brake': 1 }
   const uniforms: Record<string, number> = { 'light.haze': 1, 'volumetrics.strength': 1 }
   const sim: FakeSim = {
     calls, tune, uniforms,
@@ -497,9 +502,9 @@ test('operatorBridge: locked by default; scripts, tuning keys and harnesses refu
   const sim = fakeSim()
   const slept: number[] = []
   const gate = new FakeGate()
-  const op = operatorBridge(sim, gate, new FakeMind(), async (ms) => { slept.push(ms) })
+  const op = operatorBridge(sim, gate, new FakeMind(), async (ms) => { slept.push(ms) }, { contained: () => true })
   assert.ok(Object.isFrozen(op))
-  assert.deepEqual(Object.keys(op).sort(), ['acts', 'api', 'ask', 'askConnect', 'askSet', 'askStatus', 'askStop', 'exec', 'harness', 'harnesses', 'lock', 'say', 'saySet', 'sayStatus', 'sayStop', 'swarm', 'tune', 'tuning', 'unlock', 'unlocked'])
+  assert.deepEqual(Object.keys(op).sort(), ['acts', 'api', 'ask', 'askConnect', 'askSet', 'askStatus', 'askStop', 'elite', 'exec', 'features', 'harness', 'harnesses', 'lock', 'say', 'saySet', 'sayStatus', 'sayStop', 'swarm', 'tune', 'tuning', 'unlock', 'unlocked'])
   assert.throws(() => op.askConnect('ollama'), /^Error: ask: locked/)
   assert.throws(() => op.swarm.run('x'), /^Error: ask: locked/)
   assert.equal(op.swarm.status().running, false)
@@ -525,7 +530,7 @@ test('operatorBridge: locked by default; scripts, tuning keys and harnesses refu
   assert.deepEqual(gate.requests, [['Rust'], ['Rust'], ['Networking']])
   assert.ok(!callsOf(sim).includes('clock.set 1'), 'a rejected script never ran')
   // The tuning keys: read and written through the facade (validated; the engine clamps), no script involved.
-  assert.deepEqual(op.tuning(), { physics: { 'car.power': 1, 'car.drag': 1 }, shaders: { 'light.haze': 1, 'volumetrics.strength': 1 } })
+  assert.deepEqual(op.tuning(), { physics: { 'car.power': 1, 'car.drag': 1, 'car.brake': 1 }, shaders: { 'light.haze': 1, 'volumetrics.strength': 1 } })
   assert.equal(op.tune('physics', 'car.power', 1.5), 1.5)
   assert.equal(op.tune('shaders', 'light.haze', 0.25), 0.25)
   assert.throws(() => op.tune('physics', 'nope', 1), /unknown physics key 'nope'/)
@@ -594,10 +599,145 @@ test('gatedAsk: Rejected never asks the model; Authorized asks at once for the b
   assert.deepEqual([f.state, f.error], ['Authorized', 'no local model server is answering at http://localhost:11434'])
 })
 
+test('operatorBridge features: read while locked; steered by the operator alone; a bias leans its knobs through the facade and puts fixed lines on every ask; release and reset undo both', () => {
+  const sim = fakeSim()
+  const gate = new FakeGate()
+  const mind = new FakeMind()
+  const op = operatorBridge(sim, gate, mind, undefined, { contained: () => true })
+  assert.ok(Object.isFrozen(op.features))
+  const rows = op.features.lines()
+  assert.equal(rows.length, FEATURES.length)
+  assert.ok(rows.every((r) => /^[A-Z_]+ +\[[#.]{10}\]  \d\.\d\d$/.test(r)), rows.join('\n'))
+  assert.equal(op.features.lines(2).length, 2)
+  assert.deepEqual(op.features.prompt(), [])
+  assert.ok(op.features.explain().some((l) => /not a sparse autoencoder/.test(l)))
+  assert.equal(op.features.about('NOPE'), null)
+  const card = op.features.about('fleet restraint')!
+  assert.equal(card[0], 'FLEET_RESTRAINT  (fleet restraint)')
+  assert.match(card[2], /^threshold 0\.05  now \d\.\d\d$/)
+  assert.equal(card[5], 'knobs: physics.car.power 1.2..1..0.7')
+  for (const f of [() => op.features.steer('FLEET_RESTRAINT', -0.5), () => op.features.clamp('FLEET_RESTRAINT', 1), () => op.features.release('FLEET_RESTRAINT'), () => op.features.reset()]) {
+    assert.throws(f, /^Error: feature: locked; type 'operator unlock' first$/)
+  }
+  assert.equal(sim.tune['car.power'], 1)
+  op.unlock()
+  assert.throws(() => op.features.steer('NOPE', 0.5), /^RangeError: unknown feature 'NOPE'$/)
+  assert.throws(() => op.features.steer('FLEET_RESTRAINT', 2), /^RangeError: bias must be a number in \[-1, 1\]$/)
+  assert.throws(() => op.features.clamp('FLEET_RESTRAINT', -1), /^RangeError: clamp must be a number in \[0, 1\]$/)
+  assert.equal(sim.tune['car.power'], 1, 'a refused change moves nothing')
+  // A bias: the line kept, the knob leaned (linear from the middle toward lo), the prompt line fixed.
+  assert.deepEqual(op.features.steer('FLEET_RESTRAINT', -0.5), ['FLEET_RESTRAINT bias -0.50', 'physics.car.power = 1.1'])
+  assert.equal(sim.tune['car.power'], 1.1)
+  assert.deepEqual(op.features.prompt(), ['Steering: drive with pace where the road is clear.'])
+  assert.match(op.features.about('FLEET_RESTRAINT')![2], /  bias -0\.50$/)
+  // Every ask through the tier carries the lines (the providers put them in the system prompt).
+  op.ask(['Rust'], 'hello')
+  assert.equal(mind.asked.length, 1)
+  assert.deepEqual(mind.steering, ['Steering: drive with pace where the road is clear.'])
+  op.askStop()
+  // A clamp holds a lane; it has no knob and no strength, only its line.
+  assert.equal(op.features.clamp('FRAME_HEALTH', 0.8), 'FRAME_HEALTH clamp 0.80')
+  assert.deepEqual(op.features.prompt(), ['Steering: drive with pace where the road is clear.', 'Steering: hold frame health at 80%.'])
+  // Release: the knob back to its middle; the other steering stands.
+  assert.deepEqual(op.features.release('FLEET_RESTRAINT'), ['FLEET_RESTRAINT released', 'physics.car.power = 1'])
+  assert.equal(sim.tune['car.power'], 1)
+  assert.deepEqual(op.features.prompt(), ['Steering: hold frame health at 80%.'])
+  // A knob two features lean on takes the later feature's lean; releasing the earlier one keeps the later's.
+  assert.deepEqual(op.features.steer('TRAFFIC_YIELD', 1), ['TRAFFIC_YIELD bias +1.00', 'physics.car.brake = 1.5', 'physics.car.power = 0.8'])
+  assert.deepEqual(op.features.steer('FLEET_RESTRAINT', 1), ['FLEET_RESTRAINT bias +1.00', 'physics.car.power = 0.7'])
+  assert.deepEqual(op.features.release('TRAFFIC_YIELD'), ['TRAFFIC_YIELD released', 'physics.car.brake = 1', 'physics.car.power = 0.7'])
+  assert.deepEqual(op.features.steer('FRAME_HEALTH', 1), ['FRAME_HEALTH bias +1.00', 'shaders.volumetrics.strength = 0.5'])
+  assert.equal(sim.uniforms['volumetrics.strength'], 0.5)
+  // Reset: nothing steered, every knob any feature leans on back to its middle.
+  const reset = op.features.reset()
+  assert.equal(reset[0], 'features: nothing steered')
+  assert.deepEqual(reset.slice(1).sort(), ['physics.car.brake = 1', 'physics.car.power = 1', 'shaders.volumetrics.strength = 1'])
+  assert.deepEqual([sim.tune['car.power'], sim.tune['car.brake'], sim.uniforms['volumetrics.strength']], [1, 1, 1])
+  assert.deepEqual(op.features.prompt(), [])
+  // Nothing of the laws was reached: the facade recorded no kernel or vehicle call.
+  assert.ok(sim.calls.every((c) => !/kernel|vehicles|laws|bouncer|sanctuary/.test(c)), sim.calls.join(', '))
+})
+
+test('operatorBridge elite: a passphrase kept as a salted hash opens NoirScript\'s writes, each through the facade; wrong passphrases are counted; operator lock closes it', () => {
+  const sim = fakeSim()
+  const kept: string[] = []
+  const vault = { load: () => kept[kept.length - 1] ?? null, save: (v: string) => { kept.push(v) } }
+  const op = operatorBridge(sim, new FakeGate(), new FakeMind(), undefined, { vault })
+  assert.ok(Object.isFrozen(op.elite))
+  assert.equal(op.elite.status(), 'ring0: elite tier locked (no passphrase set); 0 writes this session')
+  assert.equal(op.elite.unlocked(), false)
+  assert.equal(op.elite.writes(), null)
+  assert.throws(() => op.elite.unlock('open sesame please'), /^Error: ring0: locked; type 'operator unlock' first$/)
+  assert.throws(() => op.elite.set('open sesame please'), /^Error: ring0: locked; type 'operator unlock' first$/)
+  assert.equal(op.elite.lock(), 'ring0: elite tier locked')
+  op.unlock()
+  assert.throws(() => op.elite.unlock('open sesame please'), /^Error: no elite passphrase is set: 'ring0 elite set <passphrase>' first$/)
+  assert.throws(() => op.elite.set('short'), /^RangeError: the passphrase must be 8 to 256 characters$/)
+  assert.throws(() => op.elite.set('x'.repeat(257)), /^RangeError: the passphrase must be 8 to 256 characters$/)
+  assert.equal(kept.length, 0)
+  assert.match(op.elite.set('open sesame please'), /^ring0: elite passphrase set \(kept as a salted hash, never the words\)/)
+  assert.equal(kept.length, 1)
+  assert.match(kept[0], /^v1:[0-9a-f]{32}:[0-9a-f]{64}$/)
+  assert.ok(!kept[0].includes('sesame'))
+  const [, salt, hash] = kept[0].split(':')
+  assert.equal(hash, sha256(`${salt}:open sesame please`), 'the record is the salted SHA-256 of the passphrase')
+  assert.equal(op.elite.status(), 'ring0: elite tier locked; 0 writes this session')
+  assert.throws(() => op.elite.set('another passphrase'), /^Error: a passphrase is set: 'ring0 unlock --elite <passphrase>' first/)
+  assert.throws(() => op.elite.unlock('wrong words here'), /^Error: wrong passphrase \(4 tries left\)$/)
+  assert.throws(() => op.elite.unlock('Open sesame please'), /^Error: wrong passphrase \(3 tries left\)$/, 'case matters')
+  const banner = op.elite.unlock('open sesame please')
+  assert.equal(banner[0], 'Ring-0 elite tier unlocked for this console session.')
+  assert.ok(banner.some((l) => /Still in force/.test(l)) && banner.some((l) => /three laws/.test(l)) && banner.some((l) => /Ring-0 auditor/.test(l)))
+  assert.equal(op.elite.unlocked(), true)
+  assert.equal(op.elite.status(), 'ring0: elite tier unlocked; 0 writes this session')
+  // The writes: every one through the facade `set`, a scripted intent and crowd.cull already use, and the inspector.
+  const w = op.elite.writes()!
+  assert.ok(Object.isFrozen(w))
+  assert.equal(w.tune('physics.car.power', 1.5), 1.5)
+  assert.equal(w.tune('car.drag', 2), 2)
+  assert.equal(w.tune('shaders.volumetrics.strength', 0.5), 0.5)
+  assert.deepEqual([sim.tune['car.power'], sim.tune['car.drag'], sim.uniforms['volumetrics.strength']], [1.5, 2, 0.5])
+  assert.equal(w.intent(1, 0.5, 0, 0.1), true)
+  assert.ok(sim.calls.includes('vehicles.intent 1 0.5 0 0.1'), sim.calls.join(', '))
+  assert.equal(w.cull(0.5), 0.5)
+  assert.ok(sim.calls.includes('crowd.cull {"density":0.5}'), sim.calls.join(', '))
+  assert.equal(w.steer('FLEET_RESTRAINT', 0.5), 0.5)
+  assert.equal(op.features.prompt().length, 1)
+  assert.throws(() => w.tune('physics.nope', 1), /unknown physics key/)
+  assert.throws(() => w.steer('NOPE', 1), /^RangeError: unknown feature 'NOPE'$/)
+  assert.equal(op.elite.status(), 'ring0: elite tier unlocked; 6 writes this session', 'a refused write is not counted')
+  // A new passphrase while open; the old one no longer opens it.
+  assert.match(op.elite.set('a new passphrase'), /^ring0: elite passphrase set/)
+  assert.equal(kept.length, 2)
+  assert.equal(op.elite.lock(), 'ring0: elite tier locked')
+  assert.equal(op.elite.writes(), null)
+  assert.throws(() => w.tune('car.power', 1), /^Error: elite tier locked: 'ring0 unlock --elite <passphrase>' opens it$/, 'a surface handed out earlier dies with the tier')
+  assert.throws(() => op.elite.unlock('open sesame please'), /^Error: wrong passphrase \(4 tries left\)$/)
+  assert.equal(op.elite.unlock('a new passphrase')[0], 'Ring-0 elite tier unlocked for this console session.')
+  // operator lock closes both; five wrong passphrases in a row refuse until the operator tier is locked and unlocked again.
+  op.lock()
+  assert.equal(op.elite.unlocked(), false)
+  op.unlock()
+  for (let i = 5; i >= 1; i--) assert.throws(() => op.elite.unlock('nope nope nope'), new RegExp(`^Error: wrong passphrase \\(${i - 1} ${i - 1 === 1 ? 'try' : 'tries'} left\\)$`))
+  assert.throws(() => op.elite.unlock('a new passphrase'), /^Error: too many wrong passphrases: operator lock, then operator unlock, to try again$/)
+  op.lock()
+  op.unlock()
+  assert.equal(op.elite.unlock('a new passphrase')[0], 'Ring-0 elite tier unlocked for this console session.')
+  // Nothing of the laws was reached.
+  assert.ok(sim.calls.every((c) => !/kernel|laws|bouncer|sanctuary/.test(c)), sim.calls.join(', '))
+  // Without a vault the tier cannot open.
+  const bare = operatorBridge(fakeSim(), new FakeGate(), new FakeMind())
+  bare.unlock()
+  assert.equal(bare.elite.status(), 'ring0: elite tier locked (this page cannot keep a passphrase); 0 writes this session')
+  assert.throws(() => bare.elite.set('open sesame please'), /cannot keep a passphrase/)
+  assert.throws(() => bare.elite.unlock('open sesame please'), /cannot keep a passphrase/)
+  assert.equal(bare.elite.writes(), null)
+})
+
 test('operatorBridge ask: locked, one answer at a time, a model must be chosen; status, settings and stop', async () => {
   const gate = new FakeGate()
   const mind = new FakeMind()
-  const op = operatorBridge(fakeSim(), gate, mind)
+  const op = operatorBridge(fakeSim(), gate, mind, undefined, { contained: () => true })
   assert.throws(() => op.ask(['Rust'], 'hi'), /^Error: ask: locked/)
   assert.throws(() => op.askStatus(), /^Error: ask: locked/)
   assert.throws(() => op.askSet('model', 'x'), /^Error: ask: locked/)
@@ -645,7 +785,7 @@ class PageMind extends FakeMind {
 test('a model running in this page (chosen, or found by auto) has no endpoint, so the swarm runs over it; with no file kept, the refusal says where to choose one', async () => {
   for (const how of [{ provider: 'inpage' }, { provider: 'auto', found: 'inpage' }]) {
     const mind = new PageMind(how)
-    const op = operatorBridge(fakeSim(), new FakeGate(), mind)
+    const op = operatorBridge(fakeSim(), new FakeGate(), mind, undefined, { contained: () => true })
     op.unlock()
     const status = await op.askStatus()
     assert.deepEqual([status.server, status.runtime, status.storage], ['this page', 'this browser runs it (one thread)', 'kept in this page'], 'the runtime and storage rows reach the console')
@@ -662,13 +802,21 @@ test('a model running in this page (chosen, or found by auto) has no endpoint, s
   // The same 'this page' given as a server's address is no address on this machine: the loopback invariant refuses
   // the step, so the run above went ahead only because a model in this page has no endpoint at all.
   const served = new PageMind({ provider: 'ollama' })
-  const op = operatorBridge(fakeSim(), new FakeGate(), served)
+  const op = operatorBridge(fakeSim(), new FakeGate(), served, undefined, { contained: () => true })
   op.unlock()
   const r = await within(op.swarm.run('name the parts', 1).result)
   assert.deepEqual(r.steps.map((st) => [st.state, st.failed]), [['refused', ['LoopbackOnly']]])
   assert.equal(served.asked.length, 0)
+  // The console's own ask is refused by the Ring-0 action gate before a model is even looked for: the Zeroth Law, in the kernel's words.
   served.model = null
-  assert.throws(() => op.ask(['Rust'], 'hi'), /^Error: choose a model first: ask model <name> \(type ask to list them\)$/)
+  assert.throws(() => op.ask(['Rust'], 'hi'), /^Error: ask: Zeroth Law: this page is not on this machine$/)
+  assert.equal(served.asked.length, 0)
+  // A server on this machine and no model chosen: the console's own words, the full form.
+  const local = new FakeMind()
+  local.model = null
+  const lop = operatorBridge(fakeSim(), new FakeGate(), local, undefined, { contained: () => true })
+  lop.unlock()
+  assert.throws(() => lop.ask(['Rust'], 'hi'), /^Error: choose a model first: ask model <name> \(type ask to list them\)$/)
 })
 
 test('leasedApi: the facade\'s shape, no safety member at any depth, frozen, plain arrows; every call goes through the lease, none once it refuses', () => {
@@ -969,10 +1117,10 @@ test('operatorBridge say: locked, no speech on the page, no voice, one at a time
   const gate = new FakeGate()
   const voice = new FakeVoice()
   const out = new FakeOut()
-  const none = operatorBridge(fakeSim(), gate, new FakeMind())
+  const none = operatorBridge(fakeSim(), gate, new FakeMind(), undefined, { contained: () => true })
   none.unlock()
   assert.throws(() => none.say(['Rust'], 'hi'), /speech is not available on this page/)
-  const op = operatorBridge(fakeSim(), gate, new FakeMind(), undefined, { voice, speech: out })
+  const op = operatorBridge(fakeSim(), gate, new FakeMind(), undefined, { voice, speech: out, contained: () => true })
   for (const call of [() => op.say(['Rust'], 'hi'), () => op.sayStatus(), () => op.saySet('voice', 'v2'), () => op.sayStop()]) assert.throws(call, /^Error: say: locked/)
   assert.equal(voice.sent.length, 0)
   op.unlock()
@@ -1013,7 +1161,7 @@ test('the diary: every run, ask and say is noted for the people it was bound to,
     recall: (agent) => (agent === 7 ? ['2 h ago: you were asked over for Rust and joined the operator'] : []),
     note: (bound, kind, skills, text, state) => notes.push(`${bound.map((t) => `${t.agent}#${t.serial}`).join('+')} ${kind} [${skills.join(',')}] ${text} (${state})`),
   }
-  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary })
+  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary, contained: () => true })
   op.unlock()
   await op.exec(['rust'], 'sim.clock.hours()\n// second line').result
   const asked = op.ask(['RUST'], 'how does grip work?\nbriefly')
@@ -1046,7 +1194,7 @@ test('the diary is told how each task ended (what the memory learns from), and a
     recall: () => [],
     note: (_bound, kind, _skills, text, state, _at, _hash, outcome) => notes.push(`${kind} ${text} (${state}) ${outcome ?? '-'}`),
   }
-  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary })
+  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary, contained: () => true })
   op.unlock()
   await op.exec(['rust'], '1 + 1').result
   await op.exec(['rust'], 'throw new Error("no")').result
@@ -1089,7 +1237,7 @@ test('say auto on: a whole answer is said aloud by whoever gave it, through the 
   const mind = new FakeMind()
   const voice = new FakeVoice()
   const out = new FakeOut()
-  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out })
+  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, contained: () => true })
   op.unlock()
   const quiet = op.ask(['Rust'], 'q')
   mind.say('text', 'An answer.')
@@ -1136,7 +1284,7 @@ test('the script standing in for a model is shown with its reason, and never sai
   const diary: Diary = { recall: () => [], note: (_b, kind, _s, text) => notes.push(`${kind} ${text}`) }
   const remembered: string[] = []
   const awareness: Awareness = { context: () => null, remember: (_agent, who, what) => { remembered.push(`${who} ${what}`) } }
-  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary, awareness })
+  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary, awareness, contained: () => true })
   op.unlock()
   const a = op.ask(['Rust'], 'where is the lake?')
   mind.say('text', 'You ask about the lake.')
@@ -1163,7 +1311,7 @@ test('14A on the way out: an answer is screened as it streams; a refused word is
   const out = new FakeOut()
   const notes: string[] = []
   const diary: Diary = { recall: () => [], note: (_b, kind, _s, text) => notes.push(`${kind} ${text}`) }
-  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary })
+  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary, contained: () => true })
   op.unlock()
   const seen: string[] = []
   const a = op.ask(['Rust'], 'what now?')
@@ -1264,7 +1412,7 @@ test("operatorBridge ask think: on or off only, through the mind's own switch; a
   const mind = new FakeMind()
   let think = false
   Object.assign(mind, { setThink: (on: boolean) => (think = on) })
-  const op = operatorBridge(fakeSim(), new FakeGate(), mind)
+  const op = operatorBridge(fakeSim(), new FakeGate(), mind, undefined, { contained: () => true })
   assert.throws(() => op.askSet('think', 'on'), /^Error: ask: locked/)
   op.unlock()
   assert.equal(op.askSet('think', 'on'), 'on: the model reasons before it answers (slower; its thinking shows live)')
@@ -1272,7 +1420,7 @@ test("operatorBridge ask think: on or off only, through the mind's own switch; a
   assert.equal(op.askSet('think', 'off'), 'off: the model answers without reasoning first')
   assert.equal(think, false)
   assert.throws(() => op.askSet('think', 'maybe'), /ask think takes on or off/)
-  const plain = operatorBridge(fakeSim(), new FakeGate(), new FakeMind())
+  const plain = operatorBridge(fakeSim(), new FakeGate(), new FakeMind(), undefined, { contained: () => true })
   plain.unlock()
   assert.throws(() => plain.askSet('think', 'on'), /this model server has no think switch/)
 })
@@ -1289,7 +1437,7 @@ test('a console ask that proposes a city action: the note and the moment carry t
   const diary: Diary = { recall: () => [], note: (_b, kind, _s, text, state, _at, _h, outcome) => notes.push(`${kind} ${text} (${state}) ${outcome ?? '-'}`) }
   const remembered: string[] = []
   const awareness: Awareness = { context: () => null, remember: (agent, who, what) => { remembered.push(`${agent} ${who}: ${what}`) } }
-  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary, awareness, nameOf: (agent) => (agent === 7 ? 'Mara' : null) })
+  const op = operatorBridge(fakeSim(), gate, mind, undefined, { voice, speech: out, diary, awareness, nameOf: (agent) => (agent === 7 ? 'Mara' : null), contained: () => true })
   op.unlock()
   const a = op.ask(['Rust'], 'hi')
   mind.say('text', 'ok\nACTION: time 22:00')
@@ -1329,13 +1477,13 @@ test('a console ask that proposes a city action: the note and the moment carry t
   mind.say('text', 'Done. ACTION: time 22:00')
   mind.finish('Done. ACTION: time 22:00')
   const o = await within(odd.result)
-  assert.deepEqual(o.act, { kind: 'refused', reason: 'the ACTION line must stand on a line of its own', told: 7 })
+  assert.deepEqual(o.act, { kind: 'refused', reason: 'Zeroth Law: the ACTION line must stand on a line of its own', told: 7 })
   assert.equal(notes.at(-1), 'ask hi → Done. ACTION: time 22:00 (proposed a line the city could not read) (Authorized) answered')
   assert.deepEqual(remembered.slice(-2), [
     '7 the city: could not read your action line: the ACTION line must stand on a line of its own; nothing was proposed',
     '7 the player: asked "hi" and you answered "Done. ACTION: time 22:00 (proposed a line the city could not read)"',
   ], 'the city tells them first, then the moment of the ask itself')
-  assert.equal(op.acts.log().at(-1)?.note, 'not run: the ACTION line must stand on a line of its own')
+  assert.equal(op.acts.log().at(-1)?.note, 'not run: Zeroth Law: the ACTION line must stand on a line of its own')
 })
 
 test('no proposal waits past a lock: lock withdraws it, the chain and the memory say so, the ended event comes by the console, and the OK is refused as locked; unlocked, the next proposal is act 2 and the OK runs it once through the gate', async () => {
@@ -1346,7 +1494,7 @@ test('no proposal waits past a lock: lock withdraws it, the chain and the memory
   const notes: string[] = []
   const diary: Diary = { recall: () => [], note: (_b, kind, _s, text, state, _at, _h, outcome) => notes.push(`${kind} ${text} (${state}) ${outcome ?? '-'}`) }
   const sim = fakeSim()
-  const op = operatorBridge(sim, gate, mind, undefined, { awareness, diary })
+  const op = operatorBridge(sim, gate, mind, undefined, { awareness, diary, contained: () => true })
   op.unlock()
   const events: string[] = []
   op.acts.follow((ev) => events.push(ev.kind === 'ended' ? `ended ${ev.act.seq} ${ev.end.state} by ${ev.by}: ${ev.end.line}` : `${ev.kind} ${ev.act.seq}`))
@@ -1390,4 +1538,19 @@ test('no proposal waits past a lock: lock withdraws it, the chain and the memory
   assert.equal(remembered.at(-1), '7 the player: allowed your proposal and the city did it: the clock is set to 17:30')
   assert.equal(gate.requests.length, 4, 'two asks, two proposals')
   assert.deepEqual(events.slice(2), ['proposed 2', 'allowed 2', 'ended 2 done by console: the clock is set to 17:30'])
+})
+
+test('operatorBridge ask: a host that vouched nothing for the air gap (no `contained` sense, or one that says false) is refused under the Zeroth Law before the gateway or the model is reached', async () => {
+  for (const senses of [{}, { contained: () => false }]) {
+    const gate = new FakeGate()
+    const mind = new FakeMind()
+    const op = operatorBridge(fakeSim(), gate, mind, undefined, senses)
+    op.unlock()
+    assert.throws(() => op.ask(['Rust'], 'hi'), /^Error: ask: Zeroth Law: this page's outbound primitives are not held to this machine \(the host has not vouched for the air gap\)$/)
+    assert.deepEqual([gate.requests, mind.asked], [[], []], 'nothing reached the gateway or the model')
+    // The swarm asks the same way: its one step fails on the gate's sentence, and the trail says so.
+    const r = await within(op.swarm.run('name the parts', 1).result)
+    assert.deepEqual(r.steps.map((st) => [st.state, st.note]), [['failed', "ask: Zeroth Law: this page's outbound primitives are not held to this machine (the host has not vouched for the air gap)"]])
+    assert.deepEqual([gate.requests, mind.asked], [[], []])
+  }
 })

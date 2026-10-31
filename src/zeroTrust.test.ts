@@ -9,8 +9,10 @@
  *   tree and the Nix page's source keep every name of it out (tools/selfheal/sandbox.mjs AI_TOOLING);
  * - nothing runs a command through a shell: no `exec`/`execSync` from child_process and no `shell: true` anywhere;
  *   the tooling that spawns (build, smoke, sandbox, self-heal) names its program and passes an argument vector;
- * - exactly one module serves the network, the room host (src/10_Network/replication.node.ts: token-authenticated,
- *   loopback unless NET_HOST says otherwise, throttled per address); a test's server binds 127.0.0.1 and port 0; the
+ * - exactly two modules serve the network, the room host (src/10_Network/replication.node.ts: token-authenticated,
+ *   loopback unless NET_HOST says otherwise, throttled per address) and the robot relay (src/10_Network/
+ *   robotRelay.node.ts: token-authenticated, a loopback Origin for the page, loopback unless ROBOT_HOST says
+ *   otherwise); a test's server binds 127.0.0.1 and port 0; the
  *   desktop launcher (tools/web/launch.mjs, what `nix run` starts) serves the built page to this machine alone, on
  *   127.0.0.1 and a fixed port, because the page keeps its settings per address;
  * - the page ships no server framework, and the dev server keeps Vite's loopback default.
@@ -97,8 +99,9 @@ test('nothing runs a command through a shell: no exec or execSync from child_pro
   assert.deepEqual(found, [])
 })
 
-test('one module serves the network (the authenticated room host); every test server binds 127.0.0.1 on port 0; the launcher binds 127.0.0.1', () => {
+test('two modules serve the network (the authenticated room host and the robot relay); every test server binds 127.0.0.1 on port 0; the launcher binds 127.0.0.1', () => {
   const HOST = 'src/10_Network/replication.node.ts'
+  const RELAY = 'src/10_Network/robotRelay.node.ts'
   // The browser smoke test serves dist/index.html to its own headless browser for the length of a run: a test server
   // in a tool's file, held to the test servers' rule.
   const HARNESSES = ['tools/browser/smoke.mjs']
@@ -119,11 +122,14 @@ test('one module serves the network (the authenticated room host); every test se
       for (const m of listens) if (!/^\s*[\w.]+\s*,\s*'127\.0\.0\.1'/.test(m[1])) loose.push(`${f}: listen(${m[1]})`)
     } else servers.push(f)
   }
-  assert.deepEqual(servers, [HOST], 'modules that serve')
+  assert.deepEqual([...servers].sort(), [HOST, RELAY], 'modules that serve')
   assert.deepEqual(loose, [], 'a test server off loopback or on a fixed port, or the launcher off loopback')
   const host = readFileSync(join(ROOT, HOST), 'utf8')
   assert.match(host, /const bind = o\.host \?\? '127\.0\.0\.1'/, 'the host binds loopback unless told otherwise')
   assert.match(host, /process\.env\.NET_HOST \?\? '127\.0\.0\.1'/, 'the entry point binds loopback unless NET_HOST says otherwise')
+  const relay = readFileSync(join(ROOT, RELAY), 'utf8')
+  assert.match(relay, /const bind = o\.host \?\? '127\.0\.0\.1'/, 'the relay binds loopback unless told otherwise')
+  assert.match(relay, /process\.env\.ROBOT_HOST \?\? '127\.0\.0\.1'/, 'the relay\'s entry point binds loopback unless ROBOT_HOST says otherwise')
 })
 
 test('the page ships no server framework, and the dev server keeps Vite\'s loopback default', () => {

@@ -18,6 +18,7 @@ import type { CrowdSimStats } from '../03_Spawn_Agents/crowdSensor.ts'
 import type { CarTuning, DriveMode } from './car.ts'
 import type { TrackKind } from '../06_Make_Decisions/tracks.ts'
 import type { BalanceState } from '../03_Spawn_Agents/ragdoll.ts'
+import type { Manifest } from '../04_Connect_Hardware/jointState.ts'
 
 /**
  * One vehicle's slice of the pose buffer (Float32Array, `POSE.stride` floats per vehicle, fleet order). The
@@ -252,11 +253,30 @@ export type SimCommand =
    * fresh controller, as the room's authority has it (leaving the car they were in, if another, where it is).
    */
   | { c: 'netCar'; i: number; state: CarBodyState }
+  /**
+   * The joint bridge (docs/joint-bridge-spec.md §5, 07_Execute_Actions/jointRealm.ts): a robot's body in this realm.
+   * `manifest` is judged again in the worker (jointState.ts buildManifest, articulated.ts buildable) and the body is
+   * built at (x, y, z) facing `heading`, its root fixed there; a refused build is a counted rejection and the slot
+   * stays empty. Allowed in a network room: a robot is the page's own, never replayed by the room's authority.
+   */
+  | { c: 'robotSpawn'; id: number; manifest: Manifest; x: number; y: number; z: number; heading: number }
+  | { c: 'robotRemove'; id: number }
+  /** This step's setpoints for robot `id` (the newest wins): `q` the movable joints' length, `qd` and `tau` the same or empty. */
+  | { c: 'robotTargets'; id: number; seq: number; q: number[]; qd: number[]; tau: number[] }
+  /**
+   * How the body answers its setpoints: `follow` tracks the newest (a twin following a robot's frames), `filter` holds
+   * each back `delaySteps` steps and eases toward it at `tauMs` (a leader's body, a simulated robot: the calibrated
+   * lag), `hold` stands still. `tauMs` and `delaySteps` are kept when not given.
+   */
+  | { c: 'robotMode'; id: number; mode: RobotMode; tauMs?: number; delaySteps?: number }
   // Fault injection for the ?debug harness only: refused by a worker built without debug.
   | { c: 'dbgVelocity'; i: number; x: number; y: number; z: number }
   | { c: 'dbgMode'; i: number; mode: DriveMode }
   | { c: 'dbgSanctuary'; on: boolean }
   | { c: 'dbgHazard'; i: number; ahead: number | null }
+
+/** How a robot body in the realm answers its setpoints (jointRealm.ts). */
+export type RobotMode = 'follow' | 'filter' | 'hold'
 
 /**
  * One frame's worth of input. There is deliberately nothing about pedestrians or time in it: the crowd, its
@@ -430,6 +450,12 @@ export interface StepState {
    * them, transferred; null with the ragdoll off, in a region, and from a halted realm.
    */
   rigs: Float32Array | null
+  /**
+   * The robot bodies' joints and link poses (jointBridge.ts JOINT_SLOT, one slot per body, spawn order) as this step
+   * left them, for a page without shared memory: null when the realm holds no robot, when the page sent a joint
+   * buffer (the words went into it instead), and from a halted realm.
+   */
+  robots: Float32Array | null
   /** Everyone the operator has asked over and not yet released. */
   recruits: RecruitView[]
   /** Messages and commands the worker refused since it started. */
@@ -445,6 +471,13 @@ export interface StepState {
  * Only on a cross-origin isolated page: elsewhere the page keeps a plain buffer of its own and fills it itself.
  */
 export interface SimBridge { t: 'bridge'; buffer: SharedArrayBuffer }
+
+/**
+ * The page's joint buffer (07_Execute_Actions/jointBridge.ts), sent once after `ready` beside the bridge: a
+ * SharedArrayBuffer of exactly JOINT_BYTES, which the realm fills after every step with every robot body's joints and
+ * link poses. Anything else is refused and counted. Only on a cross-origin isolated page.
+ */
+export interface SimJoints { t: 'joints'; buffer: SharedArrayBuffer }
 
 export interface SimReady { t: 'ready'; meta: SimMeta }
 export interface SimPanic { t: 'panic'; reason: string }
@@ -468,5 +501,5 @@ export function failureCode(e: unknown): SimFailureCode | undefined {
   return SIM_FAILURE_CODES.includes(c as SimFailureCode) ? (c as SimFailureCode) : undefined
 }
 
-export type ToWorker = SimInit | SimBridge | StepRequest
+export type ToWorker = SimInit | SimBridge | SimJoints | StepRequest
 export type FromWorker = SimReady | StepState | SimPanic | SimFailure

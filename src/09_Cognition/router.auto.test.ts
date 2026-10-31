@@ -522,7 +522,7 @@ test('from the console: the script standing in is said under its words and not r
   const m = machine({})
   const notes: string[] = []
   const diary: Diary = { recall: () => [], note: (_b, kind, _s, text) => { notes.push(`${kind}: ${text}`) } }
-  const op = operatorBridge({} as SimControls, gate(), withScriptedFallback(createMindRouter({ fetch: m.f, lookMs: 50 })), undefined, { diary })
+  const op = operatorBridge({} as SimControls, gate(), withScriptedFallback(createMindRouter({ fetch: m.f, lookMs: 50 })), undefined, { diary, contained: () => true })
   const b = { operator: op } as unknown as TerminalBridge
   shell('operator unlock', b, [])
   const canned = await shell('ask rust: hi', b, []).pending
@@ -583,7 +583,7 @@ test('model files kept in this page with none chosen: auto passes them over with
   assert.deepEqual(calls, ['installed'], 'listed, never answered')
   assert.equal(r.settings().found, undefined)
   // From the console, as the note says: the rows and the refusal both point at the files kept, not at keeping another.
-  const op = operatorBridge({} as SimControls, gate(), r)
+  const op = operatorBridge({} as SimControls, gate(), r, undefined, { contained: () => true })
   const b = { operator: op } as unknown as TerminalBridge
   shell('operator unlock', b, [])
   shell('ask provider inpage', b, [])

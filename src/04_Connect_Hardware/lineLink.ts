@@ -10,8 +10,13 @@
  *   device → host   READY <device-name>         must arrive within 2 s of the first HELLO, else the link fails
  *   host → device   {"speedKmh":42,…}           newline-delimited JSON telemetry, ≤ 10 Hz, newest wins
  *   device → host   PING      →   host → device   PONG
- *   device → host   anything else (e.g. {"trigger":0.4}) is read and ignored: a device cannot steer the city.
- * What breaks if it is removed? Serial and Bluetooth LE devices can be neither paired nor fed telemetry.
+ *   device → host   anything else (e.g. {"trigger":0.4}) is handed to the bus (onLine) once READY is in, and the bus
+ *                                               reads only the joint bridge's and the gate's lines (hal.ts): a device
+ *                                               cannot steer the city, what it says is read, never run.
+ *   host → device   control lines (ARM, DISARM: send) go first, then the one setpoint slot (JT: setpoint, newest
+ *                                               wins), then the telemetry slot. docs/joint-bridge-spec.md §3.1.
+ * What breaks if it is removed? Serial and Bluetooth LE devices can be neither paired nor fed telemetry, and the
+ * joint bridge has no serial door.
  *
  * Nordic UART Service UUIDs from Nordic Semiconductor's nRF Connect SDK documentation ("Nordic UART Service
  * (NUS)"): RX 6e400002 is written by the central (us), TX 6e400003 notifies the central.
@@ -32,6 +37,11 @@ export const LINE = {
   /** Longer inbound lines are dropped whole. */
   maxLine: 1024,
   telemetryIntervalMs: 100,
+  /**
+   * Most of the page's control lines (send) waiting to go out at once; the next is refused, so a device that stopped
+   * reading cannot grow the queue. The link's own HELLO and PONG are not counted (one PONG at most ever waits).
+   */
+  controlQueue: 8,
   /** ATT_MTU 23 − 3: the payload every BLE link supports without MTU negotiation (Web Bluetooth exposes none). */
   bleChunk: 20,
   baudRate: 115200,
@@ -216,6 +226,7 @@ export async function openBle(device: BleDevice): Promise<ByteChannel> {
 export type LinkState = 'handshaking' | 'ready' | 'error' | 'disconnected'
 
 const PONG = 'PONG\n'
+const withNewline = (s: string) => (s.endsWith('\n') ? s : `${s}\n`)
 
 export interface LineLinkOptions {
   brand: string
@@ -224,9 +235,14 @@ export interface LineLinkOptions {
   helloEveryMs?: number
   /** Called whenever state, name or detail change. */
   onChange?: () => void
+  /**
+   * Called with every complete inbound line (newline stripped) once the link is ready, except the link's own words
+   * (PING, PONG, READY). Before READY every line but READY is boot noise and stays here.
+   */
+  onLine?: (line: string) => void
 }
 
-/** The HAL/1 session over one channel: handshake, PING/PONG, newest-wins telemetry. */
+/** The HAL/1 session over one channel: handshake, PING/PONG, the page's control lines, one setpoint slot, newest-wins telemetry. */
 export class LineLink {
   readonly channel: ByteChannel
   state: LinkState = 'handshaking'
@@ -234,12 +250,14 @@ export class LineLink {
   name = ''
   detail = ''
   linesIn = 0
+  /** Everything written: HELLO, PONG, control lines, setpoints and telemetry. */
   linesOut = 0
-  private readonly opts: Required<Omit<LineLinkOptions, 'onChange'>> & { onChange: () => void }
+  private readonly opts: Required<Omit<LineLinkOptions, 'onChange' | 'onLine'>> & { onChange: () => void; onLine: (line: string) => void }
   private readonly framer = new LineFramer()
   private readonly encoder = new TextEncoder()
   private readonly control: string[] = []
   private readonly lines: string[] = []
+  private setpointLine: string | null = null
   private telemetryLine: string | null = null
   private writing = false
   private settle: ((s: LinkState) => void) | null = null
@@ -255,6 +273,7 @@ export class LineLink {
       handshakeMs: opts.handshakeMs ?? LINE.handshakeMs,
       helloEveryMs: opts.helloEveryMs ?? LINE.helloEveryMs,
       onChange: opts.onChange ?? (() => {}),
+      onLine: opts.onLine ?? (() => {}),
     }
     this.detail = `${HAL_PROTOCOL} handshake`
   }
@@ -275,6 +294,29 @@ export class LineLink {
     })
   }
 
+  /**
+   * Queues one control line (ARM, DISARM, anything the page composes; a missing '\n' is added) behind those waiting;
+   * control lines are written before the setpoint and telemetry slots. False, and nothing queued, when the link is
+   * not ready or LINE.controlQueue lines already wait: the caller sees the loss instead of the queue growing.
+   */
+  send(line: string): boolean {
+    if (this.state !== 'ready' || this.control.length >= LINE.controlQueue) return false
+    this.queue(withNewline(line))
+    return true
+  }
+
+  /** The setpoint slot (JT): the newest unsent line wins; written after the control queue and before telemetry. */
+  setpoint(line: string): void {
+    if (this.state !== 'ready') return
+    this.setpointLine = withNewline(line)
+    void this.drain()
+  }
+
+  /** Drops an unsent setpoint (a disarm must not be followed by a stale JT that was still waiting). */
+  clearSetpoint(): void {
+    this.setpointLine = null
+  }
+
   /** Queues one telemetry line (with its '\n'); an unsent older one is replaced. */
   telemetry(line: string): void {
     if (this.state !== 'ready') return
@@ -284,6 +326,7 @@ export class LineLink {
 
   async close(): Promise<void> {
     this.stopTimers()
+    this.setpointLine = null
     if (this.state !== 'disconnected') this.set('disconnected', 'closed')
     await this.closeChannel()
   }
@@ -304,11 +347,11 @@ export class LineLink {
 
   private onBytes(bytes: Uint8Array): void {
     const lines = this.framer.push(bytes, this.lines)
-    for (let i = 0; i < lines.length; i++) this.onLine(lines[i])
+    for (let i = 0; i < lines.length; i++) this.inbound(lines[i])
     lines.length = 0
   }
 
-  private onLine(line: string): void {
+  private inbound(line: string): void {
     this.linesIn++
     if (this.state === 'handshaking') {
       const name = parseReady(line)
@@ -319,10 +362,16 @@ export class LineLink {
         this.set('ready', `${HAL_PROTOCOL} · ${this.channel.kind === 'serial' ? 'serial' : 'BLE UART'}`)
         return
       }
+    } else if (this.state !== 'ready') return
+    const word = line.trim()
+    if (word === 'PING') {
+      // One PONG waiting to go out answers every PING behind it: a PING flood cannot grow the queue.
+      if (this.control.at(-1) !== PONG) this.queue(PONG)
+      return
     }
-    if (line.trim() !== 'PING' || (this.state !== 'ready' && this.state !== 'handshaking')) return
-    // One PONG waiting to go out answers every PING behind it: a PING flood cannot grow the queue.
-    if (this.control.at(-1) !== PONG) this.queue(PONG)
+    // Before READY everything else is boot noise. After it the link's own words stay here; the rest is the bus's.
+    if (this.state !== 'ready' || word === '' || word === 'PONG' || parseReady(line) !== null) return
+    this.opts.onLine(line)
   }
 
   private onDrop(reason: string): void {
@@ -360,7 +409,7 @@ export class LineLink {
     void this.drain()
   }
 
-  /** One write at a time; control lines (HELLO, PONG) go before telemetry. */
+  /** One write at a time: control lines (HELLO, PONG, the page's) first, then the setpoint slot, then telemetry. */
   private async drain(): Promise<void> {
     if (this.writing) return
     this.writing = true
@@ -368,9 +417,9 @@ export class LineLink {
       for (;;) {
         if (this.state === 'error' || this.state === 'disconnected') break
         let line = this.control.shift()
-        if (line === undefined && this.state === 'ready' && this.telemetryLine !== null) {
-          line = this.telemetryLine
-          this.telemetryLine = null
+        if (line === undefined && this.state === 'ready') {
+          if (this.setpointLine !== null) { line = this.setpointLine; this.setpointLine = null }
+          else if (this.telemetryLine !== null) { line = this.telemetryLine; this.telemetryLine = null }
         }
         if (line === undefined) break
         await this.channel.write(this.encoder.encode(line))
