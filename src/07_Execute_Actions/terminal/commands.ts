@@ -22,11 +22,13 @@
  * Active recruit to it, through the same worker checks as asking), the player's look (`look`) and the opt-in network
  * session (`net`, operator-gated) go through the bridge the same way. `boot` asks the host to reload on a track
  * (the city, or the console alone); `r0` is the console's own stack machine (repl.ts): it touches no bridge at all.
+ * `topic` reads the unified namespace (05_Observe_Environment/namespace.ts): every reading of the city as a retained
+ * topic, listed by filter, read one at a time, walked as a tree, or watched live like `stats`; read-only, like `stats`.
  * What breaks if it is removed? The terminal cannot interpret a single line.
  */
 import type {
   ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, ExecResult, GateTether, GoalPlan, HalDevice, HarnessReport, LookBridge, LookChange, MemoryBridge, MindStatus, ModelBridge,
-  NetBridge, NetReport, OperatorBridge, PendingAct, Piece, PingKind, PingPick, RecordBridge, RecruitBridge, Ring0Stats, RunResult, SayResult, TerminalBridge, VoiceStatus,
+  NetBridge, NetReport, OperatorBridge, PendingAct, Piece, PingKind, PingPick, RecordBridge, RecruitBridge, Ring0Stats, RunResult, SayResult, TerminalBridge, TopicBridge, VoiceStatus,
 } from './bridge.ts'
 import type { QualityState, RecordingState } from '../../05_Observe_Environment/telemetry.ts'
 import type { SwarmReport, SwarmStatus } from '../../08_Swarm/orchestrator.ts'
@@ -51,14 +53,17 @@ export interface TextStream {
   subscribe(fn: (piece: Piece) => void): () => void
 }
 
+/** How a live view draws its next frame from the bridge (`stats`, `topic watch`): the terminal calls it ~4 times a second. */
+export type LiveFrame = (b: TerminalBridge) => string[]
+
 /**
- * `live`: redraw formatStats() in place until cancelled (lines are the first frame). `pending`: lines
- * that arrive later (a device picker, a script, a harness). `stream`: text shown live until `pending`
- * settles. `clear` wipes the screen, `close` hides the console, `boot` asks the host to reload the page on
- * that track ('gui': the city; 'tty': the full-screen console alone, ?boot=tty).
+ * `live`: redraw the view in place until cancelled, each frame drawn by the function from the bridge (lines are the
+ * first frame). `pending`: lines that arrive later (a device picker, a script, a harness). `stream`: text shown live
+ * until `pending` settles. `clear` wipes the screen, `close` hides the console, `boot` asks the host to reload the
+ * page on that track ('gui': the city; 'tty': the full-screen console alone, ?boot=tty).
  */
 /** `map`: the host keeps the choice (`default` forgets it) and reloads the page on that map (App.tsx remap). */
-export interface CommandResult { lines: Line[]; clear?: boolean; live?: 'stats'; close?: boolean; boot?: 'gui' | 'tty'; map?: 'city' | 'lakefront' | 'default'; pending?: Promise<Line[]>; stream?: TextStream }
+export interface CommandResult { lines: Line[]; clear?: boolean; live?: LiveFrame; close?: boolean; boot?: 'gui' | 'tty'; map?: 'city' | 'lakefront' | 'default'; pending?: Promise<Line[]>; stream?: TextStream }
 
 /** Quality tier indices: -1 = Lite (governor.ts LITE, below the table) … 0 = Minimal … 4 = Ultra … 5 = Peak (governor.ts PEAK, above the table). */
 const MIN_TIER = -1
@@ -76,6 +81,7 @@ const CORE = [
   { name: 'stats', usage: 'stats [--once]', summary: 'live Rapier3D, frame, crowd and kernel readout' },
   { name: 'laws', usage: 'laws', summary: 'the four laws the kernel and the action gate enforce, in rank order' },
   { name: 'kernel', usage: 'kernel', summary: 'interventions per law, Solid->Sensor flips' },
+  { name: 'topic', usage: 'topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]', summary: 'the unified namespace: every reading as a retained topic under Enterprise/JCS/Site/AgentCity (~); filter with + for one level and # for the rest' },
   { name: 'quality', usage: 'quality [auto|lite|peak|-1|0-5]', summary: 'show or set the render quality tier' },
   { name: 'time', usage: 'time [HH[:MM]]', summary: 'show or set the city clock' },
   { name: 'audio', usage: 'audio [on|off|0-100]', summary: 'show or set the soundscape' },
@@ -168,6 +174,7 @@ const LOOK_ACTIONS = ['code', 'preset', 'random', 'reset', 'show'] as const
 const ARGS: Record<string, readonly string[]> = {
   help: NAMES,
   stats: ['--once'],
+  topic: ['get', 'list', 'tree', 'watch'],
   quality: ['-1', '0', '1', '2', '3', '4', '5', 'auto', 'lite', 'peak'],
   audio: ['off', 'on'],
   ghost: ['off', 'on'],
@@ -235,6 +242,13 @@ function operatorOf(b: TerminalBridge): OperatorBridge {
   const op = b.operator
   if (!op) throw new Error('operator tier not available on this bridge')
   return op
+}
+
+/** Likewise for a host that publishes no topics (the TTY shell, an older host). */
+function topicsOf(b: TerminalBridge): TopicBridge {
+  const t = b.topics
+  if (!t) throw new Error('the namespace is not available on this bridge')
+  return t
 }
 
 /** Likewise for a bridge built before recruitment existed. */
@@ -782,7 +796,37 @@ const HANDLERS: Record<Name, Handler> = {
   stats(args, b) {
     for (const a of args) if (a !== '--once') return fail(`stats: unrecognized option '${a}'`, usage('stats'))
     const lines = formatStats(b.stats()).map(out)
-    return args.length ? { lines } : { lines, live: 'stats' }
+    return args.length ? { lines } : { lines, live: (bridge) => formatStats(bridge.stats()) }
+  },
+
+  // The unified namespace, read-only: the bridge formats every row (the console imports nothing of the bus).
+  topic(args, b) {
+    const t = topicsOf(b)
+    const a = args[0]
+    if (a === undefined) return { lines: [out(t.status()), ...t.children().map(out)] }
+    if (args.length > 2) return fail(usage('topic'))
+    const arg = args[1]
+    if (a === 'list') {
+      const rows = t.list(arg)
+      return { lines: rows.length ? rows.map(out) : [sys(`topic: nothing retained matches '${arg ?? '#'}'`)] }
+    }
+    if (a === 'get') {
+      if (arg === undefined) return fail('usage: topic get <topic>')
+      const row = t.get(arg)
+      return row === null ? fail(`topic: no topic '${arg}'`) : { lines: [out(row)] }
+    }
+    if (a === 'tree') {
+      const rows = t.children(arg)
+      return { lines: rows.length ? rows.map(out) : [sys(`topic: nothing under '${arg ?? '~'}'`)] }
+    }
+    if (a === 'watch') {
+      const frame: LiveFrame = (bridge) => {
+        const rows = topicsOf(bridge).list(arg)
+        return rows.length ? rows : [`(nothing retained matches '${arg ?? '#'}')`]
+      }
+      return { lines: frame(b).map(out), live: frame }
+    }
+    return fail(`topic: unknown action '${a}'`, usage('topic'))
   },
 
   laws: bare('laws', (b) => {

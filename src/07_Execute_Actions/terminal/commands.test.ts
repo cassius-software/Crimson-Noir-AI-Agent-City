@@ -24,7 +24,7 @@ import {
 import {
   offlineBridge, ring0Stats, type ActEnd, type ActEvent, type ActsBridge, type AskResult, type GatedAsk, type GatedRun, type GatedSay, type HalDevice, type LookBridge, type LookChange,
   type MemoryBridge, type ModelBridge, type NetBridge, type NetReport, type OperatorBridge, type PendingAct, type Piece, type PingBridge, type PingPick, type PingPoint, type RecordBridge,
-  type RecruitBridge, type Ring0Stats, type SayResult, type TerminalBridge, type AgentBridge, type ConciergeBridge,
+  type RecruitBridge, type Ring0Stats, type SayResult, type TerminalBridge, type TopicBridge, type AgentBridge, type ConciergeBridge,
 } from './bridge.ts'
 import { SKILLS } from '../../03_Spawn_Agents/skills.ts'
 import { LOOK_BODIES, LOOK_PRESETS, LOOK_SLOTS } from '../../03_Spawn_Agents/look.ts'
@@ -49,7 +49,7 @@ const LAWS = [
 ] as const
 
 const CORE_NAMES = [
-  'help', 'stats', 'laws', 'kernel', 'quality', 'time', 'audio', 'ghost', 'rain', 'render', 'captions', 'ping', 'look', 'agent', 'sloane', 'goal', 'hal', 'recruit', 'memory', 'clear', 'history', 'echo',
+  'help', 'stats', 'laws', 'kernel', 'topic', 'quality', 'time', 'audio', 'ghost', 'rain', 'render', 'captions', 'ping', 'look', 'agent', 'sloane', 'goal', 'hal', 'recruit', 'memory', 'clear', 'history', 'echo',
   'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'exit',
 ]
 const OPERATOR_NAMES = ['operator', 'run', 'ask', 'swarm', 'act', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
@@ -353,6 +353,31 @@ function fakeRecord(): FakeRec {
   return f
 }
 
+interface FakeTopics extends TopicBridge {
+  /** The retained rows the fake answers with, keyed by topic as typed ('~' for the root). */
+  rows: Record<string, string>
+}
+
+/** Logs to the bridge's shared `calls` (as 'topics <verb>'): the namespace is read-only, and the sweep sees every use. */
+function fakeTopics(calls: string[]): FakeTopics {
+  const t: FakeTopics = {
+    rows: {
+      '~/Area/FinancialDistrict/Line/Frame/Cell/Page/fps': '~/Area/FinancialDistrict/Line/Frame/Cell/Page/fps  59.940',
+      '~/Area/FinancialDistrict/Line/Kernel/Cell/Laws/law1': '~/Area/FinancialDistrict/Line/Kernel/Cell/Laws/law1  5',
+    },
+    list: (filter) => {
+      calls.push(`topics list ${filter ?? '-'}`)
+      // '+' one level, '#' the rest, as the real bus matches (namespace.ts matches()).
+      const re = filter === undefined ? /./ : new RegExp(`^${filter.split('/').map((l) => (l === '#' ? '.*' : l === '+' ? '[^/]+' : l.replace(/[.*?^${}()|[\]\\]/g, '\\$&'))).join('/')}$`)
+      return Object.entries(t.rows).filter(([k]) => re.test(k)).map(([, v]) => v)
+    },
+    get: (topic) => { calls.push(`topics get ${topic}`); return t.rows[topic] ?? null },
+    children: (prefix) => { calls.push(`topics children ${prefix ?? '-'}`); return prefix === undefined ? ['Area/      2 topics'] : [] },
+    status: () => { calls.push('topics status'); return 'namespace  2 topics  40 publishes  head 0000beef' },
+  }
+  return t
+}
+
 /** Logs to the bridge's shared `calls` (as 'memory <verb>'), so the air-gap sweep sees every use. */
 function fakeMemory(calls: string[]): MemoryBridge {
   return {
@@ -486,6 +511,7 @@ function fakeModel(calls: string[]): FakeModel {
 
 interface Fake extends TerminalBridge {
   calls: string[]
+  topics: FakeTopics
   recruit: FakeRecruit
   ping: FakePing
   look: FakeLook
@@ -523,6 +549,7 @@ function fake(): Fake {
     render: (arg) => { f.calls.push(`render ${arg}`); return arg ?? 'on' },
     captions: (arg) => { f.calls.push(`captions ${arg}`); return `captions: ${arg ?? 'on'}` },
     ping: undefined as unknown as FakePing,
+    topics: undefined as unknown as FakeTopics,
     hal: {
       summary: () => `${f.devs.length} device(s)`,
       devices: () => f.devs,
@@ -541,6 +568,7 @@ function fake(): Fake {
     model: undefined as unknown as FakeModel,
   }
   f.ping = fakePing(f.calls)
+  f.topics = fakeTopics(f.calls)
   f.recruit = fakeRecruit(f.calls)
   f.memory = fakeMemory(f.calls)
   f.look = fakeLook(f.calls)
@@ -635,8 +663,10 @@ test('help lists every command with usage, in two groups; help <cmd> explains on
 test('stats goes live by default and prints once with --once', () => {
   const b = fake()
   const live = run('stats', b, [])
-  assert.equal(live.live, 'stats')
+  assert.equal(typeof live.live, 'function')
   assert.deepEqual(texts(live), formatStats(sampleStats()))
+  // Each later frame is drawn by the result's own function over the bridge, so the terminal knows no command by name.
+  assert.deepEqual(live.live!(b), formatStats(sampleStats()))
   assert.ok(kinds(live).every((k) => k === 'out'))
   const once = run('stats --once', b, [])
   assert.equal(once.live, undefined)
@@ -645,6 +675,45 @@ test('stats goes live by default and prints once with --once', () => {
   assert.ok(isErr(bad))
   assert.equal(bad.live, undefined)
   assert.match(texts(bad).join('\n'), /unrecognized option '--forever'/)
+})
+
+test('topic: the namespace read-only, by filter, one topic, the tree, or live; every row from the bridge', () => {
+  const b = fake()
+  // Alone: the status line, then the root's children.
+  assert.deepEqual(texts(run('topic', b, [])), ['namespace  2 topics  40 publishes  head 0000beef', 'Area/      2 topics'])
+  assert.deepEqual(b.calls, ['topics status', 'topics children -'])
+  b.calls.length = 0
+  // list: every retained topic, or those a filter matches; nothing matched is said in dim text, not as an error.
+  assert.equal(run('topic list', b, []).lines.length, 2)
+  assert.deepEqual(texts(run('topic list ~/Area/+/Line/Kernel/#', b, [])), ['~/Area/FinancialDistrict/Line/Kernel/Cell/Laws/law1  5'])
+  const none = run('topic list ~/Area/Nowhere/#', b, [])
+  assert.deepEqual(none.lines, [{ kind: 'sys', text: "topic: nothing retained matches '~/Area/Nowhere/#'" }])
+  assert.deepEqual(b.calls, ['topics list -', 'topics list ~/Area/+/Line/Kernel/#', 'topics list ~/Area/Nowhere/#'])
+  b.calls.length = 0
+  // get: one row, or an error naming the topic; the topic is required.
+  assert.equal(only(run('topic get ~/Area/FinancialDistrict/Line/Frame/Cell/Page/fps', b, [])).text, '~/Area/FinancialDistrict/Line/Frame/Cell/Page/fps  59.940')
+  assert.deepEqual(run('topic get ~/Area/Nowhere', b, []).lines, [{ kind: 'err', text: "topic: no topic '~/Area/Nowhere'" }])
+  assert.deepEqual(run('topic get', b, []).lines, [{ kind: 'err', text: 'usage: topic get <topic>' }])
+  // tree: the children under a prefix.
+  assert.deepEqual(texts(run('topic tree', b, [])), ['Area/      2 topics'])
+  assert.deepEqual(run('topic tree ~/Area/Nowhere', b, []).lines, [{ kind: 'sys', text: "topic: nothing under '~/Area/Nowhere'" }])
+  // watch: a live view whose frames are the filtered rows, redrawn by the result's own function; nothing matched is a frame too.
+  const live = run('topic watch ~/Area/+/Line/Kernel/#', b, [])
+  assert.equal(typeof live.live, 'function')
+  assert.deepEqual(texts(live), ['~/Area/FinancialDistrict/Line/Kernel/Cell/Laws/law1  5'])
+  assert.deepEqual(live.live!(b), ['~/Area/FinancialDistrict/Line/Kernel/Cell/Laws/law1  5'])
+  const empty = run('topic watch ~/Area/Nowhere/#', b, [])
+  assert.deepEqual(texts(empty), ["(nothing retained matches '~/Area/Nowhere/#')"])
+  assert.equal(typeof empty.live, 'function')
+  // Argument validation, before the bridge is touched.
+  b.calls.length = 0
+  assert.ok(isErr(run('topic nope', b, [])))
+  assert.ok(isErr(run('topic list a b', b, [])))
+  assert.deepEqual(b.calls, [])
+  // Help and completion know it.
+  assert.equal(texts(run('help topic', b, []))[0], 'usage: topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]')
+  assert.deepEqual(complete('topic '), ['topic get', 'topic list', 'topic tree', 'topic watch'])
+  for (const l of texts(run('topic', b, []))) assert.ok(/^[\x20-\x7e]*$/.test(l), l)
 })
 
 test('formatStats shows Rapier3D latency, substeps, bodies, colliders, CCD, drawn agents, timings, quality, kernel', () => {
@@ -927,7 +996,7 @@ test('air gap: a failing or offline bridge becomes error lines, never an excepti
     'swarm', 'swarm status', 'swarm roles', 'swarm guardrails', 'swarm audit', 'swarm plan x', 'swarm run x', 'swarm stop',
     'say voice v', 'say stop', 'memory', 'memory 7', 'memory forget 7', 'api', 'api clock', 'get', 'set physics.car.power 1', 'harness', 'harness list', 'harness run sanctuary', 'sim',
     'record', 'record status', 'record start', 'record start camera', 'record stop', 'render', 'render off', 'captions', 'captions on', 'ping', 'ping go', 'ping clear',
-    'look', 'look show 7', 'look reset', 'look top 2', 'recruit', 'recruit rally 7', 'recruit rally 7 1 2']) {
+    'look', 'look show 7', 'look reset', 'look top 2', 'recruit', 'recruit rally 7', 'recruit rally 7 1 2', 'topic', 'topic list', 'topic list ~/#', 'topic get ~/x', 'topic tree', 'topic watch']) {
     const r = run(c, off, [])
     assert.ok(isErr(r), `${c} should report an error offline`)
     assert.match(texts(r)[0], /engine not running$/)
@@ -960,6 +1029,14 @@ test('air gap: a failing or offline bridge becomes error lines, never an excepti
   const bare = fake()
   Object.assign(bare, { look: undefined })
   for (const c of ['look', 'look show 7', 'look reset', 'look preset navy suit']) assert.match(only(run(c, bare, [])).text, /look not available/, c)
+  // A host that publishes no topics (no `topics`): the namespace says so, and nothing goes live.
+  const quiet = fake()
+  Object.assign(quiet, { topics: undefined })
+  for (const c of ['topic', 'topic list', 'topic get ~/x', 'topic tree', 'topic watch']) {
+    const r = run(c, quiet, [])
+    assert.match(only(r).text, /the namespace is not available/, c)
+    assert.equal(r.live, undefined)
+  }
   assert.match(texts(run('sim', old, [])).at(-1) ?? '', /^operator {2}locked/)
   // A bridge from before the recorder (no `record`): likewise.
   const older = fake()
@@ -975,10 +1052,13 @@ test('air gap: while locked, across every command and completion, the only knobs
   // `operator unlock` is the one line that changes the lock state; every other line runs against the locked tier.
   assert.ok(lines.includes('operator unlock'))
   const sweep = [...lines.filter((l) => l !== 'operator unlock'), 'time 8', 'time 08:15', 'run 1 + 1', 'run rust: 1 + 1', 'get physics', 'set physics.car.power 2', 'harness run kernel-stop',
-    'recruit rally 7', 'recruit rally 7 1 2', 'look show 7', 'look top 2', 'look code ABCD-EFGH', 'net join ws://127.0.0.1:8787 tok']
+    'recruit rally 7', 'recruit rally 7 1 2', 'look show 7', 'look top 2', 'look code ABCD-EFGH', 'net join ws://127.0.0.1:8787 tok', 'topic get ~/x', 'topic list ~/#', 'topic tree ~/Area']
   for (const l of sweep) void run(l, b, ['help'])
   const touched = new Set(b.calls.map((c) => c.split(' ')[0]))
-  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'ghost', 'look', 'memory', 'model', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'setClock', 'stats'])
+  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'ghost', 'look', 'memory', 'model', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'setClock', 'stats', 'topics'])
+  // The namespace is only ever read while locked (it has no write), and only through its four readers.
+  const topicVerbs = new Set(b.calls.filter((c) => c.startsWith('topics ')).map((c) => c.split(' ')[1]))
+  assert.deepEqual([...topicVerbs].sort(), ['children', 'get', 'list', 'status'])
   // The model file kept in this page and its GPU switch keep a file or a setting and send no prompt, so they need no
   // unlock (`ask file`, `ask gpu`); the prompt itself (`ask <skill>: ...`) is refused below like every operator command.
   // No completed line forgets a kept file: `ask file forget` alone names none, so it is refused.

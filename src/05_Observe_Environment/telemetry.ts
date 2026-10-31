@@ -231,6 +231,11 @@ export interface SipocSnapshot {
      */
     dissolve?: { active: number; count: number }
     /**
+     * The unified namespace (namespace.ts TopicBus): how many topics the bus retains and how many publishes it has
+     * accepted since boot. The engine publishes every snapshot into it; absent before the first publish.
+     */
+    topics?: { count: number; publishes: number }
+    /**
      * The operator's pings standing now (08_Swarm/ping.ts PingBoard), oldest first, each placed where the head looked,
      * with where it falls on the screen: a marker on the minimap and a chip over the world for the newest. Absent when
      * none stands.
