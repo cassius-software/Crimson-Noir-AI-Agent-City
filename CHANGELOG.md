@@ -15,6 +15,24 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **One command for every platform's build: `npm run build:matrix`.** `tools/build/matrix.mjs` (plain Node, programs
+  with argument vectors, never a shell, so cmd.exe and sh run the same thing) builds the page once and then each
+  target a machine can build: the Tauri 2 shell for Windows x64 (`windows-x64`: NSIS installer and bare .exe) and
+  Windows arm64 (`windows-arm64`, cross-compiled on Windows x64), Linux x64 and arm64 (`linux-x64`, `linux-arm64`:
+  .deb and .AppImage), macOS (`macos-universal`: one universal .app, zipped, and .dmg, unsigned), Android
+  (`android-apk`: arm64-v8a, signed with the debug key unless `CRIMSON_ANDROID_KEYSTORE` names one) and iOS
+  (`ios-ipa`: built with code signing off, so unsigned), and Crimson Noir OS's UEFI application for x86-64
+  (`uefi-x64`, with the .img and .iso media where the media tools are installed). `uefi-arm64` is listed as
+  unsupported with the reason (the boot crate's machine layer is x86-64 assembly). `--list`, `--targets
+  <ids>|all|host`, `--dry-run`, `--out`, `--skip-page`; a target named by hand that the machine cannot build fails
+  the run, under `all` it is skipped with a note. `.github/workflows/build-matrix.yml` runs the same command on
+  GitHub's runners, one job per target (Windows, Linux x64, Linux arm64, macOS twice, Linux with the Android SDK), lays
+  the nine targets out in the run's summary, and on a v* tag uploads the files to the tag's release after
+  build-release.yml has created it; build-release.yml dispatches it for a tag it makes itself, as it does
+  windows-app.yml. Not made: .msi and .rpm (the version `1.0.0-stable-beta` carries a pre-release tag and a hyphen,
+  which WiX and rpm refuse), anything signed or notarized (no Apple or Windows signing account), UEFI aarch64. Tried
+  in Node (the dry run and the table's tests); the workflow's first runs are the pull request's own, and no file it
+  makes has been opened on a Mac, a phone or a Windows on Arm machine.
 - **Hardware classes, lanes per class and the `hardware` command.** The engine now decides once at boot which of
   three machines it is on (`src/05_Observe_Environment/governor.ts` `classifyHardware`): a phone (any phone, tablet
   or lite profile), a workstation (a Peak candidate whose WebGPU adapter binds at least 512 MiB in one storage buffer

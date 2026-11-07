@@ -132,14 +132,17 @@ cargo test --manifest-path native/kv-pager/Cargo.toml
 cargo test --manifest-path native/routing/Cargo.toml
 ```
 
-### 3. Build Native Executables (Windows `.exe`, Linux ELF, macOS `.app`, Android/iOS)
+### 3. Build Native Executables (Windows `.exe`, Linux `.deb`/`.AppImage`, macOS `.app`, Android `.apk`, iOS `.ipa`, UEFI)
 ```bash
-# Desktop Native (Windows / Linux / macOS via Tauri v2 + Clang/LLVM)
-npm run tauri build
+# One command, every target this machine can build (plain Node: the same in cmd.exe and sh)
+npm run build:matrix -- --list
+npm run build:matrix -- --targets host      # this machine's desktop app and the UEFI application
+npm run build:matrix -- --targets all       # everything it can; the rest skipped with a note
 
-# Bare-Metal UEFI Bootable Image
-./crimson_noir_os/tools/build-image.sh
+# Bare-Metal UEFI Bootable Image (Linux or macOS, with mtools, sgdisk and xorriso)
+sh crimson_noir_os/tools/build-image.sh
 ```
+The GitHub workflow `build-matrix` runs the same command for all nine targets; `MANUAL.md`, *The build matrix*, says what each file needs to run and what is not made (nothing is signed).
 
 ---
 
