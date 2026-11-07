@@ -15,6 +15,20 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Gas metering in the NoirScript VM, and the lane runner.** A bound that ends a NoirScript run is now named in
+  the result as well as in its text (`NoirResult.fault`: `gas`, `bounds`, `memory`, `depth` or `output`; a division
+  by zero, a type error or a refused host write is a plain error and carries none), and the VM exports the lane
+  limits (`LANE_LIMITS`: `MAX_OPS_PER_TICK` = 4,096 instructions a tick, 256 characters of output, a 65,536-cell
+  arena, 32 frames). `src/08_Swarm/lanes.ts` (new) runs a dispatched plan's sub-agents in isolated lanes: one
+  session each (its own arena), one program a tick against one snapshot of the city's columns, every tick and every
+  effect put to the Ring-0 action gate's `admitLane`, which gains two Zeroth-Law checks, `GasWithin` and
+  `MemoryWithin` (fifteen checks now; `act gate` prints them). A refusal is the lane panic: the lane zeroed and
+  sealed, the fault hashed onto the runner's ledger with the gate's sentence as its reason, one console line, and the
+  frame untouched; a write for vehicle teleop from a lane without the bit is a capability fault; the operator's
+  knobs (`tune`, `cull`, `steer`) are nobody's lane's. Tests pin every fault kind end to end, isolation of one lane
+  among others, a plain error keeping its lane, `ask` on an effect outside the VM, a host that vouches nothing or
+  whose realm has halted, that nothing throws, lane-to-lane memory isolation, the `LANE_MAX` cap and determinism to
+  the ledger's head. Nothing dispatches into lanes yet: that is the next slice.
 - **Capability lanes, the lane panic and the forbidden doors.** A sub-agent lane has a 32-bit capability word
   (`src/02_Define_The_Rules/capabilities.ts`), one `Uint32` per lane: four grantable bits (`CAP_MOVE`,
   `CAP_WORKPLACE_TASK`, `CAP_VEHICLE_TELEOP`, `CAP_SUBAGENT_SPAWN`), everything else forbidden for good

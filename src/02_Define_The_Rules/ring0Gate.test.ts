@@ -39,15 +39,15 @@ const { readHeld } = (await import(HELD)) as { readHeld(path: string, encoding: 
 const ASK: AskIntent = Object.freeze({ contained: true, endpoint: 'http://localhost:11434', unlocked: true })
 const PROPOSAL: ProposalIntent = Object.freeze({ contained: true, line: 'ACTION: time 22:00', catalogued: true, unlocked: true, vacant: true })
 const RUN: RunIntent = Object.freeze({ contained: true, verb: 'time', panic: null, unlocked: true, allowedBy: 'console', held: true, proposer: true, chainOk: true })
-const LANE: LaneIntent = Object.freeze({ contained: true, panic: null, held: CAP_MOVE | CAP_WORKPLACE_TASK, asked: CAP_MOVE })
+const LANE: LaneIntent = Object.freeze({ contained: true, panic: null, held: CAP_MOVE | CAP_WORKPLACE_TASK, asked: CAP_MOVE, steps: 120, budget: 4096, fault: null })
 
 const ADMITTED: GateVerdict = Object.freeze({ admitted: true, law: null, failed: Object.freeze([]) })
 
 /** The verdict a single failed check gives. */
 const refusedBy = (check: CheckName, reason: string): GateVerdict => ({ admitted: false, law: CHECK_LAW[check], failed: [{ law: CHECK_LAW[check], check, reason }] })
 
-test('the table: thirteen checks, named once, in rank order under the four laws, each with a sentence; every check stands under an invariant or none; everything is frozen', () => {
-  assert.equal(CHECKS.length, 13)
+test('the table: fifteen checks, named once, in rank order under the four laws, each with a sentence; every check stands under an invariant or none; everything is frozen', () => {
+  assert.equal(CHECKS.length, 15)
   assert.equal(new Set(CHECKS.map((c) => c.name)).size, CHECKS.length)
   for (let i = 1; i < CHECKS.length; i++) assert.ok(CHECKS[i - 1].law <= CHECKS[i].law, `${CHECKS[i].name} is ranked under ${CHECKS[i - 1].name}`)
   assert.deepEqual([...new Set(CHECKS.map((c) => c.law))], LAWS.map((l) => l.id), 'every law has a check')
@@ -126,8 +126,15 @@ test('an allowed action about to run: contained, the realm standing, kinetic-fre
   assert.equal(sentence(admitRun({ ...RUN, chainOk: false })), `Third Law: ${REASONS.ChainVerified}`)
 })
 
-test('a lane\'s effect: contained, the realm standing, every bit asked for held; a door bit is named as a door; a lane holding nothing asks for nothing', () => {
+test('a lane\'s tick or effect: contained, within its gas and its arena, the realm standing, every bit asked for held; a door bit is named as a door; a lane holding nothing asks for nothing', () => {
   assert.deepEqual(admitLane({ ...LANE, asked: CAP_MOVE | CAP_WORKPLACE_TASK }), ADMITTED)
+  assert.deepEqual(admitLane({ ...LANE, steps: 4096 }), ADMITTED, 'the whole budget, spent to the step, is within it')
+  assert.deepEqual(admitLane({ ...LANE, steps: 0, budget: 0 }), ADMITTED, 'an effect outside the VM counts no steps')
+  assert.deepEqual(admitLane({ ...LANE, fault: { kind: 'gas', text: 'step budget exhausted (4096)' } }), refusedBy('GasWithin', 'the lane ran its 4096-step budget out this tick'))
+  assert.deepEqual(admitLane({ ...LANE, steps: 5000 }), refusedBy('GasWithin', 'the lane ran its 4096-step budget out this tick (5000 steps counted)'), 'a count past the budget is a fault whatever the VM said')
+  for (const [kind, text] of [['bounds', 'index 7 out of bounds (len 4)'], ['memory', 'memory exhausted'], ['depth', 'stack overflow (depth 32)'], ['output', 'output limit exhausted (256)']] as const) {
+    assert.deepEqual(admitLane({ ...LANE, fault: { kind, text } }), refusedBy('MemoryWithin', `the lane reached past its bounds: ${text}`), kind)
+  }
   assert.deepEqual(admitLane({ ...LANE, asked: 0 }), ADMITTED, 'an effect that needs nothing')
   assert.deepEqual(admitLane({ ...LANE, contained: null }), refusedBy('Contained', REASONS.Contained))
   assert.deepEqual(admitLane({ ...LANE, contained: false }), refusedBy('Contained', REASONS.Contained))
@@ -138,10 +145,13 @@ test('a lane\'s effect: contained, the realm standing, every bit asked for held;
   assert.deepEqual(admitLane({ ...LANE, asked: CAP_NET }), refusedBy('LaneCapable', 'the lane asked for the network: a door no lane is granted'))
   assert.deepEqual(admitLane({ ...LANE, held: 0xffff_ffff, asked: CAP_CODE }), ADMITTED, 'a word that somehow holds a door bit admits it: the table never grants one (capabilities.test.ts), the gate reads the word')
   assert.deepEqual(admitLane({ ...LANE, asked: (1 << 20) >>> 0 }), refusedBy('LaneCapable', 'the lane asked for reserved bit 20: a bit no lane is granted'))
-  const all = admitLane({ contained: null, panic: 'x', held: 0, asked: CAP_MOVE | CAP_NET })
-  assert.deepEqual(all.failed.map((r) => [r.check, r.law]), [['Contained', 0], ['RealmStanding', 1], ['LaneCapable', 2]])
+  const all = admitLane({ contained: null, panic: 'x', held: 0, asked: CAP_MOVE | CAP_NET, steps: 4096, budget: 4096, fault: { kind: 'gas', text: 'step budget exhausted (4096)' } })
+  assert.deepEqual(all.failed.map((r) => [r.check, r.law]), [['Contained', 0], ['GasWithin', 0], ['RealmStanding', 1], ['LaneCapable', 2]])
   assert.equal(sentence(all), `Zeroth Law: ${REASONS.Contained}`)
-  assert.deepEqual(invariantsOf(all), ['LoopbackOnly', 'CapabilityTethered'])
+  assert.deepEqual(invariantsOf(all), ['LoopbackOnly', 'BudgetWithinQuota', 'CapabilityTethered'])
+  const bounds = admitLane({ ...LANE, asked: CAP_SUBAGENT_SPAWN, fault: { kind: 'bounds', text: 'index 9 out of bounds (len 8)' } })
+  assert.deepEqual(bounds.failed.map((r) => r.check), ['MemoryWithin', 'LaneCapable'])
+  assert.equal(sentence(bounds), 'Zeroth Law: the lane reached past its bounds: index 9 out of bounds (len 8)')
   assert.equal(sentence(admitLane({ ...LANE, asked: CAP_SUBAGENT_SPAWN })), 'Second Law: the lane holds move, workplace task and asked for sub-agent spawn')
 })
 
@@ -301,8 +311,12 @@ test('the keeper: perform is called once in the runtime, inside the lease\'s use
   assert.match(acts, /const pre = admitProposal\(\{ contained: deps\.contained\(\), line, catalogued: p\.kind === 'refused' \? \{ reason: p\.reason \} : true, unlocked: deps\.unlocked\(\), vacant: pending === null \}\)\n\s*if \(p\.kind === 'refused' \|\| !pre\.admitted\) \{/, 'every ACTION line, readable or not, passes the gate')
   const voice = source('07_Execute_Actions/onboarding/voice.ts')
   assert.match(voice, /!admitWords\(said\)\.admitted\) return line/)
-  // The gate is imported by the three that stand on the road, and by nothing else at runtime.
-  assert.deepEqual(having(/from '[./]*02_Define_The_Rules\/ring0Gate\.ts'|from '\.\/ring0Gate\.ts'/), ['07_Execute_Actions/acts.ts', '07_Execute_Actions/onboarding/voice.ts', '07_Execute_Actions/operator.ts'])
+  // The gate is imported by the three that stand on the road and the lane runner (08_Swarm/lanes.ts, whose every tick and effect passes admitLane), and by nothing else at runtime.
+  assert.deepEqual(having(/from '[./]*02_Define_The_Rules\/ring0Gate\.ts'|from '\.\/ring0Gate\.ts'/), ['07_Execute_Actions/acts.ts', '07_Execute_Actions/onboarding/voice.ts', '07_Execute_Actions/operator.ts', '08_Swarm/lanes.ts'])
+  const lanes = source('08_Swarm/lanes.ts')
+  assert.match(lanes, /const v = admitLane\(\{ contained: this\.#vouch\(\), panic: this\.#standing\(\), held, asked, steps, budget: this\.#limits\.steps, fault \}\)\n\s*if \(v\.admitted\) return v\n[\s\S]{0,400}?lanePanic\(f, this\.#table, this\.#ledger, this\.#deps\.log\)/, 'a refusal of a lane is the lane panic, in the one place')
+  assert.equal((lanes.match(/\badmitLane\(/g) ?? []).length, 1, 'one gate call in the runner, which every tick and every ask goes through')
+  assert.equal((lanes.match(/\blanePanic\(/g) ?? []).length, 1)
 })
 
 test('the console names the law the way the gate does', () => {

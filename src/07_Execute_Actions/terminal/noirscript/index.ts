@@ -13,12 +13,13 @@
  * limits' cells, so the larger arena is not a larger allowance for the lines that follow. Limits are made sane
  * before use (vm.ts saneLimits): a missing, non-finite or negative field falls back to the session's, and cells and
  * depth have hard caps. Nothing here throws: every failure is the `error` text of a result, an allocation that
- * fails is "memory exhausted", and a host write that re-enters `run` on the same session gets "session busy"
+ * fails is "memory exhausted" (a bound that ends a line is named in the result's `fault` too, for a host that runs
+ * a lane a tick: LANE_LIMITS), and a host write that re-enters `run` on the same session gets "session busy"
  * instead of corrupting the run in progress. The directory imports nothing from outside itself (the air gap), and
  * nothing in it reaches a clock, a random source, the network or the DOM.
  * What breaks if it is removed? The console's `noir` command has no language behind it.
  */
-import type { Decl, FnSig } from './ast.ts'
+import type { Decl, FnSig, NoirFault } from './ast.ts'
 import { NoirError } from './ast.ts'
 import { compile } from './compiler.ts'
 import { disassemble } from './disasm.ts'
@@ -30,15 +31,24 @@ import type { Arena, CompiledFn, NoirHost, NoirLimits, NoirTables } from './vm.t
 import { DEFAULT_LOCKED, EMPTY_TABLES, LIMITS, TABLE_NAMES, execute, makeArena, saneLimits } from './vm.ts'
 
 export type { NoirColumns, NoirTables, NoirWrites, NoirHost, NoirLimits } from './vm.ts'
-export { EMPTY_TABLES, LIMITS, ELITE_LIMITS } from './vm.ts'
+export type { NoirFault } from './ast.ts'
+export { EMPTY_TABLES, LIMITS, ELITE_LIMITS, LANE_LIMITS, MAX_OPS_PER_TICK } from './vm.ts'
 export { KEYWORDS, TYPE_NAMES } from './lexer.ts'
 export { INTRINSIC_NAMES } from './intrinsics.ts'
 export { f32Text } from './format.ts'
 
-/** What one line gave: the lines printed, the first error if any, the instructions it took, and the names it declared. */
-export interface NoirResult { readonly out: string[]; readonly error?: string; readonly steps: number; readonly defined: readonly string[] }
+/**
+ * What one line gave: the lines printed, the first error if any, the instructions it took, the names it declared,
+ * and, when a bound ended it, which (`fault`: the budget, an index, memory, depth or output; absent otherwise).
+ */
+export interface NoirResult { readonly out: string[]; readonly error?: string; readonly steps: number; readonly defined: readonly string[]; readonly fault?: NoirFault }
 
 const message = (e: unknown): string => (e instanceof NoirError ? e.message : `internal error: ${e instanceof Error ? e.message : String(e)}`)
+/** A failed line's result: the error, and the fault when the failure is one of the bounds. */
+const failed = (e: unknown, defined: readonly string[]): NoirResult => {
+  const fault = e instanceof NoirError ? e.fault : null
+  return fault === null ? { out: [], error: message(e), steps: 0, defined } : { out: [], error: message(e), steps: 0, defined, fault }
+}
 
 /**
  * A NoirScript session: the functions and globals its lines have declared, and the arena they live in. Deterministic
@@ -79,7 +89,7 @@ export class NoirSession {
       this.ensureArena(lim.cells)
       line = compile(check(parse(source), { globals: this.globals, fns: this.fnSigs, nextFnIndex: this.fns.length }), { globalTop: this.globalTop, cells: this.arena.cells, lineCells: lim.cells })
     } catch (e) {
-      return { out: [], error: message(e), steps: 0, defined: [] }
+      return failed(e, [])
     }
     // The whole line compiled: install what it declared (named in the order written), then run it.
     for (const f of line.fns) {
@@ -104,7 +114,8 @@ export class NoirSession {
     // A `write` that is not an object (null, say) is no write surface: the intrinsics fail with the locked message.
     const write = host?.write
     const r = execute({ arena: this.arena, fns: this.fns, main: line.main, globalTop: this.globalTop, tables, write: typeof write === 'object' && write !== null ? write : undefined, locked: host?.locked ?? DEFAULT_LOCKED, limits: lim })
-    return r.error === undefined ? { out: r.out, steps: r.steps, defined } : { out: r.out, error: r.error, steps: r.steps, defined }
+    if (r.error === undefined) return { out: r.out, steps: r.steps, defined }
+    return r.fault === undefined ? { out: r.out, error: r.error, steps: r.steps, defined } : { out: r.out, error: r.error, steps: r.steps, defined, fault: r.fault }
   }
 
   /** Compiles only and returns the bytecode listing (or the compile error as `error`). Installs nothing. */
@@ -148,7 +159,7 @@ export class NoirSession {
     try {
       bigger = makeArena(cells)
     } catch {
-      throw new NoirError('memory exhausted')
+      throw new NoirError('memory exhausted', 'memory')
     }
     bigger.i32.set(this.arena.i32.subarray(0, Math.min(this.globalTop, this.arena.cells)))
     this.arena = bigger

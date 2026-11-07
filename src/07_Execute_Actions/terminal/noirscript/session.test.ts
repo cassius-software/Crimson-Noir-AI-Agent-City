@@ -56,7 +56,7 @@ function fake(write = true, locked?: string): Fake {
 // The public API
 
 test('index.ts exports exactly the public API of the specification, frozen where it is a constant', () => {
-  assert.deepEqual(Object.keys(api).sort(), ['ELITE_LIMITS', 'EMPTY_TABLES', 'INTRINSIC_NAMES', 'KEYWORDS', 'LIMITS', 'NoirSession', 'TYPE_NAMES', 'f32Text'])
+  assert.deepEqual(Object.keys(api).sort(), ['ELITE_LIMITS', 'EMPTY_TABLES', 'INTRINSIC_NAMES', 'KEYWORDS', 'LANE_LIMITS', 'LIMITS', 'MAX_OPS_PER_TICK', 'NoirSession', 'TYPE_NAMES', 'f32Text'])
   assert.deepEqual([...KEYWORDS], ['fn', 'let', 'mut', 'if', 'else', 'while', 'for', 'in', 'loop', 'break', 'continue', 'return', 'true', 'false', 'as', 'query', 'where'])
   assert.deepEqual([...TYPE_NAMES], ['i32', 'u32', 'f32', 'bool', 'void', 'f32x4', 'i32x4', 'u32x4', 'u32x8', 'col'])
   for (const name of ['min', 'max', 'abs', 'clamp', 'sqrt', 'floor', 'ceil', 'trunc', 'select', 'mask', 'popcount', 'clz', 'ctz', 'rotl', 'rotr', 'morton2', 'demorton2x', 'demorton2y',

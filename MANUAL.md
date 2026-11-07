@@ -751,11 +751,12 @@ anywhere in the product.
   model is asked through the operator tier (whichever provider answers: the Claude gateway, a model server on this
   machine, the model file kept in this page, or the script; the swarm asks the same way, one step at a time), its
   answer may end with one `ACTION:` line from the fixed catalogue, the line is proposed to you, and once you allow it
-  it runs once under the proposer's tether. The gate stands at the three moments on that road, and its thirteen checks
+  it runs once under the proposer's tether. The gate stands at the three moments on that road, and its fifteen checks
   are ranked under four laws, the Zeroth Law above the kernel's three: **Zeroth, protect the city.** The page's
   outbound primitives are held to this machine, as the host vouches (the air gap `main.tsx` installed is still in
   place); the model is on this machine or there is none; the words pass the 14A screen; the effect is a line of the
-  catalogue. **First.** The Ring-0 audit has not panicked (a halted realm takes no action); the verb reaches no
+  catalogue; a sub-agent lane's program took at most its gas for the tick and stayed inside its own arena (see
+  Capability lanes below). **First.** The Ring-0 audit has not panicked (a halted realm takes no action); the verb reaches no
   facade leaf that moves a body, drives a car or weakens the kernel (a table of what every verb reaches, proved
   exact by running every verb over a recording facade). **Second.** The operator tier is unlocked; a person allowed
   it, at the console, on the card or through a host (the gateway never allows); a sub-agent's lane holds the capability
@@ -778,13 +779,20 @@ anywhere in the product.
   `XMLHttpRequest`, `WebSocket`, `EventSource`, WebRTC, `WebTransport`, `navigator.sendBeacon`), dynamic code
   (`eval`, `Function`, `importScripts`, WebAssembly), a window (`window.open`) and the host process (`process`,
   `require`, the file system). A grant keeps only the grantable bits; the check is the kernel's own `asked & !held`,
-  without a branch. The gate's `LaneCapable` check (Second Law) reads the word the moment before a lane's effect, and
-  a refusal trips the lane panic: the lane's word is zeroed and sealed (nothing is granted to it again), the fault is
-  hashed onto a ledger chained from a fixed genesis with the city's SHA-256, one line goes to the console (`[RING-0
-  LANE 3] isolated (capability): … audit 9f3a…`), and the frame goes on: unlike the realm's kernel panic, which locks
-  the page, a lane's panic isolates the lane and nothing else. The network and window doors are the air gap's to
-  hold on the page's own global (`window.open` is held to this machine like `fetch`); the code and host doors are
-  not reachable from a lane at all, since a lane runs NoirScript, whose folder names none of them.
+  without a branch. A lane runs one NoirScript program a tick (`08_Swarm/lanes.ts`), in a session of its own (its
+  own arena: no lane reads another's memory) under the lane limits: `MAX_OPS_PER_TICK`, 4,096 instructions of gas a
+  tick, 256 characters of output, a 256 KiB arena the city's columns are copied into, 32 frames of stack. The gate
+  reads every tick and every effect: `GasWithin` and `MemoryWithin` (Zeroth Law) refuse a program that ran its gas
+  out or reached past its bounds (an index past an array or a column, memory, depth, output, each in the VM's own
+  words), `LaneCapable` (Second Law) refuses a write or an effect the word does not cover, and a refusal trips the
+  lane panic: the lane's word is zeroed and sealed (nothing is granted to it again), the fault is hashed onto a
+  ledger chained from a fixed genesis with the city's SHA-256, one line goes to the console (`[RING-0 LANE 3]
+  isolated (gas): Zeroth Law: the lane ran its 4096-step budget out this tick; … audit 9f3a…`), and the frame goes
+  on: the other lanes run their next tick, and unlike the realm's kernel panic, which locks the page, a lane's panic
+  isolates the lane and nothing else. A plain mistake in a program (a division by zero, a type error) is an error on
+  the lane's readout and the lane runs again next tick. The network and window doors are the air gap's to hold on
+  the page's own global (`window.open` is held to this machine like `fetch`); the code and host doors are not
+  reachable from a lane at all, since a lane runs NoirScript, whose folder names none of them.
 - **The physics realm** (`physics.worker.ts`, `simHost.ts`, `simCore.ts`). The Rapier world runs in a dedicated
   Web Worker, inlined into the single HTML file, together with everything that touches it: the fleet and its
   Bouncer, the avatar, the Sanctuary, the Ring-0 audit, the promoted pedestrians' rigs and their balance machine,
@@ -1173,7 +1181,7 @@ Ring-0 elite tier above it, below). While unlocked:
   reloading the page (`map`, `boot`) and spawning or altering anyone are not in the catalogue and cannot be proposed;
   a line that asks for them is refused by name, under the gate's Zeroth Law (`Zeroth Law: no city action called
   'teleport' (time, rain, light, quality, cars, crowd, sound, or none)`). `help` lists the command as `act [ok|no|log [verify]|list|gate]`; `act list` prints the catalogue,
-  `act gate` the Ring-0 action gate's thirteen checks with their laws (see The ethical kernel), and the reads (`act`,
+  `act gate` the Ring-0 action gate's fifteen checks with their laws (see The ethical kernel), and the reads (`act`,
   `act log`, `act list`, `act gate`) work while locked. **The gate.** Before any of this, every ask passes the gate
   (the page contained as the host vouches and the model on this machine or none: `ask: Zeroth Law: …` otherwise;
   the lock, which `ask: locked` has refused already, is held again), every `ACTION:` line passes it as it is read,

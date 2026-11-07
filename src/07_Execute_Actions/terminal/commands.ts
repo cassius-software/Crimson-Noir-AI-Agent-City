@@ -665,6 +665,8 @@ const GATE_LINES: readonly (readonly [string, string, string])[] = [
   ['LoopbackOnly', 'Zeroth Law', 'the model the words come from is on this machine, or there is none (the script, a model in this page)'],
   ['Conduct14A', 'Zeroth Law', 'the words pass the 14A screen (conduct.ts); a prompt that fails it is not engaged with at all'],
   ['Catalogued', 'Zeroth Law', 'the effect is one line of the fixed catalogue (actions.ts): nothing else an answer says can change the city'],
+  ['GasWithin', 'Zeroth Law', "a sub-agent lane's program took at most its gas for the tick (noirscript MAX_OPS_PER_TICK, 4096 instructions): one that runs the budget out is isolated, not waited for"],
+  ['MemoryWithin', 'Zeroth Law', "a sub-agent lane's program stayed inside its own arena: an index past an array or a column, memory, call depth or output beyond its limits is a fault, not a crash"],
   ['RealmStanding', 'First Law', 'the Ring-0 audit (ring0.ts) has not panicked: a halted realm takes no action'],
   ['KineticFree', 'First Law', 'the verb reaches no leaf that moves a body, drives a car or weakens the kernel: a car is only parked, or handed back to a driver the Bouncer vets'],
   ['OperatorUnlocked', 'Second Law', 'the operator tier is unlocked'],
