@@ -58,7 +58,8 @@ test('V and the right stick\'s click are the mute (M is rain mode, L3 the run la
 test('the HUD\'s pill: a button named by the device\'s state, fed every snapshot, shown while the device is open even with the HUD hidden', () => {
   assert.match(APP, /s\.supplier\.voice = \{ phase: mic\.phase, detail: mic\.state\.detail, speaking: speaker\.speaking, path: mic\.path, words: recruiter !== null && recruiter\.mic\.state === 'listening' \}\n\s+if \(recruiter\) s\.supplier\.recruiting = hudLine\(/, 'written before the recruiter\'s line, every HUD interval')
   assert.match(APP, /<Hud s=\{hud\}[^\n]* mic=\{mic\} onMic=\{onMic\} \/>/)
-  assert.match(HUD, /const micPill = voice && \(visible \|\| micOpen\) && <MicPill voice=\{voice\} mic=\{mic\} onMic=\{onMic\}/)
+  assert.match(HUD, /const micNeeded = voice \? micOpen \|\| voice\.phase === 'opening' \|\| voice\.phase === 'blocked' \|\| voice\.phase === 'error' \|\| voice\.phase === 'unavailable' : false/)
+  assert.match(HUD, /const micPill = voice && \(micOpen \|\| \(visible && \(!compact \|\| micNeeded\)\)\) && <MicPill voice=\{voice\} mic=\{mic\} onMic=\{onMic\}/, 'always while open; at rest on a desktop; on a phone only opening, open or failed (the Menu is the switch there)')
   assert.match(HUD, /\{!visible && \(recChip \|\| micPill \|\| rc\?\.listening \|\| captionStrip\) && \(/, 'the hidden HUD still frames an open microphone')
   assert.match(HUD, /<button\n\s+type="button"\n\s+onClick=\{onMic\}\n\s+aria-label=\{pillLabel\(voice\.phase, voice\.speaking, failed \? voice\.detail : ''\)\}\n\s+aria-pressed=\{open\}/)
   assert.match(HUD, /className=\{`pointer-events-auto flex [^`]*focus-visible:outline-2[^`]*\$\{panel\}`\}/, 'the one HUD element that takes the pointer, with a visible focus ring')

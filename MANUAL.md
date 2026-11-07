@@ -547,7 +547,9 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   **Speaking** (Sloane talking over an open microphone), **Muted**, or why it could not open. It is a button: a press,
   `V`, the right stick's click or the touch Menu's Microphone item opens the microphone (the browser asks its
   permission the first time) or mutes it. Mute releases the device, so the browser's own microphone indicator goes
-  out with the pill's; the device is never open without the pill, which outlives `H` like REC. A first visit starts
+  out with the pill's; the device is never open without the pill, which outlives `H` like REC. On a phone the pill
+  shows only while the microphone is open, opening or could not open: the Menu's Microphone item is the switch there,
+  and the smallest screens have no row to spare above Sloane's chip. A first visit starts
   with the microphone **off** until that first press: `MIC_OPEN_BY_DEFAULT` in `microphone.ts` is the one line that
   would open it at boot instead. A visitor who turned it on and left it on finds it on again on the next visit; one
   who muted it finds it off (key `civic-simulation:voice:v1`). Open, an on-device voice activity detector (energy over
