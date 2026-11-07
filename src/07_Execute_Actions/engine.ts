@@ -831,7 +831,7 @@ export class Engine {
       // the same rooms from them. A surveyed region has no window and no lots: its copy is the pack.
       const lots = pack && layout && streets ? regionWorkplaceLots(pack, layout, streets, spawn, options.seed) : []
       const hollow = pack && layout ? hollowLots(pack, layout, lots) : null
-      const world = buildWorld(gpu.renderer, options.seed, pack && layout && hollow ? { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan: hollow.plan } : null, lite ? LITE_WORLD : FULL_WORLD)
+      const world = buildWorld(gpu.renderer, options.seed, pack && layout && hollow ? { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan: hollow.plan, rooms: hollow.rooms } : null, lite ? LITE_WORLD : FULL_WORLD)
       // Players 1..3 (split screen) start beside player 0 along the sidewalk (the city's spawn sidewalk runs along z; a
       // region's along its street heading); the realm moves a spawn out of a building lot itself.
       const along = start ? { x: Math.sin(start.heading), z: Math.cos(start.heading) } : { x: 0, z: 1 }
@@ -859,7 +859,8 @@ export class Engine {
       const governor = options.quality === 'auto'
         ? new Governor({ tier: profile.startTier, auto: true, targetMs, pacerMs, lite, ...range })
         : new Governor({ tier: options.quality, auto: false, targetMs, pacerMs, lite, ...range })
-      const mask = (k: QualityKnobs): QualityKnobs => ({ ...k, shadows: k.shadows && options.shadows, post: k.post && options.post })
+      // A lite boot built no clustered lighting (LITE_WORLD), so its lamps stay unlit at every tier it could reach.
+      const mask = (k: QualityKnobs): QualityKnobs => ({ ...k, shadows: k.shadows && options.shadows, post: k.post && options.post, lampLights: lite ? 0 : k.lampLights })
       const first = governor.knobs()
       // In a region without a street window nobody of the procedural crowd is drawn (they walk the procedural grid,
       // kilometres from the region).
@@ -879,6 +880,7 @@ export class Engine {
         setPost: (on) => { live.post = on },
         setVolumetrics: (on) => { live.volumetrics = on },
         setTextureSize: (size) => world.setTextureSize(size),
+        setLampLights: (count) => world.setLampLights(count),
       }
       const applied = mask(first)
       applyQuality(applied, targets)
@@ -1752,8 +1754,10 @@ export class Engine {
     const k = q.mask(q.governor.knobs())
     // Ghost view lives in the post chain: while it is on, the chain runs at every tier (unless ?post=0 forbids it).
     if (this.ghost.on && this.options.post) k.post = true
-    // The post chain presents one image; a headset wants two eyes, so it is off while presenting (xrSession.ts).
-    if (this.rig.headset) k.post = false
+    // The post chain presents one image; a headset wants two eyes, so it is off while presenting (xrSession.ts). The
+    // clustered lamps bin into the viewport of the render they are computed for (cityLights.ts); a headset's two eyes
+    // are drawn by three's own XR path, which is not that render, so under a headset the lamps are emissive only.
+    if (this.rig.headset) { k.post = false; k.lampLights = 0 }
     applyQuality(k, q.targets, q.applied)
     q.applied = k
   }

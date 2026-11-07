@@ -13,14 +13,16 @@ import {
   ACESFilmicToneMapping, BoxGeometry, BufferAttribute, BufferGeometry, Color, CylinderGeometry, DirectionalLight,
   Float32BufferAttribute, HemisphereLight, IcosahedronGeometry, InstancedBufferAttribute, InstancedMesh, Matrix4,
   Mesh, MeshStandardNodeMaterial, Object3D, PCFShadowMap, PMREMGenerator, PerspectiveCamera, PlaneGeometry,
-  PointLight, SRGBColorSpace, Scene, SphereGeometry, Vector3, WebGPURenderer, type Node, type NodeBuilder, type UniformNode,
+  PointLight, SRGBColorSpace, Scene, SphereGeometry, Vector2, Vector3, WebGPURenderer, type Node, type NodeBuilder, type UniformNode,
 } from 'three/webgpu'
 import {
   Fn, attribute, exp, float, fog, max, mix, positionLocal, positionPrevious, positionView, positionWorld, select, sin, step,
   time, uniform, vec3,
 } from 'three/tsl'
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js'
-import { buildingMaterial, groundMaterial, waterMaterial } from './materials.ts'
+import { buildingMaterial, groundMaterial, waterMaterial, type RealLight } from './materials.ts'
+import { clusterCityLights, LAMP, lampHead, nearestLamps, roomFixtures } from './cityLights.ts'
+import { workplaces, type Workplace } from './interiors.ts'
 import { CITY_CENTER, LAKE, generateBuildings, streetFurniture, type Box, type Building, type Furniture } from './city.ts'
 import { FbmSet } from './fbmTexture.ts'
 import { sunAt, type SunState } from './solar.ts'
@@ -203,6 +205,13 @@ export interface World {
   /** Procedural texture resolution, texels per edge: the largest resident size not above `size` (FBM_SIZES).
    *  A swap between textures uploaded at startup: no upload, no shader or pipeline rebuild, no hitch. */
   setTextureSize(size: number): void
+  /**
+   * How many street lamps, the nearest to the focus, carry a real PointLight after dark (governor lampLights), at most
+   * WorldDetail.lampLights; 0 lights none and turns the rooms' ceiling fixtures off. The lights are clustered
+   * (cityLights.ts), so the count is a uniform and the change never recompiles; the ground's painted pools fade in
+   * beyond the farthest lit lamp.
+   */
+  setLampLights(count: number): void
   /** Operator tuning read every update(): scale factors (1 = the authored look). Bounds in LIGHT_TUNE_RANGE. */
   tuning: LightTuning
   /**
@@ -229,11 +238,14 @@ export interface World {
 
 /**
  * How much of the world's fixed cost a boot builds: chosen once (engine.ts, from the device profile) before anything
- * compiles, because the lamp lights are part of every lit material's pipeline key and the geometry is built once.
- * FULL_WORLD is the city as authored; LITE_WORLD is the one a lite profile (an entry-level phone GPU) boots.
+ * compiles, because whether the lamps are lit by clustered PointLights is part of every lit material's shader and the
+ * geometry is built once. FULL_WORLD is the city as authored; LITE_WORLD is the one a lite profile (an entry-level
+ * phone GPU) boots.
  */
 export interface WorldDetail {
-  /** Real PointLights on the lamps nearest the player, always present (0: the lamps are emissive only after dark). */
+  /** The pool of real PointLights for the street lamps nearest the player (cityLights.ts): the most a tier may light
+   *  (governor lampLights, World.setLampLights). 0 builds no clustered lighting at all: the lamps are emissive only
+   *  after dark and the rooms have no fixtures. */
   lampLights: number
   /** Environment probe cube edge, texels (three's PMREMGenerator size). */
   probeSize: number
@@ -250,17 +262,21 @@ export interface WorldDetail {
 }
 
 export const FULL_WORLD: Readonly<WorldDetail> = Object.freeze({
-  lampLights: 6, probeSize: 256, probeStepHours: ENV_PROBE_STEP_HOURS, cloudCoverage: 0.32, canopyDetail: 1, lensSegments: [10, 6] as const, resortMetres: 6,
+  lampLights: 384, probeSize: 256, probeStepHours: ENV_PROBE_STEP_HOURS, cloudCoverage: 0.32, canopyDetail: 1, lensSegments: [10, 6] as const, resortMetres: 6,
 })
 
 /**
- * The lite boot: no lamp PointLights (shorter lit shaders; the lamp heads and the ground's lamp pools stay emissive), a
+ * The lite boot: no lamp PointLights and no clustered lighting (shorter lit shaders; the lamp heads and the ground's
+ * lamp pools stay emissive), a
  * 64² probe baked once a game hour, a cloudless sky, canopies of 20 faces a lobe and coarser lenses (about half the
  * street furniture's triangles), and a building re-sort every 24 m.
  */
 export const LITE_WORLD: Readonly<WorldDetail> = Object.freeze({
   lampLights: 0, probeSize: 64, probeStepHours: 1, cloudCoverage: 0, canopyDetail: 0, lensSegments: [6, 4] as const, resortMetres: 24,
 })
+
+/** How far the focus moves before the lit lamps are chosen again, m (world.ts placeLampLights). */
+export const RESELECT_M = 3
 
 /** Whether the pass being built writes motion vectors (three's builder knows; its typings leave the method out). */
 const needsPrevious = (b: NodeBuilder): boolean => (b as NodeBuilder & { needsPreviousData(): boolean }).needsPreviousData()
@@ -400,10 +416,11 @@ function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', 
  * The world under its sky. With a region (a pack and where it sits), the region's surveyed buildings, streets and water
  * stand in for the procedural city: no city ground or lake, and no city boxes but the region's own `plan` (a generated
  * region's workplaces, regionWorld.ts hollowLots: each room's glass shell, furniture and ceiling slab, and what the slab
- * carries), drawn, walled and rasterised as the city's are. `detail`: FULL_WORLD, or LITE_WORLD for a lite device
+ * carries), drawn, walled and rasterised as the city's are, and `rooms`, the workplaces among them, whose ceilings get
+ * fixtures (the city's are its seed's, interiors.ts workplaces). `detail`: FULL_WORLD, or LITE_WORLD for a lite device
  * profile.
  */
-export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pack: RegionPack; layout: RegionLayout; streets?: StreetGrid | null; plan?: readonly Building[] } | null = null, detail: Readonly<WorldDetail> = FULL_WORLD): World {
+export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pack: RegionPack; layout: RegionLayout; streets?: StreetGrid | null; plan?: readonly Building[]; rooms?: readonly Workplace[] } | null = null, detail: Readonly<WorldDetail> = FULL_WORLD): World {
   const scene = new Scene()
   const camera = new PerspectiveCamera(62, 1, 0.1, 2400)
   const plan = region ? [...(region.plan ?? [])] : generateBuildings(seed)
@@ -413,6 +430,8 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   const furniture: Furniture = region ? (region.streets ? windowFurniture(region.streets, seed) : { lamps: [], trees: [], signals: [] }) : streetFurniture(seed)
   const night = uniform(0)
   const signalClock = uniform(0)
+  // Where the real lamp light reaches (below): the focus and the farthest lit lamp's distance, for the ground's pools.
+  const realLight: RealLight = { focus: uniform(new Vector2()), radius: uniform(0) }
   // Matrix mode's one uniform: every surface below takes it; the sky (next) does not.
   const matrixMode = createMatrixMode()
 
@@ -508,7 +527,7 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   // two would fight for the depth buffer).
   const south = CITY_CENTER - 1600, north = CITY_CENTER + 1600
   const landDepth = LAKE.shore + LAKE.wall.thickness - south
-  const ground = new Mesh(new PlaneGeometry(3200, landDepth).rotateX(-Math.PI / 2).translate(CITY_CENTER, 0, south + landDepth / 2), applyMatrixMode(groundMaterial(fbm, night), matrixMode.globalState))
+  const ground = new Mesh(new PlaneGeometry(3200, landDepth).rotateX(-Math.PI / 2).translate(CITY_CENTER, 0, south + landDepth / 2), applyMatrixMode(groundMaterial(fbm, night, realLight), matrixMode.globalState))
   ground.receiveShadow = true
   ground.renderOrder = 1
   ground.name = 'Streets'
@@ -526,28 +545,55 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
     dissolve = props.dissolve
   }
 
-  // Real light from the lamps nearest the player, so people, cars and facades are lit after dark
-  // (the rest of the lamps are emissive only). Always present, so dusk never triggers a recompile; a lite boot has
-  // none, and every lamp is emissive only.
+  // Real light after dark from the lamps nearest the player (as many as the tier allows: setLampLights), so the street,
+  // the people, the cars and the facades under them are lit, and from every workplace's ceiling fixtures; the rest of
+  // the lamps are emissive heads over the ground's painted pools. The lights are clustered (cityLights.ts): one shader
+  // whatever the count, so the tier moves the count and dusk never recompiles. A lite boot builds none of it, and
+  // every lamp is emissive only.
   const lampLights = Array.from({ length: detail.lampLights }, () => {
-    const l = new PointLight(0xffd6a0, 0, 24, 2)
+    const l = new PointLight(new Color(...LAMP.color), 0, LAMP.range, LAMP.decay)
+    l.visible = false
     scene.add(l)
     return l
   })
-  const lampHeads = furniture.lamps.map(([x, z, yaw]) => [x + Math.sin(yaw) * 1.4, 5.9, z + Math.cos(yaw) * 1.4])
+  const rooms = detail.lampLights > 0 ? (region ? region.rooms ?? [] : workplaces(seed)) : []
+  const fixtureLights = roomFixtures(rooms).map((f) => {
+    const l = new PointLight(new Color(...f.color), f.candela, f.range, f.decay)
+    l.position.set(f.x, f.y, f.z)
+    l.visible = false
+    scene.add(l)
+    return l
+  })
+  if (detail.lampLights > 0) clusterCityLights(renderer, scene)
+  const lampHeads = furniture.lamps.map(lampHead)
   const nearest: number[] = []
+  const lampScratch = { d2: new Float32Array(lampHeads.length), order: new Uint32Array(lampHeads.length) }
+  let litLamps = 0
+  let placedCount = -1, placedX = Number.NaN, placedZ = Number.NaN
+  const setLampLights = (count: number) => {
+    litLamps = Math.max(0, Math.min(lampLights.length, Math.floor(count)))
+    for (const l of fixtureLights) l.visible = litLamps > 0
+  }
+  // The nearest lamps are chosen again when the focus has moved RESELECT_M or the count changed (a sort of every lamp
+  // head, cityLights.ts nearestLamps); the brightness follows the night every update.
   const placeLampLights = (fx: number, fz: number, nightness: number) => {
-    nearest.length = 0
-    if (!lampHeads.length || !lampLights.length) return
-    const d = lampHeads.map(([x, , z]) => (x - fx) ** 2 + (z - fz) ** 2)
-    for (let n = 0; n < lampLights.length; n++) {
-      let best = -1
-      for (let i = 0; i < d.length; i++) if (!nearest.includes(i) && (best < 0 || d[i] < d[best])) best = i
-      nearest.push(best)
-      const [x, y, z] = lampHeads[best]
-      lampLights[n].position.set(x, y, z)
-      lampLights[n].intensity = 40 * nightness
+    const want = nightness > 0.002 ? litLamps : 0
+    if (want !== placedCount || (want > 0 && (fx - placedX) ** 2 + (fz - placedZ) ** 2 > RESELECT_M * RESELECT_M)) {
+      realLight.radius.value = Math.sqrt(nearestLamps(lampHeads, fx, fz, want, nearest, lampScratch))
+      realLight.focus.value.set(fx, fz)
+      for (let n = 0; n < lampLights.length; n++) {
+        const l = lampLights[n]
+        if (n < nearest.length) {
+          const [x, y, z] = lampHeads[nearest[n]]
+          l.position.set(x, y, z)
+          l.visible = true
+        } else {
+          l.visible = false
+        }
+      }
+      placedCount = want; placedX = fx; placedZ = fz
     }
+    for (let n = 0; n < nearest.length; n++) lampLights[n].intensity = LAMP.candela * nightness
   }
 
   const warm = new Color(1.0, 0.62, 0.36)
@@ -610,5 +656,5 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   const setTextureSize = (size: number) => { fbm.setSize(size) }
   const follow = (other: PerspectiveCamera) => { sky.position.copy(other.position) }
 
-  return { scene, camera, boxes, furniture, night, signalClock, matrixMode, sun, setTextureSize, tuning, resorted: region ? [] : [buildings], follow, region: regionScene, dissolve, update }
+  return { scene, camera, boxes, furniture, night, signalClock, matrixMode, sun, setTextureSize, setLampLights, tuning, resorted: region ? [] : [buildings], follow, region: regionScene, dissolve, update }
 }
