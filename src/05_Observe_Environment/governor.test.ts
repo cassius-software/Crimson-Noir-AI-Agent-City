@@ -14,10 +14,14 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Frustum, Matrix4, PerspectiveCamera, RepeatWrapping, Vector3 } from 'three/webgpu'
 import { vec2 } from 'three/tsl'
+import { readFileSync } from 'node:fs'
 import {
-  CARS_DEFAULT, CROWD_DEFAULT, Governor, LITE, LITE_TIER, PEAK, PEAK_TIER, TIERS, defaultAgents, defaultCars, knobsOf, degradeBudgetMs, estimateRefreshHz, nativeHost, profileDevice, readDeviceHints, tierRange, type DeviceHints,
+  BIG_ADAPTER, CARS_DEFAULT, CROWD_DEFAULT, DEFAULT_LIMITS, GOVERNOR_RINGS, Governor, LANES, LANE_BYTES, LANE_RANGE, LITE, LITE_TIER, PEAK, PEAK_TIER, TIERS, classifyHardware, defaultAgents, defaultCars, defaultLanes,
+  knobsOf, degradeBudgetMs, estimateRefreshHz, laneCeiling, nativeHost, peakCandidate, profileDevice, readAdapterLimits, readDeviceHints, tierRange, type AdapterLimits, type DeviceHints,
   type QualityKnobs,
 } from './governor.ts'
+import { FRAME_RING, FrameClock } from './telemetry.ts'
+import { AGENTS_RANGE } from '../03_Spawn_Agents/crowdSensor.ts'
 import { PARKED_SHADOW_MAP, SHADOW_EXTENT, applyQuality, pixelRatioFor, refitPixelRatio, type QualityTargets } from '../07_Execute_Actions/quality.ts'
 import { FBM_SIZES, FbmSet, bakeFbm, downsampleRgba } from '../01_Initialize_World/fbmTexture.ts'
 import { CITY } from '../01_Initialize_World/city.ts'
@@ -1221,4 +1225,182 @@ test('host: a Tauri v2 window is told from a browser tab, by what Tauri injects'
   assert.deepEqual(native, { mobile: false, gpuClass: 'discrete', startTier: 4, lite: false })
   assert.deepEqual(tierRange(native), { min: 0, max: 4 })
   assert.equal(defaultAgents(native), CROWD_DEFAULT.full)
+})
+
+// ---------------------------------------------------------------------------------------------------
+// Hardware class, adapter limits and lanes (the plan's three hardware tiers, laid over the quality tiers)
+
+/** A desktop card's limits as Chromium reports them (an RTX 3080: 2 GiB bindings and buffers, 1024-wide workgroups). */
+const BIG: AdapterLimits = Object.freeze({ maxStorageBufferBindingSize: 2 ** 31, maxBufferSize: 2 ** 31, maxComputeWorkgroupSizeX: 1024, maxComputeInvocationsPerWorkgroup: 1024 })
+/** A 16-thread, 8 GB (or more) Windows desktop; the adapter varies. */
+const desk = (h: Partial<DeviceHints>): DeviceHints => ({ ...base, userAgent: WIN, cores: 16, ...h })
+const classOf = (h: Partial<DeviceHints>, limits?: AdapterLimits | null, peak?: boolean, lite?: boolean) => {
+  const hints = desk(h)
+  return classifyHardware(hints, profileDevice(hints, lite), limits, peak)
+}
+
+test('hardware: a phone or a lite profile is a phone, a Peak candidate whose adapter binds half a gibibyte a workstation, everything else a desktop', () => {
+  // The three machines of the plan: the phone, the desktop, the console-class PC with a big card.
+  assert.equal(classOf({ ...phone, userAgent: ANDROID, adapter: 'qualcomm / adreno-7xx' }, BIG), 'phone')
+  assert.equal(classOf({ ...phone, userAgent: ANDROID, adapter: 'arm / bifrost' }, BIG), 'phone', 'a lite phone')
+  assert.equal(classOf({ adapter: 'nvidia / lovelace' }, BIG, undefined, true), 'phone', '?lite=1 on a desktop sizes as a phone')
+  assert.equal(classOf({ adapter: 'intel / gen-9' }, BIG), 'desktop', 'an integrated GPU is no Peak candidate')
+  assert.equal(classOf({ adapter: 'google / swiftshader' }, BIG), 'desktop')
+  assert.equal(classOf({ adapter: 'unknown adapter' }, BIG), 'desktop')
+  assert.equal(classOf({ adapter: 'nvidia / lovelace' }, BIG), 'workstation')
+  assert.equal(classOf({ adapter: 'amd / rdna-3 / AMD Radeon RX 7800 XT' }, BIG), 'workstation')
+  assert.equal(classOf({ userAgent: MAC, adapter: 'apple / apple-m3 / Apple M3 Max' }, BIG), 'workstation', 'an Apple chip is a Peak candidate (peakCandidate)')
+  // The machine, not only the card: fewer than 8 threads or a reported memory under 8 GB is a desktop (peakCandidate).
+  assert.equal(classOf({ adapter: 'nvidia / lovelace', cores: 4 }, BIG), 'desktop')
+  assert.equal(classOf({ adapter: 'nvidia / lovelace', memoryGb: 4 }, BIG), 'desktop')
+  assert.equal(classOf({ adapter: 'nvidia / lovelace', memoryGb: undefined }, BIG), 'workstation', 'Safari and Firefox report no memory')
+  // The class never contradicts the Peak rule: a workstation is a Peak candidate, and a Peak candidate with a big
+  // adapter is a workstation.
+  for (const adapter of ['nvidia / lovelace', 'amd / rdna-2', 'intel / gen-9', 'google / swiftshader', 'apple / apple-m3']) {
+    const hints = desk({ adapter })
+    const p = profileDevice(hints)
+    assert.equal(classifyHardware(hints, p, BIG) === 'workstation', peakCandidate(hints, p), adapter)
+  }
+})
+
+test('hardware: the adapter limits are a veto, never a promotion: WebGPU\'s defaults, a small binding or a small buffer make a desktop of a Peak candidate; ?peak=1 is the operator\'s word; no limits, no veto', () => {
+  const card = { adapter: 'nvidia / lovelace' }
+  assert.equal(classOf(card, DEFAULT_LIMITS), 'desktop', 'a driver or a software rasterizer reporting the defaults')
+  assert.equal(classOf(card, { ...BIG, maxStorageBufferBindingSize: BIG_ADAPTER.storageBinding - 1 }), 'desktop')
+  assert.equal(classOf(card, { ...BIG, maxBufferSize: BIG_ADAPTER.buffer - 1 }), 'desktop')
+  assert.equal(classOf(card, { ...BIG, maxStorageBufferBindingSize: BIG_ADAPTER.storageBinding, maxBufferSize: BIG_ADAPTER.buffer }), 'workstation', 'exactly the bar')
+  assert.equal(classOf(card, { ...DEFAULT_LIMITS, maxComputeWorkgroupSizeX: 1024, maxComputeInvocationsPerWorkgroup: 1024 }), 'desktop', 'workgroup width promotes nothing')
+  assert.equal(classOf(card, undefined), 'workstation', 'no limits read (an old fake adapter): the hints decide')
+  assert.equal(classOf(card, null), 'workstation')
+  assert.equal(classOf(card, DEFAULT_LIMITS, true), 'workstation', '?peak=1 skips the veto')
+  assert.equal(classOf(card, BIG, false), 'desktop', '?peak=0 is no candidate, so no workstation')
+  assert.equal(classOf({ adapter: 'intel / gen-9' }, BIG, true), 'workstation', '?peak=1 makes a candidate of an integrated GPU (peakCandidate), so a workstation')
+  assert.equal(classOf({ ...phone, userAgent: ANDROID, adapter: 'qualcomm / adreno-7xx' }, BIG, true), 'phone', 'but never of a phone')
+  assert.deepEqual(BIG_ADAPTER, { storageBinding: 512 * 2 ** 20, buffer: 2 ** 30 })
+  assert.deepEqual(DEFAULT_LIMITS, { maxStorageBufferBindingSize: 128 * 2 ** 20, maxBufferSize: 256 * 2 ** 20, maxComputeWorkgroupSizeX: 256, maxComputeInvocationsPerWorkgroup: 256 }, 'the WebGPU defaults')
+})
+
+test('hardware: readAdapterLimits reads the four limits as a browser reports them (getters on a prototype), and falls back to the defaults where one is missing or not a number', () => {
+  assert.deepEqual(readAdapterLimits(undefined), DEFAULT_LIMITS)
+  assert.deepEqual(readAdapterLimits(null), DEFAULT_LIMITS)
+  assert.deepEqual(readAdapterLimits({}), DEFAULT_LIMITS)
+  // GPUSupportedLimits: the values are accessors on the prototype, not own properties (a spread or JSON would lose them).
+  const proto = { get maxStorageBufferBindingSize() { return 2 ** 31 }, get maxBufferSize() { return 2 ** 31 }, get maxComputeWorkgroupSizeX() { return 1024 }, get maxComputeInvocationsPerWorkgroup() { return 1024 }, get maxBindGroups() { return 4 } }
+  const like = Object.create(proto) as Partial<Record<keyof AdapterLimits, unknown>>
+  assert.deepEqual(Object.keys(like), [])
+  assert.deepEqual(readAdapterLimits(like), BIG)
+  assert.deepEqual(readAdapterLimits({ maxStorageBufferBindingSize: 2 ** 30 }), { ...DEFAULT_LIMITS, maxStorageBufferBindingSize: 2 ** 30 })
+  assert.deepEqual(readAdapterLimits({ maxStorageBufferBindingSize: '2147483648', maxBufferSize: NaN, maxComputeWorkgroupSizeX: 0, maxComputeInvocationsPerWorkgroup: -1 }), DEFAULT_LIMITS)
+  assert.deepEqual(readAdapterLimits({ maxStorageBufferBindingSize: Infinity }), DEFAULT_LIMITS)
+  assert.ok(Object.isFrozen(DEFAULT_LIMITS))
+})
+
+test('lanes: the range is the realm\'s (crowdSensor.ts AGENTS_RANGE), a lane is the crowd\'s 64-byte brain, the classes simulate 8,000, 14,000 and 32,768, all within the range', () => {
+  assert.deepEqual(LANE_RANGE, AGENTS_RANGE)
+  assert.deepEqual(LANE_RANGE, [256, 60000])
+  assert.equal(LANE_BYTES, 64)
+  const crowdSim = readFileSync(new URL('../03_Spawn_Agents/crowdSim.ts', import.meta.url), 'utf8')
+  assert.match(crowdSim, new RegExp(`label: 'crowd\\.brain', size: agentCount \\* ${LANE_BYTES},`), 'the largest per-lane storage buffer')
+  assert.deepEqual(LANES, { phone: 8000, desktop: 14000, workstation: 32768 })
+  assert.equal(LANES.phone, CROWD_DEFAULT.phone)
+  assert.equal(LANES.desktop, CROWD_DEFAULT.full)
+  for (const n of Object.values(LANES)) assert.ok(n >= LANE_RANGE[0] && n <= LANE_RANGE[1], String(n))
+  assert.ok(Object.isFrozen(LANES))
+})
+
+test('lanes: the ceiling is what the adapter binds in one storage buffer, within the range; no limits, the range\'s top', () => {
+  assert.equal(laneCeiling(undefined), 60000)
+  assert.equal(laneCeiling(null), 60000)
+  assert.equal(laneCeiling(BIG), 60000)
+  assert.equal(laneCeiling(DEFAULT_LIMITS), 60000, '128 MiB binds two million lanes: the realm\'s range is the ceiling on every real adapter')
+  assert.equal(laneCeiling({ ...DEFAULT_LIMITS, maxStorageBufferBindingSize: LANE_BYTES * 1000 }), 1000)
+  assert.equal(laneCeiling({ ...DEFAULT_LIMITS, maxStorageBufferBindingSize: LANE_BYTES * 1000 + 63 }), 1000, 'whole lanes')
+  assert.equal(laneCeiling({ ...DEFAULT_LIMITS, maxStorageBufferBindingSize: 64 }), 256, 'never below the range\'s floor')
+})
+
+test('lanes: the default by profile and class: fewest on lite, 5,000 where the profile starts at Minimal, else the class\'s count, never over the ceiling; defaultAgents is the class-less read', () => {
+  const discrete = profileDevice(desk({ adapter: 'nvidia / lovelace' }))
+  const software = profileDevice(desk({ adapter: 'google / swiftshader' }))
+  const mobile = profileDevice(desk({ ...phone, userAgent: ANDROID, adapter: 'qualcomm / adreno-7xx' }))
+  const lite = profileDevice(desk({ ...phone, userAgent: ANDROID, adapter: 'arm / bifrost' }))
+  assert.equal(discrete.startTier, 4)
+  assert.equal(software.startTier, 0)
+  assert.equal(defaultLanes(discrete, 'workstation', BIG), 32768)
+  assert.equal(defaultLanes(discrete, 'desktop', BIG), 14000)
+  assert.equal(defaultLanes(discrete, 'desktop', DEFAULT_LIMITS), 14000)
+  assert.equal(defaultLanes(discrete, 'phone', BIG), 8000, '?lite=0 on a phone-classed machine would read the phone count')
+  assert.equal(defaultLanes(software, 'desktop', BIG), 5000, 'a software rasterizer spends the frame simulating')
+  assert.equal(defaultLanes(software, 'workstation', BIG), 5000, 'a class never raises a Minimal start')
+  assert.equal(defaultLanes(mobile, 'phone', DEFAULT_LIMITS), 8000)
+  assert.equal(defaultLanes(lite, 'phone', BIG), 2500)
+  assert.equal(defaultLanes(lite, 'workstation', BIG), 2500, 'lite is lite whatever the class')
+  assert.equal(defaultLanes(discrete, 'workstation', { ...BIG, maxStorageBufferBindingSize: LANE_BYTES * 1000 }), 1000, 'capped by the ceiling')
+  assert.equal(defaultLanes(discrete, 'workstation'), 32768, 'no limits: no cap below the range')
+  for (const p of [discrete, software, mobile, lite]) {
+    assert.equal(defaultAgents(p), defaultLanes(p, p.mobile || p.lite ? 'phone' : 'desktop'), JSON.stringify(p))
+  }
+  assert.equal(defaultAgents(discrete), CROWD_DEFAULT.full, 'the numbers of before')
+  assert.equal(defaultAgents(mobile), CROWD_DEFAULT.phone)
+})
+
+test('rings: every ring the governor and the frame clock walk is a power of two (they are indexed by a mask, never a modulo)', () => {
+  const pow2 = (n: number) => Number.isInteger(n) && n > 0 && (n & (n - 1)) === 0
+  assert.deepEqual(GOVERNOR_RINGS, { frames: 4096, presents: 256, gpu: 2048 })
+  for (const [name, n] of Object.entries(GOVERNOR_RINGS)) assert.ok(pow2(n), `${name}: ${n}`)
+  assert.equal(FRAME_RING, 256)
+  assert.ok(pow2(FRAME_RING))
+  // The frame clock: mean, p50, p95 and p99 over its ring, oldest frames forgotten, no allocation per call.
+  const c = new FrameClock()
+  assert.deepEqual(c.stats(), [0, 0, 0, 0])
+  for (let i = 0; i < FRAME_RING; i++) c.push(100)
+  for (let i = 0; i < FRAME_RING; i++) c.push(i % 50 === 49 ? 40 : i % 10 === 9 ? 20 : 10)
+  const [mean, p50, p95, p99] = c.stats()
+  assert.ok(near(mean, (FRAME_RING * 10 + 20 * 10 + 5 * 30) / FRAME_RING, 1e-3), `mean ${mean}: 231 at 10, 20 at 20, 5 at 40; the hundreds forgotten`)
+  assert.equal(p50, 10)
+  assert.equal(p95, 20)
+  assert.equal(p99, 40)
+  assert.equal(c.longFrames, FRAME_RING + 5, 'frames over 33.4 ms, counted for the session')
+})
+
+test('percentiles: p50, p95 and p99 of the governor\'s own window (the newest 5 s of recorded frames), with the count and the span; zeros before a frame; a run of hitches clamped as the ring holds it; the newest minFrames always count', () => {
+  const g = new Governor({ tier: 2, auto: false })
+  assert.deepEqual(g.percentiles(), { p50: 0, p95: 0, p99: 0, n: 0, windowMs: 0 })
+  assert.deepEqual(g.percentiles(NaN), { p50: 0, p95: 0, p99: 0, n: 0, windowMs: 0 })
+  const c = new Clock(g)
+  // Warm-up frames (the first 750 ms) are not recorded, so not counted.
+  c.run(0.5, hz(60))
+  assert.equal(g.percentiles(c.now).n, 0)
+  // 10 s of a known mix at ~88 fps: 88 % of frames 10 ms, 10 % 20 ms, 2 % 40 ms (a hitch, under outlierMs).
+  c.run(10, (_t, i) => (i % 50 === 49 ? 40 : i % 10 === 9 ? 20 : 10))
+  const r = g.percentiles(c.now)
+  assert.equal(r.p50, 10)
+  assert.equal(r.p95, 20)
+  assert.equal(r.p99, 40)
+  assert.ok(r.n >= 400 && r.n <= 470, `${r.n} frames in the window`)
+  assert.ok(r.windowMs <= 5000 + 40 && r.windowMs >= 4900, `${r.windowMs} ms`)
+  assert.deepEqual(g.percentiles(), r, 'no argument: the clock of the last sample')
+  // The window forgets: 6 s of slow frames leave none of the fast ones in it.
+  c.run(6, 30)
+  const slow = g.percentiles(c.now)
+  assert.deepEqual([slow.p50, slow.p95, slow.p99], [30, 30, 30])
+  assert.ok(slow.n >= 160 && slow.n <= 170, `${slow.n}`)
+  // At half a frame a second: frames over outlierMs are hitches (the first three of a run dropped, the rest held at
+  // outlierMs), and the window stretches back to the newest minFrames however old they are.
+  const h = new Clock(new Governor({ tier: 2, auto: false }))
+  h.run(30, 2000)
+  const few = h.g.percentiles(h.now)
+  assert.equal(few.n, 5)
+  assert.deepEqual([few.p50, few.p95, few.p99], [250, 250, 250])
+  assert.equal(few.windowMs, 8000)
+})
+
+test('state: the hardware class rides on the governor\'s state when the engine gives one, and is absent otherwise (the console and the namespace read it there)', () => {
+  const g = new Governor({ tier: 3, auto: true, hardware: 'workstation' })
+  assert.equal(g.state().hardware, 'workstation')
+  assert.deepEqual(Object.keys(g.state()), ['tier', 'label', 'auto', 'renderScale', 'targetMs', 'hardware'])
+  assert.equal('hardware' in new Governor({ tier: 3, auto: true }).state(), false)
+  const lite = new Governor({ tier: -1, auto: true, min: -1, max: 0, lite: true, hardware: 'phone' })
+  assert.deepEqual(lite.state(), { tier: -1, label: 'Lite', auto: true, renderScale: 0.5, targetMs: lite.targetMs, lite: true, hardware: 'phone' })
+  assert.deepEqual(g.range(), { min: 0, max: 4 })
+  assert.deepEqual(lite.range(), { min: -1, max: 0 })
 })

@@ -84,9 +84,11 @@ The built-in **Dynamic Frame Governor** (`src/05_Observe_Environment/governor.ts
 
 | Target Tier | Reference Hardware | Render Pipeline | Active SoA Agent Lanes | Local LLM / Swarm Mode |
 | :--- | :--- | :--- | :--- | :--- |
-| **Lite / Mobile** | Latest iPhone / Ulefone Armor X32 (6–8 GB RAM) | Clustered Forward+ · TAA · 2-Cascade CSM | 4,096 Lanes | In-Page Q4_K_M GGUF (1.7B–3B) / HTN |
-| **Desktop Auto** | Core i7 / Ryzen 7 · GTX 1060 / Radeon iGPU (16 GB) | 4x MSAA + TAA · GTAO · SSR · 3-Cascade PCSS | 32,768 Lanes | In-Page GGUF / Local Ollama / Claude Bridge |
-| **Peak / Pro** | PS5 Pro Equivalent Linux PC (RDNA 3.5/4 · 60+ TFLOPS) | 4K Clustered Deferred · Ray-Marched GI · Volumetrics | 131,072 Lanes | Multi-Swarm Parallel GGUF + Full Sim2Real |
+| **Lite / Mobile** | Latest iPhone / Ulefone Armor X32 (6–8 GB RAM) | Clustered Forward+ · TAA · 2-Cascade CSM | 8,000 lanes (2,500 on a lite profile) | In-Page Q4_K_M GGUF (1.7B–3B) / HTN |
+| **Desktop Auto** | Core i7 / Ryzen 7 · GTX 1060 / Radeon iGPU (16 GB) | 4x MSAA + TAA · GTAO · SSR · 3-Cascade PCSS | 14,000 lanes | In-Page GGUF / Local Ollama / Claude Bridge |
+| **Peak / Pro** | PS5 Pro Equivalent Linux PC (RDNA 3.5/4 · 60+ TFLOPS) | 4K Clustered Deferred · Ray-Marched GI · Volumetrics | 32,768 lanes (up to 60,000 with `?crowd`) | Multi-Swarm Parallel GGUF + Full Sim2Real |
+
+The lane counts are what the engine simulates by default for each hardware class it recognises at boot (phone, desktop, workstation: `MANUAL.md`, Autoscaling); the console's `hardware` command shows the class, the adapter's limits and the frame-time percentiles.
 
 ---
 

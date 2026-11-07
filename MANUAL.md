@@ -887,12 +887,12 @@ React overlay at `z-index: 9999`. The simulation keeps running underneath, and g
 while you type.
 
 - `stats` is live: Rapier step latency, physics phase, substeps, bodies, colliders and CCD bodies;
-  drawn agents (near, far, total); fps, frame time, p95, CPU and GPU time; quality tier; kernel
+  drawn agents (near, far, total); fps, frame time, p95, p99, CPU and GPU time; quality tier; kernel
   counters. `stats --once` prints a single frame.
 - The core commands, as `help` prints them: `help [command]`, `stats [--once]`, `laws`, `kernel`,
   `topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]`,
   `feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]`,
-  `ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]`, `quality [auto|lite|peak|-1|0-5]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `xr [vr|ar|off]`, `render [on|off]`,
+  `ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]`, `quality [auto|lite|peak|-1|0-5]`, `hardware`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `xr [vr|ar|off]`, `render [on|off]`,
   `captions [on|off]`, `ping [go|look|gather|wait|clear]`,
   `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
   `robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|remove <id>]`,
@@ -2156,10 +2156,40 @@ are no toasts and no settings menu, and the console's `quality` command is the o
   - **Tried so far.** Only in headless Chromium on the software adapter: with a faked RTX 5090 (the browser smoke's
     `peak` scenario), and pinned for a few frames in the `ultra` scenario, also in the Nix package's Chromium. Not
     measured on a real big GPU.
-- **How many pedestrians.** Unless `?crowd` says, the profile decides at boot: 14,000 wherever it starts on
-  Medium or above, 8,000 on a phone, 5,000 on the weakest GPUs and software rasterizers, and 2,500 on a lite profile.
-  The simulation's size is fixed for the session (the GPU buffers are sized for it). The tiers then scale how many
-  are drawn.
+- **Hardware classes.** Beside the tiers, which move, the engine decides once at boot which of three machines it is
+  on (`classifyHardware`), from the same device profile and the WebGPU adapter's limits (what one storage buffer
+  binding and one buffer may hold, read from the adapter itself, since the page's device is made with the defaults):
+  - a **phone**: any phone or tablet, and any lite profile (so `?lite=1` on a desktop sizes it as a phone);
+  - a **workstation**: a computer that would try Peak by itself (a separate graphics card or an Apple chip, 8 cores,
+    8 GB where the browser says), whose adapter binds at least 512 MiB in one storage buffer and makes a 1 GiB buffer.
+    Every desktop card and Apple chip reports far more; a software rasterizer, or a driver that reports WebGPU's bare
+    defaults (128 and 256 MiB), is a desktop whatever the machine claims. `?peak=1` is the operator's word and skips
+    that check; `?peak=0` makes a desktop of it;
+  - a **desktop**: everything else, including a browser that says nothing of the machine.
+
+  The class changes no tier rule (a workstation's automatic range reaches Peak exactly as before, on the GPU's own
+  timings) and moves nothing after boot. A browser cannot tell a 16 GB machine from a 32 GB one (`deviceMemory` stops
+  at 8) or a 10 TFLOPS card from a 60 TFLOPS one by its adapter line, so what separates a workstation that merely
+  starts on Ultra from one that holds Peak is Peak itself, earned on measured GPU time. The class rides on the
+  governor's state (`quality.hardware` in the snapshot, `~/…/Quality/Cell/Governor/hardware` in the namespace), and
+  the console's `hardware` names it.
+- **How many pedestrians (lanes).** Unless `?crowd` says, the class decides at boot: 32,768 on a workstation, 14,000
+  on a desktop, 8,000 on a phone; 5,000 wherever the profile starts on Minimal (the weakest GPUs and software
+  rasterizers, whatever the class), and 2,500 on a lite profile. Each pedestrian is one lane of the crowd's structure-
+  of-arrays buffers (its largest, the 64-byte brain, is one storage binding), and the count never exceeds what the
+  adapter binds in one buffer or the realm's range of 256 to 60,000 (`?crowd` is clamped the same way). The
+  simulation's size is fixed for the session (the GPU buffers are sized for it). The tiers then scale how many are
+  drawn. The 60,000 top is the realm's own: the 131,072 lanes a console-class PC was asked to carry would need the
+  crowd's spatial grid, its readback and its draw resized, and a real big GPU to measure them on, so it is not raised
+  here; a workstation's 32,768 is under the 60,000 an integrated GPU was measured to carry at Low, below, and is
+  itself unmeasured on a real workstation.
+- **The `hardware` command.** Six rows: the class with the profile that gave it and the automatic range; the adapter
+  line; its limits (binding, buffer, the widest workgroup and its invocations); the lanes simulated, the class's
+  default and the adapter's ceiling; the frame times of the governor's own window, the newest 5 s of recorded frames
+  (p50, p95 and p99, with how many frames they stand on); and what the browser said of the machine (threads, memory
+  as reported, browser tab or native shell). The percentiles come from the same ring the governor judges by: start-up
+  frames are not in it, a run of hitches is held at 250 ms as the ring holds them, and a lone hitch is not in it at
+  all. `stats` and `sim` show the HUD clock's p95 and p99 of the last 256 frames beside the mean.
 - **The lite profile and the Lite tier.** Entry-level phone GPUs get a profile of their own: any phone whose adapter
   is ARM Bifrost or Midgard (a Mali-G52 reads `arm / bifrost` in Chrome, and so does an older flagship's Mali-G76,
   since Chrome names only the architecture), Imagination PowerVR Rogue, Furian or B-Series (Dawn: `img-tec / rogue`; a

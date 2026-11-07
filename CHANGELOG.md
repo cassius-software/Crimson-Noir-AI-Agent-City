@@ -15,6 +15,23 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Hardware classes, lanes per class and the `hardware` command.** The engine now decides once at boot which of
+  three machines it is on (`src/05_Observe_Environment/governor.ts` `classifyHardware`): a phone (any phone, tablet
+  or lite profile), a workstation (a Peak candidate whose WebGPU adapter binds at least 512 MiB in one storage buffer
+  and makes a 1 GiB buffer: `readAdapterLimits`, read from the adapter in `world.ts`, since the page's device is made
+  with the defaults), or a desktop (everything else; the adapter's limits are a veto, never a promotion, `?peak=1`
+  skips it). The class sets how many pedestrians the realm simulates unless `?crowd` says (`defaultLanes`: 32,768 on
+  a workstation, the 14,000, 8,000, 5,000 and 2,500 of before elsewhere, never over what the adapter binds or the
+  realm's 60,000), rides on the governor's state (`quality.hardware`, the namespace's `Quality/Governor/hardware`)
+  and changes no tier rule. The governor's rings are walked by a mask (every ring a power of two, pinned by a test),
+  and it reports the percentiles of its own window (`Governor.percentiles`: p50, p95, p99, allocation-free). The HUD
+  clock keeps 256 frames and adds p99 (`output.p99Ms`, the namespace's `Frame/Page/p99Ms`, the `stats` and `sim`
+  frame rows). The console's `hardware` prints the class, the profile and range, the adapter and its limits, the
+  lanes, the window's percentiles and the machine as the browser reports it; MANUAL.md, Autoscaling, has the rules.
+  Tried in Node (the governor, console and namespace suites) and in headless Chromium on the software adapter (the
+  browser smoke's `desktop` and `lite` scenarios see a desktop and a phone); no workstation was seen on real
+  hardware, and the plan's 131,072 lanes are not raised here (the crowd's grid, readback and draw would need
+  resizing and measuring on a real big GPU).
 - **The fallen wear their own bodies.** A pedestrian the realm promotes to a physical body (a shove, a kerb trip, a
   slip near the operator) is no longer hidden and replaced by grey capsules: the crowd's vertex stage hangs each of
   the body's fifteen bones from the rig shape it belongs to (`src/03_Spawn_Agents/humanoid.ts` `RIG_REST`,

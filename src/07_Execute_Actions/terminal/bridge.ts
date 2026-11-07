@@ -19,6 +19,7 @@ import type { HalDevice } from '../../04_Connect_Hardware/hal.ts'
 import type { RobotRow } from '../../04_Connect_Hardware/robotLink.ts'
 import type { LawText } from '../../02_Define_The_Rules/laws.ts'
 import type { CameraStats, KernelStats, NetReport, QualityState, RecordingState, SipocSnapshot } from '../../05_Observe_Environment/telemetry.ts'
+import type { AdapterLimits, DeviceProfile, HardwareClass } from '../../05_Observe_Environment/governor.ts'
 import type { RecorderSource } from '../../05_Observe_Environment/recorder.ts'
 import type {
   ActBy, ActEnd, ActEvent, ActsBridge, AskResult, ExecResult, GatedAsk, GatedRun, GatedSay, GateTether, MindStatus, PendingAct, Piece, RunResult, RunState,
@@ -35,7 +36,7 @@ export type {
 }
 
 export interface Ring0Stats {
-  fps: number; frameMs: number; p95Ms: number; cpuMs: number; gpuRenderMs: number; gpuComputeMs: number
+  fps: number; frameMs: number; p95Ms: number; p99Ms: number; cpuMs: number; gpuRenderMs: number; gpuComputeMs: number
   /** stepMs: one world.step(); physicsMs: one whole step in the physics worker; steps: substeps last step. */
   rapier: { stepMs: number; physicsMs: number; steps: number; bodies: number; colliders: number; ccd: number }
   agents: { population: number; drawnNear: number; drawnFar: number; waiting: number; crossing: number; yielding: number; nudges: number; working?: number }
@@ -46,6 +47,29 @@ export interface Ring0Stats {
   sensing?: { ageMs: number | null; lagMs: number }
   /** The cinema camera (absent with ?cinema=0); `fps` above stays the animation-frame rate input runs at. */
   camera?: CameraStats
+}
+
+/**
+ * What the `hardware` command prints: the machine the city sized itself for at boot (governor.ts classifyHardware,
+ * defaultLanes), the adapter and its limits, the lanes the realm simulates, the governor's frame-time percentiles
+ * (Governor.percentiles) and what the browser said of the machine.
+ */
+export interface HardwareReport {
+  class: HardwareClass
+  profile: DeviceProfile
+  /** The adapter line (vendor / architecture / description). */
+  adapter: string
+  limits: AdapterLimits
+  /** The governor's automatic range and where the profile started it. */
+  tiers: { min: number; max: number; start: number; startLabel: string }
+  /** Lanes (pedestrians) the realm simulates, the class's default for this machine, and the adapter's ceiling. */
+  lanes: { simulated: number; default: number; ceiling: number }
+  /** Frame times of the governor's window, ms; n = 0 before the first frame. */
+  frames: { p50: number; p95: number; p99: number; n: number; windowMs: number }
+  host: 'browser' | 'native'
+  /** Logical threads and navigator.deviceMemory (Chromium only, capped at 8); undefined where the browser says nothing. */
+  cores: number | undefined
+  memoryGb: number | undefined
 }
 
 /**
@@ -360,6 +384,8 @@ export interface TerminalBridge {
   hal: { summary(): string; devices(): HalDevice[]; pair(kind: 'hid' | 'serial' | 'bluetooth'): Promise<HalDevice | null>; readonly shellHid?: boolean }
   /** GPU adapter description. */
   adapter(): string
+  /** The machine the city sized itself for (the `hardware` command). */
+  hardware(): HardwareReport
   /** Ghost view (view-only: the physics shapes drawn as code over the frame): on, off, or the status line. */
   ghost(arg?: 'on' | 'off'): string
   /**
@@ -477,7 +503,7 @@ export interface PhysicsCounters { stepMs: number; steps: number; bodies: number
 export function ring0Stats(s: SipocSnapshot, physics: PhysicsCounters): Ring0Stats {
   const o = s.output, p = s.process
   return {
-    fps: o.fps, frameMs: o.frameMs, p95Ms: o.p95Ms, cpuMs: o.cpuMs, gpuRenderMs: o.gpuRenderMs, gpuComputeMs: o.gpuComputeMs,
+    fps: o.fps, frameMs: o.frameMs, p95Ms: o.p95Ms, p99Ms: o.p99Ms, cpuMs: o.cpuMs, gpuRenderMs: o.gpuRenderMs, gpuComputeMs: o.gpuComputeMs,
     rapier: {
       stepMs: physics.stepMs, physicsMs: o.physicsMs, steps: physics.steps,
       bodies: physics.bodies, colliders: physics.colliders, ccd: physics.ccd,
@@ -506,6 +532,7 @@ export function offlineBridge(brand: TerminalBridge['brand']): TerminalBridge {
     stats: down, laws: down, clock: down, setClock: down, quality: down, audio: down,
     hal: { summary: down, devices: down, pair: down },
     adapter: () => '',
+    hardware: down,
     ghost: down,
     rain: down,
     xr: down,
