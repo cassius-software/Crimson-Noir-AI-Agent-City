@@ -27,6 +27,9 @@
  *   the layout depends only on format and dimension, so nothing recompiles and nothing uploads (fbmTexture.ts).
  * - Post and crowd culling (the GPU density lottery and draw distance) are delegated to the engine
  *   (render path switch, compute uniform).
+ * - Lit street lamps: World.setLampLights, the count of lamps nearest the player that carry a real PointLight. The
+ *   lights are clustered (cityLights.ts): their count is a uniform and an unlit lamp's light is simply not visible,
+ *   so the count moves without a recompile.
  * - Golden-hour volumetrics (Ultra and Peak): a strength uniform the engine writes (volumetrics.ts). The ray
  *   loop in the post chain is gated by that uniform, so the shader is compiled once with the pipeline and a
  *   tier change flips one float: no recompile either way.
@@ -49,6 +52,9 @@ export interface QualityTargets {
   setVolumetrics(on: boolean): void
   /** Procedural (FBM) texture resolution, texels per edge: World.setTextureSize. */
   setTextureSize(size: number): void
+  /** Street lamps lit by a real PointLight, the nearest to the player: World.setLampLights (0: none, and the rooms'
+   *  fixtures off). */
+  setLampLights(count: number): void
   /** The drawing buffer's limit: its longer edge stays within maxEdge texels (the device's maxTextureDimension2D) for a
    *  canvas cssEdge() CSS pixels on its longer side. Absent: no limit (the tests' mock). */
   fit?: { maxEdge: number; cssEdge(): number }
@@ -90,6 +96,7 @@ export function applyQuality(k: QualityKnobs, t: QualityTargets, prev?: QualityK
   const rays = k.volumetrics && k.post
   if (!prev || (prev.volumetrics && prev.post) !== rays) t.setVolumetrics(rays)
   if (!prev || prev.textureSize !== k.textureSize) t.setTextureSize(k.textureSize)
+  if (!prev || prev.lampLights !== k.lampLights) t.setLampLights(k.lampLights)
   if (!prev || prev.crowdDensity !== k.crowdDensity || prev.lodDistance !== k.lodDistance ||
     prev.nearRadius !== k.nearRadius || prev.maxDistance !== k.maxDistance) {
     t.setCrowd({ lodDistance: k.lodDistance, nearRadius: k.nearRadius, density: k.crowdDensity, maxDistance: k.maxDistance })
