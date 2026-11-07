@@ -21,9 +21,11 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `V`, the right stick's click (R3) or the touch Menu's new Microphone item opens the microphone or mutes it, all
   one action through the engine (`input.ts` `'mute'`, `gamepad.ts` `PAD_EDGE.mute`, `engine.ts` `onMute`). Mute
   releases the device, so the browser's own indicator goes out with the pill's, and the device is never open
-  without the pill, which outlives `H` like REC. A first visit starts with the microphone off until that first
-  press: `MIC_OPEN_BY_DEFAULT` in `04_Connect_Hardware/microphone.ts` is the one line that would open it at boot
-  instead; a visitor who left it on finds it on again (key `civic-simulation:voice:v1`). Open, a voice activity
+  without the pill, which outlives `H` like REC (on a phone the pill shows only while the device is open, opening or
+  could not open: the Menu's item is the switch there, and the smallest screens have no row to spare). A first visit
+  starts with the microphone off until that first press: `MIC_OPEN_BY_DEFAULT` in `04_Connect_Hardware/microphone.ts`
+  is the one line that would open it at boot instead; a visitor who left it on finds it on again (key
+  `civic-simulation:voice:v1`). Open, a voice activity
   detector (`vad.ts`: energy over an adaptive floor, zero crossings and spectral flatness per 512-sample frame, with
   onset and release counts) runs in an audio worklet where the browser has one and polled from the page where it
   has not, feeding the meter and the pill; speech starting while Sloane speaks cuts her line (`speaker.ts`
