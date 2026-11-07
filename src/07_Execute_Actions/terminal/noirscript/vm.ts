@@ -47,8 +47,10 @@
  * the output cap, the depth cap and the arena bound end a runaway program with a named error; every index into an
  * array, vector or column is checked; integer division by zero is an error; i32 wraps (| 0, Math.imul), u32 wraps
  * (>>> 0), f32 rounds after every operation. Limits reach `execute` sane (saneLimits): finite, non-negative, capped.
+ * A bound that ends a run is named in the result's `fault` as well as its error text (gas, bounds, memory, depth,
+ * output), so a host running a lane a tick (LANE_LIMITS, MAX_OPS_PER_TICK) can isolate the lane on it.
  */
-import type { Ty } from './ast.ts'
+import type { NoirFault, Ty } from './ast.ts'
 import { NoirError, tyWidth } from './ast.ts'
 import { formatCells } from './format.ts'
 
@@ -89,6 +91,15 @@ export interface NoirLimits { readonly steps: number; readonly out: number; read
 
 export const LIMITS: NoirLimits = Object.freeze({ steps: 1_000_000, out: 16_384, cells: 262_144, depth: 1_024 })
 export const ELITE_LIMITS: NoirLimits = Object.freeze({ steps: 50_000_000, out: 65_536, cells: 4_194_304, depth: 4_096 })
+/** The gas of one sub-agent lane for one tick: the instructions its program may take before it is a fault. */
+export const MAX_OPS_PER_TICK = 4096
+/**
+ * A sub-agent lane's limits (08_Swarm/lanes.ts): MAX_OPS_PER_TICK steps a tick, a short output, a 256 KiB arena of
+ * its own (the city's columns are copied into it each tick, so a lane reads the city and never the arena of
+ * another lane), and a shallow stack. Running a budget out, an index past an array or a column, the arena, the depth
+ * or the output is a fault the lane's host isolates it for; a plain error is not.
+ */
+export const LANE_LIMITS: NoirLimits = Object.freeze({ steps: MAX_OPS_PER_TICK, out: 256, cells: 65_536, depth: 32 })
 
 export const DEFAULT_LOCKED = 'elite tier locked'
 
@@ -279,9 +290,10 @@ export interface RunInput {
   readonly limits: NoirLimits
 }
 
-export interface RunOutput { readonly out: string[]; readonly error?: string; readonly steps: number }
+/** `fault`: which bound ended the run, when one did (ast.ts NoirFault); absent for a run that ended or a plain error. */
+export interface RunOutput { readonly out: string[]; readonly error?: string; readonly steps: number; readonly fault?: NoirFault }
 
-function fail(message: string): never { throw new NoirError(message) }
+function fail(message: string, fault: NoirFault | null = null): never { throw new NoirError(message, fault) }
 
 /** A table's row count as the host states it: NaN and anything below one give 0; Infinity is as many as the columns hold. */
 const rowsOf = (n: unknown): number => (typeof n === 'number' && n > 0 ? Math.floor(n) : 0)
@@ -296,7 +308,7 @@ function snapshot(t: NoirTables, arena: Arena, globalTop: number, cells: number,
   let cur = align16(globalTop)
   for (const c of COLUMNS) {
     const n = rows[c.table]!
-    if (cur + n > cells) fail('memory exhausted')
+    if (cur + n > cells) fail('memory exhausted', 'memory')
     const src = sources[c.id]!
     const view = c.elem === 'f32' ? arena.f32 : arena.i32
     if (ArrayBuffer.isView(src)) view.set((src as Float32Array).subarray(0, n), cur)
@@ -321,7 +333,7 @@ function snapshot(t: NoirTables, arena: Arena, globalTop: number, cells: number,
 }
 
 /** `u` set names the index as the u32 it was (the same 32 bits read unsigned). */
-const outOfBounds = (idx: number, len: number, u: number): never => fail(`index ${u !== 0 ? idx >>> 0 : idx} out of bounds (len ${len})`)
+const outOfBounds = (idx: number, len: number, u: number): never => fail(`index ${u !== 0 ? idx >>> 0 : idx} out of bounds (len ${len})`, 'bounds')
 
 /** The low 16 bits of v spread to the even bit positions. */
 function spread(v: number): number {
@@ -392,7 +404,7 @@ export function execute(input: RunInput): RunOutput {
   /** The cost of moving `w` cells, taken before the move: a move the budget cannot cover is refused by name. */
   const charge = (w: number): void => {
     steps += w >> 4
-    if (steps >= limits.steps) { steps = limits.steps; fail(`step budget exhausted (${limits.steps})`) }
+    if (steps >= limits.steps) { steps = limits.steps; fail(`step budget exhausted (${limits.steps})`, 'gas') }
   }
   try {
     framePc = new Int32Array(limits.depth)
@@ -401,9 +413,9 @@ export function execute(input: RunInput): RunOutput {
     fp = align16(tableTop)
     bound = Math.min(cells, fp + limits.cells)
     sp = fp + main.frameSize
-    if (sp + main.maxStack > bound) fail('memory exhausted')
+    if (sp + main.maxStack > bound) fail('memory exhausted', 'memory')
     for (;;) {
-      if (steps >= limits.steps) fail(`step budget exhausted (${limits.steps})`)
+      if (steps >= limits.steps) fail(`step budget exhausted (${limits.steps})`, 'gas')
       steps++
       const op = code[pc++]!
       switch (op) {
@@ -569,10 +581,10 @@ export function execute(input: RunInput): RunOutput {
         }
         case Op.CALL: {
           const callee = fns[code[pc++]!]!
-          if (depth >= limits.depth) fail(`stack overflow (depth ${limits.depth})`)
+          if (depth >= limits.depth) fail(`stack overflow (depth ${limits.depth})`, 'depth')
           const newFp = sp - callee.paramCells
           const newSp = newFp + callee.frameSize
-          if (newSp + callee.maxStack > bound) fail('memory exhausted')
+          if (newSp + callee.maxStack > bound) fail('memory exhausted', 'memory')
           frameFn[depth] = fn
           framePc[depth] = pc
           frameFp[depth] = fp
@@ -732,7 +744,7 @@ export function execute(input: RunInput): RunOutput {
           sp -= total
           const line = parts.join(' ')
           printed += line.length + 1
-          if (printed > limits.out) fail(`output limit exhausted (${limits.out})`)
+          if (printed > limits.out) fail(`output limit exhausted (${limits.out})`, 'output')
           out.push(line)
           break
         }
@@ -740,7 +752,7 @@ export function execute(input: RunInput): RunOutput {
       }
     }
   } catch (e) {
-    const error = e instanceof NoirError ? e.message : `internal error: ${e instanceof Error ? e.message : String(e)}`
-    return { out, error, steps }
+    if (e instanceof NoirError) return e.fault === null ? { out, error: e.message, steps } : { out, error: e.message, steps, fault: e.fault }
+    return { out, error: `internal error: ${e instanceof Error ? e.message : String(e)}`, steps }
   }
 }

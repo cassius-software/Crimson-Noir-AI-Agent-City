@@ -541,7 +541,7 @@ export const globalCeiling = (cells: number): number => cells - (cells >> 2)
 
 /** A function that could never run in the arena, whatever else is in it, is refused at compile time. */
 function fits(f: CompiledFn, cells: number): CompiledFn {
-  if (f.frameSize + f.maxStack > cells) throw new NoirError('memory exhausted')
+  if (f.frameSize + f.maxStack > cells) throw new NoirError('memory exhausted', 'memory')
   return f
 }
 
@@ -556,7 +556,7 @@ export function compile(checked: Checked, layout: Layout): CompiledLine {
     else if (isVector(g.ty)) top = (top + 3) & ~3
     g.slot = top
     top += w
-    if (top > ceiling) throw new NoirError('memory exhausted')
+    if (top > ceiling) throw new NoirError('memory exhausted', 'memory')
   }
   const c = new Compiler()
   const fns = checked.fns.map((f) => fits(c.compileFn(f), layout.cells))
