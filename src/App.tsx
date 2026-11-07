@@ -19,9 +19,10 @@ import { Hud } from './07_Execute_Actions/Hud.tsx'
 import { Terminal, type TerminalHandle } from './07_Execute_Actions/terminal/Terminal.tsx'
 import { offlineBridge, type LookBridge, type ModelBridge, type NetBridge, type PendingAct, type TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
 import { hudLine, recruitBridge, Recruiter } from './08_Swarm/recruitment.ts'
+import { TEAM_TICK_MS, TeamRunner } from './08_Swarm/team.ts'
 import { TaskRouter } from './08_Swarm/taskRouter.ts'
 import { deferredLedger, followRecruiter, indexedDbLedger, memoryBridge, SwarmMemory } from './08_Swarm/memory.ts'
-import { loopbackFetch } from './02_Define_The_Rules/airgap.ts'
+import { airgapInstalled, loopbackFetch } from './02_Define_The_Rules/airgap.ts'
 import { createMindRouter } from './09_Cognition/router.ts'
 import { createInPageMind, type InPageMind } from './09_Cognition/inPage.ts'
 import { runtimeMode } from './09_Cognition/inPageCaps.ts'
@@ -63,12 +64,13 @@ import { builderPort } from './01_Initialize_World/lakefrontWorkerPort.ts'
 import { screenNames } from './01_Initialize_World/assets/cc0.ts'
 import { Onboarding, type Outcome } from './07_Execute_Actions/onboarding/Onboarding.tsx'
 import { loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
-import { modelVoice, scriptedVoice, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
+import { modelVoice, scriptedVoice, sloaneVoice, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
 import { ConciergeSpeaker, conciergeBridge, synthEnv, type ConciergeOut } from './07_Execute_Actions/onboarding/speaker.ts'
 import { useMentor } from './07_Execute_Actions/onboarding/useMentor.ts'
 import { agentBridge, identityLine, Roster, voiceProfile } from './08_Swarm/roster.ts'
 import { SKILLS } from './03_Spawn_Agents/skills.ts'
 import { FiveWhys } from './06_Make_Decisions/intent.ts'
+import { teamRows } from './06_Make_Decisions/dispatch.ts'
 import type { GoalPlan } from './07_Execute_Actions/terminal/bridge.ts'
 import type { Voice as SpeechVoice } from './07_Execute_Actions/operator.ts'
 import type { Event as MentorEvent } from './09_Cognition/tutorial.ts'
@@ -527,24 +529,32 @@ function qualityFor(step: PlanStep, b: Pick<TerminalBridge, 'quality'>): 'auto' 
 
 /**
  * The console's `goal` (terminal/bridge.ts GoalPlan): the goal planned as Sloane plans one (06_Make_Decisions/intent.ts),
- * its immediate steps applied through the same knobs the Concierge uses (the clock, the quality tier, the sound).
+ * its immediate steps applied through the same knobs the Concierge uses (the clock, the quality tier, the sound) and
+ * its team, when it has one, opened through the same team runner (the bridge's `lanes`).
  */
-function goalPlan(text: string, b: Pick<TerminalBridge, 'setClock' | 'quality' | 'audio'>): GoalPlan {
+function goalPlan(text: string, b: Pick<TerminalBridge, 'setClock' | 'quality' | 'audio' | 'lanes'>): GoalPlan {
   const brief = new FiveWhys(text).brief()
   const steps: { label: string; state: 'done' | 'later' | 'failed'; detail?: string }[] = []
+  let team: string[] | undefined
   for (const step of brief.plan) {
     if (!step.immediate) { steps.push({ label: step.label, state: 'later' }); continue }
     try {
       if (step.control === 'time' && typeof step.value === 'number') b.setClock(step.value)
       else if (step.control === 'quality' && (step.value === 'auto' || typeof step.value === 'number')) b.quality(qualityFor(step, b))
       else if (step.control === 'audio' && (step.value === 'on' || step.value === 'off' || typeof step.value === 'number')) b.audio(step.value)
+      else if (step.control === 'dispatch' && step.team && b.lanes) {
+        const d = b.lanes.dispatch(step.team)
+        team = teamRows(step.team)
+        steps.push({ label: step.label, state: 'done', detail: `${d.lanes} ${d.lanes === 1 ? 'lane' : 'lanes'} open` })
+        continue
+      }
       else { steps.push({ label: step.label, state: 'later' }); continue }
       steps.push({ label: step.label, state: 'done' })
     } catch (e) {
       steps.push({ label: step.label, state: 'failed', detail: e instanceof Error ? e.message : String(e) })
     }
   }
-  return { root: brief.root, steps, notes: brief.unmapped }
+  return { root: brief.root, steps, notes: brief.unmapped, ...(team ? { team } : {}) }
 }
 
 /**
@@ -602,6 +612,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
     if (id.agent !== null) engineRef.current?.setLook(id.agent, id.look)
   }, [roster])
   const onSay = useCallback((text: string) => { void speaker.speak(text) }, [speaker])
+  /** Sloane's own words for a brief (onboarding/voice.ts sloaneVoice), once the city's mind exists; null with the scripted provider. */
+  const [sloane, setSloane] = useState<Voice | null>(null)
   const onHear = useCallback((voice: string, line: string) => { void speaker.preview(line, voice) }, [speaker])
   const lookOpenRef = useRef(false)
   const [veilDone, setVeilDone] = useState(false)
@@ -655,6 +667,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
     if (step.control === 'time' && typeof step.value === 'number') { b.setClock(step.value); return true }
     if (step.control === 'quality' && (step.value === 'auto' || typeof step.value === 'number')) { b.quality(qualityFor(step, b)); return true }
     if (step.control === 'audio' && (step.value === 'on' || step.value === 'off' || typeof step.value === 'number')) { b.audio(step.value); return true }
+    // A team goes to the team runner (08_Swarm/team.ts) through the bridge, as the console's `goal` sends one.
+    if (step.control === 'dispatch' && step.team && b.lanes) { b.lanes.dispatch(step.team); return true }
     return false
   }, [bridge])
 
@@ -691,6 +705,9 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
     let engine: Engine | null = null
     let recruiter: Recruiter | null = null
     let router: TaskRouter | null = null
+    /** The team runner (08_Swarm/team.ts): Sloane's dispatched sub-agents, stepped every TEAM_TICK_MS from the frame loop. */
+    let crew: TeamRunner | null = null
+    let lastTeam = 0
     /** Stops following the recruiter: its events into the swarm's memory, its list into the roster's hires. */
     let unfollow: (() => void) | null = null
     /** The answer streaming in from the local model, for the HUD (null when none is). */
@@ -720,9 +737,14 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
       if (!engine || engine.halted) return
       try {
         engine.frame(now)
+        // The team's lanes read the city a few times a second, never per frame: their gas is per tick, and the HUD shows
+        // their readings on its own interval.
+        if (crew && now - lastTeam >= TEAM_TICK_MS) { lastTeam = now; crew.tick() }
         if (now - lastHud > HUD_INTERVAL_MS) {
           lastHud = now
           const s = engine.snapshot()
+          // The team Sloane dispatched (08_Swarm/team.ts): its lanes for the Concierge, its one line for the MIC chip.
+          if (crew) { s.supplier.lanes = crew.lines(); s.supplier.team = crew.line() }
           if (recruiter) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, activityText(answering, engine.speaking, modelPhase ?? keepLine))
           // A city action waiting for the operator's OK takes the activity line (the MIC chip reads it, console open or closed).
           if (recruiter && actRef.current) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, `Waiting for your OK: ${actRef.current.who} proposes: ${actRef.current.sentence}`)
@@ -956,6 +978,26 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
         if (termOpenRef.current || lookOpenRef.current) e.input.suspend(true)
         setEngine(e)
         const engineBridge = e.terminalBridge(gate, mind, voice, memory.diary(), voiceOf, pageStore(ELITE_KEY))
+        // The team runner over what the page already has: the bridge's one reader of the city's columns, the air gap's
+        // vouch, the realm's standing, this map's workplaces, and the recruiter for the bodies (the same asks `recruit`
+        // makes). A lane the gate isolates toasts, console open or closed.
+        const host = e.recruitHost()
+        const team = new TeamRunner({
+          tables: () => engineBridge.soa?.tables() ?? null,
+          contained: () => airgapInstalled(globalThis),
+          panic: () => e.panicReason,
+          rooms: () => e.workplaces,
+          operator: () => host.operator(),
+          recruits: () => r.recruits,
+          recruit: (skill) => r.recruit(skill),
+          rally: (agent, x, z) => r.rally(agent, x, z),
+          log: (line) => { console.error(line); e.toast('Lane isolated', line) },
+        })
+        crew = team
+        const lanes = team.console()
+        // Sloane's own words for a brief: the router's order (the local servers, then the model in this page), the
+        // planner's sentence on any failure; never with the provider the player set to scripted.
+        setSloane(local.settings().provider === 'scripted' ? null : sloaneVoice(mind))
         setBridge(Object.freeze({
           ...engineBridge,
           // The map this shell walks, for the console's `map` status line (the choice itself is remap's).
@@ -963,7 +1005,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           recruit: recruitBridge(r),
           agent: agentBridge(roster, { recruit: (skill) => recruitBridge(r).ask(skill), wear: (agent, look) => e.setLook(agent, look), skills: () => SKILLS }),
           concierge: conciergeBridge(speaker),
-          goal: (text: string) => goalPlan(text, engineBridge),
+          goal: (text: string) => goalPlan(text, { ...engineBridge, lanes }),
+          lanes,
           memory: memoryBridge(memory, r),
           net: netBridge(e.net, pageStore(NET_TOKEN_KEY)),
           model: modelBridge,
@@ -1024,7 +1067,9 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
       link.sound = () => true
       setEngine(null)
       setBridge(null)
+      setSloane(null)
       unfollow?.()
+      crew?.dispose()
       router?.dispose()
       recruiter?.dispose()
       unModel()
@@ -1081,6 +1126,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           nudge={nudge}
           onGoal={onGoal}
           onSay={onSay}
+          reword={sloane}
+          lanes={hud.supplier.lanes ?? null}
         />
       )}
       {hud && (

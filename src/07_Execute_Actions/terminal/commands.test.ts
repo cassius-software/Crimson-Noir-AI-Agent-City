@@ -51,7 +51,7 @@ const LAWS = [
 ] as const
 
 const CORE_NAMES = [
-  'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'time', 'audio', 'ghost', 'rain', 'xr', 'render', 'captions', 'ping', 'look', 'agent', 'sloane', 'goal', 'hal', 'robot', 'recruit', 'memory', 'clear', 'history', 'echo',
+  'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'time', 'audio', 'ghost', 'rain', 'xr', 'render', 'captions', 'ping', 'look', 'agent', 'sloane', 'goal', 'lanes', 'hal', 'robot', 'recruit', 'memory', 'clear', 'history', 'echo',
   'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'noir', 'exit',
 ]
 const OPERATOR_NAMES = ['operator', 'ring0', 'run', 'ask', 'swarm', 'act', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
@@ -1086,7 +1086,8 @@ test('air gap: a failing or offline bridge becomes error lines, never an excepti
     'say voice v', 'say stop', 'memory', 'memory 7', 'memory forget 7', 'api', 'api clock', 'get', 'set physics.car.power 1', 'harness', 'harness list', 'harness run sanctuary', 'sim',
     'record', 'record status', 'record start', 'record start camera', 'record stop', 'render', 'render off', 'captions', 'captions on', 'ping', 'ping go', 'ping clear',
     'look', 'look show 7', 'look reset', 'look top 2', 'recruit', 'recruit rally 7', 'recruit rally 7 1 2', 'topic', 'topic list', 'topic list ~/#', 'topic get ~/x', 'topic tree', 'topic watch',
-    'robot', 'robot demo', 'robot relay', 'robot relay off', 'robot mode sim:demo sim', 'robot set sim:demo elbow 1', 'robot disarm sim:demo', 'robot remove sim:demo']) {
+    'robot', 'robot demo', 'robot relay', 'robot relay off', 'robot mode sim:demo sim', 'robot set sim:demo elbow 1', 'robot disarm sim:demo', 'robot remove sim:demo',
+    'lanes', 'lanes ledger', 'lanes ledger verify', 'lanes stop']) {
     const r = run(c, off, [])
     assert.ok(isErr(r), `${c} should report an error offline`)
     assert.match(texts(r)[0], /engine not running$/)
@@ -1208,7 +1209,7 @@ test('air gap: while locked, across every command and completion, the only knobs
 test('air gap: the terminal files reach nothing at runtime beyond React, the brand and each other', () => {
   const allowedTypes = [
     '../../02_Define_The_Rules/laws.ts', '../../03_Spawn_Agents/look.ts', '../../04_Connect_Hardware/hal.ts', '../../04_Connect_Hardware/robotLink.ts', '../../05_Observe_Environment/telemetry.ts',
-    '../../05_Observe_Environment/recorder.ts', '../operator.ts', '../harness.ts', '../../08_Swarm/orchestrator.ts',
+    '../../05_Observe_Environment/recorder.ts', '../operator.ts', '../harness.ts', '../../08_Swarm/orchestrator.ts', '../../06_Make_Decisions/dispatch.ts',
   ]
   // repl.ts is the console's own machine: a runtime import, and the one terminal module that imports nothing itself.
   // react-dom is React's own renderer: Terminal.tsx takes flushSync from it, so a tap can open the console and focus it at once.
@@ -2878,6 +2879,38 @@ test('agent, sloane and goal: the roster, the concierge\'s voice and a goal in p
   assert.deepEqual(complete('agent '), ['agent dismiss', 'agent forget', 'agent hire', 'agent new', 'agent voices'])
   assert.deepEqual(complete('sloane v'), ['sloane voice', 'sloane voices'])
   assert.deepEqual(complete('agent hire '), [], 'the name comes first: no skill is offered in its place')
+})
+
+test('lanes: the team runner through the bridge (status, the ledger verified on request, stop); absent, or a line it refuses, is one error line', () => {
+  const b = fake()
+  assert.deepEqual(texts(run('lanes', b, [])), ['lanes: the lanes are not available on this bridge'])
+  const calls: string[] = []
+  const t = {
+    ...b,
+    lanes: {
+      status: () => { calls.push('status'); return ['team: Send 2 scouts (2 running, 0 isolated) · tick 4', '  LANE  TAG'] },
+      ledger: (verify: boolean) => { calls.push(`ledger ${verify}`); return verify ? ['ledger: 0 records', '  chain verified'] : ['ledger: 0 records'] },
+      stop: () => { calls.push('stop'); return 'released: 2 lanes closed' },
+      dispatch: () => { calls.push('dispatch'); return { lanes: 0, dropped: 0 } },
+    },
+  }
+  assert.deepEqual(run('lanes', t, []).lines, [{ kind: 'out', text: 'team: Send 2 scouts (2 running, 0 isolated) · tick 4' }, { kind: 'out', text: '  LANE  TAG' }])
+  assert.deepEqual(texts(run('lanes ledger', t, [])), ['ledger: 0 records'])
+  assert.deepEqual(texts(run('lanes ledger verify', t, [])), ['ledger: 0 records', '  chain verified'])
+  assert.deepEqual(texts(run('lanes stop', t, [])), ['released: 2 lanes closed'])
+  for (const l of ['lanes go', 'lanes ledger now', 'lanes stop all', 'lanes ledger verify twice']) assert.deepEqual(texts(run(l, t, [])), ['usage: lanes [ledger [verify]|stop]'], l)
+  assert.deepEqual(calls, ['status', 'ledger false', 'ledger true', 'stop'], 'the console never dispatches by itself: goal does')
+  const broken = { ...t, lanes: { ...t.lanes, status: () => { throw new Error('the realm halted') } } }
+  assert.deepEqual(texts(run('lanes', broken, [])), ['lanes: the realm halted'])
+  assert.deepEqual(complete('lanes '), ['lanes ledger', 'lanes stop'])
+  assert.deepEqual(complete('lanes ledger '), ['lanes ledger verify'])
+  // A goal that dispatched prints the team's rows after its steps.
+  const g = { ...b, goal: () => ({ root: 'You want the city to work on it.', steps: [{ label: 'Send 2 sub-agents', state: 'done' as const }], notes: [], team: ['warehouse:1    at the Automated Logistics Warehouse: reads the crowd'] }) }
+  assert.deepEqual(run('goal hold a warehouse drill', g, []).lines, [
+    { kind: 'out', text: 'You want the city to work on it.' },
+    { kind: 'out', text: '  done     Send 2 sub-agents' },
+    { kind: 'sys', text: '  warehouse:1    at the Automated Logistics Warehouse: reads the crowd' },
+  ])
 })
 
 test('hal pair hid inside the Windows app: no picker is promised, and an empty list is "none plugged in"', async () => {
