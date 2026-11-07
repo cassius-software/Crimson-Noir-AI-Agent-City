@@ -617,6 +617,17 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **The physics realm's step is a quarter to a third faster: the street furniture is a hundred compound sensors,
+  not 4,599 colliders.** rapier.js walks every collider in the world through a WebAssembly-to-JavaScript callback at
+  the end of each `world.step()`, so the city's lamps, trees and signal poles (sensors nothing in the realm touches or
+  queries) cost every step about 0.6 ms and 1.4 MB of garbage. `physics.ts` now packs them into one compound sensor
+  per 80 m tile, each pole the same cylinder where it stood. Measured in Node on a four-core container, best of three:
+  the realm's whole step (`SimCore`, the city, 600 steps) 1.78 → 1.32 ms with 36 cars and 2.27 → 1.49 ms with 48 cars
+  and a stand-in crowd; the world's step alone 0.73 → 0.30 ms and 2.26 → 0.86 MB of garbage a step; a bonnet ray
+  2.9 → 1.7 µs. The cars' poses over those 600 steps hash the same as before, to the bit. A new `physics.test.ts`
+  keeps the one-sensor-per-pole world as the reference and holds the packed one to it: the same poles along 4,000
+  seeded rays (to Rapier's own ray-cast tolerance, which shows only at a graze), every pole found at its centre and not
+  beside it, every pole in one compound sensor on the fixed body, and every solid query answered exactly as before.
 - **The flow field's CPU solve is 3.3× faster, and allocation-free once warm.** The bucket queue and the direction
   pass (`src/06_Make_Decisions/flowField.ts` `solveDial`, `directions`), which the physics worker runs for every
   new goal whenever the field is not solved on the GPU, now work over the grid padded by a ring of blocked cells, with
