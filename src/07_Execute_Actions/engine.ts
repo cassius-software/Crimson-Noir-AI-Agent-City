@@ -2437,6 +2437,9 @@ export class Engine {
       // pair() must stay synchronous up to requestDevice/requestPort: the Enter keydown is the user gesture.
       hal: Object.freeze({ summary: () => hal.summary(), devices: () => hal.devices(), pair: (k: 'hid' | 'serial' | 'bluetooth') => hal.pair(k), get shellHid() { return hal.shellHid } }),
       adapter: () => this.adapter,
+      // The rooms' stations, read-only, for `robot cell`: kind id, index in the room, where to stand and which way to
+      // face (the surveyed region has no rooms: an empty list; Lakefront Metro has its own).
+      roomStations: () => this.rooms.flatMap((r) => r.stations.map((s, i) => ({ kind: r.kind as string, station: i, x: s.x, z: s.z, yaw: s.yaw }))),
       ghost: (arg?: 'on' | 'off') => (arg === undefined ? (this.ghost.on ? 'on' : 'off') : this.setGhost(arg === 'on')),
       rain: (arg?: 'on' | 'off') => (arg === undefined ? (this.matrixOn ? 'on' : 'off') : this.setMatrix(arg === 'on')),
       xr: (arg?: 'vr' | 'ar' | 'off') => this.xrCommand(arg),
@@ -2454,6 +2457,10 @@ export class Engine {
         arm: (id: string) => this.robots.arm(id),
         disarm: (id: string) => this.robots.disarm(id),
         calibrate: (id: string, joint: string) => this.robots.calibrate(id, joint),
+        fit: (id: string, joint: string) => this.robots.fit(id, joint),
+        shape: (id: string, seed?: number | 'off') => this.robots.shape(id, seed),
+        cellKind: (kind: string) => this.robots.cellKind(kind),
+        cell: (kind: string, station: number, at: { x: number; z: number; yaw: number }) => this.robots.cell(kind, station, at),
         remove: (id: string) => this.robots.remove(id),
       }),
       render: (arg?: 'on' | 'off') => (arg === undefined ? (this.rendering ? 'on' : 'off') : this.setRendering(arg === 'on')),

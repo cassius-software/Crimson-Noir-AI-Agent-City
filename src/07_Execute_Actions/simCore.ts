@@ -733,7 +733,7 @@ export class SimCore {
         return
       }
       case 'robotMode': {
-        this.#robots.mode(cmd.id, cmd.mode, cmd.tauMs, cmd.delaySteps)
+        this.#robots.mode(cmd.id, cmd.mode, cmd.tauMs, cmd.delaySteps, cmd.shaping, cmd.friction)
         return
       }
       case 'reset': {

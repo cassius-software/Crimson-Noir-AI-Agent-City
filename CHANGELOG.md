@@ -15,6 +15,46 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Actuator shaping, domain randomization and workstation cells for the joint bridge**
+  (`src/04_Connect_Hardware/actuatorFit.ts`, `cells.ts`; `src/07_Execute_Actions/jointRealm.ts`, `articulated.ts`).
+  A step response can now be fitted as a second-order system with dead time (`fitStep2`: gain, delay, natural rate ω
+  and damping ζ from the closed forms of the under-, critically and over-damped responses, seeded from the
+  first-order fit and refined by a shrinking search from its four best seeds), and `pickFit` takes it over the
+  first-order lag only when the error falls by a tenth or more (Occam), never when the first-order fit is already
+  within 0.2 % of the response. A chosen second-order fit becomes the joint's **reference actuator**
+  (`ActuatorShaping`, `gainsFor2`, `stepShaping`): in `filter` mode the delayed setpoint drives a spring and damper
+  with a speed cap, ω clamped to 60 rad/s, stepped semi-implicitly in four sub-steps so it stays bounded at 60 Hz for
+  any damping, and the servo tracks it; the first-order filter is unchanged for a joint without one. **Domain
+  randomization** (`randomizeDomain(seed, manifest)`, `DOMAIN`): from the rules' PRNG alone, every link's mass within
+  ±20 % and its inertia within ±30 % at the same mass (a new optional `inertiaScale` on a link, judged within 0.1 to
+  10, which the realm applies to the shape's own tensor: `shapeInertia`, whose closed forms match what Rapier derives),
+  a friction per movable joint relative to its own caps (Coulomb up to 5 % of the effort cap, stiction one to two
+  times that, viscous costing at most 10 % of the effort at the speed cap) and a jittered shaping per joint. The
+  realm applies **joint friction** about each joint after the servo, through the servo's own impulse pair
+  (`jointTorque`): stiction holds a still joint while the servo asks less than it, Coulomb and viscous friction never
+  take more than the speed the joint has by the realm's measure and never exceed the effort cap. `robotMode` carries
+  an optional `shaping` and `friction` per movable joint, every number judged in the worker before any of it is kept
+  (a bad one is a counted rejection; the old command shape is unchanged). The console gains `robot fit <id> <joint>`
+  (both fits, the choice, applied), `robot shape <id> [<seed>|off]` (the body re-spawned where it stood from the
+  seed's domain, disarmed; the plain body back; or the domain's table) and `robot cell [<kind> <station>]`. **Cells**
+  (`cells.ts`): a six-joint arm, a two-axis gantry with a wrist, a vibration table, a gait belt and a console with no
+  robot, mapped from the workplace kind ids by string (`console` for an unknown kind); `robot cell` lists every
+  station of every room with its cell (a new read-only `roomStations()` on the terminal bridge) and `robot cell
+  <kind> <station>` spawns that cell's robot at the station, facing its yaw. `toUrdf` writes any manifest back out as
+  URDF that `urdf.ts` reads to an equal manifest. Tests: `actuatorFit.test.ts` (five plants across the damping cases
+  fitted back, ω within 3 % and ζ within 5 % where under- or critically damped, with noise, Occam on first-order
+  plants, the stepper against the closed form and bounded at its clamp, stiction, Coulomb, the speed cap, the domain's
+  spreads and determinism), `cells.test.ts` (every cell built through the one judge, the map, the URDF round trip of
+  every cell and the demo arm), `jointRealm.test.ts` (the new mode fields judged and nothing kept from a bad command;
+  a joint following an under-damped reference within 0.05 rad, overshooting as it does, with its own delay; stiction
+  holding a joint under twice the servo's demand and letting go at half; Coulomb friction at the whole cap stopping a
+  moving joint without turning it round beyond the solver's own correction), `articulated.test.ts` (the closed-form
+  inertia against Rapier's, an inertia scale at the same mass), `jointState.test.ts` (`inertiaScale`),
+  `robotLink.test.ts` (a fit against a second-order realm sends that joint a shaping of its ω and ζ, against a
+  first-order realm none; a shaped body re-spawned in place with the friction and shaping; a cell at its station) and
+  `commands.test.ts`. Unverified: nothing here has met a physical robot or a real actuator; the cells have not been
+  seen on screen (no GPU in the cloud), and a cell's robot shares its station with the crowd's worker (robots never
+  touch people).
 - **The fallen wear their own bodies.** A pedestrian the realm promotes to a physical body (a shove, a kerb trip, a
   slip near the operator) is no longer hidden and replaced by grey capsules: the crowd's vertex stage hangs each of
   the body's fifteen bones from the rig shape it belongs to (`src/03_Spawn_Agents/humanoid.ts` `RIG_REST`,
