@@ -17,6 +17,7 @@
  * What breaks if it is removed? The player loses location, time, speed, signals and control hints.
  */
 import { useEffect, useRef, useSyncExternalStore } from 'react'
+import { isOpen, phaseWord, pillLabel, pillWord, type MicMeter } from '../04_Connect_Hardware/microphone.ts'
 import { CITY, CITY_SIZE, LAKE, districtOfLot } from '../01_Initialize_World/city.ts'
 import { drawRooms, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { TRAFFIC } from '../02_Define_The_Rules/civic.ts'
@@ -102,7 +103,7 @@ const SHORT = mediaStore('(max-height: 499px)')
  *  for the Concierge card above it. Smaller windows get the one-line chip (Sloane's list has every key). */
 const ROOMY = { ...mediaStore('(min-width: 1100px) and (min-height: 600px)'), server: () => true }
 
-export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null }: {
+export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null, mic = null, onMic }: {
   s: SipocSnapshot | null
   adapter: string
   visible: boolean
@@ -110,6 +111,10 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   terminalOpen?: boolean
   /** A region's minimap layer (engine.mapLayer): drawn instead of the procedural city's grid. */
   mapLayer?: MapLayer | null
+  /** The microphone's meter (04_Connect_Hardware/microphone.ts), read at frame rate while the pill shows the device open; null without one. */
+  mic?: MicMeter | null
+  /** The pill's press: open the microphone, or mute it (the same switch as V, the right stick's click and the touch Menu). */
+  onMic?: () => void
 }) {
   const small = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
   const short = useSyncExternalStore(SHORT.subscribe, SHORT.matches, SHORT.server)
@@ -178,13 +183,19 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
     </div>
   )
 
-  // Recruitment: an open microphone is never without its indicator (it outlives the H key, like REC), and who
-  // is coming over, and the Active swarm's skills.
+  // The microphone's pill (microphone.ts): its state, a live meter while it is open, and the switch. While the HUD is
+  // hidden it shows only with the device open: the browser's own indicator is never on without it (like REC).
+  const voice = s.supplier.voice
+  const micOpen = voice ? isOpen(voice.phase) : false
+  const micPill = voice && (visible || micOpen) && <MicPill voice={voice} mic={mic} onMic={onMic} panel={panel} muted={muted} dark={dark} />
+  // Recruitment: who is coming over, the Active swarm's skills and the activity line. Without a host microphone (an
+  // older host, no pill) the chip also carries the MIC dot, so an open microphone is never without its indicator.
   const rc = s.supplier.recruiting
-  const micChip = rc && (rc.listening || rc.line) && (
+  const dotted = Boolean(rc?.listening) && !voice
+  const micChip = rc && (dotted || rc.line) && (
     <div className={`flex max-w-full items-center gap-2 px-3 py-1.5 text-[11px] font-semibold tabular-nums ${panel}`} data-hint="mic">
-      {rc.listening && <span className="h-2 w-2 shrink-0 rounded-full bg-sky-500" />}
-      <span className="truncate">{[rc.listening ? 'MIC · on-device' : '', rc.line].filter(Boolean).join(' · ')}</span>
+      {dotted && <span className="h-2 w-2 shrink-0 rounded-full bg-sky-500" />}
+      <span className="truncate">{[dotted ? 'MIC · on-device' : '', rc.line].filter(Boolean).join(' · ')}</span>
     </div>
   )
 
@@ -273,6 +284,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
               </div>
             </div>
             {recChip}
+            {micPill}
             {micChip}
             {ghostChip}
             {renderChip}
@@ -411,6 +423,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
                 )}
               </div>
               {recChip}
+              {micPill}
               {micChip}
               {ghostChip}
               {renderChip}
@@ -440,10 +453,11 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
 
       {visible && pingChip}
 
-      {!visible && (recChip || rc?.listening || captionStrip) && (
+      {!visible && (recChip || micPill || rc?.listening || captionStrip) && (
         <div className={compact ? FRAME_COMPACT : FRAME_WIDE}>
           <div className="absolute top-0 left-0 flex max-w-full flex-col items-start gap-2">
             {recChip}
+            {micPill}
             {rc?.listening && micChip}
           </div>
           {captionStrip && <div className="absolute bottom-0 left-1/2 w-max max-w-full -translate-x-1/2">{captionStrip}</div>}
@@ -456,6 +470,65 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * The microphone's pill (04_Connect_Hardware/microphone.ts): a button with the state's word and colour, a live meter
+ * of the room while the device is open, and an accessible name that says the state, what a press does and the key.
+ * The meter is drawn at frame rate from the microphone's own ring of levels, outside React; the word comes with the
+ * snapshot. A live region beside it tells a screen reader of a change of state (listening, muted, blocked), not of
+ * every onset of speech nor of Sloane speaking: those are the meter's news.
+ */
+function MicPill({ voice, mic, onMic, panel, muted, dark }: {
+  voice: NonNullable<SipocSnapshot['supplier']['voice']>; mic: MicMeter | null; onMic?: () => void; panel: string; muted: string; dark: boolean
+}) {
+  const canvas = useRef<HTMLCanvasElement>(null)
+  const open = isOpen(voice.phase)
+  useEffect(() => {
+    const el = canvas.current
+    if (!el || !mic || !open) return
+    const ctx = el.getContext('2d')
+    if (!ctx) return
+    let raf = 0
+    const draw = () => {
+      const w = el.width, h = el.height, n = mic.levels.length, bar = w / n
+      ctx.clearRect(0, 0, w, h)
+      ctx.fillStyle = dark ? 'rgba(255,255,255,0.85)' : 'rgba(15,23,42,0.8)'
+      for (let i = 0; i < n; i++) {
+        // The square root lifts a quiet room into view; a full level fills the height.
+        const v = mic.levels[(mic.head + i) % n]
+        const bh = Math.max(1, Math.min(h, Math.sqrt(v > 0 ? v : 0) * h))
+        ctx.fillRect(i * bar, (h - bh) / 2, Math.max(1, bar - 1), bh)
+      }
+      raf = requestAnimationFrame(draw)
+    }
+    raf = requestAnimationFrame(draw)
+    return () => cancelAnimationFrame(raf)
+  }, [mic, open, dark])
+  const failed = voice.phase === 'blocked' || voice.phase === 'error' || voice.phase === 'unavailable'
+  const dot = voice.phase === 'speech' ? 'bg-emerald-400' : open && voice.speaking ? 'bg-amber-400' : open ? 'bg-sky-500' : failed ? 'bg-rose-500' : dark ? 'bg-slate-400' : 'bg-slate-500'
+  // The reader's line: the state without speech onsets (speech reads as listening) and without Sloane's turns.
+  const told = `Microphone ${phaseWord(voice.phase === 'speech' ? 'listening' : voice.phase).replace(/^Mic /, '').toLowerCase()}`
+  return (
+    <>
+      <button
+        type="button"
+        onClick={onMic}
+        aria-label={pillLabel(voice.phase, voice.speaking, failed ? voice.detail : '')}
+        aria-pressed={open}
+        title={voice.detail || undefined}
+        className={`pointer-events-auto flex max-w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[11px] font-semibold tabular-nums focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400 ${panel}`}
+        data-hint="voice"
+        data-mic={voice.phase}
+      >
+        <span className={`h-2 w-2 shrink-0 rounded-full ${dot} ${voice.phase === 'speech' ? 'animate-pulse' : ''}`} />
+        <span className="truncate">{pillWord(voice.phase, voice.speaking)}</span>
+        {open && <canvas ref={canvas} width={96} height={20} className="h-3.5 w-12 shrink-0" aria-hidden="true" />}
+        {open && voice.words && <span className={`truncate font-medium ${muted}`}>words on-device</span>}
+      </button>
+      <span className="sr-only" role="status" aria-live="polite">{told}</span>
+    </>
   )
 }
 

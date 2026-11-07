@@ -19,7 +19,7 @@ import type { GamepadLike } from './web-hardware.d.ts'
 
 export type { Analog, PadFamily } from './gamepad.ts'
 
-export type Action = 'interact' | 'reset' | 'timeForward' | 'timeBack' | 'ghost' | 'matrix' | 'ping'
+export type Action = 'interact' | 'reset' | 'timeForward' | 'timeBack' | 'ghost' | 'matrix' | 'ping' | 'mute'
 
 /** Hold-type touch buttons. `run` is a toggle on the touch layout, but the state lives here. */
 export type TouchButton = 'brake' | 'handbrake' | 'run'
@@ -39,6 +39,8 @@ const ACTION_KEYS: Record<string, Action> = {
   KeyM: 'matrix',
   /** A ping where the head looks (08_Swarm/ping.ts); also the middle mouse button and a pad's right shoulder. */
   KeyQ: 'ping',
+  /** The microphone's mute and unmute (04_Connect_Hardware/microphone.ts); also a pad's right stick click (R3) and the HUD's pill. */
+  KeyV: 'mute',
 }
 
 /** Modifier keys: held alone they are keys like any other (Shift runs); with Command they start no chord. */
@@ -522,6 +524,7 @@ export class Input {
     if (edges & PAD_EDGE.timeForward) this.queued.add('timeForward')
     if (edges & PAD_EDGE.timeBack) this.queued.add('timeBack')
     if (edges & PAD_EDGE.ping) this.queued.add('ping')
+    if (edges & PAD_EDGE.mute) this.queued.add('mute')
     if (this.mapper.active) this.lastSource = 'gamepad'
 
     const xr = this.xr

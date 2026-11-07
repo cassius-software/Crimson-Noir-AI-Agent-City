@@ -15,6 +15,30 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The microphone pill, an on-device voice detector and barge-in over Sloane.** A pill under the HUD's header
+  (`07_Execute_Actions/Hud.tsx` `MicPill`) reads the microphone's state (Mic off, Listening with a live meter of the
+  room, Hearing you, Speaking while Sloane talks over it, Muted, or why it could not open) and is a button: a press,
+  `V`, the right stick's click (R3) or the touch Menu's new Microphone item opens the microphone or mutes it, all
+  one action through the engine (`input.ts` `'mute'`, `gamepad.ts` `PAD_EDGE.mute`, `engine.ts` `onMute`). Mute
+  releases the device, so the browser's own indicator goes out with the pill's, and the device is never open
+  without the pill, which outlives `H` like REC. A first visit starts with the microphone off until that first
+  press: `MIC_OPEN_BY_DEFAULT` in `04_Connect_Hardware/microphone.ts` is the one line that would open it at boot
+  instead; a visitor who left it on finds it on again (key `civic-simulation:voice:v1`). Open, a voice activity
+  detector (`vad.ts`: energy over an adaptive floor, zero crossings and spectral flatness per 512-sample frame, with
+  onset and release counts) runs in an audio worklet where the browser has one and polled from the page where it
+  has not, feeding the meter and the pill; speech starting while Sloane speaks cuts her line (`speaker.ts`
+  `onSpeaking`, `speaking`), with the browser's echo cancellation and a margin in the detector against her own
+  voice. Where the browser promises on-device speech recognition (`08_Swarm/recruitment.ts`) it listens while the
+  microphone is open, `recruit listen` opens the pill's microphone too, and words that are not a recruitment
+  request reach Sloane (`Concierge.tsx` `heard`, `onboarding/heard.ts`: a line that names Sloane first opens the
+  goal dialogue; an open question takes the whole line). The console's `mic [on|off]` prints and switches it. The
+  screen reader hears the pill's state through a live region (not every onset of speech), and its accessible name
+  says the state, what a press does and the key. Firefox has no on-device recognition, so there the pill shows the
+  level and speech only; no audio leaves the page, nothing is recorded, and no speech model ships with the page
+  (no Whisper). Verified by Node tests against synthetic room, voice and hiss signals and fake browser objects
+  (`vad.test.ts`, `microphone.test.ts`, `voiceWiring.test.ts`); a real microphone, a phone's and Safari's permission
+  flow, and the barge-in's feel with a loudspeaker are unverified.
+
 - **The fallen wear their own bodies.** A pedestrian the realm promotes to a physical body (a shove, a kerb trip, a
   slip near the operator) is no longer hidden and replaced by grey capsules: the crowd's vertex stage hangs each of
   the body's fifteen bones from the rig shape it belongs to (`src/03_Spawn_Agents/humanoid.ts` `RIG_REST`,

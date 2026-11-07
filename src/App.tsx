@@ -18,7 +18,8 @@ import { Engine, type EngineOptions } from './07_Execute_Actions/engine.ts'
 import { Hud } from './07_Execute_Actions/Hud.tsx'
 import { Terminal, type TerminalHandle } from './07_Execute_Actions/terminal/Terminal.tsx'
 import { offlineBridge, type LookBridge, type ModelBridge, type NetBridge, type PendingAct, type TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
-import { hudLine, recruitBridge, Recruiter } from './08_Swarm/recruitment.ts'
+import { hudLine, recruitBridge, Recruiter, speechEnv } from './08_Swarm/recruitment.ts'
+import { isOpen as micIsOpen, Microphone, voiceStatus } from './04_Connect_Hardware/microphone.ts'
 import { TaskRouter } from './08_Swarm/taskRouter.ts'
 import { deferredLedger, followRecruiter, indexedDbLedger, memoryBridge, SwarmMemory } from './08_Swarm/memory.ts'
 import { loopbackFetch } from './02_Define_The_Rules/airgap.ts'
@@ -67,7 +68,7 @@ import { modelVoice, scriptedVoice, type Voice } from './07_Execute_Actions/onbo
 import { ConciergeSpeaker, conciergeBridge, synthEnv, type ConciergeOut } from './07_Execute_Actions/onboarding/speaker.ts'
 import { useMentor } from './07_Execute_Actions/onboarding/useMentor.ts'
 import { agentBridge, identityLine, Roster, voiceProfile } from './08_Swarm/roster.ts'
-import { SKILLS } from './03_Spawn_Agents/skills.ts'
+import { parseRequest, SKILLS } from './03_Spawn_Agents/skills.ts'
 import { FiveWhys } from './06_Make_Decisions/intent.ts'
 import type { GoalPlan } from './07_Execute_Actions/terminal/bridge.ts'
 import type { Voice as SpeechVoice } from './07_Execute_Actions/operator.ts'
@@ -587,6 +588,26 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
   const [roster] = useState(() => new Roster())
   const [agents, setAgents] = useState(() => roster.list())
   useEffect(() => roster.onChange(() => setAgents(roster.list())), [roster])
+  // The microphone (04_Connect_Hardware/microphone.ts): off until the visitor presses the pill, V, the right stick's
+  // click or the Menu's item (MIC_OPEN_BY_DEFAULT is the one line that would open it at boot instead), its switch kept
+  // between visits; one per shell, disposed with it. The engine hands the presses here and never opens one itself.
+  const [mic] = useState(() => new Microphone())
+  const onMic = useCallback(() => { void mic.toggle() }, [mic])
+  useEffect(() => () => mic.dispose(), [mic])
+  // Sloane's voice and the microphone: the detector allows for the page's own voice (the pill reads Speaking), and
+  // speech starting while Sloane speaks cuts the line (barge-in).
+  useEffect(() => {
+    const untell = speaker.onSpeaking((on) => mic.setSpeaking(on))
+    const barge = () => speaker.stop()
+    mic.addEventListener('barge', barge)
+    return () => {
+      untell()
+      mic.setSpeaking(false)
+      mic.removeEventListener('barge', barge)
+    }
+  }, [mic, speaker])
+  // Words the visitor said near the open microphone that were not a recruitment request: Sloane's (Concierge.tsx heard).
+  const [heard, setHeard] = useState<{ id: number; text: string } | null>(null)
   useEffect(() => {
     engine?.setIdentities((agent) => { const id = roster.byAgent(agent); return id ? identityLine(id) : null })
     return () => engine?.setIdentities(null)
@@ -677,13 +698,21 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
     }
     // Browsers only start audio from a user gesture; every gesture is a chance to (re)unlock it (every player's soundscape).
     const unlock = () => engineRef.current?.unlockAudio()
+    // The microphone's own context, opened at boot without a gesture (a kept switch), wakes on the first one too.
+    const wake = () => mic.resume()
     window.addEventListener('keydown', onKey)
-    for (const type of ['pointerdown', 'keydown', 'touchend', 'click'] as const) window.addEventListener(type, unlock, { capture: true })
+    for (const type of ['pointerdown', 'keydown', 'touchend', 'click'] as const) {
+      window.addEventListener(type, unlock, { capture: true })
+      window.addEventListener(type, wake, { capture: true })
+    }
     return () => {
       window.removeEventListener('keydown', onKey)
-      for (const type of ['pointerdown', 'keydown', 'touchend', 'click'] as const) window.removeEventListener(type, unlock, { capture: true })
+      for (const type of ['pointerdown', 'keydown', 'touchend', 'click'] as const) {
+        window.removeEventListener(type, unlock, { capture: true })
+        window.removeEventListener(type, wake, { capture: true })
+      }
     }
-  }, [])
+  }, [mic])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -693,6 +722,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
     let router: TaskRouter | null = null
     /** Stops following the recruiter: its events into the swarm's memory, its list into the roster's hires. */
     let unfollow: (() => void) | null = null
+    /** Unties the microphone from the recogniser and Sloane's ear (set once the engine is up). */
+    let unlisten: (() => void) | null = null
     /** The answer streaming in from the local model, for the HUD (null when none is). */
     let answering: { thinking: number; tail: string } | null = null
     /** The city router's model kept in this page (inPage.ts), shut down with the city; null until the engine is up. */
@@ -723,6 +754,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
         if (now - lastHud > HUD_INTERVAL_MS) {
           lastHud = now
           const s = engine.snapshot()
+          // The microphone's pill: its phase, Sloane speaking over it, which detector, and whether words are recognised.
+          s.supplier.voice = { phase: mic.phase, detail: mic.state.detail, speaking: speaker.speaking, path: mic.path, words: recruiter !== null && recruiter.mic.state === 'listening' }
           if (recruiter) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, activityText(answering, engine.speaking, modelPhase ?? keepLine))
           // A city action waiting for the operator's OK takes the activity line (the MIC chip reads it, console open or closed).
           if (recruiter && actRef.current) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, `Waiting for your OK: ${actRef.current.who} proposes: ${actRef.current.sentence}`)
@@ -837,6 +870,40 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
         // plans it from its own copies (08_Swarm/ping.ts rallyPlan), the recruiter checks the page's copy, the physics
         // realm decides on its own readings; its answer is a toast either way.
         e.onRally = (req) => { void r.rally(req.agent, req.x, req.z).then((o) => e.toast('Rally', o.message)) }
+        // The microphone's presses (V, the right stick's click, the Menu's item) arrive through the engine as one action.
+        e.onMute = onMic
+        // The on-device recogniser (recruitment.ts) runs while the microphone is open, where the browser promises one
+        // (Firefox has none: the pill shows the level and speech only), and its microphone is never open without the
+        // pill: `recruit listen` opens the pill's microphone too, and a mute stops the recogniser. What it hears that
+        // is not a recruitment request goes to Sloane (Concierge.tsx heard; heard.ts decides what of it is a goal).
+        const words = (): boolean => { const R = speechEnv().Recognition; return R !== null && 'processLocally' in R.prototype }
+        let micWasOpen = false
+        const onMicChange = () => {
+          const open = mic.open
+          if (open === micWasOpen) return
+          micWasOpen = open
+          const st = r.mic.state
+          if (open && st !== 'listening' && st !== 'starting' && words()) void r.listen()
+          if (!open && (st === 'listening' || st === 'starting')) r.stop()
+        }
+        mic.addEventListener('change', onMicChange)
+        const onRecruiterMic = (ev: Event) => {
+          if ((ev as CustomEvent<{ state: string }>).detail.state === 'listening' && !mic.open && mic.phase !== 'opening') void mic.listen()
+        }
+        r.addEventListener('mic', onRecruiterMic)
+        let heardId = 0
+        const onHeard = (ev: Event) => {
+          const t = (ev as CustomEvent<{ transcript: string }>).detail.transcript
+          if (parseRequest(t) === null) setHeard({ id: ++heardId, text: t })
+        }
+        r.addEventListener('heard', onHeard)
+        unlisten = () => {
+          mic.removeEventListener('change', onMicChange)
+          r.removeEventListener('mic', onRecruiterMic)
+          r.removeEventListener('heard', onHeard)
+        }
+        // A kept switch (the visitor left the microphone on) opens it as the city starts; a first visit waits for a press.
+        if (mic.opensAtBoot()) void mic.listen()
         // The opt-in network client (10_Network/netClient.ts): built over the page's own socket constructor, never
         // connected at boot, handed to the engine through its NetHost seam (the engine draws the room's poses as
         // ghosts and feeds the client player 1's input) and to the console through the bridge. The room's chat and
@@ -856,8 +923,10 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           if (haltClass(reason) === 'gpu-reset') inPage.noteGpuReset()
           void inPage.dispose()
           unfollow?.()
+          unlisten?.()
           tasks.dispose()
           r.dispose()
+          mic.close()
           setLocked(reason)
           // A graphics reset in the background restarts once the player is back (once per two minutes at most).
           if (haltClass(reason) === 'gpu-reset') unwatch = reloadWhenVisible(document.hidden)
@@ -963,6 +1032,12 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           recruit: recruitBridge(r),
           agent: agentBridge(roster, { recruit: (skill) => recruitBridge(r).ask(skill), wear: (agent, look) => e.setLook(agent, look), skills: () => SKILLS }),
           concierge: conciergeBridge(speaker),
+          mic: Object.freeze({
+            status: () => voiceStatus(mic, speaker.speaking, words()
+              ? r.mic.state === 'listening' ? 'on-device recognition listening (recruitment.ts): a skill asked for, or "Sloane, ..." for a goal' : 'on-device recognition available: it listens while the microphone is open'
+              : 'on-device recognition: none in this browser; the pill shows the level and speech only (recruit <skill> types a request)'),
+            on: (on: boolean) => (on ? mic.listen().then((st) => `${st.phase}${st.detail ? ` · ${st.detail}` : ''}`) : (mic.mute(), 'muted: the device is released')),
+          }),
           goal: (text: string) => goalPlan(text, engineBridge),
           memory: memoryBridge(memory, r),
           net: netBridge(e.net, pageStore(NET_TOKEN_KEY)),
@@ -1019,6 +1094,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
       unwatch()
       window.removeEventListener('resize', onResize)
       engineRef.current = null
+      unlisten?.()
+      mic.close()
       speaker.stop()
       link.source = null
       link.sound = () => true
@@ -1032,7 +1109,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
       if ((window as { recruit?: unknown }).recruit) delete (window as { recruit?: unknown }).recruit
       engine?.dispose()
     }
-  }, [options, plan, wearLook, link, roster, speaker])
+  }, [options, plan, wearLook, link, roster, speaker, mic, onMic])
 
   // The boot's failure first; else a halt that is not an audit. Words for this device (bootFailure.ts).
   const env = useMemo(() => pageEnv(), [])
@@ -1044,7 +1121,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
       {/* The picker's file input: no accept (a phone greys out a .gguf it has no type for), and hidden by its size
           and opacity, never by display, so every browser still opens it from a click. */}
       <input ref={fileRef} type="file" multiple tabIndex={-1} aria-hidden="true" className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0" />
-      <Hud s={hud} adapter={adapter} visible={hudVisible} terminalOpen={termOpen} mapLayer={engine?.mapLayer ?? null} />
+      <Hud s={hud} adapter={adapter} visible={hudVisible} terminalOpen={termOpen} mapLayer={engine?.mapLayer ?? null} mic={mic} onMic={onMic} />
       {engine && hud && !termOpen && (
         <TouchControls
           input={engine.input}
@@ -1061,6 +1138,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
             // The headset item only where a session can be asked for; the tap itself is the user activation.
             onHeadset: hud.supplier.xr.state === 'unsupported' ? undefined : () => engine.toggleXr(),
             headset: hud.supplier.xr.state === 'vr' || hud.supplier.xr.state === 'ar',
+            mic: hud.supplier.voice ? micIsOpen(hud.supplier.voice.phase) : false,
           }}
         />
       )}
@@ -1081,6 +1159,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           nudge={nudge}
           onGoal={onGoal}
           onSay={onSay}
+          heard={heard}
         />
       )}
       {hud && (

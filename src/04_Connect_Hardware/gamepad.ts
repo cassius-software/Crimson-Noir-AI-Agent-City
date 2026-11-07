@@ -55,7 +55,7 @@ export const PAD_TUNING = {
 } as const
 
 /** Edge bits returned by PadMapper.read(). */
-export const PAD_EDGE = { interact: 1, reset: 2, timeForward: 4, timeBack: 8, ping: 16 } as const
+export const PAD_EDGE = { interact: 1, reset: 2, timeForward: 4, timeBack: 8, ping: 16, mute: 32 } as const
 
 /**
  * Where a pad's `paddles` bits (web-hardware.d.ts GamepadLike; a DualSense Edge's Fn keys and back paddles) sit in
@@ -435,6 +435,8 @@ export class PadMapper {
       // The right shoulder: a ping, reachable with the thumbs on the sticks, walking or steering.
       if (rising & ((1 << PAD.r1) | PADDLE_RIGHT)) edges |= PAD_EDGE.ping
       if (rising & ((1 << PAD.l3) | PADDLE_LEFT)) l3 = true
+      // The right stick's click: the microphone's mute, a thumb that never leaves the stick (L3 is the run latch).
+      if (rising & (1 << PAD.r3)) edges |= PAD_EDGE.mute
       if (bits & (1 << PAD.east)) out.handbrake = true
       if (bits !== 0 || move > 0 || look > 0 || throttle > 0 || brake > 0) {
         any = true

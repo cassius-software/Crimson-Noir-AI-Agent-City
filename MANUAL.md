@@ -68,6 +68,7 @@ at all (see Track B under Ring-0 console).
 | Clock −1 h / +1 h | `[` `]` | D-pad left / right | Menu: Clock −1 h / +1 h |
 | Ghost view | G | | Menu: Ghost view |
 | Rain mode | M | | Menu: Rain mode |
+| Microphone on · mute (the HUD's pill does the same) | V | right-stick click | Menu: Microphone |
 | Hide HUD | H | | Menu: Hide HUD |
 | Ring-0 console | `~` (Backquote) | | Menu: Console (Close shuts it) |
 | A model file for the model in this page | `ask file` in the console, or drop the file on the city | | Menu: Model file |
@@ -533,7 +534,25 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   tier sounds like the operating system's own voices and no better; `sloane` in the console says which tier speaks.
 - **Pings and captions on the HUD.** The minimap rings every standing ping in its kind's colour, fading as it
   expires, and the newest shows as a chip over the world with what it asks, what it landed on and the distance (see
-  Pings and the rally). The chip goes with `H`; the caption strip and the MIC chip do not (see Spatial audio).
+  Pings and the rally). The chip goes with `H`; the caption strip and the microphone pill do not (see Spatial audio).
+- **The microphone pill and Sloane's ear** (`04_Connect_Hardware/microphone.ts`, `vad.ts`). A pill under the header
+  reads the microphone's state: **Mic off**, **Listening** (with a live meter of the room), **Hearing you**,
+  **Speaking** (Sloane talking over an open microphone), **Muted**, or why it could not open. It is a button: a press,
+  `V`, the right stick's click or the touch Menu's Microphone item opens the microphone (the browser asks its
+  permission the first time) or mutes it. Mute releases the device, so the browser's own microphone indicator goes
+  out with the pill's; the device is never open without the pill, which outlives `H` like REC. A first visit starts
+  with the microphone **off** until that first press: `MIC_OPEN_BY_DEFAULT` in `microphone.ts` is the one line that
+  would open it at boot instead. A visitor who turned it on and left it on finds it on again on the next visit; one
+  who muted it finds it off (key `civic-simulation:voice:v1`). Open, an on-device voice activity detector (energy over
+  the room's floor, zero crossings, spectral flatness, in an audio worklet where the browser has one and polled from
+  the page where it has not) drives the meter and the **Hearing you** state; speech starting while Sloane speaks cuts
+  her line (barge-in), and the browser's echo cancellation plus a margin in the detector keep Sloane's own voice from
+  counting as yours. Where the browser promises on-device speech recognition (see Recruitment), it runs while the
+  microphone is open and the pill adds **words on-device**: a skill asked for is the recruiter's, and a line that names
+  Sloane first ("Sloane, make it night") goes to the goal dialogue as if typed; with a question or the goal prompt
+  open on the card, whatever you say is the answer. Firefox has no on-device recognition, so there the pill shows the
+  level and speech only. No audio leaves the page: nothing is recorded, nothing is sent, and no speech model ships
+  with the page (no Whisper). `mic` in the console prints all of this; `mic on` and `mic off` are the switch.
 - **Glyphs:** every control hint follows the input in use. When a pad is picked up it switches silently to
   that pad's layout: the two letter layouts (A or B at the south button), numbered shoulders and stick clicks,
   or button positions (South, East, North) for a pad it does not recognise. On phones it switches to touch
@@ -893,7 +912,7 @@ while you type.
   `topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]`,
   `feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]`,
   `ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]`, `quality [auto|lite|peak|-1|0-5]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `xr [vr|ar|off]`, `render [on|off]`,
-  `captions [on|off]`, `ping [go|look|gather|wait|clear]`,
+  `captions [on|off]`, `mic [on|off]`, `ping [go|look|gather|wait|clear]`,
   `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
   `robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|remove <id>]`,
   `recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]`, `memory [<agent>|forget <agent>|forget all]`,
@@ -946,6 +965,10 @@ while you type.
   name none of it).
 - `captions [on|off]` turns the closed captions of every sound on or off (see Spatial audio); `?captions=0` starts
   them off.
+- `mic [on|off]` prints the microphone's state (its phase, the pill's word, which detector analyses the audio,
+  whether it opens at boot, and whether words are recognised on this device) or turns it on or off; `mic on` asks
+  the browser's permission inside the Enter keystroke, and `mic off` releases the device (see The microphone pill
+  under Onboarding and the spatial HUD).
 - `ping [go|look|gather|wait]` marks where you look, as `Q` does; `ping` alone lists the marks standing, and
   `ping clear` takes them off the board. A `go` or `gather` ping is offered to the recruiter as a rally the physics
   worker re-checks (see Pings and the rally).
@@ -1266,8 +1289,11 @@ tethered to you, part of your swarm, until the tether breaks.
   nobody, nor does a request turned down ("I don't need a Rust developer", "we aren't hiring"), and a bare
   "go" is a verb. A later request in the same breath still counts ("never mind, recruit a designer").
   `recruit listen` reports what happened: listening, or why not (permission refused, no model, no
-  microphone), and a failure also shows on the HUD. A blue **MIC** chip shows whenever the microphone
-  is open, even with the HUD hidden. `recruit install` is refused while the microphone is open.
+  microphone), and a failure also shows on the HUD. The recogniser runs whenever the microphone pill is open
+  (see The microphone pill under Onboarding and the spatial HUD), and `recruit listen` opens the pill's
+  microphone too: the pill reads **Listening · words on-device** whenever the recogniser is open, even with the
+  HUD hidden, and muting the pill (`V`) stops the recogniser. `recruit install` is refused while the microphone
+  is open.
 - **Without a microphone.** `recruit rust` in the console, or `recruit("Rust")` in the browser's
   developer console, makes the same request. The call returns a promise with the outcome.
 - **Who can hear you.** Only people within 5 m (`AUDIBLE_RADIUS`), standing on the sidewalk, on your
@@ -2251,7 +2277,7 @@ HRTF-panned sources:
   walk signal per axis, the recruitment cue, the ping cue, the cabin, speech with its words (`Pedestrian N
   (skill): …`, verbatim: what passed the 14A screen is what is read) and a peer's voice (captioned as a voice, not
   transcribed, since the page cannot transcribe a remote stream on-device) are all captioned. The strip sits
-  bottom-centre and outlives the `H` key, like the MIC chip. `captions off` or `?captions=0` turns it off.
+  bottom-centre and outlives the `H` key, like the microphone pill. `captions off` or `?captions=0` turns it off.
   `captions.test.ts` sweeps every string the module can produce through the same patterns as `compliance.test.ts`
   and the conduct screen. A sound without an event has no caption.
 - **Peer voices:** `attachPeer` places a `MediaStream` the network client hands in, under the peer's name, with

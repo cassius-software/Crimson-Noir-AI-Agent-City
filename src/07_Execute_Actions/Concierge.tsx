@@ -28,6 +28,7 @@ import { controlHints, isPadFamily, type GlyphFamily } from './glyphs.ts'
 import { GlyphKey } from './Hud.tsx'
 import type { Nudge } from '../09_Cognition/tutorial.ts'
 import { CONCIERGE_NAME } from './onboarding/script.ts'
+import { heardGoal } from './onboarding/heard.ts'
 
 /** The Concierge's name (onboarding/script.ts), for any other surface that mentions them. */
 export { CONCIERGE_NAME }
@@ -183,9 +184,17 @@ export interface ConciergeProps {
   onGoal?(): void
   /** Optional: Sloane's spoken voice (onboarding/speaker.ts): called with each line the card shows, as plain words. */
   onSay?(text: string): void
+  /**
+   * Optional: words the visitor said near the open microphone (the on-device recogniser's final transcript,
+   * 04_Connect_Hardware/microphone.ts beside 08_Swarm/recruitment.ts), each with its own id; a recruitment request
+   * never arrives here. An open question takes them as its answer and the open goal prompt as the goal; otherwise only
+   * a line that names Sloane first ("Sloane, make it night") opens the goal dialogue with the rest (onboarding/heard.ts),
+   * so the room's talk is never a goal. Each utterance is taken once.
+   */
+  heard?: { id: number; text: string } | null
 }
 
-export function Concierge({ visible, profile, onProfile, family, overlay = family === 'touch', driving, dark = false, settleMs = SLOANE.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal, onSay }: ConciergeProps) {
+export function Concierge({ visible, profile, onProfile, family, overlay = family === 'touch', driving, dark = false, settleMs = SLOANE.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal, onSay, heard = null }: ConciergeProps) {
   const small = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
   const short = useSyncExternalStore(SHORT.subscribe, SHORT.matches, SHORT.server)
   const landscape = useSyncExternalStore(LANDSCAPE.subscribe, LANDSCAPE.matches, LANDSCAPE.server)
@@ -332,6 +341,26 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
     open('goal')
     onGoal?.()
   }
+  // Words the visitor said (heard.ts decides what of them is Sloane's): an open question or goal prompt takes the line,
+  // else a line that names Sloane first opens the goal dialogue with the rest. After the render, so the host's hooks
+  // (onGoal) run outside it; each utterance once, by its id, and none while the card is hidden.
+  const heardRef = useRef(0)
+  const takeHeard = useEffectEvent((text: string) => {
+    if (!visible) return
+    const open = view === 'goal' && !dialogue.brief
+    const said = heardGoal(text, open)
+    if (said === null) return
+    if (open) reply(said)
+    else {
+      openGoal()
+      startGoal(said)
+    }
+  })
+  useEffect(() => {
+    if (!heard || heard.id === heardRef.current) return
+    heardRef.current = heard.id
+    takeHeard(heard.text)
+  }, [heard])
   const copyBrief = () => {
     const md = dialogue.brief?.markdown
     if (!md) return

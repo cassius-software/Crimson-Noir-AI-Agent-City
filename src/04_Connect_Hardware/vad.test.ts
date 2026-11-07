@@ -1,0 +1,214 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
+/**
+ * Why does this file exist? It is the evidence for the voice activity detector (vad.ts): a quiet room is never speech,
+ * a harmonic voice-like signal over the room is speech after the onset and stays through a short pause, broadband
+ * hiss at the same level is not, a shout that never ends becomes the room only slowly, the page speaking raises the
+ * bar, odd input (NaN, blocks of any size) never throws, the FFT is an FFT, and the worklet module the page builds
+ * from the class is valid JavaScript that registers a processor and detects speech in a stub AudioWorklet scope.
+ * What breaks if it is removed? A tuning change could make the pill read "Hearing you" to a fan, or never, with
+ * nothing to say so; or the serialised worklet could stop parsing after a build change.
+ */
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import { VAD, VAD_PROCESSOR, VadCore, vadWorkletSource } from './vad.ts'
+
+const SR = 48_000
+
+/** A deterministic noise source (xorshift), in −1..1. */
+function noise(seed = 1): () => number {
+  let s = seed >>> 0 || 1
+  return () => {
+    s ^= s << 13; s >>>= 0
+    s ^= s >>> 17
+    s ^= s << 5; s >>>= 0
+    return (s / 0xffffffff) * 2 - 1
+  }
+}
+
+/** `seconds` of a quiet room: white noise at `level` RMS. */
+function room(seconds: number, level = 0.003, seed = 7): Float32Array {
+  const n = Math.round(seconds * SR), out = new Float32Array(n), r = noise(seed)
+  // Uniform noise has RMS 1/√3: scale to the level asked.
+  const k = level * Math.sqrt(3)
+  for (let i = 0; i < n; i++) out[i] = r() * k
+  return out
+}
+
+/** `seconds` of a voice-like signal: a 140 Hz fundamental with eight harmonics, a little vibrato, at `level` RMS, over the room. */
+function voice(seconds: number, level = 0.08, seed = 11): Float32Array {
+  const n = Math.round(seconds * SR), out = room(seconds, 0.003, seed)
+  const f0 = 140
+  let sum = 0
+  const raw = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    const t = i / SR
+    const f = f0 * (1 + 0.02 * Math.sin(2 * Math.PI * 5 * t))
+    let v = 0
+    for (let h = 1; h <= 8; h++) v += Math.sin(2 * Math.PI * f * h * t + h) / h
+    raw[i] = v
+    sum += v * v
+  }
+  const k = level / Math.sqrt(sum / n)
+  for (let i = 0; i < n; i++) out[i] += raw[i] * k
+  return out
+}
+
+/** Hiss: white noise at a voice's level. */
+const hiss = (seconds: number, level = 0.08): Float32Array => room(seconds, level, 23)
+
+function concat(...parts: Float32Array[]): Float32Array {
+  const out = new Float32Array(parts.reduce((n, p) => n + p.length, 0))
+  let at = 0
+  for (const p of parts) { out.set(p, at); at += p.length }
+  return out
+}
+
+/** Feeds a signal in 128-sample blocks (as a worklet does) and records every boundary with the sample it fell on. */
+function run(core: VadCore, x: Float32Array, block = 128): { at: number; speech: boolean }[] {
+  const out: { at: number; speech: boolean }[] = []
+  for (let i = 0; i < x.length; i += block) {
+    core.push(x, i, Math.min(block, x.length - i))
+    if (core.changed) out.push({ at: i, speech: core.speech })
+  }
+  return out
+}
+
+test('the constructor takes the tuning, rounds the frame to a power of two, and refuses nonsense', () => {
+  const c = new VadCore(VAD)
+  assert.equal(c.frame, 512)
+  assert.equal(new VadCore({ frame: 500 }).frame, 512)
+  assert.equal(new VadCore({ frame: 1000 }).frame, 1024)
+  assert.equal(new VadCore({ frame: -5, energyRatio: 0, onsetFrames: 0, floorRise: 0.5 } as never).frame, 64)
+  const d = new VadCore({ energyRatio: 0, onsetFrames: 0, floorRise: 0.5 } as never)
+  assert.deepEqual([d.energyRatio, d.onsetFrames, d.floorRise], [2.5, 4, 1.004])
+})
+
+test('a quiet room is never speech; the level follows the room and the floor settles on it', () => {
+  const c = new VadCore(VAD)
+  const changes = run(c, room(3))
+  assert.deepEqual(changes, [])
+  assert.equal(c.speech, false)
+  assert.ok(c.frames > 250, `${c.frames} frames`)
+  assert.ok(c.rms > 0.001 && c.rms < 0.006, `level ${c.rms}`)
+  assert.ok(c.floor >= VAD.floor && c.floor < 0.006, `floor ${c.floor}`)
+})
+
+test('a voice over the room starts speech after the onset frames, survives a short pause, and ends after the release', () => {
+  const c = new VadCore(VAD)
+  const signal = concat(room(1), voice(0.8), room(0.15), voice(0.5), room(1.5))
+  const changes = run(c, signal)
+  assert.equal(changes.length, 2, JSON.stringify(changes))
+  const [start, end] = changes
+  assert.equal(start.speech, true)
+  assert.equal(end.speech, false)
+  // Started within the onset (4 frames of 512) plus a block of the voice beginning at 1 s.
+  const voiceAt = SR
+  assert.ok(start.at >= voiceAt && start.at <= voiceAt + VAD.onsetFrames * VAD.frame + 2 * VAD.frame, `started at ${start.at - voiceAt} samples in`)
+  // Ended after the release (24 frames) past the second voice's end at 1 + 0.8 + 0.15 + 0.5 s; the 150 ms pause was kept.
+  const voiceEnd = Math.round(2.45 * SR)
+  assert.ok(end.at >= voiceEnd + (VAD.releaseFrames - 1) * VAD.frame && end.at <= voiceEnd + (VAD.releaseFrames + 3) * VAD.frame, `ended ${end.at - voiceEnd} samples after`)
+})
+
+test('hiss at a voice\'s level is not speech: loud, but neither voiced nor tonal', () => {
+  const c = new VadCore(VAD)
+  const changes = run(c, concat(room(1), hiss(1.5), room(0.5)))
+  assert.deepEqual(changes, [], 'hiss')
+  const f = c.features()
+  assert.ok(f.zcr > VAD.zcrMax || f.flatness < VAD.flatnessMin, `zcr ${f.zcr} flatness ${f.flatness}`)
+})
+
+test('a voice that never stops becomes the room only slowly: the floor rises a little per silent frame, never during speech', () => {
+  const c = new VadCore(VAD)
+  run(c, concat(room(1), voice(4)))
+  assert.equal(c.speech, true, 'four seconds of voice is still speech')
+  assert.ok(c.floor < 0.01, `the floor stayed near the room: ${c.floor}`)
+})
+
+test('while the page is speaking, the bar is higher: a quiet voice that would start speech does not, a clear one does and the onset is doubled', () => {
+  const quiet = concat(room(1), voice(1, 0.009))
+  const a = new VadCore(VAD)
+  assert.equal(run(a, quiet).length, 1, 'a quiet voice over a quiet room is speech when nothing else is playing')
+  const b = new VadCore(VAD)
+  b.speaking = true
+  assert.deepEqual(run(b, quiet), [], 'the same voice under the speaking margin is not')
+  const c = new VadCore(VAD)
+  c.speaking = true
+  const changes = run(c, concat(room(1), voice(1)))
+  assert.equal(changes.length, 1)
+  assert.ok(changes[0].at >= SR + (VAD.onsetFrames * 2 - 1) * VAD.frame, `the onset doubled: ${changes[0].at - SR}`)
+})
+
+test('push takes any block size and any offset, ignores NaN and infinities, and reset forgets everything', () => {
+  const a = new VadCore(VAD), b = new VadCore(VAD)
+  const signal = concat(room(0.5), voice(0.6), room(0.8))
+  const fine = run(a, signal, 37)
+  const coarse = run(b, signal, 4096)
+  assert.equal(fine.length, 2)
+  assert.equal(coarse.length, 2)
+  assert.equal(a.frames, b.frames)
+  const odd = new Float32Array(2048)
+  odd.fill(Number.NaN, 0, 600)
+  odd[700] = Number.POSITIVE_INFINITY
+  odd[701] = Number.NEGATIVE_INFINITY
+  const c = new VadCore(VAD)
+  assert.equal(c.push(odd), 4)
+  assert.equal(c.speech, false)
+  assert.ok(Number.isFinite(c.rms) && Number.isFinite(c.floor))
+  assert.equal(c.push(odd, 1000, 5000), 2, 'a length past the end is cut to it')
+  run(c, voice(1))
+  assert.equal(c.speech, true)
+  c.reset()
+  assert.deepEqual([c.speech, c.frames, c.rms, c.floor, c.fill, c.run], [false, 0, 0, VAD.floor, 0, 0])
+})
+
+test('the FFT: a pure tone lands in its bin and nowhere else; the flatness of white noise is near 0 dB, of a tone far below', () => {
+  const n = 512
+  const re = new Float32Array(n), im = new Float32Array(n)
+  for (let i = 0; i < n; i++) re[i] = Math.cos((2 * Math.PI * 8 * i) / n)
+  VadCore.fft(re, im)
+  const mag = (k: number) => Math.hypot(re[k], im[k])
+  assert.ok(Math.abs(mag(8) - n / 2) < 1e-2, `bin 8: ${mag(8)}`)
+  assert.ok(Math.abs(mag(n - 8) - n / 2) < 1e-2, `bin ${n - 8}: ${mag(n - 8)}`)
+  for (let k = 0; k < n; k++) if (k !== 8 && k !== n - 8) assert.ok(mag(k) < 1e-2, `bin ${k}: ${mag(k)}`)
+  const flat = new VadCore(VAD)
+  flat.step(hiss(512 / SR, 0.1).subarray(0, 512))
+  assert.ok(flat.flatness < 3, `white noise flatness ${flat.flatness} dB`)
+  const tonal = new VadCore(VAD)
+  tonal.step(voice(512 / SR, 0.1).subarray(0, 512))
+  assert.ok(tonal.flatness > 10, `a harmonic voice ${tonal.flatness} dB below flat`)
+})
+
+test('the worklet module: VadCore by its runtime name, the processor registered under its name, and it detects speech in a stub scope', () => {
+  const src = vadWorkletSource(VAD, 4)
+  assert.ok(src.includes(`new ${VadCore.name}(`), 'the class by its own (possibly minified) name')
+  assert.ok(src.includes(`registerProcessor(${JSON.stringify(VAD_PROCESSOR)}`))
+  // A stub AudioWorkletGlobalScope: the module must run in it, register one processor, and that processor must post
+  // a level a few times a second and every boundary.
+  const registered: { name: string; ctor: new (o: unknown) => { process(inputs: Float32Array[][]): boolean; port: { onmessage: ((e: { data: unknown }) => void) | null; postMessage(m: unknown): void } } }[] = []
+  class AudioWorkletProcessor { port = { onmessage: null as ((e: { data: unknown }) => void) | null, posted: [] as unknown[], postMessage(m: unknown) { this.posted.push(m) } } }
+  const scope = {
+    AudioWorkletProcessor,
+    registerProcessor: (name: string, ctor: never) => { registered.push({ name, ctor }) },
+    currentTime: 0.5,
+  }
+  const fn = new Function(...Object.keys(scope), src)
+  fn(...Object.values(scope))
+  assert.equal(registered.length, 1)
+  assert.equal(registered[0].name, VAD_PROCESSOR)
+  const p = new registered[0].ctor({ processorOptions: {} })
+  const posted = (p.port as unknown as { posted: unknown[] }).posted
+  const signal = concat(room(0.5), voice(0.6), room(0.8))
+  for (let i = 0; i + 128 <= signal.length; i += 128) assert.equal(p.process([[signal.subarray(i, i + 128)]]), true)
+  const boundaries = posted.filter((m) => typeof (m as { speech?: unknown }).speech === 'boolean') as { speech: boolean }[]
+  assert.deepEqual(boundaries.map((b) => b.speech), [true, false])
+  const levels = posted.filter((m) => typeof (m as { speech?: unknown }).speech !== 'boolean').length
+  // 1.9 s is about 178 frames: a level every 4 frames is about 44 messages, far fewer than the 712 blocks.
+  assert.ok(levels > 30 && levels < 60, `${levels} level messages`)
+  // The page's commands: speaking raises the bar; reset forgets.
+  p.port.onmessage?.({ data: { speaking: true } })
+  p.port.onmessage?.({ data: { reset: true } })
+  assert.equal(p.process([[]]), true, 'no channel: nothing happens, the processor stays')
+  assert.equal(p.process([]), true)
+})

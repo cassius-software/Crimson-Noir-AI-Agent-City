@@ -118,6 +118,8 @@ test('edges fire once per press: A interact, Y reset, right shoulder ping, d-pad
   assert.equal(m.read([pad({ pressed: [PAD.r1] })], a), 0, 'held: no repeat')
   assert.equal(m.read([pad()], a), 0)
   assert.equal(m.read([pad({ pressed: [PAD.r1, PAD.south] })], a), PAD_EDGE.ping | PAD_EDGE.interact, 'pressed again, with another edge')
+  assert.equal(m.read([pad({ pressed: [PAD.r3] })], a), PAD_EDGE.mute, 'right stick click: the microphone')
+  assert.equal(m.read([pad({ pressed: [PAD.r3] })], a), 0, 'held: no repeat')
   assert.equal(m.read([pad({ pressed: [PAD.west, PAD.l1, PAD.start, PAD.select] })], a), 0, 'unmapped buttons')
 })
 

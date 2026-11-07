@@ -8,7 +8,7 @@
  * foot, Brake, Handbrake and Reset while driving, and Ping (a mark where the head looks) in both modes. A Menu
  * button beside them opens what a keyboard reaches with one key and a phone has no key for: the Ring-0 console (and
  * through it `ask`, the agents and every setting), the model file kept in this page (the browser's file picker), the
- * clock an hour back or on, ghost view, rain mode, and hiding the HUD. Only its own controls take pointer events, so
+ * clock an hour back or on, ghost view, rain mode, the microphone, and hiding the HUD. Only its own controls take pointer events, so
  * the rest of the HUD stays click-through. After every layout it measures what it drew and judges it by the rule book
  * (touchLayout.ts: finger-sized, on the size ladder, clear of each other and of the system's swipe bands), and says
  * so in its `data-touch-layout` attribute, which the browser smoke test reads at every phone size.
@@ -94,6 +94,8 @@ export interface TouchMenuHost {
   /** Enters or leaves the headset (WebXR), inside the tap; absent where no immersive session can be asked for. */
   onHeadset?: () => void
   headset?: boolean
+  /** The microphone (microphone.ts) as the last snapshot reported it: open (true) or not, so its item reads On or Off. */
+  mic?: boolean
 }
 
 interface Props { input: Input; driving: boolean; nearVehicle: boolean; menu?: TouchMenuHost }
@@ -408,6 +410,8 @@ function MenuSheet({ input, host, at, onClose }: { input: Input; host: TouchMenu
     { label: 'Clock +1 h', run: () => input.press('timeForward'), keep: true },
     { label: 'Ghost view', on: host.ghost, run: () => input.press('ghost') },
     { label: 'Rain mode', on: host.rain, run: () => input.press('matrix') },
+    // The microphone: the same press as V and the right stick's click (the engine hands it to the host's switch).
+    { label: 'Microphone', on: host.mic === true, run: () => input.press('mute') },
     ...(host.onHeadset ? [{ label: 'Headset', on: host.headset === true, run: host.onHeadset }] : []),
     { label: host.hudVisible ? 'Hide HUD' : 'Show HUD', run: host.onHud },
   ]

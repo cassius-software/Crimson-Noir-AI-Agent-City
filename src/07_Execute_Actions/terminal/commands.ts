@@ -34,8 +34,8 @@
  * What breaks if it is removed? The terminal cannot interpret a single line.
  */
 import type {
-  ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, EliteWrites, ExecResult, GateTether, GoalPlan, HalDevice, HarnessReport, LookBridge, LookChange, MemoryBridge, MindStatus, ModelBridge,
-  NetBridge, NetReport, OperatorBridge, PendingAct, Piece, PingKind, PingPick, RecordBridge, RecruitBridge, Ring0Stats, RobotConsole, RobotRow, RunResult, SayResult, TerminalBridge, TopicBridge, VoiceStatus,
+  ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, EliteWrites, ExecResult, GateTether, GoalPlan, HalDevice, HarnessReport, LookBridge, LookChange, MemoryBridge, MicBridge, MindStatus,
+  ModelBridge, NetBridge, NetReport, OperatorBridge, PendingAct, Piece, PingKind, PingPick, RecordBridge, RecruitBridge, Ring0Stats, RobotConsole, RobotRow, RunResult, SayResult, TerminalBridge, TopicBridge, VoiceStatus,
 } from './bridge.ts'
 import type { QualityState, RecordingState } from '../../05_Observe_Environment/telemetry.ts'
 import type { SwarmReport, SwarmStatus } from '../../08_Swarm/orchestrator.ts'
@@ -106,6 +106,7 @@ const CORE = [
   { name: 'look', usage: 'look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]', summary: "your look from the crowd's wardrobe (body, height, mass, muscle, shoulders, hips, legs, posture, head, skin, hair, top, bottom, shirt, shoes, tie, eyewear, bag, cup)" },
   { name: 'agent', usage: 'agent [new <name>|<name> pronouns|role|voice|look|name <value...>|hire <name> [<skill>]|dismiss <name>|forget <name>|voices]', summary: 'your own agents: name, pronouns, role, voice and look; hire one into a pedestrian with a skill (they answer ask and say as themselves)' },
   { name: 'sloane', usage: 'sloane [on|off|voice <name>|voices|say <text...>]', summary: "the concierge's spoken voice: the speech provider's voice at your own head when say has one, else the browser's offline voice" },
+  { name: 'mic', usage: 'mic [on|off]', summary: "the microphone: the HUD's pill, the on-device voice detector and barge-in over Sloane; off until pressed, and mute releases the device (V, the right stick's click, the pill, the touch Menu)" },
   { name: 'goal', usage: 'goal <words...>', summary: 'tell the city a goal in plain words, as you would tell Sloane: what can be done now is done, the rest is explained' },
   { name: 'hal', usage: 'hal [pair hid|serial|ble]', summary: 'hardware bus devices; pair a controller' },
   { name: 'robot', usage: 'robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|remove <id>]', summary: 'the robots: physical ones over HAL/1 or the loopback relay, simulated ones from a URDF file; their bodies in the physics realm as twins or leaders, every setpoint through the gate (relay, spawn, urdf, arm and calibrate are the operator\'s)' },
@@ -217,6 +218,7 @@ const ARGS: Record<string, readonly string[]> = {
   look: [...LOOK_ACTIONS, ...LOOK_SLOT_ARGS].sort(),
   agent: ['dismiss', 'forget', 'hire', 'new', 'voices'],
   sloane: ['off', 'on', 'say', 'voice', 'voices'],
+  mic: ['off', 'on'],
   'look body': LOOK_BODY_ARGS,
   'look hairStyle': ['bald', 'bob', 'bun', 'long', 'short'],
   'look undertone': ['cool', 'neutral', 'olive', 'warm'],
@@ -361,6 +363,12 @@ function conciergeOf(b: TerminalBridge): ConciergeBridge {
   const c = b.concierge
   if (!c) throw new Error('the concierge is not available on this bridge')
   return c
+}
+
+function micOf(b: TerminalBridge): MicBridge {
+  const m = b.mic
+  if (!m) throw new Error('the microphone is not available on this bridge')
+  return m
 }
 
 const AGENT_FIELDS = ['pronouns', 'role', 'voice', 'look', 'name'] as const
@@ -1060,6 +1068,23 @@ const HANDLERS: Record<Name, Handler> = {
     if (!value) return fail('usage: sloane say <text...>')
     const pending = c.say(value).then((t) => [sys(`sloane: ${t}`)], (e: unknown) => [err(`sloane: ${message(e)}`)])
     return { lines: [], pending }
+  },
+
+  /** The microphone (04_Connect_Hardware/microphone.ts): the pill's state, or the switch (on asks the browser, inside this keydown). */
+  mic(args, b) {
+    if (args.length > 1) return fail(usage('mic'))
+    const a = args[0]
+    if (a !== undefined && a !== 'on' && a !== 'off') return fail(`mic: invalid argument '${a}'`, usage('mic'))
+    let m: MicBridge
+    try {
+      m = micOf(b)
+    } catch (e) {
+      return fail(`mic: ${message(e)}`)
+    }
+    if (a === undefined) return { lines: m.status().map(out) }
+    const r = m.on(a === 'on')
+    if (typeof r === 'string') return { lines: [out(`mic: ${r}`)] }
+    return { lines: [], pending: r.then((line) => [sys(`mic: ${line}`)], (e: unknown) => [err(`mic: ${message(e)}`)]) }
   },
 
   /** A goal in plain words: the host plans it as Sloane would (06_Make_Decisions/intent.ts) and applies what it can now. */

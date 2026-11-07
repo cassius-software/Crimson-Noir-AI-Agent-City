@@ -166,6 +166,10 @@ export class ConciergeSpeaker {
   #cuts = 0
   /** The last tier that spoke, for the console. */
   #last: Tier = 'silent'
+  /** Lines being said aloud now: 0 or 1, but for the instant a new line cuts the last. */
+  #aloud = 0
+  /** Told as Sloane starts (true) and stops (false) speaking aloud, once per change (onSpeaking). */
+  readonly #ears = new Set<(on: boolean) => void>()
 
   constructor(o: SpeakerOptions) {
     this.#env = o.env
@@ -177,6 +181,17 @@ export class ConciergeSpeaker {
 
   settings(): ConciergeSettings { return this.#settings }
   get lastTier(): Tier { return this.#last }
+  /** Whether a line is being said aloud now (either tier). */
+  get speaking(): boolean { return this.#aloud > 0 }
+
+  /**
+   * Tells `fn` as Sloane starts (true) and stops (false) speaking aloud, once per change: the microphone's barge-in
+   * and its pill's word (App wires it to 04_Connect_Hardware/microphone.ts setSpeaking). Returns the way to stop.
+   */
+  onSpeaking(fn: (on: boolean) => void): () => void {
+    this.#ears.add(fn)
+    return () => { this.#ears.delete(fn) }
+  }
 
   setOn(on: boolean): boolean {
     this.#settings = Object.freeze({ ...this.#settings, on: on === true })
@@ -210,26 +225,32 @@ export class ConciergeSpeaker {
     const line = text.replace(/\s+/g, ' ').trim()
     if (!line || signal?.aborted) return 'silent'
     let tier = this.tier()
-    if (tier === 'provider') {
-      try {
-        await this.#provider(line, signal)
-        this.#last = 'provider'
-        return 'provider'
-      } catch {
-        // The provider failed (down, refused, no such voice): the browser's voice, so the line is still heard. A line
-        // cut on the way (the next line, an abort) is not said at all, nor one whose sound went off meanwhile (the
-        // soundscape refusing to decode is often why the provider failed).
-        if (signal?.aborted || cuts !== this.#cuts) return 'silent'
-        tier = this.#sound() && this.#settings.on && this.browserVoices().length ? 'browser' : 'silent'
+    if (tier === 'silent') {
+      this.#last = 'silent'
+      return 'silent'
+    }
+    return this.#saying(async () => {
+      if (tier === 'provider') {
+        try {
+          await this.#provider(line, signal)
+          this.#last = 'provider'
+          return 'provider'
+        } catch {
+          // The provider failed (down, refused, no such voice): the browser's voice, so the line is still heard. A line
+          // cut on the way (the next line, an abort) is not said at all, nor one whose sound went off meanwhile (the
+          // soundscape refusing to decode is often why the provider failed).
+          if (signal?.aborted || cuts !== this.#cuts) return 'silent'
+          tier = this.#sound() && this.#settings.on && this.browserVoices().length ? 'browser' : 'silent'
+        }
       }
-    }
-    if (tier === 'browser') {
-      await this.#browser(line, signal)
-      this.#last = 'browser'
-      return 'browser'
-    }
-    this.#last = 'silent'
-    return 'silent'
+      if (tier === 'browser') {
+        await this.#browser(line, signal)
+        this.#last = 'browser'
+        return 'browser'
+      }
+      this.#last = 'silent'
+      return 'silent'
+    })
   }
 
   /**
@@ -243,19 +264,35 @@ export class ConciergeSpeaker {
     const line = text.replace(/\s+/g, ' ').trim()
     if (!line || !this.#sound()) return 'silent'
     const profile = voiceProfile(voice)
-    if (profile === null && this.#source() !== null) {
-      try {
-        await this.#provider(line, undefined, voice)
-        this.#last = 'provider'
-        return 'provider'
-      } catch {
-        if (cuts !== this.#cuts) return 'silent'
+    return this.#saying(async () => {
+      if (profile === null && this.#source() !== null) {
+        try {
+          await this.#provider(line, undefined, voice)
+          this.#last = 'provider'
+          return 'provider'
+        } catch {
+          if (cuts !== this.#cuts) return 'silent'
+        }
       }
+      if (!this.#sound() || !this.browserVoices().length) return 'silent'
+      await this.#browser(line, undefined, profile ?? voiceProfile('even'))
+      this.#last = 'browser'
+      return 'browser'
+    })
+  }
+
+  /** Runs a line as speech: `speaking` is true from its first sound to its end, and onSpeaking is told at each edge. */
+  async #saying<T>(run: () => Promise<T>): Promise<T> {
+    if (++this.#aloud === 1) this.#tell(true)
+    try {
+      return await run()
+    } finally {
+      if (--this.#aloud === 0) this.#tell(false)
     }
-    if (!this.#sound() || !this.browserVoices().length) return 'silent'
-    await this.#browser(line, undefined, profile ?? voiceProfile('even'))
-    this.#last = 'browser'
-    return 'browser'
+  }
+
+  #tell(on: boolean): void {
+    for (const fn of this.#ears) { try { fn(on) } catch { /* a listener's fault is not the line's */ } }
   }
 
   stop(): void {

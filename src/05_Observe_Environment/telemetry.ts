@@ -7,6 +7,7 @@
  * serialize it as a Sparkplug B metric set without renaming anything.
  * What breaks if it is removed? The HUD loses its readouts and frame-time budgets go unmeasured.
  */
+import type { MicPhase } from '../04_Connect_Hardware/microphone.ts'
 import type { XrState } from '../04_Connect_Hardware/xrSystem.ts'
 
 export class FrameClock {
@@ -184,6 +185,13 @@ export interface SipocSnapshot {
      * recognition), and one line about the Active swarm's skills and who is coming over (or the last outcome).
      */
     recruiting?: { listening: boolean; line: string }
+    /**
+     * The microphone (04_Connect_Hardware/microphone.ts), added by the host: its phase and detail for the HUD's pill
+     * (the browser's own indicator is never on without it), whether the page itself is speaking (Sloane; the pill
+     * reads Speaking), which detector analyses the audio ('worklet', 'page' or 'none'), and whether on-device speech
+     * recognition is running beside it (`words`; Firefox has none, so the pill shows level and speech only).
+     */
+    voice?: { phase: MicPhase; detail: string; speaking: boolean; path: 'worklet' | 'page' | 'none'; words: boolean }
   }
   input: { mode: 'foot' | 'vehicle'; nearVehicle: boolean }
   process: {

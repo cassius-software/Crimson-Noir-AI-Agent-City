@@ -402,6 +402,8 @@ export interface TerminalBridge {
   agent?: AgentBridge
   /** Absent until the host has a concierge that can speak (the terminal then says so). */
   concierge?: ConciergeBridge
+  /** Absent until the host holds the microphone (04_Connect_Hardware/microphone.ts; the terminal then says so). */
+  mic?: MicBridge
   /** A goal in plain words, planned as Sloane plans one (06_Make_Decisions/intent.ts) with what can be done now done; absent in the console shell. */
   goal?(text: string): GoalPlan
 }
@@ -457,6 +459,16 @@ export interface AgentBridge {
   forget(name: string): string
   /** The twelve voice profiles, one line each. */
   voices(): string[]
+}
+
+/**
+ * The microphone (04_Connect_Hardware/microphone.ts): the state the HUD's pill shows, and the switch. `on(true)` opens
+ * the device (the browser asks its permission; called synchronously inside the Enter keydown, the user activation)
+ * and resolves to the outcome; `on(false)` releases it. The audio never leaves the page.
+ */
+export interface MicBridge {
+  status(): string[]
+  on(on: boolean): string | Promise<string>
 }
 
 /** Sloane's spoken voice (onboarding/speaker.ts): the switch, the browser voice preferred, the tier a line takes, a line said now. */

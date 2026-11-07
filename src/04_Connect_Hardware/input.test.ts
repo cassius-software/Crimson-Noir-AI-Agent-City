@@ -221,6 +221,32 @@ test('ping: Q, the middle mouse button and the right shoulder queue one edge eac
   assert.equal(input.take('ping'), true, 'the touch button and the harness press it')
 })
 
+test('mute: V and the right stick click queue one edge each (M is rain mode, L3 the run latch); a field and a held key never do', () => {
+  doc.dispatchEvent(ev('keydown', { code: 'KeyV', repeat: false }))
+  assert.equal(input.take('mute'), true)
+  assert.equal(input.take('mute'), false, 'one edge per press')
+  doc.dispatchEvent(ev('keydown', { code: 'KeyV', repeat: true }))
+  assert.equal(input.take('mute'), false, 'a held key repeats nothing')
+  const typed = ev('keydown', { code: 'KeyV', repeat: false })
+  Object.defineProperty(typed, 'target', { value: { tagName: 'TEXTAREA' } })
+  doc.dispatchEvent(typed)
+  assert.equal(input.take('mute'), false, 'typing in a field')
+  doc.dispatchEvent(ev('keydown', { code: 'KeyM', repeat: false }))
+  assert.equal(input.take('mute'), false, 'M is not the microphone')
+  assert.equal(input.take('matrix'), true)
+  pads.push(pad({ pressed: [PAD.r3] }))
+  input.poll(1 / 60)
+  assert.equal(input.take('mute'), true, 'right stick click')
+  input.poll(1 / 60)
+  assert.equal(input.take('mute'), false, 'held')
+  pads.length = 0
+  pads.push(pad({ pressed: [PAD.l3] }))
+  input.poll(1 / 60)
+  assert.equal(input.take('mute'), false, 'L3 is the run latch, not the microphone')
+  input.press('mute')
+  assert.equal(input.take('mute'), true, 'the pill and the harness press it')
+})
+
 test('a touch laptop: a finger brings the touch overlay, the mouse moving again puts it away', () => {
   assert.equal(input.touch, false, 'no coarse pointer here')
   canvas.dispatchEvent(ev('pointerdown', { pointerId: 7, pointerType: 'touch', button: 0, buttons: 1, clientX: 10, clientY: 10 }))

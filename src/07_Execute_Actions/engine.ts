@@ -608,6 +608,11 @@ export class Engine {
    * realm decides on its own readings. Null: a ping is a mark and nothing more. The engine never sends a rally itself.
    */
   onRally: ((request: RallyRequest) => void) | null = null
+  /**
+   * The host's microphone switch (App.tsx: 04_Connect_Hardware/microphone.ts toggle), called once per press of V, the
+   * right stick's click (R3) or the touch Menu's item. Null: the press goes nowhere. The engine never opens a microphone.
+   */
+  onMute: (() => void) | null = null
   /** Real-time end of the current haptic thump (ms, rAF clock). */
   private pulseUntil = 0
   private readonly foot: FootControls = { x: 0, z: 0, heading: 0 }
@@ -1772,6 +1777,7 @@ export class Engine {
     if (input.take('timeBack')) { this.hours = (this.hours + 23) % 24; this.toast('Clock', formatClock(this.hours)) }
     if (input.take('ghost')) this.toast('Ghost view', this.setGhost(!this.ghost.on))
     if (input.take('matrix')) this.toast('Matrix mode', this.setMatrix(!this.matrixOn))
+    if (input.take('mute')) this.onMute?.()
     if (input.take('reset') && driving >= 0) sim.send({ c: 'reset' })
     // The other seats' doors and resets, each for its own avatar (their pads queue them on their own intents). In a
     // network room only player 1 drives (simCore.ts 'interact'): the others' presses are taken and go nowhere.
