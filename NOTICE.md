@@ -70,6 +70,11 @@ None. No Reserved Material of this product is designated as Licensed Material.
   introduced in the short story "Runaround" (1942). The concept is credited to Isaac Asimov; the
   wording of the laws in this product is original and reproduces none of his text. This product is
   not affiliated with or endorsed by his estate.
+- **Monk Skin Tone Scale.** Ten of the character customizer's skin tones (`mst-01` to `mst-10`,
+  `src/03_Spawn_Agents/look.ts` and `crowd.ts`) are the Monk Skin Tone Scale developed by Dr. Ellis Monk and
+  published by Google under the Creative Commons Attribution 4.0 International licence (CC BY 4.0). The ten
+  colour values are used as published, unmodified; the
+  scale is credited to Dr. Ellis Monk. This product is not affiliated with or endorsed by him or by Google.
 - **Motion blur.** The cinema camera's shutter reconstructs motion blur with the tile-based filter published
   by Morgan McGuire, Padraic Hennessy, Michał Bukowski and Brian Osman ("A Reconstruction Filter for Plausible
   Motion Blur", I3D 2012) and the direction-aware gather of Jean-Philippe Guertin, Morgan McGuire and Derek

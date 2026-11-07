@@ -15,6 +15,29 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The ten Monk skin tones, vitiligo, freckles and body builds, on a look genome of sixteen words.** The character
+  customizer's look (`src/03_Spawn_Agents/look.ts`) grows from four packed words to a genome of sixteen
+  (`LOOK_WORDS`): words 0 to 3 are the look, figure, face and wardrobe words exactly as they were, word 4 is a new
+  skin word, and words 5 to 15 are spare (zero, and refused otherwise). Every field of the later words is 0 for "as
+  before", so every stored look (records v1 to v4), every look code (28, 21, 15 and 8 symbols) and every roster look
+  reads back as the same look, and a look without the new fields keeps its exact code. The skin slot holds the eight
+  older tones and then the ten tones of the Monk Skin Tone Scale (`mst-01` to `mst-10`; Dr. Ellis Monk, published by
+  Google under CC BY 4.0, credited in `NOTICE.md`); the street's hash now draws everyone from the Monk tones evenly,
+  so the two deepest tones, which no pedestrian wore before, are as common as the lightest. **Vitiligo** (six
+  patterns: hands, face, hands and face, scattered, widespread, one side) and **freckles** (light, medium, dense) are
+  painted by the crowd's fragment stage from the rest position (two octaves of value noise for the patches, one dot at
+  most per 1.6 cm cell for the freckles, thickest over the cheeks and nose, never on a paled patch), each under its own
+  branch so a person without them pays nothing; two pedestrians in a hundred have vitiligo and about one in six
+  freckles. A **Build** row (slight, lean, athletic, muscular, broad, stocky, soft, full) sets the mass, muscle,
+  shoulder and hip sliders together, on the card and as `look build <name>` at the console. `crowd.figure` becomes
+  four quads a person (64 bytes: the figure, face and wardrobe words with the rig slot word, then genome words 4 to
+  15), the vertex stage still binds seven storage buffers, and the skin word reaches the fragment as one flat integer
+  varying (`@interpolate(flat)`, not three's `flat, either`). A look code with a skin word grows a tail of eight
+  symbols with its own check, and its head's check then covers every word, so the head alone is refused instead of
+  read in an older tone. The stored record is v5. Pinned by `look.test.ts` (the genome's layout and round trip,
+  the hashed crowd's odds and the shader's links, the codes with and without a tail, the builds) and
+  `lookWiring.test.ts` (the buffer, the varying, the engine's record and the v4 record read as it is).
+
 - **Every street lamp near you is a real light, and every workplace has a lit ceiling.** The city's night lighting
   moves to three r186's clustered (Forward+) lighting (`src/01_Initialize_World/cityLights.ts`): the lamps' point
   lights live in a texture, a compute pass bins them once a render into a 48 × 27 × 24 grid of view-frustum cells,

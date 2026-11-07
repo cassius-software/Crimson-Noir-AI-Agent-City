@@ -607,17 +607,18 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   body (past the level-of-detail cut) leave them out, so the shadow shader and the distant crowd cost what they
   did. The iris keeps the colour the street's hash gives it (the words have no room for it).
 - **The wardrobe** (`03_Spawn_Agents/look.ts`) is the crowd's own, and closed by construction. A look is
-  thirty-two slots: the body, eight body sliders (height, mass, muscle, shoulders, hips, legs, posture, head),
-  seven face sliders (brow, jaw, chin, cheek, nose, eyes, lips), and the sixteen dress slots (skin, age,
-  undertone, hair style, hair colour, layer, top, trim, bottom, shirt, shoes, tie, scarf, eyewear, bag, cup), every
+  thirty-four slots: the body, eight body sliders (height, mass, muscle, shoulders, hips, legs, posture, head),
+  seven face sliders (brow, jaw, chin, cheek, nose, eyes, lips), and the eighteen dress slots (skin, age,
+  undertone, vitiligo, freckles, hair style, hair colour, layer, top, trim, bottom, shirt, shoes, tie, scarf, eyewear, bag, cup), every
   one an index into the crowd's catalogue: the four bodies `crowd.ts` draws (suit, smart casual, pantsuit, skirt
   suit), its eleven optional pieces (tie, bag, cup, long hair, glasses, the hair cap, a bob, a bun, the face, a
   coat, a scarf), its twenty-one colour palettes verbatim (`look.test.ts` reads them out of `crowd.ts`'s source, so
   they cannot drift), the ninth hair colour the shader mixes in, and the sliders' steps. The height is 32 steps from 1.50 m to 2.05 m; mass, muscle,
   shoulders, hips, leg length, posture and the seven face sliders are sixteen steps each; the head and the age
   eight. The module ships no colour, piece or body of its own, so nothing stored, typed or shared can dress anyone
-  in anything the crowd does not wear today: `validateLook` accepts nothing but an object with exactly those slots,
-  each within its body's options. A look kept before the layers existed (twenty-nine slots) is upgraded on the way
+  in anything the crowd does not wear today: `validateLook` accepts nothing but an object with those slots, each
+  within its body's options (the genome's later slots, vitiligo and freckles, may be left out and read as none). A
+  look kept before the layers existed (twenty-nine slots) is upgraded on the way
   in with the jacket, a matching trim and no scarf (`upgradeFaceLook`); one kept before the face existed (twenty
   slots) with the base face, the middle age and a neutral undertone, its hair style carried (`upgradeFigureLook`);
   one kept before the sliders existed (fourteen slots, with `build`) has its height and build carried onto the new
@@ -637,6 +638,21 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   street's hash dresses one pedestrian in five in shirt sleeves, three in twenty in a coat, one in five with a
   contrast trim and three in twenty-five with a scarf. The slot a band of the body paints is now one slot per band
   (the lower ring's, flat): a jacket's hem over the trousers no longer shows the slots numbered between them.
+- **Skin and build.** The **Skin** row holds the eight tones the crowd wore first and, after them, the ten tones of
+  the Monk Skin Tone Scale (`mst-01`, lightest, to `mst-10`, deepest; the scale is Dr. Ellis Monk's, published by
+  Google under CC BY 4.0, credited in `NOTICE.md`). The street's hash now dresses everyone in a Monk tone, the ten
+  evenly, so the deepest tones the crowd never wore before are as common as the lightest; the older eight stay for
+  looks that chose them. **Vitiligo** (none, hands, face, hands and face, scattered, widespread, one side) pales
+  patches of the skin toward a milky cream, two octaves of value noise over the body's rest position past an edge
+  the pattern sets, so a patch keeps its place as the person walks and shows clearly on a deep tone and softly on a
+  light one, as it does. **Freckles** (none, light, medium, dense) are dots of about a centimetre and a half, thickest
+  over the cheeks and the nose, fewer on the rest of the face, the hands and the neck, never on a paled patch; the
+  far body keeps the patches and drops the freckles. Where on a person they fall is the person's own (an offset from
+  their seed, like the iris), so two people wearing one code are not marked alike. Two pedestrians in a hundred have
+  vitiligo and about one in six freckles, whatever their tone. A **Build** row heads the body sliders: eight frames
+  (slight, lean, athletic, muscular, broad, stocky, soft, full: the somatotypes' span in plain words) that set mass,
+  muscle, shoulders and hips together; any slider moved after is your own, and the height is never a build's.
+  `look build athletic` does the same at the console.
 - **The four words.** `packLook` folds the body, the pieces, the colours, the age and the undertone into one
   unsigned 32-bit word (bit 6 says the hair is long, written from the style; the top bit is spare), `packFigure`
   the eight body sliders into a second, `packFace` the seven face sliders and the hair style into a third and
@@ -646,7 +662,12 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   already binds seven of the eight storage buffers WebGPU promises every device): the body materials read them in
   place of the hash, and the page's cull reads the body out of the first to pick what to draw. No simulation pass
   binds any of them, so nothing of a look reaches the pedestrians' motion, the First-Law sensing, the protocol or
-  the physics worker. `lookFromSeed(i)` reproduces, bit for bit, the choice the crowd's hash makes for agent `i`,
+  the physics worker. Those four are the first of a **look genome** of sixteen words (`LOOK_WORDS`): word 4, the skin
+  word, holds the skin's high bits (a Monk tone is option 8 and up), vitiligo and freckles, and words 5 to 15 are
+  spare and must be zero. Every field of the later words is 0 for "as before", so a look of the older layouts is the
+  same look with them zero, and the crowd draws it the same. `crowd.figure` holds sixteen words a person (the
+  figure, face and wardrobe words, the rig slot word, then the genome's words 4 to 15); the fragment stage reads the
+  skin word through one flat varying. `lookFromSeed(i)` reproduces, bit for bit, the choice the crowd's hash makes for agent `i`,
   sliders, face, hair style, age, undertone, layer, trim and scarf included (the hashed crowd draws its stature
   from a per-body range, men 1.64 m to 2.00 m and women 1.55 m to 1.87 m, and every other slider over its whole
   range; a woman's hair that is not short is long, a bob or a bun in thirds, one man in twenty-five is bald), so an
@@ -655,7 +676,10 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   sees over a short one.
 - **Codes and presets.** A look code is twenty-eight symbols, `XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX`, from an alphabet
   without I, L, O and U, carrying the four words and a CRC-8 over them: it can be written down and shared, and
-  `parseLookCode` ignores case, the dashes and spaces and refuses any single mistyped symbol. A twenty-one-symbol
+  `parseLookCode` ignores case, the dashes and spaces and refuses any single mistyped symbol. A look whose genome's
+  later words are not all zero (a Monk tone, vitiligo, freckles) adds a tail of eight symbols per word with its own
+  check, `-XXXXXXXX`, and its head's check then covers every word, so the head cut off alone is refused rather than
+  read as the look in an older tone; a look without them keeps the very code it always had. A twenty-one-symbol
   code from before the layers, a fifteen-symbol code from before the face, and an eight-symbol code from before the
   sliders, still read, upgraded the same way as a stored look. Eight named presets, two per body (navy suit,
   charcoal suit, camel blazer, navy blazer, burgundy pantsuit, cream pantsuit, navy skirt suit, camel skirt suit),
@@ -675,8 +699,10 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   button or Done puts it away.
 - **Kept here.** The look is kept in this browser only (`localStorage`, key `civic-simulation:look:v1`,
   `05_Observe_Environment/lookStore.ts`), separate from the profile, so a renamed visitor keeps their outfit;
-  every stored value goes through `validateLook` on the way in. The record's `v` names its layout: 3 is written
-  now; a 2 (the twenty slots before the face) and a 1 (the fourteen slots) are read and upgraded.
+  every stored value goes through `validateLook` on the way in. The record's `v` names its layout: 5 is written
+  now; a 4 (the thirty-two slots before the skin word) reads as it is with no vitiligo and no freckles, and a 3 (the
+  twenty-nine slots before the layers), a 2 (the twenty slots before the face) and a 1 (the fourteen slots) are read
+  and upgraded.
 - **Your agents** (`08_Swarm/roster.ts`). The card's second row of tabs holds the agents you make your own, at most
   twelve: type a name (one word, screened under 14A like any name the city shows) and press Add. Each tab sets their
   pronouns (they/them, she/her, he/him, any), a role in your words (one line, at most 48 characters, held to the same

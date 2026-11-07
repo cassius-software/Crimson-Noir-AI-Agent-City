@@ -51,8 +51,8 @@ import { SIGNAL, signalFor, walkAllowed } from '../02_Define_The_Rules/civic.ts'
 import { LAWS } from '../02_Define_The_Rules/laws.ts'
 import { airgapInstalled } from '../02_Define_The_Rules/airgap.ts'
 import { kernelPanic } from '../02_Define_The_Rules/ring0Panic.ts'
-import { CrowdView } from '../03_Spawn_Agents/crowd.ts'
-import { heightScale, LOOK_NONE, packFace, packFigure, packLook, packWardrobe, unpackLook, validateLook, type Look } from '../03_Spawn_Agents/look.ts'
+import { CrowdView, FIGURE_QUADS } from '../03_Spawn_Agents/crowd.ts'
+import { heightScale, LOOK_NONE, LOOK_WORDS, packGenome, packLook, unpackGenome, validateLook, type Look } from '../03_Spawn_Agents/look.ts'
 import type { ConciergeOut } from './onboarding/speaker.ts'
 import { CONCIERGE_NAME as CONCIERGE_LABEL } from './onboarding/script.ts'
 import { packFrustumPlanes, PLAYER_INDEX, type CrowdStats, type CullSettings } from '../03_Spawn_Agents/crowdCompute.ts'
@@ -209,6 +209,9 @@ const LIGHTBAR = { rest: 0xe8203a, limited: 0xd89a2a, thump: 0xffffff } as const
 const MAX_STEP_DT = 0.1
 /** How often the pedestrians' positions are copied out of the crowd frames for SimControls.crowd.positions, ms. */
 const CROWD_COPY_MS = 250
+/** The u32 of one agent's record in CrowdView.figure (FIGURE_QUADS quads), and where its rig slot word sits in it. */
+const FIGURE_STRIDE = FIGURE_QUADS * 4
+const RIG_SLOT_WORD = 3
 /**
  * Split screen: how far apart players 1..3 spawn along the sidewalk beside player 0, m, and each player's audio pools
  * (audio.ts Design B: smaller car-voice and murmur pools per head keep the panner count near forty for four players).
@@ -498,7 +501,10 @@ export class Engine {
   /** The crowd's look words on the GPU (three's buffer for CrowdView.look) and the page's copy of them (setLook, lookOf). */
   private readonly crowdLook: GPUBuffer
   private readonly lookWords: Uint32Array
-  /** The figure, face and wardrobe words beside them (CrowdView.figure, four per agent with a spare: the body sliders, the face and the wardrobe of a worn look), written the same way. */
+  /**
+   * The rest of each agent's genome beside them (CrowdView.figure, FIGURE_STRIDE words per agent: the figure, face and
+   * wardrobe words, the rig slot word, then the genome's words 4 to 15, the skin word first), written the same way.
+   */
   private readonly crowdFigure: GPUBuffer
   private readonly figureWords: Uint32Array
   private readonly poleOut = new Int32Array(DISSOLVE.maxPoles)
@@ -692,7 +698,7 @@ export class Engine {
     this.crowdLook = p.crowdLook
     this.lookWords = new Uint32Array(p.options.agents)
     this.crowdFigure = p.crowdFigure
-    this.figureWords = new Uint32Array(p.options.agents * 4)
+    this.figureWords = new Uint32Array(p.options.agents * FIGURE_STRIDE)
     this.overlapOut = new Int32Array(p.sim.meta.suv.length)
     this.options = p.options
     this.quality = p.quality
@@ -1136,9 +1142,10 @@ export class Engine {
   }
 
   private wearSlot(agent: number, word: number): void {
-    if (this.figureWords[agent * 4 + 3] === word) return
-    this.figureWords[agent * 4 + 3] = word
-    this.gpu.device.queue.writeBuffer(this.crowdFigure, agent * 16 + 12, this.figureWords, agent * 4 + 3, 1)
+    const at = agent * FIGURE_STRIDE + RIG_SLOT_WORD
+    if (this.figureWords[at] === word) return
+    this.figureWords[at] = word
+    this.gpu.device.queue.writeBuffer(this.crowdFigure, at * 4, this.figureWords, at, 1)
   }
 
   /**
@@ -1154,12 +1161,13 @@ export class Engine {
     if (!Number.isInteger(agent) || agent < 0 || agent >= this.lookWords.length) return false
     const word = look === null ? LOOK_NONE : validateLook(look) === null ? -1 : packLook(look)
     if (word < 0) return false
+    const genome = look === null ? null : packGenome(look)
+    const at = agent * FIGURE_STRIDE
     this.lookWords[agent] = word
-    this.figureWords[agent * 4] = look === null ? 0 : packFigure(look)
-    this.figureWords[agent * 4 + 1] = look === null ? 0 : packFace(look)
-    this.figureWords[agent * 4 + 2] = look === null ? 0 : packWardrobe(look)
+    // The genome's words 1 to 3 (the figure, face and wardrobe words) first, the rig slot word kept, then words 4 on.
+    for (let w = 1; w < LOOK_WORDS; w++) this.figureWords[at + (w < 4 ? w - 1 : w)] = genome === null ? 0 : genome[w]
     this.gpu.device.queue.writeBuffer(this.crowdLook, agent * 4, this.lookWords, agent, 1)
-    this.gpu.device.queue.writeBuffer(this.crowdFigure, agent * 16, this.figureWords, agent * 4, 4)
+    this.gpu.device.queue.writeBuffer(this.crowdFigure, at * 4, this.figureWords, at, FIGURE_STRIDE)
     // The player's own body sets the first-person eye: a taller look sees over the crowd, a shorter one looks up at
     // it (head.ts eyeHeightFor; the hash's body keeps the reference eye).
     if (agent === PLAYER_INDEX) this.rig.setEyeHeight(eyeHeightFor(look === null ? 1 : heightScale(look)))
@@ -1169,7 +1177,8 @@ export class Engine {
   /** The look an agent was dressed in (setLook), or null while the hash dresses them (or for no such agent). */
   lookOf(agent: number): Look | null {
     if (!Number.isInteger(agent) || agent < 0 || agent >= this.lookWords.length) return null
-    return unpackLook(this.lookWords[agent], this.figureWords[agent * 4], this.figureWords[agent * 4 + 1], this.figureWords[agent * 4 + 2])
+    const at = agent * FIGURE_STRIDE, f = this.figureWords
+    return unpackGenome([this.lookWords[agent], f[at], f[at + 1], f[at + 2], ...f.subarray(at + 4, at + FIGURE_STRIDE)])
   }
 
   /**

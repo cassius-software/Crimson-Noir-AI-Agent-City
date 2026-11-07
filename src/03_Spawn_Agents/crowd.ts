@@ -14,7 +14,9 @@
  * undertone, and the words beside it (`crowd.figure`: the figure word, the face word and the wardrobe word) the eight
  * body sliders, the seven face sliders and the hair style, and the wardrobe's outer layer (a jacket, shirt sleeves or
  * a coat), its trim and its scarf, in place of the hash (the body itself is chosen from the look word in the cull,
- * crowd.wgsl), so the player and a recruit can wear what they chose. The jacket's lines are the fragment stage's: the
+ * crowd.wgsl), so the player and a recruit can wear what they chose; the genome's later words (look.ts LOOK_WORDS,
+ * after the three in the same record) reach the fragment stage as one flat varying of four, the skin word among them:
+ * a Monk tone, vitiligo's paler patches and freckles, drawn on the skin from the rest position. The jacket's lines are the fragment stage's: the
  * shirt's V, the lapels beside it, the collar band and the cuffs are cut from the rest position (humanoid.ts GARMENT),
  * so the trim's dye needs no vertices of its own. The face (the brow, the nose, the eyes, the lips, the ears) is drawn
  * by the eye pass of the near body alone: the shadow pass and the far body leave it out.
@@ -32,10 +34,10 @@ import { CODE_DISSOLVE, applyCodeDissolve } from '../01_Initialize_World/codeDis
 import { applyMatrixMode } from '../01_Initialize_World/matrixMode.ts'
 import { bodyVertex } from './crowdBody.ts'
 import { PLAYER_INDEX, VARIANTS, agentQuota } from './crowdCompute.ts'
-import { BODY_NAMES, BONE, GARMENT, HEIGHT_BASE, PIECE, RIG_REST, RIG_WEAR, humanoidMesh, type HumanoidMesh } from './humanoid.ts'
+import { BODY_NAMES, BONE, FACE, GARMENT, HEIGHT_BASE, LANDMARK, PIECE, RIG_REST, RIG_WEAR, SLOT, humanoidMesh, type HumanoidMesh } from './humanoid.ts'
 import {
-  HAIR, LAYER, LOOK_FIELD, LOOK_HASHED_COLOUR, LOOK_HASHED_FACE, LOOK_HASHED_HAIR_SPLIT, LOOK_HASHED_LAYER, LOOK_HASHED_SCARF,
-  LOOK_HASHED_SLIDER, LOOK_ODDS, LOOK_PIECE_BIT, LOOK_SLIDER_MIDDLE, LOOK_STATURE, WARDROBE,
+  HAIR, LAYER, LOOK_FIELD, LOOK_FIELD_HIGH, LOOK_HASHED_COLOUR, LOOK_HASHED_FACE, LOOK_HASHED_HAIR_SPLIT, LOOK_HASHED_LAYER, LOOK_HASHED_SCARF,
+  LOOK_HASHED_SLIDER, LOOK_ODDS, LOOK_PIECE_BIT, LOOK_SLIDER_MIDDLE, LOOK_STATURE, LOOK_WORDS, VITILIGO, WARDROBE,
   type LookFaceSlider, type LookSlider, type LookSlot, type PaletteName,
 } from './look.ts'
 
@@ -120,6 +122,7 @@ export function attireColour(agent: number): [number, number, number] {
 }
 const PALETTE = {
   skin: hex([0xf3d2b8, 0xe8b894, 0xd29f79, 0xb97f5a, 0x9a6444, 0x7a4a31, 0x5c3522, 0xe5c0a0]),
+  monk: hex([0xf6ede4, 0xf3e7db, 0xf7ead0, 0xeadaba, 0xd7bd96, 0xa07e56, 0x825c43, 0x604134, 0x3a312a, 0x292420]),
   hair: hex([0x1b1512, 0x2a1d14, 0x3b2618, 0x5e3c24, 0x7a3a1f, 0xb8935a, 0x8a6a48, 0x9c9a96]),
   iris: hex([0x3b2314, 0x5a3a22, 0x2a1a12, 0x4a6a4a, 0x5a7a9a, 0x7a5a3a]),
   suits: hex([0x1f2a44, 0x33363b, 0x5b6068, 0x1a1a1c, 0x4a3b2e, 0x2d4a73, 0x3d4550]),
@@ -152,6 +155,87 @@ const PALETTE_OFFSET: ReadonlyMap<Color[], number> = new Map(
   Object.values(PALETTE).map((list, i, lists) => [list, lists.slice(0, i).reduce((n, l) => n + l.length, 0)]),
 )
 
+/**
+ * The quads of crowd.figure per agent: the figure, face and wardrobe words with the rig slot word (the first), then
+ * the genome's words 4 to 15 (look.ts LOOK_WORDS; the look word itself is crowd.look). Sixty-four bytes a person.
+ */
+export const FIGURE_QUADS = 1 + (LOOK_WORDS - 4) / 4
+
+/** Vitiligo's pale, linear RGB: a milky cream with a little pink (on a deep tone the patch shows clearly, on a light one softly, as it does). */
+const VITILIGO_PALE = new Color(0xf2e0d6)
+/** How much of the skin each vitiligo pattern pales (look.ts VITILIGO), as the share of the noise's range above its edge. */
+const VITILIGO_COVER = Object.freeze({ scattered: 0.24, widespread: 0.66, zoned: 0.52 })
+/** The share of freckle cells holding a freckle at each density (look.ts WARDROBE.freckles: light, medium, dense) where they gather most. */
+const FRECKLE_DENSITY = Object.freeze([0, 0.16, 0.3, 0.48])
+/** Where freckles gather most on the face: the band of the cheeks and the nose's bridge, m of the rest body (humanoid.ts FACE: the lips' line to the nose's root). */
+const FRECKLE_BAND = Object.freeze({ from: FACE.lips.lineY, to: FACE.nose.rootY + 0.004 })
+
+/** Three's hash of an integer cell, salted: the lattice the skin's noise and freckles are drawn from. */
+const lattice = (c: V3, salt: number): F1 => hash(dot(c, vec3(1, 57, 113)).add(salt))
+
+/** Smooth value noise in 0..1 at `p` (the lattice's eight corners, trilinear with smoothstep weights). */
+function valueNoise(p: V3, salt: number): F1 {
+  const c = p.floor()
+  const f = p.fract()
+  const u = f.mul(f).mul(f.mul(-2).add(3))
+  const at = (x: number, y: number, z: number): F1 => lattice(c.add(vec3(x, y, z)), salt)
+  const near = mix(mix(at(0, 0, 0), at(1, 0, 0), u.x), mix(at(0, 1, 0), at(1, 1, 0), u.x), u.y)
+  const far = mix(mix(at(0, 0, 1), at(1, 0, 1), u.x), mix(at(0, 1, 1), at(1, 1, 1), u.x), u.y)
+  return mix(near, far, u.z)
+}
+
+/**
+ * The skin with its marks: vitiligo's paler patches (look.ts VITILIGO: on the hands and wrists, the face, both,
+ * scattered or widespread anywhere the skin shows, or on one side of the body), two octaves of value noise over the
+ * rest position past an edge the pattern's cover sets, and freckles (FRECKLE_DENSITY), one dot at most in each 1.6 cm
+ * cell, thickest over the cheeks and the nose, fewer on the rest of the face, the hands and the neck, never on a
+ * paled patch (it has no pigment to freckle). `offset` (0..1 each, the person's own) moves both patterns, so two people
+ * of one look are not marked alike. Only the skin, the lips and bare legs read the result, and a person with neither
+ * pays for neither (each is computed under its own branch). The far body keeps the patches, not the freckles.
+ */
+function skinMarks(skinIn: V3, vitiligoIn: U1, frecklesIn: U1, rigIn: V3, offsetIn: V3, slotIn: F1, near: boolean): V3 {
+  // A function of its inputs (not a closure over them), so the call node holds them and the colour graph reaches through it.
+  const marks = Fn(([skin, vitiligo, freckles, rig, offset, slot]: [V3, U1, U1, V3, V3, F1]) => {
+    const rest = positionGeometry
+    const bone = rig.x
+    const on = (b: number) => bone.greaterThan(b - 0.5).and(bone.lessThan(b + 0.5))
+    const bare = slot.greaterThan(SLOT.SKIN - 0.5).and(slot.lessThan(SLOT.SKIN + 0.5))
+      .or(slot.greaterThan(SLOT.LIP - 0.5).and(slot.lessThan(SLOT.LIP + 0.5)))
+      .or(slot.greaterThan(SLOT.LEGWEAR - 0.5).and(slot.lessThan(SLOT.LEGWEAR + 0.5)))
+    const face = on(BONE.HEAD).and(rest.z.greaterThan(0))
+    const hands = on(BONE.HAND_L).or(on(BONE.HAND_R)).or(on(BONE.FOREARM_L).or(on(BONE.FOREARM_R)).and(rest.y.lessThan(LANDMARK.wrist + 0.08)))
+    const flag = (b: typeof face): F1 => select(b, float(1), float(0))
+    const is = (v: number) => vitiligo.equal(uint(v))
+    const out = vec3(skin).toVar()
+    const patch = float(0).toVar()
+    If(bare.and(vitiligo.notEqual(uint(0))), () => {
+      const zone = select(is(VITILIGO.hands), flag(hands), select(is(VITILIGO.face), flag(face), select(is(VITILIGO.handsAndFace), flag(hands.or(face)),
+        select(is(VITILIGO.oneSide), flag(rest.x.greaterThan(0)), float(1)))))
+      const cover = select(is(VITILIGO.scattered), float(VITILIGO_COVER.scattered), select(is(VITILIGO.widespread), float(VITILIGO_COVER.widespread), float(VITILIGO_COVER.zoned)))
+      const p = rest.add(vec3(1, 0, 1)).add(offset.mul(40))
+      const n = valueNoise(p.mul(7), 3.1).mul(0.68).add(valueNoise(p.mul(17), 5.7).mul(0.32))
+      const edge = float(1).sub(cover)
+      patch.assign(zone.mul(smoothstep(edge.sub(0.035), edge.add(0.035), n)))
+      out.assign(mix(skin, vec3(VITILIGO_PALE.r, VITILIGO_PALE.g, VITILIGO_PALE.b), patch.mul(0.9)))
+    })
+    if (near) {
+      If(bare.and(freckles.notEqual(uint(0))), () => {
+        const density = select(freckles.equal(uint(1)), float(FRECKLE_DENSITY[1]), select(freckles.equal(uint(2)), float(FRECKLE_DENSITY[2]), float(FRECKLE_DENSITY[3])))
+        const cheeks = flag(rest.y.greaterThan(FRECKLE_BAND.from).and(rest.y.lessThan(FRECKLE_BAND.to)))
+        const where = select(face, mix(float(0.45), float(1), cheeks), select(hands, float(0.4), float(0.3)))
+        const q = rest.add(vec3(1, 0, 1)).mul(62).add(offset.mul(97))
+        const cell = q.floor()
+        const centre = vec3(lattice(cell, 11.3), lattice(cell, 13.7), lattice(cell, 17.9)).mul(0.4).add(0.3)
+        const present = step(float(1).sub(density.mul(where)), lattice(cell, 19.1))
+        const spot = present.mul(float(1).sub(smoothstep(0.17, 0.3, q.fract().sub(centre).length()))).mul(float(1).sub(patch))
+        out.assign(mix(out, out.mul(vec3(0.72, 0.56, 0.46)), spot))
+      })
+    }
+    return out
+  }) as unknown as (...inputs: Node[]) => V3
+  return marks(skinIn, vitiligoIn, frecklesIn, rigIn, offsetIn, slotIn)
+}
+
 function agentBuffers(view: CrowdView, agentCount: number, listLength: number) {
   return {
     pos: storage(view.pos, 'vec4', agentCount).toReadOnly(),
@@ -159,7 +243,7 @@ function agentBuffers(view: CrowdView, agentCount: number, listLength: number) {
     pose: storage(view.pose, 'vec4', agentCount).toReadOnly(),
     dissolve: storage(view.dissolve, 'float', agentCount).toReadOnly(),
     look: storage(view.look, 'uint', agentCount).toReadOnly(),
-    figure: storage(view.figure, 'uvec4', agentCount).toReadOnly(),
+    figure: storage(view.figure, 'uvec4', agentCount * FIGURE_QUADS).toReadOnly(),
     lists: storage(view.drawLists, 'uint', listLength).toReadOnly(),
   }
 }
@@ -185,10 +269,11 @@ export class CrowdView {
   /**
    * The figure word, the face word and the wardrobe word per agent (look.ts packFigure: the eight body sliders' steps;
    * packFace: the seven face sliders' steps and the hair style; packWardrobe: the layer, the trim and the scarf; read
-   * only where the look word says a look is worn), four u32 per agent (the fourth spare), written beside the look
-   * word. Page-only like it: the worker's passes never bind it, the cull never reads it, no pedestrian moves for it.
-   * One buffer for the four: the vertex stage binds seven storage buffers already, of the eight WebGPU promises every
-   * device.
+   * only where the look word says a look is worn), then the rig slot word, then the genome's words 4 to 15 (look.ts
+   * packGenome: the skin word, and spare words that stay zero): FIGURE_QUADS quads, sixteen u32 per agent, written
+   * beside the look word. Page-only like it: the worker's passes never bind it, the cull never reads it, no pedestrian
+   * moves for it. One buffer for all of them: the vertex stage binds seven storage buffers already, of the eight
+   * WebGPU promises every device.
    */
   readonly figure: StorageBufferAttribute
   readonly drawArgs: IndirectStorageBufferAttribute
@@ -251,7 +336,7 @@ export class CrowdView {
     this.drawLists = new StorageBufferAttribute(new Uint32Array(quota * VARIANTS * 2), 1)
     this.dissolve = new StorageBufferAttribute(new Float32Array(agentCount), 1)
     this.look = new StorageBufferAttribute(new Uint32Array(agentCount), 1)
-    this.figure = new StorageBufferAttribute(new Uint32Array(agentCount * 4), 4)
+    this.figure = new StorageBufferAttribute(new Uint32Array(agentCount * FIGURE_QUADS * 4), 4)
     this.drawTemplate = new Uint32Array(VARIANTS * 2 * 5)
     this.pos.name = 'crowd.pos'
     this.vel.name = 'crowd.vel'
@@ -311,7 +396,7 @@ export class CrowdView {
       const pose = b.pose.element(agentIndex)
       const dissolve = b.dissolve.element(agentIndex)
       const word = b.look.element(agentIndex)
-      const quad = b.figure.element(agentIndex)
+      const quad = b.figure.element(agentIndex.mul(uint(FIGURE_QUADS)))
       const figure = quad.x
       const faceWord = quad.y
       const wardrobeWord = quad.z
@@ -437,7 +522,8 @@ export class CrowdView {
     const table = uniformArray(PALETTE_TABLE, 'color')
     const colour = (list: Color[], i: U1): V3 => table.element(i.add(uint(PALETTE_OFFSET.get(list)!))) as unknown as V3
     const pick = (list: Color[], hk: F1): V3 => colour(list, uint(hk.mul(list.length - 0.001)))
-    const skin = pick(PALETTE.skin, h(1))
+    // The hashed crowd wears the Monk scale's ten tones evenly (look.ts lookFromSeed: the same link, the same palette).
+    const skin = pick(PALETTE.monk, h(1))
     const hair = mix(pick(PALETTE.hair, h(2)), vec3(0.6, 0.6, 0.58), step(0.9, h(9)))
     let top: V3, bottom: V3, shirt: V3, shoes: V3
     if (variant === 0) {
@@ -456,6 +542,12 @@ export class CrowdView {
     const word = uint(vLookHi.add(0.5)).shiftLeft(uint(16)).bitOr(uint(vLookLo.add(0.5)))
     const custom = word.bitAnd(uint(1)).equal(uint(1))
     const field = (s: LookSlot): U1 => word.shiftRight(uint(LOOK_FIELD[s][1])).bitAnd(uint((1 << LOOK_FIELD[s][2]) - 1))
+    // The genome's words 4 to 7 (look.ts LOOK_FIELD: the skin word first), the person's second quad of crowd.figure,
+    // flat: one person's four integers in every fragment (an integer varying is never interpolated). Read only where
+    // the look word says a look is worn: the hash's people leave them zero.
+    const genome = varying(b.figure.element(b.lists.element(instanceIndex.add(uint(listBase))).mul(uint(FIGURE_QUADS)).add(uint(1))), 'vAgentGenome').setInterpolation('flat')
+    const genomeWord = (w: number): U1 => (w === 4 ? genome.x : w === 5 ? genome.y : w === 6 ? genome.z : genome.w) as unknown as U1
+    const gene = ([w, shift, width]: readonly [number, number, number]): U1 => genomeWord(w).shiftRight(uint(shift)).bitAnd(uint((1 << width) - 1))
     const at = (list: Color[], i: U1): V3 => {
       const last = uint(list.length - 1)
       return colour(list, select(i.lessThan(last), i, last))
@@ -464,7 +556,12 @@ export class CrowdView {
     const cloth = (name: PaletteName): Color[] => PALETTE[name]
     const grey = vec3(0.6, 0.6, 0.58)
     const hairAt = field('hairColour')
-    const ownSkin = at(PALETTE.skin, field('skin'))
+    // The skin's options run on past the eight older tones into the Monk scale's ten (look.ts lookOptions: the skin
+    // word holds the index's high bits), and the table holds the two palettes end to end (PALETTE: monk follows skin),
+    // so one index from the older palette's offset reads either, bounded to the deepest tone.
+    const skinAt = field('skin').bitOr(gene(LOOK_FIELD_HIGH.skin!).shiftLeft(uint(LOOK_FIELD.skin[2])))
+    const lastSkin = uint(PALETTE.skin.length + PALETTE.monk.length - 1)
+    const ownSkin = colour(PALETTE.skin, select(skinAt.lessThan(lastSkin), skinAt, lastSkin))
     const ownHair = select(hairAt.greaterThanEqual(uint(PALETTE.hair.length)), grey, at(PALETTE.hair, hairAt))
     const ownTop = at(cloth(outfit.top), field('top'))
     // Trousers that may match the jacket (option 0 of a matching outfit): the cloth at i - 1 otherwise.
@@ -483,7 +580,13 @@ export class CrowdView {
     const tone = select(custom, field('undertone'), uint(h(LOOK_HASHED_COLOUR.undertone).mul(WARDROBE.undertone.length - 0.001)))
     const tint = select(tone.equal(uint(1)), vec3(1.04, 1.0, 0.94), select(tone.equal(uint(2)), vec3(0.97, 0.99, 1.05), select(tone.equal(uint(3)), vec3(0.98, 1.02, 0.92), vec3(1, 1, 1))))
     const toned = pickedSkin.mul(tint)
-    const wornSkin = mix(toned, vec3(dot(toned, vec3(0.2126, 0.7152, 0.0722))), age.mul(0.25))
+    // Vitiligo and freckles (look.ts WARDROBE.vitiligo, WARDROBE.freckles: the skin word's, or the fragment chain's as
+    // lookFromSeed draws them), painted over the skin from the rest position so they keep their place as the body
+    // moves; where they fall on a person is the person's own (an offset from their seed, like the iris).
+    const vitiligo = select(custom, gene(LOOK_FIELD.vitiligo), select(h(LOOK_HASHED_COLOUR.vitiligo).greaterThanEqual(LOOK_ODDS.vitiligo), uint(h(LOOK_HASHED_COLOUR.vitiligoPattern).mul(WARDROBE.vitiligo.length - 1 - 0.001)).add(uint(1)), uint(0)))
+    const freckles = select(custom, gene(LOOK_FIELD.freckles), select(h(LOOK_HASHED_COLOUR.freckles).greaterThanEqual(LOOK_ODDS.freckles), uint(h(LOOK_HASHED_COLOUR.frecklesDensity).mul(WARDROBE.freckles.length - 1 - 0.001)).add(uint(1)), uint(0)))
+    const marked = skinMarks(toned, vitiligo, freckles, rig, vec3(h(LOOK_HASHED_COLOUR.marks), h(LOOK_HASHED_COLOUR.marks + 1), h(LOOK_HASHED_COLOUR.marks + 2)), slot, near)
+    const wornSkin = mix(marked, vec3(dot(marked, vec3(0.2126, 0.7152, 0.0722))), age.mul(0.25))
     const wornHair = mix(pickedHair, grey, smoothstep(0.5, 1, age))
     top = select(custom, ownTop, top)
     bottom = select(custom, ownBottom, bottom)
