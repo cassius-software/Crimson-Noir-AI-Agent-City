@@ -25,8 +25,9 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url))
 
-/** The page with the in-page runtime embedded measured 13,956,193 bytes (18 October 2026); this is that plus 3%. */
-export const MAX_BYTES = 14_375_000
+/** The page with the in-page runtime embedded measured 13,956,193 bytes (18 October 2026) and, after the microphone
+ *  pill and its voice detector (7 November 2026), 14,385,135 bytes; this is the later measure plus 3%. */
+export const MAX_BYTES = 14_817_000
 
 /** The hosts the page names without the in-page runtime, all from bundled packages and notices: React's error links,
  *  Tailwind's banner, three.js's removal note and a shader's credit, the SVG and MathML namespaces, and the Apache

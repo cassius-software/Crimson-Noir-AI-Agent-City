@@ -37,7 +37,8 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   level and speech only; no audio leaves the page, nothing is recorded, and no speech model ships with the page
   (no Whisper). Verified by Node tests against synthetic room, voice and hiss signals and fake browser objects
   (`vad.test.ts`, `microphone.test.ts`, `voiceWiring.test.ts`); a real microphone, a phone's and Safari's permission
-  flow, and the barge-in's feel with a loudspeaker are unverified.
+  flow, and the barge-in's feel with a loudspeaker are unverified. The page grew 17.7 KB for it, past a budget main
+  was 7.5 KB under, so `tools/verify/page_dist.mjs` re-measures: 14,385,135 bytes plus 3%.
 
 - **The fallen wear their own bodies.** A pedestrian the realm promotes to a physical body (a shove, a kerb trip, a
   slip near the operator) is no longer hidden and replaced by grey capsules: the crowd's vertex stage hangs each of
