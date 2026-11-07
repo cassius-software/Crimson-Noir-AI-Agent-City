@@ -13,12 +13,14 @@
  */
 import { MeshStandardNodeMaterial } from 'three/webgpu'
 import {
-  Fn, abs, attribute, cross, dFdx, dFdy, dot, exp, faceDirection, float, floor, fract, fwidth, hash, max, min, mix,
+  Fn, abs, attribute, cross, dFdx, dFdy, dot, exp, faceDirection, float, floor, fract, fwidth, hash, length, max, min, mix,
   normalViewGeometry, normalWorldGeometry, positionView, positionWorld, select, sign, smoothstep, step,
   time, vec2, vec3,
 } from 'three/tsl'
-import type { Node, UniformNode } from 'three/webgpu'
+import type { Node, UniformNode, Vector2 } from 'three/webgpu'
 import { CITY, HERITAGE_COLUMNS, STYLE } from './city.ts'
+import { FIXTURE } from './cityLights.ts'
+import { ROOM } from './interiors.ts'
 import type { FbmSet } from './fbmTexture.ts'
 import { TRAFFIC } from '../02_Define_The_Rules/civic.ts'
 
@@ -146,13 +148,26 @@ export function buildingMaterial(fbm: FbmSet, night: UniformNode<'float', number
   const shopGlow = vec3(1.0, 0.86, 0.66).mul(shopOpen).mul(smoothstep(0.2, 3.6, v).mul(0.5).add(0.5)).mul(mix(0.12, 0.5, night))
   const glassColor = select(glassStyle.and(retail.not()), tint, vec3(0.03, 0.035, 0.04))
 
-  m.colorNode = mix(wall, glassColor, glazing)
+  // A workplace's ceiling (interiors.ts: the slab's underside at ROOM.height, the one downward face at that height):
+  // white acoustic tile with a luminaire panel over each of the room's four fixtures (cityLights.ts FIXTURE: a lot's
+  // centre is at (k + 0.5) × pitch, the fixtures FIXTURE.span from it on both axes), lit day and night: the fixtures'
+  // faces, whose light is the real PointLights hung under them.
+  const ceilingFace = n.y.lessThan(-0.5).and(abs(p.y.sub(ROOM.height)).lessThan(0.05))
+  const ceilingLocal = fract(p.xz.div(CITY.pitch)).mul(CITY.pitch).sub(CITY.pitch / 2)
+  const luminairePanel = band(abs(abs(ceilingLocal.x).sub(FIXTURE.span)), 0, FIXTURE.panel).mul(band(abs(abs(ceilingLocal.y).sub(FIXTURE.span)), 0, FIXTURE.panel))
+  const tile = vec3(0.82, 0.82, 0.8).mul(noise(p.xz.div(1.5)).g.mul(0.1).add(0.95))
+  // The panels shine; the tile between them carries a little of the bounce light a lit room's ceiling has and no
+  // light here reaches it (four pendants light the floor; nothing bounces back up without global illumination).
+  const luminaire = vec3(1.0, 0.98, 0.94).mul(luminairePanel.mul(2.2).add(0.1))
+
+  m.colorNode = select(ceilingFace, tile, mix(wall, glassColor, glazing))
   m.metalnessNode = mix(select(glassStyle, mullion.mul(0.8), float(0)), float(0.55), glazing)
-  m.roughnessNode = mix(select(glassStyle, float(0.35), select(isStyle(style, STYLE.rail), float(0.4), select(roof, float(0.9), float(0.82)))), float(0.05), glazing)
-  m.emissiveNode = glazing.mul(select(retail, shopGlow, officeGlow))
-  // Glass stays optically flat; only the opaque skin gets texture relief.
+  m.roughnessNode = select(ceilingFace, float(0.9), mix(select(glassStyle, float(0.35), select(isStyle(style, STYLE.rail), float(0.4), select(roof, float(0.9), float(0.82)))), float(0.05), glazing))
+  m.emissiveNode = select(ceilingFace, luminaire, glazing.mul(select(retail, shopGlow, officeGlow)))
+  // Glass stays optically flat; only the opaque skin gets texture relief. The ceiling is flat too: its fixtures light
+  // it at a grazing angle, where the facade's mullion relief would draw as dark and bright stripes.
   const height = detail.a.mul(0.15).sub(mullion.mul(0.3)).sub(courses.mul(select(brickStyle, float(0.4), float(0)))).mul(float(1).sub(glazing))
-  m.normalNode = bumpedNormal(height, 0.2)
+  m.normalNode = bumpedNormal(select(ceilingFace, float(0), height), 0.2)
   return m
 }
 
@@ -169,7 +184,14 @@ function lampPool(p: V3): F {
   return max(pool(p.x, cz), pool(p.z, cx))
 }
 
-export function groundMaterial(fbm: FbmSet, night: UniformNode<'float', number>): MeshStandardNodeMaterial {
+/**
+ * Where the real lamp light reaches (world.ts: the lamps nearest the focus are PointLights, cityLights.ts): the focus,
+ * city metres, and the radius, m, of the farthest lit lamp. The ground's painted pools (lampPool) fade out inside it,
+ * so a lamp is lit by its light or by its pool, never both; a radius of 0 (a lite boot, daylight) paints every pool.
+ */
+export interface RealLight { focus: UniformNode<'vec2', Vector2>; radius: UniformNode<'float', number> }
+
+export function groundMaterial(fbm: FbmSet, night: UniformNode<'float', number>, real: RealLight | null = null): MeshStandardNodeMaterial {
   const noise = (uv: V2) => fbm.sample(uv)
   const m = new MeshStandardNodeMaterial()
   const p = positionWorld
@@ -226,7 +248,9 @@ export function groundMaterial(fbm: FbmSet, night: UniformNode<'float', number>)
   m.colorNode = base
   m.roughnessNode = select(road, mix(float(0.92), float(0.65), max(yellow, white)), select(parkRow.and(inside).and(promenade.not()), float(0.95), float(0.86)))
   m.metalnessNode = float(0)
-  m.emissiveNode = base.mul(vec3(1.0, 0.8, 0.55)).mul(lampPool(p).mul(night).mul(0.7))
+  // The painted pools stand in beyond the real light's reach (and everywhere without it).
+  const painted = real ? smoothstep(real.radius.mul(0.75).max(1), real.radius.max(1.5), length(p.xz.sub(real.focus))) : float(1)
+  m.emissiveNode = base.mul(vec3(1.0, 0.8, 0.55)).mul(lampPool(p).mul(night).mul(0.7).mul(painted))
   // The light catches each zone's own joints (no joints in the road or the grass), the same ones the colour draws.
   const joints = select(road.or(parkRow.and(inside).and(promenade.not())), float(0), select(promenade, promenadeSlabs, select(heritage, paverJoints, slabs)))
   m.normalNode = bumpedNormal(grain.mul(0.25).sub(joints.mul(0.5)), 0.12)

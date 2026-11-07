@@ -51,6 +51,11 @@ export interface QualityKnobs {
   maxDistance: number
   /** Procedural (FBM) texture resolution, texels per edge; one of fbmTexture.ts FBM_SIZES. */
   textureSize: number
+  /** Street lamps lit by a real PointLight, the nearest to the player (world.ts, cityLights.ts: clustered, so the count
+   *  is a uniform and a change never recompiles). 0 turns the rooms' ceiling fixtures off too: a lite boot has no
+   *  clustered lighting at all. At the city's lamp density (eight a block) 32 lamps reach about 45 m, 384 about 155 m;
+   *  the ground's painted pools stand in beyond. */
+  lampLights: number
 }
 
 const frozen = (k: QualityKnobs): QualityKnobs => Object.freeze(k)
@@ -61,11 +66,11 @@ const frozen = (k: QualityKnobs): QualityKnobs => Object.freeze(k)
  *  pre-governor look apart from a slightly thinner far crowd; below it every step also lowers the
  *  procedural texture resolution (256² → 192² → 128² → 64²). Ultra (and Peak above it) adds the golden-hour sun shafts. */
 export const TIERS: readonly QualityKnobs[] = Object.freeze([
-  frozen({ label: 'Minimal', renderScale: 0.65, shadows: false, shadowMapSize: 1024, post: false, volumetrics: false, crowdDensity: 0.2, lodDistance: 12, nearRadius: 10, maxDistance: 110, textureSize: 64 }),
-  frozen({ label: 'Low', renderScale: 0.75, shadows: false, shadowMapSize: 1024, post: true, volumetrics: false, crowdDensity: 0.4, lodDistance: 18, nearRadius: 14, maxDistance: 180, textureSize: 128 }),
-  frozen({ label: 'Medium', renderScale: 0.85, shadows: true, shadowMapSize: 1024, post: true, volumetrics: false, crowdDensity: 0.65, lodDistance: 24, nearRadius: 18, maxDistance: 300, textureSize: 192 }),
-  frozen({ label: 'High', renderScale: 1, shadows: true, shadowMapSize: 2048, post: true, volumetrics: false, crowdDensity: 0.85, lodDistance: 30, nearRadius: 22, maxDistance: 450, textureSize: 256 }),
-  frozen({ label: 'Ultra', renderScale: 1, shadows: true, shadowMapSize: 4096, post: true, volumetrics: true, crowdDensity: 1, lodDistance: 45, nearRadius: 30, maxDistance: 700, textureSize: 256 }),
+  frozen({ label: 'Minimal', renderScale: 0.65, shadows: false, shadowMapSize: 1024, post: false, volumetrics: false, crowdDensity: 0.2, lodDistance: 12, nearRadius: 10, maxDistance: 110, textureSize: 64, lampLights: 32 }),
+  frozen({ label: 'Low', renderScale: 0.75, shadows: false, shadowMapSize: 1024, post: true, volumetrics: false, crowdDensity: 0.4, lodDistance: 18, nearRadius: 14, maxDistance: 180, textureSize: 128, lampLights: 64 }),
+  frozen({ label: 'Medium', renderScale: 0.85, shadows: true, shadowMapSize: 1024, post: true, volumetrics: false, crowdDensity: 0.65, lodDistance: 24, nearRadius: 18, maxDistance: 300, textureSize: 192, lampLights: 128 }),
+  frozen({ label: 'High', renderScale: 1, shadows: true, shadowMapSize: 2048, post: true, volumetrics: false, crowdDensity: 0.85, lodDistance: 30, nearRadius: 22, maxDistance: 450, textureSize: 256, lampLights: 192 }),
+  frozen({ label: 'Ultra', renderScale: 1, shadows: true, shadowMapSize: 4096, post: true, volumetrics: true, crowdDensity: 1, lodDistance: 45, nearRadius: 30, maxDistance: 700, textureSize: 256, lampLights: 256 }),
 ])
 
 /**
@@ -73,7 +78,7 @@ export const TIERS: readonly QualityKnobs[] = Object.freeze([
  * console's tier numbers and every index the governor's tests pin keep their meaning; knobsOf reads it. Half the base
  * pixel ratio's edge (a quarter of its pixels), no shadows or post, and a thinner, shorter crowd draw than Minimal.
  */
-export const LITE: QualityKnobs = frozen({ label: 'Lite', renderScale: 0.5, shadows: false, shadowMapSize: 1024, post: false, volumetrics: false, crowdDensity: 0.15, lodDistance: 8, nearRadius: 6, maxDistance: 80, textureSize: 64 })
+export const LITE: QualityKnobs = frozen({ label: 'Lite', renderScale: 0.5, shadows: false, shadowMapSize: 1024, post: false, volumetrics: false, crowdDensity: 0.15, lodDistance: 8, nearRadius: 6, maxDistance: 80, textureSize: 64, lampLights: 0 })
 /** Lite's tier index: the lowest a manual choice may pin, and the automatic floor of a lite profile (tierRange). */
 export const LITE_TIER = -1
 
@@ -86,7 +91,7 @@ export const LITE_TIER = -1
  * everyone is drawn anyway. Reached automatically only on a Peak range (tierRange) and on the GPU's own timings
  * (Governor.gpuSample).
  */
-export const PEAK: QualityKnobs = frozen({ label: 'Peak', renderScale: 1.25, shadows: true, shadowMapSize: 8192, shadowExtent: 160, post: true, volumetrics: true, crowdDensity: 1, lodDistance: 90, nearRadius: 30, maxDistance: 700, textureSize: 256 })
+export const PEAK: QualityKnobs = frozen({ label: 'Peak', renderScale: 1.25, shadows: true, shadowMapSize: 8192, shadowExtent: 160, post: true, volumetrics: true, crowdDensity: 1, lodDistance: 90, nearRadius: 30, maxDistance: 700, textureSize: 256, lampLights: 384 })
 /** Peak's tier index: the highest a manual choice may pin, and the automatic ceiling of a Peak range (tierRange). */
 export const PEAK_TIER = TIERS.length
 
