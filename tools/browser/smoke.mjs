@@ -6,7 +6,7 @@
  * Why does this file exist? It is the browser smoke test of the built page (`npm run smoke:browser`): the 3D city booted
  * in a real Chrome or Chromium on the software WebGPU adapter (cdp.mjs SOFTWARE_WEBGPU), driven through the same input
  * events a person makes, on each kind of device the page has to work on:
- * - desktop: the procedural city's six indoor workplaces handed to its crowd, keyboard walking, a mouse drag turning
+ * - desktop: the procedural city's sixteen indoor workplaces handed to its crowd, keyboard walking, a mouse drag turning
  *   the head, a gamepad (a standard-mapping pad stood in for the real one) walking and turning, the Ring-0 console
  *   opened with the tilde key and answering, typing in it never moving the avatar, ghost view and rain mode toggled from
  *   their keys, and a car entered, driven and left; and the software adapter left as every device that is not a Peak
@@ -73,7 +73,7 @@
  *   installed, the second load cross-origin isolated by the worker, a model file kept from the Menu on that second
  *   visit, and the city started from the phone's copy with the host gone, the kept model still answering;
  * - lakefront: the generated metropolis (?map=lakefront, built in the page's worker from the seed), whose crowd walks
- *   its street window with the six workplaces the page picked from the pack and the HUD counting who is at work, at
+ *   its street window with the workplaces the page picked from the pack and the HUD counting who is at work, at
  *   Medium, the first tier with shadows, so the sun's shadow pass draws the region's buildings and its shaders build;
  * - fail: the ways out when the city cannot start or stops, each in its own browser: navigator.gpu taken away (the
  *   card before a first visit's onboarding, at desktop and phone size and in Firefox on Android with Open in Chrome
@@ -708,7 +708,7 @@ const SCENARIOS = {
       check(cards === 0, 'desktop: a city that started has no recovery card, and the boot watchdog stood down', `cards+watchdog=${cards}`)
       // The physics worker reports how many rooms its crowd was handed (SimMeta.rooms).
       const rooms = await p.eval('window.__SIM__.engine.sim.meta.rooms')
-      check(rooms === 6, 'desktop: the city\'s six indoor workplaces reached the crowd', `${rooms} rooms`)
+      check(rooms === 16, 'desktop: the city\'s sixteen indoor workplaces reached the crowd', `${rooms} rooms`)
       // Not a Peak candidate (a software adapter): every such device boots as it did before Peak.
       const nc = await p.eval(PEAK_STATE)
       check(nc.max === 4 && nc.timestamps === false && nc.peak === null, 'desktop: a device that is not a Peak candidate keeps the range Minimal..Ultra, no GPU timestamps and no Peak rule', `range ${nc.min}..${nc.max}, timestamps ${nc.timestamps}, peak ${JSON.stringify(nc.peak)}`)
@@ -1644,7 +1644,9 @@ const SCENARIOS = {
           people: s.process.pedestrians, working: s.process.working, errors: window.__SIM__.errors().slice(0, 5) } })()`)
       check(r.region && r.window, 'lakefront: ?map=lakefront walks the generated metropolis through its street window', `region ${r.region}, window ${r.window}`)
       check(r.people > 0, 'lakefront: the window has people', `${r.people} pedestrians`)
-      check(r.drawn === 6 && r.crowd === 6, 'lakefront: six indoor workplaces drawn, and six reached the worker\'s crowd', `${r.drawn} drawn, ${r.crowd} in the worker's crowd`)
+      // Sixteen: seed 1337's metropolis window has at least sixteen candidate lots (twelve transit hubs and four more), so
+      // every slot is filled (region/workplaces.test.ts pins the lots).
+      check(r.drawn === 16 && r.crowd === 16, 'lakefront: sixteen indoor workplaces drawn, and sixteen reached the worker\'s crowd', `${r.drawn} drawn, ${r.crowd} in the worker's crowd`)
       check(Number.isInteger(r.working) && r.working >= 0, 'lakefront: the HUD counts who is at work indoors', `working ${r.working}`)
       const f0 = (await p.snap()).crowdFrames
       const advanced = await p.waitFor(`window.__SIM__.snapshot().process.crowdFrames > ${f0 + 2}`, 60_000).then(() => true, () => false)

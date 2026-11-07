@@ -140,7 +140,7 @@ export interface SimInit {
   streets?: StreetGrid | null
   /**
    * A generated region's indoor workplaces (01_Initialize_World/region/workplaces.ts regionWorkplaceLots): at most
-   * six lots of the street window, each with its kind and its doorway's street front, which the page picked from its
+   * sixteen lots of the street window, each with its kind and its doorway's street front, which the page picked from its
    * pack and the worker builds the same rooms from (interiors.ts workplacesAt), so the two never disagree. Their boxes
    * come in `boxes`. Only with a street window; absent (or null) for none, and for the city, whose rooms are its seed's.
    */
@@ -184,7 +184,7 @@ export interface SimMeta {
   /** Rig slots in every rig stream (RIG_SLOTS with the ragdoll on in the city; 0 off, or in a region: the stream is null). */
   rigSlots: number
   /**
-   * Indoor workplaces this realm's crowd was handed (01_Initialize_World/interiors.ts): the city's six, a generated
+   * Indoor workplaces this realm's crowd was handed (01_Initialize_World/interiors.ts): the city's sixteen, a generated
    * region's that came in SimInit.workplaces, none in a surveyed region or without a crowd. A read-out for the page.
    */
   rooms: number

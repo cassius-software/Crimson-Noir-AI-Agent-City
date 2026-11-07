@@ -198,6 +198,35 @@ no real building is copied. The districts have generic names, and the HUD shows 
 
 Streets run the full grid; the crowd walks every sidewalk and stops short of the water.
 
+**Sixteen indoor workplaces** (`01_Initialize_World/interiors.ts`). Sixteen downtown lots, one in each sixteenth of
+the inner downtown (four columns of lots by four rows, chosen from the world seed), have their ground floor hollowed
+into a room you can walk into: glass walls, a 4 m doorway on one street, a ceiling that carries the podium and the
+tower above, and furniture. One room per kind, in this order, and the order is the kind's id (the crowd's station
+slots, the shader's room slots and the console's `rooms` all count by it): 0 a dexterous robotics and manipulator lab,
+1 an automated fulfillment and forklift warehouse, 2 a Tier-4 server vault and cooling plant, 3 Lakefront Metro
+operations and dispatch, 4 an air traffic and drone swarm control tower, 5 a commercial culinary and automated prep
+line, 6 a precision CNC and cleanroom micro-fab, 7 a civic architecture and digital twin studio, 8 an autonomous fleet
+maintenance and battery swap bay, 9 a vertical hydroponic greenhouse, 10 a materials testing and acoustics chamber,
+11 an emergency response and disaster recovery sim centre, 12 a financial and smart-contract clearing floor, 13 a
+biomedical prosthetics and gait calibration lab, 14 a renewable microgrid and substation control room, and 15 the
+Sanctuary, a Ring-0 executive console deck (a room; the First Law's Sanctuary in `07_Execute_Actions/sanctuary.ts`
+is unrelated). Every room has eight workstations in two rows; a share of the GPU crowd (one pedestrian in about 205,
+never fewer than one in eight) is dealt one of the 128 stations and works there in shifts of 5 minutes in every 8,
+walking the streets to the doorway, in to the station and back out; the HUD's "At work indoors" counts them and the
+minimap draws the rooms. Lakefront Metro gets the same rooms on up to sixteen lots of its street window (seed 1337's
+metropolis fills all sixteen: twelve transit hubs and four more), chosen from its pack by `region/workplaces.ts`. For
+another thread (a swarm that sends people to work), the engine keeps the rooms as two flat tables, built once:
+`window.__SIM__.engine.workplaceTable` (with `?debug`) is a `Float32Array` of 16 rows of 8 floats, `kind, x, y, z,
+doorX, doorZ, doorYaw, stations` (row *i* is kind *i*; `kind` is −1 and the rest 0 where this map has no such room;
+`x, z` the lot's centre and `y` 0, the floor, in engine metres; `doorX, doorZ` the doorway's centre on the wall's
+outer face; `doorYaw` the heading from the doorway into the room, `atan2(x, z)`, forward being `(sin yaw, cos yaw)`),
+and `engine.stationTable` 128 rows of 4, `x, y, z, yaw`, row *r × 8 + s* being station *s* of kind *r* (the crowd's
+own station slot); `WORKPLACE_TABLE` and `STATION_TABLE` in `interiors.ts` spell both layouts out. The console's
+`rooms` lists the same rooms as text. Verified in Node: every layout's stations stand clear, every route leg is
+straight and clear, anyone let go indoors walks out of every room, 500 jostled walkers commute 5,000 steps through
+no wall and no desk, the tables agree with the rooms; unverified from the cloud (no GPU): the ten new rooms and their
+workday on screen.
+
 The fixed track network (`06_Make_Decisions/tracks.ts`) is laid over the grid from the same seed: 64 right-turn
 rings for the cars, one round each 2 × 2-block cell; one elevated train loop on a deck 9 m over the median of the
 two arterial streets, with four mid-block stations and guideway columns at the kerb; drone corridors at 40 m and
@@ -898,7 +927,7 @@ while you type.
   `robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|remove <id>]`,
   `recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]`, `memory [<agent>|forget <agent>|forget all]`,
   `clear`, `history`, `echo [text]`, `uname [-asnrvmi]`, `whoami`, `version`, `boot [gui|tty|status]`,
-  `map [city|lakefront|default|status]`, `r0 <words...>|r0 reset|r0 words`,
+  `map [city|lakefront|default|status]`, `rooms`, `r0 <words...>|r0 reset|r0 words`,
   `noir <source>|noir reset|noir words|noir asm <source>`, `agent [...]`, `sloane [...]`,
   `goal <words...>`, `exit`.
 - `topic` reads the unified namespace: every reading of the city, published each HUD tick into an in-page topic
@@ -939,6 +968,11 @@ while you type.
   its traffic), `map lakefront` into the generated metropolis (no people or traffic of its own yet), and the choice
   is kept between visits until `map default` forgets it; the desktop app has no address bar, so this is its way to
   choose. A `?map=` or `?region=` word in the URL still wins for that visit.
+- `rooms` lists the indoor workplaces of the map you are on (see The city): one row each, in slot order, with the slot
+  (the kind's id, the row of `engine.workplaceTable`), the kind, the lot (`k,m`), the doorway's `x z` in metres, the
+  station count and the name; sixteen in the procedural city, the lots the window gave in Lakefront Metro, `rooms:
+  none` on the surveyed region, and refused in the console-alone shell, which has no city. Read-only: it touches
+  nothing but the rows the bridge hands it.
 - `render off` stops drawing: the canvas is cleared to black once and the HUD shows `RENDER OFF · console only ·
   render on`, while the physics realm, the step requests, the head pose, the haptics, the audio, the captions and
   the console keep running. The quality governor holds its tier while nothing is drawn. `render on` resumes with a

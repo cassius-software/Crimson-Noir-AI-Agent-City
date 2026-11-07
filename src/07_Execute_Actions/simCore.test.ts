@@ -1094,7 +1094,7 @@ test('tracks on: a step returns the pose buffer and the craft buffer, plain data
   const reference = new TrackFleet(buildTrackNetwork(11))
   assert.equal(sim.meta.craft, reference.count)
   assert.ok(sim.meta.craft > 900)
-  assert.equal(sim.meta.rooms, 6, 'the city\'s crowd has its six workplaces')
+  assert.equal(sim.meta.rooms, 16, 'the city\'s crowd has its sixteen workplaces')
   const poses = new Float32Array(sim.meta.count * POSE.stride)
   const craft = new Float32Array(sim.meta.craft * TRACK_POSE.stride)
   const input = { dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds: [] }
@@ -1247,8 +1247,9 @@ test('a region with a street window: the fleet is seated on the window\'s rings 
 
 test('a region with its workplaces: the crowd is handed the rooms, their boxes wall the flow field, and a driver who leaves a car indoors stays out of the glass', async () => {
   const { region, streets } = windowedRegion()
-  // Six rooms along the window's third row of lots, every doorway on its line-3 street (the window's lots 1, 3, … 11).
-  const lots: WorkplaceLot[] = WORKPLACE_KINDS.map((kind, n) => ({ kind, k: 51 + 2 * n, m: 52, side: 0 }))
+  // Sixteen rooms on the window's third and sixth rows of lots (eight each, the window's lots 1, 3, … 15), every doorway
+  // on the line-3 or the line-6 street below its row.
+  const lots: WorkplaceLot[] = WORKPLACE_KINDS.map((kind, n) => ({ kind, k: 51 + 2 * (n % 8), m: n < 8 ? 52 : 55, side: 0 }))
   const rooms = workplacesAt(lots)
   const boxes = rooms.flatMap((r) => [...r.shell, ...r.furniture].map((b) => b.box))
   const room = rooms[0]
@@ -1261,8 +1262,8 @@ test('a region with its workplaces: the crowd is handed the rooms, their boxes w
     return new FakeCrowd()
   })
   assert.equal(given.length, 1)
-  assert.deepEqual(given[0].rooms, rooms, 'the crowd is handed the six rooms')
-  assert.equal(sim.meta.rooms, 6, 'and the page is told so (the browser smoke reads it)')
+  assert.deepEqual(given[0].rooms, rooms, 'the crowd is handed the sixteen rooms')
+  assert.equal(sim.meta.rooms, 16, 'and the page is told so (the browser smoke reads it)')
   const { grid } = given[0]
   const wall = toWorld(room, -CITY.lotHalf + ROOM.wall / 2, 0), hub = toWorld(room, ROOM.hub, 0)
   assert.equal(grid.weight[cellAt(grid, wall.x, wall.z)], 0, 'the back wall blocks its cell')

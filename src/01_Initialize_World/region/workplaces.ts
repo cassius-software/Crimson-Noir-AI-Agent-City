@@ -3,16 +3,17 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It gives a generated region (Lakefront Metro, through its street window, streets.ts) the
- * procedural city's six indoor workplaces (interiors.ts): which lots of the window become rooms, which street front
+ * procedural city's sixteen indoor workplaces (interiors.ts): which lots of the window become rooms, which street front
  * each doorway faces, and the commute's route table the crowd shader walks to them.
- * - The lots. The city picks its six from the seed alone, on a grid where every lot has four streets. A region's
+ * - The lots. The city picks its sixteen from the seed alone, on a grid where every lot has four streets. A region's
  *   window has dropped streets, pedestrian streets, water and ravines, so the lots are read from the pack: a lot is a
  *   candidate when one of its street fronts is a two-way street with a sidewalk (SEG.walk | SEG.drive) whose sidewalk
  *   corner on the corner graph is reachable from where the visitor starts. The candidates are ranked by what stands on
  *   them (a low podium carrying a tower first: the transit hubs, whose podium becomes the ceiling and whose tower is
  *   carried above the room; then lots one or two tall buildings fill; then one mid-rise; then one low building; then
  *   open lots), then by how near the start's lot they are, then by the seed's dice; never the tallest building's lot
- *   (the landmark stays) and never a lot under water. Six at most, the kinds in WORKPLACE_KINDS order; fewer is legal.
+ *   (the landmark stays) and never a lot under water. Sixteen (ROOM.slots) at most, the kinds in WORKPLACE_KINDS order;
+ *   fewer is legal, and a window short of candidates gives fewer.
  *   The page picks them and the physics worker receives them as data (simProtocol.ts SimInit.workplaces), so the two
  *   never disagree.
  * - The route table. The city's commuters walk the corner graph greedily towards the workplace's corner, which always

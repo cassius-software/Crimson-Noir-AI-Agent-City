@@ -41,7 +41,7 @@ import { buildWorld, createRenderer, FULL_WORLD, gpuBufferOf, LIGHT_TUNE_RANGE, 
 import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
 import { RegionPlaces, hollowLots, layoutOf, regionPhysics } from '../01_Initialize_World/region/regionWorld.ts'
 import { regionWorkplaceLots } from '../01_Initialize_World/region/workplaces.ts'
-import { drawRooms, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
+import { drawRooms, stationTable, WORKPLACE_KINDS, workplaceTable, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { streetCapacity, streetGridOf, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { tallestBuilding, type RegionPack } from '../01_Initialize_World/region/pack.ts'
 import { LANDMARK } from '../01_Initialize_World/lakefront.ts'
@@ -480,9 +480,12 @@ export class Engine {
   /**
    * The world's indoor workplaces (interiors.ts): the city's from its seed, a generated region's on lots of its street
    * window (region/workplaces.ts), none in a surveyed region. A region's minimap draws them; the HUD counts who is at
-   * work in them.
+   * work in them; the console's `rooms` lists them; `workplaceTable` and `stationTable` hand them to a swarm.
    */
   private readonly rooms: readonly Workplace[]
+  /** The rooms as the flat tables (interiors.ts workplaceTable, stationTable), built on the first read and kept: the rooms never change while the engine lives. */
+  private roomTable: Float32Array | null = null
+  private roomStations: Float32Array | null = null
   /** The swarm's short-term memory (08_Swarm/shortTerm.ts): the last few moments between each recruit and the player, this visit only. */
   private readonly moments = new ShortTermMemory()
   /** Ghost-mode collision's passages (contact.ts): the city's poles, the passage pulse, and the nearest pedestrian's
@@ -822,7 +825,7 @@ export class Engine {
         cars: empty ? 0 : streets ? (requested.tracks === false ? 0 : Math.min(cars, streetCapacity(streets, requested.seed))) : cars,
         agents: empty ? AGENTS_RANGE[0] : requested.agents ?? defaultAgents(profile), host: hints.host ?? 'browser',
       }
-      // A generated region's indoor workplaces (region/workplaces.ts): up to six lots of its street window near the start,
+      // A generated region's indoor workplaces (region/workplaces.ts): up to sixteen lots of its street window near the start,
       // picked from the pack as it came, then hollowed out of a copy of it (regionWorld.ts hollowLots), which the page
       // draws with the rooms' boxes and paved floors and the worker walls; the worker gets the lots themselves and builds
       // the same rooms from them. A surveyed region has no window and no lots: its copy is the pack.
@@ -974,6 +977,20 @@ export class Engine {
     } finally {
       document.removeEventListener('visibilitychange', onVisibility)
     }
+  }
+
+  /**
+   * The workplaces as a flat table for a swarm that dispatches by slot (interiors.ts WORKPLACE_TABLE: one row of eight
+   * floats per kind slot, kind −1 where this world has no such room), computed once; read from the page as
+   * window.__SIM__.engine.workplaceTable (with ?debug). The same array every time: a reader must not write it.
+   */
+  get workplaceTable(): Float32Array {
+    return (this.roomTable ??= workplaceTable(this.rooms))
+  }
+
+  /** Every room's stations as a flat table (interiors.ts STATION_TABLE: ROOM.slots × ROOM.stations rows of x, y, z, yaw), computed once. */
+  get stationTable(): Float32Array {
+    return (this.roomStations ??= stationTable(this.rooms))
   }
 
   /** The minimap's layer in a region (its water, buildings and streets near a point, then its workplaces over the
@@ -2437,6 +2454,9 @@ export class Engine {
       // pair() must stay synchronous up to requestDevice/requestPort: the Enter keydown is the user gesture.
       hal: Object.freeze({ summary: () => hal.summary(), devices: () => hal.devices(), pair: (k: 'hid' | 'serial' | 'bluetooth') => hal.pair(k), get shellHid() { return hal.shellHid } }),
       adapter: () => this.adapter,
+      // The indoor workplaces as rows (the city's sixteen, a region's lots, none in a surveyed region): plain data, the
+      // slot being the kind's index, as workplaceTable counts them.
+      rooms: () => this.rooms.map((r) => ({ slot: WORKPLACE_KINDS.indexOf(r.kind), kind: r.kind, name: r.name, k: r.k, m: r.m, doorX: r.door.x, doorZ: r.door.z, stations: r.stations.length })),
       ghost: (arg?: 'on' | 'off') => (arg === undefined ? (this.ghost.on ? 'on' : 'off') : this.setGhost(arg === 'on')),
       rain: (arg?: 'on' | 'off') => (arg === undefined ? (this.matrixOn ? 'on' : 'off') : this.setMatrix(arg === 'on')),
       xr: (arg?: 'vr' | 'ar' | 'off') => this.xrCommand(arg),

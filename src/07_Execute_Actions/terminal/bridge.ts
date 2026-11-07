@@ -34,6 +34,13 @@ export type {
   RunResult, RunState, SayResult, VoiceStatus, HarnessReport, RecorderSource, RecordingState, NetReport, LookChange,
 }
 
+/**
+ * One indoor workplace as the console lists it (`rooms`): its slot (the kind's index in interiors.ts WORKPLACE_KINDS,
+ * the id a swarm dispatches by), its kind and display name, its lot (between streets k and k + 1, m and m + 1), its
+ * doorway's centre in engine metres and how many stations it has. Plain data: the console holds no room.
+ */
+export interface RoomRow { slot: number; kind: string; name: string; k: number; m: number; doorX: number; doorZ: number; stations: number }
+
 export interface Ring0Stats {
   fps: number; frameMs: number; p95Ms: number; cpuMs: number; gpuRenderMs: number; gpuComputeMs: number
   /** stepMs: one world.step(); physicsMs: one whole step in the physics worker; steps: substeps last step. */
@@ -360,6 +367,8 @@ export interface TerminalBridge {
   hal: { summary(): string; devices(): HalDevice[]; pair(kind: 'hid' | 'serial' | 'bluetooth'): Promise<HalDevice | null>; readonly shellHid?: boolean }
   /** GPU adapter description. */
   adapter(): string
+  /** The indoor workplaces this world has, in slot order (the city's sixteen; a region's lots; none in a surveyed region); absent on a host without a city (the TTY shell). */
+  rooms?(): readonly RoomRow[]
   /** Ghost view (view-only: the physics shapes drawn as code over the frame): on, off, or the status line. */
   ghost(arg?: 'on' | 'off'): string
   /**

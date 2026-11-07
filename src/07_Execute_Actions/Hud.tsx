@@ -549,7 +549,7 @@ function MouseIcon() {
 }
 
 /** The procedural city's map around (x, z): the lake, the lots and parks, the street grid. */
-/** The seed's workplaces, for the minimap (interiors.ts is pure and seeded: the same six the city hollowed). */
+/** The seed's workplaces, for the minimap (interiors.ts is pure and seeded: the same sixteen the city hollowed). */
 let roomsFor: { seed: number; rooms: readonly Workplace[] } | null = null
 function roomsOf(seed: number): readonly Workplace[] {
   if (roomsFor?.seed !== seed) roomsFor = { seed, rooms: workplaces(seed) }

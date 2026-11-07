@@ -15,6 +15,39 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Sixteen indoor workplaces, in a fixed order that is their id** (`src/01_Initialize_World/interiors.ts`). The six
+  rooms become sixteen, `WORKPLACE_KINDS` in this order: roboticsLab, warehouse, serverVault, metroOps, controlTower,
+  kitchen, microFab, twinStudio, fleetBay, greenhouse, acousticsLab, responseCenter, clearingFloor, gaitLab,
+  microgrid, consoleDeck (the Sanctuary, a Ring-0 executive console deck: a room, unrelated to the First Law's
+  `sanctuary.ts`). The six first rooms keep their furniture and stations to the centimetre under their new ids
+  (telemetryCommand is controlTower, the boardroom twinStudio, the legal chambers clearingFloor, the clinic gaitLab);
+  the ten new layouts (hot and cold aisle racks and coolant manifolds, signal boards and switch consoles, induction
+  islands and prep arms and a plating conveyor, CNC cells and wafer handlers and the gantry's rail, lift platforms
+  and a battery rack, grow towers and dosing pumps, an anechoic chamber with shaker tables, a weather grid and
+  dispatch terminals, relay cabinets and inverters, a mainframe plinth and the console ring) keep every rule the
+  crowd's mirror tests hold a layout to, written down over the layouts (station rows at v = ±4.6, the aisles clear,
+  nothing past u = 5, a back-wall piece shallow where a bay row starts). `ROOM.slots` is 16: the crowd shader's
+  `Params` grows from 5,600 to 11,360 bytes (sixteen rooms of 416, the route table to 160 rows), still far inside the
+  65,536 a uniform binding has; the workday deals 128 stations with the same stride 29 (coprime with 128 as it was
+  with 48), one worker in about 205 pedestrians instead of one in 77, never fewer than one in eight. The procedural
+  city picks sixteen lots on a 4 × 4 grid over the inner downtown (`workplaceLots`; every downtown lot has a podium to
+  hollow); Lakefront Metro's `regionWorkplaceLots` returns up to sixteen, and every window of the three test seeds
+  yields sixteen (seed 1337's metropolis: its twelve transit hubs first, the six old lots among them, then four more).
+  Two flat tables for a swarm that dispatches by slot, pure and documented in the manual: `workplaceTable` (16 rows of
+  `kind, x, y, z, doorX, doorZ, doorYaw, stations`, kind −1 where a map has no such room) and `stationTable` (128 rows
+  of `x, y, z, yaw`, row r × 8 + s the crowd's own station slot), with frozen `WORKPLACE_TABLE` and `STATION_TABLE`
+  layouts; the engine exposes both as getters computed once (`window.__SIM__.engine.workplaceTable`,
+  `.stationTable`). The console gains `rooms` (`terminal/commands.ts`, `bridge.ts` `RoomRow`): slot, kind, lot,
+  doorway, stations and name, in the city and in Lakefront Metro, `none` on the surveyed region, refused in the
+  console-alone shell. The worker's refusal says "one of the sixteen kinds"; the browser smoke pins sixteen rooms on
+  the desktop and sixteen drawn and sixteen in the crowd on `?map=lakefront`. Tests: `interiors.test.ts` (every
+  invariant over the sixteen layouts and four seeds, the six old rooms' geometry pinned piece by piece, the tables),
+  `region/workplaces.test.ts` (sixteen lots on every window, seed 1337's picks), `commands.test.ts` (`rooms`), and the
+  pins in `simCore`, `regionPhysics`, `crowdCompute` and `intent` (`wgslHost` reads the room's size from the source). The passer-by mirror in
+  `interiors.test.ts` now judges "already inside" as the shader does (strictly within the walls), since a lot's
+  position can round the doorway band's outer edge a hair either way. Unverified from the cloud (no GPU): the ten new
+  rooms, their furniture and the workday on screen; the shader is validated by `naga` and run on the CPU by the
+  `wgslHost` tests as before.
 - **The fallen wear their own bodies.** A pedestrian the realm promotes to a physical body (a shove, a kerb trip, a
   slip near the operator) is no longer hidden and replaced by grey capsules: the crowd's vertex stage hangs each of
   the body's fifteen bones from the rig shape it belongs to (`src/03_Spawn_Agents/humanoid.ts` `RIG_REST`,

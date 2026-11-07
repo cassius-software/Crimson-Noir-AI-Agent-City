@@ -52,7 +52,7 @@ const LAWS = [
 
 const CORE_NAMES = [
   'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'time', 'audio', 'ghost', 'rain', 'xr', 'render', 'captions', 'ping', 'look', 'agent', 'sloane', 'goal', 'hal', 'robot', 'recruit', 'memory', 'clear', 'history', 'echo',
-  'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'noir', 'exit',
+  'uname', 'whoami', 'version', 'boot', 'map', 'rooms', 'r0', 'noir', 'exit',
 ]
 const OPERATOR_NAMES = ['operator', 'ring0', 'run', 'ask', 'swarm', 'act', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
 
@@ -607,6 +607,12 @@ interface Fake extends TerminalBridge {
   record: FakeRec
 }
 
+/** Two workplaces as the engine's bridge rows them (bridge.ts RoomRow): the first two slots of the city, and a region's would be the same shape. */
+const ROOMS = [
+  { slot: 0, kind: 'roboticsLab', name: 'Dexterous Robotics and Manipulator Lab', k: 7, m: 2, doorX: 300, doorZ: 80, stations: 8 },
+  { slot: 1, kind: 'warehouse', name: 'Automated Fulfillment and Forklift Warehouse', k: 10, m: 1, doorX: 433, doorZ: 60, stations: 8 },
+] as const
+
 function fake(): Fake {
   const f: Fake = {
     calls: [],
@@ -645,6 +651,7 @@ function fake(): Fake {
       },
     },
     adapter: () => 'Test GPU (fake)',
+    rooms: () => ROOMS,
     operator: fakeOperator(),
     record: fakeRecord(),
     recruit: undefined as unknown as FakeRecruit,
@@ -707,6 +714,29 @@ test('quoting: echo keeps quoted spacing, escapes work, unterminated quotes are 
   const bad = only(run('echo "open', b, []))
   assert.equal(bad.kind, 'err')
   assert.match(bad.text, /unterminated quoted string/)
+})
+
+test('rooms lists the indoor workplaces by slot, says so when a map has none, and is refused without a city or with an argument', () => {
+  const b = fake()
+  const r = run('rooms', b, [])
+  const t = texts(r)
+  assert.equal(t.length, 4, 'a header, a row per room, a footer')
+  assert.match(t[0], /^slot {2}kind .* lot .* door x .* z {2}stations {2}name$/)
+  // The columns as the header sets them: slot right in 4, kind left in 16, lot left in 7, door x and z right in 6, stations right in 8, two spaces between.
+  assert.match(t[1], /^ {3}0 {2}roboticsLab {7}7,2 {9}300 {5}80 {9}8 {2}Dexterous Robotics and Manipulator Lab$/)
+  assert.match(t[2], /^ {3}1 {2}warehouse {9}10,1 {8}433 {5}60 {9}8 {2}Automated Fulfillment and Forklift Warehouse$/)
+  assert.deepEqual(kinds(r), ['out', 'out', 'out', 'sys'])
+  assert.match(t[3], /^2 workplaces; .*the slot is the kind's index/)
+  // A surveyed region has no rooms; the console shell has no city at all.
+  b.rooms = () => []
+  assert.deepEqual(texts(run('rooms', b, [])), ['rooms: none (this map has no indoor workplaces)'])
+  const { rooms: _none, ...noCity } = b
+  void _none
+  assert.ok(isErr(run('rooms', noCity as TerminalBridge, [])))
+  assert.match(texts(run('rooms', noCity as TerminalBridge, []))[0], /no city is running/)
+  assert.ok(isErr(run('rooms all', b, [])))
+  // Read-only: nothing but the rows is touched, and the bridge is never written.
+  assert.deepEqual(b.calls, [])
 })
 
 test('help lists every command with usage, in two groups; help <cmd> explains one', () => {
@@ -1068,7 +1098,7 @@ test('clear, history, whoami, version, uname and exit', () => {
 test('the brand always comes from the bridge', () => {
   const b = unlocked()
   const everything = ['help', 'stats', 'laws', 'kernel', 'quality', 'time', 'audio', 'hal', 'version', 'uname -a', 'api', 'harness', 'record', 'sim', 'operator',
-    'render', 'captions', 'ping', 'look', 'boot', 'map', 'r0', 'noir', 'net', 'recruit', 'robot', 'robot demo', 'robot relay']
+    'render', 'captions', 'ping', 'look', 'boot', 'map', 'rooms', 'r0', 'noir', 'net', 'recruit', 'robot', 'robot demo', 'robot relay']
     .flatMap((c) => texts(run(c, b, [])))
     .concat(motd(BRAND).map((l) => l.text))
     .join('\n')
@@ -1690,7 +1720,7 @@ test('sim prints a one-screen summary from stats, the clock and the lock state',
 
 test('content rules: no combat vocabulary in anything the console prints', () => {
   const b = unlocked()
-  const printed = [...complete('').map((c) => c), 'help', 'help stats', 'help record', 'laws', 'kernel', 'stats', 'api', 'api vehicles', 'harness', 'record', 'record status', 'sim', 'operator lock', 'operator unlock', 'act', 'act list', 'act log', 'act gate']
+  const printed = [...complete('').map((c) => c), 'help', 'help stats', 'help record', 'laws', 'kernel', 'stats', 'api', 'api vehicles', 'harness', 'record', 'record status', 'sim', 'operator lock', 'operator unlock', 'act', 'act list', 'act log', 'act gate', 'rooms']
     .flatMap((c) => texts(run(c, b, [])))
     .concat(motd(BRAND).map((l) => l.text))
     .join('\n')
