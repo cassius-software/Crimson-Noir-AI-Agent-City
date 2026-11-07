@@ -105,7 +105,7 @@ export function ActCard({ act, termOpen, onAllow, onRefuse }: { act: PendingAct;
       aria-labelledby={title}
       aria-describedby={body}
       data-act={act.seq}
-      className="pointer-events-none fixed inset-0 z-[10000] flex items-center justify-center font-sans text-sm"
+      className="ui-zoom pointer-events-none fixed inset-0 z-[10000] flex items-center justify-center font-sans text-sm"
       style={SAFE_PADDING}
     >
       {/* The root lets the pointer through to the city (a drag still looks around, the touch stick still walks); only

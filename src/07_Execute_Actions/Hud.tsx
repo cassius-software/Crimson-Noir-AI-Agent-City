@@ -103,7 +103,7 @@ const SHORT = mediaStore('(max-height: 499px)')
  *  for the Concierge card above it. Smaller windows get the one-line chip (Sloane's list has every key). */
 const ROOMY = { ...mediaStore('(min-width: 1100px) and (min-height: 600px)'), server: () => true }
 
-export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null, mic = null, onMic }: {
+export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null, mic = null, onMic, highContrast = false, captionPx = 13 }: {
   s: SipocSnapshot | null
   adapter: string
   visible: boolean
@@ -115,6 +115,10 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   mic?: MicMeter | null
   /** The pill's press: open the microphone, or mute it (the same switch as V, the right stick's click and the touch Menu). */
   onMic?: () => void
+  /** High contrast in force (07_Execute_Actions/access.ts highContrast; index.css flattens the panels): the meter draws white. */
+  highContrast?: boolean
+  /** The caption strip's font size, CSS px (access.ts CAPTION_PX). */
+  captionPx?: number
 }) {
   const small = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
   const short = useSyncExternalStore(SHORT.subscribe, SHORT.matches, SHORT.server)
@@ -187,7 +191,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   // hidden it shows only with the device open: the browser's own indicator is never on without it (like REC).
   const voice = s.supplier.voice
   const micOpen = voice ? isOpen(voice.phase) : false
-  const micPill = voice && (visible || micOpen) && <MicPill voice={voice} mic={mic} onMic={onMic} panel={panel} muted={muted} dark={dark} />
+  const micPill = voice && (visible || micOpen) && <MicPill voice={voice} mic={mic} onMic={onMic} contrast={highContrast} panel={panel} muted={muted} dark={dark} />
   // Recruitment: who is coming over, the Active swarm's skills and the activity line. Without a host microphone (an
   // older host, no pill) the chip also carries the MIC dot, so an open microphone is never without its indicator.
   const rc = s.supplier.recruiting
@@ -203,7 +207,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   // speech with its words. An accessibility surface, so it outlives the H key like the MIC and REC chips.
   const captions = c.captions
   const captionStrip = captions && captions.length > 0 && (
-    <div role="status" aria-live="polite" className={`flex max-w-full flex-col items-center gap-1 px-4 py-2 text-[13px] font-medium ${panel}`} data-hint="captions">
+    <div role="status" aria-live="polite" className={`flex max-w-full flex-col items-center gap-1 px-4 py-2 font-medium ${panel}`} style={{ fontSize: `${captionPx}px` }} data-hint="captions">
       {captions.map((line, i) => (
         <div key={`${i}:${line}`} className="max-w-full truncate text-center">{line}</div>
       ))}
@@ -267,7 +271,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   )
 
   return (
-    <div className="pointer-events-none absolute inset-0 font-sans text-[13px] antialiased select-none">
+    <div className="ui-zoom pointer-events-none absolute inset-0 font-sans text-[13px] antialiased select-none">
       {visible && !compact && (
         <div className={FRAME_WIDE}>
           <div className="absolute top-0 left-0 flex flex-col items-start gap-2">
@@ -480,8 +484,8 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
  * snapshot. A live region beside it tells a screen reader of a change of state (listening, muted, blocked), not of
  * every onset of speech nor of Sloane speaking: those are the meter's news.
  */
-function MicPill({ voice, mic, onMic, panel, muted, dark }: {
-  voice: NonNullable<SipocSnapshot['supplier']['voice']>; mic: MicMeter | null; onMic?: () => void; panel: string; muted: string; dark: boolean
+function MicPill({ voice, mic, onMic, contrast, panel, muted, dark }: {
+  voice: NonNullable<SipocSnapshot['supplier']['voice']>; mic: MicMeter | null; onMic?: () => void; contrast: boolean; panel: string; muted: string; dark: boolean
 }) {
   const canvas = useRef<HTMLCanvasElement>(null)
   const open = isOpen(voice.phase)
@@ -494,7 +498,7 @@ function MicPill({ voice, mic, onMic, panel, muted, dark }: {
     const draw = () => {
       const w = el.width, h = el.height, n = mic.levels.length, bar = w / n
       ctx.clearRect(0, 0, w, h)
-      ctx.fillStyle = dark ? 'rgba(255,255,255,0.85)' : 'rgba(15,23,42,0.8)'
+      ctx.fillStyle = contrast ? '#fff' : dark ? 'rgba(255,255,255,0.85)' : 'rgba(15,23,42,0.8)'
       for (let i = 0; i < n; i++) {
         // The square root lifts a quiet room into view; a full level fills the height.
         const v = mic.levels[(mic.head + i) % n]
@@ -505,7 +509,7 @@ function MicPill({ voice, mic, onMic, panel, muted, dark }: {
     }
     raf = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(raf)
-  }, [mic, open, dark])
+  }, [mic, open, dark, contrast])
   const failed = voice.phase === 'blocked' || voice.phase === 'error' || voice.phase === 'unavailable'
   const dot = voice.phase === 'speech' ? 'bg-emerald-400' : open && voice.speaking ? 'bg-amber-400' : open ? 'bg-sky-500' : failed ? 'bg-rose-500' : dark ? 'bg-slate-400' : 'bg-slate-500'
   // The reader's line: the state without speech onsets (speech reads as listening) and without Sloane's turns.

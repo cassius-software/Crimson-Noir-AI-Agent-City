@@ -404,6 +404,8 @@ export interface TerminalBridge {
   concierge?: ConciergeBridge
   /** Absent until the host holds the microphone (04_Connect_Hardware/microphone.ts; the terminal then says so). */
   mic?: MicBridge
+  /** Absent in the console shell: the page's accessibility settings (07_Execute_Actions/access.ts). */
+  access?: AccessBridge
   /** A goal in plain words, planned as Sloane plans one (06_Make_Decisions/intent.ts) with what can be done now done; absent in the console shell. */
   goal?(text: string): GoalPlan
 }
@@ -469,6 +471,17 @@ export interface AgentBridge {
 export interface MicBridge {
   status(): string[]
   on(on: boolean): string | Promise<string>
+}
+
+/**
+ * The page's accessibility settings (07_Execute_Actions/access.ts): high contrast, the colour-vision filter, the text
+ * scale and the caption size, kept between visits. `set` takes the console's field and value words and returns the
+ * field's line, or the error (nothing written); `reset` restores the defaults.
+ */
+export interface AccessBridge {
+  status(): string[]
+  set(field: string, value: string): { line: string } | { error: string }
+  reset(): string
 }
 
 /** Sloane's spoken voice (onboarding/speaker.ts): the switch, the browser voice preferred, the tier a line takes, a line said now. */

@@ -40,6 +40,21 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   flow, and the barge-in's feel with a loudspeaker are unverified. The page grew 17.7 KB for it, past a budget main
   was 7.5 KB under, so `tools/verify/page_dist.mjs` re-measures: 14,385,135 bytes plus 3%.
 
+- **Accessibility: high contrast, colour-vision filters, text size, caption size.** Four settings
+  (`07_Execute_Actions/access.ts`), kept between visits (`civic-simulation:access:v1`), set for one visit in the URL
+  (`?contrast=`, `?vision=`, `?ui=`, `?captions=large|huge`), read and written by the console's `access` and, the two
+  most wanted on a phone, by the touch Menu's High contrast and Text size items. High contrast (`auto` by default:
+  the operating system's `prefers-contrast: more`) is written onto the page's root (`data-contrast`) and flattens
+  every frosted-glass card (`index.css`, keyed on the blur utility so every card holds without knowing) to white on
+  black with solid borders and a thick focus ring; the colour-vision filter is one more 3×3 at the end of the post
+  chain (`postfx.ts`, after the ghost composite), a daltonisation for a protan, deutan or tritan viewer (the Machado,
+  Oliveira and Fernandes 2009 simulation, the lost colour shifted into the channels the viewer sees) and the identity
+  otherwise, set through `Engine.setVision`; the text size is a CSS zoom on every overlay's root (`--ui-zoom`,
+  `.ui-zoom`: the HUD, Sloane, the wardrobe, the action card, the way-out and lock screens, the onboarding), never the
+  canvas; the caption strip has a size of its own. Verified by Node tests of the arithmetic (every filter keeps every
+  grey and pulls the confused pair apart) and the settings, and by source pins over the page (`access.test.ts`,
+  `accessWiring.test.ts`); how the filter and the zoom look on a real display is unverified.
+
 - **The fallen wear their own bodies.** A pedestrian the realm promotes to a physical body (a shove, a kerb trip, a
   slip near the operator) is no longer hidden and replaced by grey capsules: the crowd's vertex stage hangs each of
   the body's fifteen bones from the rig shape it belongs to (`src/03_Spawn_Agents/humanoid.ts` `RIG_REST`,

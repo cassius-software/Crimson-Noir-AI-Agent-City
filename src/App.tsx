@@ -13,13 +13,14 @@
  * the city on a desktop.
  * What breaks if it is removed? Nothing is mounted: the page is blank.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { Engine, type EngineOptions } from './07_Execute_Actions/engine.ts'
 import { Hud } from './07_Execute_Actions/Hud.tsx'
 import { Terminal, type TerminalHandle } from './07_Execute_Actions/terminal/Terminal.tsx'
 import { offlineBridge, type LookBridge, type ModelBridge, type NetBridge, type PendingAct, type TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
 import { hudLine, recruitBridge, Recruiter, speechEnv } from './08_Swarm/recruitment.ts'
 import { isOpen as micIsOpen, Microphone, voiceStatus } from './04_Connect_Hardware/microphone.ts'
+import { accessBridge, accessFromQuery, applyAccess, CAPTION_PX, cycleScale, highContrast, loadAccess, saveAccess, toggleContrast, type AccessSettings } from './07_Execute_Actions/access.ts'
 import { TaskRouter } from './08_Swarm/taskRouter.ts'
 import { deferredLedger, followRecruiter, indexedDbLedger, memoryBridge, SwarmMemory } from './08_Swarm/memory.ts'
 import { loopbackFetch } from './02_Define_The_Rules/airgap.ts'
@@ -478,9 +479,31 @@ function onboardingVoice(): Voice {
   return modelVoice(router, (line) => (/morning, sunset or night/i.test(line) ? ['morning', 'sunset', 'night'] : /sound on/i.test(line) ? ['sound'] : []))
 }
 
+/** The operating system's own contrast switch (`prefers-contrast: more`), which the 'auto' contrast setting follows (access.ts). */
+const PREFERS_MORE = (() => {
+  let list: MediaQueryList | null = null
+  const media = () => (list ??= window.matchMedia('(prefers-contrast: more)'))
+  return {
+    subscribe(onChange: () => void) {
+      const m = media()
+      m.addEventListener('change', onChange)
+      return () => m.removeEventListener('change', onChange)
+    },
+    matches: () => media().matches,
+    server: () => false,
+  }
+})()
+
 function App() {
   // Read once: the boot track decides which shell mounts, so the hooks of each shell live in that shell.
   const [options] = useState(readOptions)
+  // Accessibility (07_Execute_Actions/access.ts): kept between visits, set for one visit in the URL, and written onto
+  // <html> (data-contrast, --ui-zoom) here, above every shell, so the onboarding, the console alone and the way-out
+  // card hold it too; 'auto' contrast follows the system's switch.
+  const [access, setAccessState] = useState(() => accessFromQuery(new URLSearchParams(window.location.search), loadAccess()))
+  const prefersMore = useSyncExternalStore(PREFERS_MORE.subscribe, PREFERS_MORE.matches, PREFERS_MORE.server)
+  const onAccess = useCallback((next: AccessSettings) => { setAccessState(next); saveAccess(next) }, [])
+  useEffect(() => { applyAccess(access, prefersMore, document.documentElement) }, [access, prefersMore])
   // A first visit (no saved onboarding, no profile) opens on the concierge's onboarding, which builds the metropolis in the
   // background and hands its outcome here; a returning visitor goes straight to the map they chose (script.ts).
   const [saved] = useState<SavedOnboarding | null>(loadOnboarding)
@@ -514,7 +537,7 @@ function App() {
   const shellOptions = outcome?.options ? { ...options, ...outcome.options } : options
   // Sloane watches the first minutes of a visitor who has just walked in from the onboarding (never the expert path).
   const mentored = outcome !== null && !outcome.saved.skipped
-  return <GuiShell options={shellOptions} plan={{ choice, pack: outcome?.pack ?? null, zone }} mentored={mentored} voice={voice} speaker={speaker} link={link} />
+  return <GuiShell options={shellOptions} plan={{ choice, pack: outcome?.pack ?? null, zone }} mentored={mentored} voice={voice} speaker={speaker} link={link} access={access} prefersMore={prefersMore} onAccess={onAccess} />
 }
 
 /**
@@ -556,7 +579,10 @@ function goalPlan(text: string, b: Pick<TerminalBridge, 'setClock' | 'quality' |
 interface SpeakerLink { sound(): boolean; source: { voice: SpeechVoice; out: ConciergeOut } | null }
 
 /** The city: the engine over the canvas, the HUD, the Concierge, the touch controls and the drop-down console. */
-function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: Options; plan: MapPlan; mentored: boolean; voice: Voice; speaker: ConciergeSpeaker; link: SpeakerLink }) {
+function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefersMore, onAccess }: {
+  options: Options; plan: MapPlan; mentored: boolean; voice: Voice; speaker: ConciergeSpeaker; link: SpeakerLink
+  access: AccessSettings; prefersMore: boolean; onAccess: (next: AccessSettings) => void
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   // The city's element (a model file dropped on it is kept, on a desktop) and the hidden file input the picker opens.
   const mainRef = useRef<HTMLElement>(null)
@@ -594,6 +620,13 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
   const [mic] = useState(() => new Microphone())
   const onMic = useCallback(() => { void mic.toggle() }, [mic])
   useEffect(() => () => mic.dispose(), [mic])
+  // Accessibility (access.ts): high contrast in force now; the settings behind refs for the console's bridge, which is
+  // built once with the engine; the colour-vision filter handed to the post chain as it changes.
+  const high = highContrast(access, prefersMore)
+  const accessRef = useRef(access)
+  const prefersRef = useRef(prefersMore)
+  useEffect(() => { accessRef.current = access; prefersRef.current = prefersMore }, [access, prefersMore])
+  useEffect(() => { engine?.setVision(access.vision) }, [engine, access.vision])
   // Sloane's voice and the microphone: the detector allows for the page's own voice (the pill reads Speaking), and
   // speech starting while Sloane speaks cuts the line (barge-in).
   useEffect(() => {
@@ -1038,6 +1071,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
               : 'on-device recognition: none in this browser; the pill shows the level and speech only (recruit <skill> types a request)'),
             on: (on: boolean) => (on ? mic.listen().then((st) => `${st.phase}${st.detail ? ` · ${st.detail}` : ''}`) : (mic.mute(), 'muted: the device is released')),
           }),
+          access: accessBridge(() => accessRef.current, () => prefersRef.current, onAccess),
           goal: (text: string) => goalPlan(text, engineBridge),
           memory: memoryBridge(memory, r),
           net: netBridge(e.net, pageStore(NET_TOKEN_KEY)),
@@ -1109,7 +1143,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
       if ((window as { recruit?: unknown }).recruit) delete (window as { recruit?: unknown }).recruit
       engine?.dispose()
     }
-  }, [options, plan, wearLook, link, roster, speaker, mic, onMic])
+  }, [options, plan, wearLook, link, roster, speaker, mic, onMic, onAccess])
 
   // The boot's failure first; else a halt that is not an audit. Words for this device (bootFailure.ts).
   const env = useMemo(() => pageEnv(), [])
@@ -1121,7 +1155,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
       {/* The picker's file input: no accept (a phone greys out a .gguf it has no type for), and hidden by its size
           and opacity, never by display, so every browser still opens it from a click. */}
       <input ref={fileRef} type="file" multiple tabIndex={-1} aria-hidden="true" className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0" />
-      <Hud s={hud} adapter={adapter} visible={hudVisible} terminalOpen={termOpen} mapLayer={engine?.mapLayer ?? null} mic={mic} onMic={onMic} />
+      <Hud s={hud} adapter={adapter} visible={hudVisible} terminalOpen={termOpen} mapLayer={engine?.mapLayer ?? null} highContrast={high} captionPx={CAPTION_PX[access.captions]} mic={mic} onMic={onMic} />
       {engine && hud && !termOpen && (
         <TouchControls
           input={engine.input}
@@ -1139,6 +1173,11 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
             onHeadset: hud.supplier.xr.state === 'unsupported' ? undefined : () => engine.toggleXr(),
             headset: hud.supplier.xr.state === 'vr' || hud.supplier.xr.state === 'ar',
             mic: hud.supplier.voice ? micIsOpen(hud.supplier.voice.phase) : false,
+            // Accessibility (access.ts): the two settings most wanted on a phone; the rest is the console's `access`.
+            contrast: high,
+            onContrast: () => onAccess(toggleContrast(access, prefersMore)),
+            textScale: access.scale,
+            onTextScale: () => onAccess(cycleScale(access)),
           }}
         />
       )}

@@ -96,6 +96,12 @@ export interface TouchMenuHost {
   headset?: boolean
   /** The microphone (microphone.ts) as the last snapshot reported it: open (true) or not, so its item reads On or Off. */
   mic?: boolean
+  /** High contrast (07_Execute_Actions/access.ts) in force now, and its switch; without the switch there is no item. */
+  contrast?: boolean
+  onContrast?: () => void
+  /** The text size of every card, percent, and the step to the next size; without the step there is no item. */
+  textScale?: number
+  onTextScale?: () => void
 }
 
 interface Props { input: Input; driving: boolean; nearVehicle: boolean; menu?: TouchMenuHost }
@@ -413,6 +419,9 @@ function MenuSheet({ input, host, at, onClose }: { input: Input; host: TouchMenu
     // The microphone: the same press as V and the right stick's click (the engine hands it to the host's switch).
     { label: 'Microphone', on: host.mic === true, run: () => input.press('mute') },
     ...(host.onHeadset ? [{ label: 'Headset', on: host.headset === true, run: host.onHeadset }] : []),
+    // Accessibility (access.ts): the two settings most wanted on a phone; the rest is the console's `access`.
+    ...(host.onContrast ? [{ label: 'High contrast', on: host.contrast === true, run: host.onContrast }] : []),
+    ...(host.onTextScale ? [{ label: `Text size ${host.textScale ?? 100} %`, run: host.onTextScale, keep: true }] : []),
     { label: host.hudVisible ? 'Hide HUD' : 'Show HUD', run: host.onHud },
   ]
   const beside = at.left - 12 - SHEET_W >= 8

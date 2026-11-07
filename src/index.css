@@ -54,3 +54,56 @@ html[data-shell='tauri'] #root {
     font-size: max(16px, 1em);
   }
 }
+
+/* Accessibility (07_Execute_Actions/access.ts writes these onto <html>). --ui-zoom scales every overlay that carries
+   .ui-zoom (the HUD, Sloane's card and chip, the wardrobe, the action card, the way-out card) without the canvas, 100 %
+   to 200 %. data-contrast="high" flattens every frosted-glass panel (matched by its blur utility, so every panel holds
+   without each file knowing) to white on black with a solid border and no blur or shadow, lifts every light button
+   inside one to black on white, and gives keyboard focus a thick ring; pulsing dots hold still. */
+:root {
+  --ui-zoom: 1;
+}
+.ui-zoom {
+  zoom: var(--ui-zoom);
+}
+html[data-contrast='high'] [class*='backdrop-blur'] {
+  background-color: #000 !important;
+  color: #fff !important;
+  border: 2px solid #fff !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+html[data-contrast='high'] [class*='backdrop-blur'] [class*='text-'] {
+  color: #fff !important;
+}
+html[data-contrast='high'] [class*='backdrop-blur'] [class*='border-'] {
+  border-color: #fff !important;
+}
+html[data-contrast='high'] [class*='backdrop-blur'] [class*='bg-white/'],
+html[data-contrast='high'] [class*='backdrop-blur'] [class*='bg-slate-900'],
+html[data-contrast='high'] [class*='backdrop-blur'] [class*='bg-sky-'],
+html[data-contrast='high'] [class*='backdrop-blur'] [class*='bg-rose-'],
+html[data-contrast='high'] [class*='backdrop-blur'] [class*='bg-emerald-'],
+html[data-contrast='high'] [class*='backdrop-blur'] [class*='bg-amber-'] {
+  background-color: #fff !important;
+  color: #000 !important;
+  border-color: #000 !important;
+}
+html[data-contrast='high'] [class*='backdrop-blur'] [class*='bg-white/'] *,
+html[data-contrast='high'] [class*='backdrop-blur'] [class*='bg-slate-900'] * {
+  color: #000 !important;
+}
+html[data-contrast='high'] [class*='backdrop-blur'] input,
+html[data-contrast='high'] [class*='backdrop-blur'] textarea {
+  background-color: #000 !important;
+  color: #fff !important;
+  border: 2px solid #fff !important;
+}
+html[data-contrast='high'] :focus-visible {
+  outline: 3px solid #ffd400 !important;
+  outline-offset: 2px !important;
+}
+html[data-contrast='high'] [class*='animate-pulse'] {
+  animation: none !important;
+}

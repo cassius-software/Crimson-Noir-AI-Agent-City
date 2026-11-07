@@ -86,7 +86,8 @@ import {
 } from './simProtocol.ts'
 import { readControls } from './controls.ts'
 import { clampPlayers, originBottomLeft, splitScreen, type Rect } from './viewports.ts'
-import { buildPost, type CinemaPost } from './postfx.ts'
+import { buildPost, type CinemaPost, type VisionUniform } from './postfx.ts'
+import { visionMatrix, visionWord, type Vision } from './access.ts'
 import { createGhost, type GhostView } from './ghost.ts'
 import { CONTACT, ContactPulse, PoleIndex, carGap, carsWithin, peopleWithin, peopleWithinBox, personGap, personGapToBox, touching } from './contact.ts'
 import { DISSOLVE, DissolveSet, carsOverlapping, copyDirty, poleSlot, type DissolveBuffer } from './dissolve.ts'
@@ -451,6 +452,9 @@ export class Engine {
   /** The cinema camera's pacer and post uniforms (both null with ?cinema=0: every animation frame is drawn). */
   private readonly pacer: FramePacer | null
   private readonly cinema: CinemaPost | null
+  /** The colour-vision filter's matrix at the end of the post chain (postfx.ts; 07_Execute_Actions/access.ts sets it through setVision). */
+  private readonly vision: VisionUniform
+  private visionMode: Vision = 'none'
   /** The span the pedestrians' motion vectors cover (crowd.ts CrowdView.frameSeconds). */
   private readonly crowdFrameSeconds: UniformNode<'float', number>
   /** Where the pedestrians look (crowd.ts CrowdView.gazeTarget): the operator's eye afoot, nobody from a car. */
@@ -662,7 +666,7 @@ export class Engine {
 
   private constructor(p: {
     canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; craftView: CraftView | null; rigView: RigView; profile: DeviceProfile
-    post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
+    post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; vision: VisionUniform; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
     options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]
     crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; crowdFigure: GPUBuffer; netView: NetView
   }) {
@@ -684,6 +688,7 @@ export class Engine {
     this.post = p.post
     this.volumetrics = p.volumetrics
     this.cinema = p.cinema
+    this.vision = p.vision
     this.pacer = p.cinema ? new FramePacer(CINEMA.fps) : null
     this.crowdFrameSeconds = p.crowdFrameSeconds
     this.crowdGaze = p.crowdGaze
@@ -911,7 +916,7 @@ export class Engine {
       const netView = new NetView()
       world.scene.add(netView.people, netView.cars)
       const ghost = createGhost({ boxes: world.boxes, furniture: world.furniture, suv: sim.meta.suv, crowdPos: view0.pos, agents: options.agents, rigs: rigShapes })
-      const { pipeline: post, volumetrics, cinema } = buildPost(gpu.renderer, world.scene, world.camera, options.cinema === false ? null : { resorted: world.resorted }, ghost)
+      const { pipeline: post, volumetrics, cinema, vision } = buildPost(gpu.renderer, world.scene, world.camera, options.cinema === false ? null : { resorted: world.resorted }, ghost)
 
       const w = Math.max(1, canvas.clientWidth), h = Math.max(1, canvas.clientHeight)
       gpu.renderer.setSize(w, h, false)
@@ -956,7 +961,7 @@ export class Engine {
       if (sim.fault !== null) throw new Error(sim.fault)
       stillThere()
       const engine = new Engine({
-        canvas, gpu, world, crowd, sim, view, rigView, profile, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options,
+        canvas, gpu, world, crowd, sim, view, rigView, profile, post, volumetrics, cinema, vision, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options,
         quality: { governor, targets, applied, mask, live }, places, landmark, streets,
         rooms: hollow ? hollow.rooms : workplaces(options.seed),
         // The code dissolve's crowd amounts: allocated by the draws above like the frame's buffers, written the same way.
@@ -2221,6 +2226,19 @@ export class Engine {
     const at = cam.position
     return wallsBetween(this.world.boxes, { x: at.x, y: at.y, z: at.z }, { x, y: SPEECH.height, z })
   }
+
+  /**
+   * The colour-vision filter (07_Execute_Actions/access.ts): the post chain's last matrix, a daltonisation for a protan,
+   * deutan or tritan viewer, or the identity for 'none'. View-only. Returns the word the console prints.
+   */
+  setVision(mode: Vision): string {
+    this.visionMode = mode
+    this.vision.value.set(...visionMatrix(mode))
+    return visionWord(mode)
+  }
+
+  /** The colour-vision filter in force. */
+  get visionFilter(): Vision { return this.visionMode }
 
   /** Closed captions on or off (view-only; the soundscape keeps sounding). Returns the status line the console prints. */
   setCaptions(on: boolean): string {

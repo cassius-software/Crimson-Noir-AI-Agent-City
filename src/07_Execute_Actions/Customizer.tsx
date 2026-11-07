@@ -584,7 +584,7 @@ export function Customizer({ visible, look, seed, onChange, onClose, dark = fals
   }
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center p-4 font-sans text-[13px] antialiased">
+    <div className="ui-zoom pointer-events-none absolute inset-0 z-30 flex items-center justify-center p-4 font-sans text-[13px] antialiased">
       <aside
         ref={cardRef}
         tabIndex={-1}
