@@ -374,6 +374,27 @@ shoved, no pole stops you, and the people keep their line.
   at run time by `ragdollRealm.ts` alone, that module by `simCore.ts` alone, only the listed files name it, and a
   vehicle is not a cause it accepts. The avatar's capsule carries a group that filters a rig's segments out
   (`AVATAR_GROUPS`), so you walk through a promoted person as through anyone else, and shove nobody.
+- **Six layers, one rule** (`02_Define_The_Rules/collision.ts` `LAYER`, `canCollide`). Every collider in the realm
+  is in one of six layers: terrain, structure, player, agent, vehicle, prop. The whole of the policy above is one
+  rule: an actor (a player, an agent, a vehicle) meets the solid world (terrain and structures) and nothing else. So a
+  player never meets a player, an agent, a vehicle or a prop; a vehicle never meets a vehicle, an agent or a player;
+  and the solid world never meets itself. `canCollide(a, b)` is that rule with no branch in it, −1 for a pair that
+  meets and 0 for one that does not, the same whichever way round. The Rapier words that carry it (`COLLIDERS`: each
+  class of collider's body kind, sensor flag and interaction groups) are checked against the rule pair by pair in
+  `collision.test.ts`, and the sources that set them are pinned, so a group that drifts from the rule fails the suite.
+  Two players: the controller skips every kinematic body as well as every dynamic one (`player.ts`
+  `PASS_VEHICLES`), so in a room you walk through another player's capsule as through anyone else
+  (`wallContact.test.ts`).
+- **A wall stops a car dead, and nothing breaks** (`WALL_CONTACT`). The one contact a chassis exchanges, with the
+  solid world, has zero restitution and a friction of 0.4. A sedan or an SUV driven into a wall at the speed cap stops
+  inside 0.15 m, stays on its wheels, rolls back no faster than the solver's own correction (about a metre a second)
+  and reverses away; hit twenty degrees off square it slides along the wall and keeps its heading sense. There is no
+  damage model anywhere: nothing deforms, catches fire, breaks down or counts health, no event is raised, and the
+  suite checks that no vehicle, physics or collision source names such a thing. A car that ends on its side or roof is
+  set back on its wheels (`recover`). The restitution is zero on purpose: a bounce is paid out of the contact
+  solver's warm-start, which a car rebuilt from a room correction cannot copy, so the room's replay would part from
+  the page's at every wall. All of it is measured in real Rapier in Node (`wallContact.test.ts`); how it looks on a
+  GPU is not verified here.
 - **The code dissolve** (`01_Initialize_World/codeDissolve.ts`, `07_Execute_Actions/dissolve.ts`). Where your body
   meets something it passes through, that thing gives way. When the avatar's disc on foot, or the driven car's
   chassis at the wheel, each grown by 0.25 m, is inside a street lamp, a tree, a signal pole, a pedestrian or (on
@@ -2580,7 +2601,7 @@ keeps the same chassis class in every slot (saved rooms, the network's plan and 
 untouched). The realm's `meta` carries `kind` beside `suv`; the HUD names the kind when you take a wheel.
 - **Collisions:** strict CCD on every chassis; cars pass through cars (collision groups,
   `02_Define_The_Rules/collision.ts`; see Ghost-mode collision), stay solid to the world, and let the avatar on foot
-  walk through them (`avatarThroughCars`).
+  walk through them (`avatarThroughCars`). A wall stops a car dead with no bounce and no damage (`WALL_CONTACT`).
 - **Steering:** Ackermann geometry (the inner front wheel steers more).
 - **Resistance:** aerodynamic drag and rolling resistance. Coast-down from 50 km/h is about
   0.3 m/s².

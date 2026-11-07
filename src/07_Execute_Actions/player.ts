@@ -28,10 +28,14 @@ const MAX_LIFT = 0.35
 const SOLIDS = RAPIER.QueryFilterFlags.EXCLUDE_SENSORS
 /**
  * On foot, vehicles are not obstacles (collision.ts avatarThroughCars; every dynamic body in this world is a vehicle
- * chassis): the avatar walks through a parked car as through a lamp, and the car's mesh dissolves around the camera.
- * The flag doubles the groups (AVATAR_GROUPS already drops every chassis pair), so neither alone can let a car back in.
+ * chassis, a rig's segment or a robot's link, and the avatar passes through each): the avatar walks through a parked
+ * car as through a lamp, and the car's mesh dissolves around the camera. The flag doubles the groups (AVATAR_GROUPS
+ * already drops every chassis pair), so neither alone can let a car back in. Nor is another player's capsule (the
+ * only other kinematic body) an obstacle: players walk through each other as through anyone else (collision.ts
+ * canCollide: a player meets the ground and the structures and nothing else). The mirror's GHOST flags below say the
+ * same, so a realm and its mirror sweep the same set of colliders.
  */
-const PASS_VEHICLES = SOLIDS | RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC
+const PASS_VEHICLES = SOLIDS | RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC | RAPIER.QueryFilterFlags.EXCLUDE_KINEMATIC
 /**
  * A ghost (player 1 in a network room) and the network's mirror: only fixed geometry is an obstacle. No vehicle, no
  * other player (kinematic capsules), no sensor. The same flags on both sides, so the page's move and the server's

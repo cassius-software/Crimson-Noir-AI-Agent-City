@@ -15,6 +15,16 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The contact policy as one rule.** Six collision layers (`src/02_Define_The_Rules/collision.ts` `LAYER`:
+  terrain, structure, player, agent, vehicle, prop) and one branchless rule, `canCollide`: an actor (a player, an
+  agent, a vehicle) meets the solid world (terrain, a structure) and nothing else, −1 or 0, the same either way
+  round. The Rapier words that already carried the policy (each collider class's body kind, sensor flag and
+  interaction groups, now listed in `COLLIDERS`) are checked against the rule pair by pair, and the sources that
+  set them are pinned, so a group that drifts from the rule fails the suite. `wallContact.test.ts` drives a sedan and
+  an SUV into a wall at the speed cap in real Rapier: a dead stop inside 0.15 m, upright, nothing added to or taken
+  from the world, no First-Law ruling, and away again in reverse; a corner hit slides along the wall. `WALL_CONTACT`
+  (restitution 0, friction 0.4) is on every chassis. There is no damage model, and the suite checks that none is
+  named in any vehicle, physics or collision source. Manual: Ghost-mode collision.
 - **The fallen wear their own bodies.** A pedestrian the realm promotes to a physical body (a shove, a kerb trip, a
   slip near the operator) is no longer hidden and replaced by grey capsules: the crowd's vertex stage hangs each of
   the body's fifteen bones from the rig shape it belongs to (`src/03_Spawn_Agents/humanoid.ts` `RIG_REST`,
@@ -585,6 +595,12 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **Players pass through players.** The avatar's controller skipped dynamic bodies and sensors and now skips
+  kinematic bodies too (`src/07_Execute_Actions/player.ts` `PASS_VEHICLES`), as the one contact rule says of two
+  players, so in a room two people at the same spot never block each other; a wall still stops both. A chassis
+  carries `WALL_CONTACT` instead of Rapier's default contact (friction 0.4 where it was 0.5; restitution 0 as
+  before, now stated and tested: a bounce would live in the solver's warm-start, which a car rebuilt from a room
+  correction cannot copy, so the room's replay would part from the page's at every wall, `mirror.node.test.ts`).
 - **Look v2.** A look is twenty slots: `build` is gone, replaced by the eight sliders. A look kept in this browser
   before (record `v` 1, fourteen slots, the same key), a roster record's look and an eight-symbol look code are
   upgraded on the way in (height and build carried onto the new sliders, the rest set to the middle); new records

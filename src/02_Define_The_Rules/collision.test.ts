@@ -18,7 +18,10 @@ import { test } from 'node:test'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ALL_GROUPS, AVATAR_GROUPS, COLLISION, GROUP, interactionGroups, RAGDOLL_GROUPS, VEHICLE_CHASSIS_GROUPS, WHEEL_RAY_GROUPS } from './collision.ts'
+import {
+  ACTORS, ALL_GROUPS, AVATAR_GROUPS, canCollide, COLLIDERS, COLLISION, DEFAULT_GROUPS, GROUP, interactionGroups, LAYER, RAGDOLL_GROUPS, rapierContact, rapierPairs,
+  ROBOT_GROUPS, SOLID_WORLD, VEHICLE_CHASSIS_GROUPS, WALL_CONTACT, WHEEL_RAY_GROUPS,
+} from './collision.ts'
 import { PERTURBATION_CAUSES, POOL_CAPACITY } from '../03_Spawn_Agents/ragdoll.ts'
 import { RIG_SLOTS } from '../07_Execute_Actions/simProtocol.ts'
 
@@ -193,4 +196,95 @@ test('no surface rail: every train of the track network rides the elevated deck,
   // Every kind of track is one of the four: nothing that runs at street level besides the cars on their lanes.
   const kinds = new Set(buildTrackNetwork(1337).tracks.map((t) => t.kind))
   assert.deepEqual([...kinds].sort(), ['car', 'drone', 'plane', 'train'])
+})
+
+test('the layer table: six one-bit layers, the solid world and the actors, frozen', () => {
+  assert.ok(Object.isFrozen(LAYER))
+  const bits = [LAYER.terrain, LAYER.structure, LAYER.player, LAYER.agent, LAYER.vehicle, LAYER.prop]
+  assert.equal(LAYER.none, 0)
+  for (const b of bits) assert.ok(b > 0 && (b & (b - 1)) === 0, `${b} is one bit`)
+  assert.equal(new Set(bits).size, 6, 'distinct bits')
+  assert.equal(SOLID_WORLD, LAYER.terrain | LAYER.structure)
+  assert.equal(ACTORS, LAYER.player | LAYER.agent | LAYER.vehicle)
+  assert.equal(SOLID_WORLD & ACTORS, 0)
+  assert.equal((SOLID_WORLD | ACTORS) & LAYER.prop, 0, 'a prop is neither world nor actor')
+})
+
+test('the one rule, branchless: an actor meets the solid world and nothing else; the answer is every bit or none', () => {
+  const layers = Object.values(LAYER)
+  for (const a of layers) for (const b of layers) {
+    const r = canCollide(a, b)
+    assert.ok(r === -1 || r === 0, `canCollide(${a}, ${b}) = ${r}`)
+    assert.equal(r, canCollide(b, a), 'symmetric')
+    const actor = (l: number) => (l & ACTORS) !== 0, solid = (l: number) => (l & SOLID_WORLD) !== 0
+    assert.equal(r === -1, (actor(a) && solid(b)) || (actor(b) && solid(a)), `canCollide(${a}, ${b})`)
+  }
+  // Spelled out: the pairs the 14A rule names.
+  assert.equal(canCollide(LAYER.player, LAYER.terrain), -1)
+  assert.equal(canCollide(LAYER.player, LAYER.structure), -1)
+  assert.equal(canCollide(LAYER.vehicle, LAYER.terrain), -1)
+  assert.equal(canCollide(LAYER.vehicle, LAYER.structure), -1)
+  assert.equal(canCollide(LAYER.agent, LAYER.terrain), -1, 'a fallen person lies on the ground')
+  assert.equal(canCollide(LAYER.agent, LAYER.structure), -1)
+  assert.equal(canCollide(LAYER.player, LAYER.agent), 0, 'nobody is shoved')
+  assert.equal(canCollide(LAYER.player, LAYER.vehicle), 0, 'the avatar walks through a car')
+  assert.equal(canCollide(LAYER.player, LAYER.player), 0, 'players walk through players')
+  assert.equal(canCollide(LAYER.vehicle, LAYER.vehicle), 0, 'cars pass through cars')
+  assert.equal(canCollide(LAYER.vehicle, LAYER.agent), 0, 'a car never reaches a fallen person or a robot')
+  assert.equal(canCollide(LAYER.agent, LAYER.agent), 0)
+  for (const l of Object.values(LAYER)) assert.equal(canCollide(LAYER.prop, l), 0, 'a lamp stops nobody')
+  assert.equal(canCollide(LAYER.terrain, LAYER.structure), 0, 'the world does not meet itself')
+  assert.equal(canCollide(LAYER.none, LAYER.terrain), 0)
+  // A mask of layers answers for any of them.
+  assert.equal(canCollide(LAYER.player | LAYER.vehicle, LAYER.structure), -1)
+  assert.equal(canCollide(ACTORS, ACTORS), 0)
+  assert.equal(canCollide(ACTORS, SOLID_WORLD), -1)
+  // Every bit set: usable as a mask over a 32-bit lane.
+  assert.equal(canCollide(LAYER.vehicle, LAYER.structure) & 0x1234, 0x1234)
+  assert.equal(canCollide(LAYER.vehicle, LAYER.vehicle) & 0x1234, 0)
+})
+
+test('the words the realm builds with say what the rule says, pair by pair: Rapier\'s pairing, sensors and body kinds against canCollide', () => {
+  assert.ok(Object.isFrozen(COLLIDERS))
+  const names = Object.keys(COLLIDERS) as (keyof typeof COLLIDERS)[]
+  assert.deepEqual(names, ['ground', 'building', 'avatar', 'rig', 'robot', 'chassis', 'furniture'])
+  for (const a of names) for (const b of names) {
+    const A = COLLIDERS[a], B = COLLIDERS[b]
+    assert.equal(rapierContact(A, B), canCollide(A.layer, B.layer) === -1, `${a} vs ${b}: Rapier ${rapierContact(A, B)}, the rule ${canCollide(A.layer, B.layer)}`)
+  }
+  // The words each class is built with are the ones the realm's modules use.
+  assert.equal(COLLIDERS.chassis.groups, VEHICLE_CHASSIS_GROUPS)
+  assert.equal(COLLIDERS.avatar.groups, AVATAR_GROUPS)
+  assert.equal(COLLIDERS.rig.groups, RAGDOLL_GROUPS)
+  assert.equal(COLLIDERS.robot.groups, ROBOT_GROUPS)
+  assert.equal(COLLIDERS.ground.groups, DEFAULT_GROUPS)
+  assert.equal(COLLIDERS.building.groups, DEFAULT_GROUPS)
+  assert.equal(COLLIDERS.furniture.groups, DEFAULT_GROUPS)
+  assert.equal(COLLIDERS.furniture.sensor, true)
+  assert.equal(DEFAULT_GROUPS, 0xffffffff)
+  assert.equal(rapierPairs(VEHICLE_CHASSIS_GROUPS, VEHICLE_CHASSIS_GROUPS), false)
+  assert.equal(rapierPairs(VEHICLE_CHASSIS_GROUPS, DEFAULT_GROUPS), true)
+  // The realm's sources carry those words (read, not imported: three of them load Rapier).
+  const src = (f: string) => readFileSync(join(SRC, f), 'utf8')
+  assert.match(src('07_Execute_Actions/carRig.ts'), /setCollisionGroups\(VEHICLE_CHASSIS_GROUPS\)/)
+  assert.match(src('07_Execute_Actions/player.ts'), /capsule\(HALF_HEIGHT, RADIUS\)\.setCollisionGroups\(AVATAR_GROUPS\)/)
+  assert.match(src('07_Execute_Actions/articulated.ts'), /setCollisionGroups\(ROBOT_GROUPS\)/)
+  assert.match(src('07_Execute_Actions/physics.ts'), /\.setSensor\(true\)/, 'furniture is sensors')
+  assert.doesNotMatch(src('07_Execute_Actions/physics.ts'), /setCollisionGroups/, 'the ground and the buildings keep the default words')
+  // Two kinematic bodies: Rapier solves nothing between them, and the character controller is told to pass them too.
+  assert.match(src('07_Execute_Actions/player.ts'), /const PASS_VEHICLES = SOLIDS \| RAPIER\.QueryFilterFlags\.EXCLUDE_DYNAMIC \| RAPIER\.QueryFilterFlags\.EXCLUDE_KINEMATIC/)
+})
+
+test('wall contact: a dead stop and a slide on every chassis, no damage model anywhere', () => {
+  assert.ok(Object.isFrozen(WALL_CONTACT))
+  // Zero so a car rebuilt from a room correction leaves a wall on the room's own path (mirror.node.test.ts).
+  assert.equal(WALL_CONTACT.restitution, 0, 'a bounce would carry solver state a rebuild cannot copy')
+  assert.ok(WALL_CONTACT.friction > 0 && WALL_CONTACT.friction <= 1)
+  const rig = readFileSync(join(SRC, '07_Execute_Actions/carRig.ts'), 'utf8')
+  assert.match(rig, /setFriction\(WALL_CONTACT\.friction\)\.setRestitution\(WALL_CONTACT\.restitution\)/)
+  // Nothing in the realm models harm to a vehicle or a structure: no health, no damage, no wreck, no fire, no explosion.
+  for (const [name, text] of runtimeSources()) {
+    if (!/^07_Execute_Actions\/(vehicles|carRig|car|physics|simCore|fleetView|craftView|trackFleet)\.ts$/.test(name) && !/^02_Define_The_Rules\//.test(name)) continue
+    assert.doesNotMatch(code(text), /\b(damage|health|hitpoints|wreck|crumple|explod|explosion|on fire|catch(es)? fire)\b/i, `${name} models harm`)
+  }
 })

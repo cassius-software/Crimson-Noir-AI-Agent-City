@@ -19,7 +19,7 @@ import { CAR, chassisBox, kindFromDraw, kindOf, RIDE_HEIGHT, WHEELS, type CarTun
 import { CITY, inLot } from '../01_Initialize_World/city.ts'
 import { crossesGlass, insideRoom, penetrates, ROOM, toLocal, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { KERNEL } from '../02_Define_The_Rules/civic.ts'
-import { VEHICLE_CHASSIS_GROUPS, WHEEL_RAY_GROUPS } from '../02_Define_The_Rules/collision.ts'
+import { VEHICLE_CHASSIS_GROUPS, WALL_CONTACT, WHEEL_RAY_GROUPS } from '../02_Define_The_Rules/collision.ts'
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
 import { Driver, type DriverLike } from '../06_Make_Decisions/traffic.ts'
 import { TrackDriver } from '../06_Make_Decisions/trackDriver.ts'
@@ -98,9 +98,11 @@ export function buildCarRig(world: RAPIER.World, x: number, z: number, heading: 
   body.enableCcd(true)
   const box = chassisBox(suv)
   // Cars pass through cars: the chassis groups drop every chassis-chassis pair in the broad phase (no contact,
-  // no impulse) and leave the ground, the buildings and the avatar's capsule as solid as before.
+  // no impulse) and leave the ground and the buildings as solid as before (the avatar's capsule filters chassis out
+  // on its side). The one contact a chassis exchanges, with the solid world, is WALL_CONTACT: a rebound and a slide.
   const collider = world.createCollider(
-    RAPIER.ColliderDesc.cuboid(box.hx, box.hy, box.hz).setTranslation(0, box.y, 0).setMass(mass).setFriction(0.4).setCollisionGroups(VEHICLE_CHASSIS_GROUPS),
+    RAPIER.ColliderDesc.cuboid(box.hx, box.hy, box.hz).setTranslation(0, box.y, 0).setMass(mass)
+      .setFriction(WALL_CONTACT.friction).setRestitution(WALL_CONTACT.restitution).setCollisionGroups(VEHICLE_CHASSIS_GROUPS),
     body,
   )
   const controller = world.createVehicleController(body)
