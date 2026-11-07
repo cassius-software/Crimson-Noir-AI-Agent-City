@@ -50,6 +50,20 @@ export const TRIPLES = Object.freeze({
 
 /** The Tauri CLI, run under this Node (no npm, no npx, no shell: the same on cmd.exe and sh). */
 const TAURI = join(ROOT, 'node_modules', '@tauri-apps', 'cli', 'tauri.js')
+/**
+ * npm's own command-line script, run under this Node for the two mobile `init` steps and nothing else. The Android
+ * and Xcode projects Tauri generates call the CLI back when Gradle or Xcode builds the Rust library, with the command
+ * `init` was run through: under npm that is `npm run -- tauri <platform> <script>` (package.json's `tauri` script),
+ * while a bare `node tauri.js` is recorded as `node tauri`, which is no file, and the build dies inside Gradle or
+ * Xcode. The script is the one `npm run build:matrix` came from, else the npm installed beside this Node.
+ */
+function npmCli() {
+  const bin = dirname(process.execPath)
+  const candidates = [process.env.npm_execpath, join(bin, 'node_modules', 'npm', 'bin', 'npm-cli.js'), join(bin, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')]
+  const found = candidates.find((c) => c && basename(c) === 'npm-cli.js' && existsSync(c))
+  if (!found) throw new Error('npm-cli.js not found beside this Node: run `npm run build:matrix`')
+  return found
+}
 /** The page is built once per run, so every later tauri step is told not to build it again. */
 const NO_PAGE_BUILD = JSON.stringify({ build: { beforeBuildCommand: '' } })
 
@@ -104,7 +118,7 @@ export const TARGETS = Object.freeze([
     tools: ['cargo', 'rustup'], env: ['ANDROID_HOME', 'NDK_HOME', 'JAVA_HOME'],
     plan: () => [
       rustupTarget(TRIPLES.android),
-      tauri('android', 'init', '--ci', '--skip-targets-install'),
+      tauriInit('android'),
       tauri('android', 'build', '--ci', '--config', NO_PAGE_BUILD, '--apk', '--target', 'aarch64'),
       { kind: 'sign-apk' },
     ],
@@ -112,10 +126,13 @@ export const TARGETS = Object.freeze([
     note: 'WebGPU in the Android System WebView needs Android 12 or later and a current WebView; not run on a phone yet',
   },
   {
-    id: 'ios-ipa', artifact: 'iOS (arm64): .ipa, unsigned (built with code signing off)', hosts: ['darwin'],
+    id: 'ios-ipa', artifact: 'iOS (arm64): .ipa, unsigned (Xcode\'s archive with code signing off)', hosts: ['darwin'],
     tools: ['cargo', 'rustup', 'xcodebuild'],
-    plan: () => [rustupTarget(TRIPLES.ios), tauri('ios', 'init', '--ci', '--skip-targets-install'), { kind: 'xcode-ios' }],
-    collect: ({ out }) => globs(join(out, 'ios-ipa'), (n) => n.endsWith('.ipa')),
+    // Tauri drives xcodebuild itself: the project's "Build Rust Code" phase asks the running `tauri ios build` for its
+    // options over a local socket, so xcodebuild run by hand fails at once; `--no-sign` archives with code signing off
+    // and zips Payload/<app>.app into gen/apple/build/arm64/<product name>.ipa.
+    plan: () => [rustupTarget(TRIPLES.ios), tauriInit('ios'), tauri('ios', 'build', '--ci', '--no-sign', '--config', NO_PAGE_BUILD, '--target', 'aarch64')],
+    collect: ({ version }) => globs(join(ROOT, 'src-tauri/gen/apple/build/arm64'), (n) => n.endsWith('.ipa')).slice(0, 1).map(([p]) => [p, `crimson-noir-agent-city_${version}_ios-arm64-unsigned.ipa`]),
     note: 'cannot be installed as it is: a device needs it re-signed (a free Apple ID with a sideloading tool, seven days at a time; a paid account for TestFlight or the App Store); the iPhone home-screen web copy (MANUAL.md, On an iPhone) needs none of that; not run on a Mac yet',
   },
   {
@@ -142,6 +159,8 @@ export const IDS = Object.freeze(TARGETS.map((t) => t.id))
 
 function step(cmd, argv, extra = {}) { return { kind: 'run', cmd, argv, ...extra } }
 function tauri(...argv) { return step(process.execPath, [TAURI, ...argv]) }
+/** `tauri <android|ios> init` through npm (npmCli above says why), non-interactive, the Rust targets added by rustupTarget. */
+function tauriInit(platform) { return step(process.execPath, [npmCli(), 'run', '--', 'tauri', platform, 'init', '--ci', '--skip-targets-install']) }
 function rustupTarget(...triples) { return step('rustup', ['target', 'add', ...triples]) }
 
 /** Files in `dir` whose names pass `keep`, as [path, name]; none when the directory is missing. */
@@ -236,44 +255,13 @@ function signApk(ctx) {
   }
 }
 
-/**
- * The iOS app with code signing off, then the .ipa by hand (xcodebuild's export needs a team): the Xcode project
- * `tauri ios init` wrote, its iOS scheme, a Release build for the device SDK, and Payload/<app>.app zipped.
- */
-function buildIosUnsigned(ctx) {
-  const apple = join(ROOT, 'src-tauri/gen/apple')
-  const project = globs(apple, (n) => n.endsWith('.xcodeproj'))[0]
-  if (!project) throw new Error(`no .xcodeproj under ${relative(ROOT, apple)} (tauri ios init)`)
-  const list = run('xcodebuild', ['-project', project[0], '-list', '-json'], { capture: true })
-  if (!list.ok) throw new Error(`xcodebuild -list failed: ${list.err || list.out}`)
-  const scheme = (JSON.parse(list.out).project?.schemes ?? []).find((s) => /_iOS$/.test(s))
-  if (!scheme) throw new Error('no *_iOS scheme in the Xcode project')
-  const derived = join(ROOT, 'src-tauri/gen/apple/build')
-  const b = run('xcodebuild', ['-project', project[0], '-scheme', scheme, '-configuration', 'Release', '-sdk', 'iphoneos', '-destination', 'generic/platform=iOS', '-derivedDataPath', derived,
-    'CODE_SIGNING_ALLOWED=NO', 'CODE_SIGNING_REQUIRED=NO', 'CODE_SIGN_IDENTITY=', 'build'])
-  if (!b.ok) throw new Error('xcodebuild build failed')
-  const app = walk(join(derived, 'Build/Products')).find((p) => p.endsWith('.app') && /iphoneos/.test(p) && statSync(p).isDirectory())
-  if (!app) throw new Error('xcodebuild left no .app for iphoneos')
-  const outDir = join(ctx.out, 'ios-ipa')
-  const payload = join(tmpdir(), `crimson-noir-ipa-${process.pid}`, 'Payload')
-  rmSync(dirname(payload), { recursive: true, force: true })
-  mkdirSync(payload, { recursive: true })
-  cpSync(app, join(payload, basename(app)), { recursive: true })
-  mkdirSync(outDir, { recursive: true })
-  const ipa = join(outDir, `crimson-noir-agent-city_${ctx.version}_ios-arm64-unsigned.ipa`)
-  rmSync(ipa, { force: true })
-  const z = run('ditto', ['-c', '-k', '--keepParent', payload, ipa])
-  if (!z.ok) throw new Error('ditto could not zip the Payload')
-  rmSync(dirname(payload), { recursive: true, force: true })
-}
-
 function walk(dir) {
   if (!existsSync(dir)) return []
   const out = []
   for (const n of readdirSync(dir)) {
     const p = join(dir, n)
     out.push(p)
-    if (statSync(p).isDirectory() && !n.endsWith('.app')) out.push(...walk(p))
+    if (statSync(p).isDirectory()) out.push(...walk(p))
   }
   return out
 }
@@ -385,9 +373,6 @@ export function main(argv) {
         } else if (s.kind === 'sign-apk') {
           console.log('  sign the .apk (zipalign, apksigner)')
           if (!dryRun) signApk(ctx)
-        } else if (s.kind === 'xcode-ios') {
-          console.log('  xcodebuild (Release, iphoneos, code signing off), then Payload/*.app -> .ipa')
-          if (!dryRun) buildIosUnsigned(ctx)
         }
       }
       if (!dryRun) {

@@ -54,21 +54,36 @@ test('every plan is programs with argument vectors, never a shell line; every Ta
     const steps = t.plan(CTX)
     assert.ok(steps.length > 0, t.id)
     for (const s of steps) {
-      if (s.kind !== 'run') { assert.ok(['sign-apk', 'xcode-ios'].includes(s.kind), `${t.id}: ${s.kind}`); continue }
+      if (s.kind !== 'run') { assert.equal(s.kind, 'sign-apk', `${t.id}: ${s.kind}`); continue }
       assert.ok(typeof s.cmd === 'string' && Array.isArray(s.argv), `${t.id}: ${JSON.stringify(s)}`)
       // No shell: the one `sh` is the repository's own media script, run by path with its arguments.
       if (s.cmd === 'sh') assert.deepEqual(s.argv!.slice(0, 1), ['tools/build-image.sh'], t.id)
-      assert.ok(!['bash', 'cmd', 'cmd.exe', 'powershell', 'pwsh'].includes(s.cmd!), `${t.id}: ${s.cmd}`)
+      // npm and npx are .cmd files on Windows, which Node will not spawn without a shell: npm runs as its own script under this Node.
+      assert.ok(!['bash', 'cmd', 'cmd.exe', 'powershell', 'pwsh', 'npm', 'npx', 'npm.cmd', 'npx.cmd'].includes(s.cmd!), `${t.id}: ${s.cmd}`)
       for (const a of s.argv!) assert.ok(!/&&|\|\||[;|><`$]/.test(a) || a.startsWith('{'), `${t.id}: shell syntax in an argument: ${a}`)
-      if (s.argv![0]?.endsWith('tauri.js')) {
-        assert.equal(s.cmd, process.execPath, `${t.id}: the Tauri CLI runs under this Node`)
-        const verb = s.argv![1] === 'android' || s.argv![1] === 'ios' ? s.argv![2] : s.argv![1]
+      const viaNpm = s.argv![0]?.endsWith('npm-cli.js')
+      if (s.argv![0]?.endsWith('tauri.js') || viaNpm) {
+        assert.equal(s.cmd, process.execPath, `${t.id}: the Tauri CLI, and npm, run under this Node`)
+        let a = s.argv!.slice(1)
+        if (viaNpm) { assert.deepEqual(a.slice(0, 3), ['run', '--', 'tauri'], `${t.id}: npm runs the tauri script and nothing else`); a = a.slice(3) }
+        const mobile = a[0] === 'android' || a[0] === 'ios'
+        const verb = mobile ? a[1] : a[0]
         if (verb === 'build') {
           const i = s.argv!.indexOf('--config')
           assert.ok(i > 0, `${t.id}: a build without --config would build the page again`)
           assert.deepEqual(JSON.parse(s.argv![i + 1]), { build: { beforeBuildCommand: '' } }, t.id)
         }
+        // A mobile project records the command `init` ran through and calls it back from Gradle or Xcode: `npm run -- tauri`
+        // exists everywhere (package.json's tauri script); the bare `node tauri` a plain `node tauri.js` leaves does not.
+        if (mobile && verb === 'init') assert.ok(viaNpm && a.includes('--ci'), `${t.id}: ${a.join(' ')} must run through npm, non-interactive`)
       }
+    }
+    if (t.id === 'ios-ipa') {
+      // Xcode's "Build Rust Code" phase asks the running Tauri CLI for its options, so only `tauri ios build` drives
+      // xcodebuild, and without an Apple account it must be told to skip signing.
+      assert.ok(!steps.some((s) => s.cmd === 'xcodebuild'), 'no xcodebuild step of its own')
+      const b = steps.find((s) => s.argv?.[1] === 'ios' && s.argv?.[2] === 'build')
+      assert.ok(b?.argv?.includes('--no-sign') && b?.argv?.includes('--ci'), 'tauri ios build --ci --no-sign')
     }
     // The target builds on at least one machine of the kinds the table knows (both Linux architectures among them).
     const machines = t.hosts.flatMap((h) => hosts[h])

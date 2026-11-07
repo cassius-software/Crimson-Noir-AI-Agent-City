@@ -2768,6 +2768,9 @@ One command builds every shipped form of the city from a checkout, on the machin
 `npm run build:matrix` (`tools/build/matrix.mjs`, plain Node: it runs programs with argument vectors and never a
 shell, so it is the same command in cmd.exe, PowerShell and sh). It builds the page once (`tsc -b`, `vite build`),
 then each target, and every app is the same Tauri 2 shell (`src-tauri/`) around that page. Nothing it makes is signed.
+The Android and Xcode projects are generated through npm's own script (`node npm-cli.js run -- tauri android init`,
+under the same Node), because Gradle and Xcode call the Tauri CLI back with the command `init` ran through, and
+`npm run -- tauri` exists on every machine where a bare `node tauri` does not.
 
 | Target | Makes | Builds on | State |
 | :--- | :--- | :--- | :--- |
@@ -2777,7 +2780,7 @@ then each target, and every app is the same Tauri 2 shell (`src-tauri/`) around 
 | `linux-arm64` | `.deb` and `.AppImage` | a Linux arm64 machine (no cross-compilation: WebKitGTK must be the target's own) | built by the workflow on `ubuntu-24.04-arm`; not run on a device |
 | `macos-universal` | one universal `.app` (Apple silicon and Intel; zipped) and `.dmg`, unsigned and not notarized | macOS with Xcode | built by the workflow; not opened on a Mac. Gatekeeper asks once: right-click › Open, or `xattr -d com.apple.quarantine` |
 | `android-apk` | an arm64-v8a `.apk`, signed with the Android debug key (so a phone with "install unknown apps" takes it), or with the keystore `CRIMSON_ANDROID_KEYSTORE` names (`…_PASSWORD`, `CRIMSON_ANDROID_KEY_ALIAS`, `…_KEY_PASSWORD`) | any OS with the Android SDK, an NDK and Java 17 (`ANDROID_HOME`, `NDK_HOME`, `JAVA_HOME`) | built by the workflow; not installed on a phone. WebGPU in the Android System WebView needs Android 12 or later and a current WebView |
-| `ios-ipa` | an arm64 `.ipa`, unsigned (Xcode's build with code signing off, `Payload/*.app` zipped) | macOS with Xcode | best effort in the workflow. It cannot be installed as it is: a device needs it re-signed (a free Apple ID with a sideloading tool, seven days at a time; a paid developer account for TestFlight or the App Store). The home-screen web copy (below) needs none of that |
+| `ios-ipa` | an arm64 `.ipa`, unsigned (`tauri ios build --no-sign`: Xcode's archive with code signing off, `Payload/*.app` zipped) | macOS with Xcode | best effort in the workflow. It cannot be installed as it is: a device needs it re-signed (a free Apple ID with a sideloading tool, seven days at a time; a paid developer account for TestFlight or the App Store). The home-screen web copy (below) needs none of that |
 | `uefi-x64` | `BOOTX64.EFI`, and `crimson_noir_os.img` and `.iso` where `sh`, mtools, sgdisk and xorriso are installed | anywhere cargo is | built by the workflow; the release media still come from `build-release.yml`, which bakes twice, compares the bytes and boots the image in QEMU |
 | `uefi-arm64` | nothing | nowhere yet | unsupported: `crimson_noir_os/boot/src/arch.rs` drives the machine with x86-64 port I/O, the TSC, a GDT and IDT and a PS/2 keyboard; an aarch64 port (GIC, generic timer, PL011 or the firmware's console) does not exist |
 
