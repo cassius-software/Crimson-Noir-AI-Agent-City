@@ -276,7 +276,7 @@ const PEAK_UNDO = /\b(?:chang\w* my mind|(?<!\bno )second thoughts?|mis ?click\w
 const PEAK_MACHINE = /\b(?:my|the|this|our) (?:graphics card|card|gpu|laptop|pc|computer|machine|phone|device|mac|tablet)\b|\b\d+ ?(?:gb|mb)\b|\bvram\b/
 
 /** Wishes the city cannot grant yet: named in the brief with the modules a change would touch. Matched
- *  first, so "speed up the day" never reads as "day". */
+ *  before the controls (after the work words only), so "speed up the day" never reads as "day". */
 const UNSUPPORTED: readonly (Unmapped & { re: RegExp })[] = [
   { re: /\b(?:speed(?:ing)? up|slow(?:ing)? down|faster|slower|shorter|longer|freeze|stop|pause|hold) (?:the |a )?(?:time|clock|day|days|night|nights|sun)\b|\b(?:day|night) length\b|\btime (?:go|goes|pass|passes|passing|flies|fly|run|runs) (?:faster|slower|quicker|by)\b|\bdays? (?:are|is) too (?:short|long|fast|slow)\b|\b(?:freeze|pause|stop) time\b/,
     label: 'How fast the day passes: set when the city starts, not while it runs', modules: ['07_Execute_Actions/engine.ts', 'App.tsx'] },
@@ -431,14 +431,15 @@ function read(input: string, peak: boolean): Reading {
   const blank = (s: string, m: RegExpExecArray) => `${s.slice(0, m.index)}${' '.repeat(m[0].length)}${s.slice(m.index + m[0].length)}`
   const consume = (m: RegExpExecArray) => { text = blank(text, m) }
   const harm = HARM.test(text)
+  // The work words and the count go to the team planner (dispatch.ts); taken first so "the lakefront metro" is work,
+  // not a trip to the Lakefront, and "the wind farms" a desk, not the weather. They leave `kept` too: "a battery swap
+  // drill" says nothing about Peak.
+  const work = scanWork(text)
+  for (const sp of work.spans) { text = blankSpan(text, sp); kept = blankSpan(kept, sp) }
   for (const u of UNSUPPORTED) {
     const m = u.re.exec(text)
     if (m) { unmapped.push({ label: u.label, modules: u.modules }); consume(m) }
   }
-  // The work words and the count go to the team planner (dispatch.ts); taken here so "the lakefront metro" is work,
-  // not a trip to the Lakefront.
-  const work = scanWork(text)
-  for (const sp of work.spans) text = blankSpan(text, sp)
   const unsureMatch = UNSURE.exec(text)
   const unsure = unsureMatch ? unsureMatch[0] : null
   if (unsureMatch) consume(unsureMatch)
@@ -505,9 +506,10 @@ function analyze(input: string, scouts = false): Analysis {
   }
   const { hyps, tags, unmapped, harm, unsure, work } = r
   // Work the goal names is a team (dispatch.ts); with `scouts`, so is a goal nothing else maps to (never harm, never
-  // "I don't know"): the two scouts go, and the goal is no dead end.
+  // "I don't know", never a goal without a word in it): the two scouts go, and the goal is no dead end.
   const named = work.kinds.length > 0 || work.count !== null
-  const team = harm ? null : named || (scouts && hyps.length === 0 && unsure === null) ? teamOf(work, input) : null
+  const worded = /[a-z0-9]/.test(normalize(input))
+  const team = harm ? null : named || (scouts && worded && hyps.length === 0 && unsure === null) ? teamOf(work, input) : null
   if (team) mergeHyp(hyps, { control: 'dispatch', value: team.lanes.length, confidence: team.scouting ? 0.5 : work.count !== null ? 1 : 0.9, at: work.at, derived: false })
   hyps.sort((a, b) => b.confidence - a.confidence || a.at - b.at)
   const flag: Flag = harm ? 'harm' : hyps.length ? 'none' : unsure !== null ? 'unsure' : 'unmapped'
@@ -556,12 +558,17 @@ function absorb(f: Frame, answer: string, derived: boolean): Control[] {
   for (const h of a.hyps) if (!(named && h.control === 'quality')) put(f, h.control, h.value, h.confidence, derived)
   for (const t of a.tags) if (!(named && (t === 'no-peak' || t === 'peak-ask'))) f.tags.add(t)
   for (const u of a.unmapped) if (!f.unmapped.some((x) => x.label === u.label)) f.unmapped.push(u)
-  // The scouts stood in for a goal nothing mapped; an answer that maps to a control sends them back. A team the answer
-  // names stands in their place.
-  if (f.team?.scouting && a.hyps.some((h) => h.control !== 'dispatch')) { drop(f, 'dispatch'); f.team = null }
+  // The scouts stood in for a goal nothing mapped; an answer that maps to a control sends them back, and a team the
+  // answer names stands in their place. A team the goal named stays; the dispatch's count is always the team's.
+  if (f.team?.scouting && (a.team !== null || a.hyps.some((h) => h.control !== 'dispatch'))) {
+    f.team = null
+    if (a.team === null) drop(f, 'dispatch')
+  }
   if (a.team) {
     if (f.team === null) f.team = a.team
-    if (!has(f, 'dispatch')) put(f, 'dispatch', a.team.lanes.length, a.team.scouting ? 0.5 : 0.9, derived)
+    const d = find(f, 'dispatch')
+    if (d) d.value = f.team.lanes.length
+    else put(f, 'dispatch', f.team.lanes.length, f.team.scouting ? 0.5 : 0.9, derived)
   }
   return a.hyps.map((h) => h.control)
 }

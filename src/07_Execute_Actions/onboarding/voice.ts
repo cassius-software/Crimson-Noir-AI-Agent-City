@@ -47,11 +47,29 @@ export const keepNumbers = (line: string): readonly string[] => line.match(/\d+/
  * Sloane's voice over the page's mind for the card's brief: the planner's sentence reworded in Sloane's words (the
  * local servers first, then the model in this page, by the router's own order), screened as the onboarding's is
  * (REWORD_MAX, the numbers kept, admitWords), and the planner's sentence itself on any failure or timeout. The plan
- * under it, and the dispatch, never depend on the answer: this is Sloane's phrasing, not Sloane's decision.
+ * under it, and the dispatch, never depend on the answer: this is Sloane's phrasing, not Sloane's decision. `live` is
+ * asked at every sentence, not once when the city starts: false (the player set the scripted provider since) keeps the
+ * planner's sentence and asks no mind. An answer carrying an action line ("ACTION: quality low", what the scripted mind
+ * appends) is a command, never Sloane's sentence.
  */
-export function sloaneVoice(mind: Mind, timeoutMs = SLOANE_REWORD_MS): Voice {
-  return modelVoice(mind, keepNumbers, timeoutMs, sloanePrompt)
+export function sloaneVoice(mind: Mind, timeoutMs = SLOANE_REWORD_MS, live: () => boolean = () => true): Voice {
+  const voice = modelVoice(mind, keepNumbers, timeoutMs, sloanePrompt)
+  return {
+    say: async (line, signal) => {
+      let asks = false
+      try {
+        asks = live()
+      } catch {
+        asks = false
+      }
+      if (!asks) return line
+      const said = await voice.say(line, signal)
+      return ACTION_LINE.test(said) ? line : said
+    },
+  }
 }
+/** An action line in a mind's answer (06_Make_Decisions/actions.ts parses these): never said as a sentence. */
+const ACTION_LINE = /\bACTION\s*:/i
 
 /** Words a rewording must keep: the names and choices the line offers, so a chip still matches what was said. */
 export function mustKeep(line: string, keep: readonly string[]): boolean {

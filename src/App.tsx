@@ -64,7 +64,7 @@ import { builderPort } from './01_Initialize_World/lakefrontWorkerPort.ts'
 import { screenNames } from './01_Initialize_World/assets/cc0.ts'
 import { Onboarding, type Outcome } from './07_Execute_Actions/onboarding/Onboarding.tsx'
 import { loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
-import { modelVoice, scriptedVoice, sloaneVoice, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
+import { SLOANE_REWORD_MS, modelVoice, scriptedVoice, sloaneVoice, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
 import { ConciergeSpeaker, conciergeBridge, synthEnv, type ConciergeOut } from './07_Execute_Actions/onboarding/speaker.ts'
 import { useMentor } from './07_Execute_Actions/onboarding/useMentor.ts'
 import { agentBridge, identityLine, Roster, voiceProfile } from './08_Swarm/roster.ts'
@@ -545,7 +545,8 @@ function goalPlan(text: string, b: Pick<TerminalBridge, 'setClock' | 'quality' |
       else if (step.control === 'dispatch' && step.team && b.lanes) {
         const d = b.lanes.dispatch(step.team)
         team = teamRows(step.team)
-        steps.push({ label: step.label, state: 'done', detail: `${d.lanes} ${d.lanes === 1 ? 'lane' : 'lanes'} open` })
+        const away = d.missing?.length ? `; not on this map: ${d.missing.join(', ')} (nobody asked over, those lanes read around the city centre)` : ''
+        steps.push({ label: step.label, state: 'done', detail: `${d.lanes} ${d.lanes === 1 ? 'lane' : 'lanes'} open${away}` })
         continue
       }
       else { steps.push({ label: step.label, state: 'later' }); continue }
@@ -612,7 +613,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
     if (id.agent !== null) engineRef.current?.setLook(id.agent, id.look)
   }, [roster])
   const onSay = useCallback((text: string) => { void speaker.speak(text) }, [speaker])
-  /** Sloane's own words for a brief (onboarding/voice.ts sloaneVoice), once the city's mind exists; null with the scripted provider. */
+  /** Sloane's own words for a brief (onboarding/voice.ts sloaneVoice), once the city's mind exists; it keeps the planner's sentence while the provider is scripted. */
   const [sloane, setSloane] = useState<Voice | null>(null)
   const onHear = useCallback((voice: string, line: string) => { void speaker.preview(line, voice) }, [speaker])
   const lookOpenRef = useRef(false)
@@ -996,8 +997,9 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
         crew = team
         const lanes = team.console()
         // Sloane's own words for a brief: the router's order (the local servers, then the model in this page), the
-        // planner's sentence on any failure; never with the provider the player set to scripted.
-        setSloane(local.settings().provider === 'scripted' ? null : sloaneVoice(mind))
+        // planner's sentence on any failure; never with the provider the player set to scripted, asked at every sentence
+        // (the console's `ask provider` changes it while the city runs).
+        setSloane(sloaneVoice(mind, SLOANE_REWORD_MS, () => local.settings().provider !== 'scripted'))
         setBridge(Object.freeze({
           ...engineBridge,
           // The map this shell walks, for the console's `map` status line (the choice itself is remap's).

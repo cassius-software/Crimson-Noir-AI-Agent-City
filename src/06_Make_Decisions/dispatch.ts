@@ -59,10 +59,14 @@ const LAWS = 'the Second and Third Law counters and the frame’s slowest fracti
 const FRAME = 'the frame rate, its slowest fraction, and how many cars and people the city holds'
 const desk = (d: Desk): Desk => Object.freeze({ ...d, kinds: Object.freeze([...d.kinds]) })
 
-/** The sixteen desks in slot order. A word here is never one of the intent engine's knob words (intent.ts RULES), so a knob stays a knob. */
+/**
+ * The sixteen desks in slot order. A word here is never one of the intent engine's knob words (intent.ts RULES), so a
+ * knob stays a knob: the console keeps 'automate' and 'ring 0', the traffic keeps 'congestion' and 'traffic flow', the
+ * sound keeps 'sound proof'. A desk's own name ('the control tower', 'the console deck') is the desk.
+ */
 export const DESKS: readonly Desk[] = Object.freeze([
   desk({ id: 'roboticsLab', kinds: ['roboticsLab'], title: 'the robotics lab', short: 'robotics', skill: 'Robotics', reads: 'the vehicles within 30 m of the lab and the fastest of them', probe: 'carsNear',
-    re: /\b(?:robot(?:ic|ics|s)?|drills?|servos?|actuators?|manipulat(?:or|ors|ion)|grippers?|sim(?: |-)?to(?: |-)?real|automat(?:e|ed|ion))\b/ }),
+    re: /\b(?:robot(?:ic|ics|s)?|drills?|servos?|actuators?|manipulat(?:or|ors|ion)|grippers?|sim(?: |-)?to(?: |-)?real)\b/ }),
   desk({ id: 'warehouse', kinds: ['warehouse'], title: 'the warehouse', short: 'warehouse', skill: 'Go', reads: 'the people within 20 m of the warehouse', probe: 'crowd20',
     re: /\b(?:ware ?houses?|logistics|inventory|shipments?|pallets?|fork ?lifts?|stock ?rooms?|supply chains?|deliver(?:y|ies)|fulfil?lment|parcels?|packages?)\b/ }),
   desk({ id: 'serverVault', kinds: ['serverVault'], title: 'the server vault', short: 'vault', skill: 'Networking', reads: KERNEL, probe: 'kernel',
@@ -70,21 +74,21 @@ export const DESKS: readonly Desk[] = Object.freeze([
   desk({ id: 'metroOps', kinds: ['metroOps'], title: 'metro operations', short: 'metro', skill: 'Data', reads: 'the cars moving and parked, and the frame rate', probe: 'cars',
     re: /\b(?:(?:lakefront )?metro(?:politan)?|schedul(?:e|es|ed|ing)|time ?tables?|transit|headways?|trains|train (?:lines?|times?|service)|subway|commut(?:e|ers?|ing)|ferr(?:y|ies))\b/ }),
   desk({ id: 'controlTower', kinds: ['controlTower', 'telemetryCommand'], title: 'the control tower', short: 'tower', skill: 'Python', reads: FRAME, probe: 'frame',
-    re: /\b(?:telemetry|control tower|air ?traffic|airspace|flight paths?|vtol|monitoring|dash ?boards?|metrics|throughput|traffic flow|congestion)\b/ }),
+    re: /\b(?:telemetry|control tower|air ?traffic|airspace|flight paths?|vtol|monitoring|dash ?boards?|metrics|throughput)\b/ }),
   desk({ id: 'kitchen', kinds: ['kitchen'], title: 'the kitchen', short: 'kitchen', skill: 'Design', reads: 'the people within 12 m of the kitchen door', probe: 'crowd12',
     re: /\b(?:kitchens?|cook(?:s|ing)?|meals?|food|dinners?|catering|prep line|chefs?|recipes?)\b/ }),
   desk({ id: 'microFab', kinds: ['microFab'], title: 'the micro-fab', short: 'fab', skill: 'C++', reads: KERNEL, probe: 'kernel',
     re: /\b(?:cnc|clean ?rooms?|fabricat(?:e|ed|ion)|micro ?fab|machining|prototyp(?:e|es|ing)|tolerances?|milling|3d print(?:ing|ers?|s)?|wafers?)\b/ }),
   desk({ id: 'twinStudio', kinds: ['twinStudio', 'boardroom'], title: 'the twin studio', short: 'twin', skill: 'Design', reads: KERNEL, probe: 'kernel',
-    re: /\b(?:board ?rooms?|the board|executives?|strateg(?:y|ic|ies)|budgets?|road ?maps?|meetings?|decisions?|priorit(?:y|ies|i[sz]e)|digital twins?|twin studio|architecture|blueprints?|zoning|city plan(?:ning|s)?|urban planning)\b/ }),
+    re: /\b(?:board ?rooms?|the board|executives?(?! console)|strateg(?:y|ic|ies)|budgets?|road ?maps?|meetings?|decisions?|priorit(?:y|ies|i[sz]e)|digital twins?|twin studio|architecture|blueprints?|zoning|city plan(?:ning|s)?|urban planning)\b/ }),
   desk({ id: 'fleetBay', kinds: ['fleetBay'], title: 'the fleet bay', short: 'fleet', skill: 'Rust', reads: 'the vehicles within 30 m of the bay and the fastest of them', probe: 'carsNear',
     re: /\b(?:fleet|battery swap|charg(?:ers?|ing)|maintenance|garage|depot|taxis?|t[iy]res?)\b/ }),
   desk({ id: 'greenhouse', kinds: ['greenhouse'], title: 'the greenhouse', short: 'greenhouse', skill: 'Data', reads: 'the people within 20 m of the greenhouse', probe: 'crowd20',
     re: /\b(?:green ?houses?|hydroponics?|crops?|harvests?|seedlings?|planting|irrigation|farm(?:s|ing)?|agri(?:culture|tech)?|lettuce|tomatoes)\b/ }),
   desk({ id: 'acousticsLab', kinds: ['acousticsLab'], title: 'the acoustics chamber', short: 'acoustics', skill: 'Audio', reads: 'the people within 12 m of the chamber door', probe: 'crowd12',
-    re: /\b(?:acoustics?|sound ?proof(?:ing)?|decibels?|vibrations?|resonance|materials testing|stress test(?:s|ing)?|anechoic)\b/ }),
+    re: /\b(?:acoustics?|soundproof(?:ing)?|decibels?|vibrations?|resonance|materials testing|stress test(?:s|ing)?|anechoic)\b/ }),
   desk({ id: 'responseCenter', kinds: ['responseCenter'], title: 'the response centre', short: 'response', skill: 'Testing', reads: LAWS, probe: 'laws',
-    re: /\b(?:emergenc(?:y|ies)|disasters?|evacuat(?:e|ion|ions)|triage|first aid|fire drills?|floods?|earthquakes?|rescue|paramedics?|incidents?|recovery)\b/ }),
+    re: /\b(?:emergenc(?:y|ies)|disasters?|evacuat(?:e|ion|ions)|triage|first aid|fire drills?|floods?|earthquakes?|rescue|paramedics?|incidents?|recovery|response cent(?:re|er)s?)\b/ }),
   desk({ id: 'clearingFloor', kinds: ['clearingFloor', 'legalChambers'], title: 'the clearing floor', short: 'clearing', skill: 'Security', reads: LAWS, probe: 'laws',
     re: /\b(?:legal|lawyers?|compliance|contracts?|smart contracts?|licen[cs]es?|licen[cs]ing|polic(?:y|ies)|regulat(?:ion|ions|ory|ors?)|audits?|counsel|privacy|settlements?|clearing floor|ledgers?|payments?|invoices?|trades|finance|accounting|payroll|taxes)\b/ }),
   desk({ id: 'gaitLab', kinds: ['gaitLab', 'clinic'], title: 'the gait lab', short: 'gait', skill: 'Accessibility', reads: 'the people within 12 m of the lab door', probe: 'crowd12',
@@ -92,7 +96,7 @@ export const DESKS: readonly Desk[] = Object.freeze([
   desk({ id: 'microgrid', kinds: ['microgrid'], title: 'the microgrid room', short: 'grid', skill: 'Go', reads: FRAME, probe: 'frame',
     re: /\b(?:micro ?grids?|substations?|electricity|solar|energy|outages?|load balancing|voltage|turbines?|wind farms?|power (?:grid|plants?|lines?|cuts?))\b/ }),
   desk({ id: 'consoleDeck', kinds: ['consoleDeck'], title: 'the console deck', short: 'deck', skill: 'Rust', reads: KERNEL, probe: 'laws',
-    re: /\b(?:sanctuary|ring ?0|ring zero|console deck|executive console|zeroth law|first law|second law|third law|the kernel)\b/ }),
+    re: /\b(?:sanctuary|console deck|zeroth law|first law|second law|third law|the kernel)\b/ }),
 ])
 const DESK_OF: ReadonlyMap<DeskId, Desk> = new Map(DESKS.map((d) => [d.id, d]))
 export const deskOf = (id: DeskId): Desk => DESK_OF.get(id) ?? DESKS[0]!
@@ -101,11 +105,11 @@ export const deskAt = (kind: string): Desk | null => DESKS.find((d) => d.kinds.i
 /** Every desk's id, in slot order. */
 export const DESK_IDS: readonly DeskId[] = Object.freeze(DESKS.map((d) => d.id))
 
-/** How many: "24 agents", "a 24-agent drill", "six sub-agents", "12 robots". */
-const COUNT = /\b(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty)(?: ?- ?| )?(?:sub ?-? ?agents?|agents?|lanes?|workers?|robots?|bots?|people|scouts?|hands)\b/
+/** How many: "24 agents", "a 24-agent drill", "six sub-agents", "12 robots". Never "ten people" (the crowd) or "three lanes" (the roads). */
+const COUNT = /\b(\d{1,5}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty)(?: ?- ?| )?(?:sub ?-? ?agents?|agents?|workers?|robots?|bots?|scouts?|hands)\b/
 const WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, twenty: 20, thirty: 30 }
-/** The verb that sends work, right before a work word or a count ("run a 24-agent drill", "optimize the metro schedule"): it goes with the work, so "run" is not a pace on foot. */
-const VERB = /\b(?:run|running|hold|start|launch|stage|conduct|kick off|organi[sz]e|arrange|do|execute|carry out|optimi[sz]e|improve|review|measure|check|plan)(?: (?:a|an|the|another|our|my|some|this|that))? $/
+/** The verb that sends work, at most two words before a work word or a count ("run a 24-agent drill", "run a quick warehouse audit", "optimize the metro schedule"): it goes with the work, so "run" is not a pace on foot. Never across a preposition ("run to the warehouse" stays a run). */
+const VERB = /\b(?:run|running|hold|start|launch|stage|conduct|kick off|organi[sz]e|arrange|do|execute|carry out|optimi[sz]e|improve|review|measure|check|plan)(?: (?:a|an|the|another|our|my|some|this|that))?(?: (?!(?:to|around|through|into|onto|over|past|across|along|by|in|at|on|off|from|with|for|of|and|or|but|then|up|down|out|away|back|home)\b)[a-z0-9']+){0,2} $/
 
 /** A span of the goal a work word or a count took, for the caller to blank. */
 export interface Span { readonly index: number; readonly length: number }
@@ -136,16 +140,25 @@ export function scanWork(text: string): WorkScan {
     count = WORDS[word] ?? Number(word)
     take(c.index, c[0].length)
   }
+  // Every desk's matches; where two overlap ("fire drill" and "drill", "wind farms" and "farms") the longer phrase is
+  // the desk meant, and the shorter is not a second desk.
+  const hits: { kind: DeskId; index: number; length: number }[] = []
   for (const d of DESKS) {
     const re = new RegExp(d.re.source, 'g')
     let m: RegExpExecArray | null
     while ((m = re.exec(text)) !== null) {
       if (m[0].length === 0) { re.lastIndex++; continue }
-      if (!found.some((f) => f.kind === d.id)) found.push({ kind: d.id, at: m.index })
-      take(m.index, m[0].length)
+      hits.push({ kind: d.id, index: m.index, length: m[0].length })
     }
   }
-  found.sort((a, b) => a.at - b.at)
+  hits.sort((a, b) => b.length - a.length || a.index - b.index)
+  const held: typeof hits = []
+  for (const h of hits) if (!held.some((k) => h.index < k.index + k.length && k.index < h.index + h.length)) held.push(h)
+  held.sort((a, b) => a.index - b.index)
+  for (const h of held) {
+    if (!found.some((f) => f.kind === h.kind)) found.push({ kind: h.kind, at: h.index })
+    take(h.index, h.length)
+  }
   return { kinds: found.map((f) => f.kind), count, at: Number.isFinite(at) ? at : text.length, spans }
 }
 
@@ -176,9 +189,12 @@ export interface Team {
 /** The team a scan plans: the desks named (or the scouts), `count` lanes dealt round the desks in order. */
 export function teamOf(scan: WorkScan, goal: string): Team {
   const scouting = scan.kinds.length === 0
-  const kinds = scouting ? SCOUTS : scan.kinds
-  const asked = Math.max(1, scan.count ?? kinds.length)
+  const named = scouting ? SCOUTS : scan.kinds
+  const asked = Math.max(1, scan.count ?? named.length)
   const size = Math.min(asked, TEAM_MAX)
+  // Fewer sub-agents than desks named reach the first desks only, and the team names only those: no desk is promised a
+  // lane it does not get.
+  const kinds = named.slice(0, size)
   const lanes: TeamLane[] = []
   for (let i = 0; i < size; i++) {
     const kind = kinds[i % kinds.length]!

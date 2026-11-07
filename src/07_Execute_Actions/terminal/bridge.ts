@@ -457,7 +457,8 @@ export interface LanesBridge {
   ledger(verify: boolean): string[]
   /** Closes every lane; the people asked over stay. */
   stop(): string
-  dispatch(team: Team): { lanes: number; dropped: number }
+  /** Opens the team's lanes; `missing` names the desks this map has no room for. */
+  dispatch(team: Team): { lanes: number; dropped: number; missing?: readonly string[] }
 }
 
 /**

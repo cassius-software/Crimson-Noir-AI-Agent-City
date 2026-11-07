@@ -18,7 +18,7 @@ import { CAP_MOVE, CAP_WORKPLACE_TASK } from '../02_Define_The_Rules/capabilitie
 import { RALLY_RANGE } from '../03_Spawn_Agents/skills.ts'
 import { teamFor } from '../06_Make_Decisions/dispatch.ts'
 import type { NoirTables } from '../07_Execute_Actions/terminal/noirscript/index.ts'
-import { NOTES_MAX, TEAM_TICK_MS, TeamRunner, type TeamHost, type TeamRoom } from './team.ts'
+import { GONE_TICKS, NOTES_MAX, RALLY_RETRY_TICKS, TEAM_TICK_MS, TeamRunner, type TeamHost, type TeamRoom } from './team.ts'
 
 /** A small city: a hundred people on a grid within 14 m of the origin, ten cars on a line far east. */
 function tables(): NoirTables {
@@ -80,7 +80,7 @@ test('dispatch opens one lane a sub-agent at its desk\'s door, asks one body a d
   assert.equal(crew.line(), '')
   const team = teamFor(GOAL)
   const d = crew.dispatch(team)
-  assert.deepEqual(d, { lanes: 24, dropped: 0, label: 'Send 24 sub-agents to the warehouse, the control tower and the robotics lab', bodies: 3 })
+  assert.deepEqual(d, { lanes: 24, dropped: 0, label: 'Send 24 sub-agents to the warehouse, the control tower and the robotics lab', bodies: 3, missing: [] })
   assert.equal(crew.team, team)
   // One body a desk, asked over by the desk's skill, in the order the goal named them, each after the lane's own ask for the move.
   assert.deepEqual(h.calls, ['recruit Go', 'recruit Python', 'recruit Robotics'])
@@ -121,9 +121,9 @@ test('dispatch opens one lane a sub-agent at its desk\'s door, asks one body a d
   assert.deepEqual(after.slice(after.indexOf('notes:') + 1), ['  warehouse:1: agent 10 (Go) is coming over', '  tower:1: agent 11 (Python) is coming over', '  robotics:1: agent 12 (Robotics) is coming over'])
   // The cap: a goal asking for more than fit says so, and nobody beyond it is opened.
   const capped = crew.dispatch(teamFor('send 40 agents to the clinic'))
-  assert.deepEqual([capped.lanes, capped.dropped, capped.bodies], [32, 8, 1])
+  assert.deepEqual([capped.lanes, capped.dropped, capped.bodies, capped.missing], [32, 8, 1, ['the gait lab']])
   assert.match(crew.status()[0]!, /\(32 running, 0 isolated, 8 asked for beyond the cap\)/)
-  assert.ok(crew.status().some((l) => /nowhere to send them: this map has no gait lab|asking someone with Accessibility over/.test(l)))
+  assert.ok(crew.status().some((l) => /^ {2}gait:1 {8}nowhere {3}this map has no gait lab: nobody asked over, its lanes read around the city centre$/.test(l)))
 })
 
 test('bodies: an arrived recruit is sent to the desk\'s door only when the player stands within rally range of it; farther, the distance is said; driving, nobody moves; a desk this map lacks says so', async () => {
@@ -153,17 +153,19 @@ test('bodies: an arrived recruit is sent to the desk\'s door only when the playe
   h.at = { x: 58, z: 0 }
   crew.tick()
   assert.deepEqual(h.calls.filter((c) => c.startsWith('rally')), ['rally 10 5 0', 'rally 11 60 0'])
+  // Sending until the recruiter answers: only a rally it took counts at the desk.
+  assert.match(crew.status().find((l) => l.startsWith('  tower:1 '))!, /sending {3}sending agent 11 to the Telemetry Command$/)
+  assert.equal(crew.line(), 'Team 24 · warehouse 8, tower 8, robotics 8 · 2 coming over · 1 at their desk')
+  await settle()
   assert.equal(crew.line(), 'Team 24 · warehouse 8, tower 8, robotics 8 · 1 coming over · 2 at their desk')
-  // A desk this map has no room for: the lane reads around the origin, the body is asked over, and once arrived has nowhere to go.
+  // A desk this map has no room for: the lane reads around the origin, nobody is asked over, and the dispatch names it.
   const k = host()
   const kitchen = new TeamRunner(k)
-  kitchen.dispatch(teamFor('the kitchen prep line'))
+  assert.deepEqual(kitchen.dispatch(teamFor('the kitchen prep line')).missing, ['the kitchen'])
   await settle()
-  assert.deepEqual(k.calls, ['recruit Design'])
-  k.people[0]!.arrived = true
+  assert.deepEqual(k.calls, [])
   kitchen.tick()
-  assert.ok(!k.calls.some((c) => c.startsWith('rally')))
-  assert.match(kitchen.status().find((l) => l.startsWith('  kitchen:1 '))!, /coming {4}nowhere to send them: this map has no kitchen$/)
+  assert.match(kitchen.status().find((l) => l.startsWith('  kitchen:1 '))!, /nowhere {3}this map has no kitchen: nobody asked over, its lanes read around the city centre$/)
   assert.equal(kitchen.lines()[0]!.reading, `people within 12 m ${within(12, 0, 0)} of 48 from row 0`, 'read around the origin')
   // A refused ask over: the body is refused and the reason kept; a rally the host refuses is kept as its message.
   const shy = host({ recruit: async () => ({ ok: false, agent: -1, message: 'nobody within earshot has Go' }) })
@@ -211,17 +213,17 @@ test('stop closes the lanes and keeps the people; a second dispatch replaces the
   assert.deepEqual(con.status(), ['lanes: nobody dispatched; tell Sloane a goal about work, or type goal <words...>'])
   assert.deepEqual(con.ledger(true), ['lanes: nobody dispatched, so no ledger'])
   assert.equal(con.stop(), 'nobody dispatched')
-  assert.deepEqual(con.dispatch(teamFor('the warehouse')), { lanes: 1, dropped: 0 })
+  assert.deepEqual(con.dispatch(teamFor('the warehouse')), { lanes: 1, dropped: 0, missing: [] })
   assert.ok(release !== null, 'the first team asked someone over')
   const first = release
   // The second team replaces the first before the first's answer comes.
-  assert.deepEqual(con.dispatch(teamFor('two agents at the clinic')), { lanes: 2, dropped: 0 })
+  assert.deepEqual(con.dispatch(teamFor('two agents at the control tower')), { lanes: 2, dropped: 0, missing: [] })
   first()
   await settle()
-  const rows = crew.status().filter((l) => /^ {2}gait:1 /.test(l))
+  const rows = crew.status().filter((l) => /^ {2}tower:1 /.test(l))
   assert.equal(rows.length, 1)
-  assert.match(rows[0]!, /^ {2}gait:1 {8}asked {5}asking someone with Accessibility over$/, 'the late answer never reached the new team')
-  assert.equal(crew.line(), 'Team 2 · gait 2')
+  assert.match(rows[0]!, /^ {2}tower:1 {7}asked {5}asking someone with Python over$/, 'the late answer never reached the new team')
+  assert.equal(crew.line(), 'Team 2 · tower 2')
   // Stop: the lanes close, the people stay (the recruiter keeps them), and everything reads as empty.
   assert.equal(con.stop(), 'released: 2 lanes closed; the people asked over stay with you (recruit dismiss lets them go)')
   assert.equal(crew.team, null)
@@ -241,11 +243,10 @@ test('stop closes the lanes and keeps the people; a second dispatch replaces the
 test('a host that throws is a note, never an exception, and the notes are capped', async () => {
   const bad = host({
     tables: () => { throw new Error('the columns are away') },
-    rooms: () => { throw new Error('no rooms today') },
     recruit: () => { throw new Error('the recruiter is gone') },
   })
   const crew = new TeamRunner(bad)
-  const d = crew.dispatch(teamFor('the warehouse and the clinic'))
+  const d = crew.dispatch(teamFor('the warehouse and the control tower'))
   assert.deepEqual([d.lanes, d.bodies], [2, 2])
   for (let i = 0; i < NOTES_MAX * 3; i++) crew.tick()
   const status = crew.status()
@@ -266,13 +267,75 @@ test('a host that throws is a note, never an exception, and the notes are capped
   const st = r.status()
   assert.ok(st.some((l) => /^ {2}warehouse:1 {3}refused {3}no answer$/.test(l)))
   assert.ok(st.includes('  people: the list is gone'))
-  // A rally the host throws on is noted on the body.
+  // Rooms that throw: no desk is placed, nobody is asked over, and the note says why.
+  const roomless = host({ rooms: () => { throw new Error('no rooms today') } })
+  const n = new TeamRunner(roomless)
+  assert.deepEqual(n.dispatch(teamFor('the warehouse')).missing, ['the warehouse'])
+  assert.deepEqual(roomless.calls, [])
+  assert.ok(n.status().includes('  rooms: no rooms today'))
+  // A rally the host throws on is noted on the body, which stays coming over (never counted at the desk).
   const throwing = host({ rally: () => { throw new Error('no legs') } })
   const t = new TeamRunner(throwing)
   t.dispatch(teamFor('the warehouse'))
   await settle()
   throwing.people[0]!.arrived = true
   t.tick()
-  assert.ok(t.status().some((l) => /^ {2}warehouse:1 {3}rallied {3}no legs$/.test(l)))
+  assert.ok(t.status().some((l) => /^ {2}warehouse:1 {3}coming {4}no legs$/.test(l)))
+  assert.equal(t.line(), 'Team 1 · warehouse 1 · 1 coming over')
   assert.equal(TEAM_TICK_MS, 250)
+})
+
+test('a rally the recruiter turns down is asked again later and never counted at the desk; someone who leaves before arriving is gone; a team asked for from a car asks once the player is on foot', async () => {
+  // Turned down (no sidewalk there): back to coming over, asked again RALLY_RETRY_TICKS later, then taken.
+  let refuse = true
+  const h = host({ rally: async (agent, x, z) => { h.calls.push(`rally ${agent} ${x} ${z}`); return refuse ? { ok: false, message: 'rally: no sidewalk from where they stand to the rally point' } : { ok: true, message: `agent ${agent} is on the way` } } })
+  const crew = new TeamRunner(h)
+  crew.dispatch(teamFor('the warehouse'))
+  await settle()
+  h.people[0]!.arrived = true
+  crew.tick()
+  await settle()
+  const rallies = () => h.calls.filter((c) => c.startsWith('rally')).length
+  assert.equal(rallies(), 1)
+  assert.match(crew.status().find((l) => l.startsWith('  warehouse:1 '))!, /coming {4}rally: no sidewalk from where they stand to the rally point$/)
+  assert.equal(crew.line(), 'Team 1 · warehouse 1 · 1 coming over')
+  for (let i = 0; i < RALLY_RETRY_TICKS - 1; i++) crew.tick()
+  assert.equal(rallies(), 1, 'not asked again before the hold')
+  refuse = false
+  crew.tick()
+  await settle()
+  assert.equal(rallies(), 2)
+  assert.equal(crew.line(), 'Team 1 · warehouse 1 · 1 at their desk')
+  // Released before arriving (the tether broke, or they were dismissed): gone after GONE_TICKS ticks off the list.
+  const g = host()
+  const left = new TeamRunner(g)
+  left.dispatch(teamFor('the warehouse'))
+  await settle()
+  g.people.length = 0
+  for (let i = 0; i < GONE_TICKS - 1; i++) left.tick()
+  assert.equal(left.line(), 'Team 1 · warehouse 1 · 1 coming over')
+  left.tick()
+  assert.match(left.status().find((l) => l.startsWith('  warehouse:1 '))!, /gone {6}agent 10 left before reaching the desk$/)
+  assert.equal(left.line(), 'Team 1 · warehouse 1')
+  // Asked for from a car: nobody asked until the player is on foot, then asked once, through the lane's word.
+  const c = host()
+  c.at = null
+  const car = new TeamRunner(c)
+  car.dispatch(teamFor('the warehouse'))
+  assert.deepEqual(c.calls, [])
+  assert.equal(car.line(), 'Team 1 · warehouse 1 · 1 asked once you are on foot')
+  car.tick()
+  assert.deepEqual(c.calls, [])
+  c.at = { x: 0, z: 0 }
+  car.tick()
+  car.tick()
+  await settle()
+  assert.deepEqual(c.calls, ['recruit Go'])
+  assert.equal(car.line(), 'Team 1 · warehouse 1 · 1 coming over')
+  // Turned down while in a car (the race: the player got in after the ask): waiting, not refused.
+  const r = host({ recruit: async () => { r.at = null; return { ok: false, agent: -1, message: 'Go: recruiting works on foot' } } })
+  const raced = new TeamRunner(r)
+  raced.dispatch(teamFor('the warehouse'))
+  await settle()
+  assert.match(raced.status().find((l) => l.startsWith('  warehouse:1 '))!, /waiting {3}Go: recruiting works on foot$/)
 })

@@ -18,7 +18,7 @@ import { SKILLS } from '../03_Spawn_Agents/skills.ts'
 import { LANE_LIMITS, MAX_OPS_PER_TICK, NoirSession, type NoirTables } from '../07_Execute_Actions/terminal/noirscript/index.ts'
 import { LANE_MAX } from '../08_Swarm/lanes.ts'
 import { DESKS, DESK_IDS, SCOUTS, TEAM_CAPS, TEAM_MAX, WINDOW, deskAt, deskOf, laneSpec, plainWords, scanWork, teamFor, teamLabel, teamLines, teamNames, teamOf, teamRows, type DeskId } from './dispatch.ts'
-import { FiveWhys } from './intent.ts'
+import { FiveWhys, classify } from './intent.ts'
 
 /** A city-sized table: ten thousand people on a grid, two hundred and forty cars on a line, some parked, most moving. */
 function city(): NoirTables {
@@ -72,11 +72,16 @@ test('every desk has words that send work there and nowhere else, and no desk wo
     const s = scanWork(plainWords(SAMPLE[d.id]))
     assert.deepEqual(s.kinds, [d.id], `${d.id}: ${SAMPLE[d.id]}`)
   }
+  // Each desk's own name, as the brief and the console print it, sends work to that desk.
+  for (const d of DESKS) assert.deepEqual(scanWork(plainWords(d.title)).kinds, [d.id], d.title)
   // Goals the intent engine maps to a knob, a trip, a pace or a question: the planner must see no work in them.
   const knobs = [
     'make it night', 'too dark', 'golden hour', 'it feels laggy', 'runs slow', 'my battery is hot', 'the fan is loud', 'cool it down', 'ultra graphics', 'potato quality',
     'mute', 'turn the sound off', 'music please', 'too loud', 'quieter roads', 'less traffic', 'fewer cars', 'more people', 'walk faster', 'take me to the harbour',
     'the controls', 'lunch time', 'breakfast', 'make it rain', 'fly over the city', 'go inside my house', 'pizza', "i don't know", 'change my outfit', 'a photo mode',
+    // The console's words, the traffic's and the crowd's, which the desks once took (an independent review's sweep of every desk word through the engine).
+    'automate the city', 'open ring 0', 'ring zero please', 'the executive console', 'the congestion is terrible', 'improve the traffic flow', 'sound proof',
+    'put ten people on the streets', 'two people walking', 'the 3 lanes of traffic are jammed',
   ]
   for (const g of knobs) {
     const p = scanWork(plainWords(g))
@@ -84,7 +89,7 @@ test('every desk has words that send work there and nowhere else, and no desk wo
     assert.equal(p.at, plainWords(g).length)
   }
   // And through the whole engine: each knob goal plans its knob (or asks its why), never a dispatch; a district is a trip.
-  for (const g of ['make it night', 'it feels laggy', 'mute', 'my battery is hot', 'too loud', 'the financial district']) {
+  for (const g of ['make it night', 'it feels laggy', 'mute', 'my battery is hot', 'too loud', 'the financial district', 'automate the traffic lights', 'open ring 0', 'the congestion is terrible', 'put ten people on the streets']) {
     const m = new FiveWhys(g)
     const asked = m.next() !== null
     const b = m.brief()
@@ -99,15 +104,26 @@ test('scanWork: the desks in order of first mention, the count in digits or word
   assert.deepEqual(s.kinds, ['metroOps', 'warehouse', 'roboticsLab'])
   assert.equal(s.count, 24)
   assert.equal(s.at, 0, '"optimize the" goes with the metro')
-  // "optimize the lakefront metro" and "run a 24 agent" are each one span from their verb, so the district rule never sees the metro and "run" is no pace.
+  // "optimize the lakefront metro" and "run a 24 agent" are each one span from their verb (which reaches two words on, so
+  // "schedule" and "warehouse" take it too), so the district rule never sees the metro and "run" is no pace.
   const taken = s.spans.map((sp) => text.slice(sp.index, sp.index + sp.length)).sort()
-  assert.deepEqual(taken, ['drill', 'optimize the lakefront metro', 'robotics', 'run a 24 agent', 'schedule', 'warehouse'])
+  assert.deepEqual(taken, ['drill', 'optimize the lakefront metro', 'optimize the lakefront metro schedule', 'robotics', 'run a 24 agent', 'run a 24 agent warehouse'])
   assert.deepEqual(scanWork('hold a triage with six scouts').count, 6)
   assert.deepEqual(scanWork('twelve robots please').count, 12)
   assert.deepEqual(scanWork('a 400 agent drill').count, 400)
-  // A word that is also a knob's stays the knob's: "traffic" alone is the cars, only "traffic flow" is the tower.
+  // A word that is also a knob's stays the knob's: "traffic" is the cars' (air traffic is the tower's).
   assert.deepEqual(scanWork('less traffic').kinds, [])
-  assert.deepEqual(scanWork('the traffic flow downtown').kinds, ['controlTower'])
+  assert.deepEqual(scanWork('the traffic flow downtown').kinds, [])
+  assert.deepEqual(scanWork('the air traffic').kinds, ['controlTower'])
+  // Up to five digits: a count past the cap is still a count (teamOf says what it left out).
+  assert.equal(scanWork('send 1000 agents to the warehouse').count, 1000)
+  // Overlapping desk words: the longer phrase is the desk meant, the shorter is no second desk.
+  assert.deepEqual(scanWork('a fire drill').kinds, ['responseCenter'])
+  assert.deepEqual(scanWork('the wind farms').kinds, ['microgrid'])
+  assert.deepEqual(scanWork('the executive console').kinds, [])
+  // The verb reaches two words on ("run a quick warehouse audit"), never across a preposition ("run to the warehouse" stays a run).
+  assert.equal(scanWork('run a quick warehouse audit').at, 0)
+  assert.equal(scanWork('run to the warehouse').at, 'run to the '.length)
   // "power" alone is nobody's; the grid's words are the grid's.
   assert.deepEqual(scanWork('more power').kinds, [])
   assert.deepEqual(scanWork('the power grid').kinds, ['microgrid'])
@@ -122,6 +138,10 @@ test('teamOf: one lane a desk by default, a count dealt round the desks, the cap
   assert.deepEqual(five.lanes.map((l) => [l.tag, l.slice, l.kind]), [['warehouse:1', 0, 'warehouse'], ['robotics:1', 0, 'roboticsLab'], ['warehouse:2', 1, 'warehouse'], ['robotics:2', 1, 'roboticsLab'], ['warehouse:3', 2, 'warehouse']])
   const capped = teamFor('send 40 agents to the clinic')
   assert.deepEqual([capped.lanes.length, capped.asked, capped.dropped], [TEAM_MAX, 40, 8])
+  // Fewer sub-agents than desks named: the first desks get them, and only they are named.
+  const short = teamFor('2 agents at the warehouse, the clinic and the kitchen')
+  assert.deepEqual([short.kinds, short.lanes.map((l) => l.tag)], [['warehouse', 'gaitLab'], ['warehouse:1', 'gait:1']])
+  assert.equal(teamLabel(short), 'Send 2 sub-agents to the warehouse and the gait lab')
   const scouts = teamFor('pizza')
   assert.deepEqual([scouts.kinds, scouts.lanes.map((l) => l.tag), scouts.scouting, scouts.goal], [SCOUTS, ['twin:1', 'tower:1'], true, 'pizza'])
   const counted = teamFor('send six agents')
@@ -230,4 +250,26 @@ test('deterministic: the same goal gives the same team, lane for lane, and the s
   assert.notEqual(laneSpec(a.lanes[1]!, { x: 1, z: 2 }).prelude, laneSpec(a.lanes[1]!, null).prelude, 'the desk\'s place is in the prelude')
   assert.match(laneSpec(a.lanes[1]!, null).prelude, /let at_x = 0\.000; let at_z = 0\.000;/)
   assert.match(laneSpec(a.lanes[1]!, { x: Number.NaN, z: Number.POSITIVE_INFINITY }).prelude, /let at_x = 0\.000; let at_z = 0\.000;/, 'a place that is nowhere reads at the origin')
+})
+
+test('the engine around the planner: a desk phrase wins over a bare unsupported word inside it, work words say nothing about Peak, a goal without a word sends nobody, and a team an answer names replaces the scouts', () => {
+  // "the wind farms" is the microgrid, not the weather; "a green house" the greenhouse, not going indoors.
+  for (const [g, desk] of [['the wind farms', 'the microgrid room'], ['a green house', 'the greenhouse'], ['flight paths over the city', 'the control tower']] as const) {
+    const b = new FiveWhys(g).brief()
+    assert.deepEqual([b.plan.map((s) => s.label), b.unmapped.length], [[`Send one sub-agent to ${desk}`], 0], g)
+  }
+  // "a battery swap drill" is the fleet bay's, not the heat and battery rule's: Peak is still Sloane's question.
+  assert.deepEqual(classify('peak graphics and a battery swap drill').map((c) => [c.control, c.value]), [['dispatch', 2], ['quality', undefined]])
+  // Nothing but punctuation: no scouts, the redirect question.
+  const blank = new FiveWhys('???')
+  assert.ok(blank.next() !== null)
+  assert.ok(blank.brief().plan.every((s) => s.control !== 'dispatch'))
+  // Scouts for a goal nothing mapped; an answer naming work replaces them, an answer naming a control sends them back.
+  const named = new FiveWhys('pizza')
+  assert.equal(named.brief().plan[0]!.label, 'Send 2 scouts to the twin studio and the control tower')
+  named.answer('a warehouse drill with four agents')
+  assert.deepEqual(named.brief().plan.map((s) => s.label), ['Send 4 sub-agents to the warehouse and the robotics lab'])
+  const knob = new FiveWhys('pizza')
+  knob.answer('make it night')
+  assert.ok(knob.brief().plan.every((s) => s.control !== 'dispatch'))
 })

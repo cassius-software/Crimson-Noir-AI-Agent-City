@@ -63,7 +63,7 @@ test('App: the team runner over the page\'s own parts, ticked from the frame loo
   assert.match(src, /if \(step\.control === 'dispatch' && step\.team && b\.lanes\) \{ b\.lanes\.dispatch\(step\.team\); return true \}/, 'the card dispatches through the bridge')
   assert.match(src, /else if \(step\.control === 'dispatch' && step\.team && b\.lanes\) \{\n\s*const d = b\.lanes\.dispatch\(step\.team\)/, 'and so does goal')
   assert.match(src, /crew\?\.dispose\(\)/)
-  assert.match(src, /setSloane\(local\.settings\(\)\.provider === 'scripted' \? null : sloaneVoice\(mind\)\)/, 'Sloane\'s words through the router\'s order, never with the scripted provider')
+  assert.match(src, /setSloane\(sloaneVoice\(mind, SLOANE_REWORD_MS, \(\) => local\.settings\(\)\.provider !== 'scripted'\)\)/, 'Sloane\'s words through the router\'s order, never with the scripted provider, asked at every sentence')
   assert.match(src, /reword=\{sloane\}\s*lanes=\{hud\.supplier\.lanes \?\? null\}/)
   // The runner is never given the engine itself, the simulation or a mind.
   const start = src.indexOf('new TeamRunner(')
