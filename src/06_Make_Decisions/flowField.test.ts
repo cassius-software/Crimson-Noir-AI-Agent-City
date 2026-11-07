@@ -631,7 +631,14 @@ test('the flat solvers leave the bits the tuple form leaves: costs and direction
   const again = solveFlow(city, [goal, 0])
   assert.deepEqual(again.cost, referenceDial(city, [goal, 0]))
   assert.deepEqual(again.dir, referenceDirections(city, again.cost))
-  // A grid whose weights were written after its first solve is solved over the new weights.
+  // A grid whose weights were written after its first solve is solved over the new weights: a cell blocked, then
+  // opened again, then made road.
   city.weight[goal + 1] = 0
   assert.deepEqual(solveDial(city, [goal]), referenceDial(city, [goal]))
+  city.weight[goal + 1] = 1
+  const reopened = solveFlow(city, [goal])
+  assert.deepEqual(reopened.cost, referenceDial(city, [goal]))
+  assert.deepEqual(reopened.dir, referenceDirections(city, reopened.cost))
+  city.weight[goal + 1] = FLOW.roadWeight
+  assert.deepEqual(directions(city, solveDial(city, [goal])), referenceDirections(city, referenceDial(city, [goal])))
 })
