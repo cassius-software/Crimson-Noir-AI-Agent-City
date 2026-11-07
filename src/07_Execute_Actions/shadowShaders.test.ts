@@ -26,9 +26,9 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { gunzipSync } from 'node:zlib'
 import {
-  ACESFilmicToneMapping, CubeUVReflectionMapping, DirectionalLight, PCFShadowMap, SRGBColorSpace, ShadowNode, Texture, WGSLNodeBuilder,
-  WebGPURenderer, setConsoleFunction, type Camera, type InstancedMesh, type Light, type Material, type Mesh, type Node, type Object3D,
-  type Scene,
+  ACESFilmicToneMapping, CubeUVReflectionMapping, DirectionalLight, PCFShadowMap, PMREMGenerator, SRGBColorSpace, ShadowNode, Texture,
+  WGSLNodeBuilder, WebGPURenderer, setConsoleFunction, type Camera, type InstancedMesh, type Light, type Material, type Mesh, type Node,
+  type Object3D, type PointLight, type Scene,
 } from 'three/webgpu'
 import { texture } from 'three/tsl'
 
@@ -40,7 +40,9 @@ registerHooks({
     return { format: 'module', source: `export default ${JSON.stringify(text)}`, shortCircuit: true }
   },
 })
-const { buildWorld } = await import('../01_Initialize_World/world.ts')
+const { buildWorld, FULL_WORLD, LITE_WORLD } = await import('../01_Initialize_World/world.ts')
+const { CityLightsNode, FIXTURE, LAMP } = await import('../01_Initialize_World/cityLights.ts')
+const { workplaces } = await import('../01_Initialize_World/interiors.ts')
 const { buildLakefrontPack } = await import('../01_Initialize_World/lakefrontPack.ts')
 const { RegionPlaces, hollowLots, layoutOf } = await import('../01_Initialize_World/region/regionWorld.ts')
 const { streetGridOf } = await import('../01_Initialize_World/region/streets.ts')
@@ -280,7 +282,7 @@ function lakefront(renderer: WebGPURenderer) {
   const streets = streetGridOf(pack, layout.offset, start)
   assert.ok(streets, 'the metropolis has a street window')
   const hollow = hollowLots(pack, layout, regionWorkplaceLots(pack, layout, streets, start, SEED))
-  return buildWorld(renderer, SEED, { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan: hollow.plan })
+  return buildWorld(renderer, SEED, { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan: hollow.plan, rooms: hollow.rooms })
 }
 
 /** The region every build carries (vite.config.ts regionPack, App.tsx loadRegion), walked with ?region=on: no window, no lots. */
@@ -348,4 +350,98 @@ test('a region\'s tiles share one facade material, and every tile\'s shadow pass
     assert.deepEqual(logged, [], `${tile.name}: three logged nothing while building its shadow pass`)
     assert.equal(surfaceCalls(s.fragment), 1, `${tile.name}: its shadow pass reads rain mode once`)
   }
+})
+
+/**
+ * Runs `fn` with the sky probe's bake stubbed (World.update bakes it through three's PMREMGenerator, which needs a
+ * device): the probe is a texture whose pixels nothing here reads.
+ */
+function withoutProbe<T>(fn: () => T): T {
+  const own = PMREMGenerator.prototype.fromScene
+  const stub = (_scene: Scene, _sigma: number, _near: number, _far: number, options: { renderTarget?: unknown }) => options.renderTarget ?? { texture: new Texture() }
+  PMREMGenerator.prototype.fromScene = stub as unknown as typeof own
+  try {
+    return fn()
+  } finally {
+    PMREMGenerator.prototype.fromScene = own
+  }
+}
+
+/** The scene's point lights (the lamps' and the rooms' fixtures'): the whole pool, lit or not. */
+const pointLights = (scene: Scene): PointLight[] => scene.children.filter((o): o is PointLight => (o as PointLight).isPointLight === true)
+const streets = (scene: Scene): Mesh => {
+  const m = scene.getObjectByName('Streets') as Mesh | undefined
+  assert.ok(m, 'the city ground is drawn')
+  return m
+}
+
+test('the lamps are clustered: one lit shader whatever the count of lit lamps, the cluster grid read in the main pass only, none of it in a lite boot', () => {
+  const renderer = offlineRenderer()
+  const world = buildWorld(renderer, SEED)
+  const lights = pointLights(world.scene)
+  const rooms = workplaces(SEED).length
+  assert.equal(lights.length, FULL_WORLD.lampLights + FIXTURE.at.length * rooms, 'the lamp pool and four fixtures a room')
+  assert.ok(lights.every((l) => !l.visible), 'nothing is lit before the first update')
+  assert.ok((renderer as unknown as Internals).lighting.getNode(world.scene) instanceof CityLightsNode, 'the city scene gets the clustered node')
+  // A night update with the tier's count: that many lamps, the nearest to the focus, and every fixture.
+  world.setLampLights(128)
+  withoutProbe(() => world.update(23, 0, 320, 320))
+  const lit = lights.filter((l) => l.visible)
+  assert.equal(lit.length, 128 + FIXTURE.at.length * rooms)
+  const lamps = lit.filter((l) => l.distance === LAMP.range)
+  assert.equal(lamps.length, 128)
+  assert.ok(lamps.every((l) => Math.abs(l.intensity - LAMP.candela) < 1e-6 && l.position.y === LAMP.height), 'a lit lamp shines LAMP.candela from its head')
+  const far = Math.max(...lamps.map((l) => Math.hypot(l.position.x - 320, l.position.z - 320)))
+  assert.ok(far < 100, `128 lamps round the focus reach ${far.toFixed(0)} m`)
+  // The main pass reads the grid's index buffer and the lights' texture; its WGSL is the same for six lit lamps or
+  // a hundred and twenty-eight (the count is a uniform), so a tier change never recompiles.
+  const ground = streets(world.scene)
+  const environment = environmentOf()
+  // (The first build of a material primes three's node caches and lays its text out a little differently from every
+  // build after it, whatever the lights; the builds compared are the settled ones.)
+  build(renderer, world.scene, world.camera, ground, ground.material as Material, environment)
+  const many = build(renderer, world.scene, world.camera, ground, ground.material as Material, environment)
+  assert.match(many.fragment, /lightIndexes/, 'the main pass reads the cluster grid')
+  const lightsKey = (lightsOf(renderer, world.scene) as unknown as Node).getCacheKey(true)
+  world.setLampLights(6)
+  withoutProbe(() => world.update(23, 0, 320, 320))
+  assert.equal(pointLights(world.scene).filter((l) => l.visible && l.distance === LAMP.range).length, 6)
+  const few = build(renderer, world.scene, world.camera, ground, ground.material as Material, environment)
+  assert.equal(few.fragment, many.fragment, 'the same fragment stage for six lit lamps and for 128')
+  assert.equal((lightsOf(renderer, world.scene) as unknown as Node).getCacheKey(true), lightsKey, 'the lights node keys the pipeline the same: nothing recompiles')
+  assert.equal(few.vertex, many.vertex)
+  // By day the lamps go dark and unlit (the fixtures stay: a workplace is lit by day), without a change of shader.
+  withoutProbe(() => world.update(12, 0, 320, 320))
+  assert.equal(pointLights(world.scene).filter((l) => l.visible).length, FIXTURE.at.length * rooms, 'by day the lamps are not lit')
+  assert.equal(build(renderer, world.scene, world.camera, ground, ground.material as Material, environment).fragment, many.fragment)
+  assert.equal((lightsOf(renderer, world.scene) as unknown as Node).getCacheKey(true), lightsKey)
+  // The shadow pass never pays for the grid.
+  const sun = world.sun
+  for (const s of buildShadow(renderer, world.scene, sun, ground).value) assert.doesNotMatch(s.fragment, /lightIndexes/, 'the shadow pass reads no cluster grid')
+  // A count of 0 lights nothing, fixtures included.
+  world.setLampLights(0)
+  withoutProbe(() => world.update(23, 0, 320, 320))
+  assert.equal(pointLights(world.scene).filter((l) => l.visible).length, 0)
+  // A lite boot: no point lights, no clustered node, no grid in the shader.
+  const liteRenderer = offlineRenderer()
+  const lite = buildWorld(liteRenderer, SEED, null, LITE_WORLD)
+  assert.equal(pointLights(lite.scene).length, 0)
+  assert.ok(!((liteRenderer as unknown as Internals).lighting.getNode(lite.scene) instanceof CityLightsNode))
+  lite.setLampLights(128)
+  withoutProbe(() => lite.update(23, 0, 320, 320))
+  const liteGround = streets(lite.scene)
+  assert.doesNotMatch(build(liteRenderer, lite.scene, lite.camera, liteGround, liteGround.material as Material, environment).fragment, /lightIndexes/)
+})
+
+test('the lakefront metropolis lights its rooms: four fixtures a room under the ceiling, the lamps of its street window clustered', () => {
+  const renderer = offlineRenderer()
+  const world = lakefront(renderer)
+  const lights = pointLights(world.scene)
+  const fixtures = lights.filter((l) => l.distance === FIXTURE.range)
+  assert.ok(fixtures.length > 0 && fixtures.length % FIXTURE.at.length === 0, `${fixtures.length} fixtures`)
+  assert.equal(lights.length - fixtures.length, FULL_WORLD.lampLights)
+  world.setLampLights(64)
+  withoutProbe(() => world.update(23, 0, world.camera.position.x, world.camera.position.z))
+  assert.equal(lights.filter((l) => l.visible).length, 64 + fixtures.length)
+  assert.ok((renderer as unknown as Internals).lighting.getNode(world.scene) instanceof CityLightsNode)
 })

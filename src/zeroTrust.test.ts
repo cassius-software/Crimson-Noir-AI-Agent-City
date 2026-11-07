@@ -102,9 +102,9 @@ test('nothing runs a command through a shell: no exec or execSync from child_pro
 test('two modules serve the network (the authenticated room host and the robot relay); every test server binds 127.0.0.1 on port 0; the launcher binds 127.0.0.1', () => {
   const HOST = 'src/10_Network/replication.node.ts'
   const RELAY = 'src/10_Network/robotRelay.node.ts'
-  // The browser smoke test serves dist/index.html to its own headless browser for the length of a run: a test server
-  // in a tool's file, held to the test servers' rule.
-  const HARNESSES = ['tools/browser/smoke.mjs']
+  // The browser smoke test and the screenshot tool serve dist/index.html to their own headless browser for the length
+  // of a run: a test server in a tool's file, held to the test servers' rule.
+  const HARNESSES = ['tools/browser/smoke.mjs', 'tools/browser/shot.mjs']
   // The desktop launcher serves the built page to this machine's own browser. Its port is fixed (4180) because the
   // page keeps its settings per address, and a page opened from a file instead loses the shared bridge and the local
   // model servers (MANUAL.md, On NixOS): it may name any port, but only on the loopback literal.

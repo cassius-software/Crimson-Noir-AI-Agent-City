@@ -55,6 +55,38 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   browser smoke's `desktop` and `lite` scenarios see a desktop and a phone); no workstation was seen on real
   hardware, and the plan's 131,072 lanes are not raised here (the crowd's grid, readback and draw would need
   resizing and measuring on a real big GPU).
+- **Every street lamp near you is a real light, and every workplace has a lit ceiling.** The city's night lighting
+  moves to three r186's clustered (Forward+) lighting (`src/01_Initialize_World/cityLights.ts`): the lamps' point
+  lights live in a texture, a compute pass bins them once a render into a 48 × 27 × 24 grid of view-frustum cells,
+  and each fragment loops over the few lights of its own cell, so the light count is a uniform and one lit shader
+  serves six lamps or four hundred. Before, every point light was part of every lit material's pipeline key, so the
+  page lit six lamps and no more; a region's asphalt had no painted pools either, so the lakefront metropolis's
+  streets were dark under their lamps. Now the lamps nearest the player carry a real light after dark, as many as the
+  tier allows (the governor's new `lampLights` knob: 32 on Minimal, 64, 128, 192, 256 on Ultra, 384 on Peak; about
+  45 m around you on Minimal, 155 m on Peak at the city's lamp density), lighting the asphalt, the sidewalk, the people,
+  the cars and the facades under them, warm sodium (28 cd at the head, 28 m reach: the night is drawn near the day's
+  exposure, so a lamp is a fraction of the sun); the city ground's painted pools fade out inside that radius and stand
+  in beyond it, as they always did. Every workplace (the city's six and a region's) gets four ceiling fixtures (18 cd,
+  cool office white, always on) under a ceiling of white tile with a luminaire panel over each fixture, drawn by the
+  building material. The grid is held constant (`CityLightsNode`), unlike
+  three's node, which rebuilds its compute pass whenever the drawing buffer changes size and so re-keys every lit
+  material: a tier step, a resize or dusk never recompiles anything, and a split-screen viewport bins its own grid
+  over its own rectangle. A lite boot builds none of it (no point lights, no cluster grid: its lit shaders stay as
+  short as they were) and under a headset the lamps go back to emissive heads (three's XR path is not the render the
+  grid is computed for). Pinned by `cityLights.test.ts` (the nearest-lamp choice, the fixtures inside their rooms,
+  the constant grid against three's rebuilding one) and `shadowShaders.test.ts` (every material still builds in both
+  passes within the binding budget; the same lit fragment for 6 and 128 lit lamps and by day; the lite boot's has no
+  grid). The page grows by 11 KB (three's clustered lights node and `cityLights.ts`), past the page budget main was
+  at; the budget (`tools/verify/page_dist.mjs` `MAX_BYTES`) is raised here exactly as the voice pill's PR raises it
+  (the same lines, so the two merge either way round). What CI shows:
+  the browser job's frames on the software adapter; `tools/browser/shot.mjs` (new, below) photographed the lakefront
+  and the city at night before and after. How it looks on a real GPU is unverified.
+- **A screenshot tool for rendering changes.** `node tools/browser/shot.mjs --out DIR --query "map=lakefront&quality=3"
+  --at "name,hour[,yaw,pitch[,x,z]]"` boots the built page once in a headless Chrome on the software WebGPU adapter
+  (the way the browser smoke does, served from 127.0.0.1 with the isolation headers) and photographs it at any
+  number of clock hours, head angles and places, the concierge's card skipped and the HUD hidden; it exits 1 when the
+  page threw, logged a WebGPU error or a shader three could not build.
+
 - **The fallen wear their own bodies.** A pedestrian the realm promotes to a physical body (a shove, a kerb trip, a
   slip near the operator) is no longer hidden and replaced by grey capsules: the crowd's vertex stage hangs each of
   the body's fifteen bones from the rig shape it belongs to (`src/03_Spawn_Agents/humanoid.ts` `RIG_REST`,

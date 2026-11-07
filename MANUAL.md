@@ -198,6 +198,22 @@ no real building is copied. The districts have generic names, and the HUD shows 
 
 Streets run the full grid; the crowd walks every sidewalk and stops short of the water.
 
+### Night lighting
+
+After dark the street lamps nearest you carry real light (`01_Initialize_World/cityLights.ts`): warm sodium from the
+head of the pole, over the asphalt, the sidewalk, the people, the cars and the facades under it, 28 m around each
+lamp. How many are lit is the quality tier's (Autoscaling): 32 on Minimal, 64 on Low, 128 on Medium, 192 on High, 256
+on Ultra and 384 on Peak, the nearest first, which at the city's eight lamps a block reaches about 45 m around you on
+Minimal and 155 m on Peak; beyond the farthest lit lamp the ground shows the painted pools it always did, and a lamp is
+lit by its light or by its pool, never both. The same lamps light a region's street window (the lakefront metropolis),
+whose asphalt has no painted pools, so its streets are lit only where the real light reaches. Every indoor workplace
+(the city's six glass-walled ground floors, and a region's) has four ceiling fixtures under a white tile ceiling, a
+luminaire panel over each, on by day and by night. The
+lights are clustered: a compute pass sorts them into a grid of view cells once a frame and each pixel reads the few
+lights of its cell, so the tier moves the count without recompiling a shader, and dusk costs no hitch. A lite profile
+builds none of this (every lamp is an emissive head over its pool, the rooms are lit by the sky), and under a headset
+the lamps go back to emissive heads while the headset presents.
+
 The fixed track network (`06_Make_Decisions/tracks.ts`) is laid over the grid from the same seed: 64 right-turn
 rings for the cars, one round each 2 × 2-block cell; one elevated train loop on a deck 9 m over the median of the
 two arterial streets, with four mid-block stations and guideway columns at the kerb; drone corridors at 40 m and
@@ -503,7 +519,7 @@ reading order. The rects tile the canvas exactly, in whole pixels.
 - **What stays player 1's.** The post chain (the cinema shutter, bloom, ND, film response, ghost view) is player
   1's alone and is off while the screen is split: every viewport takes the direct ACES path, and
   `ghost on` says so. The sun's shadow focus, the lamp lights and the building sort follow player 1, so the other
-  viewports get shadows only near player 1. The HUD, the captions, the pings, the code dissolve's scans, the
+  viewports get shadows and lit lamps only near player 1 (each viewport bins the lit lamps into its own grid). The HUD, the captions, the pings, the code dissolve's scans, the
   passage count, the haptics, recruitment and the operator tier stay player 1's. Players 2–4 are not drawn as crowd
   figures, so a pedestrian may walk through them; they are protected exactly on the CPU, and safety does not rest
   on the figure.
@@ -2073,8 +2089,10 @@ are no toasts and no settings menu, and the console's `quality` command is the o
   capped at Minimal.
 - **Tiers:** there are seven: Lite (tier -1, reached automatically only on a lite profile, or pinned by hand), Minimal
   to Ultra, and Peak (tier 5, reached automatically only on a big GPU that reports its own timings, below, or pinned
-  by hand). They scale render resolution, shadows and shadow-map size, post-processing, and the crowd's LOD distance,
-  near radius, draw distance and **density**. Density is a stable per-agent hash, so the same people stay visible.
+  by hand). They scale render resolution, shadows and shadow-map size, post-processing, the lit street lamps (the
+  nearest to you after dark: 32 on Minimal to 384 on Peak, none on Lite; Night lighting), and the crowd's LOD
+  distance, near radius, draw distance and **density**. Density is a stable per-agent hash, so the same people stay
+  visible.
 - **Stepping down:** when FPS stays below 60 for more than 2 s (with 5 % vsync tolerance, so a clean
   60 Hz display never trips it), the governor steps down one tier. That thins the crowd's drawn
   InstancedMesh count and lowers the procedural texture resolution (256 → 192 → 128 → 64). Textures are
@@ -3156,7 +3174,8 @@ the production page finds no physics object in the page and has every crafted me
   hosts (`tools/verify/page_dist.mjs`); the pinned runtime's bytes and imports are what was reviewed
   (`tools/verify/wasm_airgap.py`).
 - **In a browser, on every CI run:** the browser job runs the smoke (`tools/browser/smoke.mjs`) on the built page in
-  Chrome on the software WebGPU adapter, and four of its scenarios run the real runtime with the tiny model
+  Chrome on the software WebGPU adapter (and `tools/browser/shot.mjs` photographs the built page the same way, at
+  chosen hours, head angles and places, for a rendering change's before and after), and four of its scenarios run the real runtime with the tiny model
   `tools/browser/tinyGguf.mjs` writes. `inpage`, cross-origin isolated on two threads: the file picked at the
   console, kept and loaded with two threads and the context the model was trained on; a recruit asked and answered;
   the city's automatic tier set above the hold first, lowered to the hold while the model works and back after; a
