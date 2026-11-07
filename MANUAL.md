@@ -179,6 +179,9 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 | `?vision=protan`, `deutan`, `tritan` | A colour-vision filter over the finished frame for this visit (`none` turns a kept one off) |
 | `?ui=150` | The text size of every card for this visit: 100, 125, 150, 175 or 200 percent (another number goes to the nearest step) |
 | `?captions=large`, `?captions=huge` | The caption strip's size for this visit |
+| `?dwell=1`, `?scan=1` | The dwell click, or single-switch scanning, for this visit (`0` turns a kept one off; see Accessibility) |
+| `?pad=left`, `?pad=right` | A one-handed pad layout for this visit (`both` restores the two-handed one; see Accessibility) |
+| `?announce=0` | No screen-reader lines of the district, vehicles, seats and toasts for this visit (see Accessibility) |
 | `?boot=tty` | Track B: the Ring-0 console alone, full screen, with no canvas, no engine, no WebGPU, no physics worker and no audio; `boot gui` reloads the city (see Ring-0 console) |
 | `?profile` | GPU timestamps |
 | `?debug` | Exposes `window.__SIM__` test hooks; off by default |
@@ -568,8 +571,23 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   red for a tritan); view-only, off by default, and the greys are never tinted. The **text size** (`access text
   125|150|175|200`, the Menu's Text size item, `?ui=150`) enlarges every card and never the canvas. The **caption
   size** (`access captions large|huge`, `?captions=large`) is the strip's own. `access` alone prints them, `access
-  reset` restores the defaults. Switch scanning, dwell click and one-handed controller presets are not built yet;
-  sticky keys are the operating system's own feature. How the filter and the zoom look on a real display is unverified.
+  reset` restores the defaults. Four more are for the hands and the ears. The **dwell click** (`access dwell on`,
+  `?dwell=1`; `04_Connect_Hardware/dwell.ts`): a pointer resting on a control for 0.6 s presses it (a ring fills over
+  the time; a text field takes the caret instead), once per rest; a touch, a real press and pointer lock never dwell.
+  **Single-switch scanning** (`access scan on`, `?scan=1`; `scanning.ts`): the page's controls are offered one at a
+  time every 1.2 s, in page order, the one offered focused and ringed, and the Space bar presses it (a field takes the
+  caret); Space is taken before the city sees it, and typed into a field stays a space. A **one-handed pad layout**
+  (`access pad left|right`, `?pad=`; `gamepad.ts` `PadHand`): that hand's stick moves and steers, and looks while its
+  shoulder (L1 or R1) is held; the left hand's throttle is the d-pad's up and L2 its brake, the right hand's throttle R2
+  and the west face button its brake; select is the run latch and start a ping for either hand, and that stick's click
+  is the mute; the left hand keeps the d-pad (down enters a car, left and right move the clock) and has no reset or
+  handbrake, the right hand keeps the face buttons (south enters, north resets, east is the handbrake) and has no
+  clock keys; a split screen's other seats keep both hands. The **screen reader's lines** (`access announce off` turns
+  them off; `07_Execute_Actions/announcer.ts`): a live region on the HUD tells of the district walked into (once it
+  has been held four seconds), a vehicle beside you and what enters it, a seat taken or left, and every toast, one line
+  at a time and at most one every 2.5 s; the captions, the microphone pill and Sloane's lines have live regions of their
+  own. Sticky keys are the operating system's own feature. How the filter and the zoom look on a real display, and the
+  dwell and the scan with a real head mouse or switch interface, are unverified.
 - **Glyphs:** every control hint follows the input in use. When a pad is picked up it switches silently to
   that pad's layout: the two letter layouts (A or B at the south button), numbered shoulders and stick clicks,
   or button positions (South, East, North) for a pad it does not recognise. On phones it switches to touch
@@ -930,7 +948,7 @@ while you type.
   `feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]`,
   `ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]`, `quality [auto|lite|peak|-1|0-5]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `xr [vr|ar|off]`, `render [on|off]`,
   `captions [on|off]`, `mic [on|off]`,
-  `access [contrast auto|high|normal|vision none|protan|deutan|tritan|text 100|125|150|175|200|captions normal|large|huge|reset]`,
+  `access [contrast auto|high|normal|vision none|protan|deutan|tritan|text 100|125|150|175|200|captions normal|large|huge|dwell on|off|scan on|off|pad both|left|right|announce on|off|reset]`,
   `ping [go|look|gather|wait|clear]`,
   `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
   `robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|remove <id>]`,
@@ -988,10 +1006,11 @@ while you type.
   whether it opens at boot, and whether words are recognised on this device) or turns it on or off; `mic on` asks
   the browser's permission inside the Enter keystroke, and `mic off` releases the device (see The microphone pill
   under Onboarding and the spatial HUD).
-- `access [contrast auto|high|normal|vision none|protan|deutan|tritan|text 100|125|150|175|200|captions normal|large|huge|reset]`
+- `access [contrast auto|high|normal|vision none|protan|deutan|tritan|text 100|125|150|175|200|captions normal|large|huge|dwell on|off|scan on|off|pad both|left|right|announce on|off|reset]`
   prints the accessibility settings or sets one: high contrast for every card, the colour-vision filter over the
-  frame, the text size of every card and the caption size, kept between visits; `access reset` restores the defaults
-  (see Accessibility under Onboarding and the spatial HUD).
+  frame, the text size of every card, the caption size, the dwell click, single-switch scanning, a one-handed pad
+  layout and the screen reader's lines, kept between visits; `access reset` restores the defaults (see Accessibility
+  under Onboarding and the spatial HUD).
 - `ping [go|look|gather|wait]` marks where you look, as `Q` does; `ping` alone lists the marks standing, and
   `ping clear` takes them off the board. A `go` or `gather` ping is offered to the recruiter as a rally the physics
   worker re-checks (see Pings and the rally).

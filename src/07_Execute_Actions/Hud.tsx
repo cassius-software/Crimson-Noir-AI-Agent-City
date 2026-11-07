@@ -272,6 +272,8 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
 
   return (
     <div className="ui-zoom pointer-events-none absolute inset-0 font-sans text-[13px] antialiased select-none">
+      {/* The screen reader's line (announcer.ts): always in the page, so a reader follows it from the first word. */}
+      <span className="sr-only" role="status" aria-live="polite" data-announce>{c.announce ?? ''}</span>
       {visible && !compact && (
         <div className={FRAME_WIDE}>
           <div className="absolute top-0 left-0 flex flex-col items-start gap-2">

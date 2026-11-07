@@ -55,6 +55,19 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   grey and pulls the confused pair apart) and the settings, and by source pins over the page (`access.test.ts`,
   `accessWiring.test.ts`); how the filter and the zoom look on a real display is unverified.
 
+- **The hands and the ears: dwell click, single-switch scanning, one-handed pad layouts, the screen reader's lines.**
+  Four more settings in `access.ts` (`access dwell|scan|pad|announce`, `?dwell= ?scan= ?pad= ?announce=`). The dwell
+  click (`04_Connect_Hardware/dwell.ts`) presses the control a pointer rests on for 0.6 s, once per rest, never a
+  touch, a real press or anything under pointer lock; single-switch scanning (`scanning.ts`) offers the page's
+  controls one at a time every 1.2 s, focused and ringed, and takes the Space bar as the switch ahead of the city (a
+  space typed in a field stays one); the pad mapper (`gamepad.ts` `PadHand`, `Input.setHand`) gains a left-hand and a
+  right-hand layout (one stick moves, and looks while its shoulder is held; that side's pedals and buttons; select is
+  the run latch, start a ping, the stick's click the mute); and a live region on the HUD (`announcer.ts`,
+  `customer.announce`) tells a screen reader of the district walked into once held, a vehicle beside you and what
+  enters it, a seat taken or left, and every toast, one line per 2.5 s with a short queue. Verified by Node tests over
+  fake pages and pads (`dwell.test.ts`, `scanning.test.ts`, `announcer.test.ts`, `gamepad.test.ts`) and source pins
+  (`accessWiring.test.ts`); a real head mouse, switch interface or screen reader is unverified.
+
 - **The fallen wear their own bodies.** A pedestrian the realm promotes to a physical body (a shove, a kerb trip, a
   slip near the operator) is no longer hidden and replaced by grey capsules: the crowd's vertex stage hangs each of
   the body's fifteen bones from the rig shape it belongs to (`src/03_Spawn_Agents/humanoid.ts` `RIG_REST`,

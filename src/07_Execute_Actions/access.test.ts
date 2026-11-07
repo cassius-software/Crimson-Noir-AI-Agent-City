@@ -31,11 +31,12 @@ test('kept settings: the defaults without a store or a record, or with anything 
   assert.equal(loadAccess(store({ [ACCESS_KEY]: `{"v":1,"contrast":"high","pad":"${'x'.repeat(300)}"}` })), ACCESS_DEFAULTS, 'too long to be ours')
   assert.deepEqual(
     loadAccess(store({ [ACCESS_KEY]: JSON.stringify({ v: 1, contrast: 'high', vision: 'sepia', scale: 150, captions: 'huge' }) })),
-    { contrast: 'high', vision: 'none', scale: 150, captions: 'huge' }, 'an unknown value reads as its default, the rest kept',
+    { ...ACCESS_DEFAULTS, contrast: 'high', scale: 150, captions: 'huge' }, 'an unknown value reads as its default, the rest kept',
   )
   assert.equal(loadAccess(store({ [ACCESS_KEY]: JSON.stringify({ v: 1, scale: 160 }) })).scale, 100, 'a scale off the steps')
   const s = store()
-  const next: AccessSettings = { contrast: 'normal', vision: 'tritan', scale: 200, captions: 'large' }
+  const next: AccessSettings = { contrast: 'normal', vision: 'tritan', scale: 200, captions: 'large', dwell: true, scan: true, pad: 'left', announce: false }
+  assert.deepEqual(loadAccess(store({ [ACCESS_KEY]: JSON.stringify({ v: 1, dwell: 'yes', scan: 1, pad: 'feet', announce: false }) })), { ...ACCESS_DEFAULTS, announce: false }, 'the hands\' fields: booleans and a hand, or the defaults')
   saveAccess(next, s)
   assert.deepEqual(loadAccess(s), next)
   assert.ok(Object.isFrozen(loadAccess(s)))
@@ -50,7 +51,10 @@ test('the URL for one visit: each option over the kept settings, ?ui rounded to 
   const q = (s: string) => new URLSearchParams(s)
   assert.equal(accessFromQuery(q(''), ACCESS_DEFAULTS), ACCESS_DEFAULTS, 'nothing asked: the same object')
   assert.equal(accessFromQuery(q('contrast=loud&vision=x&ui=abc&captions=0'), ACCESS_DEFAULTS), ACCESS_DEFAULTS, "nothing valid (captions=0 is the strip's own switch)")
-  assert.deepEqual(accessFromQuery(q('contrast=high&vision=deutan&ui=150&captions=huge')), { contrast: 'high', vision: 'deutan', scale: 150, captions: 'huge' })
+  assert.deepEqual(accessFromQuery(q('contrast=high&vision=deutan&ui=150&captions=huge')), { ...ACCESS_DEFAULTS, contrast: 'high', vision: 'deutan', scale: 150, captions: 'huge' })
+  assert.deepEqual(accessFromQuery(q('dwell=1&scan=on&pad=right&announce=0')), { ...ACCESS_DEFAULTS, dwell: true, scan: true, pad: 'right', announce: false })
+  assert.deepEqual(accessFromQuery(q('dwell=maybe&pad=feet&announce='), ACCESS_DEFAULTS), ACCESS_DEFAULTS, 'words that are neither on nor off, and a hand that is not one, change nothing')
+  assert.deepEqual(accessFromQuery(q('dwell=0&scan=false'), { ...ACCESS_DEFAULTS, dwell: true, scan: true }), ACCESS_DEFAULTS, 'off over a kept on')
   assert.ok(Object.isFrozen(accessFromQuery(q('ui=125'))))
   assert.equal(accessFromQuery(q('ui=140')).scale, 150)
   assert.equal(accessFromQuery(q('ui=112')).scale, 100)
@@ -58,7 +62,7 @@ test('the URL for one visit: each option over the kept settings, ?ui rounded to 
   assert.equal(accessFromQuery(q('ui=900')).scale, 200)
   assert.equal(accessFromQuery(q('ui=0')).scale, 100)
   assert.equal(accessFromQuery(q('ui=')).scale, 100, 'an empty number is none')
-  const kept: AccessSettings = { contrast: 'normal', vision: 'protan', scale: 125, captions: 'large' }
+  const kept: AccessSettings = { ...ACCESS_DEFAULTS, contrast: 'normal', vision: 'protan', scale: 125, captions: 'large' }
   assert.deepEqual(accessFromQuery(q('vision=none'), kept), { ...kept, vision: 'none' }, 'one option over the kept ones')
   assert.equal(accessFromQuery(q('vision=protan'), kept), kept, 'the kept value asked again: the same object')
 })
@@ -99,8 +103,14 @@ test("withAccess: each field from the console's words, case, blanks and a traili
   assert.equal(withAccess(ACCESS_DEFAULTS, 'text', '160'), 'access: text is one of 100, 125, 150, 175, 200 (percent)')
   assert.equal(withAccess(ACCESS_DEFAULTS, 'text', ''), 'access: text is one of 100, 125, 150, 175, 200 (percent)', 'an empty number is not 0')
   assert.equal(withAccess(ACCESS_DEFAULTS, 'captions', 'big'), 'access: captions is one of normal, large, huge')
-  assert.equal(withAccess(ACCESS_DEFAULTS, 'font', '12'), "access: nothing to set called 'font': contrast, vision, text, captions")
-  assert.deepEqual([...ACCESS_FIELDS], ['contrast', 'vision', 'text', 'captions'])
+  assert.equal(withAccess(ACCESS_DEFAULTS, 'font', '12'), "access: nothing to set called 'font': contrast, vision, text, captions, dwell, scan, pad, announce")
+  assert.deepEqual([...ACCESS_FIELDS], ['contrast', 'vision', 'text', 'captions', 'dwell', 'scan', 'pad', 'announce'])
+  assert.deepEqual(withAccess(ACCESS_DEFAULTS, 'dwell', 'ON'), { ...ACCESS_DEFAULTS, dwell: true })
+  assert.deepEqual(withAccess(ACCESS_DEFAULTS, 'scan', '1'), { ...ACCESS_DEFAULTS, scan: true })
+  assert.deepEqual(withAccess({ ...ACCESS_DEFAULTS, announce: true }, 'announce', 'off'), { ...ACCESS_DEFAULTS, announce: false })
+  assert.deepEqual(withAccess(ACCESS_DEFAULTS, 'pad', 'Left'), { ...ACCESS_DEFAULTS, pad: 'left' })
+  assert.equal(withAccess(ACCESS_DEFAULTS, 'dwell', 'maybe'), 'access: dwell is on or off')
+  assert.equal(withAccess(ACCESS_DEFAULTS, 'pad', 'feet'), 'access: pad is one of both, left, right')
 })
 
 test('the colour-vision matrices: every simulation row sums to one; the filter is the identity for none and I + K(I − M) otherwise, so a grey passes unchanged; red keeps its red and gains green and blue for a protan or deutan viewer, blue keeps its blue and gains red and green for a tritan; the words name the viewer', () => {
@@ -153,13 +163,18 @@ test('applyAccess writes data-contrast and --ui-zoom onto the root; the status l
   assert.equal(root.dataset.contrast, 'normal')
   assert.equal(root.style.vars['--ui-zoom'], '1.25')
 
-  const lines = accessStatus({ contrast: 'auto', vision: 'deutan', scale: 175, captions: 'huge' }, true)
-  assert.equal(lines.length, 5)
+  const lines = accessStatus({ ...ACCESS_DEFAULTS, vision: 'deutan', scale: 175, captions: 'huge', pad: 'left' }, true)
+  assert.equal(lines.length, 9)
   assert.match(lines[0], /^contrast {2}auto \(the system asks for more: high\) {2}\(access contrast auto\|high\|normal\)$/)
   assert.match(lines[1], /^vision {4}deutan \(green weak or blind\)/)
   assert.match(lines[2], /^text {6}175 % {2}\(access text 100\|125\|150\|175\|200\)$/)
   assert.match(lines[3], /^captions {2}huge, 24 px/)
-  assert.ok(lines[4].includes(ACCESS_KEY) && lines[4].includes('?contrast= ?vision= ?ui= ?captions='))
+  assert.match(lines[4], /^dwell {5}off {2}\(access dwell on\|off\)$/)
+  assert.match(lines[5], /^scan {6}off {2}\(access scan on\|off\)$/)
+  assert.match(lines[6], /^pad {7}left hand: its stick moves, with L1 held it looks; select runs, start pings {2}\(access pad both\|left\|right\)$/)
+  assert.match(lines[7], /^announce {2}on: the district, a vehicle beside you, a seat and the toasts are read {2}\(access announce on\|off\)$/)
+  assert.ok(lines[8].includes(ACCESS_KEY) && lines[8].includes('?contrast= ?vision= ?ui= ?captions= ?dwell= ?scan= ?pad= ?announce='))
+  assert.match(accessStatus({ ...ACCESS_DEFAULTS, dwell: true, scan: true, pad: 'right', announce: false }, false).slice(4, 8).join('\n'), /^dwell {5}on: a pointer resting[^\n]*\nscan {6}on: the controls are offered[^\n]*\npad {7}right hand: its stick moves, with R1 held[^\n]*\nannounce {2}off/)
   assert.match(accessStatus(ACCESS_DEFAULTS, false)[0], /^contrast {2}auto \(the system asks for no more: normal\)/)
   assert.doesNotMatch(accessStatus({ ...ACCESS_DEFAULTS, contrast: 'high' }, false)[0], /the system/, 'a set contrast says nothing of the system')
   assert.deepEqual(CAPTION_PX, { normal: 13, large: 18, huge: 24 })
@@ -175,7 +190,9 @@ test('applyAccess writes data-contrast and --ui-zoom onto the root; the status l
   assert.equal(writes.length, 1, 'an error writes nothing')
   assert.deepEqual(b.set(' TEXT ', '125'), { line: accessStatus({ ...ACCESS_DEFAULTS, vision: 'protan', scale: 125 }, false)[2] })
   assert.equal(held.scale, 125)
+  assert.deepEqual(b.set('pad', 'right'), { line: accessStatus({ ...ACCESS_DEFAULTS, vision: 'protan', scale: 125, pad: 'right' }, false)[6] }, 'the later fields find their own line')
+  assert.equal(held.pad, 'right')
   assert.match(b.reset(), /^access: the defaults/)
   assert.equal(held, ACCESS_DEFAULTS)
-  assert.equal(writes.length, 3)
+  assert.equal(writes.length, 4)
 })

@@ -12,7 +12,7 @@
  * What breaks if it is removed? The player cannot move, look, drive or interact.
  */
 import { HalBus } from './hal.ts'
-import { createAnalog, isUsablePad, PAD_EDGE, PadLook, PadMapper, type Analog, type PadFamily, type GenericLayout } from './gamepad.ts'
+import { createAnalog, isUsablePad, PAD_EDGE, PadLook, PadMapper, type Analog, type PadFamily, type PadHand, type GenericLayout } from './gamepad.ts'
 import type { XrMapper } from './xrInput.ts'
 import { KEYBOARD_SEAT, PadSeat, SEATS, SeatTable, type PlayerIntent, type Seat } from './seats.ts'
 import type { GamepadLike } from './web-hardware.d.ts'
@@ -457,6 +457,11 @@ export class Input {
    * lowest free seat among 1..n−1 first, then seat 0) and player 1 reads only the pad in seat 0; with one, every pad
    * merges into player 1 as before. Pads in seats that no longer exist stand up at once.
    */
+  /** The pad layout (gamepad.ts PadHand; 07_Execute_Actions/access.ts `pad`): both hands, or one stick and one side's buttons. The first seat's pad; a split screen's other seats keep both hands. */
+  setHand(hand: PadHand): void {
+    this.mapper.hand = hand
+  }
+
   setPlayers(n: number): void {
     this.seats.setPlayers(n)
     if (this.seats.players <= 1) this.seats.clear()
