@@ -870,9 +870,6 @@ export class Engine {
       const governor = options.quality === 'auto'
         ? new Governor({ tier: profile.startTier, auto: true, targetMs, pacerMs, lite, hardware, ...range })
         : new Governor({ tier: options.quality, auto: false, targetMs, pacerMs, lite, hardware, ...range })
-      const mask = (k: QualityKnobs): QualityKnobs => ({ ...k, shadows: k.shadows && options.shadows, post: k.post && options.post })
-        ? new Governor({ tier: profile.startTier, auto: true, targetMs, pacerMs, lite, ...range })
-        : new Governor({ tier: options.quality, auto: false, targetMs, pacerMs, lite, ...range })
       // A lite boot built no clustered lighting (LITE_WORLD), so its lamps stay unlit at every tier it could reach.
       const mask = (k: QualityKnobs): QualityKnobs => ({ ...k, shadows: k.shadows && options.shadows, post: k.post && options.post, lampLights: lite ? 0 : k.lampLights })
       const first = governor.knobs()
