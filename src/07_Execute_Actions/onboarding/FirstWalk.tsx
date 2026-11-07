@@ -84,7 +84,7 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
 
   const line = beat && beat.stage === card.stage ? beat.text : card.ask
   const at = termOpen ? AT.console : overlay ? AT.touch : compact ? AT.compact : AT.wide
-  const exam6 = card.stage === 'exam'
+  const exitStage = card.stage === 'exam'
   return (
     <section
       role="region"
@@ -109,7 +109,7 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
       </p>
       <p className="text-[13px] leading-[18px] text-noir-titanium-400">{card.eli8}</p>
 
-      {exam6 && (
+      {exitStage && (
         <div className="flex flex-col gap-1.5">
           <pre className="overflow-x-auto rounded-noir-control border border-noir-titanium-800 bg-noir-ink-2 px-3 py-2 font-noir-mono text-[12px] leading-[18px] text-noir-titanium-100" aria-label="The program">
             {PROGRAM.map((l, i) => <div key={i}>noir {l}</div>)}

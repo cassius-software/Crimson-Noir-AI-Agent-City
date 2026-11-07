@@ -3,7 +3,7 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the page's side of the first walk (09_Cognition/firstWalk.ts): the React hook that
- * starts the six stages once the city is on screen, feeds the walk what the page sees (the HUD's snapshot a few times
+ * starts the seven stages once the city is on screen, feeds the walk what the page sees (the HUD's snapshot a few times
  * a second: where the visitor stands, where the head points, how far they have come, whether they are at a wheel,
  * inside one of the workplaces, or at the console) and what the page reports outright (a goal sent to Sloane, a
  * console line run, the exit program's doors), asks it once a second whether there is something to say, and hands

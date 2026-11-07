@@ -167,14 +167,16 @@ test('the walk off this visit: every door is shut with one message; status says 
   assert.equal(r.exam.status(), 'tutorial: the first walk is off this visit (?tutorial=1 starts it)')
 })
 
-test('status names the stage of six; program is the one exit program; every line is plain and admissible', () => {
+test('status names the stage of seven; program is the one exit program; every line is plain and admissible', () => {
   const r = rig()
   r.stage.s = 'move'
-  assert.equal(r.exam.status(), 'tutorial: the first walk, stage 1 of 6 (move); the exit program ends it (tutorial program)')
+  assert.equal(r.exam.status(), 'tutorial: the first walk, stage 1 of 7 (move); the exit program ends it (tutorial program)')
+  r.stage.s = 'style'
+  assert.equal(r.exam.status(), 'tutorial: the first walk, stage 5 of 7 (style); the exit program ends it (tutorial program)')
   r.stage.s = 'ring0'
-  assert.equal(r.exam.status(), 'tutorial: the first walk, stage 5 of 6 (ring0); the exit program ends it (tutorial program)')
+  assert.equal(r.exam.status(), 'tutorial: the first walk, stage 6 of 7 (ring0); the exit program ends it (tutorial program)')
   r.stage.s = 'exam'
-  assert.equal(r.exam.status(), 'tutorial: the first walk, stage 6 of 6 (exam); the exit program ends it (tutorial program)')
+  assert.equal(r.exam.status(), 'tutorial: the first walk, stage 7 of 7 (exam); the exit program ends it (tutorial program)')
   r.stage.s = null
   assert.equal(r.exam.status(), 'tutorial: the first walk is passed: the city is yours')
   assert.equal(r.exam.program(), PROGRAM, 'the same frozen array as the walk shows')

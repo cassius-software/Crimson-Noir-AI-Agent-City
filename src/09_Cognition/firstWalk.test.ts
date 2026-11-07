@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is the evidence for the first walk: six stages in a fixed order, each finished by the
+ * Why does this file exist? It is the evidence for the first walk: seven stages in a fixed order, each finished by the
  * reading or event that means it was done (a turn of the head and three metres; a goal, the microphone or the
- * captions; a car entered; a room entered; a law line run at the console; the city unlocked), a stage done early
- * kept without a word, a stage the map cannot offer passed over, Sloane's line at every start, one hint per stage
+ * captions; a car entered; a room entered; the wardrobe put away after it was open; a law line run at the console; the
+ * city unlocked), a stage done early kept without a word, a stage the map or the page cannot offer passed over, Sloane's line at every start, one hint per stage
  * after a quiet spell and never before the cooldown, the exit finished by nothing but `unlock`, and every spoken
  * line plain, true to the city, admissible under the conduct screen and never calling the walk a lesson.
  * What breaks if it is removed? A walk that skips a stage, nags, or can be passed without the program would ship unnoticed.
@@ -29,7 +29,7 @@ function begun(o: FirstWalkOptions = KEYS): FirstWalk {
   return w
 }
 
-test('the six stages in order, each finished by its reading or event; the exit only by unlock; Sloane speaks at every start and at the end', () => {
+test('the seven stages in order, each finished by its reading or event; the exit only by unlock; Sloane speaks at every start and at the end', () => {
   const w = begun()
   assert.equal(w.stage, 'move')
   const first = w.tick(0)
@@ -49,8 +49,13 @@ test('the six stages in order, each finished by its reading or event; the exit o
   assert.equal(w.stage, 'work')
   assert.equal(w.tick(5 * S)?.stage, 'work')
   w.read(still({ yaw: 0.5, travelled: 40, inside: true }), 6 * S)
+  assert.equal(w.stage, 'style')
+  const style = w.tick(6 * S)
+  assert.ok(style && style.kind === 'ask' && style.stage === 'style')
+  assert.match(style.text, /Look/)
+  w.note('wardrobe', 6.5 * S)
   assert.equal(w.stage, 'ring0')
-  assert.equal(w.tick(6 * S)?.stage, 'ring0')
+  assert.equal(w.tick(6.5 * S)?.stage, 'ring0')
   w.note('console', 7 * S)
   assert.equal(w.stage, 'ring0', 'opening the console is not reading the laws')
   w.note('law', 8 * S)
@@ -100,12 +105,19 @@ test('a later stage done early is kept, and said nothing of until its turn', () 
   w.note('goal', 4 * S)
   assert.equal(w.stage, 'work', 'fleet was done early')
   w.note('inside', 5 * S)
+  assert.equal(w.stage, 'style')
+  w.note('wardrobe', 6 * S)
   assert.equal(w.stage, 'exam', 'ring0 was done early')
+  // The wardrobe put away during an earlier stage counts the same way.
+  const v = begun()
+  v.note('wardrobe', 1 * S)
+  assert.ok(v.done.has('style'))
+  assert.equal(v.stage, 'move')
 })
 
-test('a stage the map cannot offer is passed over: no cars, no rooms; the exit never is', () => {
-  const w = new FirstWalk({ ...KEYS, city: { fleet: false, rooms: false }, done: ['exam'] })
-  assert.ok(w.done.has('fleet') && w.done.has('work'))
+test('a stage the map or the page cannot offer is passed over: no cars, no rooms, no wardrobe; the exit never is', () => {
+  const w = new FirstWalk({ ...KEYS, city: { fleet: false, rooms: false, wardrobe: false }, done: ['exam'] })
+  assert.ok(w.done.has('fleet') && w.done.has('work') && w.done.has('style'))
   assert.equal(w.done.has('exam'), false, 'done may not name the exit')
   w.start(0)
   w.read(still(), 0)
@@ -114,6 +126,8 @@ test('a stage the map cannot offer is passed over: no cars, no rooms; the exit n
   assert.equal(w.stage, 'ring0')
   assert.equal(available('fleet', { fleet: false, rooms: true }), false)
   assert.equal(available('work', { fleet: true, rooms: false }), false)
+  assert.equal(available('style', { fleet: true, rooms: true, wardrobe: false }), false)
+  assert.equal(available('style', { fleet: true, rooms: true }), true, 'a page that does not say has the wardrobe card')
   for (const s of STAGES) if (s !== 'fleet' && s !== 'work') assert.equal(available(s, { fleet: false, rooms: false }), true, s)
   // A reload mid-walk picks up where it was.
   const r = new FirstWalk({ ...KEYS, done: ['move', 'voice', 'fleet'] })
@@ -194,7 +208,7 @@ test('every spoken line is plain words, admissible, true to the device, and neve
       for (const w of whys) { check(w, `${s} why`); assert.match(w, /^Why .*\? Because /, w) }
       const card = cardFor(s, o)
       assert.equal(card.index, STAGES.indexOf(s) + 1)
-      assert.equal(card.count, 6)
+      assert.equal(card.count, 7)
       assert.ok(card.title && card.show && card.ask === ask.text)
     }
   }
@@ -209,6 +223,10 @@ test('every spoken line is plain words, admissible, true to the device, and neve
   assert.match(askFor('fleet', PAD).text, /press A/)
   assert.match(askFor('ring0', TOUCH).text, /Menu/)
   assert.match(askFor('ring0', KEYS).text, /~ key/)
+  assert.match(askFor('style', TOUCH).text, /Tap Look/)
+  assert.match(askFor('style', KEYS).text, /Click Look/)
+  assert.deepEqual([...askFor('style', PAD).keep], ['Look', 'Done'])
+  assert.match(askFor('style', { ...KEYS, name: 'Dana' }).text, /how you look, Dana/)
   assert.match(askFor('move', { ...KEYS, name: 'Dana' }).text, /Welcome in, Dana/)
   assert.match(hintFor('work', { ...KEYS, place: () => ({ name: 'the clinic', metres: 120.4, bearing: 'north' }) }).text, /the clinic, about 120 metres to the north/)
   assert.match(hintFor('work', KEYS).text, /wide open doorway/)
@@ -216,6 +234,6 @@ test('every spoken line is plain words, admissible, true to the device, and neve
   const e = askFor('exam', KEYS)
   assert.deepEqual([...e.keep], ['verify_ring0', 'spawn_subagents', 'unlock_city'])
   assert.match(e.text, /twenty-four sub-agents/)
-  const stages: Stage[] = ['move', 'voice', 'fleet', 'work', 'ring0', 'exam']
+  const stages: Stage[] = ['move', 'voice', 'fleet', 'work', 'style', 'ring0', 'exam']
   assert.deepEqual([...STAGES], stages)
 })
