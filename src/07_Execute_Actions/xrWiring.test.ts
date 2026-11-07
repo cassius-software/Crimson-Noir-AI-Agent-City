@@ -61,7 +61,7 @@ test('the frame: only the headset\'s frames run while presenting; the head offse
 test('under a headset: the canvas resize waits, the post chain and the ghost are off, the pacer passes every frame through, and the host gives it all back', () => {
   assert.match(ENGINE, /resize\([^)]*\)[^{]*\{\n(?:\s*\/\/[^\n]*\n)*\s+if \(this\.rig\.headset\) return/, 'three refuses setSize while presenting')
   assert.match(ENGINE, /if \(on && this\.rig\.headset\) return 'needs the post-processing chain, which is off under a headset'/)
-  assert.match(ENGINE, /if \(this\.rig\.headset\) k\.post = false/)
+  assert.match(ENGINE, /if \(this\.rig\.headset\) \{ k\.post = false; k\.lampLights = 0 \}/, 'and the clustered lamps, binned for the one render the headset does not present')
   const host = between(ENGINE, '  private xrHost(): XrHost {', '\n  }\n')
   assert.match(host, /started: \(mode, blend\) => \{\n\s+this\.rig\.setHeadset\(composerFor\(this\.gpu\.renderer as unknown as XrRendererLike\)\)\n\s+if \(this\.pacer\) this\.pacer\.passthrough = true\n\s+this\.applyTier\(\)/)
   assert.match(host, /ended: \(\) => \{\n\s+this\.rig\.setHeadset\(null\)\n\s+if \(this\.pacer\) this\.pacer\.passthrough = false\n\s+this\.applyTier\(\)\n\s+if \(!this\.disposed\) \{ this\.resize\(\); this\.toast\('Headset', 'off'\) \}/)

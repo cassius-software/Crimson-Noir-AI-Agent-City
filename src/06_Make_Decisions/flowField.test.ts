@@ -20,7 +20,8 @@ import { CITY, CITY_SIZE, type Box } from '../01_Initialize_World/city.ts'
 import { ROOM, WORKPLACE_KINDS, toLocal, toWorld, workplacesAt, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
 import {
-  blockBoxes, cellAt, cellCentre, cityGrid, cpuFlowSolver, DIAGONAL_UNIT, directions, emptyGrid, FLOW, flowAt, NEIGHBOURS, nearestOpen,
+  blockBoxes, cellAt, cellCentre, cityGrid, cpuFlowSolver, DIAGONAL_UNIT, directions, emptyGrid, FLOW, flowAt, NEIGHBOUR_COST, NEIGHBOUR_DI, NEIGHBOUR_DJ,
+  NEIGHBOUR_DX, NEIGHBOUR_DZ, NEIGHBOURS, nearestOpen,
   regionGrid, relaxStep, seedCost, solveByRelaxation, solveDial, solveFlow, trace, UNREACHED, type FlowGrid,
 } from './flowField.ts'
 
@@ -496,4 +497,148 @@ test('the CPU solver lands the same field in the texture with one writeTexture',
   const none = createFlowTexture(device as unknown as GPUDevice, null) as unknown as MockTexture
   assert.equal(none.width, 1)
   assert.equal(none.height, 1)
+})
+
+// ---------------------------------------------------------------- the flat solvers against the tuple form
+
+/**
+ * The bucket queue and the direction pass as they were first written, over NEIGHBOURS' tuples with a bounds test
+ * per neighbour and a growable array per bucket: the reference the flat, padded-grid forms in flowField.ts are held
+ * to, bit for bit (the data-oriented pass's convention: the old form stays in the test as the oracle).
+ */
+function referenceOpen(grid: FlowGrid, i: number, j: number, di: number, dj: number, diagonal: boolean): boolean {
+  const ni = i + di, nj = j + dj
+  if (ni < 0 || nj < 0 || ni >= grid.width || nj >= grid.height) return false
+  if (grid.weight[nj * grid.width + ni] === 0) return false
+  if (diagonal && (grid.weight[j * grid.width + ni] === 0 || grid.weight[nj * grid.width + i] === 0)) return false
+  return true
+}
+
+function referenceDial(grid: FlowGrid, goals: readonly number[]): Int32Array {
+  const { width, weight } = grid
+  const cost = seedCost(grid, goals)
+  const buckets: (number[] | undefined)[] = []
+  for (const g of goals) if (g >= 0 && g < cost.length && cost[g] === 0) (buckets[0] ??= []).push(g)
+  for (let d = 0; d < buckets.length; d++) {
+    const bucket = buckets[d]
+    if (!bucket) continue
+    for (let k = 0; k < bucket.length; k++) {
+      const c = bucket[k]
+      if (cost[c] !== d) continue
+      const i = c % width, j = (c - i) / width
+      for (const [di, dj, diagonal] of NEIGHBOURS) {
+        if (!referenceOpen(grid, i, j, di, dj, diagonal)) continue
+        const n = (j + dj) * width + (i + di)
+        const v = d + (diagonal ? FLOW.diagonal : FLOW.straight) * weight[n]
+        if (v < cost[n]) {
+          cost[n] = v
+          ;(buckets[v] ??= []).push(n)
+        }
+      }
+    }
+    buckets[d] = undefined
+  }
+  return cost
+}
+
+function referenceDirections(grid: FlowGrid, cost: Int32Array): Float32Array {
+  const { width, height, weight } = grid
+  const out = new Float32Array(2 * width * height)
+  for (let j = 0; j < height; j++) {
+    for (let i = 0; i < width; i++) {
+      const c = j * width + i
+      let dx = 0, dz = 0
+      const own = cost[c]
+      if (weight[c] !== 0 && own < UNREACHED && own > 0) {
+        let best = own
+        for (const [di, dj, diagonal] of NEIGHBOURS) {
+          if (!referenceOpen(grid, i, j, di, dj, diagonal)) continue
+          const n = cost[(j + dj) * width + (i + di)]
+          if (n < best) {
+            best = n
+            dx = diagonal ? di * DIAGONAL_UNIT : di
+            dz = diagonal ? dj * DIAGONAL_UNIT : dj
+          }
+        }
+      }
+      out[2 * c] = dx
+      out[2 * c + 1] = dz
+    }
+  }
+  return out
+}
+
+test('the neighbour tables are NEIGHBOURS, in its order: steps, costs and unit directions', () => {
+  assert.deepEqual(Array.from(NEIGHBOUR_DI), NEIGHBOURS.map((n) => n[0]))
+  assert.deepEqual(Array.from(NEIGHBOUR_DJ), NEIGHBOURS.map((n) => n[1]))
+  assert.deepEqual(Array.from(NEIGHBOUR_COST), NEIGHBOURS.map((n) => (n[2] ? FLOW.diagonal : FLOW.straight)))
+  assert.deepEqual(Array.from(NEIGHBOUR_DX), NEIGHBOURS.map((n) => (n[2] ? n[0] * DIAGONAL_UNIT : n[0])))
+  assert.deepEqual(Array.from(NEIGHBOUR_DZ), NEIGHBOURS.map((n) => (n[2] ? n[1] * DIAGONAL_UNIT : n[1])))
+  for (let k = 0; k < 8; k++) assert.equal(k >= 4, NEIGHBOUR_COST[k] === FLOW.diagonal, 'the four straight steps first, then the diagonals')
+})
+
+test('the flat solvers leave the bits the tuple form leaves: costs and directions on random mazes, heavy cells, odd goals and the city', () => {
+  const rng = createRng(0x600d)
+  const draw = (n: number): number => Math.floor(rng() * n)
+  for (let round = 0; round < 60; round++) {
+    // Sizes down to a single row or column; densities up to a grid mostly wall; weights up to the byte's full range on
+    // some rounds (the ring of buckets grows with the heaviest cell), the usual 1 and 3 on the rest.
+    const w = 1 + draw(round < 20 ? 6 : 48), h = 1 + draw(round < 20 ? 6 : 48)
+    const g = emptyGrid(w, h, draw(100) - 50, draw(100) - 50)
+    const density = rng() * 0.6
+    const heavy = round % 4 === 3
+    for (let c = 0; c < w * h; c++) {
+      const r = rng()
+      if (r < density) g.weight[c] = 0
+      else if (heavy) g.weight[c] = 1 + draw(255)
+      else if (r < density + 0.2) g.weight[c] = FLOW.roadWeight
+    }
+    // Goals: one to four cells, some blocked, one repeated, one off the grid, one not a whole number, sometimes none.
+    const goals: number[] = []
+    const n = draw(5)
+    for (let k = 0; k < n; k++) goals.push(draw(w * h))
+    if (round % 5 === 1) goals.push(goals[0] ?? 0)
+    if (round % 7 === 2) goals.push(w * h + draw(10), -1 - draw(10))
+    if (round % 9 === 3) goals.push(0.5)
+    const expected = referenceDial(g, goals)
+    const got = solveDial(g, goals)
+    assert.deepEqual(Array.from(got), Array.from(expected), `costs: round ${round}, ${w}×${h}, goals ${JSON.stringify(goals)}`)
+    assert.deepEqual(Array.from(directions(g, got)), Array.from(referenceDirections(g, expected)), `directions: round ${round}`)
+    // The relaxation's fixed point is the same field.
+    if (w * h <= 400) assert.deepEqual(Array.from(solveByRelaxation(g, goals).cost), Array.from(expected), `relaxation: round ${round}`)
+  }
+  // A direction field over a cost array the solver did not make (a blocked cell given a finite cost): the blocked
+  // target is still never stepped to, and a cell is still never read outside the grid.
+  const odd = maze(9, 7, 0.3, 77)
+  const handmade = referenceDial(odd, [4])
+  for (let c = 0; c < handmade.length; c++) if (odd.weight[c] === 0) handmade[c] = 1
+  assert.deepEqual(Array.from(directions(odd, handmade)), Array.from(referenceDirections(odd, handmade)))
+  // The city, twice over one grid: the second solve reuses the first's working set and gives the same field.
+  const half = CITY.lotHalf
+  const boxes: Box[] = []
+  for (let k = 0; k < CITY.blocks; k++) {
+    for (let m = 0; m < CITY.blocks; m++) {
+      const cx = (k + 0.5) * CITY.pitch, cz = (m + 0.5) * CITY.pitch
+      boxes.push([cx - half, 0, cz - half, cx + half, 20, cz + half])
+    }
+  }
+  const city = cityGrid(boxes)
+  const goal = nearestOpen(city, 3.5 * CITY.pitch, 3 * CITY.pitch + CITY.roadHalf + 1)
+  const ref = referenceDial(city, [goal])
+  const first = solveFlow(city, [goal])
+  assert.deepEqual(first.cost, ref)
+  assert.deepEqual(first.dir, referenceDirections(city, ref))
+  const again = solveFlow(city, [goal, 0])
+  assert.deepEqual(again.cost, referenceDial(city, [goal, 0]))
+  assert.deepEqual(again.dir, referenceDirections(city, again.cost))
+  // A grid whose weights were written after its first solve is solved over the new weights: a cell blocked, then
+  // opened again, then made road.
+  city.weight[goal + 1] = 0
+  assert.deepEqual(solveDial(city, [goal]), referenceDial(city, [goal]))
+  city.weight[goal + 1] = 1
+  const reopened = solveFlow(city, [goal])
+  assert.deepEqual(reopened.cost, referenceDial(city, [goal]))
+  assert.deepEqual(reopened.dir, referenceDirections(city, reopened.cost))
+  city.weight[goal + 1] = FLOW.roadWeight
+  assert.deepEqual(directions(city, solveDial(city, [goal])), referenceDirections(city, referenceDial(city, [goal])))
 })
