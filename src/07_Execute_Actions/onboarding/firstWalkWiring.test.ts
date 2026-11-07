@@ -14,6 +14,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
+import { PROGRAM } from '../../09_Cognition/firstWalk.ts'
 import { TICK_MS, bearingOf, nearestPlace, wordsOf } from './useFirstWalk.ts'
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8')
@@ -68,6 +69,32 @@ test('App: the walk is switched on from the URL and the pass record, fed the Con
   assert.match(src, /case 'move': \{\s*e\.input\.yaw \+= 0\.7/)
   assert.match(src, /case 'ring0': termRef\.current\?\.run\('laws'\)/)
   assert.match(src, /case 'exam': termRef\.current\?\.type\(`noir \$\{PROGRAM\[0\]\}`\)/)
+  // The exam behind the exit program: composed in the console bridge over the host's vouch for the air gap, the
+  // kernel-panic state, the bridge's laws, the recruiter's own lane and the walk; the nonce drawn once per page load.
+  assert.match(src, /exam: createExam\(\{/)
+  assert.match(src, /contained: \(\) => airgapInstalled\(globalThis\)/)
+  assert.match(src, /standing: \(\) => lockedRef\.current === null/)
+  assert.match(src, /laws: \(\) => engineBridge\.laws\(\)/)
+  assert.match(src, /checks: \(\) => GATE_CHECK_NAMES/, 'the gate\'s check names come through the operator tier, one of the gate\'s three keepers')
+  assert.match(src, /ask: \(skill\) => r\.tryAsk\(skill\)/)
+  assert.match(src, /nonce: crypto\.getRandomValues\(new Uint32Array\(1\)\)\[0\]/)
+  assert.match(src, /stage: \(\) => walkRef\.current\.stage/)
+  assert.match(src, /on: \(\) => walk,/)
+  assert.match(src, /note: \(ev\) => walkRef\.current\.note\(ev\)/)
+})
+
+test('the exam reaches the walk\'s program and the bridge\'s type, and nothing else: no gate, no engine, no realm, no write', () => {
+  const src = read('exam.ts')
+  const imports = [...src.matchAll(/^import .* from '([^']+)'/gm)].map((m) => m[1])
+  assert.deepEqual(imports, ['../../09_Cognition/firstWalk.ts', '../terminal/bridge.ts'])
+  assert.match(src, /import type \{ ExamBridge \} from '\.\.\/terminal\/bridge\.ts'/, 'the bridge is a type only')
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+  assert.doesNotMatch(code, /\bengine\b|simControls|localStorage|fetch\(|\.write\b|write:/i)
+  // The console's `tutorial program` without an exam prints the walk's own program (commands.ts keeps a copy; this pins them equal).
+  const commands = read('../terminal/commands.ts')
+  const copy = commands.match(/const EXAM_PROGRAM: readonly string\[\] = Object\.freeze\((\[[^\]]*\])\)/)
+  assert.ok(copy, 'commands.ts keeps the program for the shell without an exam')
+  assert.deepEqual([...copy![1]!.matchAll(/'((?:[^'\\]|\\.)*)'/g)].map((m) => m[1]), [...PROGRAM])
 })
 
 test('the console reports every line run and types or runs a line for the card; the Concierge reports a goal sent; the engine shows its rooms', () => {

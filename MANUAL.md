@@ -563,10 +563,9 @@ reading order. The rects tile the canvas exactly, in whole pixels.
 Sloane's first walk is the first-run tutorial: six stages that a brand-new visitor goes through before the city is
 theirs, each one a thing to do rather than a thing to read, and the only way out a three-line program typed at the
 Ring-0 console. Sloane never calls it a lesson. It is built as a setting (`src/07_Execute_Actions/onboarding/firstWalkStore.ts`
-`FIRST_WALK_DEFAULT`): **in this version it is opt-in** (`?tutorial=1`), because the exit program's three words are not
-yet in NoirScript and a walk nobody can finish must not be mandatory; once they land, the default flips and every first
-run of the city shell opens on the walk until it has been passed once, with `?tutorial=0` and the expert path
-(`?onboarding=0`) the only ways to keep it away. The pass is kept in this browser (`localStorage`, key
+`FIRST_WALK_DEFAULT`, one constant): **on by default**, so every first run of the city shell opens on the walk until it
+has been passed once, with `?tutorial=0` and the expert path (`?onboarding=0`) the only ways to keep it away, and
+`?tutorial=1` the way to walk it again. The pass is kept in this browser (`localStorage`, key
 `civic-simulation:first-walk:v1`), written only when the console's exam has unlocked the city; `?boot=tty` never
 shows it (there is no city to walk).
 
@@ -607,13 +606,24 @@ shows it (there is no city to walk).
   noir unlock_city(seal, swarm);
   ```
 
-  The three words are not yet in NoirScript: this version's card shows them, types them and runs them, and the
-  console answers that it does not know them. When they land (see The Ring-0 console), `verify_ring0` is a checksum
-  of the kernel's live state (zero when any check fails), `spawn_subagents` asks people over through the recruiter's
-  own lane and answers with how many came, and `unlock_city` opens the city only for a live seal and a swarm of at
-  least one; none of them bypasses the Ring-0 gate or the elite tier.
+  The three words are ordinary NoirScript intrinsics (`docs/noirscript.md`) behind an exam the city wires into the
+  console (`src/07_Execute_Actions/onboarding/exam.ts`). None of them bypasses the Ring-0 gate or the elite tier, and
+  the exam has no write of its own. `verify_ring0()` is a seal: a 32-bit hash of what holds right now (the four laws
+  by rank and title, the gate's twelve checks by name, the page's air gap as the host vouches for it, the Ring-0 audit
+  standing) salted with a number drawn once per page load, so it is 0 when any of that fails and a number typed from
+  memory never matches. `spawn_subagents(n, role)` asks up to `n` people over for the role through the recruiter's own
+  lane, under the same page checks and realm answers as `recruit <skill>` (on foot, off the road, within earshot, at
+  most eight at a time; the one role today is `sim2real_workplaces`, which asks for Robotics, Rust, Python, Data,
+  Testing, Design, TypeScript and Security in turn), and answers with how many were actually asked, never the number
+  wished for: stand on a sidewalk near people, or it answers 0 and says so. `unlock_city(seal, swarm)` opens the city
+  for a seal that matches the live one and a swarm of one or more, refuses with its reason otherwise, and after the
+  pass answers that the city is already yours. After each line the console prints what the doors said. In the console
+  shell (`?boot=tty`) there is no city and no exam: the three words answer so. `tutorial [status|program]` reads the
+  stage and the program; there is no `tutorial off`.
 - **Debug hooks** (`?debug`): `__SIM__.walk()` is the stage on the card (`null` when off or passed) and
-  `__SIM__.walkNote(event)` reports an event into it, for the browser smoke.
+  `__SIM__.walkNote(event)` reports an event into it, for the browser smoke, whose `walk` scenario does the whole walk
+  on the accessible path in CI's Chrome (every button, the exit program, the pass kept). How the card stands on a real
+  phone, a pad or a screen reader is unverified.
 - **Verified:** the stage engine, the switch and the store, the page wiring and the lines' plainness, admissibility
   and brand scrub are pinned by the node tests. How the card stands on a real phone, a pad and a screen reader is
   unverified.

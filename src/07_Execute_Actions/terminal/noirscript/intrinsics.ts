@@ -96,6 +96,9 @@ const TABLE: readonly (readonly [string, readonly IntrinsicForm[]])[] = [
   ['intent', [form([i32, f32, f32, f32], bool, [Op.INTENT])]],
   ['cull', [form([f32], f32, [Op.CULL])]],
   ['steer', [form([T.str, f32], f32, [Op.STEER])]],
+  ['verify_ring0', [form([], u32, [Op.VERIFY_RING0])]],
+  ['spawn_subagents', [form([i32, T.str], i32, [Op.SPAWN_SUBAGENTS])]],
+  ['unlock_city', [form([u32, i32], bool, [Op.UNLOCK_CITY])]],
   ['print', []],
   ['println', []],
 ]

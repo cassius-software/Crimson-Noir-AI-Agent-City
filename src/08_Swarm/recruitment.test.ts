@@ -624,3 +624,30 @@ test('a microphone failure leaves the HUD once voice works again', async () => {
   const before = hudLine(k.r).line
   assert.match(before, /unknown skill/)
 })
+
+test('tryAsk answers at once: who was asked and the worker\'s request sent, or why not; the worker\'s answer still arrives as for recruit', () => {
+  const { host, r, seen } = rig()
+  const [a, b] = withSkill('Rust')
+  assert.deepEqual(r.tryAsk('Rust'), { sent: false, agent: -1, message: 'Rust: the crowd has not been seen yet' })
+  const unknown = r.tryAsk('Nope')
+  assert.equal(unknown.sent, false)
+  assert.match(unknown.message, /^unknown skill 'Nope': /)
+  host.deliver(new Map<number, [number, number]>([[a, [OP.x, OP.z + 4]], [b, [OP.x, OP.z - 2]]]))
+  assert.deepEqual(r.tryAsk('Rust'), { sent: true, agent: b, message: `Rust: asking agent ${b} over (2.0 m)` }, 'the nearest')
+  assert.deepEqual(host.sent, [{ c: 'recruit', id: 1, skill: 'Rust', agent: b }])
+  assert.deepEqual(r.tryAsk('Rust'), { sent: true, agent: a, message: `Rust: asking agent ${a} over (4.0 m)` }, 'the nearest not yet asked')
+  assert.deepEqual(host.sent.map((c) => c.c === 'recruit' ? c.agent : -1), [b, a])
+  const third = r.tryAsk('Rust')
+  assert.equal(third.sent, false)
+  assert.match(third.message, new RegExp(`^Rust: nobody within ${AUDIBLE_RADIUS} m`))
+  assert.deepEqual(seen.filter((e) => e.type === 'recruit').map((e) => (e.detail as { agent: number }).agent), [b, a])
+  assert.equal(seen.filter((e) => e.type === 'refused').length, 3)
+  // The worker's answer to the first ask arrives through the same events as for recruit.
+  host.deliver(new Map(), [{ e: 'arrived', agent: b, skill: 'Rust' } as unknown as SimEvent], [view(b, 'Rust', true)])
+  assert.ok(r.recruits.some((v) => v.agent === b && v.arrived))
+  host.operatorAt = null
+  const foot = r.tryAsk('Rust')
+  assert.equal(foot.sent, false)
+  assert.match(foot.message, /on foot|not running|driving|seat/i)
+  assert.equal(host.sent.length, 2, 'a refusal sends nothing')
+})

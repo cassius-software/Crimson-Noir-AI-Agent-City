@@ -90,7 +90,7 @@
  * screenshot per scenario to --out (default: a temporary directory), and the console's transcript where a scenario
  * types in it, prints one row per check (and an `info` row for what is recorded, not asserted) and exits 1 if any
  * fails.
- * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,actions,lakefront,fail].
+ * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,actions,walk,lakefront,fail].
  * Needs `npm run build`.
  * What breaks if it is removed? Nothing at runtime; the page loses its only end-to-end check in a browser, and with it
  * the proof that the city renders and that every control reaches the avatar.
@@ -636,6 +636,37 @@ async function tether(p, skill, tries = 6) {
     if (end === 'active') return { ok: true, notes }
   }
   return { ok: false, notes }
+}
+
+/**
+ * Puts the operator down on a sidewalk beside the nearest person who knows `skill` (the first half of `tether`,
+ * without the recruit), so an ask within earshot can be sent: the first walk's exam asks people over through the
+ * recruiter, under the recruiter's own checks (on foot, off the road, within AUDIBLE_RADIUS, the person idle).
+ */
+async function besideSomeone(p, skill) {
+  const seen = await p.eval(`new Promise((resolve) => { const h = window.__SIM__.engine.recruitHost(); const off = h.onState((s) => {
+    const f = s.crowdFrame; if (!f || f.length < 4 * h.agents) return; off()
+    const xz = new Array(2 * h.agents); for (let k = 0; k < h.agents; k++) { xz[2 * k] = f[4 * k]; xz[2 * k + 1] = f[4 * k + 2] }
+    resolve({ xz, me: h.operator() }) }) })`)
+  if (!seen.me) return { ok: false, note: 'the operator is not on foot' }
+  const xz = Float32Array.from(seen.xz)
+  let best = null
+  for (let k = 1; 2 * k + 1 < xz.length; k++) {
+    const x = xz[2 * k], z = xz[2 * k + 1]
+    if (!skillsOf(k).includes(skill) || !Number.isFinite(x) || onRoad(x, z)) continue
+    const d = Math.hypot(x - seen.me.x, z - seen.me.z)
+    if (best && d >= best.d) continue
+    for (const [ox, oz] of [[1.2, 0], [-1.2, 0], [0, 1.2], [0, -1.2]]) {
+      const at = { x: x + ox, z: z + oz }
+      if (!onRoad(at.x, at.z) && eligible(xz, k, at, skill) >= 0) { best = { k, at, d }; break }
+    }
+  }
+  if (!best) return { ok: false, note: `nobody with ${skill} on a sidewalk` }
+  await p.eval(`window.__SIM__.teleport(${best.at.x}, ${best.at.z})`)
+  await p.frames(3)
+  // The recruiter's copy of the crowd is refreshed every 250 ms (recruitment.ts COPY_INTERVAL_MS).
+  await new Promise((r) => setTimeout(r, 400))
+  return { ok: true, note: `agent ${best.k}, ${best.d.toFixed(0)} m away` }
 }
 
 /**
@@ -1627,6 +1658,92 @@ const SCENARIOS = {
       p.health('actions')
     } finally {
       p.saveTranscript('actions')
+      await p.b.close()
+    }
+  },
+
+  /**
+   * The first walk (09_Cognition/firstWalk.ts, onboarding/FirstWalk.tsx and exam.ts) end to end on its accessible
+   * path: `?tutorial=1` opens on it; no button or key puts the card away; each stage's one button has Sloane do the
+   * stage's action (walk, plan a goal, a car's door, a workplace's doorway, `laws`) and the page's own readings pass
+   * it; on the last card the three line buttons and Run run the exit program through the console's NoirScript session,
+   * where the exam seals the live kernel, asks people over through the recruiter (so the visitor is first put down on a
+   * sidewalk beside someone who knows Robotics) and unlocks the city; the card goes and the pass is kept.
+   */
+  async walk(chrome, origin) {
+    const p = await open(chrome)
+    try {
+      await p.goto(`${origin}/?${LIGHT}&tutorial=1`)
+      await p.booted()
+      const stage = () => p.eval('window.__SIM__.walk()')
+      const card = () => p.eval(`!!document.querySelector('[data-walk-show]')`)
+      const show = () => p.eval(`(() => { const b = document.querySelector('[data-walk-show]'); if (!b) return null; const t = b.textContent.trim(); b.click(); return t })()`)
+      const past = (s, ms = 30_000) => p.waitFor(`window.__SIM__.walk() !== ${JSON.stringify(s)}`, ms).then(() => true, () => false)
+      const shown = await p.waitFor(`!!document.querySelector('[data-walk-show]')`, 30_000).then(() => true, () => false)
+      check(shown && (await stage()) === 'move', 'walk: a first run opens on the first walk, at its first stage', `card ${shown}, stage ${await stage()}`)
+      const buttons = await p.eval(`[...document.querySelectorAll('[data-walk] button')].map((b) => b.textContent.trim() + (b.getAttribute('aria-label') ? ' [' + b.getAttribute('aria-label') + ']' : ''))`)
+      check(buttons.length > 0 && !buttons.some((w) => /skip|close|dismiss|later|\bx\b/i.test(w)), 'walk: the card has no skip and no close', buttons.join(', '))
+      await p.tap('Escape', 'Escape', 27)
+      await p.frames(3)
+      check(await card(), 'walk: Escape does not put the card away')
+
+      // 1 Look and walk: "Walk for me" turns the head and walks; the page's own readings pass the stage.
+      const seen = () => p.eval(`(() => { const s = window.__SIM__.snapshot(); return { yaw: s.customer.viewYaw, m: s.experience.distanceWalked, x: s.customer.x, z: s.customer.z } })()`)
+      const w0 = await seen()
+      const b1 = await show()
+      const walked = await past('move')
+      const w1 = await seen()
+      check(walked, `walk: "${b1}" turns the head and walks the three metres`, `stage ${await stage()}; yaw ${w0.yaw.toFixed(2)} -> ${w1.yaw.toFixed(2)}, ${(w1.m - w0.m).toFixed(1)} m walked, from (${w0.x.toFixed(1)}, ${w0.z.toFixed(1)}) to (${w1.x.toFixed(1)}, ${w1.z.toFixed(1)})`)
+      // 2 Talk to Sloane: "Plan one for me" plans a goal as the chip would.
+      check((await stage()) === 'voice', 'walk: stage 2 is a goal for Sloane', `stage ${await stage()}`)
+      const b2 = await show()
+      check(await past('voice'), `walk: "${b2}" plans a goal and the stage passes`, `stage ${await stage()}`)
+      // 3 The parked fleet: "Take me to a car" puts the visitor at a parked car's door and the realm opens it.
+      check((await stage()) === 'fleet', 'walk: stage 3 is the parked fleet', `stage ${await stage()}`)
+      const b3 = await show()
+      check(await past('fleet', 60_000), `walk: "${b3}" puts the visitor at a car's door and the realm opens it`, `stage ${await stage()}`)
+      check((await p.snap()).mode === 'vehicle', 'walk: at the wheel after stage 3')
+      // 4 Inside a workplace: "Take me inside" puts the visitor down just inside a doorway (out of the car first).
+      check((await stage()) === 'work', 'walk: stage 4 is a workplace', `stage ${await stage()}`)
+      const b4 = await show()
+      check(await past('work', 60_000), `walk: "${b4}" puts the visitor inside a workplace`, `stage ${await stage()}`)
+      check((await p.snap()).mode === 'foot', 'walk: on foot again inside')
+      // 5 Ring-0: "Open it for me" runs laws at the console.
+      check((await stage()) === 'ring0', 'walk: stage 5 is Ring-0', `stage ${await stage()}`)
+      const b5 = await show()
+      check(await past('ring0', 30_000), `walk: "${b5}" runs laws and the stage passes`, `stage ${await stage()}`)
+      // 6 The way out: beside someone on a sidewalk first (spawn_subagents asks through the recruiter, within earshot),
+      // then the three line buttons and Run, each line's doors reported by the console.
+      check((await stage()) === 'exam', 'walk: stage 6 is the exit program', `stage ${await stage()}`)
+      const by = await besideSomeone(p, 'Robotics')
+      check(by.ok, 'walk: the visitor is put down on a sidewalk beside someone who knows Robotics', by.note)
+      const lines = await p.eval(`[...document.querySelectorAll('[data-walk-line-button]')].length`)
+      check(lines === 3 && await p.eval(`!!document.querySelector('[data-walk-run]')`), 'walk: the last card has three line buttons and Run', `${lines} lines`)
+      await p.shot('walk-exam')
+      const line = async (i, done) => {
+        await p.eval(`document.querySelector('[data-walk-line-button="${i}"]')?.click()`)
+        const typed = await p.waitFor(`(document.querySelector('[aria-label="Ring-0 command line"]')?.value ?? '').startsWith('noir ')`, 10_000).then(() => true, () => false)
+        await p.eval(`document.querySelector('[data-walk-run]')?.click()`)
+        const t = await p.waitFor(`(() => { const t = ${CONSOLE_LOG}?.innerText ?? ''; return ${done}.test(t) && t })()`, 30_000).catch(() => null)
+        p.transcript.push(`[line ${i}, typed ${typed}]\n${t ?? `(nothing matching ${done} after 30 s)\n${await p.eval(`${CONSOLE_LOG}?.innerText ?? ''`).catch(() => '')}`}`)
+        return { typed, t }
+      }
+      const l1 = await line(1, /verify_ring0: seal [0-9a-f]{8} over 4 laws, 12 checks, contained, realm standing/)
+      check(l1.typed && l1.t !== null, 'walk: line 1 is typed into the prompt and Run seals the live kernel', lastLine(l1.t))
+      const l2 = await line(2, /spawn_subagents: \d+ of 24 asked over for sim2real_workplaces/)
+      check(l2.t !== null && !/spawn_subagents: 0 of 24/.test(l2.t), 'walk: line 2 asks people over through the recruiter (at least one)', lastLine(l2.t))
+      const l3 = await line(3, /unlock_city: /)
+      check(/unlock_city: the city is yours/.test(l3.t ?? ''), 'walk: line 3 unlocks the city', lastLine(l3.t))
+      const gone = await p.waitFor(`window.__SIM__.walk() === null && !document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false)
+      const kept = await p.eval(`(() => { try { return JSON.parse(localStorage.getItem('civic-simulation:first-walk:v1') ?? 'null') } catch { return null } })()`)
+      check(gone && kept?.v === 1 && kept?.passed === true, 'walk: the card goes and the pass is kept for the next visit', JSON.stringify(kept))
+      await p.eval(`document.querySelector('[aria-label="Ring-0 command line"]')?.focus()`)
+      const status = await p.command('tutorial status', /tutorial: /)
+      check(/^tutorial: the first walk is passed: the city is yours$/.test(lastLine(status)), 'walk: tutorial status says the walk is passed', lastLine(status))
+      await p.shot('walk')
+      p.health('walk')
+    } finally {
+      p.saveTranscript('walk')
       await p.b.close()
     }
   },

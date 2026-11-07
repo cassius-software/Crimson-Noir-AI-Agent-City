@@ -40,6 +40,7 @@ import { harnesses } from '../harness.ts'
 import { FEATURES } from '../../09_Cognition/features.ts'
 import type { NoirTables } from './noirscript/index.ts'
 import type { QualityState, RecordingState, SipocSnapshot } from '../../05_Observe_Environment/telemetry.ts'
+import { PROGRAM } from '../../09_Cognition/firstWalk.ts'
 
 const BRAND = { name: 'TESTBRAND', version: '9.8.7', host: 'testhost' }
 
@@ -52,7 +53,7 @@ const LAWS = [
 
 const CORE_NAMES = [
   'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'time', 'audio', 'ghost', 'rain', 'xr', 'render', 'captions', 'ping', 'look', 'agent', 'sloane', 'goal', 'hal', 'robot', 'recruit', 'memory', 'clear', 'history', 'echo',
-  'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'noir', 'exit',
+  'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'noir', 'tutorial', 'exit',
 ]
 const OPERATOR_NAMES = ['operator', 'ring0', 'run', 'ask', 'swarm', 'act', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
 
@@ -2988,4 +2989,52 @@ test('xr: the status line at once; vr, ar and off reach the bridge inside the ke
   assert.equal(b.calls.length, 4, 'a refused line touches nothing')
   assert.deepEqual(complete('xr '), ['xr ar', 'xr off', 'xr vr'])
   assert.ok(isErr(run('xr', offlineBridge(BRAND), [])), 'the offline bridge: an error line, no exception')
+})
+
+test('tutorial reads the walk\'s stage and the exit program from the exam, or says the shell has none; noir hands the exam over, prints what its doors said, and opens no write', () => {
+  const b = fake()
+  const program = ["the exit program, one 'noir' line at a time (the session keeps seal and swarm between lines):", ...PROGRAM.map((l) => `  noir ${l}`)]
+  // No exam (the console shell): one plain line and the program, nothing touched, and no `tutorial off`.
+  assert.deepEqual(texts(run('tutorial', b, [])), ['tutorial: no first walk in this shell (it runs in the city)', ...program])
+  assert.deepEqual(texts(run('tutorial status', b, [])), ['tutorial: no first walk in this shell (it runs in the city)'])
+  assert.deepEqual(texts(run('tutorial program', b, [])), program)
+  assert.deepEqual(kinds(run('tutorial', b, [])), ['out', 'sys', 'out', 'out', 'out'])
+  assert.ok(isErr(run('tutorial off', b, [])))
+  assert.ok(isErr(run('tutorial status now', b, [])))
+  assert.deepEqual(b.calls, [])
+  assert.deepEqual(complete('tutorial '), ['tutorial program', 'tutorial status'])
+  // The three words without an exam: they type-check and compile, and fail at run time with the shell's own message.
+  assert.deepEqual(run('noir print(verify_ring0());', b, []).lines, [{ kind: 'err', text: 'noir: no first walk in this shell: the exit program runs in the city' }])
+  assert.deepEqual(run('noir print(spawn_subagents(24, "sim2real_workplaces"), unlock_city(1u, 1));', b, []).lines, [{ kind: 'err', text: 'noir: no first walk in this shell: the exit program runs in the city' }])
+  assert.ok(run('noir asm unlock_city(verify_ring0(), spawn_subagents(24, "sim2real_workplaces"));', b, []).lines.every((l) => l.kind === 'out'))
+  // With an exam (the city): status and program are its; the doors answer in lane types, the session keeps seal and
+  // swarm between lines, and what the doors said follows the output as sys lines.
+  const said: string[] = []
+  const doors: unknown[][] = []
+  const e = fake()
+  e.exam = {
+    verifyRing0: () => { doors.push(['verify']); said.push('verify_ring0: seal 00c0ffee over 4 laws, 12 checks, contained, realm standing'); return 0xc0ffee },
+    spawnSubagents: (n, role) => { doors.push(['spawn', n, role]); said.push(`spawn_subagents: 2 of ${n} asked over for ${role}`); return 2 },
+    unlockCity: (seal, swarm) => { doors.push(['unlock', seal, swarm]); said.push('unlock_city: the city is yours'); return true },
+    report: () => said.splice(0),
+    status: () => 'tutorial: the first walk, stage 6 of 6 (exam); the exit program ends it (tutorial program)',
+    program: () => PROGRAM,
+  }
+  assert.deepEqual(texts(run('tutorial status', e, [])), ['tutorial: the first walk, stage 6 of 6 (exam); the exit program ends it (tutorial program)'])
+  const session = replSession()
+  assert.deepEqual(run(`noir ${PROGRAM[0]}`, e, [], session).lines, [{ kind: 'sys', text: 'verify_ring0: seal 00c0ffee over 4 laws, 12 checks, contained, realm standing' }])
+  assert.deepEqual(run(`noir ${PROGRAM[1]}`, e, [], session).lines, [{ kind: 'sys', text: 'spawn_subagents: 2 of 24 asked over for sim2real_workplaces' }])
+  assert.deepEqual(run(`noir ${PROGRAM[2]}`, e, [], session).lines, [{ kind: 'sys', text: 'unlock_city: the city is yours' }])
+  assert.deepEqual(run('noir print(seal, swarm);', e, [], session).lines, [{ kind: 'out', text: '12648430 2' }])
+  assert.deepEqual(doors, [['verify'], ['spawn', 24, 'sim2real_workplaces'], ['unlock', 0xc0ffee, 2]])
+  // The exam opens no write: a write intrinsic is still the elite tier's, and nothing of the bridge but the columns was touched.
+  assert.deepEqual(run('noir print(tune("car.power", 2.0));', e, [], session).lines, [{ kind: 'err', text: "noir: elite tier locked: 'ring0 unlock --elite <passphrase>' opens it" }])
+  assert.ok(e.calls.every((c) => c === 'soa tables'), e.calls.join(', '))
+  assert.deepEqual(e.operator.opCalls, [])
+  // A door that throws is the run's error, and what the doors said so far still prints.
+  e.exam = { ...e.exam, spawnSubagents: () => { said.push('spawn_subagents: nobody'); throw new Error("spawn_subagents: unknown role 'x'") } }
+  assert.deepEqual(run('noir print(spawn_subagents(1, "x"));', e, [], session).lines, [{ kind: 'err', text: "noir: spawn_subagents: unknown role 'x'" }, { kind: 'sys', text: 'spawn_subagents: nobody' }])
+  // The words list has the three names.
+  const words = run('noir words', e, [], session).lines[0].text.split(' ')
+  for (const w of ['verify_ring0', 'spawn_subagents', 'unlock_city']) assert.ok(words.includes(w), w)
 })

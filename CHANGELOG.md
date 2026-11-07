@@ -25,11 +25,24 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   skip and no key that puts it away (`FirstWalk.tsx`), one accessible button per stage that has Sloane do the action,
   and on the last card buttons that type each program line into the console's prompt and run it. The console's
   handle gained `type` and `run` and reports every line run (`onLine`); the Concierge reports a goal sent
-  (`onGoalSent`); the engine shows its workplaces (`workplaces()`). **Opt-in in this version** (`FIRST_WALK_DEFAULT`
-  is false): the exit program's three words are not yet in NoirScript, so the last stage cannot be passed; the
-  default flips when they land. The quiet five-minute watch waits until the walk is passed. Pinned by node tests (the
-  stage order and detection, the switch, the wiring, the lines' plainness, conduct screen and brand scrub); how the
-  card stands on a real phone, a pad or a screen reader is unverified.
+  (`onGoalSent`); the engine shows its workplaces (`workplaces()`). On by default (`FIRST_WALK_DEFAULT`, one
+  constant); the exit program is the next entry's. The quiet five-minute watch waits until the walk is passed. Pinned
+  by node tests (the stage order and detection, the switch, the wiring, the lines' plainness, conduct screen and brand
+  scrub); how the card stands on a real phone, a pad or a screen reader is unverified.
+- **The first walk's way out: three NoirScript words and the exam behind them.** `verify_ring0() -> u32`,
+  `spawn_subagents(n: i32, role: str) -> i32` and `unlock_city(seal: u32, swarm: i32) -> bool` are intrinsics of the
+  console's language (`src/07_Execute_Actions/terminal/noirscript`: a new `NoirHost.exam` surface with `noExam` as its
+  refusal, three zero-operand opcodes, the folder's air gap unchanged), behind an exam the city composes into the
+  console bridge (`src/07_Execute_Actions/onboarding/exam.ts`): a 32-bit FNV-1a seal over the live kernel (the four
+  laws, the twelve checks, the host's vouch for the air gap, the audit standing) salted once per page load, 0 when any
+  part fails; a swarm asked over through the recruiter's own lane (`Recruiter.tryAsk`, the same checks and realm
+  answers as `recruit`), answering with how many were asked, never the number wished for; an unlock only for this
+  session's live seal and a swarm of one or more, which tells the walk and keeps the pass. The console's `noir` prints
+  what the doors said after each line; a read-only `tutorial [status|program]`; no `tutorial off`. The exam has no
+  write surface: the Ring-0 gate and the elite tier stand as they were. A browser-smoke scenario (`walk`) does the
+  whole walk on the accessible path. Pinned by node tests (the VM's call-through and lane types, the seal, the swarm's
+  honesty, the unlock's refusals, the console's wiring, the air gap's export list); a real GPU, phone or pad is
+  unverified.
 - **The fallen wear their own bodies.** A pedestrian the realm promotes to a physical body (a shove, a kerb trip, a
   slip near the operator) is no longer hidden and replaced by grey capsules: the crowd's vertex stage hangs each of
   the body's fifteen bones from the rig shape it belongs to (`src/03_Spawn_Agents/humanoid.ts` `RIG_REST`,

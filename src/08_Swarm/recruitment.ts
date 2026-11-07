@@ -229,6 +229,22 @@ export class Recruiter extends EventTarget {
     return this.#ask(s)
   }
 
+  /**
+   * The same ask, answered at once: whether a request went to the physics worker (the page's checks passed and someone
+   * within earshot knows `skill`), and who, or why not. The worker's answer arrives through the recruiter's events as
+   * for `recruit`. For a caller that cannot wait (the first walk's exam, inside a NoirScript run).
+   */
+  tryAsk(skill: string): { sent: boolean; agent: number; message: string } {
+    const s = skillNamed(typeof skill === 'string' ? skill : '')
+    if (s === null) return { sent: false, agent: -1, message: this.#refuse(null, `unknown skill '${String(skill)}': ${SKILLS.join(', ')}`).message }
+    // The ask's checks and its send run before #ask's first promise, so `sent` is settled when it returns.
+    const sent: { got: { agent: number; distance: number } | null } = { got: null }
+    this.#ask(s, (agent, distance) => { sent.got = { agent, distance } }).catch(() => {})
+    const got = sent.got
+    if (got === null) return { sent: false, agent: -1, message: this.#last }
+    return { sent: true, agent: got.agent, message: `${s}: asking agent ${got.agent} over (${got.distance.toFixed(1)} m)` }
+  }
+
   /** A transcript (from the recogniser, or typed): a request if it names one, otherwise nothing happens. */
   hear(transcript: string): Promise<RecruitOutcome> | null {
     const t = typeof transcript === 'string' ? transcript.trim() : ''
@@ -389,7 +405,7 @@ export class Recruiter extends EventTarget {
    * operator (the head's position, head.ts); the nearest within AUDIBLE_RADIUS, on this side of the street, with the
    * skill, becomes Interviewing, and the physics worker is asked to walk them over.
    */
-  #ask(skill: Skill): Promise<RecruitOutcome> {
+  #ask(skill: Skill, onSent?: (agent: number, distance: number) => void): Promise<RecruitOutcome> {
     if (this.#disposed) return Promise.resolve(this.#refuse(skill, 'the city is not running'))
     const operator = this.#host.operator()
     const why = whyNot(operator)
@@ -401,6 +417,7 @@ export class Recruiter extends EventTarget {
     this.#states.set(found.agent, skill)
     this.#emit('recruit', { agent: found.agent, skill, distance: found.distance })
     const id = ++this.#id
+    onSent?.(found.agent, found.distance)
     this.#host.send({ c: 'recruit', id, skill, agent: found.agent })
     return new Promise((resolve) => { this.#pending.set(id, { resolve, skill, agent: found.agent, states: 0 }) })
   }

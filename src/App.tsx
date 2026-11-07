@@ -21,7 +21,7 @@ import { offlineBridge, type LookBridge, type ModelBridge, type NetBridge, type 
 import { hudLine, recruitBridge, Recruiter } from './08_Swarm/recruitment.ts'
 import { TaskRouter } from './08_Swarm/taskRouter.ts'
 import { deferredLedger, followRecruiter, indexedDbLedger, memoryBridge, SwarmMemory } from './08_Swarm/memory.ts'
-import { loopbackFetch } from './02_Define_The_Rules/airgap.ts'
+import { airgapInstalled, loopbackFetch } from './02_Define_The_Rules/airgap.ts'
 import { createMindRouter } from './09_Cognition/router.ts'
 import { createInPageMind, type InPageMind } from './09_Cognition/inPage.ts'
 import { runtimeMode } from './09_Cognition/inPageCaps.ts'
@@ -35,7 +35,7 @@ import { createLocalSpeech } from './09_Cognition/localSpeech.ts'
 import { createNetClient } from './10_Network/netClient.ts'
 import { admissibleChat, admissibleName } from './10_Network/replication.ts'
 import type { NetControls } from './07_Execute_Actions/engine.ts'
-import type { GateHandle, GateLease, Mind, SkillGate } from './07_Execute_Actions/operator.ts'
+import { GATE_CHECK_NAMES, type GateHandle, type GateLease, type Mind, type SkillGate } from './07_Execute_Actions/operator.ts'
 import { TouchControls } from './04_Connect_Hardware/TouchControls.tsx'
 import { isEditableTarget } from './04_Connect_Hardware/input.ts'
 import type { SipocSnapshot } from './05_Observe_Environment/telemetry.ts'
@@ -67,16 +67,19 @@ import { modelVoice, scriptedVoice, type Voice } from './07_Execute_Actions/onbo
 import { ConciergeSpeaker, conciergeBridge, synthEnv, type ConciergeOut } from './07_Execute_Actions/onboarding/speaker.ts'
 import { useMentor } from './07_Execute_Actions/onboarding/useMentor.ts'
 import { FirstWalkCard } from './07_Execute_Actions/onboarding/FirstWalk.tsx'
+import { createExam } from './07_Execute_Actions/onboarding/exam.ts'
 import { loadFirstWalk, needsFirstWalk } from './07_Execute_Actions/onboarding/firstWalkStore.ts'
 import { useFirstWalk } from './07_Execute_Actions/onboarding/useFirstWalk.ts'
 import { ROOM, toWorld } from './01_Initialize_World/interiors.ts'
+import { yawFacing } from './07_Execute_Actions/head.ts'
+import { MAX_WALK_MS } from './07_Execute_Actions/scriptedWalk.ts'
 import { agentBridge, identityLine, Roster, voiceProfile } from './08_Swarm/roster.ts'
 import { SKILLS } from './03_Spawn_Agents/skills.ts'
 import { FiveWhys } from './06_Make_Decisions/intent.ts'
 import type { GoalPlan } from './07_Execute_Actions/terminal/bridge.ts'
 import type { Voice as SpeechVoice } from './07_Execute_Actions/operator.ts'
 import type { Event as MentorEvent } from './09_Cognition/tutorial.ts'
-import { PROGRAM, type WalkEvent } from './09_Cognition/firstWalk.ts'
+import { PROGRAM, WALK, type WalkEvent } from './09_Cognition/firstWalk.ts'
 
 const HUD_INTERVAL_MS = 100
 /**
@@ -562,6 +565,9 @@ function goalPlan(text: string, b: Pick<TerminalBridge, 'setClock' | 'quality' |
 interface SpeakerLink { sound(): boolean; source: { voice: SpeechVoice; out: ConciergeOut } | null }
 
 /** The city: the engine over the canvas, the HUD, the Concierge, the touch controls and the drop-down console. */
+/** The most "Walk for me" keeps walking for, wall-clock ms (the stage's three metres end it long before on any ordinary frame). */
+const SHOW_WALK_MS = 60_000
+
 function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { options: Options; plan: MapPlan; mentored: boolean; walk: boolean; voice: Voice; speaker: ConciergeSpeaker; link: SpeakerLink }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   // The city's element (a model file dropped on it is kept, on a desktop) and the hidden file input the picker opens.
@@ -614,6 +620,8 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
   const [veilDone, setVeilDone] = useState(false)
   // A Ring-0 kernel panic: the engine is halted and the reason is shown over everything.
   const [locked, setLocked] = useState<string | null>(null)
+  const lockedRef = useRef(locked)
+  useEffect(() => { lockedRef.current = locked }, [locked])
   // A city action an agent proposed, waiting for the operator's OK (07_Execute_Actions/acts.ts; the bridge's acts.follow
   // feeds it): the card, the input shield and the HUD line all derive from this one state, and actRef is the frame
   // loop's view of it. Every proposal, decision and end: the card and the shield come up on `proposed` and go on
@@ -703,7 +711,22 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
       case 'move': {
         e.input.yaw += 0.7
         const yaw = e.input.yaw
-        c.avatar.walk(Math.sin(yaw) * 1.4, Math.cos(yaw) * 1.4, 3000)
+        // Walks where the visitor now looks (on foot, forward is (-sin yaw, -cos yaw): controls.ts readControls) until
+        // the stage is passed or the avatar is a metre past its three metres, asking again every quarter second: a
+        // scripted walk is held for wall-clock time, and on a slow frame (a software GPU) the realm's clamped steps
+        // fall far behind the clock, so one hold covers less ground than it says. A minute is the most it tries.
+        const vx = -Math.sin(yaw) * 1.4, vz = -Math.cos(yaw) * 1.4
+        const from = c.avatar.position()
+        const until = performance.now() + SHOW_WALK_MS
+        c.avatar.walk(vx, vz, MAX_WALK_MS)
+        const id = window.setInterval(() => {
+          if (engineRef.current !== e) { window.clearInterval(id); return }
+          const at = c.avatar.position()
+          const far = Math.hypot(at.x - from.x, at.z - from.z) >= WALK.walkMetres + 1
+          if (walkRef.current.stage === 'move' && !far && performance.now() < until) { c.avatar.walk(vx, vz, MAX_WALK_MS); return }
+          window.clearInterval(id)
+          c.avatar.walk(0, 0, 0)
+        }, 250)
         return
       }
       case 'voice': {
@@ -725,9 +748,10 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
         }
         if (pick < 0) return
         const v = c.vehicles.state(pick)
-        // Beside the car (forward is (sin h, cos h); this is the side at its left), facing it; the door is the realm's to open.
+        // Beside the car (its forward is (sin h, cos h); this is the side at its left), facing it (head.ts yawFacing turns
+        // the heading towards the car into the yaw that looks that way); the door is the realm's to open.
         const px = v.x + Math.cos(v.heading) * 2.2, pz = v.z - Math.sin(v.heading) * 2.2
-        c.avatar.teleport(px, pz, Math.atan2(v.x - px, v.z - pz))
+        c.avatar.teleport(px, pz, yawFacing(Math.atan2(v.x - px, v.z - pz)))
         window.setTimeout(() => { if (engineRef.current === e) e.interact() }, 400)
         return
       }
@@ -741,7 +765,7 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
         if (!room) return
         // The hub: the point just inside the doorway every route through the room passes, facing the room.
         const p = toWorld(room, ROOM.hub, 0)
-        c.avatar.teleport(p.x, p.z, Math.atan2(room.cx - p.x, room.cz - p.z))
+        c.avatar.teleport(p.x, p.z, yawFacing(Math.atan2(room.cx - p.x, room.cz - p.z)))
         return
       }
       case 'ring0': termRef.current?.run('laws'); return
@@ -1058,6 +1082,20 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
           memory: memoryBridge(memory, r),
           net: netBridge(e.net, pageStore(NET_TOKEN_KEY)),
           model: modelBridge,
+          // The first walk's exam, behind NoirScript's verify_ring0 / spawn_subagents / unlock_city: it reads the
+          // kernel (the laws, the host's vouch for the air gap, the audit standing), asks people over through the
+          // recruiter's own lane, and tells the walk; it has no write surface of its own.
+          exam: createExam({
+            contained: () => airgapInstalled(globalThis),
+            standing: () => lockedRef.current === null,
+            laws: () => engineBridge.laws(),
+            checks: () => GATE_CHECK_NAMES,
+            ask: (skill) => r.tryAsk(skill),
+            nonce: crypto.getRandomValues(new Uint32Array(1))[0] ?? 1,
+            stage: () => walkRef.current.stage,
+            on: () => walk,
+            note: (ev) => walkRef.current.note(ev),
+          }),
           // The player's look: App's state is the one source (the wardrobe card and the console share it).
           look: lookBridge({
             worn: () => wornRef.current ?? lookFromSeed(seedRef.current),
@@ -1126,7 +1164,7 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
       if ((window as { recruit?: unknown }).recruit) delete (window as { recruit?: unknown }).recruit
       engine?.dispose()
     }
-  }, [options, plan, wearLook, link, roster, speaker])
+  }, [options, plan, wearLook, link, roster, speaker, walk])
 
   // The boot's failure first; else a halt that is not an audit. Words for this device (bootFailure.ts).
   const env = useMemo(() => pageEnv(), [])
