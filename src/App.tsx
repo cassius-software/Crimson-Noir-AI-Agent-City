@@ -21,6 +21,9 @@ import { offlineBridge, type LookBridge, type ModelBridge, type NetBridge, type 
 import { hudLine, recruitBridge, Recruiter, speechEnv } from './08_Swarm/recruitment.ts'
 import { isOpen as micIsOpen, Microphone, voiceStatus } from './04_Connect_Hardware/microphone.ts'
 import { accessBridge, accessFromQuery, applyAccess, CAPTION_PX, cycleScale, highContrast, loadAccess, saveAccess, toggleContrast, type AccessSettings } from './07_Execute_Actions/access.ts'
+import { browserDwellEnv, DwellClicker } from './04_Connect_Hardware/dwell.ts'
+import { browserScanEnv, Scanner } from './04_Connect_Hardware/scanning.ts'
+import { Announcer } from './07_Execute_Actions/announcer.ts'
 import { TaskRouter } from './08_Swarm/taskRouter.ts'
 import { deferredLedger, followRecruiter, indexedDbLedger, memoryBridge, SwarmMemory } from './08_Swarm/memory.ts'
 import { loopbackFetch } from './02_Define_The_Rules/airgap.ts'
@@ -504,6 +507,20 @@ function App() {
   const prefersMore = useSyncExternalStore(PREFERS_MORE.subscribe, PREFERS_MORE.matches, PREFERS_MORE.server)
   const onAccess = useCallback((next: AccessSettings) => { setAccessState(next); saveAccess(next) }, [])
   useEffect(() => { applyAccess(access, prefersMore, document.documentElement) }, [access, prefersMore])
+  // The hands (access.ts dwell, scan): a pointer resting on a control presses it; the controls offered in turn, Space
+  // pressing the one offered. Here above every shell, so the onboarding and the console alone have them too.
+  useEffect(() => {
+    if (!access.dwell) return
+    const dwell = new DwellClicker(browserDwellEnv())
+    dwell.start()
+    return () => dwell.stop()
+  }, [access.dwell])
+  useEffect(() => {
+    if (!access.scan) return
+    const scan = new Scanner(browserScanEnv())
+    scan.start()
+    return () => scan.stop()
+  }, [access.scan])
   // A first visit (no saved onboarding, no profile) opens on the concierge's onboarding, which builds the metropolis in the
   // background and hands its outcome here; a returning visitor goes straight to the map they chose (script.ts).
   const [saved] = useState<SavedOnboarding | null>(loadOnboarding)
@@ -627,6 +644,9 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
   const prefersRef = useRef(prefersMore)
   useEffect(() => { accessRef.current = access; prefersRef.current = prefersMore }, [access, prefersMore])
   useEffect(() => { engine?.setVision(access.vision) }, [engine, access.vision])
+  useEffect(() => { engine?.input.setHand(access.pad) }, [engine, access.pad])
+  // The screen reader's lines (announcer.ts), one per shell: it keeps what it has said.
+  const [announcer] = useState(() => new Announcer())
   // Sloane's voice and the microphone: the detector allows for the page's own voice (the pill reads Speaking), and
   // speech starting while Sloane speaks cuts the line (barge-in).
   useEffect(() => {
@@ -787,6 +807,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
         if (now - lastHud > HUD_INTERVAL_MS) {
           lastHud = now
           const s = engine.snapshot()
+          // The screen reader's line (announcer.ts): the district, a vehicle beside you, a seat taken or left, a toast.
+          if (accessRef.current.announce) { const said = announcer.next(s, now); if (said) s.customer.announce = said }
           // The microphone's pill: its phase, Sloane speaking over it, which detector, and whether words are recognised.
           s.supplier.voice = { phase: mic.phase, detail: mic.state.detail, speaking: speaker.speaking, path: mic.path, words: recruiter !== null && recruiter.mic.state === 'listening' }
           if (recruiter) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, activityText(answering, engine.speaking, modelPhase ?? keepLine))
@@ -1143,7 +1165,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
       if ((window as { recruit?: unknown }).recruit) delete (window as { recruit?: unknown }).recruit
       engine?.dispose()
     }
-  }, [options, plan, wearLook, link, roster, speaker, mic, onMic, onAccess])
+  }, [options, plan, wearLook, link, roster, speaker, mic, onMic, onAccess, announcer])
 
   // The boot's failure first; else a halt that is not an audit. Words for this device (bootFailure.ts).
   const env = useMemo(() => pageEnv(), [])

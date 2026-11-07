@@ -29,6 +29,9 @@ const POSTFX = read('./postfx.ts')
 const ENGINE = read('./engine.ts')
 const COMMANDS = read('./terminal/commands.ts')
 const BRIDGE = read('./terminal/bridge.ts')
+const INPUT = read('../04_Connect_Hardware/input.ts')
+const SCANNING = read('../04_Connect_Hardware/scanning.ts')
+const TELEMETRY = read('../05_Observe_Environment/telemetry.ts')
 
 test('App: the settings are read once under the URL, written onto <html> above every shell, kept on every change; auto contrast follows the system', () => {
   assert.match(APP, /const \[access, setAccessState\] = useState\(\(\) => accessFromQuery\(new URLSearchParams\(window\.location\.search\), loadAccess\(\)\)\)/)
@@ -53,7 +56,7 @@ test('the shell: the filter reaches the engine as it changes, the bridge reads t
   assert.match(TOUCH, /\{ label: `Text size \$\{host\.textScale \?\? 100\} %`, run: host\.onTextScale, keep: true \}/, 'the sheet stays open while the size cycles')
   assert.match(ENGINE, /^\s+setVision\(mode: Vision\): string \{\n\s+this\.visionMode = mode\n\s+this\.vision\.value\.set\(\.\.\.visionMatrix\(mode\)\)\n\s+return visionWord\(mode\)\n\s+\}/m)
   assert.match(BRIDGE, /set\(field: string, value: string\): \{ line: string \} \| \{ error: string \}/)
-  assert.match(COMMANDS, /\{ name: 'access', usage: 'access \[contrast auto\|high\|normal\|vision none\|protan\|deutan\|tritan\|text 100\|125\|150\|175\|200\|captions normal\|large\|huge\|reset\]'/)
+  assert.match(COMMANDS, /\{ name: 'access', usage: 'access \[contrast auto\|high\|normal\|vision none\|protan\|deutan\|tritan\|text 100\|125\|150\|175\|200\|captions normal\|large\|huge\|dwell on\|off\|scan on\|off\|pad both\|left\|right\|announce on\|off\|reset\]'/)
   assert.match(COMMANDS, /'access vision': \['deutan', 'none', 'protan', 'tritan'\]/)
 })
 
@@ -81,4 +84,24 @@ test('the post chain ends in the filter on both paths, the identity until the ho
   assert.match(ENGINE, /const \{ pipeline: post, volumetrics, cinema, vision \} = buildPost\(/)
   assert.match(ENGINE, /this\.vision = p\.vision/)
   assert.equal(ENGINE.match(/this\.vision\.value\.set\(/g)?.length, 1, 'set in one place')
+})
+
+test('the hands and the ears: the dwell and the scan run above every shell, the switch is taken before the city sees it, the pad layout reaches the input, the reader\'s line is in the HUD from the first render', () => {
+  const app = APP.indexOf('function App() {'), tty = APP.indexOf("if (options.boot === 'tty') return <TtyShell />")
+  for (const line of ['const dwell = new DwellClicker(browserDwellEnv())', 'const scan = new Scanner(browserScanEnv())']) {
+    const at = APP.indexOf(line)
+    assert.ok(app < at && at < tty, `${line}: in App, before any shell is chosen`)
+  }
+  assert.match(APP, /if \(!access\.dwell\) return\n\s+const dwell = new DwellClicker\(browserDwellEnv\(\)\)\n\s+dwell\.start\(\)\n\s+return \(\) => dwell\.stop\(\)\n\s+\}, \[access\.dwell\]\)/)
+  assert.match(APP, /if \(!access\.scan\) return\n\s+const scan = new Scanner\(browserScanEnv\(\)\)\n\s+scan\.start\(\)\n\s+return \(\) => scan\.stop\(\)\n\s+\}, \[access\.scan\]\)/)
+  assert.match(APP, /useEffect\(\(\) => \{ engine\?\.input\.setHand\(access\.pad\) \}, \[engine, access\.pad\]\)/)
+  assert.match(INPUT, /setHand\(hand: PadHand\): void \{\n\s+this\.mapper\.hand = hand\n\s+\}/)
+  assert.match(APP, /if \(accessRef\.current\.announce\) \{ const said = announcer\.next\(s, now\); if \(said\) s\.customer\.announce = said \}\n\s+\/\/ The microphone's pill/, 'written every HUD interval, before the pill\'s line')
+  assert.match(HUD, /className="ui-zoom pointer-events-none absolute inset-0 [^"]*">\n\s+\{\/\*[^\n]*\*\/\}\n\s+<span className="sr-only" role="status" aria-live="polite" data-announce>\{c\.announce \?\? ''\}<\/span>/, 'the first child of the root, HUD shown or hidden')
+  assert.match(TELEMETRY, /^\s+announce\?: string$/m)
+  assert.match(SCANNING, /doc\.addEventListener\('keydown', h, \{ capture: true \}\)/, 'ahead of the city\'s keydown')
+  assert.match(SCANNING, /e\.preventDefault\(\)\n\s+e\.stopImmediatePropagation\(\)/)
+  assert.match(INPUT, /on\(document, 'keydown', \(e\) => \{\n\s+const target = e\.target/, 'the city listens on the way up, after the scan')
+  assert.match(CSS, /\[data-dwell='arming'\] \{\n\s+outline: 3px solid #ffd400 !important;[^}]*animation: dwell-arm 600ms linear forwards;/)
+  assert.match(CSS, /\[data-scan\] \{\n\s+outline: 4px solid #ffd400 !important;/)
 })
