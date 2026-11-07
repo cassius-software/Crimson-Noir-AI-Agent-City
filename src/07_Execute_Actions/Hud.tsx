@@ -187,7 +187,10 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   // hidden it shows only with the device open: the browser's own indicator is never on without it (like REC).
   const voice = s.supplier.voice
   const micOpen = voice ? isOpen(voice.phase) : false
-  const micPill = voice && (visible || micOpen) && <MicPill voice={voice} mic={mic} onMic={onMic} panel={panel} muted={muted} dark={dark} />
+  // On a phone the pill shows only while the device is open, opening or could not open: the Menu's Microphone item is
+  // the switch there, and a row of the smallest screens belongs to Sloane's chip (the browser smoke's phone layouts).
+  const micNeeded = voice ? micOpen || voice.phase === 'opening' || voice.phase === 'blocked' || voice.phase === 'error' || voice.phase === 'unavailable' : false
+  const micPill = voice && (micOpen || (visible && (!compact || micNeeded))) && <MicPill voice={voice} mic={mic} onMic={onMic} panel={panel} muted={muted} dark={dark} />
   // Recruitment: who is coming over, the Active swarm's skills and the activity line. Without a host microphone (an
   // older host, no pill) the chip also carries the MIC dot, so an open microphone is never without its indicator.
   const rc = s.supplier.recruiting
