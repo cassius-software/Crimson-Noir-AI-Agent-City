@@ -31,6 +31,7 @@ const { FULL_WORLD, LITE_WORLD } = await import('../01_Initialize_World/world.ts
 const { RigView } = await import('./rigView.ts')
 const { streetFurniture } = await import('../01_Initialize_World/city.ts')
 const { ENV_PROBE_STEP_HOURS } = await import('../01_Initialize_World/envProbe.ts')
+const { PEAK } = await import('../05_Observe_Environment/governor.ts')
 const { RIG_POSE } = await import('./simProtocol.ts')
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8')
@@ -67,7 +68,7 @@ test('engine: the profile takes ?lite, and decides the crowd and the fleet unles
 test('engine: a lite profile caps the post chain off as ?post=0 does, and no capped boot draws (compiles) the chain', () => {
   assert.match(CREATE, /post: requested\.post && players === 1 && !lite, lite,/)
   // The mask and the ghost view's forcing read options.post: a capped chain never runs at any tier.
-  assert.match(CREATE, /post: k\.post && options\.post \}\)/)
+  assert.match(CREATE, /post: k\.post && options\.post, lampLights: lite \? 0 : k\.lampLights \}\)/, 'and a lite boot, which built no clustered lighting, lights no lamp at any tier')
   assert.match(ENGINE, /if \(this\.ghost\.on && this\.options\.post\) k\.post = true/)
   const scope = between(CREATE, "gpu.device.pushErrorScope('validation')", 'const invalid = await gpu.device.popErrorScope()')
   assert.match(scope, /gpu\.renderer\.render\(world\.scene, world\.camera\)\n\s+if \(options\.post\) post\.render\(\)/, 'uncapped: both paths, as before')
@@ -78,7 +79,7 @@ test('engine: a lite profile caps the post chain off as ?post=0 does, and no cap
 })
 
 test('engine: the lite boot builds the lighter world and hands the realm no furniture sensors, no ragdoll and no craft', () => {
-  assert.match(CREATE, /buildWorld\(gpu\.renderer, options\.seed, pack && layout && hollow \? \{ pack: hollow\.pack, layout: \{ \.\.\.layout, floors: hollow\.floors \}, streets, plan: hollow\.plan \} : null, lite \? LITE_WORLD : FULL_WORLD\)/)
+  assert.match(CREATE, /buildWorld\(gpu\.renderer, options\.seed, pack && layout && hollow \? \{ pack: hollow\.pack, layout: \{ \.\.\.layout, floors: hollow\.floors \}, streets, plan: hollow\.plan, rooms: hollow\.rooms \} : null, lite \? LITE_WORLD : FULL_WORLD\)/)
   const sim = between(CREATE, 'simBoot = SimClient.create({', '})')
   assert.match(sim, /furniture: lite \? NO_FURNITURE : world\.furniture/)
   assert.match(sim, /ragdoll: options\.ragdoll !== false && !pack && !lite, craft: !lite,/)
@@ -106,14 +107,16 @@ test('engine: the lite boot builds the lighter world and hands the realm no furn
 })
 
 test('world: FULL_WORLD is the city as authored; LITE_WORLD drops the lamp lights, shrinks and slows the probe, clears the sky', () => {
-  assert.deepEqual({ ...FULL_WORLD }, { lampLights: 6, probeSize: 256, probeStepHours: ENV_PROBE_STEP_HOURS, cloudCoverage: 0.32, canopyDetail: 1, lensSegments: [10, 6], resortMetres: 6 })
+  assert.deepEqual({ ...FULL_WORLD }, { lampLights: 384, probeSize: 256, probeStepHours: ENV_PROBE_STEP_HOURS, cloudCoverage: 0.32, canopyDetail: 1, lensSegments: [10, 6], resortMetres: 6 })
   assert.equal(ENV_PROBE_STEP_HOURS, 0.2)
   assert.deepEqual({ ...LITE_WORLD }, { lampLights: 0, probeSize: 64, probeStepHours: 1, cloudCoverage: 0, canopyDetail: 0, lensSegments: [6, 4], resortMetres: 24 })
   assert.ok(Object.isFrozen(FULL_WORLD) && Object.isFrozen(LITE_WORLD))
+  assert.equal(FULL_WORLD.lampLights, PEAK.lampLights, 'the pool is the most any tier lights')
   assert.match(WORLD, /detail: Readonly<WorldDetail> = FULL_WORLD\): World \{/, 'every other caller keeps the authored city')
   assert.match(WORLD, /const lampLights = Array\.from\(\{ length: detail\.lampLights \}/)
-  // With no lamp light the per-frame placement returns before scanning the lamp heads.
-  assert.match(WORLD, /if \(!lampHeads\.length \|\| !lampLights\.length\) return/)
+  // With no lamp light there are no room fixtures and no clustered lighting on the renderer: the lit shaders stay short.
+  assert.match(WORLD, /const rooms = detail\.lampLights > 0 \? \(region \? region\.rooms \?\? \[\] : workplaces\(seed\)\) : \[\]/)
+  assert.match(WORLD, /if \(detail\.lampLights > 0\) clusterCityLights\(renderer, scene\)/)
   assert.match(WORLD, /cloudCoverage: detail\.cloudCoverage \}/)
   assert.match(WORLD, /\{ stepHours: detail\.probeStepHours, onBake:/)
   assert.match(WORLD, /< detail\.resortMetres\) return/)
