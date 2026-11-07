@@ -42,6 +42,7 @@ import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
 import { RegionPlaces, hollowLots, layoutOf, regionPhysics } from '../01_Initialize_World/region/regionWorld.ts'
 import { regionWorkplaceLots } from '../01_Initialize_World/region/workplaces.ts'
 import { drawRooms, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
+import { orbitEye, shopAt, shops as cityShops, SHOP, type Shop } from '../01_Initialize_World/storefronts.ts'
 import { streetCapacity, streetGridOf, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { tallestBuilding, type RegionPack } from '../01_Initialize_World/region/pack.ts'
 import { LANDMARK } from '../01_Initialize_World/lakefront.ts'
@@ -483,6 +484,16 @@ export class Engine {
    * work in them.
    */
   private readonly rooms: readonly Workplace[]
+  /**
+   * The world's storefronts (01_Initialize_World/storefronts.ts): the city's five from its seed (a region has none yet).
+   * The page tells which one the avatar stands in (the HUD's chip, E or B opens its catalogue) and circles the body
+   * with the mirror camera while the catalogue is open.
+   */
+  readonly shops: readonly Shop[]
+  /** The shop the avatar stood in at the last frame (index into shops), or −1. */
+  private shopHere = -1
+  /** The mirror camera while a shop's catalogue is open: the shop and the orbit's angle, rad; null in first person. */
+  private showroom: { shop: number; angle: number } | null = null
   /** The swarm's short-term memory (08_Swarm/shortTerm.ts): the last few moments between each recruit and the player, this visit only. */
   private readonly moments = new ShortTermMemory()
   /** Ghost-mode collision's passages (contact.ts): the city's poles, the passage pulse, and the nearest pedestrian's
@@ -608,6 +619,11 @@ export class Engine {
    * realm decides on its own readings. Null: a ping is a mark and nothing more. The engine never sends a rally itself.
    */
   onRally: ((request: RallyRequest) => void) | null = null
+  /**
+   * The host's: a shop's catalogue asked for (E or B on foot inside shop `index`, with no car in reach to take the E).
+   * Null: nothing opens.
+   */
+  onBrowse: ((index: number) => void) | null = null
   /** Real-time end of the current haptic thump (ms, rAF clock). */
   private pulseUntil = 0
   private readonly foot: FootControls = { x: 0, z: 0, heading: 0 }
@@ -658,11 +674,12 @@ export class Engine {
   private constructor(p: {
     canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; craftView: CraftView | null; rigView: RigView; profile: DeviceProfile
     post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
-    options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]
+    options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]; shops: readonly Shop[]
     crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; crowdFigure: GPUBuffer; netView: NetView
   }) {
     this.places = p.places
     this.rooms = p.rooms
+    this.shops = p.shops
     this.streets = p.streets
     this.regionName = p.options.region?.name ?? null
     this.landmarkAt = p.landmark
@@ -956,6 +973,8 @@ export class Engine {
         canvas, gpu, world, crowd, sim, view, rigView, profile, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options,
         quality: { governor, targets, applied, mask, live }, places, landmark, streets,
         rooms: hollow ? hollow.rooms : workplaces(options.seed),
+        // The city's storefronts, hollowed into its boxes by city.ts (storefronts.ts hollowShops); none in a region yet.
+        shops: hollow ? [] : cityShops(options.seed),
         // The code dissolve's crowd amounts: allocated by the draws above like the frame's buffers, written the same way.
         crowdDissolve: gpuBufferOf(gpu.renderer, view0.dissolve),
         crowdLook,
@@ -1449,6 +1468,39 @@ export class Engine {
     })
   }
 
+  /**
+   * Opens the catalogue of the shop the avatar stands in, through the host (onBrowse): on foot, with no car in reach
+   * (a car in reach keeps the E for its door). Returns whether it did.
+   */
+  browse(): boolean {
+    const st = this.sim.state
+    if (this.halted || this.disposed || !this.onBrowse || st.driving >= 0) return false
+    const i = shopAt(this.shops, st.avatar.x, st.avatar.z)
+    if (i < 0 || this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE) >= 0) return false
+    this.onBrowse(i)
+    return true
+  }
+
+  /**
+   * The mirror camera for shop `index`'s catalogue, or null to give the eye back to the head. Opening it steps the
+   * avatar onto the shop's fitting spot, facing the doorway, where nothing is within the orbit (storefronts.ts SHOP);
+   * the camera starts on the doorway's side, looking at the body's front. Returns whether it opened (only inside that
+   * shop, on foot, without a headset).
+   */
+  setShowroom(index: number | null): boolean {
+    if (index === null) { this.showroom = null; return true }
+    const shop = this.shops[index]
+    const st = this.sim.state
+    if (!shop || st.driving >= 0 || this.rig.headset || shopAt(this.shops, st.avatar.x, st.avatar.z) !== index) return false
+    const f = shop.fitting
+    this.sim.send({ c: 'teleport', x: f.x, z: f.z })
+    // The body faces where the head looks turned about (avatarHeading = yaw + π), so the head looks back into the shop.
+    this.input.yaw = Math.atan2(Math.sin(f.yaw + Math.PI), Math.cos(f.yaw + Math.PI))
+    this.input.pitch = 0
+    this.showroom = { shop: index, angle: f.yaw }
+    return true
+  }
+
   /** Enter the nearest car, or leave the current one on the driver's (left) side (decided in the physics realm). */
   interact(): void {
     this.sim.send({ c: 'interact' })
@@ -1771,7 +1823,9 @@ export class Engine {
     this.xrInput.headOffset = this.rig.headset ? this.rig.pose.yaw - input.yaw : 0
     input.poll(dt)
 
-    if (input.take('interact')) this.interact()
+    // Inside a shop on foot, E opens its catalogue unless a car is in reach to take it (storefronts.ts); B always asks.
+    if (input.take('interact') && !this.browse()) this.interact()
+    if (input.take('browse')) this.browse()
     if (input.take('timeForward')) { this.hours = (this.hours + 1) % 24; this.toast('Clock', formatClock(this.hours)) }
     if (input.take('timeBack')) { this.hours = (this.hours + 23) % 24; this.toast('Clock', formatClock(this.hours)) }
     if (input.take('ghost')) this.toast('Ghost view', this.setGhost(!this.ghost.on))
@@ -1849,6 +1903,18 @@ export class Engine {
       // The body faces where the head looks (forward (sin h, cos h) = the view's horizontal forward).
       this.avatarHeading = input.yaw + Math.PI
       this.rig.onFoot(cam, av.x, av.feetY, av.z, input.yaw, input.pitch, dt)
+    }
+    // Which shop the avatar stands in, and the mirror camera while its catalogue is open: the eye leaves the head and
+    // circles the body (whose own figure shows once the camera is past crowd.ts OWN_BODY.radius); the head's pose,
+    // which the listener, the gaze and the ping read, stays where it is. Leaving the shop or taking a car ends it.
+    this.shopHere = driving >= 0 ? -1 : shopAt(this.shops, av.x, av.z)
+    const show = this.showroom
+    if (show && (this.shopHere !== show.shop || this.rig.headset)) this.showroom = null
+    else if (show) {
+      show.angle += SHOP.orbit.rate * dt
+      const o = orbitEye(av.x, av.feetY, av.z, show.angle)
+      cam.position.set(o.eye.x, o.eye.y, o.eye.z)
+      cam.lookAt(o.at.x, o.at.y, o.at.z)
     }
     // The pedestrians near the operator look them in the eye (crowd.ts gazeTarget); from a car, nobody is looked at.
     this.crowdGaze.value.set(this.rig.pose.x, this.rig.pose.y, this.rig.pose.z, driving >= 0 ? 0 : 1)
@@ -2382,6 +2448,8 @@ export class Engine {
         x, z, heading, signalEW: signalFor('ew', st.simTime), signalNS: signalFor('ns', st.simTime), signalRemaining: next - phase,
         region: this.regionName,
         streets: this.streets !== null,
+        // The shop the avatar stands in (storefronts.ts), for the HUD's chip and the card; absent outside every shop.
+        ...(this.shopHere >= 0 && { shop: { index: this.shopHere, kind: this.shops[this.shopHere].kind, name: this.shops[this.shopHere].name, showroom: this.showroom !== null } }),
         ...(this.captionsOn && { captions: this.captionLines() }),
       },
       experience: { sessionSeconds: this.simTime, longFrames: this.clock.longFrames, distanceWalked: this.walked, distanceDriven: this.driven },

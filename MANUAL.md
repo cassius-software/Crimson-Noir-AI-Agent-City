@@ -62,6 +62,7 @@ at all (see Track B under Ring-0 console).
 | Look (head) | drag with the mouse, or click to capture it | right stick | drag on the right half |
 | Run | Shift (either) | left-stick click | Run button |
 | Enter / exit a car | E | south face button | Enter car / Exit car |
+| Browse a shop (on foot inside a storefront) | E (a car in reach keeps E for its door), or B | south face button | tap the Browse chip |
 | Handbrake | Space | east face button | Handbrake |
 | Right the car | R | north face button | Reset |
 | Ping (mark a spot or a person where you look) | Q, or the middle mouse button | right shoulder button | Ping |
@@ -219,6 +220,37 @@ rings for the cars, one round each 2 × 2-block cell; one elevated train loop on
 two arterial streets, with four mid-block stations and guideway columns at the kerb; drone corridors at 40 m and
 46 m over the 4 × 4-block face rings; one plane racetrack at 400 m; and two VTOL routes along the avenues at 75 and
 85 m, each calling at four rooftop pads. See Vehicles.
+
+### Storefronts
+
+Five ground floors in the city are shops (`01_Initialize_World/storefronts.ts`), placed from the seed on lots no
+workplace has: **Verrin & Vale Tailors** in Midtown, **Bio-Frame Prosthetics Atelier** in the northern downtown rows,
+**Escapement Row Horology** within two blocks of the Financial District's centre, and side by side on the lakefront
+row, facing the lake, **Aethelgard Ink Studio** and **Lintel & Lumen Design House**. Each is a glass-walled room like a
+workplace, with a counter and a mirror at the back and its own fixtures: mannequins and rails at the tailor, chairs at
+the tattoo studio, gait rails at the atelier, display cases at the watch shop, and seven scale models of the city's
+homes on plinths at the design house. The minimap draws them in teal. Pedestrians walk past them, not in.
+
+On foot inside one, the HUD shows **Browse** and the shop's name. E, B, the pad's south face button or a tap on that
+chip opens the shop's card (`07_Execute_Actions/StoreCard.tsx`); near a car, E keeps opening its door, and B still
+opens the card. While the card is open you stand on the fitting spot facing the door, and the camera leaves your head
+to circle your body slowly (the mirror), so what you wear shows. Esc, × or Done gives the eye back. Every line lists
+its level and its price. **Try on** wears it on your body until the card closes. **Buy** takes the credits and wears it
+at once. An owned line you are not wearing has **Wear**. What you bought and your balance are kept in this browser
+(key `civic-simulation:shop:v1`), validated on the way in like the look.
+
+- **Credits.** Until the progression engine lands, the shops run on practice credits: level 5 and 5,000 civic
+  credits, enough for the first floor of each shop and not for everything, and what you buy is kept as the same bits
+  the progression record will hold (worn lines at look 512 and up, furniture from 0, homes 0 to 6). When it lands, its
+  level, its credits and its purchase gate take the practice purse's place (`07_Execute_Actions/shopkeeper.ts`,
+  `progressionPurse`); what was bought with practice credits stays in the practice record.
+- **On sale now.** The tailor's six overcoats, seven contrast trims, seven scarves and a silk tie; the atelier's smart
+  eyewear; the watch shop's leather briefcase. Lines that need slots the wardrobe does not have yet (the tattoo
+  designs and inks, prosthetic limbs, the hearing processor, watches, the lapel pin, the umbrella, headphones) are
+  listed as on order and go on sale when the wardrobe's update adds those slots. The design house's furniture and its
+  seven property deeds (level 1 to 20, free to 4,500,000 credits) wait for the properties.
+- **Limits.** The procedural city only: the lakefront metropolis has no shops yet. The wardrobe card is not gated by
+  what you bought; it still offers everything the crowd wears. Under a headset the mirror camera stays off.
 
 ## The surveyed map
 

@@ -177,3 +177,26 @@ touch this, since the product uses no ability scores. Nothing in this PR changes
    `license-headers` job, so the Rust trees are held the
    way the npm tree now is. It needs network access to the registry on the runner, which CI has and this session
    did not.
+
+## 7. Names in the storefronts and the property catalogue (7 November 2026)
+
+The second master prompt (another AI's plan) named five shops and seven homes. Each name was searched on the web in
+quotes, with its trade, for a business or a registered mark in the same line of trade, and checked against
+`src/compliance.test.ts`'s list of real places. What was renamed, and why:
+
+| Plan's name | Found | Now |
+|---|---|---|
+| Sovereign Thread Tailors | "Sovereign Threads, LLC" is listed as the owner of US trademarks (Justia's owner listing; the goods were not readable from here), a name one letter from the tailor's in the clothing trade | **Verrin & Vale Tailors** (no result for the name) |
+| Chronos (watch shop) | CHRONOS is a registered mark, and Chronos Manufactures SA holds marks (Justia listings) | **Escapement Row Horology** (results only for the watch part "escapement") |
+| Domus (design house) | Domus is an established architecture and design magazine (domusweb.it) | **Lintel & Lumen Design House** (no result for the name) |
+| Harbourfront Galleria, Harbourfront Timber Loft | Harbourfront is a real Toronto neighbourhood, refused by the compliance list | **Waterline Galleria**, **Pierside Timber Loft** |
+| Apex Citadel (top-tier home) | "Citadel Apex" is a place name in another video game's lore | **Crown Spire Sky-Mansion** |
+
+Kept, with nothing found in the same trade: Aethelgard Ink Studio (the name turns up only in fantasy world-building),
+Bio-Frame Prosthetics Atelier (no prosthetics business or mark of that name), and the homes' descriptive names
+(Metro-Line Micro-Loft, Midtown Brownstone, Crimson Tower Penthouse, Lakefront Glass Villa, Sovereign Lakefront
+Estate). A web search is not a clearance search: before the shops' names go on anything sold, counsel should run them
+through the USPTO, CIPO and EUIPO registers in classes 25 (clothing), 14 (watches), 10 (prostheses), 20 (furniture),
+35 (retail) and 36 (real estate). `storefronts.test.ts` and `storeCatalog.test.ts` keep the old names out of the
+shops and the catalogue.
+

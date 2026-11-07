@@ -15,6 +15,29 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Five shops you can walk into, browse and buy from.** Five ground floors of the procedural city are storefronts
+  (`src/01_Initialize_World/storefronts.ts`): Verrin & Vale Tailors, Aethelgard Ink Studio, Bio-Frame Prosthetics
+  Atelier, Escapement Row Horology and Lintel & Lumen Design House, each on a lot of its own quarter, picked from the
+  seed among the lots no workplace has. Each lot's podium is hollowed into a glass room with a counter, a mirror and
+  its trade's fixtures, and the ceiling slab keeps the building's finish; the minimap draws the shops in teal. On foot
+  inside one, E (unless a car is in reach), B, the pad's south button or the HUD's Browse chip opens the shop's card
+  (`src/07_Execute_Actions/StoreCard.tsx`): the avatar steps onto a fitting spot kept clear of every fixture and the
+  camera circles the body, so the outfit shows; every line has its level and price, Try on, Buy (worn at once) and
+  Wear. Purchases go through one shopkeeper (`shopkeeper.ts`) over a purse shaped like the progression engine's
+  keeper (its spaces, bits, gate verdicts and subscribe; `progressionPurse` adapts the keeper by its documented
+  contract). Until that keeper lands, a practice purse (level 5, 5,000 credits) kept in this browser
+  (`civic-simulation:shop:v1`) stands in, with the same bits: worn lines at look 512 and up, furniture from 0, homes 0
+  to 6. On sale now: the tailor's overcoats, trims, scarves and tie,
+  the atelier's smart eyewear and the watch shop's briefcase; tattoos, limbs, watches and the other lines that need
+  wardrobe slots not built yet are listed as on order, and the design house's furniture and seven property deeds wait
+  for the properties. Three of the plan's shop names and two home names were changed after a trademark and place-name
+  search (`docs/ip-audit.md` §7). Pinned by `storefronts.test.ts` (one shop per kind on its quarter for 64 seeds,
+  never on a workplace lot, the podium gone, every fixture inside the walls, the walk-in and the camera's circle
+  clear, the real Rapier avatar walking from the sidewalk to the fitting spot), `storeCatalog.test.ts` (ids, the
+  deeds' levels and prices, every line on sale wearable by every preset body, the gate's verdicts and exact millions,
+  the stored record's validation, the shopkeeper on the practice purse and on a stand-in for the progression keeper) and `storeWiring.test.ts`. The city only for now;
+  the lakefront metropolis has none yet.
+
 - **Every street lamp near you is a real light, and every workplace has a lit ceiling.** The city's night lighting
   moves to three r186's clustered (Forward+) lighting (`src/01_Initialize_World/cityLights.ts`): the lamps' point
   lights live in a texture, a compute pass bins them once a render into a 48 × 27 × 24 grid of view-frustum cells,
