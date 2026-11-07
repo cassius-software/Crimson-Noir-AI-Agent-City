@@ -585,6 +585,18 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **The flow field's CPU solve is 2.3× faster, and allocation-free once warm.** The bucket queue and the direction
+  pass (`src/06_Make_Decisions/flowField.ts` `solveDial`, `directions`), which the physics worker runs for every
+  new goal whenever the field is not solved on the GPU, now work over the grid padded by a ring of blocked cells, with
+  the eight neighbours as flat tables (`NEIGHBOUR_DI`, `NEIGHBOUR_DJ`, `NEIGHBOUR_COST`, `NEIGHBOUR_DX`,
+  `NEIGHBOUR_DZ`), one doubly linked list per bucket threaded through two cell-indexed arrays, and a working set kept
+  per grid, instead of a tuple destructured per neighbour, a bounds test per step and a growable array per bucket.
+  Measured in a four-core container under Node 22: the city's 320 × 320 grid from 18.7 ms to 7.4 ms a solve, the
+  Lakefront Metro grid (1280 × 1280, 1.6 M cells) from 495 ms to 213 ms. The field is the same to the bit: a test
+  holds both solvers to the tuple form, kept in the test as the reference, over sixty random mazes (heavy cells;
+  repeated, blocked, off-grid and fractional goals), a handmade cost field and the city, and the relaxation (the GPU's
+  own pass, unchanged) still reaches the same fixed point. A branchless pick in the direction pass was measured too
+  and was slower under V8; the branch stayed.
 - **Look v2.** A look is twenty slots: `build` is gone, replaced by the eight sliders. A look kept in this browser
   before (record `v` 1, fourteen slots, the same key), a roster record's look and an eight-symbol look code are
   upgraded on the way in (height and build carried onto the new sliders, the rest set to the middle); new records

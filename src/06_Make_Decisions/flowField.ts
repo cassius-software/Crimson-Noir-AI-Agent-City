@@ -237,62 +237,156 @@ export function solveByRelaxation(grid: FlowGrid, goals: readonly number[], limi
 }
 
 /**
+ * The eight neighbours of NEIGHBOURS as flat tables, in its order: the column step, the row step, the step's cost
+ * before the cell's weight, and the unit direction of the step (the diagonals' components DIAGONAL_UNIT, as f32).
+ * The two fast solvers below read these, never the tuples: an inner loop over a million cells cannot afford an
+ * iterator and a destructuring per neighbour (solveFlow over the Lakefront Metro grid, 1.6 M cells, took half a
+ * second that way; flowField.test.ts holds the tables to NEIGHBOURS and the solvers to the tuple form, bit for bit).
+ */
+export const NEIGHBOUR_DI: Int8Array = Int8Array.from(NEIGHBOURS, (n) => n[0])
+export const NEIGHBOUR_DJ: Int8Array = Int8Array.from(NEIGHBOURS, (n) => n[1])
+export const NEIGHBOUR_COST: Int32Array = Int32Array.from(NEIGHBOURS, (n) => (n[2] ? FLOW.diagonal : FLOW.straight))
+export const NEIGHBOUR_DX: Float32Array = Float32Array.from(NEIGHBOURS, (n) => (n[2] ? n[0] * DIAGONAL_UNIT : n[0]))
+export const NEIGHBOUR_DZ: Float32Array = Float32Array.from(NEIGHBOURS, (n) => (n[2] ? n[1] * DIAGONAL_UNIT : n[1]))
+
+/**
+ * The solvers' working set over the grid padded by one blocked cell on every side, so that every neighbour is an
+ * index into it and never a bounds test: the padded weights, the padded costs, and the bucket queue's links (one
+ * doubly linked list per bucket, threaded through two arrays indexed by cell). One per grid, kept across solves in a
+ * WeakMap (the grid gone, the set goes with it), so a solve allocates nothing but its result once the grid is warm;
+ * the weights are copied in again on every call, since a grid's weights may be written after it was built (blockBoxes).
+ */
+interface Workspace { pw: Uint8Array; pcost: Int32Array; next: Int32Array; prev: Int32Array }
+const workspaces = new WeakMap<FlowGrid, Workspace>()
+
+/** The grid's working set, its padded weights fresh. */
+function workspace(grid: FlowGrid): Workspace {
+  const { width, height, weight } = grid
+  const stride = width + 2, n = stride * (height + 2)
+  let w = workspaces.get(grid)
+  if (!w || w.pw.length !== n) workspaces.set(grid, (w = { pw: new Uint8Array(n), pcost: new Int32Array(n), next: new Int32Array(n), prev: new Int32Array(n) }))
+  const pw = w.pw
+  pw.fill(0)
+  for (let j = 0; j < height; j++) pw.set(weight.subarray(j * width, (j + 1) * width), (j + 1) * stride + 1)
+  return w
+}
+
+/**
+ * Each neighbour's offset in the padded index space of a grid `stride` wide, and the offsets of the two straight
+ * cells a step passes between (for a straight step, the target itself and the cell stepped from: both open whenever
+ * the step is considered, so one rule serves all eight: a step is open iff its target and both side cells are).
+ */
+function offsets(stride: number): { off: Int32Array; sideA: Int32Array; sideB: Int32Array } {
+  const off = new Int32Array(8), sideA = new Int32Array(8), sideB = new Int32Array(8)
+  for (let k = 0; k < 8; k++) {
+    off[k] = NEIGHBOUR_DJ[k] * stride + NEIGHBOUR_DI[k]
+    sideA[k] = NEIGHBOUR_DI[k]
+    sideB[k] = NEIGHBOUR_DJ[k] * stride
+  }
+  return { off, sideA, sideB }
+}
+
+/**
  * The cost field by a bucket queue (Dial's algorithm: every edge weight is a small integer), in one call. Its fixed
- * point is the relaxation's: the least cost over every path, for every cell. The fast CPU path.
+ * point is the relaxation's: the least cost over every path, for every cell. The fast CPU path, and the one the
+ * physics worker runs for every new goal when the field is not solved on the GPU: over the padded grid, with a ring
+ * of buckets one longer than the costliest step (a diagonal into the heaviest cell) and each cell linked into the
+ * bucket of its tentative cost, moved when it is lowered, so no cell is visited twice and nothing is allocated per
+ * cell. Goals that are not integer cells of the grid, or are blocked, are ignored, as seedCost ignores them.
  */
 export function solveDial(grid: FlowGrid, goals: readonly number[]): Int32Array {
-  const { width, weight } = grid
-  const cost = seedCost(grid, goals)
-  const buckets: (number[] | undefined)[] = []
-  for (const g of goals) if (g >= 0 && g < cost.length && cost[g] === 0) (buckets[0] ??= []).push(g)
-  for (let d = 0; d < buckets.length; d++) {
-    const bucket = buckets[d]
-    if (!bucket) continue
-    for (let k = 0; k < bucket.length; k++) {
-      const c = bucket[k]
-      if (cost[c] !== d) continue
-      const i = c % width, j = (c - i) / width
-      for (const [di, dj, diagonal] of NEIGHBOURS) {
-        if (!open(grid, i, j, di, dj, diagonal)) continue
-        const n = (j + dj) * width + (i + di)
-        const v = d + (diagonal ? FLOW.diagonal : FLOW.straight) * weight[n]
-        if (v < cost[n]) {
-          cost[n] = v
-          ;(buckets[v] ??= []).push(n)
+  const { width, height, weight } = grid
+  const cells = width * height
+  const { pw, pcost, next, prev } = workspace(grid)
+  const stride = width + 2
+  const { off, sideA, sideB } = offsets(stride)
+  const cost = NEIGHBOUR_COST
+  pcost.fill(UNREACHED)
+  let heaviest = 1
+  for (let c = 0; c < cells; c++) heaviest = Math.max(heaviest, weight[c])
+  const ring = FLOW.diagonal * heaviest + 1
+  const head = new Int32Array(ring).fill(-1)
+  let queued = 0
+  for (const g of goals) {
+    if (!(Number.isInteger(g) && g >= 0 && g < cells && weight[g] !== 0)) continue
+    const i = g % width, p = ((g - i) / width + 1) * stride + i + 1
+    if (pcost[p] === 0) continue
+    pcost[p] = 0
+    next[p] = head[0]
+    prev[p] = -1
+    if (head[0] !== -1) prev[head[0]] = p
+    head[0] = p
+    queued++
+  }
+  // Bucket d holds every cell whose tentative cost is d; a cell relaxed from it lands in a later bucket of the ring
+  // (its cost grows by at least FLOW.straight and by less than the ring), so the list being walked is never written.
+  for (let d = 0, slot = 0; queued > 0; d++, slot = slot + 1 === ring ? 0 : slot + 1) {
+    let c = head[slot]
+    if (c === -1) continue
+    head[slot] = -1
+    for (; c !== -1; c = next[c]) {
+      queued--
+      for (let k = 0; k < 8; k++) {
+        const n = c + off[k]
+        const w = pw[n]
+        if (w * pw[c + sideA[k]] * pw[c + sideB[k]] === 0) continue
+        const v = d + cost[k] * w
+        const old = pcost[n]
+        if (v >= old) continue
+        if (old !== UNREACHED) {
+          const pn = prev[n], nn = next[n]
+          if (pn !== -1) next[pn] = nn
+          else head[old % ring] = nn
+          if (nn !== -1) prev[nn] = pn
+          queued--
         }
+        pcost[n] = v
+        const s = v % ring
+        next[n] = head[s]
+        prev[n] = -1
+        if (head[s] !== -1) prev[head[s]] = n
+        head[s] = n
+        queued++
       }
     }
-    buckets[d] = undefined
   }
-  return cost
+  const out = new Int32Array(cells)
+  for (let j = 0; j < height; j++) out.set(pcost.subarray((j + 1) * stride + 1, (j + 1) * stride + 1 + width), j * width)
+  return out
 }
 
 /**
  * The direction field from a cost field: per cell, the unit vector towards the neighbour of least cost that it may
  * step to (the first in NEIGHBOURS order on a tie), the diagonals as (±DIAGONAL_UNIT, ±DIAGONAL_UNIT); zero where the
- * cell is blocked, unreached, the goal, or no neighbour is cheaper. The same arithmetic as the shader's `direction`.
+ * cell is blocked, unreached, the goal, or no neighbour is cheaper. The same arithmetic as the shader's `direction`,
+ * over the padded grid: the border and every blocked cell cost UNREACHED there, which no open neighbour's cost falls
+ * below, so the one test left per neighbour is the step's own (target and side cells open).
  */
 export function directions(grid: FlowGrid, cost: Int32Array, out = new Float32Array(2 * grid.width * grid.height)): Float32Array {
-  const { width, height, weight } = grid
+  const { width, height } = grid
+  const { pw, pcost } = workspace(grid)
+  const stride = width + 2
+  const { off, sideA, sideB } = offsets(stride)
+  pcost.fill(UNREACHED)
+  for (let j = 0; j < height; j++) pcost.set(cost.subarray(j * width, (j + 1) * width), (j + 1) * stride + 1)
   for (let j = 0; j < height; j++) {
-    for (let i = 0; i < width; i++) {
-      const c = j * width + i
+    for (let i = 0, p = (j + 1) * stride + 1, c = 2 * j * width; i < width; i++, p++, c += 2) {
       let dx = 0, dz = 0
-      const own = cost[c]
-      if (weight[c] !== 0 && own < UNREACHED && own > 0) {
+      const own = pcost[p]
+      if (pw[p] !== 0 && own < UNREACHED && own > 0) {
         let best = own
-        for (const [di, dj, diagonal] of NEIGHBOURS) {
-          if (!open(grid, i, j, di, dj, diagonal)) continue
-          const n = cost[(j + dj) * width + (i + di)]
+        for (let k = 0; k < 8; k++) {
+          if (pw[p + off[k]] * pw[p + sideA[k]] * pw[p + sideB[k]] === 0) continue
+          const n = pcost[p + off[k]]
           if (n < best) {
             best = n
-            dx = diagonal ? di * DIAGONAL_UNIT : di
-            dz = diagonal ? dj * DIAGONAL_UNIT : dj
+            dx = NEIGHBOUR_DX[k]
+            dz = NEIGHBOUR_DZ[k]
           }
         }
       }
-      out[2 * c] = dx
-      out[2 * c + 1] = dz
+      out[c] = dx
+      out[c + 1] = dz
     }
   }
   return out
