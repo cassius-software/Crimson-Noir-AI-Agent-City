@@ -12,7 +12,7 @@ A business-casual, non-violent civic simulation that ships as one self-contained
 16 × 16-block city under a moving sun: a downtown of towers, a heritage quarter of stone and brick rows, and a
 lakefront of condominiums along a promenade, a seawall and a pier. It has 14,000 GPU-simulated pedestrians
 who wait for the walk signal, and Rapier3D traffic that obeys the lights and, by default, drives a fixed network
-of right-turn rings that cannot jam (trains, drones, planes and VTOLs keep timetables above it). Every
+of right-turn rings that cannot jam (trains, drones, planes and VTOLs keep timetables above it, ferries on the lake). Every
 vehicle command, from the AI or from you, passes a three-law safety kernel before it reaches the wheels. You see
 everything **first person**, at eye level, on foot or from the driver's seat. You can walk the districts (straight
 through people, lamps and trees, which dissolve into falling green binary code as you pass: the collision model is
@@ -168,7 +168,7 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 | `?scale=1` | Base pixel ratio |
 | `?seed=1337` | World seed |
 | `?shadows=0`, `?post=0` | Caps that apply at every quality tier |
-| `?tracks=0` | Turns the fixed track network off: AI cars take random street-hopping routes, and there are no trains, drones or planes (default: on; see Vehicles) |
+| `?tracks=0` | Turns the fixed track network off: AI cars take random street-hopping routes, and there are no trains, drones, planes, VTOLs or ferries (default: on; see Vehicles) |
 | `?players=1`…`4` | Local split screen: one viewport per player (default 1; see Split screen) |
 | `?cinema=0` | Turns the cinema camera off: every frame is drawn, no motion blur, ACES tone mapping (see The cinema camera) |
 | `?ragdoll=0` | Turns the balance machine off: no pedestrian is ever promoted to a physical body (default: on; see The balance machine under The ethical kernel) |
@@ -794,8 +794,9 @@ anywhere in the product.
   breaches are counted, because verified First-Law stops land 1.71–1.97 m from the bumper and the Sanctuary's
   nudge leaves a shielded person 1.52 m from a car's centreline. The audit's counters are in the console
   (`kernel`, `stats`) and in `sim.kernel.stats().audit`; the auditor and its panic helper are frozen. For the
-  scheduled craft (trains, drones, planes) the audit also halts on any non-finite value or any craft below its
-  corridor's floor (`Corridor Exploit`; see Vehicles). It only halts, never corrects.
+  scheduled craft (trains, drones, planes, VTOLs, ferries) the audit also halts on any non-finite value, any craft
+  below its corridor's floor, or a ferry whose hull reaches the land side of its shore (`Corridor Exploit`; see
+  Vehicles). It only halts, never corrects.
 - **Ring-0 action gate** (`02_Define_The_Rules/ring0Gate.ts`). A model's words can change the city by one road only: a
   model is asked through the operator tier (whichever provider answers: the Claude gateway, a model server on this
   machine, the model file kept in this page, or the script; the swarm asks the same way, one step at a time), its
@@ -2620,19 +2621,23 @@ Every source file opens with "Why does this file exist? / What breaks if it is r
 
 ## Vehicles
 
-Eight kinds of vehicle (`07_Execute_Actions/car.ts` `VEHICLE_KINDS`: an executive sedan, a transit pod, a logistics
-van, a transit coach, a courier robot, a security SUV, a gullwing coupe and a utility rig) are drawn over two chassis
-classes of Rapier raycast vehicle, the sedan's and the SUV's (box, mass, power, drag), each proven once against the
-First Law's stopping envelope in `vehicles.test.ts`. A kind picks a class and a body: its own extruded side profile
-(`fleetView.ts` `PROFILES`), scaled about the chassis origin, with its own glass (the pod's canopy, the coach's window
-band, the van's and the rig's cab), brake lights that follow the brake demand, a warm cabin light through the glass at
-night on the pod and the coach, an amber flashing beacon on the rig's roof, and wheels sized to it. Every silhouette
-stays inside its class's box plus the dissolve's reach (`vehicleKinds.test.ts`), so the camera never enters a body
-the dissolve has not taken; a silhouette longer than its box, a full-length coach or an articulated bus, would need a
-stopping envelope of its own and is not one of these. The fleet's one seeded draw that used to decide "SUV or
-sedan" now decides the kind, with the heavy kinds on exactly the old SUV share, so every fleet a seed laid out before
-keeps the same chassis class in every slot (saved rooms, the network's plan and the determinism golden are
-untouched). The realm's `meta` carries `kind` beside `suv`; the HUD names the kind when you take a wheel.
+Eleven kinds of vehicle (`07_Execute_Actions/car.ts` `VEHICLE_KINDS`: an executive sedan, a transit pod, a logistics
+van, a transit coach, a courier robot, a security SUV, a gullwing coupe, a utility rig, a box truck, an automated
+guided vehicle and a counterbalance forklift) are drawn over two chassis classes of Rapier raycast vehicle, the
+sedan's and the SUV's (box, mass, power, drag), each proven once against the First Law's stopping envelope in
+`vehicles.test.ts`. A kind picks a class and a body: its own extruded side profile (`fleetView.ts` `PROFILES`), scaled
+about the chassis origin, with its own glass (the pod's canopy, the coach's window band, the van's, the rig's and the
+truck's cab, the forklift's cab under its overhead guard, the guided vehicle's sensor band), brake lights that follow
+the brake demand, a warm cabin light through the glass at night on the pod and the coach, an amber flashing beacon on
+the rig's cab roof, the guided vehicle's sensor dome and the forklift's overhead guard, and wheels sized to it. The box truck rides the heavy class;
+the guided vehicle and the forklift ride the light class and are drawn smaller than its box (the walls and the
+dissolve still see the box). Every silhouette stays inside its class's box plus the dissolve's reach
+(`vehicleKinds.test.ts`), so the camera never enters a body the dissolve has not taken; a silhouette longer than its
+box, a full-length coach or an articulated bus, would need a stopping envelope of its own and is not one of these.
+The fleet's one seeded draw that used to decide "SUV or sedan" now decides the kind, with the heavy kinds on exactly
+the old SUV share, so every fleet a seed laid out before keeps the same chassis class in every slot (saved rooms, the
+network's plan and the determinism golden are untouched; a slot's kind within its class can change as kinds join).
+The realm's `meta` carries `kind` beside `suv`; the HUD names the kind when you take a wheel.
 - **Collisions:** strict CCD on every chassis; cars pass through cars (collision groups,
   `02_Define_The_Rules/collision.ts`; see Ghost-mode collision), stay solid to the world, and let the avatar on foot
   walk through them (`avatarThroughCars`). A wall stops a car dead with no bounce and no damage (`WALL_CONTACT`).
@@ -2690,11 +2695,25 @@ releases, byte for byte (the same seats, drivers and paint from the same stream)
   corners, four mid-block stations, a 15 s dwell, a timetable that keeps the sets at least 74 m apart; guideway
   columns at the kerb 8, 16, 24 and 32 m into each block, clear of every lamp, tree and signal pole), one drone per
   20 m of every drone corridor at 40 m clockwise and 46 m counter-clockwise (960 on the city's 32 corridors),
-  three planes on the racetrack at 400 m, and two VTOLs on each of two routes between rooftop pads (below). None
-  has a Rapier body, a driver or a Bouncer ruling: each is a pure function of the realm's own clock, so a step only
-  evaluates the timetable and packs the result, and the craft never interact. What keeps them away from people is
-  geometry, proved in `tracks.test.ts`: every corridor clears every building box of four seeds and sits at least
-  6 m over any car roof, and none ever reaches the street or the sidewalk.
+  three planes on the racetrack at 400 m, two VTOLs on each of two routes between rooftop pads, and two harbour
+  ferries on the lake (both below). None has a Rapier body, a driver or a Bouncer ruling: each is a pure function of
+  the realm's own clock, so a step only evaluates the timetable and packs the result, and the craft never interact.
+  What keeps them away from people is geometry, proved in `tracks.test.ts`: every corridor in the air clears every
+  building box of four seeds and sits at least 6 m over any car roof, the ferries' route stays on the lake, and none
+  ever reaches the street or the sidewalk.
+- **The harbour ferries** (`tracks.ts` `ferryRoutes`, `TRACKS.ferry`). Two ferries, a 26 m hull of 9 m beam each,
+  share one route on the lake: a racetrack whose near straight runs past the pier head, then a 120 m turn out onto
+  the lake, a far straight 240 m further out and a turn back in, about 1.8 km a lap. The one call is alongside the
+  pier head, the ferry broadside to the pier's end with its side 2 m off it; there it stands 30 s, then sails on at
+  up to 6 m/s with a vessel's gentle 0.25 m/s², the two boats half a lap (about three minutes) apart. The route is
+  fixed by the lake, the same for every seed. A ferry sails at the water's level, so the proof that keeps it from
+  people is not height but the seawall: `tracks.test.ts` measures the hull (a rectangle, not a disc, which would
+  reach the pier it calls at; `hullGap`) every half metre against every box of four seeds, and the closest it comes
+  to anything built is that 2 m at the pier head; no corner of a hull at any heading comes within 2 m of the
+  seawall. The kind's Ring-0 floor is its waterline, and it has a shore as well, the pier's end (746 m, the furthest
+  anything built reaches into the lake): a ferry whose hull, read at its heading, reaches the land side of it halts
+  the realm, and the route keeps every hull more than a metre clear of it (`ring0.test.ts`). Nobody boards a ferry (or a
+  train or a VTOL) yet: the craft are timetabled scenery, and boarding is a separate system.
 - **The VTOL routes** (`tracks.ts` `vtolRoutes`, given the city's boxes by `buildTrackNetwork`). A pad is the
   roof of a box between 24 and 60 m up, at least 4 m each way, with nothing taller within the craft's 3 m descent
   column; the inner route picks one in each of downtown's four quarters, the outer one on each of the four sides
@@ -2715,18 +2734,21 @@ releases, byte for byte (the same seats, drivers and paint from the same stream)
   `TRACK_POSE` (`simProtocol.ts`), eight floats per craft (position, heading, kind, track, arc length, speed),
   transferred and handed back for reuse like the pose buffer. Before it leaves, the Ring-0 audit reads it
   (`ring0.ts auditCraft`): every value must be finite and every craft at or above its corridor's floor (the train
-  deck at 9 m, the drones at 40 m, the planes at 400 m); anything else is a kernel panic with a named reason
+  deck at 9 m, the drones at 40 m, the planes at 400 m, a ferry's waterline), and a ferry's hull on the lake side of
+  its shore; anything else is a kernel panic with a named reason
   (`Corridor Exploit: train craft 0 left its corridor (y=2.00m below its 9m floor).`), the buffer that halted the
   realm never leaves it, and a halted realm ships no craft. The check only halts, never corrects. A surveyed region
   gets no craft.
 - **The craft on the page** (`craftView.ts`). The page builds the realm's network again from the same seed and boxes
   (the craft count must agree, or the view refuses) and draws, from the stream, one InstancedMesh a kind: each train
   set as three cars laid along the loop about the set's head, the drones nosed a little into their way, the planes
-  banked through the racetrack's turns by their own speed and the turn's radius, the VTOLs nosed down with their
-  speed and upright over a pad; and the structure that stands still: the loop's deck under the rail top, the
-  guideway columns and beams, the four stations' platforms at the cars' floor with a canopy each, and a lit pad on
-  every roof a VTOL calls at. Trains, VTOLs, the pads and the structure cast shadows; the drones and the planes do
-  not. Every material takes rain mode once, and `craftView.test.ts` holds every body inside the envelope its kind is
+  banked into the racetrack's turns (the inner wing down) by their own speed and the turn's radius, the VTOLs nosed
+  down with their speed and upright over a pad, the ferries level on the water (a pointed hull, the crimson stripe, a
+  cabin with a window band, a wheelhouse, side lights and a mast beacon); every craft that carries side lights shows
+  red to port and green to starboard; and the structure that stands still: the loop's deck
+  under the rail top, the guideway columns and beams, the four stations' platforms at the cars' floor with a canopy
+  each, and a lit pad on every roof a VTOL calls at. Trains, VTOLs, ferries, the pads and the structure cast shadows;
+  the drones and the planes do not. Every material takes rain mode once, and `craftView.test.ts` holds every body inside the envelope its kind is
   proved clear by.
 - **The zero-jam guarantee**, precisely. "Zero jams" is an AI-only, per-ring guarantee with containment, not a
   promise about the player. With the fleet on tracks, every AI car is seated on one of 64 fixed right-turn rings

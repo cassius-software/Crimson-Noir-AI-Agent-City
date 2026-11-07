@@ -193,9 +193,16 @@ test('no surface rail: every train of the track network rides the elevated deck,
       for (let s = 0; s < t.length; s += 2) assert.ok(poseAt(t, s).y >= TRACKS.train.deck - 1e-9, `train ${t.id} at s=${s}`)
     }
   }
-  // Every kind of track is one of the four: nothing that runs at street level besides the cars on their lanes.
-  const kinds = new Set(buildTrackNetwork(1337).tracks.map((t) => t.kind))
-  assert.deepEqual([...kinds].sort(), ['car', 'drone', 'plane', 'train'])
+  // Every kind of track is one of these five: nothing runs at street level besides the cars on their lanes. The ferries
+  // sail at the water's level, beyond the seawall: no corner of a hull, at any heading, reaches the wall.
+  const { LAKE } = await import('../01_Initialize_World/city.ts')
+  const network = buildTrackNetwork(1337)
+  const kinds = new Set(network.tracks.map((t) => t.kind))
+  assert.deepEqual([...kinds].sort(), ['car', 'drone', 'ferry', 'plane', 'train'])
+  const reach = Math.hypot(TRACKS.ferry.halfLength, TRACKS.ferry.halfBeam)
+  for (const t of network.tracks.filter((k) => k.kind === 'ferry')) {
+    for (let s = 0; s < t.length; s += 2) assert.ok(poseAt(t, s).z - reach > LAKE.shore + LAKE.wall.thickness, `ferry ${t.id} at s=${s} is on the lake`)
+  }
 })
 
 test('the layer table: six one-bit layers, the solid world and the actors, frozen', () => {

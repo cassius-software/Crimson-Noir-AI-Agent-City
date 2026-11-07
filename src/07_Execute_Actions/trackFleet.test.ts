@@ -3,19 +3,20 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It proves the scheduled craft stream in Node, with no physics engine: the fleet lists
- * every train set, drone and plane of the network in buffer order with its kind code and track id; over two hours
- * of realm time at half-second steps every value it writes is finite and passes the Ring-0 craft audit, every
+ * every train set, drone, plane and ferry of the network in buffer order with its kind code and track id; over two
+ * hours of realm time at half-second steps every value it writes is finite and passes the Ring-0 craft audit, every
  * train stands on the deck within 1.5 m of the elevated loop at a speed the timetable allows, every drone flies at
- * 40 or 46 m and every plane at 400 m, the three train sets never come within their spacing, and the arc length
- * and speed fields agree with the positions; the buffer is periodic in each craft's lap and a pure function of the
- * clock whatever was written before; every sample clears every building box of four seeds by the craft's envelope;
- * and the class refuses a short buffer or a bad index and is frozen.
+ * 40 or 46 m, every plane at 400 m and every ferry on the water on its route, the three train sets never come within
+ * their spacing, and the arc length and speed fields agree with the positions; the buffer is periodic in each craft's
+ * lap and a pure function of the clock whatever was written before; every sample clears every building box of four
+ * seeds by the craft's envelope (a ferry's hull by its berth); and the class refuses a short buffer or a bad index and
+ * is frozen.
  * What breaks if it is removed? A timetable, a corridor or a packing change could send a train off its deck, a
  * drone into a tower or a NaN into the page, and only the live audit would say so.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { TRACKS, buildTrackNetwork, lapSeconds, poseAt, projectOnto, scheduledCount, scheduledPose, type Track } from '../06_Make_Decisions/tracks.ts'
+import { TRACKS, buildTrackNetwork, hullGap, lapSeconds, poseAt, projectOnto, scheduledCount, scheduledPose, type Track } from '../06_Make_Decisions/tracks.ts'
 import { CITY, generateBuildings, type Box } from '../01_Initialize_World/city.ts'
 import { auditCraft } from '../02_Define_The_Rules/ring0.ts'
 import { TRACK_KINDS, TRACK_POSE } from './simProtocol.ts'
@@ -25,7 +26,7 @@ const S = TRACK_POSE.stride
 const net = buildTrackNetwork(1337)
 const fleet = new TrackFleet(net)
 const sky = net.tracks.filter((t) => t.kind !== 'car')
-const KIND = { train: TRACK_KINDS.indexOf('train'), drone: TRACK_KINDS.indexOf('drone'), plane: TRACK_KINDS.indexOf('plane') }
+const KIND = { train: TRACK_KINDS.indexOf('train'), drone: TRACK_KINDS.indexOf('drone'), plane: TRACK_KINDS.indexOf('plane'), ferry: TRACK_KINDS.indexOf('ferry') }
 
 const field = (buf: Float32Array, i: number, f: keyof typeof TRACK_POSE): number => buf[i * S + TRACK_POSE[f]]
 /** Signed arc-length difference b − a around a loop of `length`, in (−length/2, length/2]. */
@@ -60,9 +61,10 @@ test('the fleet lists every scheduled craft of the network in buffer order, with
   assert.equal(i, fleet.count)
   assert.ok(!Array.from({ length: fleet.count }, (_, k) => field(buf, k, 'kind')).includes(TRACK_KINDS.indexOf('car')))
   const kinds = new Set(Array.from({ length: fleet.count }, (_, k) => field(buf, k, 'kind')))
-  assert.deepEqual([...kinds].sort(), [KIND.train, KIND.drone, KIND.plane])
+  assert.deepEqual([...kinds].sort(), [KIND.train, KIND.drone, KIND.plane, KIND.ferry])
   assert.equal(Array.from({ length: fleet.count }, (_, k) => field(buf, k, 'kind')).filter((k) => k === KIND.train).length, TRACKS.train.sets)
   assert.equal(Array.from({ length: fleet.count }, (_, k) => field(buf, k, 'kind')).filter((k) => k === KIND.plane).length, TRACKS.plane.count)
+  assert.equal(Array.from({ length: fleet.count }, (_, k) => field(buf, k, 'kind')).filter((k) => k === KIND.ferry).length, TRACKS.ferry.count)
 })
 
 test('two hours at 0.5 s: finite and clean for the audit, trains on the deck within 1.5 m of the loop and never faster than the timetable, drones at 40/46 m, planes at 400 m, sets ≥ 74 m apart, s and speed true', () => {
@@ -91,6 +93,11 @@ test('two hours at 0.5 s: finite and clean for the audit, trains on the deck wit
       } else if (tr.kind === 'drone') {
         assert.ok(y === TRACKS.drone.altitude[0] || y === TRACKS.drone.altitude[1], `drone at ${y} m`)
         assert.equal(v, TRACKS.drone.speed)
+      } else if (tr.kind === 'ferry') {
+        assert.equal(y, Math.fround(TRACKS.ferry.water), `ferry at ${y} m`)
+        assert.ok(v >= 0 && v <= TRACKS.ferry.speed + 0.05, `ferry speed ${v} at t ${t}`)
+        const lateral = Math.abs(projectOnto(tr, field(buf, i, 'x'), field(buf, i, 'z'), s).lateral)
+        assert.ok(lateral < 1e-2, `ferry ${i} is ${lateral} m off its route at t ${t}`)
       } else {
         assert.equal(y, TRACKS.plane.altitude)
         assert.equal(v, TRACKS.plane.speed)
@@ -108,7 +115,7 @@ test('two hours at 0.5 s: finite and clean for the audit, trains on the deck wit
       if (step > 0) {
         const d = around(prevS[i], s, tr.length)
         assert.ok(d >= -1e-3, `${tr.kind} ${i} went backwards: ${d} m`)
-        const tol = tr.kind === 'train' ? 0.2 : 1e-2
+        const tol = tr.kind === 'train' || tr.kind === 'ferry' ? 0.2 : 1e-2
         assert.ok(Math.abs(d - ((prevV[i] + v) / 2) * DT) < tol, `${tr.kind} ${i}: moved ${d} m at ${(prevV[i] + v) / 2} m/s over ${DT} s`)
       }
       prevS[i] = s; prevV[i] = v
@@ -124,7 +131,7 @@ test('two hours at 0.5 s: finite and clean for the audit, trains on the deck wit
 test('periodic in each craft\'s lap, and a pure function of the clock: the same t writes the same buffer whatever came before', () => {
   const a = new Float32Array(fleet.length), b = new Float32Array(fleet.length)
   const periods = new Set(Array.from({ length: fleet.count }, (_, i) => fleet.periodOf(i)))
-  assert.equal(periods.size, 3, 'one lap time per kind')
+  assert.equal(periods.size, 4, 'one lap time per kind')
   for (const t of [0, 17.3, 400.9, 3599.5]) {
     fleet.writePoses(t, a)
     for (const T of periods) {
@@ -150,7 +157,7 @@ test('periodic in each craft\'s lap, and a pure function of the clock: the same 
   // poseOf is the double the buffer rounds, and trackPoseAt the track's own pose at the buffer's s.
   for (const i of [0, 1, 2, 10, fleet.count - 1]) {
     const p = fleet.poseOf(i, 1000)
-    assert.ok(Math.abs(p.x - field(a, i, 'x')) < 1e-3 && Math.abs(p.z - field(a, i, 'z')) < 1e-3 && p.y === field(a, i, 'y'))
+    assert.ok(Math.abs(p.x - field(a, i, 'x')) < 1e-3 && Math.abs(p.z - field(a, i, 'z')) < 1e-3 && Math.fround(p.y) === field(a, i, 'y'))
     const q = trackPoseAt(net.tracks[fleet.craftAt(i).track], field(a, i, 's'))
     assert.ok(Math.hypot(q.x - p.x, q.z - p.z) < 2e-3)
   }
@@ -178,6 +185,20 @@ test('every craft clears every building box of four seeds by its envelope (INV-1
       fleet.writePoses(t, buf)
       for (let i = 0; i < fleet.count; i++) {
         const tr = net.tracks[fleet.craftAt(i).track]
+        if (tr.kind === 'ferry') {
+          // A ferry's envelope is its hull, which comes a berth from the pier head at its call (a disc would not fit).
+          const F = TRACKS.ferry
+          const x = field(buf, i, 'x'), y = field(buf, i, 'y'), z = field(buf, i, 'z'), heading = field(buf, i, 'heading')
+          const cx = Math.floor(x / cell), cz = Math.floor(z / cell)
+          for (let a = -1; a <= 1; a++) for (let c = -1; c <= 1; c++) {
+            for (const b of hash.get(`${cx + a},${cz + c}`) ?? []) {
+              if (b[4] <= y - F.draft || b[1] >= y + F.height) continue
+              const gap = hullGap(x, z, heading, F.halfLength, F.halfBeam, b)
+              assert.ok(gap >= F.berth - 1e-3, `seed ${seed}: ferry craft ${i} at t ${t} (${x.toFixed(1)}, ${z.toFixed(1)}) is ${gap.toFixed(3)} m from a box`)
+            }
+          }
+          continue
+        }
         const env = envelope[tr.kind as keyof typeof envelope]
         const x = field(buf, i, 'x'), y = field(buf, i, 'y'), z = field(buf, i, 'z')
         const y0 = y + env.low, y1 = y + env.high

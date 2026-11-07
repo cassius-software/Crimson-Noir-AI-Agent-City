@@ -67,16 +67,16 @@ export const MODES: readonly DriveMode[] = ['ai', 'player', 'parked']
 
 /**
  * One scheduled craft's slice of the craft buffer (Float32Array, `TRACK_POSE.stride` floats per craft): the train
- * sets, drones, planes and VTOLs that follow the corridors of 06_Make_Decisions/tracks.ts on the realm's own clock
+ * sets, drones, planes, VTOLs and ferries that follow the corridors of 06_Make_Decisions/tracks.ts on the realm's own clock
  * (trackFleet.ts), in network order (track by track, each track's craft by index). `kind` is the craft's index in
  * TRACK_KINDS, `track` its track id, `s` its arc length along the track (m) and `speed` its speed along it (m/s).
  * The page only draws it; the Ring-0 audit reads it (every value finite, every craft at or above its corridor's
- * floor) before it leaves the realm.
+ * floor, a ferry's hull on the lake side of its shore) before it leaves the realm.
  */
 export const TRACK_POSE = { x: 0, y: 1, z: 2, heading: 3, kind: 4, track: 5, s: 6, speed: 7, stride: 8 } as const
 
 /** TrackKind as it is stored in the craft buffer (index = code). Cars never appear in it: they are in the pose buffer. */
-export const TRACK_KINDS: readonly TrackKind[] = ['car', 'train', 'drone', 'plane', 'vtol']
+export const TRACK_KINDS: readonly TrackKind[] = ['car', 'train', 'drone', 'plane', 'vtol', 'ferry']
 
 /**
  * The rig stream (StepState.rigs): one slice of `RIG_POSE.stride` floats per rig slot (`SimMeta.rigSlots` of them),

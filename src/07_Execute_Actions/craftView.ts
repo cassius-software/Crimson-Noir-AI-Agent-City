@@ -4,18 +4,18 @@
 /**
  * Why does this file exist? It draws the scheduled craft on the page: the train sets on the elevated loop (three rigid
  * cars a set, laid along the loop behind the set's head), the drones on their corridors, the planes on the racetrack
- * (banked through its turns by their own speed and the turn's radius) and the VTOLs between their rooftop pads
- * (nose down with their speed, upright over a pad), from the craft stream the physics worker sends every step
- * (simProtocol.ts TRACK_POSE), one InstancedMesh a kind; and the structure that stands still: the loop's deck,
- * guideway columns and beams, its four station platforms with their canopies, and a pad on every roof a VTOL calls
- * at. The page builds the network for them from the same seed and boxes as the realm (tracks.ts buildTrackNetwork),
- * so the deck lies under the trains and the pads under the VTOLs by construction. It holds no physics and no
- * timetable: numbers in, matrices out; the realm's Ring-0 audit has already read every number here.
+ * (banked through its turns by their own speed and the turn's radius), the VTOLs between their rooftop pads (nose down
+ * with their speed, upright over a pad) and the ferries on the lake, from the craft stream the physics worker sends
+ * every step (simProtocol.ts TRACK_POSE), one InstancedMesh a kind; and the structure that stands still: the loop's
+ * deck, guideway columns and beams, its four station platforms with their canopies, and a pad on every roof a VTOL
+ * calls at. The page builds the network for them from the same seed and boxes as the realm (tracks.ts
+ * buildTrackNetwork), so the deck lies under the trains and the pads under the VTOLs by construction. It holds no
+ * physics and no timetable: numbers in, matrices out; the realm's Ring-0 audit has already read every number here.
  * What breaks if it is removed? The craft run in the worker but are never seen, and the sky and the loop stay empty.
  */
 import {
-  BoxGeometry, BufferGeometry, ConeGeometry, CylinderGeometry, Float32BufferAttribute, InstancedMesh, Matrix4, Mesh, MeshStandardNodeMaterial,
-  Quaternion, RingGeometry, Vector3, type Object3D, type UniformNode, type Vector4,
+  BoxGeometry, BufferGeometry, ConeGeometry, CylinderGeometry, ExtrudeGeometry, Float32BufferAttribute, InstancedMesh, Matrix4, Mesh,
+  MeshStandardNodeMaterial, Quaternion, RingGeometry, Shape, Vector3, type Object3D, type UniformNode, type Vector4,
 } from 'three/webgpu'
 import { abs, attribute, float, select, sin, time, vec3 } from 'three/tsl'
 import type { Node } from 'three/webgpu'
@@ -39,7 +39,10 @@ const VTOL_PITCH = 0.14
 /** How much of the way to its target bank a plane rolls each sync (about 0.2 s at 60 a second). */
 const BANK_EASE = 0.08
 const G = 9.81
-const KIND = { train: TRACK_KINDS.indexOf('train'), drone: TRACK_KINDS.indexOf('drone'), plane: TRACK_KINDS.indexOf('plane'), vtol: TRACK_KINDS.indexOf('vtol') }
+const KIND = {
+  train: TRACK_KINDS.indexOf('train'), drone: TRACK_KINDS.indexOf('drone'), plane: TRACK_KINDS.indexOf('plane'), vtol: TRACK_KINDS.indexOf('vtol'),
+  ferry: TRACK_KINDS.indexOf('ferry'),
+}
 /** The envelope the pads are drawn within: a pad's radius is under TRACKS.vtol.padHalf, so it lies on the roof it is set on. */
 const PAD_RADIUS = 3.8
 
@@ -85,7 +88,7 @@ export function droneGeometry(): BufferGeometry {
   const parts: [BufferGeometry, number][] = [[box(0.46, 0.1, 0.46), PART.shell]]
   for (const a of [Math.PI / 4, -Math.PI / 4]) parts.push([new BoxGeometry(0.76, 0.03, 0.05).rotateY(a).translate(0, 0.06, 0), PART.shell])
   for (const x of [-0.27, 0.27]) for (const z of [-0.27, 0.27]) parts.push([new CylinderGeometry(0.17, 0.17, 0.015, 10).translate(x, 0.09, z), PART.rotor])
-  parts.push([box(0.06, 0.06, 0.06, 0.2, 0, 0.2), PART.lampPort], [box(0.06, 0.06, 0.06, 0.2, 0, -0.2), PART.lampStarboard])
+  parts.push([box(0.06, 0.06, 0.06, 0.2, 0, -0.2), PART.lampPort], [box(0.06, 0.06, 0.06, 0.2, 0, 0.2), PART.lampStarboard])
   return assemble(parts)
 }
 
@@ -104,8 +107,8 @@ export function planeGeometry(): BufferGeometry {
     [new CylinderGeometry(0.8, 0.8, 3.4, 12).rotateZ(Math.PI / 2).translate(1.5, -1.3, 6), PART.shell],
     [new CylinderGeometry(0.8, 0.8, 3.4, 12).rotateZ(Math.PI / 2).translate(1.5, -1.3, -6), PART.shell],
     [box(24, 0.5, 3.24, 1, 0.5), PART.glass],
-    [box(0.3, 0.3, 0.3, 1, -0.5, 18), PART.lampPort],
-    [box(0.3, 0.3, 0.3, 1, -0.5, -18), PART.lampStarboard],
+    [box(0.3, 0.3, 0.3, 1, -0.5, -18), PART.lampPort],
+    [box(0.3, 0.3, 0.3, 1, -0.5, 18), PART.lampStarboard],
     [box(0.3, 0.3, 0.3, -17.6, 5.3, 0), PART.strobe],
   ])
 }
@@ -131,6 +134,39 @@ export function vtolGeometry(): BufferGeometry {
     parts.push([new CylinderGeometry(0.72, 0.72, 0.03, 16).translate(x, 0.9, z), PART.rotor])
   }
   return assemble(parts)
+}
+
+/**
+ * A harbour ferry: a hull with a pointed bow (the waterline at the origin, its keel 1.3 m under it), the crimson stripe
+ * along the topsides, a passenger cabin with a window band, a wheelhouse over it, a mast with the beacon, red and green
+ * side lights on the wheelhouse and a white stern light. Forward is +x, within TRACKS.ferry.halfLength along,
+ * halfBeam across, draft under the waterline and height over it.
+ */
+export function ferryGeometry(): BufferGeometry {
+  // The hull in plan, extruded up 2.6 m: a square stern, parallel sides, and a bow that narrows to a point.
+  const plan = new Shape()
+  plan.moveTo(-12.6, -4.4)
+  plan.lineTo(6, -4.4)
+  plan.lineTo(10.6, -2.6)
+  plan.lineTo(12.8, 0)
+  plan.lineTo(10.6, 2.6)
+  plan.lineTo(6, 4.4)
+  plan.lineTo(-12.6, 4.4)
+  plan.closePath()
+  const hull = new ExtrudeGeometry(plan, { depth: 2.6, bevelEnabled: false, curveSegments: 1 }).rotateX(-Math.PI / 2).translate(0, -1.3, 0)
+  return assemble([
+    [hull, PART.shell],
+    [box(18.6, 0.3, 8.84, -3.3, 0.9), PART.stripe],
+    [box(14, 2.2, 7.4, -2.5, 2.4), PART.shell],
+    [box(13.6, 0.9, 7.46, -2.5, 2.6), PART.glass],
+    [box(5, 1.8, 5.6, 2.4, 4.4), PART.shell],
+    [box(5.04, 0.7, 5.66, 2.4, 4.6), PART.glass],
+    [box(0.3, 2.0, 0.3, 1.2, 6.3), PART.shell],
+    [box(0.25, 0.2, 0.25, 1.2, 7.35), PART.beacon],
+    [box(0.3, 0.3, 0.3, 4.2, 4.0, -2.9), PART.lampPort],
+    [box(0.3, 0.3, 0.3, 4.2, 4.0, 2.9), PART.lampStarboard],
+    [box(0.3, 0.3, 0.3, -12.55, 1.6, 0), PART.strobe],
+  ])
 }
 
 /** A rooftop pad: a concrete disc, its lit ring and the H. The origin is the disc's centre; it is set 0.15 m into the roof. */
@@ -209,7 +245,7 @@ function craftMaterial(shell: [number, number, number], night: Night, matrixMode
 }
 
 export class CraftView {
-  /** Everything to add to the scene: the four kinds' instanced meshes, the pads, the deck and its columns and beams. */
+  /** Everything to add to the scene: the five kinds' instanced meshes, the pads, the deck and its columns and beams. */
   readonly meshes: readonly Object3D[]
   /** Craft in every stream this view reads: the network's, which must be the realm's. */
   readonly count: number
@@ -217,6 +253,7 @@ export class CraftView {
   readonly drones: InstancedMesh
   readonly planes: InstancedMesh
   readonly vtols: InstancedMesh
+  readonly ferries: InstancedMesh
   readonly pads: InstancedMesh
   readonly guideway: Mesh | null
   readonly columns: InstancedMesh | null
@@ -247,7 +284,7 @@ export class CraftView {
     this.tracks = network.tracks
     this.kindOf = new Uint8Array(count)
     this.slotOf = new Int32Array(count)
-    const per = [0, 0, 0, 0, 0]
+    const per = TRACK_KINDS.map(() => 0)
     for (let i = 0; i < count; i++) {
       const c = fleet.craftAt(i)
       this.kindOf[i] = c.kind
@@ -266,6 +303,7 @@ export class CraftView {
     this.drones = instanced(droneGeometry(), craftMaterial([0.16, 0.17, 0.18], night, matrixMode, { metal: 0.4, rough: 0.5 }), per[KIND.drone], 'Drones', false)
     this.planes = instanced(planeGeometry(), craftMaterial([0.82, 0.83, 0.85], night, matrixMode, { metal: 0.7, rough: 0.3, glow: 0.4 }), per[KIND.plane], 'Planes', false)
     this.vtols = instanced(vtolGeometry(), craftMaterial([0.14, 0.14, 0.15], night, matrixMode, { metal: 0.55, rough: 0.35, glow: 0.6 }), per[KIND.vtol], 'VTOLs', true)
+    this.ferries = instanced(ferryGeometry(), craftMaterial([0.72, 0.73, 0.74], night, matrixMode, { metal: 0.3, rough: 0.5, glow: 0.7 }), per[KIND.ferry], 'Ferries', true)
     this.bank = new Float32Array(Math.max(1, per[KIND.plane]))
     // The pads: one on every roof a VTOL route calls at, set 0.15 m into it.
     const padsAt: { x: number; y: number; z: number }[] = []
@@ -276,7 +314,7 @@ export class CraftView {
     if (padsAt.length > 0) this.pads.computeBoundingSphere()
     // The loop's structure.
     const train = network.tracks.find((t) => t.kind === 'train') ?? null
-    const meshes: Object3D[] = [this.trains, this.drones, this.planes, this.vtols, this.pads]
+    const meshes: Object3D[] = [this.trains, this.drones, this.planes, this.vtols, this.pads, this.ferries]
     if (train) {
       const concrete = craftMaterial([0.42, 0.42, 0.4], night, matrixMode, { metal: 0, rough: 0.9 })
       this.guideway = new Mesh(guidewayGeometry(train), concrete)
@@ -304,7 +342,10 @@ export class CraftView {
     this.meshes = Object.freeze(meshes)
   }
 
-  /** Yaw for the realm's heading (forward (sin h, 0, cos h)) on a body whose forward is +x. */
+  /**
+   * Yaw for the realm's heading (forward (sin h, 0, cos h)) on a body whose forward is +x: the body's +z lands on
+   * (−cos h, 0, sin h), the right of travel (tracks.ts), so a body's starboard side is its +z and its port side −z.
+   */
   private yaw(heading: number): Quaternion {
     return this.q.setFromAxisAngle(this.Y, heading - Math.PI / 2)
   }
@@ -331,17 +372,20 @@ export class CraftView {
         this.drones.setMatrixAt(slot, this.m.compose(this.v.set(x, y, z), this.q, this.one))
       } else if (kind === KIND.plane) {
         // Banked by the turn: tan(bank) = v² / (g R) on an arc, level on a straight; eased so a piece's end is not a snap.
+        // A positive bank about the body's +x lowers its +z wing, the right one (yaw above), into a right turn.
         const piece = track ? pieceAt(track, s) : null
-        const target = piece && piece.kind === 'arc' ? -Math.sign(piece.sweep) * Math.atan((speed * speed) / (G * piece.radius)) : 0
+        const target = piece && piece.kind === 'arc' ? Math.sign(piece.sweep) * Math.atan((speed * speed) / (G * piece.radius)) : 0
         this.bank[slot] += (target - this.bank[slot]) * BANK_EASE
         this.yaw(heading).multiply(this.q2.setFromAxisAngle(this.X, this.bank[slot]))
         this.planes.setMatrixAt(slot, this.m.compose(this.v.set(x, y, z), this.q, this.one))
       } else if (kind === KIND.vtol) {
         this.yaw(heading).multiply(this.q2.setFromAxisAngle(this.Z, -VTOL_PITCH * Math.min(1, speed / TRACKS.vtol.speed)))
         this.vtols.setMatrixAt(slot, this.m.compose(this.v.set(x, y, z), this.q, this.one))
+      } else if (kind === KIND.ferry) {
+        this.ferries.setMatrixAt(slot, this.m.compose(this.v.set(x, y, z), this.yaw(heading), this.one))
       }
     }
-    for (const mesh of [this.trains, this.drones, this.planes, this.vtols]) mesh.instanceMatrix.needsUpdate = true
+    for (const mesh of [this.trains, this.drones, this.planes, this.vtols, this.ferries]) mesh.instanceMatrix.needsUpdate = true
   }
 
   dispose(): void {

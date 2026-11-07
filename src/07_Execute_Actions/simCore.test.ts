@@ -1112,7 +1112,7 @@ test('tracks on: a step returns the pose buffer and the craft buffer, plain data
   assert.equal(auditCraft(craft), null)
   const kinds = new Set<number>()
   for (let i = 0; i < sim.meta.craft; i++) kinds.add(craft[i * TRACK_POSE.stride + TRACK_POSE.kind])
-  assert.deepEqual([...kinds].sort(), [TRACK_KINDS.indexOf('train'), TRACK_KINDS.indexOf('drone'), TRACK_KINDS.indexOf('plane')])
+  assert.deepEqual([...kinds].sort(), [TRACK_KINDS.indexOf('train'), TRACK_KINDS.indexOf('drone'), TRACK_KINDS.indexOf('plane'), TRACK_KINDS.indexOf('ferry')])
   // The craft stand where the realm's clock has them: the timetable evaluated at simTime, bit for bit.
   assert.deepEqual(Array.from(craft), Array.from(reference.writePoses(s.simTime, new Float32Array(reference.length))))
   // The craft move with the clock, and the trains stay on their deck.

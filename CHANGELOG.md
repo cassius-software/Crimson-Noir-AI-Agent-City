@@ -15,6 +15,27 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **A box truck, an automated guided vehicle and a counterbalance forklift.** Three working kinds join
+  `VEHICLE_KINDS` (`src/07_Execute_Actions/car.ts`), eleven in all: a cab-over box truck on the heavy class, and a
+  cab-less guided vehicle and a forklift under its overhead guard on the light class, the last two drawn smaller than
+  the sedan's box, with an amber beacon on the guided vehicle's sensor dome and on the forklift's guard. Each has its
+  own extruded profile and glass (`fleetView.ts` `PROFILES`; the driver's eye looks out through the guided vehicle's
+  sensor band and the forklift's open cab and mast), inside its class's box plus the dissolve's reach (`vehicleKinds.test.ts`), and a name the conduct test
+  reads. The first eight kinds keep their indices and the heavy share of the fleet's draw is unchanged, so every slot
+  keeps its chassis class; a slot's kind within its class can change. Manual: Vehicles.
+- **Two harbour ferries on the lake.** A new craft kind, `ferry` (`src/06_Make_Decisions/tracks.ts` `ferryRoutes`,
+  `TRACKS.ferry`; `simProtocol.ts` `TRACK_KINDS`): two 26 m ferries share one 1.8 km route on the lake, calling
+  alongside the pier head for 30 s with the hull 2 m off the pier's end, then sailing at up to 6 m/s, half a lap
+  apart, on the train's timetable machinery with their own acceleration and dwell. `craftView.ts` draws them
+  (`ferryGeometry`, a pointed hull with the crimson stripe, cabin, wheelhouse, side lights and a mast beacon). The
+  proof is the seawall, not height: `tracks.test.ts` measures the hull (`hullGap`, a rectangle, not a disc) every
+  half metre against every box of four seeds (closest approach: the 2 m berth) and keeps every hull corner 2 m off
+  the seawall; `trackFleet.test.ts` reads the hull's clearance off the stream for ten minutes (more than a lap) and
+  the ferries on the water, on their route and clean for the audit for two hours of realm time. The Ring-0 craft
+  audit gains the kind's floor (its waterline) and a shore, the pier's end (`CRAFT.shore`, 746 m), read with the
+  hull at its heading (`CRAFT.halfLength`, `CRAFT.halfBeam`): a ferry whose hull reaches the land side of it halts
+  the realm, and every pose of the route keeps its hull more than a metre clear (`ring0.test.ts`). Nobody boards a
+  craft yet. Manual: Vehicles.
 - **Kerbside bays, and the only car you may take.** One car in four of a fleet is seated, empty, in a kerbside bay
   (`src/07_Execute_Actions/parking.ts` `BAYS`, `bayNear`, `bayClear`; `carRig.ts` `planFleet` takes the city's
   boxes): the last quarter of the plan, so every earlier slot is as it was and the seed's stream is not drawn from,
@@ -290,7 +311,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   adapter.
 - **Unarmed by construction, pinned.** `conduct.test.ts` now proves the city carries no weapon: the wardrobe's five
   optional pieces (a tie, a bag, a cup, long hair, glasses), the ragdoll's eleven body segments and ten joints, the
-  crowd's eight activities, the seven action verbs with their rules and hints, the skills and the eight vehicle kinds
+  crowd's eight activities, the seven action verbs with their rules and hints, the skills and the eleven vehicle kinds
   name none; the agents' mesh descriptors, rigs, shaders and action tables carry no weapon word in code or comment; an
   `ACTION` line that asks for one is refused before any model is involved; and the asset gate's four forbidden words
   are all in the conduct lexicon, so an ask about one is not engaged with. A new optional piece or activity has to be
@@ -719,6 +740,12 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Fixed
 
+- **Craft show red to port and green to starboard, and planes bank into their turns.** A craft's body has its right
+  side on +z under the view's yaw (`craftView.ts`), but the drone's and the plane's red light sat on +z, and a plane
+  rolled its outer wing down through a turn. The side lights move to their own sides (the new ferry's too), the bank
+  lowers the inner wing, and `craftView.test.ts` now pins both: every side light on its side of the body, every
+  craft's +z on the right of travel as the stream places it, and the plane's right wing down in a right turn. The
+  drawing only; no craft moves differently.
 - **A scrape along a lot wall replays to the bit.** The city's lots are boxes that overlap (a plinth, and buildings
   raised from the street inside it), so a street face was two solid faces in one plane up to the plinth's top. A
   chassis working its corner along it got two identical contacts, and how Rapier split the impulse between them
