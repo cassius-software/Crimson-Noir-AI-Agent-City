@@ -2474,12 +2474,13 @@ physics realm is the prediction that hides the latency.
 - **The smoke test.** `npm run smoke:net` starts the real server as a process of its own (snapshots once a second,
   so the answer to a packet is plainly its correction) and plays a client over a real socket. It checks that a
   missing or forged token is refused before a socket opens, that an honest walk is kept (it waits for the snapshot
-  that acknowledges the walk's last step, however late), and that nine crafted illegal packets are each refused and
+  that acknowledges the walk's last step, however late), and that ten crafted illegal packets are each refused and
   corrected within 50 ms (measured here: 0.7–15.1 ms), with nothing else sent
   back and the server's truth unchanged: a position written into memory, 600 substeps in one packet, a burst past
   the bank of 180 substeps (the correction proves the six honest bursts before it were the ones kept), a walk
   through the podium east of the spawn sidewalk, an injected velocity of three runs, a door into a car 284 m away, a
-  car claimed beside the player but off every ring, a door out of a car never taken, and a wheel never taken.
+  car in traffic claimed beside the player (it has a driver), a bay car claimed beside the player far from its bay, a
+  door out of a car never taken, and a wheel never taken.
 - **Fuzzing and the parity proof** (Phase 13). Seeded, replayable property suites
   (`02_Define_The_Rules/property.ts`) fuzz every layer, with their fixed seeds on every change (`ci.yml`) and, every
   night, at twenty times the case count from a fresh seed (`.github/workflows/fuzz.yml`: `FUZZ_SCALE` and
