@@ -203,7 +203,7 @@ test('a host that vouches nothing or whose realm halted: every lane isolated thr
 })
 
 test('stop closes the lanes and keeps the people; a second dispatch replaces the first and a late answer from the first changes nothing; the console surface is frozen; dispose', async () => {
-  let release: (() => void) | null = null
+  let release = null as (() => void) | null
   const slow = host({ recruit: (skill) => new Promise((resolve) => { release = () => resolve({ ok: true, agent: 99, message: `agent 99 (${skill}) is coming over` }) }) })
   const crew = new TeamRunner(slow)
   const con = crew.console()
@@ -213,7 +213,7 @@ test('stop closes the lanes and keeps the people; a second dispatch replaces the
   assert.equal(con.stop(), 'nobody dispatched')
   assert.deepEqual(con.dispatch(teamFor('the warehouse')), { lanes: 1, dropped: 0 })
   assert.ok(release !== null, 'the first team asked someone over')
-  const first = release!
+  const first = release
   // The second team replaces the first before the first's answer comes.
   assert.deepEqual(con.dispatch(teamFor('two agents at the clinic')), { lanes: 2, dropped: 0 })
   first()
