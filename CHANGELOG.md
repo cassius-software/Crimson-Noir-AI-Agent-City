@@ -33,6 +33,11 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   which WiX and rpm refuse), anything signed or notarized (no Apple or Windows signing account), UEFI aarch64. Tried
   in Node (the dry run and the table's tests); the workflow's first runs are the pull request's own, and no file it
   makes has been opened on a Mac, a phone or a Windows on Arm machine.
+  The workflow's first run on this change's own pull request built all seven: Windows arm64, Linux x64, Linux arm64,
+  macOS universal, the Android .apk, the iOS .ipa and the UEFI application with its media (the Android and iOS jobs
+  needed the Tauri CLI driven as Tauri expects: the mobile projects generated through npm, so Gradle and Xcode can
+  call it back, and the .ipa from `tauri ios build --no-sign`). None of the files has been opened on a device yet
+  except the Windows app.
 - **Hardware classes, lanes per class and the `hardware` command.** The engine now decides once at boot which of
   three machines it is on (`src/05_Observe_Environment/governor.ts` `classifyHardware`): a phone (any phone, tablet
   or lite profile), a workstation (a Peak candidate whose WebGPU adapter binds at least 512 MiB in one storage buffer
