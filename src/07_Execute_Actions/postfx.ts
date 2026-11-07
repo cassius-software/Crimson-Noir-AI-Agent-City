@@ -15,7 +15,7 @@
  * tone curve.
  */
 import {
-  Matrix4, NoToneMapping, RenderPipeline, SRGBColorSpace, type Mesh, type Node, type NodeBuilder, type PerspectiveCamera,
+  Matrix3, Matrix4, NoToneMapping, RenderPipeline, SRGBColorSpace, type Mesh, type Node, type NodeBuilder, type PerspectiveCamera,
   type Scene, type UniformNode, type WebGPURenderer,
 } from 'three/webgpu'
 import {
@@ -64,19 +64,26 @@ export function pickMotion(material: unknown, resorted: ReadonlySet<unknown>, ca
   return resorted.has(material) ? cameraOnly : (velocity as unknown as Node<'vec2'>)
 }
 
+/** The colour-vision filter's matrix (access.ts visionMatrix), the identity until the host sets one. */
+export type VisionUniform = UniformNode<'mat3', Matrix3>
+
 export function buildPost(
   renderer: WebGPURenderer, scene: Scene, camera: PerspectiveCamera, cinema: CinemaScene | null = null,
   ghost: GhostLayer | null = null,
-): { pipeline: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null } {
+): { pipeline: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; vision: VisionUniform } {
   const scenePass = pass(scene, camera)
   const pipeline = new RenderPipeline(renderer)
   pipeline.outputColorTransform = false
   const vignette = float(1).sub(smoothstep(0.55, 1.2, length(screenUV.sub(0.5)).mul(1.4)).mul(0.3))
+  // The colour-vision filter (access.ts): one 3×3 over the finished, display-referred frame, the identity unless the
+  // host sets a protan, deutan or tritan daltonisation. After the ghost, so its colours are moved with the frame's.
+  const vision: VisionUniform = uniform(new Matrix3())
   // Last of all, over the finished (shuttered, graded, anti-aliased) frame: ghost view, when the page has one. Its
   // shapes render in a pass of their own, never in the scene pass, so they reach no velocity buffer.
   const finish = (fxaaImage: Node): Node => {
     const image = fxaaImage as unknown as Node<'vec4'>
-    return ghost ? ghostComposite(image, pass(ghost.scene, camera).getTextureNode('output'), ghost) : image
+    const over = ghost ? ghostComposite(image, pass(ghost.scene, camera).getTextureNode('output'), ghost) : image
+    return vec4(vision.mul(over.rgb).clamp(), over.a)
   }
   if (!cinema) {
     const color = scenePass.getTextureNode('output')
@@ -89,7 +96,7 @@ export function buildPost(
     const lit = color.rgb.add(glow.rgb).add(rays.rgb).mul(vignette)
     // Tone map first, then anti-alias the display-referred image (FXAA expects it).
     pipeline.outputNode = finish(fxaa(renderOutput(vec4(lit, 1))))
-    return { pipeline, volumetrics, cinema: null }
+    return { pipeline, volumetrics, cinema: null, vision }
   }
 
   const volumetrics = createVolumetrics()
@@ -114,5 +121,5 @@ export function buildPost(
   const exposure = uniform(1)
   const filtered = lit.mul(exp2(nd.negate())).mul(exposure)
   pipeline.outputNode = finish(fxaa(renderOutput(vec4(filmResponse(filtered), 1), NoToneMapping, SRGBColorSpace)))
-  return { pipeline, volumetrics, cinema: { shutter, nd, exposure, previousViewProjection } }
+  return { pipeline, volumetrics, cinema: { shutter, nd, exposure, previousViewProjection }, vision }
 }

@@ -284,6 +284,8 @@ export interface SipocSnapshot {
      * distance, speech with its words. Absent while captions are off (?captions=0 or setCaptions(false)).
      */
     captions?: string[]
+    /** What the screen reader is told this interval (07_Execute_Actions/announcer.ts), added by the host; absent when there is nothing new. */
+    announce?: string
   }
   experience: { sessionSeconds: number; longFrames: number; distanceWalked: number; distanceDriven: number }
   map: MapCar[]

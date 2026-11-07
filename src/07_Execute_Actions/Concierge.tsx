@@ -492,7 +492,7 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
     const pill = `pointer-events-auto absolute ${at} flex items-center rounded-full border text-[12px] backdrop-blur-xl backdrop-saturate-150 ${glass} ${enter}`
     const style = chipTop ? { top: chipTop } : undefined
     return (
-      <div className="pointer-events-none absolute inset-0 z-30 font-sans antialiased select-none">
+      <div className="ui-zoom pointer-events-none absolute inset-0 z-30 font-sans antialiased select-none">
         {pending ? (
           <button ref={chipRef} type="button" onClick={askForName} className={`${pill} gap-2 py-1 pr-3.5 pl-1`} style={style} data-concierge="chip">
             <SloaneMark size={24} />
@@ -730,7 +730,7 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
     </aside>
   )
   return (
-    <div className="pointer-events-none absolute inset-0 z-30 font-sans text-[13px] antialiased">
+    <div className="ui-zoom pointer-events-none absolute inset-0 z-30 font-sans text-[13px] antialiased">
       {wide ? <div className={WIDE_COLUMN}>{card}<div aria-hidden className={WIDE_SPACER} /></div> : card}
     </div>
   )

@@ -84,10 +84,10 @@ test('the card: an alertdialog with data-act over the console and under the reco
   assert.match(root, /data-act=\{act\.seq\}/)
   assert.match(root, /aria-labelledby=\{title\}/)
   assert.doesNotMatch(root, /aria-modal/, 'the console beneath stays usable')
-  assert.match(root, /className="pointer-events-none fixed inset-0 z-\[10000\] /, 'the root lets the pointer through to the city')
+  assert.match(root, /className="ui-zoom pointer-events-none fixed inset-0 z-\[10000\] /, 'the root lets the pointer through to the city')
   assert.match(CARD, /<div className="pointer-events-auto w-full max-w-sm /, 'only the card takes taps')
   assert.match(read('./terminal/Terminal.tsx'), /\.r0-root\{position:absolute;top:0;left:0;right:0;z-index:9999;/, 'over the console')
-  assert.match(RECOVERY, /className="fixed inset-0 z-\[10001\] /, 'under the recovery card')
+  assert.match(RECOVERY, /className="ui-zoom fixed inset-0 z-\[10001\] /, 'under the recovery card')
   // Refuse first in DOM order (a pad's south face button presses the first button when none is focused), both min-h-11.
   const buttons = [...CARD.matchAll(/<button [\s\S]*?>(Refuse|Allow)<\/button>/g)]
   assert.deepEqual(buttons.map((m) => m[1]), ['Refuse', 'Allow'])
