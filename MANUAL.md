@@ -751,14 +751,15 @@ anywhere in the product.
   model is asked through the operator tier (whichever provider answers: the Claude gateway, a model server on this
   machine, the model file kept in this page, or the script; the swarm asks the same way, one step at a time), its
   answer may end with one `ACTION:` line from the fixed catalogue, the line is proposed to you, and once you allow it
-  it runs once under the proposer's tether. The gate stands at the three moments on that road, and its twelve checks
+  it runs once under the proposer's tether. The gate stands at the three moments on that road, and its thirteen checks
   are ranked under four laws, the Zeroth Law above the kernel's three: **Zeroth, protect the city.** The page's
   outbound primitives are held to this machine, as the host vouches (the air gap `main.tsx` installed is still in
   place); the model is on this machine or there is none; the words pass the 14A screen; the effect is a line of the
   catalogue. **First.** The Ring-0 audit has not panicked (a halted realm takes no action); the verb reaches no
   facade leaf that moves a body, drives a car or weakens the kernel (a table of what every verb reaches, proved
   exact by running every verb over a recording facade). **Second.** The operator tier is unlocked; a person allowed
-  it, at the console, on the card or through a host (the gateway never allows). **Third.** The proposer is still
+  it, at the console, on the card or through a host (the gateway never allows); a sub-agent's lane holds the capability
+  its effect needs (see below). **Third.** The proposer is still
   tethered, under the same recruitment; the hash-chained trail verifies; no other proposal waits. Every check is a
   rule over plain values, applied the same way every time, with no clock, no randomness and no I/O; the refusal
   names the highest law that refused in the kernel's words (`Second Law: the operator tier is locked`), and a
@@ -768,6 +769,22 @@ anywhere in the product.
   operator tier and every action: the gate fails closed. A model's rewording of Sloane's lines passes the same screen
   before it is spoken as the city's own (the onboarding voice asks the model for it outside the gate's ask check; a
   rewording changes nothing, and the provider's own loopback gate holds its address).
+- **Capability lanes and the lane panic** (`02_Define_The_Rules/capabilities.ts`, `ring0Panic.ts`). A sub-agent of a
+  dispatched plan runs in a lane with a 32-bit capability word, kept one word per lane in a typed array as the kernel
+  keeps its own fuse. Four bits can be granted: move (a rally the physics realm decides), workplace task (a station
+  indoors and the bounded program run there), vehicle teleop (a car's intent through the elite tier's write) and
+  sub-agent spawn (opening a lane under one's own, the root orchestrator's bit). Every other bit is forbidden for
+  good, and the top four name the doors of the host no lane is ever let through: the network (`fetch`,
+  `XMLHttpRequest`, `WebSocket`, `EventSource`, WebRTC, `WebTransport`, `navigator.sendBeacon`), dynamic code
+  (`eval`, `Function`, `importScripts`, WebAssembly), a window (`window.open`) and the host process (`process`,
+  `require`, the file system). A grant keeps only the grantable bits; the check is the kernel's own `asked & !held`,
+  without a branch. The gate's `LaneCapable` check (Second Law) reads the word the moment before a lane's effect, and
+  a refusal trips the lane panic: the lane's word is zeroed and sealed (nothing is granted to it again), the fault is
+  hashed onto a ledger chained from a fixed genesis with the city's SHA-256, one line goes to the console (`[RING-0
+  LANE 3] isolated (capability): … audit 9f3a…`), and the frame goes on: unlike the realm's kernel panic, which locks
+  the page, a lane's panic isolates the lane and nothing else. The network and window doors are the air gap's to
+  hold on the page's own global (`window.open` is held to this machine like `fetch`); the code and host doors are
+  not reachable from a lane at all, since a lane runs NoirScript, whose folder names none of them.
 - **The physics realm** (`physics.worker.ts`, `simHost.ts`, `simCore.ts`). The Rapier world runs in a dedicated
   Web Worker, inlined into the single HTML file, together with everything that touches it: the fleet and its
   Bouncer, the avatar, the Sanctuary, the Ring-0 audit, the promoted pedestrians' rigs and their balance machine,
@@ -1156,7 +1173,7 @@ Ring-0 elite tier above it, below). While unlocked:
   reloading the page (`map`, `boot`) and spawning or altering anyone are not in the catalogue and cannot be proposed;
   a line that asks for them is refused by name, under the gate's Zeroth Law (`Zeroth Law: no city action called
   'teleport' (time, rain, light, quality, cars, crowd, sound, or none)`). `help` lists the command as `act [ok|no|log [verify]|list|gate]`; `act list` prints the catalogue,
-  `act gate` the Ring-0 action gate's twelve checks with their laws (see The ethical kernel), and the reads (`act`,
+  `act gate` the Ring-0 action gate's thirteen checks with their laws (see The ethical kernel), and the reads (`act`,
   `act log`, `act list`, `act gate`) work while locked. **The gate.** Before any of this, every ask passes the gate
   (the page contained as the host vouches and the model on this machine or none: `ask: Zeroth Law: …` otherwise;
   the lock, which `ask: locked` has refused already, is held again), every `ACTION:` line passes it as it is read,
@@ -2981,7 +2998,7 @@ reset and a real pad.
   `installAirgap(globalThis)` before anything else, and `physics.worker.ts` on the worker's own global; it replaces
   `fetch`, `WebSocket`, `EventSource`, `XMLHttpRequest.prototype.open` and `importScripts` with versions that refuse,
   in one sentence, any URL that is not loopback, the page's own origin or a `blob:`/`data:` URL the page made, removes
-  `RTCPeerConnection`, `WebTransport` and `navigator.sendBeacon` outright, and freezes those properties, so an
+  `RTCPeerConnection`, `WebTransport` and `navigator.sendBeacon` outright, holds `window.open` to the same places, and freezes those properties, so an
   operator script or an injected one cannot put the originals back. The proof: `10_Network/airgap.test.ts` reads the
   source and fails if any runtime file names an address off this machine, or an outbound primitive outside its
   allowlist, or an allowlisted call site whose enclosing function does not go through the gate, or if either entry

@@ -17,9 +17,10 @@ import { readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  ACTION_LEAVES, admitAsk, admitProposal, admitRun, admitWords, CHECK_INVARIANT, CHECK_LAW, CHECKS, invariantsOf, KINETIC, KINETIC_FREE, kineticLeaves, REASONS, sentence,
-  type AskIntent, type CheckName, type GateVerdict, type ProposalIntent, type RunIntent,
+  ACTION_LEAVES, admitAsk, admitLane, admitProposal, admitRun, admitWords, CHECK_INVARIANT, CHECK_LAW, CHECKS, invariantsOf, KINETIC, KINETIC_FREE, kineticLeaves, REASONS, sentence,
+  type AskIntent, type CheckName, type GateVerdict, type LaneIntent, type ProposalIntent, type RunIntent,
 } from './ring0Gate.ts'
+import { CAP_CODE, CAP_MOVE, CAP_NET, CAP_SUBAGENT_SPAWN, CAP_WORKPLACE_TASK } from './capabilities.ts'
 import { INVARIANTS } from './guardrails.ts'
 import { LAW_NAMES, LAWS } from './laws.ts'
 import { parseAction, perform, VERBS, type CityKnobs } from '../06_Make_Decisions/actions.ts'
@@ -38,14 +39,15 @@ const { readHeld } = (await import(HELD)) as { readHeld(path: string, encoding: 
 const ASK: AskIntent = Object.freeze({ contained: true, endpoint: 'http://localhost:11434', unlocked: true })
 const PROPOSAL: ProposalIntent = Object.freeze({ contained: true, line: 'ACTION: time 22:00', catalogued: true, unlocked: true, vacant: true })
 const RUN: RunIntent = Object.freeze({ contained: true, verb: 'time', panic: null, unlocked: true, allowedBy: 'console', held: true, proposer: true, chainOk: true })
+const LANE: LaneIntent = Object.freeze({ contained: true, panic: null, held: CAP_MOVE | CAP_WORKPLACE_TASK, asked: CAP_MOVE })
 
 const ADMITTED: GateVerdict = Object.freeze({ admitted: true, law: null, failed: Object.freeze([]) })
 
 /** The verdict a single failed check gives. */
 const refusedBy = (check: CheckName, reason: string): GateVerdict => ({ admitted: false, law: CHECK_LAW[check], failed: [{ law: CHECK_LAW[check], check, reason }] })
 
-test('the table: twelve checks, named once, in rank order under the four laws, each with a sentence; every check stands under an invariant or none; everything is frozen', () => {
-  assert.equal(CHECKS.length, 12)
+test('the table: thirteen checks, named once, in rank order under the four laws, each with a sentence; every check stands under an invariant or none; everything is frozen', () => {
+  assert.equal(CHECKS.length, 13)
   assert.equal(new Set(CHECKS.map((c) => c.name)).size, CHECKS.length)
   for (let i = 1; i < CHECKS.length; i++) assert.ok(CHECKS[i - 1].law <= CHECKS[i].law, `${CHECKS[i].name} is ranked under ${CHECKS[i - 1].name}`)
   assert.deepEqual([...new Set(CHECKS.map((c) => c.law))], LAWS.map((l) => l.id), 'every law has a check')
@@ -57,8 +59,9 @@ test('the table: twelve checks, named once, in rank order under the four laws, e
   }
   assert.deepEqual(Object.keys(CHECK_INVARIANT).sort(), CHECKS.map((c) => c.name).sort())
   for (const o of [CHECKS, ...CHECKS, CHECK_LAW, CHECK_INVARIANT, REASONS, ACTION_LEAVES, ...Object.values(ACTION_LEAVES), KINETIC, KINETIC_FREE]) assert.ok(Object.isFrozen(o))
-  for (const f of [admitAsk, admitProposal, admitRun, admitWords, sentence, invariantsOf, kineticLeaves]) assert.ok(Object.isFrozen(f), f.name)
+  for (const f of [admitAsk, admitProposal, admitRun, admitLane, admitWords, sentence, invariantsOf, kineticLeaves]) assert.ok(Object.isFrozen(f), f.name)
   assert.deepEqual(admitAsk(ASK), ADMITTED)
+  assert.deepEqual(admitLane(LANE), ADMITTED)
   assert.deepEqual(admitProposal(PROPOSAL), ADMITTED)
   assert.deepEqual(admitRun(RUN), ADMITTED)
   assert.deepEqual(admitWords('Should it be morning, sunset or night when you arrive?'), ADMITTED)
@@ -123,6 +126,25 @@ test('an allowed action about to run: contained, the realm standing, kinetic-fre
   assert.equal(sentence(admitRun({ ...RUN, chainOk: false })), `Third Law: ${REASONS.ChainVerified}`)
 })
 
+test('a lane\'s effect: contained, the realm standing, every bit asked for held; a door bit is named as a door; a lane holding nothing asks for nothing', () => {
+  assert.deepEqual(admitLane({ ...LANE, asked: CAP_MOVE | CAP_WORKPLACE_TASK }), ADMITTED)
+  assert.deepEqual(admitLane({ ...LANE, asked: 0 }), ADMITTED, 'an effect that needs nothing')
+  assert.deepEqual(admitLane({ ...LANE, contained: null }), refusedBy('Contained', REASONS.Contained))
+  assert.deepEqual(admitLane({ ...LANE, contained: false }), refusedBy('Contained', REASONS.Contained))
+  assert.deepEqual(admitLane({ ...LANE, panic: 'RUNAWAY: 41.0 m/s' }), refusedBy('RealmStanding', 'the realm has halted: RUNAWAY: 41.0 m/s'))
+  assert.deepEqual(admitLane({ ...LANE, asked: CAP_SUBAGENT_SPAWN }), refusedBy('LaneCapable', 'the lane holds move, workplace task and asked for sub-agent spawn'))
+  assert.deepEqual(admitLane({ ...LANE, asked: CAP_MOVE | CAP_SUBAGENT_SPAWN }), refusedBy('LaneCapable', 'the lane holds move, workplace task and asked for sub-agent spawn'), 'only the missing bits are named')
+  assert.deepEqual(admitLane({ ...LANE, held: 0, asked: CAP_MOVE }), refusedBy('LaneCapable', 'the lane holds nothing and asked for move'), 'a zeroed lane')
+  assert.deepEqual(admitLane({ ...LANE, asked: CAP_NET }), refusedBy('LaneCapable', 'the lane asked for the network: a door no lane is granted'))
+  assert.deepEqual(admitLane({ ...LANE, held: 0xffff_ffff, asked: CAP_CODE }), ADMITTED, 'a word that somehow holds a door bit admits it: the table never grants one (capabilities.test.ts), the gate reads the word')
+  assert.deepEqual(admitLane({ ...LANE, asked: (1 << 20) >>> 0 }), refusedBy('LaneCapable', 'the lane asked for reserved bit 20: a bit no lane is granted'))
+  const all = admitLane({ contained: null, panic: 'x', held: 0, asked: CAP_MOVE | CAP_NET })
+  assert.deepEqual(all.failed.map((r) => [r.check, r.law]), [['Contained', 0], ['RealmStanding', 1], ['LaneCapable', 2]])
+  assert.equal(sentence(all), `Zeroth Law: ${REASONS.Contained}`)
+  assert.deepEqual(invariantsOf(all), ['LoopbackOnly', 'CapabilityTethered'])
+  assert.equal(sentence(admitLane({ ...LANE, asked: CAP_SUBAGENT_SPAWN })), 'Second Law: the lane holds move, workplace task and asked for sub-agent spawn')
+})
+
 test('deterministic: the same intent gives the same verdict every time, as frozen values the caller cannot alter; the gate keeps no clock, no randomness and no I/O', () => {
   const i: RunIntent = { contained: true, verb: 'cars', panic: 'x', unlocked: false, allowedBy: 'card', held: true, proposer: false, chainOk: true }
   const a = admitRun(i)
@@ -131,7 +153,7 @@ test('deterministic: the same intent gives the same verdict every time, as froze
   assert.throws(() => { (a as { admitted: boolean }).admitted = true }, TypeError)
   const src = code(readHeld(join(SRC, '02_Define_The_Rules/ring0Gate.ts'), 'utf8'))
   assert.doesNotMatch(src, /\bDate\b|Math\.random|\bfetch\b|\bsetTimeout\b|\bimport\s*\(|\bprocess\b|\bwindow\b|\bglobalThis\b|\bnavigator\b/)
-  assert.deepEqual(specifiers(src).sort(), ['./airgap.ts', './conduct.ts', './guardrails.ts', './laws.ts'], 'it reads the rules and nothing else')
+  assert.deepEqual(specifiers(src).sort(), ['./airgap.ts', './capabilities.ts', './conduct.ts', './guardrails.ts', './laws.ts'], 'it reads the rules and nothing else')
 })
 
 // ---------------------------------------------------------------- the First-Law table, proved against the catalogue

@@ -24,6 +24,10 @@
  *   over a recording facade), the tier is unlocked and a person allowed it (PersonAllowed: at the console, on the
  *   card or through the host; the gateway never allows), the proposer is still tethered under the same recruitment
  *   (LeaseHeld, ProposerBound), and the hash-chained trail verifies (ChainVerified).
+ * - `admitLane`, the moment before a sub-agent lane's effect (08_Swarm/lanes.ts): the page is contained, the realm
+ *   stands, and the lane's capability word holds every bit the effect needs (LaneCapable: capabilities.ts; a door bit,
+ *   the network, dynamic code, a window or the host process, is named as such and never admitted). A refusal here is
+ *   what trips the lane panic (ring0Panic.ts lanePanic): the lane is zeroed and the fault hashed onto the ledger.
  * - `admitWords`, for a model's words shown as the city's own (the onboarding's reworded lines): the screen alone. The
  *   onboarding voice asks a model for that rewording outside `admitAsk` (it changes nothing, and the provider's own
  *   loopback gate holds its address); its words pass here before they are spoken.
@@ -38,6 +42,7 @@
  * one of them fails.
  */
 import { loopbackServer } from './airgap.ts'
+import { capNames, doors, forbidden, violation } from './capabilities.ts'
 import { screen } from './conduct.ts'
 import type { Invariant } from './guardrails.ts'
 import { LAW_NAMES, type GateLaw } from './laws.ts'
@@ -45,7 +50,7 @@ import { LAW_NAMES, type GateLaw } from './laws.ts'
 export type CheckName =
   | 'Contained' | 'LoopbackOnly' | 'Conduct14A' | 'Catalogued'
   | 'RealmStanding' | 'KineticFree'
-  | 'OperatorUnlocked' | 'PersonAllowed'
+  | 'OperatorUnlocked' | 'PersonAllowed' | 'LaneCapable'
   | 'LeaseHeld' | 'ProposerBound' | 'ChainVerified' | 'OneAtATime'
 
 export interface Check { readonly law: GateLaw; readonly name: CheckName; readonly text: string }
@@ -60,6 +65,7 @@ export const CHECKS: readonly Check[] = Object.freeze([
   Object.freeze({ law: 1, name: 'KineticFree', text: 'the verb reaches no leaf that moves a body, drives a car or weakens the kernel: a car is only parked, or handed back to a driver the Bouncer vets' }),
   Object.freeze({ law: 2, name: 'OperatorUnlocked', text: 'the operator tier is unlocked' }),
   Object.freeze({ law: 2, name: 'PersonAllowed', text: 'a person allowed it, at the console, on the card or through the host; the gateway never allows' }),
+  Object.freeze({ law: 2, name: 'LaneCapable', text: "a sub-agent's lane holds the capability its effect needs (capabilities.ts): a bit it was never granted, or a door no lane is granted, is refused and the lane is isolated" }),
   Object.freeze({ law: 3, name: 'LeaseHeld', text: "the proposer is still tethered to the operator (the capability gateway's lease holds)" }),
   Object.freeze({ law: 3, name: 'ProposerBound', text: 'the gate binds the proposer, under the same recruitment, and nobody else' }),
   Object.freeze({ law: 3, name: 'ChainVerified', text: 'the hash-chained trail verifies before anything runs' }),
@@ -76,7 +82,7 @@ export const CHECK_LAW: Readonly<Record<CheckName, GateLaw>> = Object.freeze(Obj
 export const CHECK_INVARIANT: Readonly<Record<CheckName, Invariant | null>> = Object.freeze({
   Contained: 'LoopbackOnly', LoopbackOnly: 'LoopbackOnly', Conduct14A: 'ConductScreen14A', Catalogued: null,
   RealmStanding: null, KineticFree: null,
-  OperatorUnlocked: 'HumanOverrideSupreme', PersonAllowed: 'HumanOverrideSupreme',
+  OperatorUnlocked: 'HumanOverrideSupreme', PersonAllowed: 'HumanOverrideSupreme', LaneCapable: 'CapabilityTethered',
   LeaseHeld: 'CapabilityTethered', ProposerBound: 'CapabilityTethered', ChainVerified: 'ProvenanceChained', OneAtATime: 'HumanOverrideSupreme',
 })
 
@@ -256,6 +262,37 @@ export function admitRun(i: RunIntent): GateVerdict {
   ))
 }
 
+/** A sub-agent lane's effect, the moment before it (08_Swarm/lanes.ts): what the lane holds and what the effect needs. */
+export interface LaneIntent {
+  readonly contained: Vouched
+  /** The Ring-0 audit's panic reason, or null while the realm stands. */
+  readonly panic: string | null
+  /** The lane's capability word (capabilities.ts CapabilityLanes.held). */
+  readonly held: number
+  /** The bits the effect needs. */
+  readonly asked: number
+}
+
+/**
+ * A lane's effect about to happen: contained, the realm standing, and every bit asked for held. A door bit (the
+ * network, dynamic code, a window, the host process) is named as such: no lane holds one, so none is ever admitted.
+ * Pure.
+ */
+export function admitLane(i: LaneIntent): GateVerdict {
+  const missing = violation(i.asked, i.held)
+  const door = doors(i.asked)
+  const reserved = forbidden(i.asked)
+  return verdictOf(refusals(
+    contained(i.contained),
+    i.panic === null ? null : fail('RealmStanding', `the realm has halted: ${i.panic}`),
+    missing === 0 ? null : fail('LaneCapable', door !== 0
+      ? `the lane asked for ${capNames(door).join(', ')}: a door no lane is granted`
+      : reserved !== 0
+        ? `the lane asked for ${capNames(reserved).join(', ')}: a bit no lane is granted`
+        : `the lane holds ${capNames(i.held).join(', ') || 'nothing'} and asked for ${capNames(missing).join(', ')}`),
+  ))
+}
+
 /** A model's words about to be shown as the city's own: the screen alone. Pure. */
 export function admitWords(text: string): GateVerdict {
   return verdictOf(refusals(conduct(text)))
@@ -264,6 +301,7 @@ export function admitWords(text: string): GateVerdict {
 Object.freeze(admitAsk)
 Object.freeze(admitProposal)
 Object.freeze(admitRun)
+Object.freeze(admitLane)
 Object.freeze(admitWords)
 Object.freeze(sentence)
 Object.freeze(invariantsOf)

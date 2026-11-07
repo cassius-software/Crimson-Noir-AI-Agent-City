@@ -15,6 +15,23 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Capability lanes, the lane panic and the forbidden doors.** A sub-agent lane has a 32-bit capability word
+  (`src/02_Define_The_Rules/capabilities.ts`), one `Uint32` per lane: four grantable bits (`CAP_MOVE`,
+  `CAP_WORKPLACE_TASK`, `CAP_VEHICLE_TELEOP`, `CAP_SUBAGENT_SPAWN`), everything else forbidden for good
+  (`CAP_FORBIDDEN_MASK`), the top four bits naming the host's doors no lane is granted (the network, dynamic code, a
+  window, the host process) and `FORBIDDEN_DOORS` the names a script would use for them. `violation(asked, held)` is
+  the kernel's branchless `asked & !caps`; a `CapabilityLanes` table grants grantable bits only and never grants a
+  zeroed lane again; a `FaultLedger` hashes every fault over the one before it with the city's SHA-256
+  (`integrity.ts`) and verifies by recomputation. The Ring-0 action gate has a thirteenth check, `LaneCapable`
+  (Second Law), and a fourth moment, `admitLane`, the moment before a lane's effect; a refusal there is what
+  `lanePanic` (`ring0Panic.ts`) answers: the lane's word zeroed and sealed, the fault on the ledger, one console
+  line with the audit hash, and the frame untouched (the realm's `kernelPanic` still locks the page; the lane's
+  never throws). The air gap now holds `window.open` to this machine like `fetch` (a new tab is a way out too);
+  `act gate` prints the thirteen checks. Tests pin the bits, the branchless check against a plain reference over
+  thousands of words, the sealed lane, the ledger's chain and tamper detection, the panic's log line and that it
+  never throws, that every network and window door in the list is guarded or removed by the air gap, and that no
+  door's name is in the code of the lane modules. The lanes themselves (the runner and what dispatches into them)
+  come in the next slices.
 - **The fallen wear their own bodies.** A pedestrian the realm promotes to a physical body (a shove, a kerb trip, a
   slip near the operator) is no longer hidden and replaced by grey capsules: the crowd's vertex stage hangs each of
   the body's fifteen bones from the rig shape it belongs to (`src/03_Spawn_Agents/humanoid.ts` `RIG_REST`,

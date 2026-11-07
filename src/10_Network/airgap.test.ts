@@ -70,6 +70,9 @@ const ALLOWED: Record<string, { line: RegExp; guard: RegExp | null }[]> = {
     { line: /new WebSocket\(url, protocols\)/, guard: /\bnetServer\(url\)/ },
     { line: /typeof RTCPeerConnection === 'undefined'/, guard: null },
   ],
+  // The capability word's list of the host's doors (the names a script would use, kept as strings so a fault can name
+  // the door): a presence check that addresses nothing, and what the air gap's own test checks itself against.
+  '02_Define_The_Rules/capabilities.ts': [{ line: /\.map\(\(name\) => Object\.freeze\(\{ name, bit: CAP_(?:NET|CODE) \}\)\)/, guard: null }],
   // The robot bridge's one socket (to the loopback relay, a URL netServer admits) and its one fetch (a URDF served on
   // this machine, under the gate's wrapper).
   '04_Connect_Hardware/robotLink.ts': [
@@ -136,10 +139,11 @@ test('the gate is pure and one: every alias and every guard is defined through l
   assert.match(c, /export function netServer\(url: unknown\)[^]*?const u = loopbackUrl\(url\)/)
   assert.match(c, /export function loopbackFetch[^]*?loopbackOnly\(url\) === null \? Promise\.reject/)
   assert.match(c, /const admit = [^]*?if \(loopbackOnly\(u\.href\) !== null\) return u\.href/)
-  // Every primitive the guard hands on is given admit()'s string: fetch (a string, a Request), the two constructors, open, importScripts.
-  assert.equal(c.match(/\badmit\(/g)?.length, 4, 'fetch (a string, a Request), the constructors and open go through admit')
+  // Every primitive the guard hands on is given admit()'s string: fetch (a string, a Request), the two constructors, XMLHttpRequest's open, window.open, importScripts.
+  assert.equal(c.match(/\badmit\(/g)?.length, 5, 'fetch (a string, a Request), the constructors, XMLHttpRequest.open and window.open go through admit')
   assert.match(c, /urls\.map\(admit\)/, 'importScripts too')
   assert.match(c, /fix\(g, 'fetch', fetch\)/)
+  assert.match(c, /fix\(g, 'open', open\)/, 'window.open is held and frozen')
   assert.match(c, /guardConstructor\('WebSocket'\)\n  guardConstructor\('EventSource'\)/)
   assert.match(c, /fix\(proto, 'open', open\)/)
   assert.match(c, /\['RTCPeerConnection', 'webkitRTCPeerConnection', 'WebTransport'\]/)

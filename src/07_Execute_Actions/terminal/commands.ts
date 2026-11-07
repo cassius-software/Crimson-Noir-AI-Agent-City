@@ -669,6 +669,7 @@ const GATE_LINES: readonly (readonly [string, string, string])[] = [
   ['KineticFree', 'First Law', 'the verb reaches no leaf that moves a body, drives a car or weakens the kernel: a car is only parked, or handed back to a driver the Bouncer vets'],
   ['OperatorUnlocked', 'Second Law', 'the operator tier is unlocked'],
   ['PersonAllowed', 'Second Law', 'a person allowed it, at the console, on the card or through the host; the gateway never allows'],
+  ['LaneCapable', 'Second Law', "a sub-agent's lane holds the capability its effect needs (capabilities.ts): a bit it was never granted, or a door no lane is granted, is refused and the lane is isolated"],
   ['LeaseHeld', 'Third Law', "the proposer is still tethered to the operator (the capability gateway's lease holds)"],
   ['ProposerBound', 'Third Law', 'the gate binds the proposer, under the same recruitment, and nobody else'],
   ['ChainVerified', 'Third Law', 'the hash-chained trail verifies before anything runs'],
