@@ -41,6 +41,7 @@ import { buildWorld, createRenderer, FULL_WORLD, gpuBufferOf, LIGHT_TUNE_RANGE, 
 import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
 import { RegionPlaces, hollowLots, layoutOf, regionPhysics } from '../01_Initialize_World/region/regionWorld.ts'
 import { regionWorkplaceLots } from '../01_Initialize_World/region/workplaces.ts'
+import { craftBoxesOf, regionTransit, windowNetwork } from '../01_Initialize_World/region/transit.ts'
 import { drawRooms, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { streetCapacity, streetGridOf, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { tallestBuilding, type RegionPack } from '../01_Initialize_World/region/pack.ts'
@@ -828,7 +829,16 @@ export class Engine {
       // the same rooms from them. A surveyed region has no window and no lots: its copy is the pack.
       const lots = pack && layout && streets ? regionWorkplaceLots(pack, layout, streets, spawn, options.seed) : []
       const hollow = pack && layout ? hollowLots(pack, layout, lots) : null
-      const world = buildWorld(gpu.renderer, options.seed, pack && layout && hollow ? { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan: hollow.plan } : null, lite ? LITE_WORLD : FULL_WORLD)
+      // The window's transit (region/transit.ts regionTransit): the zebra crossings and the STOL strip the region draws,
+      // the pier the page draws and the worker walls (in the plan with the rooms), and the pier's opening through the
+      // shore wall. A surveyed region has no window and none of it.
+      const transit = pack && layout && streets && hollow ? regionTransit(hollow.pack, layout, streets) : null
+      const plan = hollow ? [...hollow.plan, ...(transit?.plan ?? [])] : []
+      const world = buildWorld(gpu.renderer, options.seed, pack && layout && hollow ? { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan, transit } : null, lite ? LITE_WORLD : FULL_WORLD)
+      // The craft boxes (transit.ts craftBoxesOf): the window's rectangular buildings, the needles and the plan, from the
+      // hollowed pack (a building put out of a room's way is no pad), sent to the worker so that it lays the window's
+      // VTOL routes and racetrack as the page does.
+      const craftBoxes = pack && layout && streets && hollow ? craftBoxesOf(hollow.pack, layout.offset, streets, world.boxes) : null
       // Players 1..3 (split screen) start beside player 0 along the sidewalk (the city's spawn sidewalk runs along z; a
       // region's along its street heading); the realm moves a spawn out of a building lot itself.
       const along = start ? { x: Math.sin(start.heading), z: Math.cos(start.heading) } : { x: 0, z: 1 }
@@ -841,10 +851,11 @@ export class Engine {
       // page draws them yet).
       simBoot = SimClient.create({
         seed: options.seed, cars: options.cars, agents: options.agents, boxes: world.boxes, furniture: lite ? NO_FURNITURE : world.furniture, spawn,
-        debug: options.debug === true, region: hollow && layout ? regionPhysics(hollow.pack, layout) : null, streets, tracks: options.tracks !== false,
+        debug: options.debug === true, region: hollow && layout ? regionPhysics(hollow.pack, layout, transit?.openings ?? []) : null, streets, tracks: options.tracks !== false,
         ragdoll: options.ragdoll !== false && !pack && !lite, craft: !lite,
         ...(spawns.length > 0 && { spawns }),
         ...(lots.length > 0 && { workplaces: lots }),
+        ...(craftBoxes && craftBoxes.length > 0 && { craftBoxes }),
       })
 
       // Start on the tier the device profile suggests (or the one the URL pins), before anything compiles:
@@ -887,8 +898,11 @@ export class Engine {
       const view = new FleetView(sim.meta.kind, sim.meta.paint, world.night, world.matrixMode.globalState)
       view.sync(sim.state.poses)
       // The scheduled craft (the realm's craft stream; craftView.ts): the page builds the realm's own network again, from
-      // the same seed and boxes, for the loop's deck, the pads and the cars of a set. None on a lite boot or in a region.
-      const craftView = sim.meta.craft > 0 ? new CraftView(buildTrackNetwork(options.seed, world.boxes), sim.meta.craft, world.night, world.matrixMode.globalState) : null
+      // the same seed and boxes (in a region with a street window, the window's network from the same seed, window, craft
+      // boxes and bounds: transit.ts windowNetwork), for the loop's deck, the pads and the cars of a set; the view throws
+      // when its count is not the realm's. None on a lite boot or in a surveyed region without a window.
+      const network = sim.meta.craft > 0 ? (streets && craftBoxes && layout ? windowNetwork(options.seed, streets, craftBoxes, layout.bounds) : buildTrackNetwork(options.seed, world.boxes)) : null
+      const craftView = network ? new CraftView(network, sim.meta.craft, world.night, world.matrixMode.globalState, streets ? streets.furniture : undefined) : null
       if (craftView && sim.state.craft) craftView.sync(sim.state.craft)
       // The rigs of the promoted pedestrians (the realm's rig stream; none with the ragdoll off, in a region or on a lite
       // boot). The figures wear them (crowd.ts rigPoses); the capsules are drawn in the figures' place only on

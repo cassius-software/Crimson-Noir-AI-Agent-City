@@ -146,6 +146,15 @@ export interface SimInit {
    */
   workplaces?: WorkplaceLot[] | null
   /**
+   * A generated region's craft boxes (01_Initialize_World/region/transit.ts craftBoxesOf): the rectangular buildings on
+   * the lots of its street window and the ring of lots round them, every building that reaches into the racetrack's
+   * envelope and the region's plan, as [x0, 0, z0, x1, height, z1] in engine metres. The worker lays the window's VTOL
+   * routes and racetrack by them (transit.ts windowNetwork) exactly as the page does, since it has the pack's walls and
+   * not its boxes. At most transit.ts MAX_CRAFT_BOXES. Only with a street window; absent (or null) for the city, whose
+   * own boxes serve, and for a surveyed region.
+   */
+  craftBoxes?: Box[] | null
+  /**
    * Seat the AI fleet on the fixed track network (06_Make_Decisions/tracks.ts, built in the worker from the seed, or
    * the street window's rings in a region with one) and drive it with track followers; anything but true keeps the
    * random street-hopping drivers.
@@ -157,9 +166,10 @@ export interface SimInit {
    */
   ragdoll?: boolean
   /**
-   * Run the scheduled craft (the trains, drones and planes of trackFleet.ts) with tracks on in the city: anything but
-   * false runs them. False (a lite boot, which draws none) skips the stream as a region does: meta.craft is 0
-   * and every state's craft buffer null.
+   * Run the scheduled craft (the trains, drones, planes and VTOLs of trackFleet.ts) with tracks on, in the city and in
+   * a region with a street window (its own loop, corridors and racetrack, transit.ts windowNetwork): anything but
+   * false runs them. False (a lite boot, which draws none) skips the stream, as a surveyed region without a window
+   * does: meta.craft is 0 and every state's craft buffer null.
    */
   craft?: boolean
 }

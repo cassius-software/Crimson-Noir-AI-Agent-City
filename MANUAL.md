@@ -202,7 +202,9 @@ The fixed track network (`06_Make_Decisions/tracks.ts`) is laid over the grid fr
 rings for the cars, one round each 2 × 2-block cell; one elevated train loop on a deck 9 m over the median of the
 two arterial streets, with four mid-block stations and guideway columns at the kerb; drone corridors at 40 m and
 46 m over the 4 × 4-block face rings; one plane racetrack at 400 m; and two VTOL routes along the avenues at 75 and
-85 m, each calling at four rooftop pads. See Vehicles.
+85 m, each calling at four rooftop pads. See Vehicles. Lakefront Metro's street window gets the same network laid over
+its own streets, and a transit map besides (`region/transit.ts`: zebra crossings, paved plazas, a ferry pier and a
+STOL strip; see The surveyed map).
 
 ## The surveyed map
 
@@ -234,7 +236,21 @@ beside it. The page inflates the pack itself (the browser's own gzip stream); no
   fleet is seated on rings laid over the window's whole cells (disjoint rectangles whose every side is a car street,
   the zero-jam rule of `tracks.ts` kept) and the lamps, trees and signal poles stand along the window's streets. Every
   street cars use is two lanes, one each way; a bridge's shore walls are cut for its width. Beyond the window the
-  metropolis is still quiet. The visitor's answers are saved, so the next visit opens on the same city at the chosen region;
+  metropolis is still quiet. The window has its **transit map** too (`region/transit.ts`, pure: the page and the
+  physics worker build it from the same seed, window, craft boxes and bounds): an elevated train loop on the 9 m deck
+  round the city's own corridor where every side of it has a sidewalk, else the largest walkable rectangle of the
+  window (at least 4 blocks a side), with four mid-side stations and guideway columns at the window's own 3.9 m kerb;
+  drone corridors at 40 and 46 m over every walkable 4-block cell; the plane racetrack at 400 m, centred on the window
+  and held inside the region, moved by whole blocks off The Spire; VTOL routes between rooftop pads of the window's own
+  buildings, in the city's band of 24 to 60 m roofs where the window has them and in a second band over the map's
+  towers (roofs of 60 to 140 m, flown between at 150 and 160 m; a window with no such roofs has none: seed 7's east
+  bluffs and north ridge); zebra crossings on every walkable arm of every intersection, as paint over the asphalt;
+  the plaza lots (the hubs' squares) paved at the sidewalks' height; a harbour ferry pier from the lake shore nearest
+  the window, 60 m out over the water with railings and a berth platform at its end, the shore wall opened for it
+  (no vessel sails yet); and a STOL strip, 300 × 24 m of asphalt with threshold bars and a centreline on the open land
+  nearest the window, clear of everything built (the planes keep the racetrack and do not land). No subterranean
+  line: a track has one height. `transit.test.ts` proves all of it on fourteen windows of three seeds, the craft to
+  the same INV-1 envelopes as the city's. The visitor's answers are saved, so the next visit opens on the same city at the chosen region;
   `?map=city` or `?region=off` opens the procedural city, `?onboarding=0` skips the onboarding (the expert path) and
   `?onboarding=1` shows it again. The structural layouts, one JSON file per region with an index naming The Spire and
   the hubs, are committed under `world/lakefront/` and regenerated with `node tools/world/lakefront.mjs` (`--check`
@@ -289,8 +305,8 @@ npm run build:pilot   # dist-pilot/index.html: the same single offline file, ope
 - **Not there yet** (the surveyed region; Lakefront Metro has its street window, above):
   - traffic and pedestrians (the AI drives and walks the procedural grid, so the surveyed region's fleet is empty and
     the crowd it keeps is hidden, kilometres away);
-  - the craft (the elevated loop, the corridors and the VTOL pads are laid over the procedural grid and its roofs, so
-    no region gets trains, drones, planes or VTOLs);
+  - the craft (the elevated loop, the corridors, the racetrack and the VTOL pads need a street window: Lakefront
+    Metro has them over its window, the surveyed region gets none);
   - room acoustics (a region's walls live in the physics worker, so every voice there is dry);
   - traffic signals, street lamps and trees (the surveyed region has none; a street window has them along its streets);
   - terrain (the region is flat: no ravines, no bluffs);
@@ -2652,7 +2668,24 @@ releases, byte for byte (the same seats, drivers and paint from the same stream)
   deck at 9 m, the drones at 40 m, the planes at 400 m); anything else is a kernel panic with a named reason
   (`Corridor Exploit: train craft 0 left its corridor (y=2.00m below its 9m floor).`), the buffer that halted the
   realm never leaves it, and a halted realm ships no craft. The check only halts, never corrects. A surveyed region
-  gets no craft.
+  gets no craft; Lakefront Metro's street window gets its own (next but one).
+- **In Lakefront Metro** (`01_Initialize_World/region/transit.ts` `windowNetwork`). A region with a street window
+  gets the network laid over the window's own streets: the car rings of the window's cells first, then an elevated
+  loop round a rectangle of walkable streets (the city's corridor when the window has all four of its sides, else the
+  largest walkable rectangle, at least 4 blocks a side; the same deck, arcs and four stations; `tracks.ts` `trainLoop`
+  and `guideway(track, kerb)` with the window's 3.9 m kerb, which clears its two-lane carriageway and its lamps at 10
+  and 30 m, trees at 20 m and signal poles), the drone corridors over every walkable 4-block cell, the racetrack about
+  the window's middle held inside the region (and moved by whole blocks when The Spire comes within the envelope's
+  half-length of it), and the VTOL routes from the window's **craft boxes**: the rectangular buildings on the window's
+  lots and the ring of lots round them, every building that reaches into the racetrack's envelope, and the region's
+  plan, which the page computes from the pack it drew and sends in the init (`SimInit.craftBoxes`, at most 4,096,
+  judged in the worker like every other field), since the worker holds the pack's walls and not its boxes.
+  `vtolRoutes(boxes, cells, band)` takes the window's cells and a band of roofs: the city's (24 to 60 m, cruising at
+  75 and 85) where the window has such roofs, and a second over a generated map's towers (60 to 140 m, cruising at
+  150 and 160, both over the drones and under the planes; the cells cut where the towers stand, `padCells`); a
+  window with no roof in either band has no VTOL route. Both sides build the network from the same seed, window,
+  boxes and bounds, so the realm's craft count is the page's (the view refuses otherwise). The lite profile keeps the
+  craft off, as in the city.
 - **The craft on the page** (`craftView.ts`). The page builds the realm's network again from the same seed and boxes
   (the craft count must agree, or the view refuses) and draws, from the stream, one InstancedMesh a kind: each train
   set as three cars laid along the loop about the set's head, the drones nosed a little into their way, the planes

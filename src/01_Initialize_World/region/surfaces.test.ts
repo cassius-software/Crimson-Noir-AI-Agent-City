@@ -64,7 +64,9 @@ const ys = (m: Mesh): number[] => {
 }
 
 test('the surfaces lie in order, each strictly over the one below, with room between them for the reversed buffer', () => {
-  const order = ['water', 'sidewalk', 'sidewalkJunction', 'road', 'roadJunction'] as const
+  // The markings (region/transit.ts: the crossings' stripes, the strip's paint) are drawn only with a street window's
+  // transit, which transit.test.ts holds at its height; here the height keeps its place in the order.
+  const order = ['water', 'sidewalk', 'sidewalkJunction', 'road', 'roadJunction', 'marking'] as const
   let below = 0
   for (const k of order) {
     assert.ok(SURFACE[k] - below >= 0.0049, `${k} at ${SURFACE[k]} is less than 5 mm over ${below}`)

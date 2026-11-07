@@ -18,6 +18,8 @@ import { JointBuffer } from './jointBridge.ts'
 import type { RegionGround } from './physics.ts'
 import { CITY } from '../01_Initialize_World/city.ts'
 import { WINDOW_BLOCKS, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
+import { MAX_CRAFT_BOXES } from '../01_Initialize_World/region/transit.ts'
+import type { Box } from '../01_Initialize_World/city.ts'
 import { ROOM, WORKPLACE_KINDS, type Side, type WorkplaceLot } from '../01_Initialize_World/interiors.ts'
 
 export type Post = (msg: FromWorker, transfer?: Transferable[]) => void
@@ -80,6 +82,26 @@ function streetsOf(u: unknown): StreetGrid | null | undefined {
  * are a list of at most ROOM.slots; each stands on a lot of the window (whole lot indices, the engine's), its doorway
  * faces one of the lot's four streets, it is one of the six kinds, and no lot holds two.
  */
+/**
+ * A region's craft boxes (SimInit.craftBoxes), checked: an empty list when there are none, else the list as plain data
+ * (at most MAX_CRAFT_BOXES, each six finite numbers with its low corner first and a height of zero or more), or the
+ * reason it is refused. They need a street window, as the routes they are laid by do.
+ */
+function craftBoxesOf(u: unknown, streets: StreetGrid | null): Box[] | string {
+  if (u === undefined || u === null) return []
+  if (!Array.isArray(u) || u.length > MAX_CRAFT_BOXES) return `init: craft boxes are a list of at most ${MAX_CRAFT_BOXES}`
+  if (u.length === 0) return []
+  if (!streets) return "init: craft boxes need a region's street window"
+  const out: Box[] = []
+  for (const b of u) {
+    if (!Array.isArray(b) || b.length !== 6 || !b.every((v) => typeof v === 'number' && Number.isFinite(v))) return 'init: a craft box is six finite numbers'
+    const [x0, y0, z0, x1, y1, z1] = b as number[]
+    if (!(x0 <= x1 && y0 <= y1 && z0 <= z1)) return 'init: a craft box has its low corner first'
+    out.push([x0, y0, z0, x1, y1, z1])
+  }
+  return out
+}
+
 function workplacesOf(u: unknown, streets: StreetGrid | null): WorkplaceLot[] | string {
   if (u === undefined || u === null) return []
   if (!Array.isArray(u) || u.length > ROOM.slots) return `init: workplaces are a list of at most ${ROOM.slots}`
@@ -180,9 +202,14 @@ export function createSimHost(post: Post, create: (o: SimCoreOptions) => Promise
           post({ t: 'error', message: workplaces })
           return
         }
+        const craftBoxes = craftBoxesOf(init.craftBoxes, region ? streets : null)
+        if (typeof craftBoxes === 'string') {
+          post({ t: 'error', message: craftBoxes })
+          return
+        }
         core = await create({
           seed: init.seed, cars: init.cars, agents: init.agents, boxes: init.boxes, furniture: init.furniture, spawn: init.spawn, spawns, debug: init.debug === true, region,
-          streets: region ? streets : null, workplaces, tracks: init.tracks === true, ragdoll: init.ragdoll === true, craft: init.craft !== false,
+          streets: region ? streets : null, workplaces, craftBoxes, tracks: init.tracks === true, ragdoll: init.ragdoll === true, craft: init.craft !== false,
         })
         for (let i = 0; i < refusedEarly; i++) core.noteRejected('message before init')
         post({ t: 'ready', meta: core.meta })

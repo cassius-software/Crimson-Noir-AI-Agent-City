@@ -15,6 +15,51 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Lakefront Metro's transit map** (`src/01_Initialize_World/region/transit.ts`, pure: the page and the physics worker
+  build it from the same seed, street window, craft boxes and bounds). A generated region's street window now carries
+  what the procedural city has had since the fixed track network, and a little more. An **elevated train loop** on the
+  9 m deck round the city's own corridor where every side of it has a sidewalk, else the largest walkable rectangle of
+  the window (at least 4 blocks a side), with four mid-side stations and guideway columns at the window's own 3.9 m
+  kerb (`tracks.ts` `trainLoop(corners)` and `guideway(track, kerb)`, the city's calls unchanged). **Drone corridors**
+  at 40 and 46 m over every walkable 4-block cell. The **plane racetrack** at 400 m (`planeCorridors(centre)`),
+  centred on the window and held inside the region (`RACETRACK_REACH`: a window by the region's edge no longer sends
+  the planes 1.8 km out over the margin), moved by whole blocks when The Spire comes within the envelope's
+  half-length of it. **VTOL routes** between rooftop pads of the window's own buildings: `tracks.ts` `vtolRoutes(boxes,
+  cells, band)` and `vtolPads(boxes, band)` take a region's cells and a `VtolBand`; the city's band (roofs of 24 to
+  60 m, cruising at 75 and 85) serves where the window has such roofs, and a second band over a generated map's
+  towers (`HIGH_BAND`: roofs of 60 to 140 m, flown between at 150 and 160 m, over the drones and under the planes),
+  its cells cut where the towers stand (`padCells`); twelve of the fifteen test windows get one or two routes, seed
+  7's east bluffs and its north ridge (the grand ravine's window too) none (no tower in their windows: legal). The whole network is
+  `windowNetwork(seed, window, craftBoxes, bounds)`: `SimInit.craftBoxes` (the window's rectangular buildings and the
+  ring of lots round them, every building that reaches into the racetrack's envelope, and the region's plan:
+  `craftBoxesOf`, at most `MAX_CRAFT_BOXES` 4,096, judged in `simHost.ts` like every other field) lets the worker,
+  which holds the pack's walls and not its boxes, lay the same routes as the page; `simCore.ts` schedules the craft in
+  a region with a window (a surveyed region still has none) and `engine.ts` builds the `CraftView` for them with the
+  window's kerb (`craftView.ts` takes a `kerb`). **Zebra crossings** on every walkable arm of every window
+  intersection, as geometry: six 0.5 m stripes across a car street and three across a pedestrian one, in the crowd's
+  own `TRAFFIC.crosswalk` band, in one `RegionMarkings` mesh of one material at a new `SURFACE.marking` (0.055 m,
+  over the junction asphalt; no polygon offset, pieces under `SURFACE_PIECE`). **Pedestrian plazas**: `fromMacro.ts`
+  writes a generated pack's plaza lots as `pack.plazas` (one rectangle each; optional in the format, the surveyed
+  pilot has none; `validatePack` checks it when present), and `regionWorld.ts` paves them at the sidewalks' height, so
+  the hubs' squares are stone, not lawn. A **harbour ferry dock** (`ferryDock`): a pier from the lake shore nearest the
+  window, its deck from the quay 60 m out over the water, railed, with a 10 × 20 m berth platform at its end, as boxes
+  the page draws and the worker walls (in the plan with the rooms); the shore wall is opened for it
+  (`regionPhysics(pack, layout, openings)`); `ferryBerth()` gives where a vessel would come alongside (the vessel is
+  another change's). A **STOL strip** (`stolStrip`): 300 × 24 m of asphalt on the open land nearest the window, off
+  the window and clear of every building, road, water polygon and plaza by 2 m, with threshold bars and a centreline
+  at `SURFACE.marking`; the planes keep the racetrack at 400 m and do not land (landing is not built). No
+  subterranean line: a track has one height. `region/clip.ts` gains `isRect`, `region/streets.ts` now holds
+  `LANE_WIDTH`, `SIDEWALK` and `roadWidth` (re-exported by `regionWorld.ts`), so the worker can read them. Tests:
+  `transit.test.ts` (fourteen windows of three seeds: the loop's sides walkable and no larger rectangle missed, its
+  columns clear of every lamp, tree, signal pole, box and the carriageway; INV-1 for every train, drone, plane and
+  VTOL piece against every craft box with the city's envelopes; the racetrack inside the region and off the needles;
+  the network's craft audit clean on the realm's clock, the core scheduling them from the boxes it was sent and the
+  page placing every craft where the realm does; the worker refusing malformed craft boxes; the crossings counted
+  against the walkable arms; the plazas built on by nothing; the pier over the water with the shore wall opened for
+  it and every other wall as it was; the strip clear; the markings drawn at their height; a source pin that the page
+  and the worker call the same function with the same arguments), `surfaces.test.ts` keeps the new height in order,
+  and the browser smoke's `?map=lakefront` scenario checks the craft and the markings. Unverified from the cloud (no
+  GPU): the loop, the craft, the crossings, the pier and the strip on screen.
 - **The fallen wear their own bodies.** A pedestrian the realm promotes to a physical body (a shove, a kerb trip, a
   slip near the operator) is no longer hidden and replaced by grey capsules: the crowd's vertex stage hangs each of
   the body's fifteen bones from the rig shape it belongs to (`src/03_Spawn_Agents/humanoid.ts` `RIG_REST`,
