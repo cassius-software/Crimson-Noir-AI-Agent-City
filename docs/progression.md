@@ -146,6 +146,14 @@ p.record[16]                                     // credits, read-only by conven
 - **Spaces.** `look` (indices 0 to 1023: the wardrobe, the dyes and the body art), `property` (0 to 63) and
   `furniture` (0 to 511). An index outside its space is `PURCHASE.invalid`. Each selling thread owns its space and
   numbers its own items in it; an index, once shipped, keeps its meaning, since the bit is what the record remembers.
+  The claims so far:
+
+  | Space | Indices | Sold by |
+  |---|---|---|
+  | `look` | 0-511 and 768-1023 | the customizer (wardrobe, dyes, body art) |
+  | `look` | 512-767 | the retail storefronts |
+  | `property` | 0-63 (the seven homes and offices are 0-6) | the properties |
+  | `furniture` | 0-511 | the furnishing of the properties |
 - **Arguments.** `buy(space, index, levelReq, price)`: `levelReq` a whole number from 1 to 20, `price` a whole number
   of credits from 0 to 2,000,000,000 (0 is a free unlock).
 - **Results.** `PURCHASE.bought` (0), `owned` (1, nothing charged), `level` (2), `credits` (3), `invalid` (4), checked
