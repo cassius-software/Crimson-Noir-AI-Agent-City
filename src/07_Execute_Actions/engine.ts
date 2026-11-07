@@ -105,6 +105,9 @@ import { ring0Stats, type TerminalBridge } from './terminal/bridge.ts'
 import { familyOf, modeGlyph, type glyph } from './glyphs.ts'
 import { PING_KINDS, PING_WORDS, PingBoard, pickPing, pingLine, rallyPlan, type Ping, type Pick, type PingKind, type RallyRequest } from '../08_Swarm/ping.ts'
 
+/** POSE.mode of a parked car (simProtocol.ts MODES): nobody at its wheel, the kind of car a player may take. */
+const PARKED = MODES.indexOf('parked')
+
 /**
  * Where Engine.create has got to, for the boot veil's 'Still starting' line (bootFailure.ts BOOT_STAGE): a player who
  * has waited, and a bug report, can tell a slow shader compile on a phone from a boot that stopped.
@@ -1588,6 +1591,9 @@ export class Engine {
       } else if (ev.e === 'exited') {
         this.pulseUntil = 0
         this.toast('Vehicle parked', 'Hazards on, doors locked.')
+      } else if (ev.e === 'rejected' && ev.reason.startsWith('that car')) {
+        // A door tried on a car with a driver (an AI's, another player's): said, never taken from them.
+        this.toast('Vehicle', ev.reason)
       }
     }
     const stepDt = Math.max(0, s.simTime - prev.simTime)
@@ -2247,12 +2253,14 @@ export class Engine {
     return out
   }
 
-  /** Index of the car nearest (x, z) within `range` in the newest state, or −1. */
-  private nearestCar(x: number, z: number, range: number): number {
+  /** Index of the car nearest (x, z) within `range` in the newest state, or −1; with `parked`, among the parked cars
+   *  only: the kind the realm lets a player take (simCore.ts #interact), so the door prompt and a headset's pinch agree. */
+  private nearestCar(x: number, z: number, range: number, parked = false): number {
     const p = this.sim.state.poses
     let best = -1, bestD = range
     for (let i = 0; i < this.sim.meta.count; i++) {
       const o = i * POSE.stride
+      if (parked && p[o + POSE.mode] !== PARKED) continue
       const d = Math.hypot(p[o + POSE.x] - x, p[o + POSE.z] - z)
       if (d < bestD) { bestD = d; best = i }
     }
@@ -2328,7 +2336,7 @@ export class Engine {
     const map = []
     for (let i = 0; i < this.sim.meta.count; i++) {
       const q = i * POSE.stride
-      map.push({ x: p[q + POSE.x], z: p[q + POSE.z], heading: p[q + POSE.heading], player: i === st.driving })
+      map.push({ x: p[q + POSE.x], z: p[q + POSE.z], heading: p[q + POSE.heading], player: i === st.driving, parked: p[q + POSE.mode] === PARKED })
     }
     const snap: SipocSnapshot = {
       supplier: {
@@ -2339,7 +2347,7 @@ export class Engine {
         xr: { state: this.xr.state, detail: this.xrLine() },
         robots: this.robots.summary(),
       },
-      input: { mode: driving ? 'vehicle' : 'foot', nearVehicle: !driving && this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE) >= 0 },
+      input: { mode: driving ? 'vehicle' : 'foot', nearVehicle: !driving && this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE, true) >= 0 },
       process: {
         // A surveyed region has no pedestrians of its own (the procedural crowd it keeps is hidden, kilometres away); a
         // generated one walks its street window.
@@ -2785,7 +2793,7 @@ export class Engine {
       select: () => {
         // A pinch (or a hand's select) with no controller: the interaction at hand, else a ping where the head looks.
         const st = this.sim.state
-        const near = st.driving >= 0 || this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE) >= 0
+        const near = st.driving >= 0 || this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE, true) >= 0
         this.input.press(near ? 'interact' : 'ping')
       },
       started: (mode, blend) => {

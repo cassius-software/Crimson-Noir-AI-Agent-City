@@ -448,7 +448,7 @@ test('a reset rights the car of the player it names: player 1\'s at the wheel, n
   assert.equal(sim.halted, false, sim.panic ?? '')
 })
 
-test('a network room replays player 1 alone: the others are taken out of their cars as it starts and their doors are refused in it, while player 1\'s opens', async () => {
+test('a network room replays player 1 alone: the others are taken out of their cars as it starts and their doors are refused in it; a car back in traffic is nobody\'s to take', async () => {
   const { sim, poses, step } = await core(true)
   const lane = OPEN.x + 3.5, z = OPEN.z + 40
   step({ cmds: [
@@ -475,16 +475,20 @@ test('a network room replays player 1 alone: the others are taken out of their c
   s = step({ cmds: [{ c: 'interact', player: 1 }] })
   assert.ok(s.events.some((e) => e.e === 'rejected' && e.reason.includes('only player 1 opens a car door')), JSON.stringify(s.events))
   assert.deepEqual(s.drivings, [-1, -1, -1, -1])
+  // Player 1's own door is heard in the room, but car 0 is back in traffic with a driver of its own: refused and said.
+  // (The cars a player may take in a room are the parked ones: the plan's bay cars, parking.ts; this fleet has none.)
   step({ cmds: [{ c: 'teleport', x: poses[POSE.x] + 3.5, z: poses[POSE.z] }] })
   for (let i = 0; i < 5; i++) step()
   s = step({ cmds: [{ c: 'interact' }] })
-  assert.deepEqual(s.drivings, [0, -1, -1, -1], 'player 1 takes the wheel in the room')
+  assert.deepEqual(s.drivings, [-1, -1, -1, -1], 'a car in traffic is not taken from its driver')
+  assert.ok(s.events.some((e) => e.e === 'rejected' && e.reason === 'that car has a driver'), JSON.stringify(s.events))
   for (let i = 0; i < 10; i++) step()
   s = step({ cmds: [{ c: 'interact' }] })
   assert.deepEqual(s.drivings, [-1, -1, -1, -1], 'and leaves it')
-  step({ cmds: [{ c: 'room', on: false }] })
+  // Out of the room the console parks car 0 again, and player 2's door opens on it: a parked car is anyone's.
+  step({ cmds: [{ c: 'room', on: false }, { c: 'setMode', i: 0, mode: 'parked' }] })
   s = step({ cmds: [{ c: 'interact', player: 1 }] })
-  assert.deepEqual(s.drivings, [-1, 0, -1, -1], 'out of the room, player 2\'s door opens again')
+  assert.deepEqual(s.drivings, [-1, 0, -1, -1], 'out of the room, player 2\'s door opens again on the parked car')
   assert.equal(sim.halted, false, sim.panic ?? '')
 })
 
