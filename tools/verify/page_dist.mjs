@@ -8,8 +8,9 @@
  *   - DIR holds exactly index.html: the product is one self-contained file, and nothing else may ship beside it (a
  *     chunk split out of the bundle, an asset Vite copied, a model);
  *   - no .gguf file is anywhere in DIR: a model is the operator's own file, kept in their browser, never shipped;
- *   - index.html is at most MAX_BYTES (the size measured with the in-page model runtime embedded, plus 3%), so a page
- *     that grows on a phone's connection does so on purpose, with this number raised in review;
+ *   - index.html is at most MAX_BYTES (the size measured with the in-page model runtime embedded and Sloane's first
+ *     walk, plus 3%), so a page that grows on a phone's connection does so on purpose, with this number raised in
+ *     review;
  *   - the http(s) hosts the page names are exactly the reviewed list below (loopback aside): a new address anywhere in
  *     the page (code, a string, a licence text) is read and added here, or removed, before it ships. The page reaches
  *     none of them by itself (index.html's policy allows no host but this machine); these are links, licence texts and
@@ -26,7 +27,7 @@ import { fileURLToPath } from 'node:url'
 const ROOT = fileURLToPath(new URL('../..', import.meta.url))
 
 /** The page with the in-page runtime embedded measured 13,956,193 bytes (18 October 2026); this is that plus 3%. */
-export const MAX_BYTES = 14_375_000
+export const MAX_BYTES = 14_825_000
 
 /** The hosts the page names without the in-page runtime, all from bundled packages and notices: React's error links,
  *  Tailwind's banner, three.js's removal note and a shader's credit, the SVG and MathML namespaces, and the Apache
