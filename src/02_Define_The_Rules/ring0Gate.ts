@@ -24,21 +24,18 @@
  *   over a recording facade), the tier is unlocked and a person allowed it (PersonAllowed: at the console, on the
  *   card or through the host; the gateway never allows), the proposer is still tethered under the same recruitment
  *   (LeaseHeld, ProposerBound), and the hash-chained trail verifies (ChainVerified).
- * - `admitLane`, after a sub-agent lane's tick and the moment before its effect (08_Swarm/lanes.ts): the page is
- *   contained, the lane's program took at most its gas for the tick (GasWithin: noirscript MAX_OPS_PER_TICK) and stayed
- *   inside its own arena (MemoryWithin: an index, memory, depth or output bound), the realm stands, and the lane's
- *   capability word holds every bit the effect needs (LaneCapable: capabilities.ts; a door bit, the network, dynamic
- *   code, a window or the host process, is named as such and never admitted). A refusal here is what trips the lane
- *   panic (ring0Panic.ts lanePanic): the lane is zeroed and the fault hashed onto the ledger; the frame goes on.
+ * - `admitLane`, after a sub-agent lane's tick and before its effect (08_Swarm/lanes.ts): the page is contained, the
+ *   program took at most its gas for the tick (GasWithin: noirscript MAX_OPS_PER_TICK) and stayed inside its arena
+ *   (MemoryWithin: an index, memory, depth or output bound), the realm stands, and the lane's word holds every bit the
+ *   effect needs (LaneCapable: capabilities.ts; a door bit is named as such and never admitted). A refusal trips the
+ *   lane panic (ring0Panic.ts lanePanic): the lane zeroed, the fault hashed onto the ledger, the frame untouched.
  * - `admitWords`, for a model's words shown as the city's own (the onboarding's reworded lines): the screen alone. The
- *   onboarding voice asks a model for that rewording outside `admitAsk` (it changes nothing, and the provider's own
- *   loopback gate holds its address); its words pass here before they are spoken.
+ *   voice asks for the rewording outside `admitAsk` (it changes nothing; the provider's loopback gate holds its address).
  * What this is and is not: every check is a rule over plain values (no clock, no randomness, no I/O), applied the same
  * way every time, and the tests hold each one; the verdict names the highest-ranked law that refused and every check
  * that failed. It is not a proof about a model, and it does not look inside one. The three laws' own rulings on vehicle
- * commands (laws.ts adjudicate) and the audit after every physics tick (ring0.ts) are the kernel's; this gate is what
- * stands between an answer and the kernel. The exports are frozen, so nothing running in the page can monkey-patch
- * the gate away.
+ * commands (laws.ts adjudicate) and the audit after every physics tick (ring0.ts) are the kernel's; this gate stands
+ * between an answer and the kernel. The exports are frozen: nothing running in the page can monkey-patch the gate away.
  * What breaks if it is removed? An answer's line would reach the city on the operator's OK alone, with no check that
  * the page is contained, the realm stands, the proposer is still here or the trail is whole, and no law named when
  * one of them fails.
