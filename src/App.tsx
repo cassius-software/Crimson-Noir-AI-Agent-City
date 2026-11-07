@@ -66,6 +66,7 @@ import { loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, saveMapChoic
 import { modelVoice, scriptedVoice, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
 import { ConciergeSpeaker, conciergeBridge, synthEnv, type ConciergeOut } from './07_Execute_Actions/onboarding/speaker.ts'
 import { useMentor } from './07_Execute_Actions/onboarding/useMentor.ts'
+import { pageProgress, progressBridge } from './07_Execute_Actions/progress.ts'
 import { agentBridge, identityLine, Roster, voiceProfile } from './08_Swarm/roster.ts'
 import { SKILLS } from './03_Spawn_Agents/skills.ts'
 import { FiveWhys } from './06_Make_Decisions/intent.ts'
@@ -964,6 +965,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           agent: agentBridge(roster, { recruit: (skill) => recruitBridge(r).ask(skill), wear: (agent, look) => e.setLook(agent, look), skills: () => SKILLS }),
           concierge: conciergeBridge(speaker),
           goal: (text: string) => goalPlan(text, engineBridge),
+          // The operator's level, credits and skills (progress.ts): the page's one keeper, which the console earns into.
+          progress: progressBridge(pageProgress()),
           memory: memoryBridge(memory, r),
           net: netBridge(e.net, pageStore(NET_TOKEN_KEY)),
           model: modelBridge,

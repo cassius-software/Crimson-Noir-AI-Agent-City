@@ -339,6 +339,28 @@ export interface LookBridge {
 }
 
 /**
+ * The operator's progression as the console reads it (07_Execute_Actions/progress.ts over
+ * 02_Define_The_Rules/progression.ts): level, XP, credits, skills, the table a check pays by, and the two things the
+ * operator spends by hand (a skill increase, a hero point). `command` is asked after every console command that ran
+ * without an error; it alone decides whether that command earns a check (and in which skill), and returns the lines
+ * the check printed, or none. A method may throw with the reason; the terminal prints it.
+ */
+export interface ProgressBridge {
+  /** `progress`: the operator as they stand. */
+  status(): string[]
+  /** `progress table`: the DC, a success's pay and each level's treasure, the degrees and the breadth bonus. */
+  table(): string[]
+  /** `progress train <skill>`: a skill increase spent; the line saying the new rank. */
+  train(skill: string): string
+  /** `progress reroll`: a hero point spent on the last check; the new result's lines. */
+  reroll(): string[]
+  /** `progress reset --yes`: a new operator. */
+  reset(): string
+  /** After a command ran without an error: its check's lines when it earned one, else none. */
+  command(name: string, args: readonly string[]): string[]
+}
+
+/**
  * Implemented by the host (App/engine). Arguments mirror the command line: `quality` takes 'auto' or a
  * tier from -1 (Lite) to 5 (Peak), `audio` takes 'on' / 'off' or a volume in percent (0–100). Called with no argument, both
  * only report. A method may throw; the terminal prints the message and carries on.
@@ -404,6 +426,8 @@ export interface TerminalBridge {
   concierge?: ConciergeBridge
   /** A goal in plain words, planned as Sloane plans one (06_Make_Decisions/intent.ts) with what can be done now done; absent in the console shell. */
   goal?(text: string): GoalPlan
+  /** The operator's progression; absent in the console shell (it is kept by the city) and on an older host. */
+  progress?: ProgressBridge
 }
 
 /**

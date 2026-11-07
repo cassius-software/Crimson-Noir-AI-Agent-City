@@ -35,7 +35,7 @@
  */
 import type {
   ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, EliteWrites, ExecResult, GateTether, GoalPlan, HalDevice, HarnessReport, LookBridge, LookChange, MemoryBridge, MindStatus, ModelBridge,
-  NetBridge, NetReport, OperatorBridge, PendingAct, Piece, PingKind, PingPick, RecordBridge, RecruitBridge, Ring0Stats, RobotConsole, RobotRow, RunResult, SayResult, TerminalBridge, TopicBridge, VoiceStatus,
+  NetBridge, NetReport, OperatorBridge, PendingAct, Piece, PingKind, PingPick, ProgressBridge, RecordBridge, RecruitBridge, Ring0Stats, RobotConsole, RobotRow, RunResult, SayResult, TerminalBridge, TopicBridge, VoiceStatus,
 } from './bridge.ts'
 import type { QualityState, RecordingState } from '../../05_Observe_Environment/telemetry.ts'
 import type { SwarmReport, SwarmStatus } from '../../08_Swarm/orchestrator.ts'
@@ -107,6 +107,7 @@ const CORE = [
   { name: 'agent', usage: 'agent [new <name>|<name> pronouns|role|voice|look|name <value...>|hire <name> [<skill>]|dismiss <name>|forget <name>|voices]', summary: 'your own agents: name, pronouns, role, voice and look; hire one into a pedestrian with a skill (they answer ask and say as themselves)' },
   { name: 'sloane', usage: 'sloane [on|off|voice <name>|voices|say <text...>]', summary: "the concierge's spoken voice: the speech provider's voice at your own head when say has one, else the browser's offline voice" },
   { name: 'goal', usage: 'goal <words...>', summary: 'tell the city a goal in plain words, as you would tell Sloane: what can be done now is done, the rest is explained' },
+  { name: 'progress', usage: 'progress [table|train <skill>|reroll|reset [--yes]]', summary: 'your level, XP, credits, hero points and skills; what a check pays; spend a skill increase or a hero point' },
   { name: 'hal', usage: 'hal [pair hid|serial|ble]', summary: 'hardware bus devices; pair a controller' },
   { name: 'robot', usage: 'robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|remove <id>]', summary: 'the robots: physical ones over HAL/1 or the loopback relay, simulated ones from a URDF file; their bodies in the physics realm as twins or leaders, every setpoint through the gate (relay, spawn, urdf, arm and calibrate are the operator\'s)' },
   { name: 'recruit', usage: 'recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]', summary: 'ask someone nearby with a skill over, or an Active recruit to the pinged point; listen by voice (on-device)' },
@@ -224,6 +225,9 @@ const ARGS: Record<string, readonly string[]> = {
   'look trim': ['matching'],
   'look scarf': ['none'],
   'look preset': LOOK_PRESET_ARGS,
+  progress: ['reroll', 'reset', 'table', 'train'],
+  'progress train': ['commerce', 'computers', 'optics', 'piloting', 'robotics', 'security', 'swarm', 'voice'],
+  'progress reset': ['--yes'],
   boot: ['gui', 'status', 'tty'],
   map: ['city', 'default', 'lakefront', 'status'],
   r0: ['reset', 'words'],
@@ -293,6 +297,30 @@ function operatorOf(b: TerminalBridge): OperatorBridge {
 /** The elite tier's write surface for a NoirScript run: null while it (or the operator tier) is locked, and on a bridge without one. */
 function eliteWritesOf(b: TerminalBridge): EliteWrites | null {
   try { return b.operator?.elite.writes() ?? null } catch { return null }
+}
+
+/** The progression, or the reason there is none here (the console alone keeps no city, so no progression). */
+function progressOf(b: TerminalBridge): ProgressBridge {
+  const p = b.progress
+  if (!p) throw new Error(b.brand.track === 'tty' ? 'kept by the city: boot gui to see it' : 'not available on this page')
+  return p
+}
+
+/**
+ * A command's result with the check it earned (ProgressBridge.command decides whether it earned one): appended to its
+ * lines, or to its pending lines once they settle; never for a result that holds an error, and never at all on a host
+ * without a progression. A progression that throws costs the command nothing.
+ */
+function earned(name: Name, args: readonly string[], b: TerminalBridge, r: CommandResult): CommandResult {
+  const p = b.progress
+  const failed = (lines: readonly Line[]) => lines.some((l) => l.kind === 'err')
+  if (!p || failed(r.lines)) return r
+  const check = (): Line[] => {
+    try { return p.command(name, args).map(out) } catch { return [] }
+  }
+  if (r.pending) return { ...r, pending: r.pending.then((lines) => (failed(lines) ? lines : [...lines, ...check()])) }
+  const lines = check()
+  return lines.length ? { ...r, lines: [...r.lines, ...lines] } : r
 }
 
 /** Likewise for a host that publishes no topics (the TTY shell, an older host). */
@@ -1081,6 +1109,21 @@ const HANDLERS: Record<Name, Handler> = {
     return { lines: [out(plan.root), ...lines, ...(!done && plan.steps.length ? [sys('  nothing could be done now: the rest needs the operator, or a restart')] : [])] }
   },
 
+  progress(args, b) {
+    const [a, ...rest] = args
+    if (a === undefined) return { lines: progressOf(b).status().map(out) }
+    if (a === 'table') return rest.length ? fail(usage('progress')) : { lines: progressOf(b).table().map(out) }
+    if (a === 'reroll') return rest.length ? fail(usage('progress')) : { lines: progressOf(b).reroll().map(out) }
+    if (a === 'train') return rest.length === 1 ? { lines: [out(progressOf(b).train(rest[0]))] } : fail(usage('progress'))
+    if (a === 'reset') {
+      if (rest.length === 1 && rest[0] === '--yes') return { lines: [out(progressOf(b).reset())] }
+      if (rest.length) return fail(usage('progress'))
+      progressOf(b)
+      return { lines: [sys('progress reset --yes starts a new operator: every level, credit, skill rank and purchase is gone for good')] }
+    }
+    return fail(`progress: unknown command '${a}'`, usage('progress'))
+  },
+
   hal(args, b) {
     if (!args.length) {
       const devices = b.hal.devices()
@@ -1790,11 +1833,13 @@ const HANDLERS: Record<Name, Handler> = {
 }
 
 function dispatch(name: Name, args: string[], bridge: TerminalBridge, history: readonly string[], line: string, session: ReplSession | null): CommandResult {
+  let r: CommandResult
   try {
-    return HANDLERS[name](args, bridge, history, line, session)
+    r = HANDLERS[name](args, bridge, history, line, session)
   } catch (e) {
     return fail(`${name}: ${message(e)}`)
   }
+  return earned(name, args, bridge, r)
 }
 
 /** Whether a proposed city action waits for the OK; false on a bridge without the tier (so `y` stays an unknown word there). */

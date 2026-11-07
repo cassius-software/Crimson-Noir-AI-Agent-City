@@ -15,6 +15,21 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The operator's progression.** The operator now has a level (1 to 20, 1,000 XP each, the rest rolling over), six
+  attribute modifiers, eight skills of the city with proficiency ranks, civic credits, hero points, resolve and three
+  actions and a reaction per six-second round (`src/02_Define_The_Rules/progression.ts`, over one 128-word record,
+  sealed and range-checked, kept in this browser by `src/05_Observe_Environment/progressStore.ts`). A console
+  command that does something in the city earns a check in its skill: a d20 plus the skill's modifier against the
+  level-based DC, eased by 2, paying a fixed table by degree and level, raised by how many different skills the
+  current cycle of 24 checks has used (1x to 3.5x). A skill rests a minute between checks; after three misses in a row
+  the next check rolls twice; a hero point rerolls the last check. The console's `progress` prints the status, the
+  table, spends skill increases and hero points, and starts over with `reset --yes`. Credits buy through one purchase
+  gate (`buy`, `canBuy`, `owns`, `spend` on `pageProgress()`), which debits the credits and sets the unlock in the
+  same record and save, for the wardrobe, the properties and their furniture to use. The mechanics are offered under
+  the ORC License: `NOTICE.md` now attributes Pathfinder GM Core as well (its level-based DCs and treasure table are
+  used) and lists what was taken and added, and `docs/ip-audit.md` §7 records the checks. The plan's surprise-scaled
+  payouts, hidden pity counter and drop tokens were not built (`docs/progression.md` says why). The cues on a success
+  and the checks the city itself earns are not in this change.
 - **The fallen wear their own bodies.** A pedestrian the realm promotes to a physical body (a shove, a kerb trip, a
   slip near the operator) is no longer hidden and replaced by grey capsules: the crowd's vertex stage hangs each of
   the body's fifteen bones from the rig shape it belongs to (`src/03_Spawn_Agents/humanoid.ts` `RIG_REST`,

@@ -900,7 +900,7 @@ while you type.
   `clear`, `history`, `echo [text]`, `uname [-asnrvmi]`, `whoami`, `version`, `boot [gui|tty|status]`,
   `map [city|lakefront|default|status]`, `r0 <words...>|r0 reset|r0 words`,
   `noir <source>|noir reset|noir words|noir asm <source>`, `agent [...]`, `sloane [...]`,
-  `goal <words...>`, `exit`.
+  `goal <words...>`, `progress [table|train <skill>|reroll|reset [--yes]]`, `exit`.
 - `topic` reads the unified namespace: every reading of the city, published each HUD tick into an in-page topic
   bus (`05_Observe_Environment/namespace.ts`) in the ISA-95 shape
   `Enterprise/JCS/Site/AgentCity/Area/{District}/Line/{Subsystem}/Cell/{Entity}/{Tag}`, the Area being the district you
@@ -974,6 +974,12 @@ while you type.
 - `goal <words...>` plans a goal as Sloane's card does (at most 160 characters): the steps it can take now (the
   clock, the quality tier, the sound) are applied and printed `done`, the rest `later`, a step that failed `failed`
   with why, and words nothing in the city maps to yet are named.
+- `progress` shows the operator's progression (see The operator's progression): level, XP, civic credits, hero
+  points, resolve, the round's actions, the six attributes and the eight skills with their ranks and modifiers;
+  `progress table` prints the DC, a success's pay and each level's treasure, and the degrees and the breadth bonus;
+  `progress train <skill>` spends a skill increase; `progress reroll` spends a hero point on the last check;
+  `progress reset --yes` starts a new operator. A command that does something in the city (not a status line or a
+  list) and ran without an error earns a check, printed under its own lines.
 - `history` and the Up arrow never show a key typed to `ask key` or `say key` or a token typed to `net join`: all
   are kept as dots.
 
@@ -1249,6 +1255,40 @@ enforces that `terminal/*` imports only types from the rest of the engine
 the console the other way round too, read-only: the operator tier is handed the task gateway, which only
 reads the worker's list, and every script must pass it. The console never holds the gateway, the
 recruiter or the engine.
+
+## The operator's progression
+
+The operator has a level (1 to 20, 1,000 XP to each), civic credits, hero points (at most three), resolve, six
+attribute modifiers (STR, DEX, CON, INT, WIS, CHA) and eight skills, each at a proficiency rank from untrained to
+legendary: computers (INT), piloting (DEX), robotics (STR), cyber security (WIS), swarm command (CHA), acoustics and
+voice (CHA), optics and cinema (WIS), and architecture and commerce (INT). A new operator is level 1 with every
+attribute at +1, every skill trained, 150 credits and one hero point. The rules are in
+`src/02_Define_The_Rules/progression.ts`; the page's keeper is `src/07_Execute_Actions/progress.ts`; the record is
+kept in this browser's local storage (`civic-simulation:progress:v1`, `src/05_Observe_Environment/progressStore.ts`)
+and nowhere else. The design and its numbers are in `docs/progression.md`.
+
+- **Checks.** Doing something earns a check in the skill it belongs to: a d20 plus the skill's modifier (its rank's
+  proficiency at the operator's level plus its attribute) against the level's DC, eased by 2. The degree pays from a
+  fixed table: a critical failure nothing, a failure 10 XP, a success 40 XP and the level's payout in credits (150 at
+  level 1, 400,000 at level 20), a critical success 80 XP, two and a half times the payout and a hero point.
+- **Breadth.** A cycle is 24 checks; the more different skills it has used, the more each check pays, XP and credits
+  alike: 1x for one skill, 1.5x for three, 2x for five, 3.5x for all eight (lighting the eighth also gives a resolve).
+- **Pace.** Three actions and a reaction every six seconds; a skill earns again a minute after its check, so varied
+  work pays and the same command over and over does not.
+- **Bad luck.** After three misses in a row, the next check rolls twice and keeps the higher die.
+- **Levels.** Each level from 2 brings a skill increase (`progress train <skill>`: expert any time, master from level
+  7, legendary from 15) and a resolve; levels 5, 10, 15 and 20 bring four attribute boosts, to the attributes behind
+  the skills used most (a boost at +4 or more counts half).
+- **Hero points.** One at the start of every session at least; `progress reroll` spends one on the last check that
+  was not a critical success. The better of the two results pays; nothing is taken back.
+- **Credits** buy the wardrobe, the properties and their furniture through one gate: the credits are debited and the
+  unlock set in the same record and the same save, so a purchase never takes the credits without the item.
+
+In this first slice the console earns the checks (`noir`, `r0` and `run` for computers, the robots' commands for
+robotics, `harness run` and the verifications for security, recruiting, asking, `swarm run`, `act ok` and pings for
+swarm command, `say` and `sloane say` for voice, `rain`, `ghost`, `time`, `xr` and `record start` for optics, `look`
+for commerce). The cues (a chime, a controller's click, the HUD's flash) and the checks the city itself earns
+(boarding a car, someone recruited arriving) are the next slice.
 
 ## Recruitment
 
