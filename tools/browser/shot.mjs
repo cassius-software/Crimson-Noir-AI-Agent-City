@@ -89,7 +89,8 @@ try {
   const t0 = Date.now()
   await b.send('Page.navigate', { url })
   await b.waitFor('!!window.__SIM__ && window.__SIM__.snapshot().output.fps > 0', BOOT_MS)
-  await b.waitFor(`!document.querySelector('.boot-veil[data-phase="cover"]')`, 30_000)
+  // The veil gone, not just fading: Sloane's card opens when the fade ends, so a Skip looked for sooner can miss it.
+  await b.waitFor(`!document.querySelector('.boot-veil')`, 30_000)
   console.log(`shot: booted in ${((Date.now() - t0) / 1000).toFixed(0)} s (${await b.eval('window.__SIM__.snapshot().process.gpu')})`)
   // The concierge asks a first visitor's name over the frame: skipped, as a visitor who wants the city would. The HUD
   // (the clock, the counts, the minimap) goes with the H key, as it does for a player.

@@ -310,13 +310,15 @@ class Page {
     await this.b.send('Page.navigate', { url })
   }
   /**
-   * Waits for the engine (window.__SIM__), a few rendered frames, and the boot veil lifting: it takes every touch and
+   * Waits for the engine (window.__SIM__), a few rendered frames, and the boot veil gone: it takes every touch and
    * click while it covers the page (BootVeil.tsx holds it half a second after the first frame), and a person waits for
-   * the city to show before touching it too.
+   * the city to show before touching it too. Gone, not just fading: Sloane's card opens when the fade ends (App.tsx
+   * veilDone), and on a slow software adapter that came after the first key checks, so its name field took G, M,
+   * the tilde and E as typing.
    */
   async booted() {
     await this.waitFor('!!window.__SIM__ && window.__SIM__.snapshot().output.fps > 0', BOOT_MS)
-    await this.waitFor(`!document.querySelector('.boot-veil[data-phase="cover"]')`, 30_000)
+    await this.waitFor(`!document.querySelector('.boot-veil')`, 30_000)
   }
   snap() {
     // On foot the avatar's capsule; at the wheel the driven car's pose (POSE: x at 0, z at 2, 28 floats a body).
