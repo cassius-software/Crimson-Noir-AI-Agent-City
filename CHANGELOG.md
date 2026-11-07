@@ -15,6 +15,18 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Kerbside bays, and the only car you may take.** One car in four of a fleet is seated, empty, in a kerbside bay
+  (`src/07_Execute_Actions/parking.ts` `BAYS`, `bayNear`, `bayClear`; `carRig.ts` `planFleet` takes the city's
+  boxes): the last quarter of the plan, so every earlier slot is as it was and the seed's stream is not drawn from,
+  on the sidewalk's inner strip 5.2 m from the street's centreline on the right-hand side of travel, 15 m or 25 m
+  along a block side (clear of the lamps and the tree), facing along the lane, and only where the lot's boxes leave a
+  car's footprint clear; a region's street window has its own origin. The traffic passes a bay without queueing
+  behind it or finding it with its bonnet rays, and a pedestrian walks round it. The minimap draws a bay car green
+  (`MapCar.parked`). A bay car a player leaves stands where it was left; when a network room starts, when the room's
+  held cars overflow, or when the room puts a driver out, it goes back to its bay (`Fleet.rebay`), so the page and
+  the room expect the same car in the same place with no further state. `parking.test.ts` checks the plan, every
+  bay's place and clearance, the realm's traffic flowing past the bays for 1,800 ticks (no follower stands beside a
+  bay for more than 3 s), and the door on both kinds of car. Manual: Vehicles.
 - **The contact policy as one rule.** Six collision layers (`src/02_Define_The_Rules/collision.ts` `LAYER`:
   terrain, structure, player, agent, vehicle, prop) and one branchless rule, `canCollide`: an actor (a player, an
   agent, a vehicle) meets the solid world (terrain, a structure) and nothing else, −1 or 0, the same either way
@@ -595,6 +607,15 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **A car in traffic is nobody's to take.** The only car a player may enter is a parked one: the realm's door
+  (`simCore.ts` `#interact` asks the fleet for the nearest parked car; a car in traffic within reach gets the toast
+  "that car has a driver", or "that car is being driven"), the console's `intent` (refused on an AI car: park it
+  first with `setMode parked`), and a network room's garage (`garage.node.ts` `whyNotEnter`: a car the room does not
+  hold must be a bay car standing in its bay within 0.5 m, turned at most 0.1 rad, upright, at a car's height and at
+  rest; a lane car is refused, `enter: car N has a driver`). The earlier door for a moving lane car (on its ring's
+  lane within 1 m, facing along it, at the ring's speed or under) is gone; the fleet is still measured against that
+  envelope in `garage.node.test.ts`. The room tests (`mirror.node.test.ts`, `authority.node.test.ts`,
+  `parity.fuzz.test.ts`, `simPlayers.test.ts`, `simCore.test.ts`) take bay cars now. Manual: Vehicles, Networking.
 - **Players pass through players.** The avatar's controller skipped dynamic bodies and sensors and now skips
   kinematic bodies too (`src/07_Execute_Actions/player.ts` `PASS_VEHICLES`), as the one contact rule says of two
   players, so in a room two people at the same spot never block each other; a wall still stops both. A chassis
@@ -653,6 +674,18 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Fixed
 
+- **A scrape along a lot wall replays to the bit.** The city's lots are boxes that overlap (a plinth, and buildings
+  raised from the street inside it), so a street face was two solid faces in one plane up to the plinth's top. A
+  chassis working its corner along it got two identical contacts, and how Rapier split the impulse between them
+  depended on which other bodies shared the broad phase's cell (the traffic beside a kerbside bay): the page's car
+  and a network room's replay of it parted by one float32 step a frame (15 µm at 150 m, 13 mm after ten seconds),
+  and the room put an honest driver back every frame of the scrape; a steady slide along the doubled face also paid
+  two frictions for one wall. `src/07_Execute_Actions/physics.ts` `solidBoxes` clips a box standing inside another
+  to the part above it before the colliders are built, on the page and in the room alike (a box wholly inside is
+  left out; boxes on top of, beside or straddling another are as they were; what is drawn is unchanged).
+  `solidBoxes.test.ts` pins the clip, counts the city's clipped boxes (hundreds a seed) and replays the scrape beside
+  thirty-five cars to the bit; `authority.node.test.ts` and `parity.fuzz.test.ts` drive bay cars along their lot
+  walls and are never put back. Manual: Ghost-mode collision.
 - **Sloane no longer takes the focus from a halted city's way-out card.** The Concierge became visible when the boot
   veil finished fading, whatever the city's state, and its name field took the keyboard focus from anything but
   another text field, so a halt inside the veil's last second (the browser smoke's thrown frame right after the veil

@@ -21,7 +21,7 @@ import { test } from 'node:test'
 import { generateCity, streetFurniture } from '../01_Initialize_World/city.ts'
 import { gen, type Gen } from '../02_Define_The_Rules/property.ts'
 import { SimCore } from '../07_Execute_Actions/simCore.ts'
-import { doorOf, ENTER_RANGE, footWish, POSE, RUN, type DriveControls, type SimCommand, type StepState } from '../07_Execute_Actions/simProtocol.ts'
+import { doorOf, ENTER_RANGE, footWish, MODES, POSE, RUN, type DriveControls, type SimCommand, type StepState } from '../07_Execute_Actions/simProtocol.ts'
 import { Mirror } from './mirror.node.ts'
 import { createNetClient, type Move, type NetClient, type NetSocket } from './netClient.ts'
 import { startHost } from './replication.node.ts'
@@ -134,10 +134,12 @@ async function page(url: string, token: string, name: string, clock: { now: numb
       reported = m
     }
   }
+  /** The nearest parked car: the kind of car a player may take (a car in traffic has a driver). */
   const nearest = () => {
     const a = st!.avatar
     let best = { x: 0, z: 0, d: Infinity }
     for (let i = 0; i < CARS; i++) {
+      if (poses[i * POSE.stride + POSE.mode] !== MODES.indexOf('parked')) continue
       const x = poses[i * POSE.stride + POSE.x], z = poses[i * POSE.stride + POSE.z]
       const d = Math.hypot(x - a.x, z - a.z)
       if (d < best.d) best = { x, z, d }

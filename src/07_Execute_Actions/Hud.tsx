@@ -617,7 +617,8 @@ function Minimap({ s, dark, ui, className, layer = null }: { s: SipocSnapshot; d
       ctx.save()
       ctx.translate(car.x, car.z)
       ctx.rotate(-car.heading)
-      ctx.fillStyle = car.player ? '#2563eb' : dark ? '#94a3b8' : '#64748b'
+      // Yours in blue; a parked car (nobody at its wheel: one you may take) in green; traffic in grey.
+      ctx.fillStyle = car.player ? '#2563eb' : car.parked ? '#16a34a' : dark ? '#94a3b8' : '#64748b'
       ctx.beginPath()
       ctx.roundRect(-0.95, -2.3, 1.9, 4.6, 0.6)
       ctx.fill()
