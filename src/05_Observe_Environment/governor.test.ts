@@ -78,6 +78,7 @@ test('tiers: five frozen, uniquely named steps that only ever add work going up'
     assert.ok(!p.post || t.post, 'post never switches off going up')
     assert.ok(!p.volumetrics || t.volumetrics, 'volumetrics never switch off going up')
     if (p.shadows) assert.ok(t.shadowMapSize >= p.shadowMapSize)
+    assert.ok(t.lampLights > p.lampLights, 'every step up lights more lamps')
     const cost = (k: QualityKnobs) => k.renderScale + Number(k.shadows) + Number(k.post) + Number(k.volumetrics) + k.crowdDensity + k.maxDistance / 1000 + k.shadowMapSize / 8192 + k.textureSize / 1024
     assert.ok(cost(t) > cost(p), `${t.label} is strictly more work than ${p.label}`)
   }
@@ -113,14 +114,15 @@ test('tiers: Lite is tier -1, below Minimal and outside the table; knobsOf reads
   assert.ok(Object.isFrozen(LITE))
   assert.deepEqual({ ...LITE }, {
     label: 'Lite', renderScale: 0.5, shadows: false, shadowMapSize: 1024, post: false, volumetrics: false,
-    crowdDensity: 0.15, lodDistance: 8, nearRadius: 6, maxDistance: 80, textureSize: 64,
+    crowdDensity: 0.15, lodDistance: 8, nearRadius: 6, maxDistance: 80, textureSize: 64, lampLights: 0,
   })
   // The same rules as the table, one step further down.
   const min = TIERS[0]
   assert.ok(LITE.renderScale >= 0.5 && LITE.crowdDensity > 0)
   assert.ok(LITE.nearRadius <= LITE.lodDistance && LITE.lodDistance < LITE.maxDistance)
   assert.ok(FBM_SIZES.includes(LITE.textureSize))
-  for (const k of ['renderScale', 'crowdDensity', 'lodDistance', 'nearRadius', 'maxDistance', 'textureSize'] as const) assert.ok(LITE[k] <= min[k], `Lite.${k} <= Minimal.${k}`)
+  for (const k of ['renderScale', 'crowdDensity', 'lodDistance', 'nearRadius', 'maxDistance', 'textureSize', 'lampLights'] as const) assert.ok(LITE[k] <= min[k], `Lite.${k} <= Minimal.${k}`)
+  assert.equal(LITE.lampLights, 0, 'a lite boot builds no clustered lighting (world.ts LITE_WORLD), so Lite lights no lamp')
   const cost = (k: QualityKnobs) => k.renderScale + Number(k.shadows) + Number(k.post) + Number(k.volumetrics) + k.crowdDensity + k.maxDistance / 1000 + k.shadowMapSize / 8192 + k.textureSize / 1024
   assert.ok(cost(LITE) < cost(min), 'Lite is strictly less work than Minimal')
   assert.ok(!new Set(TIERS.map((t) => t.label)).has(LITE.label))
@@ -135,13 +137,14 @@ test('tiers: Peak sits above the table like Lite', () => {
   assert.equal(knobsOf(4), TIERS[4])
   assert.deepEqual(PEAK, {
     label: 'Peak', renderScale: 1.25, shadows: true, shadowMapSize: 8192, shadowExtent: 160, post: true, volumetrics: true,
-    crowdDensity: 1, lodDistance: 90, nearRadius: 30, maxDistance: 700, textureSize: 256,
+    crowdDensity: 1, lodDistance: 90, nearRadius: 30, maxDistance: 700, textureSize: 256, lampLights: 384,
   })
   // The same rules as the table, one step further up.
   const ultra = TIERS[4]
-  for (const k of ['renderScale', 'crowdDensity', 'lodDistance', 'nearRadius', 'maxDistance', 'textureSize', 'shadowMapSize'] as const) {
+  for (const k of ['renderScale', 'crowdDensity', 'lodDistance', 'nearRadius', 'maxDistance', 'textureSize', 'shadowMapSize', 'lampLights'] as const) {
     assert.ok(PEAK[k] >= ultra[k], `Peak.${k} >= Ultra.${k}`)
   }
+  assert.equal(PEAK.lampLights, 384, 'the whole pool the world builds (liteWiring.test.ts pins FULL_WORLD to it)')
   assert.ok(PEAK.shadows && PEAK.post && PEAK.volumetrics, 'nothing switches off going up')
   const cost = (k: QualityKnobs) => k.renderScale + Number(k.shadows) + Number(k.post) + Number(k.volumetrics) + k.crowdDensity + k.maxDistance / 1000 + k.shadowMapSize / 8192 + k.textureSize / 1024
   assert.ok(cost(PEAK) > cost(ultra), `Peak is strictly more work than Ultra (${cost(PEAK)} > ${cost(ultra)})`)
@@ -855,15 +858,17 @@ function mockTargets(fit?: { maxEdge: number; cssEdge(): number }) {
   const post: boolean[] = []
   const volumetrics: boolean[] = []
   const texture: number[] = []
+  const lamps: number[] = []
   const t = {
     renderer, sun, basePixelRatio: 2,
     setCrowd: (c: (typeof crowd)[number]) => { crowd.push(c); log.push('crowd') },
     setPost: (on: boolean) => { post.push(on); log.push(`post ${on}`) },
     setVolumetrics: (on: boolean) => { volumetrics.push(on); log.push(`volumetrics ${on}`) },
     setTextureSize: (size: number) => { texture.push(size); log.push(`texture ${size}`) },
+    setLampLights: (count: number) => { lamps.push(count); log.push(`lamps ${count}`) },
     ...(fit && { fit }),
   }
-  return { t: t as unknown as QualityTargets, renderer, shadow, sun, crowd, post, volumetrics, texture, log }
+  return { t: t as unknown as QualityTargets, renderer, shadow, sun, crowd, post, volumetrics, texture, lamps, log }
 }
 
 test('applyQuality: first application sets everything and decides the compiled shadow variant', () => {
@@ -876,6 +881,7 @@ test('applyQuality: first application sets everything and decides the compiled s
   assert.deepEqual(m.post, [true])
   assert.deepEqual(m.volumetrics, [false], 'High: the ray strength is written to 0 once, before the first frame')
   assert.deepEqual(m.texture, [256])
+  assert.deepEqual(m.lamps, [192])
   assert.deepEqual(m.crowd, [{ lodDistance: 30, nearRadius: 22, density: TIERS[3].crowdDensity, maxDistance: 450 }])
 
   const handset = mockTargets()
@@ -898,13 +904,13 @@ test('applyQuality: only what changed; identical knobs touch nothing', () => {
   applyQuality(TIERS[3], m.t, TIERS[3])
   assert.deepEqual(m.log, [])
   applyQuality(TIERS[4], m.t, TIERS[3])
-  assert.deepEqual(m.log, ['mapSize 4096', 'volumetrics true', 'crowd'], 'Ultra differs from High in shadow texels, sun shafts and crowd only')
+  assert.deepEqual(m.log, ['mapSize 4096', 'volumetrics true', 'lamps 256', 'crowd'], 'Ultra differs from High in shadow texels, sun shafts, lit lamps and crowd only')
   m.log.length = 0
   applyQuality(TIERS[3], m.t, TIERS[4])
-  assert.deepEqual(m.log, ['mapSize 2048', 'volumetrics false', 'crowd'], 'and back: one uniform write, no post toggle')
+  assert.deepEqual(m.log, ['mapSize 2048', 'volumetrics false', 'lamps 192', 'crowd'], 'and back: uniform writes, no post toggle')
   m.log.length = 0
   applyQuality(TIERS[2], m.t, TIERS[3])
-  assert.deepEqual(m.log, ['pixelRatio 1.7', 'mapSize 1024', 'texture 192', 'crowd'], 'the operator\'s rule: crowd and texture detail go down together')
+  assert.deepEqual(m.log, ['pixelRatio 1.7', 'mapSize 1024', 'texture 192', 'lamps 128', 'crowd'], 'the operator\'s rule: crowd, lamps and texture detail go down together')
 })
 
 test('applyQuality: the sun shafts follow the post cap — Ultra with post capped off never turns them on', () => {
@@ -983,12 +989,12 @@ test('applyQuality: Ultra to Peak supersamples and widens the sun\'s box at the 
   applyQuality(TIERS[4], m.t)
   m.log.length = 0
   applyQuality(PEAK, m.t, TIERS[4])
-  assert.deepEqual(m.log, ['pixelRatio 2.5', 'mapSize 8192', 'extent 160', 'crowd'], 'Peak differs from Ultra in pixels, shadow texels and box, and detailed bodies only')
+  assert.deepEqual(m.log, ['pixelRatio 2.5', 'mapSize 8192', 'extent 160', 'lamps 384', 'crowd'], 'Peak differs from Ultra in pixels, shadow texels and box, lit lamps and detailed bodies only')
   m.log.length = 0
   applyQuality(PEAK, m.t, PEAK)
   assert.deepEqual(m.log, [])
   applyQuality(TIERS[4], m.t, PEAK)
-  assert.deepEqual(m.log, ['pixelRatio 2', 'mapSize 4096', 'extent 80', 'crowd'], 'and back: the box and its projection with it')
+  assert.deepEqual(m.log, ['pixelRatio 2', 'mapSize 4096', 'extent 80', 'lamps 256', 'crowd'], 'and back: the box and its projection with it')
   assert.deepEqual([m.shadow.camera.left, m.shadow.camera.top, m.shadow.camera.bottom], [-80, 80, -80])
 
   const first = mockTargets()
