@@ -15,6 +15,21 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Sloane's first walk, the first-run tutorial (stages, switch and card).** Six stages a brand-new visitor does before
+  the city is theirs (turn the head and walk; tell Sloane a goal; get into a parked car; stand inside a workplace; run
+  `laws` at the Ring-0 console; run the three-line NoirScript exit program), as a pure stage engine with Sloane's
+  lines (`src/09_Cognition/firstWalk.ts`: the thing to do in the device's own words, one line for an eight-year-old,
+  five whys one deeper each, one hint per stage after forty-five quiet seconds), a switch and a pass record
+  (`src/07_Execute_Actions/onboarding/firstWalkStore.ts`: `?tutorial=1|0`, `?onboarding=0` and `?boot=tty` keep it away,
+  the pass under `civic-simulation:first-walk:v1`), the page hook (`useFirstWalk.ts`) and a card with no close, no
+  skip and no key that puts it away (`FirstWalk.tsx`), one accessible button per stage that has Sloane do the action,
+  and on the last card buttons that type each program line into the console's prompt and run it. The console's
+  handle gained `type` and `run` and reports every line run (`onLine`); the Concierge reports a goal sent
+  (`onGoalSent`); the engine shows its workplaces (`workplaces()`). **Opt-in in this version** (`FIRST_WALK_DEFAULT`
+  is false): the exit program's three words are not yet in NoirScript, so the last stage cannot be passed; the
+  default flips when they land. The quiet five-minute watch waits until the walk is passed. Pinned by node tests (the
+  stage order and detection, the switch, the wiring, the lines' plainness, conduct screen and brand scrub); how the
+  card stands on a real phone, a pad or a screen reader is unverified.
 - **The fallen wear their own bodies.** A pedestrian the realm promotes to a physical body (a shove, a kerb trip, a
   slip near the operator) is no longer hidden and replaced by grey capsules: the crowd's vertex stage hangs each of
   the body's fifteen bones from the rig shape it belongs to (`src/03_Spawn_Agents/humanoid.ts` `RIG_REST`,
