@@ -740,6 +740,17 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   rectangle, their softer, broader, narrower or more defined kin, and four that move one feature); each sets the
   head and the seven face sliders, and any slider moved after is your own. At the console: `look hairStyle afro`,
   `look curl 4C`, `look headwear hijab`, `look headwearColour 3`, `look face heart`.
+- **Facial hair, hearing devices and prosthetics.** A **Facial hair** row (none, stubble, moustache, goatee, short
+  beard, full beard, long beard) paints the face in the hair's colour, greying with the hair; the long beard is a
+  shape of its own below the chin. A **Hearing devices** row (none, hearing aids, cochlear implant, cochlear implants,
+  implant and aid) puts a hearing aid behind the ear, or a cochlear implant's processor behind the ear with its coil
+  on the side of the head; on the near body only, the far body is too small to show them. A **Prosthetic** row (none,
+  left arm, right arm, left leg, right leg, both arms, both legs) with a **Prosthetic finish** row (matte, carbon,
+  chrome, skin-matched) paints the hand and wrist below the sleeve, or the shin and the ankle below the knee, with the
+  socket's line; a leg shows where the leg is bare (under a skirt), and trousers cover it as they would. Some
+  pedestrians have them too (facial hair for about forty-five men in a hundred, hearing aids for about two people in
+  a hundred, an implant for under one, a prosthetic for one). At the console: `look facialHair goatee`, `look hearing
+  cochlear implant`, `look prosthetic left arm`, `look prostheticFinish carbon`.
 - **The four words.** `packLook` folds the body, the pieces, the colours, the age and the undertone into one
   unsigned 32-bit word (bit 6 says the hair is long, written from the style; the top bit is spare), `packFigure`
   the eight body sliders into a second, `packFace` the seven face sliders and the hair style into a third and
@@ -812,7 +823,7 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   person's joints sit a few centimetres off its shapes for as long as the fall lasts (`?rigs=capsules` shows the rig
   bare), and the network ghosts keep the base body. The
   face is still: no expression, no blink, no lip movement when someone speaks, and the eyes look where the head
-  looks. There is no facial hair, and the hair is a shape, not strands. Heads turn to you and to the way their owner
+  looks. The hair is a shape, not strands, and facial hair is paint on the face (the long beard is a shape). Heads turn to you and to the way their owner
   goes, not to other pedestrians or cars; the feet stay planted from half a metre a second up and shuffle a little
   under it while a stride shrinks to standing. Whether agent 0's hashed look and `lookFromSeed(0)` agree on the GPU
   is a browser check not yet made (see Browser support); the skinned body and its face have been looked at on a

@@ -36,7 +36,7 @@ import { bodyVertex } from './crowdBody.ts'
 import { PLAYER_INDEX, VARIANTS, agentQuota } from './crowdCompute.ts'
 import { BODY_NAMES, BONE, FACE, GARMENT, HEIGHT_BASE, LANDMARK, PIECE, RIG_REST, RIG_WEAR, SLOT, humanoidMesh, type HumanoidMesh } from './humanoid.ts'
 import {
-  HAIR_PIECE_STYLES, HAIR_TEXTURE, HAIR_TEXTURE_BITS, HAIR_TEXTURE_STYLES, HEADWEAR, LAYER, LOOK_FIELD, LOOK_FIELD_HIGH, LOOK_HASHED_COLOUR,
+  FACIAL_HAIR, HAIR_PIECE_STYLES, HAIR_TEXTURE, HAIR_TEXTURE_BITS, HAIR_TEXTURE_STYLES, HEADWEAR, HEARING, LAYER, LOOK_HASHED_HEARING, PROSTHETIC, LOOK_FIELD, LOOK_FIELD_HIGH, LOOK_HASHED_COLOUR,
   LOOK_HASHED_FACE, LOOK_HASHED_HAIR_SPLIT, LOOK_HASHED_HEADWEAR, LOOK_HASHED_LAYER, LOOK_HASHED_SCARF,
   LOOK_HASHED_SLIDER, LOOK_ODDS, LOOK_PIECE_BIT, LOOK_SLIDER_MIDDLE, LOOK_STATURE, LOOK_WORDS, VITILIGO, WARDROBE,
   type LookFaceSlider, type LookSlider, type LookSlot, type PaletteName,
@@ -246,8 +246,8 @@ function skinMarks(skinIn: V3, vitiligoIn: U1, frecklesIn: U1, rigIn: V3, offset
  * deeper down the scale). The far body keeps the cuts that change the head's colour (close, faded, shaved) and leaves
  * the fine paints. Only the hair's slot reads the result (not the brows: their piece is the face's).
  */
-function hairPaint(hairIn: V3, skinIn: V3, textureIn: U1, curlIn: U1, rigIn: V3, near: boolean): V3 {
-  const paint = Fn(([hair, skin, texture, curl, rig]: [V3, V3, U1, U1, V3]) => {
+function hairPaint(hairIn: V3, skinIn: V3, textureIn: U1, curlIn: U1, rigIn: V3, slotIn: F1, near: boolean): V3 {
+  const paint = Fn(([hair, skin, texture, curl, rig, slot]: [V3, V3, U1, U1, V3, F1]) => {
     const rest = positionGeometry
     const piece = rig.z
     const is = (p: number) => piece.greaterThan(p - 0.5).and(piece.lessThan(p + 0.5))
@@ -256,53 +256,96 @@ function hairPaint(hairIn: V3, skinIn: V3, textureIn: U1, curlIn: U1, rigIn: V3,
     const t = (k: number) => texture.equal(uint(k))
     const out = vec3(hair).toVar()
     const x = rest.x, y = rest.y
-    const shaved = skin.mul(0.86).add(hair.mul(0.14))
-    If(onCap, () => {
-      If(t(HAIR_TEXTURE.close), () => { out.assign(mix(hair, skin, 0.5)) })
-      If(t(HAIR_TEXTURE.fade), () => { out.assign(mix(hair, shaved, smoothstep(1.715, 1.645, y))) })
-      If(t(HAIR_TEXTURE.undercut), () => { out.assign(select(x.abs().greaterThan(0.056).and(y.lessThan(1.735)), shaved, hair)) })
-      If(t(HAIR_TEXTURE.strip), () => { out.assign(select(x.abs().greaterThan(0.03), shaved, hair)) })
+    // A variable, assigned before the cuts: two of them read it, and an expression first built inside one cut's branch
+    // was left unassigned in the other's (the centre strip's sides read black).
+    const shaved = skin.mul(0.86).add(hair.mul(0.14)).toVar()
+    // The hair's slot alone: every other fragment keeps the colour as it came (this runs before the slots' branches).
+    If(slot.greaterThan(SLOT.HAIR - 0.5).and(slot.lessThan(SLOT.HAIR + 0.5)), () => {
+      If(onCap, () => {
+        If(t(HAIR_TEXTURE.close), () => { out.assign(mix(hair, skin, 0.5)) })
+        If(t(HAIR_TEXTURE.fade), () => { out.assign(mix(hair, shaved, smoothstep(1.715, 1.645, y))) })
+        If(t(HAIR_TEXTURE.undercut), () => { out.assign(select(x.abs().greaterThan(0.056).and(y.lessThan(1.735)), shaved, hair)) })
+        If(t(HAIR_TEXTURE.strip), () => { out.assign(select(x.abs().greaterThan(0.03), shaved, hair)) })
+      })
+      if (near) {
+        const groove = (v: F1, width: number): F1 => smoothstep(0.5 - width, 0.5, v.fract().sub(0.5).abs())
+        const lengths = is(PIECE.LONG_HAIR).or(is(PIECE.PONYTAIL)).or(is(PIECE.BOB)).or(is(PIECE.BUN)).or(is(PIECE.TOP_BUN))
+        If(onCap.and(t(HAIR_TEXTURE.part)), () => { out.assign(select(x.sub(0.035).abs().lessThan(0.004).and(y.greaterThan(1.7)), mix(hair, skin, 0.6), hair)) })
+        If(onCap.and(t(HAIR_TEXTURE.rows).or(t(HAIR_TEXTURE.braids))), () => {
+          // Partings between the rows, front to back (cornrows), or a grid of them (braids' sections).
+          const rows = groove(x.mul(select(t(HAIR_TEXTURE.rows), float(55), float(30))), 0.09)
+          const sections = select(t(HAIR_TEXTURE.braids), groove(y.mul(30).add(rest.z.mul(30)), 0.08), float(0))
+          out.assign(mix(hair, skin.mul(0.8), rows.max(sections).mul(0.75)))
+        })
+        If(lengths.and(t(HAIR_TEXTURE.braids).or(t(HAIR_TEXTURE.rows))), () => {
+          out.assign(hair.mul(float(0.78).add(groove(y.mul(90).add(x.abs().mul(60)), 0.25).oneMinus().mul(0.3))))
+        })
+        If(ofHair.and(t(HAIR_TEXTURE.locs)), () => {
+          const cords = groove(x.mul(45).add(rest.z.mul(45)), 0.18).oneMinus()
+          out.assign(hair.mul(float(0.74).add(cords.mul(0.3)).add(valueNoise(rest.mul(vec3(40, 12, 40)), 2.3).mul(0.08))))
+        })
+        If(ofHair.and(t(HAIR_TEXTURE.twists)), () => {
+          const a = groove(y.mul(70).add(x.mul(50)), 0.2), c = groove(y.mul(70).sub(x.mul(50)), 0.2)
+          out.assign(hair.mul(float(1.04).sub(a.max(c).mul(0.24))))
+        })
+        If(onCap.and(t(HAIR_TEXTURE.waves)), () => {
+          const r = vec3(x, 0, rest.z.add(0.015)).length()
+          out.assign(mix(hair, skin, 0.35).mul(float(0.84).add(groove(r.mul(85).add(y.mul(20)), 0.3).oneMinus().mul(0.22))))
+        })
+        // The curl pattern's own texture (1A to 4C: four families of three): straight streaks, waves, curls, coils.
+        If(ofHair.and(curl.greaterThan(uint(0))).and(t(HAIR_TEXTURE.close).not()).and(t(HAIR_TEXTURE.waves).not()), () => {
+          const family = curl.sub(uint(1)).div(uint(3))
+          const grade = float(curl.sub(uint(1)).mod(uint(3))).div(2)
+          const streak = x.add(rest.z).mul(300).sin().mul(0.05)
+          const wave = y.mul(float(110).add(grade.mul(40))).add(x.mul(40).sin().mul(2)).sin().mul(0.08)
+          const curls = valueNoise(rest.mul(float(140).add(grade.mul(60))), 4.1).sub(0.5).mul(0.24)
+          const coils = valueNoise(rest.mul(float(260).add(grade.mul(80))), 6.7).sub(0.5).mul(0.28).sub(0.06)
+          const shade = select(family.equal(uint(0)), streak, select(family.equal(uint(1)), wave, select(family.equal(uint(2)), curls, coils)))
+          out.assign(out.mul(shade.add(1)))
+        })
+      }
     })
-    if (near) {
-      const groove = (v: F1, width: number): F1 => smoothstep(0.5 - width, 0.5, v.fract().sub(0.5).abs())
-      const lengths = is(PIECE.LONG_HAIR).or(is(PIECE.PONYTAIL)).or(is(PIECE.BOB)).or(is(PIECE.BUN)).or(is(PIECE.TOP_BUN))
-      If(onCap.and(t(HAIR_TEXTURE.part)), () => { out.assign(select(x.sub(0.035).abs().lessThan(0.004).and(y.greaterThan(1.7)), mix(hair, skin, 0.6), hair)) })
-      If(onCap.and(t(HAIR_TEXTURE.rows).or(t(HAIR_TEXTURE.braids))), () => {
-        // Partings between the rows, front to back (cornrows), or a grid of them (braids' sections).
-        const rows = groove(x.mul(select(t(HAIR_TEXTURE.rows), float(55), float(30))), 0.09)
-        const sections = select(t(HAIR_TEXTURE.braids), groove(y.mul(30).add(rest.z.mul(30)), 0.08), float(0))
-        out.assign(mix(hair, skin.mul(0.8), rows.max(sections).mul(0.75)))
-      })
-      If(lengths.and(t(HAIR_TEXTURE.braids).or(t(HAIR_TEXTURE.rows))), () => {
-        out.assign(hair.mul(float(0.78).add(groove(y.mul(90).add(x.abs().mul(60)), 0.25).oneMinus().mul(0.3))))
-      })
-      If(ofHair.and(t(HAIR_TEXTURE.locs)), () => {
-        const cords = groove(x.mul(45).add(rest.z.mul(45)), 0.18).oneMinus()
-        out.assign(hair.mul(float(0.74).add(cords.mul(0.3)).add(valueNoise(rest.mul(vec3(40, 12, 40)), 2.3).mul(0.08))))
-      })
-      If(ofHair.and(t(HAIR_TEXTURE.twists)), () => {
-        const a = groove(y.mul(70).add(x.mul(50)), 0.2), c = groove(y.mul(70).sub(x.mul(50)), 0.2)
-        out.assign(hair.mul(float(1.04).sub(a.max(c).mul(0.24))))
-      })
-      If(onCap.and(t(HAIR_TEXTURE.waves)), () => {
-        const r = vec3(x, 0, rest.z.add(0.015)).length()
-        out.assign(mix(hair, skin, 0.35).mul(float(0.84).add(groove(r.mul(85).add(y.mul(20)), 0.3).oneMinus().mul(0.22))))
-      })
-      // The curl pattern's own texture (1A to 4C: four families of three): straight streaks, waves, curls, coils.
-      If(ofHair.and(curl.greaterThan(uint(0))).and(t(HAIR_TEXTURE.close).not()).and(t(HAIR_TEXTURE.waves).not()), () => {
-        const family = curl.sub(uint(1)).div(uint(3))
-        const grade = float(curl.sub(uint(1)).mod(uint(3))).div(2)
-        const streak = x.add(rest.z).mul(300).sin().mul(0.05)
-        const wave = y.mul(float(110).add(grade.mul(40))).add(x.mul(40).sin().mul(2)).sin().mul(0.08)
-        const curls = valueNoise(rest.mul(float(140).add(grade.mul(60))), 4.1).sub(0.5).mul(0.24)
-        const coils = valueNoise(rest.mul(float(260).add(grade.mul(80))), 6.7).sub(0.5).mul(0.28).sub(0.06)
-        const shade = select(family.equal(uint(0)), streak, select(family.equal(uint(1)), wave, select(family.equal(uint(2)), curls, coils)))
-        out.assign(out.mul(shade.add(1)))
-      })
-    }
     return out
   }) as unknown as (...inputs: Node[]) => V3
-  return paint(hairIn, skinIn, textureIn, curlIn, rigIn)
+  return paint(hairIn, skinIn, textureIn, curlIn, rigIn, slotIn)
+}
+
+/**
+ * Facial hair painted on the face's skin in the hair's colour (look.ts FACIAL_HAIR), from the rest position: stubble
+ * a light shadow over the jaw and the upper lip, a moustache over the lip, a goatee the moustache and the chin, a
+ * short beard the jaw to the cheek's lower line, a full beard (and under the long beard's piece) up to the cheeks,
+ * each broken by fine noise so it reads as hair. Not on the nose or the ears (the features' piece), nor the lips
+ * (their own slot). The far body has no features: it keeps the beards' colour over the jaw, not the fine lines.
+ */
+function facialPaint(skinIn: V3, hairIn: V3, styleIn: U1, rigIn: V3, slotIn: F1, near: boolean): V3 {
+  const paint = Fn(([skin, hair, style, rig, slot]: [V3, V3, U1, V3, F1]) => {
+    const rest = positionGeometry
+    const out = vec3(skin).toVar()
+    const onHead = rig.x.greaterThan(BONE.HEAD - 0.5).and(rig.x.lessThan(BONE.HEAD + 0.5))
+    const feature = rig.z.greaterThan(PIECE.FACE - 0.5).and(rig.z.lessThan(PIECE.FACE + 0.5))
+    const bare = slot.greaterThan(SLOT.SKIN - 0.5).and(slot.lessThan(SLOT.SKIN + 0.5))
+    If(bare.and(onHead).and(feature.not()).and(style.notEqual(uint(FACIAL_HAIR.none))), () => {
+      const x = rest.x.abs(), y = rest.y, z = rest.z
+      const is = (k: number) => style.equal(uint(k))
+      const grain = near ? valueNoise(rest.mul(180), 8.3).mul(0.3).add(0.7) : float(0.85)
+      const full = is(FACIAL_HAIR.fullBeard).or(is(FACIAL_HAIR.longBeard))
+      const jawTop = select(full, float(1.642), float(1.628))
+      // Down to the chin's own ring (1.572 to 1.575), or a little under it for a full beard: the neck below is bare (the
+      // trunk's last two rings are the head's bone and the skin's slot, so nothing else keeps the paint off the throat).
+      const below = select(full, float(1.548), float(1.571))
+      const jaw = y.greaterThan(below).and(y.lessThan(jawTop)).and(z.greaterThan(-0.03))
+      const lip = x.lessThan(0.028).and(y.greaterThan(1.612)).and(y.lessThan(1.626)).and(z.greaterThan(0.04))
+      const chin = x.lessThan(0.03).and(y.greaterThan(1.571)).and(y.lessThan(1.602)).and(z.greaterThan(0.02))
+      const beard = is(FACIAL_HAIR.shortBeard).or(is(FACIAL_HAIR.fullBeard)).or(is(FACIAL_HAIR.longBeard))
+      const cover = select(is(FACIAL_HAIR.stubble), select(jaw.or(lip), float(0.32), float(0)),
+        select(lip.and(is(FACIAL_HAIR.moustache).or(is(FACIAL_HAIR.goatee)).or(beard)), float(0.95),
+          select(chin.and(is(FACIAL_HAIR.goatee)), float(0.92),
+            select(jaw.and(beard), select(is(FACIAL_HAIR.shortBeard), float(0.8), float(0.94)), float(0)))))
+      out.assign(mix(skin, hair, cover.mul(grain)))
+    })
+    return out
+  }) as unknown as (...inputs: Node[]) => V3
+  return paint(skinIn, hairIn, styleIn, rigIn, slotIn)
 }
 
 function agentBuffers(view: CrowdView, agentCount: number, listLength: number) {
@@ -535,8 +578,21 @@ export class CrowdView {
         : select(covered, float(1 << LOOK_PIECE_BIT.hairCap), float(0))
       // The hashed hair is the five older styles' pieces alone, covered as a chosen look's is.
       const hashedHair = select(coversAll, float(0), select(coversCrown, hashedLength, hashedCrown.add(hashedLength)))
-      const ownGrooms = ownHair.add(headwearBits)
-      const hashedHead = hashedHair.add(headwearBits)
+      // The skin word's own pieces (look.ts genomeBits): the long beard, and on the near body the hearing devices (a
+      // chosen look's, or the hash's: hearing aids for a few, an implant on the right for fewer).
+      const hearingLink = h(LOOK_HASHED_HEARING)
+      const hashedHearing = select(hearingLink.greaterThanEqual(LOOK_ODDS.implant), uint(HEARING.implant), select(hearingLink.greaterThanEqual(LOOK_ODDS.aids), uint(HEARING.aids), uint(HEARING.none)))
+      const hearing = select(custom, skinWord.shiftRight(uint(LOOK_FIELD.hearing[1])).bitAnd(uint(7)), hashedHearing)
+      const hears = (...kinds: number[]) => kinds.reduce((on: ReturnType<typeof hearing.equal>, k) => on.or(hearing.equal(uint(k))), hearing.equal(uint(255)))
+      const longBeard = custom.and(skinWord.shiftRight(uint(LOOK_FIELD.facialHair[1])).bitAnd(uint(7)).equal(uint(FACIAL_HAIR.longBeard)))
+      const genomePieces = select(longBeard, float(1 << LOOK_PIECE_BIT.beard), float(0)).add(near
+        ? select(hears(HEARING.aids, HEARING.implantAndAid), float(1 << LOOK_PIECE_BIT.aidL), float(0))
+          .add(select(hears(HEARING.aids), float(1 << LOOK_PIECE_BIT.aidR), float(0)))
+          .add(select(hears(HEARING.implants), float(1 << LOOK_PIECE_BIT.coilL), float(0)))
+          .add(select(hears(HEARING.implant, HEARING.implants, HEARING.implantAndAid), float(1 << LOOK_PIECE_BIT.coilR), float(0)))
+        : float(0))
+      const ownGrooms = ownHair.add(headwearBits).add(genomePieces)
+      const hashedHead = hashedHair.add(headwearBits).add(genomePieces)
       // The eye pass alone draws the face's features (their piece bit): the shadow map does without them.
       const features = eye ? 1 << LOOK_PIECE_BIT.face : 0
       // The wardrobe the hash gives (look.ts lookFromSeed draws it from the same links the same way), as a wardrobe
@@ -620,7 +676,13 @@ export class CrowdView {
     // band between two rings is one slot. Interpolated, rig.y would paint the slots numbered between the two as
     // stripes across the band (a jacket's hem over the trousers showed the shirt, the skin and the hair).
     const slot = varying(rig.y, 'vAgentSlot').setInterpolation('flat')
-    const h = (k: number): F1 => hash(vSeed.add(k * 7.919))
+    // One node per link (built once, at the top of the stage: see shared below), however many paints read it.
+    const links = new Map<number, F1>()
+    const h = (k: number): F1 => {
+      let link = links.get(k)
+      if (link === undefined) links.set(k, (link = hash(vSeed.add(k * 7.919)).toVar() as unknown as F1))
+      return link
+    }
     // The colour lists on the GPU: one uniform array of every palette, a palette read at its offset (PALETTE_TABLE).
     const table = uniformArray(PALETTE_TABLE, 'color')
     const colour = (list: Color[], i: U1): V3 => table.element(i.add(uint(PALETTE_OFFSET.get(list)!))) as unknown as V3
@@ -689,8 +751,8 @@ export class CrowdView {
     const vitiligo = select(custom, gene(LOOK_FIELD.vitiligo), select(h(LOOK_HASHED_COLOUR.vitiligo).greaterThanEqual(LOOK_ODDS.vitiligo), uint(h(LOOK_HASHED_COLOUR.vitiligoPattern).mul(WARDROBE.vitiligo.length - 1 - 0.001)).add(uint(1)), uint(0)))
     const freckles = select(custom, gene(LOOK_FIELD.freckles), select(h(LOOK_HASHED_COLOUR.freckles).greaterThanEqual(LOOK_ODDS.freckles), uint(h(LOOK_HASHED_COLOUR.frecklesDensity).mul(WARDROBE.freckles.length - 1 - 0.001)).add(uint(1)), uint(0)))
     const marked = skinMarks(toned, vitiligo, freckles, rig, vec3(h(LOOK_HASHED_COLOUR.marks), h(LOOK_HASHED_COLOUR.marks + 1), h(LOOK_HASHED_COLOUR.marks + 2)), slot, near)
-    const wornSkin = mix(marked, vec3(dot(marked, vec3(0.2126, 0.7152, 0.0722))), age.mul(0.25))
-    const greyed = mix(pickedHair, grey, smoothstep(0.5, 1, age))
+    const wornSkin = mix(marked, vec3(dot(marked, vec3(0.2126, 0.7152, 0.0722))), age.mul(0.25)).toVar() as unknown as V3
+    const greyed = mix(pickedHair, grey, smoothstep(0.5, 1, age)).toVar() as unknown as V3
     top = select(custom, ownTop, top)
     bottom = select(custom, ownBottom, bottom)
     shirt = select(custom, ownShirt, shirt)
@@ -704,7 +766,7 @@ export class CrowdView {
     const hairTexture = wardrobe.shiftRight(uint(8)).bitAnd(uint((1 << HAIR_TEXTURE_BITS) - 1))
     const headwear = wardrobe.shiftRight(uint(8 + HAIR_TEXTURE_BITS)).bitAnd(uint(7))
     const curl = select(custom, gene(LOOK_FIELD.curl), uint(h(LOOK_HASHED_COLOUR.curl).mul(WARDROBE.curl.length - 1 - 0.001)).add(uint(1)))
-    const wornHair = hairPaint(greyed, wornSkin, hairTexture, curl, rig, near)
+    const wornHair = hairPaint(greyed, wornSkin, hairTexture, curl, rig, slot, near).toVar() as unknown as V3
     // The headwear's cloth (the look's, or the colours' chain's), a head wrap's print in two shades of it, a beanie's
     // ribs; a kippah painted on the crown over the hair or the scalp; on the far body, which has no headwear pieces,
     // the hair's cap under any cover in the cloth.
@@ -720,7 +782,29 @@ export class CrowdView {
     const covered = headwear.notEqual(uint(HEADWEAR.none)).and(hw(HEADWEAR.kippah).not())
     const farCover = near ? float(0) : select(covered.and(pieceIs(PIECE.HAIR_CAP)), float(1), float(0))
     const hairShown = mix(select(kippah, headCloth, wornHair), fabric, farCover)
-    const skinShown = select(kippah, headCloth, wornSkin)
+    // Facial hair (the look's, or a man's from the colours' chain: stubble to a full beard) in the hair's colour.
+    const facialHair = select(custom, gene(LOOK_FIELD.facialHair), woman ? uint(0)
+      : select(h(LOOK_HASHED_COLOUR.facialHair).greaterThanEqual(LOOK_ODDS.facialHair), uint(h(LOOK_HASHED_COLOUR.facialHairStyle).mul(FACIAL_HAIR.fullBeard - 0.001)).add(uint(1)), uint(0)))
+    const skinShown = select(kippah, headCloth, facialPaint(wornSkin, greyed, facialHair, rig, slot, near)).toVar() as unknown as V3
+    // A prosthetic limb (the look's, or one in a hundred from the colours' chain): the hand below the sleeve for an
+    // arm, the shin below the knee for a leg where it is bare (the skirt suit's), in its finish, with the socket's line.
+    const hashedLimb = h(LOOK_HASHED_COLOUR.prosthetic).greaterThanEqual(LOOK_ODDS.prosthetic)
+    const prosthetic = select(custom, gene(LOOK_FIELD.prosthetic), select(hashedLimb, uint(h(LOOK_HASHED_COLOUR.prostheticLimb).mul(4 - 0.001)).add(uint(1)), uint(0)))
+    const finish = select(custom, gene(LOOK_FIELD.prostheticFinish), select(hashedLimb, uint(h(LOOK_HASHED_COLOUR.prostheticFinish).mul(WARDROBE.prostheticFinish.length - 0.001)), uint(0)))
+    const limb = (...kinds: number[]) => kinds.reduce((on: ReturnType<typeof prosthetic.equal>, k) => on.or(prosthetic.equal(uint(k))), prosthetic.equal(uint(255)))
+    const boneIs = (k: number) => rig.x.greaterThan(k - 0.5).and(rig.x.lessThan(k + 0.5))
+    const slotIs = (k: number) => slot.greaterThan(k - 0.5).and(slot.lessThan(k + 0.5))
+    // The person's own left is +x, the bones' _R side (humanoid.ts: the _L bones are the side a viewer facing them sees on
+    // their left), so a left arm or leg is the _R hand or shin.
+    const armHere = slotIs(SLOT.SKIN).and(boneIs(BONE.HAND_R).and(limb(PROSTHETIC.leftArm, PROSTHETIC.bothArms)).or(boneIs(BONE.HAND_L).and(limb(PROSTHETIC.rightArm, PROSTHETIC.bothArms))))
+    const legHere = slotIs(SLOT.LEGWEAR).and(positionGeometry.y.lessThan(0.46))
+      .and(boneIs(BONE.SHIN_R).and(limb(PROSTHETIC.leftLeg, PROSTHETIC.bothLegs)).or(boneIs(BONE.SHIN_L).and(limb(PROSTHETIC.rightLeg, PROSTHETIC.bothLegs))))
+    const limbHere = armHere.or(legHere)
+    const weave = step(0.5, positionGeometry.x.add(positionGeometry.z).mul(140).fract()).add(step(0.5, positionGeometry.y.mul(140).fract())).mod(2)
+    const fin = (k: number) => finish.equal(uint(k))
+    const finishColour = select(fin(0), vec3(0.23, 0.24, 0.26), select(fin(1), mix(vec3(0.07, 0.075, 0.08), vec3(0.14, 0.145, 0.15), weave), select(fin(2), vec3(0.72, 0.74, 0.77), wornSkin.mul(0.96))))
+    const socketY = select(armHere, float(0.905), float(0.446))
+    const limbColour = finishColour.mul(select(positionGeometry.y.sub(socketY).abs().lessThan(0.006), float(0.5), float(1)))
     const wfield = (s: 'layer' | 'trim' | 'scarf'): U1 => wardrobe.shiftRight(uint(LOOK_FIELD[s][1])).bitAnd(uint((1 << LOOK_FIELD[s][2]) - 1))
     const layer = wfield('layer')
     const trimAt = wfield('trim')
@@ -751,23 +835,37 @@ export class CrowdView {
     // The suit's tie keeps the hash's cloth; the other bodies' accent is the shirt. The skirt suit's hose is the hash's.
     const accent = variant === 0 ? pick(PALETTE.ties, h(5)) : shirt
     const legwear = variant === 3 ? mix(wornSkin, vec3(0.08, 0.07, 0.07), step(0.55, h(11))) : bottom
+    const device = vec3(0.17, 0.175, 0.18)
     const prop = select(rig.z.greaterThan(PIECE.CUP - 0.5), vec3(0.93, 0.92, 0.9), pick(PALETTE.bags, h(12)))
     const frame = vec3(0.05, 0.05, 0.055)
     // The eyes: their whites, an iris the hash picks (the words have no room for it), and the lips a shade of the skin.
     const white = vec3(0.88, 0.86, 0.84)
     const iris = pick(PALETTE.iris, h(LOOK_HASHED_COLOUR.iris))
     const lip = wornSkin.mul(vec3(0.82, 0.55, 0.55))
-    const slots: V3[] = [worn, shirt, skinShown, hairShown, bottom, shoes, accent, prop, legwear, frame, white, iris, lip, scarf, fabric]
-    const rough = [0.82, 0.7, 0.55, 0.6, 0.8, 0.35, 0.6, 0.45, 0.6, 0.3, 0.25, 0.3, 0.5, 0.78, 0.8]
+    const slots: V3[] = [worn, shirt, select(armHere, limbColour, skinShown), hairShown, bottom, shoes, accent, prop, select(legHere, limbColour, legwear), frame, white, iris, lip, scarf, fabric, device]
+    const rough = [0.82, 0.7, 0.55, 0.6, 0.8, 0.35, 0.6, 0.45, 0.6, 0.3, 0.25, 0.3, 0.5, 0.78, 0.8, 0.4]
     let color: V3 = slots[slots.length - 1]
     let roughness: F1 = float(rough[rough.length - 1])
     for (let s = slots.length - 2; s >= 0; s--) {
       color = select(slot.lessThan(s + 0.5), slots[s], color)
       roughness = select(slot.lessThan(s + 0.5), float(rough[s]), roughness)
     }
-    m.colorNode = color
-    m.roughnessNode = roughness
-    m.metalnessNode = float(0)
+    // three writes each branch of a select out on its own (ConditionalNode isolates them), so a value two slots read,
+    // first reached inside one branch, was written again in every other branch that read it, and the rain-mode and
+    // dissolve wraps read the colour a second time: the fragment stage grew past its budget (shadowShaders.test.ts).
+    // Declared once at the top of the stage instead, before any branch, every later read is the variable: the links,
+    // the skin and the hair as painted, the colour. Each paint still pays for its marks under its own branches.
+    // (The variables are the call's inputs, so the colour graph is still walked from colorNode: lookWiring.test.ts.)
+    const shared = [...links.values(), wornSkin, greyed, wornHair, skinShown, color.toVar()] as unknown as Node[]
+    const declared = Fn((nodes: Node[]) => {
+      for (const n of nodes) (n as unknown as { toStack(): unknown }).toStack()
+      return nodes[nodes.length - 1]
+    }) as unknown as (...inputs: Node[]) => V3
+    m.colorNode = declared(...shared)
+    // A prosthetic's finish has its own sheen: chrome is a metal, carbon a satin, matte and a cover the skin's.
+    const chrome = limbHere.and(fin(2))
+    m.roughnessNode = select(chrome, float(0.22), select(limbHere.and(fin(1)), float(0.4), roughness))
+    m.metalnessNode = select(chrome, float(0.85), float(0))
     // Matrix mode (matrixMode.ts), over the body's own colour; the dissolve below reads the dimmed colour as its base.
     if (this.matrixMode) applyMatrixMode(m, this.matrixMode)
     // The code dissolve, over everything above, with the body's feet as its origin (fresh reads: nothing of posed()'s

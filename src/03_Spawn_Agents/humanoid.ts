@@ -16,7 +16,9 @@
  * no randomness.
  * What breaks if it is removed? The crowd has no body to draw, and the sliders have nothing to move.
  *
- * Frame: metres, feet on y = 0, the person faces +z, their left side at −x. The base person is HEIGHT_BASE tall;
+ * Frame: metres, feet on y = 0, the person faces +z. "Left" in this file (the _L bones, the cup's hand) is −x, the
+ * side a viewer facing them sees on their left, which is the person's own right in three's right-handed frame; the
+ * hearing devices' pieces (AID_L, COIL_L) are named for the person's own side. The base person is HEIGHT_BASE tall;
  * the sliders move away from them. Bones (BONE): the trunk bends about the hip; the chest twists about the spine;
  * the head nods about the neck; each leg is thigh, shin and foot about the hip, knee and ankle; each arm is upper
  * arm, forearm and hand about the shoulder, elbow and wrist. A vertex carries its slot (the colour the fragment stage
@@ -37,8 +39,8 @@ export const BONE = Object.freeze({
 export const BONES = 15
 
 /** The colour slots the fragment stage paints (crowd.ts: the top, the shirt, the skin, ..., the eye's white, the iris, the lips). */
-export const SLOT = Object.freeze({ TOP: 0, SHIRT: 1, SKIN: 2, HAIR: 3, BOTTOM: 4, SHOES: 5, ACCENT: 6, PROP: 7, LEGWEAR: 8, FRAME: 9, EYE: 10, IRIS: 11, LIP: 12, SCARF: 13, HEADWEAR: 14 })
-export const SLOTS = 15
+export const SLOT = Object.freeze({ TOP: 0, SHIRT: 1, SKIN: 2, HAIR: 3, BOTTOM: 4, SHOES: 5, ACCENT: 6, PROP: 7, LEGWEAR: 8, FRAME: 9, EYE: 10, IRIS: 11, LIP: 12, SCARF: 13, HEADWEAR: 14, DEVICE: 15 })
+export const SLOTS = 16
 /**
  * The optional pieces, one bit each in a person's piece mask (look.ts LOOK_PIECE_BIT; 0 is "always drawn"). The hair
  * is pieces too: the cap (every style but bald), long hair, a bob, a bun. FACE is the features (eyes, brows, nose,
@@ -48,11 +50,15 @@ export const SLOTS = 15
  * (look.ts HEADWEAR, cloth slot HEADWEAR): WRAP a head scarf over the head, the ears and the neck with the face open,
  * TURBAN a wound crown above the brow (a turban, a head wrap), HAT a snug crown (a beanie, a durag, a flat cap's) and
  * BRIM a flat cap's peak; the near body alone has them: the far body keeps the hair's cap under them in the
- * headwear's cloth (crowd.ts). A kippah is painted on the crown (crowd.ts), not a piece.
+ * headwear's cloth (crowd.ts). A kippah is painted on the crown (crowd.ts), not a piece. BEARD is a long beard below
+ * the chin (shorter facial hair is painted); AID_L and AID_R a hearing aid behind each ear, COIL_L and COIL_R a
+ * cochlear implant's processor behind the ear with its coil on the side of the head (look.ts HEARING; device slot
+ * DEVICE), each named for the person's own left (+x) or right (−x).
  */
 export const PIECE = Object.freeze({
   NONE: 0, TIE: 1, BAG: 2, CUP: 3, LONG_HAIR: 4, GLASSES: 5, HAIR_CAP: 6, BOB: 7, BUN: 8, FACE: 9, COAT: 10, SCARF: 11,
   VOLUME: 12, TOP_BUN: 13, PONYTAIL: 14, WRAP: 15, TURBAN: 16, HAT: 17, BRIM: 18,
+  BEARD: 19, AID_L: 20, AID_R: 21, COIL_L: 22, COIL_R: 23,
 })
 
 /**
@@ -957,6 +963,30 @@ function headTubes(): Tube[] {
     { y: 1.701, rx: 0.08, rz: 0.04, z: 0.118, slot: W, bone: H, far: true },
     { y: 1.709, rx: 0.08, rz: 0.04, z: 0.118, slot: W, bone: H, far: true },
   ]
+  // A long beard: from the jaw's front (inside the face above the chin) down over the throat to the chest.
+  const beard: Ring[] = [
+    { y: 1.625, rx: 0.074, rz: 0.03, z: 0.058, slot: SLOT.HAIR, bone: H, far: true },
+    { y: 1.585, rx: 0.068, rz: 0.042, z: 0.066, slot: SLOT.HAIR, bone: H },
+    { y: 1.545, rx: 0.052, rz: 0.036, z: 0.08, slot: SLOT.HAIR, bone: H, bone1: BONE.CHEST, w: 0.3, far: true },
+    { y: 1.5, rx: 0.034, rz: 0.026, z: 0.094, slot: SLOT.HAIR, bone: H, bone1: BONE.CHEST, w: 0.6 },
+    { y: 1.465, rx: 0.016, rz: 0.014, z: 0.104, slot: SLOT.HAIR, bone: BONE.CHEST, far: true },
+  ]
+  // A hearing aid: a small pod behind the ear's top.
+  const aid = (side: number): Ring[] => [
+    { y: 1.655, x: side * 0.109, z: -0.024, rx: 0.005, rz: 0.008, slot: SLOT.DEVICE, bone: H },
+    { y: 1.692, x: side * 0.11, z: -0.02, rx: 0.006, rz: 0.01, slot: SLOT.DEVICE, bone: H },
+  ]
+  // A cochlear implant: a larger processor behind the ear and the coil, a disc on the side of the head above and
+  // behind it (rings stacked up its face, thin across the head), outside the hair's cap.
+  const processor = (side: number): Ring[] => [
+    { y: 1.648, x: side * 0.11, z: -0.026, rx: 0.006, rz: 0.01, slot: SLOT.DEVICE, bone: H },
+    { y: 1.694, x: side * 0.111, z: -0.022, rx: 0.007, rz: 0.012, slot: SLOT.DEVICE, bone: H },
+  ]
+  const coil = (side: number): Ring[] => [
+    { y: 1.698, x: side * 0.108, z: -0.05, rx: 0.003, rz: 0.008, slot: SLOT.DEVICE, bone: H },
+    { y: 1.712, x: side * 0.109, z: -0.05, rx: 0.004, rz: 0.016, slot: SLOT.DEVICE, bone: H },
+    { y: 1.726, x: side * 0.108, z: -0.05, rx: 0.003, rz: 0.008, slot: SLOT.DEVICE, bone: H },
+  ]
   const rim = (y0: number, y1: number): Ring[] => [
     { y: y0, rx: 0.095, rz: 0.014, z: 0.1, slot: SLOT.FRAME, bone: H },
     { y: y1, rx: 0.095, rz: 0.014, z: 0.1, slot: SLOT.FRAME, bone: H },
@@ -997,6 +1027,13 @@ function headTubes(): Tube[] {
     { rings: turban, segments: 10, farSegments: 6, capTop: 1.842, piece: PIECE.TURBAN, nearOnly: true, head: true, depth: 3 },
     { rings: hat, segments: 10, farSegments: 6, capTop: 1.785, piece: PIECE.HAT, nearOnly: true, head: true, depth: 3 },
     { rings: brim, segments: 8, farSegments: 6, capTop: 1.709, capBottom: 1.701, piece: PIECE.BRIM, nearOnly: true, head: true, depth: 4 },
+    { rings: beard, segments: 8, farSegments: 6, capBottom: 1.458, piece: PIECE.BEARD, head: true, depth: 4 },
+    { rings: aid(1), segments: 5, farSegments: 5, capTop: 1.696, capBottom: 1.651, piece: PIECE.AID_L, nearOnly: true, head: true, depth: 2 },
+    { rings: aid(-1), segments: 5, farSegments: 5, capTop: 1.696, capBottom: 1.651, piece: PIECE.AID_R, nearOnly: true, head: true, depth: 2 },
+    { rings: processor(1), segments: 5, farSegments: 5, capTop: 1.699, capBottom: 1.644, piece: PIECE.COIL_L, nearOnly: true, head: true, depth: 2 },
+    { rings: coil(1), segments: 6, farSegments: 6, capTop: 1.729, capBottom: 1.695, piece: PIECE.COIL_L, nearOnly: true, head: true, depth: 2 },
+    { rings: processor(-1), segments: 5, farSegments: 5, capTop: 1.699, capBottom: 1.644, piece: PIECE.COIL_R, nearOnly: true, head: true, depth: 2 },
+    { rings: coil(-1), segments: 6, farSegments: 6, capTop: 1.729, capBottom: 1.695, piece: PIECE.COIL_R, nearOnly: true, head: true, depth: 2 },
     { rings: nose, segments: 6, farSegments: 6, capBottom: 1.622, piece: PIECE.FACE, nearOnly: true, head: true, depth: 4 },
     ...eye(-1), ...eye(1), brow(-1), brow(1),
     { rings: lips, segments: 8, farSegments: 8, capTop: 1.6125, capBottom: 1.6035, piece: PIECE.FACE, nearOnly: true, head: true, depth: 4 },

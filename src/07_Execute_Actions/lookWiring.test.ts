@@ -140,8 +140,8 @@ test('crowd.ts: the words override the hashed mask, figure, face and wardrobe in
   for (const slot of ['skin', 'hairColour', 'top', 'bottom', 'shirt', 'shoes', 'age', 'undertone']) assert.ok(fragment.includes(`field('${slot}')`), `${slot} is read`)
   for (const line of [
     'const pickedSkin = select(custom, ownSkin, skin)', 'const pickedHair = select(custom, ownHair, hair)',
-    'const toned = pickedSkin.mul(tint)', 'const greyed = mix(pickedHair, grey, smoothstep(0.5, 1, age))',
-    'const wornHair = hairPaint(greyed, wornSkin, hairTexture, curl, rig, near)',
+    'const toned = pickedSkin.mul(tint)', 'const greyed = mix(pickedHair, grey, smoothstep(0.5, 1, age)).toVar()',
+    'const wornHair = hairPaint(greyed, wornSkin, hairTexture, curl, rig, slot, near).toVar()',
     'const skin = pick(PALETTE.monk, h(1))', 'const ownSkin = colour(PALETTE.skin, select(skinAt.lessThan(lastSkin), skinAt, lastSkin))',
     'const skinAt = field(\'skin\').bitOr(gene(LOOK_FIELD_HIGH.skin!).shiftLeft(uint(LOOK_FIELD.skin[2])))',
     'top = select(custom, ownTop, top)', 'bottom = select(custom, ownBottom, bottom)',
@@ -162,7 +162,7 @@ test('crowd.ts: the words override the hashed mask, figure, face and wardrobe in
   assert.match(fragment, /pick\(PALETTE\.bags, h\(12\)\)/)
   assert.match(fragment, /const legwear = variant === 3 \? mix\(wornSkin, vec3\(0\.08, 0\.07, 0\.07\), step\(0\.55, h\(11\)\)\) : bottom/)
   assert.match(fragment, /const iris = pick\(PALETTE\.iris, h\(LOOK_HASHED_COLOUR\.iris\)\)/)
-  assert.match(fragment, /const slots: V3\[\] = \[worn, shirt, skinShown, hairShown, bottom, shoes, accent, prop, legwear, frame, white, iris, lip, scarf, fabric\]/, 'every slot, the headwear\'s cloth last')
+  assert.match(fragment, /const slots: V3\[\] = \[worn, shirt, select\(armHere, limbColour, skinShown\), hairShown, bottom, shoes, accent, prop, select\(legHere, limbColour, legwear\), frame, white, iris, lip, scarf, fabric, device\]/, 'every slot, a prosthetic over the hand or the bare shin, the headwear\'s cloth and the devices last')
   // The garments: the layer owns the top's dye, the trim is matching or a cloth, the jacket's lines are cut from the rest position.
   assert.match(fragment, /const wardrobe = uint\(vWardrobe\.add\(0\.5\)\)/)
   assert.match(fragment, /const coat = at\(PALETTE\.coats, select\(custom, field\('top'\), uint\(h\(3\)\.mul\(cloth\(outfit\.top\)\.length - 0\.001\)\)\)\)/, 'the coat\'s cloth from the top\'s index, or the top\'s link over the jacket palette\'s length')

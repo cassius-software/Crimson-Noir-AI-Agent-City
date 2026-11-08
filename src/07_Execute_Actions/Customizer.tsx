@@ -83,6 +83,10 @@ function slotLabel(slot: LookSlot, body: LookBody, layer: number = LAYER.jacket)
     case 'hairColour': return 'Hair colour'
     case 'headwear': return 'Headwear'
     case 'headwearColour': return 'Headwear colour'
+    case 'facialHair': return 'Facial hair'
+    case 'hearing': return 'Hearing devices'
+    case 'prosthetic': return 'Prosthetic'
+    case 'prostheticFinish': return 'Prosthetic finish'
     case 'layer': return 'Layer'
     case 'top': return layer === LAYER.coat ? 'Coat' : body === 1 ? 'Blazer' : body === 3 ? 'Top' : 'Jacket'
     case 'trim': return 'Trim'
@@ -153,6 +157,7 @@ function silhouettePaint(look: Look): string[] {
   out[SLOT.LIP] = lipOf(lookSwatch(look, 'skin') ?? 0xd29f79)
   out[SLOT.SCARF] = own('scarf', 0x6a1e2a)
   out[SLOT.HEADWEAR] = own('headwearColour', 0x1c1c22)
+  out[SLOT.DEVICE] = '#2b2c2e'
   return out
 }
 
@@ -277,7 +282,7 @@ function Face({ look, t }: { look: Look; t: Theme }) {
         <span className={`text-[10px] font-semibold tracking-wider uppercase ${t.muted}`}>Profile</span>
       </div>
       <p className={`max-w-[14rem] pb-4 text-[11px] leading-snug ${t.muted}`}>
-        The head's own rings, up close. The eyes keep the colour the street gives them; the age and the undertone show on the street alone.
+        The head's own rings, up close. The eyes keep the colour the street gives them; the age, the undertone, facial hair short of a long beard and a prosthetic show on the street alone.
       </p>
     </div>
   )

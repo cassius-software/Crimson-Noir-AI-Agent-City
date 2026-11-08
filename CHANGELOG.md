@@ -15,6 +15,25 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Facial hair, hearing aids and cochlear implants, and prosthetic limbs.** The skin word's next eleven bits carry
+  the facial hair (none, stubble, moustache, goatee, short beard, full beard, long beard: 3 bits), the hearing devices
+  (none, hearing aids, a cochlear implant, implants on both sides, an implant with an aid: 3 bits), a prosthetic limb
+  (either arm, either leg, both arms, both legs: 3 bits) and its finish (matte, carbon, chrome, skin-matched: 2 bits);
+  all are 0 for "as before", so every older look and code reads back unchanged, and the skin word's top two bits stay
+  spare. Facial hair and the prosthetics are painted by the crowd's fragment stage (a prosthetic hand and wrist below
+  the sleeve, a prosthetic shin below the knee where the leg is bare, with the socket's line); the long beard and the
+  hearing devices are pieces (`humanoid.ts` PIECE 19 to 23, which fills the float piece mask to bit 23), the devices
+  on the near body only. The hashed crowd gains facial hair for about forty-five men in a hundred (stubble to a full
+  beard), hearing aids for about two people in a hundred, a cochlear implant for under one, and a prosthetic arm or
+  leg for one. The near body grows by about 130 vertices (budget 1,950, from 1,850) and the far body by about 20
+  (budget 540, from 520). The people's fragment stage is now written out once per value: three writes each branch of
+  a `select` on its own, so the skin and the hair as painted, and the hash links, were written again in every slot's
+  branch that read them, and these paints took the stage past the 256 KiB a stage may be (`shadowShaders.test.ts`).
+  They are declared once at the top of the stage instead, each paint still under its own branches: the main pass's
+  fragment for the suit is about 119,000 characters (from about 198,000 before this change) and its shadow pass's
+  about 76,000 (from about 156,000). Pinned by `look.test.ts`, `humanoid.test.ts`, `lookWiring.test.ts`,
+  `commands.test.ts` and `conduct.test.ts` (the new pieces confirmed unarmed). Browser shots on SwiftShader only;
+  nothing visual is confirmed on real hardware.
 - **Thirty-two hair styles, curl patterns 1A to 4C, eight headwear and twenty-four face shapes.** The look's hair
   style takes two high bits in the skin word (`LOOK_FIELD_HIGH.hairStyle`) and reaches thirty-two styles
   (`HAIR_STYLES`: the five older ones keep their numbers), each a set of hair pieces and a paint. Three new hair
