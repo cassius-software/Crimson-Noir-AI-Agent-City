@@ -67,3 +67,68 @@ Left as it was, and why:
   around the DOM, WebGPU, Rapier and sockets: their state is small, their calls are the browser's, and converting them
   would change layout without a hot path to gain or an oracle to hold them to.
 - The terminal (`term.rs`) is an interpreter; its dispatch is a `match` by design and it is not on the tick.
+
+## The hot-loop audit of November 2026: what it measured, what it changed, what it left
+
+A second pass (2026-11-07) read every hot kernel again, one independent reader per area (the flow field, the crowd
+shader, the crowd's CPU side, the physics realm's tick, the page's frame, the routing core and the KV pager, the OS
+kernel, the WGSL host compiler), measured on a four-core container with Node 22 and cargo 1.97 and no GPU. A change was
+made only where a benchmark showed the gain and a test could hold the old behaviour to the bit.
+
+Changed:
+
+- **The flow field's CPU solvers** (`src/06_Make_Decisions/flowField.ts`, PR #71): a padded grid, flat neighbour
+  tables, a byte of open steps per cell and an intrusive bucket ring. Lakefront Metro's 1.6 M-cell solve went from
+  495 ms to 150 ms, the city's from 18.7 ms to 5.3 ms. The old tuple form stays in the test as the reference.
+- **The street furniture as compound sensors** (`src/07_Execute_Actions/physics.ts`, PR #89): rapier.js walks every
+  collider through a WebAssembly-to-JavaScript callback after every step, so 4,599 poles nothing touched cost the realm
+  0.6 ms and 1.4 MB a step. As 100 compound sensors, the realm's step with 48 cars went from 2.27 ms to 1.49 ms, and the
+  cars' poses hash the same. The one-sensor-per-pole world stays in the test as the reference.
+
+Measured, and left as it is:
+
+- **A branchless pick is slower in V8.** The flow field's direction pass was tried with a mask select in place of
+  `if (n < best)`: 3.9 ms became 6.6 ms on the city. The branch stayed. A branch the predictor gets right costs less
+  than the arithmetic that replaces it.
+- **The crowd's CPU side** packs and reads back buffers that are already flat. The whole worker-side crowd step is
+  about 90 µs at 14,000 people (0.5% of a frame), most of it one de-interleave loop at 5 ns a person.
+- **The crowd shader's branches** (`crowd.wgsl`): about twenty short diamonds could be `select()` with the same bits,
+  and the car loop diverges because neighbouring lanes hold people from anywhere in the city. A sort of the dispatch
+  by cell could help that, but it needs another buffer than the eight `simulate` binds, and nothing here can time a
+  GPU. Without a device to measure on, the shader was not touched.
+- **The page's frame** is GPU-bound by design. What runs per entity on the CPU totals 0.4 to 0.6 ms of a 16.7 ms frame:
+  the contact pulse's scan of the pedestrians, a 36-car overlap test, the craft and the rigs. The audit's largest
+  page-side item, the nearest-lamp search, was rewritten by the clustered lighting change (PR #78) with a 3 m gate.
+- **The routing core's wrapper.** For a drone's pose the WebAssembly core costs more than the TypeScript it replaces
+  (about 0.10 against 0.06 ms a frame for 966 craft), because the call's shape and its returned object cost more than
+  the arithmetic. A one-entry memo of the track's arena offset was tried and measured no faster. Writing poses straight
+  into the craft buffer would save about 0.04 ms a frame, across three modules. Left.
+- **`wrap()` calls a software `fmod` in WebAssembly.** A three-compare fold gives the same bits (for every positive,
+  finite track length), but saves only about 0.3 µs a car a frame. That is not worth regenerating the module.
+- **The OS kernel's wipe** (`noir_core/src/kernels.rs`): every tick ANDs every agent's 72-word block with its keep
+  mask, though almost no agent is wiped. Skipping it when no lane in a group is wiped makes the tick 1.2x faster, bit
+  for bit. It would need a data-dependent loop or an `if`, which the kernel's contract forbids (a test reads the file
+  and refuses one), and the tick already runs about eighty times faster than the 60 Hz it is asked for. Left, by
+  choice.
+- **The OS kernel's station loop** does its lane-to-array round trips through memory. Register-resident weights and a
+  multiply-high remainder could be worth 1.15x to 1.3x more, still branchless. That is unmeasured end to end and is
+  headroom only, so it was left.
+- **No `simd128` for the routing and KV pager crates.** They have no loop wide enough. The UEFI target has SSE off by
+  rustc's target specification. Rapier is already its SIMD build.
+- **The bonnet rays.** Each car casts three 22 m rays a frame, about 0.2 ms a step at 48 cars. They are the Third
+  Law's obstacle sense, so cutting them is a behaviour question for the vehicles, not a layout one.
+- **The paged-attention shader** could use subgroups and vec4 loads. That needs a device to validate, and not every
+  adapter has subgroups.
+- **The WGSL host compiler's output** (`src/03_Spawn_Agents/wgslHost.ts`) builds a fresh JavaScript array for every
+  vector operation and an object for every struct it reads: about 10 KB per person per `simulate` pass, 50 KB with 48
+  cars, and a tenth of the time in garbage collection. Scalarising vectors and structs into locals (the same
+  `Math.fround` tree, so the same bits) ran hand-converted pieces 4 to 11 times faster, and one dispatch loop per entry
+  point halves `clearGrid`. But the CPU twin is a test oracle: nothing in the page or the worker imports it. The gain
+  is CI time (the 27.5 s crowd soak to an estimated 13 to 15 s), not a player's frame, so it was left for a pass of its
+  own with a differential test against today's emitter.
+- **Beyond the areas above**, a last reader looked for hot loops no area had read. The bootable image's cinematic pass
+  (`noir_core/src/render.rs`) does a 64-bit divide per pixel for a vignette that depends only on the pixel and the
+  resolution: 1.3 ms of a 16.7 ms frame in a host build, and a table would give the same bits. The replication room's
+  tick (`src/10_Network/replication.node.ts`) seals every other peer's pose once per peer: 2.9 ms a tick at 32 peers.
+  Both are candidates for a next slice. The clustered lights' per-render binning and the code-dissolve and ghost-view
+  fragment costs belong to the lighting work and need a GPU to time.

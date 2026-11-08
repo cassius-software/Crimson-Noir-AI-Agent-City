@@ -9,16 +9,19 @@
  * summary, visibility/pagehide safety, dispose sending the "off" effect, and the robot side of a HAL/1 device
  * (docs/joint-bridge-spec.md §3.1): CAPS kept or refused, a manifest in one line or in parts, frames judged
  * against it, acks and the gate's words as events, the page's lines in their order on the wire, the joint bound,
- * the manifest replacement rule and 'gone' when the device drops.
+ * the manifest replacement rule and 'gone' when the device drops. It also pins a passed check's cue on the hands:
+ * the tap's shape (PULSE, pulseLevel) frame by frame on a pad, and the phone buzz (vibrate) with its refusals.
  * What breaks if it is removed? A regression could leave a trigger stiff or prompt at the wrong time.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { crc32 as zlibCrc32 } from 'node:zlib'
+import { SHELL_GLOBAL } from '../07_Execute_Actions/desktopShell.ts'
 import { BRAND } from '../brand.ts'
-import { HalBus, type HalRobotEvent } from './hal.ts'
+import { HalBus, PULSE, pulseLevel, type HalRobotEvent } from './hal.ts'
 import { buildManifest, JOINT_LINE, manifestJson, manifestLines, type Manifest } from './jointState.ts'
 import { LINE, NUS } from './lineLink.ts'
+import { nativeNavigator } from './nativeHid.ts'
 import { LEGACY_CAPABILITIES } from './peripheralPolicy.ts'
 import type {
   BleCharacteristic, BleDevice, BleRequestOptions, BleServer, BleValueEvent, ByteReadResult, GamepadLike, HardwareNavigator, Hid,
@@ -981,4 +984,178 @@ test('a CAPS the host cannot read is logged and the device stays a legacy sensor
   assert.deepEqual(r.events.at(-1), { kind: 'gone', id: id2 })
   await r.bus.dispose()
   assert.equal(r.events.filter((e) => e.kind === 'gone').length, gone + 1, 'dispose has nothing left to say gone about')
+})
+
+// ── a passed check's cue on the hands ──────────────────────────────────────────────────────────────
+
+test('PULSE: the agreed tap, softer than the thump and shorter than it even as two taps', () => {
+  assert.deepEqual(PULSE, { level: 0.35, onMs: 50, gapMs: 70, phone: 12, phoneCritical: [12, 70, 12] })
+  assert.ok(PULSE.level > 0.2 && PULSE.level < 1, 'between the limiter hum (0.2) and the guardrail thump (1.0)')
+  assert.ok(2 * PULSE.onMs + PULSE.gapMs < 180, 'two taps end before a thump (180 ms) would')
+})
+
+test('pulseLevel: one tap for a success, two for a critical success, 50 ms on and 70 ms off; a cue read early still starts on its first tap', () => {
+  const L = PULSE.level
+  const at = (taps: number) => [0, 49, 51, 120, 169, 171].map((t) => pulseLevel(t, taps))
+  assert.deepEqual(at(1), [L, L, 0, 0, 0, 0])
+  assert.deepEqual(at(2), [L, L, 0, L, L, 0])
+  assert.equal(pulseLevel(-1, 1), L, 'the frame clock a few ms behind the stamp is still the first tap')
+  assert.equal(pulseLevel(-40, 2), L)
+  assert.equal(pulseLevel(50, 1), 0, 'a tap is 50 ms, its end excluded')
+  assert.equal(pulseLevel(170, 2), 0)
+  assert.equal(pulseLevel(1e9, 2), 0, 'an old cue is long over')
+  assert.equal(pulseLevel(0, 0), 0, 'no taps, no rumble')
+  assert.equal(pulseLevel(Number.NaN, 2), 0)
+  assert.equal(pulseLevel(Number.POSITIVE_INFINITY, 2), 0)
+})
+
+test('a 0.35 tap then 0 on a standard Gamepad API pad: one effect at the quantized level and one reset', async () => {
+  let now = 1000
+  const p = pad(0, 'Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)')
+  const bus = new HalBus({ navigator: nav({ pads: [p] }), now: () => now })
+  bus.readPads()
+  bus.output({ rumble: PULSE.level })
+  assert.deepEqual(p.effects, [{ strong: 6 / 16 }], '0.35 is 6 of the 16 steps')
+  now += 16
+  bus.readPads()
+  assert.equal(p.effects.length, 1, 'the timed effect outlasts the tap: no re-issue inside it')
+  bus.output({ rumble: 0 })
+  assert.equal(p.resets, 1)
+  now += 16
+  bus.readPads()
+  assert.equal(p.effects.length, 1)
+  assert.equal(p.resets, 1)
+  await bus.dispose()
+})
+
+test('a critical success played frame by frame through pulseLevel starts and stops the pad twice, at 60 Hz and at 30 Hz', async () => {
+  for (const frameMs of [16, 33]) {
+    let now = 5000
+    const p = pad(0, 'Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)')
+    const bus = new HalBus({ navigator: nav({ pads: [p] }), now: () => now })
+    bus.readPads()
+    const cue = now
+    for (; now <= cue + 400; now += frameMs) {
+      bus.readPads()
+      bus.output({ rumble: pulseLevel(now - cue, 2) })
+    }
+    assert.deepEqual(p.effects, [{ strong: 6 / 16 }, { strong: 6 / 16 }], `${frameMs} ms frames: two taps`)
+    assert.equal(p.resets, 2, `${frameMs} ms frames: each tap is stopped`)
+    await bus.dispose()
+  }
+})
+
+/** A navigator that only vibrates: it records each pattern and the object the call was made on. */
+function buzzer(answer: () => boolean = () => true) {
+  const calls: (number | number[])[] = []
+  const receivers: unknown[] = []
+  const n: HardwareNavigator = {
+    vibrate(this: unknown, pattern: number | number[]) { receivers.push(this); calls.push(pattern); return answer() },
+  }
+  return { n, calls, receivers }
+}
+
+test('vibrate: the phone buzz goes to the bus\'s own navigator, called on it, and returns the browser\'s answer', async () => {
+  const b = buzzer()
+  const bus = new HalBus({ navigator: b.n })
+  assert.equal(bus.vibrate(PULSE.phone), true)
+  assert.equal(bus.vibrate(PULSE.phoneCritical), true)
+  assert.deepEqual(b.calls, [12, [12, 70, 12]])
+  assert.deepEqual(b.receivers, [b.n, b.n], 'called on the navigator, as a browser requires')
+  const refusing = new HalBus({ navigator: buzzer(() => false).n })
+  assert.equal(refusing.vibrate(12), false, 'the browser said no (no tap on the page yet)')
+  await bus.dispose()
+  await refusing.dispose()
+})
+
+test('vibrate: false and silent with no vibration, no navigator, a throwing browser or a disposed bus, and on Node\'s navigator', async () => {
+  assert.equal(new HalBus({ navigator: nav({}) }).vibrate(12), false)
+  assert.equal(new HalBus({ navigator: null }).vibrate(12), false)
+  const throwing = new HalBus({ navigator: buzzer(() => { throw new Error('NotAllowedError') }).n })
+  assert.doesNotThrow(() => throwing.vibrate(12))
+  assert.equal(throwing.vibrate([12, 70, 12]), false)
+  const b = buzzer()
+  const bus = new HalBus({ navigator: b.n })
+  await bus.dispose()
+  assert.equal(bus.vibrate(12), false)
+  assert.deepEqual(b.calls, [], 'a disposed bus buzzes nothing')
+  // The default navigator here is Node's, which has no vibrate: the answer is false, never a throw.
+  const node = new HalBus()
+  assert.equal(node.vibrate(12), false)
+  await node.dispose()
+})
+
+test('vibrate: a hidden page buzzes nothing, by the same rule that quiets the pads; shown again, it buzzes', async () => {
+  const g = globalThis as Record<string, unknown>
+  const docEvents = new Events<void>()
+  const doc = { visibilityState: 'hidden', addEventListener: (t: string, l: () => void) => docEvents.add(t, l), removeEventListener: (t: string, l: () => void) => docEvents.remove(t, l) }
+  g.document = doc
+  try {
+    const b = buzzer()
+    const bus = new HalBus({ navigator: b.n })
+    await bus.autoconnect()
+    assert.equal(bus.vibrate(12), false)
+    assert.deepEqual(b.calls, [])
+    doc.visibilityState = 'visible'
+    docEvents.dispatch('visibilitychange', undefined)
+    assert.equal(bus.vibrate(12), true)
+    assert.deepEqual(b.calls, [12])
+    await bus.dispose()
+  } finally {
+    delete g.document
+  }
+})
+
+test('vibrate inside the desktop shell: the shell\'s navigator passes the browser\'s own vibrate through, on its own receiver', async () => {
+  const shell = { [SHELL_GLOBAL]: { core: { invoke: async () => [] }, event: { listen: async () => () => {} } } }
+  const timers = { setInterval: () => ({}), clearInterval: () => {} }
+  const b = buzzer()
+  const wrapped = nativeNavigator(b.n, shell, timers)
+  assert.ok(wrapped && wrapped !== b.n, 'the shell builds its own navigator')
+  const bus = new HalBus({ navigator: wrapped })
+  assert.equal(bus.vibrate(PULSE.phoneCritical), true)
+  assert.deepEqual(b.calls, [[12, 70, 12]])
+  assert.deepEqual(b.receivers, [b.n], 'the browser\'s navigator, not the wrapper')
+  const bare = nativeNavigator({ getGamepads: () => [] }, shell, timers)
+  assert.equal(bare?.vibrate, undefined, 'no vibration in the browser, none in the wrapper')
+  assert.equal(new HalBus({ navigator: bare }).vibrate(12), false)
+  await bus.dispose()
+})
+
+test('asleep: true while the page is hidden or the bus is disposed, so a one-off tap is not kept to replay on return', async () => {
+  const g = globalThis as Record<string, unknown>
+  const docEvents = new Events<void>()
+  const doc = { visibilityState: 'visible', addEventListener: (t: string, l: () => void) => docEvents.add(t, l), removeEventListener: (t: string, l: () => void) => docEvents.remove(t, l) }
+  g.document = doc
+  try {
+    let now = 1000
+    const p = pad(0, 'Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)')
+    const bus = new HalBus({ navigator: nav({ pads: [p] }), now: () => now })
+    await bus.autoconnect()
+    bus.readPads()
+    assert.equal(bus.asleep, false)
+    doc.visibilityState = 'hidden'
+    docEvents.dispatch('visibilitychange', undefined)
+    assert.equal(bus.asleep, true)
+    // What the engine's check cue does: ask first, and send nothing while asleep. No frame runs to clear a tap meanwhile.
+    if (!bus.asleep) bus.output({ rumble: PULSE.level })
+    now += 60_000
+    doc.visibilityState = 'visible'
+    docEvents.dispatch('visibilitychange', undefined)
+    assert.equal(bus.asleep, false)
+    bus.readPads()
+    assert.deepEqual(p.effects, [], 'the return replays no stray tap')
+    // Without the question, the bus keeps the tap and plays it on return: why the cue asks.
+    doc.visibilityState = 'hidden'
+    docEvents.dispatch('visibilitychange', undefined)
+    bus.output({ rumble: PULSE.level })
+    assert.deepEqual(p.effects, [], 'hidden: nothing sent')
+    doc.visibilityState = 'visible'
+    docEvents.dispatch('visibilitychange', undefined)
+    assert.deepEqual(p.effects, [{ strong: 6 / 16 }], 'kept and replayed')
+    await bus.dispose()
+    assert.equal(bus.asleep, true, 'a disposed bus sends nothing')
+  } finally {
+    delete g.document
+  }
 })
