@@ -158,6 +158,7 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 |---|---|
 | `?quality=auto` (default) | The quality governor picks the tier; `?quality=0`…`4` pins one: Minimal, Low, Medium, High, Ultra; `?quality=-1` or `?quality=lite` pins Lite, below Minimal (see Autoscaling); `?quality=5` or `?quality=peak` pins Peak, above Ultra |
 | `?peak=1`, `?peak=0` | `?peak=1` lets the governor try Peak on this computer even when it would not pick it by itself (it still needs the GPU's own timings); `?peak=0` keeps Peak away. Phones and the lite profile never try it (see Autoscaling) |
+| `?msaa=1`, `?msaa=0` | `?msaa=1` draws the scene 4x multisampled on this computer even when it would not pick it by itself; `?msaa=0` never. Decided at start; phones and the lite profile never draw it (see Anti-aliasing) |
 | `?vram=24` | The GPUs' memory in GB (2^30 bytes), from 0 to 4096, for the size of model auto gives Ollama (How big a model auto gives Ollama, under The model providers). The NixOS launcher adds it from `nvidia-smi` or the amdgpu driver; `?vram=0` sizes nothing; `ask vram` at the console beats it. Absent: auto keeps its usual model |
 | `?fps=60` | Frame-rate target (default: estimated from the display, held within 60–90) |
 | `?crowd=14000` | Pedestrians, from 256 to 60,000 (default: 14,000 on a desktop GPU, 8,000 on a phone, 5,000 on the weakest devices, 2,500 on a lite profile) |
@@ -266,7 +267,41 @@ The fixed track network (`06_Make_Decisions/tracks.ts`) is laid over the grid fr
 rings for the cars, one round each 2 × 2-block cell; one elevated train loop on a deck 9 m over the median of the
 two arterial streets, with four mid-block stations and guideway columns at the kerb; drone corridors at 40 m and
 46 m over the 4 × 4-block face rings; one plane racetrack at 400 m; and two VTOL routes along the avenues at 75 and
-85 m, each calling at four rooftop pads. See Vehicles.
+85 m, each calling at four rooftop pads. See Vehicles. Lakefront Metro's street window gets the same network laid over
+its own streets, and a transit map besides (`region/transit.ts`: zebra crossings, paved plazas, a ferry pier and a
+STOL strip; see The surveyed map).
+
+### Anti-aliasing
+
+Every tier with the post chain (Low and up) smooths edges with FXAA, on the finished picture. On a computer with the
+most room to spare the scene is also drawn **4x multisampled** before any of that: four depth and coverage samples a
+pixel, averaged as the scene is finished, so thin things (lamp poles, mast arms, signal poles, roof edges) stay whole
+farther into the distance instead of breaking into dashes, and edges crawl less as you turn. Who gets it by itself: a
+computer the device profile starts on Ultra, which means a recent separate NVIDIA card, or an AMD Radeon RX or Radeon
+Pro where the browser names the card (stock Chrome, Edge and WebView2 give only the vendor and architecture, so an AMD
+card starts on High there and needs `?msaa=1`), with 8 or more processor threads and, where the browser says, 8 GB or
+more of memory, on a screen of up to 2560 × 1440 drawn pixels (`?scale` counted). Anyone else can ask for it with
+`?msaa=1`; `?msaa=0` turns it off. Phones and the lite profile never draw it, whatever the address says.
+
+- **Decided once, at start.** The sample count is part of every scene shader's pipeline, so changing it while you play
+  would rebuild all of them: the tiers never touch it, and a reload with `?msaa` changes it. If the browser refuses
+  the multisampled scene at start, the post chain is built again at one sample and the city starts without it rather
+  than not at all (the browser's developer console says so).
+- **What it costs.** Four samples a pixel of colour, motion and depth: about 150 MB more graphics memory at 1080p on
+  High or Ultra, about 270 MB at 1440p (about 420 MB on Peak, which draws 1.25 times the resolution on each side), and
+  a share of each frame the governor measures as it measures everything else. It is not taken away tier by tier: the
+  narrow automatic rule is the safeguard. With one player, Minimal draws without the post chain and so without the
+  samples, unless ghost view is on (which keeps the chain, and its samples, running).
+- **Split screen** has no post chain, so with `?msaa=1` (or on a computer that would get it by itself) the renderer's
+  own picture is drawn 4x multisampled instead, every view in it. The renderer keeps that for its life, so split
+  screen keeps the samples at every tier, Minimal included; `?post=0` turns them off. It has no one-sample fallback: a
+  browser that refused it would fail the start like any other refused first frame.
+- **What it does not do.** The samples are averaged in linear light before the film curve, so a bright lamp's edge
+  stays hard and a thin dark pole against a bright daytime sky keeps only part of its contrast (it reads as a faint
+  continuous line). Edges a shader draws (road markings, rain mode's glyphs, the code dissolve) are not multisampled.
+  Under the cinema shutter the motion at a silhouette is averaged too, which can leave a faint halo on something
+  moving fast. The headset has no anti-aliasing, and neither do `?post=0` and Minimal with one player. How it looks
+  and what it costs on a real graphics card is unverified: the pictures behind this were drawn by the software adapter.
 
 ### Storefronts
 
@@ -343,7 +378,21 @@ beside it. The page inflates the pack itself (the browser's own gzip stream); no
   fleet is seated on rings laid over the window's whole cells (disjoint rectangles whose every side is a car street,
   the zero-jam rule of `tracks.ts` kept) and the lamps, trees and signal poles stand along the window's streets. Every
   street cars use is two lanes, one each way; a bridge's shore walls are cut for its width. Beyond the window the
-  metropolis is still quiet. The visitor's answers are saved, so the next visit opens on the same city at the chosen region;
+  metropolis is still quiet. The window has its **transit map** too (`region/transit.ts`, pure: the page and the
+  physics worker build it from the same seed, window, craft boxes and bounds): an elevated train loop on the 9 m deck
+  round the city's own corridor where every side of it has a sidewalk, else the largest walkable rectangle of the
+  window (at least 4 blocks a side), with four mid-side stations and guideway columns at the window's own 3.9 m kerb;
+  drone corridors at 40 and 46 m over every walkable 4-block cell; the plane racetrack at 400 m, centred on the window
+  and held inside the region, moved by whole blocks off The Spire; VTOL routes between rooftop pads of the window's own
+  buildings, in the city's band of 24 to 60 m roofs where the window has them and in a second band over the map's
+  towers (roofs of 60 to 140 m, flown between at 150 and 160 m; a window with no such roofs has none: seed 7's east
+  bluffs and north ridge); zebra crossings on every walkable arm of every intersection, as paint over the asphalt;
+  the plaza lots (the hubs' squares) paved at the sidewalks' height; a harbour ferry pier from the lake shore nearest
+  the window, 60 m out over the water with railings and a berth platform at its end, the shore wall opened for it
+  (no vessel sails yet); and a STOL strip, 300 × 24 m of asphalt with threshold bars and a centreline on the open land
+  nearest the window, clear of everything built (the planes keep the racetrack and do not land). No subterranean
+  line: a track has one height. `transit.test.ts` proves all of it on fourteen windows of three seeds, the craft to
+  the same INV-1 envelopes as the city's. The visitor's answers are saved, so the next visit opens on the same city at the chosen region;
   `?map=city` or `?region=off` opens the procedural city, `?onboarding=0` skips the onboarding (the expert path) and
   `?onboarding=1` shows it again. The structural layouts, one JSON file per region with an index naming The Spire and
   the hubs, are committed under `world/lakefront/` and regenerated with `node tools/world/lakefront.mjs` (`--check`
@@ -398,8 +447,8 @@ npm run build:pilot   # dist-pilot/index.html: the same single offline file, ope
 - **Not there yet** (the surveyed region; Lakefront Metro has its street window, above):
   - traffic and pedestrians (the AI drives and walks the procedural grid, so the surveyed region's fleet is empty and
     the crowd it keeps is hidden, kilometres away);
-  - the craft (the elevated loop, the corridors and the VTOL pads are laid over the procedural grid and its roofs, so
-    no region gets trains, drones, planes or VTOLs);
+  - the craft (the elevated loop, the corridors, the racetrack and the VTOL pads need a street window: Lakefront
+    Metro has them over its window, the surveyed region gets none);
   - room acoustics (a region's walls live in the physics worker, so every voice there is dry);
   - traffic signals, street lamps and trees (the surveyed region has none; a street window has them along its streets);
   - terrain (the region is flat: no ravines, no bluffs);
@@ -1619,8 +1668,19 @@ them that answers (`auto`):
   OpenAI-compatible server such as LM Studio (`http://localhost:1234`), then a model file kept in this page (`inpage`,
   below), then the Claude gateway (`http://localhost:8089`), each at the address its own provider is set to. The
   three on this machine are asked for their models at once, each for at most 2 s, and the first in that order with a
-  model that writes text answers (embedding, reranking and speech models are passed over, by name); only when none
-  has one is the page's own model considered, and it is asked nothing: it is found when a file is kept and chosen
+  model that writes text answers (embedding, reranking and speech models are passed over, by name). With them go
+  the newer default addresses, asked at the same moment and each given 2 s too: a llama.cpp server at
+  `http://localhost:9931` (llama-server's default since build b11521, October 2026), then vLLM at
+  `http://localhost:8000` and SGLang at `http://localhost:30000` for the OpenAI-compatible provider. These are used
+  only when none of the three has a text model (and called off once the three have been heard and one has). The first that lists a text model
+  answers and is kept as that provider's address, as `ask server` would keep it: the next visit asks it first (and
+  the old default goes into this second round, so auto finds it again if the server moves back), and `ask provider
+  openai` or `ask provider llamacpp` uses it too until `ask server <url>` sets another. The second round never looks
+  past an address you set that is not one of these, never moves a provider to a server that does not list the model
+  you chose for it with `ask model` (the reason says so), and never asks the gateway's address. Nothing listening
+  there is the usual case, and port 8000 is many a web server's, so the reason names a server there only when it
+  refuses this page, has no text model or lacks the model you chose (and, on an isolated page, vLLM's flag when
+  nothing answered on 8000). Only when neither finds one is the page's own model considered, and it is asked nothing: it is found when a file is kept and chosen
   (picking a file chooses it) and this browser can run it, and it is not loaded until the ask itself. Files kept with
   none chosen are passed over with a note that says how to choose one, and with nothing kept the page's model goes
   unmentioned. Only when that finds nothing is the gateway asked, since it asks the Claude API. A server that is
@@ -1647,7 +1707,7 @@ them that answers (`auto`):
   OpenAI-compatible chat-completions format, at `http://localhost:8080`, the one model the server was started
   with), for offline environments.
 - **`openai`**: any other server on this machine that speaks the OpenAI-compatible chat-completions format (LM
-  Studio at its default `http://localhost:1234`, vLLM, a loopback proxy), with its own address and the first text
+  Studio at its default `http://localhost:1234`, vLLM, SGLang, a loopback proxy), with its own address and the first text
   model it lists unless you choose one (`ask model <name>`). For both chat-format providers the model reads
   `default` until you choose one: before the first answer the server is asked which models it lists, and the first
   that writes text, in the server's own order, is sent (asked once per server, and again after the server says it no
@@ -1771,14 +1831,14 @@ any of them.
   to `OLLAMA_ORIGINS` where Ollama starts (on Windows, `setx OLLAMA_ORIGINS "http://tauri.localhost"` in cmd, then quit
   and restart Ollama from its tray icon). A llama.cpp server (`llama-server`) answers any page unless it was started
   with its tools or agent options; LM Studio answers pages only with CORS turned on (Enable CORS in its server settings, or
-  `lms server start --cors`). A llama.cpp server built since b11521 (October 2026) listens on port 9931 by default,
-  where auto does not look: start it with `--port 8080`, or `ask connect llamacpp http://localhost:9931`. vLLM 0.32
-  and later answers no other page unless started with `--allowed-origins` naming the page's origin (on Linux:
-  `--allowed-origins '["http://127.0.0.1:4180"]'`), and since it listens on every network interface unless told
-  otherwise, also start it with `--host 127.0.0.1`; SGLang answers any page and listens on 127.0.0.1 by default. Both
-  speak the chat format: `ask connect openai http://localhost:8000` (vLLM) or `http://localhost:30000` (SGLang). On a
-  cross-origin isolated page (the launcher, the preview, the Windows app and the installed web copy all are) a
-  server refusing the origin cannot be told from one that is not running, so the sentence says it may be either.
+  `lms server start --cors`). A llama.cpp server built since b11521 (October 2026) listens on port 9931 by default;
+  auto finds it there in its second round (under `ask provider llamacpp`, `ask server http://localhost:9931`). vLLM 0.32 and later answers no other page unless started with
+  `--allowed-origins` naming the page's origin (on Linux: `--allowed-origins '["http://127.0.0.1:4180"]'`), and since
+  it listens on every network interface unless told otherwise, also start it with `--host 127.0.0.1`; SGLang answers
+  any page and listens on 127.0.0.1 by default. Auto finds both on their default ports in its second round (vLLM
+  first); at another address, `ask connect openai <url>`. On a cross-origin isolated page (the launcher, the preview,
+  the Windows app and the installed web copy all are) a server refusing the origin cannot be told from one that is
+  not running, so the sentence says it may be either, and names vLLM's flag when nothing answered at its port.
 - **Bounded.** Every request to a local server asks for a context of 8,192 tokens and an answer of at most 2,048
   (the Ollama format is the one that bounds the context). A model's own maximum can be far larger, and a server
   that sizes its memory to it can fail before the first word (seen here: a 4B model asking for 20.5 GB). Running
@@ -1789,9 +1849,10 @@ any of them.
   by one `GET /api/tags` when auto found Ollama without its list of sizes (found in the chat format, or `ask server`
   or `ask api` changed since). Under `auto`, an
   ask with nothing found yet, an ask whose server stops answering before any of its answer arrived, and `ask` alone
-  first ask the three model servers above for their lists of models, all on this machine, then read the list of model
-  files kept in this page (no request), and ask the Claude gateway (which asks the Claude API) only when none of them
-  has a model that writes text. No provider can leave the machine: every one that addresses a server asks the one gate
+  first ask the three model servers above for their lists of models, and with them up to three more at the newer
+  default addresses (9931, 8000 and 30000, or a provider's old default once it is set to one of these), all on this machine,
+  then read the list of model files kept in this page (no request), and ask the Claude gateway (which asks the
+  Claude API) only when none of them has a model that writes text. No provider can leave the machine: every one that addresses a server asks the one gate
   (`02_Define_The_Rules/airgap.ts loopbackServer`) before anything is sent, and the fetch they are handed is the
   page's own under the gate's wrapper; the in-page provider and the script address nothing. The engine holds no
   network code: App builds the router and hands it to the operator tier, which knows only its shape (`Mind` in
@@ -2990,7 +3051,24 @@ releases, byte for byte (the same seats, drivers and paint from the same stream)
   deck at 9 m, the drones at 40 m, the planes at 400 m); anything else is a kernel panic with a named reason
   (`Corridor Exploit: train craft 0 left its corridor (y=2.00m below its 9m floor).`), the buffer that halted the
   realm never leaves it, and a halted realm ships no craft. The check only halts, never corrects. A surveyed region
-  gets no craft.
+  gets no craft; Lakefront Metro's street window gets its own (next but one).
+- **In Lakefront Metro** (`01_Initialize_World/region/transit.ts` `windowNetwork`). A region with a street window
+  gets the network laid over the window's own streets: the car rings of the window's cells first, then an elevated
+  loop round a rectangle of walkable streets (the city's corridor when the window has all four of its sides, else the
+  largest walkable rectangle, at least 4 blocks a side; the same deck, arcs and four stations; `tracks.ts` `trainLoop`
+  and `guideway(track, kerb)` with the window's 3.9 m kerb, which clears its two-lane carriageway and its lamps at 10
+  and 30 m, trees at 20 m and signal poles), the drone corridors over every walkable 4-block cell, the racetrack about
+  the window's middle held inside the region (and moved by whole blocks when The Spire comes within the envelope's
+  half-length of it), and the VTOL routes from the window's **craft boxes**: the rectangular buildings on the window's
+  lots and the ring of lots round them, every building that reaches into the racetrack's envelope, and the region's
+  plan, which the page computes from the pack it drew and sends in the init (`SimInit.craftBoxes`, at most 4,096,
+  judged in the worker like every other field), since the worker holds the pack's walls and not its boxes.
+  `vtolRoutes(boxes, cells, band)` takes the window's cells and a band of roofs: the city's (24 to 60 m, cruising at
+  75 and 85) where the window has such roofs, and a second over a generated map's towers (60 to 140 m, cruising at
+  150 and 160, both over the drones and under the planes; the cells cut where the towers stand, `padCells`); a
+  window with no roof in either band has no VTOL route. Both sides build the network from the same seed, window,
+  boxes and bounds, so the realm's craft count is the page's (the view refuses otherwise). The lite profile keeps the
+  craft off, as in the city.
 - **The craft on the page** (`craftView.ts`). The page builds the realm's network again from the same seed and boxes
   (the craft count must agree, or the view refuses) and draws, from the stream, one InstancedMesh a kind: each train
   set as three cars laid along the loop about the set's head, the drones nosed a little into their way, the planes
