@@ -18,6 +18,9 @@ import { RAPIER } from './physics.ts'
 import { CAR, chassisBox, kindFromDraw, kindOf, RIDE_HEIGHT, WHEELS, type CarTuning, type DriveMode } from './car.ts'
 import { CITY, inLot } from '../01_Initialize_World/city.ts'
 import { crossesGlass, insideRoom, penetrates, ROOM, toLocal, type Workplace } from '../01_Initialize_World/interiors.ts'
+
+/** What exitPoint reads of a room: its lot, its doorway's side and its furniture (a workplace and a shop both are one). */
+export type GlassRoom = Pick<Workplace, 'cx' | 'cz' | 'side' | 'furniture'>
 import { KERNEL } from '../02_Define_The_Rules/civic.ts'
 import { VEHICLE_CHASSIS_GROUPS, WHEEL_RAY_GROUPS } from '../02_Define_The_Rules/collision.ts'
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
@@ -182,12 +185,13 @@ export function clampSpeed(body: RAPIER.RigidBody, max: number): boolean {
  * a desk), on round to the bonnet and the boot, where the driver squeezes out against the chassis; and with nowhere
  * clear of the furniture either, the first of those points inside the walls. Never one the line from the chassis
  * centre reaches only through glass (a car askew in the doorway has a jamb beside it). Always EXIT_SIDE from the
- * chassis centre. The realm's rule (simCore.ts #interact) and the room's check of it are this one function.
+ * chassis centre. The realm's rule (simCore.ts #interact) and the room's check of it are this one function. A shop
+ * (01_Initialize_World/storefronts.ts) is a glass room of the same frame, and is handed in beside the workplaces.
  */
-export function exitPoint(x: number, z: number, heading: number, rooms: readonly Workplace[] = []): { x: number; z: number } {
+export function exitPoint(x: number, z: number, heading: number, rooms: readonly GlassRoom[] = []): { x: number; z: number } {
   const lx = Math.cos(heading), lz = -Math.sin(heading)
   const left = { x: x + lx * EXIT_SIDE, z: z + lz * EXIT_SIDE }
-  const reach = (room: Workplace, p: { x: number; z: number }) => {
+  const reach = (room: GlassRoom, p: { x: number; z: number }) => {
     const { u, v } = toLocal(room, p.x, p.z)
     return Math.max(Math.abs(u), Math.abs(v))
   }
