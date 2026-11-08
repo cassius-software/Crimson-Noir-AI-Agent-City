@@ -484,6 +484,23 @@ async function serveStatic(dir) {
   return { origin: `http://127.0.0.1:${server.address().port}`, close: () => { server.closeAllConnections(); server.close() } }
 }
 
+/**
+ * A llama-server built since b11521 as the page meets it: its new default port (9931) on this machine, every origin
+ * allowed (its default), one text model listed. Only the lists a look asks are answered.
+ */
+async function serveLlamaServer() {
+  const server = createServer((req, res) => {
+    const head = { 'Access-Control-Allow-Origin': req.headers.origin ?? '*', 'Cache-Control': 'no-store' }
+    if (new URL(req.url ?? '/', 'http://x').pathname === '/v1/models') {
+      res.writeHead(200, { ...head, 'Content-Type': 'application/json' }).end(JSON.stringify({ object: 'list', data: [{ id: 'smoke-9931.gguf', object: 'model' }] }))
+      return
+    }
+    res.writeHead(404, head).end()
+  })
+  await new Promise((r, j) => { server.once('error', j); server.listen(9931, '127.0.0.1', r) })
+  return { close: () => { server.closeAllConnections(); server.close() } }
+}
+
 /** Navigates again to `url` and waits until the new document has booted (the old one is marked, so it cannot answer). */
 async function reload(p, url) {
   await p.eval('window.__smokeOld = true')
@@ -1594,7 +1611,9 @@ const SCENARIOS = {
    * plain JS, as the debug handle allows (App.tsx `window.__SIM__.engine`).
    */
   async actions(chrome, origin) {
-    const p = await open(chrome)
+    // `localhost` as a browser resolves it (to this machine), ahead of the rules that keep everything else off the
+    // network: the second round's llama-server below is addressed by that name.
+    const p = await open(chrome, { args: ['--host-resolver-rules=MAP localhost 127.0.0.1'] })
     try {
       // The slowest day (one sim minute a real minute at 60 fps, slower on a software GPU, whose frames are clamped to
       // 50 ms of sim time): the clock an action set is read back minutes later, so the hour is compared, not the minute.
@@ -1658,6 +1677,17 @@ const SCENARIOS = {
       const log = await p.command('act log verify', /chain: /)
       check(gone && /stop {4}act-5 .*CapabilityTethered: Aborted \(Spatial Tether Lost\): agent \d+ \(Design(?:, [^)]*)?\): no longer tethered to the operator/.test(log ?? '') && /chain: 11 entries verify from genesis/.test(log ?? '') && /^22:/.test(await clock()),
         'actions: a lost tether ends the proposal in the gateway\'s words; the trail has every proposal, decision and end, and verifies', lastLine(log))
+
+      // A llama-server on its new default port (router.ts KNOWN_SERVERS): nothing answers at 8080, so auto's second
+      // round finds it on 9931, through the page's own air gap and connect-src, and keeps that address.
+      const llama = await serveLlamaServer()
+      try {
+        await p.command('ask provider auto', /provider\s+auto/)
+        check(!!(await p.command('ask', /found\s+llamacpp at http:\/\/localhost:9931, found answering on this machine/, 30_000)),
+          'actions: auto finds a llama-server on its new default port, 9931, when nothing answers at 8080')
+      } finally {
+        llama.close()
+      }
       await p.shot('actions')
       p.health('actions')
     } finally {

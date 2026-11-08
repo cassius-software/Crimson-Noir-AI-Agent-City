@@ -8,7 +8,8 @@
  * - `auto`: at an ask, the first provider whose server answers on this machine, in AUTO_ORDER (the local model
  *   servers first, then a model file kept in this page, then the Claude gateway), kept for the visit and looked for
  *   again when it stops answering (and at `ask` alone); a model server installed with its defaults is used with
- *   nothing set at the console;
+ *   nothing set at the console, at the newer default addresses too (KNOWN_SERVERS: llama-server's 9931, vLLM's 8000,
+ *   SGLang's 30000), asked only when none answers at its usual one and never on a phone;
  * - `claude`: the Claude Messages API through a gateway on this machine (claudeApi.ts), with the key the operator
  *   gives the console;
  * - `ollama`: a local model server on this machine speaking the Ollama API (localCompute.ts generate);
@@ -64,11 +65,11 @@ const LOOK_PHASES: readonly (readonly Found[])[] = Object.freeze([
 const IN_PAGE_PLACE = 'the model file kept in this page'
 /** What each provider is, in the words the console prints after a swap. */
 export const PROVIDER_TEXT: Readonly<Record<Provider, string>> = Object.freeze({
-  auto: 'auto: the first model that answers on this machine (Ollama, a llama.cpp server, an OpenAI-compatible server such as LM Studio, a model file kept in this page, then the gateway to the Claude API), kept until it stops answering; the script when none does',
+  auto: 'auto: the first model that answers on this machine (Ollama, a llama.cpp server, an OpenAI-compatible server such as LM Studio, vLLM or SGLang, a model file kept in this page, then the gateway to the Claude API), kept until it stops answering; the script when none does',
   claude: 'claude: the Claude API through a gateway on this machine (best with the key in the gateway; ask key <key> keeps one in this browser)',
   ollama: 'ollama: a model server on this machine (the Ollama API)',
   llamacpp: 'llamacpp: a packaged model under a llama.cpp server on this machine',
-  openai: 'openai: an OpenAI-compatible server on this machine (LM Studio, vLLM, a loopback proxy; ask server <url> and ask model <name> point at it)',
+  openai: 'openai: an OpenAI-compatible server on this machine (LM Studio, vLLM, SGLang, a loopback proxy; ask server <url> and ask model <name> point at it)',
   inpage: 'inpage: a model file kept in this page, run by the page itself on this device; nothing is addressed (Menu › Model file, or ask file, chooses one)',
   scripted: 'scripted: no backend; every answer is the deterministic script, and nothing reaches any network',
 })
@@ -82,6 +83,19 @@ export const LLAMACPP_MODEL = ANY_MODEL
 export const OPENAI_SERVER = 'http://localhost:1234'
 /** The model asked of it unless the operator chooses one it lists (ask model <name>): the first it lists. */
 export const OPENAI_MODEL = ANY_MODEL
+/** Where vLLM listens unless told otherwise (its own default port). */
+export const VLLM_SERVER = 'http://localhost:8000'
+/**
+ * The addresses a provider's server listens at when it is started with its own defaults, the provider's default
+ * first: llama-server moved from 8080 to 9931 in build b11521 (October 2026); vLLM listens on 8000 and SGLang on
+ * 30000. When no server on this machine answers with a model at the address its provider is set to, and that address
+ * is one of these, auto's look asks the provider's others once (look, the second round), never on a phone. Ollama
+ * has one.
+ */
+export const KNOWN_SERVERS: Readonly<Partial<Record<Found, readonly string[]>>> = Object.freeze({
+  llamacpp: Object.freeze([LLAMACPP_SERVER, 'http://localhost:9931']),
+  openai: Object.freeze([OPENAI_SERVER, VLLM_SERVER, 'http://localhost:30000']),
+})
 /** What the scripted provider reports as its server and model: nothing is addressed, nothing is loaded. */
 export const SCRIPTED_SERVER = 'none'
 /** What the in-page provider reports as its server: nothing is addressed, the model runs in this page. */
@@ -169,10 +183,12 @@ function noInPage(): Mind {
  * `inPage` builds the in-page provider over its own slice of the router's store (09_Cognition/inPage.ts, from the
  * host); without it the stand-in above answers for that provider.
  */
-export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUTO_LOOK_MS, inPage = noInPage, vram }: {
+export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUTO_LOOK_MS, inPage = noInPage, vram, phone = () => false }: {
   fetch: FetchLike; store?: SettingsStore; timeouts?: Timeouts; lookMs?: number; inPage?: (store: SettingsStore) => Mind
   /** the page's vram= query value, for auto's Ollama model (modelFit.ts) */
   vram?: string | null
+  /** whether this device is a phone (the engine's profile): a phone runs no model server, so auto's look asks no second round there */
+  phone?: () => boolean
 }): MindRouter {
   const kept: Kept = { v: 3, provider: DEFAULT_PROVIDER, claude: { server: CLAUDE_GATEWAY, model: DEFAULT_CLAUDE_MODEL, key: null, effort: null }, ollama: null, llamacpp: null, openai: null, inpage: null }
   try {
@@ -343,23 +359,101 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
    * named in a look that it cannot run (a list that failed says nothing of what is kept).
    */
   const chosenInPage = (): boolean => inpage.settings().model !== null
-  /** Where a look asked a provider, as its sentence names it. */
-  const placeOf = (p: Found): string => (p === 'inpage' ? IN_PAGE_PLACE : `${p} at ${byName(p).settings().server}`)
+  /** The second round's addresses a look asked a provider at, beside its own (none until a look asks any). */
+  let alsoAt = new Map<Found, string[]>()
+  /** Where a look asked a provider, as its sentence names it: its address, and the second round's ports (same host). */
+  const placeOf = (p: Found): string => {
+    if (p === 'inpage') return IN_PAGE_PLACE
+    const also = (alsoAt.get(p) ?? []).map((u) => u.slice(u.lastIndexOf(':')))
+    const more = also.length ? ` (also ${also.length > 1 ? `${also.slice(0, -1).join(', ')} and ${also.at(-1)}` : also[0]})` : ''
+    return `${p} at ${byName(p).settings().server}${more}`
+  }
+  /**
+   * The second round of a look (KNOWN_SERVERS): each provider set to one of its known addresses is asked at its others
+   * not asked already, in AUTO_ORDER and each list's order. An address set to anything else is the operator's: none.
+   */
+  const secondRound = (): { p: Found; url: string }[] => {
+    const servers = LOOK_PHASES[0].map((p) => byName(p).settings().server)
+    return LOOK_PHASES[0].flatMap((p) => {
+      const known = KNOWN_SERVERS[p]; const at = byName(p).settings().server
+      return known?.includes(at) ? known.filter((url) => !servers.includes(url)).map((url) => ({ p, url })) : []
+    })
+  }
+  /**
+   * The second round of a look (secondRound): those addresses asked at once, each for at most `lookMs`, in the
+   * provider's own wire format; the first in order that lists a model that writes text here (and the model kept for
+   * that provider, when one was chosen) is kept as the provider's server, as ask server keeps one, and found. A list
+   * that failed is said through `heard`, as the first round's are, except that nothing listening is the usual case
+   * here, so it is said only as vLLM's hint.
+   */
+  const secondLook = async (signal: AbortSignal | undefined, heard: (p: Found, server: string, e: unknown, also: boolean) => void, notes: string[]): Promise<Mind | null> => {
+    const asks = secondRound()
+    for (const { p, url } of asks) alsoAt.set(p, [...(alsoAt.get(p) ?? []), url])
+    const lists = await Promise.all(asks.map(({ p, url }) => {
+      const within = AbortSignal.timeout(lookMs)
+      const api = byName(p).settings().api === 'generate' ? 'generate' : 'chat'
+      return installedModels(fetchFn, url, signal ? AbortSignal.any([signal, within]) : within, api).then((names): string[] | unknown => names, (e: unknown) => e)
+    }))
+    if (signal?.aborted) throw signal.reason
+    for (const [i, { p, url }] of asks.entries()) {
+      const names = lists[i]
+      if (!Array.isArray(names)) { heard(p, url, names, true); continue }
+      if (!names.some(localText)) { notes.push(`the ${p} server at ${url} is running but has no model that writes text on this machine`); continue }
+      const mind = byName(p); const want = mind.settings().model
+      if (want !== null && want !== ANY_MODEL && !names.includes(want)) {
+        notes.push(`the ${p} server at ${url} is running but does not list ${want}, the model kept for ${p} (ask connect ${p} ${url}, then ask model <name>)`)
+        continue
+      }
+      mind.setServer(url)
+      found = p
+      return mind
+    }
+    return null
+  }
   /**
    * Looks for a model on this machine: asks the model servers on this machine in AUTO_ORDER for their models at once,
    * each for at most `lookMs`, and keeps the first in that order that answers with one that writes text here
    * (localText: not an embedding model, not one of Ollama's cloud models); only when none does is the model file kept
    * in this page asked (it makes no request and loads nothing: it lists what is kept, or says why it cannot run here),
-   * and only when that has none is the Claude gateway asked, since it asks the Claude API. An Ollama whose model the
-   * operator never chose (the default, or one auto chose before) but which lacks it is given the default if it has
-   * it now, else the first such model. Throws the 'offline' failure (the script stands in for it) when none answers,
-   * naming why each server it heard from would not do; the page's own model is named only when a file is kept.
+   * and only when that has none is the Claude gateway asked, since it asks the Claude API. Between the servers and the
+   * page's own model, unless this is a phone, comes the second round (secondLook): the newer default addresses of the
+   * providers still set to a known one, asked only when the servers at their own addresses gave nothing usable. An
+   * Ollama whose model the operator never chose (the default, or one auto chose before) but which lacks it is given
+   * the default if it has it now, else the first such model. Throws the 'offline' failure (the script stands in for
+   * it) when none answers, naming why each server it heard from would not do; the page's own model is named only when
+   * a file is kept.
    */
   const look = async (signal?: AbortSignal): Promise<Mind> => {
     await settled(signal)
     found = null
+    alsoAt = new Map()
     const notes: string[] = []
+    // Whether a server at the address its provider is set to seemed not to be running, and vLLM's address did (each
+    // may be refusing this page's origin instead, which an isolated page cannot tell apart).
     let unseen = false
+    let vllmUnseen = false
+    /**
+     * A list that failed, said in the notes the way its cause is fixed. In the second round (`also`) a server that
+     * seems not to be running is said only through vLLM's hint: nothing listening there is the usual case.
+     */
+    const heard = (p: Found, server: string, e: unknown, also = false): void => {
+      const at = `the ${p} server at ${server}`
+      const missing = (): void => {
+        if (p === 'claude') return
+        if (!also) unseen = true
+        if (server === VLLM_SERVER) vllmUnseen = true
+      }
+      // Running but refusing this page is worth saying: it is fixed in that server's settings, not by starting one.
+      if (e instanceof CognitionError && e.code === 'refused') notes.push(e.message)
+      else if (e instanceof CognitionError && e.code === 'offline') missing()
+      // Cut off by the look's own wait: busy, or the browser is still asking whether this page may reach it.
+      else if (e instanceof DOMException && e.name === 'TimeoutError') {
+        notes.push(`${at} did not list its models within ${lookMs / 1000} s (busy, or the browser is asking whether this page may reach it: allow it, then ask again)`)
+        missing()
+      }
+      // Running, but its list failed or could not be read: starting it again is not the fix.
+      else if (e instanceof CognitionError && (e.code === 'server' || e.code === 'unreadable')) notes.push(`${at} is running but did not give its list of models (${e.message})`)
+    }
     // Whether the look's sentence names the page's own model: only when a file is kept there.
     let pageNamed = false
     for (const group of LOOK_PHASES) {
@@ -390,31 +484,29 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
           else notes.push(`inpage: ${names instanceof Error ? names.message : String(names)}`)
           continue
         }
-        const at = `the ${p} server at ${byName(p).settings().server}`
+        const server = byName(p).settings().server
         if (!Array.isArray(names)) {
-          // Running but refusing this page is worth saying: it is fixed in that server's settings, not by starting one.
-          if (names instanceof CognitionError && names.code === 'refused') notes.push(names.message)
-          else if (names instanceof CognitionError && names.code === 'offline') unseen ||= p !== 'claude'
-          // Cut off by the look's own wait: busy, or the browser is still asking whether this page may reach it.
-          else if (names instanceof DOMException && names.name === 'TimeoutError') {
-            notes.push(`${at} did not list its models within ${lookMs / 1000} s (busy, or the browser is asking whether this page may reach it: allow it, then ask again)`)
-            unseen ||= p !== 'claude'
-          }
-          // Running, but its list failed or could not be read: starting it again is not the fix.
-          else if (names instanceof CognitionError && (names.code === 'server' || names.code === 'unreadable')) notes.push(`${at} is running but did not give its list of models (${names.message})`)
+          heard(p, server, names)
           continue
         }
         if (p !== 'claude' && !names.some(localText)) {
-          notes.push(`${at} is running but has no model that writes text on this machine${p === 'ollama' ? ` (ollama pull ${DEFAULT_MODEL})` : ''}`)
+          notes.push(`the ${p} server at ${server} is running but has no model that writes text on this machine${p === 'ollama' ? ` (ollama pull ${DEFAULT_MODEL})` : ''}`)
           continue
         }
         if (p === 'ollama' && unchosen()) repick(names)
         found = p
         return byName(p)
       }
+      // The second round, only after the servers at their own addresses gave nothing usable, and never on a phone.
+      if (group === LOOK_PHASES[0] && !phone()) {
+        const elsewhere = await secondLook(signal, heard, notes)
+        if (elsewhere !== null) return elsewhere
+      }
     }
     // On an isolated page a local server refusing the origin cannot be told from one not running: say it may be that.
-    if (unseen && isolatedPage()) notes.push("one that is running may be refusing this page's origin, which looks the same from here (Ollama: add this page's origin to OLLAMA_ORIGINS)")
+    // vLLM 0.32 and later refuses every other page unless it is started with --allowed-origins.
+    const fixes = [...(unseen ? ["Ollama: add this page's origin to OLLAMA_ORIGINS"] : []), ...(vllmUnseen ? ['vLLM 0.32 and later: start it with --allowed-origins naming that origin'] : [])]
+    if (fixes.length && isolatedPage()) notes.push(`one that is running may be refusing this page's origin, which looks the same from here (${fixes.join('; ')})`)
     lookNote = notes.map((n) => `; ${n}`).join('')
     const where = AUTO_ORDER.filter((p) => p !== 'inpage' || pageNamed).map(placeOf).join(', ')
     throw new CognitionError('offline', `no model is answering on this machine (looked for ${where})${lookNote}: start one, or choose one with ask provider <name>`)

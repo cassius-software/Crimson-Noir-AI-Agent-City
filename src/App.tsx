@@ -849,6 +849,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           })),
           // The address's GPU figure (?vram=): auto may give Ollama a bigger model it already has, by what Ollama measured.
           vram: options.vram,
+          // A phone runs no model server: auto's look asks no second round of addresses there.
+          phone: () => e.profile.mobile,
         })
         inPageMind = inPage
         const mind: Mind = {

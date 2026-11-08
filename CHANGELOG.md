@@ -891,6 +891,15 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   and on Windows the figure has to be typed (`ask vram`) for now; on NixOS the launcher also counts an integrated
   Radeon given 4 GB or more by its firmware (not tried on one; `-- vram=0` sizes nothing). Nothing is downloaded, and
   the page still addresses only this machine.
+- **auto finds llama-server, vLLM and SGLang on their own default ports.** When no model server answers with a text
+  model at the address its provider is set to, provider `auto` asks once more, at once and for at most 2 s each:
+  llama-server's new default `http://localhost:9931` (since build b11521), then vLLM's `http://localhost:8000` and
+  SGLang's `http://localhost:30000`. The first with a text model answers and is kept as that provider's address, as
+  `ask server` would keep it (and the old default is asked in this second round if it goes quiet). It is never asked
+  on a phone, never past an address the operator set that is not one of these, and never moves a provider to a
+  server that lacks the model chosen for it. On an isolated page the reason names vLLM's `--allowed-origins` flag
+  when nothing answered on 8000. CI proves it in Node against fake servers by port; no real llama-server, vLLM or
+  SGLang ran it. The addresses are on the same loopback host, so the air gap is unchanged.
 
 ### Removed
 

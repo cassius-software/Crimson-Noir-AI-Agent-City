@@ -1585,8 +1585,15 @@ them that answers (`auto`):
   OpenAI-compatible server such as LM Studio (`http://localhost:1234`), then a model file kept in this page (`inpage`,
   below), then the Claude gateway (`http://localhost:8089`), each at the address its own provider is set to. The
   three on this machine are asked for their models at once, each for at most 2 s, and the first in that order with a
-  model that writes text answers (embedding, reranking and speech models are passed over, by name); only when none
-  has one is the page's own model considered, and it is asked nothing: it is found when a file is kept and chosen
+  model that writes text answers (embedding, reranking and speech models are passed over, by name). When none has
+  one, auto asks once more, at the newer default addresses, all at once and each for at most 2 s: a llama.cpp server
+  at `http://localhost:9931` (llama-server's default since build b11521, October 2026), then vLLM at
+  `http://localhost:8000` and SGLang at `http://localhost:30000` for the OpenAI-compatible provider. The first that
+  lists a text model answers and is kept as that provider's address, as `ask server` would keep it, so the next
+  visit asks it first (and asks the old default in this second round if it goes quiet). This second round is never
+  asked on a phone, never past an address you set that is not one of these, and never moves a provider to a server
+  that does not list the model you chose for it with `ask model` (the reason says so). Only when neither round
+  finds one is the page's own model considered, and it is asked nothing: it is found when a file is kept and chosen
   (picking a file chooses it) and this browser can run it, and it is not loaded until the ask itself. Files kept with
   none chosen are passed over with a note that says how to choose one, and with nothing kept the page's model goes
   unmentioned. Only when that finds nothing is the gateway asked, since it asks the Claude API. A server that is
@@ -1613,7 +1620,7 @@ them that answers (`auto`):
   OpenAI-compatible chat-completions format, at `http://localhost:8080`, the one model the server was started
   with), for offline environments.
 - **`openai`**: any other server on this machine that speaks the OpenAI-compatible chat-completions format (LM
-  Studio at its default `http://localhost:1234`, vLLM, a loopback proxy), with its own address and the first text
+  Studio at its default `http://localhost:1234`, vLLM, SGLang, a loopback proxy), with its own address and the first text
   model it lists unless you choose one (`ask model <name>`). For both chat-format providers the model reads
   `default` until you choose one: before the first answer the server is asked which models it lists, and the first
   that writes text, in the server's own order, is sent (asked once per server, and again after the server says it no
@@ -1737,14 +1744,14 @@ any of them.
   to `OLLAMA_ORIGINS` where Ollama starts (on Windows, `setx OLLAMA_ORIGINS "http://tauri.localhost"` in cmd, then quit
   and restart Ollama from its tray icon). A llama.cpp server (`llama-server`) answers any page unless it was started
   with its tools or agent options; LM Studio answers pages only with CORS turned on (Enable CORS in its server settings, or
-  `lms server start --cors`). A llama.cpp server built since b11521 (October 2026) listens on port 9931 by default,
-  where auto does not look: start it with `--port 8080`, or `ask connect llamacpp http://localhost:9931`. vLLM 0.32
-  and later answers no other page unless started with `--allowed-origins` naming the page's origin (on Linux:
-  `--allowed-origins '["http://127.0.0.1:4180"]'`), and since it listens on every network interface unless told
-  otherwise, also start it with `--host 127.0.0.1`; SGLang answers any page and listens on 127.0.0.1 by default. Both
-  speak the chat format: `ask connect openai http://localhost:8000` (vLLM) or `http://localhost:30000` (SGLang). On a
-  cross-origin isolated page (the launcher, the preview, the Windows app and the installed web copy all are) a
-  server refusing the origin cannot be told from one that is not running, so the sentence says it may be either.
+  `lms server start --cors`). A llama.cpp server built since b11521 (October 2026) listens on port 9931 by default;
+  auto finds it there in its second round. vLLM 0.32 and later answers no other page unless started with
+  `--allowed-origins` naming the page's origin (on Linux: `--allowed-origins '["http://127.0.0.1:4180"]'`), and since
+  it listens on every network interface unless told otherwise, also start it with `--host 127.0.0.1`; SGLang answers
+  any page and listens on 127.0.0.1 by default. Auto finds both on their default ports in its second round (vLLM
+  first); at another address, `ask connect openai <url>`. On a cross-origin isolated page (the launcher, the preview,
+  the Windows app and the installed web copy all are) a server refusing the origin cannot be told from one that is
+  not running, so the sentence says it may be either, and names vLLM's flag when nothing answered at its port.
 - **Bounded.** Every request to a local server asks for a context of 8,192 tokens and an answer of at most 2,048
   (the Ollama format is the one that bounds the context). A model's own maximum can be far larger, and a server
   that sizes its memory to it can fail before the first word (seen here: a 4B model asking for 20.5 GB). Running

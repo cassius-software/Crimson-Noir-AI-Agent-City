@@ -4,7 +4,9 @@
 /**
  * Why does this file exist? It proves the router's auto provider (router.ts), the default: at an ask it finds the
  * first model server answering on this machine in AUTO_ORDER (Ollama, llama.cpp, an OpenAI-compatible server such as
- * LM Studio, then a model file kept in this page, then the Claude gateway) and answers with it; it passes over a
+ * LM Studio, then a model file kept in this page, then the Claude gateway) and answers with it; when none answers at
+ * its own address it asks the newer default ones once (llama-server's 9931, vLLM's 8000, SGLang's 30000), never on a
+ * phone and never past an address the operator set, and keeps the one found as that provider's; it passes over a
  * server that is down, hangs, refuses this page or has no model that writes text, and says why; it gives an Ollama
  * without the default model the first text model it has; it looks again when the one it found stops answering, but
  * never once its answer has begun; the page's own model is only listed by a look (never answered or loaded), named
@@ -19,7 +21,7 @@ import { operatorBridge, type Answer, type AnswerRequest, type Diary, type GateH
 import type { TerminalBridge } from '../07_Execute_Actions/terminal/bridge.ts'
 import { run as shell } from '../07_Execute_Actions/terminal/commands.ts'
 import { CognitionError, DEFAULT_MODEL, DEFAULT_SERVER, type FetchLike } from './localCompute.ts'
-import { AUTO_ORDER, createMindRouter, INPAGE_SERVER, LLAMACPP_SERVER, OPENAI_SERVER, PROVIDER_TEXT } from './router.ts'
+import { AUTO_ORDER, createMindRouter, INPAGE_SERVER, KNOWN_SERVERS, LLAMACPP_SERVER, OPENAI_SERVER, PROVIDER_TEXT, VLLM_SERVER } from './router.ts'
 import { SCRIPTED, withScriptedFallback } from './scripted.ts'
 
 const enc = new TextEncoder()
@@ -128,14 +130,15 @@ test('auto looks in AUTO_ORDER: the servers on this machine at once, the first i
   assert.equal(lm.settings().server, OPENAI_SERVER)
   assert.equal(studio.calls.find((c) => c.url.endsWith('/v1/chat/completions'))?.body?.model, 'zai-org/glm-4.6v-flash')
 
-  // Only the Claude gateway: asked only once the servers on this machine have all said no, found last, and its key and
+  // Only the Claude gateway: asked only once the servers on this machine have all said no, at their own addresses and
+  // then at the newer default ones (llama-server's 9931, vLLM's 8000, SGLang's 30000), found last, and its key and
   // effort rows come back.
   const lone = machine({ 8089: ['claude-opus-5-5'] })
   const gw = createMindRouter({ fetch: lone.f })
   assert.equal(await ask(gw), '8089 says hi')
   assert.equal(gw.settings().found, 'claude')
   assert.equal(gw.settings().key, null)
-  assert.deepEqual(lone.calls.map((c) => new URL(c.url).port), ['11434', '8080', '1234', '8089', '8089'])
+  assert.deepEqual(lone.calls.map((c) => new URL(c.url).port), ['11434', '8080', '1234', '9931', '8000', '30000', '8089', '8089'])
 })
 
 test('an Ollama without the default model is given the first model it has that writes text; a chosen model is left alone', async () => {
@@ -230,7 +233,15 @@ test('on a cross-origin isolated page, nothing seen running may be a server refu
   const isolated: FetchLike = async () => { throw new TypeError('Failed to fetch') }
   try {
     g.crossOriginIsolated = true
-    await assert.rejects(ask(createMindRouter({ fetch: isolated, lookMs: 50 })), /\(looked for .*\); one that is running may be refusing this page's origin, which looks the same from here \(Ollama: add this page's origin to OLLAMA_ORIGINS\): start one/)
+    await assert.rejects(ask(createMindRouter({ fetch: isolated, lookMs: 50 })), /\(looked for .*\); one that is running may be refusing this page's origin, which looks the same from here \(Ollama: add this page's origin to OLLAMA_ORIGINS; vLLM 0\.32 and later: start it with --allowed-origins naming that origin\): start one/)
+    // Every server at its own address answers with no text model: Ollama's fix is not named, only vLLM's, since
+    // nothing answered at vLLM's address; and once vLLM answers there (with no text model either), neither is.
+    const running = { 11434: ['nomic-embed-text'], 8080: ['nomic-embed-text-v1.5.Q4_K_M.gguf'], 1234: ['text-embedding-nomic-embed-text-v1.5'] }
+    await assert.rejects(ask(createMindRouter({ fetch: machine(running).f, lookMs: 50 })),
+      /has no model that writes text on this machine; one that is running may be refusing this page's origin, which looks the same from here \(vLLM 0\.32 and later: start it with --allowed-origins naming that origin\): start one/)
+    await assert.rejects(ask(createMindRouter({ fetch: machine({ ...running, 8000: ['BAAI/bge-m3-embedding'] }).f, lookMs: 50 })), (e: unknown) => !/refusing this page's origin/.test((e as Error).message))
+    // On a phone there is no second round, so vLLM's address was never asked and goes unnamed.
+    await assert.rejects(ask(createMindRouter({ fetch: isolated, lookMs: 50, phone: () => true })), /\(looked for .*\); one that is running may be refusing this page's origin, which looks the same from here \(Ollama: add this page's origin to OLLAMA_ORIGINS\): start one/)
     // Beside another server's reason too (an embedding model under llama.cpp), not instead of it.
     await assert.rejects(ask(createMindRouter({ fetch: machine({ 8080: ['nomic-embed-text-v1.5.Q4_K_M.gguf'] }).f, lookMs: 50 })),
       /; the llamacpp server at http:\/\/localhost:8080 is running but has no model that writes text on this machine; one that is running may be refusing this page's origin/)
@@ -256,7 +267,7 @@ test('passed over and said why: a server that is down, hangs past the look, refu
   await assert.rejects(ask(none), (e: unknown) => {
     assert.ok(e instanceof CognitionError)
     assert.equal(e.code, 'offline')
-    assert.equal(e.message, `no model is answering on this machine (looked for ollama at ${DEFAULT_SERVER}, llamacpp at ${LLAMACPP_SERVER}, openai at ${OPENAI_SERVER}, claude at http://localhost:8089)`
+    assert.equal(e.message, `no model is answering on this machine (looked for ollama at ${DEFAULT_SERVER}, llamacpp at ${LLAMACPP_SERVER} (also :9931), openai at ${OPENAI_SERVER} (also :8000 and :30000), claude at http://localhost:8089)`
       + `; the ollama server at ${DEFAULT_SERVER} is running but has no model that writes text on this machine (ollama pull qwen3-vl:4b)`
       + `; the local model server at ${LLAMACPP_SERVER} is running but refused this page: allow this page's origin in its settings (a page opened from a file sends 'null'), or open the page from http://localhost`
       + `; the openai server at ${OPENAI_SERVER} did not list its models within 0.05 s (busy, or the browser is asking whether this page may reach it: allow it, then ask again)`
@@ -412,7 +423,7 @@ test('a model file kept in this page is found after the servers on this machine 
   assert.equal(s.found, 'inpage')
   assert.equal(s.auto, 'inpage: the model file kept in this page, found ready to run on this device (ask provider inpage keeps it)')
   assert.deepEqual([s.server, s.model, s.runtime, s.storage, s.key], [INPAGE_SERVER, 'tiny.gguf', 'this browser runs it (one thread)', 'kept in this page', undefined])
-  assert.deepEqual(m.calls.map((c) => new URL(c.url).port), ['11434', '8080', '1234'], 'the three servers on this machine were asked; the gateway never was')
+  assert.deepEqual(m.calls.map((c) => new URL(c.url).port), ['11434', '8080', '1234', '9931', '8000', '30000'], 'the servers on this machine were asked, at their own addresses and then the newer default ones; the gateway never was')
   assert.deepEqual(p.calls, ['installed', 'answer'])
   // The next ask goes straight to it: no list is asked of anyone.
   m.calls.length = 0
@@ -447,11 +458,12 @@ test('a model file kept in this page that this browser cannot run is passed over
   try {
     g.crossOriginIsolated = true
     // Every server answers, with nothing that writes text, and the gateway is down: nothing but the page's own model
-    // could have raised the hint about a server refusing this page's origin.
+    // could have raised the hint about a server refusing this page's origin. On a phone, so no second round of
+    // addresses is asked (nothing listening at vLLM's would raise the hint too).
     const m = machine({ 11434: ['nomic-embed-text'], 8080: ['nomic-embed-text-v1.5.Q4_K_M.gguf'], 1234: ['text-embedding-nomic-embed-text-v1.5'] })
     const why = 'this browser cannot run a model in this page (no JSPI): the script answers instead'
     const p = page('tiny.gguf', why)
-    await assert.rejects(ask(createMindRouter({ fetch: m.f, lookMs: 50, inPage: p.factory })), (e: unknown) => {
+    await assert.rejects(ask(createMindRouter({ fetch: m.f, lookMs: 50, inPage: p.factory, phone: () => true })), (e: unknown) => {
       assert.ok(e instanceof CognitionError)
       assert.equal(e.code, 'offline')
       assert.equal(e.message, `no model is answering on this machine (looked for ollama at ${DEFAULT_SERVER}, llamacpp at ${LLAMACPP_SERVER}, openai at ${OPENAI_SERVER}, the model file kept in this page, claude at http://localhost:8089)`
@@ -468,7 +480,7 @@ test('a model file kept in this page that this browser cannot run is passed over
     const plain = page(null)
     const said = async (f: ReturnType<typeof page>): Promise<string> => {
       try {
-        await ask(createMindRouter({ fetch: m.f, lookMs: 50, inPage: f.factory }))
+        await ask(createMindRouter({ fetch: m.f, lookMs: 50, inPage: f.factory, phone: () => true }))
       } catch (e) {
         return (e as Error).message
       }
@@ -576,7 +588,7 @@ test('model files kept in this page with none chosen: auto passes them over with
   await assert.rejects(ask(r), (e: unknown) => {
     assert.ok(e instanceof CognitionError)
     assert.equal(e.code, 'offline')
-    assert.match(e.message, /\(looked for ollama at .*, openai at http:\/\/localhost:1234, the model file kept in this page, claude at http:\/\/localhost:8089\)/)
+    assert.match(e.message, /\(looked for ollama at .*, openai at http:\/\/localhost:1234 \(also :8000 and :30000\), the model file kept in this page, claude at http:\/\/localhost:8089\)/)
     assert.match(e.message, /; inpage: 2 model files are kept in this page but none is chosen \(ask provider inpage, then ask model <name>\): start one/)
     return true
   })
@@ -598,4 +610,150 @@ test('model files kept in this page with none chosen: auto passes them over with
   assert.equal(await ask(r), 'inpage says hi')
   assert.equal(r.settings().found, 'inpage')
   assert.deepEqual(calls.filter((c) => c.startsWith('answer')), ['answer tiny.gguf', 'answer tiny.gguf'])
+})
+
+// The second round: the newer default addresses (router.ts KNOWN_SERVERS), asked only when the servers at their own
+// addresses gave nothing usable, and never on a phone.
+const port = (url: string): string => new URL(url).port
+const LISTS = /\/v1\/models$|\/api\/tags$/
+
+test('a llama-server built since b11521, alone on 9931: found in the second round and kept as the llama.cpp address; the next visit asks it first, and one back on 8080 is found there', async () => {
+  let json: string | null = null
+  const store = { load: () => json, save: (v: string) => { json = v } }
+  const m = machine({ 9931: ['local.gguf'] })
+  const r = createMindRouter({ fetch: m.f, store, lookMs: 50 })
+  assert.equal(await ask(r), '9931 says hi')
+  const s = r.settings()
+  assert.deepEqual([s.provider, s.found, s.server], ['auto', 'llamacpp', 'http://localhost:9931'])
+  assert.equal(s.auto, 'llamacpp at http://localhost:9931, found answering on this machine (ask provider llamacpp keeps it)')
+  // The first round at the three addresses at once, then the second at the three newer ones at once, then the answer.
+  assert.deepEqual(m.calls.filter((c) => LISTS.test(c.url)).slice(0, 6).map((c) => port(c.url)), ['11434', '8080', '1234', '9931', '8000', '30000'])
+  assert.equal(m.calls.find((c) => c.url.endsWith('/v1/chat/completions'))?.url, 'http://localhost:9931/v1/chat/completions')
+  assert.equal(m.calls.find((c) => c.url.endsWith('/v1/chat/completions'))?.body?.model, 'local.gguf')
+  // The next ask goes straight to it.
+  m.calls.length = 0
+  assert.equal(await ask(r), '9931 says hi')
+  assert.ok(m.calls.every((c) => port(c.url) === '9931'), m.calls.map((c) => c.url).join(', '))
+
+  // The next visit: llama.cpp's address is 9931 now, asked in the first round, and no second round follows (the
+  // fourth list is the one the answer reads to name the model the server has).
+  m.calls.length = 0
+  const next = createMindRouter({ fetch: m.f, store, lookMs: 50 })
+  assert.equal(await ask(next), '9931 says hi')
+  assert.deepEqual(m.calls.filter((c) => LISTS.test(c.url)).map((c) => port(c.url)), ['11434', '9931', '1234', '9931'])
+
+  // Started again with --port 8080: 9931 says nothing, and the second round finds it at its old default, kept again.
+  m.servers[9931] = 'down'
+  m.servers[8080] = ['local.gguf']
+  m.calls.length = 0
+  const back = createMindRouter({ fetch: m.f, store, lookMs: 50 })
+  assert.equal(await ask(back), '8080 says hi')
+  assert.equal(back.settings().server, LLAMACPP_SERVER)
+  assert.deepEqual(m.calls.filter((c) => LISTS.test(c.url)).slice(0, 6).map((c) => port(c.url)), ['11434', '9931', '1234', '8080', '8000', '30000'])
+  assert.equal(JSON.parse(JSON.parse(json ?? '{}').llamacpp).server, LLAMACPP_SERVER)
+})
+
+test('vLLM on 8000 and SGLang on 30000 are found as the OpenAI-compatible provider, in that order, after a llama-server on 9931', async () => {
+  assert.deepEqual(KNOWN_SERVERS, { llamacpp: [LLAMACPP_SERVER, 'http://localhost:9931'], openai: [OPENAI_SERVER, VLLM_SERVER, 'http://localhost:30000'] })
+  const found = async (servers: Record<string, Server>): Promise<[string, unknown, unknown, string | undefined]> => {
+    const m = machine(servers)
+    const r = createMindRouter({ fetch: m.f, lookMs: 50 })
+    const said = await ask(r)
+    return [said, r.settings().found, r.settings().server, m.calls.find((c) => c.url.endsWith('/v1/chat/completions'))?.body?.model]
+  }
+  assert.deepEqual(await found({ 8000: ['Qwen/Qwen3-32B'] }), ['8000 says hi', 'openai', VLLM_SERVER, 'Qwen/Qwen3-32B'])
+  assert.deepEqual(await found({ 30000: ['meta-llama/Llama-3.3-70B-Instruct'] }), ['30000 says hi', 'openai', 'http://localhost:30000', 'meta-llama/Llama-3.3-70B-Instruct'])
+  assert.deepEqual(await found({ 8000: ['vllm-model'], 30000: ['sglang-model'] }), ['8000 says hi', 'openai', VLLM_SERVER, 'vllm-model'])
+  assert.deepEqual(await found({ 9931: ['local.gguf'], 8000: ['vllm-model'] }), ['9931 says hi', 'llamacpp', 'http://localhost:9931', 'local.gguf'])
+  // An embedding model alone there is passed over, as in the first round.
+  assert.deepEqual(await found({ 8000: ['BAAI/bge-m3-embedding'], 30000: ['sglang-model'] }), ['30000 says hi', 'openai', 'http://localhost:30000', 'sglang-model'])
+})
+
+test('the second round only when the first found nothing usable: a server that answers wins at once; one with no text model does not stop it', async () => {
+  const up = machine({ 1234: ['lm-model'], 9931: ['local.gguf'] })
+  assert.equal(await ask(createMindRouter({ fetch: up.f, lookMs: 50 })), '1234 says hi')
+  assert.ok(up.calls.every((c) => !['9931', '8000', '30000'].includes(port(c.url))), up.calls.map((c) => c.url).join(', '))
+  // llama.cpp on 8080 has only an embedding model: nothing usable, so 9931 is asked and answers.
+  const embed = machine({ 8080: ['nomic-embed-text-v1.5.Q4_K_M.gguf'], 9931: ['local.gguf'] })
+  const r = createMindRouter({ fetch: embed.f, lookMs: 50 })
+  assert.equal(await ask(r), '9931 says hi')
+  assert.equal(r.settings().server, 'http://localhost:9931')
+})
+
+test('never on a phone: no second round, and the sentence names only the addresses asked', async () => {
+  const m = machine({ 9931: ['local.gguf'], 8000: ['vllm-model'], 30000: ['sglang-model'] })
+  const r = createMindRouter({ fetch: m.f, lookMs: 50, phone: () => true })
+  await assert.rejects(ask(r), (e: unknown) => {
+    assert.ok(e instanceof CognitionError)
+    assert.equal(e.message, `no model is answering on this machine (looked for ollama at ${DEFAULT_SERVER}, llamacpp at ${LLAMACPP_SERVER}, openai at ${OPENAI_SERVER}, claude at http://localhost:8089): start one, or choose one with ask provider <name>`)
+    return true
+  })
+  assert.deepEqual(m.calls.map((c) => port(c.url)), ['11434', '8080', '1234', '8089'])
+})
+
+test('an address the operator set is theirs: a provider at any other address is never asked elsewhere, and a model kept for it that a server lacks keeps it from moving there', async () => {
+  // The OpenAI-compatible provider at 9000: only llama.cpp, still at its default, gets a second round.
+  const m = machine({ 8000: ['vllm-model'], 30000: ['sglang-model'] })
+  const r = createMindRouter({ fetch: m.f, lookMs: 50 })
+  r.connect!('openai', 'http://localhost:9000')
+  r.setProvider('auto')
+  await assert.rejects(ask(r), /\(looked for ollama at http:\/\/localhost:11434, llamacpp at http:\/\/localhost:8080 \(also :9931\), openai at http:\/\/localhost:9000, claude at http:\/\/localhost:8089\)/)
+  assert.ok(m.calls.every((c) => !['8000', '30000'].includes(port(c.url))), m.calls.map((c) => c.url).join(', '))
+
+  // A model kept for the OpenAI-compatible provider (chosen for LM Studio): vLLM on 8000 lacks it, so it stays at 1234
+  // and the sentence says how to move it; SGLang on 30000 lists it, so it moves there with the model kept.
+  const kept = machine({ 8000: ['vllm-model'] })
+  const k = createMindRouter({ fetch: kept.f, lookMs: 50 })
+  k.setProvider('openai')
+  k.setModel('lm-model')
+  k.setProvider('auto')
+  await assert.rejects(ask(k), /; the openai server at http:\/\/localhost:8000 is running but does not list lm-model, the model kept for openai \(ask connect openai http:\/\/localhost:8000, then ask model <name>\): start one/)
+  k.setProvider('openai')
+  assert.equal(k.settings().server, OPENAI_SERVER)
+  kept.servers[30000] = ['sglang-model', 'lm-model']
+  k.setProvider('auto')
+  assert.equal(await ask(k), '30000 says hi')
+  assert.deepEqual([k.settings().server, k.settings().model], ['http://localhost:30000', 'lm-model'])
+  assert.equal(kept.calls.find((c) => c.url.endsWith('/v1/chat/completions'))?.body?.model, 'lm-model')
+})
+
+test('a second-round server that refuses this page, hangs or has no text model is said as the first round says it', async () => {
+  const m = machine({ 9931: ['nomic-embed-text-v1.5.Q4_K_M.gguf'], 8000: 'refuses', 30000: 'hangs' })
+  await assert.rejects(ask(createMindRouter({ fetch: m.f, lookMs: 50 })), (e: unknown) => {
+    assert.ok(e instanceof CognitionError)
+    assert.equal(e.message, `no model is answering on this machine (looked for ollama at ${DEFAULT_SERVER}, llamacpp at ${LLAMACPP_SERVER} (also :9931), openai at ${OPENAI_SERVER} (also :8000 and :30000), claude at http://localhost:8089)`
+      + '; the llamacpp server at http://localhost:9931 is running but has no model that writes text on this machine'
+      + `; the local model server at ${VLLM_SERVER} is running but refused this page: allow this page's origin in its settings (a page opened from a file sends 'null'), or open the page from http://localhost`
+      + '; the openai server at http://localhost:30000 did not list its models within 0.05 s (busy, or the browser is asking whether this page may reach it: allow it, then ask again)'
+      + ': start one, or choose one with ask provider <name>')
+    return true
+  })
+})
+
+test('a stop during the second round ends the look at once, and nothing it heard is kept', async () => {
+  // 9931 answers with a model at once; 30000 holds the round open until the stop.
+  const m = machine({ 9931: ['local.gguf'], 30000: 'hangs' })
+  const r = createMindRouter({ fetch: m.f, lookMs: 60_000 })
+  const ctl = new AbortController()
+  const asked = ask(r, req(ctl.signal))
+  // The first round fails at once (nothing listens); the second waits on 30000.
+  while (!m.calls.some((c) => port(c.url) === '30000')) await new Promise((r) => setTimeout(r, 1))
+  const t0 = performance.now()
+  ctl.abort(new Error('stopped by the operator'))
+  await assert.rejects(asked, /stopped by the operator/)
+  assert.ok(performance.now() - t0 < 1000, 'not held for the look\'s wait')
+  assert.equal(r.settings().found, undefined)
+  r.setProvider('llamacpp')
+  assert.equal(r.settings().server, LLAMACPP_SERVER, 'the address heard before the stop was not kept')
+})
+
+test('an address the first round already asked is not asked again in the second', async () => {
+  // The OpenAI-compatible provider set to 9931 (not one of its known addresses): llama.cpp's second round would ask
+  // 9931 too, and does not.
+  const m = machine({})
+  const r = createMindRouter({ fetch: m.f, lookMs: 50 })
+  r.connect!('openai', 'http://localhost:9931')
+  r.setProvider('auto')
+  await assert.rejects(ask(r), /\(looked for ollama at http:\/\/localhost:11434, llamacpp at http:\/\/localhost:8080, openai at http:\/\/localhost:9931, claude at http:\/\/localhost:8089\)/)
+  assert.deepEqual(m.calls.map((c) => port(c.url)), ['11434', '8080', '9931', '8089'])
 })
