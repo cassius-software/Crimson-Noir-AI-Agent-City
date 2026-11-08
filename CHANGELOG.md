@@ -60,6 +60,62 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   and the worker call the same function with the same arguments), `surfaces.test.ts` keeps the new height in order,
   and the browser smoke's `?map=lakefront` scenario checks the craft and the markings. Unverified from the cloud (no
   GPU): the loop, the craft, the crossings, the pier and the strip on screen.
+- **The ten Monk skin tones, vitiligo, freckles and body builds, on a look genome of sixteen words.** The character
+  customizer's look (`src/03_Spawn_Agents/look.ts`) grows from four packed words to a genome of sixteen
+  (`LOOK_WORDS`): words 0 to 3 are the look, figure, face and wardrobe words exactly as they were, word 4 is a new
+  skin word, and words 5 to 15 are spare (zero, and refused otherwise). Every field of the later words is 0 for "as
+  before", so every stored look (records v1 to v4), every look code (28, 21, 15 and 8 symbols) and every roster look
+  reads back as the same look, and a look without the new fields keeps its exact code. The skin slot holds the eight
+  older tones and then the ten tones of the Monk Skin Tone Scale (`mst-01` to `mst-10`; Dr. Ellis Monk, published by
+  Google under CC BY 4.0, credited in `NOTICE.md`); the street's hash now draws everyone from the Monk tones evenly,
+  so the two deepest tones, which no pedestrian wore before, are as common as the lightest. **Vitiligo** (six
+  patterns: hands, face, hands and face, scattered, widespread, one side) and **freckles** (light, medium, dense) are
+  painted by the crowd's fragment stage from the rest position (two octaves of value noise for the patches, one dot at
+  most per 1.6 cm cell for the freckles, thickest over the cheeks and nose, never on a paled patch), each under its own
+  branch so a person without them pays nothing; two pedestrians in a hundred have vitiligo and about one in six
+  freckles. A **Build** row (slight, lean, athletic, muscular, broad, stocky, soft, full) sets the mass, muscle,
+  shoulder and hip sliders together, on the card and as `look build <name>` at the console. `crowd.figure` becomes
+  four quads a person (64 bytes: the figure, face and wardrobe words with the rig slot word, then genome words 4 to
+  15), the vertex stage still binds seven storage buffers, and the skin word reaches the fragment as one flat integer
+  varying (`@interpolate(flat)`, not three's `flat, either`). A look code with a skin word grows a tail of eight
+  symbols with its own check, and its head's check then covers every word, so the head alone is refused instead of
+  read in an older tone. The stored record is v5. Pinned by `look.test.ts` (the genome's layout and round trip,
+  the hashed crowd's odds and the shader's links, the codes with and without a tail, the builds) and
+  `lookWiring.test.ts` (the buffer, the varying, the engine's record and the v4 record read as it is).
+
+- **Five shops you can walk into, browse and buy from.** Five ground floors of the procedural city are storefronts
+  (`src/01_Initialize_World/storefronts.ts`): Verrin & Vale Tailors, Aethelgard Ink Studio, Bio-Frame Prosthetics
+  Atelier, Escapement Row Horology and Lintel & Lumen Design House, each on a lot of its own quarter, picked from the
+  seed among the lots no workplace has. Each lot's podium is hollowed into a glass room with a counter, a mirror and
+  its trade's fixtures, and the ceiling slab keeps the building's finish; the minimap draws the shops in teal. On foot
+  inside one, E (unless a car is in reach), B, the pad's south button or the HUD's Browse chip opens the shop's card
+  (`src/07_Execute_Actions/StoreCard.tsx`): the avatar steps onto a fitting spot kept clear of every fixture and the
+  camera circles the body, so the outfit shows; every line has its level and price, Try on, Buy (worn at once) and
+  Wear. Purchases go through one shopkeeper (`shopkeeper.ts`) over the progression engine's keeper (`progress.ts`
+  `pageProgress`, adapted by `progressionPurse`): the card shows its level and civic credits, and its purchase gate
+  takes the price and sets the line's unlock bit in the same saved record (worn lines at look 512 and up, furniture
+  from 0, homes 0 to 6). A new operator starts at level 1 with 150 credits, enough for a first-floor line such as the
+  tie, and earns more by the city's work. On sale now: the tailor's overcoats, trims, scarves and tie,
+  the atelier's smart eyewear and the watch shop's briefcase; tattoos, limbs, watches and the other lines that need
+  wardrobe slots not built yet are listed as on order, and the design house's furniture and seven property deeds wait
+  for the properties. Three of the plan's shop names and two home names were changed after a trademark and place-name
+  search (`docs/ip-audit.md` §7). Pinned by `storefronts.test.ts` (one shop per kind on its quarter for 64 seeds,
+  never on a workplace lot, the podium gone, every fixture inside the walls, the walk-in and the camera's circle
+  clear, the real Rapier avatar walking from the sidewalk to the fitting spot), `storeCatalog.test.ts` (ids, the
+  deeds' levels and prices, every line on sale wearable by every preset body, the spaces, level cap and verdicts equal
+  to the progression engine's, the shopkeeper over a real keeper bought once and kept across a reload, and over a
+  stand-in that refuses) and `storeWiring.test.ts`.
+- **The five shops in Lakefront Metro too.** A generated region's street window gets the same five storefronts
+  (`src/01_Initialize_World/region/shops.ts`), on the lots nearest the visitor's start once its workplaces have taken
+  theirs, from the same candidates as the workplaces (`region/workplaces.ts` `lotCandidates`, shared now): a doorway on
+  a two-way street with a sidewalk the start can walk to, never the landmark's lot or a lot under water.
+  `regionWorld.ts` `hollowLots` hollows a shop's lot as it hollows a room's (the slab in the podium's height and
+  finish, a tower carried on it, the floor and forecourt paved), the worker takes the lots in `SimInit.shops` and
+  refuses malformed ones, each with its reason, the region's minimap draws the shops, and each shop's card names the
+  streets it stands on (the city's arcades are the city's districts). Pinned by
+  `region/shops.test.ts` (two seeds, every zone: five shops, never a workplace's lot, the nearest lots first, the
+  hollowing and the workplaces unchanged by it), `regionPhysics.test.ts` (the worker's refusals) and
+  `storeWiring.test.ts`.
 - **One command for every platform's build: `npm run build:matrix`.** `tools/build/matrix.mjs` (plain Node, programs
   with argument vectors, never a shell, so cmd.exe and sh run the same thing) builds the page once and then each
   target a machine can build: the Tauri 2 shell for Windows x64 (`windows-x64`: NSIS installer, .msi and bare .exe)
@@ -866,6 +922,20 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   over a solid person as an impact. The Sanctuary no longer shields or nudges anyone for overlapping a standing car,
   and it now shields anyone within 0.3 m of a moving one whichever way it moves, since you can run after a car pulling
   away; a car pulling away nudges nobody.
+- **auto can give Ollama a bigger model it already has, by the GPUs' memory.** Given the GPUs' memory (`ask vram
+  <GB>`, kept in this browser, or `vram=` in the address, which the NixOS launcher now adds from `nvidia-smi` or the
+  amdgpu driver), provider `auto` measures an Ollama answer (one `GET /api/ps` on this machine) and then answers with
+  the largest text model Ollama already lists that fits the figure less 2 GB by that measure. A model whose weights
+  alone exceed the figure is never chosen while a smaller one is listed; a bigger model that is slow, or split between
+  the GPU and the processor when its first wait runs out, is dropped for the visit, and one too big in two visits is avoided until `ask vram`. The
+  console's `fit` row says which model and why; `ask model auto` hands a chosen model back to auto; under auto, a
+  model Ollama lists at over 60 GB gets longer to start answering (a second per 200 MB). Without a figure only that wait changes: the same requests and
+  the same model. The 2 GB reserve, 5 tokens a second over 32 tokens, two visits, 200 MB a second and the launcher's 4 GB
+  floor are starting values, not measured. CI proves it in Node against a fake Ollama and a stubbed `nvidia-smi`, and
+  in the browser smoke on a software adapter (the row and the commands); no real GPU ran it. Nothing grows on a phone,
+  and on Windows the figure has to be typed (`ask vram`) for now; on NixOS the launcher also counts an integrated
+  Radeon given 4 GB or more by its firmware (not tried on one; `-- vram=0` sizes nothing). Nothing is downloaded, and
+  the page still addresses only this machine.
 
 ### Removed
 

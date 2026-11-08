@@ -33,7 +33,8 @@ test('the engine: the lots from the pack as it came, a hollowed copy drawn and w
     'const landmark = pack && layout ? landmarkOf(pack, layout.offset) : null',
     'const streets = pack && layout ? streetGridOf(pack, layout.offset, spawn) : null',
     'const lots = pack && layout && streets ? regionWorkplaceLots(pack, layout, streets, spawn, options.seed) : []',
-    'const hollow = pack && layout ? hollowLots(pack, layout, lots) : null',
+    // The region's shops (region/shops.ts, storeWiring.test.ts) are hollowed with the rooms.
+    'const hollow = pack && layout ? hollowLots(pack, layout, lots, shopLots) : null',
   ]) assert.ok(src.includes(line), line)
   before(src, 'const streets = pack && layout ? streetGridOf(', 'regionWorkplaceLots(pack, layout, streets, spawn, options.seed)', 'the window first, the lots in it')
   before(src, 'const hollow = pack && layout ? hollowLots(', 'const world = buildWorld(', 'hollowed before the world is built')
@@ -49,7 +50,7 @@ test('the engine: the lots from the pack as it came, a hollowed copy drawn and w
   // The engine keeps the world's rooms: the minimap draws them over a region's map, and the HUD counts who is at work
   // wherever there are rooms (the city's, a generated region's), never in a surveyed region.
   assert.ok(src.includes('rooms: hollow ? hollow.rooms : workplaces(options.seed),'))
-  assert.ok(src.includes('return p ? (ctx, x, z, radius, dark) => { p.drawMap(ctx, x, z, radius, dark); drawRooms(ctx, rooms, x, z, dark, radius) } : null'), 'the rooms over the region\'s map')
+  assert.ok(src.includes('return p ? (ctx, x, z, radius, dark) => { p.drawMap(ctx, x, z, radius, dark); drawRooms(ctx, rooms, x, z, dark, radius); drawShops(ctx, shops, x, z, dark, radius) } : null'), 'the rooms (and the shops) over the region\'s map')
   assert.ok(src.includes('...(this.places && this.rooms.length === 0 ? {} : { working: s.working ?? 0 }),'), 'at work indoors wherever there are rooms')
   assert.ok(!src.includes('...(this.places ? {} : { working: s.working ?? 0 }),'))
 })

@@ -32,7 +32,8 @@ import { Physics } from './physics.ts'
 import { Avatar } from './player.ts'
 import { Sanctuary, type Nudge } from './sanctuary.ts'
 import { Fleet, type Person, type Vehicle } from './vehicles.ts'
-import { exitPoint, HELD_CARS } from './carRig.ts'
+import { exitPoint, HELD_CARS, type GlassRoom } from './carRig.ts'
+import { shops, shopsAt } from '../01_Initialize_World/storefronts.ts'
 import { TrackFleet } from './trackFleet.ts'
 import { RagdollRealm } from './ragdollRealm.ts'
 import { JointRealm } from './jointRealm.ts'
@@ -178,8 +179,11 @@ export class SimCore {
   readonly #crowd: CrowdSensor | null
   /** Per player: the car they drive, or null on foot. */
   readonly #driving: (Vehicle | null)[]
-  /** The indoor workplaces (the city's, or a generated region's: none in a surveyed one): a car left in one puts its driver down indoors. */
-  readonly #rooms: readonly Workplace[]
+  /**
+   * Every glass room a car can stand in: the indoor workplaces (the city's, or a generated region's: none in a surveyed
+   * one) and, in the city, the shops (storefronts.ts). A car left in one puts its driver down indoors (exitPoint).
+   */
+  readonly #glass: readonly GlassRoom[]
   /** This realm's own clock (the sum of accepted dt): harness time limits never trust the page's clock. */
   #simTime = 0
   #blindUntil = -1
@@ -235,7 +239,9 @@ export class SimCore {
   private constructor(physics: Physics, o: SimCoreOptions, crowd: CrowdSensor | null, rooms: readonly Workplace[]) {
     this.#physics = physics
     this.#crowd = crowd
-    this.#rooms = rooms
+    // The city's shops are its seed's like its rooms, a generated region's are the lots it was handed (none in a
+    // surveyed region); a car driven into one leaves its driver clear of the glass and the fixtures as a workplace does.
+    this.#glass = [...rooms, ...(o.region ? (o.streets && o.shops?.length ? shopsAt(o.shops) : []) : shops(o.seed))]
     this.#debug = o.debug === true
     const r = o.region?.bounds
     this.#auditor = r
@@ -985,7 +991,7 @@ export class SimCore {
       const t = fleet.position(v, this.#pos)
       const h = fleet.heading(v)
       // carRig.ts exitPoint: the realm's rule and the room's check of it are one function.
-      const { x: ex, z: ez } = exitPoint(t.x, t.z, h, this.#rooms)
+      const { x: ex, z: ez } = exitPoint(t.x, t.z, h, this.#glass)
       v.mode = 'parked'
       // In a network room a car stops where its driver leaves it: its brakes would otherwise answer the bouncer, whose
       // pedestrians only this page sees, and the room's authority holds the car where it was left. A car the room took

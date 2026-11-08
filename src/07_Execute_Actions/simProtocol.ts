@@ -13,6 +13,7 @@ import type { Box, Furniture } from '../01_Initialize_World/city.ts'
 import type { RegionGround } from './physics.ts'
 import type { StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import type { WorkplaceLot } from '../01_Initialize_World/interiors.ts'
+import type { ShopLot } from '../01_Initialize_World/storefronts.ts'
 import type { KernelStats } from '../05_Observe_Environment/telemetry.ts'
 import type { CrowdSimStats } from '../03_Spawn_Agents/crowdSensor.ts'
 import type { CarTuning, DriveMode } from './car.ts'
@@ -154,6 +155,12 @@ export interface SimInit {
    * own boxes serve, and for a surveyed region.
    */
   craftBoxes?: Box[] | null
+   * A generated region's storefronts (01_Initialize_World/region/shops.ts regionShopLots): at most five lots of the
+   * street window, none a workplace's, each with its kind and its doorway's street front, which the worker builds the
+   * same glass from (storefronts.ts shopsAt) so a car left in a shop puts its driver down clear of it. Their boxes come
+   * in `boxes`. Only with a street window; absent (or null) for none, and for the city, whose shops are its seed's.
+   */
+  shops?: ShopLot[] | null
   /**
    * Seat the AI fleet on the fixed track network (06_Make_Decisions/tracks.ts, built in the worker from the seed, or
    * the street window's rings in a region with one) and drive it with track followers; anything but true keeps the
