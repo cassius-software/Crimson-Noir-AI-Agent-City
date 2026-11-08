@@ -12,7 +12,8 @@
  * cancelled. Over a real socket: pieces arrive as they are written, and an abort closes the connection before the
  * server has finished. And from the console, through the gateway, to a real server and back: Rejected never reaches
  * the server, an answer streams live, the tether breaking mid-answer cuts the request, the operator can stop it, and
- * a server that is not running is reported, not thrown.
+ * a server that is not running is reported, not thrown. Ollama's list with each model's size and where a loaded model
+ * sits (/api/ps) are read from this machine only, and a big model's first-piece wait may grow but never shrink.
  * What breaks if it is removed? A prompt could go off the machine, an answer keep streaming after the person who
  * could give it was left behind, or a stopped server crash the console, and nothing would say so.
  */
@@ -27,8 +28,8 @@ import type { TerminalBridge } from '../07_Execute_Actions/terminal/bridge.ts'
 import { run as shell } from '../07_Execute_Actions/terminal/commands.ts'
 import { TaskRouter, type SwarmSource } from '../08_Swarm/taskRouter.ts'
 import {
-  ANSWER_TOKENS, BASE_REALITY, CONTEXT_TOKENS, CognitionError, chat, createLocalCompute, DEFAULT_API, DEFAULT_MODEL, DEFAULT_SERVER, generate, installedModels, loopbackServer, systemPrompt,
-  type FetchLike,
+  ANSWER_TOKENS, BASE_REALITY, BYTES_MAX, CONTEXT_TOKENS, CognitionError, chat, createLocalCompute, DEFAULT_API, DEFAULT_MODEL, DEFAULT_SERVER, generate, installedModels, installedSizes, loopbackServer,
+  placementOf, systemPrompt, type FetchLike,
 } from './localCompute.ts'
 
 // ---------------------------------------------------------------- helpers
@@ -386,6 +387,147 @@ test('the models the server has, sorted; its failures in the same plain words', 
   await assert.rejects(installedModels(fakeFetch(() => json(200, { nope: 1 })).f, DEFAULT_SERVER), (e: unknown) => e instanceof CognitionError && e.code === 'unreadable')
   await assert.rejects(installedModels(async () => { throw new TypeError('Failed to fetch') }, DEFAULT_SERVER), (e: unknown) => e instanceof CognitionError && e.code === 'offline')
   await assert.rejects(installedModels(f, 'http://example.com'), (e: unknown) => e instanceof CognitionError && e.code === 'refused')
+})
+
+test('installedSizes: Ollama\'s list with each model\'s weight bytes and whether it writes text; its cloud models dropped; a size out of bounds is unknown; the same request as installedModels', async () => {
+  const tags = {
+    models: [
+      { name: 'b:7b', size: 4.7e9, capabilities: ['completion'] },
+      { name: 'a:1b', size: 1.1e9 },
+      { name: 'nomic-embed-text', size: 274_302_450, capabilities: ['embedding'] },
+      { name: 'w', size: -1, capabilities: ['completion', 'embedding'] },
+      { name: 'big', size: 2 ** 51 },
+      { name: 'v', size: 2e9, capabilities: ['vision'] },
+      { name: 'gpt-oss:120b-cloud', size: 384, remote_host: 'https://ollama.com:443', remote_model: 'gpt-oss:120b' },
+      { size: 3 },
+    ],
+  }
+  const { f, calls } = fakeFetch(() => json(200, tags))
+  const sizes = await installedSizes(f, 'http://localhost:11434/')
+  assert.deepEqual(sizes, [
+    { name: 'a:1b', bytes: 1.1e9, text: true },
+    { name: 'b:7b', bytes: 4.7e9, text: true },
+    { name: 'big', bytes: null, text: true },
+    { name: 'nomic-embed-text', bytes: 274_302_450, text: false },
+    { name: 'v', bytes: 2e9, text: false },
+    { name: 'w', bytes: null, text: false },
+  ])
+  assert.equal(2 ** 51 > BYTES_MAX, true)
+  assert.deepEqual(calls.map((c) => c.url), ['http://localhost:11434/api/tags'])
+  // The same request, and the same names, as the list `ask` shows on this machine.
+  const names = await installedModels(f, 'http://localhost:11434/', undefined, 'generate', true, true)
+  assert.deepEqual(sizes.map((m) => m.name), names)
+  assert.equal(calls.length, 2)
+  assert.deepEqual(calls[0].init, calls[1].init)
+  assert.deepEqual(calls[0].init, { signal: undefined, cache: 'no-store', referrerPolicy: 'no-referrer' })
+  // Its failures are the list's, and nothing is asked off this machine.
+  await assert.rejects(installedSizes(fakeFetch(() => json(200, { nope: 1 })).f, DEFAULT_SERVER), (e: unknown) => e instanceof CognitionError && e.code === 'unreadable')
+  await assert.rejects(installedSizes(async () => { throw new TypeError('Failed to fetch') }, DEFAULT_SERVER), (e: unknown) => e instanceof CognitionError && e.code === 'offline')
+  const off = fakeFetch(() => json(200, tags))
+  await assert.rejects(installedSizes(off.f, 'http://example.com:11434'), (e: unknown) => e instanceof CognitionError && e.code === 'refused')
+  assert.equal(off.calls.length, 0)
+  // A malformed entry (null) is skipped by both readers alike, so a look and `ask` alone agree on what Ollama lists.
+  const odd = fakeFetch(() => json(200, { models: [null, { name: 'gemma:2b', size: 1.7e9 }] }))
+  assert.deepEqual((await installedSizes(odd.f, DEFAULT_SERVER)).map((m) => m.name), ['gemma:2b'])
+  assert.deepEqual(await installedModels(odd.f, DEFAULT_SERVER, undefined, 'generate', true, true), ['gemma:2b'])
+  assert.deepEqual(await installedModels(odd.f, DEFAULT_SERVER), ['gemma:2b'])
+})
+
+test('placementOf: Ollama\'s /api/ps for the model by name or name:latest; bytes checked; null for anything else, and nothing asked off this machine', async () => {
+  const ps = {
+    models: [
+      { name: 'qwen3-vl:4b', model: 'qwen3-vl:4b', size: 5e9, size_vram: 5e9 },
+      { name: 'llama3:latest', model: 'llama3:latest', size: 6e9, size_vram: 2e9 },
+      { name: 'over:1b', size: 1e9, size_vram: 2e9 },
+      { name: 'cpu:1b', size: 1e9, size_vram: 0 },
+      { name: 'novram:1b', size: 1e9 },
+      { name: 'negative:1b', size: 1e9, size_vram: -1 },
+      { name: 'huge:1b', size: 2 ** 51, size_vram: 0 },
+      { name: 'empty:1b', size: 0, size_vram: 0 },
+    ],
+  }
+  const { f, calls } = fakeFetch(() => json(200, ps))
+  assert.deepEqual(await placementOf(f, 'http://localhost:11434/', 'qwen3-vl:4b'), { loaded: 5e9, gpu: 5e9 })
+  assert.deepEqual(calls.map((c) => [c.url, c.init?.cache, c.init?.referrerPolicy]), [['http://localhost:11434/api/ps', 'no-store', 'no-referrer']])
+  assert.deepEqual(await placementOf(f, DEFAULT_SERVER, 'llama3'), { loaded: 6e9, gpu: 2e9 }, 'the default tag shown')
+  assert.deepEqual(await placementOf(f, DEFAULT_SERVER, 'llama3:latest'), { loaded: 6e9, gpu: 2e9 })
+  assert.deepEqual(await placementOf(f, DEFAULT_SERVER, 'over:1b'), { loaded: 1e9, gpu: 1e9 }, 'never more on the GPU than in all')
+  assert.deepEqual(await placementOf(f, DEFAULT_SERVER, 'cpu:1b'), { loaded: 1e9, gpu: 0 })
+  for (const model of ['novram:1b', 'negative:1b', 'huge:1b', 'empty:1b', 'gone:1b', 'qwen3-vl']) assert.equal(await placementOf(f, DEFAULT_SERVER, model), null, model)
+  // Every failure is null, never a throw.
+  const signal = AbortSignal.timeout(2000)
+  assert.equal(await placementOf(fakeFetch(() => json(500, { error: 'busy' })).f, DEFAULT_SERVER, 'qwen3-vl:4b', signal), null)
+  assert.equal(await placementOf(async () => { throw new TypeError('Failed to fetch') }, DEFAULT_SERVER, 'qwen3-vl:4b'), null)
+  assert.equal(await placementOf(fakeFetch(() => new Response('not json', { status: 200 })).f, DEFAULT_SERVER, 'qwen3-vl:4b'), null)
+  assert.equal(await placementOf(fakeFetch(() => json(200, { models: 'none' })).f, DEFAULT_SERVER, 'qwen3-vl:4b'), null)
+  assert.equal(await placementOf(fakeFetch(() => json(200, null)).f, DEFAULT_SERVER, 'qwen3-vl:4b'), null)
+  // The signal given is the one sent.
+  const seen = fakeFetch(() => json(200, ps))
+  await placementOf(seen.f, DEFAULT_SERVER, 'qwen3-vl:4b', signal)
+  assert.equal(seen.calls[0].init?.signal, signal)
+  // Off this machine: null, and nothing asked at all.
+  const off = fakeFetch(() => json(200, ps))
+  assert.equal(await placementOf(off.f, 'http://example.com:11434', 'qwen3-vl:4b'), null)
+  assert.equal(off.calls.length, 0)
+})
+
+test('pace: tokens a second from Ollama\'s own eval_count and eval_duration; absent when it does not say', async () => {
+  const say = (done: object) => generate(fakeFetch(() => streamed(ndjson({ response: 'ok', done: false }, { response: '', done: true, done_reason: 'stop', ...done }))).f, { server: DEFAULT_SERVER, model: 'm', system: '', prompt: '' }, () => {})
+  assert.deepEqual(await say({ eval_count: 64, eval_duration: 8e9 }), { text: 'ok', thinking: 0, tokens: 64, reason: 'stop', pace: 8 })
+  for (const done of [{ eval_count: 64, eval_duration: 0 }, { eval_count: 64 }, { eval_count: 0, eval_duration: 8e9 }, { eval_count: 64, eval_duration: '8e9' }, { eval_count: 64, eval_duration: -1 }]) {
+    const a = await say(done)
+    assert.equal('pace' in a, false, JSON.stringify(done))
+    assert.equal(a.tokens, done.eval_count === 64 ? 64 : 0)
+  }
+  // SAMPLE carries no eval_duration: the answer is as it always was.
+  assert.deepEqual(await generate(fakeFetch(() => streamed(SAMPLE)).f, { server: DEFAULT_SERVER, model: 'm', system: '', prompt: '' }, () => {}), { text: 'Grip scales tyre friction — naïve 東京.', thinking: 2, tokens: 42, reason: 'stop' })
+})
+
+test('coldWait lengthens a model\'s first-piece wait and never shortens it', async () => {
+  /** A server whose first line, a whole answer, comes `ms` after the request (100 ms unless said). */
+  const lateBy = (ms: number): FetchLike => async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        timer = setTimeout(() => {
+          try {
+            controller.enqueue(enc.encode(SAMPLE))
+            controller.close()
+          } catch {
+            // cancelled already
+          }
+        }, ms)
+      },
+      cancel() { clearTimeout(timer) },
+    }), { status: 200 })
+  }
+  const late = lateBy(100)
+  const asked: string[] = []
+  const ask = (wait: number) => createLocalCompute({
+    fetch: late, timeouts: { firstMs: 50, stallMs: 50 }, coldWait: (model) => { asked.push(model); return wait },
+  }).answer({ tethers: [], prompt: 'hi', signal: new AbortController().signal }, () => {}).then((a) => a.reason, (e: unknown) => e)
+  assert.equal(await within(ask(150)), 'stop', 'a longer wait: the late first line arrives in time')
+  assert.deepEqual(asked, [DEFAULT_MODEL], 'asked for the model the answer sends')
+  for (const wait of [10, 0, -1, Number.NaN, Infinity]) {
+    const e = await within(ask(wait))
+    assert.ok(e instanceof CognitionError && e.code === 'timeout', `${wait}: the wait as it was`)
+  }
+  // Never shorter: a first line at 25 ms still arrives within the client's own 50 ms, whatever shorter wait is given.
+  for (const wait of [10, 1, 0, -1, Number.NaN]) {
+    const soon = createLocalCompute({ fetch: lateBy(25), timeouts: { firstMs: 50, stallMs: 50 }, coldWait: () => wait })
+    assert.equal(await within(soon.answer({ tethers: [], prompt: 'hi', signal: new AbortController().signal }, () => {}).then((a) => a.reason, (e: unknown) => e)), 'stop', `${wait}: not shortened`)
+  }
+  // Only the first-piece wait: an answer that goes quiet after its first piece is cut off at the stall wait as before.
+  const quiet: FetchLike = async () => new Response(new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(enc.encode('{"response":"a","done":false}\n')) },
+  }), { status: 200 })
+  const t0 = performance.now()
+  const stalled = await within(createLocalCompute({ fetch: quiet, timeouts: { firstMs: 50, stallMs: 50 }, coldWait: () => 5000 }).answer({ tethers: [], prompt: 'hi', signal: new AbortController().signal }, () => {}).catch((e: unknown) => e))
+  assert.ok(stalled instanceof CognitionError && stalled.code === 'timeout' && /went quiet/.test(stalled.message), String(stalled))
+  assert.ok(performance.now() - t0 < 1500, 'the stall wait, not the longer first wait')
+  // Without the option the wait is the client's own.
+  const plain = await within(createLocalCompute({ fetch: late, timeouts: { firstMs: 50, stallMs: 50 } }).answer({ tethers: [], prompt: 'hi', signal: new AbortController().signal }, () => {}).catch((e: unknown) => e))
+  assert.ok(plain instanceof CognitionError && plain.code === 'timeout')
 })
 
 // ---------------------------------------------------------------- over a real socket
