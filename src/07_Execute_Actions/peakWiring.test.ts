@@ -39,7 +39,7 @@ test('host: ?quality takes 5 and the word peak, and ?peak=1|0 reaches the engine
 test('engine: a Peak candidate\'s three writes timestamps, and the range reaches Peak only where it does', () => {
   // Decided from the adapter line before three is made, by the same profile the city takes.
   assert.match(CREATE, /peakCandidate\(h, profileDevice\(h, requested\.lite\), requested\.peak\)/)
-  assert.match(CREATE, /createRenderer\(canvas, requested\.pixelRatio, requested\.profile, peakOf\)/)
+  assert.match(CREATE, /createRenderer\(canvas, requested\.pixelRatio, requested\.profile, peakOf, splitSamplesOf\)/)
   // Without GPU timestamps nothing can judge Peak, so the range stops at Ultra.
   assert.match(CREATE, /const peak = gpu\.timestamps && peakCandidate\(hints, profile, requested\.peak\)/)
   assert.match(CREATE, /const range = tierRange\(profile, peak\)/)

@@ -40,9 +40,11 @@ test('the engine: the lots from the pack as it came, a hollowed copy drawn and w
   before(src, 'const hollow = pack && layout ? hollowLots(', 'const world = buildWorld(', 'hollowed before the world is built')
   // The page draws the hollowed copy, the rooms' boxes and their paved floors; the worker walls that same copy, takes
   // the world's boxes (the rooms' among them) as colliders, and builds its rooms from the lots.
-  assert.ok(src.includes('const world = buildWorld(gpu.renderer, options.seed, pack && layout && hollow ? { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan: hollow.plan, rooms: hollow.rooms } : null, lite ? LITE_WORLD : FULL_WORLD)'), 'the hollowed copy, its plan and its rooms (whose ceilings get fixtures, cityLights.ts)')
+  // The plan is the rooms' boxes and the transit's (region/transit.ts: the pier), drawn and walled alike.
+  assert.ok(src.includes('const plan = hollow ? [...hollow.plan, ...(transit?.plan ?? [])] : []'))
+  assert.ok(src.includes('const world = buildWorld(gpu.renderer, options.seed, pack && layout && hollow ? { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan, rooms: hollow.rooms, transit } : null, lite ? LITE_WORLD : FULL_WORLD)'))
   assert.ok(src.includes('boxes: world.boxes,'), 'the rooms\' boxes reach the worker in the world\'s')
-  assert.ok(src.includes('region: hollow && layout ? regionPhysics(hollow.pack, layout) : null, streets, tracks: options.tracks !== false,'))
+  assert.ok(src.includes('region: hollow && layout ? regionPhysics(hollow.pack, layout, transit?.openings ?? []) : null, streets, tracks: options.tracks !== false,'))
   assert.ok(!src.includes('regionPhysics(pack, layout)'), 'never the pack drawn round a room')
   assert.ok(src.includes('...(lots.length > 0 && { workplaces: lots }),'), 'the worker builds the rooms the page drew')
   // The engine keeps the world's rooms: the minimap draws them over a region's map, and the HUD counts who is at work
@@ -55,7 +57,7 @@ test('the engine: the lots from the pack as it came, a hollowed copy drawn and w
 
 test('the world: a region\'s boxes (its rooms\' shell, furniture and what the slabs carry) are drawn as the city\'s, and only when there are some', () => {
   const src = flat(read('../01_Initialize_World/world.ts'))
-  assert.match(src, /region: \{ pack: RegionPack; layout: RegionLayout; streets\?: StreetGrid \| null; plan\?: readonly Building\[\]; rooms\?: readonly Workplace\[\] \} \| null = null/)
+  assert.match(src, /region: \{ pack: RegionPack; layout: RegionLayout; streets\?: StreetGrid \| null; plan\?: readonly Building\[\]; rooms\?: readonly Workplace\[\]; transit\?: RegionTransit \| null \} \| null = null/)
   assert.ok(src.includes('const plan = region ? [...(region.plan ?? [])] : generateBuildings(seed)'))
   assert.ok(src.includes('if (!region || plan.length > 0) scene.add(buildings)'))
   // The city's instances are re-sorted towards the camera every frame; a region's few boxes once, at the build.

@@ -12,7 +12,7 @@
 import { LOT, MACRO, STREET, type MacroCity } from '../macroCity.ts'
 import { signedArea2, type Pt } from './clip.ts'
 import { NAME_HEADS, NAME_TAILS } from './names.ts'
-import { BUILDING_KIND, DM, FLOW, REGION_FORMAT, ROAD_CLASS, WATER_KIND, polygons, pushPolygon, type RegionPack } from './pack.ts'
+import { BUILDING_KIND, DM, FLOW, REGION_FORMAT, ROAD_CLASS, WATER_KIND, polygons, pushPolygon, type Polygons, type RegionPack } from './pack.ts'
 
 /** Storey height, m: a floor count becomes a building height. */
 export const FLOOR_HEIGHT = 3.3
@@ -153,8 +153,16 @@ export function macroToRegionPack(map: MacroCity, o: FromMacroOptions): RegionPa
       k = end + 1
     }
   }
+  // The plazas: every LOT.plaza lot's built square (the lot less the street band each side: 26 m), one rectangle each.
+  // The hubs' four centre lots and a few core lots are plazas (lakefront.ts lotAt); nothing is built on one.
+  const plazas: Polygons = polygons()
+  const band = MACRO.bandHalf
+  for (let m = 0; m < B; m++) for (let k = 0; k < B; k++) {
+    if (map.lots[m * B + k] !== LOT.plaza) continue
+    pushPolygon(plazas, [rect(k * P + band - ox, m * P + band - oz, (k + 1) * P - band - ox, (m + 1) * P - band - oz)])
+  }
   const buildings: RegionPack['buildings'] = { ...polygons(), height: [], kind: [] }
-  const fp = map.footprints, band = MACRO.bandHalf
+  const fp = map.footprints
   for (let i = 0; i < fp.length; i += 6) {
     const li = fp[i], k = li % B, m = Math.floor(li / B)
     const x = k * P + band - ox, z = m * P + band - oz
@@ -172,5 +180,6 @@ export function macroToRegionPack(map: MacroCity, o: FromMacroOptions): RegionPa
     roads,
     water,
     buildings,
+    plazas,
   }
 }
