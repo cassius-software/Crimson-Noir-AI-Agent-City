@@ -621,7 +621,8 @@ the module imports only the hardware stage ...".
 GPU crowd keeps one player figure: avatars 1 to 3 are not crowd figures and are protected exactly on the CPU, so a
 pedestrian may walk through them (safety does not rest on it). Recruitment, the operator tier, haptics and the
 spectator fold stay player 0's. The post chain and ghost view are player 0's and off while the screen is split; one
-shadow frustum and one HUD serve all four viewports; the other three are plain renders under player 0's light. The
+shadow frustum and one HUD serve all four viewports (since the cascaded sun, each viewport's render fits the sun's two
+cascades to its own camera); the other three are plain renders under player 0's light. The
 realm came first (stage B of the critique's plan) because the spectator design (stage A) was a placeholder: with
 `avatars[k]` wired, viewports 2 to 4 look out of their own avatars.
 
