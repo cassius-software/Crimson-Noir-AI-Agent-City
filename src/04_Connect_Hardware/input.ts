@@ -19,7 +19,7 @@ import type { GamepadLike } from './web-hardware.d.ts'
 
 export type { Analog, PadFamily } from './gamepad.ts'
 
-export type Action = 'interact' | 'reset' | 'timeForward' | 'timeBack' | 'ghost' | 'matrix' | 'ping'
+export type Action = 'interact' | 'reset' | 'timeForward' | 'timeBack' | 'ghost' | 'matrix' | 'ping' | 'browse'
 
 /** Hold-type touch buttons. `run` is a toggle on the touch layout, but the state lives here. */
 export type TouchButton = 'brake' | 'handbrake' | 'run'
@@ -39,6 +39,8 @@ const ACTION_KEYS: Record<string, Action> = {
   KeyM: 'matrix',
   /** A ping where the head looks (08_Swarm/ping.ts); also the middle mouse button and a pad's right shoulder. */
   KeyQ: 'ping',
+  /** A shop's catalogue, standing in it (01_Initialize_World/storefronts.ts; E does it too when no car is in reach). */
+  KeyB: 'browse',
 }
 
 /** Modifier keys: held alone they are keys like any other (Shift runs); with Command they start no chord. */

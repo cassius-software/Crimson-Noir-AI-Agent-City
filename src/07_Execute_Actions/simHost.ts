@@ -19,6 +19,7 @@ import type { RegionGround } from './physics.ts'
 import { CITY } from '../01_Initialize_World/city.ts'
 import { WINDOW_BLOCKS, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { ROOM, WORKPLACE_KINDS, type Side, type WorkplaceLot } from '../01_Initialize_World/interiors.ts'
+import { SHOP_KINDS, type ShopLot } from '../01_Initialize_World/storefronts.ts'
 
 export type Post = (msg: FromWorker, transfer?: Transferable[]) => void
 
@@ -104,6 +105,37 @@ function workplacesOf(u: unknown, streets: StreetGrid | null): WorkplaceLot[] | 
 }
 
 /**
+ * A region's storefronts, checked against its street window and its workplaces (null window for none: the city, or a
+ * surveyed region): an empty list when there are none, else the list as plain data, or the reason it is refused. They
+ * need a street window; they are a list of at most SHOP_KINDS.length; each stands on a lot of the window, its doorway
+ * faces one of the lot's four streets, it is one of the five kinds, once each, and no lot holds two or a workplace.
+ */
+function shopsOf(u: unknown, streets: StreetGrid | null, workplaces: readonly WorkplaceLot[]): ShopLot[] | string {
+  if (u === undefined || u === null) return []
+  if (!Array.isArray(u) || u.length > SHOP_KINDS.length) return `init: shops are a list of at most ${SHOP_KINDS.length}`
+  if (u.length === 0) return []
+  if (!streets) return "init: shops need a region's street window"
+  const k0 = streets.originX / CITY.pitch, m0 = streets.originZ / CITY.pitch
+  const inWindow = (n: unknown, n0: number): n is number => Number.isInteger(n) && (n as number) >= n0 && (n as number) < n0 + streets.blocks
+  const out: ShopLot[] = []
+  const taken = new Set(workplaces.map(({ k, m }) => `${k},${m}`))
+  const kinds = new Set<string>()
+  for (const w of u) {
+    if (!isRecord(w)) return 'init: a shop is a kind, a lot (k, m) and a side'
+    const { kind, k, m, side } = w
+    if (!inWindow(k, k0) || !inWindow(m, m0)) return 'init: a shop stands on a lot of the street window'
+    if (!(side === 0 || side === 1 || side === 2 || side === 3)) return "init: a shop's doorway faces one of its lot's four streets (0 to 3)"
+    const known = SHOP_KINDS.find((x) => x === kind)
+    if (!known || kinds.has(known)) return 'init: a shop is one of the five kinds, once each'
+    if (taken.has(`${k},${m}`)) return 'init: one shop or workplace to a lot'
+    taken.add(`${k},${m}`)
+    kinds.add(known)
+    out.push({ kind: known, k, m, side: side as Side })
+  }
+  return out
+}
+
+/**
  * The extra players' spawns, checked: an empty list when there are none, undefined when malformed (a list of at most
  * MAX_PLAYERS − 1 records with finite x and z).
  */
@@ -180,9 +212,14 @@ export function createSimHost(post: Post, create: (o: SimCoreOptions) => Promise
           post({ t: 'error', message: workplaces })
           return
         }
+        const shops = shopsOf(init.shops, region ? streets : null, workplaces)
+        if (typeof shops === 'string') {
+          post({ t: 'error', message: shops })
+          return
+        }
         core = await create({
           seed: init.seed, cars: init.cars, agents: init.agents, boxes: init.boxes, furniture: init.furniture, spawn: init.spawn, spawns, debug: init.debug === true, region,
-          streets: region ? streets : null, workplaces, tracks: init.tracks === true, ragdoll: init.ragdoll === true, craft: init.craft !== false,
+          streets: region ? streets : null, workplaces, shops, tracks: init.tracks === true, ragdoll: init.ragdoll === true, craft: init.craft !== false,
         })
         for (let i = 0; i < refusedEarly; i++) core.noteRejected('message before init')
         post({ t: 'ready', meta: core.meta })
