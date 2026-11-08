@@ -178,9 +178,9 @@ export function HomeCard({ visible, home, keeper, homeInfo, dark = false, onClos
             )}
           </div>
 
-          <div className={`mt-2 flex items-baseline justify-between gap-2 rounded-2xl border px-3 py-2 ${t.rule}`} data-purse={w.source}>
+          <div className={`mt-2 flex items-baseline justify-between gap-2 rounded-2xl border px-3 py-2 ${t.rule}`} data-purse>
             <span className="font-semibold">Level {w.level()} · {credits(w.credits())}</span>
-            <span className={`text-[11px] ${t.muted}`}>{w.source === 'practice' ? 'Practice credits until progression arrives' : 'Your civic credits'}</span>
+            <span className={`text-[11px] ${t.muted}`}>Your civic credits</span>
           </div>
           {!owned && <p className={`mt-2 text-[11px] leading-snug ${t.muted}`} data-also>Also sold at {SHOP_INFO.designHouse.name}</p>}
         </div>

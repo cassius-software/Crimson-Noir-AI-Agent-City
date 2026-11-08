@@ -70,7 +70,7 @@ test('one line per home, each a sentence; they, the sky-floor notes and the seve
     clean(`deed ${deed.id}`, deed.name)
   }
   // The card's other fixed words.
-  for (const words of ['Claim (free)', 'Buy', 'Yours', 'Also sold at', 'Esc or B closes', 'Practice credits until progression arrives']) {
+  for (const words of ['Claim (free)', 'Buy', 'Yours', 'Also sold at', 'Esc or B closes', 'Your civic credits']) {
     assert.ok(card.includes(words), `the card says ${words}`)
     clean('the card', words)
   }

@@ -10,7 +10,9 @@
  * importing (the cognition router with the model kept in this page, the network client), keeps the visitor's look and
  * session token, and screens the room's names and chat under 14A once more as they arrive. The model file kept in this
  * page is picked here too: one hidden file input, opened from the console's `ask file` or the Menu, or a file dropped on
- * the city on a desktop.
+ * the city on a desktop. The operator's progression reaches the city here too: the page's one keeper (progress.ts) is
+ * earned into by the engine's deeds, the recruiter's arrivals and understood requests, and the wardrobe card, and its one
+ * listener cues each success (the engine's chime and tap, the HUD's chip).
  * What breaks if it is removed? Nothing is mounted: the page is blank.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -49,12 +51,12 @@ import { Concierge } from './07_Execute_Actions/Concierge.tsx'
 import { Customizer } from './07_Execute_Actions/Customizer.tsx'
 import { StoreCard } from './07_Execute_Actions/StoreCard.tsx'
 import { HomeCard } from './07_Execute_Actions/HomeCard.tsx'
-import { createShopkeeper, type Shopkeeper } from './07_Execute_Actions/shopkeeper.ts'
+import { createShopkeeper, progressionPurse, type Shopkeeper } from './07_Execute_Actions/shopkeeper.ts'
 import type { StoreItem } from './07_Execute_Actions/storeCatalog.ts'
 import { DEED_BASE, PROPERTY_KINDS } from './01_Initialize_World/properties.ts'
 import { loadProfile, type Profile } from './05_Observe_Environment/profile.ts'
 import { loadLook, saveLook } from './05_Observe_Environment/lookStore.ts'
-import { changeLook, describeLook, lookFromSeed, type Look, type LookChange } from './03_Spawn_Agents/look.ts'
+import { changeLook, describeLook, LOOK_SLOTS, lookFromSeed, type Look, type LookChange } from './03_Spawn_Agents/look.ts'
 import { PLAYER_INDEX } from './03_Spawn_Agents/crowdCompute.ts'
 import { clampPlayers } from './07_Execute_Actions/viewports.ts'
 import type { PlanStep } from './06_Make_Decisions/intent.ts'
@@ -71,6 +73,8 @@ import { loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, saveMapChoic
 import { modelVoice, scriptedVoice, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
 import { ConciergeSpeaker, conciergeBridge, synthEnv, type ConciergeOut } from './07_Execute_Actions/onboarding/speaker.ts'
 import { useMentor } from './07_Execute_Actions/onboarding/useMentor.ts'
+import { cueOf, earnFromRecruiter, hudProgress, pageProgress, progressBridge, worthCue, type ProgressCue } from './07_Execute_Actions/progress.ts'
+import { SKILL_TITLE } from './02_Define_The_Rules/progression.ts'
 import { agentBridge, identityLine, Roster, voiceProfile } from './08_Swarm/roster.ts'
 import { SKILLS } from './03_Spawn_Agents/skills.ts'
 import { FiveWhys } from './06_Make_Decisions/intent.ts'
@@ -433,6 +437,8 @@ function readOptions(): Options {
     audio: q.get('audio') !== '0',
     // Closed captions of every spatial sound (captions.ts); ?captions=0 keeps the HUD's strip empty.
     captions: q.get('captions') !== '0',
+    // Controller rumble and phone vibration (the guardrails' feel and a check's tap); ?haptics=0 starts them off.
+    haptics: q.get('haptics') !== '0',
     debug: q.has('debug'),
     // Track B: ?boot=tty mounts the full-screen console alone (no canvas, no engine, no WebGPU, no worker, no audio).
     boot: q.get('boot') === 'tty' ? 'tty' : 'gui',
@@ -617,8 +623,9 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
   const onHear = useCallback((voice: string, line: string) => { void speaker.preview(line, voice) }, [speaker])
   const lookOpenRef = useRef(false)
   // The storefronts (01_Initialize_World/storefronts.ts): the one shopkeeper every purchase goes through, the shop whose
-  // card is open (its index in engine.shops, or null), and the line being tried on (worn on the body, never kept).
-  const [keeper] = useState(() => createShopkeeper())
+  // card is open (its index in engine.shops, or null), and the line being tried on (worn on the body, never kept). It buys
+  // through the page's one progression keeper: its level, its credits, its purchase gate (progress.ts).
+  const [keeper] = useState(() => createShopkeeper({ purse: progressionPurse(pageProgress()) }))
   const [storeOpen, setStoreOpen] = useState<number | null>(null)
   // The frame loop's view of it: the open shop's index, or null.
   const storeOpenRef = useRef<number | null>(null)
@@ -669,7 +676,10 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
   const wornRef = useRef<Look | null>(null)
   const seedRef = useRef(PLAYER_INDEX)
   useEffect(() => { wornRef.current = worn; seedRef.current = profile?.seed ?? PLAYER_INDEX }, [worn, profile])
-  const openLook = useCallback(() => { setLookOpen(true); noteRef.current('wardrobe') }, [])
+  // Whether this visit to the wardrobe has earned its check yet: a new visit (openLook, the only way the card opens)
+  // starts again.
+  const lookDeedRef = useRef(false)
+  const openLook = useCallback(() => { lookDeedRef.current = false; setLookOpen(true); noteRef.current('wardrobe') }, [])
   const closeLook = useCallback(() => setLookOpen(false), [])
   // A shop's card: E, B or the HUD's chip inside a storefront opens it (the engine's onBrowse, the chip's tap); the
   // mirror camera turns round the body while it is open, and closing it gives the eye back and takes any try-on off.
@@ -701,6 +711,14 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
     if (e && item.kind === 'deed' && !e.goHome(item.index)) e.toast('Home', 'Walk there: a shared room replays your steps')
   }, [])
   const whereFor = useCallback((item: StoreItem) => (item.kind === 'deed' ? engine?.homeWhere(item.index) ?? null : null), [engine])
+  // The card's changes, worn as the console's are. The card calls this on every swatch and every slider step, so only
+  // the first change of a visit that really alters the look earns Architecture and commerce (progress.ts), retried
+  // while no action is left. The console's `look` keeps wearLook and earns for itself, so the two never pay twice.
+  const wearFromCard = useCallback((next: Look) => {
+    const was = wornRef.current ?? lookFromSeed(seedRef.current)
+    wearLook(next)
+    if (!lookDeedRef.current && LOOK_SLOTS.some((slot) => next[slot] !== was[slot]) && pageProgress().earn('commerce')) lookDeedRef.current = true
+  }, [wearLook])
 
   // A brief's immediate steps go through the terminal bridge (the same four operator knobs), never the engine.
   const applyIntent = useCallback((step: PlanStep): boolean => {
@@ -749,6 +767,12 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
     let router: TaskRouter | null = null
     /** Stops following the recruiter: its events into the swarm's memory, its list into the roster's hires. */
     let unfollow: (() => void) | null = null
+    /** Stops the page's keeper cueing this city's checks (its one listener), and the recruiter's events earning. */
+    let uncheck: (() => void) | null = null
+    let unearn: (() => void) | null = null
+    /** The last success worth a cue (progress.ts cueOf), set by that listener and read by the loop for the HUD's chip:
+     *  a plain variable, so a check earned inside a frame or a worker message touches no React state. */
+    let cue: ProgressCue | null = null
     /** The answer streaming in from the local model, for the HUD (null when none is). */
     let answering: { thinking: number; tail: string } | null = null
     /** The city router's model kept in this page (inPage.ts), shut down with the city; null until the engine is up. */
@@ -779,6 +803,9 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
         if (now - lastHud > HUD_INTERVAL_MS) {
           lastHud = now
           const s = engine.snapshot()
+          // The operator's progression chip: the keeper's own cache builds its strings only when what it shows changed
+          // (a check, a purchase, the round's refill, the cue going stale), so this costs a few comparisons a tick.
+          s.supplier.progress = hudProgress(pageProgress(), cue, now)
           if (recruiter) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, activityText(answering, engine.speaking, modelPhase ?? keepLine))
           // A city action waiting for the operator's OK takes the activity line (the MIC chip reads it, console open or closed).
           if (recruiter && actRef.current) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, `Waiting for your OK: ${actRef.current.who} proposes: ${actRef.current.sentence}`)
@@ -898,6 +925,19 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
         // plans it from its own copies (08_Swarm/ping.ts rallyPlan), the recruiter checks the page's copy, the physics
         // realm decides on its own readings; its answer is a toast either way.
         e.onRally = (req) => { void r.rally(req.agent, req.x, req.z).then((o) => e.toast('Rally', o.message)) }
+        // The operator's progression (progress.ts, the page's one keeper). The city's own deeds earn into it: the engine
+        // says which (a boarding, the clock, ghost and rain keys), someone recruited arriving, a spoken request understood.
+        // One listener cues every success, the console's and the city's alike: the chime and the tap (checkCue) at once,
+        // and the HUD's chip from the loop. A reroll that climbs to a success is cued as any success is; one that stayed
+        // a success paid nothing and is not cued again (worthCue).
+        e.onDeed = (skill) => { pageProgress().earn(skill) }
+        uncheck = pageProgress().subscribe((c) => {
+          if (worthCue(c)) {
+            cue = cueOf(c, performance.now())
+            e.checkCue(c.degree, SKILL_TITLE[c.skill])
+          }
+        })
+        unearn = earnFromRecruiter(pageProgress(), r)
         // The opt-in network client (10_Network/netClient.ts): built over the page's own socket constructor, never
         // connected at boot, handed to the engine through its NetHost seam (the engine draws the room's poses as
         // ghosts and feeds the client player 1's input) and to the console through the bridge. The room's chat and
@@ -917,6 +957,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           if (haltClass(reason) === 'gpu-reset') inPage.noteGpuReset()
           void inPage.dispose()
           unfollow?.()
+          uncheck?.()
+          unearn?.()
           tasks.dispose()
           r.dispose()
           setLocked(reason)
@@ -1029,6 +1071,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           agent: agentBridge(roster, { recruit: (skill) => recruitBridge(r).ask(skill), wear: (agent, look) => e.setLook(agent, look), skills: () => SKILLS }),
           concierge: conciergeBridge(speaker),
           goal: (text: string) => goalPlan(text, engineBridge),
+          // The operator's level, credits and skills (progress.ts): the page's one keeper, which the console earns into.
+          progress: progressBridge(pageProgress()),
           memory: memoryBridge(memory, r),
           net: netBridge(e.net, pageStore(NET_TOKEN_KEY)),
           model: modelBridge,
@@ -1098,6 +1142,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
       setEngine(null)
       setBridge(null)
       unfollow?.()
+      uncheck?.()
+      unearn?.()
       router?.dispose()
       recruiter?.dispose()
       unModel()
@@ -1166,7 +1212,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           visible={lookOpen && veilDone && !termOpen && locked === null}
           look={worn}
           seed={profile?.seed ?? 0}
-          onChange={wearLook}
+          onChange={wearFromCard}
           onClose={closeLook}
           dark={hud.customer.daylight < 0.35}
           agents={agents}

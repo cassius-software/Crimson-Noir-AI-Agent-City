@@ -9,8 +9,8 @@
  * Buy (the shopkeeper's gate takes the credits and sets the owned bit; a bought line is worn at once) and, once owned,
  * Wear. A home's deed sells the same way, and its row also says where the home stands and has Visit (Go home once
  * owned), which the host answers by taking the avatar to the home's doorstep or by saying why it cannot. Lines the
- * wardrobe or furnishing do not have yet are listed as on order, with no button. The purse line says whose credits
- * these are: practice credits until the progression engine's keeper is handed in. Esc, the close button or Done puts it
+ * wardrobe or furnishing do not have yet are listed as on order, with no button. The purse line shows the operator's
+ * level and civic credits from the progression keeper. Esc, the close button or Done puts it
  * away; the host gives the eye back to the head.
  * What breaks if it is removed? A shop is a room with nothing to buy in it, and nothing shows what the shops sell.
  */
@@ -211,9 +211,9 @@ export function StoreCard({ visible, shop, keeper, look, trying, mirror = true, 
           <button type="button" onClick={onClose} aria-label="Close" className={`shrink-0 rounded-full border px-2.5 py-1 text-[12px] ${t.pill}`}>×</button>
         </div>
 
-        <div className={`mx-5 mt-3 flex items-baseline justify-between gap-2 rounded-2xl border px-3 py-2 ${t.rule}`} data-purse={w.source}>
+        <div className={`mx-5 mt-3 flex items-baseline justify-between gap-2 rounded-2xl border px-3 py-2 ${t.rule}`} data-purse>
           <span className="font-semibold">Level {w.level()} · {credits(w.credits())}</span>
-          <span className={`text-[11px] ${t.muted}`}>{w.source === 'practice' ? 'Practice credits until progression arrives' : 'Your civic credits'}</span>
+          <span className={`text-[11px] ${t.muted}`}>Your civic credits</span>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-2 pt-1">

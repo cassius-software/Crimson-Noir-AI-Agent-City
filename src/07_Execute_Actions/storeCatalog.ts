@@ -6,9 +6,8 @@
  * purchase passes: every catalogue line with its stable id, its shop, the operator level it asks and its price in
  * civic credits, the bit it owns in the progression record's unlock spaces (look, property, furniture: the
  * progression engine's purchase gate, docs/progression.md), and what it does when worn (the look slots it sets,
- * through look.ts withLookSlot, so nothing a shop sells can dress anyone in anything the crowd does not wear); and a
- * gate over plain bits for the practice purse, which takes the price and sets the bit only when the level is reached,
- * the credits are there and the line is not owned yet.
+ * through look.ts withLookSlot, so nothing a shop sells can dress anyone in anything the crowd does not wear); and
+ * the words for the gate's verdicts.
  *
  * A line whose look slots the wardrobe does not have yet (tattoos, prosthetic limbs, watches: the customizer's coming
  * slots) is on order: shown, priced, never sold, and live the moment the wardrobe gains a slot of that name. The
@@ -16,22 +15,22 @@
  * design house's furniture is on order the same way until furnishing opens, so a piece can never be bought before it
  * can be placed.
  *
- * The level, the credits and what is owned are not kept here: a purse answers for them (shopkeeper.ts). The
- * progression engine's keeper is the real one; until it lands the shops run on a practice purse
- * (05_Observe_Environment/shopStore.ts), and the card says so.
+ * The level, the credits and what is owned are not kept here: the progression engine's keeper answers for them
+ * (07_Execute_Actions/progress.ts, through shopkeeper.ts), and its purchase gate takes the credits and sets the bit.
  * What breaks if it is removed? The shops have nothing to sell and nothing decides whether a purchase may happen.
  */
 import { LOOK_SLOTS, withLookSlot, type Look, type LookSlot } from '../03_Spawn_Agents/look.ts'
 import type { ShopKind } from '../01_Initialize_World/storefronts.ts'
+import { MAX_LEVEL, UNLOCK_SPACE } from '../02_Define_The_Rules/progression.ts'
 
-/** The highest operator level. */
-export const MAX_LEVEL = 20
+/** The highest operator level (the progression engine's). */
+export { MAX_LEVEL }
 
 /**
  * The progression record's unlock spaces and their sizes (progression.ts UNLOCK_SPACE): an item's bit is an index in
  * one of them, and keeps its meaning for ever once shipped.
  */
-export const SPACE_SIZE = Object.freeze({ look: 1024, property: 64, furniture: 512 })
+export const SPACE_SIZE = Object.freeze({ look: UNLOCK_SPACE.look.size, property: UNLOCK_SPACE.property.size, furniture: UNLOCK_SPACE.furniture.size })
 export type Space = keyof typeof SPACE_SIZE
 /**
  * Where the shops number their lines in each space (agreed with the progression and customizer threads): worn lines
@@ -179,16 +178,7 @@ export function wearing(look: Look, i: StoreItem): boolean {
   return Object.entries(i.wear).every(([slot, value]) => look[slot as LookSlot] === value)
 }
 
-// ---------------------------------------------------------------- bits and the practice gate
-
-/** A space's bits, none set (the practice purse's; the progression record keeps its own). */
-export const emptyBits = (space: Space): Uint32Array => new Uint32Array(SPACE_SIZE[space] / 32)
-
-/** Whether bit `index` is set (false for an index outside the bits). */
-export function hasBit(bits: Uint32Array, index: number): boolean {
-  if (!Number.isInteger(index) || index < 0 || index >= bits.length * 32) return false
-  return ((bits[index >>> 5] >>> (index & 31)) & 1) === 1
-}
+// ---------------------------------------------------------------- the gate's verdicts
 
 /**
  * The verdicts: bought, or why not. The same numbers as the progression engine's purchase results (progression.ts
@@ -196,25 +186,6 @@ export function hasBit(bits: Uint32Array, index: number): boolean {
  */
 export const GATE = Object.freeze({ bought: 0, owned: 1, level: 2, credits: 3, unavailable: 4 })
 export type GateVerdict = (typeof GATE)[keyof typeof GATE]
-
-/**
- * The practice purse's gate on plain numbers: the line is bought when the level is reached, the credits cover the
- * price and the bit is clear; then the price is taken from `wallet[1]` and the bit set in one pass, the writes masked
- * by the verdict rather than branched on (the plan's style). `wallet` is [level, credits] (whole numbers; credits
- * reach the millions, so the price is taken in doubles, scaled by 0 or 1, never masked as a 32-bit integer). Returns
- * the verdict: bought, or the first reason in the order owned, level, credits (the progression gate's order).
- */
-export function purchaseGate(wallet: Float64Array, bits: Uint32Array, index: number, level: number, price: number): GateVerdict {
-  const word = index >>> 5, bit = (1 << (index & 31)) >>> 0
-  const isOwned = ((bits[word] & bit) !== 0 ? 1 : 0)
-  const levelOk = wallet[0] >= level ? 1 : 0
-  const fundsOk = wallet[1] >= price ? 1 : 0
-  const can = levelOk & fundsOk & (1 ^ isOwned)
-  wallet[1] -= price * can
-  bits[word] = (bits[word] | (bit & -can)) >>> 0
-  // 0 bought; else 1 owned, 2 level, 3 credits: the first that failed.
-  return ((1 - can) * (isOwned ? GATE.owned : levelOk === 0 ? GATE.level : GATE.credits)) as GateVerdict
-}
 
 /** What a shop says about a line with this verdict, in words (`credits` is the purse's balance). */
 export function whyOf(i: StoreItem, verdict: GateVerdict, credits: number): string {

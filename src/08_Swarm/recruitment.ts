@@ -59,6 +59,11 @@ export type AgentState = 'Idle' | 'Interviewing' | 'Active'
 export interface RecruitEvents {
   /** A final transcript from the recogniser. */
   heard: { transcript: string }
+  /**
+   * A transcript that made a request (a request word and a skill), once, just before it is asked. The progression earns
+   * Acoustics and voice on it (progress.ts earnFromRecruiter), so it need not parse transcripts itself.
+   */
+  understood: { transcript: string; skill: Skill }
   /** The main-thread match: someone within earshot has the skill (the worker has been asked to bring them over). */
   recruit: { agent: number; skill: Skill; distance: number }
   refused: { skill: Skill | null; reason: string }
@@ -229,14 +234,19 @@ export class Recruiter extends EventTarget {
     return this.#ask(s)
   }
 
-  /** A transcript (from the recogniser, or typed): a request if it names one, otherwise nothing happens. */
+  /**
+   * A transcript (from the recogniser, or typed): a request if it names one, otherwise nothing happens. A request is
+   * announced as 'understood' before it is asked, whether or not anyone near has the skill: the words were understood.
+   */
   hear(transcript: string): Promise<RecruitOutcome> | null {
     const t = typeof transcript === 'string' ? transcript.trim() : ''
     if (!t) return null
     this.#heard = t
     this.#emit('heard', { transcript: t })
     const skill = parseRequest(t)
-    return skill === null ? null : this.#ask(skill)
+    if (skill === null) return null
+    this.#emit('understood', { transcript: t, skill })
+    return this.#ask(skill)
   }
 
   /**

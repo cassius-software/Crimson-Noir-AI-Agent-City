@@ -75,7 +75,7 @@
  * - lakefront: the generated metropolis (?map=lakefront, built in the page's worker from the seed), whose crowd walks
  *   its street window with the six workplaces the page picked from the pack and the HUD counting who is at work, at
  *   Medium, the first tier with shadows, so the sun's shadow pass draws the region's buildings and its shaders build;
- * - homes: the seven homes of seed 1337 and their deeds, inside the practice purse (nothing here costs a credit): B in
+ * - homes: the seven homes of seed 1337 and their deeds, on the progression keeper (nothing here costs a credit): B in
  *   Lintel & Lumen Design House opens its card, the Micro-Loft's deed is claimed for nothing and the Pierside's asks for
  *   level 6, Go home puts the avatar on the sidewalk in front of the loft's doorway, W walks it in through the
  *   planters, the HUD's chip says the home is yours, B opens the doorstep card saying Yours, the avatar stands still
@@ -1668,8 +1668,8 @@ const SCENARIOS = {
   },
 
   /**
-   * The seven homes (src/01_Initialize_World/properties.ts) and their deeds, inside the practice purse's 5,000 credits:
-   * the only purchase is the Micro-Loft's free deed. The design house's card sells it and goes there (Go home); the
+   * The seven homes (src/01_Initialize_World/properties.ts) and their deeds, on the progression keeper (a new operator,
+   * level 1): the only purchase is the Micro-Loft's free deed. The design house's card sells it and goes there (Go home); the
    * doorstep card (HomeCard.tsx) opens inside the home and holds the avatar still; the lakefront metropolis has the
    * seven too, and the deed bought in the city is still owned there.
    */
@@ -1696,11 +1696,12 @@ const SCENARIOS = {
           place: row(224)?.querySelector('[data-place]')?.textContent ?? '', go: row(224)?.querySelector('[data-action="go"]')?.textContent ?? '' } })()`)
       check(rows.loft === '0' && rows.pier === '2' && /needs level 6/.test(rows.pierWhy), 'homes: the Micro-Loft\'s deed can be had, and the Pierside Timber Loft\'s asks for level 6', JSON.stringify(rows))
       check(rows.go === 'Visit' && rows.place.startsWith(homes[0].address), 'homes: the loft\'s row says where it stands and offers Visit', `${rows.go}: ${rows.place}`)
-      // Claim the loft: free, so the practice purse keeps its 5,000 credits.
+      // Claim the loft: free, so the operator's credits stay as they were.
+      const before = await p.eval('window.__SIM__.shopkeeper.purse.credits()')
       await p.eval(`${at('aside[data-store="designHouse"] [data-item="224"] [data-action="buy"]')}?.click()`)
       const owned = await p.waitFor(`!!${at('aside[data-store="designHouse"] [data-item="224"][data-owned]')}`, 10_000).then(() => true, () => false)
       const bought = await p.eval(`({ said: ${at('aside[data-store="designHouse"] [data-said]')}?.textContent ?? '', credits: window.__SIM__.shopkeeper.purse.credits(), go: ${at('aside[data-store="designHouse"] [data-item="224"] [data-action="go"]')}?.textContent ?? '' })`)
-      check(owned && bought.credits === 5000 && /Metro-Line Micro-Loft is yours/.test(bought.said), 'homes: the loft\'s deed is claimed for nothing, and the card says where it is', `${bought.said}; ${bought.credits} credits`)
+      check(owned && bought.credits === before && /Metro-Line Micro-Loft is yours/.test(bought.said), 'homes: the loft\'s deed is claimed for nothing, and the card says where it is', `${bought.said}; ${bought.credits} credits`)
       check(bought.go === 'Go home', 'homes: the owned deed\'s row offers Go home', bought.go)
       // Go home: the sidewalk in front of the loft's doorway, the store card closed behind.
       await p.eval(`${at('aside[data-store="designHouse"] [data-item="224"] [data-action="go"]')}?.click()`)

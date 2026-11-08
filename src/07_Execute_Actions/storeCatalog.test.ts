@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It holds the shops' catalogue, the practice gate, the saved record, the purses and the
- * shopkeeper (storeCatalog.ts, shopStore.ts, shopkeeper.ts) to their promises: ids and bits stable and unique, every
- * bit inside its unlock space and the worn lines inside the shops' own range of the look space; every worn line on
- * sale dresses every body in something the wardrobe has; the deeds are on sale and dress nobody, while the furniture
- * stays on order until furnishing opens; a line on order is never sold; the gate takes the price and sets the bit only
- * when the level, the credits and the bit allow, and its verdict names the first reason; the practice purse claims the
- * free loft, buys the brownstone and is told the level the timber loft needs; a stored record that is not one reads as
- * a fresh start; a purchase survives a reload; the progression keeper's contract (its record words, its gate's
- * verdicts, its subscribe) drives the shopkeeper the same way; the 14A screen passes every name.
+ * Why does this file exist? It holds the shops' catalogue, the purse and the shopkeeper (storeCatalog.ts,
+ * shopkeeper.ts) to their promises: ids and bits stable and unique, every bit inside its unlock space and the worn
+ * lines inside the shops' own range of the look space; the spaces, the level cap and the verdicts the progression
+ * engine's own (progression.ts); every worn line on sale dresses every body in something the wardrobe has; the deeds
+ * are on sale and dress nobody, while the furniture stays on order until furnishing opens; a line on order is never
+ * sold; the progression keeper (progress.ts createProgress) buys a line once, takes its price from the record, sets its
+ * bit and keeps both across a reload, and refuses with the first reason; a new operator claims the free loft and is
+ * told the level the brownstone needs, and a keeper at that level buys it; a keeper that refuses leaves no bit; the
+ * 14A screen passes every name.
  * What breaks if it is removed? A shop could sell a line twice, sell a line nobody can wear, take credits for nothing,
  * or set a bit another thread's line means.
  */
@@ -19,12 +19,13 @@ import { test } from 'node:test'
 import { SHOP_KINDS } from '../01_Initialize_World/storefronts.ts'
 import { LOOK_PRESETS, LOOK_SLOTS, validateLook } from '../03_Spawn_Agents/look.ts'
 import { screen } from '../02_Define_The_Rules/conduct.ts'
-import { CREDITS_MAX, PRACTICE, SHOP_KEY, freshShop, loadShop, saveShop, validateShop } from '../05_Observe_Environment/shopStore.ts'
+import { AT, MAX_LEVEL as PROGRESSION_MAX_LEVEL, PURCHASE, STARTING_CREDITS, UNLOCK_SPACE } from '../02_Define_The_Rules/progression.ts'
+import { createProgress } from './progress.ts'
 import {
-  CATALOGUE, GATE, MAX_LEVEL, OPEN_KINDS, SHOP_LOOK_BASE, SHOP_LOOK_END, SPACE_SIZE, emptyBits, hasBit, itemById, itemsOf, onSale, purchaseGate, wearItem,
-  wearing, whyOf, type ItemKind, type Space,
+  CATALOGUE, GATE, MAX_LEVEL, OPEN_KINDS, SHOP_LOOK_BASE, SHOP_LOOK_END, SPACE_SIZE, itemById, itemsOf, onSale, wearItem, wearing, whyOf,
+  type ItemKind, type Space,
 } from './storeCatalog.ts'
-import { PROGRESS_WORD, createShopkeeper, practicePurse, progressionPurse, type ProgressLike } from './shopkeeper.ts'
+import { PROGRESS_WORD, createShopkeeper, progressionPurse, type ProgressLike } from './shopkeeper.ts'
 
 /** A Map-backed localStorage. */
 const memory = () => {
@@ -118,32 +119,6 @@ test('every name passes the 14A screen and names no real place', () => {
   }
 })
 
-test('the practice gate: bought only with the level, the credits and a clear bit; the price taken once; the first reason named', () => {
-  const bits = emptyBits('look')
-  assert.equal(bits.length, 32)
-  const w = new Float64Array([3, 1000])
-  assert.equal(purchaseGate(w, bits, 520, 4, 100), GATE.level, 'level first among the money reasons')
-  assert.equal(w[1], 1000)
-  assert.equal(hasBit(bits, 520), false)
-  assert.equal(purchaseGate(w, bits, 520, 2, 5000), GATE.credits)
-  assert.equal(w[1], 1000)
-  assert.equal(purchaseGate(w, bits, 520, 2, 400), GATE.bought)
-  assert.equal(w[1], 600)
-  assert.equal(hasBit(bits, 520), true)
-  assert.equal(purchaseGate(w, bits, 520, 2, 400), GATE.owned, 'never twice')
-  assert.equal(w[1], 600)
-  // The top bit of a word, and an exact balance.
-  assert.equal(purchaseGate(w, bits, 543, 1, 600), GATE.bought)
-  assert.equal(w[1], 0)
-  assert.equal(bits[16] >>> 31, 1)
-  // Millions of credits stay exact.
-  const rich = new Float64Array([20, 4_500_000])
-  const homes = emptyBits('property')
-  assert.equal(purchaseGate(rich, homes, 6, 20, 4_500_000), GATE.bought)
-  assert.equal(rich[1], 0)
-  for (const bad of [-1, 64, 1.5, Number.NaN]) assert.equal(hasBit(homes, bad), false)
-})
-
 test('whyOf says why in words', () => {
   const coat = itemById(3)!
   assert.match(whyOf(coat, GATE.level, 0), /needs level 3/)
@@ -156,80 +131,73 @@ test('whyOf says why in words', () => {
   assert.match(whyOf(itemById(226)!, GATE.level, 0), /needs level 6/)
 })
 
-test('the record: a fresh start for anything not a record, the practice purse full; a valid one round-trips', () => {
-  const s = memory()
-  const plain = (r: ReturnType<typeof freshShop>) => ({ ...r, look: [...r.look], property: [...r.property], furniture: [...r.furniture] })
-  assert.deepEqual(plain(loadShop(s)), plain(freshShop()))
-  assert.equal(loadShop(null).credits, PRACTICE.credits)
-  const ok = { v: 1, look: Array(32).fill(0), property: [0, 0], furniture: Array(16).fill(0), level: 1, credits: 0 }
-  for (const raw of ['', 'x', '[]', '{}', JSON.stringify({ ...ok, v: 2 }), JSON.stringify({ ...ok, look: [1] }),
-    JSON.stringify({ ...ok, property: [0, -1] }), JSON.stringify({ ...ok, furniture: undefined }), JSON.stringify({ ...ok, level: 0 }),
-    JSON.stringify({ ...ok, credits: 1.5 }), JSON.stringify({ ...ok, credits: CREDITS_MAX + 1 }), 'z'.repeat(1300)]) {
-    s.setItem(SHOP_KEY, raw)
-    assert.equal(loadShop(s).credits, PRACTICE.credits, `not a record: ${raw.slice(0, 40)}`)
-  }
-  const r = { ...freshShop(), level: 7, credits: 123 }
-  r.look[16] = 5
-  r.property[1] = 0x80000000
-  assert.ok(saveShop(r, s))
-  const back = loadShop(s)
-  assert.deepEqual(plain(back), plain(r))
-  assert.equal(validateShop({ ...ok, level: 21 }), null)
-  // A store that throws on every call is a fresh start and a refused save, never an exception.
-  const broken = { getItem: () => { throw new Error('blocked') }, setItem: () => { throw new Error('quota') }, removeItem: () => { throw new Error('x') } }
-  assert.equal(loadShop(broken).credits, PRACTICE.credits)
-  assert.equal(saveShop(r, broken), false)
+test('the shops speak the progression engine\'s numbers: its spaces, its level cap, its verdicts, its record words', () => {
+  for (const space of Object.keys(UNLOCK_SPACE) as Space[]) assert.equal(SPACE_SIZE[space], UNLOCK_SPACE[space].size, space)
+  assert.deepEqual(Object.keys(SPACE_SIZE), Object.keys(UNLOCK_SPACE))
+  assert.equal(MAX_LEVEL, PROGRESSION_MAX_LEVEL)
+  assert.deepEqual([GATE.bought, GATE.owned, GATE.level, GATE.credits, GATE.unavailable],
+    [PURCHASE.bought, PURCHASE.owned, PURCHASE.level, PURCHASE.credits, PURCHASE.invalid])
+  assert.deepEqual({ ...PROGRESS_WORD }, { level: AT.level, credits: AT.credits })
 })
 
-test('the shopkeeper on the practice purse: buys through the gate, saves at once, refuses twice, wears only what is owned', () => {
+test('the progression keeper behind the shopkeeper: a new operator\'s level and credits, bought once, kept across a reload', () => {
   const s = memory()
-  const k = createShopkeeper({ purse: practicePurse(s) })
-  assert.equal(k.purse.source, 'practice')
+  const p = createProgress({ store: s, seed: () => 1337, now: () => 0 })
+  const k = createShopkeeper({ purse: progressionPurse(p) })
+  assert.equal(k.purse.level(), 1)
+  assert.equal(k.purse.credits(), STARTING_CREDITS)
   let calls = 0
   const off = k.onChange(() => { calls++ })
   const look = LOOK_PRESETS[0].look
-  assert.equal(k.wear(0, look), null, 'not owned: not worn')
-  const before = k.purse.credits()
-  const r = k.buy(0)
+  const tie = itemById(24)!
+  assert.ok(onSale(tie) && tie.level === 1 && tie.price <= STARTING_CREDITS, 'a first-floor line a new operator can afford')
+  assert.equal(k.wear(24, look), null, 'not owned: not worn')
+  const rows = k.rows('tailor', look)
+  assert.equal(rows.find((r) => r.item.id === 24)!.verdict, GATE.bought)
+  assert.equal(rows.find((r) => r.item.id === 5)!.verdict, GATE.level, 'a level 2 line at level 1')
+  assert.equal(rows.find((r) => r.item.id === 0)!.verdict, GATE.credits)
+  assert.match(rows.find((r) => r.item.id === 0)!.why, /250 more credits/)
+  const r = k.buy(24)
   assert.equal(r.verdict, GATE.bought, r.message)
-  assert.equal(k.purse.credits(), before - itemById(0)!.price)
-  assert.equal(k.purse.owns('look', 512), true, 'the line\'s own bit')
+  assert.equal(k.purse.credits(), STARTING_CREDITS - tie.price, 'the price taken from the record')
+  assert.equal(p.record[AT.credits], STARTING_CREDITS - tie.price)
+  assert.equal(p.owns('look', SHOP_LOOK_BASE + 24), true, 'the line\'s own bit in the look space')
+  assert.equal(p.owns('furniture', SHOP_LOOK_BASE + 24), false, 'and in no other space')
   assert.equal(calls, 1)
-  assert.equal(k.buy(0).verdict, GATE.owned)
-  assert.equal(k.purse.credits(), before - itemById(0)!.price, 'never charged twice')
-  const worn = k.wear(0, look)
-  assert.ok(worn && worn.layer === 2 && worn.top === 0)
-  assert.equal(k.rows('tailor', worn).find((row) => row.item.id === 0)?.worn, true)
-  // Reloaded: the purchase and the balance are still there.
-  const again = createShopkeeper({ purse: practicePurse(s) })
-  assert.equal(again.owns(0), true)
-  assert.equal(again.purse.credits(), before - itemById(0)!.price)
-  // Above the practice level, and on order: refused with the reason, nothing taken.
-  assert.equal(again.buy(14).verdict, GATE.level)
-  assert.equal(again.buy(129).verdict, GATE.unavailable)
-  assert.equal(again.buy(160).verdict, GATE.unavailable, 'furniture is on order')
-  assert.equal(again.buy(4242).verdict, GATE.unavailable)
-  assert.equal(again.purse.credits(), before - itemById(0)!.price)
-  // The purse refuses what the progression gate would call invalid.
+  assert.equal(k.buy(24).verdict, GATE.owned)
+  assert.equal(k.purse.credits(), STARTING_CREDITS - tie.price, 'never charged twice')
+  const worn = k.wear(24, look)
+  assert.ok(worn && wearing(worn, tie))
+  assert.equal(k.rows('tailor', worn).find((row) => row.item.id === 24)?.worn, true)
+  // Refused with the reason, nothing taken: above the level, on order, no such line.
+  assert.equal(k.buy(5).verdict, GATE.level)
+  assert.equal(k.buy(129).verdict, GATE.unavailable)
+  assert.equal(k.buy(160).verdict, GATE.unavailable, 'furniture is on order')
+  assert.equal(k.buy(4242).verdict, GATE.unavailable)
+  assert.equal(k.purse.credits(), STARTING_CREDITS - tie.price)
+  // The gate refuses what is not a purchase.
   for (const [space, index, level, price] of [['look', 1024, 1, 0], ['nowhere', 0, 1, 0], ['look', 0, 0, 0], ['look', 0, 21, 0], ['look', 0, 1, -1], ['look', 0, 1, 0.5]] as const) {
-    assert.equal(again.purse.canBuy(space as Space, index, level, price), GATE.unavailable)
-    assert.equal(again.purse.buy(space as Space, index, level, price), GATE.unavailable)
+    assert.equal(k.purse.canBuy(space as Space, index, level, price), GATE.unavailable)
+    assert.equal(k.purse.buy(space as Space, index, level, price), GATE.unavailable)
   }
   off()
+  // Reloaded from the same store: the purchase and the balance are still there.
+  const again = createShopkeeper({ purse: progressionPurse(createProgress({ store: s, seed: () => 1, now: () => 0 })) })
+  assert.equal(again.owns(24), true)
+  assert.equal(again.purse.credits(), STARTING_CREDITS - tie.price)
 })
 
-test('the practice purse buys homes: claims the Micro-Loft for 0 cr, buys the Brownstone, and the Timber Loft answers level', () => {
+test('the progression keeper sells homes: a new operator claims the Micro-Loft for 0 cr and is told the Brownstone\'s level; at level 3 it is bought', () => {
   const s = memory()
-  const k = createShopkeeper({ purse: practicePurse(s) })
-  assert.deepEqual([k.purse.level(), k.purse.credits()], [PRACTICE.level, PRACTICE.credits])
+  const k = createShopkeeper({ purse: progressionPurse(createProgress({ store: s, seed: () => 1337, now: () => 0 })) })
   let calls = 0
   k.onChange(() => { calls++ })
-  // The design house's card: the seven deeds for sale or gated, every piece of furniture on order and saying why.
+  // The design house's card: the free loft for sale, the other six deeds gated by level, every piece of furniture on order.
   const rows = k.rows('designHouse', null)
   assert.deepEqual(rows.filter((r) => r.item.kind === 'deed').map((r) => r.verdict),
-    [GATE.bought, GATE.bought, GATE.level, GATE.level, GATE.level, GATE.level, GATE.level])
-  assert.deepEqual(rows.filter((r) => r.item.kind === 'deed').slice(2).map((r) => r.why),
-    ['needs level 6', 'needs level 10', 'needs level 14', 'needs level 17', 'needs level 20'])
+    [GATE.bought, GATE.level, GATE.level, GATE.level, GATE.level, GATE.level, GATE.level])
+  assert.deepEqual(rows.filter((r) => r.item.kind === 'deed').slice(1).map((r) => r.why),
+    ['needs level 3', 'needs level 6', 'needs level 10', 'needs level 14', 'needs level 17', 'needs level 20'])
   for (const r of rows.filter((row) => row.item.kind === 'furniture')) {
     assert.equal(r.verdict, GATE.unavailable, r.item.name)
     assert.equal(r.why, 'on order: opens with furnishing')
@@ -238,30 +206,32 @@ test('the practice purse buys homes: claims the Micro-Loft for 0 cr, buys the Br
   // The free loft is claimed for nothing, and sets property bit 0.
   const loft = k.buy(224)
   assert.equal(loft.verdict, GATE.bought, loft.message)
-  assert.equal(k.purse.credits(), PRACTICE.credits)
+  assert.equal(k.purse.credits(), STARTING_CREDITS)
   assert.equal(k.owns(224), true)
   assert.equal(k.purse.owns('property', 0), true)
   assert.equal(k.buy(224).verdict, GATE.owned, 'claimed once')
-  // The brownstone takes its 4,000 cr and sets bit 1; a deed is never worn.
-  const brownstone = k.buy(225)
+  assert.equal(k.wear(224, LOOK_PRESETS[0].look), null, 'a deed is never worn')
+  // The brownstone needs level 3: refused with the level named, nothing taken, nothing set.
+  const early = k.buy(225)
+  assert.equal(early.verdict, GATE.level)
+  assert.match(early.message, /needs level 3/)
+  assert.equal(k.purse.credits(), STARTING_CREDITS)
+  assert.equal(k.owns(225), false)
+  assert.equal(calls, 1)
+  // Reloaded, the loft is still owned and the rows say so.
+  const again = createShopkeeper({ purse: progressionPurse(createProgress({ store: s, seed: () => 1, now: () => 0 })) })
+  assert.deepEqual(again.rows('designHouse', null).filter((r) => r.owned).map((r) => r.item.id), [224])
+  // A keeper at level 3 with the credits buys the brownstone: 4,000 cr taken, property bit 1 set.
+  const p = fakeProgress(3, 5000)
+  const k3 = createShopkeeper({ purse: progressionPurse(p) })
+  const brownstone = k3.buy(225)
   assert.equal(brownstone.verdict, GATE.bought, brownstone.message)
-  assert.equal(k.purse.credits(), PRACTICE.credits - 4000)
-  assert.equal(k.purse.owns('property', 1), true)
-  assert.equal(k.wear(225, LOOK_PRESETS[0].look), null)
-  assert.equal(calls, 2)
-  // Level 6 is past the practice purse: refused with the level named, nothing taken, nothing set.
-  const timber = k.buy(226)
-  assert.equal(timber.verdict, GATE.level)
-  assert.match(timber.message, /Pierside Timber Loft: needs level 6/)
-  assert.equal(k.purse.credits(), PRACTICE.credits - 4000)
-  assert.equal(k.owns(226), false)
-  assert.equal(calls, 2)
-  // Reloaded, both homes are still owned and the rows say so.
-  const again = createShopkeeper({ purse: practicePurse(s) })
-  assert.deepEqual(again.rows('designHouse', null).filter((r) => r.owned).map((r) => r.item.id), [224, 225])
+  assert.equal(k3.purse.credits(), 1000)
+  assert.equal(p.owns('property', 1), true)
+  assert.match(k3.buy(226).message, /Pierside Timber Loft: needs level 6/)
 })
 
-/** A stand-in for the progression keeper, by its documented contract (docs/progression.md, the purchase gate). */
+/** A stand-in for the progression keeper, by its documented contract (docs/progression.md, the purchase gate): any level, and a refusal on demand. */
 function fakeProgress(level: number, balance: number) {
   const record = new Float64Array(32)
   record[PROGRESS_WORD.level] = level
@@ -289,10 +259,9 @@ function fakeProgress(level: number, balance: number) {
   return p
 }
 
-test('the progression keeper drives the shopkeeper: its level gates, its gate buys, its record holds the balance, its subscribe redraws', () => {
+test('a keeper by the documented contract: its level gates, its gate buys, its refusal leaves no bit, its subscribe redraws', () => {
   const p = fakeProgress(20, 10_000)
   const k = createShopkeeper({ purse: progressionPurse(p) })
-  assert.equal(k.purse.source, 'progression')
   assert.equal(k.purse.level(), 20)
   assert.equal(k.purse.credits(), 10_000)
   let calls = 0

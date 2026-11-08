@@ -175,6 +175,7 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 | `?rigs=capsules` | Draws a fallen pedestrian's physical rig as grey capsules in place of their figure (default: their own body wears the rig) |
 | `?audio=0` | Start with the soundscape muted |
 | `?captions=0` | Start with the closed captions off (`captions on` turns them on; see Spatial audio) |
+| `?haptics=0` | Start with the controller's rumble and the phone's vibration off: the guardrails' feel and a check's tap (`haptics on` turns them on; the triggers' resistance stays; see The operator's progression) |
 | `?boot=tty` | Track B: the Ring-0 console alone, full screen, with no canvas, no engine, no WebGPU, no physics worker and no audio; `boot gui` reloads the city (see Ring-0 console) |
 | `?profile` | GPU timestamps |
 | `?debug` | Exposes `window.__SIM__` test hooks; off by default |
@@ -248,14 +249,15 @@ to circle your body slowly (the mirror), so what you wear shows; the sound stays
 card opens without the mirror (the room did not make the step onto the fitting spot). Esc, × or Done gives the eye
 back. Every line lists
 its level and its price. **Try on** wears it on your body until the card closes. **Buy** takes the credits and wears it
-at once. An owned line you are not wearing has **Wear**. What you bought and your balance are kept in this browser
-(key `civic-simulation:shop:v1`), validated on the way in like the look.
+at once. An owned line you are not wearing has **Wear**. What you bought and your balance live in your operator
+record (the progression engine's, kept in this browser), so the console's `progress` and the card agree.
 
-- **Credits.** Until the progression engine lands, the shops run on practice credits: level 5 and 5,000 civic
-  credits, enough for the first floor of each shop and not for everything, and what you buy is kept as the same bits
-  the progression record will hold (worn lines at look 512 and up, furniture from 0, homes 0 to 6). When it lands, its
-  level, its credits and its purchase gate take the practice purse's place (`07_Execute_Actions/shopkeeper.ts`,
-  `progressionPurse`); what was bought with practice credits stays in the practice record.
+- **Credits.** The card's purse line is your operator level and civic credits. A new operator starts at level 1 with
+  150 credits, enough for a first-floor line such as the silk tie; the city's work earns more (see "The operator's
+  progression"). A purchase goes through the progression engine's purchase gate, which takes the price and sets the
+  line's unlock bit in the same saved record or changes nothing (`07_Execute_Actions/shopkeeper.ts` `progressionPurse`
+  over `progress.ts` `pageProgress`): worn lines at look 512 and up, furniture from 0, homes 0 to 6. A line above your
+  level says which level it needs; one you cannot afford says how many more credits.
 - **On sale now.** The tailor's six overcoats, seven contrast trims, seven scarves and a silk tie; the atelier's smart
   eyewear; the watch shop's leather briefcase. Lines that need slots the wardrobe does not have yet (the tattoo
   designs and inks, prosthetic limbs, the hearing processor, watches, the lapel pin, the umbrella, headphones) are
@@ -310,9 +312,10 @@ headset or opening the console closes it too. On a pad, move to Done with the d-
   city but not in this map says so, and its button stays off.
 - **In a network room** Visit and Go home are refused ("not in a shared room: walk there"): the room replays the steps
   it saw and would put you back where you were. Walk there instead; the doorstep card still opens.
-- **The practice purse** (level 5 and 5,000 credits, with no income) reaches two deeds: claim the Micro-Loft for
-  nothing and buy the Brownstone for 4,000 credits, which leaves 1,000. The other five rows say "needs level 6", 10,
-  14, 17 and 20 until the progression engine lands. Furniture stays on order until furnishing opens.
+- **What a new operator can own.** At level 1 with 150 credits you can claim the Micro-Loft for nothing at once.
+  The Brownstone (level 3, 4,000 credits) and the rest say which level they need ("needs level 3", 6, 10, 14, 17 and
+  20) until your progression gets there, then how many more credits. Deeds are bought through the same progression
+  purchase gate as the clothes. Furniture stays on order until furnishing opens.
 
 ## The surveyed map
 
@@ -1003,14 +1006,14 @@ while you type.
   `topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]`,
   `feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]`,
   `ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]`, `quality [auto|lite|peak|-1|0-5]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `xr [vr|ar|off]`, `render [on|off]`,
-  `captions [on|off]`, `ping [go|look|gather|wait|clear]`,
+  `captions [on|off]`, `haptics [on|off]`, `ping [go|look|gather|wait|clear]`,
   `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
   `robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|remove <id>]`,
   `recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]`, `memory [<agent>|forget <agent>|forget all]`,
   `clear`, `history`, `echo [text]`, `uname [-asnrvmi]`, `whoami`, `version`, `boot [gui|tty|status]`,
   `map [city|lakefront|default|status]`, `r0 <words...>|r0 reset|r0 words`,
   `noir <source>|noir reset|noir words|noir asm <source>`, `agent [...]`, `sloane [...]`,
-  `goal <words...>`, `exit`.
+  `goal <words...>`, `progress [table|train <skill>|reroll|reset [--yes]]`, `exit`.
 - `topic` reads the unified namespace: every reading of the city, published each HUD tick into an in-page topic
   bus (`05_Observe_Environment/namespace.ts`) in the ISA-95 shape
   `Enterprise/JCS/Site/AgentCity/Area/{District}/Line/{Subsystem}/Cell/{Entity}/{Tag}`, the Area being the district you
@@ -1056,6 +1059,9 @@ while you type.
   name none of it).
 - `captions [on|off]` turns the closed captions of every sound on or off (see Spatial audio); `?captions=0` starts
   them off.
+- `haptics [on|off]` turns the controller's rumble and the phone's vibration on or off: the guardrails' feel at the
+  wheel (the limiter's hum, the thump) and a check's tap (see The operator's progression). The triggers' resistance is
+  force, not vibration, and stays. `haptics` alone says which; `?haptics=0` starts them off.
 - `ping [go|look|gather|wait]` marks where you look, as `Q` does; `ping` alone lists the marks standing, and
   `ping clear` takes them off the board. A `go` or `gather` ping is offered to the recruiter as a rally the physics
   worker re-checks (see Pings and the rally).
@@ -1084,6 +1090,13 @@ while you type.
 - `goal <words...>` plans a goal as Sloane's card does (at most 160 characters): the steps it can take now (the
   clock, the quality tier, the sound) are applied and printed `done`, the rest `later`, a step that failed `failed`
   with why, and words nothing in the city maps to yet are named.
+- `progress` shows the operator's progression (see The operator's progression): level, XP, civic credits, hero
+  points, resolve, the round's actions, the six attributes and the eight skills with their ranks and modifiers;
+  `progress table` prints the DC, a success's pay and each level's treasure, and the degrees and the breadth bonus;
+  `progress train <skill>` spends a skill increase; `progress reroll` spends a hero point on the last check;
+  `progress reset --yes` starts a new operator. A command that does something in the city (not a status line or a
+  list) and ran without an error earns a check, printed under its own lines; the city earns some checks itself (see
+  The operator's progression).
 - `history` and the Up arrow never show a key typed to `ask key` or `say key` or a token typed to `net join`: all
   are kept as dots.
 
@@ -1345,7 +1358,7 @@ protects.
 
 The console is air-gapped from the swarm. It can reach the engine only through a frozen
 `TerminalBridge` (`terminal/bridge.ts`): read-only statistics, the laws, the operator controls (clock, quality,
-audio, ghost view, drawing, captions, peripheral pairing), the view-only pings and the player's look, recruitment,
+audio, ghost view, drawing, captions, haptics, peripheral pairing), the view-only pings and the player's look, recruitment,
 the swarm's memory to read (erasing it needs the operator tier), and the opt-in network session (joining needs the
 operator tier). `boot` asks the host to reload the page on a track, and `r0` touches no bridge at all. Recruitment
 is the one knob that reaches a pedestrian, and it can only ask: to come over, or, an Active recruit, to stand at a
@@ -1359,6 +1372,55 @@ enforces that `terminal/*` imports only types from the rest of the engine
 the console the other way round too, read-only: the operator tier is handed the task gateway, which only
 reads the worker's list, and every script must pass it. The console never holds the gateway, the
 recruiter or the engine.
+
+## The operator's progression
+
+The operator has a level (1 to 20, 1,000 XP to each), civic credits, hero points (at most three), resolve, six
+attribute modifiers (STR, DEX, CON, INT, WIS, CHA) and eight skills, each at a proficiency rank from untrained to
+legendary: computers (INT), piloting (DEX), robotics (STR), cyber security (WIS), swarm command (CHA), acoustics and
+voice (CHA), optics and cinema (WIS), and architecture and commerce (INT). A new operator is level 1 with every
+attribute at +1, every skill trained, 150 credits and one hero point. The rules are in
+`src/02_Define_The_Rules/progression.ts`; the page's keeper is `src/07_Execute_Actions/progress.ts`; the record is
+kept in this browser's local storage (`civic-simulation:progress:v1`, `src/05_Observe_Environment/progressStore.ts`)
+and nowhere else. The design and its numbers are in `docs/progression.md`.
+
+- **Checks.** Doing something earns a check in the skill it belongs to: a d20 plus the skill's modifier (its rank's
+  proficiency at the operator's level plus its attribute) against the level's DC, eased by 2. The degree pays from a
+  fixed table: a critical failure nothing, a failure 10 XP, a success 40 XP and the level's payout in credits (150 at
+  level 1, 400,000 at level 20), a critical success 80 XP, two and a half times the payout and a hero point.
+- **Breadth.** A cycle is 24 checks; the more different skills it has used, the more each check pays, XP and credits
+  alike: 1x for one skill, 1.5x for three, 2x for five, 3.5x for all eight (lighting the eighth also gives a resolve).
+- **Pace.** Three actions and a reaction every six seconds; a skill earns again a minute after its check, so varied
+  work pays and the same command over and over does not.
+- **Bad luck.** After three misses in a row, the next check rolls twice and keeps the higher die.
+- **Levels.** Each level from 2 brings a skill increase (`progress train <skill>`: expert any time, master from level
+  7, legendary from 15) and a resolve; levels 5, 10, 15 and 20 bring four attribute boosts, to the attributes behind
+  the skills used most (a boost at +4 or more counts half).
+- **Hero points.** One at the start of every session at least; `progress reroll` spends one on the last check that
+  was not a critical success. The better of the two results pays; nothing is taken back.
+- **Credits** buy the wardrobe, the properties and their furniture through one gate: the credits are debited and the
+  unlock set in the same record and the same save, so a purchase never takes the credits without the item.
+- **What earns.** At the console: `noir`, `r0` and `run` for computers, the robots' commands for robotics,
+  `harness run` and the verifications for security, `recruit rally`, asking, `swarm run`, `act ok` and pings for swarm
+  command, `say` and `sloane say` for voice, `rain`, `ghost`, `time`, `xr` and `record start` for optics, `look` for
+  commerce. In the city: boarding a car with the door key (piloting); someone you recruited arriving, however you
+  asked (swarm command, from the round's reaction, so `recruit <skill>` and `recruit listen` earn nothing themselves);
+  a spoken request the recruiter understood (voice); the clock keys, the rain key, the ghost key when the view shows
+  or goes, and the touch menu's Headset (optics); and the wardrobe card's first real change of a visit (commerce). A
+  script's, a harness's or an agent's act earns nothing, and neither does a key held down.
+- **Cues.** Every success and critical success, at the console or in the city, plays a short chime in your ears
+  (an arpeggio, or a chord for a critical success, captioned as `[chime: Piloting, success]`), taps a controller once
+  or twice on its rumble while no guardrail holds it, the screen is not split and the page is shown, vibrates a phone
+  once or twice, and shows on the HUD's progress chip. The chime never covers a cue or a ping: at the ear it is
+  quieter than the recruitment cue from anyone near enough to be asked over, it waits for a cue or a ping still
+  sounding, and one that starts over it fades it out. A hero point's reroll that stayed a success is not cued again. The chip, under the
+  status chips at the top left, reads `Level 3 · 420 of 1,000 XP · 1,250 credits · hero 2 · ◆◆◇ ↺` (◆ an action left,
+  ◇ one spent, ↺ the reaction ready), and for four seconds after a check which degree, in which skill and what it
+  paid, with one soft ring around it (none when the system asks for reduced motion). On a phone it shows only for
+  those four seconds, and not at all held in landscape. A check the city earns makes no toast: the chip and the
+  chime's caption report it. Captions only describe sounds that play, so with the sound off (`audio off`,
+  `?audio=0`) the chip alone shows it; `audio 0` silences the city and keeps every caption. `haptics off` or
+  `?haptics=0` stills the tap and the vibration. How they feel on real controllers and phones is unverified.
 
 ## Recruitment
 
@@ -2360,7 +2422,8 @@ HRTF-panned sources:
   Each line carries the sound's bearing in the listener's head frame (one of eight arrows, a side word, the
   distance rounded to 1 m under 10 m and 5 m beyond), recomputed as the head turns: `↗ [car approaching] · ahead
   right, 25 m`. Cars approaching, passing and shifting, tyres, the crowd murmur (by level, with hysteresis), the
-  walk signal per axis, the recruitment cue, the ping cue, the cabin, speech with its words (`Pedestrian N
+  walk signal per axis, the recruitment cue, the ping cue, the cabin, a check's chime (text alone, since it plays in
+  the head: `[chime: Optics and cinema, critical success]`), speech with its words (`Pedestrian N
   (skill): …`, verbatim: what passed the 14A screen is what is read) and a peer's voice (captioned as a voice, not
   transcribed, since the page cannot transcribe a remote stream on-device) are all captioned. The strip sits
   bottom-centre and outlives the `H` key, like the MIC chip. `captions off` or `?captions=0` turns it off.

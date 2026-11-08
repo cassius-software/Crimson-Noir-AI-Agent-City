@@ -23,19 +23,20 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   inside one, E (unless a car is in reach), B, the pad's south button or the HUD's Browse chip opens the shop's card
   (`src/07_Execute_Actions/StoreCard.tsx`): the avatar steps onto a fitting spot kept clear of every fixture and the
   camera circles the body, so the outfit shows; every line has its level and price, Try on, Buy (worn at once) and
-  Wear. Purchases go through one shopkeeper (`shopkeeper.ts`) over a purse shaped like the progression engine's
-  keeper (its spaces, bits, gate verdicts and subscribe; `progressionPurse` adapts the keeper by its documented
-  contract). Until that keeper lands, a practice purse (level 5, 5,000 credits) kept in this browser
-  (`civic-simulation:shop:v1`) stands in, with the same bits: worn lines at look 512 and up, furniture from 0, homes 0
-  to 6. On sale now: the tailor's overcoats, trims, scarves and tie,
+  Wear. Purchases go through one shopkeeper (`shopkeeper.ts`) over the progression engine's keeper (`progress.ts`
+  `pageProgress`, adapted by `progressionPurse`): the card shows its level and civic credits, and its purchase gate
+  takes the price and sets the line's unlock bit in the same saved record (worn lines at look 512 and up, furniture
+  from 0, homes 0 to 6). A new operator starts at level 1 with 150 credits, enough for a first-floor line such as the
+  tie, and earns more by the city's work. On sale now: the tailor's overcoats, trims, scarves and tie,
   the atelier's smart eyewear and the watch shop's briefcase; tattoos, limbs, watches and the other lines that need
   wardrobe slots not built yet are listed as on order, and the design house's furniture and seven property deeds wait
   for the properties. Three of the plan's shop names and two home names were changed after a trademark and place-name
   search (`docs/ip-audit.md` §7). Pinned by `storefronts.test.ts` (one shop per kind on its quarter for 64 seeds,
   never on a workplace lot, the podium gone, every fixture inside the walls, the walk-in and the camera's circle
   clear, the real Rapier avatar walking from the sidewalk to the fitting spot), `storeCatalog.test.ts` (ids, the
-  deeds' levels and prices, every line on sale wearable by every preset body, the gate's verdicts and exact millions,
-  the stored record's validation, the shopkeeper on the practice purse and on a stand-in for the progression keeper) and `storeWiring.test.ts`.
+  deeds' levels and prices, every line on sale wearable by every preset body, the spaces, level cap and verdicts equal
+  to the progression engine's, the shopkeeper over a real keeper bought once and kept across a reload, and over a
+  stand-in that refuses) and `storeWiring.test.ts`.
 - **The five shops in Lakefront Metro too.** A generated region's street window gets the same five storefronts
   (`src/01_Initialize_World/region/shops.ts`), on the lots nearest the visitor's start once its workplaces have taken
   theirs, from the same candidates as the workplaces (`region/workplaces.ts` `lotCandidates`, shared now): a doorway on
@@ -65,10 +66,49 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   minimaps draw the homes in violet, the owned ones in gold. Furniture stays on order until furnishing opens. Pinned by
   `homeGrid.test.ts`, `properties.test.ts` (64 seeds: seven distinct free lots by the rules, the shell, the fill block
   and planters, the pads and tracks unchanged, a real Rapier car stopped by the planters and a real Rapier avatar
-  walking in), `region/homes.test.ts` (two seeds, every zone), `storeCatalog.test.ts` (deeds on sale, the practice
-  purse claims the loft and buys the Brownstone, the Pierside asks for level 6), `homeCard.test.ts`, `input.test.ts`
+  walking in), `region/homes.test.ts` (two seeds, every zone), `storeCatalog.test.ts` (deeds on sale, a new
+  operator's progression keeper claims the loft and is told the Brownstone's level, a level 3 keeper buys it), `homeCard.test.ts`, `input.test.ts`
   (the drain) and `homeWiring.test.ts`.
 
+- **The operator's progression.** The operator now has a level (1 to 20, 1,000 XP each, the rest rolling over), six
+  attribute modifiers, eight skills of the city with proficiency ranks, civic credits, hero points, resolve and three
+  actions and a reaction per six-second round (`src/02_Define_The_Rules/progression.ts`, over one 128-word record,
+  sealed and range-checked, kept in this browser by `src/05_Observe_Environment/progressStore.ts`). A console
+  command that does something in the city earns a check in its skill: a d20 plus the skill's modifier against the
+  level-based DC, eased by 2, paying a fixed table by degree and level, raised by how many different skills the
+  current cycle of 24 checks has used (1x to 3.5x). A skill rests a minute between checks; after three misses in a row
+  the next check rolls twice; a hero point rerolls the last check. The console's `progress` prints the status, the
+  table, spends skill increases and hero points, and starts over with `reset --yes`. Credits buy through one purchase
+  gate (`buy`, `canBuy`, `owns`, `spend` on `pageProgress()`), which debits the credits and sets the unlock in the
+  same record and save, for the wardrobe, the properties and their furniture to use. The mechanics are offered under
+  the ORC License: `NOTICE.md` now attributes Pathfinder GM Core as well (its level-based DCs and treasure table are
+  used) and lists what was taken and added, and `docs/ip-audit.md` §7 records the checks. The plan's surprise-scaled
+  payouts, hidden pity counter and drop tokens were not built (`docs/progression.md` says why). The cues on a success
+  and the checks the city itself earns are not in this change.
+- **The city earns checks, and a success is cued.** The second slice of the operator's progression. The city's own
+  deeds now earn: boarding a car with the door key (piloting; a network room's correction or a script's `interact()`
+  does not), someone recruited arriving however they were asked (swarm command, from the round's reaction), a spoken
+  request the recruiter understood (acoustics and voice, from a new `understood` event), the clock keys, the rain key,
+  the ghost key when the view really shows or goes, and the touch menu's Headset (optics and cinema), and the wardrobe
+  card's first real change of a visit (architecture and commerce). The setters behind the keys and the agents' city
+  knobs earn nothing, so the console's own checks are not lost to a skill's rest, and `recruit <skill>` and `recruit
+  listen` at the console no longer earn (the arrival and the understood request do, once). One keeper listener in App
+  cues every success, the console's or the city's: a short head-locked chime in player 1's ears (a C5 E5 G5 arpeggio,
+  or a C4 C6 G6 chord for a critical success, rendered once at build, straight to the master gain with no panner or
+  reverb, captioned as text alone: `[chime: Piloting, success]`; at the ear quieter than the recruitment cue from
+  anyone near enough to be asked over, waiting for a cue or a ping still sounding and fading out under one that
+  starts, so it never covers either); one or two 50 ms taps on a controller's rumble while no guardrail signal holds
+  the motors, the screen is not split and the page is shown, the hold, the snap and the lightbar untouched; one or
+  two short vibrations on a phone; and a HUD progress chip (the level, '420 of 1,000 XP', the credits, the hero
+  points, the round's pips, and for four seconds what a check was and paid) with one soft ring at most once a second
+  and none under the system's reduced-motion setting. A hero point's reroll that stayed a success is not cued again. `haptics [on|off]` at the console
+  and `?haptics=0` switch the rumble and the vibration off. What CI shows: the chime's buffers, levels and graph
+  (`audio.test.ts`), its caption (`captions.test.ts`), the tap's envelope and the guarded `vibrate` on fake
+  navigators (`hal.test.ts`), the earns, the chip's words and its cache (`progress.test.ts`, `recruitment.test.ts`), the
+  knob (`commands.test.ts`), and the wiring by source scan (`progressWiring.test.ts`: the tap merged after the
+  guardrails, the deeds only at the keys and the boarding, one listener taken back on a halt and with the city). How the
+  chime sounds, how the pad's tap and the phone's vibration feel on real devices, the chip's glow in a real browser, and
+  the plan's under-16 ms budget are unverified. An action card's cost in pips is not in this change.
 - **Every street lamp near you is a real light, and every workplace has a lit ceiling.** The city's night lighting
   moves to three r186's clustered (Forward+) lighting (`src/01_Initialize_World/cityLights.ts`): the lamps' point
   lights live in a texture, a compute pass bins them once a render into a 48 × 27 × 24 grid of view-frustum cells,
