@@ -28,6 +28,9 @@
  * client the way it hands in the mind, the engine holds no network code, and each frame it offers the client player
  * 1's desired velocity and heading and reads back the room's poses, drawn as pose-only ghosts (netView.ts) that are
  * never bodies in the physics realm; the room's chat and pings become captions, a peer's voice a placed voice.
+ * The progression stays the host's too: player 1's own deeds (a car boarded with the door key; the clock, ghost and
+ * rain keys) are handed to App through onDeed, and a check App reports back is cued by checkCue as a head-locked chime
+ * and, with haptics on, a short tap on the pad or the phone. The engine imports no keeper and keeps no record.
  * App.tsx owns the requestAnimationFrame loop and calls frame(). Beside that loop, a PerformanceObserver on the
  * browser's `longtask` entries (longTasks.ts) writes one silent console line per main-thread stall over 50 ms,
  * with the heap and the live worker count, so a micro-stutter leaves evidence; where the API is missing it is a no-op.
@@ -49,6 +52,8 @@ import { METRO } from '../01_Initialize_World/lakefrontPack.ts'
 import { formatClock, sunAt, type SunState } from '../01_Initialize_World/solar.ts'
 import { SIGNAL, signalFor, walkAllowed } from '../02_Define_The_Rules/civic.ts'
 import { LAWS } from '../02_Define_The_Rules/laws.ts'
+import { CRIT_SUCCESS, SUCCESS } from '../02_Define_The_Rules/degrees.ts'
+import type { OperatorSkill } from '../02_Define_The_Rules/progression.ts'
 import { airgapInstalled } from '../02_Define_The_Rules/airgap.ts'
 import { kernelPanic } from '../02_Define_The_Rules/ring0Panic.ts'
 import { CrowdView } from '../03_Spawn_Agents/crowd.ts'
@@ -58,7 +63,7 @@ import { CONCIERGE_NAME as CONCIERGE_LABEL } from './onboarding/script.ts'
 import { packFrustumPlanes, PLAYER_INDEX, type CrowdStats, type CullSettings } from '../03_Spawn_Agents/crowdCompute.ts'
 import { CrowdCull } from '../03_Spawn_Agents/crowdCull.ts'
 import { AGENTS_RANGE } from '../03_Spawn_Agents/crowdSensor.ts'
-import type { HalOutputs } from '../04_Connect_Hardware/hal.ts'
+import { PULSE, pulseLevel, type HalOutputs } from '../04_Connect_Hardware/hal.ts'
 import { Input, TriggerFeedback } from '../04_Connect_Hardware/input.ts'
 import { KEYBOARD_SEAT, type Seat } from '../04_Connect_Hardware/seats.ts'
 import { FrameClock, type GlyphFamily, type KernelStats, type NetReport, type NetState, type SeatView, type SipocSnapshot, type Toast } from '../05_Observe_Environment/telemetry.ts'
@@ -142,6 +147,12 @@ export interface EngineOptions {
    * stop as a HUD line with its bearing and distance, speech with its words. setCaptions() turns them at run time.
    */
   captions?: boolean
+  /**
+   * Haptics (default on, ?haptics=0 off): the pad's rumble and the throttle trigger's snap, for the guardrails and for
+   * a check's cue (checkCue), and a phone's vibration for that cue. Off, nothing vibrates; the triggers' resistance is
+   * force, not vibration, and stays, and so does the lightbar. setHaptics() turns it at run time.
+   */
+  haptics?: boolean
   /** ?debug: the physics worker also accepts fault-injection commands (the harness's). Fixed at boot; off in production. */
   debug?: boolean
   /**
@@ -205,6 +216,12 @@ const HAPTICS = { limiter: 0.2, pulse: 1, pulseMs: 180, hold: 0.6 } as const
  * the swarm's second role), white for the thump (the First Law taking the car, or a full brake).
  */
 const LIGHTBAR = { rest: 0xe8203a, limited: 0xd89a2a, thump: 0xffffff } as const
+/**
+ * How soon after player 1 pressed the door key a car they sat down in counts as their own boarding, ms. The realm
+ * answers within a few steps; a seat taken later than this, or one no key press asked for (a room's correction, a
+ * script's interact()), earns nothing.
+ */
+const DOOR_DEED_MS = 1500
 /** Longest simulated time one step request carries when the worker fell behind, s. */
 const MAX_STEP_DT = 0.1
 /** How often the pedestrians' positions are copied out of the crowd frames for SimControls.crowd.positions, ms. */
@@ -558,6 +575,8 @@ export class Engine {
   /** The soundscape's closed captions (captions.ts), fed by every sound event with the head pose as the listener. */
   private readonly captions = new CaptionTrack()
   private captionsOn: boolean
+  /** Haptics on (EngineOptions.haptics, setHaptics): off, frame() sends no rumble or snap and checkCue no tap. */
+  private hapticsOn: boolean
   /** A scripted walk (SimControls.avatar.walk): the velocity it asks for, and until when (performance.now() ms). */
   private readonly scriptedWalk: ScriptedWalk = { x: 0, z: 0, until: 0 }
   private crowdCopiedAt = -Infinity
@@ -608,8 +627,23 @@ export class Engine {
    * realm decides on its own readings. Null: a ping is a mark and nothing more. The engine never sends a rally itself.
    */
   onRally: ((request: RallyRequest) => void) | null = null
+  /**
+   * The host's progression hand-off (App.tsx: the page's keeper earns the skill): called with the skill a deed of the
+   * player's own earns, from a key frame() takes or a car door the player opened (received()). Null: the city earns
+   * nothing. The engine keeps no record of its own, and never calls this per frame or from a setter the console,
+   * scripts or agents share.
+   */
+  onDeed: ((skill: OperatorSkill) => void) | null = null
   /** Real-time end of the current haptic thump (ms, rAF clock). */
   private pulseUntil = 0
+  /**
+   * A check's cue on the pad (checkCue): when it was stamped (performance.now() ms) and how many taps it plays, 1 for a
+   * success and 2 for a critical success (hal.ts pulseLevel). Apart from pulseUntil, so the guardrails' resets leave it.
+   */
+  private rewardAt = -1e9
+  private rewardTaps = 0
+  /** When player 1 last pressed the door key (performance.now() ms), for the Piloting a boarding earns (DOOR_DEED_MS). */
+  private doorPressedAt = -Infinity
   private readonly foot: FootControls = { x: 0, z: 0, heading: 0 }
   private readonly drive: DriveControls = { steer: 0, fwd: 0, back: 0, handbrake: false }
   /** Simulated seconds not yet sent to the worker (it was still busy with the previous step). */
@@ -726,6 +760,7 @@ export class Engine {
     this.audio = soundscape()
     if (!p.options.audio) this.audio.setEnabled(false)
     this.captionsOn = p.options.captions !== false
+    this.hapticsOn = p.options.haptics !== false
     // Every sound's start, change and stop, captioned from where the head is (HeadRig.pose is the listener).
     this.audio.onSound = (e) => { if (this.captionsOn) this.captions.push(e, this.rig.pose) }
     // One audio frame, mutated in place every tick; car slots keep fleet order (voice hysteresis is by index).
@@ -1592,6 +1627,12 @@ export class Engine {
         this.toast(kindOf(ev.kind).name, this.glyphs === 'touch'
           ? `${g('throttle')} to drive · ${g('brake')} to brake or reverse · ${g('interact')} to leave`
           : `${g('throttle')} / ${g('brake')} throttle and brake · ${g('handbrake')} handbrake · ${g('interact')} to leave`)
+        // Piloting, for a car the player boarded with the door key (stamped where frame() takes it). A room's
+        // correction, a script's or a harness's interact() and the debug hook never stamp it, so they earn nothing.
+        if (!ev.room && performance.now() - this.doorPressedAt < DOOR_DEED_MS) {
+          this.doorPressedAt = -Infinity
+          this.deed('piloting')
+        }
       } else if (ev.e === 'exited') {
         this.pulseUntil = 0
         this.toast('Vehicle parked', 'Hazards on, doors locked.')
@@ -1633,6 +1674,42 @@ export class Engine {
         return heard
       },
     })
+  }
+
+  /**
+   * A check the player just made (App.tsx: the page's keeper's listener, for a success or a critical success). The
+   * chime plays in player 1's ears alone (audio.ts chime: head-locked, captioned as text with no place), since the
+   * progression is player 1's. With haptics on, the hands feel it too: on a pad, one 50 ms tap for a success and two
+   * for a critical success (hal.ts PULSE), played by frame() and only while the screen is not split, because the bus
+   * sends one rumble to every pad; on a phone, one short vibration or two. The first tap goes out at once unless a
+   * guardrail signal holds the motors, and the guardrails always win; a hidden page gets no tap at all. This can run inside received() or frame()
+   * (earn() calls its listeners at once), so it starts a pre-rendered buffer and sets two numbers, nothing more.
+   * Nothing once the city has stopped.
+   */
+  checkCue(degree: number, label?: string): void {
+    if (this.halted || this.disposed || !(degree >= SUCCESS)) return
+    const critical = degree === CRIT_SUCCESS
+    this.audio.chime(critical ? 'critical' : 'success', label)
+    if (!this.hapticsOn) return
+    const device = this.input.device
+    if (device === 'touch') {
+      this.input.hal.vibrate(critical ? PULSE.phoneCritical : PULSE.phone)
+      return
+    }
+    // A hidden page runs no frame to end a tap, and the bus would keep it to replay on return: no tap at all then.
+    if (device !== 'gamepad' || this.views.length > 1 || this.input.hal.asleep) return
+    this.rewardAt = performance.now()
+    this.rewardTaps = critical ? 2 : 1
+    // The limiter's hum or the thump on the motors: frame() keeps the guardrail and drops the tap.
+    const st = this.sim.state
+    const guarded = st.driving >= 0 && (this.rewardAt < this.pulseUntil || st.haptics.limited)
+    if (!guarded) this.input.hal.output({ rumble: PULSE.level })
+  }
+
+  /** Hands a deed's skill to the host (onDeed). A host's error joins the engine's errors and never breaks the frame. */
+  private deed(skill: OperatorSkill): void {
+    if (this.halted || this.disposed) return
+    try { this.onDeed?.(skill) } catch (e) { this.errors.push(`progress: ${e instanceof Error ? e.message : String(e)}`) }
   }
 
   /**
@@ -1776,11 +1853,20 @@ export class Engine {
     this.xrInput.headOffset = this.rig.headset ? this.rig.pose.yaw - input.yaw : 0
     input.poll(dt)
 
-    if (input.take('interact')) this.interact()
-    if (input.take('timeForward')) { this.hours = (this.hours + 1) % 24; this.toast('Clock', formatClock(this.hours)) }
-    if (input.take('timeBack')) { this.hours = (this.hours + 23) % 24; this.toast('Clock', formatClock(this.hours)) }
-    if (input.take('ghost')) this.toast('Ghost view', this.setGhost(!this.ghost.on))
-    if (input.take('matrix')) this.toast('Matrix mode', this.setMatrix(!this.matrixOn))
+    // Player 1's own deeds earn here, once per press: the door key is stamped for the boarding received() pays, and
+    // the clock, ghost and rain keys earn Optics and cinema. The setters behind them stay silent, because the console,
+    // scripts and agents' acts share them and the console earns for its own commands.
+    if (input.take('interact')) { this.doorPressedAt = performance.now(); this.interact() }
+    if (input.take('timeForward')) { this.hours = (this.hours + 1) % 24; this.toast('Clock', formatClock(this.hours)); this.deed('optics') }
+    if (input.take('timeBack')) { this.hours = (this.hours + 23) % 24; this.toast('Clock', formatClock(this.hours)); this.deed('optics') }
+    if (input.take('ghost')) {
+      const line = this.setGhost(!this.ghost.on)
+      this.toast('Ghost view', line)
+      // Only a view that showed or went away earns: setGhost's other lines are refusals, and an 'off' in split screen,
+      // under a headset or with the post chain off hides a view nobody saw.
+      if (line.startsWith('on:') || (line === 'off' && this.views.length === 1 && !this.rig.headset && this.options.post)) this.deed('optics')
+    }
+    if (input.take('matrix')) { this.toast('Rain mode', this.setMatrix(!this.matrixOn)); this.deed('optics') }
     if (input.take('reset') && driving >= 0) sim.send({ c: 'reset' })
     // The other seats' doors and resets, each for its own avatar (their pads queue them on their own intents). In a
     // network room only player 1 drives (simCore.ts 'interact'): the others' presses are taken and go nowhere.
@@ -1815,6 +1901,11 @@ export class Engine {
       snap = thump ? HAPTICS.pulse : 0
       lightbar = thump ? LIGHTBAR.thump : st.haptics.limited ? LIGHTBAR.limited : LIGHTBAR.rest
     }
+    // A check's taps (checkCue) on the motors alone, and only while no guardrail signal holds them: the limiter's hum
+    // and the thump win, and the hold, the snap and the lightbar never carry a cue. Haptics off stills every
+    // vibration, the guardrails' too; the triggers' resistance is force, not vibration, and stays.
+    if (rumble === 0) rumble = pulseLevel(nowMs - this.rewardAt, this.rewardTaps)
+    if (!this.hapticsOn) { rumble = 0; snap = 0 }
     this.pendingDt = Math.min(MAX_STEP_DT, this.pendingDt + dt)
     const physicsStart = performance.now()
     // The step about to go out (one at a time: none is in flight), for the room: the walking velocity it asks for and
@@ -2232,6 +2323,17 @@ export class Engine {
     return on ? 'captions: on' : 'captions: off'
   }
 
+  /**
+   * Haptics on or off (EngineOptions.haptics): off, the next frame stills the pad's rumble and the throttle's snap,
+   * for the guardrails and a check's cue alike, and a phone is never asked to vibrate; the triggers' resistance and the
+   * lightbar stay. Returns the status line the console prints.
+   */
+  setHaptics(on: boolean): string {
+    this.hapticsOn = on
+    if (!on) this.rewardTaps = 0
+    return on ? 'haptics: on' : 'haptics: off'
+  }
+
   /** The pings standing now, oldest first, one line each (08_Swarm/ping.ts pingLine), for the console. */
   pingLines(): string[] {
     const now = this.simTime
@@ -2467,6 +2569,7 @@ export class Engine {
       }),
       render: (arg?: 'on' | 'off') => (arg === undefined ? (this.rendering ? 'on' : 'off') : this.setRendering(arg === 'on')),
       captions: (arg?: 'on' | 'off') => (arg === undefined ? (this.captionsOn ? 'captions: on' : 'captions: off') : this.setCaptions(arg === 'on')),
+      haptics: (arg?: 'on' | 'off') => (arg === undefined ? (this.hapticsOn ? 'haptics: on' : 'haptics: off') : this.setHaptics(arg === 'on')),
       // The unified namespace, read-only: the rows are formatted here, so the console imports nothing of the bus. A
       // leading '~' stands for the root in a filter, a topic or a prefix, as the rows print it.
       topics: Object.freeze({
@@ -2813,11 +2916,15 @@ export class Engine {
     }
   }
 
-  /** The touch menu's Headset item, inside the tap: leaves the headset, or enters VR (AR where VR is not offered). */
+  /**
+   * The touch menu's Headset item, inside the tap: leaves the headset, or enters VR (AR where VR is not offered). A
+   * session that starts from the tap earns Optics and cinema; the console's `xr` earns for itself, so started() does not.
+   */
   toggleXr(): void {
     if (this.xr.presenting) { void this.xr.exit(); return }
     void this.enterXr(this.xrModes.vr || !this.xrModes.ar ? 'immersive-vr' : 'immersive-ar').then((line) => {
       if (!this.xr.presenting) this.toast('Headset', line)
+      else this.deed('optics')
     })
   }
 

@@ -744,6 +744,15 @@ const SCENARIOS = {
       const nc = await p.eval(PEAK_STATE)
       check(nc.max === 4 && nc.timestamps === false && nc.peak === null, 'desktop: a device that is not a Peak candidate keeps the range Minimal..Ultra, no GPU timestamps and no Peak rule', `range ${nc.min}..${nc.max}, timestamps ${nc.timestamps}, peak ${JSON.stringify(nc.peak)}`)
 
+      // Sloane's name question shows once the veil has finished fading, and its field takes the keyboard (Concierge.tsx).
+      // booted() returns as the fade starts, and a click on the canvas leaves a focused field focused: on a runner slow
+      // enough that the field came up after the click below, every key from G on was typed into it (G, M, the tilde and
+      // E all failing together, the nix smoke of PRs #71 and #89). So wait for the question, then skip it with Esc as a
+      // person who wants to walk would.
+      if (await p.waitFor(`!document.querySelector('.boot-veil') && document.activeElement?.getAttribute('aria-label') === 'Your name'`, 30_000).then(() => true, () => false)) {
+        await p.tap('Escape', 'Escape', 27)
+      }
+
       // Walk: W held (layout-independent code), the avatar moves.
       await p.mouse('mousePressed', 480, 270, 1)
       await p.mouse('mouseReleased', 480, 270)
