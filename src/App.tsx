@@ -454,6 +454,9 @@ function readOptions(): Options {
     // The Peak candidacy (governor.ts peakCandidate): ?peak=1 lets any desktop's governor try Peak, ?peak=0 keeps it off;
     // absent, the device profile decides. A phone or a lite profile never tries it, and none does without GPU timestamps.
     peak: q.get('peak') === '1' ? true : q.get('peak') === '0' ? false : undefined,
+    // The scene's multisampling (governor.ts msaaCandidate): ?msaa=1 draws 4 samples a pixel on any desktop, ?msaa=0
+    // never; absent, the device profile decides. A phone or a lite profile never does. Read once, at boot.
+    msaa: q.get('msaa') === '1' ? true : q.get('msaa') === '0' ? false : undefined,
     // The GPUs' memory in GB for the size of model auto gives Ollama (09_Cognition/modelFit.ts): the NixOS launcher adds
     // it from nvidia-smi or the amdgpu driver; ask vram at the console beats it; absent, auto keeps its usual model.
     vram: q.get('vram'),

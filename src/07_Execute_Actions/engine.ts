@@ -45,6 +45,7 @@ import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
 import { RegionPlaces, hollowLots, layoutOf, regionPhysics } from '../01_Initialize_World/region/regionWorld.ts'
 import { regionShopLots } from '../01_Initialize_World/region/shops.ts'
 import { regionWorkplaceLots } from '../01_Initialize_World/region/workplaces.ts'
+import { craftBoxesOf, regionTransit, windowNetwork } from '../01_Initialize_World/region/transit.ts'
 import { drawRooms, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { drawShops, orbitEye, shopAt, shops as cityShops, SHOP, type Shop } from '../01_Initialize_World/storefronts.ts'
 import { streetCapacity, streetGridOf, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
@@ -74,7 +75,8 @@ import { TopicBus, UNS, childLines, publishSnapshot, topicLines } from '../05_Ob
 import type { NoirTables } from './terminal/noirscript/index.ts'
 import type { AgentTelemetry } from '../05_Observe_Environment/agv.ts'
 import {
-  Governor, classifyHardware, defaultCars, defaultLanes, knobsOf, laneCeiling, liteJoinHint, peakCandidate, profileDevice, readDeviceHints, tierRange,
+  Governor, MSAA, classifyHardware, defaultCars, defaultLanes, knobsOf, laneCeiling, liteJoinHint, msaaCandidate, peakCandidate, profileDevice,
+  readDeviceHints, tierRange,
   type DeviceHints, type DeviceProfile, type HardwareClass, type QualityKnobs,
 } from '../05_Observe_Environment/governor.ts'
 import { CAR_TUNE_RANGE, chassisBox, clampTuning, kindOf, type CarTuning } from './car.ts'
@@ -198,6 +200,11 @@ export interface EngineOptions {
    * three writes GPU timestamps and, where it then does, whether the governor's automatic range reaches Peak.
    */
   peak?: boolean
+  /**
+   * The scene's multisampling (?msaa=1 on, ?msaa=0 off; absent: the device profile decides, governor.ts msaaCandidate):
+   * whether the post chain's scene pass draws 4 samples a pixel (split screen: the renderer's own frame), decided at boot.
+   */
+  msaa?: boolean
 }
 
 /**
@@ -722,11 +729,14 @@ export class Engine {
   /** Whether the city's GPU device has shader-f16 (gpuDevice.ts asks for it wherever the adapter offers it): the model in
    *  this page runs on the GPU by default only then (inPagePlan.ts). */
   readonly gpuF16: boolean
+  /** The scene's samples per pixel as the boot decided them (governor.ts msaaCandidate; 0 after a refused 4x chain): the
+   *  post chain's scene pass, fixed for the engine's life. Split screen's are the renderer's own (renderer.samples). */
+  readonly sceneSamples: 0 | 4
 
   private constructor(p: {
     canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; craftView: CraftView | null; rigView: RigView; profile: DeviceProfile
     hardware: HardwareClass; hints: DeviceHints
-    post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
+    post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; sceneSamples: 0 | 4; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
     options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]; shops: readonly Shop[]
     crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; crowdFigure: GPUBuffer; netView: NetView
   }) {
@@ -740,6 +750,7 @@ export class Engine {
     this.gpu = p.gpu
     this.profile = p.profile
     this.gpuF16 = p.gpu.device.features.has('shader-f16')
+    this.sceneSamples = p.sceneSamples
     this.hardware = p.hardware
     this.hints = p.hints
     this.world = p.world
@@ -844,7 +855,14 @@ export class Engine {
       const h = readDeviceHints(line)
       return peakCandidate(h, profileDevice(h, requested.lite), requested.peak)
     }
-    const gpu = await createRenderer(canvas, requested.pixelRatio, requested.profile, peakOf)
+    // Split screen draws on the direct path alone (the post chain is player 1's, off with more players), so there the
+    // renderer's own frame takes the samples, fixed for its life (createRenderer) and so at every tier; the same rule as
+    // the scene pass's, ?post=0 included. Unlike the scene pass it has no 1x fallback: three cannot change them later.
+    const splitSamplesOf = (line: string): 0 | 4 => {
+      const h = readDeviceHints(line)
+      return requested.post && clampPlayers(requested.players) > 1 && msaaCandidate(h, profileDevice(h, requested.lite), requested.msaa, requested.pixelRatio) ? MSAA.samples : 0
+    }
+    const gpu = await createRenderer(canvas, requested.pixelRatio, requested.profile, peakOf, splitSamplesOf)
     onStage('world')
     // A boot that fails partway lets go of what it took: the page's GPU device (releaseGpu) and the physics worker, so
     // the recovery card is not left over a device and a worker still running, and the worker's own later rejection is
@@ -899,6 +917,9 @@ export class Engine {
         cars: empty ? 0 : streets ? (requested.tracks === false ? 0 : Math.min(cars, streetCapacity(streets, requested.seed))) : cars,
         agents: empty ? AGENTS_RANGE[0] : Math.min(requested.agents ?? defaultLanes(profile, hardware, gpu.limits), laneCeiling(gpu.limits)), host: hints.host ?? 'browser',
       }
+      // The scene pass's samples (governor.ts msaaCandidate), decided once here: every scene pipeline three builds keys on
+      // them, so no tier change may move them. Only where the post chain can run (not split screen, lite or ?post=0).
+      let sceneSamples: 0 | 4 = options.post && msaaCandidate(hints, profile, requested.msaa, requested.pixelRatio) ? MSAA.samples : 0
       // A generated region's indoor workplaces (region/workplaces.ts): up to six lots of its street window near the start,
       // picked from the pack as it came, then hollowed out of a copy of it (regionWorld.ts hollowLots), which the page
       // draws with the rooms' boxes and paved floors and the worker walls; the worker gets the lots themselves and builds
@@ -907,7 +928,16 @@ export class Engine {
       const lots = pack && layout && streets ? regionWorkplaceLots(pack, layout, streets, spawn, options.seed) : []
       const shopLots = pack && layout && streets ? regionShopLots(pack, layout, streets, spawn, options.seed, lots) : []
       const hollow = pack && layout ? hollowLots(pack, layout, lots, shopLots) : null
-      const world = buildWorld(gpu.renderer, options.seed, pack && layout && hollow ? { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan: hollow.plan, rooms: hollow.rooms } : null, lite ? LITE_WORLD : FULL_WORLD)
+      // The window's transit (region/transit.ts regionTransit): the zebra crossings and the STOL strip the region draws,
+      // the pier the page draws and the worker walls (in the plan with the rooms), and the pier's opening through the
+      // shore wall. A surveyed region has no window and none of it.
+      const transit = pack && layout && streets && hollow ? regionTransit(hollow.pack, layout, streets) : null
+      const plan = hollow ? [...hollow.plan, ...(transit?.plan ?? [])] : []
+      const world = buildWorld(gpu.renderer, options.seed, pack && layout && hollow ? { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan, rooms: hollow.rooms, transit } : null, lite ? LITE_WORLD : FULL_WORLD)
+      // The craft boxes (transit.ts craftBoxesOf): the window's rectangular buildings, the needles and the plan, from the
+      // hollowed pack (a building put out of a room's way is no pad), sent to the worker so that it lays the window's
+      // VTOL routes and racetrack as the page does.
+      const craftBoxes = pack && layout && streets && hollow ? craftBoxesOf(hollow.pack, layout.offset, streets, world.boxes) : null
       // Players 1..3 (split screen) start beside player 0 along the sidewalk (the city's spawn sidewalk runs along z; a
       // region's along its street heading); the realm moves a spawn out of a building lot itself.
       const along = start ? { x: Math.sin(start.heading), z: Math.cos(start.heading) } : { x: 0, z: 1 }
@@ -920,10 +950,11 @@ export class Engine {
       // page draws them yet).
       simBoot = SimClient.create({
         seed: options.seed, cars: options.cars, agents: options.agents, boxes: world.boxes, furniture: lite ? NO_FURNITURE : world.furniture, spawn,
-        debug: options.debug === true, region: hollow && layout ? regionPhysics(hollow.pack, layout) : null, streets, tracks: options.tracks !== false,
+        debug: options.debug === true, region: hollow && layout ? regionPhysics(hollow.pack, layout, transit?.openings ?? []) : null, streets, tracks: options.tracks !== false,
         ragdoll: options.ragdoll !== false && !pack && !lite, craft: !lite,
         ...(spawns.length > 0 && { spawns }),
         ...(lots.length > 0 && { workplaces: lots }),
+        ...(craftBoxes && craftBoxes.length > 0 && { craftBoxes }),
         ...(shopLots.length > 0 && { shops: shopLots }),
       })
 
@@ -970,8 +1001,11 @@ export class Engine {
       const view = new FleetView(sim.meta.kind, sim.meta.paint, world.night, world.matrixMode.globalState)
       view.sync(sim.state.poses)
       // The scheduled craft (the realm's craft stream; craftView.ts): the page builds the realm's own network again, from
-      // the same seed and boxes, for the loop's deck, the pads and the cars of a set. None on a lite boot or in a region.
-      const craftView = sim.meta.craft > 0 ? new CraftView(buildTrackNetwork(options.seed, world.boxes), sim.meta.craft, world.night, world.matrixMode.globalState) : null
+      // the same seed and boxes (in a region with a street window, the window's network from the same seed, window, craft
+      // boxes and bounds: transit.ts windowNetwork), for the loop's deck, the pads and the cars of a set; the view throws
+      // when its count is not the realm's. None on a lite boot or in a surveyed region without a window.
+      const network = sim.meta.craft > 0 ? (streets && craftBoxes && layout ? windowNetwork(options.seed, streets, craftBoxes, layout.bounds) : buildTrackNetwork(options.seed, world.boxes)) : null
+      const craftView = network ? new CraftView(network, sim.meta.craft, world.night, world.matrixMode.globalState, streets ? streets.furniture : undefined) : null
       if (craftView && sim.state.craft) craftView.sync(sim.state.craft)
       // The rigs of the promoted pedestrians (the realm's rig stream; none with the ragdoll off, in a region or on a lite
       // boot). The figures wear them (crowd.ts rigPoses); the capsules are drawn in the figures' place only on
@@ -989,7 +1023,9 @@ export class Engine {
       const netView = new NetView()
       world.scene.add(netView.people, netView.cars)
       const ghost = createGhost({ boxes: world.boxes, furniture: world.furniture, suv: sim.meta.suv, crowdPos: view0.pos, agents: options.agents, rigs: rigShapes })
-      const { pipeline: post, volumetrics, cinema } = buildPost(gpu.renderer, world.scene, world.camera, options.cinema === false ? null : { resorted: world.resorted }, ghost)
+      const chainOf = (samples: 0 | 4): ReturnType<typeof buildPost> =>
+        buildPost(gpu.renderer, world.scene, world.camera, options.cinema === false ? null : { resorted: world.resorted }, ghost, { sceneSamples: samples })
+      let { pipeline: post, volumetrics, cinema, release } = chainOf(sceneSamples)
 
       const w = Math.max(1, canvas.clientWidth), h = Math.max(1, canvas.clientHeight)
       gpu.renderer.setSize(w, h, false)
@@ -1002,17 +1038,36 @@ export class Engine {
       onStage('shaders')
       await gpu.renderer.compileAsync(world.scene, world.camera)
       onStage('frame')
-      // Draw once on BOTH paths (post and direct), so a later quality step that toggles post never compiles a
+      // Draw once on BOTH paths (direct and post), so a later quality step that toggles post never compiles a
       // pipeline mid-game; the boot veil hides these frames. They draw inside a validation scope: a draw the browser's
       // WebGPU refuses, or a device lost meanwhile, fails the boot with its own words instead of lifting the veil onto
       // a city that never presents. With post capped off (?post=0, split screen, a lite profile) the chain can never
       // run, so it is not drawn: three then never compiles its passes or the velocity copies of every material.
+      // Each path in a scope of its own, so a refusal is blamed on the path that drew it.
       gpu.device.pushErrorScope('validation')
       gpu.renderer.render(world.scene, world.camera)
-      if (options.post) post.render()
       const invalid = await gpu.device.popErrorScope()
       stillThere()
       if (invalid) throw new Error(`the first frame failed WebGPU validation: ${invalid.message}`)
+      if (options.post) {
+        gpu.device.pushErrorScope('validation')
+        post.render()
+        const refused = await gpu.device.popErrorScope()
+        stillThere()
+        // A multisampled chain the browser refuses is let go and built again at one sample, then drawn again in a scope
+        // of its own: the city boots without the anti-aliasing rather than not at all. Anything else fails the boot.
+        if (refused && sceneSamples > 0) {
+          console.warn(`[aa] the 4x scene pass failed WebGPU validation (${refused.message}); the chain is rebuilt at 1x`)
+          release()
+          sceneSamples = 0
+          ;({ pipeline: post, volumetrics, cinema, release } = chainOf(sceneSamples))
+          gpu.device.pushErrorScope('validation')
+          post.render()
+          const retry = await gpu.device.popErrorScope()
+          stillThere()
+          if (retry) throw new Error(`the first frame failed WebGPU validation: ${retry.message}`)
+        } else if (refused) throw new Error(`the first frame failed WebGPU validation: ${refused.message}`)
+      }
       // The render buffers exist once three has drawn them (above); the worker's first frame goes straight in. The
       // looks (03_Spawn_Agents/look.ts): every body material reads the attribute, so the draws allocated it as well;
       // the cull reads each agent's body from it, setLook writes it.
@@ -1034,7 +1089,7 @@ export class Engine {
       if (sim.fault !== null) throw new Error(sim.fault)
       stillThere()
       const engine = new Engine({
-        canvas, gpu, world, crowd, sim, view, rigView, profile, hardware, hints, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options,
+        canvas, gpu, world, crowd, sim, view, rigView, profile, hardware, hints, post, volumetrics, cinema, sceneSamples, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options,
         quality: { governor, targets, applied, mask, live }, places, landmark, streets,
         rooms: hollow ? hollow.rooms : workplaces(options.seed),
         // The city's storefronts, hollowed into its boxes by city.ts (storefronts.ts hollowShops), or a generated region's
