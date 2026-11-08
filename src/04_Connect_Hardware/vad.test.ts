@@ -192,6 +192,40 @@ test('hiss at a voice\'s level is not speech: loud, but neither voiced nor tonal
   assert.ok(f.zcr > VAD.zcrMax || f.flatness < VAD.flatnessMin, `zcr ${f.zcr} flatness ${f.flatness}`)
 })
 
+/** `x` through a windowed-sinc low-pass at `cut` (a fraction of the rate), scaled by `gain`. */
+function lowpass(x: Float32Array, cut: number, gain = 1, taps = 255): Float32Array {
+  const h = new Float32Array(taps), m = (taps - 1) / 2
+  for (let i = 0; i < taps; i++) {
+    const t = i - m, sinc = t === 0 ? 2 * cut : Math.sin(2 * Math.PI * cut * t) / (Math.PI * t)
+    h[i] = sinc * (0.42 - 0.5 * Math.cos((2 * Math.PI * i) / (taps - 1)) + 0.08 * Math.cos((4 * Math.PI * i) / (taps - 1))) * gain
+  }
+  const out = new Float32Array(x.length)
+  for (let i = 0; i < x.length; i++) {
+    let a = 0
+    for (let j = 0; j < taps; j++) { const k = i - j + m; if (k >= 0 && k < x.length) a += x[k] * h[j] }
+    out[i] = a
+  }
+  return out
+}
+
+test('hiss stays hiss when the top of the band is empty: a microphone rolling off at 16 to 21 kHz, and a 48 kHz capture heard in a 96 kHz context', () => {
+  // The seventh review's case: the flatness was read up to the top of the band and the crossings per sample, so hiss
+  // with nothing above 20 kHz looked tonal, and in a 96 kHz context (the browser's echo cancellation works at 48 kHz)
+  // it crossed zero half as often per sample: both votes said voice, and a hiss could cut Sloane off.
+  const sig = concat(room(1), hiss(1.5), room(0.5))
+  for (const hz of [21_000, 18_000, 16_000]) assert.deepEqual(run(new VadCore(VAD), lowpass(sig, hz / SR)), [], `hiss rolled off at ${hz} Hz is not speech`)
+  const up = new Float32Array(sig.length * 2)
+  for (let i = 0; i < sig.length; i++) up[2 * i] = sig[i]
+  const at96 = lowpass(up, 22_000 / 96_000, 2)
+  assert.deepEqual(run(new VadCore({ ...VAD, frame: vadFrame(96_000), rate: 96_000 }), at96), [], 'a 48 kHz capture in a 96 kHz context: still hiss')
+  // A voice through the same paths is still a voice.
+  const v = concat(room(0.5), voice(0.6), room(0.8))
+  assert.equal(run(new VadCore(VAD), lowpass(v, 16_000 / SR))[0]?.speech, true, 'a voice rolled off at 16 kHz is speech')
+  const vu = new Float32Array(v.length * 2)
+  for (let i = 0; i < v.length; i++) vu[2 * i] = v[i]
+  assert.equal(run(new VadCore({ ...VAD, frame: vadFrame(96_000), rate: 96_000 }), lowpass(vu, 22_000 / 96_000, 2))[0]?.speech, true, 'and at 96 kHz')
+})
+
 test('a voice that never stops becomes the room only slowly: the floor rises a little per silent frame, a quarter of that during speech', () => {
   const c = new VadCore(VAD)
   run(c, concat(room(1), voice(4)))
@@ -318,7 +352,7 @@ test('a knock or a click of up to three frames (32 ms), wherever it falls across
 test('the frame follows the sample rate (vadFrame), so a frame lasts 10.7 to 11.6 ms and every count of frames is the time it says: at 88.2 and 96 kHz a knock of up to 32 ms is not learned and her learning still lasts about 1.5 s', () => {
   const frames = [16_000, 22_050, 24_000, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000].map(vadFrame)
   assert.deepEqual(frames, [128, 256, 256, 256, 512, 512, 1024, 1024, 2048, 2048])
-  assert.deepEqual([vadFrame(0), vadFrame(Number.NaN), vadFrame(-1), vadFrame(8_000), vadFrame(1e7)], [512, 512, 512, 128, 4096])
+  assert.deepEqual([vadFrame(0), vadFrame(Number.NaN), vadFrame(-1), vadFrame(8_000), vadFrame(1e7)], [512, 512, 512, 64, 4096])
   for (const rate of [22_050, 24_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000]) {
     const ms = (vadFrame(rate) / rate) * 1000
     assert.ok(ms >= 10.6 && ms <= 11.7, `${rate} Hz: a frame is ${ms.toFixed(1)} ms`)

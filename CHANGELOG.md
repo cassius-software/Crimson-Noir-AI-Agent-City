@@ -27,11 +27,14 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   starts with the microphone off until that first press: `MIC_OPEN_BY_DEFAULT` in `04_Connect_Hardware/microphone.ts`
   is the one line that would open it at boot instead; a visitor who left it on finds it on again (key
   `civic-simulation:voice:v1`). Open, a voice activity
-  detector (`vad.ts`: energy over an adaptive floor, zero crossings and spectral flatness per frame of about 11 ms,
-  with onset and release counts) runs in an audio worklet where the browser has one and polled from the page where it
-  has not (each poll feeds the samples since the last by the context's clock), feeding the meter and the pill; the
-  frame follows the context's sample rate (`vadFrame`: 512 samples at 44.1 and 48 kHz, 1024 at 88.2 and 96 kHz), so
-  every time below holds at those rates (at 16 and 32 kHz a frame is 8 ms and every time is three quarters as long); speech starting while Sloane speaks cuts her line (`speaker.ts`
+  detector (`vad.ts`: energy over an adaptive floor, zero crossings counted as at 48 kHz and spectral flatness below
+  16 kHz, so hiss with an empty top of the band stays hiss, per frame of about 11 ms, with onset and release counts)
+  runs in an audio worklet where the browser has one and polled from the page where it has not (each poll feeds the
+  samples since the last by the context's clock), feeding the meter and the pill; the frame follows the audio
+  context's sample rate, which is the output device's (`vadFrame`: 512 samples at 44.1 and 48 kHz, 1024 at 88.2 and
+  96 kHz), so every time the detector counts below holds at those rates (at 8, 16 and 32 kHz a frame is 8 ms and
+  those times are three quarters as long; the 1.5 s after her line in which words are not taken is the clock's);
+  speech starting while Sloane speaks cuts her line (`speaker.ts`
   `onSpeaking`, `speaking`), with the browser's echo cancellation and a margin in the detector against her own
   voice; the detector also learns how loud her voice comes back through the speakers over each line's first 1.5 s
   and 0.43 s past the last steady sound in them (`speaking` starts when the clip plays or the browser speaks, not

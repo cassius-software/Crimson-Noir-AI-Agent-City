@@ -33,8 +33,10 @@ export interface ScanTarget {
   focus(options?: { preventScroll?: boolean }): void
   matches(selector: string): boolean
   hasAttribute(name: string): boolean
+  getAttribute(name: string): string | null
   setAttribute(name: string, value: string): void
   removeAttribute(name: string): void
+  addEventListener(type: 'blur', fn: () => void, options?: { once?: boolean }): void
 }
 
 /** The key event's parts the scan reads. */
@@ -159,9 +161,22 @@ export class Scanner {
         el.focus({ preventScroll: false })
       }
     }
-    // Given back once the focus has moved on, so taking it away never drops the focus to the page.
-    if (lent && lent !== el) lent.removeAttribute('tabindex')
+    if (lent && lent !== el) this.giveBack(lent)
     this.seen = this.env.active()
+  }
+
+  /**
+   * Gives a lent tabindex back: at once if the control no longer has the focus, else when the focus leaves it (taking
+   * it off the focused control would drop the focus to the page: on stop(), or when the next control offered could not
+   * take the focus either); a window losing the focus is not the focus leaving. Never one the page has set since.
+   */
+  private giveBack(el: ScanTarget): void {
+    const back = (): void => {
+      if (this.lent === el || el.getAttribute('tabindex') !== '-1') return
+      if (this.env.active() === el) { el.addEventListener('blur', back, { once: true }); return }
+      el.removeAttribute('tabindex')
+    }
+    back()
   }
 }
 

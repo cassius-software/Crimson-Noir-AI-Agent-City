@@ -12,7 +12,7 @@
  * a filter built into the chain that nothing sets, with every unit test green.
  */
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
 const read = (p: string): string => readFileSync(new URL(p, import.meta.url), 'utf8')
@@ -22,6 +22,7 @@ const CONCIERGE = read('./Concierge.tsx')
 const ACT = read('./ActCard.tsx')
 const WARDROBE = read('./Customizer.tsx')
 const RECOVERY = read('./RecoveryCard.tsx')
+const STORE = read('./StoreCard.tsx')
 const ONBOARDING = read('./onboarding/Onboarding.tsx')
 const TOUCH = read('../04_Connect_Hardware/TouchControls.tsx')
 const CSS = read('../index.css')
@@ -64,10 +65,16 @@ test('the shell: the filter reaches the engine as it changes, the bridge reads t
 })
 
 test('every overlay root carries the zoom class, every card the blur utility the contrast rules key on; the HUD meter and captions follow', () => {
-  for (const [name, src, roots] of [['Hud', HUD, 1], ['Concierge', CONCIERGE, 2], ['ActCard', ACT, 1], ['Customizer', WARDROBE, 1], ['RecoveryCard', RECOVERY, 2], ['Onboarding', ONBOARDING, 1]] as const) {
+  for (const [name, src, roots] of [['Hud', HUD, 1], ['Concierge', CONCIERGE, 2], ['ActCard', ACT, 1], ['Customizer', WARDROBE, 1], ['RecoveryCard', RECOVERY, 2], ['Onboarding', ONBOARDING, 1], ['StoreCard', STORE, 1]] as const) {
     assert.equal(src.match(/className="ui-zoom (?:pointer-events-none )?(?:absolute|fixed) inset-0/g)?.length, roots, `${name}: its full-screen root${roots > 1 ? 's' : ''} zoom`)
   }
-  for (const [name, src] of [['Hud', HUD], ['Concierge', CONCIERGE], ['ActCard', ACT], ['Customizer', WARDROBE], ['RecoveryCard', RECOVERY]] as const) {
+  // Every full-screen overlay among the cards zooms, so a card added later (the shops' was merged in without it) is
+  // caught; the touch layer (04_Connect_Hardware/TouchControls.tsx) is sized for thumbs, not text, and lives elsewhere.
+  const cards = (dir: string): string[] => readdirSync(new URL(dir, import.meta.url), { withFileTypes: true }).flatMap((d) => d.isDirectory() ? cards(`${dir}${d.name}/`) : d.name.endsWith('.tsx') ? [`${dir}${d.name}`] : [])
+  for (const file of cards('./')) {
+    for (const m of read(file).matchAll(/className="([^"]*?)\b(?:absolute|fixed) inset-0\b/g)) assert.ok(/^ui-zoom /.test(m[1]), `${file}: a full-screen overlay without the text-size zoom (${m[0]})`)
+  }
+  for (const [name, src] of [['Hud', HUD], ['Concierge', CONCIERGE], ['ActCard', ACT], ['Customizer', WARDROBE], ['RecoveryCard', RECOVERY], ['StoreCard', STORE]] as const) {
     assert.match(src, /backdrop-blur-/, `${name}: the card is frosted glass, which index.css flattens`)
   }
   assert.match(CSS, /:root \{\n\s+--ui-zoom: 1;\n\}/)
@@ -113,9 +120,8 @@ test('the hands and the ears: the dwell and the scan run above every shell, the 
 test('a setting changed never rebuilds the city: the shell pins what it booted with, and the engine effect depends on nothing an accessibility change renews', () => {
   assert.match(APP, /const \[boot\] = useState\(\(\) => \(\{ options, plan \}\)\)/)
   assert.match(APP, /const \{ options, plan \} = boot\n/)
-  const deps = APP.match(/\}, \[boot, wearLook, link, roster, speaker, [^\]\n]*mic, onMic, onAccess, announcer\]\)/)
-  assert.ok(deps, 'the engine effect\'s deps')
-  assert.doesNotMatch(deps[0], /\boptions\b|\bplan\b|\baccess\b/, 'no options or plan object among the deps: App renders them anew on every setting')
+  // Exactly these: each is made once per shell (useState, a [] callback, the pinned boot), so no setting renews one.
+  assert.match(APP, /\}, \[boot, wearLook, link, roster, speaker, keeper, openStore, closeStore, mic, onMic, onAccess, announcer\]\)/, 'no options or plan object among the deps: App renders them anew on every setting')
   assert.doesNotMatch(APP, /\}, \[options, plan, wearLook/)
 })
 

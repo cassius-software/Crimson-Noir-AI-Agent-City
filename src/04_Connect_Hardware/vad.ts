@@ -6,7 +6,7 @@
  * frame by frame, whether the microphone hears a person speaking or the room, so the page can show "Hearing you",
  * cut Sloane's voice short when the visitor talks over it (barge-in), and never treat a passing bus as a sentence. It
  * is the classic three-feature detector (energy over an adaptive noise floor, the zero-crossing rate, and the spectral
- * flatness of a 512-point frame: speech is louder than the room, not hissy, and harmonic), with an onset count before
+ * flatness of a frame of about 11 ms: speech is louder than the room, not hissy, and harmonic), with an onset count before
  * speech starts and a release count before it ends, so a plosive or a pause inside a sentence changes nothing. No
  * neural model is bundled: this is deterministic, allocation-free after construction, and runs in Node for the tests.
  * The same class runs inside an AudioWorklet: `vadWorkletSource` serialises it (Function.prototype.toString, the
@@ -26,15 +26,21 @@ export const VAD = Object.freeze({
   floor: 0.0015,
   /** RMS over the noise floor (as a ratio) that votes speech: 2.5 is about 8 dB. */
   energyRatio: 2.5,
-  /** The zero-crossing rate above which a frame is hiss, not a voice (speech sits well under this). */
+  /** The zero-crossing rate above which a frame is hiss, not a voice (speech sits well under this), counted per sample
+   *  at 48 kHz: at a higher rate it is scaled to that, so hiss from a 48 kHz capture in a 96 kHz context counts as hiss. */
   zcrMax: 0.35,
-  /** Decibels below a flat spectrum from which a frame is tonal enough to vote speech (white noise is near 0). */
+  /** Decibels below a flat spectrum from which a frame is tonal enough to vote speech (white noise is near 0) ... */
   flatnessMin: 4,
+  /** ... over the bins below this many hertz (and below the top of the band), so a microphone's roll-off near 20 kHz,
+   *  or the empty top half of a 48 kHz capture in a 96 kHz context, never makes hiss look tonal. */
+  band: 16_000,
+  /** The sample rate the frames come at (the page passes its audio context's, with the frame vadFrame picks for it). */
+  rate: 48_000,
   /** Frames in a row that read as speech before speech starts (4 is about 43 ms). */
   onsetFrames: 4,
   /** Frames in a row that read as the room before speech ends (24 is about 260 ms: a pause inside a sentence stays). */
   releaseFrames: 24,
-  /** How much the noise floor rises per frame that is not speech (it drops at once): 0.4 % a frame, half a second to double.
+  /** How much the noise floor rises per frame that is not speech (it drops at once): 0.4 % a frame, about 1.9 s to double.
    *  During speech it rises at a quarter of that, so a steady voiced noise (a fan's hum, traffic) that started speech
    *  becomes the room in a few seconds instead of reading as a voice for ever, while a person talking keeps it for many. */
   floorRise: 1.004,
@@ -95,6 +101,10 @@ export class VadCore {
   readonly floorMin: number
   readonly energyRatio: number
   readonly zcrMax: number
+  /** The sample rate the frames come at, what the crossings are scaled by (never under 1), and the bins the flatness reads. */
+  readonly rate: number
+  readonly zcrScale: number
+  readonly bandBins: number
   readonly flatnessMin: number
   readonly onsetFrames: number
   readonly releaseFrames: number
@@ -154,6 +164,10 @@ export class VadCore {
     this.energyRatio = Number(o.energyRatio) > 1 ? Number(o.energyRatio) : 2.5
     this.zcrMax = Number(o.zcrMax) > 0 ? Number(o.zcrMax) : 0.35
     this.flatnessMin = Number(o.flatnessMin) >= 0 ? Number(o.flatnessMin) : 4
+    const rate = Number(o.rate) > 0 ? Number(o.rate) : 48_000
+    this.rate = rate
+    this.zcrScale = Math.max(1, rate / 48_000)
+    this.bandBins = Math.max(2, Math.min((this.frame >> 1) - 1, Math.floor(((Number(o.band) > 0 ? Number(o.band) : 16_000) * this.frame) / rate)))
     this.onsetFrames = Number(o.onsetFrames) >= 1 ? Math.round(Number(o.onsetFrames)) : 4
     this.releaseFrames = Number(o.releaseFrames) >= 1 ? Math.round(Number(o.releaseFrames)) : 24
     this.floorRise = Number(o.floorRise) > 1 ? Number(o.floorRise) : 1.004
@@ -212,18 +226,17 @@ export class VadCore {
       this.im[k] = 0
     }
     const rms = Math.sqrt(sum / n)
-    const zcr = crossings / (n - 1)
+    const zcr = (crossings / (n - 1)) * this.zcrScale
     VadCore.fft(this.re, this.im)
-    // Spectral flatness over the bins above DC: the geometric mean over the arithmetic mean of the power, in dB below
-    // flat (0 dB is white noise; a voice is many dB below).
+    // Spectral flatness over the bins above DC and below `band`: the geometric mean over the arithmetic mean of the
+    // power, in dB below flat (0 dB is white noise; a voice is many dB below).
     let logSum = 0, linSum = 0
-    const half = n >> 1
-    for (let k = 1; k < half; k++) {
+    const bins = this.bandBins
+    for (let k = 1; k <= bins; k++) {
       const p = this.re[k] * this.re[k] + this.im[k] * this.im[k] + 1e-20
       logSum += Math.log(p)
       linSum += p
     }
-    const bins = half - 1
     const flatness = -10 * Math.log10(Math.exp(logSum / bins) / (linSum / bins))
     this.frameRms = rms
     this.zcr = zcr
@@ -341,13 +354,14 @@ export class VadCore {
 /**
  * The frame for a sample rate: the power of two nearest to 10.7 ms of it (512 at 44.1 and 48 kHz, 1024 at 88.2 and
  * 96 kHz, 2048 at 176.4 and 192 kHz, 256 at 22.05 and 24 kHz), so a frame lasts 10.7 to 11.6 ms and every count of
- * frames in VAD is the time it says. At 16 and 32 kHz the nearest is 8 ms (128 and 256), so there every time is three
- * quarters as long. A rate the browser does not give (0, NaN) keeps 512.
+ * frames in VAD is the time it says. At 8, 16 and 32 kHz the nearest is 8 ms (64, 128 and 256), so there every time
+ * the detector counts is three quarters as long. Between 64 and 4096 samples; a rate the browser does not give (0,
+ * NaN) keeps 512.
  */
 export function vadFrame(rate: number): number {
   const r = Number(rate)
   if (!Number.isFinite(r) || r <= 0) return VAD.frame
-  return Math.min(4096, Math.max(128, 2 ** Math.round(Math.log2((r * VAD.frame) / 48_000))))
+  return Math.min(4096, Math.max(64, 2 ** Math.round(Math.log2((r * VAD.frame) / 48_000))))
 }
 
 /** The processor's registered name. */

@@ -364,9 +364,10 @@ export class Microphone extends EventTarget {
     this.#source = source
     // The frame follows the context's rate, which is the output device's (often 96 kHz on an audio interface), so every
     // count of frames in VAD is the time it says (vad.ts vadFrame).
-    const frame = vadFrame(ctx.sampleRate)
-    const opts = frame === VAD.frame ? VAD : Object.freeze({ ...VAD, frame })
-    if (this.#core.frame !== frame) this.#core = new VadCore(opts)
+    const rate = Number(ctx.sampleRate) > 0 ? Number(ctx.sampleRate) : VAD.rate
+    const frame = vadFrame(rate)
+    const opts = frame === VAD.frame && rate === VAD.rate ? VAD : Object.freeze({ ...VAD, frame, rate })
+    if (this.#core.frame !== frame || this.#core.rate !== rate) this.#core = new VadCore(opts)
     this.#core.reset()
     this.#core.speaking = this.#speaking
     this.#speech = false

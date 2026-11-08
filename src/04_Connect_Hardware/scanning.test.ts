@@ -12,8 +12,15 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { SCAN, Scanner, type ScanEnv, type ScanKey, type ScanTarget } from './scanning.ts'
 
-/** What has the focus in the fake page. */
+/** What has the focus in the fake page; moving it blurs the one that had it (the page's own element while it does). */
 const page0 = { focused: null as unknown }
+function setFocus(el: El | null): void {
+  const was = page0.focused as El | null
+  if (was === el) return
+  page0.focused = null
+  was?.blurred()
+  page0.focused = el
+}
 
 class El implements ScanTarget {
   clicks = 0
@@ -27,6 +34,7 @@ class El implements ScanTarget {
   /** ... and false too for one it will not focus even with a tabindex (a button in a disabled fieldset). */
   readonly lendable: boolean
   readonly attrs = new Map<string, string>()
+  readonly blurs: (() => void)[] = []
   constructor(name: string, typed = false, focusable = true, lendable = true) {
     this.name = name
     this.typed = typed
@@ -35,15 +43,23 @@ class El implements ScanTarget {
     this.lendable = lendable
   }
   click(): void { this.clicks++ }
-  focus(): void { this.focuses++; if (this.focusable || (this.lendable && this.attrs.has('tabindex'))) page0.focused = this }
+  focus(): void { this.focuses++; if (this.focusable || (this.lendable && this.attrs.has('tabindex'))) setFocus(this) }
   matches(): boolean { return this.typed }
   hasAttribute(name: string): boolean { return this.attrs.has(name) }
+  getAttribute(name: string): string | null { return this.attrs.get(name) ?? null }
   setAttribute(name: string, value: string): void { this.attrs.set(name, value); if (name === 'data-scan') this.marked = true }
-  removeAttribute(name: string): void { this.attrs.delete(name); if (name === 'data-scan') this.marked = false }
+  removeAttribute(name: string): void {
+    this.attrs.delete(name)
+    if (name === 'data-scan') this.marked = false
+    // The browser's focus fixup: a focused element that can no longer take the focus drops it to the page.
+    if (name === 'tabindex' && page0.focused === this && !this.focusable) setFocus(null)
+  }
+  addEventListener(_type: 'blur', fn: () => void): void { this.blurs.push(fn) }
+  blurred(): void { const fns = this.blurs.splice(0); for (const fn of fns) fn() }
 }
 
 function page(shown: El[]) {
-  page0.focused = null
+  setFocus(null)
   let keyFn: ((e: ScanKey) => void) | null = null
   const timers = new Map<number, () => void>()
   let next = 1
@@ -231,6 +247,40 @@ test('a control the browser will not focus as it is takes the focus for its offe
   assert.deepEqual(seen, ['c', 'field', 'dead', 'd', 'c'], 'the round goes on past it')
   assert.deepEqual([c.attrs.has('tabindex'), d.attrs.has('tabindex'), dead.attrs.has('tabindex')], [false, false, false], 'nothing left lent')
   t.stop()
+})
+
+test('the lent tabindex is given back only once the focus has left the control (on stop, or past a control that takes none), and never one the page has set since', () => {
+  // The seventh review's cases: taking it off the control that has the focus drops the focus to the page, which the
+  // stop() contract ("focus stays where it is") and the round's own comment ruled out; and a tabindex the page gave the
+  // control meanwhile (a roving tabindex) was taken away with it.
+  const a = new El('a', false, false), b = new El('b', false, false), c = new El('c')
+  const p = page([a, b, c])
+  const s = new Scanner(p.env, 1000)
+  s.start()
+  assert.deepEqual([page0.focused, a.attrs.get('tabindex')], [a, '-1'])
+  s.stop()
+  assert.deepEqual([page0.focused, a.attrs.get('tabindex')], [a, '-1'], 'stopped: the focus stays, and so does the tabindex under it')
+  c.focus()
+  assert.deepEqual([page0.focused, a.attrs.has('tabindex')], [c, false], 'given back once the focus has left')
+  // Past a control that takes no focus even when lent one: the focus stays on the last, and so does its tabindex.
+  const d = new El('d', false, false), dead = new El('dead', false, false, false), e = new El('e')
+  const q = page([d, dead, e])
+  const t = new Scanner(q.env, 1000)
+  t.start()
+  q.tick()
+  assert.deepEqual([t.current, page0.focused, d.attrs.get('tabindex')], [dead, d, '-1'], 'the focus never drops to the page')
+  q.tick()
+  assert.deepEqual([t.current, page0.focused, d.attrs.has('tabindex'), dead.attrs.has('tabindex')], [e, e, false, false], 'both given back once the focus moved on')
+  t.stop()
+  // The page sets its own tabindex on the control while it is offered: kept.
+  const f = new El('f', false, false), g = new El('g')
+  const r = page([f, g])
+  const u = new Scanner(r.env, 1000)
+  u.start()
+  f.setAttribute('tabindex', '0')
+  r.tick()
+  assert.deepEqual([u.current, f.attrs.get('tabindex')], [g, '0'], 'the page\'s own tabindex stays')
+  u.stop()
 })
 
 test('a field the round merely offers is not taken: with no key it is passed like any control', () => {

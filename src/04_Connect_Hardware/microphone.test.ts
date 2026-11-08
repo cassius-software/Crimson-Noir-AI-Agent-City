@@ -322,6 +322,7 @@ test('the detector\'s frame follows the context\'s rate (96 kHz: 1024 samples, a
   await wm.listen()
   assert.equal(wm.path, 'worklet')
   assert.equal((FakeWorklet.made.at(-1)!.options as { frame: number }).frame, 1024, 'the worklet gets the frame for 96 kHz')
+  assert.equal((FakeWorklet.made.at(-1)!.options as { rate: number }).rate, 96_000, 'and the rate, which the hiss test reads its band by')
   assert.equal((FakeWorklet.made.at(-1)!.options as { onsetFrames: number }).onsetFrames, VAD.onsetFrames, 'and the rest of the tuning')
   wm.mute()
   const p = fake({ worklet: 'refuse', rate: 96_000 })
