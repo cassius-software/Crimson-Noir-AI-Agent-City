@@ -485,11 +485,15 @@ async function serveStatic(dir) {
 }
 
 /**
- * A llama-server built since b11521 as the page meets it: its new default port (9931) on this machine, every origin
- * allowed (its default), one text model listed. Only the lists a look asks are answered.
+ * A llama-server built since b11521 as the page meets it: every origin allowed (its default), one text model listed;
+ * only the lists a look asks are answered. It listens on a free port, which the browser is told is localhost:9931 (its
+ * new default port), so nothing on this machine is reached or needed free. Until `on()` it drops every connection, as
+ * a port with nothing listening would.
  */
 async function serveLlamaServer() {
+  let ready = false
   const server = createServer((req, res) => {
+    if (!ready) { req.socket.destroy(); return }
     const head = { 'Access-Control-Allow-Origin': req.headers.origin ?? '*', 'Cache-Control': 'no-store' }
     if (new URL(req.url ?? '/', 'http://x').pathname === '/v1/models') {
       res.writeHead(200, { ...head, 'Content-Type': 'application/json' }).end(JSON.stringify({ object: 'list', data: [{ id: 'smoke-9931.gguf', object: 'model' }] }))
@@ -497,8 +501,8 @@ async function serveLlamaServer() {
     }
     res.writeHead(404, head).end()
   })
-  await new Promise((r, j) => { server.once('error', j); server.listen(9931, '127.0.0.1', r) })
-  return { close: () => { server.closeAllConnections(); server.close() } }
+  await new Promise((r) => server.listen(0, '127.0.0.1', r))
+  return { port: server.address().port, on: () => { ready = true }, close: () => { server.closeAllConnections(); server.close() } }
 }
 
 /** Navigates again to `url` and waits until the new document has booted (the old one is marked, so it cannot answer). */
@@ -1611,9 +1615,9 @@ const SCENARIOS = {
    * plain JS, as the debug handle allows (App.tsx `window.__SIM__.engine`).
    */
   async actions(chrome, origin) {
-    // `localhost` as a browser resolves it (to this machine), ahead of the rules that keep everything else off the
-    // network: the second round's llama-server below is addressed by that name.
-    const p = await open(chrome, { args: ['--host-resolver-rules=MAP localhost 127.0.0.1'] })
+    // The page's localhost:9931 is the fake llama-server below; every other address stays off the network.
+    const llama = await serveLlamaServer()
+    const p = await open(chrome, { args: [`--host-resolver-rules=MAP localhost:9931 127.0.0.1:${llama.port}`] })
     try {
       // The slowest day (one sim minute a real minute at 60 fps, slower on a software GPU, whose frames are clamped to
       // 50 ms of sim time): the clock an action set is read back minutes later, so the hour is compared, not the minute.
@@ -1680,19 +1684,16 @@ const SCENARIOS = {
 
       // A llama-server on its new default port (router.ts KNOWN_SERVERS): nothing answers at 8080, so auto's second
       // round finds it on 9931, through the page's own air gap and connect-src, and keeps that address.
-      const llama = await serveLlamaServer()
-      try {
-        await p.command('ask provider auto', /provider\s+auto/)
-        check(!!(await p.command('ask', /found\s+llamacpp at http:\/\/localhost:9931, found answering on this machine/, 30_000)),
-          'actions: auto finds a llama-server on its new default port, 9931, when nothing answers at 8080')
-      } finally {
-        llama.close()
-      }
+      llama.on()
+      await p.command('ask provider auto', /provider\s+auto/)
+      check(!!(await p.command('ask', /found\s+llamacpp at http:\/\/localhost:9931, found answering on this machine/, 30_000)),
+        'actions: auto finds a llama-server on its new default port, 9931, when nothing answers at 8080')
       await p.shot('actions')
       p.health('actions')
     } finally {
       p.saveTranscript('actions')
       await p.b.close()
+      llama.close()
     }
   },
 
