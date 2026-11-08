@@ -297,17 +297,20 @@ export class NativeHid implements Hid {
 /**
  * The navigator the HAL should use: inside the shell, its HID in the place of the browser's (WebView2's has no
  * chooser, so it never yields a device); in a browser, the navigator as it is. Everything else (serial, Bluetooth,
- * the gamepads) stays the browser's.
+ * the gamepads, vibration) stays the browser's. The two methods are called on the browser's own navigator, which
+ * throws an illegal invocation when they are called on any other object.
  */
 export function nativeNavigator(nav: HardwareNavigator | null, g: object = globalThis, opts: NativeHidOptions = {}): HardwareNavigator | null {
   const core = shellCore(g)
   if (!core) return nav
   const hid = new NativeHid(core, opts)
   const pads = nav?.getGamepads
+  const buzz = nav?.vibrate
   return {
     hid,
     serial: nav?.serial,
     bluetooth: nav?.bluetooth,
     getGamepads: typeof pads === 'function' ? () => pads.call(nav) : undefined,
+    vibrate: typeof buzz === 'function' ? (pattern: number | number[]) => buzz.call(nav, pattern) : undefined,
   }
 }

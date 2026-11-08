@@ -19,6 +19,11 @@ This product is based on the following Licensed Material:
   Patchen Mortimer, Dennis Muldoon, Stephen Radney-MacFarland, Mikhail Rekun, David N. Ross, Michael
   Sayre, Mark Seifter, Kendra Leigh Speedling, Mark Thompson, Clark Valentine, Andrew White, Landon
   Winkler, and Linda Zayas-Palmer.
+- Pathfinder GM Core © 2023 Paizo Inc., Designed by Logan Bonner and Mark Seifter. Authors: Amirali Attar
+  Olyaee, Logan Bonner, Creighton Broadhurst, Jason Bulmahn, James Case, Jesse Decker, Eleanor Ferron, Fabby
+  Garza Marroquín, Jaym Gates, Matthew Goetz, James Jacobs, Brian R. James, Jenny Jarzabski, Dustin Knight,
+  Jason LeMaitre, Lyz Liddell, Luis Loza, Ron Lundeen, Stephen Radney-MacFarland, David N. Ross, Michael Sayre,
+  Mark Seifter, Owen K.C. Stephens, Amber Stewart, Clark Valentine, Landon Winkler, and Linda Zayas-Palmer.
 
 If you use our Licensed Material in your own published works, please credit us as follows:
 
@@ -46,6 +51,21 @@ limited to:
 - **The three-law command ruling** (`laws.ts`): the ranking under which every vehicle command is
   vetted (protect people, then follow instructions, then preserve the vehicle), the stopping-envelope
   test and the standoff distance.
+- **The operator's progression** (`src/02_Define_The_Rules/progression.ts`, kept by
+  `src/07_Execute_Actions/progress.ts`): six attribute modifiers (strength, dexterity, constitution,
+  intelligence, wisdom, charisma) and attribute boosts at levels 5, 10, 15 and 20, four to different
+  attributes, a boost at +4 or more counting half; skill proficiency ranks with one skill increase a level,
+  master from level 7 and legendary from level 15; levels 1 to 20 at 1,000 XP each; the level-based DC
+  table and the easy adjustment (-2); hero points (at most three, one at the start of a session, spent to
+  reroll a check); three actions and a reaction per six-second round; the treasure-by-level table, at ten
+  credits to the gold piece, and fifteen gold pieces of starting wealth.
+- **What the progression adds on top** (Adapted Licensed Material, the same files): eight skills of the
+  city (computers, piloting, robotics, cyber security, swarm command, acoustics and voice, optics and
+  cinema, architecture and commerce) and the attribute each adds; a check for each thing the operator does,
+  paid by degree from a fixed table; the payout by level; a breadth bonus by how many different skills a
+  cycle of checks has used; resolve, capped by constitution; a bad-luck guard that gives the check after
+  three misses in a row fortune; a minute's rest before a skill earns again; civic credits and the unlocks
+  they buy.
 - **The 5-Whys intent engine** (`intent.ts`): the question-selection tables and the plan mapping are
   this product's own mechanics. The "5 Whys" questioning technique itself is a long-established, public
   root-cause method and is not claimed.
@@ -159,8 +179,13 @@ release; each one is something the release engineering could not confirm.
    the book. Check it against the ORC Notice printed in Pathfinder Player Core (Paizo, 2023) and use
    Paizo's requested wording exactly.
 3. **Upstream scope.** The mechanics used are check resolution, proficiency ranks and fortune/
-   misfortune. Nothing from GM Core (for example, DC-by-level tables) is used: every DC here is an
-   original number. Confirm no other ORC work was drawn on. If one was, add it to the attribution.
+   misfortune (Player Core), and since the operator's progression (7 November 2026) attribute modifiers
+   and boosts, skill increases, levels and XP, hero points and the three-action round (Player Core) and the
+   level-based DCs, the easy adjustment and the treasure-by-level table (GM Core). The civic checks'
+   DCs (`civic.ts`) are still original numbers. The GM Core credit line above was taken from the Archives of
+   Nethys licence page (2e.aonprd.com/Licenses.aspx, read 7 November 2026), not from the book; check it
+   against the ORC Notice printed in Pathfinder GM Core (Paizo, 2023), as item 2 asks for Player Core.
+   Confirm no other ORC work was drawn on. If one was, add it to the attribution.
 4. **Licensing the code.** The ORC License grants no licence to software code (the ORC AxE, "Digital
    Applications of the ORC License"). `LICENSE` licenses the mechanics under ORC, keeps the core
    (`src/`, `crimson_noir_os/`, `native/`, `world/`, `brand/`) proprietary under
