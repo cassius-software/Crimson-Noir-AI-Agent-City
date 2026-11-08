@@ -373,8 +373,13 @@ class Page {
   saveTranscript(name) {
     try { writeFileSync(join(OUT, `${name}-console.txt`), this.transcript.join('\n\n')) } catch { /* the report still has the check rows */ }
   }
-  /** Opens the Ring-0 console with the tilde key (a desktop), its prompt focused. */
+  /**
+   * Opens the Ring-0 console with the tilde key (a desktop), its prompt focused. A first visit's concierge greets once
+   * the veil is gone, its name field holding the keyboard: skipped first, as a visitor who wants the console would, so
+   * the tilde reaches the page (after a reload too).
+   */
   async openConsole() {
+    await this.eval(`[...document.querySelectorAll('aside[data-concierge] button')].find((b) => b.textContent.trim() === 'Skip')?.click()`)
     await this.tap('Backquote', '`', 192)
     return this.waitFor(`!!document.querySelector('[aria-label$="Ring-0 terminal"][data-open]') && document.activeElement?.getAttribute('aria-label') === 'Ring-0 command line'`, 10_000).then(() => true, () => false)
   }
@@ -1428,8 +1433,6 @@ const SCENARIOS = {
       await p.goto(url)
       await p.booted()
       check(await p.eval('globalThis.crossOriginIsolated === true'), 'inpage: the page is cross-origin isolated, so the model may use more than one thread')
-      // As in ultra: the concierge has greeted by now, its name field holding the keyboard; skipped, the tilde reaches the page.
-      await p.eval(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Skip')?.click()`)
       check(await p.openConsole(), 'inpage: the tilde key opens the console')
       await p.command('operator unlock', /unlocked/)
 
@@ -1574,8 +1577,6 @@ const SCENARIOS = {
       // 50 ms of sim time): the clock an action set is read back minutes later, so the hour is compared, not the minute.
       await p.goto(`${origin}/?${LIGHT}&day=1440`)
       await p.booted()
-      // As in ultra: the concierge has greeted by now, its name field holding the keyboard; skipped, the tilde reaches the page.
-      await p.eval(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Skip')?.click()`)
       check(await p.openConsole(), 'actions: the tilde key opens the console')
       await p.command('operator unlock', /unlocked/)
       // `ask provider scripted` answers `provider  scripted: no backend; …` (router.ts PROVIDER_TEXT).
