@@ -28,10 +28,11 @@
  * anywhere a car might be, and jump in and out of cars that are not there.
  */
 import { generateCity } from '../01_Initialize_World/city.ts'
-import { workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
+import { workplaces } from '../01_Initialize_World/interiors.ts'
+import { shops } from '../01_Initialize_World/storefronts.ts'
 import { RING0 } from '../02_Define_The_Rules/ring0.ts'
 import { buildTrackNetwork, projectOnto, tangentAt, type TrackNetwork } from '../06_Make_Decisions/tracks.ts'
-import { AUTHORED, carState, carSubstep, clampSpeed, exitPoint, HELD_CARS, headingOf, planFleet, rebuildCarRig, type CarRig, type PlannedCar } from '../07_Execute_Actions/carRig.ts'
+import { AUTHORED, carState, carSubstep, clampSpeed, exitPoint, HELD_CARS, headingOf, planFleet, rebuildCarRig, type CarRig, type GlassRoom, type PlannedCar } from '../07_Execute_Actions/carRig.ts'
 import { Physics, PHYSICS_HZ } from '../07_Execute_Actions/physics.ts'
 import { ENTER_RANGE, type CarBodyState } from '../07_Execute_Actions/simProtocol.ts'
 
@@ -142,8 +143,11 @@ export class Garage {
   readonly network: TrackNetwork
   readonly plan: readonly PlannedCar[]
   readonly #boxes: ReturnType<typeof generateCity>
-  /** The seed's indoor workplaces: where a car left in one puts its driver (carRig.ts exitPoint, as the page's realm). */
-  readonly #rooms: readonly Workplace[]
+  /**
+   * The seed's glass rooms, its indoor workplaces and its shops (storefronts.ts): where a car left in one puts its
+   * driver (carRig.ts exitPoint), the same list the page's realm hands it in the city (simCore.ts #glass).
+   */
+  readonly #rooms: readonly GlassRoom[]
   readonly #bays = new Map<number, Bay>()
   /** Substeps replayed at the wheel, and drive worlds built, since the garage was made. */
   readonly counts = { substeps: 0, worlds: 0 }
@@ -155,7 +159,7 @@ export class Garage {
     this.network = buildTrackNetwork(this.seed)
     this.plan = Object.freeze(planFleet(this.cars, this.seed, this.network).cars)
     this.#boxes = generateCity(this.seed)
-    this.#rooms = workplaces(this.seed)
+    this.#rooms = [...workplaces(this.seed), ...shops(this.seed)]
   }
 
   join(id: number): void {

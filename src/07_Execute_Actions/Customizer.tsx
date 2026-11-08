@@ -26,8 +26,8 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { PIECE, SLOT, faceRings, silhouetteRings, type SilhouetteRing } from '../03_Spawn_Agents/humanoid.ts'
 import {
-  HAIR, LAYER, LOOK_BODY_SLIDERS, LOOK_FACE_SLIDERS, LOOK_PRESETS, LOOK_SLOTS, bodyShapeOf, faceShapeOf, formatLookCode, lookFromSeed, lookOptions, lookSwatch, matchingSwatch,
-  parseLookCode, withLookSlot,
+  HAIR, LAYER, LOOK_BODY_SLIDERS, LOOK_BUILDS, LOOK_FACE_SLIDERS, LOOK_PRESETS, LOOK_SLOTS, bodyShapeOf, buildOf, faceShapeOf, formatLookCode, lookFromSeed, lookOptions,
+  lookSwatch, matchingSwatch, parseLookCode, withBuild, withLookSlot,
   type Look, type LookBody, type LookFaceSlider, type LookSlider, type LookSlot,
 } from '../03_Spawn_Agents/look.ts'
 import { seedFromName } from '../05_Observe_Environment/profile.ts'
@@ -76,6 +76,8 @@ function slotLabel(slot: LookSlot, body: LookBody, layer: number = LAYER.jacket)
     case 'skin': return 'Skin'
     case 'age': return 'Age'
     case 'undertone': return 'Undertone'
+    case 'vitiligo': return 'Vitiligo'
+    case 'freckles': return 'Freckles'
     case 'hairStyle': return 'Hair'
     case 'hairColour': return 'Hair colour'
     case 'layer': return 'Layer'
@@ -370,6 +372,32 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
                 <span className={`w-14 shrink-0 text-right font-mono text-[12px] ${t.muted}`} data-slider-value>{shown}</span>
               </div>
             )
+            // The builds head the body sliders (each sets the frame's four; any moved after is the person's own).
+            if (slot === 'height') {
+              const on = buildOf(worn)
+              return (
+                <Fragment key={slot}>
+                  <div className="mb-2 flex items-start gap-3" data-row="build">
+                    <div className={`w-20 shrink-0 pt-1 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>Build</div>
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Build">
+                      {LOOK_BUILDS.map((b) => (
+                        <button
+                          key={b.name}
+                          type="button"
+                          role="radio"
+                          aria-checked={on?.name === b.name}
+                          onClick={() => { const next = withBuild(worn, b.name); if (next) onChange(next) }}
+                          className={`rounded-full border px-2.5 py-0.5 text-[12px] capitalize ${on?.name === b.name ? t.pillOn : t.pill}`}
+                        >
+                          {b.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {row}
+                </Fragment>
+              )
+            }
             // The face view heads the face sliders.
             if (slot === 'brow') {
               return (

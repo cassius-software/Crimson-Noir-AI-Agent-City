@@ -11,6 +11,7 @@
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
 import { TRAFFIC } from '../02_Define_The_Rules/civic.ts'
 import { hollowWorkplaces } from './interiors.ts'
+import { hollowShops } from './storefronts.ts'
 
 export const CITY = {
   /** Blocks per axis. Streets run along x = k·pitch and z = m·pitch, k,m ∈ [0, blocks]. */
@@ -234,7 +235,8 @@ function shoreline(add: Add): void {
 /**
  * Every box in the city and its finish, from the seed alone: the lots' buildings, the shoreline, and the sixteen workplace
  * lots hollowed into rooms (interiors.ts hollowWorkplaces: their podium becomes glass walls with a doorway, a ceiling
- * slab and furniture; the towers above and every other lot are as generated).
+ * slab and furniture; the towers above and every other lot are as generated), then the five shop lots hollowed the
+ * same way (storefronts.ts hollowShops, on lots the workplaces did not take).
  */
 export function generateBuildings(seed: number): Building[] {
   const rng = createRng(seed)
@@ -258,6 +260,7 @@ export function generateBuildings(seed: number): Building[] {
   }
   shoreline(add)
   hollowWorkplaces(seed, out)
+  hollowShops(seed, out)
   return out
 }
 
