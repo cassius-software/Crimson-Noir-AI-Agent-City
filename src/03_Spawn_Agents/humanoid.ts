@@ -1414,7 +1414,11 @@ class Loft {
 
   tube(t: Tube, far: boolean): void {
     if (far && t.nearOnly) return
-    const rings = far ? t.rings.filter((r, i) => r.far || i === 0 || i === t.rings.length - 1) : t.rings
+    // Laid from the lowest ring up whichever way the tube lists them: the quads' winding (counter-clockwise from
+    // outside, the face three draws) and the smooth normals face out only that way, and the caps meet the rings they
+    // name. A tube listed from the top down was drawn inside out, its outer face culled (the skirt showed the legs).
+    const listed = t.rings[t.rings.length - 1].y < t.rings[0].y ? [...t.rings].reverse() : t.rings
+    const rings = far ? listed.filter((r, i) => r.far || i === 0 || i === listed.length - 1) : listed
     if (rings.length < 2) return
     const n = far ? t.farSegments : t.segments
     const piece = t.piece ?? PIECE.NONE

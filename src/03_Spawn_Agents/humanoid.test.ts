@@ -524,6 +524,58 @@ test('rigPoint: on a rig standing at rest the body stands as it was; a shape mov
   assert.deepEqual(rotateByQuat([1, 2, 3], [0, 0, 0, 1]), [1, 2, 3])
 })
 
+test('every tube is laid from its lowest ring up, so the face three draws is the outer one: every round tube\'s side triangles wind counter-clockwise seen from outside, near and far, and each cap lies past the ring it closes', () => {
+  // A tube listed from the top down (the legs, the arms, the shoes, the skirt) was once drawn inside out: its outer
+  // face culled, its far wall's inside shown, the legs in front of the skirt's back panel.
+  for (const detailed of [true, false]) {
+    for (let v = 0; v < BODY_NAMES.length; v++) {
+      const m = humanoidMesh(v, detailed)
+      const at = (i: number) => [m.position[i * 3], m.position[i * 3 + 1], m.position[i * 3 + 2]]
+      let tri = 0
+      let round = 0
+      for (const t of bodyTubes(v)) {
+        if (!detailed && t.nearOnly) continue
+        const ys = t.rings.map((r) => r.y)
+        if (t.capTop !== undefined) assert.ok(t.capTop >= Math.max(...ys), `${BODY_NAMES[v]}: a top cap above its tube`)
+        if (t.capBottom !== undefined) assert.ok(t.capBottom <= Math.min(...ys), `${BODY_NAMES[v]}: a bottom cap below its tube`)
+        const kept = detailed ? t.rings.length : t.rings.filter((r, i) => r.far || i === 0 || i === t.rings.length - 1).length
+        const n = detailed ? t.segments : t.farSegments
+        const sides = n * 2 * (kept - 1)
+        // Round tubes alone: the features, the head's laid rings and the flat strips (the tie, the scarf's tail) have
+        // no axis to face away from.
+        if (!t.head && t.piece !== PIECE.FACE && t.rings.every((r) => r.rx >= 0.02 && (r.rz ?? r.rx) >= 0.02)) {
+          round++
+          for (let q = tri; q < tri + sides; q++) {
+            const [a, b, c] = [at(m.index[q * 3]), at(m.index[q * 3 + 1]), at(m.index[q * 3 + 2])]
+            const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]]
+            const w = [c[0] - a[0], c[1] - a[1], c[2] - a[2]]
+            const nx = u[1] * w[2] - u[2] * w[1]
+            const nz = u[0] * w[1] - u[1] * w[0]
+            const y = (a[1] + b[1] + c[1]) / 3
+            const r = t.rings.reduce((best, x) => (Math.abs(x.y - y) < Math.abs(best.y - y) ? x : best))
+            const ox = (a[0] + b[0] + c[0]) / 3 - (r.x ?? 0)
+            const oz = (a[2] + b[2] + c[2]) / 3 - (r.z ?? 0)
+            if (Math.hypot(nx, nz) < 1e-9) continue
+            assert.ok(nx * ox + nz * oz > 0, `${BODY_NAMES[v]} ${detailed ? 'near' : 'far'}: a side triangle of the tube at ${ys.join(', ')} faces in`)
+          }
+        }
+        tri += sides + (t.capTop !== undefined ? n : 0) + (t.capBottom !== undefined ? n : 0)
+      }
+      assert.equal(tri, m.index.length / 3, 'every triangle counted to its tube')
+      assert.ok(round >= 9, 'the trunk, both sleeves, hands, legs and shoes at least')
+    }
+  }
+  // The skirt's hem ring: smooth normals out, so it is lit from outside.
+  const skirt = humanoidMesh(3, true)
+  let hem = 0
+  for (let i = 0; i < skirt.vertexCount; i++) {
+    if (skirt.rig[i * 3 + 1] !== SLOT.BOTTOM || skirt.rig[i * 3] !== BONE.TRUNK || skirt.skin[i * 2] !== BONE.TRUNK || Math.abs(skirt.position[i * 3 + 1] - LOWER.hem) > 1e-6) continue
+    hem++
+    assert.ok(skirt.position[i * 3] * skirt.normal[i * 3] + skirt.position[i * 3 + 2] * skirt.normal[i * 3 + 2] > 0, 'the skirt\'s hem faces out')
+  }
+  assert.equal(hem, 16)
+})
+
 test('SOLE: the shoe\'s lowest ring reaches SOLE.heel behind the ankle and SOLE.toe ahead of it, on every body', () => {
   for (const v of VARIANTS) {
     const soles = bodyTubes(v).flatMap((t) => t.rings).filter((r) => r.slot === SLOT.SHOES && r.y === 0)

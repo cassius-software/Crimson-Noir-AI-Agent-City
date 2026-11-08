@@ -1052,6 +1052,17 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Fixed
 
+- **The sleeves, the hands, the legs, the shoes, the bag, the skirt, the long hair, the bob, the ponytail and the
+  long beard were drawn inside out.** The loft lays a tube's quads counter-clockwise seen from outside (the face three draws) only when its rings run from
+  the bottom up, and it closes `capTop` on the last ring and `capBottom` on the first. These tubes listed their rings
+  from the top down, so their outer faces were culled: each showed the inside of its far wall, lit by normals pointing
+  in, and the hands and the shoes closed with a cone from the wrong ring (a point below the wrist, a spike inside the
+  shoe), the soles left open. On an arm or a leg the outline hid it; on the skirt the legs stood in front of its back
+  panel, so the knees seemed to come through. `humanoid.ts` now lays every tube from its lowest ring up (no ring
+  moves), and `humanoid.test.ts` checks that every round tube's triangles face out on every body, near and far, that
+  every cap lies past the ring it closes, and that the skirt's hem faces out. In the code since the first bodies
+  (#59); found in this slice's SwiftShader screenshots (`/mnt/project-files/screenshots/lower-cuts/`), not yet seen
+  on real hardware.
 - **Sloane no longer takes the focus from a halted city's way-out card.** The Concierge became visible when the boot
   veil finished fading, whatever the city's state, and its name field took the keyboard focus from anything but
   another text field, so a halt inside the veil's last second (the browser smoke's thrown frame right after the veil
