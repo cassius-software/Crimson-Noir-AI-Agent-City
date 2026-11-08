@@ -162,7 +162,8 @@ test('crowd.ts: the words override the hashed mask, figure, face and wardrobe in
   assert.match(fragment, /pick\(PALETTE\.bags, h\(12\)\)/)
   assert.match(fragment, /const legwear = variant === 3 \? mix\(wornSkin, vec3\(0\.08, 0\.07, 0\.07\), step\(0\.55, h\(11\)\)\) : bottom/)
   assert.match(fragment, /const iris = pick\(PALETTE\.iris, h\(LOOK_HASHED_COLOUR\.iris\)\)/)
-  assert.match(fragment, /const slots: V3\[\] = \[worn, shirt, select\(armHere, limbColour, skinShown\), hairShown, bottom, shoes, accent, prop, select\(legHere, limbColour, legwear\), frame, white, iris, lip, scarf, fabric, device\]/, 'every slot, a prosthetic over the hand or the bare shin, the headwear\'s cloth and the devices last')
+  assert.match(fragment, /const slots: V3\[\] = \[worn, shirt, select\(armHere, limbColour, skinShown\), hairShown, woven, shoes, accent, prop, select\(legHere, limbColour, legwear\), frame, white, iris, lip, scarf, fabric, device\]/, 'every slot, the bottom in its weave, a prosthetic over the hand or the bare shin, the headwear\'s cloth and the devices last')
+  assert.match(fragment, /const jacket = select\(inV\.or\(shirtCollar\), shirt, select\(lapel\.or\(collar\)\.or\(cuff\), select\(trimAt\.equal\(uint\(0\)\), woven, trimCloth\), woven\)\)/, 'the jacket or the coat in its weave, a matching trim too')
   // The garments: the layer owns the top's dye, the trim is matching or a cloth, the jacket's lines are cut from the rest position.
   assert.match(fragment, /const wardrobe = uint\(vWardrobe\.add\(0\.5\)\)/)
   assert.match(fragment, /const coat = at\(PALETTE\.coats, select\(custom, field\('top'\), uint\(h\(3\)\.mul\(cloth\(outfit\.top\)\.length - 0\.001\)\)\)\)/, 'the coat\'s cloth from the top\'s index, or the top\'s link over the jacket palette\'s length')
@@ -170,7 +171,6 @@ test('crowd.ts: the words override the hashed mask, figure, face and wardrobe in
   assert.match(fragment, /const trimCloth = select\(trimAt\.equal\(uint\(0\)\), topCloth, at\(PALETTE\.trims, trimAt\.sub\(uint\(1\)\)\)\)/)
   assert.match(fragment, /const scarf = at\(PALETTE\.scarves, select\(scarfAt\.equal\(uint\(0\)\), uint\(0\), scarfAt\.sub\(uint\(1\)\)\)\)/)
   assert.match(fragment, /const rest = positionGeometry/, 'the garment lines are cut from the rest position')
-  assert.match(fragment, /const jacket = select\(inV\.or\(shirtCollar\), shirt, select\(lapel\.or\(collar\)\.or\(cuff\), trimCloth, topCloth\)\)/)
   assert.match(fragment, /const worn = select\(layer\.equal\(uint\(LAYER\.shirt\)\), shirt, jacket\)/, 'under shirt sleeves the whole slot is the shirt\'s')
 })
 

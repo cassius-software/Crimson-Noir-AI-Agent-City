@@ -15,6 +15,23 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Sixteen fabric weaves.** A cloth word joins the look genome (word 5): the top's weave and the bottom's at four
+  bits each (`LOOK_FIELD.topWeave`, `LOOK_FIELD.bottomWeave`). 0 is plain, as before, so every older look and code
+  reads back unchanged. The weaves (`look.ts` WEAVE) are plain, twill, herringbone, pinstripe, chalk stripe,
+  houndstooth, glen check, windowpane, tartan (a generic check), tweed, linen, silk, cashmere, merino, batik (plain
+  dots and rings, no classical pattern of the craft) and strip weave (bars and blocks, no named pattern). The crowd's
+  fragment stage paints the top's weave on the jacket or the coat (a matching trim too) and the bottom's on the
+  trousers or the skirt, from the rest position, round each part by the angle about its own axis so stripes run down
+  the body and the sleeves. Threads finer than a pixel fade to the weave's own mean colour: the pixel's footprint is a
+  derivative, read at the top of the stage before any branch. Silk, merino, linen, tweed and cashmere set their own
+  roughness. The bottom's option 0 is `matching`: the top's weave where the trousers are the jacket's cloth, plain
+  elsewhere. Four tops in ten in the hashed crowd are woven, one of eight weaves per body (`WEAVE_STREET`: suitings
+  for the suit and the pantsuit, tweeds and checks for the blazer, the softer cloths and the prints for the skirt
+  suit's top). A look with a weave carries a second word in its code's tail (fifteen symbols). The suit's main
+  fragment stage grows to about 144,000 characters (from about 119,000) and its shadow pass to about 97,000 (from
+  about 76,000). Customizer rows **Weave** and **Trousers' weave** (**Skirt's weave** on the skirt suit), console
+  `look topWeave <name>` and `look bottomWeave <name>`. Pinned by `look.test.ts`, `lookWiring.test.ts` and
+  `commands.test.ts`. Browser shots on SwiftShader only; nothing visual is confirmed on real hardware.
 - **Facial hair, hearing aids and cochlear implants, and prosthetic limbs.** The skin word's next eleven bits carry
   the facial hair (none, stubble, moustache, goatee, short beard, full beard, long beard: 3 bits), the hearing devices
   (none, hearing aids, a cochlear implant, implants on both sides, an implant with an aid: 3 bits), a prosthetic limb

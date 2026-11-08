@@ -18,7 +18,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
-  FEATURE_IDS, HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_BUILD_ARGS, LOOK_FACE_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatHardware, formatRecording, formatStats,
+  FEATURE_IDS, HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_BUILD_ARGS, LOOK_FACE_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, LOOK_WEAVE_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatHardware, formatRecording, formatStats,
   isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type CommandResult, type Line,
 } from './commands.ts'
 import {
@@ -1760,7 +1760,9 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.deepEqual(complete('ping '), ['ping clear', 'ping gather', 'ping go', 'ping look', 'ping wait'])
   assert.deepEqual(complete('ping g'), ['ping gather', 'ping go'])
   assert.deepEqual(complete('look '), [...['build', 'code', 'face', 'preset', 'random', 'reset', 'show'], ...LOOK_SLOT_ARGS].sort().map((a) => `look ${a}`))
-  assert.deepEqual(complete('look b'), ['look bag', 'look body', 'look bottom', 'look brow', 'look build'])
+  assert.deepEqual(complete('look b'), ['look bag', 'look body', 'look bottom', 'look bottomWeave', 'look brow', 'look build'])
+  assert.deepEqual(complete('look topWeave h'), ['look topWeave herringbone', 'look topWeave houndstooth'])
+  assert.deepEqual(complete('look bottomWeave m'), ['look bottomWeave matching', 'look bottomWeave merino'])
   assert.deepEqual(complete('look build '), LOOK_BUILD_ARGS.map((a) => `look build ${a}`))
   assert.deepEqual(complete('look face '), LOOK_FACE_ARGS.map((a) => `look face ${a}`))
   assert.deepEqual(complete('look face ov'), ['look face oval'])
@@ -2167,6 +2169,8 @@ test('look: the look worn (or a pedestrian\'s), a slot by number or name, a pres
   assert.deepEqual([...LOOK_FACE_ARGS], LOOK_FACE_SHAPES.map((x) => x.name).sort())
   for (const slot of ['vitiligo', 'freckles'] as const) assert.deepEqual(complete(`look ${slot} `), lookOptions(0, slot).map((o) => `look ${slot} ${o.name}`).sort(), `${slot}: the wardrobe's names`)
   assert.deepEqual(complete('look skin '), lookOptions(0, 'skin').slice(8).map((o) => `look skin ${o.name}`), 'the Monk tones by their scale names')
+  assert.deepEqual([...LOOK_WEAVE_ARGS], [...WARDROBE.weave].sort(), 'the weaves by their names')
+  assert.deepEqual(complete('look bottomWeave '), [...new Set([...lookOptions(0, 'bottomWeave'), ...lookOptions(1, 'bottomWeave')].map((o) => o.name))].sort().map((n) => `look bottomWeave ${n}`), 'the bottom\'s weaves: matching on a suit, plain on chinos')
 })
 
 test('map: the map the shell walks; map city|lakefront|default hands the host a reload, never the same map twice; no bridge call', () => {

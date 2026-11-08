@@ -751,6 +751,13 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   pedestrians have them too (facial hair for about forty-five men in a hundred, hearing aids for about two people in
   a hundred, an implant for under one, a prosthetic for one). At the console: `look facialHair goatee`, `look hearing
   cochlear implant`, `look prosthetic left arm`, `look prostheticFinish carbon`.
+- **Weaves.** A **Weave** row (plain, twill, herringbone, pinstripe, chalk stripe, houndstooth, glen check,
+  windowpane, tartan, tweed, linen, silk, cashmere, merino, batik, strip weave) weaves the jacket's cloth (the coat's
+  under a coat, and a matching trim with it), and a **Trousers' weave** row (**Skirt's weave** on the skirt suit) the
+  bottom's. Its first option, **matching**, wears the jacket's weave when the trousers are the jacket's cloth and is
+  plain otherwise. Fine threads fade to the cloth's own shade at a distance, so a far pinstripe suit reads as a
+  slightly lighter cloth. Silk is smoother, and linen, tweed and cashmere drier. About four pedestrians in ten wear a
+  woven top. At the console: `look topWeave herringbone`, `look bottomWeave matching`.
 - **The four words.** `packLook` folds the body, the pieces, the colours, the age and the undertone into one
   unsigned 32-bit word (bit 6 says the hair is long, written from the style; the top bit is spare), `packFigure`
   the eight body sliders into a second, `packFace` the seven face sliders and the hair style into a third and
@@ -761,11 +768,12 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   place of the hash, and the page's cull reads the body out of the first to pick what to draw. No simulation pass
   binds any of them, so nothing of a look reaches the pedestrians' motion, the First-Law sensing, the protocol or
   the physics worker. Those four are the first of a **look genome** of sixteen words (`LOOK_WORDS`): word 4, the skin
-  word, holds the skin's high bits (a Monk tone is option 8 and up), vitiligo and freckles, and words 5 to 15 are
-  spare and must be zero. Every field of the later words is 0 for "as before", so a look of the older layouts is the
+  word, holds the skin's high bits (a Monk tone is option 8 and up), vitiligo, freckles, the hair style's high bits,
+  the curl, the headwear, facial hair, hearing devices and a prosthetic; word 5, the cloth word, holds the top's
+  weave and the bottom's; words 6 to 15 are spare and must be zero. Every field of the later words is 0 for "as before", so a look of the older layouts is the
   same look with them zero, and the crowd draws it the same. `crowd.figure` holds sixteen words a person (the
   figure, face and wardrobe words, the rig slot word, then the genome's words 4 to 15); the fragment stage reads the
-  skin word through one flat varying. `lookFromSeed(i)` reproduces, bit for bit, the choice the crowd's hash makes for agent `i`,
+  skin and cloth words through one flat varying. `lookFromSeed(i)` reproduces, bit for bit, the choice the crowd's hash makes for agent `i`,
   sliders, face, hair style, age, undertone, layer, trim and scarf included (the hashed crowd draws its stature
   from a per-body range, men 1.64 m to 2.00 m and women 1.55 m to 1.87 m, and every other slider over its whole
   range; a woman's hair that is not short is long, a bob or a bun in thirds, one man in twenty-five is bald), so an
@@ -775,8 +783,9 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
 - **Codes and presets.** A look code is twenty-eight symbols, `XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX`, from an alphabet
   without I, L, O and U, carrying the four words and a CRC-8 over them: it can be written down and shared, and
   `parseLookCode` ignores case, the dashes and spaces and refuses any single mistyped symbol. A look whose genome's
-  later words are not all zero (a Monk tone, vitiligo, freckles) adds a tail of eight symbols per word with its own
-  check, `-XXXXXXXX`, and its head's check then covers every word, so the head cut off alone is refused rather than
+  later words are not all zero (a Monk tone, vitiligo, freckles, a weave) adds a tail carrying those words up to the
+  last that is not zero, with its own check: eight symbols for the skin word alone, `-XXXXXXXX`, fifteen with the
+  cloth word, `-XXXXXXXX-XXXXXXX`. Its head's check then covers every word, so the head cut off alone is refused rather than
   read as the look in an older tone; a look without them keeps the very code it always had. A twenty-one-symbol
   code from before the layers, a fifteen-symbol code from before the face, and an eight-symbol code from before the
   sliders, still read, upgraded the same way as a stored look. Eight named presets, two per body (navy suit,

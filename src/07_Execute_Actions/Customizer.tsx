@@ -89,8 +89,10 @@ function slotLabel(slot: LookSlot, body: LookBody, layer: number = LAYER.jacket)
     case 'prostheticFinish': return 'Prosthetic finish'
     case 'layer': return 'Layer'
     case 'top': return layer === LAYER.coat ? 'Coat' : body === 1 ? 'Blazer' : body === 3 ? 'Top' : 'Jacket'
+    case 'topWeave': return layer === LAYER.coat ? 'Coat\'s weave' : 'Weave'
     case 'trim': return 'Trim'
     case 'bottom': return body === 3 ? 'Skirt' : body === 1 ? 'Chinos' : 'Trousers'
+    case 'bottomWeave': return body === 3 ? 'Skirt\'s weave' : 'Trousers\' weave'
     case 'shirt': return body >= 2 ? 'Blouse' : 'Shirt'
     case 'shoes': return 'Shoes'
     case 'tie': return 'Tie'
@@ -343,8 +345,8 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
 
       <div className={`mt-3 border-t pt-3 ${t.rule}`}>
         {LOOK_SLOTS.map((slot) => {
-          // Under shirt sleeves the jacket is off: its cloth and its trim are not seen, so their rows are not shown.
-          if (worn.layer === LAYER.shirt && (slot === 'top' || slot === 'trim')) return null
+          // Under shirt sleeves the jacket is off: its cloth, its weave and its trim are not seen, so their rows are not shown.
+          if (worn.layer === LAYER.shirt && (slot === 'top' || slot === 'topWeave' || slot === 'trim')) return null
           const options = lookOptions(body, slot, worn.layer)
           const current = worn[slot]
           if (isSlider(slot)) {

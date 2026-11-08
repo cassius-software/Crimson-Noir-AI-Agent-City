@@ -27,8 +27,8 @@ import {
   StorageBufferAttribute, Uint32BufferAttribute, Vector4, type Node, type NodeBuilder, type UniformNode,
 } from 'three/webgpu'
 import {
-  Fn, If, attribute, cameraPosition, dot, float, hash, instanceIndex, mix, normalLocal, positionGeometry, positionLocal, positionPrevious,
-  select, smoothstep, step, storage, time, uint, uniform, uniformArray, varying, varyingProperty, vec3, vec4,
+  Fn, If, atan, attribute, cameraPosition, dot, float, fwidth, hash, instanceIndex, mix, normalLocal, positionGeometry, positionLocal, positionPrevious,
+  select, smoothstep, step, storage, time, uint, uniform, uniformArray, varying, varyingProperty, vec2, vec3, vec4,
 } from 'three/tsl'
 import { CODE_DISSOLVE, applyCodeDissolve } from '../01_Initialize_World/codeDissolve.ts'
 import { applyMatrixMode } from '../01_Initialize_World/matrixMode.ts'
@@ -38,7 +38,7 @@ import { BODY_NAMES, BONE, FACE, GARMENT, HEIGHT_BASE, LANDMARK, PIECE, RIG_REST
 import {
   FACIAL_HAIR, HAIR_PIECE_STYLES, HAIR_TEXTURE, HAIR_TEXTURE_BITS, HAIR_TEXTURE_STYLES, HEADWEAR, HEARING, LAYER, LOOK_HASHED_HEARING, PROSTHETIC, LOOK_FIELD, LOOK_FIELD_HIGH, LOOK_HASHED_COLOUR,
   LOOK_HASHED_FACE, LOOK_HASHED_HAIR_SPLIT, LOOK_HASHED_HEADWEAR, LOOK_HASHED_LAYER, LOOK_HASHED_SCARF,
-  LOOK_HASHED_SLIDER, LOOK_ODDS, LOOK_PIECE_BIT, LOOK_SLIDER_MIDDLE, LOOK_STATURE, LOOK_WORDS, VITILIGO, WARDROBE,
+  LOOK_HASHED_SLIDER, LOOK_ODDS, LOOK_PIECE_BIT, LOOK_SLIDER_MIDDLE, LOOK_STATURE, LOOK_WORDS, VITILIGO, WARDROBE, WEAVE, WEAVE_STREET_PACKED,
   type LookFaceSlider, type LookSlider, type LookSlot, type PaletteName,
 } from './look.ts'
 
@@ -348,6 +348,137 @@ function facialPaint(skinIn: V3, hairIn: V3, styleIn: U1, rigIn: V3, slotIn: F1,
   return paint(skinIn, hairIn, styleIn, rigIn, slotIn)
 }
 
+/** A pale thread on the cloth (pinstripes, chalk stripes, windowpanes), a batik's resist and a strip weave's gold bars, linear RGB. */
+const THREAD = Object.freeze({ chalk: vec3(0.86, 0.85, 0.82), resist: vec3(0.86, 0.7, 0.42), gold: vec3(0.6, 0.42, 0.09) })
+/** The cloths with a sheen of their own (look.ts WEAVE): silk smooth, merino fine, linen, tweed and cashmere dry. */
+const WEAVE_SHEEN: readonly (readonly [weave: number, roughness: number])[] = Object.freeze([
+  [WEAVE.silk, 0.35], [WEAVE.merino, 0.74], [WEAVE.linen, 0.9], [WEAVE.tweed, 0.9], [WEAVE.cashmere, 0.92],
+])
+
+/**
+ * The cloth's weave (look.ts WEAVE) over the top's or the bottom's cloth, from the rest position: round each part (the
+ * trunk, a leg, an arm) by the angle about its own axis at its mean radius, so stripes run down the body and the
+ * sleeves and meet in a seam at the back, and up it by the height. `footprint` is a pixel's width on the rest body (m), read at the top of the
+ * stage, outside every branch (a derivative is defined only there): threads finer than it fade to the weave's own mean
+ * colour, so a far suit's pinstripes become a slightly lighter cloth, not a moiré. The far body skips the noise the
+ * tweed and the cashmere are flecked with. A cloth with weave 0 (plain, and every slot but the top and the bottom)
+ * comes back as it went in.
+ */
+function weavePaint(clothIn: V3, weaveIn: U1, rigIn: V3, slotIn: F1, footprintIn: F1, near: boolean, skirt: boolean): V3 {
+  const paint = Fn(([cloth, weave, rig, slot, footprint]: [V3, U1, V3, F1, F1]) => {
+    const out = vec3(cloth).toVar()
+    If(weave.notEqual(uint(WEAVE.plain)), () => {
+      const rest = positionGeometry
+      const bone = rig.x
+      const onArm = bone.greaterThan(BONE.ARM_L - 0.5)
+      // The legs, and the trousers' seat on the trunk with them (each half about its own leg, so the seat's stripes run
+      // on down the thighs and meet at the centre seam); a skirt is one tube round both legs, about the trunk's axis.
+      const seat = skirt ? slot.lessThan(-1) : slot.greaterThan(SLOT.BOTTOM - 0.5).and(slot.lessThan(SLOT.BOTTOM + 0.5))
+      const onLeg = bone.greaterThan(BONE.THIGH_L - 0.5).and(bone.lessThan(BONE.SHIN_R + 0.5)).or(seat)
+      // The sleeves hang round x = ±1.06 of the shoulder (humanoid.ts armTubes), the legs round the hips' x.
+      const axis = select(onArm, float(LANDMARK.shoulderX * 1.06), select(onLeg, float(LANDMARK.hipX), float(0))).mul(rest.x.sign())
+      const dx = rest.x.sub(axis)
+      // Read by every weave's branch: variables, assigned before them (an expression first built inside one branch is
+      // unassigned in the others).
+      // The angle about the part's axis at the part's mean radius (the trunk's, a leg's, an arm's): a stripe keeps to its
+      // meridian down the body however the girth changes (the true arc's length bent them where the back curves).
+      const u = atan(dx, rest.z).mul(select(onArm, float(0.05), select(onLeg, float(0.07), float(0.15)))).toVar()
+      const v = rest.y.toVar()
+      const fw = footprint
+      const light = mix(cloth, THREAD.chalk, 0.55).toVar()
+      const accent = mix(vec3(0.36, 0.035, 0.03), vec3(cloth.z, cloth.x, cloth.y).mul(2), 0.35).toVar()
+      const second = mix(vec3(0.02, 0.12, 0.06), vec3(cloth.y, cloth.z, cloth.x).mul(1.6), 0.35).toVar()
+      // Lines `width` wide every `period` along t (m), smoothed over the pixel, and their mean (width / period) once a
+      // pixel spans half a period; a ripple's depth, gone as its period nears the pixel.
+      const lines = (t: F1, period: number, width: number): F1 => {
+        const d = t.div(period).add(0.5).fract().sub(0.5).abs().mul(period)
+        return mix(float(width / 2).sub(d).div(fw).add(0.5).clamp(0, 1), float(width / period), smoothstep(0.25, 0.5, fw.div(period)))
+      }
+      const fine = (period: number): F1 => float(1).sub(smoothstep(0.2, 0.45, fw.div(period)))
+      const ripple = (t: F1, period: number, depth: number): F1 => t.mul((2 * Math.PI) / period).sin().mul(depth).mul(fine(period)).add(1)
+      const is = (k: number) => weave.equal(uint(k))
+      const between = (a: number, b: number) => weave.greaterThanEqual(uint(a)).and(weave.lessThanEqual(uint(b)))
+      If(is(WEAVE.twill), () => { out.assign(cloth.mul(ripple(u.add(v), 0.0035, 0.07))) })
+      If(is(WEAVE.merino), () => { out.assign(cloth.mul(ripple(u.add(v), 0.002, 0.035))) })
+      If(is(WEAVE.herringbone), () => {
+        // Twill lines that turn every centimetre round the body: the bone of the fish.
+        const turn = u.div(0.01).floor().mod(2).mul(2).sub(1)
+        out.assign(cloth.mul(ripple(v.add(u.mul(turn)), 0.0045, 0.1)))
+      })
+      If(is(WEAVE.pinstripe), () => { out.assign(mix(cloth, light, lines(u, 0.012, 0.0008).mul(0.85))) })
+      If(is(WEAVE.chalkStripe), () => { out.assign(mix(cloth, light, lines(u, 0.026, 0.0026).mul(0.45))) })
+      If(is(WEAVE.windowpane), () => { out.assign(mix(cloth, light, lines(u, 0.07, 0.0016).max(lines(v, 0.07, 0.0016)).mul(0.75))) })
+      If(between(WEAVE.houndstooth, WEAVE.glenCheck), () => {
+        // Two shades in a check of 12 mm (houndstooth: the dark quarter, the light quarter and two of teeth), or the glen
+        // check's blocks of a small check, bars and stripes, under an overcheck of a bluer line.
+        const hl = mix(cloth, vec3(0.8, 0.79, 0.76), 0.35), hd = cloth.mul(0.5)
+        const q = vec2(u, v).div(0.012).fract()
+        const a = step(0.5, q.x), b = step(0.5, q.y)
+        // The teeth are stripes of 4.2 mm: they fade to their mean on their own period, before the check's 12 mm does.
+        const teeth = mix(float(0.5), step(0.5, q.x.add(q.y).mul(2).fract()), fine(0.0042))
+        const tooth = float(1).sub(a).mul(float(1).sub(b)).add(a.add(b).sub(a.mul(b).mul(2)).mul(teeth))
+        const ra = step(0.5, u.div(0.048).fract()), rb = step(0.5, v.div(0.048).fract())
+        const check = step(0.5, u.div(0.005).fract()).sub(step(0.5, v.div(0.005).fract())).abs()
+        const both = ra.mul(rb), none = float(1).sub(ra).mul(float(1).sub(rb))
+        const glen = both.mul(check).add(none.mul(step(0.5, v.div(0.004).fract()))).add(float(1).sub(both).sub(none).mul(step(0.5, u.div(0.004).fract())))
+        const shade = select(is(WEAVE.houndstooth), mix(float(0.5), tooth, fine(0.012)), mix(float(0.5), glen, fine(0.004)))
+        const over = select(is(WEAVE.glenCheck), lines(u, 0.096, 0.0012).max(lines(v, 0.096, 0.0012)), float(0))
+        out.assign(mix(mix(hl, hd, shade), cloth.mul(vec3(0.7, 0.85, 1.5)).add(vec3(0.02, 0.03, 0.08)), over.mul(0.8)))
+      })
+      If(is(WEAVE.tartan), () => {
+        // A generic check: two dark bands crossing (darker where they cross), a wide stripe of the second colour and a
+        // fine one of the first, both ways, every 9 cm.
+        const bands = cloth.mul(float(1).sub(lines(u, 0.09, 0.045).add(lines(v, 0.09, 0.045)).mul(0.25)))
+        const wide = lines(u.sub(0.0675), 0.09, 0.006).max(lines(v.sub(0.0675), 0.09, 0.006))
+        const thin = lines(u.sub(0.0225), 0.09, 0.002).max(lines(v.sub(0.0225), 0.09, 0.002))
+        out.assign(mix(mix(bands, second, wide.mul(0.8)), accent, thin.mul(0.9)))
+      })
+      If(is(WEAVE.tweed), () => {
+        // Flecks of a pale and a coloured thread in a mottled cloth (the noise on the near body alone).
+        // Past the pixel the flecks fade to their mean: one cell in twelve and a half, half pale and half coloured.
+        const mottle = near ? valueNoise(rest.mul(700), 9.1).sub(0.5).mul(0.35).mul(fine(0.0014)) : float(0)
+        const cell = rest.mul(520).floor()
+        const sharp = near ? fine(0.002) : float(0)
+        const fleck = mix(float(0.08), near ? step(0.92, lattice(cell, 12.7)) : float(0.08), sharp)
+        const thread = mix(mix(light, accent, 0.5), near ? select(lattice(cell, 14.3).greaterThan(0.5), light, accent) : light, sharp)
+        out.assign(mix(cloth.mul(mottle.add(1)), thread, fleck.mul(0.6)))
+      })
+      If(is(WEAVE.linen), () => {
+        // Slubs: each fine row and column of threads a little lighter or darker than its neighbours.
+        const rows = lattice(vec3(0, v.div(0.0012).floor(), u.div(0.02).floor()), 21.1)
+        const cols = lattice(vec3(u.div(0.0012).floor(), 0, v.div(0.02).floor()), 23.3)
+        out.assign(cloth.mul(rows.add(cols).sub(1).mul(0.12).mul(fine(0.0012)).add(1.04)))
+      })
+      If(is(WEAVE.silk), () => { out.assign(cloth.mul(1.04)) })
+      If(is(WEAVE.cashmere), () => {
+        const soft = mix(cloth, vec3(dot(cloth, vec3(0.2126, 0.7152, 0.0722))), 0.08).mul(1.03)
+        out.assign(near ? soft.mul(valueNoise(rest.mul(400), 15.9).sub(0.5).mul(0.06).mul(fine(0.0025)).add(1)) : soft)
+      })
+      If(is(WEAVE.batik), () => {
+        // A dye resisted in dots and rings, every 3.6 cm, each row half a step along from the last.
+        const row = v.div(0.036).floor()
+        const c = vec2(u.div(0.036).add(row.mod(2).mul(0.5)), v.div(0.036)).fract().sub(0.5)
+        const r = c.length().mul(0.036)
+        const dot3 = float(0.0035).sub(r).div(fw).add(0.5).clamp(0, 1)
+        const ring = float(0.0012).sub(r.sub(0.011).abs()).div(fw).add(0.5).clamp(0, 1)
+        const mark = mix(dot3.max(ring), float(0.16), smoothstep(0.25, 0.5, fw.div(0.005)))
+        out.assign(mix(cloth, mix(cloth, THREAD.resist, 0.6), mark))
+      })
+      If(is(WEAVE.stripWeave), () => {
+        // Strips 7.5 cm wide sewn side by side: blocks of gold bars and of a centre stripe in the second colour, staggered
+        // strip to strip, each strip's edge a dark seam.
+        const strip = u.div(0.075).floor()
+        const block = v.div(0.06).add(strip.mul(0.5)).floor().add(strip).mod(2)
+        const bars = mix(cloth, THREAD.gold, lines(v, 0.008, 0.004).mul(0.85))
+        const centre = mix(cloth, second, lines(u.sub(0.0375), 0.075, 0.01).mul(0.85))
+        out.assign(mix(select(block.lessThan(0.5), bars, centre), cloth.mul(0.4), lines(u, 0.075, 0.0015)))
+      })
+    })
+    return out
+  }) as unknown as (...inputs: Node[]) => V3
+  return paint(clothIn, weaveIn, rigIn, slotIn, footprintIn)
+}
+
 function agentBuffers(view: CrowdView, agentCount: number, listLength: number) {
   return {
     pos: storage(view.pos, 'vec4', agentCount).toReadOnly(),
@@ -382,7 +513,7 @@ export class CrowdView {
    * The figure word, the face word and the wardrobe word per agent (look.ts packFigure: the eight body sliders' steps;
    * packFace: the seven face sliders' steps and the hair style; packWardrobe: the layer, the trim and the scarf; read
    * only where the look word says a look is worn), then the rig slot word, then the genome's words 4 to 15 (look.ts
-   * packGenome: the skin word, and spare words that stay zero): FIGURE_QUADS quads, sixteen u32 per agent, written
+   * packGenome: the skin word, the cloth word, and spare words that stay zero): FIGURE_QUADS quads, sixteen u32 per agent, written
    * beside the look word. Page-only like it: the worker's passes never bind it, the cull never reads it, no pedestrian
    * moves for it. One buffer for all of them: the vertex stage binds seven storage buffers already, of the eight
    * WebGPU promises every device.
@@ -676,6 +807,9 @@ export class CrowdView {
     // band between two rings is one slot. Interpolated, rig.y would paint the slots numbered between the two as
     // stripes across the band (a jacket's hem over the trousers showed the shirt, the skin and the hair).
     const slot = varying(rig.y, 'vAgentSlot').setInterpolation('flat')
+    // A pixel's width on the rest body (m), for the weaves' fading (weavePaint): a derivative, so it is read first, at
+    // the top of the stage before any branch (shared, below), where every fragment of a quad still runs together.
+    const footprint = fwidth(positionGeometry).length().max(0.00001).toVar() as unknown as F1
     // One node per link (built once, at the top of the stage: see shared below), however many paints read it.
     const links = new Map<number, F1>()
     const h = (k: number): F1 => {
@@ -707,7 +841,7 @@ export class CrowdView {
     const word = uint(vLookHi.add(0.5)).shiftLeft(uint(16)).bitOr(uint(vLookLo.add(0.5)))
     const custom = word.bitAnd(uint(1)).equal(uint(1))
     const field = (s: LookSlot): U1 => word.shiftRight(uint(LOOK_FIELD[s][1])).bitAnd(uint((1 << LOOK_FIELD[s][2]) - 1))
-    // The genome's words 4 to 7 (look.ts LOOK_FIELD: the skin word first), the person's second quad of crowd.figure,
+    // The genome's words 4 to 7 (look.ts LOOK_FIELD: the skin word, then the cloth word), the person's second quad of crowd.figure,
     // flat: one person's four integers in every fragment (an integer varying is never interpolated). Read only where
     // the look word says a look is worn: the hash's people leave them zero.
     const genome = varying(b.figure.element(b.lists.element(instanceIndex.add(uint(listBase))).mul(uint(FIGURE_QUADS)).add(uint(1))), 'vAgentGenome').setInterpolation('flat')
@@ -830,8 +964,25 @@ export class CrowdView {
     const lapel = front.and(side.lessThan(half.add(float(GARMENT.lapel))))
     const collar = onTrunk.and(rest.y.greaterThan(float(GARMENT.collar)))
     const cuff = onArm.and(rest.y.lessThan(float(GARMENT.cuff)))
-    const jacket = select(inV.or(shirtCollar), shirt, select(lapel.or(collar).or(cuff), trimCloth, topCloth))
+    // The weaves (look.ts WEAVE): the top's (the look's, or four tops in ten of the hash's from the body's eight) on the
+    // outer layer's cloth, and the bottom's: the look's, or under `matching` (0) the top's where the trousers are the
+    // jacket's cloth (a matching outfit's bottom 0, or the hash's matching trousers) and plain elsewhere. One paint for
+    // the slot at hand, the top's cloth or the bottom's, declared with the shared values (below).
+    const street = uint(WEAVE_STREET_PACKED[variant]).shiftRight(uint(h(LOOK_HASHED_COLOUR.weavePick).mul(8 - 0.001)).mul(uint(4))).bitAnd(uint(15))
+    const topWeave = select(custom, gene(LOOK_FIELD.topWeave), select(h(LOOK_HASHED_COLOUR.weave).greaterThanEqual(LOOK_ODDS.weave), street, uint(0)))
+    const matches = variant === 0 ? select(custom, bottomAt.equal(uint(0)), uint(1).equal(uint(1)))
+      : variant === 2 ? select(custom, bottomAt.equal(uint(0)), h(10).lessThan(0.6)) : uint(0).equal(uint(1))
+    const ownBottomWeave = gene(LOOK_FIELD.bottomWeave)
+    const bottomWeave = select(custom.and(ownBottomWeave.notEqual(uint(0))), ownBottomWeave, select(matches, topWeave, uint(0)))
+    const onBottom = slotIs(SLOT.BOTTOM)
+    const woven = weavePaint(select(onBottom, bottom, topCloth), select(onBottom, bottomWeave, select(slotIs(SLOT.TOP), topWeave, uint(0))), rig, slot, footprint, near, variant === 3).toVar() as unknown as V3
+    const jacket = select(inV.or(shirtCollar), shirt, select(lapel.or(collar).or(cuff), select(trimAt.equal(uint(0)), woven, trimCloth), woven))
     const worn = select(layer.equal(uint(LAYER.shirt)), shirt, jacket)
+    // Where the woven cloth shows (the jacket or the coat itself, a matching trim, the trousers or the skirt), the cloths
+    // with a sheen of their own set it (WEAVE_SHEEN), and the rest keep the slot's.
+    const shownWeave = select(onBottom, bottomWeave, select(slotIs(SLOT.TOP).and(layer.notEqual(uint(LAYER.shirt))).and(inV.or(shirtCollar).not())
+      .and(lapel.or(collar).or(cuff).and(trimAt.notEqual(uint(0))).not()), topWeave, uint(0)))
+    const sheen = WEAVE_SHEEN.reduce((r: F1, [k, value]) => select(shownWeave.equal(uint(k)), float(value), r), float(-1)).toVar() as unknown as F1
     // The suit's tie keeps the hash's cloth; the other bodies' accent is the shirt. The skirt suit's hose is the hash's.
     const accent = variant === 0 ? pick(PALETTE.ties, h(5)) : shirt
     const legwear = variant === 3 ? mix(wornSkin, vec3(0.08, 0.07, 0.07), step(0.55, h(11))) : bottom
@@ -842,7 +993,7 @@ export class CrowdView {
     const white = vec3(0.88, 0.86, 0.84)
     const iris = pick(PALETTE.iris, h(LOOK_HASHED_COLOUR.iris))
     const lip = wornSkin.mul(vec3(0.82, 0.55, 0.55))
-    const slots: V3[] = [worn, shirt, select(armHere, limbColour, skinShown), hairShown, bottom, shoes, accent, prop, select(legHere, limbColour, legwear), frame, white, iris, lip, scarf, fabric, device]
+    const slots: V3[] = [worn, shirt, select(armHere, limbColour, skinShown), hairShown, woven, shoes, accent, prop, select(legHere, limbColour, legwear), frame, white, iris, lip, scarf, fabric, device]
     const rough = [0.82, 0.7, 0.55, 0.6, 0.8, 0.35, 0.6, 0.45, 0.6, 0.3, 0.25, 0.3, 0.5, 0.78, 0.8, 0.4]
     let color: V3 = slots[slots.length - 1]
     let roughness: F1 = float(rough[rough.length - 1])
@@ -856,7 +1007,7 @@ export class CrowdView {
     // Declared once at the top of the stage instead, before any branch, every later read is the variable: the links,
     // the skin and the hair as painted, the colour. Each paint still pays for its marks under its own branches.
     // (The variables are the call's inputs, so the colour graph is still walked from colorNode: lookWiring.test.ts.)
-    const shared = [...links.values(), wornSkin, greyed, wornHair, skinShown, color.toVar()] as unknown as Node[]
+    const shared = [footprint, ...links.values(), wornSkin, greyed, wornHair, skinShown, woven, sheen, color.toVar()] as unknown as Node[]
     const declared = Fn((nodes: Node[]) => {
       for (const n of nodes) (n as unknown as { toStack(): unknown }).toStack()
       return nodes[nodes.length - 1]
@@ -864,7 +1015,7 @@ export class CrowdView {
     m.colorNode = declared(...shared)
     // A prosthetic's finish has its own sheen: chrome is a metal, carbon a satin, matte and a cover the skin's.
     const chrome = limbHere.and(fin(2))
-    m.roughnessNode = select(chrome, float(0.22), select(limbHere.and(fin(1)), float(0.4), roughness))
+    m.roughnessNode = select(chrome, float(0.22), select(limbHere.and(fin(1)), float(0.4), select(sheen.greaterThanEqual(0), sheen, roughness)))
     m.metalnessNode = select(chrome, float(0.85), float(0))
     // Matrix mode (matrixMode.ts), over the body's own colour; the dissolve below reads the dimmed colour as its base.
     if (this.matrixMode) applyMatrixMode(m, this.matrixMode)

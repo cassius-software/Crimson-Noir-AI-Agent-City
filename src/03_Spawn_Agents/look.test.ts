@@ -25,7 +25,7 @@ import {
   LOOK_HASHED_FACE, LOOK_HASHED_HAIR_SPLIT, LOOK_HASHED_HEADWEAR, LOOK_HASHED_HEARING, LOOK_HASHED_LAYER, LOOK_HASHED_SCARF, LOOK_HASHED_SLIDER, LOOK_NONE, LOOK_ODDS, LOOK_PALETTE, LOOK_PIECE_BIT, LOOK_PRESETS,
   LOOK_SLIDER_MIDDLE, LOOK_SLOTS, LOOK_STATURE, LOOK_V2_SLOTS, LOOK_V3_SLOTS, LOOK_V4_SLOTS, LOOK_WORDS, lookBuild, lookFromSeed, lookMask, lookOptions, lookPreset, lookSize, lookSwatch, matchingSwatch,
   monkSkin, packFace, packFigure, packGenome, packLook, packWardrobe, parseLookCode, shaderHash, sliderValue, statureOf, statureStep, unpackFaceLook, unpackFigureLook, unpackGenome, unpackLegacyLook,
-  unpackLook, upgradeFaceLook, upgradeFigureLook, upgradeLegacyLook, validateLook, VITILIGO, WARDROBE, wardrobeBits, withBuild, withLookSlot,
+  unpackLook, upgradeFaceLook, upgradeFigureLook, upgradeLegacyLook, validateLook, VITILIGO, WARDROBE, wardrobeBits, WEAVE, WEAVE_STREET, WEAVE_STREET_PACKED, withBuild, withLookSlot,
   type Look, type LookBody, type LookSlot,
 } from './look.ts'
 
@@ -76,7 +76,7 @@ const BASE_FACE = Object.freeze({ brow: 8, jaw: 8, chin: 8, cheek: 8, nose: 8, e
 /** The wardrobe slots of an upgraded look: the jacket, a matching trim, no scarf. */
 const BASE_WARDROBE = Object.freeze({ layer: 0, trim: 0, scarf: 0 })
 /** The genome's later slots of a look kept before them: no vitiligo, no freckles. */
-const BASE_GENOME = Object.freeze({ vitiligo: 0, freckles: 0, curl: 0, headwear: 0, headwearColour: 0, facialHair: 0, hearing: 0, prosthetic: 0, prostheticFinish: 0 })
+const BASE_GENOME = Object.freeze({ vitiligo: 0, freckles: 0, curl: 0, headwear: 0, headwearColour: 0, facialHair: 0, hearing: 0, prosthetic: 0, prostheticFinish: 0, topWeave: 0, bottomWeave: 0 })
 
 // --- The catalogue is the crowd's ------------------------------------------------------------------------------
 
@@ -155,10 +155,10 @@ test('the bodies, the piece bits, the grey, the hash chains, the odds, the hashe
   assert.equal(new Set(links).size, links.length, 'a link each')
   for (const k of links) assert.ok(k === 7 || k >= 9, `link ${k} is free of the pieces (1-5), the height (6) and the idle phase (8)`)
   // The hashed age, undertone and iris: the fragment chain's free links (1-6 and 9-12 are the colours).
-  assert.deepEqual(LOOK_HASHED_COLOUR, { age: 7, undertone: 8, iris: 13, trim: 14, scarfCloth: 15, trimCloth: 16, vitiligo: 17, vitiligoPattern: 18, freckles: 19, frecklesDensity: 20, marks: 21, headwearCloth: 24, curl: 25, facialHair: 26, facialHairStyle: 31, prosthetic: 28, prostheticLimb: 29, prostheticFinish: 30 })
+  assert.deepEqual(LOOK_HASHED_COLOUR, { age: 7, undertone: 8, iris: 13, trim: 14, scarfCloth: 15, trimCloth: 16, vitiligo: 17, vitiligoPattern: 18, freckles: 19, frecklesDensity: 20, marks: 21, headwearCloth: 24, curl: 25, facialHair: 26, facialHairStyle: 31, prosthetic: 28, prostheticLimb: 29, prostheticFinish: 30, weave: 32, weavePick: 33 })
   const colourLinks = [...Object.values(LOOK_HASHED_COLOUR), LOOK_HASHED_COLOUR.marks + 1, LOOK_HASHED_COLOUR.marks + 2]
   for (const k of colourLinks) assert.ok(k === 7 || k === 8 || k >= 13, `colour link ${k} is free of the colours (1-6, 9-12)`)
-  assert.equal(new Set(colourLinks).size, 20, 'a link each, the marks\' offset three of them')
+  assert.equal(new Set(colourLinks).size, 22, 'a link each, the marks\' offset three of them')
   assert.ok(CROWD.includes('h(LOOK_HASHED_COLOUR.age).mul(WARDROBE.ageSteps - 1).add(0.5).floor()).div(WARDROBE.ageSteps - 1)'))
   // The skin word: the hashed crowd's Monk tone, its vitiligo (two in a hundred, a pattern of the six) and freckles (about one in six, a density of the three).
   assert.ok(CROWD.includes('const skin = pick(PALETTE.monk, h(1))'), 'the hashed crowd wears the Monk scale')
@@ -194,7 +194,7 @@ test('slot sizes: the pinned counts, every colour option a palette swatch, the p
   const common = {
     body: 4, height: 32, mass: 16, muscle: 16, shoulders: 16, hips: 16, legs: 16, posture: 16, head: 8,
     brow: 16, jaw: 16, chin: 16, cheek: 16, nose: 16, eyes: 16, lips: 16,
-    skin: 18, age: 8, undertone: 4, vitiligo: 7, freckles: 4, hairStyle: 32, curl: 13, headwear: 8, headwearColour: 8, facialHair: 7, hearing: 5, prosthetic: 7, prostheticFinish: 4, hairColour: 9, tie: 2, eyewear: 2, bag: 2, cup: 2, layer: 3, trim: 8, scarf: 8,
+    skin: 18, age: 8, undertone: 4, vitiligo: 7, freckles: 4, hairStyle: 32, curl: 13, headwear: 8, headwearColour: 8, facialHair: 7, hearing: 5, prosthetic: 7, prostheticFinish: 4, topWeave: 16, bottomWeave: 16, hairColour: 9, tie: 2, eyewear: 2, bag: 2, cup: 2, layer: 3, trim: 8, scarf: 8,
   }
   assert.deepEqual(sizes(0), { ...common, top: 7, bottom: 8, shirt: 6, shoes: 3 })
   assert.deepEqual(sizes(1), { ...common, top: 7, bottom: 6, shirt: 6, shoes: 4 })
@@ -234,14 +234,14 @@ test('slot sizes: the pinned counts, every colour option a palette swatch, the p
     assert.deepEqual([lookOptions(b, 'height')[0].name, lookOptions(b, 'height')[31].name], ['1.50 m', '2.05 m'])
     assert.deepEqual([lookOptions(b, 'mass')[0].name, lookOptions(b, 'mass')[15].name, lookOptions(b, 'head')[7].name, lookOptions(b, 'nose')[15].name, lookOptions(b, 'age')[7].name], ['1', '16', '8', '16', '8'])
   }
-  assert.equal(LOOK_SLOTS.length, 41)
+  assert.equal(LOOK_SLOTS.length, 43)
   assert.deepEqual(LOOK_SLOTS.slice(0, 9), ['body', ...LOOK_BODY_SLIDERS])
   assert.deepEqual(LOOK_SLOTS.slice(9, 16), [...LOOK_FACE_SLIDERS])
   assert.deepEqual(LOOK_SLOTS.slice(16, 21), ['skin', 'age', 'undertone', 'vitiligo', 'freckles'], 'the skin\'s slots together')
   assert.deepEqual(LOOK_SLOTS.slice(21, 26), ['hairStyle', 'curl', 'hairColour', 'headwear', 'headwearColour'], 'the hair\'s slots and what is worn over it together')
   assert.deepEqual(LOOK_SLOTS.slice(26, 30), ['facialHair', 'hearing', 'prosthetic', 'prostheticFinish'], 'the person\'s own: facial hair, hearing devices, a limb')
-  assert.deepEqual(LOOK_SLOTS.slice(30, 38), ['layer', 'top', 'trim', 'bottom', 'shirt', 'shoes', 'tie', 'scarf'], 'the layer before the top it dyes, the trim after it')
-  assert.deepEqual([...LOOK_GENOME_SLOTS], ['vitiligo', 'freckles', 'curl', 'headwear', 'headwearColour', 'facialHair', 'hearing', 'prosthetic', 'prostheticFinish'])
+  assert.deepEqual(LOOK_SLOTS.slice(30, 40), ['layer', 'top', 'topWeave', 'trim', 'bottom', 'bottomWeave', 'shirt', 'shoes', 'tie', 'scarf'], 'the layer before the top it dyes, each cloth\'s weave after it, the trim after the top')
+  assert.deepEqual([...LOOK_GENOME_SLOTS], ['vitiligo', 'freckles', 'curl', 'headwear', 'headwearColour', 'facialHair', 'hearing', 'prosthetic', 'prostheticFinish', 'topWeave', 'bottomWeave'])
   assert.deepEqual([...LOOK_V4_SLOTS], LOOK_SLOTS.filter((s) => !(LOOK_GENOME_SLOTS as readonly string[]).includes(s)))
   assert.equal(LOOK_V4_SLOTS.length, 32)
   assert.deepEqual([...LOOK_V3_SLOTS], LOOK_V4_SLOTS.filter((s) => s !== 'layer' && s !== 'trim' && s !== 'scarf'))
@@ -290,7 +290,7 @@ test('lookSwatch: colours for colour slots, the jacket\'s cloth for matching tro
 
 // --- The packed words ------------------------------------------------------------------------------------------
 
-test('LOOK_FIELD: sixteen words; the look word\'s bit 0 is the valid flag and bit 6 the long-hair bit, its fields tile the rest to bit 30; the figure word is full; the face word tiles bits 0 to 30; the wardrobe word its low byte; the skin word its low seven bits (the skin\'s high bits, vitiligo, freckles); words 5 to 15 spare; each field wide enough for its slot', () => {
+test('LOOK_FIELD: sixteen words; the look word\'s bit 0 is the valid flag and bit 6 the long-hair bit, its fields tile the rest to bit 30; the figure word is full; the face word tiles bits 0 to 30; the wardrobe word its low byte; the skin word its low thirty bits; the cloth word (5) its low byte, the two weaves; words 6 to 15 spare; each field wide enough for its slot', () => {
   assert.equal(LOOK_WORDS, 16)
   const used = Array.from({ length: LOOK_WORDS }, (_, w) => new Set<number>(w === 0 ? [0, LONG_HAIR_BIT] : []))
   const claim = (slot: string, word: number, shift: number, width: number) => {
@@ -307,7 +307,7 @@ test('LOOK_FIELD: sixteen words; the look word\'s bit 0 is the valid flag and bi
     assert.ok(largest <= 1 << (width + (high ? high[2] : 0)), `${slot}: ${largest} options in ${width} bits${high ? ` and ${high[2]} high` : ''}`)
     claim(slot, word, shift, width)
     if (high) claim(`${slot} (high)`, ...high)
-    const expected = (LOOK_BODY_SLIDERS as readonly string[]).includes(slot) ? 1 : (LOOK_FACE_SLIDERS as readonly string[]).includes(slot) || slot === 'hairStyle' ? 2 : slot === 'layer' || slot === 'trim' || slot === 'scarf' ? 3 : (LOOK_GENOME_SLOTS as readonly string[]).includes(slot) ? 4 : 0
+    const expected = (LOOK_BODY_SLIDERS as readonly string[]).includes(slot) ? 1 : (LOOK_FACE_SLIDERS as readonly string[]).includes(slot) || slot === 'hairStyle' ? 2 : slot === 'layer' || slot === 'trim' || slot === 'scarf' ? 3 : slot === 'topWeave' || slot === 'bottomWeave' ? 5 : (LOOK_GENOME_SLOTS as readonly string[]).includes(slot) ? 4 : 0
     assert.equal(word, expected, `${slot} is in word ${expected}`)
     assert.equal(word >= 4, (LOOK_GENOME_SLOTS as readonly string[]).includes(slot), `${slot}: the genome's later words hold its later slots alone`)
   }
@@ -316,7 +316,9 @@ test('LOOK_FIELD: sixteen words; the look word\'s bit 0 is the valid flag and bi
   assert.deepEqual([LOOK_FIELD.vitiligo, LOOK_FIELD.freckles, LOOK_FIELD.curl, LOOK_FIELD.headwear, LOOK_FIELD.headwearColour], [[4, 2, 3], [4, 5, 2], [4, 9, 4], [4, 13, 3], [4, 16, 3]])
   assert.deepEqual([LOOK_FIELD.facialHair, LOOK_FIELD.hearing, LOOK_FIELD.prosthetic, LOOK_FIELD.prostheticFinish], [[4, 19, 3], [4, 22, 3], [4, 25, 3], [4, 28, 2]])
   assert.deepEqual([...used[4]].sort((a, b) => a - b), Array.from({ length: 30 }, (_, i) => i), 'the skin word\'s low thirty bits; the top two spare')
-  for (let w = 5; w < LOOK_WORDS; w++) assert.equal(used[w].size, 0, `word ${w} is spare`)
+  assert.deepEqual([LOOK_FIELD.topWeave, LOOK_FIELD.bottomWeave], [[5, 0, 4], [5, 4, 4]], 'the cloth word: the top\'s weave, then the bottom\'s')
+  assert.deepEqual([...used[5]].sort((a, b) => a - b), Array.from({ length: 8 }, (_, i) => i), 'the cloth word\'s low byte; the rest spare')
+  for (let w = 6; w < LOOK_WORDS; w++) assert.equal(used[w].size, 0, `word ${w} is spare`)
   assert.ok(Object.isFrozen(LOOK_FIELD_HIGH))
   assert.equal(used[0].size, 31)
   assert.ok(!used[0].has(31), 'the look word\'s top bit is spare')
@@ -791,6 +793,10 @@ test('lookFromSeed is deterministic, always wearable, body = seed mod 4, and the
     const limb = hc(28) >= Math.fround(0.99)
     assert.equal(look.prosthetic, limb ? 1 + idx(hc(29), 4) : 0)
     assert.equal(look.prostheticFinish, limb ? idx(hc(30), 4) : 0)
+    // The cloth word: four tops in ten woven, on the colours' 32, one of the body's eight weaves on 33; the trousers
+    // follow the top as `matching` (0), so the hash never sets the bottom's.
+    assert.equal(look.topWeave, hc(32) >= Math.fround(0.6) ? WEAVE_STREET[look.body][idx(hc(33), 8)] : 0)
+    assert.equal(look.bottomWeave, 0)
   }
   // Odd seeds still give a look: the city must always dress someone.
   for (const s of [NaN, -5, Infinity, 1.7, 2 ** 40, 0xffffffff]) assert.deepEqual(validateLook(lookFromSeed(s)), lookFromSeed(s))
@@ -810,10 +816,10 @@ test('the two hash chains never share a link: no colour link the fragment reads 
 })
 
 test('lookFromSeed is pinned for the player\'s slot and the first agents, and its odds match the crowd\'s', () => {
-  assert.deepEqual(lookFromSeed(0), { body: 0, height: 26, mass: 11, muscle: 4, shoulders: 0, hips: 8, legs: 8, posture: 8, head: 4, brow: 4, jaw: 4, chin: 5, cheek: 13, nose: 14, eyes: 14, lips: 2, skin: 12, age: 6, undertone: 2, vitiligo: 0, freckles: 0, hairStyle: 1, curl: 7, headwear: 0, headwearColour: 0, facialHair: 5, hearing: 0, prosthetic: 0, prostheticFinish: 0, hairColour: 1, layer: 0, top: 1, trim: 2, bottom: 0, shirt: 2, shoes: 0, tie: 0, scarf: 0, eyewear: 0, bag: 1, cup: 0 })
-  assert.deepEqual(lookFromSeed(1), { body: 1, height: 28, mass: 8, muscle: 14, shoulders: 4, hips: 15, legs: 12, posture: 5, head: 1, brow: 7, jaw: 11, chin: 15, cheek: 15, nose: 9, eyes: 4, lips: 4, skin: 9, age: 3, undertone: 2, vitiligo: 0, freckles: 0, hairStyle: 0, curl: 9, headwear: 0, headwearColour: 0, facialHair: 0, hearing: 0, prosthetic: 0, prostheticFinish: 0, hairColour: 1, layer: 0, top: 4, trim: 0, bottom: 0, shirt: 3, shoes: 0, tie: 0, scarf: 2, eyewear: 0, bag: 1, cup: 0 })
-  assert.deepEqual(lookFromSeed(2), { body: 2, height: 11, mass: 15, muscle: 12, shoulders: 4, hips: 4, legs: 3, posture: 2, head: 7, brow: 15, jaw: 2, chin: 2, cheek: 11, nose: 12, eyes: 1, lips: 6, skin: 11, age: 4, undertone: 2, vitiligo: 0, freckles: 0, hairStyle: 1, curl: 4, headwear: 0, headwearColour: 0, facialHair: 0, hearing: 0, prosthetic: 0, prostheticFinish: 0, hairColour: 6, layer: 0, top: 5, trim: 0, bottom: 3, shirt: 4, shoes: 3, tie: 0, scarf: 0, eyewear: 0, bag: 0, cup: 0 })
-  assert.deepEqual(lookFromSeed(3), { body: 3, height: 18, mass: 1, muscle: 4, shoulders: 10, hips: 2, legs: 1, posture: 10, head: 3, brow: 12, jaw: 9, chin: 8, cheek: 9, nose: 14, eyes: 7, lips: 6, skin: 12, age: 2, undertone: 0, vitiligo: 0, freckles: 0, hairStyle: 2, curl: 4, headwear: 0, headwearColour: 0, facialHair: 0, hearing: 0, prosthetic: 0, prostheticFinish: 0, hairColour: 6, layer: 0, top: 4, trim: 0, bottom: 2, shirt: 1, shoes: 0, tie: 0, scarf: 7, eyewear: 1, bag: 0, cup: 0 })
+  assert.deepEqual(lookFromSeed(0), { body: 0, height: 26, mass: 11, muscle: 4, shoulders: 0, hips: 8, legs: 8, posture: 8, head: 4, brow: 4, jaw: 4, chin: 5, cheek: 13, nose: 14, eyes: 14, lips: 2, skin: 12, age: 6, undertone: 2, vitiligo: 0, freckles: 0, hairStyle: 1, curl: 7, headwear: 0, headwearColour: 0, facialHair: 5, hearing: 0, prosthetic: 0, prostheticFinish: 0, hairColour: 1, layer: 0, top: 1, topWeave: 0, trim: 2, bottom: 0, bottomWeave: 0, shirt: 2, shoes: 0, tie: 0, scarf: 0, eyewear: 0, bag: 1, cup: 0 })
+  assert.deepEqual(lookFromSeed(1), { body: 1, height: 28, mass: 8, muscle: 14, shoulders: 4, hips: 15, legs: 12, posture: 5, head: 1, brow: 7, jaw: 11, chin: 15, cheek: 15, nose: 9, eyes: 4, lips: 4, skin: 9, age: 3, undertone: 2, vitiligo: 0, freckles: 0, hairStyle: 0, curl: 9, headwear: 0, headwearColour: 0, facialHair: 0, hearing: 0, prosthetic: 0, prostheticFinish: 0, hairColour: 1, layer: 0, top: 4, topWeave: 12, trim: 0, bottom: 0, bottomWeave: 0, shirt: 3, shoes: 0, tie: 0, scarf: 2, eyewear: 0, bag: 1, cup: 0 })
+  assert.deepEqual(lookFromSeed(2), { body: 2, height: 11, mass: 15, muscle: 12, shoulders: 4, hips: 4, legs: 3, posture: 2, head: 7, brow: 15, jaw: 2, chin: 2, cheek: 11, nose: 12, eyes: 1, lips: 6, skin: 11, age: 4, undertone: 2, vitiligo: 0, freckles: 0, hairStyle: 1, curl: 4, headwear: 0, headwearColour: 0, facialHair: 0, hearing: 0, prosthetic: 0, prostheticFinish: 0, hairColour: 6, layer: 0, top: 5, topWeave: 0, trim: 0, bottom: 3, bottomWeave: 0, shirt: 4, shoes: 3, tie: 0, scarf: 0, eyewear: 0, bag: 0, cup: 0 })
+  assert.deepEqual(lookFromSeed(3), { body: 3, height: 18, mass: 1, muscle: 4, shoulders: 10, hips: 2, legs: 1, posture: 10, head: 3, brow: 12, jaw: 9, chin: 8, cheek: 9, nose: 14, eyes: 7, lips: 6, skin: 12, age: 2, undertone: 0, vitiligo: 0, freckles: 0, hairStyle: 2, curl: 4, headwear: 0, headwearColour: 0, facialHair: 0, hearing: 0, prosthetic: 0, prostheticFinish: 0, hairColour: 6, layer: 0, top: 4, topWeave: 9, trim: 0, bottom: 2, bottomWeave: 0, shirt: 1, shoes: 0, tie: 0, scarf: 7, eyewear: 1, bag: 0, cup: 0 })
   const n = 20000
   const rate = (pick: (l: Look) => number, from = 0, step = 1) => {
     let sum = 0, count = 0
@@ -869,6 +875,44 @@ test('lookFromSeed is pinned for the player\'s slot and the first agents, and it
   for (let v = 1; v < 7; v++) near(rate((l) => (l.vitiligo === v ? 1 : 0)), (1 - LOOK_ODDS.vitiligo) / 6, `vitiligo pattern ${v}`, 0.003)
   near(rate((l) => (l.freckles > 0 ? 1 : 0)), 1 - LOOK_ODDS.freckles, 'freckles', 0.01)
   for (let f = 1; f < 4; f++) near(rate((l) => (l.freckles === f ? 1 : 0)), (1 - LOOK_ODDS.freckles) / 3, `freckle density ${f}`, 0.01)
+  // The cloth word: four tops in ten woven, each of the body's eight about as often; the bottom's left to follow.
+  near(rate((l) => (l.topWeave > 0 ? 1 : 0)), 1 - LOOK_ODDS.weave, 'a woven top', 0.01)
+  for (const b of BODIES) for (const w of WEAVE_STREET[b]) near(rate((l) => (l.topWeave === w ? 1 : 0), b, 4), (1 - LOOK_ODDS.weave) / 8, `${LOOK_BODIES[b]} in weave ${w}`, 0.012)
+  assert.equal(rate((l) => l.bottomWeave), 0)
+})
+
+test('the weaves: sixteen cloths, plain first, none named for a people; the bottom\'s 0 follows a matching top; the street\'s eight per body, packed for the shader as crowd.ts reads them', () => {
+  assert.deepEqual([...WARDROBE.weave], [
+    'plain', 'twill', 'herringbone', 'pinstripe', 'chalk stripe', 'houndstooth', 'glen check', 'windowpane',
+    'tartan', 'tweed', 'linen', 'silk', 'cashmere', 'merino', 'batik', 'strip weave',
+  ])
+  assert.deepEqual(Object.values(WEAVE), WARDROBE.weave.map((_, i) => i), 'WEAVE names the list in order')
+  assert.equal(WEAVE.plain, 0, 'plain is 0: a look kept before the weaves is plain')
+  for (const name of WARDROBE.weave) assert.doesNotMatch(name, /kente|adinkra|asante|ewe|maasai|navajo|aztec|tribal|ethnic|native/i, `${name}: a weave is named for its cloth, never a people`)
+  for (const b of BODIES) {
+    assert.deepEqual(lookOptions(b, 'topWeave').map((o) => o.name), [...WARDROBE.weave])
+    const bottom = lookOptions(b, 'bottomWeave').map((o) => o.name)
+    assert.deepEqual(bottom, [WARDROBE.outfits[b].matching ? 'matching' : 'plain', ...WARDROBE.weave.slice(1)], 'the bottom\'s 0 is matching where the trousers may be the jacket\'s cloth')
+    // The street: eight distinct weaves, none plain, packed four bits each in list order.
+    assert.equal(WEAVE_STREET[b].length, 8)
+    assert.equal(new Set(WEAVE_STREET[b]).size, 8)
+    assert.ok(!WEAVE_STREET[b].includes(WEAVE.plain))
+    for (const [i, w] of WEAVE_STREET[b].entries()) assert.equal((WEAVE_STREET_PACKED[b] >>> (4 * i)) & 15, w)
+  }
+  assert.ok(WEAVE_STREET[0].includes(WEAVE.pinstripe) && WEAVE_STREET[1].includes(WEAVE.tweed) && WEAVE_STREET[3].includes(WEAVE.silk), 'the suit\'s suitings, the blazer\'s tweeds, the skirt suit\'s soft cloths')
+  assert.equal(LOOK_ODDS.weave, 0.6)
+  // crowd.ts reads the same words, links and lists: the look's weave or the street's, the bottom's 0 the top's where the
+  // trousers match it (the suit's always for the hash, the pantsuit's under the dark-trousers odds), one paint per slot.
+  assert.ok(CROWD.includes('const street = uint(WEAVE_STREET_PACKED[variant]).shiftRight(uint(h(LOOK_HASHED_COLOUR.weavePick).mul(8 - 0.001)).mul(uint(4))).bitAnd(uint(15))'))
+  assert.ok(CROWD.includes('const topWeave = select(custom, gene(LOOK_FIELD.topWeave), select(h(LOOK_HASHED_COLOUR.weave).greaterThanEqual(LOOK_ODDS.weave), street, uint(0)))'))
+  assert.ok(CROWD.includes('const matches = variant === 0 ? select(custom, bottomAt.equal(uint(0)), uint(1).equal(uint(1)))'))
+  assert.ok(CROWD.includes(': variant === 2 ? select(custom, bottomAt.equal(uint(0)), h(10).lessThan(0.6)) : uint(0).equal(uint(1))'), 'the pantsuit\'s trousers match under the dark-trousers odds')
+  assert.ok(CROWD.includes('const bottomWeave = select(custom.and(ownBottomWeave.notEqual(uint(0))), ownBottomWeave, select(matches, topWeave, uint(0)))'))
+  assert.ok(CROWD.includes('const woven = weavePaint(select(onBottom, bottom, topCloth), select(onBottom, bottomWeave, select(slotIs(SLOT.TOP), topWeave, uint(0))), rig, slot, footprint, near, variant === 3).toVar()'))
+  assert.equal(LOOK_ODDS.darkTrousers, 0.6, 'the pantsuit\'s match is the dark-trousers odds')
+  // The pixel's footprint is a derivative: read at the top of the stage, first of the shared values, before any branch.
+  assert.ok(CROWD.includes('const footprint = fwidth(positionGeometry).length().max(0.00001).toVar()'))
+  assert.ok(CROWD.includes('const shared = [footprint, ...links.values(),'))
 })
 
 // --- Presets ---------------------------------------------------------------------------------------------------
@@ -996,8 +1040,12 @@ test('a look code is twenty-eight symbols "XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX", and
   for (const look of looks) {
     const code = formatLookCode(look)
     const later = packGenome(look).slice(4).some((w) => w !== 0)
-    // Every genome word past 4 is zero today but the skin word, so a tail is one word: eight symbols.
-    assert.match(code, new RegExp(`^${SYMBOL}{7}-${SYMBOL}{7}-${SYMBOL}{7}-${SYMBOL}{7}${later ? `-${SYMBOL}{8}` : ''}$`), code)
+    // The genome's words past 4 up to the last that is not zero (the skin word, the cloth word) ride the tail: eight
+    // symbols for one word, fifteen (eight and seven) for two.
+    const k = packGenome(look).slice(4).findLastIndex((w) => w !== 0) + 1
+    const tail = k === 0 ? '' : k === 1 ? `-${SYMBOL}{8}` : `-${SYMBOL}{8}-${SYMBOL}{7}`
+    assert.ok(k <= 2, 'words 6 to 15 are spare')
+    assert.match(code, new RegExp(`^${SYMBOL}{7}-${SYMBOL}{7}-${SYMBOL}{7}-${SYMBOL}{7}${tail}$`), code)
     if (later) tailed++
     assert.deepEqual(parseLookCode(code), look)
     assert.deepEqual(parseLookCode(code.toLowerCase()), look)

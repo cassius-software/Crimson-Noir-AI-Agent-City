@@ -105,7 +105,7 @@ const CORE = [
   { name: 'captions', usage: 'captions [on|off]', summary: 'closed captions for every sound: engines, signals, speech, pings (view-only)' },
   { name: 'haptics', usage: 'haptics [on|off]', summary: "controller rumble and phone vibration: the guardrails' feel and a check's tap (the triggers' resistance stays)" },
   { name: 'ping', usage: 'ping [go|look|gather|wait|clear]', summary: 'mark where you look for your swarm (view-only; shown on the minimap and captioned; Q); alone, the marks standing' },
-  { name: 'look', usage: 'look [show [<agent>]|<slot> <n|name>|preset <name>|build <name>|face <name>|code <code>|random [<seed>]|reset]', summary: "your look from the crowd's wardrobe (body, build, height, mass, muscle, shoulders, hips, legs, posture, head, face shape, skin, vitiligo, freckles, hair, curl, headwear, facial hair, hearing devices, prosthetic, top, bottom, shirt, shoes, tie, eyewear, bag, cup)" },
+  { name: 'look', usage: 'look [show [<agent>]|<slot> <n|name>|preset <name>|build <name>|face <name>|code <code>|random [<seed>]|reset]', summary: "your look from the crowd's wardrobe (body, build, height, mass, muscle, shoulders, hips, legs, posture, head, face shape, skin, vitiligo, freckles, hair, curl, headwear, facial hair, hearing devices, prosthetic, top, weaves, bottom, shirt, shoes, tie, eyewear, bag, cup)" },
   { name: 'agent', usage: 'agent [new <name>|<name> pronouns|role|voice|look|name <value...>|hire <name> [<skill>]|dismiss <name>|forget <name>|voices]', summary: 'your own agents: name, pronouns, role, voice and look; hire one into a pedestrian with a skill (they answer ask and say as themselves)' },
   { name: 'sloane', usage: 'sloane [on|off|voice <name>|voices|say <text...>]', summary: "the concierge's spoken voice: the speech provider's voice at your own head when say has one, else the browser's offline voice" },
   { name: 'goal', usage: 'goal <words...>', summary: 'tell the city a goal in plain words, as you would tell Sloane: what can be done now is done, the rest is explained' },
@@ -200,7 +200,7 @@ export const LOOK_SLOT_ARGS = [
   'body', 'height', 'mass', 'muscle', 'shoulders', 'hips', 'legs', 'posture', 'head', 'brow', 'jaw', 'chin', 'cheek', 'nose', 'eyes', 'lips',
   'skin', 'age', 'undertone', 'vitiligo', 'freckles', 'hairStyle', 'curl', 'hairColour', 'headwear', 'headwearColour',
   'facialHair', 'hearing', 'prosthetic', 'prostheticFinish',
-  'layer', 'top', 'trim', 'bottom', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
+  'layer', 'top', 'topWeave', 'trim', 'bottom', 'bottomWeave', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
 ] as const
 export const LOOK_BUILD_ARGS = ['athletic', 'broad', 'full', 'lean', 'muscular', 'slight', 'soft', 'stocky'] as const
 export const LOOK_BODY_ARGS = ['pantsuit', 'skirt suit', 'smart casual', 'suit'] as const
@@ -209,6 +209,10 @@ export const LOOK_FACE_ARGS = [
   'broad nose', 'broad square', 'broad triangle', 'defined long', 'defined oval', 'diamond', 'full heart', 'full lips', 'full round', 'heart', 'long',
   'narrow diamond', 'narrow heart', 'narrow long', 'narrow nose', 'oval', 'rectangle', 'round', 'soft oval', 'soft round', 'soft square', 'square',
   'triangle', 'wide eyes',
+] as const
+export const LOOK_WEAVE_ARGS = [
+  'batik', 'cashmere', 'chalk stripe', 'glen check', 'herringbone', 'houndstooth', 'linen', 'merino', 'pinstripe', 'plain', 'silk', 'strip weave',
+  'tartan', 'tweed', 'twill', 'windowpane',
 ] as const
 const LOOK_ACTIONS = ['build', 'code', 'face', 'preset', 'random', 'reset', 'show'] as const
 
@@ -241,6 +245,8 @@ const ARGS: Record<string, readonly string[]> = {
   'look hearing': ['cochlear implant', 'cochlear implants', 'hearing aids', 'implant and aid', 'none'],
   'look prosthetic': ['both arms', 'both legs', 'left arm', 'left leg', 'none', 'right arm', 'right leg'],
   'look prostheticFinish': ['carbon', 'chrome', 'matte', 'skin-matched'],
+  'look topWeave': LOOK_WEAVE_ARGS,
+  'look bottomWeave': ['matching', ...LOOK_WEAVE_ARGS].sort(),
   'look undertone': ['cool', 'neutral', 'olive', 'warm'],
   'look skin': ['mst-01', 'mst-02', 'mst-03', 'mst-04', 'mst-05', 'mst-06', 'mst-07', 'mst-08', 'mst-09', 'mst-10'],
   'look vitiligo': ['face', 'hands', 'hands and face', 'none', 'one side', 'scattered', 'widespread'],

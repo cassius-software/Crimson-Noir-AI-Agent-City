@@ -94,7 +94,7 @@ export const LOOK_SLOTS = [
   'body', ...LOOK_BODY_SLIDERS, ...LOOK_FACE_SLIDERS,
   'skin', 'age', 'undertone', 'vitiligo', 'freckles', 'hairStyle', 'curl', 'hairColour', 'headwear', 'headwearColour',
   'facialHair', 'hearing', 'prosthetic', 'prostheticFinish',
-  'layer', 'top', 'trim', 'bottom', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
+  'layer', 'top', 'topWeave', 'trim', 'bottom', 'bottomWeave', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
 ] as const
 export type LookSlot = (typeof LOOK_SLOTS)[number]
 export type Look = Readonly<Record<LookSlot, number>>
@@ -106,6 +106,7 @@ export type Look = Readonly<Record<LookSlot, number>>
  */
 export const LOOK_GENOME_SLOTS = [
   'vitiligo', 'freckles', 'curl', 'headwear', 'headwearColour', 'facialHair', 'hearing', 'prosthetic', 'prostheticFinish',
+  'topWeave', 'bottomWeave',
 ] as const satisfies readonly LookSlot[]
 
 /** The slots a look had before the genome's later words (the thirty-two of the four words): every one is required. */
@@ -249,6 +250,32 @@ export const hearingPieces = (hearing: number): readonly ('aidL' | 'aidR' | 'coi
  * painted by crowd.ts in matte grey, carbon weave, chrome, or a skin-matched cover, with the socket's line.
  */
 export const PROSTHETIC = Object.freeze({ none: 0, leftArm: 1, rightArm: 2, leftLeg: 3, rightLeg: 4, bothArms: 5, bothLegs: 6 })
+/**
+ * The cloth's weave (WARDROBE.weave), painted by crowd.ts from the rest position over the top's cloth (the jacket's,
+ * or the coat's under a coat) and the trousers' or the skirt's: plain as before, then the suitings (twill,
+ * herringbone, pinstripe, chalk stripe, houndstooth, glen check, windowpane, a generic tartan check), the textured
+ * cloths (tweed, linen, silk, cashmere, merino: silk, linen, cashmere, tweed and merino have their own sheen), a batik
+ * of plain dots and rings (no classical pattern of the craft's) and a strip weave of bars and blocks (no named
+ * pattern of any people's). Each fades to its own mean colour where its threads are finer than a pixel. The bottom's
+ * option 0 is `matching`: the top's weave when the trousers are the jacket's cloth (a matching outfit's bottom 0),
+ * plain otherwise, so a stored look (neither set) is plain as it always was.
+ */
+export const WEAVE = Object.freeze({
+  plain: 0, twill: 1, herringbone: 2, pinstripe: 3, chalkStripe: 4, houndstooth: 5, glenCheck: 6, windowpane: 7,
+  tartan: 8, tweed: 9, linen: 10, silk: 11, cashmere: 12, merino: 13, batik: 14, stripWeave: 15,
+})
+/**
+ * The weaves the hashed crowd wears on its tops (above LOOK_ODDS.weave, one of eight per body, LOOK_HASHED_COLOUR
+ * weavePick): suitings for the suit and the pantsuit, tweeds and checks for the smart-casual blazer, the softer cloths
+ * and the prints for the skirt suit's top. Packed four bits each for crowd.ts (WEAVE_STREET_PACKED).
+ */
+export const WEAVE_STREET: readonly (readonly number[])[] = Object.freeze([
+  Object.freeze([WEAVE.twill, WEAVE.herringbone, WEAVE.pinstripe, WEAVE.chalkStripe, WEAVE.glenCheck, WEAVE.windowpane, WEAVE.houndstooth, WEAVE.merino]),
+  Object.freeze([WEAVE.tweed, WEAVE.herringbone, WEAVE.houndstooth, WEAVE.linen, WEAVE.glenCheck, WEAVE.windowpane, WEAVE.twill, WEAVE.cashmere]),
+  Object.freeze([WEAVE.pinstripe, WEAVE.twill, WEAVE.houndstooth, WEAVE.glenCheck, WEAVE.merino, WEAVE.linen, WEAVE.cashmere, WEAVE.chalkStripe]),
+  Object.freeze([WEAVE.silk, WEAVE.cashmere, WEAVE.linen, WEAVE.merino, WEAVE.houndstooth, WEAVE.tweed, WEAVE.batik, WEAVE.stripWeave]),
+])
+export const WEAVE_STREET_PACKED: readonly number[] = Object.freeze(WEAVE_STREET.map((list) => list.reduce((w, k, i) => (w | (k << (4 * i))) >>> 0, 0)))
 /** The hair pieces a crown cover leaves showing below it: the length, the bob's sides, a tail. */
 const BELOW_CROWN: ReadonlySet<string> = new Set(['longHair', 'bob', 'ponytail'])
 
@@ -286,6 +313,10 @@ export const WARDROBE = Object.freeze({
   hearing: Object.freeze(['none', 'hearing aids', 'cochlear implant', 'cochlear implants', 'implant and aid']),
   prosthetic: Object.freeze(['none', 'left arm', 'right arm', 'left leg', 'right leg', 'both arms', 'both legs']),
   prostheticFinish: Object.freeze(['matte', 'carbon', 'chrome', 'skin-matched']),
+  weave: Object.freeze([
+    'plain', 'twill', 'herringbone', 'pinstripe', 'chalk stripe', 'houndstooth', 'glen check', 'windowpane',
+    'tartan', 'tweed', 'linen', 'silk', 'cashmere', 'merino', 'batik', 'strip weave',
+  ]),
   layer: Object.freeze(['jacket', 'shirt sleeves', 'coat']),
   tie: Object.freeze(['none', 'tie']),
   eyewear: Object.freeze(['none', 'glasses']),
@@ -319,7 +350,8 @@ export const LONG_HAIR_BIT = 2 + LOOK_PIECE_BIT.longHair
  * (0 is matching, or none); bits 8 to 31 are spare. Word 4 is the skin word: the skin's high bits (LOOK_FIELD_HIGH:
  * a Monk tone is option 8 and up, past the look word's three bits), vitiligo at three bits and freckles at two, the hair
  * style's high bits, the curl, the headwear and its cloth, the facial hair, the hearing devices, a prosthetic limb and
- * its finish; bits 30 and 31 are spare, and so are words 5 to 15 (LOOK_WORDS), which unpackGenome requires to be zero. Every width is
+ * its finish; bits 30 and 31 are spare. Word 5 is the cloth word: the top's weave and the bottom's at four bits each;
+ * bits 8 to 31 are spare, and so are words 6 to 15 (LOOK_WORDS), which unpackGenome requires to be zero. Every width is
  * pinned to hold its slot's largest option count (with its high bits, for a slot that has them).
  */
 export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [word: number, shift: number, width: number]>> = Object.freeze({
@@ -364,6 +396,8 @@ export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [word: number, shift
   hearing: [4, 22, 3],
   prosthetic: [4, 25, 3],
   prostheticFinish: [4, 28, 2],
+  topWeave: [5, 0, 4],
+  bottomWeave: [5, 4, 4],
 })
 
 /**
@@ -424,9 +458,11 @@ export const LOOK_HASHED_HEARING = 26
  * The links of the fragment chain (LOOK_HASH.colours) the age, the undertone and the iris colour are drawn from; the
  * trim's contrast (above LOOK_ODDS.trim it is a trim cloth, else matching) and that cloth; the scarf's cloth; whether
  * the skin has vitiligo (above LOOK_ODDS.vitiligo) and its pattern, freckles (above LOOK_ODDS.freckles) and how many;
- * `marks` and the two links after it, where on a person the patches and freckles fall (crowd.ts, not a slot).
+ * `marks` and the two links after it, where on a person the patches and freckles fall (crowd.ts, not a slot); the
+ * headwear's cloth, the curl pattern, facial hair and its style, a prosthetic limb, which and its finish; whether the
+ * top is woven with a pattern (above LOOK_ODDS.weave) and which of the body's WEAVE_STREET.
  */
-export const LOOK_HASHED_COLOUR = Object.freeze({ age: 7, undertone: 8, iris: 13, trim: 14, scarfCloth: 15, trimCloth: 16, vitiligo: 17, vitiligoPattern: 18, freckles: 19, frecklesDensity: 20, marks: 21, headwearCloth: 24, curl: 25, facialHair: 26, facialHairStyle: 31, prosthetic: 28, prostheticLimb: 29, prostheticFinish: 30 })
+export const LOOK_HASHED_COLOUR = Object.freeze({ age: 7, undertone: 8, iris: 13, trim: 14, scarfCloth: 15, trimCloth: 16, vitiligo: 17, vitiligoPattern: 18, freckles: 19, frecklesDensity: 20, marks: 21, headwearCloth: 24, curl: 25, facialHair: 26, facialHairStyle: 31, prosthetic: 28, prostheticLimb: 29, prostheticFinish: 30, weave: 32, weavePick: 33 })
 
 const isBody = (v: unknown): v is LookBody => v === 0 || v === 1 || v === 2 || v === 3
 const womanBody = (body: LookBody): boolean => body >= 2
@@ -477,6 +513,9 @@ export function lookOptions(body: LookBody, slot: LookSlot, layer: number = LAYE
     case 'hearing': return named(WARDROBE.hearing)
     case 'prosthetic': return named(WARDROBE.prosthetic)
     case 'prostheticFinish': return named(WARDROBE.prostheticFinish)
+    case 'topWeave': return named(WARDROBE.weave)
+    // Option 0 follows the top where the trousers are its cloth (a matching outfit's), and is plain on the rest.
+    case 'bottomWeave': return [{ name: outfit.matching ? 'matching' : 'plain', hex: null }, ...named(WARDROBE.weave.slice(1))]
     case 'hairColour': return [...swatches(LOOK_PALETTE.hair), { name: 'grey', hex: GREY_HAIR }]
     case 'layer': return named(WARDROBE.layer)
     // The layer owns the top's dye: a coat draws from the coats, as many as the body's own jacket palette holds (the slot's width is the jacket's).
@@ -904,7 +943,7 @@ export const LOOK_HASH = Object.freeze({ pieces: 13.37, colours: 7.919 })
  * long, under `bun` a bob, else a bun; a man's split link at or above `bald` is bald, else long. Two people in a
  * hundred have vitiligo (`vitiligo`), about one in six freckles (`freckles`), whatever their tone.
  */
-export const LOOK_ODDS = Object.freeze({ tie: 0.3, bagMan: 0.7, bagWoman: 0.62, cup: 0.82, longHair: 0.35, glasses: 0.78, grey: 0.9, darkTrousers: 0.6, bob: 0.34, bun: 0.67, bald: 0.96, shirtSleeves: 0.2, coat: 0.85, scarf: 0.88, trim: 0.8, vitiligo: 0.98, freckles: 0.84, hijab: 0.95, headWrap: 0.93, turban: 0.975, kippah: 0.965, flatCap: 0.95, facialHair: 0.55, aids: 0.975, implant: 0.993, prosthetic: 0.99 })
+export const LOOK_ODDS = Object.freeze({ tie: 0.3, bagMan: 0.7, bagWoman: 0.62, cup: 0.82, longHair: 0.35, glasses: 0.78, grey: 0.9, darkTrousers: 0.6, bob: 0.34, bun: 0.67, bald: 0.96, shirtSleeves: 0.2, coat: 0.85, scarf: 0.88, trim: 0.8, vitiligo: 0.98, freckles: 0.84, hijab: 0.95, headWrap: 0.93, turban: 0.975, kippah: 0.965, flatCap: 0.95, facialHair: 0.55, aids: 0.975, implant: 0.993, prosthetic: 0.99, weave: 0.6 })
 
 const pickIndex = (h: number, length: number): number => Math.min(u32(f32(h * f32(length - 0.001))), length - 1)
 const above = (h: number, edge: number): number => (h >= f32(edge) ? 1 : 0)
@@ -978,6 +1017,10 @@ export function lookFromSeed(seed: number): Look {
     hearing: above(hp(LOOK_HASHED_HEARING), LOOK_ODDS.implant) ? HEARING.implant : above(hp(LOOK_HASHED_HEARING), LOOK_ODDS.aids) ? HEARING.aids : HEARING.none,
     prosthetic: above(hc(LOOK_HASHED_COLOUR.prosthetic), LOOK_ODDS.prosthetic) ? 1 + pickIndex(hc(LOOK_HASHED_COLOUR.prostheticLimb), 4) : 0,
     prostheticFinish: above(hc(LOOK_HASHED_COLOUR.prosthetic), LOOK_ODDS.prosthetic) ? pickIndex(hc(LOOK_HASHED_COLOUR.prostheticFinish), WARDROBE.prostheticFinish.length) : 0,
+    // Four tops in ten are woven with a pattern or a texture, one of the body's eight (WEAVE_STREET); the trousers stay
+    // `matching` (the top's weave on a matching suit's, plain on the rest).
+    topWeave: above(hc(LOOK_HASHED_COLOUR.weave), LOOK_ODDS.weave) ? WEAVE_STREET[body][pickIndex(hc(LOOK_HASHED_COLOUR.weavePick), WEAVE_STREET[body].length)] : 0,
+    bottomWeave: 0,
     hairColour: grey ? LOOK_PALETTE.hair.length : pickIndex(hc(2), LOOK_PALETTE.hair.length),
     layer,
     top: pickIndex(hc(3), topSize),
