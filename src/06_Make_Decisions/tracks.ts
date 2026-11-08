@@ -11,20 +11,22 @@
  * the median of two arterial streets, drones face-ring corridors at 40 and 46 m, planes one racetrack at
  * 400 m, and VTOLs two routes between rooftop pads (roofs of 24 to 60 m, chosen from the city's own boxes so
  * every leg and every descent is clear of every building): none of them ever reaches the street or the
- * sidewalk plane, so none needs the kernel. The module also holds the headway slots (where a fleet seats its
- * cars), the ring gaps a track follower reads for the cars of its own ring, the timetables of the scheduled
- * vehicles, and the guideway columns a renderer draws. It is pure: no physics handle, nothing loaded, and the
- * zero-jam invariants (tracks.test.ts INV-1..4) are proved on it in Node.
+ * sidewalk plane, so none needs the kernel. Two harbour ferries share one route on the lake, calling at the
+ * pier head: they sail at the water's level, but beyond the seawall, their hulls a berth clear of the pier and
+ * the wall (tracks.test.ts), where no street, sidewalk or person is. The module also holds the headway slots
+ * (where a fleet seats its cars), the ring gaps a track follower reads for the cars of its own ring, the
+ * timetables of the scheduled vehicles, and the guideway columns a renderer draws. It is pure: no physics handle,
+ * nothing loaded, and the zero-jam invariants (tracks.test.ts INV-1..4) are proved on it in Node.
  * What breaks if it is removed? Cars fall back to the random street-hopping Driver (traffic.ts) and jams
- * become possible again; trains, drones, planes and VTOLs have nowhere to run.
+ * become possible again; trains, drones, planes, VTOLs and ferries have nowhere to run.
  */
-import { CITY, CITY_CENTER, type Box } from '../01_Initialize_World/city.ts'
+import { CITY, CITY_CENTER, LAKE, type Box } from '../01_Initialize_World/city.ts'
 import { TRAFFIC, type Axis } from '../02_Define_The_Rules/civic.ts'
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
 
 export type Vec2 = readonly [number, number]
 export type Turn = 'straight' | 'left' | 'right'
-export type TrackKind = 'car' | 'train' | 'drone' | 'plane' | 'vtol'
+export type TrackKind = 'car' | 'train' | 'drone' | 'plane' | 'vtol' | 'ferry'
 
 /** A straight piece along `dir` (a unit axis vector) from (x0, z0). */
 export interface Line {
@@ -76,7 +78,7 @@ export interface Track {
   readonly pieces: readonly Piece[]
   /** Stop lines in order of s (car tracks only). */
   readonly stops: readonly Stop[]
-  /** Station platforms in order of s (train tracks only): the train's centre stops here. A VTOL route's pads, likewise. */
+  /** Station platforms in order of s (train tracks only): the train's centre stops here. A VTOL route's pads, and a ferry route's pier head, likewise. */
   readonly stations: readonly number[]
   /** Per station of a VTOL route, the roof its pad is set on, m over the street plane (empty for every other kind). */
   readonly pads: readonly number[]
@@ -84,7 +86,7 @@ export interface Track {
   readonly cornerSpeed: number
   /** Metres per headway slot. */
   readonly slot: number
-  /** Height of the track (the street plane for cars, the deck or the corridor altitude otherwise; a VTOL route's cruise). */
+  /** Height of the track (the street plane for cars, the deck or the corridor altitude otherwise; a VTOL route's cruise; a ferry's waterline). */
   readonly y: number
 }
 
@@ -214,6 +216,27 @@ export const TRACKS = Object.freeze({
     /** Shortest leg, m. */
     legMin: 40,
   }),
+  ferry: Object.freeze({
+    /** The hull's waterline over the street plane, m: the lake's surface (city.ts LAKE.water), and the kind's Ring-0 floor. */
+    water: LAKE.water,
+    speed: 6,
+    /** Acceleration and braking between calls, m/s²: a vessel's, far gentler than a train's. */
+    accel: 0.25,
+    /** Seconds alongside the pier head at each call. */
+    dwell: 30,
+    /** Ferries on the route, half a lap apart. */
+    count: 2,
+    /** The envelope: a hull of half this length and half this beam, this deep under the waterline and this tall over it. */
+    halfLength: 13,
+    halfBeam: 4.5,
+    draft: 1.6,
+    height: 7.5,
+    /** Water between the hull's side and the pier head at a call, m: the closest the hull comes to anything built. */
+    berth: 2,
+    /** Half the length of the route's two straights and the radius of its two turns, m. */
+    reach: 260,
+    radius: 120,
+  }),
 })
 
 const right = (d: Vec2): Vec2 => [-d[1], d[0]]
@@ -287,7 +310,9 @@ function makeTrack(id: number, kind: TrackKind, pieces: Piece[], stops: Stop[], 
         ? { speedLimit: TRACKS.drone.speed, cornerSpeed: TRACKS.drone.speed, slot: TRACKS.drone.headway }
         : kind === 'plane'
           ? { speedLimit: TRACKS.plane.speed, cornerSpeed: TRACKS.plane.speed, slot: TRACKS.plane.headway }
-          : { speedLimit: TRACKS.vtol.speed, cornerSpeed: TRACKS.vtol.speed, slot: TRACKS.vtol.legMin }
+          : kind === 'ferry'
+            ? { speedLimit: TRACKS.ferry.speed, cornerSpeed: TRACKS.ferry.speed, slot: 2 * TRACKS.ferry.halfLength }
+            : { speedLimit: TRACKS.vtol.speed, cornerSpeed: TRACKS.vtol.speed, slot: TRACKS.vtol.legMin }
   return Object.freeze({
     id, kind, length, pieces: Object.freeze(pieces), stops: Object.freeze(stops), stations: Object.freeze(stations), pads: Object.freeze(pads), y, ...limits,
   })
@@ -445,11 +470,67 @@ export function planeCorridors(): Track[] {
 }
 
 /**
- * The whole network from the seed: car rings, the elevated loop, the drone corridors, the racetrack and, given the
- * city's building boxes, the VTOL routes between rooftop pads (none without them); ids 0..n−1.
+ * The harbour ferries' route: a racetrack on the lake whose near straight runs east past the pier head, the hull's side
+ * `berth` metres off the pier's end (city.ts LAKE.pier), then a turn out onto the lake, the far straight back west
+ * 2 · radius further out, and a turn in again. The one call is alongside the pier head, the ferry's centre on the
+ * pier's axis. Fixed by the lake alone: the same for every seed, and clear of the seawall and the pier by
+ * construction (tracks.test.ts measures it against every box of the city).
+ */
+export function ferryRoutes(): Track[] {
+  const { reach, radius, berth, halfBeam, water } = TRACKS.ferry
+  const cx = LAKE.pier.x
+  const near = LAKE.shore + LAKE.pier.length + berth + halfBeam
+  const pieces: Piece[] = []
+  let s = 0
+  pieces.push(linePiece(s, cx - reach, near, [1, 0], 2 * reach))
+  s += 2 * reach
+  const out = arcPiece(s, cx + reach, near + radius, radius, -Math.PI / 2, Math.PI)
+  pieces.push(out)
+  s += out.length
+  pieces.push(linePiece(s, cx + reach, near + 2 * radius, [-1, 0], 2 * reach))
+  s += 2 * reach
+  pieces.push(arcPiece(s, cx - reach, near + radius, radius, Math.PI / 2, Math.PI))
+  return [makeTrack(0, 'ferry', pieces, [], [reach], water)]
+}
+
+/**
+ * The gap, m, between a hull (a rectangle of `halfLength` along `heading` and `halfBeam` across it, centred on (x, z))
+ * and a box's footprint: 0 when they overlap. A ferry's envelope is a hull, not a disc (a disc of its half-length would
+ * reach the pier it calls at), so INV-1 measures the ferry by this (tracks.test.ts, trackFleet.test.ts).
+ */
+export function hullGap(x: number, z: number, heading: number, halfLength: number, halfBeam: number, b: Box): number {
+  const fx = Math.sin(heading), fz = Math.cos(heading), rx = -fz, rz = fx
+  const hull: Vec2[] = [[1, 1], [1, -1], [-1, -1], [-1, 1]].map(([a, c]) => [x + fx * a * halfLength + rx * c * halfBeam, z + fz * a * halfLength + rz * c * halfBeam])
+  const box: Vec2[] = [[b[0], b[2]], [b[3], b[2]], [b[3], b[5]], [b[0], b[5]]]
+  // Two convex shapes overlap unless one of their four edge normals separates them.
+  const separated = ([[1, 0], [0, 1], [fx, fz], [rx, rz]] as Vec2[]).some(([ax, az]) => {
+    let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity
+    for (const [px, pz] of hull) { const d = px * ax + pz * az; a0 = Math.min(a0, d); a1 = Math.max(a1, d) }
+    for (const [px, pz] of box) { const d = px * ax + pz * az; b0 = Math.min(b0, d); b1 = Math.max(b1, d) }
+    return a1 < b0 || b1 < a0
+  })
+  if (!separated) return 0
+  // Apart: the gap is from a corner of one to an edge of the other.
+  let best = Infinity
+  for (const [px, pz] of hull) best = Math.min(best, boxGap(px, pz, b))
+  for (const [px, pz] of box) {
+    for (let i = 0; i < 4; i++) {
+      const [ax, az] = hull[i], [bx, bz] = hull[(i + 1) % 4]
+      const ex = bx - ax, ez = bz - az
+      const u = Math.min(1, Math.max(0, ((px - ax) * ex + (pz - az) * ez) / (ex * ex + ez * ez)))
+      best = Math.min(best, Math.hypot(px - ax - u * ex, pz - az - u * ez))
+    }
+  }
+  return best
+}
+
+/**
+ * The whole network from the seed: car rings, the elevated loop, the drone corridors, the racetrack, the ferry route
+ * and, given the city's building boxes, the VTOL routes between rooftop pads (none without them, and always last, so
+ * every other track has the same id with or without boxes); ids 0..n−1.
  */
 export function buildTrackNetwork(seed: number, boxes: readonly Box[] = []): TrackNetwork {
-  const all = [...carLoops(seed), ...trainLoops(), ...droneCorridors(), ...planeCorridors(), ...vtolRoutes(boxes)]
+  const all = [...carLoops(seed), ...trainLoops(), ...droneCorridors(), ...planeCorridors(), ...ferryRoutes(), ...vtolRoutes(boxes)]
   return Object.freeze({ seed, tracks: Object.freeze(all.map((t, id) => (t.id === id ? t : Object.freeze({ ...t, id })))) })
 }
 
@@ -756,9 +837,18 @@ export function ringGaps(sSorted: Float64Array, length: number, carLength: numbe
 
 interface Leg { run: number; accel: number; cruise: number; peak: number; distance: number }
 
-/** The train's legs between consecutive stations: accelerate at comfortableDecel, cruise, brake, dwell. */
+/** How hard a timetabled craft speeds up and brakes, m/s²: a ferry its own gentle rate, a train or a VTOL comfortableDecel. */
+const accelOf = (track: Track): number => (track.kind === 'ferry' ? TRACKS.ferry.accel : TRAFFIC.comfortableDecel)
+
+/** Seconds a timetabled craft stands at each station: a train set at its platform, a ferry at the pier head. */
+const dwellOf = (track: Track): number => (track.kind === 'ferry' ? TRACKS.ferry.dwell : TRACKS.train.dwell)
+
+/** Whether a track runs to a timetable of stations and dwells (a train loop, a ferry route), not at constant speed. */
+const timetabled = (track: Track): boolean => (track.kind === 'train' || track.kind === 'ferry') && track.stations.length > 0
+
+/** The legs between consecutive stations: accelerate (accelOf), cruise, brake, dwell. */
 function legs(track: Track): Leg[] {
-  const a = TRAFFIC.comfortableDecel, v = track.speedLimit
+  const a = accelOf(track), v = track.speedLimit
   return track.stations.map((from, i) => {
     const to = track.stations[(i + 1) % track.stations.length]
     const distance = i + 1 < track.stations.length ? to - from : to + track.length - from
@@ -772,16 +862,16 @@ function legs(track: Track): Leg[] {
   })
 }
 
-/** Seconds one vehicle takes for a lap: the train timetable with its dwells, a VTOL route's with its pad calls, or length / speed. */
+/** Seconds one vehicle takes for a lap: the train's or the ferry's timetable with its dwells, a VTOL route's with its pad calls, or length / speed. */
 export function lapSeconds(track: Track): number {
-  if (track.kind === 'train' && track.stations.length > 0) return legs(track).reduce((t, l) => t + l.run + TRACKS.train.dwell, 0)
+  if (timetabled(track)) return legs(track).reduce((t, l) => t + l.run + dwellOf(track), 0)
   if (track.kind === 'vtol') return legs(track).reduce((t, l, i) => t + l.run + padTime(track, i), 0)
   return track.length / track.speedLimit
 }
 
-/** Arc length of a train `tau` seconds after leaving its first station. */
+/** Arc length of a train (or a ferry) `tau` seconds after leaving its first station. */
 function timetable(track: Track, tau: number): number {
-  const a = TRAFFIC.comfortableDecel
+  const a = accelOf(track), dwell = dwellOf(track)
   let s = track.stations[0]
   for (const leg of legs(track)) {
     if (tau < leg.run) {
@@ -794,8 +884,8 @@ function timetable(track: Track, tau: number): number {
     }
     tau -= leg.run
     s = wrap(track, s + leg.distance)
-    if (tau < TRACKS.train.dwell) return s
-    tau -= TRACKS.train.dwell
+    if (tau < dwell) return s
+    tau -= dwell
   }
   return s
 }
@@ -803,10 +893,11 @@ function timetable(track: Track, tau: number): number {
 /**
  * Where vehicle `index` of `count` on a scheduled track stands at realm time `t`: a pure function of t, so
  * vehicles never interact. Trains follow the timetable (dwelling TRACKS.train.dwell s at every station), sets
- * a lap-time / count apart; drones and planes hold constant speed a length / count apart.
+ * a lap-time / count apart, and so do the ferries (TRACKS.ferry.dwell s at the pier head); drones and planes hold
+ * constant speed a length / count apart.
  */
 export function scheduledPose(track: Track, index: number, count: number, t: number): TrackPose {
-  if (track.kind === 'train' && track.stations.length > 0) {
+  if (timetabled(track)) {
     const T = lapSeconds(track)
     const tau = ((((t + (index * T) / count) % T) + T) % T)
     return poseAt(track, timetable(track, tau))
@@ -823,9 +914,10 @@ export function scheduledPose(track: Track, index: number, count: number, t: num
   return poseAt(track, (index * track.length) / count + track.speedLimit * t)
 }
 
-/** How many vehicles a scheduled track carries: the train sets, one drone per headway, the planes. */
+/** How many vehicles a scheduled track carries: the train sets, one drone per headway, the planes, the VTOLs, the ferries. */
 export function scheduledCount(track: Track): number {
   if (track.kind === 'train') return TRACKS.train.sets
+  if (track.kind === 'ferry') return TRACKS.ferry.count
   if (track.kind === 'plane') return TRACKS.plane.count
   if (track.kind === 'drone') return Math.max(1, Math.floor(track.length / TRACKS.drone.headway))
   if (track.kind === 'vtol') return TRACKS.vtol.craft

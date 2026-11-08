@@ -3,10 +3,10 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? The car as plain numbers: dimensions, powertrain constants, tuning bounds, wheel layout
- * and the eight kinds of vehicle the fleet is drawn from (VEHICLE_KINDS). Both realms read it: the physics worker
+ * and the eleven kinds of vehicle the fleet is drawn from (VEHICLE_KINDS). Both realms read it: the physics worker
  * builds and drives the Rapier vehicles from it (vehicles.ts), and the main thread draws them and maps the player's
  * controls with it (fleetView.ts, engine.ts). It imports nothing, so the page's own bundle never pulls in Rapier.
- * The kinds are two chassis classes under eight silhouettes: a light class (the sedan's box, mass and power) and a
+ * The kinds are two chassis classes under eleven silhouettes: a light class (the sedan's box, mass and power) and a
  * heavy class (the SUV's), each proven once in vehicles.test.ts against the First Law's stopping envelope; a kind
  * picks a class and a body (its profile and scale in fleetView.ts, within DISSOLVE.reach of the class's box, so the
  * dissolve still has the mesh before the camera does). A silhouette longer than its box, a full coach or an
@@ -76,7 +76,7 @@ export type DriveMode = 'ai' | 'player' | 'parked'
 /** How a kind of vehicle is drawn and lit (fleetView.ts); its physics is its chassis class (`heavy`). */
 export interface VehicleKind {
   /** Stable id, the profile's name in fleetView.ts. */
-  readonly id: 'sedan' | 'pod' | 'van' | 'coach' | 'courier' | 'suv' | 'coupe' | 'utility'
+  readonly id: 'sedan' | 'pod' | 'van' | 'coach' | 'courier' | 'suv' | 'coupe' | 'utility' | 'truck' | 'agv' | 'forklift'
   /** What the HUD calls it. */
   readonly name: string
   /** The heavy chassis class: the SUV's box (chassisBox(true)), mass, power and drag. False: the sedan's. */
@@ -90,8 +90,9 @@ export interface VehicleKind {
 }
 
 /**
- * The eight kinds, in the order a kind index names them (SimMeta.kind, Vehicle.kind). The mix a fleet draws is
- * kindFromDraw below: three in ten heavy, as the fleet has always been.
+ * The eleven kinds, in the order a kind index names them (SimMeta.kind, Vehicle.kind): the last three came after the
+ * first eight, which keep their indices. The mix a fleet draws is kindFromDraw below: three in ten heavy, as the fleet
+ * has always been.
  */
 export const VEHICLE_KINDS: readonly VehicleKind[] = Object.freeze([
   { id: 'sedan', name: 'Executive sedan', heavy: false, scale: [1, 1, 1], wheel: 1, lights: 'none' },
@@ -102,6 +103,11 @@ export const VEHICLE_KINDS: readonly VehicleKind[] = Object.freeze([
   { id: 'suv', name: 'Security SUV', heavy: true, scale: [1, 1.16, 1.03], wheel: 1.08, lights: 'none' },
   { id: 'coupe', name: 'Gullwing coupe', heavy: false, scale: [1, 0.88, 1], wheel: 1, lights: 'none' },
   { id: 'utility', name: 'Utility rig', heavy: true, scale: [1, 1.28, 1.04], wheel: 1.08, lights: 'beacon' },
+  // The logistics three (Pillar 4): a cab-over box truck on the heavy class; a cab-less automated guided vehicle and
+  // a counterbalance forklift under its overhead guard, both on the light class, each with an amber beacon.
+  { id: 'truck', name: 'Box truck', heavy: true, scale: [1, 1, 1.06], wheel: 1.08, lights: 'none' },
+  { id: 'agv', name: 'Automated guided vehicle', heavy: false, scale: [1, 1, 0.9], wheel: 0.7, lights: 'beacon' },
+  { id: 'forklift', name: 'Counterbalance forklift', heavy: false, scale: [0.62, 1, 0.72], wheel: 0.75, lights: 'beacon' },
 ].map((k) => Object.freeze({ ...k, scale: Object.freeze(k.scale) }) as VehicleKind))
 
 /** The kind index of `id`. */
@@ -110,13 +116,14 @@ export const KIND = Object.freeze(Object.fromEntries(VEHICLE_KINDS.map((k, i) =>
 /**
  * The kind one draw `u` (0 ≤ u < 1 from the fleet's seeded stream) picks. Heavy kinds take u < 0.3, light kinds the
  * rest, so `VEHICLE_KINDS[kindFromDraw(u)].heavy === u < 0.3`: the one draw that used to decide "SUV or sedan" now
- * decides the kind, and every fleet a seed laid out before keeps the same chassis class in every slot. Out of range
- * (NaN, ≥ 1, negative) is the sedan.
+ * decides the kind, and every fleet a seed laid out before keeps the same chassis class in every slot (a slot's kind
+ * within its class may change as kinds join: the truck took a share of the heavy draws, the AGV and the forklift of the
+ * light ones). Out of range (NaN, ≥ 1, negative) is the sedan.
  */
 export function kindFromDraw(u: number): number {
   if (!(u >= 0 && u < 1)) return KIND.sedan
-  if (u < 0.3) return u < 0.12 ? KIND.suv : u < 0.2 ? KIND.van : u < 0.26 ? KIND.coach : KIND.utility
-  return u < 0.66 ? KIND.sedan : u < 0.78 ? KIND.pod : u < 0.86 ? KIND.courier : KIND.coupe
+  if (u < 0.3) return u < 0.1 ? KIND.suv : u < 0.17 ? KIND.van : u < 0.22 ? KIND.coach : u < 0.26 ? KIND.utility : KIND.truck
+  return u < 0.62 ? KIND.sedan : u < 0.73 ? KIND.pod : u < 0.8 ? KIND.courier : u < 0.88 ? KIND.coupe : u < 0.94 ? KIND.agv : KIND.forklift
 }
 
 /** The kind's record, the sedan's for an index that is not one. */
