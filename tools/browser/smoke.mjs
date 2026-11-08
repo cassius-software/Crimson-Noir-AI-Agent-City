@@ -1428,6 +1428,8 @@ const SCENARIOS = {
       await p.goto(url)
       await p.booted()
       check(await p.eval('globalThis.crossOriginIsolated === true'), 'inpage: the page is cross-origin isolated, so the model may use more than one thread')
+      // As in ultra: the concierge has greeted by now, its name field holding the keyboard; skipped, the tilde reaches the page.
+      await p.eval(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Skip')?.click()`)
       check(await p.openConsole(), 'inpage: the tilde key opens the console')
       await p.command('operator unlock', /unlocked/)
 
@@ -1572,6 +1574,8 @@ const SCENARIOS = {
       // 50 ms of sim time): the clock an action set is read back minutes later, so the hour is compared, not the minute.
       await p.goto(`${origin}/?${LIGHT}&day=1440`)
       await p.booted()
+      // As in ultra: the concierge has greeted by now, its name field holding the keyboard; skipped, the tilde reaches the page.
+      await p.eval(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Skip')?.click()`)
       check(await p.openConsole(), 'actions: the tilde key opens the console')
       await p.command('operator unlock', /unlocked/)
       // `ask provider scripted` answers `provider  scripted: no backend; …` (router.ts PROVIDER_TEXT).
