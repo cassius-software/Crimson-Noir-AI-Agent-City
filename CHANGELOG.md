@@ -45,7 +45,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   0.stable.beta (the final 1.0.0-1 sorts after it). Nothing is compiled with the shorter version, so the app inside
   every installer says 1.0.0-stable-beta (`installerVersion`, `rpmRelease` in tools/build/matrix.mjs, pinned by
   tests). The pull request's runners built all four: the x64 .msi in windows-app.yml, the arm64 .msi (WiX target
-  arm64, 8.3 MiB), and `Crimson Noir Agent City-1.0.0-0.stable.beta.x86_64.rpm` and `.aarch64.rpm` (8.2 MiB). Not
+  arm64, 8.3 MiB), and `Crimson Noir Agent City-1.0.0-0.stable.beta.x86_64.rpm` (8.2 MiB) and `.aarch64.rpm`. Not
   installed on a machine yet.
 - **Crimson Noir OS boots on aarch64 (`uefi-arm64`).** The boot crate's machine layer is split by architecture
   (`crimson_noir_os/boot/src/arch.rs`): `arch/x86_64.rs` is the old one, and `arch/aarch64.rs` drives an Arm machine
