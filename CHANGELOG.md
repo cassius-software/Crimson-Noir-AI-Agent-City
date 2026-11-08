@@ -849,6 +849,15 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **The web copy on GitHub Pages follows main by itself.** `.github/workflows/web.yml` ran only when someone started
+  it, so the public copy fell behind main (it last showed the Oct 31 build). It now also runs each time ci passes on
+  main (a `workflow_run` trigger on ci, main only): it builds the commit ci tested and publishes it only while that
+  commit is still main's tip, asked before the build and again before the deploy (so re-running an old run's failed
+  jobs cannot put an old build back). A burst of merges is published once, after the last one's ci passes, and the
+  copy never steps back to an older build or shows a commit ci has not passed. A failed or cancelled ci, or one for a
+  pull request (a fork's branch named main included), publishes nothing. Run workflow still publishes main by hand.
+  The trigger takes effect once the file is on main; what it does there is not yet shown by a run.
+
 - **The physics realm's step is a quarter to a third faster: the street furniture is a hundred compound sensors,
   not 4,599 colliders.** rapier.js walks every collider in the world through a WebAssembly-to-JavaScript callback at
   the end of each `world.step()`, so the city's lamps, trees and signal poles (sensors nothing in the realm touches or
