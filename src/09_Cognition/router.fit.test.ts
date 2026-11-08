@@ -40,10 +40,11 @@ interface Call { readonly url: string; readonly mode?: string; readonly model?: 
 /**
  * A fake machine: Ollama on :11434 (its list with sizes and capabilities, /api/generate, /api/ps, /api/version, and
  * the chat format), nothing listening on any other port (:8080, :1234, :8089). Every request is noted. `hold` keeps
- * /api/ps waiting; `down` takes Ollama away.
+ * /api/ps waiting; `psFails` makes the next /api/ps requests answer 500; `psHang` makes /api/ps never answer (until
+ * the request is cut off); `down` takes Ollama away.
  */
 function machine(o: { models: Listed[]; ps?: Record<string, Placed>; writes?: Record<string, Writes> }) {
-  const state: { models: Listed[]; ps: Record<string, Placed>; writes: Record<string, Writes>; hold: Promise<void> | null; down: boolean } = { models: o.models, ps: o.ps ?? {}, writes: o.writes ?? {}, hold: null, down: false }
+  const state: { models: Listed[]; ps: Record<string, Placed>; writes: Record<string, Writes>; hold: Promise<void> | null; down: boolean; psFails: number; psHang: boolean } = { models: o.models, ps: o.ps ?? {}, writes: o.writes ?? {}, hold: null, down: false, psFails: 0, psHang: false }
   const calls: Call[] = []
   const generate = (model: string, signal: AbortSignal | undefined): Promise<Response> | Response => {
     const w = state.writes[model] ?? {}
@@ -90,6 +91,17 @@ function machine(o: { models: Listed[]; ps?: Record<string, Placed>; writes?: Re
     }
     if (u.pathname === '/api/ps') {
       if (state.hold) await state.hold
+      // Never answers: cut off only when the request's signal aborts, as a real fetch is.
+      if (state.psHang) {
+        return new Promise<Response>((_, reject) => {
+          if (signal?.aborted) return reject(signal.reason)
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+        })
+      }
+      if (state.psFails > 0) {
+        state.psFails--
+        return json({ error: 'busy' }, 500)
+      }
       return json({ models: Object.entries(state.ps).map(([name, p]) => ({ name, model: name, size: p.size, size_vram: p.vram })) })
     }
     if (u.pathname === '/api/generate') return generate(body?.model ?? '', signal)
@@ -170,9 +182,14 @@ test('a figure from the address: the first answer is measured once; the next use
   const store = memory()
   // The client's own five-minute first wait: the 14b's 47 s of reading earns no longer one, so the row names none.
   const r = make(m, { vram: '23.9', store, timeouts: undefined })
+  // Before any look: nothing found yet to size.
+  assert.equal(r.settings().fit, "23.9 GB given by the page's address (vram=); auto sizes Ollama's model once a look finds Ollama on this machine")
+  await r.installed()
   assert.equal(r.settings().fit, "23.9 GB given by the page's address (vram=); the next answer is measured before auto picks bigger")
   assert.equal(await ask(r), `${DEFAULT_MODEL} says hi`)
   await measured(m, 1)
+  // The model the next answer goes to follows the measurement at once, before any look.
+  assert.equal(r.settings().model, 'qwen3:14b')
   const ps = m.calls.findIndex((c) => c.url.endsWith('/api/ps'))
   assert.equal(m.calls[ps].url, `${DEFAULT_SERVER}/api/ps`)
   assert.ok(ps > m.calls.findIndex((c) => c.url.endsWith('/api/generate')), 'measured after the answer')
@@ -215,7 +232,8 @@ test('need is the largest loaded-to-weights ratio this server measured', async (
   const m = machine({ models: models() })
   const r = make(m, { vram: '24', store: memory(seen([['gemma3:4b', 3e9, 5.4e9], [DEFAULT_MODEL, 3.3e9, 3.63e9]])) })
   assert.equal(await ask(r), 'qwen3:14b says hi')
-  assert.match(r.settings().fit ?? '', /auto answers with qwen3:14b, the largest that fits by what was measured \(8\.7 GB of weights, about 15\.6 GB loaded by that measure/)
+  // The client's 50 ms first wait here, so the 14b's 46.5 s of reading is a longer one, and the row says so.
+  assert.match(r.settings().fit ?? '', /auto answers with qwen3:14b, the largest that fits by what was measured \(8\.7 GB of weights, about 15\.6 GB loaded by that measure; its first answer may wait up to 1 minute while Ollama reads it; ask model <name> keeps another\)$/)
   // With only the 1.1 measured, the 32b would fit: the larger ratio is what kept it out.
   const only = machine({ models: models() })
   assert.equal(await ask(make(only, { vram: '24', store: memory(seen([[DEFAULT_MODEL, 3.3e9, 3.63e9]])) })), 'qwen3:32b says hi')
@@ -388,6 +406,12 @@ test("a big model's first answer may wait a second per 200 MB of its weights, fi
   const unknown = machine({ models: [L(DEFAULT_MODEL)], writes: { [DEFAULT_MODEL]: { delayMs: 75 } } })
   await assert.rejects(ask(make(unknown)), timedOut)
   assert.equal(looks(big) + looks(unknown), 0)
+  // Under ask provider ollama the wait is the client's own, though auto's look read the size this visit.
+  const own = machine({ models: [L(DEFAULT_MODEL, 20e6)], writes: { [DEFAULT_MODEL]: { delayMs: 75 } } })
+  const r = make(own)
+  assert.equal(await ask(r), `${DEFAULT_MODEL} says hi`)
+  r.setProvider('ollama')
+  await assert.rejects(ask(r), timedOut)
 })
 
 test('a moved model Ollama will not load is set aside and the same ask is answered once more by the next one', async () => {
@@ -572,7 +596,8 @@ test('what is kept: the console figure and the measurements, read back checked; 
   await ask(r)
   await measured(m, 1)
   const entry = { server: DEFAULT_SERVER, model: DEFAULT_MODEL, weights: 3.3e9, loaded: 5e9, gpu: 5e9, pace: 41.2, fails: 0 }
-  assert.deepEqual(fitOf(store), { vram: 24, seen: [entry] })
+  // The step up follows the measurement at once, so the model it moved from is kept with it.
+  assert.deepEqual(fitOf(store), { vram: 24, seen: [entry], usual: DEFAULT_MODEL })
   // Read back next visit: the console's figure and the measurement stand.
   const next = make(m, { store })
   await next.installed()
@@ -661,4 +686,176 @@ test('another provider found, or the chat format: nothing measured, and the row 
   assert.equal(await ask(c), 'chat says hi')
   await settle()
   assert.equal(looks(chat), 0)
+})
+
+test('a measurement that fails is asked again after the next answer, and the step follows it at once', async () => {
+  const m = machine({ models: CARD(), ps: { [DEFAULT_MODEL]: { size: 5e9, vram: 5e9 } }, writes: { [DEFAULT_MODEL]: QUICK } })
+  const r = make(m, { vram: '24' })
+  m.state.psFails = 1
+  assert.equal(await ask(r), `${DEFAULT_MODEL} says hi`)
+  await measured(m, 1)
+  assert.equal(r.settings().model, DEFAULT_MODEL, 'nothing measured, nothing moved')
+  assert.equal(r.settings().fit, "24.0 GB given by the page's address (vram=); the next answer is measured before auto picks bigger")
+  assert.equal(await ask(r), `${DEFAULT_MODEL} says hi`)
+  await measured(m, 2)
+  assert.equal(r.settings().model, 'qwen3:14b', 'measured the second time')
+  assert.match(r.settings().fit ?? '', /; auto answers with qwen3:14b, the largest that fits by what was measured /)
+  assert.equal(await ask(r), 'qwen3:14b says hi')
+})
+
+test('a refused command leaves a measurement under way alone; an accepted one drops it, and the next answer is measured again', async () => {
+  const m = machine({ models: CARD(), ps: { [DEFAULT_MODEL]: { size: 5e9, vram: 5e9 } }, writes: { [DEFAULT_MODEL]: QUICK } })
+  const r = make(m, { vram: '24' })
+  let release = (): void => {}
+  m.state.hold = new Promise<void>((res) => { release = res })
+  await ask(r)
+  await until(() => looks(m) === 1)
+  assert.throws(() => r.connect('bogus'))
+  assert.throws(() => r.setProvider('nope'))
+  assert.throws(() => r.setModel(''))
+  assert.throws(() => r.setApi?.('smoke'))
+  assert.throws(() => r.setServer('http://example.com:11434'))
+  release()
+  m.state.hold = null
+  await settle()
+  assert.equal(r.settings().model, 'qwen3:14b', 'kept, and the step followed')
+  // Accepted, though it changes nothing: the measurement under way is dropped, and the next answer is measured.
+  const n = machine({ models: CARD(), ps: { [DEFAULT_MODEL]: { size: 5e9, vram: 5e9 } }, writes: { [DEFAULT_MODEL]: QUICK } })
+  const r2 = make(n, { vram: '24' })
+  n.state.hold = new Promise<void>((res) => { release = res })
+  await ask(r2)
+  await until(() => looks(n) === 1)
+  r2.setProvider('auto')
+  release()
+  n.state.hold = null
+  await settle()
+  assert.equal(r2.settings().model, DEFAULT_MODEL, 'dropped')
+  await ask(r2)
+  await measured(n, 2)
+  assert.equal(r2.settings().model, 'qwen3:14b')
+})
+
+test('a stop while a measurement is under way ends the ask at once, and ask alone too', async () => {
+  const m = machine({ models: CARD(), ps: { [DEFAULT_MODEL]: { size: 5e9, vram: 5e9 } }, writes: { [DEFAULT_MODEL]: QUICK } })
+  const r = make(m, { vram: '24', lookMs: 2000 })
+  let release = (): void => {}
+  m.state.hold = new Promise<void>((res) => { release = res })
+  await ask(r)
+  await until(() => looks(m) === 1)
+  const held = (p: Promise<unknown>): Promise<string> => Promise.race([p.then(() => 'answered', () => 'stopped'), new Promise<string>((res) => setTimeout(() => res('held'), 500))])
+  // Unstopped, ask alone waits for the measurement under way.
+  const alone = r.installed()
+  assert.equal(await held(alone), 'held', 'ask alone waits for the measurement under way')
+  const stop = new AbortController()
+  const answer = r.answer({ ...req(), signal: stop.signal }, () => {})
+  stop.abort(new DOMException('stopped by the operator', 'AbortError'))
+  assert.equal(await held(answer), 'stopped')
+  const quit = new AbortController()
+  const list = r.installed(quit.signal)
+  quit.abort(new DOMException('stopped by the operator', 'AbortError'))
+  assert.equal(await held(list), 'stopped')
+  assert.equal(sent(m).length, 1, 'nothing more was sent')
+  release()
+  m.state.hold = null
+  await alone
+  assert.equal(r.settings().model, 'qwen3:14b', 'ask alone answers once the measurement has landed')
+})
+
+test('found in the chat format, then ask api generate: the next answer looks again and is sized before it is sent', async () => {
+  const m = machine({ models: [L('deepseek-r1:671b', 404e9), L('qwen3:235b', 142e9), L('qwen3:8b', 5.2e9)] })
+  const store = memory()
+  const first = make(m, { store })
+  await first.installed()
+  first.setApi?.('chat')
+  // Next visit: found in the chat format, with no list of sizes.
+  const r = make(m, { vram: '318.5', store })
+  assert.equal(await ask(r), 'chat says hi')
+  assert.equal(r.settings().fit, "318.5 GB given by the page's address (vram=); auto sizes Ollama's model only in the generate format (ask api generate)")
+  r.setApi?.('generate')
+  assert.equal(await ask(r), 'qwen3:235b says hi', 'not deepseek-r1:671b, whose weights alone exceed the figure')
+  assert.deepEqual(sent(m), ['qwen3:235b'])
+})
+
+test('ask model auto in the chat format: the next ask looks, and chooses from what Ollama lists then', async () => {
+  const m = machine({ models: [L('llama3:8b', 4.7e9), L('qwen3:8b', 5.2e9)] })
+  const store = memory()
+  const first = make(m, { store })
+  await first.installed()
+  first.setApi?.('chat')
+  const r = make(m, { store })
+  await r.installed()
+  r.setModel('qwen3:8b')
+  assert.equal(r.setModel('auto'), 'auto: auto chooses the Ollama model again at its next look')
+  const before = m.calls.length
+  assert.equal(await ask(r), 'chat says hi')
+  const after = m.calls.slice(before).filter((c) => c.url.startsWith(DEFAULT_SERVER)).map((c) => `${new URL(c.url).pathname} ${c.model ?? ''}`.trim())
+  assert.deepEqual(after, ['/v1/models', '/v1/chat/completions llama3:8b'], 'looked first; not the default, which Ollama does not list')
+})
+
+test('the answer R8 gives once more is measured too', async () => {
+  const m = machine({ models: [L('deepseek-r1:671b', 404e9), L('qwen3:235b', 142e9), L('qwen3:8b', 5.2e9)], ps: { 'qwen3:8b': { size: 6e9, vram: 6e9 } }, writes: { 'qwen3:235b': 500, 'qwen3:8b': QUICK } })
+  const store = memory()
+  const r = make(m, { vram: '318.5', store })
+  assert.equal(await ask(r), 'qwen3:8b says hi')
+  await measured(m, 1)
+  assert.deepEqual(fitOf(store)?.seen.map((s) => s.model), ['qwen3:8b'])
+  assert.equal(r.settings().model, 'qwen3:8b')
+})
+
+test('an /api/ps that never answers is cut off after the look wait: the next ask is not held, nothing is kept, and the next answer asks again', async () => {
+  const m = machine({ models: CARD(), ps: { [DEFAULT_MODEL]: { size: 5e9, vram: 5e9 } }, writes: { [DEFAULT_MODEL]: QUICK } })
+  const store = memory()
+  const r = make(m, { vram: '24', store, lookMs: 50 })
+  m.state.psHang = true
+  assert.equal(await ask(r), `${DEFAULT_MODEL} says hi`)
+  await until(() => looks(m) === 1)
+  const next = ask(r)
+  assert.equal(await Promise.race([next, new Promise<string>((res) => setTimeout(() => res('held'), 1000))]), `${DEFAULT_MODEL} says hi`)
+  await until(() => looks(m) === 2)
+  await new Promise((res) => setTimeout(res, 100))
+  assert.equal(fitOf(store)?.seen.length ?? 0, 0, 'nothing kept')
+  assert.equal(r.settings().model, DEFAULT_MODEL)
+})
+
+test('whole on the processor when a first wait runs out: still loading, no verdict, and a count kept from before stands', async () => {
+  const before = JSON.stringify({ v: 3, provider: 'auto', fit: { vram: null, seen: [{ server: DEFAULT_SERVER, model: 'qwen3:8b', weights: 9e6, loaded: 11e6, gpu: 5e6, pace: 2, fails: 1 }] } })
+  const m = machine({ models: [L(DEFAULT_MODEL, 4e6), L('qwen3:8b', 9e6)], ps: { [DEFAULT_MODEL]: { size: 5e6, vram: 5e6 }, 'qwen3:8b': { size: 11e6, vram: 0 } }, writes: { 'qwen3:8b': 'hang' } })
+  const store = memory(before)
+  // Kept from before: the 8b measured partly on the GPU at 11 MB, which fits a 2.1 GB figure less 2 GiB, so auto
+  // steps up to it at once.
+  const r = make(m, { vram: '2.1', store })
+  await assert.rejects(ask(r), timedOut)
+  assert.equal(lastSent(m), 'qwen3:8b')
+  await measured(m, 1)
+  assert.deepEqual(fitOf(store)?.seen.map((s) => [s.model, s.fails]), [['qwen3:8b', 1]], 'no verdict: the count of 1 stands')
+  await assert.rejects(ask(r), timedOut)
+  assert.equal(lastSent(m), 'qwen3:8b', 'not set aside')
+})
+
+test('ask vram gives a model one more chance again after a first wait with nothing loaded', async () => {
+  const m = machine({ models: [L(DEFAULT_MODEL, 4e6), L('qwen3:8b', 9e6)], ps: { [DEFAULT_MODEL]: { size: 5e6, vram: 5e6 } }, writes: { 'qwen3:8b': 'hang' } })
+  const r = make(m, { vram: '2.1' })
+  await ask(r)
+  await measured(m, 1)
+  await assert.rejects(ask(r), timedOut)
+  assert.equal(lastSent(m), 'qwen3:8b')
+  await measured(m, 2)
+  r.setVram('2.1')
+  assert.equal(await ask(r), `${DEFAULT_MODEL} says hi`)
+  await measured(m, 3)
+  await assert.rejects(ask(r), timedOut)
+  assert.equal(lastSent(m), 'qwen3:8b')
+  await measured(m, 4)
+  await assert.rejects(ask(r), timedOut)
+  assert.equal(lastSent(m), 'qwen3:8b', 'one more chance after ask vram, as at the start of a visit')
+})
+
+test("the operator's model named without its tag (ask model qwen3) is measured and shown like qwen3:latest", async () => {
+  const m = machine({ models: [L(DEFAULT_MODEL, 3.3e9), L('qwen3:latest', 5.2e9)], ps: { 'qwen3:latest': { size: 6e9, vram: 6e9 } }, writes: { qwen3: SLOW } })
+  const r = make(m, { vram: '24' })
+  await r.installed()
+  r.setModel('qwen3')
+  assert.equal(await ask(r), 'qwen3 says hi')
+  await measured(m, 1)
+  assert.match(r.settings().fit ?? '', /^24\.0 GB given by the page's address \(vram=\); the model is yours \(ask model chose it\): auto sizes only a model it chose \(ask model auto hands it back\); qwen3 measured 5\.6 GB loaded, all on the GPU, 2\.0 tokens a second/)
 })

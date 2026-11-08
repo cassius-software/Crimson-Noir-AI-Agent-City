@@ -325,7 +325,8 @@ test('fitLine: every sentence, exactly', () => {
       "100.0 GB given by the page's address (vram=); deepseek-r1:671b has 376.3 GB of weights alone, more than the GPU's 100.0 GB; Ollama lists nothing smaller that fits, so auto keeps deepseek-r1:671b; ask vram auto measures afresh"],
     ['set aside, the console tail as typed', { figure: ASK(24.5), choice: { name: 'qwen3-vl:4b', step: 'usual', bytes: 3.3e9 }, last: small, anyAside: true },
       "24.5 GB given at the console (ask vram); qwen3-vl:4b measured 4.7 GB loaded, all on the GPU, 41.2 tokens a second; nothing bigger that Ollama lists fits by what was measured, so auto keeps qwen3-vl:4b; ask vram 24.5 measures afresh"],
-    ['nothing found yet', { found: null }, `${ADDR}; the next answer is measured before auto picks bigger`],
+    ['nothing found yet', { found: null }, `${ADDR}; auto sizes Ollama's model once a look finds Ollama on this machine`],
+    ['nothing found yet, a choice kept', { found: null, choice: { name: 'qwen3-vl:4b', step: 'usual', bytes: 3.3e9 } }, `${ADDR}; the next answer is measured before auto picks bigger`],
   ]
   for (const [name, over, want] of table) {
     const got = line(over)

@@ -12,15 +12,15 @@
  * before. A model whose listed weights alone exceed the figure is never chosen while a smaller one is listed (today's
  * pick included). A bigger model is chosen only after Ollama's own /api/ps has shown how much a loaded model takes and
  * that some of it sits on the GPU; then the largest listed model whose need, its weights times the largest
- * loaded-to-weights ratio measured on this server, fits the figure less RESERVE_BYTES. A measured model that was split
- * between the GPU and the processor, or too slow, is set aside. Every number marked a starting value is a guess the
- * MANUAL names as one; none is from a real big GPU. Everything here is a pure function of what it is given: the router
- * (router.ts) asks the server and keeps what was measured.
+ * loaded-to-weights ratio measured on this server, fits the figure less RESERVE_BYTES. A measured model that was too
+ * slow (a bigger one), split and slow (one no bigger), or split when its first wait ran out, is set aside (failed).
+ * Every number marked a starting value is a guess the MANUAL names as one; none is from a real big GPU. Everything here
+ * is a pure function of what it is given: the router (router.ts) asks the server and keeps what was measured.
  */
 import { BYTES_MAX, DEFAULT_MODEL, localText, loopbackServer, type Weighed } from './localCompute.ts'
 
 export const GIB = 2 ** 30
-/** Starting value: llama.cpp --fit keeps 1 GiB per device (external §4); 1 GiB more for the city's own WebGPU. */
+/** Starting value: llama.cpp --fit keeps 1 GiB per device; 1 GiB more for the city's own WebGPU. */
 export const RESERVE_BYTES = 2 * GIB
 /** Starting values: slower than this many tokens a second, over at least PACE_TOKENS, is slow. */
 export const PACE_FLOOR = 5
@@ -196,6 +196,8 @@ export function fitLine(i: FitInput): string | undefined {
   const gb = f.gb.toFixed(1)
   const fig = f.from === 'ask' ? `${gb} GB given at the console (ask vram)` : `${gb} GB given by the page's address (vram=)`
   if (i.found !== null && i.found !== 'ollama') return `${fig}; auto sizes only a model Ollama lists (${i.found} answers now)`
+  // Nothing found yet (before the first look, or a look that found no server): no model to size, no measurement to come.
+  if (i.found === null && i.choice === null) return `${fig}; auto sizes Ollama's model once a look finds Ollama on this machine`
   if (i.chat) return `${fig}; auto sizes Ollama's model only in the generate format (ask api generate)`
   const meas = i.last !== null ? measured(i.last, i.verdict) : null
   if (i.theirs !== null) {

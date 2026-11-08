@@ -426,6 +426,11 @@ test('installedSizes: Ollama\'s list with each model\'s weight bytes and whether
   const off = fakeFetch(() => json(200, tags))
   await assert.rejects(installedSizes(off.f, 'http://example.com:11434'), (e: unknown) => e instanceof CognitionError && e.code === 'refused')
   assert.equal(off.calls.length, 0)
+  // A malformed entry (null) is skipped by both readers alike, so a look and `ask` alone agree on what Ollama lists.
+  const odd = fakeFetch(() => json(200, { models: [null, { name: 'gemma:2b', size: 1.7e9 }] }))
+  assert.deepEqual((await installedSizes(odd.f, DEFAULT_SERVER)).map((m) => m.name), ['gemma:2b'])
+  assert.deepEqual(await installedModels(odd.f, DEFAULT_SERVER, undefined, 'generate', true, true), ['gemma:2b'])
+  assert.deepEqual(await installedModels(odd.f, DEFAULT_SERVER), ['gemma:2b'])
 })
 
 test('placementOf: Ollama\'s /api/ps for the model by name or name:latest; bytes checked; null for anything else, and nothing asked off this machine', async () => {
@@ -479,8 +484,8 @@ test('pace: tokens a second from Ollama\'s own eval_count and eval_duration; abs
 })
 
 test('coldWait lengthens a model\'s first-piece wait and never shortens it', async () => {
-  /** A server whose first line, a whole answer, comes 100 ms after the request. */
-  const late: FetchLike = async () => {
+  /** A server whose first line, a whole answer, comes `ms` after the request (100 ms unless said). */
+  const lateBy = (ms: number): FetchLike => async () => {
     let timer: ReturnType<typeof setTimeout> | undefined
     return new Response(new ReadableStream<Uint8Array>({
       start(controller) {
@@ -491,11 +496,12 @@ test('coldWait lengthens a model\'s first-piece wait and never shortens it', asy
           } catch {
             // cancelled already
           }
-        }, 100)
+        }, ms)
       },
       cancel() { clearTimeout(timer) },
     }), { status: 200 })
   }
+  const late = lateBy(100)
   const asked: string[] = []
   const ask = (wait: number) => createLocalCompute({
     fetch: late, timeouts: { firstMs: 50, stallMs: 50 }, coldWait: (model) => { asked.push(model); return wait },
@@ -506,6 +512,19 @@ test('coldWait lengthens a model\'s first-piece wait and never shortens it', asy
     const e = await within(ask(wait))
     assert.ok(e instanceof CognitionError && e.code === 'timeout', `${wait}: the wait as it was`)
   }
+  // Never shorter: a first line at 25 ms still arrives within the client's own 50 ms, whatever shorter wait is given.
+  for (const wait of [10, 1, 0, -1, Number.NaN]) {
+    const soon = createLocalCompute({ fetch: lateBy(25), timeouts: { firstMs: 50, stallMs: 50 }, coldWait: () => wait })
+    assert.equal(await within(soon.answer({ tethers: [], prompt: 'hi', signal: new AbortController().signal }, () => {}).then((a) => a.reason, (e: unknown) => e)), 'stop', `${wait}: not shortened`)
+  }
+  // Only the first-piece wait: an answer that goes quiet after its first piece is cut off at the stall wait as before.
+  const quiet: FetchLike = async () => new Response(new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(enc.encode('{"response":"a","done":false}\n')) },
+  }), { status: 200 })
+  const t0 = performance.now()
+  const stalled = await within(createLocalCompute({ fetch: quiet, timeouts: { firstMs: 50, stallMs: 50 }, coldWait: () => 5000 }).answer({ tethers: [], prompt: 'hi', signal: new AbortController().signal }, () => {}).catch((e: unknown) => e))
+  assert.ok(stalled instanceof CognitionError && stalled.code === 'timeout' && /went quiet/.test(stalled.message), String(stalled))
+  assert.ok(performance.now() - t0 < 1500, 'the stall wait, not the longer first wait')
   // Without the option the wait is the client's own.
   const plain = await within(createLocalCompute({ fetch: late, timeouts: { firstMs: 50, stallMs: 50 } }).answer({ tethers: [], prompt: 'hi', signal: new AbortController().signal }, () => {}).catch((e: unknown) => e))
   assert.ok(plain instanceof CognitionError && plain.code === 'timeout')

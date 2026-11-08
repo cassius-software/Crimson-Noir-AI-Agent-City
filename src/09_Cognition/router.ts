@@ -34,7 +34,7 @@
 import { scriptedAction } from '../06_Make_Decisions/actions.ts'
 import type { Answer, AnswerRequest, GateTether, Mind, Piece } from '../07_Execute_Actions/operator.ts'
 import { CLAUDE_GATEWAY, claudeAnswer, claudeModels, claudeServer, DEFAULT_CLAUDE_MODEL, EFFORTS, isEffort, maskKey } from './claudeApi.ts'
-import { ANY_MODEL, BASE_REALITY, CognitionError, createLocalCompute, DEFAULT_MODEL, installedModels, installedSizes, isolatedPage, localText, placementOf, promptHash, systemPrompt, TIMEOUTS, type FetchLike, type SettingsStore, type Timeouts, type Weighed } from './localCompute.ts'
+import { ANY_MODEL, BASE_REALITY, CognitionError, createLocalCompute, DEFAULT_MODEL, installedModels, installedSizes, isolatedPage, localText, placementOf, promptHash, sameModel, systemPrompt, TIMEOUTS, type FetchLike, type SettingsStore, type Timeouts, type Weighed } from './localCompute.ts'
 import { choose, coldWaitMs, failed, figureOf, fitLine, FAILS_KEPT, PACE_FLOOR, PACE_TOKENS, parseVram, readFit, remember, todaysPick, whereOf, type Choice, type FitKept } from './modelFit.ts'
 import { createPrefixCache } from './prefixCache.ts'
 import { SCRIPTED, scriptedAnswer } from './scripted.ts'
@@ -95,8 +95,9 @@ export const isProvider = (v: unknown): v is Provider => (PROVIDERS as readonly 
  * in-page provider's too, which the router stores but never reads), and who chose the Ollama model (`picked`): absent,
  * nobody (the default stands); a name, auto chose it for a server that lacked the default, so auto chooses again when
  * that one goes too; null, the operator chose, and it is left alone. `fit` is what auto's sizing of the Ollama model
- * keeps (modelFit.ts FitKept): the console's GPU figure, what was measured, and the model auto moved from; an older
- * build ignores the key, so the version stays.
+ * keeps (modelFit.ts FitKept): the console's GPU figure, what was measured, and the model auto moved from. An older
+ * build ignores the key, so the version stays; it answers with the model auto last moved to (kept as its own pick)
+ * until ask model <name>, and the next save there drops `fit`.
  */
 interface Kept {
   v: 3
@@ -211,8 +212,9 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
   let grow = true
   let generation = 0
   let measuring: Promise<void> | null = null
-  // A big model may wait longer for its first piece while Ollama reads it (modelFit.ts coldWaitMs; never shorter).
-  const ollama = createLocalCompute({ fetch: fetchFn, store: slice(kept, 'ollama', keep), ...(timeouts && { timeouts }), coldWait: (n) => coldWaitMs(bytesOf(n)) })
+  // Under auto, a big model may wait longer for its first piece while Ollama reads it (modelFit.ts coldWaitMs; never
+  // shorter); under ask provider ollama the wait is the client's own.
+  const ollama = createLocalCompute({ fetch: fetchFn, store: slice(kept, 'ollama', keep), ...(timeouts && { timeouts }), coldWait: (n) => (kept.provider === 'auto' ? coldWaitMs(bytesOf(n)) : 0) })
   const llamacpp = createLocalCompute({ fetch: fetchFn, store: slice(kept, 'llamacpp', keep), defaults: { server: LLAMACPP_SERVER, model: LLAMACPP_MODEL, api: 'chat' }, ...(timeouts && { timeouts }) })
   const openai = createLocalCompute({ fetch: fetchFn, store: slice(kept, 'openai', keep), defaults: { server: OPENAI_SERVER, model: OPENAI_MODEL, api: 'chat' }, ...(timeouts && { timeouts }) })
   // The model file kept in this page: its own settings (the file chosen, think, the GPU) in its own slice.
@@ -277,8 +279,8 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
   const keyOf = (server: string, model: string): string => `${server} ${model}`
   /** Ollama's list with sizes as the last look read it, when it was this server's. */
   const listedHere = (): readonly Weighed[] | null => (catalog?.server === ollama.settings().server ? catalog.models : null)
-  /** A model's listed weight bytes on this server (null: not listed, or no size). */
-  const bytesOf = (n: string): number | null => listedHere()?.find((m) => m.name === n)?.bytes ?? null
+  /** A model's listed weight bytes on this server (null: not listed, or no size); `qwen3` is the listed `qwen3:latest`. */
+  const bytesOf = (n: string): number | null => listedHere()?.find((m) => sameModel(m.name, n))?.bytes ?? null
   /** The GPU figure in force: the console's, else the page's address (modelFit.ts figureOf). */
   const figure = () => figureOf(kept.fit?.vram ?? null, vram)
   /** The measurements kept that still count (R12): this server's, at the weights it lists now. */
@@ -354,7 +356,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
    * naming why each server it heard from would not do; the page's own model is named only when a file is kept.
    */
   const look = async (signal?: AbortSignal): Promise<Mind> => {
-    if (measuring) await measuring
+    await settled(signal)
     found = null
     const notes: string[] = []
     let unseen = false
@@ -417,6 +419,21 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
     const where = AUTO_ORDER.filter((p) => p !== 'inpage' || pageNamed).map(placeOf).join(', ')
     throw new CognitionError('offline', `no model is answering on this machine (looked for ${where})${lookNote}: start one, or choose one with ask provider <name>`)
   }
+  /** The measurement under way, awaited before a look or an answer; a stop (the signal aborting) ends the wait at once. */
+  const settled = async (signal?: AbortSignal): Promise<void> => {
+    const m = measuring
+    if (m === null) return
+    if (signal === undefined) return m
+    let stop = (): void => {}
+    const stopped = new Promise<void>((r) => { stop = r })
+    signal.addEventListener('abort', stop, { once: true })
+    try {
+      if (!signal.aborted) await Promise.race([m, stopped])
+    } finally {
+      signal.removeEventListener('abort', stop)
+    }
+    if (signal.aborted) throw signal.reason
+  }
   /** An Ollama answer under auto with a GPU figure: where and what it was sent, and the settings count then. */
   type Sent = { readonly server: string; readonly model: string; readonly gen: number }
   /**
@@ -429,9 +446,11 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
     const pace = a?.pace ?? (timedOut === 'stall' ? 0 : null)
     const slow = timedOut !== null || (counted && pace !== null && pace < PACE_FLOOR)
     const k = keyOf(sent.server, sent.model)
+    // Measured once a visit while quick; a measurement dropped or failed (nothing kept) is asked again after the next.
     if (!slow && verified.has(k)) return
-    verified.add(k)
-    const run = (measuring ?? Promise.resolve()).then(() => measure(sent, pace, slow, timedOut === 'cold')).catch(() => {})
+    // Once measured, the model the next answer goes to (and what the row says) follows at once.
+    const follow = (): void => { if (kept.provider === 'auto' && found === 'ollama' && unchosen()) { const n = listedHere()?.map((m) => m.name); if (n) repick(n) } }
+    const run = (measuring ?? Promise.resolve()).then(() => measure(sent, pace, slow, timedOut === 'cold')).then(follow).catch(() => {})
     measuring = run
     void run.finally(() => { if (measuring === run) measuring = null })
   }
@@ -453,6 +472,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
     const prev = seenHere().find((x) => x.model === sent.model)?.fails ?? 0
     const fails = bad ? (aside.has(k) ? prev : Math.min(FAILS_KEPT, prev + 1)) : 0
     if (bad) { aside.add(k); if (big && moved()) grow = false }
+    verified.add(k)
     const weights = bytesOf(sent.model); if (weights === null) return
     const fit = kept.fit ?? (kept.fit = { vram: null, seen: [] })
     fit.seen = remember(fit.seen, { server: sent.server, model: sent.model, weights, loaded: placed.loaded, gpu: placed.gpu, pace, fails })
@@ -467,7 +487,19 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
    * by the next one (R8).
    */
   const autoAnswer = async (req: AnswerRequest, onPiece: (p: Piece) => void): Promise<Answer> => {
-    if (measuring) await measuring
+    await settled(req.signal)
+    // With a figure, an Ollama found without this server's list of sizes (found in the chat format, or another server
+    // set since) has its list read first (one GET of /api/tags, given lookMs), so the model is sized before it is sent
+    // (R5) and the operator's own can be measured; if the list cannot be read, the answer below says what is wrong.
+    const os0 = ollama.settings()
+    if (found === 'ollama' && figure() !== null && os0.api !== 'chat' && listedHere() === null) {
+      try {
+        catalog = { server: os0.server, models: await installedSizes(fetchFn, os0.server, AbortSignal.any([req.signal, AbortSignal.timeout(lookMs)])) }
+      } catch {
+        // not read: sent as it is
+      }
+      if (req.signal.aborted) throw req.signal.reason
+    }
     const first = found
     if (first === 'ollama' && figure() !== null && unchosen()) { const n = listedHere()?.map((m) => m.name); if (n) repick(n) }
     const m = first !== null ? byName(first) : await look(req.signal)
@@ -483,7 +515,13 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
       if (sent && !arrived && !req.signal.aborted && e instanceof CognitionError && e.code === 'server' && moved() && unchosen()) {
         aside.add(keyOf(sent.server, sent.model)); if (larger(sent.model)) grow = false
         const n = listedHere()?.map((x) => x.name); if (n) repick(n)
-        if (ollama.settings().model !== sent.model) return ollama.answer(req, onPiece) // R8: once
+        const again = ollama.settings()
+        if (again.model !== null && again.model !== sent.model) {
+          // R8: once, and that answer is measured too.
+          const a = await ollama.answer(req, onPiece)
+          after({ server: again.server, model: again.model, gen: generation }, a, null)
+          return a
+        }
       }
       if (first === null || arrived || req.signal.aborted || !(e instanceof CognitionError && (e.code === 'offline' || e.code === 'refused'))) throw e
       return (await look(req.signal)).answer(req, onPiece)
@@ -512,7 +550,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
     const cold = choice !== null ? coldWaitMs(choice.bytes) : 0
     return fitLine({
       figure: figure(), off: kept.fit?.vram === 0, found, chat: s.api === 'chat', theirs: unchosen() ? null : s.model,
-      choice, usual: { name: usual, bytes: bytesOf(usual) }, last, verdict, anyAside: aside.size > 0 || avoided().size > 0, grow,
+      choice, usual: { name: usual, bytes: bytesOf(usual) }, last, verdict, anyAside: avoided().size > 0, grow,
       coldMs: cold > firstMs ? cold : 0,
     })
   }
@@ -530,6 +568,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
       repick(names)
       return `auto: auto chooses the Ollama model again (${ollamaModel()} now)`
     }
+    found = null // so the next ask really looks, and chooses from what Ollama lists then
     return 'auto: auto chooses the Ollama model again at its next look'
   }
 
@@ -547,15 +586,16 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
       return { ...s, ...own, ...(line !== null && { cache: line }), ...(kept.provider === 'auto' && { auto: autoLine(), ...(found !== null && { found }), ...(fit !== undefined && { fit }) }) }
     },
     setServer: (url: string) => {
+      const set = settable().setServer(url)
       generation++
-      return settable().setServer(url)
+      return set
     },
     setModel: (name: string) => {
       const n = typeof name === 'string' ? name.trim() : ''
       if (n === 'auto' && (kept.provider === 'ollama' || (kept.provider === 'auto' && (found === null || found === 'ollama')))) return handBack()
-      generation++
       const m = settable()
       const set = m.setModel(name)
+      generation++
       // The operator chose the Ollama model: auto leaves it alone from now on.
       if (m === ollama) {
         kept.picked = null
@@ -571,15 +611,16 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
       return m.setThink(on)
     },
     setApi: (format: string): string => {
-      generation++
       const m = settable()
       if (!m.setApi) throw new Error(`the ${answering() ?? kept.provider} provider speaks one wire format only`)
-      return m.setApi(format)
+      const set = m.setApi(format)
+      generation++
+      return set
     },
     setProvider: (name: string): Provider => {
-      generation++
       const n = typeof name === 'string' ? name.trim().toLowerCase() : ''
       if (!isProvider(n)) throw new TypeError(`ask provider takes ${PROVIDERS.join(', ')}`)
+      generation++
       kept.provider = n
       keep()
       return n
@@ -615,7 +656,6 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
       return `${v.toFixed(1)} GB at the console, kept: auto may give Ollama a bigger model it already has once an answer has been measured; what was measured before is forgotten${under}`
     },
     connect: (provider: string, url?: string, key?: string): string => {
-      generation++
       const n = typeof provider === 'string' ? provider.trim().toLowerCase() : ''
       if (!isProvider(n)) throw new TypeError(`ask connect takes ${PROVIDERS.join(', ')}, then an optional server url and, for claude, a key`)
       const u = typeof url === 'string' ? url.trim() : ''
@@ -631,6 +671,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
       const said = /^https?:\/\/[^\s@]*$/i.test(u) ? `, not '${u}'` : ': the second word must be a server url such as http://localhost:8089 (a key alone goes in with ask key <key>)'
       if (u && n === 'claude' && claudeServer(u) === null) throw new Error(`the Claude provider speaks only to a gateway on this machine (localhost, 127.0.0.1 or [::1])${said}`)
       if (u && n !== 'claude' && n !== 'scripted' && n !== 'auto' && n !== 'inpage' && claudeServer(u) === null) throw new Error(`the local model server must be on this machine (localhost, 127.0.0.1 or [::1])${said}`)
+      generation++
       kept.provider = n
       const set: string[] = []
       if (u) set.push(`server ${target.setServer(u)}`)

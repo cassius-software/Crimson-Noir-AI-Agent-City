@@ -493,7 +493,7 @@ export async function installedModels(fetchFn: FetchLike, server: string, signal
   // `onMachine`: not the models Ollama runs on its own cloud, which its own list marks with where they run, whatever
   // they are called (a cloud model copied under another name, one offered only there).
   const here = onMachine && api !== 'chat' ? models.filter((m) => !remote(m)) : models
-  const names = here.map((m) => (m as Record<string, unknown>)[key]).filter((n): n is string => typeof n === 'string')
+  const names = here.map((m) => (m as Record<string, unknown> | null)?.[key]).filter((n): n is string => typeof n === 'string')
   return sorted ? names.sort() : names
 }
 
@@ -516,6 +516,9 @@ export async function installedSizes(fetchFn: FetchLike, server: string, signal?
   return out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
 }
 
+/** Whether Ollama's name `listed` is the model `n`: the same name, or `n` with Ollama's default tag (`qwen3` is `qwen3:latest`). */
+export const sameModel = (listed: unknown, n: string): boolean => listed === n || listed === `${n}:latest`
+
 /** Where Ollama has `model` loaded now (/api/ps): its bytes in all and on GPUs. Null when not loaded, not on this machine, or anything fails; never throws. */
 export async function placementOf(fetchFn: FetchLike, server: string, model: string, signal?: AbortSignal): Promise<{ loaded: number; gpu: number } | null> {
   try {
@@ -526,10 +529,7 @@ export async function placementOf(fetchFn: FetchLike, server: string, model: str
     const models = ((await res.json()) as { models?: unknown } | null)?.models
     if (!Array.isArray(models)) return null
     // Ollama names a loaded model as its list does, the default tag shown or not.
-    const e = models.find((m) => {
-      const name = (m as { name?: unknown } | null)?.name
-      return name === model || name === `${model}:latest`
-    }) as { size?: unknown; size_vram?: unknown } | undefined
+    const e = models.find((m) => sameModel((m as { name?: unknown } | null)?.name, model)) as { size?: unknown; size_vram?: unknown } | undefined
     const size = e?.size
     const vram = e?.size_vram
     if (!bytesOk(size) || size <= 0 || typeof vram !== 'number' || !Number.isFinite(vram) || vram < 0) return null
