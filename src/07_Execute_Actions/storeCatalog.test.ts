@@ -4,11 +4,13 @@
 /**
  * Why does this file exist? It holds the shops' catalogue, the practice gate, the saved record, the purses and the
  * shopkeeper (storeCatalog.ts, shopStore.ts, shopkeeper.ts) to their promises: ids and bits stable and unique, every
- * bit inside its unlock space and the worn lines inside the shops' own range of the look space; every line on sale
- * dresses every body in something the wardrobe has; a line on order never sold; the gate takes the price and sets the
- * bit only when the level, the credits and the bit allow, and its verdict names the first reason; a stored record that
- * is not one reads as a fresh start; a purchase survives a reload; the progression keeper's contract (its record
- * words, its gate's verdicts, its subscribe) drives the shopkeeper the same way; the 14A screen passes every name.
+ * bit inside its unlock space and the worn lines inside the shops' own range of the look space; every worn line on
+ * sale dresses every body in something the wardrobe has; the deeds are on sale and dress nobody, while the furniture
+ * stays on order until furnishing opens; a line on order is never sold; the gate takes the price and sets the bit only
+ * when the level, the credits and the bit allow, and its verdict names the first reason; the practice purse claims the
+ * free loft, buys the brownstone and is told the level the timber loft needs; a stored record that is not one reads as
+ * a fresh start; a purchase survives a reload; the progression keeper's contract (its record words, its gate's
+ * verdicts, its subscribe) drives the shopkeeper the same way; the 14A screen passes every name.
  * What breaks if it is removed? A shop could sell a line twice, sell a line nobody can wear, take credits for nothing,
  * or set a bit another thread's line means.
  */
@@ -19,8 +21,8 @@ import { LOOK_PRESETS, LOOK_SLOTS, validateLook } from '../03_Spawn_Agents/look.
 import { screen } from '../02_Define_The_Rules/conduct.ts'
 import { CREDITS_MAX, PRACTICE, SHOP_KEY, freshShop, loadShop, saveShop, validateShop } from '../05_Observe_Environment/shopStore.ts'
 import {
-  CATALOGUE, GATE, MAX_LEVEL, SHOP_LOOK_BASE, SHOP_LOOK_END, SPACE_SIZE, emptyBits, hasBit, itemById, itemsOf, onSale, purchaseGate, wearItem, wearing, whyOf,
-  type Space,
+  CATALOGUE, GATE, MAX_LEVEL, OPEN_KINDS, SHOP_LOOK_BASE, SHOP_LOOK_END, SPACE_SIZE, emptyBits, hasBit, itemById, itemsOf, onSale, purchaseGate, wearItem,
+  wearing, whyOf, type ItemKind, type Space,
 } from './storeCatalog.ts'
 import { PROGRESS_WORD, createShopkeeper, practicePurse, progressionPurse, type ProgressLike } from './shopkeeper.ts'
 
@@ -62,13 +64,38 @@ test('the deeds are the plan\'s seven tiers, in level order, priced as its table
   assert.deepEqual(deeds.map((d) => d.level), [1, 3, 6, 10, 14, 17, 20])
   assert.deepEqual(deeds.map((d) => d.price), [0, 4000, 18000, 75000, 320000, 1100000, 4500000])
   assert.deepEqual(deeds.map((d) => d.index), [0, 1, 2, 3, 4, 5, 6])
-  assert.ok(deeds.every((d) => d.shop === 'designHouse' && !onSale(d)), 'deeds wait for the properties')
 })
 
-test('every line on sale dresses every preset body in a valid look; a line on order is never sold nor worn', () => {
+test('deeds are on sale; furniture is still on order, and goes on sale only when furnishing opens its kind', () => {
+  assert.deepEqual([...OPEN_KINDS], ['deed'])
+  const deeds = CATALOGUE.filter((i) => i.kind === 'deed')
+  const furniture = CATALOGUE.filter((i) => i.kind === 'furniture')
+  assert.equal(deeds.length, 7)
+  assert.ok(furniture.length > 0)
+  assert.ok(deeds.every((d) => d.shop === 'designHouse' && onSale(d)), 'the deeds are on sale')
+  assert.ok(furniture.every((f) => f.shop === 'designHouse' && !onSale(f)), 'no piece is sold before it can be placed')
+  // Furnishing adds its kind, and the pieces are on sale at once; without the deeds' kind, a deed is on order again.
+  const furnishing: ReadonlySet<ItemKind> = new Set<ItemKind>(['deed', 'furniture'])
+  assert.ok(furniture.every((f) => onSale(f, LOOK_SLOTS, furnishing)))
+  assert.ok(deeds.every((d) => !onSale(d, LOOK_SLOTS, new Set<ItemKind>())))
+  // A kind in the open set never puts a worn line on sale: those answer to the wardrobe alone.
+  const watch = CATALOGUE.find((i) => i.wear && 'watch' in i.wear)!
+  assert.equal(onSale(watch, LOOK_SLOTS, new Set<ItemKind>(['wear', 'deed', 'furniture'])), false)
+})
+
+test('every worn line on sale dresses every preset body in a valid look; a deed on sale dresses nobody; a line on order is never sold nor worn', () => {
   for (const i of CATALOGUE) {
     if (!onSale(i)) {
       for (const p of LOOK_PRESETS) assert.equal(wearItem(p.look, i), null, `${i.name} is on order but wearable`)
+      continue
+    }
+    if (i.kind !== 'wear') {
+      // A deed is sold, never worn: nothing it sets, nothing anyone shows as wearing.
+      assert.equal(i.wear, null, `${i.name} is not worn`)
+      for (const p of LOOK_PRESETS) {
+        assert.equal(wearItem(p.look, i), null, `${i.name} would be worn by the ${p.name}`)
+        assert.equal(wearing(p.look, i), false)
+      }
       continue
     }
     for (const p of LOOK_PRESETS) {
@@ -124,7 +151,9 @@ test('whyOf says why in words', () => {
   assert.equal(whyOf(coat, GATE.bought, 9999), 'for sale')
   assert.equal(whyOf(coat, GATE.owned, 0), 'owned')
   assert.match(whyOf(itemById(129)!, GATE.unavailable, 0), /on order/)
-  assert.match(whyOf(itemById(225)!, GATE.unavailable, 0), /properties/)
+  assert.match(whyOf(itemById(160)!, GATE.unavailable, 0), /furnishing/)
+  assert.equal(whyOf(itemById(225)!, GATE.unavailable, 0), 'not for sale', 'a deed is on sale, so an unavailable one is refused, not on order')
+  assert.match(whyOf(itemById(226)!, GATE.level, 0), /needs level 6/)
 })
 
 test('the record: a fresh start for anything not a record, the practice purse full; a valid one round-trips', () => {
@@ -178,6 +207,7 @@ test('the shopkeeper on the practice purse: buys through the gate, saves at once
   // Above the practice level, and on order: refused with the reason, nothing taken.
   assert.equal(again.buy(14).verdict, GATE.level)
   assert.equal(again.buy(129).verdict, GATE.unavailable)
+  assert.equal(again.buy(160).verdict, GATE.unavailable, 'furniture is on order')
   assert.equal(again.buy(4242).verdict, GATE.unavailable)
   assert.equal(again.purse.credits(), before - itemById(0)!.price)
   // The purse refuses what the progression gate would call invalid.
@@ -186,6 +216,49 @@ test('the shopkeeper on the practice purse: buys through the gate, saves at once
     assert.equal(again.purse.buy(space as Space, index, level, price), GATE.unavailable)
   }
   off()
+})
+
+test('the practice purse buys homes: claims the Micro-Loft for 0 cr, buys the Brownstone, and the Timber Loft answers level', () => {
+  const s = memory()
+  const k = createShopkeeper({ purse: practicePurse(s) })
+  assert.deepEqual([k.purse.level(), k.purse.credits()], [PRACTICE.level, PRACTICE.credits])
+  let calls = 0
+  k.onChange(() => { calls++ })
+  // The design house's card: the seven deeds for sale or gated, every piece of furniture on order and saying why.
+  const rows = k.rows('designHouse', null)
+  assert.deepEqual(rows.filter((r) => r.item.kind === 'deed').map((r) => r.verdict),
+    [GATE.bought, GATE.bought, GATE.level, GATE.level, GATE.level, GATE.level, GATE.level])
+  assert.deepEqual(rows.filter((r) => r.item.kind === 'deed').slice(2).map((r) => r.why),
+    ['needs level 6', 'needs level 10', 'needs level 14', 'needs level 17', 'needs level 20'])
+  for (const r of rows.filter((row) => row.item.kind === 'furniture')) {
+    assert.equal(r.verdict, GATE.unavailable, r.item.name)
+    assert.equal(r.why, 'on order: opens with furnishing')
+  }
+  assert.ok(rows.every((r) => !r.worn))
+  // The free loft is claimed for nothing, and sets property bit 0.
+  const loft = k.buy(224)
+  assert.equal(loft.verdict, GATE.bought, loft.message)
+  assert.equal(k.purse.credits(), PRACTICE.credits)
+  assert.equal(k.owns(224), true)
+  assert.equal(k.purse.owns('property', 0), true)
+  assert.equal(k.buy(224).verdict, GATE.owned, 'claimed once')
+  // The brownstone takes its 4,000 cr and sets bit 1; a deed is never worn.
+  const brownstone = k.buy(225)
+  assert.equal(brownstone.verdict, GATE.bought, brownstone.message)
+  assert.equal(k.purse.credits(), PRACTICE.credits - 4000)
+  assert.equal(k.purse.owns('property', 1), true)
+  assert.equal(k.wear(225, LOOK_PRESETS[0].look), null)
+  assert.equal(calls, 2)
+  // Level 6 is past the practice purse: refused with the level named, nothing taken, nothing set.
+  const timber = k.buy(226)
+  assert.equal(timber.verdict, GATE.level)
+  assert.match(timber.message, /Pierside Timber Loft: needs level 6/)
+  assert.equal(k.purse.credits(), PRACTICE.credits - 4000)
+  assert.equal(k.owns(226), false)
+  assert.equal(calls, 2)
+  // Reloaded, both homes are still owned and the rows say so.
+  const again = createShopkeeper({ purse: practicePurse(s) })
+  assert.deepEqual(again.rows('designHouse', null).filter((r) => r.owned).map((r) => r.item.id), [224, 225])
 })
 
 /** A stand-in for the progression keeper, by its documented contract (docs/progression.md, the purchase gate). */

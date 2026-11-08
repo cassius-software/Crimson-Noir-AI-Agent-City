@@ -15,11 +15,13 @@
  * a turn from rest, a long frame out of rest and a 125 Hz mouse on a 240 Hz screen are kept, a jump out of stillness
  * is not, and never two in a row), and a mouse
  * puts a touch laptop's overlay away, Run toggle and all, but never a touch-first tablet's (until its primary pointer
- * turns fine).
+ * turns fine). `drain` (a home's card holding the avatar still) drops the queued actions and nothing else, and the
+ * console's suspend and the act card's shield keep their exact bodies.
  * What breaks if it is removed? A regression to orbit-camera input (a wheel zoom, a click that must come
  * first, an unclamped pitch that flips the view) could ship unnoticed.
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, test } from 'node:test'
 import { HalBus } from './hal.ts'
 import { Input, isEditableTarget, LOOK, PITCH_LIMIT } from './input.ts'
@@ -219,6 +221,32 @@ test('ping: Q, the middle mouse button and the right shoulder queue one edge eac
   assert.equal(input.take('ping'), false, 'held')
   input.press('ping')
   assert.equal(input.take('ping'), true, 'the touch button and the harness press it')
+})
+
+test('drain: every queued action dropped, and nothing else; the held keys, the stick and a held face button stay as they were', () => {
+  doc.dispatchEvent(ev('keydown', { code: 'KeyW', repeat: false }))
+  doc.dispatchEvent(ev('keydown', { code: 'KeyQ', repeat: false }))
+  input.press('interact')
+  pads.push(pad({ axes: [0, -1, 0, 0], pressed: [PAD.south] }))
+  input.poll(1 / 60)
+  input.drain()
+  for (const a of ['interact', 'ping', 'reset', 'timeForward', 'timeBack'] as const) assert.equal(input.take(a), false, `${a} dropped`)
+  assert.equal(input.down('KeyW'), true, 'a held key is still held')
+  assert.ok(input.analog.moveY > 0.99, 'the stick still reads (the engine zeroes the walk itself)')
+  input.poll(1 / 60)
+  assert.equal(input.take('interact'), false, 'the face button still held: no new edge after the drain')
+  pads[0] = pad({ axes: [0, -1, 0, 0] })
+  input.poll(1 / 60)
+  pads[0] = pad({ axes: [0, -1, 0, 0], pressed: [PAD.south] })
+  input.poll(1 / 60)
+  assert.equal(input.take('interact'), true, 'a fresh press queues again: nothing was suspended or shielded')
+  assert.equal(input.suspended, false)
+  assert.equal(input.shielded, false)
+  // The console's suspend and the act card's shield keep their exact bodies (actWiring.test.ts pins the shield's).
+  const src = readFileSync(new URL('./input.ts', import.meta.url), 'utf8')
+  assert.match(src, /\n {2}drain\(\): void \{\n {4}this\.queued\.clear\(\)\n {2}\}\n/)
+  assert.match(src, /\n {2}suspend\(on: boolean\): void \{\n {4}this\.suspended = on\n {4}if \(!on\) return\n {4}this\.keys\.clear\(\)\n {4}this\.queued\.clear\(\)\n {4}this\.endDrag\(\)\n {4}this\.padLook\.reset\(\)\n {4}this\.xr\?\.reset\(\)\n {4}for \(const seat of this\.padSeats\) seat\.release\(\)\n {4}if \(document\.pointerLockElement === this\.canvas\) document\.exitPointerLock\(\)\n {2}\}\n/)
+  assert.match(src, /\n {2}shield\(on: boolean\): void \{\n {4}this\.shielded = on\n {2}\}\n/)
 })
 
 test('a touch laptop: a finger brings the touch overlay, the mouse moving again puts it away', () => {

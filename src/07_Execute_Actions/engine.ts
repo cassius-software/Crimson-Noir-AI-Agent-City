@@ -41,9 +41,11 @@ import { buildWorld, createRenderer, FULL_WORLD, gpuBufferOf, LIGHT_TUNE_RANGE, 
 import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
 import { RegionPlaces, hollowLots, layoutOf, regionPhysics } from '../01_Initialize_World/region/regionWorld.ts'
 import { regionShopLots } from '../01_Initialize_World/region/shops.ts'
+import { regionHomeLots } from '../01_Initialize_World/region/homes.ts'
 import { regionWorkplaceLots } from '../01_Initialize_World/region/workplaces.ts'
-import { drawRooms, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
+import { doorDir, doorFront, drawRooms, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { drawShops, orbitEye, shopAt, shops as cityShops, SHOP, type Shop } from '../01_Initialize_World/storefronts.ts'
+import { cityHomes, DEED_BASE, drawHomes, homeAt, type Home } from '../01_Initialize_World/properties.ts'
 import { streetCapacity, streetGridOf, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { tallestBuilding, type RegionPack } from '../01_Initialize_World/region/pack.ts'
 import { LANDMARK } from '../01_Initialize_World/lakefront.ts'
@@ -70,6 +72,7 @@ import type { NoirTables } from './terminal/noirscript/index.ts'
 import type { AgentTelemetry } from '../05_Observe_Environment/agv.ts'
 import { Governor, defaultAgents, defaultCars, liteJoinHint, peakCandidate, profileDevice, readDeviceHints, tierRange, type DeviceProfile, type QualityKnobs } from '../05_Observe_Environment/governor.ts'
 import { CAR_TUNE_RANGE, chassisBox, clampTuning, kindOf, type CarTuning } from './car.ts'
+import { itemById } from './storeCatalog.ts'
 import { FleetView } from './fleetView.ts'
 import { CraftView } from './craftView.ts'
 import { buildTrackNetwork } from '../06_Make_Decisions/tracks.ts'
@@ -277,6 +280,29 @@ function audioFrameOf(cars: number): AudioFrame {
 const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th'}`
 /** What a ping landed on, for its caption: 'a spot', 'person 12', 'car 3', 'pole 7'. */
 const pingWhat = (p: Ping): string => (p.pick === 'point' ? 'a spot' : `${p.pick} ${p.index}`)
+/** The city's street address of a point, in the snapshot's own words: '9th Ave & 12th St'. */
+const cityAddress = (x: number, z: number): string => `${ordinal(Math.round(x / CITY.pitch) + 1)} Ave & ${ordinal(Math.round(z / CITY.pitch) + 1)} St`
+/** The eight compass words, clockwise from north (the engine's north is −z, its east +x, as the minimap draws them). */
+const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'] as const
+/** How far and which way (x, z) lies from (fromX, fromZ), in words: '330 m west', or 'here' within 15 m. */
+function wayTo(fromX: number, fromZ: number, x: number, z: number): string {
+  const dx = x - fromX, dz = z - fromZ, d = Math.hypot(dx, dz)
+  if (!(d >= 15)) return 'here'
+  const i = ((Math.round(Math.atan2(dx, -dz) / (Math.PI / 4)) % 8) + 8) % 8
+  return `${Math.round(d / 10) * 10} m ${COMPASS[i]}`
+}
+
+/**
+ * A home as the page knows it (01_Initialize_World/properties.ts Home): its deed's name (the catalogue's, line 224 + its
+ * property index), its street address (the city's grid at the doorway, or a region's own street names there), and its
+ * arrival: the spot on the sidewalk lane in front of the doorway where Go home puts the avatar (interiors.ts doorFront).
+ */
+export type PageHome = Home & { name: string; address: string; arrival: { x: number; z: number } }
+
+/** `h` with its name, address and arrival, the sidewalk lane `lane` metres off the street's centre line. */
+function pageHome(h: Home, address: string, lane: number): PageHome {
+  return { ...h, name: itemById(DEED_BASE + h.home)?.name ?? h.kind, address, arrival: doorFront(h, lane) }
+}
 
 /** One prop's dissolve amounts to its instanced attribute (dirty range only), marked for three's upload, then cleaned. */
 function flushProp(b: DissolveBuffer, attr: { array: ArrayLike<number>; needsUpdate: boolean }): void {
@@ -496,6 +522,20 @@ export class Engine {
   private shopHere = -1
   /** The mirror camera while a shop's catalogue is open: the shop and the orbit's angle, rad; null in first person. */
   private showroom: { shop: number; angle: number } | null = null
+  /**
+   * The world's homes (01_Initialize_World/properties.ts): the city's seven from its seed, or a generated region's on
+   * lots of its street window (region/homes.ts: up to seven, none in a surveyed region), each with its deed's name, its
+   * address and its arrival on the sidewalk. A home is known by its property index (Home.home), the same in every map,
+   * never by its place in this list. The page tells which one the avatar stands in (the HUD's chip, E or B opens its
+   * doorstep card), and Go home takes the avatar to one.
+   */
+  readonly homes: readonly PageHome[]
+  /** The home the avatar stood in on foot at the last frame (its property index), or −1. */
+  private homeHere = -1
+  /** The home whose doorstep card is open (its property index), or null: while it is open the avatar is held still. */
+  private homeCard: number | null = null
+  /** The homes the player owns, one bit per property index (the host's shopkeeper says, through setOwnedHomes). */
+  private ownedHomes = 0
   /** The head's pose while the mirror camera draws a frame (present() alone sees the orbit; the listener keeps the head). */
   private readonly headPos = new Vector3()
   private readonly headRot = new Quaternion()
@@ -629,6 +669,11 @@ export class Engine {
    * Null: nothing opens.
    */
   onBrowse: ((index: number) => void) | null = null
+  /**
+   * The host's: a home's doorstep card asked for (E or B on foot inside home `home`, its property index, with no car in
+   * reach to take the E). Null: nothing opens.
+   */
+  onHome: ((home: number) => void) | null = null
   /** Real-time end of the current haptic thump (ms, rAF clock). */
   private pulseUntil = 0
   private readonly foot: FootControls = { x: 0, z: 0, heading: 0 }
@@ -680,11 +725,13 @@ export class Engine {
     canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; craftView: CraftView | null; rigView: RigView; profile: DeviceProfile
     post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
     options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]; shops: readonly Shop[]
+    homes: readonly PageHome[]
     crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; crowdFigure: GPUBuffer; netView: NetView
   }) {
     this.places = p.places
     this.rooms = p.rooms
     this.shops = p.shops
+    this.homes = p.homes
     this.streets = p.streets
     this.regionName = p.options.region?.name ?? null
     this.landmarkAt = p.landmark
@@ -848,10 +895,13 @@ export class Engine {
       // picked from the pack as it came, then hollowed out of a copy of it (regionWorld.ts hollowLots), which the page
       // draws with the rooms' boxes and paved floors and the worker walls; the worker gets the lots themselves and builds
       // the same rooms from them. Its five storefronts (region/shops.ts) take the lots nearest the start after them and
-      // are hollowed the same way. A surveyed region has no window and no lots: its copy is the pack.
+      // are hollowed the same way, and then its seven homes (region/homes.ts) take theirs from what is left; the worker
+      // is not told of the homes, whose glass reaches it as the world's boxes (no car fits through a home's planters).
+      // A surveyed region has no window and no lots: its copy is the pack.
       const lots = pack && layout && streets ? regionWorkplaceLots(pack, layout, streets, spawn, options.seed) : []
       const shopLots = pack && layout && streets ? regionShopLots(pack, layout, streets, spawn, options.seed, lots) : []
-      const hollow = pack && layout ? hollowLots(pack, layout, lots, shopLots) : null
+      const homeLots = pack && layout && streets ? regionHomeLots(pack, layout, streets, spawn, options.seed, [...lots, ...shopLots]) : []
+      const hollow = pack && layout ? hollowLots(pack, layout, lots, shopLots, homeLots) : null
       const world = buildWorld(gpu.renderer, options.seed, pack && layout && hollow ? { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan: hollow.plan, rooms: hollow.rooms } : null, lite ? LITE_WORLD : FULL_WORLD)
       // Players 1..3 (split screen) start beside player 0 along the sidewalk (the city's spawn sidewalk runs along z; a
       // region's along its street heading); the realm moves a spawn out of a building lot itself.
@@ -985,6 +1035,9 @@ export class Engine {
         // (regionWorld.ts hollowLots; none in a surveyed region), each given the region's own address for its card: the
         // city's arcades name the city's districts, which a region does not have.
         shops: hollow ? hollow.shops.map((s) => (places ? { ...s, arcade: places.place(s.door.x, s.door.z) } : s)) : cityShops(options.seed),
+        // The city's homes, hollowed into its boxes by city.ts (properties.ts hollowProperties), or a generated region's
+        // (regionWorld.ts hollowLots), each at the address of its doorway: the city's grid there, or the region's streets.
+        homes: hollow ? hollow.homes.map((h) => pageHome(h, places ? places.place(h.door.x, h.door.z) : cityAddress(h.door.x, h.door.z), streets?.lane ?? CITY.lane)) : cityHomes(options.seed).map((h) => pageHome(h, cityAddress(h.door.x, h.door.z), CITY.lane)),
         // The code dissolve's crowd amounts: allocated by the draws above like the frame's buffers, written the same way.
         crowdDissolve: gpuBufferOf(gpu.renderer, view0.dissolve),
         crowdLook,
@@ -1007,11 +1060,12 @@ export class Engine {
     }
   }
 
-  /** The minimap's layer in a region (its water, buildings and streets near a point, then its workplaces and shops over
-   * the footprints they were hollowed from, as the city's map draws its own); null in the procedural city. */
+  /** The minimap's layer in a region (its water, buildings and streets near a point, then its workplaces, shops and homes
+   * over the footprints they were hollowed from, as the city's map draws its own, the homes the player owns in gold);
+   * null in the procedural city. */
   get mapLayer(): ((ctx: CanvasRenderingContext2D, x: number, z: number, radius: number, dark: boolean) => void) | null {
-    const p = this.places, rooms = this.rooms, shops = this.shops
-    return p ? (ctx, x, z, radius, dark) => { p.drawMap(ctx, x, z, radius, dark); drawRooms(ctx, rooms, x, z, dark, radius); drawShops(ctx, shops, x, z, dark, radius) } : null
+    const p = this.places, rooms = this.rooms, shops = this.shops, homes = this.homes
+    return p ? (ctx, x, z, radius, dark) => { p.drawMap(ctx, x, z, radius, dark); drawRooms(ctx, rooms, x, z, dark, radius); drawShops(ctx, shops, x, z, dark, radius); drawHomes(ctx, homes, x, z, dark, this.ownedHomes, radius) } : null
   }
 
   resize(): void {
@@ -1512,6 +1566,68 @@ export class Engine {
     return true
   }
 
+  /**
+   * Opens the doorstep card of the home the avatar stands in, through the host (onHome), on foot: browse()'s rule, so
+   * `interact` (the E key's and the pad's south button's ask) leaves the press to a car in reach. Returns whether it did.
+   */
+  openHome(interact = false): boolean {
+    const st = this.sim.state
+    if (this.halted || this.disposed || !this.onHome || st.driving >= 0) return false
+    const h = homeAt(this.homes, st.avatar.x, st.avatar.z)
+    if (h < 0 || (interact && this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE) >= 0)) return false
+    this.onHome(h)
+    return true
+  }
+
+  /**
+   * The doorstep card of home `home` (its property index) open, or null for none. While one is open the avatar is held
+   * still: each frame drops every queued action after the poll and zeroes the walk (a pad's edges queue and its stick
+   * walks even while the host suspends the game's input). Returns whether it took: only while the avatar stands in that
+   * home, on foot, in a city that runs; closing always takes.
+   */
+  setHomeCard(home: number | null): boolean {
+    if (home === null) { this.homeCard = null; return true }
+    const st = this.sim.state
+    if (this.halted || this.disposed || st.driving >= 0 || homeAt(this.homes, st.avatar.x, st.avatar.z) !== home) { this.homeCard = null; return false }
+    this.homeCard = home
+    return true
+  }
+
+  /** The homes the player owns, one bit per property index (bit i: deed 224 + i), for the HUD and the minimaps. */
+  setOwnedHomes(mask: number): void {
+    this.ownedHomes = Number.isInteger(mask) ? mask & 0x7f : 0
+  }
+
+  /**
+   * Takes the avatar to home `home` (its property index): onto its arrival spot on the sidewalk in front of the doorway,
+   * looking in through it (avatarHeading = yaw + π). Refused when the city has stopped, at the wheel, when the home is
+   * not in this map, and in a network room, where the room replays only the steps it saw and would put the player back.
+   * Returns whether it went.
+   */
+  goHome(home: number): boolean {
+    const h = this.homes.find((x) => x.home === home)
+    if (!h || this.halted || this.disposed || this.netRoom || this.sim.state.driving >= 0) return false
+    this.sim.send({ c: 'teleport', x: h.arrival.x, z: h.arrival.z })
+    const d = doorDir(h.side)
+    this.input.yaw = Math.atan2(d.x, d.z)
+    this.input.pitch = 0
+    return true
+  }
+
+  /**
+   * Where home `home` (its property index) stands, for a deed's row: `line` is its address and how far and which way it
+   * lies from the player ('9th Ave & 12th St, 330 m west'), and `why` says why Go home cannot take the player there now
+   * (in a network room, or the home is not in this map), else null.
+   */
+  homeWhere(home: number): { line: string; why: string | null } {
+    const h = this.homes.find((x) => x.home === home)
+    if (!h) return { line: '', why: 'stands in the city, not in this map' }
+    const st = this.sim.state
+    const o = st.driving * POSE.stride
+    const x = st.driving >= 0 ? st.poses[o + POSE.x] : st.avatar.x, z = st.driving >= 0 ? st.poses[o + POSE.z] : st.avatar.z
+    return { line: `${h.address}, ${wayTo(x, z, h.door.x, h.door.z)}`, why: this.netRoom ? 'not in a shared room: walk there' : null }
+  }
+
   /** Enter the nearest car, or leave the current one on the driver's (left) side (decided in the physics realm). */
   interact(): void {
     this.sim.send({ c: 'interact' })
@@ -1833,11 +1949,14 @@ export class Engine {
     // read against the head's own yaw (the pose is the headset's), not the body yaw Input keeps.
     this.xrInput.headOffset = this.rig.headset ? this.rig.pose.yaw - input.yaw : 0
     input.poll(dt)
+    // A home's doorstep card holds the avatar still: whatever the poll queued (a pad's edges queue even while the host
+    // suspends the game's input) is dropped, so no press reaches a car's door, the clock or a ping.
+    if (this.homeCard !== null) input.drain()
 
     // Inside a shop on foot, E opens its catalogue unless a car is in reach to take it (storefronts.ts); B opens it
-    // whether or not a car is near.
-    if (input.take('interact') && !this.browse(true)) this.interact()
-    if (input.take('browse')) this.browse()
+    // whether or not a car is near. Inside a home (properties.ts), E and B open its doorstep card the same way.
+    if (input.take('interact') && !this.browse(true) && !this.openHome(true)) this.interact()
+    if (input.take('browse') && !this.browse()) this.openHome()
     if (input.take('timeForward')) { this.hours = (this.hours + 1) % 24; this.toast('Clock', formatClock(this.hours)) }
     if (input.take('timeBack')) { this.hours = (this.hours + 23) % 24; this.toast('Clock', formatClock(this.hours)) }
     if (input.take('ghost')) this.toast('Ghost view', this.setGhost(!this.ghost.on))
@@ -1864,6 +1983,8 @@ export class Engine {
     if (driving < 0) {
       // A script's walk (a harness's, say) overrides the keys while it lasts; the worker still caps it at a run.
       applyWalk(this.scriptedWalk, nowMs, foot)
+      // A home's doorstep card holds the avatar still: the stick walks even under suspend, and a script's walk waits.
+      if (this.homeCard !== null) { foot.x = 0; foot.z = 0 }
       this.pulseUntil = 0
     } else {
       // What the wheels received (vetted, L2-limited) in the audited state: the brake trigger feels it, the rumble
@@ -1922,6 +2043,10 @@ export class Engine {
     const show = this.showroom
     if (show && (this.shopHere !== show.shop || this.rig.headset || this.netRoom)) this.showroom = null
     else if (show) show.angle += SHOP.orbit.rate * dt
+    // Which home the avatar stands in on foot; out of the home with its card open (a teleport, the console's moves),
+    // the hold ends here and the host puts the card away at its next look.
+    this.homeHere = driving >= 0 ? -1 : homeAt(this.homes, av.x, av.z)
+    if (this.homeCard !== null && this.homeHere !== this.homeCard) this.homeCard = null
     // The pedestrians near the operator look them in the eye (crowd.ts gazeTarget); from a car, nobody is looked at.
     this.crowdGaze.value.set(this.rig.pose.x, this.rig.pose.y, this.rig.pose.z, driving >= 0 ? 0 : 1)
     // The other local players' heads, each on its own camera from its own avatar (or the car it drives) and its seat's
@@ -2393,6 +2518,12 @@ export class Engine {
     return { drawnNear: this.crowd.stats.drawnNear, drawnFar: this.crowd.stats.drawnFar, nudges: w.nudges, waiting: w.waiting, crossing: w.crossing, retreating: w.retreating, working: w.working }
   }
 
+  /** Home `home` (its property index) as the snapshot shows it: its kind, its deed's name, whether it is owned, and whether its card is open. */
+  private homeView(home: number): NonNullable<SipocSnapshot['customer']['home']> {
+    const h = this.homes.find((x) => x.home === home)
+    return { index: home, kind: h?.kind ?? '', name: h?.name ?? '', owned: ((this.ownedHomes >>> home) & 1) === 1, card: this.homeCard === home }
+  }
+
   private kernelStats(): KernelStats {
     const k = this.sim.state.kernel
     return { ...k, audit: { ...k.audit, panic: k.audit.panic ?? this.lockReason } }
@@ -2473,6 +2604,9 @@ export class Engine {
         streets: this.streets !== null,
         // The shop the avatar stands in (storefronts.ts), for the HUD's chip and the card; absent outside every shop.
         ...(this.shopHere >= 0 && { shop: { index: this.shopHere, kind: this.shops[this.shopHere].kind, name: this.shops[this.shopHere].name, showroom: this.showroom !== null } }),
+        // The home the avatar stands in (properties.ts), for the HUD's chip and the card; absent outside every home.
+        ...(this.homeHere >= 0 && { home: this.homeView(this.homeHere) }),
+        ownedHomes: this.ownedHomes,
         ...(this.captionsOn && { captions: this.captionLines() }),
       },
       experience: { sessionSeconds: this.simTime, longFrames: this.clock.longFrames, distanceWalked: this.walked, distanceDriven: this.driven },

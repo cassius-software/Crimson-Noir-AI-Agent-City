@@ -7,9 +7,11 @@
  * or why not, as the shopkeeper (shopkeeper.ts) answers. A line the body can wear has Try on (worn at once on the
  * player's body, which the mirror camera circles, and taken off again when the card closes unless it was bought),
  * Buy (the shopkeeper's gate takes the credits and sets the owned bit; a bought line is worn at once) and, once owned,
- * Wear. Lines the wardrobe or the properties do not have yet are listed as on order, with no button. The purse line
- * says whose credits these are: practice credits until the progression engine's keeper is handed in. Esc, the close button or
- * Done puts it away; the host gives the eye back to the head.
+ * Wear. A home's deed sells the same way, and its row also says where the home stands and has Visit (Go home once
+ * owned), which the host answers by taking the avatar to the home's doorstep or by saying why it cannot. Lines the
+ * wardrobe or furnishing do not have yet are listed as on order, with no button. The purse line says whose credits
+ * these are: practice credits until the progression engine's keeper is handed in. Esc, the close button or Done puts it
+ * away; the host gives the eye back to the head.
  * What breaks if it is removed? A shop is a room with nothing to buy in it, and nothing shows what the shops sell.
  */
 import { useEffect, useRef, useState } from 'react'
@@ -35,9 +37,20 @@ export interface StoreCardProps {
   onTry: (id: number | null, look: Look | null) => void
   /** Wear and keep `look` (a bought line; the host saves it like the wardrobe's). */
   onWear: (look: Look) => void
+  /** Take the avatar to deed `item`'s home (Visit, or Go home once owned); the host says why when it cannot. */
+  onGo?: (item: StoreItem) => void
+  /**
+   * Where deed `item`'s home stands, as the host knows it: `line` is the address and the compass from here, and `why`
+   * is the reason Visit cannot go there now (in a shared room, or the home is not in this map), else null. Null when
+   * the host has nothing to say, and then Visit stays off.
+   */
+  whereFor?: (item: StoreItem) => Where | null
   onClose: () => void
   dark?: boolean
 }
+
+/** Where a home stands, and why Visit cannot go there now (null when it can). */
+type Where = { line: string; why: string | null }
 
 /** The card's glass, by daylight: the wardrobe card's (Customizer.tsx), with the shops' teal for what may be bought. */
 function themeOf(dark: boolean) {
@@ -64,13 +77,16 @@ function sections(rows: readonly ShopRow[]): [string, ShopRow[]][] {
   return [...out]
 }
 
-function Row({ row, look, trying, t, onTry, onBuy, onWear }: {
-  row: ShopRow; look: Look; trying: boolean; t: Theme
-  onTry: (item: StoreItem) => void; onBuy: (item: StoreItem) => void; onWear: (item: StoreItem) => void
+function Row({ row, look, trying, t, where, onTry, onBuy, onWear, onGo }: {
+  row: ShopRow; look: Look; trying: boolean; t: Theme; where: Where | null
+  onTry: (item: StoreItem) => void; onBuy: (item: StoreItem) => void; onWear: (item: StoreItem) => void; onGo?: (item: StoreItem) => void
 }) {
   const { item, verdict, why, owned, worn } = row
   const fits = wearItem(look, item) !== null
   const status = owned ? (worn ? 'Wearing' : 'Owned') : verdict === GATE.bought ? credits(item.price) : why
+  // A deed's row says where its home stands, and why Visit cannot go there now, in words a touch screen shows too.
+  const place = where ? [where.line, where.why].filter(Boolean).join(' · ') : ''
+  const goOff = where === null || where.why !== null
   return (
     <li className={`flex flex-wrap items-center gap-x-2 gap-y-1 border-b py-2 last:border-b-0 ${t.rule}`} data-item={item.id} data-verdict={verdict} data-owned={owned || undefined} data-worn={worn || undefined}>
       <div className="min-w-0 flex-1">
@@ -78,6 +94,7 @@ function Row({ row, look, trying, t, onTry, onBuy, onWear }: {
         <div className={`text-[11px] leading-snug ${t.muted}`}>
           Level {item.level} · {credits(item.price)}{status !== credits(item.price) && <> · <span data-why>{status}</span></>}
         </div>
+        {place && <div className={`text-[11px] leading-snug ${t.muted}`} data-place>{place}</div>}
       </div>
       {!owned && fits && (
         <button type="button" onClick={() => onTry(item)} aria-pressed={trying} className={`rounded-full border px-2.5 py-0.5 text-[12px] ${trying ? t.pillOn : t.pill}`} data-action="try">
@@ -98,11 +115,23 @@ function Row({ row, look, trying, t, onTry, onBuy, onWear }: {
       {owned && fits && !worn && (
         <button type="button" onClick={() => onWear(item)} className={`rounded-full border px-2.5 py-0.5 text-[12px] ${t.pill}`} data-action="wear">Wear</button>
       )}
+      {item.kind === 'deed' && onGo && (
+        <button
+          type="button"
+          onClick={() => onGo(item)}
+          disabled={goOff}
+          title={where?.why ?? undefined}
+          className={`rounded-full border px-2.5 py-0.5 text-[12px] ${goOff ? `${t.off} cursor-not-allowed` : t.pill}`}
+          data-action="go"
+        >
+          {owned ? 'Go home' : 'Visit'}
+        </button>
+      )}
     </li>
   )
 }
 
-export function StoreCard({ visible, shop, keeper, look, trying, mirror = true, onTry, onWear, onClose, dark = false }: StoreCardProps) {
+export function StoreCard({ visible, shop, keeper, look, trying, mirror = true, onTry, onWear, onGo, whereFor, onClose, dark = false }: StoreCardProps) {
   const cardRef = useRef<HTMLElement>(null)
   // The shopkeeper's every change (a purchase, a reset from the console) redraws the card.
   const [, setVersion] = useState(0)
@@ -137,8 +166,15 @@ export function StoreCard({ visible, shop, keeper, look, trying, mirror = true, 
     const next = wearItem(look, item)
     if (next) onTry(item.id, next)
   }
+  const whereOf = (item: StoreItem): Where | null => (item.kind === 'deed' && whereFor?.(item)) || null
   const buy = (item: StoreItem) => {
     const r = keeper.buy(item.id)
+    if (r.verdict === GATE.bought && item.kind === 'deed') {
+      // A home bought says where it stands, so the next press can be Go home; a deed is never worn.
+      const line = whereOf(item)?.line
+      setSaid({ shop, text: line ? `${item.name} is yours: ${line}` : `${item.name} is yours` })
+      return
+    }
     setSaid({ shop, text: r.message })
     if (r.verdict !== GATE.bought) return
     // Bought is worn at once (the plan's instant buy and equip); the try-on, if it was this line, is now the look.
@@ -185,7 +221,9 @@ export function StoreCard({ visible, shop, keeper, look, trying, mirror = true, 
             <section key={group} className="mt-3" data-group={group}>
               <h3 className={`text-[11px] font-semibold uppercase tracking-wide ${t.muted}`}>{group}</h3>
               <ul>
-                {list.map((r) => <Row key={r.item.id} row={r} look={look} trying={trying === r.item.id} t={t} onTry={tryOn} onBuy={buy} onWear={wear} />)}
+                {list.map((r) => (
+                  <Row key={r.item.id} row={r} look={look} trying={trying === r.item.id} t={t} where={whereOf(r.item)} onTry={tryOn} onBuy={buy} onWear={wear} onGo={onGo} />
+                ))}
               </ul>
             </section>
           ))}
@@ -202,7 +240,7 @@ export function StoreCard({ visible, shop, keeper, look, trying, mirror = true, 
               </ul>
               <p className={`mt-1 text-[11px] leading-snug ${t.muted}`}>
                 {later.some((r) => r.item.kind === 'wear') && 'Worn lines arrive with the wardrobe update. '}
-                {later.some((r) => r.item.kind !== 'wear') && 'Furniture and homes open with the properties.'}
+                {later.some((r) => r.item.kind === 'furniture') && 'Furniture arrives with furnishing.'}
               </p>
             </details>
           )}

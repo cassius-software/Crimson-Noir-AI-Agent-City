@@ -417,6 +417,15 @@ export class Input {
     return this.queued.delete(action)
   }
 
+  /**
+   * Drops every queued action and nothing else: held keys, the sticks, the pads' held bits and the look are untouched.
+   * The engine calls it after each poll while a home's card holds the avatar still, so a pad's edge (which queues even
+   * under suspend) never reaches a car's door or the clock.
+   */
+  drain(): void {
+    this.queued.clear()
+  }
+
   /** Programmatic key press, used by the ?debug harness and the touch buttons; nothing while a card waits for the OK. */
   press(action: Action): void {
     if (this.shielded) return

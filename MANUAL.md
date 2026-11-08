@@ -259,11 +259,60 @@ at once. An owned line you are not wearing has **Wear**. What you bought and you
 - **On sale now.** The tailor's six overcoats, seven contrast trims, seven scarves and a silk tie; the atelier's smart
   eyewear; the watch shop's leather briefcase. Lines that need slots the wardrobe does not have yet (the tattoo
   designs and inks, prosthetic limbs, the hearing processor, watches, the lapel pin, the umbrella, headphones) are
-  listed as on order and go on sale when the wardrobe's update adds those slots. The design house's furniture and its
-  seven property deeds (level 1 to 20, free to 4,500,000 credits) wait for the properties.
+  listed as on order and go on sale when the wardrobe's update adds those slots. The design house's seven property
+  deeds (level 1 to 20, free to 4,500,000 credits) are on sale (see Homes); its furniture is on order until furnishing
+  opens, so nothing is sold before it can be placed.
 - **Limits.** The wardrobe card is not gated by
   what you bought; it still offers everything the crowd wears. Putting on a headset closes the card. A pad has no B,
   so near a car the pad's south button opens the car's door and the card opens from the chip (a click or a tap).
+
+### Homes
+
+Seven more ground floors in the city are homes (`01_Initialize_World/properties.ts`), placed from the seed on lots no
+workplace and no shop has, with dice of their own, so the workplaces and the shops stand where they always did. Each
+home has one deed, sold at Lintel & Lumen Design House:
+
+- **Metro-Line Micro-Loft** (level 1, free) beside one of the elevated loop's four stations, its doorway toward the
+  loop's street.
+- **Midtown Brownstone** (level 3, 4,000 credits) on the downtown column next to the Heritage Quarter, its doorway west
+  onto the street between them.
+- **Pierside Timber Loft** (level 6, 18,000 credits) on the lakefront row beside the pier, facing the lake.
+- **Lakefront Glass Villa** (level 14, 320,000 credits) near the middle of the lakefront row and **Sovereign Lakefront
+  Estate** (level 17, 1,100,000 credits) at its eastern end, both facing the lake.
+- **Crown Spire Sky-Mansion** (level 20, 4,500,000 credits) at the foot of the tallest headquarters tower no one else
+  has, and **Crimson Tower Penthouse** (level 10, 75,000 credits) at the foot of another tower near the centre, at
+  least two lots away. For now each is the residence at its tower's foot; the card says the sky floor opens later.
+
+Each home is a glass room built like a shop, with the ceiling slab in the building's own finish. The grander the home,
+the deeper the room: a solid wall stands behind a smaller one, so the Micro-Loft is 9.3 m deep and the two grandest
+24.9 m, all of them 24.9 m wide. Two concrete planters stand in every doorway: a person walks between them, and no car
+fits. Anyone can walk into any home, in either map and in a network room. The minimap draws a home on sale in violet
+and one you own in gold.
+
+Lakefront Metro has the seven homes too (`01_Initialize_World/region/homes.ts`), on lots of its street window once its
+workplaces and shops have taken theirs, hollowed the same way. The grander homes get the better-built lots (a podium
+that carries a tower goes to the Sky-Mansion), so a home's name does not promise a view of the lake there; a window with
+too few lots has fewer homes, and the surveyed region has none. A region home's card names the streets it stands on.
+
+On foot inside a home, the HUD shows **For sale**, the home's name, its level and its price, or **Your home** and its
+name. E (unless a car is in reach), B, the pad's south button (with no car near) or a tap on that chip opens the
+home's doorstep card (`07_Execute_Actions/HomeCard.tsx`): the name and the address, a line about the home, its level
+and price, **Buy** (**Claim (free)** for the Micro-Loft) or the reason the purchase gate refuses, and your purse; once it
+is yours the card says **Yours**. While the card is open you stand still: the game's keys rest, the touch controls step
+aside, and the pad's presses and its stick move nothing. Esc, B, × or Done closes it; leaving the home, putting on a
+headset or opening the console closes it too. On a pad, move to Done with the d-pad and press the south button.
+
+- **Buying.** A deed bought on a doorstep or at the design house is the same purchase, through the one shopkeeper, kept
+  in the same browser record (homes are property bits 0 to 6). Each deed's row at the design house also says where the
+  home stands: its address, then how far and which way it lies from you (for example "9th Ave & 12th St, 330 m west").
+- **Visit and Go home.** Each deed's row has **Visit**, or **Go home** once you own it: it puts you on the sidewalk in
+  front of the home's doorway, looking in, and the shop's card closes as you leave the shop. A home that stands in the
+  city but not in this map says so, and its button stays off.
+- **In a network room** Visit and Go home are refused ("not in a shared room: walk there"): the room replays the steps
+  it saw and would put you back where you were. Walk there instead; the doorstep card still opens.
+- **The practice purse** (level 5 and 5,000 credits, with no income) reaches two deeds: claim the Micro-Loft for
+  nothing and buy the Brownstone for 4,000 credits, which leaves 1,000. The other five rows say "needs level 6", 10,
+  14, 17 and 20 until the progression engine lands. Furniture stays on order until furnishing opens.
 
 ## The surveyed map
 

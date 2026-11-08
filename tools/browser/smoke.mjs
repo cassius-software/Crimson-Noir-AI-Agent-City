@@ -75,6 +75,12 @@
  * - lakefront: the generated metropolis (?map=lakefront, built in the page's worker from the seed), whose crowd walks
  *   its street window with the six workplaces the page picked from the pack and the HUD counting who is at work, at
  *   Medium, the first tier with shadows, so the sun's shadow pass draws the region's buildings and its shaders build;
+ * - homes: the seven homes of seed 1337 and their deeds, inside the practice purse (nothing here costs a credit): B in
+ *   Lintel & Lumen Design House opens its card, the Micro-Loft's deed is claimed for nothing and the Pierside's asks for
+ *   level 6, Go home puts the avatar on the sidewalk in front of the loft's doorway, W walks it in through the
+ *   planters, the HUD's chip says the home is yours, B opens the doorstep card saying Yours, the avatar stands still
+ *   under it with W held, Esc closes it, and the lakefront metropolis, reloaded, has its seven homes and still knows
+ *   the loft is owned;
  * - fail: the ways out when the city cannot start or stops, each in its own browser: navigator.gpu taken away (the
  *   card before a first visit's onboarding, at desktop and phone size and in Firefox on Android with Open in Chrome
  *   first, Restart focused and taken by Enter, the pad's
@@ -90,7 +96,7 @@
  * screenshot per scenario to --out (default: a temporary directory), and the console's transcript where a scenario
  * types in it, prints one row per check (and an `info` row for what is recorded, not asserted) and exits 1 if any
  * fails.
- * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,actions,lakefront,fail].
+ * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,actions,lakefront,homes,fail].
  * Needs `npm run build`.
  * What breaks if it is removed? Nothing at runtime; the page loses its only end-to-end check in a browser, and with it
  * the proof that the city renders and that every control reaches the avatar.
@@ -1658,6 +1664,89 @@ const SCENARIOS = {
       check(r.errors.length === 0, 'lakefront: the engine recorded no error', r.errors.join(' | ').slice(0, 300))
       await p.shot('lakefront')
       p.health('lakefront')
+    } finally { await p.b.close() }
+  },
+
+  /**
+   * The seven homes (src/01_Initialize_World/properties.ts) and their deeds, inside the practice purse's 5,000 credits:
+   * the only purchase is the Micro-Loft's free deed. The design house's card sells it and goes there (Go home); the
+   * doorstep card (HomeCard.tsx) opens inside the home and holds the avatar still; the lakefront metropolis has the
+   * seven too, and the deed bought in the city is still owned there.
+   */
+  async homes(chrome, origin) {
+    const p = await open(chrome)
+    const at = (sel) => `document.querySelector(${JSON.stringify(sel)})`
+    try {
+      await p.goto(`${origin}/?${LIGHT}&seed=1337`)
+      await p.booted()
+      const homes = await p.eval('window.__SIM__.homes()')
+      check(homes.length === 7 && homes.every((h, i) => h.home === i && h.name && h.address), 'homes: seed 1337 has its seven homes, each with its deed\'s name and its address', homes.map((h) => `${h.home} ${h.name} (${h.address})`).join(', '))
+      await p.mouse('mousePressed', 480, 270, 1)
+      await p.mouse('mouseReleased', 480, 270)
+      // Into Lintel & Lumen Design House, and B opens its card.
+      const shop = await p.eval(`window.__SIM__.shops().find((s) => s.kind === 'designHouse')`)
+      await p.eval(`window.__SIM__.teleport(${shop.fitting.x}, ${shop.fitting.z})`)
+      const inShop = await p.waitFor(`window.__SIM__.snapshot().customer.shop?.kind === 'designHouse'`, 30_000).then(() => true, () => false)
+      check(inShop, 'homes: the avatar stands in Lintel & Lumen Design House')
+      await p.tap('KeyB', 'b', 66)
+      const card = await p.waitFor(`!!${at('aside[data-store="designHouse"] [data-item="224"]')}`, 20_000).then(() => true, () => false)
+      check(card, 'homes: B opens the design house\'s card, the deeds on sale in it')
+      const rows = await p.eval(`(() => { const row = (id) => ${at('aside[data-store="designHouse"]')}?.querySelector('[data-item="' + id + '"]')
+        return { loft: row(224)?.getAttribute('data-verdict'), pier: row(226)?.getAttribute('data-verdict'), pierWhy: row(226)?.querySelector('[data-why]')?.textContent ?? '',
+          place: row(224)?.querySelector('[data-place]')?.textContent ?? '', go: row(224)?.querySelector('[data-action="go"]')?.textContent ?? '' } })()`)
+      check(rows.loft === '0' && rows.pier === '2' && /needs level 6/.test(rows.pierWhy), 'homes: the Micro-Loft\'s deed can be had, and the Pierside Timber Loft\'s asks for level 6', JSON.stringify(rows))
+      check(rows.go === 'Visit' && rows.place.startsWith(homes[0].address), 'homes: the loft\'s row says where it stands and offers Visit', `${rows.go}: ${rows.place}`)
+      // Claim the loft: free, so the practice purse keeps its 5,000 credits.
+      await p.eval(`${at('aside[data-store="designHouse"] [data-item="224"] [data-action="buy"]')}?.click()`)
+      const owned = await p.waitFor(`!!${at('aside[data-store="designHouse"] [data-item="224"][data-owned]')}`, 10_000).then(() => true, () => false)
+      const bought = await p.eval(`({ said: ${at('aside[data-store="designHouse"] [data-said]')}?.textContent ?? '', credits: window.__SIM__.shopkeeper.purse.credits(), go: ${at('aside[data-store="designHouse"] [data-item="224"] [data-action="go"]')}?.textContent ?? '' })`)
+      check(owned && bought.credits === 5000 && /Metro-Line Micro-Loft is yours/.test(bought.said), 'homes: the loft\'s deed is claimed for nothing, and the card says where it is', `${bought.said}; ${bought.credits} credits`)
+      check(bought.go === 'Go home', 'homes: the owned deed\'s row offers Go home', bought.go)
+      // Go home: the sidewalk in front of the loft's doorway, the store card closed behind.
+      await p.eval(`${at('aside[data-store="designHouse"] [data-item="224"] [data-action="go"]')}?.click()`)
+      const a = homes[0].arrival
+      const arrived = await p.waitFor(`(() => { const v = window.__SIM__.engine.sim.state.avatar; return Math.hypot(v.x - ${a.x}, v.z - ${a.z}) < 0.6 })()`, 30_000).then(() => true, () => false)
+      check(arrived, 'homes: Go home puts the avatar on the sidewalk in front of the loft\'s doorway', JSON.stringify({ arrival: a, at: await p.snap().then((s) => ({ x: s.x, z: s.z })) }))
+      const closed = await p.waitFor(`!${at('aside[data-store]')}`, 10_000).then(() => true, () => false)
+      check(closed, 'homes: the design house\'s card closed once the avatar left the shop')
+      // W walks in through the planters' centre gap; the chip says the home is the player's. The canvas is clicked
+      // first, as a person would: Sloane's name field takes the focus back when the card goes.
+      await p.mouse('mousePressed', 480, 270, 1)
+      await p.mouse('mouseReleased', 480, 270)
+      await p.key('keyDown', 'KeyW', 'w', 87)
+      const inside = await p.waitFor(`window.__SIM__.snapshot().customer.home?.index === 0`, 30_000).then(() => true, () => false)
+      await p.frames(6)
+      await p.key('keyUp', 'KeyW', 'w', 87)
+      check(inside, 'homes: W walks the avatar into the loft')
+      const chip = await p.waitFor(`(() => { const c = ${at('[data-hint="home"]')}; return c && c.textContent })()`, 10_000).catch(() => '')
+      const snap = await p.eval('window.__SIM__.snapshot().customer')
+      check(/Your home: Metro-Line Micro-Loft/.test(chip ?? '') && snap.home?.owned === true && (snap.ownedHomes & 1) === 1, 'homes: the HUD\'s chip says the loft is yours', `${chip}; ${JSON.stringify(snap.home)} owned ${snap.ownedHomes}`)
+      // B opens the doorstep card, which says Yours; the avatar stands still under it, W held or not.
+      await p.tap('KeyB', 'b', 66)
+      const doorstep = await p.waitFor(`!!${at('aside[data-home="0"]')}`, 10_000).then(() => true, () => false)
+      const yours = await p.eval(`({ yours: ${at('aside[data-home="0"] [data-yours]')}?.textContent ?? '', card: window.__SIM__.snapshot().customer.home?.card === true })`)
+      check(doorstep && yours.yours === 'Yours' && yours.card, 'homes: B opens the loft\'s doorstep card, and it says Yours', JSON.stringify(yours))
+      const h0 = await p.snap()
+      await p.eval(`window.__SIM__.hold('KeyW', true)`)
+      await p.frames(10)
+      await p.eval(`window.__SIM__.hold('KeyW', false)`)
+      const h1 = await p.snap()
+      check(dist(h0, h1) < 0.05, 'homes: under the doorstep card the avatar stands still with W held', `${dist(h0, h1).toFixed(3)} m`)
+      await p.tap('Escape', 'Escape', 27)
+      const gone = await p.waitFor(`!${at('aside[data-home]')} && window.__SIM__.snapshot().customer.home?.card === false`, 10_000).then(() => true, () => false)
+      check(gone, 'homes: Esc closes the doorstep card')
+      await p.shot('homes')
+      const errs = (await p.snap()).errors
+      check(errs.length === 0, 'homes: the engine recorded no error', errs.join(' | ').slice(0, 300))
+      p.health('homes')
+
+      // The lakefront metropolis, in the same browser: its seven homes, and the loft still owned.
+      await p.goto(`${origin}/?map=lakefront&${LIGHT}`)
+      await p.booted()
+      const lake = await p.eval(`({ region: window.__SIM__.engine.places !== null, homes: window.__SIM__.homes().length, kept: window.__SIM__.engine.homes.length, owned: window.__SIM__.snapshot().customer.ownedHomes })`)
+      check(lake.region && lake.homes === 7 && lake.kept === 7, 'homes: the lakefront metropolis has its seven homes', JSON.stringify(lake))
+      check((lake.owned & 1) === 1, 'homes: the loft claimed in the city is still owned there (one browser record)', `owned ${lake.owned}`)
+      p.health('homes lakefront')
     } finally { await p.b.close() }
   },
 

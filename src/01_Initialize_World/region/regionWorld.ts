@@ -14,11 +14,11 @@
  *   polygon offset is used;
  * - the physics: every wall as a segment with its height, the lake's shoreline as a low wall, and the region's edge;
  * - places: the fictional name of the street you stand on and the nearest cross street, and a spawn on a sidewalk;
- * - the workplaces' and the shops' lots hollowed (hollowLots): the buildings on the lots region/workplaces.ts and
- *   region/shops.ts chose are put out of sight and out of the walls, and the rooms (interiors.ts) and the shops
- *   (storefronts.ts) stand there instead, as boxes the city's renderer and colliders take: the glass shell, the
- *   furniture or the fixtures, the ceiling slab in the podium's finish, and whatever stood above the slab carried on
- *   it; each room's and shop's floor is paved.
+ * - the workplaces', the shops' and the homes' lots hollowed (hollowLots): the buildings on the lots
+ *   region/workplaces.ts, region/shops.ts and region/homes.ts chose are put out of sight and out of the walls, and the
+ *   rooms (interiors.ts), the shops (storefronts.ts) and the homes (properties.ts) stand there instead, as boxes the
+ *   city's renderer and colliders take: the glass shell, the furniture or the fixtures, the ceiling slab in the
+ *   podium's finish, and whatever stood above the slab carried on it; each room's, shop's and home's floor is paved.
  * What breaks if it is removed? A region pack can be compiled but never walked.
  */
 import {
@@ -28,6 +28,7 @@ import { abs, attribute, float, fract, mix, positionWorld, smoothstep, step, vec
 import { CITY, STYLE, type Building } from '../city.ts'
 import type { FbmSet } from '../fbmTexture.ts'
 import { ROOM, toWorld, workplacesAt, type Side, type Workplace, type WorkplaceLot } from '../interiors.ts'
+import { homesAt, type Home, type HomeLot } from '../properties.ts'
 import { shopsAt, type Shop, type ShopLot } from '../storefronts.ts'
 import { buildingMaterial, waterMaterial } from '../materials.ts'
 import { applyMatrixMode } from '../matrixMode.ts'
@@ -798,11 +799,13 @@ export interface HollowRegion {
    * furniture, and what stood above its ceiling slab.
    */
   plan: Building[]
-  /** The rooms' and the shops' floors and forecourts, for RegionLayout.floors. */
+  /** The rooms', the shops' and the homes' floors and forecourts, for RegionLayout.floors. */
   floors: Rect[]
   rooms: Workplace[]
   /** The shops (storefronts.ts shopsAt) on the shop lots, their slabs in their podiums' height and finish. */
   shops: Shop[]
+  /** The homes (properties.ts homesAt) on the home lots, their slabs in their podiums' height and finish. */
+  homes: Home[]
 }
 
 /**
@@ -817,9 +820,11 @@ const isRect = (r: readonly Pt[]): boolean => {
 }
 
 /**
- * The region with rooms on `lots` (region/workplaces.ts regionWorkplaceLots) and shops on `shopLots` (region/shops.ts
- * regionShopLots, never one of the rooms' lots), as a copy: the pack is only read, since the page builds its world
- * again whenever it remounts. A shop's lot is hollowed exactly as a room's is; only what stands inside differs.
+ * The region with rooms on `lots` (region/workplaces.ts regionWorkplaceLots), shops on `shopLots` (region/shops.ts
+ * regionShopLots, never one of the rooms' lots) and homes on `homeLots` (region/homes.ts regionHomeLots, never a room's
+ * or a shop's lot), as a copy: the pack is only read, since the page builds its world again whenever it remounts. A
+ * shop's lot and a home's are hollowed exactly as a room's is; only what stands inside differs. The rooms' boxes and
+ * floors come first, then the shops', then the homes', so each kind leaves the ones before it as they were.
  * - Every building standing on a chosen lot (its box's centre in the lot's square: workplaces.ts buildingLot) gets
  *   height 0 in the copy, so the meshes and the walls skip it. Every index is kept, so every other building's finish
  *   (its index's dice) is as before.
@@ -832,9 +837,9 @@ const isRect = (r: readonly Pt[]): boolean => {
  *   metre either side, out to the sidewalk's edge of the street it faces) are paved, at the sidewalks' height: the
  *   ground under them is lawn.
  */
-export function hollowLots(pack: RegionPack, l: RegionLayout, lots: readonly WorkplaceLot[], shopLots: readonly ShopLot[] = []): HollowRegion {
-  const chosen = new Set([...lots, ...shopLots].map(({ k, m }) => `${k},${m}`))
-  if (chosen.size !== lots.length + shopLots.length) throw new RangeError('one room or shop to a lot')
+export function hollowLots(pack: RegionPack, l: RegionLayout, lots: readonly WorkplaceLot[], shopLots: readonly ShopLot[] = [], homeLots: readonly HomeLot[] = []): HollowRegion {
+  const chosen = new Set([...lots, ...shopLots, ...homeLots].map(({ k, m }) => `${k},${m}`))
+  if (chosen.size !== lots.length + shopLots.length + homeLots.length) throw new RangeError('one room or shop to a lot (homes included)')
   const height = pack.buildings.height.slice()
   const on = new Map<string, LotBuilding[]>()
   for (let i = 0; i < height.length; i++) {
@@ -855,7 +860,7 @@ export function hollowLots(pack: RegionPack, l: RegionLayout, lots: readonly Wor
   // The sidewalk's edge, m from the lot's centre: the street's centre half a pitch out, less a two-lane carriageway's
   // half and the sidewalk (fromMacro.ts: every street a car uses has two lanes).
   const h = CITY.lotHalf, edge = CITY.pitch / 2 - roadWidth(ROAD_CLASS.local, 2).carriage / 2 - SIDEWALK
-  // A lot's tower carried on its slab, and its floor and forecourt paved: a room's and a shop's alike.
+  // A lot's tower carried on its slab, and its floor and forecourt paved: a room's, a shop's and a home's alike.
   const carry = (room: { k: number; m: number; cx: number; cz: number; side: Side }, top: number) => {
     for (const b of on.get(`${room.k},${room.m}`) ?? []) {
       const rings = polygonAt(pack.buildings, b.i)
@@ -874,5 +879,10 @@ export function hollowLots(pack: RegionPack, l: RegionLayout, lots: readonly Wor
     plan.push(...shop.shell, ...shop.furniture)
     carry(shop, slabOf(shop.k, shop.m).top)
   }
-  return { pack: { ...pack, buildings: { ...pack.buildings, height } }, plan, floors, rooms, shops }
+  const homes = homesAt(homeLots, (k, m) => { const s = slabOf(k, m); return { top: s.top, style: s.finish } })
+  for (const home of homes) {
+    plan.push(...home.shell, ...home.fixtures)
+    carry(home, slabOf(home.k, home.m).top)
+  }
+  return { pack: { ...pack, buildings: { ...pack.buildings, height } }, plan, floors, rooms, shops, homes }
 }

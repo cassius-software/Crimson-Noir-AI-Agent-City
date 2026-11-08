@@ -47,6 +47,27 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `region/shops.test.ts` (two seeds, every zone: five shops, never a workplace's lot, the nearest lots first, the
   hollowing and the workplaces unchanged by it), `regionPhysics.test.ts` (the worker's refusals) and
   `storeWiring.test.ts`.
+- **Seven homes you can buy and walk into, in the city and in Lakefront Metro.** The design house's seven deeds are
+  on sale, and each stands for a home (`src/01_Initialize_World/properties.ts`): a ground-floor glass room built from
+  the shop's recipe on a lot no workplace or shop has, picked from the seed with dice of its own (the Micro-Loft beside
+  an elevated-loop station, the Brownstone on the heritage seam, the Pierside Timber Loft, the Glass Villa and the
+  Estate on the lakefront row facing the lake, the Penthouse and the Sky-Mansion at the foot of two headquarters
+  towers, sold for now as the residences at the towers' feet). A smaller home is a shallower room, with a solid block
+  behind it on the shared 32 × 32 floor plan (`src/02_Define_The_Rules/homeGrid.ts`), and two concrete planters in the
+  doorway let a person through and no car. A generated region's street window gets up to seven homes too
+  (`region/homes.ts`), after its workplaces and shops, the grander homes on the better-built lots, hollowed by
+  `regionWorld.ts` `hollowLots`. On foot inside a home the HUD's chip reads "For sale" with the deed's level and price,
+  or "Your home"; E (unless a car is in reach), B or the chip opens a doorstep card
+  (`src/07_Execute_Actions/HomeCard.tsx`) that sells the deed through the one shopkeeper (Claim (free) for the loft) or
+  says Yours, and holds the avatar still while it is open (the engine drops every queued action after the poll and
+  zeroes the walk; `Input.drain`). The design house's deed rows say where each home stands and offer Visit, or Go home
+  once owned, which puts the avatar on the sidewalk in front of the doorway, and is refused in a network room. The
+  minimaps draw the homes in violet, the owned ones in gold. Furniture stays on order until furnishing opens. Pinned by
+  `homeGrid.test.ts`, `properties.test.ts` (64 seeds: seven distinct free lots by the rules, the shell, the fill block
+  and planters, the pads and tracks unchanged, a real Rapier car stopped by the planters and a real Rapier avatar
+  walking in), `region/homes.test.ts` (two seeds, every zone), `storeCatalog.test.ts` (deeds on sale, the practice
+  purse claims the loft and buys the Brownstone, the Pierside asks for level 6), `homeCard.test.ts`, `input.test.ts`
+  (the drain) and `homeWiring.test.ts`.
 
 - **Every street lamp near you is a real light, and every workplace has a lit ceiling.** The city's night lighting
   moves to three r186's clustered (Forward+) lighting (`src/01_Initialize_World/cityLights.ts`): the lamps' point

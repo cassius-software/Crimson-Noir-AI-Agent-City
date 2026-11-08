@@ -184,5 +184,5 @@ test('App: Sloane never greets over a halted city, so the card keeps focus on Re
   // thrown frame right after the veil lifts) shows the card first and Sloane's name field second, which would take the
   // focus from Restart (Concierge.tsx focusField takes it from anything but another text field). The Customizer and the
   // ActCard are gated on the same lock (lookWiring.test.ts, actWiring.test.ts).
-  assert.match(APP, /<Concierge\n\s*visible=\{veilDone && hudVisible && !termOpen && !lookOpen && storeOpen === null && locked === null\}/)
+  assert.match(APP, /<Concierge\n\s*visible=\{veilDone && hudVisible && !termOpen && !lookOpen && storeOpen === null && homeOpen === null && locked === null\}/)
 })
