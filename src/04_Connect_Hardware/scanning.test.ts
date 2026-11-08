@@ -22,13 +22,16 @@ class El implements ScanTarget {
   readonly name: string
   readonly typed: boolean
   readonly tagName: string
-  constructor(name: string, typed = false) {
+  /** False for a control the browser will not focus (a role="button" with no tabindex, a button in a disabled fieldset). */
+  readonly focusable: boolean
+  constructor(name: string, typed = false, focusable = true) {
     this.name = name
     this.typed = typed
     this.tagName = typed ? 'INPUT' : 'BUTTON'
+    this.focusable = focusable
   }
   click(): void { this.clicks++ }
-  focus(): void { this.focuses++; page0.focused = this }
+  focus(): void { this.focuses++; if (this.focusable) page0.focused = this }
   matches(): boolean { return this.typed }
   setAttribute(name: string): void { if (name === 'data-scan') this.marked = true }
   removeAttribute(name: string): void { if (name === 'data-scan') this.marked = false }
@@ -165,6 +168,31 @@ test('a field that takes the focus without a key (a click, a card\'s own focus, 
   p.tick()
   assert.deepEqual([s.current, page0.focused], [a, a], 'quiet: the round goes on from the field (round to the first) and takes the focus')
   s.stop()
+})
+
+test('a control that cannot take the focus never hands the round back to the field before it: the round goes on past it', () => {
+  // The fourth review's case: the focus stays on the field the round offered last, which used to read as a field
+  // focused by another hand, so the round came back to it after every offer of the stuck control and never reached b.
+  const a = new El('a'), field = new El('field', true), stuck = new El('stuck', false, false), b = new El('b')
+  const p = page([a, field, stuck, b])
+  const s = new Scanner(p.env, 1000)
+  s.start()
+  const seen: string[] = [(s.current as El).name]
+  for (let i = 0; i < 6; i++) { p.tick(); seen.push((s.current as El).name) }
+  assert.deepEqual(seen, ['a', 'field', 'stuck', 'b', 'a', 'field', 'stuck'], 'every control is offered in turn')
+  s.stop()
+  // A field outside the round with the focus, then a first control that cannot take it: taken once, then let go.
+  const outside = new El('outside', true), stuck2 = new El('stuck', false, false), c = new El('c')
+  const q = page([stuck2, c])
+  outside.focus()
+  const t = new Scanner(q.env, 1000)
+  t.start()
+  assert.equal(t.current, outside, 'the field with the focus is the one offered')
+  for (let i = 0; i < SCAN.hold; i++) q.tick()
+  const after: string[] = []
+  for (let i = 0; i < 4; i++) { q.tick(); after.push((t.current as El).name) }
+  assert.deepEqual(after, ['stuck', 'c', 'stuck', 'c'], 'quiet: the round goes on, and the field it left is not taken again')
+  t.stop()
 })
 
 test('a field the round merely offers is not taken: with no key it is passed like any control', () => {

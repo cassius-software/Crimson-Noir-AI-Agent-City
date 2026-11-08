@@ -39,19 +39,23 @@ export const VAD = Object.freeze({
   /** While the page itself is speaking (Sloane), the energy ratio is multiplied by this, so her own voice from the
    *  speakers is not taken for the visitor's (echo cancellation does most of it; this is the margin). */
   speakingMargin: 2,
-  /** While she speaks, speech starts only after onsetFrames times this (24 frames, about 256 ms) ... */
+  /** While she speaks and her voice comes back, speech starts only after onsetFrames times this (24 frames, about
+   *  256 ms) ... */
   speakingOnset: 6,
   /** ... counted with a leak: a frame that is not speech takes this off the count instead of clearing it, so a visitor
    *  talking over her adds up syllable after syllable, while one loud syllable of hers stays one. */
   speakingLeak: 0.25,
-  /** Frames at the start of each of Sloane's lines, from her first sound, that only learn how loud her voice comes back
-   *  through the speakers (40 is about 430 ms): no speech starts in them. The operating system's voice is not the
-   *  browser's own audio, so the browser's echo cancellation may not take it out of the microphone at all. */
+  /** While she speaks but none of her voice comes back (headphones, or echo cancellation that takes it out), the onset
+   *  is onsetFrames times this instead (6 frames): there is no echo of hers to mistake, and a quieter visitor still cuts in. */
+  quietOnset: 1.5,
+  /** Frames at the start of each of Sloane's lines that only learn how loud her voice comes back through the speakers:
+   *  no speech starts in them. The operating system's voice is not the browser's own audio, so the browser's echo
+   *  cancellation may not take it out of the microphone at all. The learning covers the first echoWait frames (140 is
+   *  about 1.5 s: an operating system's voice can start late after the page asks for it) and goes on for echoFrames
+   *  (40, about 430 ms) after the last steady sound heard in them, so a voice that starts late is learned however a
+   *  click or a cough came before it. It learns the steady level (the quietest of the last three frames), so a click
+   *  shorter than three frames (32 ms) is not taken for her voice. A visitor who talks in that time is learned as her. */
   echoFrames: 40,
-  /** Frames after her line starts to wait for her first sound (140 is about 1.5 s: an operating system's voice can
-   *  start late after the page asks for it, and a line whose first sound slipped past the wait would be heard as louder
-   *  than her echo all through); none heard by then (headphones), the learning ends there. A visitor who starts talking
-   *  inside it is learned as her voice: the one place barge-in is lost. */
   echoWait: 140,
   /** After that, a visitor talking over her must be this much louder than her loudest echo heard (1.6 is about 4 dB). */
   echoRatio: 1.6,
@@ -92,6 +96,7 @@ export class VadCore {
   readonly speakingMargin: number
   readonly speakingOnset: number
   readonly speakingLeak: number
+  readonly quietOnset: number
   readonly echoFrames: number
   readonly echoWait: number
   readonly echoRatio: number
@@ -120,10 +125,13 @@ export class VadCore {
   echo = 0
   /** Frames since her current line started (0 when she is quiet). */
   speakFrames = 0
-  /** The frame of her line her first sound came at (−1 before it, or none came within echoWait). */
+  /** The frame of her line the last steady sound came at within echoWait (−1 while none has). */
   heardAt = -1
   /** Frames since her voice last came back near her loudest echo. */
   echoQuiet = 0
+  /** The two frames' RMS before this one (the steady level is the quietest of the three). */
+  prev1 = 0
+  prev2 = 0
   /** The last frame's features. */
   zcr = 0
   flatness = 0
@@ -146,6 +154,7 @@ export class VadCore {
     this.speakingMargin = Number(o.speakingMargin) >= 1 ? Number(o.speakingMargin) : 2
     this.speakingOnset = Number(o.speakingOnset) >= 1 ? Number(o.speakingOnset) : 6
     this.speakingLeak = Number(o.speakingLeak) >= 0 ? Number(o.speakingLeak) : 0.25
+    this.quietOnset = Number(o.quietOnset) >= 1 ? Number(o.quietOnset) : 1.5
     this.echoFrames = Number(o.echoFrames) >= 0 ? Math.round(Number(o.echoFrames)) : 40
     this.echoWait = Number(o.echoWait) >= 0 ? Math.round(Number(o.echoWait)) : 140
     this.echoRatio = Number(o.echoRatio) >= 1 ? Number(o.echoRatio) : 1.6
@@ -215,18 +224,24 @@ export class VadCore {
     this.flatness = flatness
     this.frames++
     this.rms = this.rms * this.levelSmooth + rms * (1 - this.levelSmooth)
-    // Sloane's line: the echoFrames from her first sound only learn how loud her voice comes back (no onset in them);
-    // after that the visitor must be echoRatio louder than her loudest echo, which holds while her voice keeps coming
-    // near it (a pause or a quiet stretch never lowers it under her next stressed word), rises only slowly (a
-    // visitor's rising onset is never learned as hers) and falls only after a long quiet.
+    // Sloane's line: its first echoWait frames, and echoFrames after the last steady sound in them, only learn how loud
+    // her voice comes back (no onset in them); after that the visitor must be echoRatio louder than her loudest echo,
+    // which holds while her voice keeps coming near it (a pause or a quiet stretch never lowers it under her next
+    // stressed word), rises only slowly (a visitor's rising onset is never learned as hers) and falls only after a
+    // long quiet.
+    const steady = Math.min(rms, this.prev1, this.prev2)
+    this.prev2 = this.prev1
+    this.prev1 = rms
     if (this.speaking) this.speakFrames++
     else { this.speakFrames = 0; this.echo = 0; this.heardAt = -1; this.echoQuiet = 0 }
-    if (this.speaking && this.heardAt < 0 && this.speakFrames <= this.echoWait && rms > this.floor * this.energyRatio) this.heardAt = this.speakFrames
-    const learning = this.speaking && (this.heardAt < 0 ? this.speakFrames <= this.echoWait : this.speakFrames - this.heardAt < this.echoFrames)
-    if (learning) this.echo = Math.max(this.echo, rms)
+    if (this.speaking && this.speakFrames <= this.echoWait && steady > this.floor * this.energyRatio) this.heardAt = this.speakFrames
+    const learning = this.speaking && (this.speakFrames <= this.echoWait || (this.heardAt >= 0 && this.speakFrames - this.heardAt < this.echoFrames))
+    if (learning) this.echo = Math.max(this.echo, steady)
+    // Her voice comes back: her loudest echo stands clear of the room.
+    const echoed = this.echo > this.floor * this.energyRatio
     // The vote: louder than the room (mandatory), and not hiss, or harmonic.
     const ratio = this.speaking ? this.energyRatio * this.speakingMargin : this.energyRatio
-    const loud = rms > this.floorMin && rms > this.floor * ratio && (!this.speaking || rms > this.echo * this.echoRatio)
+    const loud = rms > this.floorMin && rms > this.floor * ratio && (!this.speaking || (!learning && rms > this.echo * this.echoRatio))
     const voiced = zcr < this.zcrMax || flatness > this.flatnessMin
     const isSpeech = loud && voiced
     if (this.speaking && !learning && !isSpeech) {
@@ -242,7 +257,7 @@ export class VadCore {
       if (isSpeech) this.run = 0
       else if (++this.run >= this.releaseFrames) { this.speech = false; this.run = 0; this.changed = true }
     } else {
-      const onset = this.speaking ? this.onsetFrames * this.speakingOnset : this.onsetFrames
+      const onset = !this.speaking ? this.onsetFrames : this.onsetFrames * (echoed ? this.speakingOnset : this.quietOnset)
       if (!isSpeech) this.run = this.speaking ? Math.max(0, this.run - this.speakingLeak) : 0
       else if (++this.run >= onset) { this.speech = true; this.run = 0; this.changed = true }
     }
@@ -267,6 +282,8 @@ export class VadCore {
     this.speakFrames = 0
     this.heardAt = -1
     this.echoQuiet = 0
+    this.prev1 = 0
+    this.prev2 = 0
   }
 
   /** In-place radix-2 FFT (the length is a power of two: the constructor made it one). */

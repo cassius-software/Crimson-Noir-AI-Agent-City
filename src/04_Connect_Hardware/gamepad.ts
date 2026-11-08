@@ -426,12 +426,14 @@ export class PadMapper {
       this.seen[slot] = 1
       const ax = p.axes, b = p.buttons
       // One hand needs that side's stick and buttons. A pad without the standard mapping has them all only in the
-      // kernel's order ('evdev'). Elsewhere only the first six buttons are read (no d-pad, no centre buttons): the left
-      // hand keeps its stick and its L1 glance, and south opens a door (the only door button such a pad has); the right
-      // hand keeps its layout where its stick is read ('four-axis') and reads with both hands where it is not, so a
-      // one-handed setting never leaves such a pad unable to move or open a door.
+      // kernel's order ('evdev'), and its d-pad only where a hat sits on axes 6 and 7. Elsewhere only the first six
+      // buttons are read (no d-pad, no centre buttons). Without a d-pad the left hand keeps its stick and its L1 glance,
+      // and south opens a door (the only door button left to it); the right hand keeps its layout where its stick is read
+      // ('evdev', 'four-axis') and reads with both hands where it is not, so a one-handed setting never leaves such a pad
+      // unable to move or open a door.
       const layout = standard ? null : this.generic.layoutOf(p.index)
       const partial = !standard && layout !== 'evdev'
+      const dpadless = partial || (layout === 'evdev' && raw.axes.length < 8)
       const hand = !partial || this.hand === 'left' || (this.hand === 'right' && layout === 'four-axis') ? this.hand : 'both'
       // One hand (PadHand): its stick moves, and looks instead while that side's shoulder is held.
       const lookHeld = hand === 'left' ? isPressed(b[PAD.l1]) : hand === 'right' ? isPressed(b[PAD.r1]) : false
@@ -472,7 +474,7 @@ export class PadMapper {
       } else {
         // One hand: the centre buttons are shared, the rest sits on that hand's side (PadHand).
         if (rising & (1 << (hand === 'left' ? PAD.down : PAD.south))) edges |= PAD_EDGE.interact
-        if (hand === 'left' && partial && rising & (1 << PAD.south)) edges |= PAD_EDGE.interact
+        if (hand === 'left' && dpadless && rising & (1 << PAD.south)) edges |= PAD_EDGE.interact
         if (hand === 'right' && rising & (1 << PAD.north)) edges |= PAD_EDGE.reset
         if (hand === 'left' && rising & (1 << PAD.left)) edges |= PAD_EDGE.timeBack
         if (hand === 'left' && rising & (1 << PAD.right)) edges |= PAD_EDGE.timeForward

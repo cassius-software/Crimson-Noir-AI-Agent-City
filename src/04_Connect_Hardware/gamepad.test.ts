@@ -196,6 +196,20 @@ test('the face button that wakes a pad without the standard mapping does nothing
   assert.equal(s.read([pad({ pressed: [PAD.south] })], a) & PAD_EDGE.interact, PAD_EDGE.interact)
 })
 
+test('the left hand on a pad in the kernel\'s order: a hat on axes 6 and 7 is its d-pad (down enters); with six axes there is none, so south opens a door', () => {
+  // The fourth review: the left hand had no door button at all on a six-axis pad read in the kernel's order.
+  for (const [axes, hat] of [[6, false], [8, true]] as const) {
+    const m = mapper(), a = createAnalog()
+    m.hand = 'left'
+    const kernel = (pressed: number[] = [], down = false) => pad({ id: '45e-28e-Generic X-Box pad', index: 1, mapping: '', axes: [0, 0, -1, 0, 0, -1, 0, down ? 1 : 0].slice(0, axes), pressed })
+    for (let i = 0; i < readsFor(GENERIC_MS.rest); i++) m.read([kernel()], a)
+    assert.equal(m.generic.layoutOf(1), 'evdev', `${axes} axes, triggers at rest: the kernel's order`)
+    assert.equal(m.read([kernel([PAD.south])], a) & PAD_EDGE.interact, hat ? 0 : PAD_EDGE.interact, `${axes} axes: south ${hat ? 'is the right side\'s' : 'opens a door (no d-pad)'}`)
+    m.read([kernel()], a)
+    assert.equal(m.read([kernel([], true)], a) & PAD_EDGE.interact, hat ? PAD_EDGE.interact : 0, `${axes} axes: ${hat ? 'the hat\'s down enters' : 'no hat to press'}`)
+  }
+})
+
 test('the Linux kernel\'s axis order (triggers resting at −1 on axes 2 and 5): sticks, triggers, d-pad and the remapped buttons', () => {
   const m = mapper(), a = createAnalog()
   const evdev = (axes: number[], pressed: number[] = []) => pad({ id: '45e-28e-Generic X-Box pad', index: 1, mapping: '', axes, pressed })

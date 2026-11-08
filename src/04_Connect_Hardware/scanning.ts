@@ -63,6 +63,10 @@ export class Scanner {
   /** The field being typed in, which holds the round, and the offers since its last key. */
   private held: unknown = null
   private idle = 0
+  /** What had the focus when the round last looked (after its own focus move too): only a field the focus moved to
+   *  since is taken as typed in, so a control that cannot take the focus never hands the round back to the field
+   *  before it. */
+  private seen: unknown = null
 
   constructor(env: ScanEnv, ms: number = SCAN.ms, key: string = SCAN.key) {
     this.env = env
@@ -98,7 +102,9 @@ export class Scanner {
    */
   step(): void {
     const active = this.env.active()
-    if (active !== this.held && active !== this.now && isEditableTarget(active as EventTarget | null)) { this.typing(active); return }
+    const moved = active !== this.seen
+    this.seen = active
+    if (moved && active !== this.held && active !== this.now && isEditableTarget(active as EventTarget | null)) { this.typing(active); return }
     if (this.held !== null && active === this.held && this.idle < SCAN.hold) { this.idle++; return }
     this.held = null
     const all = this.env.candidates()
@@ -141,6 +147,7 @@ export class Scanner {
       el.setAttribute('data-scan', '')
       el.focus({ preventScroll: false })
     }
+    this.seen = this.env.active()
   }
 }
 
