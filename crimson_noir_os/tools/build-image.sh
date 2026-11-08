@@ -4,8 +4,10 @@
 # Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 # Why does this file exist? It makes the one-click bootable media of Crimson Noir OS from the UEFI image: a raw GPT disk
 # image (an EFI system partition holding \EFI\BOOT\BOOTX64.EFI, the declared configuration and the notices) to write to a
-# USB stick or boot in a virtual machine, and a UEFI-bootable ISO (El Torito, hybrid). Tools: cargo with the
-# x86_64-unknown-uefi target, mtools, sgdisk (gdisk) and xorriso.
+# USB stick or boot in a virtual machine, and a UEFI-bootable ISO (El Torito, hybrid). Usage: build-image.sh [out dir]
+# [target], the target x86_64-unknown-uefi (the default) or aarch64-unknown-uefi, whose media hold \EFI\BOOT\BOOTAA64.EFI
+# (the removable-media path an Arm machine's firmware boots). Tools: cargo with the target, mtools, sgdisk (gdisk) and
+# xorriso.
 # The media are reproducible: the same commit gives the same bytes on any machine, so two release tags at one commit
 # publish one set of checksums and anyone can rebuild and compare. Everything that would otherwise vary is fixed by the
 # commit: every timestamp is its commit time (SOURCE_DATE_EPOCH, which mtools and xorriso honour), and the GPT's GUIDs
@@ -15,15 +17,22 @@
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 out=${1:-"$here/target/image"}
+target=${2:-x86_64-unknown-uefi}
+case "$target" in
+  x86_64-unknown-uefi) boot=BOOTX64.EFI; arch_id="" ;;
+  aarch64-unknown-uefi) boot=BOOTAA64.EFI; arch_id="aarch64:" ;;
+  *) echo "build-image.sh: no media for $target (x86_64-unknown-uefi or aarch64-unknown-uefi)" >&2; exit 1 ;;
+esac
 cd "$here"
-cargo build -q --locked -p crimson_boot --target x86_64-unknown-uefi --release
-efi="$here/target/x86_64-unknown-uefi/release/crimson_boot.efi"
+cargo build -q --locked -p crimson_boot --target "$target" --release
+efi="$here/target/$target/release/crimson_boot.efi"
 
 # What fixes every varying byte: the commit's time, and its hash as the media's identity.
 SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct 2>/dev/null || echo 0)}
 id=${CRIMSON_MEDIA_ID:-$(git rev-parse HEAD 2>/dev/null || echo "$SOURCE_DATE_EPOCH")}
 export SOURCE_DATE_EPOCH
-hex=$(printf '%s' "crimson-noir-media:$id" | sha256sum | cut -c1-64)
+# The aarch64 media's identity names the architecture (the x86-64 media's stays what it was: the same bytes as before).
+hex=$(printf '%s' "crimson-noir-media:$arch_id$id" | sha256sum | cut -c1-64)
 guid() { echo "$1" | sed 's/^\(.\{8\}\)\(.\{4\}\)\(.\{4\}\)\(.\{4\}\)\(.\{12\}\).*/\1-\2-\3-\4-\5/'; }
 disk_guid=$(guid "$(echo "$hex" | cut -c1-32)")
 part_guid=$(guid "$(echo "$hex" | cut -c33-64)")
@@ -36,7 +45,7 @@ rm -f "$esp" "$out/crimson_noir_os.img" "$out/crimson_noir_os.iso"
 stage="$out/stage"
 rm -rf "$stage"
 mkdir -p "$stage"
-cp "$efi" "$stage/BOOTX64.EFI"
+cp "$efi" "$stage/$boot"
 cp "$here/containment.nix" "$here/containment.lock" "$stage/"
 cp "$here/NOTICE.txt" "$stage/NOTICE.TXT"
 touch -d "@$SOURCE_DATE_EPOCH" "$stage"/*
@@ -44,7 +53,7 @@ touch -d "@$SOURCE_DATE_EPOCH" "$stage"/*
 dd if=/dev/zero of="$esp" bs=1M count=34 status=none
 mformat -i "$esp" -F -v CRIMSONNOIR -N "$serial" ::
 mmd -i "$esp" ::/EFI ::/EFI/BOOT
-mcopy -m -i "$esp" "$stage/BOOTX64.EFI" ::/EFI/BOOT/BOOTX64.EFI
+mcopy -m -i "$esp" "$stage/$boot" "::/EFI/BOOT/$boot"
 mcopy -m -i "$esp" "$stage/containment.nix" "$stage/containment.lock" ::/
 mcopy -m -i "$esp" "$stage/NOTICE.TXT" ::/NOTICE.TXT
 # The disk: a GPT with the ESP as its one partition (sectors 2048 onward), under the commit's GUIDs.

@@ -23,7 +23,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  CROWD_DEFAULT, Governor, TIERS, defaultAgents, profileDevice, readDeviceHints, tierRange, type DeviceHints, type DeviceProfile,
+  CROWD_DEFAULT, DEFAULT_LIMITS, Governor, LANES, TIERS, classifyHardware, defaultAgents, defaultLanes, profileDevice, readDeviceHints, tierRange, type AdapterLimits, type DeviceHints, type DeviceProfile,
 } from './governor.ts'
 import type { SipocSnapshot } from './telemetry.ts'
 import { CINEMA, FramePacer } from '../07_Execute_Actions/cinema.ts'
@@ -393,6 +393,29 @@ export function writeDesktopTrace(path = DESKTOP_TRACE): string {
 
 // ---------------------------------------------------------------------------------------------------
 // 1. The profile: Ultra and the full crowd, in a tab and in the native shell
+
+/** The RTX 30-series card's limits as Chromium reports them: 2 GiB bindings and buffers, 1024-wide workgroups. */
+const AMPERE_LIMITS: AdapterLimits = Object.freeze({ maxStorageBufferBindingSize: 2 ** 31, maxBufferSize: 2 ** 31, maxComputeWorkgroupSizeX: 1024, maxComputeInvocationsPerWorkgroup: 1024 })
+
+test('profile: the console-class desktop is a workstation (the plan\'s top hardware tier) when its adapter binds half a gibibyte, and simulates 32,768 lanes; on WebGPU\'s default limits it is a desktop with the 14,000 of before', () => {
+  for (const [d, label] of [[TAB_4K, 'Chrome tab'], [NATIVE_4K, 'native shell'], [TAB_144, '144 Hz monitor']] as const) {
+    const b = boot(d)
+    assert.equal(classifyHardware(b.hints, b.profile, AMPERE_LIMITS), 'workstation', label)
+    assert.equal(defaultLanes(b.profile, 'workstation', AMPERE_LIMITS), 32768, label)
+    assert.equal(LANES.workstation, 32768)
+    // A software rasterizer or a driver reporting the defaults, whatever the user agent says: the class of before.
+    assert.equal(classifyHardware(b.hints, b.profile, DEFAULT_LIMITS), 'desktop', label)
+    assert.equal(defaultLanes(b.profile, 'desktop', DEFAULT_LIMITS), 14000, label)
+    assert.equal(defaultLanes(b.profile, 'desktop', DEFAULT_LIMITS), b.agents, `${label}: what boot() sized before the class existed`)
+    // ?peak=0 keeps the range at Ultra and the machine a desktop; ?peak=1 is the operator's word on any limits.
+    assert.equal(classifyHardware(b.hints, b.profile, AMPERE_LIMITS, false), 'desktop', label)
+    assert.equal(classifyHardware(b.hints, b.profile, DEFAULT_LIMITS, true), 'workstation', label)
+    // The class on the governor's state, as the engine builds it.
+    const g = new Governor({ tier: b.profile.startTier, auto: true, hardware: 'workstation', ...tierRange(b.profile, true) })
+    assert.equal(g.state().hardware, 'workstation')
+    assert.deepEqual(g.range(), { min: 0, max: 5 })
+  }
+})
 
 test('profile: the console-class desktop as its globals describe it — Ultra, 14,000 pedestrians, the whole range', () => {
   for (const [d, label] of [[TAB_4K, 'Chrome tab, 4K panel'], [{ ...TAB_4K, userAgent: EDGE }, 'Edge tab, 4K panel'], [TAB_144, 'Chrome tab, 144 Hz monitor']] as const) {

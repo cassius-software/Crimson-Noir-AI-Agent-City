@@ -4,7 +4,8 @@
 //! Why does this file exist? It is the firmware boundary of the bootable image, written out by hand from the UEFI
 //! specification (2.10): the system table, the boot services the image calls before it takes the machine over (pages,
 //! the memory map, the protocol lookup, the stall, the watchdog, ExitBootServices), the text console for the one
-//! message before the screen is ours, and the Graphics Output Protocol that names the linear framebuffer. Only the
+//! message before the screen is ours, the Graphics Output Protocol that names the linear framebuffer, and the
+//! configuration table (where an aarch64 machine's ACPI tables, and its serial line, are found). Only the
 //! entries the image calls are typed; every other slot is a placeholder of the right size, so each table's layout is
 //! the specification's. No UEFI crate: every byte of the image is either this workspace's or a crate the containment
 //! configuration declares.
@@ -43,7 +44,32 @@ pub struct SystemTable {
     pub runtime_services: *mut RuntimeServices,
     pub boot_services: *mut BootServices,
     pub number_of_table_entries: usize,
-    pub configuration_table: *mut c_void,
+    pub configuration_table: *mut ConfigurationTable,
+}
+
+/// One entry of the configuration table: a GUID and the table it names.
+#[repr(C)]
+pub struct ConfigurationTable {
+    pub vendor_guid: Guid,
+    pub vendor_table: *mut c_void,
+}
+
+/// The table the configuration table names by `guid`, if the firmware published one.
+///
+/// # Safety
+/// `st` is the firmware's system table; its configuration table holds `number_of_table_entries` entries.
+#[cfg_attr(target_arch = "x86_64", allow(dead_code))]
+pub unsafe fn configuration_table(st: *const SystemTable, guid: &Guid) -> Option<*const c_void> {
+    unsafe {
+        let t = (*st).configuration_table;
+        if t.is_null() {
+            return None;
+        }
+        (0..(*st).number_of_table_entries)
+            .map(|k| &*t.add(k))
+            .find(|e| e.vendor_guid == *guid && !e.vendor_table.is_null())
+            .map(|e| e.vendor_table as *const c_void)
+    }
 }
 
 #[repr(C)]
@@ -136,12 +162,17 @@ pub struct RuntimeServices {
 }
 
 #[repr(C)]
+#[derive(PartialEq, Eq)]
 pub struct Guid {
     pub data1: u32,
     pub data2: u16,
     pub data3: u16,
     pub data4: [u8; 8],
 }
+
+/// EFI_ACPI_20_TABLE_GUID: the ACPI 2.0+ RSDP.
+#[cfg_attr(target_arch = "x86_64", allow(dead_code))]
+pub const ACPI_20_GUID: Guid = Guid { data1: 0x8868_e871, data2: 0xe4f1, data3: 0x11d3, data4: [0xbc, 0x22, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81] };
 
 /// EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID
 pub const GOP_GUID: Guid = Guid { data1: 0x9042_a9de, data2: 0x23dc, data3: 0x4a38, data4: [0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a] };

@@ -301,6 +301,7 @@ export function publishSnapshot(bus: TopicBus, s: SipocSnapshot, physics: Physic
   put('Frame', 'Page', 'frameMs', o.frameMs)
   put('Frame', 'Page', 'p50Ms', o.p50Ms)
   put('Frame', 'Page', 'p95Ms', o.p95Ms)
+  put('Frame', 'Page', 'p99Ms', o.p99Ms)
   put('Frame', 'Page', 'cpuMs', o.cpuMs)
   put('Frame', 'Page', 'gpuRenderMs', o.gpuRenderMs)
   put('Frame', 'Page', 'gpuComputeMs', o.gpuComputeMs)
@@ -361,6 +362,7 @@ export function publishSnapshot(bus: TopicBus, s: SipocSnapshot, physics: Physic
   put('Quality', 'Governor', 'renderScale', q.renderScale)
   put('Quality', 'Governor', 'targetMs', q.targetMs)
   if (q.lite !== undefined) put('Quality', 'Governor', 'lite', q.lite)
+  if (q.hardware !== undefined) put('Quality', 'Governor', 'hardware', q.hardware)
   if (q.held !== undefined) put('Quality', 'Governor', 'held', q.held)
 
   put('Clock', 'Sun', 'clock', c.clock)
