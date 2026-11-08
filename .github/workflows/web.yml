@@ -6,12 +6,15 @@
 # screen and play it offline. The address is https://<owner>.github.io/<repository>/; MANUAL.md "On an iPhone" says
 # what is and is not served. It needs the repository's Pages source set to "GitHub Actions" once (Settings > Pages).
 # When it runs:
-# - on its own, each time ci.yml passes on a push to main, so the copy follows main. It builds the commit ci tested,
-#   and only while that commit is still main's tip: when main has moved on, the newer commit's own green ci publishes
-#   that one instead, so the copy never steps back to an older build and never shows a commit ci has not passed. A ci
-#   run that failed, was cancelled (a newer merge cancels the one before it) or checked a pull request publishes
-#   nothing, so during a burst of merges the copy is published once, after the last one's ci passes.
-# - by hand: Actions > web > Run workflow, on main or a tag; it publishes that ref as it is, without waiting for ci.
+# - on its own, each time ci.yml passes on main (a push, or ci run by hand on main), so the copy follows main. It
+#   builds the commit ci tested, and publishes it only while that commit is still main's tip (checked before the
+#   build and again just before the deploy, so a re-run of an old run's failed jobs cannot put an old build back):
+#   when main has moved on, a newer commit's green ci publishes instead. The copy never steps back to an older build
+#   and never shows a commit ci has not passed. A ci run that failed, was cancelled (a newer merge cancels the one
+#   before it) or checked a pull request publishes nothing, so during a burst of merges the copy is published once,
+#   after the last one's ci passes.
+# - by hand: Actions > web > Run workflow, on main; it publishes main as it is, without waiting for ci. (A tag would
+#   also need a tag rule on the github-pages environment, which allows only the default branch by default.)
 # What breaks if it is removed? Nothing else: dist-web/ can still be served from any https host by hand.
 
 name: web
@@ -28,23 +31,25 @@ permissions:
 
 # One publication at a time; a second run waits for the first rather than cancelling a deployment halfway, and a newer
 # one waiting takes the place of an older one waiting (which would find main had moved on anyway). A run for a ci that
-# did not pass on a push publishes nothing, so it waits in a group of its own and never takes a real one's place.
+# did not pass on main publishes nothing, so it waits in a group of its own and never takes a real one's place.
 concurrency:
   group: >-
     ${{ (github.event_name == 'workflow_dispatch' ||
-    (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'))
+    (github.event.workflow_run.conclusion == 'success' &&
+    (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')))
     && 'pages' || format('pages-skip-{0}', github.run_id) }}
   cancel-in-progress: false
 
 jobs:
   # Which commit to publish, if any.
   pick:
-    # A green ci of a push to main in this repository, or a run started by hand. A fork's pull request from a branch
-    # it named main also reports head_branch main, so the event and the repository are checked as well.
+    # A green ci on main in this repository (a push, or ci started by hand there), or this run started by hand. A
+    # fork's pull request from a branch it named main also reports head_branch main, so the event and the repository
+    # are checked as well.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
+      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') &&
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-24.04
@@ -63,11 +68,11 @@ jobs:
             echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          tip=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          tip=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
           if [ "$tip" = "$TESTED" ]; then
             echo "sha=$TESTED" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice::ci passed on $TESTED, but main is at $tip now: that commit's own ci publishes it."
+            echo "::notice::ci passed on $TESTED, but main is at $tip now; only main's tip is published."
           fi
 
   build:
@@ -92,15 +97,35 @@ jobs:
           path: dist-web
 
   deploy:
-    needs: build
+    needs: [pick, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
+      contents: read
       pages: write
       id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # "Re-run failed jobs" on an old run keeps pick's old answer, so the tip is asked again here.
+      - id: tip
+        name: Still main's tip (an automatic run only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PICKED: ${{ needs.pick.outputs.sha }}
+        run: |
+          if [ "$EVENT" = workflow_dispatch ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          tip=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          if [ "$tip" = "$PICKED" ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::built $PICKED, but main is at $tip now; only main's tip is published."
+          fi
       - id: deployment
+        if: steps.tip.outputs.deploy == 'true'
         uses: actions/deploy-pages@v4
