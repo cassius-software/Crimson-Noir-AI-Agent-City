@@ -115,7 +115,7 @@ const CORE = [
   { name: 'goal', usage: 'goal <words...>', summary: 'tell the city a goal in plain words, as you would tell Sloane: what can be done now is done, the rest is explained' },
   { name: 'progress', usage: 'progress [table|train <skill>|reroll|reset [--yes]]', summary: 'your level, XP, credits, hero points and skills; what a check pays; spend a skill increase or a hero point' },
   { name: 'hal', usage: 'hal [pair hid|serial|ble]', summary: 'hardware bus devices; pair a controller' },
-  { name: 'robot', usage: 'robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|remove <id>]', summary: 'the robots: physical ones over HAL/1 or the loopback relay, simulated ones from a URDF file; their bodies in the physics realm as twins or leaders, every setpoint through the gate (relay, spawn, urdf, arm and calibrate are the operator\'s)' },
+  { name: 'robot', usage: 'robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|cell [<kind> <station>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|fit <id> <joint>|shape <id> [<seed>|off]|remove <id>]', summary: 'the robots: physical ones over HAL/1 or the loopback relay, simulated ones from a URDF file or a workstation cell; their bodies in the physics realm as twins or leaders, every setpoint through the gate; fit takes the better of two actuator models, shape randomizes the body\'s domain by a seed (relay, spawn, cell, urdf, arm, calibrate, fit and shape are the operator\'s)' },
   { name: 'recruit', usage: 'recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]', summary: 'ask someone nearby with a skill over, or an Active recruit to the pinged point; listen by voice (on-device)' },
   { name: 'memory', usage: 'memory [<agent>|forget <agent>|forget all]', summary: 'what the people you recruit remember in this city; forget erases it (operator)' },
   { name: 'clear', usage: 'clear', summary: 'clear the screen (Ctrl+L)' },
@@ -255,7 +255,7 @@ const ARGS: Record<string, readonly string[]> = {
   tutorial: ['program', 'status'],
   hal: ['pair'],
   'hal pair': ['ble', 'hid', 'serial'],
-  robot: ['arm', 'calibrate', 'demo', 'disarm', 'mode', 'relay', 'remove', 'set', 'spawn', 'urdf'],
+  robot: ['arm', 'calibrate', 'cell', 'demo', 'disarm', 'fit', 'mode', 'relay', 'remove', 'set', 'shape', 'spawn', 'urdf'],
   'robot relay': ['off'],
   recruit: [...RECRUIT_ACTIONS, ...SKILL_ARGS].sort(),
   uname: ['-a'],
@@ -1820,9 +1820,11 @@ const HANDLERS: Record<Name, Handler> = {
     return { lines: [sys(`net: joining ${url}...`)], pending }
   },
 
-  // The robots (04_Connect_Hardware/robotLink.ts). The list, the demo, a mode, a setpoint, a disarm, a remove and the
-  // relay's status or its off run at any time (the last three only ever stop something); the relay, a body into the
-  // realm, a URDF read, arming and calibrating are the operator's. The async ones report later, as `xr` does.
+  // The robots (04_Connect_Hardware/robotLink.ts). The list, the demo, a mode, a setpoint, a disarm, a remove, the
+  // relay's status or its off, the stations' list and a domain's table run at any time (the stops only ever stop
+  // something; the rest only read); the relay, a body into the realm (spawn, cell, shape), a URDF read, arming,
+  // calibrating and fitting are the operator's. The async ones report later, as `xr` does; a report of several lines
+  // (fit, shape) is printed line by line.
   robot(args, b) {
     const r = robotOf(b)
     const a = args[0]
@@ -1834,9 +1836,37 @@ const HANDLERS: Record<Name, Handler> = {
     const n = args.length
     const later = (first: string, p: Promise<string>): CommandResult => ({
       lines: [sys(first)],
-      pending: p.then((t): Line[] => [out(`robot: ${t}`)], (e: unknown): Line[] => [err(`robot: ${message(e)}`)]),
+      pending: p.then((t): Line[] => t.split('\n').map((l, i) => out(i === 0 ? `robot: ${l}` : `  ${l}`)), (e: unknown): Line[] => [err(`robot: ${message(e)}`)]),
     })
     switch (a) {
+      case 'cell': {
+        if (n !== 1 && n !== 3) return fail(usage('robot'))
+        const stations = b.roomStations?.()
+        if (!stations) return fail('robot: this host keeps no rooms')
+        if (n === 1) {
+          if (!stations.length) return { lines: [sys('robot: no rooms on this map (the surveyed region has none)')] }
+          const head = out(`  ${'KIND'.padEnd(18)}${'STATION'.padEnd(9)}${'X'.padEnd(9)}${'Z'.padEnd(9)}${'YAW'.padEnd(7)}CELL`)
+          return { lines: [head, ...stations.map((s) => out(`  ${s.kind.padEnd(18)}${String(s.station).padEnd(9)}${s.x.toFixed(1).padEnd(9)}${s.z.toFixed(1).padEnd(9)}${s.yaw.toFixed(2).padEnd(7)}${r.cellKind(s.kind)}`))] }
+        }
+        if (!/^\d{1,4}$/.test(args[2])) return fail(`robot: not a station: '${args[2]}' (a whole number; robot cell lists them)`, usage('robot'))
+        const station = Number(args[2])
+        const st = stations.find((s) => s.kind === args[1] && s.station === station)
+        if (!st) return fail(`robot: no station ${station} in a '${args[1]}' room (robot cell lists them)`)
+        if (!operatorOf(b).unlocked()) return locked('robot')
+        return { lines: [out(r.cell(args[1], station, { x: st.x, z: st.z, yaw: st.yaw }))] }
+      }
+      case 'shape': {
+        if (n !== 2 && n !== 3) return fail(usage('robot'))
+        if (n === 2) return { lines: r.shape(args[1]).split('\n').map(out) }
+        if (args[2] !== 'off' && !/^\d{1,10}$/.test(args[2])) return fail(`robot: not a seed: '${args[2]}' (a whole number, or off)`, usage('robot'))
+        if (!operatorOf(b).unlocked()) return locked('robot')
+        return { lines: r.shape(args[1], args[2] === 'off' ? 'off' : Number(args[2])).split('\n').map(out) }
+      }
+      case 'fit': {
+        if (n !== 3) return fail(usage('robot'))
+        if (!operatorOf(b).unlocked()) return locked('robot')
+        return later(`robot: fitting ${args[2]} of ${args[1]} (a hold, one small step, two models)...`, r.fit(args[1], args[2]))
+      }
       case 'relay': {
         if (n === 1) return { lines: [out(r.relayStatus())] }
         if (args[1] === 'off') return n === 2 ? { lines: [out(r.relayOff())] } : fail(usage('robot'))

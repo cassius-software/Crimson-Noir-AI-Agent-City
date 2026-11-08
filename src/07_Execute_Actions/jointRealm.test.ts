@@ -7,13 +7,17 @@
  * given steps and easing toward it at the given time constant; `follow` mode carrying a frame forward by its speed;
  * a stale setpoint holding; the slots written for the joint buffer; removal on a body gone wrong; and, through
  * SimCore and the host, the four commands as counted rejections or acts, the slots in StepState without a joint
- * buffer and in the shared buffer with one, allowed in a network room, with the transfer list unchanged.
+ * buffer and in the shared buffer with one, allowed in a network room, with the transfer list unchanged. And the
+ * shaping and the friction a domain or a second-order fit sends: judged before anything is kept, the joint following
+ * the second-order reference with its own delay, stiction holding a still joint under a small demand and breaking
+ * away over it, and Coulomb friction slowing a joint without ever turning it round.
  * What breaks if it is removed? A twin could answer a setpoint at the wrong time, or a bad manifest could reach Rapier.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import RAPIER from '@dimforge/rapier3d-simd-compat'
 import { JointRealm, ROBOT_REALM } from './jointRealm.ts'
+import { SHAPING, stepShaping, type ActuatorShaping, type JointFriction } from '../04_Connect_Hardware/actuatorFit.ts'
 import { JOINT_BYTES, JOINT_FLAG, JOINT_SLOT, JointBuffer, slotView } from './jointBridge.ts'
 import { buildManifest, MAX_ROBOTS, type Manifest } from '../04_Connect_Hardware/jointState.ts'
 import { SimCore, type StepInput } from './simCore.ts'
@@ -143,6 +147,125 @@ test('filter mode: a setpoint is held back the given steps, then eased toward at
   assert.ok(at(60) < 0.4, `at 60 ms: ${(at(60) * 100).toFixed(0)} %`)
   assert.ok(at(200) > 0.5 && at(200) < 0.8, `at 200 ms: ${(at(200) * 100).toFixed(0)} % (63 % is the filter alone; the servo adds a little lag)`)
   assert.ok(at(1000) > 0.98, `at 1 s: ${(at(1000) * 100).toFixed(0)} %`)
+})
+
+/** A shaping with no friction of its own: ω, ζ and the delay given, unit gain, the shoulder's speed cap. */
+const shapingOf = (omega: number, zeta: number, delaySteps = 0): ActuatorShaping => ({ omega, zeta, delaySteps, gain: 1, velocityMax: 4, coulomb: 0, viscous: 0, stiction: 0 })
+const NO_RUB: JointFriction = { coulomb: 0, viscous: 0, stiction: 0 }
+
+test('mode takes a shaping and a friction per joint, every number judged and nothing kept from a bad command; the old shape stays', () => {
+  const w = world()
+  const pool = new JointRealm(w)
+  pool.spawn(1, arm(), 0, 0, 0, 0)
+  const good = shapingOf(6, 0.5)
+  pool.mode(1, 'filter', 0, 0, [good, null], [NO_RUB, null])
+  pool.mode(1, 'filter', 0, 0, [], [])
+  pool.mode(1, 'filter', 0, 0)
+  assert.throws(() => pool.mode(1, 'filter', 0, 0, 'x'), /shaping is not an array/)
+  assert.throws(() => pool.mode(1, 'filter', 0, 0, [good]), /shaping has 1 entries for 2 joints/)
+  assert.throws(() => pool.mode(1, 'filter', 0, 0, [7, null]), /shaping\[0\] is not an object/)
+  assert.throws(() => pool.mode(1, 'filter', 0, 0, [{ ...good, omega: SHAPING.omegaMax + 1 }, null]), /shaping\[0\]\.omega/)
+  assert.throws(() => pool.mode(1, 'filter', 0, 0, [{ ...good, omega: NaN }, null]), /shaping\[0\]\.omega/)
+  assert.throws(() => pool.mode(1, 'filter', 0, 0, [null, { ...good, zeta: -0.1 }]), /shaping\[1\]\.zeta/)
+  assert.throws(() => pool.mode(1, 'filter', 0, 0, [{ ...good, delaySteps: 1.5 }, null]), /delaySteps must be a whole number/)
+  assert.throws(() => pool.mode(1, 'filter', 0, 0, [{ ...good, delaySteps: ROBOT_REALM.maxDelaySteps + 1 }, null]), /delaySteps/)
+  assert.throws(() => pool.mode(1, 'filter', 0, 0, [{ ...good, gain: 0 }, null]), /gain/)
+  assert.throws(() => pool.mode(1, 'filter', 0, 0, [{ ...good, velocityMax: undefined }, null]), /velocityMax/)
+  assert.throws(() => pool.mode(1, 'filter', 0, 0, undefined, 'x'), /friction is not an array/)
+  assert.throws(() => pool.mode(1, 'filter', 0, 0, undefined, [NO_RUB]), /friction has 1 entries for 2 joints/)
+  // Coulomb and stiction within each joint's own effort cap (the shoulder 50 N·m, the elbow 20).
+  pool.mode(1, 'filter', 0, 0, undefined, [{ coulomb: 50, viscous: 0, stiction: 50 }, { coulomb: 20, viscous: 0, stiction: 20 }])
+  assert.throws(() => pool.mode(1, 'filter', 0, 0, undefined, [NO_RUB, { coulomb: 21, viscous: 0, stiction: 0 }]), /friction\[1\]\.coulomb must be 0\.\.20/)
+  assert.throws(() => pool.mode(1, 'filter', 0, 0, undefined, [{ coulomb: 0, viscous: -1, stiction: 0 }, null]), /friction\[0\]\.viscous/)
+  assert.throws(() => pool.mode(1, 'filter', 0, 0, undefined, [{ coulomb: 0, viscous: 0, stiction: Infinity }, null]), /friction\[0\]\.stiction/)
+  assert.throws(() => pool.mode(1, 'filter', 0, 0, undefined, [{ coulomb: 0, viscous: 0 }, null]), /friction\[0\]\.stiction/)
+})
+
+test('filter mode with a shaping: the joint follows the second-order reference, with its own delay; a bad command keeps nothing; an empty array gives the filter back', () => {
+  const w = world()
+  const pool = new JointRealm(w)
+  pool.spawn(1, arm(), 0, 0, 0, 0)
+  const body = pool.body(1)!
+  const now = { t: 0 }
+  run(w, pool, 10, now)
+  // An under-damped reference on the shoulder (ζ 0.5: about 16 % overshoot), the elbow on the pass-through filter.
+  const sh = shapingOf(6, 0.5)
+  pool.mode(1, 'filter', 0, 0, [sh, null])
+  const ref = { x: body.movable[0].q, xd: 0 }
+  const trace: number[] = [], want: number[] = []
+  run(w, pool, 120, now, (t) => {
+    pool.targets(1, 1, [0.5, 0], [], [], t)
+    stepShaping(sh, ref, 0.5, H)
+    want.push(ref.x)
+    trace.push(body.movable[0].q)
+  })
+  // The body tracks the reference within a servo step behind it, overshoots as the reference does, and settles.
+  const lag = Math.max(...trace.slice(1).map((q, i) => Math.abs(q - want[i])))
+  assert.ok(lag < 0.05, `tracks the reference: worst ${lag.toFixed(3)} rad`)
+  const peak = Math.max(...trace)
+  assert.ok(peak > 0.55 && peak < 0.62, `overshoots as ζ 0.5 does (0.58): ${peak.toFixed(3)}`)
+  assert.ok(near(trace.at(-1)!, 0.5, 0.02), `settles: ${trace.at(-1)}`)
+  // Its own delay: five steps back, the shoulder stands for five steps after a new setpoint (the filter's delay is 0).
+  pool.mode(1, 'filter', 0, 0, [shapingOf(6, 1, 5), null])
+  const held: number[] = []
+  run(w, pool, 10, now, (t) => { pool.targets(1, 2, [0, 0], [], [], t); held.push(body.movable[0].q) })
+  assert.ok(held.slice(0, 5).every((q) => near(q, held[0], 0.01)), `still for its five steps: ${held.map((q) => q.toFixed(3)).join(' ')}`)
+  assert.ok(held[9] < held[0] - 0.02, `then moving: ${held[9]}`)
+  run(w, pool, 120, now, (t) => pool.targets(1, 3, [0, 0], [], [], t))
+  // A command with a good shaping and a bad friction keeps neither: the slow reference does not arrive.
+  assert.throws(() => pool.mode(1, 'filter', 0, 0, [shapingOf(0.5, 1), null], [{ coulomb: 99, viscous: 0, stiction: 0 }, null]), /friction/)
+  // An empty array clears the shaping: the pass-through filter is back, so a step is met within a few steps with no
+  // overshoot to speak of (the reference above, at 6 rad/s, takes far longer).
+  pool.mode(1, 'filter', 0, 0, [])
+  const plain: number[] = []
+  run(w, pool, 30, now, (t) => { pool.targets(1, 4, [0.5, 0], [], [], t); plain.push(body.movable[0].q) })
+  assert.ok(plain[9] > 0.45, `the filter back: ${plain[9].toFixed(3)} at 10 steps (the reference was at ${want[9].toFixed(3)})`)
+  assert.ok(Math.max(...plain) < 0.53, `no reference overshoot: ${Math.max(...plain).toFixed(3)}`)
+})
+
+test('joint friction: stiction holds a still joint under a small demand and lets go over it; Coulomb slows a joint and never turns it round', () => {
+  const w = world()
+  const pool = new JointRealm(w)
+  pool.spawn(1, arm(), 0, 0, 0, 0)
+  const body = pool.body(1)!
+  const now = { t: 0 }
+  run(w, pool, 10, now)
+  pool.mode(1, 'filter', 0, 0)
+  // What the servo asks of the still shoulder for a 0.2 rad step, before anything moves: the stiction to beat.
+  pool.targets(1, 1, [0.2, 0], [], [], now.t)
+  now.t += H
+  pool.tend(now.t)
+  pool.drive(H, now.t)
+  const demand = Math.abs(body.movable[0].demand + body.movable[0].load)
+  assert.ok(demand > 0, `the servo asks something: ${demand}`)
+  w.step()
+  // Back to rest, then stiction twice that demand: the shoulder stays put however long the setpoint stands.
+  pool.mode(1, 'filter', 0, 0, undefined, [{ coulomb: 0, viscous: 0, stiction: 2 * demand }, null])
+  run(w, pool, 60, now, (t) => pool.targets(1, 2, [0, 0], [], [], t))
+  const q0 = body.movable[0].q
+  const stuck: number[] = []
+  run(w, pool, 60, now, (t) => { pool.targets(1, 3, [q0 + 0.2, 0], [], [], t); stuck.push(body.movable[0].q) })
+  assert.ok(stuck.every((q) => near(q, q0, 1e-3)), `held by stiction: ${Math.min(...stuck).toFixed(4)}..${Math.max(...stuck).toFixed(4)} from ${q0.toFixed(4)}`)
+  // Stiction at half the demand: it breaks away and reaches the setpoint.
+  pool.mode(1, 'filter', 0, 0, undefined, [{ coulomb: 0, viscous: 0, stiction: demand / 2 }, null])
+  run(w, pool, 90, now, (t) => pool.targets(1, 4, [q0 + 0.2, 0], [], [], t))
+  assert.ok(near(body.movable[0].q, q0 + 0.2, 0.02), `broke away: ${body.movable[0].q.toFixed(4)} for ${(q0 + 0.2).toFixed(4)}`)
+  // A joint moving fast toward a far setpoint, then Coulomb friction at its whole effort cap: it slows to a stop and
+  // never once runs backwards, though the friction is many times what would stop it in a step.
+  pool.mode(1, 'filter', 0, 0, [])
+  pool.mode(1, 'filter', 0, 0, undefined, [])
+  run(w, pool, 4, now, (t) => pool.targets(1, 5, [-1.8, 0], [], [], t))
+  assert.ok(body.movable[0].qd < -1, `moving: ${body.movable[0].qd}`)
+  pool.mode(1, 'filter', 0, 0, undefined, [{ coulomb: 50, viscous: 0, stiction: 0 }, null])
+  const qs: number[] = [body.movable[0].q]
+  run(w, pool, 60, now, (t) => { pool.targets(1, 6, [-1.8, 0], [], [], t); qs.push(body.movable[0].q) })
+  // Friction removes at most the speed the joint has by the realm's own measure (the measured speed and the reduced
+  // inertia the servo uses); what the solver's position correction does at the stop is its own, and stays under a
+  // tenth of a milliradian a step (five hundredths here).
+  for (let i = 1; i < qs.length; i++) assert.ok(qs[i] <= qs[i - 1] + 1e-4, `never back: step ${i} ${qs[i - 1].toFixed(5)} -> ${qs[i].toFixed(5)}`)
+  assert.ok(qs.at(-1)! - Math.min(...qs) < 2e-4, `stopped, not turned round: ${Math.min(...qs).toFixed(5)} then ${qs.at(-1)!.toFixed(5)}`)
+  assert.ok(qs.at(-1)! > -1.7, `slowed short of the setpoint: ${qs.at(-1)}`)
+  assert.equal(pool.write(new Float32Array(MAX_ROBOTS * JOINT_SLOT.words)), 1, 'the body is still sane')
 })
 
 test('follow mode carries the newest frame forward by its speed for a while; a stale setpoint holds; hold mode holds', () => {

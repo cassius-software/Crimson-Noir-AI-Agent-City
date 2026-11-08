@@ -10,7 +10,7 @@
  * the home-screen icon and title, the service worker's registration, and `manifest-src 'self'` in its content policy,
  * which otherwise refuses the manifest), the manifest, the service worker, the icons, and an empty .nojekyll (GitHub
  * Pages would otherwise run Jekyll over the folder). Any static https host can serve it; the web workflow
- * (.github/workflows/web.yml) publishes it on GitHub Pages when someone runs that workflow.
+ * (.github/workflows/web.yml) publishes it on GitHub Pages each time ci passes on main, or when someone runs it.
  * The service worker (WORKER below) answers every request for these files from its own cache after the first visit, so
  * the city then starts with no network at all; it keeps one cache per build, named by the page's hash, and drops the
  * others once a new build has been cached. It also adds the two cross-origin isolation headers a static host does not

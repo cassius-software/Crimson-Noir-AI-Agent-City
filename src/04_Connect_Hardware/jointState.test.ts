@@ -14,7 +14,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   buildManifest, byteLength, checkFrame, checkTargets, clampTargets, frameLine, JOINT_LINE, manifestJson, manifestLines, ManifestAssembler, MAX_JOINTS, parseJointLine, readManifest, validName,
-  type JointFrame, type JointTargets, type Manifest,
+  INERTIA_SCALE, type JointFrame, type JointTargets, type Manifest,
 } from './jointState.ts'
 import { LINE } from './lineLink.ts'
 
@@ -69,6 +69,22 @@ test('a manifest from JSON: judged by the reader\'s rules, read back equal from 
   const tooBig = buildManifest('r', Array.from({ length: MAX_JOINTS + 2 }, (_, i) => link(`l${i}`)), Array.from({ length: MAX_JOINTS + 1 }, (_, i) => joint(`j${i}`, `l${i}`, `l${i + 1}`)))
   assert.ok(!tooBig.ok && /too many (links|joints)/.test(tooBig.reason))
   assert.ok(!readManifest('nope').ok && !readManifest('[]').ok && !readManifest('{"robot":"r"}').ok)
+})
+
+test('a link\'s inertiaScale: absent by default, kept within its bounds and through the JSON, refused outside them', () => {
+  const plain = buildManifest('r', [link('a'), link('b')], [joint('j', 'a', 'b')])
+  assert.ok(plain.ok && !('inertiaScale' in plain.value.links[1]), 'absent: no word at all, so old manifests read as they did')
+  const scaled = buildManifest('r', [link('a'), { ...link('b'), inertiaScale: 1.3 }], [joint('j', 'a', 'b')])
+  assert.ok(scaled.ok)
+  assert.equal(scaled.value.links[1].inertiaScale, 1.3)
+  const back = readManifest(manifestJson(scaled.value))
+  assert.ok(back.ok)
+  assert.deepEqual(back.value, scaled.value)
+  for (const k of [INERTIA_SCALE.min, INERTIA_SCALE.max]) assert.ok(buildManifest('r', [{ ...link('a'), inertiaScale: k }], []).ok, `${k} is inside`)
+  for (const k of [0, INERTIA_SCALE.min / 2, INERTIA_SCALE.max * 1.01, NaN, Infinity, '1.2', null]) {
+    const r = buildManifest('r', [{ ...link('a'), inertiaScale: k }], [])
+    assert.ok(!r.ok && /inertiaScale must be a finite number from 0\.1 to 10/.test(r.reason), `${String(k)}: ${r.ok ? 'accepted' : r.reason}`)
+  }
 })
 
 test('frames and targets: lengths against the movable count, empty arrays allowed, finite numbers, seq and stamps', () => {
