@@ -4,8 +4,9 @@
 //! Why does this file exist? It draws the tutorial's 3D server room with integer arithmetic only: fixed-point
 //! coordinates (Q16.16 metres), a sine table built at compile time, a camera, near-plane clipping, a triangle
 //! rasterizer with a depth buffer (1/z, interpolated as a plane), per-triangle fog, depth-tested points for the swarm,
-//! and the cinematic pass (letterbox bars, vignette, film grain). Integer only because the bootable image is compiled
-//! soft-float: a float per pixel would cost a library call per operation there. The scene (scene.rs) is baked into
+//! and the cinematic pass (letterbox bars, vignette, film grain). Integer only because the x86-64 bootable image is
+//! compiled soft-float: a float per pixel would cost a library call per operation there (the aarch64 image has NEON,
+//! and draws the same integer frames). The scene (scene.rs) is baked into
 //! flat arrays of triangles, a structure of arrays like everything else: no object per mesh, no method per triangle.
 //! What breaks if it is removed? Nothing can be shown in three dimensions: the tutorial has no room to walk in.
 

@@ -4,7 +4,8 @@
 //! Why does this file exist? Every word the system shows is drawn here: the tutorial's captions, the terminal, the
 //! fault screen. Glyphs are the public-domain 8×8 bitmap font of the IBM PC era as the `font8x8` crate ships it (MIT;
 //! bit 0 of each row is the leftmost pixel), drawn into a 0x00RRGGBB pixel buffer, scaled by whole pixels and clipped
-//! to the buffer. Integer arithmetic only, so it costs the same on the bare-metal image (soft-float) as anywhere.
+//! to the buffer. Integer arithmetic only, so it costs the same on the x86-64 bare-metal image (soft-float) as
+//! anywhere.
 //! What breaks if it is removed? The system has no way to say anything on screen.
 
 use font8x8::legacy::BASIC_LEGACY;

@@ -509,7 +509,7 @@ test('a fix for heat or a slow frame is a ceiling on the tier, never a raise; a 
   // Peak (tier 5, above the table) only when named, and never set by a goal: Sloane asks first, and only her Set Peak
   // sets it, always as the tier to set: 5 is never a ceiling.
   assert.equal(PEAK_TIER, 5)
-  const PEAK_QUESTION = 'Peak takes a big graphics card and about half a gigabyte more of its memory. Set Peak, or keep to Ultra at most?'
+  const PEAK_QUESTION = 'Peak takes a big graphics card: it draws every frame at a higher resolution than Ultra. Set Peak, or keep to Ultra at most?'
   for (const goal of ['peak graphics', 'beyond ultra', 'peak graphics please', 'can you turn on peak graphics?', 'i want peak graphics too',
     "i don't mind peak graphics", 'peak graphics and no traffic', 'peak graphics with the sound off', 'keep peak graphics', 'i prefer peak graphics',
     'go all out with peak graphics', 'max out with peak graphics', 'max it out with peak graphics', 'switch back to peak graphics',

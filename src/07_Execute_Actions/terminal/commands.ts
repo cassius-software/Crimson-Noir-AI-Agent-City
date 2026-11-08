@@ -34,7 +34,7 @@
  * What breaks if it is removed? The terminal cannot interpret a single line.
  */
 import type {
-  ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, EliteWrites, ExecResult, GateTether, GoalPlan, HalDevice, HarnessReport, LookBridge, LookChange, MemoryBridge, MindStatus, ModelBridge,
+  ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, EliteWrites, ExecResult, GateTether, GoalPlan, HalDevice, HardwareReport, HarnessReport, LookBridge, LookChange, MemoryBridge, MindStatus, ModelBridge,
   NetBridge, NetReport, OperatorBridge, PendingAct, Piece, PingKind, PingPick, ProgressBridge, RecordBridge, RecruitBridge, Ring0Stats, RobotConsole, RobotRow, RunResult, SayResult, TerminalBridge, TopicBridge, VoiceStatus,
 } from './bridge.ts'
 import type { QualityState, RecordingState } from '../../05_Observe_Environment/telemetry.ts'
@@ -95,6 +95,7 @@ const CORE = [
   { name: 'topic', usage: 'topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]', summary: 'the unified namespace: every reading as a retained topic under Enterprise/JCS/Site/AgentCity (~); filter with + for one level and # for the rest' },
   { name: 'feature', usage: 'feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]', summary: "the feature inspector: named readings of the city in [0, 1], sparsified and ranked; steer and clamp lean the agents' prompts and the tuning knobs (operator)" },
   { name: 'quality', usage: 'quality [auto|lite|peak|-1|0-5]', summary: 'show or set the render quality tier' },
+  { name: 'hardware', usage: 'hardware', summary: 'the machine the city sized itself for: its class (phone, desktop, workstation), the adapter and its limits, the lanes simulated, the frame-time percentiles' },
   { name: 'time', usage: 'time [HH[:MM]]', summary: 'show or set the city clock' },
   { name: 'audio', usage: 'audio [on|off|0-100]', summary: 'show or set the soundscape' },
   { name: 'ghost', usage: 'ghost [on|off]', summary: 'ghost view: the physics shapes as code over the frame (view-only; G)' },
@@ -288,6 +289,8 @@ const count = (v: number): string => (Number.isFinite(v) ? String(Math.round(v))
 /** GPU timings are 0 until timestamp queries resolve (?profile, or a Peak range at Ultra or Peak), so 0 reads as "not measured". */
 const gpuMs = (v: number): string => (Number.isFinite(v) && v > 0 ? v.toFixed(2) : '-')
 const row = (label: string, text: string): string => label.padEnd(10) + text
+/** Bytes as the `hardware` command prints an adapter limit: whole MiB below a GiB, GiB to one decimal above (2 GiB, 1.5 GiB). */
+const bytes = (n: number): string => (n >= 2 ** 30 ? `${String(Math.round((n / 2 ** 30) * 10) / 10)} GiB` : `${Math.round(n / 2 ** 20)} MiB`)
 
 /** A bridge built before the operator tier existed has no `operator`; say so instead of crashing. */
 function operatorOf(b: TerminalBridge): OperatorBridge {
@@ -440,6 +443,27 @@ export function formatQuality(q: QualityState): string {
   return `tier ${q.tier} ${q.label} (${q.auto ? 'auto' : 'fixed'})  scale ${fixed(q.renderScale, 2)}x  budget ${fixed(q.targetMs, 1)} ms${q.lite ? '  lite profile' : ''}${peak}`
 }
 
+/**
+ * The `hardware` readout: six rows of fixed columns, ASCII only, at most 80 columns each (an adapter line longer than
+ * that is cut). The class and the profile that gave it, the adapter and its limits, the lanes, the governor's frame-time
+ * percentiles with how many frames they stand on, and what the browser said of the machine.
+ */
+export function formatHardware(h: HardwareReport): string[] {
+  const p = h.profile, t = h.tiers, f = h.frames, l = h.limits
+  const adapter = h.adapter.length > 70 ? `${h.adapter.slice(0, 67)}...` : h.adapter
+  const frames = f.n === 0 ? 'no frames yet' : `p50 ${fixed(f.p50, 2)} ms  p95 ${fixed(f.p95, 2)} ms  p99 ${fixed(f.p99, 2)} ms  (${count(f.n)} frames in ${fixed(f.windowMs / 1000, 1)} s)`
+  const threads = h.cores !== undefined && h.cores > 0 ? `${count(h.cores)} threads` : 'threads unknown'
+  const memory = h.memoryGb !== undefined && h.memoryGb > 0 ? `${count(h.memoryGb)} GB reported` : 'memory unreported'
+  return [
+    row('class', `${h.class}  profile ${p.lite ? 'lite' : p.mobile ? 'phone' : p.gpuClass}  start ${t.start} ${t.startLabel}  tiers ${t.min}..${t.max}`),
+    row('adapter', adapter),
+    row('limits', `bind ${bytes(l.maxStorageBufferBindingSize)}  buffer ${bytes(l.maxBufferSize)}  workgroup ${count(l.maxComputeWorkgroupSizeX)} wide  ${count(l.maxComputeInvocationsPerWorkgroup)} invocations`),
+    row('lanes', `${count(h.lanes.simulated)} simulated  (${count(h.lanes.default)} default for a ${h.class}, ${count(h.lanes.ceiling)} ceiling)`),
+    row('frames', frames),
+    row('machine', `${threads}  ${memory}  ${h.host === 'native' ? 'native shell' : 'browser tab'}`),
+  ]
+}
+
 /** The cinema camera's row (none with ?cinema=0): presented frames, the shutter, the ND, the cuts. ASCII only. */
 function cameraRows(s: Ring0Stats): string[] {
   const c = s.camera
@@ -454,7 +478,7 @@ export function formatStats(s: Ring0Stats): string[] {
   const drawn = a.drawnNear + a.drawnFar
   const share = a.population > 0 ? ` (${fixed((100 * drawn) / a.population, 1)}%)` : ''
   return [
-    row('frame', `${fixed(s.fps, 1)} fps  ${fixed(s.frameMs, 2)} ms  p95 ${fixed(s.p95Ms, 2)} ms  cpu ${fixed(s.cpuMs, 2)} ms`),
+    row('frame', `${fixed(s.fps, 1)} fps  ${fixed(s.frameMs, 2)} ms  p95 ${fixed(s.p95Ms, 2)} ms  p99 ${fixed(s.p99Ms, 2)} ms  cpu ${fixed(s.cpuMs, 2)} ms`),
     ...cameraRows(s),
     row('gpu', `render ${gpuMs(s.gpuRenderMs)} ms  compute ${gpuMs(s.gpuComputeMs)} ms`),
     row('rapier3d', `step ${fixed(r.stepMs, 3)} ms  physics ${fixed(r.physicsMs, 2)} ms/frame  substeps ${count(r.steps)}`),
@@ -966,6 +990,11 @@ const HANDLERS: Record<Name, Handler> = {
     if (a === 'peak') return { lines: [out(formatQuality(b.quality(MAX_TIER)))] }
     if (/^(?:-1|\d)$/.test(a) && Number(a) >= MIN_TIER && Number(a) <= MAX_TIER) return { lines: [out(formatQuality(b.quality(Number(a))))] }
     return fail(`quality: invalid tier '${a}'`, usage('quality'))
+  },
+
+  hardware(args, b) {
+    if (args.length) return fail(usage('hardware'))
+    return { lines: formatHardware(b.hardware()).map(out) }
   },
 
   time(args, b) {
@@ -1824,7 +1853,7 @@ const HANDLERS: Record<Name, Handler> = {
       lines: [
         out(row('clock', b.clock())),
         out(row('quality', formatQuality(s.quality))),
-        out(row('frame', `${fixed(s.fps, 1)} fps  ${fixed(s.frameMs, 2)} ms  p95 ${fixed(s.p95Ms, 2)} ms`)),
+        out(row('frame', `${fixed(s.fps, 1)} fps  ${fixed(s.frameMs, 2)} ms  p95 ${fixed(s.p95Ms, 2)} ms  p99 ${fixed(s.p99Ms, 2)} ms`)),
         ...cameraRows(s).map(out),
         out(row('agents', `drawn ${count(a.drawnNear + a.drawnFar)} of ${count(a.population)}  waiting ${count(a.waiting)}  crossing ${count(a.crossing)}${a.working === undefined ? '' : `  at work ${count(a.working)}`}`)),
         out(row('vehicles', count(s.vehicles))),

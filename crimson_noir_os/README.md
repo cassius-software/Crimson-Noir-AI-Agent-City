@@ -39,6 +39,8 @@ sh tools/build-image.sh                    # target/image/crimson_noir_os.img an
 python3 tools/boot_test.py target/image/crimson_noir_os.img --wait "SELFTEST PASS" \
   --step "wait:TUTORIAL 6 PASSED" --step 'type:\n' --step "wait:TERMINAL READY" \
   --step 'type:golden\n' --step wait:MATCH --step 'type:halt\n' --step 'wait:POWER OFF' --step exit
+sh tools/build-image.sh target/image-aarch64 aarch64-unknown-uefi   # the same for 64-bit Arm, in target/image-aarch64
+python3 tools/boot_test.py target/image-aarch64/crimson_noir_os.img --arch aarch64 --wait "SELFTEST PASS"
 cargo run --release -- selftest            # the hosted runtime: CPU and GPU, compared word for word
 cargo test --workspace                     # 85 tests (set NOIR_REQUIRE_GPU=1 to fail rather than skip without a GPU)
 npm run smoke:bridge                       # from the repository root: the bridge against the real host (below)
@@ -48,9 +50,9 @@ npm run smoke:bridge                       # from the repository root: the bridg
 
 | Purpose | What you need |
 |---|---|
-| Build | Rust 1.88 or newer with the `x86_64-unknown-uefi` target |
+| Build | Rust 1.88 or newer with the `x86_64-unknown-uefi` target (and `aarch64-unknown-uefi` for Arm) |
 | Make the media | `mtools`, `gdisk` (sgdisk) and `xorriso` |
-| Boot test | `qemu-system-x86_64` and OVMF |
+| Boot test | `qemu-system-x86_64` and OVMF; for Arm, `qemu-system-aarch64` and AAVMF (Debian's `qemu-efi-aarch64`) |
 | Hosted GPU path | Any Vulkan, Metal or DX12 adapter; Mesa's lavapipe works, with no GPU at all |
 
 **Releases**
@@ -62,6 +64,12 @@ tag's GitHub Release. The workflow:
 3. bakes the image and the ISO;
 4. boots both in QEMU with OVMF (the disk image through the tutorial and the terminal to a clean power-off);
 5. attaches `crimson_noir_os.img`, `crimson_noir_os.iso`, `BOOTX64.EFI`, the configuration and `SHA256SUMS`.
+
+The aarch64 media are not made by that workflow. The repository's build matrix builds them (`npm run build:matrix`,
+target `uefi-arm64`, which bakes once), and its workflow, `.github/workflows/build-matrix.yml`, bakes them a second
+time from a clean build, compares the bytes, boots the disk image in QEMU's Arm `virt` machine with AAVMF through the
+same steps, and the ISO to the self-test. On a `v*` tag (not `stable-*`) it attaches `BOOTAA64.EFI` and
+`crimson_noir_os-aarch64.img`/`.iso` (the build matrix's names for them) to the tag's release.
 
 The media are reproducible. Every timestamp is the commit's time, the disk's GUIDs and the FAT serial come from the
 commit's hash, and the linker writes a hash of the output where it would stamp the build time (`.cargo/config.toml`:
@@ -89,7 +97,8 @@ only the media's description under the marker is refreshed.
 
 - To make a bootable stick, write `crimson_noir_os.img` to it, for example
   `dd if=target/image/crimson_noir_os.img of=/dev/sdX bs=4M`, then boot it on a UEFI x86-64 machine with Secure Boot
-  off. The image is unsigned.
+  off. The image is unsigned. `crimson_noir_os-aarch64.img` is the same for a 64-bit Arm machine with UEFI firmware
+  and ACPI (see Hardware support below).
 - The ISO is hybrid, so it boots from a stick or as a virtual machine's CD.
 
 ## What is where
@@ -100,9 +109,9 @@ only the media's description under the marker is refreshed.
 | `containment.canonical` | That canonical form, byte for byte (`cargo run -- canonical`); a test holds it equal to the generator, and the host's tests hold its SHA-256 equal to the lock |
 | `containment.seal` | The scripted run's ledger head, entry count and weights digest (`cargo run -- seal`): the host keeps for the fleet only the run with this seal; a test holds it equal to the run |
 | `crates/noir_core` | The `no_std` + `alloc` core, shared by the image and the hosted runtime (48 unit tests, 21 property tests under tests/) |
-| `boot/` (`crimson_boot`) | The UEFI application: its own UEFI bindings, GOP framebuffer, ExitBootServices, own GDT/IDT, serial log, PS/2 keyboard, a sealed bump allocator |
+| `boot/` (`crimson_boot`) | The UEFI application: its own UEFI bindings, GOP framebuffer, ExitBootServices, a sealed bump allocator, and per architecture (`arch/x86_64.rs`, `arch/aarch64.rs`) the serial log, the clock, the image's own GDT/IDT or exception vectors, and the keyboard (PS/2 on x86-64, the serial console on Arm) |
 | `src/`, `shaders/` | The hosted runtime (std, wgpu 30, bytemuck, log + env_logger, pollster) and the WGSL kernels; `wire.rs`, `ledger.rs` and `bridge.rs` are the bridge, which only this runtime has (16 tests, and 1 run against a live host) |
-| `tools/` | `build-image.sh` makes the disk image and the ISO; `boot_test.py` boots them in QEMU + OVMF, follows the serial log, types, and takes screenshots |
+| `tools/` | `build-image.sh` makes the disk image and the ISO for either target; `boot_test.py` boots them in QEMU + OVMF (or AAVMF with `--arch aarch64`), follows the serial log, types, and takes screenshots |
 
 The core crate's modules:
 
@@ -111,7 +120,7 @@ The core crate's modules:
 | `config.rs` | The configuration parser, validator, lock and generator |
 | `matrix.rs` | The Global Matrix, the world, spawning and the scripted self-test run |
 | `kernels.rs` | The branch-free hot path: the scalar reference tick, the SIMD tick (four agents a register), the relaxation and the sorting network's comparator |
-| `lanes.rs` | The SIMD lane type the tick runs on: SSE2 registers on x86_64, plain lane loops on the UEFI target |
+| `lanes.rs` | The SIMD lane type the tick runs on: SSE2 registers on x86_64, plain lane loops on both UEFI targets |
 | `sort.rs` | The bitonic network and its 0-1 proof |
 | `render.rs` | The integer-only rasterizer |
 | `scene.rs` | The room, built from the matrix |
@@ -256,6 +265,16 @@ QEMU 8 with OVMF, q35 machine, TCG (no hardware acceleration):
 | Tutorial passed | 76 s |
 | `halt` | powers the machine off through the firmware's runtime services |
 
+QEMU 8.2 with AAVMF (edk2 2024.02), `virt` machine, Cortex-A72, TCG, a 1024x768 ramfb screen; the log reads the
+generic timer at 62 MHz there:
+
+| Stage | Result |
+|---|---|
+| Boot checks pass (`SELFTEST PASS`) | about 7.5 s |
+| The self-test's compute run (600 ticks of 4,096 agents) | 1.5 to 1.8 s over eight boots, fingerprint `0x83765bab` as on x86-64 |
+| Tutorial passed | about 73 s |
+| `halt` | powers the machine off through the firmware's runtime services |
+
 On a desktop, with lavapipe as the GPU, `selftest` takes about 5 s in a debug build.
 
 ## Limits and corrections to the design document
@@ -278,12 +297,18 @@ These are stated plainly so nobody has to discover them.
 
 **Hardware support**
 
-- The keyboard is PS/2 only; USB keyboards work where the firmware emulates PS/2, as QEMU and most PCs do.
+- On x86-64 the keyboard is PS/2 only; USB keyboards work where the firmware emulates PS/2, as QEMU and most PCs do.
+- On aarch64 there is no PS/2 controller and the image has no USB stack, so the keyboard is the serial console: the
+  UART the firmware's ACPI SPCR table names (a PL011 or an SBSA generic UART), read and written after
+  ExitBootServices, where the arrow keys and Page Up/Down arrive as a terminal's escape sequences. A machine without
+  that table boots, but has no log and no keyboard; one with device trees only (no ACPI) is the same.
 - The image has no network, by design, and its configuration refuses one (`network = false`). Only the hosted
   runtime's bridge speaks to anything, and only to this machine.
-- Nothing here has been booted on physical hardware: the image is tested in QEMU with OVMF. The keyboard, the
-  framebuffer and the firmware calls are the standard ones a PC provides, but no physical machine has confirmed them.
-- The image is soft-float, so the renderer is integer-only.
+- Nothing here has been booted on physical hardware: the image is tested in QEMU with OVMF, and the aarch64 image in
+  QEMU's `virt` machine with AAVMF. The keyboard, the framebuffer and the firmware calls are the standard ones a PC
+  (or an Arm server's UEFI and ACPI) provides, but no physical machine has confirmed them.
+- The x86-64 image is soft-float, so the renderer is integer-only; the aarch64 image has NEON and draws the same
+  integer frames.
 - The firmware watchdog is turned off; the step budget is the only watchdog.
 
 **Looks**

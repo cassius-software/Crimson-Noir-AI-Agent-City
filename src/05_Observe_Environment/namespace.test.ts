@@ -40,7 +40,7 @@ function sample(): SipocSnapshot {
       gpu: 'some gpu', sensingAgeMs: 16.5, sensingLagMs: 2.25, crowdFrames: 500, seed: 42, working: 33, host: 'browser',
     },
     output: {
-      fps: 60, frameMs: 16.6667, p50Ms: 16.2, p95Ms: 18.4, cpuMs: 4.5, gpuRenderMs: 6.25, gpuComputeMs: 1.125,
+      fps: 60, frameMs: 16.6667, p50Ms: 16.2, p95Ms: 18.4, p99Ms: 21.05, cpuMs: 4.5, gpuRenderMs: 6.25, gpuComputeMs: 1.125,
       physicsMs: 2.5, rapierMs: 1.75, postMs: 0.1, ghost: true, rendering: false,
       net: { state: 'joined', peers: 3, dropped: 1 },
     },
@@ -48,7 +48,7 @@ function sample(): SipocSnapshot {
       law1: 1, law2: 2, law3: 3, sensorFlips: 4, shielded: true, last: 'law 2: a person shielded',
       audit: { ticks: 1000, perimeterBreaches: 0, velocityCaps: 2, closest: 1.234, panic: null },
     },
-    quality: { tier: 3, label: 'High', auto: true, renderScale: 1.5, targetMs: 16.667, lite: false, held: 2 },
+    quality: { tier: 3, label: 'High', auto: true, renderScale: 1.5, targetMs: 16.667, lite: false, hardware: 'desktop', held: 2 },
     customer: {
       region: null, streets: true, name: 'Ada', clock: '21:30', daylight: 0.125, viewYaw: 0,
       district: 'Financial District · night', speedKmh: 42.5, gear: 'D2',
@@ -75,7 +75,7 @@ function bare(): SipocSnapshot {
       pedestrians: 0, vehicles: 0, drawnNear: 0, drawnFar: 0, waiting: 0, crossing: 0, yielding: 0, safetyNudges: 0,
       gpu: '', sensingAgeMs: null,
     },
-    output: { fps: 30, frameMs: 33, p50Ms: 33, p95Ms: 40, cpuMs: 8, gpuRenderMs: 0, gpuComputeMs: 0, physicsMs: 3, rapierMs: 2 },
+    output: { fps: 30, frameMs: 33, p50Ms: 33, p95Ms: 40, p99Ms: 44, cpuMs: 8, gpuRenderMs: 0, gpuComputeMs: 0, physicsMs: 3, rapierMs: 2 },
     kernel: {
       law1: 0, law2: 0, law3: 0, sensorFlips: 0, shielded: false, last: '',
       audit: { ticks: 0, perimeterBreaches: 0, velocityCaps: 0, closest: Infinity, panic: null },
@@ -101,7 +101,7 @@ const SAMPLE_TOPICS: readonly string[] = [
   ...['crossing', 'drawnFar', 'drawnNear', 'pedestrians', 'safetyNudges', 'sensingAgeMs', 'sensingLagMs', 'waiting', 'working', 'yielding']
     .map((t) => `${P}Crowd/Cell/Population/${t}`),
   ...['distanceDriven', 'distanceWalked', 'longFrames', 'sessionSeconds'].map((t) => `${P}Experience/Cell/Session/${t}`),
-  ...['cpuMs', 'fps', 'frameMs', 'ghost', 'gpuComputeMs', 'gpuRenderMs', 'p50Ms', 'p95Ms', 'physicsMs', 'rain', 'rapierMs', 'rendering']
+  ...['cpuMs', 'fps', 'frameMs', 'ghost', 'gpuComputeMs', 'gpuRenderMs', 'p50Ms', 'p95Ms', 'p99Ms', 'physicsMs', 'rain', 'rapierMs', 'rendering']
     .map((t) => `${P}Frame/Cell/Page/${t}`),
   ...['device', 'glyphs', 'hal', 'pointerLocked', 'recording', 'robots', 'touch', 'xr'].map((t) => `${P}Hardware/Cell/Bus/${t}`),
   ...['closest', 'panic', 'perimeterBreaches', 'ticks', 'velocityCaps'].map((t) => `${P}Kernel/Cell/Audit/${t}`),
@@ -109,7 +109,7 @@ const SAMPLE_TOPICS: readonly string[] = [
   ...['publishes', 'topics'].map((t) => `${P}Namespace/Cell/Bus/${t}`),
   ...['dropped', 'peers', 'state'].map((t) => `${P}Network/Cell/Session/${t}`),
   ...['bodies', 'ccd', 'colliders', 'stepMs', 'steps'].map((t) => `${P}Physics/Cell/Realm/${t}`),
-  ...['auto', 'held', 'label', 'lite', 'renderScale', 'targetMs', 'tier'].map((t) => `${P}Quality/Cell/Governor/${t}`),
+  ...['auto', 'hardware', 'held', 'label', 'lite', 'renderScale', 'targetMs', 'tier'].map((t) => `${P}Quality/Cell/Governor/${t}`),
   `${P}Traffic/Cell/Fleet/vehicles`,
   ...['ew', 'ns', 'remaining'].map((t) => `${P}Traffic/Cell/Signals/${t}`),
   ...['heading', 'player', 'x', 'z'].map((t) => `${P}Traffic/Cell/Vehicle000/${t}`),
@@ -295,12 +295,12 @@ test('subscribe: the filter selects, calls arrive inside publish in order, unsub
 test('children: the next-level names below a prefix with their topic counts, sorted; the root by default', () => {
   const bus = new TopicBus()
   publishSnapshot(bus, sample(), PHYSICS, 1)
-  assert.deepEqual(bus.children(), [{ name: 'Area', topics: 84 }])
-  assert.deepEqual(bus.children(''), [{ name: 'Enterprise', topics: 84 }])
+  assert.deepEqual(bus.children(), [{ name: 'Area', topics: 86 }])
+  assert.deepEqual(bus.children(''), [{ name: 'Enterprise', topics: 86 }])
   assert.deepEqual(bus.children(`${ROOT}/Area/FinancialDistrict/Line`), [
     { name: 'Avatar', topics: 8 }, { name: 'Clock', topics: 2 }, { name: 'Crowd', topics: 10 }, { name: 'Experience', topics: 4 },
-    { name: 'Frame', topics: 12 }, { name: 'Hardware', topics: 8 }, { name: 'Kernel', topics: 11 }, { name: 'Namespace', topics: 2 },
-    { name: 'Network', topics: 3 }, { name: 'Physics', topics: 5 }, { name: 'Quality', topics: 7 }, { name: 'Traffic', topics: 12 },
+    { name: 'Frame', topics: 13 }, { name: 'Hardware', topics: 8 }, { name: 'Kernel', topics: 11 }, { name: 'Namespace', topics: 2 },
+    { name: 'Network', topics: 3 }, { name: 'Physics', topics: 5 }, { name: 'Quality', topics: 8 }, { name: 'Traffic', topics: 12 },
   ])
   assert.deepEqual(bus.children(`${ROOT}/Area/FinancialDistrict/Line/Traffic/Cell/`), [
     { name: 'Fleet', topics: 1 }, { name: 'Signals', topics: 3 }, { name: 'Vehicle000', topics: 4 }, { name: 'Vehicle001', topics: 4 },
@@ -309,7 +309,7 @@ test('children: the next-level names below a prefix with their topic counts, sor
   assert.deepEqual(bus.children(`${ROOT}/Area/FinancialDistrict/Line/Clock/Cell/Sun/clock`), [])
   assert.deepEqual(bus.children(`${ROOT}/Area/Financial`), [], 'a prefix is whole levels, not a prefix of a level')
   assert.deepEqual(bus.children('nowhere'), [])
-  assert.deepEqual(childLines(bus), ['Area/              84 topics'])
+  assert.deepEqual(childLines(bus), ['Area/              86 topics'])
   assert.deepEqual(childLines(bus, `${ROOT}/Area/FinancialDistrict/Line/Traffic/Cell`), [
     'Fleet/              1 topics',
     'Signals/            3 topics',
@@ -374,12 +374,12 @@ test('clear drops every topic, keeps the counters and the subscribers', () => {
 test('publishSnapshot: the exact sorted topic list of a complete snapshot, the Area from the district line', () => {
   const bus = new TopicBus()
   const s = sample()
-  assert.equal(publishSnapshot(bus, s, PHYSICS, 7), 84)
+  assert.equal(publishSnapshot(bus, s, PHYSICS, 7), 86)
   assert.equal(bus.refused, 0)
-  assert.equal(bus.count, 84)
-  assert.equal(bus.publishes, 84)
+  assert.equal(bus.count, 86)
+  assert.equal(bus.publishes, 86)
   assert.deepEqual(bus.topics(), SAMPLE_TOPICS)
-  assert.equal(SAMPLE_TOPICS.length, 84)
+  assert.equal(SAMPLE_TOPICS.length, 86)
   for (const t of bus.topics()) {
     assert.ok(isTopic(t), t)
     assert.ok(t.startsWith(`${ROOT}/Area/FinancialDistrict/Line/`), t)
@@ -419,6 +419,8 @@ test('publishSnapshot: the values land under their tags, with the named empty ca
   assert.equal(value(bus, `${P}Quality/Cell/Governor/auto`), true)
   assert.equal(value(bus, `${P}Quality/Cell/Governor/lite`), false)
   assert.equal(value(bus, `${P}Quality/Cell/Governor/held`), 2)
+  assert.equal(value(bus, `${P}Quality/Cell/Governor/hardware`), 'desktop')
+  assert.equal(value(bus, `${F}p99Ms`), 21.05)
   assert.equal(value(bus, `${P}Clock/Cell/Sun/clock`), '21:30')
   assert.equal(value(bus, `${P}Clock/Cell/Sun/daylight`), 0.125)
   assert.equal(value(bus, `${P}Avatar/Cell/Player/mode`), 'vehicle')
@@ -435,13 +437,13 @@ test('publishSnapshot: the values land under their tags, with the named empty ca
   assert.equal(value(bus, `${P}Network/Cell/Session/peers`), 3)
   assert.equal(value(bus, `${P}Experience/Cell/Session/distanceWalked`), 1500.5)
   // The bus's own readings are published last, with the counts at that moment.
-  assert.equal(value(bus, `${P}Namespace/Cell/Bus/topics`), 82)
-  assert.equal(value(bus, `${P}Namespace/Cell/Bus/publishes`), 83)
-  assert.equal(bus.get(`${P}Namespace/Cell/Bus/publishes`)?.seq, 84)
+  assert.equal(value(bus, `${P}Namespace/Cell/Bus/topics`), 84)
+  assert.equal(value(bus, `${P}Namespace/Cell/Bus/publishes`), 85)
+  assert.equal(bus.get(`${P}Namespace/Cell/Bus/publishes`)?.seq, 86)
   // The empty cases, the infinite closest, the other dash, and the defaults of the absent flags.
   const b = new TopicBus()
-  assert.equal(publishSnapshot(b, bare(), null, 2), 63)
-  assert.equal(b.count, 63)
+  assert.equal(publishSnapshot(b, bare(), null, 2), 64)
+  assert.equal(b.count, 64)
   assert.equal(b.refused, 0)
   const Q = `${ROOT}/Area/HarbourQuarter/Line/`
   assert.ok(b.topics().every((t) => t.startsWith(Q)))
@@ -452,8 +454,8 @@ test('publishSnapshot: the values land under their tags, with the named empty ca
   assert.equal(value(b, `${Q}Frame/Cell/Page/rendering`), true)
   assert.equal(value(b, `${Q}Frame/Cell/Page/ghost`), false)
   assert.equal(value(b, `${Q}Frame/Cell/Page/rain`), false)
-  assert.equal(value(b, `${Q}Namespace/Cell/Bus/topics`), 61)
-  assert.equal(value(b, `${Q}Namespace/Cell/Bus/publishes`), 62)
+  assert.equal(value(b, `${Q}Namespace/Cell/Bus/topics`), 62)
+  assert.equal(value(b, `${Q}Namespace/Cell/Bus/publishes`), 63)
   assert.equal(b.get(`${Q}Physics/Cell/Realm/steps`), null)
   assert.equal(b.get(`${Q}Network/Cell/Session/state`), null)
   assert.equal(b.get(`${Q}Crowd/Cell/Population/sensingAgeMs`), null)
@@ -468,19 +470,19 @@ test('publishSnapshot: a non-finite reading is skipped and counted refused; the 
   s.output.fps = Number.NaN
   s.customer.daylight = Infinity
   s.customer.district = ''
-  assert.equal(publishSnapshot(bus, s, PHYSICS, 1), 82)
+  assert.equal(publishSnapshot(bus, s, PHYSICS, 1), 84)
   assert.equal(bus.refused, 2)
-  assert.equal(bus.count, 82)
+  assert.equal(bus.count, 84)
   assert.equal(bus.get(`${ROOT}/Area/Unknown/Line/Frame/Cell/Page/fps`), null)
   assert.equal(value(bus, `${ROOT}/Area/Unknown/Line/Frame/Cell/Page/frameMs`), 16.6667)
-  assert.equal(value(bus, `${ROOT}/Area/Unknown/Line/Namespace/Cell/Bus/topics`), 80)
+  assert.equal(value(bus, `${ROOT}/Area/Unknown/Line/Namespace/Cell/Bus/topics`), 82)
 })
 
 test('publishSnapshot: at most 64 vehicles, zero-padded to three digits', () => {
   const bus = new TopicBus()
   const s = sample()
   s.map = Array.from({ length: 70 }, (_, i) => ({ x: i, z: -i, heading: 0, player: i === 0 }))
-  assert.equal(publishSnapshot(bus, s, PHYSICS, 1), 84 - 8 + 64 * 4)
+  assert.equal(publishSnapshot(bus, s, PHYSICS, 1), 86 - 8 + 64 * 4)
   assert.equal(bus.topics(`${P}Traffic/Cell/+/x`).length, 64)
   assert.equal(value(bus, `${P}Traffic/Cell/Vehicle063/x`), 63)
   assert.equal(bus.get(`${P}Traffic/Cell/Vehicle064/x`), null)
@@ -493,9 +495,9 @@ test('publishSnapshot twice: the same topics, new values and sequence numbers, t
   const s = sample()
   publishSnapshot(bus, s, PHYSICS, 1)
   const h1 = bus.head()
-  assert.equal(publishSnapshot(bus, s, PHYSICS, 2), 84)
-  assert.equal(bus.count, 84)
-  assert.equal(bus.publishes, 168)
+  assert.equal(publishSnapshot(bus, s, PHYSICS, 2), 86)
+  assert.equal(bus.count, 86)
+  assert.equal(bus.publishes, 172)
   assert.deepEqual(bus.topics(), SAMPLE_TOPICS)
   assert.notEqual(bus.head(), h1)
   // Two buses fed the same snapshots in the same order agree on the head.
@@ -513,7 +515,7 @@ test('topicLines: the root as ~, two spaces, the value as the console shows it; 
   const bus = new TopicBus()
   publishSnapshot(bus, sample(), PHYSICS, 1)
   const lines = topicLines(bus.list())
-  assert.equal(lines.length, 84)
+  assert.equal(lines.length, 86)
   for (const line of lines) {
     assert.match(line, /^[\x20-\x7e]+$/, line)
     assert.ok(line.length <= 100, line)
@@ -528,6 +530,7 @@ test('topicLines: the root as ~, two spaces, the value as the console shows it; 
     '~/Area/FinancialDistrict/Line/Frame/Cell/Page/gpuRenderMs  6.250',
     '~/Area/FinancialDistrict/Line/Frame/Cell/Page/p50Ms  16.200',
     '~/Area/FinancialDistrict/Line/Frame/Cell/Page/p95Ms  18.400',
+    '~/Area/FinancialDistrict/Line/Frame/Cell/Page/p99Ms  21.050',
     '~/Area/FinancialDistrict/Line/Frame/Cell/Page/physicsMs  2.500',
     '~/Area/FinancialDistrict/Line/Frame/Cell/Page/rain  on',
     '~/Area/FinancialDistrict/Line/Frame/Cell/Page/rapierMs  1.750',

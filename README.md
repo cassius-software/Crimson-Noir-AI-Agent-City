@@ -84,9 +84,11 @@ The built-in **Dynamic Frame Governor** (`src/05_Observe_Environment/governor.ts
 
 | Target Tier | Reference Hardware | Render Pipeline | Active SoA Agent Lanes | Local LLM / Swarm Mode |
 | :--- | :--- | :--- | :--- | :--- |
-| **Lite / Mobile** | Latest iPhone / Ulefone Armor X32 (6–8 GB RAM) | Clustered Forward+ · TAA · 2-Cascade CSM | 4,096 Lanes | In-Page Q4_K_M GGUF (1.7B–3B) / HTN |
-| **Desktop Auto** | Core i7 / Ryzen 7 · GTX 1060 / Radeon iGPU (16 GB) | 4x MSAA + TAA · GTAO · SSR · 3-Cascade PCSS | 32,768 Lanes | In-Page GGUF / Local Ollama / Claude Bridge |
-| **Peak / Pro** | PS5 Pro Equivalent Linux PC (RDNA 3.5/4 · 60+ TFLOPS) | 4K Clustered Deferred · Ray-Marched GI · Volumetrics | 131,072 Lanes | Multi-Swarm Parallel GGUF + Full Sim2Real |
+| **Lite / Mobile** | Latest iPhone / Ulefone Armor X32 (6–8 GB RAM) | Clustered Forward+ · TAA · 2-Cascade CSM | 8,000 lanes (2,500 on a lite profile) | In-Page Q4_K_M GGUF (1.7B–3B) / HTN |
+| **Desktop Auto** | Core i7 / Ryzen 7 · GTX 1060 / Radeon iGPU (16 GB) | 4x MSAA + TAA · GTAO · SSR · 3-Cascade PCSS | 14,000 lanes | In-Page GGUF / Local Ollama / Claude Bridge |
+| **Peak / Pro** | PS5 Pro Equivalent Linux PC (RDNA 3.5/4 · 60+ TFLOPS) | 4K Clustered Deferred · Ray-Marched GI · Volumetrics | 32,768 lanes (up to 60,000 with `?crowd`) | Multi-Swarm Parallel GGUF + Full Sim2Real |
+
+The lane counts are what the engine simulates by default for each hardware class it recognises at boot (phone, desktop, workstation: `MANUAL.md`, Autoscaling); the console's `hardware` command shows the class, the adapter's limits and the frame-time percentiles.
 
 ---
 
@@ -130,14 +132,17 @@ cargo test --manifest-path native/kv-pager/Cargo.toml
 cargo test --manifest-path native/routing/Cargo.toml
 ```
 
-### 3. Build Native Executables (Windows `.exe`, Linux ELF, macOS `.app`, Android/iOS)
+### 3. Build Native Executables (Windows `.exe`, Linux `.deb`/`.AppImage`, macOS `.app`, Android `.apk`, iOS `.ipa`, UEFI)
 ```bash
-# Desktop Native (Windows / Linux / macOS via Tauri v2 + Clang/LLVM)
-npm run tauri build
+# One command, every target this machine can build (plain Node: the same in cmd.exe and sh)
+npm run build:matrix -- --list
+npm run build:matrix -- --targets host      # this machine's desktop app and the UEFI application
+npm run build:matrix -- --targets all       # everything it can; the rest skipped with a note
 
-# Bare-Metal UEFI Bootable Image
-./crimson_noir_os/tools/build-image.sh
+# Bare-Metal UEFI Bootable Image (Linux or macOS, with mtools, sgdisk and xorriso)
+sh crimson_noir_os/tools/build-image.sh
 ```
+The GitHub workflow `build-matrix` runs the same command for all nine targets; `MANUAL.md`, *The build matrix*, says what each file needs to run and what is not made (nothing is signed).
 
 ---
 
