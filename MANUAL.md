@@ -724,7 +724,7 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
 - **Hair, headwear and face shapes.** The **Hair** row holds thirty-two styles: the five every look had (short, long,
   bob, bun, bald, their numbers kept) and buzz cut, fade, side part, afro, tapered afro, afro puff, top knot, ponytail,
   braided ponytail, cornrows, cornrow ponytail, box braids, braided bun, braided updo, locs, short locs, locs updo,
-  twists, long twists, twist-out, layered, half up, undercut, mohawk, waves, bun with fade and side part bun. Each is
+  twists, long twists, twist-out, layered, half up, undercut, centre strip, waves, bun with fade and side part bun. Each is
   the hair's pieces (the cap, the length, a bob, a bun, and three new shapes: a full rounded shell, a puff on the crown
   and a tail) and a paint over them (cropped close, faded or shaved at the sides, a parting, cornrows' rows, braids'
   plaits, locs' cords, twists, waves round the crown). A **Curl pattern** row (1A to 4C, or "as styled") lays the

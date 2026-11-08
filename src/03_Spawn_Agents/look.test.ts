@@ -254,6 +254,7 @@ test('slot sizes: the pinned counts, every colour option a palette swatch, the p
   for (const [name, i] of Object.entries(HAIR)) assert.equal(HAIR_STYLES[i].name, name)
   assert.deepEqual(WARDROBE.hairStyle, HAIR_STYLES.map((h) => h.name), 'the catalogue\'s names are the styles\' own')
   assert.equal(new Set(WARDROBE.hairStyle).size, 32, 'thirty-two names, each its own')
+  for (const name of ['mohawk', 'mohican']) assert.ok(!WARDROBE.hairStyle.includes(name), `a cut is named for itself, not for a people (${name})`)
   assert.equal(WARDROBE.ageSteps, 8)
   assert.ok(Object.isFrozen(WARDROBE) && Object.isFrozen(WARDROBE.outfits) && Object.isFrozen(LOOK_FIELD) && Object.isFrozen(HAIR))
 })

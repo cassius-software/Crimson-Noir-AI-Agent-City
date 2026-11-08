@@ -149,7 +149,8 @@ export const HAIR = Object.freeze({ short: 0, long: 1, bob: 2, bun: 3, bald: 4, 
 /**
  * How a style's hair is painted over its pieces (crowd.ts, the hair's slot): as it grows, cropped close to the scalp,
  * faded to the skin at the sides and back, cornrows, braids, locs, twists, a side part, an undercut (the sides
- * shaved), a strip down the middle (the sides shaved), or waves round the crown.
+ * shaved), a strip down the middle (the sides shaved), or waves round the crown. Every name is the cut's own, never
+ * a people's.
  */
 export const HAIR_TEXTURE = Object.freeze({ plain: 0, close: 1, fade: 2, rows: 3, braids: 4, locs: 5, twists: 6, part: 7, undercut: 8, strip: 9, waves: 10 })
 type HairPiece = 'hairCap' | 'longHair' | 'bob' | 'bun' | 'volume' | 'topBun' | 'ponytail'
@@ -191,7 +192,7 @@ export const HAIR_STYLES: readonly { readonly name: string; readonly pieces: rea
   ['layered', ['hairCap', 'bob', 'longHair'], 'plain'],
   ['half up', ['hairCap', 'longHair', 'bun'], 'plain'],
   ['undercut', ['hairCap'], 'undercut'],
-  ['mohawk', ['hairCap'], 'strip'],
+  ['centre strip', ['hairCap'], 'strip'],
   ['waves', ['hairCap'], 'waves'],
   ['bun with fade', ['hairCap', 'bun'], 'fade'],
   ['side part bun', ['hairCap', 'bun'], 'part'],

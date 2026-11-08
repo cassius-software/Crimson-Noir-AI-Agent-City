@@ -231,7 +231,7 @@ const ARGS: Record<string, readonly string[]> = {
   'look body': LOOK_BODY_ARGS,
   'look hairStyle': [
     'afro', 'afro puff', 'bald', 'bob', 'box braids', 'braided bun', 'braided ponytail', 'braided updo', 'bun', 'bun with fade', 'buzz cut',
-    'cornrow ponytail', 'cornrows', 'fade', 'half up', 'layered', 'locs', 'locs updo', 'long', 'long twists', 'mohawk', 'ponytail', 'short',
+    'centre strip', 'cornrow ponytail', 'cornrows', 'fade', 'half up', 'layered', 'locs', 'locs updo', 'long', 'long twists', 'ponytail', 'short',
     'short locs', 'side part', 'side part bun', 'tapered afro', 'top knot', 'twist-out', 'twists', 'undercut', 'waves',
   ],
   'look curl': ['1A', '1B', '1C', '2A', '2B', '2C', '3A', '3B', '3C', '4A', '4B', '4C', 'as styled'],
