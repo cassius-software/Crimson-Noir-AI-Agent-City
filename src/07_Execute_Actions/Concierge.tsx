@@ -181,11 +181,13 @@ export interface ConciergeProps {
   nudge?: Nudge | null
   /** Optional: the player opened the goal dialogue (the mentor counts it as talking to Sloane). */
   onGoal?(): void
+  /** Optional: the player sent a goal in their own words (the first walk's voice stage counts it as talking to Sloane). */
+  onGoalSent?(text: string): void
   /** Optional: Sloane's spoken voice (onboarding/speaker.ts): called with each line the card shows, as plain words. */
   onSay?(text: string): void
 }
 
-export function Concierge({ visible, profile, onProfile, family, overlay = family === 'touch', driving, dark = false, settleMs = SLOANE.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal, onSay }: ConciergeProps) {
+export function Concierge({ visible, profile, onProfile, family, overlay = family === 'touch', driving, dark = false, settleMs = SLOANE.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal, onGoalSent, onSay }: ConciergeProps) {
   const small = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
   const short = useSyncExternalStore(SHORT.subscribe, SHORT.matches, SHORT.server)
   const landscape = useSyncExternalStore(LANDSCAPE.subscribe, LANDSCAPE.matches, LANDSCAPE.server)
@@ -294,7 +296,9 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   }
   const startGoal = (text: string) => {
     const goalText = text.trim()
-    if (goalText) advance(new FiveWhys(goalText), [])
+    if (!goalText) return
+    advance(new FiveWhys(goalText), [])
+    onGoalSent?.(goalText)
   }
   const reply = (text: string) => {
     if (dialogue.whys && dialogue.step) {

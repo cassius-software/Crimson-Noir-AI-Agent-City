@@ -70,6 +70,10 @@ import { loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, saveMapChoic
 import { modelVoice, scriptedVoice, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
 import { ConciergeSpeaker, conciergeBridge, synthEnv, type ConciergeOut } from './07_Execute_Actions/onboarding/speaker.ts'
 import { useMentor } from './07_Execute_Actions/onboarding/useMentor.ts'
+import { FirstWalkCard } from './07_Execute_Actions/onboarding/FirstWalk.tsx'
+import { loadFirstWalk, needsFirstWalk } from './07_Execute_Actions/onboarding/firstWalkStore.ts'
+import { useFirstWalk } from './07_Execute_Actions/onboarding/useFirstWalk.ts'
+import { ROOM, toWorld } from './01_Initialize_World/interiors.ts'
 import { cueOf, earnFromRecruiter, hudProgress, pageProgress, progressBridge, worthCue, type ProgressCue } from './07_Execute_Actions/progress.ts'
 import { SKILL_TITLE } from './02_Define_The_Rules/progression.ts'
 import { agentBridge, identityLine, Roster, voiceProfile } from './08_Swarm/roster.ts'
@@ -78,6 +82,7 @@ import { FiveWhys } from './06_Make_Decisions/intent.ts'
 import type { GoalPlan } from './07_Execute_Actions/terminal/bridge.ts'
 import type { Voice as SpeechVoice } from './07_Execute_Actions/operator.ts'
 import type { Event as MentorEvent } from './09_Cognition/tutorial.ts'
+import { PROGRAM, type WalkEvent } from './09_Cognition/firstWalk.ts'
 
 const HUD_INTERVAL_MS = 100
 /**
@@ -498,6 +503,8 @@ function App() {
   // background and hands its outcome here; a returning visitor goes straight to the map they chose (script.ts).
   const [saved] = useState<SavedOnboarding | null>(loadOnboarding)
   const [onboard] = useState(() => needsOnboarding(new URLSearchParams(window.location.search), saved, loadProfile()))
+  // The first walk (onboarding/firstWalkStore.ts): on until its exit program has unlocked the city once, unless the URL says otherwise.
+  const [walk] = useState(() => needsFirstWalk(new URLSearchParams(window.location.search), loadFirstWalk()))
   const [outcome, setOutcome] = useState<Outcome | null>(null)
   const [voice] = useState(onboardingVoice)
   // Sloane's spoken voice, one for the onboarding and the city (the link is filled in once the engine is up).
@@ -527,7 +534,7 @@ function App() {
   const shellOptions = outcome?.options ? { ...options, ...outcome.options } : options
   // Sloane watches the first minutes of a visitor who has just walked in from the onboarding (never the expert path).
   const mentored = outcome !== null && !outcome.saved.skipped
-  return <GuiShell options={shellOptions} plan={{ choice, pack: outcome?.pack ?? null, zone }} mentored={mentored} voice={voice} speaker={speaker} link={link} />
+  return <GuiShell options={shellOptions} plan={{ choice, pack: outcome?.pack ?? null, zone }} mentored={mentored} walk={walk} voice={voice} speaker={speaker} link={link} />
 }
 
 /**
@@ -569,7 +576,7 @@ function goalPlan(text: string, b: Pick<TerminalBridge, 'setClock' | 'quality' |
 interface SpeakerLink { sound(): boolean; source: { voice: SpeechVoice; out: ConciergeOut } | null }
 
 /** The city: the engine over the canvas, the HUD, the Concierge, the touch controls and the drop-down console. */
-function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: Options; plan: MapPlan; mentored: boolean; voice: Voice; speaker: ConciergeSpeaker; link: SpeakerLink }) {
+function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { options: Options; plan: MapPlan; mentored: boolean; walk: boolean; voice: Voice; speaker: ConciergeSpeaker; link: SpeakerLink }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   // The city's element (a model file dropped on it is kept, on a desktop) and the hidden file input the picker opens.
   const mainRef = useRef<HTMLElement>(null)
@@ -651,9 +658,31 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
   // tether like `act ok`; a press after the proposal ended (the console answered first, the tether broke) is nothing.
   const allowAct = useCallback(() => { try { void bridge?.operator.acts.allow('card').result.catch(noop) } catch { /* already ended */ } }, [bridge])
   const refuseAct = useCallback(() => { try { bridge?.operator.acts.refuse('card') } catch { /* already ended */ } }, [bridge])
-  // Sloane's quiet watch over a first visitor (onboarding/useMentor.ts): its lines reach the Concierge as nudges, and a
-  // prompt sent to someone in the city is reported to it from the mind below (noteRef, built once with the engine).
-  const { nudge, note: noteMentor } = useMentor({ active: mentored && veilDone, engine, hud, family: hud?.supplier.glyphs ?? 'keyboard', name: profile?.name ?? '', voice })
+  // The first walk (onboarding/useFirstWalk.ts): Sloane's six stages before the city is the visitor's, ended only by the
+  // console's exit program. Its reports come from the Concierge (a goal sent), the console (a line run, its opening),
+  // the HUD (the microphone, the captions) and, in time, the exam; walkRef is the handlers' view of it.
+  const fw = useFirstWalk({ active: walk && veilDone, engine, hud, family: hud?.supplier.glyphs ?? 'keyboard', name: profile?.name ?? '', voice, termOpen })
+  const walking = walk && !fw.passed
+  const walkRef = useRef(fw)
+  useEffect(() => { walkRef.current = fw }, [fw])
+  const onGoalSent = useCallback(() => walkRef.current.note('goal'), [])
+  const listening = hud?.supplier.recruiting?.listening === true
+  useEffect(() => { if (listening) walkRef.current.note('mic') }, [listening])
+  // The captions turned (on or off) since the city came up: a change, not the state, is the visitor's doing.
+  const captionsOn = hud !== null && hud.customer.captions !== undefined
+  const hasHud = hud !== null
+  const captionsRef = useRef<boolean | null>(null)
+  useEffect(() => {
+    if (!hasHud) return
+    if (captionsRef.current !== null && captionsRef.current !== captionsOn) walkRef.current.note('captions')
+    captionsRef.current = captionsOn
+  }, [captionsOn, hasHud])
+  const typeWalk = useCallback((line: string) => termRef.current?.type(line), [])
+  const runWalk = useCallback(() => termRef.current?.run(), [])
+  // Sloane's quiet watch over a first visitor (onboarding/useMentor.ts), once the walk is over: its lines reach the
+  // Concierge as nudges, and a prompt sent to someone in the city is reported to it from the mind below (noteRef,
+  // built once with the engine).
+  const { nudge, note: noteMentor } = useMentor({ active: mentored && veilDone && !walking, engine, hud, family: hud?.supplier.glyphs ?? 'keyboard', name: profile?.name ?? '', voice })
   const noteRef = useRef<(e: MentorEvent) => void>(noteMentor)
   useEffect(() => { noteRef.current = noteMentor }, [noteMentor])
   const onGoal = useCallback(() => noteRef.current('goal'), [])
@@ -698,12 +727,74 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
     return false
   }, [bridge])
 
+  /**
+   * The walk's accessible path (FirstWalk.tsx's one button per stage): Sloane does the stage's action for a visitor
+   * who cannot. A turn of the head and four metres forward, as the keys would do it; a goal planned as the card plans
+   * one; the visitor put down at the nearest parked car's door and the door opened; put down just inside the nearest
+   * workplace's doorway; the console opened on `laws`; the program's first line typed into the prompt. Everything goes
+   * through the same controls the console's operator tier has (engine.simControls), never past the realm.
+   */
+  const showWalk = useCallback(() => {
+    const e = engineRef.current
+    const w = walkRef.current
+    if (!e || !w.stage) return
+    const c = e.simControls()
+    switch (w.stage) {
+      case 'move': {
+        e.input.yaw += 0.7
+        const yaw = e.input.yaw
+        c.avatar.walk(Math.sin(yaw) * 1.4, Math.cos(yaw) * 1.4, 3000)
+        return
+      }
+      case 'voice': {
+        const plan = bridge?.goal?.('make it night')
+        if (!plan) return
+        e.toast('Sloane', `${plan.root}: ${plan.steps.map((st) => `${st.label} (${st.state})`).join(', ')}`)
+        w.note('goal')
+        return
+      }
+      case 'fleet': {
+        const at = c.avatar.position()
+        let pick = -1, best = Number.POSITIVE_INFINITY
+        for (let i = 0; i < c.vehicles.count(); i++) {
+          const v = c.vehicles.state(i)
+          if (v.mode === 'player') continue
+          // A parked car first, the nearest moving one only when none is parked.
+          const d = Math.hypot(v.x - at.x, v.z - at.z) + (v.mode === 'parked' ? 0 : 1e6)
+          if (d < best) { best = d; pick = i }
+        }
+        if (pick < 0) return
+        const v = c.vehicles.state(pick)
+        // Beside the car (forward is (sin h, cos h); this is the side at its left), facing it; the door is the realm's to open.
+        const px = v.x + Math.cos(v.heading) * 2.2, pz = v.z - Math.sin(v.heading) * 2.2
+        c.avatar.teleport(px, pz, Math.atan2(v.x - px, v.z - pz))
+        window.setTimeout(() => { if (engineRef.current === e) e.interact() }, 400)
+        return
+      }
+      case 'work': {
+        const at = c.avatar.position()
+        let room = null, near = Number.POSITIVE_INFINITY
+        for (const r of e.workplaces()) {
+          const d = Math.hypot(r.door.x - at.x, r.door.z - at.z)
+          if (d < near) { near = d; room = r }
+        }
+        if (!room) return
+        // The hub: the point just inside the doorway every route through the room passes, facing the room.
+        const p = toWorld(room, ROOM.hub, 0)
+        c.avatar.teleport(p.x, p.z, Math.atan2(room.cx - p.x, room.cz - p.z))
+        return
+      }
+      case 'ring0': termRef.current?.run('laws'); return
+      case 'exam': termRef.current?.type(`noir ${PROGRAM[0]}`); return
+    }
+  }, [bridge])
+
   // The console suspends game input (and releases pointer lock) while it owns the keyboard; the wardrobe card likewise
-  // while it is open (the console opening puts the card away).
+  // while it is open (the console opening puts the card away). The walk hears of the console opening.
   const onTermOpen = useCallback((open: boolean) => {
     termOpenRef.current = open
     setTermOpen(open)
-    if (open) { setLookOpen(false); setStoreOpen(null); setTrying(null) }
+    if (open) { setLookOpen(false); setStoreOpen(null); setTrying(null); walkRef.current.note('console') }
     engineRef.current?.input.suspend(open || lookOpenRef.current || storeOpenRef.current !== null)
   }, [])
   useEffect(() => {
@@ -1077,6 +1168,9 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
               net: e.net,
               // Headless browsers cannot take pointer lock; this hides the capture hint for screenshots.
               pretendLocked: () => { e.input.locked = true },
+              // The first walk (09_Cognition/firstWalk.ts): the stage on the card (null when off or passed), and a report into it.
+              walk: () => walkRef.current.stage,
+              walkNote: (ev: WalkEvent) => walkRef.current.note(ev),
               // The physics realm as the harness sees it: the mirrored state, the command queue (dbg* accepted), the next state.
               sim: e.debugSim(),
               engine: e,
@@ -1160,6 +1254,23 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           onLook={openLook}
           nudge={nudge}
           onGoal={onGoal}
+          onGoalSent={onGoalSent}
+          onSay={onSay}
+        />
+      )}
+      {/* The first walk's card (onboarding/FirstWalk.tsx): over the HUD, under the console; away while the wardrobe is open
+          or the city is halted. It has no close: the console's exit program ends it. */}
+      {hud && walking && fw.card && (
+        <FirstWalkCard
+          visible={veilDone && !lookOpen && locked === null}
+          card={fw.card}
+          beat={fw.beat}
+          exam={fw.exam}
+          overlay={hud.supplier.touch}
+          termOpen={termOpen}
+          onShow={showWalk}
+          onType={typeWalk}
+          onRun={runWalk}
           onSay={onSay}
         />
       )}
@@ -1191,7 +1302,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           dark={hud.customer.daylight < 0.35}
         />
       )}
-      <Terminal ref={termRef} bridge={bridge} onOpenChange={onTermOpen} onBoot={reboot} onMap={remap} />
+      <Terminal ref={termRef} bridge={bridge} onOpenChange={onTermOpen} onBoot={reboot} onMap={remap} onLine={fw.line} />
       {/* A city action waiting for the operator's OK (ActCard.tsx): over the console, under the recovery card; never
           while the city is halted, never before the veil lifts. The console beneath stays usable (y, n, act ok, act no). */}
       {act && veilDone && locked === null && bridge && <ActCard act={act} termOpen={termOpen} onAllow={allowAct} onRefuse={refuseAct} />}
