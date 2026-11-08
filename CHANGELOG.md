@@ -53,6 +53,13 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   stage as more ways to finish it. `tutorial status` counts seven stages; the browser smoke's `walk` scenario opens
   and closes the wardrobe on the way. Pinned by node tests (the order, the wardrobe event, the stage passed over, the
   lines' plainness, conduct screen and brand scrub, App's wiring); a real phone, pad or screen reader is unverified.
+- **The first walk's card and Sloane's open card side by side.** On a desktop window narrower than about 1,300 px
+  the walk's card (20 rem, on the right under the readout) lay over the right end of Sloane's open card, her name
+  question's Continue button among it, on every first run. From 960 px across her card's column now runs from the
+  minimap's clearance to just short of the walk's card while the walk is on (`Concierge.tsx` `WIDE_BESIDE`, centred
+  there up to its usual 38 rem); below 960 px the walk's card steps aside while her card is open (`onOpen`, `crowded`)
+  and comes back when she settles into her chip. The browser smoke's `walk` scenario measures the two apart at
+  960×540, 1024×640, 1152×648, 1280×720 and 1366×657 and the walk's card away at 900×600 while her question is open.
 - **Actuator shaping, domain randomization and workstation cells for the joint bridge**
   (`src/04_Connect_Hardware/actuatorFit.ts`, `cells.ts`; `src/07_Execute_Actions/jointRealm.ts`, `articulated.ts`).
   A step response can now be fitted as a second-order system with dead time (`fitStep2`: gain, delay, natural rate ω

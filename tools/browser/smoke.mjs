@@ -1718,6 +1718,27 @@ const SCENARIOS = {
       check(shown && (await stage()) === 'move', 'walk: a first run opens on the first walk, at its first stage', `card ${shown}, stage ${await stage()}`)
       const buttons = await p.eval(`[...document.querySelectorAll('[data-walk] button')].map((b) => b.textContent.trim() + (b.getAttribute('aria-label') ? ' [' + b.getAttribute('aria-label') + ']' : ''))`)
       check(buttons.length > 0 && !buttons.some((w) => /skip|close|dismiss|later|\bx\b/i.test(w)), 'walk: the card has no skip and no close', buttons.join(', '))
+      // A first run also opens on Sloane's name question: from 60 rem across her card stands left of the walk's, at every
+      // window size up to where the two met before (about 1,300 px); in a narrower window the walk's card steps aside
+      // while hers is open, and comes back at 960 px.
+      if (await p.waitFor(`!!document.querySelector('aside[data-concierge="ask"]')`, 30_000).then(() => true, () => false)) {
+        const apart = []
+        for (const [width, height] of [[960, 540], [1024, 640], [1152, 648], [1280, 720], [1366, 657]]) {
+          await p.b.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false })
+          await p.frames(3)
+          const m = await p.eval(`(() => { const r = (q) => { const e = document.querySelector(q); if (!e) return null; const b = e.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom } }; return { walk: r('[data-walk]'), sloane: r('aside[data-concierge="ask"]') } })()`)
+          const meet = !m.walk || !m.sloane || (m.sloane.r > m.walk.l && m.sloane.l < m.walk.r && m.sloane.b > m.walk.t && m.sloane.t < m.walk.b)
+          apart.push(`${width}x${height} ${meet ? 'MEET' : `gap ${Math.round(m.walk.l - m.sloane.r)}`}`)
+        }
+        check(!apart.some((a) => a.includes('MEET')), 'walk: Sloane\'s open question stands beside the walk\'s card, never under it', apart.join(', '))
+        await p.b.send('Emulation.setDeviceMetricsOverride', { width: 900, height: 600, deviceScaleFactor: 1, mobile: false })
+        const aside = await p.waitFor(`!document.querySelector('[data-walk]') && !!document.querySelector('aside[data-concierge="ask"]')`, 5_000).then(() => true, () => false)
+        await p.b.send('Emulation.setDeviceMetricsOverride', { width: 960, height: 540, deviceScaleFactor: 1, mobile: false })
+        const back = await p.waitFor(`!!document.querySelector('[data-walk-show]')`, 5_000).then(() => true, () => false)
+        await p.frames(3)
+        await p.shot('walk-beside')
+        check(aside && back, 'walk: under 60 rem across the walk\'s card steps aside while Sloane\'s card is open, and is back at 960 px', `aside at 900 px ${aside}, back at 960 px ${back}`)
+      } else check(false, 'walk: Sloane\'s name question opens with the walk')
       await p.tap('Escape', 'Escape', 27)
       await p.frames(3)
       check(await card(), 'walk: Escape does not put the card away')
