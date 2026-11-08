@@ -316,13 +316,15 @@ class Page {
     await this.b.send('Page.navigate', { url })
   }
   /**
-   * Waits for the engine (window.__SIM__), a few rendered frames, and the boot veil lifting: it takes every touch and
+   * Waits for the engine (window.__SIM__), a few rendered frames, and the boot veil gone: it takes every touch and
    * click while it covers the page (BootVeil.tsx holds it half a second after the first frame), and a person waits for
-   * the city to show before touching it too.
+   * the city to show before touching it too. Gone, not just fading: Sloane's card opens when the fade ends (App.tsx
+   * veilDone), and on a slow software adapter that came after the first key checks, so its name field took G, M,
+   * the tilde and E as typing.
    */
   async booted() {
     await this.waitFor('!!window.__SIM__ && window.__SIM__.snapshot().output.fps > 0', BOOT_MS)
-    await this.waitFor(`!document.querySelector('.boot-veil[data-phase="cover"]')`, 30_000)
+    await this.waitFor(`!document.querySelector('.boot-veil')`, 30_000)
   }
   snap() {
     // On foot the avatar's capsule; at the wheel the driven car's pose (POSE: x at 0, z at 2, 28 floats a body).
@@ -377,8 +379,13 @@ class Page {
   saveTranscript(name) {
     try { writeFileSync(join(OUT, `${name}-console.txt`), this.transcript.join('\n\n')) } catch { /* the report still has the check rows */ }
   }
-  /** Opens the Ring-0 console with the tilde key (a desktop), its prompt focused. */
+  /**
+   * Opens the Ring-0 console with the tilde key (a desktop), its prompt focused. A first visit's concierge greets once
+   * the veil is gone, its name field holding the keyboard: skipped first, as a visitor who wants the console would, so
+   * the tilde reaches the page (after a reload too).
+   */
   async openConsole() {
+    await this.eval(`[...document.querySelectorAll('aside[data-concierge] button')].find((b) => b.textContent.trim() === 'Skip')?.click()`)
     await this.tap('Backquote', '`', 192)
     return this.waitFor(`!!document.querySelector('[aria-label$="Ring-0 terminal"][data-open]') && document.activeElement?.getAttribute('aria-label') === 'Ring-0 command line'`, 10_000).then(() => true, () => false)
   }
@@ -718,6 +725,15 @@ const SCENARIOS = {
       // Not a Peak candidate (a software adapter): every such device boots as it did before Peak.
       const nc = await p.eval(PEAK_STATE)
       check(nc.max === 4 && nc.timestamps === false && nc.peak === null, 'desktop: a device that is not a Peak candidate keeps the range Minimal..Ultra, no GPU timestamps and no Peak rule', `range ${nc.min}..${nc.max}, timestamps ${nc.timestamps}, peak ${JSON.stringify(nc.peak)}`)
+
+      // Sloane's name question shows once the veil has finished fading, and its field takes the keyboard (Concierge.tsx).
+      // booted() returns as the fade starts, and a click on the canvas leaves a focused field focused: on a runner slow
+      // enough that the field came up after the click below, every key from G on was typed into it (G, M, the tilde and
+      // E all failing together, the nix smoke of PRs #71 and #89). So wait for the question, then skip it with Esc as a
+      // person who wants to walk would.
+      if (await p.waitFor(`!document.querySelector('.boot-veil') && document.activeElement?.getAttribute('aria-label') === 'Your name'`, 30_000).then(() => true, () => false)) {
+        await p.tap('Escape', 'Escape', 27)
+      }
 
       // Walk: W held (layout-independent code), the avatar moves.
       await p.mouse('mousePressed', 480, 270, 1)

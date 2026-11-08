@@ -458,7 +458,10 @@ shoved, no pole stops you, and the people keep their line.
 
 - **The street furniture is in the physics world as sensors** (`physics.ts`). Ghost view still shows every pole, and
   a query can still find one, but a pole exchanges no contact. The avatar's controller, a car's wheels, the AI
-  drivers' obstacle ray and the ground guard all ignore sensors. A car drives through a lamp as over open road.
+  drivers' obstacle ray and the ground guard all ignore sensors. A car drives through a lamp as over open road. The
+  poles are packed into one compound sensor per 80 m tile (a hundred for the city instead of 4,599 colliders), since
+  Rapier's JavaScript side visits every collider after every step: each pole is the same cylinder where it always
+  stood.
 - **The crowd never sees you as a neighbour.** The avatar is not put in the grid the pedestrians steer by
   (`crowd.wgsl` `binAgents`), so none of them steps aside, falls in beside you, or drifts toward you. Someone you ask
   over still keeps their talking distance: that comes from the summons, not from collision.
