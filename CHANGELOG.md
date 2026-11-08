@@ -42,7 +42,8 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   a two-way street with a sidewalk the start can walk to, never the landmark's lot or a lot under water.
   `regionWorld.ts` `hollowLots` hollows a shop's lot as it hollows a room's (the slab in the podium's height and
   finish, a tower carried on it, the floor and forecourt paved), the worker takes the lots in `SimInit.shops` and
-  refuses malformed ones, each with its reason, and the region's minimap draws the shops. Pinned by
+  refuses malformed ones, each with its reason, the region's minimap draws the shops, and each shop's card names the
+  streets it stands on (the city's arcades are the city's districts). Pinned by
   `region/shops.test.ts` (two seeds, every zone: five shops, never a workplace's lot, the nearest lots first, the
   hollowing and the workplaces unchanged by it), `regionPhysics.test.ts` (the worker's refusals) and
   `storeWiring.test.ts`.

@@ -39,7 +39,11 @@ test('the city and the worker: shops hollowed after the workplaces; a car left i
 
 test('the engine: the city\'s shops kept; E opens a shop\'s card unless a car is in reach, B always; the mirror camera ends outside the shop', () => {
   const src = flat(read('./engine.ts'))
-  assert.ok(src.includes('shops: hollow ? hollow.shops : cityShops(options.seed),'), 'the city\'s shops, or the region\'s')
+  assert.ok(src.includes('shops: hollow ? hollow.shops.map((s) => (places ? { ...s, arcade: places.place(s.door.x, s.door.z) } : s)) : cityShops(options.seed),'), 'the city\'s shops, or the region\'s at their own addresses')
+  // The card names the shop's own arcade (a region's address there), never the city's district for its kind.
+  const card = flat(read('./StoreCard.tsx'))
+  assert.ok(card.includes('data-arcade>{shop.arcade}</div>'))
+  assert.ok(!card.includes('info.arcade'))
   // A region's shops: picked after its workplaces, never on one of their lots, hollowed with them, the same lots to the worker.
   before(src, 'const lots = pack && layout && streets ? regionWorkplaceLots(', 'const shopLots = pack && layout && streets ? regionShopLots(pack, layout, streets, spawn, options.seed, lots) : []', 'the workplaces first')
   assert.ok(src.includes('hollowLots(pack, layout, lots, shopLots)'))

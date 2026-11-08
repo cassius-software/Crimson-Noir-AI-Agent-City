@@ -31,8 +31,9 @@ export const SHOP_KINDS = ['tailor', 'inkStudio', 'prosthetics', 'horology', 'de
 export type ShopKind = (typeof SHOP_KINDS)[number]
 
 /**
- * Each shop's name, the arcade it stands in and one line about it, as the card and the HUD say them. The names are
- * invented and were searched for clashes with real businesses in the same trade (docs/ip-audit.md, section 7): the
+ * Each shop's name, the arcade it stands in in the city (a region's shop takes its street address instead: engine.ts)
+ * and one line about it, as the card and the HUD say them. The names are invented and were searched for clashes with
+ * real businesses in the same trade (docs/ip-audit.md, section 7): the
  * plan's tailor, watch shop and design house names were close to a clothing company's registered marks, registered
  * watch marks and an established design magazine, so all three were renamed; no real place is named (the plan's
  * waterfront arcade was a real neighbourhood's name).
@@ -42,7 +43,7 @@ export const SHOP_INFO: Readonly<Record<ShopKind, { name: string; arcade: string
   inkStudio: Object.freeze({ name: 'Aethelgard Ink Studio', arcade: 'Lakefront Arts Row', line: 'Fine-line, geometric and heritage designs, previewed before a needle moves.' }),
   prosthetics: Object.freeze({ name: 'Bio-Frame Prosthetics Atelier', arcade: 'Biomedical Plaza', line: 'Limbs, hearing tech and smart eyewear, fitted and finished to order.' }),
   horology: Object.freeze({ name: 'Escapement Row Horology', arcade: 'Financial District Arcade', line: 'Watches, briefcases, lapel pins and the small things that finish a look.' }),
-  designHouse: Object.freeze({ name: 'Lintel & Lumen Design House', arcade: 'Waterline Galleria', line: 'Furniture, lighting and art, and the brokerage for every property in the city.' }),
+  designHouse: Object.freeze({ name: 'Lintel & Lumen Design House', arcade: 'Waterline Galleria', line: 'Furniture, lighting and art, and the brokerage for every home you can own.' }),
 })
 
 /** The shop's tuning, frozen. */
@@ -64,6 +65,7 @@ export interface ShopLot { kind: ShopKind; k: number; m: number; side: Side }
 export interface Shop {
   kind: ShopKind
   name: string
+  /** Where it stands, as its card says it: the city's arcade for its kind, or a region's street address. */
   arcade: string
   k: number
   m: number

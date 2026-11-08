@@ -238,7 +238,8 @@ can walk to from the start, never on the landmark's lot or in the lake. Each lot
 (`regionWorld.ts` `hollowLots`): what stood there is put out of sight, the ceiling slab takes the podium's height and
 finish, a tower that stood on the podium is carried on the slab, and the floor and the forecourt are paved. The
 physics worker is handed the same lots and builds the same glass, so a car left in a shop puts its driver down clear
-of it. The surveyed region has no street window, and no shops.
+of it. A region shop's card names the streets it stands on, not a city arcade. The surveyed region has no street
+window, and no shops.
 
 On foot inside one, the HUD shows **Browse** and the shop's name. E, B, the pad's south face button or a tap on that
 chip opens the shop's card (`07_Execute_Actions/StoreCard.tsx`); near a car, E keeps opening its door, and B still

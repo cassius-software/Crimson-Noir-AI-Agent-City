@@ -169,7 +169,7 @@ export function StoreCard({ visible, shop, keeper, look, trying, mirror = true, 
         <div className="flex items-start gap-3 px-5 pt-4">
           <div className="min-w-0 flex-1">
             <div className="text-base font-semibold leading-tight">{info.name}</div>
-            <div className={`text-[11px] uppercase tracking-wide ${t.muted}`}>{info.arcade}</div>
+            <div className={`text-[11px] uppercase tracking-wide ${t.muted}`} data-arcade>{shop.arcade}</div>
             <p className={`mt-1 text-[12px] leading-snug ${t.muted}`}>{info.line}</p>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className={`shrink-0 rounded-full border px-2.5 py-1 text-[12px] ${t.pill}`}>×</button>

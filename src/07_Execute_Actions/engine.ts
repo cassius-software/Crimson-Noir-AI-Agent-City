@@ -982,8 +982,9 @@ export class Engine {
         quality: { governor, targets, applied, mask, live }, places, landmark, streets,
         rooms: hollow ? hollow.rooms : workplaces(options.seed),
         // The city's storefronts, hollowed into its boxes by city.ts (storefronts.ts hollowShops), or a generated region's
-        // (regionWorld.ts hollowLots; none in a surveyed region).
-        shops: hollow ? hollow.shops : cityShops(options.seed),
+        // (regionWorld.ts hollowLots; none in a surveyed region), each given the region's own address for its card: the
+        // city's arcades name the city's districts, which a region does not have.
+        shops: hollow ? hollow.shops.map((s) => (places ? { ...s, arcade: places.place(s.door.x, s.door.z) } : s)) : cityShops(options.seed),
         // The code dissolve's crowd amounts: allocated by the draws above like the frame's buffers, written the same way.
         crowdDissolve: gpuBufferOf(gpu.renderer, view0.dissolve),
         crowdLook,

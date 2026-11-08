@@ -18,7 +18,7 @@ import { readFileSync } from 'node:fs'
 import { registerHooks } from 'node:module'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { CITY, STYLE } from '../city.ts'
+import { CITY, STYLE, type Building } from '../city.ts'
 import { ROOM, targetCorner, toWorld, type WorkplaceLot } from '../interiors.ts'
 import { ZONE, generateLakefront } from '../lakefront.ts'
 import { packOf } from '../lakefrontPack.ts'
@@ -39,20 +39,25 @@ registerHooks({
 const { RegionPlaces, buildingStyle, hollowLots, layoutOf } = await import('./regionWorld.ts')
 
 const P = CITY.pitch
-interface Window { seed: number; zone: string; pack: RegionPack; layout: ReturnType<typeof layoutOf>; start: { x: number; z: number }; g: StreetGrid; lots: WorkplaceLot[]; shops: ShopLot[] }
+interface Window { seed: number; zone: string; pack: RegionPack; before: string; layout: ReturnType<typeof layoutOf>; start: { x: number; z: number }; g: StreetGrid; lots: WorkplaceLot[]; shops: ShopLot[] }
 const WINDOWS: Window[] = [1337, 7].flatMap((seed) => {
   const map = generateLakefront(seed, 64)
   return Object.entries(ZONE).filter(([name]) => name !== 'lake').map(([zone, z]) => {
     const pack = packOf(map, z)
+    // The pack as it came, before anything reads it: a picker that wrote to it would show here, whatever it returned.
+    const before = JSON.stringify(pack)
     const layout = layoutOf(pack)
     const start = new RegionPlaces(pack, layout).spawn({ x: layout.offset.x, z: layout.offset.z })
     const g = streetGridOf(pack, layout.offset, start)!
     const lots = regionWorkplaceLots(pack, layout, g, start, seed)
-    return { seed, zone, pack, layout, start, g, lots, shops: regionShopLots(pack, layout, g, start, seed, lots) }
+    return { seed, zone, pack, before, layout, start, g, lots, shops: regionShopLots(pack, layout, g, start, seed, lots) }
   })
 })
 const local = (w: Window, l: { k: number; m: number }) => ({ i: l.k - w.g.originX / P, j: l.m - w.g.originZ / P })
 const key = (l: { k: number; m: number }) => `${l.k},${l.m}`
+const overLot = (lot: { cx: number; cz: number }, { box: [x0, , z0, x1, , z1] }: Building) =>
+  Math.abs((x0 + x1) / 2 - lot.cx) <= CITY.lotHalf && Math.abs((z0 + z1) / 2 - lot.cz) <= CITY.lotHalf
+const byBox = (a: Building, b: Building) => a.box.join() < b.box.join() ? -1 : a.box.join() > b.box.join() ? 1 : 0
 const pointIn = (x: number, z: number, ring: readonly (readonly [number, number])[]): boolean => {
   let c = false
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
@@ -83,26 +88,42 @@ test('five lots of the window after the workplaces, never one of theirs, the lan
       const cx = (s.k + 0.5) * P - w.layout.offset.x, cz = (s.m + 0.5) * P - w.layout.offset.z
       for (let p = 0; p < polygonCount(w.pack.water); p++) assert.ok(!polygonAt(w.pack.water, p).some((r) => pointIn(cx, cz, r)), `${at}: the ${s.kind} is on dry land`)
     }
-    const before = JSON.stringify(w.pack)
+    assert.equal(JSON.stringify(w.pack), w.before, `${at}: the pack is only read (the snapshot was taken before any picker ran)`)
     assert.deepEqual(regionShopLots(w.pack, w.layout, g, w.start, w.seed, w.lots), shops, `${at}: the same lots again`)
-    assert.equal(JSON.stringify(w.pack), before, `${at}: the pack is only read`)
+    // From a fresh pack of the same map, the same lots: nothing the first run left behind chose them.
+    const fresh = packOf(generateLakefront(w.seed, 64), ZONE[w.zone as keyof typeof ZONE])
+    assert.deepEqual(regionShopLots(fresh, w.layout, g, w.start, w.seed, regionWorkplaceLots(fresh, w.layout, g, w.start, w.seed)), shops, `${at}: the same lots from a fresh pack`)
   }
   assert.notDeepEqual(WINDOWS[0].shops, WINDOWS[5].shops, 'another seed, other shops')
 })
 
-test('the shops stand where a visitor finds them: no lot left out is nearer the start than a lot chosen', () => {
+test('the shops stand where a visitor finds them: the nearest lots first, then the better built, the kinds in that order', () => {
+  let tierDecided = 0
   for (const w of WINDOWS) {
     const at = `seed ${w.seed} ${w.zone}`
     const taken = new Set(w.lots.map(key))
     const K0 = w.g.originX / P, M0 = w.g.originZ / P
     const all = lotCandidates(w.pack, w.layout, w.g, w.start).filter((c) => !taken.has(`${K0 + c.i},${M0 + c.j}`))
+    const rank = new Map(all.map((c) => [`${K0 + c.i},${M0 + c.j}`, c]))
     const chosen = new Set(w.shops.map(key))
-    const ringOf = new Map(all.map((c) => [`${K0 + c.i},${M0 + c.j}`, c.ring]))
-    const farthest = Math.max(...w.shops.map((s) => ringOf.get(key(s))!))
-    const nearestLeft = Math.min(...all.filter((c) => !chosen.has(`${K0 + c.i},${M0 + c.j}`)).map((c) => c.ring))
-    assert.ok(farthest <= nearestLeft, `${at}: a shop ${farthest} rings out, a lot left ${nearestLeft} out`)
-    assert.ok(farthest <= 3, `${at}: every shop within three lots of the start (${farthest})`)
+    const left = all.filter((c) => !chosen.has(`${K0 + c.i},${M0 + c.j}`))
+    // No lot left out comes before a chosen one by (ring, tier): ties on both are the dice's.
+    for (const s of w.shops) {
+      const c = rank.get(key(s))!
+      for (const o of left) {
+        assert.ok(c.ring < o.ring || (c.ring === o.ring && c.tier <= o.tier), `${at}: the ${s.kind} (ring ${c.ring}, tier ${c.tier}) after a lot left out (ring ${o.ring}, tier ${o.tier})`)
+        if (c.ring === o.ring && c.tier < o.tier) tierDecided++
+      }
+    }
+    // The kinds go to the lots in rank order.
+    const pairs = w.shops.map((s) => rank.get(key(s))!)
+    for (let n = 1; n < pairs.length; n++) {
+      const a = pairs[n - 1], b = pairs[n]
+      assert.ok(a.ring < b.ring || (a.ring === b.ring && a.tier <= b.tier), `${at}: ${w.shops[n - 1].kind} before ${w.shops[n].kind}`)
+    }
+    assert.ok(Math.max(...pairs.map((c) => c.ring)) <= 3, `${at}: every shop within three lots of the start`)
   }
+  assert.ok(tierDecided > 0, 'somewhere the tier, not the ring, decided between a shop and a lot left out')
 })
 
 test('hollowing with the shops: their buildings hidden, a shop on each in its podium\'s height and finish, the tower carried, the floors paved; the workplaces as they were', () => {
@@ -129,10 +150,22 @@ test('hollowing with the shops: their buildings hidden, a shop on each in its po
     assert.deepEqual(h.shops, want, `${at}: the shops`)
     const inShop = new Set(h.shops.flatMap((s) => [...s.shell, ...s.furniture]))
     for (const b of inShop) assert.ok(h.plan.includes(b), `${at}: every shop box is drawn`)
-    // What the shops add to the plan beyond their own boxes is what stood above their slabs, carried.
-    const extra = h.plan.length - plain.plan.length - inShop.size
-    assert.ok(extra >= 0, `${at}: ${extra}`)
-    carried += extra
+    assert.deepEqual(h.plan.slice(0, plain.plan.length), plain.plan, `${at}: the rooms' boxes first, as they were`)
+    // What the shops add beyond their own boxes is exactly what stood a floor or more above each slab, carried on it
+    // from the slab's top as the box it was, in its own finish; nothing else.
+    const lifted = h.plan.slice(plain.plan.length).filter((b) => !inShop.has(b))
+    let above = 0
+    for (const shop of h.shops) {
+      const { i, j } = local(w, shop)
+      const top = shop.shell[5].box[4]
+      const want = on[j * w.g.blocks + i].filter((b) => b.height >= top + 3.3 - 1e-6)
+        .map((b): Building => ({ box: [b.x0, top, b.z0, b.x1, b.height, b.z1], style: buildingStyle(w.pack, w.layout, b.i) }))
+      assert.deepEqual(lifted.filter((b) => overLot(shop, b)).sort(byBox), want.sort(byBox), `${at} ${shop.kind}: carried above the slab`)
+      for (const b of want) assert.ok(b.box[1] >= ROOM.height + 0.3 - 1e-9, `${at} ${shop.kind}: nothing carried reaches into the shop`)
+      above += want.length
+    }
+    assert.equal(lifted.length, above, `${at}: nothing else is drawn`)
+    carried += above
     // The floors: the rooms' as before, then each shop's lot and its forecourt.
     const rect = (a: { x: number; z: number }, b: { x: number; z: number }) => ({ x0: Math.min(a.x, b.x), z0: Math.min(a.z, b.z), x1: Math.max(a.x, b.x), z1: Math.max(a.z, b.z) })
     const edge = CITY.pitch / 2 - 3.3 - 2.2
