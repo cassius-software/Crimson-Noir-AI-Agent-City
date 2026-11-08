@@ -2679,6 +2679,9 @@ export class Engine {
       // The indoor workplaces as rows (the city's sixteen, a region's lots, none in a surveyed region): plain data, the
       // slot being the kind's index, as workplaceTable counts them.
       rooms: () => this.rooms.map((r) => ({ slot: WORKPLACE_KINDS.indexOf(r.kind), kind: r.kind, name: r.name, k: r.k, m: r.m, doorX: r.door.x, doorZ: r.door.z, stations: r.stations.length })),
+      // The rooms' stations, read-only, for `robot cell`: kind id, index in the room, where to stand and which way to
+      // face (the surveyed region has no rooms: an empty list; Lakefront Metro has its own).
+      roomStations: () => this.rooms.flatMap((r) => r.stations.map((s, i) => ({ kind: r.kind as string, station: i, x: s.x, z: s.z, yaw: s.yaw }))),
       hardware: (): HardwareReport => ({
         class: this.hardware, profile: this.profile, adapter: this.adapter, limits: this.gpu.limits,
         tiers: { ...governor.range(), start: this.profile.startTier, startLabel: knobsOf(this.profile.startTier).label },
@@ -2703,6 +2706,10 @@ export class Engine {
         arm: (id: string) => this.robots.arm(id),
         disarm: (id: string) => this.robots.disarm(id),
         calibrate: (id: string, joint: string) => this.robots.calibrate(id, joint),
+        fit: (id: string, joint: string) => this.robots.fit(id, joint),
+        shape: (id: string, seed?: number | 'off') => this.robots.shape(id, seed),
+        cellKind: (kind: string) => this.robots.cellKind(kind),
+        cell: (kind: string, station: number, at: { x: number; z: number; yaw: number }) => this.robots.cell(kind, station, at),
         remove: (id: string) => this.robots.remove(id),
       }),
       render: (arg?: 'on' | 'off') => (arg === undefined ? (this.rendering ? 'on' : 'off') : this.setRendering(arg === 'on')),

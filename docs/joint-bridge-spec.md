@@ -162,7 +162,17 @@ takes the newest setpoints per robot; in every substep it measures, then drives.
 | `{c:'robotSpawn', id, manifest, x, y, z, heading}` | Build the body (`buildable` first). A refused build leaves the slot empty: the page, which ran `buildable` itself, reports the realm refused. |
 | `{c:'robotRemove', id}` | Remove it. |
 | `{c:'robotTargets', id, seq, q, qd, tau}` | Setpoints for this step (one per robot per step; the newest wins). |
-| `{c:'robotMode', id, mode:'follow'|'filter'|'hold', tauMs?, delaySteps?}` | `follow`: track the newest setpoints (a twin following frames: first-order hold on q̇ for up to 100 ms, then hold). `filter`: every setpoint is held back `delaySteps` steps (`DelayBuffer`) and passed through `y += (u − y)(1 − e^(−h/τ))`, the calibrated lag (a leader's body, a `sim` body). `hold`: stand still at the effort cap. Setpoints older than 500 ms hold in every mode. A body that stops being finite is removed and counted as a rejection. |
+| `{c:'robotMode', id, mode:'follow'|'filter'|'hold', tauMs?, delaySteps?, shaping?, friction?}` | `follow`: track the newest setpoints (a twin following frames: first-order hold on q̇ for up to 100 ms, then hold). `filter`: every setpoint is held back `delaySteps` steps (`DelayBuffer`) and passed through `y += (u − y)(1 − e^(−h/τ))`, the calibrated lag (a leader's body, a `sim` body). `hold`: stand still at the effort cap. Setpoints older than 500 ms hold in every mode. `shaping` (one entry per movable joint, `null` for the filter) puts the second-order reference actuator of section 6 in place of the filter on that joint, with its own delay; `friction` (one per movable joint, `null` for none) is a Coulomb, viscous and stiction torque the realm applies about the joint after the servo. Both are kept when not given and cleared by an empty array; every number is judged before any of it is kept, so a bad command changes nothing. A body that stops being finite is removed and counted as a rejection. |
+
+**Joint friction** (`jointRealm.ts`, applied through `articulated.ts` `jointTorque`, the servo's own equal and
+opposite impulse pair): Coulomb `c` and stiction `s` in N·m or N, viscous `b` in N·m·s/rad or N·s/m. A joint moving
+slower than 0.01 rad/s or m/s whose servo asks less than `s` (the demand net of the weight it feeds forward) is held:
+friction cancels the servo's push and takes out the creep it had, on the reduced inertia the servo uses. Otherwise
+`c + b·|v|` opposes the speed `v` the servo's impulse leaves the joint with, clamped to what brings `v` to rest within
+the step and never over the effort cap, so friction only takes speed away and the servo's stability bound stands. In
+the test a joint stopped by friction at its whole cap moves back by the solver's own position correction alone, under
+a tenth of a milliradian. Coulomb and stiction are judged within the joint's effort cap. τ in the slot stays the
+servo's applied torque.
 
 Frames out, every step, through the **joint buffer** (`jointBridge.ts`): one SharedArrayBuffer the page sends once
 (`{t:'joints', buffer}`), with its own lock and header (Int32 words: `lock`, `seq`, `step`, `robots`, `simTimeMs`,
@@ -188,6 +198,36 @@ the same layout from it. Setpoints go in as commands, never through the buffer.
    round((L − return trip) · 60 / 1000), never below 0 and at most 120 (L was timed from the page, so the link is in it
    twice). The result is shown and applied to that robot's `filter` mode.
 
+`robot fit <id> <joint>` runs the same hold and step and fits the recording twice:
+
+5. **Second-order fit** (`fitStep2`): gain K, delay L, natural rate ω, damping ζ, the response
+   `y0 + K·Δu·s(t − L)` with `s` the closed-form unit step response (under-damped, critically damped within 10⁻⁶ of
+   ζ = 1, over-damped). Seeded from the first-order fit (ω = 1/τ, ζ = 1, and starts that put the 63.2 % crossing where
+   the first-order fit had it, and heavily damped starts that answer like the first-order fit itself, so the search
+   never starts worse than the model it must beat); the four best seeds descend by a shrinking coordinate search over
+   (L, ω, ζ) with diagonal moves in (ω, ζ), the gain re-solved by least squares at every point. On a clean recording
+   of a second-order plant ω and ζ come back within 3 % and 5 % (15 % and 25 % over-damped, where the poles and the
+   delay trade off along a flat valley), the gain within 1 %.
+6. **Occam** (`pickFit`): the second-order model is taken only when it lowers the first-order fit's rmse by 10 % or
+   more, and never when the first-order rmse is already under 0.2 % of the response.
+7. **The reference actuator** (`ActuatorShaping`, `gainsFor2`, `stepShaping`): a chosen second-order fit becomes
+   that joint's shaping: ω (clamped to 1/h, 60 rad/s at 60 Hz), ζ, the gain (0.05 to 10), the delay counted as
+   `gainsFor` counts it, and the joint's own speed cap. In `filter` mode the delayed setpoint drives
+   `ẍ = ω²(K·r − x) − 2ζω·ẋ` (a speed cap; Coulomb, viscous and stiction terms of its own, which a domain leaves at 0),
+   stepped semi-implicitly in four sub-steps with the damping implicit: bounded for any ζ ≥ 0 up to the clamp, within
+   0.5 % of the closed form at ω 10, 2 % at ω 30 ζ 0.5 and 6 % at the clamp with ζ 0.3. The servo tracks the
+   reference, its speed fed forward.
+
+**Domain randomization** (`randomizeDomain(seed, manifest, base?)`, `robot shape <id> <seed>`): from `createRng(seed)`
+alone, in a fixed order, so a seed is the same world on any machine. Every link's mass × [0.8, 1.2] and its
+`inertiaScale` × [0.7, 1.3]: a URDF's inertia tensor is not read, so the manifest's one inertia word scales the
+link's shape-derived tensor at the same mass (`articulated.ts` `shapeInertia`, the closed forms checked against what
+Rapier derives). Per movable joint a friction relative to its own caps: Coulomb 0 to 5 % of the effort cap (a
+geared servo's running friction is a few percent of its rated torque), stiction one to two times that, viscous
+costing at most 10 % of the effort at the speed cap. Per movable joint a shaping jittered about the fitted one (or a
+nominal 20 rad/s critically damped servo): ω and ζ ±25 %, the gain ±2 %, up to one more step of delay. The page
+re-spawns the body from the randomized manifest and sends the friction and shaping with the mode.
+
 ## 7. Console (`robot`)
 
 `robot` (list: id, door, mode, joints, name, state: armed, body, last frame age or stale, calibrated, refusals) ·
@@ -196,9 +236,23 @@ robot that announced itself, or `sim:<name>` from `robot urdf` or `robot demo`; 
 no x z is given) · `robot urdf <loopback url> [name]` (a `sim` robot from a URDF file served on this machine) ·
 `robot demo [name]` (the built-in three-joint arm, `sim:demo`, so the bridge can be tried with nothing attached) ·
 `robot mode <id> twin|leader|watch|sim` · `robot set <id> <joint> <q>` (a leader's or sim's setpoint, clamped to the
-joint's limits) · `robot arm <id>` / `robot disarm <id>` · `robot calibrate <id> <joint>` · `robot remove <id>`.
-The relay, a spawn, a URDF read, arming and calibrating are the operator's (`operator unlock`); the list, the demo,
-a mode, a setpoint, a disarm, a remove and the relay's status or its off run at any time. HAL/1 robots arrive
+joint's limits) · `robot arm <id>` / `robot disarm <id>` · `robot calibrate <id> <joint>` · `robot fit <id> <joint>`
+(both models, Occam choosing, the choice applied to that joint) · `robot shape <id> <seed>` / `robot shape <id> off` /
+`robot shape <id>` (the body re-spawned where it stood from the seed's domain, the plain body back, or the domain's
+table: each link's factors, each joint's friction and shaping; a re-shaped robot is disarmed, since the new body
+stands at q = 0) · `robot cell` / `robot cell <kind> <station>` (every station of every room with its cell kind, or
+the cell's robot as `sim:<kind>-<station>` at that station, facing its yaw) · `robot remove <id>`.
+The relay, a spawn, a cell, a shape, a URDF read, arming, calibrating and fitting are the operator's
+(`operator unlock`); the list, the demo, a mode, a setpoint, a disarm, a remove, the relay's status or its off, the
+stations' list and a domain's table run at any time.
+
+**Workstation cells** (`cells.ts`): `arm` (six revolute joints, a tabletop collaborative arm of 14.6 kg, 60 N·m at the
+shoulder to 6 N·m at the tool), `gantry` (two prismatic axes of 1.2 and 0.8 m under a slab and a wrist), `shaker`
+(one vertical axis of ±25 mm, 2 kN), `treadmill` (one continuous joint, a gait belt's roller: 30 rad/s is 1.5 m/s) and
+`console` (no robot). A workplace kind id maps to a cell by string, `console` for any kind the table does not know:
+roboticsLab, kitchen and fleetBay an arm; warehouse, microFab and greenhouse a gantry; acousticsLab a shaker; gaitLab
+(and the clinic it replaces) a treadmill; the rest a console. `toUrdf(manifest)` writes any manifest back out as URDF
+that `urdf.ts` reads to an equal manifest (every cell and the demo arm are tested), so a cell can go to a ROS tool. HAL/1 robots arrive
 through `hal pair serial|ble` and `hal.autoconnect` (granted ports re-open at boot). The HUD shows `Robots · n` with
 the armed count and the first robot's line; the namespace carries the count under `Hardware/Bus/robots`.
 
@@ -211,6 +265,12 @@ the armed count and the first robot's line; the namespace carries the count unde
   datasets, QoS 2, MQTT over TLS, the recorder, the network room's mirror of robots: not built.
 - A HAL/1 robot is at most 24 joints; a relay robot at most 64; four robots at once.
 - τ reported by a twin is the servo's applied torque; a device's τ is whatever it reports.
+- Nothing in section 6 has met a physical robot: the second-order fit, the reference actuator, the friction and the
+  domain are proved against plants of known numbers in Node and against Rapier, not against an actuator. Inertia is
+  randomized as one scale on the shape's own tensor (a URDF's full tensor is not read or written); the reference's
+  own friction terms exist but a domain leaves them at 0 and puts friction on the joint. A cell's robot stands at a
+  station the crowd's workday still uses; its links never meet people (section 5), so a worker and the robot share
+  the spot.
 - `tools/robot/ros2_bridge.py` is an example of a `/robot` peer written from the ROS 2 Python API's documentation and
   never run against ROS 2 here.
 
@@ -220,7 +280,8 @@ the armed count and the first robot's line; the namespace carries the count unde
 |---|---|
 | Vocabulary, lines, judges | `src/04_Connect_Hardware/jointState.ts` |
 | URDF | `src/04_Connect_Hardware/urdf.ts` |
-| Calibration | `src/04_Connect_Hardware/actuatorFit.ts` |
+| Calibration, the second-order fit, the reference actuator, the domain | `src/04_Connect_Hardware/actuatorFit.ts` |
+| Workstation cells, URDF out | `src/04_Connect_Hardware/cells.ts` |
 | The gate's command | `src/04_Connect_Hardware/peripheralPolicy.ts` |
 | HAL/1 lines in and out | `src/04_Connect_Hardware/lineLink.ts`, `hal.ts` |
 | The page's bridge and console | `src/04_Connect_Hardware/robotLink.ts`, `src/engine.ts` |
