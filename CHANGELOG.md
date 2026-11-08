@@ -1052,6 +1052,13 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Fixed
 
+- **The crowd's shadow pass ran the whole paint.** three multiplies a shadow's alpha by the material's colour alpha
+  (`Renderer._getShadowNodes` reads `colorNode.a`), so every body's shadow-map fragment stage carried the look's whole
+  paint, the weaves, cuts, hair, skin and faces, about 138,000 characters per body, run for every shadow-map texel a
+  body covers, for an alpha that is always 1. The crowd's colour now answers `.a` with 1 itself, and its shadow pass is
+  the pose and the code dissolve's shadow mask alone: 1,105 characters for each of the eight bodies.
+  `shadowShaders.test.ts` holds it under 4,096. Found when CI's browser job on this slice outran its 30 minutes, every
+  suite 1.5 to 2 times slower than on `main`.
 - **The sleeves, the hands, the legs, the shoes, the bag, the skirt, the long hair, the bob, the ponytail and the
   long beard were drawn inside out.** The loft lays a tube's quads counter-clockwise seen from outside (the face three draws) only when its rings run from
   the bottom up, and it closes `capTop` on the last ring and `capBottom` on the first. These tubes listed their rings

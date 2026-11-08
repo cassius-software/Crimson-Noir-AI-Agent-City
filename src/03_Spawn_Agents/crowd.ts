@@ -1189,6 +1189,12 @@ export class CrowdView {
     // graph is shared across the fold's branches).
     const feet = b.pos.element(b.lists.element(instanceIndex.add(uint(listBase)))).xyz
     applyCodeDissolve(m, vDissolve, feet, PEOPLE_DISSOLVE_INK)
+    // The shadow pass multiplies its alpha by the colour's (three's Renderer._getShadowNodes reads colorNode.a), which
+    // wrote the whole paint, every weave and cut, into the shadow map's fragment stage, run for every texel a body
+    // covers, for an alpha that is always 1: the crowd is opaque. The colour answers `.a` with 1 itself (an own value
+    // over the swizzle three puts on every node's prototype, whose setter would assign instead), so the shadow pass
+    // draws the pose and the dissolve's shadow mask alone (shadowShaders.test.ts pins its size).
+    Object.defineProperty(m.colorNode, 'a', { value: float(1) })
     return m
   }
 }
