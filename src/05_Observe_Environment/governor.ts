@@ -47,7 +47,7 @@ export interface QualityKnobs {
   /** The sun shadow filter's taps per fragment (sunShadow.ts softShadowFilter: a uniform the taps past three's five
    *  are taken behind, so the count moves without a recompile; 5 is three's own). */
   shadowTaps: number
-  /** Bloom, vignette, explicit tone mapping and FXAA. */
+  /** Bloom, vignette, explicit tone mapping and FXAA, over a 4x-multisampled scene where the boot chose it (msaaCandidate). */
   post: boolean
   /** Golden-hour sun shafts in the post chain (volumetrics.ts); needs `post`. Ultra and Peak. */
   volumetrics: boolean
@@ -255,6 +255,26 @@ export function peakCandidate(h: DeviceHints, p: DeviceProfile, peak?: boolean):
   if (peak !== undefined) return peak
   if (h.cores < 8 || (h.memoryGb !== undefined && h.memoryGb < 8)) return false
   return p.gpuClass === 'discrete' || (p.gpuClass === 'integrated' && /\bapple\b/.test(h.adapter.toLowerCase()))
+}
+
+/**
+ * The scene's multisampling (postfx.ts buildPost): 4 samples per pixel, on screens up to 2560 × 1440 drawing pixels.
+ * Not a tier knob: the sample count is in the key of every scene pipeline three builds, so changing it at run time
+ * would rebuild every material, and the boot decides it once.
+ */
+export const MSAA = Object.freeze({ samples: 4 as const, maxPixels: 2560 * 1440 })
+
+/**
+ * Pure. Whether the boot draws the scene 4x multisampled. Automatic only where the frame has the most room to spare: a
+ * Peak candidate's hardware that the profile starts at Ultra (a high-end discrete card on a screen the 4K rule did not
+ * mark down), at no more than MSAA.maxPixels drawing pixels; `baseRatio` is the page's ?scale, which multiplies them.
+ * `msaa` is the page's ?msaa: true or false decides on any desktop-class profile, absent leaves it to this rule. Never a
+ * phone or a lite profile, whatever ?msaa says: their frames have nothing to spare for four samples a pixel.
+ */
+export function msaaCandidate(h: DeviceHints, p: DeviceProfile, msaa?: boolean, baseRatio = 1): boolean {
+  if (p.lite || p.mobile) return false
+  if (msaa !== undefined) return msaa
+  return peakCandidate(h, p) && p.startTier >= TOP && h.screenPixels * baseRatio * baseRatio <= MSAA.maxPixels
 }
 
 /**

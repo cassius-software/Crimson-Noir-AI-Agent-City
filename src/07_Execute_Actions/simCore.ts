@@ -40,7 +40,8 @@ import { JointRealm } from './jointRealm.ts'
 import { JOINT_SLOT } from './jointBridge.ts'
 import { MAX_ROBOTS } from '../04_Connect_Hardware/jointState.ts'
 import { buildTrackNetwork } from '../06_Make_Decisions/tracks.ts'
-import { streetCapacity, streetNetwork, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
+import { streetCapacity, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
+import { windowNetwork } from '../01_Initialize_World/region/transit.ts'
 import { AGENTS_RANGE, MAX_CARS, PEDESTRIAN_MAX_SPEED, type CrowdSensor, type Summon } from '../03_Spawn_Agents/crowdSensor.ts'
 import {
   ACTIVITY, APPROACH_SECONDS, AUDIBLE_RADIUS, eligible, findRecruit, RALLY_RANGE, RECRUIT_SLOTS, RECRUITING_PLAYER, RELEASE_DISTANCE, skillNamed, skillsOf, whyNot, whyNotRally,
@@ -160,7 +161,7 @@ export class SimCore {
   readonly meta: SimMeta
   readonly #physics: Physics
   readonly #fleet: Fleet
-  /** The scheduled craft (train sets, drones, planes) on the city's corridors: with tracks on, in the city only. */
+  /** The scheduled craft (train sets, drones, planes, VTOLs) on the city's corridors or a street window's: with tracks on. */
   readonly #craft: TrackFleet | null
   /** Every player's body, index = player: Sanctuary ward k and audit person k. */
   readonly #avatars: readonly Avatar[]
@@ -250,11 +251,15 @@ export class SimCore {
     // On tracks, the network is built here from the seed: nothing about the routes crosses from the page. In a region
     // with a street window (streets.ts) the rings are the window's, laid over its own car streets.
     const streets = r ? (o.streets ?? null) : null
-    const network = o.tracks === true ? (streets ? streetNetwork(o.seed, streets) : buildTrackNetwork(o.seed, o.boxes)) : null
+    // With a street window the network is the window's own (region/transit.ts windowNetwork): its car rings, then its
+    // elevated loop, drone corridors, racetrack (held inside the region) and VTOL routes between the roofs of the craft
+    // boxes the page sent; the page builds the same from the same four arguments for the craft view.
+    const network = o.tracks === true ? (streets ? windowNetwork(o.seed, streets, o.craftBoxes ?? [], r ?? null) : buildTrackNetwork(o.seed, o.boxes)) : null
     this.#fleet = new Fleet(physics, o.cars, o.seed, { exposeRig: this.#debug, network: network ?? undefined })
-    // The corridors are laid over the city's grid (the VTOL pads on its own roofs): a region has no elevated loop and
-    // no racetrack over it. A lite boot asks for none (SimInit.craft false); the page draws them (craftView.ts).
-    this.#craft = network && !r && o.craft !== false ? new TrackFleet(network) : null
+    // The corridors are laid over the city's grid, or over a region's street window; a surveyed region has no window and
+    // so no corridors (its fleet's network is the city's rings, which seat no craft). A lite boot asks for none
+    // (SimInit.craft false); the page draws them (craftView.ts).
+    this.#craft = network && (streets || !r) && o.craft !== false ? new TrackFleet(network) : null
     // Every player's body, in player order: Sanctuary ward k and audit person k are player k.
     const spawns = [o.spawn, ...(o.spawns ?? [])]
     this.#avatars = Object.freeze(spawns.map((p) => new Avatar(physics, p.x, p.z)))

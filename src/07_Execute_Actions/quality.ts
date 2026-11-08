@@ -29,6 +29,7 @@
  *   the layout depends only on format and dimension, so nothing recompiles and nothing uploads (fbmTexture.ts).
  * - Post and crowd culling (the GPU density lottery and draw distance) are delegated to the engine
  *   (render path switch, compute uniform).
+ * - Not here: the scene's multisampling, in every scene pipeline's key, so the boot decides it (msaaCandidate).
  * - Lit street lamps: World.setLampLights, the count of lamps nearest the player that carry a real PointLight. The
  *   lights are clustered (cityLights.ts): their count is a uniform and an unlit lamp's light is simply not visible,
  *   so the count moves without a recompile.

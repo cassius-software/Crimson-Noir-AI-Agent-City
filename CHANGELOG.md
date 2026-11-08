@@ -30,6 +30,51 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   default flips when they land. The quiet five-minute watch waits until the walk is passed. Pinned by node tests (the
   stage order and detection, the switch, the wiring, the lines' plainness, conduct screen and brand scrub); how the
   card stands on a real phone, a pad or a screen reader is unverified.
+- **Lakefront Metro's transit map** (`src/01_Initialize_World/region/transit.ts`, pure: the page and the physics worker
+  build it from the same seed, street window, craft boxes and bounds). A generated region's street window now carries
+  what the procedural city has had since the fixed track network, and a little more. An **elevated train loop** on the
+  9 m deck round the city's own corridor where every side of it has a sidewalk, else the largest walkable rectangle of
+  the window (at least 4 blocks a side), with four mid-side stations and guideway columns at the window's own 3.9 m
+  kerb (`tracks.ts` `trainLoop(corners)` and `guideway(track, kerb)`, the city's calls unchanged). **Drone corridors**
+  at 40 and 46 m over every walkable 4-block cell. The **plane racetrack** at 400 m (`planeCorridors(centre)`),
+  centred on the window and held inside the region (`RACETRACK_REACH`: a window by the region's edge no longer sends
+  the planes 1.8 km out over the margin), moved by whole blocks when The Spire comes within the envelope's
+  half-length of it. **VTOL routes** between rooftop pads of the window's own buildings: `tracks.ts` `vtolRoutes(boxes,
+  cells, band)` and `vtolPads(boxes, band)` take a region's cells and a `VtolBand`; the city's band (roofs of 24 to
+  60 m, cruising at 75 and 85) serves where the window has such roofs, and a second band over a generated map's
+  towers (`HIGH_BAND`: roofs of 60 to 140 m, flown between at 150 and 160 m, over the drones and under the planes),
+  its cells cut where the towers stand (`padCells`); twelve of the fifteen test windows get one or two routes, seed
+  7's east bluffs and its north ridge (the grand ravine's window too) none (no tower in their windows: legal). The whole network is
+  `windowNetwork(seed, window, craftBoxes, bounds)`: `SimInit.craftBoxes` (the window's rectangular buildings and the
+  ring of lots round them, every building that reaches into the racetrack's envelope, and the region's plan:
+  `craftBoxesOf`, at most `MAX_CRAFT_BOXES` 4,096, judged in `simHost.ts` like every other field) lets the worker,
+  which holds the pack's walls and not its boxes, lay the same routes as the page; `simCore.ts` schedules the craft in
+  a region with a window (a surveyed region still has none) and `engine.ts` builds the `CraftView` for them with the
+  window's kerb (`craftView.ts` takes a `kerb`). **Zebra crossings** on every walkable arm of every window
+  intersection, as geometry: six 0.5 m stripes across a car street and three across a pedestrian one, in the crowd's
+  own `TRAFFIC.crosswalk` band, in one `RegionMarkings` mesh of one material at a new `SURFACE.marking` (0.055 m,
+  over the junction asphalt; no polygon offset, pieces under `SURFACE_PIECE`). **Pedestrian plazas**: `fromMacro.ts`
+  writes a generated pack's plaza lots as `pack.plazas` (one rectangle each; optional in the format, the surveyed
+  pilot has none; `validatePack` checks it when present), and `regionWorld.ts` paves them at the sidewalks' height, so
+  the hubs' squares are stone, not lawn. A **harbour ferry dock** (`ferryDock`): a pier from the lake shore nearest the
+  window, its deck from the quay 60 m out over the water, railed, with a 10 × 20 m berth platform at its end, as boxes
+  the page draws and the worker walls (in the plan with the rooms); the shore wall is opened for it
+  (`regionPhysics(pack, layout, openings)`); `ferryBerth()` gives where a vessel would come alongside (the vessel is
+  another change's). A **STOL strip** (`stolStrip`): 300 × 24 m of asphalt on the open land nearest the window, off
+  the window and clear of every building, road, water polygon and plaza by 2 m, with threshold bars and a centreline
+  at `SURFACE.marking`; the planes keep the racetrack at 400 m and do not land (landing is not built). No
+  subterranean line: a track has one height. `region/clip.ts` gains `isRect`, `region/streets.ts` now holds
+  `LANE_WIDTH`, `SIDEWALK` and `roadWidth` (re-exported by `regionWorld.ts`), so the worker can read them. Tests:
+  `transit.test.ts` (fourteen windows of three seeds: the loop's sides walkable and no larger rectangle missed, its
+  columns clear of every lamp, tree, signal pole, box and the carriageway; INV-1 for every train, drone, plane and
+  VTOL piece against every craft box with the city's envelopes; the racetrack inside the region and off the needles;
+  the network's craft audit clean on the realm's clock, the core scheduling them from the boxes it was sent and the
+  page placing every craft where the realm does; the worker refusing malformed craft boxes; the crossings counted
+  against the walkable arms; the plazas built on by nothing; the pier over the water with the shore wall opened for
+  it and every other wall as it was; the strip clear; the markings drawn at their height; a source pin that the page
+  and the worker call the same function with the same arguments), `surfaces.test.ts` keeps the new height in order,
+  and the browser smoke's `?map=lakefront` scenario checks the craft and the markings. Unverified from the cloud (no
+  GPU): the loop, the craft, the crossings, the pier and the strip on screen.
 - **Actuator shaping, domain randomization and workstation cells for the joint bridge**
   (`src/04_Connect_Hardware/actuatorFit.ts`, `cells.ts`; `src/07_Execute_Actions/jointRealm.ts`, `articulated.ts`).
   A step response can now be fitted as a second-order system with dead time (`fitStep2`: gain, delay, natural rate ω
@@ -222,6 +267,42 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   parking) reaches its cascades. Unverified: how it looks on a real GPU (software-WebGPU pictures only, which at the
   photographed spots look like the old ones), and the cost of the second shadow pass on an integrated GPU at Medium (the
   governor measures and steps down as ever).
+- **4x multisampled anti-aliasing for the scene, decided at boot.** FXAA was the only anti-aliasing, and it cannot
+  bring back a lamp pole or a mast arm thinner than a pixel. Now the post chain's scene pass can draw 4 samples a pixel
+  (three r186's `pass(scene, camera, { samples: 4 })`; colour and, under the cinema camera, the velocity buffer resolved
+  as the pass ends, the multisampled colour never stored; the sun shafts read the first sample of the multisampled
+  depth), with FXAA and the ghost view's composite after it as before. Who gets it: `governor.ts msaaCandidate`, by
+  itself only on a Peak candidate's hardware that the profile starts on Ultra (a high-end discrete card the browser
+  identifies as one: stock Chromium names no AMD card, so an AMD card there starts on High and needs `?msaa=1`) at no
+  more than 2560 × 1440 drawn pixels (`?scale` counted, squared); `?msaa=1` asks for it on any desktop, `?msaa=0`
+  refuses it, and a phone or a lite profile never takes it. The sample count is in the key of every scene pipeline
+  three builds, so it is not a tier knob: the boot decides it once, there is still one post chain, and no tier change
+  recompiles. Split screen, which has no post chain, multisamples the renderer's own frame instead under the same rule
+  (`?post=0` included; split screen refuses a headset, so the headset's targets stay at one sample); the renderer keeps
+  that for its life, so split screen keeps it at every tier, and it has no one-sample fallback. The boot's first frame
+  now draws the direct path and the post chain in a validation scope each: a refused direct path fails the boot as
+  before, and only a refused 4x chain is released and built again at one sample, then drawn again in its own scope,
+  with the boot's own failure text kept. `Engine.sceneSamples` says what the boot chose; `tools/browser/shot.mjs` logs
+  the samples of the path that drew each picture. On the Lakefront map the street ribbons (carriageways and sidewalks)
+  are now cut into 32 m pieces instead of 128 m (`regionWorld.ts RIBBON_PIECE`): multisampled, the software adapter drew
+  a pale line of junction pavement across the road at junctions about 50 m off, because the pavement lies 5 mm under
+  the asphalt and the depth taken off the pixel centre across a 128 m piece lost those 5 mm; at 32 m (and at 16 m) the
+  line is gone, for about three times the streets' vertices (some 21,000 more on the metropolis's street window;
+  `surfaces.test.ts` pins the pieces). Pinned by `governorMsaa.test.ts` (who is a candidate, ?msaa, the
+  screen cap with ?scale squared, an unnamed AMD card, no tier carries a knob), `postfxAa.test.ts` (the scene pass at 4
+  from its construction, colour not stored and depth stored, the ghost pass at one sample and after FXAA, the
+  renderer's samples never reaching the scene pass, release() freeing the targets, 1, 2 and 8 refused),
+  `aaWiring.test.ts` (the host's ?msaa, split screen's renderer samples, the boot decision, the two scopes and the 1x
+  fallback, no sample count set by a tier) and the browser smoke on the software adapter (a desktop at one sample;
+  `?msaa=1` at Ultra under the cinema camera with every two-target pipeline at 4x through Low, Peak and Ultra, no
+  pipeline compiled by those tier changes, and ghost view and rain mode validating; the faked RTX 5090 multisampling by
+  itself; split screen at 4x on the renderer; the lite phone, and the phone with `?lite=0&msaa=1`, at one sample).
+  Limits: the plain resolve averages linear light before the film curve, so bright edges stay hard and a thin dark pole
+  against a bright day sky keeps only part of its contrast; shader-drawn edges (road markings, rain mode) are not
+  multisampled; the cost is not shed tier by tier (with one player only Minimal, without ghost view, has none); Lite,
+  the headset, and Minimal and `?post=0` with one player still have no anti-aliasing (a phone off the lite profile
+  keeps FXAA at Low and Medium). Unverified: how it looks and what it costs on a real GPU (software-WebGPU pictures
+  only).
 - **The operator's progression.** The operator now has a level (1 to 20, 1,000 XP each, the rest rolling over), six
   attribute modifiers, eight skills of the city with proficiency ranks, civic credits, hero points, resolve and three
   actions and a reaction per six-second round (`src/02_Define_The_Rules/progression.ts`, over one 128-word record,
@@ -955,6 +1036,18 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   and on Windows the figure has to be typed (`ask vram`) for now; on NixOS the launcher also counts an integrated
   Radeon given 4 GB or more by its firmware (not tried on one; `-- vram=0` sizes nothing). Nothing is downloaded, and
   the page still addresses only this machine.
+- **auto finds llama-server, vLLM and SGLang on their own default ports.** With the three usual addresses, provider
+  `auto` now asks llama-server's new default `http://localhost:9931` (since build b11521), vLLM's
+  `http://localhost:8000` and SGLang's `http://localhost:30000`, at the same moment (each given 2 s, as the usual three are), and uses
+  them only when none of the usual three has a text model. The first with a text model answers and is kept as that
+  provider's address, as `ask server` would keep it (and the old default goes into this second round, so auto finds
+  it again if the server moves back). It never looks past an address the operator set that is not one of these,
+  never moves a provider to a server that lacks the model chosen for it, and never takes the gateway's address for
+  one. Nothing listening there goes unsaid; a server there refusing the page or holding no text model is named, and
+  on an isolated page the reason names vLLM's `--allowed-origins` flag when nothing answered on 8000. CI proves it in
+  Node against fake servers by port, and in the browser smoke (a fake llama-server answering as `localhost:9931`); no
+  real llama-server, vLLM or SGLang ran it. The addresses are on the same loopback host, so the air gap is
+  unchanged.
 
 ### Removed
 
