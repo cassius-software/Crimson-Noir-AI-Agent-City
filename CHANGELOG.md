@@ -81,6 +81,45 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   browser smoke's `desktop` and `lite` scenarios see a desktop and a phone); no workstation was seen on real
   hardware, and the plan's 131,072 lanes are not raised here (the crowd's grid, readback and draw would need
   resizing and measuring on a real big GPU).
+- **The operator's progression.** The operator now has a level (1 to 20, 1,000 XP each, the rest rolling over), six
+  attribute modifiers, eight skills of the city with proficiency ranks, civic credits, hero points, resolve and three
+  actions and a reaction per six-second round (`src/02_Define_The_Rules/progression.ts`, over one 128-word record,
+  sealed and range-checked, kept in this browser by `src/05_Observe_Environment/progressStore.ts`). A console
+  command that does something in the city earns a check in its skill: a d20 plus the skill's modifier against the
+  level-based DC, eased by 2, paying a fixed table by degree and level, raised by how many different skills the
+  current cycle of 24 checks has used (1x to 3.5x). A skill rests a minute between checks; after three misses in a row
+  the next check rolls twice; a hero point rerolls the last check. The console's `progress` prints the status, the
+  table, spends skill increases and hero points, and starts over with `reset --yes`. Credits buy through one purchase
+  gate (`buy`, `canBuy`, `owns`, `spend` on `pageProgress()`), which debits the credits and sets the unlock in the
+  same record and save, for the wardrobe, the properties and their furniture to use. The mechanics are offered under
+  the ORC License: `NOTICE.md` now attributes Pathfinder GM Core as well (its level-based DCs and treasure table are
+  used) and lists what was taken and added, and `docs/ip-audit.md` §7 records the checks. The plan's surprise-scaled
+  payouts, hidden pity counter and drop tokens were not built (`docs/progression.md` says why). The cues on a success
+  and the checks the city itself earns are not in this change.
+- **The city earns checks, and a success is cued.** The second slice of the operator's progression. The city's own
+  deeds now earn: boarding a car with the door key (piloting; a network room's correction or a script's `interact()`
+  does not), someone recruited arriving however they were asked (swarm command, from the round's reaction), a spoken
+  request the recruiter understood (acoustics and voice, from a new `understood` event), the clock keys, the rain key,
+  the ghost key when the view really shows or goes, and the touch menu's Headset (optics and cinema), and the wardrobe
+  card's first real change of a visit (architecture and commerce). The setters behind the keys and the agents' city
+  knobs earn nothing, so the console's own checks are not lost to a skill's rest, and `recruit <skill>` and `recruit
+  listen` at the console no longer earn (the arrival and the understood request do, once). One keeper listener in App
+  cues every success, the console's or the city's: a short head-locked chime in player 1's ears (a C5 E5 G5 arpeggio,
+  or a C4 C6 G6 chord for a critical success, rendered once at build, straight to the master gain with no panner or
+  reverb, captioned as text alone: `[chime: Piloting, success]`; at the ear quieter than the recruitment cue from
+  anyone near enough to be asked over, waiting for a cue or a ping still sounding and fading out under one that
+  starts, so it never covers either); one or two 50 ms taps on a controller's rumble while no guardrail signal holds
+  the motors, the screen is not split and the page is shown, the hold, the snap and the lightbar untouched; one or
+  two short vibrations on a phone; and a HUD progress chip (the level, '420 of 1,000 XP', the credits, the hero
+  points, the round's pips, and for four seconds what a check was and paid) with one soft ring at most once a second
+  and none under the system's reduced-motion setting. A hero point's reroll that stayed a success is not cued again. `haptics [on|off]` at the console
+  and `?haptics=0` switch the rumble and the vibration off. What CI shows: the chime's buffers, levels and graph
+  (`audio.test.ts`), its caption (`captions.test.ts`), the tap's envelope and the guarded `vibrate` on fake
+  navigators (`hal.test.ts`), the earns, the chip's words and its cache (`progress.test.ts`, `recruitment.test.ts`), the
+  knob (`commands.test.ts`), and the wiring by source scan (`progressWiring.test.ts`: the tap merged after the
+  guardrails, the deeds only at the keys and the boarding, one listener taken back on a halt and with the city). How the
+  chime sounds, how the pad's tap and the phone's vibration feel on real devices, the chip's glow in a real browser, and
+  the plan's under-16 ms budget are unverified. An action card's cost in pips is not in this change.
 - **Every street lamp near you is a real light, and every workplace has a lit ceiling.** The city's night lighting
   moves to three r186's clustered (Forward+) lighting (`src/01_Initialize_World/cityLights.ts`): the lamps' point
   lights live in a texture, a compute pass bins them once a render into a 48 × 27 × 24 grid of view-frustum cells,
@@ -683,6 +722,19 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **The physics realm's step is a quarter to a third faster: the street furniture is a hundred compound sensors,
+  not 4,599 colliders.** rapier.js walks every collider in the world through a WebAssembly-to-JavaScript callback at
+  the end of each `world.step()`, so the city's lamps, trees and signal poles (sensors nothing in the realm touches or
+  queries) cost every step about 0.6 ms and 1.4 MB of garbage. `physics.ts` now packs them into one compound sensor
+  per 80 m tile, each pole the same cylinder where it stood. Measured in Node on a four-core container, best of three:
+  the realm's whole step (`SimCore`, the city, 600 steps) 1.78 → 1.32 ms with 36 cars and 2.27 → 1.49 ms with 48 cars
+  and a stand-in crowd; the world's step alone 0.73 → 0.30 ms and 2.26 → 0.86 MB of garbage a step. A bonnet ray costs
+  the same as before (it excludes sensors inside Rapier). The cars' poses over those 600 steps hash the same as before,
+  to the bit. A new `physics.test.ts`
+  keeps the one-sensor-per-pole world as the reference and holds the packed one to it: the same poles along 4,000
+  seeded rays (to Rapier's ray-cast tolerance: under a millimetre, a few millimetres at a graze), every pole found inside
+  its rim on all four sides and under its top and not just outside them, every pole in one compound sensor on the fixed
+  body, and every one of 2,000 seeded solid rays answered exactly as before.
 - **The flow field's CPU solve is 3.3× faster, and allocation-free once warm.** The bucket queue and the direction
   pass (`src/06_Make_Decisions/flowField.ts` `solveDial`, `directions`), which the physics worker runs for every
   new goal whenever the field is not solved on the GPU, now work over the grid padded by a ring of blocked cells, with
