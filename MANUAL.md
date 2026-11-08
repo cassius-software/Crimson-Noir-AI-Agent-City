@@ -249,14 +249,15 @@ to circle your body slowly (the mirror), so what you wear shows; the sound stays
 card opens without the mirror (the room did not make the step onto the fitting spot). Esc, × or Done gives the eye
 back. Every line lists
 its level and its price. **Try on** wears it on your body until the card closes. **Buy** takes the credits and wears it
-at once. An owned line you are not wearing has **Wear**. What you bought and your balance are kept in this browser
-(key `civic-simulation:shop:v1`), validated on the way in like the look.
+at once. An owned line you are not wearing has **Wear**. What you bought and your balance live in your operator
+record (the progression engine's, kept in this browser), so the console's `progress` and the card agree.
 
-- **Credits.** Until the progression engine lands, the shops run on practice credits: level 5 and 5,000 civic
-  credits, enough for the first floor of each shop and not for everything, and what you buy is kept as the same bits
-  the progression record will hold (worn lines at look 512 and up, furniture from 0, homes 0 to 6). When it lands, its
-  level, its credits and its purchase gate take the practice purse's place (`07_Execute_Actions/shopkeeper.ts`,
-  `progressionPurse`); what was bought with practice credits stays in the practice record.
+- **Credits.** The card's purse line is your operator level and civic credits. A new operator starts at level 1 with
+  150 credits, enough for a first-floor line such as the silk tie; the city's work earns more (see "The operator's
+  progression"). A purchase goes through the progression engine's purchase gate, which takes the price and sets the
+  line's unlock bit in the same saved record or changes nothing (`07_Execute_Actions/shopkeeper.ts` `progressionPurse`
+  over `progress.ts` `pageProgress`): worn lines at look 512 and up, furniture from 0, homes 0 to 6. A line above your
+  level says which level it needs; one you cannot afford says how many more credits.
 - **On sale now.** The tailor's six overcoats, seven contrast trims, seven scarves and a silk tie; the atelier's smart
   eyewear; the watch shop's leather briefcase. Lines that need slots the wardrobe does not have yet (the tattoo
   designs and inks, prosthetic limbs, the hearing processor, watches, the lapel pin, the umbrella, headphones) are

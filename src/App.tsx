@@ -50,7 +50,7 @@ import { probeGpu, WebGPUUnavailableError, type GpuProbe } from './01_Initialize
 import { Concierge } from './07_Execute_Actions/Concierge.tsx'
 import { Customizer } from './07_Execute_Actions/Customizer.tsx'
 import { StoreCard } from './07_Execute_Actions/StoreCard.tsx'
-import { createShopkeeper } from './07_Execute_Actions/shopkeeper.ts'
+import { createShopkeeper, progressionPurse } from './07_Execute_Actions/shopkeeper.ts'
 import { loadProfile, type Profile } from './05_Observe_Environment/profile.ts'
 import { loadLook, saveLook } from './05_Observe_Environment/lookStore.ts'
 import { changeLook, describeLook, LOOK_SLOTS, lookFromSeed, type Look, type LookChange } from './03_Spawn_Agents/look.ts'
@@ -613,8 +613,9 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
   const onHear = useCallback((voice: string, line: string) => { void speaker.preview(line, voice) }, [speaker])
   const lookOpenRef = useRef(false)
   // The storefronts (01_Initialize_World/storefronts.ts): the one shopkeeper every purchase goes through, the shop whose
-  // card is open (its index in engine.shops, or null), and the line being tried on (worn on the body, never kept).
-  const [keeper] = useState(() => createShopkeeper())
+  // card is open (its index in engine.shops, or null), and the line being tried on (worn on the body, never kept). It buys
+  // through the page's one progression keeper: its level, its credits, its purchase gate (progress.ts).
+  const [keeper] = useState(() => createShopkeeper({ purse: progressionPurse(pageProgress()) }))
   const [storeOpen, setStoreOpen] = useState<number | null>(null)
   // The frame loop's view of it: the open shop's index, or null.
   const storeOpenRef = useRef<number | null>(null)

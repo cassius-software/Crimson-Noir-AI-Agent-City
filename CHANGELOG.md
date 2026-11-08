@@ -23,19 +23,20 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   inside one, E (unless a car is in reach), B, the pad's south button or the HUD's Browse chip opens the shop's card
   (`src/07_Execute_Actions/StoreCard.tsx`): the avatar steps onto a fitting spot kept clear of every fixture and the
   camera circles the body, so the outfit shows; every line has its level and price, Try on, Buy (worn at once) and
-  Wear. Purchases go through one shopkeeper (`shopkeeper.ts`) over a purse shaped like the progression engine's
-  keeper (its spaces, bits, gate verdicts and subscribe; `progressionPurse` adapts the keeper by its documented
-  contract). Until that keeper lands, a practice purse (level 5, 5,000 credits) kept in this browser
-  (`civic-simulation:shop:v1`) stands in, with the same bits: worn lines at look 512 and up, furniture from 0, homes 0
-  to 6. On sale now: the tailor's overcoats, trims, scarves and tie,
+  Wear. Purchases go through one shopkeeper (`shopkeeper.ts`) over the progression engine's keeper (`progress.ts`
+  `pageProgress`, adapted by `progressionPurse`): the card shows its level and civic credits, and its purchase gate
+  takes the price and sets the line's unlock bit in the same saved record (worn lines at look 512 and up, furniture
+  from 0, homes 0 to 6). A new operator starts at level 1 with 150 credits, enough for a first-floor line such as the
+  tie, and earns more by the city's work. On sale now: the tailor's overcoats, trims, scarves and tie,
   the atelier's smart eyewear and the watch shop's briefcase; tattoos, limbs, watches and the other lines that need
   wardrobe slots not built yet are listed as on order, and the design house's furniture and seven property deeds wait
   for the properties. Three of the plan's shop names and two home names were changed after a trademark and place-name
   search (`docs/ip-audit.md` §7). Pinned by `storefronts.test.ts` (one shop per kind on its quarter for 64 seeds,
   never on a workplace lot, the podium gone, every fixture inside the walls, the walk-in and the camera's circle
   clear, the real Rapier avatar walking from the sidewalk to the fitting spot), `storeCatalog.test.ts` (ids, the
-  deeds' levels and prices, every line on sale wearable by every preset body, the gate's verdicts and exact millions,
-  the stored record's validation, the shopkeeper on the practice purse and on a stand-in for the progression keeper) and `storeWiring.test.ts`.
+  deeds' levels and prices, every line on sale wearable by every preset body, the spaces, level cap and verdicts equal
+  to the progression engine's, the shopkeeper over a real keeper bought once and kept across a reload, and over a
+  stand-in that refuses) and `storeWiring.test.ts`.
 - **The five shops in Lakefront Metro too.** A generated region's street window gets the same five storefronts
   (`src/01_Initialize_World/region/shops.ts`), on the lots nearest the visitor's start once its workplaces have taken
   theirs, from the same candidates as the workplaces (`region/workplaces.ts` `lotCandidates`, shared now): a doorway on

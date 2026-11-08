@@ -3,31 +3,24 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the one place a shop's purchase happens: the catalogue (storeCatalog.ts) and a purse
- * together. A purse answers for the operator's level, credits and what they own, and buys: the progression engine's
- * keeper (07_Execute_Actions/progress.ts pageProgress, whose purchase gate debits the credits and sets the unlock bit
- * in one record and one save, docs/progression.md) once the host hands it in through `progressionPurse`, else the
- * practice purse kept in this browser (05_Observe_Environment/shopStore.ts) with the same spaces, the same bits and
- * the same verdicts. The card and the debug handle both buy through the shopkeeper, so they cannot disagree about what
- * is owned or what it cost.
+ * together. A purse answers for the operator's level, credits and what they own, and buys: the page hands in the
+ * progression engine's keeper (07_Execute_Actions/progress.ts pageProgress, whose purchase gate debits the credits and
+ * sets the unlock bit in one record and one save, docs/progression.md) through `progressionPurse`. The card and the
+ * debug handle both buy through the shopkeeper, so they cannot disagree about what is owned or what it cost.
  * What breaks if it is removed? Each surface would keep its own owned set and its own balance.
  */
 import type { ShopKind } from '../01_Initialize_World/storefronts.ts'
 import type { Look } from '../03_Spawn_Agents/look.ts'
-import { loadShop, saveShop, type ShopRecord } from '../05_Observe_Environment/shopStore.ts'
-import type { ProfileStore } from '../05_Observe_Environment/profile.ts'
 import {
-  GATE, MAX_LEVEL, SPACE_SIZE, credits as creditWords, hasBit, itemById, itemsOf, onSale, purchaseGate, wearItem, wearing, whyOf,
-  type GateVerdict, type Space, type StoreItem,
+  GATE, credits as creditWords, itemById, itemsOf, onSale, wearItem, wearing, whyOf, type GateVerdict, type Space, type StoreItem,
 } from './storeCatalog.ts'
 
 /**
- * The operator's level, credits and unlocks as a shop reads them, and the gate it buys through: the shape of the
- * progression engine's keeper (progress.ts Progress), so it drops in. `canBuy` previews, `buy` debits and sets the bit
- * together or changes nothing; both answer with the gate's verdict (storeCatalog.ts GATE, the same numbers as
- * progression.ts PURCHASE).
+ * The operator's level, credits and unlocks as a shop reads them, and the gate it buys through (progressionPurse over
+ * the progression engine's keeper). `canBuy` previews, `buy` debits and sets the bit together or changes nothing; both
+ * answer with the gate's verdict (storeCatalog.ts GATE, the same numbers as progression.ts PURCHASE).
  */
 export interface Purse {
-  readonly source: 'practice' | 'progression'
   level(): number
   credits(): number
   canBuy(space: Space, index: number, levelReq: number, price: number): GateVerdict
@@ -57,7 +50,6 @@ const verdictOf = (r: number): GateVerdict => (r === 0 || r === 1 || r === 2 || 
 /** The progression engine's keeper as a purse: its level, its credits, its gate, its unlocks. */
 export function progressionPurse(p: ProgressLike): Purse {
   return Object.freeze({
-    source: 'progression' as const,
     level: () => p.record[PROGRESS_WORD.level],
     credits: () => p.record[PROGRESS_WORD.credits],
     canBuy: (space: Space, index: number, levelReq: number, price: number) => verdictOf(p.canBuy(space, index, levelReq, price)),
@@ -67,55 +59,11 @@ export function progressionPurse(p: ProgressLike): Purse {
   })
 }
 
-/** Whether a purchase's arguments are ones the progression gate takes (else it answers invalid; so does this purse). */
-const valid = (space: Space, index: number, levelReq: number, price: number): boolean =>
-  Object.hasOwn(SPACE_SIZE, space) && Number.isInteger(index) && index >= 0 && index < SPACE_SIZE[space]
-  && Number.isInteger(levelReq) && levelReq >= 1 && levelReq <= MAX_LEVEL && Number.isInteger(price) && price >= 0 && price <= 2_000_000_000
-
-/**
- * The practice purse over a store (localStorage by default): a level and credits that start at shopStore.ts PRACTICE,
- * bits in the progression record's spaces, saved after every purchase (a refused save keeps it for the visit).
- */
-export function practicePurse(store?: ProfileStore | null): Purse {
-  let record: ShopRecord = store === undefined ? loadShop() : loadShop(store)
-  const listeners = new Set<() => void>()
-  const preview = (space: Space, index: number, levelReq: number, price: number): GateVerdict => {
-    if (!valid(space, index, levelReq, price)) return GATE.unavailable
-    if (hasBit(record[space], index)) return GATE.owned
-    if (record.level < levelReq) return GATE.level
-    return record.credits < price ? GATE.credits : GATE.bought
-  }
-  return Object.freeze({
-    source: 'practice' as const,
-    level: () => record.level,
-    credits: () => record.credits,
-    canBuy: preview,
-    buy(space: Space, index: number, levelReq: number, price: number): GateVerdict {
-      if (!valid(space, index, levelReq, price)) return GATE.unavailable
-      // The gate on copies: the credits and the bit change together, in a new record, or not at all.
-      const wallet = new Float64Array([record.level, record.credits])
-      const bits = record[space].slice()
-      const verdict = purchaseGate(wallet, bits, index, levelReq, price)
-      if (verdict !== GATE.bought) return verdict
-      record = { ...record, [space]: bits, credits: wallet[1] }
-      if (store === undefined) saveShop(record)
-      else saveShop(record, store)
-      for (const f of listeners) f()
-      return verdict
-    },
-    owns: (space: Space, index: number) => Object.hasOwn(SPACE_SIZE, space) && hasBit(record[space], index),
-    subscribe(fn: () => void) {
-      listeners.add(fn)
-      return () => { listeners.delete(fn) }
-    },
-  })
-}
-
 /** One line as a card lists it: the line, whether it may be bought now and why not, and whether the look wears it. */
 export interface ShopRow { item: StoreItem; verdict: GateVerdict; why: string; owned: boolean; worn: boolean }
 
 export interface Shopkeeper {
-  /** The purse in use: the progression engine's, or the practice one. */
+  /** The purse every purchase goes through (the progression engine's keeper, on the page). */
   readonly purse: Purse
   /** A shop's lines for `look` (worn: the look already wears all the line sets). */
   rows(shop: ShopKind, look: Look | null): ShopRow[]
@@ -136,9 +84,9 @@ function verdictFor(purse: Purse, item: StoreItem): GateVerdict {
   return purse.canBuy(item.space, item.index, item.level, item.price)
 }
 
-/** The shopkeeper over a purse (the practice one by default). */
-export function createShopkeeper(o: { purse?: Purse | null } = {}): Shopkeeper {
-  const purse = o.purse ?? practicePurse()
+/** The shopkeeper over a purse. */
+export function createShopkeeper(o: { purse: Purse }): Shopkeeper {
+  const { purse } = o
   return {
     purse,
     rows(shop, look) {
