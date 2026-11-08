@@ -27,7 +27,8 @@ import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from '
 import { PIECE, SLOT, faceRings, silhouetteRings, type SilhouetteRing } from '../03_Spawn_Agents/humanoid.ts'
 import {
   LAYER, LOOK_BODY_SLIDERS, LOOK_BUILDS, LOOK_FACE_SHAPES, LOOK_FACE_SLIDERS, LOOK_GARMENTS, LOOK_PRESETS, LOOK_SLOTS, bodyShapeOf, buildOf, faceShapeNameOf, faceShapeOf,
-  formatLookCode, garmentOf, lookFromSeed, lookOptions, lookSwatch, lookWears, matchingSwatch, parseLookCode, withBuild, withFaceShape, withGarment, withLookSlot,
+  LOOK_LOWER_GARMENTS, formatLookCode, garmentOf, lookFromSeed, lookOptions, lookSwatch, lookWears, lowerGarmentFits, lowerGarmentOf, matchingSwatch, parseLookCode,
+  withBuild, withFaceShape, withGarment, withLookSlot,
   type Look, type LookBody, type LookFaceSlider, type LookSlider, type LookSlot,
 } from '../03_Spawn_Agents/look.ts'
 import { seedFromName } from '../05_Observe_Environment/profile.ts'
@@ -92,6 +93,7 @@ function slotLabel(slot: LookSlot, body: LookBody, layer: number = LAYER.jacket)
     case 'top': return layer === LAYER.coat ? 'Coat' : body === 1 ? 'Blazer' : body === 3 ? 'Top' : 'Jacket'
     case 'topWeave': return layer === LAYER.coat ? 'Coat\'s weave' : 'Weave'
     case 'trim': return 'Trim'
+    case 'bottomCut': return body === 3 ? 'Skirt\'s cut' : body === 1 ? 'Chinos\' cut' : 'Trousers\' cut'
     case 'bottom': return body === 3 ? 'Skirt' : body === 1 ? 'Chinos' : 'Trousers'
     case 'bottomWeave': return body === 3 ? 'Skirt\'s weave' : 'Trousers\' weave'
     case 'shirt': return body >= 2 ? 'Blouse' : 'Shirt'
@@ -221,7 +223,12 @@ function Silhouette({ look, t }: { look: Look; t: Theme }) {
   const views = useMemo(() => {
     // The features are the face view's: at this scale they would only clutter the head.
     const keep = (r: SilhouetteRing) => r.piece !== PIECE.FACE && wears(look, r.piece)
-    return { front: silhouetteRings(body, shape, false).filter(keep), side: silhouetteRings(body, shape, true).filter(keep) }
+    // The lower cut's shape (a wide leg, a midi hem) is the vertex stage's, through the same garmentPoint.
+    const coat = look.layer === LAYER.coat
+    return {
+      front: silhouetteRings(body, shape, false, look.bottomCut, coat).filter(keep),
+      side: silhouetteRings(body, shape, true, look.bottomCut, coat).filter(keep),
+    }
   }, [look, body, shape])
   return (
     <div className="flex items-end gap-4" data-row="silhouette">
@@ -476,6 +483,33 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
                   <div className={`w-20 shrink-0 pt-1 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>Garment</div>
                   <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Garment">
                     {LOOK_GARMENTS.map((g) => (
+                      <button
+                        key={g.name}
+                        type="button"
+                        role="radio"
+                        aria-checked={wearing?.name === g.name}
+                        onClick={() => { const next = withGarment(worn, g.name); if (next) onChange(next) }}
+                        className={`rounded-full border px-2.5 py-0.5 text-[12px] ${wearing?.name === g.name ? t.pillOn : t.pill}`}
+                      >
+                        {g.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {pills}
+              </Fragment>
+            )
+          }
+          // The lower garments head the lower cut's rows, the ones the body wears (a skirt for the skirt suit, trousers
+          // for the rest): each sets the cut and, where it names one, the weave.
+          if (slot === 'bottomCut') {
+            const wearing = lowerGarmentOf(worn)
+            return (
+              <Fragment key={slot}>
+                <div className="mb-2 flex items-start gap-3" data-row="lowerGarment">
+                  <div className={`w-20 shrink-0 pt-1 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>{worn.body === 3 ? 'Skirts' : 'Trousers'}</div>
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="radiogroup" aria-label={worn.body === 3 ? 'Skirts' : 'Trousers'}>
+                    {LOOK_LOWER_GARMENTS.filter((g) => lowerGarmentFits(worn, g)).map((g) => (
                       <button
                         key={g.name}
                         type="button"

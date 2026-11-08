@@ -105,7 +105,7 @@ const CORE = [
   { name: 'captions', usage: 'captions [on|off]', summary: 'closed captions for every sound: engines, signals, speech, pings (view-only)' },
   { name: 'haptics', usage: 'haptics [on|off]', summary: "controller rumble and phone vibration: the guardrails' feel and a check's tap (the triggers' resistance stays)" },
   { name: 'ping', usage: 'ping [go|look|gather|wait|clear]', summary: 'mark where you look for your swarm (view-only; shown on the minimap and captioned; Q); alone, the marks standing' },
-  { name: 'look', usage: 'look [show [<agent>]|<slot> <n|name>|preset <name>|build <name>|face <name>|garment <name>|code <code>|random [<seed>]|reset]', summary: "your look from the crowd's wardrobe (body, build, height, mass, muscle, shoulders, hips, legs, posture, head, face shape, skin, vitiligo, freckles, hair, curl, headwear, facial hair, hearing devices, prosthetic, garments, cuts, top, weaves, bottom, shirt, shoes, tie, eyewear, bag, cup)" },
+  { name: 'look', usage: 'look [show [<agent>]|<slot> <n|name>|preset <name>|build <name>|face <name>|garment <name>|code <code>|random [<seed>]|reset]', summary: "your look from the crowd's wardrobe (body, build, height, mass, muscle, shoulders, hips, legs, posture, head, face shape, skin, vitiligo, freckles, hair, curl, headwear, facial hair, hearing devices, prosthetic, garments, cuts, top, weaves, trouser and skirt cuts, bottom, shirt, shoes, tie, eyewear, bag, cup)" },
   { name: 'agent', usage: 'agent [new <name>|<name> pronouns|role|voice|look|name <value...>|hire <name> [<skill>]|dismiss <name>|forget <name>|voices]', summary: 'your own agents: name, pronouns, role, voice and look; hire one into a pedestrian with a skill (they answer ask and say as themselves)' },
   { name: 'sloane', usage: 'sloane [on|off|voice <name>|voices|say <text...>]', summary: "the concierge's spoken voice: the speech provider's voice at your own head when say has one, else the browser's offline voice" },
   { name: 'goal', usage: 'goal <words...>', summary: 'tell the city a goal in plain words, as you would tell Sloane: what can be done now is done, the rest is explained' },
@@ -200,7 +200,7 @@ export const LOOK_SLOT_ARGS = [
   'body', 'height', 'mass', 'muscle', 'shoulders', 'hips', 'legs', 'posture', 'head', 'brow', 'jaw', 'chin', 'cheek', 'nose', 'eyes', 'lips',
   'skin', 'age', 'undertone', 'vitiligo', 'freckles', 'hairStyle', 'curl', 'hairColour', 'headwear', 'headwearColour',
   'facialHair', 'hearing', 'prosthetic', 'prostheticFinish',
-  'layer', 'cut', 'top', 'topWeave', 'trim', 'bottom', 'bottomWeave', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
+  'layer', 'cut', 'top', 'topWeave', 'trim', 'bottomCut', 'bottom', 'bottomWeave', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
 ] as const
 export const LOOK_BUILD_ARGS = ['athletic', 'broad', 'full', 'lean', 'muscular', 'slight', 'soft', 'stocky'] as const
 export const LOOK_BODY_ARGS = ['pantsuit', 'skirt suit', 'smart casual', 'suit'] as const
@@ -218,15 +218,25 @@ export const LOOK_CUT_ARGS = [
   'band collar', 'belted', 'cardigan', 'cropped', 'double-breasted', 'notch lapel', 'open front', 'patch pockets', 'peak lapel', 'quilted',
   'shawl collar', 'side closure', 'turtleneck', 'waistcoat', 'wrap front', 'zip front',
 ] as const
+/** The lower cuts, trousers' and skirts' together (the host takes the names the body wears). */
+export const LOOK_BOTTOM_CUT_ARGS = [
+  'A-line', 'back vent', 'belted', 'box pleat', 'button front', 'cropped', 'culottes', 'flared', 'high-waisted', 'midi', 'midi A-line', 'midi pencil',
+  'palazzo', 'panelled', 'pencil', 'piped seam', 'pleated', 'pleated turn-ups', 'pressed crease', 'side stripe', 'slim', 'straight', 'tapered', 'tulip',
+  'turn-ups', 'wide-leg', 'wrap',
+] as const
+/** The garments, tops and lower garments together. */
 export const LOOK_GARMENT_ARGS = [
-  'band-collar batik jacket', 'band-collar jacket', 'band-collar long coat', 'band-collar silk jacket', 'belted jacket', 'belted trench coat',
-  'cashmere blazer', 'cashmere cardigan', 'chalk stripe suit jacket', 'check overcoat', 'cropped houndstooth jacket', 'cropped jacket',
-  'double-breasted chalk stripe jacket', 'double-breasted glen check jacket', 'double-breasted overcoat', 'double-breasted suit jacket',
-  'herringbone blazer', 'herringbone overcoat', 'houndstooth blazer', 'linen blazer', 'merino cardigan', 'peak-lapel pinstripe jacket',
-  'peak-lapel suit jacket', 'pinstripe suit jacket', 'pinstripe waistcoat', 'quilted coat', 'quilted jacket', 'shawl-collar dinner jacket',
-  'side-closure jacket', 'side-closure silk jacket', 'silk evening jacket', 'silk wrap jacket', 'strip-weave blazer', 'turtleneck and blazer',
-  'turtleneck and tweed jacket', 'tweed blazer', 'tweed waistcoat', 'unbuttoned blazer', 'unbuttoned linen blazer', 'waistcoat', 'windowpane blazer',
-  'wrap coat', 'wrap jacket', 'zip-front jacket',
+  'A-line skirt', 'band-collar batik jacket', 'band-collar jacket', 'band-collar long coat', 'band-collar silk jacket', 'belted jacket', 'belted trench coat',
+  'box-pleat check skirt', 'button-front skirt', 'cashmere blazer', 'cashmere cardigan', 'chalk stripe suit jacket', 'check overcoat',
+  'cropped houndstooth jacket', 'cropped jacket', 'cropped linen trousers', 'dinner trousers', 'double-breasted chalk stripe jacket',
+  'double-breasted glen check jacket', 'double-breasted overcoat', 'double-breasted suit jacket', 'flared trousers', 'glen check trousers',
+  'herringbone blazer', 'herringbone overcoat', 'houndstooth blazer', 'linen blazer', 'merino cardigan', 'midi A-line skirt', 'midi pencil skirt',
+  'palazzo trousers', 'peak-lapel pinstripe jacket', 'peak-lapel suit jacket', 'pencil skirt', 'pinstripe suit jacket', 'pinstripe suit trousers',
+  'pinstripe waistcoat', 'pleated chinos', 'pleated skirt', 'pleated tweed trousers', 'quilted coat', 'quilted jacket', 'shawl-collar dinner jacket',
+  'side-closure jacket', 'side-closure silk jacket', 'silk evening jacket', 'silk wrap jacket', 'strip-weave blazer', 'tapered chinos',
+  'turn-up wool trousers', 'turtleneck and blazer', 'turtleneck and tweed jacket', 'tweed blazer', 'tweed waistcoat', 'twill culottes',
+  'unbuttoned blazer', 'unbuttoned linen blazer', 'waistcoat', 'wide-leg trousers', 'windowpane blazer', 'wrap coat', 'wrap jacket', 'wrap skirt',
+  'zip-front jacket',
 ] as const
 const LOOK_ACTIONS = ['build', 'code', 'face', 'garment', 'preset', 'random', 'reset', 'show'] as const
 
@@ -270,6 +280,7 @@ const ARGS: Record<string, readonly string[]> = {
   'look layer': ['coat', 'jacket', 'shirt sleeves'],
   'look cut': LOOK_CUT_ARGS,
   'look garment': LOOK_GARMENT_ARGS,
+  'look bottomCut': LOOK_BOTTOM_CUT_ARGS,
   'look trim': ['matching'],
   'look scarf': ['none'],
   'look preset': LOOK_PRESET_ARGS,
@@ -718,7 +729,7 @@ function lookChange(action: string, rest: readonly string[]): LookChange | strin
   if (action === 'preset') return rest.length ? { kind: 'preset', name: rest.join(' ') } : 'usage: look preset <name>'
   if (action === 'build') return rest.length === 1 ? { kind: 'build', name: rest[0] } : `usage: look build <${LOOK_BUILD_ARGS.join('|')}>`
   if (action === 'face') return rest.length ? { kind: 'face', name: rest.join(' ') } : 'usage: look face <shape> (oval, round, square, heart, long, diamond, triangle, ...)'
-  if (action === 'garment') return rest.length ? { kind: 'garment', name: rest.join(' ') } : 'usage: look garment <name> (pinstripe suit jacket, tweed blazer, waistcoat, cashmere cardigan, belted trench coat, ...)'
+  if (action === 'garment') return rest.length ? { kind: 'garment', name: rest.join(' ') } : 'usage: look garment <name> (pinstripe suit jacket, tweed blazer, waistcoat, belted trench coat, wide-leg trousers, pencil skirt, ...)'
   if (action === 'code') return rest.length === 1 ? { kind: 'code', code: rest[0] } : 'usage: look code <XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX>'
   const slot = LOOK_SLOT_ARGS.find((x) => x.toLowerCase() === action.toLowerCase())
   if (!slot) return `look: no slot named '${action}': ${LOOK_SLOT_ARGS.join(', ')}`

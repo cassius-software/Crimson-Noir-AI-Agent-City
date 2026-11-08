@@ -747,7 +747,8 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   on the side of the head; on the near body only, the far body is too small to show them. A **Prosthetic** row (none,
   left arm, right arm, left leg, right leg, both arms, both legs) with a **Prosthetic finish** row (matte, carbon,
   chrome, skin-matched) paints the hand and wrist below the sleeve, or the shin and the ankle below the knee, with the
-  socket's line; a leg shows where the leg is bare (under a skirt), and trousers cover it as they would. Some
+  socket's line; a leg shows where the leg is bare (under a skirt, or below cropped trousers and culottes), and
+  trousers cover it as they would. Some
   pedestrians have them too (facial hair for about forty-five men in a hundred, hearing aids for about two people in
   a hundred, an implant for under one, a prosthetic for one). At the console: `look facialHair goatee`, `look hearing
   cochlear implant`, `look prosthetic left arm`, `look prostheticFinish carbon`.
@@ -771,6 +772,23 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   palette holds. A band collar, a turtleneck, a zip front, a side closure and a quilted jacket take the tie off.
   Under shirt sleeves the jacket is off and its cut is not shown. About three pedestrians in ten wear
   a cut other than the notch lapel. At the console: `look cut double-breasted`, `look garment belted trench coat`.
+- **Trousers and skirts.** A **Trousers' cut** row (**Chinos' cut** on smart casual, **Skirt's cut** on the skirt
+  suit) cuts the lower garment. Trousers: straight (as every pair was), pressed crease, pleated, turn-ups, side stripe
+  (in satin), wide-leg, tapered, flared, cropped (ending above the ankle), culottes (ending at the calf), high-waisted
+  (the trousers' cloth up to the waist where it shows: in shirt sleeves or under a cropped jacket), belted (a belt
+  where the waist shows), piped seam, slim, pleated turn-ups and palazzo. Skirts: straight (as every skirt was),
+  pencil, A-line, pleated, box pleat, wrap, midi (to mid-calf), midi pencil, midi A-line, back vent, button front,
+  tulip, panelled, high-waisted, belted and flared. The wide-leg, palazzo, flared, culottes, tapered and slim trousers
+  and every skirt cut but the straight, the back vent, the button front and the belted change the shape (a wider or
+  narrower leg, a skirt that swings out, narrows or reaches mid-calf), and the silhouette on the card shows it; the
+  rest are lines on the cloth. Under a coat a skirt does not widen. Changing between the skirt suit and the other
+  bodies puts the cut back to straight. A **Trousers** or **Skirts** row above it holds the twelve named pairs of
+  trousers (pinstripe suit trousers, glen check trousers, pleated chinos, pleated tweed trousers, turn-up wool
+  trousers, dinner trousers, wide-leg trousers, palazzo trousers, tapered chinos, flared trousers, cropped linen
+  trousers, twill culottes) or the eight skirts (pencil, midi pencil, A-line, midi A-line, pleated, box-pleat check,
+  wrap and button-front): each sets the cut and the weave and keeps your colours. Only the ones your body wears are
+  listed, and the console refuses a skirt on a trouser body. About one pedestrian in three wears a lower cut. At the
+  console: `look bottomCut midi`, `look garment wide-leg trousers`.
 - **The four words.** `packLook` folds the body, the pieces, the colours, the age and the undertone into one
   unsigned 32-bit word (bit 6 says the hair is long, written from the style; the top bit is spare), `packFigure`
   the eight body sliders into a second, `packFace` the seven face sliders and the hair style into a third and

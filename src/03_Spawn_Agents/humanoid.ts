@@ -89,6 +89,98 @@ export const LANDMARK = Object.freeze({
   chestPivot: 1.2, shoulder: 1.45, shoulderX: 0.2, elbow: 1.17, wrist: 0.92, neck: 1.52,
 })
 
+/**
+ * The lower garment's cuts: one list for the three trouser bodies, one for the skirt suit's (look.ts
+ * WARDROBE.trouserCut, WARDROBE.skirtCut name them in this order). Cut 0 is the straight leg or the straight skirt
+ * every body already wore, so a look without a cut is drawn as it always was. Some cuts reshape the cloth
+ * (TROUSER_SHAPE, SKIRT_SHAPE: garmentPoint and its GPU twin, crowdBody.ts bodyGarment); the fragment stage paints
+ * the rest on it (crowd.ts).
+ */
+export const TROUSER_CUT = Object.freeze({
+  straight: 0, crease: 1, pleated: 2, turnUps: 3, sideStripe: 4, wideLeg: 5, tapered: 6, flared: 7,
+  cropped: 8, culottes: 9, highWaisted: 10, belted: 11, piped: 12, slim: 13, pleatedTurnUps: 14, palazzo: 15,
+})
+export const SKIRT_CUT = Object.freeze({
+  straight: 0, pencil: 1, aLine: 2, pleated: 3, boxPleat: 4, wrap: 5, midi: 6, midiPencil: 7,
+  midiALine: 8, backVent: 9, buttonFront: 10, tulip: 11, panelled: 12, highWaisted: 13, belted: 14, flared: 15,
+})
+
+/**
+ * Heights the lower cuts are shaped by, m on the base body: the skirt's waist ring (above it the high waist raises
+ * the skirt, below it a midi lengthens it) and hem; where a slim leg starts and finishes narrowing; where a taper
+ * takes hold below the knee and the ankle its slope counts from; the tulip's bulge over the hips; where the skirt's
+ * hem starts to follow the thighs, and the band down its middle (|x| under followMid) that stays with the trunk,
+ * the following rising from there to the leg's axis.
+ */
+export const LOWER = Object.freeze({
+  waist: 0.92, hem: 0.56, top: 1.02,
+  slimFrom: 0.85, slimTo: 0.5, taperFrom: 0.62, taperTo: 0.5, ankle: 0.095,
+  bulgeAt: 0.84, bulgeHalf: 0.14, pencilFrom: 0.85, followFrom: 0.85, followMid: 0.02,
+})
+
+/**
+ * Where the fragment stage ends the shorter trousers (crowd.ts), m: the cropped pair above the ankle, the culottes at
+ * the leg's 0.34 ring, the last one TROUSER_SHAPE widens (the band below it narrows back to the calf, painted as the
+ * hem's shadowed inside down to culottesInside, the leg below that).
+ */
+export const LOWER_PAINT = Object.freeze({ croppedHem: 0.19, culottesHem: 0.34, culottesInside: 0.27 })
+
+/**
+ * How each trouser cut reshapes a leg about its own axis (x = ±LANDMARK.hipX, z = 0), as
+ * [slim, wide, flare, wideAbove, wideTop, wideFull, taper, taperSlope]: a ring's radius r becomes r·(1 − slim·t),
+ * t rising from LOWER.slimFrom down to LOWER.slimTo; is raised toward wide + flare·(knee − y) (the flare grows below
+ * the knee only) as y falls from wideTop to wideFull, at or above wideAbove alone (the culottes' hem); and is lowered
+ * toward taper + taperSlope·(y − LOWER.ankle) as y falls from LOWER.taperFrom to LOWER.taperTo. Zeros reshape
+ * nothing: the painted cuts.
+ */
+export const TROUSER_SHAPE: readonly (readonly number[])[] = Object.freeze([
+  [0, 0, 0, 0, 0, 0, 0, 0], // straight
+  [0, 0, 0, 0, 0, 0, 0, 0], // pressed crease
+  [0, 0, 0, 0, 0, 0, 0, 0], // pleated
+  [0, 0, 0, 0, 0, 0, 0, 0], // turn-ups
+  [0, 0, 0, 0, 0, 0, 0, 0], // side stripe
+  [0, 0.08, 0, 0, 0.82, 0.6, 0, 0], // wide-leg: about 8 cm round from the thigh down
+  [0, 0, 0, 0, 0, 0, 0.036, 0.05], // tapered: 3.6 cm at the ankle
+  [0, 0.058, 0.09, 0, 0.56, 0.48, 0, 0], // flared: from the knee, 9.4 cm round at the hem
+  [0, 0, 0, 0, 0, 0, 0, 0], // cropped
+  [0, 0.085, 0, 0.29, 0.82, 0.6, 0, 0], // culottes: wide down to the calf
+  [0, 0, 0, 0, 0, 0, 0, 0], // high-waisted
+  [0, 0, 0, 0, 0, 0, 0, 0], // belted
+  [0, 0, 0, 0, 0, 0, 0, 0], // piped seam
+  [0.1, 0, 0, 0, 0, 0, 0, 0], // slim: a tenth narrower from the hip down
+  [0, 0, 0, 0, 0, 0, 0, 0], // pleated turn-ups
+  [0, 0.095, 0, 0, 0.86, 0.66, 0, 0], // palazzo: wider, from higher up
+].map((row) => Object.freeze(row)))
+
+/**
+ * How each skirt cut reshapes the skirt about the trunk's axis, as
+ * [flare, flareTop, pencil, length, bulge, raise, narrowTop, follow]: every radius scales by 1 + flare·t(flareTop
+ * down to LOWER.hem) + bulge·hat(LOWER.bulgeAt, LOWER.bulgeHalf) − pencil·t(LOWER.pencilFrom down to LOWER.hem) −
+ * narrowTop·t(LOWER.waist up to LOWER.top); below LOWER.waist the skirt stretches down by `length` (1.556 takes the
+ * hem from 0.56 to a midi's 0.36), above it rises by `raise` per metre (0.8 takes the top from 1.02 to 1.1). Under a
+ * coat no skirt widens (the coat hems where the skirt does). `follow` is how much of the hem the thigh on its side
+ * carries (crowdBody.ts: the skirt hangs from the trunk alone, so a narrow or a long hem would let the knees through
+ * mid-stride). Zeros, and length 1, reshape nothing.
+ */
+export const SKIRT_SHAPE: readonly (readonly number[])[] = Object.freeze([
+  [0, 0.92, 0, 1, 0, 0, 0, 0], // straight
+  [0, 0.92, 0.22, 1, 0, 0, 0, 0.45], // pencil
+  [0.24, 0.95, 0, 1, 0, 0, 0, 0], // A-line
+  [0.08, 0.92, 0, 1, 0, 0, 0, 0.2], // pleated
+  [0.1, 0.92, 0, 1, 0, 0, 0, 0.2], // box pleat
+  [0.05, 0.92, 0, 1, 0, 0, 0, 0.25], // wrap
+  [0, 0.92, 0, 1.556, 0, 0, 0, 0.5], // midi
+  [0, 0.92, 0.2, 1.556, 0, 0, 0, 0.6], // midi pencil
+  [0.3, 0.95, 0, 1.556, 0, 0, 0, 0.25], // midi A-line
+  [0, 0.92, 0, 1, 0, 0, 0, 0], // back vent
+  [0, 0.92, 0, 1, 0, 0, 0, 0], // button front
+  [0, 0.92, 0.16, 1, 0.06, 0, 0, 0.4], // tulip
+  [0.12, 0.92, 0, 1, 0, 0, 0, 0.15], // panelled
+  [0, 0.92, 0, 1, 0, 0.8, 0.1, 0], // high-waisted
+  [0, 0.92, 0, 1, 0, 0, 0, 0], // belted
+  [0.42, 0.98, 0, 1, 0, 0, 0, 0], // flared
+].map((row) => Object.freeze(row)))
+
 /** The body sliders, each 0..1 but the height in metres. */
 export interface BodyShape {
   readonly height: number
@@ -333,6 +425,68 @@ export function morphNormal(nx: number, ny: number, nz: number, y: number, z: nu
   out[0] = x / l; out[1] = yy / l; out[2] = zz / l
   return out
 }
+
+/**
+ * A lower garment's cut at one point of its tube (TROUSER_SHAPE about a leg's axis, SKIRT_SHAPE about the trunk's):
+ * the radius `r` at height `y` reshaped, and the height stretched (a skirt's length and high waist). Writes
+ * [radius, height] into `out` and returns it. crowdBody.ts bodyLowerShape is the GPU twin.
+ */
+export function lowerShape(r: number, y: number, skirt: boolean, cut: number, coat: boolean, out: number[] = [0, 0]): number[] {
+  if (skirt) {
+    const [flare, flareTop, pencil, length, bulge, raise, narrowTop] = SKIRT_SHAPE[cut]
+    let s = 1 + flare * smoothTo(flareTop, LOWER.hem, y) + bulge * hat(y, LOWER.bulgeAt, LOWER.bulgeHalf)
+      - pencil * smoothTo(LOWER.pencilFrom, LOWER.hem, y) - narrowTop * smoothTo(LOWER.waist, LOWER.top, y)
+    if (coat) s = Math.min(s, 1)
+    out[0] = r * s
+    out[1] = y < LOWER.waist ? LOWER.waist - (LOWER.waist - y) * length : y + (y - LOWER.waist) * raise
+    return out
+  }
+  const [slim, wide, flare, wideAbove, wideTop, wideFull, taper, taperSlope] = TROUSER_SHAPE[cut]
+  let q = r * (1 - slim * smoothTo(LOWER.slimFrom, LOWER.slimTo, y))
+  const w = wide + flare * Math.max(0, LANDMARK.knee - y)
+  if (w > 0 && y >= wideAbove) q += smoothTo(wideTop, wideFull, y) * Math.max(0, w - q)
+  if (taper > 0) q -= smoothTo(LOWER.taperFrom, LOWER.taperTo, y) * Math.max(0, q - (taper + taperSlope * (y - LOWER.ankle)))
+  out[0] = q
+  out[1] = y
+  return out
+}
+
+/**
+ * A rest-pose vertex of the lower garment as its cut reshapes it, before the sliders (crowdBody.ts bodyGarment is
+ * the GPU twin): a trouser leg (slot BOTTOM on a leg bone) about the leg's axis, the skirt (slot BOTTOM hung from the
+ * trunk alone: the trunk's own seat rings take the chest for a second bone) about the trunk's. The normal follows: in
+ * the tube's cylinder (radius, angle, height), with the radius taken to F(r, y) and the height to Y(y), a normal's
+ * radial, angular and height parts become (n_r·Y', n_θ·r·F_r·Y'/F, n_y·F_r − n_r·F_y), the derivatives by central
+ * differences, so an unchanged point keeps its normal and a flare is lit as one. Cut 0, and every other vertex, comes
+ * back as it went in. Writes [x, y, z, nx, ny, nz] into `out` and returns it.
+ */
+export function garmentPoint(
+  x: number, y: number, z: number, nx: number, ny: number, nz: number,
+  slot: number, bone0: number, bone1: number, cut: number, coat: boolean, out: number[] = [0, 0, 0, 0, 0, 0],
+): number[] {
+  out[0] = x; out[1] = y; out[2] = z; out[3] = nx; out[4] = ny; out[5] = nz
+  const leg = bone0 >= BONE.THIGH_L && bone0 <= BONE.FOOT_R
+  const skirt = bone0 === BONE.TRUNK && bone1 === BONE.TRUNK
+  if (cut === 0 || slot !== SLOT.BOTTOM || !(leg || skirt)) return out
+  const ax = leg ? Math.sign(x) * LANDMARK.hipX : 0
+  const dx = x - ax
+  const r = Math.max(Math.hypot(dx, z), 1e-6)
+  const [F, Y] = lowerShape(r, y, skirt, cut, coat)
+  const fr = (lowerShape(r + GARMENT_STEP.r, y, skirt, cut, coat)[0] - lowerShape(r - GARMENT_STEP.r, y, skirt, cut, coat)[0]) / (2 * GARMENT_STEP.r)
+  const up = lowerShape(r, y + GARMENT_STEP.y, skirt, cut, coat), dn = lowerShape(r, y - GARMENT_STEP.y, skirt, cut, coat)
+  const fy = (up[0] - dn[0]) / (2 * GARMENT_STEP.y), yy = (up[1] - dn[1]) / (2 * GARMENT_STEP.y)
+  const c = dx / r, s = z / r, k = F / r
+  out[0] = ax + dx * k; out[1] = Y; out[2] = z * k
+  const nr = nx * c + nz * s, nt = nz * c - nx * s
+  const mr = nr * yy, mt = nt * fr * yy / k, my = ny * fr - nr * fy
+  const ox = mr * c - mt * s, oz = mr * s + mt * c
+  const l = Math.hypot(ox, my, oz) || 1
+  out[3] = ox / l; out[4] = my / l; out[5] = oz / l
+  return out
+}
+
+/** The central differences' steps garmentPoint and bodyGarment take, m. */
+export const GARMENT_STEP = Object.freeze({ r: 0.001, y: 0.002 })
 
 /** The per-agent scales the shader applies after the pose: the stature up the body, and its square root across. */
 export function scaleOf(f: ShapeFactors): { readonly y: number; readonly xz: number } {
@@ -1190,6 +1344,9 @@ function skirtTube(): Tube {
   return { rings, segments: 16, farSegments: 8 }
 }
 
+/** Where each body's jacket hems over the trousers' seat (or the skirt), m: the trunk's slot turns from BOTTOM to TOP there. */
+export const JACKET_HEM = Object.freeze([0.9, 0.94, 0.92, 0.98])
+
 /** The four bodies' names, in draw-list order (crowd.ts VARIANT_NAMES, look.ts LOOK_BODIES). */
 export const BODY_NAMES = ['suit', 'smart casual', 'pantsuit', 'skirt suit'] as const
 
@@ -1198,7 +1355,7 @@ export function bodyTubes(variant: number): Tube[] {
   const v = Number.isFinite(variant) ? Math.min(3, Math.max(0, Math.floor(variant))) : 0
   const woman = v >= 2
   const skirt = v === 3
-  const hem = v === 0 ? 0.9 : v === 1 ? 0.94 : v === 2 ? 0.92 : 0.98
+  const hem = JACKET_HEM[v]
   const profile = woman ? womanTrunk(hem) : manTrunk(hem)
   // The shirt's V, the lapels, the collar and the cuffs are painted on the cloth by the fragment stage (GARMENT).
   const tubes: Tube[] = [
@@ -1368,16 +1525,20 @@ const STILL: BodyPose = Object.freeze({ tilt: 0, bend: 0, fall: 0 })
  * front (`side` false: x edges) or from the person's left (`side` true: z edges). The legs' and arms' rings are
  * weighted to their own bone alone here (their blend to the trunk is a few millimetres at rest).
  */
-function ringEdges(tubes: readonly Tube[], shape: BodyShape, face: FaceShape, side: boolean): SilhouetteRing[] {
+function ringEdges(tubes: readonly Tube[], shape: BodyShape, face: FaceShape, side: boolean, lowerCut = 0, coat = false): SilhouetteRing[] {
   const f = shapeFactors(shape)
   const scale = scaleOf(f)
   const piv = pivotsOf(f)
   const a = walkAngles(0, 0, f)
   const out: SilhouetteRing[] = []
   const p = [0, 0, 0]
+  const g = [0, 0, 0, 0, 0, 0]
   const edge = (x: number, y: number, z: number, r: Ring, th: number): number[] => {
     if (r.region !== undefined && r.bone === BONE.HEAD) facePoint(x, y, z, r.region, faceWeight(r, th), face, p)
-    else { p[0] = x; p[1] = y; p[2] = z }
+    else if (lowerCut !== 0) {
+      garmentPoint(x, y, z, 0, 1, 0, r.slot, r.bone, r.bone1 ?? r.bone, lowerCut, coat, g)
+      p[0] = g[0]; p[1] = g[1]; p[2] = g[2]
+    } else { p[0] = x; p[1] = y; p[2] = z }
     morphPoint(p[0], p[1], p[2], r.bone, f, p)
     boneTransform(r.bone, p, 1, a, STILL, piv)
     p[0] *= scale.xz; p[1] *= scale.y; p[2] *= scale.xz
@@ -1411,10 +1572,12 @@ function ringEdges(tubes: readonly Tube[], shape: BodyShape, face: FaceShape, si
  * The body's rings, standing, with the body sliders applied, seen from the front (`side` false: x edges) or from the
  * person's left (`side` true: z edges, so the posture's lean and the knees' and elbows' rest show), for a picture of
  * the look without a GPU. Optional pieces are included with their piece bit; the caller leaves out the ones the look
- * does not wear (the features, piece FACE, belong to faceRings). The face is the base one here.
+ * does not wear (the features, piece FACE, belong to faceRings). The face is the base one here. `lowerCut` reshapes the
+ * trousers or the skirt as the shader does (garmentPoint; `coat`: under a coat, where no skirt widens); the painted
+ * cuts are not shown.
  */
-export function silhouetteRings(variant: number, shape: BodyShape, side = false): SilhouetteRing[] {
-  return ringEdges(bodyTubes(variant), shape, FACE_NEUTRAL, side)
+export function silhouetteRings(variant: number, shape: BodyShape, side = false, lowerCut = 0, coat = false): SilhouetteRing[] {
+  return ringEdges(bodyTubes(variant), shape, FACE_NEUTRAL, side, lowerCut, coat)
 }
 
 /**

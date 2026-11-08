@@ -17,8 +17,9 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { BODY_INCLUDES, BODY_WGSL, statureFactor } from './crowdBody.ts'
 import {
-  BODY_NAMES, BONE, BONES, EYE_LEVEL, FACE, FACE_NEUTRAL, FACE_REGION, GARMENT, GAZE, GAZE_AHEAD, HAIRLINE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, MORPH, PIECE, REGION, RIG_REST, RIG_WEAR, SHAPE_NEUTRAL, SLOT, SLOTS, SOLE, WALK,
-  bodyTubes, boneGroup, boneSide, boneTransform, eyeHeightOf, faceNormal, facePoint, faceRings, footAt, gazeAt, heightMap, humanoidMesh, legReach, legSolve, morphNormal, morphPoint,
+  BODY_NAMES, BONE, BONES, EYE_LEVEL, FACE, FACE_NEUTRAL, FACE_REGION, GARMENT, GARMENT_STEP, GAZE, GAZE_AHEAD, HAIRLINE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, LOWER, MORPH, PIECE, REGION,
+  RIG_REST, RIG_WEAR, SHAPE_NEUTRAL, SKIRT_CUT, SKIRT_SHAPE, SLOT, SLOTS, SOLE, TROUSER_CUT, TROUSER_SHAPE, WALK,
+  bodyTubes, boneGroup, boneSide, boneTransform, eyeHeightOf, faceNormal, facePoint, faceRings, footAt, garmentPoint, gazeAt, heightMap, humanoidMesh, legReach, legSolve, lowerShape, morphNormal, morphPoint,
   pelvisDrop, pivotsOf, rigPoint, rotateByQuat, scaleOf, shapeFactors, silhouetteRings, skinPoint, skullFront, swingOf, walkAngles,
   type BodyPose, type BodyShape, type FaceShape, type LegAngles, type RigPose,
 } from './humanoid.ts'
@@ -809,14 +810,14 @@ test('HAIRLINE: the cap\'s front leaves the skull\'s front at the hairline and i
 
 // --- The WGSL --------------------------------------------------------------------------------------------------
 
-test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow and wrist as their drop from the shoulder), seventeen functions, one call for the position and the normal, the face shaped on the head alone, the legs solved from the feet, the gaze from the operator\'s eye, a fallen body hung from its rig', () => {
+test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow and wrist as their drop from the shoulder), twenty functions, one call for the position and the normal, the face shaped on the head alone, the lower cut before the sliders, the legs solved from the feet, the gaze from the operator\'s eye, a fallen body hung from its rig', () => {
   const lit = (n: number): string => (Number.isInteger(n) ? `${n}.0` : `${n}`)
   const flat = (name: string, o: unknown, out: [string, number][] = []): [string, number][] => {
     if (typeof o === 'number') out.push([name, o])
     else for (const [k, v] of Object.entries(o as object)) flat(`${name}.${k}`, v, out)
     return out
   }
-  const carried = [...flat('LANDMARK', LANDMARK), ...flat('MORPH', MORPH), ...flat('REGION', REGION), ...flat('LIMB_GIRTH', LIMB_GIRTH), ...flat('WALK', WALK), ...flat('SOLE', SOLE), ...flat('GAZE', GAZE), ...flat('FACE', FACE)]
+  const carried = [...flat('LANDMARK', LANDMARK), ...flat('MORPH', MORPH), ...flat('REGION', REGION), ...flat('LIMB_GIRTH', LIMB_GIRTH), ...flat('WALK', WALK), ...flat('SOLE', SOLE), ...flat('GAZE', GAZE), ...flat('FACE', FACE), ...flat('LOWER', LOWER), ...flat('GARMENT_STEP', GARMENT_STEP)]
     .filter(([name]) => name !== 'LANDMARK.elbow' && name !== 'LANDMARK.wrist' && name !== 'FACE.nose.rootY' && name !== 'FACE.clear')
   for (const [name, v] of carried) assert.ok(BODY_WGSL.includes(lit(v)), `${name} = ${lit(v)} in the WGSL`)
   assert.ok(BODY_WGSL.includes(`shoulderY - ${lit(LANDMARK.shoulder - LANDMARK.elbow)}`), 'the elbow hangs its drop under the shoulder')
@@ -824,7 +825,7 @@ test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow a
   assert.doesNotMatch(BODY_WGSL, /undefined|NaN|\[object/, 'every interpolation is a number')
   // Tint refuses WGSL's reserved words as names (it refused `target`); the ones a hand reaches for, as a declared name.
   assert.doesNotMatch(BODY_WGSL, /\b(?:target|flat|smooth|filter|get|set|type|mod|of|from|new|ref|self|this|with|where|use|pass|premerge|precise|common|shared|static|sizeof|null|nil|do|match|move|mut|pub|priv|super|try|catch|throw|final|package|module|import|export|layout|resource|register|precision|patch|partition|require|regardless|unless|operator|namespace|template|typedef|union|enum|class|interface|extends|implements|instanceof|delete|yield|await|become|crate|impl|trait|unsafe|unsized|external|demote|coherent|readonly|writeonly|varying|attribute|active|cast|highp|mediump|lowp|snorm|unorm|std|meta|macro|auto|goto|inline|noexcept|volatile|virtual|friend|explicit|mutable|restrict|protected|public|using|typename|typeof|typeid|decltype|concept|debugger|fallthrough|finally|subroutine|groupshared|nointerpolation|noperspective|packoffset|pixelfragment|thread_local|column_major)\s*[:=]/, 'no name WGSL reserves')
-  assert.deepEqual([...BODY_WGSL.matchAll(/^fn (\w+)\(/gm)].map((m) => m[1]), ['bodyRotX', 'bodyRotY', 'bodyRotAxis', 'bodyHat', 'bodyHeightMap', 'bodySlope', 'bodyFace', 'bodyMorph', 'bodyFoot', 'bodyReach', 'bodyLeg', 'bodyGaze', 'bodyRigCentre', 'bodyRotQ', 'bodyRig', 'bodyBone', 'bodyVertex'])
+  assert.deepEqual([...BODY_WGSL.matchAll(/^fn (\w+)\(/gm)].map((m) => m[1]), ['bodyRotX', 'bodyRotY', 'bodyRotAxis', 'bodyHat', 'bodyHeightMap', 'bodySlope', 'bodyRamp', 'bodyLowerShape', 'bodyGarment', 'bodyFace', 'bodyMorph', 'bodyFoot', 'bodyReach', 'bodyLeg', 'bodyGaze', 'bodyRigCentre', 'bodyRotQ', 'bodyRig', 'bodyBone', 'bodyVertex'])
   assert.ok(BODY_WGSL.includes('fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: vec4f, motion: vec4f, pose: vec4f, stance: vec4f, morphA: vec4f, morphB: vec4f, faceA: vec4f, faceB: vec4f, t: f32, gaze: vec4f, rigA: vec4f, rigAq: vec4f, rigB: vec4f, rigBq: vec4f) -> mat3x3f'))
   assert.ok(BODY_WGSL.includes('fn bodyRig(m: mat3x3f, bone0: u32, bone1: u32, weight: f32, stature: f32, pA: vec4f, qA: vec4f, pB: vec4f, qB: vec4f) -> mat3x3f'))
   // The fallen body: after the sliders and before the walk, hung from its rig; every shape's standing centre in the text.
@@ -844,7 +845,18 @@ test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow a
   assert.match(BODY_WGSL, /if \(bone == 2u\) \{ q = bodyRotX\(q, vec3f\(0\.0, pivB\.w, 0\.0\), trunk\.y\); q = bodyRotY\(q, vec3f\(0\.0, pivB\.w, 0\.0\), headYaw\); \}/, 'the head nods, then turns, about the neck')
   assert.ok(BODY_WGSL.includes('fn bodyMorph(p: vec3f, n: vec3f, bone: u32, m: vec4f, fD: f32, fLegs: f32, fTrunk: f32) -> mat3x3f'))
   assert.ok(BODY_WGSL.includes('fn bodyFace(p: vec3f, n: vec3f, face: vec2f, fa: vec4f, fb: vec4f) -> mat3x3f'))
-  assert.equal((BODY_WGSL.match(/-> mat3x3f/g) ?? []).length, 8, 'the rotations, the face, the morph, the rig, the bone chain and the vertex each carry a position and a normal')
+  assert.equal((BODY_WGSL.match(/-> mat3x3f/g) ?? []).length, 9, 'the rotations, the lower garment, the face, the morph, the rig, the bone chain and the vertex each carry a position and a normal')
+  // The lower cut: humanoid.ts's two tables in one array, trousers then skirts, two vec4s a cut; read from morphB.w
+  // after the face and before the sliders; the skirt's hem handed to the thigh beside it, in the walking path alone.
+  const table = [...TROUSER_SHAPE, ...SKIRT_SHAPE].flatMap((row) => [row.slice(0, 4), row.slice(4, 8)]).map((v) => `vec4f(${v.map(lit).join(', ')})`).join(', ')
+  assert.ok(BODY_WGSL.includes(`var shapes = array<vec4f, 64>(${table});`), 'TROUSER_SHAPE and SKIRT_SHAPE in the WGSL')
+  assert.ok(BODY_WGSL.includes(`let at = select(0u, ${TROUSER_SHAPE.length * 2}u, skirt) + cut * 2u;`))
+  assert.ok(BODY_WGSL.includes('fn bodyGarment(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, code: f32) -> mat3x3f'))
+  assert.ok(BODY_WGSL.includes('fn bodyLowerShape(r: f32, y: f32, p0: vec4f, p1: vec4f, skirt: bool, coat: bool) -> vec2f'))
+  assert.match(BODY_WGSL, /let lower = bodyGarment\(v0, n0, rig, skin, morphB\.w\);\n\s*v0 = lower\[0\];\n\s*n0 = lower\[1\];/)
+  assert.ok(BODY_WGSL.indexOf('let lower = bodyGarment(') < BODY_WGSL.indexOf('let rest = bodyMorph('), 'the cut before the sliders')
+  assert.ok(BODY_WGSL.indexOf('let follow = lower[2].x;') > BODY_WGSL.indexOf('return bodyRig(rest,'), 'a fallen body\'s skirt hangs as it always did')
+  assert.ok(BODY_WGSL.includes(`bodyRamp(${lit(LOWER.followMid)}, ${lit(LANDMARK.hipX)}, abs(v.x))`), 'the skirt\'s middle stays with the trunk, so its halves never part between the knees')
   assert.ok(BODY_WGSL.includes('return mat3x3f(world, normalize('), 'the world position and a unit normal')
   for (const piece of ['mask', 'holdingCup', 'carryingBag']) assert.ok(BODY_WGSL.includes(piece), piece)
   // The face is shaped before the body sliders, on the head bone, where the vertex names a region; the regions in
@@ -867,7 +879,7 @@ test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow a
   }
   const src = read('./crowdBody.ts')
   assert.match(src, /^(?:\/\/[^\n]*\n)*\/\*\*\n \* Why does this file exist\?[\s\S]*What breaks if it is removed\?/, 'the header')
-  assert.match(src, /import \{ FACE, GAZE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, MORPH, REGION, RIG_REST, SOLE, WALK \} from '\.\/humanoid\.ts'/)
+  assert.match(src, /import \{ BONE, FACE, GARMENT_STEP, GAZE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, LOWER, MORPH, REGION, RIG_REST, SKIRT_SHAPE, SLOT, SOLE, TROUSER_SHAPE, WALK \} from '\.\/humanoid\.ts'/)
   assert.match(src, /export const bodyVertex = fn\('bodyVertex'\)/)
   assert.doesNotMatch(src, /from 'three\/webgpu'|three\/src/, 'nodes only: no renderer')
   assert.equal(statureFactor(HEIGHT_BASE), 1)
@@ -894,6 +906,81 @@ test('crowd.ts: the geometry is humanoid.ts\'s mesh with its rig, skin and face 
   assert.match(crowd, /const body = skinned\.element\(uint\(0\)\)/)
   assert.match(crowd, /export const VARIANT_NAMES = BODY_NAMES/)
   assert.doesNotMatch(crowd, /BoxGeometry|CylinderGeometry|SphereGeometry|CapsuleGeometry/, 'no primitives: the body is the loft')
+})
+
+test('the lower cuts: cut 0 and every vertex but the lower garment\'s come back as they went in; the skirt is the skirt suit\'s alone; a wide leg, a taper, a midi\'s hem and an A-line\'s flare land where the tables say; a normal stays a unit on its side of the cloth; the card draws the cut', () => {
+  assert.equal(Object.keys(TROUSER_CUT).length, 16)
+  assert.equal(Object.keys(SKIRT_CUT).length, 16)
+  assert.deepEqual(Object.values(TROUSER_CUT), [...Array(16).keys()])
+  assert.deepEqual(Object.values(SKIRT_CUT), [...Array(16).keys()])
+  assert.equal(TROUSER_SHAPE.length, 16)
+  assert.equal(SKIRT_SHAPE.length, 16)
+  for (const row of [...TROUSER_SHAPE, ...SKIRT_SHAPE]) assert.equal(row.length, 8)
+  assert.deepEqual([...TROUSER_SHAPE[0]], [0, 0, 0, 0, 0, 0, 0, 0], 'the straight leg reshapes nothing')
+  assert.deepEqual([...SKIRT_SHAPE[0]], [0, LOWER.waist, 0, 1, 0, 0, 0, 0], 'the straight skirt reshapes nothing')
+  const out = [0, 0, 0, 0, 0, 0]
+  const same = (a: readonly number[], b: readonly number[], eps = 1e-6) => a.every((v, i) => Math.abs(v - b[i]) <= eps)
+  for (let variant = 0; variant < 4; variant++) {
+    const mesh = humanoidMesh(variant, true)
+    let changed = 0
+    for (let i = 0; i < mesh.vertexCount; i++) {
+      const p = [...mesh.position.subarray(i * 3, i * 3 + 3), ...mesh.normal.subarray(i * 3, i * 3 + 3)]
+      const [bone0, slot] = [Math.round(mesh.rig[i * 3]), Math.round(mesh.rig[i * 3 + 1])]
+      const bone1 = Math.round(mesh.skin[i * 2])
+      const skirt = bone0 === BONE.TRUNK && bone1 === BONE.TRUNK && slot === SLOT.BOTTOM
+      if (skirt) assert.equal(variant, 3, 'a skirt ring is the skirt suit\'s alone: the trousers\' seat takes the chest for its second bone')
+      const lower = slot === SLOT.BOTTOM && (skirt || (bone0 >= BONE.THIGH_L && bone0 <= BONE.FOOT_R))
+      assert.ok(same(garmentPoint(p[0], p[1], p[2], p[3], p[4], p[5], slot, bone0, bone1, 0, false, out), p), 'cut 0 is the body as it was')
+      for (let cut = 1; cut < 16; cut++) {
+        const g = garmentPoint(p[0], p[1], p[2], p[3], p[4], p[5], slot, bone0, bone1, cut, cut % 2 === 1, out)
+        if (!lower) assert.ok(same(g, p), `cut ${cut} leaves slot ${slot} on bone ${bone0} alone`)
+        else {
+          assert.ok(g.every(Number.isFinite))
+          assert.ok(Math.abs(Math.hypot(g[3], g[4], g[5]) - 1) < 1e-6, 'a unit normal')
+          // The normal stays on its side of the cloth: the tube's radial direction keeps its sign.
+          const ax = skirt ? 0 : Math.sign(p[0]) * LANDMARK.hipX
+          const dx = p[0] - ax, l = Math.hypot(dx, p[2]) || 1
+          const before = (p[3] * dx + p[5] * p[2]) / l, after = (g[3] * (g[0] - ax) + g[5] * g[2]) / (Math.hypot(g[0] - ax, g[2]) || 1)
+          if (Math.abs(before) > 0.2) assert.ok(Math.sign(before) === Math.sign(after), `cut ${cut}: the normal keeps its side`)
+          if (!same(g, p)) changed++
+        }
+      }
+    }
+    assert.ok(changed > 0, `some cut reshapes body ${variant}'s lower garment`)
+  }
+  // A leg point at the shin, on its own axis' outside: the wide leg about 8 cm round, the palazzo wider, the taper
+  // down toward 3.6 cm at the ankle, the slim a tenth narrower, the culottes back to the leg below their hem.
+  const x = LANDMARK.hipX + 0.06, ring = (cut: number, y: number, coat = false) => garmentPoint(x, y, 0, 1, 0, 0, SLOT.BOTTOM, BONE.SHIN_R, BONE.SHIN_R, cut, coat, out)[0] - LANDMARK.hipX
+  assert.ok(Math.abs(ring(TROUSER_CUT.wideLeg, 0.4) - 0.08) < 1e-9)
+  assert.ok(Math.abs(ring(TROUSER_CUT.palazzo, 0.4) - 0.095) < 1e-9)
+  assert.ok(ring(TROUSER_CUT.flared, 0.2) > ring(TROUSER_CUT.flared, 0.4), 'the flare grows below the knee')
+  assert.ok(Math.abs(ring(TROUSER_CUT.tapered, 0.4) - (0.036 + 0.05 * (0.4 - LOWER.ankle))) < 1e-9)
+  assert.ok(Math.abs(ring(TROUSER_CUT.slim, 0.4) - 0.054) < 1e-9)
+  assert.ok(Math.abs(ring(TROUSER_CUT.culottes, 0.4) - 0.085) < 1e-9 && Math.abs(ring(TROUSER_CUT.culottes, 0.2) - 0.06) < 1e-9)
+  assert.equal(ring(TROUSER_CUT.wideLeg, 0.86), 0.06, 'the seat and the thigh\'s top untouched')
+  assert.equal(ring(TROUSER_CUT.wideLeg, 0.4, true), ring(TROUSER_CUT.wideLeg, 0.4), 'a coat changes no trousers')
+  // The skirt: a midi's hem at 0.36, the A-line's hem a quarter wider, the pencil narrower, none wider under a coat,
+  // the high waist raised to 1.1.
+  const hem = (cut: number, coat = false) => garmentPoint(0.225, LOWER.hem, 0, 1, 0, 0, SLOT.BOTTOM, BONE.TRUNK, BONE.TRUNK, cut, coat, out).slice(0, 2)
+  assert.ok(Math.abs(hem(SKIRT_CUT.midi)[1] - 0.36) < 1e-3)
+  assert.ok(Math.abs(hem(SKIRT_CUT.aLine)[0] - 0.225 * 1.24) < 1e-9)
+  assert.ok(hem(SKIRT_CUT.pencil)[0] < 0.2)
+  assert.equal(hem(SKIRT_CUT.aLine, true)[0], 0.225, 'no skirt widens under a coat')
+  assert.ok(Math.abs(garmentPoint(0.17, LOWER.top, 0, 1, 0, 0, SLOT.BOTTOM, BONE.TRUNK, BONE.TRUNK, SKIRT_CUT.highWaisted, false, out)[1] - 1.1) < 1e-9)
+  // An A-line's outer face looks up a little, as a lampshade's does; the inward face down.
+  const lamp = garmentPoint(0.21, 0.7, 0, 1, 0, 0, SLOT.BOTTOM, BONE.TRUNK, BONE.TRUNK, SKIRT_CUT.aLine, false, out).slice(3)
+  assert.ok(lamp[0] > 0.9 && lamp[1] > 0.05)
+  const inward = garmentPoint(0.21, 0.7, 0, -1, 0, 0, SLOT.BOTTOM, BONE.TRUNK, BONE.TRUNK, SKIRT_CUT.aLine, false, out).slice(3)
+  assert.ok(inward[0] < -0.9 && inward[1] < -0.05)
+  assert.deepEqual(lowerShape(0.1, 0.5, false, 0, false), [0.1, 0.5])
+  assert.deepEqual(lowerShape(0.1, 0.5, true, 0, false), [0.1, 0.5])
+  // The card: the midi's hem lower, the wide leg wider, the cut 0 card as before.
+  const low = (rings: readonly { y: number }[]) => Math.min(...rings.map((r) => r.y))
+  const skirtRings = (cut: number) => silhouetteRings(3, SHAPE_NEUTRAL, false, cut).filter((r) => r.slot === SLOT.BOTTOM)
+  assert.ok(low(skirtRings(SKIRT_CUT.midi)) < low(skirtRings(0)) - 0.15)
+  const width = (cut: number) => Math.max(...silhouetteRings(0, SHAPE_NEUTRAL, false, cut).filter((r) => r.slot === SLOT.BOTTOM && r.y < 0.45).map((r) => r.right - r.left))
+  assert.ok(width(TROUSER_CUT.wideLeg) > width(0) + 0.03)
+  assert.deepEqual(silhouetteRings(2, SHAPE_NEUTRAL, true, 0), silhouetteRings(2, SHAPE_NEUTRAL, true))
 })
 
 test('GARMENT, the coat and the scarf: the jacket\'s lines sit on the loft (the V closes on the chest and opens at the trunk\'s top ring, the cuff line cuts every sleeve, a band stands above the collar line); the coat is a shell outside the trunk on both bodies; the scarf wraps the neck, with a tail down the chest on the near body alone', () => {

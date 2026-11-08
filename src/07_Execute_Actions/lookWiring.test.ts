@@ -131,7 +131,7 @@ test('crowd.ts: the words override the hashed mask, figure, face and wardrobe in
   // A worn body writes no motion of its own: its previous position is its position, not the twin's walk.
   assert.match(posed, /positionPrevious\.assign\(select\(quad\.w\.greaterThan\(uint\(0\)\), placed, placed\.sub\(vec3\(motion\.x, 0, motion\.y\)\.mul\(this\.frameSeconds\)\)\)\)/, 'a rig wearer is sharp')
   assert.match(posed, /const morphA = vec4\(slider\('mass'\), slider\('muscle'\), slider\('shoulders'\), slider\('hips'\)\)/)
-  assert.match(posed, /const morphB = vec4\(slider\('legs'\), slider\('posture'\), slider\('head'\), 0\)/)
+  assert.match(posed, /const morphB = vec4\(slider\('legs'\), slider\('posture'\), slider\('head'\), lowerCode\)/, 'morphB.w: the lower cut, 16 more under a coat (crowdBody.ts bodyGarment)')
   assert.match(posed, /faceA\.assign\(vec4\(faceStep\('brow'\), faceStep\('jaw'\), faceStep\('chin'\), faceStep\('cheek'\)\)\)/)
   assert.match(posed, /faceB\.assign\(vec4\(faceStep\('nose'\), faceStep\('eyes'\), faceStep\('lips'\), 0\)\)/)
   before(posed, "vLookLo.assign(float(word.bitAnd(uint(0xffff))))", 'if (!eye) return body', 'the shadow pass writes the low half too')
@@ -164,7 +164,7 @@ test('crowd.ts: the words override the hashed mask, figure, face and wardrobe in
   assert.match(fragment, /pick\(PALETTE\.bags, h\(12\)\)/)
   assert.match(fragment, /const legwear = variant === 3 \? mix\(wornSkin, vec3\(0\.08, 0\.07, 0\.07\), step\(0\.55, h\(11\)\)\) : bottom/)
   assert.match(fragment, /const iris = pick\(PALETTE\.iris, h\(LOOK_HASHED_COLOUR\.iris\)\)/)
-  assert.match(fragment, /const slots: V3\[\] = \[worn, shirt, select\(turtleNeck, knitShirt, select\(armHere, limbColour, skinShown\)\), hairShown, woven, shoes, accent, prop, select\(legHere, limbColour, legwear\), frame, white, iris, lip, scarf, fabric, device\]/, 'every slot, the bottom in its weave, a prosthetic over the hand or the bare shin, the headwear\'s cloth and the devices last')
+  assert.match(fragment, /const slots: V3\[\] = \[worn, shirt, select\(turtleNeck, knitShirt, select\(armHere, limbColour, skinShown\)\), hairShown, bottomShown, shoes, accent, prop, select\(legHere, limbColour, legwear\), frame, white, iris, lip, scarf, fabric, device\]/, 'every slot, the bottom in its weave and its cut\'s lines, a prosthetic over the hand or the bare shin, the headwear\'s cloth and the devices last')
   assert.match(fragment, /const faced = select\(lapel\.or\(collar\)\.or\(cuff\), select\(trimAt\.equal\(uint\(0\)\), woven, trimCloth\), woven\)/, 'the jacket or the coat in its weave, a matching trim too')
   assert.match(fragment, /const tailoredJacket = select\(inV\.or\(shirtCollar\), neckline, faced\)/, 'the shirt in the V and above the collar')
   assert.match(fragment, /const jacket = select\(vestArm\.or\(cropped\), shirt, select\(lining, /, 'the cut\'s marks over the jacket')
@@ -175,7 +175,7 @@ test('crowd.ts: the words override the hashed mask, figure, face and wardrobe in
   assert.match(fragment, /const trimCloth = select\(trimAt\.equal\(uint\(0\)\), topCloth, at\(PALETTE\.trims, trimAt\.sub\(uint\(1\)\)\)\)/)
   assert.match(fragment, /const scarf = at\(PALETTE\.scarves, select\(scarfAt\.equal\(uint\(0\)\), uint\(0\), scarfAt\.sub\(uint\(1\)\)\)\)/)
   assert.match(fragment, /const rest = positionGeometry/, 'the garment lines are cut from the rest position')
-  assert.match(fragment, /const worn = select\(layer\.equal\(uint\(LAYER\.shirt\)\), shirt, jacket\)/, 'under shirt sleeves the whole slot is the shirt\'s')
+  assert.match(fragment, /const worn = select\(raisedWaist, waistBand, select\(layer\.equal\(uint\(LAYER\.shirt\)\), shirt, jacket\)\)/, 'under shirt sleeves the whole slot is the shirt\'s, but where high-waisted trousers rise over it')
 })
 
 test('the cull reads the body out of the word (binding 13, the page\'s pass alone); no simulation pass binds it', () => {

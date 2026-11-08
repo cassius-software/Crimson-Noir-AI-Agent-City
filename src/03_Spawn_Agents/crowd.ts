@@ -34,11 +34,11 @@ import { CODE_DISSOLVE, applyCodeDissolve } from '../01_Initialize_World/codeDis
 import { applyMatrixMode } from '../01_Initialize_World/matrixMode.ts'
 import { bodyVertex } from './crowdBody.ts'
 import { PLAYER_INDEX, VARIANTS, agentQuota } from './crowdCompute.ts'
-import { BODY_NAMES, BONE, FACE, GARMENT, HEIGHT_BASE, LANDMARK, PIECE, RIG_REST, RIG_WEAR, SLOT, humanoidMesh, type HumanoidMesh } from './humanoid.ts'
+import { BODY_NAMES, BONE, FACE, GARMENT, HEIGHT_BASE, JACKET_HEM, LANDMARK, LOWER_PAINT, PIECE, RIG_REST, RIG_WEAR, SLOT, humanoidMesh, type HumanoidMesh } from './humanoid.ts'
 import {
   FACIAL_HAIR, HAIR_PIECE_STYLES, HAIR_TEXTURE, HAIR_TEXTURE_BITS, HAIR_TEXTURE_STYLES, HEADWEAR, HEARING, LAYER, LOOK_HASHED_HEARING, PROSTHETIC, LOOK_FIELD, LOOK_FIELD_HIGH, LOOK_HASHED_COLOUR,
   LOOK_HASHED_FACE, LOOK_HASHED_HAIR_SPLIT, LOOK_HASHED_HEADWEAR, LOOK_HASHED_LAYER, LOOK_HASHED_SCARF,
-  LOOK_HASHED_SLIDER, LOOK_ODDS, LOOK_PIECE_BIT, LOOK_SLIDER_MIDDLE, LOOK_STATURE, LOOK_WORDS, VITILIGO, WARDROBE, WEAVE, WEAVE_STREET_PACKED, CUT, CUT_STREET_PACKED, TIELESS_CUTS,
+  LOOK_HASHED_SLIDER, LOOK_ODDS, LOOK_PIECE_BIT, LOOK_SLIDER_MIDDLE, LOOK_STATURE, LOOK_WORDS, VITILIGO, WARDROBE, WEAVE, WEAVE_STREET_PACKED, CUT, CUT_STREET_PACKED, TIELESS_CUTS, BOTTOM_CUT_STREET_PACKED, SKIRT_CUT, TROUSER_CUT,
   type LookFaceSlider, type LookSlider, type LookSlot, type PaletteName,
 } from './look.ts'
 
@@ -749,6 +749,13 @@ export class CrowdView {
       const hashedCut = select(hc(LOOK_HASHED_COLOUR.cut).greaterThanEqual(LOOK_ODDS.cut),
         uint(CUT_STREET_PACKED[variant]).shiftRight(uint(hc(LOOK_HASHED_COLOUR.cutPick).mul(8 - 0.001)).mul(uint(4))).bitAnd(uint(15)), uint(0))
       const cutNow = select(custom, genomeQuad.y.shiftRight(uint(LOOK_FIELD.cut[1])).bitAnd(uint(15)), hashedCut)
+      // The lower cut (look.ts bottomCut): the look's from the cloth word, or the hash's from the colours' chain as the
+      // fragment stage draws it. crowdBody.ts bodyGarment reshapes the trousers' legs or the skirt by it (morphB.w: the
+      // cut, 16 more under a coat, where no skirt widens).
+      const hashedBottomCut = select(hc(LOOK_HASHED_COLOUR.bottomCut).greaterThanEqual(LOOK_ODDS.bottomCut),
+        uint(BOTTOM_CUT_STREET_PACKED[variant]).shiftRight(uint(hc(LOOK_HASHED_COLOUR.bottomCutPick).mul(8 - 0.001)).mul(uint(4))).bitAnd(uint(15)), uint(0))
+      const bottomCutNow = select(custom, genomeQuad.y.shiftRight(uint(LOOK_FIELD.bottomCut[1])).bitAnd(uint(15)), hashedBottomCut)
+      const lowerCode = float(bottomCutNow).add(select(layer.equal(uint(LAYER.coat)), float(16), float(0)))
       const tieless = TIELESS_CUTS.reduce((on: ReturnType<typeof cutNow.equal>, k) => on.or(cutNow.equal(uint(k))), cutNow.equal(uint(255))).and(layer.notEqual(uint(LAYER.shirt)))
       const tieWorn = select(custom, float(word.shiftRight(uint(2 + LOOK_PIECE_BIT.tie)).bitAnd(uint(1))), step(0.3, h(1))).mul(1 << LOOK_PIECE_BIT.tie)
       const mask = select(custom, float(word.shiftRight(uint(2)).bitAnd(uint(46))).add(ownGrooms), hashedMask.add(hashedHead)).add(features).add(wardrobePieces)
@@ -760,7 +767,7 @@ export class CrowdView {
       const height = select(custom, stepOf('height'), hashedHeight).mul(STATURE_STEP).add(WARDROBE.stature.min).div(HEIGHT_BASE)
       const stance = vec4(height, mask, h(8), float(quad.w))
       const morphA = vec4(slider('mass'), slider('muscle'), slider('shoulders'), slider('hips'))
-      const morphB = vec4(slider('legs'), slider('posture'), slider('head'), 0)
+      const morphB = vec4(slider('legs'), slider('posture'), slider('head'), lowerCode)
       const rig = attribute('rig', 'vec3')
       const skin = attribute('skin', 'vec2')
       const face = attribute('face', 'vec2')
@@ -930,7 +937,8 @@ export class CrowdView {
       : select(h(LOOK_HASHED_COLOUR.facialHair).greaterThanEqual(LOOK_ODDS.facialHair), uint(h(LOOK_HASHED_COLOUR.facialHairStyle).mul(FACIAL_HAIR.fullBeard - 0.001)).add(uint(1)), uint(0)))
     const skinShown = select(kippah, headCloth, facialPaint(wornSkin, greyed, facialHair, rig, slot, near)).toVar() as unknown as V3
     // A prosthetic limb (the look's, or one in a hundred from the colours' chain): the hand below the sleeve for an
-    // arm, the shin below the knee for a leg where it is bare (the skirt suit's), in its finish, with the socket's line.
+    // arm, the shin below the knee for a leg where it is bare (the skirt suit's, or below cropped trousers and
+    // culottes), in its finish, with the socket's line.
     const hashedLimb = h(LOOK_HASHED_COLOUR.prosthetic).greaterThanEqual(LOOK_ODDS.prosthetic)
     const prosthetic = select(custom, gene(LOOK_FIELD.prosthetic), select(hashedLimb, uint(h(LOOK_HASHED_COLOUR.prostheticLimb).mul(4 - 0.001)).add(uint(1)), uint(0)))
     const finish = select(custom, gene(LOOK_FIELD.prostheticFinish), select(hashedLimb, uint(h(LOOK_HASHED_COLOUR.prostheticFinish).mul(WARDROBE.prostheticFinish.length - 0.001)), uint(0)))
@@ -939,8 +947,17 @@ export class CrowdView {
     const slotIs = (k: number) => slot.greaterThan(k - 0.5).and(slot.lessThan(k + 0.5))
     // The person's own left is +x, the bones' _R side (humanoid.ts: the _L bones are the side a viewer facing them sees on
     // their left), so a left arm or leg is the _R hand or shin.
+    // The lower cut (look.ts bottomCut: the look's, or about one pair of trousers or skirt in three of the hash's, from
+    // the body's eight): its lines are painted below; cropped trousers and culottes end above the ankle, bare or in a
+    // sock as the skirt suit's hose is (the same link), where a prosthetic leg shows too (humanoid.ts LOWER_PAINT).
+    const streetBottomCut = uint(BOTTOM_CUT_STREET_PACKED[variant]).shiftRight(uint(h(LOOK_HASHED_COLOUR.bottomCutPick).mul(8 - 0.001)).mul(uint(4))).bitAnd(uint(15))
+    const bottomCut = select(custom, gene(LOOK_FIELD.bottomCut), select(h(LOOK_HASHED_COLOUR.bottomCut).greaterThanEqual(LOOK_ODDS.bottomCut), streetBottomCut, uint(0))).toVar() as unknown as U1
+    const lowIs = (k: number) => bottomCut.equal(uint(k))
+    const onLegBone = rig.x.greaterThan(BONE.THIGH_L - 0.5).and(rig.x.lessThan(BONE.FOOT_R + 0.5))
+    const hemAt = variant === 3 ? float(-1) : select(lowIs(TROUSER_CUT.cropped), float(LOWER_PAINT.croppedHem), select(lowIs(TROUSER_CUT.culottes), float(LOWER_PAINT.culottesHem), float(-1)))
+    const ankle = slotIs(SLOT.BOTTOM).and(onLegBone).and(positionGeometry.y.lessThan(hemAt))
     const armHere = slotIs(SLOT.SKIN).and(boneIs(BONE.HAND_R).and(limb(PROSTHETIC.leftArm, PROSTHETIC.bothArms)).or(boneIs(BONE.HAND_L).and(limb(PROSTHETIC.rightArm, PROSTHETIC.bothArms))))
-    const legHere = slotIs(SLOT.LEGWEAR).and(positionGeometry.y.lessThan(0.46))
+    const legHere = slotIs(SLOT.LEGWEAR).and(positionGeometry.y.lessThan(0.46)).or(ankle)
       .and(boneIs(BONE.SHIN_R).and(limb(PROSTHETIC.leftLeg, PROSTHETIC.bothLegs)).or(boneIs(BONE.SHIN_L).and(limb(PROSTHETIC.rightLeg, PROSTHETIC.bothLegs))))
     const limbHere = armHere.or(legHere)
     const weave = step(0.5, positionGeometry.x.add(positionGeometry.z).mul(140).fract()).add(step(0.5, positionGeometry.y.mul(140).fract())).mod(2)
@@ -1004,8 +1021,13 @@ export class CrowdView {
       : variant === 2 ? select(custom, bottomAt.equal(uint(0)), h(10).lessThan(0.6)) : uint(0).equal(uint(1))
     const ownBottomWeave = gene(LOOK_FIELD.bottomWeave)
     const bottomWeave = select(custom.and(ownBottomWeave.notEqual(uint(0))), ownBottomWeave, select(matches, topWeave, uint(0)))
-    const onBottom = slotIs(SLOT.BOTTOM)
-    const woven = weavePaint(select(onBottom, bottom, topCloth), select(onBottom, bottomWeave, select(slotIs(SLOT.TOP), topWeave, uint(0))), rig, slot, footprint, near, variant === 3).toVar() as unknown as V3
+    // A high-waisted pair of trousers (look.ts bottomCut) where the waist shows, in shirt sleeves or under a cropped
+    // jacket: the trousers' cloth, and its weave, up the trunk to 1.04.
+    const waistShown = layer.equal(uint(LAYER.shirt)).or(cutIs(CUT.cropped).and(layer.equal(uint(LAYER.jacket))))
+    const raisedWaist = variant === 3 ? uint(0).equal(uint(1))
+      : lowIs(TROUSER_CUT.highWaisted).and(slotIs(SLOT.TOP)).and(onTrunk).and(isCoat.not()).and(rest.y.lessThan(1.04)).and(waistShown)
+    const onBottom = slotIs(SLOT.BOTTOM).or(raisedWaist)
+    const woven = weavePaint(select(onBottom, bottom, topCloth), select(onBottom, bottomWeave, select(slotIs(SLOT.TOP), topWeave, uint(0))), rig, select(raisedWaist, float(SLOT.BOTTOM), slot), footprint, near, variant === 3).toVar() as unknown as V3
     // The turtleneck's knit and the shirt in the V: a fine rib round the neck (the rib's mean past the pixel).
     const knitShirt = near ? shirt.mul(atan(rest.x, rest.z).mul(0.06 * 2 * Math.PI / 0.003).sin().mul(0.06).mul(float(1).sub(smoothstep(0.2, 0.45, footprint.div(0.003)))).add(1)) : shirt
     const neckline = select(cutIs(CUT.turtleneck), knitShirt, select(openStrip.and(rest.y.lessThan(0.95)), bottom, shirt))
@@ -1056,15 +1078,74 @@ export class CrowdView {
       quilting.max(pockets).max(lapelEdge).max(seam).max(select(zip, thin(rest.x.abs(), 0.007), float(0))).max(select(closure, thin(rest.x.sub(sideLine).abs(), 0.006), float(0))))
     const jacket = select(vestArm.or(cropped), shirt, select(lining, topCloth.mul(0.55), select(buckle, vec3(0.62, 0.6, 0.55), select(belt, beltCloth,
       select(buttons, topCloth.mul(0.35).add(0.02), select(zip.and(rest.x.abs().lessThan(0.0035)), vec3(0.52, 0.52, 0.54), stitched))))))
-    const worn = select(layer.equal(uint(LAYER.shirt)), shirt, jacket)
+    // The lower cut's lines, from the rest position as the jacket's are (its shapes are the vertex stage's: crowdBody.ts
+    // bodyGarment). The trousers, each half about its own leg's axis: a pressed crease down the front and the back,
+    // pleats from the waist, turn-ups at the hem, a satin side stripe or a piped seam down the outside, the cropped
+    // hem and the culottes' above the ankle, a belt where the waist shows. The skirt, round the trunk's axis: pleats,
+    // box pleats or panels, the wrap's edge, a back vent, a button front, the tulip's petals, a belt over the waist,
+    // the high waist's seam, the flared skirt's folds. The fine lines are the near body's.
+    const leather = vec3(0.09, 0.07, 0.06)
+    const metal = vec3(0.62, 0.6, 0.55)
+    let bottomShown: V3
+    let lowMarks: ReturnType<typeof onTrunk.and>
+    let stripe: ReturnType<typeof onTrunk.and>
+    if (variant === 3) {
+      const phi = atan(rest.x, rest.z)
+      // The distance round the skirt (at a 20 cm radius) to the nearest of n seams.
+      const seams = (n: number): F1 => phi.mul(n / (2 * Math.PI)).add(0.5).fract().sub(0.5).abs().mul((2 * Math.PI * 0.2) / n)
+      const below = float(1).sub(smoothstep(0.9, 0.96, rest.y))
+      const pleats = select(lowIs(SKIRT_CUT.pleated), thin(seams(28), 0.0025), select(lowIs(SKIRT_CUT.boxPleat), thin(seams(10).sub(0.012).abs(), 0.0025),
+        select(lowIs(SKIRT_CUT.panelled), thin(seams(6), 0.0025), float(0)))).mul(below)
+      const wrapEdge = select(lowIs(SKIRT_CUT.wrap).and(rest.z.greaterThan(0)).and(rest.y.lessThan(0.98)), thin(rest.x.sub(float(0.07).sub(float(0.98).sub(rest.y).mul(0.32))).abs(), 0.003), float(0))
+      const vent = select(lowIs(SKIRT_CUT.backVent).and(rest.z.lessThan(0)).and(rest.y.lessThan(0.68)), thin(rest.x.abs(), 0.006), float(0))
+      const petals = select(lowIs(SKIRT_CUT.tulip).and(rest.z.greaterThan(0)).and(rest.y.lessThan(0.8)), thin(rest.x.abs().sub(float(0.8).sub(rest.y).pow(2).mul(0.9).add(0.015)).abs(), 0.003), float(0))
+      const waistSeam = select(lowIs(SKIRT_CUT.highWaisted), thin(rest.y.sub(1.0).abs(), 0.003), float(0))
+      const folds = select(lowIs(SKIRT_CUT.flared), phi.mul(14).cos().mul(0.1).mul(float(1).sub(smoothstep(0.62, 0.92, rest.y))), float(0))
+      const lines = near ? pleats.max(wrapEdge).max(vent).max(petals).max(waistSeam) : float(0)
+      const cloth = mix(woven.mul(near ? folds.add(1) : float(1)), woven.mul(0.5), lines)
+      const skirtButtons = lowIs(SKIRT_CUT.buttonFront).and(front).and(rest.y.lessThan(0.98)).and(column(float(0), float(0.95), 0.07, 6))
+      const belt = lowIs(SKIRT_CUT.belted).and(onTrunk).and(rest.y.greaterThan(0.985))
+      const buckle = belt.and(rest.z.greaterThan(0)).and(rest.x.abs().lessThan(0.018))
+      bottomShown = select(buckle, metal, select(belt, leather, select(skirtButtons, bottom.mul(0.35).add(0.02), cloth)))
+      lowMarks = belt.or(skirtButtons)
+      stripe = uint(0).equal(uint(1))
+    } else {
+      const legX = rest.x.sub(float(LANDMARK.hipX).mul(rest.x.sign()))
+      const outside = legX.mul(rest.x.sign()).greaterThan(0)
+      const trousers = slotIs(SLOT.BOTTOM).and(onLegBone.or(onTrunk))
+      const pleated = lowIs(TROUSER_CUT.pleated).or(lowIs(TROUSER_CUT.pleatedTurnUps))
+      const creased = lowIs(TROUSER_CUT.crease).or(pleated)
+      const crease = select(creased.and(onLegBone).and(rest.y.lessThan(0.86)).and(rest.z.abs().greaterThan(0.02)), thin(legX.abs(), 0.003), float(0))
+      const pleatLines = select(pleated.and(trousers).and(rest.z.greaterThan(0)).and(rest.y.greaterThan(0.7)), thin(legX.abs().sub(0.028).abs(), 0.003).mul(smoothstep(0.7, 0.8, rest.y)), float(0))
+      const turned = lowIs(TROUSER_CUT.turnUps).or(lowIs(TROUSER_CUT.pleatedTurnUps)).and(onLegBone).and(rest.y.lessThan(0.15))
+      const turnLine = select(turned, thin(rest.y.sub(0.145).abs(), 0.003), float(0))
+      const hemLine = select(onLegBone.and(hemAt.greaterThan(0)), thin(rest.y.sub(hemAt).abs(), 0.003), float(0))
+      const piping = near ? select(lowIs(TROUSER_CUT.piped).and(trousers).and(outside), thin(rest.z.abs(), 0.0025), float(0)) : float(0)
+      const lines = near ? pleatLines.max(turnLine).max(hemLine) : float(0)
+      const lit = woven.mul(near ? crease.mul(0.35).add(1) : float(1))
+      const cloth = mix(mix(lit, lit.mul(0.5), lines), bottom.mul(1.5).add(0.06).min(vec3(1)), piping)
+      const turnedCloth = select(turned.and(rest.y.lessThan(0.143)), cloth.mul(0.88), cloth)
+      stripe = lowIs(TROUSER_CUT.sideStripe).and(trousers).and(outside).and(rest.z.abs().lessThan(0.007))
+      // The belt on the seat, and on the thighs' tops where they stand out of it at the hips (the suit's sits that low).
+      const belt = lowIs(TROUSER_CUT.belted).and(waistShown).and(onTrunk.or(onLegBone)).and(rest.y.sub(JACKET_HEM[variant] - 0.018).abs().lessThan(0.016))
+      const buckle = belt.and(rest.z.greaterThan(0)).and(rest.x.abs().lessThan(0.018))
+      const ankleCloth = mix(wornSkin, vec3(0.08, 0.07, 0.07), step(0.55, h(11)))
+      // Below the culottes' hem the leg narrows back to the calf: the hem's shadowed inside, then the leg.
+      const inside = ankle.and(lowIs(TROUSER_CUT.culottes)).and(rest.y.greaterThan(LOWER_PAINT.culottesInside))
+      bottomShown = select(ankle, select(inside, woven.mul(0.3), select(legHere, limbColour, ankleCloth)), select(buckle, metal, select(belt, leather, select(stripe, bottom.mul(0.7), turnedCloth))))
+      lowMarks = ankle.or(belt)
+    }
+    // The high waist's top seam, over the trousers' cloth up the trunk.
+    const waistBand = near ? mix(woven, woven.mul(0.5), thin(rest.y.sub(1.035).abs(), 0.003)) : woven
+    const worn = select(raisedWaist, waistBand, select(layer.equal(uint(LAYER.shirt)), shirt, jacket))
     // Where the woven cloth shows (the jacket or the coat itself, a matching trim, the trousers or the skirt), the cloths
     // with a sheen of their own set it (WEAVE_SHEEN), and the rest keep the slot's; a shawl collar's facing and a
     // waistcoat's lining are satin.
     const outer = slotIs(SLOT.TOP).and(layer.notEqual(uint(LAYER.shirt)))
     const cutMarks = vestArm.or(cropped).or(belt).or(buttons).or(zip.and(rest.x.abs().lessThan(0.0035)))
-    const shownWeave = select(onBottom, bottomWeave, select(outer.and(inV.or(shirtCollar).not())
+    const shownWeave = select(onBottom, select(lowMarks, uint(255), bottomWeave), select(outer.and(inV.or(shirtCollar).not())
       .and(lapel.or(collar).or(cuff).and(trimAt.notEqual(uint(0))).not()).and(cutMarks.not()).and(lining.not()), topWeave, uint(0)))
-    const satin = outer.and(lining.or(cutIs(CUT.shawl).and(lapel.or(collar)).and(inV.or(shirtCollar).not())))
+    const satin = outer.and(lining.or(cutIs(CUT.shawl).and(lapel.or(collar)).and(inV.or(shirtCollar).not()))).or(stripe)
     const sheen = select(satin, float(0.45), WEAVE_SHEEN.reduce((r: F1, [k, value]) => select(shownWeave.equal(uint(k)), float(value), r), float(-1))).toVar() as unknown as F1
     // The suit's tie keeps the hash's cloth; the other bodies' accent is the shirt. The skirt suit's hose is the hash's.
     const accent = variant === 0 ? pick(PALETTE.ties, h(5)) : shirt
@@ -1078,7 +1159,7 @@ export class CrowdView {
     const lip = wornSkin.mul(vec3(0.82, 0.55, 0.55))
     // The turtleneck's knit up the neck (the trunk's skin), under a jacket or a coat.
     const turtleNeck = cutIs(CUT.turtleneck).and(layer.notEqual(uint(LAYER.shirt))).and(onTrunk)
-    const slots: V3[] = [worn, shirt, select(turtleNeck, knitShirt, select(armHere, limbColour, skinShown)), hairShown, woven, shoes, accent, prop, select(legHere, limbColour, legwear), frame, white, iris, lip, scarf, fabric, device]
+    const slots: V3[] = [worn, shirt, select(turtleNeck, knitShirt, select(armHere, limbColour, skinShown)), hairShown, bottomShown, shoes, accent, prop, select(legHere, limbColour, legwear), frame, white, iris, lip, scarf, fabric, device]
     const rough = [0.82, 0.7, 0.55, 0.6, 0.8, 0.35, 0.6, 0.45, 0.6, 0.3, 0.25, 0.3, 0.5, 0.78, 0.8, 0.4]
     let color: V3 = slots[slots.length - 1]
     let roughness: F1 = float(rough[rough.length - 1])
@@ -1092,7 +1173,7 @@ export class CrowdView {
     // Declared once at the top of the stage instead, before any branch, every later read is the variable: the links,
     // the skin and the hair as painted, the colour. Each paint still pays for its marks under its own branches.
     // (The variables are the call's inputs, so the colour graph is still walked from colorNode: lookWiring.test.ts.)
-    const shared = [footprint, ...links.values(), cut, wornSkin, greyed, wornHair, skinShown, woven, sheen, color.toVar()] as unknown as Node[]
+    const shared = [footprint, ...links.values(), cut, bottomCut, wornSkin, greyed, wornHair, skinShown, woven, sheen, color.toVar()] as unknown as Node[]
     const declared = Fn((nodes: Node[]) => {
       for (const n of nodes) (n as unknown as { toStack(): unknown }).toStack()
       return nodes[nodes.length - 1]

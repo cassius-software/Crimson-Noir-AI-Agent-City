@@ -15,6 +15,34 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Sixteen trouser cuts, sixteen skirt cuts and twenty lower garments.** The cloth word's next four bits carry the
+  lower garment's cut (`LOOK_FIELD.bottomCut`, word 5 bits 12 to 15; `humanoid.ts` TROUSER_CUT, SKIRT_CUT). The three
+  trouser bodies share one list: straight (0, every pair as it was, so every older look and code reads back unchanged
+  and is drawn as before), pressed crease, pleated, turn-ups, side stripe, wide-leg, tapered, flared, cropped,
+  culottes, high-waisted, belted, piped seam, slim, pleated turn-ups and palazzo. The skirt suit has its own: straight
+  (0), pencil, A-line, pleated, box pleat, wrap, midi, midi pencil, midi A-line, back vent, button front, tulip,
+  panelled, high-waisted, belted and flared. Changing the body between the skirt suit and the others starts the cut
+  again at straight. Some cuts change the shape with no new geometry. The vertex stage moves the lower garment's own
+  rings before the body sliders (`crowdBody.ts` bodyGarment, the GPU twin of `humanoid.ts` garmentPoint, which the
+  card's silhouette uses too). Each trouser leg is reshaped about its own axis and the skirt about the trunk's.
+  Normals follow the shape by the cylinder's rule, so a flare is lit as one. A wide leg, a palazzo, a flare or the
+  culottes widen the leg, a taper or a slim cut narrows it, a midi lengthens the skirt to 0.36 m, an A-line or a
+  flared skirt widens toward the hem, a pencil or a tulip narrows it, and the high waist raises it. A narrow or long
+  skirt's hem moves with the thigh on its side, so the knees stay inside it mid-stride. Under a coat no skirt widens.
+  The cut reaches the vertex stage in `morphB.w` (the cut, plus 16 under a coat), so no new buffer is bound. The
+  fragment stage paints the rest from the rest position: the crease, pleats, turn-ups, a satin side stripe, a piped
+  seam, the cropped and culottes hems above a bare or socked ankle (a prosthetic leg shows its finish there; below the
+  culottes' wide hem, its shadowed inside), a belt and buckle where the waist shows, the high waist's cloth up the
+  trunk in shirt sleeves or under a cropped jacket, and the skirt's pleats, box pleats, panels, wrap edge, back vent,
+  button front, tulip petals, belt, waist seam and flared folds. About one pedestrian in three wears a lower cut, one
+  of eight per body (`BOTTOM_CUT_STREET`). `LOOK_LOWER_GARMENTS` names twelve pairs of trousers and eight skirts, each
+  a lower cut and a weave. A skirt is refused on a trouser body and trousers on the skirt suit, with a line that says
+  why. With the forty-four tops that makes sixty-four garments. Customizer rows **Trousers** or **Skirts** (the lower
+  garments the body wears) and **Trousers' cut**, **Chinos' cut** or **Skirt's cut**. Console: `look bottomCut
+  wide-leg`, `look garment pencil skirt`. On today's main the suit's main fragment stage is about 200,000 characters,
+  its shadow pass about 138,000 and its vertex stage about 62,000, inside the 262,144 budget. Pinned by
+  `humanoid.test.ts`, `look.test.ts`, `lookWiring.test.ts` and `commands.test.ts`. Browser screenshots on SwiftShader
+  only; nothing visual is confirmed on real hardware.
 - **Sixteen cuts of the outer layer, and forty-four named garments.** The cloth word's next four bits carry the
   outer layer's cut (`LOOK_FIELD.cut`, word 5 bits 8 to 11; `look.ts` CUT): notch lapel (0, every jacket as it was,
   so every older look and code reads back unchanged and is drawn as before), peak lapel, shawl collar, double-breasted,

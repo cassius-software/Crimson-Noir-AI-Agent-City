@@ -24,7 +24,7 @@
  * What breaks if it is removed? The customizer would have no catalogue, nothing could be saved or shared, and the
  * crowd's per-agent attributes would have no agreed bit layout to carry.
  */
-import { HEIGHT_BASE, type BodyShape, type FaceShape } from './humanoid.ts'
+import { HEIGHT_BASE, SKIRT_CUT, TROUSER_CUT, type BodyShape, type FaceShape } from './humanoid.ts'
 
 /** The four bodies crowd.ts draws, in draw-list order (an agent's hashed body is its index modulo four). */
 export const LOOK_BODIES = ['suit', 'smart casual', 'pantsuit', 'skirt suit'] as const
@@ -94,7 +94,7 @@ export const LOOK_SLOTS = [
   'body', ...LOOK_BODY_SLIDERS, ...LOOK_FACE_SLIDERS,
   'skin', 'age', 'undertone', 'vitiligo', 'freckles', 'hairStyle', 'curl', 'hairColour', 'headwear', 'headwearColour',
   'facialHair', 'hearing', 'prosthetic', 'prostheticFinish',
-  'layer', 'cut', 'top', 'topWeave', 'trim', 'bottom', 'bottomWeave', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
+  'layer', 'cut', 'top', 'topWeave', 'trim', 'bottomCut', 'bottom', 'bottomWeave', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
 ] as const
 export type LookSlot = (typeof LOOK_SLOTS)[number]
 export type Look = Readonly<Record<LookSlot, number>>
@@ -106,7 +106,7 @@ export type Look = Readonly<Record<LookSlot, number>>
  */
 export const LOOK_GENOME_SLOTS = [
   'vitiligo', 'freckles', 'curl', 'headwear', 'headwearColour', 'facialHair', 'hearing', 'prosthetic', 'prostheticFinish',
-  'topWeave', 'bottomWeave', 'cut',
+  'topWeave', 'bottomWeave', 'cut', 'bottomCut',
 ] as const satisfies readonly LookSlot[]
 
 /** The slots a look had before the genome's later words (the thirty-two of the four words): every one is required. */
@@ -304,6 +304,29 @@ export const CUT_STREET: readonly (readonly number[])[] = Object.freeze([
 /** The cuts a tie is not worn with on the outer layer (the mask drops it): a turtleneck, and the jackets closed to the neck. */
 export const TIELESS_CUTS: readonly number[] = Object.freeze([CUT.band, CUT.turtleneck, CUT.zip, CUT.side, CUT.quilted])
 export const CUT_STREET_PACKED: readonly number[] = Object.freeze(CUT_STREET.map((list) => list.reduce((w, k, i) => (w | (k << (4 * i))) >>> 0, 0)))
+/**
+ * The lower garment's cut (WARDROBE.trouserCut on the three trouser bodies, WARDROBE.skirtCut on the skirt suit's;
+ * humanoid.ts TROUSER_CUT, SKIRT_CUT number them): the straight leg or the straight skirt every body wore before (0,
+ * so a stored look is cut as it was). The trousers' cuts: a pressed crease; pleats; turn-ups; a satin side stripe;
+ * wide-leg, tapered and flared legs; cropped above the ankle; culottes to the calf; a high waist and a belt, seen in
+ * shirt sleeves; a piped seam; a slim leg; pleats with turn-ups; palazzo legs. The skirt's: pencil, A-line, pleated,
+ * box-pleated, wrap, midi (and midi pencil, midi A-line), a back vent, a button front, tulip, panelled, high-waisted,
+ * belted and flared. The shapes are the vertex stage's (crowdBody.ts bodyGarment), the lines the fragment stage's.
+ * Each is named for the cut, never for a people's dress.
+ */
+export { SKIRT_CUT, TROUSER_CUT }
+/**
+ * The lower cuts the hashed crowd wears (above LOOK_ODDS.bottomCut, one of eight per body, LOOK_HASHED_COLOUR
+ * bottomCutPick): the suit's tailored trousers, the chinos' casual cuts, the pantsuit's wide and cropped legs, the
+ * skirt suit's skirts. Packed four bits each for crowd.ts (BOTTOM_CUT_STREET_PACKED).
+ */
+export const BOTTOM_CUT_STREET: readonly (readonly number[])[] = Object.freeze([
+  Object.freeze([TROUSER_CUT.crease, TROUSER_CUT.pleated, TROUSER_CUT.turnUps, TROUSER_CUT.slim, TROUSER_CUT.pleatedTurnUps, TROUSER_CUT.tapered, TROUSER_CUT.wideLeg, TROUSER_CUT.highWaisted]),
+  Object.freeze([TROUSER_CUT.crease, TROUSER_CUT.pleated, TROUSER_CUT.tapered, TROUSER_CUT.slim, TROUSER_CUT.cropped, TROUSER_CUT.turnUps, TROUSER_CUT.belted, TROUSER_CUT.piped]),
+  Object.freeze([TROUSER_CUT.wideLeg, TROUSER_CUT.palazzo, TROUSER_CUT.crease, TROUSER_CUT.cropped, TROUSER_CUT.culottes, TROUSER_CUT.flared, TROUSER_CUT.tapered, TROUSER_CUT.highWaisted]),
+  Object.freeze([SKIRT_CUT.pencil, SKIRT_CUT.aLine, SKIRT_CUT.pleated, SKIRT_CUT.wrap, SKIRT_CUT.midi, SKIRT_CUT.midiPencil, SKIRT_CUT.buttonFront, SKIRT_CUT.belted]),
+])
+export const BOTTOM_CUT_STREET_PACKED: readonly number[] = Object.freeze(BOTTOM_CUT_STREET.map((list) => list.reduce((w, k, i) => (w | (k << (4 * i))) >>> 0, 0)))
 /** The hair pieces a crown cover leaves showing below it: the length, the bob's sides, a tail. */
 const BELOW_CROWN: ReadonlySet<string> = new Set(['longHair', 'bob', 'ponytail'])
 
@@ -350,6 +373,14 @@ export const WARDROBE = Object.freeze({
     'notch lapel', 'peak lapel', 'shawl collar', 'double-breasted', 'band collar', 'turtleneck', 'waistcoat', 'cardigan',
     'open front', 'belted', 'cropped', 'wrap front', 'zip front', 'side closure', 'quilted', 'patch pockets',
   ]),
+  trouserCut: Object.freeze([
+    'straight', 'pressed crease', 'pleated', 'turn-ups', 'side stripe', 'wide-leg', 'tapered', 'flared',
+    'cropped', 'culottes', 'high-waisted', 'belted', 'piped seam', 'slim', 'pleated turn-ups', 'palazzo',
+  ]),
+  skirtCut: Object.freeze([
+    'straight', 'pencil', 'A-line', 'pleated', 'box pleat', 'wrap', 'midi', 'midi pencil',
+    'midi A-line', 'back vent', 'button front', 'tulip', 'panelled', 'high-waisted', 'belted', 'flared',
+  ]),
   tie: Object.freeze(['none', 'tie']),
   eyewear: Object.freeze(['none', 'glasses']),
   bag: Object.freeze(['none', 'bag']),
@@ -383,7 +414,8 @@ export const LONG_HAIR_BIT = 2 + LOOK_PIECE_BIT.longHair
  * a Monk tone is option 8 and up, past the look word's three bits), vitiligo at three bits and freckles at two, the hair
  * style's high bits, the curl, the headwear and its cloth, the facial hair, the hearing devices, a prosthetic limb and
  * its finish; bits 30 and 31 are spare. Word 5 is the cloth word: the top's weave and the bottom's at four bits each,
- * then the outer layer's cut at four; bits 12 to 31 are spare, and so are words 6 to 15 (LOOK_WORDS), which unpackGenome requires to be zero. Every width is
+ * then the outer layer's cut at four, then the lower garment's cut at four; bits 16 to 31 are spare, and so are words 6
+ * to 15 (LOOK_WORDS), which unpackGenome requires to be zero. Every width is
  * pinned to hold its slot's largest option count (with its high bits, for a slot that has them).
  */
 export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [word: number, shift: number, width: number]>> = Object.freeze({
@@ -431,6 +463,7 @@ export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [word: number, shift
   topWeave: [5, 0, 4],
   bottomWeave: [5, 4, 4],
   cut: [5, 8, 4],
+  bottomCut: [5, 12, 4],
 })
 
 /**
@@ -494,9 +527,10 @@ export const LOOK_HASHED_HEARING = 26
  * `marks` and the two links after it, where on a person the patches and freckles fall (crowd.ts, not a slot); the
  * headwear's cloth, the curl pattern, facial hair and its style, a prosthetic limb, which and its finish; whether the
  * top is woven with a pattern (above LOOK_ODDS.weave) and which of the body's WEAVE_STREET; whether the outer layer
- * has a cut of its own (above LOOK_ODDS.cut) and which of the body's CUT_STREET.
+ * has a cut of its own (above LOOK_ODDS.cut) and which of the body's CUT_STREET; whether the trousers or the skirt
+ * have one (above LOOK_ODDS.bottomCut) and which of the body's BOTTOM_CUT_STREET.
  */
-export const LOOK_HASHED_COLOUR = Object.freeze({ age: 7, undertone: 8, iris: 13, trim: 14, scarfCloth: 15, trimCloth: 16, vitiligo: 17, vitiligoPattern: 18, freckles: 19, frecklesDensity: 20, marks: 21, headwearCloth: 24, curl: 25, facialHair: 26, facialHairStyle: 31, prosthetic: 28, prostheticLimb: 29, prostheticFinish: 30, weave: 32, weavePick: 33, cut: 34, cutPick: 35 })
+export const LOOK_HASHED_COLOUR = Object.freeze({ age: 7, undertone: 8, iris: 13, trim: 14, scarfCloth: 15, trimCloth: 16, vitiligo: 17, vitiligoPattern: 18, freckles: 19, frecklesDensity: 20, marks: 21, headwearCloth: 24, curl: 25, facialHair: 26, facialHairStyle: 31, prosthetic: 28, prostheticLimb: 29, prostheticFinish: 30, weave: 32, weavePick: 33, cut: 34, cutPick: 35, bottomCut: 36, bottomCutPick: 37 })
 
 const isBody = (v: unknown): v is LookBody => v === 0 || v === 1 || v === 2 || v === 3
 const womanBody = (body: LookBody): boolean => body >= 2
@@ -553,6 +587,7 @@ export function lookOptions(body: LookBody, slot: LookSlot, layer: number = LAYE
     case 'hairColour': return [...swatches(LOOK_PALETTE.hair), { name: 'grey', hex: GREY_HAIR }]
     case 'layer': return named(WARDROBE.layer)
     case 'cut': return named(WARDROBE.cut)
+    case 'bottomCut': return named(body === 3 ? WARDROBE.skirtCut : WARDROBE.trouserCut)
     // The layer owns the top's dye: a coat draws from the coats, as many as the body's own jacket palette holds (the slot's width is the jacket's).
     case 'top': return layer === LAYER.coat ? swatches(LOOK_PALETTE.coats).slice(0, LOOK_PALETTE[outfit.top].length) : swatches(LOOK_PALETTE[outfit.top])
     case 'trim': return [{ name: 'matching', hex: null }, ...swatches(LOOK_PALETTE.trims)]
@@ -755,7 +790,8 @@ export function validateLook(raw: unknown): Look | null {
 
 /**
  * A look with one slot changed, or null if the slot or the value is not in the catalogue. Changing the body keeps
- * every other slot where it still exists for the new body and moves the rest to that slot's last option.
+ * every other slot where it still exists for the new body and moves the rest to that slot's last option; between
+ * the skirt suit and a trouser body the lower cut goes back to straight (its options are the other garment's).
  */
 export function withLookSlot(look: Look, slot: LookSlot, value: number): Look | null {
   if (!Number.isInteger(value) || value < 0) return null
@@ -763,6 +799,8 @@ export function withLookSlot(look: Look, slot: LookSlot, value: number): Look | 
     if (!isBody(value)) return null
     const out: Record<string, number> = {}
     for (const s of LOOK_SLOTS) out[s] = s === 'body' ? value : Math.min(look[s], lookSize(value, s) - 1)
+    // A trouser cut is no skirt's: between the skirt suit and a trouser body the lower cut starts straight again.
+    if ((look.body === 3) !== (value === 3)) out.bottomCut = 0
     return validateLook(out)
   }
   return validateLook({ ...look, [slot]: value })
@@ -981,9 +1019,10 @@ export const LOOK_HASH = Object.freeze({ pieces: 13.37, colours: 7.919 })
  * The thresholds a piece is drawn above (crowd.ts `step(edge, h(k))`); a woman's bag is commoner than a man's. The
  * hair: below `longHair` on link 4 is short; otherwise a woman's split link (LOOK_HASHED_HAIR_SPLIT) under `bob` is
  * long, under `bun` a bob, else a bun; a man's split link at or above `bald` is bald, else long. Two people in a
- * hundred have vitiligo (`vitiligo`), about one in six freckles (`freckles`), whatever their tone.
+ * hundred have vitiligo (`vitiligo`), about one in six freckles (`freckles`), whatever their tone. Three outer layers
+ * in ten wear a cut (`cut`), about one pair of trousers or skirt in three (`bottomCut`).
  */
-export const LOOK_ODDS = Object.freeze({ tie: 0.3, bagMan: 0.7, bagWoman: 0.62, cup: 0.82, longHair: 0.35, glasses: 0.78, grey: 0.9, darkTrousers: 0.6, bob: 0.34, bun: 0.67, bald: 0.96, shirtSleeves: 0.2, coat: 0.85, scarf: 0.88, trim: 0.8, vitiligo: 0.98, freckles: 0.84, hijab: 0.95, headWrap: 0.93, turban: 0.975, kippah: 0.965, flatCap: 0.95, facialHair: 0.55, aids: 0.975, implant: 0.993, prosthetic: 0.99, weave: 0.6, cut: 0.7 })
+export const LOOK_ODDS = Object.freeze({ tie: 0.3, bagMan: 0.7, bagWoman: 0.62, cup: 0.82, longHair: 0.35, glasses: 0.78, grey: 0.9, darkTrousers: 0.6, bob: 0.34, bun: 0.67, bald: 0.96, shirtSleeves: 0.2, coat: 0.85, scarf: 0.88, trim: 0.8, vitiligo: 0.98, freckles: 0.84, hijab: 0.95, headWrap: 0.93, turban: 0.975, kippah: 0.965, flatCap: 0.95, facialHair: 0.55, aids: 0.975, implant: 0.993, prosthetic: 0.99, weave: 0.6, cut: 0.7, bottomCut: 0.65 })
 
 const pickIndex = (h: number, length: number): number => Math.min(u32(f32(h * f32(length - 0.001))), length - 1)
 const above = (h: number, edge: number): number => (h >= f32(edge) ? 1 : 0)
@@ -1063,6 +1102,7 @@ export function lookFromSeed(seed: number): Look {
     bottomWeave: 0,
     // Three outer layers in ten are cut otherwise than the notch lapel, one of the body's eight (CUT_STREET).
     cut: above(hc(LOOK_HASHED_COLOUR.cut), LOOK_ODDS.cut) ? CUT_STREET[body][pickIndex(hc(LOOK_HASHED_COLOUR.cutPick), CUT_STREET[body].length)] : 0,
+    bottomCut: above(hc(LOOK_HASHED_COLOUR.bottomCut), LOOK_ODDS.bottomCut) ? BOTTOM_CUT_STREET[body][pickIndex(hc(LOOK_HASHED_COLOUR.bottomCutPick), BOTTOM_CUT_STREET[body].length)] : 0,
     hairColour: grey ? LOOK_PALETTE.hair.length : pickIndex(hc(2), LOOK_PALETTE.hair.length),
     layer,
     top: pickIndex(hc(3), topSize),
@@ -1426,22 +1466,80 @@ export const LOOK_GARMENTS: readonly LookGarment[] = Object.freeze(([
 ] as const).map(([name, layer, cut, topWeave, trim]: readonly [string, number, number, number, number?]) =>
   Object.freeze({ name, layer, cut, topWeave, trim: trim ?? null })))
 
-/** The garment of that name (case and surrounding space ignored), or null. */
-export function lookGarment(name: string): LookGarment | null {
-  const key = name.trim().toLowerCase()
-  return LOOK_GARMENTS.find((g) => g.name === key) ?? null
+/** What a lower garment sets: the trousers' or the skirt's cut and weave. A skirt goes on the skirt suit's body alone, trousers on the other three. */
+export interface LookLowerGarment {
+  readonly name: string
+  readonly skirt: boolean
+  readonly bottomCut: number
+  /** The bottom's weave; 0 is as the outfit wears it (matching the top where the trousers are its cloth, else plain). */
+  readonly bottomWeave: number
 }
 
-/** The look in a garment (its layer, cut, weave and any trim set; everything else as it was), or null for no such garment or a look outside the wardrobe. */
+/**
+ * The catalogue's lower garments: twelve pairs of trousers and eight skirts, each a lower cut (TROUSER_CUT,
+ * SKIRT_CUT) and a weave, named by what it is, never by a people's dress. Like the tops they keep the look's colours
+ * (the `bottom` slot dyes them). With the forty-four tops, the wardrobe names sixty-four garments.
+ */
+export const LOOK_LOWER_GARMENTS: readonly LookLowerGarment[] = Object.freeze(([
+  ['pinstripe suit trousers', false, TROUSER_CUT.crease, WEAVE.pinstripe],
+  ['glen check trousers', false, TROUSER_CUT.crease, WEAVE.glenCheck],
+  ['pleated chinos', false, TROUSER_CUT.pleated, WEAVE.twill],
+  ['pleated tweed trousers', false, TROUSER_CUT.pleatedTurnUps, WEAVE.tweed],
+  ['turn-up wool trousers', false, TROUSER_CUT.turnUps, WEAVE.merino],
+  ['dinner trousers', false, TROUSER_CUT.sideStripe, 0],
+  ['wide-leg trousers', false, TROUSER_CUT.wideLeg, 0],
+  ['palazzo trousers', false, TROUSER_CUT.palazzo, WEAVE.silk],
+  ['tapered chinos', false, TROUSER_CUT.tapered, WEAVE.twill],
+  ['flared trousers', false, TROUSER_CUT.flared, 0],
+  ['cropped linen trousers', false, TROUSER_CUT.cropped, WEAVE.linen],
+  ['twill culottes', false, TROUSER_CUT.culottes, WEAVE.twill],
+  ['pencil skirt', true, SKIRT_CUT.pencil, 0],
+  ['midi pencil skirt', true, SKIRT_CUT.midiPencil, WEAVE.merino],
+  ['A-line skirt', true, SKIRT_CUT.aLine, WEAVE.twill],
+  ['midi A-line skirt', true, SKIRT_CUT.midiALine, WEAVE.cashmere],
+  ['pleated skirt', true, SKIRT_CUT.pleated, 0],
+  ['box-pleat check skirt', true, SKIRT_CUT.boxPleat, WEAVE.tartan],
+  ['wrap skirt', true, SKIRT_CUT.wrap, WEAVE.linen],
+  ['button-front skirt', true, SKIRT_CUT.buttonFront, WEAVE.twill],
+] as const).map(([name, skirt, bottomCut, bottomWeave]: readonly [string, boolean, number, number]) => Object.freeze({ name, skirt, bottomCut, bottomWeave })))
+
+/** The garment of that name, a top (LOOK_GARMENTS), case and surrounding space ignored, or null. */
+export function lookGarment(name: string): LookGarment | null {
+  const key = name.trim().toLowerCase()
+  return LOOK_GARMENTS.find((g) => g.name.toLowerCase() === key) ?? null
+}
+
+/** The lower garment of that name (LOOK_LOWER_GARMENTS), case and surrounding space ignored, or null. */
+export function lookLowerGarment(name: string): LookLowerGarment | null {
+  const key = name.trim().toLowerCase()
+  return LOOK_LOWER_GARMENTS.find((g) => g.name.toLowerCase() === key) ?? null
+}
+
+/** Whether a lower garment goes on a look's body: a skirt on the skirt suit's, trousers on the other three. */
+export const lowerGarmentFits = (look: Look, g: LookLowerGarment): boolean => g.skirt === (look.body === 3)
+
+/**
+ * The look in a garment, or null for no such garment, a lower garment this body does not wear (lowerGarmentFits) or
+ * a look outside the wardrobe. A top sets the layer, the cut, the weave and any trim; a lower garment the lower cut
+ * and the bottom's weave; everything else stays as it was.
+ */
 export function withGarment(look: Look, name: string): Look | null {
+  if (validateLook(look) === null) return null
   const g = lookGarment(name)
-  if (g === null || validateLook(look) === null) return null
-  return validateLook({ ...look, layer: g.layer, cut: g.cut, topWeave: g.topWeave, ...(g.trim === null ? {} : { trim: g.trim }) })
+  if (g !== null) return validateLook({ ...look, layer: g.layer, cut: g.cut, topWeave: g.topWeave, ...(g.trim === null ? {} : { trim: g.trim }) })
+  const lower = lookLowerGarment(name)
+  if (lower === null || !lowerGarmentFits(look, lower)) return null
+  return validateLook({ ...look, bottomCut: lower.bottomCut, bottomWeave: lower.bottomWeave })
 }
 
 /** The garment a look wears exactly (its layer, cut, weave and any trim it sets), or null when it wears none of them. */
 export function garmentOf(look: Look): LookGarment | null {
   return LOOK_GARMENTS.find((g) => look.layer === g.layer && look.cut === g.cut && look.topWeave === g.topWeave && (g.trim === null || look.trim === g.trim)) ?? null
+}
+
+/** The lower garment a look wears exactly (one its body wears, with its lower cut and weave), or null. */
+export function lowerGarmentOf(look: Look): LookLowerGarment | null {
+  return LOOK_LOWER_GARMENTS.find((g) => lowerGarmentFits(look, g) && look.bottomCut === g.bottomCut && look.bottomWeave === g.bottomWeave) ?? null
 }
 
 /** The column the console's view of a look starts its values at: one past the longest slot name. */
@@ -1469,7 +1567,7 @@ export function describeLook(look: Look): string[] {
  * One change to a look, as the console's `look` command asks it (terminal/bridge.ts LookBridge): a slot set to an
  * option (its 1-based number as describeLook prints it, or its name), a preset by name, a build by name (LOOK_BUILDS:
  * its four body sliders), a face shape by name (LOOK_FACE_SHAPES), a garment by name (LOOK_GARMENTS: the outer layer,
- * its cut and its weave), a look code, a look drawn from a seed, or the seed's own look again.
+ * its cut and its weave; LOOK_LOWER_GARMENTS: the lower cut and the bottom's weave), a look code, a look drawn from a seed, or the seed's own look again.
  */
 export type LookChange =
   | { readonly kind: 'slot'; readonly slot: string; readonly value: string }
@@ -1509,7 +1607,12 @@ export function changeLook(look: Look, change: LookChange, seed: number): LookCh
     }
     case 'garment': {
       const next = withGarment(look, change.name)
-      return next ? { look: next, error: null } : refused(`no garment named '${change.name}': ${LOOK_GARMENTS.map((g) => g.name).join(', ')}`)
+      if (next) return { look: next, error: null }
+      const lower = lookLowerGarment(change.name)
+      if (lower !== null && validateLook(look) !== null) {
+        return refused(lower.skirt ? `the ${lower.name} goes with the skirt suit: this body wears trousers` : `the ${lower.name} are trousers: the skirt suit wears a skirt`)
+      }
+      return refused(`no garment named '${change.name}': ${[...LOOK_GARMENTS, ...LOOK_LOWER_GARMENTS].map((g) => g.name).join(', ')}`)
     }
     case 'preset': {
       const p = lookPreset(change.name)

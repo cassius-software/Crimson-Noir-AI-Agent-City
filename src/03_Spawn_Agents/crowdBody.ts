@@ -16,12 +16,15 @@
  * What breaks if it is removed? The bodies have no vertex stage: nothing of the crowd is posed or drawn.
  */
 import { wgslFn } from 'three/tsl'
-import { FACE, GAZE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, MORPH, REGION, RIG_REST, SOLE, WALK } from './humanoid.ts'
+import { BONE, FACE, GARMENT_STEP, GAZE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, LOWER, MORPH, REGION, RIG_REST, SKIRT_SHAPE, SLOT, SOLE, TROUSER_SHAPE, WALK } from './humanoid.ts'
 
 const TAU = Math.PI * 2
 
 /** A number as a WGSL f32 literal (an integer gets its point). */
 const f = (n: number): string => (Number.isInteger(n) ? `${n}.0` : `${n}`)
+
+/** The lower cuts' shapes as two vec4f per cut, the trousers' sixteen then the skirt's (bodyGarment indexes them). */
+const LOWER_TABLE = [...TROUSER_SHAPE, ...SKIRT_SHAPE].flatMap((row) => [row.slice(0, 4), row.slice(4, 8)]).map((v) => `vec4f(${v.map(f).join(', ')})`).join(', ')
 
 /**
  * The WGSL, one `fn` per wgslFn (the others are its includes). Every constant is humanoid.ts's. A `mat3x3f` passed
@@ -31,7 +34,8 @@ const f = (n: number): string => (Number.isInteger(n) ? `${n}.0` : `${n}`)
  * bone, weight of the first) and `face` (face region, weight); the agent's position and heading; its motion (vx, vz,
  * walk phase, speed); its spring-damper pose (tilt, bend, push angle, activity); `stance` = (stature as a factor of
  * the base height, piece mask, idle phase 0..1, -); `morphA` = (mass, muscle, shoulders, hips) and `morphB` = (legs,
- * posture, head, -), each a slider's 0..1; `faceA` = (brow, jaw, chin, cheek) and `faceB` = (nose, eyes, lips, -),
+ * posture, head, lower cut), the sliders each 0..1, the lower cut as bodyGarment reads it (the cut, 16 more under a
+ * coat); `faceA` = (brow, jaw, chin, cheek) and `faceB` = (nose, eyes, lips, -),
  * each −1..1; the time; and `gaze` = the operator's eye in the world (x, y, z) with 1 in w when someone is afoot to
  * look at (0: nobody). WGSL reserves `target`, so the eye is `eye` inside. `rigA`/`rigAq` and `rigB`/`rigBq` are the
  * world centre (x, y, z) and rotation (a quaternion) of the rig shapes the vertex's two bones hang from, read when
@@ -70,6 +74,70 @@ fn bodyHeightMap(y: f32, fLegs: f32, fTrunk: f32) -> f32 {
 }
 fn bodySlope(y: f32, fLegs: f32, fTrunk: f32) -> f32 {
   return select(select(1.0, fTrunk, y <= ${f(LANDMARK.neck)}), fLegs, y <= ${f(LANDMARK.hip)});
+}
+fn bodyRamp(a: f32, b: f32, x: f32) -> f32 {
+  let t = clamp((x - a) / (b - a), 0.0, 1.0);
+  return t * t * (3.0 - 2.0 * t);
+}
+fn bodyLowerShape(r: f32, y: f32, p0: vec4f, p1: vec4f, skirt: bool, coat: bool) -> vec2f {
+  // humanoid.ts lowerShape: the radius at y reshaped, and the height stretched. A skirt's p0 = (flare, flareTop,
+  // pencil, length), p1 = (bulge, raise, narrowTop, follow); a trouser leg's p0 = (slim, wide, flare, wideAbove),
+  // p1 = (wideTop, wideFull, taper, taperSlope).
+  if (skirt) {
+    var s = 1.0 + p0.x * bodyRamp(p0.y, ${f(LOWER.hem)}, y) + p1.x * bodyHat(y, ${f(LOWER.bulgeAt)}, ${f(LOWER.bulgeHalf)}) - p0.z * bodyRamp(${f(LOWER.pencilFrom)}, ${f(LOWER.hem)}, y) - p1.z * bodyRamp(${f(LOWER.waist)}, ${f(LOWER.top)}, y);
+    if (coat) {
+      s = min(s, 1.0);
+    }
+    return vec2f(r * s, select(y + (y - ${f(LOWER.waist)}) * p1.y, ${f(LOWER.waist)} - (${f(LOWER.waist)} - y) * p0.w, y < ${f(LOWER.waist)}));
+  }
+  var q = r * (1.0 - p0.x * bodyRamp(${f(LOWER.slimFrom)}, ${f(LOWER.slimTo)}, y));
+  let w = p0.y + p0.z * max(0.0, ${f(LANDMARK.knee)} - y);
+  if (w > 0.0 && y >= p0.w) {
+    q = q + bodyRamp(p1.x, p1.y, y) * max(0.0, w - q);
+  }
+  if (p1.z > 0.0) {
+    q = q - bodyRamp(${f(LOWER.taperFrom)}, ${f(LOWER.taperTo)}, y) * max(0.0, q - (p1.z + p1.w * (y - ${f(LOWER.ankle)})));
+  }
+  return vec2f(q, y);
+}
+fn bodyGarment(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, code: f32) -> mat3x3f {
+  // humanoid.ts garmentPoint: a trouser leg (slot BOTTOM on a leg bone) about the leg's axis, or the skirt (slot
+  // BOTTOM on the trunk with the trunk for its second bone too) about the trunk's, reshaped by the lower cut; the
+  // normal by the cylinder's rule, its derivatives by central differences. code = the cut (0..15) + 16 under a coat
+  // (crowd.ts morphB.w). Column 2's x is how much of a skirt's hem the thigh beside it carries (bodyVertex).
+  let c = u32(code + 0.5);
+  let cut = c & 15u;
+  let bone0 = u32(rig.x + 0.5);
+  let leg = bone0 >= ${BONE.THIGH_L}u && bone0 <= ${BONE.FOOT_R}u;
+  let skirt = bone0 == ${BONE.TRUNK}u && u32(skin.x + 0.5) == ${BONE.TRUNK}u;
+  if (cut == 0u || abs(rig.y - ${f(SLOT.BOTTOM)}) > 0.5 || !(leg || skirt)) {
+    return mat3x3f(v, n, vec3f(0.0));
+  }
+  var shapes = array<vec4f, ${(TROUSER_SHAPE.length + SKIRT_SHAPE.length) * 2}>(${LOWER_TABLE});
+  let at = select(0u, ${TROUSER_SHAPE.length * 2}u, skirt) + cut * 2u;
+  let p0 = shapes[at];
+  let p1 = shapes[at + 1u];
+  let coat = (c & 16u) != 0u;
+  let ax = select(0.0, sign(v.x) * ${f(LANDMARK.hipX)}, leg);
+  let dx = v.x - ax;
+  let r = max(length(vec2f(dx, v.z)), 0.000001);
+  let o = bodyLowerShape(r, v.y, p0, p1, skirt, coat);
+  let fr = (bodyLowerShape(r + ${f(GARMENT_STEP.r)}, v.y, p0, p1, skirt, coat).x - bodyLowerShape(r - ${f(GARMENT_STEP.r)}, v.y, p0, p1, skirt, coat).x) / ${f(2 * GARMENT_STEP.r)};
+  let up = bodyLowerShape(r, v.y + ${f(GARMENT_STEP.y)}, p0, p1, skirt, coat);
+  let dn = bodyLowerShape(r, v.y - ${f(GARMENT_STEP.y)}, p0, p1, skirt, coat);
+  let fy = (up.x - dn.x) / ${f(2 * GARMENT_STEP.y)};
+  let yy = (up.y - dn.y) / ${f(2 * GARMENT_STEP.y)};
+  let cs = dx / r;
+  let sn = v.z / r;
+  let k = o.x / r;
+  let nr = n.x * cs + n.z * sn;
+  let nt = n.z * cs - n.x * sn;
+  let mr = nr * yy;
+  let mt = nt * fr * yy / k;
+  let my = n.y * fr - nr * fy;
+  // The middle of the skirt, front and back, stays with the trunk: the halves would part between the knees.
+  let follow = select(0.0, p1.w * bodyRamp(${f(LOWER.followFrom)}, ${f(LOWER.hem)}, v.y) * bodyRamp(${f(LOWER.followMid)}, ${f(LANDMARK.hipX)}, abs(v.x)), skirt);
+  return mat3x3f(vec3f(ax + dx * k, o.y, v.z * k), normalize(vec3f(mr * cs - mt * sn, my, mr * sn + mt * cs)), vec3f(follow, 0.0, 0.0));
 }
 fn bodyFace(p: vec3f, n: vec3f, face: vec2f, fa: vec4f, fb: vec4f) -> mat3x3f {
   // face = (region, weight): 1 brow, 2 jaw, 3 chin, 4 cheek, 5 nose, 6 eyes, 7 lips (humanoid.ts FACE_REGION, FACE).
@@ -279,6 +347,11 @@ fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: v
     v0 = shaped[0];
     n0 = shaped[1];
   }
+  // The lower garment's cut (bodyGarment), on the trousers' legs or the skirt alone, in the base body's metres: the
+  // sliders reshape it after. morphB.w carries the cut (and 16 under a coat); 0 moves nothing.
+  let lower = bodyGarment(v0, n0, rig, skin, morphB.w);
+  v0 = lower[0];
+  n0 = lower[1];
   // The sliders' factors.
   let fLegs = ${f(MORPH.legs.base)} + morphB.x * ${f(MORPH.legs.range)};
   let fTrunk = (${f(LANDMARK.neck)} - ${f(LANDMARK.hip)} * fLegs) / ${f(LANDMARK.neck - LANDMARK.hip)};
@@ -339,9 +412,13 @@ fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: v
   }
   let b0 = bodyBone(bone0, rest, legL, legR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);
   var b = b0;
-  if (bone1 != bone0 && weight < 1.0) {
-    let b1 = bodyBone(bone1, rest, legL, legR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);
-    b = b0 * weight + b1 * (1.0 - weight);
+  // A skirt's low rings hang from the thigh on their side as well as the trunk, as much as the cut says (bodyGarment).
+  let follow = lower[2].x;
+  let boneB = select(bone1, select(${BONE.THIGH_L}u, ${BONE.THIGH_R}u, v.x >= 0.0), follow > 0.0);
+  let weightB = select(weight, 1.0 - follow, follow > 0.0);
+  if (boneB != bone0 && weightB < 1.0) {
+    let b1 = bodyBone(boneB, rest, legL, legR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);
+    b = b0 * weightB + b1 * (1.0 - weightB);
   }
   b = bodyRotAxis(b, vec3f(0.0), k, pose.x);
   // The stature's scales (the normal takes their reciprocals), the pelvis' rise, the heading, the place.
@@ -365,7 +442,9 @@ export const BODY_INCLUDES: Readonly<Record<string, readonly string[]>> = Object
   bodyLeg: Object.freeze(['bodyReach']),
   bodyRig: Object.freeze(['bodyRigCentre', 'bodyRotQ']),
   bodyBone: Object.freeze(['bodyRotX', 'bodyRotY', 'bodyRotAxis']),
-  bodyVertex: Object.freeze(['bodyFace', 'bodyHeightMap', 'bodyMorph', 'bodyRig', 'bodyFoot', 'bodyReach', 'bodyLeg', 'bodyGaze', 'bodyBone', 'bodyRotAxis']),
+  bodyLowerShape: Object.freeze(['bodyRamp', 'bodyHat']),
+  bodyGarment: Object.freeze(['bodyLowerShape', 'bodyRamp']),
+  bodyVertex: Object.freeze(['bodyFace', 'bodyGarment', 'bodyHeightMap', 'bodyMorph', 'bodyRig', 'bodyFoot', 'bodyReach', 'bodyLeg', 'bodyGaze', 'bodyBone', 'bodyRotAxis']),
 })
 
 const parts = BODY_WGSL.split(/(?=^fn )/m).map((s) => s.trim()).filter(Boolean)
