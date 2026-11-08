@@ -72,6 +72,11 @@
  *   static host serves it, to an iPhone: the manifest read through the page's policy, the icons, the service worker
  *   installed, the second load cross-origin isolated by the worker, a model file kept from the Menu on that second
  *   visit, and the city started from the phone's copy with the host gone, the kept model still answering;
+ * - walk: the first walk (?tutorial=1) end to end on its accessible path, the look stage through the wardrobe card and
+ *   the way out through the three NoirScript lines, with Sloane's name question beside the walk's card at five desktop
+ *   sizes and the walk's card stepping aside for it under 960 px;
+ * - walkshop: the first walk's look stage through a shop instead: Sloane names the shops, the Browse chip is clear of
+ *   the walk's card, a try-on costs nothing, and the shop's card put away passes the stage;
  * - lakefront: the generated metropolis (?map=lakefront, built in the page's worker from the seed), whose crowd walks
  *   its street window with the six workplaces the page picked from the pack and the HUD counting who is at work, at
  *   Medium, the first tier with shadows, so the sun's shadow pass draws the region's buildings and its shaders build;
@@ -90,7 +95,7 @@
  * screenshot per scenario to --out (default: a temporary directory), and the console's transcript where a scenario
  * types in it, prints one row per check (and an `info` row for what is recorded, not asserted) and exits 1 if any
  * fails.
- * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,actions,walk,lakefront,fail].
+ * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,actions,walk,walkshop,lakefront,fail].
  * Needs `npm run build`.
  * What breaks if it is removed? Nothing at runtime; the page loses its only end-to-end check in a browser, and with it
  * the proof that the city renders and that every control reaches the avatar.
@@ -1813,6 +1818,61 @@ const SCENARIOS = {
       p.saveTranscript('walk')
       await p.b.close()
     }
+  },
+
+  /**
+   * The first walk's look stage through a shop (storefronts.ts, StoreCard.tsx): with Sloane's name question skipped and
+   * the earlier stages passed (the first two by their buttons, the next two by the reports the page would make, the
+   * car and the room, which the walk scenario takes by their buttons), Sloane names the shops on a map that has
+   * them; the visitor stands in the first shop, the HUD's Browse chip is not under the walk's card and opens the
+   * shop's card; the walk's card steps aside; trying a line on costs nothing and passes nothing; Done puts the shop's
+   * card away, which passes the stage, and the walk's card is back on Ring-0.
+   */
+  async walkshop(chrome, origin) {
+    const p = await open(chrome)
+    try {
+      await p.goto(`${origin}/?${LIGHT}&tutorial=1`)
+      await p.booted()
+      const stage = () => p.eval('window.__SIM__.walk()')
+      const past = (s, ms = 30_000) => p.waitFor(`window.__SIM__.walk() !== ${JSON.stringify(s)}`, ms).then(() => true, () => false)
+      // Sloane's name question skipped with Esc, as the desktop scenario does and a visitor who wants to walk would: her
+      // open card stands over the bottom-centre prompts in a window this short, the Browse chip among them.
+      if (await p.waitFor(`!document.querySelector('.boot-veil') && document.activeElement?.getAttribute('aria-label') === 'Your name'`, 30_000).then(() => true, () => false)) {
+        await p.tap('Escape', 'Escape', 27)
+      }
+      await p.waitFor(`!!document.querySelector('[data-walk-show]')`, 30_000).catch(() => {})
+      // Walk for me, then Plan one for me (a goal planned as the chip would).
+      await p.eval(`document.querySelector('[data-walk-show]')?.click()`)
+      await past('move')
+      await p.eval(`document.querySelector('[data-walk-show]')?.click()`)
+      await past('voice')
+      for (const ev of ['vehicle', 'inside']) await p.eval(`window.__SIM__.walkNote(${JSON.stringify(ev)})`)
+      const at = await p.waitFor(`window.__SIM__.walk() === 'style'`, 10_000).then(() => true, () => false)
+      const said = await p.eval(`document.querySelector('[data-walk]')?.innerText ?? ''`)
+      check(at && /shops on the street/.test(said) && /press B/.test(said), 'walkshop: the look stage names the shops, in the keyboard\'s words', `stage ${await stage()}; ${said.replace(/\s+/g, ' ').slice(0, 200)}`)
+      // Into the first shop (the city always has five), on foot, at its fitting spot; the realm's reading says so.
+      const shop = await p.eval(`window.__SIM__.shops()[0]`)
+      await p.eval(`window.__SIM__.teleport(${shop.fitting.x}, ${shop.fitting.z}, 0)`)
+      const inShop = await p.waitFor(`window.__SIM__.snapshot().customer.shop?.index === 0 && !!document.querySelector('[data-hint="shop"]')`, 20_000).then(() => true, () => false)
+      // The Browse chip is the shop's way in on every device; nothing of the walk's card lies over its middle.
+      const over = await p.eval(`(() => { const c = document.querySelector('[data-hint="shop"]'); if (!c) return 'no chip'; const r = c.getBoundingClientRect(); const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); if (top && c.contains(top)) return ''; const at = (e) => e ? e.tagName.toLowerCase() + [...e.attributes].filter((a) => a.name.startsWith('data-') || a.name === 'aria-label').map((a) => '[' + a.name + '=' + a.value.slice(0, 24) + ']').join('') : 'nothing'; return 'under ' + at(top) + ' in ' + at(top?.closest('aside,section,div[data-walk]') ?? null) + ' at ' + Math.round(r.left) + ',' + Math.round(r.top) })()`)
+      await p.shot('walk-shop-chip')
+      check(inShop && over === '', 'walkshop: in the shop, the Browse chip shows and the walk\'s card does not cover it', `${shop.name}: in ${inShop}, chip ${over || 'clear'}`)
+      await p.eval(`document.querySelector('[data-hint="shop"]')?.click()`)
+      const open1 = await p.waitFor(`!!document.querySelector('[data-store]') && !document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false)
+      check(open1 && (await stage()) === 'style', 'walkshop: Browse opens the shop\'s card and the walk\'s card steps aside', `card ${open1}, stage ${await stage()}`)
+      const credits = () => p.eval('window.__SIM__.shopkeeper.purse.credits()')
+      const c0 = await credits()
+      const tried = await p.eval(`(() => { const b = document.querySelector('[data-store] [data-action="try"]'); if (!b) return false; b.click(); return true })()`)
+      await p.frames(3)
+      check(tried && (await credits()) === c0 && (await stage()) === 'style', 'walkshop: trying a line on costs nothing and does not pass the stage', `tried ${tried}, credits ${c0} -> ${await credits()}, stage ${await stage()}`)
+      await p.shot('walk-shop')
+      await p.eval(`document.querySelector('[data-store] [data-action="done"]')?.click()`)
+      const away = await past('style', 10_000)
+      check(away && (await stage()) === 'ring0' && await p.waitFor(`!document.querySelector('[data-store]') && !!document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false),
+        'walkshop: Done puts the shop\'s card away, the stage passes and the walk\'s card is back on Ring-0', `stage ${await stage()}`)
+      p.health('walkshop')
+    } finally { await p.b.close() }
   },
 
   async lakefront(chrome, origin) {

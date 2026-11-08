@@ -36,10 +36,12 @@ test('the hook\'s readers: the device\'s words from the glyphs, a bearing, the n
   assert.equal(TICK_MS, 1000)
 })
 
-test('the hook listens and never writes: readings from the snapshot, the engine asked only for its rooms and its car count, the pass kept once', () => {
+test('the hook listens and never writes: readings from the snapshot, the engine asked only for its rooms, its car count and whether it has shops, the pass kept once', () => {
   const src = read('./useFirstWalk.ts')
   assert.match(src, /engine\.workplaces\(\)/)
   assert.match(src, /engine\.simControls\(\)\.vehicles\.count\(\) > 0/)
+  assert.match(src, /stores: engine\.shops\.length > 0/, 'the look stage names the shops only on a map that has them')
+  assert.doesNotMatch(src, /engine\.shops(?!\.length > 0)/, 'and of the shops, only whether there are any')
   assert.doesNotMatch(src, /engine\.(?!workplaces\b|simControls\b)[a-zA-Z]+\(/, 'nothing else of the engine is called')
   assert.doesNotMatch(src, /simControls\(\)\.(?!vehicles\.count\(\))/, 'and of the controls, only the car count')
   assert.match(src, /insideRoom\(r, x, z\)/)
@@ -51,7 +53,7 @@ test('the hook listens and never writes: readings from the snapshot, the engine 
   assert.match(src, /if \(lawLine\(text\)\) note\('law'\)/)
 })
 
-test('App: the walk is switched on from the URL and the pass record, fed the Concierge\'s goal, the console\'s lines and opening, the HUD\'s microphone and captions, the wardrobe put away; the quiet watch waits for it', () => {
+test('App: the walk is switched on from the URL and the pass record, fed the Concierge\'s goal, the console\'s lines and opening, the HUD\'s microphone and captions, the wardrobe or a shop\'s card put away; the quiet watch waits for it', () => {
   const src = read('../../App.tsx')
   assert.match(src, /needsFirstWalk\(new URLSearchParams\(window\.location\.search\), loadFirstWalk\(\)\)/)
   assert.match(src, /useFirstWalk\(\{ active: walk && veilDone/)
@@ -67,7 +69,9 @@ test('App: the walk is switched on from the URL and the pass record, fed the Con
   assert.match(src, /walkRef\.current\.note\('captions'\)/)
   // The look stage: the wardrobe card put away (by Done, its close button, Escape or the console) after it was open.
   assert.match(src, /if \(lookWas\.current && !lookOpen\) walkRef\.current\.note\('wardrobe'\)\s*lookWas\.current = lookOpen/)
-  assert.match(src, /<FirstWalkCard/)
+  // Or a shop's card put away (Done, ×, Escape, the console, walking out of the shop, a headset) after it was open.
+  assert.match(src, /if \(storeWas\.current && storeOpen === null\) walkRef\.current\.note\('store'\)\s*storeWas\.current = storeOpen !== null/)
+  assert.match(src, /<FirstWalkCard\s+visible=\{veilDone && !lookOpen && storeOpen === null && locked === null\}/, 'the walk\'s card steps aside for the wardrobe and a shop\'s card')
   assert.match(src, /onShow=\{showWalk\}/)
   assert.match(src, /walk: \(\) => walkRef\.current\.stage/, 'the smoke reads the stage')
   // The accessible path goes through the same controls the operator tier has, and the console's handle.
