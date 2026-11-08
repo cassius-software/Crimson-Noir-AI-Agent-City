@@ -16,12 +16,14 @@
  * the same from the environment; CHROME names the browser (a path, or a command on PATH). `--check` is CI's proof that
  * the launcher's server serves the page so it runs: it serves the page on a free port to a headless browser on the
  * software adapter and exits 0 once the city draws frames, cross-origin isolated and with no exception on the page.
+ * Before it opens the window it reads the GPUs' memory (nvidia-smi, else the amdgpu driver's files) and adds vram= to
+ * the address, so auto may give Ollama a bigger model; vram= on the command line wins, and --check reads nothing.
  * What breaks if it is removed? `nix run` and the NixOS package have nothing to start; dist/index.html still plays
  * from a disk (with the copying bridge) or under `npm run preview`.
  */
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { createHmac, randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, request } from 'node:http'
 import { homedir, hostname } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -63,6 +65,57 @@ export const MARK = 'X-Agent-City-Launcher'
 
 /** The answer to a challenge: the nonce signed with the token. */
 export const proof = (token, nonce) => createHmac('sha256', token).update(nonce).digest('hex')
+
+/** Starting value: a GPU with less memory than this (an integrated GPU's share) is not counted. */
+export const GPU_FLOOR_BYTES = 4 * 2 ** 30
+/** The page's own ceiling (src/09_Cognition/modelFit.ts VRAM_MAX_GB) and a sanity bound on any byte count read. */
+export const VRAM_MAX_GB = 4096
+const BYTES_MAX = 2 ** 50
+const PROBE_MS = 5000
+
+/** nvidia-smi's total memory per GPU in MiB, one line each, or null where it is missing, fails or hangs past PROBE_MS.
+ *  An argument list, no shell; its complaints are not shown. */
+const runSmi = () => {
+  const r = spawnSync('nvidia-smi', ['--query-gpu=memory.total', '--format=csv,noheader,nounits'], { encoding: 'utf8', timeout: PROBE_MS, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true })
+  return r.status === 0 && typeof r.stdout === 'string' ? r.stdout : null
+}
+
+/**
+ * This machine's GPU memory for the page's vram=, in GB of 2^30 bytes rounded down to 0.1, and where it was read; or
+ * null. nvidia-smi first (MiB per GPU; a `[N/A]` line is skipped), else the amdgpu driver's bytes per card under
+ * /sys/class/drm (cardN only, so a connector such as card0-DP-1 is not a second card). A GPU under GPU_FLOOR_BYTES is
+ * not counted, and a sum above the page's ceiling is no figure. No Ollama API reports this, so the launcher reads it.
+ */
+export function gpuMemory({ smi = runSmi, drm = '/sys/class/drm', list = (d) => readdirSync(d), read = (f) => readFileSync(f, 'utf8') } = {}) {
+  const sum = (bytes) => {
+    const kept = bytes.filter((b) => Number.isSafeInteger(b) && b >= GPU_FLOOR_BYTES && b <= BYTES_MAX)
+    if (kept.length === 0) return null
+    const gb = Math.floor(kept.reduce((a, b) => a + b, 0) / 2 ** 30 * 10) / 10
+    return gb > VRAM_MAX_GB ? null : gb
+  }
+  const text = smi()
+  if (typeof text === 'string') {
+    const gb = sum(text.split('\n').map((l) => l.trim()).filter((l) => /^\d+$/.test(l)).map((l) => Number(l) * 2 ** 20))
+    if (gb !== null) return { gb, from: 'nvidia-smi' }
+  }
+  try {
+    const cards = list(drm).filter((c) => /^card\d+$/.test(c))
+    const gb = sum(cards.map((c) => {
+      try { return Number(read(join(drm, c, 'device', 'mem_info_vram_total')).trim()) } catch { return NaN }
+    }))
+    if (gb !== null) return { gb, from: 'amdgpu' }
+  } catch { /* no driver folder here: no figure from it */ }
+  return null
+}
+
+/** Adds the probe's figure to the page's query as vram=, unless the command line gave vram= (vram=0 included), and
+ *  returns what it added, or null. */
+export function withVram(query, probe = gpuMemory) {
+  if (query.has('vram')) return null
+  const g = probe()
+  if (g) query.set('vram', g.gb.toFixed(1))
+  return g
+}
 
 /** The signals that end the launcher; each one still runs its exit handlers (the window and the token file go too). */
 const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT']
@@ -265,6 +318,7 @@ async function check(o) {
 const HELP = `Crimson Noir: Agent City launcher
   crimson-noir-agent-city [key=value ...] [--port N] [--dir DIR] [--x11] [--no-browser] [--check]
   key=value       a query parameter of the page (quality=4, map=lakefront, players=2, lite=1)
+  vram=<GB>       the GPUs' memory for auto's Ollama model (default: read from nvidia-smi or the amdgpu driver; vram=0 for none)
   --port N        the port on 127.0.0.1 (default ${PORT}; the page keeps its settings per address)
   --dir DIR       the folder holding index.html (default: the build's dist/)
   --x11           run the window under X11 (XWayland) when WebGPU will not start under Wayland
@@ -289,6 +343,8 @@ async function main() {
   if (o.check) return (await check(o)) ? 0 : 1
 
   const page = readPage(o.dir)
+  const gpu = withVram(o.query)
+  if (gpu) console.log(`this machine's GPUs: ${gpu.gb.toFixed(1)} GB (${gpu.from}): auto may give Ollama a bigger model by them (vram=${gpu.gb.toFixed(1)} in the page's address; vram=0 sizes nothing)`)
   const query = o.query.toString()
   const url = `http://127.0.0.1:${o.port}/${query ? `?${query}` : ''}`
   const state = stateDir()
