@@ -1096,7 +1096,8 @@ Ring-0 elite tier above it, below). While unlocked:
   model, the masked key and the effort, and what the server has; `ask provider
   auto|claude|ollama|llamacpp|openai|inpage|scripted`, `ask connect <provider> [<url>] [<key>]` (the provider, its
   server and the Claude provider's key in one line, checked before anything changes), `ask key <key>|none`, `ask
-  effort <level>`, `ask model <name>` (`ask model auto` hands Ollama's model back to auto), `ask vram <GB>|0|auto`
+  effort <level>`, `ask model <name>` (`ask model auto`, under `ask provider ollama` or while auto has found Ollama or
+  nothing yet, hands Ollama's model back to auto), `ask vram <GB>|0|auto`
   (the GPUs' memory, so auto may give Ollama a bigger model it already has) and `ask server <url>` set it up;
   `ask stop` stops an answer. `ask file [forget <name>|load|unload|log]` and `ask gpu auto|on|off` keep and run a
   model file in this page (A model in this page);
@@ -1569,9 +1570,10 @@ any of them.
   from a slow disk and read the prompt on a modest machine; a server that sends its headers at once still has the
   whole 5 minutes) and, once the answer has begun, 2 minutes between lines. Past either, the request is closed and
   one sentence says which wait ran out; when nothing came at all, it adds that the model may still be loading (ask
-  again) or be too big for this machine (choose a smaller one). `ask stop` ends one sooner, as before. A model Ollama
-  lists at more than 60 GB gets longer to send its first line: a second per 200 MB of its weights (a starting value),
-  so a 142 GB model has about 12 minutes.
+  again) or be too big for this machine (choose a smaller one). `ask stop` ends one sooner, as before. Under `auto`,
+  once its look has read Ollama's list this visit, a model listed at more than 60 GB gets longer to send its first
+  line: a second per 200 MB of its weights (a starting value), so a 142 GB model has about 12 minutes; under `ask
+  provider ollama` the wait is the usual one.
 - **A page opened from a file.** The browser sends that page's origin as `null`, and a local server
   usually refuses it: Ollama does by default. `ask` detects this (a server that is up but refusing is
   told apart from one that is down) and says so. Open the page from `http://localhost` instead
@@ -1597,7 +1599,9 @@ any of them.
   a model beside the city costs frame rate, and the quality governor drops the tier to compensate.
 - **What it cannot do.** It sends nothing unless you type `ask`, and nothing polls in the background. With the GPUs'
   memory given, an answer from Ollama under auto may be followed by one more request on this machine, `GET /api/ps`
-  (which models Ollama has loaded and how much of each sits on the GPU), at most one for each answer. Under `auto`, an
+  (which models Ollama has loaded and how much of each sits on the GPU), at most one for each answer, and preceded
+  by one `GET /api/tags` when auto found Ollama without its list of sizes (found in the chat format, or `ask server`
+  or `ask api` changed since). Under `auto`, an
   ask with nothing found yet, an ask whose server stops answering before any of its answer arrived, and `ask` alone
   first ask the three model servers above for their lists of models, all on this machine, then read the list of model
   files kept in this page (no request), and ask the Claude gateway (which asks the Claude API) only when none of them
@@ -1618,29 +1622,35 @@ by itself (On NixOS). The console's figure beats the address; `ask vram 0` sizes
 `ask vram auto` hands back to the address. GB here are 2^30 bytes, as everywhere in the page; Ollama's own list
 prints decimal GB, so its 142GB is 132.2 GB here.
 
-- **Without a figure nothing changes**: the same requests, the same model, no `fit` row. That is a phone, the Windows
-  app and a browser on Windows until `ask vram` is typed. On a laptop's integrated GPU, leave it unset: its share of
-  memory is not a figure this rule can use.
+- **Without a figure nothing changes** but the longer first wait of a model over 60 GB (How long it waits, above): the
+  same requests, the same model, no `fit` row. That is a phone, the Windows app and a browser on Windows until `ask
+  vram` is typed. On a laptop's integrated GPU, leave it unset: its share of memory is not a figure this rule can use.
+  On NixOS the launcher counts an integrated Radeon whose firmware gives it 4 GB or more as a GPU (inferred from the
+  driver's files, not tried on such a machine); start it with `-- vram=0` there to size nothing.
 - **With one, under auto, with Ollama in the generate format:**
   - A model whose weights alone are more than the figure is never chosen while a smaller one is listed.
   - The first answer of each model in a visit, an answer slower than 5 tokens a second over at least 32 tokens, and
     one that ran out of time, are each followed by one `GET /api/ps`: how much the loaded model takes in all and how
     much of it is on the GPU.
-  - Once a measurement shows the model on the GPU, auto gives Ollama the largest text model it lists whose need fits
-    the figure less 2 GB. Need is that model's own measured size, else its weights times the largest
+  - Once a measurement shows the model at least partly on the GPU, auto gives Ollama the largest text model it lists
+    whose need fits the figure less 2 GB. Need is that model's own measured size, else its weights times the largest
     loaded-to-weights ratio measured on this server.
   - That model's first answer is measured too. A bigger model slower than 5 tokens a second, or split between the GPU
     and the processor when its first wait runs out, is dropped for the visit, the model below answers, and no bigger
-    one is tried again that visit. Too big in two visits, and it is avoided until `ask vram` or until it is pulled
-    again.
-  - A model Ollama will not load (its failure before anything arrives) is set aside for the visit, and the same ask
-    is answered once more by the next one.
+    one is tried again that visit. Dropped in two visits (too big or too slow), and it is avoided until `ask vram` or
+    until a pull changes its size.
+  - A model auto moved to that Ollama will not load (its failure before anything arrives) is set aside for the visit,
+    and the same ask is answered once more by the model auto picks next. The model it would have used anyway is not
+    answered twice: that failure is the ask's.
 - **Never:** a model Ollama does not already list (nothing is downloaded); a cloud model (`kimi-k3` has only a cloud
   tag); the model you chose (`ask model <name>`: it is measured and shown, never replaced; `ask model auto` hands it
   back); another provider.
 - **The `fit` row** under `ask` says the figure and where it came from, what was measured, which model answers and
   why, how to keep another (`ask model <name>`) and, after anything was dropped, how to start again (`ask vram …
   measures afresh`).
+- **An older build of the page** (read from its code, not run) answers with the model auto last moved to, as if it
+  had picked it, until `ask model <name>` or until Ollama no longer lists it, and drops what was measured at its next
+  save.
 - **Starting values, not measured on a big GPU:** the 2 GB kept free (1 GB is llama.cpp's own margin per GPU, 1 GB for
   the city), 5 tokens a second over 32 tokens, two visits, a second per 200 MB, and the launcher's 4 GB floor.
 - **A datacenter box.** Run the city on the box: the launcher reads its GPUs, which then draw the city as well as run
@@ -1652,7 +1662,8 @@ prints decimal GB, so its 142GB is 132.2 GB here.
 - **What is verified:** in Node on every CI run, the rules and every sentence (`modelFit.test.ts`), the router over a
   fake Ollama (`router.fit.test.ts`: no change without a figure, growth, the misfit, the ratio, the processor-only
   case, one dropped step a visit, the two visits and the way back, the waits, the retry, a measurement that lands
-  late, `ask model auto`, the operator's own model, the paths asked, what is kept), the readers
+  late or is dropped and asked again, a stop while one is under way, the chat format then the generate one, `ask model
+  auto`, the operator's own model, the paths asked, what is kept), the readers
   (`localCompute.test.ts`) and the launcher's probe on a stubbed `nvidia-smi` and a temporary folder of driver files
   (`desktopLauncher.test.ts`); in a browser, the `actions` scenario of the smoke on a software adapter: the `fit` row
   from `vram=24`, `ask vram 16`, a refusal and `ask vram auto`. Not verified: any real GPU, Ollama's `/api/ps` on a
@@ -2636,7 +2647,7 @@ Every source file opens with "Why does this file exist? / What breaks if it is r
 | 06_Make_Decisions | `traffic.ts`, `tracks.ts`, `trackDriver.ts`, `routingWasm.ts`, `routing.wasm.ts` (generated from `native/routing`), `intent.ts` | The track arithmetic as WebAssembly, with `tracks.ts` its reference; AI drivers: the street-hopping driver and the track follower, sharing one reaction check and hazard episode; the fixed track network (the car rings, the train loop, the drone corridors, the plane racetrack, the headway seats, the box hold); the 5-Whys intent engine |
 | 07_Execute_Actions | `engine.ts`, `simClient.ts`, `simProtocol.ts`, `physics.worker.ts`, `simHost.ts`, `simCore.ts`, `physics.ts`, `vehicles.ts`, `car.ts`, `carRig.ts`, `fleetView.ts`, `trackFleet.ts`, `ragdollRealm.ts`, `articulated.ts`, `jointRealm.ts`, `jointBridge.ts`, `rigView.ts`, `sanctuary.ts`, `player.ts`, `head.ts`, `controls.ts`, `viewports.ts`, `quality.ts`, `audio.ts`, `acoustics.ts`, `captions.ts`, `postfx.ts`, `cinema.ts`, `shutter.ts`, `volumetrics.ts`, `ghost.ts`, `contact.ts`, `dissolve.ts`, `netView.ts`, `operator.ts`, `harness.ts`, `spatial.ts`, `Hud.tsx`, `BootVeil.tsx`, `Concierge.tsx`, `Customizer.tsx`, `glyphs.ts`, `terminal/` (`Terminal.tsx`, `bridge.ts`, `commands.ts`, `repl.ts`) | Frame loop; the physics realm (worker entry, its message door, the simulation core, Rapier world, fleet on its tracks, the car rules the page and the room share (the rig, the substep, the exit point, the fleet's plan), the scheduled craft and their pose stream, the balance machine over the pedestrians near the operator and its rig stream, the robots' bodies (a servo chain built from a manifest, the pool of them with their twin filter and modes, the shared joint buffer the page reads them from), sanctuary, up to four avatars) and the page's end of it (client, protocol, fleet drawing, rig drawing, first-person heads, per-seat controls, the split-screen arithmetic); quality applier, soundscape (with its speech voice, rooms, peer voices and the sound-event stream), room acoustics, the caption track, post chain, the cinema camera (24 fps pacer, 180° shutter, ND and film response), sun shafts, ghost view, the passage envelope and the code dissolve's envelope, the network ghosts, operator facade and physics harnesses (the spatial sweep's plan among them), HUD, boot veil, concierge, the wardrobe card, control glyphs, console (with R0, its stack machine) |
 | 08_Swarm | `recruitment.ts`, `taskRouter.ts`, `memory.ts`, `ping.ts` | The swarm's hash-chained memory and weight ledger; the operator's voice: on-device continuous speech recognition, the request parser, the main-thread proximity match, the request to the physics worker, the rally request, and the console and `recruit()` fallback; the task gateway that binds skill-bound work to the tethered swarm; the swarm's episodic memory (IndexedDB, by world seed and pedestrian); the ping's pick, board and rally plan |
-| 09_Cognition | `localCompute.ts`, `claudeApi.ts`, `router.ts`, `prefixCache.ts`, `kvPager.wasm.ts` (generated from `native/kv-pager-wasm`), `localSpeech.ts`, `inPage.ts`, `inPagePlan.ts`, `inPageCaps.ts`, `gguf.ts`, `modelStore.ts`, `modelStore.worker.ts`, `wllamaRuntime.ts` | The prompt-prefix page table over kv-pager as WebAssembly; the operator's model providers and voice: the router (`claude` through a gateway on this machine with the operator's key; `ollama` and `llamacpp` on this machine), the local client in both wire formats and the Claude client, the system prompt opening with the 14A core and then the tethered people's skills and memories, the streamed answer, the speech client for a speech server on this machine, the audio for the soundscape, the cut when the tether breaks, and every failure as one sentence; the model in this page (`inpage`): its device policy, what the browser offers, the GGUF header check, the file kept in the page's storage (copied by a worker of its own), and the one adapter over wllama |
+| 09_Cognition | `localCompute.ts`, `claudeApi.ts`, `router.ts`, `modelFit.ts`, `prefixCache.ts`, `kvPager.wasm.ts` (generated from `native/kv-pager-wasm`), `localSpeech.ts`, `inPage.ts`, `inPagePlan.ts`, `inPageCaps.ts`, `gguf.ts`, `modelStore.ts`, `modelStore.worker.ts`, `wllamaRuntime.ts` | The prompt-prefix page table over kv-pager as WebAssembly; the operator's model providers and voice: the router (`claude` through a gateway on this machine with the operator's key; `ollama` and `llamacpp` on this machine), the local client in both wire formats and the Claude client, the system prompt opening with the 14A core and then the tethered people's skills and memories, the streamed answer, the speech client for a speech server on this machine, the audio for the soundscape, the cut when the tether breaks, and every failure as one sentence; auto's sizing of Ollama's model by the GPUs' memory; the model in this page (`inpage`): its device policy, what the browser offers, the GGUF header check, the file kept in the page's storage (copied by a worker of its own), and the one adapter over wllama |
 | 10_Network | `replication.ts`, `replication.node.ts`, `mirror.node.ts`, `garage.node.ts`, `plane.node.ts`, `netClient.ts`, `telemetry.ts`, `robotRelay.node.ts`, `sparkplugHost.node.ts`, `sparkplug.ts`, `mqttCodec.ts` | The network room: the plain-data protocol core and authoritative room both sides share (validated both ways, rate-limited, screened under 14A, every input judged by an authority and refused ones corrected), the Node-only WebSocket host (HMAC session tokens checked at the upgrade, one connection per player, never bundled), the headless Ring-0 mirror it judges with (the city of the seed in Rapier, the realm's own character controller, the Ring-0 audit) and its garage (every player's car replayed with the page's own car physics, every door checked), an open-plane authority for the protocol's tests, and the opt-in page client that speaks ws or wss only to `localhost` or `127.0.0.1` (the host on this machine, or the local end of a tunnel or proxy), reports the realm's steps and doors, snaps to corrections, and reconciles the room's snapshots into the poses `netView.ts` draws; the robots' loopback relay (`npm run serve:robots`: the page's one socket and the robots' peers, a second gate on every setpoint, a Sparkplug B host application over MQTT when a broker is named) and the Sparkplug B and MQTT codecs both ends share |
 | native/kv-pager | `01_geometry.rs`, `02_page_table.rs`, `03_gpu/`, `bin/stress.rs`, `bin/chaos/` | A paged KV cache (its page table also runs on the page, through `native/kv-pager-wasm`) (prefix caching, copy-on-write, the WGSL decode kernel, the stress and chaos runs); `CAUSAL.md` traces the copy-on-write chain |
 | native/kv-pager-wasm | `lib.rs` | kv-pager's page table (no GPU) behind a C ABI, built to WebAssembly as `09_Cognition/kvPager.wasm.ts` (`npm run native:wasm`) |
@@ -2959,7 +2970,8 @@ system's nixpkgs); on a channel-based one,
   given); `AGENT_CITY_PORT` and `AGENT_CITY_DIST` set the port and the page.
 - **The GPUs' memory.** Before it opens the window the launcher reads the GPUs' memory:
   `nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits` (MiB per GPU), else
-  `/sys/class/drm/card*/device/mem_info_vram_total` (bytes per card). GPUs under 4 GB are skipped. It adds
+  `/sys/class/drm/card*/device/mem_info_vram_total` (bytes per card). GPUs under 4 GB are skipped (an integrated
+  Radeon given 4 GB or more by its firmware is counted; not tried on one). It adds
   `vram=<GB>` to the address and prints the figure and where it came from; `-- vram=<GB>` gives your own and
   `-- vram=0` none; `--check` reads nothing. Ollama itself, on NixOS 26.05:
   `services.ollama = { enable = true; package = pkgs.ollama-cuda; };` (or `pkgs.ollama-rocm`, `pkgs.ollama-vulkan`);
