@@ -117,6 +117,68 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   vertices (budget 1,850, from 1,600) and the far body by about 30 (budget 520, from 500). Pinned by `look.test.ts`,
   `humanoid.test.ts`, `lookWiring.test.ts`, `commands.test.ts` and `conduct.test.ts` (the new pieces confirmed
   unarmed). Browser shots on SwiftShader only; nothing visual is confirmed on real hardware.
+- **Sloane's first walk, the first-run tutorial (stages, switch and card).** Six stages a brand-new visitor does before
+  the city is theirs (turn the head and walk; tell Sloane a goal; get into a parked car; stand inside a workplace; run
+  `laws` at the Ring-0 console; run the three-line NoirScript exit program), as a pure stage engine with Sloane's
+  lines (`src/09_Cognition/firstWalk.ts`: the thing to do in the device's own words, one line for an eight-year-old,
+  five whys one deeper each, one hint per stage after forty-five quiet seconds), a switch and a pass record
+  (`src/07_Execute_Actions/onboarding/firstWalkStore.ts`: `?tutorial=1|0`, `?onboarding=0` and `?boot=tty` keep it away,
+  the pass under `civic-simulation:first-walk:v1`), the page hook (`useFirstWalk.ts`) and a card with no close, no
+  skip and no key that puts it away (`FirstWalk.tsx`), one accessible button per stage that has Sloane do the action,
+  and on the last card buttons that type each program line into the console's prompt and run it. The console's
+  handle gained `type` and `run` and reports every line run (`onLine`); the Concierge reports a goal sent
+  (`onGoalSent`); the engine shows its workplaces (`workplaces()`). On by default (`FIRST_WALK_DEFAULT`, one
+  constant); the exit program is the next entry's. The quiet five-minute watch waits until the walk is passed. Pinned
+  by node tests (the stage order and detection, the switch, the wiring, the lines' plainness, conduct screen and brand
+  scrub); how the card stands on a real phone, a pad or a screen reader is unverified.
+- **The first walk's way out: three NoirScript words and the exam behind them.** `verify_ring0() -> u32`,
+  `spawn_subagents(n: i32, role: str) -> i32` and `unlock_city(seal: u32, swarm: i32) -> bool` are intrinsics of the
+  console's language (`src/07_Execute_Actions/terminal/noirscript`: a new `NoirHost.exam` surface with `noExam` as its
+  refusal, three zero-operand opcodes, the folder's air gap unchanged), behind an exam the city composes into the
+  console bridge (`src/07_Execute_Actions/onboarding/exam.ts`): a 32-bit FNV-1a seal over the live kernel (the four
+  laws, the twelve checks, the host's vouch for the air gap, the audit standing) salted once per page load, 0 when any
+  part fails; a swarm asked over through the recruiter's own lane (`Recruiter.tryAsk`, the same checks and realm
+  answers as `recruit`), answering with how many were asked, never the number wished for; an unlock only for this
+  session's live seal and a swarm of one or more, which tells the walk and keeps the pass. The console's `noir` prints
+  what the doors said after each line; a read-only `tutorial [status|program]`; no `tutorial off`. The exam has no
+  write surface: the Ring-0 gate and the elite tier stand as they were. A browser-smoke scenario (`walk`) does the
+  whole walk on the accessible path. Pinned by node tests (the VM's call-through and lane types, the seal, the swarm's
+  honesty, the unlock's refusals, the console's wiring, the air gap's export list); a real GPU, phone or pad is
+  unverified.
+- **The first walk's seventh stage: your look.** Between the workplaces and Ring-0 the walk now asks the visitor to
+  choose how they look, in the wardrobe card already in the city (Track A of the character customizer: the closed
+  business-casual wardrobe, the body and face sliders, the shareable code, the Agents tab), opened from **Look** on
+  Sloane's chip; putting the card away again (Done, its close button, Escape or the console taking over) finishes the
+  stage, and its accessible button, *Open the wardrobe*, opens the card. Sloane's line, hint, eight-year-old's line and
+  five whys say only what the wardrobe does today. The stage is passed over on a page without the card, and the exit
+  program is unchanged. The second plan's stores and owned places are not built yet; when they land they join this
+  stage as more ways to finish it. `tutorial status` counts seven stages; the browser smoke's `walk` scenario opens
+  and closes the wardrobe on the way. Pinned by node tests (the order, the wardrobe event, the stage passed over, the
+  lines' plainness, conduct screen and brand scrub, App's wiring); a real phone, pad or screen reader is unverified.
+- **The first walk's look stage takes the shops too.** On a map with shops (the city's five, Lakefront Metro's) the
+  "Your look" stage can now be finished in a shop as well as in the wardrobe card: walking in, opening the shop's card
+  (B, or E with no car near; the pad's south face button; the Browse chip on touch) and putting it away again (Done, ×,
+  Escape, the console taking over, or walking out) passes it, whether or not anything was tried on or bought. Sloane's
+  line, hint and eight-year-old's line name the shops only on a map that has them, in the device's own words, and say
+  that trying on is free; the five whys now name the ten Monk tones, freckles and vitiligo of the look genome, the
+  card's tabs for your own agents, and, where there are shops, the camera that circles you in one (not in a headset
+  or a shared room). The walk's card steps aside while a shop's card is open. A surveyed region, which has no shops,
+  keeps the stage as it was; owned homes are not built yet. The browser smoke gains a `walkshop` scenario (the look
+  stage passed in the first shop, a try-on that costs nothing). Pinned by node tests (the shop event, the stage kept
+  when done early, the lines with and without shops on each device, App's wiring); a real phone, pad or screen reader
+  is unverified.
+- **The first walk's card and Sloane's open card side by side.** On a desktop window narrower than about 1,300 px
+  the walk's card (20 rem, on the right under the readout) lay over the right end of Sloane's open card, her name
+  question's Continue button among it, on every first run. From 960 px across her card's column now runs from the
+  minimap's clearance to just short of the walk's card while the walk is on (`Concierge.tsx` `WIDE_BESIDE`, centred
+  there up to its usual 38 rem); below 960 px the walk's card steps aside while her card is open (`onOpen`, `crowded`)
+  and comes back when she settles into her chip. The browser smoke's `walk` scenario measures the two apart at
+  960×540, 1024×640, 1152×648, 1280×720 and 1366×657 and the walk's card away at 900×600 while her question is open.
+  (`onGoalSent`); the engine shows its workplaces (`workplaces()`). **Opt-in in this version** (`FIRST_WALK_DEFAULT`
+  is false): the exit program's three words are not yet in NoirScript, so the last stage cannot be passed; the
+  default flips when they land. The quiet five-minute watch waits until the walk is passed. Pinned by node tests (the
+  stage order and detection, the switch, the wiring, the lines' plainness, conduct screen and brand scrub); how the
+  card stands on a real phone, a pad or a screen reader is unverified.
 - **Lakefront Metro's transit map** (`src/01_Initialize_World/region/transit.ts`, pure: the page and the physics worker
   build it from the same seed, street window, craft boxes and bounds). A generated region's street window now carries
   what the procedural city has had since the fixed track network, and a little more. An **elevated train loop** on the

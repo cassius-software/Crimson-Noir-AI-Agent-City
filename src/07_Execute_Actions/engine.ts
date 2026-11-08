@@ -1542,6 +1542,11 @@ export class Engine {
     return this.landmarkAt
   }
 
+  /** The map's indoor workplaces (interiors.ts), read-only: the first walk's indoor stage reads where they are; empty in a surveyed region. */
+  workplaces(): readonly Workplace[] {
+    return this.rooms
+  }
+
   /** Where pedestrian `agent` stands in the newest reading (a recruit's measured place), else where the player's body is. */
   private standingOf(agent: number): { x: number; z: number; isPlayer: boolean } {
     const st = this.sim.state
