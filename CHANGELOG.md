@@ -27,13 +27,18 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   starts with the microphone off until that first press: `MIC_OPEN_BY_DEFAULT` in `04_Connect_Hardware/microphone.ts`
   is the one line that would open it at boot instead; a visitor who left it on finds it on again (key
   `civic-simulation:voice:v1`). Open, a voice activity
-  detector (`vad.ts`: energy over an adaptive floor, zero crossings counted as at 48 kHz and spectral flatness below
-  16 kHz, so hiss with an empty top of the band stays hiss, per frame of about 11 ms, with onset and release counts)
-  runs in an audio worklet where the browser has one and polled from the page where it has not (each poll feeds the
-  samples since the last by the context's clock), feeding the meter and the pill; the frame follows the audio
-  context's sample rate, which is the output device's (`vadFrame`: 512 samples at 44.1 and 48 kHz, 1024 at 88.2 and
-  96 kHz), so every time the detector counts below holds at those rates (at 8, 16 and 32 kHz a frame is 8 ms and
-  those times are three quarters as long; the 1.5 s after her line in which words are not taken is the clock's);
+  detector (`vad.ts`: energy over an adaptive floor, the zero-crossing rate and spectral flatness, per frame of about
+  11 ms, with onset and release counts) runs in an audio worklet where the browser has one and polled from the page
+  where it has not (each poll feeds the samples since the last by the context's clock), feeding the meter and the
+  pill. The crossings and the flatness are read over the band the frame carries (up to its last bin within 30 dB of
+  its mean power, read through a Hann window; the flatness below 16 kHz too), so hiss stays hiss where the
+  microphone's band ends before the context's: a 16 kHz headset heard in a 48 kHz context, a call codec's 7 kHz or
+  3.4 kHz edge, a 48 kHz capture in a 96 kHz context. Hiss whose band slopes away over more than about a tenth of its
+  width, and pink or brown noise, can still read as a voice. The frame follows the audio context's sample rate, which
+  is the output device's (`vadFrame`: 512 samples at 44.1 and 48 kHz, 1024 at 88.2 and 96 kHz, up to 8192 at 768 kHz),
+  so every time the detector counts below holds at 44.1 or 48 kHz or either doubled or halved (at 8, 16, 32, 64 and
+  128 kHz a frame is 8 ms and those times are three quarters as long; the 1.5 s after her line in which words are not
+  taken is the clock's);
   speech starting while Sloane speaks cuts her line (`speaker.ts`
   `onSpeaking`, `speaking`), with the browser's echo cancellation and a margin in the detector against her own
   voice; the detector also learns how loud her voice comes back through the speakers over each line's first 1.5 s
@@ -349,9 +354,14 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   otherwise, set through `Engine.setVision`, which keeps the post chain on at every tier while a filter is chosen
   (where the page turned the chain off, under the lite profile, a split screen, `?post=0` or a headset, the
   console's `access` says the filter is not drawn and why); the text size is a CSS zoom on every overlay's root (`--ui-zoom`,
-  `.ui-zoom`: the HUD, Sloane, the wardrobe, the action card, the way-out and lock screens, the onboarding), never the
-  canvas (inside it, every length measured in the window's pixels, such as the touch buttons' edges, is divided by
-  the zoom, so Sloane's card still clears the buttons at 200 %); the caption strip has a size of its own. Verified by Node tests of the arithmetic (every filter keeps every
+  `.ui-zoom`: the HUD, Sloane, the wardrobe, the action card, the way-out and lock screens, the onboarding, the shops'
+  card, the touch Menu's sheet), never the canvas or the touch buttons, which are sized for thumbs (inside it, every
+  length measured in the window's pixels, such as the touch buttons' edges or where the Menu's sheet opens, is divided
+  by the zoom, so Sloane's card still clears the buttons at 200 %, and the Menu's sheet opens on the screen; a test
+  reads every component's syntax tree for a full-screen overlay outside the zoom, or a zoom inside another); the
+  caption strip has a size of its own. Checked in headless Chromium with a phone's touch layout: at 200 % the Menu's
+  sheet opens on the screen at 360 × 740, 375 × 667 and 390 × 844 and in landscape, and at 150 and 175 % on a
+  320 × 568 phone; there at 200 % Sloane's open card lies over the Menu button. Verified by Node tests of the arithmetic (every filter keeps every
   grey and pulls the confused pair apart) and the settings, and by source pins over the page (`access.test.ts`,
   `accessWiring.test.ts`); how the filter and the zoom look on a real display is unverified.
 
@@ -362,7 +372,10 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   real press or anything under pointer lock; single-switch scanning (`scanning.ts`) offers the page's controls one
   at a time every 1.2 s, focused and ringed, and takes the Space bar as the switch ahead of the city (on a field
   offered it takes the field; a control the browser will not focus as it is, a `role="button"` with no tabindex, is
-  lent tabindex -1 for its offer so the switch's key reaches it; a field taken by the switch, focused any other way
+  lent tabindex -1 for its offer so the switch's key reaches it, and given back once the focus has left it (on its
+  blur, at the next offer, or when the focus lands anywhere, since a focus moved while the window is in the back fires
+  no blur), never if the page wrote that tabindex itself meanwhile (a roving tabindex's "-1" too, watched with a
+  MutationObserver); a field taken by the switch, focused any other way
   or typed into holds the round until 6 s pass without a key, and a space typed there stays one); the pad mapper (`gamepad.ts` `PadHand`, `Input.setHand`)
   gains a left-hand and a right-hand layout (one stick moves, and looks while its shoulder is held; that side's
   pedals and buttons; select is the run latch, which holds until the stick has walked and come home, a glance

@@ -14,6 +14,7 @@
 import assert from 'node:assert/strict'
 import { readdirSync, readFileSync } from 'node:fs'
 import { test } from 'node:test'
+import ts from 'typescript'
 
 const read = (p: string): string => readFileSync(new URL(p, import.meta.url), 'utf8')
 const APP = read('../App.tsx')
@@ -64,16 +65,69 @@ test('the shell: the filter reaches the engine as it changes, the bridge reads t
   assert.match(COMMANDS, /'access vision': \['deutan', 'none', 'protan', 'tritan'\]/)
 })
 
+/** The class tokens a className could hold: every string in it (a template literal's text, a ternary's branches). */
+function classTokens(attr: ts.JsxAttribute): string[] {
+  const out: string[] = []
+  const visit = (n: ts.Node): void => {
+    if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) out.push(n.text)
+    else if (ts.isTemplateExpression(n)) { out.push(n.head.text); for (const span of n.templateSpans) { visit(span.expression); out.push(span.literal.text) } }
+    else ts.forEachChild(n, visit)
+  }
+  if (attr.initializer) visit(attr.initializer)
+  return out.join(' ').split(/\s+/).filter(Boolean)
+}
+
+/** Tokens that cover the whole screen: inset-0 with absolute or fixed, or fixed at the top left at full size. */
+const fullScreen = (t: string[]): boolean =>
+  (t.includes('inset-0') && (t.includes('absolute') || t.includes('fixed'))) ||
+  (t.includes('fixed') && t.includes('top-0') && t.includes('left-0') && t.some((c) => /^h-(full|screen|dvh|svh|lvh)$/.test(c)) && t.some((c) => /^w-(full|screen|dvw|svw|lvw)$/.test(c)))
+
+/** Every full-screen element of every component in src, with whether it zooms and whether one it sits in does. */
+function overlays(): { file: string; line: number; tokens: string[]; zoom: boolean; inside: boolean }[] {
+  const files = (dir: string): string[] => readdirSync(new URL(dir, import.meta.url), { withFileTypes: true }).flatMap((d) => d.isDirectory() ? files(`${dir}${d.name}/`) : d.name.endsWith('.tsx') ? [`${dir}${d.name}`] : [])
+  const found: { file: string; line: number; tokens: string[]; zoom: boolean; inside: boolean }[] = []
+  for (const file of files('../')) {
+    const sf = ts.createSourceFile(file, read(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+    const walk = (n: ts.Node, zoomed: boolean): void => {
+      if (ts.isJsxElement(n) || ts.isJsxSelfClosingElement(n)) {
+        const open = ts.isJsxElement(n) ? n.openingElement : n
+        const attr = open.attributes.properties.find((a): a is ts.JsxAttribute => ts.isJsxAttribute(a) && a.name.getText(sf) === 'className')
+        const tokens = attr ? classTokens(attr) : []
+        const zoom = tokens.includes('ui-zoom')
+        if (zoom || fullScreen(tokens)) found.push({ file, line: sf.getLineAndCharacterOfPosition(open.getStart(sf)).line + 1, tokens, zoom, inside: zoomed })
+        ts.forEachChild(n, (c) => walk(c, zoomed || zoom))
+        return
+      }
+      ts.forEachChild(n, (c) => walk(c, zoomed))
+    }
+    walk(sf, false)
+  }
+  return found
+}
+
 test('every overlay root carries the zoom class, every card the blur utility the contrast rules key on; the HUD meter and captions follow', () => {
-  for (const [name, src, roots] of [['Hud', HUD, 1], ['Concierge', CONCIERGE, 2], ['ActCard', ACT, 1], ['Customizer', WARDROBE, 1], ['RecoveryCard', RECOVERY, 2], ['Onboarding', ONBOARDING, 1], ['StoreCard', STORE, 1]] as const) {
+  for (const [name, src, roots] of [['Hud', HUD, 1], ['Concierge', CONCIERGE, 2], ['ActCard', ACT, 1], ['Customizer', WARDROBE, 1], ['RecoveryCard', RECOVERY, 2], ['Onboarding', ONBOARDING, 1], ['StoreCard', STORE, 1], ['the touch Menu', TOUCH, 1]] as const) {
     assert.equal(src.match(/className="ui-zoom (?:pointer-events-none )?(?:absolute|fixed) inset-0/g)?.length, roots, `${name}: its full-screen root${roots > 1 ? 's' : ''} zoom`)
   }
-  // Every full-screen overlay among the cards zooms, so a card added later (the shops' was merged in without it) is
-  // caught; the touch layer (04_Connect_Hardware/TouchControls.tsx) is sized for thumbs, not text, and lives elsewhere.
-  const cards = (dir: string): string[] => readdirSync(new URL(dir, import.meta.url), { withFileTypes: true }).flatMap((d) => d.isDirectory() ? cards(`${dir}${d.name}/`) : d.name.endsWith('.tsx') ? [`${dir}${d.name}`] : [])
-  for (const file of cards('./')) {
-    for (const m of read(file).matchAll(/className="([^"]*?)\b(?:absolute|fixed) inset-0\b/g)) assert.ok(/^ui-zoom /.test(m[1]), `${file}: a full-screen overlay without the text-size zoom (${m[0]})`)
+  // Every full-screen overlay in the page's components zooms or sits inside one that does, and none zooms inside
+  // another (the zoom would apply twice), so a card added later (the shops' was merged in without it) is caught however
+  // its classes are written: read from the syntax tree, a template literal's text and any order included. The touch
+  // layer's own root (04_Connect_Hardware/TouchControls.tsx, z-10) is the one left out: its buttons are sized for
+  // thumbs, not text (its Menu sheet, a list of words, zooms). A component whose full-screen root is drawn inside
+  // another component's zoomed root would need its own line here.
+  const all = overlays()
+  const thumbs = all.filter((o) => o.file.endsWith('/TouchControls.tsx') && !o.zoom && !o.inside && o.tokens.includes('z-10'))
+  assert.equal(thumbs.length, 1, 'the touch layer\'s root, and only it, is left out')
+  for (const o of all) {
+    if (thumbs.includes(o)) continue
+    assert.ok(!(o.zoom && o.inside), `${o.file}:${o.line}: a zoom inside a zoom (${o.tokens.join(' ')})`)
+    assert.ok(o.zoom || o.inside, `${o.file}:${o.line}: a full-screen overlay without the text-size zoom (${o.tokens.join(' ')})`)
   }
+  assert.ok(all.filter((o) => o.zoom).length >= 10, `the sweep reads the zoomed roots: ${all.filter((o) => o.zoom).length}`)
+  assert.match(TOUCH, /const unzoom = \(px: number\): string => `calc\(\$\{px\}px \/ var\(--ui-zoom, 1\)\)`/)
+  assert.equal(TOUCH.match(/(?:right|bottom): unzoom\(Math\.max\(8, window\.inner(?:Width|Height) - at\.\w+(?: \+ 12)?\)\)/g)?.length, 4, 'the Menu sheet\'s place, in the window\'s pixels, divided by the zoom')
+  assert.equal(TOUCH.match(/maxHeight: `calc\(\(\$\{Math\.round\(at\.(?:bottom|top - 12)\)\}px - max\(12px, env\(safe-area-inset-top, 0px\)\)\) \/ var\(--ui-zoom, 1\)\)`/g)?.length, 2, 'and its height')
+  assert.match(TOUCH, /const beside = at\.left - 12 - SHEET_W \* zoom >= 8/, 'and it is that much wider')
   for (const [name, src] of [['Hud', HUD], ['Concierge', CONCIERGE], ['ActCard', ACT], ['Customizer', WARDROBE], ['RecoveryCard', RECOVERY], ['StoreCard', STORE]] as const) {
     assert.match(src, /backdrop-blur-/, `${name}: the card is frosted glass, which index.css flattens`)
   }

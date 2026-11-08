@@ -638,7 +638,10 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   would open it at boot instead. A visitor who turned it on and left it on finds it on again on the next visit; one
   who muted it finds it off (key `civic-simulation:voice:v1`). Open, an on-device voice activity detector (energy over
   the room's floor, zero crossings, spectral flatness, in an audio worklet where the browser has one and polled from
-  the page where it has not) drives the meter and the **Hearing you** state; speech starting while Sloane speaks cuts
+  the page where it has not) drives the meter and the **Hearing you** state. It reads the crossings and the flatness
+  over the band your microphone actually carries, so the hiss of a headset that records at 16 kHz, or of a call
+  codec, is not taken for a voice; hiss that fades out gradually toward the top of the band, and deeper rushing
+  noise, can be; speech starting while Sloane speaks cuts
   her line (barge-in), and the browser's echo cancellation plus a margin in the detector keep Sloane's own voice from
   counting as yours; the detector also learns how loud her voice comes back through the speakers in the first moments
   of each line (its first 1.5 s, counted from when her voice is played or spoken, not while a provider voice is still
@@ -646,8 +649,9 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   your voice about 1.6 times that for a quarter of a second before it cuts her. A click or a knock there is not taken
   for her if it is over within about 30 ms; one that rings on in the room is. Nobody cuts in during her line's first
   1.5 s: a voice there is taken for hers, and then it takes a few seconds of quiet before that voice can cut in.
-  (These times hold where the page's audio runs at 44.1 kHz or more; where it runs at 8, 16 or 32 kHz, as it can while
-  a Bluetooth headset is in call mode, they are three quarters as long.) With headphones, talking over her works after
+  (These times hold where the page's audio runs at 44.1 or 48 kHz, or either doubled or halved, up to 768 kHz; where
+  it runs at 8, 16 or 32 kHz, as it can while a Bluetooth headset is in call mode, or at 64 or 128 kHz, they are three
+  quarters as long.) With headphones, talking over her works after
   that; through speakers whose sound the browser does not cancel, you need to be clearly louder than her and may need
   to keep talking. A line whose loudness swings widely can still cut itself. Where the browser promises on-device speech recognition (see Recruitment), it runs while the
   microphone is open and the pill adds **words on-device**: a skill asked for is the recruiter's, and a line that names
@@ -670,14 +674,16 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   red for a tritan); view-only, off by default, and the greys are never tinted. While a filter is chosen the post chain
   runs at every tier; where the page turned the chain off (the lite profile, a split screen, `?post=0`, a headset)
   the filter is not drawn, and `access` says so and why. The **text size** (`access text
-  125|150|175|200`, the Menu's Text size item, `?ui=150`) enlarges every card and never the canvas. The **caption
+  125|150|175|200`, the Menu's Text size item, `?ui=150`) enlarges every card and the touch Menu's list, never the
+  canvas or the touch buttons, which are sized for thumbs. The **caption
   size** (`access captions large|huge`, `?captions=large`) is the strip's own. `access` alone prints them, `access
   reset` restores the defaults. Four more are for the hands and the ears. The **dwell click** (`access dwell on`,
   `?dwell=1`; `04_Connect_Hardware/dwell.ts`): a pointer resting on a control for 0.6 s presses it (a ring fills over
   the time; a text field takes the caret instead), once per rest; a touch, a real press and pointer lock never dwell.
   **Single-switch scanning** (`access scan on`, `?scan=1`; `scanning.ts`): the page's controls are offered one at a
   time every 1.2 s, in page order, the one offered focused and ringed (one that takes no focus as it is gets a
-  tabindex for its turn), and the Space bar presses it (a field offered takes the caret); Space is taken before the
+  tabindex for its turn, taken back once the focus has left it, unless the page set that tabindex itself meanwhile),
+  and the Space bar presses it (a field offered takes the caret); Space is taken before the
   city sees it. A field taken by the switch, clicked into, focused by a
   card or the dwell, or typed into holds the round until 6 s pass without a key, and a space typed there stays a
   space. A **one-handed pad layout**

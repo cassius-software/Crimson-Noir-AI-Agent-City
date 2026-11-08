@@ -12,14 +12,16 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { SCAN, Scanner, type ScanEnv, type ScanKey, type ScanTarget } from './scanning.ts'
 
-/** What has the focus in the fake page; moving it blurs the one that had it (the page's own element while it does). */
-const page0 = { focused: null as unknown }
+/** What has the focus in the fake page; moving it blurs the one that had it (the page's own element while it does)
+ *  and tells the window's focus listeners, unless the window is in the back (`away`), where no blur or focus fires. */
+const page0 = { focused: null as unknown, away: false, onFocus: new Set<() => void>(), onFocusIn: null as ((el: El) => void) | null }
 function setFocus(el: El | null): void {
   const was = page0.focused as El | null
   if (was === el) return
   page0.focused = null
-  was?.blurred()
+  if (!page0.away) was?.blurred()
   page0.focused = el
+  if (el && !page0.away) { page0.onFocusIn?.(el); for (const fn of [...page0.onFocus]) fn() }
 }
 
 class El implements ScanTarget {
@@ -35,6 +37,8 @@ class El implements ScanTarget {
   readonly lendable: boolean
   readonly attrs = new Map<string, string>()
   readonly blurs: (() => void)[] = []
+  /** Every write of its tabindex, by anyone (what a MutationObserver records). */
+  writes = 0
   constructor(name: string, typed = false, focusable = true, lendable = true) {
     this.name = name
     this.typed = typed
@@ -47,9 +51,10 @@ class El implements ScanTarget {
   matches(): boolean { return this.typed }
   hasAttribute(name: string): boolean { return this.attrs.has(name) }
   getAttribute(name: string): string | null { return this.attrs.get(name) ?? null }
-  setAttribute(name: string, value: string): void { this.attrs.set(name, value); if (name === 'data-scan') this.marked = true }
+  setAttribute(name: string, value: string): void { this.attrs.set(name, value); if (name === 'data-scan') this.marked = true; if (name === 'tabindex') this.writes++ }
   removeAttribute(name: string): void {
     this.attrs.delete(name)
+    if (name === 'tabindex') this.writes++
     if (name === 'data-scan') this.marked = false
     // The browser's focus fixup: a focused element that can no longer take the focus drops it to the page.
     if (name === 'tabindex' && page0.focused === this && !this.focusable) setFocus(null)
@@ -59,6 +64,9 @@ class El implements ScanTarget {
 }
 
 function page(shown: El[]) {
+  page0.away = false
+  page0.onFocus.clear()
+  page0.onFocusIn = null
   setFocus(null)
   let keyFn: ((e: ScanKey) => void) | null = null
   const timers = new Map<number, () => void>()
@@ -69,13 +77,15 @@ function page(shown: El[]) {
     onKey: (fn) => { keyFn = fn; return () => { keyFn = null } },
     setInterval: (fn) => { const id = next++; timers.set(id, fn); return id },
     clearInterval: (id) => { timers.delete(id as number) },
+    watch: (t) => { const el = t as El, at = el.writes; return { touched: () => el.writes > at, stop() {} } },
+    onFocus: (fn) => { page0.onFocus.add(fn); return () => { page0.onFocus.delete(fn) } },
   }
   const key = (code: string, target: EventTarget | null = null, repeat = false) => {
     const e = { code, repeat, target, prevented: false, stopped: false, preventDefault() { this.prevented = true }, stopImmediatePropagation() { this.stopped = true } }
     keyFn?.(e)
     return e
   }
-  return { env, key, tick: () => { for (const fn of [...timers.values()]) fn() }, timers: () => timers.size, listening: () => keyFn !== null }
+  return { env, key, tick: () => { for (const fn of [...timers.values()]) fn() }, timers: () => timers.size, listening: () => keyFn !== null, focusWatchers: () => page0.onFocus.size }
 }
 
 test('the round offers each control in order and comes back to the first, focusing and marking the one offered; the switch presses it, or puts the caret in a field', () => {
@@ -281,6 +291,52 @@ test('the lent tabindex is given back only once the focus has left the control (
   r.tick()
   assert.deepEqual([u.current, f.attrs.get('tabindex')], [g, '0'], 'the page\'s own tabindex stays')
   u.stop()
+})
+
+test('a tabindex the page writes after the lend is the page\'s, even when it is "-1" (a roving tabindex), and a lent one is given back when the focus leaves with no blur (the window in the back)', () => {
+  // The eighth review's cases. A roving tabindex gives every item but the current one "-1", the very value lent, so the
+  // value alone could not tell them apart: moving on, the scan took away the "-1" the page had just written and the
+  // page's arrow keys could no longer reach the item. And a focus that moves while the window is in the back fires no
+  // blur, so a lent tabindex waiting for one stayed for good.
+  const x = new El('x', false, false), y = new El('y', false, false), z = new El('z')
+  const p = page([x, y, z])
+  page0.onFocusIn = (el) => { if (el === x || el === y) { el.setAttribute('tabindex', '0'); (el === x ? y : x).setAttribute('tabindex', '-1') } }
+  const s = new Scanner(p.env, 1000)
+  s.start()
+  assert.deepEqual([page0.focused, x.attrs.get('tabindex'), y.attrs.get('tabindex')], [x, '0', '-1'], 'lent, then the page took it over')
+  p.tick()
+  assert.deepEqual([s.current, page0.focused, x.attrs.get('tabindex'), y.attrs.get('tabindex')], [y, y, '-1', '0'], 'the page\'s own "-1" on the item it left stays')
+  s.stop()
+  assert.equal(p.focusWatchers(), 0, 'nothing owed, nothing watched')
+  // Lent, then the round passes a control that takes no focus (the focus stays, waiting for its blur); the window goes
+  // to the back (a blur with the focus still there: still waiting), and the next offer moves the focus with no blur.
+  const a = new El('a', false, false), dead = new El('dead', false, false, false), e = new El('e'), f = new El('f')
+  const q = page([a, dead, e, f])
+  const t = new Scanner(q.env, 1000)
+  t.start()
+  q.tick()
+  assert.deepEqual([t.current, page0.focused, a.attrs.get('tabindex')], [dead, a, '-1'])
+  page0.away = true
+  a.blurred()
+  q.tick()
+  assert.deepEqual([t.current, page0.focused, a.attrs.get('tabindex')], [e, e, '-1'], 'the focus left with no blur')
+  q.tick()
+  assert.deepEqual([t.current, a.attrs.has('tabindex')], [f, false], 'given back at the next offer')
+  t.stop()
+  // Stopped with the focus on it, the window in the back, then its card hidden (the focus drops to the page with no
+  // blur): given back when the window comes forward again.
+  const b = new El('b', false, false), c = new El('c')
+  const r = page([b, c])
+  const u = new Scanner(r.env, 1000)
+  u.start()
+  u.stop()
+  page0.away = true
+  b.blurred()
+  setFocus(null)
+  assert.equal(b.attrs.get('tabindex'), '-1', 'no blur, no offer: still lent')
+  page0.away = false
+  for (const fn of [...page0.onFocus]) fn()
+  assert.deepEqual([b.attrs.has('tabindex'), r.focusWatchers()], [false, 0], 'the window\'s focus came back: given back, and nothing left watched')
 })
 
 test('a field the round merely offers is not taken: with no key it is passed like any control', () => {

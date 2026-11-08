@@ -7,7 +7,8 @@
  * page's order, every SCAN.ms; the one offered is focused and marked (`data-scan`, which index.css rings), and the
  * switch, the Space bar (a switch interface sends one key, and Space is the usual one), presses it, or puts the caret
  * in a field (a control the browser will not focus as it is, a role="button" with no tabindex, is lent tabindex -1
- * for its offer, so the switch's key goes to it and not to the field the focus was on). The press is taken on the way down, before the rest of the page sees the key, so the city's handbrake
+ * for its offer, so the switch's key goes to it and not to the field the focus was on; it is given back once the focus
+ * has left it, and never if the page wrote that tabindex itself meanwhile). The press is taken on the way down, before the rest of the page sees the key, so the city's handbrake
  * never fires with it. A field being typed in (taken by the switch, focused by any other hand, or typed into) becomes
  * the one offered (the ring moves to it) and holds the round on it until SCAN.hold offers pass without a key, so the
  * caret is never taken mid-word and the round goes on from the field; while it holds, Space typed there stays a space. Every round reads the controls again, so a card that opens or closes joins or leaves the round. Pure: the page is an environment handed in (`browserScanEnv` is the one
@@ -39,6 +40,9 @@ export interface ScanTarget {
   addEventListener(type: 'blur', fn: () => void, options?: { once?: boolean }): void
 }
 
+/** A watch on a control's tabindex: whether anything has written it since the watch began, and its end. */
+export interface ScanWatch { touched(): boolean; stop(): void }
+
 /** The key event's parts the scan reads. */
 export interface ScanKey { code: string; repeat: boolean; target: EventTarget | null; preventDefault(): void; stopImmediatePropagation(): void }
 
@@ -52,7 +56,15 @@ export interface ScanEnv {
   onKey(fn: (e: ScanKey) => void): () => void
   setInterval(fn: () => void, ms: number): unknown
   clearInterval(id: unknown): void
+  /** Watches the control's tabindex from now (a MutationObserver, its records taken at once): a tabindex the page wrote
+   *  after the scan lent one is the page's, even when it is "-1" too (a roving tabindex). Without it, the value alone. */
+  watch?(el: ScanTarget): ScanWatch
+  /** Subscribes to every focus that lands in the window, the window's own included (a blur does not fire when the focus
+   *  moves while the window is in the back); returns the unsubscribe. */
+  onFocus?(fn: () => void): () => void
 }
+
+const UNWATCHED: ScanWatch = Object.freeze({ touched: () => false, stop() {} })
 
 /** The fields a press focuses instead of pressing (dwell.ts has the same list). */
 const TYPED = 'input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]), textarea, select'
@@ -71,8 +83,14 @@ export class Scanner {
    *  since is taken as typed in, so a control that takes no focus even when lent a tabindex (a button in a disabled
    *  fieldset) never hands the round back to the field before it. */
   private seen: unknown = null
-  /** The control offered now that was lent tabindex -1 to take the focus (given back when the round moves on). */
+  /** The control offered now that holds a lent tabindex -1 (it is not given back while offered) ... */
   private lent: ScanTarget | null = null
+  /** ... and every control holding one not given back yet, with the watch on its tabindex: each is given back once the
+   *  focus has left it (looked at on its blur, at every offer, and whenever the focus lands anywhere in the window). */
+  private readonly owed = new Map<ScanTarget, ScanWatch>()
+  /** The owed controls that had the focus when last looked at, waiting for their blur. */
+  private readonly waiting = new Set<ScanTarget>()
+  private offFocus: (() => void) | null = null
 
   constructor(env: ScanEnv, ms: number = SCAN.ms, key: string = SCAN.key) {
     this.env = env
@@ -107,6 +125,7 @@ export class Scanner {
    * one that took the focus some other way (a click, a card's own focus, the dwell), from that moment.
    */
   step(): void {
+    this.settleAll()
     const active = this.env.active()
     const moved = active !== this.seen
     this.seen = active
@@ -154,29 +173,51 @@ export class Scanner {
     if (el) {
       el.setAttribute('data-scan', '')
       el.focus({ preventScroll: false })
+      if (this.owed.has(el)) this.lent = el
       // Not focused as it is: lent tabindex -1 for its offer (a field never needs it: fields take the focus).
-      if (this.env.active() !== el && !el.hasAttribute('tabindex')) {
+      else if (this.env.active() !== el && !el.hasAttribute('tabindex')) {
         el.setAttribute('tabindex', '-1')
+        this.owed.set(el, this.env.watch?.(el) ?? UNWATCHED)
         this.lent = el
+        if (this.offFocus === null && this.env.onFocus) this.offFocus = this.env.onFocus(() => this.settleAll())
         el.focus({ preventScroll: false })
       }
     }
-    if (lent && lent !== el) this.giveBack(lent)
+    if (lent && lent !== el) this.settle(lent)
     this.seen = this.env.active()
   }
 
+  /** Looks at every control still holding a lent tabindex. */
+  private settleAll(): void {
+    for (const el of [...this.owed.keys()]) this.settle(el)
+  }
+
   /**
-   * Gives a lent tabindex back: at once if the control no longer has the focus, else when the focus leaves it (taking
-   * it off the focused control would drop the focus to the page: on stop(), or when the next control offered could not
-   * take the focus either); a window losing the focus is not the focus leaving. Never one the page has set since.
+   * Gives a lent tabindex back once the control is no longer offered and the focus has left it: taking it off the
+   * focused control would drop the focus to the page (on stop(), or when the next control offered could not take the
+   * focus either), and a window losing the focus is not the focus leaving. A tabindex the page wrote since is the
+   * page's, and stays.
    */
-  private giveBack(el: ScanTarget): void {
-    const back = (): void => {
-      if (this.lent === el || el.getAttribute('tabindex') !== '-1') return
-      if (this.env.active() === el) { el.addEventListener('blur', back, { once: true }); return }
-      el.removeAttribute('tabindex')
+  private settle(el: ScanTarget): void {
+    const watch = this.owed.get(el)
+    if (!watch || el === this.lent) return
+    if (watch.touched() || el.getAttribute('tabindex') !== '-1') { this.forget(el); return }
+    if (this.env.active() === el) {
+      if (!this.waiting.has(el)) {
+        this.waiting.add(el)
+        el.addEventListener('blur', () => { this.waiting.delete(el); this.settle(el) }, { once: true })
+      }
+      return
     }
-    back()
+    this.forget(el)
+    el.removeAttribute('tabindex')
+  }
+
+  private forget(el: ScanTarget): void {
+    this.owed.get(el)?.stop()
+    this.owed.delete(el)
+    this.waiting.delete(el)
+    if (this.owed.size === 0 && this.offFocus !== null) { this.offFocus(); this.offFocus = null }
   }
 }
 
@@ -194,5 +235,21 @@ export function browserScanEnv(doc: Document = document): ScanEnv {
     },
     setInterval: (fn, ms) => setInterval(fn, ms),
     clearInterval: (id) => clearInterval(id as ReturnType<typeof setInterval>),
+    watch(el) {
+      const Observer = doc.defaultView?.MutationObserver
+      if (!Observer) return UNWATCHED
+      let touched = false
+      const mo = new Observer(() => { touched = true })
+      mo.observe(el as unknown as Node, { attributes: true, attributeFilter: ['tabindex'] })
+      return { touched: () => touched || (touched = mo.takeRecords().length > 0), stop: () => mo.disconnect() }
+    },
+    onFocus(fn) {
+      const win = doc.defaultView
+      if (!win) return () => {}
+      // Focus does not bubble, but the window sees every element's at the capture phase.
+      const h = (): void => fn()
+      win.addEventListener('focus', h, true)
+      return () => win.removeEventListener('focus', h, true)
+    },
   }
 }

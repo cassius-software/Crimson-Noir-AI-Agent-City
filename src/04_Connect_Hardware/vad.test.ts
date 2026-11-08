@@ -28,9 +28,9 @@ function noise(seed = 1): () => number {
   }
 }
 
-/** `seconds` of a quiet room: white noise at `level` RMS. */
-function room(seconds: number, level = 0.003, seed = 7): Float32Array {
-  const n = Math.round(seconds * SR), out = new Float32Array(n), r = noise(seed)
+/** `seconds` of a quiet room: white noise at `level` RMS (at 48 kHz, or `rate`). */
+function room(seconds: number, level = 0.003, seed = 7, rate = SR): Float32Array {
+  const n = Math.round(seconds * rate), out = new Float32Array(n), r = noise(seed)
   // Uniform noise has RMS 1/√3: scale to the level asked.
   const k = level * Math.sqrt(3)
   for (let i = 0; i < n; i++) out[i] = r() * k
@@ -38,13 +38,13 @@ function room(seconds: number, level = 0.003, seed = 7): Float32Array {
 }
 
 /** `seconds` of a voice-like signal: a 140 Hz fundamental with eight harmonics, a little vibrato, at `level` RMS, over the room. */
-function voice(seconds: number, level = 0.08, seed = 11): Float32Array {
-  const n = Math.round(seconds * SR), out = room(seconds, 0.003, seed)
+function voice(seconds: number, level = 0.08, seed = 11, rate = SR): Float32Array {
+  const n = Math.round(seconds * rate), out = room(seconds, 0.003, seed, rate)
   const f0 = 140
   let sum = 0
   const raw = new Float32Array(n)
   for (let i = 0; i < n; i++) {
-    const t = i / SR
+    const t = i / rate
     const f = f0 * (1 + 0.02 * Math.sin(2 * Math.PI * 5 * t))
     let v = 0
     for (let h = 1; h <= 8; h++) v += Math.sin(2 * Math.PI * f * h * t + h) / h
@@ -226,6 +226,50 @@ test('hiss stays hiss when the top of the band is empty: a microphone rolling of
   assert.equal(run(new VadCore({ ...VAD, frame: vadFrame(96_000), rate: 96_000 }), lowpass(vu, 22_000 / 96_000, 2))[0]?.speech, true, 'and at 96 kHz')
 })
 
+/** `x` at `from` Hz heard in a context at `to` Hz (a whole multiple): zeros between, then a low-pass under the old Nyquist
+ *  whose edge falls within a tenth of the band, like a browser's resampler or a codec's (511 taps). */
+function resample(x: Float32Array, from: number, to: number): Float32Array {
+  const k = Math.round(to / from), up = new Float32Array(x.length * k)
+  for (let i = 0; i < x.length; i++) up[k * i] = x[i]
+  return lowpass(up, (0.4583 * from) / to, k, 511)
+}
+/** `x` through such an edge at `hz`, at `rate`. */
+const edge = (x: Float32Array, hz: number, rate: number): Float32Array => lowpass(x, hz / rate, 1, 511)
+
+/** Whether the detector, at `rate` with the page's frame for it, starts speech anywhere in `x`. */
+const speaks = (x: Float32Array, rate: number): boolean => run(new VadCore({ ...VAD, frame: vadFrame(rate), rate }), x).some((c) => c.speech)
+
+test('hiss stays hiss whatever band the microphone carries: one that ends early (a 16 kHz headset resampled into a 48 kHz context, a call codec\'s edge) is read over the band it carries, and voices through the same paths are still voices', () => {
+  // The eighth review's case: the flatness was read up to 16 kHz and the crossings per sample of the whole band, so hiss
+  // whose band ended lower (a 16 kHz microphone heard in a 48 kHz context has nothing above 8 kHz) looked tonal and
+  // crossed zero too seldom: both votes said voice, and with headphones it cut Sloane's line within 60 ms.
+  const hissAt = (rate: number, seed: number): Float32Array => concat(room(0.6, 0.003, 7, rate), room(0.8, 0.08, seed, rate), room(0.3, 0.003, 9, rate))
+  const seeds = [23, 41, 57, 73, 91, 101, 117, 131]
+  for (const hz of [16_000, 15_500, 14_000, 12_000, 8_000, 4_000]) {
+    // A cut at 16 kHz sat on the old bar (11 of 20 seeds were speech): more seeds there.
+    const said = seeds.slice(0, hz >= 15_500 ? 8 : 3).filter((seed) => speaks(edge(hissAt(SR, seed), hz, SR), SR))
+    assert.deepEqual(said, [], `48 kHz, hiss cut at ${hz} Hz is not speech`)
+  }
+  for (const [from, to] of [[16_000, 48_000], [24_000, 48_000], [32_000, 96_000], [8_000, 48_000]] as const) {
+    const said = seeds.slice(0, 3).filter((seed) => speaks(resample(hissAt(from, seed), from, to), to))
+    assert.deepEqual(said, [], `a ${from / 1000} kHz capture in a ${to / 1000} kHz context: still hiss`)
+  }
+  for (const [rate, hz] of [[16_000, 7_000], [8_000, 3_400], [32_000, 14_000]] as const) {
+    const said = seeds.slice(0, 3).filter((seed) => speaks(edge(hissAt(rate, seed), hz, rate), rate))
+    assert.deepEqual(said, [], `a ${rate / 1000} kHz context whose codec ends at ${hz} Hz: still hiss`)
+  }
+  // While she speaks with none of her coming back (headphones), that hiss does not cut her line.
+  const c = new VadCore(VAD)
+  run(c, resample(room(0.6, 0.003, 61, 16_000), 16_000, SR))
+  c.speaking = true
+  assert.deepEqual(run(c, resample(concat(room(2, 0.003, 62, 16_000), room(0.8, 0.08, 63, 16_000)), 16_000, SR)), [], 'hiss from a 16 kHz headset does not cut her line')
+  // A voice through each path is still a voice.
+  const v = (rate: number): Float32Array => concat(room(0.5, 0.003, 3, rate), voice(0.6, 0.08, 11, rate), room(0.8, 0.003, 5, rate))
+  for (const hz of [16_000, 8_000, 4_000]) assert.ok(speaks(edge(v(SR), hz, SR), SR), `48 kHz, a voice cut at ${hz} Hz is speech`)
+  for (const [from, to] of [[16_000, 48_000], [8_000, 48_000], [48_000, 96_000]] as const) assert.ok(speaks(resample(v(from), from, to), to), `a voice from a ${from / 1000} kHz capture in a ${to / 1000} kHz context is speech`)
+  for (const [rate, hz] of [[16_000, 7_000], [8_000, 3_400]] as const) assert.ok(speaks(edge(v(rate), hz, rate), rate), `a voice in a ${rate / 1000} kHz context through a ${hz} Hz codec is speech`)
+})
+
 test('a voice that never stops becomes the room only slowly: the floor rises a little per silent frame, a quarter of that during speech', () => {
   const c = new VadCore(VAD)
   run(c, concat(room(1), voice(4)))
@@ -350,10 +394,12 @@ test('a knock or a click of up to three frames (32 ms), wherever it falls across
 })
 
 test('the frame follows the sample rate (vadFrame), so a frame lasts 10.7 to 11.6 ms and every count of frames is the time it says: at 88.2 and 96 kHz a knock of up to 32 ms is not learned and her learning still lasts about 1.5 s', () => {
-  const frames = [16_000, 22_050, 24_000, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000].map(vadFrame)
-  assert.deepEqual(frames, [128, 256, 256, 256, 512, 512, 1024, 1024, 2048, 2048])
-  assert.deepEqual([vadFrame(0), vadFrame(Number.NaN), vadFrame(-1), vadFrame(8_000), vadFrame(1e7)], [512, 512, 512, 64, 4096])
-  for (const rate of [22_050, 24_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000]) {
+  const frames = [16_000, 22_050, 24_000, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000, 352_800, 384_000, 705_600, 768_000].map(vadFrame)
+  assert.deepEqual(frames, [128, 256, 256, 256, 512, 512, 1024, 1024, 2048, 2048, 4096, 4096, 8192, 8192])
+  assert.deepEqual([vadFrame(0), vadFrame(Number.NaN), vadFrame(-1), vadFrame(8_000), vadFrame(64_000), vadFrame(128_000), vadFrame(1e7)], [512, 512, 512, 64, 512, 1024, 8192])
+  // The eighth review's case: the frame stopped at 4096 samples, so at 705.6 and 768 kHz (a USB converter's rate) every
+  // time the detector counts was about half as long.
+  for (const rate of [11_025, 12_000, 22_050, 24_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000, 352_800, 384_000, 705_600, 768_000]) {
     const ms = (vadFrame(rate) / rate) * 1000
     assert.ok(ms >= 10.6 && ms <= 11.7, `${rate} Hz: a frame is ${ms.toFixed(1)} ms`)
     const wait = (VAD.echoWait * vadFrame(rate)) / rate

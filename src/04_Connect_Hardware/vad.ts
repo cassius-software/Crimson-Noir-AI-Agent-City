@@ -26,14 +26,23 @@ export const VAD = Object.freeze({
   floor: 0.0015,
   /** RMS over the noise floor (as a ratio) that votes speech: 2.5 is about 8 dB. */
   energyRatio: 2.5,
-  /** The zero-crossing rate above which a frame is hiss, not a voice (speech sits well under this), counted per sample
-   *  at 48 kHz: at a higher rate it is scaled to that, so hiss from a 48 kHz capture in a 96 kHz context counts as hiss. */
+  /** The zero-crossing rate above which a frame is hiss, not a voice (speech sits well under this), per sample over the
+   *  band the frame carries (see edge): white noise crosses about 0.58 times a sample over the whole band, and hiss
+   *  through a band half as wide half as often, so the count is divided by the share of the band the frame carries. */
   zcrMax: 0.35,
   /** Decibels below a flat spectrum from which a frame is tonal enough to vote speech (white noise is near 0) ... */
   flatnessMin: 4,
-  /** ... over the bins below this many hertz (and below the top of the band), so a microphone's roll-off near 20 kHz,
-   *  or the empty top half of a 48 kHz capture in a 96 kHz context, never makes hiss look tonal. */
+  /** ... over the bins the frame carries (see edge) and below this many hertz, so a microphone's gentle roll-off near
+   *  20 kHz never makes hiss look tonal. */
   band: 16_000,
+  /** The band a frame carries ends at its last bin within this many decibels of its mean power over the bins: above
+   *  it, nothing. A microphone or a codec whose band ends below the context's (a 16 kHz headset resampled into a
+   *  48 kHz context, a call codec's 7 kHz edge, a 48 kHz capture in a 96 kHz context) leaves empty bins at the top,
+   *  which would make hiss look tonal and cross zero too seldom: both features read the band the frame carries
+   *  instead. A band that only slopes away (no edge) is read whole. */
+  edge: 30,
+  /** ... but never under this many hertz, so a low tone or a quiet room is not read over a sliver of the band. */
+  edgeMin: 3_000,
   /** The sample rate the frames come at (the page passes its audio context's, with the frame vadFrame picks for it). */
   rate: 48_000,
   /** Frames in a row that read as speech before speech starts (4 is about 43 ms). */
@@ -101,10 +110,12 @@ export class VadCore {
   readonly floorMin: number
   readonly energyRatio: number
   readonly zcrMax: number
-  /** The sample rate the frames come at, what the crossings are scaled by (never under 1), and the bins the flatness reads. */
+  /** The sample rate the frames come at, the last bin the flatness may read, the power ratio under a frame's mean that
+   *  carries nothing (edge), and the lowest bin its band may end at (edgeMin). */
   readonly rate: number
-  readonly zcrScale: number
   readonly bandBins: number
+  readonly edgeFloor: number
+  readonly edgeBins: number
   readonly flatnessMin: number
   readonly onsetFrames: number
   readonly releaseFrames: number
@@ -166,8 +177,10 @@ export class VadCore {
     this.flatnessMin = Number(o.flatnessMin) >= 0 ? Number(o.flatnessMin) : 4
     const rate = Number(o.rate) > 0 ? Number(o.rate) : 48_000
     this.rate = rate
-    this.zcrScale = Math.max(1, rate / 48_000)
-    this.bandBins = Math.max(2, Math.min((this.frame >> 1) - 1, Math.floor(((Number(o.band) > 0 ? Number(o.band) : 16_000) * this.frame) / rate)))
+    const top = (this.frame >> 1) - 1
+    this.bandBins = Math.max(2, Math.min(top, Math.floor(((Number(o.band) > 0 ? Number(o.band) : 16_000) * this.frame) / rate)))
+    this.edgeFloor = 10 ** (-(Number(o.edge) > 0 ? Number(o.edge) : 30) / 10)
+    this.edgeBins = Math.max(2, Math.min(top, Math.round(((Number(o.edgeMin) > 0 ? Number(o.edgeMin) : 3_000) * this.frame) / rate)))
     this.onsetFrames = Number(o.onsetFrames) >= 1 ? Math.round(Number(o.onsetFrames)) : 4
     this.releaseFrames = Number(o.releaseFrames) >= 1 ? Math.round(Number(o.releaseFrames)) : 24
     this.floorRise = Number(o.floorRise) > 1 ? Number(o.floorRise) : 1.004
@@ -226,16 +239,36 @@ export class VadCore {
       this.im[k] = 0
     }
     const rms = Math.sqrt(sum / n)
-    const zcr = (crossings / (n - 1)) * this.zcrScale
-    VadCore.fft(this.re, this.im)
-    // Spectral flatness over the bins above DC and below `band`: the geometric mean over the arithmetic mean of the
-    // power, in dB below flat (0 dB is white noise; a voice is many dB below).
+    const re = this.re, im = this.im
+    VadCore.fft(re, im)
+    // The power of each bin above DC (kept in re), and the same through a Hann window (kept in im: the window is three
+    // taps across the bins, 1/2 and −1/4 either side), whose leakage dies within a few bins: the frame's edges leak
+    // across the whole spectrum without it, about 40 dB down, which would fill an empty top of the band.
+    const last = (n >> 1) - 1
+    let mean = 0, pr = re[0], pi = im[0]
+    for (let k = 1; k <= last; k++) {
+      const cr = re[k], ci = im[k]
+      const hr = 0.5 * cr - 0.25 * (pr + re[k + 1]), hi = 0.5 * ci - 0.25 * (pi + im[k + 1])
+      re[k] = cr * cr + ci * ci + 1e-20
+      im[k] = hr * hr + hi * hi + 1e-20
+      mean += im[k]
+      pr = cr
+      pi = ci
+    }
+    // The band the frame carries: up to its last bin within `edge` dB of that mean (never under edgeMin). Empty bins
+    // above a band that ends early (a lower-rate microphone resampled, a codec's edge) are not the frame's.
+    const bar = (mean / last) * this.edgeFloor
+    let carried = last
+    while (carried > this.edgeBins && !(im[carried] > bar)) carried--
+    // Crossings per sample, as if that band were the whole band: hiss through half the band crosses half as often.
+    const zcr = (crossings / (n - 1)) * ((last + 1) / (carried + 1))
+    // Spectral flatness over the bins above DC, within that band and below `band`: the geometric mean over the
+    // arithmetic mean of the power, in dB below flat (0 dB is white noise; a voice is many dB below).
     let logSum = 0, linSum = 0
-    const bins = this.bandBins
+    const bins = Math.min(carried, this.bandBins)
     for (let k = 1; k <= bins; k++) {
-      const p = this.re[k] * this.re[k] + this.im[k] * this.im[k] + 1e-20
-      logSum += Math.log(p)
-      linSum += p
+      logSum += Math.log(re[k])
+      linSum += re[k]
     }
     const flatness = -10 * Math.log10(Math.exp(logSum / bins) / (linSum / bins))
     this.frameRms = rms
@@ -353,15 +386,16 @@ export class VadCore {
 
 /**
  * The frame for a sample rate: the power of two nearest to 10.7 ms of it (512 at 44.1 and 48 kHz, 1024 at 88.2 and
- * 96 kHz, 2048 at 176.4 and 192 kHz, 256 at 22.05 and 24 kHz), so a frame lasts 10.7 to 11.6 ms and every count of
- * frames in VAD is the time it says. At 8, 16 and 32 kHz the nearest is 8 ms (64, 128 and 256), so there every time
- * the detector counts is three quarters as long. Between 64 and 4096 samples; a rate the browser does not give (0,
- * NaN) keeps 512.
+ * 96 kHz, 2048 at 176.4 and 192 kHz, 256 at 22.05 and 24 kHz, up to 8192 at 705.6 and 768 kHz, the highest rate a
+ * browser's audio runs at), so at 44.1 or 48 kHz, or either doubled or halved, a frame lasts 10.7 to 11.6 ms and every
+ * count of frames in VAD is the time it says. At 8, 16, 32, 64 and 128 kHz the nearest is 8 ms (64 to 1024), so there
+ * every time the detector counts is three quarters as long. Between 64 samples (under 6 kHz a frame is longer) and
+ * 8192; a rate the browser does not give (0, NaN) keeps 512.
  */
 export function vadFrame(rate: number): number {
   const r = Number(rate)
   if (!Number.isFinite(r) || r <= 0) return VAD.frame
-  return Math.min(4096, Math.max(64, 2 ** Math.round(Math.log2((r * VAD.frame) / 48_000))))
+  return Math.min(8192, Math.max(64, 2 ** Math.round(Math.log2((r * VAD.frame) / 48_000))))
 }
 
 /** The processor's registered name. */
