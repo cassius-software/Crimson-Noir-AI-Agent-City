@@ -44,6 +44,16 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   honesty, the unlock's refusals, the console's wiring, the air gap's export list); a real GPU, phone or pad is
   unverified.
 
+- **The first walk's seventh stage: your look.** Between the workplaces and Ring-0 the walk now asks the visitor to
+  choose how they look, in the wardrobe card already in the city (Track A of the character customizer: the closed
+  business-casual wardrobe, the body and face sliders, the shareable code, the Agents tab), opened from **Look** on
+  Sloane's chip; putting the card away again (Done, its close button, Escape or the console taking over) finishes the
+  stage, and its accessible button, *Open the wardrobe*, opens the card. Sloane's line, hint, eight-year-old's line and
+  five whys say only what the wardrobe does today. The stage is passed over on a page without the card, and the exit
+  program is unchanged. The second plan's stores and owned places are not built yet; when they land they join this
+  stage as more ways to finish it. `tutorial status` counts seven stages; the browser smoke's `walk` scenario opens
+  and closes the wardrobe on the way. Pinned by node tests (the order, the wardrobe event, the stage passed over, the
+  lines' plainness, conduct screen and brand scrub, App's wiring); a real phone, pad or screen reader is unverified.
 - **Every street lamp near you is a real light, and every workplace has a lit ceiling.** The city's night lighting
   moves to three r186's clustered (Forward+) lighting (`src/01_Initialize_World/cityLights.ts`): the lamps' point
   lights live in a texture, a compute pass bins them once a render into a 48 × 27 × 24 grid of view-frustum cells,

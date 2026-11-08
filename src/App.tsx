@@ -699,7 +699,8 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
    * The walk's accessible path (FirstWalk.tsx's one button per stage): Sloane does the stage's action for a visitor
    * who cannot. A turn of the head and four metres forward, as the keys would do it; a goal planned as the card plans
    * one; the visitor put down at the nearest parked car's door and the door opened; put down just inside the nearest
-   * workplace's doorway; the console opened on `laws`; the program's first line typed into the prompt. Everything goes
+   * workplace's doorway; the wardrobe card opened (the visitor puts it away, which finishes the stage); the console
+   * opened on `laws`; the program's first line typed into the prompt. Everything goes
    * through the same controls the console's operator tier has (engine.simControls), never past the realm.
    */
   const showWalk = useCallback(() => {
@@ -768,22 +769,27 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
         c.avatar.teleport(p.x, p.z, yawFacing(Math.atan2(room.cx - p.x, room.cz - p.z)))
         return
       }
+      case 'style': openLook(); return
       case 'ring0': termRef.current?.run('laws'); return
       case 'exam': termRef.current?.type(`noir ${PROGRAM[0]}`); return
     }
-  }, [bridge])
+  }, [bridge, openLook])
 
   // The console suspends game input (and releases pointer lock) while it owns the keyboard; the wardrobe card likewise
-  // while it is open (the console opening puts the card away). The walk hears of the console opening.
+  // while it is open (the console opening puts the card away). The walk hears of the console opening, and of the
+  // wardrobe card put away after it was open (Done, the close button, Escape or the console taking over).
   const onTermOpen = useCallback((open: boolean) => {
     termOpenRef.current = open
     setTermOpen(open)
     if (open) { setLookOpen(false); walkRef.current.note('console') }
     engineRef.current?.input.suspend(open || lookOpenRef.current)
   }, [])
+  const lookWas = useRef(false)
   useEffect(() => {
     lookOpenRef.current = lookOpen
     engineRef.current?.input.suspend(lookOpen || termOpenRef.current)
+    if (lookWas.current && !lookOpen) walkRef.current.note('wardrobe')
+    lookWas.current = lookOpen
   }, [lookOpen])
 
   useEffect(() => {

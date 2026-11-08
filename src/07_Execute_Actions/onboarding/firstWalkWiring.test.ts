@@ -51,7 +51,7 @@ test('the hook listens and never writes: readings from the snapshot, the engine 
   assert.match(src, /if \(lawLine\(text\)\) note\('law'\)/)
 })
 
-test('App: the walk is switched on from the URL and the pass record, fed the Concierge\'s goal, the console\'s lines and opening, the HUD\'s microphone and captions; the quiet watch waits for it', () => {
+test('App: the walk is switched on from the URL and the pass record, fed the Concierge\'s goal, the console\'s lines and opening, the HUD\'s microphone and captions, the wardrobe put away; the quiet watch waits for it', () => {
   const src = read('../../App.tsx')
   assert.match(src, /needsFirstWalk\(new URLSearchParams\(window\.location\.search\), loadFirstWalk\(\)\)/)
   assert.match(src, /useFirstWalk\(\{ active: walk && veilDone/)
@@ -62,11 +62,14 @@ test('App: the walk is switched on from the URL and the pass record, fed the Con
   assert.match(src, /walkRef\.current\.note\('console'\)/)
   assert.match(src, /walkRef\.current\.note\('mic'\)/)
   assert.match(src, /walkRef\.current\.note\('captions'\)/)
+  // The look stage: the wardrobe card put away (by Done, its close button, Escape or the console) after it was open.
+  assert.match(src, /if \(lookWas\.current && !lookOpen\) walkRef\.current\.note\('wardrobe'\)\s*lookWas\.current = lookOpen/)
   assert.match(src, /<FirstWalkCard/)
   assert.match(src, /onShow=\{showWalk\}/)
   assert.match(src, /walk: \(\) => walkRef\.current\.stage/, 'the smoke reads the stage')
   // The accessible path goes through the same controls the operator tier has, and the console's handle.
   assert.match(src, /case 'move': \{\s*e\.input\.yaw \+= 0\.7/)
+  assert.match(src, /case 'style': openLook\(\); return/, 'the look stage\'s button opens the wardrobe card the chip opens')
   assert.match(src, /case 'ring0': termRef\.current\?\.run\('laws'\)/)
   assert.match(src, /case 'exam': termRef\.current\?\.type\(`noir \$\{PROGRAM\[0\]\}`\)/)
   // The exam behind the exit program: composed in the console bridge over the host's vouch for the air gap, the

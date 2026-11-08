@@ -175,7 +175,7 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 | `?audio=0` | Start with the soundscape muted |
 | `?captions=0` | Start with the closed captions off (`captions on` turns them on; see Spatial audio) |
 | `?boot=tty` | Track B: the Ring-0 console alone, full screen, with no canvas, no engine, no WebGPU, no physics worker and no audio; `boot gui` reloads the city (see Ring-0 console) |
-| `?tutorial=1`, `?tutorial=0` | Sloane's first walk, the first-run tutorial in six stages that only the console's exit program ends: `?tutorial=1` opens on it (again, after a pass), `?tutorial=0` keeps it away for this visit; `?onboarding=0` keeps it away too (see The first walk) |
+| `?tutorial=1`, `?tutorial=0` | Sloane's first walk, the first-run tutorial in seven stages that only the console's exit program ends: `?tutorial=1` opens on it (again, after a pass), `?tutorial=0` keeps it away for this visit; `?onboarding=0` keeps it away too (see The first walk) |
 | `?profile` | GPU timestamps |
 | `?debug` | Exposes `window.__SIM__` test hooks; off by default |
 
@@ -576,7 +576,7 @@ reading order. The rects tile the canvas exactly, in whole pixels.
 
 ### The first walk (the first-run tutorial)
 
-Sloane's first walk is the first-run tutorial: six stages that a brand-new visitor goes through before the city is
+Sloane's first walk is the first-run tutorial: seven stages that a brand-new visitor goes through before the city is
 theirs, each one a thing to do rather than a thing to read, and the only way out a three-line program typed at the
 Ring-0 console. Sloane never calls it a lesson. It is built as a setting (`src/07_Execute_Actions/onboarding/firstWalkStore.ts`
 `FIRST_WALK_DEFAULT`, one constant): **on by default**, so every first run of the city shell opens on the walk until it
@@ -587,21 +587,25 @@ shows it (there is no city to walk).
 
 - **The card** (`FirstWalk.tsx`) stands in Sloane's own style under the readout on a wide screen, in the band above the
   stick and the buttons on a phone, and at the foot of the screen while the console is open. It names the stage (1 of
-  6), says the one thing to do in your device's own words (the keys, the pad's buttons by their layout, or the touch
+  7), says the one thing to do in your device's own words (the keys, the pad's buttons by their layout, or the touch
   controls and the Menu), tells you what it is in a line an eight-year-old follows, and unfolds **five whys** one at a
   time when you press **Why?**, each one deeper than the last and each one true of the city as it runs (the 24 fps,
-  180-degree-shutter cinema camera; GGX; the First Law under every wheel; the six workplaces; the four laws, the
+  180-degree-shutter cinema camera; GGX; the First Law under every wheel; the six workplaces; the closed business-casual wardrobe; the four laws, the
   twelve checks and the air gap; the bounded NoirScript VM). It has **no close button, no skip and no key that puts
   it away**; the card says so. Sloane says each line aloud when the sound is on, and the configured model may reword a
   line when it answers in time and keeps the key or command the line needs.
-- **The six stages** (`src/09_Cognition/firstWalk.ts`), each finished by what the page sees, never by a button:
+- **The seven stages** (`src/09_Cognition/firstWalk.ts`), each finished by what the page sees, never by a button:
   1. **Look and walk**: a turn of the head of about twenty degrees and three metres on foot.
   2. **Talk to Sloane**: a goal sent from the chip in your own words (opening the microphone with `recruit listen`
      or turning the captions counts too).
   3. **The parked fleet**: get into a car (the stage is passed over on a map with no cars).
   4. **Inside a workplace**: stand inside one of the six workplaces (passed over on a surveyed map, which has none).
-  5. **Ring-0**: open the console and run `laws` (`kernel`, `act gate`, `act list` or `ring0` work too).
-  6. **The way out**: run the exit program; see below. Doing a later stage early counts (a car entered while still
+  5. **Your look**: open the wardrobe card from **Look** on Sloane's chip (or **Change my look** in her list) and put
+     it away again (**Done**, its close button or Escape); changing something is up to you. The card is the wardrobe
+     described under The character customizer; the city's stores and owned places are not built yet, and when they
+     are they join this stage as more ways to finish it.
+  6. **Ring-0**: open the console and run `laws` (`kernel`, `act gate`, `act list` or `ring0` work too).
+  7. **The way out**: run the exit program; see below. Doing a later stage early counts (a car entered while still
      learning to walk); Sloane says nothing of it until its turn would have come.
 
   Sloane says each stage as it starts and, after forty-five seconds with no progress, one hint, more plainly (the
@@ -610,7 +614,8 @@ shows it (there is no city to walk).
 - **The accessible path.** Every card has one button that has Sloane do the stage's action for a visitor who cannot
   (a switch, a screen reader, a phone with no keyboard): *Walk for me* turns the head and walks four metres; *Plan one
   for me* plans "make it night" as the chip would; *Take me to a car* puts you down at the nearest parked car's door
-  and opens it; *Take me inside* puts you down just inside the nearest workplace's doorway; *Open it for me* opens the
+  and opens it; *Take me inside* puts you down just inside the nearest workplace's doorway; *Open the wardrobe* opens the
+  wardrobe card (the walk's card steps aside while it is open, and **Done** brings it back); *Open it for me* opens the
   console on `laws`; on the last card three buttons type each line of the program into the console's prompt and
   **Run** runs it, so the walk is completable with taps alone. Everything goes through the same controls the operator
   tier has (`engine.simControls`), never past the realm: the car's door is the realm's to open, as always.

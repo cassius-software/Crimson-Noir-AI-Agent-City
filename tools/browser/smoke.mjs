@@ -1665,8 +1665,8 @@ const SCENARIOS = {
   /**
    * The first walk (09_Cognition/firstWalk.ts, onboarding/FirstWalk.tsx and exam.ts) end to end on its accessible
    * path: `?tutorial=1` opens on it; no button or key puts the card away; each stage's one button has Sloane do the
-   * stage's action (walk, plan a goal, a car's door, a workplace's doorway, `laws`) and the page's own readings pass
-   * it; on the last card the three line buttons and Run run the exit program through the console's NoirScript session,
+   * stage's action (walk, plan a goal, a car's door, a workplace's doorway, the wardrobe card, `laws`) and the page's
+   * own readings pass it (the wardrobe's stage when its Done puts the card away); on the last card the three line buttons and Run run the exit program through the console's NoirScript session,
    * where the exam seals the live kernel, asks people over through the recruiter (so the visitor is first put down on a
    * sidewalk beside someone who knows Robotics) and unlocks the city; the card goes and the pass is kept.
    */
@@ -1708,13 +1708,24 @@ const SCENARIOS = {
       const b4 = await show()
       check(await past('work', 60_000), `walk: "${b4}" puts the visitor inside a workplace`, `stage ${await stage()}`)
       check((await p.snap()).mode === 'foot', 'walk: on foot again inside')
-      // 5 Ring-0: "Open it for me" runs laws at the console.
-      check((await stage()) === 'ring0', 'walk: stage 5 is Ring-0', `stage ${await stage()}`)
+      // 5 Your look: "Open the wardrobe" opens the wardrobe card the chip opens (the walk's card steps aside while it is
+      // open); its Done puts it away, and that passes the stage.
+      check((await stage()) === 'style', 'walk: stage 5 is the wardrobe', `stage ${await stage()}`)
       const b5 = await show()
-      check(await past('ring0', 30_000), `walk: "${b5}" runs laws and the stage passes`, `stage ${await stage()}`)
-      // 6 The way out: beside someone on a sidewalk first (spawn_subagents asks through the recruiter, within earshot),
+      const dressed = await p.waitFor(`!!document.querySelector('[data-customizer]') && !document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false)
+      check(dressed && (await stage()) === 'style', `walk: "${b5}" opens the wardrobe card and the walk's card steps aside`, `wardrobe ${dressed}, stage ${await stage()}`)
+      await p.shot('walk-wardrobe')
+      await p.eval(`document.querySelector('[data-customizer] [data-action="done"]')?.click()`)
+      const away = await past('style', 10_000)
+      check(away && await p.waitFor(`!document.querySelector('[data-customizer]') && !!document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false),
+        'walk: Done puts the wardrobe away, the stage passes and the walk\'s card is back', `stage ${await stage()}`)
+      // 6 Ring-0: "Open it for me" runs laws at the console.
+      check((await stage()) === 'ring0', 'walk: stage 6 is Ring-0', `stage ${await stage()}`)
+      const b6 = await show()
+      check(await past('ring0', 30_000), `walk: "${b6}" runs laws and the stage passes`, `stage ${await stage()}`)
+      // 7 The way out: beside someone on a sidewalk first (spawn_subagents asks through the recruiter, within earshot),
       // then the three line buttons and Run, each line's doors reported by the console.
-      check((await stage()) === 'exam', 'walk: stage 6 is the exit program', `stage ${await stage()}`)
+      check((await stage()) === 'exam', 'walk: stage 7 is the exit program', `stage ${await stage()}`)
       const by = await besideSomeone(p, 'Robotics')
       check(by.ok, 'walk: the visitor is put down on a sidewalk beside someone who knows Robotics', by.note)
       const lines = await p.eval(`[...document.querySelectorAll('[data-walk-line-button]')].length`)
