@@ -18,7 +18,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
-  FEATURE_IDS, HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_BUILD_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatHardware, formatRecording, formatStats,
+  FEATURE_IDS, HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_BOTTOM_CUT_ARGS, LOOK_BUILD_ARGS, LOOK_CUT_ARGS, LOOK_FACE_ARGS, LOOK_GARMENT_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, LOOK_WEAVE_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatHardware, formatRecording, formatStats,
   isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type CommandResult, type Line,
 } from './commands.ts'
 import {
@@ -27,7 +27,7 @@ import {
   type RecruitBridge, type Ring0Stats, type RobotConsole, type RobotRow, type SayResult, type TerminalBridge, type TopicBridge, type AgentBridge, type ConciergeBridge, type FeaturesBridge, type EliteBridge,
 } from './bridge.ts'
 import { SKILLS } from '../../03_Spawn_Agents/skills.ts'
-import { LOOK_BODIES, LOOK_BUILDS, LOOK_PRESETS, LOOK_SLOTS, lookOptions } from '../../03_Spawn_Agents/look.ts'
+import { LOOK_BODIES, LOOK_BUILDS, LOOK_FACE_SHAPES, LOOK_GARMENTS, LOOK_LOWER_GARMENTS, LOOK_PRESETS, LOOK_SLOTS, WARDROBE, lookOptions } from '../../03_Spawn_Agents/look.ts'
 import { PING_KINDS, PING_WORDS } from '../../08_Swarm/ping.ts'
 import { apiDoc, exec, scriptApi, type SimControls } from '../operator.ts'
 import { createSwarm } from '../../08_Swarm/orchestrator.ts'
@@ -771,7 +771,7 @@ test('help lists every command with usage, in two groups; help <cmd> explains on
   assert.match(all, /captions \[on\|off\]/)
   assert.match(all, /haptics \[on\|off\]/)
   assert.match(all, /ping \[go\|look\|gather\|wait\|clear\]/)
-  assert.match(all, /look \[show \[<agent>\]\|<slot> <n\|name>\|preset <name>\|build <name>\|code <code>\|random \[<seed>\]\|reset\]/)
+  assert.match(all, /look \[show \[<agent>\]\|<slot> <n\|name>\|preset <name>\|build <name>\|face <name>\|garment <name>\|code <code>\|random \[<seed>\]\|reset\]/)
   assert.match(all, /boot \[gui\|tty\|status\]/)
   assert.match(all, /r0 <words\.\.\.>\|r0 reset\|r0 words/)
   assert.match(all, /net \[join <ws-url> \[<token>\]\|leave\|status\|forget\]/)
@@ -1780,17 +1780,29 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.deepEqual(complete('haptics '), ['haptics off', 'haptics on'])
   assert.deepEqual(complete('ping '), ['ping clear', 'ping gather', 'ping go', 'ping look', 'ping wait'])
   assert.deepEqual(complete('ping g'), ['ping gather', 'ping go'])
-  assert.deepEqual(complete('look '), [...['build', 'code', 'preset', 'random', 'reset', 'show'], ...LOOK_SLOT_ARGS].sort().map((a) => `look ${a}`))
-  assert.deepEqual(complete('look b'), ['look bag', 'look body', 'look bottom', 'look brow', 'look build'])
+  assert.deepEqual(complete('look '), [...['build', 'code', 'face', 'garment', 'preset', 'random', 'reset', 'show'], ...LOOK_SLOT_ARGS].sort().map((a) => `look ${a}`))
+  assert.deepEqual(complete('look b'), ['look bag', 'look body', 'look bottom', 'look bottomCut', 'look bottomWeave', 'look brow', 'look build'])
+  assert.deepEqual(complete('look bottomCut p'), ['look bottomCut palazzo', 'look bottomCut panelled', 'look bottomCut pencil', 'look bottomCut piped seam', 'look bottomCut pleated', 'look bottomCut pleated turn-ups', 'look bottomCut pressed crease'])
+  assert.deepEqual(complete('look topWeave h'), ['look topWeave herringbone', 'look topWeave houndstooth'])
+  assert.deepEqual(complete('look bottomWeave m'), ['look bottomWeave matching', 'look bottomWeave merino'])
   assert.deepEqual(complete('look build '), LOOK_BUILD_ARGS.map((a) => `look build ${a}`))
+  assert.deepEqual(complete('look face '), LOOK_FACE_ARGS.map((a) => `look face ${a}`))
+  assert.deepEqual(complete('look face ov'), ['look face oval'])
+  assert.deepEqual(complete('look garment '), LOOK_GARMENT_ARGS.map((a) => `look garment ${a}`))
+  assert.deepEqual(complete('look garment tw'), ['look garment tweed blazer', 'look garment tweed waistcoat', 'look garment twill culottes'])
+  assert.deepEqual(complete('look cut p'), ['look cut patch pockets', 'look cut peak lapel'])
   assert.deepEqual(complete('look skin mst-1'), ['look skin mst-10'])
   assert.deepEqual(complete('look vitiligo h'), ['look vitiligo hands', 'look vitiligo hands and face'])
   assert.deepEqual(complete('look freckles '), ['look freckles dense', 'look freckles light', 'look freckles medium', 'look freckles none'])
-  assert.deepEqual(complete('look h'), ['look hairColour', 'look hairStyle', 'look head', 'look height', 'look hips'])
+  assert.deepEqual(complete('look h'), ['look hairColour', 'look hairStyle', 'look head', 'look headwear', 'look headwearColour', 'look hearing', 'look height', 'look hips'])
   assert.deepEqual(complete('look body '), LOOK_BODY_ARGS.map((a) => `look body ${a}`))
   assert.deepEqual(complete('look body s'), ['look body skirt suit', 'look body smart casual', 'look body suit'])
   assert.deepEqual(complete('look preset n'), ['look preset navy blazer', 'look preset navy skirt suit', 'look preset navy suit'])
-  assert.deepEqual(complete('look hairStyle '), ['look hairStyle bald', 'look hairStyle bob', 'look hairStyle bun', 'look hairStyle long', 'look hairStyle short'])
+  assert.deepEqual(complete('look hairStyle b'), ['look hairStyle bald', 'look hairStyle bob', 'look hairStyle box braids', 'look hairStyle braided bun', 'look hairStyle braided ponytail', 'look hairStyle braided updo', 'look hairStyle bun', 'look hairStyle bun with fade', 'look hairStyle buzz cut'])
+  assert.deepEqual(complete('look hairStyle '), [...WARDROBE.hairStyle].sort().map((n) => `look hairStyle ${n}`), 'every style, the catalogue\'s names')
+  assert.deepEqual(complete('look curl '), [...WARDROBE.curl].sort().map((n) => `look curl ${n}`))
+  assert.deepEqual(complete('look headwear '), [...WARDROBE.headwear].sort().map((n) => `look headwear ${n}`))
+  for (const slot of ['facialHair', 'hearing', 'prosthetic', 'prostheticFinish'] as const) assert.deepEqual(complete(`look ${slot} `), [...WARDROBE[slot]].sort().map((n) => `look ${slot} ${n}`))
   assert.deepEqual(complete('look undertone '), ['look undertone cool', 'look undertone neutral', 'look undertone olive', 'look undertone warm'])
   assert.deepEqual(complete('look layer '), ['look layer coat', 'look layer jacket', 'look layer shirt sleeves'])
   assert.deepEqual(complete('look trim '), ['look trim matching'])
@@ -2142,6 +2154,7 @@ test('look: the look worn (or a pedestrian\'s), a slot by number or name, a pres
   run('look body skirt suit', b, [])
   run('look HairColour grey', b, [])
   run('look preset navy skirt suit', b, [])
+  run('look garment belted trench coat', b, [])
   run('look code abcd-efgh', b, [])
   run('look random 77', b, [])
   run('look random', b, [])
@@ -2151,12 +2164,13 @@ test('look: the look worn (or a pedestrian\'s), a slot by number or name, a pres
     { kind: 'slot', slot: 'body', value: 'skirt suit' },
     { kind: 'slot', slot: 'hairColour', value: 'grey' },
     { kind: 'preset', name: 'navy skirt suit' },
+    { kind: 'garment', name: 'belted trench coat' },
     { kind: 'code', code: 'abcd-efgh' },
     { kind: 'random', seed: 77 },
     { kind: 'random', seed: Number.NaN },
     { kind: 'reset' },
   ])
-  assert.deepEqual(b.calls, ['look show me', 'look show me', 'look show 12', 'look show 99', 'look set slot', 'look set slot', 'look set slot', 'look set preset', 'look set code',
+  assert.deepEqual(b.calls, ['look show me', 'look show me', 'look show 12', 'look show 99', 'look set slot', 'look set slot', 'look set slot', 'look set preset', 'look set garment', 'look set code',
     'look set random', 'look set random', 'look set reset'])
   // The host's own refusals (the wardrobe is closed) are lines.
   assert.deepEqual(run('look code ZZZZ-ZZZZ', b, []).lines, [{ kind: 'err', text: "look: not a look code: 'ZZZZ-ZZZZ' (eight symbols, XXXX-XXXX)" }])
@@ -2179,8 +2193,14 @@ test('look: the look worn (or a pedestrian\'s), a slot by number or name, a pres
   assert.deepEqual([...LOOK_BODY_ARGS], [...LOOK_BODIES].sort())
   assert.deepEqual([...LOOK_PRESET_ARGS], LOOK_PRESETS.map((p) => p.name).sort())
   assert.deepEqual([...LOOK_BUILD_ARGS], LOOK_BUILDS.map((x) => x.name).sort())
+  assert.deepEqual([...LOOK_FACE_ARGS], LOOK_FACE_SHAPES.map((x) => x.name).sort())
+  assert.deepEqual([...LOOK_GARMENT_ARGS], [...LOOK_GARMENTS, ...LOOK_LOWER_GARMENTS].map((x) => x.name).sort(), 'the garments by their names, tops and lower garments')
+  assert.deepEqual([...LOOK_BOTTOM_CUT_ARGS], [...new Set([...WARDROBE.trouserCut, ...WARDROBE.skirtCut])].sort(), 'the lower cuts by their names, trousers\' and skirts\'')
+  assert.deepEqual([...LOOK_CUT_ARGS], [...WARDROBE.cut].sort(), 'the cuts by their names')
   for (const slot of ['vitiligo', 'freckles'] as const) assert.deepEqual(complete(`look ${slot} `), lookOptions(0, slot).map((o) => `look ${slot} ${o.name}`).sort(), `${slot}: the wardrobe's names`)
   assert.deepEqual(complete('look skin '), lookOptions(0, 'skin').slice(8).map((o) => `look skin ${o.name}`), 'the Monk tones by their scale names')
+  assert.deepEqual([...LOOK_WEAVE_ARGS], [...WARDROBE.weave].sort(), 'the weaves by their names')
+  assert.deepEqual(complete('look bottomWeave '), [...new Set([...lookOptions(0, 'bottomWeave'), ...lookOptions(1, 'bottomWeave')].map((o) => o.name))].sort().map((n) => `look bottomWeave ${n}`), 'the bottom\'s weaves: matching on a suit, plain on chinos')
 })
 
 test('map: the map the shell walks; map city|lakefront|default hands the host a reload, never the same map twice; no bridge call', () => {

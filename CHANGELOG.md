@@ -15,6 +15,108 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Sixteen trouser cuts, sixteen skirt cuts and twenty lower garments.** The cloth word's next four bits carry the
+  lower garment's cut (`LOOK_FIELD.bottomCut`, word 5 bits 12 to 15; `humanoid.ts` TROUSER_CUT, SKIRT_CUT). The three
+  trouser bodies share one list: straight (0, every pair as it was, so every older look and code reads back unchanged
+  and is drawn as before), pressed crease, pleated, turn-ups, side stripe, wide-leg, tapered, flared, cropped,
+  culottes, high-waisted, belted, piped seam, slim, pleated turn-ups and palazzo. The skirt suit has its own: straight
+  (0), pencil, A-line, pleated, box pleat, wrap, midi, midi pencil, midi A-line, back vent, button front, tulip,
+  panelled, high-waisted, belted and flared. Changing the body between the skirt suit and the others starts the cut
+  again at straight. Some cuts change the shape with no new geometry. The vertex stage moves the lower garment's own
+  rings before the body sliders (`crowdBody.ts` bodyGarment, the GPU twin of `humanoid.ts` garmentPoint, which the
+  card's silhouette uses too). Each trouser leg is reshaped about its own axis and the skirt about the trunk's.
+  Normals follow the shape by the cylinder's rule, so a flare is lit as one. A wide leg, a palazzo, a flare or the
+  culottes widen the leg, a taper or a slim cut narrows it, a midi lengthens the skirt to 0.36 m, an A-line or a
+  flared skirt widens toward the hem, a pencil or a tulip narrows it, and the high waist raises it. A narrow or long
+  skirt's hem spreads with the stride: its front moves with the leading thigh and its back with the trailing one, so
+  the knees stay inside it more of the time (no cloth is simulated). Under a coat no skirt widens.
+  The cut reaches the vertex stage in `morphB.w` (the cut, plus 16 under a coat), so no new buffer is bound. The
+  fragment stage paints the rest from the rest position: the crease, pleats, turn-ups, a satin side stripe, a piped
+  seam, the cropped and culottes hems above a bare or socked ankle (a prosthetic leg shows its finish there; below the
+  culottes' wide hem, its shadowed inside), a belt and buckle where the waist shows, the high waist's cloth up the
+  trunk in shirt sleeves or under a cropped jacket, and the skirt's pleats, box pleats, panels, wrap edge, back vent,
+  button front, tulip petals, belt, waist seam and flared folds. About one pedestrian in three wears a lower cut, one
+  of eight per body (`BOTTOM_CUT_STREET`). `LOOK_LOWER_GARMENTS` names twelve pairs of trousers and eight skirts, each
+  a lower cut and a weave. A skirt is refused on a trouser body and trousers on the skirt suit, with a line that says
+  why. With the forty-four tops that makes sixty-four garments. Customizer rows **Trousers** or **Skirts** (the lower
+  garments the body wears) and **Trousers' cut**, **Chinos' cut** or **Skirt's cut**. Console: `look bottomCut
+  wide-leg`, `look garment pencil skirt`. On today's main the suit's main fragment stage is about 200,000 characters,
+  its shadow pass about 138,000 and its vertex stage about 62,000, inside the 262,144 budget. Pinned by
+  `humanoid.test.ts`, `look.test.ts`, `lookWiring.test.ts` and `commands.test.ts`. Browser screenshots on SwiftShader
+  only; nothing visual is confirmed on real hardware.
+- **Sixteen cuts of the outer layer, and forty-four named garments.** The cloth word's next four bits carry the
+  outer layer's cut (`LOOK_FIELD.cut`, word 5 bits 8 to 11; `look.ts` CUT): notch lapel (0, every jacket as it was,
+  so every older look and code reads back unchanged and is drawn as before), peak lapel, shawl collar, double-breasted,
+  band collar, turtleneck, waistcoat, cardigan, open front, belted, cropped, wrap front, zip front, side closure,
+  quilted and patch pockets, each named for the cut and never for a people's dress. The crowd's fragment stage cuts
+  the jacket or the coat from the rest position: the cut moves where the V closes, where its centre runs and how
+  wide the lapels are (the notch lapel moves none of them), then paints its own marks: the waistcoat's shirt sleeves
+  and dark satin lining, the cropped jacket's shirt below the waist, a belt and buckle, one or two columns of
+  buttons, a zip, the side closure's line, diamond quilting, the cardigan's rib, patch pockets, a fine outer edge on
+  the peak, shawl, double-breasted and wrap lapels, a satin sheen on the shawl's facing, and the turtleneck's knit up
+  the neck. Under a band collar, a turtleneck, a zip front, a side closure or a quilted jacket the tie comes off
+  (`TIELESS_CUTS`), in the look's mask and in the crowd's vertex stage alike. Three outer layers in ten in the hashed
+  crowd wear a cut, one of eight per body (`CUT_STREET`).
+  `LOOK_GARMENTS` names forty-four tops (suit jackets, blazers, evening jackets, band-collar and side-closure
+  jackets, waistcoats, cardigans, cropped, belted, wrap, quilted and zip-front jackets, and seven coats), each a
+  layer, a cut and a weave (the shawl-collar jackets also take the darkest trim) that keeps the look's colours;
+  like a build, a garment is a starting point, not a slot (`withGarment`, `garmentOf`). Customizer rows **Garment**
+  and **Cut** (**Coat's cut** under a coat; the Cut row hidden under shirt sleeves, where a garment puts the layer
+  back on), console `look garment <name>` and `look cut <name>`. The suit's main fragment stage grows to about
+  170,000 characters and its shadow pass to about 122,000, inside the 262,144 budget. Pinned by `look.test.ts`,
+  `lookWiring.test.ts` and `commands.test.ts`. Browser screenshots on SwiftShader only; nothing visual is confirmed
+  on real hardware.
+- **Sixteen fabric weaves.** A cloth word joins the look genome (word 5): the top's weave and the bottom's at four
+  bits each (`LOOK_FIELD.topWeave`, `LOOK_FIELD.bottomWeave`). 0 is plain, as before, so every older look and code
+  reads back unchanged. The weaves (`look.ts` WEAVE) are plain, twill, herringbone, pinstripe, chalk stripe,
+  houndstooth, glen check, windowpane, tartan (a generic check), tweed, linen, silk, cashmere, merino, batik (plain
+  dots and rings, no classical pattern of the craft) and strip weave (bars and blocks, no named pattern). The crowd's
+  fragment stage paints the top's weave on the jacket or the coat (a matching trim too) and the bottom's on the
+  trousers or the skirt, from the rest position, round each part by the angle about its own axis so stripes run down
+  the body and the sleeves. Threads finer than a pixel fade to the weave's own mean colour: the pixel's footprint is a
+  derivative, read at the top of the stage before any branch. Silk, merino, linen, tweed and cashmere set their own
+  roughness. The bottom's option 0 is `matching`: the top's weave where the trousers are the jacket's cloth, plain
+  elsewhere. Four tops in ten in the hashed crowd are woven, one of eight weaves per body (`WEAVE_STREET`: suitings
+  for the suit and the pantsuit, tweeds and checks for the blazer, the softer cloths and the prints for the skirt
+  suit's top). A look with a weave carries a second word in its code's tail (fifteen symbols). The suit's main
+  fragment stage grows to about 144,000 characters (from about 119,000) and its shadow pass to about 97,000 (from
+  about 76,000). Customizer rows **Weave** and **Trousers' weave** (**Skirt's weave** on the skirt suit), console
+  `look topWeave <name>` and `look bottomWeave <name>`. Pinned by `look.test.ts`, `lookWiring.test.ts` and
+  `commands.test.ts`. Browser shots on SwiftShader only; nothing visual is confirmed on real hardware.
+- **Facial hair, hearing aids and cochlear implants, and prosthetic limbs.** The skin word's next eleven bits carry
+  the facial hair (none, stubble, moustache, goatee, short beard, full beard, long beard: 3 bits), the hearing devices
+  (none, hearing aids, a cochlear implant, implants on both sides, an implant with an aid: 3 bits), a prosthetic limb
+  (either arm, either leg, both arms, both legs: 3 bits) and its finish (matte, carbon, chrome, skin-matched: 2 bits);
+  all are 0 for "as before", so every older look and code reads back unchanged, and the skin word's top two bits stay
+  spare. Facial hair and the prosthetics are painted by the crowd's fragment stage (a prosthetic hand and wrist below
+  the sleeve, a prosthetic shin below the knee where the leg is bare, with the socket's line); the long beard and the
+  hearing devices are pieces (`humanoid.ts` PIECE 19 to 23, which fills the float piece mask to bit 23), the devices
+  on the near body only. The hashed crowd gains facial hair for about forty-five men in a hundred (stubble to a full
+  beard), hearing aids for about two people in a hundred, a cochlear implant for under one, and a prosthetic arm or
+  leg for one. The near body grows by about 130 vertices (budget 1,950, from 1,850) and the far body by about 20
+  (budget 540, from 520). The people's fragment stage is now written out once per value: three writes each branch of
+  a `select` on its own, so the skin and the hair as painted, and the hash links, were written again in every slot's
+  branch that read them, and these paints took the stage past the 256 KiB a stage may be (`shadowShaders.test.ts`).
+  They are declared once at the top of the stage instead, each paint still under its own branches: the main pass's
+  fragment for the suit is about 119,000 characters (from about 198,000 before this change) and its shadow pass's
+  about 76,000 (from about 156,000). Pinned by `look.test.ts`, `humanoid.test.ts`, `lookWiring.test.ts`,
+  `commands.test.ts` and `conduct.test.ts` (the new pieces confirmed unarmed). Browser shots on SwiftShader only;
+  nothing visual is confirmed on real hardware.
+- **Thirty-two hair styles, curl patterns 1A to 4C, eight headwear and twenty-four face shapes.** The look's hair
+  style takes two high bits in the skin word (`LOOK_FIELD_HIGH.hairStyle`) and reaches thirty-two styles
+  (`HAIR_STYLES`: the five older ones keep their numbers), each a set of hair pieces and a paint. Three new hair
+  shapes join the body (`humanoid.ts` PIECE: a full rounded shell, a puff on the crown, a tail) and four headwear
+  shapes (a head scarf over the head and neck, a wound crown, a snug crown, a flat cap's peak), near body only; the
+  far body paints the hair's cap in the headwear's cloth. The skin word also carries the curl pattern (4 bits), the
+  headwear (none, hijab, turban, head wrap, kippah, durag, beanie, flat cap: 3 bits) and its cloth (3 bits); all are
+  0 for "as before", so every older look and code reads back unchanged. The crowd's vertex stage picks each hair
+  piece with one shift of a 32-bit style set per piece (`HAIR_PIECE_STYLES`), and the fragment stage paints the cut
+  and the curl texture from the rest position under branches. The hashed crowd gains a curl pattern each and a few
+  headwear (about seven women and five men in a hundred). Twenty-four face shapes (`LOOK_FACE_SHAPES`, named by shape
+  alone) set the head and the face sliders, as a card row and `look face <shape>`. The near body grows by about 270
+  vertices (budget 1,850, from 1,600) and the far body by about 30 (budget 520, from 500). Pinned by `look.test.ts`,
+  `humanoid.test.ts`, `lookWiring.test.ts`, `commands.test.ts` and `conduct.test.ts` (the new pieces confirmed
+  unarmed). Browser shots on SwiftShader only; nothing visual is confirmed on real hardware.
 - **Sloane's first walk, the first-run tutorial (stages, switch and card).** Six stages a brand-new visitor does before
   the city is theirs (turn the head and walk; tell Sloane a goal; get into a parked car; stand inside a workplace; run
   `laws` at the Ring-0 console; run the three-line NoirScript exit program), as a pure stage engine with Sloane's
@@ -1105,6 +1207,24 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Fixed
 
+- **The crowd's shadow pass ran the whole paint.** three multiplies a shadow's alpha by the material's colour alpha
+  (`Renderer._getShadowNodes` reads `colorNode.a`), so every body's shadow-map fragment stage carried the look's whole
+  paint, the weaves, cuts, hair, skin and faces, about 138,000 characters per body, run for every shadow-map texel a
+  body covers, for an alpha that is always 1. The crowd's colour now answers `.a` with 1 itself, and its shadow pass is
+  the pose and the code dissolve's shadow mask alone: 1,105 characters for each of the eight bodies.
+  `shadowShaders.test.ts` holds it under 4,096. Found when CI's browser job on this slice outran its 30 minutes, every
+  suite 1.5 to 2 times slower than on `main`.
+- **The sleeves, the hands, the legs, the shoes, the bag, the skirt, the long hair, the bob, the ponytail and the
+  long beard were drawn inside out.** The loft lays a tube's quads counter-clockwise seen from outside (the face three draws) only when its rings run from
+  the bottom up, and it closes `capTop` on the last ring and `capBottom` on the first. These tubes listed their rings
+  from the top down, so their outer faces were culled: each showed the inside of its far wall, lit by normals pointing
+  in, and the hands and the shoes closed with a cone from the wrong ring (a point below the wrist, a spike inside the
+  shoe), the soles left open. On an arm or a leg the outline hid it; on the skirt the legs stood in front of its back
+  panel, so the knees seemed to come through. `humanoid.ts` now lays every tube from its lowest ring up (no ring
+  moves), and `humanoid.test.ts` checks that every round tube's triangles face out on every body, near and far, that
+  every cap lies past the ring it closes, and that the skirt's hem faces out. In the code since the first bodies
+  (#59); found in this slice's SwiftShader screenshots (`/mnt/project-files/screenshots/lower-cuts/`), not yet seen
+  on real hardware.
 - **Sloane no longer takes the focus from a halted city's way-out card.** The Concierge became visible when the boot
   veil finished fading, whatever the city's state, and its name field took the keyboard focus from anything but
   another text field, so a halt inside the veil's last second (the browser smoke's thrown frame right after the veil

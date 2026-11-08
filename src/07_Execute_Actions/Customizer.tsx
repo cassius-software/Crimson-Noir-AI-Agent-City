@@ -26,8 +26,9 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { PIECE, SLOT, faceRings, silhouetteRings, type SilhouetteRing } from '../03_Spawn_Agents/humanoid.ts'
 import {
-  HAIR, LAYER, LOOK_BODY_SLIDERS, LOOK_BUILDS, LOOK_FACE_SLIDERS, LOOK_PRESETS, LOOK_SLOTS, bodyShapeOf, buildOf, faceShapeOf, formatLookCode, lookFromSeed, lookOptions,
-  lookSwatch, matchingSwatch, parseLookCode, withBuild, withLookSlot,
+  LAYER, LOOK_BODY_SLIDERS, LOOK_BUILDS, LOOK_FACE_SHAPES, LOOK_FACE_SLIDERS, LOOK_GARMENTS, LOOK_PRESETS, LOOK_SLOTS, bodyShapeOf, buildOf, faceShapeNameOf, faceShapeOf,
+  LOOK_LOWER_GARMENTS, formatLookCode, garmentOf, lookFromSeed, lookOptions, lookSwatch, lookWears, lowerGarmentFits, lowerGarmentOf, matchingSwatch, parseLookCode,
+  withBuild, withFaceShape, withGarment, withLookSlot,
   type Look, type LookBody, type LookFaceSlider, type LookSlider, type LookSlot,
 } from '../03_Spawn_Agents/look.ts'
 import { seedFromName } from '../05_Observe_Environment/profile.ts'
@@ -79,11 +80,22 @@ function slotLabel(slot: LookSlot, body: LookBody, layer: number = LAYER.jacket)
     case 'vitiligo': return 'Vitiligo'
     case 'freckles': return 'Freckles'
     case 'hairStyle': return 'Hair'
+    case 'curl': return 'Curl pattern'
     case 'hairColour': return 'Hair colour'
+    case 'headwear': return 'Headwear'
+    case 'headwearColour': return 'Headwear colour'
+    case 'facialHair': return 'Facial hair'
+    case 'hearing': return 'Hearing devices'
+    case 'prosthetic': return 'Prosthetic'
+    case 'prostheticFinish': return 'Prosthetic finish'
     case 'layer': return 'Layer'
+    case 'cut': return layer === LAYER.coat ? 'Coat\'s cut' : 'Cut'
     case 'top': return layer === LAYER.coat ? 'Coat' : body === 1 ? 'Blazer' : body === 3 ? 'Top' : 'Jacket'
+    case 'topWeave': return layer === LAYER.coat ? 'Coat\'s weave' : 'Weave'
     case 'trim': return 'Trim'
+    case 'bottomCut': return body === 3 ? 'Skirt\'s cut' : body === 1 ? 'Chinos\' cut' : 'Trousers\' cut'
     case 'bottom': return body === 3 ? 'Skirt' : body === 1 ? 'Chinos' : 'Trousers'
+    case 'bottomWeave': return body === 3 ? 'Skirt\'s weave' : 'Trousers\' weave'
     case 'shirt': return body >= 2 ? 'Blouse' : 'Shirt'
     case 'shoes': return 'Shoes'
     case 'tie': return 'Tie'
@@ -149,6 +161,8 @@ function silhouettePaint(look: Look): string[] {
   out[SLOT.IRIS] = '#4a3a2a'
   out[SLOT.LIP] = lipOf(lookSwatch(look, 'skin') ?? 0xd29f79)
   out[SLOT.SCARF] = own('scarf', 0x6a1e2a)
+  out[SLOT.HEADWEAR] = own('headwearColour', 0x1c1c22)
+  out[SLOT.DEVICE] = '#2b2c2e'
   return out
 }
 
@@ -165,22 +179,8 @@ function shaded(hex: string): string {
   return hex6((c(16) << 16) | (c(8) << 8) | c(0))
 }
 
-/** Whether the look wears an optional piece of the body (the always-drawn ones have piece 0; the hair's follow the style). */
-function wears(look: Look, piece: number): boolean {
-  switch (piece) {
-    case PIECE.TIE: return look.tie === 1
-    case PIECE.BAG: return look.bag === 1
-    case PIECE.CUP: return look.cup === 1
-    case PIECE.GLASSES: return look.eyewear === 1
-    case PIECE.HAIR_CAP: return look.hairStyle !== HAIR.bald
-    case PIECE.LONG_HAIR: return look.hairStyle === HAIR.long
-    case PIECE.BOB: return look.hairStyle === HAIR.bob
-    case PIECE.BUN: return look.hairStyle === HAIR.bun
-    case PIECE.COAT: return look.layer === LAYER.coat
-    case PIECE.SCARF: return look.scarf !== 0
-    default: return true
-  }
-}
+/** Whether the look wears an optional piece of the body (the always-drawn ones have piece 0): the crowd's own mask (look.ts lookWears). */
+const wears = (look: Look, piece: number): boolean => lookWears(look, piece)
 
 const m = (v: number): string => (Math.round(v * 1000) / 1000).toString()
 
@@ -223,7 +223,12 @@ function Silhouette({ look, t }: { look: Look; t: Theme }) {
   const views = useMemo(() => {
     // The features are the face view's: at this scale they would only clutter the head.
     const keep = (r: SilhouetteRing) => r.piece !== PIECE.FACE && wears(look, r.piece)
-    return { front: silhouetteRings(body, shape, false).filter(keep), side: silhouetteRings(body, shape, true).filter(keep) }
+    // The lower cut's shape (a wide leg, a midi hem) is the vertex stage's, through the same garmentPoint.
+    const coat = look.layer === LAYER.coat
+    return {
+      front: silhouetteRings(body, shape, false, look.bottomCut, coat).filter(keep),
+      side: silhouetteRings(body, shape, true, look.bottomCut, coat).filter(keep),
+    }
   }, [look, body, shape])
   return (
     <div className="flex items-end gap-4" data-row="silhouette">
@@ -287,7 +292,7 @@ function Face({ look, t }: { look: Look; t: Theme }) {
         <span className={`text-[10px] font-semibold tracking-wider uppercase ${t.muted}`}>Profile</span>
       </div>
       <p className={`max-w-[14rem] pb-4 text-[11px] leading-snug ${t.muted}`}>
-        The head's own rings, up close. The eyes keep the colour the street gives them; the age and the undertone show on the street alone.
+        The head's own rings, up close. The eyes keep the colour the street gives them; the age, the undertone, facial hair short of a long beard and a prosthetic show on the street alone.
       </p>
     </div>
   )
@@ -348,8 +353,8 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
 
       <div className={`mt-3 border-t pt-3 ${t.rule}`}>
         {LOOK_SLOTS.map((slot) => {
-          // Under shirt sleeves the jacket is off: its cloth and its trim are not seen, so their rows are not shown.
-          if (worn.layer === LAYER.shirt && (slot === 'top' || slot === 'trim')) return null
+          // Under shirt sleeves the jacket is off: its cut, its cloth, its weave and its trim are not seen, so their rows are not shown.
+          if (worn.layer === LAYER.shirt && (slot === 'cut' || slot === 'top' || slot === 'topWeave' || slot === 'trim')) return null
           const options = lookOptions(body, slot, worn.layer)
           const current = worn[slot]
           if (isSlider(slot)) {
@@ -398,18 +403,36 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
                 </Fragment>
               )
             }
-            // The face view heads the face sliders.
+            // The face view heads the face sliders, then the face shapes (each sets the head and the seven sliders).
             if (slot === 'brow') {
+              const shape = faceShapeNameOf(worn)
               return (
                 <Fragment key={slot}>
                   <div className={`mb-3 mt-3 border-t pt-3 ${t.rule}`}><Face look={worn} t={t} /></div>
+                  <div className="mb-2 flex items-start gap-3" data-row="face-shape">
+                    <div className={`w-20 shrink-0 pt-1 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>Face shape</div>
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Face shape">
+                      {LOOK_FACE_SHAPES.map((f) => (
+                        <button
+                          key={f.name}
+                          type="button"
+                          role="radio"
+                          aria-checked={shape?.name === f.name}
+                          onClick={() => { const next = withFaceShape(worn, f.name); if (next) onChange(next) }}
+                          className={`rounded-full border px-2.5 py-0.5 text-[12px] capitalize ${shape?.name === f.name ? t.pillOn : t.pill}`}
+                        >
+                          {f.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   {row}
                 </Fragment>
               )
             }
             return <Fragment key={slot}>{row}</Fragment>
           }
-          return (
+          const pills = (
             <div key={slot} className="mb-2 flex items-start gap-3" data-slot={slot}>
               <div className={`w-20 shrink-0 pt-1 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>{slotLabel(slot, body, worn.layer)}</div>
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="radiogroup" aria-label={slotLabel(slot, body, worn.layer)}>
@@ -451,6 +474,60 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
               </div>
             </div>
           )
+          // The garments head the outer layer's rows (each sets the layer, its cut and its weave; the colours stay the look's).
+          if (slot === 'layer') {
+            const wearing = garmentOf(worn)
+            return (
+              <Fragment key={slot}>
+                <div className="mb-2 flex items-start gap-3" data-row="garment">
+                  <div className={`w-20 shrink-0 pt-1 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>Garment</div>
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Garment">
+                    {LOOK_GARMENTS.map((g) => (
+                      <button
+                        key={g.name}
+                        type="button"
+                        role="radio"
+                        aria-checked={wearing?.name === g.name}
+                        onClick={() => { const next = withGarment(worn, g.name); if (next) onChange(next) }}
+                        className={`rounded-full border px-2.5 py-0.5 text-[12px] ${wearing?.name === g.name ? t.pillOn : t.pill}`}
+                      >
+                        {g.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {pills}
+              </Fragment>
+            )
+          }
+          // The lower garments head the lower cut's rows, the ones the body wears (a skirt for the skirt suit, trousers
+          // for the rest): each sets the cut and, where it names one, the weave.
+          if (slot === 'bottomCut') {
+            const wearing = lowerGarmentOf(worn)
+            return (
+              <Fragment key={slot}>
+                <div className="mb-2 flex items-start gap-3" data-row="lowerGarment">
+                  <div className={`w-20 shrink-0 pt-1 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>{worn.body === 3 ? 'Skirts' : 'Trousers'}</div>
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="radiogroup" aria-label={worn.body === 3 ? 'Skirts' : 'Trousers'}>
+                    {LOOK_LOWER_GARMENTS.filter((g) => lowerGarmentFits(worn, g)).map((g) => (
+                      <button
+                        key={g.name}
+                        type="button"
+                        role="radio"
+                        aria-checked={wearing?.name === g.name}
+                        onClick={() => { const next = withGarment(worn, g.name); if (next) onChange(next) }}
+                        className={`rounded-full border px-2.5 py-0.5 text-[12px] ${wearing?.name === g.name ? t.pillOn : t.pill}`}
+                      >
+                        {g.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {pills}
+              </Fragment>
+            )
+          }
+          return pills
         })}
       </div>
 
