@@ -751,6 +751,10 @@ const SCENARIOS = {
       // Not a Peak candidate (a software adapter): every such device boots as it did before Peak.
       const nc = await p.eval(PEAK_STATE)
       check(nc.max === 4 && nc.timestamps === false && nc.peak === null, 'desktop: a device that is not a Peak candidate keeps the range Minimal..Ultra, no GPU timestamps and no Peak rule', `range ${nc.min}..${nc.max}, timestamps ${nc.timestamps}, peak ${JSON.stringify(nc.peak)}`)
+      // The hardware class: a software adapter in a desktop browser is a desktop (never a workstation: no Peak
+      // candidate), and the snapshot's quality carries the class the console names.
+      const hw = await p.eval(`(() => { const s = window.__SIM__.snapshot(); return { hardware: s.quality.hardware, p99: s.output.p99Ms, lanes: window.__SIM__.engine.sim.meta.agents } })()`)
+      check(hw.hardware === 'desktop' && Number.isFinite(hw.p99) && hw.lanes === 512, 'desktop: the hardware class is desktop, the snapshot carries p99 and the lanes are the page\'s ?crowd', JSON.stringify(hw))
 
       // Sloane's name question shows once the veil has finished fading, and its field takes the keyboard (Concierge.tsx).
       // booted() returns as the fade starts, and a click on the canvas leaves a focused field focused: on a runner slow
@@ -1204,6 +1208,10 @@ const SCENARIOS = {
       // By now the concierge has greeted, its name field holding the keyboard: skipped, so the tilde reaches the page.
       await p.eval(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Skip')?.click()`)
       check(await p.openConsole(), 'file: the tilde key opens the console')
+      // The hardware readout on the software adapter: a desktop (no Peak candidate), six rows, the window's percentiles.
+      const hw = await p.command('hardware', /^machine {3}/m)
+      check(/^class {5}desktop {2}profile \w+ {2}start \d \w+ {2}tiers 0\.\.4$/m.test(hw ?? '') && /^lanes {5}512 simulated {2}\(\d+ default for a desktop, 60000 ceiling\)$/m.test(hw ?? '') && /^frames {4}p50 [\d.]+ ms {2}p95 [\d.]+ ms {2}p99 [\d.]+ ms {2}\(\d+ frames in [\d.]+ s\)$/m.test(hw ?? ''),
+        'file: hardware names the desktop class, the page\'s 512 lanes and the governor\'s percentiles', (hw ?? '').split('\n').filter((l) => /^(class|lanes|frames) /.test(l.trim())).join(' | ').slice(0, 300))
       const kept = await p.command('ask file', KEPT, 60_000)
       check(p.choosers === 0 && FILE_PAGE.test(kept ?? '') && !/is kept in this page/.test(kept ?? ''),
         'file: ask file on a page opened from disk opens no picker, keeps nothing, and says a page opened from a file cannot run the model', `${p.choosers} picker(s); ${lastLine(kept)}`)
@@ -1357,12 +1365,16 @@ const SCENARIOS = {
       check(ran, 'lite: frames are drawn and the crowd runs')
       const hud = await p.eval(`document.body.innerText.includes('Lite')`)
       check(hud, 'lite: the HUD shows the tier as Lite')
+      check(q.hardware === 'phone', 'lite: the hardware class is phone (a lite profile sizes as a phone)', JSON.stringify(q))
       // The model in this page on the lite profile: picked from the Menu (the tap opens the picker), kept, loaded only
       // when asked, on the processor with the lite plan, the city held at Lite while it loads.
       const pick = await menuPick(p)
       check(pick.tapped && p.choosers === 1 && KEPT_ON_A_PHONE.test(pick.toast ?? ''), 'lite: Menu › Model file opens the picker from the tap and keeps the file, not loaded until asked',
         `${pick.tapped ? 'tapped' : 'no Menu item'}, ${p.choosers} picker(s); ${pick.toast}`)
       check(await menuConsole(p), 'lite: the Menu opens the console')
+      const hw = await p.command('hardware', /^machine {3}/m)
+      check(/^class {5}phone {2}profile lite {2}start -1 Lite {2}tiers -1\.\.0$/m.test(hw ?? '') && /^lanes {5}2500 simulated {2}\(2500 default for a phone, 60000 ceiling\)$/m.test(hw ?? ''),
+        'lite: hardware names the phone class, the lite profile and its 2,500 lanes', (hw ?? '').split('\n').filter((l) => /^(class|lanes) /.test(l.trim())).join(' | ').slice(0, 300))
       const above = await tierAbove(p, LITE_PLAN.heldTier)
       check(above.ok, 'lite: quality 0, then quality auto, runs the city at Minimal in auto, above the hold\'s cap', above.line)
       const load = await holdsWhile(p, () => p.command('ask file load', LOADED, 180_000))

@@ -59,10 +59,13 @@ test('engine: the profile takes ?lite, and decides the crowd and the fleet unles
   assert.match(CREATE, /const profile = profileDevice\(hints, requested\.lite\)\n\s+const lite = profile\.lite/)
   assert.match(CREATE, /const cars = requested\.cars \?\? defaultCars\(profile\)/)
   assert.match(CREATE, /Math\.min\(cars, streetCapacity\(streets, requested\.seed\)\)\) : cars,/)
-  assert.match(CREATE, /agents: empty \? AGENTS_RANGE\[0\] : requested\.agents \?\? defaultAgents\(profile\)/)
-  // The governor carries the flag to the console and the snapshot (QualityState.lite).
-  assert.match(CREATE, /new Governor\(\{ tier: profile\.startTier, auto: true, targetMs, pacerMs, lite, \.\.\.range \}\)/)
-  assert.match(CREATE, /new Governor\(\{ tier: options\.quality, auto: false, targetMs, pacerMs, lite, \.\.\.range \}\)/)
+  // The lanes: ?crowd, else the class's default (governor.ts defaultLanes, from the profile, the hardware class and the
+  // adapter's limits), never over the adapter's ceiling.
+  assert.match(CREATE, /const hardware = classifyHardware\(hints, profile, gpu\.limits, requested\.peak\)/)
+  assert.match(CREATE, /agents: empty \? AGENTS_RANGE\[0\] : Math\.min\(requested\.agents \?\? defaultLanes\(profile, hardware, gpu\.limits\), laneCeiling\(gpu\.limits\)\)/)
+  // The governor carries the flag and the class to the console and the snapshot (QualityState.lite, .hardware).
+  assert.match(CREATE, /new Governor\(\{ tier: profile\.startTier, auto: true, targetMs, pacerMs, lite, hardware, \.\.\.range \}\)/)
+  assert.match(CREATE, /new Governor\(\{ tier: options\.quality, auto: false, targetMs, pacerMs, lite, hardware, \.\.\.range \}\)/)
 })
 
 test('engine: a lite profile caps the post chain off as ?post=0 does, and no capped boot draws (compiles) the chain', () => {

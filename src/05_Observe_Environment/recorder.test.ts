@@ -290,7 +290,7 @@ function snapshot(over: { law1?: number; flips?: number; tier?: string; panic?: 
     },
     quality: { tier: 3, label: over.tier ?? 'High', auto: true, renderScale: 1, targetMs: 16.7 },
     input: { mode: over.mode ?? 'foot', nearVehicle: false },
-    output: { fps: 59.6, frameMs: 16.7, p50Ms: 16, p95Ms: 18, cpuMs: 4, gpuRenderMs: 3, gpuComputeMs: 0, physicsMs: 1, rapierMs: 0.4 },
+    output: { fps: 59.6, frameMs: 16.7, p50Ms: 16, p95Ms: 18, p99Ms: 20, cpuMs: 4, gpuRenderMs: 3, gpuComputeMs: 0, physicsMs: 1, rapierMs: 0.4 },
     customer: { name: 'Probe', clock: '17:05', daylight: 0.8, viewYaw: 0, district: 'Financial District · 3rd Ave & 4th St', speedKmh: 0, gear: 'N', x: 12.5, z: -3, heading: 1.2, signalEW: 'green', signalNS: 'red', signalRemaining: 10 },
   } as unknown as SipocSnapshot
 }

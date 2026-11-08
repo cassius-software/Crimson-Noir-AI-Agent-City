@@ -1,0 +1,238 @@
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
+# Why does this file exist? It is the cross-platform build matrix: one job per target of tools/build/matrix.mjs, each
+# on the one kind of runner that can build it (Windows for the Windows arm64 app and .msi, cross-compiled; Linux x64
+# and Linux arm64 machines for the .deb, .rpm and .AppImage of each; macOS for the universal .app and .dmg and for the
+# unsigned iOS .ipa; Linux with the Android SDK for the .apk; Linux for Crimson Noir OS's UEFI application and media,
+# x86-64 and aarch64, each baked a second time from a clean build and compared byte for byte, then booted in QEMU on
+# its own firmware: self-test, tutorial, terminal, power-off). Every
+# job runs the same command a person runs at home, `node tools/build/matrix.mjs --targets <id>`, and publishes what it
+# built as a workflow artifact named matrix-<id>, plus the script's report; a summary job lays the nine targets out in
+# the run's summary, including the one no job here builds (Windows x64, which windows-app.yml builds on every change).
+# On a v* tag the files also go onto the tag's GitHub Release, after build-release.yml has created it (the same wait
+# as windows-app.yml), all but the x86-64 media, which build-release.yml bakes twice, compares and publishes under
+# the same names. The iOS job is best effort:
+# Tauri's generated Xcode project is built with code signing off and may break with an Xcode change; its failure
+# does not fail the run. Nothing is signed (see the script's header).
+# It runs on a pull request that touches the shells or this tooling, on a v* tag, and by hand ("Run workflow", with a
+# tag to build and upload to, or none to build this ref for artifacts alone). Only GitHub's own actions run here.
+# What breaks if it is removed? Every platform but Windows is a page of instructions again, and a release carries
+# only the Windows app and the OS media.
+
+name: build-matrix
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/build-matrix.yml
+      - tools/build/**
+      - src-tauri/**
+      - package.json
+      - package-lock.json
+      - crimson_noir_os/boot/**
+      - crimson_noir_os/crates/**
+      - crimson_noir_os/tools/**
+      - crimson_noir_os/.cargo/**
+      - crimson_noir_os/Cargo.toml
+      - crimson_noir_os/Cargo.lock
+      - crimson_noir_os/containment.nix
+      - crimson_noir_os/containment.lock
+      - crimson_noir_os/NOTICE.txt
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: A v* tag whose commit to build and whose GitHub Release to upload to (empty builds this ref, artifacts only)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-matrix-${{ inputs.tag || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  RUST_TOOLCHAIN: '1.97.0'
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows-arm64
+            runner: windows-latest
+          - target: linux-x64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: macos-universal
+            runner: macos-15
+          - target: android-apk
+            runner: ubuntu-24.04
+          - target: ios-ipa
+            runner: macos-15
+            bestEffort: true
+          - target: uefi-x64
+            runner: ubuntu-24.04
+          - target: uefi-arm64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.bestEffort == true }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          rustc --version
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+            crimson_noir_os/target
+          key: build-matrix-${{ matrix.target }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('src-tauri/Cargo.lock', 'crimson_noir_os/Cargo.lock') }}
+          restore-keys: build-matrix-${{ matrix.target }}-${{ env.RUST_TOOLCHAIN }}-
+      - name: The Linux shell's libraries (WebKitGTK 4.1, GTK 3, the AppImage tools' needs)
+        if: startsWith(matrix.target, 'linux-')
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libssl-dev libxdo-dev libayatana-appindicator3-dev patchelf file
+      - name: The media tools (mtools, gdisk, xorriso), so the UEFI jobs make the .img and .iso too, and QEMU with the firmware that boots them
+        if: startsWith(matrix.target, 'uefi-')
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends mtools gdisk xorriso qemu-system-x86 ovmf qemu-system-arm qemu-efi-aarch64
+      - name: Java 17 and the NDK the runner carries, for the Android shell
+        if: matrix.target == 'android-apk'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Point Tauri at the runner's Android SDK and NDK
+        if: matrix.target == 'android-apk'
+        run: |
+          test -n "$ANDROID_HOME" || { echo "::error::no ANDROID_HOME on this runner"; exit 1; }
+          echo "NDK_HOME=${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --list_installed | grep -E 'build-tools|ndk' || true
+      - run: npm ci --no-audit --no-fund
+      - name: Build the target (the page once, then the shell)
+        # The cache restores src-tauri/target with the bundles of earlier versions; they go first, so the script
+        # collects only this version's files.
+        run: |
+          rm -rf src-tauri/target/release/bundle src-tauri/target/*/release/bundle
+          node tools/build/matrix.mjs --targets "${{ matrix.target }}" --out out
+      - name: Bake the UEFI media again from a clean build; the bytes must be the same
+        if: startsWith(matrix.target, 'uefi-')
+        working-directory: crimson_noir_os
+        run: |
+          case "${{ matrix.target }}" in
+            uefi-arm64) triple=aarch64-unknown-uefi; media=../out/uefi-arm64/crimson_noir_os-aarch64; efi=../out/uefi-arm64/BOOTAA64.EFI ;;
+            *) triple=x86_64-unknown-uefi; media=../out/uefi-x64/crimson_noir_os; efi=../out/uefi-x64/BOOTX64.EFI ;;
+          esac
+          cargo clean -p crimson_boot --release --target "$triple"
+          sh tools/build-image.sh "$RUNNER_TEMP/again" "$triple" > /dev/null
+          for f in img iso; do
+            cmp "$media.$f" "$RUNNER_TEMP/again/crimson_noir_os.$f" || { echo "::error::the .$f is not reproducible: a second clean bake differs"; exit 1; }
+          done
+          cmp "$efi" "target/$triple/release/crimson_boot.efi" || { echo "::error::the UEFI application is not reproducible"; exit 1; }
+          echo "a second clean bake gave the same bytes"
+      - name: Boot the disk image in QEMU (self-test, tutorial, terminal, power-off) and the ISO (self-test)
+        if: startsWith(matrix.target, 'uefi-')
+        working-directory: crimson_noir_os
+        run: |
+          if [ "${{ matrix.target }}" = uefi-arm64 ]; then arch=aarch64; media=../out/uefi-arm64/crimson_noir_os-aarch64; else arch=x86_64; media=../out/uefi-x64/crimson_noir_os; fi
+          python3 -I tools/boot_test.py "$media.img" --arch "$arch" --timeout 300 --wait "SELFTEST PASS" \
+            --step "wait:TUTORIAL 6 PASSED" --step 'type:\n' --step "wait:TERMINAL READY" \
+            --step 'type:golden\n' --step wait:MATCH --step 'type:halt\n' --step 'wait:POWER OFF' --step exit
+          python3 -I tools/boot_test.py "$media.iso" --arch "$arch" --timeout 300 --wait "SELFTEST PASS"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: matrix-${{ matrix.target }}
+          path: out/${{ matrix.target }}/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: matrix-report-${{ matrix.target }}
+          path: out/matrix.json
+          if-no-files-found: ignore
+
+  # The nine targets in one table, whatever each job did: built (with its files), failed, skipped, or no job here.
+  summary:
+    if: always()
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: matrix-report-*
+          path: reports
+      - name: Lay the matrix out in the run's summary
+        run: |
+          node tools/build/matrix.mjs --summary reports | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # On a v* tag: every file onto the tag's release. build-release.yml creates that release once its bake is done; this
+  # waits for it as windows-app.yml does, and creates it only when none exists after the wait. The x86-64 media stay
+  # build-release.yml's: it publishes BOOTX64.EFI and crimson_noir_os.img/.iso under the same names, baked twice and
+  # compared, so the build matrix's copies are not uploaded over them.
+  release:
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag, 'v'))
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: matrix-*
+          path: media
+      - name: Upload to the tag's release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          rm -rf media/matrix-report-* media/matrix-uefi-x64
+          # Every Tauri bundle's name starts with the product's, which has spaces: an array keeps each name whole.
+          mapfile -t files < <(find media -type f | sort)
+          [ ${#files[@]} -gt 0 ] || { echo "::error::no file to upload"; exit 1; }
+          printf '%s\n' "${files[@]}"
+          for i in $(seq 1 80); do
+            if gh release view "$TAG" > /dev/null 2>&1; then break; fi
+            echo "waiting for build-release.yml to create the release $TAG ($i)"; sleep 60
+          done
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" "${files[@]}" --clobber
+          else
+            echo "::warning::no release $TAG after the wait: creating it with the build matrix's files alone (build-release.yml adds the x86-64 OS media when it runs)"
+            gh release create "$TAG" "${files[@]}" --verify-tag --title "Crimson Noir Agent City $TAG" --prerelease \
+              --notes "The desktop and mobile shells from the build matrix (tools/build/matrix.mjs): unsigned; see MANUAL.md, The build matrix."
+          fi
