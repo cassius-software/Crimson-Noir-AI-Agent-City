@@ -40,9 +40,10 @@ import { watchLongTasks } from './longTasks.ts'
 import { buildWorld, createRenderer, FULL_WORLD, gpuBufferOf, LIGHT_TUNE_RANGE, LITE_WORLD, ndStopsFor, releaseGpu, WebGPUUnavailableError, type Gpu, type LightTuning, type World } from '../01_Initialize_World/world.ts'
 import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
 import { RegionPlaces, hollowLots, layoutOf, regionPhysics } from '../01_Initialize_World/region/regionWorld.ts'
+import { regionShopLots } from '../01_Initialize_World/region/shops.ts'
 import { regionWorkplaceLots } from '../01_Initialize_World/region/workplaces.ts'
 import { drawRooms, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
-import { orbitEye, shopAt, shops as cityShops, SHOP, type Shop } from '../01_Initialize_World/storefronts.ts'
+import { drawShops, orbitEye, shopAt, shops as cityShops, SHOP, type Shop } from '../01_Initialize_World/storefronts.ts'
 import { streetCapacity, streetGridOf, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { tallestBuilding, type RegionPack } from '../01_Initialize_World/region/pack.ts'
 import { LANDMARK } from '../01_Initialize_World/lakefront.ts'
@@ -485,7 +486,8 @@ export class Engine {
    */
   private readonly rooms: readonly Workplace[]
   /**
-   * The world's storefronts (01_Initialize_World/storefronts.ts): the city's five from its seed (a region has none yet).
+   * The world's storefronts (01_Initialize_World/storefronts.ts): the city's five from its seed, or a generated region's
+   * from its pack (region/shops.ts; none in a surveyed region).
    * The page tells which one the avatar stands in (the HUD's chip, E or B opens its catalogue) and circles the body
    * with the mirror camera while the catalogue is open.
    */
@@ -845,9 +847,11 @@ export class Engine {
       // A generated region's indoor workplaces (region/workplaces.ts): up to six lots of its street window near the start,
       // picked from the pack as it came, then hollowed out of a copy of it (regionWorld.ts hollowLots), which the page
       // draws with the rooms' boxes and paved floors and the worker walls; the worker gets the lots themselves and builds
-      // the same rooms from them. A surveyed region has no window and no lots: its copy is the pack.
+      // the same rooms from them. Its five storefronts (region/shops.ts) take the lots nearest the start after them and
+      // are hollowed the same way. A surveyed region has no window and no lots: its copy is the pack.
       const lots = pack && layout && streets ? regionWorkplaceLots(pack, layout, streets, spawn, options.seed) : []
-      const hollow = pack && layout ? hollowLots(pack, layout, lots) : null
+      const shopLots = pack && layout && streets ? regionShopLots(pack, layout, streets, spawn, options.seed, lots) : []
+      const hollow = pack && layout ? hollowLots(pack, layout, lots, shopLots) : null
       const world = buildWorld(gpu.renderer, options.seed, pack && layout && hollow ? { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan: hollow.plan, rooms: hollow.rooms } : null, lite ? LITE_WORLD : FULL_WORLD)
       // Players 1..3 (split screen) start beside player 0 along the sidewalk (the city's spawn sidewalk runs along z; a
       // region's along its street heading); the realm moves a spawn out of a building lot itself.
@@ -865,6 +869,7 @@ export class Engine {
         ragdoll: options.ragdoll !== false && !pack && !lite, craft: !lite,
         ...(spawns.length > 0 && { spawns }),
         ...(lots.length > 0 && { workplaces: lots }),
+        ...(shopLots.length > 0 && { shops: shopLots }),
       })
 
       // Start on the tier the device profile suggests (or the one the URL pins), before anything compiles:
@@ -976,8 +981,9 @@ export class Engine {
         canvas, gpu, world, crowd, sim, view, rigView, profile, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options,
         quality: { governor, targets, applied, mask, live }, places, landmark, streets,
         rooms: hollow ? hollow.rooms : workplaces(options.seed),
-        // The city's storefronts, hollowed into its boxes by city.ts (storefronts.ts hollowShops); none in a region yet.
-        shops: hollow ? [] : cityShops(options.seed),
+        // The city's storefronts, hollowed into its boxes by city.ts (storefronts.ts hollowShops), or a generated region's
+        // (regionWorld.ts hollowLots; none in a surveyed region).
+        shops: hollow ? hollow.shops : cityShops(options.seed),
         // The code dissolve's crowd amounts: allocated by the draws above like the frame's buffers, written the same way.
         crowdDissolve: gpuBufferOf(gpu.renderer, view0.dissolve),
         crowdLook,
@@ -1000,11 +1006,11 @@ export class Engine {
     }
   }
 
-  /** The minimap's layer in a region (its water, buildings and streets near a point, then its workplaces over the
-   * footprints they were hollowed from, as the city's map draws its own); null in the procedural city. */
+  /** The minimap's layer in a region (its water, buildings and streets near a point, then its workplaces and shops over
+   * the footprints they were hollowed from, as the city's map draws its own); null in the procedural city. */
   get mapLayer(): ((ctx: CanvasRenderingContext2D, x: number, z: number, radius: number, dark: boolean) => void) | null {
-    const p = this.places, rooms = this.rooms
-    return p ? (ctx, x, z, radius, dark) => { p.drawMap(ctx, x, z, radius, dark); drawRooms(ctx, rooms, x, z, dark, radius) } : null
+    const p = this.places, rooms = this.rooms, shops = this.shops
+    return p ? (ctx, x, z, radius, dark) => { p.drawMap(ctx, x, z, radius, dark); drawRooms(ctx, rooms, x, z, dark, radius); drawShops(ctx, shops, x, z, dark, radius) } : null
   }
 
   resize(): void {

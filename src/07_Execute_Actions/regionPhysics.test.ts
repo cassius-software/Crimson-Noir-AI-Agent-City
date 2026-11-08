@@ -11,7 +11,7 @@
  *   the city: its back wall stops the avatar and its doorway lets it in; and the hollowed pack has no wall left on a
  *   room's lot;
  * - the core audits a region against a slab that holds it, not the city's;
- * - the worker's door refuses a malformed region, and malformed workplaces each with its own reason.
+ * - the worker's door refuses a malformed region, malformed workplaces and malformed shops each with its own reason.
  * What breaks if it is removed? The avatar could walk through surveyed buildings, into the lake or off the map.
  */
 import assert from 'node:assert/strict'
@@ -264,4 +264,41 @@ test('the worker refuses malformed workplaces, each with its own reason, and han
   assert.equal((await answer(init(lots), take)).t, 'ready')
   assert.equal((await answer(init(undefined), take)).t, 'ready')
   assert.deepEqual(handed, [lots, []])
+})
+
+test('the worker refuses malformed shops, each with its own reason, and hands sound ones to the core', async () => {
+  const s = at(-150, -100)
+  const sound = cityStreetGrid()
+  sound.originX = 2000
+  sound.originZ = 2000
+  const rooms = [{ kind: 'roboticsLab', k: 52, m: 52, side: 0 }]
+  const shops = [{ kind: 'tailor', k: 53, m: 53, side: 1 }, { kind: 'designHouse', k: 55, m: 53, side: 2 }]
+  const init = (list: unknown, streets: unknown = sound) => ({ t: 'init' as const, seed: 1, cars: 0, agents: 256, boxes: [], furniture: { lamps: [], trees: [], signals: [] }, spawn: s, debug: false, region: regionPhysics(p, L), streets, workplaces: rooms, shops: list })
+  const answer = async (msg: unknown, create = async (o: Parameters<typeof SimCore.create>[0]) => SimCore.create(o, null)) => {
+    const posts: unknown[] = []
+    await createSimHost((m: unknown) => posts.push(m), create)(msg as SimInit)
+    return posts.at(-1) as { t: string; message?: string }
+  }
+  const refused = async (msg: unknown, reason: RegExp, why: string) => {
+    const last = await answer(msg)
+    assert.equal(last.t, 'error', why)
+    assert.match(last.message ?? '', reason, why)
+  }
+  await refused({ ...init(shops, null), workplaces: undefined }, /^init: shops need a region's street window$/, 'no street window')
+  await refused({ ...init(shops), region: null, workplaces: undefined }, /^init: shops need a region's street window$/, 'the city has its own')
+  await refused(init({ 0: shops[0] }), /^init: shops are a list of at most 5$/, 'not a list')
+  await refused(init([...shops, ...shops, ...shops]), /^init: shops are a list of at most 5$/, 'six')
+  await refused(init([{ ...shops[0], k: 49 }]), /^init: a shop stands on a lot of the street window$/, 'west of the window')
+  await refused(init([{ ...shops[0], m: 53.5 }]), /^init: a shop stands on a lot of the street window$/, 'between lots')
+  await refused(init([{ ...shops[0], side: -1 }]), /^init: a shop's doorway faces one of its lot's four streets \(0 to 3\)$/, 'no such street')
+  await refused(init([{ ...shops[0], kind: 'casino' }]), /^init: a shop is one of the five kinds, once each$/, 'an unknown kind')
+  await refused(init([shops[0], { ...shops[1], kind: 'tailor' }]), /^init: a shop is one of the five kinds, once each$/, 'two tailors')
+  await refused(init([{ ...shops[0], k: 52, m: 52 }]), /^init: one shop or workplace to a lot$/, 'on the workplace\'s lot')
+  await refused(init([shops[0], { ...shops[1], k: 53 }]), /^init: one shop or workplace to a lot$/, 'two on a lot')
+  // Sound ones reach the core as they were sent; none is no shops.
+  const handed: unknown[] = []
+  const take = async (o: Parameters<typeof SimCore.create>[0]) => { handed.push(o.shops); return SimCore.create(o, null) }
+  assert.equal((await answer(init(shops), take)).t, 'ready')
+  assert.equal((await answer(init(undefined), take)).t, 'ready')
+  assert.deepEqual(handed, [shops, []])
 })

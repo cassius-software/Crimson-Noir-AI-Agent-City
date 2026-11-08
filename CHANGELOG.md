@@ -35,8 +35,17 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   never on a workplace lot, the podium gone, every fixture inside the walls, the walk-in and the camera's circle
   clear, the real Rapier avatar walking from the sidewalk to the fitting spot), `storeCatalog.test.ts` (ids, the
   deeds' levels and prices, every line on sale wearable by every preset body, the gate's verdicts and exact millions,
-  the stored record's validation, the shopkeeper on the practice purse and on a stand-in for the progression keeper) and `storeWiring.test.ts`. The city only for now;
-  the lakefront metropolis has none yet.
+  the stored record's validation, the shopkeeper on the practice purse and on a stand-in for the progression keeper) and `storeWiring.test.ts`.
+- **The five shops in Lakefront Metro too.** A generated region's street window gets the same five storefronts
+  (`src/01_Initialize_World/region/shops.ts`), on the lots nearest the visitor's start once its workplaces have taken
+  theirs, from the same candidates as the workplaces (`region/workplaces.ts` `lotCandidates`, shared now): a doorway on
+  a two-way street with a sidewalk the start can walk to, never the landmark's lot or a lot under water.
+  `regionWorld.ts` `hollowLots` hollows a shop's lot as it hollows a room's (the slab in the podium's height and
+  finish, a tower carried on it, the floor and forecourt paved), the worker takes the lots in `SimInit.shops` and
+  refuses malformed ones, each with its reason, and the region's minimap draws the shops. Pinned by
+  `region/shops.test.ts` (two seeds, every zone: five shops, never a workplace's lot, the nearest lots first, the
+  hollowing and the workplaces unchanged by it), `regionPhysics.test.ts` (the worker's refusals) and
+  `storeWiring.test.ts`.
 
 - **Every street lamp near you is a real light, and every workplace has a lit ceiling.** The city's night lighting
   moves to three r186's clustered (Forward+) lighting (`src/01_Initialize_World/cityLights.ts`): the lamps' point

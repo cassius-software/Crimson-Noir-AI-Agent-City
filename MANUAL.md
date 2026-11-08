@@ -232,6 +232,14 @@ workplace, with a counter and a mirror at the back and its own fixtures: mannequ
 the tattoo studio, gait rails at the atelier, display cases at the watch shop, and seven scale models of the city's
 homes on plinths at the design house. The minimap draws them in teal. Pedestrians walk past them, not in.
 
+Lakefront Metro has the same five shops (`01_Initialize_World/region/shops.ts`), on the lots of its street window
+nearest where you start, once its workplaces have taken theirs: every doorway on a two-way street with a sidewalk you
+can walk to from the start, never on the landmark's lot or in the lake. Each lot is hollowed as a workplace's is
+(`regionWorld.ts` `hollowLots`): what stood there is put out of sight, the ceiling slab takes the podium's height and
+finish, a tower that stood on the podium is carried on the slab, and the floor and the forecourt are paved. The
+physics worker is handed the same lots and builds the same glass, so a car left in a shop puts its driver down clear
+of it. The surveyed region has no street window, and no shops.
+
 On foot inside one, the HUD shows **Browse** and the shop's name. E, B, the pad's south face button or a tap on that
 chip opens the shop's card (`07_Execute_Actions/StoreCard.tsx`); near a car, E keeps opening its door, and B still
 opens the card. While the card is open you stand on the fitting spot facing the door, and the camera leaves your head
@@ -252,7 +260,7 @@ at once. An owned line you are not wearing has **Wear**. What you bought and you
   designs and inks, prosthetic limbs, the hearing processor, watches, the lapel pin, the umbrella, headphones) are
   listed as on order and go on sale when the wardrobe's update adds those slots. The design house's furniture and its
   seven property deeds (level 1 to 20, free to 4,500,000 credits) wait for the properties.
-- **Limits.** The procedural city only: the lakefront metropolis has no shops yet. The wardrobe card is not gated by
+- **Limits.** The wardrobe card is not gated by
   what you bought; it still offers everything the crowd wears. Putting on a headset closes the card. A pad has no B,
   so near a car the pad's south button opens the car's door and the card opens from the chip (a click or a tap).
 

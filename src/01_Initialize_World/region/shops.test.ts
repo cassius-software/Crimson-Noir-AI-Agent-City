@@ -1,0 +1,151 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
+/**
+ * Why does this file exist? Lakefront Metro's five storefronts are chosen from its pack (region/shops.ts) on a street
+ * window that has dropped streets, dead ends and water, after its workplaces. These tests hold the choice to its
+ * promises on the real generated map (two seeds, the five zones each): five lots of the window, never a workplace's,
+ * the landmark's or one under water, each with its doorway on a two-way street with a sidewalk whose corner the visitor
+ * can walk to, the kinds in order, the nearest lots first, the same lots every time and the pack untouched. And they
+ * hold the hollowing with shops (regionWorld.ts hollowLots): the shop lots' buildings put out of sight, a shop on each
+ * built as storefronts.ts builds it with its slab in the podium's height and finish, the tower carried, the floor and
+ * forecourt paved, the workplaces exactly as they were without shops, and a shop refused on a workplace's lot.
+ * What breaks if it is removed? A shop could open onto a missing street or the lake, take a workplace's lot, or stand
+ * inside a building still drawn round it in the map a returning visitor lands in, and only a GPU would show it.
+ */
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { registerHooks } from 'node:module'
+import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
+import { CITY, STYLE } from '../city.ts'
+import { ROOM, targetCorner, toWorld, type WorkplaceLot } from '../interiors.ts'
+import { ZONE, generateLakefront } from '../lakefront.ts'
+import { packOf } from '../lakefrontPack.ts'
+import { SHOP_KINDS, shopsAt, type ShopLot } from '../storefronts.ts'
+import { polygonAt, polygonCount, tallestBuilding, type RegionPack } from './pack.ts'
+import { regionShopLots } from './shops.ts'
+import { SEG, streetGridOf, type StreetGrid } from './streets.ts'
+import { buildingLot, cornerComponent, cornerKey, cornerNear, frontOf, lotCandidates, regionWorkplaceLots, slabPodium, windowLotBuildings } from './workplaces.ts'
+
+// Vite's `?raw` import, for Node: regionWorld.ts imports a module that takes WGSL that way (workplaces.test.ts's hook).
+registerHooks({
+  load(url, context, nextLoad) {
+    if (!url.endsWith('.wgsl?raw')) return nextLoad(url, context)
+    const text = readFileSync(fileURLToPath(url.slice(0, -'?raw'.length)), 'utf8')
+    return { format: 'module', source: `export default ${JSON.stringify(text)}`, shortCircuit: true }
+  },
+})
+const { RegionPlaces, buildingStyle, hollowLots, layoutOf } = await import('./regionWorld.ts')
+
+const P = CITY.pitch
+interface Window { seed: number; zone: string; pack: RegionPack; layout: ReturnType<typeof layoutOf>; start: { x: number; z: number }; g: StreetGrid; lots: WorkplaceLot[]; shops: ShopLot[] }
+const WINDOWS: Window[] = [1337, 7].flatMap((seed) => {
+  const map = generateLakefront(seed, 64)
+  return Object.entries(ZONE).filter(([name]) => name !== 'lake').map(([zone, z]) => {
+    const pack = packOf(map, z)
+    const layout = layoutOf(pack)
+    const start = new RegionPlaces(pack, layout).spawn({ x: layout.offset.x, z: layout.offset.z })
+    const g = streetGridOf(pack, layout.offset, start)!
+    const lots = regionWorkplaceLots(pack, layout, g, start, seed)
+    return { seed, zone, pack, layout, start, g, lots, shops: regionShopLots(pack, layout, g, start, seed, lots) }
+  })
+})
+const local = (w: Window, l: { k: number; m: number }) => ({ i: l.k - w.g.originX / P, j: l.m - w.g.originZ / P })
+const key = (l: { k: number; m: number }) => `${l.k},${l.m}`
+const pointIn = (x: number, z: number, ring: readonly (readonly [number, number])[]): boolean => {
+  let c = false
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, zi] = ring[i], [xj, zj] = ring[j]
+    if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) c = !c
+  }
+  return c
+}
+
+test('five lots of the window after the workplaces, never one of theirs, the landmark\'s or the lake; each doorway on a two-way street the visitor can walk to; the kinds in order; the same every time; the pack untouched', () => {
+  for (const w of WINDOWS) {
+    const at = `seed ${w.seed} ${w.zone}`
+    const { shops, g } = w
+    assert.equal(shops.length, SHOP_KINDS.length, `${at}: ${shops.length} shops`)
+    assert.deepEqual(shops.map((s) => s.kind), [...SHOP_KINDS], `${at}: the kinds in order`)
+    const taken = new Set(w.lots.map(key))
+    assert.equal(new Set(shops.map(key)).size, shops.length, `${at}: every lot once`)
+    const reach = cornerComponent(g, cornerNear(g, w.start))
+    const tallest = tallestBuilding(w.pack)!
+    for (const s of shops) {
+      assert.ok(!taken.has(key(s)), `${at}: the ${s.kind} is not on a workplace's lot`)
+      const { i, j } = local(w, s)
+      assert.ok(Number.isInteger(i) && Number.isInteger(j) && i >= 0 && j >= 0 && i < g.blocks && j < g.blocks, `${at}: the ${s.kind} is in the window`)
+      assert.equal(frontOf(g, i, j, s.side), SEG.walk | SEG.drive, `${at}: the ${s.kind}'s doorway is on a two-way street with a sidewalk`)
+      const t = targetCorner({ k: i, m: j, side: s.side })
+      assert.ok(reach.has(cornerKey(t)), `${at}: the ${s.kind}'s doorway is reachable from the start`)
+      assert.ok(!(Math.floor((tallest.x + w.layout.offset.x) / P) === s.k && Math.floor((tallest.z + w.layout.offset.z) / P) === s.m), `${at}: not the landmark's lot`)
+      const cx = (s.k + 0.5) * P - w.layout.offset.x, cz = (s.m + 0.5) * P - w.layout.offset.z
+      for (let p = 0; p < polygonCount(w.pack.water); p++) assert.ok(!polygonAt(w.pack.water, p).some((r) => pointIn(cx, cz, r)), `${at}: the ${s.kind} is on dry land`)
+    }
+    const before = JSON.stringify(w.pack)
+    assert.deepEqual(regionShopLots(w.pack, w.layout, g, w.start, w.seed, w.lots), shops, `${at}: the same lots again`)
+    assert.equal(JSON.stringify(w.pack), before, `${at}: the pack is only read`)
+  }
+  assert.notDeepEqual(WINDOWS[0].shops, WINDOWS[5].shops, 'another seed, other shops')
+})
+
+test('the shops stand where a visitor finds them: no lot left out is nearer the start than a lot chosen', () => {
+  for (const w of WINDOWS) {
+    const at = `seed ${w.seed} ${w.zone}`
+    const taken = new Set(w.lots.map(key))
+    const K0 = w.g.originX / P, M0 = w.g.originZ / P
+    const all = lotCandidates(w.pack, w.layout, w.g, w.start).filter((c) => !taken.has(`${K0 + c.i},${M0 + c.j}`))
+    const chosen = new Set(w.shops.map(key))
+    const ringOf = new Map(all.map((c) => [`${K0 + c.i},${M0 + c.j}`, c.ring]))
+    const farthest = Math.max(...w.shops.map((s) => ringOf.get(key(s))!))
+    const nearestLeft = Math.min(...all.filter((c) => !chosen.has(`${K0 + c.i},${M0 + c.j}`)).map((c) => c.ring))
+    assert.ok(farthest <= nearestLeft, `${at}: a shop ${farthest} rings out, a lot left ${nearestLeft} out`)
+    assert.ok(farthest <= 3, `${at}: every shop within three lots of the start (${farthest})`)
+  }
+})
+
+test('hollowing with the shops: their buildings hidden, a shop on each in its podium\'s height and finish, the tower carried, the floors paved; the workplaces as they were', () => {
+  let carried = 0
+  for (const w of WINDOWS) {
+    const at = `seed ${w.seed} ${w.zone}`
+    const plain = hollowLots(w.pack, w.layout, w.lots)
+    const h = hollowLots(w.pack, w.layout, w.lots, w.shops)
+    assert.deepEqual(plain.shops, [], `${at}: no shop lots, no shops`)
+    assert.deepEqual(h.rooms, plain.rooms, `${at}: the workplaces as they were`)
+    // Every building on a shop lot or a room's is hidden, and no other.
+    const chosen = new Set([...w.lots, ...w.shops].map(key))
+    for (let i = 0; i < w.pack.buildings.height.length; i++) {
+      const on = buildingLot(w.pack, w.layout.offset, i)
+      assert.equal(h.pack.buildings.height[i], on && chosen.has(`${on.K},${on.M}`) ? 0 : w.pack.buildings.height[i], `${at}: building ${i}`)
+    }
+    // Each shop is the storefront shopsAt builds on its lot, with the podium's height and finish for its slab.
+    const on = windowLotBuildings(w.pack, w.layout.offset, w.g)
+    const want = shopsAt(w.shops, (k, m) => {
+      const { i, j } = local(w, { k, m })
+      const p = slabPodium(on[j * w.g.blocks + i])
+      return p ? { top: Math.max(p.height, ROOM.height + 0.3), style: buildingStyle(w.pack, w.layout, p.i) } : { top: ROOM.height + 0.3, style: STYLE.mixed }
+    })
+    assert.deepEqual(h.shops, want, `${at}: the shops`)
+    const inShop = new Set(h.shops.flatMap((s) => [...s.shell, ...s.furniture]))
+    for (const b of inShop) assert.ok(h.plan.includes(b), `${at}: every shop box is drawn`)
+    // What the shops add to the plan beyond their own boxes is what stood above their slabs, carried.
+    const extra = h.plan.length - plain.plan.length - inShop.size
+    assert.ok(extra >= 0, `${at}: ${extra}`)
+    carried += extra
+    // The floors: the rooms' as before, then each shop's lot and its forecourt.
+    const rect = (a: { x: number; z: number }, b: { x: number; z: number }) => ({ x0: Math.min(a.x, b.x), z0: Math.min(a.z, b.z), x1: Math.max(a.x, b.x), z1: Math.max(a.z, b.z) })
+    const edge = CITY.pitch / 2 - 3.3 - 2.2
+    assert.deepEqual(h.floors, [...plain.floors, ...h.shops.flatMap((s) => [
+      rect(toWorld(s, -CITY.lotHalf, -CITY.lotHalf), toWorld(s, CITY.lotHalf, CITY.lotHalf)),
+      rect(toWorld(s, CITY.lotHalf, -2.5), toWorld(s, edge, 2.5)),
+    ])], `${at}: the floors`)
+  }
+  assert.ok(carried > 0, 'something stood above a shop\'s slab')
+})
+
+test('a shop is refused on a workplace\'s lot, and on another shop\'s', () => {
+  const w = WINDOWS[0]
+  assert.throws(() => hollowLots(w.pack, w.layout, w.lots, [{ ...w.shops[0], k: w.lots[0].k, m: w.lots[0].m }]), /one room or shop to a lot/)
+  assert.throws(() => hollowLots(w.pack, w.layout, w.lots, [w.shops[0], { ...w.shops[1], k: w.shops[0].k, m: w.shops[0].m }]), /one room or shop to a lot/)
+})

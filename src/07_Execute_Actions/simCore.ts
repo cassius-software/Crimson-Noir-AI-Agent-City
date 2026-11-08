@@ -33,7 +33,7 @@ import { Avatar } from './player.ts'
 import { Sanctuary, type Nudge } from './sanctuary.ts'
 import { Fleet, type Person, type Vehicle } from './vehicles.ts'
 import { exitPoint, HELD_CARS, type GlassRoom } from './carRig.ts'
-import { shops } from '../01_Initialize_World/storefronts.ts'
+import { shops, shopsAt } from '../01_Initialize_World/storefronts.ts'
 import { TrackFleet } from './trackFleet.ts'
 import { RagdollRealm } from './ragdollRealm.ts'
 import { JointRealm } from './jointRealm.ts'
@@ -238,9 +238,9 @@ export class SimCore {
   private constructor(physics: Physics, o: SimCoreOptions, crowd: CrowdSensor | null, rooms: readonly Workplace[]) {
     this.#physics = physics
     this.#crowd = crowd
-    // The city's shops are its seed's like its rooms (a region has none yet); a car driven into one leaves its driver
-    // clear of the glass and the fixtures as a workplace does.
-    this.#glass = [...rooms, ...(o.region ? [] : shops(o.seed))]
+    // The city's shops are its seed's like its rooms, a generated region's are the lots it was handed (none in a
+    // surveyed region); a car driven into one leaves its driver clear of the glass and the fixtures as a workplace does.
+    this.#glass = [...rooms, ...(o.region ? (o.streets && o.shops?.length ? shopsAt(o.shops) : []) : shops(o.seed))]
     this.#debug = o.debug === true
     const r = o.region?.bounds
     this.#auditor = r

@@ -4,7 +4,8 @@
 /**
  * Why does this file exist? It pins the page-side wiring of the storefronts (01_Initialize_World/storefronts.ts), which
  * the engine, the HUD and App carry and Node cannot run: the city's buildings are hollowed for the shops after the
- * workplaces, the worker's exit rule knows the shops' glass, the engine keeps the city's shops (a region has none yet)
+ * workplaces, the worker's exit rule knows the shops' glass (the city's, or a generated region's lots), the engine
+ * keeps the city's shops or the region's (region/shops.ts, hollowed by regionWorld.ts hollowLots and handed to the worker)
  * and opens a shop's card from E (a car in reach keeps E for its door) or B, the mirror camera circles the body while
  * the card is open and ends when the avatar leaves the shop, the HUD shows the shop's chip and draws the shops on the
  * minimap, and App opens the card from the engine and the chip, suspends the game's input while it is open, wears a
@@ -29,7 +30,7 @@ test('the city and the worker: shops hollowed after the workplaces; a car left i
   const city = flat(read('../01_Initialize_World/city.ts'))
   before(city, 'hollowWorkplaces(seed, out)', 'hollowShops(seed, out)', 'the workplaces first, so the shops pick among the lots left')
   const core = flat(read('./simCore.ts'))
-  assert.ok(core.includes('this.#glass = [...rooms, ...(o.region ? [] : shops(o.seed))]'), 'the city\'s shops, none in a region yet')
+  assert.ok(core.includes('this.#glass = [...rooms, ...(o.region ? (o.streets && o.shops?.length ? shopsAt(o.shops) : []) : shops(o.seed))]'), 'the city\'s shops, or the region\'s lots')
   assert.ok(core.includes('exitPoint(t.x, t.z, h, this.#glass)'))
   // The network room's authority puts a driver down by the same rooms, or it refuses every exit at a shop.
   const garage = flat(read('../10_Network/garage.node.ts'))
@@ -38,7 +39,12 @@ test('the city and the worker: shops hollowed after the workplaces; a car left i
 
 test('the engine: the city\'s shops kept; E opens a shop\'s card unless a car is in reach, B always; the mirror camera ends outside the shop', () => {
   const src = flat(read('./engine.ts'))
-  assert.ok(src.includes('shops: hollow ? [] : cityShops(options.seed),'), 'the city\'s shops; a region has none yet')
+  assert.ok(src.includes('shops: hollow ? hollow.shops : cityShops(options.seed),'), 'the city\'s shops, or the region\'s')
+  // A region's shops: picked after its workplaces, never on one of their lots, hollowed with them, the same lots to the worker.
+  before(src, 'const lots = pack && layout && streets ? regionWorkplaceLots(', 'const shopLots = pack && layout && streets ? regionShopLots(pack, layout, streets, spawn, options.seed, lots) : []', 'the workplaces first')
+  assert.ok(src.includes('hollowLots(pack, layout, lots, shopLots)'))
+  assert.ok(src.includes('...(shopLots.length > 0 && { shops: shopLots }),'), 'the worker builds the same glass')
+  assert.ok(src.includes('drawRooms(ctx, rooms, x, z, dark, radius); drawShops(ctx, shops, x, z, dark, radius)'), 'the region\'s minimap shows its shops')
   assert.ok(src.includes("if (input.take('interact') && !this.browse(true)) this.interact()"), 'E is the shop\'s only when browse took it')
   assert.ok(src.includes("if (input.take('browse')) this.browse()"), 'B asks without the car check')
   assert.ok(src.includes('if (i < 0 || (interact && this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE) >= 0)) return false'), 'a car in reach keeps E (only E) for its door')
