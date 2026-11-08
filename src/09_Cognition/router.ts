@@ -9,7 +9,7 @@
  *   servers first, then a model file kept in this page, then the Claude gateway), kept for the visit and looked for
  *   again when it stops answering (and at `ask` alone); a model server installed with its defaults is used with
  *   nothing set at the console, at the newer default addresses too (KNOWN_SERVERS: llama-server's 9931, vLLM's 8000,
- *   SGLang's 30000), asked with the usual ones and used only when none answers at its usual one;
+ *   SGLang's 30000), asked with the usual ones and used only when none lists a text model at its usual one;
  * - `claude`: the Claude Messages API through a gateway on this machine (claudeApi.ts), with the key the operator
  *   gives the console;
  * - `ollama`: a local model server on this machine speaking the Ollama API (localCompute.ts generate);
@@ -89,8 +89,8 @@ export const VLLM_SERVER = 'http://localhost:8000'
  * The addresses a provider's server listens at when it is started with its own defaults, the provider's default
  * first: llama-server moved from 8080 to 9931 in build b11521 (October 2026); vLLM listens on 8000 and SGLang on
  * 30000. A provider set to one of these is asked at its others too by auto's look (the second round), at the same
- * time as the first, and they are used only when no server answers with a model at the address its provider is set
- * to. Ollama has one.
+ * time as the first, and they are used only when no server lists a model that writes text at the address its
+ * provider is set to. Ollama has one.
  */
 export const KNOWN_SERVERS: Readonly<Partial<Record<Found, readonly string[]>>> = Object.freeze({
   llamacpp: Object.freeze([LLAMACPP_SERVER, 'http://localhost:9931']),
@@ -103,6 +103,16 @@ export const INPAGE_SERVER = 'this page'
 /** Why the stand-in for the in-page provider cannot answer: the host handed the router no runtime for one. */
 export const NO_INPAGE_RUNTIME = 'no in-page runtime here'
 export const isProvider = (v: unknown): v is Provider => (PROVIDERS as readonly unknown[]).includes(v)
+
+/** The port an address on this machine listens at (a missing port is the scheme's own); '' when it is no address. */
+const portOf = (url: string): string => {
+  try {
+    const u = new URL(url)
+    return u.port || (u.protocol === 'https:' ? '443' : '80')
+  } catch {
+    return ''
+  }
+}
 
 /**
  * What the router keeps between visits: the provider, the Claude provider's own settings, each local provider's (the
@@ -368,14 +378,15 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
   type Elsewhere = { readonly p: Found; readonly url: string; readonly from: string }
   /**
    * The second round of a look (KNOWN_SERVERS): each local provider set to one of its known addresses, at its others
-   * the look does not ask already (the gateway's address included), in AUTO_ORDER and each list's order. An address set
-   * to anything else is the operator's: none.
+   * the look does not ask already (the gateway's address included), in AUTO_ORDER and each list's order. Every address
+   * here is on this machine, so one is asked already when its port is (localhost, 127.0.0.1 and [::1] alike). An
+   * address set to anything else is the operator's: none.
    */
   const secondRound = (): Elsewhere[] => {
-    const asked = [...LOOK_PHASES[0], 'claude' as const].map((p) => byName(p).settings().server)
+    const asked = new Set([...LOOK_PHASES[0], 'claude' as const].map((p) => portOf(byName(p).settings().server)))
     return LOOK_PHASES[0].flatMap((p) => {
       const known = KNOWN_SERVERS[p]; const from = byName(p).settings().server
-      return known?.includes(from) ? known.filter((url) => !asked.includes(url)).map((url) => ({ p, url, from })) : []
+      return known?.includes(from) ? known.filter((url) => !asked.has(portOf(url))).map((url) => ({ p, url, from })) : []
     })
   }
   /**
@@ -414,9 +425,9 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
    * (localText: not an embedding model, not one of Ollama's cloud models); only when none does is the model file kept
    * in this page asked (it makes no request and loads nothing: it lists what is kept, or says why it cannot run here),
    * and only when that has none is the Claude gateway asked, since it asks the Claude API. With the servers go the
-   * newer default addresses of the providers still set to a known one (secondRound), asked at the same time so they
-   * add no wait, read only when the servers at their own addresses gave nothing usable (adopt), and called off once
-   * one did. An Ollama whose model the operator never chose (the default, or one auto chose before) but which lacks it is given
+   * newer default addresses of the providers still set to a known one (secondRound), asked at the same time (the
+   * look still waits at most `lookMs` for both rounds), read only when the servers at their own addresses gave nothing
+   * usable (adopt), and called off once the first round has settled with a text model. An Ollama whose model the operator never chose (the default, or one auto chose before) but which lacks it is given
    * the default if it has it now, else the first such model. Throws the 'offline' failure (the script stands in for
    * it) when none answers, naming why each server it heard from would not do; the page's own model is named only when
    * a file is kept.
@@ -457,7 +468,8 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
     for (const group of LOOK_PHASES) {
       const within = (): AbortSignal => (signal ? AbortSignal.any([signal, AbortSignal.timeout(lookMs)]) : AbortSignal.timeout(lookMs))
       const pending = Promise.all(group.map((p) => listOf(p, within()).then((names): string[] | unknown => names, (e: unknown) => e)))
-      // The second round goes with the first, in each provider's own wire format, and is called off once it is not needed.
+      // The second round goes with the first, in each provider's own wire format, and is called off once the first round
+      // has settled (with a text model, or with nothing usable and the second round read).
       const off = new AbortController()
       const others = group === LOOK_PHASES[0] && second.length
         ? Promise.all(second.map(({ p, url }) => installedModels(fetchFn, url, AbortSignal.any([within(), off.signal]), byName(p).settings().api === 'generate' ? 'generate' : 'chat').then((names): string[] | unknown => names, (e: unknown) => e)))

@@ -1586,17 +1586,18 @@ them that answers (`auto`):
   below), then the Claude gateway (`http://localhost:8089`), each at the address its own provider is set to. The
   three on this machine are asked for their models at once, each for at most 2 s, and the first in that order with a
   model that writes text answers (embedding, reranking and speech models are passed over, by name). With them go
-  the newer default addresses, asked at the same moment so they add no wait: a llama.cpp server at
+  the newer default addresses, asked at the same moment (the look still waits at most 2 s for both): a llama.cpp server at
   `http://localhost:9931` (llama-server's default since build b11521, October 2026), then vLLM at
   `http://localhost:8000` and SGLang at `http://localhost:30000` for the OpenAI-compatible provider. These are used
-  only when none of the three has a text model (and called off once one does). The first that lists a text model
+  only when none of the three has a text model (and called off once the three have been heard and one has). The first that lists a text model
   answers and is kept as that provider's address, as `ask server` would keep it: the next visit asks it first (and
   the old default goes into this second round, so auto finds it again if the server moves back), and `ask provider
   openai` or `ask provider llamacpp` uses it too until `ask server <url>` sets another. The second round never looks
   past an address you set that is not one of these, never moves a provider to a server that does not list the model
   you chose for it with `ask model` (the reason says so), and never asks the gateway's address. Nothing listening
-  there is the usual case, and port 8000 is many a web server's, so the reason names only a server there that
-  refuses this page or has no text model. Only when neither finds one is the page's own model considered, and it is asked nothing: it is found when a file is kept and chosen
+  there is the usual case, and port 8000 is many a web server's, so the reason names a server there only when it
+  refuses this page, has no text model or lacks the model you chose (and, on an isolated page, vLLM's flag when
+  nothing answered on 8000). Only when neither finds one is the page's own model considered, and it is asked nothing: it is found when a file is kept and chosen
   (picking a file chooses it) and this browser can run it, and it is not loaded until the ask itself. Files kept with
   none chosen are passed over with a note that says how to choose one, and with nothing kept the page's model goes
   unmentioned. Only when that finds nothing is the gateway asked, since it asks the Claude API. A server that is
@@ -1766,7 +1767,7 @@ any of them.
   or `ask api` changed since). Under `auto`, an
   ask with nothing found yet, an ask whose server stops answering before any of its answer arrived, and `ask` alone
   first ask the three model servers above for their lists of models, and with them up to three more at the newer
-  default addresses (9931, 8000 and 30000, or a provider's old default once auto has moved it), all on this machine,
+  default addresses (9931, 8000 and 30000, or a provider's old default once it is set to one of these), all on this machine,
   then read the list of model files kept in this page (no request), and ask the Claude gateway (which asks the
   Claude API) only when none of them has a model that writes text. No provider can leave the machine: every one that addresses a server asks the one gate
   (`02_Define_The_Rules/airgap.ts loopbackServer`) before anything is sent, and the fetch they are handed is the

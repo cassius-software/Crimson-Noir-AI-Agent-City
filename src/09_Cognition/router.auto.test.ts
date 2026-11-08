@@ -6,7 +6,7 @@
  * first model server answering on this machine in AUTO_ORDER (Ollama, llama.cpp, an OpenAI-compatible server such as
  * LM Studio, then a model file kept in this page, then the Claude gateway) and answers with it; it asks the newer
  * default addresses with them (llama-server's 9931, vLLM's 8000, SGLang's 30000), never past an address the operator
- * set that is not one of the known ones, and uses them only when none answers at its own address, keeping the one
+ * set that is not one of the known ones, and uses them only when none lists a text model at its own address, keeping the one
  * found as that provider's; it passes over a
  * server that is down, hangs, refuses this page or has no model that writes text, and says why; it gives an Ollama
  * without the default model the first text model it has; it looks again when the one it found stops answering, but
@@ -38,7 +38,7 @@ type Server = 'down' | 'refuses' | 'hangs' | 'web' | readonly string[]
 
 /** A machine of model servers by port (11434 Ollama, 8080 llama.cpp, 1234 LM Studio, 8089 the Claude gateway), noting every request. */
 function machine(servers: Record<string, Server>) {
-  const calls: { url: string; body: { model?: string } | null }[] = []
+  const calls: { url: string; body: { model?: string } | null; signal?: AbortSignal }[] = []
   const f: FetchLike = async (url, init) => {
     const port = new URL(url).port
     const s = servers[port] ?? 'down'
@@ -47,7 +47,7 @@ function machine(servers: Record<string, Server>) {
       if (s === 'down') throw new TypeError('Failed to fetch')
       return new Response(null, { status: 200 })
     }
-    calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : null })
+    calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : null, signal: init?.signal ?? undefined })
     if (s === 'down' || s === 'refuses') throw new TypeError('Failed to fetch')
     if (s === 'hangs') {
       return new Promise<Response>((_, reject) => {
@@ -113,7 +113,8 @@ test('auto looks in AUTO_ORDER: the servers on this machine at once, the first i
   assert.equal(s.server, DEFAULT_SERVER)
   assert.equal(s.key, undefined, 'no key row while a local model answers')
   // The look asked the three lists on this machine, with the second round's three newer default addresses (called off
-  // once Ollama answered), not the gateway's (which asks the Claude API); the next ask goes straight to the one found.
+  // once the first round settled with Ollama's text model), not the gateway's (which asks the Claude API); the next ask
+  // goes straight to the one found.
   assert.deepEqual(m.calls.map((c) => c.url), [`${DEFAULT_SERVER}/api/tags`, `${LLAMACPP_SERVER}/v1/models`, `${OPENAI_SERVER}/v1/models`,
     'http://localhost:9931/v1/models', `${VLLM_SERVER}/v1/models`, 'http://localhost:30000/v1/models', `${DEFAULT_SERVER}/api/generate`])
   m.calls.length = 0
@@ -435,7 +436,7 @@ test('a model file kept in this page is found after the servers on this machine 
   assert.equal(s.found, 'inpage')
   assert.equal(s.auto, 'inpage: the model file kept in this page, found ready to run on this device (ask provider inpage keeps it)')
   assert.deepEqual([s.server, s.model, s.runtime, s.storage, s.key], [INPAGE_SERVER, 'tiny.gguf', 'this browser runs it (one thread)', 'kept in this page', undefined])
-  assert.deepEqual(m.calls.map((c) => new URL(c.url).port), ['11434', '8080', '1234', '9931', '8000', '30000'], 'the servers on this machine were asked, at their own addresses and then the newer default ones; the gateway never was')
+  assert.deepEqual(m.calls.map((c) => new URL(c.url).port), ['11434', '8080', '1234', '9931', '8000', '30000'], 'the servers on this machine were asked, at their own addresses and the newer default ones with them; the gateway never was')
   assert.deepEqual(p.calls, ['installed', 'answer'])
   // The next ask goes straight to it: no list is asked of anyone.
   m.calls.length = 0
@@ -625,8 +626,8 @@ test('model files kept in this page with none chosen: auto passes them over with
   assert.deepEqual(calls.filter((c) => c.startsWith('answer')), ['answer tiny.gguf', 'answer tiny.gguf'])
 })
 
-// The second round: the newer default addresses (router.ts KNOWN_SERVERS), asked only when the servers at their own
-// addresses gave nothing usable, and never on a phone.
+// The second round: the newer default addresses (router.ts KNOWN_SERVERS), asked with the first round and read only
+// when the servers at their own addresses gave nothing usable, phones included.
 const port = (url: string): string => new URL(url).port
 const LISTS = /\/v1\/models$|\/api\/tags$/
 
@@ -639,7 +640,7 @@ test('a llama-server built since b11521, alone on 9931: found in the second roun
   const s = r.settings()
   assert.deepEqual([s.provider, s.found, s.server], ['auto', 'llamacpp', 'http://localhost:9931'])
   assert.equal(s.auto, 'llamacpp at http://localhost:9931, found answering on this machine (ask provider llamacpp keeps it)')
-  // The first round at the three addresses at once, then the second at the three newer ones at once, then the answer.
+  // Both rounds go out at once (the three usual addresses, then the three newer ones, in the order sent), then the answer.
   assert.deepEqual(m.calls.filter((c) => LISTS.test(c.url)).slice(0, 6).map((c) => port(c.url)), ['11434', '8080', '1234', '9931', '8000', '30000'])
   assert.equal(m.calls.find((c) => c.url.endsWith('/v1/chat/completions'))?.url, 'http://localhost:9931/v1/chat/completions')
   assert.equal(m.calls.find((c) => c.url.endsWith('/v1/chat/completions'))?.body?.model, 'local.gguf')
@@ -704,7 +705,7 @@ async function askedAll(m: ReturnType<typeof machine>, ports: readonly string[])
   assert.ok(all(), `asked ${m.calls.map((c) => port(c.url)).join(', ')}, not all of ${ports.join(', ')}`)
 }
 
-test('the second round goes out with the first, so it adds no wait: all six addresses are asked while every one still hangs', async () => {
+test('the second round goes out with the first, within the one look\'s wait: all six addresses are asked while every one still hangs', async () => {
   const m = machine({ 11434: 'hangs', 8080: 'hangs', 1234: 'hangs', 9931: 'hangs', 8000: 'hangs', 30000: 'hangs' })
   const r = createMindRouter({ fetch: m.f, lookMs: 60_000 })
   const ctl = new AbortController()
@@ -827,4 +828,35 @@ test('an address the first round already asked is not asked again in the second'
   assert.deepEqual(g.calls.map((c) => port(c.url)), ['11434', '8080', '1234', '9931', '30000', '8000', '8000'])
   gw.setProvider('openai')
   assert.equal(gw.settings().server, OPENAI_SERVER)
+
+  // The same port by another name for this machine is the same server: a gateway at 127.0.0.1:8000 is not asked as
+  // vLLM at localhost:8000, and an OpenAI-compatible server set to [::1]:9931 is not asked again as llama-server.
+  const named = machine({ 8000: ['claude-opus-5-5'] })
+  const n = createMindRouter({ fetch: named.f, lookMs: 50 })
+  n.connect!('claude', 'http://127.0.0.1:8000')
+  n.setProvider('auto')
+  assert.equal(await ask(n), '8000 says hi')
+  assert.equal(n.settings().found, 'claude')
+  assert.ok(named.calls.every((c) => port(c.url) !== '8000' || new URL(c.url).hostname === '127.0.0.1'), named.calls.map((c) => c.url).join(', '))
+  n.setProvider('openai')
+  assert.equal(n.settings().server, OPENAI_SERVER)
+  const v6 = machine({})
+  const s6 = createMindRouter({ fetch: v6.f, lookMs: 50 })
+  s6.connect!('openai', 'http://[::1]:9931')
+  s6.setProvider('auto')
+  await assert.rejects(ask(s6), /llamacpp at http:\/\/localhost:8080, openai at http:\/\/\[::1\]:9931,/)
+  assert.deepEqual(v6.calls.map((c) => port(c.url)), ['11434', '8080', '9931', '8089'])
+})
+
+test('once the first round has settled with a text model, the second round still under way is called off: nothing waits out the look\'s 2 s', async () => {
+  // Ollama lists a text model at once; the three newer addresses hang, under a look that would wait a minute.
+  const m = machine({ 11434: ['qwen3-vl:4b'], 9931: 'hangs', 8000: 'hangs', 30000: 'hangs' })
+  const r = createMindRouter({ fetch: m.f, lookMs: 60_000 })
+  assert.equal(await ask(r), '11434 says hi')
+  const second = m.calls.filter((c) => ['9931', '8000', '30000'].includes(port(c.url)))
+  assert.equal(second.length, 3)
+  for (const c of second) {
+    assert.ok(c.signal?.aborted, `${c.url} is still being asked`)
+    assert.notEqual((c.signal?.reason as Error | undefined)?.name, 'TimeoutError', `${c.url} ran out the look's wait instead`)
+  }
 })
