@@ -108,7 +108,10 @@ export function tolerateIdentitySwizzle(proto: ViewMaker | undefined = (globalTh
   ;(proto as unknown as Record<symbol, boolean>)[SWIZZLE_SAFE] = true
 }
 
-export async function createRenderer(canvas: HTMLCanvasElement, pixelRatio: number, profile = false, timestamps: (adapter: string) => boolean = () => false): Promise<Gpu> {
+export async function createRenderer(
+  canvas: HTMLCanvasElement, pixelRatio: number, profile = false, timestamps: (adapter: string) => boolean = () => false,
+  samples: (adapter: string) => 0 | 4 = () => 0,
+): Promise<Gpu> {
   // The device is asked for here, not by three (gpuDevice.ts): a core adapter as the physics worker asks, three's own
   // features, and a coded error naming the real cause when there is none. Handed a device, three makes no request of
   // its own and so never falls back to WebGL2, which would also claim the canvas for good.
@@ -127,7 +130,9 @@ export async function createRenderer(canvas: HTMLCanvasElement, pixelRatio: numb
   // (0.12 mm at 1,000 m). three flips the depth functions, the shadow bias and the clear value itself; the sky, which
   // puts itself on the far plane by hand, is told in buildWorld (skyAtFarPlane). WebGPU always honours the setting
   // (only the WebGL backend can refuse it), and createRenderer insists on the WebGPU backend below.
-  const renderer = new WebGPURenderer({ canvas, antialias: false, powerPreference: 'high-performance', trackTimestamp: profile || timestamps(line), reversedDepthBuffer: true, device })
+  // `samples` multisamples the renderer's own frame (the direct path), fixed for its life: 4 only for split screen on an
+  // MSAA candidate (engine.ts splitSamplesOf); the post chain's passes pin their own (postfx.ts buildPost).
+  const renderer = new WebGPURenderer({ canvas, antialias: false, samples: samples(line), powerPreference: 'high-performance', trackTimestamp: profile || timestamps(line), reversedDepthBuffer: true, device })
   await renderer.init()
   const backend = renderer.backend as unknown as { isWebGPUBackend?: boolean; device?: GPUDevice; trackTimestamp?: boolean }
   if (!backend.isWebGPUBackend || !backend.device) {

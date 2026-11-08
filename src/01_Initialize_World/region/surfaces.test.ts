@@ -40,7 +40,7 @@ registerHooks({
     return { format: 'module', source: `export default ${JSON.stringify(text)}`, shortCircuit: true }
   },
 })
-const { SIDEWALK, SURFACE, SURFACE_PIECE, layoutOf, regionMeshes, roadWidth } = await import('./regionWorld.ts')
+const { RIBBON_PIECE, SIDEWALK, SURFACE, SURFACE_PIECE, layoutOf, regionMeshes, roadWidth } = await import('./regionWorld.ts')
 
 /** The meshes of a generated zone, by name, with the pack and the layout they came from. */
 function build(seed: number, zone: Zone) {
@@ -339,6 +339,26 @@ test('every flat surface is drawn in pieces no longer than SURFACE_PIECE, the gr
     g.computeBoundingBox()
     const bb = g.boundingBox!, b = METROPOLIS.layout.bounds
     assert.ok(bb.min.x <= b.x0 - 2999 && bb.max.x >= b.x1 + 2999 && bb.min.z <= b.z0 - 2999 && bb.max.z >= b.z1 + 2999, 'the ground and its margin')
+  }
+})
+
+test('a street\'s ribbons are cut shorter than the ground: no piece longer than RIBBON_PIECE (the junction pavement 5 mm under the asphalt holds under multisampling)', () => {
+  assert.ok(RIBBON_PIECE <= 32 && RIBBON_PIECE < SURFACE_PIECE, `${RIBBON_PIECE} m pieces`)
+  // Hand-made: one local street with sidewalks, 1,000 m along x (the pack counts tenths of a metre).
+  const pack: RegionPack = {
+    format: 'region/1', name: 'long', grid: METROPOLIS.pack.grid, bounds: { x0: -10, z0: -20, x1: 1010, z1: 20 }, attribution: [], names: ['a'],
+    roads: { cls: [ROAD_CLASS.local], lanes: [2], flow: [0], name: [0], start: [0, 2], xz: [0, 0, 10000, 0] },
+    water: { polyStart: [0], ringStart: [0], xz: [], kind: [], name: [] },
+    buildings: { polyStart: [0], ringStart: [0], xz: [], height: [], kind: [] },
+  }
+  const scene = regionMeshes(pack, layoutOf(pack), new FbmSet(1, [64]), uniform(0))
+  const points = Math.ceil(1000 / RIBBON_PIECE) + 1
+  for (const name of ['RegionRoads', 'RegionSidewalks']) {
+    const pos = (scene.meshes.find((m) => m.name === name)!.geometry as BufferGeometry).getAttribute('position')
+    assert.equal(pos.count, 2 * points, `${name}: two vertices at each of ${points} points`)
+    const xs = [...new Set(Array.from({ length: pos.count }, (_, i) => Math.round(pos.getX(i) * 1000) / 1000))].sort((a, b) => a - b)
+    const gaps = xs.slice(1).map((x, i) => x - xs[i])
+    assert.ok(Math.max(...gaps) <= RIBBON_PIECE + 1e-3, `${name}: a piece of ${Math.max(...gaps).toFixed(2)} m`)
   }
 })
 

@@ -72,6 +72,14 @@ export const SURFACE = Object.freeze({
  * on the software adapter. Pieces this short keep every vertex within sight of the pixel, as a building's wall is.
  */
 export const SURFACE_PIECE = 128
+/**
+ * The longest piece, m, a street's ribbons (its carriageway and sidewalks) are drawn in, shorter than SURFACE_PIECE: a
+ * junction's pavement lies 5 mm under the carriageway that crosses it, and with the scene multisampled (postfx.ts) each
+ * pixel's depth is also taken at four points off its centre, where the software adapter's interpolation across a
+ * 128 m piece lost those 5 mm, and a pale line of pavement crossed the road at every junction some 50 m off. In 32 m
+ * pieces it holds; the streets take about three times the vertices (some 21,000 more on the metropolis's street window).
+ */
+export const RIBBON_PIECE = 32
 /** Height of the lake's shoreline wall and of the region's edge wall (physics only), m. */
 export const SHORE_WALL = 1.2
 export const EDGE_WALL = 4
@@ -453,11 +461,11 @@ function pieces(pts: readonly Pt[], piece: number): Pt[] {
 
 /**
  * A ribbon `half` wide each side of a polyline, at height y, mitred at its bends, in pieces no longer than
- * SURFACE_PIECE. Extra per-vertex values from `v`.
+ * RIBBON_PIECE. Extra per-vertex values from `v`.
  */
 function ribbon(b: Buffers, line: readonly Pt[], half: number, y: number, v: (across: number, dist: number) => Record<string, number>): void {
   if (line.length < 2) return
-  const pts = pieces(line, SURFACE_PIECE)
+  const pts = pieces(line, RIBBON_PIECE)
   let dist = 0
   const base = b.pos.length / 3
   for (let k = 0; k < pts.length; k++) {
