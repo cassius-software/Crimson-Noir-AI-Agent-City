@@ -89,8 +89,10 @@ test('the settings: on by default with no voice preferred; kept under one key; a
 })
 
 /** A fake provider: the operator's voice and the soundscape at the player's head. */
-function fakeProvider(o: { voice?: string | null; fail?: boolean } = {}) {
+function fakeProvider(o: { voice?: string | null; fail?: boolean; holdDecode?: boolean } = {}) {
   const said: string[] = []
+  /** With holdDecode, each decode waits here until the test settles it. */
+  const decodes: { done: (ok: boolean) => void }[] = []
   const played: string[] = []
   let stops = 0
   let finish: (() => void) | null = null
@@ -108,14 +110,16 @@ function fakeProvider(o: { voice?: string | null; fail?: boolean } = {}) {
     },
   }
   const out = {
-    decode: (bytes: ArrayBuffer): Promise<SpeechClip> => Promise.resolve({ seconds: bytes.byteLength / 8 }),
+    decode: (bytes: ArrayBuffer): Promise<SpeechClip> => !o.holdDecode
+      ? Promise.resolve({ seconds: bytes.byteLength / 8 })
+      : new Promise<SpeechClip>((resolve, reject) => { decodes.push({ done: (ok) => (ok ? resolve({ seconds: bytes.byteLength / 8 }) : reject(new Error('the soundscape refused to decode'))) }) }),
     play: (_clip: SpeechClip, text: string): Utterance => {
       played.push(text)
       const ended = new Promise<void>((resolve) => { finish = resolve })
       return Object.freeze({ ended, stop: () => { stops++; finish?.() } })
     },
   }
-  return { voice, out, said, played, get stops() { return stops }, end: () => finish?.() }
+  return { voice, out, said, played, decodes, get stops() { return stops }, end: () => finish?.() }
 }
 
 test('speak: the provider at the player\'s head when it has a voice; a failing provider falls back to the browser; no voice chosen, the browser; sound off, nothing; a new line cuts the last; an abort cuts', async () => {
@@ -339,6 +343,36 @@ test('speaking starts at the first sound, not when the line is asked for: a prov
   sp.stop()
   assert.equal(await cutEarly, 'silent')
   assert.deepEqual(told, [true, false], 'a provider line cut before its first sound was never speech')
+})
+
+test('a provider line being decoded is not yet speech: it starts when the clip plays, or, the decode refused, when the browser speaks it', async () => {
+  const tick = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0)) }
+  const f = fakeSynth()
+  const p = fakeProvider({ holdDecode: true })
+  const sp = new ConciergeSpeaker({ env: f.env, sound: () => true, source: () => ({ voice: p.voice, out: p.out }), store: memoryStore() })
+  const told: boolean[] = []
+  sp.onSpeaking((on) => { told.push(on) })
+  const line = sp.speak('Decoded first.')
+  await tick()
+  assert.deepEqual([p.said, p.decodes.length, p.played], [['Decoded first.'], 1, []], 'synthesised, now decoding')
+  assert.deepEqual([sp.speaking, told], [false, []], 'decoding: nothing is heard yet')
+  p.decodes[0].done(true)
+  await tick()
+  assert.deepEqual([p.played, sp.speaking, told], [['Decoded first.'], true, [true]], 'the clip played: speaking from here')
+  p.end()
+  assert.equal(await line, 'provider')
+  // The decode refused: the browser says it, and speaking starts only then.
+  const spoken = f.spoken.length
+  const refused = sp.speak('Decoded never.')
+  await tick()
+  assert.deepEqual([p.decodes.length, sp.speaking, told], [2, false, [true, false]], 'decoding again: not speaking')
+  p.decodes[1].done(false)
+  await tick()
+  assert.deepEqual([p.played.length, f.spoken.length - spoken, f.spoken.at(-1)?.text], [1, 1, 'Decoded never.'], 'the browser speaks it, the provider never played it')
+  assert.deepEqual([sp.speaking, told], [true, [true, false, true]], 'speaking from the browser\'s first sound')
+  f.end()
+  assert.equal(await refused, 'browser')
+  assert.deepEqual(told, [true, false, true, false])
 })
 
 test('the console bridge: status names the switch, the tier and the voice; on and off; a voice by name; the list; a line said now', async () => {

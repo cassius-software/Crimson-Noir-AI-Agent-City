@@ -7,9 +7,9 @@
  * page's order, every SCAN.ms; the one offered is focused and marked (`data-scan`, which index.css rings), and the
  * switch, the Space bar (a switch interface sends one key, and Space is the usual one), presses it, or puts the caret
  * in a field. The press is taken on the way down, before the rest of the page sees the key, so the city's handbrake
- * never fires with it. A field being typed in (taken by the switch, focused by any other hand, or typed into) holds
- * the round on it until SCAN.hold offers pass without a key, so the caret is never taken mid-word, and while it holds Space typed there stays
- * a space. Every round reads the controls again, so a card that opens or closes joins or leaves the round. Pure: the page is an environment handed in (`browserScanEnv` is the one
+ * never fires with it. A field being typed in (taken by the switch, focused by any other hand, or typed into) becomes
+ * the one offered (the ring moves to it) and holds the round on it until SCAN.hold offers pass without a key, so the
+ * caret is never taken mid-word and the round goes on from the field; while it holds, Space typed there stays a space. Every round reads the controls again, so a card that opens or closes joins or leaves the round. Pure: the page is an environment handed in (`browserScanEnv` is the one
  * over `document`), so a Node test drives it with fakes.
  * What breaks if it is removed? A visitor with one switch can reach nothing.
  */
@@ -116,7 +116,9 @@ export class Scanner {
     return true
   }
 
+  /** The field is the one offered now (marked, so the ring is where the caret is and the round goes on from it), held. */
   private typing(field: unknown): void {
+    this.mark(field as ScanTarget)
     this.held = field
     this.idle = 0
   }

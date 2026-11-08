@@ -31,11 +31,19 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   onset and release counts) runs in an audio worklet where the browser has one and polled from the page where it
   has not, feeding the meter and the pill; speech starting while Sloane speaks cuts her line (`speaker.ts`
   `onSpeaking`, `speaking`), with the browser's echo cancellation and a margin in the detector against her own
-  voice; the detector also learns how loud her voice comes back through the speakers in the first moments of each
-  line, counted from her first sound (`speaking` starts when the clip plays or the browser speaks, not while a
-  provider voice is synthesised or fails over), and then wants a voice twice that before it cuts her, an estimate
-  that follows her voice down quickly and up only slowly, so a visitor's own rising voice is never learned as hers:
-  the system voice playing aloud does not cut itself, and a visitor still cuts in with speakers or headphones.
+  voice; the detector also learns how loud her voice comes back through the speakers in the first 0.43 s of each
+  line, counted from her first sound (it waits up to 1.5 s for it; `speaking` starts when the clip plays or the
+  browser speaks, not while a provider voice is synthesised, decoded or failing over), then holds her loudest word
+  through her pauses (it falls only after 1.5 s without her voice near it, and rises at most 1 % a frame) and wants a
+  voice 1.6 times that for about a quarter of a second before it cuts her. Against simulated lines (syllables whose
+  loudness swings by 3 to 4 dB, pauses between sentences, a start up to a second late, a room's reverberation, her
+  voice 3 dB louder at the end) her own line never cut itself in 480 tries, and with nothing of her coming back
+  (headphones) a visitor cut in within a second every time; over her echo with no echo cancellation, a visitor 9 to
+  14 dB louder than her usual words cut in within a second about seven times in ten, the rest later or not at all.
+  Swings of 6 dB between syllables still cut about one line in eleven, and her voice rising 6 dB within a line about
+  one in thirty-five, in the same simulation. A visitor who starts talking in her line's first moments (before her first
+  sound and the 0.43 s after it, or her first 1.5 s when none of her comes back) is learned as her voice and cannot
+  cut in until they pause.
   Where the browser promises on-device speech recognition (`08_Swarm/recruitment.ts`) it listens while the
   microphone is open, `recruit listen` opens the pill's microphone too, and words that are not a recruitment
   request reach Sloane (`Concierge.tsx` `heard`, `onboarding/heard.ts`: a line that names Sloane first opens the
@@ -47,7 +55,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   state, what a press does and the key. A mute that lands while the device is still opening stops the recogniser
   as well, and changing an accessibility setting never restarts the city or the microphone. Firefox has no on-device recognition, so there the pill shows the
   level and speech only; no audio leaves the page, nothing is recorded, and no speech model ships with the page
-  (no Whisper). Verified by Node tests against synthetic room, voice and hiss signals and fake browser objects
+  (no Whisper). Verified by Node tests against synthetic room, voice, syllable-shaped speech and hiss signals and fake browser objects
   (`vad.test.ts`, `microphone.test.ts`, `voiceWiring.test.ts`); a real microphone, a phone's and Safari's permission
   flow, and the barge-in's feel with a loudspeaker are unverified. The page grew 17.7 KB for it, past a budget main
   was 7.5 KB under, so `tools/verify/page_dist.mjs` re-measures: 14,385,135 bytes plus 3%.
@@ -115,9 +123,10 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   until 6 s pass without a key, and a space typed there stays one); the pad mapper (`gamepad.ts` `PadHand`, `Input.setHand`)
   gains a left-hand and a right-hand layout (one stick moves, and looks while its shoulder is held; that side's
   pedals and buttons; select is the run latch, which holds until the stick has walked and come home, a glance
-  aside; start a ping, the stick's click the mute; on a pad without the standard mapping, whose d-pad and centre
-  buttons are not read, the left hand keeps its stick and glance and opens doors with south, and the right hand
-  reads with both hands where its stick is not read either), and the action card, the way-out card and the lock
+  aside; start a ping, the stick's click the mute; on a pad without the standard mapping read by position with four
+  axes or one stick (or not placed yet), whose d-pad and centre buttons are not read, the left hand keeps its stick
+  and glance and opens doors with south, and the right hand reads with both hands unless the pad has four axes; a pad
+  read in kernel order keeps the whole one-hand layout), and the action card, the way-out card and the lock
   screen take the same hand (`padNav.ts`: start presses for the left hand and moves on for the right; the glance
   shoulders never act there); and a live region on the HUD
   (`announcer.ts`, `customer.announce`) tells a screen reader of the district walked into once held, a vehicle

@@ -35,6 +35,7 @@ class El implements ScanTarget {
 }
 
 function page(shown: El[]) {
+  page0.focused = null
   let keyFn: ((e: ScanKey) => void) | null = null
   const timers = new Map<number, () => void>()
   let next = 1
@@ -94,8 +95,6 @@ test('other keys, a held switch and a switch typed in a field are left alone; a 
   assert.deepEqual([a.clicks, other.prevented], [0, false])
   const held = p.key('Space', null, true)
   assert.deepEqual([a.clicks, held.prevented], [0, true], 'a held switch is swallowed but presses nothing again')
-  const typing = p.key('Space', { tagName: 'INPUT' } as unknown as EventTarget)
-  assert.deepEqual([a.clicks, typing.prevented], [0, false], 'a space typed in a field stays a space')
   p.tick()
   assert.equal(s.current, c, 'the one that is gone is never offered')
   shown.length = 0
@@ -105,6 +104,9 @@ test('other keys, a held switch and a switch typed in a field are left alone; a 
   shown.push(c)
   p.tick()
   assert.equal(s.current, c, 'back when something is shown')
+  const field = new El('field', true)
+  const typing = p.key('Space', field as unknown as EventTarget)
+  assert.deepEqual([c.clicks, typing.prevented, s.current], [0, false, field], 'a space typed in a field (one the round never offered) stays a space, and the field is the one offered now')
   s.stop()
 })
 
@@ -118,16 +120,20 @@ test('a field being typed in holds the round: its keys (the switch\'s Space too,
   field.focus()
   const letter = p.key('KeyA', field as unknown as EventTarget)
   assert.equal(letter.prevented, false, 'a letter typed is the field\'s')
+  assert.deepEqual([s.current, field.marked, a.marked], [field, true, false], 'the field is the one offered now: the ring is where the caret is')
   p.tick()
-  assert.equal(s.current, a, 'the offer does not move (and does not take the focus)')
+  assert.equal(s.current, field, 'the offer does not move (and does not take the focus)')
   assert.equal(page0.focused, field)
   for (let i = 0; i < 3; i++) p.tick()
   const space = p.key('Space', field as unknown as EventTarget)
   assert.deepEqual([space.prevented, a.clicks], [false, 0], 'Space typed in a field being typed in is a space, and presses nothing')
   for (let i = 0; i < SCAN.hold; i++) p.tick()
-  assert.equal(s.current, a, 'every key restarts the hold')
+  assert.equal(s.current, field, 'every key restarts the hold')
   p.tick()
-  assert.equal(s.current, field, 'quiet: the round goes on from where it stood')
+  assert.deepEqual([s.current, page0.focused], [b, b], 'quiet: the round goes on from the field')
+  p.tick()
+  p.tick()
+  assert.deepEqual([s.current, page0.focused], [field, field], 'round again to the field, merely offered')
   // Offered now; a letter typed in it holds it, the switch is then a space too.
   const typed = p.key('KeyB', field as unknown as EventTarget)
   assert.equal(typed.prevented, false)
@@ -148,13 +154,28 @@ test('a field that takes the focus without a key (a click, a card\'s own focus, 
   s.start()
   assert.equal(s.current, a)
   field.focus()
-  for (let i = 0; i <= SCAN.hold; i++) p.tick()
-  assert.deepEqual([s.current, page0.focused], [a, field], 'the caret stays in the field for SCAN.hold offers and one')
+  p.tick()
+  assert.deepEqual([s.current, field.marked, a.marked], [field, true, false], 'taken without a key: the field is the one offered, the ring moves to it')
+  for (let i = 0; i < SCAN.hold; i++) p.tick()
+  assert.deepEqual([s.current, page0.focused], [field, field], 'the caret stays in the field for SCAN.hold offers and one')
   const space = p.key('Space', field as unknown as EventTarget)
   assert.deepEqual([space.prevented, a.clicks, b.clicks], [false, 0, 0], 'a space typed there is a space, and presses nothing')
   for (let i = 0; i < SCAN.hold; i++) p.tick()
-  assert.equal(s.current, a, 'the key restarted the hold')
+  assert.equal(s.current, field, 'the key restarted the hold')
   p.tick()
-  assert.deepEqual([s.current, page0.focused], [b, b], 'quiet: the round goes on and takes the focus')
+  assert.deepEqual([s.current, page0.focused], [a, a], 'quiet: the round goes on from the field (round to the first) and takes the focus')
+  s.stop()
+})
+
+test('a field the round merely offers is not taken: with no key it is passed like any control', () => {
+  const a = new El('a'), field = new El('field', true), b = new El('b')
+  const p = page([a, field, b])
+  const s = new Scanner(p.env, 1000)
+  s.start()
+  assert.equal(s.current, a)
+  p.tick()
+  assert.deepEqual([s.current, page0.focused], [field, field], 'offered: marked and focused by the round itself')
+  p.tick()
+  assert.deepEqual([s.current, page0.focused], [b, b], 'no key: passed on the next offer, not held')
   s.stop()
 })

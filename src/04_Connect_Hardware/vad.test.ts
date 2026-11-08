@@ -5,10 +5,11 @@
  * Why does this file exist? It is the evidence for the voice activity detector (vad.ts): a quiet room is never speech,
  * a harmonic voice-like signal over the room is speech after the onset and stays through a short pause, broadband
  * hiss at the same level is not, a shout that never ends becomes the room only slowly, the page speaking raises the
- * bar, odd input (NaN, blocks of any size) never throws, the FFT is an FFT, and the worklet module the page builds
+ * bar, Sloane's own line in syllables (pauses, a late start, reverberation) never cuts itself while a visitor talking
+ * over it does, odd input (NaN, blocks of any size) never throws, the FFT is an FFT, and the worklet module the page builds
  * from the class is valid JavaScript that registers a processor and detects speech in a stub AudioWorklet scope.
- * What breaks if it is removed? A tuning change could make the pill read "Hearing you" to a fan, or never, with
- * nothing to say so; or the serialised worklet could stop parsing after a build change.
+ * What breaks if it is removed? A tuning change could make the pill read "Hearing you" to a fan, or never, or let
+ * Sloane cut her own lines, with nothing to say so; or the serialised worklet could stop parsing after a build change.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
@@ -72,6 +73,47 @@ function hum(seconds: number, level: number, seed = 31): Float32Array {
 function onset(x: Float32Array, ms: number, db = 30): Float32Array {
   const out = Float32Array.from(x), n = Math.min(out.length, Math.round((ms / 1000) * SR))
   for (let i = 0; i < n; i++) out[i] *= 10 ** ((db * (i / n - 1)) / 20)
+  return out
+}
+
+/** Speech-shaped: `sentences` of 6 to 14 syllables (140 to 300 ms each, a sin² envelope down to a trough of 0.1, each
+ *  syllable's loudness spread by `sigmaDb` decibels), `pause` seconds of the room between sentences, a voice (`f0`, eight
+ *  harmonics) at `peak` RMS on a syllable's crest, through a room's reverberation (`rt60` seconds), over the room;
+ *  `louder` scales the last sentence (her voice rising at the end of a line). */
+function syllables(seed: number, o: { peak: number; sentences: number; pause: number; sigmaDb?: number; louder?: number; f0?: number; rt60?: number }): Float32Array {
+  const r = noise(seed + 1000), env: number[] = [], ms = (s: number): number => Math.round(s * 1000)
+  const gauss = (): number => Math.sqrt(-2 * Math.log(Math.max(1e-9, (r() + 1) / 2))) * Math.cos(Math.PI * (r() + 1))
+  for (let s = 0; s < o.sentences; s++) {
+    const count = 6 + Math.floor(((r() + 1) / 2) * 9), gain = s === o.sentences - 1 ? o.louder ?? 1 : 1
+    for (let k = 0; k < count; k++) {
+      const d = ms(0.14 + ((r() + 1) / 2) * 0.16), g = gain * 10 ** ((gauss() * (o.sigmaDb ?? 3)) / 20)
+      for (let i = 0; i < d; i++) env.push(g * (0.1 + 0.9 * Math.sin((Math.PI * i) / d) ** 2))
+    }
+    if (s < o.sentences - 1) for (let i = 0; i < ms(o.pause); i++) env.push(0)
+  }
+  // A millisecond envelope; the reverberation adds a decaying tail of its energy.
+  const a = Math.exp(-6.9 / ((o.rt60 ?? 0.3) * 1000))
+  let tail = 0
+  const shaped = env.map((e) => { tail = tail * a + e * e * (1 - a); return Math.sqrt(e * e + 0.3 * tail) })
+  const per = SR / 1000, n = shaped.length * per, out = room(n / SR, 0.003, seed), raw = new Float32Array(n), f0 = o.f0 ?? 140
+  let sum = 0
+  for (let i = 0; i < n; i++) {
+    const t = i / SR, f = f0 * (1 + 0.02 * Math.sin(2 * Math.PI * 5 * t))
+    let v = 0
+    for (let h = 1; h <= 8; h++) v += Math.sin(2 * Math.PI * f * h * t + h) / h
+    raw[i] = v
+    sum += v * v
+  }
+  const k = o.peak / Math.sqrt(sum / n)
+  for (let i = 0; i < n; i++) out[i] += raw[i] * k * shaped[Math.floor(i / per)]
+  return out
+}
+
+/** `b` heard over `a` from sample `at` on. */
+function over(a: Float32Array, b: Float32Array, at: number): Float32Array {
+  const out = new Float32Array(Math.max(a.length, at + b.length))
+  out.set(a)
+  for (let i = 0; i < b.length; i++) out[at + i] += b[i]
   return out
 }
 
@@ -177,13 +219,14 @@ test('Sloane\'s own voice back through the speakers is not the visitor\'s: her l
   assert.deepEqual([c.echo, c.speakFrames], [0, 0])
 })
 
-test('a visitor\'s voice rising over tens of milliseconds still barges in, over her continuing echo and with none at all (headphones), and is never learned as her echo; her own voice growing a little louder is not the visitor', () => {
+test('a visitor\'s voice rising over tens of milliseconds still barges in, over her continuing echo and with none at all (headphones), and is never learned as her echo', () => {
   for (const ms of [40, 80, 120]) {
-    // Headphones, or echo cancellation that works: nothing of her comes back.
+    // Headphones, or echo cancellation that works: nothing of her comes back (past the echoWait frames that wait for her
+    // first sound: a visitor who starts inside them is learned as her voice, the one place barge-in is lost).
     const quiet = new VadCore(VAD)
     run(quiet, room(1))
     quiet.speaking = true
-    assert.deepEqual(run(quiet, room(0.6)), [], 'her line, inaudible here')
+    assert.deepEqual(run(quiet, room(1.6)), [], 'her line, inaudible here')
     const visitor = run(quiet, onset(voice(0.8, 0.05, 43), ms))
     assert.equal(visitor[0]?.speech, true, `no echo, a ${ms} ms onset: barges in`)
     // Speakers: her echo goes on under the visitor's words.
@@ -195,16 +238,50 @@ test('a visitor\'s voice rising over tens of milliseconds still barges in, over 
     assert.equal(over[0]?.speech, true, `her echo going on, a ${ms} ms onset: barges in`)
     assert.ok(loud.speaking && loud.echo < 0.1, `the estimate stayed near her echo, not the visitor's level: ${loud.echo}`)
   }
-  // Her own voice coming back 3 dB louder later in the line: followed, not taken for a visitor.
-  const c = new VadCore(VAD)
-  run(c, room(1))
-  c.speaking = true
-  assert.deepEqual(run(c, concat(voice(1.5, 0.05, 41), voice(1, 0.07, 47))), [], 'her louder words are still hers')
-  assert.ok(c.echo > 0.06, `followed up: ${c.echo}`)
 })
 
-test('while the page is speaking, the bar is higher: a quiet voice that would start speech does not, a clear one does and the onset is doubled', () => {
-  const quiet = concat(room(1), voice(1, 0.009))
+test('her own line in syllables never cuts itself: pauses between sentences, a late start, a room\'s reverberation, and her voice 3 dB louder at the end', () => {
+  // Her loudest echo holds through a pause and a quiet stretch (echoHold), so her next stressed word is never over the
+  // bar; a steady tone could not show it (the second review's design passed one and cut her own speech).
+  const cut: string[] = []
+  let lines = 0
+  for (const sigmaDb of [0, 3, 4]) for (const pause of [0.3, 1.2]) for (const lag of [0, 0.6, 1]) for (const louder of [1, 1.41]) for (const seed of [1, 2, 3]) {
+    const c = new VadCore(VAD)
+    run(c, room(1, 0.003, seed + 50))
+    c.speaking = true
+    const line = concat(room(lag, 0.003, seed + 60), syllables(seed, { peak: 0.05, sentences: 4, pause, sigmaDb, louder, rt60: 0.4 }))
+    lines++
+    if (run(c, line).length > 0) cut.push(`σ${sigmaDb} pause ${pause} lag ${lag} louder ${louder} seed ${seed}`)
+  }
+  assert.equal(lines, 108)
+  assert.deepEqual(cut, [], 'her own line started speech')
+})
+
+test('a visitor talking over her line in syllables barges in within a second, always with none of her coming back and most times over her echo, and never before they speak', () => {
+  // Over her echo without echo cancellation it is a trade: the bar that never lets her own line cut itself (above)
+  // also lets a visitor 12 to 14 dB over her usual words through within a second only most times (16 of these 24 at
+  // this tuning; the rest later or not at all, as her estimate creeps up under their words).
+  const results: { kind: string; ok: boolean; early: boolean }[] = []
+  for (const [her, visitor] of [[0, 0.05], [0.05, 0.2], [0.03, 0.15]] as const) for (const when of [2, 3.5]) for (const seed of [1, 2, 3, 4, 5, 6]) {
+    const c = new VadCore(VAD)
+    run(c, room(1, 0.003, seed + 50))
+    c.speaking = true
+    const line = her > 0 ? syllables(seed, { peak: her, sentences: 3, pause: 0.5 }) : room(6, 0.003, seed)
+    const at = Math.round(SR * (when + (seed % 5) * 0.07))
+    const heard = run(c, over(line, syllables(seed + 100, { peak: visitor, sentences: 1, pause: 0, f0: 210 }), at))
+    const first = heard.find((x) => x.speech)
+    results.push({ kind: `${her}/${visitor}@${when}`, ok: first !== undefined && first.at >= at && first.at - at < SR, early: first !== undefined && first.at < at })
+  }
+  assert.deepEqual(results.filter((x) => x.early), [], 'speech never starts before the visitor speaks')
+  assert.deepEqual(results.filter((x) => x.kind.startsWith('0/') && !x.ok).map((x) => x.kind), [], 'with none of her coming back (headphones), every visitor barges in within a second')
+  const echoed = results.filter((x) => !x.kind.startsWith('0/'))
+  assert.equal(echoed.length, 24)
+  assert.ok(echoed.filter((x) => x.ok).length >= 15, `over her echo, most barge in within a second: ${echoed.filter((x) => x.ok).length} of 24`)
+})
+
+test('while the page is speaking, the bar is higher: a quiet voice that would start speech does not, a clear one does after a longer onset', () => {
+  // Past her line's first 1.5 s (echoWait), where a voice is learned as hers whatever its level.
+  const quiet = concat(room(1.6), voice(1, 0.009))
   const a = new VadCore(VAD)
   assert.equal(run(a, quiet).length, 1, 'a quiet voice over a quiet room is speech when nothing else is playing')
   const b = new VadCore(VAD)
@@ -212,9 +289,10 @@ test('while the page is speaking, the bar is higher: a quiet voice that would st
   assert.deepEqual(run(b, quiet), [], 'the same voice under the speaking margin is not')
   const c = new VadCore(VAD)
   c.speaking = true
-  const changes = run(c, concat(room(1), voice(1)))
+  const changes = run(c, concat(room(1.6), voice(1)))
   assert.equal(changes.length, 1)
-  assert.ok(changes[0].at >= SR + (VAD.onsetFrames * 2 - 1) * VAD.frame, `the onset doubled: ${changes[0].at - SR}`)
+  const at = Math.round(1.6 * SR)
+  assert.ok(changes[0].at >= at + (VAD.onsetFrames * VAD.speakingOnset - 1) * VAD.frame, `the onset lengthened: ${changes[0].at - at}`)
 })
 
 test('push takes any block size and any offset, ignores NaN and infinities, and reset forgets everything', () => {

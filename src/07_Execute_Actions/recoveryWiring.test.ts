@@ -57,6 +57,8 @@ test('padStep: A presses, the d-pad moves focus, and only a button that goes dow
   assert.equal(padStep(padStep(there, [pad(PAD.start)], 'left').held, [pad(PAD.start)], 'left').action, null, 'held start: an edge, like A')
   // The hook reads the page's hand on every poll.
   assert.match(read('./padNav.ts'), /padStep\(prev \?\? new Set\(\), readPads\(\), pageHand\(\)\)/)
+  assert.match(read('./padNav.ts'), /document\.documentElement\.dataset\.pad\b[\s\S]{0,80}v === 'left' \|\| v === 'right' \? v : 'both'/, 'the hand is the one access.ts writes on <html data-pad>; anything else is both hands')
+  assert.match(read('./access.ts'), /root\.dataset\.pad = s\.pad/, 'and access.ts writes it')
   // usePadNav: the first poll only learns what is held, so the A that was driving cannot restart the city.
   assert.match(read('./padNav.ts'), /const first = prev === null[\s\S]*if \(!first && action && el\)/)
 })

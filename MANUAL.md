@@ -573,9 +573,11 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   the page where it has not) drives the meter and the **Hearing you** state; speech starting while Sloane speaks cuts
   her line (barge-in), and the browser's echo cancellation plus a margin in the detector keep Sloane's own voice from
   counting as yours; the detector also learns how loud her voice comes back through the speakers in the first moments
-  of each line (from her first sound, not while a provider voice is still being made), and wants a voice twice that
-  before it cuts her, an estimate that follows her down quickly and up only slowly, so your own voice rising is never
-  taken for hers. Where the browser promises on-device speech recognition (see Recruitment), it runs while the
+  of each line (from her first sound, not while a provider voice is still being made), holds her loudest word through
+  her pauses, and wants your voice about 1.6 times that for a quarter of a second before it cuts her. With headphones,
+  talking over her works once her line is 1.5 s old; through speakers whose sound the browser does not cancel, you
+  need to be clearly louder than her and may need to keep talking, and a voice that starts in her line's first
+  moments is taken for hers. A line whose loudness swings widely can still cut itself. Where the browser promises on-device speech recognition (see Recruitment), it runs while the
   microphone is open and the pill adds **words on-device**: a skill asked for is the recruiter's, and a line that names
   Sloane first ("Sloane, make it night") goes to the goal dialogue as if typed; with a question or the goal prompt
   open on the card, whatever you say is the answer. Nothing heard while she speaks, or in the 1.5 s after, is taken,
@@ -611,9 +613,11 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   and the west face button its brake; select is the run latch (it holds until the stick has walked and come home; a
   glance with the shoulder leaves it) and start a ping for either hand, and that stick's click is the mute; the left hand keeps the d-pad (down enters a car, left and right move the clock) and has no reset or
   handbrake, the right hand keeps the face buttons (south enters, north resets, east is the handbrake) and has no
-  clock keys; a split screen's other seats keep both hands. On a pad without the standard mapping (only the sticks it
-  is sure of and the first six buttons are read: no d-pad, no centre buttons) the left hand keeps its stick and glance
-  and opens doors with the south button, and the right hand reads with both hands unless its stick is read. The action
+  clock keys; a split screen's other seats keep both hands. On a pad without the standard mapping that is read by
+  position with four axes or one stick, or not placed yet (only the sticks it is sure of and the first six buttons are
+  read: no d-pad, no centre buttons), the left hand keeps its stick and glance and opens doors with the south button,
+  and the right hand reads with both hands unless the pad has four axes; a pad read in kernel order keeps the whole
+  one-handed layout. The action
   card, the way-out card and the lock screen take the same hand: the left hand moves with the d-pad and presses with
   start, the right hand moves on with start and presses with the south button; L1 and R1 stay a glance there. The **screen reader's lines** (`access announce off` turns
   them off; `07_Execute_Actions/announcer.ts`): a live region on the HUD tells of the district walked into (once it
