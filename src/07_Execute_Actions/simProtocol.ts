@@ -20,6 +20,7 @@ import type { CarTuning, DriveMode } from './car.ts'
 import type { TrackKind } from '../06_Make_Decisions/tracks.ts'
 import type { BalanceState } from '../03_Spawn_Agents/ragdoll.ts'
 import type { Manifest } from '../04_Connect_Hardware/jointState.ts'
+import type { ActuatorShaping, JointFriction } from '../04_Connect_Hardware/actuatorFit.ts'
 
 /**
  * One vehicle's slice of the pose buffer (Float32Array, `POSE.stride` floats per vehicle, fleet order). The
@@ -274,9 +275,13 @@ export type SimCommand =
   /**
    * How the body answers its setpoints: `follow` tracks the newest (a twin following a robot's frames), `filter` holds
    * each back `delaySteps` steps and eases toward it at `tauMs` (a leader's body, a simulated robot: the calibrated
-   * lag), `hold` stands still. `tauMs` and `delaySteps` are kept when not given.
+   * lag), `hold` stands still. `tauMs` and `delaySteps` are kept when not given. `shaping`, per movable joint, puts a
+   * second-order reference actuator (actuatorFit.ts ActuatorShaping, with its own delay) in place of the first-order
+   * filter on that joint (null: the filter); `friction`, per movable joint, is the physical Coulomb, viscous and
+   * stiction friction the realm applies about the joint (null: none). Each is kept when not given and cleared by an
+   * empty array; every number is judged in the worker (lengths, finiteness, bounds) and a bad one is a counted rejection.
    */
-  | { c: 'robotMode'; id: number; mode: RobotMode; tauMs?: number; delaySteps?: number }
+  | { c: 'robotMode'; id: number; mode: RobotMode; tauMs?: number; delaySteps?: number; shaping?: (ActuatorShaping | null)[]; friction?: (JointFriction | null)[] }
   // Fault injection for the ?debug harness only: refused by a worker built without debug.
   | { c: 'dbgVelocity'; i: number; x: number; y: number; z: number }
   | { c: 'dbgMode'; i: number; mode: DriveMode }
