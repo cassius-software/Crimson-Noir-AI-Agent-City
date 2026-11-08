@@ -32,8 +32,6 @@ import { workplaces } from '../01_Initialize_World/interiors.ts'
 import { shops } from '../01_Initialize_World/storefronts.ts'
 import { RING0 } from '../02_Define_The_Rules/ring0.ts'
 import { buildTrackNetwork, type TrackNetwork } from '../06_Make_Decisions/tracks.ts'
-import { AUTHORED, carState, carSubstep, clampSpeed, exitPoint, HELD_CARS, headingOf, planFleet, rebuildCarRig, type CarRig, type PlannedCar } from '../07_Execute_Actions/carRig.ts'
-import { buildTrackNetwork, projectOnto, tangentAt, type TrackNetwork } from '../06_Make_Decisions/tracks.ts'
 import { AUTHORED, carState, carSubstep, clampSpeed, exitPoint, HELD_CARS, headingOf, planFleet, rebuildCarRig, type CarRig, type GlassRoom, type PlannedCar } from '../07_Execute_Actions/carRig.ts'
 import { Physics, PHYSICS_HZ } from '../07_Execute_Actions/physics.ts'
 import { ENTER_RANGE, type CarBodyState } from '../07_Execute_Actions/simProtocol.ts'
@@ -136,7 +134,6 @@ export class Garage {
     this.#boxes = generateCity(this.seed)
     // The same plan the page builds its fleet from (simCore.ts): the parked share in the bays the city's boxes leave clear.
     this.plan = Object.freeze(planFleet(this.cars, this.seed, this.network, { boxes: this.#boxes }).cars)
-    this.#rooms = workplaces(this.seed)
     this.#rooms = [...workplaces(this.seed), ...shops(this.seed)]
   }
 

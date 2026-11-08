@@ -482,8 +482,6 @@ test('publishSnapshot: at most 64 vehicles, zero-padded to three digits', () => 
   const bus = new TopicBus()
   const s = sample()
   s.map = Array.from({ length: 70 }, (_, i) => ({ x: i, z: -i, heading: 0, player: i === 0, parked: false }))
-  assert.equal(publishSnapshot(bus, s, PHYSICS, 1), 84 - 8 + 64 * 4)
-  s.map = Array.from({ length: 70 }, (_, i) => ({ x: i, z: -i, heading: 0, player: i === 0 }))
   assert.equal(publishSnapshot(bus, s, PHYSICS, 1), 86 - 8 + 64 * 4)
   assert.equal(bus.topics(`${P}Traffic/Cell/+/x`).length, 64)
   assert.equal(value(bus, `${P}Traffic/Cell/Vehicle063/x`), 63)

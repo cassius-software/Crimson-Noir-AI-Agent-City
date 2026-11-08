@@ -3162,9 +3162,11 @@ by `tools/web/pwa.mjs`:
 Serve the folder over https, open the address in Safari, then Share > Add to Home Screen: the city opens full screen
 from its icon, with the touch controls (Controls). Two ways to serve it:
 - **GitHub Pages (a public address).** Once, in GitHub: the repository's Settings > Pages > Source: GitHub Actions.
-  Then Actions > web > Run workflow (`.github/workflows/web.yml`; it never runs on its own). The city is then at
-  `https://cassius-software.github.io/Crimson-Noir-AI-Agent-City/`, for anyone with the address (the repository and
-  its releases are public already). GitHub serves the files and runs nothing.
+  From then on `.github/workflows/web.yml` publishes main by itself each time ci passes on main: the commit ci
+  tested, and only while it is still main's tip, so during a burst of merges it publishes once, after the last one's
+  ci passes, and never a commit ci has not passed. Actions > web > Run workflow publishes main by hand, without
+  waiting for ci. The city is at `https://cassius-software.github.io/Crimson-Noir-AI-Agent-City/`, for anyone with
+  the address (the repository and its releases are public already). GitHub serves the files and runs nothing.
 - **Your own devices only (Tailscale).** Tailscale on the PC and on the iPhone, with HTTPS certificates turned on for
   the tailnet (Tailscale's admin console, DNS: MagicDNS and HTTPS Certificates). On the PC, after
   `npm run build:web`: `tailscale serve --bg <full path of dist-web>`. The iPhone opens
