@@ -30,6 +30,36 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   default flips when they land. The quiet five-minute watch waits until the walk is passed. Pinned by node tests (the
   stage order and detection, the switch, the wiring, the lines' plainness, conduct screen and brand scrub); how the
   card stands on a real phone, a pad or a screen reader is unverified.
+- **The sun's shadows reach farther, in two cascades, with a softer, tier-set penumbra.** The one directional light
+  with a fixed shadow box of ±80 m around the player (±160 m on Peak, on an 8192² map of half a gigabyte) is replaced
+  by three r186's cascaded sun light (`src/01_Initialize_World/sunShadow.ts`, three/addons `SunLight`): a near cascade
+  fitted to the first stretch of the view with fine texels (about 32 m on Medium, 42 m on High, 62 m on Ultra and
+  Peak), a far one to the rest out to the tier's distance (the governor's new `shadowDistance`: 120 m on Medium, 160 m
+  on High, 240 m on Ultra and Peak), fading out over its last tenth instead of ending in a line, the two drawn side by
+  side in one atlas (1024 texels a cascade on Medium, 2048 on High, 4096 on Ultra and Peak, so Peak's shadows take a
+  quarter gigabyte instead of a half) and fitted and snapped to whole texels by three every shadow pass; in split
+  screen each viewport's shadows are fitted to its own head. Two things three leaves to the page are done in
+  `CitySunShadow`: casters are drawn from at least 320 m toward the sun whichever way the player faces (three alone
+  drew them from as little as one shadow distance sunward, so a tower's long low-sun shadow came and went as the head
+  turned), and every cascade spans at least 700 m of depth, so the depth bias means the 21 cm it did over the old box.
+  The filter is three's own PCF (a Vogel disk of hardware depth comparisons rotated per pixel) with the tap count read
+  from a uniform (`shadowTaps`: 5 on Medium, 8, 12, 16 on Peak; the taps are written out with every one past five behind
+  an `if` on it, no loop) and the disk's radius a tier knob too (`shadowRadius`, round on the atlas), so the shadows
+  soften up the tiers without a recompile. Peak keeps Ultra's cascades and reach (a farther reach would stretch the
+  near cascade and coarsen the shadows nearest the eye) and adds taps and a wider penumbra. Parking (shadows off below
+  Medium) works as before, on the same shadow object. Sloane's Peak question no longer says Peak takes half a gigabyte
+  more. Pinned by `sunShadow.test.ts` (the light, its node class registered with the renderer once, the filter
+  installed before the first build, two cascades in one atlas, casters from 320 m sunward at every heading, tier and
+  sun height over at least 700 m without moving three's fit across the light, the taps' bounds), `shadowShaders.test.ts`
+  (every material still builds in both passes within the binding budget; the lit fragment's shadow is sixteen written-out
+  hardware comparisons a cascade, eleven behind an `if` on one uniform, no loop, and its WGSL is byte-identical for
+  Medium's and Peak's taps, distance and map; the shadow pass, built for a real caster, compares nothing) and the
+  governor, Peak and browser-smoke pins (Peak's atlas is 8192 wide with a three-texel penumbra, Ultra's 2.5, both 240 m;
+  the lakefront's Medium atlas 2048 × 1024 and 120 m). three's own `CSMShadowNode` was not used: it clones the light's
+  shadow once at the first compile, so nothing written to the sun's shadow afterwards (the tier's map size, the
+  parking) reaches its cascades. Unverified: how it looks on a real GPU (software-WebGPU pictures only, which at the
+  photographed spots look like the old ones), and the cost of the second shadow pass on an integrated GPU at Medium (the
+  governor measures and steps down as ever).
 - **The operator's progression.** The operator now has a level (1 to 20, 1,000 XP each, the rest rolling over), six
   attribute modifiers, eight skills of the city with proficiency ranks, civic credits, hero points, resolve and three
   actions and a reaction per six-second round (`src/02_Define_The_Rules/progression.ts`, over one 128-word record,
@@ -376,8 +406,9 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 - **Peak, a tier above Ultra for big GPUs.** Tier 5, outside the tier table like Lite, so every existing tier number
   and automatic range stays as it was. It draws Ultra at 1.25 times the resolution on each side (about 1.56 times the
   pixels), held within the device's largest texture, which also fixes `?scale=2` on a very wide window at any tier;
-  the sun's shadows out to 160 m at the same sharpness, on an 8192² map of about 512 MB of graphics memory, given back
-  on the way down; and full-detail people out to 90 m. Who is measured: a desktop with a discrete GPU or an Apple
+  Ultra's sun shadows with a wider sixteen-tap penumbra (it first drew them out to 160 m on an 8192² map of about
+  512 MB; the cascades above replaced that, and Peak's shadows now take Ultra's 256 MB); and full-detail people out to
+  90 m. Who is measured: a desktop with a discrete GPU or an Apple
   chip, 8 or more cores and 8 GB or more (`?peak=1` or `?peak=0` decides on any desktop). On such a desktop three
   writes GPU timestamps, and the range reaches Peak only where it really does. The governor climbs from Ultra only
   when nine frames in ten took at most 30 % of the frame budget on the GPU, because under the cinema camera the frame
