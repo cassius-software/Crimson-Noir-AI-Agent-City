@@ -5,7 +5,7 @@
  * Why does this file exist? It is the air gap between the Ring-0 terminal and the running city: the
  * only surface the console can reach. It carries read-only telemetry (the stats, and the unified namespace of topics
  * the engine publishes every snapshot into, read by filter) plus a few operator knobs (clock,
- * quality tier, audio, ghost view, drawing, captions, hardware pairing), the view-only pings and the player's look,
+ * quality tier, audio, ghost view, drawing, captions, haptics, hardware pairing), the view-only pings and the player's look,
  * recruitment (asking someone nearby over by skill, or an Active recruit to a pinged point: the one knob that
  * reaches a pedestrian, and only through the physics worker's own checks), the swarm's memory (read, or erased on
  * command), the opt-in network session, the model file kept in this page and, behind an explicit `operator unlock`,
@@ -401,6 +401,11 @@ export interface TerminalBridge {
   render(arg?: 'on' | 'off'): string
   /** Closed captions for every sound (view-only; the soundscape keeps sounding): on, off, or the status line ('captions: on' | 'captions: off'). */
   captions(arg?: 'on' | 'off'): string
+  /**
+   * Haptics (the pad's rumble and the throttle's snap for the guardrails and a check's cue, and a phone's vibration for
+   * that cue): on, off, or the status line ('haptics: on' | 'haptics: off'). Off, the triggers' resistance stays.
+   */
+  haptics(arg?: 'on' | 'off'): string
   /** The unified namespace of topics (read-only); absent on a host that publishes none (the TTY shell, an older host). */
   topics?: TopicBridge
   /** The city's columns for NoirScript (read-only copies); absent on a host without a running city (the TTY shell). */
@@ -535,6 +540,7 @@ export function offlineBridge(brand: TerminalBridge['brand']): TerminalBridge {
     xr: down,
     render: down,
     captions: down,
+    haptics: down,
     topics: { list: down, get: down, children: down, status: down },
     ping: { at: down, list: down, newest: down, clear: down },
     operator: {

@@ -174,6 +174,7 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 | `?rigs=capsules` | Draws a fallen pedestrian's physical rig as grey capsules in place of their figure (default: their own body wears the rig) |
 | `?audio=0` | Start with the soundscape muted |
 | `?captions=0` | Start with the closed captions off (`captions on` turns them on; see Spatial audio) |
+| `?haptics=0` | Start with the controller's rumble and the phone's vibration off: the guardrails' feel and a check's tap (`haptics on` turns them on; the triggers' resistance stays; see The operator's progression) |
 | `?boot=tty` | Track B: the Ring-0 console alone, full screen, with no canvas, no engine, no WebGPU, no physics worker and no audio; `boot gui` reloads the city (see Ring-0 console) |
 | `?profile` | GPU timestamps |
 | `?debug` | Exposes `window.__SIM__` test hooks; off by default |
@@ -909,7 +910,7 @@ while you type.
   `topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]`,
   `feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]`,
   `ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]`, `quality [auto|lite|peak|-1|0-5]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `xr [vr|ar|off]`, `render [on|off]`,
-  `captions [on|off]`, `ping [go|look|gather|wait|clear]`,
+  `captions [on|off]`, `haptics [on|off]`, `ping [go|look|gather|wait|clear]`,
   `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
   `robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|remove <id>]`,
   `recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]`, `memory [<agent>|forget <agent>|forget all]`,
@@ -962,6 +963,9 @@ while you type.
   name none of it).
 - `captions [on|off]` turns the closed captions of every sound on or off (see Spatial audio); `?captions=0` starts
   them off.
+- `haptics [on|off]` turns the controller's rumble and the phone's vibration on or off: the guardrails' feel at the
+  wheel (the limiter's hum, the thump) and a check's tap (see The operator's progression). The triggers' resistance is
+  force, not vibration, and stays. `haptics` alone says which; `?haptics=0` starts them off.
 - `ping [go|look|gather|wait]` marks where you look, as `Q` does; `ping` alone lists the marks standing, and
   `ping clear` takes them off the board. A `go` or `gather` ping is offered to the recruiter as a rally the physics
   worker re-checks (see Pings and the rally).
@@ -995,7 +999,8 @@ while you type.
   `progress table` prints the DC, a success's pay and each level's treasure, and the degrees and the breadth bonus;
   `progress train <skill>` spends a skill increase; `progress reroll` spends a hero point on the last check;
   `progress reset --yes` starts a new operator. A command that does something in the city (not a status line or a
-  list) and ran without an error earns a check, printed under its own lines.
+  list) and ran without an error earns a check, printed under its own lines; the city earns some checks itself (see
+  The operator's progression).
 - `history` and the Up arrow never show a key typed to `ask key` or `say key` or a token typed to `net join`: all
   are kept as dots.
 
@@ -1257,7 +1262,7 @@ protects.
 
 The console is air-gapped from the swarm. It can reach the engine only through a frozen
 `TerminalBridge` (`terminal/bridge.ts`): read-only statistics, the laws, the operator controls (clock, quality,
-audio, ghost view, drawing, captions, peripheral pairing), the view-only pings and the player's look, recruitment,
+audio, ghost view, drawing, captions, haptics, peripheral pairing), the view-only pings and the player's look, recruitment,
 the swarm's memory to read (erasing it needs the operator tier), and the opt-in network session (joining needs the
 operator tier). `boot` asks the host to reload the page on a track, and `r0` touches no bridge at all. Recruitment
 is the one knob that reaches a pedestrian, and it can only ask: to come over, or, an Active recruit, to stand at a
@@ -1299,12 +1304,27 @@ and nowhere else. The design and its numbers are in `docs/progression.md`.
   was not a critical success. The better of the two results pays; nothing is taken back.
 - **Credits** buy the wardrobe, the properties and their furniture through one gate: the credits are debited and the
   unlock set in the same record and the same save, so a purchase never takes the credits without the item.
-
-In this first slice the console earns the checks (`noir`, `r0` and `run` for computers, the robots' commands for
-robotics, `harness run` and the verifications for security, recruiting, asking, `swarm run`, `act ok` and pings for
-swarm command, `say` and `sloane say` for voice, `rain`, `ghost`, `time`, `xr` and `record start` for optics, `look`
-for commerce). The cues (a chime, a controller's click, the HUD's flash) and the checks the city itself earns
-(boarding a car, someone recruited arriving) are the next slice.
+- **What earns.** At the console: `noir`, `r0` and `run` for computers, the robots' commands for robotics,
+  `harness run` and the verifications for security, `recruit rally`, asking, `swarm run`, `act ok` and pings for swarm
+  command, `say` and `sloane say` for voice, `rain`, `ghost`, `time`, `xr` and `record start` for optics, `look` for
+  commerce. In the city: boarding a car with the door key (piloting); someone you recruited arriving, however you
+  asked (swarm command, from the round's reaction, so `recruit <skill>` and `recruit listen` earn nothing themselves);
+  a spoken request the recruiter understood (voice); the clock keys, the rain key, the ghost key when the view shows
+  or goes, and the touch menu's Headset (optics); and the wardrobe card's first real change of a visit (commerce). A
+  script's, a harness's or an agent's act earns nothing, and neither does a key held down.
+- **Cues.** Every success and critical success, at the console or in the city, plays a short chime in your ears
+  (an arpeggio, or a chord for a critical success, captioned as `[chime: Piloting, success]`), taps a controller once
+  or twice on its rumble while no guardrail holds it, the screen is not split and the page is shown, vibrates a phone
+  once or twice, and shows on the HUD's progress chip. The chime never covers a cue or a ping: at the ear it is
+  quieter than the recruitment cue from anyone near enough to be asked over, it waits for a cue or a ping still
+  sounding, and one that starts over it fades it out. A hero point's reroll that stayed a success is not cued again. The chip, under the
+  status chips at the top left, reads `Level 3 · 420 of 1,000 XP · 1,250 credits · hero 2 · ◆◆◇ ↺` (◆ an action left,
+  ◇ one spent, ↺ the reaction ready), and for four seconds after a check which degree, in which skill and what it
+  paid, with one soft ring around it (none when the system asks for reduced motion). On a phone it shows only for
+  those four seconds, and not at all held in landscape. A check the city earns makes no toast: the chip and the
+  chime's caption report it. Captions only describe sounds that play, so with the sound off (`audio off`,
+  `?audio=0`) the chip alone shows it; `audio 0` silences the city and keeps every caption. `haptics off` or
+  `?haptics=0` stills the tap and the vibration. How they feel on real controllers and phones is unverified.
 
 ## Recruitment
 
@@ -2306,7 +2326,8 @@ HRTF-panned sources:
   Each line carries the sound's bearing in the listener's head frame (one of eight arrows, a side word, the
   distance rounded to 1 m under 10 m and 5 m beyond), recomputed as the head turns: `↗ [car approaching] · ahead
   right, 25 m`. Cars approaching, passing and shifting, tyres, the crowd murmur (by level, with hysteresis), the
-  walk signal per axis, the recruitment cue, the ping cue, the cabin, speech with its words (`Pedestrian N
+  walk signal per axis, the recruitment cue, the ping cue, the cabin, a check's chime (text alone, since it plays in
+  the head: `[chime: Optics and cinema, critical success]`), speech with its words (`Pedestrian N
   (skill): …`, verbatim: what passed the 14A screen is what is read) and a peer's voice (captioned as a voice, not
   transcribed, since the page cannot transcribe a remote stream on-device) are all captioned. The strip sits
   bottom-centre and outlives the `H` key, like the MIC chip. `captions off` or `?captions=0` turns it off.

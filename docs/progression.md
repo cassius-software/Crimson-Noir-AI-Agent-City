@@ -5,8 +5,8 @@ progression", says how to use them). The implementation is three files:
 
 - `src/02_Define_The_Rules/progression.ts`: the rules, pure (no clock, no storage, no DOM), over one flat record.
 - `src/05_Observe_Environment/progressStore.ts`: the record kept in this browser's local storage.
-- `src/07_Execute_Actions/progress.ts`: the page's keeper (rounds, rests, saving, listeners), the console's text and
-  which console command earns which skill.
+- `src/07_Execute_Actions/progress.ts`: the page's keeper (rounds, rests, saving, listeners), the console's text,
+  which console command earns which skill, what the recruiter's events earn, and the HUD chip's words.
 
 The tests beside them (`progression.test.ts`, `progressStore.test.ts`, `progress.test.ts`) pin every number on this
 page. The mechanics are offered under the ORC License; `NOTICE.md` names the two works they come from (Pathfinder
@@ -68,16 +68,16 @@ used most, so the operator grows into the work they do.
 
 **Skills.**
 
-| Skill | Attribute | Earned by (this slice, from the console) |
-|---|---|---|
-| computers | INT | `noir`, `r0`, `run` |
-| piloting | DEX | (the city's vehicles, next slice) |
-| robotics | STR | `robot spawn`, `urdf`, `demo`, `set`, `arm`, `calibrate`, `mode` |
-| cyber security | WIS | `harness run`, `act gate`, `act log verify`, `swarm audit verify` |
-| swarm command | CHA | `act ok`, `swarm run`, `recruit`, `ask`, `ping` |
-| acoustics and voice | CHA | `say`, `sloane say`, `recruit listen` |
-| optics and cinema | WIS | `rain`, `ghost`, `time`, `xr`, `record start` |
-| architecture and commerce | INT | `look` (with a change) |
+| Skill | Attribute | Earned at the console | Earned in the city |
+|---|---|---|---|
+| computers | INT | `noir`, `r0`, `run` | |
+| piloting | DEX | | boarding a car with the door key |
+| robotics | STR | `robot spawn`, `urdf`, `demo`, `set`, `arm`, `calibrate`, `mode` | |
+| cyber security | WIS | `harness run`, `act gate`, `act log verify`, `swarm audit verify` | |
+| swarm command | CHA | `act ok`, `swarm run`, `recruit rally`, `ask`, `ping` | someone recruited arriving (from the reaction) |
+| acoustics and voice | CHA | `say`, `sloane say` | a spoken request the recruiter understood |
+| optics and cinema | WIS | `rain`, `ghost`, `time`, `xr`, `record start` | the clock keys, the rain key, the ghost key when the view shows or goes, the touch menu's Headset |
+| architecture and commerce | INT | `look` (with a change) | the wardrobe card's first real change of a visit |
 
 Every skill starts trained. A level from 2 brings one skill increase: expert at any level, master from level 7,
 legendary from level 15 (Player Core's gates). A skill's modifier is its attribute plus, when trained or better,
@@ -125,6 +125,44 @@ this slice it is shown and kept; what spends it comes with the slices that need 
 
 **XP.** 1,000 a level; what is left over rolls into the next. At level 20 the XP stops at 999.
 
+## The city's checks and the cues
+
+**What the city earns.** The engine hands App a deed (`onDeed`) once per press or event, never once per frame:
+boarding counts only when player 1 pressed the door key within 1.5 s and the boarding was not a network room's
+correction, so a script's or a harness's `interact()` earns nothing; the ghost key counts only when the view actually
+showed or went away (a single view, no headset, the post chain on). The setters behind the keys (the ghost view's,
+rain mode's and the clock's) and the city knobs an agent's act uses earn nothing, because the console, scripts and
+agents share them and the console earns for its own commands. Recruiting earns once, when the person arrives, however
+they were asked (the console, a voice, `agent hire`), and from the reaction, since the city chose the moment and the
+round's actions stay the operator's; so `recruit <skill>` and `recruit listen` at the console earn nothing themselves.
+The wardrobe card calls back on every swatch and slider step, so only its first change of a visit that alters the look
+earns; the console's `look` earns for itself. The keeper's rests and rounds still decide every one of these.
+
+**The cues.** One listener in App cues every success and critical success, the console's and the city's alike,
+including a hero-point reroll that climbs to one (a reroll that stayed a success paid nothing and is not cued again):
+
+- a short chime in player 1's ears alone (`audio.ts` `CHIME`: a C5 E5 G5 arpeggio for a success, a C4 C6 G6 chord
+  for a critical success, rendered once when the soundscape is built), captioned as text with no place
+  (`[chime: Piloting, success]`). It never covers a cue or a ping: at the ear it is quieter than the recruitment cue
+  from anyone near enough to be asked over (5 m, through the cue's distance and pan), it waits for a cue or a ping
+  still sounding (the console's `ping go` cues the mark first), and one that starts over it fades it out;
+- on a controller, one 50 ms tap for a success and two for a critical success on the rumble alone (`hal.ts` `PULSE`),
+  only while no guardrail signal holds the motors, the screen is not split and the page is shown; on a phone, a 12 ms
+  vibration, or two;
+  `haptics off` at the console or `?haptics=0` stills both, and the guardrails' rumble with them (the triggers'
+  resistance stays);
+- the HUD's progress chip: the level, the XP ('420 of 1,000 XP'), the credits, the hero points and the round's pips
+  (◆ left, ◇ spent, ↺ the reaction), and for four seconds after a check which degree, in which skill and what it paid,
+  with one soft ring around the chip (warmer for a critical success), at most once a second and none when the system
+  asks for reduced motion. On a phone the chip shows only for those four seconds, and not at all held in landscape.
+  A check the city earns makes no toast: the chip and the chime's caption report it. Captions only describe sounds
+  that play, so with the sound off (`audio off`, `?audio=0`) the chip alone shows it; `audio 0` silences the city and
+  keeps every caption, the chime's too.
+
+The chime is rendered before any check, and the first tap is sent from the listener at once rather than on the next
+frame. Whether that meets the plan's under-16 ms budget is not measured, and how the tap and the vibration feel on real
+pads and phones is unverified.
+
 ## The purchase gate
 
 Every purchase in the city goes through the one record, so the credits and what they bought are saved in the same
@@ -167,8 +205,9 @@ p.record[16]                                     // credits, read-only by conven
 skills); `progress table` the DC, the payouts, the treasure, the degrees and the breadth bonus; `progress train
 <skill>` spends an increase; `progress reroll` a hero point; `progress reset --yes` starts a new operator. A console
 command that does something in the city and ran without an error earns a check in its skill, printed under its own
-lines, when an action is left and the skill is rested; status lines and lists earn nothing. The terminal app (`tty`)
-has no city and says so.
+lines, when an action is left and the skill is rested; status lines and lists earn nothing. The status refills the
+round's pips on the same six-second clock the HUD chip reads, so the two agree. `haptics [on|off]` switches the
+controller's rumble and the phone's vibration. The terminal app (`tty`) has no city and says so.
 
 ## Not built
 
@@ -182,9 +221,6 @@ has no city and says so.
 
 ## Next
 
-- The cues: a short chime, a controller's pulse (`dualsense.ts`, `navigator.vibrate` on phones) and a HUD chip with
-  the level, XP, credits, hero points and the round's pips, flashing on a success; the plan's under-16 ms budget is
-  met by preparing the sound and the pulse before any check.
-- The checks the city itself earns: boarding a parked vehicle (piloting), someone recruited arriving (swarm
-  command), the camera and rain keys (optics and cinema), a voice command (acoustics and voice).
-- An action card's cost in pips.
+- Done in the second slice: the cues (the chime, the controller's tap and the phone's vibration, the HUD chip) and
+  the checks the city itself earns (above).
+- Left: an action card's cost in pips.

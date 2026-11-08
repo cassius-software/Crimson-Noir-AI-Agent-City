@@ -6,10 +6,13 @@
  * (02_Define_The_Rules/progression.ts), loaded at start and saved after every change
  * (05_Observe_Environment/progressStore.ts), the round clock (three actions and a reaction every six seconds), each
  * skill's rest (a skill earns again a minute after its last check), the last check (a hero point may reroll it), and
- * whoever listens for a check (the console now; the cues and the HUD as they are wired). It also decides which console
- * commands earn a check, in which skill, and writes the console's `progress` text. The wardrobe and the properties buy
- * through `buy`, which debits the credits and sets the unlock in the same record and the same save.
- * What breaks if it is removed? Nothing earns XP or credits, `progress` has nothing to show, and nothing can be bought.
+ * whoever listens for a check (the console, the chime and the pad's pulse). It also decides which console commands
+ * earn a check, in which skill, which of the recruiter's events earn one (someone arriving, a spoken request
+ * understood), and writes the words: the console's `progress` text and the HUD's progress chip, finished here so the
+ * HUD imports nothing of the keeper. The wardrobe and the properties buy through `buy`, which debits the credits and
+ * sets the unlock in the same record and the same save.
+ * What breaks if it is removed? Nothing earns XP or credits, `progress` and the HUD have nothing to show, and nothing
+ * can be bought.
  */
 import { CRIT_FAILURE, CRIT_SUCCESS, FAILURE, RANKS, SUCCESS } from '../02_Define_The_Rules/degrees.ts'
 import {
@@ -21,6 +24,8 @@ import {
 } from '../02_Define_The_Rules/progression.ts'
 import { loadProgress, saveProgress } from '../05_Observe_Environment/progressStore.ts'
 import type { ProfileStore } from '../05_Observe_Environment/profile.ts'
+import type { HudProgress } from '../05_Observe_Environment/telemetry.ts'
+import type { RecruitEvents } from '../08_Swarm/recruitment.ts'
 
 const COMPUTERS = 0, ROBOTICS = 2, SECURITY = 3, SWARM = 4, VOICE = 5, OPTICS = 6, COMMERCE = 7
 
@@ -58,6 +63,12 @@ export interface Progress {
   last(): Check | null
   /** How long until `skill` earns again, ms (0 when it may now). */
   restFor(skill: number): number
+  /**
+   * Runs the round clock, as earn does: a new round (three actions and the reaction) once ROUND_MS has passed since
+   * this one began. Returns ms to the next. Neither saved nor told, because a new session starts with a full round
+   * anyway; the HUD and the console's `progress` call it so their pips refill without waiting for the next check.
+   */
+  round(): number
   /** Calls `fn` after every change (with the check, when a check made it); returns the unsubscribe. */
   subscribe(fn: (check: Check | null) => void): () => void
   /** A new operator: everything earned and bought is gone. */
@@ -150,6 +161,10 @@ export function createProgress(opts: ProgressOptions = {}): Progress {
     },
     last: (): Check | null => last,
     restFor: (s: number): number => Math.max(0, SKILL_REST_MS - (now() - rested[index(s)])),
+    round(): number {
+      tick()
+      return Math.min(ROUND_MS, Math.max(0, ROUND_MS - (now() - roundStart)))
+    },
     subscribe(fn: (check: Check | null) => void): () => void {
       listeners.add(fn)
       return () => { listeners.delete(fn) }
@@ -169,6 +184,36 @@ let page: Progress | null = null
 /** The page's one keeper, made on first use over this browser's storage (the console, the wardrobe and the properties share it). */
 export function pageProgress(): Progress {
   return (page ??= createProgress())
+}
+
+// ---------------------------------------------------------------------------------------------------
+// What the recruiter's events earn
+
+/**
+ * All earnFromRecruiter needs of the recruiter (08_Swarm/recruitment.ts Recruiter): its events. Typed this narrowly so
+ * this file never loads the recruiter, the skills or the city to earn from them.
+ */
+export type RecruitFeed = Pick<EventTarget, 'addEventListener' | 'removeEventListener'>
+
+/** Someone recruited reached the operator (once per recruit, however they were asked), and a spoken request understood. */
+const ARRIVED = 'active' satisfies keyof RecruitEvents
+const UNDERSTOOD = 'understood' satisfies keyof RecruitEvents
+
+/**
+ * Earns from what the recruiter says happened: Swarm command when someone recruited arrives, spent from the reaction
+ * because the city chose the moment and the round's actions stay the operator's, and Acoustics and voice when a spoken
+ * request is understood. The keeper's rests and rounds still decide, so an event while the skill rests earns nothing.
+ * Returns the unsubscribe.
+ */
+export function earnFromRecruiter(p: Progress, feed: RecruitFeed): () => void {
+  const arrived = (): void => { p.earn('swarm', true) }
+  const understood = (): void => { p.earn('voice') }
+  feed.addEventListener(ARRIVED, arrived)
+  feed.addEventListener(UNDERSTOOD, understood)
+  return () => {
+    feed.removeEventListener(ARRIVED, arrived)
+    feed.removeEventListener(UNDERSTOOD, understood)
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -193,7 +238,9 @@ export function commandSkill(name: string, args: readonly string[]): number {
     case 'harness': return head === 'run' ? SECURITY : -1
     case 'act': return head === 'ok' ? SWARM : head === 'gate' || (head === 'log' && args[1] === 'verify') ? SECURITY : -1
     case 'swarm': return head === 'run' ? SWARM : head === 'audit' && /\sverify\b/.test(args[0] ?? '') ? SECURITY : -1
-    case 'recruit': return !any || ['stop', 'install', 'dismiss'].includes(head) ? -1 : head === 'listen' ? VOICE : SWARM
+    // Asking for a skill earns nothing here: the arrival earns Swarm command, once for every way of recruiting, and a
+    // spoken request understood earns Acoustics and voice (earnFromRecruiter), so opening the microphone does not.
+    case 'recruit': return head === 'rally' ? SWARM : -1
     case 'ask': return SKILLED.test((args[0] ?? '').trim()) ? SWARM : -1
     case 'ping': return any && head !== 'clear' ? SWARM : -1
     case 'say': return SKILLED.test((args[0] ?? '').trim()) ? VOICE : -1
@@ -242,6 +289,8 @@ export function checkLines(c: Check, heroLeft = 0): string[] {
 
 /** The console's `progress`: the operator as they stand. */
 export function statusLines(p: Progress): string[] {
+  // The round first, so these pips agree with the HUD's after a quiet spell.
+  p.round()
   const rec = p.record
   const level = rec[AT.level]
   const xp = level >= MAX_LEVEL ? 'top level' : `${rec[AT.xp]}/${XP_PER_LEVEL} XP`
@@ -283,6 +332,108 @@ export function tableLines(): string[] {
     `  breadth: ${BREADTH_Q8.slice(1).map((q, i) => `${i + 1} ${times(q)}`).join(' · ')} (skills used in a cycle of ${CYCLE_CHECKS} checks; XP and credits alike)`,
     `  ${ACTIONS_PER_ROUND} actions and a reaction every ${ROUND_MS / 1000} s; each skill earns again after ${SKILL_REST_MS / 1000} s; after ${GUARD_AFTER} misses in a row the next check rolls twice`,
   ]
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The HUD's progress chip
+
+/**
+ * The last check worth a cue, as the host keeps it: plain numbers it sets from the keeper's listener (cueOf), so the
+ * HUD loop reads a variable and no React state changes inside a check. `at` is on the clock hudProgress gets as `now`.
+ */
+export interface ProgressCue {
+  readonly degree: number
+  readonly skill: number
+  readonly xp: number
+  readonly credits: number
+  readonly hero: number
+  readonly at: number
+}
+
+/** How long a check stays fresh on the HUD, ms: its words shown, and the phone's chip up. */
+export const HUD_CUE_MS = 4000
+
+/**
+ * Whether check `c` is cued (the chime, the tap, the HUD's words and its ring): a success or a critical success, but
+ * not a hero point's reroll that stayed where the first roll was. A reroll pays only what it adds (progression.ts
+ * reroll), and every step up to a success adds XP or a hero point, so a reroll that paid nothing climbed nothing and
+ * would only repeat a success already cued.
+ */
+export const worthCue = (c: Check | null): c is Check =>
+  c !== null && c.degree >= SUCCESS && !(c.reroll && c.xp === 0 && c.credits === 0 && c.hero === 0)
+
+/** The cue for check `c` made at `at`. */
+export const cueOf = (c: Check, at: number): ProgressCue =>
+  Object.freeze({ degree: c.degree, skill: c.skill, xp: c.xp, credits: c.credits, hero: c.hero, at })
+
+const counted = (n: number, one: string): string => `${grouped(n)} ${one}${n === 1 ? '' : 's'}`
+const sameCue = (a: ProgressCue | null, b: ProgressCue | null): boolean =>
+  a === b || (a !== null && b !== null && a.at === b.at && a.degree === b.degree && a.skill === b.skill && a.xp === b.xp && a.credits === b.credits && a.hero === b.hero)
+
+/** What the chip was last built from, per keeper, so a HUD tick with nothing new builds no strings. */
+interface HudMemo {
+  readonly words: Int32Array
+  readonly cue: ProgressCue | null
+  readonly fresh: boolean
+  readonly out: HudProgress
+}
+const memos = new WeakMap<Progress, HudMemo>()
+/** The record words the chip shows: level, XP, credits, hero points, the round. */
+const SHOWN = [AT.level, AT.xp, AT.credits, AT.hero, AT.actions] as const
+
+/**
+ * The HUD's progress chip as finished strings: the standing ('Level 3 · 420 of 1,000 XP · 1,250 credits · hero 2 ·
+ * ◆◆◇ ↺'), the same in full words for a screen reader, and the fresh check (`cue`, made within HUD_CUE_MS of `now`):
+ * which degree, in which skill, and what it paid. Runs the round clock first, so the pips refill on their own. Returns
+ * the same object while nothing it shows has changed, so calling it at the HUD's cadence costs a few comparisons.
+ */
+export function hudProgress(p: Progress, cue: ProgressCue | null, now: number): HudProgress {
+  p.round()
+  const rec = p.record
+  const age = cue === null ? Infinity : Math.max(0, now - cue.at)
+  const fresh = cue !== null && cue.degree >= SUCCESS && age < HUD_CUE_MS
+  const memo = memos.get(p)
+  if (memo && memo.fresh === fresh && sameCue(memo.cue, cue) && SHOWN.every((at, i) => memo.words[i] === rec[at])) {
+    return fresh ? Object.freeze({ ...memo.out, cueAge: age }) : memo.out
+  }
+  const level = rec[AT.level]
+  const top = level >= MAX_LEVEL
+  const hero = rec[AT.hero]
+  const left = actionsLeft(rec)
+  const round = pips(rec)
+  const xp = top ? 'top level' : `${grouped(rec[AT.xp])} of ${grouped(XP_PER_LEVEL)} XP`
+  const said = [
+    `Level ${level}`,
+    top ? 'the top level' : `${grouped(rec[AT.xp])} of ${grouped(XP_PER_LEVEL)} experience points`,
+    counted(rec[AT.credits], 'credit'),
+    counted(hero, 'hero point'),
+    `${left} of ${ACTIONS_PER_ROUND} actions left this round`,
+    `reaction ${reactionLeft(rec) ? 'ready' : 'spent'}`,
+  ].join(', ')
+  let cueText = ''
+  let delta = ''
+  let label = said
+  if (fresh) {
+    const critical = cue.degree >= CRIT_SUCCESS
+    cueText = `${critical ? 'Critical success' : 'Success'} in ${SKILL_TITLE[cue.skill] ?? 'a skill'}`
+    delta = [cue.xp ? `+${grouped(cue.xp)} XP` : '', cue.credits ? `+${grouped(cue.credits)} credits` : '', cue.hero ? `+${counted(cue.hero, 'hero point')}` : '']
+      .filter(Boolean).join(', ')
+    const paid = [cue.xp ? counted(cue.xp, 'experience point') : '', cue.credits ? counted(cue.credits, 'credit') : '', cue.hero ? counted(cue.hero, 'hero point') : '']
+      .filter(Boolean).join(', ')
+    label = `${said}. ${cueText}${paid ? `: ${paid}` : ''}`
+  }
+  const out: HudProgress = Object.freeze({
+    text: `Level ${level} · ${xp} · ${counted(rec[AT.credits], 'credit')} · hero ${hero} · ${round}`,
+    label,
+    pips: round,
+    cue: fresh ? (cue.degree >= CRIT_SUCCESS ? 'critical' : 'success') : null,
+    cueText,
+    delta,
+    cueAt: fresh ? cue.at : -1,
+    cueAge: fresh ? age : Infinity,
+  })
+  memos.set(p, { words: Int32Array.from(SHOWN, (at) => rec[at]), cue, fresh, out })
+  return out
 }
 
 /** The console's `progress` surface (terminal/bridge.ts ProgressBridge) over a keeper. */
