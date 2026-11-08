@@ -164,7 +164,7 @@ export const FIGURE_QUADS = 1 + (LOOK_WORDS - 4) / 4
 /** Vitiligo's pale, linear RGB: a milky cream with a little pink (on a deep tone the patch shows clearly, on a light one softly, as it does). */
 const VITILIGO_PALE = new Color(0xf2e0d6)
 /** How much of the skin each vitiligo pattern pales (look.ts VITILIGO), as the share of the noise's range above its edge. */
-const VITILIGO_COVER = Object.freeze({ scattered: 0.24, widespread: 0.66, zoned: 0.52 })
+const VITILIGO_COVER = Object.freeze({ scattered: 0.2, widespread: 0.58, zoned: 0.42 })
 /** The share of freckle cells holding a freckle at each density (look.ts WARDROBE.freckles: light, medium, dense) where they gather most. */
 const FRECKLE_DENSITY = Object.freeze([0, 0.16, 0.3, 0.48])
 /** Where freckles gather most on the face: the band of the cheeks and the nose's bridge, m of the rest body (humanoid.ts FACE: the lips' line to the nose's root). */
@@ -213,7 +213,7 @@ function skinMarks(skinIn: V3, vitiligoIn: U1, frecklesIn: U1, rigIn: V3, offset
         select(is(VITILIGO.oneSide), flag(rest.x.greaterThan(0)), float(1)))))
       const cover = select(is(VITILIGO.scattered), float(VITILIGO_COVER.scattered), select(is(VITILIGO.widespread), float(VITILIGO_COVER.widespread), float(VITILIGO_COVER.zoned)))
       const p = rest.add(vec3(1, 0, 1)).add(offset.mul(40))
-      const n = valueNoise(p.mul(7), 3.1).mul(0.68).add(valueNoise(p.mul(17), 5.7).mul(0.32))
+      const n = valueNoise(p.mul(11), 3.1).mul(0.68).add(valueNoise(p.mul(29), 5.7).mul(0.32))
       const edge = float(1).sub(cover)
       patch.assign(zone.mul(smoothstep(edge.sub(0.035), edge.add(0.035), n)))
       out.assign(mix(skin, vec3(VITILIGO_PALE.r, VITILIGO_PALE.g, VITILIGO_PALE.b), patch.mul(0.9)))
