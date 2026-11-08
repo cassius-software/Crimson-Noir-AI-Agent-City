@@ -2,26 +2,30 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is the first-run tutorial as pure data and timing: the six things a brand-new visitor
+ * Why does this file exist? It is the first-run tutorial as pure data and timing: the seven things a brand-new visitor
  * does before the city is theirs (turn the head and walk; tell Sloane a goal; get into a parked car; step inside a
- * workplace; read the four laws at the Ring-0 console; run the three-line NoirScript program that is the only way
- * out), what counts as having done each one (a reading of the page, or an event the page reports), and what Sloane
+ * workplace; choose a look in the wardrobe or a shop; read the four laws at the Ring-0 console; run the three-line NoirScript
+ * program that is the only way out), what counts as having done each one (a reading of the page, or an event the page reports), and what Sloane
  * says at each: the thing to do in the visitor's own device's words, one plain line of what it is (for an
  * eight-year-old), and five whys that go one deeper each time, every one of them true of the city as it runs today.
  * Sloane calls it "your first walk"; the words "tutorial", "lesson" and "step" never appear in a spoken line. Like the
  * quiet watch beside it (tutorial.ts Mentor) this reads the simulation and never writes to it, and every moment comes
- * from the clock values it is given, never from Date.now, so a test can walk the six stages in a microsecond. The
+ * from the clock values it is given, never from Date.now, so a test can walk the seven stages in a microsecond. The
  * React side (07_Execute_Actions/onboarding/useFirstWalk.ts, FirstWalk.tsx) feeds it and shows it; the exit itself
  * is the console's (terminal/noirscript: verify_ring0, spawn_subagents, unlock_city) and reaches here as events.
+ * The look stage teaches what the city has for it: the wardrobe card (Customizer.tsx) and, on a map with shops
+ * (01_Initialize_World/storefronts.ts), the shops' cards (StoreCard.tsx), either one put away after it was open
+ * finishing it; owned homes, when the city has them, join the same way (a city flag beside `stores`, an event beside
+ * 'store'), so its place in the order and the exit stay as they are.
  * What breaks if it is removed? The first run has no stages, no words and no notion of having been passed.
  */
 import type { InputFamily } from './tutorial.ts'
 
 export type { InputFamily } from './tutorial.ts'
 
-/** The six stages, in order. */
-export type Stage = 'move' | 'voice' | 'fleet' | 'work' | 'ring0' | 'exam'
-export const STAGES: readonly Stage[] = Object.freeze(['move', 'voice', 'fleet', 'work', 'ring0', 'exam'])
+/** The seven stages, in order. */
+export type Stage = 'move' | 'voice' | 'fleet' | 'work' | 'style' | 'ring0' | 'exam'
+export const STAGES: readonly Stage[] = Object.freeze(['move', 'voice', 'fleet', 'work', 'style', 'ring0', 'exam'])
 
 /** How patient Sloane is, ms, and what counts. */
 export const WALK = Object.freeze({
@@ -66,8 +70,13 @@ export interface FirstWalkOptions {
   words: ControlWords
   /** The visitor's name, or '' (Sloane then says nothing in its place). */
   name?: string
-  /** Whether this map has cars to get into and rooms to walk into (a surveyed region has no rooms): a stage with nothing to do is passed over. */
-  city: { fleet: boolean; rooms: boolean }
+  /**
+   * Whether this map has cars to get into and rooms to walk into (a surveyed region has no rooms), whether the page has
+   * the wardrobe card (absent counts as present) and whether the map has shops to walk into (absent counts as none: the
+   * city's five, Lakefront Metro's up to five, a surveyed region's none): a stage with nothing to do is passed over, and
+   * Sloane names the shops only where there are some.
+   */
+  city: { fleet: boolean; rooms: boolean; wardrobe?: boolean; stores?: boolean }
   /** The nearest workplace, asked when the hint for the indoor stage is said; null or absent when there is none. */
   place?: () => WalkPlace | null
   /** Stages already done (a reload mid-walk; nothing is kept unless the walk was passed, so usually none). */
@@ -94,10 +103,11 @@ export interface WalkReading {
 
 /**
  * An event the page reports outright: a goal told to Sloane, the microphone opened, the captions turned, a car
- * entered, a room entered, the console opened, a law line run there (`laws`, `kernel`, `act gate`, `ring0`), and the
- * exit program's three doors as the console's exam reports them (a seal checked, a swarm called, the city unlocked).
+ * entered, a room entered, the wardrobe card or a shop's card put away after it was opened, the console opened, a law line run there
+ * (`laws`, `kernel`, `act gate`, `ring0`), and the exit program's three doors as the console's exam reports them (a
+ * seal checked, a swarm called, the city unlocked).
  */
-export type WalkEvent = 'look' | 'move' | 'goal' | 'mic' | 'captions' | 'vehicle' | 'inside' | 'console' | 'law' | 'seal' | 'swarm' | 'unlock'
+export type WalkEvent = 'look' | 'move' | 'goal' | 'mic' | 'captions' | 'vehicle' | 'inside' | 'wardrobe' | 'store' | 'console' | 'law' | 'seal' | 'swarm' | 'unlock'
 
 /** One of Sloane's lines: at a stage's start (the thing to do), as a hint, or when the walk is passed. */
 export interface Beat {
@@ -151,16 +161,25 @@ function pressHow(o: FirstWalkOptions, action: string): string {
   return o.family === 'touch' ? `tap ${action}` : `press ${action}`
 }
 const tap = (o: FirstWalkOptions): string => (o.family === 'touch' ? 'Tap' : 'Click')
+/** How a shop's card opens from inside the shop: B on a keyboard (E too, with no car near), the face button that enters a car on a pad, the Browse chip on touch. */
+function browseHow(o: FirstWalkOptions): string {
+  switch (o.family) {
+    case 'keyboard': return 'press B'
+    case 'pad': return `press ${o.words.interact}`
+    case 'touch': return 'tap Browse'
+  }
+}
 
 /** A number in words, for the few the lines say. */
 const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty', 'twenty-one', 'twenty-two', 'twenty-three', 'twenty-four']
 export const inWords = (n: number): string => WORDS[n] ?? String(n)
 
-/** Whether a stage exists on this map: no cars means nothing to get into, no rooms nothing to walk into. */
+/** Whether a stage exists on this map: no cars means nothing to get into, no rooms nothing to walk into, no wardrobe and no shop nothing to put on. */
 export function available(s: Stage, city: FirstWalkOptions['city']): boolean {
   switch (s) {
     case 'fleet': return city.fleet
     case 'work': return city.rooms
+    case 'style': return city.wardrobe !== false || city.stores === true
     default: return true
   }
 }
@@ -172,6 +191,7 @@ export function titleOf(s: Stage): string {
     case 'voice': return 'Talk to Sloane'
     case 'fleet': return 'The parked fleet'
     case 'work': return 'Inside a workplace'
+    case 'style': return 'Your look'
     case 'ring0': return 'Ring-0'
     case 'exam': return 'The way out'
   }
@@ -184,6 +204,7 @@ export function showOf(s: Stage): string {
     case 'voice': return 'Plan one for me'
     case 'fleet': return 'Take me to a car'
     case 'work': return 'Take me inside'
+    case 'style': return 'Open the wardrobe'
     case 'ring0': return 'Open it for me'
     case 'exam': return 'Type it for me'
   }
@@ -203,6 +224,10 @@ export function askFor(s: Stage, o: FirstWalkOptions): { text: string; keep: rea
       return { text: `See the cars? Find one that is parked, stand right by its door until a prompt appears, and ${pressHow(o, o.words.interact)} to get in. Drive a little; the car will not let you hurt anyone.`, keep: [o.words.interact] }
     case 'work':
       return { text: 'Now go indoors. Six workplaces have open doors on the street: a robotics lab, a boardroom, a warehouse, a clinic, the legal chambers and a control room. Step through any one of them.', keep: ['door'] }
+    case 'style': {
+      const shops = o.city.stores === true ? ` Or walk into one of the shops on the street and ${browseHow(o)} to try its lines on; trying on is free.` : ''
+      return { text: `Now choose how you look${name}. ${tap(o)} Look at the end of my chip: pick your clothes and their colours, your hair, your skin, your face and your build, then press Done.${shops}`, keep: ['Look', 'Done'] }
+    }
     case 'ring0':
       if (o.family === 'touch') return { text: 'Under the city is a kernel called Ring-0. Open the Menu in the corner, tap Console, type the word laws and tap go.', keep: ['Console', 'laws'] }
       return { text: `Under the city is a kernel called Ring-0. Open the console with the ${o.words.console} key, type the word laws and press Enter.`, keep: [o.words.console, 'laws'] }
@@ -227,6 +252,10 @@ export function hintFor(s: Stage, o: FirstWalkOptions): { text: string; keep: re
       const where = p ? `The nearest is ${p.name}, about ${Math.max(1, Math.round(p.metres))} metres to the ${p.bearing}; its door faces the street.` : 'A workplace is a low building with a wide open doorway on the street.'
       return { text: `${where} Walk through the doorway and stop inside; the button on this card takes you there.`, keep: ['doorway'] }
     }
+    case 'style': {
+      const shops = o.city.stores === true ? ` A shop works too: walk in, ${browseHow(o)}, and press Done when you have looked.` : ''
+      return { text: `Look is the small word at the end of my chip. ${tap(o)} it, change anything you like or nothing at all, and press Done.${shops} The button on this card opens the wardrobe for you.`, keep: ['Look', 'Done'] }
+    }
     case 'ring0':
       return { text: o.family === 'touch'
         ? 'The console drops down from the top of the screen once you tap Console in the Menu. Type laws and tap go; act gate and kernel work too.'
@@ -236,20 +265,25 @@ export function hintFor(s: Stage, o: FirstWalkOptions): { text: string; keep: re
   }
 }
 
-/** What a stage is, for an eight-year-old. One or two plain sentences, all true of the city as it runs. */
-export function eli8Of(s: Stage): string {
+/**
+ * What a stage is, for an eight-year-old. One or two plain sentences, all true of the city as it runs; the look stage
+ * names the shops only on a map that has them (`city.stores`).
+ */
+export function eli8Of(s: Stage, city?: FirstWalkOptions['city']): string {
   switch (s) {
     case 'move': return 'You are a person in this city, not a camera floating about. Your head turns, your feet carry you, and the picture follows you the way a film does.'
     case 'voice': return 'I am the city’s concierge. Tell me what you want in plain words and I ask you why, a few times, until we both know what you really mean; then I set what I can (the time, the quality, the sound) and write the rest down for you.'
     case 'fleet': return 'The streets have a fleet: cars of eight kinds that drive, park and let you take the wheel, and craft that fly between rooftop pads above the avenues. Every one of them keeps the same laws as the people.'
     case 'work': return 'Inside, the people of the city work: they type, inspect and talk at their stations, and what an agent does there is real agent work, prompts and answers, not a cartoon of it. A robot, real or simulated, can take a body in this city too, over the joint bridge.'
+    case 'style': return `You choose how you look: your clothes and their colours, your hair, your skin, your face and your build. Everyone on the street is dressed from the same wardrobe you are, the city’s own business-casual one.${city?.stores === true ? ' The shops on the street sell lines from it too, and trying them on costs nothing.' : ''}`
     case 'ring0': return 'Underneath the city is a kernel called Ring-0. It holds four laws in rank order, and every car, every agent and every command passes through them. Nothing in the city, and nothing you type, can turn them off.'
     case 'exam': return 'This is a tiny program in NoirScript, the console’s own typed language. It runs in a machine with walls: a fixed amount of memory, a fixed number of steps, and only the doors the kernel opens. The three words are doors.'
   }
 }
 
-/** The five whys of a stage, one deeper each. Plain words; nothing here that the city does not do. */
-export function whysOf(s: Stage): readonly string[] {
+/** The five whys of a stage, one deeper each. Plain words; nothing here that the city does not do (the shops only where `city.stores`). */
+export function whysOf(s: Stage, city?: FirstWalkOptions['city']): readonly string[] {
+  const shops = city?.stores === true
   switch (s) {
     case 'move': return Object.freeze([
       'Why does the picture smear a little when you turn fast? Because the camera is a film camera: it shows twenty-four pictures a second and each one is open for half of its moment (a 180-degree shutter), so motion blurs the way it does at the cinema.',
@@ -279,6 +313,13 @@ export function whysOf(s: Stage): readonly string[] {
       'Why mention robots in here? Because a robot’s joints can drive a body in this city and a body here can lead a robot’s joints, over the joint bridge; the city is where the simulated and the real meet.',
       'Why does it matter to you? Because what you ask the city to do ends up at a station like these, done by someone, and you can walk in and watch.',
     ])
+    case 'style': return Object.freeze([
+      'Why business casual? Because the city is a place of work: everyone in it, you included, is dressed as for an office, a lab or a studio, in a suit, smart casual, a pantsuit or a skirt suit, with a jacket, shirt sleeves or a coat.',
+      'Why does everyone on the street look different? Because each person’s look is drawn from that same wardrobe by a hash of their own number: a different draw for every one of them, across all ten skin tones of the Monk scale, with freckles on some and vitiligo on a few, and nobody has to pick.',
+      `Why can nothing outside the wardrobe be worn? Because every choice is a number pointing into the crowd’s own catalogue, so no saved look, no typed command${shops ? ', no shared code and no shop' : ' and no shared code'} can put anyone in anything else.`,
+      `Why does the wardrobe card draw you rather than show a mirror? Because out on the street you see through your own eyes; the card draws you from the very rings your graphics chip builds your body from, and your shadow and everyone else see the rest, freckles and vitiligo included.${shops ? ' In a shop, while its card is open, the camera steps out and circles you like a mirror (not in a headset or a shared room).' : ''}`,
+      'Why does your look have a short code? Because a look is a set of numbers: the code, with a check built in, carries them to another device or a friend; and beside You, the card has a tab for each of your own agents, with a voice and a look from the same wardrobe.',
+    ])
     case 'ring0': return Object.freeze([
       'Why four laws and not three? Because the Zeroth Law sits above the others: no action may harm the city as a whole, and the action gate holds every ask, proposal and run to it before the First, Second and Third.',
       'Why is there a gate at all? Because an agent that can act is allowed to act only through a catalogue of named actions, each checked twelve ways, and each one waits for your OK on a card; the agent never gets its hands on the engine.',
@@ -298,7 +339,7 @@ export function whysOf(s: Stage): readonly string[] {
 
 /** The card for a stage. */
 export function cardFor(s: Stage, o: FirstWalkOptions): StageCard {
-  return Object.freeze({ stage: s, index: STAGES.indexOf(s) + 1, count: STAGES.length, title: titleOf(s), ask: askFor(s, o).text, eli8: eli8Of(s), whys: whysOf(s), show: showOf(s) })
+  return Object.freeze({ stage: s, index: STAGES.indexOf(s) + 1, count: STAGES.length, title: titleOf(s), ask: askFor(s, o).text, eli8: eli8Of(s, o.city), whys: whysOf(s, o.city), show: showOf(s) })
 }
 
 /** Sloane's line when the city opens. */
@@ -386,6 +427,7 @@ export class FirstWalk {
       case 'goal': case 'mic': case 'captions': this.#finish('voice', now); break
       case 'vehicle': this.#finish('fleet', now); break
       case 'inside': this.#finish('work', now); break
+      case 'wardrobe': case 'store': this.#finish('style', now); break
       case 'law': this.#finish('ring0', now); break
       case 'seal': this.#seal = true; break
       case 'swarm': this.#swarm = true; break

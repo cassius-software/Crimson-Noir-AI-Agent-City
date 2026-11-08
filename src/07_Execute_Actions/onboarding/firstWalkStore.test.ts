@@ -21,7 +21,7 @@ const q = (s: string) => new URLSearchParams(s)
 const passed = { v: 1 as const, passed: true as const, at: 1 }
 
 test('on for a first run, off once passed, and the URL knobs: tutorial, onboarding, boot', () => {
-  assert.equal(FIRST_WALK_DEFAULT, false, 'opt-in until the exit program is in NoirScript; then true, and mandatory on a first run as the brief asks')
+  assert.equal(FIRST_WALK_DEFAULT, true, 'mandatory on a first run, as the brief asks (this one constant makes it opt-in)')
   assert.equal(needsFirstWalk(q(''), null, true), true)
   assert.equal(needsFirstWalk(q(''), passed, true), false)
   assert.equal(needsFirstWalk(q(''), null), FIRST_WALK_DEFAULT)

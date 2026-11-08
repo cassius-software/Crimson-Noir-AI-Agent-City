@@ -16,11 +16,11 @@ import type { KeyStore } from './script.ts'
 
 /**
  * Whether a first run opens on the walk at all. True: the walk is mandatory on a first run, as the brief asks, and
- * the only way out is the console's exit program. False: the walk shows only with `?tutorial=1`. Flip this one
- * constant to change the default; nothing else reads a setting. It stays false until the exit program's three words
- * (verify_ring0, spawn_subagents, unlock_city) are in NoirScript: a walk nobody can finish must not be mandatory.
+ * the only way out is the console's exit program (its three words, verify_ring0, spawn_subagents and unlock_city, are
+ * NoirScript's: terminal/noirscript, wired through onboarding/exam.ts). False: the walk shows only with `?tutorial=1`.
+ * Flip this one constant to change the default; nothing else reads a setting.
  */
-export const FIRST_WALK_DEFAULT = false
+export const FIRST_WALK_DEFAULT = true
 
 /** Keyed by the package id, like the profile and the onboarding, so a product rename keeps the pass. */
 export const FIRST_WALK_KEY = 'civic-simulation:first-walk:v1'

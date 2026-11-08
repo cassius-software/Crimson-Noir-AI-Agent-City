@@ -104,5 +104,5 @@ test('the code of the sources is ASCII (so is everything the console could print
   const index = read('index.ts')
   const exported = [...index.matchAll(/^export (?:const|class|function|interface|type) (\w+)/gm)].map((m) => m[1]!)
   const reexported = [...index.matchAll(/^export (type )?\{([^}]*)\} from/gm)].flatMap((m) => m[2]!.split(',').map((s) => s.trim()).filter((s) => s.length > 0))
-  assert.deepEqual([...exported, ...reexported].sort(), ['ELITE_LIMITS', 'EMPTY_TABLES', 'INTRINSIC_NAMES', 'KEYWORDS', 'LIMITS', 'NoirColumns', 'NoirHost', 'NoirLimits', 'NoirResult', 'NoirSession', 'NoirTables', 'NoirWrites', 'TYPE_NAMES', 'f32Text'])
+  assert.deepEqual([...exported, ...reexported].sort(), ['ELITE_LIMITS', 'EMPTY_TABLES', 'INTRINSIC_NAMES', 'KEYWORDS', 'LIMITS', 'NoirColumns', 'NoirExam', 'NoirHost', 'NoirLimits', 'NoirResult', 'NoirSession', 'NoirTables', 'NoirWrites', 'TYPE_NAMES', 'f32Text'])
 })

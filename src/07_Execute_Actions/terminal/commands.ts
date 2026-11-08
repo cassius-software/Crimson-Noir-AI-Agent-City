@@ -83,6 +83,10 @@ const R0_NOTE_STEPS = 100_000
 const NOIR_NOTE_STEPS = 100_000
 /** What a NoirScript write intrinsic fails with while the elite tier is locked (operator.ts's requireElite says the same). */
 const NOIR_LOCKED = "elite tier locked: 'ring0 unlock --elite <passphrase>' opens it"
+/** What an exam intrinsic fails with on a host without the first walk's exam (the console shell). */
+const NOIR_NO_EXAM = 'no first walk in this shell: the exit program runs in the city'
+/** The exit program as `tutorial program` prints it where no exam is wired (09_Cognition/firstWalk.ts PROGRAM is the one source; a test pins them equal). */
+const EXAM_PROGRAM: readonly string[] = Object.freeze(['let seal = verify_ring0();', 'let swarm = spawn_subagents(24, "sim2real_workplaces");', 'unlock_city(seal, swarm);'])
 /** A number as typed for a point: -12, 3.5. */
 const NUMBER = /^-?\d+(?:\.\d+)?$/
 
@@ -124,6 +128,7 @@ const CORE = [
   { name: 'map', usage: 'map [city|lakefront|default|status]', summary: 'which map is walked; map city reloads into the procedural city (people and traffic), map lakefront into the metropolis; the choice is kept until map default' },
   { name: 'r0', usage: 'r0 <words...>|r0 reset|r0 words', summary: "the console's own stack machine (Turing-complete, sandboxed: it reaches nothing of the city)" },
   { name: 'noir', usage: 'noir <source>|noir reset|noir words|noir asm <source>', summary: "NoirScript, the console's typed, compiled language (a bounded bytecode VM with lane types; reads the city's columns as copies; its writes need the elite tier)" },
+  { name: 'tutorial', usage: 'tutorial [status|program]', summary: "Sloane's first walk: the stage you are on, and the three-line NoirScript program that is its only way out (nothing here turns the walk off)" },
   { name: 'exit', usage: 'exit', summary: 'close the console (also ` or Esc)' },
 ] as const
 
@@ -247,6 +252,7 @@ const ARGS: Record<string, readonly string[]> = {
   'ring0 unlock': ['--elite'],
   'ring0 elite': ['set'],
   noir: ['asm', 'reset', 'words'],
+  tutorial: ['program', 'status'],
   hal: ['pair'],
   'hal pair': ['ble', 'hid', 'serial'],
   robot: ['arm', 'calibrate', 'cell', 'demo', 'disarm', 'fit', 'mode', 'relay', 'remove', 'set', 'shape', 'spawn', 'urdf'],
@@ -1432,11 +1438,33 @@ const HANDLERS: Record<Name, Handler> = {
       }
     }
     const writes = eliteWritesOf(b)
-    const host: NoirHost = writes === null ? { tables: () => tables, locked: NOIR_LOCKED } : { tables: () => tables, write: writes, locked: NOIR_LOCKED }
+    // The first walk's exam (bridge.exam): its three intrinsics reach the walk, the kernel's seal and the recruiter's own
+    // lane, and nothing else; what each door said is printed after the run, so the visitor reads why the city stayed shut.
+    const exam = b.exam
+    const host: NoirHost = {
+      tables: () => tables, locked: NOIR_LOCKED, noExam: NOIR_NO_EXAM,
+      ...(writes === null ? {} : { write: writes }),
+      ...(exam === undefined ? {} : { exam }),
+    }
     const r = n.run(rest, host, writes === null ? undefined : ELITE_LIMITS)
     const lines = r.out.map(out)
     if (r.error !== undefined) lines.push(err(`noir: ${r.error}`))
+    if (exam !== undefined) for (const line of exam.report()) lines.push(sys(line))
     if (r.steps >= NOIR_NOTE_STEPS) lines.push(sys(`-- ${r.steps} steps --`))
+    return { lines }
+  },
+
+  // Read-only: the walk's stage and its exit program. There is no `tutorial off`: the program is the way out.
+  tutorial(args, b) {
+    const a = args[0]
+    if (args.length > 1 || (a !== undefined && a !== 'status' && a !== 'program')) return fail(usage('tutorial'))
+    const e = b.exam
+    const lines: Line[] = []
+    if (a !== 'program') lines.push(out(e === undefined ? 'tutorial: no first walk in this shell (it runs in the city)' : e.status()))
+    if (a !== 'status') {
+      lines.push(sys("the exit program, one 'noir' line at a time (the session keeps seal and swarm between lines):"))
+      for (const l of e?.program() ?? EXAM_PROGRAM) lines.push(out(`  noir ${l}`))
+    }
     return { lines }
   },
 

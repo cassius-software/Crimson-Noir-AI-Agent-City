@@ -179,7 +179,7 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 | `?captions=0` | Start with the closed captions off (`captions on` turns them on; see Spatial audio) |
 | `?haptics=0` | Start with the controller's rumble and the phone's vibration off: the guardrails' feel and a check's tap (`haptics on` turns them on; the triggers' resistance stays; see The operator's progression) |
 | `?boot=tty` | Track B: the Ring-0 console alone, full screen, with no canvas, no engine, no WebGPU, no physics worker and no audio; `boot gui` reloads the city (see Ring-0 console) |
-| `?tutorial=1`, `?tutorial=0` | Sloane's first walk, the first-run tutorial in six stages that only the console's exit program ends: `?tutorial=1` opens on it (again, after a pass), `?tutorial=0` keeps it away for this visit; `?onboarding=0` keeps it away too (see The first walk) |
+| `?tutorial=1`, `?tutorial=0` | Sloane's first walk, the first-run tutorial in seven stages that only the console's exit program ends: `?tutorial=1` opens on it (again, after a pass), `?tutorial=0` keeps it away for this visit; `?onboarding=0` keeps it away too (see The first walk) |
 | `?profile` | GPU timestamps |
 | `?debug` | Exposes `window.__SIM__` test hooks; off by default |
 
@@ -693,33 +693,42 @@ reading order. The rects tile the canvas exactly, in whole pixels.
 
 ### The first walk (the first-run tutorial)
 
-Sloane's first walk is the first-run tutorial: six stages that a brand-new visitor goes through before the city is
+Sloane's first walk is the first-run tutorial: seven stages that a brand-new visitor goes through before the city is
 theirs, each one a thing to do rather than a thing to read, and the only way out a three-line program typed at the
 Ring-0 console. Sloane never calls it a lesson. It is built as a setting (`src/07_Execute_Actions/onboarding/firstWalkStore.ts`
-`FIRST_WALK_DEFAULT`): **in this version it is opt-in** (`?tutorial=1`), because the exit program's three words are not
-yet in NoirScript and a walk nobody can finish must not be mandatory; once they land, the default flips and every first
-run of the city shell opens on the walk until it has been passed once, with `?tutorial=0` and the expert path
-(`?onboarding=0`) the only ways to keep it away. The pass is kept in this browser (`localStorage`, key
+`FIRST_WALK_DEFAULT`, one constant): **on by default**, so every first run of the city shell opens on the walk until it
+has been passed once, with `?tutorial=0` and the expert path (`?onboarding=0`) the only ways to keep it away, and
+`?tutorial=1` the way to walk it again. The pass is kept in this browser (`localStorage`, key
 `civic-simulation:first-walk:v1`), written only when the console's exam has unlocked the city; `?boot=tty` never
 shows it (there is no city to walk).
 
 - **The card** (`FirstWalk.tsx`) stands in Sloane's own style under the readout on a wide screen, in the band above the
-  stick and the buttons on a phone, and at the foot of the screen while the console is open. It names the stage (1 of
-  6), says the one thing to do in your device's own words (the keys, the pad's buttons by their layout, or the touch
+  stick and the buttons on a phone, and at the foot of the screen while the console is open. On a wide screen from
+  960 px across, Sloane's own open card (her name question, a goal) stands to its left rather than under it; in a
+  narrower window the walk's card steps aside while hers is open and comes back when she settles into her chip. It names the stage (1 of
+  7), says the one thing to do in your device's own words (the keys, the pad's buttons by their layout, or the touch
   controls and the Menu), tells you what it is in a line an eight-year-old follows, and unfolds **five whys** one at a
   time when you press **Why?**, each one deeper than the last and each one true of the city as it runs (the 24 fps,
-  180-degree-shutter cinema camera; GGX; the First Law under every wheel; the six workplaces; the four laws, the
+  180-degree-shutter cinema camera; GGX; the First Law under every wheel; the six workplaces; the closed business-casual wardrobe; the four laws, the
   twelve checks and the air gap; the bounded NoirScript VM). It has **no close button, no skip and no key that puts
   it away**; the card says so. Sloane says each line aloud when the sound is on, and the configured model may reword a
   line when it answers in time and keeps the key or command the line needs.
-- **The six stages** (`src/09_Cognition/firstWalk.ts`), each finished by what the page sees, never by a button:
+- **The seven stages** (`src/09_Cognition/firstWalk.ts`), each finished by what the page sees, never by a button:
   1. **Look and walk**: a turn of the head of about twenty degrees and three metres on foot.
   2. **Talk to Sloane**: a goal sent from the chip in your own words (opening the microphone with `recruit listen`
      or turning the captions counts too).
   3. **The parked fleet**: get into a car (the stage is passed over on a map with no cars).
   4. **Inside a workplace**: stand inside one of the six workplaces (passed over on a surveyed map, which has none).
-  5. **Ring-0**: open the console and run `laws` (`kernel`, `act gate`, `act list` or `ring0` work too).
-  6. **The way out**: run the exit program; see below. Doing a later stage early counts (a car entered while still
+  5. **Your look**: open the wardrobe card from **Look** on Sloane's chip (or **Change my look** in her list) and put
+     it away again (**Done**, its close button or Escape); changing something is up to you. The card is the wardrobe
+     described under The character customizer. On a map with shops (the city's five, Lakefront Metro's; see
+     Storefronts) a shop does it too: walk in, open its card (B or E on a keyboard, the south face button on a pad, the
+     **Browse** chip on touch), try a line on if you like (trying on is free; buying costs credits), and put the card
+     away (**Done**, ×, Escape, the console, or walking out). Sloane names the shops only where there are some; the
+     walk's card steps aside while a shop's card is open, as it does for the wardrobe. Owned homes are not built yet;
+     when they are they join this stage the same way.
+  6. **Ring-0**: open the console and run `laws` (`kernel`, `act gate`, `act list` or `ring0` work too).
+  7. **The way out**: run the exit program; see below. Doing a later stage early counts (a car entered while still
      learning to walk); Sloane says nothing of it until its turn would have come.
 
   Sloane says each stage as it starts and, after forty-five seconds with no progress, one hint, more plainly (the
@@ -728,7 +737,8 @@ shows it (there is no city to walk).
 - **The accessible path.** Every card has one button that has Sloane do the stage's action for a visitor who cannot
   (a switch, a screen reader, a phone with no keyboard): *Walk for me* turns the head and walks four metres; *Plan one
   for me* plans "make it night" as the chip would; *Take me to a car* puts you down at the nearest parked car's door
-  and opens it; *Take me inside* puts you down just inside the nearest workplace's doorway; *Open it for me* opens the
+  and opens it; *Take me inside* puts you down just inside the nearest workplace's doorway; *Open the wardrobe* opens the
+  wardrobe card (the walk's card steps aside while it is open, and **Done** brings it back); *Open it for me* opens the
   console on `laws`; on the last card three buttons type each line of the program into the console's prompt and
   **Run** runs it, so the walk is completable with taps alone. Everything goes through the same controls the operator
   tier has (`engine.simControls`), never past the realm: the car's door is the realm's to open, as always.
@@ -740,13 +750,24 @@ shows it (there is no city to walk).
   noir unlock_city(seal, swarm);
   ```
 
-  The three words are not yet in NoirScript: this version's card shows them, types them and runs them, and the
-  console answers that it does not know them. When they land (see The Ring-0 console), `verify_ring0` is a checksum
-  of the kernel's live state (zero when any check fails), `spawn_subagents` asks people over through the recruiter's
-  own lane and answers with how many came, and `unlock_city` opens the city only for a live seal and a swarm of at
-  least one; none of them bypasses the Ring-0 gate or the elite tier.
+  The three words are ordinary NoirScript intrinsics (`docs/noirscript.md`) behind an exam the city wires into the
+  console (`src/07_Execute_Actions/onboarding/exam.ts`). None of them bypasses the Ring-0 gate or the elite tier, and
+  the exam has no write of its own. `verify_ring0()` is a seal: a 32-bit hash of what holds right now (the four laws
+  by rank and title, the gate's twelve checks by name, the page's air gap as the host vouches for it, the Ring-0 audit
+  standing) salted with a number drawn once per page load, so it is 0 when any of that fails and a number typed from
+  memory never matches. `spawn_subagents(n, role)` asks up to `n` people over for the role through the recruiter's own
+  lane, under the same page checks and realm answers as `recruit <skill>` (on foot, off the road, within earshot, at
+  most eight at a time; the one role today is `sim2real_workplaces`, which asks for Robotics, Rust, Python, Data,
+  Testing, Design, TypeScript and Security in turn), and answers with how many were actually asked, never the number
+  wished for: stand on a sidewalk near people, or it answers 0 and says so. `unlock_city(seal, swarm)` opens the city
+  for a seal that matches the live one and a swarm of one or more, refuses with its reason otherwise, and after the
+  pass answers that the city is already yours. After each line the console prints what the doors said. In the console
+  shell (`?boot=tty`) there is no city and no exam: the three words answer so. `tutorial [status|program]` reads the
+  stage and the program; there is no `tutorial off`.
 - **Debug hooks** (`?debug`): `__SIM__.walk()` is the stage on the card (`null` when off or passed) and
-  `__SIM__.walkNote(event)` reports an event into it, for the browser smoke.
+  `__SIM__.walkNote(event)` reports an event into it, for the browser smoke, whose `walk` scenario does the whole walk
+  on the accessible path in CI's Chrome (every button, the exit program, the pass kept). How the card stands on a real
+  phone, a pad or a screen reader is unverified.
 - **Verified:** the stage engine, the switch and the store, the page wiring and the lines' plainness, admissibility
   and brand scrub are pinned by the node tests. How the card stands on a real phone, a pad and a screen reader is
   unverified.
