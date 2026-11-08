@@ -1021,7 +1021,7 @@ while you type.
   `ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]`, `quality [auto|lite|peak|-1|0-5]`, `hardware`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `xr [vr|ar|off]`, `render [on|off]`,
   `captions [on|off]`, `haptics [on|off]`, `ping [go|look|gather|wait|clear]`,
   `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
-  `robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|remove <id>]`,
+  `robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|cell [<kind> <station>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|fit <id> <joint>|shape <id> [<seed>|off]|remove <id>]`,
   `recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]`, `memory [<agent>|forget <agent>|forget all]`,
   `clear`, `history`, `echo [text]`, `uname [-asnrvmi]`, `whoami`, `version`, `boot [gui|tty|status]`,
   `map [city|lakefront|default|status]`, `r0 <words...>|r0 reset|r0 words`,
@@ -2299,11 +2299,33 @@ specifications and unverified on hardware. Nothing opens at boot: a robot arrive
   <id> [x z]` puts the body in the realm (two metres before you when no place is given), `robot mode <id>
   twin|leader|watch|sim`, `robot set <id> <joint> <q>`, `robot arm <id>` / `robot disarm <id>`, `robot calibrate <id>
   <joint>` (a hold, then one small step toward the farther limit; the fitted dead time less the measured return trip
-  and the fitted time constant become the twin's delay and filter), `robot remove <id>`, `robot relay <ws url>
-  <token>` / `robot relay off`. The relay, a spawn, a URDF read, arming and calibrating are the operator's
-  (`operator unlock`); the list, the demo, a mode, a setpoint, a disarm, a remove and the relay's status or its off
-  run at any time, so a stop is never locked. The HUD shows `Robots · n` with the armed count while any robot is
+  and the fitted time constant become the twin's delay and filter), `robot fit <id> <joint>` (the same step fitted
+  twice, as a first-order lag and as a second-order system; the twin takes the second only when it lowers the error a
+  tenth, as a reference actuator on that joint), `robot shape <id> <seed>` / `robot shape <id> off` / `robot shape
+  <id>` (the body re-spawned where it stood from a randomized domain, the plain body back, or the domain's table),
+  `robot cell` / `robot cell <kind> <station>` (the stations of every room and the workstation cell each kind gets, or
+  that cell's robot spawned at the station), `robot remove <id>`, `robot relay <ws url> <token>` / `robot relay off`.
+  The relay, a spawn, a cell, a shape, a URDF read, arming, calibrating and fitting are the operator's (`operator
+  unlock`); the list, the demo, a mode, a setpoint, a disarm, a remove, the relay's status or its off, the stations'
+  list and a domain's table run at any time, so a stop is never locked. The HUD shows `Robots · n` with the armed count while any robot is
   known, and the namespace carries the count under `Hardware/Bus/robots`.
+- **Actuator shaping and domain randomization** (`04_Connect_Hardware/actuatorFit.ts`). A policy trained in the city
+  transfers only if the city's actuators answer like real ones and the training saw their spread. `robot fit` fits a
+  joint's step as a second-order system with dead time (ω, ζ, the closed forms) as well as the first-order lag, and
+  Occam picks: the second-order model only when its error is a tenth lower. A second-order choice runs in the realm as
+  that joint's reference actuator (a spring and damper toward the delayed setpoint, ω clamped to 60 rad/s, stepped so
+  it stays bounded at 60 Hz) and the servo tracks it. `robot shape <id> <seed>` draws a domain from the seed alone:
+  every link's mass within ±20 % and its inertia within ±30 % at the same mass, a Coulomb friction of up to 5 % of
+  each joint's effort cap with stiction one to two times that and a viscous term costing at most a tenth of the effort
+  at the speed cap, and each joint's shaping jittered (ω and ζ ±25 %, up to a step more delay). The realm applies the
+  friction about each joint after the servo, never more than would stop it in the step and never over the cap, and
+  stiction holds a still joint until the servo asks more. The same seed is the same body on any machine.
+- **Workstation cells** (`04_Connect_Hardware/cells.ts`). Each kind of workplace has a cell: a six-joint arm in the
+  robotics lab, the kitchen and the fleet bay; a two-axis gantry in the warehouse, the micro-fab and the greenhouse; a
+  vibration table in the acoustics lab; a gait belt in the gait lab; a console with no robot everywhere else (and for
+  any kind the table does not know). `robot cell` lists every station with its cell; `robot cell roboticsLab 0` spawns
+  `sim:roboticsLab-0` at that station, facing the way the station faces, a sim robot like any other. Any manifest can
+  be written back out as URDF (`toUrdf`) that the URDF reader reads to the same manifest.
 - **Trying it with nothing attached.** In the console: `robot demo`, `robot spawn sim:demo`, `robot set sim:demo elbow
   1`, then `operator unlock`, `robot arm sim:demo`, `robot calibrate sim:demo elbow`: the realm is the robot, so the
   calibration measures the servo itself. With the relay: `ROBOT_PRINT_TOKEN=1 npm run serve:robots` prints the port and
@@ -2318,6 +2340,9 @@ specifications and unverified on hardware. Nothing opens at boot: a robot arrive
   a mimic joint, a floating or planar joint and a robot of more than 64 joints or 32 links are refused; the page
   never opens a socket off this machine, so a remote robot or a remote broker reaches the city only through the
   relay running on it; the realm's 60 Hz loop stays the realm's: a robot is placed into it and never changes its step.
+  The second-order fit, the reference actuator, the friction and the domain are proved against plants of known
+  numbers and against Rapier, never against a physical actuator; inertia is randomized as one scale on the shape's
+  own tensor (a URDF's full tensor is not read).
   The limits and the open points are listed in the specification's §8.
 
 ## Autoscaling

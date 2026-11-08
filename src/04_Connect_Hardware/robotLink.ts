@@ -10,8 +10,11 @@
  * the body in the physics realm (spawned and driven with SimCommands, read back from the joint buffer), the mode
  * (twin: the body follows the robot; leader: the body leads and its joints go out as setpoints; watch; sim), the
  * gate's state (peripheralPolicy.ts: caps, the operator tier, the lease the console holds, the arming handshake, the
- * heartbeat, the sequence, the time-to-live and the rate) and the calibration (actuatorFit.ts). Nothing goes out to a
- * robot except through `admit`; every door's outbound lines are built here, at most 20 a second (10 over BLE), the
+ * heartbeat, the sequence, the time-to-live and the rate), the calibration (actuatorFit.ts: `robot calibrate` for the
+ * first-order lag, `robot fit` for both models with Occam choosing), the randomized domain a body is spawned under
+ * (`robot shape <seed>`: the manifest's masses and inertia scales, a friction and a shaping per joint, all from the
+ * seed) and the workstation cells (`robot cell`: cells.ts, a cell's robot placed at a room's station). Nothing goes
+ * out to a robot except through `admit`; every door's outbound lines are built here, at most 20 a second (10 over BLE), the
  * newest winning and a held setpoint re-sent every 200 ms. The socket is made only inside connect() and only for a
  * URL the air gap's netServer admits; a URDF file is read only through loopbackFetch. The lease breaks when the body
  * is more than 12 m from the operator, on `robot disarm`, on `operator lock`, on a halt (panic) or when the page is
@@ -26,7 +29,8 @@ import {
   type Capabilities, type PolicyState,
 } from './peripheralPolicy.ts'
 import { buildable, buildManifest, checkFrame, clampTargets, frameLine, MAX_ROBOTS, type JointFrame, type Manifest } from './jointState.ts'
-import { Calibrator, gainsFor, RoundTrip, type TwinGains } from './actuatorFit.ts'
+import { Calibrator, describeDomain, DOMAIN, fitStep2, gainsFor, gainsFor2, pickFit, randomizeDomain, RoundTrip, type ActuatorShaping, type Domain, type TwinGains } from './actuatorFit.ts'
+import { cellFor, cellManifest, CELL_OF_WORKPLACE } from './cells.ts'
 import { parseUrdf } from './urdf.ts'
 import { LINE } from './lineLink.ts'
 import type { HalRobot, HalRobotEvent } from './hal.ts'
@@ -148,6 +152,12 @@ interface Robot {
   lease: AbortController | null
   armWait: { resolve: (s: string) => void; timer: ReturnType<typeof setTimeout> } | null
   gains: TwinGains | null
+  /** Per movable joint, the second-order shaping a `robot fit` gave it (null: the first-order gains); null before any. */
+  shaping: (ActuatorShaping | null)[] | null
+  /** The randomized domain the body was spawned under (`robot shape`), or null: the plain manifest. */
+  domain: Domain | null
+  /** Where the body was placed, so `robot shape` can put a new one in the same spot. */
+  placed: { x: number; y: number; z: number; heading: number } | null
   /** The console's setpoint (leader, sim), per movable joint; null until set (the body stands where it was built). */
   setpoint: number[] | null
   seq: number
@@ -155,7 +165,8 @@ interface Robot {
   lastSentKey: string
   refusals: number
   readonly rtt: RoundTrip
-  cal: { c: Calibrator; joint: string; resolve: (s: string) => void } | null
+  /** A running calibration: `second` when `robot fit` asked for both models. */
+  cal: { c: Calibrator; joint: string; second: boolean; resolve: (s: string) => void } | null
 }
 
 type RelayMessage = Record<string, unknown> & { t: string }
@@ -310,7 +321,7 @@ export class RobotBridge {
     return [...this.robots.values()].map((r) => ({
       id: r.id, door: r.door, name: r.name, mode: r.mode, joints: r.manifest.movable.length, armed: r.policy.armed, body: r.body,
       frameAgeMs: r.frame ? Math.max(0, now - r.frameAt) : null, stale: r.frame !== null && now - r.frameAt > ROBOT_LINK.staleMs,
-      calibrated: r.gains !== null, refusals: r.refusals,
+      calibrated: r.gains !== null || (r.shaping?.some((s) => s !== null) ?? false), refusals: r.refusals,
     }))
   }
 
@@ -337,23 +348,86 @@ export class RobotBridge {
   spawn(id: string, x?: number, z?: number): string {
     const r = this.robots.get(id)
     if (!r) return `no robot '${id}'`
-    if (r.body !== null) return `${id}: already in the realm (body ${r.body}); robot remove first`
-    const bodies = [...this.robots.values()].filter((o) => o.body !== null).length
-    if (bodies >= MAX_ROBOTS) return `the realm holds at most ${MAX_ROBOTS} robots`
-    const why = buildable(r.manifest)
-    if (why) return `${id}: ${why}`
     const op = this.host.operatorAt()
     const px = x ?? op.x + 2 * Math.sin(op.heading), pz = z ?? op.z + 2 * Math.cos(op.heading)
     if (!Number.isFinite(px) || !Number.isFinite(pz)) return 'x and z must be numbers'
+    return this.place(r, px, op.y, pz, op.heading + Math.PI)
+  }
+
+  /**
+   * The body into the realm at a place: the pool's cap, `buildable` on the manifest the realm will get (the domain's
+   * when the robot is shaped, else its own), the spawn command and the mode (with the shaping and friction).
+   */
+  private place(r: Robot, x: number, y: number, z: number, heading: number): string {
+    if (r.body !== null) return `${r.id}: already in the realm (body ${r.body}); robot remove first`
+    const bodies = [...this.robots.values()].filter((o) => o.body !== null).length
+    if (bodies >= MAX_ROBOTS) return `the realm holds at most ${MAX_ROBOTS} robots`
+    const manifest = r.domain ? r.domain.manifest : r.manifest
+    const why = buildable(manifest)
+    if (why) return `${r.id}: ${why}`
     r.body = this.nextBody++
     r.q = r.manifest.movable.map(() => 0)
     r.qd = r.manifest.movable.map(() => 0)
     r.tau = r.manifest.movable.map(() => 0)
     r.at = null
     r.holding = true
-    this.host.send({ c: 'robotSpawn', id: r.body, manifest: r.manifest, x: px, y: op.y, z: pz, heading: op.heading + Math.PI })
+    r.placed = { x, y, z, heading }
+    this.host.send({ c: 'robotSpawn', id: r.body, manifest, x, y, z, heading })
     this.sendMode(r)
-    return `${id}: body ${r.body} at ${fmt(px, 1)}, ${fmt(pz, 1)} (${r.manifest.movable.length} joints, mode ${r.mode})`
+    return `${r.id}: body ${r.body} at ${fmt(x, 1)}, ${fmt(z, 1)} (${r.manifest.movable.length} joints, mode ${r.mode}${r.domain ? `, domain seed ${r.domain.seed}` : ''})`
+  }
+
+  /**
+   * `robot shape <id> [<seed>|off]`: with nothing, the robot's domain table; with a seed, a domain drawn from it
+   * (masses, inertia scales, a friction and a shaping per joint) and the body re-spawned under it where it stood,
+   * the friction and shaping sent with the mode; with `off`, the plain body back the same way. A new body is never
+   * armed: a shaped robot is disarmed first, since the new body stands at q = 0 wherever the robot is.
+   */
+  shape(id: string, seed?: number | 'off'): string {
+    const r = this.robots.get(id)
+    if (!r) return `no robot '${id}'`
+    if (seed === undefined) return r.domain ? describeDomain(r.domain).join('\n') : `${id}: plain body, no domain (robot shape ${id} <seed>)`
+    if (seed === 'off') {
+      if (!r.domain) return `${id}: no domain to take off`
+      r.domain = null
+    } else {
+      if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) return 'seed: a whole number from 0 to 4294967295'
+      r.domain = randomizeDomain(seed, r.manifest, r.shaping)
+    }
+    if (r.body === null) return r.domain ? [`${id}: domain seed ${r.domain.seed} kept for the next spawn (robot spawn ${id})`, ...describeDomain(r.domain)].join('\n') : `${id}: plain body for the next spawn (robot spawn ${id})`
+    if (r.policy.armed || r.armWait) this.sendDisarm(r, 'reshaped', true)
+    const op = this.host.operatorAt()
+    const at = r.placed ?? { x: op.x, y: op.y, z: op.z, heading: op.heading + Math.PI }
+    this.unspawn(r)
+    const placed = this.place(r, at.x, at.y, at.z, at.heading)
+    return r.domain ? [placed, ...describeDomain(r.domain)].join('\n') : `${placed} · plain body`
+  }
+
+  /** The workstation cell of a workplace kind id (cells.ts). */
+  cellKind(kind: string): string {
+    return cellFor(kind)
+  }
+
+  /**
+   * `robot cell <kind> <station>`: the cell's robot as `sim:<kind>-<station>`, built from the cell's manifest and
+   * placed at the station on the operator's ground, facing the station's yaw. A console cell has no robot and says so.
+   */
+  cell(kind: string, station: number, at: { x: number; z: number; yaw: number }): string {
+    const c = cellFor(kind)
+    if (c === 'console') {
+      const withRobot = Object.entries(CELL_OF_WORKPLACE).filter(([, v]) => v !== 'console').map(([k, v]) => `${k} (${v})`).join(', ')
+      return `${kind}: a console cell has no robot; a desk, a screen and a chair. The kinds with one: ${withRobot}`
+    }
+    if (!Number.isInteger(station) || station < 0) return 'station: a whole number'
+    if (![at.x, at.z, at.yaw].every(Number.isFinite)) return 'the station is not finite'
+    const name = `${kind}-${station}`
+    const id = `sim:${name}`
+    if (!/^sim:[A-Za-z0-9_.-]{1,32}$/.test(id)) return `${kind}: not a kind id this bridge can name`
+    const old = this.robots.get(id)
+    if (old && old.body !== null) return `${id}: already in the realm (body ${old.body}); robot remove first`
+    this.addSim(id, cellManifest(c, name))
+    const placed = this.place(this.robots.get(id)!, at.x, this.host.operatorAt().y, at.z, at.yaw)
+    return `${placed} · ${c} cell`
   }
 
   /** `robot mode <id> twin|leader|watch|sim`. */
@@ -436,9 +510,22 @@ export class RobotBridge {
 
   /** `robot calibrate <id> <joint>`: one joint's step response, armed; resolves with the fit and the twin's new lag. */
   calibrate(id: string, joint: string): Promise<string> {
+    return this.startCalibration(id, joint, false)
+  }
+
+  /**
+   * `robot fit <id> <joint>`: the same step, fitted first and second order; the twin takes the second-order model as
+   * a shaping on that joint only when it lowers the error a tenth (pickFit), else the first-order gains as calibrate.
+   */
+  fit(id: string, joint: string): Promise<string> {
+    return this.startCalibration(id, joint, true)
+  }
+
+  private startCalibration(id: string, joint: string, second: boolean): Promise<string> {
     const r = this.robots.get(id)
+    const verb = second ? 'fit' : 'calibrate'
     if (!r) return Promise.resolve(`no robot '${id}'`)
-    if (r.mode !== 'leader' && r.mode !== 'sim') return Promise.resolve(`${id}: calibrate needs mode leader or sim`)
+    if (r.mode !== 'leader' && r.mode !== 'sim') return Promise.resolve(`${id}: ${verb} needs mode leader or sim`)
     if (r.body === null) return Promise.resolve(`${id}: no body in the realm (robot spawn ${id})`)
     if (!r.policy.armed) return Promise.resolve(`${id}: arm first (robot arm ${id})`)
     if (r.cal) return Promise.resolve(`${id}: a calibration is running (${r.cal.joint})`)
@@ -447,7 +534,7 @@ export class RobotBridge {
     const spec = r.manifest.joints[r.manifest.movable[k]]
     const limited = spec.kind !== 'continuous'
     const c = new Calibrator([{ index: k, name: spec.name, lower: limited ? spec.lower : null, upper: limited ? spec.upper : null }])
-    return new Promise<string>((resolve) => { r.cal = { c, joint: spec.name, resolve } })
+    return new Promise<string>((resolve) => { r.cal = { c, joint: spec.name, second, resolve } })
   }
 
   /** `robot remove <id>`: the body out of the realm (a sim robot leaves altogether). */
@@ -543,10 +630,20 @@ export class RobotBridge {
     return r.mode === 'twin' ? 'follow' : r.mode === 'watch' ? 'hold' : 'filter'
   }
 
+  /**
+   * The body's mode with the calibrated lag; the shaping per joint (the domain's, jittered about the fitted ones,
+   * when shaped; else the fitted ones once any joint has one) and the domain's friction. Neither key travels before
+   * it has anything to say, so a plain body's command is the plain command.
+   */
   private sendMode(r: Robot): void {
     if (r.body === null) return
     const g = r.gains
-    this.host.send({ c: 'robotMode', id: r.body, mode: this.realmMode(r), tauMs: g?.tauMs ?? 0, delaySteps: g?.delaySteps ?? 0 })
+    const shaping = r.domain ? r.domain.shaping : r.shaping
+    const friction = r.domain ? r.domain.friction : null
+    this.host.send({
+      c: 'robotMode', id: r.body, mode: this.realmMode(r), tauMs: g?.tauMs ?? 0, delaySteps: g?.delaySteps ?? 0,
+      ...(shaping ? { shaping: shaping.map((s) => (s ? { ...s } : null)) } : {}), ...(friction ? { friction: friction.map((f) => ({ ...f })) } : {}),
+    })
   }
 
   private note(line: string): void {
@@ -566,7 +663,7 @@ export class RobotBridge {
     return {
       id, door, name: manifest.robot, manifest, caps, transport, mode: door === 'sim' ? 'sim' : 'twin',
       frame: null, frameAt: 0, handed: -1, ack: -1, body: null, q: new Array<number>(n).fill(0), qd: new Array<number>(n).fill(0), tau: new Array<number>(n).fill(0), at: null, holding: true, bodyAck: -1,
-      policy: initialState(caps, this.host.now(), n), lease: null, armWait: null, gains: null, setpoint: null, seq: 0, lastSentAt: -Infinity, lastSentKey: '', refusals: 0,
+      policy: initialState(caps, this.host.now(), n), lease: null, armWait: null, gains: null, shaping: null, domain: null, placed: null, setpoint: null, seq: 0, lastSentAt: -Infinity, lastSentKey: '', refusals: 0,
       rtt: new RoundTrip(), cal: null,
     }
   }
@@ -589,6 +686,8 @@ export class RobotBridge {
       old.policy = initialState(caps, this.host.now(), manifest.movable.length)
       old.frame = null
       old.gains = null
+      old.shaping = null
+      old.domain = null
       old.setpoint = null
       return
     }
@@ -748,9 +847,35 @@ export class RobotBridge {
     if ('error' in res) { cal.resolve(`${r.id}: calibration of ${res.name} failed: ${res.error}`); return }
     const fit = res.fit
     const returnTrip = Number.isFinite(r.rtt.meanMs) ? r.rtt.meanMs : 0
-    r.gains = gainsFor(fit, returnTrip)
+    if (!cal.second) {
+      r.gains = gainsFor(fit, returnTrip)
+      this.sendMode(r)
+      cal.resolve(`${r.id}: ${res.name}: delay ${fmt(fit.deadTimeMs, 0)} ms (return trip ${fmt(returnTrip, 0)} ms), τ ${fmt(fit.timeConstantMs, 0)} ms, gain ${fmt(fit.gain, 2)}, rmse ${fmt(fit.rmse, 4)}${fit.settled ? '' : ', not settled'} · twin: ${r.gains.delaySteps} step(s) back, τ ${fmt(r.gains.tauMs, 0)} ms`)
+      return
+    }
+    // Both models on the one recording; Occam picks. A second-order choice is a shaping on this joint alone (with
+    // the joint's own speed cap); a first-order choice is the gains as calibrate sets them, and no shaping here.
+    const fit2 = fitStep2(res.samples, res.step.u0, res.step.u1)
+    const pick = pickFit(fit, fit2)
+    const spec = r.manifest.joints[r.manifest.movable[res.index]]
+    const lines = [
+      `${r.id}: ${res.name}: first order: delay ${fmt(fit.deadTimeMs, 0)} ms, τ ${fmt(fit.timeConstantMs, 0)} ms, gain ${fmt(fit.gain, 2)}, rmse ${fmt(fit.rmse, 4)}${fit.settled ? '' : ', not settled'} (return trip ${fmt(returnTrip, 0)} ms)`,
+      'error' in fit2 ? `second order: ${fit2.error}` : `second order: delay ${fmt(fit2.deadTimeMs, 0)} ms, ω ${fmt(fit2.omega, 1)} rad/s, ζ ${fmt(fit2.zeta, 2)}, gain ${fmt(fit2.gain, 2)}, rmse ${fmt(fit2.rmse, 4)}`,
+    ]
+    if (pick.order === 2 && !('error' in fit2)) {
+      const sh = gainsFor2(fit2, returnTrip, spec.velocity > 0 ? spec.velocity : DOMAIN.capDefault.velocity)
+      if (!r.shaping) r.shaping = r.manifest.movable.map(() => null)
+      r.shaping[res.index] = sh
+      lines.push(`twin takes ${pick.why} · shaping: ${sh.delaySteps} step(s) back, ω ${fmt(sh.omega, 1)} rad/s, ζ ${fmt(sh.zeta, 2)}, gain ${fmt(sh.gain, 2)}, speed cap ${fmt(sh.velocityMax, 1)}`)
+    } else {
+      r.gains = gainsFor(fit, returnTrip)
+      if (r.shaping) r.shaping[res.index] = null
+      lines.push(`twin takes ${pick.why} · ${r.gains.delaySteps} step(s) back, τ ${fmt(r.gains.tauMs, 0)} ms`)
+    }
+    // A shaped robot's domain is drawn again about the new base: the same seed, so the same masses and friction.
+    if (r.domain) r.domain = randomizeDomain(r.domain.seed, r.manifest, r.shaping)
     this.sendMode(r)
-    cal.resolve(`${r.id}: ${res.name}: delay ${fmt(fit.deadTimeMs, 0)} ms (return trip ${fmt(returnTrip, 0)} ms), τ ${fmt(fit.timeConstantMs, 0)} ms, gain ${fmt(fit.gain, 2)}, rmse ${fmt(fit.rmse, 4)}${fit.settled ? '' : ', not settled'} · twin: ${r.gains.delaySteps} step(s) back, τ ${fmt(r.gains.tauMs, 0)} ms`)
+    cal.resolve(lines.join('\n'))
   }
 
   /** The bodies' slots out of the joint buffer, into each robot. */
