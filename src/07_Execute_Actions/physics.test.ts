@@ -6,7 +6,7 @@
  * sensor per FURNITURE_TILE square) to the world it replaced, one sensor cylinder per lamp, tree and signal pole, built
  * here the old way as the reference:
  * - a query that includes sensors finds the same poles at the same distances (to Rapier's own ray-cast tolerance)
- *   along thousands of seeded rays, finds every pole at its own centre, and finds nothing where no pole stands;
+ *   along thousands of seeded rays, and finds every pole just inside its rim and its top and nothing just outside them;
  * - every pole is in exactly one compound, every compound is a sensor on the fixed body, and the solid world (ground
  *   and buildings) answers every solid query exactly as before;
  * - the city's world holds a hundred tiles in place of 4,599 colliders.
@@ -61,8 +61,8 @@ function sensorsAt(world: RAPIER.World, x: number, y: number, z: number): number
  * How close a ray comes to the rim of the pole nearest a point on it, m: the smaller of its closest approach to that
  * pole's axis less the radius, and the point's height from the pole's base or top. Rapier casts a ray at a cylinder by
  * an iterative support-map search that stops within a fraction of a millimetre, and where it stops depends on the frame
- * the cylinder is described in (the world's origin before, its tile's centre now): a hit moves by up to half a
- * millimetre, and where a ray only grazes the surface (a tangent, the corner at the base) by a few millimetres or to a
+ * the cylinder is described in (the world's origin before, its tile's centre now): a hit moves by up to about
+ * three-quarters of a millimetre, and where a ray only grazes the surface (a tangent, the corner at the base) by a few millimetres or to a
  * miss.
  */
 function rimDistance(poles: readonly (readonly [number, number, number, number])[], ray: RAPIER.Ray, t: number): number {
@@ -129,25 +129,38 @@ test('the packed furniture finds the same poles at the same distances as one sen
   if (process.env.FURNITURE_WORST) console.log(`hits ${hits}, flips ${flips}, worst away from a rim ${worst} m`)
 })
 
-test('every pole is found at its own centre and nowhere a hand-width beside it, in the packed world as in the reference', async () => {
+test('every pole is found a centimetre inside its rim on all four sides and under its top, and not a centimetre outside them, in the packed world as in the reference', async () => {
   const { packed, reference, furniture } = await worlds()
   const kinds = [[furniture.lamps, POLES.lamp], [furniture.trees, POLES.tree], [furniture.signals, POLES.signal]] as const
-  let poles = 0, beside = 0
+  const EDGE = 0.01
+  let poles = 0, alone = 0
   for (const [list, size] of kinds) {
+    const { height: h, radius: r } = size
     for (const [x, z] of list) {
       poles++
-      assert.ok(sensorsAt(packed.world, x, size.height / 2, z) >= 1, `a pole at (${x}, ${z}) is in the packed world`)
-      // Just past the radius, east: in the packed world exactly when in the reference (another pole may stand there).
-      const ox = x + size.radius + 0.05
-      const p = sensorsAt(packed.world, ox, size.height / 2, z), r = sensorsAt(reference.world, ox, size.height / 2, z)
-      assert.equal(p > 0, r > 0, `beside the pole at (${x}, ${z})`)
-      if (r === 0) beside++
-      // Above the pole's top: no pole there either (each pole is the height it always was).
-      assert.equal(sensorsAt(packed.world, x, size.height + 0.05, z) > 0, sensorsAt(reference.world, x, size.height + 0.05, z) > 0)
+      const at = `the pole at (${x}, ${z})`
+      // Inside: a centimetre in from the rim east, west, north and south at mid-height, under the top, over the base.
+      const inside: [number, number, number][] = [
+        [x + r - EDGE, h / 2, z], [x - r + EDGE, h / 2, z], [x, h / 2, z + r - EDGE], [x, h / 2, z - r + EDGE],
+        [x, h - EDGE, z], [x, EDGE, z],
+      ]
+      for (const [px, py, pz] of inside) assert.ok(sensorsAt(packed.world, px, py, pz) >= 1, `${at}: (${px}, ${py}, ${pz}) is inside it`)
+      // Outside: a centimetre out past the rim on the same four sides, and over the top. Another pole may stand there,
+      // so each answer is the reference's.
+      const outside: [number, number, number][] = [
+        [x + r + EDGE, h / 2, z], [x - r - EDGE, h / 2, z], [x, h / 2, z + r + EDGE], [x, h / 2, z - r - EDGE], [x, h + EDGE, z],
+      ]
+      let clear = true
+      for (const [px, py, pz] of outside) {
+        const p = sensorsAt(packed.world, px, py, pz) > 0, ref = sensorsAt(reference.world, px, py, pz) > 0
+        assert.equal(p, ref, `${at}: (${px}, ${py}, ${pz}) just outside it`)
+        if (ref) clear = false
+      }
+      if (clear) alone++
     }
   }
   assert.equal(poles, furniture.lamps.length + furniture.trees.length + furniture.signals.length)
-  assert.ok(beside > poles * 0.9, `most poles stand alone (${beside} of ${poles})`)
+  assert.ok(alone > poles * 0.9, `most poles stand alone (${alone} of ${poles})`)
 })
 
 test('every pole is in one compound sensor on the fixed body, one per tile, and the city has a hundred tiles in place of 4,599 colliders', async () => {

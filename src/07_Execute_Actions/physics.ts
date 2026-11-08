@@ -183,9 +183,12 @@ export const FURNITURE_TILE = 2 * CITY.pitch
  * unmapRemovedColliders), so the city's 4,599 poles cost every step about 0.6 ms and 1.4 MB of garbage while nothing
  * touched them. As a hundred compounds they cost almost nothing (the world's step with 48 cars went from 1.05 to
  * 0.45 ms), a query that includes sensors finds the same cylinders (physics.test.ts holds the two to the same answers),
- * and the realm's cars drive the same to the bit. A compound sits at its tile's centre and holds its poles relative to
- * it, so the floats stay small. Tiles are made in the order their first pole comes, poles in their own order: the page,
- * the room's mirror and its garage build the same world.
+ * and the realm's cars drove the same to the bit over 600 steps. (A chassis pressed against two fixed colliders at once
+ * may resolve them in another order, at the last bit, since the broad phase's tree holds the sensors' leaves; a world
+ * with no furniture already differed from one with poles that way.) A compound sits at its tile's centre and holds its
+ * poles relative to it, so the floats stay small. Tiles are made in the order their first pole comes, poles in their
+ * own order: the page and the room's mirror build the same compounds from the same lists. The garage and a Lite page
+ * build none, and every query in all of them excludes sensors.
  */
 function furnitureColliders(world: RAPIER.World, fixed: RAPIER.RigidBody, furniture: Furniture): void {
   const tiles = new Map<number, { cx: number; cz: number; shapes: RAPIER.Shape[]; at: RAPIER.Vector[] }>()
