@@ -34,7 +34,7 @@
  * What breaks if it is removed? The terminal cannot interpret a single line.
  */
 import type {
-  ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, EliteWrites, ExecResult, GateTether, GoalPlan, HalDevice, HarnessReport, LookBridge, LookChange, MemoryBridge, MindStatus, ModelBridge,
+  ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, EliteWrites, ExecResult, GateTether, GoalPlan, HalDevice, HardwareReport, HarnessReport, LookBridge, LookChange, MemoryBridge, MindStatus, ModelBridge,
   NetBridge, NetReport, OperatorBridge, PendingAct, Piece, PingKind, PingPick, ProgressBridge, RecordBridge, RecruitBridge, Ring0Stats, RobotConsole, RobotRow, RunResult, SayResult, TerminalBridge, TopicBridge, VoiceStatus,
 } from './bridge.ts'
 import type { QualityState, RecordingState } from '../../05_Observe_Environment/telemetry.ts'
@@ -95,6 +95,7 @@ const CORE = [
   { name: 'topic', usage: 'topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]', summary: 'the unified namespace: every reading as a retained topic under Enterprise/JCS/Site/AgentCity (~); filter with + for one level and # for the rest' },
   { name: 'feature', usage: 'feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]', summary: "the feature inspector: named readings of the city in [0, 1], sparsified and ranked; steer and clamp lean the agents' prompts and the tuning knobs (operator)" },
   { name: 'quality', usage: 'quality [auto|lite|peak|-1|0-5]', summary: 'show or set the render quality tier' },
+  { name: 'hardware', usage: 'hardware', summary: 'the machine the city sized itself for: its class (phone, desktop, workstation), the adapter and its limits, the lanes simulated, the frame-time percentiles' },
   { name: 'time', usage: 'time [HH[:MM]]', summary: 'show or set the city clock' },
   { name: 'audio', usage: 'audio [on|off|0-100]', summary: 'show or set the soundscape' },
   { name: 'ghost', usage: 'ghost [on|off]', summary: 'ghost view: the physics shapes as code over the frame (view-only; G)' },
@@ -104,7 +105,7 @@ const CORE = [
   { name: 'captions', usage: 'captions [on|off]', summary: 'closed captions for every sound: engines, signals, speech, pings (view-only)' },
   { name: 'haptics', usage: 'haptics [on|off]', summary: "controller rumble and phone vibration: the guardrails' feel and a check's tap (the triggers' resistance stays)" },
   { name: 'ping', usage: 'ping [go|look|gather|wait|clear]', summary: 'mark where you look for your swarm (view-only; shown on the minimap and captioned; Q); alone, the marks standing' },
-  { name: 'look', usage: 'look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]', summary: "your look from the crowd's wardrobe (body, height, mass, muscle, shoulders, hips, legs, posture, head, skin, hair, top, bottom, shirt, shoes, tie, eyewear, bag, cup)" },
+  { name: 'look', usage: 'look [show [<agent>]|<slot> <n|name>|preset <name>|build <name>|code <code>|random [<seed>]|reset]', summary: "your look from the crowd's wardrobe (body, build, height, mass, muscle, shoulders, hips, legs, posture, head, skin, vitiligo, freckles, hair, top, bottom, shirt, shoes, tie, eyewear, bag, cup)" },
   { name: 'agent', usage: 'agent [new <name>|<name> pronouns|role|voice|look|name <value...>|hire <name> [<skill>]|dismiss <name>|forget <name>|voices]', summary: 'your own agents: name, pronouns, role, voice and look; hire one into a pedestrian with a skill (they answer ask and say as themselves)' },
   { name: 'sloane', usage: 'sloane [on|off|voice <name>|voices|say <text...>]', summary: "the concierge's spoken voice: the speech provider's voice at your own head when say has one, else the browser's offline voice" },
   { name: 'goal', usage: 'goal <words...>', summary: 'tell the city a goal in plain words, as you would tell Sloane: what can be done now is done, the rest is explained' },
@@ -131,7 +132,7 @@ const OPERATOR = [
   { name: 'operator', usage: 'operator [unlock|lock|status]', summary: 'the operator tier: scripts, tuning keys, harnesses' },
   { name: 'ring0', usage: 'ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]', summary: "the Ring-0 elite tier above the operator tier: a passphrase opens NoirScript's writes and raised limits for this session; the laws stay out of reach" },
   { name: 'run', usage: 'run <skill>[,<skill>...]: <js...>', summary: 'run a script against sim.* while someone tethered has the skill (Shift+Enter adds a line)' },
-  { name: 'ask', usage: 'ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|file [forget <name>|load|unload|log]|gpu auto|on|off|stop]', summary: 'ask the model, answering as someone tethered with the skill; the answer streams in' },
+  { name: 'ask', usage: 'ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|vram <GB>|auto|file [forget <name>|load|unload|log]|gpu auto|on|off|stop]', summary: 'ask the model, answering as someone tethered with the skill; the answer streams in' },
   { name: 'swarm', usage: 'swarm [run [--agents <1-5>] <goal...>|plan [--agents <1-5>] <goal...>|status|stop|roles|guardrails|audit [verify]]', summary: 'a goal over up to five roles (architect, coder, tester, auditor, verifier), one gated prompt each, guardrails before and after, a hash-chained audit trail' },
   { name: 'act', usage: 'act [ok|no|log [verify]|list|gate]', summary: 'a city action an agent proposed: allow it, refuse it, read the hash-chained trail, list the catalogue, or read the gate it passes' },
   { name: 'say', usage: 'say [<skill>[,<skill>...]: <text...>|voice <name>|model <name>|server <url>|provider local|elevenlabs|key <key>|none|auto on|off|stop]', summary: 'said aloud by someone tethered with the skill, from where they stand (a speech server on this machine; or ElevenLabs through a gateway on it)' },
@@ -197,11 +198,12 @@ const PING_WORDS: Record<PingKind, string> = { go: 'go there', look: 'look there
 /** The look's slots, bodies and presets, as typed after `look` (commands.test.ts pins them to 03_Spawn_Agents/look.ts, not imported here). */
 export const LOOK_SLOT_ARGS = [
   'body', 'height', 'mass', 'muscle', 'shoulders', 'hips', 'legs', 'posture', 'head', 'brow', 'jaw', 'chin', 'cheek', 'nose', 'eyes', 'lips',
-  'skin', 'age', 'undertone', 'hairStyle', 'hairColour', 'layer', 'top', 'trim', 'bottom', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
+  'skin', 'age', 'undertone', 'vitiligo', 'freckles', 'hairStyle', 'hairColour', 'layer', 'top', 'trim', 'bottom', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
 ] as const
+export const LOOK_BUILD_ARGS = ['athletic', 'broad', 'full', 'lean', 'muscular', 'slight', 'soft', 'stocky'] as const
 export const LOOK_BODY_ARGS = ['pantsuit', 'skirt suit', 'smart casual', 'suit'] as const
 export const LOOK_PRESET_ARGS = ['burgundy pantsuit', 'camel blazer', 'camel skirt suit', 'charcoal suit', 'cream pantsuit', 'navy blazer', 'navy skirt suit', 'navy suit'] as const
-const LOOK_ACTIONS = ['code', 'preset', 'random', 'reset', 'show'] as const
+const LOOK_ACTIONS = ['build', 'code', 'preset', 'random', 'reset', 'show'] as const
 
 /** Tab-completion candidates for arguments, keyed by the words before the one being completed. */
 const ARGS: Record<string, readonly string[]> = {
@@ -223,6 +225,10 @@ const ARGS: Record<string, readonly string[]> = {
   'look body': LOOK_BODY_ARGS,
   'look hairStyle': ['bald', 'bob', 'bun', 'long', 'short'],
   'look undertone': ['cool', 'neutral', 'olive', 'warm'],
+  'look skin': ['mst-01', 'mst-02', 'mst-03', 'mst-04', 'mst-05', 'mst-06', 'mst-07', 'mst-08', 'mst-09', 'mst-10'],
+  'look vitiligo': ['face', 'hands', 'hands and face', 'none', 'one side', 'scattered', 'widespread'],
+  'look freckles': ['dense', 'light', 'medium', 'none'],
+  'look build': LOOK_BUILD_ARGS,
   'look layer': ['coat', 'jacket', 'shirt sleeves'],
   'look trim': ['matching'],
   'look scarf': ['none'],
@@ -249,11 +255,12 @@ const ARGS: Record<string, readonly string[]> = {
   uname: ['-a'],
   operator: ['lock', 'status', 'unlock'],
   run: SKILL_ARGS.map((s) => `${s}:`),
-  ask: [...SKILL_ARGS.map((s) => `${s}:`), 'api', 'connect', 'effort', 'file', 'gpu', 'key', 'model', 'provider', 'server', 'stop', 'think'].sort(),
+  ask: [...SKILL_ARGS.map((s) => `${s}:`), 'api', 'connect', 'effort', 'file', 'gpu', 'key', 'model', 'provider', 'server', 'stop', 'think', 'vram'].sort(),
   'ask think': ['off', 'on'],
   'ask file': MODEL_FILE_ACTIONS,
   'ask gpu': GPU_MODES,
   'ask api': ['chat', 'generate'],
+  'ask vram': ['auto'],
   'ask provider': PROVIDER_ARGS,
   'ask connect': PROVIDER_ARGS,
   swarm: ['audit', 'guardrails', 'plan', 'roles', 'run', 'status', 'stop'],
@@ -288,6 +295,8 @@ const count = (v: number): string => (Number.isFinite(v) ? String(Math.round(v))
 /** GPU timings are 0 until timestamp queries resolve (?profile, or a Peak range at Ultra or Peak), so 0 reads as "not measured". */
 const gpuMs = (v: number): string => (Number.isFinite(v) && v > 0 ? v.toFixed(2) : '-')
 const row = (label: string, text: string): string => label.padEnd(10) + text
+/** Bytes as the `hardware` command prints an adapter limit: whole MiB below a GiB, GiB to one decimal above (2 GiB, 1.5 GiB). */
+const bytes = (n: number): string => (n >= 2 ** 30 ? `${String(Math.round((n / 2 ** 30) * 10) / 10)} GiB` : `${Math.round(n / 2 ** 20)} MiB`)
 
 /** A bridge built before the operator tier existed has no `operator`; say so instead of crashing. */
 function operatorOf(b: TerminalBridge): OperatorBridge {
@@ -440,6 +449,27 @@ export function formatQuality(q: QualityState): string {
   return `tier ${q.tier} ${q.label} (${q.auto ? 'auto' : 'fixed'})  scale ${fixed(q.renderScale, 2)}x  budget ${fixed(q.targetMs, 1)} ms${q.lite ? '  lite profile' : ''}${peak}`
 }
 
+/**
+ * The `hardware` readout: six rows of fixed columns, ASCII only, at most 80 columns each (an adapter line longer than
+ * that is cut). The class and the profile that gave it, the adapter and its limits, the lanes, the governor's frame-time
+ * percentiles with how many frames they stand on, and what the browser said of the machine.
+ */
+export function formatHardware(h: HardwareReport): string[] {
+  const p = h.profile, t = h.tiers, f = h.frames, l = h.limits
+  const adapter = h.adapter.length > 70 ? `${h.adapter.slice(0, 67)}...` : h.adapter
+  const frames = f.n === 0 ? 'no frames yet' : `p50 ${fixed(f.p50, 2)} ms  p95 ${fixed(f.p95, 2)} ms  p99 ${fixed(f.p99, 2)} ms  (${count(f.n)} frames in ${fixed(f.windowMs / 1000, 1)} s)`
+  const threads = h.cores !== undefined && h.cores > 0 ? `${count(h.cores)} threads` : 'threads unknown'
+  const memory = h.memoryGb !== undefined && h.memoryGb > 0 ? `${count(h.memoryGb)} GB reported` : 'memory unreported'
+  return [
+    row('class', `${h.class}  profile ${p.lite ? 'lite' : p.mobile ? 'phone' : p.gpuClass}  start ${t.start} ${t.startLabel}  tiers ${t.min}..${t.max}`),
+    row('adapter', adapter),
+    row('limits', `bind ${bytes(l.maxStorageBufferBindingSize)}  buffer ${bytes(l.maxBufferSize)}  workgroup ${count(l.maxComputeWorkgroupSizeX)} wide  ${count(l.maxComputeInvocationsPerWorkgroup)} invocations`),
+    row('lanes', `${count(h.lanes.simulated)} simulated  (${count(h.lanes.default)} default for a ${h.class}, ${count(h.lanes.ceiling)} ceiling)`),
+    row('frames', frames),
+    row('machine', `${threads}  ${memory}  ${h.host === 'native' ? 'native shell' : 'browser tab'}`),
+  ]
+}
+
 /** The cinema camera's row (none with ?cinema=0): presented frames, the shutter, the ND, the cuts. ASCII only. */
 function cameraRows(s: Ring0Stats): string[] {
   const c = s.camera
@@ -454,7 +484,7 @@ export function formatStats(s: Ring0Stats): string[] {
   const drawn = a.drawnNear + a.drawnFar
   const share = a.population > 0 ? ` (${fixed((100 * drawn) / a.population, 1)}%)` : ''
   return [
-    row('frame', `${fixed(s.fps, 1)} fps  ${fixed(s.frameMs, 2)} ms  p95 ${fixed(s.p95Ms, 2)} ms  cpu ${fixed(s.cpuMs, 2)} ms`),
+    row('frame', `${fixed(s.fps, 1)} fps  ${fixed(s.frameMs, 2)} ms  p95 ${fixed(s.p95Ms, 2)} ms  p99 ${fixed(s.p99Ms, 2)} ms  cpu ${fixed(s.cpuMs, 2)} ms`),
     ...cameraRows(s),
     row('gpu', `render ${gpuMs(s.gpuRenderMs)} ms  compute ${gpuMs(s.gpuComputeMs)} ms`),
     row('rapier3d', `step ${fixed(r.stepMs, 3)} ms  physics ${fixed(r.physicsMs, 2)} ms/frame  substeps ${count(r.steps)}`),
@@ -646,6 +676,7 @@ function lookChange(action: string, rest: readonly string[]): LookChange | strin
     return { kind: 'random', seed: rest.length ? Number(rest[0]) : Number.NaN }
   }
   if (action === 'preset') return rest.length ? { kind: 'preset', name: rest.join(' ') } : 'usage: look preset <name>'
+  if (action === 'build') return rest.length === 1 ? { kind: 'build', name: rest[0] } : `usage: look build <${LOOK_BUILD_ARGS.join('|')}>`
   if (action === 'code') return rest.length === 1 ? { kind: 'code', code: rest[0] } : 'usage: look code <XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX>'
   const slot = LOOK_SLOT_ARGS.find((x) => x.toLowerCase() === action.toLowerCase())
   if (!slot) return `look: no slot named '${action}': ${LOOK_SLOT_ARGS.join(', ')}`
@@ -754,6 +785,8 @@ function mindLines(m: MindStatus): Line[] {
   if (scripted) lines.push(out(row('server', 'none: nothing is addressed')), out(row('model', 'none: the script')))
   else if (inPage) lines.push(out(row('server', 'none: the model runs in this page')), out(row('model', model)))
   else lines.push(out(row('server', network ? `${m.server}  (a gateway on this machine only)` : `${m.server}  (this machine only)`)), out(row('model', model)))
+  // Under auto with the GPUs' memory given: the size of model it gives Ollama and why (09_Cognition/modelFit.ts fitLine).
+  if (m.fit !== undefined) lines.push(out(row('fit', m.fit)))
   if (network) {
     lines.push(out(row('key', m.key ? `${m.key}  (kept in this browser's local storage: ask key none clears it)` : 'none in this page: the gateway on this machine adds it (recommended)')))
     lines.push(out(row('effort', m.effort ?? "the model's default (ask effort low|medium|high|xhigh|max)")))
@@ -966,6 +999,11 @@ const HANDLERS: Record<Name, Handler> = {
     if (a === 'peak') return { lines: [out(formatQuality(b.quality(MAX_TIER)))] }
     if (/^(?:-1|\d)$/.test(a) && Number(a) >= MIN_TIER && Number(a) <= MAX_TIER) return { lines: [out(formatQuality(b.quality(Number(a))))] }
     return fail(`quality: invalid tier '${a}'`, usage('quality'))
+  },
+
+  hardware(args, b) {
+    if (args.length) return fail(usage('hardware'))
+    return { lines: formatHardware(b.hardware()).map(out) }
   },
 
   time(args, b) {
@@ -1494,11 +1532,11 @@ const HANDLERS: Record<Name, Handler> = {
       if (!connect[1]) return fail(`usage: ask connect <${PROVIDER_ARGS.join('|')}> [<url>] [<key>]`)
       return { lines: [out(row('provider', op.askConnect(connect[1], connect[2], connect[3])))] }
     }
-    const set = /^(model|server|think|api|provider|key|effort)(?:\s+([\s\S]*))?$/.exec(rest)
+    const set = /^(model|server|think|api|provider|key|effort|vram)(?:\s+([\s\S]*))?$/.exec(rest)
     if (set) {
-      const key = set[1] as 'model' | 'server' | 'think' | 'api' | 'provider' | 'key' | 'effort'
+      const key = set[1] as 'model' | 'server' | 'think' | 'api' | 'provider' | 'key' | 'effort' | 'vram'
       const value = (set[2] ?? '').trim()
-      const takes = { model: 'name', server: 'url', api: 'generate|chat', think: 'on|off', provider: PROVIDER_ARGS.join('|'), key: 'key|none', effort: 'low|medium|high|xhigh|max|none' }[key]
+      const takes = { model: 'name', server: 'url', api: 'generate|chat', think: 'on|off', provider: PROVIDER_ARGS.join('|'), key: 'key|none', effort: 'low|medium|high|xhigh|max|none', vram: 'GB|auto' }[key]
       if (!value) return fail(`usage: ask ${key} <${takes}>`)
       return { lines: [out(row(key, op.askSet(key, value)))] }
     }
@@ -1824,7 +1862,7 @@ const HANDLERS: Record<Name, Handler> = {
       lines: [
         out(row('clock', b.clock())),
         out(row('quality', formatQuality(s.quality))),
-        out(row('frame', `${fixed(s.fps, 1)} fps  ${fixed(s.frameMs, 2)} ms  p95 ${fixed(s.p95Ms, 2)} ms`)),
+        out(row('frame', `${fixed(s.fps, 1)} fps  ${fixed(s.frameMs, 2)} ms  p95 ${fixed(s.p95Ms, 2)} ms  p99 ${fixed(s.p99Ms, 2)} ms`)),
         ...cameraRows(s).map(out),
         out(row('agents', `drawn ${count(a.drawnNear + a.drawnFar)} of ${count(a.population)}  waiting ${count(a.waiting)}  crossing ${count(a.crossing)}${a.working === undefined ? '' : `  at work ${count(a.working)}`}`)),
         out(row('vehicles', count(s.vehicles))),

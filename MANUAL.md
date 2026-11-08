@@ -63,6 +63,7 @@ at all (see Track B under Ring-0 console).
 | Look (head) | drag with the mouse, or click to capture it | right stick | drag on the right half |
 | Run | Shift (either) | left-stick click | Run button |
 | Enter / exit a car | E | south face button | Enter car / Exit car |
+| Browse a shop (on foot inside a storefront) | E (a car in reach keeps E for its door), or B | south face button | tap the Browse chip |
 | Handbrake | Space | east face button | Handbrake |
 | Right the car | R | north face button | Reset |
 | Ping (mark a spot or a person where you look) | Q, or the middle mouse button | right shoulder button | Ping |
@@ -158,6 +159,7 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 |---|---|
 | `?quality=auto` (default) | The quality governor picks the tier; `?quality=0`…`4` pins one: Minimal, Low, Medium, High, Ultra; `?quality=-1` or `?quality=lite` pins Lite, below Minimal (see Autoscaling); `?quality=5` or `?quality=peak` pins Peak, above Ultra |
 | `?peak=1`, `?peak=0` | `?peak=1` lets the governor try Peak on this computer even when it would not pick it by itself (it still needs the GPU's own timings); `?peak=0` keeps Peak away. Phones and the lite profile never try it (see Autoscaling) |
+| `?vram=24` | The GPUs' memory in GB (2^30 bytes), from 0 to 4096, for the size of model auto gives Ollama (How big a model auto gives Ollama, under The model providers). The NixOS launcher adds it from `nvidia-smi` or the amdgpu driver; `?vram=0` sizes nothing; `ask vram` at the console beats it. Absent: auto keeps its usual model |
 | `?fps=60` | Frame-rate target (default: estimated from the display, held within 60–90) |
 | `?crowd=14000` | Pedestrians, from 256 to 60,000 (default: 14,000 on a desktop GPU, 8,000 on a phone, 5,000 on the weakest devices, 2,500 on a lite profile) |
 | `?cars=36` | Cars, at most 48 (default: 36, or 12 on a lite profile) |
@@ -216,11 +218,72 @@ lights of its cell, so the tier moves the count without recompiling a shader, an
 builds none of this (every lamp is an emissive head over its pool, the rooms are lit by the sky), and under a headset
 the lamps go back to emissive heads while the headset presents.
 
+### Sun shadows
+
+The sun (and the moon after dark) casts shadows from two cascades (`01_Initialize_World/sunShadow.ts`, three's
+cascaded sun light): a near cascade fitted to the first stretch of what you see (about 32 m on Medium, 42 m on High,
+62 m on Ultra and Peak) with fine texels, and a far one fitted to the rest out to the tier's distance (Autoscaling:
+120 m on Medium, 160 m on High, 240 m on Ultra and Peak), with coarser texels nobody can tell apart that far off; the
+far cascade fades out over its last tenth instead of ending in a line, as the one fixed box around you used to eighty
+metres out. Whichever way you face, buildings up to 320 m toward the sun still cast into what you see, so a tower's
+long evening shadow does not come and go as you turn. The two are drawn side by side in one
+atlas (1024 texels a cascade on Medium, 2048 on High, 4096 on Ultra and Peak: 16, 64 and 256 MB of graphics memory),
+fitted and snapped to whole texels every shadow pass so they do not crawl when you turn your head. The penumbra is a
+disk of taps rotated per pixel (5 on Medium, 8 on High, 12 on Ultra, 16 on Peak, each a hardware depth comparison),
+whose count and radius are numbers the tier writes: a tier change moves them without recompiling a shader, like
+everything else the tiers touch. Below Medium (Low, Minimal and Lite) the sun draws no shadows. How the shadows look on a real graphics card
+is unverified: the pictures behind this were drawn by the software adapter.
+
 The fixed track network (`06_Make_Decisions/tracks.ts`) is laid over the grid from the same seed: 64 right-turn
 rings for the cars, one round each 2 × 2-block cell; one elevated train loop on a deck 9 m over the median of the
 two arterial streets, with four mid-block stations and guideway columns at the kerb; drone corridors at 40 m and
 46 m over the 4 × 4-block face rings; one plane racetrack at 400 m; and two VTOL routes along the avenues at 75 and
 85 m, each calling at four rooftop pads. See Vehicles.
+
+### Storefronts
+
+Five ground floors in the city are shops (`01_Initialize_World/storefronts.ts`), placed from the seed on lots no
+workplace has: **Verrin & Vale Tailors** in the northern downtown rows, **Bio-Frame Prosthetics Atelier** in the
+southern downtown rows above the lakefront, **Escapement Row Horology** within two blocks of the Financial District's
+centre, and on the lakefront row, facing the lake, **Aethelgard Ink Studio** in its western half and **Lintel & Lumen
+Design House** in its eastern half. Each is a glass-walled room like a
+workplace, with a counter and a mirror at the back and its own fixtures: mannequins and rails at the tailor, chairs at
+the tattoo studio, gait rails at the atelier, display cases at the watch shop, and seven scale models of the city's
+homes on plinths at the design house. The minimap draws them in teal. Pedestrians walk past them, not in.
+
+Lakefront Metro has the same five shops (`01_Initialize_World/region/shops.ts`), on the lots of its street window
+nearest where you start, once its workplaces have taken theirs: every doorway on a two-way street with a sidewalk you
+can walk to from the start, never on the landmark's lot or in the lake. Each lot is hollowed as a workplace's is
+(`regionWorld.ts` `hollowLots`): what stood there is put out of sight, the ceiling slab takes the podium's height and
+finish, a tower that stood on the podium is carried on the slab, and the floor and the forecourt are paved. The
+physics worker is handed the same lots and builds the same glass, so a car left in a shop puts its driver down clear
+of it. A region shop's card names the streets it stands on, not a city arcade. The surveyed region has no street
+window, and no shops.
+
+On foot inside one, the HUD shows **Browse** and the shop's name. E, B, the pad's south face button or a tap on that
+chip opens the shop's card (`07_Execute_Actions/StoreCard.tsx`); near a car, E keeps opening its door, and B still
+opens the card. While the card is open you stand on the fitting spot facing the door, and the camera leaves your head
+to circle your body slowly (the mirror), so what you wear shows; the sound stays at your head. In a network room the
+card opens without the mirror (the room did not make the step onto the fitting spot). Esc, × or Done gives the eye
+back. Every line lists
+its level and its price. **Try on** wears it on your body until the card closes. **Buy** takes the credits and wears it
+at once. An owned line you are not wearing has **Wear**. What you bought and your balance live in your operator
+record (the progression engine's, kept in this browser), so the console's `progress` and the card agree.
+
+- **Credits.** The card's purse line is your operator level and civic credits. A new operator starts at level 1 with
+  150 credits, enough for a first-floor line such as the silk tie; the city's work earns more (see "The operator's
+  progression"). A purchase goes through the progression engine's purchase gate, which takes the price and sets the
+  line's unlock bit in the same saved record or changes nothing (`07_Execute_Actions/shopkeeper.ts` `progressionPurse`
+  over `progress.ts` `pageProgress`): worn lines at look 512 and up, furniture from 0, homes 0 to 6. A line above your
+  level says which level it needs; one you cannot afford says how many more credits.
+- **On sale now.** The tailor's six overcoats, seven contrast trims, seven scarves and a silk tie; the atelier's smart
+  eyewear; the watch shop's leather briefcase. Lines that need slots the wardrobe does not have yet (the tattoo
+  designs and inks, prosthetic limbs, the hearing processor, watches, the lapel pin, the umbrella, headphones) are
+  listed as on order and go on sale when the wardrobe's update adds those slots. The design house's furniture and its
+  seven property deeds (level 1 to 20, free to 4,500,000 credits) wait for the properties.
+- **Limits.** The wardrobe card is not gated by
+  what you bought; it still offers everything the crowd wears. Putting on a headset closes the card. A pad has no B,
+  so near a car the pad's south button opens the car's door and the card opens from the chip (a click or a tap).
 
 ## The surveyed map
 
@@ -555,8 +618,9 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   `· N players`.
 - **What stays player 1's.** The post chain (the cinema shutter, bloom, ND, film response, ghost view) is player
   1's alone and is off while the screen is split: every viewport takes the direct ACES path, and
-  `ghost on` says so. The sun's shadow focus, the lamp lights and the building sort follow player 1, so the other
-  viewports get shadows and lit lamps only near player 1 (each viewport bins the lit lamps into its own grid). The HUD, the captions, the pings, the code dissolve's scans, the
+  `ghost on` says so. The lamp lights and the building sort follow player 1, so the other viewports get lit lamps only
+  near player 1 (each viewport bins the lit lamps into its own grid); the sun's shadow cascades are fitted to each
+  viewport's own head as it is drawn (Sun shadows). The HUD, the captions, the pings, the code dissolve's scans, the
   passage count, the haptics, recruitment and the operator tier stay player 1's. Players 2–4 are not drawn as crowd
   figures, so a pedestrian may walk through them; they are protected exactly on the CPU, and safety does not rest
   on the figure.
@@ -644,17 +708,18 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   body (past the level-of-detail cut) leave them out, so the shadow shader and the distant crowd cost what they
   did. The iris keeps the colour the street's hash gives it (the words have no room for it).
 - **The wardrobe** (`03_Spawn_Agents/look.ts`) is the crowd's own, and closed by construction. A look is
-  thirty-two slots: the body, eight body sliders (height, mass, muscle, shoulders, hips, legs, posture, head),
-  seven face sliders (brow, jaw, chin, cheek, nose, eyes, lips), and the sixteen dress slots (skin, age,
-  undertone, hair style, hair colour, layer, top, trim, bottom, shirt, shoes, tie, scarf, eyewear, bag, cup), every
+  thirty-four slots: the body, eight body sliders (height, mass, muscle, shoulders, hips, legs, posture, head),
+  seven face sliders (brow, jaw, chin, cheek, nose, eyes, lips), and the eighteen dress slots (skin, age,
+  undertone, vitiligo, freckles, hair style, hair colour, layer, top, trim, bottom, shirt, shoes, tie, scarf, eyewear, bag, cup), every
   one an index into the crowd's catalogue: the four bodies `crowd.ts` draws (suit, smart casual, pantsuit, skirt
   suit), its eleven optional pieces (tie, bag, cup, long hair, glasses, the hair cap, a bob, a bun, the face, a
   coat, a scarf), its twenty-one colour palettes verbatim (`look.test.ts` reads them out of `crowd.ts`'s source, so
   they cannot drift), the ninth hair colour the shader mixes in, and the sliders' steps. The height is 32 steps from 1.50 m to 2.05 m; mass, muscle,
   shoulders, hips, leg length, posture and the seven face sliders are sixteen steps each; the head and the age
   eight. The module ships no colour, piece or body of its own, so nothing stored, typed or shared can dress anyone
-  in anything the crowd does not wear today: `validateLook` accepts nothing but an object with exactly those slots,
-  each within its body's options. A look kept before the layers existed (twenty-nine slots) is upgraded on the way
+  in anything the crowd does not wear today: `validateLook` accepts nothing but an object with those slots, each
+  within its body's options (the genome's later slots, vitiligo and freckles, may be left out and read as none). A
+  look kept before the layers existed (twenty-nine slots) is upgraded on the way
   in with the jacket, a matching trim and no scarf (`upgradeFaceLook`); one kept before the face existed (twenty
   slots) with the base face, the middle age and a neutral undertone, its hair style carried (`upgradeFigureLook`);
   one kept before the sliders existed (fourteen slots, with `build`) has its height and build carried onto the new
@@ -674,6 +739,21 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   street's hash dresses one pedestrian in five in shirt sleeves, three in twenty in a coat, one in five with a
   contrast trim and three in twenty-five with a scarf. The slot a band of the body paints is now one slot per band
   (the lower ring's, flat): a jacket's hem over the trousers no longer shows the slots numbered between them.
+- **Skin and build.** The **Skin** row holds the eight tones the crowd wore first and, after them, the ten tones of
+  the Monk Skin Tone Scale (`mst-01`, lightest, to `mst-10`, deepest; the scale is Dr. Ellis Monk's, published by
+  Google under CC BY 4.0, credited in `NOTICE.md`). The street's hash now dresses everyone in a Monk tone, the ten
+  evenly, so the deepest tones the crowd never wore before are as common as the lightest; the older eight stay for
+  looks that chose them. **Vitiligo** (none, hands, face, hands and face, scattered, widespread, one side) pales
+  patches of the skin toward a milky cream, two octaves of value noise over the body's rest position past an edge
+  the pattern sets, so a patch keeps its place as the person walks and shows clearly on a deep tone and softly on a
+  light one, as it does. **Freckles** (none, light, medium, dense) are dots of about a centimetre and a half, thickest
+  over the cheeks and the nose, fewer on the rest of the face, the hands and the neck, never on a paled patch; the
+  far body keeps the patches and drops the freckles. Where on a person they fall is the person's own (an offset from
+  their seed, like the iris), so two people wearing one code are not marked alike. Two pedestrians in a hundred have
+  vitiligo and about one in six freckles, whatever their tone. A **Build** row heads the body sliders: eight frames
+  (slight, lean, athletic, muscular, broad, stocky, soft, full: the somatotypes' span in plain words) that set mass,
+  muscle, shoulders and hips together; any slider moved after is your own, and the height is never a build's.
+  `look build athletic` does the same at the console.
 - **The four words.** `packLook` folds the body, the pieces, the colours, the age and the undertone into one
   unsigned 32-bit word (bit 6 says the hair is long, written from the style; the top bit is spare), `packFigure`
   the eight body sliders into a second, `packFace` the seven face sliders and the hair style into a third and
@@ -683,7 +763,12 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   already binds seven of the eight storage buffers WebGPU promises every device): the body materials read them in
   place of the hash, and the page's cull reads the body out of the first to pick what to draw. No simulation pass
   binds any of them, so nothing of a look reaches the pedestrians' motion, the First-Law sensing, the protocol or
-  the physics worker. `lookFromSeed(i)` reproduces, bit for bit, the choice the crowd's hash makes for agent `i`,
+  the physics worker. Those four are the first of a **look genome** of sixteen words (`LOOK_WORDS`): word 4, the skin
+  word, holds the skin's high bits (a Monk tone is option 8 and up), vitiligo and freckles, and words 5 to 15 are
+  spare and must be zero. Every field of the later words is 0 for "as before", so a look of the older layouts is the
+  same look with them zero, and the crowd draws it the same. `crowd.figure` holds sixteen words a person (the
+  figure, face and wardrobe words, the rig slot word, then the genome's words 4 to 15); the fragment stage reads the
+  skin word through one flat varying. `lookFromSeed(i)` reproduces, bit for bit, the choice the crowd's hash makes for agent `i`,
   sliders, face, hair style, age, undertone, layer, trim and scarf included (the hashed crowd draws its stature
   from a per-body range, men 1.64 m to 2.00 m and women 1.55 m to 1.87 m, and every other slider over its whole
   range; a woman's hair that is not short is long, a bob or a bun in thirds, one man in twenty-five is bald), so an
@@ -692,7 +777,10 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   sees over a short one.
 - **Codes and presets.** A look code is twenty-eight symbols, `XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX`, from an alphabet
   without I, L, O and U, carrying the four words and a CRC-8 over them: it can be written down and shared, and
-  `parseLookCode` ignores case, the dashes and spaces and refuses any single mistyped symbol. A twenty-one-symbol
+  `parseLookCode` ignores case, the dashes and spaces and refuses any single mistyped symbol. A look whose genome's
+  later words are not all zero (a Monk tone, vitiligo, freckles) adds a tail of eight symbols per word with its own
+  check, `-XXXXXXXX`, and its head's check then covers every word, so the head cut off alone is refused rather than
+  read as the look in an older tone; a look without them keeps the very code it always had. A twenty-one-symbol
   code from before the layers, a fifteen-symbol code from before the face, and an eight-symbol code from before the
   sliders, still read, upgraded the same way as a stored look. Eight named presets, two per body (navy suit,
   charcoal suit, camel blazer, navy blazer, burgundy pantsuit, cream pantsuit, navy skirt suit, camel skirt suit),
@@ -712,8 +800,10 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   button or Done puts it away.
 - **Kept here.** The look is kept in this browser only (`localStorage`, key `civic-simulation:look:v1`,
   `05_Observe_Environment/lookStore.ts`), separate from the profile, so a renamed visitor keeps their outfit;
-  every stored value goes through `validateLook` on the way in. The record's `v` names its layout: 3 is written
-  now; a 2 (the twenty slots before the face) and a 1 (the fourteen slots) are read and upgraded.
+  every stored value goes through `validateLook` on the way in. The record's `v` names its layout: 5 is written
+  now; a 4 (the thirty-two slots before the skin word) reads as it is with no vitiligo and no freckles, and a 3 (the
+  twenty-nine slots before the layers), a 2 (the twenty slots before the face) and a 1 (the fourteen slots) are read
+  and upgraded.
 - **Your agents** (`08_Swarm/roster.ts`). The card's second row of tabs holds the agents you make your own, at most
   twelve: type a name (one word, screened under 14A like any name the city shows) and press Add. Each tab sets their
   pronouns (they/them, she/her, he/him, any), a role in your words (one line, at most 48 characters, held to the same
@@ -941,12 +1031,12 @@ React overlay at `z-index: 9999`. The simulation keeps running underneath, and g
 while you type.
 
 - `stats` is live: Rapier step latency, physics phase, substeps, bodies, colliders and CCD bodies;
-  drawn agents (near, far, total); fps, frame time, p95, CPU and GPU time; quality tier; kernel
+  drawn agents (near, far, total); fps, frame time, p95, p99, CPU and GPU time; quality tier; kernel
   counters. `stats --once` prints a single frame.
 - The core commands, as `help` prints them: `help [command]`, `stats [--once]`, `laws`, `kernel`,
   `topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]`,
   `feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]`,
-  `ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]`, `quality [auto|lite|peak|-1|0-5]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `xr [vr|ar|off]`, `render [on|off]`,
+  `ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]`, `quality [auto|lite|peak|-1|0-5]`, `hardware`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `xr [vr|ar|off]`, `render [on|off]`,
   `captions [on|off]`, `haptics [on|off]`, `ping [go|look|gather|wait|clear]`,
   `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
   `robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|remove <id>]`,
@@ -1143,8 +1233,11 @@ Ring-0 elite tier above it, below). While unlocked:
   model, the masked key and the effort, and what the server has; `ask provider
   auto|claude|ollama|llamacpp|openai|inpage|scripted`, `ask connect <provider> [<url>] [<key>]` (the provider, its
   server and the Claude provider's key in one line, checked before anything changes), `ask key <key>|none`, `ask
-  effort <level>`, `ask model <name>` and `ask server <url>` set it up; `ask stop` stops an answer. `ask file [forget
-  <name>|load|unload|log]` and `ask gpu auto|on|off` keep and run a model file in this page (A model in this page);
+  effort <level>`, `ask model <name>` (`ask model auto`, under `ask provider ollama` or while auto has found Ollama or
+  nothing yet, hands Ollama's model back to auto), `ask vram <GB>|0|auto`
+  (the GPUs' memory, so auto may give Ollama a bigger model it already has) and `ask server <url>` set it up;
+  `ask stop` stops an answer. `ask file [forget <name>|load|unload|log]` and `ask gpu auto|on|off` keep and run a
+  model file in this page (A model in this page);
   they send no prompt, so they need no unlock. An inadmissible prompt gets `-- no reply --` and reaches no model. The
   answer may end with one `ACTION:` line; what it proposes is shown as `act N: … proposes: …` and waits for your OK;
   `ask stop` withdraws it.
@@ -1536,7 +1629,10 @@ them that answers (`auto`):
   answering before any of an answer has arrived (so the next ask finds whatever answers now) and at `ask` alone (so a
   server started since, earlier in that order, takes over). An Ollama whose model you never chose (the default, or
   one auto chose earlier) but which lacks it is given the default if it has it now, else the first text model it
-  has; one you chose with `ask model` is left alone. Models Ollama runs on its own cloud (marked so in its list, or, in the chat format, by a name ending in `cloud`) are never chosen this way, since a
+  has; one you chose with `ask model` is left alone (`ask model auto` hands it back). Given the GPUs' memory (`ask
+  vram`, or `vram=` in the address), auto may also give Ollama a bigger or smaller model it already has (How big a
+  model auto gives Ollama, below). Models Ollama runs on its own cloud (marked so in its list, or, in the chat
+  format, by a name ending in `cloud`) are never chosen this way, since a
   prompt to one leaves the machine. A model server installed with its own defaults therefore answers with nothing
   typed at the console, on a page that server allows (see Which pages a model server answers, below). With nothing
   answering, the script stands in (below), labelled as such; the reason names every address looked at, and each
@@ -1601,11 +1697,12 @@ any of them.
   swaps and points it in one line (a bad address leaves everything as it was); `ask model <name>` and `ask server
   <url>` set the chosen provider's own; `ask key <key>` sets the Claude provider's key and `ask key none` clears it;
   `ask effort low|medium|high|xhigh|max|none` how hard the model works on an answer (the API's own default when
-  unset); `ask think on|off` and `ask api generate|chat` apply to the local providers as before. Each provider keeps
-  its own server and model between visits, in one store in this browser's local storage
-  (`civic-simulation:cognition:v2`; the store's own version is 3 since the `openai` provider joined it, read back from
-  the earlier shape without loss; the in-page provider's file chosen, `think` and `gpu` are one more slice of it, and
-  its model files are kept elsewhere, below).
+  unset); `ask think on|off` and `ask api generate|chat` apply to the local providers as before;
+  `ask vram <GB>|0|auto` gives the GPUs' memory for auto's Ollama model (below). Each provider keeps its own server
+  and model between visits, in one store in this browser's local storage (`civic-simulation:cognition:v2`; the GPU
+  figure and what was measured are its `fit` key, read back checked; the store's own version is 3 since the `openai`
+  provider joined it, read back from the earlier shape without loss; the in-page provider's file chosen, `think` and
+  `gpu` are one more slice of it, and its model files are kept elsewhere, below).
 - **The key: keep it in the gateway.** The recommended setup holds no key in the page at all: the gateway on this
   machine adds the key to every request it forwards, `ask key none` leaves the page with none, and with none the
   page sends no `x-api-key` header. A key typed to `ask key <key>` is kept in the same local-storage record, in
@@ -1660,7 +1757,10 @@ any of them.
   from a slow disk and read the prompt on a modest machine; a server that sends its headers at once still has the
   whole 5 minutes) and, once the answer has begun, 2 minutes between lines. Past either, the request is closed and
   one sentence says which wait ran out; when nothing came at all, it adds that the model may still be loading (ask
-  again) or be too big for this machine (choose a smaller one). `ask stop` ends one sooner, as before.
+  again) or be too big for this machine (choose a smaller one). `ask stop` ends one sooner, as before. Under `auto`,
+  once its look has read Ollama's list this visit, a model listed at more than 60 GB gets longer to send its first
+  line: a second per 200 MB of its weights (a starting value), so a 142 GB model has about 12 minutes; under `ask
+  provider ollama` the wait is the usual one.
 - **A page opened from a file.** The browser sends that page's origin as `null`, and a local server
   usually refuses it: Ollama does by default. `ask` detects this (a server that is up but refusing is
   told apart from one that is down) and says so. Open the page from `http://localhost` instead
@@ -1672,14 +1772,23 @@ any of them.
   to `OLLAMA_ORIGINS` where Ollama starts (on Windows, `setx OLLAMA_ORIGINS "http://tauri.localhost"` in cmd, then quit
   and restart Ollama from its tray icon). A llama.cpp server (`llama-server`) answers any page unless it was started
   with its tools or agent options; LM Studio answers pages only with CORS turned on (Enable CORS in its server settings, or
-  `lms server start --cors`). On a
+  `lms server start --cors`). A llama.cpp server built since b11521 (October 2026) listens on port 9931 by default,
+  where auto does not look: start it with `--port 8080`, or `ask connect llamacpp http://localhost:9931`. vLLM 0.32
+  and later answers no other page unless started with `--allowed-origins` naming the page's origin (on Linux:
+  `--allowed-origins '["http://127.0.0.1:4180"]'`), and since it listens on every network interface unless told
+  otherwise, also start it with `--host 127.0.0.1`; SGLang answers any page and listens on 127.0.0.1 by default. Both
+  speak the chat format: `ask connect openai http://localhost:8000` (vLLM) or `http://localhost:30000` (SGLang). On a
   cross-origin isolated page (the launcher, the preview, the Windows app and the installed web copy all are) a
   server refusing the origin cannot be told from one that is not running, so the sentence says it may be either.
 - **Bounded.** Every request to a local server asks for a context of 8,192 tokens and an answer of at most 2,048
   (the Ollama format is the one that bounds the context). A model's own maximum can be far larger, and a server
   that sizes its memory to it can fail before the first word (seen here: a 4B model asking for 20.5 GB). Running
   a model beside the city costs frame rate, and the quality governor drops the tier to compensate.
-- **What it cannot do.** It sends nothing unless you type `ask`, and nothing polls in the background. Under `auto`, an
+- **What it cannot do.** It sends nothing unless you type `ask`, and nothing polls in the background. With the GPUs'
+  memory given, an answer from Ollama under auto may be followed by one more request on this machine, `GET /api/ps`
+  (which models Ollama has loaded and how much of each sits on the GPU), at most one for each answer, and preceded
+  by one `GET /api/tags` when auto found Ollama without its list of sizes (found in the chat format, or `ask server`
+  or `ask api` changed since). Under `auto`, an
   ask with nothing found yet, an ask whose server stops answering before any of its answer arrived, and `ask` alone
   first ask the three model servers above for their lists of models, all on this machine, then read the list of model
   files kept in this page (no request), and ask the Claude gateway (which asks the Claude API) only when none of them
@@ -1691,6 +1800,62 @@ any of them.
   fixed catalogue (City actions, under The operator tier), shown to you and run only after your OK, under the
   proposer's tether; files, shell and network are not actions. `10_Network/airgap.test.ts` pins that no source in the
   product names an address off this machine.
+
+#### How big a model auto gives Ollama (`ask vram`)
+
+Ollama lists how big each model's weights are, but no model server says how much memory the GPUs have, so it is given:
+`ask vram 24` at the console (kept in this browser), or `vram=24` in the page's address, which the NixOS launcher adds
+by itself (On NixOS). The console's figure beats the address; `ask vram 0` sizes nothing whatever the address says;
+`ask vram auto` hands back to the address. GB here are 2^30 bytes, as everywhere in the page; Ollama's own list
+prints decimal GB, so its 142GB is 132.2 GB here.
+
+- **Without a figure nothing changes** but the longer first wait of a model over 60 GB (How long it waits, above): the
+  same requests, the same model, no `fit` row. That is a phone, the Windows app and a browser on Windows until `ask
+  vram` is typed. On a laptop's integrated GPU, leave it unset: its share of memory is not a figure this rule can use.
+  On NixOS the launcher counts an integrated Radeon whose firmware gives it 4 GB or more as a GPU (inferred from the
+  driver's files, not tried on such a machine); start it with `-- vram=0` there to size nothing.
+- **With one, under auto, with Ollama in the generate format:**
+  - A model whose weights alone are more than the figure is never chosen while a smaller one is listed.
+  - The first answer of each model in a visit, an answer slower than 5 tokens a second over at least 32 tokens, and
+    one that ran out of time, are each followed by one `GET /api/ps`: how much the loaded model takes in all and how
+    much of it is on the GPU.
+  - Once a measurement shows the model at least partly on the GPU, auto gives Ollama the largest text model it lists
+    whose need fits the figure less 2 GB. Need is that model's own measured size, else its weights times the largest
+    loaded-to-weights ratio measured on this server.
+  - That model's first answer is measured too. A bigger model slower than 5 tokens a second, or split between the GPU
+    and the processor when its first wait runs out, is dropped for the visit, the model below answers, and no bigger
+    one is tried again that visit. Dropped in two visits (too big or too slow), and it is avoided until `ask vram` or
+    until a pull changes its size.
+  - A model auto moved to that Ollama will not load (its failure before anything arrives) is set aside for the visit,
+    and the same ask is answered once more by the model auto picks next. The model it would have used anyway is not
+    answered twice: that failure is the ask's.
+- **Never:** a model Ollama does not already list (nothing is downloaded); a cloud model (`kimi-k3` has only a cloud
+  tag); the model you chose (`ask model <name>`: it is measured and shown, never replaced; `ask model auto` hands it
+  back); another provider.
+- **The `fit` row** under `ask` says the figure and where it came from, what was measured, which model answers and
+  why, how to keep another (`ask model <name>`) and, after anything was dropped, how to start again (`ask vram …
+  measures afresh`).
+- **An older build of the page** (read from its code, not run) answers with the model auto last moved to, as if it
+  had picked it, until `ask model <name>` or until Ollama no longer lists it, and drops what was measured at its next
+  save.
+- **Starting values, not measured on a big GPU:** the 2 GB kept free (1 GB is llama.cpp's own margin per GPU, 1 GB for
+  the city), 5 tokens a second over 32 tokens, two visits, a second per 200 MB, and the launcher's 4 GB floor.
+- **A datacenter box.** Run the city on the box: the launcher reads its GPUs, which then draw the city as well as run
+  the model. Or keep the page on your computer and forward Ollama's port over SSH (OpenSSH, in PowerShell or any
+  shell): `ssh -N -o ExitOnForwardFailure=yes -L 11434:127.0.0.1:11434 <user>@<box>`, then `ask vram <the box's GB>`
+  once, since your own launcher, if any, reports your computer's GPU. The page still addresses only `localhost`; the
+  prompt leaves this computer inside the SSH connection, to the box you named, and the box's Ollama must allow this
+  page's origin (`OLLAMA_ORIGINS`) as on this machine. The page cannot open, check or close the tunnel.
+- **What is verified:** in Node on every CI run, the rules and every sentence (`modelFit.test.ts`), the router over a
+  fake Ollama (`router.fit.test.ts`: no change without a figure, growth, the misfit, the ratio, the processor-only
+  case, one dropped step a visit, the two visits and the way back, the waits, the retry, a measurement that lands
+  late or is dropped and asked again, a stop while one is under way, the chat format then the generate one, `ask model
+  auto`, the operator's own model, the paths asked, what is kept), the readers
+  (`localCompute.test.ts`) and the launcher's probe on a stubbed `nvidia-smi` and a temporary folder of driver files
+  (`desktopLauncher.test.ts`); in a browser, the `actions` scenario of the smoke on a software adapter: the `fit` row
+  from `vram=24`, `ask vram 16`, a refusal and `ask vram auto`. Not verified: any real GPU, Ollama's `/api/ps` on a
+  real split model, real ratios and paces, whether 2 GB is enough, `nvidia-smi` on a NixOS `PATH`, the amdgpu files
+  on an integrated GPU, and a tunnel's delay.
 
 #### The prompt-prefix page table
 
@@ -1805,8 +1970,8 @@ its own licence. The parts: `09_Cognition/inPage.ts` (the provider), `inPagePlan
 - **The city while it works.** While the model loads or answers, the city's automatic quality tier is held down
   (`governor.ts hold`, the last column above): at most Low on a computer whose GPU is integrated, Minimal on a phone
   and Lite on a lite profile, where the city and the model share one chip; a computer with a discrete GPU keeps its
-  tier. The one exception is Peak with the model on the GPU: Peak comes down to Ultra, which gives the model the half
-  gigabyte Peak's shadows take. An Apple chip at Peak comes down to Low like any integrated GPU, wherever the model
+  tier. The one exception is Peak with the model on the GPU: Peak comes down to Ultra, which gives the model Peak's
+  larger picture and its share of the GPU. An Apple chip at Peak comes down to Low like any integrated GPU, wherever the model
   runs. Either way Peak does not come straight back when the model stops (that would take the memory again before the
   next answer): the release returns Ultra, and the governor earns Peak again after a quiet spell of 40 seconds, longer
   if the model keeps working, up to 5 minutes. On a discrete card, a model on the processor (a card without
@@ -2187,7 +2352,7 @@ are no toasts and no settings menu, and the console's `quality` command is the o
   capped at Minimal.
 - **Tiers:** there are seven: Lite (tier -1, reached automatically only on a lite profile, or pinned by hand), Minimal
   to Ultra, and Peak (tier 5, reached automatically only on a big GPU that reports its own timings, below, or pinned
-  by hand). They scale render resolution, shadows and shadow-map size, post-processing, the lit street lamps (the
+  by hand). They scale render resolution, shadows (their map, their reach and their softness: Sun shadows), post-processing, the lit street lamps (the
   nearest to you after dark: 32 on Minimal to 384 on Peak, none on Lite; Night lighting), and the crowd's LOD
   distance, near radius, draw distance and **density**. Density is a stable per-agent hash, so the same people stay
   visible.
@@ -2228,9 +2393,11 @@ are no toasts and no settings menu, and the console's `quality` command is the o
   its architecture) and the first probe takes it to Ultra about 6 s after boot.
 - **Peak, above Ultra.** Tier 5, outside the tier table like Lite, so every other tier number stays as it was.
   - **What it adds.** Ultra drawn at 1.25 times the resolution on each side, about 1.56 times the pixels (smoother
-    edges), the sun's shadows reaching 160 m around you instead of 80 m at the same sharpness, and full-detail people
-    out to 90 m instead of 45. The shadow map takes about 512 MB of graphics memory instead of 128 MB, and the larger
-    picture about 45 MB more at 1080p (about 190 MB at 4K). Both are given back when the tier comes down. The picture
+    edges), Ultra's sun shadows (the same two 4096-texel cascades out to the same 240 m: a farther reach would stretch
+    the near cascade and make the shadows nearest you coarser than Ultra's) with a wider sixteen-tap penumbra, and
+    full-detail people out to 90 m instead of 45. The shadow atlas is Ultra's (about 256 MB of graphics memory either
+    way); the larger picture takes about 45 MB more at 1080p (about 190 MB at 4K),
+    given back when the tier comes down. The picture
     is never made larger than the graphics card's largest texture, which also keeps `?scale=2` working on a very wide
     window at any tier.
   - **Which computers try it by themselves.** Desktops and laptops with a separate graphics card of any make, or an
@@ -2253,7 +2420,7 @@ are no toasts and no settings menu, and the console's `quality` command is the o
     picked by itself: give it `?peak=1`. In a browser, add `?peak=1` to the address.
   - **Agents and Sloane.** Agents cannot ask for it, and no goal sets it. When a goal names Peak ("peak quality",
     "beyond ultra", "can you turn on peak graphics?", "peak graphics and no traffic"), Sloane asks first: "Peak takes
-    a big graphics card and about half a gigabyte more of its memory. Set Peak, or keep to Ultra at most?" The rest of
+    a big graphics card: it draws every frame at a higher resolution than Ultra. Set Peak, or keep to Ultra at most?" The rest of
     the goal reads as it would without Peak, so "peak graphics and no traffic" still clears the roads. The console's
     `goal`, which asks nothing, leaves the quality as it is; `quality peak` pins Peak there. "Best" and "max" still
     mean Ultra. A no, a turn-down, another tier or a complaint about its cost in the goal ("i don't want peak
@@ -2272,10 +2439,40 @@ are no toasts and no settings menu, and the console's `quality` command is the o
   - **Tried so far.** Only in headless Chromium on the software adapter: with a faked RTX 5090 (the browser smoke's
     `peak` scenario), and pinned for a few frames in the `ultra` scenario, also in the Nix package's Chromium. Not
     measured on a real big GPU.
-- **How many pedestrians.** Unless `?crowd` says, the profile decides at boot: 14,000 wherever it starts on
-  Medium or above, 8,000 on a phone, 5,000 on the weakest GPUs and software rasterizers, and 2,500 on a lite profile.
-  The simulation's size is fixed for the session (the GPU buffers are sized for it). The tiers then scale how many
-  are drawn.
+- **Hardware classes.** Beside the tiers, which move, the engine decides once at boot which of three machines it is
+  on (`classifyHardware`), from the same device profile and the WebGPU adapter's limits (what one storage buffer
+  binding and one buffer may hold, read from the adapter itself, since the page's device is made with the defaults):
+  - a **phone**: any phone or tablet, and any lite profile (so `?lite=1` on a desktop sizes it as a phone);
+  - a **workstation**: a computer that would try Peak by itself (a separate graphics card or an Apple chip, 8 cores,
+    8 GB where the browser says), whose adapter binds at least 512 MiB in one storage buffer and makes a 1 GiB buffer.
+    Every desktop card and Apple chip reports far more; a software rasterizer, or a driver that reports WebGPU's bare
+    defaults (128 and 256 MiB), is a desktop whatever the machine claims. `?peak=1` is the operator's word and skips
+    that check; `?peak=0` makes a desktop of it;
+  - a **desktop**: everything else, including a browser that says nothing of the machine.
+
+  The class changes no tier rule (a workstation's automatic range reaches Peak exactly as before, on the GPU's own
+  timings) and moves nothing after boot. A browser cannot tell a 16 GB machine from a 32 GB one (`deviceMemory` stops
+  at 8) or a 10 TFLOPS card from a 60 TFLOPS one by its adapter line, so what separates a workstation that merely
+  starts on Ultra from one that holds Peak is Peak itself, earned on measured GPU time. The class rides on the
+  governor's state (`quality.hardware` in the snapshot, `~/…/Quality/Cell/Governor/hardware` in the namespace), and
+  the console's `hardware` names it.
+- **How many pedestrians (lanes).** Unless `?crowd` says, the class decides at boot: 32,768 on a workstation, 14,000
+  on a desktop, 8,000 on a phone; 5,000 wherever the profile starts on Minimal (the weakest GPUs and software
+  rasterizers, whatever the class), and 2,500 on a lite profile. Each pedestrian is one lane of the crowd's structure-
+  of-arrays buffers (its largest, the 64-byte brain, is one storage binding), and the count never exceeds what the
+  adapter binds in one buffer or the realm's range of 256 to 60,000 (`?crowd` is clamped the same way). The
+  simulation's size is fixed for the session (the GPU buffers are sized for it). The tiers then scale how many are
+  drawn. The 60,000 top is the realm's own: the 131,072 lanes a console-class PC was asked to carry would need the
+  crowd's spatial grid, its readback and its draw resized, and a real big GPU to measure them on, so it is not raised
+  here; a workstation's 32,768 is under the 60,000 an integrated GPU was measured to carry at Low, below, and is
+  itself unmeasured on a real workstation.
+- **The `hardware` command.** Six rows: the class with the profile that gave it and the automatic range; the adapter
+  line; its limits (binding, buffer, the widest workgroup and its invocations); the lanes simulated, the class's
+  default and the adapter's ceiling; the frame times of the governor's own window, the newest 5 s of recorded frames
+  (p50, p95 and p99, with how many frames they stand on); and what the browser said of the machine (threads, memory
+  as reported, browser tab or native shell). The percentiles come from the same ring the governor judges by: start-up
+  frames are not in it, a run of hitches is held at 250 ms as the ring holds them, and a lone hitch is not in it at
+  all. `stats` and `sim` show the HUD clock's p95 and p99 of the last 256 frames beside the mean.
 - **The lite profile and the Lite tier.** Entry-level phone GPUs get a profile of their own: any phone whose adapter
   is ARM Bifrost or Midgard (a Mali-G52 reads `arm / bifrost` in Chrome, and so does an older flagship's Mali-G76,
   since Chrome names only the architecture), Imagination PowerVR Rogue, Furian or B-Series (Dawn: `img-tec / rogue`; a
@@ -2673,7 +2870,7 @@ Every source file opens with "Why does this file exist? / What breaks if it is r
 | 06_Make_Decisions | `traffic.ts`, `tracks.ts`, `trackDriver.ts`, `routingWasm.ts`, `routing.wasm.ts` (generated from `native/routing`), `intent.ts` | The track arithmetic as WebAssembly, with `tracks.ts` its reference; AI drivers: the street-hopping driver and the track follower, sharing one reaction check and hazard episode; the fixed track network (the car rings, the train loop, the drone corridors, the plane racetrack, the headway seats, the box hold); the 5-Whys intent engine |
 | 07_Execute_Actions | `engine.ts`, `simClient.ts`, `simProtocol.ts`, `physics.worker.ts`, `simHost.ts`, `simCore.ts`, `physics.ts`, `vehicles.ts`, `car.ts`, `carRig.ts`, `fleetView.ts`, `trackFleet.ts`, `ragdollRealm.ts`, `articulated.ts`, `jointRealm.ts`, `jointBridge.ts`, `rigView.ts`, `sanctuary.ts`, `player.ts`, `head.ts`, `controls.ts`, `viewports.ts`, `quality.ts`, `audio.ts`, `acoustics.ts`, `captions.ts`, `postfx.ts`, `cinema.ts`, `shutter.ts`, `volumetrics.ts`, `ghost.ts`, `contact.ts`, `dissolve.ts`, `netView.ts`, `operator.ts`, `harness.ts`, `spatial.ts`, `Hud.tsx`, `BootVeil.tsx`, `Concierge.tsx`, `Customizer.tsx`, `glyphs.ts`, `terminal/` (`Terminal.tsx`, `bridge.ts`, `commands.ts`, `repl.ts`) | Frame loop; the physics realm (worker entry, its message door, the simulation core, Rapier world, fleet on its tracks, the car rules the page and the room share (the rig, the substep, the exit point, the fleet's plan), the scheduled craft and their pose stream, the balance machine over the pedestrians near the operator and its rig stream, the robots' bodies (a servo chain built from a manifest, the pool of them with their twin filter and modes, the shared joint buffer the page reads them from), sanctuary, up to four avatars) and the page's end of it (client, protocol, fleet drawing, rig drawing, first-person heads, per-seat controls, the split-screen arithmetic); quality applier, soundscape (with its speech voice, rooms, peer voices and the sound-event stream), room acoustics, the caption track, post chain, the cinema camera (24 fps pacer, 180° shutter, ND and film response), sun shafts, ghost view, the passage envelope and the code dissolve's envelope, the network ghosts, operator facade and physics harnesses (the spatial sweep's plan among them), HUD, boot veil, concierge, the wardrobe card, control glyphs, console (with R0, its stack machine) |
 | 08_Swarm | `recruitment.ts`, `taskRouter.ts`, `memory.ts`, `ping.ts` | The swarm's hash-chained memory and weight ledger; the operator's voice: on-device continuous speech recognition, the request parser, the main-thread proximity match, the request to the physics worker, the rally request, and the console and `recruit()` fallback; the task gateway that binds skill-bound work to the tethered swarm; the swarm's episodic memory (IndexedDB, by world seed and pedestrian); the ping's pick, board and rally plan |
-| 09_Cognition | `localCompute.ts`, `claudeApi.ts`, `router.ts`, `prefixCache.ts`, `kvPager.wasm.ts` (generated from `native/kv-pager-wasm`), `localSpeech.ts`, `inPage.ts`, `inPagePlan.ts`, `inPageCaps.ts`, `gguf.ts`, `modelStore.ts`, `modelStore.worker.ts`, `wllamaRuntime.ts` | The prompt-prefix page table over kv-pager as WebAssembly; the operator's model providers and voice: the router (`claude` through a gateway on this machine with the operator's key; `ollama` and `llamacpp` on this machine), the local client in both wire formats and the Claude client, the system prompt opening with the 14A core and then the tethered people's skills and memories, the streamed answer, the speech client for a speech server on this machine, the audio for the soundscape, the cut when the tether breaks, and every failure as one sentence; the model in this page (`inpage`): its device policy, what the browser offers, the GGUF header check, the file kept in the page's storage (copied by a worker of its own), and the one adapter over wllama |
+| 09_Cognition | `localCompute.ts`, `claudeApi.ts`, `router.ts`, `modelFit.ts`, `prefixCache.ts`, `kvPager.wasm.ts` (generated from `native/kv-pager-wasm`), `localSpeech.ts`, `inPage.ts`, `inPagePlan.ts`, `inPageCaps.ts`, `gguf.ts`, `modelStore.ts`, `modelStore.worker.ts`, `wllamaRuntime.ts` | The prompt-prefix page table over kv-pager as WebAssembly; the operator's model providers and voice: the router (`claude` through a gateway on this machine with the operator's key; `ollama` and `llamacpp` on this machine), the local client in both wire formats and the Claude client, the system prompt opening with the 14A core and then the tethered people's skills and memories, the streamed answer, the speech client for a speech server on this machine, the audio for the soundscape, the cut when the tether breaks, and every failure as one sentence; auto's sizing of Ollama's model by the GPUs' memory; the model in this page (`inpage`): its device policy, what the browser offers, the GGUF header check, the file kept in the page's storage (copied by a worker of its own), and the one adapter over wllama |
 | 10_Network | `replication.ts`, `replication.node.ts`, `mirror.node.ts`, `garage.node.ts`, `plane.node.ts`, `netClient.ts`, `telemetry.ts`, `robotRelay.node.ts`, `sparkplugHost.node.ts`, `sparkplug.ts`, `mqttCodec.ts` | The network room: the plain-data protocol core and authoritative room both sides share (validated both ways, rate-limited, screened under 14A, every input judged by an authority and refused ones corrected), the Node-only WebSocket host (HMAC session tokens checked at the upgrade, one connection per player, never bundled), the headless Ring-0 mirror it judges with (the city of the seed in Rapier, the realm's own character controller, the Ring-0 audit) and its garage (every player's car replayed with the page's own car physics, every door checked), an open-plane authority for the protocol's tests, and the opt-in page client that speaks ws or wss only to `localhost` or `127.0.0.1` (the host on this machine, or the local end of a tunnel or proxy), reports the realm's steps and doors, snaps to corrections, and reconciles the room's snapshots into the poses `netView.ts` draws; the robots' loopback relay (`npm run serve:robots`: the page's one socket and the robots' peers, a second gate on every setpoint, a Sparkplug B host application over MQTT when a broker is named) and the Sparkplug B and MQTT codecs both ends share |
 | native/kv-pager | `01_geometry.rs`, `02_page_table.rs`, `03_gpu/`, `bin/stress.rs`, `bin/chaos/` | A paged KV cache (its page table also runs on the page, through `native/kv-pager-wasm`) (prefix caching, copy-on-write, the WGSL decode kernel, the stress and chaos runs); `CAUSAL.md` traces the copy-on-write chain |
 | native/kv-pager-wasm | `lib.rs` | kv-pager's page table (no GPU) behind a C ABI, built to WebAssembly as `09_Cognition/kvPager.wasm.ts` (`npm run native:wasm`) |
@@ -2845,8 +3042,8 @@ releases, byte for byte (the same seats, drivers and paint from the same stream)
 The city ships as a one-click Windows program as well as the single page: `src-tauri/` is a Tauri 2 shell (Rust)
 around the very same `dist/index.html`, built by `npm run app:build` (the Vite build runs first as Tauri's
 `beforeBuildCommand`, then `cargo build --release` and the NSIS installer). The `windows-app` workflow builds it on
-every pull request and push to main (artifacts `windows-installer-<version>` and `windows-portable-<version>`) and,
-when a `v*` tag is pushed, puts both on the tag's release beside the OS media.
+every pull request and push to main (artifacts `windows-installer-<version>`, `windows-msi-<version>` and
+`windows-portable-<version>`) and, when a `v*` tag is pushed, puts all three on the tag's release beside the OS media.
 
 - **Installing.** Download `Crimson Noir Agent City_<version>_x64-setup.exe` and double-click it. It installs for
   the current user (no administrator prompt) and puts a shortcut in the Start menu. The file is not code-signed, so
@@ -2883,6 +3080,67 @@ when a `v*` tag is pushed, puts both on the tag's release beside the OS media.
   `beforeDevCommand`). Building needs Rust (1.85 or newer) and, on Windows, the Visual Studio C++ build tools; on
   Linux, `libwebkit2gtk-4.1-dev` and friends. The icon set (`src-tauri/icons/`) is generated from
   `brand/marks/crimson-noir-mark.svg` with `npx tauri icon brand/marks/crimson-noir-mark.svg -o src-tauri/icons`.
+
+## The build matrix
+
+One command builds every shipped form of the city from a checkout, on the machine that can build it:
+`npm run build:matrix` (`tools/build/matrix.mjs`, plain Node: it runs programs with argument vectors and never a
+shell, so it is the same command in cmd.exe, PowerShell and sh). It builds the page once (`tsc -b`, `vite build`),
+then each target, and every app is the same Tauri 2 shell (`src-tauri/`) around that page; the UEFI targets carry no
+page, so a run of those alone builds none. Nothing it makes is signed.
+The version, `1.0.0-stable-beta`, carries a pre-release tag, which WiX and rpm refuse in a version. The `.msi` is
+given WiX's own version, the numbers alone (`1.0.0`, `bundle.windows.wix.version`), and the `.rpm` the numbers as its
+Version with the tag in its Release (`1.0.0-0.stable.beta`, as Fedora numbers pre-releases, so the final `1.0.0-1`
+sorts after it). The `.rpm` is packaged by `tauri bundle` from the binary the build just made, so nothing is compiled
+with the shorter version: the app inside every installer says `1.0.0-stable-beta`.
+The Android and Xcode projects are generated through npm's own script (`node npm-cli.js run -- tauri android init`,
+under the same Node), because Gradle and Xcode call the Tauri CLI back with the command `init` ran through, and
+`npm run -- tauri` exists on every machine where a bare `node tauri` does not.
+
+| Target | Makes | Builds on | State |
+| :--- | :--- | :--- | :--- |
+| `windows-x64` | the NSIS installer (`*-setup.exe`), the `.msi` and the bare `.exe` | Windows x64 | the installer and `.exe` run on Julian's laptop; all three built in `windows-app.yml` on every change (the `.msi` by `tauri bundle` from the same binary); the `.msi` not installed yet |
+| `windows-arm64` | the same, cross-compiled (`--target aarch64-pc-windows-msvc`) | Windows x64 | built by the workflow; not run on a Windows on Arm machine |
+| `linux-x64` | `.deb`, `.rpm` and `.AppImage` | Linux x64 with WebKitGTK 4.1 and GTK 3 development packages | built by the workflow; not installed on a device; WebGPU in WebKitGTK unverified |
+| `linux-arm64` | `.deb`, `.rpm` and `.AppImage` | a Linux arm64 machine (no cross-compilation: WebKitGTK must be the target's own) | built by the workflow on `ubuntu-24.04-arm`; not run on a device |
+| `macos-universal` | one universal `.app` (Apple silicon and Intel; zipped) and `.dmg`, unsigned and not notarized | macOS with Xcode | built by the workflow; not opened on a Mac. Gatekeeper asks once: right-click › Open, or `xattr -d com.apple.quarantine` |
+| `android-apk` | an arm64-v8a `.apk`, signed with the Android debug key (so a phone with "install unknown apps" takes it), or with the keystore `CRIMSON_ANDROID_KEYSTORE` names (`…_PASSWORD`, `CRIMSON_ANDROID_KEY_ALIAS`, `…_KEY_PASSWORD`) | any OS with the Android SDK, an NDK and Java 17 (`ANDROID_HOME`, `NDK_HOME`, `JAVA_HOME`) | built by the workflow; not installed on a phone. WebGPU in the Android System WebView needs Android 12 or later and a current WebView |
+| `ios-ipa` | an arm64 `.ipa`, unsigned (`tauri ios build --no-sign`: Xcode's archive with code signing off, `Payload/*.app` zipped) | macOS with Xcode | built by the workflow (best effort: its failure does not fail the run); not run on a device. It cannot be installed as it is: a device needs it re-signed (a free Apple ID with a sideloading tool, seven days at a time; a paid developer account for TestFlight or the App Store). The home-screen web copy (below) needs none of that |
+| `uefi-x64` | `BOOTX64.EFI`, and `crimson_noir_os.img` and `.iso` where `sh`, mtools, sgdisk and xorriso are installed | anywhere cargo is | built, baked a second time and compared, and booted in QEMU with OVMF by the workflow; the release media still come from `build-release.yml`, which does the same before it publishes |
+| `uefi-arm64` | `BOOTAA64.EFI`, and `crimson_noir_os-aarch64.img` and `.iso` where `sh`, mtools, sgdisk and xorriso are installed | anywhere cargo is | built, baked a second time and compared, and booted by the workflow on QEMU's Arm `virt` machine with edk2 (AAVMF): the self-test with the x86-64 image's fingerprint, the tutorial, the terminal typed over the serial line, power-off. Not booted on Arm hardware. The keyboard is the serial console (below) |
+
+- **Flags.** `--list` prints the table with what this machine can build; `--targets a,b` names targets (one it cannot
+  build, or that fails, exits 1), `--targets all` builds every target it can and skips the rest with a note,
+  `--targets host` (the default) builds this machine's own desktop app and the UEFI application; `--dry-run` prints the
+  commands and builds nothing; `--out <dir>` (default `out/matrix`) is where each target's files land, in
+  `<dir>/<id>/`, with `<dir>/matrix.json` saying what was built, skipped or failed and why; `--skip-page` keeps the
+  `dist/` already there. On Windows: `npm run build:matrix -- --targets windows-x64,windows-arm64`.
+- **Crimson Noir OS on aarch64.** The bootable image is one system on two machines: `crimson_noir_os/boot/src/arch.rs`
+  picks the machine layer, `arch/x86_64.rs` (COM1, the TSC, a GDT and IDT, the PS/2 keyboard) or `arch/aarch64.rs`
+  (the UART the firmware's ACPI SPCR table names, a PL011 or an SBSA generic UART; the generic timer; the image's own
+  exception vectors at EL1 or EL2, every exception to the fault screen), and everything else is shared. An Arm machine
+  has no PS/2 controller and the image has no USB stack, so on aarch64 the keyboard is the serial console: type into
+  the serial line (a terminal's arrows and Page Up/Down work). Boot it at home with
+  `python3 crimson_noir_os/tools/boot_test.py out/matrix/uefi-arm64/crimson_noir_os-aarch64.img --arch aarch64
+  --wait "SELFTEST PASS"` (QEMU's `virt` machine, a Cortex-A72, edk2's AAVMF firmware and a ramfb screen). A machine
+  whose firmware publishes no SPCR table, or whose console UART is a 16550, boots with no log and no keys.
+- **What is not made, and why.** Signing and notarization: there is no Apple Developer or Windows code-signing
+  account, so SmartScreen, Gatekeeper and iOS each ask or refuse as described above. A `linux-arm64` build on an x64
+  machine, or any iOS or macOS build off a Mac. A static ELF of the app: the Linux shell links WebKitGTK and GTK, which
+  are the system's own libraries, so the `.AppImage` is the one file that carries them.
+- **The workflow.** `.github/workflows/build-matrix.yml` runs the same command on GitHub's runners, one job per target
+  (`windows-latest`, `ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15` twice, `ubuntu-24.04` with the Android SDK, and
+  `ubuntu-24.04` for each UEFI target), on a pull request that touches the shells, Crimson Noir OS or this tooling, on
+  a `v*` tag, and by hand. Each UEFI job then bakes its media a second time from a clean build, compares the bytes, and
+  boots the disk image in QEMU through the tutorial and the terminal to power-off, and the ISO to the self-test. Each
+  job publishes its files as the artifact `matrix-<id>` and its report; a summary job lays the nine targets out in the
+  run's summary, naming `windows-x64` as `windows-app.yml`'s. On a `v*` tag the files go onto the tag's release after
+  `build-release.yml` has created it (the same wait as `windows-app.yml`), all but the x86-64 media, which
+  `build-release.yml` publishes under the same names; `build-release.yml` dispatches this workflow for a tag it makes
+  itself. Only GitHub's own actions run in it.
+- **Which browser engine each app gets.** WebView2 (Chromium) on Windows, WebKitGTK on Linux, WKWebView on macOS and
+  iOS, the Android System WebView. The city needs WebGPU from it: Windows has it; the others are untested, and where
+  an engine lacks it the app shows the same recovery card as a browser without WebGPU.
 
 ## On an iPhone (the web app)
 
@@ -3026,6 +3284,14 @@ system's nixpkgs); on a channel-based one,
   (`CHROME=google-chrome-stable`); `AGENT_CITY_CHROME_FLAGS` adds switches, each starting with `--` and with no space
   inside its value (an `--enable-features` list joins the launcher's own: Chromium keeps only the last list it is
   given); `AGENT_CITY_PORT` and `AGENT_CITY_DIST` set the port and the page.
+- **The GPUs' memory.** Before it opens the window the launcher reads the GPUs' memory:
+  `nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits` (MiB per GPU), else
+  `/sys/class/drm/card*/device/mem_info_vram_total` (bytes per card). GPUs under 4 GB are skipped (an integrated
+  Radeon given 4 GB or more by its firmware is counted; not tried on one). It adds
+  `vram=<GB>` to the address and prints the figure and where it came from; `-- vram=<GB>` gives your own and
+  `-- vram=0` none; `--check` reads nothing. Ollama itself, on NixOS 26.05:
+  `services.ollama = { enable = true; package = pkgs.ollama-cuda; };` (or `pkgs.ollama-rocm`, `pkgs.ollama-vulkan`);
+  the old `acceleration` option is removed there.
 
 `nix develop` opens a shell with Node 24, Chromium (as `CHROME`, for the browser smoke), rustup, Python with z3 (for
 `npm run verify -- smt`) and git.
@@ -3047,6 +3313,8 @@ the page and the city boots headless in the package's Chromium on the software a
 exception on the page), and the browser smoke's desktop and Ultra scenarios in that Chromium (the Ultra one also pins
 Peak for a few frames).
 `src/desktopLauncher.test.ts` holds the address, the headers, the token, the one features list and the flake's shape.
+It also holds the GPU probe: `nvidia-smi`'s lines on a stub (two GPUs, `[N/A]`, a GPU under 4 GB) and the amdgpu
+files in a temporary folder (a connector folder skipped), and `--check` reading nothing; no real GPU was probed.
 By hand, in a Linux container (Ubuntu 24.04, not NixOS) running as root, so with `--no-sandbox` and the software
 adapter's switches (`--use-vulkan=swiftshader --use-angle=swiftshader --use-gl=angle --enable-unsafe-swiftshader`)
 added through `AGENT_CITY_CHROME_FLAGS`: the packaged command opened the city in an app window on a virtual display, a
@@ -3286,6 +3554,14 @@ the production page finds no physics object in the page and has every crafted me
   `act ok` does not; a lost tether ends the proposal in the gateway's words, and the trail has every proposal, decision
   and end, and verifies.
 - **Mutations:** 20 bugs planted in this change's code, each caught by the named test.
+
+**Auto's Ollama model by the GPU (unreleased).**
+- **In Node, on every CI run:** `modelFit.test.ts`, `router.fit.test.ts`, the new `localCompute`, `commands`,
+  `operator`, `fitWiring` and `desktopLauncher` tests (as listed under How big a model auto gives Ollama).
+- **In a browser, on every CI run:** the `actions` scenario, with `vram=24` in the address: the `fit` row,
+  `ask vram 16`, the refusal of 5000, and `ask vram auto`.
+- **Not verified:** a real GPU, a real Ollama, the NixOS probe on hardware, and Windows (which needs `ask vram` typed
+  for now).
 
 For 1.4.0-beta.1 (Agent City v1.0 Stable Beta), in this environment: a Linux container with Node 22, and a
 headless Chromium whose only WebGPU adapter is software.

@@ -281,9 +281,12 @@ const UNSUPPORTED: readonly (Unmapped & { re: RegExp })[] = [
   { re: /\b(?:fly(?:ing)?|flight|jet ?pack|wings|helicopters?|drones?|planes?|aircraft|hover|float up|climb (?:a |the )?(?:building|tower|roof)|roof ?tops?)\b/,
     label: 'Flying and rooftops: everyone here stays on the ground', modules: ['07_Execute_Actions/player.ts', '07_Execute_Actions/physics.ts'] },
   { re: /\b(?:go (?:inside|indoors)|indoors?|interiors?|inside (?:a |the )?(?:building|shop|house|tower)|enter (?:a |the )?(?:building|shop|house|tower)|apartments?|my (?:house|home|place)|houses?|homes?)\b/,
-    label: 'Going indoors: only the six workplaces open onto the street, in the city and in the lakefront metropolis; every other building is a solid shell for now',
-    modules: ['01_Initialize_World/interiors.ts', '01_Initialize_World/city.ts', '01_Initialize_World/world.ts'] },
-  { re: /\b(?:missions?|quests?|objectives?|high ?scores?|level up|achievements?|rewards?|unlock(?:s|able)?|money|cash|coins?|buy(?:ing)?|purchase|jobs?|tasks?)\b/,
+    label: 'Going indoors: the six workplaces open onto the street, in the city and in the lakefront metropolis, and so do five shops in each (walk in and press B to browse); every other building is a solid shell for now',
+    modules: ['01_Initialize_World/interiors.ts', '01_Initialize_World/storefronts.ts', '01_Initialize_World/city.ts', '01_Initialize_World/world.ts'] },
+  { re: /\b(?:buy(?:ing)?|purchase|shop(?:s|ping)?|stores?|money|cash|coins?|credits?)\b/,
+    label: 'Shopping: five shops in the city and five in the lakefront metropolis sell clothes and accessories for civic credits; walk into one and press B to browse (Sloane cannot buy for you)',
+    modules: ['01_Initialize_World/storefronts.ts', '07_Execute_Actions/storeCatalog.ts', '07_Execute_Actions/StoreCard.tsx'] },
+  { re: /\b(?:missions?|quests?|objectives?|high ?scores?|level up|achievements?|rewards?|unlock(?:s|able)?|jobs?|tasks?)\b/,
     label: 'Missions and scores: there are none; the city is a place, not a game to beat', modules: ['07_Execute_Actions/engine.ts', '06_Make_Decisions/intent.ts'] },
   { re: /\b(?:more (?:buildings|streets|blocks)|bigger city|larger city|expand the city|new (?:buildings|district)|build (?:a |something|houses)|construct)\b/,
     label: 'A bigger city: the street grid is fixed when the city starts', modules: ['01_Initialize_World/city.ts', '01_Initialize_World/world.ts'] },
@@ -329,7 +332,7 @@ const RULES: readonly Rule[] = [
   one(/\b(?:lag(?:gy|ging|s)?|slow(?:er|ly)?|sluggish|stutter(?:s|ing|y)?|jank(?:y)?|chopp(?:y|ing)|jerky|frame ?rate|fps|frames?|freez(?:es|ing|e)|hitch(?:es|ing)?|dropp?ing frames|not smooth|smooth(?:er|ly)?|snappier|unresponsive|responsive|performance|faster|quicker)\b/, 'quality', undefined, 0.9, 'performance'),
   one(/\b(?:battery|batteries|hot|heat(?:ing)?|warm|too warm|overheat(?:s|ing)?|fan|fans|thermals?|cool(?:er)? down|cooler)\b/, 'quality', 1, 0.9, 'battery'),
   // Peak, above Ultra (governor.ts PEAK_TIER), only when named: "best", "max" and "ultra" keep meaning Ultra, so a casual
-  // ask never takes the half gigabyte Peak's shadows need. Before the Ultra rule, which would read "beyond ultra". As
+  // ask never takes the memory and GPU time Peak takes. Before the Ultra rule, which would read "beyond ultra". As
   // sure as the heat and battery rule, so "hot on peak graphics" keeps that rule's Low (the first of equals). Never kept
   // as it stands: analyze turns it into Sloane's Peak question or Ultra at most.
   PEAK_RULE,
@@ -671,7 +674,7 @@ const PROBES: readonly Probe[] = [
     key: 'quality.peak',
     // Any goal that names Peak without turning it down (analyze): set nothing until the visitor says.
     when: (f) => f.tags.has('peak-ask') && find(f, 'quality')?.value === undefined,
-    ask: () => ({ question: 'Peak takes a big graphics card and about half a gigabyte more of its memory. Set Peak, or keep to Ultra at most?', options: ['Set Peak', 'Ultra at most'] }),
+    ask: () => ({ question: 'Peak takes a big graphics card: it draws every frame at a higher resolution than Ultra. Set Peak, or keep to Ultra at most?', options: ['Set Peak', 'Ultra at most'] }),
     resolve: (a, f) => {
       const raw = a.slice(0, 1024).normalize('NFKC').toLowerCase()
       // Ultra passed over for Peak, or the tier above it, is Peak's name here ("peak, not ultra", "higher than ultra").

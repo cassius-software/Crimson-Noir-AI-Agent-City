@@ -466,8 +466,11 @@ test('markdown brief: no questions, nothing mapped, and the unsupported are each
   assert.match(rain.markdown, /- Weather: the city has one clear late-September day so far — would touch `01_Initialize_World\/solar\.ts`/)
   // Going indoors: the workplaces (01_Initialize_World/interiors.ts) are open, in both generated maps; nothing else is.
   const home = new FiveWhys('go inside my house').brief()
-  assert.deepEqual(home.unmapped, ['Going indoors: only the six workplaces open onto the street, in the city and in the lakefront metropolis; every other building is a solid shell for now'])
+  assert.deepEqual(home.unmapped, ['Going indoors: the six workplaces open onto the street, in the city and in the lakefront metropolis, and so do five shops in each (walk in and press B to browse); every other building is a solid shell for now'])
   assert.match(home.markdown, /would touch `01_Initialize_World\/interiors\.ts`/)
+  // Shopping: the five shops (01_Initialize_World/storefronts.ts) sell for credits; Sloane points the way, never buys.
+  const coat = new FiveWhys('buy a coat with my credits').brief()
+  assert.deepEqual(coat.unmapped, ['Shopping: five shops in the city and five in the lakefront metropolis sell clothes and accessories for civic credits; walk into one and press B to browse (Sloane cannot buy for you)'])
   const empty = ask('pizza', 'nope').brief()
   assert.deepEqual(empty.plan, [])
   assert.match(empty.markdown, /## Plan\n_Nothing to change\._/)
@@ -506,7 +509,7 @@ test('a fix for heat or a slow frame is a ceiling on the tier, never a raise; a 
   // Peak (tier 5, above the table) only when named, and never set by a goal: Sloane asks first, and only her Set Peak
   // sets it, always as the tier to set: 5 is never a ceiling.
   assert.equal(PEAK_TIER, 5)
-  const PEAK_QUESTION = 'Peak takes a big graphics card and about half a gigabyte more of its memory. Set Peak, or keep to Ultra at most?'
+  const PEAK_QUESTION = 'Peak takes a big graphics card: it draws every frame at a higher resolution than Ultra. Set Peak, or keep to Ultra at most?'
   for (const goal of ['peak graphics', 'beyond ultra', 'peak graphics please', 'can you turn on peak graphics?', 'i want peak graphics too',
     "i don't mind peak graphics", 'peak graphics and no traffic', 'peak graphics with the sound off', 'keep peak graphics', 'i prefer peak graphics',
     'go all out with peak graphics', 'max out with peak graphics', 'max it out with peak graphics', 'switch back to peak graphics',

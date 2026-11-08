@@ -21,6 +21,7 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react'
 import { CITY, CITY_SIZE, LAKE, districtOfLot } from '../01_Initialize_World/city.ts'
 import { drawRooms, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
+import { drawShops, shops, type Shop } from '../01_Initialize_World/storefronts.ts'
 import { TRAFFIC } from '../02_Define_The_Rules/civic.ts'
 import type { HudPing, HudProgress, Light, SipocSnapshot } from '../05_Observe_Environment/telemetry.ts'
 import { BRAND } from '../brand.ts'
@@ -106,7 +107,7 @@ const CALM = mediaStore('(prefers-reduced-motion: reduce)')
  *  for the Concierge card above it. Smaller windows get the one-line chip (Sloane's list has every key). */
 const ROOMY = { ...mediaStore('(min-width: 1100px) and (min-height: 600px)'), server: () => true }
 
-export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null }: {
+export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null, onBrowse }: {
   s: SipocSnapshot | null
   adapter: string
   visible: boolean
@@ -114,6 +115,8 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   terminalOpen?: boolean
   /** A region's minimap layer (engine.mapLayer): drawn instead of the procedural city's grid. */
   mapLayer?: MapLayer | null
+  /** Open the catalogue of the shop the avatar stands in (the chip's tap; E and B go through the engine). */
+  onBrowse?: (index: number) => void
 }) {
   const small = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
   const short = useSyncExternalStore(SHORT.subscribe, SHORT.matches, SHORT.server)
@@ -143,6 +146,17 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
     <div className={`flex items-center gap-2 px-4 py-2 ${panel}`}>
       <GlyphKey glyph={glyph('interact', family)} kind={glyphKind('interact', family)} /> <span>Enter vehicle</span>
     </div>
+  )
+  // Inside a storefront (storefronts.ts), on foot, its catalogue closed, the console shut: the shop's name and the way
+  // in, a button a tap or a click opens. Its key is E (the pad's interact button), or B when a car in reach keeps E for
+  // its door (a pad has no B: the chip itself is the way in then).
+  const shop = c.shop
+  const shopGlyph = touch || family === 'touch' ? null : !s.input.nearVehicle ? glyph('interact', family) : family === 'keyboard' ? 'B' : null
+  const shopChip = shop && !shop.showroom && !driving && !terminalOpen && (
+    <button type="button" onClick={() => onBrowse?.(shop.index)} className={`pointer-events-auto flex items-center gap-2 px-4 py-2 text-left ${panel}`} data-hint="shop">
+      {shopGlyph && <><GlyphKey glyph={shopGlyph} kind={glyphKind('interact', family)} />{' '}</>}
+      <span>Browse <bdi className="font-semibold">{shop.name}</bdi></span>
+    </button>
   )
   // Desktop, mouse not captured, player not yet under way: how to look around, plus the controls the
   // Concierge's tips leave out. Never shown to controllers or touch, never over the centre of view.
@@ -364,7 +378,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
             )}
           </div>
 
-          {enterPrompt && <div className="absolute bottom-20 left-1/2 -translate-x-1/2">{enterPrompt}</div>}
+          {(enterPrompt || shopChip) && <div className="absolute bottom-20 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2">{shopChip}{enterPrompt}</div>}
           {/* The captions above the enter prompt, clear of the minimap and the speed panel like the capture chip. */}
           {captionStrip && <div className="absolute bottom-32 left-1/2 w-max max-w-[calc(100%_-_34rem)] -translate-x-1/2">{captionStrip}</div>}
           {/* Clear of the minimap (13 rem) and the speed panel on either side. */}
@@ -440,10 +454,11 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
           {/* Bottom-centre, between the thumbs: the capture hint (a small desktop window), the enter
               prompt, and — on a phone held in landscape, where browser bars take 30-60 px of its height
               and the speedometer under the minimap would reach the driving buttons — the speedometer. */}
-          {(captureHint || enterPrompt || (driving && short) || captionStrip) && (
+          {(captureHint || enterPrompt || shopChip || (driving && short) || captionStrip) && (
             <div className="absolute bottom-0 left-1/2 flex max-w-full -translate-x-1/2 flex-col items-center gap-2">
               {captionStrip}
               {captureHint && captureChip(false)}
+              {shopChip}
               {enterPrompt}
               {driving && short && speedChip}
             </div>
@@ -614,6 +629,13 @@ function roomsOf(seed: number): readonly Workplace[] {
   return roomsFor.rooms
 }
 
+/** The city's storefronts for a seed, kept like its rooms (storefronts.ts is pure, but there is no need to redo it each frame). */
+let shopsFor: { seed: number; shops: readonly Shop[] } | null = null
+function shopsOf(seed: number): readonly Shop[] {
+  if (shopsFor?.seed !== seed) shopsFor = { seed, shops: shops(seed) }
+  return shopsFor.shops
+}
+
 function cityMap(ctx: CanvasRenderingContext2D, x: number, z: number, dark: boolean, seed?: number): void {
   const { pitch, lotHalf, roadHalf } = CITY
   // The lake beyond the seawall.
@@ -635,6 +657,8 @@ function cityMap(ctx: CanvasRenderingContext2D, x: number, z: number, dark: bool
   // The indoor workplaces: the lot drawn as a room with the doorway open on its street front (interiors.ts drawRooms,
   // which a region's map layer draws its rooms with too).
   if (seed !== undefined) drawRooms(ctx, roomsOf(seed), x, z, dark)
+  // The storefronts, the same way in the shops' own colour (storefronts.ts drawShops).
+  if (seed !== undefined) drawShops(ctx, shopsOf(seed), x, z, dark)
   // Roads.
   ctx.fillStyle = dark ? '#334155' : '#ffffff'
   for (let i = 0; i <= CITY.blocks; i++) {

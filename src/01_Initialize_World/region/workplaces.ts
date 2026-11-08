@@ -217,25 +217,27 @@ const inWater = (water: Polygons, x: number, z: number): boolean => {
 }
 
 /**
- * The region's workplace lots in the window `g` (streets.ts streetGridOf), for a visitor starting at `start` (engine
- * metres): at most ROOM.slots, in WORKPLACE_KINDS order, as interiors.ts workplacesAt takes them (engine lot indices).
- * The ranking is the file's header's: the tier (lotTier), then the Chebyshev ring of lots from the start's, then the
- * dice (createRng(seed ^ 0x1a7e): one draw per window lot in row order, then one per pick for its doorway's side
- * among the fronts that qualify). Deterministic, and the pack is only read.
+ * A lot of the window a room may take (lotCandidates): window lot (i, j), its tier (lotTier), its Chebyshev ring of
+ * lots from the start's, and the street fronts its doorway may face.
  */
-export function regionWorkplaceLots(pack: RegionPack, layout: { offset: { x: number; z: number } }, g: StreetGrid, start: { x: number; z: number }, seed: number): WorkplaceLot[] {
+export interface LotCandidate { i: number; j: number; tier: number; ring: number; sides: Side[] }
+
+/**
+ * The lots of window `g` a room may stand on, for a visitor starting at `start` (engine metres), in row order: never
+ * the tallest building's lot (the landmark stays) nor a lot under water, and only a lot with a street front that is a
+ * two-way street with a sidewalk whose room corner (interiors.ts targetCorner) the start's corner graph reaches; each
+ * with every such front. The pack is only read.
+ */
+export function lotCandidates(pack: RegionPack, layout: { offset: { x: number; z: number } }, g: StreetGrid, start: { x: number; z: number }): LotCandidate[] {
   if (g.blocks !== WINDOW_BLOCKS) throw new RangeError(`a street window is ${WINDOW_BLOCKS} blocks across, got ${g.blocks}`)
   const B = g.blocks, K0 = g.originX / P, M0 = g.originZ / P, off = layout.offset
   const on = windowLotBuildings(pack, off, g)
   const landmark = tallestBuilding(pack)
   const tallK = landmark ? Math.floor((landmark.x + off.x) / P) : NaN, tallM = landmark ? Math.floor((landmark.z + off.z) / P) : NaN
   const reach = cornerComponent(g, cornerNear(g, start))
-  const rng = createRng((seed ^ 0x1a7e) >>> 0)
-  const dice = new Float64Array(B * B)
-  for (let j = 0; j < B; j++) for (let i = 0; i < B; i++) dice[j * B + i] = rng()
   const si = Math.floor((start.x - g.originX) / P), sj = Math.floor((start.z - g.originZ) / P)
   const two = SEG.walk | SEG.drive
-  const candidates: { i: number; j: number; tier: number; ring: number; sides: Side[] }[] = []
+  const candidates: LotCandidate[] = []
   for (let j = 0; j < B; j++) {
     for (let i = 0; i < B; i++) {
       if (K0 + i === tallK && M0 + j === tallM) continue
@@ -249,6 +251,22 @@ export function regionWorkplaceLots(pack: RegionPack, layout: { offset: { x: num
       candidates.push({ i, j, tier: lotTier(on[j * B + i]), ring: Math.max(Math.abs(i - si), Math.abs(j - sj)), sides })
     }
   }
+  return candidates
+}
+
+/**
+ * The region's workplace lots in the window `g` (streets.ts streetGridOf), for a visitor starting at `start` (engine
+ * metres): at most ROOM.slots, in WORKPLACE_KINDS order, as interiors.ts workplacesAt takes them (engine lot indices).
+ * The ranking is the file's header's: among lotCandidates, the tier (lotTier), then the Chebyshev ring of lots from
+ * the start's, then the dice (createRng(seed ^ 0x1a7e): one draw per window lot in row order, then one per pick for
+ * its doorway's side among the fronts that qualify). Deterministic, and the pack is only read.
+ */
+export function regionWorkplaceLots(pack: RegionPack, layout: { offset: { x: number; z: number } }, g: StreetGrid, start: { x: number; z: number }, seed: number): WorkplaceLot[] {
+  const candidates = lotCandidates(pack, layout, g, start)
+  const B = g.blocks, K0 = g.originX / P, M0 = g.originZ / P
+  const rng = createRng((seed ^ 0x1a7e) >>> 0)
+  const dice = new Float64Array(B * B)
+  for (let j = 0; j < B; j++) for (let i = 0; i < B; i++) dice[j * B + i] = rng()
   candidates.sort((a, b) => a.tier - b.tier || a.ring - b.ring || dice[a.j * B + a.i] - dice[b.j * B + b.i] || a.j - b.j || a.i - b.i)
   return candidates.slice(0, ROOM.slots).map((c, n) => ({
     kind: WORKPLACE_KINDS[n], k: K0 + c.i, m: M0 + c.j, side: c.sides[Math.min(c.sides.length - 1, Math.floor(rng() * c.sides.length))],

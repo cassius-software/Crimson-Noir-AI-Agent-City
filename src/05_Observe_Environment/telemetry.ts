@@ -8,24 +8,35 @@
  * What breaks if it is removed? The HUD loses its readouts and frame-time budgets go unmeasured.
  */
 import type { XrState } from '../04_Connect_Hardware/xrSystem.ts'
+import type { HardwareClass } from './governor.ts'
+
+/** Frames the HUD's clock remembers (over 4 s at 60 fps): a power of two, so the ring is walked by a mask, never a modulo. */
+export const FRAME_RING = 256
+const FRAME_MASK = FRAME_RING - 1
 
 export class FrameClock {
-  private readonly samples = new Float32Array(240)
+  private readonly samples = new Float32Array(FRAME_RING)
+  private readonly scratch = new Float32Array(FRAME_RING)
   private n = 0
   longFrames = 0
 
   push(ms: number): void {
-    this.samples[this.n++ % this.samples.length] = ms
+    this.samples[this.n++ & FRAME_MASK] = ms
     if (ms > 33.4) this.longFrames++
   }
 
-  /** [mean, p50, p95] over the last 240 frames, in milliseconds. */
-  stats(): [number, number, number] {
-    const count = Math.min(this.n, this.samples.length)
-    if (count === 0) return [0, 0, 0]
-    const sorted = Array.from(this.samples.subarray(0, count)).sort((a, b) => a - b)
-    const mean = sorted.reduce((s, x) => s + x, 0) / count
-    return [mean, sorted[Math.floor(count * 0.5)], sorted[Math.min(count - 1, Math.floor(count * 0.95))]]
+  /** [mean, p50, p95, p99] over the last FRAME_RING frames, in milliseconds (floor index: p99 of 256 frames is the
+   *  third slowest). Allocation-free: sorts a scratch copy in place, so a HUD tick never feeds the garbage collector. */
+  stats(): [number, number, number, number] {
+    const count = Math.min(this.n, FRAME_RING)
+    if (count === 0) return [0, 0, 0, 0]
+    const s = this.scratch.subarray(0, count)
+    s.set(this.samples.subarray(0, count))
+    s.sort()
+    let sum = 0
+    for (let i = 0; i < count; i++) sum += s[i]
+    const at = (p: number): number => s[Math.min(count - 1, Math.floor(count * p))]
+    return [sum / count, at(0.5), at(0.95), at(0.99)]
   }
 }
 
@@ -163,6 +174,8 @@ export interface QualityState {
   targetMs: number
   /** The device profile is lite (governor.ts DeviceProfile.lite: an entry-level phone GPU, or ?lite=1); absent otherwise. */
   lite?: boolean
+  /** The hardware class the engine sized the city for (governor.ts classifyHardware); absent on a governor given none. */
+  hardware?: HardwareClass
   /** The highest tier the governor may take while the in-page model works (governor.ts hold()); absent when not held. */
   held?: number
   /** The Peak rule (governor.ts PEAK_GOV), present only on a Peak range: the GPU render time it judges, ms (p90 at Ultra,
@@ -227,7 +240,7 @@ export interface SipocSnapshot {
     host?: 'browser' | 'native'
   }
   output: {
-    fps: number; frameMs: number; p50Ms: number; p95Ms: number; cpuMs: number; gpuRenderMs: number; gpuComputeMs: number
+    fps: number; frameMs: number; p50Ms: number; p95Ms: number; p99Ms: number; cpuMs: number; gpuRenderMs: number; gpuComputeMs: number
     /** One whole step in the physics worker (controls, vetting, substeps, Ring-0 audit, packing), ms: off this thread. */
     physicsMs: number
     /** Rapier world.step() alone, per step, ms. */
@@ -291,6 +304,11 @@ export interface SipocSnapshot {
     region?: string | null
     /** The region has a street window (its people, traffic and signals are real); absent or false in a surveyed region. */
     streets?: boolean
+    /**
+     * The storefront the avatar stands in (01_Initialize_World/storefronts.ts): its index in the engine's shops, its kind
+     * and name, and whether the mirror camera circles the body now (its catalogue open). Absent outside every shop.
+     */
+    shop?: { index: number; kind: string; name: string; showroom: boolean }
     /** The name the user gave the Concierge ('' until they do). */
     name: string
     clock: string; daylight: number; viewYaw: number; district: string; speedKmh: number; gear: string

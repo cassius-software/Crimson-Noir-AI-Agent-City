@@ -18,16 +18,16 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
-  FEATURE_IDS, HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatRecording, formatStats,
+  FEATURE_IDS, HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_BUILD_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatHardware, formatRecording, formatStats,
   isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type CommandResult, type Line,
 } from './commands.ts'
 import {
-  offlineBridge, ring0Stats, type ActEnd, type ActEvent, type ActsBridge, type AskResult, type GatedAsk, type GatedRun, type GatedSay, type HalDevice, type LookBridge, type LookChange,
+  offlineBridge, ring0Stats, type ActEnd, type ActEvent, type ActsBridge, type AskResult, type GatedAsk, type GatedRun, type GatedSay, type HalDevice, type HardwareReport, type LookBridge, type LookChange,
   type MemoryBridge, type ModelBridge, type NetBridge, type NetReport, type OperatorBridge, type PendingAct, type Piece, type PingBridge, type PingPick, type PingPoint, type RecordBridge,
   type RecruitBridge, type Ring0Stats, type RobotConsole, type RobotRow, type SayResult, type TerminalBridge, type TopicBridge, type AgentBridge, type ConciergeBridge, type FeaturesBridge, type EliteBridge,
 } from './bridge.ts'
 import { SKILLS } from '../../03_Spawn_Agents/skills.ts'
-import { LOOK_BODIES, LOOK_PRESETS, LOOK_SLOTS } from '../../03_Spawn_Agents/look.ts'
+import { LOOK_BODIES, LOOK_BUILDS, LOOK_PRESETS, LOOK_SLOTS, lookOptions } from '../../03_Spawn_Agents/look.ts'
 import { PING_KINDS, PING_WORDS } from '../../08_Swarm/ping.ts'
 import { apiDoc, exec, scriptApi, type SimControls } from '../operator.ts'
 import { createSwarm } from '../../08_Swarm/orchestrator.ts'
@@ -51,7 +51,7 @@ const LAWS = [
 ] as const
 
 const CORE_NAMES = [
-  'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'time', 'audio', 'ghost', 'rain', 'xr', 'render', 'captions', 'haptics', 'ping', 'look', 'agent', 'sloane', 'goal', 'progress', 'hal', 'robot', 'recruit', 'memory', 'clear', 'history', 'echo',
+  'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'hardware', 'time', 'audio', 'ghost', 'rain', 'xr', 'render', 'captions', 'haptics', 'ping', 'look', 'agent', 'sloane', 'goal', 'progress', 'hal', 'robot', 'recruit', 'memory', 'clear', 'history', 'echo',
   'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'noir', 'exit',
 ]
 const OPERATOR_NAMES = ['operator', 'ring0', 'run', 'ask', 'swarm', 'act', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
@@ -60,12 +60,25 @@ const IDLE: RecordingState = { active: false, source: null, seconds: 0, frames: 
 
 function sampleStats(): Ring0Stats {
   return {
-    fps: 59.94, frameMs: 16.683, p95Ms: 18.2, cpuMs: 4.1, gpuRenderMs: 3.25, gpuComputeMs: 0,
+    fps: 59.94, frameMs: 16.683, p95Ms: 18.2, p99Ms: 19.1, cpuMs: 4.1, gpuRenderMs: 3.25, gpuComputeMs: 0,
     rapier: { stepMs: 0.4123, physicsMs: 1.234, steps: 2, bodies: 41, colliders: 612, ccd: 37 },
     agents: { population: 10000, drawnNear: 1234, drawnFar: 2345, waiting: 120, crossing: 45, yielding: 3, nudges: 7 },
     vehicles: 36,
     quality: { tier: 3, label: 'High', auto: true, renderScale: 1, targetMs: 16.7 },
     kernel: { law1: 5, law2: 1, law3: 2, sensorFlips: 4, shielded: false, last: 'First Law: person 3.2 m ahead', audit: { ticks: 0, perimeterBreaches: 0, velocityCaps: 0, closest: Infinity, panic: null } },
+  }
+}
+
+/** What the engine's bridge reports for `hardware` on a desktop with a big card (bridge.ts HardwareReport). */
+function sampleHardware(): HardwareReport {
+  return {
+    class: 'workstation', profile: { mobile: false, gpuClass: 'discrete', startTier: 4, lite: false },
+    adapter: 'nvidia / ampere / NVIDIA GeForce RTX 3080',
+    limits: { maxStorageBufferBindingSize: 2 ** 31, maxBufferSize: 2 ** 31, maxComputeWorkgroupSizeX: 1024, maxComputeInvocationsPerWorkgroup: 1024 },
+    tiers: { min: 0, max: 5, start: 4, startLabel: 'Ultra' },
+    lanes: { simulated: 32768, default: 32768, ceiling: 60000 },
+    frames: { p50: 8.213, p95: 9.8, p99: 12.404, n: 1200, windowMs: 4987 },
+    host: 'browser', cores: 16, memoryGb: 8,
   }
 }
 
@@ -107,7 +120,7 @@ interface FakeOp extends OperatorBridge {
   /** The answered text (the ACTION line already stripped, as the tier hands it over). */
   text: string
   acts: FakeActs
-  mind: { server: string; model: string | null; think?: boolean; api?: string; provider?: string; key?: string | null; effort?: string; found?: string; runtime?: string; storage?: string }
+  mind: { server: string; model: string | null; think?: boolean; api?: string; provider?: string; key?: string | null; effort?: string; found?: string; runtime?: string; storage?: string; fit?: string }
   /** How a `say` ends: said, rejected, cut off by the tether, the server failing, the operator's stop. */
   speech: 'ok' | 'reject' | 'abort' | 'fail' | 'stopped'
   /** The ask's answer is said aloud as well (say auto on): how that ends. */
@@ -292,6 +305,10 @@ function fakeOperator(): FakeOp {
         if (value !== 'on' && value !== 'off') throw new TypeError('ask think takes on or off')
         f.mind.think = value === 'on'
         return f.mind.think ? 'on: the model reasons before it answers (slower; its thinking shows live)' : 'off: the model answers without reasoning first'
+      }
+      if (key === 'vram') {
+        if (!/^(auto|\d{1,4}(\.\d+)?)$/i.test(value)) throw new TypeError("ask vram takes the GPUs' memory in GB, from 0 to 4096 (such as ask vram 24; 0 sizes nothing), or auto")
+        return `${value} GB at the console`
       }
       f.mind[key] = value
       return value
@@ -646,6 +663,7 @@ function fake(): Fake {
       },
     },
     adapter: () => 'Test GPU (fake)',
+    hardware: () => { f.calls.push('hardware'); return sampleHardware() },
     operator: fakeOperator(),
     record: fakeRecord(),
     recruit: undefined as unknown as FakeRecruit,
@@ -724,7 +742,7 @@ test('help lists every command with usage, in two groups; help <cmd> explains on
   assert.match(all, /hal \[pair hid\|serial\|ble\]/)
   assert.match(all, /operator \[unlock\|lock\|status\]/)
   assert.match(all, /run <skill>\[,<skill>\.\.\.\]: <js\.\.\.>/)
-  assert.match(all, /ask \[<skill>\[,<skill>\.\.\.\]: <prompt\.\.\.>\|provider <name>\|connect <provider> \[<url>\] \[<key>\]\|model <name>\|server <url>\|key <key>\|effort <level>\|think on\|off\|api <format>\|file \[forget <name>\|load\|unload\|log\]\|gpu auto\|on\|off\|stop\]/)
+  assert.match(all, /ask \[<skill>\[,<skill>\.\.\.\]: <prompt\.\.\.>\|provider <name>\|connect <provider> \[<url>\] \[<key>\]\|model <name>\|server <url>\|key <key>\|effort <level>\|think on\|off\|api <format>\|vram <GB>\|auto\|file \[forget <name>\|load\|unload\|log\]\|gpu auto\|on\|off\|stop\]/)
   assert.match(all, /harness \[list\|run <name>\]/)
   assert.match(all, /act \[ok\|no\|log \[verify\]\|list\|gate\]/)
   assert.match(all, /record \[start \[canvas\|camera\]\|stop\|status\]/)
@@ -733,7 +751,7 @@ test('help lists every command with usage, in two groups; help <cmd> explains on
   assert.match(all, /captions \[on\|off\]/)
   assert.match(all, /haptics \[on\|off\]/)
   assert.match(all, /ping \[go\|look\|gather\|wait\|clear\]/)
-  assert.match(all, /look \[show \[<agent>\]\|<slot> <n\|name>\|preset <name>\|code <code>\|random \[<seed>\]\|reset\]/)
+  assert.match(all, /look \[show \[<agent>\]\|<slot> <n\|name>\|preset <name>\|build <name>\|code <code>\|random \[<seed>\]\|reset\]/)
   assert.match(all, /boot \[gui\|tty\|status\]/)
   assert.match(all, /r0 <words\.\.\.>\|r0 reset\|r0 words/)
   assert.match(all, /net \[join <ws-url> \[<token>\]\|leave\|status\|forget\]/)
@@ -810,7 +828,7 @@ test('topic: the namespace read-only, by filter, one topic, the tree, or live; e
 test('formatStats shows Rapier3D latency, substeps, bodies, colliders, CCD, drawn agents, timings, quality, kernel', () => {
   const lines = formatStats(sampleStats())
   const t = lines.join('\n')
-  assert.match(t, /^frame {5}59\.9 fps {2}16\.68 ms {2}p95 18\.20 ms {2}cpu 4\.10 ms$/m)
+  assert.match(t, /^frame {5}59\.9 fps {2}16\.68 ms {2}p95 18\.20 ms {2}p99 19\.10 ms {2}cpu 4\.10 ms$/m)
   // Compute timestamps not resolved (0) read as "-", not as a measured zero.
   assert.match(t, /^gpu {7}render 3\.25 ms {2}compute - ms$/m)
   assert.match(t, /^rapier3d {2}step 0\.412 ms {2}physics 1\.23 ms\/frame {2}substeps 2$/m)
@@ -1082,7 +1100,7 @@ test('the brand always comes from the bridge', () => {
 
 test('air gap: a failing or offline bridge becomes error lines, never an exception', () => {
   const off = offlineBridge(BRAND)
-  for (const c of ['stats', 'stats --once', 'laws', 'kernel', 'quality', 'quality 2', 'time', 'time 8', 'audio', 'audio on', 'hal', 'hal pair hid',
+  for (const c of ['stats', 'stats --once', 'laws', 'kernel', 'quality', 'quality 2', 'hardware', 'time', 'time 8', 'audio', 'audio on', 'hal', 'hal pair hid',
     'operator', 'operator unlock', 'operator lock', 'run 1 + 1', 'run rust: 1 + 1', 'ask', 'ask rust: hi', 'ask model m', 'ask connect ollama', 'ask stop', 'say', 'say rust: hi',
     'swarm', 'swarm status', 'swarm roles', 'swarm guardrails', 'swarm audit', 'swarm plan x', 'swarm run x', 'swarm stop',
     'say voice v', 'say stop', 'memory', 'memory 7', 'memory forget 7', 'api', 'api clock', 'get', 'set physics.car.power 1', 'harness', 'harness list', 'harness run sanctuary', 'sim',
@@ -1148,7 +1166,7 @@ test('air gap: while locked, across every command and completion, the only knobs
     'noir print(crowd.n);', 'noir print(tune("car.power", 2.0));']
   for (const l of sweep) void run(l, b, ['help'])
   const touched = new Set(b.calls.map((c) => c.split(' ')[0]))
-  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'features', 'ghost', 'haptics', 'look', 'memory', 'model', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'robot', 'setClock', 'soa', 'stats', 'topics', 'xr'])
+  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'features', 'ghost', 'haptics', 'hardware', 'look', 'memory', 'model', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'robot', 'setClock', 'soa', 'stats', 'topics', 'xr'])
   // The feature inspector is only ever read while locked: no bias, clamp, release or reset reaches the tier.
   const featureVerbs = new Set(b.calls.filter((c) => c.startsWith('features ')).map((c) => c.split(' ')[1]))
   assert.deepEqual([...featureVerbs].sort(), ['about', 'explain', 'lines', 'prompt'])
@@ -1211,6 +1229,8 @@ test('air gap: the terminal files reach nothing at runtime beyond React, the bra
   const allowedTypes = [
     '../../02_Define_The_Rules/laws.ts', '../../03_Spawn_Agents/look.ts', '../../04_Connect_Hardware/hal.ts', '../../04_Connect_Hardware/robotLink.ts', '../../05_Observe_Environment/telemetry.ts',
     '../../05_Observe_Environment/recorder.ts', '../operator.ts', '../harness.ts', '../../08_Swarm/orchestrator.ts',
+    // The hardware report's shapes (the class, the profile, the adapter limits): types, erased at runtime like the rest.
+    '../../05_Observe_Environment/governor.ts',
   ]
   // repl.ts is the console's own machine: a runtime import, and the one terminal module that imports nothing itself.
   // react-dom is React's own renderer: Terminal.tsx takes flushSync from it, so a tap can open the console and focus it at once.
@@ -1411,7 +1431,7 @@ test('ask: alone it reports the server, the model and what the server has; model
   assert.deepEqual(texts(run('ask think', b, [])), ['usage: ask think <on|off>'])
   for (const line of ['ask how does grip work?', 'ask 42: hi', 'ask "a: b"']) {
     const no = run(line, b, [])
-    assert.deepEqual(texts(no), ['ask: name the skill the answer needs first, e.g. ask rust: how does car.grip work?', 'usage: ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|file [forget <name>|load|unload|log]|gpu auto|on|off|stop]'], line)
+    assert.deepEqual(texts(no), ['ask: name the skill the answer needs first, e.g. ask rust: how does car.grip work?', 'usage: ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|vram <GB>|auto|file [forget <name>|load|unload|log]|gpu auto|on|off|stop]'], line)
     assert.equal(no.pending, undefined, line)
   }
   assert.ok(isErr(run('ask rust:', b, [])))
@@ -1678,7 +1698,7 @@ test('sim prints a one-screen summary from stats, the clock and the lock state',
   const t = texts(run('sim', b, []))
   assert.equal(t[0], 'clock     10:00')
   assert.match(t[1], /^quality {3}tier 3 High \(auto\)/)
-  assert.match(t[2], /^frame {5}59\.9 fps {2}16\.68 ms {2}p95 18\.20 ms$/)
+  assert.match(t[2], /^frame {5}59\.9 fps {2}16\.68 ms {2}p95 18\.20 ms {2}p99 19\.10 ms$/)
   assert.match(t[3], /^agents {4}drawn 3579 of 10000 {2}waiting 120 {2}crossing 45$/)
   assert.equal(t[4], 'vehicles  36')
   assert.match(t[5], /^rapier3d {2}step 0\.412 ms {2}bodies 41 {2}colliders 612 {2}ccd 37$/)
@@ -1705,7 +1725,7 @@ test('content rules: no combat vocabulary in anything the console prints', () =>
 })
 
 test('completion: command names, then arguments, as whole lines', () => {
-  assert.deepEqual(complete('h'), ['hal', 'haptics', 'harness', 'help', 'history'])
+  assert.deepEqual(complete('h'), ['hal', 'haptics', 'hardware', 'harness', 'help', 'history'])
   assert.deepEqual(complete('he'), ['help'])
   assert.deepEqual(complete('st'), ['stats'])
   assert.deepEqual(complete('s'), ['say', 'set', 'sim', 'sloane', 'stats', 'swarm'])
@@ -1739,8 +1759,12 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.deepEqual(complete('haptics '), ['haptics off', 'haptics on'])
   assert.deepEqual(complete('ping '), ['ping clear', 'ping gather', 'ping go', 'ping look', 'ping wait'])
   assert.deepEqual(complete('ping g'), ['ping gather', 'ping go'])
-  assert.deepEqual(complete('look '), [...['code', 'preset', 'random', 'reset', 'show'], ...LOOK_SLOT_ARGS].sort().map((a) => `look ${a}`))
-  assert.deepEqual(complete('look b'), ['look bag', 'look body', 'look bottom', 'look brow'])
+  assert.deepEqual(complete('look '), [...['build', 'code', 'preset', 'random', 'reset', 'show'], ...LOOK_SLOT_ARGS].sort().map((a) => `look ${a}`))
+  assert.deepEqual(complete('look b'), ['look bag', 'look body', 'look bottom', 'look brow', 'look build'])
+  assert.deepEqual(complete('look build '), LOOK_BUILD_ARGS.map((a) => `look build ${a}`))
+  assert.deepEqual(complete('look skin mst-1'), ['look skin mst-10'])
+  assert.deepEqual(complete('look vitiligo h'), ['look vitiligo hands', 'look vitiligo hands and face'])
+  assert.deepEqual(complete('look freckles '), ['look freckles dense', 'look freckles light', 'look freckles medium', 'look freckles none'])
   assert.deepEqual(complete('look h'), ['look hairColour', 'look hairStyle', 'look head', 'look height', 'look hips'])
   assert.deepEqual(complete('look body '), LOOK_BODY_ARGS.map((a) => `look body ${a}`))
   assert.deepEqual(complete('look body s'), ['look body skirt suit', 'look body smart casual', 'look body suit'])
@@ -1769,7 +1793,7 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.deepEqual(complete('run rust: s'), [])
   assert.deepEqual(complete('api si'), ['api signal'])
   assert.deepEqual(complete('ask s'), ['ask security:', 'ask server', 'ask shaders:', 'ask stop'])
-  assert.equal(complete('ask ').length, SKILL_ARGS.length + 11)
+  assert.equal(complete('ask ').length, SKILL_ARGS.length + 12)
   assert.deepEqual(complete('ask m'), ['ask model'])
   assert.deepEqual(complete('ask provider '), ['ask provider auto', 'ask provider claude', 'ask provider inpage', 'ask provider llamacpp', 'ask provider ollama', 'ask provider openai', 'ask provider scripted'])
   assert.deepEqual(complete('ask f'), ['ask file'])
@@ -1839,16 +1863,68 @@ test('toggle key: backquote/tilde, but not plain Ctrl or Meta chords', () => {
   assert.ok(!k('Escape', 'Escape'))
 })
 
+test('hardware: the class, the profile and the range, the adapter and its limits, the lanes, the percentiles and the machine, in six ASCII rows under 80 columns', () => {
+  const b = fake()
+  const r = run('hardware', b, [])
+  assert.deepEqual(b.calls, ['hardware'])
+  assert.deepEqual(kinds(r), ['out', 'out', 'out', 'out', 'out', 'out'])
+  const t = texts(r)
+  assert.equal(t[0], 'class     workstation  profile discrete  start 4 Ultra  tiers 0..5')
+  assert.equal(t[1], 'adapter   nvidia / ampere / NVIDIA GeForce RTX 3080')
+  assert.equal(t[2], 'limits    bind 2 GiB  buffer 2 GiB  workgroup 1024 wide  1024 invocations')
+  assert.equal(t[3], 'lanes     32768 simulated  (32768 default for a workstation, 60000 ceiling)')
+  assert.equal(t[4], 'frames    p50 8.21 ms  p95 9.80 ms  p99 12.40 ms  (1200 frames in 5.0 s)')
+  assert.equal(t[5], 'machine   16 threads  8 GB reported  browser tab')
+  for (const l of t) {
+    assert.ok(l.length <= 80, `${l.length} columns: ${l}`)
+    assert.ok(/^[\x20-\x7e]*$/.test(l), l)
+  }
+  assert.equal(r.live, undefined, 'a readout, not a live view')
+  // An argument is a usage error, and the bridge is not asked.
+  const bad = run('hardware now', b, [])
+  assert.ok(isErr(bad))
+  assert.match(texts(bad)[0], /^usage: hardware$/)
+  assert.deepEqual(b.calls, ['hardware'])
+})
+
+test('formatHardware: a phone before its first frame, a lite profile, a native shell, a browser that says nothing of the machine, a long adapter line cut, limits in MiB', () => {
+  const phone = formatHardware({
+    class: 'phone', profile: { mobile: true, gpuClass: 'mobile', startTier: 1, lite: false }, adapter: 'apple / common-3',
+    limits: { maxStorageBufferBindingSize: 128 * 2 ** 20, maxBufferSize: 256 * 2 ** 20, maxComputeWorkgroupSizeX: 256, maxComputeInvocationsPerWorkgroup: 256 },
+    tiers: { min: 0, max: 2, start: 1, startLabel: 'Low' }, lanes: { simulated: 8000, default: 8000, ceiling: 60000 },
+    frames: { p50: 0, p95: 0, p99: 0, n: 0, windowMs: 0 }, host: 'browser', cores: 6, memoryGb: undefined,
+  })
+  assert.equal(phone[0], 'class     phone  profile phone  start 1 Low  tiers 0..2')
+  assert.equal(phone[2], 'limits    bind 128 MiB  buffer 256 MiB  workgroup 256 wide  256 invocations')
+  assert.equal(phone[3], 'lanes     8000 simulated  (8000 default for a phone, 60000 ceiling)')
+  assert.equal(phone[4], 'frames    no frames yet')
+  assert.equal(phone[5], 'machine   6 threads  memory unreported  browser tab')
+  const lite = formatHardware({
+    class: 'phone', profile: { mobile: true, gpuClass: 'mobile', startTier: -1, lite: true }, adapter: 'arm / bifrost / ' + 'Mali-G52 MC2 '.repeat(8),
+    limits: { maxStorageBufferBindingSize: 1.5 * 2 ** 30, maxBufferSize: 2 ** 30, maxComputeWorkgroupSizeX: 512, maxComputeInvocationsPerWorkgroup: 512 },
+    tiers: { min: -1, max: 0, start: -1, startLabel: 'Lite' }, lanes: { simulated: 512, default: 2500, ceiling: 60000 },
+    frames: { p50: 41.2, p95: 55.25, p99: 120.5, n: 3, windowMs: 180.4 }, host: 'native', cores: 0, memoryGb: 4,
+  })
+  assert.equal(lite[0], 'class     phone  profile lite  start -1 Lite  tiers -1..0')
+  assert.equal(lite[1].length, 80, lite[1])
+  assert.ok(lite[1].startsWith('adapter   arm / bifrost / Mali-G52') && lite[1].endsWith('...'), lite[1])
+  assert.equal(lite[2], 'limits    bind 1.5 GiB  buffer 1 GiB  workgroup 512 wide  512 invocations')
+  assert.equal(lite[3], 'lanes     512 simulated  (2500 default for a phone, 60000 ceiling)')
+  assert.equal(lite[4], 'frames    p50 41.20 ms  p95 55.25 ms  p99 120.50 ms  (3 frames in 0.2 s)')
+  assert.equal(lite[5], 'machine   threads unknown  4 GB reported  native shell')
+  for (const l of [...phone, ...lite]) assert.ok(l.length <= 80 && /^[\x20-\x7e]*$/.test(l), l)
+})
+
 test('ring0Stats maps a HUD snapshot plus physics counters', () => {
   const snap = {
-    output: { fps: 60, frameMs: 16.6, p50Ms: 16, p95Ms: 19, cpuMs: 5, gpuRenderMs: 2, gpuComputeMs: 1, physicsMs: 1.5, rapierMs: 0.4 },
+    output: { fps: 60, frameMs: 16.6, p50Ms: 16, p95Ms: 19, p99Ms: 21, cpuMs: 5, gpuRenderMs: 2, gpuComputeMs: 1, physicsMs: 1.5, rapierMs: 0.4 },
     process: { pedestrians: 9999, vehicles: 36, drawnNear: 100, drawnFar: 200, waiting: 3, crossing: 4, yielding: 5, safetyNudges: 6, gpu: 'x', sensingAgeMs: 33, sensingLagMs: 35 },
     quality: sampleStats().quality,
     kernel: sampleStats().kernel,
   } as unknown as SipocSnapshot
   const s = ring0Stats(snap, { stepMs: 0.42, steps: 3, bodies: 50, colliders: 700, ccd: 36 })
   assert.deepEqual(s, {
-    fps: 60, frameMs: 16.6, p95Ms: 19, cpuMs: 5, gpuRenderMs: 2, gpuComputeMs: 1,
+    fps: 60, frameMs: 16.6, p95Ms: 19, p99Ms: 21, cpuMs: 5, gpuRenderMs: 2, gpuComputeMs: 1,
     rapier: { stepMs: 0.42, physicsMs: 1.5, steps: 3, bodies: 50, colliders: 700, ccd: 36 },
     agents: { population: 9999, drawnNear: 100, drawnFar: 200, waiting: 3, crossing: 4, yielding: 5, nudges: 6 },
     vehicles: 36,
@@ -2081,6 +2157,9 @@ test('look: the look worn (or a pedestrian\'s), a slot by number or name, a pres
   assert.deepEqual([...LOOK_SLOT_ARGS], [...LOOK_SLOTS])
   assert.deepEqual([...LOOK_BODY_ARGS], [...LOOK_BODIES].sort())
   assert.deepEqual([...LOOK_PRESET_ARGS], LOOK_PRESETS.map((p) => p.name).sort())
+  assert.deepEqual([...LOOK_BUILD_ARGS], LOOK_BUILDS.map((x) => x.name).sort())
+  for (const slot of ['vitiligo', 'freckles'] as const) assert.deepEqual(complete(`look ${slot} `), lookOptions(0, slot).map((o) => `look ${slot} ${o.name}`).sort(), `${slot}: the wardrobe's names`)
+  assert.deepEqual(complete('look skin '), lookOptions(0, 'skin').slice(8).map((o) => `look skin ${o.name}`), 'the Monk tones by their scale names')
 })
 
 test('map: the map the shell walks; map city|lakefront|default hands the host a reload, never the same map twice; no bridge call', () => {
@@ -2406,6 +2485,33 @@ test('ask file and ask gpu work while locked (they keep a file or a setting, and
     assert.deepEqual(run(c, bare, []).lines, [{ kind: 'err', text: 'ask: this page cannot hold a model file' }], c)
   }
   for (const c of ['ask file', 'ask file load', 'ask gpu auto']) assert.deepEqual(run(c, offlineBridge(BRAND), []).lines, [{ kind: 'err', text: 'ask: engine not running' }], c)
+})
+
+test('ask vram: its usage, its row, the console\'s refusal and its completion; the fit row sits under the model row', async () => {
+  const b = unlocked()
+  // Bare: the usage, and the bridge is not asked.
+  assert.deepEqual(texts(run('ask vram', b, [])), ['usage: ask vram <GB|auto>'])
+  assert.deepEqual(texts(run('ask vram   ', b, [])), ['usage: ask vram <GB|auto>'])
+  assert.deepEqual(b.operator.opCalls, [])
+  assert.deepEqual(run('ask vram 24', b, []).lines, [{ kind: 'out', text: 'vram      24 GB at the console' }])
+  assert.deepEqual(b.operator.opCalls, ['askSet vram 24'])
+  run('ask vram AUTO', b, [])
+  assert.deepEqual(b.operator.opCalls, ['askSet vram 24', 'askSet vram AUTO'], 'the mind reads the word, whatever its case')
+  // The mind's refusal, in its words.
+  assert.deepEqual(run('ask vram lots', b, []).lines, [{ kind: 'err', text: "ask: ask vram takes the GPUs' memory in GB, from 0 to 4096 (such as ask vram 24; 0 sizes nothing), or auto" }])
+  // The fit row, right under the model row.
+  b.operator.mind.fit = "24.0 GB given by the page's address (vram=); the next answer is measured before auto picks bigger"
+  assert.deepEqual(await run('ask', b, []).pending, [
+    { kind: 'out', text: 'server    http://localhost:11434  (this machine only)' },
+    { kind: 'out', text: 'model     test-model' },
+    { kind: 'out', text: "fit       24.0 GB given by the page's address (vram=); the next answer is measured before auto picks bigger" },
+    { kind: 'out', text: 'installed a-model' },
+    { kind: 'out', text: '          test-model  (chosen)' },
+  ])
+  // Tab completes the word and its one keyword.
+  assert.deepEqual(complete('ask v'), ['ask vram'])
+  assert.deepEqual(complete('ask vram '), ['ask vram auto'])
+  assert.deepEqual(complete('ask vram a'), ['ask vram auto'])
 })
 
 test('ask alone over a model running in this page: no server, the runtime and storage rows, and where to keep a file when none is', async () => {

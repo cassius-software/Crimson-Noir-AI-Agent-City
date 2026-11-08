@@ -1,2 +1,5 @@
 target
 gen/schemas
+# The Android and Xcode projects `npm run build:matrix` generates with `tauri android|ios init --ci` (tools/build/matrix.mjs).
+gen/android
+gen/apple

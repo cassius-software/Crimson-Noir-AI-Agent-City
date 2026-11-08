@@ -15,6 +15,158 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The ten Monk skin tones, vitiligo, freckles and body builds, on a look genome of sixteen words.** The character
+  customizer's look (`src/03_Spawn_Agents/look.ts`) grows from four packed words to a genome of sixteen
+  (`LOOK_WORDS`): words 0 to 3 are the look, figure, face and wardrobe words exactly as they were, word 4 is a new
+  skin word, and words 5 to 15 are spare (zero, and refused otherwise). Every field of the later words is 0 for "as
+  before", so every stored look (records v1 to v4), every look code (28, 21, 15 and 8 symbols) and every roster look
+  reads back as the same look, and a look without the new fields keeps its exact code. The skin slot holds the eight
+  older tones and then the ten tones of the Monk Skin Tone Scale (`mst-01` to `mst-10`; Dr. Ellis Monk, published by
+  Google under CC BY 4.0, credited in `NOTICE.md`); the street's hash now draws everyone from the Monk tones evenly,
+  so the two deepest tones, which no pedestrian wore before, are as common as the lightest. **Vitiligo** (six
+  patterns: hands, face, hands and face, scattered, widespread, one side) and **freckles** (light, medium, dense) are
+  painted by the crowd's fragment stage from the rest position (two octaves of value noise for the patches, one dot at
+  most per 1.6 cm cell for the freckles, thickest over the cheeks and nose, never on a paled patch), each under its own
+  branch so a person without them pays nothing; two pedestrians in a hundred have vitiligo and about one in six
+  freckles. A **Build** row (slight, lean, athletic, muscular, broad, stocky, soft, full) sets the mass, muscle,
+  shoulder and hip sliders together, on the card and as `look build <name>` at the console. `crowd.figure` becomes
+  four quads a person (64 bytes: the figure, face and wardrobe words with the rig slot word, then genome words 4 to
+  15), the vertex stage still binds seven storage buffers, and the skin word reaches the fragment as one flat integer
+  varying (`@interpolate(flat)`, not three's `flat, either`). A look code with a skin word grows a tail of eight
+  symbols with its own check, and its head's check then covers every word, so the head alone is refused instead of
+  read in an older tone. The stored record is v5. Pinned by `look.test.ts` (the genome's layout and round trip,
+  the hashed crowd's odds and the shader's links, the codes with and without a tail, the builds) and
+  `lookWiring.test.ts` (the buffer, the varying, the engine's record and the v4 record read as it is).
+
+- **Five shops you can walk into, browse and buy from.** Five ground floors of the procedural city are storefronts
+  (`src/01_Initialize_World/storefronts.ts`): Verrin & Vale Tailors, Aethelgard Ink Studio, Bio-Frame Prosthetics
+  Atelier, Escapement Row Horology and Lintel & Lumen Design House, each on a lot of its own quarter, picked from the
+  seed among the lots no workplace has. Each lot's podium is hollowed into a glass room with a counter, a mirror and
+  its trade's fixtures, and the ceiling slab keeps the building's finish; the minimap draws the shops in teal. On foot
+  inside one, E (unless a car is in reach), B, the pad's south button or the HUD's Browse chip opens the shop's card
+  (`src/07_Execute_Actions/StoreCard.tsx`): the avatar steps onto a fitting spot kept clear of every fixture and the
+  camera circles the body, so the outfit shows; every line has its level and price, Try on, Buy (worn at once) and
+  Wear. Purchases go through one shopkeeper (`shopkeeper.ts`) over the progression engine's keeper (`progress.ts`
+  `pageProgress`, adapted by `progressionPurse`): the card shows its level and civic credits, and its purchase gate
+  takes the price and sets the line's unlock bit in the same saved record (worn lines at look 512 and up, furniture
+  from 0, homes 0 to 6). A new operator starts at level 1 with 150 credits, enough for a first-floor line such as the
+  tie, and earns more by the city's work. On sale now: the tailor's overcoats, trims, scarves and tie,
+  the atelier's smart eyewear and the watch shop's briefcase; tattoos, limbs, watches and the other lines that need
+  wardrobe slots not built yet are listed as on order, and the design house's furniture and seven property deeds wait
+  for the properties. Three of the plan's shop names and two home names were changed after a trademark and place-name
+  search (`docs/ip-audit.md` §7). Pinned by `storefronts.test.ts` (one shop per kind on its quarter for 64 seeds,
+  never on a workplace lot, the podium gone, every fixture inside the walls, the walk-in and the camera's circle
+  clear, the real Rapier avatar walking from the sidewalk to the fitting spot), `storeCatalog.test.ts` (ids, the
+  deeds' levels and prices, every line on sale wearable by every preset body, the spaces, level cap and verdicts equal
+  to the progression engine's, the shopkeeper over a real keeper bought once and kept across a reload, and over a
+  stand-in that refuses) and `storeWiring.test.ts`.
+- **The five shops in Lakefront Metro too.** A generated region's street window gets the same five storefronts
+  (`src/01_Initialize_World/region/shops.ts`), on the lots nearest the visitor's start once its workplaces have taken
+  theirs, from the same candidates as the workplaces (`region/workplaces.ts` `lotCandidates`, shared now): a doorway on
+  a two-way street with a sidewalk the start can walk to, never the landmark's lot or a lot under water.
+  `regionWorld.ts` `hollowLots` hollows a shop's lot as it hollows a room's (the slab in the podium's height and
+  finish, a tower carried on it, the floor and forecourt paved), the worker takes the lots in `SimInit.shops` and
+  refuses malformed ones, each with its reason, the region's minimap draws the shops, and each shop's card names the
+  streets it stands on (the city's arcades are the city's districts). Pinned by
+  `region/shops.test.ts` (two seeds, every zone: five shops, never a workplace's lot, the nearest lots first, the
+  hollowing and the workplaces unchanged by it), `regionPhysics.test.ts` (the worker's refusals) and
+  `storeWiring.test.ts`.
+- **One command for every platform's build: `npm run build:matrix`.** `tools/build/matrix.mjs` (plain Node, programs
+  with argument vectors, never a shell, so cmd.exe and sh run the same thing) builds the page once and then each
+  target a machine can build: the Tauri 2 shell for Windows x64 (`windows-x64`: NSIS installer, .msi and bare .exe)
+  and Windows arm64 (`windows-arm64`, cross-compiled on Windows x64), Linux x64 and arm64 (`linux-x64`, `linux-arm64`:
+  .deb, .rpm and .AppImage), macOS (`macos-universal`: one universal .app, zipped, and .dmg, unsigned), Android
+  (`android-apk`: arm64-v8a, signed with the debug key unless `CRIMSON_ANDROID_KEYSTORE` names one) and iOS
+  (`ios-ipa`: built with code signing off, so unsigned), and Crimson Noir OS's UEFI application for x86-64
+  (`uefi-x64`, with the .img and .iso media where the media tools are installed) and aarch64 (`uefi-arm64`, the entry
+  after next). `--list`, `--targets
+  <ids>|all|host`, `--dry-run`, `--out`, `--skip-page`; a target named by hand that the machine cannot build fails
+  the run, under `all` it is skipped with a note. `.github/workflows/build-matrix.yml` runs the same command on
+  GitHub's runners, one job per target (Windows, Linux x64, Linux arm64, macOS twice, Linux with the Android SDK), lays
+  the nine targets out in the run's summary, and on a v* tag uploads the files to the tag's release after
+  build-release.yml has created it; build-release.yml dispatches it for a tag it makes itself, as it does
+  windows-app.yml. Not made: anything signed or notarized (no Apple or Windows signing account). Tried in Node (the
+  dry run and the table's tests); the workflow's first runs are the pull request's own, and no file it makes has been
+  opened on a Mac, a phone or a Windows on Arm machine.
+  The workflow's first run on this change's own pull request built all seven: Windows arm64, Linux x64, Linux arm64,
+  macOS universal, the Android .apk, the iOS .ipa and the UEFI application with its media (the Android and iOS jobs
+  needed the Tauri CLI driven as Tauri expects: the mobile projects generated through npm, so Gradle and Xcode can
+  call it back, and the .ipa from `tauri ios build --no-sign`). None of the files has been opened on a device yet
+  except the Windows app.
+- **The .msi and the .rpm, with the version's numbers as the installers' own.** WiX takes no pre-release tag and rpm
+  no hyphen in a version, and the version is `1.0.0-stable-beta`. The Windows targets now also make an .msi, with
+  WiX's own version set to the numbers (`bundle.windows.wix.version`: 1.0.0), and windows-app.yml packages one from
+  the same binary with `tauri bundle` on every change (artifact `windows-msi-<version>`, and onto a tag's release).
+  The Linux targets make an .rpm with `tauri bundle` from the binary the build made: Version 1.0.0, Release
+  0.stable.beta (the final 1.0.0-1 sorts after it). Nothing is compiled with the shorter version, so the app inside
+  every installer says 1.0.0-stable-beta (`installerVersion`, `rpmRelease` in tools/build/matrix.mjs, pinned by
+  tests). The pull request's runners built all four: the x64 .msi in windows-app.yml, the arm64 .msi (WiX target
+  arm64, 8.3 MiB), and `Crimson Noir Agent City-1.0.0-0.stable.beta.x86_64.rpm` (8.2 MiB) and `.aarch64.rpm`. Not
+  installed on a machine yet.
+- **Crimson Noir OS boots on aarch64 (`uefi-arm64`).** The boot crate's machine layer is split by architecture
+  (`crimson_noir_os/boot/src/arch.rs`): `arch/x86_64.rs` is the old one, and `arch/aarch64.rs` drives an Arm machine
+  after ExitBootServices: the serial line is the UART the firmware's ACPI SPCR table names (a PL011 or an SBSA generic
+  UART; no table, no log), the clock the generic timer's virtual count, and the image installs its own exception
+  vectors (VBAR_EL1, or VBAR_EL2 where the firmware runs at EL2), so every exception lands on the fault screen with its
+  class, syndrome, fault address and return address. An Arm machine has no PS/2 controller and the image has no USB
+  stack, so the keyboard is the serial console (a terminal's bytes, arrows and Page Up/Down). Everything above that
+  layer is shared, and the compute self-test reaches the x86-64 image's fingerprint (0x83765bab). `build-image.sh`
+  takes the target (`BOOTAA64.EFI` on the ESP; the media's identity names the architecture, the x86-64 media's is
+  unchanged), `boot_test.py --arch aarch64` boots QEMU's Arm `virt` machine with edk2 (AAVMF), a ramfb screen and the
+  serial line on a socket it types into, and build-matrix.yml's two UEFI jobs bake their media twice, compare the
+  bytes, and boot the disk image through the tutorial and the terminal to power-off and the ISO to the self-test. On
+  a tag the x86-64 media stay build-release.yml's (the build matrix no longer uploads its copies over them). Checked in
+  QEMU here and on the pull request's runners: the aarch64 disk image through the whole boot test (`SELFTEST PASS`
+  after 8 s, the tutorial passed after 74 s, `golden` matched, powered off), the ISO from a SCSI CD to the self-test,
+  a second clean bake byte for byte, and the x86-64 image through the same tests after the split; here also a forced
+  data abort and a BRK on the fault screen. Not booted on Arm hardware.
+- **Hardware classes, lanes per class and the `hardware` command.** The engine now decides once at boot which of
+  three machines it is on (`src/05_Observe_Environment/governor.ts` `classifyHardware`): a phone (any phone, tablet
+  or lite profile), a workstation (a Peak candidate whose WebGPU adapter binds at least 512 MiB in one storage buffer
+  and makes a 1 GiB buffer: `readAdapterLimits`, read from the adapter in `world.ts`, since the page's device is made
+  with the defaults), or a desktop (everything else; the adapter's limits are a veto, never a promotion, `?peak=1`
+  skips it). The class sets how many pedestrians the realm simulates unless `?crowd` says (`defaultLanes`: 32,768 on
+  a workstation, the 14,000, 8,000, 5,000 and 2,500 of before elsewhere, never over what the adapter binds or the
+  realm's 60,000), rides on the governor's state (`quality.hardware`, the namespace's `Quality/Governor/hardware`)
+  and changes no tier rule. The governor's rings are walked by a mask (every ring a power of two, pinned by a test),
+  and it reports the percentiles of its own window (`Governor.percentiles`: p50, p95, p99, allocation-free). The HUD
+  clock keeps 256 frames and adds p99 (`output.p99Ms`, the namespace's `Frame/Page/p99Ms`, the `stats` and `sim`
+  frame rows). The console's `hardware` prints the class, the profile and range, the adapter and its limits, the
+  lanes, the window's percentiles and the machine as the browser reports it; MANUAL.md, Autoscaling, has the rules.
+  Tried in Node (the governor, console and namespace suites) and in headless Chromium on the software adapter (the
+  browser smoke's `desktop` and `lite` scenarios see a desktop and a phone); no workstation was seen on real
+  hardware, and the plan's 131,072 lanes are not raised here (the crowd's grid, readback and draw would need
+  resizing and measuring on a real big GPU).
+- **The sun's shadows reach farther, in two cascades, with a softer, tier-set penumbra.** The one directional light
+  with a fixed shadow box of ±80 m around the player (±160 m on Peak, on an 8192² map of half a gigabyte) is replaced
+  by three r186's cascaded sun light (`src/01_Initialize_World/sunShadow.ts`, three/addons `SunLight`): a near cascade
+  fitted to the first stretch of the view with fine texels (about 32 m on Medium, 42 m on High, 62 m on Ultra and
+  Peak), a far one to the rest out to the tier's distance (the governor's new `shadowDistance`: 120 m on Medium, 160 m
+  on High, 240 m on Ultra and Peak), fading out over its last tenth instead of ending in a line, the two drawn side by
+  side in one atlas (1024 texels a cascade on Medium, 2048 on High, 4096 on Ultra and Peak, so Peak's shadows take a
+  quarter gigabyte instead of a half) and fitted and snapped to whole texels by three every shadow pass; in split
+  screen each viewport's shadows are fitted to its own head. Two things three leaves to the page are done in
+  `CitySunShadow`: casters are drawn from at least 320 m toward the sun whichever way the player faces (three alone
+  drew them from as little as one shadow distance sunward, so a tower's long low-sun shadow came and went as the head
+  turned), and every cascade spans at least 700 m of depth, so the depth bias means the 21 cm it did over the old box.
+  The filter is three's own PCF (a Vogel disk of hardware depth comparisons rotated per pixel) with the tap count read
+  from a uniform (`shadowTaps`: 5 on Medium, 8, 12, 16 on Peak; the taps are written out with every one past five behind
+  an `if` on it, no loop) and the disk's radius a tier knob too (`shadowRadius`, round on the atlas), so the shadows
+  soften up the tiers without a recompile. Peak keeps Ultra's cascades and reach (a farther reach would stretch the
+  near cascade and coarsen the shadows nearest the eye) and adds taps and a wider penumbra. Parking (shadows off below
+  Medium) works as before, on the same shadow object. Sloane's Peak question no longer says Peak takes half a gigabyte
+  more. Pinned by `sunShadow.test.ts` (the light, its node class registered with the renderer once, the filter
+  installed before the first build, two cascades in one atlas, casters from 320 m sunward at every heading, tier and
+  sun height over at least 700 m without moving three's fit across the light, the taps' bounds), `shadowShaders.test.ts`
+  (every material still builds in both passes within the binding budget; the lit fragment's shadow is sixteen written-out
+  hardware comparisons a cascade, eleven behind an `if` on one uniform, no loop, and its WGSL is byte-identical for
+  Medium's and Peak's taps, distance and map; the shadow pass, built for a real caster, compares nothing) and the
+  governor, Peak and browser-smoke pins (Peak's atlas is 8192 wide with a three-texel penumbra, Ultra's 2.5, both 240 m;
+  the lakefront's Medium atlas 2048 × 1024 and 120 m). three's own `CSMShadowNode` was not used: it clones the light's
+  shadow once at the first compile, so nothing written to the sun's shadow afterwards (the tier's map size, the
+  parking) reaches its cascades. Unverified: how it looks on a real GPU (software-WebGPU pictures only, which at the
+  photographed spots look like the old ones), and the cost of the second shadow pass on an integrated GPU at Medium (the
+  governor measures and steps down as ever).
 - **The operator's progression.** The operator now has a level (1 to 20, 1,000 XP each, the rest rolling over), six
   attribute modifiers, eight skills of the city with proficiency ranks, civic credits, hero points, resolve and three
   actions and a reaction per six-second round (`src/02_Define_The_Rules/progression.ts`, over one 128-word record,
@@ -404,8 +556,9 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 - **Peak, a tier above Ultra for big GPUs.** Tier 5, outside the tier table like Lite, so every existing tier number
   and automatic range stays as it was. It draws Ultra at 1.25 times the resolution on each side (about 1.56 times the
   pixels), held within the device's largest texture, which also fixes `?scale=2` on a very wide window at any tier;
-  the sun's shadows out to 160 m at the same sharpness, on an 8192² map of about 512 MB of graphics memory, given back
-  on the way down; and full-detail people out to 90 m. Who is measured: a desktop with a discrete GPU or an Apple
+  Ultra's sun shadows with a wider sixteen-tap penumbra (it first drew them out to 160 m on an 8192² map of about
+  512 MB; the cascades above replaced that, and Peak's shadows now take Ultra's 256 MB); and full-detail people out to
+  90 m. Who is measured: a desktop with a discrete GPU or an Apple
   chip, 8 or more cores and 8 GB or more (`?peak=1` or `?peak=0` decides on any desktop). On such a desktop three
   writes GPU timestamps, and the range reaches Peak only where it really does. The governor climbs from Ultra only
   when nine frames in ten took at most 30 % of the frame budget on the GPU, because under the cinema camera the frame
@@ -782,6 +935,20 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   over a solid person as an impact. The Sanctuary no longer shields or nudges anyone for overlapping a standing car,
   and it now shields anyone within 0.3 m of a moving one whichever way it moves, since you can run after a car pulling
   away; a car pulling away nudges nobody.
+- **auto can give Ollama a bigger model it already has, by the GPUs' memory.** Given the GPUs' memory (`ask vram
+  <GB>`, kept in this browser, or `vram=` in the address, which the NixOS launcher now adds from `nvidia-smi` or the
+  amdgpu driver), provider `auto` measures an Ollama answer (one `GET /api/ps` on this machine) and then answers with
+  the largest text model Ollama already lists that fits the figure less 2 GB by that measure. A model whose weights
+  alone exceed the figure is never chosen while a smaller one is listed; a bigger model that is slow, or split between
+  the GPU and the processor when its first wait runs out, is dropped for the visit, and one too big in two visits is avoided until `ask vram`. The
+  console's `fit` row says which model and why; `ask model auto` hands a chosen model back to auto; under auto, a
+  model Ollama lists at over 60 GB gets longer to start answering (a second per 200 MB). Without a figure only that wait changes: the same requests and
+  the same model. The 2 GB reserve, 5 tokens a second over 32 tokens, two visits, 200 MB a second and the launcher's 4 GB
+  floor are starting values, not measured. CI proves it in Node against a fake Ollama and a stubbed `nvidia-smi`, and
+  in the browser smoke on a software adapter (the row and the commands); no real GPU ran it. Nothing grows on a phone,
+  and on Windows the figure has to be typed (`ask vram`) for now; on NixOS the launcher also counts an integrated
+  Radeon given 4 GB or more by its firmware (not tried on one; `-- vram=0` sizes nothing). Nothing is downloaded, and
+  the page still addresses only this machine.
 
 ### Removed
 
