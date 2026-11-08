@@ -8,11 +8,13 @@
  *   the post pass, bloom and FXAA follow the drawing-buffer size each frame. Same path as a window resize.
  * - Render scale above 1 (Peak): the same setPixelRatio, held so the drawing buffer's longer edge stays within the
  *   device's largest 2D texture (pixelRatioFor); a window resize refits it (refitPixelRatio).
- * - Sun shadow box (Peak): the shadow camera's left/right/top/bottom and its projection, which three's ShadowNode
- *   computes only at setup, so applyShadowExtent recomputes it (a uniform; nothing recompiles).
- * - Shadow map size: ShadowNode.renderShadow() calls shadowMap.setSize(mapSize) before every shadow render,
- *   so a new mapSize reallocates the depth target on the next shadow pass; the PCF filter reads mapSize as
- *   a uniform and bind groups are rebuilt when the texture is replaced. No shader changes.
+ * - Sun shadow distance: the far plane of the sun's shadow camera, which three's SunLightShadow reads every shadow
+ *   pass to fit its two cascades to the view out to it (sunShadow.ts): a number, no projection to recompute.
+ * - Shadow softness: the filter's disk radius (shadow.radius, a uniform three's filter reads) and its tap count
+ *   (World.setShadowTaps: the uniform the filter's taps past five are taken behind, sunShadow.ts). Two writes.
+ * - Shadow map size: SunShadowNode.renderShadow() sizes the atlas (two cascades of mapSize side by side) before
+ *   every shadow render, so a new mapSize reallocates the depth target on the next shadow pass; the filter reads
+ *   the atlas size as a uniform and bind groups are rebuilt when the texture is replaced. No shader changes.
  * - Shadows off/on: renderer.shadowMap.enabled is part of every render object's dynamic cache key, and
  *   light.castShadow is part of the lights cache key, so flipping either rebuilds every lit pipeline (a
  *   visible hitch, again on the way back). Once the shadowed variant exists, shadows are instead parked:
@@ -37,12 +39,14 @@
  * What breaks if it is removed? The governor's tier changes and the terminal's `quality` command have no
  * visible effect, and the start tier chosen for a phone is never applied.
  */
-import type { DirectionalLight, WebGPURenderer } from 'three/webgpu'
+import type { WebGPURenderer } from 'three/webgpu'
+import type { SunLight } from 'three/addons/lights/SunLight.js'
 import type { QualityKnobs } from '../05_Observe_Environment/governor.ts'
 
 export interface QualityTargets {
   renderer: WebGPURenderer
-  sun: DirectionalLight
+  /** The world's sun (sunShadow.ts): its shadow's map size, distance (camera.far), radius, intensity and update flags. */
+  sun: SunLight
   /** Pixel ratio at renderScale 1. */
   basePixelRatio: number
   setCrowd(c: { lodDistance: number; nearRadius: number; density: number; maxDistance: number }): void
@@ -55,6 +59,8 @@ export interface QualityTargets {
   /** Street lamps lit by a real PointLight, the nearest to the player: World.setLampLights (0: none, and the rooms'
    *  fixtures off). */
   setLampLights(count: number): void
+  /** The sun shadow filter's taps per fragment: World.setShadowTaps (a uniform loop bound; nothing recompiles). */
+  setShadowTaps(count: number): void
   /** The drawing buffer's limit: its longer edge stays within maxEdge texels (the device's maxTextureDimension2D) for a
    *  canvas cssEdge() CSS pixels on its longer side. Absent: no limit (the tests' mock). */
   fit?: { maxEdge: number; cssEdge(): number }
@@ -63,16 +69,12 @@ export interface QualityTargets {
 /** Shadow map edge while shadows are parked. */
 export const PARKED_SHADOW_MAP = 16
 
-/** Half-width of the sun's shadow box below Peak, m: the box world.ts builds (peakWiring.test.ts pins the two together). */
-export const SHADOW_EXTENT = 80
-
 /** Pure. The pixel ratio for a render scale, lowered only as far as keeps the drawing buffer's longer edge within maxEdge
  *  texels (WebGPU's default 8192 here: the device asks no limits). A cssEdge under 1 reads as 1. */
 export function pixelRatioFor(base: number, scale: number, cssEdge: number, maxEdge = Infinity): number {
   return Math.min(base * scale, maxEdge / Math.max(1, cssEdge))
 }
 const ratioOf = (k: QualityKnobs, t: QualityTargets): number => pixelRatioFor(t.basePixelRatio, k.renderScale, t.fit?.cssEdge() ?? 1, t.fit?.maxEdge)
-const extentOf = (k: QualityKnobs): number => k.shadowExtent ?? SHADOW_EXTENT
 
 /** After a resize (engine.ts resize): the ratio again for the canvas's new size, set only when it moved (the limit
  *  engaged or let go). */
@@ -90,7 +92,9 @@ export function applyQuality(k: QualityKnobs, t: QualityTargets, prev?: QualityK
   if (!prev || prev.renderScale !== k.renderScale) t.renderer.setPixelRatio(ratioOf(k, t))
   if (!prev) t.renderer.shadowMap.enabled = k.shadows
   if (!prev || prev.shadows !== k.shadows || (k.shadows && prev.shadowMapSize !== k.shadowMapSize)) applyShadows(k, t)
-  if (!prev || extentOf(prev) !== extentOf(k)) applyShadowExtent(t.sun, extentOf(k))
+  if (!prev || prev.shadowDistance !== k.shadowDistance) t.sun.shadow.camera.far = k.shadowDistance
+  if (!prev || prev.shadowRadius !== k.shadowRadius) t.sun.shadow.radius = k.shadowRadius
+  if (!prev || prev.shadowTaps !== k.shadowTaps) t.setShadowTaps(k.shadowTaps)
   if (!prev || prev.post !== k.post) t.setPost(k.post)
   // The shafts live in the post chain: a post cap (?post=0) folded into the knobs keeps them off too.
   const rays = k.volumetrics && k.post
@@ -127,14 +131,4 @@ function applyShadows(k: QualityKnobs, t: QualityTargets): void {
     shadow.mapSize.set(PARKED_SHADOW_MAP, PARKED_SHADOW_MAP)
     shadow.needsUpdate = true
   }
-}
-
-/** The sun's shadow box at ±extent m. Nothing when it already is (so a first application below Peak touches nothing).
- *  three computes a shadow camera's projection at setup only (ShadowNode), so it is recomputed here; the sun follow
- *  (world.ts) reads the texel from the live box. */
-function applyShadowExtent(sun: DirectionalLight, extent: number): void {
-  const c = sun.shadow.camera
-  if (c.left === -extent && c.right === extent && c.top === extent && c.bottom === -extent) return
-  c.left = -extent; c.right = extent; c.top = extent; c.bottom = -extent
-  c.updateProjectionMatrix()
 }
