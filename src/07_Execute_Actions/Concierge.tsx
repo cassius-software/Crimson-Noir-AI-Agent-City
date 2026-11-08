@@ -90,6 +90,9 @@ const [ORC_BEFORE, ORC_AFTER] = ORC_NOTICE.split(ORC_REGISTRATION)
  *  left column (17 rem of status chips and toasts, which also keeps it off the stick) and, level with the header and
  *  readout (--hud-row-bottom), of their right edge (--hud-right), down to 10.5 rem: under about 600 px across that
  *  floor can still reach a toast.
+ *  Text size (access.ts): the card and chip sit inside the overlay's zoom, which multiplies every length in them, so
+ *  each length measured in the window's own pixels (the published edges above, the viewport's height) is divided by
+ *  --ui-zoom first, or at 200 % the card would clear the buttons by twice their height and run off the screen.
  *  Which placements apply follows the touch overlay being on screen (`overlay`), not the glyphs: a pad paired with a
  *  phone shows its glyphs while the buttons stay.
  *  Desktop: a column from just below the centre of view down to the HUD frame. The card stands at its foot
@@ -99,24 +102,24 @@ const [ORC_BEFORE, ORC_AFTER] = ORC_NOTICE.split(ORC_REGISTRATION)
 const WIDE_COLUMN = 'absolute top-[calc(50%+1rem)] bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-1/2 flex w-[min(38rem,max(22rem,calc(100%_-_30.5rem)))] -translate-x-1/2 flex-col justify-end'
 const WIDE_SPACER = 'h-[8.5rem] min-h-[3.25rem] shrink [@media(min-width:1100px)_and_(min-height:600px)]:min-h-[5rem]'
 const CARD_AT = {
-  tall: 'top-[calc(max(0.75rem,env(safe-area-inset-top))+8.75rem)] right-[max(0.75rem,env(safe-area-inset-right))] left-[max(0.75rem,env(safe-area-inset-left))] mx-auto max-h-[calc(100dvh_-_max(0.75rem,env(safe-area-inset-top))_-_8.75rem_-_max(0.75rem,env(safe-area-inset-bottom)))] max-w-[28rem] overflow-y-auto overscroll-contain',
-  tallTouch: 'top-[calc(max(0.75rem,env(safe-area-inset-top))+8.75rem)] right-[max(0.75rem,env(safe-area-inset-right))] left-[max(0.75rem,env(safe-area-inset-left))] mx-auto max-h-[calc(100dvh_-_max(0.75rem,env(safe-area-inset-top))_-_8.75rem_-_var(--touch-top,0.75rem)_-_0.5rem)] max-w-[28rem] overflow-y-auto overscroll-contain',
-  short: 'bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-[max(calc(env(safe-area-inset-left,0px)+0.75rem),min(calc(env(safe-area-inset-left,0px)+12.5rem),calc(100%_-_var(--touch-left,12rem)_-_16rem)))] right-[calc(var(--touch-left,12rem)_+_0.5rem)] mx-auto max-h-[calc(100dvh_-_max(0.75rem,env(safe-area-inset-bottom))_-_max(0.75rem,env(safe-area-inset-top)))] max-w-[28rem] overflow-y-auto overscroll-contain',
-  shortDriving: 'bottom-[calc(var(--touch-top,10.5rem)_+_0.5rem)] left-[max(calc(env(safe-area-inset-left,0px)+0.75rem),min(calc(env(safe-area-inset-left,0px)+12.5rem),calc(100%_-_max(0.75rem,env(safe-area-inset-right))_-_15.5rem)))] right-[max(0.75rem,env(safe-area-inset-right))] mx-auto max-h-[calc(100dvh_-_var(--touch-top,10.5rem)_-_0.5rem_-_max(0.75rem,env(safe-area-inset-top)))] max-w-[28rem] overflow-y-auto overscroll-contain',
-  shortRaised: 'bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+4.5rem)] left-1/2 max-h-[calc(100dvh_-_max(0.75rem,env(safe-area-inset-bottom))_-_4.5rem_-_max(0.75rem,env(safe-area-inset-top)))] w-[min(28rem,calc(100%_-_26rem_-_env(safe-area-inset-left,0px)_-_env(safe-area-inset-right,0px)))] min-w-[18rem] -translate-x-1/2 overflow-y-auto overscroll-contain',
+  tall: 'top-[calc(max(0.75rem,env(safe-area-inset-top))+8.75rem)] right-[max(0.75rem,env(safe-area-inset-right))] left-[max(0.75rem,env(safe-area-inset-left))] mx-auto max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_8.75rem_-_max(0.75rem,env(safe-area-inset-bottom)))] max-w-[28rem] overflow-y-auto overscroll-contain',
+  tallTouch: 'top-[calc(max(0.75rem,env(safe-area-inset-top))+8.75rem)] right-[max(0.75rem,env(safe-area-inset-right))] left-[max(0.75rem,env(safe-area-inset-left))] mx-auto max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_8.75rem_-_calc(var(--touch-top,0.75rem)_/_var(--ui-zoom,1))_-_0.5rem)] max-w-[28rem] overflow-y-auto overscroll-contain',
+  short: 'bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-[max(calc(env(safe-area-inset-left,0px)+0.75rem),min(calc(env(safe-area-inset-left,0px)+12.5rem),calc(100%_-_calc(var(--touch-left,12rem)_/_var(--ui-zoom,1))_-_16rem)))] right-[calc(calc(var(--touch-left,12rem)_/_var(--ui-zoom,1))_+_0.5rem)] mx-auto max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-bottom))_-_max(0.75rem,env(safe-area-inset-top)))] max-w-[28rem] overflow-y-auto overscroll-contain',
+  shortDriving: 'bottom-[calc(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1))_+_0.5rem)] left-[max(calc(env(safe-area-inset-left,0px)+0.75rem),min(calc(env(safe-area-inset-left,0px)+12.5rem),calc(100%_-_max(0.75rem,env(safe-area-inset-right))_-_15.5rem)))] right-[max(0.75rem,env(safe-area-inset-right))] mx-auto max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1))_-_0.5rem_-_max(0.75rem,env(safe-area-inset-top)))] max-w-[28rem] overflow-y-auto overscroll-contain',
+  shortRaised: 'bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+4.5rem)] left-1/2 max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-bottom))_-_4.5rem_-_max(0.75rem,env(safe-area-inset-top)))] w-[min(28rem,calc(100%_-_26rem_-_env(safe-area-inset-left,0px)_-_env(safe-area-inset-right,0px)))] min-w-[18rem] -translate-x-1/2 overflow-y-auto overscroll-contain',
 } as const
 const CHIP_AT = {
   wide: 'bottom-[calc(max(1.25rem,env(safe-area-inset-bottom))+13.75rem)] left-[max(1.25rem,env(safe-area-inset-left))] max-w-[18rem]',
   compact: 'right-[max(0.75rem,env(safe-area-inset-right))] max-w-[18rem]',
-  shortTouch: '[--chip-top:min(calc(max(0.75rem,env(safe-area-inset-top))_+_7.5rem),calc(100dvh_-_var(--touch-top,0px)_-_2.5rem))] [--chip-right:calc(max(0.75rem,env(safe-area-inset-right))_+_clamp(0rem,calc((max(0.75rem,env(safe-area-inset-top))_+_7.25rem_-_var(--chip-top))_*_100),7.5rem))] [--chip-left:max(calc(max(0.75rem,env(safe-area-inset-left,0px))_+_17.5rem),min(calc(var(--hud-right,0px)_+_0.5rem),calc(max(0.75rem,env(safe-area-inset-left,0px))_+_17.5rem_+_clamp(0px,calc((var(--hud-row-bottom,0px)_+_0.25rem_-_var(--chip-top))_*_10000),100vw))))] top-(--chip-top) right-(--chip-right) max-w-[max(10.5rem,min(18rem,calc(100%_-_var(--chip-right)_-_var(--chip-left))))]',
+  shortTouch: '[--chip-top:min(calc(max(0.75rem,env(safe-area-inset-top))_+_7.5rem),calc(calc(100dvh_/_var(--ui-zoom,1))_-_calc(var(--touch-top,0px)_/_var(--ui-zoom,1))_-_2.5rem))] [--chip-right:calc(max(0.75rem,env(safe-area-inset-right))_+_clamp(0rem,calc((max(0.75rem,env(safe-area-inset-top))_+_7.25rem_-_var(--chip-top))_*_100),7.5rem))] [--chip-left:max(calc(max(0.75rem,env(safe-area-inset-left,0px))_+_17.5rem),min(calc(calc(var(--hud-right,0px)_/_var(--ui-zoom,1))_+_0.5rem),calc(max(0.75rem,env(safe-area-inset-left,0px))_+_17.5rem_+_clamp(0px,calc((calc(var(--hud-row-bottom,0px)_/_var(--ui-zoom,1))_+_0.25rem_-_var(--chip-top))_*_10000),100vw))))] top-(--chip-top) right-(--chip-right) max-w-[max(10.5rem,min(18rem,calc(100%_-_var(--chip-right)_-_var(--chip-left))))]',
 } as const
 /** The compact chip's top (inline, not a class, because the same expression is published as --chip-bottom): under
  *  the minimap, or the speed chip at the wheel, and under the HUD's panels (--hud-bottom, from Hud.tsx) when they
  *  reach lower, as a readout with a device line does on an upright phone, but always ending above the touch buttons
  *  (where both cannot hold it stands over a panel, which takes no taps, never over a button). */
 const CHIP_TOP = {
-  foot: 'min(max(calc(max(0.75rem, env(safe-area-inset-top)) + 7.5rem), calc(var(--hud-bottom, 0px) + 0.5rem)), calc(100dvh - var(--touch-top, 0px) - 2.5rem))',
-  driving: 'min(max(calc(max(0.75rem, env(safe-area-inset-top)) + 11.75rem), calc(var(--hud-bottom, 0px) + 0.5rem)), calc(100dvh - var(--touch-top, 0px) - 2.5rem))',
+  foot: 'min(max(calc(max(0.75rem, env(safe-area-inset-top)) + 7.5rem), calc(calc(var(--hud-bottom, 0px) / var(--ui-zoom, 1)) + 0.5rem)), calc(calc(100dvh / var(--ui-zoom, 1)) - calc(var(--touch-top, 0px) / var(--ui-zoom, 1)) - 2.5rem))',
+  driving: 'min(max(calc(max(0.75rem, env(safe-area-inset-top)) + 11.75rem), calc(calc(var(--hud-bottom, 0px) / var(--ui-zoom, 1)) + 0.5rem)), calc(calc(100dvh / var(--ui-zoom, 1)) - calc(var(--touch-top, 0px) / var(--ui-zoom, 1)) - 2.5rem))',
 } as const
 
 /** A media query as a stable external store (same queries as the HUD's compact layout). */

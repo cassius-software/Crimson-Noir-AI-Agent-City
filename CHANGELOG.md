@@ -19,7 +19,8 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   (`07_Execute_Actions/Hud.tsx` `MicPill`) reads the microphone's state (Mic off, Listening with a live meter of the
   room, Hearing you, Speaking while Sloane talks over it, Muted, or why it could not open) and is a button: a press,
   `V`, the right stick's click (R3) or the touch Menu's new Microphone item opens the microphone or mutes it, all
-  one action through the engine (`input.ts` `'mute'`, `gamepad.ts` `PAD_EDGE.mute`, `engine.ts` `onMute`). Mute
+  one action through the engine (`input.ts` `'mute'`, `gamepad.ts` `PAD_EDGE.mute`, `engine.ts` `onMute`), which
+  goes through even while an action card waits for the OK. Mute
   releases the device, so the browser's own indicator goes out with the pill's, and the device is never open
   without the pill, which outlives `H` like REC (on a phone the pill shows only while the device is open, opening or
   could not open: the Menu's item is the switch there, and the smallest screens have no row to spare). A first visit
@@ -30,12 +31,17 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   onset and release counts) runs in an audio worklet where the browser has one and polled from the page where it
   has not, feeding the meter and the pill; speech starting while Sloane speaks cuts her line (`speaker.ts`
   `onSpeaking`, `speaking`), with the browser's echo cancellation and a margin in the detector against her own
-  voice. Where the browser promises on-device speech recognition (`08_Swarm/recruitment.ts`) it listens while the
+  voice; the detector also learns how loud her voice comes back through the speakers in the first moments of each
+  line and then wants a voice twice that before it cuts her, so the system voice playing aloud does not cut itself.
+  Where the browser promises on-device speech recognition (`08_Swarm/recruitment.ts`) it listens while the
   microphone is open, `recruit listen` opens the pill's microphone too, and words that are not a recruitment
   request reach Sloane (`Concierge.tsx` `heard`, `onboarding/heard.ts`: a line that names Sloane first opens the
-  goal dialogue; an open question takes the whole line). The console's `mic [on|off]` prints and switches it. The
-  screen reader hears the pill's state through a live region (not every onset of speech), and its accessible name
-  says the state, what a press does and the key. Firefox has no on-device recognition, so there the pill shows the
+  goal dialogue, "Sloan" too; an open question takes the whole line), but none heard while she speaks or in the
+  1.5 s after (`heardNow`), so her own line is never taken for the visitor's. The console's `mic [on|off]` prints
+  and switches it. The screen reader hears the microphone's state through a live region in the HUD's root (not
+  every onset of speech), there on a phone and with the HUD hidden too, and the pill's accessible name says the
+  state, what a press does and the key. A mute that lands while the device is still opening stops the recogniser
+  as well, and changing an accessibility setting never restarts the city or the microphone. Firefox has no on-device recognition, so there the pill shows the
   level and speech only; no audio leaves the page, nothing is recorded, and no speech model ships with the page
   (no Whisper). Verified by Node tests against synthetic room, voice and hiss signals and fake browser objects
   (`vad.test.ts`, `microphone.test.ts`, `voiceWiring.test.ts`); a real microphone, a phone's and Safari's permission
@@ -75,29 +81,41 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 - **Accessibility: high contrast, colour-vision filters, text size, caption size.** Four settings
   (`07_Execute_Actions/access.ts`), kept between visits (`civic-simulation:access:v1`), set for one visit in the URL
-  (`?contrast=`, `?vision=`, `?ui=`, `?captions=large|huge`), read and written by the console's `access` and, the two
+  (`?contrast=`, `?vision=`, `?ui=`, `?captions=large|huge`; a change of another setting keeps only that one, so
+  a URL's setting is not saved by it), read and written by the console's `access` and, the two
   most wanted on a phone, by the touch Menu's High contrast and Text size items. High contrast (`auto` by default:
   the operating system's `prefers-contrast: more`) is written onto the page's root (`data-contrast`) and flattens
   every frosted-glass card (`index.css`, keyed on the blur utility so every card holds without knowing) to white on
-  black with solid borders and a thick focus ring; the colour-vision filter is one more 3×3 at the end of the post
+  black with solid borders and a thick focus ring, every light button inside one to black on white, the chosen one
+  of a set (a wardrobe pill, a pressed toggle) the other way round, and the status dots (a traffic signal's lights,
+  the recording and recruiting dots) keep their colours, brightened and ringed; the colour-vision filter is one more 3×3 at the end of the post
   chain (`postfx.ts`, after the ghost composite), a daltonisation for a protan, deutan or tritan viewer (the Machado,
   Oliveira and Fernandes 2009 simulation, the lost colour shifted into the channels the viewer sees) and the identity
-  otherwise, set through `Engine.setVision`; the text size is a CSS zoom on every overlay's root (`--ui-zoom`,
+  otherwise, set through `Engine.setVision`, which keeps the post chain on at every tier while a filter is chosen
+  (where the page turned the chain off, under the lite profile, a split screen, `?post=0` or a headset, the
+  console's `access` says the filter is not drawn and why); the text size is a CSS zoom on every overlay's root (`--ui-zoom`,
   `.ui-zoom`: the HUD, Sloane, the wardrobe, the action card, the way-out and lock screens, the onboarding), never the
-  canvas; the caption strip has a size of its own. Verified by Node tests of the arithmetic (every filter keeps every
+  canvas (inside it, every length measured in the window's pixels, such as the touch buttons' edges, is divided by
+  the zoom, so Sloane's card still clears the buttons at 200 %); the caption strip has a size of its own. Verified by Node tests of the arithmetic (every filter keeps every
   grey and pulls the confused pair apart) and the settings, and by source pins over the page (`access.test.ts`,
   `accessWiring.test.ts`); how the filter and the zoom look on a real display is unverified.
 
 - **The hands and the ears: dwell click, single-switch scanning, one-handed pad layouts, the screen reader's lines.**
   Four more settings in `access.ts` (`access dwell|scan|pad|announce`, `?dwell= ?scan= ?pad= ?announce=`). The dwell
-  click (`04_Connect_Hardware/dwell.ts`) presses the control a pointer rests on for 0.6 s, once per rest, never a
-  touch, a real press or anything under pointer lock; single-switch scanning (`scanning.ts`) offers the page's
-  controls one at a time every 1.2 s, focused and ringed, and takes the Space bar as the switch ahead of the city (a
-  space typed in a field stays one); the pad mapper (`gamepad.ts` `PadHand`, `Input.setHand`) gains a left-hand and a
-  right-hand layout (one stick moves, and looks while its shoulder is held; that side's pedals and buttons; select is
-  the run latch, start a ping, the stick's click the mute); and a live region on the HUD (`announcer.ts`,
-  `customer.announce`) tells a screen reader of the district walked into once held, a vehicle beside you and what
-  enters it, a seat taken or left, and every toast, one line per 2.5 s with a short queue. Verified by Node tests over
+  click (`04_Connect_Hardware/dwell.ts`) presses the control a pointer rests on for 0.6 s, its ring filling over
+  that time, once per rest (a control replaced in the same spot waits for the pointer to move), never a touch, a
+  real press or anything under pointer lock; single-switch scanning (`scanning.ts`) offers the page's controls one
+  at a time every 1.2 s, focused and ringed, and takes the Space bar as the switch ahead of the city (on a field
+  offered it takes the field; a field being typed in, by the switch or any other hand, holds the round until 6 s
+  pass without a key, and a space typed there stays one); the pad mapper (`gamepad.ts` `PadHand`, `Input.setHand`)
+  gains a left-hand and a right-hand layout (one stick moves, and looks while its shoulder is held; that side's
+  pedals and buttons; select is the run latch, which holds until the stick has walked and come home, a glance
+  aside; start a ping, the stick's click the mute; a pad without the standard mapping keeps both hands where its
+  layout lacks that hand's buttons), and the action card, the way-out card and the lock screen take the same hand
+  (`padNav.ts`: L1 presses for the left hand, R1 moves on for the right); and a live region on the HUD
+  (`announcer.ts`, `customer.announce`) tells a screen reader of the district walked into once held, a vehicle
+  beside you and what enters it, a seat taken or left, and every toast, oldest first, one line per 2.5 s with a
+  short queue. Verified by Node tests over
   fake pages and pads (`dwell.test.ts`, `scanning.test.ts`, `announcer.test.ts`, `gamepad.test.ts`) and source pins
   (`accessWiring.test.ts`); a real head mouse, switch interface or screen reader is unverified.
 

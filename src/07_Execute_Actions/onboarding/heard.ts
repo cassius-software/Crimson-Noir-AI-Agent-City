@@ -7,12 +7,24 @@
  * request is the recruiter's, and the rest reaches here. With a question or the goal prompt open on the card, the
  * whole line is the answer or the goal: the visitor opened that dialogue. Otherwise only a line that names Sloane
  * first ("Sloane, make it night", "hey Sloane, take me to the harbour") opens the goal dialogue, with the name
- * taken off, so the room's talk never becomes a goal. Pure: a function a Node test runs.
+ * taken off, so the room's talk never becomes a goal. The recogniser may spell her name "Sloan"; a possessive
+ * ("Sloane's car") is talk about her, not to her. Nothing is taken while she speaks or for HEARD_QUIET_MS after:
+ * her own line coming back through the speakers is not the visitor's. Pure: a function a Node test runs.
  * What breaks if it is removed? Every word near the microphone would be a goal, or none would.
  */
 
-/** Sloane's name at the head of a line, with the small words people put before it and the pause after it. */
-const ADDRESSED = /^(?:(?:hey|hi|ok|okay|so|right|please)[,\s]+)*sloane\b[\s,.:;!?-]*/i
+/** Sloane's name at the head of a line (or the recogniser's "Sloan"), with the small words people put before it and
+ *  the pause after it; never a possessive. */
+const ADDRESSED = /^(?:(?:hey|hi|ok|okay|so|right|please)[,\s]+)*sloane?\b(?!['’])[\s,.:;!?-]*/i
+
+/** Milliseconds after Sloane stops speaking during which nothing heard is hers to take (App.tsx onHeard): the
+ *  recogniser's final words for her own line arrive after its end-of-utterance pause. */
+export const HEARD_QUIET_MS = 1500
+
+/** Whether words heard now may be the visitor's: not while Sloane speaks, nor within HEARD_QUIET_MS of her last line. */
+export function heardNow(speaking: boolean, now: number, quietAt: number): boolean {
+  return !speaking && !(now - quietAt < HEARD_QUIET_MS)
+}
 
 /** The longest goal taken from speech (Concierge.tsx's field takes as much). */
 export const HEARD_MAX = 200

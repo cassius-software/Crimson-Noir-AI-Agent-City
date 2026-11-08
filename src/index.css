@@ -81,6 +81,7 @@ html[data-contrast='high'] [class*='backdrop-blur'] [class*='border-'] {
   border-color: #fff !important;
 }
 html[data-contrast='high'] [class*='backdrop-blur'] [class*='bg-white/'],
+html[data-contrast='high'] [class*='backdrop-blur'] .bg-white,
 html[data-contrast='high'] [class*='backdrop-blur'] [class*='bg-slate-900'],
 html[data-contrast='high'] [class*='backdrop-blur'] [class*='bg-sky-'],
 html[data-contrast='high'] [class*='backdrop-blur'] [class*='bg-rose-'],
@@ -91,8 +92,42 @@ html[data-contrast='high'] [class*='backdrop-blur'] [class*='bg-amber-'] {
   border-color: #000 !important;
 }
 html[data-contrast='high'] [class*='backdrop-blur'] [class*='bg-white/'] *,
+html[data-contrast='high'] [class*='backdrop-blur'] .bg-white *,
 html[data-contrast='high'] [class*='backdrop-blur'] [class*='bg-slate-900'] * {
   color: #000 !important;
+}
+/* The chosen one of a set (a wardrobe pill, a pressed toggle) reads the other way from its lifted neighbours: white on
+   black with a thick white ring. */
+html[data-contrast='high'] [class*='backdrop-blur'] :is([aria-checked='true'], [aria-selected='true'], [aria-pressed='true']) {
+  background-color: #000 !important;
+  color: #fff !important;
+  border: 3px solid #fff !important;
+}
+html[data-contrast='high'] [class*='backdrop-blur'] :is([aria-checked='true'], [aria-selected='true'], [aria-pressed='true']) * {
+  color: #fff !important;
+}
+/* A touch button held or latched on (Run, the brake) is lifted to black on white, so on and off differ. */
+html[data-contrast='high'] [data-touch][aria-pressed='true'] {
+  background-color: #fff !important;
+  color: #000 !important;
+  border-color: #000 !important;
+}
+/* Status dots (a traffic signal's light, the recording and recruiting dots) say what they say by their colour: they keep
+   it, brightened for black, ringed in white. */
+html[data-contrast='high'] [class*='backdrop-blur'] .rounded-full:empty[class*='bg-'] {
+  border: 1px solid #fff !important;
+}
+html[data-contrast='high'] [class*='backdrop-blur'] .rounded-full:empty.bg-emerald-400 {
+  background-color: #4ade80 !important;
+}
+html[data-contrast='high'] [class*='backdrop-blur'] .rounded-full:empty.bg-amber-400 {
+  background-color: #fbbf24 !important;
+}
+html[data-contrast='high'] [class*='backdrop-blur'] .rounded-full:empty.bg-rose-500 {
+  background-color: #f87171 !important;
+}
+html[data-contrast='high'] [class*='backdrop-blur'] .rounded-full:empty.bg-sky-500 {
+  background-color: #38bdf8 !important;
 }
 html[data-contrast='high'] [class*='backdrop-blur'] input,
 html[data-contrast='high'] [class*='backdrop-blur'] textarea {
@@ -109,17 +144,33 @@ html[data-contrast='high'] [class*='animate-pulse'] {
 }
 
 /* The hands (04_Connect_Hardware/dwell.ts, scanning.ts): the control a resting pointer is about to press, with the ring
-   filling over the dwell time, then pressed; and the control single-switch scanning offers now. */
-[data-dwell='arming'] {
-  outline: 3px solid #ffd400 !important;
+   filling over the dwell time, then pressed; and the control single-switch scanning offers now. The ring's colour is
+   left to the animation (an important colour would outrank it); a restart flips 'arming' and 'rearming', whose two
+   animation names make the browser start the fill again. */
+[data-dwell='arming'],
+[data-dwell='rearming'] {
+  outline-style: solid !important;
+  outline-width: 3px !important;
+  outline-color: #ffd400;
   outline-offset: 2px;
   animation: dwell-arm 600ms linear forwards;
+}
+[data-dwell='rearming'] {
+  animation-name: dwell-rearm;
 }
 [data-dwell='done'] {
   outline: 3px solid #22c55e !important;
   outline-offset: 2px;
 }
 @keyframes dwell-arm {
+  from {
+    outline-color: rgba(255, 212, 0, 0.15);
+  }
+  to {
+    outline-color: #ffd400;
+  }
+}
+@keyframes dwell-rearm {
   from {
     outline-color: rgba(255, 212, 0, 0.15);
   }

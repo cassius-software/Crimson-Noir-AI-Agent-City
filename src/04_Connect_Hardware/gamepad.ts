@@ -373,8 +373,14 @@ export class PadMapper {
   used = false
   /** Any input beyond the dead zones during the last read. */
   active = false
-  /** L3 run latch: on with an L3 click, off with another click or when the left stick returns to centre. */
+  /**
+   * L3 run latch: on with an L3 click, off with another click or when the left stick returns to centre. With one hand
+   * (select latches it, so the thumb has just left the stick) it ends only once the stick has walked after the latch
+   * and come home, and a glance (the stick looking under the shoulder) leaves it as it is.
+   */
   running = false
+  /** One hand: the stick has walked since the run was latched. */
+  private runMoved = false
   /** The layout read (PadHand): both hands unless the host sets one. */
   hand: PadHand = 'both'
   /**
@@ -403,7 +409,7 @@ export class PadMapper {
   read(pads: ArrayLike<GamepadLike | null | undefined> | null, out: Analog): number {
     zeroAnalog(out)
     this.seen.fill(0)
-    let edges = 0, count = 0, any = false, bestMove = 0, bestLook = 0, l3 = false
+    let edges = 0, count = 0, any = false, bestMove = 0, bestStick = 0, bestLook = 0, l3 = false
     let firstPad: GamepadLike | null = null, lastPad: GamepadLike | null = null
     const dz = PAD_TUNING.stickDeadzone, v = this.v
     const n = pads ? pads.length : 0
@@ -418,11 +424,17 @@ export class PadMapper {
       firstPad ??= p
       const slot = p.index & (SLOTS - 1)
       this.seen[slot] = 1
-      const ax = p.axes, b = p.buttons, hand = this.hand
+      const ax = p.axes, b = p.buttons
+      // One hand needs that side's stick and buttons. A pad without the standard mapping has them all only in the
+      // kernel's order ('evdev'); 'four-axis' has the right hand's stick and face buttons but no d-pad; anything else
+      // reads with both hands, so a one-handed setting never leaves such a pad unable to move or open a door.
+      const layout = standard ? null : this.generic.layoutOf(p.index)
+      const hand = standard || layout === 'evdev' || (this.hand === 'right' && layout === 'four-axis') ? this.hand : 'both'
       // One hand (PadHand): its stick moves, and looks instead while that side's shoulder is held.
       const lookHeld = hand === 'left' ? isPressed(b[PAD.l1]) : hand === 'right' ? isPressed(b[PAD.r1]) : false
       radialDeadzone((hand === 'right' ? ax[2] : ax[0]) ?? 0, (hand === 'right' ? ax[3] : ax[1]) ?? 0, dz, v)
       const stick = v.x * v.x + v.y * v.y
+      if (stick > bestStick) bestStick = stick
       const move = lookHeld ? 0 : stick
       if (move > bestMove) { bestMove = move; out.moveX = v.x; out.moveY = -v.y; out.steer = -v.x }
       if (hand === 'both') radialDeadzone(ax[2] ?? 0, ax[3] ?? 0, dz, v)
@@ -473,12 +485,14 @@ export class PadMapper {
     }
     for (let s = 0; s < SLOTS; s++) if (!this.seen[s]) { this.prev[s] = 0; this.generic.forget(s) }
     this.before.set(this.seen)
-    if (l3) this.running = !this.running
-    else if (bestMove === 0) this.running = false
+    if (l3) { this.running = !this.running; this.runMoved = false }
+    else if (this.hand === 'both') { if (bestMove === 0) this.running = false }
+    else if (bestMove > 0) this.runMoved = true
+    else if (bestStick === 0 && this.runMoved) this.running = false
     out.run = this.running
     this.active = any
     if (any) this.used = true
-    if (count === 0) { this.used = false; this.running = false; this.lastSlot = -1 }
+    if (count === 0) { this.used = false; this.running = false; this.runMoved = false; this.lastSlot = -1 }
     this.trackFamily(lastPad, firstPad)
     return edges
   }

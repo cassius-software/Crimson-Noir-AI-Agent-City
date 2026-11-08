@@ -417,9 +417,12 @@ export class Input {
     return this.queued.delete(action)
   }
 
-  /** Programmatic key press, used by the ?debug harness and the touch buttons; nothing while a card waits for the OK. */
+  /**
+   * Programmatic key press, used by the ?debug harness and the touch buttons; nothing while a card waits for the OK,
+   * except the microphone's mute, a privacy switch that is never held back (the Menu's Microphone item).
+   */
   press(action: Action): void {
-    if (this.shielded) return
+    if (this.shielded && action !== 'mute') return
     this.queued.add(action)
   }
 
@@ -444,8 +447,8 @@ export class Input {
 
   /**
    * A card waits for the operator's OK (its own buttons take the pad and the taps): the pad's edges read in poll() and
-   * the touch cluster's press() queue nothing until it lifts, so the south face button presses the card and never the
-   * car door. Keys, sticks, triggers, the mouse and the other seats are untouched (E or a walk-off still ends the
+   * the touch cluster's press() queue nothing until it lifts (but the microphone's mute), so the south face button
+   * presses the card and never the car door. Keys, sticks, triggers, the mouse and the other seats are untouched (E or a walk-off still ends the
    * proposal, in the gateway's words), and the mapper's held bits advance all the while, so no edge replays on lift.
    */
   shield(on: boolean): void {
@@ -523,7 +526,9 @@ export class Input {
       edges = this.mapper.read(pads, this.pad)
     }
     edges |= this.readXr() // the headset's controllers: their held bits advance here too, their edges ride the pad's word
-    if (this.shielded) edges = 0 // a card waits for the operator's OK: its buttons have the pad (the held bits advanced above)
+    // A card waits for the operator's OK: its buttons have the pad (the held bits advanced above); the mute, a privacy
+    // switch on a stick click the card never reads, still goes through.
+    if (this.shielded) edges &= PAD_EDGE.mute
     if (edges & PAD_EDGE.interact) this.queued.add('interact')
     if (edges & PAD_EDGE.reset) this.queued.add('reset')
     if (edges & PAD_EDGE.timeForward) this.queued.add('timeForward')

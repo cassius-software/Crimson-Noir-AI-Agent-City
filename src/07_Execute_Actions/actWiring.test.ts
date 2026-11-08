@@ -159,13 +159,13 @@ test('content: everything the card, the HUD line and the toasts show passes 14A,
   assert.doesNotMatch(CARD, /!['"]/, 'no exclamation mark in a literal')
 })
 
-test('the input shield: a second flag beside suspend that drops the pad\'s edges after the mapper read and makes press() a no-op; keys untouched', () => {
+test('the input shield: a second flag beside suspend that drops the pad\'s edges after the mapper read and makes press() a no-op (but the mute); keys untouched', () => {
   assert.match(INPUT, /^ {2}shielded = false$/m)
   assert.match(INPUT, /shield\(on: boolean\): void \{\n\s+this\.shielded = on\n\s+\}/)
   const poll = between(INPUT, '  poll(dt: number): void {', '  /** Virtual stick')
-  assert.match(poll, /edges = this\.mapper\.read\(pads, this\.pad\)\n\s+\}\n\s+edges \|= this\.readXr\(\) \/\/[^\n]*\n\s+if \(this\.shielded\) edges = 0 \/\/[^\n]*\n\s+if \(edges & PAD_EDGE\.interact\) this\.queued\.add\('interact'\)/, 'after the mapper reads, the pad\'s and the headset\'s (their held bits advance), before any edge is queued')
+  assert.match(poll, /edges = this\.mapper\.read\(pads, this\.pad\)\n\s+\}\n\s+edges \|= this\.readXr\(\) \/\/[^\n]*\n(?:\s+\/\/[^\n]*\n)+\s+if \(this\.shielded\) edges &= PAD_EDGE\.mute\n\s+if \(edges & PAD_EDGE\.interact\) this\.queued\.add\('interact'\)/, 'after the mapper reads, the pad\'s and the headset\'s (their held bits advance), before any edge is queued')
   assert.equal(poll.match(/this\.shielded/g)?.length, 1)
-  assert.match(INPUT, /press\(action: Action\): void \{\n\s+if \(this\.shielded\) return\n\s+this\.queued\.add\(action\)\n\s+\}/)
+  assert.match(INPUT, /press\(action: Action\): void \{\n\s+if \(this\.shielded && action !== 'mute'\) return\n\s+this\.queued\.add\(action\)\n\s+\}/, 'the microphone\'s mute, a privacy switch, is never held back')
   const keyboard = between(INPUT, "on(document, 'keydown', (e) => {", "on(document, 'keyup'")
   assert.doesNotMatch(keyboard, /shielded/, 'the keyboard is untouched: E still ends the proposal')
   assert.match(keyboard, /if \(this\.suspended \|\| isEditableTarget\(target\)\) return/, 'the console\'s own guard, unchanged')

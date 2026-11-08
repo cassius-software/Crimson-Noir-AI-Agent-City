@@ -44,7 +44,8 @@ export class Announcer {
   private district = ''
   private districtSince = 0
   private said = ''
-  private lastToast = 0
+  /** The newest toast id told (ids start at 0, so none yet is −1). */
+  private lastToast = -1
   private lastAt = Number.NEGATIVE_INFINITY
   private readonly queue: string[] = []
 
@@ -58,7 +59,7 @@ export class Announcer {
       this.district = s.customer.district
       this.districtSince = now
       this.said = s.customer.district
-      this.lastToast = s.toasts.reduce((m, t) => (t.id > m ? t.id : m), 0)
+      this.lastToast = s.toasts.reduce((m, t) => (t.id > m ? t.id : m), -1)
       return null
     }
     if (s.input.mode !== this.mode) {
@@ -76,11 +77,11 @@ export class Announcer {
       this.said = this.district
       this.push(`Now in ${this.district}.`)
     }
-    for (const t of s.toasts) {
-      if (t.id > this.lastToast) {
-        this.lastToast = t.id
-        this.push(t.body ? `${t.title}: ${t.body}` : t.title)
-      }
+    // Every toast newer than the last told, oldest first, whatever order the HUD lists them in (newest first).
+    const fresh = s.toasts.filter((t) => t.id > this.lastToast).sort((a, b) => a.id - b.id)
+    for (const t of fresh) {
+      this.lastToast = t.id
+      this.push(t.body ? `${t.title}: ${t.body}` : t.title)
     }
     if (this.queue.length === 0 || now - this.lastAt < ANNOUNCE.gapMs) return null
     this.lastAt = now

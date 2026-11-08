@@ -12,7 +12,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   ACCESS_DEFAULTS, ACCESS_FIELDS, ACCESS_KEY, CAPTION_PX, CVD_SIM, DALTON_K, IDENTITY, SCALES, accessBridge, accessFromQuery, accessStatus,
-  applyAccess, applyMat3, cycleScale, highContrast, loadAccess, nextScale, saveAccess, toggleContrast, visionMatrix, visionWord, withAccess,
+  applyAccess, keepAccess, applyMat3, cycleScale, highContrast, loadAccess, nextScale, saveAccess, toggleContrast, visionMatrix, visionWord, withAccess,
   type AccessSettings, type KeyStore, type Mat3,
 } from './access.ts'
 
@@ -61,7 +61,8 @@ test('the URL for one visit: each option over the kept settings, ?ui rounded to 
   assert.equal(accessFromQuery(q('ui=112.5')).scale, 100, 'a tie goes to the smaller step')
   assert.equal(accessFromQuery(q('ui=900')).scale, 200)
   assert.equal(accessFromQuery(q('ui=0')).scale, 100)
-  assert.equal(accessFromQuery(q('ui=')).scale, 100, 'an empty number is none')
+  assert.equal(accessFromQuery(q('ui='), { ...ACCESS_DEFAULTS, scale: 150 }).scale, 150, 'an empty number is none: the kept size holds')
+  assert.equal(accessFromQuery(q('ui=%20')).scale, 100)
   const kept: AccessSettings = { ...ACCESS_DEFAULTS, contrast: 'normal', vision: 'protan', scale: 125, captions: 'large' }
   assert.deepEqual(accessFromQuery(q('vision=none'), kept), { ...kept, vision: 'none' }, 'one option over the kept ones')
   assert.equal(accessFromQuery(q('vision=protan'), kept), kept, 'the kept value asked again: the same object')
@@ -152,16 +153,18 @@ test('the colour-vision matrices: every simulation row sums to one; the filter i
 })
 
 test('applyAccess writes data-contrast and --ui-zoom onto the root; the status lines; the bridge reads and writes through, hands back the field\'s line or the error, and the defaults', () => {
-  const root = { dataset: {} as { contrast?: string }, style: { vars: {} as Record<string, string>, setProperty(n: string, v: string) { this.vars[n] = v } } }
+  const root = { dataset: {} as { contrast?: string; pad?: string }, style: { vars: {} as Record<string, string>, setProperty(n: string, v: string) { this.vars[n] = v } } }
   applyAccess(ACCESS_DEFAULTS, false, root)
   assert.equal(root.dataset.contrast, 'normal')
   assert.equal(root.style.vars['--ui-zoom'], '1')
   applyAccess({ ...ACCESS_DEFAULTS, scale: 150 }, true, root)
   assert.equal(root.dataset.contrast, 'high')
   assert.equal(root.style.vars['--ui-zoom'], '1.5')
-  applyAccess({ ...ACCESS_DEFAULTS, contrast: 'normal', scale: 125 }, true, root)
+  assert.equal(root.dataset.pad, 'both')
+  applyAccess({ ...ACCESS_DEFAULTS, contrast: 'normal', scale: 125, pad: 'left' }, true, root)
   assert.equal(root.dataset.contrast, 'normal')
   assert.equal(root.style.vars['--ui-zoom'], '1.25')
+  assert.equal(root.dataset.pad, 'left', 'the hand the ways out of a stopped city read')
 
   const lines = accessStatus({ ...ACCESS_DEFAULTS, vision: 'deutan', scale: 175, captions: 'huge', pad: 'left' }, true)
   assert.equal(lines.length, 9)
@@ -181,7 +184,9 @@ test('applyAccess writes data-contrast and --ui-zoom onto the root; the status l
 
   let held: AccessSettings = ACCESS_DEFAULTS
   const writes: AccessSettings[] = []
-  const b = accessBridge(() => held, () => false, (n) => { held = n; writes.push(n) })
+  const wholes: boolean[] = []
+  let note: string | null = null
+  const b = accessBridge(() => held, () => false, (n, whole) => { held = n; writes.push(n); wholes.push(whole === true) }, () => note)
   assert.ok(Object.isFrozen(b))
   assert.deepEqual(b.status(), accessStatus(ACCESS_DEFAULTS, false))
   assert.deepEqual(b.set('vision', 'protan'), { line: accessStatus({ ...ACCESS_DEFAULTS, vision: 'protan' }, false)[1] })
@@ -192,7 +197,21 @@ test('applyAccess writes data-contrast and --ui-zoom onto the root; the status l
   assert.equal(held.scale, 125)
   assert.deepEqual(b.set('pad', 'right'), { line: accessStatus({ ...ACCESS_DEFAULTS, vision: 'protan', scale: 125, pad: 'right' }, false)[6] }, 'the later fields find their own line')
   assert.equal(held.pad, 'right')
+  note = 'needs the post-processing chain, which ?post=0 turned off'
+  assert.match(b.status()[1], /^vision {4}protan[^\n]*, but not drawn now: it needs the post-processing chain, which \?post=0 turned off {2}\(access vision/, 'a filter the chain cannot draw says so')
   assert.match(b.reset(), /^access: the defaults/)
   assert.equal(held, ACCESS_DEFAULTS)
   assert.equal(writes.length, 4)
+  assert.deepEqual(wholes, [false, false, false, true], 'a reset is kept whole; a change only by its field')
+  assert.doesNotMatch(b.status()[1], /not drawn/, 'no filter, nothing to say')
+})
+
+test('a change keeps only the fields it changes: a setting the URL gave for one visit is not written down by a later switch', () => {
+  const kept: AccessSettings = { ...ACCESS_DEFAULTS, scale: 150 }
+  const live = accessFromQuery(new URLSearchParams('?ui=200&vision=deutan'), kept)
+  assert.equal(live.scale, 200)
+  const next = { ...live, contrast: 'high' as const }
+  assert.deepEqual(keepAccess(kept, live, next), { ...kept, contrast: 'high' }, 'the contrast is kept; the visit\'s text size and filter are not')
+  assert.deepEqual(keepAccess(kept, live, { ...live, scale: 125 }), { ...kept, scale: 125 }, 'a field set again is kept, whatever the URL said')
+  assert.deepEqual(keepAccess(kept, live, live), kept, 'nothing changed, nothing new kept')
 })

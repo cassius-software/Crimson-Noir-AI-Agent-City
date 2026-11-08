@@ -20,7 +20,7 @@ import { Terminal, type TerminalHandle } from './07_Execute_Actions/terminal/Ter
 import { offlineBridge, type LookBridge, type ModelBridge, type NetBridge, type PendingAct, type TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
 import { hudLine, recruitBridge, Recruiter, speechEnv } from './08_Swarm/recruitment.ts'
 import { isOpen as micIsOpen, Microphone, voiceStatus } from './04_Connect_Hardware/microphone.ts'
-import { accessBridge, accessFromQuery, applyAccess, CAPTION_PX, cycleScale, highContrast, loadAccess, saveAccess, toggleContrast, type AccessSettings } from './07_Execute_Actions/access.ts'
+import { accessBridge, accessFromQuery, applyAccess, CAPTION_PX, cycleScale, highContrast, keepAccess, loadAccess, saveAccess, toggleContrast, type AccessSettings } from './07_Execute_Actions/access.ts'
 import { browserDwellEnv, DwellClicker } from './04_Connect_Hardware/dwell.ts'
 import { browserScanEnv, Scanner } from './04_Connect_Hardware/scanning.ts'
 import { Announcer } from './07_Execute_Actions/announcer.ts'
@@ -70,6 +70,7 @@ import { Onboarding, type Outcome } from './07_Execute_Actions/onboarding/Onboar
 import { loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
 import { modelVoice, scriptedVoice, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
 import { ConciergeSpeaker, conciergeBridge, synthEnv, type ConciergeOut } from './07_Execute_Actions/onboarding/speaker.ts'
+import { heardNow } from './07_Execute_Actions/onboarding/heard.ts'
 import { useMentor } from './07_Execute_Actions/onboarding/useMentor.ts'
 import { agentBridge, identityLine, Roster, voiceProfile } from './08_Swarm/roster.ts'
 import { parseRequest, SKILLS } from './03_Spawn_Agents/skills.ts'
@@ -502,10 +503,20 @@ function App() {
   const [options] = useState(readOptions)
   // Accessibility (07_Execute_Actions/access.ts): kept between visits, set for one visit in the URL, and written onto
   // <html> (data-contrast, --ui-zoom) here, above every shell, so the onboarding, the console alone and the way-out
-  // card hold it too; 'auto' contrast follows the system's switch.
-  const [access, setAccessState] = useState(() => accessFromQuery(new URLSearchParams(window.location.search), loadAccess()))
+  // card hold it too; 'auto' contrast follows the system's switch. What is kept and what is live are followed by hand:
+  // a change keeps only the fields it changes (keepAccess), so a setting the URL gave for one visit is not written down
+  // by a later switch of something else; a reset is kept whole.
+  const [start] = useState(() => { const kept = loadAccess(); return { kept, live: accessFromQuery(new URLSearchParams(window.location.search), kept) } })
+  const [access, setAccessState] = useState(start.live)
+  const keptRef = useRef(start.kept)
+  const liveRef = useRef(start.live)
   const prefersMore = useSyncExternalStore(PREFERS_MORE.subscribe, PREFERS_MORE.matches, PREFERS_MORE.server)
-  const onAccess = useCallback((next: AccessSettings) => { setAccessState(next); saveAccess(next) }, [])
+  const onAccess = useCallback((next: AccessSettings, whole?: boolean) => {
+    keptRef.current = whole === true ? next : keepAccess(keptRef.current, liveRef.current, next)
+    liveRef.current = next
+    setAccessState(next)
+    saveAccess(keptRef.current)
+  }, [])
   useEffect(() => { applyAccess(access, prefersMore, document.documentElement) }, [access, prefersMore])
   // The hands (access.ts dwell, scan): a pointer resting on a control presses it; the controls offered in turn, Space
   // pressing the one offered. Here above every shell, so the onboarding and the console alone have them too.
@@ -598,7 +609,7 @@ interface SpeakerLink { sound(): boolean; source: { voice: SpeechVoice; out: Con
 /** The city: the engine over the canvas, the HUD, the Concierge, the touch controls and the drop-down console. */
 function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefersMore, onAccess }: {
   options: Options; plan: MapPlan; mentored: boolean; voice: Voice; speaker: ConciergeSpeaker; link: SpeakerLink
-  access: AccessSettings; prefersMore: boolean; onAccess: (next: AccessSettings) => void
+  access: AccessSettings; prefersMore: boolean; onAccess: (next: AccessSettings, whole?: boolean) => void
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   // The city's element (a model file dropped on it is kept, on a desktop) and the hidden file input the picker opens.
@@ -636,7 +647,9 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
   // between visits; one per shell, disposed with it. The engine hands the presses here and never opens one itself.
   const [mic] = useState(() => new Microphone())
   const onMic = useCallback(() => { void mic.toggle() }, [mic])
-  useEffect(() => () => mic.dispose(), [mic])
+  // Closed, not disposed, on unmount: React's development double mount runs this cleanup and then the shell again with
+  // the same microphone, which must still open; close() drops any open still in flight and releases the device.
+  useEffect(() => () => { mic.close() }, [mic])
   // Accessibility (access.ts): high contrast in force now; the settings behind refs for the console's bridge, which is
   // built once with the engine; the colour-vision filter handed to the post chain as it changes.
   const high = highContrast(access, prefersMore)
@@ -767,8 +780,13 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
     }
   }, [mic])
 
+  // What the city was booted with, pinned at mount: App renders again whenever an accessibility setting or the system's
+  // contrast switch changes, and hands down a fresh plan object each time, which must not tear the city down and build
+  // it again (a remap or a reboot reloads the page, so nothing is lost by reading these once).
+  const [boot] = useState(() => ({ options, plan }))
   useEffect(() => {
     const canvas = canvasRef.current
+    const { options, plan } = boot
     if (!canvas) return
     let engine: Engine | null = null
     let recruiter: Recruiter | null = null
@@ -935,11 +953,14 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
         let micWasOpen = false
         const onMicChange = () => {
           const open = mic.open
+          const st = r.mic.state
+          const live = st === 'listening' || st === 'starting'
+          // Settled closed (off, muted, blocked, failed) rather than still opening: the recogniser stops whatever the
+          // edge, so a mute pressed while the pill read Opening never leaves it listening behind a Muted pill.
+          if (!open && mic.phase !== 'opening') { micWasOpen = false; if (live) r.stop(); return }
           if (open === micWasOpen) return
           micWasOpen = open
-          const st = r.mic.state
-          if (open && st !== 'listening' && st !== 'starting' && words()) void r.listen()
-          if (!open && (st === 'listening' || st === 'starting')) r.stop()
+          if (open && !live && words()) void r.listen()
         }
         mic.addEventListener('change', onMicChange)
         const onRecruiterMic = (ev: Event) => {
@@ -947,8 +968,13 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
         }
         r.addEventListener('mic', onRecruiterMic)
         let heardId = 0
+        // Sloane's own line coming back through the speakers is not the visitor's: nothing heard while she speaks, or
+        // within heard.ts HEARD_QUIET_MS of her last line, reaches her.
+        let quietAt = Number.NEGATIVE_INFINITY
+        const unquiet = speaker.onSpeaking((on) => { if (!on) quietAt = performance.now() })
         const onHeard = (ev: Event) => {
           const t = (ev as CustomEvent<{ transcript: string }>).detail.transcript
+          if (!heardNow(speaker.speaking, performance.now(), quietAt)) return
           if (parseRequest(t) === null) setHeard({ id: ++heardId, text: t })
         }
         r.addEventListener('heard', onHeard)
@@ -956,6 +982,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
           mic.removeEventListener('change', onMicChange)
           r.removeEventListener('mic', onRecruiterMic)
           r.removeEventListener('heard', onHeard)
+          unquiet()
         }
         // A kept switch (the visitor left the microphone on) opens it as the city starts; a first visit waits for a press.
         if (mic.opensAtBoot()) void mic.listen()
@@ -1093,7 +1120,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
               : 'on-device recognition: none in this browser; the pill shows the level and speech only (recruit <skill> types a request)'),
             on: (on: boolean) => (on ? mic.listen().then((st) => `${st.phase}${st.detail ? ` · ${st.detail}` : ''}`) : (mic.mute(), 'muted: the device is released')),
           }),
-          access: accessBridge(() => accessRef.current, () => prefersRef.current, onAccess),
+          access: accessBridge(() => accessRef.current, () => prefersRef.current, onAccess, () => engineRef.current?.visionBlocked() ?? null),
           goal: (text: string) => goalPlan(text, engineBridge),
           memory: memoryBridge(memory, r),
           net: netBridge(e.net, pageStore(NET_TOKEN_KEY)),
@@ -1165,7 +1192,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
       if ((window as { recruit?: unknown }).recruit) delete (window as { recruit?: unknown }).recruit
       engine?.dispose()
     }
-  }, [options, plan, wearLook, link, roster, speaker, mic, onMic, onAccess, announcer])
+  }, [boot, wearLook, link, roster, speaker, mic, onMic, onAccess, announcer])
 
   // The boot's failure first; else a halt that is not an audit. Words for this device (bootFailure.ts).
   const env = useMemo(() => pageEnv(), [])

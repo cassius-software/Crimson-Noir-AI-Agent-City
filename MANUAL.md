@@ -562,7 +562,7 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   reads the microphone's state: **Mic off**, **Listening** (with a live meter of the room), **Hearing you**,
   **Speaking** (Sloane talking over an open microphone), **Muted**, or why it could not open. It is a button: a press,
   `V`, the right stick's click or the touch Menu's Microphone item opens the microphone (the browser asks its
-  permission the first time) or mutes it. Mute releases the device, so the browser's own microphone indicator goes
+  permission the first time) or mutes it, even while an action card waits for your OK. Mute releases the device, so the browser's own microphone indicator goes
   out with the pill's; the device is never open without the pill, which outlives `H` like REC. On a phone the pill
   shows only while the microphone is open, opening or could not open: the Menu's Microphone item is the switch there,
   and the smallest screens have no row to spare above Sloane's chip. A first visit starts
@@ -572,38 +572,48 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   the room's floor, zero crossings, spectral flatness, in an audio worklet where the browser has one and polled from
   the page where it has not) drives the meter and the **Hearing you** state; speech starting while Sloane speaks cuts
   her line (barge-in), and the browser's echo cancellation plus a margin in the detector keep Sloane's own voice from
-  counting as yours. Where the browser promises on-device speech recognition (see Recruitment), it runs while the
+  counting as yours; the detector also learns how loud her voice comes back through the speakers in the first moments
+  of each line, and wants a voice twice that before it cuts her. Where the browser promises on-device speech recognition (see Recruitment), it runs while the
   microphone is open and the pill adds **words on-device**: a skill asked for is the recruiter's, and a line that names
   Sloane first ("Sloane, make it night") goes to the goal dialogue as if typed; with a question or the goal prompt
-  open on the card, whatever you say is the answer. Firefox has no on-device recognition, so there the pill shows the
+  open on the card, whatever you say is the answer. Nothing heard while she speaks, or in the 1.5 s after, is taken,
+  so her own line never becomes yours. A screen reader hears the microphone's state change wherever it was switched. Firefox has no on-device recognition, so there the pill shows the
   level and speech only. No audio leaves the page: nothing is recorded, nothing is sent, and no speech model ships
   with the page (no Whisper). `mic` in the console prints all of this; `mic on` and `mic off` are the switch.
 - **Accessibility** (`07_Execute_Actions/access.ts`). Four settings, kept between visits (key
-  `civic-simulation:access:v1`) and set for one visit in the URL. **High contrast** (`access contrast high`, the touch
+  `civic-simulation:access:v1`) and set for one visit in the URL (a URL's setting stays for that visit: changing
+  another setting keeps only the one changed). Changing any of them never restarts the city. **High contrast** (`access contrast high`, the touch
   Menu's High contrast item, `?contrast=high`; `auto`, the default, follows the operating system's own contrast
   switch) flattens every card (the HUD, Sloane's card and chip, the wardrobe, the action card, the way-out card) to
-  white on black with solid borders, no frosted glass and a thick yellow focus ring. A **colour-vision filter**
+  white on black with solid borders, no frosted glass and a thick yellow focus ring; light buttons turn black on white,
+  the chosen one of a set (a wardrobe pill, a pressed toggle) white on black with a thick ring, and the status dots
+  (a traffic signal's lights, the recording dot) keep their colours. A **colour-vision filter**
   (`access vision protan|deutan|tritan`, `?vision=`) is the post chain's last matrix over the finished frame: a
   daltonisation, the frame as the viewer would see it (after Machado, Oliveira and Fernandes 2009), the colour lost
   found and shifted into the channels the viewer does see (reds toward blue for a protan or deutan viewer, blues toward
-  red for a tritan); view-only, off by default, and the greys are never tinted. The **text size** (`access text
+  red for a tritan); view-only, off by default, and the greys are never tinted. While a filter is chosen the post chain
+  runs at every tier; where the page turned the chain off (the lite profile, a split screen, `?post=0`, a headset)
+  the filter is not drawn, and `access` says so and why. The **text size** (`access text
   125|150|175|200`, the Menu's Text size item, `?ui=150`) enlarges every card and never the canvas. The **caption
   size** (`access captions large|huge`, `?captions=large`) is the strip's own. `access` alone prints them, `access
   reset` restores the defaults. Four more are for the hands and the ears. The **dwell click** (`access dwell on`,
   `?dwell=1`; `04_Connect_Hardware/dwell.ts`): a pointer resting on a control for 0.6 s presses it (a ring fills over
   the time; a text field takes the caret instead), once per rest; a touch, a real press and pointer lock never dwell.
   **Single-switch scanning** (`access scan on`, `?scan=1`; `scanning.ts`): the page's controls are offered one at a
-  time every 1.2 s, in page order, the one offered focused and ringed, and the Space bar presses it (a field takes the
-  caret); Space is taken before the city sees it, and typed into a field stays a space. A **one-handed pad layout**
+  time every 1.2 s, in page order, the one offered focused and ringed, and the Space bar presses it (a field offered
+  takes the caret); Space is taken before the city sees it. A field being typed in, taken by the switch or clicked
+  into, holds the round until 6 s pass without a key, and a space typed there stays a space. A **one-handed pad layout**
   (`access pad left|right`, `?pad=`; `gamepad.ts` `PadHand`): that hand's stick moves and steers, and looks while its
   shoulder (L1 or R1) is held; the left hand's throttle is the d-pad's up and L2 its brake, the right hand's throttle R2
-  and the west face button its brake; select is the run latch and start a ping for either hand, and that stick's click
-  is the mute; the left hand keeps the d-pad (down enters a car, left and right move the clock) and has no reset or
+  and the west face button its brake; select is the run latch (it holds until the stick has walked and come home; a
+  glance with the shoulder leaves it) and start a ping for either hand, and that stick's click is the mute; the left hand keeps the d-pad (down enters a car, left and right move the clock) and has no reset or
   handbrake, the right hand keeps the face buttons (south enters, north resets, east is the handbrake) and has no
-  clock keys; a split screen's other seats keep both hands. The **screen reader's lines** (`access announce off` turns
+  clock keys; a split screen's other seats keep both hands, and so does a pad without the standard mapping whose layout
+  lacks that hand's buttons. The action card, the way-out card and the lock screen take the same hand: the left hand
+  moves with the d-pad and presses with L1, the right hand moves on with R1 and presses with the south button. The **screen reader's lines** (`access announce off` turns
   them off; `07_Execute_Actions/announcer.ts`): a live region on the HUD tells of the district walked into (once it
-  has been held four seconds), a vehicle beside you and what enters it, a seat taken or left, and every toast, one line
-  at a time and at most one every 2.5 s; the captions, the microphone pill and Sloane's lines have live regions of their
+  has been held four seconds), a vehicle beside you and what enters it, a seat taken or left, and every toast, oldest
+  first, one line at a time and at most one every 2.5 s; the captions, the microphone pill and Sloane's lines have live regions of their
   own. Sticky keys are the operating system's own feature. How the filter and the zoom look on a real display, and the
   dwell and the scan with a real head mouse or switch interface, are unverified.
 - **Glyphs:** every control hint follows the input in use. When a pad is picked up it switches silently to

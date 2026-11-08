@@ -409,7 +409,9 @@ function MenuSheet({ input, host, at, onClose }: { input: Input; host: TouchMenu
     fn()
     if (close) onClose()
   }
-  const items: { label: string; on?: boolean; run: () => void; keep?: boolean }[] = [
+  // `id` keys an item whose label changes as it is pressed (the text size), so React keeps the same button, with its
+  // focus and the scan's place, instead of mounting a new one each press.
+  const items: { label: string; id?: string; on?: boolean; run: () => void; keep?: boolean }[] = [
     { label: 'Console', run: host.onConsole },
     ...(host.onModelFile ? [{ label: 'Model file', run: host.onModelFile }] : []),
     { label: 'Clock −1 h', run: () => input.press('timeBack'), keep: true },
@@ -421,7 +423,7 @@ function MenuSheet({ input, host, at, onClose }: { input: Input; host: TouchMenu
     ...(host.onHeadset ? [{ label: 'Headset', on: host.headset === true, run: host.onHeadset }] : []),
     // Accessibility (access.ts): the two settings most wanted on a phone; the rest is the console's `access`.
     ...(host.onContrast ? [{ label: 'High contrast', on: host.contrast === true, run: host.onContrast }] : []),
-    ...(host.onTextScale ? [{ label: `Text size ${host.textScale ?? 100} %`, run: host.onTextScale, keep: true }] : []),
+    ...(host.onTextScale ? [{ label: `Text size ${host.textScale ?? 100} %`, id: 'text-size', run: host.onTextScale, keep: true }] : []),
     { label: host.hudVisible ? 'Hide HUD' : 'Show HUD', run: host.onHud },
   ]
   const beside = at.left - 12 - SHEET_W >= 8
@@ -450,7 +452,7 @@ function MenuSheet({ input, host, at, onClose }: { input: Input; host: TouchMenu
       <div role="menu" aria-label="Menu" style={sheet} className={`pointer-events-auto absolute flex touch-pan-y flex-col gap-1.5 overflow-y-auto overscroll-contain rounded-2xl p-2 select-none ${GLASS}`}>
         {items.map((it) => (
           <button
-            key={it.label}
+            key={it.id ?? it.label}
             type="button"
             role={it.on === undefined ? 'menuitem' : 'menuitemcheckbox'}
             aria-checked={it.on}

@@ -114,7 +114,8 @@ export function saveAccess(s: AccessSettings, store: KeyStore | null = browserSt
  */
 export function accessFromQuery(q: { get(name: string): string | null }, base: AccessSettings = ACCESS_DEFAULTS): AccessSettings {
   const contrast = q.get('contrast'), vision = q.get('vision'), ui = q.get('ui'), captions = q.get('captions'), pad = q.get('pad')
-  const n = ui === null ? Number.NaN : Number(ui)
+  // An empty ?ui= is no number (Number('') is 0, which would round to 100 % over a kept size).
+  const n = ui === null || ui.trim() === '' ? Number.NaN : Number(ui)
   const nearest = Number.isFinite(n) ? [...SCALES].sort((a, b) => Math.abs(a - n) - Math.abs(b - n) || a - b)[0] : null
   const flag = (name: string, was: boolean): boolean => { const v = q.get(name); return v === null ? was : (onOff(v.toLowerCase()) ?? was) }
   const next: AccessSettings = {
@@ -240,20 +241,39 @@ export function visionWord(v: Vision): string {
 // ---------------------------------------------------------------- the page
 
 /** The document's root element, by what is written to it. */
-export interface RootLike { dataset: { contrast?: string }; style: { setProperty(name: string, value: string): void } }
+export interface RootLike { dataset: { contrast?: string; pad?: string }; style: { setProperty(name: string, value: string): void } }
 
-/** Writes the settings onto the page's root: `data-contrast` (index.css keys its rules on it) and `--ui-zoom`. */
+/**
+ * Writes the settings onto the page's root: `data-contrast` (index.css keys its rules on it), `--ui-zoom`, and
+ * `data-pad`, the hand the ways out of a stopped city read (padNav.ts), since they can stand where no prop reaches.
+ */
 export function applyAccess(s: AccessSettings, prefersMore: boolean, root: RootLike): void {
   root.dataset.contrast = highContrast(s, prefersMore) ? 'high' : 'normal'
+  root.dataset.pad = s.pad
   root.style.setProperty('--ui-zoom', String(s.scale / 100))
 }
 
-/** The console's `access` lines. */
-export function accessStatus(s: AccessSettings, prefersMore: boolean): string[] {
+/**
+ * What to keep after a change: the kept settings with only the fields the change made differ from the live ones written
+ * over them, so a setting the URL gave for one visit (?ui=200) is not written down by a later switch of something else,
+ * while a field the visitor sets again is kept, whatever the URL said.
+ */
+export function keepAccess(kept: AccessSettings, live: AccessSettings, next: AccessSettings): AccessSettings {
+  const out: Record<string, unknown> = { ...kept }
+  for (const field of Object.keys(next) as (keyof AccessSettings)[]) if (next[field] !== live[field]) out[field] = next[field]
+  return out as unknown as AccessSettings
+}
+
+/**
+ * The console's `access` lines. `visionNote` is why the colour-vision filter cannot be drawn now (the engine's
+ * visionBlocked(): the post chain is off), said on the vision line while a filter is chosen.
+ */
+export function accessStatus(s: AccessSettings, prefersMore: boolean, visionNote: string | null = null): string[] {
   const high = highContrast(s, prefersMore)
+  const held = s.vision !== 'none' && visionNote !== null ? `, but not drawn now: it ${visionNote}` : ''
   return [
     `contrast  ${s.contrast}${s.contrast === 'auto' ? ` (the system asks for ${prefersMore ? 'more' : 'no more'}: ${high ? 'high' : 'normal'})` : ''}  (access contrast auto|high|normal)`,
-    `vision    ${visionWord(s.vision)}  (access vision none|protan|deutan|tritan)`,
+    `vision    ${visionWord(s.vision)}${held}  (access vision none|protan|deutan|tritan)`,
     `text      ${s.scale} %  (access text 100|125|150|175|200)`,
     `captions  ${s.captions}, ${CAPTION_PX[s.captions]} px  (access captions normal|large|huge)`,
     `dwell     ${s.dwell ? 'on: a pointer resting on a control presses it' : 'off'}  (access dwell on|off)`,
@@ -264,18 +284,27 @@ export function accessStatus(s: AccessSettings, prefersMore: boolean): string[] 
   ]
 }
 
-/** The console's bridge over the host's settings: `read` the current ones, `prefersMore` the system's switch, `write` keeps and applies the next. */
-export function accessBridge(read: () => AccessSettings, prefersMore: () => boolean, write: (next: AccessSettings) => void): AccessBridge {
+/**
+ * The console's bridge over the host's settings: `read` the current ones, `prefersMore` the system's switch, `write`
+ * keeps and applies the next (`whole` for a reset, which keeps every field, not only the changed ones), `visionNote`
+ * why the colour filter cannot be drawn now (null when it can).
+ */
+export function accessBridge(
+  read: () => AccessSettings,
+  prefersMore: () => boolean,
+  write: (next: AccessSettings, whole?: boolean) => void,
+  visionNote: () => string | null = () => null,
+): AccessBridge {
   return Object.freeze({
-    status: () => accessStatus(read(), prefersMore()),
+    status: () => accessStatus(read(), prefersMore(), visionNote()),
     set: (field: string, value: string): { line: string } | { error: string } => {
       const next = withAccess(read(), field, value)
       if (typeof next === 'string') return { error: next }
       write(next)
-      return { line: accessStatus(next, prefersMore())[(ACCESS_FIELDS as readonly string[]).indexOf(field.trim().toLowerCase())] }
+      return { line: accessStatus(next, prefersMore(), visionNote())[(ACCESS_FIELDS as readonly string[]).indexOf(field.trim().toLowerCase())] }
     },
     reset: (): string => {
-      write(ACCESS_DEFAULTS)
+      write(ACCESS_DEFAULTS, true)
       return 'access: the defaults (auto contrast, no colour filter, text 100 %, normal captions, no dwell, no scan, both hands, announcing)'
     },
   })

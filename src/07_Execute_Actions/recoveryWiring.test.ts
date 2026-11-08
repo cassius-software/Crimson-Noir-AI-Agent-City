@@ -47,6 +47,14 @@ test('padStep: A presses, the d-pad moves focus, and only a button that goes dow
   assert.equal(padStep(appeared.held, [pad(PAD.a)]).action, null, 'still held: nothing')
   assert.equal(padStep(padStep(appeared.held, [pad()]).held, [pad(PAD.a)]).action, 'press', 'let go and pressed: a press')
   assert.equal(padStep(there, [pad(), pad(), pad(PAD.a)]).action, null, 'a third pad arriving with A down: nothing')
+  // One hand: its own side presses and moves on as well.
+  assert.equal(padStep(there, [pad(PAD.l1)]).action, null, 'both hands: L1 is nothing here')
+  assert.equal(padStep(there, [pad(PAD.l1)], 'left').action, 'press', 'the left hand presses with L1 beside its d-pad')
+  assert.equal(padStep(there, [pad(PAD.down)], 'left').action, 'next')
+  assert.equal(padStep(there, [pad(PAD.r1)], 'right').action, 'next', 'the right hand moves on with R1 beside its face buttons')
+  assert.equal(padStep(there, [pad(PAD.a)], 'right').action, 'press')
+  assert.equal(padStep(there, [pad(PAD.r1)], 'left').action, null, 'the other hand\'s shoulder is nothing')
+  assert.equal(padStep(padStep(there, [pad(PAD.l1)], 'left').held, [pad(PAD.l1)], 'left').action, null, 'held L1: an edge, like A')
   // usePadNav: the first poll only learns what is held, so the A that was driving cannot restart the city.
   assert.match(read('./padNav.ts'), /const first = prev === null[\s\S]*if \(!first && action && el\)/)
 })

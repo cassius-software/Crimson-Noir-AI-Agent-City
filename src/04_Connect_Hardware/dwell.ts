@@ -8,7 +8,10 @@
  * role under it); resting there arms it (`data-dwell="arming"`, which index.css draws as a ring filling over the
  * time), a move of more than DWELL.slopPx starts the time again where the pointer is now, and the time running out
  * presses it (`click()`; a text field is focused instead) and marks it done until the pointer leaves it, so one rest
- * is one press. A touch never dwells (a finger that rests is a hold), a real press cancels and latches the arm, and
+ * is one press. The press is also latched where it happened: until the pointer moves DWELL.slopPx from that spot, no
+ * control there is armed, so a control the press replaced with a new one in the same place (the next quick reply) is
+ * not pressed by a hand that never moved. A restart flips the mark to "rearming" and back, so the ring fills again.
+ * A touch never dwells (a finger that rests is a hold), a real press cancels and latches the arm, and
  * nothing dwells under pointer lock (the pointer is the head, and there is no control under it). Pure: the page is
  * an environment handed in (`browserDwellEnv` is the one over `document`), so a Node test drives it with fakes.
  * What breaks if it is removed? A visitor without a button has no way to press one.
@@ -62,6 +65,15 @@ export class DwellClicker {
   private ay = 0
   /** The current control has been pressed (or really pressed): no second press until the pointer leaves it. */
   private done = false
+  /** A press happened at (px, py): nothing is armed until the pointer has moved more than the slop from there. */
+  private latched = false
+  private px = 0
+  private py = 0
+  /** Where the pointer was last seen. */
+  private lx = 0
+  private ly = 0
+  /** The arming mark now on the current control ('arming' or 'rearming'). */
+  private marked = 'arming'
 
   constructor(env: DwellEnv, ms: number = DWELL.ms) {
     this.env = env
@@ -87,11 +99,19 @@ export class DwellClicker {
     for (const f of this.off) f()
     this.off = []
     this.leave()
+    this.latched = false
   }
 
   private move(e: DwellPointer): void {
     if (e.pointerType === 'touch') return
-    if (this.env.locked()) { this.leave(); return }
+    if (this.env.locked()) { this.leave(); this.latched = false; return }
+    this.lx = e.clientX
+    this.ly = e.clientY
+    if (this.latched) {
+      const qx = e.clientX - this.px, qy = e.clientY - this.py
+      if (qx * qx + qy * qy <= DWELL.slopPx * DWELL.slopPx) return
+      this.latched = false
+    }
     const under = this.env.at(e.clientX, e.clientY)
     let el = under ? under.closest(DWELL.selector) : null
     if (el && (el.hasAttribute('disabled') || el.closest('[aria-hidden="true"]') !== null || el.closest('[inert]') !== null)) el = null
@@ -112,8 +132,11 @@ export class DwellClicker {
     const el = this.current!
     this.ax = e.clientX
     this.ay = e.clientY
-    if (this.timer !== null) this.env.clearTimeout(this.timer)
-    el.setAttribute('data-dwell', 'arming')
+    const again = this.timer !== null
+    if (again) this.env.clearTimeout(this.timer)
+    // A restart on the same control flips the mark, so the ring's fill starts again (index.css).
+    this.marked = again && this.marked === 'arming' ? 'rearming' : 'arming'
+    el.setAttribute('data-dwell', this.marked)
     this.timer = this.env.setTimeout(() => this.fire(), this.ms)
   }
 
@@ -122,6 +145,7 @@ export class DwellClicker {
     const el = this.current
     if (!el) return
     this.done = true
+    this.latch(this.lx, this.ly)
     el.setAttribute('data-dwell', 'done')
     if (el.matches(DWELL.typed)) el.focus()
     else el.click()
@@ -132,7 +156,14 @@ export class DwellClicker {
     if (e.pointerType === 'touch' || !this.current) return
     if (this.timer !== null) { this.env.clearTimeout(this.timer); this.timer = null }
     this.done = true
+    this.latch(e.clientX, e.clientY)
     this.current.setAttribute('data-dwell', 'done')
+  }
+
+  private latch(x: number, y: number): void {
+    this.latched = true
+    this.px = x
+    this.py = y
   }
 
   private leave(): void {

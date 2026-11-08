@@ -58,6 +58,16 @@ function voice(seconds: number, level = 0.08, seed = 11): Float32Array {
 /** Hiss: white noise at a voice's level. */
 const hiss = (seconds: number, level = 0.08): Float32Array => room(seconds, level, 23)
 
+/** A steady hum: white noise through a one-pole low-pass (few zero crossings, so it votes voiced), at `level` RMS. */
+function hum(seconds: number, level: number, seed = 31): Float32Array {
+  const n = Math.round(seconds * SR), out = new Float32Array(n), r = noise(seed)
+  let y = 0, sum = 0
+  for (let i = 0; i < n; i++) { y = 0.97 * y + 0.03 * r(); out[i] = y; sum += y * y }
+  const k = level / Math.sqrt(sum / n)
+  for (let i = 0; i < n; i++) out[i] *= k
+  return out
+}
+
 function concat(...parts: Float32Array[]): Float32Array {
   const out = new Float32Array(parts.reduce((n, p) => n + p.length, 0))
   let at = 0
@@ -119,11 +129,38 @@ test('hiss at a voice\'s level is not speech: loud, but neither voiced nor tonal
   assert.ok(f.zcr > VAD.zcrMax || f.flatness < VAD.flatnessMin, `zcr ${f.zcr} flatness ${f.flatness}`)
 })
 
-test('a voice that never stops becomes the room only slowly: the floor rises a little per silent frame, never during speech', () => {
+test('a voice that never stops becomes the room only slowly: the floor rises a little per silent frame, a quarter of that during speech', () => {
   const c = new VadCore(VAD)
   run(c, concat(room(1), voice(4)))
   assert.equal(c.speech, true, 'four seconds of voice is still speech')
   assert.ok(c.floor < 0.01, `the floor stayed near the room: ${c.floor}`)
+})
+
+test('a steady voiced hum that starts speech becomes the room within seconds instead of reading as a voice for ever', () => {
+  for (const level of [0.006, 0.01]) {
+    const c = new VadCore(VAD)
+    const changes = run(c, concat(room(1, 0.002), hum(12, level)))
+    assert.equal(changes[0]?.speech, true, `the hum at ${level} reads as a voice at first`)
+    assert.equal(c.speech, false, `twelve seconds later it is the room: floor ${c.floor}`)
+    const end = changes.find((x) => !x.speech)
+    assert.ok(end && end.at < SR * 11, `released at ${end ? (end.at / SR).toFixed(1) : '-'} s`)
+  }
+})
+
+test('Sloane\'s own voice back through the speakers is not the visitor\'s: her line\'s start only learns its level, and a visitor louder than it still barges in', () => {
+  const c = new VadCore(VAD)
+  run(c, room(1))
+  c.speaking = true
+  // Her echo, well over the room and the speaking margin (0.05 against a floor near 0.003), starts nothing.
+  assert.deepEqual(run(c, voice(1.5, 0.05, 41)), [], 'her echo is not speech')
+  assert.ok(c.echo > 0.03, `her echo was learned: ${c.echo}`)
+  // The visitor, louder than her echo by more than the ratio, starts speech while she still speaks.
+  const over = run(c, voice(0.6, 0.2, 43))
+  assert.equal(over[0]?.speech, true, 'a clear voice over her line barges in')
+  // A line that ends forgets her echo.
+  c.speaking = false
+  run(c, room(0.05))
+  assert.deepEqual([c.echo, c.speakFrames], [0, 0])
 })
 
 test('while the page is speaking, the bar is higher: a quiet voice that would start speech does not, a clear one does and the onset is doubled', () => {

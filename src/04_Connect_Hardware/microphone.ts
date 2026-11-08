@@ -481,12 +481,12 @@ export function refusal(e: unknown): [MicPhase, string] {
   }
 }
 
-/** The console's `voice` lines over the microphone. */
+/** The console's `mic` lines over the microphone. */
 export function voiceStatus(m: Microphone, speaking: boolean, recognition: string): string[] {
   const s = m.state
   return [
     `mic       ${s.phase}${s.detail ? ` · ${s.detail}` : ''}`,
-    `pill      ${pillWord(s.phase, speaking)}  (V, R3, the pill or the Menu mute and unmute; voice on|off here)`,
+    `pill      ${pillWord(s.phase, speaking)}  (V, R3, the pill or the Menu mute and unmute; mic on|off here)`,
     `detector  ${m.path === 'worklet' ? 'audio worklet' : m.path === 'page' ? 'on the page' : 'none'}${m.open ? m.speech ? ' · hearing you' : ' · the room' : ''}`,
     `boot      ${m.opensAtBoot() ? 'opens at boot' : 'off until pressed'}  (kept switch ${m.settings().on ? 'on' : 'off'}; the default ${MIC_OPEN_BY_DEFAULT ? 'open' : 'off'})`,
     `words     ${recognition}`,

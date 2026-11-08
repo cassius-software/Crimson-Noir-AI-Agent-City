@@ -277,6 +277,9 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
     <div className="ui-zoom pointer-events-none absolute inset-0 font-sans text-[13px] antialiased select-none">
       {/* The screen reader's line (announcer.ts): always in the page, so a reader follows it from the first word. */}
       <span className="sr-only" role="status" aria-live="polite" data-announce>{c.announce ?? ''}</span>
+      {/* The microphone's state for a reader: here, not in the pill, which a phone or a hidden HUD leaves unmounted while
+          the device is shut, so "muted" is heard wherever the switch was pressed (the Menu, V, R3). */}
+      <span className="sr-only" role="status" aria-live="polite" data-mic-told>{voice ? micTold(voice.phase) : ''}</span>
       {visible && !compact && (
         <div className={FRAME_WIDE}>
           <div className="absolute top-0 left-0 flex flex-col items-start gap-2">
@@ -438,7 +441,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
               {renderChip}
               {stacked && <div className="flex w-68 max-w-full flex-col gap-2">{toasts}</div>}
             </div>
-            {!stacked && !short && <div className="mt-[max(0px,calc(var(--chip-bottom,0px)_-_var(--hud-bottom,0px)))] flex w-68 max-w-full flex-col gap-2">{toasts}</div>}
+            {!stacked && !short && <div className="mt-[max(0px,calc(var(--chip-bottom,0px)_-_var(--hud-bottom,0px)_/_var(--ui-zoom,1)))] flex w-68 max-w-full flex-col gap-2">{toasts}</div>}
           </div>
 
           <div className="absolute top-0 right-0 flex flex-col items-end gap-2" data-hud="minimap">
@@ -517,28 +520,28 @@ function MicPill({ voice, mic, onMic, contrast, panel, muted, dark }: {
   }, [mic, open, dark, contrast])
   const failed = voice.phase === 'blocked' || voice.phase === 'error' || voice.phase === 'unavailable'
   const dot = voice.phase === 'speech' ? 'bg-emerald-400' : open && voice.speaking ? 'bg-amber-400' : open ? 'bg-sky-500' : failed ? 'bg-rose-500' : dark ? 'bg-slate-400' : 'bg-slate-500'
-  // The reader's line: the state without speech onsets (speech reads as listening) and without Sloane's turns.
-  const told = `Microphone ${phaseWord(voice.phase === 'speech' ? 'listening' : voice.phase).replace(/^Mic /, '').toLowerCase()}`
   return (
-    <>
-      <button
-        type="button"
-        onClick={onMic}
-        aria-label={pillLabel(voice.phase, voice.speaking, failed ? voice.detail : '')}
-        aria-pressed={open}
-        title={voice.detail || undefined}
-        className={`pointer-events-auto flex max-w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[11px] font-semibold tabular-nums focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400 ${panel}`}
-        data-hint="voice"
-        data-mic={voice.phase}
-      >
-        <span className={`h-2 w-2 shrink-0 rounded-full ${dot} ${voice.phase === 'speech' ? 'animate-pulse' : ''}`} />
-        <span className="truncate">{pillWord(voice.phase, voice.speaking)}</span>
-        {open && <canvas ref={canvas} width={96} height={20} className="h-3.5 w-12 shrink-0" aria-hidden="true" />}
-        {open && voice.words && <span className={`truncate font-medium ${muted}`}>words on-device</span>}
-      </button>
-      <span className="sr-only" role="status" aria-live="polite">{told}</span>
-    </>
+    <button
+      type="button"
+      onClick={onMic}
+      aria-label={pillLabel(voice.phase, voice.speaking, failed ? voice.detail : '')}
+      aria-pressed={open}
+      title={voice.detail || undefined}
+      className={`pointer-events-auto flex max-w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[11px] font-semibold tabular-nums focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400 ${panel}`}
+      data-hint="voice"
+      data-mic={voice.phase}
+    >
+      <span className={`h-2 w-2 shrink-0 rounded-full ${dot} ${voice.phase === 'speech' ? 'animate-pulse' : ''}`} />
+      <span className="truncate">{pillWord(voice.phase, voice.speaking)}</span>
+      {open && <canvas ref={canvas} width={96} height={20} className="h-3.5 w-12 shrink-0" aria-hidden="true" />}
+      {open && voice.words && <span className={`truncate font-medium ${muted}`}>words on-device</span>}
+    </button>
   )
+}
+
+/** The reader's line for the microphone: the state without speech onsets (speech reads as listening) or Sloane's turns. */
+function micTold(phase: NonNullable<SipocSnapshot['supplier']['voice']>['phase']): string {
+  return `Microphone ${phaseWord(phase === 'speech' ? 'listening' : phase).replace(/^Mic /, '').toLowerCase()}`
 }
 
 /** What a ping landed on: 'a spot', 'person 12', 'car 3', 'pole 7'. */
@@ -576,6 +579,7 @@ function Signal({ label, light }: { label: string; light: Light }) {
     <span className="flex items-center gap-1.5">
       <span className={`h-2.5 w-2.5 rounded-full ${LIGHT_COLOR[light]}`} />
       {label}
+      <span className="sr-only">{` ${light}`}</span>
     </span>
   )
 }

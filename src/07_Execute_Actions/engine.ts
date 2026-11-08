@@ -1745,8 +1745,9 @@ export class Engine {
   private applyTier(): void {
     const q = this.quality
     const k = q.mask(q.governor.knobs())
-    // Ghost view lives in the post chain: while it is on, the chain runs at every tier (unless ?post=0 forbids it).
-    if (this.ghost.on && this.options.post) k.post = true
+    // Ghost view and the colour-vision filter live in the post chain: while either is on, the chain runs at every tier
+    // (unless the page turned the chain off: ?post=0, the lite profile, a split screen).
+    if ((this.ghost.on || this.visionMode !== 'none') && this.options.post) k.post = true
     // The post chain presents one image; a headset wants two eyes, so it is off while presenting (xrSession.ts). The
     // clustered lamps bin into the viewport of the render they are computed for (cityLights.ts); a headset's two eyes
     // are drawn by three's own XR path, which is not that render, so under a headset the lamps are emissive only.
@@ -2238,7 +2239,22 @@ export class Engine {
   setVision(mode: Vision): string {
     this.visionMode = mode
     this.vision.value.set(...visionMatrix(mode))
-    return visionWord(mode)
+    if (!this.disposed) this.applyTier()
+    const blocked = mode === 'none' ? null : this.visionBlocked()
+    return blocked ?? visionWord(mode)
+  }
+
+  /**
+   * Why the colour-vision filter cannot be drawn now, or null when it can: it is the post chain's last matrix, and the
+   * chain is off under a headset, while the screen is split, under the lite profile and with ?post=0 (setVision keeps it
+   * on at every other tier).
+   */
+  visionBlocked(): string | null {
+    if (this.rig.headset) return 'needs the post-processing chain, which is off under a headset'
+    if (this.views.length > 1) return 'needs the post-processing chain, which is off while the screen is split'
+    if (!this.options.post && this.options.lite) return 'needs the post-processing chain, which the lite profile turned off (?lite=0 keeps it)'
+    if (!this.options.post) return 'needs the post-processing chain, which ?post=0 turned off'
+    return null
   }
 
   /** The colour-vision filter in force. */

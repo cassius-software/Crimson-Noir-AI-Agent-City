@@ -51,6 +51,19 @@ test('a district is said once it has been held, and not again until another was;
   assert.deepEqual(rest, ['T6', 'T7: odd', 'T8'])
 })
 
+test('toasts as the HUD lists them (newest first) are all said, oldest first; the first toast of a session (id 0) is said too', () => {
+  const a = new Announcer()
+  a.next(snap(), 0)
+  const t = (id: number) => ({ id, title: `T${id}`, body: '' })
+  assert.equal(a.next(snap({ toasts: [t(0)] }), 1000), 'T0', 'id 0 is news after an empty start')
+  const heard = [a.next(snap({ toasts: [t(3), t(2), t(1), t(0)] }), 1000 + ANNOUNCE.gapMs)]
+  for (let i = 2; i <= 4; i++) { const l = a.next(snap({ toasts: [t(3), t(2), t(1)] }), 1000 + i * ANNOUNCE.gapMs); if (l) heard.push(l) }
+  assert.deepEqual(heard, ['T1', 'T2', 'T3'], 'none lost to the order they arrived in')
+  const b = new Announcer()
+  b.next(snap({ toasts: [t(0)] }), 0)
+  assert.equal(b.next(snap({ toasts: [t(0)] }), 5000), null, 'a toast already up at the first look is not news')
+})
+
 test('what enters a vehicle, for the controls in use', () => {
   assert.equal(enterWord('keyboard', false), 'E enters it')
   assert.equal(enterWord('abxy', false), 'the bottom face button enters it')

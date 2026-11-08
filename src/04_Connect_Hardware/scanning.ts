@@ -7,8 +7,9 @@
  * page's order, every SCAN.ms; the one offered is focused and marked (`data-scan`, which index.css rings), and the
  * switch, the Space bar (a switch interface sends one key, and Space is the usual one), presses it, or puts the caret
  * in a field. The press is taken on the way down, before the rest of the page sees the key, so the city's handbrake
- * never fires with it; Space typed into a field stays a space. Every round reads the controls again, so a card that
- * opens or closes joins or leaves the round. Pure: the page is an environment handed in (`browserScanEnv` is the one
+ * never fires with it. A field being typed in (taken by the switch, or by any other hand) holds the round on it until
+ * SCAN.hold offers pass without a key, so the caret is never taken mid-word, and while it holds Space typed there stays
+ * a space. Every round reads the controls again, so a card that opens or closes joins or leaves the round. Pure: the page is an environment handed in (`browserScanEnv` is the one
  * over `document`), so a Node test drives it with fakes.
  * What breaks if it is removed? A visitor with one switch can reach nothing.
  */
@@ -17,6 +18,8 @@ import { isEditableTarget } from './input.ts'
 export const SCAN = {
   /** Each control is offered this long. */
   ms: 1200,
+  /** A field being typed in holds the round this many offers after its last key (6 s at SCAN.ms). */
+  hold: 5,
   /** The switch. */
   key: 'Space',
   /** What is offered, in page order; the environment keeps only the ones that are shown. */
@@ -39,6 +42,8 @@ export interface ScanKey { code: string; repeat: boolean; target: EventTarget | 
 export interface ScanEnv {
   /** The controls shown now, in page order. */
   candidates(): ScanTarget[]
+  /** The element that has the focus now (document.activeElement). */
+  active(): unknown
   /** Subscribes to the document's keydown, ahead of every other listener; returns the unsubscribe. */
   onKey(fn: (e: ScanKey) => void): () => void
   setInterval(fn: () => void, ms: number): unknown
@@ -55,6 +60,9 @@ export class Scanner {
   private timer: unknown = null
   private offKey: (() => void) | null = null
   private now: ScanTarget | null = null
+  /** The field being typed in, which holds the round, and the offers since its last key. */
+  private held: unknown = null
+  private idle = 0
 
   constructor(env: ScanEnv, ms: number = SCAN.ms, key: string = SCAN.key) {
     this.env = env
@@ -79,28 +87,42 @@ export class Scanner {
     if (this.timer !== null) { this.env.clearInterval(this.timer); this.timer = null }
     this.offKey?.()
     this.offKey = null
+    this.held = null
     this.mark(null)
   }
 
-  /** Offers the next control in page order (the first after the last, or when the one offered has gone). */
+  /**
+   * Offers the next control in page order (the first after the last, or when the one offered has gone), unless a field
+   * is being typed in: one that still has the focus and took a key within SCAN.hold offers holds the round.
+   */
   step(): void {
+    if (this.held !== null && this.env.active() === this.held && this.idle < SCAN.hold) { this.idle++; return }
+    this.held = null
     const all = this.env.candidates()
     if (all.length === 0) { this.mark(null); return }
     const i = this.now ? all.indexOf(this.now) : -1
     this.mark(all[(i + 1) % all.length])
   }
 
-  /** Presses the control offered (a field takes the caret instead). Returns whether there was one. */
+  /** Presses the control offered (a field takes the caret instead, and holds the round). Returns whether there was one. */
   select(): boolean {
     const el = this.now
     if (!el) return false
-    if (el.matches(TYPED)) el.focus()
+    if (el.matches(TYPED)) { el.focus(); this.typing(el) }
     else el.click()
     return true
   }
 
+  private typing(field: unknown): void {
+    this.held = field
+    this.idle = 0
+  }
+
   private onKey(e: ScanKey): void {
-    if (e.code !== this.key || isEditableTarget(e.target)) return
+    // A key typed in a field is the field's: one the round did not offer, one already taken, or any key but the switch
+    // in the one offered. It holds the round there. The switch on a field merely offered takes it (select).
+    if (isEditableTarget(e.target) && (e.target !== this.now || e.target === this.held || e.code !== this.key)) { this.typing(e.target); return }
+    if (e.code !== this.key) return
     e.preventDefault()
     e.stopImmediatePropagation()
     if (!e.repeat) this.select()
@@ -123,6 +145,7 @@ export function browserScanEnv(doc: Document = document): ScanEnv {
     candidates: () => [...doc.querySelectorAll<HTMLElement>(SCAN.selector)].filter((el) =>
       el.getClientRects().length > 0 && el.closest('[aria-hidden="true"]') === null && el.closest('[inert]') === null,
     ) as unknown as ScanTarget[],
+    active: () => doc.activeElement,
     onKey(fn) {
       const h = fn as unknown as EventListener
       doc.addEventListener('keydown', h, { capture: true })
