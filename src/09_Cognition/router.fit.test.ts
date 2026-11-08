@@ -580,10 +580,11 @@ test('only Ollama\'s own paths on this machine: /api/tags, /api/generate, /api/p
   m.state.down = true
   await assert.rejects(ask(r), (e: unknown) => e instanceof CognitionError && e.code === 'offline')
   assert.deepEqual(sent(m), [DEFAULT_MODEL, 'qwen3:14b', DEFAULT_MODEL, DEFAULT_MODEL])
-  for (const c of m.calls) assert.match(c.url, /^http:\/\/localhost:(11434|8080|1234|8089)\//, c.url)
+  for (const c of m.calls) assert.match(c.url, /^http:\/\/localhost:(11434|8080|1234|9931|8000|30000|8089)\//, c.url)
   const ollama = new Set(m.calls.filter((c) => c.url.startsWith(DEFAULT_SERVER)).map((c) => c.url.slice(DEFAULT_SERVER.length)))
   assert.deepEqual([...ollama].sort(), ['/api/generate', '/api/ps', '/api/tags', '/api/version'])
-  // The other servers were asked only what a look asks on main: their lists, and whether anything listens.
+  // The other servers (the second round's addresses too) were asked only what a look asks: their lists, and whether
+  // anything listens.
   const others = new Set(m.calls.filter((c) => !c.url.startsWith(DEFAULT_SERVER)).map((c) => new URL(c.url).pathname))
   assert.deepEqual([...others].sort(), ['/api/version', '/v1/models'])
 })
