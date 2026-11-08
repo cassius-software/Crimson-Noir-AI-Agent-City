@@ -10,5 +10,9 @@
 # rustc's own /DEBUG, is the one that counts: no PDB, no GUID, and the stamp is a hash of the code alone, the
 # commit's wherever it is built. Nothing else about the build varies.
 # What breaks if it is removed? Two builds of one commit differ in two timestamps, and the release's checksums with them.
+# The aarch64 image links with the same lld-link and takes the same two arguments.
 [target.x86_64-unknown-uefi]
+rustflags = ["-C", "link-arg=/Brepro", "-C", "link-arg=/DEBUG:NONE"]
+
+[target.aarch64-unknown-uefi]
 rustflags = ["-C", "link-arg=/Brepro", "-C", "link-arg=/DEBUG:NONE"]
