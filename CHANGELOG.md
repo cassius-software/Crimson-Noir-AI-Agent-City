@@ -65,6 +65,53 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   stage passed in the first shop, a try-on that costs nothing). Pinned by node tests (the shop event, the stage kept
   when done early, the lines with and without shops on each device, App's wiring); a real phone, pad or screen reader
   is unverified.
+- **The first walk's card and Sloane's open card side by side.** On a desktop window narrower than about 1,300 px
+  the walk's card (20 rem, on the right under the readout) lay over the right end of Sloane's open card, her name
+  question's Continue button among it, on every first run. From 960 px across her card's column now runs from the
+  minimap's clearance to just short of the walk's card while the walk is on (`Concierge.tsx` `WIDE_BESIDE`, centred
+  there up to its usual 38 rem); below 960 px the walk's card steps aside while her card is open (`onOpen`, `crowded`)
+  and comes back when she settles into her chip. The browser smoke's `walk` scenario measures the two apart at
+  960×540, 1024×640, 1152×648, 1280×720 and 1366×657 and the walk's card away at 900×600 while her question is open.
+- **Actuator shaping, domain randomization and workstation cells for the joint bridge**
+  (`src/04_Connect_Hardware/actuatorFit.ts`, `cells.ts`; `src/07_Execute_Actions/jointRealm.ts`, `articulated.ts`).
+  A step response can now be fitted as a second-order system with dead time (`fitStep2`: gain, delay, natural rate ω
+  and damping ζ from the closed forms of the under-, critically and over-damped responses, seeded from the
+  first-order fit and refined by a shrinking search from its four best seeds), and `pickFit` takes it over the
+  first-order lag only when the error falls by a tenth or more (Occam), never when the first-order fit is already
+  within 0.2 % of the response. A chosen second-order fit becomes the joint's **reference actuator**
+  (`ActuatorShaping`, `gainsFor2`, `stepShaping`): in `filter` mode the delayed setpoint drives a spring and damper
+  with a speed cap, ω clamped to 60 rad/s, stepped semi-implicitly in four sub-steps so it stays bounded at 60 Hz for
+  any damping, and the servo tracks it; the first-order filter is unchanged for a joint without one. **Domain
+  randomization** (`randomizeDomain(seed, manifest)`, `DOMAIN`): from the rules' PRNG alone, every link's mass within
+  ±20 % and its inertia within ±30 % at the same mass (a new optional `inertiaScale` on a link, judged within 0.1 to
+  10, which the realm applies to the shape's own tensor: `shapeInertia`, whose closed forms match what Rapier derives),
+  a friction per movable joint relative to its own caps (Coulomb up to 5 % of the effort cap, stiction one to two
+  times that, viscous costing at most 10 % of the effort at the speed cap) and a jittered shaping per joint. The
+  realm applies **joint friction** about each joint after the servo, through the servo's own impulse pair
+  (`jointTorque`): stiction holds a still joint while the servo asks less than it, Coulomb and viscous friction never
+  take more than the speed the joint has by the realm's measure and never exceed the effort cap. `robotMode` carries
+  an optional `shaping` and `friction` per movable joint, every number judged in the worker before any of it is kept
+  (a bad one is a counted rejection; the old command shape is unchanged). The console gains `robot fit <id> <joint>`
+  (both fits, the choice, applied), `robot shape <id> [<seed>|off]` (the body re-spawned where it stood from the
+  seed's domain, disarmed; the plain body back; or the domain's table) and `robot cell [<kind> <station>]`. **Cells**
+  (`cells.ts`): a six-joint arm, a two-axis gantry with a wrist, a vibration table, a gait belt and a console with no
+  robot, mapped from the workplace kind ids by string (`console` for an unknown kind); `robot cell` lists every
+  station of every room with its cell (a new read-only `roomStations()` on the terminal bridge) and `robot cell
+  <kind> <station>` spawns that cell's robot at the station, facing its yaw. `toUrdf` writes any manifest back out as
+  URDF that `urdf.ts` reads to an equal manifest. Tests: `actuatorFit.test.ts` (five plants across the damping cases
+  fitted back, ω within 3 % and ζ within 5 % where under- or critically damped, with noise, Occam on first-order
+  plants, the stepper against the closed form and bounded at its clamp, stiction, Coulomb, the speed cap, the domain's
+  spreads and determinism), `cells.test.ts` (every cell built through the one judge, the map, the URDF round trip of
+  every cell and the demo arm), `jointRealm.test.ts` (the new mode fields judged and nothing kept from a bad command;
+  a joint following an under-damped reference within 0.05 rad, overshooting as it does, with its own delay; stiction
+  holding a joint under twice the servo's demand and letting go at half; Coulomb friction at the whole cap stopping a
+  moving joint without turning it round beyond the solver's own correction), `articulated.test.ts` (the closed-form
+  inertia against Rapier's, an inertia scale at the same mass), `jointState.test.ts` (`inertiaScale`),
+  `robotLink.test.ts` (a fit against a second-order realm sends that joint a shaping of its ω and ζ, against a
+  first-order realm none; a shaped body re-spawned in place with the friction and shaping; a cell at its station) and
+  `commands.test.ts`. Unverified: nothing here has met a physical robot or a real actuator; the cells have not been
+  seen on screen (no GPU in the cloud), and a cell's robot shares its station with the crowd's worker (robots never
+  touch people).
 - **The ten Monk skin tones, vitiligo, freckles and body builds, on a look genome of sixteen words.** The character
   customizer's look (`src/03_Spawn_Agents/look.ts`) grows from four packed words to a genome of sixteen
   (`LOOK_WORDS`): words 0 to 3 are the look, figure, face and wardrobe words exactly as they were, word 4 is a new
@@ -858,6 +905,15 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   about 20 minutes. Unverified from the cloud (no GPU): the rooms on screen and the workday at full speed there.
 
 ### Changed
+
+- **The web copy on GitHub Pages follows main by itself.** `.github/workflows/web.yml` ran only when someone started
+  it, so the public copy fell behind main (it last showed the Oct 31 build). It now also runs each time ci passes on
+  main (a `workflow_run` trigger on ci, main only): it builds the commit ci tested and publishes it only while that
+  commit is still main's tip, asked before the build and again before the deploy (so re-running an old run's failed
+  jobs cannot put an old build back). A burst of merges is published once, after the last one's ci passes, and the
+  copy never steps back to an older build or shows a commit ci has not passed. A failed or cancelled ci, or one for a
+  pull request (a fork's branch named main included), publishes nothing. Run workflow still publishes main by hand.
+  The trigger takes effect once the file is on main; what it does there is not yet shown by a run.
 
 - **The physics realm's step is a quarter to a third faster: the street furniture is a hundred compound sensors,
   not 4,599 colliders.** rapier.js walks every collider in the world through a WebAssembly-to-JavaScript callback at

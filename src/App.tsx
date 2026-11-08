@@ -668,6 +668,8 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
   // the HUD (the microphone, the captions) and, in time, the exam; walkRef is the handlers' view of it.
   const fw = useFirstWalk({ active: walk && veilDone, engine, hud, family: hud?.supplier.glyphs ?? 'keyboard', name: profile?.name ?? '', voice, termOpen })
   const walking = walk && !fw.passed
+  // Sloane's card (not her chip) on screen: in a wide window too narrow for both, the walk's card steps aside for it.
+  const [sloaneOpen, setSloaneOpen] = useState(false)
   const walkRef = useRef(fw)
   useEffect(() => { walkRef.current = fw }, [fw])
   const onGoalSent = useCallback(() => walkRef.current.note('goal'), [])
@@ -1302,10 +1304,13 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
           onGoal={onGoal}
           onGoalSent={onGoalSent}
           onSay={onSay}
+          beside={walking && fw.card !== null}
+          onOpen={setSloaneOpen}
         />
       )}
       {/* The first walk's card (onboarding/FirstWalk.tsx): over the HUD, under the console; away while the wardrobe or a
-          shop's card is open or the city is halted. It has no close: the console's exit program ends it. */}
+          shop's card is open or the city is halted, and in a wide window under 60 rem across while Sloane's card is open
+          (from 60 rem her card stands left of it). It has no close: the console's exit program ends it. */}
       {hud && walking && fw.card && (
         <FirstWalkCard
           visible={veilDone && !lookOpen && storeOpen === null && locked === null}
@@ -1318,6 +1323,7 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
           onType={typeWalk}
           onRun={runWalk}
           onSay={onSay}
+          crowded={sloaneOpen}
         />
       )}
       {hud && (

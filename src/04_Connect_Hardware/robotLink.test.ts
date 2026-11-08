@@ -8,7 +8,10 @@
  * around a leader over HAL/1 (arm refused without the operator tier, the ARM/ARMED nonce, setpoints out as JT lines
  * at the rate and re-sent when held, the lost heartbeat, the tether, the operator lock, the hidden page, `disarm`,
  * `panic`); the relay door (the gate's URL rule, the subprotocols, hello/state/arm/armed/targets/close); and a
- * calibration of a sim robot against a realm the test plays as a first-order lag, recovering its time constant.
+ * calibration of a sim robot against a realm the test plays as a first-order lag, recovering its time constant; the
+ * fit of both models against a second-order realm (the shaping goes to that joint) and a first-order one (it does
+ * not); `robot shape` re-spawning the body from a seed's domain where it stood and back; and a workstation cell's
+ * robot placed at a station, facing its yaw.
  * No device, no browser: UNCONFIRMED on real hardware.
  * What breaks if it is removed? A setpoint could leave the page outside the gate, or a twin could follow a stale frame.
  */
@@ -20,6 +23,8 @@ import { checkTargets, type JointFrame, type Manifest } from './jointState.ts'
 import { LEGACY_CAPABILITIES, parseCapabilities, type Capabilities } from './peripheralPolicy.ts'
 import { JOINT_FLAG, JOINT_SLOT, JointBuffer } from '../07_Execute_Actions/jointBridge.ts'
 import { MAX_ROBOTS } from './jointState.ts'
+import { randomizeDomain, SHAPING } from './actuatorFit.ts'
+import { cellManifest } from './cells.ts'
 import type { SimCommand } from '../07_Execute_Actions/simProtocol.ts'
 
 const SERVO: Capabilities = (() => { const c = parseCapabilities('CAPS 1 {"class":"actuator","actuation":["servo"]}'); if (!c || 'error' in c) throw new Error('caps'); return c })()
@@ -392,6 +397,137 @@ test('calibrating a sim robot against a realm the test plays as a first-order la
   const mode = h.last('robotMode')!
   assert.ok(mode.mode === 'filter' && Math.abs(mode.tauMs! - TAU) < 40 && mode.delaySteps! <= 2, JSON.stringify(mode))
   assert.equal(b.remove('sim:cal'), 'sim:cal: removed')
+  b.dispose()
+})
+
+test('robot shape: a seed\'s domain is the body the realm builds, where it stood, with the friction and shaping in the mode; the table; off brings the plain body back', async () => {
+  const h = host()
+  const b = new RobotBridge(h.host)
+  b.demo('shp')
+  const plain = demoArm('shp')
+  assert.equal(b.shape('sim:shp'), 'sim:shp: plain body, no domain (robot shape sim:shp <seed>)')
+  assert.equal(b.shape('sim:shp', 'off'), 'sim:shp: no domain to take off')
+  assert.equal(b.shape('nobody', 3), "no robot 'nobody'")
+  assert.equal(b.shape('sim:shp', 1.5), 'seed: a whole number from 0 to 4294967295')
+  // Before a body: kept for the next spawn, the table printed.
+  const kept = b.shape('sim:shp', 7).split('\n')
+  assert.equal(kept[0], 'sim:shp: domain seed 7 kept for the next spawn (robot spawn sim:shp)')
+  assert.match(kept[1], /^domain seed 7: mass ±20 %, inertia ±30 %, friction up to 5 % of the effort cap$/)
+  assert.equal(kept.length, 2 + 1 + plain.links.length + 1 + plain.movable.length, 'header, links, joints')
+  const seven = randomizeDomain(7, plain)
+  assert.match(b.spawn('sim:shp'), /^sim:shp: body 1 at 10, 22 \(3 joints, mode sim, domain seed 7\)$/)
+  assert.deepEqual(h.last('robotSpawn')!.manifest, seven.manifest, 'the realm builds the randomized body')
+  assert.notDeepEqual(seven.manifest.links.map((l) => l.mass), plain.links.map((l) => l.mass))
+  let mode = h.last('robotMode')!
+  assert.deepEqual(mode.friction, seven.friction)
+  assert.deepEqual(mode.shaping, seven.shaping)
+  // With a body: a new seed is a new body in the same place (the old one removed first), armed or not.
+  h.unlocked = true
+  assert.equal(await b.arm('sim:shp'), 'sim:shp: armed (sim)')
+  const before = h.sent.length
+  const lines = b.shape('sim:shp', 9).split('\n')
+  assert.match(lines[0], /^sim:shp: body 2 at 10, 22 \(3 joints, mode sim, domain seed 9\)$/)
+  const after = h.sent.slice(before)
+  assert.deepEqual(after.find((c) => c.c === 'robotRemove'), { c: 'robotRemove', id: 1 })
+  const spawn = h.last('robotSpawn')!
+  assert.deepEqual([spawn.id, spawn.x, spawn.z, spawn.heading], [2, 10, 22, Math.PI], 'where the old body stood, facing the same way')
+  assert.deepEqual(spawn.manifest, randomizeDomain(9, plain).manifest)
+  assert.equal(b.row('sim:shp')!.armed, false, 'a new body is never armed')
+  assert.match(b.shape('sim:shp'), /^domain seed 9: /)
+  // Off: the plain body back, and a plain mode command (no friction, no shaping key at all).
+  assert.match(b.shape('sim:shp', 'off'), /^sim:shp: body 3 at 10, 22 \(3 joints, mode sim\) · plain body$/)
+  assert.deepEqual(h.last('robotSpawn')!.manifest, plain)
+  mode = h.last('robotMode')!
+  assert.deepEqual(mode, { c: 'robotMode', id: 3, mode: 'filter', tauMs: 0, delaySteps: 0 })
+  b.dispose()
+})
+
+/** Plays the realm for a calibration: three joints answering the newest setpoint through `plant`, one tick at a time, until it resolves. */
+async function playFit(h: ReturnType<typeof host>, b: RobotBridge, done: Promise<string>, plant: (u: number, k: number) => number): Promise<string> {
+  const y = [0, 0, 0]
+  let resolved: string | null = null
+  void done.then((s) => { resolved = s })
+  for (let i = 0; i < 60 * 6 && !resolved; i++) {
+    const t = h.last('robotTargets')
+    if (t) for (let k = 0; k < 3; k++) y[k] = plant(t.q[k], k)
+    h.body(1, [...y], [10, 0, 18], t?.seq ?? -1)
+    h.tick(1000 / 60, b)
+    await Promise.resolve()
+  }
+  assert.ok(resolved, 'the fit finished')
+  return resolved!
+}
+
+test('robot fit: a second-order realm gives that joint a shaping of its ω and ζ; a first-order realm keeps the first-order gains and sends no shaping', async () => {
+  // A second-order realm: ω 8 rad/s, ζ 0.4 (a quarter overshoot), integrated finely inside each tick.
+  {
+    const h = host()
+    const b = new RobotBridge(h.host)
+    b.demo('two')
+    b.spawn('sim:two')
+    h.unlocked = true
+    assert.equal(await b.arm('sim:two'), 'sim:two: armed (sim)')
+    const W = 8, Z = 0.4
+    const x = [0, 0, 0], v = [0, 0, 0]
+    const text = await playFit(h, b, b.fit('sim:two', 'elbow'), (u, k) => {
+      const dt = 1 / 60 / 20
+      for (let i = 0; i < 20; i++) { v[k] += dt * (W * W * (u - x[k]) - 2 * Z * W * v[k]); x[k] += dt * v[k] }
+      return x[k]
+    })
+    const lines = text.split('\n')
+    assert.equal(lines.length, 3, text)
+    assert.match(lines[0], /^sim:two: elbow: first order: delay \d+ ms, τ \d+ ms, gain/)
+    assert.match(lines[1], /^second order: delay \d+ ms, ω [\d.]+ rad\/s, ζ [\d.]+, gain/)
+    assert.match(lines[2], /^twin takes second order: rmse \d+ % lower \(Occam asks 10 %\) · shaping: /)
+    const mode = h.last('robotMode')!
+    assert.ok(mode.shaping && mode.shaping.length === 3, JSON.stringify(mode))
+    assert.equal(mode.shaping[0], null)
+    assert.equal(mode.shaping[1], null)
+    const sh = mode.shaping[2]!
+    assert.ok(Math.abs(sh.omega - W) < 0.25 * W, `ω ${sh.omega} (the realm's ${W})`)
+    assert.ok(Math.abs(sh.zeta - Z) < 0.15, `ζ ${sh.zeta} (the realm's ${Z})`)
+    assert.ok(sh.velocityMax > 0 && sh.omega <= SHAPING.omegaMax)
+    assert.equal(mode.friction, undefined, 'a fit sends no friction')
+    assert.equal(b.row('sim:two')!.calibrated, true)
+    b.dispose()
+  }
+  // A first-order realm (τ 120 ms): the first-order model stays, and no shaping travels.
+  {
+    const h = host()
+    const b = new RobotBridge(h.host)
+    b.demo('one')
+    b.spawn('sim:one')
+    h.unlocked = true
+    assert.equal(await b.arm('sim:one'), 'sim:one: armed (sim)')
+    const y = [0, 0, 0]
+    const text = await playFit(h, b, b.fit('sim:one', 'elbow'), (u, k) => (y[k] += (u - y[k]) * (1 - Math.exp(-(1000 / 60) / 120))))
+    assert.match(text.split('\n')[2], /^twin takes first order: /, text)
+    const mode = h.last('robotMode')!
+    assert.equal(mode.shaping, undefined, JSON.stringify(mode))
+    assert.ok(Math.abs(mode.tauMs! - 120) < 40, `τ ${mode.tauMs}`)
+    b.dispose()
+  }
+})
+
+test('robot cell: the cell\'s robot at the station, facing its yaw, from the cell\'s manifest; a console cell has none; one body a station', () => {
+  const h = host()
+  const b = new RobotBridge(h.host)
+  assert.equal(b.cellKind('roboticsLab'), 'arm')
+  assert.equal(b.cellKind('somewhere'), 'console')
+  assert.match(b.cell('roboticsLab', 3, { x: 5, z: -7, yaw: 1.2 }), /^sim:roboticsLab-3: body 1 at 5, -7 \(6 joints, mode sim\) · arm cell$/)
+  const spawn = h.last('robotSpawn')!
+  assert.deepEqual([spawn.id, spawn.x, spawn.y, spawn.z, spawn.heading], [1, 5, h.op.y, -7, 1.2])
+  assert.deepEqual(spawn.manifest, cellManifest('arm', 'roboticsLab-3'))
+  assert.equal(b.row('sim:roboticsLab-3')!.mode, 'sim')
+  assert.match(b.cell('roboticsLab', 3, { x: 5, z: -7, yaw: 1.2 }), /already in the realm \(body 1\); robot remove first/)
+  assert.match(b.cell('gaitLab', 0, { x: 1, z: 2, yaw: 0 }), /^sim:gaitLab-0: body 2 at 1, 2 \(1 joints, mode sim\) · treadmill cell$/)
+  const n = h.sent.length
+  assert.match(b.cell('boardroom', 0, { x: 0, z: 0, yaw: 0 }), /^boardroom: a console cell has no robot; a desk, a screen and a chair\. The kinds with one: roboticsLab \(arm\), /)
+  assert.match(b.cell('somewhere', 0, { x: 0, z: 0, yaw: 0 }), /a console cell has no robot/)
+  assert.equal(b.cell('warehouse', -1, { x: 0, z: 0, yaw: 0 }), 'station: a whole number')
+  assert.equal(b.cell('warehouse', 0, { x: NaN, z: 0, yaw: 0 }), 'the station is not finite')
+  assert.equal(h.sent.length, n, 'a refused cell sends nothing')
+  assert.equal(b.remove('sim:roboticsLab-3'), 'sim:roboticsLab-3: removed')
   b.dispose()
 })
 

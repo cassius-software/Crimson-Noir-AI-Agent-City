@@ -93,6 +93,31 @@ test('App: the walk is switched on from the URL and the pass record, fed the Con
   assert.match(src, /note: \(ev\) => walkRef\.current\.note\(ev\)/)
 })
 
+test('the walk\'s card and Sloane\'s open card stand side by side on a wide screen, or the walk\'s steps aside where they cannot', () => {
+  const app = read('../../App.tsx')
+  const concierge = read('../Concierge.tsx')
+  const card = read('./FirstWalk.tsx')
+  // App: Sloane is told the walk's card is up and tells App when her card is open; the walk's card hears it.
+  assert.match(app, /beside=\{walking && fw\.card !== null\}\s*onOpen=\{setSloaneOpen\}/)
+  assert.match(app, /crowded=\{sloaneOpen\}/)
+  // Sloane: her wide column moves left of the walk's card when there is room, and her open state is any view but the chip.
+  assert.match(concierge, /className=\{beside && roomy \? WIDE_BESIDE : WIDE_COLUMN\}/)
+  assert.match(concierge, /const opened = visible && view !== 'chip'/)
+  assert.match(card, /import \{ BESIDE_ROOM_QUERY \} from '\.\.\/Concierge\.tsx'/, 'one query for both sides')
+  assert.match(card, /const shown = visible && !\(crowded && !termOpen && !overlay && !compact && !roomy\)/)
+  // The measures agree: Sloane's column ends short of the walk's card (its right inset plus its width), and at the
+  // query's width it still has at least the 22 rem her centred column never went under.
+  const walkRight = Number(/wide: 'right-\[max\(([\d.]+)rem/.exec(card)?.[1])
+  const walkWidth = Number(/wide: '[^']*\bw-\[([\d.]+)rem\]/.exec(card)?.[1])
+  const beside = /const WIDE_BESIDE = '[^']*left-\[([\d.]+)rem\] right-\[calc\(max\(([\d.]+)rem,env\(safe-area-inset-right\)\)_\+_([\d.]+)rem\)\]/.exec(concierge)
+  assert.ok(beside, 'WIDE_BESIDE has a left and a right')
+  const [left, inset, past] = [Number(beside[1]), Number(beside[2]), Number(beside[3])]
+  assert.equal(inset, walkRight, 'measured from the same right inset')
+  assert.ok(past >= walkWidth + 0.5, `${past} rem clears the ${walkWidth} rem card with a gap`)
+  const room = Number(/BESIDE_ROOM_QUERY = '\(min-width: (\d+)px\)'/.exec(concierge)?.[1]) / 16
+  assert.ok(room - left - inset - past >= 22, `${room - left - inset - past} rem left for Sloane at ${room} rem`)
+})
+
 test('the exam reaches the walk\'s program and the bridge\'s type, and nothing else: no gate, no engine, no realm, no write', () => {
   const src = read('exam.ts')
   const imports = [...src.matchAll(/^import .* from '([^']+)'/gm)].map((m) => m[1])

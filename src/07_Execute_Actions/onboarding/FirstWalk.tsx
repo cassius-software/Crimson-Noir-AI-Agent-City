@@ -11,13 +11,15 @@
  * no keyboard): walk and turn, plan a goal, take them to a car, take them inside, open the console; on the last stage
  * the buttons type each line of the program into the console's prompt and run it, so the walk is completable with
  * taps alone. It stands clear of the HUD, the touch controls and Sloane's own card: on a wide screen under the
- * readout on the right; on a compact or touch screen in the band above the stick and the buttons; with the console
- * open, at the foot of the screen under it.
+ * readout on the right, with Sloane's open card moved left of it (Concierge.tsx WIDE_BESIDE) from 60 rem across and,
+ * in a narrower wide window, stepping aside while her card is open; on a compact or touch screen in the band above
+ * the stick and the buttons; with the console open, at the foot of the screen under it.
  * What breaks if it is removed? The walk has no face: Sloane's lines are heard but never seen, and a visitor without
  * a keyboard or a mouse has no way through it.
  */
 import { useEffect, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { PROGRAM, type Beat, type StageCard } from '../../09_Cognition/firstWalk.ts'
+import { BESIDE_ROOM_QUERY } from '../Concierge.tsx'
 import { CONCIERGE_NAME } from './script.ts'
 
 /** Where the card stands (full class strings, so Tailwind sees them). The HUD's wide readout is 18 rem wide and about
@@ -45,6 +47,8 @@ function mediaStore(query: string) {
   }
 }
 const SMALL = mediaStore('(max-width: 639px), (max-height: 499px)')
+/** Room for Sloane's open card beside this one on a wide screen (Concierge.tsx's own query). */
+const ROOMY = mediaStore(BESIDE_ROOM_QUERY)
 
 export interface FirstWalkCardProps {
   /** Shown (pass false while the boot veil covers the page or the city is halted). */
@@ -64,10 +68,15 @@ export interface FirstWalkCardProps {
   onRun(): void
   /** Sloane's spoken voice: called once with each new line. */
   onSay?(text: string): void
+  /** Sloane's own card is open (Concierge onOpen): in a wide window under 60 rem across, too narrow for the two side by side, this card steps aside until hers closes. */
+  crowded?: boolean
 }
 
-export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, onShow, onType, onRun, onSay }: FirstWalkCardProps): JSX.Element | null {
+export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, onShow, onType, onRun, onSay, crowded = false }: FirstWalkCardProps): JSX.Element | null {
   const compact = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
+  const roomy = useSyncExternalStore(ROOMY.subscribe, ROOMY.matches, ROOMY.server)
+  /** On screen: shown, and not stepping aside for Sloane's open card in a wide window too narrow for both. */
+  const shown = visible && !(crowded && !termOpen && !overlay && !compact && !roomy)
   /** How many of the whys are unfolded (reset with the stage). */
   const [whys, setWhys] = useState(0)
   const [stage, setStage] = useState(card.stage)
@@ -76,11 +85,11 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
   useEffect(() => { sayRef.current = onSay }, [onSay])
   const said = useRef(-1)
   useEffect(() => {
-    if (!beat || beat.id === said.current || !visible) return
+    if (!beat || beat.id === said.current || !shown) return
     said.current = beat.id
     sayRef.current?.(beat.text)
-  }, [beat, visible])
-  if (!visible) return null
+  }, [beat, shown])
+  if (!shown) return null
 
   const line = beat && beat.stage === card.stage ? beat.text : card.ask
   const at = termOpen ? AT.console : overlay ? AT.touch : compact ? AT.compact : AT.wide

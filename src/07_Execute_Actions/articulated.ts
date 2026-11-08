@@ -15,9 +15,12 @@
  * is stable by construction at 60 Hz, with the weight of everything below the joint fed forward and the whole capped
  * at the joint's effort. The servo tracks a setpoint stiffly; the real actuator's lag and delay, which actuatorFit.ts
  * calibrates, are a setpoint filter the realm (jointRealm.ts) runs in front of it, so the fit is reproduced exactly
- * whatever the solver does. τ is the torque the servo applied, exact, not a sensed joint torque. Every Rapier call
- * stays in the physics worker; nothing here throws after a build, and a build that fails removes what it made. The
- * frame conventions are URDF's (z up, x forward) turned into the realm's (y up) at the root.
+ * whatever the solver does. τ is the torque the servo applied, exact, not a sensed joint torque. A link that carries
+ * an inertiaScale (the domain randomizer's word) gets its shape's own tensor times that scale at the same mass; the
+ * servo reports its uncapped demand so the realm's joint friction (jointRealm.ts, through `jointTorque`) can hold a
+ * joint under stiction. Every Rapier call stays in the physics worker; nothing here throws after a build, and a build
+ * that fails removes what it made. The frame conventions are URDF's (z up, x forward) turned into the realm's (y up)
+ * at the root.
  * What breaks if it is removed? A robot has no twin: nothing in the realm moves as its joints do, and the realm has
  * no joint state to send back.
  */
@@ -124,6 +127,8 @@ export interface Movable {
   load: number
   /** The torque (N·m) or force (N) the servo applied in the last drive, after the cap. */
   applied: number
+  /** What the servo asked for before the cap (the weight below already fed forward): the stiction rule reads it. */
+  demand: number
   /** Turns counted for a continuous joint so q is unwrapped. */
   turns: number
   /** True until the first measure, whose q̇ is 0. */
@@ -155,7 +160,49 @@ function colliderFor(l: Manifest['links'][number]): RAPIER.ColliderDesc {
     case 'none': d = RAPIER.ColliderDesc.ball(ROBOT.pointRadius); break
   }
   const [x, y, z] = l.shapeOrigin.xyz
-  return d.setTranslation(x, y, z).setMass(l.mass > 0 ? l.mass : ROBOT.defaultMass).setFriction(ROBOT.friction).setCollisionGroups(ROBOT_GROUPS)
+  const mass = l.mass > 0 ? l.mass : ROBOT.defaultMass
+  // A link with an inertiaScale gets its shape's own inertia tensor (the closed forms below, which the test checks
+  // against what Rapier derives at scale 1) times the scale, at the same mass: inertia randomized apart from mass.
+  if (l.inertiaScale !== undefined) {
+    const k = l.inertiaScale
+    const [ix, iy, iz] = shapeInertia(s, mass)
+    d.setMassProperties(mass, { x: 0, y: 0, z: 0 }, { x: ix * k, y: iy * k, z: iz * k }, IDENTITY)
+  } else d.setMass(mass)
+  return d.setTranslation(x, y, z).setFriction(ROBOT.friction).setCollisionGroups(ROBOT_GROUPS)
+}
+
+/**
+ * A uniform shape's principal inertia about its own centre, in the collider's local frame (Rapier's: cylinders and
+ * capsules stand along y), kg·m². The capsule is a cylinder and two hemispheres, each hemisphere carried out to the
+ * capsule's centre by the parallel axis rule (its centre of mass sits 3r/8 beyond the flat face).
+ */
+export function shapeInertia(s: Manifest['links'][number]['shape'], mass: number): Vec3 {
+  switch (s.kind) {
+    case 'box': {
+      const [a, b, c] = s.size
+      return [(mass / 12) * (b * b + c * c), (mass / 12) * (a * a + c * c), (mass / 12) * (a * a + b * b)]
+    }
+    case 'sphere': {
+      const i = 0.4 * mass * s.radius * s.radius
+      return [i, i, i]
+    }
+    case 'cylinder': {
+      const r = s.radius, L = s.length
+      const side = (mass / 12) * (3 * r * r + L * L)
+      return [side, (mass * r * r) / 2, side]
+    }
+    case 'capsule': {
+      const r = s.radius, h = s.length / 2
+      const vc = Math.PI * r * r * s.length, vb = (4 / 3) * Math.PI * r * r * r
+      const mc = (mass * vc) / (vc + vb), mb = mass - mc
+      const side = (mc / 12) * (3 * r * r + s.length * s.length) + mb * (0.4 * r * r + h * h + 0.75 * h * r)
+      return [side, (mc * r * r) / 2 + 0.4 * mb * r * r, side]
+    }
+    case 'none': {
+      const i = 0.4 * mass * ROBOT.pointRadius * ROBOT.pointRadius
+      return [i, i, i]
+    }
+  }
 }
 
 /** A body's inertia about the unit world `axis` through the world `point` (parallel-axis term included). */
@@ -269,7 +316,7 @@ export function buildArticulated(world: RAPIER.World, m: Manifest, at: Placement
       movable.push({
         index, spec, kind: prismatic ? 'prismatic' : 'revolute', joint: j, parent, child, frame1, frame2, anchor1: spec.origin.xyz,
         inertia: 0, below: Object.freeze(descendants(linkIndex.get(spec.child)!)),
-        effort, velocity, q: 0, qd: 0, tau: 0, load: 0, applied: 0, turns: 0, fresh: true,
+        effort, velocity, q: 0, qd: 0, tau: 0, load: 0, applied: 0, demand: 0, turns: 0, fresh: true,
       })
     })
     // q order is the manifest's `movable`, which is document order of the scalar joints: the same order as built.
@@ -361,10 +408,31 @@ function servo(mv: Movable, wanted: number, cap: number, h: number): void {
   const gap = wanted - mv.qd
   let torque = (mv.inertia * gap * ROBOT.servoShare) / h - mv.load
   if (!Number.isFinite(torque)) torque = 0
+  mv.demand = torque
   if (torque > cap) torque = cap
   else if (torque < -cap) torque = -cap
   mv.applied = torque
   if (torque === 0) return
+  const axisWorld = rotate(mv.child.rotation(), mv.spec.axis)
+  const j = torque * h
+  const plus = { x: axisWorld[0] * j, y: axisWorld[1] * j, z: axisWorld[2] * j }
+  const minus = { x: -plus.x, y: -plus.y, z: -plus.z }
+  if (mv.kind === 'revolute') {
+    mv.child.applyTorqueImpulse(plus, true)
+    if (!mv.parent.isFixed()) mv.parent.applyTorqueImpulse(minus, true)
+  } else {
+    mv.child.applyImpulse(plus, true)
+    if (!mv.parent.isFixed()) mv.parent.applyImpulseAtPoint(minus, mv.child.translation(), true)
+  }
+}
+
+/**
+ * A torque (N·m) or force (N) about one joint's axis over `h` seconds, as the servo's own pair: equal and opposite on
+ * child and parent (none on a fixed parent). The realm's joint friction (jointRealm.ts) goes through here; the servo's
+ * drive does not, so its arithmetic stays as measured.
+ */
+export function jointTorque(mv: Movable, torque: number, h: number): void {
+  if (!(torque !== 0) || !Number.isFinite(torque)) return
   const axisWorld = rotate(mv.child.rotation(), mv.spec.axis)
   const j = torque * h
   const plus = { x: axisWorld[0] * j, y: axisWorld[1] * j, z: axisWorld[2] * j }
