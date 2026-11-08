@@ -48,15 +48,19 @@ export const VAD = Object.freeze({
   /** While she speaks but none of her voice comes back (headphones, or echo cancellation that takes it out), the onset
    *  is onsetFrames times this instead (6 frames): there is no echo of hers to mistake, and a quieter visitor still cuts in. */
   quietOnset: 1.5,
-  /** Frames at the start of each of Sloane's lines that only learn how loud her voice comes back through the speakers:
-   *  no speech starts in them. The operating system's voice is not the browser's own audio, so the browser's echo
-   *  cancellation may not take it out of the microphone at all. The learning covers the first echoWait frames (140 is
-   *  about 1.5 s: an operating system's voice can start late after the page asks for it) and goes on for echoFrames
-   *  (40, about 430 ms) after the last steady sound heard in them, so a voice that starts late is learned however a
-   *  click or a cough came before it. It learns the steady level (the quietest of the last three frames), so a click
-   *  shorter than three frames (32 ms) is not taken for her voice. A visitor who talks in that time is learned as her. */
+  /** Frames at the start of each of Sloane's lines (a line that cuts the one before included: VadCore.newLine) that
+   *  only learn how loud her voice comes back through the speakers: no speech starts in them. The operating system's
+   *  voice is not the browser's own audio, so the browser's echo cancellation may not take it out of the microphone at
+   *  all. The learning covers the first echoWait frames (144 is about 1.5 s: an operating system's voice can start late
+   *  after the page asks for it) and goes on for echoFrames (40, about 430 ms) after the last steady sound heard in
+   *  them, so a voice that starts late is learned however a click or a cough came before it. A visitor who talks in
+   *  that time is learned as her, and so is any sound that lasts (a cough, a click that rings on in the room). */
   echoFrames: 40,
-  echoWait: 140,
+  echoWait: 144,
+  /** The steady level the learning takes is the quietest of the last this many frames, so a sound counts only once it
+   *  touches all five: a knock or a click of up to three frames (32 ms) touches four at most, wherever it falls across
+   *  them, and is never taken for her voice. */
+  steadyFrames: 5,
   /** After that, a visitor talking over her must be this much louder than her loudest echo heard (1.6 is about 4 dB). */
   echoRatio: 1.6,
   /** Her loudest echo holds while her voice keeps coming back near it (within echoNear) and for this many frames after
@@ -129,9 +133,8 @@ export class VadCore {
   heardAt = -1
   /** Frames since her voice last came back near her loudest echo. */
   echoQuiet = 0
-  /** The two frames' RMS before this one (the steady level is the quietest of the three). */
-  prev1 = 0
-  prev2 = 0
+  /** The RMS of the frames before this one, the newest first (the steady level is the quietest of them and this one). */
+  readonly past: Float32Array
   /** The last frame's features. */
   zcr = 0
   flatness = 0
@@ -144,6 +147,7 @@ export class VadCore {
     const n = Math.max(64, Math.round(Number(o.frame) || 512))
     // A power of two for the FFT: the nearest one at or above what was asked.
     this.frame = 1 << Math.ceil(Math.log2(n))
+    this.past = new Float32Array(Math.max(0, Math.min(16, Math.round(Number(o.steadyFrames) || 5) - 1)))
     this.floorMin = Number(o.floor) > 0 ? Number(o.floor) : 0.0015
     this.energyRatio = Number(o.energyRatio) > 1 ? Number(o.energyRatio) : 2.5
     this.zcrMax = Number(o.zcrMax) > 0 ? Number(o.zcrMax) : 0.35
@@ -156,7 +160,7 @@ export class VadCore {
     this.speakingLeak = Number(o.speakingLeak) >= 0 ? Number(o.speakingLeak) : 0.25
     this.quietOnset = Number(o.quietOnset) >= 1 ? Number(o.quietOnset) : 1.5
     this.echoFrames = Number(o.echoFrames) >= 0 ? Math.round(Number(o.echoFrames)) : 40
-    this.echoWait = Number(o.echoWait) >= 0 ? Math.round(Number(o.echoWait)) : 140
+    this.echoWait = Number(o.echoWait) >= 0 ? Math.round(Number(o.echoWait)) : 144
     this.echoRatio = Number(o.echoRatio) >= 1 ? Number(o.echoRatio) : 1.6
     this.echoHold = Number(o.echoHold) >= 0 ? Math.round(Number(o.echoHold)) : 140
     this.echoNear = Number(o.echoNear) >= 1 ? Number(o.echoNear) : 1.41
@@ -229,11 +233,13 @@ export class VadCore {
     // which holds while her voice keeps coming near it (a pause or a quiet stretch never lowers it under her next
     // stressed word), rises only slowly (a visitor's rising onset is never learned as hers) and falls only after a
     // long quiet.
-    const steady = Math.min(rms, this.prev1, this.prev2)
-    this.prev2 = this.prev1
-    this.prev1 = rms
+    const past = this.past
+    let steady = rms
+    for (let k = 0; k < past.length; k++) if (past[k] < steady) steady = past[k]
+    for (let k = past.length - 1; k > 0; k--) past[k] = past[k - 1]
+    if (past.length > 0) past[0] = rms
     if (this.speaking) this.speakFrames++
-    else { this.speakFrames = 0; this.echo = 0; this.heardAt = -1; this.echoQuiet = 0 }
+    else this.newLine()
     if (this.speaking && this.speakFrames <= this.echoWait && steady > this.floor * this.energyRatio) this.heardAt = this.speakFrames
     const learning = this.speaking && (this.speakFrames <= this.echoWait || (this.heardAt >= 0 && this.speakFrames - this.heardAt < this.echoFrames))
     if (learning) this.echo = Math.max(this.echo, steady)
@@ -268,6 +274,18 @@ export class VadCore {
     return { rms: this.frameRms, zcr: this.zcr, flatness: this.flatness }
   }
 
+  /**
+   * Her next line starts (the page tells it when a new line cuts the one still playing, which is no edge of
+   * `speaking`): its first echoWait frames learn her echo afresh, as at any line's start, so a voice that changed
+   * (a provider's line cut by the operating system's, which echo cancellation may not take out) is learned, not cut.
+   */
+  newLine(): void {
+    this.speakFrames = 0
+    this.echo = 0
+    this.heardAt = -1
+    this.echoQuiet = 0
+  }
+
   /** Forgets the state (the floor included): for a new stream. */
   reset(): void {
     this.speech = false
@@ -282,8 +300,7 @@ export class VadCore {
     this.speakFrames = 0
     this.heardAt = -1
     this.echoQuiet = 0
-    this.prev1 = 0
-    this.prev2 = 0
+    this.past.fill(0)
   }
 
   /** In-place radix-2 FFT (the length is a power of two: the constructor made it one). */
@@ -326,12 +343,12 @@ export const VAD_PROCESSOR = 'noir-vad'
 export interface VadMessage { rms: number; speech?: boolean; t: number }
 
 /** What the page posts to the worklet. */
-export interface VadCommand { speaking?: boolean; reset?: boolean }
+export interface VadCommand { speaking?: boolean; line?: boolean; reset?: boolean }
 
 /**
  * The AudioWorklet processor module as source text: VadCore itself (by its runtime name, which a minifier may have
  * shortened) and a processor that feeds it the input's first channel, posts a level every `every` frames and every
- * boundary at once, and takes `speaking` and `reset` from the page. Load it from a blob: URL (the page's policy admits
+ * boundary at once, and takes `speaking`, `line` (VadCore.newLine) and `reset` from the page. Load it from a blob: URL (the page's policy admits
  * blob: workers and scripts, index.html).
  */
 export function vadWorkletSource(options: Partial<VadOptions> = VAD, every = 4): string {
@@ -346,7 +363,7 @@ export function vadWorkletSource(options: Partial<VadOptions> = VAD, every = 4):
     `    super();`,
     `    this.core = new ${name}(Object.assign({}, VadOpts, (o && o.processorOptions) || {}));`,
     `    this.tick = 0;`,
-    `    this.port.onmessage = (e) => { const d = e.data || {}; if (typeof d.speaking === 'boolean') this.core.speaking = d.speaking; if (d.reset) this.core.reset(); };`,
+    `    this.port.onmessage = (e) => { const d = e.data || {}; if (typeof d.speaking === 'boolean') this.core.speaking = d.speaking; if (d.line) this.core.newLine(); if (d.reset) this.core.reset(); };`,
     `  }`,
     `  process(inputs) {`,
     `    const ch = inputs[0] && inputs[0][0];`,

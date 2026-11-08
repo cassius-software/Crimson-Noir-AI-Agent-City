@@ -310,6 +310,16 @@ export class Microphone extends EventTarget {
     this.#worklet?.port.postMessage({ speaking: this.#speaking })
   }
 
+  /**
+   * Her next line started while she speaks (speaker.ts onLine; a line that cuts the one still playing is no change of
+   * setSpeaking): the detector learns her echo afresh for it (vad.ts VadCore.newLine). Nothing while she is quiet.
+   */
+  newLine(): void {
+    if (!this.#speaking) return
+    this.#core.newLine()
+    this.#worklet?.port.postMessage({ line: true })
+  }
+
   /** A gesture: a context the browser started asleep (opened at boot, without one) wakes up. */
   resume(): void {
     const ctx = this.#ctx

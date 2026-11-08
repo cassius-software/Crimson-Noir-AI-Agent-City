@@ -33,18 +33,21 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `onSpeaking`, `speaking`), with the browser's echo cancellation and a margin in the detector against her own
   voice; the detector also learns how loud her voice comes back through the speakers over each line's first 1.5 s
   and 0.43 s past the last steady sound in them (`speaking` starts when the clip plays or the browser speaks, not
-  while a provider voice is synthesised, decoded or failing over; an operating system's voice can still start late),
-  taking the steady level (the quietest of three frames, so a click is not taken for her), then holds her loudest word
+  while a provider voice is synthesised, decoded or failing over; an operating system's voice can still start late;
+  a line that cuts the one still playing starts its own learning, `onLine`), taking the steady level (the quietest
+  of five frames, so a click or a knock of up to 32 ms is not taken for her, while one that rings on in the room is,
+  like a cough), then holds her loudest word
   through her pauses (it falls only after 1.5 s without her voice near it, and rises at most 1 % a frame) and wants a
   voice 1.6 times that for about a quarter of a second before it cuts her; with none of her coming back (headphones)
   the onset is short. Against simulated lines (syllables whose loudness swings by 3 to 4 dB, pauses between
   sentences, a start up to 1.3 s late, a room's reverberation, half of them 3 dB louder at the end) her own line
   never cut itself in 640 tries, nor in 320 more with a click or a murmur before her late voice. With nothing of her
   coming back, a visitor cut in within a second every time (80 tries at two levels down to about 17 dB over the
-  room, and 40 with a click in her first 1.5 s). Over her echo with no echo cancellation, a visitor 14 dB louder
-  than her usual words cut in within a second 31 times in 40, 12 dB louder 21 in 40, and 9.5 dB louder 5 in 40; the
-  rest later or not at all. Swings of 6 dB between syllables still cut 19 lines in 320, and her voice rising 6 dB
-  within a line 16 in 368, in the same simulation. Nobody cuts in during her line's first 1.5 s: a voice or a
+  room, 40 with a click in her first 1.5 s, and 480 with a knock of 12 to 31 ms there, wherever it fell across the
+  frames). Over her echo with no echo cancellation, a visitor 14 dB louder than her usual words cut in within a
+  second 33 times in 40, 12 dB louder 23 in 40, and 9.5 dB louder 10 in 40; the rest later or not at all. Swings of
+  6 dB between syllables still cut 23 lines in 320, and with half the lines rising 6 dB at the end instead of 3,
+  6 in 736 cut themselves, in the same simulation. Nobody cuts in during her line's first 1.5 s: a voice or a
   lasting sound there (a cough) is learned as hers, and a visitor learned that way usually cannot cut in until they
   have been quiet for a few seconds (the estimate holds 1.5 s, then halves every 1.5 s).
   Where the browser promises on-device speech recognition (`08_Swarm/recruitment.ts`) it listens while the

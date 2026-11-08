@@ -273,8 +273,8 @@ test('a visitor talking over her line in syllables barges in within a second, al
   // With none of her coming back (headphones) the onset is short, so a quieter voice (0.02 at a syllable's crest, about
   // 17 dB over the room) cuts in too, and a click in her first 1.5 s (shorter than three frames) is not learned as her
   // voice. Over her echo without echo cancellation it is a trade: the bar that never lets her own line cut itself
-  // (above) lets a visitor 12 to 14 dB over her usual words through within a second only about half the time (11 of
-  // these 24 at this tuning, 3 of 12 at 12 dB and 8 of 12 at 14 dB; the rest later or not at all, as her estimate
+  // (above) lets a visitor 12 to 14 dB over her usual words through within a second only about half the time (13 of
+  // these 24 at this tuning, 5 of 12 at 12 dB and 8 of 12 at 14 dB; the rest later or not at all, as her estimate
   // creeps up under their words).
   const results: { kind: string; ok: boolean; early: boolean }[] = []
   const headphones = (seed: number, clicked: boolean): Float32Array => clicked ? over(room(7, 0.003, seed), click(0.1, 8, seed), Math.round(0.6 * SR)) : room(7, 0.003, seed)
@@ -293,6 +293,52 @@ test('a visitor talking over her line in syllables barges in within a second, al
   const echoed = results.filter((x) => !x.kind.startsWith('0/'))
   assert.equal(echoed.length, 24)
   assert.ok(echoed.filter((x) => x.ok).length >= 10, `over her echo, many barge in within a second: ${echoed.filter((x) => x.ok).length} of 24`)
+})
+
+test('a knock or a click of up to three frames (32 ms), wherever it falls across the frames, is not learned as her voice: with headphones a visitor still cuts in within a second', () => {
+  // The fifth review's case: the steady level was the quietest of three frames, so a sound over a little more than one
+  // frame touched all three and was learned; a 22 ms tap on the desk then shut a headphones visitor out for seconds.
+  const late: string[] = []
+  for (const ms of [12, 16, 20, 24, 28, 31]) for (const shift of [0, 64, 128, 192, 256, 320, 384, 448]) {
+    const seed = 1 + ((ms + shift) % 3)
+    const n = Math.round((ms / 1000) * SR), r = noise(seed + 900), knock = new Float32Array(n)
+    for (let i = 0; i < n; i++) knock[i] = r() * 0.1 * Math.sqrt(3)
+    const c = new VadCore(VAD)
+    run(c, room(1, 0.003, seed + 50))
+    c.speaking = true
+    run(c, over(room(1.9, 0.003, seed), knock, Math.round(0.6 * SR) + shift))
+    assert.ok(c.echo < c.floor * c.energyRatio, `a ${ms} ms knock at +${shift} is not her echo: ${c.echo}`)
+    const heard = run(c, over(room(2, 0.003, seed + 1), syllables(seed + 100, { peak: 0.05, sentences: 1, pause: 0, f0: 210 }), Math.round(0.1 * SR)))
+    const first = heard.find((x) => x.speech)
+    if (first === undefined || first.at - Math.round(0.1 * SR) >= SR) late.push(`${ms} ms at +${shift}`)
+  }
+  assert.deepEqual(late, [], 'the visitor did not cut in within a second')
+})
+
+test('a line that cuts the one still playing (no edge of speaking) learns her echo afresh: a voice that changed is not cut, and nobody cuts in during its first 1.5 s', () => {
+  // The fifth review's case: the speaker keeps speaking true across a cut, so the second line used to run on the first
+  // one's count, with no learning of its own. A provider's line that echo cancellation takes out, cut by the operating
+  // system's voice that comes back, then cut itself.
+  const lines = (fresh: boolean, seed: number): { at: number; speech: boolean }[] => {
+    const c = new VadCore(VAD)
+    run(c, room(1, 0.003, seed + 50))
+    c.speaking = true
+    run(c, room(3, 0.003, seed))
+    if (fresh) c.newLine()
+    return run(c, concat(room(0.3, 0.003, seed + 60), syllables(seed, { peak: 0.05, sentences: 3, pause: 0.5, rt60: 0.4 })))
+  }
+  for (const seed of [1, 2, 3, 4]) {
+    assert.deepEqual(lines(true, seed), [], `seed ${seed}: her new voice is learned, not cut`)
+    assert.equal(lines(false, seed)[0]?.speech, true, `seed ${seed}: run on the old line's count, it cut itself`)
+  }
+  // Headphones on both lines, the visitor 0.3 s into the second: learned as her, as in any line's first 1.5 s.
+  const c = new VadCore(VAD)
+  run(c, room(1, 0.003, 51))
+  c.speaking = true
+  run(c, room(3, 0.003, 1))
+  c.newLine()
+  assert.deepEqual(run(c, over(room(1.5, 0.003, 2), syllables(101, { peak: 0.05, sentences: 1, pause: 0, f0: 210 }), Math.round(0.3 * SR))), [], 'nobody cuts in during its first 1.5 s')
+  assert.equal(c.speakFrames > 0 && c.heardAt > 0, true)
 })
 
 test('while the page is speaking, the bar is higher: a quiet voice that would start speech does not; a clear one does, after a longer onset over her echo and a shorter one with none of her coming back', () => {
@@ -387,8 +433,13 @@ test('the worklet module: VadCore by its runtime name, the processor registered 
   const levels = posted.filter((m) => typeof (m as { speech?: unknown }).speech !== 'boolean').length
   // 1.9 s is about 178 frames: a level every 4 frames is about 44 messages, far fewer than the 712 blocks.
   assert.ok(levels > 30 && levels < 60, `${levels} level messages`)
-  // The page's commands: speaking raises the bar; reset forgets.
+  // The page's commands: speaking raises the bar; a new line learns her echo afresh; reset forgets.
   p.port.onmessage?.({ data: { speaking: true } })
+  const core = (p as unknown as { core: VadCore }).core
+  for (let i = 0; i < 20; i++) p.process([[room(0.003, 0.003, 70 + i).subarray(0, 128)]])
+  assert.ok(core.speaking && core.speakFrames > 0, 'speaking: her line\'s frames count')
+  p.port.onmessage?.({ data: { line: true } })
+  assert.deepEqual([core.speaking, core.speakFrames, core.echo, core.heardAt], [true, 0, 0, -1], 'a new line starts its count again')
   p.port.onmessage?.({ data: { reset: true } })
   assert.equal(p.process([[]]), true, 'no channel: nothing happens, the processor stays')
   assert.equal(p.process([]), true)

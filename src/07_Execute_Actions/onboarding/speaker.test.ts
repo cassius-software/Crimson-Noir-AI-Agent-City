@@ -312,6 +312,31 @@ test('speaking: on from the first sound of a line to its end, once across a cut 
   assert.deepEqual(told, [true, false, true, false, true, false], 'untold after the way to stop is taken')
 })
 
+test('onLine: told at each line\'s first sound, a line that cuts the one still playing included (no edge of speaking there), and a preview\'s; not for a silent line', async () => {
+  const f = fakeSynth()
+  const sp = new ConciergeSpeaker({ env: f.env, sound: () => true, store: memoryStore() })
+  const heard: string[] = []
+  sp.onSpeaking((on) => { heard.push(on ? 'on' : 'off') })
+  const stop = sp.onLine(() => { heard.push('line') })
+  const p1 = sp.speak('One.')
+  assert.deepEqual(heard, ['on', 'line'], 'the edge first, then the line')
+  const p2 = sp.speak('Two.')
+  await p1
+  assert.deepEqual(heard, ['on', 'line', 'line'], 'the cut: a new line, no new edge')
+  f.end()
+  await p2
+  assert.equal(await sp.speak('  '), 'silent')
+  const pv = sp.preview('As Nova.', 'even')
+  f.end()
+  await pv
+  assert.deepEqual(heard, ['on', 'line', 'line', 'off', 'on', 'line', 'off'])
+  stop()
+  const p3 = sp.speak('Three.')
+  f.end()
+  await p3
+  assert.deepEqual(heard.slice(-2), ['on', 'off'], 'untold after the way to stop is taken')
+})
+
 test('speaking starts at the first sound, not when the line is asked for: a provider line while it is synthesised and decoded is not yet speech; one that fails over to the browser starts when the browser speaks', async () => {
   const f = fakeSynth()
   const p = fakeProvider()

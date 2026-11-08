@@ -71,7 +71,8 @@ test('the HUD\'s pill: a button named by the device\'s state, fed every snapshot
 })
 
 test('Sloane and the microphone: her voice is told to the detector, a barge-in cuts her line, the recogniser\'s words reach her; the device is released with the city', () => {
-  assert.match(APP, /const untell = speaker\.onSpeaking\(\(on\) => mic\.setSpeaking\(on\)\)\n\s+const barge = \(\) => speaker\.stop\(\)\n\s+mic\.addEventListener\('barge', barge\)/)
+  assert.match(APP, /const untell = speaker\.onSpeaking\(\(on\) => mic\.setSpeaking\(on\)\)\n\s+const unline = speaker\.onLine\(\(\) => mic\.newLine\(\)\)\n\s+const barge = \(\) => speaker\.stop\(\)\n\s+mic\.addEventListener\('barge', barge\)/, 'a line that cuts the one still playing is learned afresh (no edge of speaking there)')
+  assert.match(APP, /untell\(\)\n\s+unline\(\)\n\s+mic\.setSpeaking\(false\)/)
   assert.match(APP, /if \(!heardNow\(speaker\.speaking, performance\.now\(\), quietAt\)\) return\n\s+if \(parseRequest\(t\) === null\) setHeard\(\{ id: \+\+heardId, text: t \}\)/, 'nothing while Sloane speaks or just after (her own line back through the speakers); a recruitment request is the recruiter\'s; the rest is Sloane\'s')
   assert.match(APP, /const unquiet = speaker\.onSpeaking\(\(on\) => \{ if \(!on && !mic\.speech\) quietAt = performance\.now\(\) \}\)/, 'a line cut by a barge-in leaves no quiet tail: the words after it are the visitor\'s')
   assert.match(APP, /r\.removeEventListener\('heard', onHeard\)\n\s+unquiet\(\)/, 'and let go with the city')

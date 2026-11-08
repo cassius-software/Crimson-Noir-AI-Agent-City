@@ -195,6 +195,40 @@ test('a control that cannot take the focus never hands the round back to the fie
   t.stop()
 })
 
+test('the switch presses a control that cannot take the focus, though the browser sends the key to the field the focus stayed on', () => {
+  // The fifth review's case: the round offers the stuck control, the focus stays on the field before it, and the switch
+  // (Space) goes to that field. It used to take the field (a space typed in it, the round held there for SCAN.hold
+  // offers) and the stuck control could never be pressed.
+  const a = new El('a'), field = new El('field', true), stuck = new El('stuck', false, false), b = new El('b')
+  const p = page([a, field, stuck, b])
+  const s = new Scanner(p.env, 1000)
+  s.start()
+  p.tick()
+  p.tick()
+  assert.deepEqual([s.current, page0.focused], [stuck, field], 'stuck offered, the focus still on the field')
+  const press = p.key(SCAN.key, field as unknown as EventTarget)
+  assert.deepEqual([stuck.clicks, press.prevented, press.stopped, s.current], [1, true, true, stuck], 'pressed, and no space typed in the field')
+  const again = p.key(SCAN.key, field as unknown as EventTarget)
+  assert.deepEqual([stuck.clicks, again.prevented], [2, true], 'every press presses it')
+  // Any other key there is typed in the field, which then holds the round as before.
+  const letter = p.key('KeyA', field as unknown as EventTarget)
+  assert.deepEqual([letter.prevented, s.current], [false, field], 'a letter is the field\'s, and the field is the one offered')
+  const space = p.key(SCAN.key, field as unknown as EventTarget)
+  assert.deepEqual([space.prevented, stuck.clicks], [false, 2], 'once typed in, its spaces are spaces')
+  s.stop()
+  // A field the visitor focused since the round looked (a tap, the dwell) is not the stayed-on one: its space is a space.
+  const c = new El('c'), stuck2 = new El('stuck', false, false), other = new El('other', true)
+  const q = page([c, stuck2])
+  const t = new Scanner(q.env, 1000)
+  t.start()
+  q.tick()
+  assert.equal(t.current, stuck2)
+  other.focus()
+  const typed = q.key(SCAN.key, other as unknown as EventTarget)
+  assert.deepEqual([typed.prevented, stuck2.clicks, t.current], [false, 0, other], 'a field focused by another hand takes its own space')
+  t.stop()
+})
+
 test('a field the round merely offers is not taken: with no key it is passed like any control', () => {
   const a = new El('a'), field = new El('field', true), b = new El('b')
   const p = page([a, field, b])

@@ -666,14 +666,17 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
   useEffect(() => { engine?.input.setHand(access.pad) }, [engine, access.pad])
   // The screen reader's lines (announcer.ts), one per shell: it keeps what it has said.
   const [announcer] = useState(() => new Announcer())
-  // Sloane's voice and the microphone: the detector allows for the page's own voice (the pill reads Speaking), and
-  // speech starting while Sloane speaks cuts the line (barge-in).
+  // Sloane's voice and the microphone: the detector allows for the page's own voice (the pill reads Speaking) and learns
+  // her echo at each line's start, a line that cuts the one still playing included; speech starting while Sloane
+  // speaks cuts the line (barge-in).
   useEffect(() => {
     const untell = speaker.onSpeaking((on) => mic.setSpeaking(on))
+    const unline = speaker.onLine(() => mic.newLine())
     const barge = () => speaker.stop()
     mic.addEventListener('barge', barge)
     return () => {
       untell()
+      unline()
       mic.setSpeaking(false)
       mic.removeEventListener('barge', barge)
     }

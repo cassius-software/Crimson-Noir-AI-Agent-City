@@ -170,6 +170,8 @@ export class ConciergeSpeaker {
   #aloud = 0
   /** Told as Sloane starts (true) and stops (false) speaking aloud, once per change (onSpeaking). */
   readonly #ears = new Set<(on: boolean) => void>()
+  /** Told at each line's first sound, a line that cuts the one still playing included (onLine). */
+  readonly #lines = new Set<() => void>()
 
   constructor(o: SpeakerOptions) {
     this.#env = o.env
@@ -191,6 +193,16 @@ export class ConciergeSpeaker {
   onSpeaking(fn: (on: boolean) => void): () => void {
     this.#ears.add(fn)
     return () => { this.#ears.delete(fn) }
+  }
+
+  /**
+   * Tells `fn` at each line's first sound, after onSpeaking's edge when there is one. A line that cuts the one still
+   * playing is no edge (speaking stays true across the cut), so this is how the microphone learns her echo afresh for
+   * it (App wires it to 04_Connect_Hardware/microphone.ts newLine). Returns the way to stop.
+   */
+  onLine(fn: () => void): () => void {
+    this.#lines.add(fn)
+    return () => { this.#lines.delete(fn) }
   }
 
   setOn(on: boolean): boolean {
@@ -293,6 +305,7 @@ export class ConciergeSpeaker {
       if (sounding) return
       sounding = true
       if (++this.#aloud === 1) this.#tell(true)
+      for (const fn of this.#lines) { try { fn() } catch { /* a listener's fault is not the line's */ } }
     }
     try {
       return await run(onAir)

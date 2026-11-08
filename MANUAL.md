@@ -595,9 +595,10 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   her line (barge-in), and the browser's echo cancellation plus a margin in the detector keep Sloane's own voice from
   counting as yours; the detector also learns how loud her voice comes back through the speakers in the first moments
   of each line (its first 1.5 s, counted from when her voice is played or spoken, not while a provider voice is still
-  being made), holds her loudest word through her pauses, and wants your voice about 1.6 times that for a quarter of
-  a second before it cuts her. Nobody cuts in during her line's first 1.5 s: a voice there is taken for hers, and
-  then it takes a few seconds of quiet before that voice can cut in. With headphones, talking over her works after
+  being made, and afresh for a line that cuts the one before), holds her loudest word through her pauses, and wants
+  your voice about 1.6 times that for a quarter of a second before it cuts her. A click or a knock there is not taken
+  for her if it is over within about 30 ms; one that rings on in the room is. Nobody cuts in during her line's first
+  1.5 s: a voice there is taken for hers, and then it takes a few seconds of quiet before that voice can cut in. With headphones, talking over her works after
   that; through speakers whose sound the browser does not cancel, you need to be clearly louder than her and may need
   to keep talking. A line whose loudness swings widely can still cut itself. Where the browser promises on-device speech recognition (see Recruitment), it runs while the
   microphone is open and the pill adds **words on-device**: a skill asked for is the recruiter's, and a line that names

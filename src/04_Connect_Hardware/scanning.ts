@@ -65,7 +65,8 @@ export class Scanner {
   private idle = 0
   /** What had the focus when the round last looked (after its own focus move too): only a field the focus moved to
    *  since is taken as typed in, so a control that cannot take the focus never hands the round back to the field
-   *  before it. */
+   *  before it, neither on the next offer nor when the switch is pressed (the browser sends that key to the field the
+   *  focus stayed on, and it presses the control offered). */
   private seen: unknown = null
 
   constructor(env: ScanEnv, ms: number = SCAN.ms, key: string = SCAN.key) {
@@ -131,8 +132,11 @@ export class Scanner {
 
   private onKey(e: ScanKey): void {
     // A key typed in a field is the field's: one the round did not offer, one already taken, or any key but the switch
-    // in the one offered. It holds the round there. The switch on a field merely offered takes it (select).
-    if (isEditableTarget(e.target) && (e.target !== this.now || e.target === this.held || e.code !== this.key)) { this.typing(e.target); return }
+    // in the one offered. It holds the round there. The switch on a field merely offered takes it (select). The switch
+    // in a field the focus only stayed on (the control offered now could not take it, and nothing moved it since) is
+    // the switch: it presses the control offered, and types nothing.
+    const stayed = e.code === this.key && this.now !== null && e.target === this.seen && e.target !== this.held
+    if (!stayed && isEditableTarget(e.target) && (e.target !== this.now || e.target === this.held || e.code !== this.key)) { this.typing(e.target); return }
     if (e.code !== this.key) return
     e.preventDefault()
     e.stopImmediatePropagation()
