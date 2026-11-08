@@ -94,7 +94,7 @@ export const LOOK_SLOTS = [
   'body', ...LOOK_BODY_SLIDERS, ...LOOK_FACE_SLIDERS,
   'skin', 'age', 'undertone', 'vitiligo', 'freckles', 'hairStyle', 'curl', 'hairColour', 'headwear', 'headwearColour',
   'facialHair', 'hearing', 'prosthetic', 'prostheticFinish',
-  'layer', 'top', 'topWeave', 'trim', 'bottom', 'bottomWeave', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
+  'layer', 'cut', 'top', 'topWeave', 'trim', 'bottom', 'bottomWeave', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
 ] as const
 export type LookSlot = (typeof LOOK_SLOTS)[number]
 export type Look = Readonly<Record<LookSlot, number>>
@@ -106,7 +106,7 @@ export type Look = Readonly<Record<LookSlot, number>>
  */
 export const LOOK_GENOME_SLOTS = [
   'vitiligo', 'freckles', 'curl', 'headwear', 'headwearColour', 'facialHair', 'hearing', 'prosthetic', 'prostheticFinish',
-  'topWeave', 'bottomWeave',
+  'topWeave', 'bottomWeave', 'cut',
 ] as const satisfies readonly LookSlot[]
 
 /** The slots a look had before the genome's later words (the thirty-two of the four words): every one is required. */
@@ -276,6 +276,34 @@ export const WEAVE_STREET: readonly (readonly number[])[] = Object.freeze([
   Object.freeze([WEAVE.silk, WEAVE.cashmere, WEAVE.linen, WEAVE.merino, WEAVE.houndstooth, WEAVE.tweed, WEAVE.batik, WEAVE.stripWeave]),
 ])
 export const WEAVE_STREET_PACKED: readonly number[] = Object.freeze(WEAVE_STREET.map((list) => list.reduce((w, k, i) => (w | (k << (4 * i))) >>> 0, 0)))
+/**
+ * The outer layer's cut (WARDROBE.cut), painted by crowd.ts over the jacket's or the coat's cloth from the rest
+ * position: the notch lapel every jacket wore before (0, so a stored look is cut as it was); the peak lapel, widening
+ * to the shoulder; the shawl collar, one rounded lapel faced in satin; double-breasted, closing higher over two rows
+ * of buttons; a band collar, closed to the neck without lapels; a turtleneck under the open jacket, up the neck; a
+ * waistcoat, the sleeves the shirt's; a cardigan's knit, ribbed and buttoned; the front open to the hem; belted at the
+ * waist; cropped at the waist, the shirt below; a wrap front, closing on a slant; a zip front; a side closure, from
+ * the collar to the side; quilted in diamonds; and patch pockets. Each is named for the cut, never for a people's
+ * dress. Under shirt sleeves the jacket is off, and the cut is not seen.
+ */
+export const CUT = Object.freeze({
+  notch: 0, peak: 1, shawl: 2, doubleBreasted: 3, band: 4, turtleneck: 5, waistcoat: 6, cardigan: 7,
+  open: 8, belted: 9, cropped: 10, wrap: 11, zip: 12, side: 13, quilted: 14, pockets: 15,
+})
+/**
+ * The cuts the hashed crowd wears (above LOOK_ODDS.cut, one of eight per body, LOOK_HASHED_COLOUR cutPick): the
+ * tailor's cuts for the suit, the softer ones for the smart-casual blazer, the pantsuit's cropped and belted jackets,
+ * the skirt suit's wrap fronts and knits. Packed four bits each for crowd.ts (CUT_STREET_PACKED).
+ */
+export const CUT_STREET: readonly (readonly number[])[] = Object.freeze([
+  Object.freeze([CUT.peak, CUT.doubleBreasted, CUT.waistcoat, CUT.turtleneck, CUT.pockets, CUT.band, CUT.open, CUT.shawl]),
+  Object.freeze([CUT.pockets, CUT.open, CUT.cardigan, CUT.turtleneck, CUT.quilted, CUT.zip, CUT.waistcoat, CUT.band]),
+  Object.freeze([CUT.cropped, CUT.belted, CUT.open, CUT.band, CUT.peak, CUT.doubleBreasted, CUT.wrap, CUT.turtleneck]),
+  Object.freeze([CUT.wrap, CUT.cropped, CUT.cardigan, CUT.belted, CUT.side, CUT.band, CUT.turtleneck, CUT.open]),
+])
+/** The cuts a tie is not worn with on the outer layer (the mask drops it): a turtleneck, and the jackets closed to the neck. */
+export const TIELESS_CUTS: readonly number[] = Object.freeze([CUT.band, CUT.turtleneck, CUT.zip, CUT.side, CUT.quilted])
+export const CUT_STREET_PACKED: readonly number[] = Object.freeze(CUT_STREET.map((list) => list.reduce((w, k, i) => (w | (k << (4 * i))) >>> 0, 0)))
 /** The hair pieces a crown cover leaves showing below it: the length, the bob's sides, a tail. */
 const BELOW_CROWN: ReadonlySet<string> = new Set(['longHair', 'bob', 'ponytail'])
 
@@ -318,6 +346,10 @@ export const WARDROBE = Object.freeze({
     'tartan', 'tweed', 'linen', 'silk', 'cashmere', 'merino', 'batik', 'strip weave',
   ]),
   layer: Object.freeze(['jacket', 'shirt sleeves', 'coat']),
+  cut: Object.freeze([
+    'notch lapel', 'peak lapel', 'shawl collar', 'double-breasted', 'band collar', 'turtleneck', 'waistcoat', 'cardigan',
+    'open front', 'belted', 'cropped', 'wrap front', 'zip front', 'side closure', 'quilted', 'patch pockets',
+  ]),
   tie: Object.freeze(['none', 'tie']),
   eyewear: Object.freeze(['none', 'glasses']),
   bag: Object.freeze(['none', 'bag']),
@@ -350,8 +382,8 @@ export const LONG_HAIR_BIT = 2 + LOOK_PIECE_BIT.longHair
  * (0 is matching, or none); bits 8 to 31 are spare. Word 4 is the skin word: the skin's high bits (LOOK_FIELD_HIGH:
  * a Monk tone is option 8 and up, past the look word's three bits), vitiligo at three bits and freckles at two, the hair
  * style's high bits, the curl, the headwear and its cloth, the facial hair, the hearing devices, a prosthetic limb and
- * its finish; bits 30 and 31 are spare. Word 5 is the cloth word: the top's weave and the bottom's at four bits each;
- * bits 8 to 31 are spare, and so are words 6 to 15 (LOOK_WORDS), which unpackGenome requires to be zero. Every width is
+ * its finish; bits 30 and 31 are spare. Word 5 is the cloth word: the top's weave and the bottom's at four bits each,
+ * then the outer layer's cut at four; bits 12 to 31 are spare, and so are words 6 to 15 (LOOK_WORDS), which unpackGenome requires to be zero. Every width is
  * pinned to hold its slot's largest option count (with its high bits, for a slot that has them).
  */
 export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [word: number, shift: number, width: number]>> = Object.freeze({
@@ -398,6 +430,7 @@ export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [word: number, shift
   prostheticFinish: [4, 28, 2],
   topWeave: [5, 0, 4],
   bottomWeave: [5, 4, 4],
+  cut: [5, 8, 4],
 })
 
 /**
@@ -460,9 +493,10 @@ export const LOOK_HASHED_HEARING = 26
  * the skin has vitiligo (above LOOK_ODDS.vitiligo) and its pattern, freckles (above LOOK_ODDS.freckles) and how many;
  * `marks` and the two links after it, where on a person the patches and freckles fall (crowd.ts, not a slot); the
  * headwear's cloth, the curl pattern, facial hair and its style, a prosthetic limb, which and its finish; whether the
- * top is woven with a pattern (above LOOK_ODDS.weave) and which of the body's WEAVE_STREET.
+ * top is woven with a pattern (above LOOK_ODDS.weave) and which of the body's WEAVE_STREET; whether the outer layer
+ * has a cut of its own (above LOOK_ODDS.cut) and which of the body's CUT_STREET.
  */
-export const LOOK_HASHED_COLOUR = Object.freeze({ age: 7, undertone: 8, iris: 13, trim: 14, scarfCloth: 15, trimCloth: 16, vitiligo: 17, vitiligoPattern: 18, freckles: 19, frecklesDensity: 20, marks: 21, headwearCloth: 24, curl: 25, facialHair: 26, facialHairStyle: 31, prosthetic: 28, prostheticLimb: 29, prostheticFinish: 30, weave: 32, weavePick: 33 })
+export const LOOK_HASHED_COLOUR = Object.freeze({ age: 7, undertone: 8, iris: 13, trim: 14, scarfCloth: 15, trimCloth: 16, vitiligo: 17, vitiligoPattern: 18, freckles: 19, frecklesDensity: 20, marks: 21, headwearCloth: 24, curl: 25, facialHair: 26, facialHairStyle: 31, prosthetic: 28, prostheticLimb: 29, prostheticFinish: 30, weave: 32, weavePick: 33, cut: 34, cutPick: 35 })
 
 const isBody = (v: unknown): v is LookBody => v === 0 || v === 1 || v === 2 || v === 3
 const womanBody = (body: LookBody): boolean => body >= 2
@@ -518,6 +552,7 @@ export function lookOptions(body: LookBody, slot: LookSlot, layer: number = LAYE
     case 'bottomWeave': return [{ name: outfit.matching ? 'matching' : 'plain', hex: null }, ...named(WARDROBE.weave.slice(1))]
     case 'hairColour': return [...swatches(LOOK_PALETTE.hair), { name: 'grey', hex: GREY_HAIR }]
     case 'layer': return named(WARDROBE.layer)
+    case 'cut': return named(WARDROBE.cut)
     // The layer owns the top's dye: a coat draws from the coats, as many as the body's own jacket palette holds (the slot's width is the jacket's).
     case 'top': return layer === LAYER.coat ? swatches(LOOK_PALETTE.coats).slice(0, LOOK_PALETTE[outfit.top].length) : swatches(LOOK_PALETTE[outfit.top])
     case 'trim': return [{ name: 'matching', hex: null }, ...swatches(LOOK_PALETTE.trims)]
@@ -899,12 +934,17 @@ export const wardrobeBits = (wardrobe: number): number =>
  * The crowd's per-person piece mask for a packed look word, face word and wardrobe word, as the eye pass tests it
  * (tie at bit 1 … glasses at bit 5 from the look word; the hair bits from the face word's style; the coat and the
  * scarf from the wardrobe word; the face bit 9 always), 0 for LOOK_NONE. The shadow pass's mask is this without bit 9.
+ * The skin word adds its pieces (genomeBits), and the cloth word's cut drops the tie where it is not worn (TIELESS_CUTS,
+ * on a jacket or a coat).
  */
-export const lookMask = (word: number, face: number, wardrobe: number, skinWord = 0, near = true): number => {
+export const lookMask = (word: number, face: number, wardrobe: number, skinWord = 0, near = true, clothWord = 0): number => {
   if ((word & 1) === 0) return 0
   const style = ((face >>> LOOK_FIELD.hairStyle[1]) & 7) | (((skinWord >>> LOOK_FIELD_HIGH.hairStyle![1]) & 3) << 3)
   const headwear = (skinWord >>> LOOK_FIELD.headwear[1]) & 7
-  return (((word >>> 2) & 46) | hairBits(style, headwear, near) | wardrobeBits(wardrobe) | (1 << LOOK_PIECE_BIT.face) | genomeBits(skinWord, near)) >>> 0
+  const cut = (clothWord >>> LOOK_FIELD.cut[1]) & 15
+  const tieless = ((wardrobe >>> LOOK_FIELD.layer[1]) & 3) !== LAYER.shirt && TIELESS_CUTS.includes(cut)
+  const pieces = ((word >>> 2) & 46) & ~(tieless ? 1 << LOOK_PIECE_BIT.tie : 0)
+  return (pieces | hairBits(style, headwear, near) | wardrobeBits(wardrobe) | (1 << LOOK_PIECE_BIT.face) | genomeBits(skinWord, near)) >>> 0
 }
 
 /**
@@ -919,7 +959,7 @@ export const genomeBits = (skinWord: number, near = true): number => {
 /** Whether a look wears a piece (humanoid.ts PIECE) on the near body: the card's picture and the crowd's mask agree on it. */
 export function lookWears(look: Look, piece: number): boolean {
   const g = packGenome(look)
-  return piece === 0 || ((lookMask(g[0], g[2], g[3], g[4]) >>> piece) & 1) === 1
+  return piece === 0 || ((lookMask(g[0], g[2], g[3], g[4], true, g[5]) >>> piece) & 1) === 1
 }
 
 // --- The hash path, reproduced ---------------------------------------------------------------------------------
@@ -943,7 +983,7 @@ export const LOOK_HASH = Object.freeze({ pieces: 13.37, colours: 7.919 })
  * long, under `bun` a bob, else a bun; a man's split link at or above `bald` is bald, else long. Two people in a
  * hundred have vitiligo (`vitiligo`), about one in six freckles (`freckles`), whatever their tone.
  */
-export const LOOK_ODDS = Object.freeze({ tie: 0.3, bagMan: 0.7, bagWoman: 0.62, cup: 0.82, longHair: 0.35, glasses: 0.78, grey: 0.9, darkTrousers: 0.6, bob: 0.34, bun: 0.67, bald: 0.96, shirtSleeves: 0.2, coat: 0.85, scarf: 0.88, trim: 0.8, vitiligo: 0.98, freckles: 0.84, hijab: 0.95, headWrap: 0.93, turban: 0.975, kippah: 0.965, flatCap: 0.95, facialHair: 0.55, aids: 0.975, implant: 0.993, prosthetic: 0.99, weave: 0.6 })
+export const LOOK_ODDS = Object.freeze({ tie: 0.3, bagMan: 0.7, bagWoman: 0.62, cup: 0.82, longHair: 0.35, glasses: 0.78, grey: 0.9, darkTrousers: 0.6, bob: 0.34, bun: 0.67, bald: 0.96, shirtSleeves: 0.2, coat: 0.85, scarf: 0.88, trim: 0.8, vitiligo: 0.98, freckles: 0.84, hijab: 0.95, headWrap: 0.93, turban: 0.975, kippah: 0.965, flatCap: 0.95, facialHair: 0.55, aids: 0.975, implant: 0.993, prosthetic: 0.99, weave: 0.6, cut: 0.7 })
 
 const pickIndex = (h: number, length: number): number => Math.min(u32(f32(h * f32(length - 0.001))), length - 1)
 const above = (h: number, edge: number): number => (h >= f32(edge) ? 1 : 0)
@@ -1021,6 +1061,8 @@ export function lookFromSeed(seed: number): Look {
     // `matching` (the top's weave on a matching suit's, plain on the rest).
     topWeave: above(hc(LOOK_HASHED_COLOUR.weave), LOOK_ODDS.weave) ? WEAVE_STREET[body][pickIndex(hc(LOOK_HASHED_COLOUR.weavePick), WEAVE_STREET[body].length)] : 0,
     bottomWeave: 0,
+    // Three outer layers in ten are cut otherwise than the notch lapel, one of the body's eight (CUT_STREET).
+    cut: above(hc(LOOK_HASHED_COLOUR.cut), LOOK_ODDS.cut) ? CUT_STREET[body][pickIndex(hc(LOOK_HASHED_COLOUR.cutPick), CUT_STREET[body].length)] : 0,
     hairColour: grey ? LOOK_PALETTE.hair.length : pickIndex(hc(2), LOOK_PALETTE.hair.length),
     layer,
     top: pickIndex(hc(3), topSize),
@@ -1317,6 +1359,91 @@ export function parseLookCode(text: string): Look | null {
 
 // --- The console's view -----------------------------------------------------------------------------------------
 
+/** What a garment sets: the outer layer, its cut and its weave, and for the evening jackets the trim of their facings. */
+export interface LookGarment {
+  readonly name: string
+  readonly layer: number
+  readonly cut: number
+  readonly topWeave: number
+  /** The trim option the garment sets, or null to keep the look's. */
+  readonly trim: number | null
+}
+
+/**
+ * The catalogue's tops: forty-four garments of the outer layer (suit jackets, blazers, evening jackets, band-collar
+ * and side-closure jackets, waistcoats, cardigans, cropped, belted, wrap, quilted and zip-front jackets, and coats),
+ * each a layer, a cut (CUT) and a weave (WEAVE), named by what it is, never by a people's dress. A garment keeps the
+ * look's colours (the `top` slot dyes it, from the coats under a coat), so each comes in every colour the body's
+ * palette holds; its sleeves, trousers and everything else stay the look's. Like a build, a garment is a starting
+ * point, not a slot: a cut or a weave changed after it is the person's own. The shawl-collar jackets' facings are
+ * the darkest trim.
+ */
+export const LOOK_GARMENTS: readonly LookGarment[] = Object.freeze(([
+  ['pinstripe suit jacket', LAYER.jacket, CUT.notch, WEAVE.pinstripe],
+  ['chalk stripe suit jacket', LAYER.jacket, CUT.notch, WEAVE.chalkStripe],
+  ['peak-lapel suit jacket', LAYER.jacket, CUT.peak, WEAVE.twill],
+  ['peak-lapel pinstripe jacket', LAYER.jacket, CUT.peak, WEAVE.pinstripe],
+  ['double-breasted suit jacket', LAYER.jacket, CUT.doubleBreasted, WEAVE.plain],
+  ['double-breasted chalk stripe jacket', LAYER.jacket, CUT.doubleBreasted, WEAVE.chalkStripe],
+  ['double-breasted glen check jacket', LAYER.jacket, CUT.doubleBreasted, WEAVE.glenCheck],
+  ['shawl-collar dinner jacket', LAYER.jacket, CUT.shawl, WEAVE.merino, 1],
+  ['silk evening jacket', LAYER.jacket, CUT.shawl, WEAVE.silk, 1],
+  ['herringbone blazer', LAYER.jacket, CUT.notch, WEAVE.herringbone],
+  ['houndstooth blazer', LAYER.jacket, CUT.notch, WEAVE.houndstooth],
+  ['windowpane blazer', LAYER.jacket, CUT.notch, WEAVE.windowpane],
+  ['cashmere blazer', LAYER.jacket, CUT.notch, WEAVE.cashmere],
+  ['strip-weave blazer', LAYER.jacket, CUT.notch, WEAVE.stripWeave],
+  ['tweed blazer', LAYER.jacket, CUT.pockets, WEAVE.tweed],
+  ['linen blazer', LAYER.jacket, CUT.pockets, WEAVE.linen],
+  ['unbuttoned blazer', LAYER.jacket, CUT.open, WEAVE.plain],
+  ['unbuttoned linen blazer', LAYER.jacket, CUT.open, WEAVE.linen],
+  ['band-collar jacket', LAYER.jacket, CUT.band, WEAVE.plain],
+  ['band-collar silk jacket', LAYER.jacket, CUT.band, WEAVE.silk],
+  ['band-collar batik jacket', LAYER.jacket, CUT.band, WEAVE.batik],
+  ['side-closure jacket', LAYER.jacket, CUT.side, WEAVE.plain],
+  ['side-closure silk jacket', LAYER.jacket, CUT.side, WEAVE.silk],
+  ['turtleneck and blazer', LAYER.jacket, CUT.turtleneck, WEAVE.plain],
+  ['turtleneck and tweed jacket', LAYER.jacket, CUT.turtleneck, WEAVE.tweed],
+  ['waistcoat', LAYER.jacket, CUT.waistcoat, WEAVE.plain],
+  ['pinstripe waistcoat', LAYER.jacket, CUT.waistcoat, WEAVE.pinstripe],
+  ['tweed waistcoat', LAYER.jacket, CUT.waistcoat, WEAVE.tweed],
+  ['cashmere cardigan', LAYER.jacket, CUT.cardigan, WEAVE.cashmere],
+  ['merino cardigan', LAYER.jacket, CUT.cardigan, WEAVE.merino],
+  ['cropped jacket', LAYER.jacket, CUT.cropped, WEAVE.plain],
+  ['cropped houndstooth jacket', LAYER.jacket, CUT.cropped, WEAVE.houndstooth],
+  ['belted jacket', LAYER.jacket, CUT.belted, WEAVE.twill],
+  ['wrap jacket', LAYER.jacket, CUT.wrap, WEAVE.plain],
+  ['silk wrap jacket', LAYER.jacket, CUT.wrap, WEAVE.silk],
+  ['quilted jacket', LAYER.jacket, CUT.quilted, WEAVE.plain],
+  ['zip-front jacket', LAYER.jacket, CUT.zip, WEAVE.twill],
+  ['belted trench coat', LAYER.coat, CUT.belted, WEAVE.twill],
+  ['double-breasted overcoat', LAYER.coat, CUT.doubleBreasted, WEAVE.plain],
+  ['herringbone overcoat', LAYER.coat, CUT.notch, WEAVE.herringbone],
+  ['check overcoat', LAYER.coat, CUT.notch, WEAVE.tartan],
+  ['band-collar long coat', LAYER.coat, CUT.band, WEAVE.plain],
+  ['wrap coat', LAYER.coat, CUT.wrap, WEAVE.cashmere],
+  ['quilted coat', LAYER.coat, CUT.quilted, WEAVE.plain],
+] as const).map(([name, layer, cut, topWeave, trim]: readonly [string, number, number, number, number?]) =>
+  Object.freeze({ name, layer, cut, topWeave, trim: trim ?? null })))
+
+/** The garment of that name (case and surrounding space ignored), or null. */
+export function lookGarment(name: string): LookGarment | null {
+  const key = name.trim().toLowerCase()
+  return LOOK_GARMENTS.find((g) => g.name === key) ?? null
+}
+
+/** The look in a garment (its layer, cut, weave and any trim set; everything else as it was), or null for no such garment or a look outside the wardrobe. */
+export function withGarment(look: Look, name: string): Look | null {
+  const g = lookGarment(name)
+  if (g === null || validateLook(look) === null) return null
+  return validateLook({ ...look, layer: g.layer, cut: g.cut, topWeave: g.topWeave, ...(g.trim === null ? {} : { trim: g.trim }) })
+}
+
+/** The garment a look wears exactly (its layer, cut, weave and any trim it sets), or null when it wears none of them. */
+export function garmentOf(look: Look): LookGarment | null {
+  return LOOK_GARMENTS.find((g) => look.layer === g.layer && look.cut === g.cut && look.topWeave === g.topWeave && (g.trim === null || look.trim === g.trim)) ?? null
+}
+
 /** The column the console's view of a look starts its values at: one past the longest slot name. */
 const SHOW_WIDTH = Math.max(...LOOK_SLOTS.map((slot) => slot.length)) + 1
 
@@ -1341,13 +1468,15 @@ export function describeLook(look: Look): string[] {
 /**
  * One change to a look, as the console's `look` command asks it (terminal/bridge.ts LookBridge): a slot set to an
  * option (its 1-based number as describeLook prints it, or its name), a preset by name, a build by name (LOOK_BUILDS:
- * its four body sliders), a look code, a look drawn from a seed, or the seed's own look again.
+ * its four body sliders), a face shape by name (LOOK_FACE_SHAPES), a garment by name (LOOK_GARMENTS: the outer layer,
+ * its cut and its weave), a look code, a look drawn from a seed, or the seed's own look again.
  */
 export type LookChange =
   | { readonly kind: 'slot'; readonly slot: string; readonly value: string }
   | { readonly kind: 'preset'; readonly name: string }
   | { readonly kind: 'build'; readonly name: string }
   | { readonly kind: 'face'; readonly name: string }
+  | { readonly kind: 'garment'; readonly name: string }
   | { readonly kind: 'code'; readonly code: string }
   | { readonly kind: 'random'; readonly seed: number }
   | { readonly kind: 'reset' }
@@ -1377,6 +1506,10 @@ export function changeLook(look: Look, change: LookChange, seed: number): LookCh
     case 'face': {
       const next = withFaceShape(look, change.name)
       return next ? { look: next, error: null } : refused(`no face shape named '${change.name}': ${LOOK_FACE_SHAPES.map((f) => f.name).join(', ')}`)
+    }
+    case 'garment': {
+      const next = withGarment(look, change.name)
+      return next ? { look: next, error: null } : refused(`no garment named '${change.name}': ${LOOK_GARMENTS.map((g) => g.name).join(', ')}`)
     }
     case 'preset': {
       const p = lookPreset(change.name)

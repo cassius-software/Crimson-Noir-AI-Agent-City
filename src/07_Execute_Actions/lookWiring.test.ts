@@ -115,7 +115,9 @@ test('crowd.ts: the words override the hashed mask, figure, face and wardrobe in
   assert.match(posed, /const wardrobe = select\(custom, wardrobeWord, hashedWardrobe\)/, 'the wardrobe word worn: the look\'s or the hash\'s')
   assert.match(posed, /vWardrobe\.assign\(float\(wardrobe\.bitAnd\(uint\(0xff\)\)\.bitOr\(select\(custom, texture, uint\(0\)\)\.shiftLeft\(uint\(8\)\)\)\.bitOr\(headwear\.shiftLeft\(uint\(8 \+ HAIR_TEXTURE_BITS\)\)\)\)\)/, 'to the fragment stage, its low byte, the hair\'s paint and the headwear')
   // The style's five bits and the headwear: the skin word (the person's second quad) holds the high bits and the headwear.
-  assert.match(posed, /const skinWord = b\.figure\.element\(agentIndex\.mul\(uint\(FIGURE_QUADS\)\)\.add\(uint\(1\)\)\)\.x/)
+  assert.match(posed, /const genomeQuad = b\.figure\.element\(agentIndex\.mul\(uint\(FIGURE_QUADS\)\)\.add\(uint\(1\)\)\)\n\s*const skinWord = genomeQuad\.x/)
+  // The cut (word 5, the genome quad's second lane) drops the tie under a tieless outer layer, as lookMask does.
+  assert.match(posed, /const cutNow = select\(custom, genomeQuad\.y\.shiftRight\(uint\(LOOK_FIELD\.cut\[1\]\)\)/)
   assert.match(posed, /\.bitOr\(skinWord\.shiftRight\(uint\(LOOK_FIELD_HIGH\.hairStyle!\[1\]\)\)\.bitAnd\(uint\(3\)\)\.shiftLeft\(uint\(3\)\)\)/)
   assert.match(posed, /const headwear = select\(custom, skinWord\.shiftRight\(uint\(LOOK_FIELD\.headwear\[1\]\)\)\.bitAnd\(uint\(7\)\), hashedHeadwear\)/)
   assert.match(posed, /const wears = \(piece: keyof typeof HAIR_PIECE_STYLES\) => uint\(HAIR_PIECE_STYLES\[piece\]\)\.shiftRight\(style\)\.bitAnd\(uint\(1\)\)\.equal\(uint\(1\)\)/, 'each piece from its set of styles')
@@ -162,8 +164,10 @@ test('crowd.ts: the words override the hashed mask, figure, face and wardrobe in
   assert.match(fragment, /pick\(PALETTE\.bags, h\(12\)\)/)
   assert.match(fragment, /const legwear = variant === 3 \? mix\(wornSkin, vec3\(0\.08, 0\.07, 0\.07\), step\(0\.55, h\(11\)\)\) : bottom/)
   assert.match(fragment, /const iris = pick\(PALETTE\.iris, h\(LOOK_HASHED_COLOUR\.iris\)\)/)
-  assert.match(fragment, /const slots: V3\[\] = \[worn, shirt, select\(armHere, limbColour, skinShown\), hairShown, woven, shoes, accent, prop, select\(legHere, limbColour, legwear\), frame, white, iris, lip, scarf, fabric, device\]/, 'every slot, the bottom in its weave, a prosthetic over the hand or the bare shin, the headwear\'s cloth and the devices last')
-  assert.match(fragment, /const jacket = select\(inV\.or\(shirtCollar\), shirt, select\(lapel\.or\(collar\)\.or\(cuff\), select\(trimAt\.equal\(uint\(0\)\), woven, trimCloth\), woven\)\)/, 'the jacket or the coat in its weave, a matching trim too')
+  assert.match(fragment, /const slots: V3\[\] = \[worn, shirt, select\(turtleNeck, knitShirt, select\(armHere, limbColour, skinShown\)\), hairShown, woven, shoes, accent, prop, select\(legHere, limbColour, legwear\), frame, white, iris, lip, scarf, fabric, device\]/, 'every slot, the bottom in its weave, a prosthetic over the hand or the bare shin, the headwear\'s cloth and the devices last')
+  assert.match(fragment, /const faced = select\(lapel\.or\(collar\)\.or\(cuff\), select\(trimAt\.equal\(uint\(0\)\), woven, trimCloth\), woven\)/, 'the jacket or the coat in its weave, a matching trim too')
+  assert.match(fragment, /const tailoredJacket = select\(inV\.or\(shirtCollar\), neckline, faced\)/, 'the shirt in the V and above the collar')
+  assert.match(fragment, /const jacket = select\(vestArm\.or\(cropped\), shirt, select\(lining, /, 'the cut\'s marks over the jacket')
   // The garments: the layer owns the top's dye, the trim is matching or a cloth, the jacket's lines are cut from the rest position.
   assert.match(fragment, /const wardrobe = uint\(vWardrobe\.add\(0\.5\)\)/)
   assert.match(fragment, /const coat = at\(PALETTE\.coats, select\(custom, field\('top'\), uint\(h\(3\)\.mul\(cloth\(outfit\.top\)\.length - 0\.001\)\)\)\)/, 'the coat\'s cloth from the top\'s index, or the top\'s link over the jacket palette\'s length')

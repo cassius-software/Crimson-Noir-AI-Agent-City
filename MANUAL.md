@@ -758,6 +758,19 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   plain otherwise. Fine threads fade to the cloth's own shade at a distance, so a far pinstripe suit reads as a
   slightly lighter cloth. Silk is smoother, and linen, tweed and cashmere drier. About four pedestrians in ten wear a
   woven top. At the console: `look topWeave herringbone`, `look bottomWeave matching`.
+- **Cuts and garments.** A **Cut** row (**Coat's cut** under a coat) cuts the outer layer: notch lapel (as every
+  jacket was), peak lapel, shawl collar (faced in satin), double-breasted (two rows of buttons), band collar (closed
+  to the neck, buttoned), turtleneck (a knit up the neck under the open jacket), waistcoat (the sleeves the
+  shirt's, a lining at the back), cardigan (a ribbed knit, buttoned), open front (the shirt down to the hem),
+  belted, cropped (the shirt below the waist), wrap front, zip front, side closure, quilted (diamond stitching) and
+  patch pockets. Each is named for the cut, never for a people's dress. A **Garment** row above it dresses the outer
+  layer in one of forty-four named tops (suit jackets, blazers, evening jackets, band-collar and side-closure
+  jackets, waistcoats, cardigans, cropped, belted, wrap, quilted and zip-front jackets, a trench coat, overcoats, a
+  long band-collar coat, a wrap coat and a quilted coat): it sets the layer, the cut and the weave (the evening
+  jackets' facings take the darkest trim) and keeps your colours, so every garment comes in every colour the body's
+  palette holds. A band collar, a turtleneck, a zip front, a side closure and a quilted jacket take the tie off.
+  Under shirt sleeves the jacket is off and its cut is not shown. About three pedestrians in ten wear
+  a cut other than the notch lapel. At the console: `look cut double-breasted`, `look garment belted trench coat`.
 - **The four words.** `packLook` folds the body, the pieces, the colours, the age and the undertone into one
   unsigned 32-bit word (bit 6 says the hair is long, written from the style; the top bit is spare), `packFigure`
   the eight body sliders into a second, `packFace` the seven face sliders and the hair style into a third and
@@ -770,7 +783,7 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   the physics worker. Those four are the first of a **look genome** of sixteen words (`LOOK_WORDS`): word 4, the skin
   word, holds the skin's high bits (a Monk tone is option 8 and up), vitiligo, freckles, the hair style's high bits,
   the curl, the headwear, facial hair, hearing devices and a prosthetic; word 5, the cloth word, holds the top's
-  weave and the bottom's; words 6 to 15 are spare and must be zero. Every field of the later words is 0 for "as before", so a look of the older layouts is the
+  weave, the bottom's and the outer layer's cut; words 6 to 15 are spare and must be zero. Every field of the later words is 0 for "as before", so a look of the older layouts is the
   same look with them zero, and the crowd draws it the same. `crowd.figure` holds sixteen words a person (the
   figure, face and wardrobe words, the rig slot word, then the genome's words 4 to 15); the fragment stage reads the
   skin and cloth words through one flat varying. `lookFromSeed(i)` reproduces, bit for bit, the choice the crowd's hash makes for agent `i`,
@@ -783,7 +796,7 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
 - **Codes and presets.** A look code is twenty-eight symbols, `XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX`, from an alphabet
   without I, L, O and U, carrying the four words and a CRC-8 over them: it can be written down and shared, and
   `parseLookCode` ignores case, the dashes and spaces and refuses any single mistyped symbol. A look whose genome's
-  later words are not all zero (a Monk tone, vitiligo, freckles, a weave) adds a tail carrying those words up to the
+  later words are not all zero (a Monk tone, vitiligo, freckles, a weave, a cut) adds a tail carrying those words up to the
   last that is not zero, with its own check: eight symbols for the skin word alone, `-XXXXXXXX`, fifteen with the
   cloth word, `-XXXXXXXX-XXXXXXX`. Its head's check then covers every word, so the head cut off alone is refused rather than
   read as the look in an older tone; a look without them keeps the very code it always had. A twenty-one-symbol
@@ -1043,7 +1056,7 @@ while you type.
   `feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]`,
   `ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]`, `quality [auto|lite|peak|-1|0-5]`, `hardware`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `xr [vr|ar|off]`, `render [on|off]`,
   `captions [on|off]`, `haptics [on|off]`, `ping [go|look|gather|wait|clear]`,
-  `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
+  `look [show [<agent>]|<slot> <n|name>|preset <name>|build <name>|face <name>|garment <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
   `robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|remove <id>]`,
   `recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]`, `memory [<agent>|forget <agent>|forget all]`,
   `clear`, `history`, `echo [text]`, `uname [-asnrvmi]`, `whoami`, `version`, `boot [gui|tty|status]`,

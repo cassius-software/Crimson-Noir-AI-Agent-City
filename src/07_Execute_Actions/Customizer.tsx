@@ -26,8 +26,8 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { PIECE, SLOT, faceRings, silhouetteRings, type SilhouetteRing } from '../03_Spawn_Agents/humanoid.ts'
 import {
-  LAYER, LOOK_BODY_SLIDERS, LOOK_BUILDS, LOOK_FACE_SHAPES, LOOK_FACE_SLIDERS, LOOK_PRESETS, LOOK_SLOTS, bodyShapeOf, buildOf, faceShapeNameOf, faceShapeOf, formatLookCode,
-  lookFromSeed, lookOptions, lookSwatch, lookWears, matchingSwatch, parseLookCode, withBuild, withFaceShape, withLookSlot,
+  LAYER, LOOK_BODY_SLIDERS, LOOK_BUILDS, LOOK_FACE_SHAPES, LOOK_FACE_SLIDERS, LOOK_GARMENTS, LOOK_PRESETS, LOOK_SLOTS, bodyShapeOf, buildOf, faceShapeNameOf, faceShapeOf,
+  formatLookCode, garmentOf, lookFromSeed, lookOptions, lookSwatch, lookWears, matchingSwatch, parseLookCode, withBuild, withFaceShape, withGarment, withLookSlot,
   type Look, type LookBody, type LookFaceSlider, type LookSlider, type LookSlot,
 } from '../03_Spawn_Agents/look.ts'
 import { seedFromName } from '../05_Observe_Environment/profile.ts'
@@ -88,6 +88,7 @@ function slotLabel(slot: LookSlot, body: LookBody, layer: number = LAYER.jacket)
     case 'prosthetic': return 'Prosthetic'
     case 'prostheticFinish': return 'Prosthetic finish'
     case 'layer': return 'Layer'
+    case 'cut': return layer === LAYER.coat ? 'Coat\'s cut' : 'Cut'
     case 'top': return layer === LAYER.coat ? 'Coat' : body === 1 ? 'Blazer' : body === 3 ? 'Top' : 'Jacket'
     case 'topWeave': return layer === LAYER.coat ? 'Coat\'s weave' : 'Weave'
     case 'trim': return 'Trim'
@@ -345,8 +346,8 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
 
       <div className={`mt-3 border-t pt-3 ${t.rule}`}>
         {LOOK_SLOTS.map((slot) => {
-          // Under shirt sleeves the jacket is off: its cloth, its weave and its trim are not seen, so their rows are not shown.
-          if (worn.layer === LAYER.shirt && (slot === 'top' || slot === 'topWeave' || slot === 'trim')) return null
+          // Under shirt sleeves the jacket is off: its cut, its cloth, its weave and its trim are not seen, so their rows are not shown.
+          if (worn.layer === LAYER.shirt && (slot === 'cut' || slot === 'top' || slot === 'topWeave' || slot === 'trim')) return null
           const options = lookOptions(body, slot, worn.layer)
           const current = worn[slot]
           if (isSlider(slot)) {
@@ -424,7 +425,7 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
             }
             return <Fragment key={slot}>{row}</Fragment>
           }
-          return (
+          const pills = (
             <div key={slot} className="mb-2 flex items-start gap-3" data-slot={slot}>
               <div className={`w-20 shrink-0 pt-1 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>{slotLabel(slot, body, worn.layer)}</div>
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="radiogroup" aria-label={slotLabel(slot, body, worn.layer)}>
@@ -466,6 +467,33 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
               </div>
             </div>
           )
+          // The garments head the outer layer's rows (each sets the layer, its cut and its weave; the colours stay the look's).
+          if (slot === 'layer') {
+            const wearing = garmentOf(worn)
+            return (
+              <Fragment key={slot}>
+                <div className="mb-2 flex items-start gap-3" data-row="garment">
+                  <div className={`w-20 shrink-0 pt-1 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>Garment</div>
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Garment">
+                    {LOOK_GARMENTS.map((g) => (
+                      <button
+                        key={g.name}
+                        type="button"
+                        role="radio"
+                        aria-checked={wearing?.name === g.name}
+                        onClick={() => { const next = withGarment(worn, g.name); if (next) onChange(next) }}
+                        className={`rounded-full border px-2.5 py-0.5 text-[12px] ${wearing?.name === g.name ? t.pillOn : t.pill}`}
+                      >
+                        {g.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {pills}
+              </Fragment>
+            )
+          }
+          return pills
         })}
       </div>
 

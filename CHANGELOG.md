@@ -15,6 +15,28 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Sixteen cuts of the outer layer, and forty-four named garments.** The cloth word's next four bits carry the
+  outer layer's cut (`LOOK_FIELD.cut`, word 5 bits 8 to 11; `look.ts` CUT): notch lapel (0, every jacket as it was,
+  so every older look and code reads back unchanged and is drawn as before), peak lapel, shawl collar, double-breasted,
+  band collar, turtleneck, waistcoat, cardigan, open front, belted, cropped, wrap front, zip front, side closure,
+  quilted and patch pockets, each named for the cut and never for a people's dress. The crowd's fragment stage cuts
+  the jacket or the coat from the rest position: the cut moves where the V closes, where its centre runs and how
+  wide the lapels are (the notch lapel moves none of them), then paints its own marks: the waistcoat's shirt sleeves
+  and dark satin lining, the cropped jacket's shirt below the waist, a belt and buckle, one or two columns of
+  buttons, a zip, the side closure's line, diamond quilting, the cardigan's rib, patch pockets, a fine outer edge on
+  the peak, shawl, double-breasted and wrap lapels, a satin sheen on the shawl's facing, and the turtleneck's knit up
+  the neck. Under a band collar, a turtleneck, a zip front, a side closure or a quilted jacket the tie comes off
+  (`TIELESS_CUTS`), in the look's mask and in the crowd's vertex stage alike. Three outer layers in ten in the hashed
+  crowd wear a cut, one of eight per body (`CUT_STREET`).
+  `LOOK_GARMENTS` names forty-four tops (suit jackets, blazers, evening jackets, band-collar and side-closure
+  jackets, waistcoats, cardigans, cropped, belted, wrap, quilted and zip-front jackets, and seven coats), each a
+  layer, a cut and a weave (the shawl-collar jackets also take the darkest trim) that keeps the look's colours;
+  like a build, a garment is a starting point, not a slot (`withGarment`, `garmentOf`). Customizer rows **Garment**
+  and **Cut** (**Coat's cut** under a coat; the Cut row hidden under shirt sleeves, where a garment puts the layer
+  back on), console `look garment <name>` and `look cut <name>`. The suit's main fragment stage grows to about
+  170,000 characters and its shadow pass to about 122,000, inside the 262,144 budget. Pinned by `look.test.ts`,
+  `lookWiring.test.ts` and `commands.test.ts`. Browser screenshots on SwiftShader only; nothing visual is confirmed
+  on real hardware.
 - **Sixteen fabric weaves.** A cloth word joins the look genome (word 5): the top's weave and the bottom's at four
   bits each (`LOOK_FIELD.topWeave`, `LOOK_FIELD.bottomWeave`). 0 is plain, as before, so every older look and code
   reads back unchanged. The weaves (`look.ts` WEAVE) are plain, twill, herringbone, pinstripe, chalk stripe,
