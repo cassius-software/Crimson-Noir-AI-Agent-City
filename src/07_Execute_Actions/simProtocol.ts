@@ -20,6 +20,7 @@ import type { CarTuning, DriveMode } from './car.ts'
 import type { TrackKind } from '../06_Make_Decisions/tracks.ts'
 import type { BalanceState } from '../03_Spawn_Agents/ragdoll.ts'
 import type { Manifest } from '../04_Connect_Hardware/jointState.ts'
+import type { ActuatorShaping, JointFriction } from '../04_Connect_Hardware/actuatorFit.ts'
 
 /**
  * One vehicle's slice of the pose buffer (Float32Array, `POSE.stride` floats per vehicle, fleet order). The
@@ -147,6 +148,15 @@ export interface SimInit {
    */
   workplaces?: WorkplaceLot[] | null
   /**
+   * A generated region's craft boxes (01_Initialize_World/region/transit.ts craftBoxesOf): the rectangular buildings on
+   * the lots of its street window and the ring of lots round them, every building that reaches into the racetrack's
+   * envelope and the region's plan, as [x0, 0, z0, x1, height, z1] in engine metres. The worker lays the window's VTOL
+   * routes and racetrack by them (transit.ts windowNetwork) exactly as the page does, since it has the pack's walls and
+   * not its boxes. At most transit.ts MAX_CRAFT_BOXES. Only with a street window; absent (or null) for the city, whose
+   * own boxes serve, and for a surveyed region.
+   */
+  craftBoxes?: Box[] | null
+  /**
    * A generated region's storefronts (01_Initialize_World/region/shops.ts regionShopLots): at most five lots of the
    * street window, none a workplace's, each with its kind and its doorway's street front, which the worker builds the
    * same glass from (storefronts.ts shopsAt) so a car left in a shop puts its driver down clear of it. Their boxes come
@@ -165,9 +175,10 @@ export interface SimInit {
    */
   ragdoll?: boolean
   /**
-   * Run the scheduled craft (the trains, drones and planes of trackFleet.ts) with tracks on in the city: anything but
-   * false runs them. False (a lite boot, which draws none) skips the stream as a region does: meta.craft is 0
-   * and every state's craft buffer null.
+   * Run the scheduled craft (the trains, drones, planes and VTOLs of trackFleet.ts) with tracks on, in the city and in
+   * a region with a street window (its own loop, corridors and racetrack, transit.ts windowNetwork): anything but
+   * false runs them. False (a lite boot, which draws none) skips the stream, as a surveyed region without a window
+   * does: meta.craft is 0 and every state's craft buffer null.
    */
   craft?: boolean
 }
@@ -274,9 +285,13 @@ export type SimCommand =
   /**
    * How the body answers its setpoints: `follow` tracks the newest (a twin following a robot's frames), `filter` holds
    * each back `delaySteps` steps and eases toward it at `tauMs` (a leader's body, a simulated robot: the calibrated
-   * lag), `hold` stands still. `tauMs` and `delaySteps` are kept when not given.
+   * lag), `hold` stands still. `tauMs` and `delaySteps` are kept when not given. `shaping`, per movable joint, puts a
+   * second-order reference actuator (actuatorFit.ts ActuatorShaping, with its own delay) in place of the first-order
+   * filter on that joint (null: the filter); `friction`, per movable joint, is the physical Coulomb, viscous and
+   * stiction friction the realm applies about the joint (null: none). Each is kept when not given and cleared by an
+   * empty array; every number is judged in the worker (lengths, finiteness, bounds) and a bad one is a counted rejection.
    */
-  | { c: 'robotMode'; id: number; mode: RobotMode; tauMs?: number; delaySteps?: number }
+  | { c: 'robotMode'; id: number; mode: RobotMode; tauMs?: number; delaySteps?: number; shaping?: (ActuatorShaping | null)[]; friction?: (JointFriction | null)[] }
   // Fault injection for the ?debug harness only: refused by a worker built without debug.
   | { c: 'dbgVelocity'; i: number; x: number; y: number; z: number }
   | { c: 'dbgMode'; i: number; mode: DriveMode }

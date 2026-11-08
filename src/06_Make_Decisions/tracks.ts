@@ -419,7 +419,16 @@ export function carLoops(seed = 0): Track[] {
  */
 export function trainLoops(): Track[] {
   const [lo, hi] = TRACKS.train.corridor
-  const corners: Vec2[] = [[lo, lo], [hi, lo], [hi, hi], [lo, hi]]
+  return [trainLoop([[lo, lo], [hi, lo], [hi, hi], [lo, hi]])]
+}
+
+/**
+ * An elevated loop round a rectangle of grid vertices `corners` (four, clockwise, in absolute block indices: a region's
+ * window hands in its own, region/transit.ts windowTrainLoop), on the deck, with the arcs and the four mid-side stations
+ * of trainLoops. The platform of a side sits mid-block on the block nearest the side's middle.
+ */
+export function trainLoop(corners: readonly Vec2[], id = 0): Track {
+  if (corners.length !== 4) throw new Error('an elevated loop has four corners')
   const R = TRACKS.train.radius
   const pieces: Piece[] = []
   const stations: number[] = []
@@ -441,7 +450,7 @@ export function trainLoops(): Track[] {
     pieces.push(arc)
     s += arc.length
   }
-  return [makeTrack(0, 'train', pieces, [], stations, TRACKS.train.deck)]
+  return makeTrack(id, 'train', pieces, [], stations, TRACKS.train.deck)
 }
 
 /** Face-ring corridors: clockwise at the first altitude, the same lanes counter-clockwise at the second. */
@@ -452,10 +461,13 @@ export function droneCorridors(): Track[] {
   return [...cw, ...ccw].map((t, id) => Object.freeze({ ...t, id }))
 }
 
-/** One racetrack about the city centre: two straights joined by two semicircles, flown clockwise. */
-export function planeCorridors(): Track[] {
+/**
+ * One racetrack about `centre` (the city's by default; a region's window hands in its own middle): two straights joined
+ * by two semicircles, flown clockwise.
+ */
+export function planeCorridors(centre: Vec2 = [CITY_CENTER, CITY_CENTER]): Track[] {
   const { altitude, halfSize, fillet } = TRACKS.plane
-  const cx = CITY_CENTER, cz = CITY_CENTER
+  const [cx, cz] = centre
   const pieces: Piece[] = []
   let s = 0
   pieces.push(linePiece(s, cx - halfSize, cz - fillet, [1, 0], 2 * halfSize))
@@ -927,12 +939,13 @@ export function scheduledCount(track: Track): number {
 // ---------------------------------------------------------------- guideway
 
 /**
- * The elevated loop's structure for a renderer: column pairs on both curbs (CITY.furniture from the centreline)
- * at TRACKS.train.columns metres into each block along the straights, clear of the lamps at 10 and 30 m, the
- * trees at 20 m, the signal poles at the corners and the car rings' corner curves; a beam between each pair.
- * Empty for any other track.
+ * The elevated loop's structure for a renderer: column pairs on both curbs (`kerb` from the centreline: CITY.furniture
+ * in the city, a street window's own furniture line in a region, region/streets.ts WINDOW_GEOMETRY) at
+ * TRACKS.train.columns metres into each block along the straights, clear of the lamps at 10 and 30 m, the trees at
+ * 20 m, the signal poles at the corners and the car rings' corner curves; a beam between each pair. Empty for any
+ * other track.
  */
-export function guideway(track: Track): { columns: [number, number][]; beams: [number, number, number, number][] } {
+export function guideway(track: Track, kerb: number = CITY.furniture): { columns: [number, number][]; beams: [number, number, number, number][] } {
   const columns: [number, number][] = []
   const beams: [number, number, number, number][] = []
   if (track.kind !== 'train') return { columns, beams }
@@ -946,8 +959,8 @@ export function guideway(track: Track): { columns: [number, number][]; beams: [n
         const along = j * CITY.pitch + a - R
         if (along < 0 || along > p.length) continue
         const x = p.x0 + p.dx * along, z = p.z0 + p.dz * along
-        const c0: [number, number] = [x + r[0] * CITY.furniture, z + r[1] * CITY.furniture]
-        const c1: [number, number] = [x - r[0] * CITY.furniture, z - r[1] * CITY.furniture]
+        const c0: [number, number] = [x + r[0] * kerb, z + r[1] * kerb]
+        const c1: [number, number] = [x - r[0] * kerb, z - r[1] * kerb]
         columns.push(c0, c1)
         beams.push([c0[0], c0[1], c1[0], c1[1]])
       }
@@ -959,11 +972,23 @@ export function guideway(track: Track): { columns: [number, number][]; beams: [n
 // ---------------------------------------------------------------- VTOL routes
 
 /**
+ * The roofs a VTOL route's pads are set on (between `floor` and `ceiling`, m) and the cruise of each route between them:
+ * the city's own numbers (TRACKS.vtol: roofs of 24 to 60 m, flown over at 75 and 85), or a band a region hands in for
+ * its own roofs (region/transit.ts HIGH_BAND: a generated map's towers). Every cruise keeps the envelope's half-height
+ * and TRACKS.vtol.clearance over the band's ceiling, so a craft arriving over the tallest pad stays clear of it.
+ */
+export interface VtolBand { readonly floor: number; readonly ceiling: number; readonly cruise: readonly number[] }
+
+/** The cells of the VTOL routes: per route, its four cells as block rectangles [k0, k1) × [m0, m1), CITY.pitch m a block. */
+export type VtolCells = readonly (readonly (readonly [number, number, number, number])[])[]
+
+/**
  * The cells a route's four pads are chosen from, in loop order, as block rectangles [k0, k1) × [m0, m1) of the city
  * grid (CITY.pitch m a block): the inner route rounds downtown's four quarters, the outer one the four sides around
- * them. The heritage columns (k < 4), the lakefront and the park (m ≥ 14) have no roof high enough for a pad.
+ * them. The heritage columns (k < 4), the lakefront and the park (m ≥ 14) have no roof high enough for a pad. A
+ * region's window moves the same cells to its own origin (region/transit.ts windowVtolCells).
  */
-const VTOL_CELLS: readonly (readonly (readonly [number, number, number, number])[])[] = Object.freeze([
+export const VTOL_CELLS: VtolCells = Object.freeze([
   Object.freeze([[5, 8, 4, 8], [8, 12, 4, 8], [8, 12, 8, 12], [5, 8, 8, 12]] as const),
   Object.freeze([[4, 12, 1, 4], [12, 15, 4, 12], [4, 12, 12, 14], [4, 5, 4, 12]] as const),
 ])
@@ -1015,8 +1040,9 @@ function boxesNear(hash: Map<number, Box[]>, x: number, z: number, out: Box[]): 
  * of its lot there, so a craft coming straight down onto it meets nothing. In box order, so the choice is as fixed as
  * the boxes.
  */
-export function vtolPads(boxes: readonly Box[]): Pad[] {
-  const { floor, ceiling, padHalf, halfSize } = TRACKS.vtol
+export function vtolPads(boxes: readonly Box[], band: VtolBand = TRACKS.vtol): Pad[] {
+  const { padHalf, halfSize } = TRACKS.vtol
+  const { floor, ceiling } = band
   const hash = boxCells(boxes)
   const near: Box[] = []
   const out: Pad[] = []
@@ -1139,15 +1165,19 @@ function legClear(pieces: readonly Piece[], a: Pad, b: Pad, cruise: number, othe
 }
 
 /**
- * The VTOL routes of a city: for each route, one pad in each of its four cells (VTOL_CELLS), the tallest roofs first,
- * such that every leg of the loop is clear (legClear) against every pad of the city's routes, and the loop's pads are
- * `apart` from each other. A city whose boxes give no such loop for a route has no such route; a city given no boxes
- * has none at all. Pure in the boxes: the same boxes always give the same routes, in the same order.
+ * The VTOL routes of a city: for each route, one pad in each of its four cells (`cells`: VTOL_CELLS, the city's, unless
+ * a region's window hands in its own), the tallest roofs first, such that every leg of the loop is clear (legClear)
+ * against every pad of the city's routes, and the loop's pads are `apart` from each other. A city whose boxes give no
+ * such loop for a route has no such route; a city given no boxes has none at all. `band`: the roofs that take a pad and
+ * the cruise of each route (TRACKS.vtol, or a region's own). Pure in the boxes, the cells and the band: the same boxes
+ * always give the same routes, in the same order.
  */
-export function vtolRoutes(boxes: readonly Box[]): Track[] {
+export function vtolRoutes(boxes: readonly Box[], cells: VtolCells = VTOL_CELLS, band: VtolBand = TRACKS.vtol): Track[] {
   if (boxes.length === 0) return []
-  const { cruise, apart, routes } = TRACKS.vtol
-  const pads = vtolPads(boxes)
+  const { apart } = TRACKS.vtol
+  const { cruise } = band
+  const routes = Math.min(TRACKS.vtol.routes, cells.length, cruise.length)
+  const pads = vtolPads(boxes, band)
   const hash = boxCells(boxes)
   const near: Box[] = []
   const chosen: Track[] = []
@@ -1155,7 +1185,7 @@ export function vtolRoutes(boxes: readonly Box[]): Track[] {
   for (let r = 0; r < routes; r++) {
     const y = cruise[r]
     const taken = chosen.flatMap((t) => t.stations.map((s, i) => ({ ...referencePoseAt(t, s), y: t.pads[i] })))
-    const options = VTOL_CELLS[r].map(([k0, k1, m0, m1]) => pads
+    const options = cells[r].map(([k0, k1, m0, m1]) => pads
       .filter((p) => p.x >= k0 * pitch && p.x < k1 * pitch && p.z >= m0 * pitch && p.z < m1 * pitch)
       .filter((p) => taken.every((q) => Math.hypot(q.x - p.x, q.z - p.z) >= apart))
       .sort((a, b) => b.y - a.y || a.x - b.x || a.z - b.z)

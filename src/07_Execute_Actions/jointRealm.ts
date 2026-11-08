@@ -8,16 +8,22 @@
  * bridge that makes a twin answer like its robot: a delay buffer that holds every setpoint back a whole number of
  * steps and a first-order filter of the calibrated time constant (`filter` mode, a leader's body or a simulated
  * robot), a first-order hold on the newest frame for a twin that follows a real robot (`follow` mode), and a hold at
- * the effort cap when no setpoint has come for ROBOT_REALM.staleMs or the page asked for one (`hold`). Everything
- * read from a command is judged on read (lengths, finiteness, bounds) and thrown back as a counted rejection; nothing
- * inside the substep throws (a throw there would halt the realm), and a body that stops being finite is removed and
- * reported. It knows nothing of doors, gates or the page: the realm's clock and the Rapier world are its arguments.
+ * the effort cap when no setpoint has come for ROBOT_REALM.staleMs or the page asked for one (`hold`). A joint given
+ * a shaping (actuatorFit.ts ActuatorShaping, from a second-order fit or a randomized domain) runs the second-order
+ * reference actuator in place of the first-order filter, with its own delay; a joint given a friction gets a physical
+ * Coulomb, viscous and stiction torque about its axis after the servo (jointTorque: the servo's own impulse pair),
+ * clamped to what brings the joint to rest within the step (by the realm's own measure of its speed and inertia)
+ * and never over the effort cap: friction only takes speed away, so the servo's stability argument
+ * (articulated.ts ROBOT.servoRate) stands. Everything read from a command is judged on read
+ * (lengths, finiteness, bounds) and thrown back as a counted rejection; nothing inside the substep throws (a throw
+ * there would halt the realm), and a body that stops being finite is removed and reported. It knows nothing of doors,
+ * gates or the page: the realm's clock and the Rapier world are its arguments.
  * What breaks if it is removed? The realm has no robots: twins, leaders and simulated robots alike have no body.
  */
 import type RAPIER from '@dimforge/rapier3d-simd-compat'
-import { buildArticulated, drive, hold, linkPose, measure, removeArticulated, sane, type Articulated } from './articulated.ts'
-import { DelayBuffer } from '../04_Connect_Hardware/actuatorFit.ts'
-import { buildManifest, MAX_JOINTS, MAX_ROBOTS } from '../04_Connect_Hardware/jointState.ts'
+import { buildArticulated, drive, hold, jointTorque, linkPose, measure, removeArticulated, sane, type Articulated } from './articulated.ts'
+import { DelayBuffer, SHAPING, stepShaping, type ActuatorShaping, type JointFriction, type ShapingState } from '../04_Connect_Hardware/actuatorFit.ts'
+import { buildManifest, MAX_JOINTS, MAX_ROBOTS, REALM_BOUNDS } from '../04_Connect_Hardware/jointState.ts'
 import { JOINT_FLAG, JOINT_SLOT, MAX_LINKS } from './jointBridge.ts'
 import type { RobotMode } from './simProtocol.ts'
 
@@ -32,6 +38,8 @@ export const ROBOT_REALM = Object.freeze({
   maxTauMs: 10_000,
   /** Furthest from the origin a body may be placed, m. */
   placeRadius: 5000,
+  /** A joint moving slower than this (rad/s or m/s) is still: stiction may hold it. */
+  stillRate: 0.01,
 })
 
 /** One setpoint as the realm keeps it: when it arrived (realm seconds), its seq, and the three arrays (q is the joints' length). */
@@ -50,6 +58,12 @@ interface Robot {
   /** The filter's state: where the filtered setpoint stands (q), seeded from the body on the first setpoint. */
   readonly filtered: Float64Array
   seeded: boolean
+  /** Per joint: the reference actuator in place of the filter (null: the filter), and its state, seeded from the body. */
+  shaping: (ActuatorShaping | null)[] | null
+  readonly ref: ShapingState[]
+  refSeeded: boolean
+  /** Per joint: the physical friction applied after the servo (null: none). */
+  friction: (JointFriction | null)[] | null
   /** The setpoint this step drives toward (after the delay), or null: holding. */
   current: Setpoint | null
   holding: boolean
@@ -66,6 +80,45 @@ const finiteList = (a: unknown, n: number, what: string): Float64Array => {
     out[i] = v
   }
   return out
+}
+
+const numberIn = (o: Record<string, unknown>, k: string, lo: number, hi: number, what: string): number => {
+  const v = o[k]
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < lo || v > hi) throw new Error(`${what}.${k} must be ${lo}..${hi}`)
+  return v
+}
+
+/** A command's shaping array judged: empty clears (null); else one entry per joint, null or a shaping within the stepper's bounds. */
+function checkShaping(v: unknown, n: number): (ActuatorShaping | null)[] | null {
+  if (!Array.isArray(v)) throw new Error('robotMode: shaping is not an array')
+  if (v.length === 0) return null
+  if (v.length !== n) throw new Error(`robotMode: shaping has ${v.length} entries for ${n} joints`)
+  return v.map((s, i) => {
+    if (s === null) return null
+    if (typeof s !== 'object') throw new Error(`robotMode: shaping[${i}] is not an object`)
+    const o = s as Record<string, unknown>, what = `robotMode: shaping[${i}]`
+    const delaySteps = numberIn(o, 'delaySteps', 0, ROBOT_REALM.maxDelaySteps, what)
+    if (!Number.isInteger(delaySteps)) throw new Error(`${what}.delaySteps must be a whole number`)
+    return {
+      omega: numberIn(o, 'omega', 1e-3, SHAPING.omegaMax, what), zeta: numberIn(o, 'zeta', 0, SHAPING.zetaMax, what), delaySteps,
+      gain: numberIn(o, 'gain', SHAPING.gainMin, SHAPING.gainMax, what), velocityMax: numberIn(o, 'velocityMax', 1e-3, REALM_BOUNDS.velocity, what),
+      coulomb: numberIn(o, 'coulomb', 0, REALM_BOUNDS.effort, what), viscous: numberIn(o, 'viscous', 0, REALM_BOUNDS.effort, what), stiction: numberIn(o, 'stiction', 0, REALM_BOUNDS.effort, what),
+    }
+  })
+}
+
+/** A command's friction array judged: empty clears; else one per joint, null or Coulomb and stiction within the joint's effort cap, viscous within the realm's. */
+function checkFriction(v: unknown, body: Articulated): (JointFriction | null)[] | null {
+  const n = body.movable.length
+  if (!Array.isArray(v)) throw new Error('robotMode: friction is not an array')
+  if (v.length === 0) return null
+  if (v.length !== n) throw new Error(`robotMode: friction has ${v.length} entries for ${n} joints`)
+  return v.map((f, i) => {
+    if (f === null) return null
+    if (typeof f !== 'object') throw new Error(`robotMode: friction[${i}] is not an object`)
+    const o = f as Record<string, unknown>, what = `robotMode: friction[${i}]`, cap = body.movable[i].effort
+    return { coulomb: numberIn(o, 'coulomb', 0, cap, what), viscous: numberIn(o, 'viscous', 0, REALM_BOUNDS.effort, what), stiction: numberIn(o, 'stiction', 0, cap, what) }
+  })
 }
 
 /** The pool of robot bodies in one Rapier world. */
@@ -116,7 +169,10 @@ export class JointRealm {
     // The delay line starts full of "no setpoint", so a read of d steps back is exactly that from the first step.
     const delay = new DelayBuffer<Setpoint | null>(ROBOT_REALM.maxDelaySteps)
     for (let i = 0; i <= ROBOT_REALM.maxDelaySteps; i++) delay.push(null)
-    this.#robots.set(id, { id, body, mode: 'filter', tauMs: 0, delaySteps: 0, delay, latest: null, filtered: new Float64Array(n), seeded: false, current: null, holding: true })
+    this.#robots.set(id, {
+      id, body, mode: 'filter', tauMs: 0, delaySteps: 0, delay, latest: null, filtered: new Float64Array(n), seeded: false,
+      shaping: null, ref: Array.from({ length: n }, () => ({ x: 0, xd: 0 })), refSeeded: false, friction: null, current: null, holding: true,
+    })
   }
 
   /** Removes robot `id`; throws for one not in the pool. */
@@ -143,19 +199,25 @@ export class JointRealm {
     r.latest = { at: now, seq, q: qs, qd: finiteList(qd, n, 'robotTargets: qd'), tau: finiteList(tau, n, 'robotTargets: tau') }
   }
 
-  /** The mode and, for `filter`, the calibrated lag: `tauMs` ≥ 0 and `delaySteps` a whole number up to the bound (each kept when not given). */
-  mode(id: number, mode: unknown, tauMs?: unknown, delaySteps?: unknown): void {
+  /**
+   * The mode and, for `filter`, the calibrated lag: `tauMs` ≥ 0 and `delaySteps` a whole number up to the bound; and,
+   * per movable joint, a `shaping` (a reference actuator, or null for the filter) and a `friction` (or null for none).
+   * Each is kept when not given; an empty array clears the shaping or the friction. Everything is judged before any
+   * of it is kept, so a bad command changes nothing.
+   */
+  mode(id: number, mode: unknown, tauMs?: unknown, delaySteps?: unknown, shaping?: unknown, friction?: unknown): void {
     const r = this.#robots.get(id)
     if (!r) throw new Error(`robotMode: no robot ${id}`)
     if (mode !== 'follow' && mode !== 'filter' && mode !== 'hold') throw new Error(`robotMode: unknown mode ${JSON.stringify(mode)}`)
-    if (tauMs !== undefined) {
-      if (typeof tauMs !== 'number' || !Number.isFinite(tauMs) || tauMs < 0 || tauMs > ROBOT_REALM.maxTauMs) throw new Error(`robotMode: tauMs must be 0..${ROBOT_REALM.maxTauMs}`)
-      r.tauMs = tauMs
-    }
-    if (delaySteps !== undefined) {
-      if (typeof delaySteps !== 'number' || !Number.isInteger(delaySteps) || delaySteps < 0 || delaySteps > ROBOT_REALM.maxDelaySteps) throw new Error(`robotMode: delaySteps must be 0..${ROBOT_REALM.maxDelaySteps}`)
-      r.delaySteps = delaySteps
-    }
+    if (tauMs !== undefined && (typeof tauMs !== 'number' || !Number.isFinite(tauMs) || tauMs < 0 || tauMs > ROBOT_REALM.maxTauMs)) throw new Error(`robotMode: tauMs must be 0..${ROBOT_REALM.maxTauMs}`)
+    if (delaySteps !== undefined && (typeof delaySteps !== 'number' || !Number.isInteger(delaySteps) || delaySteps < 0 || delaySteps > ROBOT_REALM.maxDelaySteps)) throw new Error(`robotMode: delaySteps must be 0..${ROBOT_REALM.maxDelaySteps}`)
+    const n = r.body.movable.length
+    const shaped = shaping === undefined ? undefined : checkShaping(shaping, n)
+    const rubbed = friction === undefined ? undefined : checkFriction(friction, r.body)
+    if (tauMs !== undefined) r.tauMs = tauMs as number
+    if (delaySteps !== undefined) r.delaySteps = delaySteps as number
+    if (shaped !== undefined) { r.shaping = shaped; r.refSeeded = false }
+    if (rubbed !== undefined) r.friction = rubbed
     r.mode = mode
   }
 
@@ -189,25 +251,43 @@ export class JointRealm {
           continue
         }
         const s = r.current
-        if (!s) {
-          hold(b, h)
-          continue
+        if (!s) hold(b, h)
+        else {
+          const n = b.movable.length
+          const q = this.#scratch, qd = this.#scratch.subarray(n, 2 * n), tau = this.#scratch.subarray(2 * n, 3 * n)
+          for (let i = 0; i < n; i++) { qd[i] = i < s.qd.length ? s.qd[i] : 0; tau[i] = i < s.tau.length ? s.tau[i] : 0 }
+          if (r.mode === 'follow') {
+            // The newest frame carried forward by its own speed, for a little while; then held where it said.
+            const dt = Math.min(ROBOT_REALM.followHoldMs / 1000, Math.max(0, now - s.at))
+            for (let i = 0; i < n; i++) q[i] = s.q[i] + qd[i] * dt
+          } else {
+            // The filtered setpoint: seeded where the body stands, then eased toward the (delayed) setpoint at the
+            // calibrated time constant; a time constant of 0 passes it through. A joint with a shaping runs its
+            // reference actuator instead, seeded where the body stands when the shaping was set, toward the
+            // setpoint its own delay reaches back to (held where it is before one); the reference's own speed is
+            // the servo's feed-forward, and the filter's state follows it so the filter resumes in place.
+            if (!r.seeded) { for (let i = 0; i < n; i++) r.filtered[i] = b.movable[i].q; r.seeded = true }
+            if (r.shaping && !r.refSeeded) { for (let i = 0; i < n; i++) { r.ref[i].x = b.movable[i].q; r.ref[i].xd = 0 } r.refSeeded = true }
+            const alpha = r.tauMs > 0 ? 1 - Math.exp(-h * 1000 / r.tauMs) : 1
+            for (let i = 0; i < n; i++) {
+              const sh = r.shaping ? r.shaping[i] : null
+              if (sh) {
+                const sp = sh.delaySteps === r.delaySteps ? s : r.delay.read(sh.delaySteps) ?? null
+                const st = r.ref[i]
+                if (sp) stepShaping(sh, st, sp.q[i], h)
+                q[i] = st.x
+                qd[i] = st.xd
+                r.filtered[i] = st.x
+              } else {
+                r.filtered[i] += (s.q[i] - r.filtered[i]) * alpha
+                q[i] = r.filtered[i]
+                qd[i] *= alpha
+              }
+            }
+          }
+          drive(b, { q: q.subarray(0, n), qd, tau }, h)
         }
-        const n = b.movable.length
-        const q = this.#scratch, qd = this.#scratch.subarray(n, 2 * n), tau = this.#scratch.subarray(2 * n, 3 * n)
-        for (let i = 0; i < n; i++) { qd[i] = i < s.qd.length ? s.qd[i] : 0; tau[i] = i < s.tau.length ? s.tau[i] : 0 }
-        if (r.mode === 'follow') {
-          // The newest frame carried forward by its own speed, for a little while; then held where it said.
-          const dt = Math.min(ROBOT_REALM.followHoldMs / 1000, Math.max(0, now - s.at))
-          for (let i = 0; i < n; i++) q[i] = s.q[i] + qd[i] * dt
-        } else {
-          // The filtered setpoint: seeded where the body stands, then eased toward the (delayed) setpoint at the
-          // calibrated time constant; a time constant of 0 passes it through.
-          if (!r.seeded) { for (let i = 0; i < n; i++) r.filtered[i] = b.movable[i].q; r.seeded = true }
-          const alpha = r.tauMs > 0 ? 1 - Math.exp(-h * 1000 / r.tauMs) : 1
-          for (let i = 0; i < n; i++) { r.filtered[i] += (s.q[i] - r.filtered[i]) * alpha; q[i] = r.filtered[i]; qd[i] *= alpha }
-        }
-        drive(b, { q: q.subarray(0, n), qd, tau }, h)
+        if (r.friction) this.#rub(r.friction, b, h)
       } catch (e) {
         this.#lose(r, e instanceof Error ? e.message : String(e))
       }
@@ -242,6 +322,40 @@ export class JointRealm {
     }
     if (i < MAX_ROBOTS) out[i * JOINT_SLOT.words + JOINT_SLOT.joints] = 0
     return i
+  }
+
+  /**
+   * Joint friction, after the servo of this substep. A still joint whose servo asks less than the stiction (the
+   * demand net of the weight it feeds forward) is held: friction supplies exactly what cancels the servo's push and
+   * takes out the creep it had (under ROBOT_REALM.stillRate, on the same reduced inertia), so it comes to rest and
+   * stays, the weight still carried by the servo's feed-forward; never more than the effort cap. Otherwise Coulomb and viscous friction oppose the speed the servo's impulse
+   * leaves the joint with (the measured speed plus the servo's change, on the same reduced inertia the servo used),
+   * at most the torque that brings that speed to rest within the step and never over the effort cap: friction only
+   * ever takes speed away, so the servo's own bound is untouched. τ stays the servo's torque, as the manual says.
+   */
+  #rub(fr: readonly (JointFriction | null)[], b: Articulated, h: number): void {
+    const n = b.movable.length
+    for (let i = 0; i < n; i++) {
+      const f = fr[i]
+      if (!f) continue
+      const mv = b.movable[i]
+      const net = mv.applied + mv.load
+      if (Math.abs(mv.qd) <= ROBOT_REALM.stillRate && Math.abs(mv.demand + mv.load) <= f.stiction) {
+        let t = -net - (mv.inertia > 0 ? (mv.inertia * mv.qd) / h : 0)
+        if (t > mv.effort) t = mv.effort
+        else if (t < -mv.effort) t = -mv.effort
+        jointTorque(mv, t, h)
+        continue
+      }
+      if (!(mv.inertia > 0)) continue
+      const v = mv.qd + (net * h) / mv.inertia
+      if (!(Math.abs(v) > 1e-9)) continue
+      let t = f.coulomb + f.viscous * Math.abs(v)
+      const stop = (mv.inertia * Math.abs(v)) / h
+      if (t > stop) t = stop
+      if (t > mv.effort) t = mv.effort
+      jointTorque(mv, v > 0 ? -t : t, h)
+    }
   }
 
   #lose(r: Robot, why: string): void {

@@ -19,6 +19,7 @@ import {
 } from 'three/webgpu'
 import { abs, attribute, float, select, sin, time, vec3 } from 'three/tsl'
 import type { Node } from 'three/webgpu'
+import { CITY } from '../01_Initialize_World/city.ts'
 import { applyMatrixMode } from '../01_Initialize_World/matrixMode.ts'
 import { TRACKS, guideway, pieceAt, poseAt, type Track, type TrackNetwork } from '../06_Make_Decisions/tracks.ts'
 import { TRACK_KINDS, TRACK_POSE } from './simProtocol.ts'
@@ -274,10 +275,13 @@ export class CraftView {
   private readonly Z = new Vector3(0, 0, 1)
 
   /**
-   * `network`: the realm's own (buildTrackNetwork with the same seed and boxes); `count`: the craft in the realm's stream
-   * (SimMeta.craft), which must be the network's, or the page would place the stream's numbers on the wrong bodies.
+   * `network`: the realm's own (buildTrackNetwork with the same seed and boxes, or a region's windowNetwork with the same
+   * seed, window and craft boxes); `count`: the craft in the realm's stream (SimMeta.craft), which must be the network's,
+   * or the page would place the stream's numbers on the wrong bodies. `kerb`: how far off a street's centreline the
+   * loop's columns stand (tracks.ts guideway): the city's furniture line, or a street window's own (streets.ts
+   * WINDOW_GEOMETRY.furniture, 3.9 m, clear of the window's two-lane carriageway).
    */
-  constructor(network: TrackNetwork, count: number, night: Night, matrixMode: Mode = null) {
+  constructor(network: TrackNetwork, count: number, night: Night, matrixMode: Mode = null, kerb: number = CITY.furniture) {
     const fleet = new TrackFleet(network)
     if (fleet.count !== count) throw new Error(`the page's track network has ${fleet.count} craft, the realm's stream ${count}`)
     this.count = count
@@ -321,7 +325,7 @@ export class CraftView {
       this.guideway.name = 'Guideway'
       this.guideway.castShadow = true
       this.guideway.receiveShadow = true
-      const { columns, beams } = guideway(train)
+      const { columns, beams } = guideway(train, kerb)
       const height = train.y - 0.6
       const column = assemble([[new CylinderGeometry(TRACKS.train.columnRadius, TRACKS.train.columnRadius, height, 12).translate(0, height / 2, 0), PART.concrete]])
       this.columns = instanced(column, concrete, columns.length, 'GuidewayColumns', true)

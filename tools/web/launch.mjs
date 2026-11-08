@@ -32,7 +32,7 @@ import { Browser, findChrome, SOFTWARE_WEBGPU } from '../browser/cdp.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
-/** The fixed address's port: not one the repo's other servers use (5173, 4173, 8787, 8089, 8090, 8880, 11434, 8080, 1234). */
+/** The fixed address's port: not one the repo's other servers use or auto looks at (5173, 4173, 8787, 8089, 8090, 8880, 11434, 8080, 1234, 9931, 8000, 30000). */
 export const PORT = 4180
 
 /** The X11 window class of the app window, which the desktop entry's StartupWMClass names. */

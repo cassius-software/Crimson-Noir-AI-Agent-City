@@ -14,9 +14,21 @@
  * measured was seen across the link, so the link's return trip (the round-trip measurement) is taken out of it: what
  * is left is the actuator's own. It is a latency and response calibration: no load-side stiffness is measured. The
  * calibrator walks the joints one at a time and hands the caller the setpoints to send and, at the end, the gains.
- * Pure: the clock is an argument, nothing is imported, so every fit is proved in Node against a plant of known numbers.
+ * The same recording can be fitted a second way (`fitStep2`): a second-order system with dead time (natural rate ω,
+ * damping ζ, the closed forms for the under-, critically and over-damped cases), seeded from the first-order fit and
+ * refined by the same shrinking search; `pickFit` takes the second-order model only when it lowers the error by a
+ * tenth or more, the first otherwise. A second-order fit becomes an `ActuatorShaping`: the reference actuator the
+ * twin runs in place of the first-order filter, stepped by `stepShaping` (a spring-damper toward the delayed setpoint
+ * with a speed cap, Coulomb friction and a stiction band, integrated so it is stable at 60 Hz for any ω up to 1/h).
+ * `randomizeDomain` is the domain randomization robot-learning transfer asks for: from one seed, every link's mass
+ * ±20 % and inertia ±30 %, a friction per joint relative to its effort cap, and a jitter on every joint's shaping,
+ * all from degrees.ts createRng alone, so a seed is a reproducible world.
+ * Pure: the clock is an argument, only the rules' PRNG and the manifest's words are imported, so every fit, step and
+ * draw is proved in Node against a plant of known numbers.
  * What breaks if it is removed? A twin follows a robot with a guessed rate and no delay, and never knows how far off.
  */
+import { createRng } from '../02_Define_The_Rules/degrees.ts'
+import { buildManifest, INERTIA_SCALE, type JointSpec, type Manifest } from './jointState.ts'
 
 /** The realm's step rate the delay is counted in. */
 export const BRIDGE_HZ = 60
@@ -191,6 +203,357 @@ export function gainsFor(fit: StepFit, returnTripMs: number, hz: number = BRIDGE
   return { tauMs, delaySteps }
 }
 
+// ---- the second-order fit ---------------------------------------------------------------------------------------
+
+export const FIT2 = Object.freeze({
+  /** The second-order model is taken only when it lowers the first-order fit's rmse by this share (Occam). */
+  occam: 0.1,
+  /** A first-order fit already within this share of the response is not improved on: there is nothing left to fit. */
+  floor: 0.002,
+  /** How many of the best seeds the search descends from (a fit of 300 samples is about 20 ms a start). */
+  starts: 4,
+  /** The search's bounds: ω in rad/ms (1e-5 is a time constant of 100 s; 10 is a rise faster than any sample), ζ. */
+  omegaMin: 1e-5,
+  omegaMax: 10,
+  zetaMin: 0.05,
+  zetaMax: 20,
+  /** A damping within this of 1 takes the critically damped form (the over-damped one divides by ζ² − 1 there). */
+  criticalBand: 1e-6,
+} as const)
+
+/** A second-order system with dead time: y(t) = y0 + K·Δu·s(t − L), s the unit step response of ω, ζ. */
+export interface StepFit2 {
+  gain: number
+  deadTimeMs: number
+  /** Natural rate, rad/s, and damping ratio (under 1: overshoot; 1: critical; over 1: two real poles). */
+  omega: number
+  zeta: number
+  rmse: number
+  settled: boolean
+  y0: number
+  yEnd: number
+}
+
+/**
+ * The unit step response of a second-order system at t (the same unit as 1/ω) for t ≥ 0: the three closed forms.
+ * Near ζ = 1 the over-damped form loses digits (its two poles meet), so the critical form takes that band.
+ */
+export function step2(t: number, omega: number, zeta: number): number {
+  if (!(t > 0)) return 0
+  const wt = omega * t
+  if (Math.abs(zeta - 1) < FIT2.criticalBand) return 1 - Math.exp(-wt) * (1 + wt)
+  if (zeta < 1) {
+    const d = Math.sqrt(1 - zeta * zeta)
+    return 1 - Math.exp(-zeta * wt) * (Math.cos(d * wt) + (zeta / d) * Math.sin(d * wt))
+  }
+  const s = Math.sqrt(zeta * zeta - 1)
+  const p1 = zeta - s, p2 = zeta + s
+  return 1 - (p2 * Math.exp(-p1 * wt) - p1 * Math.exp(-p2 * wt)) / (p2 - p1)
+}
+
+/**
+ * Fits the same recording as `fitStep` with a second-order model. The first-order fit seeds it (ω = 1/τ, ζ = 1, its
+ * L; and a critically damped start whose 63.2 % crossing is the first-order fit's); a shrinking coordinate search
+ * over (L, ω, ζ), the gain re-solved by least squares at every point, takes the squared error down. ω and ζ move by
+ * a factor (their scale is unknown), L by a step; the factor and the step halve when no move helps.
+ */
+export function fitStep2(samples: readonly Sample[], u0: number, u1: number): StepFit2 | { error: string } {
+  const first = fitStep(samples, u0, u1)
+  if ('error' in first) return { error: `no second-order fit without a first: ${first.error}` }
+  const du = u1 - u0
+  const y0 = first.y0
+  const after = samples.filter((p) => p.t > 0)
+  const gainFor = (l: number, w: number, z: number): number => {
+    let num = 0, den = 0
+    for (const p of after) {
+      const r = step2(p.t - l, w, z)
+      num += r * (p.y - y0)
+      den += r * r
+    }
+    return den > 0 ? num / den : first.yEnd - y0
+  }
+  const sseFor = (l: number, w: number, z: number, dy: number): number => {
+    let s = 0
+    for (const p of samples) {
+      const e = p.y - (y0 + dy * step2(p.t - l, w, z))
+      s += e * e
+    }
+    return s
+  }
+  const clampW = (w: number): number => Math.min(FIT2.omegaMax, Math.max(FIT2.omegaMin, w))
+  const clampZ = (z: number): number => Math.min(FIT2.zetaMax, Math.max(FIT2.zetaMin, z))
+  const tau = Math.max(1, first.timeConstantMs), L1 = first.deadTimeMs
+  // The seeds: the brief's (ω = 1/τ, ζ = 1 at the first-order delay); critically damped starts that put the 63.2 %
+  // crossing (ωt = 2.146) where the first-order fit had it, with the delay partly given back to the rise; and heavily
+  // damped starts whose slow pole ω/2ζ is the first-order fit's 1/τ, which answer like the first-order fit itself, so
+  // the search never starts worse than the model it must beat.
+  type Point = { L: number; omega: number; zeta: number; dy: number; sse: number }
+  const at = (l: number, w: number, z: number): Point => {
+    const dy = gainFor(l, w, z)
+    return { L: l, omega: w, zeta: z, dy, sse: sseFor(l, w, z, dy) }
+  }
+  const seeds: Point[] = [at(L1, clampW(1 / tau), 1)]
+  for (const l of [L1, Math.max(0, L1 - tau / 2), 0]) {
+    for (const [w, z] of [[1 / tau, 0.5], [1 / tau, 2], [2.146 / Math.max(1, L1 + tau - l), 1], [2.146 / Math.max(1, L1 + tau - l), 0.5], [3 / tau, 1.5], [6 / tau, 3], [20 / tau, 10]] as const) {
+      seeds.push(at(l, clampW(w), clampZ(z)))
+    }
+  }
+  seeds.sort((a, b) => a.sse - b.sse)
+  // The descent from one start. Along each axis; along the diagonals of (ω, ζ), since ω and ζ up together keep the
+  // slow pole and speed the fast one, a valley the axis moves alone cannot follow; and that diagonal with the delay
+  // moved the other way, since a faster fast pole looks like less dead time. The step and the factor halve when no
+  // move helps. Several starts (the best seeds) because the valley has local minima the first-order-like end of it.
+  const descend = (start: Point): Point => {
+    let p = start
+    let stepL = Math.max(1, tau / 2), factor = 1.5
+    for (let round = 0; round < 60; round++) {
+      let moved = false
+      const { L, omega, zeta } = p
+      const up = clampW(omega * factor), down = clampW(omega / factor), more = clampZ(zeta * factor), less = clampZ(zeta / factor)
+      const moves: [number, number, number][] = [
+        [L + stepL, omega, zeta], [Math.max(0, L - stepL), omega, zeta],
+        [L, up, zeta], [L, down, zeta], [L, omega, more], [L, omega, less],
+        [L, up, more], [L, down, less], [L, up, less], [L, down, more],
+        [Math.max(0, L - stepL), up, more], [L + stepL, down, less],
+      ]
+      for (const [l, w, z] of moves) {
+        const q = at(l, w, z)
+        if (q.sse < p.sse - 1e-14) { p = q; moved = true }
+      }
+      if (!moved) { stepL /= 2; factor = Math.sqrt(factor) }
+      if (stepL < 0.05 && factor < 1.0005) break
+    }
+    return p
+  }
+  let best = seeds[0]
+  for (const s of seeds.slice(0, FIT2.starts)) {
+    const p = descend(s)
+    if (p.sse < best.sse) best = p
+  }
+  return { gain: best.dy / du, deadTimeMs: best.L, omega: best.omega * 1000, zeta: best.zeta, rmse: Math.sqrt(best.sse / samples.length), settled: first.settled, y0, yEnd: first.yEnd }
+}
+
+/** Which model the twin takes, and why in a sentence. */
+export interface FitChoice { order: 1 | 2; why: string; improvement: number }
+
+/**
+ * Occam: the second-order model only when its rmse is at least FIT2.occam (10 %) under the first-order fit's. A
+ * second-order fit that failed, a first-order rmse of zero, or one already under FIT2.floor of the response (two
+ * tenths of a percent: below any encoder's noise, so a lower rmse there is fitting the recording's arithmetic, not
+ * the actuator) keeps the first.
+ */
+export function pickFit(first: StepFit | { error: string }, second: StepFit2 | { error: string }): FitChoice {
+  const pct = (x: number): string => `${Math.round(x * 100)} %`
+  if ('error' in second) return { order: 1, why: `first order (the second-order fit failed: ${second.error})`, improvement: 0 }
+  if ('error' in first) return { order: 2, why: `second order (the first-order fit failed: ${first.error})`, improvement: 1 }
+  if (first.rmse <= FIT2.floor * Math.abs(first.yEnd - first.y0)) return { order: 1, why: `first order: its rmse is already under ${pct(FIT2.floor)} of the response`, improvement: 0 }
+  const improvement = first.rmse > 0 ? 1 - second.rmse / first.rmse : 0
+  if (improvement >= FIT2.occam) return { order: 2, why: `second order: rmse ${pct(improvement)} lower (Occam asks ${pct(FIT2.occam)})`, improvement }
+  return { order: 1, why: `first order: second order lowers the rmse only ${pct(Math.max(0, improvement))} (Occam asks ${pct(FIT2.occam)})`, improvement }
+}
+
+// ---- the reference actuator ------------------------------------------------------------------------------------
+
+/**
+ * The reference actuator a twin runs in place of its first-order filter (jointRealm.ts, `filter` mode with a
+ * shaping): a second-order system the servo then tracks. SI units: rad or m, seconds. The friction terms are the
+ * reference's own, per unit of its inertia (the reference has none of its own): Coulomb and stiction are
+ * decelerations (rad/s² or m/s²), viscous a rate (1/s). The realm's physical joint friction is a separate thing
+ * (JointFriction, in N·m or N): a domain sends friction there and leaves these at 0, so nothing is counted twice.
+ */
+export interface ActuatorShaping {
+  /** Natural rate, rad/s (clamped to 1/h when stepped: 60 rad/s at 60 Hz), and damping ratio (0 or more). */
+  omega: number
+  zeta: number
+  /** Whole realm steps every setpoint is held back. */
+  delaySteps: number
+  /** The reference settles at gain · setpoint (a step test's response over its command). */
+  gain: number
+  /** The reference's speed cap, rad/s or m/s. */
+  velocityMax: number
+  coulomb: number
+  viscous: number
+  stiction: number
+}
+
+export const SHAPING = Object.freeze({
+  /**
+   * ω·h may not exceed this: ω is clamped to 1/h, 60 rad/s at 60 Hz (a rise faster than the step, which a 60 Hz
+   * recording could not have resolved). The stepper is semi-implicit Euler with the damping taken implicitly, run
+   * in `substeps` sub-steps: the spring is stable while ω·h_sub < 2 for any ζ ≥ 0 (the Schur conditions on its 2×2
+   * update), and at the clamp ω·h_sub = 0.25, where the discrete response is within 2 % of the closed form at ζ = 0.5
+   * and within 6 % at ζ = 0.3 (the test pins both).
+   */
+  omegaStep: 1,
+  substeps: 4,
+  omegaMax: 60,
+  zetaMax: 10,
+  gainMin: 0.05,
+  gainMax: 10,
+  /** A reference moving slower than this is at rest, where stiction can hold it (rad/s or m/s). */
+  restRate: 1e-6,
+  /** The speed cap a shaping gets when its joint has none. */
+  velocityDefault: 100,
+} as const)
+
+/** The reference's state: where it stands and how fast it moves. */
+export interface ShapingState { x: number; xd: number }
+
+/**
+ * One realm step of `h` seconds toward the (already delayed) setpoint `r`, in SHAPING.substeps sub-steps. In each:
+ * the spring ω²(gain·r − x) is explicit, the damping 2ζω and the viscous term implicit in the new velocity, so the
+ * scheme is stable for ω·h ≤ 1 (ω clamped there) and any ζ ≥ 0. Stiction: at rest, the reference stays until the
+ * spring exceeds it. Coulomb: a deceleration toward rest that never crosses it. The speed cap clips the new
+ * velocity; the position takes the new velocity. Never NaN: a non-finite field counts as 0.
+ */
+export function stepShaping(s: ActuatorShaping, st: ShapingState, r: number, h: number): ShapingState {
+  const fin = (v: number): number => (Number.isFinite(v) ? v : 0)
+  const omega = Math.min(Math.max(0, fin(s.omega)), SHAPING.omegaStep / h)
+  const zeta = Math.max(0, fin(s.zeta))
+  const damping = 2 * zeta * omega + Math.max(0, fin(s.viscous))
+  const coulomb = Math.max(0, fin(s.coulomb)), stiction = Math.max(0, fin(s.stiction))
+  const target = fin(s.gain) * fin(r)
+  const cap = s.velocityMax > 0 ? s.velocityMax : SHAPING.velocityDefault
+  const dt = h / SHAPING.substeps
+  for (let k = 0; k < SHAPING.substeps; k++) {
+    const spring = omega * omega * (target - st.x)
+    if (Math.abs(st.xd) <= SHAPING.restRate && Math.abs(spring) <= stiction) { st.xd = 0; continue }
+    let xd = (st.xd + dt * spring) / (1 + dt * damping)
+    if (xd > 0) xd = Math.max(0, xd - coulomb * dt)
+    else if (xd < 0) xd = Math.min(0, xd + coulomb * dt)
+    if (xd > cap) xd = cap
+    else if (xd < -cap) xd = -cap
+    st.xd = xd
+    st.x += xd * dt
+  }
+  return st
+}
+
+/**
+ * A second-order fit as the twin's shaping: ω and ζ as fitted (within the stepper's bounds), the gain as fitted
+ * (within 0.05..10), the delay as gainsFor counts it (the dead time less the link's return trip, in whole steps),
+ * the joint's own speed cap, and no friction of the reference's own.
+ */
+export function gainsFor2(fit: StepFit2, returnTripMs: number, velocityMax: number, hz: number = BRIDGE_HZ): ActuatorShaping {
+  const { delaySteps } = gainsFor({ gain: fit.gain, deadTimeMs: fit.deadTimeMs, timeConstantMs: 0, rmse: fit.rmse, settled: fit.settled, y0: fit.y0, yEnd: fit.yEnd }, returnTripMs, hz)
+  const clamp = (v: number, lo: number, hi: number, dflt: number): number => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : dflt)
+  return {
+    omega: clamp(fit.omega, 1e-3, SHAPING.omegaMax, SHAPING.omegaMax), zeta: clamp(fit.zeta, 0, SHAPING.zetaMax, 1), delaySteps,
+    gain: clamp(fit.gain, SHAPING.gainMin, SHAPING.gainMax, 1), velocityMax: Number.isFinite(velocityMax) && velocityMax > 0 ? velocityMax : SHAPING.velocityDefault,
+    coulomb: 0, viscous: 0, stiction: 0,
+  }
+}
+
+// ---- domain randomization ----------------------------------------------------------------------------------------
+
+/** A joint's physical friction in the realm: N·m or N for Coulomb and stiction, N·m·s/rad or N·s/m for viscous. */
+export interface JointFriction { coulomb: number; viscous: number; stiction: number }
+
+/**
+ * The spread a seed draws from. Mass and inertia are the plan's (±20 %, ±30 %). Friction is relative to each
+ * joint's own caps, so one table fits a 6 N·m wrist and a 2 kN table: Coulomb up to 5 % of the effort cap (a geared
+ * servo's running friction is a few percent of its rated torque), stiction one to two times the Coulomb level
+ * (breakaway sits above running friction and rarely doubles it), and viscous damping that costs at most 10 % of
+ * the effort at the joint's speed cap, so the joint can still reach that speed with nine tenths of its torque. The
+ * shaping jitter moves ω and ζ by up to a quarter, the gain by 2 % and the delay by up to one extra step; a joint
+ * with no fitted shaping starts from the nominal (a 20 rad/s critically damped servo: a rise of about 0.1 s).
+ */
+export const DOMAIN = Object.freeze({
+  mass: 0.2,
+  inertia: 0.3,
+  /** Shares of the effort cap. */
+  coulomb: Object.freeze([0, 0.05]) as readonly [number, number],
+  /** Share of the effort cap spent at the velocity cap. */
+  viscous: Object.freeze([0, 0.1]) as readonly [number, number],
+  /** Times the Coulomb level. */
+  stiction: Object.freeze([1, 2]) as readonly [number, number],
+  shaping: Object.freeze({ omega: 0.25, zeta: 0.25, delaySteps: 1, gain: 0.02, nominal: Object.freeze({ omega: 20, zeta: 1, delaySteps: 0, gain: 1 }) }),
+  /** The caps a joint without any gets (articulated.ts ROBOT.defaultEffort and defaultVelocity say the same). */
+  capDefault: Object.freeze({ effort: 10, velocity: 10 }),
+} as const)
+
+export interface DomainFactor { link: string; mass: number; inertia: number }
+export interface Domain {
+  seed: number
+  /** The manifest with every link's mass and inertiaScale scaled (a link of no mass keeps none: the realm's default). */
+  manifest: Manifest
+  factors: DomainFactor[]
+  /** Per movable joint, in q order. */
+  friction: JointFriction[]
+  shaping: ActuatorShaping[]
+}
+
+/** The caps a joint carries, or the defaults for one without. */
+const capsOf = (j: JointSpec): { effort: number; velocity: number } => ({ effort: j.effort > 0 ? j.effort : DOMAIN.capDefault.effort, velocity: j.velocity > 0 ? j.velocity : DOMAIN.capDefault.velocity })
+
+/** The shaping a joint starts from when nothing was fitted: the nominal servo at the joint's own speed cap. */
+export function nominalShaping(j: JointSpec): ActuatorShaping {
+  const n = DOMAIN.shaping.nominal
+  return { omega: n.omega, zeta: n.zeta, delaySteps: n.delaySteps, gain: n.gain, velocityMax: capsOf(j).velocity, coulomb: 0, viscous: 0, stiction: 0 }
+}
+
+/**
+ * One seed, one world: the manifest's masses and inertia scales, a friction per movable joint and a shaping per
+ * movable joint (jittered from `base[i]` when given, else the nominal), drawn in a fixed order from createRng(seed)
+ * and nothing else, so the same seed gives the same domain on any machine. The manifest goes back through
+ * buildManifest, so the copy is as judged as the original (a scale is clamped into the manifest's bounds).
+ */
+export function randomizeDomain(seed: number, m: Manifest, base: readonly (ActuatorShaping | null)[] | null = null): Domain {
+  const rng = createRng(seed)
+  const span = (lo: number, hi: number): number => lo + (hi - lo) * rng()
+  const about = (jitter: number): number => span(1 - jitter, 1 + jitter)
+  const factors: DomainFactor[] = []
+  const links = m.links.map((l) => {
+    const fm = about(DOMAIN.mass), fi = about(DOMAIN.inertia)
+    factors.push({ link: l.name, mass: fm, inertia: fi })
+    const inertiaScale = Math.min(INERTIA_SCALE.max, Math.max(INERTIA_SCALE.min, (l.inertiaScale ?? 1) * fi))
+    return { ...l, mass: l.mass > 0 ? l.mass * fm : 0, inertiaScale }
+  })
+  const friction: JointFriction[] = []
+  const shaping: ActuatorShaping[] = []
+  m.movable.forEach((ji, i) => {
+    const j = m.joints[ji]
+    const { effort, velocity } = capsOf(j)
+    const coulomb = effort * span(DOMAIN.coulomb[0], DOMAIN.coulomb[1])
+    const viscous = (effort / velocity) * span(DOMAIN.viscous[0], DOMAIN.viscous[1])
+    const stiction = coulomb * span(DOMAIN.stiction[0], DOMAIN.stiction[1])
+    friction.push({ coulomb, viscous, stiction })
+    const b = base?.[i] ?? nominalShaping(j)
+    const s = DOMAIN.shaping
+    shaping.push({
+      omega: Math.min(SHAPING.omegaMax, Math.max(1e-3, b.omega * about(s.omega))),
+      zeta: Math.min(SHAPING.zetaMax, Math.max(0, b.zeta * about(s.zeta))),
+      delaySteps: Math.min(FIT.maxDelaySteps, b.delaySteps + Math.floor(span(0, s.delaySteps + 1))),
+      gain: Math.min(SHAPING.gainMax, Math.max(SHAPING.gainMin, b.gain * about(s.gain))),
+      velocityMax: b.velocityMax > 0 ? b.velocityMax : velocity,
+      coulomb: 0, viscous: 0, stiction: 0,
+    })
+  })
+  const judged = buildManifest(m.robot, links, m.joints)
+  if (!judged.ok) throw new Error(`randomizeDomain: ${judged.reason}`)
+  return { seed, manifest: judged.value, factors, friction, shaping }
+}
+
+const f3 = (v: number, d = 3): string => (Number.isFinite(v) ? Number(v.toFixed(d)).toString() : 'nan')
+
+/** The console's table of a domain: a header, the links' factors, the joints' friction and shaping. */
+export function describeDomain(d: Domain): string[] {
+  const m = d.manifest
+  const lines = [`domain seed ${d.seed}: mass ±${Math.round(DOMAIN.mass * 100)} %, inertia ±${Math.round(DOMAIN.inertia * 100)} %, friction up to ${Math.round(DOMAIN.coulomb[1] * 100)} % of the effort cap`]
+  lines.push(`  ${'LINK'.padEnd(18)}${'MASS'.padEnd(12)}${'INERTIA'.padEnd(10)}KG`)
+  d.factors.forEach((f, i) => {
+    const l = m.links[i]
+    lines.push(`  ${f.link.padEnd(18)}${`×${f3(f.mass, 2)}`.padEnd(12)}${`×${f3(f.inertia, 2)}`.padEnd(10)}${l.mass > 0 ? f3(l.mass) : 'default (unscaled)'}`)
+  })
+  lines.push(`  ${'JOINT'.padEnd(18)}${'COULOMB'.padEnd(10)}${'VISCOUS'.padEnd(10)}${'STICTION'.padEnd(10)}${'ω'.padEnd(7)}${'ζ'.padEnd(6)}${'DELAY'.padEnd(7)}${'GAIN'.padEnd(6)}VMAX`)
+  m.movable.forEach((ji, i) => {
+    const j = m.joints[ji], f = d.friction[i], s = d.shaping[i]
+    const u = j.kind === 'prismatic' ? 'N' : 'N·m'
+    lines.push(`  ${j.name.padEnd(18)}${`${f3(f.coulomb)} ${u}`.padEnd(10)}${`${f3(f.viscous)}`.padEnd(10)}${`${f3(f.stiction)} ${u}`.padEnd(10)}${f3(s.omega, 1).padEnd(7)}${f3(s.zeta, 2).padEnd(6)}${String(s.delaySteps).padEnd(7)}${f3(s.gain, 2).padEnd(6)}${f3(s.velocityMax, 1)}`)
+  })
+  return lines
+}
+
 /** A ring of the last `capacity` values; read(d) is the value pushed d pushes ago (the oldest kept when d is beyond it). */
 export class DelayBuffer<T> {
   private readonly ring: (T | undefined)[]
@@ -218,7 +581,10 @@ export class DelayBuffer<T> {
 /** A joint the calibrator may step: its index in q, its range (null for an unlimited one). */
 export interface JointToFit { index: number; name: string; lower: number | null; upper: number | null }
 
-export type JointResult = { index: number; name: string; fit: StepFit } | { index: number; name: string; error: string }
+/** A fitted joint carries its recording and the step it answered, so a second fit (fitStep2) can be run on the same data. */
+export type JointResult =
+  | { index: number; name: string; fit: StepFit; samples: readonly Sample[]; step: { u0: number; u1: number } }
+  | { index: number; name: string; error: string }
 
 type Phase = 'hold' | 'step' | 'done'
 
@@ -285,13 +651,13 @@ export class Calibrator {
       && Math.abs(this.samples[this.samples.length - 1].y - this.hold[j.index]) > FIT.minGain * Math.abs(dy)
     if (t >= FIT.recordMs || settledNow) {
       const fit = fitStep(this.samples, this.hold[j.index], this.stepTo)
-      return this.finish(j, 'error' in fit ? { error: fit.error } : { fit })
+      return this.finish(j, 'error' in fit ? { error: fit.error } : { fit, samples: this.samples, step: { u0: this.hold[j.index], u1: this.stepTo } })
     }
     return { targets, results: null }
   }
 
-  private finish(j: JointToFit, r: { fit: StepFit } | { error: string }): { targets: number[] | null; results: readonly JointResult[] | null } {
-    this.results.push('fit' in r ? { index: j.index, name: j.name, fit: r.fit } : { index: j.index, name: j.name, error: r.error })
+  private finish(j: JointToFit, r: { fit: StepFit; samples: readonly Sample[]; step: { u0: number; u1: number } } | { error: string }): { targets: number[] | null; results: readonly JointResult[] | null } {
+    this.results.push('fit' in r ? { index: j.index, name: j.name, fit: r.fit, samples: r.samples, step: r.step } : { index: j.index, name: j.name, error: r.error })
     this.at++
     this.hold = null
     this.samples = []

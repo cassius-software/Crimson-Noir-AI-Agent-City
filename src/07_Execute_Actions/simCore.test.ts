@@ -43,6 +43,7 @@ import { ACTIVITY, APPROACH_SECONDS, RALLY_RANGE, RECRUIT_SLOTS, RELEASE_DISTANC
 import type { SimEvent } from './simProtocol.ts'
 import { CITY, inLot } from '../01_Initialize_World/city.ts'
 import { SEG, cityStreetGrid, hSeg, streetCapacity, vSeg, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
+import { windowNetwork } from '../01_Initialize_World/region/transit.ts'
 import { ROOM, WORKPLACE_KINDS, toLocal, toWorld, workplacesAt, type Workplace, type WorkplaceLot } from '../01_Initialize_World/interiors.ts'
 import { cellAt, type FlowGrid } from '../06_Make_Decisions/flowField.ts'
 import { exitPoint } from './carRig.ts'
@@ -1210,7 +1211,7 @@ test('craft off (a lite boot, SimInit.craft false): tracks on and the fleet on i
   assert.deepEqual(seen, [false, true])
 })
 
-test('a region with a street window: the fleet is seated on the window\'s rings and drives them, the crowd is built for the window, no craft', async () => {
+test('a region with a street window: the fleet is seated on the window\'s rings and drives them, the crowd is built for the window, the craft on the window\'s own network', async () => {
   const { region, streets } = windowedRegion()
   const crowd = new FakeCrowd()
   const given: (StreetGrid | null)[] = []
@@ -1218,15 +1219,31 @@ test('a region with a street window: the fleet is seated on the window\'s rings 
   assert.equal(given.length, 1)
   assert.deepEqual(given[0], streets, 'the crowd factory is handed the window')
   assert.equal(sim.meta.count, 12)
-  assert.equal(sim.meta.craft, 0, 'no elevated loop, drones or planes over a region')
+  // The window's own loop, corridors and racetrack (region/transit.ts windowNetwork; no craft boxes, so no VTOL route).
+  assert.equal(sim.meta.craft, new TrackFleet(windowNetwork(5, streets, [], region.bounds)).count, 'the craft of the window\'s network')
+  assert.ok(sim.meta.craft > 0, 'an elevated loop, drones and planes over a region with a window')
   assert.equal(sim.meta.rigSlots, 0)
   assert.equal(sim.meta.rooms, 0, 'no workplaces sent: none')
   const poses = new Float32Array(sim.meta.count * POSE.stride)
+  const craft = new Float32Array(sim.meta.craft * TRACK_POSE.stride)
   const start: [number, number][] = []
-  let s = sim.step({ dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds: [] }, poses, new Float32Array(0))
+  let s = sim.step({ dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds: [] }, poses, craft)
   for (let i = 0; i < 12; i++) start.push([s.poses[i * POSE.stride], s.poses[i * POSE.stride + 2]])
-  for (let n = 0; n < 600; n++) s = sim.step({ dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds: [] }, poses, new Float32Array(0))
+  for (let n = 0; n < 600; n++) s = sim.step({ dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds: [] }, poses, craft)
   assert.equal(sim.halted, false, sim.panic ?? '')
+  // The craft run over the window: a train and drones over the window itself, and a plane on the racetrack (held
+  // inside a region's bounds where the region is wide enough; this fixture's is 840 m, narrower than the track).
+  const kinds = new Set<number>()
+  const P16 = 16 * CITY.pitch
+  for (let i = 0; i < sim.meta.craft; i++) {
+    const o = i * TRACK_POSE.stride
+    const kind = craft[o + TRACK_POSE.kind]
+    kinds.add(kind)
+    if (kind === TRACK_KINDS.indexOf('plane')) continue
+    const lx = craft[o] - streets.originX, lz = craft[o + 2] - streets.originZ
+    assert.ok(lx >= -8 && lx <= P16 + 8 && lz >= -8 && lz <= P16 + 8, `craft ${i} (kind ${kind}) at ${lx.toFixed(1)}, ${lz.toFixed(1)} is off the window`)
+  }
+  assert.ok(kinds.has(TRACK_KINDS.indexOf('train')) && kinds.has(TRACK_KINDS.indexOf('drone')) && kinds.has(TRACK_KINDS.indexOf('plane')), `kinds ${[...kinds]}`)
   const P = CITY.pitch
   let moved = 0, parked = 0
   for (let i = 0; i < 12; i++) {

@@ -7,8 +7,9 @@
  * contact groups on every link; limits that read back (Rapier 0.21 drops the joint data's revolute limits, so they
  * are set on the joint); the measured angle and slide against poses set by hand, with a turned joint frame and an
  * unwrapped wheel; the velocity motor as a first-order lag of the asked time constant, its speed cap and its effort
- * cap; the τ estimate against the torque that holds a link against gravity; the finiteness check; and what the
- * realm refuses to build.
+ * cap; the τ estimate against the torque that holds a link against gravity; the finiteness check; what the realm
+ * refuses to build; and the domain randomizer's inertia word: the closed-form tensors against what Rapier derives,
+ * and a link's inertiaScale scaling its body's inertia at the same mass.
  * What breaks if it is removed? A frame convention or a Rapier gotcha could put a twin's elbow about the wrong axis,
  * or at the wrong zero, and nothing would say so until a real robot moved the other way.
  */
@@ -17,7 +18,7 @@ import { test } from 'node:test'
 import RAPIER from '@dimforge/rapier3d-simd-compat'
 import { RAGDOLL_GROUPS, ROBOT_GROUPS } from '../02_Define_The_Rules/collision.ts'
 import { buildManifest, type Manifest } from '../04_Connect_Hardware/jointState.ts'
-import { arcToX, axisQuat, buildArticulated, drive, hold, linkPose, measure, qmul, removeArticulated, ROBOT, rotate, rpyQuat, sane, ZUP_TO_YUP, type Articulated } from './articulated.ts'
+import { arcToX, axisQuat, buildArticulated, drive, hold, linkPose, measure, qmul, removeArticulated, ROBOT, rotate, rpyQuat, sane, shapeInertia, ZUP_TO_YUP, type Articulated } from './articulated.ts'
 
 await RAPIER.init()
 const H = 1 / 60
@@ -227,4 +228,61 @@ test('what the realm refuses: a floating joint, a heavy link, a placement that i
   assert.equal(sane(a), false)
   removeArticulated(w, a)
   assert.deepEqual(counts(w), base)
+})
+
+test('shapeInertia is what Rapier derives for each shape at its mass; an inertiaScale scales the body\'s inertia and leaves its mass', () => {
+  // Each shape alone on a free body, in its collider's own frame (Rapier stands cylinders and capsules along y, as
+  // shapeInertia does), at 2.5 kg: the principal inertia Rapier computes from the shape against the closed forms.
+  const shapes: Manifest['links'][number]['shape'][] = [
+    { kind: 'box', size: [0.3, 0.1, 0.2] },
+    { kind: 'sphere', radius: 0.07 },
+    { kind: 'cylinder', radius: 0.05, length: 0.4 },
+    { kind: 'capsule', radius: 0.04, length: 0.3 },
+  ]
+  const descOf = (s: Manifest['links'][number]['shape']): RAPIER.ColliderDesc => {
+    switch (s.kind) {
+      case 'box': return RAPIER.ColliderDesc.cuboid(s.size[0] / 2, s.size[1] / 2, s.size[2] / 2)
+      case 'sphere': return RAPIER.ColliderDesc.ball(s.radius)
+      case 'cylinder': return RAPIER.ColliderDesc.cylinder(s.length / 2, s.radius)
+      case 'capsule': return RAPIER.ColliderDesc.capsule(s.length / 2, s.radius)
+      default: throw new Error('not in this test')
+    }
+  }
+  for (const s of shapes) {
+    const w = new RAPIER.World({ x: 0, y: 0, z: 0 })
+    const body = w.createRigidBody(RAPIER.RigidBodyDesc.dynamic())
+    w.createCollider(descOf(s).setMass(2.5), body)
+    w.step()
+    const got = body.principalInertia()
+    const rapier = [got.x, got.y, got.z].sort((a, b) => a - b)
+    const ours = [...shapeInertia(s, 2.5)].sort((a, b) => a - b)
+    for (let i = 0; i < 3; i++) assert.ok(Math.abs(rapier[i] - ours[i]) <= 1e-4 * Math.max(1e-6, rapier[i]) + 1e-9, `${s.kind}: Rapier ${rapier.map((v) => v.toExponential(4))} vs ${ours.map((v) => v.toExponential(4))}`)
+    w.free()
+  }
+  // A link built with inertiaScale 1.3, against the same link without one: the same mass, the inertia 1.3 times,
+  // axis by axis (the shape's own tensor at the link's mass, as Rapier would have it, then scaled).
+  const linkOf = (k?: number) => {
+    const m = buildManifest('one', [
+      { name: 'base', mass: 4, shape: { kind: 'box', size: [0.2, 0.2, 0.1] } },
+      { name: 'bar', mass: 1.5, shape: { kind: 'capsule', radius: 0.03, length: 0.5 }, shapeOrigin: { xyz: [0, 0, 0.25], rpy: [0, 0, 0] }, ...(k === undefined ? {} : { inertiaScale: k }) },
+    ], [{ name: 'hinge', kind: 'revolute', parent: 'base', child: 'bar', origin: { xyz: [0, 0, 0.05], rpy: [0, 0, 0] }, axis: [0, 1, 0], lower: -1, upper: 1, effort: 10, velocity: 2 }])
+    assert.ok(m.ok, (m as { reason?: string }).reason)
+    return (m as { value: Manifest }).value
+  }
+  const read = (m: Manifest) => {
+    const w = world()
+    const a = buildArticulated(w, m, AT)
+    const b = a.bodies[1]
+    const i = b.principalInertia()
+    const out = { mass: b.mass(), inertia: [i.x, i.y, i.z].sort((p, q) => p - q) }
+    removeArticulated(w, a)
+    w.free()
+    return out
+  }
+  const plain = read(linkOf()), one = read(linkOf(1)), scaled = read(linkOf(1.3))
+  assert.ok(near(plain.mass, 1.5, 1e-6) && near(scaled.mass, 1.5, 1e-6), `the mass unchanged: ${plain.mass} ${scaled.mass}`)
+  for (let i = 0; i < 3; i++) {
+    assert.ok(Math.abs(one.inertia[i] - plain.inertia[i]) <= 1e-4 * plain.inertia[i], `scale 1 is Rapier's own: ${one.inertia} vs ${plain.inertia}`)
+    assert.ok(Math.abs(scaled.inertia[i] / plain.inertia[i] - 1.3) <= 1e-4, `axis ${i}: ×${(scaled.inertia[i] / plain.inertia[i]).toFixed(5)}`)
+  }
 })
