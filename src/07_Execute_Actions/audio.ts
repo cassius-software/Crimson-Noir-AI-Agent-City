@@ -10,15 +10,18 @@
  * building of the physics realm's own geometry that stands between them and the listener, and placed in the room it
  * is said from (acoustics.ts: the street canyon's reverberation through one convolver with per-group sends, the
  * through-the-wall coupling of a voice in another street). A peer's voice (a MediaStream the host hands in; no
- * connection is opened here) is placed in the same space. Every sound's start, change and stop is reported to one
- * listener (`onSound`, a plain event with the sound's world point) so the HUD can caption it (captions.ts). The maths
+ * connection is opened here) is placed in the same space. One sound is head-locked: the check chime, a short arpeggio
+ * or chord that confirms a successful check (02_Define_The_Rules/progression.ts), joined straight to the master so
+ * the volume and the limiter apply but the street's panners, the cabin and the room do not. Every sound's
+ * start, change and stop is reported to one listener (`onSound`, a plain event with the sound's world point, NaN for
+ * the cabin and the chime) so the HUD can caption it (captions.ts). The maths
  * (gearbox, gain curves, voice assignment, Doppler, synthesis) is exported as pure functions and unit-tested; the
  * Soundscape class only maps it onto a small, fixed Web Audio graph built once on the first user gesture. In local
  * split screen each player has a soundscape of their own over one shared context, in head space (SoundscapeOptions):
  * Web Audio has one listener per context, so that listener stays put and every source is placed relative to each
  * player's head (toHeadSpace), with smaller voice and bed pools per player.
- * What breaks if it is removed? The city is silent: approaching traffic gives no spatial cue and the walk
- * signal has no audible counterpart for players who cannot see it.
+ * What breaks if it is removed? The city is silent: approaching traffic gives no spatial cue, the walk
+ * signal has no audible counterpart for players who cannot see it, and a successful check is not heard.
  */
 import { CITY, type Box } from '../01_Initialize_World/city.ts'
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
@@ -190,7 +193,6 @@ export const CABIN = {
   engineBay: 1.8,
 } as const
 
-/** Sample rate of the pre-rendered buffers (≥ 22.05 kHz for older WebKit; everything synthesized sits below 7 kHz). */
 /**
  * The recruitment cue: a soft rising pair of notes placed where someone the operator asked over stands, so the
  * operator hears who is coming before they see them. One shot per request; a few may overlap.
@@ -221,6 +223,43 @@ export const PING = {
   fall: 0.08,
   amplitude: 0.26,
   overtone: 0.12,
+} as const
+
+/**
+ * The check chime: a short confirmation when the operator's check succeeds (02_Define_The_Rules/progression.ts),
+ * head-locked, so it is heard in the ears rather than placed on the street. A success is a quick rising C5, E5, G5
+ * arpeggio; a critical success is one open chord of C4, C6 and G6 (notes with the same start add into a chord). One
+ * fixed sound per degree and none for a failure: it confirms, it does not escalate. It never covers a sound the player
+ * acts on: at the ear it stays under the recruitment cue from anyone near enough to be asked over, it waits for a cue
+ * or a ping that is still sounding, and a cue or a ping that starts over it fades it out (Soundscape.chime and shot).
+ */
+export const CHIME = {
+  /**
+   * The chime's own gain, joined straight to the master: on/off, the volume and the limiter apply, not the cabin. The
+   * chime reaches both ears whole, while the recruitment cue loses level to its panner: the inverse distance (0.4 at
+   * AUDIBLE_RADIUS, 5 m, the farthest anyone is asked over from) and an equal-power pan (about 0.71 an ear). So the
+   * level is set against the cue as heard from there, its peak of about 0.28 times both, near 0.08; the louder of the
+   * two chimes, the chord at about 0.2, comes out near 0.06.
+   */
+  level: 0.3,
+  /** The fade's time constant, s, when a cue or a ping starts over a chime; the chime stops six of them later. */
+  fade: 0.008,
+  /** [start s, length s, start Hz, end Hz]: three short notes in a row, the last held a little. */
+  success: {
+    notes: [[0, 0.09, 523.25, 523.25], [0.1, 0.09, 659.25, 659.25], [0.2, 0.22, 783.99, 783.99]] as readonly (readonly [number, number, number, number])[],
+    rise: 0.006,
+    fall: 0.08,
+    amplitude: 0.18,
+    overtone: 0.15,
+  },
+  /** Three notes at once, each quieter, so the summed chord peaks under 3 × amplitude and still under the cue. */
+  critical: {
+    notes: [[0, 0.45, 261.63, 261.63], [0, 0.45, 1046.5, 1046.5], [0, 0.45, 1567.98, 1567.98]] as readonly (readonly [number, number, number, number])[],
+    rise: 0.008,
+    fall: 0.3,
+    amplitude: 0.08,
+    overtone: 0.1,
+  },
 } as const
 
 /**
@@ -307,6 +346,7 @@ export function muffle(walls: number): { cutoff: number; gain: number } {
   return transmissionLoss(walls, 'masonry')
 }
 
+/** Sample rate of the pre-rendered buffers (≥ 22.05 kHz for older WebKit; everything synthesized sits below 7 kHz). */
 export const SYNTH_RATE = 24000
 const SPEED_OF_SOUND = 343
 /** update() runs its control pass at most this often (60 Hz displays run it every frame). */
@@ -693,6 +733,17 @@ export function renderPing(sampleRate: number, out: Float32Array): void {
   renderNotes(PING, sampleRate, out)
 }
 
+/** Samples in the check chime of `kind`: its last note, and a little silence so it ends on nothing. */
+export function chimeLength(kind: 'success' | 'critical', sampleRate: number): number {
+  const end = Math.max(...CHIME[kind === 'critical' ? 'critical' : 'success'].notes.map(([start, length]) => start + length))
+  return Math.round((end + 0.02) * sampleRate)
+}
+
+/** The check chime of `kind`, rendered like the recruitment cue (raised-cosine edges, a quiet overtone). */
+export function renderChime(kind: 'success' | 'critical', sampleRate: number, out: Float32Array): void {
+  renderNotes(CHIME[kind === 'critical' ? 'critical' : 'success'], sampleRate, out)
+}
+
 interface NoteSpec {
   notes: readonly (readonly [number, number, number, number])[]
   rise: number
@@ -994,6 +1045,11 @@ interface Graph {
   cue: AudioBuffer
   ping: AudioBuffer
   cues: Cue[]
+  /**
+   * The check chime: its gain into the master, both rendered buffers, the sources still sounding (chimes overlap
+   * rather than cut each other) and when the last of them ends. Kept apart from `cues`: it has no slot and no place.
+   */
+  chime: { gain: GainNode; success: AudioBuffer; critical: AudioBuffer; playing: AudioBufferSourceNode[]; until: number }
   speech: Speech
   /** Null where the browser has no ConvolverNode: every voice is dry, nothing else changes. */
   reverb: Reverb | null
@@ -1374,6 +1430,62 @@ export class Soundscape {
     return this.shot('ping', x, z, label)
   }
 
+  /**
+   * The check chime (CHIME): a success's arpeggio or a critical success's chord, head-locked, so it has no panner, no
+   * room and no place, and its caption is the text alone. Sounds only while the soundscape does (unlocked, on,
+   * running), like cue(). A fresh source per play from a buffer rendered at build time, so a check earned inside a
+   * worker message or a frame costs one node and no allocation per sample. A cue or a ping still sounding goes first
+   * (the console's `ping go` earns in the same task that cues the mark), and the chime starts as the last of them ends.
+   * Chimes that overlap mix instead of cutting each other mid-note, and the caption stops with the last of them.
+   * `label` (the skill's title) names it in its caption. Returns whether it sounded or is waiting to.
+   */
+  chime(kind: 'success' | 'critical', label?: string): boolean {
+    const ctx = this.ctx, g = this.graph
+    if (!ctx || !g || !this.enabled || ctx.state !== 'running') return false
+    try {
+      const now = ctx.currentTime, ch = g.chime
+      const critical = kind === 'critical'
+      const buffer = critical ? ch.critical : ch.success
+      const src = ctx.createBufferSource()
+      src.buffer = buffer
+      src.connect(ch.gain)
+      src.onended = () => {
+        src.disconnect()
+        const i = ch.playing.indexOf(src)
+        if (i < 0) return
+        ch.playing.splice(i, 1)
+        if (ch.playing.length === 0) this.emit('chime', 'stop', 0, Number.NaN, Number.NaN, this.clock)
+      }
+      let start = now + 0.01
+      for (const c of g.cues) if (c.source && c.until > start) start = c.until
+      src.start(start)
+      ch.playing.push(src)
+      ch.until = Math.max(ch.until, start + buffer.length / buffer.sampleRate)
+      const detail = critical ? 'critical' : 'success'
+      this.emit('chime', 'start', 0, Number.NaN, Number.NaN, now, label === undefined ? { detail } : { detail, label })
+      return true
+    } catch {
+      this.fail()
+      return false
+    }
+  }
+
+  /**
+   * Fades out every chime sounding or waiting (CHIME.fade), stops them once silent and sets the chime's level back
+   * then. The next chime waits for the cue that caused this, so it starts whole. Their caption stops here, once.
+   */
+  private giveWay(ch: Graph['chime'], now: number): void {
+    if (ch.playing.length === 0) return
+    const level = ch.gain.gain, end = now + 6 * CHIME.fade
+    level.cancelScheduledValues(now)
+    level.setTargetAtTime(0, now, CHIME.fade)
+    level.setValueAtTime(CHIME.level, end)
+    for (const s of ch.playing) stopQuietly(s, end)
+    ch.playing.length = 0
+    ch.until = Math.min(ch.until, end)
+    this.emit('chime', 'stop', 0, Number.NaN, Number.NaN, now)
+  }
+
   /** One shot on the cue voices; `label` names it in its caption (a ping's word and what it marked). */
   private shot(kind: 'cue' | 'ping', x: number, z: number, label?: string): boolean {
     const ctx = this.ctx, g = this.graph
@@ -1406,6 +1518,8 @@ export class Soundscape {
       slot.x = x
       slot.z = z
       slot.until = now + 0.01 + buffer.length / buffer.sampleRate
+      // Something placed to act on starts: a chime sounding or waiting fades out under it instead of covering it.
+      this.giveWay(g.chime, now)
       this.emit(kind, 'start', index, x, z, now, label === undefined ? undefined : { label })
       return true
     } catch {
@@ -1593,7 +1707,10 @@ export class Soundscape {
     done?.()
   }
 
-  /** `voices` counts sources currently audible: car voices, murmur beds, walk tones, cues, speech and placed peers. */
+  /**
+   * `voices` counts sources currently audible: car voices, murmur beds, walk tones, cues, chimes, speech and placed
+   * peers.
+   */
   status(): { state: AudioState; voices: number; hrtf: boolean; volume: number } {
     const g = this.graph
     let state: AudioState
@@ -1609,6 +1726,7 @@ export class Soundscape {
       if (g.tones.ns.on) voices++
       const now = this.ctx!.currentTime
       for (const c of g.cues) if (c.source && c.until > now) voices++
+      if (g.chime.until > now) voices += g.chime.playing.length
       if (g.speech.source) voices++
       for (const p of g.peers.values()) if (p.live) voices++
     }
@@ -1642,6 +1760,8 @@ export class Soundscape {
       if (g.tones.ew.source) stopQuietly(g.tones.ew.source)
       if (g.tones.ns.source) stopQuietly(g.tones.ns.source)
       for (const c of g.cues) if (c.source) stopQuietly(c.source)
+      for (const s of g.chime.playing) stopQuietly(s)
+      g.chime.playing.length = 0
       // The context is closing: its sources may never report their end, so the utterance ends here.
       const sp = g.speech
       if (sp.source) stopQuietly(sp.source)
@@ -1673,6 +1793,11 @@ export class Soundscape {
     const master = ctx.createGain()
     master.gain.value = this.enabled ? volumeToGain(this.volume) * MASTER_TRIM : 0
     master.connect(limiter)
+    // The check chime is head-locked: it joins the master itself, never the cabin bus, a panner or a reverb send, so
+    // on/off, the volume and the limiter apply while the car's low-pass and the street's room do not.
+    const chimeGain = ctx.createGain()
+    chimeGain.gain.value = CHIME.level
+    chimeGain.connect(master)
     const cabin = ctx.createBiquadFilter()
     cabin.type = 'lowpass'
     cabin.frequency.value = CABIN.open
@@ -1770,6 +1895,12 @@ export class Soundscape {
     renderCue(SYNTH_RATE, cue.getChannelData(0))
     const ping = ctx.createBuffer(1, pingLength(SYNTH_RATE), SYNTH_RATE)
     renderPing(SYNTH_RATE, ping.getChannelData(0))
+    const chimeBuffer = (kind: 'success' | 'critical'): AudioBuffer => {
+      const buffer = ctx.createBuffer(1, chimeLength(kind, SYNTH_RATE), SYNTH_RATE)
+      renderChime(kind, SYNTH_RATE, buffer.getChannelData(0))
+      return buffer
+    }
+    const chime: Graph['chime'] = { gain: chimeGain, success: chimeBuffer('success'), critical: chimeBuffer('critical'), playing: [], until: -Infinity }
     const cues: Cue[] = []
     const cueSend = convolver ? ctx.createGain() : null
     if (cueSend && convolver) { cueSend.gain.value = 0; cueSend.connect(convolver) }
@@ -1811,7 +1942,7 @@ export class Soundscape {
       : null
     return {
       master: new Knob(master.gain, 0.0005), cabin: new Knob(kRate(cabin.frequency), 0, 0.01), bus, limiter, voices, beds, babble, babbleJob,
-      tones: { ew: tone('ew'), ns: tone('ns') }, tonePan, cue, ping, cues, speech, reverb, peers: new Map(), fading: [], listener, hrtf,
+      tones: { ew: tone('ew'), ns: tone('ns') }, tonePan, cue, ping, cues, chime, speech, reverb, peers: new Map(), fading: [], listener, hrtf,
     }
   }
 
