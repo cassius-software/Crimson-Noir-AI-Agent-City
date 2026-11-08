@@ -856,7 +856,9 @@ test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow a
   assert.match(BODY_WGSL, /let lower = bodyGarment\(v0, n0, rig, skin, morphB\.w\);\n\s*v0 = lower\[0\];\n\s*n0 = lower\[1\];/)
   assert.ok(BODY_WGSL.indexOf('let lower = bodyGarment(') < BODY_WGSL.indexOf('let rest = bodyMorph('), 'the cut before the sliders')
   assert.ok(BODY_WGSL.indexOf('let follow = lower[2].x;') > BODY_WGSL.indexOf('return bodyRig(rest,'), 'a fallen body\'s skirt hangs as it always did')
-  assert.ok(BODY_WGSL.includes(`bodyRamp(${lit(LOWER.followMid)}, ${lit(LANDMARK.hipX)}, abs(v.x))`), 'the skirt\'s middle stays with the trunk, so its halves never part between the knees')
+  assert.ok(BODY_WGSL.includes(`bodyRamp(${lit(LOWER.followSide)}, ${lit(LOWER.followFull)}, abs(v.z))`), 'the skirt\'s sides stay with the trunk; its front and back follow')
+  assert.match(BODY_WGSL, /let leftLeads = legL\.x < legR\.x;\n\s*let leading = select\(6u, 3u, leftLeads\);\n\s*let trailing = select\(3u, 6u, leftLeads\);\n\s*let boneB = select\(bone1, select\(trailing, leading, v\.z >= 0\.0\), follow > 0\.0\);/, 'the front from the leading thigh, the back from the trailing one (a smaller hip angle swings the leg forward)')
+  assert.deepEqual([BONE.THIGH_L, BONE.THIGH_R], [3, 6])
   assert.ok(BODY_WGSL.includes('return mat3x3f(world, normalize('), 'the world position and a unit normal')
   for (const piece of ['mask', 'holdingCup', 'carryingBag']) assert.ok(BODY_WGSL.includes(piece), piece)
   // The face is shaped before the body sliders, on the head bone, where the vertex names a region; the regions in

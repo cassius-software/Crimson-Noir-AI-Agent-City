@@ -28,7 +28,8 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   Normals follow the shape by the cylinder's rule, so a flare is lit as one. A wide leg, a palazzo, a flare or the
   culottes widen the leg, a taper or a slim cut narrows it, a midi lengthens the skirt to 0.36 m, an A-line or a
   flared skirt widens toward the hem, a pencil or a tulip narrows it, and the high waist raises it. A narrow or long
-  skirt's hem moves with the thigh on its side, so the knees stay inside it mid-stride. Under a coat no skirt widens.
+  skirt's hem spreads with the stride: its front moves with the leading thigh and its back with the trailing one, so
+  the knees stay inside it more of the time (no cloth is simulated). Under a coat no skirt widens.
   The cut reaches the vertex stage in `morphB.w` (the cut, plus 16 under a coat), so no new buffer is bound. The
   fragment stage paints the rest from the rest position: the crease, pleats, turn-ups, a satin side stripe, a piped
   seam, the cropped and culottes hems above a bare or socked ankle (a prosthetic leg shows its finish there; below the

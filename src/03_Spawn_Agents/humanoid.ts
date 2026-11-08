@@ -109,13 +109,13 @@ export const SKIRT_CUT = Object.freeze({
  * Heights the lower cuts are shaped by, m on the base body: the skirt's waist ring (above it the high waist raises
  * the skirt, below it a midi lengthens it) and hem; where a slim leg starts and finishes narrowing; where a taper
  * takes hold below the knee and the ankle its slope counts from; the tulip's bulge over the hips; where the skirt's
- * hem starts to follow the thighs, and the band down its middle (|x| under followMid) that stays with the trunk,
- * the following rising from there to the leg's axis.
+ * hem starts to follow the thighs, and its sides, which stay with the trunk: the following rises from followSide
+ * to followFull of |z|, so the front and the back follow and the sides between them stretch.
  */
 export const LOWER = Object.freeze({
   waist: 0.92, hem: 0.56, top: 1.02,
   slimFrom: 0.85, slimTo: 0.5, taperFrom: 0.62, taperTo: 0.5, ankle: 0.095,
-  bulgeAt: 0.84, bulgeHalf: 0.14, pencilFrom: 0.85, followFrom: 0.85, followMid: 0.02,
+  bulgeAt: 0.84, bulgeHalf: 0.14, pencilFrom: 0.85, followFrom: 0.85, followSide: 0.02, followFull: 0.1,
 })
 
 /**
@@ -158,24 +158,24 @@ export const TROUSER_SHAPE: readonly (readonly number[])[] = Object.freeze([
  * down to LOWER.hem) + bulge·hat(LOWER.bulgeAt, LOWER.bulgeHalf) − pencil·t(LOWER.pencilFrom down to LOWER.hem) −
  * narrowTop·t(LOWER.waist up to LOWER.top); below LOWER.waist the skirt stretches down by `length` (1.556 takes the
  * hem from 0.56 to a midi's 0.36), above it rises by `raise` per metre (0.8 takes the top from 1.02 to 1.1). Under a
- * coat no skirt widens (the coat hems where the skirt does). `follow` is how much of the hem the thigh on its side
- * carries (crowdBody.ts: the skirt hangs from the trunk alone, so a narrow or a long hem would let the knees through
- * mid-stride). Zeros, and length 1, reshape nothing.
+ * coat no skirt widens (the coat hems where the skirt does). `follow` is how much of the hem a thigh carries
+ * (crowdBody.ts: the skirt hangs from the trunk alone, so a narrow or a long hem would let the knees through
+ * mid-stride): the front the thigh swung forward, the back the one swung back, so the hem spreads with the stride. Zeros, and length 1, reshape nothing.
  */
 export const SKIRT_SHAPE: readonly (readonly number[])[] = Object.freeze([
   [0, 0.92, 0, 1, 0, 0, 0, 0], // straight
-  [0, 0.92, 0.22, 1, 0, 0, 0, 0.45], // pencil
+  [0, 0.92, 0.22, 1, 0, 0, 0, 0.7], // pencil
   [0.24, 0.95, 0, 1, 0, 0, 0, 0], // A-line
-  [0.08, 0.92, 0, 1, 0, 0, 0, 0.2], // pleated
-  [0.1, 0.92, 0, 1, 0, 0, 0, 0.2], // box pleat
-  [0.05, 0.92, 0, 1, 0, 0, 0, 0.25], // wrap
-  [0, 0.92, 0, 1.556, 0, 0, 0, 0.5], // midi
-  [0, 0.92, 0.2, 1.556, 0, 0, 0, 0.6], // midi pencil
-  [0.3, 0.95, 0, 1.556, 0, 0, 0, 0.25], // midi A-line
+  [0.08, 0.92, 0, 1, 0, 0, 0, 0.3], // pleated
+  [0.1, 0.92, 0, 1, 0, 0, 0, 0.3], // box pleat
+  [0.05, 0.92, 0, 1, 0, 0, 0, 0.4], // wrap
+  [0, 0.92, 0, 1.556, 0, 0, 0, 0.8], // midi
+  [0, 0.92, 0.2, 1.556, 0, 0, 0, 0.95], // midi pencil
+  [0.3, 0.95, 0, 1.556, 0, 0, 0, 0.4], // midi A-line
   [0, 0.92, 0, 1, 0, 0, 0, 0], // back vent
   [0, 0.92, 0, 1, 0, 0, 0, 0], // button front
-  [0, 0.92, 0.16, 1, 0.06, 0, 0, 0.4], // tulip
-  [0.12, 0.92, 0, 1, 0, 0, 0, 0.15], // panelled
+  [0, 0.92, 0.16, 1, 0.06, 0, 0, 0.65], // tulip
+  [0.12, 0.92, 0, 1, 0, 0, 0, 0.25], // panelled
   [0, 0.92, 0, 1, 0, 0.8, 0.1, 0], // high-waisted
   [0, 0.92, 0, 1, 0, 0, 0, 0], // belted
   [0.42, 0.98, 0, 1, 0, 0, 0, 0], // flared
