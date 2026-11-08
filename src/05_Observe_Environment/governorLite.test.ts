@@ -14,7 +14,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  CARS_DEFAULT, CROWD_DEFAULT, Governor, LITE, TIERS, defaultAgents, defaultCars, knobsOf, liteJoinHint, profileDevice, readDeviceHints, tierRange,
+  CARS_DEFAULT, CROWD_DEFAULT, DEFAULT_LIMITS, Governor, LITE, TIERS, classifyHardware, defaultAgents, defaultCars, defaultLanes, knobsOf, liteJoinHint, profileDevice, readDeviceHints, tierRange,
   type DeviceHints, type DeviceProfile,
 } from './governor.ts'
 import { CINEMA } from '../07_Execute_Actions/cinema.ts'
@@ -86,6 +86,17 @@ function boot(d: Device, lite?: boolean): Boot {
 
 // ---------------------------------------------------------------------------------------------------
 // 1. The Mali-G52 phone is a lite profile
+
+test('lite 0: the hardware class is phone and the lanes 2,500, on the phone and under ?lite=1 on a desktop', () => {
+  const b = boot(MALI_G52)
+  assert.equal(classifyHardware(b.hints, b.profile, DEFAULT_LIMITS), 'phone')
+  assert.equal(defaultLanes(b.profile, 'phone', DEFAULT_LIMITS), 2500)
+  assert.equal(defaultLanes(b.profile, 'phone', DEFAULT_LIMITS), b.agents)
+  const desk = boot({ ...MALI_G52, adapter: 'nvidia / lovelace', uaData: { mobile: false, platform: 'Windows' }, memory: 8, touchPoints: 0, coarse: false, cores: 16, screen: { width: 2560, height: 1440 } }, true)
+  assert.equal(desk.profile.lite, true)
+  assert.equal(classifyHardware(desk.hints, desk.profile, { maxStorageBufferBindingSize: 2 ** 31, maxBufferSize: 2 ** 31, maxComputeWorkgroupSizeX: 1024, maxComputeInvocationsPerWorkgroup: 1024 }), 'phone')
+  assert.equal(defaultLanes(desk.profile, 'phone'), 2500)
+})
 
 test('lite 1: the Mali-G52 in Chrome on Android, as readDeviceHints reads it', () => {
   for (const memory of [4, 8]) {
