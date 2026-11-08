@@ -10,7 +10,9 @@
  * the bloom mips. In cinema mode (the default) it is a film camera: the scene pass also writes a velocity buffer,
  * the 180° shutter (shutter.ts) smears 1/48 s of motion into the colour before anything else reads it, and after
  * the lens effects a neutral-density stage and the film response (cinema.ts FILM) replace ACES. With ?cinema=0 the
- * chain is the video one: no velocity buffer, no shutter, ACES.
+ * chain is the video one: no velocity buffer, no shutter, ACES. Where the boot chose it (governor.ts msaaCandidate), the
+ * scene pass draws 4 samples a pixel and three resolves them as the pass ends: every reader downstream (the shutter,
+ * bloom, the film) sees the resolved frame, and the sun shafts read the first sample of the multisampled depth.
  * What breaks if it is removed? The scene renders without anti-aliasing, highlights, sun shafts, motion blur or a
  * tone curve.
  */
@@ -84,6 +86,44 @@ export function buildPost(
     const image = fxaaImage as unknown as Node<'vec4'>
     const over = ghost ? ghostComposite(image, pass(ghost.scene, camera).getTextureNode('output'), ghost) : image
     return vec4(vision.mul(over.rgb).clamp(), over.a)
+/** The post chain's anti-aliasing as the boot decided it: the scene pass's samples per pixel (governor.ts MSAA). */
+export interface PostAa { sceneSamples: 0 | 4 }
+
+/** What buildPost hands the engine. `release` lets go of every target the chain owns (a refused chain at boot). */
+export interface PostChain {
+  pipeline: RenderPipeline
+  volumetrics: Volumetrics
+  cinema: CinemaPost | null
+  release: () => void
+}
+
+export function buildPost(
+  renderer: WebGPURenderer, scene: Scene, camera: PerspectiveCamera, cinema: CinemaScene | null = null,
+  ghost: GhostLayer | null = null, aa: PostAa = { sceneSamples: 0 },
+): PostChain {
+  // WebGPU multisamples at 1 or 4 alone; any other count would reach three's render context unrounded.
+  if (aa.sceneSamples !== 0 && aa.sceneSamples !== 4) throw new RangeError(`the scene pass takes 0 or 4 samples, not ${String(aa.sceneSamples)}`)
+  // The samples are the pass's own, never the renderer's (split screen's direct path may have 4). At 4 the multisampled
+  // colour is resolved as the pass ends and never stored (the pass clears it every frame); its depth is stored, since
+  // the sun shafts read it.
+  const multisampled = aa.sceneSamples > 0
+  const scenePass = pass(scene, camera, { samples: aa.sceneSamples, storeMultisampledColorBuffer: !multisampled })
+  // Ghost view's shapes render in a pass of their own, never in the scene pass, so they reach no velocity buffer, and
+  // at one sample: they are laid on after FXAA.
+  const ghostPass = ghost ? pass(ghost.scene, camera, { samples: 0 }) : null
+  const pipeline = new RenderPipeline(renderer)
+  pipeline.outputColorTransform = false
+  const vignette = float(1).sub(smoothstep(0.55, 1.2, length(screenUV.sub(0.5)).mul(1.4)).mul(0.3))
+  // Last of all, over the finished (shuttered, graded, anti-aliased) frame: ghost view, when the page has one.
+  const finish = (fxaaImage: Node): Node => {
+    const image = fxaaImage as unknown as Node<'vec4'>
+    return ghost && ghostPass ? ghostComposite(image, ghostPass.getTextureNode('output'), ghost) : image
+  }
+  // Every node that owns a render target, for release(): RenderPipeline.dispose frees its own quad's material alone.
+  const owners: { dispose(): void }[] = [scenePass, ...(ghostPass ? [ghostPass] : [])]
+  const release = (): void => {
+    for (const node of owners) node.dispose()
+    pipeline.dispose()
   }
   if (!cinema) {
     const color = scenePass.getTextureNode('output')
@@ -97,6 +137,10 @@ export function buildPost(
     // Tone map first, then anti-alias the display-referred image (FXAA expects it).
     pipeline.outputNode = finish(fxaa(renderOutput(vec4(lit, 1))))
     return { pipeline, volumetrics, cinema: null, vision }
+    const smooth = fxaa(renderOutput(vec4(lit, 1)))
+    owners.push(rays, glow, smooth.textureNode)
+    pipeline.outputNode = finish(smooth)
+    return { pipeline, volumetrics, cinema: null, release }
   }
 
   const volumetrics = createVolumetrics()
@@ -122,4 +166,8 @@ export function buildPost(
   const filtered = lit.mul(exp2(nd.negate())).mul(exposure)
   pipeline.outputNode = finish(fxaa(renderOutput(vec4(filmResponse(filtered), 1), NoToneMapping, SRGBColorSpace)))
   return { pipeline, volumetrics, cinema: { shutter, nd, exposure, previousViewProjection }, vision }
+  const smooth = fxaa(renderOutput(vec4(filmResponse(filtered), 1), NoToneMapping, SRGBColorSpace))
+  owners.push(rays, shutter, glow, smooth.textureNode)
+  pipeline.outputNode = finish(smooth)
+  return { pipeline, volumetrics, cinema: { shutter, nd, exposure, previousViewProjection }, release }
 }
