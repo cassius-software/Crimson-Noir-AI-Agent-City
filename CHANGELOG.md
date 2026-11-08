@@ -71,7 +71,6 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `homeCard.test.ts`, `input.test.ts` (the drain) and `homeWiring.test.ts` (also: the poll after a card closes is
   dropped too, so the pad press that closed it cannot reopen it; no card under the console or in a headset; while a
   city action waits, only its card reads the pad; in split screen only player 1's pads reach it).
-
 - **One command for every platform's build: `npm run build:matrix`.** `tools/build/matrix.mjs` (plain Node, programs
   with argument vectors, never a shell, so cmd.exe and sh run the same thing) builds the page once and then each
   target a machine can build: the Tauri 2 shell for Windows x64 (`windows-x64`: NSIS installer, .msi and bare .exe)
