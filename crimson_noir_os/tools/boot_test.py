@@ -3,10 +3,12 @@
 # SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 # Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 """
-Why does this file exist? It boots the bootable media in QEMU with OVMF (UEFI firmware), as a machine would, and checks
-what the system reports: the serial log must reach every marker asked for (SELFTEST PASS, the tutorial's states) within
-the time allowed, and the screen is captured as PNG along the way. It can type into the system's keyboard (a PS/2 one,
-through QEMU's monitor) and capture again, so the terminal is tested the same way. `--step` runs a script of steps in
+Why does this file exist? It boots the bootable media in QEMU with UEFI firmware (OVMF on a PC, AAVMF on QEMU's Arm
+`virt` machine with `--arch aarch64`), as a machine would, and checks what the system reports: the serial log must reach
+every marker asked for (SELFTEST PASS, the tutorial's states) within the time allowed, and the screen is captured as PNG
+along the way. It can type into the system and capture again, so the terminal is tested the same way: on x86-64 into a
+PS/2 keyboard through QEMU's monitor; on aarch64 (no PS/2 controller, and the image has no USB stack) into the serial
+line, a terminal's bytes and escape sequences. `--step` runs a script of steps in
 order (wait:MARKER, shot:FILE.png, type:TEXT with \n for Enter, key:QEMU-KEY, sleep:SECONDS, exit: the machine
 powers itself off); each wait looks only at what the log gained since the last one. Nothing leaves this machine.
 What breaks if it is removed? Nothing would check that the image boots into the tutorial.
@@ -19,11 +21,19 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import zlib
 
 OVMF_CODE = "/usr/share/OVMF/OVMF_CODE_4M.fd"
 OVMF_VARS = "/usr/share/OVMF/OVMF_VARS_4M.fd"
+# Debian and Ubuntu's qemu-efi-aarch64: edk2 for QEMU's Arm virt machine (64 MiB flash images).
+AAVMF_CODE = "/usr/share/AAVMF/AAVMF_CODE.fd"
+AAVMF_VARS = "/usr/share/AAVMF/AAVMF_VARS.fd"
+
+# What a terminal sends for the QEMU key names a `key:` step uses, on the serial line (aarch64).
+SERIAL_KEYS = {"ret": b"\r", "esc": b"\x1b", "backspace": b"\x7f", "tab": b"\t", "spc": b" ", "up": b"\x1b[A",
+               "down": b"\x1b[B", "right": b"\x1b[C", "left": b"\x1b[D", "pgup": b"\x1b[5~", "pgdn": b"\x1b[6~"}
 
 KEYS = {" ": "spc", "\n": "ret", "-": "minus", "=": "equal", ".": "dot", ",": "comma", "/": "slash", ";": "semicolon",
         "'": "apostrophe", "[": "bracket_left", "]": "bracket_right", "\\": "backslash", "`": "grave_accent",
@@ -115,6 +125,46 @@ def type_text(sock, text):
         time.sleep(0.05)
 
 
+class SerialLine:
+    """The aarch64 machine's serial line: QEMU serves it on a Unix socket and waits for this to connect before the
+    machine starts, so no byte is lost; a thread copies what the system writes to the log file, and typing writes
+    bytes back."""
+
+    def __init__(self, path, log_path, q):
+        deadline = time.time() + 30
+        while True:
+            try:
+                self.s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                self.s.connect(path)
+                break
+            except OSError:
+                self.s.close()
+                if time.time() > deadline or q.poll() is not None:
+                    raise OSError("QEMU never served its serial line")
+                time.sleep(0.1)
+        self.log = open(log_path, "ab", buffering=0)
+        threading.Thread(target=self.copy, daemon=True).start()
+
+    def copy(self):
+        while True:
+            try:
+                chunk = self.s.recv(4096)
+            except OSError:
+                return
+            if not chunk:
+                return
+            self.log.write(chunk)
+
+    def send(self, data):
+        self.s.sendall(data)
+
+
+def type_serial(line, text):
+    for ch in text:
+        line.send(b"\r" if ch == "\n" else ch.encode("latin-1"))
+        time.sleep(0.02)
+
+
 def wait_for(log_path, marker, deadline, since=0):
     """Waits for `marker` in the log after offset `since`; returns the offset just past it, or None."""
     while time.time() < deadline:
@@ -138,22 +188,53 @@ def main():
     p.add_argument("--timeout", type=float, default=600, help="seconds allowed for each marker")
     p.add_argument("--log", default=None, help="where to keep the serial log")
     p.add_argument("--step", action="append", default=[], help="a scripted step, run after the markers (in order)")
+    p.add_argument("--arch", choices=["x86_64", "aarch64"], default="x86_64",
+                   help="the machine: a PC (q35, OVMF) or QEMU's Arm virt machine (AAVMF, ramfb, virtio disks)")
     a = p.parse_args()
 
     work = tempfile.mkdtemp(prefix="crimson-boot-")
+    arm = a.arch == "aarch64"
     vars_fd = os.path.join(work, "vars.fd")
-    shutil.copy(OVMF_VARS, vars_fd)
+    shutil.copy(AAVMF_VARS if arm else OVMF_VARS, vars_fd)
     log = a.log or os.path.join(work, "serial.log")
     if os.path.exists(log):
         os.remove(log)
     sock = os.path.join(work, "monitor.sock")
-    media = ["-cdrom", a.media] if a.media.endswith(".iso") else ["-drive", f"format=raw,file={a.media}"]
-    cmd = ["qemu-system-x86_64", "-machine", "q35", "-m", "512M", "-cpu", "qemu64",
-           "-drive", f"if=pflash,format=raw,readonly=on,file={OVMF_CODE}",
-           "-drive", f"if=pflash,format=raw,file={vars_fd}", *media,
-           "-display", "none", "-vga", "std", "-serial", f"file:{log}",
-           "-monitor", f"unix:{sock},server,nowait", "-no-reboot"]
+    if arm:
+        # The virt machine has no IDE: the disk is virtio-blk, the ISO a SCSI CD-ROM. The screen is ramfb (a plain
+        # framebuffer in RAM that QEMU scans out), so what the image writes after ExitBootServices is what is shown;
+        # virtio-gpu would need its commands sent. The serial line is a socket this script connects to (SerialLine).
+        serial = os.path.join(work, "serial.sock")
+        media = (["-device", "virtio-scsi-pci", "-device", "scsi-cd,drive=cd",
+                  "-drive", f"if=none,id=cd,media=cdrom,readonly=on,file={a.media}"] if a.media.endswith(".iso") else
+                 ["-device", "virtio-blk-pci,drive=hd", "-drive", f"if=none,id=hd,format=raw,file={a.media}"])
+        cmd = ["qemu-system-aarch64", "-machine", "virt", "-m", "512M", "-cpu", "cortex-a72",
+               "-drive", f"if=pflash,format=raw,readonly=on,file={AAVMF_CODE}",
+               "-drive", f"if=pflash,format=raw,file={vars_fd}", *media,
+               "-display", "none", "-device", "ramfb", "-serial", f"unix:{serial},server=on,wait=on",
+               "-monitor", f"unix:{sock},server,nowait", "-no-reboot"]
+    else:
+        media = ["-cdrom", a.media] if a.media.endswith(".iso") else ["-drive", f"format=raw,file={a.media}"]
+        cmd = ["qemu-system-x86_64", "-machine", "q35", "-m", "512M", "-cpu", "qemu64",
+               "-drive", f"if=pflash,format=raw,readonly=on,file={OVMF_CODE}",
+               "-drive", f"if=pflash,format=raw,file={vars_fd}", *media,
+               "-display", "none", "-vga", "std", "-serial", f"file:{log}",
+               "-monitor", f"unix:{sock},server,nowait", "-no-reboot"]
     q = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    line = SerialLine(serial, log, q) if arm else None
+
+    def type_any(text):
+        if line:
+            type_serial(line, text)
+        else:
+            type_text(sock, text)
+
+    def key_any(name):
+        if line:
+            line.send(SERIAL_KEYS.get(name, name.encode()))
+        else:
+            monitor(sock, f"sendkey {name}")
+
     ok = True
     try:
         start = time.time()
@@ -181,9 +262,9 @@ def main():
             elif kind == "shot":
                 shot(sock, work, arg)
             elif kind == "type":
-                type_text(sock, arg.replace("\\n", "\n"))
+                type_any(arg.replace("\\n", "\n"))
             elif kind == "key":
-                monitor(sock, f"sendkey {arg}")
+                key_any(arg)
             elif kind == "sleep":
                 time.sleep(float(arg))
             elif kind == "exit":
@@ -199,7 +280,7 @@ def main():
                 ok = False
                 break
         if ok and a.type is not None:
-            type_text(sock, a.type)
+            type_any(a.type)
             if a.after_type_wait and not wait_for(log, a.after_type_wait, time.time() + a.timeout):
                 print(f"FAIL: '{a.after_type_wait}' never reached the serial log after typing")
                 ok = False

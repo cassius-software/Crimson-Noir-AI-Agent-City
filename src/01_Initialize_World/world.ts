@@ -38,6 +38,7 @@ import { applyMatrixMode, createMatrixMode, type MatrixMode } from './matrixMode
 import { ENV_PROBE_STEP_HOURS, EnvProbe } from './envProbe.ts'
 import { acquireDevice, adapterLine, WebGPUUnavailableError } from './gpuDevice.ts'
 import { headsetPossible } from '../04_Connect_Hardware/xrSystem.ts'
+import { readAdapterLimits, type AdapterLimits } from '../05_Observe_Environment/governor.ts'
 
 export { WebGPUUnavailableError } from './gpuDevice.ts'
 
@@ -81,6 +82,9 @@ export interface Gpu {
   /** three writes GPU timestamps (trackTimestamp asked and kept: the device has timestamp-query): the engine resolves
    *  them only then, so three never warns that tracking is off. */
   timestamps: boolean
+  /** The adapter's limits (governor.ts readAdapterLimits): what the card binds, not the defaults the device was made
+   *  with (gpuDevice.ts asks for none). The hardware class and the lane ceiling read them (engine.ts Engine.create). */
+  limits: AdapterLimits
 }
 
 /** A GPUTexture's prototype as far as tolerateIdentitySwizzle touches it. */
@@ -138,7 +142,7 @@ export async function createRenderer(canvas: HTMLCanvasElement, pixelRatio: numb
   renderer.shadowMap.enabled = true
   // PCFSoftShadowMap was removed from three's WebGPU renderer; PCF with a blur radius replaces it.
   renderer.shadowMap.type = PCFShadowMap
-  return { renderer, device, adapterInfo: line, timestamps: backend.trackTimestamp === true }
+  return { renderer, device, adapterInfo: line, timestamps: backend.trackTimestamp === true, limits: readAdapterLimits(adapter.limits) }
 }
 
 /**

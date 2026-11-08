@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: MIT
 # Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 # Why does this file exist? It builds the one-click Windows app (src-tauri: a Tauri 2 window around dist/index.html)
-# where it can only be built, on a Windows runner, and puts the result where a person finds it: the NSIS installer and
-# the bare executable as workflow artifacts on every pull request and push to main, and, when a tag starting with v is
-# pushed, on that tag's GitHub Release beside the OS media that build-release.yml bakes. The two workflows run on the
-# same tag push; this one waits for the release build-release.yml creates and only makes one itself when none appears,
-# so neither tramples the other (build-release.yml uploads into an existing release with --clobber).
+# where it can only be built, on a Windows runner, and puts the result where a person finds it: the NSIS installer, the
+# .msi (from the same build; WiX takes the version's numbers alone, 1.0.0 for 1.0.0-stable-beta, and the app inside
+# keeps its own) and the bare executable as workflow artifacts on every pull request and push to main, and, when a tag
+# starting with v is pushed, on that tag's GitHub Release beside the OS media that build-release.yml bakes. The two
+# workflows run on the same tag push; this one waits for the release build-release.yml creates and only makes one
+# itself when none appears, so neither tramples the other (build-release.yml uploads into an existing release with
+# --clobber).
 # A tag that build-release.yml makes itself (a "Run workflow" bake of a tag that did not exist) is made with the
 # workflow's own token, and GitHub starts no tag-push run for such a tag; so build-release.yml dispatches this
 # workflow with the tag as its input, which builds that tag's commit and uploads to its release the same way.
@@ -75,20 +77,31 @@ jobs:
         run: |
           rm -rf src-tauri/target/release/bundle
           npm run app:build
-      - name: Collect the installer and the bare executable
+      - name: The .msi from the same binary (tauri bundle packages it without compiling; WiX gets the version's numbers)
+        run: |
+          numbers=$(node -p "require('./package.json').version.split(/[-+]/)[0]")
+          node node_modules/@tauri-apps/cli/tauri.js bundle --bundles msi --config "{\"bundle\":{\"windows\":{\"wix\":{\"version\":\"$numbers\"}}}}"
+      - name: Collect the installers and the bare executable
         id: version
         run: |
           version=$(node -p "require('./package.json').version")
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          mkdir -p out/installer out/portable
+          mkdir -p out/installer out/msi out/portable
           cp src-tauri/target/release/bundle/nsis/*"_${version}_"*-setup.exe out/installer/
+          cp src-tauri/target/release/bundle/msi/*"_${version}_"*.msi out/msi/
           cp src-tauri/target/release/*.exe out/portable/
-          ls -l out/installer out/portable
+          ls -l out/installer out/msi out/portable
           [ "$(ls out/installer | wc -l)" = 1 ] || { echo "::error::expected exactly one installer for $version"; exit 1; }
+          [ "$(ls out/msi | wc -l)" = 1 ] || { echo "::error::expected exactly one .msi for $version"; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-installer-${{ steps.version.outputs.version }}
           path: out/installer/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-msi-${{ steps.version.outputs.version }}
+          path: out/msi/
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
@@ -117,14 +130,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ inputs.tag || github.ref_name }}
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
           for i in $(seq 1 80); do
             if gh release view "$TAG" > /dev/null 2>&1; then break; fi
             echo "waiting for build-release.yml to create the release $TAG ($i)"; sleep 60
           done
           if gh release view "$TAG" > /dev/null 2>&1; then
-            # An installer of another version left on the release by an earlier run goes before the upload.
-            for asset in $(gh release view "$TAG" --json assets --jq '.assets[].name' | grep -E '\.exe$' || true); do
+            # An installer of another version left on the release by an earlier run goes before the upload. This
+            # version's stay, the arm64 ones build-matrix.yml uploads among them (this job's own are replaced).
+            for asset in $(gh release view "$TAG" --json assets --jq '.assets[].name' | grep -E '\.(exe|msi)$' | grep -vF "_${VERSION}_" || true); do
               [ -e "media/$asset" ] || gh release delete-asset "$TAG" "$asset" --yes
             done
             gh release upload "$TAG" media/* --clobber
