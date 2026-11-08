@@ -51,10 +51,8 @@ const LAWS = [
 ] as const
 
 const CORE_NAMES = [
-  'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'time', 'audio', 'ghost', 'rain', 'xr', 'render', 'captions', 'haptics', 'ping', 'look', 'agent', 'sloane', 'goal', 'progress', 'hal', 'robot', 'recruit', 'memory', 'clear', 'history', 'echo',
-  'uname', 'whoami', 'version', 'boot', 'map', 'rooms', 'r0', 'noir', 'exit',
   'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'hardware', 'time', 'audio', 'ghost', 'rain', 'xr', 'render', 'captions', 'haptics', 'ping', 'look', 'agent', 'sloane', 'goal', 'progress', 'hal', 'robot', 'recruit', 'memory', 'clear', 'history', 'echo',
-  'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'noir', 'exit',
+  'uname', 'whoami', 'version', 'boot', 'map', 'rooms', 'r0', 'noir', 'exit',
 ]
 const OPERATOR_NAMES = ['operator', 'ring0', 'run', 'ask', 'swarm', 'act', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
 
