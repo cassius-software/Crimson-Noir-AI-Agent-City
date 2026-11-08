@@ -327,7 +327,7 @@ async function loadMap(plan: MapPlan): Promise<RegionPack | null> {
 /** Which shell the page boots: 'gui' (the city) or 'tty' (?boot=tty: the full-screen console alone, no engine). */
 type BootTrack = 'gui' | 'tty'
 
-type Options = EngineOptions & { debug: boolean; boot: BootTrack }
+type Options = EngineOptions & { debug: boolean; boot: BootTrack; vram: string | null }
 
 /** The console's bridge in the TTY shell: no engine exists, so everything but the identity commands says so. */
 const TTY_BRIDGE: TerminalBridge = offlineBridge({ ...BRAND, track: 'tty' })
@@ -444,6 +444,9 @@ function readOptions(): Options {
     // The Peak candidacy (governor.ts peakCandidate): ?peak=1 lets any desktop's governor try Peak, ?peak=0 keeps it off;
     // absent, the device profile decides. A phone or a lite profile never tries it, and none does without GPU timestamps.
     peak: q.get('peak') === '1' ? true : q.get('peak') === '0' ? false : undefined,
+    // The GPUs' memory in GB for the size of model auto gives Ollama (09_Cognition/modelFit.ts): the NixOS launcher adds
+    // it from nvidia-smi or the amdgpu driver; ask vram at the console beats it; absent, auto keeps its usual model.
+    vram: q.get('vram'),
   }
 }
 
@@ -823,6 +826,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
             busy: (on, place) => e.holdQuality(on && place ? holdTier(device(), place.gpu) : null),
             onPhase: (text) => { modelPhase = text },
           })),
+          // The address's GPU figure (?vram=): auto may give Ollama a bigger model it already has, by what Ollama measured.
+          vram: options.vram,
         })
         inPageMind = inPage
         const mind: Mind = {

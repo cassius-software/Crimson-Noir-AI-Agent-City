@@ -821,6 +821,20 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   over a solid person as an impact. The Sanctuary no longer shields or nudges anyone for overlapping a standing car,
   and it now shields anyone within 0.3 m of a moving one whichever way it moves, since you can run after a car pulling
   away; a car pulling away nudges nobody.
+- **auto can give Ollama a bigger model it already has, by the GPUs' memory.** Given the GPUs' memory (`ask vram
+  <GB>`, kept in this browser, or `vram=` in the address, which the NixOS launcher now adds from `nvidia-smi` or the
+  amdgpu driver), provider `auto` measures an Ollama answer (one `GET /api/ps` on this machine) and then answers with
+  the largest text model Ollama already lists that fits the figure less 2 GB by that measure. A model whose weights
+  alone exceed the figure is never chosen while a smaller one is listed; a bigger model that is slow, or split between
+  the GPU and the processor when its first wait runs out, is dropped for the visit, and one too big in two visits is avoided until `ask vram`. The
+  console's `fit` row says which model and why; `ask model auto` hands a chosen model back to auto; under auto, a
+  model Ollama lists at over 60 GB gets longer to start answering (a second per 200 MB). Without a figure only that wait changes: the same requests and
+  the same model. The 2 GB reserve, 5 tokens a second over 32 tokens, two visits, 200 MB a second and the launcher's 4 GB
+  floor are starting values, not measured. CI proves it in Node against a fake Ollama and a stubbed `nvidia-smi`, and
+  in the browser smoke on a software adapter (the row and the commands); no real GPU ran it. Nothing grows on a phone,
+  and on Windows the figure has to be typed (`ask vram`) for now; on NixOS the launcher also counts an integrated
+  Radeon given 4 GB or more by its firmware (not tried on one; `-- vram=0` sizes nothing). Nothing is downloaded, and
+  the page still addresses only this machine.
 
 ### Removed
 

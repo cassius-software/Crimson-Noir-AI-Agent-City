@@ -132,7 +132,7 @@ const OPERATOR = [
   { name: 'operator', usage: 'operator [unlock|lock|status]', summary: 'the operator tier: scripts, tuning keys, harnesses' },
   { name: 'ring0', usage: 'ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]', summary: "the Ring-0 elite tier above the operator tier: a passphrase opens NoirScript's writes and raised limits for this session; the laws stay out of reach" },
   { name: 'run', usage: 'run <skill>[,<skill>...]: <js...>', summary: 'run a script against sim.* while someone tethered has the skill (Shift+Enter adds a line)' },
-  { name: 'ask', usage: 'ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|file [forget <name>|load|unload|log]|gpu auto|on|off|stop]', summary: 'ask the model, answering as someone tethered with the skill; the answer streams in' },
+  { name: 'ask', usage: 'ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|vram <GB>|auto|file [forget <name>|load|unload|log]|gpu auto|on|off|stop]', summary: 'ask the model, answering as someone tethered with the skill; the answer streams in' },
   { name: 'swarm', usage: 'swarm [run [--agents <1-5>] <goal...>|plan [--agents <1-5>] <goal...>|status|stop|roles|guardrails|audit [verify]]', summary: 'a goal over up to five roles (architect, coder, tester, auditor, verifier), one gated prompt each, guardrails before and after, a hash-chained audit trail' },
   { name: 'act', usage: 'act [ok|no|log [verify]|list|gate]', summary: 'a city action an agent proposed: allow it, refuse it, read the hash-chained trail, list the catalogue, or read the gate it passes' },
   { name: 'say', usage: 'say [<skill>[,<skill>...]: <text...>|voice <name>|model <name>|server <url>|provider local|elevenlabs|key <key>|none|auto on|off|stop]', summary: 'said aloud by someone tethered with the skill, from where they stand (a speech server on this machine; or ElevenLabs through a gateway on it)' },
@@ -250,11 +250,12 @@ const ARGS: Record<string, readonly string[]> = {
   uname: ['-a'],
   operator: ['lock', 'status', 'unlock'],
   run: SKILL_ARGS.map((s) => `${s}:`),
-  ask: [...SKILL_ARGS.map((s) => `${s}:`), 'api', 'connect', 'effort', 'file', 'gpu', 'key', 'model', 'provider', 'server', 'stop', 'think'].sort(),
+  ask: [...SKILL_ARGS.map((s) => `${s}:`), 'api', 'connect', 'effort', 'file', 'gpu', 'key', 'model', 'provider', 'server', 'stop', 'think', 'vram'].sort(),
   'ask think': ['off', 'on'],
   'ask file': MODEL_FILE_ACTIONS,
   'ask gpu': GPU_MODES,
   'ask api': ['chat', 'generate'],
+  'ask vram': ['auto'],
   'ask provider': PROVIDER_ARGS,
   'ask connect': PROVIDER_ARGS,
   swarm: ['audit', 'guardrails', 'plan', 'roles', 'run', 'status', 'stop'],
@@ -778,6 +779,8 @@ function mindLines(m: MindStatus): Line[] {
   if (scripted) lines.push(out(row('server', 'none: nothing is addressed')), out(row('model', 'none: the script')))
   else if (inPage) lines.push(out(row('server', 'none: the model runs in this page')), out(row('model', model)))
   else lines.push(out(row('server', network ? `${m.server}  (a gateway on this machine only)` : `${m.server}  (this machine only)`)), out(row('model', model)))
+  // Under auto with the GPUs' memory given: the size of model it gives Ollama and why (09_Cognition/modelFit.ts fitLine).
+  if (m.fit !== undefined) lines.push(out(row('fit', m.fit)))
   if (network) {
     lines.push(out(row('key', m.key ? `${m.key}  (kept in this browser's local storage: ask key none clears it)` : 'none in this page: the gateway on this machine adds it (recommended)')))
     lines.push(out(row('effort', m.effort ?? "the model's default (ask effort low|medium|high|xhigh|max)")))
@@ -1523,11 +1526,11 @@ const HANDLERS: Record<Name, Handler> = {
       if (!connect[1]) return fail(`usage: ask connect <${PROVIDER_ARGS.join('|')}> [<url>] [<key>]`)
       return { lines: [out(row('provider', op.askConnect(connect[1], connect[2], connect[3])))] }
     }
-    const set = /^(model|server|think|api|provider|key|effort)(?:\s+([\s\S]*))?$/.exec(rest)
+    const set = /^(model|server|think|api|provider|key|effort|vram)(?:\s+([\s\S]*))?$/.exec(rest)
     if (set) {
-      const key = set[1] as 'model' | 'server' | 'think' | 'api' | 'provider' | 'key' | 'effort'
+      const key = set[1] as 'model' | 'server' | 'think' | 'api' | 'provider' | 'key' | 'effort' | 'vram'
       const value = (set[2] ?? '').trim()
-      const takes = { model: 'name', server: 'url', api: 'generate|chat', think: 'on|off', provider: PROVIDER_ARGS.join('|'), key: 'key|none', effort: 'low|medium|high|xhigh|max|none' }[key]
+      const takes = { model: 'name', server: 'url', api: 'generate|chat', think: 'on|off', provider: PROVIDER_ARGS.join('|'), key: 'key|none', effort: 'low|medium|high|xhigh|max|none', vram: 'GB|auto' }[key]
       if (!value) return fail(`usage: ask ${key} <${takes}>`)
       return { lines: [out(row(key, op.askSet(key, value)))] }
     }

@@ -768,6 +768,38 @@ test('operatorBridge ask: locked, one answer at a time, a model must be chosen; 
   assert.deepEqual(await op.askStatus(), { server: 'http://localhost:12345', model: null, installed: null, error: 'no local model server is answering at http://localhost:12345' })
 })
 
+test("askSet vram reaches the mind's own setter; refused while locked and on a mind with none; askStatus passes the fit line", async () => {
+  /** A mind that sizes its model by the GPU, as the router does under auto (09_Cognition/router.ts setVram). */
+  class SizedMind extends FakeMind {
+    readonly vram: string[] = []
+    fit: string | undefined = "24.0 GB given by the page's address (vram=); the next answer is measured before auto picks bigger"
+    override settings() {
+      return { ...super.settings(), ...(this.fit !== undefined && { fit: this.fit }) }
+    }
+    setVram(value: string): string {
+      this.vram.push(value)
+      if (value === 'lots') throw new TypeError("ask vram takes the GPUs' memory in GB, from 0 to 4096 (such as ask vram 24; 0 sizes nothing), or auto")
+      return `${value}.0 GB at the console`
+    }
+  }
+  const mind = new SizedMind()
+  const op = operatorBridge(fakeSim(), new FakeGate(), mind, undefined, { contained: () => true })
+  assert.throws(() => op.askSet('vram', '24'), /^Error: ask: locked/)
+  assert.deepEqual(mind.vram, [])
+  op.unlock()
+  assert.equal(op.askSet('vram', '24'), '24.0 GB at the console')
+  assert.throws(() => op.askSet('vram', 'lots'), /^TypeError: ask vram takes the GPUs' memory in GB/)
+  assert.deepEqual(mind.vram, ['24', 'lots'])
+  assert.deepEqual(await op.askStatus(), { server: 'http://localhost:11434', model: 'test-model', fit: mind.fit, installed: ['a-model', 'test-model'] })
+  mind.fit = undefined
+  assert.ok(!('fit' in (await op.askStatus())), 'no figure: no row')
+  // A mind with no such setter: said so.
+  const bare = operatorBridge(fakeSim(), new FakeGate(), new FakeMind(), undefined, { contained: () => true })
+  bare.unlock()
+  assert.throws(() => bare.askSet('vram', '24'), /^Error: no model provider on this page grows with the GPU$/)
+  assert.throws(() => bare.askSet('laws' as 'vram', 'x'), /: model, server, think, api, provider, key, effort or vram$/)
+})
+
 /** A model running in this page as the router presents it (09_Cognition/router.ts): no address, chosen or found by auto. */
 class PageMind extends FakeMind {
   readonly how: { provider: string; found?: string }
