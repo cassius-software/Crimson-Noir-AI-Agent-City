@@ -36,15 +36,17 @@
  * with the heap and the live worker count, so a micro-stutter leaves evidence; where the API is missing it is a no-op.
  * What breaks if it is removed? Nothing runs; every module is inert without this orchestration.
  */
-import { Frustum, Matrix4, Vector3, type PerspectiveCamera, type RenderPipeline, type UniformNode, type Vector4 } from 'three/webgpu'
+import { Frustum, Matrix4, Quaternion, Vector3, type PerspectiveCamera, type RenderPipeline, type UniformNode, type Vector4 } from 'three/webgpu'
 import { BRAND } from '../brand.ts'
 import { GRAPHICS_RESET } from './bootFailure.ts'
 import { watchLongTasks } from './longTasks.ts'
 import { buildWorld, createRenderer, FULL_WORLD, gpuBufferOf, LIGHT_TUNE_RANGE, LITE_WORLD, ndStopsFor, releaseGpu, WebGPUUnavailableError, type Gpu, type LightTuning, type World } from '../01_Initialize_World/world.ts'
 import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
 import { RegionPlaces, hollowLots, layoutOf, regionPhysics } from '../01_Initialize_World/region/regionWorld.ts'
+import { regionShopLots } from '../01_Initialize_World/region/shops.ts'
 import { regionWorkplaceLots } from '../01_Initialize_World/region/workplaces.ts'
 import { drawRooms, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
+import { drawShops, orbitEye, shopAt, shops as cityShops, SHOP, type Shop } from '../01_Initialize_World/storefronts.ts'
 import { streetCapacity, streetGridOf, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { tallestBuilding, type RegionPack } from '../01_Initialize_World/region/pack.ts'
 import { LANDMARK } from '../01_Initialize_World/lakefront.ts'
@@ -503,6 +505,20 @@ export class Engine {
    * work in them.
    */
   private readonly rooms: readonly Workplace[]
+  /**
+   * The world's storefronts (01_Initialize_World/storefronts.ts): the city's five from its seed, or a generated region's
+   * from its pack (region/shops.ts; none in a surveyed region).
+   * The page tells which one the avatar stands in (the HUD's chip, E or B opens its catalogue) and circles the body
+   * with the mirror camera while the catalogue is open.
+   */
+  readonly shops: readonly Shop[]
+  /** The shop the avatar stood in at the last frame (index into shops), or −1. */
+  private shopHere = -1
+  /** The mirror camera while a shop's catalogue is open: the shop and the orbit's angle, rad; null in first person. */
+  private showroom: { shop: number; angle: number } | null = null
+  /** The head's pose while the mirror camera draws a frame (present() alone sees the orbit; the listener keeps the head). */
+  private readonly headPos = new Vector3()
+  private readonly headRot = new Quaternion()
   /** The swarm's short-term memory (08_Swarm/shortTerm.ts): the last few moments between each recruit and the player, this visit only. */
   private readonly moments = new ShortTermMemory()
   /** Ghost-mode collision's passages (contact.ts): the city's poles, the passage pulse, and the nearest pedestrian's
@@ -631,6 +647,11 @@ export class Engine {
    */
   onRally: ((request: RallyRequest) => void) | null = null
   /**
+   * The host's: a shop's catalogue asked for (E or B on foot inside shop `index`, with no car in reach to take the E).
+   * Null: nothing opens.
+   */
+  onBrowse: ((index: number) => void) | null = null
+  /**
    * The host's progression hand-off (App.tsx: the page's keeper earns the skill): called with the skill a deed of the
    * player's own earns, from a key frame() takes or a car door the player opened (received()). Null: the city earns
    * nothing. The engine keeps no record of its own, and never calls this per frame or from a setter the console,
@@ -700,11 +721,12 @@ export class Engine {
     canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; craftView: CraftView | null; rigView: RigView; profile: DeviceProfile
     hardware: HardwareClass; hints: DeviceHints
     post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
-    options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]
+    options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]; shops: readonly Shop[]
     crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; crowdFigure: GPUBuffer; netView: NetView
   }) {
     this.places = p.places
     this.rooms = p.rooms
+    this.shops = p.shops
     this.streets = p.streets
     this.regionName = p.options.region?.name ?? null
     this.landmarkAt = p.landmark
@@ -874,9 +896,11 @@ export class Engine {
       // A generated region's indoor workplaces (region/workplaces.ts): up to six lots of its street window near the start,
       // picked from the pack as it came, then hollowed out of a copy of it (regionWorld.ts hollowLots), which the page
       // draws with the rooms' boxes and paved floors and the worker walls; the worker gets the lots themselves and builds
-      // the same rooms from them. A surveyed region has no window and no lots: its copy is the pack.
+      // the same rooms from them. Its five storefronts (region/shops.ts) take the lots nearest the start after them and
+      // are hollowed the same way. A surveyed region has no window and no lots: its copy is the pack.
       const lots = pack && layout && streets ? regionWorkplaceLots(pack, layout, streets, spawn, options.seed) : []
-      const hollow = pack && layout ? hollowLots(pack, layout, lots) : null
+      const shopLots = pack && layout && streets ? regionShopLots(pack, layout, streets, spawn, options.seed, lots) : []
+      const hollow = pack && layout ? hollowLots(pack, layout, lots, shopLots) : null
       const world = buildWorld(gpu.renderer, options.seed, pack && layout && hollow ? { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan: hollow.plan, rooms: hollow.rooms } : null, lite ? LITE_WORLD : FULL_WORLD)
       // Players 1..3 (split screen) start beside player 0 along the sidewalk (the city's spawn sidewalk runs along z; a
       // region's along its street heading); the realm moves a spawn out of a building lot itself.
@@ -894,6 +918,7 @@ export class Engine {
         ragdoll: options.ragdoll !== false && !pack && !lite, craft: !lite,
         ...(spawns.length > 0 && { spawns }),
         ...(lots.length > 0 && { workplaces: lots }),
+        ...(shopLots.length > 0 && { shops: shopLots }),
       })
 
       // Start on the tier the device profile suggests (or the one the URL pins), before anything compiles:
@@ -1006,6 +1031,10 @@ export class Engine {
         canvas, gpu, world, crowd, sim, view, rigView, profile, hardware, hints, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options,
         quality: { governor, targets, applied, mask, live }, places, landmark, streets,
         rooms: hollow ? hollow.rooms : workplaces(options.seed),
+        // The city's storefronts, hollowed into its boxes by city.ts (storefronts.ts hollowShops), or a generated region's
+        // (regionWorld.ts hollowLots; none in a surveyed region), each given the region's own address for its card: the
+        // city's arcades name the city's districts, which a region does not have.
+        shops: hollow ? hollow.shops.map((s) => (places ? { ...s, arcade: places.place(s.door.x, s.door.z) } : s)) : cityShops(options.seed),
         // The code dissolve's crowd amounts: allocated by the draws above like the frame's buffers, written the same way.
         crowdDissolve: gpuBufferOf(gpu.renderer, view0.dissolve),
         crowdLook,
@@ -1028,11 +1057,11 @@ export class Engine {
     }
   }
 
-  /** The minimap's layer in a region (its water, buildings and streets near a point, then its workplaces over the
-   * footprints they were hollowed from, as the city's map draws its own); null in the procedural city. */
+  /** The minimap's layer in a region (its water, buildings and streets near a point, then its workplaces and shops over
+   * the footprints they were hollowed from, as the city's map draws its own); null in the procedural city. */
   get mapLayer(): ((ctx: CanvasRenderingContext2D, x: number, z: number, radius: number, dark: boolean) => void) | null {
-    const p = this.places, rooms = this.rooms
-    return p ? (ctx, x, z, radius, dark) => { p.drawMap(ctx, x, z, radius, dark); drawRooms(ctx, rooms, x, z, dark, radius) } : null
+    const p = this.places, rooms = this.rooms, shops = this.shops
+    return p ? (ctx, x, z, radius, dark) => { p.drawMap(ctx, x, z, radius, dark); drawRooms(ctx, rooms, x, z, dark, radius); drawShops(ctx, shops, x, z, dark, radius) } : null
   }
 
   resize(): void {
@@ -1499,6 +1528,40 @@ export class Engine {
     })
   }
 
+  /**
+   * Opens the catalogue of the shop the avatar stands in, through the host (onBrowse), on foot. `interact` is the E
+   * key's (and the pad's south button's) ask: then a car in reach keeps the press for its door. Returns whether it did.
+   */
+  browse(interact = false): boolean {
+    const st = this.sim.state
+    if (this.halted || this.disposed || !this.onBrowse || st.driving >= 0) return false
+    const i = shopAt(this.shops, st.avatar.x, st.avatar.z)
+    if (i < 0 || (interact && this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE) >= 0)) return false
+    this.onBrowse(i)
+    return true
+  }
+
+  /**
+   * The mirror camera for shop `index`'s catalogue, or null to give the eye back to the head. Opening it steps the
+   * avatar onto the shop's fitting spot, facing the doorway, where nothing is within the orbit (storefronts.ts SHOP);
+   * the camera starts on the doorway's side, looking at the body's front. Returns whether it opened (only inside that
+   * shop, on foot, without a headset, and never in a network room: the room did not make the step onto the fitting
+   * spot and would put the player back, so there the card opens in first person).
+   */
+  setShowroom(index: number | null): boolean {
+    if (index === null) { this.showroom = null; return true }
+    const shop = this.shops[index]
+    const st = this.sim.state
+    if (!shop || this.netRoom || st.driving >= 0 || this.rig.headset || shopAt(this.shops, st.avatar.x, st.avatar.z) !== index) return false
+    const f = shop.fitting
+    this.sim.send({ c: 'teleport', x: f.x, z: f.z })
+    // The body faces where the head looks turned about (avatarHeading = yaw + π), so the head looks back into the shop.
+    this.input.yaw = Math.atan2(Math.sin(f.yaw + Math.PI), Math.cos(f.yaw + Math.PI))
+    this.input.pitch = 0
+    this.showroom = { shop: index, angle: f.yaw }
+    return true
+  }
+
   /** Enter the nearest car, or leave the current one on the driver's (left) side (decided in the physics realm). */
   interact(): void {
     this.sim.send({ c: 'interact' })
@@ -1866,7 +1929,10 @@ export class Engine {
     // Player 1's own deeds earn here, once per press: the door key is stamped for the boarding received() pays, and
     // the clock, ghost and rain keys earn Optics and cinema. The setters behind them stay silent, because the console,
     // scripts and agents' acts share them and the console earns for its own commands.
-    if (input.take('interact')) { this.doorPressedAt = performance.now(); this.interact() }
+    // Inside a shop on foot, E opens its catalogue unless a car is in reach to take it (storefronts.ts); B opens it
+    // whether or not a car is near. Only a press that went to the door is stamped.
+    if (input.take('interact') && !this.browse(true)) { this.doorPressedAt = performance.now(); this.interact() }
+    if (input.take('browse')) this.browse()
     if (input.take('timeForward')) { this.hours = (this.hours + 1) % 24; this.toast('Clock', formatClock(this.hours)); this.deed('optics') }
     if (input.take('timeBack')) { this.hours = (this.hours + 23) % 24; this.toast('Clock', formatClock(this.hours)); this.deed('optics') }
     if (input.take('ghost')) {
@@ -1956,6 +2022,12 @@ export class Engine {
       this.avatarHeading = input.yaw + Math.PI
       this.rig.onFoot(cam, av.x, av.feetY, av.z, input.yaw, input.pitch, dt)
     }
+    // Which shop the avatar stands in, and the mirror camera's turn while its catalogue is open (drawn in present()).
+    // Leaving the shop, taking a car, a headset or a network room ends it.
+    this.shopHere = driving >= 0 ? -1 : shopAt(this.shops, av.x, av.z)
+    const show = this.showroom
+    if (show && (this.shopHere !== show.shop || this.rig.headset || this.netRoom)) this.showroom = null
+    else if (show) show.angle += SHOP.orbit.rate * dt
     // The pedestrians near the operator look them in the eye (crowd.ts gazeTarget); from a car, nobody is looked at.
     this.crowdGaze.value.set(this.rig.pose.x, this.rig.pose.y, this.rig.pose.z, driving >= 0 ? 0 : 1)
     // The other local players' heads, each on its own camera from its own avatar (or the car it drives) and its seat's
@@ -2000,6 +2072,18 @@ export class Engine {
       return
     }
     const cam = this.world.camera
+    // The mirror camera (a shop's catalogue open): for this draw alone the eye leaves the head and circles the body,
+    // whose own figure shows once the camera is past crowd.ts OWN_BODY.radius. Its matrices are refreshed before the
+    // cull, the sun shafts and the cinema camera's motion read them, and the head's pose is put back after the draw,
+    // so the listener, the gaze and the ping keep the head.
+    const mirror = this.showroom && orbitEye(st.avatar.x, st.avatar.feetY, st.avatar.z, this.showroom.angle)
+    if (mirror) {
+      this.headPos.copy(cam.position)
+      this.headRot.copy(cam.quaternion)
+      cam.position.set(mirror.eye.x, mirror.eye.y, mirror.eye.z)
+      cam.lookAt(mirror.at.x, mirror.at.y, mirror.at.z)
+      cam.updateMatrixWorld()
+    }
     this.projScreen.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)
     // The camera's own conventions: WebGPU's [0, 1] clip depth, reversed since the renderer asked for it (world.ts
     // createRenderer); without them the near and far planes come out as WebGL's and, reversed, swap.
@@ -2041,6 +2125,11 @@ export class Engine {
     }
     if (post) this.post.render()
     else this.gpu.renderer.render(this.world.scene, cam)
+    if (mirror) {
+      cam.position.copy(this.headPos)
+      cam.quaternion.copy(this.headRot)
+      cam.updateMatrixWorld()
+    }
     // The other players' viewports: each culled for its own camera, under the sky re-centred on that head, drawn on the
     // direct path. The lamp lights and the building sort stay player 1's (world.update above); the sun's two shadow
     // cascades are fitted by three to the camera of each render, so each viewport's are fitted to its own head.
@@ -2500,6 +2589,8 @@ export class Engine {
         x, z, heading, signalEW: signalFor('ew', st.simTime), signalNS: signalFor('ns', st.simTime), signalRemaining: next - phase,
         region: this.regionName,
         streets: this.streets !== null,
+        // The shop the avatar stands in (storefronts.ts), for the HUD's chip and the card; absent outside every shop.
+        ...(this.shopHere >= 0 && { shop: { index: this.shopHere, kind: this.shops[this.shopHere].kind, name: this.shops[this.shopHere].name, showroom: this.showroom !== null } }),
         ...(this.captionsOn && { captions: this.captionLines() }),
       },
       experience: { sessionSeconds: this.simTime, longFrames: this.clock.longFrames, distanceWalked: this.walked, distanceDriven: this.driven },

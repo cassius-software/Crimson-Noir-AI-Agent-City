@@ -62,6 +62,7 @@ at all (see Track B under Ring-0 console).
 | Look (head) | drag with the mouse, or click to capture it | right stick | drag on the right half |
 | Run | Shift (either) | left-stick click | Run button |
 | Enter / exit a car | E | south face button | Enter car / Exit car |
+| Browse a shop (on foot inside a storefront) | E (a car in reach keeps E for its door), or B | south face button | tap the Browse chip |
 | Handbrake | Space | east face button | Handbrake |
 | Right the car | R | north face button | Reset |
 | Ping (mark a spot or a person where you look) | Q, or the middle mouse button | right shoulder button | Ping |
@@ -237,6 +238,51 @@ rings for the cars, one round each 2 × 2-block cell; one elevated train loop on
 two arterial streets, with four mid-block stations and guideway columns at the kerb; drone corridors at 40 m and
 46 m over the 4 × 4-block face rings; one plane racetrack at 400 m; and two VTOL routes along the avenues at 75 and
 85 m, each calling at four rooftop pads. See Vehicles.
+
+### Storefronts
+
+Five ground floors in the city are shops (`01_Initialize_World/storefronts.ts`), placed from the seed on lots no
+workplace has: **Verrin & Vale Tailors** in the northern downtown rows, **Bio-Frame Prosthetics Atelier** in the
+southern downtown rows above the lakefront, **Escapement Row Horology** within two blocks of the Financial District's
+centre, and on the lakefront row, facing the lake, **Aethelgard Ink Studio** in its western half and **Lintel & Lumen
+Design House** in its eastern half. Each is a glass-walled room like a
+workplace, with a counter and a mirror at the back and its own fixtures: mannequins and rails at the tailor, chairs at
+the tattoo studio, gait rails at the atelier, display cases at the watch shop, and seven scale models of the city's
+homes on plinths at the design house. The minimap draws them in teal. Pedestrians walk past them, not in.
+
+Lakefront Metro has the same five shops (`01_Initialize_World/region/shops.ts`), on the lots of its street window
+nearest where you start, once its workplaces have taken theirs: every doorway on a two-way street with a sidewalk you
+can walk to from the start, never on the landmark's lot or in the lake. Each lot is hollowed as a workplace's is
+(`regionWorld.ts` `hollowLots`): what stood there is put out of sight, the ceiling slab takes the podium's height and
+finish, a tower that stood on the podium is carried on the slab, and the floor and the forecourt are paved. The
+physics worker is handed the same lots and builds the same glass, so a car left in a shop puts its driver down clear
+of it. A region shop's card names the streets it stands on, not a city arcade. The surveyed region has no street
+window, and no shops.
+
+On foot inside one, the HUD shows **Browse** and the shop's name. E, B, the pad's south face button or a tap on that
+chip opens the shop's card (`07_Execute_Actions/StoreCard.tsx`); near a car, E keeps opening its door, and B still
+opens the card. While the card is open you stand on the fitting spot facing the door, and the camera leaves your head
+to circle your body slowly (the mirror), so what you wear shows; the sound stays at your head. In a network room the
+card opens without the mirror (the room did not make the step onto the fitting spot). Esc, × or Done gives the eye
+back. Every line lists
+its level and its price. **Try on** wears it on your body until the card closes. **Buy** takes the credits and wears it
+at once. An owned line you are not wearing has **Wear**. What you bought and your balance live in your operator
+record (the progression engine's, kept in this browser), so the console's `progress` and the card agree.
+
+- **Credits.** The card's purse line is your operator level and civic credits. A new operator starts at level 1 with
+  150 credits, enough for a first-floor line such as the silk tie; the city's work earns more (see "The operator's
+  progression"). A purchase goes through the progression engine's purchase gate, which takes the price and sets the
+  line's unlock bit in the same saved record or changes nothing (`07_Execute_Actions/shopkeeper.ts` `progressionPurse`
+  over `progress.ts` `pageProgress`): worn lines at look 512 and up, furniture from 0, homes 0 to 6. A line above your
+  level says which level it needs; one you cannot afford says how many more credits.
+- **On sale now.** The tailor's six overcoats, seven contrast trims, seven scarves and a silk tie; the atelier's smart
+  eyewear; the watch shop's leather briefcase. Lines that need slots the wardrobe does not have yet (the tattoo
+  designs and inks, prosthetic limbs, the hearing processor, watches, the lapel pin, the umbrella, headphones) are
+  listed as on order and go on sale when the wardrobe's update adds those slots. The design house's furniture and its
+  seven property deeds (level 1 to 20, free to 4,500,000 credits) wait for the properties.
+- **Limits.** The wardrobe card is not gated by
+  what you bought; it still offers everything the crowd wears. Putting on a headset closes the card. A pad has no B,
+  so near a car the pad's south button opens the car's door and the card opens from the chip (a click or a tap).
 
 ## The surveyed map
 

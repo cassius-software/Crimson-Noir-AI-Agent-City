@@ -15,6 +15,39 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Five shops you can walk into, browse and buy from.** Five ground floors of the procedural city are storefronts
+  (`src/01_Initialize_World/storefronts.ts`): Verrin & Vale Tailors, Aethelgard Ink Studio, Bio-Frame Prosthetics
+  Atelier, Escapement Row Horology and Lintel & Lumen Design House, each on a lot of its own quarter, picked from the
+  seed among the lots no workplace has. Each lot's podium is hollowed into a glass room with a counter, a mirror and
+  its trade's fixtures, and the ceiling slab keeps the building's finish; the minimap draws the shops in teal. On foot
+  inside one, E (unless a car is in reach), B, the pad's south button or the HUD's Browse chip opens the shop's card
+  (`src/07_Execute_Actions/StoreCard.tsx`): the avatar steps onto a fitting spot kept clear of every fixture and the
+  camera circles the body, so the outfit shows; every line has its level and price, Try on, Buy (worn at once) and
+  Wear. Purchases go through one shopkeeper (`shopkeeper.ts`) over the progression engine's keeper (`progress.ts`
+  `pageProgress`, adapted by `progressionPurse`): the card shows its level and civic credits, and its purchase gate
+  takes the price and sets the line's unlock bit in the same saved record (worn lines at look 512 and up, furniture
+  from 0, homes 0 to 6). A new operator starts at level 1 with 150 credits, enough for a first-floor line such as the
+  tie, and earns more by the city's work. On sale now: the tailor's overcoats, trims, scarves and tie,
+  the atelier's smart eyewear and the watch shop's briefcase; tattoos, limbs, watches and the other lines that need
+  wardrobe slots not built yet are listed as on order, and the design house's furniture and seven property deeds wait
+  for the properties. Three of the plan's shop names and two home names were changed after a trademark and place-name
+  search (`docs/ip-audit.md` §7). Pinned by `storefronts.test.ts` (one shop per kind on its quarter for 64 seeds,
+  never on a workplace lot, the podium gone, every fixture inside the walls, the walk-in and the camera's circle
+  clear, the real Rapier avatar walking from the sidewalk to the fitting spot), `storeCatalog.test.ts` (ids, the
+  deeds' levels and prices, every line on sale wearable by every preset body, the spaces, level cap and verdicts equal
+  to the progression engine's, the shopkeeper over a real keeper bought once and kept across a reload, and over a
+  stand-in that refuses) and `storeWiring.test.ts`.
+- **The five shops in Lakefront Metro too.** A generated region's street window gets the same five storefronts
+  (`src/01_Initialize_World/region/shops.ts`), on the lots nearest the visitor's start once its workplaces have taken
+  theirs, from the same candidates as the workplaces (`region/workplaces.ts` `lotCandidates`, shared now): a doorway on
+  a two-way street with a sidewalk the start can walk to, never the landmark's lot or a lot under water.
+  `regionWorld.ts` `hollowLots` hollows a shop's lot as it hollows a room's (the slab in the podium's height and
+  finish, a tower carried on it, the floor and forecourt paved), the worker takes the lots in `SimInit.shops` and
+  refuses malformed ones, each with its reason, the region's minimap draws the shops, and each shop's card names the
+  streets it stands on (the city's arcades are the city's districts). Pinned by
+  `region/shops.test.ts` (two seeds, every zone: five shops, never a workplace's lot, the nearest lots first, the
+  hollowing and the workplaces unchanged by it), `regionPhysics.test.ts` (the worker's refusals) and
+  `storeWiring.test.ts`.
 - **One command for every platform's build: `npm run build:matrix`.** `tools/build/matrix.mjs` (plain Node, programs
   with argument vectors, never a shell, so cmd.exe and sh run the same thing) builds the page once and then each
   target a machine can build: the Tauri 2 shell for Windows x64 (`windows-x64`: NSIS installer, .msi and bare .exe)
