@@ -76,6 +76,28 @@ export interface HudPing {
   sy: number
 }
 
+/**
+ * The operator's progression as the HUD shows it: finished strings (07_Execute_Actions/progress.ts hudProgress), so the
+ * HUD stays a view of the snapshot and every word stays where progress.test.ts can read it.
+ */
+export interface HudProgress {
+  /** The chip's line: 'Level 3 · 420 of 1,000 XP · 1,250 credits · hero 2 · ◆◆◇ ↺'. */
+  text: string
+  /** The same standing in full words (the chip's aria-label), and the fresh check's words while there is one. */
+  label: string
+  /** The round alone: ◆ for each action left, ◇ for each spent, ↺ while the reaction is ready. */
+  pips: string
+  /** The fresh check: a success or a critical success; null when there is none or it is no longer fresh. */
+  cue: 'success' | 'critical' | null
+  /** What the fresh check was, 'Critical success in Piloting', and what it paid, '+40 XP, +150 credits'; '' with no cue. */
+  cueText: string
+  delta: string
+  /** When the fresh check was made (the host's clock, ms), so a glow can key on it once; -1 with no cue. */
+  cueAt: number
+  /** Ms since the fresh check; Infinity with no cue. */
+  cueAge: number
+}
+
 export interface MapCar { x: number; z: number; heading: number; player: boolean }
 
 /** Which control glyphs the HUD shows: the keyboard, a controller family, or touch. */
@@ -179,6 +201,8 @@ export interface SipocSnapshot {
     robots?: { count: number; armed: number; detail: string }
     /** The .agv recorder (recorder.ts): local-only capture of the canvas or the camera with per-frame telemetry. */
     recording: RecordingState
+    /** The operator's progression (progress.ts hudProgress), added by the host. */
+    progress?: HudProgress
     /**
      * Recruitment (08_Swarm/recruitment.ts), added by the host: whether the microphone is open (on-device speech
      * recognition), and one line about the Active swarm's skills and who is coming over (or the last outcome).

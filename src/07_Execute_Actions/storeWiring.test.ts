@@ -49,7 +49,7 @@ test('the engine: the city\'s shops kept; E opens a shop\'s card unless a car is
   assert.ok(src.includes('hollowLots(pack, layout, lots, shopLots)'))
   assert.ok(src.includes('...(shopLots.length > 0 && { shops: shopLots }),'), 'the worker builds the same glass')
   assert.ok(src.includes('drawRooms(ctx, rooms, x, z, dark, radius); drawShops(ctx, shops, x, z, dark, radius)'), 'the region\'s minimap shows its shops')
-  assert.ok(src.includes("if (input.take('interact') && !this.browse(true)) this.interact()"), 'E is the shop\'s only when browse took it')
+  assert.ok(src.includes("if (input.take('interact') && !this.browse(true)) { this.doorPressedAt = performance.now(); this.interact() }"), 'E is the shop\'s only when browse took it, and only a door press is stamped (progress.ts)')
   assert.ok(src.includes("if (input.take('browse')) this.browse()"), 'B asks without the car check')
   assert.ok(src.includes('if (i < 0 || (interact && this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE) >= 0)) return false'), 'a car in reach keeps E (only E) for its door')
   assert.ok(src.includes('if (show && (this.shopHere !== show.shop || this.rig.headset || this.netRoom)) this.showroom = null'), 'out of the shop, in a headset or a room, the eye goes back to the head')
