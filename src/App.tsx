@@ -791,9 +791,7 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
   const onTermOpen = useCallback((open: boolean) => {
     termOpenRef.current = open
     setTermOpen(open)
-    if (open) { setLookOpen(false); walkRef.current.note('console') }
-    engineRef.current?.input.suspend(open || lookOpenRef.current)
-    if (open) { setLookOpen(false); setStoreOpen(null); setTrying(null) }
+    if (open) { setLookOpen(false); setStoreOpen(null); setTrying(null); walkRef.current.note('console') }
     engineRef.current?.input.suspend(open || lookOpenRef.current || storeOpenRef.current !== null)
   }, [])
   useEffect(() => {
@@ -1287,7 +1285,6 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
           onHear={onHear}
         />
       )}
-      <Terminal ref={termRef} bridge={bridge} onOpenChange={onTermOpen} onBoot={reboot} onMap={remap} onLine={fw.line} />
       {hud && (
         <StoreCard
           visible={storeOpen !== null && veilDone && !termOpen && locked === null}
@@ -1302,7 +1299,7 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
           dark={hud.customer.daylight < 0.35}
         />
       )}
-      <Terminal ref={termRef} bridge={bridge} onOpenChange={onTermOpen} onBoot={reboot} onMap={remap} />
+      <Terminal ref={termRef} bridge={bridge} onOpenChange={onTermOpen} onBoot={reboot} onMap={remap} onLine={fw.line} />
       {/* A city action waiting for the operator's OK (ActCard.tsx): over the console, under the recovery card; never
           while the city is halted, never before the veil lifts. The console beneath stays usable (y, n, act ok, act no). */}
       {act && veilDone && locked === null && bridge && <ActCard act={act} termOpen={termOpen} onAllow={allowAct} onRefuse={refuseAct} />}
