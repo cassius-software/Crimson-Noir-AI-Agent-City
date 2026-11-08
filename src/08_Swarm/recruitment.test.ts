@@ -326,6 +326,26 @@ test('transcripts: a request needs a request word and a skill; what was heard is
   assert.equal(r.heard, 'I need someone who knows security')
 })
 
+test('transcripts: a request is announced as understood, once, with its skill, before it is asked; words that ask for nothing are not', () => {
+  const { host, r } = rig()
+  const [a] = withSkill('Security')
+  host.deliver(new Map([[a, [OP.x, OP.z + 2]]]))
+  const order: string[] = []
+  const understood: unknown[] = []
+  r.addEventListener('understood', (e) => { understood.push((e as CustomEvent).detail); order.push('understood') })
+  r.addEventListener('recruit', () => order.push('recruit'))
+  assert.equal(r.hear('security is tight today'), null)
+  assert.equal(r.hear('  '), null)
+  assert.deepEqual(understood, [], 'heard, but no request in it')
+  assert.ok(r.hear('I need someone who knows security') instanceof Promise)
+  assert.deepEqual(understood, [{ transcript: 'I need someone who knows security', skill: 'Security' }])
+  assert.deepEqual(order, ['understood', 'recruit'], 'announced before the ask')
+  // Understood even when nobody near has the skill: the words were, and the refusal says the rest.
+  host.operatorAt = null
+  assert.ok(r.hear('recruit a security expert') instanceof Promise)
+  assert.equal(understood.length, 2)
+})
+
 // ---------------------------------------------------------------- the microphone
 
 interface FakeRec {
