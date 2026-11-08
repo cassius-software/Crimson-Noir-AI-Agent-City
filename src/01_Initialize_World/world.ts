@@ -29,6 +29,7 @@ import { CITY_CENTER, LAKE, generateBuildings, streetFurniture, type Box, type B
 import { FbmSet } from './fbmTexture.ts'
 import { sunAt, type SunState } from './solar.ts'
 import { regionMeshes, type RegionLayout, type RegionScene } from './region/regionWorld.ts'
+import type { RegionTransit } from './region/transit.ts'
 import type { RegionPack } from './region/pack.ts'
 import { windowFurniture, type StreetGrid } from './region/streets.ts'
 import { SIGNAL } from '../02_Define_The_Rules/civic.ts'
@@ -108,7 +109,10 @@ export function tolerateIdentitySwizzle(proto: ViewMaker | undefined = (globalTh
   ;(proto as unknown as Record<symbol, boolean>)[SWIZZLE_SAFE] = true
 }
 
-export async function createRenderer(canvas: HTMLCanvasElement, pixelRatio: number, profile = false, timestamps: (adapter: string) => boolean = () => false): Promise<Gpu> {
+export async function createRenderer(
+  canvas: HTMLCanvasElement, pixelRatio: number, profile = false, timestamps: (adapter: string) => boolean = () => false,
+  samples: (adapter: string) => 0 | 4 = () => 0,
+): Promise<Gpu> {
   // The device is asked for here, not by three (gpuDevice.ts): a core adapter as the physics worker asks, three's own
   // features, and a coded error naming the real cause when there is none. Handed a device, three makes no request of
   // its own and so never falls back to WebGL2, which would also claim the canvas for good.
@@ -127,7 +131,9 @@ export async function createRenderer(canvas: HTMLCanvasElement, pixelRatio: numb
   // (0.12 mm at 1,000 m). three flips the depth functions, the shadow bias and the clear value itself; the sky, which
   // puts itself on the far plane by hand, is told in buildWorld (skyAtFarPlane). WebGPU always honours the setting
   // (only the WebGL backend can refuse it), and createRenderer insists on the WebGPU backend below.
-  const renderer = new WebGPURenderer({ canvas, antialias: false, powerPreference: 'high-performance', trackTimestamp: profile || timestamps(line), reversedDepthBuffer: true, device })
+  // `samples` multisamples the renderer's own frame (the direct path), fixed for its life: 4 only for split screen on an
+  // MSAA candidate (engine.ts splitSamplesOf); the post chain's passes pin their own (postfx.ts buildPost).
+  const renderer = new WebGPURenderer({ canvas, antialias: false, samples: samples(line), powerPreference: 'high-performance', trackTimestamp: profile || timestamps(line), reversedDepthBuffer: true, device })
   await renderer.init()
   const backend = renderer.backend as unknown as { isWebGPUBackend?: boolean; device?: GPUDevice; trackTimestamp?: boolean }
   if (!backend.isWebGPUBackend || !backend.device) {
@@ -426,11 +432,12 @@ function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', 
  * The world under its sky. With a region (a pack and where it sits), the region's surveyed buildings, streets and water
  * stand in for the procedural city: no city ground or lake, and no city boxes but the region's own `plan` (a generated
  * region's workplaces, regionWorld.ts hollowLots: each room's glass shell, furniture and ceiling slab, and what the slab
- * carries), drawn, walled and rasterised as the city's are, and `rooms`, the workplaces among them, whose ceilings get
- * fixtures (the city's are its seed's, interiors.ts workplaces). `detail`: FULL_WORLD, or LITE_WORLD for a lite device
- * profile.
+ * carries, and a region's pier), drawn, walled and rasterised as the city's are, and `rooms`, the workplaces among
+ * them, whose ceilings get fixtures (the city's are its seed's, interiors.ts workplaces); `transit` (region/transit.ts)
+ * adds the window's painted crossings and its strip to the region's meshes. `detail`: FULL_WORLD, or LITE_WORLD for a
+ * lite device profile.
  */
-export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pack: RegionPack; layout: RegionLayout; streets?: StreetGrid | null; plan?: readonly Building[]; rooms?: readonly Workplace[] } | null = null, detail: Readonly<WorldDetail> = FULL_WORLD): World {
+export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pack: RegionPack; layout: RegionLayout; streets?: StreetGrid | null; plan?: readonly Building[]; rooms?: readonly Workplace[]; transit?: RegionTransit | null } | null = null, detail: Readonly<WorldDetail> = FULL_WORLD): World {
   const scene = new Scene()
   const camera = new PerspectiveCamera(62, 1, 0.1, 2400)
   const plan = region ? [...(region.plan ?? [])] : generateBuildings(seed)
@@ -526,7 +533,7 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   buildings.receiveShadow = true
   buildings.name = 'Buildings'
   if (!region || plan.length > 0) scene.add(buildings)
-  const regionScene = region ? regionMeshes(region.pack, region.layout, fbm, night, matrixMode.globalState) : null
+  const regionScene = region ? regionMeshes(region.pack, region.layout, fbm, night, matrixMode.globalState, region.transit ?? null) : null
   if (regionScene) for (const m of regionScene.meshes) scene.add(m)
 
   // The ground stops at the seawall; the lake takes over from there (never water over ground: at a distance the

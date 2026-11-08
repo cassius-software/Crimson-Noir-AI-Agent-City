@@ -103,9 +103,10 @@ try {
     if (at.yaw !== null) await b.eval(`window.__SIM__.look(${at.yaw}, ${at.pitch})`)
     const start = await b.eval('window.__shotFrames')
     await b.waitFor(`window.__shotFrames >= ${start + FRAMES}`, 120_000)
-    const s = await b.eval(`(() => { const s = window.__SIM__.snapshot(); return { clock: s.customer.clock, tier: s.quality.label ?? s.quality.tier, fps: s.output.fps } })()`)
+    const s = await b.eval(`(() => { const s = window.__SIM__.snapshot(), e = window.__SIM__.engine
+      return { clock: s.customer.clock, tier: s.quality.label ?? s.quality.tier, fps: s.output.fps, aa: (e.quality.live.post ? e.sceneSamples : e.gpu.renderer.samples) || 1 } })()`)
     writeFileSync(join(OUT, `${at.name}.png`), await b.screenshot())
-    console.log(`shot: ${at.name}.png at ${s.clock}, tier ${s.tier}, ${Number(s.fps).toFixed(1)} fps`)
+    console.log(`shot: ${at.name}.png at ${s.clock}, tier ${s.tier}, aa ${s.aa}x, ${Number(s.fps).toFixed(1)} fps`)
   }
 } catch (e) {
   failed = true
