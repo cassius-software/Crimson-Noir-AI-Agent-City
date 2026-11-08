@@ -105,7 +105,7 @@ const CORE = [
   { name: 'captions', usage: 'captions [on|off]', summary: 'closed captions for every sound: engines, signals, speech, pings (view-only)' },
   { name: 'haptics', usage: 'haptics [on|off]', summary: "controller rumble and phone vibration: the guardrails' feel and a check's tap (the triggers' resistance stays)" },
   { name: 'ping', usage: 'ping [go|look|gather|wait|clear]', summary: 'mark where you look for your swarm (view-only; shown on the minimap and captioned; Q); alone, the marks standing' },
-  { name: 'look', usage: 'look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]', summary: "your look from the crowd's wardrobe (body, height, mass, muscle, shoulders, hips, legs, posture, head, skin, hair, top, bottom, shirt, shoes, tie, eyewear, bag, cup)" },
+  { name: 'look', usage: 'look [show [<agent>]|<slot> <n|name>|preset <name>|build <name>|code <code>|random [<seed>]|reset]', summary: "your look from the crowd's wardrobe (body, build, height, mass, muscle, shoulders, hips, legs, posture, head, skin, vitiligo, freckles, hair, top, bottom, shirt, shoes, tie, eyewear, bag, cup)" },
   { name: 'agent', usage: 'agent [new <name>|<name> pronouns|role|voice|look|name <value...>|hire <name> [<skill>]|dismiss <name>|forget <name>|voices]', summary: 'your own agents: name, pronouns, role, voice and look; hire one into a pedestrian with a skill (they answer ask and say as themselves)' },
   { name: 'sloane', usage: 'sloane [on|off|voice <name>|voices|say <text...>]', summary: "the concierge's spoken voice: the speech provider's voice at your own head when say has one, else the browser's offline voice" },
   { name: 'goal', usage: 'goal <words...>', summary: 'tell the city a goal in plain words, as you would tell Sloane: what can be done now is done, the rest is explained' },
@@ -198,11 +198,12 @@ const PING_WORDS: Record<PingKind, string> = { go: 'go there', look: 'look there
 /** The look's slots, bodies and presets, as typed after `look` (commands.test.ts pins them to 03_Spawn_Agents/look.ts, not imported here). */
 export const LOOK_SLOT_ARGS = [
   'body', 'height', 'mass', 'muscle', 'shoulders', 'hips', 'legs', 'posture', 'head', 'brow', 'jaw', 'chin', 'cheek', 'nose', 'eyes', 'lips',
-  'skin', 'age', 'undertone', 'hairStyle', 'hairColour', 'layer', 'top', 'trim', 'bottom', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
+  'skin', 'age', 'undertone', 'vitiligo', 'freckles', 'hairStyle', 'hairColour', 'layer', 'top', 'trim', 'bottom', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
 ] as const
+export const LOOK_BUILD_ARGS = ['athletic', 'broad', 'full', 'lean', 'muscular', 'slight', 'soft', 'stocky'] as const
 export const LOOK_BODY_ARGS = ['pantsuit', 'skirt suit', 'smart casual', 'suit'] as const
 export const LOOK_PRESET_ARGS = ['burgundy pantsuit', 'camel blazer', 'camel skirt suit', 'charcoal suit', 'cream pantsuit', 'navy blazer', 'navy skirt suit', 'navy suit'] as const
-const LOOK_ACTIONS = ['code', 'preset', 'random', 'reset', 'show'] as const
+const LOOK_ACTIONS = ['build', 'code', 'preset', 'random', 'reset', 'show'] as const
 
 /** Tab-completion candidates for arguments, keyed by the words before the one being completed. */
 const ARGS: Record<string, readonly string[]> = {
@@ -224,6 +225,10 @@ const ARGS: Record<string, readonly string[]> = {
   'look body': LOOK_BODY_ARGS,
   'look hairStyle': ['bald', 'bob', 'bun', 'long', 'short'],
   'look undertone': ['cool', 'neutral', 'olive', 'warm'],
+  'look skin': ['mst-01', 'mst-02', 'mst-03', 'mst-04', 'mst-05', 'mst-06', 'mst-07', 'mst-08', 'mst-09', 'mst-10'],
+  'look vitiligo': ['face', 'hands', 'hands and face', 'none', 'one side', 'scattered', 'widespread'],
+  'look freckles': ['dense', 'light', 'medium', 'none'],
+  'look build': LOOK_BUILD_ARGS,
   'look layer': ['coat', 'jacket', 'shirt sleeves'],
   'look trim': ['matching'],
   'look scarf': ['none'],
@@ -671,6 +676,7 @@ function lookChange(action: string, rest: readonly string[]): LookChange | strin
     return { kind: 'random', seed: rest.length ? Number(rest[0]) : Number.NaN }
   }
   if (action === 'preset') return rest.length ? { kind: 'preset', name: rest.join(' ') } : 'usage: look preset <name>'
+  if (action === 'build') return rest.length === 1 ? { kind: 'build', name: rest[0] } : `usage: look build <${LOOK_BUILD_ARGS.join('|')}>`
   if (action === 'code') return rest.length === 1 ? { kind: 'code', code: rest[0] } : 'usage: look code <XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX>'
   const slot = LOOK_SLOT_ARGS.find((x) => x.toLowerCase() === action.toLowerCase())
   if (!slot) return `look: no slot named '${action}': ${LOOK_SLOT_ARGS.join(', ')}`
