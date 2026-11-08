@@ -73,8 +73,10 @@ test('engine: a lite profile caps the post chain off as ?post=0 does, and no cap
   // The mask and the ghost view's forcing read options.post: a capped chain never runs at any tier.
   assert.match(CREATE, /post: k\.post && options\.post, lampLights: lite \? 0 : k\.lampLights \}\)/, 'and a lite boot, which built no clustered lighting, lights no lamp at any tier')
   assert.match(ENGINE, /if \(this\.ghost\.on && this\.options\.post\) k\.post = true/)
-  const scope = between(CREATE, "gpu.device.pushErrorScope('validation')", 'const invalid = await gpu.device.popErrorScope()')
-  assert.match(scope, /gpu\.renderer\.render\(world\.scene, world\.camera\)\n\s+if \(options\.post\) post\.render\(\)/, 'uncapped: both paths, as before')
+  // Uncapped: both paths, as before, each in a scope of its own (the direct one first; the chain only where it can run).
+  const scope = between(CREATE, "gpu.device.pushErrorScope('validation')", 'const crowdLook = ')
+  assert.match(scope, /^gpu\.device\.pushErrorScope\('validation'\)\n\s+gpu\.renderer\.render\(world\.scene, world\.camera\)\n\s+const invalid = await gpu\.device\.popErrorScope\(\)/)
+  assert.match(scope, /if \(options\.post\) \{\n\s+gpu\.device\.pushErrorScope\('validation'\)\n\s+post\.render\(\)\n\s+const refused = await gpu\.device\.popErrorScope\(\)/, 'uncapped: both paths, as before')
   // The ghost view's refusal says why.
   const ghost = between(ENGINE, '  setGhost(on: boolean): string {', '\n  }\n')
   assert.match(ghost, /if \(on && !this\.options\.post && this\.options\.lite\) return 'needs the post-processing chain, which the lite profile turned off \(\?lite=0 keeps it\)'/)

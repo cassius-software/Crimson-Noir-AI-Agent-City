@@ -111,6 +111,42 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   parking) reaches its cascades. Unverified: how it looks on a real GPU (software-WebGPU pictures only, which at the
   photographed spots look like the old ones), and the cost of the second shadow pass on an integrated GPU at Medium (the
   governor measures and steps down as ever).
+- **4x multisampled anti-aliasing for the scene, decided at boot.** FXAA was the only anti-aliasing, and it cannot
+  bring back a lamp pole or a mast arm thinner than a pixel. Now the post chain's scene pass can draw 4 samples a pixel
+  (three r186's `pass(scene, camera, { samples: 4 })`; colour and, under the cinema camera, the velocity buffer resolved
+  as the pass ends, the multisampled colour never stored; the sun shafts read the first sample of the multisampled
+  depth), with FXAA and the ghost view's composite after it as before. Who gets it: `governor.ts msaaCandidate`, by
+  itself only on a Peak candidate's hardware that the profile starts on Ultra (a high-end discrete card the browser
+  identifies as one: stock Chromium names no AMD card, so an AMD card there starts on High and needs `?msaa=1`) at no
+  more than 2560 × 1440 drawn pixels (`?scale` counted, squared); `?msaa=1` asks for it on any desktop, `?msaa=0`
+  refuses it, and a phone or a lite profile never takes it. The sample count is in the key of every scene pipeline
+  three builds, so it is not a tier knob: the boot decides it once, there is still one post chain, and no tier change
+  recompiles. Split screen, which has no post chain, multisamples the renderer's own frame instead under the same rule
+  (`?post=0` included; split screen refuses a headset, so the headset's targets stay at one sample); the renderer keeps
+  that for its life, so split screen keeps it at every tier, and it has no one-sample fallback. The boot's first frame
+  now draws the direct path and the post chain in a validation scope each: a refused direct path fails the boot as
+  before, and only a refused 4x chain is released and built again at one sample, then drawn again in its own scope,
+  with the boot's own failure text kept. `Engine.sceneSamples` says what the boot chose; `tools/browser/shot.mjs` logs
+  the samples of the path that drew each picture. On the Lakefront map the street ribbons (carriageways and sidewalks)
+  are now cut into 32 m pieces instead of 128 m (`regionWorld.ts RIBBON_PIECE`): multisampled, the software adapter drew
+  a pale line of junction pavement across the road at junctions about 50 m off, because the pavement lies 5 mm under
+  the asphalt and the depth taken off the pixel centre across a 128 m piece lost those 5 mm; at 32 m (and at 16 m) the
+  line is gone, for about three times the streets' vertices (some 21,000 more on the metropolis's street window;
+  `surfaces.test.ts` pins the pieces). Pinned by `governorMsaa.test.ts` (who is a candidate, ?msaa, the
+  screen cap with ?scale squared, an unnamed AMD card, no tier carries a knob), `postfxAa.test.ts` (the scene pass at 4
+  from its construction, colour not stored and depth stored, the ghost pass at one sample and after FXAA, the
+  renderer's samples never reaching the scene pass, release() freeing the targets, 1, 2 and 8 refused),
+  `aaWiring.test.ts` (the host's ?msaa, split screen's renderer samples, the boot decision, the two scopes and the 1x
+  fallback, no sample count set by a tier) and the browser smoke on the software adapter (a desktop at one sample;
+  `?msaa=1` at Ultra under the cinema camera with every two-target pipeline at 4x through Low, Peak and Ultra, no
+  pipeline compiled by those tier changes, and ghost view and rain mode validating; the faked RTX 5090 multisampling by
+  itself; split screen at 4x on the renderer; the lite phone, and the phone with `?lite=0&msaa=1`, at one sample).
+  Limits: the plain resolve averages linear light before the film curve, so bright edges stay hard and a thin dark pole
+  against a bright day sky keeps only part of its contrast; shader-drawn edges (road markings, rain mode) are not
+  multisampled; the cost is not shed tier by tier (with one player only Minimal, without ghost view, has none); Lite,
+  the headset, and Minimal and `?post=0` with one player still have no anti-aliasing (a phone off the lite profile
+  keeps FXAA at Low and Medium). Unverified: how it looks and what it costs on a real GPU (software-WebGPU pictures
+  only).
 - **The operator's progression.** The operator now has a level (1 to 20, 1,000 XP each, the rest rolling over), six
   attribute modifiers, eight skills of the city with proficiency ranks, civic credits, hero points, resolve and three
   actions and a reaction per six-second round (`src/02_Define_The_Rules/progression.ts`, over one 128-word record,

@@ -171,9 +171,10 @@ test('engine: a lost page device halts as a graphics reset; the first frame draw
   assert.match(ctor, /if \(this\.disposed \|\| info\.reason === 'destroyed'\) return/, 'its own destroy() is not a loss')
   assert.match(ctor, /this\.halt\(`\$\{GRAPHICS_RESET\} the page's GPU device was lost/)
   const create = ENGINE.slice(ENGINE.indexOf('  static async create('), ENGINE.indexOf('  /** The minimap'))
-  // Both paths, except that a chain capped off (?post=0, split screen, a lite profile) is never drawn, so never compiled.
-  assert.match(create, /gpu\.device\.pushErrorScope\('validation'\)\n\s+gpu\.renderer\.render\(world\.scene, world\.camera\)\n\s+if \(options\.post\) post\.render\(\)\n\s+const invalid = await gpu\.device\.popErrorScope\(\)/)
-  assert.match(create, /if \(invalid\) throw new Error\(`the first frame failed WebGPU validation: \$\{invalid\.message\}`\)/)
+  // Both paths, each in a scope of its own, except that a chain capped off (?post=0, split screen, a lite profile) is never
+  // drawn, so never compiled.
+  assert.match(create, /gpu\.device\.pushErrorScope\('validation'\)\n\s+gpu\.renderer\.render\(world\.scene, world\.camera\)\n\s+const invalid = await gpu\.device\.popErrorScope\(\)\n\s+stillThere\(\)\n\s+if \(invalid\) throw new Error\(`the first frame failed WebGPU validation: \$\{invalid\.message\}`\)\n\s+if \(options\.post\) \{\n\s+gpu\.device\.pushErrorScope\('validation'\)\n\s+post\.render\(\)\n\s+const refused = await gpu\.device\.popErrorScope\(\)\n\s+stillThere\(\)/)
+  assert.match(create, /\} else if \(refused\) throw new Error\(`the first frame failed WebGPU validation: \$\{refused\.message\}`\)/)
   assert.match(create, /\} catch \(e\) \{\n\s+void simBoot\?\.then\(\(s\) => s\.terminate\(\), \(\) => \{\}\)\n\s+releaseGpu\(gpu\)\n[\s\S]*?\n\s+throw e\n\s+\} finally \{/)
   assert.ok(create.indexOf('try {') < create.indexOf('buildWorld('), 'everything after the device is inside the try')
   assert.match(ENGINE, /releaseGpu\(this\.gpu\)/, 'dispose lets go the same way')

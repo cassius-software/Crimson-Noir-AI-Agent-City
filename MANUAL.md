@@ -157,6 +157,7 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 |---|---|
 | `?quality=auto` (default) | The quality governor picks the tier; `?quality=0`…`4` pins one: Minimal, Low, Medium, High, Ultra; `?quality=-1` or `?quality=lite` pins Lite, below Minimal (see Autoscaling); `?quality=5` or `?quality=peak` pins Peak, above Ultra |
 | `?peak=1`, `?peak=0` | `?peak=1` lets the governor try Peak on this computer even when it would not pick it by itself (it still needs the GPU's own timings); `?peak=0` keeps Peak away. Phones and the lite profile never try it (see Autoscaling) |
+| `?msaa=1`, `?msaa=0` | `?msaa=1` draws the scene 4x multisampled on this computer even when it would not pick it by itself; `?msaa=0` never. Decided at start; phones and the lite profile never draw it (see Anti-aliasing) |
 | `?fps=60` | Frame-rate target (default: estimated from the display, held within 60–90) |
 | `?crowd=14000` | Pedestrians, from 256 to 60,000 (default: 14,000 on a desktop GPU, 8,000 on a phone, 5,000 on the weakest devices, 2,500 on a lite profile) |
 | `?cars=36` | Cars, at most 48 (default: 36, or 12 on a lite profile) |
@@ -236,6 +237,38 @@ rings for the cars, one round each 2 × 2-block cell; one elevated train loop on
 two arterial streets, with four mid-block stations and guideway columns at the kerb; drone corridors at 40 m and
 46 m over the 4 × 4-block face rings; one plane racetrack at 400 m; and two VTOL routes along the avenues at 75 and
 85 m, each calling at four rooftop pads. See Vehicles.
+
+### Anti-aliasing
+
+Every tier with the post chain (Low and up) smooths edges with FXAA, on the finished picture. On a computer with the
+most room to spare the scene is also drawn **4x multisampled** before any of that: four depth and coverage samples a
+pixel, averaged as the scene is finished, so thin things (lamp poles, mast arms, signal poles, roof edges) stay whole
+farther into the distance instead of breaking into dashes, and edges crawl less as you turn. Who gets it by itself: a
+computer the device profile starts on Ultra, which means a recent separate NVIDIA card, or an AMD Radeon RX or Radeon
+Pro where the browser names the card (stock Chrome, Edge and WebView2 give only the vendor and architecture, so an AMD
+card starts on High there and needs `?msaa=1`), with 8 or more processor threads and, where the browser says, 8 GB or
+more of memory, on a screen of up to 2560 × 1440 drawn pixels (`?scale` counted). Anyone else can ask for it with
+`?msaa=1`; `?msaa=0` turns it off. Phones and the lite profile never draw it, whatever the address says.
+
+- **Decided once, at start.** The sample count is part of every scene shader's pipeline, so changing it while you play
+  would rebuild all of them: the tiers never touch it, and a reload with `?msaa` changes it. If the browser refuses
+  the multisampled scene at start, the post chain is built again at one sample and the city starts without it rather
+  than not at all (the browser's developer console says so).
+- **What it costs.** Four samples a pixel of colour, motion and depth: about 150 MB more graphics memory at 1080p on
+  High or Ultra, about 270 MB at 1440p (about 420 MB on Peak, which draws 1.25 times the resolution on each side), and
+  a share of each frame the governor measures as it measures everything else. It is not taken away tier by tier: the
+  narrow automatic rule is the safeguard. With one player, Minimal draws without the post chain and so without the
+  samples, unless ghost view is on (which keeps the chain, and its samples, running).
+- **Split screen** has no post chain, so with `?msaa=1` (or on a computer that would get it by itself) the renderer's
+  own picture is drawn 4x multisampled instead, every view in it. The renderer keeps that for its life, so split
+  screen keeps the samples at every tier, Minimal included; `?post=0` turns them off. It has no one-sample fallback: a
+  browser that refused it would fail the start like any other refused first frame.
+- **What it does not do.** The samples are averaged in linear light before the film curve, so a bright lamp's edge
+  stays hard and a thin dark pole against a bright daytime sky keeps only part of its contrast (it reads as a faint
+  continuous line). Edges a shader draws (road markings, rain mode's glyphs, the code dissolve) are not multisampled.
+  Under the cinema shutter the motion at a silhouette is averaged too, which can leave a faint halo on something
+  moving fast. The headset has no anti-aliasing, and neither do `?post=0` and Minimal with one player. How it looks
+  and what it costs on a real graphics card is unverified: the pictures behind this were drawn by the software adapter.
 
 ## The surveyed map
 
