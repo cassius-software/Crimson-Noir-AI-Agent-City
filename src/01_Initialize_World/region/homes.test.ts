@@ -150,22 +150,34 @@ test('hollowing with the homes: the workplaces and the shops exactly as they wer
   let carried = 0
   for (const w of WINDOWS) {
     const at = `seed ${w.seed} ${w.zone}`
+    const on = windowLotBuildings(w.pack, w.layout.offset, w.g)
+    // Whether a window's own homes stand under a tower depends on which lots its workplaces and shops took first, so the
+    // carrying is held on one home more where none does: on the first candidate lot no workplace, shop or home has, with
+    // something a floor above its slab. It takes the first property index the window left unused, or, with all seven
+    // used, the last home moves there, so the indices stay distinct.
+    const taken = new Set([...w.lots, ...w.shops, ...w.homes].map(key))
+    const tall = lotCandidates(w.pack, w.layout, w.g, w.start).find((c) => {
+      const here = on[c.j * w.g.blocks + c.i], top = Math.max(slabPodium(here)?.height ?? 0, ROOM.height + 0.3)
+      return !taken.has(`${w.g.originX / P + c.i},${w.g.originZ / P + c.j}`) && here.some((b) => b.height >= top + 3.3 - 1e-6)
+    })
+    const unused = PROPERTY_KINDS.findIndex((_, i) => !w.homes.some((x) => x.home === i))
+    const extra = (home: number): HomeLot => ({ home, k: w.g.originX / P + tall!.i, m: w.g.originZ / P + tall!.j, side: tall!.sides[0] })
+    const homes: HomeLot[] = !tall ? w.homes : unused >= 0 ? [...w.homes, extra(unused)] : [...w.homes.slice(0, -1), extra(w.homes[w.homes.length - 1].home)]
     const plain = hollowLots(w.pack, w.layout, w.lots, w.shops)
-    const h = hollowLots(w.pack, w.layout, w.lots, w.shops, w.homes)
+    const h = hollowLots(w.pack, w.layout, w.lots, w.shops, homes)
     assert.deepEqual(plain.homes, [], `${at}: no home lots, no homes`)
     assert.deepEqual(h.rooms, plain.rooms, `${at}: the workplaces as they were`)
     assert.deepEqual(h.shops, plain.shops, `${at}: the shops as they were`)
     assert.deepEqual(h.plan.slice(0, plain.plan.length), plain.plan, `${at}: the rooms' and the shops' boxes first, as they were`)
     assert.deepEqual(h.floors.slice(0, plain.floors.length), plain.floors, `${at}: the rooms' and the shops' floors first, as they were`)
     // Every building on a home's lot, a shop's or a room's is hidden, and no other.
-    const chosen = new Set([...w.lots, ...w.shops, ...w.homes].map(key))
+    const chosen = new Set([...w.lots, ...w.shops, ...homes].map(key))
     for (let i = 0; i < w.pack.buildings.height.length; i++) {
       const on = buildingLot(w.pack, w.layout.offset, i)
       assert.equal(h.pack.buildings.height[i], on && chosen.has(`${on.K},${on.M}`) ? 0 : w.pack.buildings.height[i], `${at}: building ${i}`)
     }
     // Each home is the one homesAt builds on its lot, with the podium's height and finish for its slab.
-    const on = windowLotBuildings(w.pack, w.layout.offset, w.g)
-    const want = homesAt(w.homes, (k, m) => {
+    const want = homesAt(homes, (k, m) => {
       const { i, j } = local(w, { k, m })
       const p = slabPodium(on[j * w.g.blocks + i])
       return p ? { top: Math.max(p.height, ROOM.height + 0.3), style: buildingStyle(w.pack, w.layout, p.i) } : { top: ROOM.height + 0.3, style: STYLE.mixed }
