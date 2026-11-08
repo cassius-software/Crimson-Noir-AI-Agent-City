@@ -162,11 +162,11 @@ test('a stream placed on the view: train cars on the deck along the loop 8 m apa
         assert.ok(Math.abs(fwd.x / flat - Math.sin(h)) < 1e-4 && Math.abs(fwd.z / flat - Math.cos(h)) < 1e-4, `${kind} ${i} faces its heading`)
         if (kind === 'drone') assert.ok(fwd.y < 0 && fwd.y > -0.2, 'a drone under way noses down a little')
         if (kind === 'vtol') assert.ok(fwd.y <= 1e-9 && fwd.y >= -0.2 && (buf[o + TRACK_POSE.speed] > 0 || Math.abs(fwd.y) < 1e-9), 'a VTOL noses down with its speed, upright on a pad')
-        if (kind === 'ferry') assert.ok(Math.abs(fwd.y) < 1e-9 && Math.abs(p.y - TRACKS.ferry.water) < 1e-6, 'a ferry sits level on the water')
         // The body's +z is the right of travel: the starboard light's side (and the plane's right wing).
         right.set(0, 0, 1).applyQuaternion(q)
         const across = Math.hypot(right.x, right.z)
         assert.ok(Math.abs(right.x / across + Math.cos(h)) < 1e-4 && Math.abs(right.z / across - Math.sin(h)) < 1e-4, `${kind} ${i}: its +z side is the right of travel`)
+        if (kind === 'ferry') assert.ok(Math.abs(fwd.y) < 1e-9 && Math.abs(right.y) < 1e-9 && Math.abs(p.y - TRACKS.ferry.water) < 1e-6, 'a ferry sits level on the water, neither pitched nor rolled')
         if (kind === 'plane') {
           // Rolled into a right turn (positive sweep) with the right wing (+z) down; level on the straights.
           const piece = pieceAt(planeTrack, buf[o + TRACK_POSE.s])
