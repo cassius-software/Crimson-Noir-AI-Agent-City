@@ -1586,7 +1586,7 @@ them that answers (`auto`):
   below), then the Claude gateway (`http://localhost:8089`), each at the address its own provider is set to. The
   three on this machine are asked for their models at once, each for at most 2 s, and the first in that order with a
   model that writes text answers (embedding, reranking and speech models are passed over, by name). With them go
-  the newer default addresses, asked at the same moment (the look still waits at most 2 s for both): a llama.cpp server at
+  the newer default addresses, asked at the same moment and each given 2 s too: a llama.cpp server at
   `http://localhost:9931` (llama-server's default since build b11521, October 2026), then vLLM at
   `http://localhost:8000` and SGLang at `http://localhost:30000` for the OpenAI-compatible provider. These are used
   only when none of the three has a text model (and called off once the three have been heard and one has). The first that lists a text model

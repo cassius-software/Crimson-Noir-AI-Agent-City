@@ -113,6 +113,19 @@ const portOf = (url: string): string => {
     return ''
   }
 }
+/**
+ * Which server on this machine an address names, as far as a look can tell: localhost and 127.0.0.1 at one port are
+ * the same server (the page's connect-src allows both, and the model servers listen on 127.0.0.1 by default), so the
+ * key is the port alone; [::1] and the rest of 127.0.0.0/8 may be another server at that port, so their host is kept.
+ */
+const serverKey = (url: string): string => {
+  try {
+    const host = new URL(url).hostname
+    return host === 'localhost' || host === '127.0.0.1' ? portOf(url) : `${host}:${portOf(url)}`
+  } catch {
+    return ''
+  }
+}
 
 /**
  * What the router keeps between visits: the provider, the Claude provider's own settings, each local provider's (the
@@ -378,15 +391,16 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
   type Elsewhere = { readonly p: Found; readonly url: string; readonly from: string }
   /**
    * The second round of a look (KNOWN_SERVERS): each local provider set to one of its known addresses, at its others
-   * the look does not ask already (the gateway's address included), in AUTO_ORDER and each list's order. Every address
-   * here is on this machine, so one is asked already when its port is (localhost, 127.0.0.1 and [::1] alike). An
-   * address set to anything else is the operator's: none.
+   * the look does not ask already, in AUTO_ORDER and each list's order: one is asked already when a provider is set to
+   * the same server (serverKey). The gateway's port is never asked, whatever name for this machine the gateway is set
+   * at: a list read there as a model server's would send the prompts on to the Claude API. An address set to anything
+   * else is the operator's: none.
    */
   const secondRound = (): Elsewhere[] => {
-    const asked = new Set([...LOOK_PHASES[0], 'claude' as const].map((p) => portOf(byName(p).settings().server)))
+    const asked = new Set([...LOOK_PHASES[0].map((p) => serverKey(byName(p).settings().server)), portOf(byName('claude').settings().server)])
     return LOOK_PHASES[0].flatMap((p) => {
       const known = KNOWN_SERVERS[p]; const from = byName(p).settings().server
-      return known?.includes(from) ? known.filter((url) => !asked.has(portOf(url))).map((url) => ({ p, url, from })) : []
+      return known?.includes(from) ? known.filter((url) => !asked.has(serverKey(url))).map((url) => ({ p, url, from })) : []
     })
   }
   /**
@@ -425,8 +439,8 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
    * (localText: not an embedding model, not one of Ollama's cloud models); only when none does is the model file kept
    * in this page asked (it makes no request and loads nothing: it lists what is kept, or says why it cannot run here),
    * and only when that has none is the Claude gateway asked, since it asks the Claude API. With the servers go the
-   * newer default addresses of the providers still set to a known one (secondRound), asked at the same time (the
-   * look still waits at most `lookMs` for both rounds), read only when the servers at their own addresses gave nothing
+   * newer default addresses of the providers still set to a known one (secondRound), asked at the same time (each
+   * list given `lookMs`, as the first round's are), read only when the servers at their own addresses gave nothing
    * usable (adopt), and called off once the first round has settled with a text model. An Ollama whose model the operator never chose (the default, or one auto chose before) but which lacks it is given
    * the default if it has it now, else the first such model. Throws the 'offline' failure (the script stands in for
    * it) when none answers, naming why each server it heard from would not do; the page's own model is named only when

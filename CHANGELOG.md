@@ -942,7 +942,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   the page still addresses only this machine.
 - **auto finds llama-server, vLLM and SGLang on their own default ports.** With the three usual addresses, provider
   `auto` now asks llama-server's new default `http://localhost:9931` (since build b11521), vLLM's
-  `http://localhost:8000` and SGLang's `http://localhost:30000`, at the same moment (the look still waits at most 2 s for both), and uses
+  `http://localhost:8000` and SGLang's `http://localhost:30000`, at the same moment (each given 2 s, as the usual three are), and uses
   them only when none of the usual three has a text model. The first with a text model answers and is kept as that
   provider's address, as `ask server` would keep it (and the old default goes into this second round, so auto finds
   it again if the server moves back). It never looks past an address the operator set that is not one of these,

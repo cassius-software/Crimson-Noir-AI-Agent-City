@@ -705,7 +705,7 @@ async function askedAll(m: ReturnType<typeof machine>, ports: readonly string[])
   assert.ok(all(), `asked ${m.calls.map((c) => port(c.url)).join(', ')}, not all of ${ports.join(', ')}`)
 }
 
-test('the second round goes out with the first, within the one look\'s wait: all six addresses are asked while every one still hangs', async () => {
+test('the second round goes out with the first, each list given the look\'s wait: all six addresses are asked while every one still hangs', async () => {
   const m = machine({ 11434: 'hangs', 8080: 'hangs', 1234: 'hangs', 9931: 'hangs', 8000: 'hangs', 30000: 'hangs' })
   const r = createMindRouter({ fetch: m.f, lookMs: 60_000 })
   const ctl = new AbortController()
@@ -829,23 +829,33 @@ test('an address the first round already asked is not asked again in the second'
   gw.setProvider('openai')
   assert.equal(gw.settings().server, OPENAI_SERVER)
 
-  // The same port by another name for this machine is the same server: a gateway at 127.0.0.1:8000 is not asked as
-  // vLLM at localhost:8000, and an OpenAI-compatible server set to [::1]:9931 is not asked again as llama-server.
-  const named = machine({ 8000: ['claude-opus-5-5'] })
-  const n = createMindRouter({ fetch: named.f, lookMs: 50 })
-  n.connect!('claude', 'http://127.0.0.1:8000')
-  n.setProvider('auto')
-  assert.equal(await ask(n), '8000 says hi')
-  assert.equal(n.settings().found, 'claude')
-  assert.ok(named.calls.every((c) => port(c.url) !== '8000' || new URL(c.url).hostname === '127.0.0.1'), named.calls.map((c) => c.url).join(', '))
-  n.setProvider('openai')
-  assert.equal(n.settings().server, OPENAI_SERVER)
+  // The gateway's port is never asked as a model server under another name for this machine: set to 127.0.0.1:8000
+  // or [::1]:8000, vLLM's localhost:8000 is not asked, and the gateway answers as itself.
+  for (const at of ['http://127.0.0.1:8000', 'http://[::1]:8000']) {
+    const named = machine({ 8000: ['claude-opus-5-5'] })
+    const n = createMindRouter({ fetch: named.f, lookMs: 50 })
+    n.connect!('claude', at)
+    n.setProvider('auto')
+    assert.equal(await ask(n), '8000 says hi')
+    assert.equal(n.settings().found, 'claude')
+    assert.ok(named.calls.every((c) => new URL(c.url).host !== 'localhost:8000'), named.calls.map((c) => c.url).join(', '))
+    n.setProvider('openai')
+    assert.equal(n.settings().server, OPENAI_SERVER)
+  }
+  // A local provider at 127.0.0.1:9931 is the same server as llama-server's localhost:9931, which is not asked again;
+  // one at [::1]:9931 may be another (llama-server listens on 127.0.0.1), so localhost:9931 is still asked.
+  const v4 = machine({})
+  const s4 = createMindRouter({ fetch: v4.f, lookMs: 50 })
+  s4.connect!('openai', 'http://127.0.0.1:9931')
+  s4.setProvider('auto')
+  await assert.rejects(ask(s4), /llamacpp at http:\/\/localhost:8080, openai at http:\/\/127\.0\.0\.1:9931,/)
+  assert.deepEqual(v4.calls.map((c) => new URL(c.url).host), ['localhost:11434', 'localhost:8080', '127.0.0.1:9931', 'localhost:8089'])
   const v6 = machine({})
   const s6 = createMindRouter({ fetch: v6.f, lookMs: 50 })
   s6.connect!('openai', 'http://[::1]:9931')
   s6.setProvider('auto')
-  await assert.rejects(ask(s6), /llamacpp at http:\/\/localhost:8080, openai at http:\/\/\[::1\]:9931,/)
-  assert.deepEqual(v6.calls.map((c) => port(c.url)), ['11434', '8080', '9931', '8089'])
+  await assert.rejects(ask(s6), /llamacpp at http:\/\/localhost:8080 \(also :9931\), openai at http:\/\/\[::1\]:9931,/)
+  assert.deepEqual(v6.calls.map((c) => new URL(c.url).host), ['localhost:11434', 'localhost:8080', '[::1]:9931', 'localhost:9931', 'localhost:8089'])
 })
 
 test('once the first round has settled with a text model, the second round still under way is called off: nothing waits out the look\'s 2 s', async () => {
