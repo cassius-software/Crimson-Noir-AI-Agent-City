@@ -7,27 +7,33 @@
  * ordered track of caption records keyed by sound kind and source (a car voice, a murmur bed, the walk signal, a cue
  * slot, a speaker, a peer, a ping), fed by plain start/change/stop events, that merges a continuing sound into its one
  * live line instead of repeating it, keeps a stopped line readable for a short hold, expires what nobody refreshes,
- * ranks speech over ambience, and holds at most a few lines at once; the bearing of a point in the listener's head
+ * ranks speech over ambience, and holds at most a few lines at once. Two sounds have no place and read as text alone:
+ * the cabin, and the head-locked check chime that confirms a successful check (heard in the ears, not on the street,
+ * so a player who cannot hear it reads the same result). Then the bearing of a point in the listener's head
  * frame as a clock hour, an eight-way arrow, a left/right word and a rounded distance (the same forward as
  * listenerBasis and the head rig: forward = (−sin yaw, −cos yaw) in the ground plane); and the one-line caption text
  * in the house style, brand-free and civil, with a speaker's words kept verbatim. Allocation-light (records are pooled
  * and reused), deterministic (the clock is an argument), no I/O, no DOM, no Web Audio: it runs in Node and is
  * unit-tested. The soundscape emits the events and the HUD draws the lines; neither is wired here.
- * What breaks if it is removed? Spatial audio has no text counterpart: an approaching car, the walk signal and what a
- * tethered person says would reach only players who can hear them.
+ * What breaks if it is removed? Spatial audio has no text counterpart: an approaching car, the walk signal, what a
+ * tethered person says and the check chime would reach only players who can hear them.
  */
 
-/** Every kind of spatial sound the city makes; the walk signal's axis and a car's state ride in `detail`. */
-export type SoundKind = 'engine' | 'tyres' | 'murmur' | 'walk-signal' | 'cue' | 'speech' | 'cabin' | 'peer' | 'ping'
+/**
+ * Every kind of sound the city makes; the walk signal's axis, a car's state and the chime's degree ride in `detail`.
+ * The cabin and the chime have no place of their own.
+ */
+export type SoundKind = 'engine' | 'tyres' | 'murmur' | 'walk-signal' | 'cue' | 'speech' | 'cabin' | 'peer' | 'ping' | 'chime'
 export type SoundPhase = 'start' | 'change' | 'stop'
 
 /**
  * One plain event from the soundscape: a sound of `kind` from `source` (the car index, bed, slot, agent number or peer
  * id: identity within the kind, 0 when the kind has one source) started, changed or stopped at the world point (x, z)
- * at clock time `t` (seconds). `text` is a speaker's exact words, `label` a display name the host supplies (a skill
- * bearer's label, a peer's name, a ping's label), `agent` the speaker's number, and `detail` the kind's own word:
- * engine 'approaching' | 'passing' | 'up' | 'down' | 'idle', murmur 'quiet' | 'busy', walk-signal 'ns' | 'ew',
- * speech 'muffled' | 'clear'.
+ * at clock time `t` (seconds); NaN for both when the sound has no place (the cabin, the chime), which the track then
+ * shows as text alone. `text` is a speaker's exact words, `label` a display name the host supplies (a skill bearer's
+ * label, a peer's name, a ping's label, the title of the skill a chime confirms), `agent` the speaker's number, and
+ * `detail` the kind's own word: engine 'approaching' | 'passing' | 'up' | 'down' | 'idle', murmur 'quiet' | 'busy',
+ * walk-signal 'ns' | 'ew', speech 'muffled' | 'clear', chime 'success' | 'critical'.
  */
 export interface CaptionEvent {
   kind: SoundKind
@@ -114,9 +120,13 @@ export interface CaptionLine {
   metres: number
 }
 
-/** Ranking between kinds: what a player most needs to read first. */
+/**
+ * Ranking between kinds: what a player most needs to read first. The chime sits under every sound a player acts on
+ * (words, a ping, someone coming over, the walk signal, the cabin) and over the ambience: it only confirms a check the
+ * HUD already shows, so it never pushes a cue off the strip.
+ */
 const PRIORITY: Readonly<Record<SoundKind, number>> = Object.freeze({
-  speech: 9, peer: 8, ping: 7, cue: 6, 'walk-signal': 5, cabin: 4, engine: 3, tyres: 2, murmur: 1,
+  speech: 10, peer: 9, ping: 8, cue: 7, 'walk-signal': 6, cabin: 5, chime: 4, engine: 3, tyres: 2, murmur: 1,
 })
 
 const TAU = Math.PI * 2
@@ -211,12 +221,17 @@ export function soundText(e: CaptionEvent): string {
     case 'ping':
       if (e.phase === 'stop') return ''
       return e.label ? `[ping: ${e.label}]` : '[ping]'
+    case 'chime': {
+      if (e.phase === 'stop') return ''
+      const degree = e.detail === 'critical' ? 'critical success' : 'success'
+      return e.label ? `[chime: ${e.label}, ${degree}]` : `[chime: ${degree}]`
+    }
   }
 }
 
 /**
  * The one-line caption of a record in the house style: the arrow, the text, then the side word and the distance
- * ('↗ [car approaching] · ahead right, 25 m'). A record with no place (the cabin) is the text alone.
+ * ('↗ [car approaching] · ahead right, 25 m'). A record with no place (the cabin, the chime) is the text alone.
  */
 export function captionText(line: CaptionLine): string {
   if (!line.arrow || !Number.isFinite(line.metres)) return line.text
@@ -361,6 +376,10 @@ export class CaptionTrack {
       l.text = text
       l.since = e.t
       l.live = true
+      // A pooled or evicted record still holds the last sound's point, and place() keeps it for an event with none:
+      // forget it, so a sound with no place (the cabin, the chime) reads as text alone, never with an old arrow.
+      l.x = Number.NaN
+      l.z = Number.NaN
       changed = true
     } else {
       if (!l.live) { l.live = true; changed = true }
@@ -413,7 +432,7 @@ export class CaptionTrack {
 
   /**
    * The lines to show at `now`: expired records dropped, the rest ranked (speech, peer, ping, cue, walk signal,
-   * cabin, engine, tyres, murmur; newest first within a kind), cut to `maxLines`. With a listener, every line's
+   * cabin, chime, engine, tyres, murmur; newest first within a kind), cut to `maxLines`. With a listener, every line's
    * bearing is recomputed from its last point first, so the arrows follow the head. The array is reused: copy it to
    * keep it.
    */

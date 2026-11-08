@@ -44,10 +44,15 @@ async function walk(furniture: Furniture, boxes: Box[] = [], frames = 360) {
 test('the furniture is in the physics world, and every pole is a sensor', async () => {
   const physics = await Physics.create([], LINE)
   let sensors = 0, poles = 0
+  // A pole is a cylinder: a collider of its own, or one part of a tile's compound (physics.ts furnitureColliders).
   physics.world.colliders.forEach((c) => {
-    if (c.shape.type !== RAPIER.ShapeType.Cylinder) return
-    poles++
-    if (c.isSensor()) sensors++
+    const shape = c.shape
+    const parts = shape.type === RAPIER.ShapeType.Compound ? (shape as RAPIER.Compound).shapes : [shape]
+    for (const part of parts) {
+      if (part.type !== RAPIER.ShapeType.Cylinder) continue
+      poles++
+      if (c.isSensor()) sensors++
+    }
   })
   assert.equal(poles, 3, 'a lamp, a tree and a signal pole')
   assert.equal(sensors, 3, 'none of them solid')
