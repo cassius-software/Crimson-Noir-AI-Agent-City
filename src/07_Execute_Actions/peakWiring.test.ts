@@ -7,16 +7,16 @@
  * timestamps only for a Peak candidate, decided from the adapter line before three is made; the automatic range
  * reaching Peak only where three really writes them; the engine resolving timings only where three writes them, and
  * feeding them to the governor; the drawing buffer fitted to the device's largest 2D texture, and refitted on resize;
- * the sun's shadow box world.ts builds matching the applier's constant; and no model choice reading the tier.
+ * the sun's shadow cascades (sunShadow.ts) sized so Peak's atlas fits that same texture; and no model choice reading
+ * the tier.
  * What breaks if it is removed? A later edit could write timestamps on every device (in the browser only the desktop
  * scenario's non-candidate check would see it, and only where SwiftShader has timestamp-query), offer Peak where
- * nothing can judge it, or let the shadow box drift from the applier's, silently.
+ * nothing can judge it, or let Peak ask for a shadow atlas no default device can make, silently.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { SHADOW_EXTENT } from './quality.ts'
-import { PEAK, PEAK_TIER } from '../05_Observe_Environment/governor.ts'
+import { PEAK, PEAK_TIER, TIERS } from '../05_Observe_Environment/governor.ts'
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8')
 const between = (src: string, from: string, to: string): string => {
@@ -67,11 +67,15 @@ test('world: three is asked for timestamps by the caller\'s decision on the adap
   assert.match(body, /timestamps: backend\.trackTimestamp === true/)
 })
 
-test('world: the sun\'s shadow box is the applier\'s SHADOW_EXTENT, and Peak doubles it at twice the map edge', () => {
-  assert.match(WORLD, /sc\.left = -80; sc\.right = 80; sc\.top = 80; sc\.bottom = -80;/)
-  assert.equal(SHADOW_EXTENT, 80)
+test('world: the sun is three\'s cascaded sun light, and Peak softens Ultra\'s cascades without stretching them', () => {
+  assert.match(WORLD, /const sunRig = createSun\(renderer\)/)
+  assert.doesNotMatch(WORLD, /DirectionalLight|sun\.target|shadow\.camera\.(?:left|right|top|bottom)/, 'no fixed shadow box is built or moved')
   assert.equal(PEAK_TIER, 5)
-  assert.equal(PEAK.shadowExtent, 2 * SHADOW_EXTENT)
+  const ultra = TIERS[4]
+  assert.equal(PEAK.shadowMapSize, ultra.shadowMapSize, 'the same cascades as Ultra')
+  assert.equal(2 * PEAK.shadowMapSize, 8192, 'the atlas, two cascades wide, is as wide as WebGPU\'s default largest texture (the device asks no limits)')
+  assert.equal(PEAK.shadowDistance, ultra.shadowDistance, 'Ultra\'s reach: a farther one would coarsen the near cascade below Ultra\'s')
+  assert.ok(PEAK.shadowTaps > ultra.shadowTaps, 'Peak buys taps, not texels')
 })
 
 test('models: no model choice reads the tier', () => {

@@ -916,6 +916,7 @@ export class Engine {
         setVolumetrics: (on) => { live.volumetrics = on },
         setTextureSize: (size) => world.setTextureSize(size),
         setLampLights: (count) => world.setLampLights(count),
+        setShadowTaps: (count) => world.setShadowTaps(count),
       }
       const applied = mask(first)
       applyQuality(applied, targets)
@@ -2044,7 +2045,8 @@ export class Engine {
     if (post) this.post.render()
     else this.gpu.renderer.render(this.world.scene, cam)
     // The other players' viewports: each culled for its own camera, under the sky re-centred on that head, drawn on the
-    // direct path. The sun's shadow focus, the lamp lights and the building sort stay player 1's (world.update above).
+    // direct path. The lamp lights and the building sort stay player 1's (world.update above); the sun's two shadow
+    // cascades are fitted by three to the camera of each render, so each viewport's are fitted to its own head.
     if (split) for (let k = 1; k < this.views.length; k++) this.presentView(this.views[k])
     // GPU timings: for the stats row under ?profile, and while the governor judges Peak (governor.ts wantsGpu, gpuSample);
     // only where three writes them (Gpu.timestamps).
