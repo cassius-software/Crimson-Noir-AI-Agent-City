@@ -35,6 +35,11 @@ export interface HomeCardProps {
   /** The home's name and its street address, as the host knows them (the city's grid, or a region's own places). */
   homeInfo?: { name: string; address: string }
   dark?: boolean
+  /**
+   * Whether the card reads the pad (padNav.ts): the host passes false while a city action waits for its OK, so the act
+   * card alone answers the pad and one press never answers both cards.
+   */
+  pad?: boolean
   onClose: () => void
 }
 
@@ -87,7 +92,7 @@ function themeOf(dark: boolean) {
 /** A button a finger, a mouse and a pad's focus can all use: 48 px tall, with a visible focus ring. */
 const BUTTON = 'min-h-12 rounded-full text-[13px] outline-none focus-visible:ring-4 focus-visible:ring-teal-400/60'
 
-export function HomeCard({ visible, home, keeper, homeInfo, dark = false, onClose }: HomeCardProps) {
+export function HomeCard({ visible, home, keeper, homeInfo, dark = false, pad = true, onClose }: HomeCardProps) {
   const cardRef = useRef<HTMLElement>(null)
   // The shopkeeper's every change (a purchase here or at the design house, a reset from the console) redraws the card.
   const [, setVersion] = useState(0)
@@ -96,7 +101,7 @@ export function HomeCard({ visible, home, keeper, homeInfo, dark = false, onClos
   const [said, setSaid] = useState<{ home: number | null; text: string }>({ home: null, text: '' })
   const item = home !== null ? itemById(DEED + home) : null
   const open = visible && item !== null && item.kind === 'deed'
-  usePadNav(cardRef, open)
+  usePadNav(cardRef, open && pad)
 
   // Esc and B put the card away (captured, so the game's own key handling never sees them while the card is open).
   useEffect(() => {

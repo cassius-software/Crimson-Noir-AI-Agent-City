@@ -1757,9 +1757,9 @@ const SCENARIOS = {
       check(errs.length === 0, 'homes: the engine recorded no error', errs.join(' | ').slice(0, 300))
       p.health('homes')
 
-      // The lakefront metropolis, in the same browser: its seven homes, and the loft still owned.
-      await p.goto(`${origin}/?map=lakefront&${LIGHT}`)
-      await p.booted()
+      // The lakefront metropolis, in the same browser: its seven homes, and the loft still owned. reload() marks the
+      // city's page first, so the checks below cannot read it while the new one commits.
+      await reload(p, `${origin}/?map=lakefront&${LIGHT}`)
       const lake = await p.eval(`({ region: window.__SIM__.engine.places !== null, homes: window.__SIM__.homes().length, kept: window.__SIM__.engine.homes.length, owned: window.__SIM__.snapshot().customer.ownedHomes })`)
       check(lake.region && lake.homes === 7 && lake.kept === 7, 'homes: the lakefront metropolis has its seven homes', JSON.stringify(lake))
       check((lake.owned & 1) === 1, 'homes: the loft claimed in the city is still owned there (one browser record)', `owned ${lake.owned}`)

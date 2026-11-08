@@ -69,12 +69,16 @@ test('the engine: the homes kept with their names and addresses; E (unless a car
   assert.ok(open.includes('const h = homeAt(this.homes, st.avatar.x, st.avatar.z)'))
   assert.ok(open.includes('if (h < 0 || (interact && this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE) >= 0)) return false'), 'a car in reach keeps E (only E) for its door')
   assert.ok(src.includes('if (this.halted || this.disposed || st.driving >= 0 || homeAt(this.homes, st.avatar.x, st.avatar.z) !== home) { this.homeCard = null; return false }'), 'the card only for the home the avatar stands in, on foot')
-  assert.ok(src.includes('if (home === null) { this.homeCard = null; return true }'), 'closing always takes')
   // The hold: right after the poll every queued action goes (a pad's edges queue even under suspend), then the E line;
   // after the controls are read (and a script's walk applied), the walk is zeroed.
   const frame = between(raw, '  frame(nowMs: number): void {', '  /** One drawn frame')
-  before(frame, 'input.poll(dt)', 'if (this.homeCard !== null) input.drain()', 'the poll first')
-  before(frame, 'if (this.homeCard !== null) input.drain()', "if (input.take('interact')", 'nothing queued reaches the E line')
+  const drain = 'if (this.homeCard !== null || this.drainNext) { input.drain(); this.drainNext = false }'
+  before(frame, 'input.poll(dt)', drain, 'the poll first')
+  before(frame, drain, "if (input.take('interact')", 'nothing queued reaches the E line')
+  // The press that closed the card (a pad's, which padNav.ts clicks after this frame's poll) reaches the next poll as a
+  // fresh edge: closing an open card drops that poll's queue too, so the E line cannot reopen it.
+  assert.ok(src.includes('if (home === null) { if (this.homeCard !== null) this.drainNext = true this.homeCard = null return true }'), 'closing always takes, and only a close of an open card arms the extra drop')
+  assert.equal((raw.match(/this\.drainNext = /g) ?? []).length, 2, 'armed on a close, spent by the drop: set nowhere else')
   before(frame, 'readControls(input, driving >= 0, foot, drive)', 'if (this.homeCard !== null) { foot.x = 0; foot.z = 0 }', 'the stick walks under suspend')
   before(frame, 'applyWalk(this.scriptedWalk, nowMs, foot)', 'if (this.homeCard !== null) { foot.x = 0; foot.z = 0 }', 'a script\'s walk waits too')
   before(frame, 'if (this.homeCard !== null) { foot.x = 0; foot.z = 0 }', 'const w = footWish(foot.x, foot.z)', 'what the room is told is the held walk')
@@ -121,7 +125,8 @@ test('the HUD: the home\'s chip on foot with its card closed; the homes on the c
 test('App: one home card state; the engine and the chip open it; input suspended at all three sites; closed out of the home, in a headset and by the console', () => {
   const src = flat(read('../App.tsx'))
   assert.ok(src.includes('const [homeOpen, setHomeOpen] = useState<number | null>(null)'))
-  assert.ok(src.includes('const openHome = useCallback((home: number) => { if (engineRef.current?.setHomeCard(home) !== true) return setLookOpen(false); setStoreOpen(null); setTrying(null); setHomeOpen(home) }, [])'), 'a card the engine refuses never opens; one card at a time, and no try-on left worn')
+  assert.ok(src.includes('if (termOpenRef.current || engineRef.current?.setHomeCard(home) !== true) return setLookOpen(false); setStoreOpen(null); setTrying(null); setHomeOpen(home) }, [])'), 'a card the engine refuses, or one the console would hide while the engine held the avatar, never opens; one card at a time, and no try-on left worn')
+  assert.ok(src.includes('pad={act === null || !bridge}'), 'while a city action waits for its OK the act card alone reads the pad (ActCard.tsx shows it when there is a bridge)')
   assert.ok(src.includes('useEffect(() => { engine?.setHomeCard(homeOpen) }, [engine, homeOpen])'), 'the engine\'s hold follows the card, closed from anywhere')
   assert.ok(src.includes('e.onHome = openHome'))
   assert.ok(src.includes('onHome={openHome}'), 'the chip opens the same card')

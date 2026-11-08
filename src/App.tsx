@@ -692,7 +692,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
   // city that runs: then nothing opens. The effect keeps the engine's hold on the card as it is (a close from anywhere
   // lets go); a card left open out of its home (a teleport, a new engine) is closed by the HUD's tick below.
   const openHome = useCallback((home: number) => {
-    if (engineRef.current?.setHomeCard(home) !== true) return
+    // Never under the console: the card would be hidden there while the engine held the avatar still.
+    if (termOpenRef.current || engineRef.current?.setHomeCard(home) !== true) return
     setLookOpen(false); setStoreOpen(null); setTrying(null); setHomeOpen(home)
   }, [])
   const closeHome = useCallback(() => setHomeOpen(null), [])
@@ -1243,6 +1244,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           home={homeOpen}
           keeper={keeper}
           homeInfo={homeInfo}
+          pad={act === null || !bridge}
           onClose={closeHome}
           dark={hud.customer.daylight < 0.35}
         />

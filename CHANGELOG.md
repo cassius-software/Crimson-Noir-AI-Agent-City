@@ -29,12 +29,12 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   from 0, homes 0 to 6). A new operator starts at level 1 with 150 credits, enough for a first-floor line such as the
   tie, and earns more by the city's work. On sale now: the tailor's overcoats, trims, scarves and tie,
   the atelier's smart eyewear and the watch shop's briefcase; tattoos, limbs, watches and the other lines that need
-  wardrobe slots not built yet are listed as on order, and the design house's furniture and seven property deeds wait
-  for the properties. Three of the plan's shop names and two home names were changed after a trademark and place-name
+  wardrobe slots not built yet are listed as on order, the design house's furniture stays on order until furnishing
+  opens, and its seven property deeds are on sale (see the homes entry below). Three of the plan's shop names and two home names were changed after a trademark and place-name
   search (`docs/ip-audit.md` §7). Pinned by `storefronts.test.ts` (one shop per kind on its quarter for 64 seeds,
   never on a workplace lot, the podium gone, every fixture inside the walls, the walk-in and the camera's circle
   clear, the real Rapier avatar walking from the sidewalk to the fitting spot), `storeCatalog.test.ts` (ids, the
-  deeds' levels and prices, every line on sale wearable by every preset body, the spaces, level cap and verdicts equal
+  deeds' levels and prices, every worn line on sale wearable by every preset body, the spaces, level cap and verdicts equal
   to the progression engine's, the shopkeeper over a real keeper bought once and kept across a reload, and over a
   stand-in that refuses) and `storeWiring.test.ts`.
 - **The five shops in Lakefront Metro too.** A generated region's street window gets the same five storefronts
@@ -64,11 +64,13 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   zeroes the walk; `Input.drain`). The design house's deed rows say where each home stands and offer Visit, or Go home
   once owned, which puts the avatar on the sidewalk in front of the doorway, and is refused in a network room. The
   minimaps draw the homes in violet, the owned ones in gold. Furniture stays on order until furnishing opens. Pinned by
-  `homeGrid.test.ts`, `properties.test.ts` (64 seeds: seven distinct free lots by the rules, the shell, the fill block
-  and planters, the pads and tracks unchanged, a real Rapier car stopped by the planters and a real Rapier avatar
-  walking in), `region/homes.test.ts` (two seeds, every zone), `storeCatalog.test.ts` (deeds on sale, a new
-  operator's progression keeper claims the loft and is told the Brownstone's level, a level 3 keeper buys it), `homeCard.test.ts`, `input.test.ts`
-  (the drain) and `homeWiring.test.ts`.
+  `homeGrid.test.ts`, `properties.test.ts` (seven distinct free lots by the rules for 64 seeds; the shell, the fill
+  block and planters, and the pads and tracks unchanged for 16; either real Rapier car stopped by the planters on seed
+  1337, and a real Rapier avatar walking in on 4 seeds), `region/homes.test.ts` (two seeds, every zone), `storeCatalog.test.ts` (deeds on sale, a new
+  operator's progression keeper claims the loft and is told the Brownstone's level, a level 3 keeper buys it),
+  `homeCard.test.ts`, `input.test.ts` (the drain) and `homeWiring.test.ts` (also: the poll after a card closes is
+  dropped too, so the pad press that closed it cannot reopen it; no card under the console; while a city action waits,
+  only its card reads the pad).
 
 - **The operator's progression.** The operator now has a level (1 to 20, 1,000 XP each, the rest rolling over), six
   attribute modifiers, eight skills of the city with proficiency ranks, civic credits, hero points, resolve and three

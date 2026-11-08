@@ -126,7 +126,8 @@ test('Esc, B, the close button and Done put the card away through the host; H an
   assert.ok(src.includes('if (!closes(e)) return e.preventDefault() e.stopPropagation() onClose()'), 'only a closing key is stopped')
   assert.equal(src.match(/onClick=\{onClose\}/g)?.length, 2, 'the close button and Done')
   assert.ok(src.includes('aria-label="Close"'))
-  assert.ok(src.includes('usePadNav(cardRef, open)'), 'a pad presses and moves between the buttons')
+  assert.ok(src.includes('usePadNav(cardRef, open && pad)'), 'a pad presses and moves between the buttons, unless the host hands the pad elsewhere')
+  assert.ok(src.includes('dark = false, pad = true, onClose }: HomeCardProps'), 'the pad is the card\'s unless the host says otherwise')
 })
 
 test('the store card\'s deed rows: Visit or Go home, off with the reason, an address line, a purchase that says where, furniture on order', () => {

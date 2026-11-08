@@ -551,6 +551,11 @@ export class Engine {
   private homeHere = -1
   /** The home whose doorstep card is open (its property index), or null: while it is open the avatar is held still. */
   private homeCard: number | null = null
+  /**
+   * One more frame's drop after a doorstep card closes: the pad's press that closed it (padNav.ts clicks Done or ×
+   * after this frame's poll) reaches the next poll as a fresh edge, and must not reopen the card through the E line.
+   */
+  private drainNext = false
   /** The homes the player owns, one bit per property index (the host's shopkeeper says, through setOwnedHomes). */
   private ownedHomes = 0
   /** The head's pose while the mirror camera draws a frame (present() alone sees the orbit; the listener keeps the head). */
@@ -1621,7 +1626,11 @@ export class Engine {
    * home, on foot, in a city that runs; closing always takes.
    */
   setHomeCard(home: number | null): boolean {
-    if (home === null) { this.homeCard = null; return true }
+    if (home === null) {
+      if (this.homeCard !== null) this.drainNext = true
+      this.homeCard = null
+      return true
+    }
     const st = this.sim.state
     if (this.halted || this.disposed || st.driving >= 0 || homeAt(this.homes, st.avatar.x, st.avatar.z) !== home) { this.homeCard = null; return false }
     this.homeCard = home
@@ -2027,8 +2036,9 @@ export class Engine {
     this.xrInput.headOffset = this.rig.headset ? this.rig.pose.yaw - input.yaw : 0
     input.poll(dt)
     // A home's doorstep card holds the avatar still: whatever the poll queued (a pad's edges queue even while the host
-    // suspends the game's input) is dropped, so no press reaches a car's door, the clock or a ping.
-    if (this.homeCard !== null) input.drain()
+    // suspends the game's input) is dropped, so no press reaches a car's door, the clock or a ping. So is the poll
+    // right after it closes, which still carries the press that closed it.
+    if (this.homeCard !== null || this.drainNext) { input.drain(); this.drainNext = false }
 
     // Player 1's own deeds earn here, once per press: the door key is stamped for the boarding received() pays, and
     // the clock, ghost and rain keys earn Optics and cinema. The setters behind them stay silent, because the console,
