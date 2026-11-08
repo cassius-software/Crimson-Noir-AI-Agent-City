@@ -6,10 +6,13 @@
  * Why does this file exist? It is the one command that builds every shipped form of Crimson Noir: Agent City from this
  * checkout, on the machine that can build it: `npm run build:matrix [-- --targets <ids>|all|host] [--out <dir>]
  * [--dry-run] [--list] [--skip-page]`. Nine targets (TARGETS below): the desktop app for Windows x64 and arm64 (the
- * NSIS installer and the bare .exe), Linux x64 and arm64 (.deb and .AppImage), macOS (one universal .app and .dmg), the
- * Android .apk, the iOS .ipa, and Crimson Noir OS's UEFI application for x86-64 (and its bootable media where the
- * media tools are installed); UEFI aarch64 is listed as unsupported, with the reason. The page (dist/index.html) is
- * built once, and every app is a Tauri 2 shell around it (src-tauri). Nothing here is signed: the Windows and Linux
+ * NSIS installer, the .msi and the bare .exe), Linux x64 and arm64 (.deb, .rpm and .AppImage), macOS (one universal
+ * .app and .dmg), the Android .apk, the iOS .ipa, and Crimson Noir OS's UEFI application for x86-64 and for aarch64
+ * (and their bootable media where the media tools are installed). The page (dist/index.html) is built once, for the
+ * targets that carry it (the UEFI application does not), and every app is a Tauri 2 shell around it (src-tauri). The
+ * version 1.0.0-stable-beta carries a pre-release tag, which WiX and rpm refuse in a version: the .msi takes the
+ * numbers alone (1.0.0) and the .rpm the numbers as its Version with the tag in its Release (0.stable.beta), while
+ * the app inside each says its full version (installerVersion, rpmRelease). Nothing here is signed: the Windows and Linux
  * files run as they are; the macOS app is unsigned (open it with right-click › Open the first time), the .apk is
  * signed with the Android debug key unless CRIMSON_ANDROID_KEYSTORE names a keystore, and the .ipa is unsigned (a
  * free Apple ID and a sideloading tool re-sign it; the App Store needs a paid account). Which browser engine the
@@ -46,7 +49,42 @@ export const TRIPLES = Object.freeze({
   android: 'aarch64-linux-android',
   ios: 'aarch64-apple-ios',
   uefiX64: 'x86_64-unknown-uefi',
+  uefiArm64: 'aarch64-unknown-uefi',
 })
+
+/**
+ * The installers' own version for an app version: its three numbers alone. WiX takes major.minor.patch (an optional
+ * fourth number) and nothing else, and rpm refuses a hyphen in its Version tag, so 1.0.0-stable-beta is 1.0.0 to
+ * both; the app inside keeps its full version (the Tauri build is never given this one).
+ */
+export function installerVersion(version) {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(version)
+  if (!m) throw new Error(`not a semantic version: ${version}`)
+  return `${m[1]}.${m[2]}.${m[3]}`
+}
+
+/**
+ * The .rpm's Release for an app version: `1` for a plain release; for a pre-release, `0.` and its tag with dots
+ * (1.0.0-stable-beta: Version 1.0.0, Release 0.stable.beta), so the final 1.0.0 (Release 1) sorts after it, as
+ * Fedora's packaging guidelines number pre-releases.
+ */
+export function rpmRelease(version) {
+  const pre = /^\d+\.\d+\.\d+-([0-9A-Za-z.-]+)/.exec(version)?.[1]
+  return pre ? `0.${pre.replace(/-/g, '.')}` : '1'
+}
+
+/** A desktop build's --config: the page is not built again, and the .msi gets the numbers WiX takes. */
+function desktopConfig(version) {
+  return JSON.stringify({ build: { beforeBuildCommand: '' }, bundle: { windows: { wix: { version: installerVersion(version) } } } })
+}
+
+/**
+ * The .rpm from the binary the build just made: `tauri bundle` packages it without compiling (and restores the binary
+ * after its patch), so the installer's version can be the numbers alone while the app inside says its own.
+ */
+function rpmStep(version) {
+  return tauri('bundle', '--bundles', 'rpm', '--config', JSON.stringify({ version: installerVersion(version), bundle: { linux: { rpm: { release: rpmRelease(version) } } } }))
+}
 
 /** The Tauri CLI, run under this Node (no npm, no npx, no shell: the same on cmd.exe and sh). */
 const TAURI = join(ROOT, 'node_modules', '@tauri-apps', 'cli', 'tauri.js')
@@ -72,35 +110,44 @@ const NO_PAGE_BUILD = JSON.stringify({ build: { beforeBuildCommand: '' } })
  * `arch`: the host architecture it needs (process.arch), absent where the host's architecture does not matter (a
  * cross-compiled or interpreted target); `tools`: the programs that must be on PATH; `env`: the variables that must be
  * set; `plan(ctx)`: the steps, each a program and its argument vector; `collect(ctx)`: the files it leaves, as
- * [source path, published name]; `unsupported`: the reason no machine builds it yet.
+ * [source path, published name]; `page`: false for a target that does not carry the page; `unsupported`: the reason no
+ * machine builds it yet (none today).
  */
 export const TARGETS = Object.freeze([
   {
-    id: 'windows-x64', artifact: 'Windows x64: NSIS installer (.exe) and the bare .exe', hosts: ['win32'], arch: 'x64',
+    id: 'windows-x64', artifact: 'Windows x64: NSIS installer (.exe), .msi and the bare .exe', hosts: ['win32'], arch: 'x64',
     tools: ['cargo', 'rustup'],
-    plan: () => [tauri('build', '--config', NO_PAGE_BUILD, '--bundles', 'nsis')],
-    collect: ({ version }) => [...globs(join(ROOT, 'src-tauri/target/release/bundle/nsis'), (n) => n.includes(`_${version}_`) && n.endsWith('-setup.exe')), ...globs(join(ROOT, 'src-tauri/target/release'), (n) => n.endsWith('.exe'))],
-    note: '.msi needs a numeric version (WiX takes no pre-release tag such as 1.0.0-stable-beta), so only the NSIS installer is made; windows-app.yml builds this target on every pull request and push to main',
+    plan: ({ version }) => [tauri('build', '--config', desktopConfig(version), '--bundles', 'nsis,msi')],
+    collect: ({ version }) => [
+      ...globs(join(ROOT, 'src-tauri/target/release/bundle/nsis'), (n) => n.includes(`_${version}_`) && n.endsWith('-setup.exe')),
+      ...globs(join(ROOT, 'src-tauri/target/release/bundle/msi'), (n) => n.includes(`_${version}_`) && n.endsWith('.msi')),
+      ...globs(join(ROOT, 'src-tauri/target/release'), (n) => n.endsWith('.exe')),
+    ],
+    note: 'the .msi\'s own version is the numbers alone (WiX takes no pre-release tag); windows-app.yml builds this target, its .msi included, on every pull request and push to main',
   },
   {
-    id: 'windows-arm64', artifact: 'Windows arm64: NSIS installer (.exe) and the bare .exe, cross-compiled on Windows x64', hosts: ['win32'],
+    id: 'windows-arm64', artifact: 'Windows arm64: NSIS installer (.exe), .msi and the bare .exe, cross-compiled on Windows x64', hosts: ['win32'],
     tools: ['cargo', 'rustup'],
-    plan: () => [rustupTarget(TRIPLES.windowsArm64), tauri('build', '--config', NO_PAGE_BUILD, '--target', TRIPLES.windowsArm64, '--bundles', 'nsis')],
-    collect: ({ version }) => [...globs(join(ROOT, `src-tauri/target/${TRIPLES.windowsArm64}/release/bundle/nsis`), (n) => n.includes(`_${version}_`) && n.endsWith('-setup.exe')), ...globs(join(ROOT, `src-tauri/target/${TRIPLES.windowsArm64}/release`), (n) => n.endsWith('.exe'))],
-    note: 'not run on a Windows on Arm machine yet',
+    plan: ({ version }) => [rustupTarget(TRIPLES.windowsArm64), tauri('build', '--config', desktopConfig(version), '--target', TRIPLES.windowsArm64, '--bundles', 'nsis,msi')],
+    collect: ({ version }) => [
+      ...globs(join(ROOT, `src-tauri/target/${TRIPLES.windowsArm64}/release/bundle/nsis`), (n) => n.includes(`_${version}_`) && n.endsWith('-setup.exe')),
+      ...globs(join(ROOT, `src-tauri/target/${TRIPLES.windowsArm64}/release/bundle/msi`), (n) => n.includes(`_${version}_`) && n.endsWith('.msi')),
+      ...globs(join(ROOT, `src-tauri/target/${TRIPLES.windowsArm64}/release`), (n) => n.endsWith('.exe')),
+    ],
+    note: 'the .msi\'s own version is the numbers alone (WiX takes no pre-release tag); not run on a Windows on Arm machine yet',
   },
   {
-    id: 'linux-x64', artifact: 'Linux x64: .deb and .AppImage', hosts: ['linux'], arch: 'x64',
+    id: 'linux-x64', artifact: 'Linux x64: .deb, .rpm and .AppImage', hosts: ['linux'], arch: 'x64',
     tools: ['cargo', 'rustup', 'pkg-config'],
-    plan: () => [tauri('build', '--config', NO_PAGE_BUILD, '--bundles', 'deb,appimage')],
-    collect: () => [...globs(join(ROOT, 'src-tauri/target/release/bundle/deb'), (n) => n.endsWith('.deb')), ...globs(join(ROOT, 'src-tauri/target/release/bundle/appimage'), (n) => n.endsWith('.AppImage'))],
-    note: 'needs WebKitGTK 4.1 and GTK 3 development packages (build-matrix.yml installs them); .rpm is left out: rpm takes no hyphen in a version such as 1.0.0-stable-beta; WebGPU in WebKitGTK is not verified',
+    plan: ({ version }) => [tauri('build', '--config', NO_PAGE_BUILD, '--bundles', 'deb,appimage'), rpmStep(version)],
+    collect: () => linuxFiles(),
+    note: 'needs WebKitGTK 4.1 and GTK 3 development packages (build-matrix.yml installs them); the .rpm is Version 1.0.0, Release 0.stable.beta (rpm takes no hyphen in a version); WebGPU in WebKitGTK is not verified',
   },
   {
-    id: 'linux-arm64', artifact: 'Linux arm64: .deb and .AppImage, built on an arm64 machine', hosts: ['linux'], arch: 'arm64',
+    id: 'linux-arm64', artifact: 'Linux arm64: .deb, .rpm and .AppImage, built on an arm64 machine', hosts: ['linux'], arch: 'arm64',
     tools: ['cargo', 'rustup', 'pkg-config'],
-    plan: () => [tauri('build', '--config', NO_PAGE_BUILD, '--bundles', 'deb,appimage')],
-    collect: () => [...globs(join(ROOT, 'src-tauri/target/release/bundle/deb'), (n) => n.endsWith('.deb')), ...globs(join(ROOT, 'src-tauri/target/release/bundle/appimage'), (n) => n.endsWith('.AppImage'))],
+    plan: ({ version }) => [tauri('build', '--config', NO_PAGE_BUILD, '--bundles', 'deb,appimage'), rpmStep(version)],
+    collect: () => linuxFiles(),
     note: 'no cross-compilation (WebKitGTK must be the target\'s own): build-matrix.yml runs it on ubuntu-24.04-arm',
   },
   {
@@ -137,7 +184,7 @@ export const TARGETS = Object.freeze([
   },
   {
     id: 'uefi-x64', artifact: 'Crimson Noir OS, UEFI x86-64: BOOTX64.EFI, and the .img and .iso media where sh, mtools, sgdisk and xorriso are installed', hosts: ['linux', 'darwin', 'win32'],
-    tools: ['cargo', 'rustup'],
+    tools: ['cargo', 'rustup'], page: false,
     plan: ({ media }) => [
       rustupTarget(TRIPLES.uefiX64),
       step('cargo', ['build', '--locked', '-p', 'crimson_boot', '--target', TRIPLES.uefiX64, '--release'], { cwd: join(ROOT, 'crimson_noir_os') }),
@@ -147,13 +194,29 @@ export const TARGETS = Object.freeze([
       [join(ROOT, `crimson_noir_os/target/${TRIPLES.uefiX64}/release/crimson_boot.efi`), 'BOOTX64.EFI'],
       ...(media ? [[join(ROOT, 'crimson_noir_os/target/image/crimson_noir_os.img'), 'crimson_noir_os.img'], [join(ROOT, 'crimson_noir_os/target/image/crimson_noir_os.iso'), 'crimson_noir_os.iso']] : []),
     ],
-    note: 'the release media come from build-release.yml, which bakes twice, compares the bytes and boots the image in QEMU; this is the same build without those checks',
+    note: 'the release media come from build-release.yml, which bakes twice, compares the bytes and boots the image in QEMU; build-matrix.yml boots this build in QEMU too',
   },
   {
-    id: 'uefi-arm64', artifact: 'Crimson Noir OS, UEFI aarch64', hosts: [],
-    unsupported: 'crimson_noir_os/boot/src/arch.rs drives the machine with x86-64 port I/O (in/out), the TSC, a GDT and IDT and a PS/2 keyboard; an aarch64 port (GIC, generic timer, PL011 or the firmware\'s console) does not exist yet, so there is nothing to compile for aarch64-unknown-uefi',
+    id: 'uefi-arm64', artifact: 'Crimson Noir OS, UEFI aarch64: BOOTAA64.EFI, and the .img and .iso media where sh, mtools, sgdisk and xorriso are installed', hosts: ['linux', 'darwin', 'win32'],
+    tools: ['cargo', 'rustup'], page: false,
+    plan: ({ media }) => [
+      rustupTarget(TRIPLES.uefiArm64),
+      step('cargo', ['build', '--locked', '-p', 'crimson_boot', '--target', TRIPLES.uefiArm64, '--release'], { cwd: join(ROOT, 'crimson_noir_os') }),
+      ...(media ? [step('sh', ['tools/build-image.sh', join('target', 'image-aarch64'), TRIPLES.uefiArm64], { cwd: join(ROOT, 'crimson_noir_os') })] : []),
+    ],
+    collect: ({ media }) => [
+      [join(ROOT, `crimson_noir_os/target/${TRIPLES.uefiArm64}/release/crimson_boot.efi`), 'BOOTAA64.EFI'],
+      ...(media ? [[join(ROOT, 'crimson_noir_os/target/image-aarch64/crimson_noir_os.img'), 'crimson_noir_os-aarch64.img'], [join(ROOT, 'crimson_noir_os/target/image-aarch64/crimson_noir_os.iso'), 'crimson_noir_os-aarch64.iso']] : []),
+    ],
+    note: 'the same system as x86-64 (crimson_noir_os/boot/src/arch/aarch64.rs is the machine layer: the UART the firmware\'s ACPI SPCR table names, the generic timer, the image\'s own exception vectors); the keyboard is the serial console (an Arm machine has no PS/2 controller and the image has no USB stack); build-matrix.yml boots it on QEMU\'s Arm virt machine with edk2; not run on Arm hardware yet',
   },
 ])
+
+/** A Linux build's files: the .deb, the .rpm and the .AppImage. */
+function linuxFiles() {
+  const b = join(ROOT, 'src-tauri/target/release/bundle')
+  return [...globs(join(b, 'deb'), (n) => n.endsWith('.deb')), ...globs(join(b, 'rpm'), (n) => n.endsWith('.rpm')), ...globs(join(b, 'appimage'), (n) => n.endsWith('.AppImage'))]
+}
 
 export const IDS = Object.freeze(TARGETS.map((t) => t.id))
 
@@ -316,7 +379,7 @@ export function summaryLines(dir) {
       : r?.status === 'built' ? ['built', r.files.join(', ')]
       : r?.status === 'failed' ? ['failed', r.reason]
       : r?.status === 'skipped' ? ['skipped', r.reason]
-      : t.id === 'windows-x64' ? ['built elsewhere', 'windows-app.yml builds it on every pull request and push to main (artifacts windows-installer-*, windows-portable-*)']
+      : t.id === 'windows-x64' ? ['built elsewhere', 'windows-app.yml builds it on every pull request and push to main (artifacts windows-installer-*, windows-msi-*, windows-portable-*)']
       : ['no report', 'the job did not finish, or left no report']
     return `| \`${t.id}\` | ${state} | ${cell(t.artifact)} | ${cell(detail)} |`
   })
@@ -354,6 +417,7 @@ export function main(argv) {
     console.log(`version ${version}; targets: ${todo.map((t) => t.id).join(', ')}; out: ${relative(ROOT, out) || '.'}${dryRun ? ' (dry run)' : ''}`)
     try {
       if (flag('skip-page')) console.log('  page: kept (--skip-page)')
+      else if (todo.every((t) => t.page === false)) console.log('  page: not needed (no target here carries it)')
       else buildPage(dryRun)
     } catch (e) {
       console.error(`::error::${e.message}`)
