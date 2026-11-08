@@ -165,6 +165,8 @@ export interface Answer {
    * did not, in one line. Absent for a model's answer, and for the scripted provider the operator chose.
    */
   readonly standIn?: string
+  /** Tokens a second as the server timed its own writing (Ollama's eval_count over eval_duration); absent when it does not say. */
+  readonly pace?: number
 }
 
 /**
@@ -180,7 +182,7 @@ export interface Mind {
    * `runtime` and `storage`: for a model run in this page (09_Cognition/inPage.ts), what runs it and how, and where its
    * file is kept, one line each (absent for a model behind a server).
    */
-  settings(): { server: string; model: string | null; think?: boolean; api?: string; provider?: string; key?: string | null; effort?: string; cache?: string; fallback?: string; scripted?: string; auto?: string; found?: string; resolved?: string; runtime?: string; storage?: string }
+  settings(): { server: string; model: string | null; think?: boolean; api?: string; provider?: string; key?: string | null; effort?: string; cache?: string; fallback?: string; scripted?: string; auto?: string; found?: string; resolved?: string; runtime?: string; storage?: string; fit?: string }
   setServer(url: string): string
   setModel(name: string): string
   /** Whether the model reasons before it answers; returns the new value. Absent: the mind has no such switch. */
@@ -193,6 +195,8 @@ export interface Mind {
   setKey?(key: string): string | null
   /** The network provider's effort (empty clears it); returns it. Absent: no provider takes one. */
   setEffort?(level: string): string | null
+  /** The GPUs' memory for auto's Ollama model (09_Cognition/router.ts setVram). Absent: nothing on this page sizes a model by the GPU. */
+  setVram?(value: string): string
   /**
    * One line: the provider and, when given, its server and (the network provider's) key; returns what the provider
    * is and what was set (09_Cognition/router.ts connect). Absent: the mind has one provider only.
@@ -510,6 +514,8 @@ export interface MindStatus {
   readonly scripted?: string
   /** Under the auto provider: what it found answering, or that it has not looked yet, one line (09_Cognition/router.ts). */
   readonly auto?: string
+  /** Under auto with the GPUs' memory given: how big a model it gives Ollama and why, one line (09_Cognition/modelFit.ts fitLine). */
+  readonly fit?: string
   /** The model the server's placeholder name stood for at the last answer (09_Cognition/localCompute.ts ANY_MODEL). */
   readonly resolved?: string
   /** A model run in this page: what runs it and how, and where its file is kept, one line each (absent for a server). */
@@ -1383,12 +1389,12 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
       if (!unlocked) throw locked('ask')
       // The settings as they are after the server was asked (the auto provider looks for one as it is asked).
       const base = () => {
-        const { server, model, think, api, provider, key, effort, cache, fallback, scripted, auto, resolved, runtime, storage } = mind.settings()
+        const { server, model, think, api, provider, key, effort, cache, fallback, scripted, auto, resolved, runtime, storage, fit } = mind.settings()
         return {
           server, model, ...(think !== undefined && { think }), ...(api !== undefined && { api }),
           ...(provider !== undefined && { provider }), ...(key !== undefined && { key }), ...(effort !== undefined && { effort }), ...(cache !== undefined && { cache }),
           ...(fallback !== undefined && { fallback }), ...(scripted !== undefined && { scripted }), ...(auto !== undefined && { auto }), ...(resolved !== undefined && { resolved }),
-          ...(runtime !== undefined && { runtime }), ...(storage !== undefined && { storage }),
+          ...(runtime !== undefined && { runtime }), ...(storage !== undefined && { storage }), ...(fit !== undefined && { fit }),
         }
       }
       return mind.installed().then(
@@ -1396,7 +1402,7 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
         (e: unknown) => ({ ...base(), installed: null, error: text(e) }),
       )
     },
-    askSet: (key: 'model' | 'server' | 'think' | 'api' | 'provider' | 'key' | 'effort', value: string): string => {
+    askSet: (key: 'model' | 'server' | 'think' | 'api' | 'provider' | 'key' | 'effort' | 'vram', value: string): string => {
       if (!unlocked) throw locked('ask')
       if (key === 'model') return mind.setModel(value)
       if (key === 'server') return mind.setServer(value)
@@ -1425,7 +1431,11 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
         const api = mind.setApi(value)
         return api === 'chat' ? 'chat: /v1/chat/completions (the chat-completions format most local servers speak)' : `${api}: /api/generate (the default)`
       }
-      throw new TypeError(`nothing to set called '${String(key)}': model, server, think, api, provider, key or effort`)
+      if (key === 'vram') {
+        if (!mind.setVram) throw new Error('no model provider on this page grows with the GPU')
+        return mind.setVram(value)
+      }
+      throw new TypeError(`nothing to set called '${String(key)}': model, server, think, api, provider, key, effort or vram`)
     },
     askStop: (): string => {
       if (!unlocked) throw locked('ask')

@@ -12,6 +12,7 @@
  * the moment the task's signal aborts (the spatial lease breaking, or the operator's own stop), and turns every way
  * the server can fail into one plain sentence: not running, running but refusing this page, no such model, not a
  * model that writes text, out of memory. Nothing it sends can leave the machine.
+ * With a GPU size given, the router also reads how big each model Ollama lists is (/api/tags) and where a loaded one sits (/api/ps), on the same server on this machine.
  * What breaks if it is removed? `ask` has nothing behind it. Nothing else in the city needs it.
  */
 import { loopbackServer } from '../02_Define_The_Rules/airgap.ts'
@@ -101,6 +102,12 @@ const LATE: unique symbol = Symbol('late')
 const MESSAGE_CHARS = 160
 /** How long a server has to list its models when the chat format asks which one to send, ms (each list asked). */
 export const LIST_MS = 10_000
+/** The largest byte count a server's list or placement is believed to report (2^50, a sanity bound); a larger one is unknown. */
+export const BYTES_MAX = 2 ** 50
+/** A model Ollama lists, with its weight bytes (null when unknown) and whether it writes text (installedSizes). */
+export interface Weighed { readonly name: string; readonly bytes: number | null; readonly text: boolean }
+/** A byte count as a server reports it: a whole number from 0 to BYTES_MAX. */
+const bytesOk = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 && n <= BYTES_MAX
 
 /**
  * The wire format (ask api): `generate` is the Ollama API (/api/generate, /api/tags; the context window and `think`
@@ -358,9 +365,10 @@ export async function generate(fetchFn: FetchLike, req: AnswerRequest, onPiece: 
 /** The generate format's NDJSON answer, read under its request's watch. */
 async function generated(res: Response, w: { signal: AbortSignal; beat(): void }, onPiece: (p: Piece) => void): Promise<Answer> {
   let text = '', thinking = 0, tokens = 0, reason = ''
+  let pace: number | undefined
   const line = (raw: string): boolean => {
     if (!raw.trim()) return false
-    let o: { response?: unknown; thinking?: unknown; done?: unknown; done_reason?: unknown; eval_count?: unknown; error?: unknown }
+    let o: { response?: unknown; thinking?: unknown; done?: unknown; done_reason?: unknown; eval_count?: unknown; eval_duration?: unknown; error?: unknown }
     try {
       o = JSON.parse(raw)
     } catch {
@@ -378,12 +386,14 @@ async function generated(res: Response, w: { signal: AbortSignal; beat(): void }
     if (o.done === true) {
       reason = typeof o.done_reason === 'string' ? o.done_reason : 'stop'
       tokens = typeof o.eval_count === 'number' ? o.eval_count : 0
+      // The server's own pace: the tokens it wrote over the nanoseconds it spent writing them.
+      if (typeof o.eval_duration === 'number' && o.eval_duration > 0 && tokens > 0) pace = tokens / (o.eval_duration / 1e9)
       return true
     }
     return false
   }
   await readLines(res, w.signal, (raw) => { w.beat(); return line(raw) })
-  return { text, thinking, tokens, reason }
+  return { text, thinking, tokens, reason, ...(pace !== undefined && { pace }) }
 }
 
 /**
@@ -454,8 +464,8 @@ async function chatted(res: Response, w: { signal: AbortSignal; beat(): void }, 
   return { text, thinking, tokens, reason }
 }
 
-/** The models the server has, by name, sorted (or in the server's own order): /api/tags (generate) or /v1/models (chat). */
-export async function installedModels(fetchFn: FetchLike, server: string, signal?: AbortSignal, api: WireFormat = DEFAULT_API, sorted = true, onMachine = false): Promise<string[]> {
+/** The server's list of models as it sends it, each entry unread: /api/tags (generate) or /v1/models (chat); its failures in one sentence. */
+async function listEntries(fetchFn: FetchLike, server: string, signal: AbortSignal | undefined, api: WireFormat): Promise<unknown[]> {
   const origin = loopbackServer(server)
   if (origin === null) throw new CognitionError('refused', `not a server on this machine: ${String(server)}`)
   let res: Response
@@ -473,12 +483,60 @@ export async function installedModels(fetchFn: FetchLike, server: string, signal
   }
   const models = api === 'chat' ? (body as { data?: unknown }).data : (body as { models?: unknown }).models
   if (!Array.isArray(models)) throw new CognitionError('unreadable', "the local model server's list of models could not be read")
+  return models
+}
+
+/** The models the server has, by name, sorted (or in the server's own order): /api/tags (generate) or /v1/models (chat). */
+export async function installedModels(fetchFn: FetchLike, server: string, signal?: AbortSignal, api: WireFormat = DEFAULT_API, sorted = true, onMachine = false): Promise<string[]> {
+  const models = await listEntries(fetchFn, server, signal, api)
   const key = api === 'chat' ? 'id' : 'name'
   // `onMachine`: not the models Ollama runs on its own cloud, which its own list marks with where they run, whatever
   // they are called (a cloud model copied under another name, one offered only there).
   const here = onMachine && api !== 'chat' ? models.filter((m) => !remote(m)) : models
-  const names = here.map((m) => (m as Record<string, unknown>)[key]).filter((n): n is string => typeof n === 'string')
+  const names = here.map((m) => (m as Record<string, unknown> | null)?.[key]).filter((n): n is string => typeof n === 'string')
   return sorted ? names.sort() : names
+}
+
+/** Ollama's list with each model's weight bytes and whether it writes text (by name and, when Ollama says, its capabilities); not its cloud models; sorted by name. */
+export async function installedSizes(fetchFn: FetchLike, server: string, signal?: AbortSignal): Promise<Weighed[]> {
+  const models = await listEntries(fetchFn, server, signal, 'generate')
+  const out: Weighed[] = []
+  for (const m of models) {
+    if (remote(m)) continue
+    const e = m as { name?: unknown; size?: unknown; capabilities?: unknown } | null
+    const name = e?.name
+    if (typeof name !== 'string') continue
+    const size = e?.size
+    const bytes = bytesOk(size) && size > 0 ? size : null
+    // What Ollama says the model does (its list carries it since v0.30.0): only then does it overrule the name.
+    const caps = Array.isArray(e?.capabilities) ? e.capabilities.filter((c): c is string => typeof c === 'string') : null
+    const text = localText(name) && (caps === null || (caps.includes('completion') && !caps.includes('embedding')))
+    out.push({ name, bytes, text })
+  }
+  return out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+}
+
+/** Whether Ollama's name `listed` is the model `n`: the same name, or `n` with Ollama's default tag (`qwen3` is `qwen3:latest`). */
+export const sameModel = (listed: unknown, n: string): boolean => listed === n || listed === `${n}:latest`
+
+/** Where Ollama has `model` loaded now (/api/ps): its bytes in all and on GPUs. Null when not loaded, not on this machine, or anything fails; never throws. */
+export async function placementOf(fetchFn: FetchLike, server: string, model: string, signal?: AbortSignal): Promise<{ loaded: number; gpu: number } | null> {
+  try {
+    const origin = loopbackServer(server)
+    if (origin === null) return null
+    const res = await fetchFn(`${origin}/api/ps`, { signal, cache: 'no-store', referrerPolicy: 'no-referrer' })
+    if (!res.ok) return null
+    const models = ((await res.json()) as { models?: unknown } | null)?.models
+    if (!Array.isArray(models)) return null
+    // Ollama names a loaded model as its list does, the default tag shown or not.
+    const e = models.find((m) => sameModel((m as { name?: unknown } | null)?.name, model)) as { size?: unknown; size_vram?: unknown } | undefined
+    const size = e?.size
+    const vram = e?.size_vram
+    if (!bytesOk(size) || size <= 0 || typeof vram !== 'number' || !Number.isFinite(vram) || vram < 0) return null
+    return { loaded: size, gpu: Math.min(vram, size) }
+  } catch {
+    return null
+  }
 }
 
 /** Whether an entry of Ollama's list (/api/tags) is one of its cloud models: it names the host or model it runs as. */
@@ -502,7 +560,11 @@ export interface SettingsStore {
  * format); the Ollama API's are used without them. In the chat format the model ANY_MODEL means the first one the
  * server lists that writes text, asked once per server (LM Studio: before every answer and at `ask` alone).
  */
-export function createLocalCompute({ fetch: fetchFn, store, defaults = {}, timeouts = TIMEOUTS }: { fetch: FetchLike; store?: SettingsStore; defaults?: { server?: string; model?: string; api?: WireFormat }; timeouts?: Timeouts }): Mind {
+export function createLocalCompute({ fetch: fetchFn, store, defaults = {}, timeouts = TIMEOUTS, coldWait }: {
+  fetch: FetchLike; store?: SettingsStore; defaults?: { server?: string; model?: string; api?: WireFormat }; timeouts?: Timeouts
+  /** A longer first-piece wait for `model`, ms (the router's: a big model takes long to read from disk, modelFit.ts coldWaitMs); never a shorter one. */
+  coldWait?: (model: string) => number
+}): Mind {
   const defaultServer = loopbackServer(defaults.server) ?? DEFAULT_SERVER
   const defaultModel = defaults.model?.trim() || DEFAULT_MODEL
   const defaultApi: WireFormat = isWireFormat(defaults.api) ? defaults.api : DEFAULT_API
@@ -602,7 +664,11 @@ export function createLocalCompute({ fetch: fetchFn, store, defaults = {}, timeo
     },
     answer: async (req: MindRequest, onPiece: (p: Piece) => void): Promise<Answer> => {
       const system = systemPrompt(req.tethers, req.memories, req.context, req.steering)
-      const r = { server, model: await modelFor(req.signal), system, prompt: req.prompt, signal: req.signal, think, timeouts }
+      const name = await modelFor(req.signal)
+      // A model that takes longer to load may wait longer for its first piece; the same timeouts when nothing is longer.
+      const extra = coldWait?.(name) ?? 0
+      const t = Number.isFinite(extra) && extra > timeouts.firstMs ? { ...timeouts, firstMs: extra } : timeouts
+      const r = { server, model: name, system, prompt: req.prompt, signal: req.signal, think, timeouts: t }
       try {
         // The hash of the exact string sent, for the audit: computed here, over `system` as it goes into the request.
         const a = await (api === 'chat' ? chat(fetchFn, r, onPiece) : generate(fetchFn, r, onPiece))

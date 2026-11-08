@@ -59,6 +59,9 @@ test('App: the walk is switched on from the URL and the pass record, fed the Con
   assert.match(src, /useMentor\(\{ active: mentored && veilDone && !walking/)
   assert.match(src, /onGoalSent=\{onGoalSent\}/)
   assert.match(src, /onLine=\{fw\.line\}/)
+  // One city console, the one the walk hears: a branch update once left a second <Terminal> holding termRef without onLine.
+  assert.equal(src.match(/<Terminal ref=\{termRef\}/g)?.length, 1, 'exactly one city console')
+  assert.match(src, /<Terminal ref=\{termRef\}[^>]*onLine=\{fw\.line\}/)
   assert.match(src, /walkRef\.current\.note\('console'\)/)
   assert.match(src, /walkRef\.current\.note\('mic'\)/)
   assert.match(src, /walkRef\.current\.note\('captions'\)/)

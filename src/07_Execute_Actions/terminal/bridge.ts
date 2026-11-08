@@ -105,10 +105,10 @@ export interface OperatorBridge {
   askStatus(): Promise<MindStatus>
   /**
    * Chooses the model, the server's address, the wire format, the provider (09_Cognition/router.ts: claude over the
-   * network, or ollama or llamacpp on this machine), the network provider's key or effort, or turns thinking on or
-   * off; returns the new value. Throws on a bad one.
+   * network, or ollama or llamacpp on this machine), the network provider's key or effort, the GPUs' memory for auto's
+   * Ollama model, or turns thinking on or off; returns the new value. Throws on a bad one.
    */
-  askSet(key: 'model' | 'server' | 'think' | 'api' | 'provider' | 'key' | 'effort', value: string): string
+  askSet(key: 'model' | 'server' | 'think' | 'api' | 'provider' | 'key' | 'effort' | 'vram', value: string): string
   /**
    * `ask connect`: the provider and, when given, its server and (the Claude provider's) key in one line
    * (09_Cognition/router.ts connect); returns what the provider is and what was set. Throws on a bad one, and while locked.
