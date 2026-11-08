@@ -62,7 +62,7 @@ test('the URL for one visit: each option over the kept settings, ?ui rounded to 
   assert.equal(accessFromQuery(q('ui=900')).scale, 200)
   assert.equal(accessFromQuery(q('ui=0')).scale, 100)
   assert.equal(accessFromQuery(q('ui='), { ...ACCESS_DEFAULTS, scale: 150 }).scale, 150, 'an empty number is none: the kept size holds')
-  assert.equal(accessFromQuery(q('ui=%20')).scale, 100)
+  assert.equal(accessFromQuery(q('ui=%20'), { ...ACCESS_DEFAULTS, scale: 150 }).scale, 150, 'a blank number is none too')
   const kept: AccessSettings = { ...ACCESS_DEFAULTS, contrast: 'normal', vision: 'protan', scale: 125, captions: 'large' }
   assert.deepEqual(accessFromQuery(q('vision=none'), kept), { ...kept, vision: 'none' }, 'one option over the kept ones')
   assert.equal(accessFromQuery(q('vision=protan'), kept), kept, 'the kept value asked again: the same object')

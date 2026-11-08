@@ -47,6 +47,9 @@ export const VAD = Object.freeze({
   echoRatio: 2,
   /** Her echo's loudest level falls by this per frame that is not speech (about 1.5 s to halve), following her voice. */
   echoDecay: 0.995,
+  /** After the learning frames it rises at most by this per frame (about 2.9 times a second): enough to follow her
+   *  voice growing louder, too slow to climb with a visitor's own onset (tens of milliseconds) and so shut them out. */
+  echoRise: 1.01,
   /** Decibels of smoothing on the reported level: the meter follows the voice, the decision does not use it. */
   levelSmooth: 0.6,
 })
@@ -74,6 +77,7 @@ export class VadCore {
   readonly echoFrames: number
   readonly echoRatio: number
   readonly echoDecay: number
+  readonly echoRise: number
   readonly levelSmooth: number
   /** The page is speaking (Sloane's voice is playing): the margin applies. */
   speaking = false
@@ -118,6 +122,7 @@ export class VadCore {
     this.echoFrames = Number(o.echoFrames) >= 0 ? Math.round(Number(o.echoFrames)) : 40
     this.echoRatio = Number(o.echoRatio) >= 1 ? Number(o.echoRatio) : 2
     this.echoDecay = Number(o.echoDecay) > 0 && Number(o.echoDecay) <= 1 ? Number(o.echoDecay) : 0.995
+    this.echoRise = Number(o.echoRise) >= 1 ? Number(o.echoRise) : 1.01
     this.levelSmooth = Number(o.levelSmooth) >= 0 && Number(o.levelSmooth) < 1 ? Number(o.levelSmooth) : 0.6
     this.floor = this.floorMin
     this.buf = new Float32Array(this.frame)
@@ -181,7 +186,8 @@ export class VadCore {
     this.frames++
     this.rms = this.rms * this.levelSmooth + rms * (1 - this.levelSmooth)
     // Sloane's line: its first echoFrames only learn how loud her voice comes back (no onset in them), and after that
-    // the visitor must be echoRatio louder than her loudest echo, which follows her voice down between her words.
+    // the visitor must be echoRatio louder than her loudest echo, which follows her voice down between her words and
+    // up only slowly (echoRise), so a visitor's rising onset is never learned as her echo.
     if (this.speaking) this.speakFrames++
     else { this.speakFrames = 0; this.echo = 0 }
     const learning = this.speaking && this.speakFrames <= this.echoFrames
@@ -191,7 +197,7 @@ export class VadCore {
     const loud = rms > this.floorMin && rms > this.floor * ratio && (!this.speaking || rms > this.echo * this.echoRatio)
     const voiced = zcr < this.zcrMax || flatness > this.flatnessMin
     const isSpeech = loud && voiced
-    if (this.speaking && !learning && !isSpeech) this.echo = Math.max(this.echo * this.echoDecay, rms)
+    if (this.speaking && !learning && !isSpeech) this.echo = rms > this.echo ? Math.min(rms, this.echo * this.echoRise) : Math.max(this.echo * this.echoDecay, rms)
     // The floor follows the room: down at once, up slowly, and a quarter as fast during speech (a voice that stays
     // would otherwise become the room at once; a steady voiced noise must become it in the end).
     const rise = isSpeech ? 1 + (this.floorRise - 1) / 4 : this.floorRise

@@ -68,6 +68,20 @@ function hum(seconds: number, level: number, seed = 31): Float32Array {
   return out
 }
 
+/** `x` with a voice's onset: rising `db` decibels over its first `ms` milliseconds, exponentially. */
+function onset(x: Float32Array, ms: number, db = 30): Float32Array {
+  const out = Float32Array.from(x), n = Math.min(out.length, Math.round((ms / 1000) * SR))
+  for (let i = 0; i < n; i++) out[i] *= 10 ** ((db * (i / n - 1)) / 20)
+  return out
+}
+
+/** Two signals heard at once (sample by sample; the shorter one ends early). */
+function mix(a: Float32Array, b: Float32Array): Float32Array {
+  const out = Float32Array.from(a.length >= b.length ? a : b), other = a.length >= b.length ? b : a
+  for (let i = 0; i < other.length; i++) out[i] += other[i]
+  return out
+}
+
 function concat(...parts: Float32Array[]): Float32Array {
   const out = new Float32Array(parts.reduce((n, p) => n + p.length, 0))
   let at = 0
@@ -161,6 +175,32 @@ test('Sloane\'s own voice back through the speakers is not the visitor\'s: her l
   c.speaking = false
   run(c, room(0.05))
   assert.deepEqual([c.echo, c.speakFrames], [0, 0])
+})
+
+test('a visitor\'s voice rising over tens of milliseconds still barges in, over her continuing echo and with none at all (headphones), and is never learned as her echo; her own voice growing a little louder is not the visitor', () => {
+  for (const ms of [40, 80, 120]) {
+    // Headphones, or echo cancellation that works: nothing of her comes back.
+    const quiet = new VadCore(VAD)
+    run(quiet, room(1))
+    quiet.speaking = true
+    assert.deepEqual(run(quiet, room(0.6)), [], 'her line, inaudible here')
+    const visitor = run(quiet, onset(voice(0.8, 0.05, 43), ms))
+    assert.equal(visitor[0]?.speech, true, `no echo, a ${ms} ms onset: barges in`)
+    // Speakers: her echo goes on under the visitor's words.
+    const loud = new VadCore(VAD)
+    run(loud, room(1))
+    loud.speaking = true
+    run(loud, voice(1.5, 0.05, 41))
+    const over = run(loud, mix(voice(0.8, 0.05, 45), onset(voice(0.8, 0.2, 43), ms)))
+    assert.equal(over[0]?.speech, true, `her echo going on, a ${ms} ms onset: barges in`)
+    assert.ok(loud.speaking && loud.echo < 0.1, `the estimate stayed near her echo, not the visitor's level: ${loud.echo}`)
+  }
+  // Her own voice coming back 3 dB louder later in the line: followed, not taken for a visitor.
+  const c = new VadCore(VAD)
+  run(c, room(1))
+  c.speaking = true
+  assert.deepEqual(run(c, concat(voice(1.5, 0.05, 41), voice(1, 0.07, 47))), [], 'her louder words are still hers')
+  assert.ok(c.echo > 0.06, `followed up: ${c.echo}`)
 })
 
 test('while the page is speaking, the bar is higher: a quiet voice that would start speech does not, a clear one does and the onset is doubled', () => {

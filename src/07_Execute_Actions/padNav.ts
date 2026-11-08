@@ -10,16 +10,17 @@
  * appears, or when its pad first shows up (a browser shows a page a pad only once one of its buttons is pressed, so
  * the A that pressed 'Open the console' can be the one that reveals it on the next page), does nothing until it is let
  * go, so the A that was driving a car cannot restart the city by accident. With one hand on the pad (access.ts `pad`,
- * written onto <html> as data-pad) that hand's side does both: the left hand presses with L1 beside its d-pad, the
- * right hand moves focus with R1 beside its face buttons. The
+ * written onto <html> as data-pad) the shared centre button, start, does what that hand's side cannot: it presses for
+ * the left hand (the d-pad moves), it moves focus for the right (A presses). Never a shoulder: L1 and R1 are that
+ * hand's glance, which a card waiting for the OK leaves live. The
  * keyboard needs nothing here: the screens focus their first button, and Enter presses a focused button natively.
  * What breaks if it is removed? A player with only a pad has no way out of a failed boot or a halted city.
  */
 import { useEffect, type RefObject } from 'react'
 import type { PadHand } from '../04_Connect_Hardware/gamepad.ts'
 
-/** Standard-mapping buttons read here: A, the d-pad (up, down, left, right), and the shoulders one hand reaches. */
-export const PAD = Object.freeze({ a: 0, up: 12, down: 13, left: 14, right: 15, l1: 4, r1: 5 })
+/** Standard-mapping buttons read here: A, the d-pad (up, down, left, right), and start, which either hand reaches. */
+export const PAD = Object.freeze({ a: 0, up: 12, down: 13, left: 14, right: 15, start: 9 })
 
 /** What one poll of the pads asks for. */
 export type PadAction = 'press' | 'next' | 'previous' | null
@@ -30,19 +31,19 @@ interface PadLike { buttons: readonly { pressed: boolean }[] }
 /**
  * Pure. The buttons held across every pad now (as "pad:button", and each pad present as "pad:"), and the action this
  * poll asks for: a button counts only on the poll it goes down (it was not held at the previous poll) on a pad that
- * was there at the previous poll, A before the d-pad. One `hand` adds its own side's way to the other: L1 presses for
- * the left hand, R1 moves on for the right.
+ * was there at the previous poll, A before the d-pad. One `hand` adds start: it presses for the left hand, it moves on
+ * for the right.
  */
 export function padStep(prev: ReadonlySet<string>, pads: readonly (PadLike | null | undefined)[], hand: PadHand = 'both'): { held: Set<string>; action: PadAction } {
   const held = new Set<string>()
   pads.forEach((p, i) => {
     if (!p) return
     held.add(`${i}:`)
-    for (const b of [PAD.a, PAD.up, PAD.down, PAD.left, PAD.right, PAD.l1, PAD.r1]) if (p.buttons[b]?.pressed) held.add(`${i}:${b}`)
+    for (const b of [PAD.a, PAD.up, PAD.down, PAD.left, PAD.right, PAD.start]) if (p.buttons[b]?.pressed) held.add(`${i}:${b}`)
   })
   const down = (b: number) => [...held].some((k) => k.endsWith(`:${b}`) && !prev.has(k) && prev.has(k.slice(0, k.indexOf(':') + 1)))
-  const press = down(PAD.a) || (hand === 'left' && down(PAD.l1))
-  const next = down(PAD.down) || down(PAD.right) || (hand === 'right' && down(PAD.r1))
+  const press = down(PAD.a) || (hand === 'left' && down(PAD.start))
+  const next = down(PAD.down) || down(PAD.right) || (hand === 'right' && down(PAD.start))
   const action: PadAction = press ? 'press' : next ? 'next' : down(PAD.up) || down(PAD.left) ? 'previous' : null
   return { held, action }
 }

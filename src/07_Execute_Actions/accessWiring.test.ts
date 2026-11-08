@@ -109,3 +109,41 @@ test('the hands and the ears: the dwell and the scan run above every shell, the 
   assert.match(CSS, /\[data-dwell='rearming'\] \{\n\s+animation-name: dwell-rearm;\n\}/, 'a restart starts the fill again')
   assert.match(CSS, /\[data-scan\] \{\n\s+outline: 4px solid #ffd400 !important;/)
 })
+
+test('a setting changed never rebuilds the city: the shell pins what it booted with, and the engine effect depends on nothing an accessibility change renews', () => {
+  assert.match(APP, /const \[boot\] = useState\(\(\) => \(\{ options, plan \}\)\)/)
+  assert.match(APP, /const \{ options, plan \} = boot\n/)
+  assert.match(APP, /\}, \[boot, wearLook, link, roster, speaker, mic, onMic, onAccess, announcer\]\)/, 'no options or plan object among the deps: App renders them anew on every setting')
+  assert.doesNotMatch(APP, /\}, \[options, plan, wearLook/)
+})
+
+test('high contrast: light buttons lifted, the chosen one of a set reversed (an inline colour kept), touch toggles and status dots readable', () => {
+  const block = CSS.slice(CSS.indexOf("html[data-contrast='high'] [class*='backdrop-blur'] {"), CSS.indexOf("html[data-contrast='high'] :focus-visible"))
+  assert.match(block, /\[class\*='backdrop-blur'\] \.bg-white,\n/, 'a solid white button is lifted with the translucent ones')
+  assert.match(block, /\[class\*='backdrop-blur'\] \.bg-white \*,\n/)
+  const chosen = ":is([aria-checked='true'], [aria-selected='true'], [aria-pressed='true'])"
+  const at = block.indexOf(`[class*='backdrop-blur'] ${chosen} {`), lift = block.indexOf("[class*='bg-white/'],")
+  assert.ok(lift >= 0 && at > lift, 'the chosen rule comes after the lift, which it outranks at equal specificity')
+  assert.match(block.slice(at), /^[^}]*color: #fff !important;\n\s+border: 3px solid #fff !important;\n\}/, 'white text and a thick ring')
+  assert.doesNotMatch(block.slice(at, block.indexOf('}', at)), /background-color/, 'no fill in the shared rule')
+  assert.ok(block.includes(`${chosen}:not([style*='background']) {\n  background-color: #000 !important;\n}`), 'black only where no inline colour is the meaning (a wardrobe swatch keeps its colour)')
+  assert.match(block, /html\[data-contrast='high'\] \[data-touch\]\[aria-pressed='true'\] \{\n\s+background-color: #fff !important;\n\s+color: #000 !important;/, 'a held or latched touch button reads on')
+  assert.match(block, /\.rounded-full:empty\[class\*='bg-'\] \{\n\s+border: 1px solid #fff !important;/)
+  for (const [cls, hex] of [['emerald-400', '#4ade80'], ['amber-400', '#fbbf24'], ['rose-500', '#f87171'], ['sky-500', '#38bdf8']]) {
+    assert.ok(block.includes(`.rounded-full:empty.bg-${cls} {\n  background-color: ${hex} !important;`), `the ${cls} dot keeps its colour`)
+  }
+})
+
+test('inside the text zoom, every length measured in the window\'s pixels is divided by the zoom first', () => {
+  const layout = CONCIERGE.slice(CONCIERGE.indexOf('const CARD_AT = {'), CONCIERGE.indexOf('/** A media query as a stable external store'))
+  for (const v of ['touch-top', 'touch-left', 'hud-right', 'hud-row-bottom', 'hud-bottom']) {
+    const uses = layout.match(new RegExp(`var\\(--${v},[^)]*\\)`, 'g')) ?? []
+    assert.ok(uses.length > 0, `--${v} is used`)
+    const divided = layout.match(new RegExp(`calc\\(var\\(--${v},[^)]*\\)(?:_/_| / )var\\(--ui-zoom, ?1\\)\\)`, 'g')) ?? []
+    assert.equal(divided.length, uses.length, `every --${v} is divided by the zoom`)
+  }
+  const dvh = layout.match(/100dvh/g)?.length ?? 0
+  assert.ok(dvh > 0)
+  assert.equal(layout.match(/calc\(100dvh(?:_\/_| \/ )var\(--ui-zoom, ?1\)\)/g)?.length, dvh, 'and so is the viewport\'s height')
+  assert.match(HUD, /mt-\[max\(0px,calc\(var\(--chip-bottom,0px\)_-_var\(--hud-bottom,0px\)_\/_var\(--ui-zoom,1\)\)\)\]/, 'the HUD\'s toasts under the chip: the chip\'s foot is already in the zoom\'s lengths, the HUD\'s is not')
+})

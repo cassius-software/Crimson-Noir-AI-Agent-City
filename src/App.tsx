@@ -971,7 +971,9 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
         // Sloane's own line coming back through the speakers is not the visitor's: nothing heard while she speaks, or
         // within heard.ts HEARD_QUIET_MS of her last line, reaches her.
         let quietAt = Number.NEGATIVE_INFINITY
-        const unquiet = speaker.onSpeaking((on) => { if (!on) quietAt = performance.now() })
+        // A line the visitor cut (a barge-in: the detector hears speech as she stops) leaves no quiet tail: what follows
+        // is theirs, the words they cut her off to say.
+        const unquiet = speaker.onSpeaking((on) => { if (!on && !mic.speech) quietAt = performance.now() })
         const onHeard = (ev: Event) => {
           const t = (ev as CustomEvent<{ transcript: string }>).detail.transcript
           if (!heardNow(speaker.speaking, performance.now(), quietAt)) return

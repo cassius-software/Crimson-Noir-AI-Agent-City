@@ -97,11 +97,14 @@ html[data-contrast='high'] [class*='backdrop-blur'] [class*='bg-slate-900'] * {
   color: #000 !important;
 }
 /* The chosen one of a set (a wardrobe pill, a pressed toggle) reads the other way from its lifted neighbours: white on
-   black with a thick white ring. */
+   black with a thick white ring. One whose colour is its meaning (a wardrobe swatch, painted inline) keeps it and takes
+   only the ring. */
 html[data-contrast='high'] [class*='backdrop-blur'] :is([aria-checked='true'], [aria-selected='true'], [aria-pressed='true']) {
-  background-color: #000 !important;
   color: #fff !important;
   border: 3px solid #fff !important;
+}
+html[data-contrast='high'] [class*='backdrop-blur'] :is([aria-checked='true'], [aria-selected='true'], [aria-pressed='true']):not([style*='background']) {
+  background-color: #000 !important;
 }
 html[data-contrast='high'] [class*='backdrop-blur'] :is([aria-checked='true'], [aria-selected='true'], [aria-pressed='true']) * {
   color: #fff !important;

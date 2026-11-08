@@ -614,9 +614,15 @@ test('one hand (PadHand): that stick moves, and looks while its shoulder is held
   m.read([stickOnly([0, -0.7, 0, 0, 0, 0])], a)
   assert.ok(a.moveY > 0.5, 'right hand, a stick-only pad (nothing read on axes 2/3): both hands, so the left stick moves')
   m.hand = 'left'
-  m.read([], a)
-  m.read([fourAxis([0, 0, 0, 0])], a)
-  assert.equal(m.read([fourAxis([0, 0, 0, 0], [PAD.south])], a) & PAD_EDGE.interact, PAD_EDGE.interact, 'left hand, four axes (no d-pad copied): both hands, so south opens a door')
+  for (const generic of [fourAxis, (axes: number[], pressed: number[] = []) => stickOnly([...axes, 0, 0], pressed)]) {
+    m.read([], a)
+    m.read([generic([0, 0, 0, 0])], a)
+    assert.equal(m.read([generic([0, 0, 0, 0], [PAD.south])], a) & PAD_EDGE.interact, PAD_EDGE.interact, 'left hand, no d-pad copied: south opens a door')
+    m.read([generic([0.7, 0, 0, 0], [PAD.l1])], a)
+    assert.ok(a.lookX > 0.4 && a.moveX === 0, 'and the left stick still glances with L1 held')
+    m.read([generic([0.7, 0, 0, 0])], a)
+    assert.ok(a.moveX > 0.5 && a.lookX === 0, 'and walks without it')
+  }
 
   m.hand = 'both'
   m.read([], a)

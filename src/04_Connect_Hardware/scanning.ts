@@ -7,8 +7,8 @@
  * page's order, every SCAN.ms; the one offered is focused and marked (`data-scan`, which index.css rings), and the
  * switch, the Space bar (a switch interface sends one key, and Space is the usual one), presses it, or puts the caret
  * in a field. The press is taken on the way down, before the rest of the page sees the key, so the city's handbrake
- * never fires with it. A field being typed in (taken by the switch, or by any other hand) holds the round on it until
- * SCAN.hold offers pass without a key, so the caret is never taken mid-word, and while it holds Space typed there stays
+ * never fires with it. A field being typed in (taken by the switch, focused by any other hand, or typed into) holds
+ * the round on it until SCAN.hold offers pass without a key, so the caret is never taken mid-word, and while it holds Space typed there stays
  * a space. Every round reads the controls again, so a card that opens or closes joins or leaves the round. Pure: the page is an environment handed in (`browserScanEnv` is the one
  * over `document`), so a Node test drives it with fakes.
  * What breaks if it is removed? A visitor with one switch can reach nothing.
@@ -93,10 +93,13 @@ export class Scanner {
 
   /**
    * Offers the next control in page order (the first after the last, or when the one offered has gone), unless a field
-   * is being typed in: one that still has the focus and took a key within SCAN.hold offers holds the round.
+   * is being typed in: one that still has the focus and took a key within SCAN.hold offers holds the round, and so does
+   * one that took the focus some other way (a click, a card's own focus, the dwell), from that moment.
    */
   step(): void {
-    if (this.held !== null && this.env.active() === this.held && this.idle < SCAN.hold) { this.idle++; return }
+    const active = this.env.active()
+    if (active !== this.held && active !== this.now && isEditableTarget(active as EventTarget | null)) { this.typing(active); return }
+    if (this.held !== null && active === this.held && this.idle < SCAN.hold) { this.idle++; return }
     this.held = null
     const all = this.env.candidates()
     if (all.length === 0) { this.mark(null); return }

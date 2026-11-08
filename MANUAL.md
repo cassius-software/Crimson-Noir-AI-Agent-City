@@ -573,11 +573,13 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   the page where it has not) drives the meter and the **Hearing you** state; speech starting while Sloane speaks cuts
   her line (barge-in), and the browser's echo cancellation plus a margin in the detector keep Sloane's own voice from
   counting as yours; the detector also learns how loud her voice comes back through the speakers in the first moments
-  of each line, and wants a voice twice that before it cuts her. Where the browser promises on-device speech recognition (see Recruitment), it runs while the
+  of each line (from her first sound, not while a provider voice is still being made), and wants a voice twice that
+  before it cuts her, an estimate that follows her down quickly and up only slowly, so your own voice rising is never
+  taken for hers. Where the browser promises on-device speech recognition (see Recruitment), it runs while the
   microphone is open and the pill adds **words on-device**: a skill asked for is the recruiter's, and a line that names
   Sloane first ("Sloane, make it night") goes to the goal dialogue as if typed; with a question or the goal prompt
   open on the card, whatever you say is the answer. Nothing heard while she speaks, or in the 1.5 s after, is taken,
-  so her own line never becomes yours. A screen reader hears the microphone's state change wherever it was switched. Firefox has no on-device recognition, so there the pill shows the
+  so her own line never becomes yours; when you cut her off, what you say is kept. A screen reader hears the microphone's state change wherever it was switched. Firefox has no on-device recognition, so there the pill shows the
   level and speech only. No audio leaves the page: nothing is recorded, nothing is sent, and no speech model ships
   with the page (no Whisper). `mic` in the console prints all of this; `mic on` and `mic off` are the switch.
 - **Accessibility** (`07_Execute_Actions/access.ts`). Four settings, kept between visits (key
@@ -601,16 +603,19 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   the time; a text field takes the caret instead), once per rest; a touch, a real press and pointer lock never dwell.
   **Single-switch scanning** (`access scan on`, `?scan=1`; `scanning.ts`): the page's controls are offered one at a
   time every 1.2 s, in page order, the one offered focused and ringed, and the Space bar presses it (a field offered
-  takes the caret); Space is taken before the city sees it. A field being typed in, taken by the switch or clicked
-  into, holds the round until 6 s pass without a key, and a space typed there stays a space. A **one-handed pad layout**
+  takes the caret); Space is taken before the city sees it. A field taken by the switch, clicked into, focused by a
+  card or the dwell, or typed into holds the round until 6 s pass without a key, and a space typed there stays a
+  space. A **one-handed pad layout**
   (`access pad left|right`, `?pad=`; `gamepad.ts` `PadHand`): that hand's stick moves and steers, and looks while its
   shoulder (L1 or R1) is held; the left hand's throttle is the d-pad's up and L2 its brake, the right hand's throttle R2
   and the west face button its brake; select is the run latch (it holds until the stick has walked and come home; a
   glance with the shoulder leaves it) and start a ping for either hand, and that stick's click is the mute; the left hand keeps the d-pad (down enters a car, left and right move the clock) and has no reset or
   handbrake, the right hand keeps the face buttons (south enters, north resets, east is the handbrake) and has no
-  clock keys; a split screen's other seats keep both hands, and so does a pad without the standard mapping whose layout
-  lacks that hand's buttons. The action card, the way-out card and the lock screen take the same hand: the left hand
-  moves with the d-pad and presses with L1, the right hand moves on with R1 and presses with the south button. The **screen reader's lines** (`access announce off` turns
+  clock keys; a split screen's other seats keep both hands. On a pad without the standard mapping (only the sticks it
+  is sure of and the first six buttons are read: no d-pad, no centre buttons) the left hand keeps its stick and glance
+  and opens doors with the south button, and the right hand reads with both hands unless its stick is read. The action
+  card, the way-out card and the lock screen take the same hand: the left hand moves with the d-pad and presses with
+  start, the right hand moves on with start and presses with the south button; L1 and R1 stay a glance there. The **screen reader's lines** (`access announce off` turns
   them off; `07_Execute_Actions/announcer.ts`): a live region on the HUD tells of the district walked into (once it
   has been held four seconds), a vehicle beside you and what enters it, a seat taken or left, and every toast, oldest
   first, one line at a time and at most one every 2.5 s; the captions, the microphone pill and Sloane's lines have live regions of their

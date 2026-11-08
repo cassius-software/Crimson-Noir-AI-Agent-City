@@ -32,12 +32,16 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   has not, feeding the meter and the pill; speech starting while Sloane speaks cuts her line (`speaker.ts`
   `onSpeaking`, `speaking`), with the browser's echo cancellation and a margin in the detector against her own
   voice; the detector also learns how loud her voice comes back through the speakers in the first moments of each
-  line and then wants a voice twice that before it cuts her, so the system voice playing aloud does not cut itself.
+  line, counted from her first sound (`speaking` starts when the clip plays or the browser speaks, not while a
+  provider voice is synthesised or fails over), and then wants a voice twice that before it cuts her, an estimate
+  that follows her voice down quickly and up only slowly, so a visitor's own rising voice is never learned as hers:
+  the system voice playing aloud does not cut itself, and a visitor still cuts in with speakers or headphones.
   Where the browser promises on-device speech recognition (`08_Swarm/recruitment.ts`) it listens while the
   microphone is open, `recruit listen` opens the pill's microphone too, and words that are not a recruitment
   request reach Sloane (`Concierge.tsx` `heard`, `onboarding/heard.ts`: a line that names Sloane first opens the
   goal dialogue, "Sloan" too; an open question takes the whole line), but none heard while she speaks or in the
-  1.5 s after (`heardNow`), so her own line is never taken for the visitor's. The console's `mic [on|off]` prints
+  1.5 s after (`heardNow`), so her own line is never taken for the visitor's; a line the visitor cut off leaves no
+  such pause, so the words they cut in with are kept. The console's `mic [on|off]` prints
   and switches it. The screen reader hears the microphone's state through a live region in the HUD's root (not
   every onset of speech), there on a phone and with the HUD hidden too, and the pill's accessible name says the
   state, what a press does and the key. A mute that lands while the device is still opening stops the recogniser
@@ -87,7 +91,8 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   the operating system's `prefers-contrast: more`) is written onto the page's root (`data-contrast`) and flattens
   every frosted-glass card (`index.css`, keyed on the blur utility so every card holds without knowing) to white on
   black with solid borders and a thick focus ring, every light button inside one to black on white, the chosen one
-  of a set (a wardrobe pill, a pressed toggle) the other way round, and the status dots (a traffic signal's lights,
+  of a set (a wardrobe pill, a pressed toggle) the other way round (a colour swatch keeps its colour and takes the
+  ring), and the status dots (a traffic signal's lights,
   the recording and recruiting dots) keep their colours, brightened and ringed; the colour-vision filter is one more 3×3 at the end of the post
   chain (`postfx.ts`, after the ghost composite), a daltonisation for a protan, deutan or tritan viewer (the Machado,
   Oliveira and Fernandes 2009 simulation, the lost colour shifted into the channels the viewer sees) and the identity
@@ -106,13 +111,15 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   that time, once per rest (a control replaced in the same spot waits for the pointer to move), never a touch, a
   real press or anything under pointer lock; single-switch scanning (`scanning.ts`) offers the page's controls one
   at a time every 1.2 s, focused and ringed, and takes the Space bar as the switch ahead of the city (on a field
-  offered it takes the field; a field being typed in, by the switch or any other hand, holds the round until 6 s
-  pass without a key, and a space typed there stays one); the pad mapper (`gamepad.ts` `PadHand`, `Input.setHand`)
+  offered it takes the field; a field taken by the switch, focused any other way or typed into holds the round
+  until 6 s pass without a key, and a space typed there stays one); the pad mapper (`gamepad.ts` `PadHand`, `Input.setHand`)
   gains a left-hand and a right-hand layout (one stick moves, and looks while its shoulder is held; that side's
   pedals and buttons; select is the run latch, which holds until the stick has walked and come home, a glance
-  aside; start a ping, the stick's click the mute; a pad without the standard mapping keeps both hands where its
-  layout lacks that hand's buttons), and the action card, the way-out card and the lock screen take the same hand
-  (`padNav.ts`: L1 presses for the left hand, R1 moves on for the right); and a live region on the HUD
+  aside; start a ping, the stick's click the mute; on a pad without the standard mapping, whose d-pad and centre
+  buttons are not read, the left hand keeps its stick and glance and opens doors with south, and the right hand
+  reads with both hands where its stick is not read either), and the action card, the way-out card and the lock
+  screen take the same hand (`padNav.ts`: start presses for the left hand and moves on for the right; the glance
+  shoulders never act there); and a live region on the HUD
   (`announcer.ts`, `customer.announce`) tells a screen reader of the district walked into once held, a vehicle
   beside you and what enters it, a seat taken or left, and every toast, oldest first, one line per 2.5 s with a
   short queue. Verified by Node tests over

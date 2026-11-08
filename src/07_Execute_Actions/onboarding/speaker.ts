@@ -229,10 +229,10 @@ export class ConciergeSpeaker {
       this.#last = 'silent'
       return 'silent'
     }
-    return this.#saying(async () => {
+    return this.#saying(async (onAir) => {
       if (tier === 'provider') {
         try {
-          await this.#provider(line, signal)
+          await this.#provider(line, signal, undefined, onAir)
           this.#last = 'provider'
           return 'provider'
         } catch {
@@ -244,7 +244,7 @@ export class ConciergeSpeaker {
         }
       }
       if (tier === 'browser') {
-        await this.#browser(line, signal)
+        await this.#browser(line, signal, undefined, onAir)
         this.#last = 'browser'
         return 'browser'
       }
@@ -264,10 +264,10 @@ export class ConciergeSpeaker {
     const line = text.replace(/\s+/g, ' ').trim()
     if (!line || !this.#sound()) return 'silent'
     const profile = voiceProfile(voice)
-    return this.#saying(async () => {
+    return this.#saying(async (onAir) => {
       if (profile === null && this.#source() !== null) {
         try {
-          await this.#provider(line, undefined, voice)
+          await this.#provider(line, undefined, voice, onAir)
           this.#last = 'provider'
           return 'provider'
         } catch {
@@ -275,19 +275,29 @@ export class ConciergeSpeaker {
         }
       }
       if (!this.#sound() || !this.browserVoices().length) return 'silent'
-      await this.#browser(line, undefined, profile ?? voiceProfile('even'))
+      await this.#browser(line, undefined, profile ?? voiceProfile('even'), onAir)
       this.#last = 'browser'
       return 'browser'
     })
   }
 
-  /** Runs a line as speech: `speaking` is true from its first sound to its end, and onSpeaking is told at each edge. */
-  async #saying<T>(run: () => Promise<T>): Promise<T> {
-    if (++this.#aloud === 1) this.#tell(true)
+  /**
+   * Runs a line as speech: `speaking` is true from its first sound to its end, and onSpeaking is told at each edge. The
+   * first sound is when the tier hands its audio to the output (`onAir`: the provider's clip played, the browser's
+   * utterance spoken), not when the line is asked for: a provider's voice is synthesised and decoded first, and may
+   * fail over to the browser's, and the microphone learns her echo from the first sound (vad.ts echoFrames).
+   */
+  async #saying<T>(run: (onAir: () => void) => Promise<T>): Promise<T> {
+    let sounding = false
+    const onAir = () => {
+      if (sounding) return
+      sounding = true
+      if (++this.#aloud === 1) this.#tell(true)
+    }
     try {
-      return await run()
+      return await run(onAir)
     } finally {
-      if (--this.#aloud === 0) this.#tell(false)
+      if (sounding && --this.#aloud === 0) this.#tell(false)
     }
   }
 
@@ -302,7 +312,7 @@ export class ConciergeSpeaker {
     cut?.()
   }
 
-  async #provider(line: string, signal?: AbortSignal, voice?: string): Promise<void> {
+  async #provider(line: string, signal?: AbortSignal, voice?: string, onAir: () => void = () => {}): Promise<void> {
     const src = this.#source()
     if (!src) throw new Error('no provider')
     const ctl = new AbortController()
@@ -316,6 +326,7 @@ export class ConciergeSpeaker {
       ctl.signal.throwIfAborted()
       const clip = await src.out.decode(bytes)
       ctl.signal.throwIfAborted()
+      onAir()
       const u = src.out.play(clip, line)
       // Cut or aborted while it plays: the clip fades out, and `ended` resolves (operator.ts Utterance).
       ctl.signal.addEventListener('abort', () => u.stop(), { once: true })
@@ -326,7 +337,7 @@ export class ConciergeSpeaker {
     }
   }
 
-  #browser(line: string, signal?: AbortSignal, profile: VoiceProfile | null = voiceProfile(CONCIERGE_PROFILE)): Promise<void> {
+  #browser(line: string, signal?: AbortSignal, profile: VoiceProfile | null = voiceProfile(CONCIERGE_PROFILE), onAir: () => void = () => {}): Promise<void> {
     const { synth, Utterance } = this.#env
     if (!synth || !Utterance) return Promise.resolve()
     return new Promise<void>((resolve) => {
@@ -352,6 +363,7 @@ export class ConciergeSpeaker {
       u.onerror = finish
       this.#cut = cut
       signal?.addEventListener('abort', cut, { once: true })
+      onAir()
       try { synth.speak(u) } catch { finish() }
     })
   }
