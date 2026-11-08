@@ -18,6 +18,7 @@ import {
   streetFurniture, type Box, type Building,
 } from './city.ts'
 import { ROOM, workplaceLots } from './interiors.ts'
+import { shopLots } from './storefronts.ts'
 
 const SEEDS = [1337, 7, 42, 90210]
 const lotOf = (x: number, z: number) => [Math.floor(x / CITY.pitch), Math.floor(z / CITY.pitch)] as const
@@ -96,12 +97,13 @@ test('every built lot is solid at eye height; the parks are open ground (a pavil
         if (districtOfLot(k, m) === 'park') {
           assert.ok(!covers, `${seed}: park ${k},${m} is built over`)
           assert.ok(mine.length <= 1 && mine.every(({ box, style }) => box[4] <= 4 && style === STYLE.concrete), `${seed}: park ${k},${m}: ${JSON.stringify(mine)}`)
-        } else if (workplaceLots(seed).some((w) => w.k === k && w.m === m)) {
-          // A workplace lot (interiors.ts): a room behind glass walls under the podium, open at its doorway alone.
+        } else if (workplaceLots(seed).some((w) => w.k === k && w.m === m) || shopLots(seed).some((w) => w.k === k && w.m === m)) {
+          // A workplace lot (interiors.ts) or a shop's (storefronts.ts): a room behind glass walls under the podium, open
+          // at its doorway alone.
           assert.ok(!covers, `${seed}: workplace ${k},${m} is solid`)
-          const glass = mine.filter(({ style }) => style === STYLE.glass)
+          // The walls: glass from the floor to the ceiling (a shop's mirror and its glass models are glass too, but neither).
+          const glass = mine.filter(({ style, box }) => style === STYLE.glass && box[1] === 0 && box[4] === ROOM.height)
           assert.equal(glass.length, 5, `${seed}: workplace ${k},${m} has four glass walls, the doorway's in two`)
-          assert.ok(glass.every(({ box }) => box[1] === 0 && box[4] === ROOM.height))
           assert.ok(mine.some(({ box }) => box[1] === ROOM.height && box[0] === cx - h && box[3] === cx + h && box[2] === cz - h && box[5] === cz + h), `${seed}: the ceiling slab carries the podium`)
         } else {
           assert.ok(covers, `${seed}: lot ${k},${m} (${districtOfLot(k, m)}) is open at eye height`)
@@ -147,9 +149,13 @@ test('the heritage quarter: two to four storeys of stone and brick with cornices
 test('the lakefront row: condominiums of about 20 to 50 m over shops; the park row: trees round open ground', () => {
   for (const seed of SEEDS) {
     const list = generateBuildings(seed)
+    // A shop on the row (storefronts.ts: the tattoo studio and the design house) has its glass and its fixtures under
+    // the ceiling slab; everything above the room is the condominium as it was.
+    const shops = shopLots(seed).filter((l) => l.m === CITY.blocks - 2).map((l) => l.k)
     for (let k = -1; k <= CITY.blocks; k++) {
       const mine = inLotBoxes(list, k, CITY.blocks - 2)
-      assert.ok(mine.every(({ style }) => style === STYLE.condo || style === STYLE.trim))
+      const shop = shops.includes(k)
+      assert.ok(mine.every(({ style, box }) => style === STYLE.condo || style === STYLE.trim || (shop && box[4] <= ROOM.height)), `${seed}: lot ${k}`)
       const slab = Math.max(...mine.filter(({ style }) => style === STYLE.condo).map((b) => b.box[4]))
       assert.ok(slab >= 19 && slab <= 51, `${seed}: lot ${k}: ${slab} m`)
     }

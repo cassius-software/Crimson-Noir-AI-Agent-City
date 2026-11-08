@@ -67,8 +67,8 @@ test('App: the card, the shield and the HUD line derive from one act state fed b
   // The HUD line: the pinned expression stays byte-identical (inPageWiring.test.ts) and a waiting proposal takes it over.
   assert.match(APP, /if \(recruiter\) s\.supplier\.recruiting = hudLine\(recruiter, router\?\.running \?\? 0, activityText\(answering, engine\.speaking, modelPhase \?\? keepLine\)\)\n\s+\/\/[^\n]*\n\s+if \(recruiter && actRef\.current\) s\.supplier\.recruiting = hudLine\(recruiter, router\?\.running \?\? 0, `Waiting for your OK: \$\{actRef\.current\.who\} proposes: \$\{actRef\.current\.sentence\}`\)\n\s+setHud\(s\)/)
   // The console's suspend expressions are byte-identical (lookWiring.test.ts pins one): the shield is a second flag.
-  assert.match(APP, /engineRef\.current\?\.input\.suspend\(open \|\| lookOpenRef\.current\)/)
-  assert.match(APP, /engineRef\.current\?\.input\.suspend\(lookOpen \|\| termOpenRef\.current\)/)
+  assert.match(APP, /engineRef\.current\?\.input\.suspend\(open \|\| lookOpenRef\.current \|\| storeOpenRef\.current !== null\)/)
+  assert.match(APP, /engineRef\.current\?\.input\.suspend\(lookOpen \|\| storeOpen !== null \|\| termOpenRef\.current\)/)
   assert.doesNotMatch(APP, /suspend\([^)]*act\b/, 'the card never suspends game input: E and a walk-off still end the proposal')
   // The proposer's name reaches the engine beside the identity line, and the pinned bridge call keeps voiceOf before the elite vault (eliteWiring.test.ts).
   assert.match(APP, /useEffect\(\(\) => \{\n\s+engine\?\.setNameOf\(\(agent\) => roster\.byAgent\(agent\)\?\.name \?\? null\)\n\s+return \(\) => engine\?\.setNameOf\(null\)\n\s+\}, \[engine, roster\]\)/)

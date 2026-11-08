@@ -103,7 +103,8 @@ test('engine: the deeds are player 1\'s presses and boarding, never a setter the
   const ghost = between(FRAME, "    if (input.take('ghost')) {", '\n    }\n')
   assert.match(ghost, /if \(line\.startsWith\('on:'\) \|\| \(line === 'off' && this\.views\.length === 1 && !this\.rig\.headset && this\.options\.post\)\) this\.deed\('optics'\)/, 'only a view that showed or went away')
   // The door key is stamped where the press is taken, never in interact() (scripts, harnesses and __SIM__ share it).
-  assert.match(FRAME, /^ {4}if \(input\.take\('interact'\)\) \{ this\.doorPressedAt = performance\.now\(\); this\.interact\(\) \}$/m)
+  // (A press a shop's card took is no door press: storefronts.ts, storeWiring.test.ts.)
+  assert.match(FRAME, /^ {4}if \(input\.take\('interact'\) && !this\.browse\(true\)\) \{ this\.doorPressedAt = performance\.now\(\); this\.interact\(\) \}$/m)
   assert.doesNotMatch(method(ENGINE, 'interact(): void {'), /doorPressedAt/)
   assert.equal(count(ENGINE_CODE, /this\.doorPressedAt = performance\.now\(\)/g), 1)
   assert.match(ENTERED, /if \(!ev\.room && performance\.now\(\) - this\.doorPressedAt < DOOR_DEED_MS\) \{\n\s+this\.doorPressedAt = -Infinity\n\s+this\.deed\('piloting'\)/, 'a room\'s correction never pays, and one press pays one boarding')
