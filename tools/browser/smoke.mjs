@@ -310,13 +310,15 @@ class Page {
     await this.b.send('Page.navigate', { url })
   }
   /**
-   * Waits for the engine (window.__SIM__), a few rendered frames, and the boot veil lifting: it takes every touch and
+   * Waits for the engine (window.__SIM__), a few rendered frames, and the boot veil gone: it takes every touch and
    * click while it covers the page (BootVeil.tsx holds it half a second after the first frame), and a person waits for
-   * the city to show before touching it too.
+   * the city to show before touching it too. Gone, not just fading: Sloane's card opens when the fade ends (App.tsx
+   * veilDone), and on a slow software adapter that came after the first key checks, so its name field took G, M,
+   * the tilde and E as typing.
    */
   async booted() {
     await this.waitFor('!!window.__SIM__ && window.__SIM__.snapshot().output.fps > 0', BOOT_MS)
-    await this.waitFor(`!document.querySelector('.boot-veil[data-phase="cover"]')`, 30_000)
+    await this.waitFor(`!document.querySelector('.boot-veil')`, 30_000)
   }
   snap() {
     // On foot the avatar's capsule; at the wheel the driven car's pose (POSE: x at 0, z at 2, 28 floats a body).
@@ -371,8 +373,13 @@ class Page {
   saveTranscript(name) {
     try { writeFileSync(join(OUT, `${name}-console.txt`), this.transcript.join('\n\n')) } catch { /* the report still has the check rows */ }
   }
-  /** Opens the Ring-0 console with the tilde key (a desktop), its prompt focused. */
+  /**
+   * Opens the Ring-0 console with the tilde key (a desktop), its prompt focused. A first visit's concierge greets once
+   * the veil is gone, its name field holding the keyboard: skipped first, as a visitor who wants the console would, so
+   * the tilde reaches the page (after a reload too).
+   */
   async openConsole() {
+    await this.eval(`[...document.querySelectorAll('aside[data-concierge] button')].find((b) => b.textContent.trim() === 'Skip')?.click()`)
     await this.tap('Backquote', '`', 192)
     return this.waitFor(`!!document.querySelector('[aria-label$="Ring-0 terminal"][data-open]') && document.activeElement?.getAttribute('aria-label') === 'Ring-0 command line'`, 10_000).then(() => true, () => false)
   }
