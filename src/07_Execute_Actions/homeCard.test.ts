@@ -102,7 +102,7 @@ test('the card buys the deed through the shopkeeper\'s gate, offers Claim for th
   assert.ok(src.includes('Also sold at {SHOP_INFO.designHouse.name}'))
   assert.ok(src.includes('const sky = SKY_NOTES[home]'))
   // What the smoke test and the wiring tests look for.
-  for (const mark of ['data-home={home}', 'data-owned={owned || undefined}', 'data-action="buy"', 'data-action="done"', 'data-purse={w.source}', 'data-said>', 'data-place>{address}']) {
+  for (const mark of ['data-home={home}', 'data-owned={owned || undefined}', 'data-action="buy"', 'data-action="done"', 'data-purse>', 'data-said>', 'data-place>{address}']) {
     assert.ok(src.includes(mark), `missing ${mark}`)
   }
   // Every button is big enough for a finger and marked for touch.

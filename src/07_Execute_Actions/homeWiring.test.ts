@@ -62,7 +62,7 @@ test('the engine: the homes kept with their names and addresses; E (unless a car
   assert.ok(src.includes('return { ...h, name: itemById(DEED_BASE + h.home)?.name ?? h.kind, address, arrival: doorFront(h, lane) }'), 'the deed\'s name; the arrival on the sidewalk lane in front of the doorway')
   assert.ok(src.includes('const cityAddress = (x: number, z: number): string => `${ordinal(Math.round(x / CITY.pitch) + 1)} Ave & ${ordinal(Math.round(z / CITY.pitch) + 1)} St`'), 'the snapshot\'s own street words')
   // E is a car's door first, then a shop's card, then a home's; B asks without the car check.
-  assert.ok(src.includes("if (input.take('interact') && !this.browse(true) && !this.openHome(true)) this.interact()"))
+  assert.ok(src.includes("if (input.take('interact') && !this.browse(true) && !this.openHome(true)) { this.doorPressedAt = performance.now(); this.interact() }"), 'only a press that went to a door is stamped (progress.ts)')
   assert.ok(src.includes("if (input.take('browse') && !this.browse()) this.openHome()"))
   const open = between(src, ' openHome(interact = false): boolean {', ' setHomeCard(')
   assert.ok(open.includes('if (this.halted || this.disposed || !this.onHome || st.driving >= 0) return false'), 'on foot, in a city that runs')
