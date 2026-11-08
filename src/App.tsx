@@ -54,6 +54,8 @@ import { AUTO_RELOAD_KEY, autoReload, BOOT_STAGE, classify, explainHalt, firstSc
 import { probeGpu, WebGPUUnavailableError, type GpuProbe } from './01_Initialize_World/gpuDevice.ts'
 import { Concierge } from './07_Execute_Actions/Concierge.tsx'
 import { Customizer } from './07_Execute_Actions/Customizer.tsx'
+import { StoreCard } from './07_Execute_Actions/StoreCard.tsx'
+import { createShopkeeper, progressionPurse } from './07_Execute_Actions/shopkeeper.ts'
 import { loadProfile, type Profile } from './05_Observe_Environment/profile.ts'
 import { loadLook, saveLook } from './05_Observe_Environment/lookStore.ts'
 import { changeLook, describeLook, LOOK_SLOTS, lookFromSeed, type Look, type LookChange } from './03_Spawn_Agents/look.ts'
@@ -333,7 +335,7 @@ async function loadMap(plan: MapPlan): Promise<RegionPack | null> {
 /** Which shell the page boots: 'gui' (the city) or 'tty' (?boot=tty: the full-screen console alone, no engine). */
 type BootTrack = 'gui' | 'tty'
 
-type Options = EngineOptions & { debug: boolean; boot: BootTrack }
+type Options = EngineOptions & { debug: boolean; boot: BootTrack; vram: string | null }
 
 /** The console's bridge in the TTY shell: no engine exists, so everything but the identity commands says so. */
 const TTY_BRIDGE: TerminalBridge = offlineBridge({ ...BRAND, track: 'tty' })
@@ -450,6 +452,9 @@ function readOptions(): Options {
     // The Peak candidacy (governor.ts peakCandidate): ?peak=1 lets any desktop's governor try Peak, ?peak=0 keeps it off;
     // absent, the device profile decides. A phone or a lite profile never tries it, and none does without GPU timestamps.
     peak: q.get('peak') === '1' ? true : q.get('peak') === '0' ? false : undefined,
+    // The GPUs' memory in GB for the size of model auto gives Ollama (09_Cognition/modelFit.ts): the NixOS launcher adds
+    // it from nvidia-smi or the amdgpu driver; ask vram at the console beats it; absent, auto keeps its usual model.
+    vram: q.get('vram'),
   }
 }
 
@@ -700,6 +705,14 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
   const onSay = useCallback((text: string) => { void speaker.speak(text) }, [speaker])
   const onHear = useCallback((voice: string, line: string) => { void speaker.preview(line, voice) }, [speaker])
   const lookOpenRef = useRef(false)
+  // The storefronts (01_Initialize_World/storefronts.ts): the one shopkeeper every purchase goes through, the shop whose
+  // card is open (its index in engine.shops, or null), and the line being tried on (worn on the body, never kept). It buys
+  // through the page's one progression keeper: its level, its credits, its purchase gate (progress.ts).
+  const [keeper] = useState(() => createShopkeeper({ purse: progressionPurse(pageProgress()) }))
+  const [storeOpen, setStoreOpen] = useState<number | null>(null)
+  // The frame loop's view of it: the open shop's index, or null.
+  const storeOpenRef = useRef<number | null>(null)
+  const [trying, setTrying] = useState<{ id: number; look: Look } | null>(null)
   const [veilDone, setVeilDone] = useState(false)
   // A Ring-0 kernel panic: the engine is halted and the reason is shown over everything.
   const [locked, setLocked] = useState<string | null>(null)
@@ -735,7 +748,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
   useEffect(() => { engine?.setPlayerName(profile?.name ?? '') }, [engine, profile])
   // The player's own body wears it from the start (agent PLAYER_INDEX; the engine writes the crowd's look word).
   const worn = useMemo(() => look ?? (profile ? lookFromSeed(profile.seed) : null), [look, profile])
-  useEffect(() => { engine?.setLook(PLAYER_INDEX, worn) }, [engine, worn])
+  // A line tried on in a shop is worn over it until it is bought or the card closes.
+  useEffect(() => { engine?.setLook(PLAYER_INDEX, trying?.look ?? worn) }, [engine, worn, trying])
   const wearLook = useCallback((next: Look) => { setLook(next); saveLook(next) }, [])
   // The console's `look` knob reads these (the bridge is built once, with the engine).
   const wornRef = useRef<Look | null>(null)
@@ -746,6 +760,12 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
   const lookDeedRef = useRef(false)
   const openLook = useCallback(() => { lookDeedRef.current = false; setLookOpen(true); noteRef.current('wardrobe') }, [])
   const closeLook = useCallback(() => setLookOpen(false), [])
+  // A shop's card: E, B or the HUD's chip inside a storefront opens it (the engine's onBrowse, the chip's tap); the
+  // mirror camera turns round the body while it is open, and closing it gives the eye back and takes any try-on off.
+  const openStore = useCallback((index: number) => { setLookOpen(false); setStoreOpen(index) }, [])
+  const closeStore = useCallback(() => { setStoreOpen(null); setTrying(null) }, [])
+  const onTry = useCallback((id: number | null, next: Look | null) => setTrying(id !== null && next ? { id, look: next } : null), [])
+  useEffect(() => { engine?.setShowroom(storeOpen) }, [engine, storeOpen])
   // The card's changes, worn as the console's are. The card calls this on every swatch and every slider step, so only
   // the first change of a visit that really alters the look earns Architecture and commerce (progress.ts), retried
   // while no action is left. The console's `look` keeps wearLook and earns for itself, so the two never pay twice.
@@ -770,13 +790,14 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
   const onTermOpen = useCallback((open: boolean) => {
     termOpenRef.current = open
     setTermOpen(open)
-    if (open) setLookOpen(false)
-    engineRef.current?.input.suspend(open || lookOpenRef.current)
+    if (open) { setLookOpen(false); setStoreOpen(null); setTrying(null) }
+    engineRef.current?.input.suspend(open || lookOpenRef.current || storeOpenRef.current !== null)
   }, [])
   useEffect(() => {
     lookOpenRef.current = lookOpen
-    engineRef.current?.input.suspend(lookOpen || termOpenRef.current)
-  }, [lookOpen])
+    storeOpenRef.current = storeOpen
+    engineRef.current?.input.suspend(lookOpen || storeOpen !== null || termOpenRef.current)
+  }, [lookOpen, storeOpen])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -862,6 +883,9 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
           // A city action waiting for the operator's OK takes the activity line (the MIC chip reads it, console open or closed).
           if (recruiter && actRef.current) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, `Waiting for your OK: ${actRef.current.who} proposes: ${actRef.current.sentence}`)
           setHud(s)
+          // Out of the open shop (a teleport, the console's own moves) or into a headset (the card is not drawn there, and
+          // the game's input must not stay suspended): its card goes.
+          if (storeOpenRef.current !== null && ((s.customer.shop?.index ?? -1) !== storeOpenRef.current || s.supplier.xr.state === 'vr' || s.supplier.xr.state === 'ar')) closeStore()
           shown = true
         }
         throws = 0
@@ -932,6 +956,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
             busy: (on, place) => e.holdQuality(on && place ? holdTier(device(), place.gpu) : null),
             onPhase: (text) => { modelPhase = text },
           })),
+          // The address's GPU figure (?vram=): auto may give Ollama a bigger model it already has, by what Ollama measured.
+          vram: options.vram,
         })
         inPageMind = inPage
         const mind: Mind = {
@@ -1150,7 +1176,9 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
           gpu: (mode: GpuMode) => gpuLine(inPage.setGpu(mode)),
           log: () => inPage.log(),
         })
-        if (termOpenRef.current || lookOpenRef.current) e.input.suspend(true)
+        if (termOpenRef.current || lookOpenRef.current || storeOpenRef.current !== null) e.input.suspend(true)
+        // E, B or the HUD's chip inside a storefront opens its card (the chip calls openStore itself).
+        e.onBrowse = openStore
         setEngine(e)
         const engineBridge = e.terminalBridge(gate, mind, voice, memory.diary(), voiceOf, pageStore(ELITE_KEY))
         setBridge(Object.freeze({
@@ -1201,6 +1229,10 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
               // The wardrobe (03_Spawn_Agents/look.ts): dress an agent (0 is the player) in a look, or null for the hash's.
               wear: (agent: number, look: Look | null) => e.setLook(agent, look),
               lookOf: (agent = PLAYER_INDEX) => e.lookOf(agent),
+              // The storefronts: where they stand, the E key's own path into a shop's card, and the one shopkeeper.
+              shops: () => e.shops.map((s, index) => ({ index, kind: s.kind, name: s.name, door: s.door, fitting: s.fitting })),
+              browse: () => e.browse(),
+              shopkeeper: keeper,
               // The network session (10_Network): join a room, leave it, or read it as plain data.
               net: e.net,
               // Headless browsers cannot take pointer lock; this hides the capture hint for screenshots.
@@ -1242,7 +1274,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
       if ((window as { recruit?: unknown }).recruit) delete (window as { recruit?: unknown }).recruit
       engine?.dispose()
     }
-  }, [boot, wearLook, link, roster, speaker, mic, onMic, onAccess, announcer])
+  }, [boot, wearLook, link, roster, speaker, keeper, openStore, closeStore, mic, onMic, onAccess, announcer])
 
   // The boot's failure first; else a halt that is not an audit. Words for this device (bootFailure.ts).
   const env = useMemo(() => pageEnv(), [])
@@ -1254,7 +1286,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
       {/* The picker's file input: no accept (a phone greys out a .gguf it has no type for), and hidden by its size
           and opacity, never by display, so every browser still opens it from a click. */}
       <input ref={fileRef} type="file" multiple tabIndex={-1} aria-hidden="true" className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0" />
-      <Hud s={hud} adapter={adapter} visible={hudVisible} terminalOpen={termOpen} mapLayer={engine?.mapLayer ?? null} highContrast={high} captionPx={CAPTION_PX[access.captions]} mic={mic} onMic={onMic} />
+      <Hud s={hud} adapter={adapter} visible={hudVisible} terminalOpen={termOpen} mapLayer={engine?.mapLayer ?? null} highContrast={high} captionPx={CAPTION_PX[access.captions]} mic={mic} onMic={onMic} onBrowse={openStore} />
       {engine && hud && !termOpen && (
         <TouchControls
           input={engine.input}
@@ -1285,7 +1317,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
           thrown frame is). The look card and the action card step aside the same way below. */}
       {hud && (
         <Concierge
-          visible={veilDone && hudVisible && !termOpen && !lookOpen && locked === null}
+          visible={veilDone && hudVisible && !termOpen && !lookOpen && storeOpen === null && locked === null}
           profile={profile}
           onProfile={setProfile}
           family={hud.supplier.glyphs}
@@ -1312,6 +1344,20 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
           roster={roster}
           onAgentLook={wearAgentLook}
           onHear={onHear}
+        />
+      )}
+      {hud && (
+        <StoreCard
+          visible={storeOpen !== null && veilDone && !termOpen && locked === null}
+          shop={storeOpen !== null ? engine?.shops[storeOpen] ?? null : null}
+          keeper={keeper}
+          look={worn ?? lookFromSeed(PLAYER_INDEX)}
+          trying={trying?.id ?? null}
+          mirror={hud.customer.shop?.showroom === true}
+          onTry={onTry}
+          onWear={wearLook}
+          onClose={closeStore}
+          dark={hud.customer.daylight < 0.35}
         />
       )}
       <Terminal ref={termRef} bridge={bridge} onOpenChange={onTermOpen} onBoot={reboot} onMap={remap} />

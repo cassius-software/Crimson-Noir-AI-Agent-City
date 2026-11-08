@@ -19,7 +19,7 @@ import type { GamepadLike } from './web-hardware.d.ts'
 
 export type { Analog, PadFamily } from './gamepad.ts'
 
-export type Action = 'interact' | 'reset' | 'timeForward' | 'timeBack' | 'ghost' | 'matrix' | 'ping' | 'mute'
+export type Action = 'interact' | 'reset' | 'timeForward' | 'timeBack' | 'ghost' | 'matrix' | 'ping' | 'mute' | 'browse'
 
 /** Hold-type touch buttons. `run` is a toggle on the touch layout, but the state lives here. */
 export type TouchButton = 'brake' | 'handbrake' | 'run'
@@ -41,6 +41,8 @@ const ACTION_KEYS: Record<string, Action> = {
   KeyQ: 'ping',
   /** The microphone's mute and unmute (04_Connect_Hardware/microphone.ts); also a pad's right stick click (R3) and the HUD's pill. */
   KeyV: 'mute',
+  /** A shop's catalogue, standing in it (01_Initialize_World/storefronts.ts; E does it too when no car is in reach). */
+  KeyB: 'browse',
 }
 
 /** Modifier keys: held alone they are keys like any other (Shift runs); with Command they start no chord. */

@@ -50,7 +50,7 @@ test('the shell: the filter reaches the engine as it changes, the bridge reads t
   assert.match(APP, /useEffect\(\(\) => \{ engine\?\.setVision\(access\.vision\) \}, \[engine, access\.vision\]\)/)
   assert.match(APP, /access: accessBridge\(\(\) => accessRef\.current, \(\) => prefersRef\.current, onAccess, \(\) => engineRef\.current\?\.visionBlocked\(\) \?\? null\),/, 'the console says when the chain cannot draw the filter')
   assert.match(APP, /useEffect\(\(\) => \{ accessRef\.current = access; prefersRef\.current = prefersMore \}, \[access, prefersMore\]\)/, 'the refs follow the state, since the bridge is built once')
-  assert.match(APP, /<Hud s=\{hud\}[^\n]* highContrast=\{high\} captionPx=\{CAPTION_PX\[access\.captions\]\} mic=\{mic\} onMic=\{onMic\} \/>/)
+  assert.match(APP, /<Hud s=\{hud\}[^\n]* highContrast=\{high\} captionPx=\{CAPTION_PX\[access\.captions\]\} mic=\{mic\} onMic=\{onMic\}[^\n]*\/>/)
   assert.match(APP, /contrast: high,\n\s+onContrast: \(\) => onAccess\(toggleContrast\(access, prefersMore\)\),\n\s+textScale: access\.scale,\n\s+onTextScale: \(\) => onAccess\(cycleScale\(access\)\),/)
   assert.match(TOUCH, /\{ label: 'High contrast', on: host\.contrast === true, run: host\.onContrast \}/)
   assert.match(TOUCH, /\{ label: `Text size \$\{host\.textScale \?\? 100\} %`, id: 'text-size', run: host\.onTextScale, keep: true \}/, 'the sheet stays open while the size cycles')
@@ -113,7 +113,9 @@ test('the hands and the ears: the dwell and the scan run above every shell, the 
 test('a setting changed never rebuilds the city: the shell pins what it booted with, and the engine effect depends on nothing an accessibility change renews', () => {
   assert.match(APP, /const \[boot\] = useState\(\(\) => \(\{ options, plan \}\)\)/)
   assert.match(APP, /const \{ options, plan \} = boot\n/)
-  assert.match(APP, /\}, \[boot, wearLook, link, roster, speaker, mic, onMic, onAccess, announcer\]\)/, 'no options or plan object among the deps: App renders them anew on every setting')
+  const deps = APP.match(/\}, \[boot, wearLook, link, roster, speaker, [^\]\n]*mic, onMic, onAccess, announcer\]\)/)
+  assert.ok(deps, 'the engine effect\'s deps')
+  assert.doesNotMatch(deps[0], /\boptions\b|\bplan\b|\baccess\b/, 'no options or plan object among the deps: App renders them anew on every setting')
   assert.doesNotMatch(APP, /\}, \[options, plan, wearLook/)
 })
 

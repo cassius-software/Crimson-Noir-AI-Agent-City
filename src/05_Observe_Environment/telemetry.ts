@@ -312,6 +312,11 @@ export interface SipocSnapshot {
     region?: string | null
     /** The region has a street window (its people, traffic and signals are real); absent or false in a surveyed region. */
     streets?: boolean
+    /**
+     * The storefront the avatar stands in (01_Initialize_World/storefronts.ts): its index in the engine's shops, its kind
+     * and name, and whether the mirror camera circles the body now (its catalogue open). Absent outside every shop.
+     */
+    shop?: { index: number; kind: string; name: string; showroom: boolean }
     /** The name the user gave the Concierge ('' until they do). */
     name: string
     clock: string; daylight: number; viewYaw: number; district: string; speedKmh: number; gear: string
